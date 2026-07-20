@@ -66,13 +66,8 @@ class FakeAuthStats:
 class WepFakeAuth:
     """On-demand Open-System fake-auth against one WEP AP."""
 
-    # ensure_associated() makes this many silent attempts (~assoc_timeout each)
-    # before declaring failure — covers the common "first try whiffs, second
-    # succeeds" flakiness without a scary log line.
     _MAX_ATTEMPTS = 3
-    # After a failed episode, back off this long before the next attempt (so a
-    # persistently-unreachable AP isn't hammered every loop tick).
-    _FAIL_BACKOFF = 5.0
+    _FAIL_BACKOFF = 5.0  # Seconds
 
     def __init__(
         self,
@@ -90,28 +85,20 @@ class WepFakeAuth:
         self._log = log_callback or (lambda _msg: None)
 
         self.stats = FakeAuthStats()
-        # State machine surfaced to the UI. "ready" = armed but not associated
-        # (the dormant default after start()).
         self.state: str = "idle"     # idle|ready|authenticating|associated|failed
         self.fail_reason: Optional[str] = None
         self.next_reauth_at: Optional[float] = None
 
         self._active = False
-        # Serialize concurrent ensure_associated() callers (replay + frag/chop)
-        # so they don't auth-storm each other.
         self._auth_lock = asyncio.Lock()
-        # Set by the RX filter (sync), read by the auth round.
         self._assoc_ok = False
-        # Whether we've logged the CURRENT failure episode — so we log a failure
-        # once (not every backoff tick) and a "recovered" line once.
+        # Whether we've logged the CURRENT failure episode
         self._announced_failure = False
 
     # ---- Lifecycle ----------------------------------------------------------
 
     def start(self) -> None:
-        """Arm: register the self MAC + RX filter. Does NOT authenticate — that
-        happens lazily on the first ``ensure_associated()`` when a TX path
-        actually has something to send."""
+        """Arm: register the self MAC + RX filter. Does NOT authenticate."""
         if self._active:
             return
         self._active = True
@@ -126,7 +113,7 @@ class WepFakeAuth:
                     self.target.bssid, _mac_str(self.source_mac))
 
     def stop(self) -> FakeAuthStats:
-        """Tear down the RX filter and drop the YOU client. Idempotent."""
+        """Tear down the RX filter and drop the YOU client."""
         if not self._active:
             return self.stats
         self._active = False
@@ -145,9 +132,7 @@ class WepFakeAuth:
         return self._active
 
     def request_reauth(self) -> None:
-        """Drop our 'associated' belief so the next ``ensure_associated()`` re-
-        authenticates (e.g. a replay stall that looks like a silent de-assoc,
-        which the AP never signalled with a Deauth)."""
+        """Drop our associated belief so the next ``ensure_associated()`` re-auth."""
         if self.state == "associated":
             self.stats.reactive_reauths += 1
             self.state = "ready"
@@ -156,9 +141,7 @@ class WepFakeAuth:
     # ---- On-demand association ----------------------------------------------
 
     async def ensure_associated(self) -> bool:
-        """Guarantee we're associated before a TX path transmits. Fast path when
-        already associated; otherwise authenticate (silently retrying), honoring
-        a post-failure backoff. Returns True iff associated."""
+        """Guarantee we're associated before a TX path transmits."""
         if not self._active:
             return False
         if self.state == "associated":
@@ -166,8 +149,7 @@ class WepFakeAuth:
         if self._in_backoff():
             return False
         async with self._auth_lock:
-            # Re-check under the lock — another caller may have just associated
-            # (or just failed and entered backoff).
+            # Re-check under the lock
             if self.state == "associated":
                 return True
             if self._in_backoff():
@@ -182,8 +164,7 @@ class WepFakeAuth:
         )
 
     async def _try_associate(self) -> bool:
-        """Up to ``_MAX_ATTEMPTS`` silent auth rounds. Logs only a failure (once
-        per episode) or a one-line recovery."""
+        """Up to ``_MAX_ATTEMPTS`` silent auth rounds."""
         for _attempt in range(self._MAX_ATTEMPTS):
             if not self._active:
                 return False
@@ -247,8 +228,7 @@ class WepFakeAuth:
             if pkt.status not in (0, None):
                 self.fail_reason = f"Auth rejected (status {pkt.status})"
         elif isinstance(pkt, DeauthPacket):
-            # We got kicked — drop our 'associated' belief so the next
-            # ensure_associated() re-auths. No eager re-auth here.
+            # We got kicked
             if self.state == "associated":
                 self.stats.reactive_reauths += 1
             self.state = "ready"
