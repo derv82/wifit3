@@ -20,12 +20,25 @@ divergences (all HW re-validated: RX 16 BSSIDs + auto-ACK 96/100):
   channel tune.
 The gate accommodates two deliberate divergences (documented, opt-in): the AC_VO inject route
 (CHECK D mask) and the monitor RX-filter (it clears DROP_UC_NOME; the kernel writes the base
-filter + a separate configure_filter, which the gate masks + skips). The remaining CHECK A-C
-FRONTIER is a **capture-vs-v6.18 skew, not a port bug**: `set_channel_20mhz` matches the v6.18
-source order, but the pcap runs the *wrapped* `mt76x2u_set_channel` (an initial phy_set_txpower
-+ config-time `mt76x2_mac_stop` before `phy_set_channel`). Open follow-up: add that wrapper for
-full parity (hypothesis: the missing mac_stop-before-retune may also explain the `cmd=31`
-SWITCH_CHANNEL timeouts seen during runtime re-tunes in ack_lab).
+filter + a separate configure_filter, which the gate masks + skips).
+
+**The CHECK A-C FRONTIER is at the channel tune, and closing it to full green is blocked by two
+separate, deeper issues (analyzed 2026-07-20, wrapper reconstruction attempted then reverted):**
+1. *Config-callback wrapper.* The pcap runs `mt76x2u_config` -> `mt76x2u_set_channel`: an initial
+   `mt76x2_phy_set_txpower` (op #1219) + `mt76x2_mac_stop` (config-time, mac.c:9) before
+   `phy_set_channel`, then `mac_resume` after. wifit3 tunes bare. The wrapper *structure* was
+   reproduced (the initial phy_set_txpower matched op #1219; `mac_stop_config` + `mac_resume`
+   are ~30-line ports of mt76x2_mac.c:9 + mac.h). This part is portable.
+2. *TX-power computation divergence (the real blocker).* wifit3's `phy_set_txpower` writes
+   `MT_TX_ALC_CFG_0 = 0x23230000` (CH_INIT 0x23, **LIMIT 0**) but the wire has `0x2f2f1b1b`
+   (CH_INIT 0x1b, **LIMIT 0x2f**). It is INSENSITIVE to `txpower_conf` (60..36 all give 0x23), so
+   it is a genuine computation difference, not a power-level config. The missing LIMIT=0x2f is a
+   likely latent bug in `phy_set_txpower` worth its own investigation (TX still works because the
+   `set_txpower_enabled` gate can fall back to the static 0x3a3a3a3a initvals). Fix this first;
+   then the wrapper reconstruction can proceed.
+Also a runtime hypothesis: the missing config-time `mac_stop` before a re-tune may explain the
+`cmd=31` SWITCH_CHANNEL timeouts seen on runtime re-tunes in ack_lab (wrap `set_channel` with
+`mac_stop_config`/`mac_resume` and HW-check).
 
 ### mt76x0u verify_pcap — CHECK D green (2026-07-20); CHECK A-C boot reproduction pending
 CHECK D is green: the deliberate OFDM-vs-CCK rate (2.4 GHz inject) and AC_VO-vs-AC_BE route are
