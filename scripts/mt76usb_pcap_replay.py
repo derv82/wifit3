@@ -215,13 +215,23 @@ class ReplayDevice:
     ROM; all MMIO reads stay positional. Both are principled (see the module docstring)."""
 
     def __init__(self, host_ops: list[dict], responses: list[bytes], start: int = 0,
-                 eeprom: bytes | None = None):
+                 eeprom: bytes | None = None, rxfilter_addr: int | None = None,
+                 rxfilter_mask: int = 0, wpdma_addr: int | None = None):
         self.ops = host_ops
         self.i = start
         self.responses = responses
         self.resp_i = 0
         self.eeprom = eeprom
         self.eeprom_served = 0
+        # Monitor RX-filter accommodation: a port in monitor mode clears extra
+        # drop bits (rxfilter_mask) for promiscuous RX, so a RX_FILTR_CFG write
+        # (rxfilter_addr) that differs from the wire ONLY within those bits is
+        # accepted. skip_configure_filter() then skips the kernel's separate
+        # configure_filter ops the port folds in. Deliberate, documented.
+        self.rxfilter_addr = rxfilter_addr
+        self.rxfilter_mask = rxfilter_mask
+        self.wpdma_addr = wpdma_addr
+        self.rxfilter_masked = 0
 
     def _next(self) -> dict:
         if self.i >= len(self.ops):
@@ -258,11 +268,38 @@ class ReplayDevice:
             return bytearray(op["data"])
         payload = bytes(data_or_wLength) if data_or_wLength else b""
         if op["data"] != payload:
+            # Monitor RX-filter write: accept a value differing only within the
+            # monitor bits (the port opens the filter for promiscuous RX).
+            if (self.rxfilter_addr is not None and addr == self.rxfilter_addr
+                    and len(payload) == 4 and len(op["data"]) == 4
+                    and ((int.from_bytes(payload, "little")
+                          ^ int.from_bytes(op["data"], "little"))
+                         & ~self.rxfilter_mask) == 0):
+                self.rxfilter_masked += 1
+                return len(payload)
             raise Divergence(
                 f"op #{self.i-1}: WRITE 0x{addr:08x} value mismatch — port "
                 f"{payload.hex() or '(none)'} vs wire {op['data'].hex() or '(none)'} "
                 f"@f{op['frame']}")
         return len(payload)
+
+    def skip_configure_filter(self) -> int:
+        """Skip the kernel's separate configure_filter ops (a WPDMA read + one or
+        more RX_FILTR_CFG writes) that the port folds into its monitor mac_start.
+        Advances the cursor over that contiguous run; returns the count skipped."""
+        skipped = 0
+        while self.i < len(self.ops):
+            op = self.ops[self.i]
+            if op["kind"] != "ctrl":
+                break
+            addr = (op["wval"] << 16) | op["widx"]
+            is_wpdma_rd = op["dir"] == "IN" and addr == self.wpdma_addr
+            is_rxfilter_wr = op["dir"] == "OUT" and addr == self.rxfilter_addr
+            if not (is_wpdma_rd or is_rxfilter_wr):
+                break
+            self.i += 1
+            skipped += 1
+        return skipped
 
     def write(self, ep, data, timeout=None):
         op = self._next()

@@ -429,13 +429,19 @@ class MT76x2UDriver(Driver):
         phy_set_rxpath(self.transport, self.chainmask)
         phy_set_txdac(self.transport, self.chainmask)
 
-        # [SRC] mt76x2/usb_init.c:187 — init_hardware ends by quiescing the MAC;
-        # the start path below re-enables it via set_channel_20mhz + mac_start.
+        # [SRC] mt76x2/usb_init.c:187 — init_hardware ends by quiescing the MAC.
         await mac_stop(self.transport)
 
-        # ----- Channel tune + mac_start + RX drainer -----
+        # [SRC] mt76x2u_start -> mt76x02u_mac_start: reset counters + enable the MAC
+        # BEFORE tuning the channel (the init tune is a bare phy_set_channel).
         if progress_cb:
-            progress_cb(0.90, f"Tuning to ch {self.current_channel}")
+            progress_cb(0.90, "Enabling RX (mac_start)")
+        if not await mac_start(self.transport, monitor=True):
+            raise BringUpError("mac-start", "mac_start (RX enable) failed")
+
+        # ----- Channel tune + RX drainer -----
+        if progress_cb:
+            progress_cb(0.92, f"Tuning to ch {self.current_channel}")
         ch = self.current_channel
         rate_power = read_rate_power(self.transport, band_2g=ch < 36)
         power_info = read_power_info(
@@ -467,11 +473,6 @@ class MT76x2UDriver(Driver):
         )
         mac_cc_reset(self.transport)
         self._init_cal_done = True
-
-        if progress_cb:
-            progress_cb(0.95, "Enabling RX (mac_start)")
-        if not await mac_start(self.transport, monitor=True):
-            raise BringUpError("mac-start", "mac_start (RX enable) failed")
 
         # connect() is idempotent: tear down any prior cal task / RX drainer
         # before (re)starting, so two cal threads or two drainers can never run

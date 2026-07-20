@@ -448,6 +448,17 @@ MT_TX_ALC_CFG_2_TEMP_COMP_MASK = 0x3F        # GENMASK(5, 0)
 MT_RX_STAT_1                   = 0x1704
 MT_RX_STAT_1_CCA_ERRORS_MASK   = 0xFFFF      # GENMASK(15, 0)
 
+# Hardware stat counters, read (read-to-clear) by mac_reset_counters at start.
+# [SRC] mt76x02_regs.h:561-599.
+MT_RX_STAT_0                   = 0x1700
+MT_RX_STAT_2                   = 0x1708
+MT_TX_STA_0                    = 0x170c
+MT_TX_STA_1                    = 0x1710
+MT_TX_STA_2                    = 0x1714
+MT_TX_STAT_FIFO                = 0x1718
+MT_TX_AGG_CNT_BASE0            = 0x1720
+MT_TX_AGG_CNT_BASE1            = 0x174c
+
 # BBP CORE register 34 — TSSI status bit checked by tssi_compensate.
 MT_BBP_CORE_R34                = MT_BBP_CORE_BASE + 34 * 4   # 0x2088
 

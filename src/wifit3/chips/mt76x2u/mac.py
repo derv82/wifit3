@@ -117,6 +117,15 @@ from .constants import (
     MT_PROT_AUTO_TX_CFG,
     MT_PWR_PIN_CFG,
     MT_RX_FILTR_CFG,
+    MT_RX_STAT_0,
+    MT_RX_STAT_1,
+    MT_RX_STAT_2,
+    MT_TX_AGG_CNT_BASE0,
+    MT_TX_AGG_CNT_BASE1,
+    MT_TX_STA_0,
+    MT_TX_STA_1,
+    MT_TX_STA_2,
+    MT_TX_STAT_FIFO,
     MT_TBTT_SYNC_CFG,
     MT_TSO_CTRL,
     MT_TX_ALC_CFG_4,
@@ -588,16 +597,38 @@ def _set_beacon_offsets(transport: MT76x2UTransport) -> None:
         transport.write32(MT_BCN_OFFSET_BASE + i * 4, regs[i])
 
 
+def mac_reset_counters(transport: MT76x2UTransport) -> None:
+    """`mt76x02_mac_reset_counters` — [SRC] mt76x02_mac.c:11. Read (read-to-clear)
+    the RX/TX stat counters so they start at zero. mt76x02u_mac_start runs this
+    first, before enabling the MAC."""
+    transport.read32(MT_RX_STAT_0)
+    transport.read32(MT_RX_STAT_1)
+    transport.read32(MT_RX_STAT_2)
+    transport.read32(MT_TX_STA_0)
+    transport.read32(MT_TX_STA_1)
+    transport.read32(MT_TX_STA_2)
+    for i in range(16):                 # MT_TX_AGG_CNT(i): 0-7 @ base0, 8-15 @ base1
+        base = MT_TX_AGG_CNT_BASE0 if i < 8 else MT_TX_AGG_CNT_BASE1
+        transport.read32(base + (i % 8) * 4)
+    for _ in range(16):
+        transport.read32(MT_TX_STAT_FIFO)
+
+
 async def mac_start(transport: MT76x2UTransport,
                     rxfilter: int = 0x00015f97,
                     monitor: bool = True) -> bool:
-    """Enable TX (always) + RX. [SRC] mt76x02_usb_core.c::mt76x02u_mac_start.
+    """`mt76x02u_mac_start` — [SRC] mt76x02_usb_core.c. Reset the stat counters,
+    enable TX, wait for WPDMA idle, program the RX filter, enable TX+RX.
 
     In monitor mode we open the RX filter further than the kernel default:
     clear DROP_UC_NOME (bit 2) so frames addressed to other STAs make it
     through, and DROP_NOT_MYBSSID (bit 3) so non-matching BSSID frames
     survive. This is the mt76 analog of [[station-vs-monitor-rcr]] for rtw88.
+    The wire wrote the base filter here and applies monitor filtering via a
+    separate configure_filter; that structural difference is a deliberate
+    wifit3 divergence, masked in verify_pcap CHECK A-C (not reordered).
     """
+    mac_reset_counters(transport)
     # Always enable TX first per kernel order.
     transport.write32(MT_MAC_SYS_CTRL, MT_MAC_SYS_CTRL_ENABLE_TX)
 

@@ -50,7 +50,12 @@ from wifit3.chips.mt76x2u.constants import (  # noqa: E402
     MT_ASIC_VERSION,
     MT_RX_FILTR_CFG,
     MT_WLAN_FUN_CTRL,
+    MT_WPDMA_GLO_CFG,
 )
+
+# DROP_UC_NOME (bit 2) | DROP_NOT_MYBSSID (bit 3): the drop bits mac_start clears
+# for promiscuous monitor RX. A RX_FILTR_CFG write differing only here is accepted.
+_MONITOR_RXFILTER_BITS = (1 << 2) | (1 << 3)
 from wifit3.chips.mt76x2u.eeprom import (  # noqa: E402
     read_mac_address,
     read_nic_conf_0,
@@ -151,7 +156,10 @@ def check_boot(data: dict, channel: int, asic_rev: int) -> tuple[str, int]:
         print("  [FAIL] no anchor: reset_wlan's MT_WLAN_FUN_CTRL MMIO read not in capture")
         return "fail", 0
     dev = rp.ReplayDevice(ops, data["responses"], start=anchor,
-                          eeprom=rp.build_eeprom(ops))
+                          eeprom=rp.build_eeprom(ops),
+                          rxfilter_addr=MT_RX_FILTR_CFG,
+                          rxfilter_mask=_MONITOR_RXFILTER_BITS,
+                          wpdma_addr=MT_WPDMA_GLO_CFG)
     t = MT76x2UTransport(dev)
     mcu = McuChannel(t)
     cal = Mt76x2CalState()
@@ -194,7 +202,13 @@ def check_boot(data: dict, channel: int, asic_rev: int) -> tuple[str, int]:
             raise rp.Divergence("mcu_load_cr returned False")
         phy_set_rxpath(t, chainmask)
         phy_set_txdac(t, chainmask)
-        await mac_stop(t)                               # [SRC] usb_init.c:187
+        await mac_stop(t)                               # [SRC] usb_init.c:187 (init_hardware end)
+        if not await mac_start(t, monitor=True):        # [SRC] mt76x2u_start -> mac_start
+            raise rp.Divergence("mac_start returned False")
+        # wifit3 folds the monitor filter into mac_start; skip the kernel's separate
+        # configure_filter ops (WPDMA read + RX_FILTR_CFG writes) the wire recorded.
+        dev.skip_configure_filter()
+        # set_channel sequence [SRC] mt76x2u_set_channel
         rate_power = read_rate_power(t, band_2g=band_2g)
         power_info = read_power_info(t, channel, band_2g=band_2g, tssi_enabled=False)
         ext_pa = (not nic0.get("pa_int_2g", True)) if band_2g \
@@ -209,8 +223,6 @@ def check_boot(data: dict, channel: int, asic_rev: int) -> tuple[str, int]:
         await phy_channel_calibrate(t, mcu, channel, cal=cal, high_gain=high_gain,
                                     ext_pa=ext_pa, tssi_enabled_flag=False)
         mac_cc_reset(t)
-        if not await mac_start(t, monitor=True):
-            raise rp.Divergence("mac_start returned False")
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
