@@ -1,8 +1,4 @@
-"""Render AccessPoint security info as Rich-markup for the UI.
-
-ScannerView and FocusViewV2 both call into here so the color scheme + AKM
-formatting stay in lock-step. Pure functions — no Textual, no I/O.
-"""
+"""Render AccessPoint security info as Rich-markup for the UI."""
 from __future__ import annotations
 
 from typing import List, Optional
@@ -10,9 +6,7 @@ from typing import List, Optional
 from wifit3.models import AccessPoint
 
 
-# Actionability palette: color signals what's worth targeting, not "how
-# strong" the protocol is. The scanner is a target-picker, so colors
-# should answer "is wifit3 going to crack this?"
+# Actionability palette: color signals what's worth targeting:
 #   bright_green = attackable today (we have an attack)
 #   yellow       = interesting but no attack yet (PRs welcome)
 #   red          = out of scope (we don't support cracking this protocol)
@@ -73,26 +67,13 @@ def format_encryption_markup(
     ap: AccessPoint, detailed: bool = False, muted: str = "dim"
 ) -> str:
     """Return Rich-markup for the ENCRYPT cell.
-
-    ``detailed=False`` (scanner) drops the pairwise cipher entirely — from
-    an attacker's perspective CCMP / GCMP-128 / GCMP-256 all funnel into
-    the same hashcat ``-m 22000`` hashline, so the cipher choice doesn't
-    open or close any wifit3 attack. Keep the scanner cell tight.
-    ``detailed=True`` (focus view) keeps the cipher visible for reference.
-
-    ``muted`` overrides the default Rich ``"dim"`` attribute for the
-    parenthesised detail / fallback strings. Pass a concrete hex color
-    (e.g. resolved from ``app.theme_variables["foreground-darken-3"]``)
-    when the caller needs the muted text to participate in a color
-    blend — Rich's ``dim`` has no color triplet and is skipped by blenders.
-    """
+    ``detailed=False`` (scanner) drops the pairwise cipher entirely.
+    ``muted`` overrides the default Rich ``"dim"`` attribute."""
     akms_tok = _simplified_akms(ap.akms)
     cipher = ap.pairwise_cipher
     show_cipher = detailed and cipher is not None
 
-    # WPA3 Transition (SAE + PSK) — render as WPA3→2, both sides _ATTACKABLE since the WPA2
-    # lane is reachable via PMKID. "WPA3→2" already encodes PSK+SAE, so scanner mode suppresses
-    # the AKM detail; detailed mode still surfaces it (rare PSK+SAE+EAP enterprise transition).
+    # WPA3 Transition (SAE + PSK) — render as WPA3→2.
     if ap.wpa3 and ap.transition_mode:
         head = f"[{_ATTACKABLE}]WPA3[/{_ATTACKABLE}]→[{_ATTACKABLE}]2[/{_ATTACKABLE}]"
         if not detailed:
@@ -118,14 +99,11 @@ def format_encryption_markup(
     if enc == "OPEN" or not enc or enc == "UNKNOWN":
         return f"[{muted}]OPEN[/{muted}]"
     if enc == "WEP":
-        # Attackable now (IV capture → replay → crack). Scanner cell carries a
-        # live unique-IV count so a target with IVs already banked stands out;
-        # the Focus CAPTURE panel owns the count in detailed mode.
+        # Attackable now (IV capture → replay → crack).
         head = f"[{_ATTACKABLE}]WEP[/{_ATTACKABLE}]"
         if detailed:
             return head
         n = ap.wep.unique_ivs if ap.wep else 0
-        # Dot separator (no parens) — the ENCRYPT column clips a trailing ')'.
         return head + f"[{muted}]·{_format_iv_count(n)} IVs[/{muted}]"
     if enc.startswith("WPA-") or enc == "WPA":
         # Legacy WPA1 vendor IE — TKIP universal. Out of scope for wifit3.
@@ -138,9 +116,7 @@ def format_encryption_markup(
 
 
 def wep_key_ascii(key_hex: str) -> str:
-    """A recovered WEP key as ``<hex> = "<ascii>"`` when it's printable ASCII
-    (e.g. ``abcde``), bare hex otherwise (e.g. a 104-bit binary key). The
-    display form shared by Focus's key chip and the Scanner win-line."""
+    """A recovered WEP key as ``<hex> = "<ascii>"``."""
     try:
         kb = bytes.fromhex(key_hex)
     except ValueError:
