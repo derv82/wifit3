@@ -7,6 +7,7 @@ survives re-addressing), drives BOTH the collector's IV gain AND whether a
 synthetic AP echo is delivered to the engine's _rx_cb.
 """
 import asyncio
+from types import SimpleNamespace
 
 from wifit3.models import AccessPoint
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
@@ -85,7 +86,7 @@ def _replay(mocker, collector, **kw):
         # Simulate the AP echoing our replay back when this candidate is
         # genuinely replayable — exactly the frame _rx_cb correlates.
         if collector.echoes(frame):
-            r._rx_cb(_echo_frame(r), -40, 0.0)
+            r._rx_cb(SimpleNamespace(raw=_echo_frame(r)))
         return True
 
     iface.send_raw = _send
@@ -208,10 +209,10 @@ async def test_paused_echo_does_not_count(mocker):
     r.start()
     r.pause()
     before = r._echoes
-    r._rx_cb(_echo_frame(r), -40, 0.0)
+    r._rx_cb(SimpleNamespace(raw=_echo_frame(r)))
     assert r._echoes == before          # dropped while paused
     r.resume()
-    r._rx_cb(_echo_frame(r), -40, 0.0)
+    r._rx_cb(SimpleNamespace(raw=_echo_frame(r)))
     assert r._echoes == before + 1      # counted once unpaused
     r.stop()
 

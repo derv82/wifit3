@@ -129,15 +129,15 @@ class WlanFrameParser:
 
         if subtype == cls.SUBTYPE_ASSOC_RESP:
             # Body: Capability(2) + Status(2) + AID(2); status at offset 26.
-            status = struct.unpack("<H", frame[26:28])[0] if len(frame) >= 28 else 0
+            status = struct.unpack("<H", frame[26:28])[0] if len(frame) >= 28 else None
             return AssocRespPacket(**base, type="assoc_resp", status=status)
         if subtype == cls.SUBTYPE_AUTH:
             # Body: Algorithm(2) + Seq(2) + Status(2); status at offset 28.
-            status = struct.unpack("<H", frame[28:30])[0] if len(frame) >= 30 else 0
+            status = struct.unpack("<H", frame[28:30])[0] if len(frame) >= 30 else None
             return AuthPacket(**base, type=f"mgmt_{subtype}", status=status)
         if subtype in (cls.SUBTYPE_DEAUTH, cls.SUBTYPE_DISASSOC):
             # Reason code is the 2-byte body right after the 24-byte header.
-            reason = struct.unpack("<H", frame[24:26])[0] if len(frame) >= 26 else 0
+            reason = struct.unpack("<H", frame[24:26])[0] if len(frame) >= 26 else None
             label = "deauth" if subtype == cls.SUBTYPE_DEAUTH else f"mgmt_{subtype}"
             return DeauthPacket(**base, type=label, reason=reason)
         return Packet(**base, type=f"mgmt_{subtype}")

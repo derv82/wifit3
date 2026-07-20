@@ -186,7 +186,7 @@ def _relaying_iface(key: bytes, daemon_box, min_relay: int = 0):
         # Relay: FromDS, Addr1=DA(tag), Addr2=BSSID, Addr3=SA(our STA).
         relay = (bytes([0x08, 0x42, 0, 0]) + da + BSSID_B + OUR
                  + b"\x00\x00" + body)
-        d._rx_cb(relay, -40, 0.0)
+        d._rx_cb(SimpleNamespace(raw=relay))
 
     box["d"] = daemon_box
     return SimpleNamespace(register_rx_callback=lambda c: None,
@@ -351,7 +351,7 @@ def _relay_frame(tag: bytes, guess: int, sa=OUR, fc1=0x42, fc0=0x08):
 def test_rx_reads_guess_from_tagged_relay():
     d, _ = _daemon()
     d._cur_tag = bytes([0x12, 0x34, 0x56, 0x78])
-    d._rx_cb(_relay_frame(d._cur_tag, 0x6B), -40, 0.0)
+    d._rx_cb(SimpleNamespace(raw=_relay_frame(d._cur_tag, 0x6B)))
     assert d._relayed_guess == 0x6B
     assert not d._sentinel_relayed
 
@@ -362,19 +362,18 @@ def test_rx_ignores_relay_with_a_different_tag():
     d, _ = _daemon()
     d._cur_tag = bytes([0x12, 0x34, 0x56, 0x78])
     other = bytes([0x12, 0x99, 0x56, 0x78])           # byte-1 differs
-    d._rx_cb(_relay_frame(other, 0x6B), -40, 0.0)
+    d._rx_cb(SimpleNamespace(raw=_relay_frame(other, 0x6B)))
     assert d._relayed_guess is None
 
 
 def test_rx_ignores_non_matching():
     d, _ = _daemon()
     d._cur_tag = bytes([0x12, 0x34, 0x56, 0x78])
-    d._rx_cb(_relay_frame(d._cur_tag, 0x6B, sa=bytes.fromhex("020000000099")),
-             -40, 0.0)                                 # SA not us
+    d._rx_cb(SimpleNamespace(raw=_relay_frame(d._cur_tag, 0x6B, sa=bytes.fromhex("020000000099"))))                                 # SA not us
     assert d._relayed_guess is None
-    d._rx_cb(_relay_frame(d._cur_tag, 0x6B, fc1=0x41), -40, 0.0)   # ToDS
+    d._rx_cb(SimpleNamespace(raw=_relay_frame(d._cur_tag, 0x6B, fc1=0x41)))   # ToDS
     assert d._relayed_guess is None
-    d._rx_cb(_relay_frame(d._cur_tag, 0x6B, fc0=0x80), -40, 0.0)   # mgmt
+    d._rx_cb(SimpleNamespace(raw=_relay_frame(d._cur_tag, 0x6B, fc0=0x80)))   # mgmt
     assert d._relayed_guess is None
 
 
@@ -383,6 +382,6 @@ def test_rx_relayed_sentinel_flags_non_vulnerable_ap():
     frame → set the flag, do NOT treat its address byte as a recovered guess."""
     d, _ = _daemon()
     d._cur_tag = bytes([0x12, 0x34, 0x56, 0x78])
-    d._rx_cb(_relay_frame(d._cur_tag, _SENTINEL), -40, 0.0)
+    d._rx_cb(SimpleNamespace(raw=_relay_frame(d._cur_tag, _SENTINEL)))
     assert d._sentinel_relayed
     assert d._relayed_guess is None

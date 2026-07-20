@@ -320,7 +320,7 @@ class WepArpReplay:
 
     # ---- Echo oracle (RX callback) ------------------------------------------
 
-    def _rx_cb(self, frame: bytes, rssi: int, ts: float) -> None:
+    def _rx_cb(self, pkt) -> None:
         """Count the AP echoing one of OUR replays — the "replayable" signal.
 
         Pinned signature (the same correlation frag/chopchop use): Data +
@@ -332,6 +332,7 @@ class WepArpReplay:
         relay (broadcast DA too) during a pause would otherwise bleed in. Runs
         on every RX frame — keep it cheap.
         """
+        frame = pkt.raw
         if not self._active or self._paused or len(frame) < 22:
             return
         fc0, fc1 = frame[0], frame[1]

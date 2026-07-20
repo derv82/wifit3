@@ -1,5 +1,6 @@
 """Tests for WEP fake authentication (frame builders + RX state machine)."""
 import asyncio
+from wifit3.dot11.parser import WlanFrameParser
 import struct
 
 import pytest
@@ -79,14 +80,14 @@ def _deauth(dest: bytes) -> bytes:
 def test_rx_assoc_resp_success_marks_associated(mocker):
     fa = _fa(mocker)
     fa._active = True
-    fa._rx_cb(_assoc_resp(SELF_MAC, status=0), -40, 0.0)
+    fa._rx_cb(WlanFrameParser.parse_80211_frame(_assoc_resp(SELF_MAC, status=0), -40))
     assert fa._assoc_ok is True
 
 
 def test_rx_assoc_resp_rejected_records_reason(mocker):
     fa = _fa(mocker)
     fa._active = True
-    fa._rx_cb(_assoc_resp(SELF_MAC, status=12), -40, 0.0)
+    fa._rx_cb(WlanFrameParser.parse_80211_frame(_assoc_resp(SELF_MAC, status=12), -40))
     assert fa._assoc_ok is False
     assert "status 12" in fa.fail_reason
 
@@ -94,14 +95,14 @@ def test_rx_assoc_resp_rejected_records_reason(mocker):
 def test_rx_ignores_frames_for_other_macs(mocker):
     fa = _fa(mocker)
     fa._active = True
-    fa._rx_cb(_assoc_resp(b"\xaa\xaa\xaa\xaa\xaa\xaa", status=0), -40, 0.0)
+    fa._rx_cb(WlanFrameParser.parse_80211_frame(_assoc_resp(b"\xaa\xaa\xaa\xaa\xaa\xaa", status=0), -40))
     assert fa._assoc_ok is False
 
 
 def test_rx_auth_reject_records_reason(mocker):
     fa = _fa(mocker)
     fa._active = True
-    fa._rx_cb(_auth_resp(SELF_MAC, status=1), -40, 0.0)
+    fa._rx_cb(WlanFrameParser.parse_80211_frame(_auth_resp(SELF_MAC, status=1), -40))
     assert "Auth rejected" in fa.fail_reason
 
 
@@ -111,7 +112,7 @@ def test_rx_deauth_drops_association(mocker):
     fa = _fa(mocker)
     fa._active = True
     fa.state = "associated"
-    fa._rx_cb(_deauth(SELF_MAC), -40, 0.0)
+    fa._rx_cb(WlanFrameParser.parse_80211_frame(_deauth(SELF_MAC), -40))
     assert fa.state == "ready"
     assert fa._assoc_ok is False
     assert fa.stats.reactive_reauths == 1

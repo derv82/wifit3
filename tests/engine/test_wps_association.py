@@ -6,6 +6,7 @@ associate() now waits for the Open-System Auth Resp (status 0), then sends Assoc
 falling back to sending it anyway if no matchable Auth Resp arrives.
 """
 import struct
+from wifit3.dot11.parser import WlanFrameParser
 
 from wifit3.engine.attacks.auth_assoc import Association
 
@@ -53,9 +54,9 @@ class _RespIface:
         self.sent.append(bytes(frame))
         subtype = (frame[0] & 0xF0) >> 4
         if subtype == 0x0B and self._answer_auth and self._cb:        # auth req
-            self._cb(_auth_resp(), -40, 0.0)
+            self._cb(WlanFrameParser.parse_80211_frame(_auth_resp(), -40))
         elif subtype == 0x00 and self._answer_assoc and self._cb:     # assoc req
-            self._cb(_assoc_resp(), -40, 0.0)
+            self._cb(WlanFrameParser.parse_80211_frame(_assoc_resp(), -40))
         return True
 
 
@@ -85,9 +86,9 @@ async def test_falls_back_to_assoc_when_no_auth_resp():
 def test_rx_cb_sets_auth_ok_on_status0_resp():
     a = Association(_RespIface(), _BSSID, "Net", 1, our_mac=_US)
     a._active = True
-    a._rx_cb(_auth_resp(0), -40, 0.0)
+    a._rx_cb(WlanFrameParser.parse_80211_frame(_auth_resp(0), -40))
     assert a._auth_ok is True
     a._auth_ok = False
-    a._rx_cb(_auth_resp(1), -40, 0.0)            # status != 0 → not ok, records reason
+    a._rx_cb(WlanFrameParser.parse_80211_frame(_auth_resp(1), -40))            # status != 0 → not ok, records reason
     assert a._auth_ok is False
     assert "Auth rejected" in (a.fail_reason or "")

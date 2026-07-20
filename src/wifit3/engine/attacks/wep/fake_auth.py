@@ -25,13 +25,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import struct
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from wifit3.models import AccessPoint
 from wifit3.dot11.auth_assoc import auth_req, assoc_req
+from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
 
 logger = logging.getLogger(__name__)
 
@@ -234,35 +234,19 @@ class WepFakeAuth:
 
     # ---- RX filter (sync, on the loop) --------------------------------------
 
-    def _rx_cb(self, frame_bytes: bytes, rssi: int, ts: float) -> None:
-        """Watch for AP replies addressed to our MAC. Keep this fast.
-
-        Per-subtype length guards: a Deauth/Disassoc is only 26 bytes (24 B
-        header + 2 B reason), so a blanket "len >= 28" gate would drop the
-        very kicks we want to react to.
-        """
-        if not self._active or len(frame_bytes) < 24:
+    def _rx_cb(self, pkt) -> None:
+        """React to the AP's typed auth/assoc-resp/deauth replies addressed to our MAC."""
+        if not self._active or pkt.raw[4:10] != self.source_mac:   # Addr1 (dest) must be us
             return
-        fc0 = frame_bytes[0]
-        if (fc0 & 0x0C) != 0x00:   # management frames only
-            return
-        if frame_bytes[4:10] != self.source_mac:  # Addr1 (dest) must be us
-            return
-        subtype = (fc0 & 0xF0) >> 4
-
-        if subtype == _SUBTYPE_ASSOC_RESP and len(frame_bytes) >= 28:
-            # Body: Capability(2) + Status(2) + AID(2) → status at offset 26.
-            status = struct.unpack("<H", frame_bytes[26:28])[0]
-            if status == 0:
+        if isinstance(pkt, AssocRespPacket):
+            if pkt.status == 0:
                 self._assoc_ok = True
-            else:
-                self.fail_reason = f"Assoc rejected (status {status})"
-        elif subtype == _SUBTYPE_AUTH and len(frame_bytes) >= 30:
-            # Body: Algo(2) + Seq(2) + Status(2) → status at offset 28.
-            status = struct.unpack("<H", frame_bytes[28:30])[0]
-            if status != 0:
-                self.fail_reason = f"Auth rejected (status {status})"
-        elif subtype in (_SUBTYPE_DEAUTH, _SUBTYPE_DISASSOC):
+            elif pkt.status is not None:
+                self.fail_reason = f"Assoc rejected (status {pkt.status})"
+        elif isinstance(pkt, AuthPacket):
+            if pkt.status not in (0, None):
+                self.fail_reason = f"Auth rejected (status {pkt.status})"
+        elif isinstance(pkt, DeauthPacket):
             # We got kicked — drop our 'associated' belief so the next
             # ensure_associated() re-auths. No eager re-auth here.
             if self.state == "associated":

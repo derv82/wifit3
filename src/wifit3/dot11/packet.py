@@ -103,19 +103,19 @@ class AssocRequestPacket(Packet):
 @dataclass(slots=True, kw_only=True)
 class AuthPacket(Packet):
     """An Open-System Authentication frame; ``status`` is the result code (0 = success)."""
-    status: int = 0
+    status: Optional[int] = None
 
 
 @dataclass(slots=True, kw_only=True)
 class AssocRespPacket(Packet):
     """A (Re)Association Response; ``status`` is the result code (0 = success)."""
-    status: int = 0
+    status: Optional[int] = None
 
 
 @dataclass(slots=True, kw_only=True)
 class DeauthPacket(Packet):
     """A Deauthentication or Disassociation; ``reason`` is the 802.11 reason code."""
-    reason: int = 0
+    reason: Optional[int] = None
 
 
 @dataclass(slots=True, kw_only=True)

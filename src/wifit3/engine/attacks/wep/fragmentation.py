@@ -283,11 +283,12 @@ class WepFragmentation:
 
     # ---- Oracle (RX callback) -----------------------------------------------
 
-    def _rx_cb(self, frame: bytes, rssi: int, ts: float) -> None:
+    def _rx_cb(self, pkt) -> None:
         """Watch for the AP relaying our reassembled ARP. Pinned signature:
         Data + FromDS + Protected + DA=broadcast + SA(Addr3)==our MAC + fresh
         IV. Match on SA, not BSSID (the box relays onto sibling BSSes). Keep it
         fast — runs on every received frame."""
+        frame = pkt.raw
         if not self._active or self._relay_seen or len(frame) < 28:
             return
         fc0, fc1 = frame[0], frame[1]

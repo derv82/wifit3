@@ -127,7 +127,7 @@ class WlanInterface:
         # client, tagged is_self so the UI shows "YOU".
         self.self_macs: Set[str] = set()
 
-        self._rx_callbacks: List[Callable[[bytes, int, float], None]] = []
+        self._rx_callbacks: List[Callable[[Packet], None]] = []
         # Fired once when the adapter is lost (RX reader death, or a hopper tune that hits a
         # dead pipe). The app subscribes and raises the Quit-only fatal modal. Latched via
         # _device_lost so multiple error sources can't stack it.
@@ -150,12 +150,11 @@ class WlanInterface:
         """Mutator callback: takes the driver's parsed frame and updates the registry."""
         frame_type = pkt.type
         bssid = pkt.bssid
-        rssi = pkt.rssi
 
-        # Fan out to raw-frame subscribers (e.g. WPA3DowngradeAttack) first, so they see
+        # Fan out to parsed-frame subscribers (e.g. WPA3DowngradeAttack) first, so they see
         # frames even when the state-update path below bails on bssid filtering.
-        if pkt.raw is not None and self._rx_callbacks:
-            self._fire_rx_callbacks(pkt.raw, rssi)
+        if self._rx_callbacks:
+            self._fire_rx_callbacks(pkt)
 
         # Debug trace of attack-relevant RX — data/EAPOL plus the AP's mgmt replies
         # (assoc-resp, auth=mgmt_11, deauth), so a whole exchange is visible. Data frames
@@ -586,21 +585,21 @@ class WlanInterface:
             except Exception:
                 logger.exception("Disconnect callback failed")
 
-    def register_rx_callback(self, callback_func: Callable[[bytes, int, float], None]):
-        """Register a raw-frame subscriber: func(frame_bytes, rssi, timestamp)."""
+    def register_rx_callback(self, callback_func: Callable[[Packet], None]):
+        """Register a parsed-frame subscriber: func(pkt). The Packet carries ``.raw`` for
+        byte-level needs (WSC parsing, exact-frame matching) and typed fields otherwise."""
         if callback_func not in self._rx_callbacks:
             self._rx_callbacks.append(callback_func)
 
-    def unregister_rx_callback(self, callback_func: Callable[[bytes, int, float], None]):
+    def unregister_rx_callback(self, callback_func: Callable[[Packet], None]):
         """Idempotent inverse of register_rx_callback."""
         if callback_func in self._rx_callbacks:
             self._rx_callbacks.remove(callback_func)
 
-    def _fire_rx_callbacks(self, frame_bytes: bytes, rssi: int):
-        ts = time.time()
+    def _fire_rx_callbacks(self, pkt: Packet):
         for cb in self._rx_callbacks:
             try:
-                cb(frame_bytes, rssi, ts)
+                cb(pkt)
             except Exception as e:
                 logger.error(f"RX Callback failed: {e}")
 

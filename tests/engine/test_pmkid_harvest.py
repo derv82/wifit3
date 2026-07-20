@@ -7,6 +7,7 @@ PMKID-less M1 (no retry — the same AP would only re-send the same empty M1). W
 rotate the MAC + retry when the AP stays silent (no M1).
 """
 from types import SimpleNamespace
+from wifit3.dot11.parser import WlanFrameParser
 
 from wifit3.engine.attacks.pmkid_harvest import PmkidFail, PmkidHarvestAttack
 from wifit3.dot11.ie import force_psk_akm
@@ -85,10 +86,10 @@ class _FakeIface:
         bssid = bytes(frame[4:10])               # addr1 = BSSID
         subtype = (frame[0] & 0xF0) >> 4
         if self._cb is not None and subtype == 0x0B:          # Auth Req → Auth Resp
-            self._cb(self._auth_resp(our_mac, bssid), -40, 0.0)
+            self._cb(WlanFrameParser.parse_80211_frame(self._auth_resp(our_mac, bssid), -40))
         elif frame[0] == 0x00:                                 # Assoc Req
             if self._cb is not None:
-                self._cb(self._assoc_resp(our_mac, bssid), -40, 0.0)
+                self._cb(WlanFrameParser.parse_80211_frame(self._assoc_resp(our_mac, bssid), -40))
             if self._deliver_m1:                              # the AP "replies" with M1
                 src = ":".join(f"{b:02x}" for b in our_mac)
                 self.ap.handshakes[src] = SimpleNamespace(pmkid=self._pmkid, akm_client=None)

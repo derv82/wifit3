@@ -357,11 +357,12 @@ class WepChopChop:
             return chop_last_byte_and_fixup(body, guess)
         return await self._sweep_for_relay(candidate)
 
-    def _rx_cb(self, frame: bytes, rssi: int, ts: float) -> None:
+    def _rx_cb(self, pkt) -> None:
         """Read the accepted guess out of the AP's relay: a Data + FromDS +
         Protected frame whose Addr1 (RA) is the multicast tag we stamped. The
         guess is Addr1[5]; Addr1[1] LSB distinguishes a real byte from a relayed
         sentinel (bad-ICV) frame."""
+        frame = pkt.raw
         if not self._active or len(frame) < 22:
             return
         fc0, fc1 = frame[0], frame[1]

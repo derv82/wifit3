@@ -16,12 +16,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import struct
 import time
 from typing import Callable, Optional
 
 from wifit3.dot11 import build_deauth
 from wifit3.dot11.auth_assoc import auth_req, assoc_req
+from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,9 @@ class WlanTransport:
         self._loop = asyncio.get_event_loop()
         self._active = False
 
-    def _rx_cb(self, frame: bytes, rssi: int, ts: float) -> None:
+    def _rx_cb(self, pkt) -> None:
         # Keep only AP→us frames: Addr1 (dest) == our MAC, Addr2 (src) == BSSID.
+        frame = pkt.raw
         if len(frame) < 24:
             return
         if frame[4:10] != self.our_mac or frame[10:16] != self.bssid:
@@ -202,26 +203,19 @@ class Association:
                 last_send = time.time()
             await asyncio.sleep(0.02)
 
-    def _rx_cb(self, frame: bytes, rssi: int, ts: float) -> None:
-        if not self._active or len(frame) < 24:
+    def _rx_cb(self, pkt) -> None:
+        if not self._active or pkt.raw[4:10] != self.our_mac:   # addressed to us
             return
-        if (frame[0] & 0x0C) != 0x00:          # management only
-            return
-        if frame[4:10] != self.our_mac:        # addressed to us
-            return
-        subtype = (frame[0] & 0xF0) >> 4
-        if subtype == _SUBTYPE_ASSOC_RESP and len(frame) >= 28:
-            status = struct.unpack("<H", frame[26:28])[0]
-            if status == 0:
+        if isinstance(pkt, AssocRespPacket):
+            if pkt.status == 0:
                 self._assoc_ok = True
-            else:
-                self.fail_reason = f"Assoc rejected (status {status})"
-        elif subtype == _SUBTYPE_AUTH and len(frame) >= 30:
-            status = struct.unpack("<H", frame[28:30])[0]
-            if status == 0:
+            elif pkt.status is not None:
+                self.fail_reason = f"Assoc rejected (status {pkt.status})"
+        elif isinstance(pkt, AuthPacket):
+            if pkt.status == 0:
                 self._auth_ok = True
-            else:
-                self.fail_reason = f"Auth rejected (status {status})"
-        elif subtype in (_SUBTYPE_DEAUTH, _SUBTYPE_DISASSOC):
+            elif pkt.status is not None:
+                self.fail_reason = f"Auth rejected (status {pkt.status})"
+        elif isinstance(pkt, DeauthPacket):
             self.associated = False
             self._assoc_ok = False
