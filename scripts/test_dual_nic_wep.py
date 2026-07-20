@@ -43,8 +43,8 @@ for _s in (sys.stdout, sys.stderr):
 
 from wifit3.wlan.manager import WlanDeviceManager
 from wifit3.models import AccessPoint
-from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
-from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
+from wifit3.campaigns.wep.fake_auth import WepFakeAuth
+from wifit3.campaigns.wep.arp_replay import WepArpReplay
 
 BROADCAST = b"\xff\xff\xff\xff\xff\xff"
 

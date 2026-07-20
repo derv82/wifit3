@@ -53,7 +53,7 @@ import zlib
 from typing import Awaitable, Callable, Optional
 
 from wifit3.models import AccessPoint
-from wifit3.engine.attacks import treelog
+from wifit3.campaigns import treelog
 from wifit3.dot11.wep.crypto import (
     CRC32_RESIDUE,
     arp_request_plaintext,

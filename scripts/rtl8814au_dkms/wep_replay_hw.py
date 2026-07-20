@@ -38,7 +38,7 @@ import libusb_package
 import usb.core
 
 from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
-from wifit3.engine.attacks.wep.campaign import WepCampaign
+from wifit3.campaigns.wep import WepCampaign
 from wifit3.models import AccessPoint
 from wifit3.wlan.interface import WlanInterface
 

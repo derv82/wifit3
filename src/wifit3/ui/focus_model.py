@@ -19,12 +19,12 @@ from typing import Any, Optional
 from rich.markup import escape
 
 from .encryption_format import format_encryption_markup
-from ..engine.attacks.campaign import Campaign
-from ..engine.attacks.pmkid_harvest import PmkidHarvestAttack
-from ..engine.attacks.wep.campaign import WepCampaign
+from ..campaigns.campaign import Campaign
+from ..campaigns.pmkid import PmkidHarvestAttack
+from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
-from ..engine.attacks.wps.campaign import WpsCampaign
-from ..engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
+from ..campaigns.pin import WpsCampaign
+from ..campaigns.wpa3_downgrade import WPA3DowngradeAttack
 
 # Attack-button campaigns in button-row order. Each declares its own
 # visible()/ineligible_reason() + labels; running-state comes from the

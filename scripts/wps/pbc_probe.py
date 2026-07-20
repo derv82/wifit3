@@ -27,8 +27,8 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from wifit3.engine.attacks.wps.pbc import WpsPbcCapture
-from wifit3.engine.attacks.wps.registrar import PinResult
+from wifit3.campaigns.pbc import WpsPbcCapture
+from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.wlan.manager import WlanDeviceManager
 
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from wifit3.engine.attacks.decloak import (
+from wifit3.campaigns.decloak import (
     SIBLING_SUFFIXES,
     DecloakAttack,
     build_candidates,

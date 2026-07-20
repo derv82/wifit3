@@ -9,7 +9,7 @@ own local copy of this for when it runs in isolation.)
 """
 import pytest
 
-from wifit3.engine.attacks.campaign import Campaign
+from wifit3.campaigns.campaign import Campaign
 
 
 @pytest.fixture(autouse=True)

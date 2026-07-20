@@ -36,11 +36,11 @@ for _stream in (sys.stdout, sys.stderr):
 
 from wps_probe import discover_iface, find_ap, load_default_target, write_pcap  # noqa: E402
 
-from wifit3.engine.attacks.auth_assoc import (  # noqa: E402
+from wifit3.campaigns.auth_assoc import (  # noqa: E402
     Association, WlanTransport, random_client_mac, str_to_mac,
 )
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie  # noqa: E402
-from wifit3.engine.attacks.wps.registrar import WpsRegistrar  # noqa: E402
+from wifit3.campaigns.wps.registrar import WpsRegistrar  # noqa: E402
 
 # Safety: the lab only targets the BSSID configured in data_dumps/wps_pin.txt (gitignored) —
 # the user's own test router. No real BSSID is hardcoded here (it must not enter git).
@@ -310,7 +310,7 @@ async def mode_campaign(iface, tgt, args):
     import tempfile
     from types import SimpleNamespace
 
-    from wifit3.engine.attacks.wps.campaign import WpsCampaign, _state_path
+    from wifit3.campaigns.pin import WpsCampaign, _state_path
     bssid = tgt["bssid"]
     tmp = tempfile.mkdtemp(prefix="wpslab_")   # isolated state dir; don't touch captures/
     if args.fresh:

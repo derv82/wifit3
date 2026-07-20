@@ -18,7 +18,7 @@ import os
 
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc import crypto as wc
-from wifit3.engine.attacks.wps.registrar import WpsRegistrar, PinResult
+from wifit3.campaigns.wps.registrar import WpsRegistrar, PinResult
 
 BSSID = bytes.fromhex("3421090001ff")
 STA = bytes.fromhex("02aabbccddee")
@@ -252,7 +252,7 @@ async def test_silent_ap_reads_as_no_response():
 
 
 def test_describe_frame_names_mgmt_and_data():
-    from wifit3.engine.attacks.wps.registrar import describe_frame
+    from wifit3.campaigns.wps.registrar import describe_frame
     # The WPS trace must name non-WSC frames so a disassoc/deauth (AP kicking us) is legible.
     assert describe_frame(b"\xa0" + b"\x00" * 24) == "mgmt/DISASSOC"
     assert describe_frame(b"\xc0" + b"\x00" * 24) == "mgmt/DEAUTH"

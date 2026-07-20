@@ -35,9 +35,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from wifit3.engine.attacks.auth_assoc import Association, WlanTransport, str_to_mac
+from wifit3.campaigns.auth_assoc import Association, WlanTransport, str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
-from wifit3.engine.attacks.wps.registrar import PinResult, WpsRegistrar
+from wifit3.campaigns.wps.registrar import PinResult, WpsRegistrar
 from wifit3.wlan.manager import WlanDeviceManager
 
 
@@ -200,7 +200,7 @@ async def main_async(args) -> int:
         if args.campaign:
             from types import SimpleNamespace
 
-            from wifit3.engine.attacks.wps.campaign import WpsCampaign
+            from wifit3.campaigns.pin import WpsCampaign
             target = found_ap or SimpleNamespace(bssid=bssid, ssid=ssid,
                                                  channel=channel, wps_locked=False)
             step(f"Run full WpsCampaign (up to {args.max_secs:.0f}s)")

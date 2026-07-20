@@ -6,7 +6,7 @@ import struct
 import pytest
 
 from wifit3.models import AccessPoint
-from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
+from wifit3.campaigns.wep.fake_auth import WepFakeAuth
 from wifit3.dot11.auth_assoc import auth_req, assoc_req
 
 SELF_MAC = b"\x02\x00\x00\x00\x00\x01"

@@ -42,13 +42,13 @@ from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Static
 
-from wifit3.engine.attacks import treelog
-from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
-from wifit3.engine.attacks.wep.campaign import WepCampaign
-from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
-from wifit3.engine.attacks.wps.campaign import WpsCampaign, load_run_state, run_progress_line
-from wifit3.engine.attacks.wps.pbc import WpsPbcCapture
-from wifit3.engine.attacks.wps.registrar import PinResult
+from wifit3.campaigns import treelog
+from wifit3.campaigns.pmkid import PmkidHarvestAttack
+from wifit3.campaigns.wep import WepCampaign
+from wifit3.campaigns.wpa3_downgrade import WPA3DowngradeAttack
+from wifit3.campaigns.pin import WpsCampaign, load_run_state, run_progress_line
+from wifit3.campaigns.pbc import WpsPbcCapture
+from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.persist.save import (
     save_handshake, save_pmkid, save_wep_key, save_wps_pbc, save_wps_pin,
 )

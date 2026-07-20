@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from wifit3.engine.attacks.wep.chopchop import (
+from wifit3.campaigns.wep.chopchop import (
     WepChopChop,
     _SENTINEL,
     _hdr_len,
@@ -291,7 +291,7 @@ async def test_loop_picks_seed_from_store_and_chops_end_to_end():
 
 
 def test_treelog_connectors():
-    from wifit3.engine.attacks import treelog
+    from wifit3.campaigns import treelog
     assert treelog.branch("x") == " [dim]├─►[/dim] x"
     ok = treelog.leaf_ok("x")
     assert ok.startswith(" [dim]└─[/dim]") and "✓" in ok and ok.endswith(" x")

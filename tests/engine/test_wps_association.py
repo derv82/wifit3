@@ -8,7 +8,7 @@ falling back to sending it anyway if no matchable Auth Resp arrives.
 import struct
 from wifit3.dot11.parser import WlanFrameParser
 
-from wifit3.engine.attacks.auth_assoc import Association
+from wifit3.campaigns.auth_assoc import Association
 
 _BSSID = "34:21:09:00:01:ff"
 _BSSID_B = bytes.fromhex("3421090001ff")

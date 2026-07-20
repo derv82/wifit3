@@ -15,13 +15,13 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from ..campaign import Campaign
-from ..auth_assoc import (
+from .campaign import Campaign
+from .auth_assoc import (
     Association, WlanTransport, build_client_leaving, random_client_mac, str_to_mac,
 )
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_ENROLLEE, wps_assoc_ie
-from .enrollee import WpsEnrollee
-from .registrar import AttemptOutcome, PinResult
+from .wps.enrollee import WpsEnrollee
+from .wps.registrar import AttemptOutcome, PinResult
 
 logger = logging.getLogger(__name__)
 

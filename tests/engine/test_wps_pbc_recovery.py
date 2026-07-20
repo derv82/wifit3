@@ -9,8 +9,8 @@ attempt's MAC.
 """
 import struct
 
-from wifit3.engine.attacks.auth_assoc import build_client_leaving
-from wifit3.engine.attacks.wps.enrollee import WpsEnrollee
+from wifit3.campaigns.auth_assoc import build_client_leaving
+from wifit3.campaigns.wps.enrollee import WpsEnrollee
 
 _AP = bytes.fromhex("3421090001ff")
 _US = bytes.fromhex("02aabbccddee")

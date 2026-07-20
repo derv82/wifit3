@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from wifit3.engine.attacks import treelog
-from wifit3.engine.attacks.pmkid_harvest import PmkidFail
+from wifit3.campaigns import treelog
+from wifit3.campaigns.pmkid import PmkidFail
 
 _M1_DIR = "AP→Client"
 _REQ_DIR = "Client→AP"

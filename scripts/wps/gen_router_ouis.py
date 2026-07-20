@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate ``src/wifit3/engine/attacks/wps/wps_router_ouis.py`` from the IEEE OUI registry.
+"""Regenerate ``src/wifit3/campaigns/wps/wps_router_ouis.py`` from the IEEE OUI registry.
 
 The WPS default-PIN dispatch gates brand-specific generators (D-Link / ASUS / Belkin) to
 those vendors' OUIs, so it needs OUI -> vendor for exactly those brands. This script filters
@@ -35,7 +35,7 @@ _VENDOR_MATCH = {
 }
 
 _OUT = (Path(__file__).resolve().parents[2]
-        / "src" / "wifit3" / "engine" / "attacks" / "wps" / "wps_router_ouis.py")
+        / "src" / "wifit3" / "campaigns" / "wps" / "wps_router_ouis.py")
 
 
 def _vendor_for(org: str) -> str | None:

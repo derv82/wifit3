@@ -7,12 +7,12 @@ algorithm descriptions (3WiFi / devttys0 / WPS-OUI-PINS plan §2).
 import subprocess
 import sys
 
-from wifit3.engine.attacks.wps import wps_algos as A
-from wifit3.engine.attacks.wps import wps_router_ouis
+from wifit3.campaigns.wps import wps_algos as A
+from wifit3.campaigns.wps import wps_router_ouis
 from wifit3.dot11.wsc.crypto import pin_is_valid
 
 _MAC = bytes.fromhex("001122334455")
-_OUI_MOD = "wifit3.engine.attacks.wps.wps_router_ouis"
+_OUI_MOD = "wifit3.campaigns.wps.wps_router_ouis"
 
 
 def test_generator_vectors():
@@ -65,7 +65,7 @@ def test_oui_table_is_lazy_loaded():
     # The ~7 KB table must NOT import at module load (protects app startup time) — only
     # when pins_for actually runs. Checked in a fresh interpreter to avoid cross-test state.
     code = (
-        "import sys, wifit3.engine.attacks.wps.wps_algos as a; "
+        "import sys, wifit3.campaigns.wps.wps_algos as a; "
         f"assert {_OUI_MOD!r} not in sys.modules, 'table imported at module load'; "
         "a.pins_for(bytes.fromhex('001122334455')); "
         f"assert {_OUI_MOD!r} in sys.modules, 'table not imported after pins_for'"

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..engine.attacks import treelog
+from ..campaigns import treelog
 from .capture_events import CaptureEvent
 from .capture_log import _eapol_fields
 

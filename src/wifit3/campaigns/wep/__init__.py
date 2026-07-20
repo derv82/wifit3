@@ -27,11 +27,11 @@ from typing import Callable, Optional
 from rich.markup import escape
 
 from wifit3.models import AccessPoint
-from wifit3.engine.attacks import treelog
-from wifit3.engine.attacks.campaign import Campaign
-from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
-from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
-from wifit3.engine.attacks.wep.chopchop import WepChopChop
+from wifit3.campaigns import treelog
+from wifit3.campaigns.campaign import Campaign
+from wifit3.campaigns.wep.fake_auth import WepFakeAuth
+from wifit3.campaigns.wep.arp_replay import WepArpReplay
+from wifit3.campaigns.wep.chopchop import WepChopChop
 from wifit3.crack.wep import (
     PtwCracker,
     keystream_from_arp_cipher,

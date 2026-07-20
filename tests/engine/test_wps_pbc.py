@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from wifit3.engine.attacks.wps.pbc import PbcWatcher
+from wifit3.campaigns.pbc import PbcWatcher
 
 
 def _ap(bssid, active):

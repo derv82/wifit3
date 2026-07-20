@@ -1,6 +1,6 @@
 """Tests for the WPS PIN keyspace."""
 
-from wifit3.engine.attacks.wps import pins
+from wifit3.campaigns.wps import pins
 from wifit3.dot11.wsc.crypto import pin_is_valid
 
 

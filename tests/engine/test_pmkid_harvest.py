@@ -9,7 +9,7 @@ rotate the MAC + retry when the AP stays silent (no M1).
 from types import SimpleNamespace
 from wifit3.dot11.parser import WlanFrameParser
 
-from wifit3.engine.attacks.pmkid_harvest import PmkidFail, PmkidHarvestAttack
+from wifit3.campaigns.pmkid import PmkidFail, PmkidHarvestAttack
 from wifit3.dot11.ie import force_psk_akm
 
 _BSSID = "aa:bb:cc:dd:ee:01"

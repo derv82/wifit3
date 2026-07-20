@@ -99,7 +99,7 @@ three for stubborn APs.
 ## Architecture — file layout & class responsibilities
 
 ```
-engine/attacks/wps/
+campaigns/wps/
   README.md         this scope doc
   __init__.py
   wsc_crypto.py     SHARED CORE. Pure functions, no I/O, no state:

@@ -10,7 +10,7 @@ import asyncio
 from types import SimpleNamespace
 
 from wifit3.models import AccessPoint
-from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
+from wifit3.campaigns.wep.arp_replay import WepArpReplay
 
 # Captured frames: FC = Data/FromDS/Protected (08 42), 24-byte header, then a
 # body whose first byte marks the candidate.
