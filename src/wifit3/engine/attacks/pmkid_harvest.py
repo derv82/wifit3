@@ -32,7 +32,7 @@ import time
 from typing import Optional
 
 from wifit3.models import AccessPoint
-from wifit3.wlan.interface import build_deauth
+from wifit3.dot11 import build_deauth
 
 from .campaign import Campaign
 from .auth_assoc import Association

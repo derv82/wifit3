@@ -20,7 +20,7 @@ import struct
 import time
 from typing import Callable, Optional
 
-from wifit3.wlan.interface import build_deauth
+from wifit3.dot11 import build_deauth
 
 logger = logging.getLogger(__name__)
 
