@@ -256,7 +256,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 ### RT5572
 *Panda PAU09 N600 · 2.4 / 5 GHz · 2T2R*
 
-> **5 GHz injection is flaky on nearby APs** — deauth / PMKID / WPS can drop on a strong nearby
+> **5 GHz injection is flaky on nearby APs**: deauth / PMKID / WPS can drop on a strong nearby
 > 5 GHz AP. Distant 5 GHz and all of 2.4 GHz are unaffected.
 
 | Capability | Status | Date | Notes |
@@ -370,7 +370,7 @@ scanning, and 30 min already resolves the degradation curve.
 
 ## Hardware queue
 
-*"Will you support card X?"* — maybe. A chipset gets added when we have the adapter in
+*"Will you support card X?"* Maybe. A chipset gets added when we have the adapter in
 hand **and** a clean cold-boot USB capture to port against (the process is
 `docs/porting/METHODOLOGY.md`). Good candidates are the USB adapters morrownr recommends for
 Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_for_Kali_Linux.md>

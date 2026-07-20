@@ -7,7 +7,7 @@ A USB-only wireless auditor that runs in userland on Linux and Windows.
 </p>
 
 <p align="center">
-  <img src="screenshots/wifit3-demo.gif" alt="Wifit3 in action — WPS PushButton PSK capture" width="700">
+  <img src="screenshots/wifit3-demo.gif" alt="Wifit3 in action: WPS PushButton PSK capture" width="700">
 </p>
 
 wifit3 is fundamentally different from its predecessor, [wifite2](https://github.com/derv82/wifite2):
@@ -75,11 +75,11 @@ wifit3 is fundamentally different from its predecessor, [wifite2](https://github
 Wifit3 uses [`uv`](https://docs.astral.sh/uv/) (requires internet access to pull dependencies
 for the first run):
 
-**Windows** — Wifit3 installs the **WinUSB** driver for your adapter itself: pick the
+**Windows**: Wifit3 installs the **WinUSB** driver for your adapter itself: pick the
 card on the splash screen and confirm. The bundled installer self-elevates for that one
 step (a single UAC prompt), after which no Administrator privileges are needed to run Wifit3.
 
-**Linux** — pick the card on the splash and confirm. Wifit3 assumes control of that
+**Linux**: pick the card on the splash and confirm. Wifit3 assumes control of that
 chipset: it blocklists the card's kernel driver (so the kernel stops grabbing it) and grants your
 user raw USB access (one privileged prompt), then asks you to replug the card once.
 Afterward Wifit3 runs without sudo. While Wifit3 controls it, the card won't work as a normal Wi-Fi
@@ -95,11 +95,11 @@ uv run wifit3
 Wifit3 only exists because of the people who reverse-engineered and maintained the Linux
 drivers we ported from.
 
-**Biggest thanks: Christian "kimo" B. ([@kimocoder](https://github.com/kimocoder))** — who
+**Biggest thanks: Christian "kimo" B. ([@kimocoder](https://github.com/kimocoder))**, who
 took over **wifite2** when its original maintainer (me) stepped away and has kept it alive and
 evolving for years since (and maintains `aircrack-ng`'s RTL8188EUS driver, which we port here).
 
-**Special thanks: Sandman** — close friend, and the master to my Linux & wireless-hacking apprenticeship.
+**Special thanks: Sandman**, close friend and the master to my Linux & wireless-hacking apprenticeship.
 
 A few more of the driver authors we ported from:
 
@@ -109,8 +109,8 @@ A few more of the driver authors we ported from:
 - **Lorenzo Bianconi** and **Felix Fietkau** — MediaTek `mt76`.
 - **Sujith Manoharan** and the **ath9k** team; **Bitterblue Smith** and the Realtek **rtw88** team.
 
-The full list — every substantive contributor to the drivers we ported, and the cards they
-enabled — is in **[CREDITS.md](CREDITS.md)**.
+The full list (every substantive contributor to the drivers we ported, and the cards they
+enabled) is in **[CREDITS.md](CREDITS.md)**.
 
 ## Minnie Drivers
 
@@ -151,13 +151,13 @@ The porting process assumes you have Anthropic's Claude Code. The steps:
 
 ## License
 
-Wifit3 is licensed under the **GNU General Public License v2.0** (GPL-2.0-only) — see
+Wifit3 is licensed under the **GNU General Public License v2.0** (GPL-2.0-only): see
 [LICENSE](LICENSE). The userland drivers are ports of GPLv2 Linux kernel and vendor DKMS
 drivers, so GPLv2 is the natural fit; the upstream authors are credited in [CREDITS.md](CREDITS.md).
 
 **Source for binary releases.** The prebuilt executables on the Releases page are built from
 this repository. The complete corresponding source for any released binary is this repository
-at its matching version tag — GPLv2 §3 is satisfied by offering source from the same place the
+at its matching version tag. GPLv2 §3 is satisfied by offering source from the same place the
 binary is offered.
 
 **Firmware is not GPL.** The vendor firmware blobs Wifit3 loads onto the cards are
@@ -171,5 +171,5 @@ For use only on networks you own or are explicitly authorized to test.
 
 ⚠️ **Hardware-damage risk.** Wifit3 talks to USB Wi-Fi hardware at the register level, with no
 kernel driver between it and the silicon. A bad register write, firmware page, or power sequence
-can damage or permanently disable ("brick") a device. **Use at your own risk — there is no
+can damage or permanently disable ("brick") a device. **Use at your own risk: there is no
 liability for hardware damage.**

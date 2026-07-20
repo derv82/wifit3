@@ -1,15 +1,15 @@
 # Firmware provenance
 
-Wifit3 is licensed **GPL-2.0-only** — but the 22 firmware blobs it ships under
+Wifit3 is licensed **GPL-2.0-only**, but the 22 firmware blobs it ships under
 `src/wifit3/chips/<chip>/assets/` (`*.bin`, plus the ath9k `*.fw`) are **not** GPL. Each is a vendor binary that the
 silicon needs loaded at bring-up, redistributed here *verbatim* under its own
-manufacturer's license — exactly as Linux's
+manufacturer's license, exactly as Linux's
 [`linux-firmware`](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git)
 repository ships them, and documented the same way that repo's `WHENCE` manifest does.
 None of these blobs are a derivative of the GPLv2 driver code we ported; they pass through
 untouched.
 
-Every blob was **byte-verified against its upstream** before shipping — either against the
+Every blob was **byte-verified against its upstream** before shipping: either against the
 canonical `linux-firmware` copy (SHA-256 / byte-diff), or against the vendor DKMS source's
 embedded C array, and in most cases re-derived from the chip's own cold-boot pcap and
 diffed against that copy. The per-chip ground-truth docs (`chips/<chip>/<CHIP>.md`) carry
@@ -61,18 +61,18 @@ Notes:
   the array to a `.bin` and ship it unmodified.
 - **MT7612U firmware is `mt7662.bin`, not `mt7662u.bin`.** The mainline `mt76x2u` USB driver
   requests `MT7662_FIRMWARE` / `MT7662_ROM_PATCH` = `mt7662.bin` / `mt7662_rom_patch.bin`
-  (`mt76x2/mt76x2.h`, `usb_mcu.c`) — the same files the PCIe `mt76x2e` driver uses. Our three
+  (`mt76x2/mt76x2.h`, `usb_mcu.c`), the same files the PCIe `mt76x2e` driver uses. Our three
   blobs are byte-identical to them (ILM+DLM == `mt7662.bin[32:]`; rom-patch body ==
   `mt7662_rom_patch.bin[30:]`, the 30-byte `mt76x02_patch_header` stripped). The similarly
   named `mt7662u.bin` (a different, larger build that `WHENCE` files under `mt76x2u` /
-  `LICENCE.mediatek`) is *not* what mainline loads or what wifit3 ships — called out here so
+  `LICENCE.mediatek`) is *not* what mainline loads or what wifit3 ships, called out here so
   the provenance and the governing license stay correct.
 
 ## Per-vendor license summary
 
 The blobs group under four vendor licenses, mirroring `linux-firmware`'s `WHENCE`. The
 verbatim `linux-firmware` `LICENCE.*` file for each blob now ships next to it in that chip's
-`assets/` directory — so the license travels with the binary in the repo, the built wheel, and
+`assets/` directory, so the license travels with the binary in the repo, the built wheel, and
 the PyInstaller bundle. The governing-license wording quoted below is from that same file.
 
 ### Realtek — `LICENCE.rtlwifi_firmware.txt`
@@ -91,7 +91,7 @@ combination with an OSI-approved open-source-licensed operating system.
 ### MediaTek — `LICENCE.mediatek`
 
 Covers the MT7921AU (`WIFI_MT7961_*`, `WIFI_RAM_CODE_MT7961_*`) and MT7610U
-(`mt7610e`/`mt7610u`) blobs. (The MT7612U `mt7662*` blobs are **not** here — `WHENCE` files
+(`mt7610e`/`mt7610u`) blobs. (The MT7612U `mt7662*` blobs are **not** here: `WHENCE` files
 them under the Ralink/MediaTek license below.) `WHENCE` marks the MediaTek blobs:
 
 > Licence: Redistributable. See LICENCE.mediatek for details.
@@ -104,7 +104,7 @@ The license reads, in full:
 > the GNU General Public License or the GNU Lesser General Public License.
 
 (Distributed WITHOUT ANY WARRANTY.) This is the explicit upstream basis for keeping the
-blobs *out* of the GPL boundary — they are bundled data, not part of the GPL-2.0-only
+blobs *out* of the GPL boundary: they are bundled data, not part of the GPL-2.0-only
 codebase.
 
 ### Ralink — `LICENCE.ralink-firmware.txt`
@@ -135,7 +135,7 @@ are reproduced, no reverse engineering, and the same limited patent license.
 
 ---
 
-*Every new firmware blob added under `chips/<chip>/assets/` must be recorded in this file —
+*Every new firmware blob added under `chips/<chip>/assets/` must be recorded in this file:
 its provenance and redistribution terms from the `linux-firmware` `WHENCE` manifest, and a
 byte-verification against `linux-firmware` (or the vendor source it was extracted from). See
 `docs/porting/METHODOLOGY.md` → "Housekeeping — every new port" → Licensing.*
