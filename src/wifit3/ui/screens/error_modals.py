@@ -26,9 +26,6 @@ class FatalErrorModal(ModalScreen[None]):
         content-align: center middle; margin-bottom: 1; text-style: bold; color: $error;
     }
     FatalErrorModal #message { margin-bottom: 1; color: $error; }
-    /* Collapsible and VerticalScroll both default to *filling* their parent, which balloons the
-       dialog to its max-height and shoves the buttons off-screen. Pin both to content height; the
-       trace then scrolls within max-height instead of growing the dialog. */
     FatalErrorModal Collapsible { height: auto; }
     FatalErrorModal #trace-scroll { height: auto; max-height: 10; }
     FatalErrorModal #trace { color: $text-muted; }

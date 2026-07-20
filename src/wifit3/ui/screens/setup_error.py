@@ -1,8 +1,7 @@
 """Modal shown when a device-setup action fails (WinUSB install/restore).
 
-Renders a title, a human message, an optional warning-styled ``action`` line (the next step
-the user should take, e.g. "Unplug and replug…"), and an optional muted ``details`` line (the
-raw libwdi / Win32 code). Dismisses with ``None``; the caller just awaits it for acknowledgement.
+Renders a title, message, warning-styled ``action`` line, and muted ``details`` line.
+Dismisses with ``None``; the caller just awaits it for acknowledgement.
 """
 from __future__ import annotations
 

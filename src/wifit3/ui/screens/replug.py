@@ -1,11 +1,4 @@
-"""Active replug gate (Linux).
-
-After a Linux install of a replug-required chipset, the card is still warm from the kernel driver
-and can't cold-reset in userland — only a physical power-cycle recovers RX. This modal watches the
-USB bus for the unplug, then the replug (a fresh, cold enumeration), and dismisses ``"replugged"``
-so the splash can auto-connect the now-cold card. The Skip button (and Escape) dismiss ``"skip"``
-— the user will replug and press START themselves; a per-phase timeout dismisses ``"timeout"``.
-"""
+"""Wait-for-user-to-replug modal (Linux)."""
 from __future__ import annotations
 
 from textual.app import ComposeResult

@@ -87,8 +87,7 @@ class SplashView(Screen):
         yield Footer()
 
     def _enter_scanning_mode(self) -> None:
-        """The 'pick a card' resting state: nothing selected, list empty + enabled, progress
-        hidden, START/uninstall disabled until poll_usb finds a card."""
+        """The 'pick a card' resting state."""
         self._is_initializing = False
         self._selected_name = None
         self._last_signature = None
@@ -105,8 +104,6 @@ class SplashView(Screen):
         self.query_one("#uninstall-btn", Button).tooltip = (
             "Uninstall the wifit3 driver / access rule for the selected card")
         self._enter_scanning_mode()
-        # Poll frequently — discovery opens no devices, so a tight interval makes plugging a card
-        # in feel instant. call_after_refresh fires the first tick now (set_interval waits a period).
         self._refresh_timer = self.set_interval(0.5, self.poll_usb)
         self.call_after_refresh(self.poll_usb)
 
@@ -120,8 +117,6 @@ class SplashView(Screen):
         self.call_after_refresh(self.poll_usb)   # repopulate now, not on the next 0.5s tick
 
     async def poll_usb(self) -> None:
-        # Skip if a connect/install is running, or a prior scan is still in flight — the bus
-        # scan can take ~1s on Windows, longer than the poll interval, so don't stack them.
         if self._is_initializing or self._poll_in_flight:
             return
         self._poll_in_flight = True
@@ -204,9 +199,7 @@ class SplashView(Screen):
 
     @work(exclusive=True)
     async def perform_start(self, iface) -> None:
-        """Start a card: try to connect; if that fails because it isn't WinUSB-bound, offer a
-        one-time install and connect again. All the blocking work (connect, openability probe,
-        install) runs off-thread so the UI stays responsive."""
+        """Start a card: try to connect; offer to install on failure."""
         status = self.query_one("#status-label", Label)
         list_view = self.query_one("#device-list", ListView)
         start_btn = self.query_one("#start-btn", Button)
@@ -224,20 +217,9 @@ class SplashView(Screen):
             self._is_initializing = False
             if self._refresh_timer:
                 self._refresh_timer.resume()
-            # Hand focus back to the picker — dismissing the install modal (or a failure)
-            # otherwise leaves nothing focused.
             list_view.focus()
 
         try:
-            # Happy path: just connect. Opening + init is inherent to using the card, so we
-            # don't pre-probe — a WinUSB-bound card (the common case) connects with no extra
-            # work or lag.
-            #
-            # Exception (Linux): a card the *kernel* driver has warmed can't cold-reset in userland
-            # on most silicon — warm-reattaching it here yields silently degraded RX. So for a
-            # foreign-warmed, replug-required chip, skip the fast connect and route into the
-            # setup/replug flow. A wifit3-warmed card isn't kernel-bound, so it still takes the fast
-            # path.
             bringup_err = None
             skip_fast_connect = False
             if sys.platform.startswith("linux"):
@@ -258,9 +240,7 @@ class SplashView(Screen):
             vid, pid, desc = iface.vid, iface.pid, iface.description
 
             async def _refind_and_connect(fail_msg: str) -> None:
-                """After a setup action, re-scan, re-find the card by VID:PID, and connect.
-                Soft-fails (status + release) if it vanished; raises ``fail_msg`` if it's back
-                but still won't initialize."""
+                """After a setup action, re-scan, re-find the card by VID:PID, and connect."""
                 await self.device_manager.refresh()
                 self._last_signature = None
                 again = self.device_manager.get_interface_by_vidpid(vid, pid)
@@ -354,8 +334,8 @@ class SplashView(Screen):
                     return
                 if target.replug_after_modprobe:
                     # This chip can't cold-reset from a kernel-warm state in userland, and the
-                    # modprobe unload left it warm — only a physical replug (real power cycle → cold
-                    # boot) recovers RX. Drive it: a modal watches for the unplug then the replug,
+                    # modprobe unload left it warm,only a physical replug recovers RX.
+                    # Drive it: a modal watches for the unplug then the replug,
                     # and only a genuine cold re-enumeration falls through to auto-connect.
                     self.query_one("#init-progress", ProgressBar).display = False
                     outcome = await self.app.push_screen_wait(
@@ -370,11 +350,7 @@ class SplashView(Screen):
                         return
                     # Cold re-enumeration confirmed → fall through to the shared auto-connect tail.
                 # Auto-connect now. install_rule chgrp'd the live node, so wait for it to actually go
-                # writable (udev propagation) behind the spinner before connecting — an unready node
-                # otherwise raises EACCES. The driver then reaches
-                # a clean cold state on its own: AR9271 self-re-enumerates on the firmware download
-                # (that re-enumeration IS the replug), and an already-warm chip reattaches. A physical
-                # replug is only the fallback if that connect fails.
+                # writable (udev propagation) behind the spinner before connecting.
                 self.app.push_screen(PropagatingDialog("Applying device access…"))
                 try:
                     ready = await self.device_manager.linux_wait_for_access(
@@ -395,15 +371,13 @@ class SplashView(Screen):
                     logger.info("post-install connect failed for %s: %s", desc, e)
                     self.query_one("#init-progress", ProgressBar).display = False
                     release()
-                    # The rules are in; the failure is in the device init itself. Name the failing
-                    # bring-up stage when we have it (BringUpError) — vague "couldn't bring it up"
-                    # hides the READ/WRITE/firmware step that actually died.
+                    # The rules are in; the failure is in the device init itself.
                     body = (f"The udev rule + blocklist are installed, but {desc} didn't finish its "
                             f"cold bring-up.")
                     stage_detail = None
                     if isinstance(e, BringUpError):
                         body = (f"The udev rule + blocklist are installed, but {desc} didn't finish "
-                                f"its cold bring-up — {e.stage} failed.")
+                                f"its cold bring-up: {e.stage} failed.")
                         stage_detail = e.detail or None
                     self.app.push_screen(SetupErrorDialog(
                         "Failed to initialize card", body, stage_detail,
@@ -428,9 +402,7 @@ class SplashView(Screen):
 
     @work(exclusive=True)
     async def perform_uninstall(self, iface) -> None:
-        """Reverse wifit3's driver/access change for a card: WinUSB unbind (Windows) or remove
-        the udev access rule (Linux). Both are privileged + blocking, so they run off-thread.
-        The card returns to its normal Wi-Fi driver — Windows immediately, Linux on replug."""
+        """Reverse wifit3's driver/access for a card: WinUSB unbind or remove udev rules."""
         if sys.platform == "win32":
             os_kind = "win"
         elif sys.platform.startswith("linux"):
@@ -463,8 +435,6 @@ class SplashView(Screen):
             name = iface.description.split("(")[0].strip()
             target = plan = None
             if os_kind == "linux":
-                # Compute the removal plan first: the card's kernel module(s), the sibling chipsets
-                # sharing them, and whether it has files of its own. Drives the narrow/wide dialog.
                 target = await asyncio.to_thread(target_for_vidpid, iface.vid, iface.pid)
                 if target is None:
                     status.update("[bold red]This card isn't a supported chipset.[/bold red]")
@@ -502,8 +472,6 @@ class SplashView(Screen):
             return
 
         # Linux: remove_rule chowns the node back to root as root, so it's revoked on return.
-        # Confirm it actually went unwritable so the card is really revoked, not just de-filed —
-        # this is the bug where uninstall did nothing until a manual replug.
         revoked = True
         if os_kind == "linux" and result.ok:
             self.app.push_screen(PropagatingDialog("Revoking device access…"))
@@ -533,8 +501,7 @@ class SplashView(Screen):
 
     async def _connect(self, iface) -> bool:
         """Try to connect ``iface``; on success switch to the scanner and return True. Returns
-        False if the card couldn't be opened/initialized — the caller decides whether that's a
-        WinUSB issue worth offering an install for."""
+        False if the card couldn't be opened/initialized."""
         progress = self.query_one("#init-progress", ProgressBar)
         progress.display = True
         progress.progress = 0
@@ -542,9 +509,7 @@ class SplashView(Screen):
             ok = await iface.connect(
                 progress_cb=lambda p, m: self.post_message(DriverProgress(p, m)))
         except BringUpError:
-            # A genuine post-open bring-up fault (firmware/init/…) — release the partial open,
-            # then let perform_start surface it. (A card that won't even open raises a plain
-            # USBError below → the install flow.)
+            # A genuine post-open bring-up fault (firmware/init/…)
             progress.display = False
             await iface.close()
             raise

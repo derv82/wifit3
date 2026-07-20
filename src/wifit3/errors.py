@@ -24,13 +24,7 @@ def is_device_gone(exc: BaseException) -> bool:
 
 
 def _scrub_paths(text: str) -> str:
-    """Strip user-identifying absolute paths out of a formatted traceback.
-
-    In-tree frames are trimmed to a wifit3-relative path (``File "...\\wifit3\\..."`` ->
-    ``File "wifit3\\..."``, which also shortens them); any path left absolute (stdlib /
-    site-packages) has the home directory collapsed to ``~``, so a pasted trace never leaks the
-    username.
-    """
+    """Strip user-identifying absolute paths out of a formatted traceback."""
     text = re.sub(r'(File ")[^"]*?(wifit3[\\/])', r"\1\2", text)
     home = os.path.expanduser("~")
     if home and len(home) > 3 and home != "~":
@@ -39,14 +33,7 @@ def _scrub_paths(text: str) -> str:
 
 
 class BringUpError(Exception):
-    """A recoverable failure while bringing up one card's driver (claim, firmware, init, …).
-
-    Per-card and non-fatal — unlike WifiteFatalError: the card is skipped and the user can pick
-    another or replug. A driver raises this (instead of logging + returning False) so the failure
-    reaches the user, not just a log. ``stage`` names the bring-up phase that failed;
-    ``detail`` is the short underlying reason. Raise it ``from`` the underlying cause to keep the
-    real error in logs.
-    """
+    """A recoverable failure while bringing up one card's driver (claim, firmware, init, …)."""
 
     def __init__(self, stage: str, detail: str = "") -> None:
         self.stage = stage
@@ -60,13 +47,7 @@ class BringUpPermissionsError(BringUpError):
 
 
 class WifiteFatalError(Exception):
-    """An unrecoverable condition the user must fix before wifit3 can run (e.g. no USB backend).
-
-    Carries a short ``title`` and a multi-line, actionable ``message``; ``trace`` formats the full
-    exception chain as plain text the user can paste into a bug report (no Textual markup, paths
-    scrubbed of PII). Raise it ``from`` the underlying cause so ``trace`` keeps the real error
-    (e.g. pyusb's NoBackendError).
-    """
+    """An unrecoverable condition the user must fix before wifit3 can run (e.g. no USB backend)."""
 
     def __init__(self, title: str, message: str) -> None:
         self.title = title
@@ -80,10 +61,7 @@ class WifiteFatalError(Exception):
 
 
 class WifiteDeviceLostError(Exception):
-    """The active adapter vanished mid-run (unplug / USB pipe wedged past recovery).
-
-    Recoverable: a replug re-enumerates a fresh handle. Carries ``title`` + ``message``.
-    """
+    """The active adapter vanished mid-run (unplug / USB pipe wedged past recovery)."""
 
     def __init__(self, name: str = "the wireless adapter") -> None:
         self.title = "Adapter disconnected"
