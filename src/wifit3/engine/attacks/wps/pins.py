@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-from .wsc_crypto import pin_checksum
+from wifit3.dot11.wsc.crypto import pin_checksum
 
 # Tried first, before the brute sweep — the canonical/default PINs that hit a
 # surprising number of consumer routers. (Full 8-digit, checksum-valid.)

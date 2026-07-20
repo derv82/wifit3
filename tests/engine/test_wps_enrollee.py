@@ -15,8 +15,8 @@ import asyncio
 import os
 import struct
 
-from wifit3.engine.attacks.wps import messages as M
-from wifit3.engine.attacks.wps import wsc_crypto as wc
+from wifit3.dot11.wsc import messages as M
+from wifit3.dot11.wsc import crypto as wc
 from wifit3.engine.attacks.wps.enrollee import WpsEnrollee
 from wifit3.engine.attacks.wps.registrar import PinResult
 

@@ -7,7 +7,7 @@ WSC derivations are checked for self-consistency (build a hash, recover it);
 their on-air correctness is proven by scripts/wps/wps_probe.py against a real AP.
 """
 
-from wifit3.engine.attacks.wps import wsc_crypto as wc
+from wifit3.dot11.wsc import crypto as wc
 
 
 # ---- AES-128 block: FIPS-197 Appendix C.1 ---------------------------------

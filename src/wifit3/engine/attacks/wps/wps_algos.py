@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Tuple
 
-from .wsc_crypto import pin_checksum
+from wifit3.dot11.wsc.crypto import pin_checksum
 
 Generator = Callable[[bytes], List[str]]
 

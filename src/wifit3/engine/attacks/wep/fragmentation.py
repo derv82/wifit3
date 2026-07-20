@@ -47,7 +47,7 @@ from typing import Awaitable, Callable, List, Optional
 
 from wifit3.models import AccessPoint
 from wifit3.engine.attacks import treelog
-from wifit3.engine.attacks.wep.wep_crypto import (
+from wifit3.dot11.wep.crypto import (
     arp_request_plaintext,
     build_fragments,
     seed_keystream_from_data,

@@ -19,7 +19,7 @@ from ..campaign import Campaign
 from ..auth_assoc import (
     Association, WlanTransport, build_client_leaving, random_client_mac, str_to_mac,
 )
-from .assoc_ie import WPS_REQ_ENROLLEE, wps_assoc_ie
+from wifit3.dot11.wsc.assoc_ie import WPS_REQ_ENROLLEE, wps_assoc_ie
 from .enrollee import WpsEnrollee
 from .registrar import AttemptOutcome, PinResult
 

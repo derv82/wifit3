@@ -9,7 +9,7 @@ import sys
 
 from wifit3.engine.attacks.wps import wps_algos as A
 from wifit3.engine.attacks.wps import wps_router_ouis
-from wifit3.engine.attacks.wps.wsc_crypto import pin_is_valid
+from wifit3.dot11.wsc.crypto import pin_is_valid
 
 _MAC = bytes.fromhex("001122334455")
 _OUI_MOD = "wifit3.engine.attacks.wps.wps_router_ouis"

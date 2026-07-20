@@ -25,7 +25,7 @@ import struct
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
-from . import wsc_crypto as wc
+from . import crypto as wc
 
 # ---- WSC attribute IDs (hostapd enum wps_attribute) -----------------------
 ATTR_AP_CHANNEL = 0x1001

@@ -21,7 +21,7 @@ from wifit3.engine.attacks.wep.chopchop import (
     _SENTINEL,
     _hdr_len,
 )
-from wifit3.engine.attacks.wep.wep_crypto import (
+from wifit3.dot11.wep.crypto import (
     CRC32_RESIDUE,
     arp_request_plaintext,
     chop_last_byte_and_fixup,

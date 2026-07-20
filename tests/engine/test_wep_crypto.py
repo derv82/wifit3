@@ -7,7 +7,7 @@ import pytest
 import os
 import random
 
-from wifit3.engine.attacks.wep.wep_crypto import (
+from wifit3.dot11.wep.crypto import (
     CRC32_RESIDUE,
     arp_request_plaintext,
     build_fragments,

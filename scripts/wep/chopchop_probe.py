@@ -39,7 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
-from wifit3.engine.attacks.wep.wep_crypto import chop_last_byte_and_fixup
+from wifit3.dot11.wep.crypto import chop_last_byte_and_fixup
 from wifit3.wlan.manager import WlanDeviceManager
 
 # ---- console helpers (match the test_hw_* aesthetic) -----------------------

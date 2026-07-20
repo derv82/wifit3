@@ -29,7 +29,7 @@ from ..campaign import Campaign
 from . import known_pins
 from . import pins as pinmod
 from ..auth_assoc import Association, WlanTransport, random_client_mac, str_to_mac
-from .assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
+from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from .lock import LockTracker
 from .registrar import AttemptOutcome, PinResult, WpsRegistrar, config_error_name
 

@@ -21,8 +21,8 @@ import logging
 import os
 import time
 
-from . import messages as M
-from . import wsc_crypto as wc
+from wifit3.dot11.wsc import messages as M
+from wifit3.dot11.wsc import crypto as wc
 from .registrar import (AttemptOutcome, PinResult, WpsTransport, config_error_name,
                         describe_frame, disassoc_reason)
 

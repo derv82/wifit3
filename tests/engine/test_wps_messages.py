@@ -7,8 +7,8 @@ test_wps_registrar.py; on-air correctness is proven by wps_probe.py.
 
 import struct
 
-from wifit3.engine.attacks.wps import messages as M
-from wifit3.engine.attacks.wps import wsc_crypto as wc
+from wifit3.dot11.wsc import messages as M
+from wifit3.dot11.wsc import crypto as wc
 
 
 def test_tlv_roundtrip():

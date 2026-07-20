@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from wifit3.engine.attacks.wps import known_pins, pins
 from wifit3.engine.attacks.wps.campaign import WpsCampaign, _state_path
 from wifit3.engine.attacks.wps.registrar import AttemptOutcome, PinResult
-from wifit3.engine.attacks.wps.wsc_crypto import pin_is_valid
+from wifit3.dot11.wsc.crypto import pin_is_valid
 
 
 def _target(bssid="02:00:00:00:00:ff", ssid="Net", ch=1):

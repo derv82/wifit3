@@ -25,8 +25,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional, Protocol
 
-from . import messages as M
-from . import wsc_crypto as wc
+from wifit3.dot11.wsc import messages as M
+from wifit3.dot11.wsc import crypto as wc
 
 logger = logging.getLogger(__name__)
 
