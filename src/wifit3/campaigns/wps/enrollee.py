@@ -84,8 +84,6 @@ class WpsEnrollee:
         sent_m1 = False
         resends_left = self.max_resends   # in-session resend budget; refreshed on every AP frame
 
-        # Log each protocol stage once — the AP retransmits each message, so
-        # without this the event log floods with duplicate M2/M4/M6 lines.
         logged: set = set()
 
         def once(stage: str, msg: str) -> None:
@@ -93,8 +91,7 @@ class WpsEnrollee:
                 logged.add(stage)
                 self.log(msg)
 
-        # Deduped wire-phase skeleton in the debug log (→ sent, ← received), so the
-        # frame stream can be read against the WSC stage rather than "eapol" alone.
+        # Deduped wire-phase skeleton in the debug log (→ sent, ← received)
         phased: set = set()
 
         def phase(label: str) -> None:
@@ -113,9 +110,7 @@ class WpsEnrollee:
             frame = await self.t.recv(min(timeout, deadline - time.monotonic()))
             timeout = self.msg_timeout
             if frame is None:
-                # No frame in the window. On no-ACK hardware the AP's reply or our last frame
-                # may have dropped — resend our last frame (no MAC rotation) to re-prompt before
-                # giving up (mirrors the registrar's in-session resend).
+                # No frame in the window.
                 if resends_left > 0 and self._last_1x_frame is not None:
                     resends_left -= 1
                     await self.t.send_no_wait(self._last_1x_frame)
@@ -125,10 +120,7 @@ class WpsEnrollee:
 
             p = M.parse_rx_frame(frame)
             if p is None:
-                # A DEAUTH/DISASSOC tore down our EAP session — resending into a dead session
-                # just burns the walk window (observed: 30s to a timeout a fresh attempt then
-                # won). Abort now so the caller retries with a fresh MAC + association. Other
-                # non-WSC frames are ignored.
+                # A DEAUTH/DISASSOC tore down our EAP session
                 kind = describe_frame(frame)
                 if kind in ("mgmt/DEAUTH", "mgmt/DISASSOC"):
                     why = disassoc_reason(frame)
@@ -144,8 +136,8 @@ class WpsEnrollee:
                 continue
 
             if p.is_eap_failure or p.wsc_msg_type == M.WPS_WSC_NACK:
-                # Decode the AP's stated reason (WSC ATTR_CONFIG_ERROR). Code 12 = "Multiple PBC
-                # sessions" = we tripped the AP's overlap guard (likely our own rapid retries).
+                # Decode the AP's stated reason (WSC ATTR_CONFIG_ERROR).
+                # #Code 12 = "Multiple PBC sessions" = we tripped the AP's overlap guard.
                 ce_raw = p.attrs.get(M.ATTR_CONFIG_ERROR)
                 ce = int.from_bytes(ce_raw[:2], "big") if ce_raw and len(ce_raw) >= 2 else None
                 phase("← EAP-FAIL/NACK")
