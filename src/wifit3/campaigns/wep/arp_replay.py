@@ -268,7 +268,7 @@ class WepArpReplay:
         )
         return new_hdr + body
 
-    # ---- Echo oracle (RX callback) ------------------------------------------
+    # ---- Echo watch (RX callback) -------------------------------------------
 
     def _rx_cb(self, pkt) -> None:
         """Count the AP echoing one of OUR replays — the "replayable" signal."""

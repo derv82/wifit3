@@ -1,7 +1,7 @@
-"""WEP ChopChop ORACLE probe (M6 — hardware ground truth).
+"""WEP ChopChop relay probe (M6: hardware ground truth).
 
 The ChopChop crypto is built + offline-verified (wep_crypto.chop_last_byte_and_
-fixup); the unknown is the live AP's ORACLE behavior: when we chop a frame's
+fixup); the unknown is the live AP's RELAY behavior: when we chop a frame's
 last byte, guess its plaintext, and fix the ICV, does the AP relay the shortened
 frame on the CORRECT guess (and drop wrong ones)? And what does that relay look
 like + how long does it take? Can't know offline — so this gets real packets.
@@ -19,7 +19,7 @@ What it does (one byte, all 256 guesses):
      exactly that guess elicited a relay — and MEASURE the per-guess latency
      (critical: the daemon does 256 guesses × ~36 bytes, so the timeout matters).
 
-Then we code chopchop.py's oracle to what the box actually does. This probe
+Then we code chopchop.py's relay check to what the AP actually does. This probe
 TRANSMITS — an explicit, run-it-yourself tool, never passive operation.
 
 Usage (at the dd-wrt box):
@@ -300,7 +300,7 @@ async def main_async(args) -> int:
                  "(try lower --gap / a 2nd pass), or it relays differently than "
                  "the SA=us/FromDS/broadcast hypothesis. Inspect the .pcap.")
             return 0
-        ok(f"{len(probe.relays)} candidate relay(s) — the ORACLE FIRES:")
+        ok(f"{len(probe.relays)} candidate relay(s) → the AP RELAYS:")
         for ts, fr in probe.relays[:8]:
             print(f"    {_describe(fr)}  (orig was {len(captured)}B)")
         # Crypto guarantees only the true-last-byte guess yields a valid ICV, so
@@ -319,8 +319,8 @@ async def main_async(args) -> int:
                      "re-relaying, or noise; check the .pcap).")
             if latency is not None:
                 ok(f"Per-guess relay latency ≈ {latency*1000:.0f} ms "
-                   "(→ chopchop.py's per-guess oracle timeout).")
-            print("\n  => ChopChop oracle CONFIRMED: chop+fixup on the correct "
+                   "(→ chopchop.py's per-guess relay timeout).")
+            print("\n  => ChopChop relay CONFIRMED: chop+fixup on the correct "
                   "guess makes the AP relay the shortened frame. Code "
                   "chopchop.py to: SA=us + FromDS + broadcast + len≈orig-1, "
                   "with the measured timeout.")

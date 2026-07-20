@@ -105,7 +105,7 @@ def test_patch_zeros_hits_target_crc():
         assert _patch_zeros(zlen, target) == corr
 
 
-# ---- ChopChop oracle: chop+fixup is valid IFF the guess is right -----------
+# ---- ChopChop: chop+fixup is valid IFF the guess is right ------------------
 
 def _wep_body(keystream: bytes, data: bytes) -> bytes:
     return wep_encrypt(keystream, data)

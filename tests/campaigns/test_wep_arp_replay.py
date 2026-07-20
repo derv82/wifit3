@@ -55,7 +55,7 @@ class FakeCollector:
 
     def echoes(self, frame: bytes) -> bool:
         """Whether the AP would echo this replay (keyed on the same body marker
-        as IV yield) — the _rx_cb oracle for tests."""
+        as IV yield): the echo check the test _rx_cb uses."""
         return (
             self._echo and len(frame) > 24
             and self._marker_yields.get(frame[24], 0) > 0

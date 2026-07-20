@@ -1,7 +1,7 @@
 """Pure WEP crypto for fragmentation / chopchop (M5/M6).
 
 EVERYTHING HERE IS OFFLINE-TESTABLE — no hardware (tests/dot11/test_wep_crypto.py). The
-hardware-in-the-loop part (the oracle: recognizing the AP's relayed frame) lives in
+hardware-in-the-loop part (recognizing the AP's relayed frame) lives in
 fragmentation.py / chopchop.py.
 
 WEP per-frame layout of the encrypted body (after the 24/26-byte MAC header):

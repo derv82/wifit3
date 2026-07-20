@@ -30,7 +30,7 @@ frame) and replay it on a loop; each AP echo carries a fresh IV. Most WEP networ
 an active client fall to this alone.
 
 **ChopChop (`-4`)** [KoreK 2004]. Byte-by-byte decryption of one captured frame using
-the AP as an ICV oracle: chop the last byte, guess its plaintext (up to 256 tries), fix
+the AP's ICV check: chop the last byte, guess its plaintext (up to 256 tries), fix
 the ICV (CRC32 is linear), send. The AP relays the frame iff the guess was right.
 Recovers plaintext + keystream without the key, then forges a broadcast ARP to feed
 replay. Used when no client traffic sources a seed ARP.
@@ -67,13 +67,13 @@ Generate IVs -> REPLAYING (fake-auth underneath; waits for / replays ARPs)
 Focus shows **Frag** and **Chop** as always-enabled Start/Stop toggles alongside the
 running campaign; clicking one stops the other.
 
-## ChopChop oracle signature (hardware-verified)
+## ChopChop relay signature (hardware-verified)
 
 The RX signature `chopchop.py` matches for an accepted guess: a Data frame, FromDS +
 Protected, Addr1 (DA) = broadcast, Addr3 (SA) = our forged STA MAC, length == original
 minus one. Match on SA, not BSSID: one correct guess produces two relays (the frame
 echoed onto sibling BSSes, a fresh IV each), so de-dup. Per-guess relay latency is about
-3 ms, so the oracle timeout is ~20 ms; each guess goes out 2-3 times since single no-ACK
+3 ms, so the relay timeout is ~20 ms; each guess goes out 2-3 times since single no-ACK
 sends can be lost. `chopchop.py` chops the variable tail (positions 16..39; ks[0..15]
 come from the known SNAP + ARP-request prefix), recovers ks[i] = body[i] ^ accepted-guess
 per step, forges a broadcast ARP from the keystream, and hands it to the campaign as a

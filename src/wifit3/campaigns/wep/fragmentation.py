@@ -20,11 +20,11 @@ packet (a TCP segment you can't replay) becomes a forged ARP you can.
 HARDWARE-VERIFIED end-to-end (dd-wrt, rtl8821au): a decrypted relay matched our
 forged ARP byte-for-byte. The crypto is in dot11/wep/crypto.py
 (`seed_keystream_from_arp`, `build_fragments`); this daemon wires the send loop
-+ the live-AP ORACLE around it.
++ the live-AP relay watch around it.
 
-ORACLE (pinned from the probe pcap): the AP's relay of our reassembled ARP is a
+RELAY SIGNATURE (pinned from the probe pcap): the AP's relay of our reassembled ARP is a
 Data frame, FromDS + Protected, Addr1(DA)=broadcast, **Addr3(SA)=our forged STA
-MAC**, with a FRESH IV (≠ our seed's), ~68 B. The box rebroadcasts onto every
+MAC**, with a FRESH IV (≠ our seed's), ~68 B. The AP rebroadcasts onto every
 BSS it runs, so we match on SA==our_mac, NOT on a specific BSSID.
 
 State machine (locked design, README "M5/M6 — refined"): user-driven, NOT
@@ -135,7 +135,6 @@ class WepFragmentation:
         self._round = 0
         self._rounds_on_seed = 0
 
-        # Oracle: set by the RX callback when a relay with our SA appears.
         self._relay_seen = False
         self._relay_frame: Optional[bytes] = None
 
@@ -263,7 +262,7 @@ class WepFragmentation:
                 return
         self._notify_activity()   # keep the assoc alive while injecting
         self._round += 1
-        # RX window — the oracle (RX callback) sets _relay_seen if it lands.
+        # RX window: the RX callback sets _relay_seen if the relay lands.
         await asyncio.sleep(self._ROUND_GAP)
 
     def _succeed(self) -> None:
@@ -281,7 +280,7 @@ class WepFragmentation:
             except Exception:
                 logger.exception("[WEP-Frag] on_forged_arp callback failed")
 
-    # ---- Oracle (RX callback) -----------------------------------------------
+    # ---- Relay watch (RX callback) ------------------------------------------
 
     def _rx_cb(self, pkt) -> None:
         """Watch for the AP relaying our reassembled ARP. Pinned signature:
