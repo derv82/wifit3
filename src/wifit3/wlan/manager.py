@@ -1,10 +1,4 @@
-"""USB-bus scan + driver dispatch.
-
-The manager has zero chipset-specific knowledge. Each driver declares
-its own VID:PIDs via :attr:`SUPPORTED_IDS` and constructs itself via
-:py:meth:`from_usb_device`; the manager just iterates the bus and asks
-each driver "is this yours?".
-"""
+"""USB-bus scan + driver dispatch."""
 from __future__ import annotations
 
 import asyncio
@@ -112,12 +106,7 @@ def _is_openable(dev: usb.core.Device) -> bool:
     except usb.core.USBError:
         return False          # busy / access-denied — not ready to drive either way
     finally:
-        # get_active_configuration() opens a libusb handle to read the descriptor. On
-        # Windows WinUSB that handle is *exclusive*, so leaking it makes the NEXT probe
-        # (1 s later, and other processes) fail with ACCESS_DENIED — a ready card then
-        # flips to present-but-unbound on the next refresh. Always release what we opened
-        # here; drivers re-open lazily in connect(). dispose on a never-opened dev is a
-        # harmless no-op.
+        # get_active_configuration() opens a libusb handle to read the descriptor
         try:
             usb.util.dispose_resources(dev)
         except Exception:
@@ -125,10 +114,7 @@ def _is_openable(dev: usb.core.Device) -> bool:
 
 
 def _raise_usblib_fatal(cause: Exception) -> NoReturn:
-    # pyusb's NoBackendError is opaque. libusb ships with wifit3 (libusb_package), so the only way
-    # it fails to load is a missing OS dependency — on Linux almost always libudev; on Windows/macOS
-    # the bundled lib should always load, so it points at a broken install. Turn it into an
-    # actionable fatal error the splash surfaces in a modal.
+    # pyusb's NoBackendError is opaque.
     if sys.platform.startswith("linux"):
         message = (
             "The bundled libusb could not be loaded — a system dependency is missing.\n\n"
@@ -152,7 +138,6 @@ def _scan_bus(backend) -> List[tuple]:
             if match is not None:
                 out.append((dev, match[0], match[1]))
     except usb.core.NoBackendError as exc:
-        # No usable libusb backend (its OS glue is missing) — fatal, the app can't run.
         _raise_usblib_fatal(exc)
     return out
 
@@ -169,10 +154,7 @@ class WlanDeviceManager:
         backend = libusb_package.get_libusb1_backend()
         matches = await asyncio.to_thread(_scan_bus, backend)
 
-        # If the same supported cards are still present, keep the live interfaces rather than
-        # tearing them down and rebuilding every poll (that churns USB handles + the channel
-        # hopper for nothing — the `RTL8187 driver closed` spam). A replug (new bus address) or
-        # a different set forces a rebuild.
+        # If the same supported cards are still present, keep the live interfaces
         sig = sorted((ent.vid, ent.pid, getattr(dev, "address", 0)) for dev, _, ent in matches)
         if self.interfaces and sig == self._dev_sig:
             return self.interfaces
@@ -229,9 +211,7 @@ class WlanDeviceManager:
             return True
 
     def linux_kernel_driver_bound(self, iface: WlanInterface) -> bool:
-        # Linux: is a real kernel Wi-Fi driver bound to this card (so it's tainted, not cold)? Even
-        # when the node is writable (e.g. root), a bound driver means firmware was already uploaded
-        # — the card needs the modprobe blacklist + a replug before a clean bring-up.
+        # Linux: is a real kernel Wi-Fi driver bound to this card?
         if not sys.platform.startswith("linux") or iface.dev is None:
             return False
         from wifit3.setup.linux import kernel_driver_bound
@@ -258,7 +238,6 @@ class WlanDeviceManager:
     async def linux_wait_for_presence(self, vid: int, pid: int, *, present: bool,
                                       timeout: float = 120.0, interval: float = 0.3) -> bool:
         # Block until the card ``vid:pid`` is present (or absent) on the bus, or ``timeout`` elapses.
-        # The replug modal drives it twice — wait for the unplug, then the fresh cold replug.
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
