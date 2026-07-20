@@ -28,8 +28,6 @@ more than a comment. The kinds that belong:
   better).
 - **A phase landmark** — a one-line `# Cold boot: fw → init → monitor`, only in a function with
   two or more such phases.
-- **A surprise-why** — one line where a competent reader would ask "wait, why?" (an ordering
-  constraint, a workaround). Stated once, not per call-site.
 
 Everything else is noise: restating a line, narrating control flow (`# loop over APs`), per-branch
 labels, "now we…", and session history (no "we used to," dated stamps, commit hashes, one-off dump
