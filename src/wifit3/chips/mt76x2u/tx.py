@@ -167,8 +167,11 @@ def assemble_tx_frame(frame_802_11: bytes, ack: bool = False,
 def _ieee80211_hdrlen(fc0: int, fc1: int) -> int:
     ftype = (fc0 & 0x0C) >> 2
     subtype = (fc0 & 0xF0) >> 4
-    if ftype == 1:
-        return 10
+    if ftype == 1:                     # control
+        # CTS/ACK are 10 bytes; RTS/PS-Poll/BACK(-REQ)/CF-End are 16. The 16-byte
+        # ones are 4-aligned, so a wrong 10 here inserts a spurious hdr-pad and
+        # over-sizes the descriptor. [SRC] ieee80211_hdrlen: 10 iff (fc & 0x00E0)==0x00C0.
+        return 10 if (fc0 & 0xE0) == 0xC0 else 16
     base = 24
     if (fc1 & 0x03) == 0x03:
         base = 30

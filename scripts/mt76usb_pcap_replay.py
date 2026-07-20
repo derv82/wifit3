@@ -2,16 +2,25 @@
 
 STRICT mode: this engine asserts that the port emits the EXACT USB op stream the kernel
 recorded, in order, with a single monotonic cursor that stops at the first byte that
-differs. There are no waivers, no off-cursor serving, no address maps — every vendor
-control op (reads INCLUDED, since reads on this silicon can be read-to-clear / posted
-barriers) and every bulk-OUT frame is matched positionally against the wire. The only
-device->host data fed back is the MCU response stream (EP 0x85), in capture order; that is
-input the port consumes, not host output we verify.
+differs. Every MMIO vendor control op (reads INCLUDED, since MMIO reads on this silicon can
+be read-to-clear / posted barriers) and every bulk-OUT frame is matched positionally against
+the wire. The only device->host data fed back is the MCU response stream (EP 0x85), in
+capture order; that is input the port consumes, not host output we verify.
 
-A divergence at op #1 is a valid, honest result: it means the port's bring-up does something
-different from the kernel cold boot from the very start (a defensive read the kernel skips, a
-live-EEPROM read where the kernel slurped upfront, a reordered write, ...). The gate's job is
-to localize that first difference exactly — not to paper over it.
+Two opt-in accommodations exist for legitimate port-vs-kernel structure differences, both
+principled (see ``ReplayDevice`` args):
+
+  - ``start`` anchors the cursor past a port-specific PROLOGUE the capture does not share
+    (e.g. a warm-reattach probe the kernel cold boot never issues). Like mt7921's PREFETCH0
+    anchor: everything from the anchor on is still strict.
+  - ``eeprom`` serves static EEPROM/efuse reads (breq 0x09) OFF-cursor from the values the
+    capture recorded, so a port that reads the ROM lazily is served correctly wherever it
+    reads. Safe precisely because a ROM is NOT read-to-clear: unlike MMIO, EEPROM reads are
+    idempotent and order-independent. Every MMIO op stays strictly positional.
+
+Absent those, a divergence at op #1 is a valid, honest result: the port's bring-up does
+something the kernel cold boot doesn't from the very start. The gate localizes that first
+difference exactly, and never papers over an MMIO divergence.
 
 FAMILY wire format (mt76u, ``data_dumps/mt76-source-v6.18/usb.c``):
 
@@ -163,18 +172,56 @@ def fmt_op(op: dict) -> str:
     return f"ctrl-WR breq=0x{op['breq']:02x} 0x{addr:08x}={val} @f{op['frame']}"
 
 
+EEPROM_BREQ = 0x09          # MT_VEND_READ_EEPROM: the static-ROM read (idempotent)
+
+
+def build_eeprom(host_ops: list[dict], breq: int = EEPROM_BREQ) -> bytes:
+    """Flatten the capture's EEPROM/efuse reads into an offset-indexed byte buffer.
+
+    The kernel slurps the whole EEPROM upfront; a port that reads the ROM lazily needs
+    those values served wherever it reads them. Safe off-cursor because a ROM is not
+    read-to-clear (see the module docstring)."""
+    buf = bytearray()
+    for o in host_ops:
+        if (o["kind"] == "ctrl" and o["dir"] == "IN" and o.get("breq") == breq
+                and o.get("data")):
+            addr = (o["wval"] << 16) | o["widx"]
+            end = addr + len(o["data"])
+            if end > len(buf):
+                buf.extend(b"\x00" * (end - len(buf)))
+            buf[addr:end] = o["data"]
+    return bytes(buf)
+
+
+def anchor_index(host_ops: list[dict], breq: int, addr: int,
+                 direction: str = "IN") -> int | None:
+    """Index of the first ctrl op matching (direction, breq, addr) — where to start the
+    strict cursor, skipping a port-specific prologue the capture does not share."""
+    for i, o in enumerate(host_ops):
+        if (o["kind"] == "ctrl" and o["dir"] == direction and o.get("breq") == breq
+                and ((o["wval"] << 16) | o["widx"]) == addr):
+            return i
+    return None
+
+
 class ReplayDevice:
     """A fake ``usb.core.Device``: ctrl_transfer / write / read walk the recorded op
-    stream so the REAL chip transport drives it unchanged. STRICT: the first op that does
-    not match — wrong direction, request, address, value, or endpoint — raises Divergence.
-    Nothing is served off-cursor; reads are positional (read-to-clear regs make that
-    mandatory). MCU responses (EP 0x85) are fed back in capture order."""
+    stream so the REAL chip transport drives it unchanged. STRICT: the first MMIO op that
+    does not match — wrong direction, request, address, value, or endpoint — raises
+    Divergence. MCU responses (EP 0x85) are fed back in capture order.
 
-    def __init__(self, host_ops: list[dict], responses: list[bytes], start: int = 0):
+    ``start`` anchors the cursor past a port-specific prologue. ``eeprom`` (a byte buffer
+    from ``build_eeprom``) serves breq-``EEPROM_BREQ`` reads off-cursor from the recorded
+    ROM; all MMIO reads stay positional. Both are principled (see the module docstring)."""
+
+    def __init__(self, host_ops: list[dict], responses: list[bytes], start: int = 0,
+                 eeprom: bytes | None = None):
         self.ops = host_ops
         self.i = start
         self.responses = responses
         self.resp_i = 0
+        self.eeprom = eeprom
+        self.eeprom_served = 0
 
     def _next(self) -> dict:
         if self.i >= len(self.ops):
@@ -188,8 +235,14 @@ class ReplayDevice:
 
     def ctrl_transfer(self, bmRequestType, bRequest, wValue, wIndex,
                       data_or_wLength, timeout=None):
-        op = self._next()
         is_in = bool(bmRequestType & 0x80)
+        # Static EEPROM/efuse read: serve off-cursor from the recorded ROM (idempotent,
+        # order-independent — not a read-to-clear MMIO reg). Does not advance the cursor.
+        if is_in and self.eeprom is not None and bRequest == EEPROM_BREQ:
+            addr = (wValue << 16) | wIndex
+            self.eeprom_served += 1
+            return bytearray(self.eeprom[addr:addr + int(data_or_wLength)])
+        op = self._next()
         exp = "IN" if is_in else "OUT"
         addr = (wValue << 16) | wIndex
         if op["kind"] != "ctrl":

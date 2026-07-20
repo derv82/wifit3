@@ -11,13 +11,17 @@ from wifit3.chips.mt76x2u import wcid
 
 
 class FakeTransport:
-    """Records every write32 call as (addr, value)."""
+    """Records write32 as (addr, value) and write_copy as (addr, bytes)."""
 
     def __init__(self):
         self.writes: list[tuple[int, int]] = []
+        self.copies: list[tuple[int, bytes]] = []
 
     def write32(self, addr: int, value: int) -> None:
         self.writes.append((addr, value & 0xFFFFFFFF))
+
+    def write_copy(self, addr: int, data: bytes) -> None:
+        self.copies.append((addr, bytes(data)))
 
 
 # ---------------------------------------------------------------------------
@@ -25,14 +29,11 @@ class FakeTransport:
 # ---------------------------------------------------------------------------
 
 def test_wcid_setup_idx0_no_mac_writes_attr_and_addr():
-    """Slot 0, vif=0, mac=None → ATTR=0 + ADDR low=0 + ADDR high=0."""
+    """Slot 0, vif=0, mac=None → ATTR=0 (write32) + ADDR = one 8-byte copy of zeros."""
     t = FakeTransport()
     wcid.mt76x02_mac_wcid_setup(t, idx=0, vif_idx=0, mac=None)
-    assert t.writes == [
-        (C.MT_WCID_ATTR_BASE + 0, 0),         # ATTR(0) = 0xa800
-        (C.MT_WCID_ADDR_BASE + 0, 0),         # ADDR(0) lo = 0x1800
-        (C.MT_WCID_ADDR_BASE + 4, 0),         # ADDR(0) hi = 0x1804
-    ]
+    assert t.writes == [(C.MT_WCID_ATTR_BASE + 0, 0)]          # ATTR(0) = 0xa800
+    assert t.copies == [(C.MT_WCID_ADDR_BASE + 0, b"\x00" * 8)]  # ADDR(0) = 0x1800, 8B
 
 
 def test_wcid_setup_idx128_writes_attr_only():
@@ -77,17 +78,14 @@ def test_wcid_setup_vif_idx_combined_low_and_ext():
     assert t.writes[0] == (C.MT_WCID_ATTR_BASE + 10 * 4, expected)
 
 
-def test_wcid_setup_mac_writes_le_into_addr():
-    """6-byte MAC → low4 = u32_le(mac[0..3]), high4 = u16_le(mac[4..5])."""
+def test_wcid_setup_mac_writes_into_addr():
+    """6-byte MAC → ATTR write32, then ADDR = one 8-byte copy (MAC + ba_mask=0)."""
     t = FakeTransport()
     mac = bytes.fromhex("AABBCCDDEEFF")
     wcid.mt76x02_mac_wcid_setup(t, idx=3, vif_idx=0, mac=mac)
-    # ATTR write first
-    assert t.writes[0] == (C.MT_WCID_ATTR_BASE + 12, 0)
-    # ADDR low = "DD CC BB AA" → 0xDDCCBBAA
-    assert t.writes[1] == (C.MT_WCID_ADDR_BASE + 24, 0xDDCCBBAA)
-    # ADDR high = "FF EE" → 0x0000FFEE
-    assert t.writes[2] == (C.MT_WCID_ADDR_BASE + 28, 0xFFEE)
+    assert t.writes[0] == (C.MT_WCID_ATTR_BASE + 12, 0)                  # ATTR
+    # struct mt76_wcid_addr = 6-byte MAC (in order) + 2-byte ba_mask(0).
+    assert t.copies == [(C.MT_WCID_ADDR_BASE + 24, mac + b"\x00\x00")]
 
 
 def test_wcid_setup_rejects_wrong_length_mac():
@@ -101,10 +99,11 @@ def test_wcid_setup_rejects_wrong_length_mac():
 # ---------------------------------------------------------------------------
 
 def test_wcid_table_clear_writes_correct_total_count():
-    """256 slots × 1 ATTR + 128 slots × 2 ADDR (low + high) = 512 writes."""
+    """256 ATTR write32 + 128 ADDR copies (slots 0-127 only)."""
     t = FakeTransport()
     wcid.wcid_table_clear(t)
-    assert len(t.writes) == 256 + 128 * 2
+    assert len(t.writes) == 256
+    assert len(t.copies) == 128
 
 
 def test_wcid_table_clear_all_writes_zero():
@@ -113,6 +112,8 @@ def test_wcid_table_clear_all_writes_zero():
     wcid.wcid_table_clear(t)
     for _, val in t.writes:
         assert val == 0, f"non-zero write during clear: {val:#x}"
+    for _, buf in t.copies:
+        assert buf == b"\x00" * 8, f"non-zero ADDR copy during clear: {buf.hex()}"
 
 
 def test_wcid_table_clear_attr_addresses_are_dense():
@@ -128,24 +129,8 @@ def test_wcid_table_clear_attr_addresses_are_dense():
 
 
 def test_wcid_table_clear_addr_only_first_128():
-    """ADDR writes only for slots 0-127 (kernel early-returns at >= 128)."""
+    """ADDR copies only for slots 0-127 (kernel early-returns at >= 128), stride 8."""
     t = FakeTransport()
     wcid.wcid_table_clear(t)
-    addr_addrs = sorted({
-        addr for addr, _ in t.writes
-        if C.MT_WCID_ADDR_BASE <= addr < C.MT_WCID_ADDR_BASE + 128 * 8
-    })
-    # 128 slots × 2 words (low + high) = 256 unique addresses, stride 4.
-    assert len(addr_addrs) == 128 * 2
-    expected = sorted(
-        [C.MT_WCID_ADDR_BASE + i * 8 for i in range(128)] +
-        [C.MT_WCID_ADDR_BASE + i * 8 + 4 for i in range(128)]
-    )
-    assert addr_addrs == expected
-    # Nothing above slot 127 in ADDR range.
-    too_high = [
-        addr for addr, _ in t.writes
-        if addr >= C.MT_WCID_ADDR_BASE + 128 * 8
-        and addr < C.MT_WCID_ATTR_BASE
-    ]
-    assert too_high == []
+    addr_addrs = [addr for addr, _ in t.copies]
+    assert addr_addrs == [C.MT_WCID_ADDR_BASE + i * 8 for i in range(128)]

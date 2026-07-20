@@ -292,11 +292,19 @@ async def mac_reset(transport: MT76x2UTransport, is_mt7612: bool = True) -> bool
     transport.rmw32(MT_TX_ALC_CFG_4, 1 << 31, 0)
 
     _mac_fixup_xtal(transport)
+    return True
 
-    # Stir US_CYC_CFG.CNT to 0x1e (the kernel does this after init_hardware).
+
+def init_us_cyc_txop(transport: MT76x2UTransport) -> None:
+    """Stir US_CYC_CFG.CNT to 0x1e and set TXOP_CTRL_CFG to 0x583f.
+
+    [SRC] mt76x2/usb_init.c:177-178 — the kernel does these two in init_hardware
+    AFTER init_beacon_config and BEFORE mcu_load_cr, NOT inside mac_reset. Doing
+    them at the mac_reset tail emitted them ~640 ops early vs the cold-boot wire
+    (verify_pcap CHECK A-C).
+    """
     transport.rmw32(MT_US_CYC_CFG, MT_US_CYC_CNT_MASK, 0x1e)
     transport.write32(MT_TXOP_CTRL_CFG, 0x583f)
-    return True
 
 
 def _compute_xtal_trim(trim_2: int, trim_1_byte: int) -> tuple[int, int]:

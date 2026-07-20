@@ -100,6 +100,21 @@ class MT76x2UTransport:
         self.write32(addr, new)
         return new
 
+    def write_copy(self, addr: int, data: bytes) -> None:
+        """Copy a byte buffer to consecutive registers in ONE MULTI_WRITE.
+
+        Mirrors ``mt76_wr_copy`` -> ``mt76u_copy`` (usb.c:158): the kernel writes
+        structs (the 8-byte WCID address, 16-byte shared keys) as a single vendor
+        MULTI_WRITE of the whole payload, NOT one ``write32`` per word. Length is
+        rounded up to 4 bytes; every caller here copies <= 16 bytes and
+        ``usb->data_len`` is >= 32 (usb.c:1083-1085), so it is always one transfer.
+        """
+        plain_addr = addr & ~MT_VEND_TYPE_MASK     # copies only hit the default bus
+        payload = bytes(data)
+        if len(payload) % 4:
+            payload += b"\x00" * (4 - len(payload) % 4)
+        self._ctrl_out(MT_VEND_MULTI_WRITE, plain_addr >> 16, plain_addr & 0xFFFF, payload)
+
     # ------------------------------------------------------------------
     # FW upload helpers.
     # ------------------------------------------------------------------

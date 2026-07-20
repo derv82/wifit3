@@ -10,17 +10,21 @@ from wifit3.chips.mt76x2u import skey
 
 
 class FakeTransport:
-    """Records read32 + write32 calls; serves reads from a backing dict."""
+    """Records read32 + write32 + write_copy; serves reads from a backing dict."""
 
     def __init__(self, reads: dict[int, int] | None = None):
         self.reads = dict(reads or {})
         self.writes: list[tuple[int, int]] = []
+        self.copies: list[tuple[int, bytes]] = []
 
     def read32(self, addr: int) -> int:
         return self.reads.get(addr, 0)
 
     def write32(self, addr: int, value: int) -> None:
         self.writes.append((addr, value & 0xFFFFFFFF))
+
+    def write_copy(self, addr: int, data: bytes) -> None:
+        self.copies.append((addr, bytes(data)))
 
 
 # ---------------------------------------------------------------------------
@@ -102,16 +106,13 @@ def test_skey_mode_shift_odd_vif_high_half():
 # mt76x02_mac_shared_key_setup with key=None — the init clear path
 # ---------------------------------------------------------------------------
 
-def test_shared_key_setup_vif0_key0_writes_mode_and_8_skey_words():
+def test_shared_key_setup_vif0_key0_writes_mode_and_skey_copy():
     t = FakeTransport()
     skey.mt76x02_mac_shared_key_setup(t, vif_idx=0, key_idx=0, key=None)
-    # First write: mode RMW (cleared cipher field = 0 → register stays 0)
-    assert t.writes[0] == (C.MT_SKEY_MODE_BASE_0, 0)
-    # Then 8 zero writes to MT_SKEY(0, 0)
-    skey_addr = C.MT_SKEY_BASE_0
-    for i in range(8):
-        assert t.writes[1 + i] == (skey_addr + i * 4, 0)
-    assert len(t.writes) == 1 + 8
+    # Mode RMW write32 (cleared cipher field = 0 → register stays 0).
+    assert t.writes == [(C.MT_SKEY_MODE_BASE_0, 0)]
+    # Then ONE 32-byte copy of zeros to MT_SKEY(0, 0).
+    assert t.copies == [(C.MT_SKEY_BASE_0, b"\x00" * C.MT76_SKEY_ENTRY_BYTES)]
 
 
 def test_shared_key_setup_preserves_other_vif_cipher_bits():
@@ -153,10 +154,11 @@ def test_shared_key_setup_with_key_raises_not_implemented():
 # ---------------------------------------------------------------------------
 
 def test_shared_key_table_clear_write_count():
-    """16 vifs × 4 keys × (1 mode write + 8 skey words) = 64 × 9 = 576 writes."""
+    """16 vifs × 4 keys × (1 mode write32 + 1 skey copy) = 64 writes + 64 copies."""
     t = FakeTransport()
     skey.shared_key_table_clear(t)
-    assert len(t.writes) == 16 * 4 * 9
+    assert len(t.writes) == 16 * 4
+    assert len(t.copies) == 16 * 4
 
 
 def test_shared_key_table_clear_all_writes_zero():
@@ -165,6 +167,8 @@ def test_shared_key_table_clear_all_writes_zero():
     skey.shared_key_table_clear(t)
     for _, val in t.writes:
         assert val == 0
+    for _, buf in t.copies:
+        assert buf == b"\x00" * C.MT76_SKEY_ENTRY_BYTES
 
 
 def test_shared_key_table_clear_hits_all_8_mode_registers():
@@ -187,15 +191,8 @@ def test_shared_key_table_clear_hits_all_8_mode_registers():
 
 
 def test_shared_key_table_clear_covers_all_64_key_regions():
-    """64 distinct MT_SKEY base addresses, each written 8 times (for the
-    8 u32 words of the 32-byte key region)."""
+    """64 distinct MT_SKEY base addresses, each cleared by one 32-byte copy."""
     t = FakeTransport()
     skey.shared_key_table_clear(t)
-    # Group writes by base address (= addr & ~31).
-    skey_bases = set()
-    for addr, _ in t.writes:
-        # Only count writes in the SKEY_0 / SKEY_1 ranges, not the mode regs.
-        if (C.MT_SKEY_BASE_0 <= addr < C.MT_SKEY_BASE_0 + 32 * 32 or
-            C.MT_SKEY_BASE_1 <= addr < C.MT_SKEY_BASE_1 + 32 * 32):
-            skey_bases.add(addr & ~31)
+    skey_bases = {addr for addr, _ in t.copies}
     assert len(skey_bases) == 64   # 16 vifs × 4 keys

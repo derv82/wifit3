@@ -56,6 +56,7 @@ from .phy import (
 from .firmware import upload_firmware
 from .mac import (
     init_beacon_config,
+    init_us_cyc_txop,
     mac_cc_reset,
     mac_reset,
     mac_setaddr,
@@ -198,11 +199,13 @@ class MT76x2UDriver(Driver):
                                      is_mt7612=self.is_mt7612):
             logger.error("MT7612U: firmware upload failed")
             return False
+        # Kernel order post-FW: WPDMA-idle check (WPDMA_GLO_CFG) BEFORE the MAC-ready
+        # check (MAC_CSR0) — [SRC] mt76x2u_init_hardware / verify_pcap CHECK A-C wire.
+        if not await wait_for_wpdma_idle(self.transport, timeout_ms=100):
+            logger.warning("MT7612U: WPDMA never idle (continuing)")
         if not await wait_for_mac(self.transport):
             logger.error("MT7612U: MAC not ready post-FW")
             return False
-        if not await wait_for_wpdma_idle(self.transport, timeout_ms=100):
-            logger.warning("MT7612U: WPDMA never idle (continuing)")
         init_dma(self.transport)
         if progress_cb:
             progress_cb(0.55, "Initializing MCU (function_select + radio on)")
@@ -221,6 +224,8 @@ class MT76x2UDriver(Driver):
         if not await mac_reset(self.transport, is_mt7612=self.is_mt7612):
             return False
         mac_setaddr(self.transport, mac_bytes)
+        # [SRC] mt76x2/usb_init.c:160 — cache the base RX filter right after setaddr.
+        self.rxfilter = self.transport.read32(MT_RX_FILTR_CFG)
         if not await wait_for_txrx_idle(self.transport):
             logger.warning(
                 "MT7612U: TX+RX did not go idle within 100ms before "
@@ -233,6 +238,9 @@ class MT76x2UDriver(Driver):
             progress_cb(0.79, "Shared key table clear (64 slots)")
         shared_key_table_clear(self.transport)
         init_beacon_config(self.transport)
+        # [SRC] mt76x2/usb_init.c:177-178 — US_CYC_CFG + TXOP_CTRL_CFG land here
+        # (after beacon config, before mcu_load_cr), not at the mac_reset tail.
+        init_us_cyc_txop(self.transport)
         return True
 
     # ---- Lifecycle --------------------------------------------------------

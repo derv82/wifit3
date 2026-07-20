@@ -287,14 +287,17 @@ async def load_rom_patch(transport: MT76x2UTransport, asic_rev: int,
     patch_reg = MT_MCU_CLOCK_CTL if rev_e3 else MT_MCU_COM_REG0
     patch_mask = 1 << 0 if rev_e3 else 1 << 1
 
-    # Idempotency check — re-upload is harmless but slower. The kernel's
-    # rom_protect path returns here still holding the semaphore
-    # ([SRC] usb_mcu.c:80-83); wifit3 only reaches this on the cold path, where
-    # the patch reg is never hot, so the early-out is effectively dead code.
-    cur = transport.read32(patch_reg)
-    if cur & patch_mask:
-        logger.info("ROM patch already applied (reg 0x%04x = 0x%08x)", patch_reg, cur)
-        return True
+    # Idempotency check — re-upload is harmless but slower. Gated behind rom_protect
+    # to match the kernel ([SRC] usb_mcu.c:80: `if (rom_protect && (mt76_rr(...) &
+    # patch_mask))`): the reference 0x7612 (rom_protect=False) skips this MMIO read
+    # entirely, and wifit3 only reaches here on the cold path where the patch reg is
+    # never hot, so the early-out is dead code there anyway. Doing it unconditionally
+    # emitted a read the cold-boot wire never issues (verify_pcap CHECK A-C).
+    if rom_protect:
+        cur = transport.read32(patch_reg)
+        if cur & patch_mask:
+            logger.info("ROM patch already applied (reg 0x%04x = 0x%08x)", patch_reg, cur)
+            return True
 
     blob = _load_asset("mt7662_rom_patch_body.bin", ROM_PATCH_BODY_SIZE)
 
