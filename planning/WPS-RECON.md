@@ -15,7 +15,7 @@ Scope: `src/wifit3/campaigns/{auth_assoc.py, campaign.py, pin.py, pbc.py, wps/*}
   (`:35-49`); instance `ap`, `iface`, `stopped`, `_task` (`:51-55`).
 - **`WpsCampaign(Campaign)`** — `campaigns/pin.py:97`. Focus-facing PIN brute-force orchestrator:
   two-halves sweep, lock/backoff, `.run` resume persistence, ETA, per-attempt logging. Its own
-  docstring lists 5 responsibilities (`:6-11`) — a god object. Holds `target`/`bssid`(str)/
+  docstring lists 5 responsibilities (`:6-11`): a god object. Holds `target`/`bssid`(str)/
   `channel`, `our_mac`, `assoc`, `transport`, ACK flags `_tx_ack`/`_ack_resends`/`_ap_ever_acked`/
   `_ap_sends_nacks`, `lock: LockTracker`, `state: CampaignState`, plus ~10 scratch fields
   (`:123-176`).
@@ -23,7 +23,7 @@ Scope: `src/wifit3/campaigns/{auth_assoc.py, campaign.py, pin.py, pbc.py, wps/*}
   associates as Enrollee and runs `WpsEnrollee`.
 - **`WpsRegistrar`** — `campaigns/wps/registrar.py:131`. Transport-agnostic per-PIN EAP/WSC state machine
   (external Registrar vs AP-as-Enrollee); drives the split-PIN attack. Knows no USB. Per-attempt WSC
-  state (keys, nonces, `highest_mt`, `last_sent`) lives as **locals** in `try_pin` (`:184-202`) —
+  state (keys, nonces, `highest_mt`, `last_sent`) lives as **locals** in `try_pin` (`:184-202`):
   the one place state is kept cleanly.
 - **`WpsEnrollee`** — `campaigns/wps/enrollee.py:32`. Mirror-polarity WSC machine for PBC (we build
   M1/M3/M5/M7, PSK arrives in M8). Same transport contract as the registrar.
@@ -188,7 +188,7 @@ Adjacent ACK/monitor plumbing also bottoms out in `Driver`: `iface.enable_rx_ack
   iface + MAC three times.
 - **Long methods / god objects:** `WpsRegistrar.try_pin` `:181-356` (~175 lines);
   `WpsEnrollee.run` `:73-220` (~147 lines); `WpsCampaign._loop` `:415-513` (~100 lines).
-- **Logging tangled into control flow:** two channels — an injected UI activity-log callback
+- **Logging tangled into control flow:** two channels, an injected UI activity-log callback
   `self.log` (defaults differ per class: `logger.info` vs `logger.debug`) and the module logger.
   `self.log(...)` calls are interleaved between protocol steps, and engine strings bake rich-markup
   color tags (`[red]…[/red]`) despite `Campaign`'s docstring claiming "Engine-pure: no Textual".

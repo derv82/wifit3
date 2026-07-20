@@ -8,7 +8,7 @@ the port), and [`CHIP-DOC.md`](CHIP-DOC.md) (the per-chip reference you ship).
 ## Mirror the kernel; the pcap verifies, it isn't the init source
 
 Port functions and tables verbatim from the kernel/vendor C. The pcap is for *verification*, not a
-source of init bytes — replay-based init is a black box that doesn't scale to siblings or survive a
+source of init bytes. Replay-based init is a black box that doesn't scale to siblings or survive a
 kernel bump. Make the first milestone the smallest verifiable handshake (chip-ID read, FW upload +
 ACK), and verify each milestone against the pcap before calling it done; "HW test passes" isn't
 enough.
@@ -25,10 +25,10 @@ specific pcap frame range you can re-verify.
 Partial ports are the most common bug class here. Default to over-porting; cut later if proven
 unused. METHODOLOGY Step 2 ("skip nothing by name") is the principle; the concrete forms that bite:
 
-- **Switch/case:** port every branch, even ones this card can't trigger — behind its real runtime
-  check, marked `# TODO: verify — untested here`. That's "ported, untested," not skipped, and it's
+- **Switch/case:** port every branch, even ones this card can't trigger, behind its real runtime
+  check, marked `# TODO: verify, untested here`. That's "ported, untested," not skipped, and it's
   what lets a sibling card work.
-- **Helper:** port every `*_write` in it, not just the obvious one — helpers bundle register pokes
+- **Helper:** port every `*_write` in it, not just the obvious one: helpers bundle register pokes
   that are jointly required.
 - **Vtable:** port `init_device` *and* `start`. The "arm the radio" writes (OFDM enable, TXPAUSE=0,
   antenna select) often live in `start`.
@@ -44,16 +44,16 @@ Hours of debug for a one-line omission.
 ## Skip comments mispredict which axis breaks
 
 When a port skips a kernel function and leaves a comment predicting the symptom ("if RX looks deaf,
-add this back"), the prediction is usually wrong about *which axis* breaks — so the comment becomes
+add this back"), the prediction is usually wrong about *which axis* breaks. So the comment becomes
 a trap: the real symptom doesn't match, the skip looks irrelevant, and you hunt in the wrong place.
 
 **Why:** mt76x2u skipped `mt76x2_phy_set_txpower_regs` as a "monitor-mode RX simplification"
 predicting an RX-sensitivity symptom. The actual symptom was TX-side: sustained injection (WEP ARP
 replay / ChopChop / Frag) yielded 0 IVs/s because the AP couldn't hear our frames and deauthed us
 as a weak STA. Hours went into ACK-tracking, MAC programming, and frame-format theories before the
-skip note — which named TX-power but predicted an RX symptom — turned up.
+skip note (which named TX-power but predicted an RX symptom) turned up.
 
-**How to apply:** "we're in monitor mode" is not a TX skip rationale — the moment `inject_frame`
+**How to apply:** "we're in monitor mode" is not a TX skip rationale. The moment `inject_frame`
 runs (deauth, fake-auth, replay), every TX-side helper is back in scope. When debugging a TX/RX
 symptom, read the chan/init skip list first and diff what the kernel writes vs what we write during
 that operation. If you skip a function, describe *what writes it makes*, not the symptom you predict.
@@ -65,13 +65,13 @@ similar elsewhere), the idle poll the kernel calls between `mac_setaddr` and the
 load-bearing, not defensive padding.
 
 **Why:** without it, a subset of the 500+ writes race the chip's in-flight TX/RX engines and don't
-take effect. The raw-inject slot (wcid 0xFF in mt76) is the one that suffers — the first
+take effect. The raw-inject slot (wcid 0xFF in mt76) is the one that suffers. The first
 fake-auth/injection misbehaves, but the chip converges after 5–10 s idle, so the second attempt
 looks fine. The symptom reads like an AP timing issue or warm-up, but it's our init not finishing
 cleanly.
 
 **How to apply:** look for a `wait_for_*_idle` / `poll_msec(MT_MAC_STATUS, ...)` between
-`mac_setaddr` and the table clears, and port it — don't defer it because "the chip should be idle
+`mac_setaddr` and the table clears, and port it. Don't defer it because "the chip should be idle
 by now." If the symptom is "first inject fails, retry reliably succeeds," suspect a missed idle poll
 before a bulk table clear, not an AP timer or PA warm-up. (mt76x2u: `mt76x02_wait_for_txrx_idle`,
 mt76x02.h.)
@@ -79,19 +79,19 @@ mt76x02.h.)
 ## Warm reattach, and the cold-only-init no-op trap
 
 When `connect()` hits a chip already running from a prior session: detect warm cheaply (read
-registers that survive between processes — e.g. rtw88: `REG_MCUFW_CTRL` FW_READY + `REG_CR`
+registers that survive between processes, e.g. rtw88: `REG_MCUFW_CTRL` FW_READY + `REG_CR`
 MACTXEN|MACRXEN) and skip the whole bring-up. Reattach lightly (re-claim the interface,
 `clear_halt` the bulk pipes, start RX polling), then smoke-test with a ~1.5 s bulk-IN read; if it's
 silent, surface a clear "please replug" rather than retrying.
 
 **Why (WinUSB):** the kernel's pwr_off → pre_cfg → pwr_on cycle does not recover a wedged bulk-IN
-pipe between userland sessions — `clear_halt`, `dev.reset()`, the full pwr_seq cycle, and pipe
+pipe between userland sessions: `clear_halt`, `dev.reset()`, the full pwr_seq cycle, and pipe
 drains all failed. The silicon is fine (registers respond); the host controller's view of the pipe
 is stuck in a way userland can't clear (the kernel only survives it by continuously resubmitting
 URBs, which our sync reads don't).
 
 **TRAP (cost ~4 hardware round-trips):** the warm path skips post-FW init, so a fix placed in
-cold-only init silently no-ops on a warm chip — and the chip stays warm across `uv run` sessions
+cold-only init silently no-ops on a warm chip, and the chip stays warm across `uv run` sessions
 until an unplug/replug. We "fixed" the monitor RX filter three times in cold-only init and saw no
 change, because none of it ran. So if a config change "has no effect across runs," suspect warm
 first. Anything that must hold in steady state (RX filter, monitor mode, address match) belongs in
@@ -108,9 +108,9 @@ verify monitor RX against its airmon-ng pcap rather than theorizing.
    is busy (10 Hz Focus update, scanner render): no `dev.read` is posted, so the dongle's RX FIFO
    overflows. Signature: ~7 beacons/s vs airodump's ~10, ~1-in-5 4-way capture in Focus, yet a
    no-TUI `test_hw.py` catches everything. The fix is the shared `chips/rx_reader.py`
-   `RxReaderThread` — a dedicated reader keeps a URB posted at all times and hands raw buffers to
+   `RxReaderThread`: a dedicated reader keeps a URB posted at all times and hands raw buffers to
    the loop via `call_soon_threadsafe` (parse + callback stay on the loop thread); it backs ~8
-   drivers. **Start the reader before RX-enable** — on 8814au, enabling MAC RX and only then
+   drivers. **Start the reader before RX-enable**: on 8814au, enabling MAC RX and only then
    starting the reader left an undrained window that latched a wedge surviving until replug (connect
    succeeds, a few frames arrive, then nothing). "A few frames then permanent stop" is a latch, not
    throughput loss; audit any `RxReaderThread` driver for reader-start-after-RX. Watch-for, not a
@@ -145,13 +145,13 @@ periodical.
 
 The pattern (built in `rtl8814au_dkms`, reused in `rtl8821cu_dkms`): a `Walk` holds the cursor and
 the real transport; the operational loop peeks the next op, matches it to each producer's unique
-*opener* op — its distinctive first register touch (`read_rf 0x18` = hop, `read 0x4e` = LED,
-`read 0x210` = watchdog) — dispatches to that producer's real driver handler, and advances the
+*opener* op, its distinctive first register touch (`read_rf 0x18` = hop, `read 0x4e` = LED,
+`read 0x210` = watchdog), dispatches to that producer's real driver handler, and advances the
 cursor by exactly what the handler consumed. The first op no handler opens is the frontier.
 
 A strict positional cursor breaks the instant two producers interleave (a timer fires mid-hop);
 dispatch-by-opener reproduces each with real driver logic in any order, nothing stripped. The
-instinct to call an interleaved op "non-deterministic / unportable" is almost always wrong — it's
+instinct to call an interleaved op "non-deterministic / unportable" is almost always wrong. It's
 real driver code; find its opener. Carry per-producer state (DIG IGI, CCK-PD level + MA, LED phase,
 HMEBOX index, NHM/CLM period) so first-tick-vs-steady writes suppress correctly. A single genuinely
 traffic-driven cosmetic bit (the LED at `0x4e[3]`) may be value-bypassed, but only with lead

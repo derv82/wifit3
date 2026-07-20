@@ -1,6 +1,6 @@
 # Verification methodology
 
-How each card in `VERIFICATION.md` earns its row. That doc is **results only** — grades, per-card
+How each card in `VERIFICATION.md` earns its row. That doc is **results only**: grades, per-card
 notes, the matrix. This doc is the **process** behind it: the columns, the grade rubric, the per-card
 checklist, and the metric definitions. Not auto-loaded; open when running a verification pass or
 editing `VERIFICATION.md`.
@@ -32,20 +32,20 @@ lower-fidelity port of a capable card (`Port ⚠️`, Grade dinged by the RX gap
 
 ## Grade rubric (human-computed, not a script)
 
-A consistency anchor, applied holistically — never run blindly. The percentage is a weighted blend,
+A consistency anchor, applied holistically. Never run blindly. The percentage is a weighted blend,
 each sub-score 0–100, scored **relative to the best card in the field** (so "it technically works"
 lands low, not at an A):
 
-- **RX health — 35%.** Beacon rate off the reference AP as a fraction of the best card's rate
+- **RX health: 35%.** Beacon rate off the reference AP as a fraction of the best card's rate
   (~9–10 bcn/s ceiling), plus breadth (APs/band vs best) and channel tune (heard/total).
-- **Capabilities — 45%.** Handshake, PMKID, WEP, WPS, ACKs — each `✅`=full, `⚠️`=half, `❌`=0. The
+- **Capabilities: 45%.** Handshake, PMKID, WEP, WPS, ACKs: each `✅`=full, `⚠️`=half, `❌`=0. The
   WEP sub-score scales with sustained IVs/s vs the best card (a 60-IVs/s cracker is worse than a
   350-IVs/s one even though both "work"). Do **not** add a separate penalty for a missing capability
-  (e.g. no auto-ACK) — it is already paid for by PMKID/WPS/ACKs scoring low here.
-- **Stability — 20%.** Soak: flat=100, mild taper=50, decays=0.
+  (e.g. no auto-ACK): it is already paid for by PMKID/WPS/ACKs scoring low here.
+- **Stability: 20%.** Soak: flat=100, mild taper=50, decays=0.
 
 Letters: **A ≥90 · B 80–89 · C 70–79 · D 60–69 · F <60.** **Hard cap:** a card that can't usefully
-receive (`RX ❌`) caps at **D** regardless of the rest — a blind radio isn't a B.
+receive (`RX ❌`) caps at **D** regardless of the rest. A blind radio isn't a B.
 
 The peer set defines "best," so early grades are provisional and the bar tightens as more cards are
 measured. Re-check anchor cards when the field grows.
@@ -58,12 +58,12 @@ top-level matrix is *not* touched until every card is done.
 1. **Linux baseline first** (card bound to its kernel driver). Verify the bound driver matches the one
    we ported from (`modinfo` / the source bundle in `usb_dumps_new/`), else the comparison is
    apples-to-oranges. Run `baseline-linux.py --capture` over the card's channels.
-2. **Replug into wifit3-ready state** (install rules, then *physically replug* — stale warm state
+2. **Replug into wifit3-ready state** (install rules, then *physically replug*: stale warm state
    carries over otherwise), confirm beacons. Run `baseline-wifit3.py` over the **same** channels.
 3. **Compare** — `driver_health.py --diff wifit3-<slug>.json linux-<slug>.json` → the **Port %** and
    the RX numbers (beacon rate, breadth, channel tune, RSSI).
 4. **TX attacks** (user runs live TX): Deauth, PMKID, WPS PBC, WEP (2.4 GHz). On 5 GHz: Deauth,
-   PMKID, WPS PBC (WEP skipped — no 5 GHz WEP target). Record sustained IVs/s from the WEP crack.
+   PMKID, WPS PBC (WEP skipped: no 5 GHz WEP target). Record sustained IVs/s from the WEP crack.
 5. **Soak** — 20-min sustained hop (`sweep.py --skip-baseline --longrun-min 20`); flat = pass.
    Deferrable: it's the last RX datapoint, so grade the rest first and backfill (grade
    provisional-on-soak until it lands).
@@ -75,8 +75,8 @@ real-world APs in a US environment.
 
 ## Metric definitions
 
-- **Beacon rate** — beacons/sec from a **pinned reference AP** (by BSSID, supplied at runtime — kept
-  out of git). Current references: `ref2g` (2.4 GHz, ch1) and `ref5g` (5 GHz, ch149; can drift — reject
+- **Beacon rate** — beacons/sec from a **pinned reference AP** (by BSSID, supplied at runtime, kept
+  out of git). Current references: `ref2g` (2.4 GHz, ch1) and `ref5g` (5 GHz, ch149; can drift: reject
   the run if it's off-channel). Read straight from the baseline rollup.
 - **Breadth / channel tune / RSSI** — from `driver_health` (APs per band; channels that heard their
   own beacons / silent / cross-channel; median RSSI delta vs Linux on shared APs).
@@ -92,9 +92,9 @@ into the non-default). Two distinct comparisons:
 
 - **Justify the default** — wifit3-dkms vs wifit3-mainline, both userland, no kernel driver needed.
 - **True Port %** — wifit3-<variant> vs the Linux **same** driver; needs that kernel driver installed
-  (in-tree Ralink is already present; out-of-tree Realtek DKMS drivers must be installed — source
+  (in-tree Ralink is already present; out-of-tree Realtek DKMS drivers must be installed: source
   versions are in `usb_dumps_new/driver-sources/`). Where the matching driver isn't installed, note
-  `Port` as measured against mainline instead — a cross-driver number, not true fidelity.
+  `Port` as measured against mainline instead: a cross-driver number, not true fidelity.
 
 ## Subsection template
 
@@ -104,7 +104,7 @@ Each card's entry under `## Per-card notes`:
 ### <CHIP>
 *<adapter> · <bands>*
 
-> **<headline caveat, if any — e.g. "5 GHz TX is dead">**
+> **<headline caveat, if any, e.g. "5 GHz TX is dead">**
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
@@ -114,6 +114,6 @@ Each card's entry under `## Per-card notes`:
 | Handshake / PMKID / WEP / WPS / ACKs | … | … | 2.4 + 5 GHz where applicable; the WEP note carries sustained IVs/s. |
 | Stress | … | … | 20-min soak. |
 
-Keep the heading bare (`### <CHIP>`) — the top-level matrix links to its anchor. Grade and Port are
+Keep the heading bare (`### <CHIP>`). The top-level matrix links to its anchor. Grade and Port are
 table rows, never the heading.
 ```
