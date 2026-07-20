@@ -1,16 +1,5 @@
 """Active decloak: send directed Probe Requests with sibling-derived SSID
-candidates and let the existing passive decloak path catch the response.
-
-Why this works: a hidden AP only emits a Probe Response when the requesting
-SSID matches its real one. By guessing sibling-suffix variants of a known
-non-hidden sibling's SSID, we shortcut the "wait for a real client" delay
-that pure passive decloak depends on.
-
-Currently unwired: no Scanner binding or campaign reaches it (it's not in
-``BUTTON_CAMPAIGNS``) — kept as the active-decloak implementation to re-attach
-to a trigger later. When run, ``WlanInterface._on_frame_parsed`` is what flips
-``ap.ssid`` on a Probe Response; we just poll for that flip per candidate.
-"""
+candidates and let the existing passive decloak path catch the response."""
 from __future__ import annotations
 
 import asyncio
@@ -26,9 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 # Curated suffix list — kept short on purpose so a full run is ~5 seconds.
-# Empty string first covers the mesh / same-SSID-dual-band case (rare but
-# cheap to check). Order is "most-likely-first" heuristic — Guest variants
-# are the dominant hidden-sibling flavour we've seen.
 SIBLING_SUFFIXES: List[str] = [
     "",
     "-Guest", "_Guest", "-guest", " Guest",
@@ -41,19 +27,13 @@ SIBLING_SUFFIXES: List[str] = [
 
 
 def build_candidates(base: str) -> List[str]:
-    """Generate likely sibling SSIDs given a known visible sibling's SSID.
-
-    Returns a deduplicated, order-preserving list. Empty bases yield an
-    empty list — caller should validate they have a sibling SSID first.
-    """
+    """Generate likely sibling SSIDs given a known visible sibling's SSID."""
     if not base:
         return []
     out: List[str] = []
     seen: set[str] = set()
     for suffix in SIBLING_SUFFIXES:
         cand = base + suffix
-        # Strip trailing whitespace only — leading whitespace would be
-        # suspicious, but " Guest" suffix produces a legitimate space.
         cand = cand.rstrip()
         if cand and cand not in seen:
             seen.add(cand)

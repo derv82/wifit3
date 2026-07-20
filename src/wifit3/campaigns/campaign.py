@@ -29,16 +29,11 @@ class Campaign:
     campaign's own complexity lives behind ``_loop()``."""
 
     # The radio mutex: at most one campaign is ``active`` across ALL subclasses
-    # (one half-duplex card). ``start()`` refuses while it's set; the ``_run``
-    # wrapper clears it on exit. Assign via ``Campaign.active`` (the class attr),
-    # never ``self.active`` (which would shadow it with an instance attr).
     active: Optional["Campaign"] = None
 
     button_id: Optional[str] = None   # the Focus button this campaign owns; None = no button (PBC)
     key: str = ""                     # mutex/registry identity: "wep"/"wps"/"wpa3down"/"pmkid"/"pbc"
-    # Focus footer command: (keycap, short label), or None for no hotkey (e.g. PBC,
-    # which is auto-triggered). The keycap must be unique across all campaigns
-    # (BINDINGS is static); the footer key's shown/grayed state mirrors the button.
+    # Focus footer command: (keycap, short label), or None for no hotkey
     hotkey: Optional[tuple[str, str]] = None
     stoppable: bool = True            # False = fire-once; button stays disabled, never flips to "Stop X"
     # Button text/variant the registry-driven derive_buttons paints: idle_* when
@@ -66,15 +61,6 @@ class Campaign:
         return True
 
     async def _drive(self) -> None:
-        # teardown() lives in the task's own frame so it fires on EVERY exit —
-        # natural return, stop-induced break, or a crash — which an external
-        # awaiter of the task could never guarantee for the natural-completion case.
-        # The framework is the crash backstop: an unexpected error in _loop() is
-        # logged (to the engine logger, never the TUI) rather than propagated, so
-        # one campaign blowing up can't break the screen or wedge the radio. The
-        # campaign owns its *expected* outcomes itself (it logs them). The mutex
-        # slot is cleared in the outermost finally so even a teardown() crash
-        # releases the radio.
         try:
             try:
                 await self._loop()
@@ -90,44 +76,34 @@ class Campaign:
                 except Exception:
                     logger.exception("campaign %r crashed in teardown()", self.key)
         finally:
-            # Only release the slot if WE still hold it — a synchronous
-            # request_stop() may have freed it already and another campaign may
-            # have since claimed it; an unguarded clear would clobber that one.
+            # Only release the slot if WE still hold it
             if Campaign.active is self:
                 Campaign.active = None
 
     async def stop(self) -> None:
-        """Cooperative stop: raise the flag, then await the loop draining +
-        teardown. Safe to call after natural completion (the task is already done)."""
+        """Cooperative stop."""
         self.stopped = True
         if self._task is not None:
             await self._task
 
     def request_stop(self) -> None:
-        """Synchronous fire-and-forget stop for sync callers (the screen): flag the
-        stop and free the radio slot NOW, leaving the running task to drain its loop
-        and run teardown on its own. Freeing the slot synchronously lets the next
-        run() claim the radio immediately — matching the pre-base
-        ``create_task(stop())`` semantics without the one-tick refusal race."""
+        """Synchronous fire-and-forget stop for sync callers (the screen)."""
         self.stopped = True
         if Campaign.active is self:
             Campaign.active = None
 
     @property
     def done(self) -> bool:
-        """True once ``_loop()`` + ``teardown()`` have finished — the screen polls
-        this to extract results + drop its handle."""
+        """True once ``_loop()`` + ``teardown()`` have finished."""
         return self._task is not None and self._task.done()
 
     # ---- behaviour (subclass fills these) -----------------------------------
     async def _loop(self) -> None:
-        """The campaign's work — the ``while not self.stopped`` loop (or a bounded
-        one-shot). MUST poll ``self.stopped`` before every blocking call, and keep
-        waits bounded, so a stop lands promptly."""
+        """The campaign's work."""
         raise NotImplementedError
 
     async def teardown(self) -> None:
-        """Exit-driven cleanup — the campaign's own (deauth-or-not, clear fake
+        """Exit-driven cleanup: the campaign's own (deauth-or-not, clear fake
         MAC, save state, stop sub-transports). Default no-op."""
 
     @classmethod
@@ -138,7 +114,5 @@ class Campaign:
 
     @classmethod
     def ineligible_reason(cls, ap) -> Optional[str]:
-        """Given it's visible: ``None`` = eligible (enabled); a string = disabled,
-        and that string is the once-at-load 'why' (e.g. ``"PMF:Required"``).
-        Mirrors the attack's real pre-flight preconditions."""
+        """Given it's visible: ``None`` = eligible (enabled); a string = disabled."""
         return None

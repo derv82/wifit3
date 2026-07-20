@@ -41,13 +41,7 @@ def random_client_mac() -> bytes:
 
 
 def build_client_leaving(bssid: bytes, our_mac: bytes, deauth: bool = True) -> bytes:
-    """A client→AP deauth (default) / disassoc announcing we're leaving the BSS.
-
-    Sent when abandoning a stalled WPS attempt so the AP drops our (possibly
-    mid-exchange) EAP session. Otherwise it keeps retransmitting the in-flight WSC
-    message to our now-dead MAC and won't start a fresh session for the next
-    attempt's new MAC — the "stuck at Identity" lockout. Reason 3 = STA leaving
-    (deauth); reason 8 = STA leaving (disassoc). addr1=AP, addr2=us, addr3=AP."""
+    """A client→AP deauth (default) / disassoc announcing we're leaving the BSS."""
     return build_deauth(bssid, our_mac, bssid, 3 if deauth else 8, disassoc=not deauth)
 
 
@@ -58,8 +52,6 @@ class WlanTransport:
         self.iface = iface
         self.bssid = bssid
         self.our_mac = our_mac
-        # Optional callback(frame_bytes) invoked on every TX — lets a probe
-        # record our injected frames alongside RX for a full-conversation pcap.
         self.tx_observer = tx_observer
         self._q: asyncio.Queue = asyncio.Queue()
         self._loop = asyncio.get_event_loop()
@@ -105,8 +97,7 @@ class WlanTransport:
             return None
 
     def drain(self) -> None:
-        """Drop any queued frames — called between PIN attempts on a kept-alive
-        association so a previous attempt's late retransmits don't bleed in."""
+        """Drop any queued frames."""
         while not self._q.empty():
             try:
                 self._q.get_nowait()
@@ -130,12 +121,7 @@ class Association:
         self.our_mac = our_mac or random_client_mac()
         self.assoc_timeout = assoc_timeout
         self.auth_timeout = auth_timeout
-        # A complete trailing IE (tag+len+body) appended to the Assoc Request — e.g. a
-        # WPS vendor IE (registrar/enrollee intent) or PMKID's forged single-AKM RSN IE.
-        # Empty = a bare Assoc Request (SSID + rates only).
         self.assoc_trailer_ies = assoc_trailer_ies
-        # Polled in associate()/_send_until so a user Stop aborts the resend loop
-        # promptly instead of injecting for the full auth+assoc budget.
         self.should_stop = should_stop or (lambda: False)
         self.associated = False
         self.fail_reason: Optional[str] = None
@@ -157,18 +143,7 @@ class Association:
         self.iface.unregister_rx_callback(self._rx_cb)
 
     async def associate(self, attempts: int = 5) -> bool:
-        """Open-auth + assoc. Returns True once the AP accepts us (status 0).
-
-        Waits for the Open-System Auth Resp (status 0) before sending the Assoc
-        Req: an AP drops an Assoc from a not-yet-authenticated STA, so a blind
-        delay races a slow/cold AP and whiffs first contact. Falls back to sending
-        the Assoc anyway after ``auth_timeout`` for APs/captures that don't surface
-        a matchable Auth Resp.
-
-        Our auth/assoc frames land no-ACK/no-retry, so within each wait we *resend*
-        while silent (a dropped auth-req or assoc-req is otherwise a lost attempt).
-        Hardware ground truth (AirLink): association was the top failure at ~29% until
-        this + relying on the AP's own retransmits (no active-monitor)."""
+        """Open-auth + assoc. Returns True once the AP accepts us (status 0)."""
         if self.iface.current_channel != self.channel:
             await self.iface.set_channel(self.channel)
         for _ in range(attempts):
@@ -178,8 +153,7 @@ class Association:
             self._assoc_ok = False
             await self._send_until(auth_req(self.bssid_bytes, self.our_mac),
                                    lambda: self._auth_ok, self.auth_timeout)
-            # Send Assoc whether or not the Auth Resp surfaced (fallback for APs that
-            # don't emit a matchable one) — resend while waiting for the Assoc Resp.
+            # Send Assoc whether or not the Auth Resp surfaced
             await self._send_until(assoc_req(self.bssid_bytes, self.our_mac, self.ssid,
                                              self.assoc_trailer_ies),
                                    lambda: self._assoc_ok, self.assoc_timeout)

