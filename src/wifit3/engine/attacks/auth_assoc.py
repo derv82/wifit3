@@ -21,13 +21,9 @@ import time
 from typing import Callable, Optional
 
 from wifit3.dot11 import build_deauth
+from wifit3.dot11.auth_assoc import auth_req, assoc_req
 
 logger = logging.getLogger(__name__)
-
-# Supported-rates menu (APs only check it parses).
-_SUPPORTED_RATES = bytes([0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24])
-_EXT_SUPPORTED_RATES = bytes([0x30, 0x48, 0x60, 0x6C])
-_CAP_ESS_PRIVACY = 0x0011
 
 _SUBTYPE_ASSOC_RESP = 0x01
 _SUBTYPE_AUTH = 0x0B
@@ -146,26 +142,6 @@ class Association:
         self._assoc_ok = False
         self._active = False
 
-    # ---- frame builders ----------------------------------------------------
-    def _hdr(self, fc: bytes) -> bytes:
-        return (fc + b"\x00\x00" + self.bssid_bytes + self.our_mac
-                + self.bssid_bytes + b"\x00\x00")
-
-    def _auth_req(self) -> bytes:
-        return self._hdr(b"\xb0\x00") + b"\x00\x00\x01\x00\x00\x00"  # open, seq 1, status 0
-
-    def _assoc_req(self) -> bytes:
-        cap = struct.pack("<H", _CAP_ESS_PRIVACY)
-        listen = struct.pack("<H", 0x0001)
-        ssid = self.ssid.encode("utf-8", "ignore")[:32]
-        ies = (
-            bytes([0x00, len(ssid)]) + ssid
-            + bytes([0x01, len(_SUPPORTED_RATES)]) + _SUPPORTED_RATES
-            + bytes([0x32, len(_EXT_SUPPORTED_RATES)]) + _EXT_SUPPORTED_RATES
-            + self.assoc_trailer_ies
-        )
-        return self._hdr(b"\x00\x00") + cap + listen + ies
-
     # ---- lifecycle ----------------------------------------------------------
     def start(self) -> None:
         if self._active:
@@ -199,10 +175,13 @@ class Association:
                 return False
             self._auth_ok = False
             self._assoc_ok = False
-            await self._send_until(self._auth_req(), lambda: self._auth_ok, self.auth_timeout)
+            await self._send_until(auth_req(self.bssid_bytes, self.our_mac),
+                                   lambda: self._auth_ok, self.auth_timeout)
             # Send Assoc whether or not the Auth Resp surfaced (fallback for APs that
             # don't emit a matchable one) — resend while waiting for the Assoc Resp.
-            await self._send_until(self._assoc_req(), lambda: self._assoc_ok, self.assoc_timeout)
+            await self._send_until(assoc_req(self.bssid_bytes, self.our_mac, self.ssid,
+                                             self.assoc_trailer_ies),
+                                   lambda: self._assoc_ok, self.assoc_timeout)
             if self._assoc_ok:
                 self.associated = True
                 return True

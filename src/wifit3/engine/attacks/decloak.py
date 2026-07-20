@@ -20,19 +20,9 @@ import time
 from typing import List, Optional
 
 from wifit3.models import AccessPoint
+from wifit3.dot11.probe import probe_req
 
 logger = logging.getLogger(__name__)
-
-
-# Same standard-rates IE used by the PMKID harvester. Real APs only check
-# that this is well-formed, not specifically what's in it.
-_SUPPORTED_RATES = bytes([
-    0x82, 0x84, 0x8B, 0x96,         # 1, 2, 5.5, 11 (basic)
-    0x0C, 0x12, 0x18, 0x24,         # 6, 9, 12, 18
-])
-_EXT_SUPPORTED_RATES = bytes([
-    0x30, 0x48, 0x60, 0x6C,         # 24, 36, 48, 54
-])
 
 
 # Curated suffix list — kept short on purpose so a full run is ~5 seconds.
@@ -107,29 +97,6 @@ class DecloakAttack:
         # Register so client/handshake tracking ignores our forged STA.
         self.iface.register_forged_mac(self.source_mac)
 
-    # ---- Frame builder ------------------------------------------------------
-
-    def _build_probe_req(self, ssid: str) -> bytes:
-        """Directed Probe Request frame addressed to the target BSSID with
-        the candidate SSID in the SSID IE. The AP only responds if the SSID
-        matches its real one (or it's broadcasting widely)."""
-        # FC: type=mgmt(0), subtype=probe_req(4) → 0x40
-        mac_hdr = (
-            b"\x40\x00"                         # FC
-            + b"\x00\x00"                       # Duration
-            + self.bssid_bytes                  # Addr1 = BSSID (RA)
-            + self.source_mac                   # Addr2 = us (TA)
-            + self.bssid_bytes                  # Addr3 = BSSID
-            + b"\x00\x00"                       # Seq (hardware fills)
-        )
-        # Tag 0 (SSID): truncate to 32B max per spec.
-        ssid_bytes = ssid.encode("utf-8", errors="ignore")[:32]
-        ssid_ie = bytes([0x00, len(ssid_bytes)]) + ssid_bytes
-        # Tag 1 + Tag 50: rates (kept short — most APs only spot-check).
-        rates_ie = bytes([0x01, len(_SUPPORTED_RATES)]) + _SUPPORTED_RATES
-        ext_rates_ie = bytes([0x32, len(_EXT_SUPPORTED_RATES)]) + _EXT_SUPPORTED_RATES
-        return mac_hdr + ssid_ie + rates_ie + ext_rates_ie
-
     # ---- Driver -------------------------------------------------------------
 
     async def run(
@@ -158,7 +125,7 @@ class DecloakAttack:
         )
 
         for candidate in candidates:
-            frame = self._build_probe_req(candidate)
+            frame = probe_req(self.bssid_bytes, self.source_mac, candidate)
             await self.iface.send_no_wait(frame)
 
             # Poll briefly — parser side flips ap.ssid asynchronously when

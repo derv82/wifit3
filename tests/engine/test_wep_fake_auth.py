@@ -6,6 +6,7 @@ import pytest
 
 from wifit3.models import AccessPoint
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
+from wifit3.dot11.auth_assoc import auth_req, assoc_req
 
 SELF_MAC = b"\x02\x00\x00\x00\x00\x01"
 BSSID_BYTES = b"\x11\x22\x33\x44\x55\x66"
@@ -29,7 +30,7 @@ def _walk_tag_ids(tags: bytes) -> list[int]:
 # ---- Frame builders --------------------------------------------------------
 
 def test_auth_req_is_open_system_seq1(mocker):
-    f = _fa(mocker)._build_auth_req()
+    f = auth_req(BSSID_BYTES, SELF_MAC)
     assert f[0:2] == b"\xb0\x00"            # mgmt / Auth subtype
     assert f[4:10] == BSSID_BYTES           # Addr1 = BSSID
     assert f[10:16] == SELF_MAC             # Addr2 = us
@@ -38,7 +39,7 @@ def test_auth_req_is_open_system_seq1(mocker):
 
 
 def test_assoc_req_sets_privacy_and_omits_rsn(mocker):
-    f = _fa(mocker)._build_assoc_req()
+    f = assoc_req(BSSID_BYTES, SELF_MAC, "WepNet")
     assert f[0:2] == b"\x00\x00"            # mgmt / Assoc Req subtype
     cap = struct.unpack("<H", f[24:26])[0]
     assert cap & 0x0010                     # Privacy bit (mandatory for WEP)
@@ -50,7 +51,7 @@ def test_assoc_req_sets_privacy_and_omits_rsn(mocker):
 
 
 def test_assoc_req_carries_ssid(mocker):
-    f = _fa(mocker)._build_assoc_req()
+    f = assoc_req(BSSID_BYTES, SELF_MAC, "WepNet")
     assert b"WepNet" in f
 
 

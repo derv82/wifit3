@@ -31,18 +31,9 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from wifit3.models import AccessPoint
+from wifit3.dot11.auth_assoc import auth_req, assoc_req
 
 logger = logging.getLogger(__name__)
-
-# Supported-rates IEs (same menu the PMKID harvester uses — APs only check
-# well-formedness).
-_SUPPORTED_RATES = bytes([0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24])
-_EXT_SUPPORTED_RATES = bytes([0x30, 0x48, 0x60, 0x6C])
-
-# Capability Info for the Assoc Req: ESS (bit 0) + Privacy (bit 4). The
-# Privacy bit is mandatory for a WEP network — an Assoc Req without it is
-# rejected as a capability mismatch.
-_CAP_ESS_PRIVACY = 0x0011
 
 # 802.11 management subtypes we care about in the RX filter.
 _SUBTYPE_ASSOC_RESP = 0x01
@@ -114,41 +105,6 @@ class WepFakeAuth:
         # Whether we've logged the CURRENT failure episode — so we log a failure
         # once (not every backoff tick) and a "recovered" line once.
         self._announced_failure = False
-
-    # ---- Frame builders -----------------------------------------------------
-
-    def _build_auth_req(self) -> bytes:
-        """Open-System Authentication Request (algo=0, seq=1, status=0)."""
-        mac_hdr = (
-            b"\xb0\x00"            # FC: mgmt, subtype Auth (0x0B)
-            + b"\x00\x00"          # Duration
-            + self.bssid_bytes     # Addr1 = BSSID (dest)
-            + self.source_mac      # Addr2 = us (source)
-            + self.bssid_bytes     # Addr3 = BSSID
-            + b"\x00\x00"          # Seq (hardware fills)
-        )
-        body = b"\x00\x00" + b"\x01\x00" + b"\x00\x00"  # algo=0, seq=1, status=0
-        return mac_hdr + body
-
-    def _build_assoc_req(self) -> bytes:
-        """Association Request: Privacy capability + SSID + rates, NO RSN IE
-        (WEP predates RSN — an RSN IE would get us rejected)."""
-        mac_hdr = (
-            b"\x00\x00"            # FC: mgmt, subtype Assoc Req (0x00)
-            + b"\x00\x00"
-            + self.bssid_bytes
-            + self.source_mac
-            + self.bssid_bytes
-            + b"\x00\x00"
-        )
-        cap_info = struct.pack("<H", _CAP_ESS_PRIVACY)
-        listen_int = struct.pack("<H", 0x0001)
-        ssid = (self.target.ssid or "").encode("utf-8", errors="ignore")[:32]
-        ssid_ie = bytes([0x00, len(ssid)]) + ssid
-        rates_ie = bytes([0x01, len(_SUPPORTED_RATES)]) + _SUPPORTED_RATES
-        ext_rates_ie = bytes([0x32, len(_EXT_SUPPORTED_RATES)]) + _EXT_SUPPORTED_RATES
-        body = cap_info + listen_int + ssid_ie + rates_ie + ext_rates_ie
-        return mac_hdr + body
 
     # ---- Lifecycle ----------------------------------------------------------
 
@@ -266,9 +222,10 @@ class WepFakeAuth:
         self._assoc_ok = False
         self.stats.auth_attempts += 1
 
-        await self.iface.send_no_wait(self._build_auth_req())
+        await self.iface.send_no_wait(auth_req(self.bssid_bytes, self.source_mac))
         await asyncio.sleep(0.1)  # let the AP process Auth before Assoc lands
-        await self.iface.send_no_wait(self._build_assoc_req())
+        await self.iface.send_no_wait(assoc_req(self.bssid_bytes, self.source_mac,
+                                                self.target.ssid or ""))
 
         deadline = time.time() + self.assoc_timeout
         while time.time() < deadline and self._active and not self._assoc_ok:

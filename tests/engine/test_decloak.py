@@ -13,6 +13,7 @@ from wifit3.engine.attacks.decloak import (
 )
 from wifit3.models import AccessPoint
 from wifit3.dot11.parser import WlanFrameParser
+from wifit3.dot11.probe import probe_req
 
 
 def test_build_candidates_empty_base_returns_empty():
@@ -56,7 +57,7 @@ def test_decloak_probe_req_parses_back_with_candidate_ssid():
         source_mac=bytes.fromhex("02deadbeefaa"),
     )
 
-    frame = attack._build_probe_req("Foo-Guest")
+    frame = probe_req(attack.bssid_bytes, attack.source_mac, "Foo-Guest")
     parsed = WlanFrameParser.parse_80211_frame(frame, rssi=-30)
 
     assert parsed is not None
@@ -81,7 +82,7 @@ def test_decloak_probe_req_handles_empty_ssid_candidate():
         base_ssid="X" * 32,
         source_mac=bytes.fromhex("020000000001"),
     )
-    frame = attack._build_probe_req("X" * 32)
+    frame = probe_req(attack.bssid_bytes, attack.source_mac, "X" * 32)
     parsed = WlanFrameParser.parse_80211_frame(frame, rssi=-30)
     assert parsed is not None
     assert parsed.ssid == "X" * 32

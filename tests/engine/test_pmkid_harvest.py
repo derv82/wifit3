@@ -8,9 +8,8 @@ rotate the MAC + retry when the AP stays silent (no M1).
 """
 from types import SimpleNamespace
 
-from wifit3.engine.attacks.pmkid_harvest import (
-    PmkidFail, PmkidHarvestAttack, _force_psk_akm,
-)
+from wifit3.engine.attacks.pmkid_harvest import PmkidFail, PmkidHarvestAttack
+from wifit3.dot11.ie import force_psk_akm
 
 _BSSID = "aa:bb:cc:dd:ee:01"
 _BSSID_B = bytes.fromhex("aabbccddee01")
@@ -162,7 +161,7 @@ async def test_no_psk_akm_short_circuits():
 def test_force_psk_akm_selects_psk_from_sae_first_list():
     # SAE + PSK (SAE listed first) → rewritten to a single PSK AKM.
     rsn = bytes.fromhex("30180100000fac040100000fac040200000fac08000fac020000")
-    assert _force_psk_akm(rsn) == bytes.fromhex(
+    assert force_psk_akm(rsn) == bytes.fromhex(
         "30140100000fac040100000fac040100000fac020000")
 
 
@@ -170,7 +169,7 @@ def test_force_psk_akm_non_pmf_cleans_caps_and_drops_group_mgmt():
     # Non-PMF target (default): force single PSK, author clean 0x0000 caps, and never
     # echo the AP's MFP tail (its raw caps / PMKID list / group-mgmt cipher).
     rsn = bytes.fromhex("30180100000fac040100000fac040100000fac028c00000fac06")
-    out = _force_psk_akm(rsn)                   # pmf_capable=False
+    out = force_psk_akm(rsn)                   # pmf_capable=False
     assert out == bytes.fromhex("30140100000fac040100000fac040100000fac020000")
     assert out.endswith(b"\x00\x00")           # explicit clean RSN caps (no MFP)
     assert b"\x0f\xac\x06" not in out          # BIP group-mgmt cipher dropped
@@ -181,7 +180,7 @@ def test_force_psk_akm_pmf_capable_advertises_mfpc_and_bip():
     # so the AP associates us — MFPC=1 (MFPR clear), PMKID-count 0, BIP-CMAC-128 group
     # mgmt. HW-observed: an MFPC=0 Assoc was ACKed at Auth then silently dropped.
     rsn = bytes.fromhex("30140100000fac040100000fac040100000fac020000")
-    out = _force_psk_akm(rsn, pmf_capable=True)
+    out = force_psk_akm(rsn, pmf_capable=True)
     assert out[0] == 0x30 and out[1] == len(out) - 2         # well-formed RSN IE
     assert bytes.fromhex("0100000fac02") in out              # forced single PSK AKM
     # Tail = RSN caps(2) + PMKID-count(2)=0 + BIP-CMAC-128(4).
@@ -191,8 +190,8 @@ def test_force_psk_akm_pmf_capable_advertises_mfpc_and_bip():
 
 
 def test_force_psk_akm_rejects_malformed():
-    assert _force_psk_akm(b"\x30\x02\x01\x00") is None         # too short for an AKM list
-    assert _force_psk_akm(b"\xdd\x10rubbish!!") is None        # not an RSN IE (tag 0xDD)
+    assert force_psk_akm(b"\x30\x02\x01\x00") is None         # too short for an AKM list
+    assert force_psk_akm(b"\xdd\x10rubbish!!") is None        # not an RSN IE (tag 0xDD)
 
 
 async def test_active_monitor_armed_when_supported():
