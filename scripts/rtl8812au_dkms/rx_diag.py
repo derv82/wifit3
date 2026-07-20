@@ -4,7 +4,7 @@ Distinguishes the two RX-deaf failure modes after the board-param (external-gain
   * demod BROKEN  -> bulk-IN delivers garbage MPDUs (random frame-control, bad CRC)
   * demod FINE    -> real 802.11 frames arrive; only the RX filter was dropping them
 
-Brings up with EFUSE-derived phy_cond params (same as trace_bringup), enters monitor,
+Brings up with EFUSE-derived phy_cond params, enters monitor,
 then overrides RCR with a PERMISSIVE value that ACCEPTS CRC/ICV-error frames
 (0x9000382F | ACRC32(bit8) | AICV(bit9)) so even garbage is delivered. Classifies every
 frame as valid-beacon / valid-other / unparseable and dumps the first few raw MPDUs.

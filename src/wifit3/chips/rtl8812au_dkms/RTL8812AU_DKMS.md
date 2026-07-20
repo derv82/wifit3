@@ -130,7 +130,7 @@ adapter falls out, and a vanished device is a fallen plug, not a result.
 - `verify_channels.py` — runtime-tune gate; byte-diffs every `iw set channel` hop (incl. band crossings + DFS) with no anchoring.
 - `rx_diag.py` — live RX classifier (`--no-iqk`; `--channel 36` for 5 GHz).
 - `deauth_hw.py` / `wep_replay_hw.py` — live TX gates (no TX pcap exists).
-- `extract_tables.py` — golden-hashed tables/FW; `pcap_regtrace.py` — register trace.
+- `extract_tables.py` — golden-hashed tables/FW.
 
 ## Verification coverage
 
