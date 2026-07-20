@@ -4,13 +4,7 @@ Status: `chips/driver.py` implemented per your notes. Nothing else touched. Not 
 Suite green (1737 passed), lint clean. The 22 drivers are UNCHANGED, so the new base code is
 dormant (they still override the public methods and never call `super().__init__()`).
 
-## Vocabulary (your question)
-
-- `chips/driver.py` = the **parent** `Driver` class (an ABC).
-- the 22 `chips/*/driver.py` = **subclasses** (or "Driver subclasses"). "children" also reads fine.
-Used "parent" / "subclass" in the docstrings.
-
-## What went into chips/driver.py
+## What goes into chips/driver.py
 
 New base `__init__` (3 fields, replaces the old 7-field-per-driver set):
 
@@ -29,73 +23,6 @@ Concrete public methods + per-chip hooks (hooks `raise NotImplementedError`, per
 - `_enable_ack_detect()` / `_disable_ack_detect()` — hooks: hardware RX-filter only
 - `record_ack(frame)` — `ra = frame[4:10]; if ra == self._tx_mac_address: self._seen_ack = True`
 - `acks_seen(...)` — **removed** from the base.
-
-## Names I had to reconcile (confirm)
-
-Your notes used two names for two things. I picked one each:
-
-- `_tx_mac_addr` (in inject) vs `_tx_mac_address` (in record_ack) → used **`_tx_mac_address`**.
-- `_tx_mac_enabled` (in inject) vs `_tx_ack_enabled` (in enable/disable) → used **`_tx_ack_enabled`**.
-
-## Details you glossed — decisions before the fan-out
-
-1. **Seq-stamp location.** Today each driver stamps the sequence number ONCE before the resend
-   loop, so every resend re-sends the identical frame (AP dedups). The new base loop calls
-   `_inject_frame` once per attempt. If stamping moves inside `_inject_frame`, each resend gets a
-   NEW seq. Decide: stamp once (base, before loop) or per-send (driver). Old behavior = stamp once.
-
-2. **wait-for-ack mechanism.** I implemented a 1 ms poll on `_seen_ack` with `wait_for_ack` as the
-   timeout, mirroring the old `_await_ack`. The old code used a `ts > since` compare to reject a
-   stale ACK; the bool instead resets to False at the top of each attempt. Practically equal,
-   slightly less precise. Confirm the bool is what you want, or keep a timestamp.
-
-3. **SW-only drivers + the `raise` hook.** `_enable_ack_detect` raises by default, so the 12
-   software-only drivers must override it with a no-op `return`. Alternative: make the base hook a
-   no-op `return` so only the 10 register-write drivers override. You wrote `raise`; I kept it.
-
-4. **`record_ack` has no `_tx_ack_enabled` guard** (matches your snippet). Harmless: `_seen_ack` is
-   reset every inject/enable, so a stray ACK while disarmed can't survive to be read.
-
-5. **`acks_seen` removal is cross-file** (not done — outside driver.py):
-   - `campaign.py:462` uses it to set `_ap_ever_acked`. It is NOT a plain deletion — dropping the
-     clause trips `_ap_ever_acked` on attempt 1 regardless of any ACK. It must read the new signal:
-     `driver._seen_ack` (or a public `seen_ack` accessor). Pick the accessor.
-   - Then strip the `acks_seen` asserts from the 22 `test_ack_detect.py` and delete each driver's
-     `acks_seen` method.
-
-6. **`enter_active_monitor` is untouched and is the OTHER side** (make the chip *emit* ACKs for a
-   forged MAC), separate from `_enable_ack_detect` (admit *incoming* ACKs to RX). Left as-is.
-
-## The 22-driver fan-out (subagent work, once the above is settled)
-
-Per driver:
-1. `__init__`: add `super().__init__()`; delete the 4 old fields (`_ack_detect_on`, `_our_tx_macs`,
-   `_ack_sightings`, `_ack_last_ts`).
-2. RX tap: replace the inline count with
-   `if len(frame) == 10 and frame[0] == 0xD4: self.record_ack(frame); continue`.
-3. Rename `inject_frame` → `_inject_frame(self, frame_bytes, use_no_ack)`; strip the resend loop,
-   the `_await_ack` wait, and the `_our_tx_macs.add`. Keep only the single send (per decision #1 on
-   stamp location, #C on its lock/executor).
-4. Rename `enable_ack_detect`/`disable_ack_detect` → `_enable_ack_detect`/`_disable_ack_detect`;
-   strip the state resets (base does them); keep only the register write. SW-only drivers: no-op.
-5. Delete `_await_ack` and `acks_seen`.
-
-## Your hardware auto-ACK question — you're not mistaken
-
-Two real cases where the silicon handles ACKs itself:
-
-- **Ralink + MediaTek (the A1 group), 802.11 MAC-layer retransmit.** With `use_no_ack=False` the
-  chip expects the AP's ACK and retransmits in hardware if it is missing. That is the chip waiting
-  on its own ACK, below our software layer.
-- **A hardware TX-status FIFO on some MediaTek chips.** `wps/README.md:338` notes mt76x2u could read
-  `MT_TX_STAT_FIFO` to learn per-frame ACK success directly, as a low-latency alternative to our
-  monitor-RX sniff. Deferred, but it means `_seen_ack` could later be fed by hardware on those
-  chips instead of `record_ack`.
-
-Our `record_ack` path (sniff ACK frames off monitor RX) is the chip-agnostic route that works
-everywhere; it is redundant with the HW capability on those specific chips, not a replacement for it.
-`enter_active_monitor`'s register-MAC write (13 drivers) is the third, separate case: it makes the
-chip emit ACKs for a forged MAC.
 
 ---
 
