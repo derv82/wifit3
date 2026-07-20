@@ -1,7 +1,9 @@
-"""Hashcat ``-m 22000`` hashline writer (WPA-PBKDF2-PMKID+EAPOL).
+"""Hashcat ``-m 22000`` hashline FORMAT (WPA-PBKDF2-PMKID+EAPOL).
+
+The disk writer is ``persist.hc22000_write``.
 
 The PMKID (``WPA*01``) line is built here; the EAPOL (``WPA*02``) lines and the
-crackability decision both live in ``engine.wpa.handshake`` — the single source
+crackability decision both live in ``crack.handshake`` — the single source
 of truth, so a "captured" verdict and a writable hashline can never disagree.
 
 Format spec (one line per hash):
@@ -21,12 +23,11 @@ References:
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import List, Optional
 
 from wifit3.models import AccessPoint, Handshake
-from wifit3.engine.wpa import handshake as wpa
-from wifit3.engine.wpa.handshake import mac_compact, ssid_hex
+from wifit3.crack import handshake as wpa
+from wifit3.crack.handshake import mac_compact, ssid_hex
 
 
 def pmkid_hashline(ssid: str, hs: Handshake) -> Optional[str]:
@@ -72,14 +73,3 @@ def format_ap_hashlines(ap: AccessPoint) -> List[str]:
             lines.append(pmkid)
         lines.extend(eapol_hashlines(ap.ssid, hs))
     return lines
-
-
-def write_hc22000(path: Path, ap: AccessPoint) -> int:
-    """Write all hashlines for *ap* to *path*. Returns the count written; writes
-    nothing (and returns 0) if none could be produced."""
-    lines = format_ap_hashlines(ap)
-    if not lines:
-        return 0
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return len(lines)

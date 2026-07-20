@@ -1,7 +1,7 @@
 """Load previously-saved captures from captures/ back into per-AP history, so a
 recovered key or captured handshake/PMKID re-surfaces as a badge + Focus summary
 on the next scan. Classification is by filename; the .pcap companion is skipped
-(its hashline sibling carries the verdict). Counterpart: engine.save."""
+(its hashline sibling carries the verdict). Counterpart: persist.save."""
 from __future__ import annotations
 
 import logging

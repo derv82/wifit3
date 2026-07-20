@@ -16,9 +16,9 @@ from rich.text import Span, Text
 from wifit3.engine.attacks import treelog
 from wifit3.engine.attacks.wps.pbc import PbcWatcher, WpsPbcCapture
 from wifit3.engine.attacks.wps.registrar import PinResult
-from wifit3.engine.capture_history import load_capture_index, summarize
+from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.models import AccessPoint, PersistedCapture
-from wifit3.engine.save import save_handshake, save_pmkid, save_wps_pbc
+from wifit3.persist.save import save_handshake, save_pmkid, save_wps_pbc
 
 from ..capture_events import (
     CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,

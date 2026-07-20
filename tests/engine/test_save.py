@@ -1,8 +1,8 @@
-"""Tests for the typed auto-save module (engine.save)."""
+"""Tests for the typed auto-save module (persist.save)."""
 from __future__ import annotations
 
 from wifit3.models import AccessPoint, HandshakeMessage, Handshake
-from wifit3.engine.save import (
+from wifit3.persist.save import (
     save_handshake,
     save_pmkid,
     save_wep_key,

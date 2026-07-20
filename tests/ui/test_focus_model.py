@@ -8,7 +8,7 @@ import types
 import pytest
 
 from wifit3.engine.attacks.campaign import Campaign
-from wifit3.engine.attacks.wep.crack import CRACK_READY_THRESHOLD
+from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.ui import focus_model as fm
 
 

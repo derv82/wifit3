@@ -603,7 +603,7 @@ class WlanFrameParser:
 
     # AKM suite numbers (00-0F-AC:N) grouped for WPA3 detection: any SAE-family
     # suite => WPA3; SAE alongside a PSK-family suite => WPA2/WPA3 transition.
-    # Mirrors the crackability split in engine.wpa.handshake (duplicated here to
+    # Mirrors the crackability split in crack.handshake (duplicated here to
     # avoid a wlan->engine import) — keep the two in sync.
     _SAE_SUITES = frozenset({0x08, 0x09, 0x18, 0x19})
     _PSK_SUITES = frozenset({0x02, 0x04, 0x06, 0x13, 0x14})

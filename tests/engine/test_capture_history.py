@@ -1,7 +1,7 @@
 """Tests for the captures/ history loader (synthetic files — no real IDs)."""
 from __future__ import annotations
 
-from wifit3.engine.capture_history import load_capture_index, summarize
+from wifit3.persist.capture_history import load_capture_index, summarize
 
 _BSSID_DASH = "aa-bb-cc-dd-ee-ff"
 _BSSID_COLON = "aa:bb:cc:dd:ee:ff"

@@ -45,7 +45,7 @@ async def test_campaign_recovers_key_from_collected_samples(mocker):
     known key, run the campaign's crack loop, and confirm it recovers it."""
     import asyncio
     import random
-    from wifit3.engine.attacks.wep.crack import rc4_keystream, ARP_REQUEST_PLAINTEXT
+    from wifit3.crack.wep import rc4_keystream, ARP_REQUEST_PLAINTEXT
 
     iface = mocker.MagicMock()
     iface.send_raw = mocker.AsyncMock(return_value=True)
@@ -68,7 +68,7 @@ async def test_campaign_recovers_key_from_collected_samples(mocker):
     campaign._active = True
     samples = iface.wep_store.crack_samples(ap.bssid)
     for iv, cipher in samples:
-        from wifit3.engine.attacks.wep.crack import keystream_from_arp_cipher
+        from wifit3.crack.wep import keystream_from_arp_cipher
         campaign.cracker.feed(iv, keystream_from_arp_cipher(cipher))
     key_out = await asyncio.get_event_loop().run_in_executor(None, campaign.cracker.recover)
     assert key_out == key

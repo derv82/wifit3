@@ -1,12 +1,12 @@
 """Hashcat ``-m 22000`` hashline formatter tests."""
 
-from wifit3.engine.hc22000 import (
+from wifit3.crack.hc22000_format import (
     eapol_hashline,
     eapol_hashlines,
     format_ap_hashlines,
     pmkid_hashline,
-    write_hc22000,
 )
+from wifit3.persist.hc22000_write import write_hc22000
 from wifit3.models import AccessPoint, HandshakeMessage, Handshake
 
 

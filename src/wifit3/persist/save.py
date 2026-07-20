@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from wifit3.engine.hc22000 import eapol_hashlines, pmkid_hashline
+from wifit3.crack.hc22000_format import eapol_hashlines, pmkid_hashline
 from wifit3.models import AccessPoint
-from wifit3.engine.pcap import write_pcap
+from wifit3.persist.pcap import write_pcap
 
 
 @dataclass(frozen=True)

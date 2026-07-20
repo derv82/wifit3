@@ -50,16 +50,16 @@ class Handshake:
     akm_client: Optional[int] = None
     # The AP's offered AKM suites (00-0F-AC:N) from its beacon RSN IE.
     # Stamped by the interface so crackability can be decided without the AP in hand.
-    # See engine.wpa.handshake (eapol_crackable / pmkid_crackable).
+    # See crack.handshake (eapol_crackable / pmkid_crackable).
     akm_offered: List[int] = field(default_factory=list)
 
     # -- Crack-validity --------------------------------------------------------
-    # Delegated to engine.wpa.handshake — the single source of truth shared with
+    # Delegated to crack.handshake — the single source of truth shared with
     # the hc22000 / auto-save path, so "captured" and "saveable" can't diverge.
     # Deferred import: that module imports this one.
 
     def _crackable_pairs(self):
-        from wifit3.engine.wpa import handshake as _wpa
+        from wifit3.crack import handshake as _wpa
         return _wpa.crackable_pairs(self)
 
     @staticmethod

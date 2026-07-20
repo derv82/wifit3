@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Iterator, Optional, Set, Tuple
 
 from wifit3.models import AccessPoint
-from wifit3.engine.wpa import handshake as wpa
+from wifit3.crack import handshake as wpa
 
 
 # Human-readable labels for AccessPoint.decloak_method / CaptureEvent.method.

@@ -22,7 +22,7 @@ from .encryption_format import format_encryption_markup
 from ..engine.attacks.campaign import Campaign
 from ..engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from ..engine.attacks.wep.campaign import WepCampaign
-from ..engine.attacks.wep.crack import CRACK_READY_THRESHOLD
+from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from ..engine.attacks.wps.campaign import WpsCampaign
 from ..engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 

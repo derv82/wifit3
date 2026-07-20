@@ -342,7 +342,7 @@ def test_group_mac_destination_is_not_a_client(mocker):
 def test_transition_pmkid_only_classified_via_assoc(mocker):
     """Phase 2 payoff: on a WPA2/WPA3 transition AP a PMKID-only capture (no M2)
     is classified from the client's Assoc-Req AKM — PSK -> crackable, SAE -> not."""
-    from wifit3.engine.wpa import handshake as wpa
+    from wifit3.crack import handshake as wpa
 
     for client_akm, expect_crackable in ((0x02, True), (0x08, False)):
         mock_driver = mocker.MagicMock()

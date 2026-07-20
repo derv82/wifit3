@@ -9,7 +9,7 @@ import random
 
 import pytest
 
-from wifit3.engine.attacks.wep.crack import (
+from wifit3.crack.wep import (
     ARP_REQUEST_PLAINTEXT,
     PlaceholderCracker,
     PtwCracker,

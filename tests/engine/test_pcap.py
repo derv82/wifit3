@@ -2,7 +2,7 @@
 FCS-less MPDU bodies (every chip driver strips at RX ingress), so the writer
 no longer second-guesses the frame tail."""
 
-from wifit3.engine.pcap import write_pcap
+from wifit3.persist.pcap import write_pcap
 
 
 def _first_packet(path) -> bytes:
