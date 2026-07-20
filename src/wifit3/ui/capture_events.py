@@ -59,7 +59,7 @@ class CaptureEvent:
     # eapol-only
     msg_num: Optional[int] = None
     replay_hex: Optional[str] = None
-    # eapol-only content descriptor (from engine.wpa.describe) — the hashcat-
+    # eapol-only content descriptor (from crack.handshake.describe) — the hashcat-
     # relevant per-field flags the aggregator ticks (ANonce/SNonce/MIC/EAPOL).
     has_nonce: Optional[bool] = None
     has_mic: Optional[bool] = None

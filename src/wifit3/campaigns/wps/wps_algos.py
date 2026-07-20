@@ -1,7 +1,7 @@
 """WPS default-PIN generation from published algorithms.
 
 PINs are computed at runtime from published WPS default-PIN algorithms, so no PIN table is
-bundled. The 8th digit is the Wi-Fi Simple Config checksum (:func:`wsc_crypto.pin_checksum`).
+bundled. The 8th digit is the Wi-Fi Simple Config checksum (:func:`dot11.wsc.crypto.pin_checksum`).
 
 A router's OUI identifies its **brand** (an IEEE assignment) but never its **chipset** (the
 Wi-Fi silicon inside — many brands share one). So candidates split by whether the OUI can tell

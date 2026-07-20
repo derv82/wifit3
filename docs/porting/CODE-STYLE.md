@@ -36,6 +36,6 @@ labels, "now we…", and session history (no "we used to," dated stamps, commit 
 percentages). A cross-reference between files only when they actually share code or a family — not
 "I fixed the same bug here."
 
-By area: `engine/attacks/**` explains the attack mechanism deeply (raw byte/XOR steps are
+By area: `campaigns/**` explains the attack mechanism deeply (raw byte/XOR steps are
 unreadable without the why); `chips/**`, `wlan/**`, and register-touching `scripts/<chip>/*` cite
 the source densely; `ui/**` is docstrings only. Dated history lives in the chip doc, not the `.py`.

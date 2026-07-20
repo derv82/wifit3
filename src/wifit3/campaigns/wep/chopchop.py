@@ -2,7 +2,7 @@
 
 Decrypts a captured frame byte-by-byte using the AP as an ICV oracle, no key:
 chop the last byte, guess its plaintext (≤256), fix the ICV
-(wep_crypto.chop_last_byte_and_fixup — CRC32 is linear), re-header to a data
+(dot11.wep.crypto.chop_last_byte_and_fixup — CRC32 is linear), re-header to a data
 frame from us, send. The AP relays the shortened frame IFF the guess was right.
 Walk backwards recovering one keystream byte per accepted guess → enough
 keystream to forge a broadcast ARP → hand to replay.

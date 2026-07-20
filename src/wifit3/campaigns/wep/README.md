@@ -39,7 +39,7 @@ UI: WEP-encrypted AP in Scanner gets a `(W)` marker. Focus on it shows "X unique
 Mirror `aireplay-ng`'s option flags so the existing documentation / muscle memory transfers cleanly.
 
 ### `-1` Fake authentication (~1 day) — prerequisite
-Open-system authentication + association as a forged client so the AP accepts our future injections. Builds on the auth / assoc machinery already in `pmkid_harvest.py`. Lands first.
+Open-system authentication + association as a forged client so the AP accepts our future injections. Builds on the auth / assoc machinery already in `pmkid.py`. Lands first.
 
 ### `-3` ARP replay (~1–2 days) — the workhorse
 Listen for an ARP request (broadcast WEP data frame, distinctive 68 / 86-byte size depending on padding). Once captured, replay it on a loop. The AP echoes back ARP replies — each carries a fresh IV. **Most WEP networks fall to this attack alone** given an existing client on the network.
@@ -214,15 +214,15 @@ decides on its own is *success* (→ resume replay), because that's unambiguous;
 
 ### Build order (de-risk like we did the cracker)
 
-1. ~~**`wep_crypto.py` FIRST — offline, fully unit-testable, no hardware.**~~
+1. ~~**`dot11/wep/crypto.py` FIRST — offline, fully unit-testable, no hardware.**~~
    ✅ **DONE + verified** (commits 06bc85b, 798126c, 5503b09):
    `icv`, `wep_encrypt`, `forge_arp_request`, AND `chop_last_byte_and_fixup`
    (the ChopChop linear-ICV fix-up — landed via affine-CRC cancellation +
    a GF(2) trailing-byte solve, gated by a decrypt→check-residue oracle).
-   11 offline tests in `tests/engine/test_wep_crypto.py`. So the ENTIRE crypto
+   11 offline tests in `tests/dot11/test_wep_crypto.py`. So the ENTIRE crypto
    surface of frag + chopchop is built and proven with zero hardware.
 2. **Fragmentation send-side primitives — ✅ DONE + offline-verified** (`build_fragments`,
-   `seed_keystream_from_arp`, `arp_request_plaintext` in `wep_crypto.py`; 5 new
+   `seed_keystream_from_arp`, `arp_request_plaintext` in `dot11/wep/crypto.py`; 5 new
    tests). KEY SIMPLIFICATION: the frag payload is itself a **broadcast ARP**, so
    one round collapses three things — the AP's relay is simultaneously (a) the
    oracle's success signal, (b) a directly replayable ARP seed, and (c) ~40 B of
@@ -289,7 +289,7 @@ decides on its own is *success* (→ resume replay), because that's unambiguous;
 
 ### File status
 
-`wep_crypto.py` + `fragmentation.py` + `chopchop.py` are all implemented + tested
+`dot11/wep/crypto.py` + `fragmentation.py` + `chopchop.py` are all implemented + tested
 + wired (campaign + Focus toggles). Hardware status (2026-05-31, see the known
 issue below):
 - **ARP replay** — works on every card tried.

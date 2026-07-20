@@ -11,7 +11,7 @@ the reaver-1.4, kimocoder/bully, and wiire/pixiewps source dumps in
 ## Why now
 
 WPS started as *"detection done, attacks not started."* We already
-decode the WPS IE (`packet.py:_parse_wps_ie` → `AccessPoint.wps*`) and surface
+decode the WPS IE (`dot11/parser.py:_parse_wps_ie` → `AccessPoint.wps*`) and surface
 `wps_locked` with a 🔒 in Scanner/Focus. The missing half is the attack: PIN
 brute-force with rate-limit backoff + ETAs, and PixieWPS bad-RNG cracking —
 a great fit for the box of ~10 aging Ralink/Realtek/Broadcom routers on hand.
@@ -50,7 +50,7 @@ down for safety, all of which we can revisit empirically against the fleet:
 WPS is EAP-over-EAPOL (ethertype `0x888e`) inside ordinary 802.11 data frames —
 the same inject+sniff path PMKID already uses. Confirmed reusable plumbing:
 
-- `pmkid_harvest.py` already forges a client MAC + builds Auth/Assoc-Req frames.
+- `pmkid.py` already forges a client MAC + builds Auth/Assoc-Req frames.
 - `interface.send_no_wait(frame)` / `send_until_ack(frame, max_retries)` — the inject primitives.
 - `interface.register_rx_callback(cb)` — raw frame bytes for a low-latency
   state machine (we do *not* drive WPS off the UI-polled AP registry).
@@ -96,46 +96,54 @@ FIRST/SECOND-half-wrong signal from *three* sources — explicit WSC_NACK,
 EAP-FAIL, and (optionally) an M5/M7 timeout-as-NACK — worth replicating all
 three for stubborn APs.
 
-## Architecture — file layout & class responsibilities
+## Architecture: file layout & class responsibilities
+
+The shared WSC spec (crypto, TLV codec, assoc IE) moved to `dot11/wsc/` in the
+parser restructure: it is pure 802.11/WSC spec, reused by both the PIN and PBC
+roles. The Focus-facing campaign orchestrators live one level up in `campaigns/`.
+What stays in `campaigns/wps/` is the attack machinery.
+
+Legend for the dated sections below, which still use the pre-move names:
+`wsc_crypto.py` is now `dot11/wsc/crypto.py`, `messages.py` -> `dot11/wsc/messages.py`,
+`assoc_ie.py` -> `dot11/wsc/assoc_ie.py`, `campaign.py` (WpsCampaign) -> `campaigns/pin.py`,
+`association.py` -> `campaigns/auth_assoc.py`. Line numbers are unchanged (pure moves).
 
 ```
-campaigns/wps/
-  README.md         this scope doc
-  __init__.py
-  wsc_crypto.py     SHARED CORE. Pure functions, no I/O, no state:
-                      DH over RFC-3526 MODP group 5 (pow()), HMAC-SHA256,
-                      WPS KDF, DHKey/KDK/AuthKey/KeyWrapKey derivation,
-                      AES-128-CBC (M5/M7 encrypted settings), PIN checksum,
-                      check_pin_half (the E-Hash1/2 verify pixie reuses).
-                      Fully unit-testable offline vs hostapd/pixiewps vectors.
-  messages.py       WSC TLV codec + EAP/EAPOL framing (Expanded type 254,
-                      WFA vendor ID, SIMPLE_CONFIG opcode). Build M2/M4/M6;
-                      parse M1/M3/M5/M7/NACK/ACK/DONE. Offline self-consistency
-                      tests (round-trip against an in-process fake enrollee).
-  registrar.py      WpsRegistrar — the per-PIN EAP/WSC state machine. Driven by
-                      an inject callback + an RX queue; knows nothing about USB.
-                      Returns FIRST_HALF_WRONG / SECOND_HALF_WRONG / SUCCESS /
-                      TIMEOUT / PROTO_ERROR. Owns the session DH keypair+nonces.
-                      Exposes the pixie bundle (PKE,PKR,E-Hash1/2,E-Nonce,
-                      AuthKey) after M3.
-  assoc_ie.py       WPS Association vendor IE (registrar/enrollee intent). The
-                      generic auth+assoc engine (Association) now lives in
-                      ../auth_assoc.py — KEEP-ALIVE across PINs, re-assoc on failure.
-  timing.py         Adaptive per-message timeout (bully's avg+avg/8+5ms, per
-                      M-type) + per-AP latency stats. The measurement rig.
-  pins.py           PIN keyspace: checksum, two-halves split, ordering,
-                      save/resume per-BSSID (bully persists .pins + .run).
-  lock.py           Lock detection (beacon AP-Setup-Locked IE — already parsed
-                      into AccessPoint.wps_locked; + bully's 3-strike M3-NACK
-                      heuristic for silent lockers) + adaptive backoff that
-                      LEARNS per-router lock duration instead of a blind 60s.
-  pixiewps.py       Native pixie-dust, all 5 modes; numpy-vectorized seed search
-                      for the time-seed/eCos brute. Consumes wsc_crypto.
-  campaign.py       WpsCampaign — the Focus-facing async orchestrator (mirrors
-                      wep/campaign.py): pixie-first → brute sweep, lock/backoff,
-                      progress/ETA, pause()/resume(). Owns the "one TX activity
-                      on a half-duplex radio" invariant.
+dot11/wsc/            shared WSC spec (pure: no device, no asyncio)
+  crypto.py           SHARED CORE (was wsc_crypto.py). Pure functions, no I/O:
+                        DH over RFC-3526 MODP group 5 (pow()), HMAC-SHA256, WPS
+                        KDF, DHKey/KDK/AuthKey/KeyWrapKey derivation, AES-128-CBC
+                        (M5/M7 encrypted settings), PIN checksum, check_pin_half.
+  messages.py         WSC TLV codec + EAP/EAPOL framing (Expanded type 254, WFA
+                        vendor ID, SIMPLE_CONFIG opcode). Build M2/M4/M6; parse
+                        M1/M3/M5/M7/NACK/ACK/DONE.
+  assoc_ie.py         WPS Association vendor IE (registrar/enrollee intent).
+
+campaigns/wps/        the PIN/PBC attack machinery
+  registrar.py        WpsRegistrar: the per-PIN EAP/WSC state machine. Inject
+                        callback in, RX queue out; knows nothing about USB. Returns
+                        FIRST_HALF_WRONG / SECOND_HALF_WRONG / SUCCESS / TIMEOUT /
+                        PROTO_ERROR. Owns the session DH keypair+nonces; exposes the
+                        pixie bundle (PKE,PKR,E-Hash1/2,E-Nonce,AuthKey) after M3.
+  enrollee.py         WpsEnrollee: the role-flipped WSC machine for PBC.
+  pins.py             PIN keyspace: checksum, two-halves split, ordering, resume.
+  known_pins.py       per-OUI default-PIN candidates (D-Link/ASUS/Belkin/...).
+  wps_algos.py        the default-PIN generators (pin24/pin_airocon/...); its
+  wps_router_ouis.py    OUI -> vendor lookup table.
+  lock.py             Lock detection (beacon AP-Setup-Locked IE + a 3-strike
+                        M3-NACK heuristic for silent lockers) + adaptive backoff
+                        that LEARNS per-router lock duration, not a blind 60s.
+
+campaigns/            the Focus-facing orchestrators (one level up)
+  pin.py              WpsCampaign (was wps/campaign.py): pixie-first then brute
+                        sweep, lock/backoff, progress/ETA, pause()/resume(). Owns
+                        the "one TX activity on a half-duplex radio" invariant.
+  pbc.py              WpsPbcCapture: the PBC (enrollee) campaign.
+  auth_assoc.py       the generic auth+assoc engine (Association): keep-alive
+                        across PINs, re-assoc on failure.
 ```
+
+(`timing.py` and `pixiewps.py` named in the milestones below are still planned, not built.)
 
 **Layering rationale (the Lead-level discussion):**
 

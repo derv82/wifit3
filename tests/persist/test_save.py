@@ -11,7 +11,7 @@ from wifit3.persist.save import (
 )
 
 
-# ---- Fixtures (mirror tests/engine/test_hc22000.py) ------------------------
+# ---- Fixtures (mirror tests/crack/test_hc22000.py) ------------------------
 
 def _eapol_payload(mic: bytes = b"\xFF" * 16, key_data_len: int = 0) -> bytes:
     pl = bytearray(99 + key_data_len)

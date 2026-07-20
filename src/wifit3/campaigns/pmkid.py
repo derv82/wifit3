@@ -18,7 +18,7 @@ Sequence per attempt:
 
 The attack returns the harvested 16-byte PMKID, or ``None`` if the AP answers
 with a PMKID-less M1 (or never answers). Cracker-side, the existing
-``engine/hc22000.write_hc22000`` writes a ``WPA*01*…`` hashline whenever
+``persist/hc22000_write.write_hc22000`` writes a ``WPA*01*…`` hashline whenever
 ``hs.pmkid`` is set.
 """
 

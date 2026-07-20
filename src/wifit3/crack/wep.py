@@ -11,7 +11,7 @@ Two implementations behind one ``WepCracker`` protocol:
   IVs arrive and a cheap search re-runs on demand.
 
 Both are pure Python and need no hardware — correctness is proven offline by
-``tests/engine/test_wep_crack.py``, which generates WEP packets under a known
+``tests/crack/test_wep_crack.py``, which generates WEP packets under a known
 key and asserts recovery.
 
 PTW background (why it works): a WEP per-packet RC4 key is ``IV(3) || root``.

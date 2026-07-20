@@ -1,6 +1,6 @@
 """Pure WEP crypto for fragmentation / chopchop (M5/M6).
 
-EVERYTHING HERE IS OFFLINE-TESTABLE — no hardware (tests/engine/test_wep_crypto.py). The
+EVERYTHING HERE IS OFFLINE-TESTABLE — no hardware (tests/dot11/test_wep_crypto.py). The
 hardware-in-the-loop part (the oracle: recognizing the AP's relayed frame) lives in
 fragmentation.py / chopchop.py.
 

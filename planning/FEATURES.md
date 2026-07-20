@@ -47,7 +47,7 @@ Wi-Fi *module* maker, not the device — disambiguation needs IE fingerprinting 
 and the previous AP's attack log is gone. Re-entering a target you already worked shows a blank
 log, even though its handshake / WPS / WEP history is exactly what you'd want back.
 
-**Model.** One new field on `AccessPoint` (`engine/models.py`, a plain `@dataclass`): a capped
+**Model.** One new field on `AccessPoint` (`models/__init__.py`, a plain `@dataclass`): a capped
 ring buffer `log_history: deque[str] = field(default_factory=lambda: deque(maxlen=200))`. It
 stores the *composed* line — timestamp prefix included — so replay shows the original event
 times, not the revisit time. It lives on the AP object, so its lifetime is that AP's lifetime
@@ -116,7 +116,7 @@ a genuinely nice touch.
 per-attack mode map noted in the enterprise graveyard entry). Cracked PSKs auto-add back into the
 VAULT — the loop closes itself.
 
-**Complexity.** Moderate — mostly a new screen over the existing `engine/save` + `hc22000` layers;
+**Complexity.** Moderate — mostly a new screen over the existing `persist/save` + `crack/hc22000_format` layers;
 the "Check" path reuses the association primitive; hashcat launch is a subprocess + parse.
 
 ------------
@@ -130,7 +130,7 @@ The WPS engine is built, offline-proven, and HW-validated (full PIN crack on Air
 - **Terminal hard-lock escape** — `lock.py` learns a measured backoff but loops forever on a
   perma-locked AP; bail after N zero-progress cycles and tell the user.
 - **Focus WPS panel** (passive-by-default, behind a button).
-- **PixieWPS** — designed in `engine/attacks/wps/README.md` (native, all 5 modes, no binary).
+- **PixieWPS** — designed in `campaigns/wps/README.md` (native, all 5 modes, no binary).
   Deferred on effort + one real dep call: **numpy**, wanted to keep the Realtek RTL819x/eCos
   2³¹–2³² seed sweep interactive (Ralink/MediaTek instant). The old glibc-dep worry is a
   non-issue (`random()` is ~30 reimplementable lines). Tractable, not a wall.
@@ -157,7 +157,7 @@ instant via crack.sh) — recovering the *domain* credential, far higher value t
 marquee enterprise capability. PEAP wraps MSCHAPv2 in TLS, so it **can't be captured
 passively** — stand up a rogue AP / evil twin so the client auths to *you*. Active, TX-heavy,
 AP-impersonating → behind the explicit-action gate; large build (target-ESSID beacon, RADIUS/
-EAP state machine, cert handling). Our `engine.campaign` format could compose it cleanly —
+EAP state machine, cert handling). Our `campaigns.campaign` format could compose it cleanly —
 worth a design pass, and an area to beat Wifite2 (no native enterprise).
 
 When a second hashcat mode lands (`-m 4800`/`5500`), the save layer needs a per-attack
@@ -173,7 +173,7 @@ kills them.
 - **Path 1 — passive (implemented, weak).** Forge WPA2-only beacons/probe-resps so a client
   downgrades and 4-ways with the *real* AP, sniffed passively. But the real AP still advertises
   SAE on-channel, so a sane client picks SAE → nothing to capture. (Never confirmed to inject on
-  HW.) `engine/attacks/wpa3_downgrade.py`.
+  HW.) `campaigns/wpa3_downgrade.py`.
 - **Path 2 — evil twin (the reliable build).** Rogue AP (same SSID/BSSID, ideally a different
   channel), WPA2-only; accept auth+assoc, **send M1 yourself** (random ANonce), capture M2.
   Deterministic. A minimal AP responder in the inject path (beacon/probe/auth/assoc/M1) — *not*

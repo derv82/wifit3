@@ -122,7 +122,7 @@ verify monitor RX against its airmon-ng pcap rather than theorizing.
    MAC header to 4-byte-align the payload, but the over-air FCS excludes them. A driver doing its
    own CRC32 check must strip the pad first, or every QoS frame (all downlink-unicast plus the whole
    4-way) silently FCS-fails while beacons pass. Symptom: scanning works, zero passive handshakes.
-4. **FCS trailer in saved pcaps** — fixed generically in `engine/pcap.write_pcap` (`_strip_fcs`
+4. **FCS trailer in saved pcaps** — fixed generically in `persist/pcap.write_pcap` (`_strip_fcs`
    drops the last 4 bytes only when they're a valid CRC32 of the rest). Don't re-fix this per-driver
    in `parse_rx_frame`: `raw` is the MPDU as the chip delivered it; normalization happens once, at
    the pcap boundary.

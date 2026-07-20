@@ -18,7 +18,7 @@ result — which is itself a replayable ARP seed. So one ordinary client data
 packet (a TCP segment you can't replay) becomes a forged ARP you can.
 
 HARDWARE-VERIFIED end-to-end (dd-wrt, rtl8821au): a decrypted relay matched our
-forged ARP byte-for-byte. The crypto is in wep_crypto.py
+forged ARP byte-for-byte. The crypto is in dot11/wep/crypto.py
 (`seed_keystream_from_arp`, `build_fragments`); this daemon wires the send loop
 + the live-AP ORACLE around it.
 
