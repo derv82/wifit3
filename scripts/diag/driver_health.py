@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from wifit3.wlan.packet import Packet
+    from wifit3.dot11.packet import Packet
 
 
 def band(channel: int) -> str:

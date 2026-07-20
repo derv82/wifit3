@@ -35,7 +35,7 @@ import usb.util
 
 from wifit3.chips.rtl8821cu_dkms import bringup, chipid
 from wifit3.chips.rtl8821cu_dkms.transport import Rtl8821cuTransport
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 USB_VID, USB_PID = 0x0BDA, 0xC820
 FW_BULK_OUT_EP = 0x05               # FW/TX bulk-OUT is on ep 0x05 (NOT the 0x04 default)

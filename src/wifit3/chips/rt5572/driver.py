@@ -25,7 +25,7 @@ from .constants import (
     USB_PID_RT5572,
     USB_VID_RALINK,
 )
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 from .chan import (
     CHANNELS_5G_NON_DFS, default_power as _default_power, hop_channel,

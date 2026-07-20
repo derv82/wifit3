@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 # BB register banks that carry the 2.4 GHz RX path: OFDM/DIG (0x800), CCK (0xA00), path-A (0xC00).
 _ADDRS = ([a for a in range(0x800, 0x900, 4)]

@@ -35,7 +35,7 @@ sys.path.insert(0, str(_HERE))
 
 from driver_health import Health, diff  # noqa: E402
 
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 # radiotap main-namespace field (size, align) by present-bit index, up to the
 # antenna-signal field (bit 5) — all we need to locate RSSI + the FCS flag.

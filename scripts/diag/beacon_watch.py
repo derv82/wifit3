@@ -37,7 +37,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 _BAR_MAX = 40  # cap the bar so a busy second can't wrap the terminal
 

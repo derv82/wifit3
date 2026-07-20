@@ -10,7 +10,7 @@ import libusb_package, usb.core, usb.util
 from wifit3.chips.mt7921au.transport import MT7921AUTransport
 from wifit3.chips.mt7921au import mcu, rx
 from wifit3.chips.mt7921au.constants import EP_OUT_MCU
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 def summarize(frames):
     c = {}

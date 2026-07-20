@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.dig import _REG_IGI, _IGI_MASK  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.watchdog import _REG_CCK_PD, tick as wd_tick  # noqa: E402
 

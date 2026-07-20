@@ -86,7 +86,7 @@ from wifit3.chips.rtl8812au.tx import (
     pick_bulk_out_ep,
     write_bulk,
 )
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 
 def _parse_mac(s: str) -> bytes:

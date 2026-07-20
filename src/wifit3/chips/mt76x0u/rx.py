@@ -329,7 +329,7 @@ class RxDrainer:
     def _dispatch(self, buf: bytes) -> None:
         """Decode one RX packet → parse → frame callback (on the loop)."""
         # Defer the WlanFrameParser import to avoid a circular at module load.
-        from wifit3.wlan.packet import WlanFrameParser
+        from wifit3.dot11.parser import WlanFrameParser
 
         self.rx_count += 1
         if self.raw_callback is not None:

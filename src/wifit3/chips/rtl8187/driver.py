@@ -39,7 +39,7 @@ import usb.util
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError, BringUpPermissionsError
 
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 from .chan import config_channel as _config_channel
 from .constants import REG_CMD, CMD_RX_ENABLE, CMD_TX_ENABLE, USB_PID_RTL8187, USB_VID_REALTEK

@@ -12,7 +12,7 @@ from wifit3.engine.attacks.decloak import (
     build_candidates,
 )
 from wifit3.engine.models import AccessPoint
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 
 def test_build_candidates_empty_base_returns_empty():

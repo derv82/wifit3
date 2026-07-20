@@ -62,7 +62,7 @@ from .constants import (
     USB_PID_RT3572,
     USB_VID_RALINK,
 )
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 from .bbp import init_bbp, prepare_bbp
 from .chan import (

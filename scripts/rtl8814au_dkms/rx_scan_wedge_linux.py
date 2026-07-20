@@ -33,7 +33,7 @@ _spec = importlib.util.spec_from_file_location(
 _bl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_bl)
 
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 _DEVNULL = subprocess.DEVNULL
 _HOP5 = [157, 165, 149]      # non-DFS 5 GHz; end on 149 to match the userland repro's cross-from channel

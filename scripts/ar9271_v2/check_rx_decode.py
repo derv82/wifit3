@@ -21,7 +21,7 @@ sys.path.insert(0, str(REPO / "scripts" / "ar9271_v2"))
 
 import ar9271_pcap_replay as rp  # noqa: E402
 from wifit3.chips.ar9271_v2 import rx_decode  # noqa: E402
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 CAP_DIR = REPO / "usb_dumps_new2" / "captures_ath9k_htc_newddevice"
 

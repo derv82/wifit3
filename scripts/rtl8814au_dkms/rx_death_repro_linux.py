@@ -34,7 +34,7 @@ _spec = importlib.util.spec_from_file_location(
 _bl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_bl)
 
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 _DEVNULL = subprocess.DEVNULL
 

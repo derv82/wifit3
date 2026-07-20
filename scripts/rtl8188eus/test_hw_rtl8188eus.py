@@ -84,7 +84,7 @@ from wifit3.chips.rtl8188eus.tx import (
     pick_bulk_out_mgmt,
     send_mgmt_frame,
 )
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 from wifit3.chips.rtl8188eus.phy_tables import (
     AGC_TABLE_8188E,
     PHY_INIT_TABLE_8188E,

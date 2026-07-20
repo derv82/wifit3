@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from wifit3.chips.rtl8814au_dkms.constants import CHANNELS_5G_NON_DFS  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.rf import _rf_read  # noqa: E402
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 _HOP5 = list(CHANNELS_5G_NON_DFS)          # the scanner's 5 GHz set
 _LAST5 = 149                               # always cross from this channel, for comparable trials

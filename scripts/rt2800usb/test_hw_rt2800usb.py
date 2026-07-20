@@ -68,7 +68,7 @@ from wifit3.chips.rt2800usb.rx import (
     read_rx_burst,
     rxwi_size_for_silicon,
 )
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 from wifit3.chips.rt2800usb.transport import RT2800USBTransport
 
 

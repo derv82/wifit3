@@ -26,7 +26,7 @@ import usb.core
 from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
 
 if TYPE_CHECKING:
-    from wifit3.wlan.packet import Packet
+    from wifit3.dot11.packet import Packet
 
 
 async def run(args) -> int:

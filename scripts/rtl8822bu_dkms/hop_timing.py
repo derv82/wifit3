@@ -29,7 +29,7 @@ from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
 from wifit3.wlan.channels import scan_hop_order
 
 if TYPE_CHECKING:
-    from wifit3.wlan.packet import Packet
+    from wifit3.dot11.packet import Packet
 
 
 class CountingCtrl:

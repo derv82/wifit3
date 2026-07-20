@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Deque, Dict, List, Optional, Set
 from wifit3.engine.models import WepStats
 
 if TYPE_CHECKING:
-    from wifit3.wlan.packet import WepDataPacket
+    from wifit3.dot11.packet import WepDataPacket
 
 # Unique-IV count at which a 40-bit (5-byte) WEP key typically becomes
 # recoverable with PTW. Drives the Focus "ETA to Nk" line.

@@ -60,7 +60,7 @@ from wifit3.chips.rtw88_8814au.phy import (
 )
 from wifit3.chips.rtw88_8814au import rx as rx8814, tx as tx8814
 from wifit3.chips.rtw88_8814au.transport import RTL8814AUTransport
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 import dataclasses
 
 

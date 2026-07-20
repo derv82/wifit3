@@ -14,7 +14,7 @@ def test_dispatch_decodes_parses_and_fires_callback(monkeypatch):
     monkeypatch.setattr(rx, "decode_rx_packet",
                         lambda data: rxobj if data == b"BULK" else None)
     monkeypatch.setattr(
-        "wifit3.wlan.packet.WlanFrameParser.parse_80211_frame",
+        "wifit3.dot11.parser.WlanFrameParser.parse_80211_frame",
         staticmethod(lambda frame, rssi: {"type": "beacon", "rssi": rssi}),
     )
     got = []

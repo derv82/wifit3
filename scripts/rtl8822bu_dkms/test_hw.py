@@ -30,7 +30,7 @@ import usb.util
 
 from wifit3.chips.rtl8822bu_dkms import bringup, chan, chipid, dm_watchdog, mac, rx, sipi
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 USB_VID, USB_PID = 0x2357, 0x0138
 CHANNELS_2G = list(range(1, 14))

@@ -36,7 +36,7 @@ from wifit3.chips.rtl8822bu.mac import (
 from wifit3.chips.rtl8822bu.phy import EfuseDefaults, phy_set_param
 from wifit3.chips.rtl8822bu.rx import RX_PKT_DESC_SZ, parse_rx_pkt_desc, probe_endpoints, read_rx_burst
 from wifit3.chips.rtl8822bu.transport import RTL8822BUTransport
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 CH_2G = [1, 6, 11]
 CH_5G = [36, 149]

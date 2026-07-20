@@ -28,7 +28,7 @@ import usb.util  # noqa: E402
 
 from wifit3.chips.ar9271_v2 import constants as C  # noqa: E402
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 
 def _reset_to_cold() -> None:

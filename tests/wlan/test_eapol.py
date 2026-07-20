@@ -5,7 +5,7 @@ import struct
 import pytest
 
 from wifit3.engine.models import HandshakeMessage, Handshake
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 
 def _build_eapol_frame(

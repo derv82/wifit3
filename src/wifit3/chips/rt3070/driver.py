@@ -24,7 +24,7 @@ import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
 from . import bbp, chan, eeprom, firmware, mac, monitor, rfcsr, tx

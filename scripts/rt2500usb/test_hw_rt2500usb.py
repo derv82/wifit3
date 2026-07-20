@@ -100,7 +100,7 @@ from wifit3.chips.rt2500usb.rx import (
 )
 from wifit3.chips.rt2500usb.tx import inject as tx_inject
 from wifit3.chips.rt2500usb.transport import RT2500USBTransport, get_field16
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 # After apply_monitor_filter: accept bits must be CLEAR (we surface these
 # frames); error bits must be SET (drop CRC + PLCP + version — the RX loop

@@ -1,7 +1,8 @@
 import struct
 
 
-from wifit3.wlan.packet import WlanFrameParser, WepDataPacket, BeaconPacket
+from wifit3.dot11.parser import WlanFrameParser
+from wifit3.dot11.packet import WepDataPacket, BeaconPacket
 
 
 # ---- Beacon builder for RSN-IE tests ---------------------------------------

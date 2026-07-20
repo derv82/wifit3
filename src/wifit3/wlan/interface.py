@@ -10,9 +10,9 @@ from wifit3.engine.models import AccessPoint, Client, Handshake, HandshakeMessag
 from wifit3.chips.driver import FakeMacSupport
 from wifit3.errors import is_device_gone
 from wifit3.wlan.channels import scan_hop_order
-from wifit3.wlan.packet import (
-    WlanFrameParser, Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
-    is_group_mac,
+from wifit3.dot11.parser import WlanFrameParser
+from wifit3.dot11.packet import (
+    Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket, is_group_mac,
 )
 from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.wep_store import WepCaptureStore

@@ -34,7 +34,7 @@ from wifit3.chips.rtl88xxau_base import sipi
 from wifit3.chips.rtl88xxau_base.transport import Rtl88xxauTransport
 from wifit3.chips.rtl8812au_dkms import bb, chan, dig, efuse, firmware, mac, monitor, rf, rx, txpower
 from wifit3.chips.rtl8812au_dkms.constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 DEFAULT_CANARY = "aa:bb:cc:dd:ee:01"   # documented A/B canary (NETGEAR2G)
 

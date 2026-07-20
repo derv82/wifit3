@@ -41,7 +41,7 @@ import usb.core
 from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
 
 if TYPE_CHECKING:
-    from wifit3.wlan.packet import Packet
+    from wifit3.dot11.packet import Packet
 
 
 def _str_to_mac(mac_str: str) -> bytes:

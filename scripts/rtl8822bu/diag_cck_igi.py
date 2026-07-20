@@ -31,7 +31,7 @@ from wifit3.chips.rtl8822bu.mac import cut_mask_from_sys_cfg1, is_chip_warm, mac
 from wifit3.chips.rtl8822bu.phy import EfuseDefaults, phy_set_param
 from wifit3.chips.rtl8822bu.rx import RX_PKT_DESC_SZ, parse_rx_pkt_desc, probe_endpoints, read_rx_burst
 from wifit3.chips.rtl8822bu.transport import RTL8822BUTransport
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 IGI_LIST = [0x1C, 0x20, 0x24, 0x2A, 0x30, 0x3A, 0x4A, 0x60, 0x7F]
 DWELL_S = 2.5

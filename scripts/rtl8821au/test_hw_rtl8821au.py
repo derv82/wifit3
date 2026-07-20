@@ -68,7 +68,7 @@ from wifit3.chips.rtl8821au.rx import (
     read_rx_burst,
 )
 from wifit3.chips.rtl8821au.transport import RTL8821AUTransport
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 
 def setup_logging(debug: bool) -> None:

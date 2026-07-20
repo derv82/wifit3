@@ -49,7 +49,7 @@ import usb.core
 from wifit3.chips.mt7921au.driver import MT7921AUDriver
 
 if TYPE_CHECKING:
-    from wifit3.wlan.packet import Packet
+    from wifit3.dot11.packet import Packet
 
 
 def _str_to_mac(mac_str: str) -> bytes:

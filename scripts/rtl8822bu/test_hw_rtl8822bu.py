@@ -63,7 +63,7 @@ from wifit3.chips.rtl8822bu.tx import (
     pick_bulk_out_ep,
     write_bulk,
 )
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 
 def setup_logging(debug: bool) -> None:

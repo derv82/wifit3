@@ -44,7 +44,7 @@ from wifit3.chips.rtl8814au_dkms.mac import hal_init_turn_on, mac_init_misc, phy
 from wifit3.chips.rtl8814au_dkms.monitor import enable_rx_bar, enter_monitor, set_sta_opmode  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.rf import phy_rf_config  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.rx import RXDESC_SIZE, decode_rssi, iter_frames, query_rx_desc  # noqa: E402
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.transport import Rtl8814auTransport  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.watchdog import WATCHDOG_PERIOD_S, WatchdogState  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.watchdog import tick as watchdog_tick  # noqa: E402

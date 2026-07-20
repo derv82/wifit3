@@ -44,7 +44,7 @@ from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
 from wifit3.chips.rtl8821au_dkms.transport import RTL8821AUDkmsTransport
 
 if TYPE_CHECKING:
-    from wifit3.wlan.packet import Packet
+    from wifit3.dot11.packet import Packet
 
 # A/B canary — strong nearby AP whose beacon rate is the DIG-health indicator. This
 # BSSID is the deliberately-committed fixed canary (on the git-history PII-scrub list);

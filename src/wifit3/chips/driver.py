@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, List, Optional, Proto
 import usb.core
 
 if TYPE_CHECKING:
-    from wifit3.wlan.packet import Packet
+    from wifit3.dot11.packet import Packet
 
 
 class ProgressCallback(Protocol):

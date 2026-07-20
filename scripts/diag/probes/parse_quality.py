@@ -39,7 +39,7 @@ from .base import Probe
 
 # sys.path is set up by sweep.py before this module is loaded
 # (sweep prepends src/ so wifit3.* is importable).
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 
 def _bssid_sane(bssid: str | None) -> bool:

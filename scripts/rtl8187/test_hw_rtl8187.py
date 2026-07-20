@@ -73,7 +73,7 @@ from wifit3.chips.rtl8187.rx import (
     read_rx_burst,
 )
 from wifit3.chips.rtl8187.transport import RTL8187Transport
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 
 def setup_logging(debug: bool) -> None:

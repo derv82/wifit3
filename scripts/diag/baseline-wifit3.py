@@ -22,7 +22,7 @@ sys.path.insert(0, str(_HERE))
 from driver_health import Health  # noqa: E402
 
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.wlan.packet import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 
 def _chip(iface) -> str:

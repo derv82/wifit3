@@ -711,7 +711,8 @@ class MT76x0UDriver(Driver):
         """
         import time as _time
 
-        from wifit3.wlan.packet import WlanFrameParser, BeaconPacket
+        from wifit3.dot11.parser import WlanFrameParser
+        from wifit3.dot11.packet import BeaconPacket
 
         from .constants import (
             MT_MAC_SYS_CTRL,
@@ -843,7 +844,7 @@ class MT76x0UDriver(Driver):
         """
         import time as _time
 
-        from wifit3.wlan.packet import WlanFrameParser
+        from wifit3.dot11.parser import WlanFrameParser
 
         from .rx import decode_rx_packet
 

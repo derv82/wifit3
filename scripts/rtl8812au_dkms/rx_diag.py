@@ -32,7 +32,7 @@ from wifit3.chips.rtl88xxau_base import registers as R
 from wifit3.chips.rtl88xxau_base.transport import Rtl88xxauTransport
 from wifit3.chips.rtl8812au_dkms import bb, chan, dig, efuse, firmware, iqk, mac, monitor, rf, rx, txpower
 from wifit3.chips.rtl8812au_dkms.constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
-from wifit3.wlan.packet import WlanFrameParser
+from wifit3.dot11.parser import WlanFrameParser
 
 REG_RCR = 0x0608
 RCR_PERMISSIVE = 0x9000382F | (1 << 8) | (1 << 9)   # monitor RCR + ACRC32 + AICV
