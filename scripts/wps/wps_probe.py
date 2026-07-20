@@ -3,7 +3,7 @@
 Everything below the radio is offline-verified (wsc_crypto / messages /
 registrar, with a fake-enrollee proving both outcome paths). The only unknown
 left is whether a REAL AP's WSC stack accepts our M2/M4/M6 and walks the
-exchange — which you can't answer offline. This probe associates to one AP and
+exchange, which you can't answer offline. This probe associates to one AP and
 runs PIN attempt(s) end to end, logging the headline lines and dumping every
 RX frame to a .pcap for analysis.
 
@@ -92,7 +92,7 @@ def load_default_target() -> dict:
 
 
 def derive_wrong_pin(pin: str) -> str:
-    """Keep the first half correct, corrupt the second half — so the attempt
+    """Keep the first half correct, corrupt the second half, so the attempt
     reaches M5 (first half accepted) then NACKs at M6 (second half wrong)."""
     if len(pin) != 8 or not pin.isdigit():
         return "00000000" if pin != "00000000" else "11111111"
@@ -117,7 +117,7 @@ async def discover_iface(debug: bool, card: str = ""):
         iface = ifaces[0]
     info(f"Using {iface.name}: {iface.description}")
     if not await iface.connect(progress_cb=lambda p, m: None):
-        fail("Driver connect() failed — replug and retry.")
+        fail("Driver connect() failed. Replug and retry.")
     return mgr, iface
 
 
@@ -137,7 +137,7 @@ async def find_ap(iface, channel: int, bssid: str | None, ssid: str | None, scan
                      f"wps={'locked' if ap.wps_locked else ap.wps}")
                 return ap
         await asyncio.sleep(0.5)
-    info(f"[warn] AP not seen in scan ({scan_s:.0f}s) — proceeding with the named "
+    info(f"[warn] AP not seen in scan ({scan_s:.0f}s), proceeding with the named "
          "BSSID/SSID/channel anyway (beacons may just be missed).")
     return None
 
@@ -172,9 +172,9 @@ async def run_one_attempt(iface, bssid: str, ssid: str, channel: int, our_mac: b
     elif r is PinResult.SECOND_HALF_WRONG:
         ok(f"WPS PIN {pin} incorrect  [first half OK, second half wrong] ({outcome.detail})")
     elif r is PinResult.TIMEOUT:
-        info(f"TIMEOUT — no usable EAP/WSC response ({outcome.detail}). See pcap.")
+        info(f"TIMEOUT: no usable EAP/WSC response ({outcome.detail}). See pcap.")
     else:
-        info(f"PROTO_ERROR — AP rejected setup before answering the PIN ({outcome.detail}); "
+        info(f"PROTO_ERROR: AP rejected setup before answering the PIN ({outcome.detail}); "
              "possibly WPS-locked. See pcap.")
     info(f"({len(capture)} frames captured so far)")
 
@@ -226,8 +226,8 @@ async def main_async(args) -> int:
             attempts = [(args.pin, "as given")]
         else:
             attempts = [
-                (derive_wrong_pin(known_pin), "incorrect — second half wrong"),
-                (known_pin, "CORRECT — should reveal PSK"),
+                (derive_wrong_pin(known_pin), "incorrect: second half wrong"),
+                (known_pin, "CORRECT: should reveal PSK"),
             ]
         for i, (pin, expect) in enumerate(attempts):
             await run_one_attempt(iface, bssid, ssid, channel, our_mac, pin, expect, capture)

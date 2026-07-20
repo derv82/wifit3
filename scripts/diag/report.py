@@ -1,4 +1,4 @@
-"""Report renderers — markdown + CSV — walk each probe asking for
+"""Report renderers (markdown + CSV) walk each probe asking for
 its own verdict/report/csv lines, in registry order.
 
 Each probe is responsible for its own section's structure. The renderer
@@ -39,7 +39,7 @@ def write_markdown(
         lines.append(
             f"- **Duration multiplier**: {args.duration_multiplier}×"
         )
-    # Active-probe parameter summary — keep this stable for the
+    # Active-probe parameter summary: keep this stable for the
     # byte-for-byte compat target (baseline + longrun only, mult=1).
     baseline_part = (
         f"**Baseline**: {args.dwell_sec}s/ch"
@@ -57,14 +57,14 @@ def write_markdown(
 
     if getattr(args, "interrupted", False):
         lines.append(
-            "> **NOTE — INTERRUPTED:** this run was cut short by Ctrl+C. "
+            "> **NOTE (INTERRUPTED):** this run was cut short by Ctrl+C. "
             "Every section below reflects partial state; the long-run "
             "snapshot table is whatever survived up to the interrupt."
         )
         lines.append("")
     elif getattr(args, "crashed_with", None):
         lines.append(
-            f"> **NOTE — CRASHED:** this run aborted before completing "
+            f"> **NOTE (CRASHED):** this run aborted before completing "
             f"every probe. Cause: `{args.crashed_with}`. The most common "
             f"trigger is a USB disconnect mid-run; the partial state "
             f"each probe collected before the crash is preserved below."

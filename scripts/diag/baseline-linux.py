@@ -1,18 +1,18 @@
 """Linux/Kali side of the card health check.
 
 Captures (or reads) a fixed-channel monitor pcap per channel, parses it with
-OUR parser, and feeds the shared aggregator — so it groups identically to the
+OUR parser, and feeds the shared aggregator, so it groups identically to the
 wifit3 side. No tshark: we read the pcap by hand, strip the radiotap header
 (RSSI lives there), honor the FCS flag, and hand the 802.11 frame to
 ``WlanFrameParser`` (the radiotap parse is byte-validated against tshark on a
 real tcpdump capture).
 
-Capture mode (Kali, needs root + a monitor interface — ``airmon-ng start <dev>``)::
+Capture mode (Kali, needs root + a monitor interface: ``airmon-ng start <dev>``)::
 
     sudo python baseline-linux.py --capture --iface wlan0mon --chip rt5370 \
         --channels 1,6,11 --secs 15
 
-Parse mode (read pcaps you already have — one per channel)::
+Parse mode (read pcaps you already have, one per channel)::
 
     python baseline-linux.py --chip rt5370 --pcap 1=cap-ch1.pcap 6=cap-ch6.pcap
 
@@ -38,7 +38,7 @@ from driver_health import Health, diff  # noqa: E402
 from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 # radiotap main-namespace field (size, align) by present-bit index, up to the
-# antenna-signal field (bit 5) — all we need to locate RSSI + the FCS flag.
+# antenna-signal field (bit 5), all we need to locate RSSI + the FCS flag.
 _RT = {0: (8, 8), 1: (1, 1), 2: (1, 1), 3: (4, 2), 4: (2, 2), 5: (1, 1),
        6: (1, 1), 7: (2, 2), 8: (2, 2), 9: (2, 2), 10: (1, 1), 11: (1, 1),
        12: (1, 1), 13: (1, 1), 14: (2, 2)}
@@ -123,7 +123,7 @@ def parse_monitor_iface(iw_text: str, base_iface: str) -> str | None:
 
 def setup_monitor(base_iface: str) -> str:
     """Bring ``base_iface`` up in monitor mode with the SAME airmon-ng dance the
-    capture pipeline uses [SRC] scripts/capture.py:634,679 — so the kernel driver
+    capture pipeline uses [SRC] scripts/capture.py:634,679, so the kernel driver
     is in the identical RX config the cold-boot capture recorded and wifit3
     reproduces. Without ``check kill`` NetworkManager/wpa_supplicant keep scanning
     and pollute the kernel's RX, biasing the A/B. Returns the monitor iface name."""
@@ -149,17 +149,17 @@ def teardown_monitor(mon_iface: str) -> None:
 
 def capture(iface: str, channel: int, secs: int) -> str | None:
     """iw set channel + tcpdump for ``secs`` into a temp pcap; return its path, or
-    None if the channel can't be tuned (e.g. regulatory-disabled — 2.4 ch12-13 in US).
+    None if the channel can't be tuned (e.g. regulatory-disabled, 2.4 ch12-13 in US).
     ``iface`` is the airmon monitor interface (``sudo`` to match the capture pipeline)."""
     if subprocess.run(["sudo", "iw", "dev", iface, "set", "channel", str(channel)]).returncode != 0:
-        print(f"  CH{channel:>3}: set channel failed (regulatory-disabled?) — skipping", file=sys.stderr)
+        print(f"  CH{channel:>3}: set channel failed (regulatory-disabled?), skipping", file=sys.stderr)
         return None
     # Hand tcpdump a FRESH (not-yet-created) path in a temp dir. Two Debian/Kali tcpdump
     # quirks bite otherwise: (1) it drops privileges to the unprivileged `tcpdump` user, so
     # -Z root keeps it as root to write the savefile; (2) even as root it refuses to write a
     # PRE-EXISTING file it doesn't own, so NamedTemporaryFile (which pre-creates a kali-owned
     # 0600 file) fails with "Permission denied". A fresh path lets tcpdump create it itself
-    # (root:root 0644, world-readable — so the unprivileged parse below can still read it).
+    # (root:root 0644, world-readable, so the unprivileged parse below can still read it).
     out = str(Path(tempfile.mkdtemp()) / f"ch{channel}.pcap")
     print(f"  CH{channel:>3}: capturing {secs}s...", file=sys.stderr)
     subprocess.run(
@@ -177,7 +177,7 @@ def main() -> int:
                    help="BASE interface (capture mode); airmon-ng brings it to monitor.")
     p.add_argument("--no-airmon", action="store_true",
                    help="Skip the airmon-ng dance; use --iface as an existing monitor iface "
-                        "(NOT recommended — the A/B must match how the capture started the driver).")
+                        "(NOT recommended: the A/B must match how the capture started the driver).")
     p.add_argument("--channels", default="1,6,11", help="Channels (capture mode).")
     p.add_argument("--secs", type=int, default=15, help="Seconds per channel (capture mode).")
     p.add_argument("--pcap", nargs="+", default=[], metavar="CH=FILE",

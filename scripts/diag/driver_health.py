@@ -1,12 +1,12 @@
 """Shared core for the card health check.
 
-Both collectors feed the SAME call — ``feed(timestamp, parsed, rssi, channel)``
-— so a beacon stream from our driver and one from a Linux pcap get grouped by
+Both collectors feed the SAME call (``feed(timestamp, parsed, rssi, channel)``),
+so a beacon stream from our driver and one from a Linux pcap get grouped by
 identical code. Any difference in the rollup is therefore the driver or the RF,
 never the maths.
 
 - ``Health`` accumulates a stream into a per-channel / per-BSSID rollup and dumps
-  it to JSON (aggregated only — never raw frames, so it stays small + readable).
+  it to JSON (aggregated only, never raw frames, so it stays small + readable).
 - ``diff`` reads two rollups (wifit3 vs linux) and prints a plain-sentence
   comparison. It is a pure function of the JSONs, so it is recomputed on demand
   and never stored.
@@ -40,7 +40,7 @@ def band(channel: int) -> str:
 
 def _impossible(tuned: int, adv: int | None) -> bool:
     """True if a beacon advertising channel ``adv`` cannot physically have been
-    heard while tuned to ``channel`` — a cross-band sighting, or a 2.4 GHz
+    heard while tuned to ``channel``: a cross-band sighting, or a 2.4 GHz
     channel more than 4 apart (non-overlapping). Adjacent-channel bleed in 2.4
     GHz is real RF and is NOT flagged."""
     if adv is None:
@@ -107,7 +107,7 @@ class Health:
 def _archive(path: Path) -> None:
     """Copy an existing rollup into ``history/`` before it is overwritten, stamped with the
     file's own mtime (i.e. when THAT run was captured, not now). The working files keep their
-    fixed names — the diff stays fresh + recomputable — while every prior run is preserved.
+    fixed names (the diff stays fresh + recomputable) while every prior run is preserved.
     ``history/`` is gitignored (rollups carry live BSSIDs, which never go to git)."""
     if not path.exists():
         return
@@ -130,7 +130,7 @@ def _bssids_by_band(rollup: dict, b: str) -> set[str]:
 
 
 def _best_rate(rollup: dict) -> tuple[str | None, float]:
-    """The single most-heard BSSID and its best per-second rate — the reference AP."""
+    """The single most-heard BSSID and its best per-second rate: the reference AP."""
     best_b, best_n, best_rate = None, -1, 0.0
     for data in rollup["channels"].values():
         for bssid, ap in data["aps"].items():
@@ -181,7 +181,7 @@ def _best_channel_persec(rollup: dict, bssid: str) -> tuple[dict, int]:
 
 
 def _rate_matched(w: dict, lin: dict, bssid: str) -> tuple[float, float, int]:
-    """Beacon rate for ``bssid`` in each rollup over a COMMON window — the min of the
+    """Beacon rate for ``bssid`` in each rollup over a COMMON window: the min of the
     two observed spans. Removes the dwell/span asymmetry (baseline-wifit3 dwells ~16 s
     vs baseline-linux ~14 s, and rate = beacons/span) that otherwise reads as a
     systematic ~12% penalty on wifit3 on every AP. Returns (wrate, lrate, window)."""

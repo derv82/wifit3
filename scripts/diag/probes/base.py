@@ -2,15 +2,15 @@
 
 The sweep harness orchestrates probes in three phases:
 
-1. **attach** — every enabled probe gets a chance to register rx
+1. **attach**: every enabled probe gets a chance to register rx
    callbacks or stash setup state. Runs before any active probe does
    work. This is what passive probes (e.g. parse_quality) hang their
    measurement on.
 
-2. **run** — active probes do their work (channel dwell, hopping,
+2. **run**: active probes do their work (channel dwell, hopping,
    etc.) and return a result. Passive probes return ``None`` here.
 
-3. **finalize** — passive probes return their accumulated stats.
+3. **finalize**: passive probes return their accumulated stats.
    Active probes return whatever ``run`` already gave them.
 
 Probes that fit one mold leave the other methods as no-ops; both kinds
@@ -57,7 +57,7 @@ def snapshot_active(iface, since: float):
 
 def median_int(values) -> int:
     """statistics.median on an iterable of numbers, cast to int. Empty
-    iterables return 0 — callers should guard if that's wrong for them."""
+    iterables return 0; callers should guard if that's wrong for them."""
     values = list(values)
     if not values:
         return 0
@@ -68,7 +68,7 @@ def median_int(values) -> int:
 class Probe(Protocol):
     """Diagnostic probe contract.
 
-    ``name`` is the CLI slug — used to build ``--skip-<name>`` and to
+    ``name`` is the CLI slug, used to build ``--skip-<name>`` and to
     label the section in the rendered report. Keep it short, lowercase,
     no spaces.
     """
@@ -106,7 +106,7 @@ class Probe(Protocol):
     def finalize(self) -> Any:
         """Return the final result after every active probe has
         completed. Active probes typically leave this returning
-        ``None`` — the renderer falls back to ``run``'s return value."""
+        ``None``. The renderer falls back to ``run``'s return value."""
         ...
 
     def verdict_lines(self, result: Any, args: argparse.Namespace) -> list[str]:

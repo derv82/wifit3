@@ -1,26 +1,26 @@
-"""Beacon-rate watch — the quick "did my change help or hurt?" RX check.
+"""Beacon-rate watch: the quick "did my change help or hurt?" RX check.
 
 Two modes:
 
   * **Live** (default): bring up the detected card, sit on one channel for a
-    fixed window, and tally beacons in 1-second buckets — measures *our*
+    fixed window, and tally beacons in 1-second buckets. Measures *our*
     userland driver.
   * **Offline** (``--pcap FILE``): read an over-the-air capture (e.g. the
     fixed-channel airodump pcap that ``capture.py`` drops on the Kali box)
-    and build the same histogram via tshark — measures whatever driver made
+    and build the same histogram via tshark. Measures whatever driver made
     the pcap. Live and offline render identically, so a kernel-driver
     baseline and our driver compare directly.
 
 Either way the headline is **one BSSID's** per-second histogram: whichever
 AP was heard best (most beacons), unless you pin one with ``--bssid``. That
-answers the portable question — "what's the highest beacons/sec this card
-can hear here?" — instead of an inflated all-APs sum.
+answers the portable question ("what's the highest beacons/sec this card
+can hear here?") instead of an inflated all-APs sum.
 
     uv run python scripts/diag/beacon_watch.py
     uv run python scripts/diag/beacon_watch.py --bssid 11:22:33:44:55:66
     uv run python scripts/diag/beacon_watch.py --pcap captures_x/capture-1_logs/airodump-fixed-ch1.cap
 
-Writes nothing to disk. BSSIDs are runtime args only — never hardcode one.
+Writes nothing to disk. BSSIDs are runtime args only. Never hardcode one.
 """
 from __future__ import annotations
 
@@ -63,8 +63,8 @@ class BeaconCollector:
 def extract_events_from_pcap(pcap_path: str) -> list[tuple[float, str]]:
     """tshark -> [(time_relative, bssid)] for every beacon in the pcap.
 
-    ``frame.time_relative`` is seconds from the capture's first frame — i.e.
-    from when the card started sitting on the channel — so a slow RX ramp
+    ``frame.time_relative`` is seconds from the capture's first frame (i.e.
+    from when the card started sitting on the channel), so a slow RX ramp
     shows up as leading low/empty buckets, exactly like live mode.
     """
     cmd = [
@@ -75,7 +75,7 @@ def extract_events_from_pcap(pcap_path: str) -> list[tuple[float, str]]:
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
     except FileNotFoundError:
-        print("[-] tshark not found — install wireshark/tshark.", file=sys.stderr)
+        print("[-] tshark not found. Install wireshark/tshark.", file=sys.stderr)
         raise SystemExit(1)
     except subprocess.CalledProcessError as e:
         print(f"[-] tshark failed: {e.stderr.strip()}", file=sys.stderr)
@@ -165,7 +165,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Report this BSSID instead of the best-heard one.")
     p.add_argument("--no-dig", action="store_true",
                    help="(live mode) Disable the driver's DIG/AGC watchdog before connect "
-                        "(no-op for drivers without one) — isolates its RX effect.")
+                        "(no-op for drivers without one), isolates its RX effect.")
     p.add_argument("--debug", action="store_true", help="DEBUG logging (live mode).")
     return p
 
@@ -185,7 +185,7 @@ async def run_live(args) -> int:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
     if len(ifaces) > 1:
-        print(f"[!] {len(ifaces)} interfaces — using {ifaces[0].name}. "
+        print(f"[!] {len(ifaces)} interfaces, using {ifaces[0].name}. "
               "Unplug others to test in isolation.", file=sys.stderr)
     iface = ifaces[0]
 
@@ -203,7 +203,7 @@ async def run_live(args) -> int:
     print(f"[*] Bringing up {iface.name} ({iface.description})...", file=sys.stderr)
     try:
         ok = await iface.connect(progress_cb=_progress)
-    except Exception as e:  # noqa: BLE001 — bring-up can raise on USB error
+    except Exception as e:  # noqa: BLE001, bring-up can raise on USB error
         print(f"[-] Bring-up failed: {e}", file=sys.stderr)
         await mgr.close_all()
         return 1

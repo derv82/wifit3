@@ -1,10 +1,10 @@
-"""Beacon extraction from a usbmon RE capture — the cross-chip RX-health check.
+"""Beacon extraction from a usbmon RE capture: the cross-chip RX-health check.
 
 `capture.py`'s `capture-N.pcap` is a usbmon dump of the *kernel* driver. During
 its fixed-channel-1 monitor segment, every received 802.11 frame crosses the USB
 bus as bulk-IN payload, wrapped in that chip's RX descriptor. The 802.11 header
 survives verbatim inside the wrapping, so we recover beacons by scanning the raw
-`usb.capdata` byte stream for the beacon signature — **no per-chip descriptor
+`usb.capdata` byte stream for the beacon signature: **no per-chip descriptor
 decode**, so this works on any chipset's capture. This is the *only* way to get a
 true per-second beacon rate out of these captures: airodump's own `.cap`
 deduplicates beacons to one-per-AP, and `capture-N.pcap` is USB, not over-air.
@@ -16,8 +16,8 @@ deduplicates beacons to one-per-AP, and `capture-N.pcap` is USB, not over-air.
     #            the descriptor-noise singletons; only needed without --bssid)
     uv run python scripts/diag/beacon_watch_usbcap.py CAP.pcap
 
-The signature is `8000 <dur> ffffffffffff <SA> <BSSID>` — beacon frame-control,
-broadcast DA, transmitter, BSSID — matched in lowercase no-colon hex. Pinning a
+The signature is `8000 <dur> ffffffffffff <SA> <BSSID>` (beacon frame-control,
+broadcast DA, transmitter, BSSID), matched in lowercase no-colon hex. Pinning a
 `--bssid` makes the BSSID match exact (false-positive odds ~2^-48), so the floor
 is bypassed entirely. Renders identically to `beacon_watch.py` (shared
 `summarize`) so a usbmon baseline and our live driver compare directly. Writes
@@ -37,7 +37,7 @@ sys.path.insert(0, str(_HERE))
 
 from beacon_watch import summarize  # noqa: E402  (shared histogram renderer)
 
-# One beacon per 102.4 ms beacon interval (100 TU) — the single-AP wire ceiling.
+# One beacon per 102.4 ms beacon interval (100 TU), the single-AP wire ceiling.
 BEACON_CEILING = 9.77
 
 # 8000 = beacon frame-control; <dur dur>; ffffffffffff = broadcast DA (Addr1);
@@ -64,7 +64,7 @@ def _tshark_bulk_in(pcap: str):
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
     except FileNotFoundError:
-        print("[-] tshark not found — install wireshark/tshark.", file=sys.stderr)
+        print("[-] tshark not found. Install wireshark/tshark.", file=sys.stderr)
         raise SystemExit(1)
     except subprocess.CalledProcessError as e:
         print(f"[-] tshark failed: {e.stderr.strip()}", file=sys.stderr)
@@ -149,7 +149,7 @@ def main() -> int:
     )
     p.add_argument("pcap", help="usbmon capture (capture-N.pcap)")
     p.add_argument("--bssid", default=None,
-                   help="Pin one BSSID (primary use). Exact match — no frequency floor.")
+                   help="Pin one BSSID (primary use). Exact match, no frequency floor.")
     p.add_argument("--endpoint", default=None,
                    help="Bulk-IN endpoint (e.g. 0x81). Default: auto-detect busiest.")
     p.add_argument("--min-beacons", type=int, default=20,
@@ -163,7 +163,7 @@ def main() -> int:
     events, ep_hits, ep = extract_events(args.pcap, endpoint=args.endpoint)
     if not events:
         print("No beacon signatures found in any bulk-IN transfer.")
-        print(f"  (endpoints with hits: {ep_hits or 'none — wrong pcap, or RX not captured'})")
+        print(f"  (endpoints with hits: {ep_hits or 'none: wrong pcap, or RX not captured'})")
         return 1
     print(f"[*] bulk-IN endpoint {ep}  (hits per endpoint: {ep_hits})", file=sys.stderr)
 
@@ -173,10 +173,10 @@ def main() -> int:
         events = [(t, b) for t, b in events if lo <= t <= hi]
         print(f"[*] clipped to FIXED-CH1 window ({hi - lo:.0f}s on ch1)", file=sys.stderr)
         if not events:
-            print("No beacons inside the FIXED-CH1 window — try --full.")
+            print("No beacons inside the FIXED-CH1 window. Try --full.")
             return 1
     elif not args.full:
-        print("[*] no _logs/main.log FIXED-CH1 window — scanning whole capture "
+        print("[*] no _logs/main.log FIXED-CH1 window, scanning whole capture "
               "(reception % diluted by bring-up/idle; use --full to silence).",
               file=sys.stderr)
 

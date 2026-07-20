@@ -7,7 +7,7 @@ Hops normally for M minutes, snapshots once per second. Bucketed into
 
 Two known biases this probe defuses:
 
-1. **Partial teardown bucket** — if the run stops mid-bucket (death
+1. **Partial teardown bucket**: if the run stops mid-bucket (death
    detect or user Ctrl-C), the last bucket has fewer snapshots than
    the rest. The first-3-vs-last-3 trend ratio is sensitive to that
    small-sample variance, so we exclude buckets that didn't see at
@@ -15,7 +15,7 @@ Two known biases this probe defuses:
    The full bucket table is still rendered (with a marker), so the
    user can see what was happening at teardown.
 
-2. **Trend on too-short runs** — the original code required at least
+2. **Trend on too-short runs**: the original code required at least
    6 buckets. We keep that gate but compute it on the *trend-eligible*
    subset (after partial-bucket exclusion).
 """
@@ -58,7 +58,7 @@ class LongRunProbe(Probe):
         return not args.skip_longrun
 
     def apply_multiplier(self, args: argparse.Namespace, mult: float) -> None:
-        # Only the wall-clock duration scales — bucket / hop-interval /
+        # Only the wall-clock duration scales; bucket / hop-interval /
         # death-timeout are about *resolution*, not duration.
         args.longrun_min = args.longrun_min * mult
 
@@ -104,7 +104,7 @@ class LongRunProbe(Probe):
                 try:
                     await asyncio.sleep(1.0)
                 except (KeyboardInterrupt, asyncio.CancelledError):
-                    # Ctrl+C — fall through to teardown + render. Every
+                    # Ctrl+C: fall through to teardown + render. Every
                     # snapshot already in the list is preserved.
                     interrupted = True
                     break
@@ -149,7 +149,7 @@ class LongRunProbe(Probe):
                     )
                     break
         finally:
-            # Teardown must never raise — we want the bucketize +
+            # Teardown must never raise: we want the bucketize +
             # return below to run unconditionally. Common failure
             # modes: second Ctrl+C, USB pipe error if the device
             # already disconnected.
@@ -183,7 +183,7 @@ class LongRunProbe(Probe):
         lines: list[str] = []
         if result.get("interrupted"):
             lines.append(
-                "- INFO  Long-run cut short by Ctrl+C — trend reflects "
+                "- INFO  Long-run cut short by Ctrl+C: trend reflects "
                 "only the buckets that completed before the interrupt."
             )
         if result["death_at_sec"] is not None:

@@ -1,4 +1,4 @@
-"""Diagnostic sweep — thin CLI over the probe registry.
+"""Diagnostic sweep: thin CLI over the probe registry.
 
 Discovers a connected card, brings it up, runs every enabled probe in
 ``probes.ALL_PROBES`` order, and writes a Markdown report + sibling
@@ -13,7 +13,7 @@ Run::
 
 The probe registry (``probes/__init__.py``) is the source of truth for
 what runs. Each probe owns its own CLI flags, verdict/report rendering,
-and CSV section — sweep.py just orchestrates.
+and CSV section; sweep.py just orchestrates.
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def _chipset_slug(iface) -> str:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Wifit3 diagnostic sweep — runs every enabled probe in "
+            "Wifit3 diagnostic sweep: runs every enabled probe in "
             "probes.ALL_PROBES against the first connected card and "
             "writes a Markdown report + CSV."
         ),
@@ -130,7 +130,7 @@ async def main() -> int:
         return 1
     if len(ifaces) > 1:
         print(
-            f"[!] Found {len(ifaces)} interfaces — using {ifaces[0].name}. "
+            f"[!] Found {len(ifaces)} interfaces, using {ifaces[0].name}. "
             "Unplug others to test in isolation.",
             file=sys.stderr,
         )
@@ -155,17 +155,17 @@ async def main() -> int:
 
     enabled = [p for p in ALL_PROBES if p.is_enabled(args)]
 
-    # Attach phase — passive probes wire up their rx callbacks here
+    # Attach phase: passive probes wire up their rx callbacks here
     # so they observe every frame the active probes generate.
     for probe in enabled:
         probe.attach(iface)
 
-    # Run phase — active probes do their work; passive ones return
+    # Run phase: active probes do their work; passive ones return
     # ``None`` and rely on finalize() to surface stats. We catch
     # everything (Ctrl+C, CancelledError, AND any exception) so the
     # report is still rendered with whatever partial state survived.
-    # USB disconnects mid-run are the common non-Ctrl+C failure mode
-    # — losing the report on a 10-min run that crashed at minute 8
+    # USB disconnects mid-run are the common non-Ctrl+C failure mode:
+    # losing the report on a 10-min run that crashed at minute 8
     # is the exact pain point we're avoiding.
     probe_results: list[tuple] = []
     args.interrupted = False
@@ -179,7 +179,7 @@ async def main() -> int:
                 probe_results.append((probe, None))
                 break
             except Exception as e:
-                # USB disconnect, driver crash, etc. — preserve any
+                # USB disconnect, driver crash, etc. Preserve any
                 # partial state the probe stashed before raising,
                 # surface the cause in the report header.
                 args.crashed_with = f"{probe.name}: {type(e).__name__}: {e}"
@@ -206,11 +206,11 @@ async def main() -> int:
     except Exception as e:
         print(f"[!] mgr.close_all() raised: {e}", file=sys.stderr)
 
-    # Everything below this point runs unconditionally — the whole
+    # Everything below this point runs unconditionally: the whole
     # point of the fix is that Ctrl+C / USB disconnect / driver
     # crash don't lose the report.
 
-    # Finalize phase — passive probes' accumulated stats land here.
+    # Finalize phase: passive probes' accumulated stats land here.
     # Active probes return ``None`` from finalize, so the run-phase
     # result is kept.
     finalized: list[tuple] = []
@@ -245,10 +245,10 @@ async def main() -> int:
         return 1
 
     if args.interrupted:
-        print("\n[!] Interrupted — partial report below.", file=sys.stderr)
+        print("\n[!] Interrupted: partial report below.", file=sys.stderr)
     elif args.crashed_with:
         print(
-            f"\n[!] Crashed ({args.crashed_with}) — partial report below.",
+            f"\n[!] Crashed ({args.crashed_with}): partial report below.",
             file=sys.stderr,
         )
     print(f"[+] Report: {report_path}", file=sys.stderr)

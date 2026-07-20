@@ -2,7 +2,7 @@
 
 Driver-agnostic probes that drive `WlanInterface` and dump a Markdown
 report + CSV per run. Reports land in `scripts/diag/reports/`
-(gitignored). One card at a time — unplug the rest.
+(gitignored). One card at a time: unplug the rest.
 
 ## Current state (today)
 
@@ -24,7 +24,7 @@ scripts/diag/
   beacon_watch_usbcap.py ← same count from a usb_dumps_new/ capture (A/B vs the kernel)
 ```
 
-Diag is dev tooling — it lives under `scripts/` deliberately so it
+Diag is dev tooling: it lives under `scripts/` deliberately so it
 doesn't get bundled into the shipped `wifit3` package. The agent +
 senior lead are the only intended runners; end users never call this.
 
@@ -40,7 +40,7 @@ uv run python scripts/diag/sweep.py --skip-baseline --longrun-min 30
 uv run python scripts/diag/sweep.py --skip-longrun
 uv run python scripts/diag/sweep.py --skip-parse-quality
 
-# Scale every duration arg by a single factor — "longevity" mode
+# Scale every duration arg by a single factor: "longevity" mode
 uv run python scripts/diag/sweep.py --duration-multiplier 3
 
 # Per-probe flags
@@ -51,7 +51,7 @@ uv run python scripts/diag/sweep.py --death-timeout-sec 30
 
 ### What the probes measure
 
-**baseline** (active) — for each `driver.SUPPORTED_CHANNELS` channel,
+**baseline** (active): for each `driver.SUPPORTED_CHANNELS` channel,
 tune, sleep 250ms (AGC), dwell `--dwell-sec`, count:
 - raw RX frames in the dwell window (any frame, parsed or not)
 - BSSIDs whose beacon advertises this channel and whose `last_seen`
@@ -60,7 +60,7 @@ tune, sleep 250ms (AGC), dwell `--dwell-sec`, count:
 
 Silent channels → broken tune (channel-set, AGC, PLL, EFUSE).
 
-**longrun** (active) — start normal hopping for `--longrun-min`
+**longrun** (active): start normal hopping for `--longrun-min`
 minutes, snapshot every second, bucket into `--bucket-sec` windows
 (default 60s). Each bucket reports median "active BSSIDs" (whose
 `last_seen` falls inside the rolling bucket window), split into 2.4 vs
@@ -71,12 +71,12 @@ buckets that saw at least `bucket_sec / 2` snapshots, so the partial
 teardown bucket (death-detect or Ctrl-C) doesn't skew it. Full table
 is still rendered, partial buckets get a `partial` marker.
 
-**Death detect** — if no frames arrive for `--death-timeout-sec`
+**Death detect**: if no frames arrive for `--death-timeout-sec`
 consecutive seconds (after at least that long of runtime), the
 long-run exits early and the verdict flags `DEATH DETECTED`. Caught
 RTL8812AU's t≈27s full-RX wedge on 2026-05-20.
 
-**parse-quality** (passive) — piggybacks on whatever active probes
+**parse-quality** (passive): piggybacks on whatever active probes
 ran. For every frame the iface delivers (i.e. post-driver-parse), it
 inspects:
 - **OUI sanity** on the BSSID — rejects multicast, all-zero, all-FF,
@@ -101,18 +101,18 @@ First 5 garbage BSSIDs surface in the detail section + CSV.
 ### Known limitations
 
 - Frame counter is raw bulk-IN deliveries. parse-quality only sees
-  frames the driver+parser already accepted — pre-parse-failure rate
+  frames the driver+parser already accepted. Pre-parse-failure rate
   needs a per-driver raw tap (Phase 1.5).
-- RSSI mean is reported verbatim from the driver — there is no
+- RSSI mean is reported verbatim from the driver. There is no
   cross-card calibration check, so impossible values (RTL8822BU +11
   dBm, RTL8188EUS -98 dBm on strong APs) flow straight through.
-- No cross-run / cross-card comparison — every report is a single
+- No cross-run / cross-card comparison: every report is a single
   card's data, and `scripts/diag/reports/*.md` is unstructured text.
 
 ## Where this is going
 
 The harness was started small and accreted features. Goal is a
-proper diagnostics suite — modular probes, one entry point, a story
+proper diagnostics suite: modular probes, one entry point, a story
 for cross-card comparison. Phases below are deliberately scoped; we
 are NOT designing the full DB schema upfront.
 
@@ -122,8 +122,8 @@ Modular probes under `scripts/diag/probes/`, each one a `Probe`
 protocol implementation. `sweep.py` is now a thin CLI: discover →
 connect → attach → run → finalize → render.
 
-Earlier plans had this living under `src/wifit3/diag/`. That was wrong
-— diag is dev tooling, doesn't ship in the runtime package, and
+Earlier plans had this living under `src/wifit3/diag/`. That was wrong:
+diag is dev tooling, doesn't ship in the runtime package, and
 matches the project's existing convention (`scripts/<chipset>/`).
 
 CLI additions:
@@ -137,14 +137,14 @@ excludes any bucket with fewer than `bucket_sec / 2` snapshots).
 
 ### Phase 1 — parse-quality probe — DONE 2026-05-21
 
-`probes/parse_quality.py`. Passive — hooks `iface.register_rx_callback`,
+`probes/parse_quality.py`. Passive: hooks `iface.register_rx_callback`,
 inspects the driver+parser output for OUI sanity + beacon channel
 consistency. See "What the probes measure" above for the verdict
 thresholds.
 
 **Hard scoping note**: the iface only delivers post-parse frames to
 its rx callbacks, so this probe sees a filtered view. Pre-parse
-failure rate isn't measurable here — that's Phase 1.5.
+failure rate isn't measurable here. That's Phase 1.5.
 
 ### Phase 1.5 — pre-parse tap + FCS validation (designed, not built)
 
@@ -153,7 +153,7 @@ Two upgrades that both need driver-level changes:
 1. **Pre-parse tap** — every driver's RX loop calls a "raw mpdu
    delivered" hook BEFORE `WlanFrameParser.parse_80211_frame`. Lets
    parse-quality measure parse-failure rate as a percentage of
-   delivered MPDUs (the metric we actually want — "card delivers
+   delivered MPDUs (the metric we actually want: "card delivers
    garbage that still counts as frames"). Implementation: add
    `register_raw_rx_callback` on `WlanInterface`; each driver fires
    it for every mpdu in its `iter_bulk_frames` loop, regardless of
@@ -173,7 +173,7 @@ artifacts.
 
 Cross-card comparison needs **per-BSSID data** persisted across runs:
 - "Which channel did each card observe BSSID `xx:xx:xx:xx:xx:xx` on?"
-  (frequency-drift detector — the original-spec ask)
+  (frequency-drift detector, the original-spec ask)
 - "What RSSI range did each card report for a given BSSID?"
   (calibration disagreement detector)
 - "Which cards see BSSIDs no other card ever sees?" (likely garbage)

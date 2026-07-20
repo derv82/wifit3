@@ -3,12 +3,12 @@
 Hooks ``iface.register_rx_callback`` and inspects the parsed output of
 every frame the other probes are already producing. Two signals:
 
-1. **OUI sanity** — BSSID's first three bytes shouldn't be multicast,
+1. **OUI sanity**: BSSID's first three bytes shouldn't be multicast,
    all-zero, all-FF, or all-same-byte. Catches bit-flip BSSIDs from
    split-MPDU bugs (the descriptor decoder cut the wrong byte
    boundary) and from RX-DMA underruns. Cheap, deterministic.
 
-2. **Beacon channel consistency** — a beacon's DS Param IE primary
+2. **Beacon channel consistency**: a beacon's DS Param IE primary
    channel should match the chip's currently-tuned channel. Mismatches
    indicate either a loose tune (the RF is hearing an adjacent
    channel) or a misordered RX queue (the descriptor's channel field
@@ -16,17 +16,17 @@ every frame the other probes are already producing. Two signals:
 
 This probe is **passive**: ``attach`` registers the rx callback,
 ``run`` is a no-op, ``finalize`` returns the accumulated stats. It
-piggybacks on whatever active probes ran — so its statistical signal
+piggybacks on whatever active probes ran, so its statistical signal
 is best when the long-run probe also ran.
 
 ## Out of scope for Phase 1
 
-* **Raw parse-failure detection** — the iface only fires rx callbacks
+* **Raw parse-failure detection**: the iface only fires rx callbacks
   for frames the driver's descriptor decoder + WlanFrameParser already
   agreed are valid 802.11. To measure parse failure as a *rate* we'd
   need a pre-parse tap in every driver's RX loop. Tracked as Phase 1.5.
 
-* **FCS validation** — per-driver (some chips strip the FCS before
+* **FCS validation**: per-driver (some chips strip the FCS before
   delivery, some don't). Needs a per-driver ``STRIPS_FCS: bool``
   capability. Tracked as Phase 1.5.
 """
@@ -85,7 +85,7 @@ class ParseQualityProbe(Probe):
         self._examples: list[str] = []  # first few garbage BSSIDs seen
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
-        # No own args yet — runs whenever active probes deliver frames.
+        # No own args yet. Runs whenever active probes deliver frames.
         pass
 
     def is_enabled(self, args: argparse.Namespace) -> bool:
@@ -99,7 +99,7 @@ class ParseQualityProbe(Probe):
         iface.register_rx_callback(self._on_raw)
 
     async def run(self, iface, args: argparse.Namespace) -> Any:
-        # Passive — all the work happens in the rx callback.
+        # Passive: all the work happens in the rx callback.
         return None
 
     def finalize(self) -> Any:
@@ -116,7 +116,7 @@ class ParseQualityProbe(Probe):
 
     def _on_raw(self, raw: bytes, rssi: int, ts: float) -> None:
         # Re-parse to inspect. The driver already parsed this same
-        # frame upstream, so we always expect a dict back here — but
+        # frame upstream, so we always expect a dict back here, but
         # we guard anyway so a parser hiccup doesn't crash diag.
         try:
             parsed = WlanFrameParser.parse_80211_frame(raw, rssi)
@@ -165,7 +165,7 @@ class ParseQualityProbe(Probe):
         if beacons:
             mism = result["beacon_ch_mismatch"]
             mism_pct = 100.0 * mism / beacons
-            # Mismatch is noisy when the hopper is moving fast — only
+            # Mismatch is noisy when the hopper is moving fast, only
             # WARN above 20%. Lower bound surfaces the signal without
             # crying wolf on every hop.
             flag = "WARN " if mism_pct > 20.0 else "OK   "

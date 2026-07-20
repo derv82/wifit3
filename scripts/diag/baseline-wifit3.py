@@ -38,7 +38,7 @@ async def run(args) -> int:
         return 1
     iface = ifaces[0]
     if len(ifaces) > 1:
-        print(f"[!] {len(ifaces)} interfaces — using {iface.name}; unplug others.", file=sys.stderr)
+        print(f"[!] {len(ifaces)} interfaces, using {iface.name}; unplug others.", file=sys.stderr)
 
     def _progress(pct: float, msg: str) -> None:
         print(f"  [{int(pct * 100):3d}%] {msg}", file=sys.stderr)
@@ -49,7 +49,7 @@ async def run(args) -> int:
             print("[-] Bring-up returned False.", file=sys.stderr)
             await mgr.close_all()
             return 1
-    except Exception as e:  # noqa: BLE001 — USB bring-up can raise
+    except Exception as e:  # noqa: BLE001, USB bring-up can raise
         print(f"[-] Bring-up failed: {e}", file=sys.stderr)
         await mgr.close_all()
         return 1
@@ -78,14 +78,14 @@ async def run(args) -> int:
     try:
         for ch in channels:
             if not await iface.set_channel(ch):
-                print(f"  CH{ch:>3}: set_channel failed — skipping", file=sys.stderr)
+                print(f"  CH{ch:>3}: set_channel failed, skipping", file=sys.stderr)
                 continue
             cur_channel["ch"] = ch
             await asyncio.sleep(0.25)  # AGC / pipe drain
             await asyncio.sleep(args.secs)
             print(f"  CH{ch:>3}: dwelt {args.secs}s", file=sys.stderr)
     except (KeyboardInterrupt, asyncio.CancelledError):
-        print("\n[!] Interrupted — writing partial.", file=sys.stderr)
+        print("\n[!] Interrupted: writing partial.", file=sys.stderr)
     finally:
         await mgr.close_all()
 

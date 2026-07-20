@@ -1,4 +1,4 @@
-"""WPS Push-Button (PBC) capture probe — hardware ground truth for P3.
+"""WPS Push-Button (PBC) capture probe: hardware ground truth for P3.
 
 Detection is passive (AccessPoint.wps_pbc_active, from beacons). This probe:
   1. parks on the target's channel and finds it,
@@ -80,7 +80,7 @@ async def discover_iface(debug):
     iface = ifaces[0]
     info(f"Using {iface.name}: {iface.description}")
     if not await iface.connect(progress_cb=lambda p, m: None):
-        fail("Driver connect() failed — replug and retry.")
+        fail("Driver connect() failed. Replug and retry.")
     return mgr, iface
 
 
@@ -120,7 +120,7 @@ async def main_async(args) -> int:
                 cur = iface.access_points.get(bssid)
                 if cur and cur.wps_pbc_active:
                     target = cur
-                    ok("PBC window OPEN — DevPwId=PBC + SelectedRegistrar seen")
+                    ok("PBC window OPEN: DevPwId=PBC + SelectedRegistrar seen")
                     break
                 await asyncio.sleep(0.4)
             else:
@@ -136,7 +136,7 @@ async def main_async(args) -> int:
 
         step("Results")
         if outcome.result is PinResult.SUCCESS:
-            ok(f"WPS-PBC SUCCESS — SSID={outcome.ssid!r}  PSK: {outcome.psk}")
+            ok(f"WPS-PBC SUCCESS: SSID={outcome.ssid!r}  PSK: {outcome.psk}")
         else:
             info(f"{outcome.result.value}: {outcome.detail}. See pcap.")
         n = write_pcap(Path(args.out), capture)

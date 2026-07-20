@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""WPS reliability lab — LIVE experiments against the AirLink test router.
+"""WPS reliability lab: LIVE experiments against the AirLink test router.
 
 Purpose: ground-truth the WPS PIN exchange on real hardware so we can rebuild the
 attack spec-first (message-resend, real lock detection) instead of on heuristics
 tuned to one router.
 
 Modes:
-  timing  — run the CORRECT pin N times; measure per-stage reach + latency + loss,
+  timing: run the CORRECT pin N times; measure per-stage reach + latency + loss,
             and re-prove/debunk one-shot-per-MAC (fixed vs rotating MAC).
-  resend  — on an M5/M7 timeout, RESEND the same M4/M6 in-session (no MAC rotation)
+  resend: on an M5/M7 timeout, RESEND the same M4/M6 in-session (no MAC rotation)
             and measure how often that recovers the reply.
 
 SAFETY: this TRANSMITS (auth/assoc + EAPOL). Hardcoded to the AirLink test box.
@@ -42,7 +42,7 @@ from wifit3.campaigns.auth_assoc import (  # noqa: E402
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie  # noqa: E402
 from wifit3.campaigns.wps.registrar import WpsRegistrar  # noqa: E402
 
-# Safety: the lab only targets the BSSID configured in data_dumps/wps_pin.txt (gitignored) —
+# Safety: the lab only targets the BSSID configured in data_dumps/wps_pin.txt (gitignored),
 # the user's own test router. No real BSSID is hardcoded here (it must not enter git).
 RESULTS = Path(__file__).parent / "lab_results.jsonl"
 
@@ -304,7 +304,7 @@ async def mode_timing(iface, tgt, args, tap=None):
 
 
 async def mode_campaign(iface, tgt, args):
-    """Drive the REAL WpsCampaign from a seeded near-answer state — end-to-end validation
+    """Drive the REAL WpsCampaign from a seeded near-answer state, end-to-end validation
     of the refactored campaign (auto-ACK off, no one-shot, resend) cracking a live AP."""
     import json as _json
     import tempfile

@@ -4,7 +4,7 @@ The ChopChop crypto is built + offline-verified (wep_crypto.chop_last_byte_and_
 fixup); the unknown is the live AP's RELAY behavior: when we chop a frame's
 last byte, guess its plaintext, and fix the ICV, does the AP relay the shortened
 frame on the CORRECT guess (and drop wrong ones)? And what does that relay look
-like + how long does it take? Can't know offline — so this gets real packets.
+like + how long does it take? Can't know offline, so this gets real packets.
 
 What it does (one byte, all 256 guesses):
   1. Discover the card, park on the target channel, find the WEP AP.
@@ -16,11 +16,11 @@ What it does (one byte, all 256 guesses):
      candidate relays: FromDS broadcast WEP data sourced from our STA, ~1 byte
      shorter than the original.
   6. With --key, decrypt the original to find the TRUE last byte, and confirm
-     exactly that guess elicited a relay — and MEASURE the per-guess latency
+     exactly that guess elicited a relay, and MEASURE the per-guess latency
      (critical: the daemon does 256 guesses × ~36 bytes, so the timeout matters).
 
 Then we code chopchop.py's relay check to what the AP actually does. This probe
-TRANSMITS — an explicit, run-it-yourself tool, never passive operation.
+TRANSMITS: an explicit, run-it-yourself tool, never passive operation.
 
 Usage (at the dd-wrt box):
     uv run python scripts/wep/chopchop_probe.py --bssid AA:BB:.. --key abcde
@@ -144,7 +144,7 @@ def _describe(frame: bytes) -> str:
 
 
 class ChopProbe:
-    """RX sink: capture everything; flag candidate relays of OUR chopped frame —
+    """RX sink: capture everything; flag candidate relays of OUR chopped frame:
     FromDS + Protected data, broadcast DA, Addr3(SA)==our STA, ~orig-1 long."""
 
     def __init__(self, source_mac: bytes, orig_len: int):
@@ -177,7 +177,7 @@ async def discover_iface(debug: bool):
     iface = ifaces[0]
     info(f"Using {iface.name}: {iface.description}")
     if not await iface.connect(progress_cb=lambda p, m: None):
-        fail("Driver connect() failed — replug and retry.")
+        fail("Driver connect() failed. Replug and retry.")
     return mgr, iface
 
 
@@ -246,7 +246,7 @@ async def main_async(args) -> int:
         info(f"Chop target: IV={iv.hex()} keyid={keyid_byte:#04x} "
              f"cipher={len(cipher)}B")
 
-        # True last plaintext byte (of plaintext++ICV) — the only guess that
+        # True last plaintext byte (of plaintext++ICV), the only guess that
         # should elicit a relay. Known via the WEP key (gold-standard verify).
         true_last = None
         if args.key is not None:
@@ -312,10 +312,10 @@ async def main_async(args) -> int:
             latency = (t_relay - t_sent) if t_sent else None
             print()
             if n == 1:
-                ok(f"Exactly 1 relay — matches the unique valid guess "
+                ok(f"Exactly 1 relay, matches the unique valid guess "
                    f"{true_last:#04x}.")
             else:
-                info(f"{n} relays (expected 1 — extras may be the AP "
+                info(f"{n} relays (expected 1: extras may be the AP "
                      "re-relaying, or noise; check the .pcap).")
             if latency is not None:
                 ok(f"Per-guess relay latency ≈ {latency*1000:.0f} ms "

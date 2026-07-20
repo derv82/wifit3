@@ -54,7 +54,7 @@ class BaselineProbe(Probe):
                 ok = await iface.set_channel(ch)
                 if not ok:
                     print(
-                        f"  CH{ch:>3}: set_channel failed — skipping",
+                        f"  CH{ch:>3}: set_channel failed, skipping",
                         file=sys.stderr,
                     )
                     results.append(dict(
@@ -89,7 +89,7 @@ class BaselineProbe(Probe):
                     mean_rssi=mean_rssi,
                     tuned=True,
                 ))
-                rssi_str = "—" if mean_rssi is None else f"{mean_rssi:.0f}"
+                rssi_str = "-" if mean_rssi is None else f"{mean_rssi:.0f}"
                 print(
                     f"  CH{ch:>3} ({classify_band(ch)}): "
                     f"{frames:>6} frames · {len(active):>3} BSSIDs "
@@ -97,7 +97,7 @@ class BaselineProbe(Probe):
                     file=sys.stderr,
                 )
         except (KeyboardInterrupt, asyncio.CancelledError):
-            # Ctrl+C in the middle of a dwell — the in-progress channel
+            # Ctrl+C in the middle of a dwell: the in-progress channel
             # was not appended to results, so it's silently dropped.
             # Every previously-completed channel is still in `results`.
             args.interrupted = True
@@ -133,8 +133,8 @@ class BaselineProbe(Probe):
             "|---:|:---:|---:|---:|---:|---:|",
         ]
         for r in result:
-            rssi = "—" if r["mean_rssi"] is None else f"{r['mean_rssi']:.0f}"
-            tag = "" if r["tuned"] else " — tune failed"
+            rssi = "-" if r["mean_rssi"] is None else f"{r['mean_rssi']:.0f}"
+            tag = "" if r["tuned"] else " (tune failed)"
             lines.append(
                 f"| {r['channel']} | {classify_band(r['channel'])} "
                 f"| {r['frames']} | {r['bssids']} | {r['new_bssids']} | {rssi} |{tag}"
