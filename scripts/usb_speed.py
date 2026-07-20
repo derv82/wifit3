@@ -1,10 +1,4 @@
-"""USB link-speed diagnostic — prints the negotiated bus speed for every device.
-
-Negotiated speed (libusb_get_device_speed) is what the host+device actually
-linked at, NOT what the device's descriptor advertises (bcdUSB). A USB3 card on
-a USB2 port / through a USB2 hub negotiates HIGH while still advertising
-bcdUSB=0x0300. That distinction is the whole point of the BUGS.md USB2 sweep.
-"""
+"""USB link-speed diagnostic. Prints the negotiated bus speed for every device."""
 import sys
 
 import libusb_package
