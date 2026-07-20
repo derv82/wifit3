@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any
 
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
+    AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
 )
 
 
@@ -23,6 +24,8 @@ class WlanFrameParser:
     SUBTYPE_PROBE_REQ = 0x04
     SUBTYPE_PROBE_RESP = 0x05
     SUBTYPE_BEACON = 0x08
+    SUBTYPE_DISASSOC = 0x0a
+    SUBTYPE_AUTH = 0x0b
     SUBTYPE_DEAUTH = 0x0c
 
     @classmethod
@@ -116,7 +119,7 @@ class WlanFrameParser:
                 return AssocRequestPacket(
                     **base, type="assoc_req", ssid=ssid,
                     assoc_akm=cls._first_rsn_akm(frame, 28))
-            return Packet(**base, type="probe_req", ssid=ssid)
+            return ProbeReqPacket(**base, type="probe_req", ssid=ssid)
 
         if subtype == cls.SUBTYPE_REASSOC_REQ:
             # +6 past Assoc's offset for the Current AP Address field (34 = 28 + 6).
@@ -124,11 +127,20 @@ class WlanFrameParser:
                 **base, type="reassoc_req",
                 assoc_akm=cls._first_rsn_akm(frame, 34))
 
-        label = {
-            cls.SUBTYPE_ASSOC_RESP: "assoc_resp",
-            cls.SUBTYPE_DEAUTH: "deauth",
-        }.get(subtype, f"mgmt_{subtype}")
-        return Packet(**base, type=label)
+        if subtype == cls.SUBTYPE_ASSOC_RESP:
+            # Body: Capability(2) + Status(2) + AID(2); status at offset 26.
+            status = struct.unpack("<H", frame[26:28])[0] if len(frame) >= 28 else 0
+            return AssocRespPacket(**base, type="assoc_resp", status=status)
+        if subtype == cls.SUBTYPE_AUTH:
+            # Body: Algorithm(2) + Seq(2) + Status(2); status at offset 28.
+            status = struct.unpack("<H", frame[28:30])[0] if len(frame) >= 30 else 0
+            return AuthPacket(**base, type=f"mgmt_{subtype}", status=status)
+        if subtype in (cls.SUBTYPE_DEAUTH, cls.SUBTYPE_DISASSOC):
+            # Reason code is the 2-byte body right after the 24-byte header.
+            reason = struct.unpack("<H", frame[24:26])[0] if len(frame) >= 26 else 0
+            label = "deauth" if subtype == cls.SUBTYPE_DEAUTH else f"mgmt_{subtype}"
+            return DeauthPacket(**base, type=label, reason=reason)
+        return Packet(**base, type=f"mgmt_{subtype}")
 
     @classmethod
     def _parse_data(cls, frame: bytes, fc1: int, subtype: int, base: Dict[str, Any]) -> "Packet":

@@ -2,7 +2,9 @@ import struct
 
 
 from wifit3.dot11.parser import WlanFrameParser
-from wifit3.dot11.packet import WepDataPacket, BeaconPacket
+from wifit3.dot11.packet import (
+    WepDataPacket, BeaconPacket, AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
+)
 
 
 # ---- Beacon builder for RSN-IE tests ---------------------------------------
@@ -545,3 +547,38 @@ def test_wep_data_with_ht_control_offset():
     assert parsed is not None
     assert parsed.type == "wep_data"
     assert parsed.iv == iv
+
+
+# ---- Auth / Assoc-resp / Deauth typed subclasses (status & reason) ----------
+
+def _mgmt_frame(subtype: int, body: bytes) -> bytes:
+    fc0 = (subtype << 4) & 0xF0
+    return (bytes([fc0, 0x00]) + b"\x00\x00" + b"\xaa" * 6 + b"\xbb" * 6
+            + b"\xcc" * 6 + b"\x00\x00" + body)
+
+
+def test_assoc_resp_carries_status():
+    p = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x01, b"\x11\x00\x0d\x00\x01\xc0"), -50)
+    assert isinstance(p, AssocRespPacket)
+    assert p.status == 0x0d
+    assert p.type == "assoc_resp"
+
+
+def test_auth_carries_status():
+    p = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x0b, b"\x00\x00\x02\x00\x0e\x00"), -50)
+    assert isinstance(p, AuthPacket)
+    assert p.status == 0x0e
+
+
+def test_deauth_and_disassoc_carry_reason():
+    d = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x0c, b"\x07\x00"), -50)
+    assert isinstance(d, DeauthPacket) and d.reason == 7 and d.type == "deauth"
+    dis = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x0a, b"\x08\x00"), -50)
+    assert isinstance(dis, DeauthPacket) and dis.reason == 8
+
+
+def test_probe_req_is_typed():
+    frame = _mgmt_frame(0x04, b"\x00\x03Foo\x01\x04\x82\x84\x8b\x96")
+    p = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert isinstance(p, ProbeReqPacket)
+    assert p.ssid == "Foo"
