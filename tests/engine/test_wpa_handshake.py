@@ -1,6 +1,6 @@
 """Unit tests for engine/wpa/handshake.py — the single source of truth for
 WPA 4-way crackability + hc22000 emission."""
-from wifit3.engine.models import HandshakeMessage, Handshake
+from wifit3.models import HandshakeMessage, Handshake
 from wifit3.engine.wpa import handshake as wpa
 
 ANONCE = b"\xaa" * 32

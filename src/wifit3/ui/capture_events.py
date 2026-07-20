@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterator, Optional, Set, Tuple
 
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 from wifit3.engine.wpa import handshake as wpa
 
 

@@ -37,7 +37,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, List, Optional
 
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 from wifit3.engine.attacks import treelog
 
 logger = logging.getLogger(__name__)

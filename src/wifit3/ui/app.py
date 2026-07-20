@@ -6,7 +6,7 @@ from typing import Optional
 from wifit3.chips import log_trace
 from wifit3.errors import WifiteDeviceLostError
 from wifit3.wlan.manager import WlanDeviceManager
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView

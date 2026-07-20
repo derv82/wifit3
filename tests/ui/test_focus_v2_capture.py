@@ -8,7 +8,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, RichLog, Static
 
-from wifit3.engine.models import PersistedCapture
+from wifit3.models import PersistedCapture
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList

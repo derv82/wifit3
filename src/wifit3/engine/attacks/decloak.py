@@ -19,7 +19,7 @@ import os
 import time
 from typing import List, Optional
 
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 
 logger = logging.getLogger(__name__)
 

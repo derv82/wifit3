@@ -39,7 +39,7 @@ import usb.core
 
 from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
 from wifit3.engine.attacks.wep.campaign import WepCampaign
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 from wifit3.wlan.interface import WlanInterface
 
 _MARKUP = re.compile(r"\[/?[^\]]*\]")   # strip rich markup tags for plain console output

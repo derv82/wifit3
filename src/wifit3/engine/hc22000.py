@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional
 
-from wifit3.engine.models import AccessPoint, Handshake
+from wifit3.models import AccessPoint, Handshake
 from wifit3.engine.wpa import handshake as wpa
 from wifit3.engine.wpa.handshake import mac_compact, ssid_hex
 

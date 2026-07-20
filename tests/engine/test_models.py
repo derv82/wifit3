@@ -1,4 +1,4 @@
-from wifit3.engine.models import AccessPoint, HandshakeMessage, Handshake, PersistedCapture
+from wifit3.models import AccessPoint, HandshakeMessage, Handshake, PersistedCapture
 
 
 def test_access_point_model_defaults():

@@ -4,7 +4,7 @@ import asyncio
 import pytest
 
 from wifit3.engine.attacks.campaign import Campaign
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 from wifit3.wlan.wep_store import WepCaptureStore
 from wifit3.engine.attacks.wep.campaign import WepCampaign
 

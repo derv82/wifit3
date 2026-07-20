@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from wifit3.engine.hc22000 import eapol_hashlines, pmkid_hashline
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 from wifit3.engine.pcap import write_pcap
 
 

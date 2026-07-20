@@ -52,7 +52,7 @@ import time
 import zlib
 from typing import Awaitable, Callable, Optional
 
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 from wifit3.engine.attacks import treelog
 from wifit3.engine.attacks.wep.wep_crypto import (
     CRC32_RESIDUE,

@@ -8,7 +8,7 @@ synthetic AP echo is delivered to the engine's _rx_cb.
 """
 import asyncio
 
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
 
 # Captured frames: FC = Data/FromDS/Protected (08 42), 24-byte header, then a

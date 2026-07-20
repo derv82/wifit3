@@ -26,7 +26,7 @@ from typing import Callable, Optional
 
 from rich.markup import escape
 
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 from wifit3.engine.attacks import treelog
 from wifit3.engine.attacks.campaign import Campaign
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth

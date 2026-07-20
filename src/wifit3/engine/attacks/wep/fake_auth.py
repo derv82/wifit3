@@ -30,7 +30,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 
 logger = logging.getLogger(__name__)
 

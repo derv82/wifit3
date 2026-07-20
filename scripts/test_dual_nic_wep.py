@@ -42,7 +42,7 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 from wifit3.wlan.manager import WlanDeviceManager
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
 

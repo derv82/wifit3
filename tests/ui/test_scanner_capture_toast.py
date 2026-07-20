@@ -7,7 +7,7 @@ import pytest
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.scanner import ScannerView
 from wifit3.ui.capture_events import CaptureEvent, CaptureKind
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 
 
 @pytest.mark.asyncio

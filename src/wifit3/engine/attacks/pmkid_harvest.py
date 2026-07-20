@@ -31,7 +31,7 @@ import os
 import time
 from typing import Optional
 
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 from wifit3.wlan.interface import build_deauth
 
 from .campaign import Campaign

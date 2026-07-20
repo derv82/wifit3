@@ -10,7 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
 
-from wifit3.engine.models import PersistedCapture
+from wifit3.models import PersistedCapture
 
 logger = logging.getLogger(__name__)
 

@@ -45,7 +45,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
-from wifit3.engine.models import HandshakeMessage, Handshake
+from wifit3.models import HandshakeMessage, Handshake
 
 # hashcat module_22000 MESSAGEPAIR bytes (EAPOL-source encoded in the low bits).
 _PAIR_M1M2_E2 = 0x00

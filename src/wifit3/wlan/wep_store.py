@@ -22,7 +22,7 @@ import time
 from collections import deque
 from typing import TYPE_CHECKING, Deque, Dict, List, Optional, Set
 
-from wifit3.engine.models import WepStats
+from wifit3.models import WepStats
 
 if TYPE_CHECKING:
     from wifit3.dot11.packet import WepDataPacket

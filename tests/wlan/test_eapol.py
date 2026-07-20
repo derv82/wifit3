@@ -4,7 +4,7 @@ import struct
 
 import pytest
 
-from wifit3.engine.models import HandshakeMessage, Handshake
+from wifit3.models import HandshakeMessage, Handshake
 from wifit3.dot11.parser import WlanFrameParser
 
 

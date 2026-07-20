@@ -7,7 +7,7 @@ from wifit3.engine.hc22000 import (
     pmkid_hashline,
     write_hc22000,
 )
-from wifit3.engine.models import AccessPoint, HandshakeMessage, Handshake
+from wifit3.models import AccessPoint, HandshakeMessage, Handshake
 
 
 # ---- Test fixtures --------------------------------------------------------------

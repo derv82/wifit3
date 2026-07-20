@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 
 
 # Actionability palette: color signals what's worth targeting, not "how

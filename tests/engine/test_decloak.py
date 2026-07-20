@@ -11,7 +11,7 @@ from wifit3.engine.attacks.decloak import (
     DecloakAttack,
     build_candidates,
 )
-from wifit3.engine.models import AccessPoint
+from wifit3.models import AccessPoint
 from wifit3.dot11.parser import WlanFrameParser
 
 

@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import List, Optional, Callable, Any, Dict, Set
 
-from wifit3.engine.models import AccessPoint, Client, Handshake, HandshakeMessage
+from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage
 from wifit3.chips.driver import FakeMacSupport
 from wifit3.errors import is_device_gone
 from wifit3.wlan.channels import scan_hop_order
