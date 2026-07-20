@@ -2,7 +2,7 @@
 WlanInterface (mock driver) end to end, no hardware. Mirrors
 ``test_focus_capture`` for v1: beacon → target → push v2 → feed M1(+PMKID)/M2,
 then assert the headline, event log, client list, and that the handshake/PMKID
-auto-save. Also checks the flow channel binds to the live interface (so its
+auto-save. Also checks the packet dashboard binds to the live interface (so its
 sparklines sample real ``packet_stats``)."""
 import pytest
 from textual.app import App
@@ -12,7 +12,7 @@ from wifit3.models import PersistedCapture
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList
-from wifit3.ui.screens.focus_v2.flow_channel import FlowChannel
+from wifit3.ui.screens.focus_v2.packet_dashboard import PacketDashboard
 from wifit3.ui.screens.focus_v2.log_band import LogBand
 from wifit3.wlan.interface import WlanInterface, DeauthResult
 
@@ -91,10 +91,10 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         focus = app.screen
         assert isinstance(focus, FocusViewV2)
 
-        # The flow channel is bound to the live interface → it samples real
+        # The packet dashboard is bound to the live interface → it samples real
         # packet_stats (not the fake generator).
-        flow = focus.query_one("#flow", FlowChannel)
-        assert flow._iface is iface and flow._bssid == bssid
+        dash = focus.query_one("#dashboard", PacketDashboard)
+        assert dash._iface is iface and dash._bssid == bssid
 
         log = focus.query_one("#log", LogBand)
         status = focus.query_one("#status", Static)
@@ -443,15 +443,15 @@ async def test_v2_wep_initial_load_surfaces_history_and_listening():
         assert "Existing captures" in text, text
         assert "WEP Key" in text and "abcde" in text, text          # the saved key chip
         assert "Listening for WEP IVs" in text, text
-        # Idle → recovered banner; the wep iv flow row is present.
+        # Idle → recovered banner; the wep iv dashboard row is present.
         assert "WEP key recovered" in str(focus.query_one("#status", Static).render())
-        flow = focus.query_one("#flow", FlowChannel)
-        assert "wep_iv" in {r.key for r in flow._rows}
-        # The WEP status is painted as flow-channel footer lines (always-on
+        dash = focus.query_one("#dashboard", PacketDashboard)
+        assert "wep_iv" in {r.key for r in dash._rows}
+        # The WEP status is painted as dashboard footer lines (always-on
         # usable-IV count, idle → just that one line, no fake-auth) — NOT a
         # separate band, so it steals no row: the mid band still abuts the bottom
         # band directly.
-        assert flow._footer is not None
-        footer_text = " ".join(t.plain for t in flow._footer)
+        assert dash._footer is not None
+        footer_text = " ".join(t.plain for t in dash._footer)
         assert "Usable IVs" in footer_text and "/10k" in footer_text
         assert focus.query_one("#mid").region.bottom == focus.query_one("#bottom").region.y

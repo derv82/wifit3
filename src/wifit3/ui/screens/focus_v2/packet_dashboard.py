@@ -1,12 +1,12 @@
-"""The packet-flow channel — the centerpiece.
+"""The packet dashboard: the centerpiece.
 
 A multi-row sparkline meter: N labelled rows, per-row colour, a trailing ``/s`` rate (or a
-recent count), all flowing **right->left** (newest sample at the right edge,
+recent count), all scrolling **right->left** (newest sample at the right edge,
 history scrolling left — you read the attack's recent past L->R). Height is
 **adaptive**: 2-row (16 levels) when there's vertical room, 1-row (8 levels)
 when cramped — the same "shrink gracefully" rule the bottom band rides.
 
-Data-source agnostic: once :meth:`FlowChannel.reconfigure` binds an interface +
+Data-source agnostic: once :meth:`PacketDashboard.reconfigure` binds an interface +
 BSSID, ``_tick`` samples ``WlanInterface.packet_stats`` deltas (each row's key
 matches a ``wlan.packet_stats`` class). Unbound (the geometry tests, the
 ``shoot_focus_v2`` screenshots), it falls back to a lively fake generator so the
@@ -30,12 +30,12 @@ _GUTTER = _LABEL_W + 1 + 1 + _NUM_W      # label + space + space + number
 _HISTORY = 256
 
 
-class FlowChannel(Static):
+class PacketDashboard(Static):
     SAMPLE_S = 0.4                        # fake-sample cadence; ~window for the rate
 
     def __init__(self, rows, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._rows = rows                 # list[FlowRow]
+        self._rows = rows                 # list[DashboardRow]
         self._hist = {r.key: deque([0] * _HISTORY, maxlen=_HISTORY) for r in rows}
         self._t = 0
         # Live binding (None -> fake generator). _prev is the last cumulative

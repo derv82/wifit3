@@ -4,10 +4,10 @@ Layout (top to bottom):
 - **Top bar** (fixed height): an "action area" on the left — the back button +
   the encryption-conditional attack buttons, all the clickables in one place —
   then the status line, expanding to fill and stay centered.
-- **Mid band**: card | flow-channel | router. Card and router are fixed-width
-  (the art is 20 cells) and vertically centered; the flow channel fills the
+- **Mid band**: card | packet-dashboard | router. Card and router are fixed-width
+  (the art is 20 cells) and vertically centered; the dashboard fills the
   middle. The band's height is capped so the sparklines reach full 2-row height
-  and the endpoint columns fit, then extra terminal height flows to the bottom.
+  and the endpoint columns fit, then extra terminal height goes to the bottom.
 - **Bottom band**: LOG (fluid width) | CLIENTS (fixed width). Grows once the mid
   band is satisfied, so tall terminals show more log lines + clients.
 
@@ -52,7 +52,7 @@ from ... import pmkid_log
 from ...encryption_format import wep_key_ascii
 from .card_endpoint import CardEndpoint
 from .clients_list import ClientsList
-from .flow_channel import FlowChannel
+from .packet_dashboard import PacketDashboard
 from .log_band import LogBand
 from .router_endpoint import RouterEndpoint
 
@@ -134,7 +134,7 @@ class FocusViewV2(Screen):
     #card, #router { width: %(ew)d; align: center middle; }
     /* Router art is a row shorter than the card's, so bottom-align it. */
     #router { align: center bottom; }
-    #flow { width: 1fr; height: 100%%; padding: 0 1; }
+    #dashboard { width: 1fr; height: 100%%; padding: 0 1; }
     .endpoint-art { width: %(ew)d; background: transparent; }
     .card-static, .ap-static { width: 100%%; height: 1; text-align: center; color: $text-muted; }
     .card-dynamic { width: 100%%; height: 1; text-align: center; color: $accent; }
@@ -200,7 +200,7 @@ class FocusViewV2(Screen):
             yield Static(self._render_status(self._snap.status), id="status")
         with Horizontal(id="mid"):
             yield CardEndpoint(self._snap, id="card")
-            yield FlowChannel(self._snap.flow, id="flow")
+            yield PacketDashboard(self._snap.dashboard, id="dashboard")
             yield RouterEndpoint(self._snap, id="router")
         with Horizontal(id="bottom"):
             yield LogBand(self._snap.log_lines, id="log")
@@ -302,13 +302,13 @@ class FocusViewV2(Screen):
 
         snap = self._snapshot()
         self._snap = snap
-        self.query_one("#flow", FlowChannel).reconfigure(snap.flow, iface, ap.bssid)
+        self.query_one("#dashboard", PacketDashboard).reconfigure(snap.dashboard, iface, ap.bssid)
         self.query_one("#card", CardEndpoint).update_dynamic(snap)
         self.query_one("#router", RouterEndpoint).update_dynamic(snap)
         self.query_one("#status", Static).update(self._render_status(snap.status))
         self.query_one("#clients", ClientsList).sync(snap.clients)
         self._refresh_buttons()
-        self._refresh_status_footer()  # flow-channel footer (cleared by reconfigure)
+        self._refresh_status_footer()  # dashboard footer (cleared by reconfigure)
 
         # Log initial "target acquired"
         enc = fm.encryption_chip(ap)
@@ -454,7 +454,7 @@ class FocusViewV2(Screen):
         iface = getattr(self.app, "active_interface", None)
         lines = [Text.from_markup(m, emoji=False)
                  for m in fm.status_footer_lines(ap, iface, self._wep_campaign, time.time())]
-        self.query_one("#flow", FlowChannel).set_footer(lines)
+        self.query_one("#dashboard", PacketDashboard).set_footer(lines)
 
     # ----- endpoint LED flicker (instrumentation) ----------------------------
 

@@ -40,8 +40,8 @@ def is_wep(ap) -> bool:
 
 
 @dataclass
-class FlowRow:
-    """One row of the packet-flow channel."""
+class DashboardRow:
+    """One row of the packet dashboard."""
     key: str                       # beacon / data / wep_iv / eapol / inject / deauth
     label: str                     # <= 6-char gutter label
     color: str                     # Rich colour name
@@ -69,29 +69,29 @@ class FocusSnapshot:
     ap_bssid: str
     ap_channel: int
     ap_encryption: str             # short markup, e.g. "WPA2"
-    flow: list[FlowRow]
+    dashboard: list[DashboardRow]
     clients: list[ClientRow]
     log_lines: list[str] = field(default_factory=list)
 
 
-# Flow rows by family — WEP shows the wep-iv row, WPA/WPA2/WPA3 the eapol row.
-_FLOW_BEACON = FlowRow("beacon", "beacon", "cyan", 10)
-_FLOW_DATA = FlowRow("data", "data", "blue", 240)
-_FLOW_WEP_IV = FlowRow("wep_iv", "wep iv", "green", 120)
-_FLOW_EAPOL = FlowRow("eapol", "eapol", "green", 4, as_rate=False)
-_FLOW_INJECT = FlowRow("inject", "inject", "orange1", 30)
-_FLOW_DEAUTH = FlowRow("deauth", "deauth", "red", 12)
+# Dashboard rows by family: WEP shows the wep-iv row, WPA/WPA2/WPA3 the eapol row.
+_DASHBOARD_BEACON = DashboardRow("beacon", "beacon", "cyan", 10)
+_DASHBOARD_DATA = DashboardRow("data", "data", "blue", 240)
+_DASHBOARD_WEP_IV = DashboardRow("wep_iv", "wep iv", "green", 120)
+_DASHBOARD_EAPOL = DashboardRow("eapol", "eapol", "green", 4, as_rate=False)
+_DASHBOARD_INJECT = DashboardRow("inject", "inject", "orange1", 30)
+_DASHBOARD_DEAUTH = DashboardRow("deauth", "deauth", "red", 12)
 
 
-def flow_rows(ap) -> list[FlowRow]:
-    """The 5 flow-channel rows for this target's family."""
+def dashboard_rows(ap) -> list[DashboardRow]:
+    """The 5 dashboard rows for this target's family."""
     enc = (ap.encryption or "").upper()
-    rows = [_FLOW_BEACON, _FLOW_DATA]
+    rows = [_DASHBOARD_BEACON, _DASHBOARD_DATA]
     if enc == "WEP":
-        rows.append(_FLOW_WEP_IV)
+        rows.append(_DASHBOARD_WEP_IV)
     elif enc not in ("OPEN", ""):
-        rows.append(_FLOW_EAPOL)
-    rows += [_FLOW_INJECT, _FLOW_DEAUTH]
+        rows.append(_DASHBOARD_EAPOL)
+    rows += [_DASHBOARD_INJECT, _DASHBOARD_DEAUTH]
     return rows
 
 
@@ -239,7 +239,7 @@ def pmf_status_markup(ap) -> str:
 
 
 def status_footer_lines(ap, iface, campaign, now: float) -> list[str]:
-    """The flow-channel footer lines for this target."""
+    """The dashboard footer lines for this target."""
     if is_wep(ap):
         return wep_status_lines(ap, iface, campaign, now)
     lines = [f"[dim]Encryption:[/dim] {format_encryption_markup(ap, detailed=True)}"]
@@ -460,7 +460,7 @@ def build_snapshot(ap, iface, campaigns: Campaigns, samples: deque,
         ap_bssid=ap.bssid,
         ap_channel=ap.channel,
         ap_encryption=format_encryption_markup(ap, detailed=True),
-        flow=flow_rows(ap),
+        dashboard=dashboard_rows(ap),
         clients=clients,
         log_lines=[],
     )
@@ -484,12 +484,12 @@ def fake_snapshot() -> FocusSnapshot:
         ap_bssid="a2:b3:c4:d5:e6:f0",
         ap_channel=6,
         ap_encryption="WPA2/CCMP",
-        flow=[
-            FlowRow("beacon", "beacon", "cyan", 10),
-            FlowRow("data", "data", "blue", 240),
-            FlowRow("eapol", "eapol", "green", 4, as_rate=False),
-            FlowRow("inject", "inject", "orange1", 30),
-            FlowRow("deauth", "deauth", "red", 12),
+        dashboard=[
+            DashboardRow("beacon", "beacon", "cyan", 10),
+            DashboardRow("data", "data", "blue", 240),
+            DashboardRow("eapol", "eapol", "green", 4, as_rate=False),
+            DashboardRow("inject", "inject", "orange1", 30),
+            DashboardRow("deauth", "deauth", "red", 12),
         ],
         clients=[
             ClientRow("fa:11:22:33:44:aa", -79, 10),

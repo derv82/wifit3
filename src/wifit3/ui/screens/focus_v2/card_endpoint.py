@@ -2,7 +2,7 @@
 (chipset/driver + the card's own BSSID when the driver exposes it) and the
 dynamic line (what the card is doing right now). Just identity + live state (the
 attack buttons live in the top "action area"), vertically centered against the
-flow channel."""
+packet dashboard."""
 from __future__ import annotations
 
 from textual.app import ComposeResult

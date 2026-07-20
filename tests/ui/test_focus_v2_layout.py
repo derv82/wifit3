@@ -32,14 +32,14 @@ async def test_layout_geometry(w, h):
         def reg(sel):
             return scr.query_one(sel).region
 
-        card, flow, router = reg("#card"), reg("#flow"), reg("#router")
-        # Endpoints pinned at the art width (20); flow fills the middle. On wide
+        card, dash, router = reg("#card"), reg("#dashboard"), reg("#router")
+        # Endpoints pinned at the art width (20); dashboard fills the middle. On wide
         # terminals the mid row gets symmetric side padding (none at 80 cols).
         pad = max(0, round((w - 80) * 0.4))
         assert card.width == 20 and router.width == 20
-        assert card.x == pad and card.right == flow.x
-        assert flow.right == router.x and router.right == w - pad
-        assert flow.width == w - 2 * pad - 40
+        assert card.x == pad and card.right == dash.x
+        assert dash.right == router.x and router.right == w - pad
+        assert dash.width == w - 2 * pad - 40
 
         log, clients = reg("#log"), reg("#clients")
         # Clients is a fixed exact-fit column; log takes the rest; no overlap.
@@ -73,13 +73,13 @@ async def test_topbar_is_the_action_area_and_card_has_no_buttons():
         assert len(scr.query("#card Button")) == 0
 
 
-async def test_flow_rows_and_rate_vs_count():
+async def test_dashboard_rows_and_rate_vs_count():
     app = _Host()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        flow = app.screen.query_one("#flow")
-        assert len(flow._rows) == 5
-        as_rate = {r.key: r.as_rate for r in flow._rows}
+        dash = app.screen.query_one("#dashboard")
+        assert len(dash._rows) == 5
+        as_rate = {r.key: r.as_rate for r in dash._rows}
         # eapol reads as a recent count (a handshake is ~4 frames); the rest /s.
         assert as_rate["eapol"] is False
         assert all(as_rate[k] for k in ("beacon", "data", "inject", "deauth"))
