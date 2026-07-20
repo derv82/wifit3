@@ -57,7 +57,7 @@ def _hs_with(ap, *, offered, client=None, pmkid=None):
 
 def test_sae_handshake_emits_eapol_but_no_completion():
     """SAE 4-way: the per-frame trace still fires (so the user sees their phone
-    connect) — but no completion banner, since it's useless."""
+    connect), but no completion banner, since it's useless."""
     det = CaptureEventDetector(granular_eapol=True)
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="X")
     hs = _hs_with(ap, offered=[8])               # SAE-only AP
@@ -116,7 +116,7 @@ def test_sae_pmkid_suppressed_wpa2_pmkid_emitted():
 
 def test_transition_pmkid_withheld_until_m2_confirms_psk():
     """A transition-AP PMKID is withheld while the client AKM is unknown, then
-    surfaces once an M2 confirms PSK — proving we don't burn the dedup slot on a
+    surfaces once an M2 confirms PSK, proving we don't burn the dedup slot on a
     suppressed capture."""
     det = CaptureEventDetector(granular_eapol=False)
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:f3", ssid="X")
@@ -134,7 +134,7 @@ def test_decloak_event_fires_once_on_transition():
     det = CaptureEventDetector(granular_eapol=False)
     ap = _ap()
 
-    # First poll: AP still hidden — no event, but detector remembers it.
+    # First poll: AP still hidden, no event, but detector remembers it.
     assert list(det.poll(ap)) == []
 
     # Decloak happens (interface.py flips ssid + decloak_method) → next poll
@@ -165,7 +165,7 @@ def test_decloak_event_not_repeated():
 
 
 def test_decloak_skipped_for_ap_never_seen_hidden():
-    """An AP that already has an SSID on first observation isn't a decloak —
+    """An AP that already has an SSID on first observation isn't a decloak:
     the detector never witnessed it hidden during its lifetime. Matches the
     Focus-entered-on-decloaked-AP semantics."""
     det = CaptureEventDetector(granular_eapol=False)
@@ -210,7 +210,7 @@ def test_reset_clears_decloak_state():
     assert len(list(det.poll(ap))) == 1
 
     det.reset()
-    # After reset, the detector has forgotten everything — but the AP is no
+    # After reset, the detector has forgotten everything, but the AP is no
     # longer hidden, so it won't be marked seen_hidden again, and we won't
     # re-emit. This is correct: reset is a fresh start, not a replay.
     assert list(det.poll(ap)) == []
@@ -263,7 +263,7 @@ def test_wps_pbc_emits_only_psk_distinct_kind():
 
 
 def test_credential_event_re_emits_after_reset():
-    """reset() forgets announce-state; a still-set credential re-announces — a
+    """reset() forgets announce-state; a still-set credential re-announces, a
     fresh start, consistent with the decloak reset semantics."""
     det = CaptureEventDetector(granular_eapol=False)
     ap = _ap_named()

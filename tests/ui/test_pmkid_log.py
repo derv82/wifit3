@@ -1,4 +1,4 @@
-"""Unit tests for ui/pmkid_log.py — the active PMKID harvest tree markup."""
+"""Unit tests for ui/pmkid_log.py: the active PMKID harvest tree markup."""
 from wifit3.campaigns.pmkid import PmkidFail
 from wifit3.ui.pmkid_log import render_failure, render_success
 

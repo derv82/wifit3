@@ -2,7 +2,7 @@
 
 The campaign's _try() is overridden to simulate an AP with a known PIN, so we
 exercise the COMMON→first-half→second-half progression, the first-half-confirmed
-switch, success/PSK capture, and .run resume — without a radio or fake enrollee.
+switch, success/PSK capture, and .run resume, without a radio or fake enrollee.
 """
 
 from types import SimpleNamespace
@@ -111,7 +111,7 @@ async def test_resume_verifies_pin_psk_unchanged(tmp_path):
 
 
 async def test_resume_catches_psk_rotation(tmp_path):
-    # PIN unchanged but the AP's password was rotated — verify picks up the
+    # PIN unchanged but the AP's password was rotated: verify picks up the
     # NEW PSK from the recovered exchange. The high-value scenario.
     known = pins.full_pin("1357", "246")
     _write_done_state(tmp_path, known, "oldpassword")
@@ -124,7 +124,7 @@ async def test_resume_catches_psk_rotation(tmp_path):
 
 
 def test_resume_pin_changed_resets_sweep(tmp_path):
-    # AP admin changed the PIN to one with a different first half — the resume-time verify
+    # AP admin changed the PIN to one with a different first half: the resume-time verify
     # sees FIRST_HALF_WRONG and invalidates everything, restarting the sweep from "common".
     stored = pins.full_pin("1357", "246")
     _write_done_state(tmp_path, stored, "oldpassword")
@@ -144,7 +144,7 @@ def test_resume_pin_changed_resets_sweep(tmp_path):
 async def test_second_half_sweep_skips_already_tested_dummy(tmp_path):
     # When first_half is confirmed via the first-half phase's dummy pin
     # (full_pin(p1, "000")), the second-half sweep must NOT re-emit that exact
-    # pin — its middle ("000") is provably wrong (SECOND_HALF_WRONG) and just
+    # pin: its middle ("000") is provably wrong (SECOND_HALF_WRONG) and just
     # wastes an attempt right after the phase transition.
     known = pins.full_pin("1357", "246")
     c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
@@ -212,7 +212,7 @@ async def test_rate_limit_does_not_skip_untested_pin(tmp_path, monkeypatch):
 
 
 async def test_teardown_saves_state_and_clears_fake_mac(tmp_path):
-    # The base lifecycle calls teardown() on every exit — it must checkpoint the
+    # The base lifecycle calls teardown() on every exit: it must checkpoint the
     # .run resume file and release the active-monitor MAC (the old _run finally).
     cleared = []
 
@@ -282,7 +282,7 @@ def test_run_progress_line_exhausted():
 def test_dead_first_half_skips_shared_prefix_common(tmp_path, monkeypatch):
     monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])   # isolate COMMON phase
     # 12345670 and 12345678 share first half "1234". Once 12345670 is first-half-wrong,
-    # 12345678 is a guaranteed first-half-wrong too — it must be skipped.
+    # 12345678 is a guaranteed first-half-wrong too. It must be skipped.
     c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
     assert "12345670" in pins.COMMON_PINS and "12345678" in pins.COMMON_PINS
 
@@ -296,7 +296,7 @@ def test_dead_first_half_skips_shared_prefix_common(tmp_path, monkeypatch):
 
     assert seen[0] == "12345670"
     assert "1234" in c.state.dead_first_halves
-    assert "12345678" not in seen           # skipped — prefix already dead
+    assert "12345678" not in seen           # skipped: prefix already dead
 
 
 def test_dead_first_half_skips_common_prefix_in_sweep(tmp_path):
@@ -338,7 +338,7 @@ def test_campaign_seeds_oui_pins_ahead_of_common(tmp_path):
 
 def test_campaign_seeds_generated_pins_for_any_bssid(tmp_path):
     from wifit3.campaigns.wps.known_pins import known_pins_for
-    # No OUI is "unknown" now — the generators fire for every BSSID.
+    # No OUI is "unknown" now: the generators fire for every BSSID.
     bssid = "fe:dc:ba:98:76:54"
     c = WpsCampaign(_iface(), _target(bssid=bssid),
                     state_dir=str(tmp_path), log=lambda m: None)
@@ -369,7 +369,7 @@ def test_lost_reply_no_retry_for_silent_ap(tmp_path):
 
 async def test_active_refusal_bails_not_churns(tmp_path):
     # An AP that actively refuses (disassoc / identity-stall) is given up on after _REFUSAL_BAIL
-    # consecutive refusals — not soft-lock-churned forever. Mere silence would NOT bail.
+    # consecutive refusals, not soft-lock-churned forever. Mere silence would NOT bail.
     class Refusing(WpsCampaign):
         async def _try(self, pin):
             return AttemptOutcome(PinResult.TIMEOUT, pin, refused=True,
@@ -383,7 +383,7 @@ async def test_active_refusal_bails_not_churns(tmp_path):
 
 
 async def test_silence_does_not_bail(tmp_path):
-    # A pure-silence TIMEOUT (refused=False) must NOT bail — infinite patience (could be a far AP).
+    # A pure-silence TIMEOUT (refused=False) must NOT bail: infinite patience (could be a far AP).
     hits = {"n": 0}
 
     class Silent(WpsCampaign):

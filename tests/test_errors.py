@@ -18,7 +18,7 @@ def test_device_gone_rejects_timeout_and_io_and_non_usb():
     timeout = usb.core.USBError("timeout", errno=110)
     timeout.backend_error_code = -7  # LIBUSB_ERROR_TIMEOUT
     io = usb.core.USBError("io", errno=5)
-    io.backend_error_code = -1       # LIBUSB_ERROR_IO — too broad to treat as unplug
+    io.backend_error_code = -1       # LIBUSB_ERROR_IO, too broad to treat as unplug
     assert not is_device_gone(timeout)
     assert not is_device_gone(io)
     assert not is_device_gone(RuntimeError("boom"))

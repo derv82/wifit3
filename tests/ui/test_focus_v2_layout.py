@@ -1,9 +1,9 @@
-"""Geometry contract for the Focus v2 shell — the layout half we can verify
+"""Geometry contract for the Focus v2 shell: the layout half we can verify
 without a human eyeball (placement / no-overlap / width-cap / band-height ladder),
 plus that the green-LED breathe actually changes the art. Aesthetics ("does it
 look good") stay the human's call, fed by the exported SVGs.
 
-Sizes are pinned headless via ``run_test(size=...)`` — no real terminal."""
+Sizes are pinned headless via ``run_test(size=...)``: no real terminal."""
 import pytest
 from textual.app import App
 from textual.widgets import Button
@@ -88,7 +88,7 @@ async def test_dashboard_rows_and_rate_vs_count():
 def test_breathe_changes_green_leds():
     dark = breathe("focus-card.ans", 0.0)
     bright = breathe("focus-card.ans", 0.5)
-    # Same glyphs + geometry — only the LED cells' colour changes.
+    # Same glyphs + geometry: only the LED cells' colour changes.
     assert dark.plain == bright.plain
     assert art_size("focus-card.ans") == (20, 10)
 
@@ -134,7 +134,7 @@ def test_flicker_state_machine_caps_rate_then_decays():
     pulses the LED settles back to idle (breathe only)."""
     from wifit3.ui.screens.focus_v2.art import BreathingArt
 
-    art = BreathingArt("focus-card.ans")          # not mounted — drive it by hand
+    art = BreathingArt("focus-card.ans")          # not mounted, drive it by hand
     assert art._blink == "idle"
     art.pulse()
     assert art._blink == "on"                     # bright this frame

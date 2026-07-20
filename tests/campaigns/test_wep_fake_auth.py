@@ -48,7 +48,7 @@ def test_assoc_req_sets_privacy_and_omits_rsn(mocker):
     ids = _walk_tag_ids(f[28:])
     assert 0 in ids                         # SSID
     assert 1 in ids                         # Supported Rates
-    assert 48 not in ids                    # NO RSN IE — WEP predates RSN
+    assert 48 not in ids                    # NO RSN IE: WEP predates RSN
 
 
 def test_assoc_req_carries_ssid(mocker):
@@ -108,7 +108,7 @@ def test_rx_auth_reject_records_reason(mocker):
 
 def test_rx_deauth_drops_association(mocker):
     """A Deauth drops our 'associated' belief (→ 'ready') so the NEXT
-    ensure_associated() re-auths — no eager re-auth from the RX handler."""
+    ensure_associated() re-auths, no eager re-auth from the RX handler."""
     fa = _fa(mocker)
     fa._active = True
     fa.state = "associated"

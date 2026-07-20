@@ -111,7 +111,7 @@ def test_wlan_frame_parser_validates():
 
 def test_wlan_frame_parser_ignores_second_ssid_ie():
     """Spec: SSID IE is mandatory and FIRST. Any later tag-0 we encounter
-    while walking IEs is malformed-frame OR — more commonly — the walker
+    while walking IEs is malformed-frame OR (more commonly) the walker
     straying into trailing bytes (unstripped FCS, hw metadata). Either way
     we must NOT overwrite the canonical SSID with that junk.
 
@@ -134,7 +134,7 @@ def test_wlan_frame_parser_ignores_second_ssid_ie():
 
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
     assert parsed is not None
-    # Stays "<hidden>" — the late tag-0 must be ignored.
+    # Stays "<hidden>". The late tag-0 must be ignored.
     assert parsed.ssid == "<hidden>"
 
 
@@ -167,7 +167,7 @@ def test_wlan_frame_parser_extracts_ssid():
 # ---- WPA3 / PMF / encryption-label tests -----------------------------------
 
 def test_wpa2_psk_ccmp_label():
-    """Standard WPA2-PSK-CCMP — by far the most common consumer config."""
+    """Standard WPA2-PSK-CCMP: by far the most common consumer config."""
     frame = _build_beacon(rsn_ie=_rsn_ie(pairwise_ciphers=(0x04,), akms=(0x02,)))
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
     assert parsed.encryption == "WPA2-PSK-CCMP"
@@ -178,7 +178,7 @@ def test_wpa2_psk_ccmp_label():
 
 
 def test_wpa3_sae_label_and_flags():
-    """Pure WPA3-SAE — PMF must be required (per WPA3 mandate)."""
+    """Pure WPA3-SAE: PMF must be required (per WPA3 mandate)."""
     rsn = _rsn_ie(
         pairwise_ciphers=(0x04,),
         akms=(0x08,),
@@ -212,7 +212,7 @@ def test_wpa2_wpa3_transition_mode():
 
 
 def test_wpa2_enterprise_eap():
-    """WPA2-EAP (corporate / 802.1X) — AKM 0x01."""
+    """WPA2-EAP (corporate / 802.1X): AKM 0x01."""
     rsn = _rsn_ie(pairwise_ciphers=(0x04,), akms=(0x01,))
     frame = _build_beacon(rsn_ie=rsn)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
@@ -230,7 +230,7 @@ def test_akm_suites_propagate_as_numbers():
 
 def test_wpa3_sae_ext_key_h2e_flags_as_wpa3():
     """WPA3-H2E uses SAE-EXT-KEY (00-0F-AC:24), not plain SAE(8). The wpa3 flag
-    must still trip — it's keyed on the SAE *family*, not just suite 8."""
+    must still trip: it's keyed on the SAE *family*, not just suite 8."""
     rsn = _rsn_ie(akms=(0x18,), rsn_caps=0x00C0)   # SAE-EXT-KEY, MFPC+MFPR
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
     assert parsed.akm_suites == [0x18]
@@ -245,7 +245,7 @@ def test_wpa3_sae_ext_key_h2e_flags_as_wpa3():
 def _build_assoc_req(rsn_ie: bytes, *, reassoc: bool = False, ssid: bytes = b"Net") -> bytes:
     """An Assoc (or Reassoc) Request from a client carrying SSID + rates + the
     given RSN IE. Reassoc inserts a (non-zero) 6-byte Current AP Address, shifting
-    the IE list from offset 28 to 34 — so a wrong offset misparses, not silently
+    the IE list from offset 28 to 34, so a wrong offset misparses, not silently
     lands on the same RSN IE."""
     subtype = 0x02 if reassoc else 0x00
     fc0 = subtype << 4                              # type = mgmt (0)
@@ -350,7 +350,7 @@ def test_wep_qos_data_iv_offset():
 
 
 def test_ext_iv_data_is_not_wep():
-    """TKIP/CCMP set the ExtIV bit — must NOT be tallied as a WEP IV."""
+    """TKIP/CCMP set the ExtIV bit: must NOT be tallied as a WEP IV."""
     frame = _build_wep_data(ext_iv=True)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
     assert parsed.type == "data"
@@ -393,7 +393,7 @@ def test_wpa3_keys_propagate_through_parse_80211_frame():
     frame = _build_beacon(rsn_ie=rsn)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
 
-    # Each must carry its PARSED value, not the BeaconPacket field default — a key
+    # Each must carry its PARSED value, not the BeaconPacket field default: a key
     # dropped on the tags->result copy would silently fall back to that default.
     assert parsed.wpa3 is True
     assert parsed.transition_mode is False
@@ -416,20 +416,20 @@ def test_rsn_ie_raw_round_trip():
 # ---- Channel parsing (2.4 GHz DS Param + 5 GHz HT Op + VHT Op) -------------
 
 def _ds_param_ie(channel: int) -> bytes:
-    """Tag 3 (DS Parameter Set) — 1-byte channel. Present on 2.4 GHz
+    """Tag 3 (DS Parameter Set): 1-byte channel. Present on 2.4 GHz
     beacons; vendor-optional on 5 GHz (most APs omit it there)."""
     return bytes([3, 1, channel])
 
 
 def _ht_op_ie(primary_channel: int) -> bytes:
-    """Tag 61 (HT Operation) — 22-byte body, first byte = primary channel.
+    """Tag 61 (HT Operation): 22-byte body, first byte = primary channel.
     Present on every 802.11n/ac AP regardless of band."""
     body = bytes([primary_channel]) + b"\x00" * 21
     return bytes([61, len(body)]) + body
 
 
 def _vht_op_ie(center_seg0: int) -> bytes:
-    """Tag 192 (VHT Operation) — 5-byte body. Byte 1 is Channel Center
+    """Tag 192 (VHT Operation): 5-byte body. Byte 1 is Channel Center
     Frequency Segment 0 = primary channel for 20 MHz BSSes."""
     body = bytes([0x00, center_seg0, 0x00, 0x00, 0x00])
     return bytes([192, len(body)]) + body
@@ -451,12 +451,12 @@ def test_channel_from_ht_op_ie_when_ds_param_missing():
 
 def test_channel_ds_param_wins_over_ht_op():
     """When both are present and disagree (shouldn't happen on a sane AP),
-    DS Param IE wins — it's the authoritative 802.11-2020 9.4.2.3 source."""
+    DS Param IE wins: it's the authoritative 802.11-2020 9.4.2.3 source."""
     # HT Op IE before DS Param IE in tag order.
     frame = _build_beacon() + _ht_op_ie(36) + _ds_param_ie(40)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
     assert parsed.channel == 40
-    # And the other way round — DS Param IE first.
+    # And the other way round: DS Param IE first.
     frame2 = _build_beacon() + _ds_param_ie(40) + _ht_op_ie(36)
     parsed2 = WlanFrameParser.parse_80211_frame(frame2, -50)
     assert parsed2.channel == 40
@@ -484,7 +484,7 @@ def test_channel_absent_when_no_ie_provides_it():
 # rejection, and the HT-Control header offset.
 
 def test_wds_frame_is_ignored():
-    """A 4-address WDS data frame (to_ds AND from_ds) is intentionally dropped —
+    """A 4-address WDS data frame (to_ds AND from_ds) is intentionally dropped:
     wifit3 has no use for repeater/mesh links. It passes _is_valid_frame (real
     addr2/addr3), so the rejection is the parser's own, not the validator's."""
     fc0 = 0x08                       # data, subtype 0
@@ -498,7 +498,7 @@ def test_wds_frame_is_ignored():
 
 def test_probe_response_parsed_like_beacon():
     """A probe response (subtype 5) carries the same IE layout as a beacon and
-    must parse identically — same BeaconPacket type, SSID, and encryption."""
+    must parse identically: same BeaconPacket type, SSID, and encryption."""
     frame = bytearray(_build_beacon(ssid="ProbeNet", rsn_ie=_rsn_ie(akms=(0x02,))))
     frame[0] = 0x50                  # mgmt subtype 5 = probe response (was 0x80 beacon)
     parsed = WlanFrameParser.parse_80211_frame(bytes(frame), -50)

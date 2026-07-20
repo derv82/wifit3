@@ -1,7 +1,7 @@
 """Pure-function tests for the shared Focus view-model (``ui.focus_model``).
 
-These exercise the campaign-value derivations directly with light stubs — no
-Textual, no interface — so the brains are pinned independent of either screen's
+These exercise the campaign-value derivations directly with light stubs (no
+Textual, no interface) so the brains are pinned independent of either screen's
 layout."""
 import types
 
@@ -14,7 +14,7 @@ from wifit3.ui import focus_model as fm
 
 @pytest.fixture(autouse=True)
 def _reset_active():
-    """derive_buttons/mutex read the Campaign.active class var — reset per test."""
+    """derive_buttons/mutex read the Campaign.active class var: reset per test."""
     Campaign.active = None
     yield
     Campaign.active = None
@@ -59,7 +59,7 @@ def test_headline_persisted_wep_idle_shows_recovered():
 
 def test_headline_active_campaign_outranks_recovered_key():
     """Re-running Replay on an already-cracked AP must show LIVE progress (with
-    the IV count), not the frozen 'recovered' banner — an active attack is the
+    the IV count), not the frozen 'recovered' banner: an active attack is the
     dominant activity."""
     ap = _wep_ap(persisted_wep=True, unique_ivs=1234)
     h = fm.derive_headline(ap, None, fm.Campaigns(wep=_wep_camp(replay_state="replaying")))
@@ -228,16 +228,16 @@ def test_derive_buttons_wep_labels_and_variants():
 
 
 # ---------------------------------------------------------------------------
-# CHARACTERIZATION — pins the exact button matrix / mutex / card line that the
+# CHARACTERIZATION: pins the exact button matrix / mutex / card line that the
 # registry rewrite (Phase B) must reproduce byte-for-byte. The headline + status
 # markup are status functions (untouched by the rewrite) and covered above.
 # (The OPEN/enterprise/SAE PMKID-eligibility *fix* is asserted in Phase B, where
-# the predicate changes — these cases pin only the behaviour that must NOT drift.)
+# the predicate changes. These cases pin only the behaviour that must NOT drift.)
 # ---------------------------------------------------------------------------
 
 
 def _bs(b):
-    """(visible, disabled, label, variant) — compact button-state tuple."""
+    """(visible, disabled, label, variant): compact button-state tuple."""
     return (b.visible, b.disabled, b.label, b.variant)
 
 
@@ -330,7 +330,7 @@ def test_buttons_open_hides_pmkid():
 
 def test_buttons_unconfirmed_encryption_shows_pmkid_disabled_with_reason():
     """A hidden AP heard without a beacon RSN (encryption 'Unknown', no AKM) shows
-    PMKID *disabled with a reason* instead of a silently-missing button — so the user
+    PMKID *disabled with a reason* instead of a silently-missing button, so the user
     knows WHY. A confirmed-open AP still hides it (test_buttons_open_hides_pmkid)."""
     st = fm.derive_buttons(_rsn_ap(encryption="Unknown", akms=()))["btn-pmkid"]
     assert st.visible is True and st.disabled is True

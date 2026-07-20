@@ -1,4 +1,4 @@
-"""Unit tests for crack/handshake.py — the single source of truth for
+"""Unit tests for crack/handshake.py: the single source of truth for
 WPA 4-way crackability + hc22000 emission."""
 from wifit3.models import HandshakeMessage, Handshake
 from wifit3.crack import handshake as wpa
@@ -84,8 +84,8 @@ def test_replay_gap_beyond_nc_not_paired():
 def test_lone_m2_binds_to_nearest_preceding_m1():
     """NETGEAR2G shape: the AP spams several M1s (all replay 0, a fresh ANonce each)
     with stale M3s ahead, then the client sends ONE M2 answering the last M1. The
-    M2 binds to that nearest preceding M1 (its real association) — never a stale
-    earlier M3 — so exactly one pair, carrying the newest ANonce."""
+    M2 binds to that nearest preceding M1 (its real association), never a stale
+    earlier M3, so exactly one pair, carrying the newest ANonce."""
     a1, a2, a3, snonce = b"\x11" * 32, b"\x22" * 32, b"\x33" * 32, b"\x02" * 32
     hs = _hs(
         _frame(1, 0, nonce=a1, mic=False), _frame(3, 1, nonce=a1),
@@ -103,8 +103,8 @@ def test_reconnect_spam_does_not_cross_pair():
     """Reconnect spam (the real NETGEAR2G HW capture): the AP resets its key-replay
     counter each association, so a STALE M3 from a prior attempt (a_old, replay 6)
     and a FRESH M2 from the next attempt (replay 5) collide on the M2+M3 replay+1
-    rule. The fresh M2 must bind only within its OWN association — to the M1 it
-    answered (a_new) — never to the stale a_old M3 ahead of it.
+    rule. The fresh M2 must bind only within its OWN association: to the M1 it
+    answered (a_new), never to the stale a_old M3 ahead of it.
 
     No timestamps are set, so the binding runs purely off ARRIVAL ORDER: this is
     exactly the round-tripped-pcap condition (per-frame timestamps not preserved),
@@ -229,7 +229,7 @@ def test_wpa2_plus_ft_unknown_client_withheld():
 
 
 def test_no_sae_or_ft_offered_is_unchanged():
-    """Plain WPA2-PSK (no SAE/FT): behaves exactly as before — the gate only ever
+    """Plain WPA2-PSK (no SAE/FT): behaves exactly as before: the gate only ever
     removes SAE/FT false-positives, never plain-PSK captures."""
     hs = _m1m2(offered=[2])
     assert wpa.eapol_verdict(hs) == "crackable"
@@ -273,7 +273,7 @@ def test_transition_ap_psk_client_over_eap_is_crackable():
 
 def test_transition_ap_eap_unknown_client_not_badged_eap():
     """EAP+PSK offered, client unknown: withhold (could be PSK), but don't badge it
-    EAP — we can't confirm which side, so no misleading 'EAP/Enterprise' line."""
+    EAP: we can't confirm which side, so no misleading 'EAP/Enterprise' line."""
     hs = _m1m2(offered=[1, 2], client=None)
     assert wpa.eapol_verdict(hs) == "unknown"
     assert wpa.crackable_pairs(hs) == []
@@ -281,7 +281,7 @@ def test_transition_ap_eap_unknown_client_not_badged_eap():
 
 
 def test_withheld_capture_label_needs_a_usable_pairing():
-    """withheld_capture_label fires only on a real captured 4-way, not a stray M1 —
+    """withheld_capture_label fires only on a real captured 4-way, not a stray M1,
     so the log line means 'you got a handshake but it's worthless', not noise."""
     m1_only = _hs(_frame(1, 5, nonce=ANONCE, mic=False))
     m1_only.akm_offered = [1]
@@ -339,7 +339,7 @@ def test_pmkid_plain_psk_crackable():
 
 
 def test_pmkid_sha256_client_suppressed():
-    """AKM-6 PMKID is HMAC-SHA256 — hashcat's PMKID path is SHA1-only."""
+    """AKM-6 PMKID is HMAC-SHA256: hashcat's PMKID path is SHA1-only."""
     assert not wpa.pmkid_crackable(_hs_pmkid(offered=[2, 6], client=6))
 
 
@@ -350,7 +350,7 @@ def test_pmkid_sha256_only_ap_suppressed():
 
 def test_pmkid_unknown_client_assumes_sha1():
     """Asymmetry vs SAE: AKM 6 is rare, so a PMKID of unknown AKM on a PSK+PSK256
-    AP is assumed to be the common SHA1 one (emit) — we don't withhold."""
+    AP is assumed to be the common SHA1 one (emit). We don't withhold."""
     assert wpa.pmkid_crackable(_hs_pmkid(offered=[2, 6], client=None))
 
 

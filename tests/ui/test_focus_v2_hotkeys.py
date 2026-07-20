@@ -73,8 +73,8 @@ def _wpa2_target(bssid="aa:bb:cc:dd:ee:01"):
 
 @pytest.mark.asyncio
 async def test_deauth_hotkey_gated_on_pmf_not_clients():
-    """'d' (broadcast deauth) is active even with no known clients (True) — it hits
-    every STA — stays active once a client appears (True), and is greyed only when
+    """'d' (broadcast deauth) is active even with no known clients (True) (it hits
+    every STA), stays active once a client appears (True), and is greyed only when
     the AP requires PMF (None)."""
     bssid, client = "aa:bb:cc:dd:ee:01", "9c:b6:d0:1a:2b:3c"
     iface, ap = _wpa2_target(bssid)
@@ -96,7 +96,7 @@ async def test_deauth_hotkey_gated_on_pmf_not_clients():
 
 @pytest.mark.asyncio
 async def test_deauth_broadcast_button_always_visible():
-    """The panel's pinned 'Deauth all' button is always visible — a broadcast deauth
+    """The panel's pinned 'Deauth all' button is always visible: a broadcast deauth
     is valid with no known clients (it hits every associated STA)."""
     bssid, client = "aa:bb:cc:dd:ee:02", "9c:b6:d0:1a:2b:3c"
     iface, ap = _wpa2_target(bssid)
@@ -121,7 +121,7 @@ async def test_deauth_broadcast_button_always_visible():
 @pytest.mark.asyncio
 async def test_campaign_hotkeys_mirror_buttons_wpa2():
     """On a plain WPA2 AP (no WPS, not WPA3): PMKID is the only plausible attack,
-    so 'p' is active and every other campaign key is hidden — exactly the button
+    so 'p' is active and every other campaign key is hidden, exactly the button
     row's visibility (test_v2_button_wiring)."""
     iface, ap = _wpa2_target()
     app = _Host(iface, ap)
@@ -157,7 +157,7 @@ async def test_campaign_hotkeys_wep_chop_greyed_until_replay():
 @pytest.mark.asyncio
 async def test_campaign_and_deauth_keys_hidden_with_no_target():
     """The demo / no-target path (geometry tests) must hide every conditional key
-    rather than crash — check_action short-circuits on a null target."""
+    rather than crash: check_action short-circuits on a null target."""
     iface, ap = _wpa2_target()
     app = _Host(iface, ap)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -172,7 +172,7 @@ async def test_campaign_and_deauth_keys_hidden_with_no_target():
 @pytest.mark.asyncio
 async def test_footer_shows_campaign_keys_per_family():
     """End to end: the rendered footer carries only the family-relevant attack
-    keys — 'p' for WPA2 (not 'r'/'c'); 'r' + greyed 'c' for WEP (not 'p')."""
+    keys: 'p' for WPA2 (not 'r'/'c'); 'r' + greyed 'c' for WEP (not 'p')."""
     iface, ap = _wpa2_target()
     app = _Host(iface, ap)
     async with app.run_test(size=(160, 40)) as pilot:
@@ -196,7 +196,7 @@ async def test_footer_shows_campaign_keys_per_family():
 @pytest.mark.asyncio
 async def test_action_campaign_dispatches_to_toggle():
     """action_campaign routes a key to its campaign's toggle via the dispatch map
-    (the button's twin) — verified without launching a real campaign."""
+    (the button's twin), verified without launching a real campaign."""
     iface, ap = _wpa2_target()
     app = _Host(iface, ap)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -237,7 +237,7 @@ async def test_w_toggles_shared_pbc_flag(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_focus_pbc_autocapture_gated_on_flag(tmp_path, monkeypatch):
-    """Focus's per-tick PBC auto-capture only fires when app.pbc_enabled is set —
+    """Focus's per-tick PBC auto-capture only fires when app.pbc_enabled is set,
     so the shared 'w' toggle actually silences the one auto-TX in Focus too."""
     monkeypatch.chdir(tmp_path)
     bssid = "aa:bb:cc:dd:ee:07"

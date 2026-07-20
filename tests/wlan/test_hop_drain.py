@@ -3,7 +3,7 @@
 Reproduces the cross-family "bad Focus" bug (wifit3.log @ 03:49:53): a channel-hop
 set_channel offloads to a run_in_executor thread that cancellation can't stop. When Focus
 entry cancels the hop loop mid-tune, the orphaned tune keeps running and finishes *after*
-stop_hopping returns — moving the chip onto a stale hop channel right as Focus pins its
+stop_hopping returns, moving the chip onto a stale hop channel right as Focus pins its
 target, so Focus shows 0 beacons. The fix shields the tune as a task and has stop_hopping
 await it, so the chip is on a known channel (and current_channel is truthful) before the
 caller's next set_channel runs.
@@ -18,7 +18,7 @@ from wifit3.wlan.interface import WlanInterface
 
 
 class _OrphanProneDriver:
-    """A driver whose set_channel runs its tune on an executor thread — the real,
+    """A driver whose set_channel runs its tune on an executor thread: the real,
     uncancellable shape that orphans on a mid-tune cancel."""
 
     SUPPORTED_CHANNELS = [1, 6, 11]
@@ -57,7 +57,7 @@ async def test_stop_hopping_drains_inflight_tune():
     await asyncio.sleep(0.02)             # a tune is now in flight (each takes 0.05s)
     await iface.stop_hopping()
 
-    # Every tune that started must have ended by the time stop_hopping returned —
+    # Every tune that started must have ended by the time stop_hopping returned:
     # i.e. the orphan was drained, not left running to move the chip afterward.
     starts = [c for (e, c) in drv.events if e == "start"]
     ends = [c for (e, c) in drv.events if e == "end"]
@@ -65,7 +65,7 @@ async def test_stop_hopping_drains_inflight_tune():
 
 
 async def test_focus_pin_lands_after_stop_hopping():
-    """The user-visible symptom: after stop_hopping, the Focus set_channel must stick —
+    """The user-visible symptom: after stop_hopping, the Focus set_channel must stick:
     no orphan tune comes along afterward to move the chip off the focused channel."""
     drv = _OrphanProneDriver()
     iface = WlanInterface(driver_instance=drv, name="wlan0", description="t")

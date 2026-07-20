@@ -20,7 +20,7 @@ def _build_eapol_frame(
     """Build a minimal valid 802.11 data frame carrying an EAPOL-Key payload.
 
     Direction is client -> AP (to_ds=1, from_ds=0) which matches M2/M4.
-    Flip to_ds/from_ds for M1/M3 if it matters (it doesn't for our parser —
+    Flip to_ds/from_ds for M1/M3 if it matters (it doesn't for our parser:
     we read the BSSID from addr1 when to_ds=0, addr2 when to_ds=1, but the
     classification path doesn't care about direction).
     """
@@ -66,7 +66,7 @@ def _build_eapol_frame(
         (0x01C0 | 0x0008, 56, 3),                # M3: ACK+MIC+INSTALL
         (0x0100 | 0x0008, 0, 4),                 # M4: MIC, !ACK, !INSTALL, no key data
         (0x0000, 0, 0),                          # All flags clear → not a 4-way msg
-        (0x0080 | 0x0040, 0, 0),                 # ACK + INSTALL only — group rekey-ish
+        (0x0080 | 0x0040, 0, 0),                 # ACK + INSTALL only: group rekey-ish
     ],
 )
 def test_classify_eapol_msg(key_info, key_data_len, expected):
@@ -138,7 +138,7 @@ def test_parser_no_pmkid_when_key_data_empty():
 
 
 def test_parser_ignores_all_zero_pmkid():
-    """Some APs ship a zero-filled placeholder KDE — not crackable; skip it."""
+    """Some APs ship a zero-filled placeholder KDE: not crackable; skip it."""
     frame = _build_eapol_frame(
         bssid_bytes=bytes.fromhex("AABBCCDDEEFF"),
         client_bytes=bytes.fromhex("112233445566"),
@@ -213,12 +213,12 @@ def _m2(key_data: bytes) -> bytes:
 def test_parser_extracts_sae_client_akm_from_m2():
     parsed = WlanFrameParser.parse_80211_frame(_m2(_rsn_keydata(0x08)), -42)
     assert parsed.msg_num == 2
-    assert parsed.akm == 0x08          # SAE — the useless case
+    assert parsed.akm == 0x08          # SAE: the useless case
 
 
 def test_parser_extracts_psk_client_akm_from_m2():
     parsed = WlanFrameParser.parse_80211_frame(_m2(_rsn_keydata(0x02)), -42)
-    assert parsed.akm == 0x02          # PSK — crackable
+    assert parsed.akm == 0x02          # PSK: crackable
 
 
 def test_parser_no_client_akm_on_m1():
@@ -239,8 +239,8 @@ def test_parser_no_client_akm_on_m1():
 
 def _ef(msg_num, replay_int, raw=None, *, ts=0.0, nonce=None, mic=True, complete=True):
     """HandshakeMessage builder for the model-delegation tests. By default produces a
-    *usable* frame — a real (non-zero) nonce, a real MIC, and a complete 802.1X
-    payload — so M2/M4 qualify as MIC keystones and M1/M3 as ANonce donors, the
+    *usable* frame: a real (non-zero) nonce, a real MIC, and a complete 802.1X
+    payload, so M2/M4 qualify as MIC keystones and M1/M3 as ANonce donors, the
     way a clean capture looks. Pass mic=False for an M1-style no-MIC frame or
     complete=False to simulate a clipped payload.
 
@@ -302,7 +302,7 @@ def test_m2_plus_m3_pair_replay_plus_one_is_complete():
 
 def test_m2_plus_m3_within_nc_tolerance_is_complete():
     """M3 should be M2.replay+1, but hcxpcapngtool (and now we) tolerate a gap up
-    to the NC value (8) and let hashcat fix the small drift — so replay 9 vs the
+    to the NC value (8) and let hashcat fix the small drift, so replay 9 vs the
     expected 6 (gap 3) still pairs."""
     hs = _make_hs(_ef(2, 5), _ef(3, 9))
     assert hs.is_complete
@@ -351,7 +351,7 @@ def test_pair_accepted_when_frames_within_window():
 def test_m1_m2_valid_despite_unrelated_later_m3():
     """M1+M2 of one association is a valid pair (hashcat MESSAGEPAIR 0x00). An M3
     from a *different*, later association (different ANonce, outside the pairing
-    window) does NOT invalidate it — only the M1 the M2 actually answered supplies
+    window) does NOT invalidate it: only the M1 the M2 actually answered supplies
     the ANonce. Matches hcxpcapngtool, which has no global 'a conflicting M3
     anywhere vetoes this M1' rule."""
     hs = _make_hs(

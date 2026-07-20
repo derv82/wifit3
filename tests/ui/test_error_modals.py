@@ -20,7 +20,7 @@ def _raise_no_backend(*args, **kwargs):
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_device_lost_from_offloop_context_shows_recoverable_modal():
-    """The RX reader hands an unplug back via loop.call_soon_threadsafe — outside Textual's
+    """The RX reader hands an unplug back via loop.call_soon_threadsafe, outside Textual's
     message-pump context. Assert that hop surfaces the recoverable modal (a direct push_screen
     there raises NoActiveAppError, so notify_device_lost must defer onto the message queue)."""
     app = WifiteApp()
@@ -64,7 +64,7 @@ async def test_back_to_splash_tears_down_interface_and_returns():
 @pytest.mark.asyncio
 async def test_no_usb_backend_shows_fatal_modal(monkeypatch):
     # The broken-udev Linux condition: find() resolves no backend and raises. (Deliberately does
-    # NOT use no_usb_devices — that stubs find->[], the success path; here find must raise.)
+    # NOT use no_usb_devices: that stubs find->[], the success path; here find must raise.)
     monkeypatch.setattr("usb.core.find", _raise_no_backend)
 
     app = WifiteApp()
@@ -80,7 +80,7 @@ async def test_no_usb_backend_shows_fatal_modal(monkeypatch):
 @pytest.mark.asyncio
 async def test_fatal_modal_compact_with_details_expanded(monkeypatch):
     # Expanding Details must scroll the trace inside a capped box, not balloon the dialog and shove
-    # the buttons off-screen (Collapsible / VerticalScroll default to *fill* — this guards the
+    # the buttons off-screen (Collapsible / VerticalScroll default to *fill*: this guards the
     # height fix). At a normal 90x40 terminal the buttons must stay on-screen.
     monkeypatch.setattr("usb.core.find", _raise_no_backend)
     app = WifiteApp()
@@ -100,7 +100,7 @@ async def test_fatal_modal_compact_with_details_expanded(monkeypatch):
 async def test_reset_for_reentry_clears_a_frozen_splash():
     """A happy-path connect leaves splash frozen (initializing latched, timer paused, START
     disabled, a stale card listed, progress shown) because it navigates to the scanner without
-    cleanup. reset_for_reentry restores the scanning state and resumes the poll timer — the
+    cleanup. reset_for_reentry restores the scanning state and resumes the poll timer: the
     installed screen only resumes on return, so on_mount can't."""
     app = WifiteApp()
     async with app.run_test() as pilot:

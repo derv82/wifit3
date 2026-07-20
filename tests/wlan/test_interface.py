@@ -76,7 +76,7 @@ def test_encryption_keeps_strongest_evidence_not_latest(mocker):
     ap = iface2.get_access_points()[0]
     assert ap.encryption == "WPA2-PSK-CCMP"
     assert ap.akms == ["PSK"]
-    # And it stays — a later RSN-less beacon can't downgrade it.
+    # And it stays: a later RSN-less beacon can't downgrade it.
     iface2._on_frame_parsed(_beacon("WEP"))
     assert iface2.get_access_points()[0].encryption == "WPA2-PSK-CCMP"
 
@@ -126,12 +126,12 @@ def test_forged_mac_does_not_create_client_or_append_eapol(mocker):
     # (a) forged MAC must NOT appear in clients
     assert forged not in iface.clients
 
-    # (b) Handshake exists for forged STA — PMKID lives there
+    # (b) Handshake exists for forged STA: PMKID lives there
     ap = iface.access_points["aa:bb:cc:dd:ee:ff"]
     hs = ap.handshakes[forged]
     assert hs.pmkid == pmkid
 
-    # (c) EAPOL frames list stays empty — no "Partial x1" in the UI
+    # (c) EAPOL frames list stays empty: no "Partial x1" in the UI
     assert hs.messages == []
 
 
@@ -226,7 +226,7 @@ def _wep_broadcast(bssid, source, *, to_ds, length=68):
 
 
 def test_broadcast_wep_stored_as_arp_candidate_either_direction(mocker):
-    """Both ToDS and FromDS broadcast WEP frames are kept — the replay engine
+    """Both ToDS and FromDS broadcast WEP frames are kept: the replay engine
     re-addresses them, so a FromDS relay is as usable as a ToDS request."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="T")
     bssid = "12:22:33:44:55:66"
@@ -297,7 +297,7 @@ def test_assoc_req_stamps_client_akm(mocker):
 def test_from_ds_client_is_receiver_not_addr3_origin(mocker):
     """AP->client (FromDS) frames carry the wired-side origin in addr3 (parsed as 'source').
     The client is the receiver (dest); attributing 'source' minted phantom clients from the
-    gateway/router MAC on bridged networks — the Focus 'hundreds of clients' bug."""
+    gateway/router MAC on bridged networks: the Focus 'hundreds of clients' bug."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
     ap, client = "aa:bb:cc:dd:ee:ff", "12:22:33:44:55:66"
     upstream = "de:ad:be:ef:00:01"   # addr3: DS-side origin, NOT a client of the AP
@@ -327,7 +327,7 @@ def test_to_ds_client_is_sender_not_addr3_da(mocker):
 
 def test_group_mac_destination_is_not_a_client(mocker):
     """Multicast/broadcast MACs (IPv6 33:33, IPv4 01:00:5e, broadcast ff:…) are frame
-    destinations, not stations — a downstream (FromDS) multicast frame would otherwise
+    destinations, not stations: a downstream (FromDS) multicast frame would otherwise
     register its group MAC (addr1) as a phantom client."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
     ap, upstream = "aa:bb:cc:dd:ee:ff", "de:ad:be:ef:00:01"
@@ -341,7 +341,7 @@ def test_group_mac_destination_is_not_a_client(mocker):
 
 def test_transition_pmkid_only_classified_via_assoc(mocker):
     """Phase 2 payoff: on a WPA2/WPA3 transition AP a PMKID-only capture (no M2)
-    is classified from the client's Assoc-Req AKM — PSK -> crackable, SAE -> not."""
+    is classified from the client's Assoc-Req AKM: PSK -> crackable, SAE -> not."""
     from wifit3.crack import handshake as wpa
 
     for client_akm, expect_crackable in ((0x02, True), (0x08, False)):
@@ -546,7 +546,7 @@ def test_siblings_first_byte_differs(mocker):
 
 
 def test_siblings_different_channel_no_match(mocker):
-    """Same near-identical BSSIDs but different channels — NOT siblings."""
+    """Same near-identical BSSIDs but different channels: NOT siblings."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
     _seed_beacon(iface, "aa:bb:cc:dd:ee:00", channel=1, ssid="Foo")
     _seed_beacon(iface, "aa:bb:cc:dd:ee:02", channel=6, ssid="Bar")
@@ -611,7 +611,7 @@ def test_siblings_zero_byte_diff_no_match(mocker):
 
 
 def test_siblings_three_way_cluster(mocker):
-    """Three virtual BSSIDs on the same channel — all link bidirectionally
+    """Three virtual BSSIDs on the same channel: all link bidirectionally
     to the other two."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
     _seed_beacon(iface, "aa:bb:cc:dd:ee:02", channel=6, ssid="Main")
@@ -628,7 +628,7 @@ def test_siblings_three_way_cluster(mocker):
 
 def test_siblings_channel_change_drops_stale_link(mocker):
     """If a sibling roams to a different channel, the link drops on both
-    sides on the next beacon — they're no longer co-radio."""
+    sides on the next beacon: they're no longer co-radio."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
     _seed_beacon(iface, "aa:bb:cc:dd:ee:00", channel=44, ssid="Foo")
     _seed_beacon(iface, "aa:bb:cc:dd:ee:02", channel=44, ssid="Bar")
@@ -685,7 +685,7 @@ async def test_hopper_surfaces_device_gone_and_stops(mocker):
 
 async def test_deauth_sets_unicast_ack_nav(mocker):
     """A client-targeted deauth burst carries the unicast-ACK NAV (0x013A) in the duration
-    of both spoofed frames — the destination (addr1) ACKs, so we reserve SIFS + a 1 Mbps
+    of both spoofed frames: the destination (addr1) ACKs, so we reserve SIFS + a 1 Mbps
     ACK. Built in the shared interface path, so this holds for every driver."""
     driver = mocker.MagicMock()
     driver.inject_frame_slow_retry = mocker.AsyncMock(return_value=True)
@@ -728,8 +728,8 @@ async def test_deauth_client_tallies_per_direction_acks(mocker):
 
 
 async def test_broadcast_deauth_only_group_frame_nav_zero(mocker):
-    """'Deauth all' sends a single AP→ff:ff:ff:ff:ff:ff wave — a group address that is never
-    ACKed, so NAV is 0. One direction only: there is NO reverse (broadcast→AP) frame — that
+    """'Deauth all' sends a single AP→ff:ff:ff:ff:ff:ff wave: a group address that is never
+    ACKed, so NAV is 0. One direction only: there is NO reverse (broadcast→AP) frame: that
     would de-auth nobody. Broadcast is fire-and-forget (never arms TX-ACK detection)."""
     driver = mocker.MagicMock()
     driver.inject_frame = mocker.AsyncMock(return_value=True)

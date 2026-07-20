@@ -2,7 +2,7 @@
 
 The low-level primitives are anchored to PUBLISHED known-answer vectors
 (FIPS-197 for the AES block, NIST SP800-38A F.2.1 for AES-CBC), so the AES
-port is validated independently — not just against itself. The higher-level
+port is validated independently, not just against itself. The higher-level
 WSC derivations are checked for self-consistency (build a hash, recover it);
 their on-air correctness is proven by scripts/wps/wps_probe.py against a real AP.
 """

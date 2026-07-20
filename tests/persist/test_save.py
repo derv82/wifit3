@@ -74,7 +74,7 @@ class TestSaveHandshake:
         assert pcap.exists() and pcap.stat().st_size > 0
 
     def test_body_is_wpa02_only(self, tmp_path):
-        # AP also has a PMKID — save_handshake must NOT include the WPA*01 line.
+        # AP also has a PMKID, so save_handshake must NOT include the WPA*01 line.
         ap = _ap_with_hs(pmkid=b"\x11" * 16)
         result = save_handshake(ap, "11:22:33:44:55:66", captures_dir=tmp_path)
         assert result is not None
@@ -86,7 +86,7 @@ class TestSaveHandshake:
         ap = _ap_with_hs(anonce=b"\xA0" + b"\x00" * 31)
         first = save_handshake(ap, "11:22:33:44:55:66", captures_dir=tmp_path)
         assert first is not None and first.was_new is True
-        # Rebuild with the same ANonce — dedupe should report the SAME path.
+        # Rebuild with the same ANonce: dedupe should report the SAME path.
         ap2 = _ap_with_hs(anonce=b"\xA0" + b"\x00" * 31)
         again = save_handshake(ap2, "11:22:33:44:55:66", captures_dir=tmp_path)
         assert again is not None
@@ -138,7 +138,7 @@ class TestSavePmkid:
         result = save_pmkid(ap, "11:22:33:44:55:66", captures_dir=tmp_path)
         assert result is not None and result.was_new is True
         assert result.path.name.endswith("_pmkid.hc22000")
-        # No pcap companion — nothing consumes a PMKID-in-pcap, and the
+        # No pcap companion: nothing consumes a PMKID-in-pcap, and the
         # harvest M1 isn't kept anyway, so the file would be beacon-only.
         assert not result.path.with_suffix(".pcap").exists()
 
@@ -246,7 +246,7 @@ class TestSaveWpsPin:
         assert again.path == first.path
 
     def test_psk_rotation_writes_new(self, tmp_path):
-        # Same PIN but PSK rotated — high-value: re-verify caught the rotation.
+        # Same PIN but PSK rotated, high-value: re-verify caught the rotation.
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
         save_wps_pin(ap, "12345670", "oldpsk", captures_dir=tmp_path)
         second = save_wps_pin(ap, "12345670", "newpsk", captures_dir=tmp_path)

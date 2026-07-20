@@ -11,7 +11,7 @@ from wifit3.campaigns.wep import WepCampaign
 
 @pytest.fixture(autouse=True)
 def _reset_active():
-    """The radio mutex is a Campaign class var — reset it around each test."""
+    """The radio mutex is a Campaign class var: reset it around each test."""
     Campaign.active = None
     yield
     Campaign.active = None

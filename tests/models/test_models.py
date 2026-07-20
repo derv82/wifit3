@@ -33,7 +33,7 @@ def test_wps_pbc_active_detection():
 def test_has_psk():
     """has_psk gates the opportunistic PBC re-invade: true once we hold the
     passphrase from any source (live PBC/PIN this session, or a prior session's
-    WPS capture on disk) — but a PIN with no PSK does not count."""
+    WPS capture on disk), but a PIN with no PSK does not count."""
     ap = AccessPoint(bssid="00:11:22:33:44:55")
     assert ap.has_psk is False                              # nothing yet
     assert ap.known_psk is None
@@ -49,7 +49,7 @@ def test_has_psk():
     assert ap2.has_psk is True
     assert ap2.known_psk == "hunter2pin"
 
-    # A bare PIN with no recovered PSK does NOT block — PBC still worth running.
+    # A bare PIN with no recovered PSK does NOT block. PBC still worth running.
     ap3 = AccessPoint(bssid="00:11:22:33:44:77")
     ap3.wps_pin = "12345670"
     assert ap3.has_psk is False
@@ -72,8 +72,8 @@ def test_has_psk():
 
 
 def _eapol(msg_num: int, replay: int) -> HandshakeMessage:
-    """A *usable* EAPOL frame: non-zero nonce, real MIC, complete 802.1X payload
-    — so M2/M4 qualify as MIC keystones and M1/M3 as ANonce donors."""
+    """A *usable* EAPOL frame: non-zero nonce, real MIC, complete 802.1X payload,
+    so M2/M4 qualify as MIC keystones and M1/M3 as ANonce donors."""
     return HandshakeMessage(
         raw=bytes([msg_num, replay & 0xFF]),
         msg_num=msg_num,

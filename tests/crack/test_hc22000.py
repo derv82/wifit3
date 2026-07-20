@@ -21,7 +21,7 @@ def _eapol_payload(mic: bytes = b"\xFF" * 16, key_data_len: int = 0) -> bytes:
     pl[1] = 0x03   # 802.1X type = EAPOL-Key
     pl[2:4] = (95 + key_data_len).to_bytes(2, "big")
     pl[4] = 0x02   # Key Desc Type = RSN
-    pl[5:7] = b"\x00\x8a"  # Key Info (M1-ish — doesn't matter for format tests)
+    pl[5:7] = b"\x00\x8a"  # Key Info (M1-ish, doesn't matter for format tests)
     pl[81:97] = mic
     pl[97:99] = key_data_len.to_bytes(2, "big")
     return bytes(pl)
@@ -119,7 +119,7 @@ def test_eapol_hashline_m1_m2():
 
 
 def test_eapol_hashline_zeros_mic_in_payload():
-    """The MIC bytes inside the EAPOL hex field must be zero — hashcat
+    """The MIC bytes inside the EAPOL hex field must be zero: hashcat
     expects to fill them itself when verifying a candidate."""
     mic = b"\xCC" * 16
     m1 = _ef(1, replay=5, payload_mic=b"\x00" * 16)
@@ -161,7 +161,7 @@ def test_eapol_hashline_m1_m4_pair_byte():
 
 
 def test_eapol_hashline_no_valid_pair_returns_none():
-    # Two M1 retries — the very bug we just fixed in is_complete
+    # Two M1 retries: the very bug we just fixed in is_complete
     m1a = _ef(1, replay=5)
     m1b = _ef(1, replay=5)
     hs = _hs("Net", m1a, m1b)

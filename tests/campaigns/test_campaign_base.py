@@ -1,4 +1,4 @@
-"""Unit tests for the Campaign base lifecycle — engine-pure, no Textual.
+"""Unit tests for the Campaign base lifecycle, engine-pure, no Textual.
 
 Pins the framework contract the per-campaign migrations rely on: the class-level
 ``active`` radio mutex, start/stop, exit-driven teardown (on completion, stop, AND
@@ -13,7 +13,7 @@ from wifit3.campaigns.campaign import Campaign
 
 @pytest.fixture(autouse=True)
 def _reset_active():
-    """``active`` is a class var — a leaked campaign would poison sibling tests."""
+    """``active`` is a class var: a leaked campaign would poison sibling tests."""
     Campaign.active = None
     yield
     Campaign.active = None
@@ -96,7 +96,7 @@ async def test_crash_in_run_is_contained_and_releases_radio(caplog):
 
     c = Boom()
     c.run()
-    await c._task                        # does NOT raise — backstop swallows it
+    await c._task                        # does NOT raise: backstop swallows it
     assert c.tore_down                   # teardown still ran
     assert Campaign.active is None       # mutex released
     assert "crashed in _loop()" in caplog.text
@@ -147,5 +147,5 @@ async def test_stop_is_idempotent_after_completion():
     c = _Looper()
     c.run()
     await c.stop()
-    await c.stop()                       # already done — must not raise
+    await c.stop()                       # already done: must not raise
     assert c.done

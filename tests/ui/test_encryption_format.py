@@ -22,7 +22,7 @@ def test_wep_zero_ivs_when_unseen():
 
 
 def test_wep_detailed_omits_iv_count():
-    """Focus's CAPTURE panel owns the IV count — the detailed ENCRYPT line
+    """Focus's CAPTURE panel owns the IV count: the detailed ENCRYPT line
     must not duplicate it."""
     ap = _ap(encryption="WEP", wep=WepStats(unique_ivs=1234))
     assert format_encryption_markup(ap, detailed=True) == (
@@ -37,7 +37,7 @@ def test_plain_psk_token_unchanged():
 
 
 def test_psk_sha256_shown_distinctly():
-    """PSK-SHA256 (AKM 6) must NOT collapse into 'PSK' — we want to see its
+    """PSK-SHA256 (AKM 6) must NOT collapse into 'PSK': we want to see its
     real-world prevalence in a scan."""
     assert "(PSK256)" in format_encryption_markup(_ap(akms=["PSK-SHA256"]), muted="dim")
 

@@ -1,8 +1,8 @@
 """Offline tests for the WEP ChopChop daemon.
 
 The AP's relay (does it relay a correct guess?) is hardware-verified by the probe; here we
-prove the OFFLINE-testable core — the byte-walk keystream recovery, the
-tag-and-read-back identity mechanism, and the forge/handoff — by driving the
+prove the OFFLINE-testable core (the byte-walk keystream recovery, the
+tag-and-read-back identity mechanism, and the forge/handoff) by driving the
 daemon with a SIMULATED AP (decrypt the shortened frame with a known key, relay
 iff the ICV is valid, echoing back the MAC tag we stamped). If recovery
 reproduces the true keystream against that, the attack logic is correct; only
@@ -67,8 +67,8 @@ def _arp_cipher(sender_ip, target_ip):
 def _ip_cipher():
     """Build a captured broadcast IP datagram cipher: SNAP + ethertype 0x0800 +
     a well-formed IPv4 header (IHL=5, TOS=0) + payload. The IP total-length
-    field equals (cipher_len - 12) by construction — exactly what header_rec
-    computes — so the offline reconstruction can confirm it via the CRC."""
+    field equals (cipher_len - 12) by construction, exactly what header_rec
+    computes, so the offline reconstruction can confirm it via the CRC."""
     ip_len = 40                                          # 20 hdr + 20 payload
     ip_hdr = bytes([0x45, 0x00, (ip_len >> 8) & 0xFF, ip_len & 0xFF,
                     0x12, 0x34,            # identification
@@ -118,7 +118,7 @@ def _daemon(probe=None):
 
 def _assert_valid_forged_arp(forged: bytes):
     """The forged frame decrypts (key abcde) to a well-formed broadcast ARP
-    from us with a valid ICV — i.e. one the AP will relay."""
+    from us with a valid ICV, i.e. one the AP will relay."""
     body = forged[_hdr_len(forged[0], forged[1]):]
     assert forged[16:22] == b"\xff" * 6          # broadcast DA (a real ARP req)
     assert body[:3] == IV                        # reused the target's IV
@@ -149,8 +149,8 @@ async def test_chop_and_forge_none_when_ap_silent():
 
 
 async def test_chop_and_forge_aborts_on_relayed_sentinel():
-    """If the AP relays the bad-ICV sentinel, it doesn't discard invalid frames
-    — chopchop can't work; we bail (and log), not loop forever."""
+    """If the AP relays the bad-ICV sentinel, it doesn't discard invalid frames:
+    chopchop can't work; we bail (and log), not loop forever."""
     cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
     logs = []
 
@@ -167,7 +167,7 @@ async def test_chop_and_forge_aborts_on_relayed_sentinel():
 def _relaying_iface(key: bytes, daemon_box, min_relay: int = 0):
     """A fake iface whose send_raw plays the AP: decrypt the sent frame's WEP
     body; if the ICV is valid, 'relay' it back as a FromDS frame echoing the DA
-    tag we stamped — exactly how the daemon learns which guess was accepted.
+    tag we stamped, exactly how the daemon learns which guess was accepted.
     ``min_relay`` models the drop-short wall: ciphers shorter than it are
     dropped (never relayed), so the chop stalls there."""
     box = {}
@@ -197,8 +197,8 @@ def _relaying_iface(key: bytes, daemon_box, min_relay: int = 0):
 async def test_tag_and_read_back_recovers_keystream_end_to_end():
     """The whole new mechanism, offline: the daemon stamps each guess into the
     DA, the simulated AP relays only the valid-ICV one (echoing that DA), and
-    the daemon reads the guess back out of the relay's Addr1 — no inference,
-    no DFS — recovering the keystream and forging a valid ARP."""
+    the daemon reads the guess back out of the relay's Addr1 (no inference,
+    no DFS) recovering the keystream and forging a valid ARP."""
     cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
     holder = {}
     iface, box = _relaying_iface(KEY, None)
@@ -215,8 +215,8 @@ async def test_tag_and_read_back_recovers_keystream_end_to_end():
 
 
 def _walled_daemon(cipher_key, min_relay):
-    """A daemon wired to a simulated AP that walls at ``min_relay`` (drop-short)
-    — for the wall paths: AP-brute (ARP) and IP header reconstruction."""
+    """A daemon wired to a simulated AP that walls at ``min_relay`` (drop-short),
+    for the wall paths: AP-brute (ARP) and IP header reconstruction."""
     holder = {}
     iface, box = _relaying_iface(cipher_key, None, min_relay=min_relay)
     d = WepChopChop(iface, SimpleNamespace(bssid=BSSID), SimpleNamespace(),
@@ -234,7 +234,7 @@ def _walled_daemon(cipher_key, min_relay):
 async def test_chop_to_wall_then_ap_brute_recovers_boundary_byte():
     """The AP walls just inside the sender MAC (won't relay a 16-byte cipher):
     chopping stalls at 17, leaving the ARP header known [0..15] and ONE unknown
-    byte [16] — recovered by the forged-ARP AP-brute, then CRC-confirmed."""
+    byte [16], recovered by the forged-ARP AP-brute, then CRC-confirmed."""
     cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
     d = _walled_daemon(KEY, min_relay=17)
     forged = await d._chop_and_forge(cipher)
@@ -247,7 +247,7 @@ async def test_recovers_ip_seed_via_header_reconstruction():
     """A broadcast IP datagram (not ARP) where the AP relays down to a 12-byte
     cipher: chopping recovers bytes 12..end, and the hidden IP header [0..11] is
     reconstructed offline (brute version/IHL + TOS, computed total-length,
-    confirmed by the frame's own CRC) — then we forge the usual broadcast ARP."""
+    confirmed by the frame's own CRC), then we forge the usual broadcast ARP."""
     cipher, _ = _ip_cipher()
     d = _walled_daemon(KEY, min_relay=12)
     forged = await d._chop_and_forge(cipher)
@@ -258,7 +258,7 @@ async def test_recovers_ip_seed_via_header_reconstruction():
 @pytest.mark.slow
 async def test_loop_picks_seed_from_store_and_chops_end_to_end():
     """Drive the real _loop (not just _chop_and_forge): it must pull a seed from
-    the store's chop_candidates, associate, chop, and hand off — without
+    the store's chop_candidates, associate, chop, and hand off, without
     referencing anything that no longer exists. Regression for the lazy-auth
     refactor leaving a stale self._can_inject() in the loop, which crashed the
     task on its first tick (chop_active stayed True so the UI showed 'forging a

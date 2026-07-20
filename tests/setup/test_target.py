@@ -1,6 +1,6 @@
 """Linux replug classification: the safe default is replug-required; only chips that genuinely
-self-cold in userland opt out. Exercised through target_for_vidpid — the exact call the splash
-uses — with each driver's own first VID:PID so the test never hardcodes brittle id literals."""
+self-cold in userland opt out. Exercised through target_for_vidpid (the exact call the splash
+uses) with each driver's own first VID:PID so the test never hardcodes brittle id literals."""
 from wifit3.setup import target_for_vidpid
 from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
 from wifit3.chips.mt76x0u.driver import MT76x0UDriver

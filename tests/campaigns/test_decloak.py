@@ -22,7 +22,7 @@ def test_build_candidates_empty_base_returns_empty():
 
 def test_build_candidates_dedups_and_orders():
     out = build_candidates("Foo")
-    # Empty suffix must be first — covers mesh / same-SSID dual-band case.
+    # Empty suffix must be first: covers mesh / same-SSID dual-band case.
     assert out[0] == "Foo"
     # No duplicates.
     assert len(out) == len(set(out))
@@ -35,7 +35,7 @@ def test_build_candidates_dedups_and_orders():
 
 
 def test_build_candidates_strips_trailing_whitespace():
-    """' Guest' suffix would produce 'Base Guest' — fine. But if base
+    """' Guest' suffix would produce 'Base Guest', fine. But if base
     already ends in whitespace, we shouldn't propagate that into all
     candidates and shouldn't double up."""
     out = build_candidates("TestSSID 2.4")
@@ -70,7 +70,7 @@ def test_decloak_probe_req_parses_back_with_candidate_ssid():
 
 def test_decloak_probe_req_handles_empty_ssid_candidate():
     """The '' (mesh/exact-match) suffix yields a candidate equal to the
-    base SSID — never an empty SSID IE, since build_candidates filters
+    base SSID, never an empty SSID IE, since build_candidates filters
     empties. But the builder itself should still accept and round-trip
     a long-SSID candidate."""
     mock_iface = MagicMock()

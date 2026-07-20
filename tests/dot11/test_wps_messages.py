@@ -106,7 +106,7 @@ def test_parse_rx_m1_request():
 
 def test_parse_rx_strips_trailing_fcs():
     # Cards append a 4-byte FCS; it must NOT leak into raw_wsc_attrs (which the
-    # next Authenticator HMACs) — this was the bug that made every M2 rejected.
+    # next Authenticator HMACs). This was the bug that made every M2 rejected.
     m1_attrs = (
         M.tlv_u8(M.ATTR_VERSION, 0x10) + M.tlv_u8(M.ATTR_MSG_TYPE, M.WPS_M1)
         + M.tlv(M.ATTR_ENROLLEE_NONCE, b"\xEE" * 16) + M.tlv(M.ATTR_PUBLIC_KEY, b"\xFF" * 192)

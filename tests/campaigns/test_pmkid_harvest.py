@@ -1,9 +1,9 @@
 """PMKID harvest: deauth-on-M1 + the empty-M1 no-retry behaviour.
 
 M1 is terminal for the harvest (we can't compute M2's MIC without the PSK), so on
-ANY M1 we send a leaving-deauth (a 3x burst — the path runs without active-monitor,
+ANY M1 we send a leaving-deauth (a 3x burst: the path runs without active-monitor,
 so our TX is un-ACKed) and stop: with the PMKID on success, empty-handed on a
-PMKID-less M1 (no retry — the same AP would only re-send the same empty M1). We only
+PMKID-less M1 (no retry: the same AP would only re-send the same empty M1). We only
 rotate the MAC + retry when the AP stays silent (no M1).
 """
 from types import SimpleNamespace
@@ -24,8 +24,8 @@ def _target(pmf_required=False, pmf_capable=False, akm_suites=(0x02,), rsn_ie=No
 
 class _FakeIface:
     """Records injected frames. Answers Association's Auth/Assoc Reqs with the
-    matching Resp (status 0) via the registered rx callback, and — when
-    ``deliver_m1`` — drops an M1 into the handshake dict the instant the Assoc Req
+    matching Resp (status 0) via the registered rx callback, and (when
+    ``deliver_m1``) drops an M1 into the handshake dict the instant the Assoc Req
     is sent (simulating the AP's reply)."""
 
     def __init__(self, deliver_m1: bool, pmkid=None, fake_mac_supported: bool = False):
@@ -123,7 +123,7 @@ async def test_empty_m1_deauths_does_not_retry_and_says_why():
     await a.teardown()
     assert a.pmkid is None
     assert a.fail_reason is PmkidFail.NO_KDE                   # specific, definitive reason
-    assert len(_deauths(iface)) == 3                           # still deauth — we got M1
+    assert len(_deauths(iface)) == 3                           # still deauth: we got M1
     assert len(_assoc_reqs(iface)) == 1                        # the fix: ONE attempt, not 3
 
 
@@ -145,7 +145,7 @@ async def test_pmf_required_short_circuits_without_tx():
     await a.teardown()
     assert a.pmkid is None
     assert a.fail_reason is PmkidFail.PMF_REQUIRED
-    assert iface.sent == []                                    # don't even try — no auth/assoc/deauth
+    assert iface.sent == []                                    # don't even try: no auth/assoc/deauth
 
 
 async def test_no_psk_akm_short_circuits():
@@ -178,7 +178,7 @@ def test_force_psk_akm_non_pmf_cleans_caps_and_drops_group_mgmt():
 
 def test_force_psk_akm_pmf_capable_advertises_mfpc_and_bip():
     # PMF-capable target (WPA3→WPA2 transition): present as a PMF-*capable* PSK client
-    # so the AP associates us — MFPC=1 (MFPR clear), PMKID-count 0, BIP-CMAC-128 group
+    # so the AP associates us: MFPC=1 (MFPR clear), PMKID-count 0, BIP-CMAC-128 group
     # mgmt. HW-observed: an MFPC=0 Assoc was ACKed at Auth then silently dropped.
     rsn = bytes.fromhex("30140100000fac040100000fac040100000fac020000")
     out = force_psk_akm(rsn, pmf_capable=True)

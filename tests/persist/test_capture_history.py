@@ -1,4 +1,4 @@
-"""Tests for the captures/ history loader (synthetic files — no real IDs)."""
+"""Tests for the captures/ history loader (synthetic files, no real IDs)."""
 from __future__ import annotations
 
 from wifit3.persist.capture_history import load_capture_index, summarize
@@ -6,7 +6,7 @@ from wifit3.persist.capture_history import load_capture_index, summarize
 _BSSID_DASH = "aa-bb-cc-dd-ee-ff"
 _BSSID_COLON = "aa:bb:cc:dd:ee:ff"
 
-# Minimal hashlines — only the WPA*TYPE* prefix is inspected.
+# Minimal hashlines: only the WPA*TYPE* prefix is inspected.
 _HS_LINE = "WPA*02*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***2\n"
 _PMKID_LINE = "WPA*01*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***\n"
 _WEPKEY_TXT = (
@@ -72,7 +72,7 @@ class TestLoadCaptureIndex:
         assert caps[0].kind == "WPS" and caps[0].value == "abcdefgh"
 
     def test_pcap_companion_is_ignored(self, tmp_path):
-        # A handshake.pcap on its own contributes no PersistedCapture — its
+        # A handshake.pcap on its own contributes no PersistedCapture. Its
         # hashline sibling carries the verdict.
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000007_handshake.pcap", "binary-ish")
         assert load_capture_index(tmp_path) == {}

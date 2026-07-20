@@ -2,13 +2,13 @@
 
 The live path (graphical pkexec → files written → kernel module unloaded → replug → cold card)
 can't be exercised without a real Linux box + hardware, so it's left to the Kali smoke. The
-deterministic logic — the rule/blacklist text, the privileged argv, and the install/remove
-classification — is covered here on any OS by forcing the platform/euid via monkeypatch.
+deterministic logic (the rule/blacklist text, the privileged argv, and the install/remove
+classification) is covered here on any OS by forcing the platform/euid via monkeypatch.
 
 The live module-discovery tests are the exception: they stand up a *real* sysfs tree (colon-named
 interface dirs like ``2-1:1.0`` + a ``driver`` symlink), which Windows' filesystem can't represent
 (``:`` is illegal in a path component; symlinks need privilege). The production glob/readlink leans
-on those exact Linux semantics, so faking them faithfully off-Linux isn't possible — ``_fake_sysfs``
+on those exact Linux semantics, so faking them faithfully off-Linux isn't possible. ``_fake_sysfs``
 skips on Windows, and these run on the Linux CI leg instead.
 """
 import sys
@@ -48,7 +48,7 @@ def _fake_sysfs(tmp_path, monkeypatch, *, sub="sys", vid=0x0cf3, pid=0x9271, bou
     """Build a minimal /sys/bus/usb/devices tree for one card and point the module at it. ``sub``
     lets one test stand up several distinct trees under the same tmp_path."""
     if sys.platform == "win32":
-        pytest.skip("fake sysfs needs colon-named interface dirs + a driver symlink — Linux-only "
+        pytest.skip("fake sysfs needs colon-named interface dirs + a driver symlink: Linux-only "
                     "filesystem semantics (covered on the Linux CI leg)")
     base = tmp_path / sub
     dev = base / "2-1"
@@ -77,7 +77,7 @@ def test_bound_modules_reads_the_interface_driver_symlink(tmp_path, monkeypatch)
 
 
 def test_bound_modules_resolves_driver_to_module_name(tmp_path, monkeypatch):
-    # Out-of-tree Realtek: the sysfs *driver* is ``rtl8814au`` but the *module* is ``8814au`` —
+    # Out-of-tree Realtek: the sysfs *driver* is ``rtl8814au`` but the *module* is ``8814au``:
     # modprobe blacklists the module, so both names must surface (over-listing is harmless).
     _fake_sysfs(tmp_path, monkeypatch, bound="rtl8814au", module="8814au")
     assert lin._bound_modules([AR9271]) == {"rtl8814au", "8814au"}
@@ -117,7 +117,7 @@ def test_resolve_via_modalias_runs_modprobe_R_on_the_cards_modalias(tmp_path, mo
 
 
 def test_card_modaliases_reads_interface_level_when_device_level_absent(tmp_path, monkeypatch):
-    # Real PAU09 (rt2800usb) behaviour: no device-level modalias, only the interface one — which is
+    # Real PAU09 (rt2800usb) behaviour: no device-level modalias, only the interface one, which is
     # what the interface-bound driver matches. Reading the device level alone found nothing.
     base = _fake_sysfs(tmp_path, monkeypatch, vid=0x148f, pid=0x5572, bound=None, modalias=None)
     (base / "2-1" / "2-1:1.0" / "modalias").write_text(
@@ -191,7 +191,7 @@ def test_install_cmd_writes_both_files_unloads_module_and_grants_node():
 
 
 def test_install_cmd_root_skips_udev_rule_and_chgrp():
-    # group=None (root): no access rule, no chgrp — only the blacklist matters to root.
+    # group=None (root): no access rule, no chgrp, only the blacklist matters to root.
     cmd = lin._install_cmd(tmp_rule=None, key="ar9271", tmp_blacklist="/t/b.conf",
                            modules=["ath9k_htc"], group=None, node="/dev/bus/usb/003/053")
     assert ".rules" not in cmd and "chgrp" not in cmd
@@ -421,7 +421,7 @@ def test_plan_uninstall_finds_direct_sibling(monkeypatch, tmp_path):
 
 
 def test_plan_uninstall_false_negative_card_with_no_conf_of_its_own(monkeypatch, tmp_path):
-    # PAU09 (rt2800usb) was never explicitly installed — only rt5372's blacklist displaced it. Its
+    # PAU09 (rt2800usb) was never explicitly installed: only rt5372's blacklist displaced it. Its
     # module comes from live discovery (mocked), and rt5372 surfaces as the blocker to remove.
     _point_paths_at_tmp(monkeypatch, tmp_path)
     _write_blacklist("rt5372", "Ralink RT5372 (Panda)", "rt2800usb")

@@ -1,4 +1,4 @@
-"""libpcap writer — saves LINKTYPE_IEEE802_11 frames verbatim. Callers deliver
+"""libpcap writer: saves LINKTYPE_IEEE802_11 frames verbatim. Callers deliver
 FCS-less MPDU bodies (every chip driver strips at RX ingress), so the writer
 no longer second-guesses the frame tail."""
 
@@ -44,7 +44,7 @@ def test_write_pcap_writes_frame_verbatim(tmp_path):
 
 
 def test_write_pcap_preserves_per_frame_timestamps(tmp_path):
-    # Each frame keeps its own capture time (epoch seconds, µs resolution) —
+    # Each frame keeps its own capture time (epoch seconds, µs resolution),
     # required so a round-tripped pcap re-extracts correctly in hcxpcapngtool.
     path = tmp_path / "b.pcap"
     recs = [(_beacon_body(), 1000.5), (_beacon_body(), 1002.25)]

@@ -3,7 +3,7 @@
 Tests that feed a fake parsed frame to ``WlanInterface._on_frame_parsed`` wrap their dict
 in ``pkt(...)``; it fills the base fields a test omits and dispatches to the right subclass
 by ``d["type"]``. Dict keys use the parser's old internal dialect, including the
-``eapol_``/``wep_`` prefixes — kept here as a compact construction shorthand for the many
+``eapol_``/``wep_`` prefixes, kept here as a compact construction shorthand for the many
 call sites, even though the parser itself now builds the subclasses directly.
 """
 from wifit3.dot11.packet import (

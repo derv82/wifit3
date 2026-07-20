@@ -2,11 +2,11 @@
 
 A minimal in-process WSC *Registrar* (the AP side, post-button-press) holding a
 known PSK runs against the real WpsEnrollee over a loopback. This exercises the
-mirror exchange — EAPOL-Start → Identity → WSC_Start → M1 → M2 → M3 → M4 → M5 →
-M6 → M7 → M8 — and the PSK extraction from M8's nested Credential.
+mirror exchange (EAPOL-Start → Identity → WSC_Start → M1 → M2 → M3 → M4 → M5 →
+M6 → M7 → M8) and the PSK extraction from M8's nested Credential.
 
 The registrar independently recomputes E-Hash1 from the E-S1 we reveal in M5 and
-asserts it matches the M3 we sent — so this validates our enrollee's PBC E-hash
+asserts it matches the M3 we sent, so this validates our enrollee's PBC E-hash
 crypto, not just that the plumbing connects. On-air correctness against a real
 AP's stack is what pbc_probe.py will prove.
 """
@@ -179,7 +179,7 @@ async def test_pbc_capture_recovers_psk():
 
 async def test_pbc_enrollee_ehash_is_valid():
     # The registrar independently verified our M3 E-Hash1 against the E-S1 we
-    # revealed — proves our enrollee PBC crypto (PSK from "00000000") is right.
+    # revealed: proves our enrollee PBC crypto (PSK from "00000000") is right.
     _out, reg = await _run()
     assert reg.e_hash1_verified
 
@@ -192,7 +192,7 @@ async def test_pbc_psk_with_binary_safe_decode():
 
 async def test_pbc_enrollee_aborts_on_should_stop():
     """A cooperative stop (Campaign.stopped, polled via should_stop) bails the
-    enrollee with ABORTED before it blocks on recv — this is what lets the 'Stop
+    enrollee with ABORTED before it blocks on recv: this is what lets the 'Stop
     PBC' button free the radio promptly instead of running to the ~30 s deadline."""
     a, b = asyncio.Queue(), asyncio.Queue()
     enr = WpsEnrollee(_QueueTransport(a, b), BSSID, STA,

@@ -70,7 +70,7 @@ def test_run_cmd_fatal_timeout_throws(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Pure text parsers — extracted as Capture staticmethods so they're callable
+# Pure text parsers, extracted as Capture staticmethods so they're callable
 # without constructing Capture (which spins up a TemporaryDirectory). Fixtures
 # are sanitized samples from usb_dumps/captures_*/ (no real BSSIDs).
 # ---------------------------------------------------------------------------
@@ -259,7 +259,7 @@ AUTOINSTALL="yes"
 def test_dkms_conf_ids_collects_package_and_module(tmp_path):
     conf = tmp_path / "dkms.conf"
     conf.write_text(DKMS_CONF_8188EUS)
-    # package name != built .ko name — we need both to match the bound module.
+    # package name != built .ko name. We need both to match the bound module.
     assert Capture._dkms_conf_ids(conf) == {"rtl8188eus", "8188eu"}
 
 
@@ -270,7 +270,7 @@ def test_dkms_conf_ids_skips_variable_refs(tmp_path):
 
 
 def test_best_dkms_match_exact_built_module_over_other_packages():
-    # Bound module 8188eu must select rtl8188eus, NOT the first-listed 8812au —
+    # Bound module 8188eu must select rtl8188eus, NOT the first-listed 8812au:
     # the multi-DKMS-installed case the old code got wrong.
     from pathlib import Path
     cands = [
@@ -317,7 +317,7 @@ def test_cleanup_saves_to_repo_when_chipset_known(tmp_path):
 
 
 # --- injection plan: per-band passes + the 5 GHz supports_5g gate -------------
-# Fake BSSIDs (AA:BB:... — not network identifiers).
+# Fake BSSIDs (AA:BB:..., not network identifiers).
 
 def test_injection_plan_legacy_target_pins_ch1(tmp_path):
     cap = _capture(tmp_path)

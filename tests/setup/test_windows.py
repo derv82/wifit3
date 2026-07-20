@@ -102,7 +102,7 @@ def test_restore_command_deletes_then_rescans():
 
 
 def test_libusb_services_cover_zadig_bindings():
-    # WinUSB (ours + Zadig), plus Zadig's libusbK / libusb-win32 — so restore rolls those back.
+    # WinUSB (ours + Zadig), plus Zadig's libusbK / libusb-win32, so restore rolls those back.
     assert _LIBUSB_SERVICES == {"winusb", "libusbk", "libusb0"}
 
 

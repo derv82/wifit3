@@ -23,7 +23,7 @@ from wifit3.ui.screens.splash import SplashView
 
 @pytest.mark.asyncio
 async def test_driver_init_io_failure_becomes_bringuperror(monkeypatch):
-    """A USB error on the first init op (the interface claim) surfaces as BringUpError —
+    """A USB error on the first init op (the interface claim) surfaces as BringUpError,
     not a silent log + return False."""
     driver = RTL8187Driver(Mock())
     monkeypatch.setattr(driver, "_claim",
@@ -37,7 +37,7 @@ async def test_driver_init_io_failure_becomes_bringuperror(monkeypatch):
 async def test_rt2800usb_init_io_failure_becomes_bringuperror(monkeypatch):
     """Second driver, same contract: the swallow-to-BringUpError conversion is a
     fleet-wide change, so lock one of the converted drivers (rt2800usb wraps its whole
-    connect body) — a USB fault on the claim must raise, not return False."""
+    connect body): a USB fault on the claim must raise, not return False."""
     driver = RT2800USBDriver(Mock())
     monkeypatch.setattr(driver, "_claim",
                         Mock(side_effect=usb.core.USBError("simulated claim failure")))
@@ -47,10 +47,10 @@ async def test_rt2800usb_init_io_failure_becomes_bringuperror(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")  # ui/conftest.py — boot touches no hardware
+@pytest.mark.usefixtures("no_usb_devices")  # ui/conftest.py: boot touches no hardware
 async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
     """A real driver failing bring-up (USB fault during init) must show in the splash's
-    persistent error label + an error toast — and a later USB poll must NOT overwrite it
+    persistent error label + an error toast, and a later USB poll must NOT overwrite it
     (the status line gets overwritten ~2x/s; the error label must survive)."""
     driver = RTL8187Driver(Mock())
     monkeypatch.setattr(driver, "_claim",
@@ -70,7 +70,7 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
         toasts: list[tuple] = []
         monkeypatch.setattr(splash, "notify", lambda *a, **k: toasts.append((a, k)))
 
-        splash.perform_start(iface)            # @work — pump the loop until it surfaces
+        splash.perform_start(iface)            # @work: pump the loop until it surfaces
         label = splash.query_one("#error-label", Label)
         for _ in range(20):
             await pilot.pause()

@@ -75,7 +75,7 @@ def test_eta_none_when_no_rate():
 
 
 def test_crack_eta_tracks_samples_not_unique_ivs():
-    """The crack ETA must use the SAMPLE rate, not the unique-IV rate — samples
+    """The crack ETA must use the SAMPLE rate, not the unique-IV rate: samples
     (usable IVs) gate cracking and lag unique IVs (the gap = organic traffic).
     Regression: the UI used to gate on unique IVs, so cracking "should start"
     at 10k IVs but didn't begin until ~10k samples (often ~2x the IVs)."""
@@ -114,7 +114,7 @@ def test_arp_candidate_rejected_on_wrong_size():
 
 
 def test_arp_candidates_stored_both_directions():
-    """We keep ALL ARP-sized broadcast frames regardless of direction — the
+    """We keep ALL ARP-sized broadcast frames regardless of direction: the
     replay engine re-addresses them and prunes non-yielding ones later."""
     c = WepCaptureStore()
     for i in range(5):

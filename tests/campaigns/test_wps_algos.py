@@ -34,7 +34,7 @@ def test_every_emitted_pin_is_checksum_valid():
 
 
 def test_gate_not_flood_unknown_oui():
-    # An OUI not in the table gets ONLY the broad chipset algorithms — no brand flood.
+    # An OUI not in the table gets ONLY the broad chipset algorithms, no brand flood.
     unknown = bytes.fromhex("fedcba987654")
     assert unknown[:3].hex().upper() not in wps_router_ouis.OUI_VENDOR
     assert A.pins_for(unknown) == list(dict.fromkeys(A.pin24(unknown) + A.pin_airocon(unknown)))
@@ -62,7 +62,7 @@ def test_oui_table_has_expected_families():
 
 
 def test_oui_table_is_lazy_loaded():
-    # The ~7 KB table must NOT import at module load (protects app startup time) — only
+    # The ~7 KB table must NOT import at module load (protects app startup time), only
     # when pins_for actually runs. Checked in a fresh interpreter to avoid cross-test state.
     code = (
         "import sys, wifit3.campaigns.wps.wps_algos as a; "

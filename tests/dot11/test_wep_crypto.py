@@ -134,7 +134,7 @@ def test_chopchop_fixup_valid_for_correct_guess_only():
 @pytest.mark.slow
 def test_chopchop_exactly_one_valid_guess_per_step():
     """EXACTLY one byte value per chop step produces a valid-ICV (relayable)
-    frame — the uniqueness ChopChop's byte-walk relies on. Exhaustive over all
+    frame, the uniqueness ChopChop's byte-walk relies on. Exhaustive over all
     256 guesses, many random frames. (Any >1 the AP relays on the air is an
     echo of the single valid frame, not a second valid byte.)"""
     rng = random.Random(7)
@@ -148,7 +148,7 @@ def test_chopchop_exactly_one_valid_guess_per_step():
                 bytes(b ^ k for b, k in zip(chop_last_byte_and_fixup(body, g), ks))
             ) & 0xFFFFFFFF == CRC32_RESIDUE
         ]
-        # Exactly one — and it's the true last byte of (data ++ ICV).
+        # Exactly one, and it's the true last byte of (data ++ ICV).
         assert valid == [(data + icv(data))[-1]]
 
 
@@ -169,7 +169,7 @@ def test_chopchop_iterates_keeping_frames_valid():
 #
 # These prove the SEND side is self-consistent: a simulated AP that decrypts +
 # reassembles our fragments recovers exactly what we fragmented. That's a
-# consistency check, NOT proof the real dd-wrt box reassembles + relays — only
+# consistency check, NOT proof the real dd-wrt box reassembles + relays. Only
 # the on-air probe (scripts/wep/frag_probe.py) can establish that.
 
 _SNAP_ARP_PREFIX = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06])

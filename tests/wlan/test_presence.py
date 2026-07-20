@@ -1,4 +1,4 @@
-"""WlanDeviceManager.linux_wait_for_presence — the unplug/replug poll behind the replug modal.
+"""WlanDeviceManager.linux_wait_for_presence: the unplug/replug poll behind the replug modal.
 Driven with a stub bus (scripted presence sequence) so no hardware or real USB scan is needed."""
 from wifit3.wlan.manager import WlanDeviceManager
 

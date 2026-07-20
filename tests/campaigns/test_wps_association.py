@@ -74,7 +74,7 @@ async def test_waits_for_auth_resp_then_sends_assoc():
 
 
 async def test_falls_back_to_assoc_when_no_auth_resp():
-    # AP answers Assoc but not Auth — we still associate, via the auth_timeout fallback.
+    # AP answers Assoc but not Auth. We still associate, via the auth_timeout fallback.
     iface = _RespIface(answer_auth=False)
     a = Association(iface, _BSSID, "Net", 1, our_mac=_US, auth_timeout=0.05)
     a.start()

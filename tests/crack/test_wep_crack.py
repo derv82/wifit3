@@ -1,4 +1,4 @@
-"""WEP cracker tests — pure software, no hardware.
+"""WEP cracker tests: pure software, no hardware.
 
 Proves the native PTW cracker recovers a known key from synthetic WEP packets:
 generate packets under a chosen key (random IVs, known ARP plaintext), feed the
@@ -64,7 +64,7 @@ def _synth_samples(key: bytes, n: int, seed: int = 1):
 
 @pytest.mark.slow
 def test_ptw_recovers_40bit_key():
-    key = bytes.fromhex("6162636465")  # "abcde" — the user's dd-wrt test key
+    key = bytes.fromhex("6162636465")  # "abcde", the user's dd-wrt test key
     c = PtwCracker()
     for iv, ks in _synth_samples(key, 40_000):
         c.feed(iv, ks)
@@ -107,7 +107,7 @@ def test_cracker_picklable_and_recovers_after_roundtrip():
 def test_ptw_tolerates_one_odd_packet_in_verify():
     """A single bad verify sample (e.g. an ARP-sized broadcast that wasn't
     actually an ARP → wrong 'known plaintext') must not reject the correct
-    key — majority verification shrugs it off."""
+    key. Majority verification shrugs it off."""
     key = bytes.fromhex("6162636465")
     c = PtwCracker()
     for iv, ks in _synth_samples(key, 40_000):
@@ -121,8 +121,8 @@ def test_ptw_tolerates_one_odd_packet_in_verify():
 def test_ptw_no_false_key_with_few_samples():
     key = os.urandom(5)
     c = PtwCracker()
-    c._MAX_TRIALS = 2000   # bound the doomed search — proving no false positive
+    c._MAX_TRIALS = 2000   # bound the doomed search, proving no false positive
     for iv, ks in _synth_samples(key, 50):
         c.feed(iv, ks)
-    # Far too few IVs — must not return a bogus key (verification guards it).
+    # Far too few IVs: must not return a bogus key (verification guards it).
     assert c.recover() is None

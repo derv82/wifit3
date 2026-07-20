@@ -1,7 +1,7 @@
 """WPS-PBC 5 GHz stall fix: the client-leaving deauth + the patient msg_timeout.
 
 A stalled attempt used to abandon ~1.6s before a slow AP's M6 (~4.6s on 5 GHz) and
-then rotate to a fresh MAC, orphaning the AP's EAP session — it retransmits the
+then rotate to a fresh MAC, orphaning the AP's EAP session: it retransmits the
 in-flight WSC message to the dead MAC and locks out the next attempt at Identity.
 Fixes: (1) WpsEnrollee.msg_timeout 3->5s so a slow AP gets time to finish; (2) a
 client→AP "leaving" deauth on teardown so the AP drops the session before the next

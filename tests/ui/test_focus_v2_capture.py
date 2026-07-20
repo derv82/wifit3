@@ -1,4 +1,4 @@
-"""FocusViewV2 must paint the live campaign picture — driven by a real
+"""FocusViewV2 must paint the live campaign picture, driven by a real
 WlanInterface (mock driver) end to end, no hardware. Mirrors
 ``test_focus_capture`` for v1: beacon → target → push v2 → feed M1(+PMKID)/M2,
 then assert the headline, event log, client list, and that the handshake/PMKID
@@ -102,13 +102,13 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         # Idle WPA target → passive listening headline.
         assert "Listening" in str(status.render())
 
-        # Phone connects: M1 (carries a PMKID KDE) — partial so far.
+        # Phone connects: M1 (carries a PMKID KDE), partial so far.
         replay = b"\x00" * 8
         iface._on_frame_parsed(_eapol(bssid, client, 1, replay, to_ap=False, pmkid=b"\xaa" * 16))
         focus._tick()
         await pilot.pause()
         text = _log_text(log)
-        # M1 is buffered (deferred aggregation) so its tree isn't logged yet —
+        # M1 is buffered (deferred aggregation) so its tree isn't logged yet,
         # but PMKID is an immediate win banner.
         assert "PMKID captured" in text, text
         assert "Valid 4-Way Handshake" not in text, text
@@ -136,7 +136,7 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
 @pytest.mark.asyncio
 async def test_focus_resume_repins_channel_when_radio_drifted():
     """Returning to Focus on the SAME target must re-tune to the target's channel when the radio
-    drifted (the Scanner hopper walks it off-channel while Focus is backgrounded) — the
+    drifted (the Scanner hopper walks it off-channel while Focus is backgrounded). The
     same-target resume used to keep the view but skip the tune, parking us on a hop channel with
     zero beacons. A modal close (no drift) must NOT re-tune (don't disrupt an active attack)."""
     bssid = "aa:bb:cc:dd:ee:01"
@@ -172,7 +172,7 @@ async def test_focus_resume_repins_channel_when_radio_drifted():
 async def test_v2_capture_wins_do_not_double_toast():
     """Focus does NOT toast handshake / PMKID wins from its detector. ScannerView sits under
     it on the screen stack, keeps polling its own detector over EVERY AP, and fires the toast
-    (so wins on OTHER targets still notify while we're focused) — a Focus toast would only
+    (so wins on OTHER targets still notify while we're focused): a Focus toast would only
     duplicate it. The win still lands in Focus's own event log, so it isn't silent locally."""
     bssid = "aa:bb:cc:dd:ee:01"
     client = "b2:c3:d4:e5:f6:07"
@@ -217,7 +217,7 @@ async def test_v2_stop_pbc_button_frees_radio_and_suppresses_rearm():
         await pilot.pause()
         focus = app.screen
         if focus._tick_timer:
-            focus._tick_timer.stop()                     # drive _tick by hand — no auto-invade race
+            focus._tick_timer.stop()                     # drive _tick by hand: no auto-invade race
         focus._start_pbc_capture = Mock()                # never fire the real capture
         # Now open a PBC walk window (timer stopped, so no real capture auto-arms).
         # PBC is only stopped while the window is open; suppression holds until close.
@@ -289,7 +289,7 @@ def test_save_line_elides_bssid_and_timestamp():
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")  # ui/conftest.py
 async def test_default_focus_screen_is_v2():
-    """``push_screen("focus")`` installs ``FocusViewV2`` — the sole Focus screen."""
+    """``push_screen("focus")`` installs ``FocusViewV2``: the sole Focus screen."""
     app = WifiteApp()
     async with app.run_test():
         assert isinstance(app.get_screen("focus"), FocusViewV2)
@@ -383,7 +383,7 @@ async def test_v2_target_acquired_log_names_encryption():
 @pytest.mark.asyncio
 async def test_v2_button_wiring():
     """The attack buttons are encryption-conditional (derive_buttons), the inline
-    ✕ maps to the right client, and that mapping reaches iface.deauth_client — proving
+    ✕ maps to the right client, and that mapping reaches iface.deauth_client, proving
     the trigger wiring with NO live TX (the recorder stands in for the radio)."""
     bssid = "aa:bb:cc:dd:ee:01"
     client = "9c:b6:d0:1a:2b:3c"
@@ -400,14 +400,14 @@ async def test_v2_button_wiring():
         deauthed.append((ap_bssid, client_bssid, rounds))
         return DeauthResult(client_sent=rounds, ap_sent=rounds, measured=True)
 
-    iface.deauth_client = _record_deauth  # stand in for the radio — no real TX
+    iface.deauth_client = _record_deauth  # stand in for the radio: no real TX
 
     app = _Host(iface, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
 
-        # WPA2 (no WPS, not WPA3): only PMKID is plausible — the rest hide.
+        # WPA2 (no WPS, not WPA3): only PMKID is plausible. The rest hide.
         assert focus.query_one("#btn-pmkid", Button).display is True
         for bid in ("#btn-gen-ivs", "#btn-chop", "#btn-wps-pin", "#btn-wpa3-down"):
             assert focus.query_one(bid, Button).display is False, bid
@@ -448,7 +448,7 @@ async def test_v2_wep_initial_load_surfaces_history_and_listening():
         dash = focus.query_one("#dashboard", PacketDashboard)
         assert "wep_iv" in {r.key for r in dash._rows}
         # The WEP status is painted as dashboard footer lines (always-on
-        # usable-IV count, idle → just that one line, no fake-auth) — NOT a
+        # usable-IV count, idle → just that one line, no fake-auth), NOT a
         # separate band, so it steals no row: the mid band still abuts the bottom
         # band directly.
         assert dash._footer is not None

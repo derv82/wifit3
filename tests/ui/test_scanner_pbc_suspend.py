@@ -2,7 +2,7 @@
 suspended under another screen (Focus).
 
 Textual's Screen.is_current is True for background screens too, so a suspended
-Scanner reads is_current == True — the original guard never bailed and the Scanner
+Scanner reads is_current == True: the original guard never bailed and the Scanner
 raced Focus's own PBC capture over the single radio (assoc rejected + EAPOL
 timeout). The foreground gate must use screen-stack identity (app.screen is self).
 """
@@ -61,7 +61,7 @@ async def test_pbc_poll_bails_while_suspended_then_acts_when_foreground():
         app.push_screen(_Overlay())
         await pilot.pause()
         assert app.screen is not scanner     # genuinely suspended …
-        assert scanner.is_current            # … yet is_current is still True — the trap
+        assert scanner.is_current            # … yet is_current is still True: the trap
         scanner._poll_pbc()
         assert not scanner._on_pbc_window.called
 

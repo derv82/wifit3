@@ -2,7 +2,7 @@
 
 The replay engine re-addresses each captured candidate into a ToDS frame from
 our MAC before injecting. The verdict ("replayable") keys on the AP echoing OUR
-frame back — so the stub, keyed on the candidate's body marker byte (which
+frame back, so the stub, keyed on the candidate's body marker byte (which
 survives re-addressing), drives BOTH the collector's IV gain AND whether a
 synthetic AP echo is delivered to the engine's _rx_cb.
 """
@@ -20,7 +20,7 @@ BAD = bytes([0x08, 0x42]) + b"\x00" * 22 + b"\xBB" * 44
 
 def _echo_frame(r) -> bytes:
     """An AP rebroadcast of our replay: Data/FromDS/Protected, DA=broadcast,
-    Addr3(SA)=our MAC, fresh IV — the signature WepArpReplay._rx_cb matches."""
+    Addr3(SA)=our MAC, fresh IV: the signature WepArpReplay._rx_cb matches."""
     return (
         bytes([0x08, 0x42])          # Data, FromDS, Protected
         + b"\x00\x00"                # Duration
@@ -84,7 +84,7 @@ def _replay(mocker, collector, **kw):
     async def _send(frame, use_no_ack=True):
         collector.on_send(frame)
         # Simulate the AP echoing our replay back when this candidate is
-        # genuinely replayable — exactly the frame _rx_cb correlates.
+        # genuinely replayable, exactly the frame _rx_cb correlates.
         if collector.echoes(frame):
             r._rx_cb(SimpleNamespace(raw=_echo_frame(r)))
         return True
@@ -111,7 +111,7 @@ def _capture_logs(mocker, collector, **kw):
 
 def test_begin_trial_log_includes_candidate_byte_count(mocker):
     """User-visible event log should show the trial candidate's byte
-    length — helps spot FCS-padded or mis-classified candidates."""
+    length, helps spot FCS-padded or mis-classified candidates."""
     r, logs = _capture_logs(mocker, FakeCollector({}, []))
     cand = bytes([0x08, 0x42]) + b"\x00" * 22 + b"\xAA" * 44   # 68 B
     r._begin_trial(cand)
@@ -183,7 +183,7 @@ async def test_patient_does_not_blacklist_before_trial_window(mocker):
 
 async def test_iv_churn_without_echo_is_not_replayable(mocker):
     """The regression: another client's IVs (a phone) bump the global count,
-    but the AP never echoes OUR frame. The candidate must NOT be promoted — it
+    but the AP never echoes OUR frame. The candidate must NOT be promoted: it
     gets blacklisted once the trial window elapses."""
     coll = FakeCollector({0xAA: 5}, [GOOD], echo=False)   # IVs rise, no echo
     r = _replay(mocker, coll)
@@ -202,7 +202,7 @@ async def test_iv_churn_without_echo_is_not_replayable(mocker):
 async def test_paused_echo_does_not_count(mocker):
     """A ChopChop relay shares our source_mac and matches the echo
     signature; arriving while replay is paused it must NOT count (the pause
-    gate), but the SAME frame counts once resumed — proving it's the gate, not
+    gate), but the SAME frame counts once resumed, proving it's the gate, not
     a signature mismatch, that dropped it."""
     coll = FakeCollector({0xAA: 5}, [GOOD])
     r = _replay(mocker, coll)
@@ -218,7 +218,7 @@ async def test_paused_echo_does_not_count(mocker):
 
 
 async def test_unassociated_blocks_tx(mocker):
-    """We only inject once ensure_associated() succeeds — a failing one (can't
+    """We only inject once ensure_associated() succeeds: a failing one (can't
     fake-auth) holds TX at 'waiting-auth' with nothing sent."""
     coll = FakeCollector({0xAA: 5}, [GOOD])
 
