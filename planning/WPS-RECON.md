@@ -22,7 +22,7 @@ Scope: `src/wifit3/campaigns/{auth_assoc.py, campaign.py, pin.py, pbc.py, wps/*}
 - **`WpsPbcCapture(Campaign)`** — `campaigns/pbc.py:47`. Fire-once opportunistic PBC PSK capture;
   associates as Enrollee and runs `WpsEnrollee`.
 - **`WpsRegistrar`** — `campaigns/wps/registrar.py:131`. Transport-agnostic per-PIN EAP/WSC state machine
-  (external Registrar vs AP-as-Enrollee); the split-PIN oracle. Knows no USB. Per-attempt WSC
+  (external Registrar vs AP-as-Enrollee); drives the split-PIN attack. Knows no USB. Per-attempt WSC
   state (keys, nonces, `highest_mt`, `last_sent`) lives as **locals** in `try_pin` (`:184-202`) —
   the one place state is kept cleanly.
 - **`WpsEnrollee`** — `campaigns/wps/enrollee.py:32`. Mirror-polarity WSC machine for PBC (we build

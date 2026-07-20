@@ -18,7 +18,7 @@ Key derivation (hostapd ``wps_derive_keys``):
     KDF(KDK,"Wi-Fi Easy and Secure Key Derivation",640b)
           -> AuthKey(32) || KeyWrapKey(16) || EMSK(32)
 
-The split-PIN oracle (hostapd ``wps_derive_psk`` + ``wps_build_r_hash``):
+The split-PIN derivation (hostapd ``wps_derive_psk`` + ``wps_build_r_hash``):
     PSK1 = first16( HMAC-SHA256_AuthKey(PIN[:4 ASCII]) )
     PSK2 = first16( HMAC-SHA256_AuthKey(PIN[4:8 ASCII]) )
     R-Hash1 = HMAC-SHA256_AuthKey( R-S1 || PSK1 || PKe || PKr )   (R-S2/PSK2 for 2)

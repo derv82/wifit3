@@ -11,7 +11,7 @@ Default target = data_dumps/wps_pin.txt (your AirLink test box). With no --pin
 it runs TWO attempts against the known PIN:
   1. a deliberately-WRONG pin (correct first half, corrupted second half) →
      expect "WPS PIN ........ incorrect" detected after the M6 NACK, which also
-     proves the first-half oracle (M5 received) worked.
+     proves the first half was accepted (M5 received).
   2. the correct PIN → expect "WPS PIN ........ CORRECT, PASSWORD: ........"
      extracted from M7.
 
@@ -93,7 +93,7 @@ def load_default_target() -> dict:
 
 def derive_wrong_pin(pin: str) -> str:
     """Keep the first half correct, corrupt the second half — so the attempt
-    reaches M5 (first-half oracle passes) then NACKs at M6 (second half wrong)."""
+    reaches M5 (first half accepted) then NACKs at M6 (second half wrong)."""
     if len(pin) != 8 or not pin.isdigit():
         return "00000000" if pin != "00000000" else "11111111"
     last = pin[-1]
@@ -174,7 +174,7 @@ async def run_one_attempt(iface, bssid: str, ssid: str, channel: int, our_mac: b
     elif r is PinResult.TIMEOUT:
         info(f"TIMEOUT — no usable EAP/WSC response ({outcome.detail}). See pcap.")
     else:
-        info(f"PROTO_ERROR — AP rejected setup before the oracle ({outcome.detail}); "
+        info(f"PROTO_ERROR — AP rejected setup before answering the PIN ({outcome.detail}); "
              "possibly WPS-locked. See pcap.")
     info(f"({len(capture)} frames captured so far)")
 

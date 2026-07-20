@@ -1,7 +1,7 @@
 """Offline tests for the WSC message codec + EAP/EAPOL framing.
 
 Self-consistency: build registrar messages, then parse them / decrypt their
-Encrypted Settings back. The full two-halves oracle is exercised in
+Encrypted Settings back. The full two-halves attack is exercised in
 test_wps_registrar.py; on-air correctness is proven by wps_probe.py.
 """
 

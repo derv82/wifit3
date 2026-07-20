@@ -241,8 +241,8 @@ def build_m4(
     reveals R-S1 in the Encrypted Settings. Authenticator over M3||M4*.
 
     The enrollee decrypts R-S1 and recomputes R-Hash1 with ITS real PSK1; if our
-    guessed first-half PSK1 matches, it proceeds to M5, else NACK — that
-    acceptance is the first-half oracle. ``r_s2`` here MUST be the same nonce
+    guessed first-half PSK1 matches, it proceeds to M5, else NACK: that M5-vs-NACK
+    reply decides the first half. ``r_s2`` here MUST be the same nonce
     later revealed in M6 (R-Hash2 commits to it).
     """
     r_hash1 = wc.e_or_r_hash(authkey, r_s1, psk1, pke, pkr)

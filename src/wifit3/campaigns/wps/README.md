@@ -54,7 +54,7 @@ RX  M7   or NACK                    <- NACK means SECOND half wrong; M7 means SU
 TX  WSC_NACK (tear down)
 ```
 
-**The two-halves oracle** (why it is ~11k attempts, not 10^8): the 8-digit PIN splits
+**The two-halves attack** (why it is ~11k attempts, not 10^8): the 8-digit PIN splits
 into PSK1 (first 4 digits) and PSK2 (last 4 = 3 digits + 1 checksum). M4 reveals our
 R-S1; the AP answers M5 only if our guessed first half matches, else NACK. M6/R-S2 does
 the same for the second half. So 10^4 (first half) + 10^3 (second half, the checksum
@@ -86,7 +86,7 @@ flaky-TX artifacts, not real AP behavior:
   DH/M3 at a consistent ~1.24s dominates per-attempt time. The campaign does not arm
   active monitor.
 - **One-shot-per-association is real WSC.** A second exchange on a kept-alive association
-  is refused pre-oracle ("Device Password Auth Failure"), so the campaign re-associates
+  is refused before the PIN check ("Device Password Auth Failure"), so the campaign re-associates
   per PIN (`_try` resets the session). One-shot-per-MAC is false (same-MAC reuse still
   cracks), so there is no proactive MAC rotation.
 - **Association is the top failure (~29%).** `_send_until` resends auth/assoc while

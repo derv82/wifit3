@@ -64,8 +64,8 @@ def test_wps_kdf_length_and_determinism():
     assert wc.wps_kdf(key, 80) != wc.wps_kdf(b"\x02" * 32, 80)
 
 
-# ---- Full key derivation + split-PIN oracle self-consistency --------------
-def test_derive_keys_and_pin_oracle():
+# ---- Full key derivation + split-PIN derivation self-consistency ----------
+def test_derive_keys_and_pin_halves():
     # Two synthetic peers complete DH; both must derive the same AuthKey.
     e_priv, pke = wc.dh_generate_keypair()
     r_priv, pkr = wc.dh_generate_keypair()

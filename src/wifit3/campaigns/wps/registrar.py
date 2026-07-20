@@ -7,7 +7,7 @@ data frames via ``messages``. The live adapter (``auth_assoc.WlanTransport``) wi
 this to ``WlanInterface.send_until_ack``/``send_no_wait`` + ``register_rx_callback``;
 tests wire it to an in-process fake enrollee.
 
-The split-PIN oracle, mapped from what arrives after each message we send:
+The PIN halves, decided by what arrives after each message we send:
 
     after M4 :  M5  -> first half correct      NACK/EAP-FAIL/timeout -> FIRST_HALF_WRONG
     after M6 :  M7  -> SUCCESS (extract PSK)    NACK/EAP-FAIL/timeout -> SECOND_HALF_WRONG
@@ -42,7 +42,7 @@ class PinResult(Enum):
     FIRST_HALF_WRONG = "first_half_wrong"
     SECOND_HALF_WRONG = "second_half_wrong"
     TIMEOUT = "timeout"
-    PROTO_ERROR = "proto_error"           # rejected before the M4 oracle (e.g. locked)
+    PROTO_ERROR = "proto_error"           # rejected before the M4 answer (e.g. locked)
     ABORTED = "aborted"                   # cooperatively stopped mid-exchange (user Stop)
 
 
@@ -188,7 +188,7 @@ class WpsRegistrar:
         r_s2 = os.urandom(wc.SECRET_NONCE_LEN)
 
         pke = nonce_e = authkey = keywrapkey = psk1 = psk2 = None
-        last_sent: Optional[str] = None         # 'M4' or 'M6' — what the oracle is pending on
+        last_sent: Optional[str] = None         # 'M4' or 'M6': which answer we're waiting on
         # Highest WSC message type handled. WSC never runs backward, so a
         # received message older than this is a stale (no-ACK) retransmit — we
         # answer the *current* stage (retry insurance) but ignore older ones,
@@ -229,7 +229,7 @@ class WpsRegistrar:
                              f"in-session ({resends_left} left)")
                     await self.t.send_no_wait(self._last_1x_frame)
                     continue
-                # Resends exhausted. After M4/M6 a silent drop is the half-wrong oracle
+                # Resends exhausted. After M4/M6 a silent drop is a half-wrong verdict
                 # (reaver's timeout-as-NACK); an explicit NACK (logged above, config_error
                 # set) is a real rejection. If a correct first half ever reads as wrong via
                 # THIS line, the AP's M5 was lost, not refused.
@@ -295,7 +295,7 @@ class WpsRegistrar:
                 if last_sent == "M6":
                     return _out(PinResult.SECOND_HALF_WRONG, detail="NACK after M6",
                                 config_error=config_error)
-                return _out(PinResult.PROTO_ERROR, detail="NACK before oracle",
+                return _out(PinResult.PROTO_ERROR, detail="NACK before PIN answer",
                             config_error=config_error)
 
             mt = p.wsc_msg_type

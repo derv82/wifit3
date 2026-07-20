@@ -3,7 +3,7 @@
 A minimal in-process WSC *enrollee* (the AP side) that knows the real PIN + PSK
 runs against the real WpsRegistrar over a loopback transport. This exercises:
   * the EAPOL-Start → Identity → M1..M7 exchange,
-  * the split-PIN oracle (first-half / second-half / success), and
+  * the split-PIN attack (first-half / second-half / success), and
   * PSK extraction from M7's Encrypted Settings.
 
 The enrollee builds its own M1/M3/M5/M7 with hand-rolled TLVs (not the
@@ -219,7 +219,7 @@ async def test_wrong_first_half():
 async def test_correct_first_half_wrong_second():
     out = await _run("12345670", "12349999")
     assert out.result is PinResult.SECOND_HALF_WRONG
-    assert out.first_half_ok        # the first-half oracle says 1234 is right
+    assert out.first_half_ok        # the M5 reply says 1234 is right
 
 
 async def test_psk_only_revealed_on_full_match():

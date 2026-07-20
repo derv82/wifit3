@@ -1,7 +1,7 @@
 """WPS PIN keyspace — the two-halves search with checksum.
 
 An 8-digit WPS PIN is P1 (first 4 digits) + P2 (last 4 = 3 free digits + a
-checksum over the first 7). The split-PIN oracle lets us recover the halves
+checksum over the first 7). The AP judges each half separately, letting us recover them
 independently: 10⁴ first-half guesses, then 10³ second-half guesses (the 8th
 digit is derived), ≈ 11,000 worst case instead of 10⁸.
 

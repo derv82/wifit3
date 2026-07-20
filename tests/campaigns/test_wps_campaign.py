@@ -1,4 +1,4 @@
-"""Campaign sweep logic, driven by a scripted oracle (no hardware).
+"""Campaign sweep logic, driven by a scripted enrollee (no hardware).
 
 The campaign's _try() is overridden to simulate an AP with a known PIN, so we
 exercise the COMMON→first-half→second-half progression, the first-half-confirmed
@@ -182,7 +182,7 @@ async def test_run_state_persisted_and_resumed(tmp_path):
 
 
 async def test_rate_limit_does_not_skip_untested_pin(tmp_path, monkeypatch):
-    # The AP refuses the first two sessions before the M4 oracle (rate-limiting):
+    # The AP refuses the first two sessions before the M4 answer (rate-limiting):
     # PROTO_ERROR must NOT advance the keyspace, so the SAME pin is retried until
     # it's actually tested. (Regression for the skip-on-PROTO_ERROR bug.)
     monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])   # isolate COMMON phase
@@ -207,7 +207,7 @@ async def test_rate_limit_does_not_skip_untested_pin(tmp_path, monkeypatch):
     # First three sessions were all the SAME first pin (2 refused + 1 real test).
     assert c.tried[0] == c.tried[1] == c.tried[2] == pins.COMMON_PINS[0]
     assert c.state.found_pin == known
-    # tested counts only real oracle results, never the rate-limited no-ops.
+    # tested counts only real M4/M6 answers, never the rate-limited no-ops.
     assert c.state.tested < c.state.attempts
 
 

