@@ -27,8 +27,15 @@ source order, but the pcap runs the *wrapped* `mt76x2u_set_channel` (an initial 
 full parity (hypothesis: the missing mac_stop-before-retune may also explain the `cmd=31`
 SWITCH_CHANNEL timeouts seen during runtime re-tunes in ack_lab).
 
-### mt76x0u verify_pcap red: same treatment pending
-`verify_pcap.py mt76x0u` is still red on the analogous divergences (prologue, AC route, plus a
-2.4 GHz OFDM-vs-CCK inject-rate difference). Apply the mt76x2u playbook (anchor the prologue,
-serve EEPROM off-cursor, mask the deliberate rate/route divergences, fix any real port gaps).
+### mt76x0u verify_pcap — CHECK D green (2026-07-20); CHECK A-C boot reproduction pending
+CHECK D is green: the deliberate OFDM-vs-CCK rate (2.4 GHz inject) and AC_VO-vs-AC_BE route are
+masked, mirroring mt76x2u. CHECK A-C is still red at the op#1 prologue. Characterized: the wire
+cold-boots read 0x0080 -> reset_wlan (write 0x0080 x2) -> early reads (0x1000/0x0000/0x0024) ->
+USB-DMA cfg (0x0238) -> warm-gate read (0x0730 @op#13) -> FW upload. wifit3 reads 0x0080 (matches
+op#0) then does its warm-reattach probe (0x0730) straight away, so it is missing the reset_wlan +
+early-init block, and `check_boot`'s `_drive` starts at `load_firmware`. The fix is the mt76x2u
+playbook: anchor past the warm probe, restructure `_drive` to the wire's reset -> init -> FW order,
+and reconcile the post-FW init op-by-op against `data_dumps/mt76-source-v6.18/mt76x0` (a
+substantial effort like mt76x2u's, ~1000 ops). No EEPROM off-cursor needed here (0 breq-0x09 reads;
+efuse is read via MT_EFUSE_CTRL).
 _Location: `chips/mt76x0u`; `scripts/mt76x0u/verify_pcap.py`._
