@@ -1,4 +1,4 @@
-"""WinUSB install confirmation — a visual-guide modal.
+"""WinUSB install confirmation: a visual-guide modal.
 
 Shown when the user STARTs a supported card that isn't WinUSB-bound yet. It draws the
 Wifit3 ↔ WinUSB ↔ card chain with the WinUSB link flagged as the missing REQUIRED piece

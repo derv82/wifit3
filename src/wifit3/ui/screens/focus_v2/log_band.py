@@ -1,4 +1,4 @@
-"""Event log — bottom-left, bordered. A live ``RichLog`` (markup, scrolling) the
+"""Event log: bottom-left, bordered. A live ``RichLog`` (markup, scrolling) the
 screen appends to as capture events land; the hard-won <40-char log lines mean
 it narrates without ever needing to expand. The shell seeds it with demo lines
 (no-target screenshots); a live target clears it and writes the real stream."""

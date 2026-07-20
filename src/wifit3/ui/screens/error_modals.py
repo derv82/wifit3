@@ -50,7 +50,7 @@ class FatalErrorModal(ModalScreen[None]):
 
     @on(Button.Pressed, "#btn-copy")
     def _copy(self) -> None:
-        # OSC-52 copy — best-effort (not every terminal supports it), so the trace also stays
+        # OSC-52 copy: best-effort (not every terminal supports it), so the trace also stays
         # visible/selectable in the Details box as the manual-copy fallback.
         self.app.copy_to_clipboard(self._error.trace)
         self.notify("Details copied to clipboard.")

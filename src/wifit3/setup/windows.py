@@ -4,7 +4,7 @@
 elevation (``ShellExecuteExW`` ``"runas"``) to bind a card to WinUSB so libusb can open it.
 :func:`restore_driver` reverses that: it finds the WinUSB/libusb driver bound to the card
 (SetupAPI, the same enumeration libwdi uses) and ``pnputil /delete-driver … /uninstall``s
-it, so Windows re-points the card to its native Wi-Fi driver (still in the driver store —
+it, so Windows re-points the card to its native Wi-Fi driver (still in the driver store,
 no pre-bind snapshot needed). The lookup keys off the *service* (WinUSB/libusbK/libusb0),
 so it also rolls back Zadig's bindings, not just ours.
 
@@ -54,7 +54,7 @@ _KEY_READ = 0x00020019
 _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 _ERROR_SUCCESS = 0
 
-# Driver services that mean "this card is on a libusb-class driver we can roll back" —
+# Driver services that mean "this card is on a libusb-class driver we can roll back":
 # covers our WinUSB installs and Zadig's WinUSB / libusbK / libusb-win32 bindings.
 _LIBUSB_SERVICES = frozenset({"winusb", "libusbk", "libusb0"})
 # pnputil exit codes we treat as success (3010 = ERROR_SUCCESS_REBOOT_REQUIRED).
@@ -69,17 +69,17 @@ _WDI_MESSAGES = {
     -3:  "Access denied while installing the driver.",
     -4:  "The card was unplugged before the install finished.",
     -5:  "The card wasn't found on the USB bus.",
-    -6:  "The card is busy — another install may be in progress.",
+    -6:  "The card is busy. Another install may be in progress.",
     -7:  "The driver install timed out.",
     -8:  "Internal error (overflow).",
-    -9:  "Windows is still finishing a previous driver install — wait a moment and retry.",
+    -9:  "Windows is still finishing a previous driver install. Wait a moment and retry.",
     -10: "The install was interrupted.",
     -11: "Out of resources while installing the driver.",
     -12: "WinUSB isn't supported for this card.",
     -13: "A WinUSB driver is already installed for this card.",
     -14: "Install cancelled.",
     -15: "Administrator rights are required (the elevation prompt was declined or blocked).",
-    -16: "32/64-bit mismatch (WOW64) — wrong wdi-simple build for this Windows.",
+    -16: "32/64-bit mismatch (WOW64): wrong wdi-simple build for this Windows.",
     -17: "Windows rejected the generated driver INF.",
     -18: "The driver catalog (.cat) is missing.",
     -19: "Windows refused the unsigned driver package.",
@@ -176,7 +176,7 @@ def _build_args(vid: int, pid: int, iid: int | None = None, name: str | None = N
 
     ``iid`` (interface MI) is **omitted by default**. wdi-simple's ``-i`` flag *also* sets
     is_composite=TRUE, so passing it for a simple single-interface card makes the install
-    target ``USB\\VID&PID&MI_00`` — which never matches the real ``USB\\VID&PID`` node, so the
+    target ``USB\\VID&PID&MI_00``, which never matches the real ``USB\\VID&PID`` node, so the
     INF installs "successfully" but binds nothing and the card is left driverless. Pass
     ``iid`` only for genuinely composite devices (libwdi issue #206).
 
@@ -219,7 +219,7 @@ def _read_text(path: Path) -> str:
 
 
 def _last_line(text: str) -> str:
-    """The last non-blank line of wdi-simple's output — the most telling bit for the modal."""
+    """The last non-blank line of wdi-simple's output: the most telling bit for the modal."""
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     return lines[-1] if lines else ""
 
@@ -236,7 +236,7 @@ def _restore_command(inf: str) -> str:
 def _run_elevated(file: str, params: str) -> _ElevatedRun:
     """Launch ``file params`` elevated (UAC), wait for it, and read its exit code.
 
-    Windows-only and blocking — call OFF the event loop. A declined UAC prompt surfaces as
+    Windows-only and blocking. Call OFF the event loop. A declined UAC prompt surfaces as
     ``launched=False`` with ``win_error == ERROR_CANCELLED``."""
     shell32 = ctypes.WinDLL("shell32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -276,16 +276,16 @@ def install_winusb(vid: int, pid: int, iid: int | None = None,
     """Bind ``vid:pid`` to WinUSB by running the bundled wdi-simple.exe **elevated**.
 
     Driver install is inherently privileged, so this raises one UAC prompt and blocks until
-    the elevated process exits — call it OFF the Textual event loop. wdi-simple runs from a
+    the elevated process exits. Call it OFF the Textual event loop. wdi-simple runs from a
     redirected batch so its console output (which can't pipe back across the UAC boundary) is
     captured to a log and echoed to ``wifit3.log``. Returns an :class:`InstallResult`; it does
-    not raise for an install *failure* (reported via the result) — only for a broken
+    not raise for an install *failure* (reported via the result), only for a broken
     environment (non-Windows, or a missing bundled exe)."""
     if sys.platform != "win32":
         raise RuntimeError("install_winusb is Windows-only")
 
     exe = wdi_simple_path()
-    # Absolute, user-writable extraction dir — see _build_args() for why the default fails.
+    # Absolute, user-writable extraction dir. See _build_args() for why the default fails.
     dest = Path(tempfile.gettempdir()) / "wifit3_winusb"
     try:
         dest.mkdir(parents=True, exist_ok=True)
@@ -316,7 +316,7 @@ def install_winusb(vid: int, pid: int, iid: int | None = None,
             logger.info("WinUSB install: user declined the UAC prompt")
             return InstallResult(
                 ok=False, cancelled=True,
-                message="Elevation cancelled — WinUSB was not installed.")
+                message="Elevation cancelled. WinUSB was not installed.")
         logger.warning("WinUSB install: ShellExecuteExW failed (WinError %d)", run.win_error)
         return InstallResult(
             ok=False, message=f"Could not launch the installer (WinError {run.win_error}).")
@@ -416,7 +416,7 @@ def restore_driver(vid: int, pid: int) -> RestoreResult:
     """Remove the WinUSB/libusb binding on ``vid:pid`` so the native driver reclaims it.
 
     Finds the bound oemNN.inf (SetupAPI) and elevates ``pnputil /delete-driver … /uninstall
-    /force`` + ``/scan-devices``. Blocks on one UAC prompt — call OFF the event loop. Returns
+    /force`` + ``/scan-devices``. Blocks on one UAC prompt. Call OFF the event loop. Returns
     a :class:`RestoreResult`; raises only for a broken environment (non-Windows)."""
     if sys.platform != "win32":
         raise RuntimeError("restore_driver is Windows-only")
@@ -437,7 +437,7 @@ def restore_driver(vid: int, pid: int) -> RestoreResult:
             logger.info("Restore: user declined the UAC prompt")
             return RestoreResult(
                 ok=False, cancelled=True,
-                message="Elevation cancelled — the WinUSB driver was not removed.")
+                message="Elevation cancelled. The WinUSB driver was not removed.")
         logger.warning("Restore: ShellExecuteExW failed (WinError %d)", run.win_error)
         return RestoreResult(
             ok=False, message=f"Could not launch the uninstaller (WinError {run.win_error}).")
@@ -447,7 +447,7 @@ def restore_driver(vid: int, pid: int) -> RestoreResult:
 
     code = run.exit_code
     if code in _PNPUTIL_OK:
-        msg = "Removed the WinUSB driver — the card should return to normal Wi-Fi."
+        msg = "Removed the WinUSB driver. The card should return to normal Wi-Fi."
         if code == 3010:
             msg += " (A reboot may be needed to finish.)"
         logger.info("Restore: removed %s (pnputil exit=%d)", inf, code)

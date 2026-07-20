@@ -1,23 +1,23 @@
-"""Linux "hand wifit3 this chipset" setup — the Zadig/WinUSB analog.
+"""Linux "hand wifit3 this chipset" setup: the Zadig/WinUSB analog.
 
 We can't keep the card usable as a normal adapter *and* drive it from userland: the kernel binds
 its driver and uploads firmware the instant the card enumerates, tainting the cold-boot state the
-port replays against. A udev permission rule alone doesn't stop that bind — it only chmods the
+port replays against. A udev permission rule alone doesn't stop that bind. It only chmods the
 node. So Linux mirrors the Windows model: the user opts in to give wifit3 **complete control of one
-chipset**, which writes a per-chipset *pair* of files —
+chipset**, which writes a per-chipset *pair* of files:
 
-* ``/etc/modprobe.d/wifit3-<chip>.conf``   — ``blacklist``/``install`` the kernel module(s), so the
+* ``/etc/modprobe.d/wifit3-<chip>.conf``   : ``blacklist``/``install`` the kernel module(s), so the
   kernel never binds + taints the card again (this is what keeps it cold).
-* ``/etc/udev/rules.d/60-wifit3-<chip>.rules`` — grant the user's admin group access to the raw USB
+* ``/etc/udev/rules.d/60-wifit3-<chip>.rules`` : grant the user's admin group access to the raw USB
   node, so wifit3 can open it without sudo.
 
 The module list is discovered *live* from the plugged-in card (sysfs bound-driver ∪ ``modprobe -R``
-on its modalias), with the driver's ``CONFLICTING_LINUX_MODULES`` as a fallback hint — so it reflects what's
+on its modalias), with the driver's ``CONFLICTING_LINUX_MODULES`` as a fallback hint, so it reflects what's
 actually installed (mainline vs DKMS) rather than a hand-list that rots. Uninstall deletes both
 files; the card returns to its normal Wi-Fi driver on the next replug.
 
 The blacklist only stops *future* binds, and an already-resident module still binds a freshly
-plugged device, so install also best-effort ``modprobe -r``s the module — but a clean cold start
+plugged device, so install also best-effort ``modprobe -r``s the module, but a clean cold start
 still needs a physical replug, which the splash asks for.
 """
 from __future__ import annotations
@@ -40,15 +40,15 @@ logger = logging.getLogger(__name__)
 RULE_DIR = "/etc/udev/rules.d"
 BLACKLIST_DIR = "/etc/modprobe.d"
 
-# Sysfs USB tree — a module constant so tests can repoint it at a fixture.
+# Sysfs USB tree: a module constant so tests can repoint it at a fixture.
 SYSFS_USB = "/sys/bus/usb/devices"
 
 # The shared mac80211/cfg80211 stack (and usbfs, which is what libusb leaves bound once we claim
-# the card) must never land in a blacklist — only the leaf USB-binding driver does.
+# the card) must never land in a blacklist. Only the leaf USB-binding driver does.
 _NEVER_BLACKLIST = frozenset({
     "usbcore", "usbfs", "usbhid", "rfkill",
     "mac80211", "cfg80211", "ath", "ath9k_common", "ath9k_hw",
-    # Bluetooth stack — a combo Wi-Fi+BT card (e.g. RTL8821CU) binds btusb on its BT
+    # Bluetooth stack: a combo Wi-Fi+BT card (e.g. RTL8821CU) binds btusb on its BT
     # interface, and modprobe blacklist is module-global, so blacklisting it kills ALL
     # system Bluetooth (this card's *and* the laptop's internal BT), not just this Wi-Fi card.
     "btusb", "bluetooth", "btrtl", "btintel", "btbcm", "btmtk",
@@ -118,10 +118,10 @@ def _matching_usb_dirs(ids):
 
 
 def _bound_modules(ids) -> set[str]:
-    """The kernel driver(s) currently bound to the card's interfaces — ground truth for the
+    """The kernel driver(s) currently bound to the card's interfaces: ground truth for the
     module that grabbed *this* device on *this* machine. The sysfs *driver* name is not always the
     *module* name (out-of-tree Realtek: driver ``rtl8814au`` ← module ``8814au``), and modprobe
-    blacklists the *module* — so resolve ``driver/module`` too and keep both."""
+    blacklists the *module*, so resolve ``driver/module`` too and keep both."""
     mods: set[str] = set()
     for d in _matching_usb_dirs(ids):
         for intf in sorted(d.glob(f"{d.name}:*")):
@@ -138,7 +138,7 @@ def _bound_modules(ids) -> set[str]:
 
 
 def _card_modaliases(ids):
-    """Every modalias for a matching card — device-level *and* per-interface. USB Wi-Fi drivers
+    """Every modalias for a matching card: device-level *and* per-interface. USB Wi-Fi drivers
     (rt2800usb, ...) bind at the *interface* and match its modalias (``…icFFiscFF…``); some
     devices/kernels expose *only* the interface modalias (no device-level one), so reading the
     device level alone misses the driver entirely."""
@@ -153,7 +153,7 @@ def _card_modaliases(ids):
 
 
 def _resolve_via_modalias(ids) -> set[str]:
-    """Every module that *could* claim this card per the installed alias table — catches the
+    """Every module that *could* claim this card per the installed alias table, catches the
     mainline-and-DKMS-both-installed case the bound-driver read alone would miss."""
     if not shutil.which("modprobe"):
         return set()
@@ -195,7 +195,7 @@ def discover_kernel_modules(target: SetupTarget) -> list[str]:
 def emit_udev_text(target: SetupTarget, group: str) -> str:
     """The per-chipset access rule: every VID:PID this driver claims, granted to ``group``. The
     blacklist displaces *all* of them from the kernel, so all of them need userland access too."""
-    lines = [f"# wifit3 device-access rule — {target.description} ({target.key})", ""]
+    lines = [f"# wifit3 device-access rule: {target.description} ({target.key})", ""]
     seen: set[tuple[int, int]] = set()
     for vid, pid in target.ids:
         if (vid, pid) in seen:
@@ -238,7 +238,7 @@ def _install_cmd(*, tmp_rule: str | None, key: str, tmp_blacklist: str | None,
     steps.append("udevadm control --reload-rules")
     if modules:
         # Best-effort: frees the warm card now and stops an already-resident module re-grabbing the
-        # device on replug. Fails harmlessly if another card holds the module — the blacklist still
+        # device on replug. Fails harmlessly if another card holds the module. The blacklist still
         # keeps it from *loading* on a future cold boot.
         mods = " ".join(q(m) for m in modules)
         steps.append(f"(modprobe -r {mods} 2>/dev/null || true)")
@@ -321,7 +321,7 @@ def _stage(name: str, text: str | None) -> str | None:
 # bind rt2800usb.ko). The blacklist is module-granular, so handing over one such card blocks the
 # module for the whole family. The reference count is *implicit*: modprobe unions every
 # ``/etc/modprobe.d/*.conf``, so a module stays blacklisted while any wifit3 conf still lists it and
-# is lifted only when the last one is removed. We never compute "what to unblacklist" — we read
+# is lifted only when the last one is removed. We never compute "what to unblacklist", we read
 # across our own files to (a) tell the user which sibling still blocks a card and (b) offer a wide
 # uninstall that clears the whole family. Only ever our own ``wifit3-*`` files are read or deleted.
 
@@ -340,7 +340,7 @@ class SiblingConf:
 
 @dataclass(frozen=True)
 class UninstallPlan:
-    """What removing a chipset entails — drives the splash's narrow/wide uninstall choice."""
+    """What removing a chipset entails, drives the splash's narrow/wide uninstall choice."""
     key: str
     own_modules: tuple[str, ...]
     siblings: tuple[SiblingConf, ...]
@@ -353,7 +353,7 @@ class UninstallPlan:
 
 
 def modules_in_conf(path) -> set[str]:
-    """The kernel modules a wifit3 blacklist conf blocks — its ``blacklist <mod>`` lines."""
+    """The kernel modules a wifit3 blacklist conf blocks: its ``blacklist <mod>`` lines."""
     mods: set[str] = set()
     try:
         text = Path(path).read_text()
@@ -381,7 +381,7 @@ def _installed_blacklist_confs() -> dict[str, Path]:
 
 def _desc_from_conf(path: Path) -> str | None:
     """Recover the human chipset label from a conf's header comment (self-contained; no registry
-    import). Greedy match tolerates parentheses in the description — the ``(key)`` before
+    import). Greedy match tolerates parentheses in the description: the ``(key)`` before
     ``to userland`` anchors it."""
     try:
         for line in path.read_text().splitlines():
@@ -462,7 +462,7 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupR
                    "Or run `sudo .venv/bin/python3 -m wifit3`.",
             message="You're not in the sudo or wheel group, so device access can't be granted.")
 
-    # As root the access rule is moot (root opens any node) — only the blacklist matters.
+    # As root the access rule is moot (root opens any node). Only the blacklist matters.
     rule_text = emit_udev_text(target, group) if group else None
     blacklist_text = emit_blacklist_text(target, modules) if modules else None
 
@@ -487,13 +487,13 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupR
 
     if rc == 0:
         detail = blacklist_path(target.key) if modules else (
-            "Couldn't determine the kernel module to blacklist — the card may be re-grabbed on "
+            "Couldn't determine the kernel module to blacklist. The card may be re-grabbed on "
             "replug. Tell us the chipset so we can add a fallback hint.")
         return LinuxSetupResult(ok=True, detail=detail, message=_REPLUG_MSG)
     if rc == 126:
         return LinuxSetupResult(
             ok=False, cancelled=True,
-            message="Authorization dismissed — the udev rule + blocklist were not installed.")
+            message="Authorization dismissed. The udev rule + blocklist were not installed.")
     return LinuxSetupResult(ok=False, detail=_manual_hint(target.key),
                             message=f"Couldn't install the udev rule + blocklist (exit {rc}).")
 
@@ -504,7 +504,7 @@ def remove_rule(target: SetupTarget, *, node: str | None = None,
     per-chipset blacklist + access-rule pairs and reload udev. The normal Wi-Fi driver rebinds on the
     next replug.
 
-    ``also_keys`` is the wide-uninstall radius — sibling chipsets sharing ``target``'s kernel module,
+    ``also_keys`` is the wide-uninstall radius: sibling chipsets sharing ``target``'s kernel module,
     removed so the shared module is actually freed (see :func:`plan_uninstall`). A narrow uninstall
     passes none; if that leaves the card's module blocked by a remaining sibling, the success message
     says so."""
@@ -516,7 +516,7 @@ def remove_rule(target: SetupTarget, *, node: str | None = None,
     if not any(Path(rule_path(k)).exists() or Path(blacklist_path(k)).exists() for k in keys):
         return LinuxSetupResult(
             ok=True, detail=rpath,
-            message="No wifit3 rules installed for this chipset — nothing to remove.")
+            message="No wifit3 rules installed for this chipset. Nothing to remove.")
 
     # Read our modules before the elevated delete wipes our conf; the residual scan then tells the
     # user if a sibling we're *not* removing still holds them.
@@ -531,7 +531,7 @@ def remove_rule(target: SetupTarget, *, node: str | None = None,
             return LinuxSetupResult(
                 ok=True, detail=rpath,
                 message=(f"Removed wifit3's rules for this card. Kernel module(s) {mods} stay "
-                         f"blocked by chipset(s) {blockers} still handed to wifit3 — uninstall those "
+                         f"blocked by chipset(s) {blockers} still handed to wifit3. Uninstall those "
                          f"too to fully restore this card. Replug to apply."))
         return LinuxSetupResult(ok=True, detail=rpath, message=_REMOVED_MSG)
 
@@ -556,7 +556,7 @@ def remove_rule(target: SetupTarget, *, node: str | None = None,
     if rc == 126:
         return LinuxSetupResult(
             ok=False, cancelled=True,
-            message="Authorization dismissed — the udev rule + blocklist are still installed.")
+            message="Authorization dismissed. The udev rule + blocklist are still installed.")
     return LinuxSetupResult(ok=False, detail=rpath,
                             message=f"Couldn't remove the udev rule + blocklist (exit {rc}).")
 

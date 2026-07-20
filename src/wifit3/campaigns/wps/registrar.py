@@ -1,4 +1,4 @@
-"""WpsRegistrar — the per-PIN EAP/WSC state machine (transport-agnostic).
+"""WpsRegistrar: the per-PIN EAP/WSC state machine (transport-agnostic).
 
 Drives one PIN attempt as an external WPS Registrar against an Enrollee (the
 AP). Knows nothing about USB: it is handed a transport with
@@ -53,18 +53,18 @@ class AttemptOutcome:
     psk: Optional[str] = None             # Network Key recovered from M7, on SUCCESS
     ssid: Optional[str] = None
     detail: str = ""
-    config_error: Optional[int] = None    # WSC ATTR_CONFIG_ERROR from a NACK — the AP's stated reason
+    config_error: Optional[int] = None    # WSC ATTR_CONFIG_ERROR from a NACK: the AP's stated reason
     reached_m1: bool = False              # did the AP start the WSC exchange (send M1) at all?
     via_timeout: bool = False             # result inferred from silence (timeout-as-NACK), not a real NACK
     refused: bool = False                 # AP actively refused external-registrar WPS (disassoc /
-    #                                       persistent identity-stall) — NOT mere silence
+    #                                       persistent identity-stall), NOT mere silence
 
     @property
     def first_half_ok(self) -> bool:
         return self.result in (PinResult.SECOND_HALF_WRONG, PinResult.SUCCESS)
 
 
-# WSC Config Error codes (WSC spec, ATTR_CONFIG_ERROR) — surfaced from a NACK so a
+# WSC Config Error codes (WSC spec, ATTR_CONFIG_ERROR): surfaced from a NACK so a
 # failure says *why*, not just "refused". 15 = the AP is telling us it's locked; 18 is
 # the closest thing to "wrong/rejected PIN". Which code(s) actually mean "advance past
 # this PIN" is AP-dependent and confirmed from hardware before we key advancement off it.
@@ -88,7 +88,7 @@ def config_error_name(code: Optional[int]) -> str:
 # After this many EAP-Req/Identity with no M1, the AP is "stuck at identity" (won't proceed).
 _IDENTITY_STALL = 8
 
-# 802.11 reason codes (disassoc/deauth) — the AP's stated reason for kicking us.
+# 802.11 reason codes (disassoc/deauth): the AP's stated reason for kicking us.
 _DISASSOC_REASONS = {
     1: "unspecified", 2: "prev-auth-invalid", 3: "deauth-leaving", 4: "inactivity",
     5: "AP-overloaded", 6: "class2-from-nonauth", 7: "class3-from-nonassoc", 8: "disassoc-leaving",
@@ -103,7 +103,7 @@ def disassoc_reason(frame: bytes) -> str:
     code = int.from_bytes(frame[24:26], "little")
     return _DISASSOC_REASONS.get(code, str(code))
 
-# 802.11 management subtypes — so the WPS trace can name a frame the AP sends us but that
+# 802.11 management subtypes, so the WPS trace can name a frame the AP sends us but that
 # isn't WSC (a DISASSOC/DEAUTH = the AP kicking us; the rest are the assoc handshake).
 _MGMT_SUBTYPES = {
     0: "assoc-req", 1: "assoc-resp", 2: "reassoc-req", 3: "reassoc-resp", 4: "probe-req",
@@ -112,7 +112,7 @@ _MGMT_SUBTYPES = {
 
 
 def describe_frame(frame: bytes) -> str:
-    """A short human name for a raw 802.11 frame (FC byte only) — for the WPS conversation
+    """A short human name for a raw 802.11 frame (FC byte only): for the WPS conversation
     trace, so a non-WSC reply (disassoc, data flood) is legible instead of silently dropped."""
     if len(frame) < 1:
         return "empty"
@@ -151,7 +151,7 @@ class WpsRegistrar:
         self.our_mac = our_mac
         # Per-message receive window. A cheap AP can take seconds to compute the
         # next WSC message (DH ≈ 1.2s measured; M1 up to ~3.4s on the AirLink), so
-        # these are deliberately generous — a window shorter than the AP's real
+        # these are deliberately generous. A window shorter than the AP's real
         # latency causes premature resends that confuse the exchange.
         self.msg_timeout = msg_timeout
         self.eapol_start_timeout = eapol_start_timeout
@@ -190,14 +190,14 @@ class WpsRegistrar:
         pke = nonce_e = authkey = keywrapkey = psk1 = psk2 = None
         last_sent: Optional[str] = None         # 'M4' or 'M6': which answer we're waiting on
         # Highest WSC message type handled. WSC never runs backward, so a
-        # received message older than this is a stale (no-ACK) retransmit — we
+        # received message older than this is a stale (no-ACK) retransmit. We
         # answer the *current* stage (retry insurance) but ignore older ones,
         # rather than re-emitting a stale M2 after we've moved on to M4.
         highest_mt = 0
         reached_m1 = False           # did the AP send M1 (WSC exchange actually started)?
         resends_left = self.max_resends   # in-session resend budget; refreshed on each AP reply
         self._last_1x_frame = None
-        identity_reqs = 0            # count EAP-Req/Identity — detect the "stuck at identity" stall
+        identity_reqs = 0            # count EAP-Req/Identity: detect the "stuck at identity" stall
         nonwsc_seen: set = set()    # distinct non-WSC frame kinds the AP sent (logged once each)
         disassoc_why: Optional[str] = None   # set if AP kicked us (mgmt DISASSOC/DEAUTH) + why
 
@@ -221,11 +221,11 @@ class WpsRegistrar:
             if frame is None:
                 # No reply in the window. Our injected frames land no-ACK/no-retry, so the
                 # likeliest cause is a dropped frame (our last one never reached the AP, or
-                # the AP's reply was lost) — resend the last frame in-session (no MAC
+                # the AP's reply was lost). Resend the last frame in-session (no MAC
                 # rotation) before inferring anything from the silence.
                 if resends_left > 0 and self._last_1x_frame is not None:
                     resends_left -= 1
-                    self.log(f"[WPS] no reply (last_sent={last_sent or 'start'}) — resending "
+                    self.log(f"[WPS] no reply (last_sent={last_sent or 'start'}): resending "
                              f"in-session ({resends_left} left)")
                     await self.t.send_no_wait(self._last_1x_frame)
                     continue
@@ -275,7 +275,7 @@ class WpsRegistrar:
                         self.log(f"[WPS] <- EAP-Req/Identity (id {p.eap_id}); -> Identity response")
                     elif identity_reqs == _IDENTITY_STALL:
                         self.log(f"[WPS] AP re-requested Identity {identity_reqs}x without reaching "
-                                 f"M1 — it may require a link-layer ACK we don't send (auto-ACK); "
+                                 f"M1. It may require a link-layer ACK we don't send (auto-ACK); "
                                  f"still answering")
                     await self._send_1x(M.eap_identity_response(p.eap_id))
                 continue
@@ -347,7 +347,7 @@ class WpsRegistrar:
                 return _out(PinResult.SUCCESS, psk=psk, ssid=ssid)
 
             else:
-                # M2D or unexpected — treat as a setup rejection (often a lock).
+                # M2D or unexpected: treat as a setup rejection (often a lock).
                 if mt == M.WPS_M2D:
                     return _out(PinResult.PROTO_ERROR, detail="M2D (AP has no registrar)")
                 self.log(f"[WPS] <- unexpected msg_type=0x{mt:02x}, ignoring")

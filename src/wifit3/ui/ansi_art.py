@@ -1,4 +1,4 @@
-"""Shared ANSI-art helpers — load ``.ans`` art so it blends into the theme.
+"""Shared ANSI-art helpers: load ``.ans`` art so it blends into the theme.
 
 The ``.ans`` files (textual-paint output) bake a pure-black ``(0,0,0)`` canvas
 into every cell. ``make_black_transparent`` drops that black so the art inherits
@@ -35,7 +35,7 @@ def _without_bgcolor(style: Style) -> Style:
 def make_black_transparent(text: Text, *, blank_black_ink: bool = False) -> Text:
     """Drop pure-black backgrounds so ``text`` inherits the theme surface.
 
-    With ``blank_black_ink`` also blank black-foreground glyphs — for art that
+    With ``blank_black_ink`` also blank black-foreground glyphs, for art that
     draws *with* black ink, not just on a black canvas (the Focus endpoint art).
     Without it, black ink is kept (the Splash logo draws in colour on a black
     canvas, so only the canvas is dropped)."""

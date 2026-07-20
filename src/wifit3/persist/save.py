@@ -1,4 +1,4 @@
-"""Content-deduped auto-save for recovered artifacts — handshakes, PMKIDs,
+"""Content-deduped auto-save for recovered artifacts: handshakes, PMKIDs,
 WEP keys, WPS credentials. One save_* per kind, each returning a SaveResult
 (or None when there's nothing worth saving). Dedupe never overwrites."""
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _safe_ssid(ssid: Optional[str]) -> str:
 def _fresh_path(captures_dir: Path, ap: AccessPoint, suffix: str) -> Path:
     """Build captures_dir/<safe_ssid>_<bssid-dashed>_<epoch><suffix>, bumping to
     the smallest free epoch. Distinct content saved in the same second would
-    otherwise collide — dedupe only catches identical content, so structurally
+    otherwise collide. Dedupe only catches identical content, so structurally
     different artifacts (new ANonce / rotated PSK) need their own files."""
     base = f"{_safe_ssid(ap.ssid)}_{ap.bssid.replace(':', '-')}"
     epoch = int(time.time())
@@ -137,7 +137,7 @@ def save_pmkid(
     *, captures_dir: Path = Path("captures"),
 ) -> Optional[SaveResult]:
     """Persist the PMKID on ap.handshakes[client_mac]. Dedupes by (BSSID,
-    PMKID-value); writes _pmkid.hc22000 only — no pcap companion, since nothing
+    PMKID-value); writes _pmkid.hc22000 only: no pcap companion, since nothing
     reads a PMKID out of a pcap (hcxpcapngtool produces hc22000, never consumes
     it). Returns None on hidden SSID / missing PMKID."""
     if not ap.ssid:

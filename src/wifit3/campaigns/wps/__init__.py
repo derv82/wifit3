@@ -1,1 +1,1 @@
-"""WPS attacks — WSC PIN brute-force, WPS PBC"""
+"""WPS attacks: WSC PIN brute-force, WPS PBC"""

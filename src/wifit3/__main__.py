@@ -10,7 +10,7 @@ async def _smoke() -> None:
          (``libusb_package/libusb-1.0.*``) and actually loads. A onefile build can misplace it,
          which breaks USB enumeration with "No backend available". We deliberately do NOT
          ``libusb_init``/enumerate here: CI runners have no USB subsystem (no ``/dev/bus/usb``),
-         so init legitimately fails there — that's a runtime-env concern, not a packaging break.
+         so init legitimately fails there. That's a runtime-env concern, not a packaging break.
       2. ``App.run_test()`` mounts every screen headless (no TTY), pulling the widget .tcss and
          logo assets that a broken ``collect_all`` would silently drop.
     """

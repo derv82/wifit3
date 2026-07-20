@@ -1,9 +1,9 @@
-"""Clients list — bottom-right, bordered. Broadcast deauth pinned at the top,
+"""Clients list: bottom-right, bordered. Broadcast deauth pinned at the top,
 then one compact left-aligned row per client: BSSID · power · packets · an
-inline ``✕`` (white-on-red) that deauths just that client — no select-then-act.
+inline ``✕`` (white-on-red) that deauths just that client: no select-then-act.
 
 Rows sync live: :meth:`ClientsList.sync` reconciles the rows to the current
-client set each tick — add newly-seen, update power/packets, drop departed (a
+client set each tick: add newly-seen, update power/packets, drop departed (a
 client that left, or the previous target's clients after a switch). It's
 idempotent and never removes-then-remounts the same id in one pass, so it's safe
 across target switches and screen re-entry (no reset that races Textual's async
@@ -64,7 +64,7 @@ class ClientsList(Vertical):
         for c in clients:
             refs = self._known.get(c.bssid)
             if refs is None:
-                # Skip if a same-id row is still mid-removal — it mounts cleanly
+                # Skip if a same-id row is still mid-removal: it mounts cleanly
                 # next tick once the removal lands, rather than duplicating the id.
                 if self.query(f"#{_row_id(c.bssid)}"):
                     continue
@@ -89,7 +89,7 @@ class ClientsList(Vertical):
         return self._by_button.get(button_id)
 
     def set_deauth_enabled(self, enabled: bool) -> None:
-        """Enable/disable every deauth control at once — the broadcast button and
+        """Enable/disable every deauth control at once: the broadcast button and
         each per-client ✕ (the only Buttons this list owns). Greyed when a
         PMF-Required AP would refuse the deauth, or another attack owns the radio."""
         disabled = not enabled

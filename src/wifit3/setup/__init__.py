@@ -1,7 +1,7 @@
 """Cross-platform device-setup *actions* (Tier-1).
 
 Tier-0 (detect + classify unbound cards) lives in ``wlan/manager.py``; this package is the
-privileged action layer the splash's Install / Restore buttons drive — WinUSB bind/unbind on
+privileged action layer the splash's Install / Restore buttons drive: WinUSB bind/unbind on
 Windows, kernel detach / udev on Linux. The VID:PID list each step needs comes from the
 driver registry (:func:`ids_from_registry`), never hand-maintained.
 """
@@ -20,7 +20,7 @@ class SetupTarget:
     that keeps the kernel off the card is module-granular, so handing over one card hands over
     every card that driver claims. ``key`` names the per-chipset rule/blacklist file pair.
     """
-    key: str                              # registry/chipset name, e.g. "ar9271" — names the files
+    key: str                              # registry/chipset name, e.g. "ar9271", names the files
     description: str                      # human label of the card the user selected
     ids: tuple[tuple[int, int], ...]      # every VID:PID this driver claims
     module_hints: tuple[str, ...]         # fallback names (driver's CONFLICTING_LINUX_MODULES)

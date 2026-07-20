@@ -1,4 +1,4 @@
-"""WPS PIN keyspace — the two-halves search with checksum.
+"""WPS PIN keyspace: the two-halves search with checksum.
 
 An 8-digit WPS PIN is P1 (first 4 digits) + P2 (last 4 = 3 free digits + a
 checksum over the first 7). The AP judges each half separately, letting us recover them
@@ -16,7 +16,7 @@ from typing import List, Tuple
 
 from wifit3.dot11.wsc.crypto import pin_checksum
 
-# Tried first, before the brute sweep — the canonical/default PINs that hit a
+# Tried first, before the brute sweep: the canonical/default PINs that hit a
 # surprising number of consumer routers. (Full 8-digit, checksum-valid.)
 COMMON_PINS: List[str] = [
     "12345670",   # the WSC spec example / many demos

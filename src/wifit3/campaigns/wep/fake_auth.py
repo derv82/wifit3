@@ -2,11 +2,11 @@
 
 Open-System Authentication + Association as a forged STA so the AP will accept
 frames we inject later (ARP replay, fragmentation, chopchop). On its own it
-generates no IVs — it's the prerequisite that unlocks the rest of the WEP suite.
+generates no IVs. It's the prerequisite that unlocks the rest of the WEP suite.
 
 LAZY / on-demand: ``start()`` only arms us (registers our MAC + an RX filter so
 we still *hear* deauths); it does NOT authenticate. We stay invisible until a TX
-path actually has something to send and calls ``ensure_associated()`` — so the
+path actually has something to send and calls ``ensure_associated()``, so the
 user isn't sitting "associated for no reason", re-announcing every interval. The
 TX paths' own data frames keep the AP's inactivity timer alive while they run;
 an explicit Deauth/Disassoc (or a replay stall) flips us out of ``associated``
@@ -14,7 +14,7 @@ so the *next* ``ensure_associated()`` re-auths within one window. No periodic
 keepalive.
 
 ``ensure_associated()`` retries silently (3 attempts, ~1s each) and only logs a
-FAILURE (once per episode) — and a one-line "recovered" if it later comes back.
+FAILURE (once per episode), and a one-line "recovered" if it later comes back.
 Routine success is silent; the live status lives in the Focus SECURITY panel via
 ``state`` (idle / authenticating / associated / failed), ``next_reauth_at`` and
 ``fail_reason``.
@@ -181,7 +181,7 @@ class WepFakeAuth:
                     self._announced_failure = False
                 return True
 
-        # All attempts failed — back off and log once per episode.
+        # All attempts failed. Back off and log once per episode.
         self.state = "failed"
         if not self.fail_reason:
             self.fail_reason = "no Assoc resp"

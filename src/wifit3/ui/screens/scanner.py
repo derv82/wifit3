@@ -67,7 +67,7 @@ def _fade_text(text: Text, factor: float, bg: tuple[int, int, int]) -> Text:
 
 
 def _cells_key(cells: List[Text]) -> tuple:
-    """A cheap, comparable fingerprint of a row's pre-fade cells — plain text plus
+    """A cheap, comparable fingerprint of a row's pre-fade cells: plain text plus
     styles (base + spans)."""
     return tuple(
         (c.plain, str(c.style), tuple((s.start, s.end, str(s.style)) for s in c.spans))
@@ -304,7 +304,7 @@ class ScannerView(Screen):
                 self._render_key[ap.bssid] = render_key
                 table.add_row(*(_fade_text(c, factor, bg) for c in raw), key=ap.bssid)
             else:
-                # Decloak event — already logged here.
+                # Decloak event: already logged here.
                 old_ssid = self.ap_cache[ap.bssid].ssid
                 if not old_ssid and ap.ssid:
                     self._write_log(
@@ -462,7 +462,7 @@ class ScannerView(Screen):
         elif ev.kind == CaptureKind.UNCRACKABLE_HANDSHAKE:
             msg = (
                 f"[bold yellow]● {escape(ev.value or '?')} 4-way[/bold yellow] on "
-                f"[bold]{ap_label}[/bold] [dim]— not crackable (-m 22000)[/dim]"
+                f"[bold]{ap_label}[/bold] [dim](not crackable, -m 22000)[/dim]"
             )
         elif ev.kind == CaptureKind.PMKID:
             msg = (
@@ -626,7 +626,7 @@ class ScannerView(Screen):
                 "[bold]WPS PushButton auto-invade[/bold] is "
                 "[yellow]disabled[/yellow] [dim](press [bold]w[/bold] to toggle)[/dim]"))
             self._write_log(treelog.leaf(
-                "[dim](detect + alert only — never transmits)[/dim]"))
+                "[dim](detect + alert only, never transmits)[/dim]"))
 
     def _poll_pbc(self) -> None:
         iface = self.app.active_interface
@@ -642,7 +642,7 @@ class ScannerView(Screen):
             f"[bold green]Open Window[/bold green] on [bold]{label}[/bold] "
             f"[dim](CH {ap.channel})[/dim]")
         if not self.app.pbc_enabled:
-            self._write_log(treelog.leaf("[dim]auto-invade off — press [bold]w[/bold] to enable[/dim]"))
+            self._write_log(treelog.leaf("[dim]auto-invade off: press [bold]w[/bold] to enable[/dim]"))
             return
         if ap.has_psk:
             wps = next((p for p in ap.persisted if p.kind == "WPS" and p.value), None)
@@ -661,7 +661,7 @@ class ScannerView(Screen):
         self._pbc_capturing = True
         label = escape(ap.ssid or ap.bssid)
         self._write_log(treelog.branch(
-            f"[cyan]invading[/cyan] [bold]{label}[/bold] — pausing hop, "
+            f"[cyan]invading[/cyan] [bold]{label}[/bold]: pausing hop, "
             f"tuning [cyan]CH {ap.channel}[/cyan]…"))
         try:
             await iface.stop_hopping()

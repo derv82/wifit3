@@ -1,7 +1,7 @@
 """Rich-markup rendering for the active PMKID harvest, as a 4-way-handshake-style tree.
 
-Built from per-line fragments — a ``PMKID · Harvesting from <essid>`` header, the
-auth/assoc/M1 action branches, and the terminal verdict — so the SAME builders
+Built from per-line fragments (a ``PMKID · Harvesting from <essid>`` header, the
+auth/assoc/M1 action branches, and the terminal verdict) so the SAME builders
 serve two emit modes: composed into one list for an atomic dump today, and called
 one-at-a-time on live progress events once the harvest becomes a campaign. Pure +
 UI-free (testable without a terminal); the screen owns side effects (save, log).
@@ -25,7 +25,7 @@ _FAIL_LEAF = {
     PmkidFail.NO_KDE:       ("No PMKID in M1", "AP does not send PMKID in M1"),
     PmkidFail.NO_RESPONSE:  ("No M1 received", "AP did not respond"),
     PmkidFail.PMF_REQUIRED: ("PMF Required", "AP only associates protected clients"),
-    PmkidFail.NO_PSK_AKM:   ("No PSK AKM", "nothing to harvest — e.g. SAE-only"),
+    PmkidFail.NO_PSK_AKM:   ("No PSK AKM", "nothing to harvest, e.g. SAE-only"),
 }
 
 # Reasons reached only AFTER we transmit Auth+Assoc, so their tree echoes those
@@ -58,7 +58,7 @@ def _fail_leaf(reason: Optional[PmkidFail]) -> str:
 
 
 def verdict_success(save_hint: Optional[str]) -> list[str]:
-    """The terminal success line(s) only — the ``✓ PMKID Extracted`` chip closed by
+    """The terminal success line(s) only: the ``✓ PMKID Extracted`` chip closed by
     the ``saved/exists: …`` leaf (or the chip alone as the closing leaf when
     ``save_hint`` is None). Emitted on its own once progress streams live."""
     if save_hint:
@@ -81,7 +81,7 @@ def render_success(essid: str, save_hint: Optional[str]) -> list[str]:
 
 def render_failure(essid: str, reason: Optional[PmkidFail]) -> list[str]:
     """Header, the auth/assoc branches (only for reasons reached after TX), an
-    ``M1 … PMKID✗`` branch (NO_KDE only — its M1 arrived KDE-less), then the
+    ``M1 … PMKID✗`` branch (NO_KDE only, its M1 arrived KDE-less), then the
     failure verdict. Atomic-dump form (see ``verdict_failure`` for the streaming
     terminal line)."""
     lines = [header(essid)]

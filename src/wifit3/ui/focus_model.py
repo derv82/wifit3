@@ -244,7 +244,7 @@ def status_footer_lines(ap, iface, campaign, now: float) -> list[str]:
         return wep_status_lines(ap, iface, campaign, now)
     lines = [f"[dim]Encryption:[/dim] {format_encryption_markup(ap, detailed=True)}"]
     parts = []
-    if ap.akms or ap.wpa3:              # RSN (WPA2/3) — PMF is meaningful
+    if ap.akms or ap.wpa3:              # RSN (WPA2/3): PMF is meaningful
         parts.append(f"[dim]PMF:[/dim] {pmf_status_markup(ap)}")
     if getattr(ap, "wps", None):
         lock = "[red]🔒[/red]" if ap.wps_locked else "[green]🔓[/green]"
@@ -266,7 +266,7 @@ class ButtonState:
 
 
 def derive_buttons(ap) -> dict[str, ButtonState]:
-    """Per-button state, keyed by button id — registry-driven."""
+    """Per-button state, keyed by button id, registry-driven."""
     active = Campaign.active
     states: dict[str, ButtonState] = {}
     for cls in BUTTON_CAMPAIGNS:
@@ -283,7 +283,7 @@ def derive_buttons(ap) -> dict[str, ButtonState]:
                 disabled=reason is not None or other,
                 label=cls.idle_label, variant=cls.idle_variant,
                 reason=reason or ("radio busy (another attack running)" if other else ""))
-    # ChopChop — a WEP sub-action, enabled only while the WEP campaign runs.
+    # ChopChop: a WEP sub-action, enabled only while the WEP campaign runs.
     wep_running = active is not None and active.key == "wep"
     chopping = wep_running and getattr(active, "chop_active", False)
     states["btn-chop"] = ButtonState(
@@ -347,7 +347,7 @@ def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
     enc = (ap.encryption or "").upper()
     wep = enc == "WEP"
 
-    # 1. WEP active attack — cracking / replaying / chopping.
+    # 1. WEP active attack: cracking / replaying / chopping.
     camp = campaigns.wep
     if camp is not None:
         n_ivs = ap.wep.unique_ivs if ap.wep else 0
@@ -369,7 +369,7 @@ def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
     # 2. Live WPS attack.
     wps = campaigns.wps
     if campaigns.pbc_busy:
-        return ["[bold green]● WPS PushButton[/bold green] window — capturing PSK"]
+        return ["[bold green]● WPS PushButton[/bold green] window: capturing PSK"]
     if wps is not None:
         if wps.state.found_pin:
             return ["[black bold on green] ✓ WPS PIN cracked [/black bold on green]",
@@ -391,7 +391,7 @@ def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
         return ["[black bold on green] ✓ WPS PSK recovered [/black bold on green]",
                 "[dim]see the event log for the passphrase[/dim]"]
 
-    # 4–5. Passive capture state: captured / partial / listening.
+    # 4-5. Passive capture state: captured / partial / listening.
     if wep:
         n_ivs = ap.wep.unique_ivs if ap.wep else 0
         if n_ivs:
@@ -412,11 +412,11 @@ def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
     if n_partial:
         breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
         return ["[yellow]◌ Capturing handshake[/yellow]",
-                f"[dim]{breakdown} — deauth a client to force a re-handshake[/dim]"]
+                f"[dim]{breakdown}: deauth a client to force a re-handshake[/dim]"]
     if enc in ("OPEN", ""):
-        return ["[dim]● Open network — no handshake to capture[/dim]"]
+        return ["[dim]● Open network: no handshake to capture[/dim]"]
     return ["[green]● Listening for handshake + PMKID[/green]",
-            "[dim]passive — deauth a client to force a handshake[/dim]"]
+            "[dim]passive: deauth a client to force a handshake[/dim]"]
 
 
 def card_identity(iface) -> tuple[str, str | None]:

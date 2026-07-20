@@ -9,7 +9,7 @@ import usb.core
 
 # LIBUSB_ERROR_NO_DEVICE (-4) is the unambiguous "adapter was unplugged" code; the libusb1
 # backend maps it to errno ENODEV (19). On Windows+WinUSB it's the *first* error an unplug
-# raises, after which the pipe streams LIBUSB_ERROR_IO (errno 5) — too broad to key on, so
+# raises, after which the pipe streams LIBUSB_ERROR_IO (errno 5), too broad to key on, so
 # we match only NO_DEVICE here and let the RX reader's consecutive-error give-up absorb the
 # messier IO streak. (backend_error_code is already read this way in mt76x0u/driver.py.)
 _LIBUSB_NO_DEVICE = -4
@@ -42,7 +42,7 @@ class BringUpError(Exception):
 
 
 class BringUpPermissionsError(BringUpError):
-    """A bring-up failure caused by missing device-access permissions — recoverable via the
+    """A bring-up failure caused by missing device-access permissions, recoverable via the
     one-time install."""
 
 
@@ -66,7 +66,7 @@ class WifiteDeviceLostError(Exception):
     def __init__(self, name: str = "the wireless adapter") -> None:
         self.title = "Adapter disconnected"
         self.message = (
-            f"Lost contact with {name} — it was unplugged or the USB link dropped.\n"
+            f"Lost contact with {name}: it was unplugged or the USB link dropped.\n"
             "Replug the card, then press Back to Splash to reconnect."
         )
         super().__init__(f"{self.title}: {self.message}")

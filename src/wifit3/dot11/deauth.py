@@ -2,7 +2,7 @@
 from wifit3.dot11.packet import is_group_mac
 
 
-# SIFS + a 1 Mbps long-preamble ACK (µs) — the unicast-ACK NAV. Matches aireplay-ng's
+# SIFS + a 1 Mbps long-preamble ACK (µs): the unicast-ACK NAV. Matches aireplay-ng's
 # hardcoded deauth duration (0x013A); our injectors default to 1 Mbps CCK, so this is the
 # time the addressed STA needs to ACK back.
 _DEAUTH_ACK_NAV_US = 0x013A

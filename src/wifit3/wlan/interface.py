@@ -384,7 +384,7 @@ class WlanInterface:
                 if bssid not in other_ap.siblings:
                     other_ap.siblings.append(bssid)
             else:
-                # Channel mismatch or too divergent — drop any stale link.
+                # Channel mismatch or too divergent: drop any stale link.
                 if bssid in other_ap.siblings:
                     other_ap.siblings.remove(bssid)
         ap.siblings = new_siblings
@@ -417,7 +417,7 @@ class WlanInterface:
         """Ask the driver to HW-ACK frames addressed to ``mac`` (active-monitor)."""
         support = self.driver.FAKE_MAC
         if support in (FakeMacSupport.NONE, FakeMacSupport.UNIMPLEMENTED):
-            logger.info("set_fake_mac: %s — active-monitor unavailable (%s)",
+            logger.info("set_fake_mac: %s, active-monitor unavailable (%s)",
                         self._chipset, support.value)
             return None
         mac_b = self._to_mac_bytes(mac)
@@ -443,7 +443,7 @@ class WlanInterface:
 
     @property
     def _chipset(self) -> str:
-        """The chips/<name> dir of the active driver — for driver-specific log lines."""
+        """The chips/<name> dir of the active driver, for driver-specific log lines."""
         parts = type(self.driver).__module__.split(".")
         return parts[-2] if len(parts) >= 2 else parts[-1]
 
@@ -554,7 +554,7 @@ class WlanInterface:
             parsed = WlanFrameParser.parse_80211_frame(frame_bytes, 0)
             if parsed is None:
                 return
-            # Mirror of [RXFRAME] for our injects — reappearing as RX would mean chip loopback.
+            # Mirror of [RXFRAME] for our injects: reappearing as RX would mean chip loopback.
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("%s", _fmt_frame("TXFRAME", parsed.type,
                                               parsed.source, parsed.dest, parsed.bssid))

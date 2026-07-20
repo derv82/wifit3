@@ -22,7 +22,7 @@ Options:
   --client2g BSSID  client for the --bssid2g deauth.
   --bssid5g BSSID   5 GHz AP for an injection test + deauth on --channel5g.
                     A no-op (skipped) when the card has no 5 GHz support, even
-                    if passed — so a dual-band invocation is safe on any card.
+                    if passed, so a dual-band invocation is safe on any card.
   --channel5g N     channel for the --bssid5g pass (default 36).
   --client5g BSSID  client for the --bssid5g deauth.
   --no-air          skip the airodump segments (native-hop reference + the
@@ -95,7 +95,7 @@ class Capture:
         self.bssid2g, self.channel2g, self.client2g = bssid2g, channel2g, client2g
         self.bssid5g, self.channel5g, self.client5g = bssid5g, channel5g, client5g
         # The two airodump segments (native-hop reference + fixed-channel
-        # over-air pcap) run by default — they're the runtime data a bring-up
+        # over-air pcap) run by default. They're the runtime data a bring-up
         # needs. fast_hop is the pathological 0.25 s stress probe, opt-in.
         self.run_air = run_air
         self.fast_hop = fast_hop
@@ -123,15 +123,15 @@ class Capture:
         self.temp_dir = Path(self.temp_dir_obj.name)
         self.logger = LogHelper(self.temp_dir)
 
-    # --- Pure parsers (no I/O) — extracted so they're unit-testable without
+    # --- Pure parsers (no I/O), extracted so they're unit-testable without
     # hardware. Tests: tests/scripts/test_capture.py. ---
 
     @staticmethod
     def parse_chipset(airmon_text, base_iface):
         """Driver name for base_iface from `airmon-ng` table output (columns:
         PHY  Interface  Driver  Chipset). Returns the Driver column with ','/'/'
-        folded to '_' (it becomes a dir name), or None if base_iface has no row
-        — which means airmon-ng never bound the card."""
+        folded to '_' (it becomes a dir name), or None if base_iface has no row,
+        which means airmon-ng never bound the card."""
         for line in airmon_text.splitlines():
             if base_iface in line:
                 parts = line.split()
@@ -173,7 +173,7 @@ class Capture:
 
     @staticmethod
     def next_capture_paths(dest_dir):
-        """Next free (capture-N.pcap, capture-N_logs) pair in dest_dir — N steps
+        """Next free (capture-N.pcap, capture-N_logs) pair in dest_dir, N steps
         past existing pcaps so a repeat run never clobbers a prior capture."""
         count = 1
         while (dest_dir / f"capture-{count}.pcap").exists():
@@ -196,7 +196,7 @@ class Capture:
     @staticmethod
     def parse_modinfo_firmware(text):
         """All `firmware:` blob names the module declares (a driver can request
-        several — e.g. a main FW + a calibration table)."""
+        several: e.g. a main FW + a calibration table)."""
         names = []
         for line in text.splitlines():
             if line.startswith("firmware:"):
@@ -207,7 +207,7 @@ class Capture:
 
     @staticmethod
     def lsusb_diff(before, after):
-        """`lsusb` lines in `after` but not `before` — the device(s) that
+        """`lsusb` lines in `after` but not `before`: the device(s) that
         appeared since the baseline. Chipset-agnostic: whatever shows up after
         the card is plugged IS the card, no VID:PID hardcoding."""
         before_lines = set(before.splitlines())
@@ -216,7 +216,7 @@ class Capture:
 
     @staticmethod
     def parse_wifi_ifaces(iw_text):
-        """Non-p2p 802.11 netdev names from `iw dev` — the card's interface is
+        """Non-p2p 802.11 netdev names from `iw dev`: the card's interface is
         whichever of these appeared after plug-in (never hardcode wlan0/wlan1)."""
         out = set()
         for line in iw_text.splitlines():
@@ -252,7 +252,7 @@ class Capture:
     @staticmethod
     def _bound_module(iface):
         """Kernel module bound to `iface` (via /sys/class/net/<iface>/device/
-        driver) — chipset-agnostic, no hardcoded module list."""
+        driver), chipset-agnostic, no hardcoded module list."""
         if not iface:
             return None
         link = Path("/sys/class/net") / iface / "device" / "driver"
@@ -320,7 +320,7 @@ class Capture:
     def _dkms_conf_ids(conf_path):
         """Lowercased identifiers a dkms.conf declares: PACKAGE_NAME plus every
         BUILT_MODULE_NAME[*]. We match the bound module against both because the
-        package name and the built .ko name routinely differ — package
+        package name and the built .ko name routinely differ: package
         `rtl8188eus` builds module `8188eu`, package `rtl8812au` builds `88XXau`."""
         ids = set()
         try:
@@ -338,7 +338,7 @@ class Capture:
 
     @staticmethod
     def _best_dkms_match(module, candidates):
-        """The (dir, ids) entry whose ids best match the bound `module` name — exact first,
+        """The (dir, ids) entry whose ids best match the bound `module` name: exact first,
         then a >=4-char substring either direction; None if nothing matches. `candidates`:
         list of (Path, set-of-lowercased-ids).
 
@@ -360,7 +360,7 @@ class Capture:
         or None for a mainline driver (ships no buildable source on the box).
 
         Scans every /usr/src/*/dkms.conf and matches its declared PACKAGE_NAME /
-        BUILT_MODULE_NAME against the bound module — the canonical, unambiguous
+        BUILT_MODULE_NAME against the bound module, the canonical, unambiguous
         mapping even with many DKMS packages present. A bare name glob is the
         last resort."""
         if not self.driver_module:
@@ -383,7 +383,7 @@ class Capture:
     def collect_driver_artifacts(self, dest_dir):
         """Copy the bound driver's firmware blobs (and DKMS source, if on disk)
         into dest_dir so each capture carries the exact artifacts that produced
-        it. Mainline drivers ship no on-disk source — driver.log's vermagic +
+        it. Mainline drivers ship no on-disk source. Driver.log's vermagic +
         filename is the fetch recipe instead."""
         if self.firmware_files:
             fw_dir = dest_dir / "firmware"
@@ -409,7 +409,7 @@ class Capture:
             except OSError as e:
                 self.logger.log_main(f"[!] Source copy failed ({src_tree}): {e}")
         elif not src_tree:
-            self.logger.log_main("[*] No on-disk driver source (mainline?) — use "
+            self.logger.log_main("[*] No on-disk driver source (mainline?): use "
                                  "driver.log vermagic/filename to fetch matching source.")
 
     def run_cmd(self, cmd_list, fatal=False, timeout=60):
@@ -419,7 +419,7 @@ class Capture:
         No fixed schedule: main.log's per-event epochs are the source of truth
         for slicing the pcap afterwards, so commands just run back-to-back. On
         timeout we log and carry on (the capture so far is never discarded)
-        unless fatal=True — reserved for the one must-succeed step, monitor-mode
+        unless fatal=True, reserved for the one must-succeed step, monitor-mode
         bring-up."""
         self.logger.log_main(f"Running: {' '.join(cmd_list)}")
         start_exec = time.time()
@@ -528,7 +528,7 @@ class Capture:
         tuples. Pure (no I/O) so the 5 GHz gate is unit-testable: legacy --target
         pins to CH1; --bssid2g / --bssid5g add their own channel. The 5 GHz pass
         is dropped when the card has no 5 GHz support, even if --bssid5g was
-        passed — so a dual-band invocation is safe on a 2.4-only card."""
+        passed, so a dual-band invocation is safe on a 2.4-only card."""
         plan = []
         if self.target_bssid:
             plan.append((1, self.target_bssid, self.client_bssid, "CH1"))
@@ -540,7 +540,7 @@ class Capture:
 
     def _injection_segment(self, channel, bssid, client, label):
         """Tune to `channel`, run aireplay's injection self-test against `bssid`,
-        then — if a `client` is given — one deauth. This is the over-air TX a
+        then (if a `client` is given) one deauth. This is the over-air TX a
         5 GHz (or 2.4 GHz) inject port is byte-matched against. Non-fatal
         throughout, like the rest of the capture sequence."""
         self.logger.log_main(
@@ -569,7 +569,7 @@ class Capture:
         for log_file in self.temp_dir.glob("*.log"):
             shutil.copy(log_file, final_logs)
         # The fixed-channel over-air pcap rides inside the per-run logs dir so
-        # it's scoped to this capture (airodump wrote it as <prefix>-01.cap) —
+        # it's scoped to this capture (airodump wrote it as <prefix>-01.cap),
         # no top-level airodump-fixed-2.pcap / -3.pcap sprawl across runs.
         for cap_file in self.temp_dir.glob("airodump-fixed-ch1*.cap"):
             shutil.copy(cap_file, final_logs / "airodump-fixed-ch1.cap")
@@ -608,10 +608,10 @@ class Capture:
             if tmp_pcap.exists():
                 salvage = Path(f"/tmp/wifit3_unsaved_{int(time.time())}")
                 self.logger.log_main(f"[!] No chipset detected (airmon never bound the "
-                                     f"card) — NOT saving to the repo. Artifacts at: {salvage}")
+                                     f"card), NOT saving to the repo. Artifacts at: {salvage}")
                 self._save_artifacts(salvage)
             else:
-                self.logger.log_main("[*] No chipset and no pcap — nothing to save.")
+                self.logger.log_main("[*] No chipset and no pcap: nothing to save.")
         else:
             dest_dir = Path(__file__).parent / f"captures_{self.chipset}"
             self._save_artifacts(dest_dir)
@@ -640,7 +640,7 @@ class Capture:
         self.start_time = time.time()
         self.logger.log_main("\n[*] Capture started.")
 
-        # tshark on usbmon0 (all buses — survives a post-FW re-enumeration onto a
+        # tshark on usbmon0 (all buses, survives a post-FW re-enumeration onto a
         # different bus). The pcap is written to the RAM-backed temp dir and only
         # moved to the capture dir at teardown, after tshark stops.
         pcap_path = self.temp_dir / "capture.pcap"
@@ -651,7 +651,7 @@ class Capture:
         )
 
         # Baseline the USB tree (our card not plugged yet) so snapshot_usb can
-        # report exactly what appears — chipset-agnostic device identification.
+        # report exactly what appears: chipset-agnostic device identification.
         self.lsusb_baseline = self._lsusb()
         self.iface_baseline = self.parse_wifi_ifaces(
             subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout)
@@ -665,7 +665,7 @@ class Capture:
         self.snapshot_usb("post-plug")
 
         # The card's netdev is the wlan interface that appeared since the pre-plug
-        # baseline — same "whatever showed up IS the card" logic as the lsusb diff.
+        # baseline, same "whatever showed up IS the card" logic as the lsusb diff.
         appeared = sorted(self.parse_wifi_ifaces(
             subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout)
             - self.iface_baseline)
@@ -675,7 +675,7 @@ class Capture:
         else:
             self.logger.log_main(f"[!] No new wlan interface appeared; using {self.base_iface}.")
 
-        # Monitor-mode bring-up — the one step that must succeed.
+        # Monitor-mode bring-up: the one step that must succeed.
         self.run_cmd(["sudo", "airmon-ng", "start", self.base_iface], fatal=True, timeout=30)
 
         # If the bus/device changed here, airmon re-enumerated the card (the
@@ -706,7 +706,7 @@ class Capture:
 
         # Grab the driver's firmware + DKMS source NOW (not only at teardown), so
         # a later hang or abort can't cost us the exact code that produced the
-        # capture. Idempotent — cleanup re-runs it as a safety net.
+        # capture. Idempotent: cleanup re-runs it as a safety net.
         if self.chipset != "unknown":
             early_dest = Path(__file__).parent / f"captures_{self.chipset}"
             early_dest.mkdir(parents=True, exist_ok=True)
@@ -714,8 +714,8 @@ class Capture:
 
         # Kernel-driver reference segments (on by default; --no-air skips), both
         # before the deterministic iw hops so they get a clean interface:
-        #   * native 250 ms airodump hop — diff vs our set_channel cadence
-        #   * fixed-channel over-air pcap — feeds beacon_watch.py --pcap, while
+        #   * native 250 ms airodump hop: diff vs our set_channel cadence
+        #   * fixed-channel over-air pcap: feeds beacon_watch.py --pcap, while
         #     the usbmon side records the 'sitting on one channel' traffic
         if self.run_air:
             self.airodump_segment(duration=10)
@@ -739,7 +739,7 @@ class Capture:
         # the capture.
         if self.bssid5g and not self.supports_5g:
             self.logger.log_main("[*] --bssid5g passed but the card has no 5 GHz "
-                                 "support — skipping the 5 GHz injection pass.")
+                                 "support, skipping the 5 GHz injection pass.")
         plan = self._injection_plan()
         if not plan:
             self.logger.log_main("[*] No injection target given; skipping injection test + deauth.")

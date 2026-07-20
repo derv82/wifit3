@@ -2,15 +2,15 @@
 
 Two implementations behind one ``WepCracker`` protocol:
 
-- ``PlaceholderCracker`` — the no-shell-out MVP. It just watches the
+- ``PlaceholderCracker``: the no-shell-out MVP. It just watches the
   unique-IV count and reports "ready" at the crack threshold; ``recover()``
-  always returns None. Not wired into the campaign — ``PtwCracker`` (below) is.
-- ``PtwCracker`` — a native, self-contained PTW (Pyshkin-Tews-Weinmann 2007)
+  always returns None. Not wired into the campaign. ``PtwCracker`` (below) is.
+- ``PtwCracker``: a native, self-contained PTW (Pyshkin-Tews-Weinmann 2007)
   key-recovery. No external aircrack. Fed a stream of ``(IV, keystream)``
   samples; the per-IV votes are *additive*, so it ingests incrementally as
   IVs arrive and a cheap search re-runs on demand.
 
-Both are pure Python and need no hardware — correctness is proven offline by
+Both are pure Python and need no hardware: correctness is proven offline by
 ``tests/crack/test_wep_crack.py``, which generates WEP packets under a known
 key and asserts recovery.
 
@@ -19,7 +19,7 @@ The IV is public, so the first 3 KSA steps are known. Klein's correlation
 then lets each packet's early keystream bytes *vote* for the root-key byte
 sums; with enough IVs the correct sums win by a wide margin. Because the
 first ~16 plaintext bytes of an ARP are fixed (LLC/SNAP + ARP header), ARP
-traffic yields the known keystream PTW needs — which is exactly what ARP
+traffic yields the known keystream PTW needs, which is exactly what ARP
 replay floods us with.
 """
 
@@ -139,7 +139,7 @@ class PtwCracker:
     The sums are IV-independent (the IV contribution is subtracted), so votes
     accumulate across all packets. ``recover`` reads off the winning sums,
     differences them into key bytes, and verifies the candidate by re-deriving
-    the keystream — trying both 40- and 104-bit lengths.
+    the keystream, trying both 40- and 104-bit lengths.
     """
 
     def __init__(
@@ -171,7 +171,7 @@ class PtwCracker:
             cum = (cum + S[i]) & 0xFF                       # j3 + Σ_{l=3}^{i} S[l]
             ks = keystream[i - 1]                           # i-th keystream byte
             # Klein/PTW (approximating S_i ≈ S_3): this estimates the ROOT-key
-            # sum Σ_{l=3}^{i} K[l] directly — IV-independent, so votes from
+            # sum Σ_{l=3}^{i} K[l] directly (IV-independent), so votes from
             # packets with different IVs accumulate. (Subtracting the IV sum,
             # which varies per packet, would scramble the vote.)
             sigma = (Sinv[(i - ks) & 0xFF] - cum) & 0xFF
@@ -219,7 +219,7 @@ class PtwCracker:
 
     def _search(self, ranked: List[List[int]], keylen: int) -> Optional[bytes]:
         """Best-first over per-byte candidate ranks: try the all-argmax key
-        first, then keys one rank off on one byte, etc. — so a couple of
+        first, then keys one rank off on one byte, etc., so a couple of
         not-quite-top byte sums are recovered without blowing up the search."""
         import heapq
 
@@ -242,7 +242,7 @@ class PtwCracker:
         return None
 
     # Verify against this many held-back samples; accept the key if all but at
-    # most this many reproduce — tolerating the rare odd-packet-out (a frame
+    # most this many reproduce, tolerating the rare odd-packet-out (a frame
     # that was ARP-sized + broadcast but not actually an ARP request, so its
     # "known plaintext" was wrong). Without the tolerance one bad sample in the
     # fixed verify set would reject the *correct* key forever.
@@ -262,7 +262,7 @@ class PtwCracker:
             produced = rc4_keystream(iv + key, need)
             if produced[: len(ks)] != ks[: len(produced)]:
                 mismatches.append(idx)
-                # Bail the instant a wrong key exceeds tolerance — this keeps
+                # Bail the instant a wrong key exceeds tolerance: this keeps
                 # the per-candidate cost ~2 RC4 across the brute-force search
                 # instead of always paying for all _VERIFY_SAMPLES.
                 if len(mismatches) > self._VERIFY_TOLERANCE:

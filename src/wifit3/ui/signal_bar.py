@@ -2,11 +2,11 @@
 
 An AP is fully heard at ~9.77 beacons/s (one per 102.4 ms TBTT), so beacons/s is
 really a *reception-quality* signal. This renders it as a horizontal meter built
-from left-fractional eighth-block glyphs (▏▎▍▌▋▊▉█) — 8 sub-steps per character,
+from left-fractional eighth-block glyphs (▏▎▍▌▋▊▉█), 8 sub-steps per character,
 fine enough to track the windowed decimal rate without visibly stepping.
 
 Colour is **positional**: each cell carries a fixed red→green hue and only the fill *length*
-follows the rate. A weak AP's bar reaches only the reds; a strong one pushes into green — and
+follows the rate. A weak AP's bar reaches only the reds; a strong one pushes into green, and
 since no cell ever changes hue, the bar never strobes as the rate wobbles.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from rich.text import Text
 # 0/8 .. 8/8 of a cell, filled from the left.
 _EIGHTHS = " ▏▎▍▌▋▊▉█"
 
-# One beacon per 102.4 ms TBTT — the rate at which an AP is fully heard.
+# One beacon per 102.4 ms TBTT: the rate at which an AP is fully heard.
 FULL_SCALE_RATE = 9.77
 
 # Brightness of the unfilled track: a dim ghost of each cell's fill hue, so the
@@ -62,7 +62,7 @@ def render_signal_bar(
 
     if rate <= 0.05:
         beat = _EMPTY * (0.5 + 0.5 * pulse)
-        # Red ╳ on the left — where the fading bar's last (red) cell sits before
+        # Red ╳ on the left, where the fading bar's last (red) cell sits before
         # it dies. The box-drawing cross fills the cell, so it's level with the
         # blocks (a centred ✕ glyph floats high).
         bar.append("╳", style=f"bold rgb({int(110 + 145 * pulse)},0,0)")

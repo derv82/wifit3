@@ -1,14 +1,14 @@
-"""Campaign — the radio-owning attack base class.
+"""Campaign: the radio-owning attack base class.
 
 A campaign owns the half-duplex radio for its lifetime: at most one runs at a
 time (the class-level ``active`` slot is the mutex). You ``run()`` a campaign; the
-base owns the lifecycle from there — scheduling the work as a task, guaranteeing
+base owns the lifecycle from there: scheduling the work as a task, guaranteeing
 ``teardown()`` on every exit (natural completion, user stop, or crash), and the
-cooperative ``stopped`` flag — so each subclass writes only its *behaviour*:
+cooperative ``stopped`` flag. So each subclass writes only its *behaviour*:
 ``_loop()`` + ``teardown()``, plus the ``visible()`` / ``ineligible_reason()``
 classmethods the Focus button row derives from.
 
-Engine-pure: no Textual — kept free of any UI dependency so the attack logic
+Engine-pure: no Textual, kept free of any UI dependency so the attack logic
 is testable in isolation.
 
 Status/headline/card rendering deliberately stays in ``ui.focus_model`` for now

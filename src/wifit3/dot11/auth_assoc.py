@@ -8,7 +8,7 @@ import struct
 from wifit3.dot11.ie import ssid_ie, rates_ie, ext_rates_ie
 
 # Assoc-request capability: ESS + Privacy. Distinct from the probe-response capability
-# (see dot11.probe._CAPABILITY_INFO) — do not conflate.
+# (see dot11.probe._CAPABILITY_INFO). Do not conflate.
 _CAP_ESS_PRIVACY = 0x0011
 
 

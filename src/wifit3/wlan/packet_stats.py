@@ -1,7 +1,7 @@
 """Per-(BSSID, class) cumulative frame tallies that feed the Focus live packet dashboard.
 
 Counts are best-effort and lock-free: RX increments run on the shared ``RxReaderThread``, TX
-on the event loop, and a dropped increment is invisible on a cosmetic meter — not worth a
+on the event loop, and a dropped increment is invisible on a cosmetic meter, not worth a
 lock on the RX hot path. The widget diffs successive :meth:`snapshot` calls into per-window
 deltas.
 """

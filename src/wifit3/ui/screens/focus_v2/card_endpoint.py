@@ -1,4 +1,4 @@
-"""Card endpoint — the left column. The card art, then its static facts
+"""Card endpoint: the left column. The card art, then its static facts
 (chipset/driver + the card's own BSSID when the driver exposes it) and the
 dynamic line (what the card is doing right now). Just identity + live state (the
 attack buttons live in the top "action area"), vertically centered against the
@@ -33,7 +33,7 @@ class CardEndpoint(Vertical):
         yield dyn
 
     def update_dynamic(self, snap) -> None:
-        """Refresh the live 'what the card is doing' line — only when it changed.
+        """Refresh the live 'what the card is doing' line, only when it changed.
         Identity (chipset / BSSID) is static per card, set once at compose.
         Textual's ``Label.update`` refreshes unconditionally, so guarding skips
         the no-op repaint that otherwise fires every tick."""
@@ -45,5 +45,5 @@ class CardEndpoint(Vertical):
         dyn.display = bool(snap.card_dynamic)
 
     def flicker(self) -> None:
-        """Pulse the card LED — the screen calls this when we TX a frame."""
+        """Pulse the card LED. The screen calls this when we TX a frame."""
         self.query_one(BreathingArt).pulse()

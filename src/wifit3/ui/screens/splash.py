@@ -62,7 +62,7 @@ class SplashView(Screen):
         self._is_initializing = False
         # Guard so overlapping polls don't stack (a bus scan can outlast the poll interval).
         self._poll_in_flight = False
-        # ListItem name of the highlighted row — what START acts on.
+        # ListItem name of the highlighted row: what START acts on.
         self._selected_name = None
 
     def compose(self) -> ComposeResult:
@@ -108,8 +108,8 @@ class SplashView(Screen):
         self.call_after_refresh(self.poll_usb)
 
     def reset_for_reentry(self) -> None:
-        """Returning to splash (adapter lost): the installed screen only resumes — on_mount doesn't
-        re-run — so restore the scanning state and un-pause the poll timer perform_start left
+        """Returning to splash (adapter lost): the installed screen only resumes (on_mount doesn't
+        re-run) so restore the scanning state and un-pause the poll timer perform_start left
         paused before it navigated to the scanner."""
         self._enter_scanning_mode()
         if self._refresh_timer is not None:
@@ -149,7 +149,7 @@ class SplashView(Screen):
                 uninstall_btn.disabled = True
                 self._selected_name = None
         except WifiteFatalError as err:
-            # Unrecoverable (e.g. no USB backend) and it surfaces on the very first scan — stop
+            # Unrecoverable (e.g. no USB backend) and it surfaces on the very first scan: stop
             # polling and replace the splash with the Quit-only fatal modal.
             self._refresh_timer.stop()
             self.app.push_screen(FatalErrorModal(err))
@@ -245,7 +245,7 @@ class SplashView(Screen):
                 self._last_signature = None
                 again = self.device_manager.get_interface_by_vidpid(vid, pid)
                 if again is None:
-                    status.update("[bold red]Card not found after setup — replug and retry.[/bold red]")
+                    status.update("[bold red]Card not found after setup. Replug and retry.[/bold red]")
                     release()
                     return
                 if not await self._connect(again):
@@ -256,7 +256,7 @@ class SplashView(Screen):
                     self.device_manager.is_openable, iface)
                 if openable:
                     raise bringup_err or RuntimeError(
-                        "the card opens but failed to initialize — replug and try again")
+                        "the card opens but failed to initialize. Replug and try again")
                 # Not WinUSB-bound → offer the one-time WinUSB install.
                 if not await self.app.push_screen_wait(ConfirmInstallDialog(desc)):
                     status.update("[bold lightgreen]Select a card and press START[/bold lightgreen]")
@@ -279,7 +279,7 @@ class SplashView(Screen):
                         self.app.push_screen(SetupErrorDialog(
                             "WinUSB install failed", result.message, " · ".join(bits) or None))
                     return
-                # The card re-enumerated under WinUSB — re-find it, then connect.
+                # The card re-enumerated under WinUSB: re-find it, then connect.
                 await _refind_and_connect("the card failed to initialize after installing WinUSB")
 
             elif sys.platform.startswith("linux"):
@@ -291,14 +291,14 @@ class SplashView(Screen):
                     # Cold + accessible but still wouldn't init → a genuine bring-up fault, not a
                     # setup gap.
                     raise bringup_err or RuntimeError(
-                        "the card has access but failed to initialize — replug and try again")
+                        "the card has access but failed to initialize. Replug and try again")
                 target = target_for_vidpid(vid, pid)
                 if target is None:
                     raise bringup_err or RuntimeError(
                         "this card isn't a supported chipset for setup")
                 # Offer the Linux device setup: a udev access rule + a modprobe blacklist for this
                 # chipset (one sudo prompt; reversible via the ✕ button). Copy + button text are the
-                # user's exact wording — the setup UX is carefully phrased, don't paraphrase it.
+                # user's exact wording. The setup UX is carefully phrased, don't paraphrase it.
                 chip = desc.split("(")[0].strip()    # just the chipset, no "(Make Model)" adapter
                 if not await self.app.push_screen_wait(ConfirmInstallDialog(
                         chip,
@@ -341,7 +341,7 @@ class SplashView(Screen):
                     outcome = await self.app.push_screen_wait(
                         ReplugModal(self.device_manager, vid, pid, chip))
                     if outcome != "replugged":
-                        # Skipped or timed out — hand back to the picker with a hint.
+                        # Skipped or timed out: hand back to the picker with a hint.
                         status.update(
                             f"[bold lightgreen]✓ Rules installed for {chip}[/bold lightgreen]. "
                             f"Unplug, replug, then press "
@@ -367,7 +367,7 @@ class SplashView(Screen):
                     return
                 try:
                     await _refind_and_connect("the card didn't come up after installing the rules")
-                except Exception as e:  # noqa: BLE001 — any connect fault → offer the replug fallback
+                except Exception as e:  # noqa: BLE001 (any connect fault → offer the replug fallback)
                     logger.info("post-install connect failed for %s: %s", desc, e)
                     self.query_one("#init-progress", ProgressBar).display = False
                     release()
@@ -390,7 +390,7 @@ class SplashView(Screen):
             chipset = getattr(iface, "description", "<UnknownChipset>").split(" (")[0]
             logger.warning("Bring-up failed for %s: %s", chipset, e)
             detail = f": {e.detail}" if e.detail else ""
-            self._show_error(f"{chipset} — {e.stage} failed{detail}")
+            self._show_error(f"{chipset}: {e.stage} failed{detail}")
             self.query_one("#init-progress", ProgressBar).display = False
             release()
         except Exception as e:
@@ -525,7 +525,7 @@ class SplashView(Screen):
         iface.register_disconnect_callback(self.app.notify_device_lost)
         progress.progress = 100
         self.query_one("#status-label", Label).update(
-            "[bold green]Ready — starting the scanner…[/bold green]")
+            "[bold green]Ready: starting the scanner…[/bold green]")
         await asyncio.sleep(0.4)
         self.app.switch_screen("scanner")
         return True

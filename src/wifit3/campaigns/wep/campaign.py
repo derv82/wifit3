@@ -3,13 +3,13 @@
 The single thing the Generate IVs button drives. For M3 it's the two
 near-term rungs of the escalation ladder:
 
-    1. fake-auth  — associate so the AP accepts our injections
-    2. ARP replay — capture an ARP passively, replay it for fresh IVs
+    1. fake-auth: associate so the AP accepts our injections
+    2. ARP replay: capture an ARP passively, replay it for fresh IVs
 
 When no ARP turns up, ChopChop *forges* one (pausing replay so only one TX
 activity uses the radio at a time), then hands the forged ARP back to replay.
-That's why replay lives behind ``pause()``/``resume()`` and the campaign — not
-the button — owns the "only one TX activity at once" rule.
+That's why replay lives behind ``pause()``/``resume()`` and the campaign (not
+the button) owns the "only one TX activity at once" rule.
 
 Coordination falls out naturally: replay only bursts while fake-auth reports
 ``associated`` (via the ``can_inject`` gate), so if the AP kicks us mid-replay

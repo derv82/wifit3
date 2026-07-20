@@ -2,10 +2,10 @@
 
 Shown when the user presses the ✕ next to START. Asks to remove wifit3's driver/access change
 for the selected card. The body copy is OS-specific (Windows WinUSB unbind vs Linux udev-rule
-removal) — passed via ``os_kind``.
+removal), passed via ``os_kind``.
 
 Linux only: one kernel module can back several handed-over cards (rt5372, rt3070, rt2800usb all
-bind rt2800usb.ko). When such siblings exist the dialog offers **two radii** — remove just this
+bind rt2800usb.ko). When such siblings exist the dialog offers **two radii**: remove just this
 card, or this card and the related ones so the shared module is actually freed. Dismisses
 ``"narrow"`` / ``"wide"`` / ``None`` (cancel); the safe choice (Cancel) holds focus so a stray
 Enter doesn't uninstall.
@@ -81,7 +81,7 @@ class ConfirmUninstallDialog(ModalScreen[str | None]):
             return (base +
                     f"\n\n[$text-warning]The kernel module is also blocked by {n} other "
                     f"rule{'s' if n != 1 else ''}:[/]\n{others}")
-        # Card has no rules of its own — the block is a sibling's rules. Frame the action around what
+        # Card has no rules of its own: the block is a sibling's rules. Frame the action around what
         # actually gets removed (the sibling rules), not "this card", which has nothing to remove.
         return (f"The card returns to normal (kernel-bound) on the next replug.\n\n"
                 f"Remove wifit3's {n} udev + modprobe rule{'s' if n != 1 else ''} for {others}?")

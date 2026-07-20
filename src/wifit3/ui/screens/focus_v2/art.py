@@ -1,7 +1,7 @@
 """Endpoint ANSI art + the green-LED breathe.
 
 The ``.ans`` files are pre-rendered 24-bit art, 20x10 cells each. Convention:
-any cell painted dark green ``rgb(0,128,0)`` is a live-indicator LED — the
+any cell painted dark green ``rgb(0,128,0)`` is a live-indicator LED. The
 breather lerps it toward bright green ``(0,255,0)`` and back on a slow cycle, so
 the art self-describes what animates without coordinate tables in code (paint a
 cell dark green and it breathes).
@@ -36,7 +36,7 @@ def _load(name: str) -> Text:
 
 
 def art_size(name: str) -> tuple[int, int]:
-    """(cell width, row count) of the art — used to pin the widget box."""
+    """(cell width, row count) of the art, used to pin the widget box."""
     lines = _load(name).split("\n")
     return max((len(ln.plain) for ln in lines), default=0), len(lines)
 
@@ -55,7 +55,7 @@ def _transparent(name: str) -> Text:
 def _paint(name: str, green: int) -> Text:
     """The (transparent) art with its LED cells set to ``rgb(0, green, 0)``.
     Returns a fresh Text each call (copied from the cached ``_transparent``
-    source) — Textual takes ownership of the renderable, so a shared/cached
+    source). Textual takes ownership of the renderable, so a shared/cached
     instance must not be handed to ``update()``."""
     lit = Color.from_rgb(0, green, 0)
     src = _transparent(name)
@@ -86,7 +86,7 @@ class BreathingArt(Static):
     """Endpoint art whose green LED cells do a dim idle *breathe*, with a bright
     *flicker* spike on each real packet (instrumentation, not decoration).
 
-    The screen calls :meth:`pulse` on traffic — RX for the router, TX for the
+    The screen calls :meth:`pulse` on traffic: RX for the router, TX for the
     card. Breathe (~1.5 s cycle) keeps the art alive while idle so it never looks
     dead; the flicker is throttled by a 1-frame ON + 2-frame refractory state
     machine (~3.3 Hz cap at 10 FPS), so a beacon storm or 400 Hz WEP injection

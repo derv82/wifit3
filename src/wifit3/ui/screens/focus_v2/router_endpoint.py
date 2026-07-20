@@ -1,10 +1,10 @@
-"""Router endpoint — the right column. Power + signal sit *directly above* the
+"""Router endpoint: the right column. Power + signal sit *directly above* the
 router art; the ESSID sits *directly below* it (the name labels the router),
-then BSSID and the channel. Encryption is NOT shown here — it lives in the log
+then BSSID and the channel. Encryption is NOT shown here. It lives in the log
 ('Target acquired … WPA2'), the under-sparkline footer, and is implied by the
 attack buttons; the channel alone keeps this column uncluttered.
 
-The power line is the live reception-quality meter — the rainbow
+The power line is the live reception-quality meter: the rainbow
 ``render_signal_bar`` (beacons/s out of ~9.8), widened to fill the column's
 negative space, with the dBm flush right. No "Beacons:" prefix: the
 bar *is* the readout."""
@@ -39,7 +39,7 @@ class RouterEndpoint(Vertical):
 
     def update_dynamic(self, snap) -> None:
         """Power meter repaints every tick (the live readout); the identity facts
-        only change on a target switch, so guard them — Textual's ``Label.update``
+        only change on a target switch, so guard them. Textual's ``Label.update``
         refreshes unconditionally, so re-pushing an unchanged label 10x/s burns CPU
         and wipes any text selection on it. (``ClientsList.sync`` guards the same way.)"""
         self.query_one("#ap-power", Label).update(self._power_line(snap))
@@ -48,21 +48,21 @@ class RouterEndpoint(Vertical):
         self._push("#ap-chan", f"channel {snap.ap_channel}")
 
     def _push(self, sel: str, value: str) -> None:
-        """Update the label only when its value changed — skip the no-op repaint."""
+        """Update the label only when its value changed: skip the no-op repaint."""
         if self._last.get(sel) == value:
             return
         self._last[sel] = value
         self.query_one(sel, Label).update(value)
 
     def flicker(self) -> None:
-        """Pulse the router LED — the screen calls this on RX from the target."""
+        """Pulse the router LED. The screen calls this on RX from the target."""
         self.query_one(BreathingArt).pulse()
 
     @staticmethod
     def _essid_markup(essid: str) -> str:
         """The ESSID as a black-on-cyan chip so it pops as the AP's identity (it
         kept blending in as plain bold white). A cloaked AP stays a dim italic
-        marker — no chip on a name we don't have."""
+        marker: no chip on a name we don't have."""
         if essid == "‹hidden›":
             return "[dim italic]‹hidden›[/dim italic]"
         return f"[black bold on cyan] {escape(essid)} [/black bold on cyan]"

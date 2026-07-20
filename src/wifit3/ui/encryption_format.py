@@ -73,23 +73,23 @@ def format_encryption_markup(
     cipher = ap.pairwise_cipher
     show_cipher = detailed and cipher is not None
 
-    # WPA3 Transition (SAE + PSK) — render as WPA3→2.
+    # WPA3 Transition (SAE + PSK): render as WPA3→2.
     if ap.wpa3 and ap.transition_mode:
         head = f"[{_ATTACKABLE}]WPA3[/{_ATTACKABLE}]→[{_ATTACKABLE}]2[/{_ATTACKABLE}]"
         if not detailed:
             return head
         return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
 
-    # Pure WPA3-SAE — no usable attack yet.
+    # Pure WPA3-SAE: no usable attack yet.
     if ap.wpa3:
         head = f"[{_NO_ATTACK_YET}]WPA3[/{_NO_ATTACK_YET}]"
         return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
 
-    # OWE (Enhanced Open) — no attack yet.
+    # OWE (Enhanced Open): no attack yet.
     if "OWE" in ap.akms:
         return f"[{_NO_ATTACK_YET}]OWE[/{_NO_ATTACK_YET}]"
 
-    # Any RSN-based modern WPA2 — attackable.
+    # Any RSN-based modern WPA2: attackable.
     if ap.akms:
         head = f"[{_ATTACKABLE}]WPA2[/{_ATTACKABLE}]"
         return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
@@ -106,12 +106,12 @@ def format_encryption_markup(
         n = ap.wep.unique_ivs if ap.wep else 0
         return head + f"[{muted}]·{_format_iv_count(n)} IVs[/{muted}]"
     if enc.startswith("WPA-") or enc == "WPA":
-        # Legacy WPA1 vendor IE — TKIP universal. Out of scope for wifit3.
+        # Legacy WPA1 vendor IE: TKIP universal. Out of scope for wifit3.
         head = f"[{_OUT_OF_SCOPE}]WPA[/{_OUT_OF_SCOPE}]"
         tail = f" [{muted}](PSK·TKIP)[/{muted}]" if detailed else f" [{muted}](PSK)[/{muted}]"
         return head + tail
 
-    # Unknown — show raw string muted.
+    # Unknown: show raw string muted.
     return f"[{muted}]{enc}[/{muted}]"
 
 

@@ -1,4 +1,4 @@
-"""802.11 channel helpers — scan-hop ordering and per-band label/range compression."""
+"""802.11 channel helpers: scan-hop ordering and per-band label/range compression."""
 from __future__ import annotations
 
 
@@ -12,7 +12,7 @@ def scan_hop_order(channels: list[int]) -> list[int]:
     then the rest of 2.4 GHz, then 5 GHz.
 
     Front-loads popular channels so the AP table is mostly populated before the first sort
-    tick. Pure reordering — same channels; non-priority 2.4 GHz and 5 GHz keep the caller's
+    tick. Pure reordering: same channels; non-priority 2.4 GHz and 5 GHz keep the caller's
     original order.
     """
     priority = [c for c in _PRIORITY_2G if c in channels]
@@ -30,7 +30,7 @@ def _split_bands(channels: list[int]) -> tuple[list[int], list[int]]:
 def _compress_runs(channels: list[int], step: int) -> str:
     """Collapse a channel list into ``a-b, c, d-e``.
 
-    ``step`` is the spacing between adjacent channels in that band — 1 on 2.4 GHz
+    ``step`` is the spacing between adjacent channels in that band: 1 on 2.4 GHz
     (1,2,3…) and 4 on the 5 GHz UNII grid (36,40,44,48…), so 36,40,44,48 renders
     ``36-48`` and any missing channel (e.g. an excluded DFS slot) breaks the run.
     """
@@ -63,7 +63,7 @@ def band_label(channels: list[int]) -> str:
 
 def band_ranges(channels: list[int]) -> list[tuple[str, str]]:
     """Per-band ``(name, compressed_ranges)`` for each band present, e.g.
-    ``[("2.4 GHz", "1-13"), ("5 GHz", "36-48, 149-165")]`` — the caller styles each
+    ``[("2.4 GHz", "1-13"), ("5 GHz", "36-48, 149-165")]``, the caller styles each
     piece. Bands absent from the set are omitted."""
     ch_24, ch_5 = _split_bands(channels)
     out: list[tuple[str, str]] = []

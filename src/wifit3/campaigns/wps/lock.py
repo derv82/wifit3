@@ -40,7 +40,7 @@ class LockTracker:
         self.strikes += 1
 
     def note_setup_locked(self) -> None:
-        """AP explicitly signalled WPS Setup-Locked (WSC config_error 15) — lock at once,
+        """AP explicitly signalled WPS Setup-Locked (WSC config_error 15): lock at once,
         rather than waiting for the silent-lock strike heuristic to reach threshold."""
         self.strikes = self.strike_threshold
 

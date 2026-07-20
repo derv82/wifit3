@@ -1,8 +1,8 @@
-"""``FocusViewV2`` — the spatial "router-admin" Focus redesign (landscape v1).
+"""``FocusViewV2``: the spatial "router-admin" Focus redesign (landscape v1).
 
 Layout (top to bottom):
-- **Top bar** (fixed height): an "action area" on the left — the back button +
-  the encryption-conditional attack buttons, all the clickables in one place —
+- **Top bar** (fixed height): an "action area" on the left (the back button +
+  the encryption-conditional attack buttons, all the clickables in one place)
   then the status line, expanding to fill and stay centered.
 - **Mid band**: card | packet-dashboard | router. Card and router are fixed-width
   (the art is 20 cells) and vertically centered; the dashboard fills the
@@ -317,7 +317,7 @@ class FocusViewV2(Screen):
             self._log(f"[bold]Target acquired:[/bold] {chip}")
         else:
             self._log("[bold]Target acquired:[/bold] "
-                      "[dim italic]cloaked network — hidden SSID[/dim italic]")
+                      "[dim italic]cloaked network: hidden SSID[/dim italic]")
         self._log(treelog.branch(f"[dim]Encryption:[/dim] {enc}"))
         self._log(treelog.branch(f"[dim]BSSID:[/dim] [white]{ap.bssid}[/white]"))
         if iface:
@@ -332,7 +332,7 @@ class FocusViewV2(Screen):
                 self._log(treelog.leaf(
                     f"[yellow]Tried to tune to channel {ap.channel}[/yellow]"))
         else:
-            self._log(treelog.leaf("[yellow]no interface — passive view only[/yellow]"))
+            self._log(treelog.leaf("[yellow]no interface: passive view only[/yellow]"))
 
         if ap.pmf_required:
             self._log("[bold yellow]PMF Required:[/] "
@@ -510,7 +510,7 @@ class FocusViewV2(Screen):
             self._log(
                 f"[black bold on yellow] {escape(ev.value or '?')} [/black bold on yellow] "
                 f"4-way from [bold]{short_sta(ev.client_mac)}[/bold] "
-                f"[dim]— not crackable (-m 22000)[/dim]"
+                f"[dim](not crackable, -m 22000)[/dim]"
             )
         elif ev.kind == CaptureKind.DECLOAK:
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
@@ -607,7 +607,7 @@ class FocusViewV2(Screen):
                       "[bold green]enabled[/bold green] [dim](press w to toggle)[/dim]")
         else:
             self._log("[bold]WPS PushButton auto-invade[/bold] "
-                      "[yellow]disabled[/yellow] [dim](detect only — press w to toggle)[/dim]")
+                      "[yellow]disabled[/yellow] [dim](detect only, press w to toggle)[/dim]")
 
     # ----- deauth ------------------------------------------------------------
 
@@ -616,9 +616,9 @@ class FocusViewV2(Screen):
         ap = self._target_ap
         iface = getattr(self.app, "active_interface", None)
         if not ap or not iface:
-            self._log("[red]✗ No target / interface — aborting Broadcast.[/red]")
+            self._log("[red]✗ No target / interface. Aborting Broadcast.[/red]")
             return
-        self._log("[bold]Broadcast de-auth — all clients[/bold]")
+        self._log("[bold]Broadcast de-auth: all clients[/bold]")
         try:
             sent = await iface.deauth_broadcast(ap.bssid, count=self._DEAUTH_BCAST_COUNT)
         except Exception as exc:
@@ -633,7 +633,7 @@ class FocusViewV2(Screen):
         ap = self._target_ap
         iface = getattr(self.app, "active_interface", None)
         if not ap or not iface:
-            self._log("[red]✗ No target / interface — aborting Deauth.[/red]")
+            self._log("[red]✗ No target / interface. Aborting Deauth.[/red]")
             return
         self._log(f"[bold]De-authenticating Client {escape(mac)}[/bold]")
         try:
@@ -654,7 +654,7 @@ class FocusViewV2(Screen):
                 f"[bold][cyan]{res.total_acked}[/cyan]/{res.total_sent} de-auths ACK'd[/bold] {detail}"))
         else:
             self._log(treelog.leaf_fail(
-                f"[bold]0/{res.total_sent} de-auths ACK'd[/bold] [dim]— AP & client silent (deaf ears)[/dim]"))
+                f"[bold]0/{res.total_sent} de-auths ACK'd[/bold] [dim](AP & client silent, deaf ears)[/dim]"))
 
     # ----- PMKID -------------------------------------------------------------
 
@@ -671,7 +671,7 @@ class FocusViewV2(Screen):
         ap = self._target_ap
         iface = getattr(self.app, "active_interface", None)
         if not ap or not iface:
-            self._log("[red]✗ No target / interface — aborting PMKID harvest.[/red]")
+            self._log("[red]✗ No target / interface. Aborting PMKID harvest.[/red]")
             return
         self._log(pmkid_log.header(escape(ap.ssid or ap.bssid)))
         self._pmkid_campaign = PmkidHarvestAttack(
@@ -719,14 +719,14 @@ class FocusViewV2(Screen):
         ap = self._target_ap
         iface = getattr(self.app, "active_interface", None)
         if not ap or not iface:
-            self._log("[red]✗ No target / interface — cannot start WPA3 Down.[/red]")
+            self._log("[red]✗ No target / interface. Cannot start WPA3 Down.[/red]")
             return
         if not ap.ssid:
-            self._log("[yellow]⚠ Cannot run WPA3 Down on a hidden AP — "
+            self._log("[yellow]⚠ Cannot run WPA3 Down on a hidden AP: "
                       "SSID unknown, no probe-response payload to forge.[/yellow]")
             return
         if not ap.transition_mode:
-            self._log("[yellow]⚠ Target is pure WPA3 (no WPA2 fallback advertised) — "
+            self._log("[yellow]⚠ Target is pure WPA3 (no WPA2 fallback advertised): "
                       "downgrade not possible.[/yellow]")
             return
         try:
@@ -740,7 +740,7 @@ class FocusViewV2(Screen):
         self._log(f"[bold cyan]WPA3 Downgrade ACTIVE[/bold cyan] on [bold]{escape(ap.ssid)}[/bold]")
         self._log(treelog.branch(
             "[dim]responding to probe requests with[/dim] [white bold]WPA2-only[/white bold]"))
-        self._log(treelog.leaf("[dim](reconnects take minutes–hours)[/dim]"))
+        self._log(treelog.leaf("[dim](reconnects take minutes to hours)[/dim]"))
 
     def _stop_wpa3_down(self) -> None:
         if not self._wpa3_down_attack:
@@ -775,7 +775,7 @@ class FocusViewV2(Screen):
         ap = self._target_ap
         iface = getattr(self.app, "active_interface", None)
         if not ap or not iface:
-            self._log("[red]✗ No target / interface — cannot Generate IVs.[/red]")
+            self._log("[red]✗ No target / interface. Cannot Generate IVs.[/red]")
             return
         try:
             self._wep_campaign = WepCampaign(iface, ap, log_callback=self._log)
@@ -817,7 +817,7 @@ class FocusViewV2(Screen):
         ap = self._target_ap
         iface = getattr(self.app, "active_interface", None)
         if not ap or not iface:
-            self._log("[red]✗ No target / interface — cannot start WPS PIN.[/red]")
+            self._log("[red]✗ No target / interface. Cannot start WPS PIN.[/red]")
             return
         # Warn when the card can't HW-ACK a spoofed MAC (still runs PIN fine, just spammy).
         warning = iface.active_monitor_warning()
@@ -877,7 +877,7 @@ class FocusViewV2(Screen):
         if not iface:
             return
         self._log("[bold cyan]WPS PushButton:[/bold cyan] [bold green]Window Open[/bold green] "
-                  "— auto-capturing PSK")
+                  "(auto-capturing PSK)")
         self._pbc_campaign = WpsPbcCapture(
             iface, ap, log=lambda m: self._log(treelog.branch(m)))
         self._pbc_campaign.run()
@@ -916,7 +916,7 @@ class FocusViewV2(Screen):
         else:
             self._pbc_retry_after = time.monotonic() + _PBC_RETRY_COOLDOWN_S
             self._log(treelog.leaf_warn(
-                f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim] — "
+                f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim], "
                 f"retrying in {_PBC_RETRY_COOLDOWN_S:.0f}s while the window's open"))
 
     def _stop_pbc_capture(self) -> None:

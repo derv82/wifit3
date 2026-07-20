@@ -14,7 +14,7 @@ from wifit3.dot11.probe import probe_req
 logger = logging.getLogger(__name__)
 
 
-# Curated suffix list — kept short on purpose so a full run is ~5 seconds.
+# Curated suffix list, kept short on purpose so a full run is ~5 seconds.
 SIBLING_SUFFIXES: List[str] = [
     "",
     "-Guest", "_Guest", "-guest", " Guest",
@@ -100,7 +100,7 @@ class DecloakAttack:
         src = ("explicit" if self.candidates_override is not None
                else f"base '{self.base_ssid}'")
         logger.info(
-            f"[DECLOAK] {self.target.bssid} — trying {len(candidates)} candidates "
+            f"[DECLOAK] {self.target.bssid}: trying {len(candidates)} candidates "
             f"({src}) as STA {_mac_bytes_to_str(self.source_mac)}"
         )
 
@@ -108,7 +108,7 @@ class DecloakAttack:
             frame = probe_req(self.bssid_bytes, self.source_mac, candidate)
             await self.iface.send_no_wait(frame)
 
-            # Poll briefly — parser side flips ap.ssid asynchronously when
+            # Poll briefly: parser side flips ap.ssid asynchronously when
             # the AP echoes back a Probe Response that the existing decloak
             # guard in WlanInterface._on_frame_parsed sees.
             deadline = time.time() + per_candidate_timeout

@@ -4,13 +4,13 @@ PINs are computed at runtime from published WPS default-PIN algorithms, so no PI
 bundled. The 8th digit is the Wi-Fi Simple Config checksum (:func:`dot11.wsc.crypto.pin_checksum`).
 
 A router's OUI identifies its **brand** (an IEEE assignment) but never its **chipset** (the
-Wi-Fi silicon inside — many brands share one). So candidates split by whether the OUI can tell
+Wi-Fi silicon inside: many brands share one). So candidates split by whether the OUI can tell
 us the PIN applies:
 
 * **Broad** (tried on every AP): the chipset-family algorithms, which can't be tied to a brand
-  from the OUI — ``pin24`` (Broadcom/Atheros/Ralink "ComputePIN") and ``pin_airocon`` (Realtek).
+  from the OUI: ``pin24`` (Broadcom/Atheros/Ralink "ComputePIN") and ``pin_airocon`` (Realtek).
   (Realtek owns 2 OUIs and Broadcom 31, confirming these are keyed on the chip, not the brand.)
-* **Brand-keyed** (tried only on a matching OUI — see :mod:`wps_router_ouis`): the generators
+* **Brand-keyed** (tried only on a matching OUI, see :mod:`wps_router_ouis`): the generators
   ``pin_dlink`` / ``pin_dlink1`` (D-Link) and ``pin_asus`` (ASUS), plus a few fixed per-brand
   default PINs (``_VENDOR_STATICS``): Thomson, Edimax, Upvel, D-Link DSL-2740R. Aimed by OUI,
   so they never cost the lockout budget on other brands' APs.
@@ -38,7 +38,7 @@ Generator = Callable[[bytes], List[str]]
 def _finalize(raw: int) -> str:
     """A 7-digit payload int → the full 8-digit PIN with its WSC checksum digit.
 
-    ``:07d`` matters — a payload with a leading zero (e.g. ``05294176``) must keep it.
+    ``:07d`` matters: a payload with a leading zero (e.g. ``05294176``) must keep it.
     """
     seven = raw % 10_000_000
     return f"{seven:07d}{pin_checksum(seven)}"
@@ -48,7 +48,7 @@ def _mac(bssid: bytes) -> int:
     return int.from_bytes(bssid, "big")
 
 
-# --- 24-bit "ComputePIN" (Broadcom/Atheros/Ralink family — the broadest single algorithm) ---
+# --- 24-bit "ComputePIN" (Broadcom/Atheros/Ralink family, the broadest single algorithm) ---
 def pin24(bssid: bytes) -> List[str]:
     return [_finalize(_mac(bssid) & 0xFFFFFF)]
 
@@ -103,7 +103,7 @@ _VENDOR_ALGOS: Dict[str, Tuple[Generator, ...]] = {
     "belkin": (),   # Arcadyan-Belkin algo needs the M1 serial (deferred); pin24 covers it broadly
 }
 
-# Fixed per-brand default PINs — tried only on that brand's routers (aimed by OUI, like the
+# Fixed per-brand default PINs, tried only on that brand's routers (aimed by OUI, like the
 # generators, so they never cost the lockout budget on other brands' APs).
 _VENDOR_STATICS: Dict[str, Tuple[str, ...]] = {
     "dlink":   ("68175542",),                          # DSL-2740R

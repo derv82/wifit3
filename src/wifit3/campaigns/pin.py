@@ -1,4 +1,4 @@
-"""WpsCampaign — the Focus-facing WPS PIN brute-force orchestrator.
+"""WpsCampaign: the Focus-facing WPS PIN brute-force orchestrator.
 
 Drives the two-halves (4+3+checksum) PIN sweep.
 Tries to keep-alive association, re-associates on loss.
@@ -79,7 +79,7 @@ def run_progress_line(state: CampaignState) -> Optional[str]:
         return (f"[bold]WPS PIN[/bold] sweep [red]exhausted[/red] "
                 f"[dim]({state.tested:,} tried · not found)[/dim]")
     if state.phase == "second_half" and state.first_half:
-        # First half locked — the live keyspace is the 1,000-candidate second half.
+        # First half locked: the live keyspace is the 1,000-candidate second half.
         return (f"[bold]WPS PIN[/bold] sweep: [cyan]{state.p2_index}[/cyan]/1,000 "
                 f"[dim]· first half [green]{state.first_half}[/green] locked[/dim]")
     return (f"[bold]WPS PIN[/bold] sweep: [cyan]{state.tested:,}[/cyan]/11,000 "
@@ -169,12 +169,12 @@ class WpsCampaign(Campaign):
                 st = CampaignState(**{k: data[k] for k in data if k in CampaignState.__annotations__})
                 if st.found_pin:
                     # Previous run recovered the PIN. The user clicking WPS PIN
-                    # again means "re-verify against the live AP" — handled by
+                    # again means "re-verify against the live AP", handled by
                     # _run switching to the "verify" phase.
                     self.log(f"resumed campaign: previously recovered PIN "
                              f"[black bold on cyan] {st.found_pin} [/black bold on cyan]")
                 elif st.first_half:
-                    # In-progress with first-half locked in — surface it.
+                    # In-progress with first-half locked in. Surface it.
                     self.log(f"resumed campaign: [cyan]{st.tested:,}[/cyan]"
                              f"/11,000 pins, [cyan bold]{st.first_half}[/cyan bold]"
                              f"[white bold]????[/white bold]")
@@ -348,8 +348,8 @@ class WpsCampaign(Campaign):
             new_psk = out.psk or ""
             old_psk = st.found_psk or ""
             if new_psk != old_psk:
-                self.log(f"[bold green]verified[/bold green] PIN [cyan]{pin}[/cyan] "
-                         f"— [bold yellow]PSK CHANGED[/bold yellow] "
+                self.log(f"[bold green]verified[/bold green] PIN [cyan]{pin}[/cyan]: "
+                         f"[bold yellow]PSK CHANGED[/bold yellow] "
                          f"[dim](updated below)[/dim]")
             else:
                 self.log(f"[bold green]verified[/bold green] PIN [cyan]{pin}[/cyan] "
@@ -358,9 +358,9 @@ class WpsCampaign(Campaign):
             st.phase = "done"
             return
         if out.first_half_ok:
-            # PIN changed: SECOND_HALF_WRONG — first half still valid
+            # PIN changed: SECOND_HALF_WRONG, first half still valid
             kept = pinmod.split_pin(pin)[0]
-            self.log(f"[yellow]PIN's second half changed[/yellow] — "
+            self.log(f"[yellow]PIN's second half changed[/yellow], "
                      f"first half [green]{kept}[/green] still valid; "
                      f"sweeping second half again")
             st.first_half = kept
@@ -373,7 +373,7 @@ class WpsCampaign(Campaign):
         if out.result is PinResult.FIRST_HALF_WRONG:
             # PIN changed: Nothing from old PIN is recoverable.
             self.log("[red]PIN no longer valid[/red] "
-                     "[dim](first half wrong — restarting full sweep)[/dim]")
+                     "[dim](first half wrong, restarting full sweep)[/dim]")
             st.first_half = None
             st.found_pin = None
             st.found_psk = None
@@ -391,7 +391,7 @@ class WpsCampaign(Campaign):
         logger.debug("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
         if self._oui_pin_count:
             self.log(f"OUI match: [cyan]{self._oui_pin_count}[/cyan] known default "
-                     f"PIN(s) — [dim]seeded ahead of the brute sweep[/dim]")
+                     f"PIN(s): [dim]seeded ahead of the brute sweep[/dim]")
 
         # When resuming with a previously-recovered PIN, re-verify it against the AP
         if self.state.phase == "done" and self.state.found_pin:
@@ -438,7 +438,7 @@ class WpsCampaign(Campaign):
                 if self.stopped:
                     break   # Stopped mid-attempt (user Stop / AP switch): bail BEFORE logging
 
-                if out.refused:   # AP actively rejected external-registrar WPS — never advances
+                if out.refused:   # AP actively rejected external-registrar WPS, never advances
                     self._consecutive_refusals += 1
                     # Log each one (no dedup) so the disassoc-vs-identity-stall variation shows.
                     self.log(f"{self._attempt_prefix(pin)} → [yellow]{out.detail}[/yellow] "
@@ -455,7 +455,7 @@ class WpsCampaign(Campaign):
                     # Session already reset by _try; the retry re-associates fresh (same MAC).
                     if self.state.attempts % self._SAVE_EVERY == 0:
                         self._save_state()
-                    continue                       # retry the SAME pin — do not advance
+                    continue                       # retry the SAME pin, do not advance
 
                 self._apply_outcome(pin, out)
 
@@ -488,7 +488,7 @@ class WpsCampaign(Campaign):
         """Mark the lock state, optionally wait it out, then release."""
         # Don't treat a silent AP (0 ACKs) as locked.
         if not beacon_locked and self._tx_ack and not self._ap_ever_acked:
-            self.log("[yellow]TX not reaching AP[/yellow] [dim]— retrying, no backoff[/dim]")
+            self.log("[yellow]TX not reaching AP[/yellow][dim]: retrying, no backoff[/dim]")
             self.lock.note_progress()
             self._last_attempt_sig = None
             return
@@ -512,7 +512,7 @@ class WpsCampaign(Campaign):
                     break
         else:
             # Fast path: Assume AP is not locked to a new MAC
-            self.log(f"[yellow]soft-lock[/yellow] [dim]({trigger}) — "
+            self.log(f"[yellow]soft-lock[/yellow] [dim]({trigger}), "
                      f"rotating MAC, no wait[/dim]")
         self.lock.end_lock()
         self._lock_kind = None
@@ -521,7 +521,7 @@ class WpsCampaign(Campaign):
 
     @property
     def lock_kind(self) -> Optional[str]:
-        """'hard' / 'soft' / None — see _handle_lock."""
+        """'hard' / 'soft' / None, see _handle_lock."""
         return self._lock_kind
 
     @property
@@ -544,11 +544,11 @@ class WpsCampaign(Campaign):
         self._timeout_retries += 1
         if self._timeout_retries > self._MAX_TIMEOUT_RETRIES:
             self.log(f"trying [cyan]{pin}[/cyan] → [yellow]no reply after "
-                     f"{self._timeout_retries} tries[/yellow] — conceding as wrong")
+                     f"{self._timeout_retries} tries[/yellow], conceding as wrong")
             self._timeout_retries = 0
             return False                  # give up retrying; fall through to advance
         lost = "M5" if out.result is PinResult.FIRST_HALF_WRONG else "M7"
-        self.log(f"trying [cyan]{pin}[/cyan] → [dim]no reply (likely a lost {lost}) — "
+        self.log(f"trying [cyan]{pin}[/cyan] → [dim]no reply (likely a lost {lost}), "
                  f"retrying (#{self._timeout_retries})[/dim]")
         self.lock.note_progress()         # a lost reply isn't a lock; keep the strike clean
         return True
@@ -564,7 +564,7 @@ class WpsCampaign(Campaign):
         self._last_attempt_sig = None
 
     def _rotate_mac(self) -> None:
-        """Fresh random MAC (+ fresh session). Rate-limit fallback only — the AP is NOT
+        """Fresh random MAC (+ fresh session). Rate-limit fallback only. The AP is NOT
         one-shot-per-MAC (proven on hardware), so this is not part of the normal loop."""
         self._reset_session()
         old = self.our_mac
@@ -602,7 +602,7 @@ class WpsCampaign(Campaign):
             self.log(f"{label} → [dark_orange]second half wrong[/dark_orange] "
                      f"[dim bold]\\[M6][/dim bold]")
         elif out.result is PinResult.PROTO_ERROR:
-            if out.detail == "assoc failed":   # not a NACK — we never associated (AP often locked)
+            if out.detail == "assoc failed":   # not a NACK, we never associated (AP often locked)
                 no_ack = (" [bold dim](0 TX ACKs)[/bold dim]"
                           if self._tx_ack and not self._ap_ever_acked else "")
                 self.log(f"{label} → [yellow]no assoc[/yellow]{no_ack}")

@@ -1,20 +1,20 @@
-"""WEP fragmentation attack (`aireplay-ng -5`) — M5.
+"""WEP fragmentation attack (`aireplay-ng -5`): M5.
 
 .. warning::
-    **NOT WIRED INTO THE PRODUCT — reference implementation.** Fragmentation needs every
+    **NOT WIRED INTO THE PRODUCT: reference implementation.** Fragmentation needs every
     fragment of an MSDU to share one 802.11 sequence number, i.e. a per-driver software-sequence
     TX path (``en_hwseq=0`` + a ``SUPPORTS_SW_SEQ`` flag) that no longer exists. As-is this WILL
     NOT RUN: ``_inject_round`` passes ``send_raw(..., sw_seq=...)``, a removed parameter. Re-wiring
     means first restoring shared sequence-ID support in the TX framework (see ``docs/porting/METHODOLOGY.md``).
     ARP-replay + ChopChop carry WEP without it.
 
-Manufactures a replayable ARP when there's none to capture — the whole reason
+Manufactures a replayable ARP when there's none to capture: the whole reason
 `-5` exists. Seed 8 bytes of keystream from ANY captured WEP *data* frame via
-its fixed LLC/SNAP prefix (NOT a broadcast ARP — depending on one would be
+its fixed LLC/SNAP prefix (NOT a broadcast ARP, depending on one would be
 circular: ARP replay would already have that seed), then fragment a
 known-plaintext broadcast ARP into ≤16 tiny frames encrypted under that seed.
 The AP reassembles them, re-encrypts under a fresh IV, and rebroadcasts the
-result — which is itself a replayable ARP seed. So one ordinary client data
+result, which is itself a replayable ARP seed. So one ordinary client data
 packet (a TCP segment you can't replay) becomes a forged ARP you can.
 
 HARDWARE-VERIFIED end-to-end (dd-wrt, rtl8821au): a decrypted relay matched our
@@ -27,13 +27,13 @@ Data frame, FromDS + Protected, Addr1(DA)=broadcast, **Addr3(SA)=our forged STA
 MAC**, with a FRESH IV (≠ our seed's), ~68 B. The AP rebroadcasts onto every
 BSS it runs, so we match on SA==our_mac, NOT on a specific BSSID.
 
-State machine (locked design, README "M5/M6 — refined"): user-driven, NOT
+State machine (locked design, README "M5/M6: refined"): user-driven, NOT
 auto-escalating. The ONE auto-transition is on SUCCESS (unambiguous): the moment
 a relay with our SA appears, we hand it to the campaign (`on_forged_arp`) and
-stop — immediate handoff, because ARP replay mints IVs far faster than
+stop: immediate handoff, because ARP replay mints IVs far faster than
 fragmentation does, and that relay is already a store-logged seed. A round that
 elicits no relay is NOT failure (could be range / TX glitch / a momentarily busy
-AP) — we KEEP RETRYING and log a running tally so the *user* decides when to
+AP). We KEEP RETRYING and log a running tally so the *user* decides when to
 switch; we never auto-stop. The campaign pauses ARP replay before starting us
 (one TX activity on the half-duplex radio) and resumes it on our success.
 """
@@ -86,10 +86,10 @@ class WepFragmentation:
     """Fragmentation daemon: seed → fragmented broadcast ARP → AP relay → hand
     the relay to ARP replay. Lifecycle mirrors WepArpReplay."""
 
-    # Pause between fragment rounds — the RX window for the AP's relay to land.
+    # Pause between fragment rounds: the RX window for the AP's relay to land.
     _ROUND_GAP = 0.2
     # If a seed yields no relay after this many rounds, it may be a bad pick
-    # (non-ARP frame of ARP size, stale IV) — blacklist it and try another.
+    # (non-ARP frame of ARP size, stale IV): blacklist it and try another.
     _RESEED_AFTER = 25
     # Heartbeat tally cadence (seconds) so the user can judge when to switch.
     _HEARTBEAT_S = 5.0
@@ -115,7 +115,7 @@ class WepFragmentation:
         # Called with the AP's relayed frame on success → campaign resumes
         # replay (the relay is already an ARP-sized broadcast seed in the store).
         self._on_forged_arp = on_forged_arp
-        # Awaited before injecting — authenticates lazily (True iff associated).
+        # Awaited before injecting: authenticates lazily (True iff associated).
         self._ensure_associated = ensure_associated or _always_associated
         # Our fragments keep the assoc alive while we're injecting.
         self._notify_activity = notify_activity or (lambda: None)
@@ -174,7 +174,7 @@ class WepFragmentation:
     def _pick_seed(self) -> bool:
         """Choose a not-yet-exhausted (data-frame, ethertype-guess) seed and
         build the fragment train from it. Seeds come from ANY captured WEP data
-        frame (store.seed_samples) — never a replayable ARP. Returns True if a
+        frame (store.seed_samples), never a replayable ARP. Returns True if a
         usable seed was found + fragments built."""
         payload = arp_request_plaintext(
             sender_mac=self.source_mac,
@@ -201,7 +201,7 @@ class WepFragmentation:
                 self._seed_iv = iv
                 self._seed_key = key
                 self._rounds_on_seed = 0
-                # Group header (plain) — each seed attempt is its own tree.
+                # Group header (plain): each seed attempt is its own tree.
                 self._log("[cyan]Fragmentation:[/cyan] forging ARP packet…")
                 return True
         return False
@@ -219,7 +219,7 @@ class WepFragmentation:
                         self._maybe_heartbeat()
                         continue
 
-                # We have a seed to fragment — now (lazily) associate.
+                # We have a seed to fragment. Now (lazily) associate.
                 if not await self._ensure_associated():
                     self._set_state("waiting-auth")
                     await asyncio.sleep(0.3)
@@ -231,7 +231,7 @@ class WepFragmentation:
                     self._succeed()
                     return
 
-                # No relay this round — keep retrying (NOT a failure), and if a
+                # No relay this round: keep retrying (NOT a failure), and if a
                 # seed is persistently barren, rotate to a different one.
                 self._rounds_on_seed += 1
                 if self._rounds_on_seed >= self._RESEED_AFTER:
@@ -239,7 +239,7 @@ class WepFragmentation:
                         self._tried.add(self._seed_key)
                     self._seed_iv = None      # force a re-pick next iteration
                     self._seed_key = None
-                    # Close this seed's group — it wouldn't relay.
+                    # Close this seed's group: it wouldn't relay.
                     self._log(treelog.leaf_fail(
                         "[yellow]seed wouldn't relay[/yellow] "
                         "[dim](trying another)[/dim]"
@@ -286,7 +286,7 @@ class WepFragmentation:
         """Watch for the AP relaying our reassembled ARP. Pinned signature:
         Data + FromDS + Protected + DA=broadcast + SA(Addr3)==our MAC + fresh
         IV. Match on SA, not BSSID (the box relays onto sibling BSSes). Keep it
-        fast — runs on every received frame."""
+        fast: runs on every received frame."""
         frame = pkt.raw
         if not self._active or self._relay_seen or len(frame) < 28:
             return
@@ -319,7 +319,7 @@ class WepFragmentation:
                 "[cyan]Fragmentation:[/cyan] waiting for Data packet… "
                 "[dim](ETA: unknown)[/dim]"
             )
-        # waiting-auth is silent — the SECURITY panel shows fake-auth status,
+        # waiting-auth is silent: the SECURITY panel shows fake-auth status,
         # and a separate "waiting for association" line is just noise.
 
     def _maybe_heartbeat(self) -> None:
@@ -330,5 +330,5 @@ class WepFragmentation:
         if self.state == "injecting":
             self._log(treelog.branch(
                 f"[dim]round[/dim] [white]{self._round}[/white] "
-                f"[dim]— no relay yet…[/dim]"
+                f"[dim]no relay yet…[/dim]"
             ))

@@ -3,8 +3,8 @@ harvests) by diffing AP state across polls.
 
 Lives between the engine and the views: engines mutate ``AccessPoint``
 objects, views poll ``CaptureEventDetector`` once per UI tick and decide
-how to render each event. The detector is purely structural — no Rich
-markup, no logging — so ScannerView and FocusViewV2 can shape events
+how to render each event. The detector is purely structural (no Rich
+markup, no logging) so ScannerView and FocusViewV2 can shape events
 differently while sharing dedup state.
 """
 from __future__ import annotations
@@ -59,13 +59,13 @@ class CaptureEvent:
     # eapol-only
     msg_num: Optional[int] = None
     replay_hex: Optional[str] = None
-    # eapol-only content descriptor (from crack.handshake.describe) — the hashcat-
+    # eapol-only content descriptor (from crack.handshake.describe): the hashcat-
     # relevant per-field flags the aggregator ticks (ANonce/SNonce/MIC/EAPOL).
     has_nonce: Optional[bool] = None
     has_mic: Optional[bool] = None
     eapol_complete: Optional[bool] = None
     # M1-only: whether the handshake carries a PMKID (the KDE rides M1's key
-    # data). True/False for an M1 frame, None for every other message — so the
+    # data). True/False for an M1 frame, None for every other message, so the
     # aggregator ticks PMKID on M1 and omits the field elsewhere.
     has_pmkid: Optional[bool] = None
     # handshake_complete-only
@@ -90,19 +90,19 @@ class CaptureEventDetector:
         # Keyed (bssid, client_mac) → count of eapol frames already surfaced, so every
         # distinct frame logs (incl. M1/M3 retries). Handshakes are rare, so err verbose.
         self._seen_eapol_count: dict[Tuple[str, str], int] = {}
-        # Keyed (bssid, client_mac, anonce) — one entry per captured handshake
+        # Keyed (bssid, client_mac, anonce): one entry per captured handshake
         # instance, so a re-handshake (new ANonce) re-announces.
         self._completed: Set[Tuple[str, str, bytes]] = set()
         self._pmkid: Set[Tuple[str, str]] = set()
-        # BSSIDs with an announced withheld (EAP/OWE) 4-way — once per AP.
+        # BSSIDs with an announced withheld (EAP/OWE) 4-way, once per AP.
         self._withheld_announced: Set[str] = set()
         # BSSIDs we've observed as hidden during this detector's lifetime.
         # Required so we only fire "decloak" on an actual None→SSID transition
-        # we witnessed — not for APs that already had an SSID on first poll.
+        # we witnessed, not for APs that already had an SSID on first poll.
         self._seen_hidden: Set[str] = set()
         self._decloak_announced: Set[str] = set()
         # (bssid, kind) for one-shot recovered-credential events (WEP key, WPS
-        # PIN/PSK/PBC) — each announces exactly once per AP.
+        # PIN/PSK/PBC): each announces exactly once per AP.
         self._creds_announced: Set[Tuple[str, CaptureKind]] = set()
 
     def reset(self) -> None:
@@ -143,7 +143,7 @@ class CaptureEventDetector:
         for client_mac, hs in ap.handshakes.items():
             key = (ap.bssid, client_mac)
 
-            # Forged MACs (our own active attacks) — record PMKID for
+            # Forged MACs (our own active attacks): record PMKID for
             # dedup but skip EAPOL frames + completion events. The
             # attack already logs its own outcome.
             if client_mac in forged_macs:
@@ -177,7 +177,7 @@ class CaptureEventDetector:
                         )
                     self._seen_eapol_count[key] = len(frames)
 
-            # Completion banner — once per handshake INSTANCE (keyed by ANonce), in both
+            # Completion banner: once per handshake INSTANCE (keyed by ANonce), in both
             # modes: M2/M3/M4 of one handshake share the instance (one banner), but a genuine
             # re-handshake (new ANonce) re-fires.
             for anonce, pair in hs.valid_pairs_by_instance().items():
@@ -193,7 +193,7 @@ class CaptureEventDetector:
                     pair_label=f"M{pair[0].msg_num}+M{pair[1].msg_num}",
                 )
 
-            # A usable 4-way the AKM gate withheld (EAP/OWE) — announce once so it
+            # A usable 4-way the AKM gate withheld (EAP/OWE): announce once so it
             # doesn't look like a silent capture failure.
             withheld = wpa.withheld_capture_label(hs)
             if withheld and ap.bssid not in self._withheld_announced:
@@ -216,7 +216,7 @@ class CaptureEventDetector:
                 )
 
         # AP-scoped recovered-credential wins. Atomic: one value per event, its
-        # meaning fixed by the kind — so a WPS PIN attack emits WPS_PIN *and*
+        # meaning fixed by the kind, so a WPS PIN attack emits WPS_PIN *and*
         # WPS_PSK (two log lines), while PBC emits only WPS_PBC. Fire-once per
         # (bssid, kind) so each credential announces exactly once.
         for kind, value in (

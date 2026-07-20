@@ -19,12 +19,12 @@ SNAPLEN = 65535
 
 
 def write_pcap(path: Path, records: Iterable[tuple[bytes, float]]) -> int:
-    """Write *records* — ``(raw 802.11 frame, capture timestamp)`` pairs — to a
+    """Write *records*, ``(raw 802.11 frame, capture timestamp)`` pairs, to a
     pcap at *path*. The timestamp is epoch seconds (float).
 
     Per-frame timing is preserved so the file is forensically accurate AND
     re-extractable by ``hcxpcapngtool``, which pairs EAPOL frames by their
-    timestamps (an EAPOL timeout window) — identical stamps would make it
+    timestamps (an EAPOL timeout window). Identical stamps would make it
     mis-pair. A timestamp <= 0 (unset) falls back to the current wall-clock
     time so the frame still lands with a sane epoch.
 

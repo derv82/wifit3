@@ -2,9 +2,9 @@
 
 The "did we capture a handshake?" verdict AND the hc22000 hashline build both route
 through ``crackable_pairs()``, so a banner can never claim a capture that ``save``
-then silently refuses — they are literally the same code path.
+then silently refuses: they are literally the same code path.
 
-Ground truth — what each 4-way message carries and what hashcat needs
+Ground truth: what each 4-way message carries and what hashcat needs
 ---------------------------------------------------------------------
 hashcat (mode 22000) cracks by guessing the PMK, deriving the PTK from
 ``ANonce + SNonce + AP_MAC + STA_MAC``, recomputing the MIC over a captured
@@ -19,14 +19,14 @@ EAPOL frame, and comparing. So it needs ANonce, SNonce, a MIC, and the exact
 
 hashcat reads the SNonce out of the *MIC frame's* embedded nonce, so the MIC
 frame must actually contain the SNonce. That means the MIC frame is always M2
-(SNonce present) or M4 (only when the client didn't zero its nonce) — never M3
+(SNonce present) or M4 (only when the client didn't zero its nonce), never M3
 (its nonce is the ANonce) and never M1 (no MIC). hashcat's MESSAGEPAIR table:
 
     0x00  M1+M2, EAPOL from M2   always crackable (M2 complete)
     0x02  M2+M3, EAPOL from M2   always crackable (M2 complete; M3 = ANonce)
     0x05  M3+M4, EAPOL from M4   only if M4's nonce != 0 (echoed SNonce)
     0x01  M1+M4, EAPOL from M4   only if M4's nonce != 0
-    0x03/0x04 (EAPOL from M3)    marked "unused" by hashcat — never emitted here
+    0x03/0x04 (EAPOL from M3)    marked "unused" by hashcat, never emitted here
 
 So a "captured handshake" requires a usable *keystone*: a complete M2 (or, rarely,
 a complete M4 with a non-zero nonce) plus an ANonce donor (M1 or M3) from the
@@ -74,33 +74,33 @@ _EAPOL_PAIR_WINDOW_S = 5.0
 # nonce drift. Exact (gap 0) is the norm; the tolerance only bridges lossy
 # captures / AP retransmits that bumped the counter or the ANonce.
 _NC_MAX = 8
-# message_pair bit 7 — tells hashcat nonce-error-correction is needed/allowed.
+# message_pair bit 7: tells hashcat nonce-error-correction is needed/allowed.
 _NC_BIT = 0x80
 
 # ----- AKM crackability (00-0F-AC suite numbers) -----------------------------
 # A capture is worth emitting only if hashcat -m 22000 can crack the *specific
-# artifact* — the PMK must be passphrase-derived (PBKDF2) AND hashcat must support
+# artifact*: the PMK must be passphrase-derived (PBKDF2) AND hashcat must support
 # the resulting hashline. SAE (ephemeral PMK), EAP (PMK from the 802.1X MSK, no
 # passphrase), OWE (no password) fail the first test. FT-PSK (PMK-R0→PMK-R1
 # hierarchy, no -m 22000 mode) and the SHA256 PMKID (HMAC-SHA256, while -m 22000's
-# PMKID path is HMAC-SHA1) pass it but fail the second — so the two artifacts gate
+# PMKID path is HMAC-SHA1) pass it but fail the second, so the two artifacts gate
 # differently:
 #
 #   EAPOL (WPA*02): hashcat reads the Key Descriptor Version from the embedded
 #     frame, so plain PSK (keyver 2) AND PSK-SHA256 (keyver 3 / AES-CMAC) both
 #     crack; FT has no mode; EAP/Enterprise has no passphrase; OWE (Enhanced Open)
-#     derives its PMK from an ECDH exchange — no password either.
+#     derives its PMK from an ECDH exchange, no password either.
 #     → uncrackable AKMs = SAE | FT-PSK | EAP | OWE.
 #   PMKID (WPA*01): single-algorithm HMAC-SHA1 → only plain PSK (AKM 2). FT and
 #     the SHA256-PSK AKMs (6 / 20) yield a hash -m 22000 can't take.
 #
 # SAE, FT, EAP, and OWE are *strict* (withhold on an unconfirmed transition AP).
-# The SHA256 PMKID is *soft* — AKM 6 is rare, so a PMKID of unknown AKM is assumed
+# The SHA256 PMKID is *soft*: AKM 6 is rare, so a PMKID of unknown AKM is assumed
 # to be the common HMAC-SHA1 one unless the AP offers no plain PSK at all.
 _SAE_AKMS = frozenset({8, 9, 24, 25})       # SAE / FT-SAE / SAE-EXT-KEY / FT-SAE-EXT-KEY
 _FT_PSK_AKMS = frozenset({4, 19})           # FT-PSK / FT-PSK-SHA384
 _EAP_AKMS = frozenset({1, 3, 5, 11, 12, 13})  # EAP/FT-EAP/EAP-SHA256/EAP-Suite-B[-192]/FT-EAP-SHA384 (Enterprise)
-_OWE_AKMS = frozenset({18})                 # OWE / Enhanced Open — PMK from ECDH, no passphrase
+_OWE_AKMS = frozenset({18})                 # OWE / Enhanced Open: PMK from ECDH, no passphrase
 _EAPOL_BAD_AKMS = _SAE_AKMS | _FT_PSK_AKMS | _EAP_AKMS | _OWE_AKMS  # never -m 22000-crackable as EAPOL
 _PMKID_PSK_AKM = 2                          # the only HMAC-SHA1 (crackable) PMKID
 _EAP_LABEL = "EAP/Enterprise"               # badge for a captured-but-worthless EAP 4-way
@@ -113,12 +113,12 @@ def eapol_verdict(hs: Handshake) -> str:
     The suppressed AKMs are SAE (ephemeral PMK), FT-PSK (no hashcat FT mode),
     EAP/Enterprise (PMK from the 802.1X MSK, no passphrase), and OWE (PMK from
     ECDH, no password); all are strict, so an unconfirmed transition AP returns
-    ``"unknown"`` and we withhold. Every other AKM — plain PSK, PSK-SHA256, and
-    legacy — is emitted.
+    ``"unknown"`` and we withhold. Every other AKM (plain PSK, PSK-SHA256, and
+    legacy) is emitted.
 
     Inputs are stamped by the interface: ``akm_client`` (the suite the client
-    chose, from M2 / (Re)Assoc — authoritative) and ``akm_offered`` (the AP's
-    beacon RSN-IE list — the fallback)."""
+    chose, from M2 / (Re)Assoc, authoritative) and ``akm_offered`` (the AP's
+    beacon RSN-IE list, the fallback)."""
     offered = set(hs.akm_offered)
     bad = _EAPOL_BAD_AKMS
     if hs.akm_client is not None:
@@ -138,7 +138,7 @@ def eapol_crackable(hs: Handshake) -> bool:
 
 
 def pmkid_crackable(hs: Handshake) -> bool:
-    """True only for a plain-PSK (AKM 2) PMKID — the lone HMAC-SHA1 PMKID hashcat
+    """True only for a plain-PSK (AKM 2) PMKID, the lone HMAC-SHA1 PMKID hashcat
     ``-m 22000`` cracks."""
     if hs.akm_client is not None:
         return hs.akm_client == _PMKID_PSK_AKM
@@ -176,10 +176,10 @@ def uncrackable_label(hs: Handshake) -> Optional[str]:
 
 @dataclass(frozen=True)
 class MessageInfo:
-    """Per-frame content descriptor — the hashcat-relevant fields, for logging.
+    """Per-frame content descriptor: the hashcat-relevant fields, for logging.
 
-    ``useful`` answers "does this frame contribute what a crackable pair needs?" —
-    true unless the frame arrived degraded (e.g. a clipped M2)."""
+    ``useful`` answers "does this frame contribute what a crackable pair needs?"
+    True unless the frame arrived degraded (e.g. a clipped M2)."""
     msg_num: int
     has_nonce: bool       # a real 32-byte, non-zero nonce
     has_mic: bool         # a real 16-byte, non-zero MIC (M1 legitimately has none)
@@ -189,11 +189,11 @@ class MessageInfo:
     def useful(self) -> bool:
         if self.msg_num == 1:   # ANonce donor
             return self.has_nonce
-        if self.msg_num == 2:   # keystone — SNonce + MIC + complete EAPOL
+        if self.msg_num == 2:   # keystone: SNonce + MIC + complete EAPOL
             return self.has_nonce and self.has_mic and self.eapol_complete
         if self.msg_num == 3:   # ANonce donor (own MIC/EAPOL unused by hashcat)
             return self.has_nonce
-        if self.msg_num == 4:   # conditional keystone — needs an echoed SNonce too
+        if self.msg_num == 4:   # conditional keystone: needs an echoed SNonce too
             return self.has_mic and self.eapol_complete and self.has_nonce
         return False
 
@@ -220,7 +220,7 @@ class CrackablePair:
 
     @property
     def instance_key(self) -> bytes:
-        """ANonce — fresh per association, so it identifies one 4-way instance."""
+        """ANonce: fresh per association, so it identifies one 4-way instance."""
         return self.anonce_frame.nonce
 
 
@@ -230,7 +230,7 @@ def _replay(f: HandshakeMessage) -> int:
 
 def _within_window(a: HandshakeMessage, b: HandshakeMessage) -> bool:
     """True if two frames are close enough in time to be one handshake. Skipped
-    when either timestamp is unset (0.0) — keeps fixtures / pre-timestamp
+    when either timestamp is unset (0.0), keeps fixtures / pre-timestamp
     captures working off the replay-counter rules alone."""
     if a.timestamp <= 0 or b.timestamp <= 0:
         return True
@@ -240,13 +240,13 @@ def _within_window(a: HandshakeMessage, b: HandshakeMessage) -> bool:
 def _mic_frame_usable(f: HandshakeMessage) -> bool:
     """Can this frame be the hashline's MIC/EAPOL source? It must carry a real
     MIC, a complete 802.1X payload, AND its embedded nonce (the SNonce hashcat
-    reads back) — which is why a zero-nonce M4 is rejected here."""
+    reads back), which is why a zero-nonce M4 is rejected here."""
     i = describe(f)
     return i.has_mic and i.eapol_complete and i.has_nonce
 
 
 def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
-    """Every distinct, hashcat-crackable handshake instance for this client — the
+    """Every distinct, hashcat-crackable handshake instance for this client: the
     AKM-gated view of ``_pairs_ignoring_akm`` (empty when the negotiated AKM can't
     be ``-m 22000``-cracked, e.g. SAE / FT-PSK / EAP / OWE)."""
     if not eapol_crackable(hs):
@@ -256,10 +256,10 @@ def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
 
 def withheld_capture_label(hs: Handshake) -> Optional[str]:
     """Badge for a captured 4-way that is confirmed uncrackable *because* its AKM
-    has no passphrase to try — EAP/Enterprise or OWE (Enhanced Open) — else None.
+    has no passphrase to try: EAP/Enterprise or OWE (Enhanced Open), else None.
     Gated on a structurally usable pairing, so it fires only when a real handshake
     was captured (not on stray EAPOL frames), letting the UI surface e.g. 'OWE
-    4-way — not crackable' instead of dropping the capture silently.
+    4-way, not crackable' instead of dropping the capture silently.
 
     SAE / FT are withheld too but stay silent here: they were never mis-reported as
     crackable, so they aren't part of this 'we captured a 4-way but it's worthless'
@@ -271,7 +271,7 @@ def withheld_capture_label(hs: Handshake) -> Optional[str]:
 
 
 def _pairs_ignoring_akm(hs: Handshake) -> List[CrackablePair]:
-    """The pairing algorithm alone, *before* the AKM crackability gate — extracted
+    """The pairing algorithm alone, *before* the AKM crackability gate, extracted
     the way hcxpcapngtool does. Callers that want the real crackable set must use
     ``crackable_pairs`` (which applies the AKM gate); this exists so the UI can
     tell 'a usable 4-way arrived but its AKM is worthless' from 'no 4-way yet'.
@@ -279,7 +279,7 @@ def _pairs_ignoring_akm(hs: Handshake) -> List[CrackablePair]:
     Each usable keystone (a complete M2, or a non-zeroed M4) is paired with every
     ANonce donor (M1/M3) whose replay counter is within ``_NC_MAX`` of the
     expected value (the nonce-error-correction tolerance) AND that sits on the
-    correct side of it in arrival order — the 4-way runs M1→M2→M3→M4, so the
+    correct side of it in arrival order: the 4-way runs M1→M2→M3→M4, so the
     lower-numbered message is captured first. Candidates are then taken best-first:
     smallest replay gap, then AP-confirmed ("authorized": M2+M3 / M3+M4) over
     "challenge" (M1+M2 / M1+M4), then the temporally nearest donor. Each keystone
@@ -293,7 +293,7 @@ def _pairs_ignoring_akm(hs: Handshake) -> List[CrackablePair]:
             by_msg[f.msg_num].append(f)
 
     # (replay-gap, confidence, arrival-distance, donor, keystone, pair_byte).
-    # confidence: 0/2 = AP-confirmed pairs, 1/3 = challenge — lower sorts first.
+    # confidence: 0/2 = AP-confirmed pairs, 1/3 = challenge, lower sorts first.
     cands: list = []
     for mic_f in by_msg[2] + by_msg[4]:
         if not _mic_frame_usable(mic_f):
@@ -350,7 +350,7 @@ def hc22000_line(ssid: str, hs: Handshake, pair: CrackablePair) -> str:
 
     The message-pair byte carries the NC bit (0x80), so hashcat applies
     nonce-error-correction by default (it's off unless this bit is set) and
-    fixes the small ANonce/replay drift the pairing tolerated — matching how
+    fixes the small ANonce/replay drift the pairing tolerated, matching how
     hcxpcapngtool flags its output."""
     payload = bytearray(pair.mic_frame.eapol_payload)
     payload[_MIC_OFFSET: _MIC_OFFSET + _MIC_LEN] = _ZERO_MIC

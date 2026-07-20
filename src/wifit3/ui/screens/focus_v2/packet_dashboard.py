@@ -2,9 +2,9 @@
 
 A multi-row sparkline meter: N labelled rows, per-row colour, a trailing ``/s`` rate (or a
 recent count), all scrolling **right->left** (newest sample at the right edge,
-history scrolling left — you read the attack's recent past L->R). Height is
+history scrolling left: you read the attack's recent past L->R). Height is
 **adaptive**: 2-row (16 levels) when there's vertical room, 1-row (8 levels)
-when cramped — the same "shrink gracefully" rule the bottom band rides.
+when cramped, the same "shrink gracefully" rule the bottom band rides.
 
 Data-source agnostic: once :meth:`PacketDashboard.reconfigure` binds an interface +
 BSSID, ``_tick`` samples ``WlanInterface.packet_stats`` deltas (each row's key
@@ -129,8 +129,8 @@ class PacketDashboard(Static):
             recent = list(self._hist[r.key])[-6:]
             avg = sum(recent) / (len(recent) * self.SAMPLE_S) if recent else 0
             num = f"{avg:.0f}/s" if r.as_rate else str(sum(recent))
-            # A flat row (no datapoint in the drawn window) is dimmed whole — label,
-            # bars, rate — so quiet rows (inject/deauth/eapol when idle) recede
+            # A flat row (no datapoint in the drawn window) is dimmed whole (label,
+            # bars, rate) so quiet rows (inject/deauth/eapol when idle) recede
             # instead of competing for attention. Keeps the colour, drops the shout.
             color = r.color if any(window) else f"dim {r.color}"
 
@@ -143,7 +143,7 @@ class PacketDashboard(Static):
                 cells = "".join(_BLOCKS[max(1, self._col(v, peak, 8))] for v in window)
                 lines.append(self._row(r.label, color, cells, num, bw))
         # WEP status footer lines sit a blank line below the sparklines, each
-        # centered in the channel width — they live in the block's own vertical
+        # centered in the channel width. They live in the block's own vertical
         # slack so they cost no row from the LOG/CLIENTS bands below.
         if self._footer is not None:
             w = self.content_size.width or 50
@@ -159,7 +159,7 @@ class PacketDashboard(Static):
 
     def _row(self, label: str, color: str, cells: str, num: str, bw: int) -> Text:
         """Right-aligned label · space · bars (right-aligned, newest at the right)
-        · space · left-aligned number — label and number sit flush against the
+        · space · left-aligned number: label and number sit flush against the
         bars. Blank label/number on the upper row of a 2-row pair."""
         t = Text()
         t.append(f"{label:>{_LABEL_W}} ", style=color if label else "")

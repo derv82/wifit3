@@ -1,4 +1,4 @@
-"""WSC (Wi-Fi Simple Config) crypto core — pure Python, no external deps.
+"""WSC (Wi-Fi Simple Config) crypto core: pure Python, no external deps.
 
 The whole cryptographic surface of the WPS registration protocol, shared by the
 online PIN brute-force (registrar building M2/M4/M6) and the future PixieWPS
@@ -6,10 +6,10 @@ offline attack. Ported from hostapd's ``src/wps/wps_common.c`` /
 ``wps_attr_build.c`` (the reference the kernel + reaver/bully all embed).
 
 Anchors (so this isn't validated only against itself):
-  * AES-128 — FIPS-197 known-answer vector (``tests``).
-  * HMAC-SHA256 / SHA-256 — stdlib ``hmac`` / ``hashlib``.
-  * DH MODP group 5 — the RFC 3526 1536-bit constant.
-  * The full DH→KDF→AuthKey chain — proven on-air the moment a real AP accepts
+  * AES-128: FIPS-197 known-answer vector (``tests``).
+  * HMAC-SHA256 / SHA-256: stdlib ``hmac`` / ``hashlib``.
+  * DH MODP group 5: the RFC 3526 1536-bit constant.
+  * The full DH→KDF→AuthKey chain: proven on-air the moment a real AP accepts
     our M2 Authenticator and proceeds to M3 (``scripts/wps/wps_probe.py``).
 
 Key derivation (hostapd ``wps_derive_keys``):
@@ -34,15 +34,15 @@ from typing import Tuple
 # ---------------------------------------------------------------------------
 # Lengths (hostapd wps.h)
 # ---------------------------------------------------------------------------
-NONCE_LEN = 16          # WPS_NONCE_LEN — Enrollee/Registrar nonces
-SECRET_NONCE_LEN = 16   # WPS_SECRET_NONCE_LEN — E-S1/E-S2/R-S1/R-S2
-PSK_LEN = 16            # WPS_PSK_LEN — half of a SHA-256 digest
+NONCE_LEN = 16          # WPS_NONCE_LEN: Enrollee/Registrar nonces
+SECRET_NONCE_LEN = 16   # WPS_SECRET_NONCE_LEN: E-S1/E-S2/R-S1/R-S2
+PSK_LEN = 16            # WPS_PSK_LEN: half of a SHA-256 digest
 HASH_LEN = 32           # E-Hash/R-Hash (full SHA-256)
 AUTHKEY_LEN = 32
 KEYWRAPKEY_LEN = 16
 EMSK_LEN = 32
-AUTHENTICATOR_LEN = 8   # WPS_AUTHENTICATOR_LEN — truncated HMAC
-KWA_LEN = 8             # WPS_KWA_LEN — Key Wrap Authenticator
+AUTHENTICATOR_LEN = 8   # WPS_AUTHENTICATOR_LEN: truncated HMAC
+KWA_LEN = 8             # WPS_KWA_LEN: Key Wrap Authenticator
 PUBKEY_LEN = 192        # DH MODP-1536 public key, zero-padded big-endian
 
 # Diffie-Hellman MODP group 5 (RFC 3526, 1536-bit). Generator = 2.
@@ -136,7 +136,7 @@ def derive_psk(authkey: bytes, pin: str) -> Tuple[bytes, bytes]:
     """PSK1/PSK2 from the device password (PIN), hostapd ``wps_derive_psk``.
 
     The PIN is hashed as its ASCII decimal string, split into halves of
-    ``(len+1)//2`` and ``len//2`` bytes — for an 8-digit PIN that's the first
+    ``(len+1)//2`` and ``len//2`` bytes, for an 8-digit PIN that's the first
     and last 4 digits.
     """
     pw = pin.encode("ascii")
@@ -182,7 +182,7 @@ def key_wrap_authenticator(authkey: bytes, plaintext: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# AES-128-CBC — pure Python (FIPS-197). Only used for WSC Encrypted Settings,
+# AES-128-CBC: pure Python (FIPS-197). Only used for WSC Encrypted Settings,
 # which are a few dozen bytes per PIN attempt, so speed is irrelevant.
 # ---------------------------------------------------------------------------
 _SBOX = bytes.fromhex(

@@ -104,7 +104,7 @@ def _is_openable(dev: usb.core.Device) -> bool:
     except NotImplementedError:
         return False          # Windows: enumerable but no WinUSB driver to open it
     except usb.core.USBError:
-        return False          # busy / access-denied — not ready to drive either way
+        return False          # busy / access-denied, not ready to drive either way
     finally:
         # get_active_configuration() opens a libusb handle to read the descriptor
         try:
@@ -117,14 +117,14 @@ def _raise_usblib_fatal(cause: Exception) -> NoReturn:
     # pyusb's NoBackendError is opaque.
     if sys.platform.startswith("linux"):
         message = (
-            "The bundled libusb could not be loaded — a system dependency is missing.\n\n"
+            "The bundled libusb could not be loaded. A system dependency is missing.\n\n"
             "Install it for your architecture and replug the card:\n"
             "  Debian / Ubuntu / Kali:   sudo apt install libudev1\n"
             "  Fedora / RHEL:            sudo dnf install systemd-libs\n"
             "  Arch:                     sudo pacman -S systemd-libs")
     else:
         message = (
-            "The bundled libusb failed to initialize. Reinstall wifit3 — the install is likely "
+            "The bundled libusb failed to initialize. Reinstall wifit3: the install is likely "
             "corrupt or being blocked by security software.")
     raise WifiteFatalError("USB backend unavailable", message) from cause
 

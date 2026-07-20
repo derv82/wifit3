@@ -111,7 +111,7 @@ def load_capture_index(captures_dir: Path | str = "captures") -> Dict[str, List[
 
 def summarize(index: Dict[str, List[PersistedCapture]]) -> tuple[int, int, int, int]:
     """(handshakes, pmkids, wep_keys, wps_psks) as a count of *APs* that have each
-    kind — de-duped per AP: an AP with 11 saved handshakes counts as one, not
+    kind, de-duped per AP: an AP with 11 saved handshakes counts as one, not
     eleven."""
     hs = pmkid = wep = wps = 0
     for caps in index.values():

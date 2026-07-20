@@ -2,12 +2,12 @@
 
 ``WlanTransport`` adapts a ``WlanInterface`` to a ``send``/``recv``/``drain``
 contract: TX via ``send_until_ack``/``send_no_wait``; RX via an ``asyncio.Queue`` fed by a registered
-callback that keeps only AP→us frames (Addr1==our MAC, Addr2==BSSID) — so a caller
+callback that keeps only AP→us frames (Addr1==our MAC, Addr2==BSSID), so a caller
 never trips over its own echoed TX or unrelated traffic.
 
 ``Association`` does Open-System auth + an Association Request. The assoc-req carries
-whatever trailing IE the caller supplies (``assoc_trailer_ies``) — a WPS vendor IE, a
-forged RSN IE for PMKID, or nothing — so this module knows no protocol above the
+whatever trailing IE the caller supplies (``assoc_trailer_ies``): a WPS vendor IE, a
+forged RSN IE for PMKID, or nothing, so this module knows no protocol above the
 802.11 skeleton.
 """
 

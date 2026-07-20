@@ -13,12 +13,12 @@ tidy tree instead::
 Flush policy (chosen with the user):
 
 * **First crackable pair → flush immediately.** The win shows the instant the
-  handshake is crackable — usually at M2, *before* M4; we don't even keep M4.
+  handshake is crackable, usually at M2, *before* M4; we don't even keep M4.
 * **Then suppress that client until a new ANonce instance completes.** The
   detector fires one HANDSHAKE event per instance, so retransmitted M3/M4 of the
   captured exchange are swallowed; a genuine re-handshake re-announces (``×2``).
 * **Partial bursts** (frames that never complete) flush after ``settle_s`` of
-  quiet with no verdict leaf — so a client spamming M1 is still surfaced once.
+  quiet with no verdict leaf, so a client spamming M1 is still surfaced once.
 
 Pure + clock-injected (``now`` is passed in), so it unit-tests with no UI / no
 hardware. Side effects (saving the .pcap) stay in the screen.
@@ -36,7 +36,7 @@ _DIR = {1: "AP→Client", 3: "AP→Client", 2: "AP←Client", 4: "AP←Client"}
 
 
 def _field_score(ev: CaptureEvent) -> int:
-    """How 'complete' a frame is — used to pick the representative when a message
+    """How 'complete' a frame is, used to pick the representative when a message
     is aggregated, so ``M1 ×20`` shows the best M1 we actually saw (not a synthetic
     OR of fields across frames)."""
     return sum(bool(x) for x in (ev.has_nonce, ev.has_mic, ev.eapol_complete, ev.has_pmkid))
@@ -102,7 +102,7 @@ def _render_tree(client_mac: str, burst: _Burst, hs_ev, instance: int,
             lines.append(treelog.leaf(save_hint))
         else:
             lines.append(treelog.leaf(verdict))            # … else verdict closes it
-    else:                                                  # partial — no verdict
+    else:                                                  # partial: no verdict
         for i, body in enumerate(bodies):
             connector = treelog.leaf if i == len(bodies) - 1 else treelog.branch
             lines.append(connector(body))
@@ -129,7 +129,7 @@ class EapolAggregator:
         self._instances: dict[str, int] = {}    # client -> # instances announced
 
     def reset(self) -> None:
-        """Drop all state — on a target switch (the new AP starts fresh)."""
+        """Drop all state: on a target switch (the new AP starts fresh)."""
         self._bursts.clear()
         self._captured.clear()
         self._instances.clear()

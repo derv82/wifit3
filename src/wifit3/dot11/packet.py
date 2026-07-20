@@ -7,7 +7,7 @@ from typing import Optional, List
 
 
 def is_group_mac(mac: str) -> bool:
-    """True for a group (multicast/broadcast) MAC — the I/G bit (LSB of the first octet) is
+    """True for a group (multicast/broadcast) MAC: the I/G bit (LSB of the first octet) is
     set. These are frame destinations (IPv6 ``33:33:…``, IPv4 ``01:00:5e:…``, broadcast
     ``ff:…``), never client stations, whose NICs are always unicast (even first octet)."""
     try:
@@ -32,7 +32,7 @@ class Packet:
 
     @property
     def client_mac(self) -> Optional[str]:
-        """The client (non-AP) STA MAC, decided by the DS bits — or None when there isn't one
+        """The client (non-AP) STA MAC, decided by the DS bits, or None when there isn't one
         (WDS 4-address, or a group destination). An AP→client frame carries the wired-side
         origin in addr3, so key off direction; picking "the address that isn't the BSSID" would
         mint phantom clients from the gateway/router MAC on a bridged network."""
@@ -51,7 +51,7 @@ class Packet:
 
 @dataclass(slots=True, kw_only=True)
 class BeaconPacket(Packet):
-    """A beacon or probe response — carries the AP's advertised capabilities (IEs)."""
+    """A beacon or probe response: carries the AP's advertised capabilities (IEs)."""
     channel: Optional[int] = None
     encryption: str = "OPEN"
     akms: List[str] = field(default_factory=list)
@@ -74,7 +74,7 @@ class BeaconPacket(Packet):
 @dataclass(slots=True, kw_only=True)
 class EapolPacket(Packet):
     """An EAPOL-Key frame of the 4-way handshake. Fields may be unset (None) on a frame too
-    short to fully extract — the interface guards on ``replay_counter`` before storing."""
+    short to fully extract. The interface guards on ``replay_counter`` before storing."""
     msg_num: int = 0
     replay_counter: Optional[bytes] = None
     nonce: Optional[bytes] = None
@@ -88,7 +88,7 @@ class EapolPacket(Packet):
 
 @dataclass(slots=True, kw_only=True)
 class WepDataPacket(Packet):
-    """A WEP-encrypted Data frame — the IV + leading ciphertext the WEP suite feeds on."""
+    """A WEP-encrypted Data frame: the IV + leading ciphertext the WEP suite feeds on."""
     iv: Optional[bytes] = None
     keyid: Optional[int] = None
     cipher: Optional[bytes] = None
@@ -96,7 +96,7 @@ class WepDataPacket(Packet):
 
 @dataclass(slots=True, kw_only=True)
 class AssocRequestPacket(Packet):
-    """A (Re)Association Request — carries the client's selected AKM."""
+    """A (Re)Association Request: carries the client's selected AKM."""
     assoc_akm: Optional[int] = None
 
 

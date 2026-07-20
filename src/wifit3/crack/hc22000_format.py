@@ -3,7 +3,7 @@
 The disk writer is ``persist.hc22000_write``.
 
 The PMKID (``WPA*01``) line is built here; the EAPOL (``WPA*02``) lines and the
-crackability decision both live in ``crack.handshake`` — the single source
+crackability decision both live in ``crack.handshake``, the single source
 of truth, so a "captured" verdict and a writable hashline can never disagree.
 
 Format spec (one line per hash):
@@ -11,9 +11,9 @@ Format spec (one line per hash):
     PROTOCOL*TYPE*PMKID_OR_MIC*MACAP*MACSTA*ESSID*ANONCE*EAPOL*MESSAGEPAIR
 
 References:
-  - Format (WPA*01 / WPA*02 fields) — hashcat issue #1816:
+  - Format (WPA*01 / WPA*02 fields), hashcat issue #1816:
     https://github.com/hashcat/hashcat/issues/1816
-  - The cracker, module_22000.c — derives the EAPOL MIC algorithm from the Key
+  - The cracker, module_22000.c, derives the EAPOL MIC algorithm from the Key
     Descriptor Version carried in the embedded EAPOL bytes (keyver 2 = HMAC-SHA1 /
     AKM PSK, keyver 3 = AES-CMAC / AKM PSK-SHA256), so the negotiated AKM needs no
     field of its own. The PMKID (WPA*01) path is single-algorithm (HMAC-SHA1) and
@@ -50,7 +50,7 @@ def pmkid_hashline(ssid: str, hs: Handshake) -> Optional[str]:
 def eapol_hashlines(ssid: str, hs: Handshake) -> List[str]:
     """One ``WPA*02*…`` line per distinct *crackable* handshake instance. Empty
     when the SSID is hidden or no instance is serialisable (e.g. a clipped MIC
-    frame) — i.e. exactly when there's nothing hashcat could crack."""
+    frame), i.e. exactly when there's nothing hashcat could crack."""
     if not ssid:
         return []
     return [wpa.hc22000_line(ssid, hs, pair) for pair in wpa.crackable_pairs(hs)]

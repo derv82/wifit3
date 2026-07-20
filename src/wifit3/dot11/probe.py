@@ -5,7 +5,7 @@ import time
 from wifit3.dot11.ie import ssid_ie, rates_ie, ext_rates_ie, ds_param_ie, GENERIC_RSN_IE
 
 # Probe-response capability: ESS + Privacy + Short Slot Time. Distinct from the
-# auth/assoc ESS+Privacy 0x0011 (see dot11.auth_assoc) — do not conflate.
+# auth/assoc ESS+Privacy 0x0011 (see dot11.auth_assoc). Do not conflate.
 _CAPABILITY_INFO = 0x0411
 
 

@@ -61,7 +61,7 @@ class WlanFrameParser:
             bssid = addr1
             source = addr2
             dest = addr3
-        else: # WDS (4-address) — not parsed
+        else: # WDS (4-address), not parsed
             return None
 
         base: Dict[str, Any] = {
@@ -73,7 +73,7 @@ class WlanFrameParser:
             return cls._parse_mgmt(frame, subtype, base)
         if ftype == cls.TYPE_DATA:
             return cls._parse_data(frame, fc1, subtype, base)
-        return None  # ctrl / reserved — _is_valid_frame already rejects these
+        return None  # ctrl / reserved: _is_valid_frame already rejects these
 
     @classmethod
     def _parse_mgmt(cls, frame: bytes, subtype: int, base: Dict[str, Any]) -> Optional["Packet"]:
@@ -150,11 +150,11 @@ class WlanFrameParser:
         header_len = 24
         if subtype & 0x08:            # QoS Control field present (+2)
             header_len += 2
-        if fc1 & 0x80:                # HT Control field present — Order bit (+4)
+        if fc1 & 0x80:                # HT Control field present, Order bit (+4)
             header_len += 4
 
         # Protected frame: the Key ID byte's ExtIV bit (0x20) tells WEP (clear → 4-byte IV)
-        # from TKIP/CCMP (set → 8-byte ext IV). Body is ciphertext either way — no LLC/SNAP.
+        # from TKIP/CCMP (set → 8-byte ext IV). Body is ciphertext either way, no LLC/SNAP.
         if (fc1 & 0x40) and len(frame) >= header_len + 4:
             keyid_byte = frame[header_len + 3]
             if not (keyid_byte & 0x20):   # ExtIV clear → WEP
@@ -163,7 +163,7 @@ class WlanFrameParser:
                     **base, type="wep_data",
                     iv=bytes(frame[header_len : header_len + 3]),
                     keyid=(keyid_byte >> 6) & 0x03,
-                    # First 16 ciphertext bytes — the PTW keystream (XOR the known ARP plaintext).
+                    # First 16 ciphertext bytes: the PTW keystream (XOR the known ARP plaintext).
                     cipher=bytes(frame[cipher_start : cipher_start + 16]))
             return Packet(**base, type="data")
 
@@ -176,7 +176,7 @@ class WlanFrameParser:
         """Find an EAPOL-Key payload after the MAC header and build an EapolPacket, or None
         if the frame has no EAPOL LLC/SNAP. A frame carrying the EAPOL ethertype but too
         short to fully decode still returns an EapolPacket ('eapol') with whatever fields it
-        reached — the interface guards on replay_counter before storing.
+        reached. The interface guards on replay_counter before storing.
         """
         if len(frame) < header_len + 8:
             return None
@@ -276,7 +276,7 @@ class WlanFrameParser:
                 ):
                     pmkid = bytes(key_data[value_start + 4 : value_start + 4 + 16])
                     # Some APs include a PMKID KDE with all-zero bytes as a
-                    # placeholder. Treat as "no PMKID" — uncrackable anyway.
+                    # placeholder. Treat as "no PMKID", uncrackable anyway.
                     if pmkid != b"\x00" * 16:
                         return pmkid
             i = value_end
@@ -285,7 +285,7 @@ class WlanFrameParser:
     @classmethod
     def _first_rsn_akm(cls, data: bytes, start: int = 0) -> Optional[int]:
         """First AKM suite (00-0F-AC:N) in the RSN IE (tag 48) within the element/KDE
-        list, walked from ``start``, or None — the single suite the supplicant selected.
+        list, walked from ``start``, or None (the single suite the supplicant selected).
         """
         i = start
         n = len(data)
@@ -356,12 +356,12 @@ class WlanFrameParser:
             addr2 = frame[10:16]
             addr3 = frame[16:22]
 
-            # addr2 is always the transmitter (SA) — never legitimately
+            # addr2 is always the transmitter (SA), never legitimately
             # broadcast or zero, so it's a good noise filter.
             if addr2 == b'\x00\x00\x00\x00\x00\x00' or addr2 == b'\xff\xff\xff\xff\xff\xff':
                 return False
             # addr3 is the DA on a ToDS frame, and a BROADCAST DA is exactly what a (WEP) ARP
-            # request carries — so reject only all-zeros here, NOT broadcast.
+            # request carries, so reject only all-zeros here, NOT broadcast.
             if addr3 == b'\x00\x00\x00\x00\x00\x00':
                 return False
 
@@ -502,10 +502,10 @@ class WlanFrameParser:
             elif tag_id == 3: # DS Parameter Set (Channel)
                 if tag_len == 1:
                     channel_ds = tag_data[0]
-            elif tag_id == 61: # HT Operation — primary channel = first byte
+            elif tag_id == 61: # HT Operation: primary channel = first byte
                 if tag_len >= 1:
                     channel_ht = tag_data[0]
-            elif tag_id == 192: # VHT Operation — center freq seg 0 at byte 1
+            elif tag_id == 192: # VHT Operation: center freq seg 0 at byte 1
                 if tag_len >= 2:
                     channel_vht = tag_data[1]
             elif tag_id == 48: # RSN (WPA2/WPA3)
@@ -604,7 +604,7 @@ class WlanFrameParser:
     # AKM suite numbers (00-0F-AC:N) grouped for WPA3 detection: any SAE-family
     # suite => WPA3; SAE alongside a PSK-family suite => WPA2/WPA3 transition.
     # Mirrors the crackability split in crack.handshake (duplicated here to
-    # avoid a wlan->engine import) — keep the two in sync.
+    # avoid a wlan->engine import), keep the two in sync.
     _SAE_SUITES = frozenset({0x08, 0x09, 0x18, 0x19})
     _PSK_SUITES = frozenset({0x02, 0x04, 0x06, 0x13, 0x14})
     # TODO: FT-PSK family (suites 4 & 19) is "crackable" but the FT key hierarchy
@@ -621,7 +621,7 @@ class WlanFrameParser:
         """Parse the RSN IE body (tag 48 contents, sans the 2-byte header).
 
         Returns dict with pairwise (str|None), akms (list[str]), pmf_capable,
-        pmf_required — or None if the IE is malformed.
+        pmf_required, or None if the IE is malformed.
 
         Field layout (per IEEE 802.11-2020 § 9.4.2.24):
             Version (2 B LE) | Group Cipher Suite (4 B) |
@@ -663,7 +663,7 @@ class WlanFrameParser:
                     continue
                 sid = suite[3]
                 if sid not in akm_suites:
-                    akm_suites.append(sid)   # raw 00-0F-AC:N — drives crackability
+                    akm_suites.append(sid)   # raw 00-0F-AC:N, drives crackability
                 name = cls._AKM_NAMES.get(sid)
                 if name is not None and name not in akms:
                     akms.append(name)
@@ -704,7 +704,7 @@ class WlanFrameParser:
         """
         if has_rsn:
             # Every SAE-family name (SAE, FT-SAE, SAE-EXT-KEY, FT-SAE-EXT-KEY)
-            # contains "SAE", so this also catches WPA3-H2E — matching the
+            # contains "SAE", so this also catches WPA3-H2E, matching the
             # suite-number `wpa3` flag so label and flag never disagree.
             has_sae = any("SAE" in a for a in akms)
             has_psk = "PSK" in akms or "PSK-SHA256" in akms
@@ -729,7 +729,7 @@ class WlanFrameParser:
                 elif has_psk:
                     akm_tag = "PSK"
                 else:
-                    # Unknown AKM(s) — fall back to listing them.
+                    # Unknown AKM(s): fall back to listing them.
                     akm_tag = "+".join(akms) if akms else None
 
             parts = [wpa_tag]
@@ -740,7 +740,7 @@ class WlanFrameParser:
             return "-".join(parts)
 
         if has_wpa:
-            # Legacy WPA1 vendor IE — TKIP is the universal assumption.
+            # Legacy WPA1 vendor IE: TKIP is the universal assumption.
             return "WPA-PSK-TKIP"
 
         if len(frame) >= 36:

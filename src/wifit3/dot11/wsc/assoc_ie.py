@@ -1,4 +1,4 @@
-"""The WPS Association vendor IE — announces registrar (PIN) or enrollee (PBC)
+"""The WPS Association vendor IE: announces registrar (PIN) or enrollee (PBC)
 intent in the Association Request so a WPS AP starts the EAP-WSC exchange.
 
 Kept out of the generic ``auth_assoc.Association`` (which knows no protocol above the

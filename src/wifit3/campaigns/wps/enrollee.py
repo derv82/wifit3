@@ -1,4 +1,4 @@
-"""WpsEnrollee — the enrollee-side WSC state machine, for PBC capture.
+"""WpsEnrollee: the enrollee-side WSC state machine, for PBC capture.
 
 When someone presses an AP's WPS button it becomes the **Registrar** and hands
 the network credential to any **Enrollee** that completes WSC within the ~120 s
@@ -9,7 +9,7 @@ PIN attack (we build M1/M3/M5/M7, the AP sends WSC_Start/M2/M4/M6/M8), and the
 PBC has no secret: the device password is the public constant "00000000"
 (`messages.PBC_PASSWORD`), so both sides derive the same PSK1/PSK2 and our
 E-hashes verify. The exchange's confidentiality rests entirely on the DH key,
-which is why this must be active — a passive capture can't derive it.
+which is why this must be active: a passive capture can't derive it.
 
 Transport-agnostic (same `send`/`recv` contract as WpsRegistrar); the live
 adapter and the in-process fake-Registrar test both satisfy it.
@@ -124,7 +124,7 @@ class WpsEnrollee:
                 kind = describe_frame(frame)
                 if kind in ("mgmt/DEAUTH", "mgmt/DISASSOC"):
                     why = disassoc_reason(frame)
-                    self.log(f"[WPS] ← {kind} reason={why} (AP dropped us) — abandoning to retry")
+                    self.log(f"[WPS] ← {kind} reason={why} (AP dropped us), abandoning to retry")
                     return AttemptOutcome(PinResult.TIMEOUT, "<PBC>", detail=f"deauth ({why})")
                 continue
 

