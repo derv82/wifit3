@@ -23,7 +23,6 @@ from wifit3.errors import BringUpError
 
 from .constants import (
     EP_IN_PKT_RX,
-    MT_MAC_STATUS,
     MT_MAC_SYS_CTRL,
     MT_MAC_SYS_CTRL_ENABLE_RX,
     MT_MAC_SYS_CTRL_ENABLE_TX,
@@ -108,14 +107,8 @@ class MT76x0UDriver(Driver):
         self.fw_info: Optional[dict] = None
         self.efuse_full: Optional[EFUSEFullInfo] = None
         self.mcu_smoke: Optional[dict] = None
-        self.mac_status_after_init: Optional[int] = None
         self.bbp_version: Optional[int] = None
         self.rxfilter_default: Optional[int] = None
-        self.wlan_fun_ctrl_after_ant: Optional[int] = None
-        self.coexcfg3_after_ant: Optional[int] = None
-        self.bbp_agc0_after_phy: Optional[int] = None
-        self.bbp_txbe5_after_phy: Optional[int] = None
-        self.rf_b0_r22_after_phy: Optional[int] = None
         # M4a.1 result from set_channel().
         self.current_channel: Optional[int] = None
         self.last_set_channel_state: Optional[dict] = None
@@ -385,9 +378,6 @@ class MT76x0UDriver(Driver):
         if not wait_for_txrx_idle(self.transport):
             logger.error("MT7610U: wait_for_txrx_idle timed out")
             return False
-        self.mac_status_after_init = self.transport.read32(MT_MAC_STATUS)
-        logger.info("MT7610U: MAC_STATUS after init = 0x%08x (TX|RX idle)",
-                    self.mac_status_after_init)
 
         # ---- M3b: init_bbp [SRC] mt76x0/init.c:192.
         # phy_wait_bbp_ready, then bbp_init_tab (58 pairs MCU), then 20
@@ -472,26 +462,6 @@ class MT76x0UDriver(Driver):
         except (PHYInitError, usb.core.USBError) as e:
             logger.error("MT7610U: phy_init failed: %s", e)
             return False
-
-        # Readback for assertions. We capture state after the full phy_init.
-        from .constants import (
-            MT_BBP_AGC,
-            MT_BBP_TXBE,
-            MT_COEXCFG3 as _MT_COEXCFG3,
-            MT_MCU_MEMMAP_RF,
-            MT_RF,
-            MT_WLAN_FUN_CTRL as _MT_WLAN_FUN_CTRL,
-        )
-        self.wlan_fun_ctrl_after_ant = self.transport.read32(_MT_WLAN_FUN_CTRL)
-        self.coexcfg3_after_ant = self.transport.read32(_MT_COEXCFG3)
-        self.bbp_agc0_after_phy = self.transport.read32(MT_BBP_AGC(0))
-        self.bbp_txbe5_after_phy = self.transport.read32(MT_BBP_TXBE(5))
-        # Read MT_RF(0, 22) via MCU to confirm freq cal write landed.
-        try:
-            rf22 = self.mcu.random_read(MT_MCU_MEMMAP_RF, [MT_RF(0, 22)])[0]
-            self.rf_b0_r22_after_phy = rf22 & 0xFF
-        except (MCUError, usb.core.USBError) as e:
-            logger.warning("MT7610U: MT_RF(0,22) readback failed (non-fatal): %s", e)
 
         # ----- M6 (TX-on-air): missing pieces at the bottom of
         # mt76x0u_init_hardware + mt76x0u_start. Without these the chip
