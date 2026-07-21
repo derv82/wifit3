@@ -48,6 +48,7 @@ from wifit3.chips.mt76x2u.chan import (  # noqa: E402
 from wifit3.chips.mt76x2u.constants import (  # noqa: E402
     EP_OUT_AC_BE,
     MT_ASIC_VERSION,
+    MT_CH_BUSY,
     MT_RX_FILTR_CFG,
     MT_WLAN_FUN_CTRL,
     MT_WPDMA_GLO_CFG,
@@ -69,9 +70,11 @@ from wifit3.chips.mt76x2u.mac import (  # noqa: E402
     init_us_cyc_txop,
     mac_cc_reset,
     mac_reset,
+    mac_resume,
     mac_setaddr,
     mac_start,
     mac_stop,
+    mac_stop_config,
     wait_for_txrx_idle,
 )
 from wifit3.chips.mt76x2u.mcu import McuChannel, mcu_init  # noqa: E402
@@ -80,6 +83,7 @@ from wifit3.chips.mt76x2u.phy import (  # noqa: E402
     mcu_load_cr,
     phy_set_rxpath,
     phy_set_txdac,
+    phy_set_txpower,
 )
 from wifit3.chips.mt76x2u.firmware import upload_firmware  # noqa: E402
 from wifit3.chips.mt76x2u.power import (  # noqa: E402
@@ -95,6 +99,12 @@ DEFAULT_CAP = "usb_dumps_new2/captures_mt76x2u_5g-injection/capture-1.pcap"
 
 # mt76x02 MCU CMD_SWITCH_CHANNEL_OP (the channel rides in payload[0]). [SRC] mt76x02_mcu.h:36
 _CMD_SWITCH_CHANNEL_OP = 30
+# mac80211's default channel at the first config(CHANGE_POWER), before the tune to ch1.
+# This 5g-injection capture defaults to 5 GHz UNII-1 ch36 (its initial phy_set_txpower).
+_CONFIG_POWER_DEFAULT_CH = 36
+# The capture's dev->txpower_conf (= hw->conf.power_level * 2). Reverse-engineered from
+# TX_PWR_CFG_0=0x01010101 on ch1 (the rate table clamps to 34): power_level 17 dBm.
+_CAPTURE_TXPOWER_CONF = 34
 _TXWI_LEN = 20
 _TXINFO_LEN = 4
 _FC_NAME = {0xc0: "deauth", 0xa0: "disassoc", 0xb0: "auth", 0x40: "probe_req",
@@ -155,8 +165,12 @@ def check_boot(data: dict, channel: int, asic_rev: int) -> tuple[str, int]:
     if anchor is None:
         print("  [FAIL] no anchor: reset_wlan's MT_WLAN_FUN_CTRL MMIO read not in capture")
         return "fail", 0
+    eeprom = rp.build_eeprom(ops)
+    # EE_BT_RCAL_RESULT (0x138): MCU_CAL_R runs only if this byte is not 0xff
+    # ([SRC] usb_phy.c:148). Read it like connect() does, off-cursor.
+    bt_rcal_valid = len(eeprom) > 0x138 and eeprom[0x138] != 0xFF
     dev = rp.ReplayDevice(ops, data["responses"], start=anchor,
-                          eeprom=rp.build_eeprom(ops),
+                          eeprom=eeprom,
                           rxfilter_addr=MT_RX_FILTR_CFG,
                           rxfilter_mask=_MONITOR_RXFILTER_BITS,
                           wpdma_addr=MT_WPDMA_GLO_CFG)
@@ -208,13 +222,21 @@ def check_boot(data: dict, channel: int, asic_rev: int) -> tuple[str, int]:
         # wifit3 folds the monitor filter into mac_start; skip the kernel's separate
         # configure_filter ops (WPDMA read + RX_FILTR_CFG writes) the wire recorded.
         dev.skip_configure_filter()
-        # The channel tune starts here. wifit3 tunes with a bare phy_set_channel
-        # (set_channel_20mhz), matching the v6.18 source order (txpower_regs first).
-        # The capture instead runs the wrapped mt76x2u_set_channel (an initial
-        # phy_set_txpower + a config-time mac_stop before phy_set_channel), so a
-        # divergence at/after this cursor is that wrapper skew, not a port bug.
-        state["channel_anchor"] = dev.i
-        # set_channel sequence [SRC] mt76x2u_set_channel
+
+        # ----- mt76x2u_config -> mt76x2u_set_channel wrapper (the capture's channel path) -----
+        # config(CHANGE_POWER): an initial phy_set_txpower at mac80211's default channel
+        # (5 GHz ch36), BEFORE the tune to ch1. wifit3's connect() tunes bare, but the pcap
+        # is the mac80211 callback flow, so we drive the real functions in that order.
+        pw_rp = read_rate_power(t, band_2g=False)
+        pw_pi = read_power_info(t, _CONFIG_POWER_DEFAULT_CH, band_2g=False, tssi_enabled=False)
+        phy_set_txpower(t, pw_rp, pw_pi, txpower_conf=_CAPTURE_TXPOWER_CONF)
+        # config(CHANGE_MONITOR): re-applies the RX filter (kernel value) + a survey CH_BUSY
+        # read; wifit3's monitor filter differs (set in mac_start), so skip those wire-only ops.
+        dev.skip_configure_filter()
+        dev.skip_read(MT_CH_BUSY)                       # survey snapshot before the re-tune
+        mac_stop_config(t)                              # [SRC] mt76x2_mac_stop (config-time)
+
+        # config(CHANGE_CHANNEL): phy_set_channel (bare set_channel_20mhz), matching v6.18.
         rate_power = read_rate_power(t, band_2g=band_2g)
         power_info = read_power_info(t, channel, band_2g=band_2g, tssi_enabled=False)
         ext_pa = (not nic0.get("pa_int_2g", True)) if band_2g \
@@ -223,12 +245,14 @@ def check_boot(data: dict, channel: int, asic_rev: int) -> tuple[str, int]:
         if not await set_channel_20mhz(
                 t, mcu, channel, asic_rev, chainmask, cal=cal,
                 rate_power=rate_power, power_info=power_info,
-                init_cal_done=False, bt_rcal_valid=True, ext_pa=ext_pa,
-                high_gain=high_gain, tssi_enabled_flag=False):
+                init_cal_done=False, bt_rcal_valid=bt_rcal_valid, ext_pa=ext_pa,
+                high_gain=high_gain, tssi_enabled_flag=True,
+                txpower_conf=_CAPTURE_TXPOWER_CONF):
             raise rp.Divergence("set_channel_20mhz returned False")
         await phy_channel_calibrate(t, mcu, channel, cal=cal, high_gain=high_gain,
-                                    ext_pa=ext_pa, tssi_enabled_flag=False)
+                                    ext_pa=ext_pa, tssi_enabled_flag=True)
         mac_cc_reset(t)
+        mac_resume(t)                                   # [SRC] mt76x2_mac_resume
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

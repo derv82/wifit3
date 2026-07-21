@@ -301,6 +301,17 @@ class ReplayDevice:
             skipped += 1
         return skipped
 
+    def skip_read(self, addr: int) -> bool:
+        """Skip one wire read of ``addr`` if it is the next op (a survey/snapshot
+        read the port does not issue). Returns True if it skipped one."""
+        if self.i < len(self.ops):
+            op = self.ops[self.i]
+            if (op["kind"] == "ctrl" and op["dir"] == "IN"
+                    and ((op["wval"] << 16) | op["widx"]) == addr):
+                self.i += 1
+                return True
+        return False
+
     def write(self, ep, data, timeout=None):
         op = self._next()
         data = bytes(data)

@@ -721,3 +721,37 @@ async def mac_stop(transport: MT76x2UTransport) -> None:
             break
 
     transport.write32(MT_TX_RTS_CFG, rts_cfg)
+
+
+def mac_stop_config(transport: MT76x2UTransport, force: bool = False) -> None:
+    """`mt76x2_mac_stop` — [SRC] mt76x2/mac.c:9. The config-time (re-tune) MAC stop,
+    lighter than the init `mt76x2u_mac_stop`: clear ED-CCA + 40M-block, disable the MAC,
+    trim the RTS retry limit, wait for the MAC to go idle (<=300x), restore RTS. The
+    kernel wraps a runtime channel change (mt76x2u_set_channel) in this + mac_resume."""
+    core4 = MT_BBP_CORE_BASE + 4 * 4
+    ibi12 = MT_BBP_IBI_BASE + 12 * 4
+    transport.rmw32(MT_TXOP_CTRL_CFG, MT_TXOP_ED_CCA_EN, 0)
+    transport.rmw32(MT_TXOP_HLDR_ET, MT_TXOP_HLDR_TX40M_BLK_EN, 0)
+    transport.write32(MT_MAC_SYS_CTRL, 0)
+    rts_cfg = transport.read32(MT_TX_RTS_CFG)
+    transport.write32(MT_TX_RTS_CFG, rts_cfg & ~MT_TX_RTS_CFG_RETRY_LIMIT)
+    stopped = False
+    for _ in range(300):
+        if ((transport.read32(MT_MAC_STATUS) & (MT_MAC_STATUS_RX | MT_MAC_STATUS_TX))
+                or transport.read32(ibi12)):
+            continue
+        stopped = True
+        break
+    if force and not stopped:
+        transport.rmw32(core4, 1 << 1, 1 << 1)
+        transport.rmw32(core4, 1 << 1, 0)
+        transport.rmw32(core4, 1 << 0, 1 << 0)
+        transport.rmw32(core4, 1 << 0, 0)
+    transport.write32(MT_TX_RTS_CFG, rts_cfg)
+
+
+def mac_resume(transport: MT76x2UTransport) -> None:
+    """`mt76x2_mac_resume` — [SRC] mt76x2/mac.h. Re-enable MAC TX+RX after a
+    config-time mac_stop (the tail of a wrapped channel change)."""
+    transport.write32(MT_MAC_SYS_CTRL,
+                      MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX)
