@@ -82,7 +82,7 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         with Vertical(id="dialog"):
             yield Label("Channel Filter", id="title")
             yield Label(
-                r"\[[bold green]a[/]]ll  \[[bold cyan]2[/]]G  \[[bold cyan]5[/]]G  "
+                r"\[[bold bright_green]a[/]]ll  \[[bold cyan]2[/]]G  \[[bold cyan]5[/]]G  "
                 r"\[[bold red]n[/]]one",
                 id="hotkeys",
             )

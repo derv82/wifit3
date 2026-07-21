@@ -215,7 +215,7 @@ class ScannerView(Screen):
             parts.append(f"{wps} WPS PSK{'s' * (wps != 1)}")
         if not parts:
             return None
-        return "[dim]Existing [bold]captures/[/bold]: " + ", ".join(parts) + "[/dim]"
+        return "Existing [bold]captures/[/bold]: " + ", ".join(parts)
 
     async def on_screen_resume(self) -> None:
         # Restart channel hopper
@@ -456,18 +456,18 @@ class ScannerView(Screen):
             pair = ev.pair_label or "?"
             msg = (
                 f"[bold green]✓ HANDSHAKE[/bold green] ({pair}) on "
-                f"[bold]{ap_label}[/bold] from [bold]{client}[/bold]"
+                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{client}[/bold]"
             )
             save_result = save_handshake(ap, ev.client_mac)
         elif ev.kind == CaptureKind.UNCRACKABLE_HANDSHAKE:
             msg = (
                 f"[bold yellow]● {escape(ev.value or '?')} 4-way[/bold yellow] on "
-                f"[bold]{ap_label}[/bold] [dim](not crackable, -m 22000)[/dim]"
+                f"[bold cyan]{ap_label}[/bold cyan] [dim](not crackable, -m 22000)[/dim]"
             )
         elif ev.kind == CaptureKind.PMKID:
             msg = (
                 f"[bold green]✓ PMKID[/bold green] on "
-                f"[bold]{ap_label}[/bold] from [bold]{client}[/bold]"
+                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{client}[/bold]"
             )
             save_result = save_pmkid(ap, ev.client_mac)
         elif ev.kind == CaptureKind.DECLOAK:
@@ -480,16 +480,16 @@ class ScannerView(Screen):
             return
         elif ev.kind == CaptureKind.WEP_KEY:
             msg = (f"[bold green]✓ WEP KEY[/bold green] on "
-                   f"[bold]{ap_label}[/bold] = {escape(wep_key_ascii(ev.value or ''))}")
+                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(wep_key_ascii(ev.value or ''))}")
         elif ev.kind == CaptureKind.WPS_PIN:
             msg = (f"[bold green]✓ WPS PIN[/bold green] on "
-                   f"[bold]{ap_label}[/bold] = {escape(ev.value or '')}")
+                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(ev.value or '')}")
         elif ev.kind == CaptureKind.WPS_PSK:
             msg = (f'[bold green]✓ WPS PSK[/bold green] on '
-                   f'[bold]{ap_label}[/bold] = "{escape(ev.value or "")}"')
+                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.value or "")}"')
         elif ev.kind == CaptureKind.WPS_PBC:
             msg = (f'[bold green]✓ WPS PSK[/bold green] [dim](via PushButton)[/dim] on '
-                   f'[bold]{ap_label}[/bold] = "{escape(ev.value or "")}"')
+                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.value or "")}"')
         else:
             return  # eapol events suppressed in scanner
         # Leading space aligns the ✓ win with the ● / ├─► / └─► tree log above it.
@@ -502,12 +502,14 @@ class ScannerView(Screen):
         if title:
             name = ev.ssid or ev.bssid
             if ev.kind == CaptureKind.WEP_KEY:
-                body = f"{name}: {wep_key_ascii(ev.value or '')}"
-            elif ev.pair_label:
-                body = f"{name} ({ev.pair_label})"
+                self.notify(f"{name}: {wep_key_ascii(ev.value or '')}", title=title, timeout=6)
             else:
-                body = name
-            self.notify(body, title=title, timeout=6)
+                # PMKID rides in M1; a handshake carries its pair label (M1+M2, …).
+                pair = ev.pair_label or ("M1" if ev.kind == CaptureKind.PMKID else None)
+                full_title = f"{title} ({pair})" if pair else title
+                body = (f"[bold]{escape(name)}[/bold] on channel [bold]{ap.channel}[/bold] "
+                        f"[dim bold](BSSID: {escape(ap.bssid)})[/dim bold]")
+                self.notify(body, title=full_title, timeout=6)
 
     def _write_log(self, text) -> None:
         try:
@@ -617,16 +619,18 @@ class ScannerView(Screen):
         if self.app.pbc_enabled:
             self._write_log(treelog.header(
                 "[bold]WPS PushButton auto-invade[/bold] is "
-                "[bold green]enabled[/bold green] [dim](press [bold]w[/bold] to toggle)[/dim]"))
+                "[bold green]enabled[/bold green] [dim](press [bold]w[/bold] to toggle)[/dim]",
+                color="dim"))
             self._write_log(treelog.leaf(
                 "[dim](automatically retrieves PSK when [bold italic]any[/bold italic] "
                 "WPS button is pressed)[/dim]"))
         else:
             self._write_log(treelog.header(
                 "[bold]WPS PushButton auto-invade[/bold] is "
-                "[yellow]disabled[/yellow] [dim](press [bold]w[/bold] to toggle)[/dim]"))
+                "[orange1]disabled[/orange1] [dim](press [bold]w[/bold] to toggle)[/dim]",
+                color="orange1"))
             self._write_log(treelog.leaf(
-                "[dim](detect + alert only, never transmits)[/dim]"))
+                "[dim](detect + alert only)[/dim]"))
 
     def _poll_pbc(self) -> None:
         iface = self.app.active_interface
@@ -700,14 +704,13 @@ class ScannerView(Screen):
         log = self.query_one("#system-log", RichLog)
         if self._fade_enabled:
             log.write(
-                f"[bold green][+] Fade ON[/bold green] "
-                f"[dim](rows fade after {int(GRACE_DURATION_S)}s, "
-                f"evict at {int(FADE_DURATION_S)}s)[/dim]"
+                " [bright_green]●[/bright_green] [bold]Idle AP Fade[/bold] is [bold]on[/bold] "
+                "[dim](idle APs slowly fade out)[/dim]"
             )
         else:
             log.write(
-                "[bold yellow][+] Fade OFF[/bold yellow] "
-                "[dim](rows stay full-bright, no eviction)[/dim]"
+                " [orange1]●[/orange1] [bold]Idle AP Fade[/bold] is [bold]off[/bold] "
+                "[dim](rows never fade)[/dim]"
             )
 
     def action_cycle_sort(self) -> None:
@@ -772,10 +775,12 @@ class ScannerView(Screen):
             for name, rngs in band_ranges(result)
         ]
         summary = " and ".join(pieces) if pieces else "[dim]no channels[/dim]"
-        log.write(f"[bold]Channel hopping[/bold] across {summary}")
+        log.write(f" [dim]●[/dim] [bold]Channel hopping[/bold] across {summary}")
         if dropped:
+            noun = "AP" if dropped == 1 else "APs"
             log.write(
-                treelog.leaf(f"[dim]Cleared {dropped} AP(s) outside the filter[/dim]")
+                treelog.leaf(f"[dim]Cleared [bold cyan]{dropped}[/bold cyan] "
+                             f"{noun} outside the filter[/dim]")
             )
 
     def _prune_aps_outside(self, channels: List[int]) -> int:

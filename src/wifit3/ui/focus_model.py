@@ -426,8 +426,8 @@ def card_identity(iface) -> tuple[str, str | None]:
     driver = getattr(iface, "driver", None)
     label = (getattr(iface, "description", None)
              or getattr(iface, "name", None) or "card")
-    # DeviceID descriptions are "chipset / marketing name"
-    label = str(label).split("/")[0].strip() or "card"
+    # Descriptions are "chipset / marketing" or "chipset (Make Model)"; keep the bare chipset.
+    label = str(label).split("/")[0].split("(")[0].strip() or "card"
     mac = getattr(driver, "mac_address", None)
     if isinstance(mac, (bytes, bytearray)) and len(mac) == 6:
         mac = ":".join(f"{b:02x}" for b in mac)

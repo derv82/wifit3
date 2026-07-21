@@ -194,8 +194,8 @@ class PmkidHarvestAttack(Campaign):
                 f"{self.target.bssid} as {_mac_bytes_to_str(self.source_mac)}"
                 f"{' (HW-ACKed)' if armed else ''}"
             )
-            self.log(f"Auth + Assoc → {self.target.bssid}"
-                     + (f" (retry {attempt})" if attempt > 1 else ""))
+            self.log(f"Auth → Assoc [dim bold](client MAC: {self.client_mac})[/dim bold]"
+                     + (f" [dim](retry {attempt})[/dim]" if attempt > 1 else ""))
             assoc = Association(self.iface, self.target.bssid, self.target.ssid or "",
                                 self.target.channel, our_mac=self.source_mac,
                                 assoc_trailer_ies=self._assoc_rsn_ie,
@@ -222,7 +222,8 @@ class PmkidHarvestAttack(Campaign):
                             f"[PMKID] Harvested {hs.pmkid.hex()} from {self.target.bssid} "
                             f"(STA {_mac_bytes_to_str(self.source_mac)})"
                         )
-                        self.log("M1 received: PMKID present")
+                        self.log("[bold]M1[/bold] received: "
+                                 "[bright_green]PMKID present[/bright_green]")
                         self.pmkid = hs.pmkid
                         return
                     self.fail_reason = PmkidFail.NO_KDE
@@ -230,14 +231,16 @@ class PmkidHarvestAttack(Campaign):
                         f"[PMKID] {self.target.bssid} answered with a PMKID-less M1: "
                         f"this AP doesn't expose one; not retrying."
                     )
-                    self.log("M1 received: no PMKID KDE")
+                    self.log("[bold]M1[/bold] received: "
+                             "[orange1 italic]no PMKID KDE[/orange1 italic]")
                     return
                 await asyncio.sleep(0.05)
 
             logger.info(
                 f"[PMKID] Attempt {attempt}: no M1 (AP silent), rotating MAC and retrying."
             )
-            self.log("no M1 (AP silent), rotating MAC")
+            self.log("[bold orange1]M1 not received[/bold orange1] "
+                     "[dim](AP silent, rotating MAC)[/dim]")
             self._rotate_mac()
 
         self.fail_reason = PmkidFail.NO_RESPONSE

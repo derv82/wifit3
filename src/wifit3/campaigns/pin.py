@@ -390,8 +390,8 @@ class WpsCampaign(Campaign):
         name = self.target.ssid or self.bssid
         logger.debug("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
         if self._oui_pin_count:
-            self.log(f"OUI match: [cyan]{self._oui_pin_count}[/cyan] known default "
-                     f"PIN(s): [dim]seeded ahead of the brute sweep[/dim]")
+            self.log(f"[dim]Prioritizing [bold]{self._oui_pin_count} OUI-matching "
+                     f"default PIN(s)[/bold][/dim]")
 
         # When resuming with a previously-recovered PIN, re-verify it against the AP
         if self.state.phase == "done" and self.state.found_pin:
@@ -488,7 +488,7 @@ class WpsCampaign(Campaign):
         """Mark the lock state, optionally wait it out, then release."""
         # Don't treat a silent AP (0 ACKs) as locked.
         if not beacon_locked and self._tx_ack and not self._ap_ever_acked:
-            self.log("[yellow]TX not reaching AP[/yellow][dim]: retrying, no backoff[/dim]")
+            self.log("[orange1]No ACK from AP[/orange1] [dim](retrying, no backoff)[/dim]")
             self.lock.note_progress()
             self._last_attempt_sig = None
             return
@@ -498,12 +498,13 @@ class WpsCampaign(Campaign):
         self._lock_kind = "hard" if beacon_locked else "soft"
         trigger = "beacon" if beacon_locked else f"{self.lock.strikes} strikes"
         if wait:
-            # Slow path: AP is locked
+            # Slow path: AP is locked. Rendered as a continuation under the last PIN.
             backoff = self.lock.backoff()
             self._lock_end_at = time.monotonic() + backoff
             self.status = "locked"
-            self.log(f"[red]AP locked[/red] [dim]({self._lock_kind}, {trigger}) "
-                     f"backing off {backoff:.0f}s[/dim]")
+            lock_label = "hard locked" if beacon_locked else "soft-lock"
+            self.log(f"{self._cont_align()} → [bright_red]{lock_label}[/bright_red] "
+                     f"({trigger}) [dim]waiting {backoff:.0f}s[/dim]")
             self._save_state()
             end = time.monotonic() + backoff
             while time.monotonic() < end and not self.stopped:
@@ -512,8 +513,8 @@ class WpsCampaign(Campaign):
                     break
         else:
             # Fast path: Assume AP is not locked to a new MAC
-            self.log(f"[yellow]soft-lock[/yellow] [dim]({trigger}), "
-                     f"rotating MAC, no wait[/dim]")
+            self.log(f"{self._cont_align()} → [bright_red]soft-lock[/bright_red] "
+                     f"[dim]rotating MAC[/dim]")
         self.lock.end_lock()
         self._lock_kind = None
         self._lock_end_at = None
@@ -543,12 +544,12 @@ class WpsCampaign(Campaign):
             return False
         self._timeout_retries += 1
         if self._timeout_retries > self._MAX_TIMEOUT_RETRIES:
-            self.log(f"trying [cyan]{pin}[/cyan] → [yellow]no reply after "
-                     f"{self._timeout_retries} tries[/yellow], conceding as wrong")
+            self.log(f"{self._attempt_prefix(pin)} → [dim]no reply after "
+                     f"{self._timeout_retries} tries, conceding as wrong[/dim]")
             self._timeout_retries = 0
             return False                  # give up retrying; fall through to advance
         lost = "M5" if out.result is PinResult.FIRST_HALF_WRONG else "M7"
-        self.log(f"trying [cyan]{pin}[/cyan] → [dim]no reply (likely a lost {lost}), "
+        self.log(f"{self._attempt_prefix(pin)} → [dim]no reply (likely a lost {lost}), "
                  f"retrying (#{self._timeout_retries})[/dim]")
         self.lock.note_progress()         # a lost reply isn't a lock; keep the strike clean
         return True
@@ -572,11 +573,16 @@ class WpsCampaign(Campaign):
         logger.debug("WPS rotated MAC %s -> %s", old.hex(), self.our_mac.hex())
 
     def _attempt_prefix(self, pin: str) -> str:
-        """Colour the PIN when it changed since the last logged line."""
+        """Bold-cyan the PIN when it changed since the last logged line; otherwise a blank
+        run the width of the PIN so this line's '→' aligns under the PIN above it."""
         if pin == self._last_logged_pin:
-            return "[dim]     ↳[/dim]"
+            return self._cont_align()
         self._last_logged_pin = pin
-        return f"[cyan]{pin}[/cyan]"
+        return f"[bold cyan]{pin}[/bold cyan]"
+
+    def _cont_align(self) -> str:
+        """Blank prefix aligning a continuation '→' under the last-logged PIN (8-digit)."""
+        return " " * len(self._last_logged_pin or "        ")
 
     def _log_attempt(self, pin: str, out: AttemptOutcome,
                      prev_first_half: Optional[str]) -> None:
@@ -593,19 +599,23 @@ class WpsCampaign(Campaign):
 
         label = self._attempt_prefix(pin)
         if first_half_just_confirmed:
-            self.log(f"{label} → [green]first half OK[/green] "
+            self.log(f"{label} → [bold bright_green]first half OK[/bold bright_green] "
                      f"[dim bold]\\[M5][/dim bold]")
             return
         if out.result is PinResult.FIRST_HALF_WRONG:
             self.log(f"{label} → [red]first half wrong[/red] [dim bold]\\[M4][/dim bold]")
         elif out.result is PinResult.SECOND_HALF_WRONG:
-            self.log(f"{label} → [dark_orange]second half wrong[/dark_orange] "
+            self.log(f"{label} → [bold bright_red]second half wrong[/bold bright_red] "
                      f"[dim bold]\\[M6][/dim bold]")
         elif out.result is PinResult.PROTO_ERROR:
             if out.detail == "assoc failed":   # not a NACK, we never associated (AP often locked)
-                no_ack = (" [bold dim](0 TX ACKs)[/bold dim]"
-                          if self._tx_ack and not self._ap_ever_acked else "")
-                self.log(f"{label} → [yellow]no assoc[/yellow]{no_ack}")
+                if self._tx_ack and not self._ap_ever_acked:
+                    # Zero ACKs: the AP isn't hearing us at all (out of range).
+                    self.log(f"{label} → [orange1]no assoc[/orange1] "
+                             f"[dim bold](0 TX ACKs)[/dim bold]")
+                else:
+                    # AP heard us (ACKed) but wouldn't complete association.
+                    self.log(f"{label} → [orange1]no assoc response[/orange1]")
             else:
                 # De-swallowed reason: the AP answered with a NACK carrying a config-error.
                 why = (config_error_name(out.config_error)

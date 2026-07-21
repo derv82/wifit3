@@ -317,7 +317,7 @@ class FocusViewV2(Screen):
             self._log(f"[bold]Target acquired:[/bold] {chip}")
         else:
             self._log("[bold]Target acquired:[/bold] "
-                      "[dim italic]cloaked network: hidden SSID[/dim italic]")
+                      "[dim italic]cloaked network (hidden SSID)[/dim italic]")
         self._log(treelog.branch(f"[dim]Encryption:[/dim] {enc}"))
         self._log(treelog.branch(f"[dim]BSSID:[/dim] [white]{ap.bssid}[/white]"))
         if iface:
@@ -343,11 +343,10 @@ class FocusViewV2(Screen):
 
         enc = (ap.encryption or "").upper()
         if enc == "WEP":
-            self._log(treelog.header(
-                "[italic]Passively Listening[/italic] for [bold]WEP IVs[/bold]"))
+            self._log("[bold italic]Passively listening[/bold italic] for [bold]WEP IVs[/bold]")
         elif enc not in ("OPEN", "", "WPA3 "):
-            # treelog so the ● shares the one-space indent of the trees above; 'Crackable' because the pipeline filters SAE-only out.
-            self._log(treelog.header("[italic]Passively Listening[/italic] for"))
+            # A bulletless header; the tree below hangs off it. 'Crackable' because the pipeline filters SAE-only out.
+            self._log("[bold italic]Passively listening[/bold italic] for")
             self._log(treelog.branch("Crackable 4-Way [bold]Handshakes[/bold]"))
             self._log(treelog.leaf("Crackable [bold]PMKIDs[/bold]"))
 
@@ -689,8 +688,10 @@ class FocusViewV2(Screen):
             hint = _save_line(result) if result is not None else None
             self._emit_lines(pmkid_log.verdict_success(hint))
             # Detector skips forged MACs, so toast the active-harvest win here too.
-            self.notify(camp.target.ssid or camp.target.bssid,
-                        title=CAPTURE_TOAST_TITLES[CaptureKind.PMKID], timeout=6)
+            name = camp.target.ssid or camp.target.bssid
+            body = (f"[bold]{escape(name)}[/bold] on channel [bold]{camp.target.channel}[/bold] "
+                    f"[dim bold](BSSID: {escape(camp.target.bssid)})[/dim bold]")
+            self.notify(body, title=f"{CAPTURE_TOAST_TITLES[CaptureKind.PMKID]} (M1)", timeout=6)
         elif getattr(camp, "stopped", False):
             self._log(treelog.leaf_fail("[yellow]Stopped[/yellow] PMKID harvesting"))
         else:
@@ -828,7 +829,7 @@ class FocusViewV2(Screen):
     def _launch_wps_pin(self, ap, iface) -> None:
         try:
             name = escape(ap.ssid or ap.bssid)
-            self._log(f"[bold cyan]WPS PIN brute[/bold cyan] started on [bold]{name}[/bold]")
+            self._log(f"[bold]WPS PIN brute[/bold] started on [bold cyan]{name}[/bold cyan]")
             self._wps_campaign = WpsCampaign(
                 iface, ap, log=lambda m: self._log(treelog.branch(m)))
             self._wps_campaign.run()

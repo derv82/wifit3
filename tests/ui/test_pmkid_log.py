@@ -3,8 +3,7 @@ from wifit3.campaigns.pmkid import PmkidFail
 from wifit3.ui.pmkid_log import render_failure, render_success
 
 _ESSID = "TESTNET"
-_HEADER = ("[bold]PMKID[/bold] [dim]·[/dim] [bold]Harvesting[/bold] from "
-           "[bold cyan]TESTNET[/bold cyan]")
+_HEADER = "[bold]Harvesting PMKID[/bold] from [bold cyan]TESTNET[/bold cyan]"
 
 
 def test_success_tree_full_action_trace():
@@ -23,13 +22,13 @@ def test_success_without_save_hint_closes_on_the_chip():
     assert "└─►" in lines[4] and "PMKID Extracted" in lines[4]
 
 
-def test_no_kde_echoes_tx_then_red_m1_and_bold_orange_leaf():
+def test_no_kde_echoes_tx_then_red_m1_and_orange_chip_leaf():
     lines = render_failure(_ESSID, PmkidFail.NO_KDE)
     assert lines[0] == _HEADER
     assert "Auth request" in lines[1] and "Assoc. request" in lines[2]
     assert "M1 Message (AP→Client) PMKID[red]✗[/red]" in lines[3]
-    assert "[red]╳[/red]" in lines[4]                           # leaf_fail terminal
-    assert "[bold orange1]No PMKID in M1[/bold orange1]" in lines[4]
+    assert "└─►" in lines[4]                                    # neutral leaf, not └─╳
+    assert "[black bold on orange1] No PMKID in M1 [/black bold on orange1]" in lines[4]
     assert "AP does not send PMKID in M1" in lines[4]
 
 
@@ -37,7 +36,8 @@ def test_no_response_echoes_tx_but_has_no_m1():
     lines = render_failure(_ESSID, PmkidFail.NO_RESPONSE)
     assert "Auth request" in lines[1] and "Assoc. request" in lines[2]
     assert not any("M1 Message" in ln for ln in lines)         # no M1 ever arrived
-    assert "[bold orange1]No M1 received[/bold orange1]" in lines[-1]
+    assert "└─►" in lines[-1]                                   # neutral leaf, not └─╳
+    assert "[bold orange1]M1 not received[/bold orange1]" in lines[-1]
     assert "AP did not respond" in lines[-1]
 
 

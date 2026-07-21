@@ -7,9 +7,10 @@ RichLog is append-only. These return Rich markup; the glyph carries status (gree
 """
 
 
-def header(msg: str) -> str:
-    """A group header ( ● ): root line above the ├─/└─ children (leading space aligns the bullet)."""
-    return f" [green]●[/green] {msg}"
+def header(msg: str, color: str = "green") -> str:
+    """A group header ( ● ): root line above the ├─/└─ children (leading space aligns the bullet).
+    ``color`` sets the bullet colour so a caller can signal state (dim = passive, orange1 = off)."""
+    return f" [{color}]●[/{color}] {msg}"
 
 
 def branch(msg: str) -> str:

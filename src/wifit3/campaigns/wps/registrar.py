@@ -248,7 +248,10 @@ class WpsRegistrar:
                 if identity_reqs >= _IDENTITY_STALL:
                     return _out(PinResult.TIMEOUT, refused=True,
                                 detail=f"stalled at ID {identity_reqs}x, no M1")
-                return _out(PinResult.TIMEOUT, detail="no reply")   # mere silence: not refused
+                # Mere silence (not refused): name the WSC message we were still waiting on.
+                awaiting = "M1" if not reached_m1 else ("M3" if highest_mt == M.WPS_M1 else None)
+                return _out(PinResult.TIMEOUT,
+                            detail=f"no reply to {awaiting}" if awaiting else "no reply")
 
             p = M.parse_rx_frame(frame)
             if p is None:
