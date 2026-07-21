@@ -345,7 +345,7 @@ class FocusViewV2(Screen):
         if enc == "WEP":
             self._log("[bold italic]Passively listening[/bold italic] for [bold]WEP IVs[/bold]")
         elif enc not in ("OPEN", "", "WPA3 "):
-            # A bulletless header; the tree below hangs off it. 'Crackable' because the pipeline filters SAE-only out.
+            # 'Crackable' because the pipeline filters SAE-only out.
             self._log("[bold italic]Passively listening[/bold italic] for")
             self._log(treelog.branch("Crackable 4-Way [bold]Handshakes[/bold]"))
             self._log(treelog.leaf("Crackable [bold]PMKIDs[/bold]"))

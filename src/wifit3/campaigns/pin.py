@@ -498,7 +498,7 @@ class WpsCampaign(Campaign):
         self._lock_kind = "hard" if beacon_locked else "soft"
         trigger = "beacon" if beacon_locked else f"{self.lock.strikes} strikes"
         if wait:
-            # Slow path: AP is locked. Rendered as a continuation under the last PIN.
+            # Slow path: AP is locked
             backoff = self.lock.backoff()
             self._lock_end_at = time.monotonic() + backoff
             self.status = "locked"
@@ -573,15 +573,14 @@ class WpsCampaign(Campaign):
         logger.debug("WPS rotated MAC %s -> %s", old.hex(), self.our_mac.hex())
 
     def _attempt_prefix(self, pin: str) -> str:
-        """Bold-cyan the PIN when it changed since the last logged line; otherwise a blank
-        run the width of the PIN so this line's '→' aligns under the PIN above it."""
+        """Bold-cyan the PIN when it changed since the last logged line, else a blank."""
         if pin == self._last_logged_pin:
             return self._cont_align()
         self._last_logged_pin = pin
         return f"[bold cyan]{pin}[/bold cyan]"
 
     def _cont_align(self) -> str:
-        """Blank prefix aligning a continuation '→' under the last-logged PIN (8-digit)."""
+        """Blank prefix the width of the last-logged PIN, aligning a continuation's '→'."""
         return " " * len(self._last_logged_pin or "        ")
 
     def _log_attempt(self, pin: str, out: AttemptOutcome,

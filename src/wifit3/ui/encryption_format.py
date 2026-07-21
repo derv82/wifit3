@@ -73,8 +73,7 @@ def format_encryption_markup(
     cipher = ap.pairwise_cipher
     show_cipher = detailed and cipher is not None
 
-    # WPA3 Transition (SAE + PSK): render as WPA3→2. WPA3 half is bright-red (SAE,
-    # no attack); the "2" is the attackable WPA2 fallback; the "→" keeps the base fg.
+    # WPA3 Transition (SAE + PSK): render as WPA3→2.
     if ap.wpa3 and ap.transition_mode:
         head = f"[bright_red]WPA3[/bright_red]→[{_ATTACKABLE}]2[/{_ATTACKABLE}]"
         if not detailed:

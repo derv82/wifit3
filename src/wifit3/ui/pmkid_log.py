@@ -54,7 +54,6 @@ def m1(has_pmkid: bool) -> str:
 
 
 def _fail_leaf(reason: Optional[PmkidFail]) -> str:
-    # A neutral └─► leaf (not the heavy └─╳): the styled head already carries the verdict.
     head, why = _FAIL_LEAF.get(reason, ("[bold orange1]Harvest failed[/bold orange1]", ""))
     tail = f" [dim]({why})[/dim]" if why else ""
     return treelog.leaf(f"{head}{tail}")

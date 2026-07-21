@@ -504,7 +504,6 @@ class ScannerView(Screen):
             if ev.kind == CaptureKind.WEP_KEY:
                 self.notify(f"{name}: {wep_key_ascii(ev.value or '')}", title=title, timeout=6)
             else:
-                # PMKID rides in M1; a handshake carries its pair label (M1+M2, …).
                 pair = ev.pair_label or ("M1" if ev.kind == CaptureKind.PMKID else None)
                 full_title = f"{title} ({pair})" if pair else title
                 body = (f"[bold]{escape(name)}[/bold] on channel [bold]{ap.channel}[/bold] "
