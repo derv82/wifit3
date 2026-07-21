@@ -130,7 +130,10 @@ MT_CMB_CTRL                       = 0x0020   # [SRC] mt76x02_regs.h:14
 MT_CMB_CTRL_XTAL_RDY              = 1 << 22  # BIT(22)
 MT_CMB_CTRL_PLL_LD                = 1 << 23  # BIT(23)
 
+MT_COEXCFG0                       = 0x0040   # [SRC] mt76x02_regs.h:30
+MT_COEXCFG0_COEX_EN               = 1 << 0    # BIT(0)
 MT_COEXCFG3                       = 0x004c   # [SRC] mt76x02_regs.h:38
+MT_CSR_EE_CFG1                    = 0x0104   # [SRC] mt76x02_regs.h:59
 
 # RF misc — toggle external PA enable bits for A/G band.
 # [SRC] mt76x02_regs.h:209

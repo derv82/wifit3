@@ -247,13 +247,8 @@ def clear_shared_keys(transport: MT76x0UTransport) -> None:
             val &= ~(MT_SKEY_MODE_MASK << shift)
             val |= MT76X02_CIPHER_NONE << shift   # = 0
             transport.write32(skey_mode_reg, val)
-            # mt76_wr_copy(MT_SKEY(...), zero_data, 32) → 8× u32 writes.
-            skey_base = MT_SKEY(vif_idx, key_idx)
-            for word_i in range(8):
-                word_val = int.from_bytes(
-                    zero32[word_i * 4: word_i * 4 + 4], "little"
-                )
-                transport.write32(skey_base + word_i * 4, word_val)
+            # mt76_wr_copy(MT_SKEY(...), zero_data, 32) → one 32-byte MULTI_WRITE.
+            transport.write_copy(MT_SKEY(vif_idx, key_idx), zero32)
     logger.info("clear_shared_keys: done")
 
 
@@ -278,7 +273,6 @@ def clear_wcids(transport: MT76x0UTransport) -> None:
         )
         transport.write32(MT_WCID_ATTR(idx), attr)
         if idx < 128:
-            # mt76_wr_copy(MT_WCID_ADDR(idx), zero_addr, 8) → 2× u32 writes.
-            transport.write32(MT_WCID_ADDR(idx), 0)
-            transport.write32(MT_WCID_ADDR(idx) + 4, 0)
+            # mt76_wr_copy(MT_WCID_ADDR(idx), zero_addr, 8) → one 8-byte MULTI_WRITE.
+            transport.write_copy(MT_WCID_ADDR(idx), b"\x00" * 8)
     logger.info("clear_wcids: done")

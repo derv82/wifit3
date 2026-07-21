@@ -249,6 +249,10 @@ class MT76x0UDriver(Driver):
             self.transport,
             progress_cb=None,
         )
+        # Warm-chip wake before the cold-boot upload. Kept here (not in
+        # load_firmware) so the verify_pcap cold path stays byte-exact; a warm
+        # chip that skips it re-uploads clean but never arms RX. See MT76X0U.md.
+        self._uploader.reset_dirty_chip()
         try:
             result = self._uploader.load_firmware(fw_file)
         except FirmwareError as e:

@@ -28,11 +28,13 @@ from .constants import (
     INTER_CHUNK_SLEEP_MS,
     MCU_FW_CHUNK_DATA_MAX,
     MT76X02_FW_HEADER_SIZE,
+    MT_ASIC_VERSION,
     MT_CMB_CTRL,
     MT_CMB_CTRL_PLL_LD,
     MT_CMB_CTRL_XTAL_RDY,
     MT_DEV_MODE_FW_RESET,
     MT_DEV_MODE_IVB_TRIGGER,
+    MT_EFUSE_CTRL,
     MT_FCE_DMA_ADDR,
     MT_FCE_DMA_LEN,
     MT_FCE_PDMA_GLOBAL_CONF,
@@ -191,6 +193,31 @@ class FirmwareUploader:
         """`mt76x0_firmware_running` — BIT(0) of MT_MCU_COM_REG0."""
         return bool(self.t.read32(MT_MCU_COM_REG0) & MT_MCU_COM_REG0_FW_READY)
 
+    def reset_dirty_chip(self) -> None:
+        """Warm/dirty-chip wake, done by connect() BEFORE the cold-boot upload.
+
+        If FW is resident from a prior session (WLAN_EN set or firmware_running),
+        force a WLAN_RESET hardware cycle from WLAN_EN=1 so it actually bites. A
+        truly cold chip skips this. Kept OUT of load_firmware (which verify_pcap
+        drives byte-exact against a clean cold-boot capture that has no such
+        reset): without it, a warm chip re-uploads clean but RX never arms, an
+        RF/DMA power state the re-upload alone doesn't clear. The subsequent
+        pre-clean chip_onoff(false,false) then clears WLAN_EN as usual.
+        """
+        val = self.t.read32(MT_WLAN_FUN_CTRL)
+        if not (val & MT_WLAN_FUN_CTRL_WLAN_EN) and not self.firmware_running():
+            return
+        v = val | (MT_WLAN_FUN_CTRL_GPIO_OUT_EN
+                   | MT_WLAN_FUN_CTRL_WLAN_EN
+                   | MT_WLAN_FUN_CTRL_WLAN_CLK_EN)
+        v &= ~MT_WLAN_FUN_CTRL_FRC_WL_ANT_SEL
+        v |= MT_WLAN_FUN_CTRL_WLAN_RESET | MT_WLAN_FUN_CTRL_WLAN_RESET_RF
+        self.t.write32(MT_WLAN_FUN_CTRL, v)
+        time.sleep(UDELAY_20US)
+        v &= ~(MT_WLAN_FUN_CTRL_WLAN_RESET | MT_WLAN_FUN_CTRL_WLAN_RESET_RF)
+        self.t.write32(MT_WLAN_FUN_CTRL, v)
+        time.sleep(0.020)
+
     def fw_reset(self) -> None:
         """`mt76x02u_mcu_fw_reset` — DEV_MODE wValue=0x1, no payload."""
         self.t.vendor_dev_mode(MT_DEV_MODE_FW_RESET)
@@ -335,61 +362,22 @@ class FirmwareUploader:
                             f"time {header['build_time']!r}  "
                             f"(ilm={header['ilm_len']} dlm={header['dlm_len']})")
 
-        # ---- Step 0z: WARM chip pre-reset.
-        # If WLAN_EN is set at entry, the chip has FW running from a
-        # previous session. We MUST do the WLAN_RESET hardware reset BEFORE
-        # the pre-clean clears WLAN_EN, because chip_onoff(reset=True)'s
-        # reset cycle is gated on `if val & WLAN_EN` — once pre-clean
-        # clears WLAN_EN, the bring-up's reset cycle skips, FW survives,
-        # fw_reset (vendor cmd) only partially kills it, and the
-        # subsequent bulk-OUT FW upload truncates mid-chunk.
-        #
-        # This block does the cycle directly:
-        #   - assert GPIO_OUT_EN + WLAN_RESET + WLAN_RESET_RF (with WLAN_EN
-        #     still set), write
-        #   - sleep
-        #   - clear the RESET bits, write
-        #   - then fall through to the normal pre-clean → bring-up flow,
-        #     which will see WLAN_EN=0 (because we kept it set + then
-        #     pre-clean clears it) and do a clean cold-boot upload.
-        initial_val = self.t.read32(MT_WLAN_FUN_CTRL)
-        # The WLAN_RESET cycle below is what actually wakes RX — it must fire on ANY *dirty* chip,
-        # not only WLAN_EN=1. A replug that doesn't power-cycle the dongle (USB passthrough / a VM)
-        # leaves FW resident with WLAN_EN=0: the chip is dirty but the old WLAN_EN-only gate missed
-        # it, so RX stayed dead on the first cold boot while every warm boot worked. So gate on
-        # firmware_running() too, and force WLAN_EN|WLAN_CLK_EN during the reset so it bites from the
-        # WLAN_EN=0 state (mirrors the working warm path). [EXPERIMENT — cold-first-boot no-RX]
-        fw_resident = self.firmware_running()
-        if (initial_val & MT_WLAN_FUN_CTRL_WLAN_EN) or fw_resident:
-            self._report(0.01,
-                f"Dirty chip (WLAN_FUN_CTRL=0x{initial_val:08x}, fw_running={fw_resident}) — "
-                f"forcing WLAN_RESET hardware cycle")
-            val = initial_val
-            val |= (MT_WLAN_FUN_CTRL_GPIO_OUT_EN
-                    | MT_WLAN_FUN_CTRL_WLAN_EN
-                    | MT_WLAN_FUN_CTRL_WLAN_CLK_EN)
-            val &= ~MT_WLAN_FUN_CTRL_FRC_WL_ANT_SEL
-            val |= (MT_WLAN_FUN_CTRL_WLAN_RESET
-                    | MT_WLAN_FUN_CTRL_WLAN_RESET_RF)
-            self.t.write32(MT_WLAN_FUN_CTRL, val)
-            time.sleep(UDELAY_20US)
-            val &= ~(MT_WLAN_FUN_CTRL_WLAN_RESET
-                     | MT_WLAN_FUN_CTRL_WLAN_RESET_RF)
-            self.t.write32(MT_WLAN_FUN_CTRL, val)
-            # Settle: chip's MCU is mid-reset; brief sleep so subsequent
-            # vendor writes don't time-out hitting a wedged USB pipe.
-            time.sleep(0.020)   # 20 ms
-
-        # ---- Step 0a: chip OFF cycle. [SRC] mt76x0/usb.c:259
-        # Kernel probe explicitly does this with the comment
-        # "Disable the HW, otherwise MCU fail to initialize on hot reboot".
-        # Critical on Windows where the chip may be in a warm state from a
-        # prior session — without this, the first vendor write after the
-        # subsequent fw_reset times out.
-        self._report(0.02, "chip_onoff(enable=false, reset=false) — pre-clean")
+        # ---- Chip reset + identity probe. [SRC] mt76x0/usb.c:259-276
+        # Always cold-boot: no warm skip, no wifit3-only pre-reset hack. The
+        # kernel probe disables the HW via chip_onoff(false,false) ("otherwise
+        # MCU fail to initialize on hot reboot"), waits for the MAC, then reads
+        # the chip identity registers. A dirty (warm) chip is reset by the
+        # `if WLAN_EN` branch inside chip_onoff(true,true) below, exactly as the
+        # kernel does. [SRC] mt76x0/init.c:44-69
+        self._report(0.02, "chip_onoff(enable=false, reset=false): pre-clean")
         self.chip_onoff(enable=False, reset=False, label="pre-clean")
         self._report(0.03, "wait_for_mac (after pre-clean)")
         self.wait_for_mac()
+
+        # ASIC identity reads the kernel probe issues here. [SRC] mt76x0/usb.c:266-276
+        self.t.read32(MT_ASIC_VERSION)      # chip / rev id
+        self.t.read32(MT_MAC_CSR0)          # mac_rev
+        self.t.read32(MT_EFUSE_CTRL)        # eFUSE-present check (SEL bit)
 
         # ---- Step 1: chip on + reset
         self._report(0.04, "chip_onoff(enable=true, reset=true)")

@@ -232,6 +232,7 @@ class ReplayDevice:
         self.rxfilter_mask = rxfilter_mask
         self.wpdma_addr = wpdma_addr
         self.rxfilter_masked = 0
+        self.empty_reads_served = 0
 
     def _next(self) -> dict:
         if self.i >= len(self.ops):
@@ -265,6 +266,14 @@ class ReplayDevice:
                 f"op #{self.i-1}: port {exp} breq=0x{bRequest:02x} 0x{addr:08x}, "
                 f"wire has {fmt_op(op)}")
         if is_in:
+            if not op["data"]:
+                # Capture gap: a MATCHED IN read (breq/addr/dir all checked above)
+                # whose data stage was not recorded. Serve zeros so a poll loop
+                # reads "not ready" and advances to the next recorded poll read,
+                # keeping the cursor aligned. Not a skipped/patched-away op.
+                self.empty_reads_served += 1
+                n = int(data_or_wLength) if isinstance(data_or_wLength, int) else 4
+                return bytearray(n)
             return bytearray(op["data"])
         payload = bytes(data_or_wLength) if data_or_wLength else b""
         if op["data"] != payload:

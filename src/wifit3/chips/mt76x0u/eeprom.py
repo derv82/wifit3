@@ -179,9 +179,12 @@ def load_full_eeprom(transport: MT76x0UTransport) -> EEPROMCache:
     Returns an EEPROMCache wrapping the 512-byte buffer.
     """
     # Kernel does a physical-size check first (mt76x0_efuse_physical_size_check),
-    # which scans the usage-map region for free slots. For our purposes we
-    # accept any EFUSE that read returns and let check_eeprom() validate the
-    # chip_id field instead — that's the meaningful sanity check.
+    # reading the usage-map region (MT_EE_USAGE_MAP_START=0x1e0, MT_MAP_READS=2
+    # blocks = 32 bytes) in PHYSICAL_READ mode to count free slots. We don't act
+    # on the count (check_eeprom() validates chip_id instead), but the reads are
+    # on the cold-boot wire, so we issue them for byte-exact reproduction.
+    # [SRC] mt76x0/eeprom.c mt76x0_efuse_physical_size_check
+    efuse_get_data(transport, 0x1e0, 32, mode=MT_EE_PHYSICAL_READ)
     raw = efuse_get_data(transport, 0, MT76X0_EEPROM_SIZE, mode=MT_EE_READ)
     return EEPROMCache(raw)
 

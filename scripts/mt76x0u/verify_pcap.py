@@ -41,7 +41,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import mt76usb_pcap_replay as rp  # noqa: E402
 
 from wifit3.chips.mt76x0u import tx as mt_tx  # noqa: E402
-from wifit3.chips.mt76x0u.constants import Q_SELECT  # noqa: E402
+from wifit3.chips.mt76x0u.constants import MT_RX_FILTR_CFG, Q_SELECT  # noqa: E402
 from wifit3.chips.mt76x0u.eeprom import read_efuse_full  # noqa: E402
 from wifit3.chips.mt76x0u.firmware import FirmwareUploader  # noqa: E402
 from wifit3.chips.mt76x0u.mac import (  # noqa: E402
@@ -123,6 +123,7 @@ def check_boot(data: dict) -> str:
         init_mac_registers(t, mcu)
         wait_for_txrx_idle(t)
         init_bbp(t, mcu)
+        t.read32(MT_RX_FILTR_CFG)     # rxfilter cache [SRC] mt76x0/init.c:196
         clear_shared_keys(t)
         clear_wcids(t)
         efuse = read_efuse_full(t)
