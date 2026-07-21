@@ -755,3 +755,12 @@ def mac_resume(transport: MT76x2UTransport) -> None:
     config-time mac_stop (the tail of a wrapped channel change)."""
     transport.write32(MT_MAC_SYS_CTRL,
                       MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX)
+
+
+def mac_stop_light(transport: MT76x2UTransport) -> None:
+    """Lightweight MAC stop for teardown: clear only ENABLE_TX|RX (leave the other
+    MAC_SYS_CTRL bits alone). The full mt76x2u_mac_stop drains the queues + writes
+    MAC_SYS_CTRL=0, which is unneeded on close() and whose poll-loop reads / full
+    register clear can leave a warm chip harder to re-attach on the next open."""
+    transport.rmw32(MT_MAC_SYS_CTRL,
+                    MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX, 0)

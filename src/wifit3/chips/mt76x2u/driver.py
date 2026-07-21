@@ -62,6 +62,7 @@ from .mac import (
     mac_setaddr,
     mac_start,
     mac_stop,
+    mac_stop_light,
     wait_for_txrx_idle,
 )
 from .mcu import McuChannel, mcu_init
@@ -737,7 +738,7 @@ class MT76x2UDriver(Driver):
             await self._rx_drainer.stop()
             self._rx_drainer = None
         try:
-            await mac_stop(self.transport)
+            mac_stop_light(self.transport)   # light teardown; full drain can wedge re-attach
         except Exception as e:
             logger.debug("MT7612U: mac_stop on close ignored: %s", e)
         try:
