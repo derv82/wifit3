@@ -103,7 +103,10 @@ class MT76x2UDriver(Driver):
         + [149, 153, 157, 161, 165]
     )
     FAKE_MAC = FakeMacSupport.SPOOFABLE
-    LINUX_REPLUG_AFTER_MODPROBE = False   # self-colds: force_power_cycle → cold-equivalent, no replug
+    # Setup-flow flag only (consumed by wifit3.setup): no replug prompt after the
+    # modprobe blocklist install. connect() always self-colds (force_power_cycle +
+    # our FW upload), so a kernel-warmed card is reset to our firmware on open.
+    LINUX_REPLUG_AFTER_MODPROBE = False
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device,
@@ -281,41 +284,26 @@ class MT76x2UDriver(Driver):
             "mt7612 (WiFi-only)" if self.is_mt7612 else "combo (WiFi+BT, rom_protect)",
         )
 
-        # ----- Cold/warm gate -----
-        # If FW is already running (a previous process left it in this state),
-        # skip the cold-only pre-FW work. The post-FW work (mac_reset, channel,
-        # mac_start) is idempotent so we re-run it regardless.
+        # ----- Always cold-boot -----
+        # We never trust already-running firmware. MT_MCU_COM_REG0 only reports
+        # that *some* firmware is up, not *whose*: it could be a prior wifit3
+        # session, a stale/wedged MCU, or (on Linux) the kernel mt76x2u driver's
+        # own firmware, which we can't drive with our command set. Reusing a
+        # foreign/warm MCU was the source of the seq-mismatch + calibration
+        # response timeouts on warm re-attach. So if anything is running we
+        # power-cycle the WLAN block first (clears the ROM-patch-applied bit +
+        # FCE state), then always upload our own firmware for a deterministic
+        # known-cold state. Costs ~1s of FW upload per open; worth it.
         com_reg = self.transport.read32(MT_MCU_COM_REG0)
-        warm = bool(com_reg & 0x3)
-        if warm:
-            self.is_warm = True
+        if com_reg & 0x3:
             logger.info(
-                "MT7612U: firmware already running (MT_MCU_COM_REG0=0x%08x). "
-                "Skipping power_on + FW upload.", com_reg,
+                "MT7612U: firmware already running (MT_MCU_COM_REG0=0x%08x); "
+                "power-cycling for a clean cold boot with our firmware.", com_reg,
             )
-            # Drain any stale MCU responses left over from the previous
-            # session — the chip's MCU firmware is still running with its
-            # own internal seq counter, and any unread response in
-            # EP_IN_CMD_RESP causes a seq-mismatch on our first wait_resp
-            # command (mcu_load_cr). Symptom: ~1-in-10 warm boots fails
-            # with "MCU resp seq mismatch: got=4 want=1" → timeout. See
-            # [[idle-gate-before-table-clears]] for the similar shape.
-            try:
-                drained = await self.mcu.drain_response_queue()
-                if drained > 0:
-                    logger.info(
-                        "MT7612U: drained %d stale MCU response(s) from "
-                        "previous session", drained,
-                    )
-            except Exception as e:
-                logger.warning(
-                    "MT7612U: MCU response drain failed (continuing): %s", e,
-                )
-
-        # ----- Cold path: power_on + FW upload + MCU init -----
-        if not warm:
-            if not await self._cold_init_chip(progress_cb):
-                raise BringUpError("cold-init", "cold chip init failed")
+            await force_power_cycle(self.transport)
+        self.is_warm = False
+        if not await self._cold_init_chip(progress_cb):
+            raise BringUpError("cold-init", "cold chip init failed")
 
         # ----- EEPROM (idempotent — chip-side EEPROM, FW not required) -----
         if progress_cb:
@@ -385,46 +373,20 @@ class MT76x2UDriver(Driver):
         if not await self._init_mac_tables(mac_bytes, progress_cb):
             raise BringUpError("mac-tables", "MAC table init failed")
 
-        # ----- BBP CR table via MCU — first wait_resp command -----
-        # If we took the warm-skip path, this is the first command we send
-        # to the previous session's MCU. On a wedged MCU, it times out
-        # (~1-in-10 warm boots — drain helped some but not all). Fall back
-        # to a full cold reset so we always succeed.
+        # ----- BBP CR table via MCU: first wait_resp command -----
+        # First MCU command after our fresh firmware upload. A timeout here
+        # means the chip didn't come up cleanly (rare: a USB/enumeration
+        # transient right after a physical replug). We already cold-booted from
+        # a power cycle, so no lighter software recovery remains; surface a
+        # replug.
         if progress_cb:
             progress_cb(0.82, "MCU LOAD_CR (BBP coefficient table)")
         if not await mcu_load_cr(self.mcu, temp_level=0, channel=0):
-            if not warm:
-                raise BringUpError("mcu-load-cr", "LOAD_CR (BBP table) failed on the cold path")
-            # Warm path: force a HARD power cycle + cold init + redo MAC
-            # tables + retry. A plain reset_wlan + power_on isn't enough to
-            # clear the chip's MCU register state (ROM-patch-applied bit,
-            # FCE config) — without an explicit WLAN_EN off-then-on the
-            # subsequent FW upload calls `_program_fce` and times out at
-            # MT_TX_CPU_FROM_FCE_BASE_PTR (chip's FCE engine still bound
-            # to the wedged previous-session state).
-            logger.warning(
-                "MT7612U: warm-path mcu_load_cr timed out — forcing power "
-                "cycle + cold reset + firmware reload"
+            raise BringUpError(
+                "mcu-load-cr",
+                "LOAD_CR (BBP table) failed after a cold boot. If it persists, "
+                "unplug and replug the USB device.",
             )
-            self.mcu._seq = 0
-            self.is_warm = False
-            warm = False
-            await force_power_cycle(self.transport)
-            if not await self._cold_init_chip(progress_cb):
-                raise BringUpError(
-                    "cold-init",
-                    "cold init failed after a power cycle — the chip is wedged from the "
-                    "previous session; please unplug and replug the USB device.",
-                )
-            if not await self._init_mac_tables(mac_bytes, progress_cb):
-                raise BringUpError("mac-tables", "MAC table init failed after a power cycle")
-            if not await mcu_load_cr(self.mcu, temp_level=0, channel=0):
-                raise BringUpError(
-                    "mcu-load-cr",
-                    "LOAD_CR (BBP table) failed after a power cycle + cold reset — please "
-                    "unplug and replug the USB device.",
-                )
-            logger.info("MT7612U: power-cycle + cold-reset fallback succeeded")
 
         # ----- PHY rxpath/txdac (chainmask-dependent BBP toggles) -----
         phy_set_rxpath(self.transport, self.chainmask)

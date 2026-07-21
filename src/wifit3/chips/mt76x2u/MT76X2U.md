@@ -65,6 +65,14 @@ on the USB `usb_phy.c` path, so it is not a gap for the USB drivers.
 
 ## Gotchas
 
+**connect() always cold-boots; it never reuses running firmware.** `MT_MCU_COM_REG0` only reports
+that *some* firmware is up, not *whose*: a prior wifit3 session, a stale MCU, or (on Linux) the kernel
+`mt76x2u` driver's own firmware, which our command set can't drive. So if anything is running,
+connect() `force_power_cycle`s the WLAN block (clears the ROM-patch-applied bit + FCE state) and always
+re-uploads our firmware. There is no warm-skip path and no warm fallback. Reusing a warm/foreign MCU
+had been the source of the intermittent `mcu_load_cr` seq-mismatch and the ~4 s of `MCU_CAL_*` response
+timeouts on warm attach; a clean power-cycled cold boot has neither. Costs ~1 s of FW upload per open.
+
 **Remove the L2 alignment pad BEFORE trimming to MPDU_LEN.** mt76x02 sets `MT_RXINFO_L2PAD` and
 inserts 2 bytes between the 802.11 header and the body whenever the header isn't 4-byte aligned —
 i.e. every QoS-Data frame (26-byte header), which is what EAPOL and WEP-ARP ride on. The kernel
@@ -129,6 +137,23 @@ cross-reference.
 - `verify_pcap.py` — offline cold-boot byte gate against `captures_mt76x2u/capture-1.pcap`.
 
 ## Debug log
+
+### 2026-07-20: connect() always cold-boots (warm-skip removed)
+
+Dropped the warm-reattach path. connect() no longer trusts a running `MT_MCU_COM_REG0` latch: the latch
+can't tell our firmware from a kernel-warmed card's, and reusing a warm/foreign MCU produced the
+intermittent `mcu_load_cr` seq-mismatch (~1/10) plus ~4 s of `MCU_CAL_*` response timeouts on warm
+attach. New policy: if any FW is running, `force_power_cycle` then always re-upload our firmware for a
+deterministic cold state. Removed the warm-skip branch, `McuChannel.drain_response_queue`, and the warm
+`mcu_load_cr`-timeout fallback ladder. HW (single owner, wifit3 closed): 50 rapid cold-open cycles,
+48/50 booted with beacons every time (11-28 APs/cycle); the two misses were a USB transient in the first
+run right after a physical replug and never recurred over the next 40 cycles. Two logged runs (40
+cycles) had zero cal/mcu timeouts, confirming a clean cold boot calibrates fast (the timeouts were a
+symptom of dirty warm/contended state, not of cold boot). `dev.reset()` was ruled out as a software
+cold on Windows+WinUSB (no-op, no re-enumeration; latch unchanged). verify_pcap stays green (the cold
+wire is unchanged: `force_power_cycle` only fires when warm, and a genuinely cold first plug skips it).
+`LINUX_REPLUG_AFTER_MODPROBE` stays `False` but is setup-flow only (no runtime effect); the old
+"self-cold, no replug" note is now literally what connect() does on every open.
 
 ### 2026-07-08 — 30-min hop soak clean; enumeration story corrected
 
