@@ -375,7 +375,9 @@ class FirmwareUploader:
         self.wait_for_mac()
 
         # ASIC identity reads the kernel probe issues here. [SRC] mt76x0/usb.c:266-276
-        self.t.read32(MT_ASIC_VERSION)      # chip / rev id
+        # Keep the version: the driver reuses it for the is_mt7630 chip strap instead
+        # of issuing a second ASIC read (which is not in the cold-boot wire).
+        self.asic_version = self.t.read32(MT_ASIC_VERSION)   # chip / rev id
         self.t.read32(MT_MAC_CSR0)          # mac_rev
         self.t.read32(MT_EFUSE_CTRL)        # eFUSE-present check (SEL bit)
 

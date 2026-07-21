@@ -41,20 +41,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import mt76usb_pcap_replay as rp  # noqa: E402
 
 from wifit3.chips.mt76x0u import tx as mt_tx  # noqa: E402
-from wifit3.chips.mt76x0u.constants import MT_RX_FILTR_CFG, Q_SELECT  # noqa: E402
-from wifit3.chips.mt76x0u.eeprom import read_efuse_full  # noqa: E402
-from wifit3.chips.mt76x0u.firmware import FirmwareUploader  # noqa: E402
-from wifit3.chips.mt76x0u.mac import (  # noqa: E402
-    clear_shared_keys,
-    clear_wcids,
-    init_mac_registers,
-    mac_setaddr,
-    wait_for_txrx_idle,
-    wait_for_wpdma,
-)
-from wifit3.chips.mt76x0u.mcu import MCUChannel  # noqa: E402
-from wifit3.chips.mt76x0u.phy import init_bbp, phy_init  # noqa: E402
-from wifit3.chips.mt76x0u.transport import MT76x0UTransport  # noqa: E402
+from wifit3.chips.mt76x0u.driver import MT76x0UDriver  # noqa: E402
 
 DEFAULT_CAP = "usb_dumps_new/captures_mt76x0u/capture-1.pcap"
 ASSETS = REPO / "src" / "wifit3" / "chips" / "mt76x0u" / "assets"
@@ -98,50 +85,28 @@ def _fw_file() -> Path:
 # ---------------------------------------------------------------------------
 
 def check_boot(data: dict) -> str:
-    """STRICT single cursor from op #0 over connect()'s real cold path
-    (load_firmware -> post-FW init). No anchor, no off-cursor serving, no reorder:
-    every op (reads included) matches the wire positionally or the walk stops with the
-    exact divergence."""
+    """STRICT single cursor from op #0 driving the driver's REAL cold bring-up
+    (``MT76x0UDriver._bringup``) against the wire. No hand copy: connect() and this
+    walk run the SAME ``_bringup``, so a change to the driver's bring-up cannot drift
+    from the gate. connect() wraps _bringup with the non-vendor dev.reset()+claim
+    (absent from the vendor-op stream) before, and the RX drainer after."""
     ops = data["host_ops"]
     dev = rp.ReplayDevice(ops, data["responses"])      # start at op #0
-    t = MT76x0UTransport(dev)
-    mcu = MCUChannel(t)
-    state = {"phase": "cold reset + firmware upload"}
-
-    def _drive():
-        # connect() does dev.reset() + interface claim (no vendor ops), then load_firmware.
-        state["phase"] = "cold reset + firmware upload"
-        uploader = FirmwareUploader(t)
-        uploader.load_firmware(_fw_file())
-
-        state["phase"] = "post-FW init"
-        uploader.init_usb_dma()
-        wait_for_wpdma(t)
-        uploader.wait_for_mac()
-        uploader.reset_csr_bbp()
-        mcu.function_select(Q_SELECT, 1)
-        init_mac_registers(t, mcu)
-        wait_for_txrx_idle(t)
-        init_bbp(t, mcu)
-        t.read32(MT_RX_FILTR_CFG)     # rxfilter cache [SRC] mt76x0/init.c:196
-        clear_shared_keys(t)
-        clear_wcids(t)
-        efuse = read_efuse_full(t)
-        mac_setaddr(t, efuse.mac_bytes)
-        phy_init(t, mcu, efuse)
+    driver = MT76x0UDriver(dev, MT76x0UDriver.SUPPORTED_IDS[0])
 
     try:
-        _drive()
+        asyncio.run(driver._bringup(_fw_file()))
     except rp.Divergence as e:
-        print(f"  [FAIL] DIVERGENCE in {state['phase']} after {dev.i} matched op(s)")
+        print(f"  [FAIL] DIVERGENCE after {dev.i} matched op(s)")
         print(f"         {e}")
         return "fail"
     except Exception as e:                       # driver raised (e.g. poll ran dry)
-        print(f"  [FAIL] {state['phase']}: driver raised {type(e).__name__}: {e} "
+        print(f"  [FAIL] driver._bringup raised {type(e).__name__}: {e} "
               f"(after {dev.i} matched ops)")
         return "fail"
 
-    print(f"  [PASS] reproduced all {dev.i} cold-boot + post-FW ops byte-for-byte")
+    print(f"  [PASS] reproduced all {dev.i} cold-boot + post-FW ops byte-for-byte "
+          f"via driver._bringup")
     return "pass"
 
 

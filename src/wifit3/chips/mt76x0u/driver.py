@@ -41,7 +41,7 @@ from .mac import (
     wait_for_txrx_idle,
     wait_for_wpdma,
 )
-from .mcu import MCUChannel, MCUError, mcu_init_smoke_test
+from .mcu import MCUChannel, MCUError
 from .phy import PHYInitError, init_bbp, phy_init, set_channel_20mhz
 from . import rx as rx_mod
 from .transport import MT76x0UTransport
@@ -106,7 +106,6 @@ class MT76x0UDriver(Driver):
         # M1 + M2 + M3a + M3b + M3c + M3d results, populated by connect().
         self.fw_info: Optional[dict] = None
         self.efuse_full: Optional[EFUSEFullInfo] = None
-        self.mcu_smoke: Optional[dict] = None
         self.bbp_version: Optional[int] = None
         self.rxfilter_default: Optional[int] = None
         # M4a.1 result from set_channel().
@@ -169,6 +168,34 @@ class MT76x0UDriver(Driver):
         if fw_file is None:
             raise BringUpError("reset/claim", "USB reset/claim failed, or the firmware blob is missing")
 
+        # Warm/dirty-chip wake (reset_dirty_chip): connect()-only, absent from the
+        # cold-boot wire, so it lives OUTSIDE _bringup (which verify_pcap drives
+        # byte-exact). A cold chip no-ops after a probe read; a warm chip gets a
+        # WLAN_RESET cycle so RX arms after the re-upload. See MT76X0U.md.
+        await asyncio.to_thread(self._warm_wake)
+
+        await self._bringup(fw_file, _p)
+
+        # ----- Background RX drainer (now that TRX is fully live) -----
+        from .rx import RxDrainer
+        self._rx_drainer = RxDrainer(
+            self.transport, frame_callback=self._on_decoded_rx,
+            raw_callback=self._on_raw_rx,
+            on_fatal=lambda e: self._on_lost and self._on_lost(e),
+        )
+        await self._rx_drainer.start()
+
+        WIRE_LOG.marker("end connect")
+        return True
+
+    async def _bringup(self, fw_file, _p=lambda *a: None) -> bool:
+        """The cold register bring-up connect() runs against the chip: firmware
+        upload + MAC/BBP init + per-station table clears + PHY init/calibrate.
+
+        Extracted from connect() so verify_pcap drives THIS exact shipping sequence
+        rather than a hand-maintained copy. connect() wraps it with the non-vendor USB
+        reset/claim (+ warm-chip wake) before, and the RX drainer after. Every op here
+        is a vendor register op the cold-boot capture should reproduce byte-for-byte."""
         _p(0.06, "Uploading Firmware…")
         if not await asyncio.to_thread(self._connect_upload_fw, fw_file):
             raise BringUpError("firmware", "firmware upload failed")
@@ -184,18 +211,13 @@ class MT76x0UDriver(Driver):
         _p(0.84, "Initing & Calibrating PHY…")
         if not await asyncio.to_thread(self._connect_init_phy):
             raise BringUpError("phy", "PHY init/calibration failed")
-
-        # ----- Background RX drainer (now that TRX is fully live) -----
-        from .rx import RxDrainer
-        self._rx_drainer = RxDrainer(
-            self.transport, frame_callback=self._on_decoded_rx,
-            raw_callback=self._on_raw_rx,
-            on_fatal=lambda e: self._on_lost and self._on_lost(e),
-        )
-        await self._rx_drainer.start()
-
-        WIRE_LOG.marker("end connect")
         return True
+
+    def _warm_wake(self) -> None:
+        """Warm/dirty-chip wake before the cold upload (reset_dirty_chip). connect()-only:
+        a cold chip no-ops after a probe read, a warm chip gets a WLAN_RESET cycle. Absent
+        from the cold-boot wire, so it stays out of _bringup (the driven cold path)."""
+        FirmwareUploader(self.transport, progress_cb=None).reset_dirty_chip()
 
     def _connect_reset_claim(self):
         """Chunk 1: USB reset + claim + locate FW file. Returns the FW path, or None."""
@@ -242,10 +264,6 @@ class MT76x0UDriver(Driver):
             self.transport,
             progress_cb=None,
         )
-        # Warm-chip wake before the cold-boot upload. Kept here (not in
-        # load_firmware) so the verify_pcap cold path stays byte-exact; a warm
-        # chip that skips it re-uploads clean but never arms RX. See MT76X0U.md.
-        self._uploader.reset_dirty_chip()
         try:
             result = self._uploader.load_firmware(fw_file)
         except FirmwareError as e:
@@ -321,48 +339,19 @@ class MT76x0UDriver(Driver):
             logger.error("MT7610U: MCU Q_SELECT failed: %s", e)
             return False
 
-        # ---- M2 diagnostic: MCU smoke-test ----------------------------
-        # Verifies the MCU command channel before we drive the init tables
-        # through it. Kept from M2 — not strictly in kernel flow but cheap.
-        try:
-            self.mcu_smoke = mcu_init_smoke_test(self.mcu, self.transport)
-            if not self.mcu_smoke["match"]:
-                logger.error(
-                    "MT7610U: MCU smoke test mismatch (direct=0x%08x vs mcu=0x%08x)",
-                    self.mcu_smoke["via_vendor_read"], self.mcu_smoke["via_mcu_read"],
-                )
-                return False
-            logger.info(
-                "MT7610U: MCU CMD_RANDOM_READ round-trip OK "
-                "(MAC_CSR0 via MCU = 0x%08x)", self.mcu_smoke["via_mcu_read"],
-            )
-            # ---- Runtime chip strap. mt76_chip = mt76_rr(MT_ASIC_VERSION) >> 16
-            # [SRC] mt76x0/usb.c:266 + mt76.h:1231. is_mt7630 (combo 2.4G+BT die)
-            # gates: eeprom has_5ghz mask, RF(5,2) patch value, phy_calibrate skip.
-            # The captured reference reads 0x7650 → is_mt7630 stays False → its
-            # every downstream wire op is byte-identical. This read is absent from
-            # the verify_pcap cursor (which drives functions, not connect()).
-            from .constants import MT_ASIC_VERSION
-            asic_version = self.transport.read32(MT_ASIC_VERSION)
-            self.chip_id = (asic_version >> 16) & 0xFFFF
-            self.is_mt7630 = self.chip_id == 0x7630
-            logger.info(
-                "MT7610U: ASIC_VERSION=0x%08x → chip=0x%04x (%s)",
-                asic_version, self.chip_id,
-                "mt7630 combo (2.4G+BT, no 5GHz)" if self.is_mt7630 else "mt7610/7650",
-            )
-        except (MCUError, usb.core.USBError) as e:
-            # Even after the warm-boot force-reupload, MCU smoke can fail
-            # if the chip's MAC/RX-DMA is so wedged that a USB reset +
-            # full FW reload can't clear it. Surface an actionable replug
-            # message — that's the only known recovery path.
-            logger.error(
-                "MT7610U: MCU smoke test failed: %s\n"
-                "  Chip appears wedged beyond what FW re-upload can fix.\n"
-                "  -> Please UNPLUG the dongle, wait ~3 seconds, REPLUG, "
-                "and retry.", e,
-            )
-            return False
+        # ---- Runtime chip strap. mt76_chip = mt76_rr(MT_ASIC_VERSION) >> 16
+        # [SRC] mt76x0/usb.c:266 + mt76.h:1231. is_mt7630 (combo 2.4G+BT die) gates:
+        # eeprom has_5ghz mask, RF(5,2) patch value, phy_calibrate skip. Reuse the
+        # ASIC version load_firmware already read at the wire's probe point — a second
+        # read here is absent from the cold-boot wire and desyncs the cursor.
+        asic_version = getattr(self._uploader, "asic_version", None) or 0
+        self.chip_id = (asic_version >> 16) & 0xFFFF
+        self.is_mt7630 = self.chip_id == 0x7630
+        logger.info(
+            "MT7610U: ASIC_VERSION=0x%08x → chip=0x%04x (%s)",
+            asic_version, self.chip_id,
+            "mt7630 combo (2.4G+BT, no 5GHz)" if self.is_mt7630 else "mt7610/7650",
+        )
 
         # ---- M3a step 11: init_mac_registers [SRC] mt76x0/init.c:187.
         # Uploads common_mac_reg_table + mt76x0_mac_reg_table via MCU, then
