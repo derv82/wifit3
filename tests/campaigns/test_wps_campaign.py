@@ -261,14 +261,14 @@ def test_run_progress_line_cracked_is_silent():
 def test_run_progress_line_first_half_uses_11k():
     from wifit3.campaigns.pin import CampaignState, run_progress_line
     line = run_progress_line(CampaignState(bssid="x", phase="first_half", tested=3200))
-    assert "3,200" in line and "11,000" in line
+    assert "3,200" in line and "11k" in line
 
 
 def test_run_progress_line_second_half_uses_1k():
     from wifit3.campaigns.pin import CampaignState, run_progress_line
     line = run_progress_line(CampaignState(bssid="x", phase="second_half",
                                            first_half="1357", p2_index=970))
-    assert "970" in line and "1,000" in line and "1357" in line
+    assert "970" in line and "1k" in line and "1357" in line
 
 
 def test_run_progress_line_exhausted():

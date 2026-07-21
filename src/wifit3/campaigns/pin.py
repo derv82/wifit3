@@ -80,10 +80,10 @@ def run_progress_line(state: CampaignState) -> Optional[str]:
                 f"[dim]({state.tested:,} tried · not found)[/dim]")
     if state.phase == "second_half" and state.first_half:
         # First half locked: the live keyspace is the 1,000-candidate second half.
-        return (f"[bold]WPS PIN[/bold] sweep: [cyan]{state.p2_index}[/cyan]/1,000 "
-                f"[dim]· first half [green]{state.first_half}[/green] locked[/dim]")
-    return (f"[bold]WPS PIN[/bold] sweep: [cyan]{state.tested:,}[/cyan]/11,000 "
-            f"[dim]· resumes where it left off[/dim]")
+        return (f"[bold]WPS PIN[/bold] sweep: [cyan]{state.p2_index}[/cyan]/1k "
+                f"[dim](first half [green]{state.first_half}[/green] locked)[/dim]")
+    return (f"[bold]WPS PIN[/bold] sweep: [cyan]{state.tested:,}[/cyan]/11k "
+            f"[dim](auto-resumes)[/dim]")
 
 
 class WpsCampaign(Campaign):

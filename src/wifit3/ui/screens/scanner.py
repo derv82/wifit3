@@ -776,7 +776,7 @@ class ScannerView(Screen):
         if dropped:
             noun = "AP" if dropped == 1 else "APs"
             log.write(
-                treelog.leaf(f"[dim]Cleared [bold cyan]{dropped}[/bold cyan] "
+                treelog.leaf(f"[dim]Cleared [bold]{dropped}[/bold] "
                              f"{noun} outside the filter[/dim]")
             )
 

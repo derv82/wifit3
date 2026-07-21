@@ -643,17 +643,17 @@ class FocusViewV2(Screen):
             return
         self._log(treelog.branch(
             f"sent {res.total_sent} de-auth frames "
-            f"[dim](AP→Client ×{res.client_sent}, Client→AP ×{res.ap_sent})[/dim]"))
+            f"[dim](AP↔Client ×{res.client_sent})[/dim]"))
         if not res.measured:  # card lacks TX-ACK detection, nothing to confirm
             self._log(treelog.leaf("[dim]delivery not measured (no TX-ACK on this card)[/dim]"))
             return
         detail = f"[dim](client {res.client_acks}/{res.client_sent} · AP {res.ap_acks}/{res.ap_sent})[/dim]"
         if res.total_acked:
-            self._log(treelog.leaf_ok(
+            self._log(treelog.leaf(
                 f"[bold][cyan]{res.total_acked}[/cyan]/{res.total_sent} de-auths ACK'd[/bold] {detail}"))
         else:
-            self._log(treelog.leaf_fail(
-                f"[bold]0/{res.total_sent} de-auths ACK'd[/bold] [dim](AP & client silent, deaf ears)[/dim]"))
+            self._log(treelog.leaf(
+                f"[bold][red]0[/red]/{res.total_sent} de-auths ACK'd[/bold] [dim](silent AP & client)[/dim]"))
 
     # ----- PMKID -------------------------------------------------------------
 
