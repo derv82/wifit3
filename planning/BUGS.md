@@ -18,14 +18,3 @@ and reconcile the post-FW init op-by-op against `data_dumps/mt76-source-v6.18/mt
 substantial effort like mt76x2u's, ~1000 ops). No EEPROM off-cursor needed here (0 breq-0x09 reads;
 efuse is read via MT_EFUSE_CTRL).
 _Location: `chips/mt76x0u`; `scripts/mt76x0u/verify_pcap.py`._
-
-## mt76x2u runtime
-
-### Channel re-tune cmd=31 timeouts on a running card (HW re-check)
-On runtime channel re-tunes (not connect), ack_lab saw `cmd=31` timeouts. The mac80211
-config-callback path the cold pcap runs stops the MAC before a re-tune (`mac_stop_config` /
-`mac_resume`), whereas runtime `set_channel` re-tunes bare; wrapping it the same way was the
-leading hypothesis. Re-check first: the always-cold work (2026-07-20) found connect-time `cmd=31`
-MCU_CAL timeouts were a symptom of dirty warm/contended MCU state, and a clean cold boot has none,
-so confirm the re-tune timeouts still reproduce from a clean cold boot before adding the wrap.
-_Reproduce: `test_hw_mt76x2u.py --phase hop`._
