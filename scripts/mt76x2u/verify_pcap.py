@@ -41,14 +41,10 @@ sys.path.insert(0, str(REPO / "scripts"))
 import mt76usb_pcap_replay as rp  # noqa: E402
 
 from wifit3.chips.mt76x2u import tx as mt_tx  # noqa: E402
-from wifit3.chips.mt76x2u.chan import (  # noqa: E402
-    phy_channel_calibrate,
-    set_channel_20mhz,
-)
+from wifit3.chips.mt76x2u.driver import MT76x2UDriver  # noqa: E402
 from wifit3.chips.mt76x2u.constants import (  # noqa: E402
     EP_OUT_AC_BE,
     MT_ASIC_VERSION,
-    MT_CH_BUSY,
     MT_RX_FILTR_CFG,
     MT_WLAN_FUN_CTRL,
     MT_WPDMA_GLO_CFG,
@@ -57,43 +53,6 @@ from wifit3.chips.mt76x2u.constants import (  # noqa: E402
 # DROP_UC_NOME (bit 2) | DROP_NOT_MYBSSID (bit 3): the drop bits mac_start clears
 # for promiscuous monitor RX. A RX_FILTR_CFG write differing only here is accepted.
 _MONITOR_RXFILTER_BITS = (1 << 2) | (1 << 3)
-from wifit3.chips.mt76x2u.eeprom import (  # noqa: E402
-    read_mac_address,
-    read_nic_conf_0,
-    read_power_info,
-    read_rate_power,
-    read_rx_high_gain_2g,
-    read_rx_high_gain_5g,
-)
-from wifit3.chips.mt76x2u.mac import (  # noqa: E402
-    init_beacon_config,
-    init_us_cyc_txop,
-    mac_cc_reset,
-    mac_reset,
-    mac_resume,
-    mac_setaddr,
-    mac_start,
-    mac_stop,
-    mac_stop_config,
-    wait_for_txrx_idle,
-)
-from wifit3.chips.mt76x2u.mcu import McuChannel, mcu_init  # noqa: E402
-from wifit3.chips.mt76x2u.phy import (  # noqa: E402
-    Mt76x2CalState,
-    mcu_load_cr,
-    phy_set_rxpath,
-    phy_set_txdac,
-    phy_set_txpower,
-)
-from wifit3.chips.mt76x2u.firmware import upload_firmware  # noqa: E402
-from wifit3.chips.mt76x2u.power import (  # noqa: E402
-    init_dma,
-    power_on,
-    reset_wlan,
-    wait_for_mac,
-    wait_for_wpdma_idle,
-)
-from wifit3.chips.mt76x2u.transport import MT76x2UTransport  # noqa: E402
 
 DEFAULT_CAP = "usb_dumps_new2/captures_mt76x2u_5g-injection/capture-1.pcap"
 
@@ -157,127 +116,48 @@ def _first_switch_channel(host_ops: list[dict]) -> int | None:
 # ---------------------------------------------------------------------------
 
 def check_boot(data: dict, channel: int, asic_rev: int) -> tuple[str, int]:
-    """Drive connect()'s cold path against a strict cursor anchored at reset_wlan.
-    Returns (verdict, ops_matched). A divergence is reported with the exact op and the
-    kernel-vs-port bytes, then the walk stops."""
+    """Drive the driver's REAL cold bring-up (MT76x2UDriver._bringup) against a strict
+    cursor anchored at reset_wlan. Returns (verdict, ops_matched). No hand copy: connect()
+    and this walk run the same _bringup, so they cannot drift.
+
+    The anchor skips the port-specific prologue the cold wire does not share (the port's
+    ASIC-version read + warm-reattach probe live in connect() BEFORE _bringup; the wire's
+    own prologue is the kernel's upfront EEPROM slurp, served off-cursor from the recorded
+    ROM since EEPROM is idempotent). From reset_wlan on, every MMIO op is positional."""
     ops = data["host_ops"]
     anchor = rp.anchor_index(ops, breq=0x07, addr=MT_WLAN_FUN_CTRL)   # reset_wlan's 1st op
     if anchor is None:
         print("  [FAIL] no anchor: reset_wlan's MT_WLAN_FUN_CTRL MMIO read not in capture")
         return "fail", 0
     eeprom = rp.build_eeprom(ops)
-    # EE_BT_RCAL_RESULT (0x138): MCU_CAL_R runs only if this byte is not 0xff
-    # ([SRC] usb_phy.c:148). Read it like connect() does, off-cursor.
-    bt_rcal_valid = len(eeprom) > 0x138 and eeprom[0x138] != 0xFF
     dev = rp.ReplayDevice(ops, data["responses"], start=anchor,
                           eeprom=eeprom,
                           rxfilter_addr=MT_RX_FILTR_CFG,
                           rxfilter_mask=_MONITOR_RXFILTER_BITS,
                           wpdma_addr=MT_WPDMA_GLO_CFG)
-    t = MT76x2UTransport(dev)
-    mcu = McuChannel(t)
-    cal = Mt76x2CalState()
-    band_2g = channel < 36
-    state = {"phase": "prologue"}
 
-    async def _drive():
-        # Prologue (ASIC-version read + warm-reattach probe) is skipped by the anchor;
-        # asic_rev is the pre-detected value and EEPROM is served off-cursor.
-        state["phase"] = "cold register init (reset_wlan + power_on)"
-        reset_wlan(t)
-        power_on(t)
-        await wait_for_mac(t)
-
-        state["phase"] = "firmware upload + MCU init"
-        if not await upload_firmware(t, asic_rev):
-            raise rp.Divergence("upload_firmware returned False (FW-ready poll ran dry)")
-        await wait_for_wpdma_idle(t, timeout_ms=100)
-        await wait_for_mac(t)
-        init_dma(t)
-        if not await mcu_init(mcu):
-            raise rp.Divergence("mcu_init returned False")
-
-        state["phase"] = "post-FW init + channel + mac_start"
-        mac_str = read_mac_address(t)
-        mac_bytes = bytes(int(b, 16) for b in mac_str.split(":"))
-        nic0 = read_nic_conf_0(t)
-        chainmask = ((nic0["tx_path"] & 0xF) << 8) | (nic0["rx_path"] & 0xF)
-        await mac_reset(t)
-        mac_setaddr(t, mac_bytes)
-        t.read32(MT_RX_FILTR_CFG)                        # [SRC] usb_init.c:160
-        await wait_for_txrx_idle(t)
-        from wifit3.chips.mt76x2u.wcid import wcid_table_clear
-        from wifit3.chips.mt76x2u.skey import shared_key_table_clear
-        wcid_table_clear(t)
-        shared_key_table_clear(t)
-        init_beacon_config(t)
-        init_us_cyc_txop(t)                             # [SRC] usb_init.c:177-178
-        if not await mcu_load_cr(mcu, temp_level=0, channel=0):
-            raise rp.Divergence("mcu_load_cr returned False")
-        phy_set_rxpath(t, chainmask)
-        phy_set_txdac(t, chainmask)
-        await mac_stop(t)                               # [SRC] usb_init.c:187 (init_hardware end)
-        if not await mac_start(t, monitor=True):        # [SRC] mt76x2u_start -> mac_start
-            raise rp.Divergence("mac_start returned False")
-        # wifit3 folds the monitor filter into mac_start; skip the kernel's separate
-        # configure_filter ops (WPDMA read + RX_FILTR_CFG writes) the wire recorded.
-        dev.skip_configure_filter()
-
-        # ----- mt76x2u_config -> mt76x2u_set_channel wrapper (the capture's channel path) -----
-        # config(CHANGE_POWER): an initial phy_set_txpower at mac80211's default channel
-        # (5 GHz ch36), BEFORE the tune to ch1. wifit3's connect() tunes bare, but the pcap
-        # is the mac80211 callback flow, so we drive the real functions in that order.
-        pw_rp = read_rate_power(t, band_2g=False)
-        pw_pi = read_power_info(t, _CONFIG_POWER_DEFAULT_CH, band_2g=False, tssi_enabled=False)
-        phy_set_txpower(t, pw_rp, pw_pi, txpower_conf=_CAPTURE_TXPOWER_CONF)
-        # config(CHANGE_MONITOR): re-applies the RX filter (kernel value) + a survey CH_BUSY
-        # read; wifit3's monitor filter differs (set in mac_start), so skip those wire-only ops.
-        dev.skip_configure_filter()
-        dev.skip_read(MT_CH_BUSY)                       # survey snapshot before the re-tune
-        mac_stop_config(t)                              # [SRC] mt76x2_mac_stop (config-time)
-
-        # config(CHANGE_CHANNEL): phy_set_channel (bare set_channel_20mhz), matching v6.18.
-        rate_power = read_rate_power(t, band_2g=band_2g)
-        power_info = read_power_info(t, channel, band_2g=band_2g, tssi_enabled=False)
-        ext_pa = (not nic0.get("pa_int_2g", True)) if band_2g \
-            else (not nic0.get("pa_int_5g", True))
-        high_gain = read_rx_high_gain_2g(t) if band_2g else read_rx_high_gain_5g(t, channel)
-        if not await set_channel_20mhz(
-                t, mcu, channel, asic_rev, chainmask, cal=cal,
-                rate_power=rate_power, power_info=power_info,
-                init_cal_done=False, bt_rcal_valid=bt_rcal_valid, ext_pa=ext_pa,
-                high_gain=high_gain, tssi_enabled_flag=True,
-                txpower_conf=_CAPTURE_TXPOWER_CONF):
-            raise rp.Divergence("set_channel_20mhz returned False")
-        await phy_channel_calibrate(t, mcu, channel, cal=cal, high_gain=high_gain,
-                                    ext_pa=ext_pa, tssi_enabled_flag=True)
-        mac_cc_reset(t)
-        mac_resume(t)                                   # [SRC] mt76x2_mac_resume
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    # Build the real driver over the replay transport; seed the state the connect()
+    # prologue would have set (asic_rev + is_mt7612 from the ASIC read, the initial
+    # channel), then drive _bringup: reset_wlan -> cold init -> lazy EEPROM -> MAC tables
+    # -> PHY -> mac_start -> the initial BARE channel tune.
+    driver = MT76x2UDriver(dev, MT76x2UDriver.SUPPORTED_IDS[0])
+    driver.asic_rev = asic_rev
+    driver.is_mt7612 = True             # AWUS036ACM reference is mt7612 (WiFi-only)
+    driver.current_channel = channel
     try:
-        loop.run_until_complete(_drive())
+        asyncio.run(driver._bringup())
     except rp.Divergence as e:
-        ca = state.get("channel_anchor")
-        if ca is not None and dev.i >= ca:
-            print(f"  [FRONTIER] reproduced {dev.i - anchor} ops byte-for-byte "
-                  f"(reset_wlan -> mac_start). The channel tune past op #{dev.i} is a "
-                  f"capture-vs-v6.18 skew, not a port bug: wifit3's set_channel_20mhz "
-                  f"tunes bare and follows the v6.18 source order (phy_set_txpower_regs "
-                  f"first), but the pcap runs the wrapped mt76x2u_set_channel (an initial "
-                  f"phy_set_txpower + a config-time mac_stop before phy_set_channel).")
-            print(f"         first divergence: {e}")
-            return "frontier", dev.i - anchor
-        print(f"  [FAIL] DIVERGENCE in {state['phase']} after {dev.i - anchor} "
-              f"matched op(s) past the reset_wlan anchor (op #{anchor})")
+        print(f"  [FAIL] DIVERGENCE after {dev.i - anchor} matched op(s) past the "
+              f"reset_wlan anchor (op #{anchor})")
         print(f"         {e}")
         return "fail", dev.i - anchor
-    finally:
-        loop.close()
+    except Exception as e:              # driver raised (poll ran dry, etc.)
+        print(f"  [FAIL] driver._bringup raised {type(e).__name__}: {e} "
+              f"(after {dev.i - anchor} matched ops past the anchor)")
+        return "fail", dev.i - anchor
 
     print(f"  [PASS] reproduced all {dev.i - anchor} cold-boot + post-FW MMIO ops "
-          f"byte-for-byte (anchored at reset_wlan op #{anchor}; "
+          f"byte-for-byte via driver._bringup (anchored at reset_wlan op #{anchor}; "
           f"{dev.eeprom_served} EEPROM reads served off-cursor)")
     return "pass", dev.i - anchor
 
@@ -437,11 +317,6 @@ def run(cap=None) -> int:
     if boot_verdict == "fail" or tx_verdict == "fail":
         print("\n[FAIL] see localized divergence(s) above")
         return 1
-    if boot_verdict == "frontier":
-        print("\n[FRONTIER] cold boot -> mac_start reproduced byte-for-byte; CHECK D TX "
-              "green. The channel tune is a capture-vs-v6.18 wrapper skew (see above), "
-              "not a port bug: set_channel_20mhz is in-parity with the v6.18 source.")
-        return 2
     if tx_verdict == "skip":
         print("\n[INCOMPLETE] boot verified; CHECK D TX UNVERIFIED — no post-boot TX in "
               "this capture. NOT a full pass.")

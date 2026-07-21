@@ -302,6 +302,16 @@ class MT76x2UDriver(Driver):
             )
             await force_power_cycle(self.transport)
         self.is_warm = False
+        await self._bringup(progress_cb)
+        return await self._connect_finish(progress_cb)
+
+    async def _bringup(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        """The cold register bring-up connect() runs once ASIC-version + warm-probe are
+        done: cold init (reset_wlan / power_on / FW / MCU) + lazy EEPROM read + MAC
+        tables + PHY + mac_start + the initial channel tune. Extracted so verify_pcap
+        drives THIS exact sequence rather than a hand copy. Uses self.asic_rev /
+        self.is_mt7612 / self.current_channel set by the caller; connect() wraps it with
+        the ASIC/warm-probe prologue before and the RX drainer + cal task after."""
         if not await self._cold_init_chip(progress_cb):
             raise BringUpError("cold-init", "cold chip init failed")
 
@@ -436,7 +446,10 @@ class MT76x2UDriver(Driver):
         )
         mac_cc_reset(self.transport)
         self._init_cal_done = True
+        return True
 
+    async def _connect_finish(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        """RX drainer + periodic-cal startup after the register bring-up. connect()-only."""
         # connect() is idempotent: tear down any prior cal task / RX drainer
         # before (re)starting, so two cal threads or two drainers can never run
         # on this instance. The manager builds a fresh driver per connect today,
