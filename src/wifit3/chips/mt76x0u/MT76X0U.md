@@ -10,7 +10,7 @@ MCU command channel. Dev card is `0e8d:7610` (Sabrent / MediaTek MT7610U).
 - 2.4 GHz monitor RX: working.
 - 5 GHz monitor RX: at kernel parity (per-channel LNA-gain fix; see Gotchas). 2026-06-28 wifit3-vs-`mt76x0u` A/B: 5 GHz breadth 33=33, per-channel ~9.09/s incl. CH157 (~93% ceiling).
 - Full attack suite HW-confirmed (2026-06-28): deauth / handshake / PMKID / WPS-PBC (36 EAPOL, auto-ACK) live-fired on 5 GHz; WEP chopchop + ARP-replay ~300 IVs/s on the 2.4 GHz router.
-- `verify_pcap`: clean against the cold-boot pcap (capture-2).
+- `verify_pcap`: CHECK A-C + CHECK D green (byte-exact cold boot + TX descriptor, capture-1).
 - Not ported: the periodic RSSI-driven AGC tracker (`mt76x0_phy_update_channel_gain` / `calibration_work`) — dynamic gain isn't re-seeded, lower-priority gap. RSSI-display (`rssi_offset[]`) half of `read_rx_gain` also unported (display-only).
 
 ## EEPROM / strap variants (cross-card generalization)
@@ -85,11 +85,12 @@ RF regs as `MT_MCU_MEMMAP_RF (0x80000000) + MT_RF(bank,reg)`. So `MT_MAC_CSR0` (
 **5 GHz RX needs the per-channel LNA-gain correction (see Debug log).** It's band- and 5 GHz-subband-specific;
 feeding `lna_gain=0` leaves `MT_BBP(AGC,8)` desensitized. Fixed via `eeprom.lna_gain_for_channel`.
 
-**Warm bring-up doesn't restore RX — a power-cycle is required.** Coming up from a still-running FW
-(force-reset + re-upload) inits clean with no error, but RX never flows; only a real cold boot does.
-(Why warm fails to arm RX is unconfirmed — likely an RF/DMA power state the re-upload doesn't reset.)
-No replug gate is needed, though: device setup's `modprobe -r` cold-re-enumerates the card, so the
-no-replug auto-connect comes up cold with RX flowing.
+**A warm chip needs a WLAN_RESET wake before the cold-boot upload.** connect() always cold-boots, but
+re-uploading firmware over a still-running FW inits clean yet never arms RX (an RF/DMA power state the
+upload alone doesn't reset). `firmware.reset_dirty_chip`, called from connect() before `load_firmware`,
+does the forced WLAN_RESET cycle first when the chip is warm (WLAN_EN set or FW resident). It lives in
+connect(), not `load_firmware`, so the `verify_pcap` cold path stays byte-exact against the clean-cold
+capture. On Linux device setup's `modprobe -r` cold-re-enumerates the card anyway, so no replug is needed.
 
 ## Orientation
 
@@ -116,6 +117,20 @@ Names match the kernel C (sources under `data_dumps/mt76-source-v6.18/`), so gre
 - `beacon_watch.py` — per-channel beacon-rate soak; this is what measured the 5 GHz desense.
 
 ## Debug log
+
+### 2026-07-20: always-cold connect() + verify_pcap CHECK A-C green
+
+connect() always cold-boots. `load_firmware` dropped the warm-skip (the early `firmware_running` probe
+and the Step 0z pre-reset) and now reproduces the kernel cold-boot prologue byte-for-byte; the warm-chip
+WLAN_RESET wake moved to connect()'s `reset_dirty_chip` (before `load_firmware`) so the verify cold path
+stays exact. `verify_pcap` CHECK A-C now reproduces all 1134 cold-boot + post-FW ops byte-for-byte (was
+red at op#1). Fixes: `transport.write_copy` for the SKEY/WCID clears (one MULTI_WRITE, not N x write32);
+the EFUSE physical-size check before the full dump; `phy_ant_select`'s three RMW ops
+(CMB_CTRL/CSR_EE_CFG1/COEXCFG0) plus the ee_ant/ee_cfg1 mutations the kernel does. HW: full bring-up
+(FW through phy_calibrate) completes with correct register values; 1754 tests pass. Open: monitor RX
+over the bulk-IN reader fails on this Windows+WinUSB setup with 'No such device' on the first EP-0x84
+read (pre-existing, reproduces on the pre-change code; RX was validated on Linux). A Windows RX-reader
+look is the follow-up.
 
 ### 2026-06-21 — weak 5 GHz RX: skipped per-channel LNA gain
 

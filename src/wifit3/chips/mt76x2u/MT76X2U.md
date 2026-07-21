@@ -70,8 +70,11 @@ that *some* firmware is up, not *whose*: a prior wifit3 session, a stale MCU, or
 `mt76x2u` driver's own firmware, which our command set can't drive. So if anything is running,
 connect() `force_power_cycle`s the WLAN block (clears the ROM-patch-applied bit + FCE state) and always
 re-uploads our firmware. There is no warm-skip path and no warm fallback. Reusing a warm/foreign MCU
-had been the source of the intermittent `mcu_load_cr` seq-mismatch and the ~4 s of `MCU_CAL_*` response
-timeouts on warm attach; a clean power-cycled cold boot has neither. Costs ~1 s of FW upload per open.
+aggravated the intermittent `mcu_load_cr` seq-mismatch and the ~4 s of `MCU_CAL_*` response timeouts;
+always cold-booting makes both rarer (most cold boots are clean) but does not eliminate them. They still
+surface intermittently on cold boots: the `MCU_CAL_*` (cmd=31) timeouts are non-fatal (the tune
+continues), and a rare `mcu_load_cr` (cmd=2) timeout that `force_power_cycle` cannot clear needs a
+physical replug (Win+WinUSB cannot fully cold-reset a wedged MCU). Costs ~1 s of FW upload per open.
 
 **Remove the L2 alignment pad BEFORE trimming to MPDU_LEN.** mt76x02 sets `MT_RXINFO_L2PAD` and
 inserts 2 bytes between the 802.11 header and the body whenever the header isn't 4-byte aligned —
@@ -137,6 +140,16 @@ cross-reference.
 - `verify_pcap.py` — offline cold-boot byte gate against `captures_mt76x2u/capture-1.pcap`.
 
 ## Debug log
+
+### 2026-07-20: cold boots are mostly-clean, not always-clean (correction)
+
+Follow-up HW on the mt7612u refines the entry below. "A clean cold boot has zero cal/mcu timeouts" was
+too strong: it held for the 40 logged coldboot cycles but is not universal. A channel-hop run showed 5
+connect-time `MCU_CAL_*` (cmd=31) timeouts on a cold boot (non-fatal, the tune continues); its 22 runtime
+re-tunes were clean (100-640 ms, zero timeouts, 137 BSSIDs heard), which refuted and removed the
+"runtime re-tune cmd=31" BUGS item. Two later cold boots hit the `mcu_load_cr` (cmd=2) timeout and wedged
+the MCU; `force_power_cycle` + re-upload could not clear it, so it needed a physical replug. Net: cold
+booting makes the flake rarer, not gone; the cal timeouts are non-fatal, a wedged MCU is replug-only.
 
 ### 2026-07-20: connect() always cold-boots (warm-skip removed)
 
