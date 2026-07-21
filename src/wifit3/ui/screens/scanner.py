@@ -617,19 +617,17 @@ class ScannerView(Screen):
         startup + the 'w' toggle."""
         if self.app.pbc_enabled:
             self._write_log(treelog.header(
-                "[bold]WPS PushButton auto-invade[/bold] is "
+                "[bold]WPS PushButton Extraction[/bold] is "
                 "[bold green]enabled[/bold green] [dim](press [bold]w[/bold] to toggle)[/dim]",
-                color="dim"))
+                color="green"))
             self._write_log(treelog.leaf(
                 "[dim](automatically retrieves PSK when [bold italic]any[/bold italic] "
                 "WPS button is pressed)[/dim]"))
         else:
             self._write_log(treelog.header(
-                "[bold]WPS PushButton auto-invade[/bold] is "
-                "[orange1]disabled[/orange1] [dim](press [bold]w[/bold] to toggle)[/dim]",
+                "[bold]WPS PushButton Extraction[/bold] is "
+                "[orange1]disabled[/orange1] [dim](detect only, press [bold]w[/bold] to toggle)[/dim]",
                 color="orange1"))
-            self._write_log(treelog.leaf(
-                "[dim](detect + alert only)[/dim]"))
 
     def _poll_pbc(self) -> None:
         iface = self.app.active_interface
@@ -703,12 +701,12 @@ class ScannerView(Screen):
         log = self.query_one("#system-log", RichLog)
         if self._fade_enabled:
             log.write(
-                " [bright_green]●[/bright_green] [bold]Idle AP Fade[/bold] is [bold]on[/bold] "
+                " [bright_green]●[/bright_green] [bold]Fade Inactive AccessPoints[/bold] is [bold]on[/bold] "
                 "[dim](idle APs slowly fade out)[/dim]"
             )
         else:
             log.write(
-                " [orange1]●[/orange1] [bold]Idle AP Fade[/bold] is [bold]off[/bold] "
+                " [orange1]●[/orange1] [bold]Fade Inactive AccessPoints[/bold] is [bold]off[/bold] "
                 "[dim](rows never fade)[/dim]"
             )
 

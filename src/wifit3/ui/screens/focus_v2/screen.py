@@ -602,10 +602,10 @@ class FocusViewV2(Screen):
 
     def _log_pbc_status(self) -> None:
         if getattr(self.app, "pbc_enabled", True):
-            self._log("[bold]WPS PushButton auto-invade[/bold] "
+            self._log("[bold]WPS PushButton Extraction[/bold] "
                       "[bold green]enabled[/bold green] [dim](press w to toggle)[/dim]")
         else:
-            self._log("[bold]WPS PushButton auto-invade[/bold] "
+            self._log("[bold]WPS PushButton Extraction[/bold] "
                       "[yellow]disabled[/yellow] [dim](detect only, press w to toggle)[/dim]")
 
     # ----- deauth ------------------------------------------------------------
