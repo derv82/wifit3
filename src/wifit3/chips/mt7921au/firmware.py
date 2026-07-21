@@ -132,11 +132,10 @@ class MT7921AUFirmwareLoader:
         # MT_SWDEF_MODE = NORMAL before firmware download (mt7921/usb.c:118).
         self.transport.write_reg32_unified(MT_SWDEF_MODE, MT_SWDEF_NORMAL_MODE)
 
-        self.transport.write_reg32_unified(MT_UDMA_TX_QSEL, MT_FW_DL_EN)
-        val = self.transport.read_reg32_unified(MT_UDMA_TX_QSEL)
-        if (val & MT_FW_DL_EN) != MT_FW_DL_EN:
-            logger.error(f"MT_UDMA_TX_QSEL write rejected (read back 0x{val:x})")
-            return False
+        # mt76_set(MT_UDMA_TX_QSEL, MT_FW_DL_EN): read-modify-write (the kernel helper
+        # always emits the write), enabling the FW-download path. [SRC] mt7921/usb.c:119.
+        # A bare write + readback here diverges from the wire's RMW read-then-write order.
+        self._rmw(MT_UDMA_TX_QSEL, 0, MT_FW_DL_EN)
 
         if not await self._load_patch():
             return False
