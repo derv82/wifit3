@@ -19,6 +19,7 @@ consult these tables. Kernel clears all entries at init
 from __future__ import annotations
 
 import logging
+import struct
 
 from .constants import (
     MT76_N_KEYS_PER_VIF,
@@ -90,9 +91,12 @@ def mt76x02_mac_shared_key_setup(
     val = (val & ~mask) | ((cipher << shift) & mask)
     transport.write32(mode_addr, val)
 
-    # 32-byte zeroed key+MICs, written as ONE mt76_wr_copy (a single 32-byte
-    # MULTI_WRITE), not 8 write32. [SRC] mt76x02_mac.c shared_key_setup + usb.c mt76u_copy.
-    transport.write_copy(_skey_addr(vif_idx, key_idx), bytes(MT76_SKEY_ENTRY_BYTES))
+    # 32 bytes (= 8 u32 words) of zeroed key+MICs.
+    key_data = bytes(MT76_SKEY_ENTRY_BYTES)
+    skey_addr = _skey_addr(vif_idx, key_idx)
+    for word_idx in range(MT76_SKEY_ENTRY_BYTES // 4):
+        word = struct.unpack("<I", key_data[word_idx * 4:word_idx * 4 + 4])[0]
+        transport.write32(skey_addr + word_idx * 4, word)
 
 
 def shared_key_table_clear(transport: MT76x2UTransport) -> None:

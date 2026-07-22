@@ -34,7 +34,7 @@ class MT7921AUDriver(Driver):
     """
 
     SUPPORTED_IDS = [
-        DeviceID(0x0e8d, 0x7961, "MediaTek MT7921AU (ALFA AWUS036AXML)"),
+        DeviceID(0x0e8d, 0x7961, "Mediatek MT7921AU (ALFA AWUS036AXML)"),
     ]
     # Dual-band Wi-Fi 6 radio, 20 MHz primary. 2.4 GHz (1-13) + the 5 GHz 20 MHz
     # channels of the world regulatory domain (regdomain.CHANNELS_5GHZ).
@@ -131,32 +131,6 @@ class MT7921AUDriver(Driver):
     async def _cold_boot(self, progress_cb: Optional[ProgressCallback]) -> bool:
         """Full bring-up of a cold chip: firmware upload, post-boot device init,
         monitor entry. The RX reader is started by load_firmware."""
-        await self._bringup(progress_cb)
-
-        # Enter monitor mode on the initial channel (the RX reader routes the
-        # monitor commands' acks back, and 802.11 frames to _on_raw_rx). airmon /
-        # mac80211 interleave these commands in a tool-timing-dependent order, so
-        # enter_monitor stays OUTSIDE _bringup (which verify_pcap drives byte-exact);
-        # the gate's operational-tail walk still byte-verifies each command.
-        if progress_cb:
-            progress_cb(0.9, "Enabling monitor mode...")
-        await chip_init.enter_monitor(self.transport, self._channel)
-
-        self.is_warm = False
-        if progress_cb:
-            progress_cb(1.0, "Done")
-        logger.info("MT7921AU monitor mode ready (cold boot) on channel %d.", self._channel)
-        return True
-
-    async def _bringup(self, progress_cb: Optional[ProgressCallback]) -> bool:
-        """The byte-exact cold register bring-up: firmware upload + post-boot device
-        init, in the exact wire order the cold-boot capture records.
-
-        Extracted from _cold_boot so verify_pcap drives THIS shipping sequence rather
-        than a hand-maintained copy: connect() and the gate run the same _bringup, so
-        they cannot drift. _cold_boot wraps it with the operational monitor entry (the
-        tool-timing-order enter_monitor) after. load_firmware starts the RX reader that
-        post_boot_init's MCU commands wait on."""
         if progress_cb:
             progress_cb(0.1, "Uploading firmware...")
         if not await self.firmware.load_firmware():
@@ -172,6 +146,17 @@ class MT7921AUDriver(Driver):
         self._antenna_mask = caps.antenna_mask
         self._nic_has_6ghz = int(caps.has_6ghz)
         self._log_nic_caps(caps)
+
+        # Enter monitor mode on the initial channel (the RX reader routes the
+        # monitor commands' acks back, and 802.11 frames to _on_raw_rx).
+        if progress_cb:
+            progress_cb(0.9, "Enabling monitor mode...")
+        await chip_init.enter_monitor(self.transport, self._channel)
+
+        self.is_warm = False
+        if progress_cb:
+            progress_cb(1.0, "Done")
+        logger.info("MT7921AU monitor mode ready (cold boot) on channel %d.", self._channel)
         return True
 
     def _log_nic_caps(self, caps: mcu.NicCaps) -> None:

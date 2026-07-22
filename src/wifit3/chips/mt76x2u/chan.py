@@ -202,11 +202,6 @@ async def set_channel_20mhz(transport: MT76x2UTransport, mcu: McuChannel,
         logger.error("mcu_init_gain(%d) failed", channel)
         return False
 
-    # LDPC RX enable — [SRC] mt76x2/usb_phy.c:145, BEFORE the calibrations (not
-    # grouped with the later post-cal BBP writes).
-    if asic_rev >= MT76XX_REV_E3:
-        transport.rmw32(MT_BBP_RXO_R13, 1 << 10, 1 << 10)
-
     # ---- Calibrations [SRC] mt76x2/usb_phy.c:147-159 ----------------------
     # ORDER matters: MCU_CAL_R (one-time) before RXDCOC; RXDCOC every switch;
     # MCU_CAL_RC (one-time) after RXDCOC.
@@ -220,6 +215,9 @@ async def set_channel_20mhz(transport: MT76x2UTransport, mcu: McuChannel,
             logger.warning("MCU_CAL_RC failed (continuing)")
 
     # ---- Post-MCU BBP writes — [SRC] mt76x2/usb_phy.c:161 -----------------
+    if asic_rev >= MT76XX_REV_E3:
+        transport.rmw32(MT_BBP_RXO_R13, 1 << 10, 1 << 10)  # LDPC RX enable
+
     transport.write32(MT_BBP_AGC_R61, 0xff64a4e2)
     transport.write32(MT_BBP_AGC_R7, 0x08081010)
     transport.write32(MT_BBP_AGC_R11, 0x00000404)

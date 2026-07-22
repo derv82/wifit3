@@ -23,6 +23,7 @@ must do the same.
 from __future__ import annotations
 
 import logging
+import struct
 from typing import Optional
 
 from .constants import (
@@ -76,16 +77,17 @@ def mt76x02_mac_wcid_setup(
     if idx >= MT76_WCID_ADDR_SLOTS:
         return
 
-    # `struct mt76_wcid_addr` = { u8 macaddr[6]; __le16 ba_mask; } = 8 bytes,
-    # written as ONE mt76_wr_copy (a single 8-byte MULTI_WRITE), not two write32.
-    # [SRC] mt76x02_mac.c mt76x02_mac_wcid_setup + usb.c mt76u_copy.
     if mac is None:
-        addr_buf = b"\x00" * 8
-    elif len(mac) != 6:
-        raise ValueError(f"wcid_setup: mac must be 6 bytes, got {len(mac)}")
+        lo_word = 0
+        hi_word = 0
     else:
-        addr_buf = bytes(mac[:6]) + b"\x00\x00"    # MAC + ba_mask=0
-    transport.write_copy(_wcid_addr_addr(idx), addr_buf)
+        if len(mac) != 6:
+            raise ValueError(f"wcid_setup: mac must be 6 bytes, got {len(mac)}")
+        lo_word = struct.unpack("<I", mac[:4])[0]
+        # High word = mac[4:6] in low 16 bits, ba_mask=0 in high 16 bits.
+        hi_word = struct.unpack("<H", mac[4:6])[0]
+    transport.write32(_wcid_addr_addr(idx), lo_word)
+    transport.write32(_wcid_addr_addr(idx) + 4, hi_word)
 
 
 def wcid_table_clear(transport: MT76x2UTransport) -> None:

@@ -29,8 +29,6 @@ from .constants import (
     MT_AMPDU_MAX_LEN_20M2S,
     MT_AUTO_RSP_CFG,
     MT_AUX_CLK_CFG,
-    MT_BBP_CORE_BASE,
-    MT_BBP_IBI_BASE,
     MT_BKOFF_SLOT_CFG,
     MT_BKOFF_SLOT_CFG_CC_DELAY_MASK,
     MT_BKOFF_SLOT_CFG_CC_DELAY_SHIFT,
@@ -117,15 +115,6 @@ from .constants import (
     MT_PROT_AUTO_TX_CFG,
     MT_PWR_PIN_CFG,
     MT_RX_FILTR_CFG,
-    MT_RX_STAT_0,
-    MT_RX_STAT_1,
-    MT_RX_STAT_2,
-    MT_TX_AGG_CNT_BASE0,
-    MT_TX_AGG_CNT_BASE1,
-    MT_TX_STA_0,
-    MT_TX_STA_1,
-    MT_TX_STA_2,
-    MT_TX_STAT_FIFO,
     MT_TBTT_SYNC_CFG,
     MT_TSO_CTRL,
     MT_TX_ALC_CFG_4,
@@ -144,21 +133,15 @@ from .constants import (
     MT_TX_PWR_CFG_9,
     MT_TX_RETRY_CFG,
     MT_TX_RTS_CFG,
-    MT_TX_RTS_CFG_RETRY_LIMIT,
     MT_TX_SW_CFG0,
     MT_TX_SW_CFG1,
     MT_TX_SW_CFG2,
     MT_TX_SW_CFG3,
     MT_TX_TIMEOUT_CFG,
     MT_TXOP_CTRL_CFG,
-    MT_TXOP_ED_CCA_EN,
     MT_TXOP_HLDR_ET,
-    MT_TXOP_HLDR_TX40M_BLK_EN,
     MT_US_CYC_CFG,
     MT_US_CYC_CNT_MASK,
-    MT_USB_DMA_CFG_RX_BUSY,
-    MT_USB_DMA_CFG_TX_BUSY,
-    MT_USB_U3DMA_CFG,
     MT_VHT_HT_FBK_CFG1,
     MT_WMM_AIFSN,
     MT_WMM_CWMAX,
@@ -309,19 +292,11 @@ async def mac_reset(transport: MT76x2UTransport, is_mt7612: bool = True) -> bool
     transport.rmw32(MT_TX_ALC_CFG_4, 1 << 31, 0)
 
     _mac_fixup_xtal(transport)
-    return True
 
-
-def init_us_cyc_txop(transport: MT76x2UTransport) -> None:
-    """Stir US_CYC_CFG.CNT to 0x1e and set TXOP_CTRL_CFG to 0x583f.
-
-    [SRC] mt76x2/usb_init.c:177-178 — the kernel does these two in init_hardware
-    AFTER init_beacon_config and BEFORE mcu_load_cr, NOT inside mac_reset. Doing
-    them at the mac_reset tail emitted them ~640 ops early vs the cold-boot wire
-    (verify_pcap CHECK A-C).
-    """
+    # Stir US_CYC_CFG.CNT to 0x1e (the kernel does this after init_hardware).
     transport.rmw32(MT_US_CYC_CFG, MT_US_CYC_CNT_MASK, 0x1e)
     transport.write32(MT_TXOP_CTRL_CFG, 0x583f)
+    return True
 
 
 def _compute_xtal_trim(trim_2: int, trim_1_byte: int) -> tuple[int, int]:
@@ -597,38 +572,16 @@ def _set_beacon_offsets(transport: MT76x2UTransport) -> None:
         transport.write32(MT_BCN_OFFSET_BASE + i * 4, regs[i])
 
 
-def mac_reset_counters(transport: MT76x2UTransport) -> None:
-    """`mt76x02_mac_reset_counters` — [SRC] mt76x02_mac.c:11. Read (read-to-clear)
-    the RX/TX stat counters so they start at zero. mt76x02u_mac_start runs this
-    first, before enabling the MAC."""
-    transport.read32(MT_RX_STAT_0)
-    transport.read32(MT_RX_STAT_1)
-    transport.read32(MT_RX_STAT_2)
-    transport.read32(MT_TX_STA_0)
-    transport.read32(MT_TX_STA_1)
-    transport.read32(MT_TX_STA_2)
-    for i in range(16):                 # MT_TX_AGG_CNT(i): 0-7 @ base0, 8-15 @ base1
-        base = MT_TX_AGG_CNT_BASE0 if i < 8 else MT_TX_AGG_CNT_BASE1
-        transport.read32(base + (i % 8) * 4)
-    for _ in range(16):
-        transport.read32(MT_TX_STAT_FIFO)
-
-
 async def mac_start(transport: MT76x2UTransport,
                     rxfilter: int = 0x00015f97,
                     monitor: bool = True) -> bool:
-    """`mt76x02u_mac_start` — [SRC] mt76x02_usb_core.c. Reset the stat counters,
-    enable TX, wait for WPDMA idle, program the RX filter, enable TX+RX.
+    """Enable TX (always) + RX. [SRC] mt76x02_usb_core.c::mt76x02u_mac_start.
 
     In monitor mode we open the RX filter further than the kernel default:
     clear DROP_UC_NOME (bit 2) so frames addressed to other STAs make it
     through, and DROP_NOT_MYBSSID (bit 3) so non-matching BSSID frames
     survive. This is the mt76 analog of [[station-vs-monitor-rcr]] for rtw88.
-    The wire wrote the base filter here and applies monitor filtering via a
-    separate configure_filter; that structural difference is a deliberate
-    wifit3 divergence, masked in verify_pcap CHECK A-C (not reordered).
     """
-    mac_reset_counters(transport)
     # Always enable TX first per kernel order.
     transport.write32(MT_MAC_SYS_CTRL, MT_MAC_SYS_CTRL_ENABLE_TX)
 
@@ -651,116 +604,12 @@ async def mac_start(transport: MT76x2UTransport,
 
 
 async def mac_stop(transport: MT76x2UTransport) -> None:
-    """`mt76x2u_mac_stop` — [SRC] mt76x2/usb_mac.c:95.
-
-    Quiesces the MAC: trim the RTS retry limit, clear ED-CCA + 40M-block, drain
-    the TX DMA and TxQ page counts, disable MAC TX+RX, wait for the MAC to go
-    idle, drain the RxQ page counts + RX DMA, then restore the RTS config. The
-    kernel runs this at the tail of init_hardware (before the start path
-    re-enables via mac_start) and on teardown. The `i > 10` / `count > 10` guards
-    force a minimum number of poll iterations exactly as the kernel does, so the
-    recorded cold-boot wire is reproduced under replay.
+    """Clear ENABLE_TX|RX. Lightweight stop — full kernel `mt76x2u_mac_stop`
+    drains queues etc. but for our close() path this is sufficient.
     """
-    u3dma = MT_VEND_TYPE_CFG | MT_USB_U3DMA_CFG
-    ibi12 = MT_BBP_IBI_BASE + 12 * 4        # MT_BBP(IBI, 12)
-    core4 = MT_BBP_CORE_BASE + 4 * 4        # MT_BBP(CORE, 4)
-
-    rts_cfg = transport.read32(MT_TX_RTS_CFG)
-    transport.write32(MT_TX_RTS_CFG, rts_cfg & ~MT_TX_RTS_CFG_RETRY_LIMIT)
-
-    transport.rmw32(MT_TXOP_CTRL_CFG, MT_TXOP_ED_CCA_EN, 0)
-    transport.rmw32(MT_TXOP_HLDR_ET, MT_TXOP_HLDR_TX40M_BLK_EN, 0)
-
-    # wait tx dma to stop
-    for i in range(2000):
-        if not (transport.read32(u3dma) & MT_USB_DMA_CFG_TX_BUSY) and i > 10:
-            break
-
-    # page count on TxQ (undocumented page-count regs, per the kernel)
-    for _ in range(200):
-        if (not (transport.read32(0x0438) & 0xFFFFFFFF)
-                and not (transport.read32(0x0A30) & 0x000000FF)
-                and not (transport.read32(0x0A34) & 0xFF00FF00)):
-            break
-
-    transport.rmw32(MT_MAC_SYS_CTRL,
-                    MT_MAC_SYS_CTRL_ENABLE_RX | MT_MAC_SYS_CTRL_ENABLE_TX, 0)
-
-    # wait for the MAC to become idle
-    stopped = False
-    for _ in range(1000):
-        if (not (transport.read32(MT_MAC_STATUS) & MT_MAC_STATUS_TX)
-                and not transport.read32(ibi12)):
-            stopped = True
-            break
-
-    if not stopped:
-        transport.rmw32(core4, 1 << 1, 1 << 1)
-        transport.rmw32(core4, 1 << 1, 0)
-        transport.rmw32(core4, 1 << 0, 1 << 0)
-        transport.rmw32(core4, 1 << 0, 0)
-
-    # page count on RxQ
-    count = 0
-    for _ in range(200):
-        if (not (transport.read32(0x0430) & 0x00FF0000)
-                and not (transport.read32(0x0A30) & 0xFFFFFFFF)
-                and not (transport.read32(0x0A34) & 0xFFFFFFFF)):
-            count += 1
-            if count > 10:
-                break
-
-    # wait for MAC RX to stop
-    for _ in range(2000):
-        if not (transport.read32(MT_MAC_STATUS) & MT_MAC_STATUS_RX):
-            break
-
-    # wait rx dma to stop
-    for i in range(2000):
-        if not (transport.read32(u3dma) & MT_USB_DMA_CFG_RX_BUSY) and i > 10:
-            break
-
-    transport.write32(MT_TX_RTS_CFG, rts_cfg)
-
-
-def mac_stop_config(transport: MT76x2UTransport, force: bool = False) -> None:
-    """`mt76x2_mac_stop` — [SRC] mt76x2/mac.c:9. The config-time (re-tune) MAC stop,
-    lighter than the init `mt76x2u_mac_stop`: clear ED-CCA + 40M-block, disable the MAC,
-    trim the RTS retry limit, wait for the MAC to go idle (<=300x), restore RTS. The
-    kernel wraps a runtime channel change (mt76x2u_set_channel) in this + mac_resume."""
-    core4 = MT_BBP_CORE_BASE + 4 * 4
-    ibi12 = MT_BBP_IBI_BASE + 12 * 4
-    transport.rmw32(MT_TXOP_CTRL_CFG, MT_TXOP_ED_CCA_EN, 0)
-    transport.rmw32(MT_TXOP_HLDR_ET, MT_TXOP_HLDR_TX40M_BLK_EN, 0)
-    transport.write32(MT_MAC_SYS_CTRL, 0)
-    rts_cfg = transport.read32(MT_TX_RTS_CFG)
-    transport.write32(MT_TX_RTS_CFG, rts_cfg & ~MT_TX_RTS_CFG_RETRY_LIMIT)
-    stopped = False
-    for _ in range(300):
-        if ((transport.read32(MT_MAC_STATUS) & (MT_MAC_STATUS_RX | MT_MAC_STATUS_TX))
-                or transport.read32(ibi12)):
-            continue
-        stopped = True
-        break
-    if force and not stopped:
-        transport.rmw32(core4, 1 << 1, 1 << 1)
-        transport.rmw32(core4, 1 << 1, 0)
-        transport.rmw32(core4, 1 << 0, 1 << 0)
-        transport.rmw32(core4, 1 << 0, 0)
-    transport.write32(MT_TX_RTS_CFG, rts_cfg)
-
-
-def mac_resume(transport: MT76x2UTransport) -> None:
-    """`mt76x2_mac_resume` — [SRC] mt76x2/mac.h. Re-enable MAC TX+RX after a
-    config-time mac_stop (the tail of a wrapped channel change)."""
-    transport.write32(MT_MAC_SYS_CTRL,
-                      MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX)
-
-
-def mac_stop_light(transport: MT76x2UTransport) -> None:
-    """Lightweight MAC stop for teardown: clear only ENABLE_TX|RX (leave the other
-    MAC_SYS_CTRL bits alone). The full mt76x2u_mac_stop drains the queues + writes
-    MAC_SYS_CTRL=0, which is unneeded on close() and whose poll-loop reads / full
-    register clear can leave a warm chip harder to re-attach on the next open."""
-    transport.rmw32(MT_MAC_SYS_CTRL,
-                    MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX, 0)
+    transport.rmw32(
+        MT_MAC_SYS_CTRL,
+        MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX,
+        0,
+    )
+    await asyncio.sleep(0.005)

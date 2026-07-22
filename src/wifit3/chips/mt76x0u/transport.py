@@ -216,39 +216,6 @@ class MT76x0UTransport:
                                      wValue=wValue, wIndex=wIndex,
                                      wLength=4, data=payload))
 
-    def write_copy(self, addr: int, data: bytes) -> None:
-        """Copy a byte buffer to consecutive registers in ONE MULTI_WRITE.
-
-        Mirrors `mt76_wr_copy` -> `mt76u_copy` [SRC] mt76x0/usb.c:158: the kernel
-        writes structs (the 8-byte WCID address, 32-byte shared keys) as a single
-        vendor MULTI_WRITE of the whole payload, not one write32 per word. Length
-        is rounded up to 4; every caller copies <= 32 bytes and usb->data_len is
-        >= 32, so it is always one transfer.
-        """
-        wValue = (addr >> 16) & 0xFFFF
-        wIndex = addr & 0xFFFF
-        payload = bytes(data)
-        if len(payload) % 4:
-            payload += b"\x00" * (4 - len(payload) % 4)
-        n = _vendor_ctrl_with_retry(
-            self.dev,
-            bmRequestType=0x40,            # vendor OUT
-            bRequest=MT_VEND_MULTI_WRITE,
-            wValue=wValue,
-            wIndex=wIndex,
-            data_or_wLength=payload,
-            timeout_ms=self.timeout_ms,
-            label=f"write_copy(0x{addr:08x}, {len(payload)}B)",
-        )
-        if n != len(payload):
-            raise RuntimeError(
-                f"write_copy(0x{addr:08x}): wrote {n} bytes, expected {len(payload)}"
-            )
-        if WIRE_LOG.enabled:
-            WIRE_LOG.emit(fmt_vendor(MT_VEND_MULTI_WRITE, is_in=False,
-                                     wValue=wValue, wIndex=wIndex,
-                                     wLength=len(payload), data=payload))
-
     def set_bits(self, addr: int, mask: int) -> int:
         """`mt76_set(reg, mask)` equivalent — RMW, returns the new value."""
         val = self.read32(addr)

@@ -39,7 +39,6 @@ class FakeTransport:
         cur = self.reads.get(addr, 0)
         new = ((cur & ~mask) | (value & mask)) & 0xFFFFFFFF
         self.reads[addr] = new
-        self.rmws.append((addr, mask, value & 0xFFFFFFFF))
         self.rmws.append((addr, mask, value))
 
 
@@ -120,8 +119,7 @@ def test_phy_set_txpower_low_writes_alc_cfg_0_and_nine_pwr_cfgs():
     phy.phy_set_txpower_low(t, rp, txp_0=0x1A, txp_1=0x05)
 
     addrs = [addr for addr, _ in t.writes]
-    rmw_addrs = [addr for addr, _, _ in t.rmws]
-    assert C.MT_TX_ALC_CFG_0 in rmw_addrs   # CH_INIT_0/1 set via two rmw_field ops
+    assert C.MT_TX_ALC_CFG_0 in addrs
     for pwr_reg in (
         C.MT_TX_PWR_CFG_0, C.MT_TX_PWR_CFG_1, C.MT_TX_PWR_CFG_2,
         C.MT_TX_PWR_CFG_3, C.MT_TX_PWR_CFG_4, C.MT_TX_PWR_CFG_7,
@@ -131,12 +129,14 @@ def test_phy_set_txpower_low_writes_alc_cfg_0_and_nine_pwr_cfgs():
 
 
 def test_phy_set_txpower_low_alc_cfg_0_carries_txp_fields():
-    """ALC_CFG_0 is two rmw_field ops: CH_INIT_0 in bits 0..5, CH_INIT_1 in 8..13."""
+    """ALC_CFG_0 is RMW: CH_INIT_0 in bits 0..5, CH_INIT_1 in bits 8..13."""
     t = FakeTransport()
     rp = _empty_rate_power()
     phy.phy_set_txpower_low(t, rp, txp_0=0x05, txp_1=0x1A)
-    val = t.reads[C.MT_TX_ALC_CFG_0]   # final register value after both rmws
-    assert (val & C.MT_TX_ALC_CFG_0_CH_INIT_0_MASK) == 0x05
+    alc_writes = [v for a, v in t.writes if a == C.MT_TX_ALC_CFG_0]
+    assert alc_writes, "ALC_CFG_0 must be written"
+    val = alc_writes[-1]
+    assert val & C.MT_TX_ALC_CFG_0_CH_INIT_0_MASK == 0x05
     assert (val & C.MT_TX_ALC_CFG_0_CH_INIT_1_MASK) >> 8 == 0x1A
 
 

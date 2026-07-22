@@ -13,21 +13,21 @@ All register addresses and vendor request codes were derived from
 # [SRC] data_dumps/mt76-source-v6.18/mt76x2/usb.c:12
 # ---------------------------------------------------------------------------
 USB_IDS_MT76X2U = [
-    (0x0b05, 0x1833, "MediaTek MT7612U (Asus USB-AC54)"),
-    (0x0b05, 0x17eb, "MediaTek MT7612U (Asus USB-AC55)"),
-    (0x0b05, 0x180b, "MediaTek MT7612U (Asus USB-N53 B1)"),
-    (0x0e8d, 0x7612, "MediaTek MT7612U (Alfa AWUS036ACM)"),
-    (0x057c, 0x8503, "MediaTek MT7612U (AVM FRITZ!WLAN AC860)"),
-    (0x7392, 0xb711, "MediaTek MT7612U (Edimax EW-7722UAC)"),
-    (0x0e8d, 0x7632, "MediaTek MT7662U (HC-M7662BU1)"),
-    (0x0471, 0x2126, "MediaTek MT7612U (LiteOn WN4516R)"),
-    (0x0471, 0x7600, "MediaTek MT7612U (LiteOn WN4519R)"),
-    (0x2c4e, 0x0103, "MediaTek MT7612U (Mercury UD13)"),
-    (0x0846, 0x9014, "MediaTek MT7612U (Netgear WNDA3100v3)"),
-    (0x0846, 0x9053, "MediaTek MT7612U (Netgear A6210)"),
-    (0x045e, 0x02e6, "MediaTek MT7612U (Xbox One Wireless Adapter)"),
-    (0x045e, 0x02fe, "MediaTek MT7612U (Xbox One Wireless Adapter)"),
-    (0x2357, 0x0137, "MediaTek MT7612U (TP-Link TL-WDN6200)"),
+    (0x0b05, 0x1833, "MT7612U (Asus USB-AC54)"),
+    (0x0b05, 0x17eb, "MT7612U (Asus USB-AC55)"),
+    (0x0b05, 0x180b, "MT7612U (Asus USB-N53 B1)"),
+    (0x0e8d, 0x7612, "MT7612U (Alfa AWUS036ACM)"),
+    (0x057c, 0x8503, "MT7612U (AVM FRITZ!WLAN AC860)"),
+    (0x7392, 0xb711, "MT7612U (Edimax EW-7722UAC)"),
+    (0x0e8d, 0x7632, "MT7662U (HC-M7662BU1)"),
+    (0x0471, 0x2126, "MT7612U (LiteOn WN4516R)"),
+    (0x0471, 0x7600, "MT7612U (LiteOn WN4519R)"),
+    (0x2c4e, 0x0103, "MT7612U (Mercury UD13)"),
+    (0x0846, 0x9014, "MT7612U (Netgear WNDA3100v3)"),
+    (0x0846, 0x9053, "MT7612U (Netgear A6210)"),
+    (0x045e, 0x02e6, "MT7612U (Xbox One Wireless Adapter)"),
+    (0x045e, 0x02fe, "MT7612U (Xbox One Wireless Adapter)"),
+    (0x2357, 0x0137, "MT7612U (TP-Link TL-WDN6200)"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -308,7 +308,6 @@ MT_TX_SW_CFG1                  = 0x1334
 MT_TX_SW_CFG2                  = 0x1338
 MT_TXOP_CTRL_CFG               = 0x1340
 MT_TX_RTS_CFG                  = 0x1344
-MT_TX_RTS_CFG_RETRY_LIMIT      = 0xFF       # GENMASK(7, 0) — retry-limit field
 MT_TX_TIMEOUT_CFG              = 0x1348
 MT_TX_RETRY_CFG                = 0x134C
 MT_TX_LINK_CFG                 = 0x1350
@@ -447,17 +446,6 @@ MT_TX_ALC_CFG_2_TEMP_COMP_MASK = 0x3F        # GENMASK(5, 0)
 # RX_STAT_1 CCA error counter. [SRC] mt76x02_regs.h:566.
 MT_RX_STAT_1                   = 0x1704
 MT_RX_STAT_1_CCA_ERRORS_MASK   = 0xFFFF      # GENMASK(15, 0)
-
-# Hardware stat counters, read (read-to-clear) by mac_reset_counters at start.
-# [SRC] mt76x02_regs.h:561-599.
-MT_RX_STAT_0                   = 0x1700
-MT_RX_STAT_2                   = 0x1708
-MT_TX_STA_0                    = 0x170c
-MT_TX_STA_1                    = 0x1710
-MT_TX_STA_2                    = 0x1714
-MT_TX_STAT_FIFO                = 0x1718
-MT_TX_AGG_CNT_BASE0            = 0x1720
-MT_TX_AGG_CNT_BASE1            = 0x174c
 
 # BBP CORE register 34 — TSSI status bit checked by tssi_compensate.
 MT_BBP_CORE_R34                = MT_BBP_CORE_BASE + 34 * 4   # 0x2088

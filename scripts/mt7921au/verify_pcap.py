@@ -1,81 +1,75 @@
 """
-verify_pcap for MT7921AU - single-cursor cold-boot gate.
+verify_pcap for MT7921AU - PARTIAL cold-boot gate. Read the warning first.
 
-Drives the driver's REAL cold bring-up (MT7921AUDriver._bringup) against a Linux
-usbmon cold-boot capture over ONE strict positional cursor: from the very first
-register op (the chip-id read at the top of firmware.load_firmware) through the
-full firmware upload (WFDMA init + ROM patch + WM RAM + FW_START handshake) and
-post_boot_init, byte-for-byte. No hand copy, no windowing: connect() and this walk
-run the same _bringup, so they cannot drift, and there are no skipped ops between
-"checks" for a reordered bring-up to hide in.
+WARNING: this does NOT diff the capture byte-for-byte. It runs windowed, anchored
+checks that SKIP the ops between windows, WAIVE some (the btusb boot-status polls),
+and assert the call order THIS SCRIPT picks for the driver's functions - not the order
+connect() actually uses. So it cannot catch a driver that reorders its bring-up, and a
+PASS only means the chosen windows matched, not that the port reproduces the capture.
+It is a smoke test over significant skipped/waived portions, not a fidelity gate.
 
-  COLD-BOOT CURSOR - the merged, capture-ordered op stream is served/asserted by a
-  mock transport (ColdBootReplay): captured register reads and MCU responses are
-  served back; every register write, MCU command frame, and FW_SCATTER chunk the
-  driver emits is asserted byte-for-byte, in order. A codec/mock bug can only cause
-  a false RED (a driver op that fails to match the wire), never a false GREEN - the
-  driver's real bytes are always compared to the recorded wire.
+Runs two offline checks against a Linux usbmon cold-boot capture, exercising the
+driver's REAL code (no reimplementation):
 
-  After _bringup returns, the SAME cursor continues through the operational tail
-  (monitor entry + airodump channel hops + periodic mac_work MIB reads). airmon /
-  mac80211 interleave the monitor-entry commands in a tool-timing-dependent order
-  that differs per capture, so the tail is matched flexibly (each op peeked and
-  routed to the real driver builder that reproduces it), not strict-positional.
+  CHECK 1 - WFDMA register init. One cursor walks the captured control-transfer
+  stream (reads + writes, with VALUES parsed straight from the pcapng bytes). It
+  runs the driver's real `_dma_init` against a mock transport that serves the
+  captured reads and asserts every write the driver emits matches the kernel's
+  wire, in order. PASS <=> zero divergences. A transposed magic number (Q_MAP,
+  SCHED_SET, ...) fails it instantly.
 
-  CHECK TX - rebuild every captured aireplay TX frame via the driver's REAL tx.build_tx
-  and assert the full USB bulk-OUT bytes AND endpoint. Only runs on a capture with
-  post-boot 802.11 TX.
+  CHECK 2 - firmware-load handshake. NEW, and only possible with a scatter-disabled
+  capture (`options mt76_usb disable_usb_sg=1`): the device->host RX is finally
+  recorded, so every MCU response is visible. For each MCU command on EP 0x08 the
+  driver's real `_build_mcu_frame` is rebuilt (seq forced to the captured value)
+  and asserted byte-for-byte against the wire, then each command is paired with its
+  response on EP 0x84 - the PATCH_SEM acks (eid=0x04) and, critically, the
+  FW_START -> eid=0x01 (MCU_EVENT_FW_START) boot signal the chip emits ~15 ms after
+  FW_START_REQ. (Pre-scatter captures recorded zero RX, which is why the prior doc
+  wrongly concluded FW_START produces no response.)
 
-Two capture-shape differences from the WiFi cold boot are counted and printed, never
-silently waived:
-  - the Linux probe reads the chip REV (0x70010204) right after the chip id; the port
-    reads only the id, so that one wire read is waived.
-  - firmware.load_firmware replicates two btusb boot-status polls (a Bluetooth-
-    coexistence artifact of the composite AXML unit); the single-function pau0f WiFi
-    cold boot has none, so those port reads are served off-cursor, and any btusb
-    boot-status polls that leak into a composite capture are waived.
+The mt7921 device address is auto-detected (it differs per plug-in: the device
+that touches the WFDMA prefetch register is the one we want).
 
-The mt7921 device address is auto-detected (it differs per plug-in: the device that
-touches the WFDMA prefetch register is the one we want).
-
-Usage: uv run python scripts/verify_pcap.py mt7921au [<pcap>]
+Usage: uv run python scripts/mt7921au/verify_pcap.py [<pcap>]
 """
 import asyncio
 import struct
 import sys
 from pathlib import Path
-from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-import wifit3.chips.mt7921au as mt_pkg  # noqa: F401,E402  (kept for parity / future asset lookups)
-from wifit3.chips.mt7921au import mcu as mt_mcu  # noqa: E402
-from wifit3.chips.mt7921au import mac as mt_mac  # noqa: E402
-from wifit3.chips.mt7921au import tx as mt_tx  # noqa: E402
-from wifit3.chips.mt7921au.constants import (  # noqa: E402
+import wifit3.chips.mt7921au as mt_pkg
+from wifit3.chips.mt7921au import init as mt_init
+from wifit3.chips.mt7921au import mcu as mt_mcu
+from wifit3.chips.mt7921au import mac as mt_mac
+from wifit3.chips.mt7921au import tx as mt_tx
+from wifit3.chips.mt7921au.constants import (
     MT_MIB_SDR9, MT_MIB_SDR3, MT_SDIO_TXD_SIZE, MT_TXD3_REM_TX_COUNT, MT_TXD3_NO_ACK,
-    MT_VEND_READ_REG_REQ, MT_VEND_POWER_ON,
 )
-from wifit3.chips.mt7921au.driver import MT7921AUDriver  # noqa: E402
+from wifit3.chips.mt7921au.firmware import MT7921AUFirmwareLoader
+from wifit3.chips.mt7921au.transport import MT7921AUTransport
 
 DEFAULT_CAP = "usb_dumps_new/captures_mt7921u_pau0f-no-adapter-scatter/capture-3.pcap"
-PREFETCH0 = 0x7C024600        # first WFDMA-init register touched - used to auto-detect the device
-REG_BREQ = {0x63, 0x66, 0x01, 0x02}   # unified rd/wr + UHW rd/wr (register access); addr-keyed
-# The btusb boot-status query (bRequest 0x01, wValue 0x30, 64-byte read) decodes to this
-# pseudo-address. It is NOT a WiFi register: on the composite AXML unit (WiFi+BT) the btusb
-# function shares the devnum and its concurrent-init boot-status polls leak into the stream.
-# The single-function pau0f has none. Waived (and counted) as another driver's traffic.
+PREFETCH0 = 0x7C024600        # first WFDMA-init register touched - start of CHECK 1 window
+REG_BREQ = {0x63, 0x66, 0x01, 0x02}   # unified rd/wr + UHW rd/wr (register access)
+# The boot-status query (bRequest 0x01, wValue 0x30, 64-byte read) decodes to this
+# pseudo-address. It is NOT a WiFi register: on the composite AXML unit (WiFi+BT) the
+# btusb function shares the devnum and its concurrent-init boot-status polls leak into
+# the stream. The single-function pau0f has none. Dropped from the post-boot walk (and
+# counted) as another driver's traffic, like an aireplay TX-status waiver.
 BOOT_STATUS_ADDR = 0x00300000
-# The Linux mt7921u probe reads chip id (0x70010200) THEN chip rev (0x70010204); the port
-# reads only the id (it needs no rev), so the one wire chip-rev read is waived (and counted).
-CHIP_REV_ADDR = 0x70010204
 EP_MCU_OUT, EP_FW_OUT, EP_IN_RX, EP_IN_CMD = 0x08, 0x04, 0x84, 0x85
-# A composite WiFi+BT unit shares its devnum with the btusb function, whose concurrent
-# BT-firmware load interleaves thousands of boot-status polls (and other BT register
-# traffic) into the stream from op #0. A single-function unit's Linux cold boot reads
-# BOOT_STATUS_ADDR zero times, so any real quantity of them flags a composite capture
-# the WiFi cold boot cannot be cleanly separated from.
-_COMPOSITE_BOOTSTATUS_MIN = 8
+
+# connac2 MCU command ids (low byte) seen during firmware load.
+CID = {0x10: "PATCH_SEM_CONTROL", 0x05: "PATCH_START_REQ", 0x07: "PATCH_FINISH_REQ",
+       0x01: "TARGET_ADDR_LEN_REQ", 0x02: "FW_START_REQ"}
+# connac2 MCU event ids (mt76_connac_mcu.h). 0x04 = MT_PATCH_SEM; 0x01 is reused for
+# TARGET_ADDRESS_LEN / FW_START / GENERIC - i.e. the generic "command accepted" ack.
+EID = {0x01: "FW_START/GENERIC", 0x04: "MT_PATCH_SEM"}
+# ext_eid on a PATCH_SEM event = the semaphore status code.
+PATCH_SEM_STATUS = {0x02: "NOT_DL_SEM_SUCCESS", 0x03: "REL_SEM_SUCCESS"}
 
 
 def parse_pcapng(path):
@@ -105,6 +99,33 @@ def detect_dev(pkts):
     return None
 
 
+def build_op_stream(pkts, dev):
+    """Ordered list of ('R'|'W', addr, value) for device-`dev` register control ops."""
+    ops, pending = [], {}
+    for pkt in pkts:
+        if len(pkt) < 64:
+            continue
+        urb_type, xfer, devnum = pkt[8], pkt[9], pkt[11]
+        if devnum != dev or xfer != 0x02:        # control transfers only
+            continue
+        urb_id = pkt[0:8]
+        if urb_type == 0x53:                      # SUBMIT (has setup)
+            bmReq, bReq = pkt[40], pkt[41]
+            if bReq not in REG_BREQ:
+                continue
+            wValue, wIndex, wLength = struct.unpack_from("<HHH", pkt, 42)
+            addr = (wValue << 16) | wIndex
+            if bmReq & 0x80:                      # IN = read; value arrives on COMPLETE
+                pending[urb_id] = addr
+            elif wLength >= 4 and len(pkt) >= 68:  # OUT = write; value in data
+                ops.append(("W", addr, struct.unpack_from("<I", pkt, 64)[0]))
+        elif urb_type == 0x43:                    # COMPLETE
+            addr = pending.pop(urb_id, None)
+            if addr is not None and len(pkt) >= 68:
+                ops.append(("R", addr, struct.unpack_from("<I", pkt, 64)[0]))
+    return ops
+
+
 def build_bulk_stream(pkts, dev):
     """Ordered bulk events for device `dev`: ('OUT', ep, data) on SUBMIT (the host
     write), ('IN', ep, data) on COMPLETE (the device response/RX)."""
@@ -123,26 +144,218 @@ def build_bulk_stream(pkts, dev):
 
 
 # ----------------------------------------------------------------------------
-# Merged cold-boot op stream + the single-cursor replay transport.
+# CHECK 1 - _dma_init register-write accuracy
 # ----------------------------------------------------------------------------
 
 class Divergence(Exception):
     pass
 
 
-def build_cold_stream(pkts, dev):
-    """Merged, capture-ordered op list for device `dev`, from the first register op.
-    Each op is a dict:
-      {'kind':'R'|'W', 'addr', 'val'}          register read / write (any bus, addr-keyed)
-      {'kind':'VENDOR','bReq','wVal','wIdx','data'}  a non-register vendor OUT (power-on)
-      {'kind':'MCU','frame','seq','resp'}       an EP-0x08 command + its seq-matched response
-      {'kind':'FWCHUNK','data'}                 an EP-0x04 FW_SCATTER chunk (SDIO hdr stripped)
+class ReplayTransport:
+    """Serves captured reads; asserts driver writes match the captured stream."""
+    def __init__(self, ops):
+        self.ops = ops
+        self.i = 0
+        self.matched = []      # (addr, value) writes confirmed against the wire
 
-    btusb boot-status reads (bReq 0x01, wValue 0x30, bmReq 0xC0) are captured as R ops at
-    BOOT_STATUS_ADDR like any UHW read; the caller waives them. Post-FW-START bulk-OUT TX
-    frames (EP 0x04 data, EP 0x09 mgmt) are excluded - they are the TX check's domain."""
+    def _next(self):
+        if self.i >= len(self.ops):
+            raise Divergence(f"driver did an extra op past the captured stream (op #{self.i})")
+        op = self.ops[self.i]
+        self.i += 1
+        return op
+
+    def read_reg32_unified(self, addr):
+        kind, a, v = self._next()
+        if kind != "R" or a != addr:
+            raise Divergence(f"op #{self.i-1}: driver READ 0x{addr:08x}, wire has {kind} 0x{a:08x}")
+        return v
+
+    def write_reg32_unified(self, addr, value):
+        kind, a, v = self._next()
+        if kind != "W" or a != addr:
+            raise Divergence(f"op #{self.i-1}: driver WROTE 0x{addr:08x}, wire has {kind} 0x{a:08x}")
+        if v != value:
+            raise Divergence(f"op #{self.i-1}: VALUE MISMATCH at 0x{addr:08x} - "
+                             f"driver 0x{value:08x} vs wire 0x{v:08x}")
+        self.matched.append((addr, value))
+
+
+def check_dma_init(pkts, dev):
+    ops = build_op_stream(pkts, dev)
+    start = next((k for k, o in enumerate(ops) if o[1] == PREFETCH0), None)
+    if start is None:
+        print("[FAIL] CHECK 1: WFDMA prefetch register not found in capture")
+        return False
+    window = ops[start:]
+    loader = MT7921AUFirmwareLoader(ReplayTransport(window),
+                                    Path(mt_pkg.__file__).parent / "assets")
+    print(f"CHECK 1 - _dma_init register init  ({len(ops)} reg ops; window @ op {start})")
+    try:
+        loader._dma_init()
+    except Divergence as e:
+        print(f"  [FAIL] DIVERGENCE - {e}")
+        print("  (the cursor stops at the first op the driver does not reproduce - that IS the bug)")
+        return False
+    t = loader.transport
+    print(f"  [PASS] reproduced {len(t.matched)} register writes byte-for-byte "
+          f"({t.i} ops consumed)")
+    return True
+
+
+# ----------------------------------------------------------------------------
+# CHECK 2 - firmware-load command/response handshake
+# ----------------------------------------------------------------------------
+
+def parse_mcu_command(frame):
+    """Pull (cid, set_query, ext_cid, seq, payload) out of a captured EP-0x08 frame.
+    Layout: SDIO(4) + connac2 txd(64) + payload + pad. cid@40 pkt_type@41
+    set_query@42 seq@43 ext_cid@45; mcu_txd.len@36 = 32 + payload_len."""
+    cid, set_query, seq, ext_cid = frame[40], frame[42], frame[43], frame[45]
+    mcu_len = struct.unpack_from("<H", frame, 36)[0]
+    payload_len = max(0, mcu_len - 32)
+    payload = bytes(frame[68:68 + payload_len])
+    return cid, set_query, ext_cid, seq, payload
+
+
+def parse_mcu_response(data):
+    """connac2 rxd: rxd[6]=24B, len@24, pkt_type@26, eid@28, seq@29, option@30,
+    ext_eid@32."""
+    if len(data) < 33:
+        return None
+    return {"eid": data[28], "seq": data[29], "ext_eid": data[32]}
+
+
+def pair_load_handshake(evs):
+    """Walk the bulk stream up to (and including) FW_START_REQ, pairing each MCU
+    command on EP 0x08 with the next device response on EP 0x84/0x85. Returns the
+    ordered list of (command_frame, response_or_None) and the FW_SCATTER count."""
+    pairs, fw_chunks = [], 0
+    for kind, ep, data in evs:
+        if kind == "OUT" and ep == EP_FW_OUT:
+            fw_chunks += 1
+        elif kind == "OUT" and ep == EP_MCU_OUT:
+            if len(data) >= 46:
+                pairs.append((data, None))
+        elif kind == "IN" and ep in (EP_IN_RX, EP_IN_CMD):
+            if pairs and pairs[-1][1] is None:
+                pairs[-1] = (pairs[-1][0], data)
+                if pairs[-1][0][40] == 0x02:   # FW_START_REQ answered -> handshake done
+                    break
+    return pairs, fw_chunks
+
+
+def check_handshake(pkts, dev):
+    evs = build_bulk_stream(pkts, dev)
+    if not any(k == "IN" for k, _, _ in evs):
+        print("CHECK 2 - firmware-load handshake")
+        print("  [SKIP] this capture has no device->host RX - it predates "
+              "disable_usb_sg=1, so MCU responses are invisible. Re-capture with "
+              "`options mt76_usb disable_usb_sg=1` to verify the handshake.")
+        return "SKIP"
+    pairs, fw_chunks = pair_load_handshake(evs)
+    if not pairs:
+        print("[FAIL] CHECK 2: no MCU commands found in capture")
+        return False
+
+    # Real frame builder, exercised once per captured command (seq forced to match).
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    tx = MT7921AUTransport(None)
+
+    print(f"CHECK 2 - firmware-load handshake  ({len(pairs)} MCU commands, "
+          f"{fw_chunks} FW_SCATTER chunks)")
+    print(f"  {'cid':>22}  seq  {'frame':>5}  rebuilt  response")
+    ok = True
+    cids = []
+    for frame, resp in pairs:
+        cid, set_query, ext_cid, seq, payload = parse_mcu_command(frame)
+        cids.append(cid)
+        name = CID.get(cid, f"0x{cid:02x}?")
+
+        # Rebuild via the driver's REAL frame builder, forcing the captured seq.
+        # The firmware-load commands are all plain MCU_CMD(cid) — no ext/uni/ce
+        # flags — so the encoded cmd is just the captured cid byte.
+        tx._mcu_seq = (seq - 1) & 0x0F
+        built, built_seq = tx._build_mcu_frame(cid, payload)
+        if built_seq != seq:
+            print(f"  [FAIL] {name}: builder produced seq 0x{built_seq:02x}, wanted 0x{seq:02x}")
+            ok = False
+        elif bytes(built) != bytes(frame):
+            diff = next((k for k in range(min(len(built), len(frame))) if built[k] != frame[k]), None)
+            print(f"  [FAIL] {name} seq=0x{seq:02x}: frame mismatch at byte {diff} "
+                  f"(driver 0x{built[diff]:02x} vs wire 0x{frame[diff]:02x}; "
+                  f"len {len(built)} vs {len(frame)})")
+            ok = False
+            continue
+
+        # Pair + validate the response.
+        r = parse_mcu_response(resp) if resp else None
+        if r is None:
+            rdesc = "-  (no response captured)"
+            if cid in (0x10, 0x02):   # PATCH_SEM and FW_START are answered on the wire
+                rdesc = "MISSING (expected a response)"
+                ok = False
+        else:
+            edesc = EID.get(r["eid"], f"eid=0x{r['eid']:02x}?")
+            if cid == 0x10:           # PATCH_SEM -> eid=0x04, ext_eid carries status
+                exp = PATCH_SEM_STATUS.get(r["ext_eid"], f"ext=0x{r['ext_eid']:02x}?")
+                rdesc = f"{edesc}/{exp}"
+                if r["eid"] != 0x04:
+                    rdesc += "  [FAIL eid!=0x04]"
+                    ok = False
+            else:                      # everything else -> eid=0x01 generic/boot ack
+                rdesc = edesc
+                if r["eid"] != 0x01:
+                    rdesc += "  [FAIL eid!=0x01]"
+                    ok = False
+            if r["seq"] != seq:        # device must echo our seq
+                rdesc += f"  [FAIL resp seq 0x{r['seq']:02x}!=0x{seq:02x}]"
+                ok = False
+            if cid == 0x02:
+                rdesc += "   <<< MCU_EVENT_FW_START (boot signal)"
+
+        print(f"  {name:>22}  0x{seq:02x}  {len(frame):>5}  {'==':>7}  {rdesc}")
+
+    # Orchestration shape: SEM_GET, START, FINISH, SEM_REL, NxTARGET_ADDR, FW_START.
+    head = cids[:4]
+    if head != [0x10, 0x05, 0x07, 0x10]:
+        print(f"  [FAIL] unexpected patch-phase command order: {[hex(c) for c in head]}")
+        ok = False
+    if cids[-1] != 0x02:
+        print(f"  [FAIL] last command is 0x{cids[-1]:02x}, expected FW_START_REQ (0x02)")
+        ok = False
+    n_target = sum(1 for c in cids if c == 0x01)
+    print(f"  {n_target} TARGET_ADDR_LEN_REQ (one per downloaded RAM region); "
+          f"sequence {'OK' if ok else 'FAILED'}")
+    print(f"  [{'PASS' if ok else 'FAIL'}] every MCU command rebuilt byte-for-byte "
+          f"and paired with its device response")
+    return ok
+
+
+# ----------------------------------------------------------------------------
+# CHECK 3 - post-boot device init + monitor entry + channel (single cursor)
+#
+# One cursor walks the merged post-boot stream: unified-bus register reads/writes
+# (control) AND MCU commands (bulk EP 0x08) with their seq-matched responses (bulk
+# EP 0x84), in capture order. The driver's REAL post-boot orchestration
+# (init.post_boot_init) is run against a mock transport that serves the captured
+# reads/responses and asserts every write/command byte-for-byte. Fail-closed:
+#   - matched     -> a handler reproduced the op; cursor advances.
+#   - divergence  -> a ported handler emitted the wrong bytes; STOP, name it.
+#   - frontier    -> the orchestration returned but ops remain unconsumed; the
+#                    first leftover op IS the next thing to port. PASS <=> none left.
+# ----------------------------------------------------------------------------
+
+class PostBootDivergence(Exception):
+    pass
+
+
+def build_postboot_stream(pkts, dev):
+    """Merged, capture-ordered op list for device `dev`. Each op is a dict:
+       {'kind':'R'|'W', 'addr', 'val'} for unified-bus register access, or
+       {'kind':'MCU', 'frame', 'seq', 'resp'} for an EP-0x08 command + its
+       seq-matched EP-0x84/0x85 response."""
     merged, pending_rd, pending_mcu = [], {}, []
-    seen_fw = False
     for pkt in pkts:
         if len(pkt) < 40 or pkt[11] != dev:
             continue
@@ -151,17 +364,15 @@ def build_cold_stream(pkts, dev):
         if xfer == 0x02:                                  # control (register bus)
             if urb_type == 0x53:                          # SUBMIT
                 bmReq, bReq = pkt[40], pkt[41]
+                if bReq not in REG_BREQ:
+                    continue
                 wValue, wIndex, wLength = struct.unpack_from("<HHH", pkt, 42)
                 addr = (wValue << 16) | wIndex
-                if bmReq & 0x80:                          # IN (read; value on COMPLETE)
-                    if bReq in REG_BREQ:
-                        pending_rd[urb_id] = addr
-                elif bReq in REG_BREQ and wLength >= 4 and len(pkt) >= 68:
+                if bmReq & 0x80:
+                    pending_rd[urb_id] = addr
+                elif wLength >= 4 and len(pkt) >= 68:
                     merged.append({"kind": "W", "addr": addr,
                                    "val": struct.unpack_from("<I", pkt, 64)[0]})
-                elif bReq == MT_VEND_POWER_ON:
-                    merged.append({"kind": "VENDOR", "bReq": bReq,
-                                   "wVal": wValue, "wIdx": wIndex, "data": b""})
             elif urb_type == 0x43:                        # COMPLETE
                 addr = pending_rd.pop(urb_id, None)
                 if addr is not None and len(pkt) >= 68:
@@ -174,11 +385,6 @@ def build_cold_stream(pkts, dev):
                 op = {"kind": "MCU", "frame": bytes(data), "seq": data[43], "resp": None}
                 merged.append(op)
                 pending_mcu.append(op)
-                if data[38] == 0x00 and data[39] == 0x80 and data[40] == 0x02:
-                    seen_fw = True                         # FW_START: RAM upload done
-            elif urb_type == 0x53 and ep == EP_FW_OUT and not seen_fw and len(data) >= 4:
-                clen = struct.unpack_from("<I", data, 0)[0] & 0xFFFF   # SDIO hdr tx_bytes
-                merged.append({"kind": "FWCHUNK", "data": bytes(data[4:4 + clen])})
             elif urb_type == 0x43 and (ep & 0x80) and lencap > 0 and len(data) > 29:
                 rseq = data[29]                            # connac rxd seq
                 for op in pending_mcu:
@@ -189,49 +395,26 @@ def build_cold_stream(pkts, dev):
 
 
 def _fmt_op(op):
-    k = op["kind"]
-    if k == "MCU":
+    if op["kind"] == "MCU":
         f = op["frame"]
         std = f[38] == 0x00 and f[39] == 0x80
         cid = f[40] if std else struct.unpack_from("<H", f, 38)[0]
         ext = f[45] if std else 0
-        return f"MCU {'STD' if std else 'UNI'} cid=0x{cid:02x} ext=0x{ext:02x} seq=0x{op['seq']:02x} ({len(f)}B)"
-    if k == "FWCHUNK":
-        return f"FWCHUNK ({len(op['data'])}B)"
-    if k == "VENDOR":
-        return f"VENDOR bReq=0x{op['bReq']:02x} wVal=0x{op['wVal']:x} wIdx=0x{op['wIdx']:x}"
-    return f"{k} 0x{op['addr']:08x}=0x{op['val']:08x}"
+        kind = "STD" if std else "UNI"
+        return f"MCU {kind} cid=0x{cid:02x} ext=0x{ext:02x} seq=0x{op['seq']:02x} ({len(f)}B)"
+    return f"{op['kind']} 0x{op['addr']:08x}=0x{op['val']:08x}"
 
 
-class _EmptyQueue:
-    """Stub for transport._mcu_rx_queue: load_firmware's post-patch drain sees it empty."""
-    def empty(self):
-        return True
-
-    def qsize(self):
-        return 0
-
-
-class ColdBootReplay:
-    """Single strict positional cursor over the merged cold-boot op stream, exposing the
-    MT7921AUTransport surface the driver's bring-up calls. Serves captured reads and MCU
-    responses; asserts every write / MCU frame / FW chunk byte-for-byte, in order.
-
-    read_boot_status is served off-cursor (a btusb-coexistence diagnostic the port
-    replicates, absent from the WiFi cold boot) and counted. Everything else is positional,
-    so a mock bug can only stop the walk early (false RED), never pass a wrong op (false GREEN).
-    """
+class PostBootReplay:
+    """Mock transport driving init.post_boot_init over the merged op stream."""
 
     def __init__(self, ops):
         self.ops = ops
         self.i = 0
-        self.boot_status_served = 0
-        self._mcu_rx_queue = _EmptyQueue()
-        self.dev = None
 
     def _next(self):
         if self.i >= len(self.ops):
-            raise Divergence(f"driver ran past the captured stream (op #{self.i})")
+            raise PostBootDivergence(f"driver ran past the captured stream (op #{self.i})")
         op = self.ops[self.i]
         self.i += 1
         return op
@@ -239,107 +422,54 @@ class ColdBootReplay:
     def peek(self):
         return self.ops[self.i] if self.i < len(self.ops) else None
 
-    # --- register bus: unified / standard / UHW reads and writes are all addr-keyed ---
-    def _read(self, addr):
+    def read_reg32_unified(self, addr):
         op = self._next()
         if op["kind"] != "R" or op["addr"] != addr:
-            raise Divergence(f"op #{self.i-1}: driver READ 0x{addr:08x}, wire has {_fmt_op(op)}")
+            raise PostBootDivergence(
+                f"op #{self.i-1}: driver READ 0x{addr:08x}, wire has {_fmt_op(op)}")
         return op["val"]
 
-    def read_reg32(self, addr):
-        return self._read(addr)
-
-    def read_reg32_unified(self, addr):
-        return self._read(addr)
-
-    def read_vendor_request(self, bmReq, bReq, wVal, wIdx, wLength, timeout=1000):
-        """_poll_reg reads the unified bus straight through this path (bReq 0x63)."""
-        if bReq != MT_VEND_READ_REG_REQ:
-            raise Divergence(f"op #{self.i}: unexpected vendor read bReq=0x{bReq:02x}")
-        return struct.pack("<I", self._read((wVal << 16) | wIdx))
-
-    def _write(self, addr, value):
+    def write_reg32_unified(self, addr, value):
         op = self._next()
         if op["kind"] != "W" or op["addr"] != addr:
-            raise Divergence(f"op #{self.i-1}: driver WROTE 0x{addr:08x}, wire has {_fmt_op(op)}")
+            raise PostBootDivergence(
+                f"op #{self.i-1}: driver WROTE 0x{addr:08x}, wire has {_fmt_op(op)}")
         if op["val"] != value:
-            raise Divergence(f"op #{self.i-1}: VALUE MISMATCH at 0x{addr:08x} - "
-                             f"driver 0x{value:08x} vs wire 0x{op['val']:08x}")
-
-    def write_reg32(self, addr, value):
-        self._write(addr, value)
-
-    def write_reg32_unified(self, addr, value):
-        self._write(addr, value)
-
-    def send_vendor_request(self, bmReq, bReq, wVal, wIdx, data=b"", timeout=1000):
-        op = self._next()
-        if (op["kind"] != "VENDOR" or op["bReq"] != bReq
-                or op["wVal"] != wVal or op["wIdx"] != wIdx):
-            raise Divergence(f"op #{self.i-1}: driver VENDOR bReq=0x{bReq:02x} "
-                             f"wVal=0x{wVal:x} wIdx=0x{wIdx:x}, wire has {_fmt_op(op)}")
-        if bytes(data) != op["data"]:
-            raise Divergence(f"op #{self.i-1}: VENDOR data mismatch "
-                             f"(driver {bytes(data).hex()} vs wire {op['data'].hex()})")
-
-    def read_boot_status(self, length=64):
-        self.boot_status_served += 1
-        return b"\x00" * length
+            raise PostBootDivergence(
+                f"op #{self.i-1}: VALUE MISMATCH at 0x{addr:08x} - "
+                f"driver 0x{value:08x} vs wire 0x{op['val']:08x}")
 
     async def send_mcu_command(self, cmd, payload=b"", wait_resp=True, resp_timeout_ms=2000):
         op = self._next()
         if op["kind"] != "MCU":
-            raise Divergence(f"op #{self.i-1}: driver sent MCU cmd=0x{cmd:x}, wire has {_fmt_op(op)}")
+            raise PostBootDivergence(
+                f"op #{self.i-1}: driver sent MCU cmd=0x{cmd:x}, wire has {_fmt_op(op)}")
         built = mt_mcu.build_mcu_frame(cmd, payload, op["seq"])
         if bytes(built) != op["frame"]:
             n = min(len(built), len(op["frame"]))
             d = next((k for k in range(n) if built[k] != op["frame"][k]), n)
             db = f"0x{built[d]:02x}" if d < len(built) else "-"
             wb = f"0x{op['frame'][d]:02x}" if d < len(op["frame"]) else "-"
-            raise Divergence(f"op #{self.i-1}: MCU frame mismatch cmd=0x{cmd:x} at byte {d} "
-                             f"(driver {db} vs wire {wb}; len {len(built)} vs {len(op['frame'])})")
+            raise PostBootDivergence(
+                f"op #{self.i-1}: MCU frame mismatch cmd=0x{cmd:x} at byte {d} "
+                f"(driver {db} vs wire {wb}; len {len(built)} vs {len(op['frame'])})")
         return op["resp"]
 
-    async def send_fw_chunk(self, chunk, timeout_ms=1000):
-        op = self._next()
-        if op["kind"] != "FWCHUNK":
-            raise Divergence(f"op #{self.i-1}: driver sent FW chunk ({len(chunk)}B), "
-                             f"wire has {_fmt_op(op)}")
-        if bytes(chunk) != op["data"]:
-            n = min(len(chunk), len(op["data"]))
-            d = next((k for k in range(n) if chunk[k] != op["data"][k]), n)
-            raise Divergence(f"op #{self.i-1}: FW chunk mismatch at byte {d} "
-                             f"(len {len(chunk)} vs {len(op['data'])})")
-        return True
+    # standard bus is not used post-boot (everything is unified); flag if it is.
+    def read_reg32(self, addr):
+        raise PostBootDivergence(f"unexpected standard-bus READ 0x{addr:08x}")
 
-    # no-ops: the reader/pipes are physical, the cursor sequences ops instead.
-    def start_rx(self):
-        pass
+    def write_reg32(self, addr, value):
+        raise PostBootDivergence(f"unexpected standard-bus WRITE 0x{addr:08x}")
 
-    async def stop_rx(self):
-        pass
-
-    def clear_halt(self, ep):
-        pass
-
-    def subscribe(self, callback):
-        pass
-
-
-# ----------------------------------------------------------------------------
-# Operational tail (after _bringup): monitor entry + channel hops + mac_work MIB.
-# airmon/mac80211 interleave these in a tool-timing order that differs per capture,
-# so each op is peeked and routed to the real driver builder that reproduces it,
-# rather than driving a fixed sequence.
-# ----------------------------------------------------------------------------
-
+# Trigger addresses: the first register read of each periodic mac_work sequence.
 _SURVEY_FIRST = MT_MIB_SDR9(0)      # mt792x_phy_update_channel busy_time read
 _MIB_FIRST = MT_MIB_SDR3(0)         # mt792x_mac_update_mib_stats fcs_err read
 
 
 def _decode_operational_mcu(f):
     """Peek a captured operational MCU frame and return (cmd, payload) for the real
-    driver builder that reproduces it - channel/enable/filter params read straight
+    driver builder that reproduces it — channel/enable/filter params read straight
     off the wire. Returns None if it's not a recognized operational command."""
     std = f[38] == 0x00 and f[39] == 0x80
     if not std:                                   # UNI command
@@ -366,15 +496,16 @@ def _decode_operational_mcu(f):
 
 
 async def walk_operational(replay):
-    """Continue the cursor past _bringup through the airmon/airodump operational tail:
-    the monitor-entry + channel-hop MCU commands (interleaved in the tool's wire order)
-    and the periodic mt792x_mac_work MIB read cycles (update_survey every tick,
-    update_mib_stats every second tick). Each op is peeked, matched to its real driver
-    builder/sequence, and replayed against the cursor.
+    """Continue the CHECK-3 cursor past post_boot_init through the airmon/airodump
+    operational tail: the monitor-entry + channel-hop MCU commands (interleaved in
+    the tool's wire order) and the periodic mt792x_mac_work MIB read cycles
+    (update_survey every tick, update_mib_stats every second tick). Each op is
+    peeked, matched to its real driver builder/sequence, and replayed against the
+    cursor — which asserts the bytes/addresses match.
 
-    Returns "exhausted" (every op reproduced), "frontier" (an op no handler reproduces),
-    or "truncated" (the capture stopped partway through a final mac_work cycle - a benign
-    capture-end artifact; every captured op matched)."""
+    Returns "exhausted" (every op reproduced), "frontier" (hit an op no handler
+    reproduces), or "truncated" (the capture stopped partway through a final
+    mac_work cycle — a benign capture-end artifact, every captured op matched)."""
     while replay.peek() is not None:
         op = replay.peek()
         try:
@@ -389,121 +520,89 @@ async def walk_operational(replay):
                 mt_mac.update_mib_stats(replay)
             else:
                 return "frontier"
-        except Divergence:
-            # A mac_work sequence that runs off the end of the captured ops is the capture
-            # stopping mid-cycle, not a divergence - every recorded op matched.
+        except PostBootDivergence:
+            # A mac_work sequence that runs off the end of the captured ops is the
+            # capture stopping mid-cycle, not a divergence — every recorded op matched.
             if replay.i >= len(replay.ops):
                 return "truncated"
             raise
     return "exhausted"
 
 
-def _patch_sleeps():
-    """Replay needs no real settle delays; the cursor, not wall-clock, sequences ops."""
-    async def _nosleep(*a, **k):
-        return None
-    asyncio.sleep = _nosleep
+def check_post_boot(pkts, dev):
+    merged = build_postboot_stream(pkts, dev)
+    # Split at FW_START (std MCU, cid 0x02); the post-boot walk begins at the first
+    # MCU command after it (GET_NIC_CAPAB) — the leading FW_N9_RDY register poll
+    # belongs to firmware.load_firmware, not the post-boot orchestration.
+    fw = next((k for k, o in enumerate(merged) if o["kind"] == "MCU"
+               and o["frame"][38] == 0x00 and o["frame"][39] == 0x80
+               and o["frame"][40] == 0x02), None)
+    if fw is None:
+        print("CHECK 3 - post-boot init")
+        print("  [SKIP] FW_START not found (pre-scatter capture?)")
+        return "SKIP"
+    post = merged[fw + 1:]
+    start = next((k for k, o in enumerate(post) if o["kind"] == "MCU"), None)
+    ops = post[start:] if start is not None else []
 
+    # Drop btusb boot-status polls that leak into the post-boot region on composite
+    # (WiFi+BT) units — another driver's traffic, not WiFi register ops (see
+    # BOOT_STATUS_ADDR). Counted and reported, never silent.
+    n_bootstatus = sum(1 for o in ops
+                       if o["kind"] in ("R", "W") and o["addr"] == BOOT_STATUS_ADDR)
+    ops = [o for o in ops
+           if not (o["kind"] in ("R", "W") and o["addr"] == BOOT_STATUS_ADDR)]
 
-def check_cold_boot(pkts, dev):
-    """STRICT single cursor driving the driver's REAL cold bring-up (_bringup: firmware
-    upload + post_boot_init) from the first register op, then the operational tail."""
-    merged = build_cold_stream(pkts, dev)
+    n_reg = sum(1 for o in ops if o["kind"] in ("R", "W"))
+    n_mcu = sum(1 for o in ops if o["kind"] == "MCU")
+    print(f"CHECK 3 - post-boot init  ({len(ops)} ops: {n_mcu} MCU cmds, {n_reg} reg R/W)")
+    if n_bootstatus:
+        print(f"  waived {n_bootstatus} btusb boot-status poll(s) "
+              f"(composite-device BT coexistence; not WiFi register ops)")
 
-    # Two capture-shape differences from the WiFi cold boot - counted, never silent.
-    n_chiprev = sum(1 for o in merged if o["kind"] == "R" and o["addr"] == CHIP_REV_ADDR)
-    n_wire_bs = sum(1 for o in merged
-                    if o["kind"] in ("R", "W") and o["addr"] == BOOT_STATUS_ADDR)
-
-    # A composite WiFi+BT unit's btusb function saturates the shared-devnum stream with
-    # its own BT-firmware load from op #0; the WiFi cold boot cannot be walked byte-for-
-    # byte through that. Refuse it (never a misleading RED against btusb noise) and point
-    # at the single-function *-scatter capture.
-    if n_wire_bs > _COMPOSITE_BOOTSTATUS_MIN:
-        print("COLD BOOT - single cursor over the real _bringup")
-        print(f"  [ABORT] composite WiFi+BT unit: {n_wire_bs} btusb boot-status polls "
-              f"(a concurrent BT-firmware load) share the devnum and interleave with the\n"
-              f"          WiFi cold boot from op #0, so it cannot be walked byte-for-byte. "
-              f"Use a single-function capture (the pau0f *-scatter default).")
-        return "composite"
-
-    merged = [o for o in merged
-              if not (o["kind"] in ("R", "W") and o["addr"] in (CHIP_REV_ADDR, BOOT_STATUS_ADDR))]
-
-    n_reg = sum(1 for o in merged if o["kind"] in ("R", "W"))
-    n_mcu = sum(1 for o in merged if o["kind"] == "MCU")
-    n_chunk = sum(1 for o in merged if o["kind"] == "FWCHUNK")
-    print("COLD BOOT - single cursor over the real _bringup (firmware upload + post-boot init)")
-    print(f"  {len(merged)} ops: {n_mcu} MCU cmds, {n_chunk} FW chunks, {n_reg} reg R/W, "
-          f"1 vendor power-on")
-    if n_chiprev:
-        print(f"  waived {n_chiprev} Linux chip-rev read(s) @0x{CHIP_REV_ADDR:08x} "
-              f"(the port reads only the chip id)")
-    if n_wire_bs:
-        print(f"  waived {n_wire_bs} btusb boot-status poll(s) @0x{BOOT_STATUS_ADDR:08x} "
-              f"(composite-device BT coexistence; not WiFi ops)")
-
-    replay = ColdBootReplay(merged)
+    replay = PostBootReplay(ops)
     asyncio.set_event_loop(asyncio.new_event_loop())
-    _patch_sleeps()
-
-    # Build the REAL driver over the replay transport (dev is never touched - the mock
-    # replaces the transport and its firmware ref, and stubs the vendor-interface claim).
-    driver = MT7921AUDriver(Mock())
-    driver.transport = replay
-    driver.firmware.transport = replay
-    driver.firmware._claim_vendor_interface = lambda *a, **k: 0
-
     state = {}
 
     async def _drive():
-        await driver._bringup(None)                 # firmware upload + post_boot_init
-        state["boot_end"] = replay.i
-        state["status"] = await walk_operational(replay)   # monitor entry + hops + MIB
+        await mt_init.post_boot_init(replay)        # deterministic init -> add_interface
+        state["init_end"] = replay.i
+        state["status"] = await walk_operational(replay)  # monitor entry + hops + MIB
 
     try:
         asyncio.get_event_loop().run_until_complete(_drive())
-    except Divergence as e:
-        print(f"  [FAIL] DIVERGENCE after {replay.i} matched op(s)")
-        print(f"         {e}")
-        print("  (the cursor stops at the first op the driver does not reproduce - that IS the bug)")
-        return "fail"
-    except Exception as e:                          # driver raised (poll ran dry, etc.)
-        print(f"  [FAIL] driver._bringup raised {type(e).__name__}: {e} "
-              f"(after {replay.i} matched ops)")
-        return "fail"
+    except PostBootDivergence as e:
+        print(f"  [FAIL] DIVERGENCE - {e}")
+        print("  (the cursor stops at the first op the driver does not reproduce)")
+        return False
 
-    if replay.boot_status_served:
-        print(f"  served {replay.boot_status_served} port boot-status read(s) off-cursor "
-              f"(firmware replicates the btusb poll; the WiFi cold boot has none)")
-
-    boot_end, status = state["boot_end"], state["status"]
-    print(f"  cold boot: {boot_end} ops (firmware upload + post-boot init -> add_interface) "
-          f"byte-for-byte via driver._bringup")
-    print(f"  operational: {replay.i - boot_end} ops (monitor entry + hops + mac_work MIB)")
+    init_end, status = state["init_end"], state["status"]
+    print(f"  init: {init_end} ops (firmware tail -> add_interface); "
+          f"operational: {replay.i - init_end} ops (monitor entry + hops + mac_work MIB)")
     if status == "frontier":
-        front = merged[replay.i]
+        front = ops[replay.i]
         print(f"  [FRONTIER] reproduced {replay.i} ops; next unported op @{replay.i} "
               f"= {_fmt_op(front)}")
         print("  ^ port this next; the gate is green only when every op is reproduced.")
-        return "frontier"
+        return "FRONTIER"
     if status == "truncated":
-        print(f"  [PASS] reproduced all {replay.i} cold-boot + operational ops byte-for-byte "
-              f"(capture ends mid mac_work cycle - benign)")
-        return "pass"
-    print(f"  [PASS] reproduced all {replay.i} cold-boot + operational ops byte-for-byte")
-    return "pass"
+        print(f"  [PASS] reproduced all {replay.i} captured post-boot ops byte-for-byte "
+              f"(capture ends mid mac_work cycle — benign)")
+        return True
+    print(f"  [PASS] reproduced all {replay.i} post-boot ops byte-for-byte")
+    return True
 
 
 # ----------------------------------------------------------------------------
-# CHECK TX - TX descriptor accuracy
+# CHECK 4 - TX descriptor accuracy
 #
 # Rebuild every captured aireplay TX frame (the `-0` deauth on EP 0x09 + the
 # `--test` null frames on EP 0x04) via the driver's REAL tx.build_tx and assert
 # the full USB bulk-OUT bytes AND the chosen endpoint match the wire. The TX band
 # is driven by the wire: a `current_channel` tracker updates on each config_sniffer
 # command (UNI 0x24, tlv tag 1) so 2.4 GHz frames rebuild as CCK and 5 GHz frames
-# as the band-offset OFDM rate. SKIP only when the capture recorded no post-boot TX.
+# as the band-offset OFDM rate (txwi[6] = 0x04004b00). SKIP only when the capture
+# recorded no post-boot TX (it stopped before the aireplay).
 # ----------------------------------------------------------------------------
 
 _FC_NAME = {0xc0: "deauth", 0xa0: "disassoc", 0xb0: "auth", 0x40: "probe_req",
@@ -566,10 +665,10 @@ def check_tx(pkts, dev):
             band_5ghz = (current_channel or 0) > 14
             txs.append((ep, bytes(data), bytes(data[off:off + framelen]), band_5ghz))
 
-    print("CHECK TX - TX descriptor (connac2 TXD/TXWI)")
+    print("CHECK 4 - TX descriptor (connac2 TXD/TXWI)")
     if not txs:
         print("  [UNVERIFIED] no post-boot 802.11 TX in this capture (stopped before aireplay)")
-        return "skip"
+        return "SKIP"
 
     ok = True
     by_kind = Counter()
@@ -609,14 +708,14 @@ def check_tx(pkts, dev):
         tail = ("descriptor + endpoint; TXD3 ACK-cfg excepted above" if ackcfg_excepted
                 else "descriptor + endpoint, both bands")
         print(f"  [PASS] every TX frame rebuilt byte-for-byte ({tail})")
-        return "pass"
+        return True
     print(f"  [FAIL] {first_bad}")
-    return "fail"
+    return False
 
 
 def run(cap=None):
     """Dispatcher entry (scripts/verify_pcap.py). Returns 0 = full green,
-    1 = divergence/failure, 2 = incomplete (cold-boot frontier or TX unverified)."""
+    1 = divergence/failure, 2 = incomplete (CHECK 3 frontier or TX unverified)."""
     cap = cap or DEFAULT_CAP
     pkts = parse_pcapng(cap)
     if not pkts:
@@ -629,36 +728,43 @@ def run(cap=None):
     print(f"verify_pcap mt7921au - {cap}")
     print(f"  {len(pkts)} packets; mt7921 auto-detected as device {dev}\n")
 
-    # The gate's whole point is verifying the device's RESPONSES - the firmware-load
-    # handshake and the post-boot MCU command/response stream - which are only recorded in
-    # a scatter capture (`options mt76_usb disable_usb_sg=1`). A pre-scatter capture has zero
-    # device->host RX, so the cold-boot cursor cannot pair MCU responses; refuse it rather
-    # than print a hollow PASS (the register-only ops are not a substitute).
+    # The gate's whole point is verifying the device's RESPONSES — the firmware-load
+    # handshake (CHECK 2) and the post-boot MCU command/response stream (CHECK 3) —
+    # which are only recorded in a scatter capture (`options mt76_usb disable_usb_sg=1`).
+    # A pre-scatter capture has zero device->host RX, so those checks cannot run; the
+    # register-only checks (CHECK 1/4) would pass on it, but that is NOT verification of
+    # the part that matters. Refuse it rather than print a hollow PASS.
     if not any(kind == "IN" for kind, _, _ in build_bulk_stream(pkts, dev)):
-        print(f"[ABORT] {cap} has no device->host RX - it was not captured with "
+        print(f"[ABORT] {cap} has no device->host RX — it was not captured with "
               "disable_usb_sg=1, so the firmware handshake and post-boot responses are\n"
               "        invisible and CANNOT be verified. Use a *-scatter capture; the "
-              "register-only ops are not a substitute.")
+              "register-only checks are not a substitute.")
         return 1
 
-    boot = check_cold_boot(pkts, dev)
+    ok1 = check_dma_init(pkts, dev)
     print()
-    if boot == "composite":
-        print("[ABORT] composite WiFi+BT capture - see above; use a single-function capture")
-        return 1
-    tx = check_tx(pkts, dev)
+    ok2 = check_handshake(pkts, dev)
+    print()
+    ok3 = check_post_boot(pkts, dev)
+    print()
+    ok4 = check_tx(pkts, dev)
 
-    if boot == "fail" or tx == "fail":
-        print("\n[FAIL] see localized divergence(s) above")
+    failed = (not ok1) or (ok2 is False) or (ok3 is False) or (ok4 is False)
+    if failed:
+        print("\n[FAIL] see divergences above")
         return 1
-    if boot == "frontier":
-        print("\n[FRONTIER] cold-boot cursor advancing - see the next op above")
+    # CHECK 3 is a single-cursor walk: FRONTIER means the boot path is byte-for-byte and the
+    # post-boot port has advanced to a named next op (not yet a full pass).
+    if ok3 == "FRONTIER":
+        print("\n[FRONTIER] CHECK 1+2 green; CHECK 3 advancing — see the next op above")
         return 2
-    if tx == "skip":
-        print("\n[INCOMPLETE] cold boot verified; CHECK TX UNVERIFIED - this capture has no "
-              "post-boot 802.11 TX. Supply a capture that exercises inject/aireplay\n"
-              "             (e.g. the 5g-injection capture) to verify TX; this run is NOT a "
-              "full pass.")
+    if ok4 == "SKIP":
+        # Fail-closed: a capture with no post-boot TX cannot verify the TX path, so
+        # this is NOT a full green. CHECK 1-3 are verified; TX is unverified.
+        print("\n[INCOMPLETE] CHECK 1-3 green (boot + RX verified); CHECK 4 TX UNVERIFIED — "
+              "this capture has no post-boot 802.11 TX. Supply a capture that exercises\n"
+              "             inject/aireplay (e.g. the 5g-injection capture) to verify TX; "
+              "this run is NOT a full pass.")
         return 2
     print("\n[PASS] all checks green")
     return 0

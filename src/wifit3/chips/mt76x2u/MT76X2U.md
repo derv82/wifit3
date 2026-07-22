@@ -65,17 +65,6 @@ on the USB `usb_phy.c` path, so it is not a gap for the USB drivers.
 
 ## Gotchas
 
-**connect() always cold-boots; it never reuses running firmware.** `MT_MCU_COM_REG0` only reports
-that *some* firmware is up, not *whose*: a prior wifit3 session, a stale MCU, or (on Linux) the kernel
-`mt76x2u` driver's own firmware, which our command set can't drive. So if anything is running,
-connect() `force_power_cycle`s the WLAN block (clears the ROM-patch-applied bit + FCE state) and always
-re-uploads our firmware. There is no warm-skip path and no warm fallback. Reusing a warm/foreign MCU
-aggravated the intermittent `mcu_load_cr` seq-mismatch and the ~4 s of `MCU_CAL_*` response timeouts;
-always cold-booting makes both rarer (most cold boots are clean) but does not eliminate them. They still
-surface intermittently on cold boots: the `MCU_CAL_*` (cmd=31) timeouts are non-fatal (the tune
-continues), and a rare `mcu_load_cr` (cmd=2) timeout that `force_power_cycle` cannot clear needs a
-physical replug (Win+WinUSB cannot fully cold-reset a wedged MCU). Costs ~1 s of FW upload per open.
-
 **Remove the L2 alignment pad BEFORE trimming to MPDU_LEN.** mt76x02 sets `MT_RXINFO_L2PAD` and
 inserts 2 bytes between the 802.11 header and the body whenever the header isn't 4-byte aligned —
 i.e. every QoS-Data frame (26-byte header), which is what EAPOL and WEP-ARP ride on. The kernel
@@ -110,6 +99,13 @@ so the mode-switch-across-power-cycles question is a non-issue for it.
 room might be a real firmware constraint; a 30-min soak hopping all 22 channels at 0.5 s dwell
 (2026-07-08) held frame rate steady with no degradation, so the driver re-tunes with no extra wait.
 
+**Don't reorder `mac_start` ahead of the channel tune to match the pcap.** The Linux cold-boot
+capture emits `mac_start` before the first tune; copying that order runs RX-DMA through the
+`SWITCH_CHANNEL` MCU commands and wedges the MT7612U MCU on Windows+WinUSB (cmd=31 timeouts
+escalating to a LOAD_CR cmd=2 wedge) within 2-3 cold boots. Bisect-confirmed: `ca6b3d41` ran 10/10
+clean, `364e6272` hit cmd=31 on boot 1. The pcap is Linux's wire: a reference for register
+*semantics*, not for host-DMA *ordering*. Tune first, then `mac_start`.
+
 **20 MHz primary only, by design.** `set_channel_20mhz` hardcodes `bw=0` / `ch_group_index=0`; we
 deliberately skip the kernel's 40/80 MHz path. This is the project-wide posture, not a capture gap —
 everything wifit3 acts on (beacons, auth/assoc, EAPOL, WEP IVs, all legacy-rate attacks) rides the
@@ -140,33 +136,6 @@ cross-reference.
 - `verify_pcap.py` — offline cold-boot byte gate against `captures_mt76x2u/capture-1.pcap`.
 
 ## Debug log
-
-### 2026-07-20: cold boots are mostly-clean, not always-clean (correction)
-
-Follow-up HW on the mt7612u refines the entry below. "A clean cold boot has zero cal/mcu timeouts" was
-too strong: it held for the 40 logged coldboot cycles but is not universal. A channel-hop run showed 5
-connect-time `MCU_CAL_*` (cmd=31) timeouts on a cold boot (non-fatal, the tune continues); its 22 runtime
-re-tunes were clean (100-640 ms, zero timeouts, 137 BSSIDs heard), which refuted and removed the
-"runtime re-tune cmd=31" BUGS item. Two later cold boots hit the `mcu_load_cr` (cmd=2) timeout and wedged
-the MCU; `force_power_cycle` + re-upload could not clear it, so it needed a physical replug. Net: cold
-booting makes the flake rarer, not gone; the cal timeouts are non-fatal, a wedged MCU is replug-only.
-
-### 2026-07-20: connect() always cold-boots (warm-skip removed)
-
-Dropped the warm-reattach path. connect() no longer trusts a running `MT_MCU_COM_REG0` latch: the latch
-can't tell our firmware from a kernel-warmed card's, and reusing a warm/foreign MCU produced the
-intermittent `mcu_load_cr` seq-mismatch (~1/10) plus ~4 s of `MCU_CAL_*` response timeouts on warm
-attach. New policy: if any FW is running, `force_power_cycle` then always re-upload our firmware for a
-deterministic cold state. Removed the warm-skip branch, `McuChannel.drain_response_queue`, and the warm
-`mcu_load_cr`-timeout fallback ladder. HW (single owner, wifit3 closed): 50 rapid cold-open cycles,
-48/50 booted with beacons every time (11-28 APs/cycle); the two misses were a USB transient in the first
-run right after a physical replug and never recurred over the next 40 cycles. Two logged runs (40
-cycles) had zero cal/mcu timeouts, confirming a clean cold boot calibrates fast (the timeouts were a
-symptom of dirty warm/contended state, not of cold boot). `dev.reset()` was ruled out as a software
-cold on Windows+WinUSB (no-op, no re-enumeration; latch unchanged). verify_pcap stays green (the cold
-wire is unchanged: `force_power_cycle` only fires when warm, and a genuinely cold first plug skips it).
-`LINUX_REPLUG_AFTER_MODPROBE` stays `False` but is setup-flow only (no runtime effect); the old
-"self-cold, no replug" note is now literally what connect() does on every open.
 
 ### 2026-07-08 — 30-min hop soak clean; enumeration story corrected
 
@@ -240,21 +209,3 @@ rom-patch body all match, and mainline `mt76x2u` requests exactly these. WHENCE 
 driver `mt76x2e` → governed by `LICENCE.ralink_a_mediatek_company_firmware`, which ships alongside
 the blobs in `assets/`. The DLM landing at `0x110800` plus an ASIC version of `0x76120044` pins the
 silicon at rev E4.
-
-### 2026-07-20 — verify_pcap brought to parity with v6.18 (CHECK A-C frontier)
-
-Ran the strict single-cursor `verify_pcap` past the old op#1 wall and reconciled the cold-boot
-path with the vendored `data_dumps/mt76-source-v6.18` source. CHECK D green; CHECK A-C reproduces
-1091 ops byte-for-byte (reset_wlan → mac_start). Real port gaps fixed (see `planning/BUGS.md`):
-ROM-patch read now gated behind `rom_protect`, WPDMA/mac wait order, US_CYC/TXOP moved to after
-beacon config, cached RX_FILTR read, WCID/skey `write_copy`, full `mac_stop` port,
-`mac_reset_counters`, and `mac_start` reordered ahead of the channel tune. All HW re-validated on
-the real card: `test_hw_mt76x2u --phase rx` heard 16 BSSIDs; `ack_lab/rx_autoack --test-card 7612
---prober-card 8812` gave 96/100 spoofed (active monitor) + 100/100 silicon + 0 bogus.
-
-The remaining CHECK A-C FRONTIER is **not a port bug**: `set_channel_20mhz` matches the v6.18
-source order, but the pcap runs the *wrapped* `mt76x2u_set_channel` (initial `phy_set_txpower` +
-config-time `mt76x2_mac_stop` before `phy_set_channel`) where wifit3 tunes bare. Follow-up: add
-that wrapper for full parity. A few `MCU cmd=31 (SWITCH_CHANNEL) response timeout`s appear on
-runtime re-tunes in ack_lab (not on the connect-time tune); the missing mac_stop-before-retune is
-a candidate cause worth checking.

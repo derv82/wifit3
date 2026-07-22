@@ -18,13 +18,9 @@ from .constants import (
     MT_BBP_AGC,
     MT_BBP_CORE,
     MT_BBP_TXBE,
-    MT_CMB_CTRL,
-    MT_COEXCFG0,
     MT_COEXCFG3,
-    MT_CSR_EE_CFG1,
     MT_EE_ANTENNA,
     MT_EE_ANTENNA_DUAL,
-    MT_EE_CFG1_INIT,
     MT_EE_NIC_CONF_2,
     MT_EE_NIC_CONF_2_ANT_DIV,
     MT_EE_NIC_CONF_2_ANT_OPT,
@@ -108,16 +104,19 @@ def rf_clear(mcu: MCUChannel, offset: int, mask: int) -> int:
 # mt76x0_phy_ant_select — [SRC] mt76x0/phy.c:426-470.
 #
 # Reads three EFUSE fields (ANTENNA, CFG1_INIT, NIC_CONF_2), reads two
-# MAC regs (MT_WLAN_FUN_CTRL, MT_COEXCFG3), then writes five MAC regs in
-# kernel order: WLAN_FUN_CTRL, RMW CMB_CTRL=ee_ant, RMW CSR_EE_CFG1=ee_cfg1,
-# clear COEXCFG0 BIT(2), COEXCFG3. ee_ant/ee_cfg1 are locally mutated copies
-# of the EFUSE fields written into the two RMW targets (not back to EFUSE).
+# MAC regs (MT_WLAN_FUN_CTRL, MT_COEXCFG3), updates them per the
+# dual-vs-single-antenna logic, writes back. Also writes the modified
+# EFUSE values (`ee_ant`) and a CFG1 field — but those are kept in
+# the chip's runtime state, not re-written to EFUSE (EFUSE is OTP).
+#
+# Actually re-reading the kernel: ee_ant and ee_cfg1 are LOCAL variables
+# the kernel mutates but DOESN'T write back. The function only writes
+# MT_WLAN_FUN_CTRL and MT_COEXCFG3. So we only mirror those two writes.
 # ---------------------------------------------------------------------------
 
 
 def phy_ant_select(
     transport: MT76x0UTransport, has_2ghz: bool, has_5ghz: bool, efuse_cache,
-    is_mt7630: bool = False,
 ) -> None:
     """Port of `mt76x0_phy_ant_select` (mt76x0/phy.c:426-470).
 
@@ -126,20 +125,17 @@ def phy_ant_select(
       - Single (our dev card path): if has_5ghz, set COEX3 BIT(3)|BIT(4);
         else set WLAN_FUN_CTRL BIT(6) + COEX3 BIT(1).
 
-    Then writes, in kernel order: WLAN_FUN_CTRL (bits 5/6 cleared then per-mode
-    set); RMW CMB_CTRL GENMASK(15,0) = ee_ant; RMW CSR_EE_CFG1 GENMASK(15,0) =
-    ee_cfg1; clear COEXCFG0 BIT(2); COEXCFG3 (bits 2-5 cleared then per-mode set).
+    Writes two MAC regs: MT_WLAN_FUN_CTRL (with bits 5/6 cleared then
+    optionally set) and MT_COEXCFG3 (with bits 2-5 cleared then per-mode set).
     """
     ee_ant = efuse_cache.get_u16(MT_EE_ANTENNA)
-    ee_cfg1 = efuse_cache.get_u16(MT_EE_CFG1_INIT)
+    # ee_cfg1 read in kernel but not used to write anything; skip.
     nic_conf2 = efuse_cache.get_u16(MT_EE_NIC_CONF_2)
 
     wlan = transport.read32(MT_WLAN_FUN_CTRL)
     coex3 = transport.read32(MT_COEXCFG3)
 
-    # Kernel: ee_ant &= ~(BIT(14) | BIT(12)); wlan &= ~(BIT(6) | BIT(5));
-    #         coex3 &= ~GENMASK(5, 2).
-    ee_ant &= ~((1 << 14) | (1 << 12))
+    # Kernel clears bits 5 and 6 of wlan; bits 2-5 of coex3 (GENMASK(5, 2)).
     wlan &= ~((1 << 5) | (1 << 6))
     coex3 &= ~(0xF << 2)   # GENMASK(5, 2) = 0x3C — bits 2-5 only
 
@@ -149,9 +145,9 @@ def phy_ant_select(
             not (nic_conf2 & MT_EE_NIC_CONF_2_ANT_OPT)
             and (nic_conf2 & MT_EE_NIC_CONF_2_ANT_DIV)
         )
-        if ant_div:
-            ee_ant |= 1 << 12
-        else:
+        # Kernel ALSO sets BIT(12) in local `ee_ant` if ant_div but doesn't
+        # write it anywhere — purely local state. Skip.
+        if not ant_div:
             coex3 |= 1 << 4
         coex3 |= 1 << 3
         if has_2ghz:
@@ -166,22 +162,11 @@ def phy_ant_select(
             coex3 |= 1 << 1
         path = "single"
 
-    if is_mt7630:
-        ee_ant |= (1 << 14) | (1 << 11)
-
-    def _rmw16(reg: int, val: int) -> None:
-        # mt76_rmw(reg, GENMASK(15, 0), val): clear low 16 bits, OR in val.
-        cur = transport.read32(reg)
-        transport.write32(reg, (cur & ~0xFFFF) | (val & 0xFFFF))
-
     transport.write32(MT_WLAN_FUN_CTRL, wlan)
-    _rmw16(MT_CMB_CTRL, ee_ant)
-    _rmw16(MT_CSR_EE_CFG1, ee_cfg1)
-    transport.clear_bits(MT_COEXCFG0, 1 << 2)   # mt76_clear(MT_COEXCFG0, BIT(2))
     transport.write32(MT_COEXCFG3, coex3)
     logger.info("phy_ant_select: %s antenna mode (ee_ant=0x%04x, "
-                "ee_cfg1=0x%04x, nic_conf2=0x%04x) → WLAN_FUN_CTRL=0x%08x "
-                "COEXCFG3=0x%08x", path, ee_ant, ee_cfg1, nic_conf2, wlan, coex3)
+                "nic_conf2=0x%04x) → WLAN_FUN_CTRL=0x%08x COEXCFG3=0x%08x",
+                path, ee_ant, nic_conf2, wlan, coex3)
 
 
 # ---------------------------------------------------------------------------
@@ -1022,7 +1007,6 @@ def phy_init(
         has_2ghz=efuse_full.has_2ghz,
         has_5ghz=efuse_full.has_5ghz,
         efuse_cache=efuse_full.cache,
-        is_mt7630=is_mt7630,
     )
     phy_rf_init(mcu, freq_offset=efuse_full.freq_offset, is_mt7630=is_mt7630)
     phy_set_rxpath(transport)

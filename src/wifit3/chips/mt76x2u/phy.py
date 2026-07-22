@@ -224,31 +224,30 @@ def _adjust_high_lna_gain(transport: MT76x2UTransport, reg: int,
     integer division (truncation towards zero), so a negative odd offset
     rounds towards zero, not towards -inf.
     """
-    # [SRC] mt76x2/phy.c:12: a standalone read of the gain field, then a separate
-    # mt76_rmw_field — two reads + one write, not one combined read-then-write.
-    gain = (transport.read32(reg) & MT_BBP_AGC_LNA_HIGH_GAIN_MASK) \
-        >> MT_BBP_AGC_LNA_HIGH_GAIN_SHIFT
+    cur = transport.read32(reg)
+    gain = (cur & MT_BBP_AGC_LNA_HIGH_GAIN_MASK) >> MT_BBP_AGC_LNA_HIGH_GAIN_SHIFT
     # Sign-extend the 6-bit field for signed arithmetic.
     if gain & 0x20:
         gain -= 0x40
     gain -= int(offset / 2)   # C-style truncation towards zero
-    transport.rmw32(reg, MT_BBP_AGC_LNA_HIGH_GAIN_MASK,
-                    (gain & 0x3F) << MT_BBP_AGC_LNA_HIGH_GAIN_SHIFT)
+    gain &= 0x3F
+    new = (cur & ~MT_BBP_AGC_LNA_HIGH_GAIN_MASK) | (gain << MT_BBP_AGC_LNA_HIGH_GAIN_SHIFT)
+    transport.write32(reg, new)
 
 
 def _adjust_agc_gain(transport: MT76x2UTransport, reg: int, offset: int) -> None:
     """`mt76x2_adjust_agc_gain` — [SRC] mt76x2/phy.c:23-31.
 
-    Reads the AGC_GAIN field (bits 14:8), adds ``offset``, writes back. [SRC]
-    mt76x2/phy.c:23: a standalone read then a separate mt76_rmw_field (two reads
-    + one write), not one combined read-then-write.
+    Reads the AGC_GAIN field (bits 14:8), adds ``offset``, writes back.
     """
-    gain = (transport.read32(reg) & MT_BBP_AGC_GAIN_MASK) >> MT_BBP_AGC_GAIN_SHIFT
+    cur = transport.read32(reg)
+    gain = (cur & MT_BBP_AGC_GAIN_MASK) >> MT_BBP_AGC_GAIN_SHIFT
     if gain & 0x40:
         gain -= 0x80
     gain += offset
-    transport.rmw32(reg, MT_BBP_AGC_GAIN_MASK,
-                    (gain & 0x7F) << MT_BBP_AGC_GAIN_SHIFT)
+    gain &= 0x7F
+    new = (cur & ~MT_BBP_AGC_GAIN_MASK) | (gain << MT_BBP_AGC_GAIN_SHIFT)
+    transport.write32(reg, new)
 
 
 def apply_gain_adj(transport: MT76x2UTransport,
@@ -355,12 +354,13 @@ def phy_set_txpower_low(transport: MT76x2UTransport, rate_power: dict,
                         txp_0: int, txp_1: int) -> None:
     """`mt76x02_phy_set_txpower` — [SRC] mt76x02_phy.c:93-122. The low-level
     register writer used by the per-band `phy_set_txpower` orchestrator."""
-    # [SRC] mt76x02_phy.c: two separate mt76_rmw_field calls (CH_INIT_0 then
-    # CH_INIT_1), each its own read-modify-write, not one combined write. Same
-    # final value, but the kernel emits two ops (and the LIMIT field is preserved).
-    transport.rmw32(MT_TX_ALC_CFG_0, MT_TX_ALC_CFG_0_CH_INIT_0_MASK, txp_0)
-    transport.rmw32(MT_TX_ALC_CFG_0, MT_TX_ALC_CFG_0_CH_INIT_1_MASK,
-                    txp_1 << MT_TX_ALC_CFG_0_CH_INIT_1_SHIFT)
+    cur = transport.read32(MT_TX_ALC_CFG_0)
+    cur &= ~MT_TX_ALC_CFG_0_CH_INIT_0_MASK
+    cur |= txp_0 & MT_TX_ALC_CFG_0_CH_INIT_0_MASK
+    cur &= ~MT_TX_ALC_CFG_0_CH_INIT_1_MASK
+    cur |= ((txp_1 << MT_TX_ALC_CFG_0_CH_INIT_1_SHIFT)
+            & MT_TX_ALC_CFG_0_CH_INIT_1_MASK)
+    transport.write32(MT_TX_ALC_CFG_0, cur)
 
     cck = rate_power["cck"]
     ofdm = rate_power["ofdm"]
@@ -720,17 +720,21 @@ def edcca_init(transport: MT76x2UTransport) -> None:
 
 def phy_set_band(transport: MT76x2UTransport, band_5g: bool,
                  primary_upper: bool = False) -> None:
-    """[SRC] mt76x02_phy.c:150. THREE separate rmw ops (set/clear 2G, clear/set 5G,
-    rmw UPPER_40M) matching the kernel's mt76_set/clear/rmw_field, not one combined
-    write. Same final value, but the kernel emits three read-modify-writes."""
+    """[SRC] mt76x02_phy.c:150."""
     if not band_5g:
-        transport.rmw32(MT_TX_BAND_CFG, MT_TX_BAND_CFG_2G, MT_TX_BAND_CFG_2G)  # set 2G
-        transport.rmw32(MT_TX_BAND_CFG, MT_TX_BAND_CFG_5G, 0)                  # clear 5G
+        # 2.4 GHz: set 2G, clear 5G.
+        cur = transport.read32(MT_TX_BAND_CFG)
+        cur = (cur | MT_TX_BAND_CFG_2G) & ~MT_TX_BAND_CFG_5G
     else:
-        transport.rmw32(MT_TX_BAND_CFG, MT_TX_BAND_CFG_2G, 0)                  # clear 2G
-        transport.rmw32(MT_TX_BAND_CFG, MT_TX_BAND_CFG_5G, MT_TX_BAND_CFG_5G)  # set 5G
-    transport.rmw32(MT_TX_BAND_CFG, MT_TX_BAND_CFG_UPPER_40M,
-                    MT_TX_BAND_CFG_UPPER_40M if primary_upper else 0)
+        # 5 GHz: clear 2G, set 5G.
+        cur = transport.read32(MT_TX_BAND_CFG)
+        cur = (cur | MT_TX_BAND_CFG_5G) & ~MT_TX_BAND_CFG_2G
+
+    if primary_upper:
+        cur |= MT_TX_BAND_CFG_UPPER_40M
+    else:
+        cur &= ~MT_TX_BAND_CFG_UPPER_40M
+    transport.write32(MT_TX_BAND_CFG, cur)
 
 
 def phy_set_bw_20mhz(transport: MT76x2UTransport, ctrl: int = 0) -> None:

@@ -41,26 +41,26 @@ sys.path.insert(0, str(REPO / "scripts"))
 import mt76usb_pcap_replay as rp  # noqa: E402
 
 from wifit3.chips.mt76x0u import tx as mt_tx  # noqa: E402
-from wifit3.chips.mt76x0u.driver import MT76x0UDriver  # noqa: E402
+from wifit3.chips.mt76x0u.constants import Q_SELECT  # noqa: E402
+from wifit3.chips.mt76x0u.eeprom import read_efuse_full  # noqa: E402
+from wifit3.chips.mt76x0u.firmware import FirmwareUploader  # noqa: E402
+from wifit3.chips.mt76x0u.mac import (  # noqa: E402
+    clear_shared_keys,
+    clear_wcids,
+    init_mac_registers,
+    mac_setaddr,
+    wait_for_txrx_idle,
+    wait_for_wpdma,
+)
+from wifit3.chips.mt76x0u.mcu import MCUChannel  # noqa: E402
+from wifit3.chips.mt76x0u.phy import init_bbp, phy_init  # noqa: E402
+from wifit3.chips.mt76x0u.transport import MT76x0UTransport  # noqa: E402
 
 DEFAULT_CAP = "usb_dumps_new/captures_mt76x0u/capture-1.pcap"
 ASSETS = REPO / "src" / "wifit3" / "chips" / "mt76x0u" / "assets"
 
 _TXWI_LEN = 20
 _DMA_INFO_LEN = 4
-# TXWI rate field (2 bytes at TXWI offset 2). mt76x0u injects OFDM-6 (0x2000) on
-# 2.4 GHz by design (its tx.py holds CCK-1 is dropped on this silicon); the aireplay
-# ref used CCK-1 (0x0000). A divergence confined to this field is that deliberate choice.
-_TXWI_RATE_OFF = _DMA_INFO_LEN + 2
-
-
-def _mask_rate(buf: bytes) -> bytes:
-    """Zero the TXWI rate field so a byte compare ignores the OFDM-vs-CCK divergence."""
-    if len(buf) < _TXWI_RATE_OFF + 2:
-        return buf
-    b = bytearray(buf)
-    b[_TXWI_RATE_OFF:_TXWI_RATE_OFF + 2] = b"\x00\x00"
-    return bytes(b)
 _FC_NAME = {0xc0: "deauth", 0xa0: "disassoc", 0xb0: "auth", 0x40: "probe_req",
             0x50: "probe_resp", 0x48: "null", 0x88: "qos_null", 0x80: "beacon"}
 
@@ -85,28 +85,49 @@ def _fw_file() -> Path:
 # ---------------------------------------------------------------------------
 
 def check_boot(data: dict) -> str:
-    """STRICT single cursor from op #0 driving the driver's REAL cold bring-up
-    (``MT76x0UDriver._bringup``) against the wire. No hand copy: connect() and this
-    walk run the SAME ``_bringup``, so a change to the driver's bring-up cannot drift
-    from the gate. connect() wraps _bringup with the non-vendor dev.reset()+claim
-    (absent from the vendor-op stream) before, and the RX drainer after."""
+    """STRICT single cursor from op #0 over connect()'s real cold path
+    (load_firmware -> post-FW init). No anchor, no off-cursor serving, no reorder:
+    every op (reads included) matches the wire positionally or the walk stops with the
+    exact divergence."""
     ops = data["host_ops"]
     dev = rp.ReplayDevice(ops, data["responses"])      # start at op #0
-    driver = MT76x0UDriver(dev, MT76x0UDriver.SUPPORTED_IDS[0])
+    t = MT76x0UTransport(dev)
+    mcu = MCUChannel(t)
+    state = {"phase": "cold reset + firmware upload"}
+
+    def _drive():
+        # connect() does dev.reset() + interface claim (no vendor ops), then load_firmware.
+        state["phase"] = "cold reset + firmware upload"
+        uploader = FirmwareUploader(t)
+        uploader.load_firmware(_fw_file())
+
+        state["phase"] = "post-FW init"
+        uploader.init_usb_dma()
+        wait_for_wpdma(t)
+        uploader.wait_for_mac()
+        uploader.reset_csr_bbp()
+        mcu.function_select(Q_SELECT, 1)
+        init_mac_registers(t, mcu)
+        wait_for_txrx_idle(t)
+        init_bbp(t, mcu)
+        clear_shared_keys(t)
+        clear_wcids(t)
+        efuse = read_efuse_full(t)
+        mac_setaddr(t, efuse.mac_bytes)
+        phy_init(t, mcu, efuse)
 
     try:
-        asyncio.run(driver._bringup(_fw_file()))
+        _drive()
     except rp.Divergence as e:
-        print(f"  [FAIL] DIVERGENCE after {dev.i} matched op(s)")
+        print(f"  [FAIL] DIVERGENCE in {state['phase']} after {dev.i} matched op(s)")
         print(f"         {e}")
         return "fail"
     except Exception as e:                       # driver raised (e.g. poll ran dry)
-        print(f"  [FAIL] driver._bringup raised {type(e).__name__}: {e} "
+        print(f"  [FAIL] {state['phase']}: driver raised {type(e).__name__}: {e} "
               f"(after {dev.i} matched ops)")
         return "fail"
 
-    print(f"  [PASS] reproduced all {dev.i} cold-boot + post-FW ops byte-for-byte "
-          f"via driver._bringup")
+    print(f"  [PASS] reproduced all {dev.i} cold-boot + post-FW ops byte-for-byte")
     return "pass"
 
 
@@ -144,22 +165,14 @@ def check_tx(data: dict) -> str:
     # STRICT: rebuild every wire TX frame via the driver's real build_inject_packet +
     # the EP_OUT_AC_VO endpoint inject_80211_frame always uses; assert bytes AND endpoint.
     # No frame type and no byte (incl. the TXWI rate field) is excused.
-    exact = byte_div = ep_div = ep_excepted = rate_excepted = 0
+    exact = byte_div = ep_div = 0
     by_kind = Counter()
     first_byte = first_ep = None
     for ep, wire, frame, ack in txs:
         by_kind[_FC_NAME.get(frame[0] & 0xFC, f"0x{frame[0]:02x}")] += 1
         built = bytes(mt_tx.build_inject_packet(frame, request_ack=ack, wcid=0xFF))
         wire = bytes(wire)
-        is_data = (frame[0] & 0x0C) == 0x08
-        rate_ok = _mask_rate(built) == _mask_rate(wire)
-        # inject_80211_frame routes EVERY frame to AC_VO; the aireplay ref put its
-        # data-null frames on AC_BE (0x04). Accept that + the OFDM-vs-CCK rate field
-        # when every other descriptor byte matches (both deliberate, documented).
         if ep != mt_tx.EP_OUT_AC_VO:
-            if is_data and ep == 0x04 and rate_ok:
-                ep_excepted += 1
-                continue
             ep_div += 1
             if first_ep is None:
                 first_ep = (f"fc0=0x{frame[0]:02x} wire ep=0x{ep:02x}, wifit3 "
@@ -167,9 +180,6 @@ def check_tx(data: dict) -> str:
             continue
         if built == wire:
             exact += 1
-            continue
-        if rate_ok:                     # only the deliberate OFDM-vs-CCK rate field differs
-            rate_excepted += 1
             continue
         byte_div += 1
         if first_byte is None:
@@ -182,18 +192,13 @@ def check_tx(data: dict) -> str:
     print(f"  {len(txs)} TX frames: {dict(by_kind)}")
     print(f"  exact byte+endpoint match: {exact}; byte-divergent: {byte_div}; "
           f"endpoint-divergent: {ep_div}")
-    if rate_excepted or ep_excepted:
-        print(f"  excepted: {rate_excepted} OFDM-vs-CCK rate (2.4 GHz inject by design), "
-              f"{ep_excepted} AC_VO-vs-AC_BE data route; every other descriptor byte matched.")
     if byte_div:
         print(f"  [FAIL] first byte divergence: {first_byte}")
     if ep_div:
         print(f"  [FAIL] first endpoint divergence: {first_ep}")
     if byte_div or ep_div:
         return "fail"
-    accepted = exact + rate_excepted + ep_excepted
-    print(f"  [PASS] all {accepted} TX frames rebuilt byte-for-byte "
-          f"({exact} exact; rate/route excepted above)")
+    print(f"  [PASS] all {exact} TX frames rebuilt byte-for-byte (descriptor + endpoint)")
     return "pass"
 
 
