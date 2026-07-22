@@ -39,6 +39,7 @@ import usb.core
 
 from wifit3.chips.rt3070 import tx
 from wifit3.chips.rt3070.driver import RT3070Driver
+from wifit3.dot11.packet import Packet
 
 
 def _str_to_mac(mac_str: str) -> bytes:
@@ -64,7 +65,7 @@ class _HandshakeTally:
         self.eapol_to_ap = 0      # client->AP (ToDS) = M2/M4
         self.eapol_from_ap = 0    # AP->client (FromDS) = M1/M3
 
-    def __call__(self, parsed: dict) -> None:
+    def __call__(self, parsed: Packet) -> None:
         self.frames += 1
         ftype = parsed.type
         bssid = (parsed.bssid or "").lower()

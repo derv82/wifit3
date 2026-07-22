@@ -37,6 +37,7 @@ import libusb_package
 import usb.core
 
 from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
+from wifit3.dot11.packet import Packet
 
 
 def _str_to_mac(mac_str: str) -> bytes:
@@ -73,7 +74,7 @@ class _HandshakeTally:
         self.eapol_from_ap = 0    # AP->client (FromDS) = M1/M3
         self.tods_data = 0
 
-    def __call__(self, parsed: dict) -> None:
+    def __call__(self, parsed: Packet) -> None:
         self.frames += 1
         ftype = parsed.type
         bssid = (parsed.bssid or "").lower()

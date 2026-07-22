@@ -33,6 +33,7 @@ from wifit3.chips.mt76x2u.constants import (
 )
 from wifit3.chips.mt76x2u.driver import MT76x2UDriver
 from wifit3.chips.driver import DeviceID
+from wifit3.dot11.packet import Packet
 
 
 def setup_logging(debug: bool) -> None:
@@ -157,7 +158,7 @@ async def phase_rx(driver: MT76x2UDriver, duration_s: float) -> None:
     # Collect parsed beacons into a per-BSSID dict for end-of-run report.
     seen_aps: dict[str, dict] = {}
 
-    def on_parsed(frame: dict) -> None:
+    def on_parsed(frame: Packet) -> None:
         if frame.subtype_id != 8:   # beacon
             return
         bssid = frame.bssid
@@ -212,7 +213,7 @@ async def phase_hop(driver: MT76x2UDriver, dwell_s: float) -> None:
     # Per-channel AP table.
     per_chan: dict[int, dict[str, dict]] = {}
 
-    def on_parsed(frame: dict) -> None:
+    def on_parsed(frame: Packet) -> None:
         if frame.subtype_id != 8:
             return
         bssid = frame.bssid
@@ -308,7 +309,7 @@ async def phase_deauth(driver: MT76x2UDriver, target: str,
     eapol_count = 0
     handshake_frames = []
 
-    def on_parsed(frame: dict) -> None:
+    def on_parsed(frame: Packet) -> None:
         nonlocal eapol_count
         if frame.type == "eapol":
             eapol_count += 1

@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import libusb_package
 import usb.core
 from wifit3.chips.mt7921au.driver import MT7921AUDriver
+from wifit3.dot11.packet import Packet
 
 MT7921AU_VID = 0x0e8d
 MT7921AU_PID = 0x7961
@@ -100,9 +101,9 @@ async def main(debug: bool):
 
     # 4. RX window — confirm frames flow
     step(f"RX ({RX_WINDOW}s listen on CH1)")
-    frames: list[dict] = []
+    frames: list[Packet] = []
 
-    def on_frame(parsed: dict):
+    def on_frame(parsed: Packet):
         frames.append(parsed)
 
     driver.register_rx_callback(on_frame)
@@ -115,7 +116,7 @@ async def main(debug: bool):
             counts[t] = counts.get(t, 0) + 1
         ok(f"Received {len(frames)} frames: {counts}")
     else:
-        # Not a hard failure — could be no nearby APs, or channel mismatch.
+        # Not a hard failure: could be no nearby APs, or channel mismatch.
         print("[WARN] No frames received. Device may be working but RF environment is quiet.")
         print("       Try a busier channel (e.g. 6 or 11) if this repeats.")
 

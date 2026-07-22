@@ -30,6 +30,7 @@ import libusb_package
 import usb.core
 
 from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
+from wifit3.dot11.packet import Packet
 
 
 class BeaconTally:
@@ -41,7 +42,7 @@ class BeaconTally:
         self.essids: dict = {}
         self.total_frames = 0
 
-    def __call__(self, parsed: dict) -> None:
+    def __call__(self, parsed: Packet) -> None:
         self.total_frames += 1
         if parsed.type == "beacon":
             bssid = (parsed.bssid or "").lower()
