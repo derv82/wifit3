@@ -94,7 +94,7 @@ async def main_async(args) -> int:
 
     mgr, iface = await discover_iface(args.debug)
     capture: list = []
-    iface.register_rx_callback(lambda fr, rssi, ts: capture.append((ts, bytes(fr))))
+    iface.register_rx_callback(lambda pkt: capture.append((time.monotonic(), pkt.raw)))
     try:
         step(f"Park on channel {channel}, find {bssid}")
         if not await iface.set_channel(channel):

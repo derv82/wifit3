@@ -42,7 +42,7 @@ class FrameCounter:
     def __init__(self) -> None:
         self.count = 0
 
-    def __call__(self, raw: bytes, rssi: int, ts: float) -> None:
+    def __call__(self, pkt) -> None:
         self.count += 1
 
 

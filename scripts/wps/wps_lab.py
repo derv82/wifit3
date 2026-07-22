@@ -106,7 +106,9 @@ class SnifferTap:
             return "us"
         return "AP" if mac == self.bssid else _mac_tail(mac)
 
-    def __call__(self, fb: bytes, rssi: int, ts: float) -> None:
+    def __call__(self, pkt) -> None:
+        fb = pkt.raw
+        ts = time.monotonic()
         if len(fb) < 10 or not self.our:
             return
         fc0 = fb[0]

@@ -153,7 +153,9 @@ class ChopProbe:
         self.captured: list = []           # (ts, frame)
         self.relays: list = []             # (ts, frame)
 
-    def rx_cb(self, frame: bytes, rssi: int, ts: float) -> None:
+    def rx_cb(self, pkt) -> None:
+        frame = pkt.raw
+        ts = time.monotonic()
         self.captured.append((ts, bytes(frame)))
         if len(frame) < 24:
             return

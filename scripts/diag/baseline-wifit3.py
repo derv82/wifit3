@@ -22,7 +22,6 @@ sys.path.insert(0, str(_HERE))
 from driver_health import Health  # noqa: E402
 
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 
 def _chip(iface) -> str:
@@ -58,14 +57,10 @@ async def run(args) -> int:
     health = Health(chip, "wifit3")
     cur_channel = {"ch": 0}
 
-    def on_rx(raw: bytes, rssi: int, ts: float) -> None:
-        try:
-            parsed = WlanFrameParser.parse_80211_frame(raw, rssi)
-        except Exception:
-            return
+    def on_rx(pkt) -> None:
         if cur_channel["ch"] == 0:
             return  # RX loop runs before the first set_channel; don't bucket pre-sweep frames at ch0
-        health.feed(time.monotonic(), parsed, rssi, cur_channel["ch"])
+        health.feed(time.monotonic(), pkt, pkt.rssi, cur_channel["ch"])
 
     iface.register_rx_callback(on_rx)
 

@@ -88,17 +88,17 @@ class WepSniffer:
         self.our_samples: list[str] = []
         self.ap_samples: list[str] = []
 
-    def __call__(self, frame: bytes, rssi: int, ts: float) -> None:
-        if len(frame) < 24:
+    def __call__(self, pkt) -> None:
+        if len(pkt.raw) < 24:
             return
         self.total += 1
-        fc0, fc1 = frame[0], frame[1]
+        fc0, fc1 = pkt.raw[0], pkt.raw[1]
         ftype = (fc0 & 0x0C) >> 2
         subtype = (fc0 & 0xF0) >> 4
         to_ds = bool(fc1 & 0x01)
         from_ds = bool(fc1 & 0x02)
         protected = bool(fc1 & 0x40)
-        a1, a2, a3 = frame[4:10], frame[10:16], frame[16:22]
+        a1, a2, a3 = pkt.raw[4:10], pkt.raw[10:16], pkt.raw[16:22]
 
         if ftype == 0 and subtype == 8 and a3 == self.bssid:
             self.beacons += 1
@@ -112,14 +112,14 @@ class WepSniffer:
             if our_mac is not None and a2 == our_mac:
                 self.our_replays += 1
                 if len(self.our_samples) < 6:
-                    self.our_samples.append(frame.hex())
+                    self.our_samples.append(pkt.raw.hex())
             else:
                 self.other_tods += 1
         elif from_ds and not to_ds and a1 == BROADCAST and a2 == self.bssid:
-            # AP→broadcast rebroadcast — the thing that mints fresh IVs.
+            # AP->broadcast rebroadcast: the thing that mints fresh IVs.
             self.ap_rebroadcasts += 1
             if len(self.ap_samples) < 6:
-                self.ap_samples.append(frame.hex())
+                self.ap_samples.append(pkt.raw.hex())
 
     def snapshot(self) -> tuple:
         return (self.total, self.beacons, self.our_replays,

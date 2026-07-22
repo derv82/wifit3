@@ -28,7 +28,6 @@ import usb.util  # noqa: E402
 
 from wifit3.chips.ar9271_v2 import constants as C  # noqa: E402
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 
 def _reset_to_cold() -> None:
@@ -63,17 +62,13 @@ class Tally:
         self.bssids: set[str] = set()
         self.beacons = 0
 
-    def __call__(self, raw: bytes, rssi: int, ts: float) -> None:
-        try:
-            p = WlanFrameParser.parse_80211_frame(raw, rssi)
-        except Exception:
+    def __call__(self, pkt) -> None:
+        if not pkt:
             return
-        if not p:
-            return
-        self.types[p.type] += 1
-        if p.type == "beacon":
+        self.types[pkt.type] += 1
+        if pkt.type == "beacon":
             self.beacons += 1
-        b = (p.bssid or "").lower()
+        b = (pkt.bssid or "").lower()
         if b:
             self.bssids.add(b)
 

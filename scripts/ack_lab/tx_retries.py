@@ -59,15 +59,15 @@ class CopyCounter:
         self.copies: dict[int, int] = {}
         self.beacons = 0
 
-    def __call__(self, fb: bytes, rssi: int, ts: float) -> None:
-        if fb and fb[0] == 0x80:
+    def __call__(self, pkt) -> None:
+        if pkt.raw and pkt.raw[0] == 0x80:
             self.beacons += 1
             return
         if self.src is None or self.target is None:
             return
-        if len(fb) < 24 or fb[10:16] != self.src or fb[4:10] != self.target:
+        if len(pkt.raw) < 24 or pkt.raw[10:16] != self.src or pkt.raw[4:10] != self.target:
             return
-        seq = int.from_bytes(fb[22:24], "little") >> 4
+        seq = int.from_bytes(pkt.raw[22:24], "little") >> 4
         self.copies[seq] = self.copies.get(seq, 0) + 1
 
     def arm(self, src: bytes, target: bytes) -> None:

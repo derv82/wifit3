@@ -21,7 +21,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 from wifit3.chips.rt5370 import mac, monitor  # noqa: E402
 
 
@@ -29,16 +28,12 @@ class Collector:
     def __init__(self) -> None:
         self.events: list[tuple[float, str, int]] = []
 
-    def __call__(self, raw: bytes, rssi: int, ts: float) -> None:
-        try:
-            p = WlanFrameParser.parse_80211_frame(raw, rssi)
-        except Exception:
+    def __call__(self, pkt) -> None:
+        if not pkt or pkt.type != "beacon":
             return
-        if not p or p.type != "beacon":
-            return
-        b = (p.bssid or "").lower()
+        b = (pkt.bssid or "").lower()
         if b:
-            self.events.append((time.monotonic(), b, rssi))
+            self.events.append((time.monotonic(), b, pkt.rssi))
 
 
 async def main(args) -> int:

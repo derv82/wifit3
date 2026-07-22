@@ -192,7 +192,7 @@ async def main_async(args) -> int:
 
     mgr, iface = await discover_iface(args.debug)
     capture: list = []
-    iface.register_rx_callback(lambda fr, rssi, ts: capture.append((ts, bytes(fr))))
+    iface.register_rx_callback(lambda pkt: capture.append((time.monotonic(), pkt.raw)))
     our_mac = bytes([0x02, 0xAA, 0xBB]) + struct.pack(">I", int(time.time()))[1:]
     try:
         found_ap = await find_ap(iface, channel, bssid, ssid, args.scan_secs)

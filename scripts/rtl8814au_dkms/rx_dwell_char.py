@@ -23,7 +23,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 _HOP = [1, 149]
 
@@ -46,13 +45,9 @@ async def run(args: argparse.Namespace) -> int:
           file=sys.stderr)
     beacons: deque = deque(maxlen=200_000)
 
-    def on_rx(raw: bytes, rssi: int, ts: float) -> None:
-        try:
-            p = WlanFrameParser.parse_80211_frame(raw, rssi)
-        except Exception:  # noqa: BLE001
-            return
-        if p and p.type == "beacon" and p.bssid:
-            beacons.append((time.monotonic(), p.bssid.lower()))
+    def on_rx(pkt) -> None:
+        if pkt and pkt.type == "beacon" and pkt.bssid:
+            beacons.append((time.monotonic(), pkt.bssid.lower()))
     iface.register_rx_callback(on_rx)
 
     def igi() -> int:

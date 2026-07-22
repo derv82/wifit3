@@ -23,7 +23,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 # BB register banks that carry the 2.4 GHz RX path: OFDM/DIG (0x800), CCK (0xA00), path-A (0xC00).
 _ADDRS = ([a for a in range(0x800, 0x900, 4)]
@@ -48,13 +47,9 @@ async def run(args: argparse.Namespace) -> int:
     t = iface.driver.transport
     beacons: deque = deque(maxlen=100_000)
 
-    def on_rx(raw: bytes, rssi: int, ts: float) -> None:
-        try:
-            p = WlanFrameParser.parse_80211_frame(raw, rssi)
-        except Exception:  # noqa: BLE001
-            return
-        if p and p.type == "beacon" and p.bssid:
-            beacons.append((time.monotonic(), p.bssid.lower()))
+    def on_rx(pkt) -> None:
+        if pkt and pkt.type == "beacon" and pkt.bssid:
+            beacons.append((time.monotonic(), pkt.bssid.lower()))
     iface.register_rx_callback(on_rx)
 
     async def rate(secs: float) -> tuple[float, float]:

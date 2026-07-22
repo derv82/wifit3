@@ -37,7 +37,6 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
-from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
 _BAR_MAX = 40  # cap the bar so a busy second can't wrap the terminal
 
@@ -48,14 +47,10 @@ class BeaconCollector:
     def __init__(self) -> None:
         self.events: list[tuple[float, str]] = []
 
-    def __call__(self, raw: bytes, rssi: int, ts: float) -> None:
-        try:
-            parsed = WlanFrameParser.parse_80211_frame(raw, rssi)
-        except Exception:
+    def __call__(self, pkt) -> None:
+        if not pkt or pkt.type != "beacon":
             return
-        if not parsed or parsed.type != "beacon":
-            return
-        bssid = (parsed.bssid or "").lower()
+        bssid = (pkt.bssid or "").lower()
         if bssid:
             self.events.append((time.monotonic(), bssid))
 

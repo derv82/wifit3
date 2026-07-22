@@ -56,11 +56,11 @@ class DeauthCounter:
         self.matched = 0
         self.sample_frames: list[bytes] = []
 
-    def __call__(self, frame_bytes: bytes, rssi: int, ts: float) -> None:
-        if len(frame_bytes) < 24:
+    def __call__(self, pkt) -> None:
+        if len(pkt.raw) < 24:
             return
         self.total += 1
-        fc0 = frame_bytes[0]
+        fc0 = pkt.raw[0]
         # FC byte 0: bits[3:2] = type (00=mgmt), bits[7:4] = subtype.
         # Beacon = type=0 subtype=8 → 0x80.
         # Deauth = type=0 subtype=12 → 0xC0.
@@ -70,15 +70,15 @@ class DeauthCounter:
         if fc0 != 0xC0:
             return
         self.any_deauth += 1
-        addr1 = frame_bytes[4:10]
-        addr2 = frame_bytes[10:16]
-        addr3 = frame_bytes[16:22]
+        addr1 = pkt.raw[4:10]
+        addr2 = pkt.raw[10:16]
+        addr3 = pkt.raw[16:22]
         ap_to_client = addr1 == self.client and addr2 == self.ap and addr3 == self.ap
         client_to_ap = addr1 == self.ap and addr2 == self.client and addr3 == self.ap
         if ap_to_client or client_to_ap:
             self.matched += 1
             if len(self.sample_frames) < 3:
-                self.sample_frames.append(frame_bytes[:26])
+                self.sample_frames.append(pkt.raw[:26])
 
 
 async def main(debug: bool) -> None:

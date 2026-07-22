@@ -48,7 +48,7 @@ async def run(args: argparse.Namespace) -> int:
     t = drv.transport
     loop = asyncio.get_running_loop()
     cnt = {"frames": 0}
-    iface.register_rx_callback(lambda raw, rssi, ts: cnt.__setitem__("frames", cnt["frames"] + 1))
+    iface.register_rx_callback(lambda pkt: cnt.__setitem__("frames", cnt["frames"] + 1))
     dch = args.dwell_ch
 
     async def rf00() -> int:

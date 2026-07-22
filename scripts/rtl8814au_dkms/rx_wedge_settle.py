@@ -58,7 +58,7 @@ async def run(args: argparse.Namespace) -> int:
         return 1
     loop = asyncio.get_running_loop()
     cnt = {"frames": 0}
-    iface.register_rx_callback(lambda raw, rssi, ts: cnt.__setitem__("frames", cnt["frames"] + 1))
+    iface.register_rx_callback(lambda pkt: cnt.__setitem__("frames", cnt["frames"] + 1))
     dch = args.dwell_ch
     print(f"[*] delay={args.delay_ms}ms at={args.at if args.delay_ms else '-'} "
           f"reissue={args.reissue} dwell_ch={dch} trials={args.trials}\n", file=sys.stderr)

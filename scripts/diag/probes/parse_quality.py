@@ -37,10 +37,6 @@ from typing import Any
 
 from .base import Probe
 
-# sys.path is set up by sweep.py before this module is loaded
-# (sweep prepends src/ so wifit3.* is importable).
-from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
-
 
 def _bssid_sane(bssid: str | None) -> bool:
     """True if BSSID looks like a plausible AP MAC.
@@ -114,19 +110,14 @@ class ParseQualityProbe(Probe):
             garbage_examples=list(self._examples),
         )
 
-    def _on_raw(self, raw: bytes, rssi: int, ts: float) -> None:
-        # Re-parse to inspect. The driver already parsed this same
-        # frame upstream, so we always expect a dict back here, but
-        # we guard anyway so a parser hiccup doesn't crash diag.
-        try:
-            parsed = WlanFrameParser.parse_80211_frame(raw, rssi)
-        except Exception:
-            return
-        if parsed is None:
+    def _on_raw(self, pkt) -> None:
+        # The interface delivers an already-parsed Packet. Guard against
+        # None so a parser hiccup upstream doesn't crash diag.
+        if pkt is None:
             return
 
         self._total += 1
-        bssid = parsed.bssid
+        bssid = pkt.bssid
         if _bssid_sane(bssid):
             self._oui_sane += 1
         else:
@@ -134,9 +125,9 @@ class ParseQualityProbe(Probe):
             if len(self._examples) < 5 and bssid:
                 self._examples.append(bssid)
 
-        if parsed.type == "beacon":
+        if pkt.type == "beacon":
             self._beacons += 1
-            beacon_ch = parsed.channel
+            beacon_ch = pkt.channel
             if beacon_ch is not None:
                 self._beacons_with_ds += 1
                 # iface.current_channel may legitimately have moved on
