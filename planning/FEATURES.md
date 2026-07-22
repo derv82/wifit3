@@ -1,23 +1,18 @@
 # Wifit3 — Features & QoL Backlog
 
-Known bugs + QoL nits live in `BUGS.md`.
+Known bugs live in `BUGS.md`.
 
 ---
 
 ## Low Priority
 
-### Multi-card support (Minnie Drivers v2)
+### Multi-card support
 
 Run 2+ USB cards in one session: pool RX, split TX. Possible because drivers are generic
 (no global state); the work is making the layer *above* them multi-instance.
 Capabilities: pooled RX (~2× beacons/EAPOL, union AP list), hot-plug add/remove mid-session,
 split the channel set across cards, dedicate one card to TX so a deauth can't deafen our own
-RX, one-card-per-target. **Complexity: big refactor**. `WlanInterface` goes per-card and a
-new `CardPool` orchestrator owns the fleet, merged model, channel arbitration, and TX routing.
-Enumeration is mostly there (`WlanDeviceManager`); everything downstream of "I have N
-interfaces" is singular today.
-
-→ Full design brain-dump (seams, dedup design, milestones, needs ironing): `planning/MULTICARD.md`
+RX, one-card-per-target. **Complexity: big refactor**.
 
 ### Test & Fix macOS support
 
@@ -28,7 +23,7 @@ Each plist declares the adapter's VID:PID with a high `IOProbeScore` so the kern
 binds the do-nothing kext and leaves the USB interface unclaimed for libusb. 
 Unverified. No macOS hardware tested. Parked until someone wants it.
 
-### Client fingerprinting — if time allows
+### Client fingerprinting
 
 **Problem.** Clients show bare MACs; a device class (phone / laptop / PS5 / IoT) speeds target
 selection. IoT (Ring/Nest/Roku/FireTV) is highest-value for scoping.
@@ -41,7 +36,7 @@ confidence)`, blank if low; full breakdown in the Focus detail panel.
 OUI→vendor DB in the Scanner table: cells too cramped for vendor strings, and an OUI names the
 Wi-Fi *module* maker, not the device: disambiguation needs IE fingerprinting anyway.)
 
-### Per-AP persistent log — if time allows
+### Per-AP persistent log
 
 **Problem.** The Focus log is per-session and per-target. Switch APs (or bounce to Scanner)
 and the previous AP's attack log is gone. Re-entering a target you already worked shows a blank
@@ -78,25 +73,7 @@ per-target log only. Mirroring it for the scanner would be a separate, optional 
 **Complexity.** Low: one dataclass field, one append in `_log`, one replay branch in
 `_enter_target`. No threading, no disk, no new widgets.
 
-### WinUSB-install mascot — "WiFFy", post-alpha, Windows-only delight
-
-The WinUSB install (`wdi-simple`) is 1–3+ min of unspeedable dead air (a Windows driver
-install, not our code). Fill it: **WiFFy**, a googly-eyed take on the logo's Wi-Fi bars
-(original, Clippy-in-spirit), floats into the install screen, rotates slow-typed one-liners,
-waves off on success, bolts off-screen on failure. Tone: authorized-tool parody (CTF / "your
-own AP" humor), ~30–50 lines, install screen only. Windows-only: Linux's `pkexec` install
-returns in a second, no void to fill. **Complexity: low**, pure presentation: the install
-already runs off-thread and the REQUIRED-badge pulse timer machinery is reusable. 📎
-
-### Triangulation map — post-1.0
-
-Three cards + RSSI trilateration + a drag-to-place UI. Fun, novel, not soon. 😄
-
-### Belkin WPS PINs from the M1 serial — deferred
-
-Derive Belkin (Arcadyan) default PINs from the serial in the WPS M1 message. Deferred because PIN candidates are generated at campaign start from the BSSID, before M1 is available.
-
-### VAULT — loot manager (working joke name: "HACKLEBOX")
+### VAULT — loot manager ("HACKLEBOX")
 
 **Problem.** Half of Wifite's UX is effectively the OS file manager: squinting at `captures/` full
 of long BSSID-encoded filenames. The loot (handshakes, PMKIDs, cracked PSKs) deserves a real view,
@@ -149,8 +126,6 @@ The WPS engine is built, offline-proven, and HW-validated (full PIN crack on Air
   - Rewriting all drivers to support STA/AP = Significant effort.
 
 ### EAP-MSCHAPv2 / PEAP via Rogue AP / Evil Twin — "active", big build
-
-Blocked by: ***Tag + suppress EAP/Enterprise handshakes***
 
 Most enterprise Wi-Fi is PEAP-MSCHAPv2, which cracks with hashcat `-m 5500` (DES half near-
 instant via crack.sh): recovering the *domain* credential, far higher value than a PSK. The

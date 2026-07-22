@@ -13,11 +13,11 @@ A USB-only wireless auditor that runs in userland on Linux and Windows.
 wifit3 is fundamentally different from its predecessor, [wifite2](https://github.com/derv82/wifite2):
 
 * Only supports certain popular USB cards (see [Supported Hardware](#supported-hardware)).
-* Bundles its own driver stack (see [Minnie Drivers](#minnie-drivers)), avoiding headaches with native wireless drivers (Windows NDIS, Linux driver conflicts).
+* Bundles its own driver stack (see [Mini-Drivers](#mini-drivers)), avoiding headaches with native wireless drivers (Windows NDIS, Linux driver conflicts).
 * Talks to wireless cards directly from userland *after* setup.
    * `sudo` is required to set up permissions on Linux (udev/modprobe).
    * Admin is required to install [WinUSB drivers](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/introduction-to-winusb-for-developers) on Windows (automated).
-   * After setup/install, wifit3 runs without priviledge escalation.
+   * After setup/install, wifit3 runs without privilege escalation.
 * *Far* fewer dependencies: PyUSB/libusb (USB) and Textual/Rich (TUI).
   * No aircrack/airmon/reaver/bully/hcxdumptool/etc.
 
@@ -108,45 +108,43 @@ A few more of the driver authors we ported from:
 The full list (every substantive contributor to the drivers we ported, and the cards they
 enabled) is in **[CREDITS.md](CREDITS.md)**.
 
-## Minnie Drivers
+## Mini-Drivers
 
-wifit3 talks to the wireless cards directly via USB using its built-in "Minnie Drivers":
-miniature userland ports of the Linux drivers. The "miniature" is because we do not port STA mode (client)
-nor AP mode; just the bare minimum needed to get RX and TX working in Monitor Mode.
+wifit3 talks to the wireless cards directly over USB through
+[its built-in "Mini-Drivers"](https://github.com/derv82/wifit3/blob/master/src/wifit3/chips/):
+miniature userland ports of the Linux kernel drivers. These ports only include the bare minimum
+needed for RX and TX in Monitor Mode (no AP/STA modes).
 
-Talking to the wireless card in this way bypasses the operating system's wireless driver stack entirely,
-including Windows' NDIS (Network Driver Interface Specification), which would otherwise prevent
-functionality such as Monitor Mode and injection. And because the bytes sent to the card are the
-same regardless of OS, one codebase runs on both Linux and Windows.
+This sidesteps the operating system's wireless stack completely, including Windows' NDIS
+(Network Driver Interface Specification), which would otherwise block Monitor Mode and
+injection. The bytes sent to the card are the same on either OS, so a single codebase runs
+on both Linux and Windows.
 
-### Driver Porting with Coding Agents
+### Ported from C to Python by a coding agent
 
-The Minnie Drivers were ported from C to Python by a coding agent, not
-by hand. I wanted to learn how to use LLMs, and porting Linux drivers to Python is a good use-case for coding agents.
+The Mini-Drivers were ported from their Linux C drivers by a coding agent. During development,
+the agent is guided by an offline test harness: it replays real USB traffic (recorded from the
+Linux wireless driver) against the Python port and halts at the first instruction where the port
+diverges from the recording. The agent ports that next sequence, replays, and repeats until the
+driver port reproduces the entire recording. Only then is it reasonably safe to try live hardware.
 
-The coding agent has a test harness which replays USB instructions (coming to/from the Linux driver) byte-for-byte
-against the ported driver. The test harness ensures the ported driver behaves identically to the Linux driver
-*in the captured scenario* (device bringup, `airmon-ng start`, `airodump-ng` channel hops, `aireplay-ng` injections).
+The loop in brief:
 
-#### Test Harness for Agents
+1. **Capture once on Linux.** With the Linux kernel driver loaded, record the card's USB traffic
+   while `airmon-ng`, `airodump-ng`, and `aireplay-ng` run.
+   [capture.py](https://github.com/derv82/wifit3/blob/master/src/wifit3/scripts/capture.py)
+   automates the capture (`usbmon` via `tshark`) and pulls the driver's C source.
+2. **Start the port:** `/port <chip>` (e.g. `/port rt5370`), a Claude-specific command. The agent
+   wires the capture into
+   [verify_pcap.py](https://github.com/derv82/wifit3/blob/master/scripts/verify_pcap.py) so the
+   capture can be replayed & verified against the new driver without touching the hardware at all.
+3. **Port to the recording.** `verify_pcap.py` reports the next USB instruction where the port's
+   output diverges from the capture. The agent uses the C source to fix it, replays, and repeats
+   until the capture runs clean.
+4. **Go live.** With the port proven against the recording, the agent tests on real hardware and
+   iterates.
 
-[The porting process](docs/porting/) (docs) explains how agents are able to safely port Linux drivers to Python.
-
-A brief summary:
-
-1. User captures USB traffic on a Linux machine that has the target wireless driver installed and running 
-(along with `airmon-ng` and `aircrack-ng`).
-   * [capture.py](https://github.com/derv82/wifit3/blob/master/src/wifit3/scripts/capture.py) is an automated 
-   script that executes the necessary commands on Linux while capturing all USB traffic.
-   * This script also extracts the Linux driver source code.
-2. User ask the agent to port the driver with the `/port` command, e.g. `/port rt5370` (Claude-specific).
-3. Agent asks for the location of the captured traffic (.pcap and .log files) and the driver's C source code.
-4. Agent updates the pcap-replay test harness (see [verify_pcap.py](https://github.com/derv82/wifit3/blob/master/scripts/verify_pcap.py)) 
-so the new driver can be tested offline for correctness against the captured USB traffic.
-5. The loop:
-   * `verify_pcap.py` provides the *next* USB instruction (bytes) which the ported driver's output diverges from the capture.
-   * Agent uses the source code & next USB instruction to port the driver byte-by-byte.
-5. Once the driver is complete and proven correct offline, Agent tests live on real hardware (card plugged in), troubleshoots and iterates.
+[docs/porting/](docs/porting/) documents the full process.
 
 ## License
 
