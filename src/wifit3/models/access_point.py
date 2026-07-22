@@ -89,6 +89,10 @@ class AccessPoint:
     # Read-only capture history loaded from captures/ at scan start.
     persisted: List[PersistedCapture] = field(default_factory=list)
 
+    # Smoothed RSSI per receiving card (card name -> dBm). `signal` is the strongest of these;
+    # the scalar `signal` field above is a transitional mirror kept in sync by WlanSink.
+    signal_by_card: Dict[str, int] = field(default_factory=dict)
+
     @property
     def wps_pbc_active(self) -> bool:
         """True during a WPS Push-Button walk window: the AP advertises PBC
