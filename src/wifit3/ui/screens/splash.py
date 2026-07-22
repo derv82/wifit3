@@ -22,6 +22,7 @@ from wifit3.ui.screens.error_modals import FatalErrorModal
 from wifit3.ui.screens.propagating import PropagatingDialog
 from wifit3.ui.screens.replug import ReplugModal
 from wifit3.wlan.manager import WlanDeviceManager
+from wifit3.wlan.array import WlanArray
 
 logger = logging.getLogger(__name__)
 
@@ -520,12 +521,33 @@ class SplashView(Screen):
         if not ok:
             progress.display = False
             return False
-        self.app.active_interface = iface
-        # Surface a mid-run adapter loss (unplug) as the Quit-only fatal modal.
-        iface.register_disconnect_callback(self.app.notify_device_lost)
+        # Pool the connected card into a fresh WlanArray, then bring up any other openable cards so
+        # a multi-card session starts merged. The array re-emits a member loss with the surviving
+        # count so the app can route 0 -> splash, 1+ -> toast.
+        array = WlanArray()
+        array.attach(iface)
+        await self._bring_up_others(array, iface)
+        array.register_disconnect_callback(self.app.notify_device_lost)
+        self.app.array = array
         progress.progress = 100
         self.query_one("#status-label", Label).update(
             "[bold green]Ready: starting the scanner…[/bold green]")
         await asyncio.sleep(0.4)
         self.app.switch_screen("scanner")
         return True
+
+    async def _bring_up_others(self, array: WlanArray, primary) -> None:
+        """Best-effort: bring up every other currently-openable supported card into the pool.
+        Sequential (two cards driving RF bring-up over USB at once can collide). Cards that still
+        need a WinUSB / udev install are skipped; they can be brought up on a later splash pass."""
+        for other in list(self.device_manager.interfaces):
+            if other is primary:
+                continue
+            if not await asyncio.to_thread(self.device_manager.is_openable, other):
+                continue
+            try:
+                if await other.connect():
+                    array.attach(other)
+                    self.notify(f"{other.description} joined the pool", timeout=4)
+            except Exception:
+                logger.info("secondary card %s failed to join", other.description, exc_info=True)

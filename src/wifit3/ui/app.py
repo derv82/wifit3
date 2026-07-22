@@ -111,7 +111,7 @@ class WifiteApp(App):
         _configure_file_logging(default_log_level)
         super().__init__()
         self.device_manager = WlanDeviceManager()
-        self.active_interface = None
+        self.array = None                 # the WlanArray (card pool) once splash brings cards up
         self.target_ap: Optional[AccessPoint] = None
         # WPS PBC auto-invade preference, shared across screens (Scanner + Focus
         # both read/toggle it via 'w'). On by default: the one active-TX exception
@@ -126,44 +126,47 @@ class WifiteApp(App):
         self.install_screen(FocusViewV2(), name="focus")
         self.push_screen("splash")
 
-    def notify_device_lost(self, exc: Exception) -> None:
-        """Adapter vanished mid-run: surface the recoverable device-lost modal.
+    def notify_device_lost(self, exc: Exception, remaining: int) -> None:
+        """A pooled card vanished mid-run (the array re-emits this with the surviving card count).
 
-        This arrives on the event-loop thread via the RX reader's ``call_soon_threadsafe``
-        hop, which runs OUTSIDE Textual's message-pump context (``active_app`` unset), so a
-        direct ``push_screen`` here crashes in the modal's compose (NoActiveAppError). Defer
-        it onto the app's message queue via ``call_later``. That callback runs in-context.
-        Idempotent: the interface latches so this fires once, and ``_show_device_lost`` guards
-        against re-pushing if a modal is already up."""
-        self.call_later(self._show_device_lost, exc)
+        Arrives on the event-loop thread via the RX reader's ``call_soon_threadsafe`` hop, which
+        runs OUTSIDE Textual's message-pump context (``active_app`` unset), so a direct
+        ``push_screen`` here crashes in the modal's compose (NoActiveAppError). Defer it onto the
+        app's message queue via ``call_later``; that callback runs in-context."""
+        self.call_later(self._show_device_lost, exc, remaining)
 
-    def _show_device_lost(self, exc: Exception) -> None:
+    def _show_device_lost(self, exc: Exception, remaining: int) -> None:
+        # Survivors remain: keep running, just toast how many are left.
+        if remaining > 0:
+            self.notify(f"A wireless card was lost. {remaining} still active.",
+                        title="Card unplugged", severity="warning")
+            return
+        # Last card gone: fall back to the recoverable modal → splash.
         if isinstance(self.screen, (FatalErrorModal, RecoverableErrorModal)):
             return
-        name = self.active_interface.name if self.active_interface else "the wireless adapter"
-        self.push_screen(RecoverableErrorModal(WifiteDeviceLostError(name)))
+        self.push_screen(RecoverableErrorModal(WifiteDeviceLostError("the wireless adapter")))
 
     async def recover_to_splash(self) -> None:
-        """Return to the splash screen after the active adapter was lost."""
-        iface = self.active_interface
+        """Return to the splash screen after the last card was lost."""
+        array = self.array
         # Unwind to the base default screen (kept by `> 1`), then re-push splash onto it.
         while len(self.screen_stack) > 1:
             await self.pop_screen()
         await self.push_screen("splash")
         # The installed splash only resumes (on_mount won't re-run), so reset its state explicitly.
         self.get_screen("splash", SplashView).reset_for_reentry()
-        # Close the dead adapter only once scanner/focus are gone, so their teardown can't read a
+        # Close the dead pool only once scanner/focus are gone, so their teardown can't read a
         # half-closed interface.
-        if iface is not None:
+        if array is not None:
             try:
-                await iface.close()
+                await array.close()
             except Exception:
-                logger.debug("Closing the lost adapter failed (already gone)", exc_info=True)
-        self.active_interface = None
+                logger.debug("Closing the lost pool failed (already gone)", exc_info=True)
+        self.array = None
         self.target_ap = None
 
     async def action_quit(self):
-        if self.active_interface:
-            await self.active_interface.close()
+        if self.array:
+            await self.array.close()
         self.exit()
 

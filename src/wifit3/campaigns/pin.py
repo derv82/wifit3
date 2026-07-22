@@ -108,9 +108,9 @@ class WpsCampaign(Campaign):
     def ineligible_reason(cls, ap):
         return "WPS locked" if getattr(ap, "wps_locked", False) else None
 
-    def __init__(self, iface, target, state_dir="captures", log=None,
+    def __init__(self, array, target, state_dir="captures", log=None,
                  inter_attempt_delay: float = 0.0):
-        super().__init__(ap=target, iface=iface)
+        super().__init__(ap=target, array=array)
         self.target = target
         self.bssid = target.bssid.lower()
         self.channel = target.channel
@@ -200,9 +200,11 @@ class WpsCampaign(Campaign):
         """Exit-driven cleanup (every exit: done / stop / crash)."""
         self._save_state()
         self._teardown()
-        await self.iface.clear_fake_mac()
-        if self._tx_ack:
-            await self.iface.disable_rx_acks()
+        card = self.iface
+        if card is not None:
+            await card.clear_fake_mac()
+            if self._tx_ack:
+                await card.disable_rx_acks()
 
     def pause(self) -> None:
         self._paused = True
@@ -481,7 +483,7 @@ class WpsCampaign(Campaign):
         # save + _teardown + clear_fake_mac now run in teardown() (every exit).
 
     def _beacon_locked(self) -> bool:
-        ap = self.iface.access_points.get(self.bssid) if hasattr(self.iface, "access_points") else None
+        ap = self.array.access_points.get(self.bssid)
         return bool(getattr(ap, "wps_locked", False)) if ap else False
 
     async def _handle_lock(self, beacon_locked: bool, wait: bool = True) -> None:

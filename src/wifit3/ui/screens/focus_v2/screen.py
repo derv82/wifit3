@@ -218,13 +218,12 @@ class FocusViewV2(Screen):
         if target is not self._target_ap:
             await self._enter_target()
         elif target is not None:
-            # Re-set channel when re-entering a target if the channel has changed.
-            iface = getattr(self.app, "active_interface", None)
-            if iface is not None and getattr(iface, "current_channel", None) != target.channel:
-                was = iface.current_channel
-                ok = await iface.set_channel(target.channel, scan=False)
-                logger.info("[FOCUS] re-pin: bssid=%s ch=%s (was %s) -> %s",
-                            target.bssid, target.channel, was, ok)
+            # Re-pin the pool to the target's channel on re-entry (STACK across channel-capable cards).
+            array = self.app.array
+            if array is not None:
+                ok = await array.set_channel(target.channel, scan=False)
+                logger.info("[FOCUS] re-pin: bssid=%s ch=%s -> %s",
+                            target.bssid, target.channel, ok)
 
     def on_resize(self) -> None:
         self._distribute()
@@ -244,7 +243,7 @@ class FocusViewV2(Screen):
         ap = getattr(self.app, "target_ap", None)
         if ap is None:
             return fm.fake_snapshot()
-        iface = getattr(self.app, "active_interface", None)
+        iface = self.app.array
         return fm.build_snapshot(
             ap, iface, self._campaigns(), self._beacon_samples, time.time())
 
@@ -291,7 +290,7 @@ class FocusViewV2(Screen):
         self._target_ap = ap
         if ap is None:
             return
-        iface = getattr(self.app, "active_interface", None)
+        iface = self.app.array
         logger.info("[FOCUS] enter: ssid=%r bssid=%s ch=%s", ap.ssid, ap.bssid, ap.channel)
 
         self._beacon_samples.clear()
@@ -430,7 +429,7 @@ class FocusViewV2(Screen):
         self._refresh_buttons()
         self._sync_bindings()
         self._refresh_status_footer()
-        iface = getattr(self.app, "active_interface", None)
+        iface = self.app.array
         self._drive_leds(ap, iface)
         self._drain_capture_events(ap, iface.forged_macs if iface else set(), time.time())
 
@@ -450,7 +449,7 @@ class FocusViewV2(Screen):
         ap = self._target_ap
         if ap is None:
             return
-        iface = getattr(self.app, "active_interface", None)
+        iface = self.app.array
         lines = [Text.from_markup(m, emoji=False)
                  for m in fm.status_footer_lines(ap, iface, self._wep_campaign, time.time())]
         self.query_one("#dashboard", PacketDashboard).set_footer(lines)
@@ -613,13 +612,14 @@ class FocusViewV2(Screen):
     async def _run_deauth_broadcast(self) -> None:
         """Worker: broadcast-deauth every station associated with the focused AP."""
         ap = self._target_ap
-        iface = getattr(self.app, "active_interface", None)
-        if not ap or not iface:
-            self._log("[red]✗ No target / interface. Aborting Broadcast.[/red]")
+        array = self.app.array
+        card = array.select_iface(ap.channel) if (ap and array) else None
+        if not ap or card is None:
+            self._log("[red]✗ No target / no card on this channel. Aborting Broadcast.[/red]")
             return
         self._log("[bold]Broadcast de-auth: all clients[/bold]")
         try:
-            sent = await iface.deauth_broadcast(ap.bssid, count=self._DEAUTH_BCAST_COUNT)
+            sent = await card.deauth_broadcast(ap.bssid, count=self._DEAUTH_BCAST_COUNT)
         except Exception as exc:
             logger.exception("Broadcast deauth crashed")
             self._log(treelog.leaf_fail(f"Broadcast failed: {escape(str(exc))}"))
@@ -630,13 +630,14 @@ class FocusViewV2(Screen):
     async def _run_deauth_selected(self, mac: str) -> None:
         """Worker: deauth a specific client (the inline ✕ that was clicked)."""
         ap = self._target_ap
-        iface = getattr(self.app, "active_interface", None)
-        if not ap or not iface:
-            self._log("[red]✗ No target / interface. Aborting Deauth.[/red]")
+        array = self.app.array
+        card = array.select_iface(ap.channel) if (ap and array) else None
+        if not ap or card is None:
+            self._log("[red]✗ No target / no card on this channel. Aborting Deauth.[/red]")
             return
         self._log(f"[bold]De-authenticating Client {escape(mac)}[/bold]")
         try:
-            res = await iface.deauth_client(ap.bssid, mac, rounds=self._DEAUTH_SEL_ROUNDS)
+            res = await card.deauth_client(ap.bssid, mac, rounds=self._DEAUTH_SEL_ROUNDS)
         except Exception as exc:
             logger.exception("Deauth %s crashed", mac)
             self._log(treelog.leaf_fail(f"Deauth failed: {escape(str(exc))}"))
@@ -668,7 +669,7 @@ class FocusViewV2(Screen):
         if self._pmkid_campaign is not None:  # already harvesting (or finishing), ignore
             return
         ap = self._target_ap
-        iface = getattr(self.app, "active_interface", None)
+        iface = self.app.array
         if not ap or not iface:
             self._log("[red]✗ No target / interface. Aborting PMKID harvest.[/red]")
             return
@@ -718,7 +719,7 @@ class FocusViewV2(Screen):
 
     def _start_wpa3_down(self) -> None:
         ap = self._target_ap
-        iface = getattr(self.app, "active_interface", None)
+        iface = self.app.array
         if not ap or not iface:
             self._log("[red]✗ No target / interface. Cannot start WPA3 Down.[/red]")
             return
@@ -774,7 +775,7 @@ class FocusViewV2(Screen):
 
     def _start_generate_ivs(self) -> None:
         ap = self._target_ap
-        iface = getattr(self.app, "active_interface", None)
+        iface = self.app.array
         if not ap or not iface:
             self._log("[red]✗ No target / interface. Cannot Generate IVs.[/red]")
             return
@@ -816,22 +817,24 @@ class FocusViewV2(Screen):
 
     def _start_wps_pin(self) -> None:
         ap = self._target_ap
-        iface = getattr(self.app, "active_interface", None)
-        if not ap or not iface:
-            self._log("[red]✗ No target / interface. Cannot start WPS PIN.[/red]")
+        array = self.app.array
+        if not ap or not array:
+            self._log("[red]✗ No target / pool. Cannot start WPS PIN.[/red]")
             return
-        # Warn when the card can't HW-ACK a spoofed MAC (still runs PIN fine, just spammy).
-        warning = iface.active_monitor_warning()
-        if isinstance(warning, str):
-            self._log(warning)
-        self._launch_wps_pin(ap, iface)
+        # Warn when the elected card can't HW-ACK a spoofed MAC (still runs PIN fine, just spammy).
+        card = array.select_iface(ap.channel)
+        if card is not None:
+            warning = card.active_monitor_warning()
+            if isinstance(warning, str):
+                self._log(warning)
+        self._launch_wps_pin(ap, array)
 
-    def _launch_wps_pin(self, ap, iface) -> None:
+    def _launch_wps_pin(self, ap, array) -> None:
         try:
             name = escape(ap.ssid or ap.bssid)
             self._log(f"[bold]WPS PIN brute[/bold] started on [bold cyan]{name}[/bold cyan]")
             self._wps_campaign = WpsCampaign(
-                iface, ap, log=lambda m: self._log(treelog.branch(m)))
+                array, ap, log=lambda m: self._log(treelog.branch(m)))
             self._wps_campaign.run()
         except Exception as exc:
             logger.exception("WPS PIN start failed")
@@ -874,7 +877,7 @@ class FocusViewV2(Screen):
     # ----- WPS PBC auto-capture ----------------------------------------------
 
     def _start_pbc_capture(self, ap) -> None:
-        iface = getattr(self.app, "active_interface", None)
+        iface = self.app.array
         if not iface:
             return
         self._log("[bold cyan]WPS PushButton:[/bold cyan] [bold green]Window Open[/bold green] "

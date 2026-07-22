@@ -106,6 +106,14 @@ class WlanInterface:
         # owns the packet-stats picture, the radio just fires the event.
         self.on_tx: Optional[Callable[[bytes], None]] = None
 
+        # Pooled state (set by WlanArray.attach). When pooled, the array's shared WlanSink is the
+        # picture, so this interface stops building its own registry (_on_frame_parsed becomes a
+        # raw fan-out) and forwards forged/self-MAC writes to the sink instead.
+        self._own_picture = True
+        self._forge_sink: Optional[Callable[[str], None]] = None
+        self._self_mac_sink: Optional[Callable[[str, Optional[str]], None]] = None
+        self._unself_mac_sink: Optional[Callable[[str], None]] = None
+
         self._hopping_task: Optional[asyncio.Task] = None
         self._tune_task: Optional[asyncio.Task] = None
         self._is_hopping = False
@@ -121,6 +129,9 @@ class WlanInterface:
 
         if self._rx_callbacks:
             self._fire_rx_callbacks(pkt)
+
+        if not self._own_picture:
+            return   # pooled: the WlanArray's WlanSink owns the registry (built via its _ingest)
 
         if (
             frame_type in ("data", "eapol", "wep_data", "assoc_resp", "reassoc_resp",
@@ -416,6 +427,8 @@ class WlanInterface:
         else:
             mac_str = str(mac).lower()
         self.forged_macs.add(mac_str)
+        if self._forge_sink is not None:
+            self._forge_sink(mac_str)   # pooled: also drop our frames from the array's picture
 
     async def set_fake_mac(self, mac: Any, bssid: Any = None) -> Optional[str]:
         """Ask the driver to HW-ACK frames addressed to ``mac`` (active-monitor)."""
@@ -476,6 +489,8 @@ class WlanInterface:
             client.is_self = True
             if bssid:
                 client.bssid = bssid
+        if self._self_mac_sink is not None:
+            self._self_mac_sink(mac_str, bssid)
         return mac_str
 
     def unregister_self_mac(self, mac: Any) -> None:
@@ -486,6 +501,8 @@ class WlanInterface:
             mac_str = str(mac).lower()
         self.self_macs.discard(mac_str)
         self.clients.pop(mac_str, None)
+        if self._unself_mac_sink is not None:
+            self._unself_mac_sink(mac_str)
 
     def register_disconnect_callback(self, callback_func: Callable[[Exception], None]):
         """Register a subscriber for adapter loss: func(exc)."""

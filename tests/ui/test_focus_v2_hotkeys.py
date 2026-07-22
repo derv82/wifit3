@@ -49,12 +49,46 @@ def _log_text(focus) -> str:
     return "\n".join(strip.text for strip in rich.lines)
 
 
+class _FakeArray:
+    """Wraps one WlanInterface as the app's WlanArray: vends it as the selected radio and delegates
+    picture reads to it (the interface stays unpooled, keeping its own registry)."""
+    def __init__(self, iface):
+        self._iface = iface
+
+    @property
+    def members(self):
+        return [self._iface]
+
+    def select_iface(self, channel, needs_spoof=False):
+        return self._iface
+
+    def get_access_points(self):
+        return self._iface.get_access_points()
+
+    def register_forged_mac(self, mac):
+        self._iface.register_forged_mac(mac)
+
+    async def set_channel(self, ch, scan=False):
+        if self._iface.current_channel == ch:   # mirror the array's already-on-channel skip
+            return True
+        return await self._iface.set_channel(ch, scan=scan)
+
+    async def stop_hopping(self):
+        return await self._iface.stop_hopping()
+
+    async def start_hopping(self, channels=None, interval=0.5):
+        return await self._iface.start_hopping(channels, interval)
+
+    def __getattr__(self, name):
+        return getattr(self._iface, name)
+
+
 class _Host(App):
     """Minimal host wiring interface + target like WifiteApp, incl. the shared
     ``pbc_enabled`` flag Focus reads/toggles."""
     def __init__(self, iface, ap):
         super().__init__()
-        self.active_interface = iface
+        self.array = _FakeArray(iface)
         self.target_ap = ap
         self.pbc_enabled = True
 

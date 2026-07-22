@@ -40,9 +40,9 @@ class WpsPbcCapture(Campaign):
     key = "pbc"
     stoppable = False
 
-    def __init__(self, iface, target, our_mac: Optional[bytes] = None, log=None,
+    def __init__(self, array, target, our_mac: Optional[bytes] = None, log=None,
                  tx_observer=None):
-        super().__init__(ap=target, iface=iface)
+        super().__init__(ap=target, array=array)
         self.target = target
         self.bssid = target.bssid.lower()
         self.channel = target.channel
@@ -63,6 +63,8 @@ class WpsPbcCapture(Campaign):
         """One PBC enrollment attempt. Returns the WpsEnrollee outcome."""
         if self.stopped:
             return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped before start")
+        if self.iface is None:
+            return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="no card can reach channel")
         armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
         if armed:
             self.our_mac = str_to_mac(armed)

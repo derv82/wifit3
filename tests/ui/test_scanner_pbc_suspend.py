@@ -54,7 +54,7 @@ async def test_pbc_poll_bails_while_suspended_then_acts_when_foreground():
 
         ap = _pbc_window_ap()
         assert ap.wps_pbc_active and not ap.has_psk
-        app.active_interface = _FakeIface([ap])
+        app.array = _FakeIface([ap])
         scanner._on_pbc_window = Mock()      # spy: did we try to act on a window?
 
         # Suspended under an overlay: must NOT act (and must not consume the edge).

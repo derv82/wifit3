@@ -98,14 +98,14 @@ class PmkidHarvestAttack(Campaign):
 
     def __init__(
         self,
-        iface,
+        array,
         target: AccessPoint,
         source_mac: Optional[bytes] = None,
         attempts: int = 3,
         m1_timeout: float = 2.0,
         log=None,
     ):
-        super().__init__(ap=target, iface=iface)
+        super().__init__(ap=target, array=array)
         self.target = target
         self.bssid_bytes = _str_to_mac(target.bssid)
         self.source_mac = source_mac or _random_client_mac()
@@ -118,7 +118,7 @@ class PmkidHarvestAttack(Campaign):
         self._armed = False
         # The Assoc RSN IE (single AKM=PSK), rebuilt from the AP's ciphers.
         self._assoc_rsn_ie: bytes = GENERIC_RSN_IE
-        self.iface.register_forged_mac(self.source_mac)
+        self.array.register_forged_mac(self.source_mac)
 
     @property
     def client_mac(self) -> str:
@@ -127,7 +127,7 @@ class PmkidHarvestAttack(Campaign):
 
     def _rotate_mac(self) -> None:
         self.source_mac = _random_client_mac()
-        self.iface.register_forged_mac(self.source_mac)
+        self.array.register_forged_mac(self.source_mac)
 
     # ---- Frame builders -----------------------------------------------------
 
@@ -139,7 +139,7 @@ class PmkidHarvestAttack(Campaign):
 
     def _received_m1(self):
         """The parser-created Handshake for our forged MAC on this AP once M1 lands."""
-        ap_state = self.iface.access_points.get(self.target.bssid.lower())
+        ap_state = self.array.access_points.get(self.target.bssid.lower())
         if not ap_state:
             return None
         return ap_state.handshakes.get(_mac_bytes_to_str(self.source_mac))

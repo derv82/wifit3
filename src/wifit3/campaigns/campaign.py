@@ -43,11 +43,22 @@ class Campaign:
     idle_variant: str = "primary"
     run_variant: str = "error"
 
-    def __init__(self, ap, iface):
+    def __init__(self, ap, array, *, needs_spoof: bool = False):
         self.ap = ap
-        self.iface = iface
+        self.array = array
+        self._needs_spoof = needs_spoof
+        self._iface = None                 # elected radio, resolved lazily by the `iface` property
         self.stopped = False
         self._task: Optional[asyncio.Task] = None
+
+    @property
+    def iface(self):
+        """The radio this campaign drives, elected from the array on first use: a card that can tune
+        to the target's channel (and HW-ACK a spoofed MAC when ``needs_spoof``). None when no live
+        card can reach the band, in which case ``_loop`` is skipped."""
+        if self._iface is None and self.array is not None:
+            self._iface = self.array.select_iface(self.ap.channel, needs_spoof=self._needs_spoof)
+        return self._iface
 
     # ---- lifecycle (framework-owned; subclasses do NOT override) ------------
     def run(self) -> bool:
@@ -63,7 +74,11 @@ class Campaign:
     async def _drive(self) -> None:
         try:
             try:
-                await self._loop()
+                if self.array is not None and self.iface is None:
+                    logger.warning("campaign %r: no card can reach channel %s; aborting",
+                                   self.key, getattr(self.ap, "channel", "?"))
+                else:
+                    await self._loop()
             except asyncio.CancelledError:
                 raise
             except Exception:

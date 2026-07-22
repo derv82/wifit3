@@ -39,7 +39,7 @@ class FakeIface:
     def register_disconnect_callback(self, cb):
         self._disc.append(cb)
 
-    async def set_channel(self, ch):
+    async def set_channel(self, ch, scan=False):
         self.current_channel = ch
         self.tuned.append(ch)
         return True
@@ -76,7 +76,7 @@ def _beacon(raw, bssid="aa:bb:cc:dd:ee:ff", rssi=-40):
 def _pool(*ifaces):
     a = WlanArray()
     for i in ifaces:
-        a._attach(i)
+        a.attach(i)
     return a
 
 

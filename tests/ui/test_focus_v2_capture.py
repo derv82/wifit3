@@ -65,12 +65,48 @@ def _log_text(band: LogBand) -> str:
     return "\n".join(strip.text for strip in rich.lines)
 
 
+class _FakeArray:
+    """Wraps one WlanInterface as the app's WlanArray: vends that interface as the selected radio
+    and delegates picture reads to it (the interface stays unpooled, so it keeps building its own
+    registry from the frames the test feeds)."""
+    def __init__(self, iface):
+        self._iface = iface
+
+    @property
+    def members(self):
+        return [self._iface]
+
+    def select_iface(self, channel, needs_spoof=False):
+        return self._iface
+
+    def get_access_points(self):
+        return self._iface.get_access_points()
+
+    def register_forged_mac(self, mac):
+        self._iface.register_forged_mac(mac)
+
+    async def set_channel(self, ch, scan=False):
+        if self._iface.current_channel == ch:   # mirror the array's already-on-channel skip
+            return True
+        return await self._iface.set_channel(ch, scan=scan)
+
+    async def stop_hopping(self):
+        return await self._iface.stop_hopping()
+
+    async def start_hopping(self, channels=None, interval=0.5):
+        return await self._iface.start_hopping(channels, interval)
+
+    def __getattr__(self, name):
+        # access_points / clients / forged_macs / wep_store / packet_stats → the interface
+        return getattr(self._iface, name)
+
+
 class _Host(App):
     """Minimal host that wires the interface + target the way WifiteApp does,
     then pushes the v2 screen straight in."""
     def __init__(self, iface, ap):
         super().__init__()
-        self.active_interface = iface
+        self.array = _FakeArray(iface)
         self.target_ap = ap
 
     def on_mount(self) -> None:
@@ -94,7 +130,7 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         # The packet dashboard is bound to the live interface → it samples real
         # packet_stats (not the fake generator).
         dash = focus.query_one("#dashboard", PacketDashboard)
-        assert dash._iface is iface and dash._bssid == bssid
+        assert dash._iface is app.array and dash._bssid == bssid
 
         log = focus.query_one("#log", LogBand)
         status = focus.query_one("#status", Static)

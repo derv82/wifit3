@@ -34,10 +34,12 @@ def _driver():
 
 
 def _iface():
-    return SimpleNamespace(access_points={}, driver=_driver(),
-                           set_fake_mac=_set_fake_mac, clear_fake_mac=_clear_fake_mac,
-                           enable_rx_acks=_noop_async, disable_rx_acks=_noop_async,
-                           acks_seen=lambda _mac: 0)
+    ns = SimpleNamespace(access_points={}, driver=_driver(),
+                         set_fake_mac=_set_fake_mac, clear_fake_mac=_clear_fake_mac,
+                         enable_rx_acks=_noop_async, disable_rx_acks=_noop_async,
+                         acks_seen=lambda _mac: 0)
+    ns.select_iface = lambda channel, needs_spoof=False: ns   # doubles as the WlanArray
+    return ns
 
 
 class ScriptedCampaign(WpsCampaign):
@@ -221,6 +223,7 @@ async def test_teardown_saves_state_and_clears_fake_mac(tmp_path):
 
     iface = SimpleNamespace(access_points={}, driver=_driver(), set_fake_mac=_set_fake_mac, clear_fake_mac=_clear,
                             enable_rx_acks=_noop_async, disable_rx_acks=_noop_async, acks_seen=lambda _mac: 0)
+    iface.select_iface = lambda channel, needs_spoof=False: iface   # doubles as the WlanArray
     c = WpsCampaign(iface, _target(), state_dir=str(tmp_path), log=lambda m: None)
     c.state.tested = 42
     await c.teardown()

@@ -25,15 +25,13 @@ async def test_device_lost_from_offloop_context_shows_recoverable_modal():
     there raises NoActiveAppError, so notify_device_lost must defer onto the message queue)."""
     app = WifiteApp()
     async with app.run_test() as pilot:
-        app.active_interface = SimpleNamespace(name="Test Card")
         loop = asyncio.get_running_loop()
-        # Exactly how the reader dispatches: a threadsafe hop, not a direct call.
-        loop.call_soon_threadsafe(app.notify_device_lost, usb.core.USBError("gone", errno=19))
+        # The last card's loss re-emits (exc, remaining=0) via the threadsafe hop.
+        loop.call_soon_threadsafe(app.notify_device_lost, usb.core.USBError("gone", errno=19), 0)
         await pilot.pause()
         await pilot.pause()
         assert isinstance(app.screen, RecoverableErrorModal)
         assert app.screen._error.title == "Adapter disconnected"
-        assert "Test Card" in app.screen._error.message
 
 
 @pytest.mark.asyncio
@@ -47,7 +45,7 @@ async def test_back_to_splash_tears_down_interface_and_returns():
         async def _close():
             closed["count"] += 1
 
-        app.active_interface = SimpleNamespace(name="Test Card", close=_close)
+        app.array = SimpleNamespace(close=_close)
         app.target_ap = object()
         app.push_screen(RecoverableErrorModal(WifiteDeviceLostError("Test Card")))
         await pilot.pause()
@@ -55,8 +53,8 @@ async def test_back_to_splash_tears_down_interface_and_returns():
         await app.recover_to_splash()
         await pilot.pause()   # let the re-entered splash settle
 
-        assert closed["count"] == 1               # dead interface torn down exactly once
-        assert app.active_interface is None
+        assert closed["count"] == 1               # dead pool torn down exactly once
+        assert app.array is None
         assert app.target_ap is None
         assert isinstance(app.screen, SplashView)
 

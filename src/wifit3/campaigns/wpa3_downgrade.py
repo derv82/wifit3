@@ -67,13 +67,13 @@ class WPA3DowngradeAttack(Campaign):
 
     def __init__(
         self,
-        iface,
+        array,
         target: AccessPoint,
         log_callback: Optional[Callable[[str], None]] = None,
     ):
         if not target.ssid:
             raise ValueError("WPA3 Downgrade requires a known SSID: target is hidden.")
-        super().__init__(ap=target, iface=iface)
+        super().__init__(ap=target, array=array)
         self.target = target
         self._log = log_callback or (lambda _msg: None)
         self.stats = WPA3DowngradeStats()

@@ -168,7 +168,7 @@ class ScannerView(Screen):
     async def on_mount(self) -> None:
         log = self.query_one("#system-log", RichLog)
         self._update_column_headers()
-        iface = self.app.active_interface
+        iface = self.app.array
 
         log.write(treelog.header("Scanner initialized"))
         rows: List[str] = []
@@ -219,7 +219,7 @@ class ScannerView(Screen):
 
     async def on_screen_resume(self) -> None:
         # Restart channel hopper
-        iface = self.app.active_interface
+        iface = self.app.array
         if not iface:
             return
         await iface.start_hopping(
@@ -250,9 +250,9 @@ class ScannerView(Screen):
     # ----- Per-tick refresh --------------------------------------------------
 
     def refresh_table(self) -> None:
-        if not self.app.active_interface:
+        if not self.app.array:
             return
-        iface = self.app.active_interface
+        iface = self.app.array
         table = self.query_one("#ap-table", DataTable)
 
         # Pre-compute per-AP client counts to avoid O(N×M) inside the AP loop below.
@@ -330,11 +330,11 @@ class ScannerView(Screen):
         self._apply_sort(scroll_to_cursor=False)
 
     def _evict_expired_aps(self) -> None:
-        if not self.app.active_interface:
+        if not self.app.array:
             return
         if not self._fade_enabled:
             return
-        iface = self.app.active_interface
+        iface = self.app.array
         table = self.query_one("#ap-table", DataTable)
         now = time.time()
 
@@ -410,7 +410,7 @@ class ScannerView(Screen):
 
     def _best_named_sibling_ssid(self, ap: AccessPoint) -> Optional[str]:
         """Guess the sibling SSID to display for a hidden AP."""
-        iface = self.app.active_interface
+        iface = self.app.array
         if not iface or not ap.siblings:
             return None
         best_ssid: Optional[str] = None
@@ -598,7 +598,7 @@ class ScannerView(Screen):
 
     def _arm_open_windows(self) -> None:
         """React to PBC windows that are *already* open at the instant we arm."""
-        iface = self.app.active_interface
+        iface = self.app.array
         if not iface:
             return
         launched = self._pbc_capturing
@@ -630,7 +630,7 @@ class ScannerView(Screen):
                 color="orange1"))
 
     def _poll_pbc(self) -> None:
-        iface = self.app.active_interface
+        iface = self.app.array
         if not iface or self.app.screen is not self:
             return
         for ap in self._pbc_watcher.new_windows(iface.get_access_points()):
@@ -656,7 +656,7 @@ class ScannerView(Screen):
 
     async def _invade_pbc(self, ap: AccessPoint) -> None:
         """Pause hop → tune to the target → run the PBC enrollment → resume."""
-        iface = self.app.active_interface
+        iface = self.app.array
         if not iface:
             return
         self._pbc_capturing = True
@@ -732,7 +732,7 @@ class ScannerView(Screen):
 
     def action_change_channel(self) -> None:
         log = self.query_one("#system-log", RichLog)
-        iface = self.app.active_interface
+        iface = self.app.array
         if not iface:
             log.write("[bold red][!] No active interface.[/bold red]")
             return
@@ -758,7 +758,7 @@ class ScannerView(Screen):
             log.write("[dim]Channel filter unchanged.[/dim]")
             return
 
-        iface = self.app.active_interface
+        iface = self.app.array
         if not iface:
             return
 
@@ -781,7 +781,7 @@ class ScannerView(Screen):
             )
 
     def _prune_aps_outside(self, channels: List[int]) -> int:
-        iface = self.app.active_interface
+        iface = self.app.array
         if not iface:
             return 0
         keep = set(channels)
@@ -810,8 +810,8 @@ class ScannerView(Screen):
         bssid = event.row_key.value
         target_ap = self.ap_cache.get(bssid)
         if target_ap:
-            if self.app.active_interface:
-                await self.app.active_interface.stop_hopping()
+            if self.app.array:
+                await self.app.array.stop_hopping()
             self.app.target_ap = target_ap
             self.app.push_screen("focus")
 

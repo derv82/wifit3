@@ -46,12 +46,17 @@ class WlanArray:
     def members(self) -> List[WlanInterface]:
         return list(self._members)
 
-    def _attach(self, iface: WlanInterface) -> WlanInterface:
-        """Wire an already-connected interface into the pool: register it as a dedupe source, point
-        its TX observer at the sink, and subscribe the array to its raw RX + disconnect."""
+    def attach(self, iface: WlanInterface) -> WlanInterface:
+        """Pool an already-connected interface: switch it to raw fan-out (the array's WlanSink is
+        the picture now), point its TX + forged/self-MAC writes at the sink, register it as a dedupe
+        source, and subscribe the array to its raw RX + disconnect."""
         self._members.append(iface)
         self._dedupe.add_source(iface.name)
+        iface._own_picture = False
         iface.on_tx = self._sink.record_tx
+        iface._forge_sink = self._sink.register_forged_mac
+        iface._self_mac_sink = self._sink.register_self_mac
+        iface._unself_mac_sink = self._sink.unregister_self_mac
         iface.register_rx_callback(lambda pkt, i=iface: self._ingest(i, pkt))
         iface.register_disconnect_callback(lambda exc, i=iface: self._member_lost(i, exc))
         logger.info("pool: attached %s (%s); %d card(s)", iface.name, iface.description,
@@ -70,7 +75,7 @@ class WlanArray:
                               vid=id_entry.vid, pid=id_entry.pid, dev=dev)
         if connect and not await iface.connect():
             raise RuntimeError(f"{id_entry.description}: connect returned False")
-        return self._attach(iface)
+        return self.attach(iface)
 
     async def hotplug(self, handle, *, connect: bool = True) -> WlanInterface:
         """add() for a card that arrived mid-session (same build + connect + pool)."""
@@ -199,11 +204,12 @@ class WlanArray:
                     seen.append(ch)
         return sorted(seen)
 
-    async def set_channel(self, channel: int) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """STACK: tune every channel-capable member to ``channel`` (focus/PBC). Members that do not
-        support it stay where they are."""
-        targets = [m for m in self._members if channel in m.supported_channels]
-        results = await asyncio.gather(*(m.set_channel(channel) for m in targets),
+        support it, or are already on it, are left alone."""
+        targets = [m for m in self._members
+                   if channel in m.supported_channels and m.current_channel != channel]
+        results = await asyncio.gather(*(m.set_channel(channel, scan=scan) for m in targets),
                                        return_exceptions=True)
         return any(r is True for r in results)
 

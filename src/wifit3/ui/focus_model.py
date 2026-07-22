@@ -419,13 +419,22 @@ def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
             "[dim]passive: deauth a client to force a handshake[/dim]"]
 
 
-def card_identity(iface) -> tuple[str, str | None]:
-    """``(chipset/label, own_bssid_or_None)`` for the card endpoint."""
-    if iface is None:
+def card_identity(source) -> tuple[str, str | None]:
+    """``(chipset/label, own_bssid_or_None)`` for the card endpoint. ``source`` is the WlanArray
+    (or a bare interface): a one-card pool shows that card's chipset + MAC, a multi-card pool the
+    count."""
+    if source is None:
         return "no card", None
-    driver = getattr(iface, "driver", None)
-    label = (getattr(iface, "description", None)
-             or getattr(iface, "name", None) or "card")
+    members = getattr(source, "members", None)
+    if members is not None:                 # a WlanArray
+        if not members:
+            return "no card", None
+        if len(members) > 1:
+            return f"{len(members)} cards", None
+        source = members[0]                 # a pool of one: describe that single card
+    driver = getattr(source, "driver", None)
+    label = (getattr(source, "description", None)
+             or getattr(source, "name", None) or "card")
     # just the chipset head, no "(Make Model)" adapter suffix
     label = str(label).split("(")[0].strip() or "card"
     mac = getattr(driver, "mac_address", None)

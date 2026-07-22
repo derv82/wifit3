@@ -40,6 +40,9 @@ class _FakeIface:
         self.fake_mac_clears = 0
         self._cb = None
 
+    def select_iface(self, channel, needs_spoof=False):
+        return self   # this fake doubles as the WlanArray: it vends itself as the radio
+
     def register_forged_mac(self, mac):
         pass
 
