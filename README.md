@@ -114,10 +114,6 @@ wifit3 talks to the wireless cards directly via USB using its built-in "Minnie D
 miniature userland ports of the Linux drivers. The "miniature" is because we do not port STA mode (client)
 nor AP mode; just the bare minimum needed to get RX and TX working in Monitor Mode.
 
-<p align="center">
-  <img src="screenshots/wifit3-minnie-drivers-arch.png" alt="Minnie Drivers architecture diagram" width="700">
-</p>
-
 Talking to the wireless card in this way bypasses the operating system's wireless driver stack entirely,
 including Windows' NDIS (Network Driver Interface Specification), which would otherwise prevent
 functionality such as Monitor Mode and injection. And because the bytes sent to the card are the
