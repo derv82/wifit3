@@ -102,6 +102,10 @@ class WlanInterface:
         self._disconnect_callbacks: List[Callable[[Exception], None]] = []
         self._device_lost = False
 
+        # Optional TX observer (frame_bytes) wired by WlanArray to WlanSink.record_tx; the array
+        # owns the packet-stats picture, the radio just fires the event.
+        self.on_tx: Optional[Callable[[bytes], None]] = None
+
         self._hopping_task: Optional[asyncio.Task] = None
         self._tune_task: Optional[asyncio.Task] = None
         self._is_hopping = False
@@ -521,6 +525,8 @@ class WlanInterface:
     async def send_no_wait(self, frame_bytes: bytes) -> bool:
         """Inject a frame fire-and-forget."""
         self._record_tx(frame_bytes)                 # live packet dashboard (deauth vs other)
+        if self.on_tx:
+            self.on_tx(frame_bytes)
         return await self.driver.inject_frame(frame_bytes)
 
     async def send_until_ack(self, frame_bytes: bytes, max_retries: int = 0) -> bool:
@@ -528,6 +534,8 @@ class WlanInterface:
         to ``max_retries`` times on silence; returns whether it landed. Needs ``enable_rx_acks()``
         armed first, else fire-and-forget. Best-effort (see ``Driver.inject_frame_slow_retry``)."""
         self._record_tx(frame_bytes)
+        if self.on_tx:
+            self.on_tx(frame_bytes)
         return await self.driver.inject_frame_slow_retry(frame_bytes, max_resends=max_retries)
 
     async def enable_rx_acks(self) -> None:

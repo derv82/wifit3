@@ -1,0 +1,238 @@
+"""The card pool (``WlanArray``): one per session. It (1) consolidates every member card's raw RX
+into a single deduplicated 802.11 picture (``WlanSink``), and (2) hands out a card for a campaign,
+deauth or interaction via ``select_iface``. It is not a radio facade: it has no ``inject_frame`` or
+``deauth``. Active TX runs on the selected ``WlanInterface`` itself; the array only picks it.
+
+A single card is an array of one: dedupe is a no-op and every read passes straight through.
+"""
+import asyncio
+import logging
+import time
+from typing import Callable, List, Optional
+
+from wifit3.chips.driver import FakeMacSupport
+from wifit3.dot11.packet import Packet
+from wifit3.wlan.dedupe import StreamMerger
+from wifit3.wlan.interface import WlanInterface
+from wifit3.wlan.sink import WlanSink
+
+logger = logging.getLogger(__name__)
+
+# Prefer the most attack-capable card (see planning/MULTICARD-PLAN.md decision 2).
+_FAKE_MAC_RANK = {
+    FakeMacSupport.SPOOFABLE: 0,
+    FakeMacSupport.FIXED_MAC: 1,
+    FakeMacSupport.NONE: 2,
+    FakeMacSupport.UNIMPLEMENTED: 3,
+}
+# Cards that can HW-ACK a spoofed MAC (the ones set_fake_mac works on).
+_SPOOF_CAPABLE = (FakeMacSupport.SPOOFABLE, FakeMacSupport.FIXED_MAC)
+
+
+class WlanArray:
+    """A pool of WlanInterfaces feeding one shared WlanSink, plus card selection for attacks."""
+
+    def __init__(self, sink: Optional[WlanSink] = None, window: float = 0.3):
+        self._members: List[WlanInterface] = []
+        self._sink = sink or WlanSink()
+        self._dedupe = StreamMerger(window=window)
+        self._rx_callbacks: List[Callable[[Packet], None]] = []      # deduped stream
+        self._disconnect_callbacks: List[Callable[[Exception, int], None]] = []
+        self._name_counter = 0
+
+    # ----- pool membership ---------------------------------------------------
+
+    @property
+    def members(self) -> List[WlanInterface]:
+        return list(self._members)
+
+    def _attach(self, iface: WlanInterface) -> WlanInterface:
+        """Wire an already-connected interface into the pool: register it as a dedupe source, point
+        its TX observer at the sink, and subscribe the array to its raw RX + disconnect."""
+        self._members.append(iface)
+        self._dedupe.add_source(iface.name)
+        iface.on_tx = self._sink.record_tx
+        iface.register_rx_callback(lambda pkt, i=iface: self._ingest(i, pkt))
+        iface.register_disconnect_callback(lambda exc, i=iface: self._member_lost(i, exc))
+        logger.info("pool: attached %s (%s); %d card(s)", iface.name, iface.description,
+                    len(self._members))
+        return iface
+
+    async def add(self, handle, *, connect: bool = True) -> WlanInterface:
+        """Build a driver + interface from a discovery handle (dev, driver_cls, id_entry), connect
+        it (the caller serializes calls: two cards driving RF bring-up over USB at once can collide),
+        and pool it. Raises on bring-up failure; the caller decides splash-fatal vs toast."""
+        dev, driver_cls, id_entry = handle
+        driver = driver_cls.from_usb_device(dev, id_entry)
+        name = f"wlan{self._name_counter}"
+        self._name_counter += 1
+        iface = WlanInterface(driver, name, id_entry.description,
+                              vid=id_entry.vid, pid=id_entry.pid, dev=dev)
+        if connect and not await iface.connect():
+            raise RuntimeError(f"{id_entry.description}: connect returned False")
+        return self._attach(iface)
+
+    async def hotplug(self, handle, *, connect: bool = True) -> WlanInterface:
+        """add() for a card that arrived mid-session (same build + connect + pool)."""
+        return await self.add(handle, connect=connect)
+
+    async def hot_unplug(self, iface: WlanInterface) -> None:
+        """Deliberately drop a card: close it, remove it from the pool, re-emit disconnect."""
+        try:
+            await iface.close()
+        except Exception:
+            logger.exception("pool: close failed during hot_unplug of %s", iface.name)
+        self._member_lost(iface, None)
+
+    def _member_lost(self, iface: WlanInterface, exc: Optional[Exception]) -> None:
+        """Drop a member (unplug or disconnect) and re-emit with the surviving card count so a
+        caller can route: 0 -> back to splash, 1+ -> toast and keep running."""
+        if iface in self._members:
+            self._members.remove(iface)
+        self._dedupe.remove_source(iface.name)
+        remaining = len(self._members)
+        logger.info("pool: lost %s; %d card(s) remain", iface.name, remaining)
+        for cb in list(self._disconnect_callbacks):
+            try:
+                cb(exc, remaining)
+            except Exception:
+                logger.exception("Array disconnect callback failed")
+
+    # ----- card selection ----------------------------------------------------
+
+    def select_iface(self, channel: int, *, needs_spoof: bool = False) -> Optional[WlanInterface]:
+        """Pick the best card for TX on ``channel``: filter to cards that support the channel (and,
+        if ``needs_spoof``, that can HW-ACK a spoofed MAC), then the most attack-capable one. None
+        when no live card can reach the band (e.g. a 5 GHz target with only 2.4 GHz cards left)."""
+        cands = [m for m in self._members if channel in m.supported_channels]
+        if needs_spoof:
+            cands = [m for m in cands if m.driver.FAKE_MAC in _SPOOF_CAPABLE]
+        if not cands:
+            return None
+        return min(cands, key=lambda m: _FAKE_MAC_RANK.get(m.driver.FAKE_MAC, 9))
+
+    # ----- deduped RX subscription (no v1 consumer, kept for future) ----------
+
+    def register_rx_callback(self, cb: Callable[[Packet], None]) -> None:
+        if cb not in self._rx_callbacks:
+            self._rx_callbacks.append(cb)
+
+    def unregister_rx_callback(self, cb: Callable[[Packet], None]) -> None:
+        if cb in self._rx_callbacks:
+            self._rx_callbacks.remove(cb)
+
+    def register_disconnect_callback(self, cb: Callable[[Exception, int], None]) -> None:
+        """Subscribe to member loss: cb(exc, remaining_card_count)."""
+        if cb not in self._disconnect_callbacks:
+            self._disconnect_callbacks.append(cb)
+
+    def _ingest(self, iface: WlanInterface, pkt: Packet) -> None:
+        """One card's raw frame: drop our own forged frames, dedupe across cards, and fold the novel
+        copy into the picture (every card contributes its own signal, even on a duplicate)."""
+        card_id = iface.name
+        if pkt.source in self._sink.forged_macs:
+            return
+        if self._dedupe.submit(card_id, pkt.raw, time.monotonic()):
+            self._sink.update(pkt, card_id, channel_hint=iface.current_channel)
+            for cb in self._rx_callbacks:
+                try:
+                    cb(pkt)
+                except Exception:
+                    logger.exception("Deduped RX callback failed")
+        else:
+            self._sink.record_signal(card_id, pkt.bssid, pkt.rssi)
+
+    # ----- shared-picture reads / writes (delegate to the sink) --------------
+
+    @property
+    def sink(self) -> WlanSink:
+        return self._sink
+
+    @property
+    def access_points(self):
+        return self._sink.access_points
+
+    @property
+    def clients(self):
+        return self._sink.clients
+
+    @property
+    def forged_macs(self):
+        return self._sink.forged_macs
+
+    @property
+    def self_macs(self):
+        return self._sink.self_macs
+
+    @property
+    def wep_store(self):
+        return self._sink.wep_store
+
+    @property
+    def packet_stats(self):
+        return self._sink.packet_stats
+
+    def get_access_points(self):
+        return self._sink.get_access_points()
+
+    def register_forged_mac(self, mac) -> None:
+        self._sink.register_forged_mac(mac)
+
+    def register_self_mac(self, mac, bssid: Optional[str] = None) -> str:
+        return self._sink.register_self_mac(mac, bssid)
+
+    def unregister_self_mac(self, mac) -> None:
+        self._sink.unregister_self_mac(mac)
+
+    def record_tx(self, frame_bytes: bytes) -> None:
+        self._sink.record_tx(frame_bytes)
+
+    # ----- channel policy ----------------------------------------------------
+
+    @property
+    def supported_channels(self) -> List[int]:
+        """Union of every member's channels (what the pool as a whole can tune to)."""
+        seen: List[int] = []
+        for m in self._members:
+            for ch in m.supported_channels:
+                if ch not in seen:
+                    seen.append(ch)
+        return sorted(seen)
+
+    async def set_channel(self, channel: int) -> bool:
+        """STACK: tune every channel-capable member to ``channel`` (focus/PBC). Members that do not
+        support it stay where they are."""
+        targets = [m for m in self._members if channel in m.supported_channels]
+        results = await asyncio.gather(*(m.set_channel(channel) for m in targets),
+                                       return_exceptions=True)
+        return any(r is True for r in results)
+
+    def _partition(self, channels: List[int]) -> dict:
+        """SPREAD: assign each channel to one capable member, balancing counts, so N cards cover
+        N-way more air per hop. A channel no member supports is dropped."""
+        assignment = {m: [] for m in self._members}
+        for ch in channels:
+            capable = [m for m in self._members if ch in m.supported_channels]
+            if not capable:
+                continue
+            m = min(capable, key=lambda mm: len(assignment[mm]))
+            assignment[m].append(ch)
+        return assignment
+
+    async def start_hopping(self, channels: Optional[List[int]] = None,
+                            interval: float = 0.5) -> None:
+        """SPREAD hop: partition the channel list across members; each hops only its subset."""
+        chans = channels or self.supported_channels
+        assignment = self._partition(chans)
+        await asyncio.gather(*(
+            m.start_hopping(channels=subset, interval=interval)
+            for m, subset in assignment.items() if subset
+        ))
+
+    async def stop_hopping(self) -> None:
+        await asyncio.gather(*(m.stop_hopping() for m in self._members),
+                             return_exceptions=True)
+
+    async def close(self) -> None:
+        await asyncio.gather(*(m.close() for m in self._members), return_exceptions=True)
+        self._members.clear()
