@@ -64,7 +64,7 @@ class _FakeArray:
     def members(self):
         return [self._iface]
 
-    def select_iface(self, channel, needs_spoof=False):
+    def select_iface(self, channel):
         return self._iface
 
     def get_access_points(self):

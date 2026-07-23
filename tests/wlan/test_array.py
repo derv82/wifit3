@@ -96,14 +96,12 @@ def test_select_iface_prefers_most_capable():
     strong = FakeIface("wlan1", [1, 6, 11], fake_mac=FakeMacSupport.SPOOFABLE)
     a = _pool(weak, strong)
     assert a.select_iface(6) is strong                       # SPOOFABLE outranks NONE
-    assert a.select_iface(6, needs_spoof=True) is strong
 
 
-def test_select_iface_needs_spoof_excludes_incapable():
+def test_select_iface_returns_only_card_even_if_spoof_incapable():
     weak = FakeIface("wlan0", [1, 6, 11], fake_mac=FakeMacSupport.NONE)
     a = _pool(weak)
-    assert a.select_iface(6) is weak                         # fine for passive/plain TX
-    assert a.select_iface(6, needs_spoof=True) is None       # cannot HW-ACK a spoofed MAC
+    assert a.select_iface(6) is weak
 
 
 # ----- ingest / dedupe -------------------------------------------------------

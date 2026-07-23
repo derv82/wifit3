@@ -25,8 +25,6 @@ _FAKE_MAC_RANK = {
     FakeMacSupport.NONE: 2,
     FakeMacSupport.UNIMPLEMENTED: 3,
 }
-# Cards that can HW-ACK a spoofed MAC (the ones set_fake_mac works on).
-_SPOOF_CAPABLE = (FakeMacSupport.SPOOFABLE, FakeMacSupport.FIXED_MAC)
 
 
 class WlanArray:
@@ -105,13 +103,10 @@ class WlanArray:
 
     # ----- card selection ----------------------------------------------------
 
-    def select_iface(self, channel: int, *, needs_spoof: bool = False) -> Optional[WlanInterface]:
-        """Pick the best card for TX on ``channel``: filter to cards that support the channel (and,
-        if ``needs_spoof``, that can HW-ACK a spoofed MAC), then the most attack-capable one. None
-        when no live card can reach the band (e.g. a 5 GHz target with only 2.4 GHz cards left)."""
+    def select_iface(self, channel: int) -> Optional[WlanInterface]:
+        """The most attack-capable card that can tune to ``channel``, or None when no live card can
+        reach the band (e.g. a 5 GHz target with only 2.4 GHz cards left)."""
         cands = [m for m in self._members if channel in m.supported_channels]
-        if needs_spoof:
-            cands = [m for m in cands if m.driver.FAKE_MAC in _SPOOF_CAPABLE]
         if not cands:
             return None
         return min(cands, key=lambda m: _FAKE_MAC_RANK.get(m.driver.FAKE_MAC, 9))

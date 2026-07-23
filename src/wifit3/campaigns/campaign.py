@@ -43,10 +43,9 @@ class Campaign:
     idle_variant: str = "primary"
     run_variant: str = "error"
 
-    def __init__(self, ap, array, *, needs_spoof: bool = False):
+    def __init__(self, ap, array):
         self.ap = ap
         self.array = array
-        self._needs_spoof = needs_spoof
         self._iface = None                 # elected radio, resolved lazily by the `iface` property
         self.stopped = False
         self._task: Optional[asyncio.Task] = None
@@ -54,10 +53,10 @@ class Campaign:
     @property
     def iface(self):
         """The radio this campaign drives, elected from the array on first use: a card that can tune
-        to the target's channel (and HW-ACK a spoofed MAC when ``needs_spoof``). None when no live
-        card can reach the band, in which case ``_loop`` is skipped."""
+        to the target's channel. None when no live card can reach the band, in which case ``_loop``
+        is skipped."""
         if self._iface is None and self.array is not None:
-            self._iface = self.array.select_iface(self.ap.channel, needs_spoof=self._needs_spoof)
+            self._iface = self.array.select_iface(self.ap.channel)
         return self._iface
 
     # ---- lifecycle (framework-owned; subclasses do NOT override) ------------
