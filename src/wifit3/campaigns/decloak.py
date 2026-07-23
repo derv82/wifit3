@@ -60,13 +60,13 @@ class DecloakAttack:
 
     def __init__(
         self,
-        iface,
+        array,
         target: AccessPoint,
         base_ssid: str,
         source_mac: Optional[bytes] = None,
         candidates_override: Optional[List[str]] = None,
     ):
-        self.iface = iface
+        self.array = array
         self.target = target
         self.base_ssid = base_ssid
         self.bssid_bytes = _str_to_mac(target.bssid)
@@ -75,7 +75,7 @@ class DecloakAttack:
         # (a hook for supplying SSIDs directly; currently exercised only by tests).
         self.candidates_override = candidates_override
         # Register so client/handshake tracking ignores our forged STA.
-        self.iface.register_forged_mac(self.source_mac)
+        self.array.register_forged_mac(self.source_mac)
 
     # ---- Driver -------------------------------------------------------------
 
@@ -86,8 +86,13 @@ class DecloakAttack:
         """Send one Probe Request per candidate SSID, polling for the parser
         to flip ``ap.ssid``. Returns the discovered SSID on success, else
         None when the candidate list is exhausted with no response."""
-        if self.iface.current_channel != self.target.channel:
-            await self.iface.set_channel(self.target.channel)
+        iface = self.array.select_iface(self.target.channel)
+        if iface is None:
+            logger.info("[DECLOAK] no card can reach channel %s for %s",
+                        self.target.channel, self.target.bssid)
+            return None
+        if iface.current_channel != self.target.channel:
+            await iface.set_channel(self.target.channel)
 
         candidates = (
             self.candidates_override
@@ -95,7 +100,7 @@ class DecloakAttack:
             else build_candidates(self.base_ssid)
         )
         bssid_lower = self.target.bssid.lower()
-        initial_ssid = self.iface.access_points.get(bssid_lower, self.target).ssid
+        initial_ssid = self.array.access_points.get(bssid_lower, self.target).ssid
 
         src = ("explicit" if self.candidates_override is not None
                else f"base '{self.base_ssid}'")
@@ -106,14 +111,13 @@ class DecloakAttack:
 
         for candidate in candidates:
             frame = probe_req(self.bssid_bytes, self.source_mac, candidate)
-            await self.iface.send_no_wait(frame)
+            await iface.send_no_wait(frame)
 
-            # Poll briefly: parser side flips ap.ssid asynchronously when
-            # the AP echoes back a Probe Response that the existing decloak
-            # guard in WlanInterface._on_frame_parsed sees.
+            # Poll briefly: the parser flips ap.ssid asynchronously when the AP echoes back a
+            # Probe Response the sink's decloak guard sees.
             deadline = time.time() + per_candidate_timeout
             while time.time() < deadline:
-                ap_state = self.iface.access_points.get(bssid_lower)
+                ap_state = self.array.access_points.get(bssid_lower)
                 if ap_state and ap_state.ssid and ap_state.ssid != initial_ssid:
                     logger.info(
                         f"[DECLOAK] hit on candidate '{candidate}' → "

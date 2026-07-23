@@ -47,11 +47,11 @@ def test_decloak_probe_req_parses_back_with_candidate_ssid():
     """Round-trip: feed a frame we built through the same parser the
     receive path uses. Confirms wire format is well-formed AND that the
     SSID we asked for is what an AP would see."""
-    mock_iface = MagicMock()
-    mock_iface.access_points = {}
+    mock_array = MagicMock()
+    mock_array.access_points = {}
     target = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", channel=6)
     attack = DecloakAttack(
-        mock_iface,
+        mock_array,
         target,
         base_ssid="Foo",
         source_mac=bytes.fromhex("02deadbeefaa"),
@@ -73,11 +73,11 @@ def test_decloak_probe_req_handles_empty_ssid_candidate():
     base SSID, never an empty SSID IE, since build_candidates filters
     empties. But the builder itself should still accept and round-trip
     a long-SSID candidate."""
-    mock_iface = MagicMock()
-    mock_iface.access_points = {}
+    mock_array = MagicMock()
+    mock_array.access_points = {}
     target = AccessPoint(bssid="11:22:33:44:55:66", channel=44)
     attack = DecloakAttack(
-        mock_iface,
+        mock_array,
         target,
         base_ssid="X" * 32,
         source_mac=bytes.fromhex("020000000001"),
@@ -89,9 +89,9 @@ def test_decloak_probe_req_handles_empty_ssid_candidate():
 
 
 def test_decloak_attack_registers_forged_mac():
-    """The attack's source MAC must be added to iface.forged_macs so the
+    """The attack's source MAC must be registered via array.register_forged_mac so the
     EAPOL/handshake/client paths don't treat it as a real STA."""
-    mock_iface = MagicMock()
+    mock_array = MagicMock()
     target = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", channel=6)
-    attack = DecloakAttack(mock_iface, target, base_ssid="Foo")
-    mock_iface.register_forged_mac.assert_called_once_with(attack.source_mac)
+    attack = DecloakAttack(mock_array, target, base_ssid="Foo")
+    mock_array.register_forged_mac.assert_called_once_with(attack.source_mac)
