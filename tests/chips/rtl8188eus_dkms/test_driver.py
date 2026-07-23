@@ -81,19 +81,19 @@ async def test_inject_frame_rejects_too_short():
 
 def test_manager_registration_and_env_order(monkeypatch):
     from wifit3.chips.rtl8188eus.driver import RTL8188EUSDriver
-    from wifit3.wlan import manager
+    from wifit3.wlan import discovery
 
     class _Dev:
         def __init__(self, vid, pid):
             self.idVendor, self.idProduct = vid, pid
 
     def selected():
-        manager._DRIVER_CLASSES = None   # bust the cached registry so the env var is re-read
-        return manager._match_driver(_Dev(0x2357, 0x010C))[0]
+        discovery._DRIVER_CLASSES = None   # bust the cached registry so the env var is re-read
+        return discovery._match_driver(_Dev(0x2357, 0x010C))[0]
 
     monkeypatch.delenv("WIFIT3_RTL8188", raising=False)
     assert selected() is Rtl8188eusDkmsDriver     # default: vendor/DKMS port for 2357:010c (stress-stable)
 
     monkeypatch.setenv("WIFIT3_RTL8188", "mainline")
     assert selected() is RTL8188EUSDriver          # opt back to mainline via env
-    manager._DRIVER_CLASSES = None                # leave the cache clean
+    discovery._DRIVER_CLASSES = None                # leave the cache clean
