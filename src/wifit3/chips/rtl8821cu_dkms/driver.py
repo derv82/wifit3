@@ -7,7 +7,7 @@ capture (all 21409 ctrl + bulk-OUT ops) byte-for-byte, so what the gate verifies
 product code path. The chip→host interrupt-IN (C2H) and bulk-IN (RX) streams are a separate blind
 spot the host-side replay does not model — see RTL8821CU_DKMS.md.
 
-Registered in ``wlan/manager.py``. ``connect`` claims the combo card's WiFi (vendor-class)
+Registered in ``wlan/discovery.py``. ``connect`` claims the combo card's WiFi (vendor-class)
 interface, starts the bulk-IN ``RxReaderThread``, runs ``bringup.cold_bringup`` (FW download +
 MAC/BB/RF + BT-coex + the ch1 monitor tune over the ep-0x05 FW/TX pipe — which leaves the chip in
 the vendor's exact receiving config, byte-for-byte), then runs the phydm watchdog on a background

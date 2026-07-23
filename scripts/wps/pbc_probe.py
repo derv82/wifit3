@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.wps.registrar import PinResult
-from wifit3.wlan.manager import WlanDeviceManager
+from wifit3.wlan.discovery import build_interfaces, close_interfaces
 
 
 def step(label):
@@ -73,15 +73,14 @@ def load_default_target() -> dict:
 
 
 async def discover_iface(debug):
-    mgr = WlanDeviceManager()
-    ifaces = await mgr.refresh()
+    ifaces = build_interfaces()
     if not ifaces:
         fail("No supported wifit3 card found.")
     iface = ifaces[0]
     info(f"Using {iface.name}: {iface.description}")
     if not await iface.connect(progress_cb=lambda p, m: None):
         fail("Driver connect() failed. Replug and retry.")
-    return mgr, iface
+    return ifaces, iface
 
 
 async def main_async(args) -> int:
@@ -92,7 +91,7 @@ async def main_async(args) -> int:
     if not bssid:
         fail("No target BSSID (give --bssid or populate data_dumps/wps_pin.txt).")
 
-    mgr, iface = await discover_iface(args.debug)
+    ifaces, iface = await discover_iface(args.debug)
     capture: list = []
     iface.register_rx_callback(lambda pkt: capture.append((time.monotonic(), pkt.raw)))
     try:
@@ -144,7 +143,7 @@ async def main_async(args) -> int:
         return 0
     finally:
         step("Release device")
-        await mgr.close_all()
+        await close_interfaces(ifaces)
         info("Closed.")
 
 

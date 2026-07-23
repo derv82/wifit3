@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from wifit3.campaigns.auth_assoc import Association, WlanTransport, str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from wifit3.campaigns.wps.registrar import PinResult, WpsRegistrar
-from wifit3.wlan.manager import WlanDeviceManager
+from wifit3.wlan.discovery import build_interfaces, close_interfaces
 
 
 def step(label: str) -> None:
@@ -102,8 +102,7 @@ def derive_wrong_pin(pin: str) -> str:
 
 
 async def discover_iface(debug: bool, card: str = ""):
-    mgr = WlanDeviceManager()
-    ifaces = await mgr.refresh()
+    ifaces = build_interfaces()
     if not ifaces:
         fail("No supported wifit3 card found. Plug it in (Zadig→WinUSB on Windows) and retry.")
     if card:
@@ -118,7 +117,7 @@ async def discover_iface(debug: bool, card: str = ""):
     info(f"Using {iface.name}: {iface.description}")
     if not await iface.connect(progress_cb=lambda p, m: None):
         fail("Driver connect() failed. Replug and retry.")
-    return mgr, iface
+    return ifaces, iface
 
 
 async def find_ap(iface, channel: int, bssid: str | None, ssid: str | None, scan_s: float):
@@ -190,7 +189,7 @@ async def main_async(args) -> int:
     if not known_pin:
         fail("No PIN to try (give --pin or populate data_dumps/wps_pin.txt).")
 
-    mgr, iface = await discover_iface(args.debug)
+    ifaces, iface = await discover_iface(args.debug)
     capture: list = []
     iface.register_rx_callback(lambda pkt: capture.append((time.monotonic(), pkt.raw)))
     our_mac = bytes([0x02, 0xAA, 0xBB]) + struct.pack(">I", int(time.time()))[1:]
@@ -242,7 +241,7 @@ async def main_async(args) -> int:
         return 0
     finally:
         step("Release device")
-        await mgr.close_all()
+        await close_interfaces(ifaces)
         info("Closed.")
 
 

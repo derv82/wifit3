@@ -21,7 +21,7 @@ sys.path.insert(0, str(_HERE))
 
 from driver_health import Health  # noqa: E402
 
-from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
+from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
 
 
 def _chip(iface) -> str:
@@ -30,8 +30,7 @@ def _chip(iface) -> str:
 
 async def run(args) -> int:
     print("[*] Discovering interfaces...", file=sys.stderr)
-    mgr = WlanDeviceManager()
-    ifaces = await mgr.refresh()
+    ifaces = build_interfaces()
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
@@ -46,11 +45,11 @@ async def run(args) -> int:
     try:
         if not await iface.connect(progress_cb=_progress):
             print("[-] Bring-up returned False.", file=sys.stderr)
-            await mgr.close_all()
+            await close_interfaces(ifaces)
             return 1
     except Exception as e:  # noqa: BLE001, USB bring-up can raise
         print(f"[-] Bring-up failed: {e}", file=sys.stderr)
-        await mgr.close_all()
+        await close_interfaces(ifaces)
         return 1
 
     chip = _chip(iface)
@@ -82,7 +81,7 @@ async def run(args) -> int:
     except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n[!] Interrupted: writing partial.", file=sys.stderr)
     finally:
-        await mgr.close_all()
+        await close_interfaces(ifaces)
 
     health.to_json(_HERE / f"wifit3-{chip}.json")
     print(f"[*] next: baseline-linux.py --chip {chip} (--capture or --pcap)", file=sys.stderr)

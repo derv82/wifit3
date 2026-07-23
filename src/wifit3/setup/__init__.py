@@ -1,15 +1,13 @@
-"""Cross-platform device-setup *actions* (Tier-1).
+"""Cross-platform device-setup *actions*: the privileged step that makes a card openable.
 
-Tier-0 (detect + classify unbound cards) lives in ``wlan/manager.py``; this package is the
-privileged action layer the splash's Install / Restore buttons drive: WinUSB bind/unbind on
-Windows, kernel detach / udev on Linux. The VID:PID list each step needs comes from the
-driver registry (:func:`ids_from_registry`), never hand-maintained.
+This package is the privileged action layer behind the splash's Install / Restore (✕) buttons and
+the bring-up engine, dispatched by :class:`wifit3.setup.base.Setup`: WinUSB bind/unbind on Windows,
+kernel detach + udev on Linux. The per-chipset VID:PID list each step needs comes from the driver
+registry (:func:`target_for_vidpid`), never hand-maintained.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-from wifit3.chips.driver import DeviceID
 
 
 @dataclass(frozen=True)
@@ -35,7 +33,7 @@ def target_for_vidpid(vid: int, pid: int) -> SetupTarget | None:
     degenerate "device not plugged in" path. Import is deferred to sidestep the chip-driver
     import cycle.
     """
-    from wifit3.wlan.manager import _import_driver_classes
+    from wifit3.wlan.discovery import _import_driver_classes
 
     for key, driver_cls in _import_driver_classes().items():
         for entry in driver_cls.SUPPORTED_IDS:
@@ -47,24 +45,3 @@ def target_for_vidpid(vid: int, pid: int) -> SetupTarget | None:
                     replug_after_modprobe=bool(
                         getattr(driver_cls, "LINUX_REPLUG_AFTER_MODPROBE", True)))
     return None
-
-
-def ids_from_registry() -> list[DeviceID]:
-    """Every supported USB VID:PID, de-duplicated, flattened from the driver registry.
-
-    Single source of truth for the setup layer (Linux udev emitter + Windows bind list), so a
-    new driver's ``SUPPORTED_IDS`` extends device-setup automatically. A VID:PID claimed by
-    several drivers keeps the first description seen. Import is deferred so callers that only
-    need the protocol types don't pull in the chip drivers.
-    """
-    from wifit3.wlan.manager import _import_driver_classes
-
-    seen: set[tuple[int, int]] = set()
-    out: list[DeviceID] = []
-    for driver_cls in _import_driver_classes().values():
-        for entry in driver_cls.SUPPORTED_IDS:
-            key = (entry.vid, entry.pid)
-            if key not in seen:
-                seen.add(key)
-                out.append(entry)
-    return out

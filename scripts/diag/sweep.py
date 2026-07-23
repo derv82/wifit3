@@ -36,7 +36,7 @@ sys.path.insert(0, str(_HERE))
 from probes import ALL_PROBES  # noqa: E402
 from report import write_csv, write_markdown  # noqa: E402
 
-from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
+from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
 
 logger = logging.getLogger("diag.sweep")
 
@@ -123,8 +123,7 @@ async def main() -> int:
             probe.apply_multiplier(args, args.duration_multiplier)
 
     print("[*] Discovering interfaces...", file=sys.stderr)
-    mgr = WlanDeviceManager()
-    ifaces = await mgr.refresh()
+    ifaces = build_interfaces()
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
@@ -141,7 +140,7 @@ async def main() -> int:
         await _connect(iface)
     except Exception as e:
         print(f"[-] Bring-up failed: {e}", file=sys.stderr)
-        await mgr.close_all()
+        await close_interfaces(ifaces)
         return 1
 
     if args.channels:
@@ -199,12 +198,12 @@ async def main() -> int:
             file=sys.stderr,
         )
 
-    # close_all() can itself raise on USB disconnect; isolate so a
+    # close can itself raise on USB disconnect; isolate so a
     # teardown failure can't kill the render path.
     try:
-        await mgr.close_all()
+        await close_interfaces(ifaces)
     except Exception as e:
-        print(f"[!] mgr.close_all() raised: {e}", file=sys.stderr)
+        print(f"[!] close_interfaces() raised: {e}", file=sys.stderr)
 
     # Everything below this point runs unconditionally: the whole
     # point of the fix is that Ctrl+C / USB disconnect / driver

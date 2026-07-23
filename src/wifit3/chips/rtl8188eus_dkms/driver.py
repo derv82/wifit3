@@ -13,7 +13,7 @@ goal). The whole operational stream (monitor entry, per-hop channel tunes, every
 byte-diffed against the cold-boot capture by ``scripts/rtl8188eus_dkms/verify_pcap.py``. The
 TX path (``tx.py`` + ``inject_frame``) is wired and HW-confirmed (deauth/EAPOL on the air).
 
-Registered in ``wlan/manager.py`` behind ``WIFIT3_RTL8188`` — the mainline-derived
+Registered in ``wlan/discovery.py`` behind ``WIFIT3_RTL8188`` — the mainline-derived
 ``rtl8188eus`` stays the default for 2357:010c until this vendor port is hardware-proven to
 tie/beat it on 2.4 GHz breadth; ``WIFIT3_RTL8188=dkms`` opts in. Exercise via
 ``scripts/rtl8188eus_dkms/``.

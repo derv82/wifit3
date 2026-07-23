@@ -36,7 +36,7 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 
-from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
+from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
 
 _BAR_MAX = 40  # cap the bar so a busy second can't wrap the terminal
 
@@ -174,8 +174,7 @@ def run_pcap(args) -> int:
 
 async def run_live(args) -> int:
     print("[*] Discovering interfaces...", file=sys.stderr)
-    mgr = WlanDeviceManager()
-    ifaces = await mgr.refresh()
+    ifaces = build_interfaces()
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
@@ -200,11 +199,11 @@ async def run_live(args) -> int:
         ok = await iface.connect(progress_cb=_progress)
     except Exception as e:  # noqa: BLE001, bring-up can raise on USB error
         print(f"[-] Bring-up failed: {e}", file=sys.stderr)
-        await mgr.close_all()
+        await close_interfaces(ifaces)
         return 1
     if not ok:
         print("[-] Bring-up returned False.", file=sys.stderr)
-        await mgr.close_all()
+        await close_interfaces(ifaces)
         return 1
 
     collector = BeaconCollector()
@@ -213,7 +212,7 @@ async def run_live(args) -> int:
           file=sys.stderr)
     if not await iface.set_channel(args.channel):
         print(f"[-] set_channel({args.channel}) failed.", file=sys.stderr)
-        await mgr.close_all()
+        await close_interfaces(ifaces)
         return 1
 
     start = time.monotonic()
@@ -228,7 +227,7 @@ async def run_live(args) -> int:
     except KeyboardInterrupt:
         pass
     print("", file=sys.stderr)
-    await mgr.close_all()
+    await close_interfaces(ifaces)
 
     events = [(t - start, b) for t, b in collector.events if t >= start]
     summarize(events, n_secs, args.bssid, source_label=iface.name)

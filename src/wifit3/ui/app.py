@@ -6,7 +6,6 @@ from typing import Optional
 from wifit3.chips import log_trace
 from wifit3.errors import WifiteDeviceLostError
 from wifit3.wlan.bringup import BringupManager
-from wifit3.wlan.manager import WlanDeviceManager
 from wifit3.wlan.array import WlanArray
 from wifit3.models import AccessPoint
 
@@ -112,7 +111,6 @@ class WifiteApp(App):
     def __init__(self, default_log_level: Optional[str] = None):
         _configure_file_logging(default_log_level)
         super().__init__()
-        self.device_manager = WlanDeviceManager()
         self.array: Optional[WlanArray] = None
         self.bringup = BringupManager(self)
         self.target_ap: Optional[AccessPoint] = None

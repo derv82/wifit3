@@ -30,7 +30,7 @@ except Exception:                                                 # noqa: BLE001
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from wifit3.wlan.manager import WlanDeviceManager
+from wifit3.wlan.discovery import build_interfaces
 from wifit3.dot11 import build_deauth
 
 PROBE_SRC = "02:b0:b0:00:00:01"   # the prober injects as this; the DUT's ACK comes back to it
@@ -66,7 +66,7 @@ async def probe(prober, dst: bytes, count: int, interval: float) -> int:
 
 async def main(a) -> None:
     logging.basicConfig(level=logging.DEBUG if a.debug else logging.ERROR)
-    ifaces = await WlanDeviceManager().refresh()
+    ifaces = build_interfaces()
 
     want = a.test_card.lower()
     dut = next((i for i in ifaces if want in (i.description or "").lower()

@@ -170,6 +170,32 @@ def build_interface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanIn
     return None
 
 
+def build_interfaces() -> List[WlanInterface]:
+    """Every present supported card as an (unconnected) WlanInterface, named wlan0..N. A one-shot
+    convenience for the dev scripts; the app builds one card at a time through the bring-up engine."""
+    backend = libusb_package.get_libusb1_backend()
+    out: List[WlanInterface] = []
+    for dev, driver_cls, entry in _scan_bus(backend):
+        try:
+            driver = driver_cls.from_usb_device(dev, entry)
+        except Exception as e:
+            logger.debug("build_interfaces: %04x:%04x (%s): %s",
+                         entry.vid, entry.pid, driver_cls.__name__, e)
+            continue
+        out.append(WlanInterface(driver, f"wlan{len(out)}", entry.description,
+                                 vid=entry.vid, pid=entry.pid, dev=dev))
+    return out
+
+
+async def close_interfaces(ifaces) -> None:
+    """Close every interface from build_interfaces(), tolerating a per-card close fault."""
+    for iface in ifaces:
+        try:
+            await iface.close()
+        except Exception:
+            logger.debug("close_interfaces: %s close failed", getattr(iface, "name", "?"))
+
+
 def usb_node_path(device_id: DeviceID) -> Optional[str]:
     """The usbfs node ``/dev/bus/usb/BBB/DDD`` of the present card matching ``device_id`` (Linux),
     or None if it isn't on the bus. The path the udev rule / chgrp acts on."""

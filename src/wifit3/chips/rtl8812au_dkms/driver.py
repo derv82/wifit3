@@ -13,7 +13,7 @@ The RX reader is started **before** ``monitor.set_monitor_mode`` opens the RX ga
 kernel posts RX URBs before the gate, and an undrained bulk-IN pipe wedges the chip's RX
 FIFO (see ``rx_reader.py``).
 
-Registered in ``wlan/manager.py`` for 0bda:8812 alongside the mainline
+Registered in ``wlan/discovery.py`` for 0bda:8812 alongside the mainline
 ``chips/rtl8812au/``. **This DKMS port is the default** — it survives the 2.4+5 GHz channel
 hop that RF-synth-wedges the mainline driver (A/B-proven on hardware); set
 ``WIFIT3_RTL8812=mainline`` to fall back to the mainline driver. ``inject_frame`` (2.4 GHz

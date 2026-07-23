@@ -490,7 +490,7 @@ def test_driver_claims_nintendo_connector():
 
 
 def test_driver_registered_in_manager():
-    from wifit3.wlan.manager import _import_driver_classes
+    from wifit3.wlan.discovery import _import_driver_classes
     assert RT2500USBDriver in _import_driver_classes().values()
 
 

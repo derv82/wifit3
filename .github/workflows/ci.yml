@@ -45,7 +45,7 @@ jobs:
         run: |
           uv run python - <<'PY'
           from wifit3.ui.app import WifiteApp  # noqa: F401  -- UI + textual import path
-          from wifit3.wlan.manager import _import_driver_classes
+          from wifit3.wlan.discovery import _import_driver_classes
           n = len(_import_driver_classes())
           print(f"{n} drivers import cleanly")
           assert n >= 10, f"driver registry looks broken: {n}"
