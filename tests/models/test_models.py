@@ -2,10 +2,10 @@ from wifit3.models import AccessPoint, HandshakeMessage, Handshake, PersistedCap
 
 
 def test_access_point_model_defaults():
-    ap = AccessPoint(bssid="00:11:22:33:44:55", ssid="Test_WiFi", signal=-50)
+    ap = AccessPoint(bssid="00:11:22:33:44:55", ssid="Test_WiFi", signal_by_card={"wlan0": -50})
     assert ap.bssid == "00:11:22:33:44:55"
     assert ap.ssid == "Test_WiFi"
-    assert ap.signal == -50
+    assert ap.signal == -50                 # property: strongest RSSI across receiving cards
     assert ap.beacons == 0
     assert ap.wpa3 is False
     assert ap.pmf_capable is False

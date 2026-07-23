@@ -81,11 +81,9 @@ class WlanSink:
 
     def _record_ap_signal(self, ap: AccessPoint, card_id: str, rssi: int) -> None:
         ap.signal_by_card[card_id] = self._smooth(ap.signal_by_card.get(card_id), rssi)
-        ap.signal = max(ap.signal_by_card.values(), default=-100)   # transitional scalar mirror
 
     def _record_client_signal(self, client: Client, card_id: str, rssi: int) -> None:
         client.signal_by_card[card_id] = self._smooth(client.signal_by_card.get(card_id), rssi)
-        client.signal = max(client.signal_by_card.values(), default=-100)
 
     # ----- ingest ------------------------------------------------------------
 

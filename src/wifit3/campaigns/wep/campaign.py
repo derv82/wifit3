@@ -109,6 +109,7 @@ class WepCampaign(Campaign):
         )
         self._log(treelog.leaf("[dim](deauth or chop if no ARPs appear)[/dim]"))
         self.fake_auth.start()
+        self.array.register_self_mac(self.fake_auth.source_mac, self.target.bssid)  # the YOU client
         self.replay.start()
         # One reusable worker process for the crack search
         self._crack_pool = ProcessPoolExecutor(max_workers=1)
@@ -162,6 +163,7 @@ class WepCampaign(Campaign):
         # Stop replay (TX) before fake-auth
         self.replay.stop()
         self.fake_auth.stop()
+        self.array.unregister_self_mac(self.fake_auth.source_mac)
         self._active = False
         # Quiet when we stopped because we WON
         if self.recovered_key is None:

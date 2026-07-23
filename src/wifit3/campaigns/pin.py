@@ -242,6 +242,7 @@ class WpsCampaign(Campaign):
             armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
             if armed:
                 self.our_mac = str_to_mac(armed)
+            self.array.register_forged_mac(self.our_mac)   # transport is radio-only; register here
             self.assoc = Association(self.iface, self.bssid, self.target.ssid or "",
                                      self.channel, our_mac=self.our_mac,
                                      assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR),

@@ -71,7 +71,7 @@ class WlanTransport:
         if self._active:
             return
         self._active = True
-        self.iface.register_forged_mac(self.our_mac)
+        # Forged-MAC registration is the campaign's job (via the array); the transport is radio-only.
         self.iface.register_rx_callback(self._rx_cb)
 
     def stop(self) -> None:

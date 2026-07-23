@@ -107,7 +107,7 @@ class WepFakeAuth:
         self.fail_reason = None
         self.next_reauth_at = None
         self._announced_failure = False
-        self.iface.register_self_mac(self.source_mac, bssid=self.target.bssid)
+        # Self-MAC registration (the YOU client) is the campaign's job via the array; radio-only here.
         self.iface.register_rx_callback(self._rx_cb)
         logger.info("[WEP-FakeAuth] Armed on %s as %s (lazy auth)",
                     self.target.bssid, _mac_str(self.source_mac))
@@ -118,7 +118,6 @@ class WepFakeAuth:
             return self.stats
         self._active = False
         self.iface.unregister_rx_callback(self._rx_cb)
-        self.iface.unregister_self_mac(self.source_mac)
         self.state = "idle"
         self.next_reauth_at = None
         logger.info(

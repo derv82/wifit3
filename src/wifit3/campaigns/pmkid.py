@@ -189,6 +189,7 @@ class PmkidHarvestAttack(Campaign):
             self._armed = self._armed or (armed is not None)
             if armed:
                 self.source_mac = _str_to_mac(armed)
+                self.array.register_forged_mac(self.source_mac)   # the HW-assigned MAC
             logger.info(
                 f"[PMKID] Attempt {attempt}/{self.attempts}: Auth + Assoc Req to "
                 f"{self.target.bssid} as {_mac_bytes_to_str(self.source_mac)}"

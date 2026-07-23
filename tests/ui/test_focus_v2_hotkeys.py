@@ -15,6 +15,7 @@ from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList
 from wifit3.ui.screens.focus_v2.log_band import LogBand
 from wifit3.wlan.interface import WlanInterface
+from wifit3.wlan.sink import WlanSink
 
 from tests.frames import pkt
 
@@ -50,10 +51,14 @@ def _log_text(focus) -> str:
 
 
 class _FakeArray:
-    """Wraps one WlanInterface as the app's WlanArray: vends it as the selected radio and delegates
-    picture reads to it (the interface stays unpooled, keeping its own registry)."""
+    """One-card WlanArray for the UI: owns a WlanSink fed from the interface's raw RX (so
+    ``iface._on_frame_parsed(pkt)`` builds the picture), vends the interface as the selected radio,
+    and delegates picture reads to the sink."""
     def __init__(self, iface):
         self._iface = iface
+        self._sink = WlanSink()
+        iface.on_tx = self._sink.record_tx
+        iface.register_rx_callback(lambda pkt: self._sink.update(pkt, iface.name))
 
     @property
     def members(self):
@@ -63,13 +68,10 @@ class _FakeArray:
         return self._iface
 
     def get_access_points(self):
-        return self._iface.get_access_points()
-
-    def register_forged_mac(self, mac):
-        self._iface.register_forged_mac(mac)
+        return self._sink.get_access_points()
 
     async def set_channel(self, ch, scan=False):
-        if self._iface.current_channel == ch:   # mirror the array's already-on-channel skip
+        if self._iface.current_channel == ch:
             return True
         return await self._iface.set_channel(ch, scan=scan)
 
@@ -80,15 +82,15 @@ class _FakeArray:
         return await self._iface.start_hopping(channels, interval)
 
     def __getattr__(self, name):
-        return getattr(self._iface, name)
+        return getattr(self._sink, name)
 
 
 class _Host(App):
-    """Minimal host wiring interface + target like WifiteApp, incl. the shared
+    """Minimal host wiring the pool + target like WifiteApp, incl. the shared
     ``pbc_enabled`` flag Focus reads/toggles."""
-    def __init__(self, iface, ap):
+    def __init__(self, array, ap):
         super().__init__()
-        self.array = _FakeArray(iface)
+        self.array = array
         self.target_ap = ap
         self.pbc_enabled = True
 
@@ -98,8 +100,9 @@ class _Host(App):
 
 def _wpa2_target(bssid="aa:bb:cc:dd:ee:01"):
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_wpa2_beacon(bssid, "TESTNET", 1))
-    return iface, iface.access_points[bssid]
+    return iface, array, array.access_points[bssid]
 
 
 # ----- deauth (item 1) -------------------------------------------------------
@@ -111,8 +114,8 @@ async def test_deauth_hotkey_gated_on_pmf_not_clients():
     every STA), stays active once a client appears (True), and is greyed only when
     the AP requires PMF (None)."""
     bssid, client = "aa:bb:cc:dd:ee:01", "9c:b6:d0:1a:2b:3c"
-    iface, ap = _wpa2_target(bssid)
-    app = _Host(iface, ap)
+    iface, array, ap = _wpa2_target(bssid)
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -133,8 +136,8 @@ async def test_deauth_broadcast_button_always_visible():
     """The panel's pinned 'Deauth all' button is always visible: a broadcast deauth
     is valid with no known clients (it hits every associated STA)."""
     bssid, client = "aa:bb:cc:dd:ee:02", "9c:b6:d0:1a:2b:3c"
-    iface, ap = _wpa2_target(bssid)
-    app = _Host(iface, ap)
+    iface, array, ap = _wpa2_target(bssid)
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -157,8 +160,8 @@ async def test_campaign_hotkeys_mirror_buttons_wpa2():
     """On a plain WPA2 AP (no WPS, not WPA3): PMKID is the only plausible attack,
     so 'p' is active and every other campaign key is hidden, exactly the button
     row's visibility (test_v2_button_wiring)."""
-    iface, ap = _wpa2_target()
-    app = _Host(iface, ap)
+    iface, array, ap = _wpa2_target()
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -174,11 +177,12 @@ async def test_campaign_hotkeys_wep_chop_greyed_until_replay():
     replay campaign owns the radio, and 'p' (PMKID) is hidden (wrong family)."""
     bssid = "aa:bb:cc:dd:ee:06"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_wpa2_beacon(bssid, "dd-wrt", 6))
-    ap = iface.access_points[bssid]
+    ap = array.access_points[bssid]
     ap.encryption = "WEP"
     ap.akm_suites = []          # a real WEP AP carries no PSK AKM → PMKID hidden
-    app = _Host(iface, ap)
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -192,8 +196,8 @@ async def test_campaign_hotkeys_wep_chop_greyed_until_replay():
 async def test_campaign_and_deauth_keys_hidden_with_no_target():
     """The demo / no-target path (geometry tests) must hide every conditional key
     rather than crash: check_action short-circuits on a null target."""
-    iface, ap = _wpa2_target()
-    app = _Host(iface, ap)
+    iface, array, ap = _wpa2_target()
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -207,8 +211,8 @@ async def test_campaign_and_deauth_keys_hidden_with_no_target():
 async def test_footer_shows_campaign_keys_per_family():
     """End to end: the rendered footer carries only the family-relevant attack
     keys: 'p' for WPA2 (not 'r'/'c'); 'r' + greyed 'c' for WEP (not 'p')."""
-    iface, ap = _wpa2_target()
-    app = _Host(iface, ap)
+    iface, array, ap = _wpa2_target()
+    app = _Host(array, ap)
     async with app.run_test(size=(160, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -231,8 +235,8 @@ async def test_footer_shows_campaign_keys_per_family():
 async def test_action_campaign_dispatches_to_toggle():
     """action_campaign routes a key to its campaign's toggle via the dispatch map
     (the button's twin), verified without launching a real campaign."""
-    iface, ap = _wpa2_target()
-    app = _Host(iface, ap)
+    iface, array, ap = _wpa2_target()
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -256,8 +260,8 @@ async def test_w_toggles_shared_pbc_flag(tmp_path, monkeypatch):
     """Focus 'w' flips app.pbc_enabled (the same setting Scanner toggles) and logs
     the new state."""
     monkeypatch.chdir(tmp_path)
-    iface, ap = _wpa2_target()
-    app = _Host(iface, ap)
+    iface, array, ap = _wpa2_target()
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -275,9 +279,9 @@ async def test_focus_pbc_autocapture_gated_on_flag(tmp_path, monkeypatch):
     so the shared 'w' toggle actually silences the one auto-TX in Focus too."""
     monkeypatch.chdir(tmp_path)
     bssid = "aa:bb:cc:dd:ee:07"
-    iface, ap = _wpa2_target(bssid)
+    iface, array, ap = _wpa2_target(bssid)
     ap.wps = True                        # WPS present, but the walk window is closed…
-    app = _Host(iface, ap)
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen

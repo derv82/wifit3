@@ -207,11 +207,11 @@ async def test_start_stop_wiring(mocker):
 
     fa.start()
     assert fa.is_active
-    iface.register_self_mac.assert_called_once()
+    # Fake-auth is radio-only now: it wires the RX filter; the YOU-client self-MAC is registered
+    # by WepCampaign via the array.
     iface.register_rx_callback.assert_called_once()
 
     await asyncio.sleep(0)   # let the keepalive task start
     fa.stop()
     assert not fa.is_active
     iface.unregister_rx_callback.assert_called_once()
-    iface.unregister_self_mac.assert_called_once()

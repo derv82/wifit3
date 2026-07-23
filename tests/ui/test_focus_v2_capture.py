@@ -15,6 +15,7 @@ from wifit3.ui.screens.focus_v2.clients_list import ClientsList
 from wifit3.ui.screens.focus_v2.packet_dashboard import PacketDashboard
 from wifit3.ui.screens.focus_v2.log_band import LogBand
 from wifit3.wlan.interface import WlanInterface, DeauthResult
+from wifit3.wlan.sink import WlanSink
 
 from tests.frames import pkt
 
@@ -66,11 +67,14 @@ def _log_text(band: LogBand) -> str:
 
 
 class _FakeArray:
-    """Wraps one WlanInterface as the app's WlanArray: vends that interface as the selected radio
-    and delegates picture reads to it (the interface stays unpooled, so it keeps building its own
-    registry from the frames the test feeds)."""
+    """One-card WlanArray for the UI: it owns a WlanSink and feeds it from the interface's raw RX
+    (so ``iface._on_frame_parsed(pkt)`` builds the picture), vends the interface as the selected
+    radio, and delegates picture reads to the sink."""
     def __init__(self, iface):
         self._iface = iface
+        self._sink = WlanSink()
+        iface.on_tx = self._sink.record_tx
+        iface.register_rx_callback(lambda pkt: self._sink.update(pkt, iface.name))
 
     @property
     def members(self):
@@ -80,10 +84,7 @@ class _FakeArray:
         return self._iface
 
     def get_access_points(self):
-        return self._iface.get_access_points()
-
-    def register_forged_mac(self, mac):
-        self._iface.register_forged_mac(mac)
+        return self._sink.get_access_points()
 
     async def set_channel(self, ch, scan=False):
         if self._iface.current_channel == ch:   # mirror the array's already-on-channel skip
@@ -97,16 +98,16 @@ class _FakeArray:
         return await self._iface.start_hopping(channels, interval)
 
     def __getattr__(self, name):
-        # access_points / clients / forged_macs / wep_store / packet_stats → the interface
-        return getattr(self._iface, name)
+        # access_points / clients / forged_macs / wep_store / packet_stats / register_forged_mac
+        return getattr(self._sink, name)
 
 
 class _Host(App):
-    """Minimal host that wires the interface + target the way WifiteApp does,
+    """Minimal host that wires the pool + target the way WifiteApp does,
     then pushes the v2 screen straight in."""
-    def __init__(self, iface, ap):
+    def __init__(self, array, ap):
         super().__init__()
-        self.array = _FakeArray(iface)
+        self.array = array
         self.target_ap = ap
 
     def on_mount(self) -> None:
@@ -118,10 +119,11 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
     bssid = "aa:bb:cc:dd:ee:01"
     client = "b2:c3:d4:e5:f6:07"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
-    ap = iface.access_points[bssid]
+    ap = array.access_points[bssid]
 
-    app = _Host(iface, ap)
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -177,9 +179,10 @@ async def test_focus_resume_repins_channel_when_radio_drifted():
     zero beacons. A modal close (no drift) must NOT re-tune (don't disrupt an active attack)."""
     bssid = "aa:bb:cc:dd:ee:01"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 6))
-    ap = iface.access_points[bssid]
-    app = _Host(iface, ap)
+    ap = array.access_points[bssid]
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -213,9 +216,10 @@ async def test_v2_capture_wins_do_not_double_toast():
     bssid = "aa:bb:cc:dd:ee:01"
     client = "b2:c3:d4:e5:f6:07"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
-    ap = iface.access_points[bssid]
-    app = _Host(iface, ap)
+    ap = array.access_points[bssid]
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -246,9 +250,10 @@ async def test_v2_stop_pbc_button_frees_radio_and_suppresses_rearm():
 
     bssid = "aa:bb:cc:dd:ee:01"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
-    ap = iface.access_points[bssid]                      # window CLOSED during mount
-    app = _Host(iface, ap)
+    ap = array.access_points[bssid]                      # window CLOSED during mount
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -338,10 +343,11 @@ async def test_v2_recovered_wps_psk_shows_in_status():
     capture task finishes."""
     bssid = "aa:bb:cc:dd:ee:01"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
-    ap = iface.access_points[bssid]
+    ap = array.access_points[bssid]
     ap.wps_pbc_psk = "hunter2"          # as set by a successful PBC capture
-    app = _Host(iface, ap)
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         status = str(app.screen.query_one("#status", Static).render())
@@ -357,12 +363,13 @@ async def test_v2_reenter_same_target_no_duplicate_client_ids():
     client = "aa:bb:cc:dd:ee:03"
     rid = "cl-" + client.replace(":", "")
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
-    ap = iface.access_points[bssid]
+    ap = array.access_points[bssid]
     iface._on_frame_parsed(pkt({"type": "data", "bssid": bssid, "source": client,
                                 "dest": bssid, "rssi": -55, "raw": b"d"}))
 
-    app = _Host(iface, ap)
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -385,12 +392,13 @@ async def test_v2_pmf_required_disables_deauth_and_logs():
     bssid = "aa:bb:cc:dd:ee:01"
     client = "9c:b6:d0:1a:2b:3c"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
-    ap = iface.access_points[bssid]
+    ap = array.access_points[bssid]
     ap.pmf_required = True
     iface._on_frame_parsed(pkt({"type": "data", "bssid": bssid, "source": client,
                                 "dest": bssid, "rssi": -60, "raw": b"d"}))
-    app = _Host(iface, ap)
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -407,9 +415,10 @@ async def test_v2_target_acquired_log_names_encryption():
     """The acquisition log carries the encryption family next to the name."""
     bssid = "aa:bb:cc:dd:ee:01"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))     # WPA2 beacon
-    ap = iface.access_points[bssid]
-    app = _Host(iface, ap)
+    ap = array.access_points[bssid]
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         text = _log_text(app.screen.query_one("#log", LogBand))
@@ -424,8 +433,9 @@ async def test_v2_button_wiring():
     bssid = "aa:bb:cc:dd:ee:01"
     client = "9c:b6:d0:1a:2b:3c"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
-    ap = iface.access_points[bssid]
+    ap = array.access_points[bssid]
     # Register a real client (a data frame) so a ✕ row appears.
     iface._on_frame_parsed(pkt({"type": "data", "bssid": bssid, "source": client,
                                 "dest": bssid, "rssi": -67, "raw": b"d"}))
@@ -438,7 +448,7 @@ async def test_v2_button_wiring():
 
     iface.deauth_client = _record_deauth  # stand in for the radio: no real TX
 
-    app = _Host(iface, ap)
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
@@ -465,13 +475,14 @@ async def test_v2_wep_initial_load_surfaces_history_and_listening():
     and the headline reads the recovered banner while idle."""
     bssid = "aa:bb:cc:dd:ee:06"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    array = _FakeArray(iface)
     iface._on_frame_parsed(_beacon(bssid, "dd-wrt", 6))
-    ap = iface.access_points[bssid]
+    ap = array.access_points[bssid]
     ap.encryption = "WEP"
     ap.persisted = [PersistedCapture(
         kind="WEP", value="6162636465", timestamp=1748487420, path="dd-wrt_wep.txt")]
 
-    app = _Host(iface, ap)
+    app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen

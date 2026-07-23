@@ -29,7 +29,6 @@ class AccessPoint:
     bssid: str
     ssid: Optional[str] = None
     channel: int = 1
-    signal: int = -100
     encryption: Optional[str] = "Unknown"
     # Structured security fields from the RSN IE; `encryption` (above) is the airodump-style string.
     akms: List[str] = field(default_factory=list)
@@ -89,9 +88,13 @@ class AccessPoint:
     # Read-only capture history loaded from captures/ at scan start.
     persisted: List[PersistedCapture] = field(default_factory=list)
 
-    # Smoothed RSSI per receiving card (card name -> dBm). `signal` is the strongest of these;
-    # the scalar `signal` field above is a transitional mirror kept in sync by WlanSink.
+    # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
     signal_by_card: Dict[str, int] = field(default_factory=dict)
+
+    @property
+    def signal(self) -> int:
+        """Strongest smoothed RSSI (dBm) across the cards that hear this AP; -100 if none yet."""
+        return max(self.signal_by_card.values(), default=-100)
 
     @property
     def wps_pbc_active(self) -> bool:
