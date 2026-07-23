@@ -5,6 +5,7 @@ from typing import Optional
 
 from wifit3.chips import log_trace
 from wifit3.errors import WifiteDeviceLostError
+from wifit3.wlan.bringup import BringupManager
 from wifit3.wlan.manager import WlanDeviceManager
 from wifit3.wlan.array import WlanArray
 from wifit3.models import AccessPoint
@@ -113,6 +114,7 @@ class WifiteApp(App):
         super().__init__()
         self.device_manager = WlanDeviceManager()
         self.array: Optional[WlanArray] = None
+        self.bringup = BringupManager(self)
         self.target_ap: Optional[AccessPoint] = None
         # WPS PBC auto-invade preference, shared across screens (Scanner + Focus
         # both read/toggle it via 'w'). On by default: the one active-TX exception
