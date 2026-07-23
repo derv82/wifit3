@@ -27,11 +27,14 @@ class SetupResult:
 
 
 class Prompter(Protocol):
-    """What a ``Setup`` needs from the UI: show a modal and wait for its answer, stream a status
-    line, report an error. The only object that touches Textual; each implementation is a dumb
-    adapter with no decisions of its own (see ``ui.bringup_prompter.BringupPrompter``)."""
+    """What a ``Setup`` needs from the UI: show a modal and wait for its answer, drive a replug,
+    stream a status line, report an error. The only object that touches Textual; each implementation
+    is a dumb adapter with no decisions of its own (see ``ui.bringup_prompter.BringupPrompter``)."""
 
-    async def confirm(self, dialog) -> bool: ...
+    async def ask(self, dialog):
+        """Show ``dialog`` (a ModalScreen) and return whatever it dismisses with."""
+        ...
+
     async def wait_replug(self, device_id: DeviceID) -> bool: ...
     def status(self, message: str) -> None: ...
     def error(self, title: str, body: str) -> None: ...

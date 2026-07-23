@@ -170,6 +170,16 @@ def build_interface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanIn
     return None
 
 
+def usb_node_path(device_id: DeviceID) -> Optional[str]:
+    """The usbfs node ``/dev/bus/usb/BBB/DDD`` of the present card matching ``device_id`` (Linux),
+    or None if it isn't on the bus. The path the udev rule / chgrp acts on."""
+    backend = libusb_package.get_libusb1_backend()
+    for dev, _cls, entry in _scan_bus(backend):
+        if entry.vid == device_id.vid and entry.pid == device_id.pid:
+            return f"/dev/bus/usb/{dev.bus:03d}/{dev.address:03d}"
+    return None
+
+
 async def wait_for_presence(vid: int, pid: int, *, present: bool,
                             timeout: float = 120.0, interval: float = 0.3) -> bool:
     """Block until the card ``vid:pid`` is present (or absent) on the bus, or ``timeout`` elapses.

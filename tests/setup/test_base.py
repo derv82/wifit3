@@ -7,7 +7,7 @@ from wifit3.setup.base import NoSetup, Setup, SetupResult
 
 class _FakePrompter:
     """Structural Prompter for tests: canned answers, no Textual."""
-    async def confirm(self, dialog):
+    async def ask(self, dialog):
         return True
 
     async def wait_replug(self, device_id):

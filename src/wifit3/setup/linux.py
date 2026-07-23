@@ -22,6 +22,7 @@ still needs a physical replug, which the splash asks for.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -33,7 +34,10 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from wifit3.setup import SetupTarget
+from wifit3.chips.driver import DeviceID
+from wifit3.setup import SetupTarget, target_for_vidpid
+from wifit3.setup.base import Prompter, Setup, SetupResult
+from wifit3.wlan.discovery import usb_node_path
 
 logger = logging.getLogger(__name__)
 
@@ -569,3 +573,113 @@ def _dedupe(keys) -> list[str]:
             seen.add(k)
             out.append(k)
     return out
+
+
+class SetupLinux(Setup):
+    """Linux device setup: a udev access rule + a modprobe blacklist for the card's chipset, written
+    under one elevation prompt. A kernel-warmed chip usually needs a physical replug after the
+    modprobe unload to reach a clean cold state; ``install`` drives that through the Prompter."""
+
+    async def install(self, device_id: DeviceID, ui: Prompter) -> bool:
+        target = target_for_vidpid(device_id.vid, device_id.pid)
+        if target is None:
+            ui.error("Device setup", "This card isn't a supported chipset for setup.")
+            return False
+
+        # Copy is the user's exact wording; do not paraphrase it.
+        from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
+        chip = device_id.description.split("(")[0].strip()
+        confirmed = await ui.ask(ConfirmInstallDialog(
+            chip,
+            title="Wifit3 needs complete control of your wireless card",
+            link_label="udev + modprobe",
+            warning=(
+                f"[bold $text-warning]One-time sudo setup for this card:"
+                f"[/bold $text-warning] (user [cyan]{current_user()}[/cyan]):\n"
+                f"- Creates [bold]udev rules[/bold] giving userland access to this card.\n"
+                f"- Creates [bold]modprobe blocklist[/bold] for this card's drivers.\n"
+                f"- [bold]The card stops working as usual[/bold]: "
+                f"no [$text-warning]airmon[/], no [$text-warning]iw[/], "
+                f"no [$text-warning]wifi[/].\n"
+                f"- [bold cyan]Reversible[/bold cyan]: Press "
+                f"[white bold on red] x [/white bold on red] to [bold]remove the "
+                f"udev + modprobe rules[/bold]."),
+            verb="Install rule + blocklist for",
+            confirm_label="Install"))
+        if not confirmed:
+            return False
+
+        ui.status(f"Installing udev rule + blocklist for {chip}…")
+        result = await asyncio.to_thread(install_rule, target, node=usb_node_path(device_id))
+        if not result.ok:
+            if not result.cancelled:
+                ui.error("Couldn't install the device rules", result.message)
+            return False
+
+        if target.replug_after_modprobe:
+            # A kernel-warmed chip can't cold-reset in userland; only a physical replug recovers RX.
+            if not await ui.wait_replug(device_id):
+                ui.status(f"Rules installed for {chip}. Replug, then press START.")
+                return False
+
+        # install_rule chgrp'd the live node; wait for udev to actually make it writable.
+        ui.status("Applying device access…")
+        if not await self._wait_for_access(device_id, writable=True):
+            ui.error(
+                "Device access didn't take effect",
+                f"The udev rule + blocklist are installed, but {device_id.description} hasn't picked "
+                f"up access yet. Unplug and replug the card, then press START.")
+            return False
+        return True
+
+    async def uninstall(self, device_id: DeviceID, ui: Prompter) -> SetupResult:
+        target = target_for_vidpid(device_id.vid, device_id.pid)
+        name = device_id.description.split("(")[0].strip()
+        if target is None:
+            return SetupResult(ok=False, message="This card isn't a supported chipset.")
+        plan = await asyncio.to_thread(plan_uninstall, target)
+        if not plan.removable:
+            return SetupResult(ok=True, message=f"No wifit3 rules installed for {name}.")
+
+        from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
+        choice = await ui.ask(ConfirmUninstallDialog(
+            name, "linux", siblings=[s.description for s in plan.siblings],
+            has_own_files=plan.has_own_files))
+        if choice is None:
+            return SetupResult(ok=False, cancelled=True, message="Uninstall cancelled.")
+
+        ui.status(f"Removing wifit3 rules for {device_id.description}…")
+        # Wide radius also removes the sibling chipsets so the shared kernel module is freed.
+        also = tuple(s.key for s in plan.siblings) if choice == "wide" else ()
+        result = await asyncio.to_thread(
+            remove_rule, target, node=usb_node_path(device_id), also_keys=also)
+        if not result.ok:
+            return SetupResult(ok=False, message=result.message, cancelled=result.cancelled,
+                               detail=result.detail)
+
+        # remove_rule chowned the node back to root; wait for that revoke to land.
+        ui.status("Revoking device access…")
+        if not await self._wait_for_access(device_id, writable=False):
+            return SetupResult(
+                ok=True, detail=result.detail,
+                message=(f"The rule is gone, but {device_id.description} keeps access until it's "
+                         f"replugged. Unplug and replug the card to fully revoke."))
+        return SetupResult(ok=True, message=result.message, detail=result.detail)
+
+    async def _wait_for_access(self, device_id: DeviceID, *, writable: bool,
+                               timeout: float = 5.0, interval: float = 0.1) -> bool:
+        """Block until the card's usbfs node reaches ``writable`` (or ``timeout``). Re-resolves the
+        node each tick because a replug re-enumerates the card to a new bus/address."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            node = usb_node_path(device_id)
+            if node is not None:
+                try:
+                    if os.access(node, os.W_OK) == writable:
+                        return True
+                except OSError:
+                    pass
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(interval)
