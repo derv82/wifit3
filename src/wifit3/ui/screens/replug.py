@@ -15,7 +15,8 @@ _REPLUG = ("[bold $text-success]Card removed ✓[/]\n\n"
 
 
 class ReplugModal(ModalScreen[str]):
-    """Watches for unplug→replug of ``vid:pid``. Dismisses "replugged" / "skip" / "timeout"."""
+    """Watches for an unplug→replug via the injected presence-waiter (no device-manager handle, so
+    it never drives a bus rescan itself). Dismisses "replugged" / "skip" / "timeout"."""
 
     BINDINGS = [Binding("escape", "skip", "Skip", show=True)]
 
@@ -32,12 +33,10 @@ class ReplugModal(ModalScreen[str]):
     ReplugModal #btn-skip { background: $primary; color: auto; }
     """
 
-    def __init__(self, device_manager, vid: int, pid: int, name: str) -> None:
+    def __init__(self, name: str, wait_present) -> None:
         super().__init__()
-        self._dm = device_manager
-        self._vid = vid
-        self._pid = pid
         self._name = name
+        self._wait_present = wait_present   # async (present: bool) -> bool
         self._done = False
 
     def compose(self) -> ComposeResult:
@@ -53,14 +52,14 @@ class ReplugModal(ModalScreen[str]):
         self.run_worker(self._watch(), exclusive=True)
 
     async def _watch(self) -> None:
-        gone = await self._dm.linux_wait_for_presence(self._vid, self._pid, present=False)
+        gone = await self._wait_present(False)
         if self._done:
             return
         if not gone:
             self._finish("timeout")
             return
         self.query_one("#status", Label).update(_REPLUG)
-        back = await self._dm.linux_wait_for_presence(self._vid, self._pid, present=True)
+        back = await self._wait_present(True)
         if self._done:
             return
         self._finish("replugged" if back else "timeout")
