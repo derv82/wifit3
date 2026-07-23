@@ -15,6 +15,7 @@ gated behind explicit user action in the splash.
 """
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import logging
 import os
@@ -24,6 +25,9 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from wifit3.chips.driver import DeviceID
+from wifit3.setup.base import Prompter, Setup, SetupResult
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +171,16 @@ def wdi_simple_path() -> Path:
     return exe
 
 
+def _winusb_dir() -> Path:
+    return Path(tempfile.gettempdir()) / "wifit3_winusb"
+
+
+def winusb_log_path() -> Path:
+    """The wdi-simple output log. SetupWindows tails it while the blocking elevated install runs so
+    the modal can show the last line (there's no other progress across the UAC boundary)."""
+    return _winusb_dir() / "wdi-simple.log"
+
+
 def _build_args(vid: int, pid: int, iid: int | None = None, name: str | None = None,
                 dest: str | None = None, log_level: int | None = None) -> list[str]:
     """wdi-simple.exe argv to bind ``vid:pid`` to WinUSB.
@@ -286,12 +300,12 @@ def install_winusb(vid: int, pid: int, iid: int | None = None,
 
     exe = wdi_simple_path()
     # Absolute, user-writable extraction dir. See _build_args() for why the default fails.
-    dest = Path(tempfile.gettempdir()) / "wifit3_winusb"
+    dest = _winusb_dir()
     try:
         dest.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         logger.warning("WinUSB install: couldn't create extraction dir %s: %s", dest, e)
-    logpath = dest / "wdi-simple.log"
+    logpath = winusb_log_path()
     batpath = dest / "run-wdi.bat"
 
     args_str = subprocess.list2cmdline(
@@ -455,3 +469,60 @@ def restore_driver(vid: int, pid: int) -> RestoreResult:
     logger.warning("Restore: pnputil failed for %s (exit=%d)", inf, code)
     return RestoreResult(
         ok=False, detail=inf, message=f"pnputil couldn't remove the driver (exit {code}).")
+
+
+class SetupWindows(Setup):
+    """Windows device setup: bind the card to WinUSB (so libusb can open it) via the bundled
+    wdi-simple.exe under one UAC prompt, and reverse it with pnputil. No replug concept exists."""
+
+    async def install(self, device_id: DeviceID, ui: Prompter) -> bool:
+        from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
+        if not await ui.ask(ConfirmInstallDialog(device_id.description)):
+            return False
+
+        ui.status(f"Installing WinUSB driver for {device_id.description}… (up to a minute)")
+        tail = asyncio.create_task(self._tail_log(ui))
+        try:
+            result = await asyncio.to_thread(
+                install_winusb, device_id.vid, device_id.pid, name=device_id.description)
+        finally:
+            tail.cancel()
+            try:
+                await tail
+            except asyncio.CancelledError:
+                pass
+
+        if not result.ok:
+            if not result.cancelled:
+                bits = []
+                if result.wdi_code is not None:
+                    bits.append(f"libwdi code {result.wdi_code}")
+                if result.detail:
+                    bits.append(result.detail)
+                detail = " · ".join(bits)
+                ui.error("WinUSB install failed",
+                         f"{result.message} ({detail})" if detail else result.message)
+            return False
+        return True
+
+    async def uninstall(self, device_id: DeviceID, ui: Prompter) -> SetupResult:
+        from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
+        name = device_id.description.split("(")[0].strip()
+        if await ui.ask(ConfirmUninstallDialog(name, "win")) is None:
+            return SetupResult(ok=False, cancelled=True, message="Uninstall cancelled.")
+        ui.status(f"Removing wifit3 driver for {device_id.description}…")
+        result = await asyncio.to_thread(restore_driver, device_id.vid, device_id.pid)
+        return SetupResult(ok=result.ok, message=result.message, cancelled=result.cancelled,
+                           detail=result.detail)
+
+    async def _tail_log(self, ui: Prompter) -> None:
+        """Push wdi-simple's newest log line to the status label until cancelled. Best-effort: a
+        missing or exclusively-open log just yields nothing (no streaming, not a failure)."""
+        path = winusb_log_path()
+        last = None
+        while True:
+            await asyncio.sleep(0.5)
+            line = _last_line(_read_text(path))
+            if line and line != last:
+                last = line
+                ui.status(line)
