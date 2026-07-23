@@ -124,7 +124,7 @@ class WifiteApp(App):
 
     def on_mount(self) -> None:
         """Register screens and push the initial SplashView."""
-        self.install_screen(SplashView(self.device_manager), name="splash")
+        self.install_screen(SplashView(), name="splash")
         self.install_screen(ScannerView(), name="scanner")
         self.install_screen(FocusViewV2(), name="focus")
         self.push_screen("splash")

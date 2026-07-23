@@ -105,13 +105,12 @@ async def test_reset_for_reentry_clears_a_frozen_splash():
         splash = app.get_screen("splash", SplashView)
         device_list = splash.query_one("#device-list", ListView)
 
-        # Freeze splash the way perform_start's happy path leaves it.
+        # Freeze splash the way a bring-up leaves it (initializing latched, timer paused, START
+        # disabled, a stale card listed) before it navigated to the scanner.
         splash._is_initializing = True
-        splash._selected_name = "wlan0"
-        await device_list.append(ListItem(Label("Stale Card"), name="wlan0"))
+        await device_list.append(ListItem(Label("Stale Card"), name="0"))
         device_list.disabled = True
         splash.query_one("#start-btn", Button).disabled = True
-        splash.query_one("#init-progress").display = True
         splash._refresh_timer.pause()          # stop the real poll racing the assertions
         splash._refresh_timer = MagicMock()    # spy resume()
         await pilot.pause()
@@ -120,9 +119,7 @@ async def test_reset_for_reentry_clears_a_frozen_splash():
         await pilot.pause()
 
         assert splash._is_initializing is False
-        assert splash._selected_name is None
         assert len(device_list.children) == 0
         assert device_list.disabled is False
         assert splash.query_one("#start-btn", Button).disabled is True
-        assert splash.query_one("#init-progress").display is False
         splash._refresh_timer.resume.assert_called_once()

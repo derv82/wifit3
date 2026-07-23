@@ -14,6 +14,8 @@ import pytest
 import usb.core
 from textual.widgets import Label
 
+import wifit3.wlan.bringup as bringup
+from wifit3.chips.driver import DeviceID
 from wifit3.chips.rt2800usb.driver import RT2800USBDriver
 from wifit3.chips.rtl8187.driver import RTL8187Driver
 from wifit3.errors import BringUpError
@@ -49,18 +51,22 @@ async def test_rt2800usb_init_io_failure_becomes_bringuperror(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")  # ui/conftest.py: boot touches no hardware
 async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
-    """A real driver failing bring-up (USB fault during init) must show in the splash's
-    persistent error label + an error toast, and a later USB poll must NOT overwrite it
-    (the status line gets overwritten ~2x/s; the error label must survive)."""
+    """A real driver failing bring-up (USB fault during init) must reach the user as a persistent
+    error label + an error toast, and a later USB poll must NOT overwrite it (the status line gets
+    overwritten ~2x/s; the error label must survive). The engine turns the fault into a FAILED
+    BringupResult, which the splash surfaces."""
     driver = RTL8187Driver(Mock())
     monkeypatch.setattr(driver, "_claim",
                         Mock(side_effect=usb.core.USBError("simulated init failure")))
 
-    # Minimal interface whose connect() IS the real driver's, so the failure travels the true
-    # path: driver init -> BringUpError -> splash. close() is the partial-claim cleanup.
+    # Interface whose connect() IS the real driver's, so the failure travels the true path:
+    # build_interface -> driver init -> BringUpError -> engine -> splash. close() is the cleanup.
     iface = SimpleNamespace(
         name="rtl8187", description="RTL8187L (test)", vid=0x0BDA, pid=0x8187,
         dev=None, connect=driver.connect, close=AsyncMock())
+    monkeypatch.setattr(bringup, "build_interface", lambda device_id, name="wlan0": iface)
+    monkeypatch.setattr(bringup, "find_devices", lambda: [])
+    dev = DeviceID(0x0BDA, 0x8187, "RTL8187L (test)")
 
     app = WifiteApp()
     async with app.run_test() as pilot:
@@ -70,9 +76,9 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
         toasts: list[tuple] = []
         monkeypatch.setattr(splash, "notify", lambda *a, **k: toasts.append((a, k)))
 
-        splash.perform_start(iface)            # @work: pump the loop until it surfaces
+        splash.perform_start(dev)              # @work: pump the loop until it surfaces
         label = splash.query_one("#error-label", Label)
-        for _ in range(20):
+        for _ in range(30):
             await pilot.pause()
             if label.display:
                 break
@@ -82,7 +88,7 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
         assert toasts, "a bring-up failure should raise a toast"
         args, kwargs = toasts[-1]
         assert kwargs.get("severity") == "error"
-        # The splash trims the " (...)" suffix off the description, so the toast names the bare
+        # The engine trims the " (...)" suffix off the description, so the toast names the bare
         # chipset ("RTL8187L"), not the full "RTL8187L (test)".
         assert "RTL8187L" in args[0] and "(test)" not in args[0] and "bring-up failed" in args[0]
 

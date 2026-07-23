@@ -92,7 +92,15 @@ class BringupManager:
         iface = build_interface(device_id, name=self._next_name())
         if iface is None:
             raise BringUpError("discover", "card not present")
-        await iface.connect(progress_cb=self.prompter.status_progress)
+        try:
+            await iface.connect(progress_cb=self.prompter.status_progress)
+        except Exception:
+            # Drop any partial USB claim so a following setup / retry isn't blocked by us holding it.
+            try:
+                await iface.close()
+            except Exception:
+                pass
+            raise
         self._ensure_array().attach(iface)
         await self._pool_ready_others(exclude=device_id)
 
