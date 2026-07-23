@@ -6,8 +6,12 @@ import logging
 from dataclasses import dataclass
 from typing import List, Optional, Callable, Any
 
+import usb.core
+
 from wifit3.chips.driver import FakeMacSupport
-from wifit3.errors import is_device_gone
+from wifit3.errors import (
+    BringUpError, BringUpPermissionsError, is_device_gone, is_permission_error,
+)
 from wifit3.wlan.channels import scan_hop_order
 from wifit3.dot11.packet import Packet
 from wifit3.dot11.deauth import build_deauth, _deauth_nav_bytes
@@ -70,8 +74,19 @@ class WlanInterface:
             self._fire_rx_callbacks(pkt)
 
     async def connect(self, progress_cb: Optional[Callable[[float, str], None]] = None) -> bool:
-        """Initializes the underlying hardware handshake."""
-        return await self.driver.connect(progress_cb=progress_cb)
+        """Initializes the underlying hardware handshake. A failure that is really the card being
+        unopenable for a fixable access reason (Windows not WinUSB-bound, Linux EACCES/EBUSY) is
+        re-raised as BringUpPermissionsError so the caller can offer the one-time setup."""
+        try:
+            return await self.driver.connect(progress_cb=progress_cb)
+        except BringUpError as e:
+            if is_permission_error(e):
+                raise BringUpPermissionsError(e.stage, e.detail) from e
+            raise
+        except (usb.core.USBError, NotImplementedError) as e:
+            if is_permission_error(e):
+                raise BringUpPermissionsError("open", str(e)) from e
+            raise
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Tune to ``channel`` via the driver. ``scan=True`` (channel hopper) hints

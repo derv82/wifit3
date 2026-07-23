@@ -23,6 +23,38 @@ def is_device_gone(exc: BaseException) -> bool:
             or getattr(exc, "errno", None) == 19)
 
 
+# libusb/errno codes that mean "the card is present but we can't open it for a FIXABLE access
+# reason": Windows not-WinUSB-bound (NotImplementedError, no backend), or Linux EACCES (no udev
+# rule) / EBUSY (a kernel driver holds it). Distinct from NO_DEVICE (unplug) and from a genuine
+# bring-up fault (firmware/init).
+_LIBUSB_ERROR_ACCESS = -3
+_LIBUSB_ERROR_BUSY = -6
+_ERRNO_EACCES = 13
+_ERRNO_EBUSY = 16
+
+
+def _usberror_is_permission(exc: usb.core.USBError) -> bool:
+    if getattr(exc, "backend_error_code", None) in (_LIBUSB_ERROR_ACCESS, _LIBUSB_ERROR_BUSY):
+        return True
+    return getattr(exc, "errno", None) in (_ERRNO_EACCES, _ERRNO_EBUSY)
+
+
+def is_permission_error(exc: BaseException) -> bool:
+    """True if ``exc`` (or anything in its cause/context chain) is the card being unopenable for a
+    reason the setup flow can fix: Windows not bound to WinUSB, or Linux EACCES/EBUSY. Drivers wrap
+    the libusb error in BringUpError (sometimes through an IOError at claim), so we walk the chain."""
+    seen: set[int] = set()
+    cur = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, NotImplementedError):
+            return True
+        if isinstance(cur, usb.core.USBError) and _usberror_is_permission(cur):
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
 def _scrub_paths(text: str) -> str:
     """Strip user-identifying absolute paths out of a formatted traceback."""
     text = re.sub(r'(File ")[^"]*?(wifit3[\\/])', r"\1\2", text)
