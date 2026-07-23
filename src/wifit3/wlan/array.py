@@ -132,10 +132,13 @@ class WlanArray:
             self._disconnect_callbacks.append(cb)
 
     def _ingest(self, iface: WlanInterface, pkt: Packet) -> None:
-        """One card's raw frame: drop our own forged frames, dedupe across cards, and fold the novel
+        """One card's raw frame: drop our own transmissions, dedupe across cards, and fold the novel
         copy into the picture (every card contributes its own signal, even on a duplicate)."""
         card_id = iface.name
-        if pkt.source in self._sink.forged_macs:
+        # Drop frames WE transmitted (forged attack MACs + our fake STA). Another pooled card hears
+        # the TX card's injections over the air, and counting them inflates the RX picture: a WEP
+        # ARP replay reuses one IV, so it is noise, not fresh keystream, yet it bloats the IV rate.
+        if pkt.source in self._sink.forged_macs or pkt.source in self._sink.self_macs:
             return
         if self._dedupe.submit(card_id, pkt.raw, time.monotonic()):
             self._sink.update(pkt, card_id, channel_hint=iface.current_channel)

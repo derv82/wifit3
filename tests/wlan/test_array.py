@@ -141,6 +141,17 @@ def test_ingest_drops_our_own_forged_frames():
     assert a.get_access_points() == []        # never entered the picture
 
 
+def test_ingest_drops_our_own_self_mac_transmissions():
+    """A pooled RX card hears the TX card's WEP replays over the air; frames sourced from our own
+    fake STA (a self-MAC) must be dropped so they don't inflate the IV rate."""
+    card = FakeIface("wlan0", [6])
+    a = _pool(card)
+    mac = a.register_self_mac("aa:bb:cc:dd:ee:01", "11:22:33:44:55:66")
+    card.emit(pkt({"type": "data", "to_ds": True, "bssid": "11:22:33:44:55:66",
+                   "source": mac, "dest": "11:22:33:44:55:66", "rssi": -40}))
+    assert a._dedupe.rx.get("wlan0", 0) == 0    # dropped before dedupe / picture
+
+
 def test_array_of_one_processes_distinct_frames():
     card = FakeIface("wlan0", [6])
     a = _pool(card)
