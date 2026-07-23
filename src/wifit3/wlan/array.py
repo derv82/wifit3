@@ -18,7 +18,7 @@ from wifit3.wlan.sink import WlanSink
 
 logger = logging.getLogger(__name__)
 
-# Prefer the most attack-capable card (see planning/MULTICARD-PLAN.md decision 2).
+# Prefer the most attack-capable card for TX (see _FAKE_MAC_RANK below).
 _FAKE_MAC_RANK = {
     FakeMacSupport.SPOOFABLE: 0,
     FakeMacSupport.FIXED_MAC: 1,
@@ -46,15 +46,11 @@ class WlanArray:
 
     def attach(self, iface: WlanInterface) -> WlanInterface:
         """Pool an already-connected interface: switch it to raw fan-out (the array's WlanSink is
-        the picture now), point its TX + forged/self-MAC writes at the sink, register it as a dedupe
-        source, and subscribe the array to its raw RX + disconnect."""
+        the picture now), point its TX stats at the sink, register it as a dedupe source, and
+        subscribe the array to its raw RX + disconnect."""
         self._members.append(iface)
         self._dedupe.add_source(iface.name)
-        iface._own_picture = False
         iface.on_tx = self._sink.record_tx
-        iface._forge_sink = self._sink.register_forged_mac
-        iface._self_mac_sink = self._sink.register_self_mac
-        iface._unself_mac_sink = self._sink.unregister_self_mac
         iface.register_rx_callback(lambda pkt, i=iface: self._ingest(i, pkt))
         iface.register_disconnect_callback(lambda exc, i=iface: self._member_lost(i, exc))
         logger.info("pool: attached %s (%s); %d card(s)", iface.name, iface.description,
