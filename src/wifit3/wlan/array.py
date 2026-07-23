@@ -8,13 +8,16 @@ A single card is an array of one: dedupe is a no-op and every read passes straig
 import asyncio
 import logging
 import time
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional, Set
 
 from wifit3.chips.driver import FakeMacSupport
 from wifit3.dot11.packet import Packet
+from wifit3.models import AccessPoint, Client
 from wifit3.wlan.dedupe import StreamMerger
 from wifit3.wlan.interface import WlanInterface
+from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.sink import WlanSink
+from wifit3.wlan.wep_store import WepCaptureStore
 
 logger = logging.getLogger(__name__)
 
@@ -141,37 +144,29 @@ class WlanArray:
         else:
             self._sink.record_signal(card_id, pkt.bssid, pkt.rssi)
 
-    # ----- shared-picture reads / writes (delegate to the sink) --------------
+    # ----- sink facade -------------------------------------------------------
 
     @property
-    def sink(self) -> WlanSink:
-        return self._sink
-
-    @property
-    def access_points(self):
+    def access_points(self) -> Dict[str, AccessPoint]:
         return self._sink.access_points
 
     @property
-    def clients(self):
+    def clients(self) -> Dict[str, Client]:
         return self._sink.clients
 
     @property
-    def forged_macs(self):
+    def forged_macs(self) -> Set[str]:
         return self._sink.forged_macs
 
     @property
-    def self_macs(self):
-        return self._sink.self_macs
-
-    @property
-    def wep_store(self):
+    def wep_store(self) -> WepCaptureStore:
         return self._sink.wep_store
 
     @property
-    def packet_stats(self):
+    def packet_stats(self) -> PacketStats:
         return self._sink.packet_stats
 
-    def get_access_points(self):
+    def get_access_points(self) -> List[AccessPoint]:
         return self._sink.get_access_points()
 
     def register_forged_mac(self, mac) -> None:
@@ -182,9 +177,6 @@ class WlanArray:
 
     def unregister_self_mac(self, mac) -> None:
         self._sink.unregister_self_mac(mac)
-
-    def record_tx(self, frame_bytes: bytes) -> None:
-        self._sink.record_tx(frame_bytes)
 
     # ----- channel policy ----------------------------------------------------
 

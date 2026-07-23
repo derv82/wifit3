@@ -243,9 +243,9 @@ class FocusViewV2(Screen):
         ap = getattr(self.app, "target_ap", None)
         if ap is None:
             return fm.fake_snapshot()
-        iface = self.app.array
+        array = self.app.array
         return fm.build_snapshot(
-            ap, iface, self._campaigns(), self._beacon_samples, time.time())
+            ap, array, self._campaigns(), self._beacon_samples, time.time())
 
     @staticmethod
     def _render_status(status) -> Text:
@@ -290,7 +290,7 @@ class FocusViewV2(Screen):
         self._target_ap = ap
         if ap is None:
             return
-        iface = self.app.array
+        array = self.app.array
         logger.info("[FOCUS] enter: ssid=%r bssid=%s ch=%s", ap.ssid, ap.bssid, ap.channel)
 
         self._beacon_samples.clear()
@@ -301,7 +301,7 @@ class FocusViewV2(Screen):
 
         snap = self._snapshot()
         self._snap = snap
-        self.query_one("#dashboard", PacketDashboard).reconfigure(snap.dashboard, iface, ap.bssid)
+        self.query_one("#dashboard", PacketDashboard).reconfigure(snap.dashboard, array, ap.bssid)
         self.query_one("#card", CardEndpoint).update_dynamic(snap)
         self.query_one("#router", RouterEndpoint).update_dynamic(snap)
         self.query_one("#status", Static).update(self._render_status(snap.status))
@@ -319,9 +319,9 @@ class FocusViewV2(Screen):
                       "[dim italic]cloaked network (hidden SSID)[/dim italic]")
         self._log(treelog.branch(f"[dim]Encryption:[/dim] {enc}"))
         self._log(treelog.branch(f"[dim]BSSID:[/dim] [white]{ap.bssid}[/white]"))
-        if iface:
+        if array:
             try:
-                ok = await iface.set_channel(ap.channel, scan=False)
+                ok = await array.set_channel(ap.channel, scan=False)
             except Exception:
                 logger.exception("Focus v2 channel tune failed")
                 ok = False
@@ -429,9 +429,9 @@ class FocusViewV2(Screen):
         self._refresh_buttons()
         self._sync_bindings()
         self._refresh_status_footer()
-        iface = self.app.array
-        self._drive_leds(ap, iface)
-        self._drain_capture_events(ap, iface.forged_macs if iface else set(), time.time())
+        array = self.app.array
+        self._drive_leds(ap, array)
+        self._drain_capture_events(ap, array.forged_macs if array else set(), time.time())
 
     def _distribute(self) -> None:
         """Fill the mid band to full 2-row sparklines."""
@@ -449,9 +449,9 @@ class FocusViewV2(Screen):
         ap = self._target_ap
         if ap is None:
             return
-        iface = self.app.array
+        array = self.app.array
         lines = [Text.from_markup(m, emoji=False)
-                 for m in fm.status_footer_lines(ap, iface, self._wep_campaign, time.time())]
+                 for m in fm.status_footer_lines(ap, array, self._wep_campaign, time.time())]
         self.query_one("#dashboard", PacketDashboard).set_footer(lines)
 
     # ----- endpoint LED flicker (instrumentation) ----------------------------
@@ -460,11 +460,11 @@ class FocusViewV2(Screen):
     _RX_KEYS = ("beacon", "data", "eapol", "wep_iv")
     _TX_KEYS = ("inject", "deauth")
 
-    def _drive_leds(self, ap, iface) -> None:
+    def _drive_leds(self, ap, array) -> None:
         """Flicker the endpoint LEDs on real traffic."""
-        if iface is None:
+        if array is None:
             return
-        snap = iface.packet_stats.snapshot(ap.bssid)
+        snap = array.packet_stats.snapshot(ap.bssid)
         prev, self._prev_stats = self._prev_stats, snap
         if prev is None:   # first frame after (re)acquire, no delta yet
             return
@@ -669,13 +669,13 @@ class FocusViewV2(Screen):
         if self._pmkid_campaign is not None:  # already harvesting (or finishing), ignore
             return
         ap = self._target_ap
-        iface = self.app.array
-        if not ap or not iface:
+        array = self.app.array
+        if not ap or not array:
             self._log("[red]✗ No target / interface. Aborting PMKID harvest.[/red]")
             return
         self._log(pmkid_log.header(escape(ap.ssid or ap.bssid)))
         self._pmkid_campaign = PmkidHarvestAttack(
-            iface, ap, log=lambda m: self._log(treelog.branch(m)))
+            array, ap, log=lambda m: self._log(treelog.branch(m)))
         self._pmkid_campaign.run()
 
     def _finish_pmkid(self) -> None:
@@ -719,8 +719,8 @@ class FocusViewV2(Screen):
 
     def _start_wpa3_down(self) -> None:
         ap = self._target_ap
-        iface = self.app.array
-        if not ap or not iface:
+        array = self.app.array
+        if not ap or not array:
             self._log("[red]✗ No target / interface. Cannot start WPA3 Down.[/red]")
             return
         if not ap.ssid:
@@ -732,7 +732,7 @@ class FocusViewV2(Screen):
                       "downgrade not possible.[/yellow]")
             return
         try:
-            self._wpa3_down_attack = WPA3DowngradeAttack(iface, ap)
+            self._wpa3_down_attack = WPA3DowngradeAttack(array, ap)
             self._wpa3_down_attack.run()
         except Exception as exc:
             logger.exception("WPA3 Down start failed")
@@ -775,12 +775,12 @@ class FocusViewV2(Screen):
 
     def _start_generate_ivs(self) -> None:
         ap = self._target_ap
-        iface = self.app.array
-        if not ap or not iface:
+        array = self.app.array
+        if not ap or not array:
             self._log("[red]✗ No target / interface. Cannot Generate IVs.[/red]")
             return
         try:
-            self._wep_campaign = WepCampaign(iface, ap, log_callback=self._log)
+            self._wep_campaign = WepCampaign(array, ap, log_callback=self._log)
             self._wep_campaign.run()
         except Exception as exc:
             logger.exception("Generate IVs start failed")
@@ -877,13 +877,13 @@ class FocusViewV2(Screen):
     # ----- WPS PBC auto-capture ----------------------------------------------
 
     def _start_pbc_capture(self, ap) -> None:
-        iface = self.app.array
-        if not iface:
+        array = self.app.array
+        if not array:
             return
         self._log("[bold cyan]WPS PushButton:[/bold cyan] [bold green]Window Open[/bold green] "
                   "(auto-capturing PSK)")
         self._pbc_campaign = WpsPbcCapture(
-            iface, ap, log=lambda m: self._log(treelog.branch(m)))
+            array, ap, log=lambda m: self._log(treelog.branch(m)))
         self._pbc_campaign.run()
 
     def _finish_pbc_capture(self, ap) -> None:

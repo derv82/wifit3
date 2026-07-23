@@ -208,9 +208,9 @@ def fakeauth_value_markup(campaign, now: float, compact: bool = False) -> str:
     return "[dim]Idle[/dim]"
 
 
-def wep_status_lines(ap, iface, campaign, now: float) -> list[str]:
+def wep_status_lines(ap, array, campaign, now: float) -> list[str]:
     """The WEP status footer (v2)."""
-    samples = iface.wep_store.crack_sample_count(ap.bssid) if iface else 0
+    samples = array.wep_store.crack_sample_count(ap.bssid) if array else 0
     n = f"[cyan]{samples:,}[/cyan]" if samples else "[red]0[/red]"
     # /10k tags the crack threshold (distinct from the gross "wep iv" rate above)
     ivs = (n if samples >= CRACK_READY_THRESHOLD
@@ -238,10 +238,10 @@ def pmf_status_markup(ap) -> str:
     return "[dim]Disabled[/dim]"
 
 
-def status_footer_lines(ap, iface, campaign, now: float) -> list[str]:
+def status_footer_lines(ap, array, campaign, now: float) -> list[str]:
     """The dashboard footer lines for this target."""
     if is_wep(ap):
-        return wep_status_lines(ap, iface, campaign, now)
+        return wep_status_lines(ap, array, campaign, now)
     lines = [f"[dim]Encryption:[/dim] {format_encryption_markup(ap, detailed=True)}"]
     parts = []
     if ap.akms or ap.wpa3:              # RSN (WPA2/3): PMF is meaningful
@@ -300,11 +300,11 @@ def deauth_blocked(ap) -> bool:
     return other_long_running_tx() or ap.pmf_required
 
 
-def client_rows(ap, iface) -> list[ClientRow]:
+def client_rows(ap, array) -> list[ClientRow]:
     """The target's real clients."""
     rows: list[ClientRow] = []
-    forged = iface.forged_macs
-    for mac, client in iface.clients.items():
+    forged = array.forged_macs
+    for mac, client in array.clients.items():
         if client.bssid != ap.bssid:
             continue
         if mac in forged or client.is_self:
@@ -342,7 +342,7 @@ def wep_action_phrase(campaign) -> str:
     }.get(state, "Listening for a packet")
 
 
-def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
+def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
     """The Campaign headline: up to 3 markup lines holding current activity."""
     enc = (ap.encryption or "").upper()
     wep = enc == "WEP"
@@ -448,17 +448,17 @@ def card_identity(source) -> tuple[str, str | None]:
 # ---------------------------------------------------------------------------
 
 
-def build_snapshot(ap, iface, campaigns: Campaigns, samples: deque,
+def build_snapshot(ap, array, campaigns: Campaigns, samples: deque,
                    now: float) -> FocusSnapshot:
     """Compose a :class:`FocusSnapshot` from the derivations for the v2 layout."""
     rate, _count = beacon_rate(ap, samples, now)
-    chipset, card_bssid = card_identity(iface)
+    chipset, card_bssid = card_identity(array)
     btns = derive_buttons(ap)
     button_labels = [btns[bid].label for bid in _BUTTON_ORDER if btns[bid].visible]
-    clients = client_rows(ap, iface) if iface else []
+    clients = client_rows(ap, array) if array else []
     essid = truncate_ssid(ap.ssid) if ap.ssid else "‹hidden›"
     return FocusSnapshot(
-        status=derive_headline(ap, iface, campaigns),
+        status=derive_headline(ap, array, campaigns),
         power_dbm=ap.signal,
         signal=rate,
         card_chipset=chipset,

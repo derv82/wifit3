@@ -132,7 +132,7 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         # The packet dashboard is bound to the live interface → it samples real
         # packet_stats (not the fake generator).
         dash = focus.query_one("#dashboard", PacketDashboard)
-        assert dash._iface is app.array and dash._bssid == bssid
+        assert dash._array is app.array and dash._bssid == bssid
 
         log = focus.query_one("#log", LogBand)
         status = focus.query_one("#status", Static)

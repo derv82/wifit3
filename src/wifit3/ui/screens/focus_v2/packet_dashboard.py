@@ -40,7 +40,7 @@ class PacketDashboard(Static):
         self._t = 0
         # Live binding (None -> fake generator). _prev is the last cumulative
         # packet_stats snapshot, diffed each tick into a per-window delta.
-        self._iface = None
+        self._array = None
         self._bssid = None
         self._prev = None
         # Optional centered footer lines painted in the channel's own vertical
@@ -57,17 +57,17 @@ class PacketDashboard(Static):
 
     # ---- target binding -----------------------------------------------------
 
-    def reconfigure(self, rows, iface, bssid) -> None:
+    def reconfigure(self, rows, array, bssid) -> None:
         """Point the channel at a target: swap in the family's rows (WEP shows
         wep_iv, WPA eapol), bind the interface + BSSID, and clear history so a
-        previous target's bars never bleed in. ``iface``/``bssid`` may be None,
+        previous target's bars never bleed in. ``array``/``bssid`` may be None,
         which drops back to the fake generator."""
         self._rows = rows
         self._hist = {r.key: deque([0] * _HISTORY, maxlen=_HISTORY) for r in rows}
-        self._iface = iface
+        self._array = array
         self._bssid = bssid
-        self._prev = (iface.packet_stats.snapshot(bssid)
-                      if (iface is not None and bssid) else None)
+        self._prev = (array.packet_stats.snapshot(bssid)
+                      if (array is not None and bssid) else None)
         self._footer = None              # cleared per target; the screen re-sets it for WEP
         self._repaint()
 
@@ -80,14 +80,14 @@ class PacketDashboard(Static):
     # ---- sampling -----------------------------------------------------------
 
     def _tick(self) -> None:
-        if self._iface is not None and self._bssid is not None:
+        if self._array is not None and self._bssid is not None:
             self._sample_live()
         else:
             self._sample_fake()
         self._repaint()
 
     def _sample_live(self) -> None:
-        snap = self._iface.packet_stats.snapshot(self._bssid)
+        snap = self._array.packet_stats.snapshot(self._bssid)
         if self._prev is not None:
             for r in self._rows:
                 # max(0, …) guards a fresh rebind where prev briefly out-runs snap.

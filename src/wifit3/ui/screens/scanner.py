@@ -168,15 +168,15 @@ class ScannerView(Screen):
     async def on_mount(self) -> None:
         log = self.query_one("#system-log", RichLog)
         self._update_column_headers()
-        iface = self.app.array
+        array = self.app.array
 
         log.write(treelog.header("Scanner initialized"))
         rows: List[str] = []
         summary = self._load_capture_history()
         if summary:
             rows.append(summary)
-        if iface:
-            hopped = self._channel_filter or list(iface.supported_channels)
+        if array:
+            hopped = self._channel_filter or list(array.supported_channels)
             rows.append(
                 "Hopping [italic]all available channels[/italic] "
                 f"[bold cyan]{band_label(hopped)}[/bold cyan]"
@@ -186,7 +186,7 @@ class ScannerView(Screen):
         for i, row in enumerate(rows):
             log.write(treelog.leaf(row) if i == len(rows) - 1 else treelog.branch(row))
 
-        if iface:
+        if array:
             # 15 FPS in-place value updates. Beacons arrive ~10 Hz per AP at best.
             self._refresh_timer = self.set_interval(1 / 15, self.refresh_table)
             # Lazy re-sort + evict expired APs.
@@ -219,10 +219,10 @@ class ScannerView(Screen):
 
     async def on_screen_resume(self) -> None:
         # Restart channel hopper
-        iface = self.app.array
-        if not iface:
+        array = self.app.array
+        if not array:
             return
-        await iface.start_hopping(
+        await array.start_hopping(
             channels=self._channel_filter, interval=0.25
         )
 
@@ -252,13 +252,13 @@ class ScannerView(Screen):
     def refresh_table(self) -> None:
         if not self.app.array:
             return
-        iface = self.app.array
+        array = self.app.array
         table = self.query_one("#ap-table", DataTable)
 
         # Pre-compute per-AP client counts to avoid O(N×M) inside the AP loop below.
         client_counts: Dict[str, int] = {}
-        for c in iface.clients.values():
-            if c.bssid and c.mac not in iface.forged_macs:
+        for c in array.clients.values():
+            if c.bssid and c.mac not in array.forged_macs:
                 client_counts[c.bssid] = client_counts.get(c.bssid, 0) + 1
 
         now = time.time()
@@ -271,7 +271,7 @@ class ScannerView(Screen):
 
         fade_enabled = self._fade_enabled
 
-        for ap in iface.get_access_points():
+        for ap in array.get_access_points():
             age = now - ap.last_seen
             if fade_enabled and age >= FADE_DURATION_S:
                 continue
@@ -322,7 +322,7 @@ class ScannerView(Screen):
                     for (col_key, _), cell in zip(self._COLUMNS, cells):
                         table.update_cell(ap.bssid, col_key, cell)
 
-            self._drain_capture_events(ap, iface.forged_macs)
+            self._drain_capture_events(ap, array.forged_macs)
 
     def _apply_sort_and_evict(self) -> None:
         """Re-sort the table and drop fully-faded APs. Runs every 2 s."""
@@ -334,7 +334,7 @@ class ScannerView(Screen):
             return
         if not self._fade_enabled:
             return
-        iface = self.app.array
+        array = self.app.array
         table = self.query_one("#ap-table", DataTable)
         now = time.time()
 
@@ -343,7 +343,7 @@ class ScannerView(Screen):
             if (now - ap.last_seen) >= FADE_DURATION_S
         ]
         for bssid in to_drop:
-            iface.access_points.pop(bssid, None)
+            array.access_points.pop(bssid, None)
             self.ap_cache.pop(bssid, None)
             self._prev_beacons.pop(bssid, None)
             self._beacon_flash_until.pop(bssid, None)
@@ -410,13 +410,13 @@ class ScannerView(Screen):
 
     def _best_named_sibling_ssid(self, ap: AccessPoint) -> Optional[str]:
         """Guess the sibling SSID to display for a hidden AP."""
-        iface = self.app.array
-        if not iface or not ap.siblings:
+        array = self.app.array
+        if not array or not ap.siblings:
             return None
         best_ssid: Optional[str] = None
         best_beacons = -1
         for sib_bssid in ap.siblings:
-            sib_ap = iface.access_points.get(sib_bssid)
+            sib_ap = array.access_points.get(sib_bssid)
             if sib_ap and sib_ap.ssid and sib_ap.beacons > best_beacons:
                 best_ssid = sib_ap.ssid
                 best_beacons = sib_ap.beacons
@@ -598,11 +598,11 @@ class ScannerView(Screen):
 
     def _arm_open_windows(self) -> None:
         """React to PBC windows that are *already* open at the instant we arm."""
-        iface = self.app.array
-        if not iface:
+        array = self.app.array
+        if not array:
             return
         launched = self._pbc_capturing
-        for ap in iface.get_access_points():
+        for ap in array.get_access_points():
             if not ap.wps_pbc_active:
                 continue
             if ap.has_psk:
@@ -630,10 +630,10 @@ class ScannerView(Screen):
                 color="orange1"))
 
     def _poll_pbc(self) -> None:
-        iface = self.app.array
-        if not iface or self.app.screen is not self:
+        array = self.app.array
+        if not array or self.app.screen is not self:
             return
-        for ap in self._pbc_watcher.new_windows(iface.get_access_points()):
+        for ap in self._pbc_watcher.new_windows(array.get_access_points()):
             self._on_pbc_window(ap)
 
     def _on_pbc_window(self, ap: AccessPoint) -> None:
@@ -656,8 +656,8 @@ class ScannerView(Screen):
 
     async def _invade_pbc(self, ap: AccessPoint) -> None:
         """Pause hop → tune to the target → run the PBC enrollment → resume."""
-        iface = self.app.array
-        if not iface:
+        array = self.app.array
+        if not array:
             return
         self._pbc_capturing = True
         label = escape(ap.ssid or ap.bssid)
@@ -665,10 +665,10 @@ class ScannerView(Screen):
             f"[cyan]invading[/cyan] [bold]{label}[/bold]: pausing hop, "
             f"tuning [cyan]CH {ap.channel}[/cyan]…"))
         try:
-            await iface.stop_hopping()
-            await iface.set_channel(ap.channel)
+            await array.stop_hopping()
+            await array.set_channel(ap.channel)
             outcome = await WpsPbcCapture(
-                iface, ap, log=lambda m: self._write_log(treelog.branch(m))
+                array, ap, log=lambda m: self._write_log(treelog.branch(m))
             ).capture()
             if outcome.result is PinResult.SUCCESS:
                 ap.wps_pbc_psk = outcome.psk
@@ -694,7 +694,7 @@ class ScannerView(Screen):
             self._pbc_capturing = False
             if self.app.screen is self:
                 # Resume hopping only if we're still the foreground screen (not Focus).
-                await iface.start_hopping(channels=self._channel_filter, interval=0.25)
+                await array.start_hopping(channels=self._channel_filter, interval=0.25)
 
     def action_toggle_fade(self) -> None:
         self._fade_enabled = not self._fade_enabled
@@ -732,12 +732,12 @@ class ScannerView(Screen):
 
     def action_change_channel(self) -> None:
         log = self.query_one("#system-log", RichLog)
-        iface = self.app.array
-        if not iface:
+        array = self.app.array
+        if not array:
             log.write("[bold red][!] No active interface.[/bold red]")
             return
 
-        supported = iface.supported_channels
+        supported = array.supported_channels
         if not supported:
             log.write(
                 "[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]"
@@ -758,14 +758,14 @@ class ScannerView(Screen):
             log.write("[dim]Channel filter unchanged.[/dim]")
             return
 
-        iface = self.app.array
-        if not iface:
+        array = self.app.array
+        if not array:
             return
 
         self._channel_filter = result
-        await iface.stop_hopping()
+        await array.stop_hopping()
         dropped = self._prune_aps_outside(result)
-        await iface.start_hopping(channels=result, interval=0.25)
+        await array.start_hopping(channels=result, interval=0.25)
 
         pieces = [
             f"[bold cyan]{name}[/bold cyan] [dim]({rngs})[/dim]"
@@ -781,19 +781,19 @@ class ScannerView(Screen):
             )
 
     def _prune_aps_outside(self, channels: List[int]) -> int:
-        iface = self.app.array
-        if not iface:
+        array = self.app.array
+        if not array:
             return 0
         keep = set(channels)
         table = self.query_one("#ap-table", DataTable)
 
         stale = [
             bssid
-            for bssid, ap in iface.access_points.items()
+            for bssid, ap in array.access_points.items()
             if ap.channel not in keep
         ]
         for bssid in stale:
-            iface.access_points.pop(bssid, None)
+            array.access_points.pop(bssid, None)
             self.ap_cache.pop(bssid, None)
             self._prev_beacons.pop(bssid, None)
             self._beacon_flash_until.pop(bssid, None)
