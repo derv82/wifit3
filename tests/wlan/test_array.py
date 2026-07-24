@@ -4,6 +4,7 @@ A lightweight FakeIface stands in for a connected WlanInterface (no hardware), e
 surface the array touches. Covers card selection (channel + capability), the dedupe/ingest wiring
 into the shared sink, STACK set_channel, SPREAD hop partitioning, and member-loss re-emit."""
 
+import asyncio
 from types import SimpleNamespace
 
 from wifit3.chips.driver import FakeMacSupport
@@ -210,3 +211,39 @@ async def test_hot_unplug_closes_and_drops():
     a.register_disconnect_callback(lambda exc, remaining: seen.append(remaining))
     await a.hot_unplug(x)
     assert x.closed is True and a.members == [] and seen == [0]
+
+
+# ----- re-partition on membership change (the array owns hopping) -------------
+
+async def test_attach_while_hopping_repartitions():
+    a = WlanArray()
+    m1 = FakeIface("wlan0", [1, 6, 11])
+    a.attach(m1)
+    await a.start_hopping(interval=0.25)
+    before = len(m1.hop_calls)
+    a.attach(FakeIface("wlan1", [1, 6, 11]))     # a card joins mid-hop
+    await asyncio.sleep(0.05)                     # let the array's internal re-hop task run
+    assert a.members[1].hop_calls, "the new card starts hopping"
+    assert len(m1.hop_calls) > before, "the existing card re-partitioned"
+
+
+async def test_attach_when_not_hopping_is_inert():
+    a = WlanArray()
+    a.attach(FakeIface("wlan0", [1, 6, 11]))      # never started hopping
+    m2 = FakeIface("wlan1", [1, 6, 11])
+    a.attach(m2)
+    await asyncio.sleep(0.05)
+    assert m2.hop_calls == []
+
+
+async def test_member_lost_while_hopping_repartitions_survivor():
+    a = WlanArray()
+    m1 = FakeIface("wlan0", [1, 6, 11])
+    m2 = FakeIface("wlan1", [1, 6, 11])
+    a.attach(m1)
+    a.attach(m2)
+    await a.start_hopping(interval=0.25)
+    before = len(m1.hop_calls)
+    m2.emit_disconnect(RuntimeError("unplug"))    # -> _member_lost -> re-partition survivor
+    await asyncio.sleep(0.05)
+    assert len(m1.hop_calls) > before

@@ -40,6 +40,13 @@ class WlanArray:
         self._rx_callbacks: List[Callable[[Packet], None]] = []      # deduped stream
         self._disconnect_callbacks: List[Callable[[Exception, int], None]] = []
         self._name_counter = 0
+        # Hop state: the channel partition is computed only in start_hopping; every membership change
+        # while hopping re-invokes it so the SPREAD tracks the live pool. Nothing outside drives it.
+        self._hopping = False
+        self._hop_channels: Optional[List[int]] = None
+        self._hop_interval = 0.5
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._rehop_tasks: Set[asyncio.Task] = set()
 
     # ----- pool membership ---------------------------------------------------
 
@@ -58,6 +65,8 @@ class WlanArray:
         iface.register_disconnect_callback(lambda exc, i=iface: self._member_lost(i, exc))
         logger.info("pool: attached %s (%s); %d card(s)", iface.name, iface.description,
                     len(self._members))
+        if self._hopping:
+            self._repartition()   # a card joined mid-hop: re-spread the channels across the pool
         return iface
 
     async def add(self, handle, *, connect: bool = True) -> WlanInterface:
@@ -94,6 +103,8 @@ class WlanArray:
         self._dedupe.remove_source(iface.name)
         remaining = len(self._members)
         logger.info("pool: lost %s; %d card(s) remain", iface.name, remaining)
+        if self._hopping and remaining:
+            self._repartition()   # survivors re-cover the departed card's channels
         for cb in list(self._disconnect_callbacks):
             try:
                 cb(exc, remaining)
@@ -213,7 +224,12 @@ class WlanArray:
 
     async def start_hopping(self, channels: Optional[List[int]] = None,
                             interval: float = 0.5) -> None:
-        """SPREAD hop: partition the channel list across members; each hops only its subset."""
+        """SPREAD hop: partition the channel list across members; each hops only its subset. Records
+        the config + running loop so a later membership change can re-partition on its own."""
+        self._hopping = True
+        self._hop_channels = channels
+        self._hop_interval = interval
+        self._loop = asyncio.get_running_loop()
         chans = channels or self.supported_channels
         assignment = self._partition(chans)
         await asyncio.gather(*(
@@ -222,8 +238,41 @@ class WlanArray:
         ))
 
     async def stop_hopping(self) -> None:
+        self._hopping = False
+        for task in list(self._rehop_tasks):
+            task.cancel()
         await asyncio.gather(*(m.stop_hopping() for m in self._members),
                              return_exceptions=True)
+
+    def _repartition(self) -> None:
+        """Re-run the hop partition for the current membership. Safe from any thread: attach() calls
+        it on the event loop (create the task directly), while the RX-reader disconnect path calls it
+        off the loop, so schedule onto the captured loop."""
+        loop = self._loop
+        if loop is None:
+            return
+
+        def _spawn() -> None:
+            task = loop.create_task(self._rehop())
+            self._rehop_tasks.add(task)
+            task.add_done_callback(self._rehop_tasks.discard)
+
+        try:
+            on_loop = asyncio.get_running_loop() is loop
+        except RuntimeError:
+            on_loop = False
+        if on_loop:
+            _spawn()
+        else:
+            loop.call_soon_threadsafe(_spawn)
+
+    async def _rehop(self) -> None:
+        try:
+            await self.start_hopping(self._hop_channels, self._hop_interval)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("re-hop after membership change failed")
 
     async def close(self) -> None:
         await asyncio.gather(*(m.close() for m in self._members), return_exceptions=True)
