@@ -190,6 +190,24 @@ async def test_start_hopping_balances_across_equal_cards():
     assert abs(len(sub_x) - len(sub_y)) <= 1        # balanced
 
 
+async def test_partition_stacks_extra_cards_on_a_narrow_filter():
+    x = FakeIface("wlan0", [1, 6, 11])
+    y = FakeIface("wlan1", [1, 6, 11])
+    a = _pool(x, y)
+    await a.start_hopping([11])                      # 1 channel, 2 cards
+    assert x.hop_calls[0] == [11]
+    assert y.hop_calls[0] == [11]                    # the extra card stacks onto ch11, not stranded
+
+
+async def test_partition_5ghz_first_keeps_cards_on_band():
+    two4 = FakeIface("wlan0", [1, 6, 11])            # 2.4-only
+    dual = FakeIface("wlan1", [1, 6, 11, 36, 44])    # dual-band
+    a = _pool(two4, dual)
+    await a.start_hopping([1, 6, 11, 36, 44])
+    assert two4.hop_calls[0] == [1, 6, 11]
+    assert dual.hop_calls[0] == [36, 44]             # dual took only 5 GHz; no 2.4 spillover onto it
+
+
 # ----- member loss -----------------------------------------------------------
 
 def test_member_lost_reemits_with_remaining_count():

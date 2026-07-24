@@ -211,16 +211,23 @@ class WlanArray:
         return any(r is True for r in results)
 
     def _partition(self, channels: List[int]) -> dict:
-        """SPREAD: assign each channel to one capable member, balancing counts, so N cards cover
-        N-way more air per hop. A channel no member supports is dropped."""
+        """SPREAD: give each channel to one capable card, balancing counts, so N cards cover N-way
+        more air per hop. Iterate channels high-first (5 GHz before 2.4 GHz) so a dual-band card
+        absorbs the scarce 5 GHz work before the all-band 2.4 GHz channels spread — that keeps cards
+        on-band and avoids costly band switches. Any card the spread leaves empty (more cards than
+        channels) then hops every filter channel it supports, doubling up for redundant RX rather
+        than stranding on its last channel. A channel no card supports is dropped."""
         assignment = {m: [] for m in self._members}
-        for ch in channels:
+        for ch in sorted(channels, reverse=True):
             capable = [m for m in self._members if ch in m.supported_channels]
             if not capable:
                 continue
             m = min(capable, key=lambda mm: len(assignment[mm]))
             assignment[m].append(ch)
-        return assignment
+        for m in assignment:
+            if not assignment[m]:
+                assignment[m] = [ch for ch in channels if ch in m.supported_channels]
+        return {m: sorted(chs) for m, chs in assignment.items()}
 
     async def start_hopping(self, channels: Optional[List[int]] = None,
                             interval: float = 0.5) -> None:
