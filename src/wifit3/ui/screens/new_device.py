@@ -23,7 +23,7 @@ class NewDeviceDialog(ModalScreen[bool]):
         border: thick $primary; background: $surface; padding: 1 2;
     }
     NewDeviceDialog #title { width: 1fr; text-align: center; text-style: bold;
-                             color: $primary; margin-bottom: 1; }
+                             color: $text-success; margin-bottom: 1; }
     NewDeviceDialog #desc { width: 1fr; text-align: center; text-style: bold; margin-bottom: 1; }
     NewDeviceDialog #prompt { width: 1fr; text-align: center; margin-bottom: 1; }
     NewDeviceDialog #button-row { height: auto; align: center middle; }
