@@ -85,8 +85,13 @@ class BringupManager:
             return BringupResult.failed(self._fault_message(device_id, e))
 
     async def uninstall(self, device_id) -> SetupResult:
-        """Reverse a prior setup for ``device_id`` (the splash's ✕ button)."""
-        return await self.setup.uninstall(device_id, self.prompter)
+        """Reverse a prior setup for ``device_id`` (the splash's ✕ button). Shows the progress modal
+        so the setup's status lines (removing rules, revoking access) are visible."""
+        await self.prompter.open(f"Uninstalling {device_id.description}…")
+        try:
+            return await self.setup.uninstall(device_id, self.prompter)
+        finally:
+            self.prompter.close()
 
     async def _connect_and_pool(self, device_id) -> None:
         iface = build_interface(device_id, name=self._next_name())

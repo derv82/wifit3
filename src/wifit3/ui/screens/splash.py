@@ -230,6 +230,8 @@ class SplashView(Screen):
         status = self.query_one("#status-label", Label)
         if res.ok:
             status.update(f"[bold green]{res.message}[/bold green]")
+            self.notify(f"[green]✓[/green] {res.message}", title="Uninstalled",
+                        severity="information")
         elif res.cancelled:
             status.update("[bold lightgreen]Select a card and press START[/bold lightgreen]")
         else:

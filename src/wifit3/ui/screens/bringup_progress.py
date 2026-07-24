@@ -4,9 +4,13 @@ rewritten into another modal."""
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Center, Vertical
+from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Label, ProgressBar
+
+# The status line is truncated to the dialog's inner width so a long driver/wdi message can't wrap
+# and jitter the modal height (a period fix is shorter messages at the source).
+_STATUS_MAX = 58
 
 
 class BringupProgressModal(ModalScreen):
@@ -17,11 +21,12 @@ class BringupProgressModal(ModalScreen):
     BringupProgressModal { align: center middle; }
     BringupProgressModal #dialog {
         width: 64; max-width: 90%; height: auto;
-        border: thick $primary; background: $surface; padding: 1 2;
+        border: thick $success; background: $surface; padding: 1 2;
     }
     BringupProgressModal #title { width: 1fr; text-align: center; text-style: bold; margin-bottom: 1; }
     BringupProgressModal #status { width: 1fr; text-align: center; margin-bottom: 1; }
-    BringupProgressModal #bar { height: auto; align: center middle; }
+    BringupProgressModal #bar { width: 100%; }
+    BringupProgressModal #bar Bar { width: 1fr; }
     """
 
     def __init__(self, title: str) -> None:
@@ -33,10 +38,11 @@ class BringupProgressModal(ModalScreen):
         with Vertical(id="dialog"):
             yield Label(self._title, id="title")
             yield Label(self._status, id="status")
-            with Center(id="bar"):
-                yield ProgressBar(total=100, show_eta=False)
+            yield ProgressBar(total=100, show_eta=False, id="bar")
 
     def set_status(self, message: str) -> None:
+        if len(message) > _STATUS_MAX:
+            message = message[:_STATUS_MAX - 1] + "…"
         self._status = message
         if self.is_mounted:
             self.query_one("#status", Label).update(message)
