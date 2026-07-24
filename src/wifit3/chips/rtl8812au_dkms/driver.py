@@ -114,8 +114,13 @@ class Rtl8812auDkmsDriver(Driver):
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()
-        # All bring-up is blocking synchronous USB I/O; keep it off the event loop.
-        await loop.run_in_executor(None, self._claim)
+        # All bring-up is blocking synchronous USB I/O; keep it off the event loop. Wrap the claim so a
+        # permission failure (set_configuration's IOError, claim_interface's USBError, or a Windows
+        # NotImplementedError) reaches WlanInterface.connect on the cause chain to be classified.
+        try:
+            await loop.run_in_executor(None, self._claim)
+        except (IOError, usb.core.USBError, NotImplementedError) as e:
+            raise BringUpError("claim", str(e)) from e
 
         # EFUSE read (probe phase, before power-on, like the vendor): crystal_cap, the
         # 2-path per-rate TX power, bb_swing, rfe_type, the MAC address, and the raw

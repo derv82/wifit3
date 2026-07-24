@@ -224,8 +224,11 @@ class MT76x0UDriver(Driver):
         try:
             self.transport.claim()
         except RuntimeError as e:
+            # The transport wraps the libusb claim error (EACCES/EBUSY on Linux, etc.) in this
+            # RuntimeError; keep it on the cause chain so WlanInterface.connect can classify a fixable
+            # permission failure instead of dropping it to a bare "reset/claim failed".
             logger.error("MT7610U: %s", e)
-            return None
+            raise BringUpError("reset/claim", str(e)) from e
 
         # Locate FW file. Prefer mt7610e (WIRE-verified); fall back to mt7610u
         # only if mt7610e is missing. Refuse to start without either.

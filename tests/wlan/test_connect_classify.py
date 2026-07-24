@@ -58,6 +58,18 @@ async def test_double_wrapped_through_ioerror():
         await _iface(be).connect()
 
 
+async def test_double_wrapped_through_runtimeerror():
+    # mt76x0u shape: the transport wraps the claim EACCES in a RuntimeError, the driver wraps that
+    # in a BringUpError.
+    inner = usb.core.USBError("access", errno=13)
+    mid = RuntimeError("claim failed")
+    mid.__cause__ = inner
+    be = BringUpError("reset/claim", "claim failed")
+    be.__cause__ = mid
+    with pytest.raises(BringUpPermissionsError):
+        await _iface(be).connect()
+
+
 async def test_permissions_error_keeps_stage_and_detail():
     be = BringUpError("bring-up", "usbfs node not writable")
     be.__cause__ = usb.core.USBError("access", -3)
