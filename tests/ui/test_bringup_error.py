@@ -92,8 +92,6 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
         # chipset ("RTL8187L"), not the full "RTL8187L (test)".
         assert "RTL8187L" in args[0] and "(test)" not in args[0] and "bring-up failed" in args[0]
 
-        # The core fix: force a full poll tick (it rewrites the status line) and confirm it
-        # leaves the error label alone.
-        splash._last_signature = None
-        await splash.poll_usb()
+        # The core fix: a device refresh rewrites the status line; confirm it leaves the error alone.
+        splash.render_devices([])
         assert splash.query_one("#error-label", Label).display is True

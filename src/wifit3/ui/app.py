@@ -1,11 +1,14 @@
 import logging
 import os
+import sys
+from textual import work
 from textual.app import App
 from typing import Optional
 
 from wifit3.chips import log_trace
-from wifit3.errors import WifiteDeviceLostError
-from wifit3.wlan.bringup import BringupManager
+from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
+from wifit3.wlan.bringup import BringupManager, Status
+from wifit3.wlan.device_listener import DeviceListener
 from wifit3.wlan.array import WlanArray
 from wifit3.models import AccessPoint
 
@@ -13,6 +16,7 @@ from .screens.splash import SplashView
 from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
 from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
+from .screens.new_device import NewDeviceDialog
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +117,8 @@ class WifiteApp(App):
         super().__init__()
         self.array: Optional[WlanArray] = None
         self.bringup = BringupManager(self)
+        self.devices = DeviceListener(on_change=self._on_devices_changed,
+                                      on_fatal=self._on_usb_fatal)
         self.target_ap: Optional[AccessPoint] = None
         # WPS PBC auto-invade preference, shared across screens (Scanner + Focus
         # both read/toggle it via 'w'). On by default: the one active-TX exception
@@ -121,11 +127,43 @@ class WifiteApp(App):
         self.theme = "textual-dark"
 
     def on_mount(self) -> None:
-        """Register screens and push the initial SplashView."""
+        """Register screens, push the splash, and start the always-on device watch."""
         self.install_screen(SplashView(), name="splash")
         self.install_screen(ScannerView(), name="scanner")
         self.install_screen(FocusViewV2(), name="focus")
         self.push_screen("splash")
+        self._device_timer = self.set_interval(0.5, self.devices.poll_once)
+        self.call_after_refresh(self.devices.poll_once)
+
+    def _on_devices_changed(self, current, arrived, departed) -> None:
+        """DeviceListener fired. On Splash, refresh the card list; mid-session, prompt to bring up
+        each newly-plugged card."""
+        if any(isinstance(s, SplashView) for s in self.screen_stack):
+            self.get_screen("splash", SplashView).render_devices(current)
+        elif arrived:
+            self.devices.pause()          # pause synchronously so the next tick can't stack a prompt
+            self._prompt_hotplug(arrived)
+
+    @work(exclusive=True)
+    async def _prompt_hotplug(self, arrived) -> None:
+        """Mid-session: ask per new card, and bring up the ones the user confirms (only that card,
+        and on Windows never a disruptive mid-session install)."""
+        try:
+            for dev in arrived:
+                if await self.push_screen_wait(NewDeviceDialog(dev.description)):
+                    res = await self.bringup.run(
+                        dev, bail_at_permissions=(sys.platform == "win32"), pool_others=False)
+                    if res.status is Status.FAILED:
+                        self.notify(res.message, severity="error")
+                    elif res.status is Status.READY:
+                        self.notify(f"{dev.description} added", severity="information")
+        finally:
+            self.devices.resume()
+
+    def _on_usb_fatal(self, err: WifiteFatalError) -> None:
+        """The bus scan hit an unrecoverable backend error: stop watching + show the Quit-only modal."""
+        self._device_timer.stop()
+        self.push_screen(FatalErrorModal(err))
 
     def notify_device_lost(self, exc: Exception, remaining: int) -> None:
         """A pooled card vanished mid-run (the array re-emits this with the surviving card count).
