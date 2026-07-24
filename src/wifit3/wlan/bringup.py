@@ -105,7 +105,10 @@ class BringupManager:
         if iface is None:
             raise BringUpError("discover", "card not present")
         try:
-            await iface.connect(progress_cb=self.prompter.status_progress)
+            if not await iface.connect(progress_cb=self.prompter.status_progress):
+                # A few drivers return False (rather than raise) on a genuine bring-up fault; don't
+                # pool a dead card.
+                raise BringUpError("init", "the driver reported bring-up failure")
         except Exception:
             # Drop any partial USB claim so a following setup / retry isn't blocked by us holding it.
             try:

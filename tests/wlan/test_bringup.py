@@ -197,3 +197,11 @@ async def test_pool_others_true_also_builds_the_other(monkeypatch):
     _stub_build_recording(monkeypatch, built)
     res = await _mgr().run(_DEV, pool_others=True)
     assert res.status is Status.READY and (_OTHER.vid, _OTHER.pid) in built
+
+
+async def test_connect_returning_false_is_failed_not_pooled(monkeypatch):
+    _queue_builds(monkeypatch, FakeInterface(ok=False))    # driver returns False on a real fault
+    app = FakeApp()
+    res = await _mgr(app).run(_DEV)
+    assert res.status is Status.FAILED
+    assert app.array is None                               # never pooled the dead card
