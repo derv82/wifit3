@@ -265,3 +265,24 @@ async def test_member_lost_while_hopping_repartitions_survivor():
     m2.emit_disconnect(RuntimeError("unplug"))    # -> _member_lost -> re-partition survivor
     await asyncio.sleep(0.05)
     assert len(m1.hop_calls) > before
+
+
+async def test_member_lost_closes_the_dead_card():
+    a = WlanArray()
+    x = FakeIface("wlan0", [6])
+    a.attach(x)                                    # captures the loop for off-thread scheduling
+    x.emit_disconnect(RuntimeError("unplug"))      # RX-reader death path
+    await asyncio.sleep(0.05)                      # let the scheduled close run
+    assert x.closed is True                        # driver closed -> its async tasks stopped
+
+
+async def test_set_channel_logs_a_failing_card_and_tunes_the_rest():
+    class _Boom(FakeIface):
+        async def set_channel(self, ch, scan=False):
+            raise RuntimeError("tune failed")
+
+    good = FakeIface("wlan0", [1, 6, 11])
+    bad = _Boom("wlan1", [1, 6, 11])
+    a = _pool(good, bad)
+    ok = await a.set_channel(6)
+    assert ok is True and good.tuned == [6]        # one card failing doesn't abort the others

@@ -47,6 +47,7 @@ class WlanArray:
         self._hop_interval = 0.5
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._rehop_tasks: Set[asyncio.Task] = set()
+        self._close_tasks: Set[asyncio.Task] = set()   # closing vanished cards; never cancelled
 
     # ----- pool membership ---------------------------------------------------
 
@@ -59,6 +60,11 @@ class WlanArray:
         the picture now), point its TX stats at the sink, register it as a dedupe source, and
         subscribe the array to its raw RX + disconnect."""
         self._members.append(iface)
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_running_loop()   # for scheduling re-hop / close from off-loop later
+            except RuntimeError:
+                pass
         self._dedupe.add_source(iface.name)
         iface.on_tx = self._sink.record_tx
         iface.register_rx_callback(lambda pkt, i=iface: self._ingest(i, pkt))
@@ -93,16 +99,20 @@ class WlanArray:
             await iface.close()
         except Exception:
             logger.exception("pool: close failed during hot_unplug of %s", iface.name)
-        self._member_lost(iface, None)
+        self._member_lost(iface, None, close=False)   # already closed above
 
-    def _member_lost(self, iface: WlanInterface, exc: Optional[Exception]) -> None:
+    def _member_lost(self, iface: WlanInterface, exc: Optional[Exception], *,
+                     close: bool = True) -> None:
         """Drop a member (unplug or disconnect) and re-emit with the surviving card count so a
-        caller can route: 0 -> back to splash, 1+ -> toast and keep running."""
+        caller can route: 0 -> back to splash, 1+ -> toast and keep running. ``close`` shuts the dead
+        card down to stop its async tasks; hot_unplug passes False since it already closed."""
         if iface in self._members:
             self._members.remove(iface)
         self._dedupe.remove_source(iface.name)
         remaining = len(self._members)
         logger.info("pool: lost %s; %d card(s) remain", iface.name, remaining)
+        if close:
+            self._close_lost(iface)   # stop the dead card's async tasks (watchdog / RX / hop)
         if self._hopping and remaining:
             self._repartition()   # survivors re-cover the departed card's channels
         for cb in list(self._disconnect_callbacks):
@@ -202,13 +212,19 @@ class WlanArray:
         return sorted(seen)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """STACK: tune every channel-capable member to ``channel`` (focus/PBC). Members that do not
-        support it, or are already on it, are left alone."""
-        targets = [m for m in self._members
-                   if channel in m.supported_channels and m.current_channel != channel]
-        results = await asyncio.gather(*(m.set_channel(channel, scan=scan) for m in targets),
-                                       return_exceptions=True)
-        return any(r is True for r in results)
+        """STACK: tune every channel-capable member to ``channel`` (focus/PBC), one at a time. A card
+        already on it, or that can't reach it, is skipped; a card that fails to tune is logged and the
+        rest still tune. Returns True if at least one card ended up on ``channel``."""
+        tuned_any = False
+        for m in self._members:
+            if channel not in m.supported_channels or m.current_channel == channel:
+                continue
+            try:
+                if await m.set_channel(channel, scan=scan):
+                    tuned_any = True
+            except Exception:
+                logger.exception("pool: %s failed to tune to channel %d", m.name, channel)
+        return tuned_any
 
     def _partition(self, channels: List[int]) -> dict:
         """SPREAD: give each channel to one capable card, balancing counts, so N cards cover N-way
@@ -251,27 +267,28 @@ class WlanArray:
         await asyncio.gather(*(m.stop_hopping() for m in self._members),
                              return_exceptions=True)
 
-    def _repartition(self) -> None:
-        """Re-run the hop partition for the current membership. Safe from any thread: attach() calls
-        it on the event loop (create the task directly), while the RX-reader disconnect path calls it
-        off the loop, so schedule onto the captured loop."""
+    def _run_on_loop(self, spawn) -> None:
+        """Call ``spawn(loop)`` on the array's event loop — directly when already on it (attach), or
+        via call_soon_threadsafe when not (the RX-reader disconnect path runs off the loop)."""
         loop = self._loop
         if loop is None:
             return
-
-        def _spawn() -> None:
-            task = loop.create_task(self._rehop())
-            self._rehop_tasks.add(task)
-            task.add_done_callback(self._rehop_tasks.discard)
-
         try:
             on_loop = asyncio.get_running_loop() is loop
         except RuntimeError:
             on_loop = False
         if on_loop:
-            _spawn()
+            spawn(loop)
         else:
-            loop.call_soon_threadsafe(_spawn)
+            loop.call_soon_threadsafe(spawn, loop)
+
+    def _repartition(self) -> None:
+        """Re-run the hop partition for the current membership (a card joined or left while hopping)."""
+        def _spawn(loop) -> None:
+            task = loop.create_task(self._rehop())
+            self._rehop_tasks.add(task)
+            task.add_done_callback(self._rehop_tasks.discard)
+        self._run_on_loop(_spawn)
 
     async def _rehop(self) -> None:
         try:
@@ -280,6 +297,22 @@ class WlanArray:
             raise
         except Exception:
             logger.exception("re-hop after membership change failed")
+
+    def _close_lost(self, iface: WlanInterface) -> None:
+        """Stop a vanished card's async tasks (watchdog, RX reader, hop) by closing it. The device is
+        gone, so close() may itself raise doing USB ops on a dead handle — swallow everything. Runs on
+        the array's loop (_member_lost fires off the RX-reader thread)."""
+        async def _close() -> None:
+            try:
+                await iface.close()
+            except Exception:
+                logger.debug("pool: close of lost %s raised (device gone)", iface.name, exc_info=True)
+
+        def _spawn(loop) -> None:
+            task = loop.create_task(_close())
+            self._close_tasks.add(task)
+            task.add_done_callback(self._close_tasks.discard)
+        self._run_on_loop(_spawn)
 
     async def close(self) -> None:
         await asyncio.gather(*(m.close() for m in self._members), return_exceptions=True)
