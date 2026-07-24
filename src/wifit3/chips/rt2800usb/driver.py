@@ -98,9 +98,8 @@ class RT2800USBDriver(Driver):
     """
 
     SUPPORTED_IDS = [
-        DeviceID(USB_VID_RALINK, USB_PID_RT3572,
-                 "Ralink RT3572 (ALFA AWUS051NH v2)",
-                 extras={"chip_id": "rt3572"}),
+        DeviceID(USB_VID_RALINK, USB_PID_RT3572, "RT3572",
+                 product_name="ALFA AWUS051NH v2", extras={"chip_id": "rt3572"}),
         # 148f:5572 (RT5572 / PAU09) is now the standalone chips/rt5572 driver.
     ]
     #     0x3572 silicon (RT3572 / AWUS051NH v2) → 2.4 + 5 GHz non-DFS

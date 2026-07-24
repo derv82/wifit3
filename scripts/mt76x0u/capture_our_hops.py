@@ -53,10 +53,10 @@ from wifit3.chips.driver import DeviceID
 
 def find_device():
     backend = libusb_package.get_libusb1_backend()
-    for vid, pid, desc in USB_IDS_MT76X0U:
+    for vid, pid, chipset, vendor, product in USB_IDS_MT76X0U:
         found = usb.core.find(idVendor=vid, idProduct=pid, backend=backend)
         if found is not None:
-            return found, DeviceID(vid, pid, desc)
+            return found, DeviceID(vid, pid, chipset, vendor, product)
     return None, None
 
 

@@ -485,7 +485,7 @@ def test_build_tx_urb_starts_with_desc():
 def test_driver_claims_nintendo_connector():
     ids = {(d.vid, d.pid) for d in RT2500USBDriver.SUPPORTED_IDS}
     assert (0x0411, 0x008B) in ids
-    assert len(RT2500USBDriver.SUPPORTED_IDS) == 31
+    assert len(RT2500USBDriver.SUPPORTED_IDS) == 29   # 31 kernel rows minus 2 non-RT2570 (BCM4320, ISL3887)
     assert RT2500USBDriver.SUPPORTED_CHANNELS == list(range(1, 15))
 
 

@@ -410,11 +410,11 @@ async def main_async(args):
     backend = libusb_package.get_libusb1_backend()
     dev = None
     id_entry = None
-    for vid, pid, desc in USB_IDS_MT76X0U:
+    for vid, pid, chipset, vendor, product in USB_IDS_MT76X0U:
         found = usb.core.find(idVendor=vid, idProduct=pid, backend=backend)
         if found is not None:
             dev = found
-            id_entry = DeviceID(vid, pid, desc)
+            id_entry = DeviceID(vid, pid, chipset, vendor, product)
             break
     if dev is None:
         print("[FATAL] no MT76x0U device found")

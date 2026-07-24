@@ -34,7 +34,7 @@ class MT7921AUDriver(Driver):
     """
 
     SUPPORTED_IDS = [
-        DeviceID(0x0e8d, 0x7961, "Mediatek MT7921AU (ALFA AWUS036AXML)"),
+        DeviceID(0x0e8d, 0x7961, "MT7921AU", product_name="ALFA AWUS036AXML / Panda PAU0F"),
     ]
     # Dual-band Wi-Fi 6 radio, 20 MHz primary. 2.4 GHz (1-13) + the 5 GHz 20 MHz
     # channels of the world regulatory domain (regdomain.CHANNELS_5GHZ).

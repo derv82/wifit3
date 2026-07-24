@@ -123,16 +123,16 @@ def open_device():
     backend = libusb_package.get_libusb1_backend()
     dev = None
     matched = None
-    for vid, pid, desc in USB_IDS_8814AU:
+    for vid, pid, chipset, vendor, product in USB_IDS_8814AU:
         found = usb.core.find(idVendor=vid, idProduct=pid, backend=backend)
         if found is not None:
-            dev, matched = found, (vid, pid, desc)
+            dev, matched = found, (vid, pid, chipset, vendor, product)
             break
     if dev is None:
         fail(
             "No RTL8814AU device found. Expected one of:\n"
-            + "\n".join(f"    {vid:04x}:{pid:04x}  {desc}"
-                        for vid, pid, desc in USB_IDS_8814AU)
+            + "\n".join(f"    {vid:04x}:{pid:04x}  {chipset}"
+                        for vid, pid, chipset, *_ in USB_IDS_8814AU)
             + "\nPlug it in, confirm Zadig bound it to WinUSB, and retry."
         )
     print(f"  Found {matched[0]:04x}:{matched[1]:04x}  {matched[2]}")

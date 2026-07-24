@@ -90,7 +90,8 @@ class MT76x2UDriver(Driver):
     """
 
     SUPPORTED_IDS = [
-        DeviceID(vid, pid, desc) for (vid, pid, desc) in USB_IDS_MT76X2U
+        DeviceID(vid, pid, chipset, vendor, product)
+        for (vid, pid, chipset, vendor, product) in USB_IDS_MT76X2U
     ]
     # 2.4 GHz channels 1..13 + non-DFS 5 GHz (UNII-1 + UNII-3).
     # DFS bands (52..144) are PHY-capable on this chip but require radar

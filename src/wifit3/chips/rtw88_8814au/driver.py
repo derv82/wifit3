@@ -58,7 +58,8 @@ class RTL8814AUDriver(Driver):
     """Driver for Realtek RTL8814AU (Alfa AWUS1900, 4T4R). M1: FW upload only."""
 
     SUPPORTED_IDS = [
-        DeviceID(vid, pid, desc) for (vid, pid, desc) in USB_IDS_8814AU
+        DeviceID(vid, pid, chipset, vendor, product)
+        for (vid, pid, chipset, vendor, product) in USB_IDS_8814AU
     ]
     # 2.4 GHz 1..13 + non-DFS 5 GHz. Channel tune lands in M3; this advertises
     # the chip's reach for when WlanInterface.start_hopping consumes it.

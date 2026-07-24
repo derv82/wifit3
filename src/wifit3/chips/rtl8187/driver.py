@@ -67,7 +67,7 @@ class RTL8187Driver(Driver):
     """
 
     SUPPORTED_IDS = [
-        DeviceID(USB_VID_REALTEK, USB_PID_RTL8187, "Realtek RTL8187L (ALFA AWUS036H)"),
+        DeviceID(USB_VID_REALTEK, USB_PID_RTL8187, "RTL8187L", product_name="ALFA AWUS036H"),
     ]
     # 2.4 GHz channels 1..13. Channel 14 is JP-only and the chip supports
     # it (rtl818x_channels[13].center_freq=2484) but we leave it off the

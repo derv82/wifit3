@@ -59,22 +59,22 @@ def fail(msg: str) -> None:
 
 def open_device():
     backend = libusb_package.get_libusb1_backend()
-    matched: tuple[int, int, str] | None = None
+    matched: DeviceID | None = None
     dev = None
-    for vid, pid, desc in USB_IDS_MT76X2U:
+    for vid, pid, chipset, vendor, product in USB_IDS_MT76X2U:
         found = usb.core.find(idVendor=vid, idProduct=pid, backend=backend)
         if found is not None:
             dev = found
-            matched = (vid, pid, desc)
+            matched = DeviceID(vid, pid, chipset, vendor, product)
             break
     if dev is None:
         fail(
             "No supported MT76x2U device found on USB bus. "
             "Expected one of: "
-            + ", ".join(f"{v:04x}:{p:04x}" for v, p, _ in USB_IDS_MT76X2U)
+            + ", ".join(f"{v:04x}:{p:04x}" for v, p, *_ in USB_IDS_MT76X2U)
         )
-    print(f"[*] Matched device: {matched[2]} ({matched[0]:04x}:{matched[1]:04x})")
-    return dev, DeviceID(matched[0], matched[1], matched[2])
+    print(f"[*] Matched device: {matched.description} ({matched.vid:04x}:{matched.pid:04x})")
+    return dev, matched
 
 
 def progress(pct: float, msg: str) -> None:

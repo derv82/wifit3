@@ -13,6 +13,51 @@ from wifit3.wlan.bringup import Status
 
 logger = logging.getLogger(__name__)
 
+# Suffix appended to a chipset name when 2+ of the same chip are present, so a multi-card
+# list doesn't read as a wall of identical names. Flip the glyph here (e.g. "_{n}", "·{n}").
+_DUP_SUFFIX = " #{n}"
+# A left buffer so chipset names don't butt against the list edge. Widen here for more indent.
+_LEFT_MARGIN = " "
+
+
+def _alpha_head(chipset: str) -> str:
+    """The leading non-digit run of a chipset name (``"RTL"`` of ``"RTL8812AU"``)."""
+    i = 0
+    while i < len(chipset) and not chipset[i].isdigit():
+        i += 1
+    return chipset[:i]
+
+
+def device_list_labels(devices) -> list:
+    """One Splash interface-list label per device: ``chipset[ #n] · vendor product``. Two-axis
+    alignment keeps a multi-card list scannable: the alpha prefix (RTL/MT/RT/AR) is left-padded so
+    the model digits line up, and the chipset column is right-padded so the ``·`` separators line
+    up. ``#n`` shows only when 2+ cards share a chipset; the ``·`` tail only when a brand is known.
+    Alignment is relative to the cards present now, so it re-flows on plug/unplug."""
+    if not devices:
+        return []
+    chip_counts: dict = {}
+    for d in devices:
+        chip_counts[d.chipset] = chip_counts.get(d.chipset, 0) + 1
+
+    prefix_w = max(len(_alpha_head(d.chipset)) for d in devices)
+    seen: dict = {}
+    heads = []
+    for dev in devices:
+        seen[dev.chipset] = seen.get(dev.chipset, 0) + 1
+        head = " " * (prefix_w - len(_alpha_head(dev.chipset))) + dev.chipset
+        if chip_counts[dev.chipset] > 1:
+            head += _DUP_SUFFIX.format(n=seen[dev.chipset])
+        heads.append(head)
+    head_w = max(len(h) for h in heads)
+
+    labels = []
+    for dev, head in zip(devices, heads):
+        brand = " ".join(x for x in (dev.vendor, dev.product_name) if x)
+        body = f"{head.ljust(head_w)} · {brand}" if brand else head
+        labels.append(_LEFT_MARGIN + body)
+    return labels
+
 
 def load_logo() -> Text:
     """Load the ANSI logo from assets."""
@@ -94,8 +139,8 @@ class SplashView(Screen):
         self._devices = devices
         list_view = self.query_one("#device-list", ListView)
         list_view.clear()
-        for i, dev in enumerate(devices):
-            list_view.append(ListItem(Label(dev.description), name=str(i)))
+        for i, label in enumerate(device_list_labels(devices)):
+            list_view.append(ListItem(Label(label), name=str(i)))
 
         status = self.query_one("#status-label", Label)
         start_btn = self.query_one("#start-btn", Button)

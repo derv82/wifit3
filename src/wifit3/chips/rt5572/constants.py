@@ -18,7 +18,7 @@ from __future__ import annotations
 # ----------------------------------------------------------------------
 USB_VID_RALINK = 0x148F
 USB_PID_RT3572 = 0x3572  # ALFA AWUS051NH v2          (silicon: RT3572)
-USB_PID_RT5372 = 0x5372  # Panda PAU05                (silicon: RT5390)
+USB_PID_RT5372 = 0x5372  # Panda PAU05/PAU06          (silicon: RT5392)
 USB_PID_RT5572 = 0x5572  # Panda PAU09 N600           (silicon: RT5592)
 
 # ----------------------------------------------------------------------

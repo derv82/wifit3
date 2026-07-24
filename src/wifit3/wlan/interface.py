@@ -42,10 +42,14 @@ class WlanInterface:
     ``WlanArray``, which owns the 802.11 picture and elects this card for attacks."""
     def __init__(self, driver_instance: Any, name: str, description: str,
                  vid: Optional[int] = None, pid: Optional[int] = None,
-                 dev: Any = None):
+                 dev: Any = None, chipset: Optional[str] = None,
+                 vendor: Optional[str] = None, product_name: Optional[str] = None):
         self.driver = driver_instance
         self.name = name
         self.description = description
+        self.chipset = chipset
+        self.vendor = vendor
+        self.product_name = product_name
         self.vid = vid
         self.pid = pid
         self.dev = dev

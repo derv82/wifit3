@@ -72,7 +72,8 @@ class RT2500USBDriver(Driver):
     """Driver for the Ralink RT2570 (rt2500usb family)."""
 
     SUPPORTED_IDS = [
-        DeviceID(vid, pid, desc) for (vid, pid, desc) in RT2500USB_DEVICE_TABLE
+        DeviceID(vid, pid, chipset, vendor, product)
+        for (vid, pid, chipset, vendor, product) in RT2500USB_DEVICE_TABLE
     ]
     # 2.4 GHz channels 1-14 — the band every RT2500 RF chip tunes (RF5222 also
     # has 5 GHz rows, but this driver is 2.4 GHz-only; see chan.RF_VALS_5222).

@@ -588,7 +588,7 @@ class SetupLinux(Setup):
 
         # Copy is the user's exact wording; do not paraphrase it.
         from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
-        chip = device_id.description.split("(")[0].strip()
+        chip = device_id.chipset
         confirmed = await ui.ask(ConfirmInstallDialog(
             chip,
             title="Wifit3 needs complete control of your wireless card",
@@ -634,7 +634,7 @@ class SetupLinux(Setup):
 
     async def uninstall(self, device_id: DeviceID, ui: Prompter) -> SetupResult:
         target = target_for_vidpid(device_id.vid, device_id.pid)
-        name = device_id.description.split("(")[0].strip()
+        name = device_id.chipset
         if target is None:
             return SetupResult(ok=False, message="This card isn't a supported chipset.")
         plan = await asyncio.to_thread(plan_uninstall, target)

@@ -166,7 +166,9 @@ def build_interface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanIn
                          entry.vid, entry.pid, driver_cls.__name__, e)
             return None
         return WlanInterface(driver, name, entry.description,
-                             vid=entry.vid, pid=entry.pid, dev=dev)
+                             vid=entry.vid, pid=entry.pid, dev=dev,
+                             chipset=entry.chipset, vendor=entry.vendor,
+                             product_name=entry.product_name)
     return None
 
 
@@ -183,7 +185,9 @@ def build_interfaces() -> List[WlanInterface]:
                          entry.vid, entry.pid, driver_cls.__name__, e)
             continue
         out.append(WlanInterface(driver, f"wlan{len(out)}", entry.description,
-                                 vid=entry.vid, pid=entry.pid, dev=dev))
+                                 vid=entry.vid, pid=entry.pid, dev=dev,
+                                 chipset=entry.chipset, vendor=entry.vendor,
+                                 product_name=entry.product_name))
     return out
 
 

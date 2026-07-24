@@ -65,10 +65,10 @@ def ssid_of(mpdu: bytes) -> str:
 
 def open_device():
     backend = libusb_package.get_libusb1_backend()
-    for vid, pid, desc in USB_IDS_8822BU:
+    for vid, pid, chipset, *_ in USB_IDS_8822BU:
         dev = usb.core.find(idVendor=vid, idProduct=pid, backend=backend)
         if dev is not None:
-            print(f"  Found {vid:04x}:{pid:04x}  {desc}")
+            print(f"  Found {vid:04x}:{pid:04x}  {chipset}")
             try:
                 if dev.is_kernel_driver_active(0):
                     dev.detach_kernel_driver(0)

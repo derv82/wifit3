@@ -27,13 +27,33 @@ class FakeMacSupport(enum.Enum):
     SPOOFABLE = "spoofable"           # ACKs an arbitrary forged MAC
 
 
+_SILICON = {"RTL": "Realtek", "MT": "MediaTek", "RT": "Ralink", "AR": "Atheros"}  # RTL before RT
+
+
 @dataclass(frozen=True)
 class DeviceID:
-    """One VID:PID a driver claims. ``extras`` carries driver-specific construction hints."""
+    """One VID:PID a driver claims. ``chipset`` is the bare silicon (e.g. ``"RTL8812AU"``);
+    ``vendor`` is the retail brand when the VID:PID names one unambiguously (else None, pending an
+    OUI read); ``product_name`` is the bare model, with the brand inlined when ``vendor`` is None.
+    ``extras`` carries driver-specific construction hints."""
     vid: int
     pid: int
-    description: str
+    chipset: str
+    vendor: Optional[str] = None
+    product_name: Optional[str] = None
     extras: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def silicon_vendor(self) -> str:
+        """The chip maker, derived from the chipset prefix (Realtek/MediaTek/Ralink/Atheros)."""
+        return next(v for p, v in _SILICON.items() if self.chipset.startswith(p))
+
+    @property
+    def description(self) -> str:
+        """Human label ``"CHIPSET (brand model)"`` (or just ``"CHIPSET"``). Back-compat shim for
+        the call sites that render a device as one string."""
+        brand = " ".join(x for x in (self.vendor, self.product_name) if x)
+        return f"{self.chipset} ({brand})" if brand else self.chipset
 
 
 class Driver(ABC):

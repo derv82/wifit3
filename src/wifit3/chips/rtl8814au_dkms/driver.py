@@ -77,8 +77,8 @@ def _detect_super_speed(transport: Rtl8814auTransport) -> bool:
 
 class Rtl8814auDkmsDriver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(VID_REALTEK, PID_RTL8814AU,
-                 "Realtek RTL8814AU (DKMS) (ALFA AWUS1900)"),
+        DeviceID(VID_REALTEK, PID_RTL8814AU, "RTL8814AU",
+                 product_name="ALFA AWUS1900"),
     ]
     # 2.4 GHz + 5 GHz, 20 MHz primary (M5a band switch / M5b select / M5c runtime / M5d TX
     # power) — both bands tune with correct per-rate TX power for RX and inject. Non-DFS 5 GHz

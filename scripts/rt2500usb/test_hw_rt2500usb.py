@@ -148,7 +148,8 @@ def open_device():
     # Try the Nintendo connector first, then the rest of the table.
     candidates = [(USB_VID_MELCO, USB_PID_NINTENDO_WIFI,
                    "Buffalo Nintendo Wi-Fi USB Connector")]
-    candidates += [(v, p, d) for (v, p, d) in RT2500USB_DEVICE_TABLE
+    candidates += [(v, p, product or chipset)
+                   for (v, p, chipset, vendor, product) in RT2500USB_DEVICE_TABLE
                    if (v, p) != (USB_VID_MELCO, USB_PID_NINTENDO_WIFI)]
 
     for vid, pid, label in candidates:

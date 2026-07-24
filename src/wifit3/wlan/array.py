@@ -84,7 +84,9 @@ class WlanArray:
         name = f"wlan{self._name_counter}"
         self._name_counter += 1
         iface = WlanInterface(driver, name, id_entry.description,
-                              vid=id_entry.vid, pid=id_entry.pid, dev=dev)
+                              vid=id_entry.vid, pid=id_entry.pid, dev=dev,
+                              chipset=id_entry.chipset, vendor=id_entry.vendor,
+                              product_name=id_entry.product_name)
         if connect and not await iface.connect():
             raise RuntimeError(f"{id_entry.description}: connect returned False")
         return self.attach(iface)

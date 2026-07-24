@@ -42,7 +42,7 @@ _SCAN_START_CHANNEL = 1            # first channel tuned at connect
 
 class RT5372Driver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(_VID_RALINK, _PID_RT5372, "Ralink RT5372/RT5392 (Panda PAU05+06)"),
+        DeviceID(_VID_RALINK, _PID_RT5372, "RT5372", product_name="Panda PAU05 / PAU06"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))   # 2.4 GHz, 20 MHz
     FAKE_MAC = FakeMacSupport.SPOOFABLE

@@ -57,16 +57,17 @@ class ConfirmInstallDialog(ModalScreen[bool]):
     ConfirmInstallDialog #button-row Button { margin: 0 2; }
     """
 
-    def __init__(self, description: str, *, title: str = _DEFAULT_TITLE,
+    def __init__(self, description: str, *, chipset: str | None = None,
+                 title: str = _DEFAULT_TITLE,
                  link_label: str = "WinUSB Driver", warning: str = _DEFAULT_WARNING,
                  verb: str = "Install WinUSB for", confirm_label: str = "Install",
                  also: str = "") -> None:
         super().__init__()
         self._full = description
         self._also = also          # appended inside the question's bold (e.g. " (+ 119 cards)")
-        # Short name for the diagram box (the chipset, before the "(Make Model)" suffix, capped so
-        # a long name doesn't blow out the box width).
-        self._short = description.split("(")[0].strip()[:18]
+        # Short name for the diagram box (the chipset, capped so a long name doesn't blow out the
+        # box width). Prefer the structured chipset; fall back to the description's head.
+        self._short = (chipset or description.split("(")[0].strip())[:18]
         self._pulse_i = 0
         self._title = title
         self._link_label = link_label   # middle (REQUIRED) box: "WinUSB Driver" / "udev + modprobe"

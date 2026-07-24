@@ -66,7 +66,7 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
         dev=None, connect=driver.connect, close=AsyncMock())
     monkeypatch.setattr(bringup, "build_interface", lambda device_id, name="wlan0": iface)
     monkeypatch.setattr(bringup, "find_devices", lambda: [])
-    dev = DeviceID(0x0BDA, 0x8187, "RTL8187L (test)")
+    dev = DeviceID(0x0BDA, 0x8187, "RTL8187L", product_name="test")
 
     app = WifiteApp()
     async with app.run_test() as pilot:
@@ -88,8 +88,8 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
         assert toasts, "a bring-up failure should raise a toast"
         args, kwargs = toasts[-1]
         assert kwargs.get("severity") == "error"
-        # The engine trims the " (...)" suffix off the description, so the toast names the bare
-        # chipset ("RTL8187L"), not the full "RTL8187L (test)".
+        # The engine labels the fault by device_id.chipset ("RTL8187L"), so the toast names the
+        # bare chipset, not the full "RTL8187L (test)".
         assert "RTL8187L" in args[0] and "(test)" not in args[0] and "bring-up failed" in args[0]
 
         # The core fix: a device refresh rewrites the status line; confirm it leaves the error alone.

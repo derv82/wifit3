@@ -13,21 +13,21 @@ All register addresses and vendor request codes were derived from
 # [SRC] data_dumps/mt76-source-v6.18/mt76x2/usb.c:12
 # ---------------------------------------------------------------------------
 USB_IDS_MT76X2U = [
-    (0x0b05, 0x1833, "MT7612U (Asus USB-AC54)"),
-    (0x0b05, 0x17eb, "MT7612U (Asus USB-AC55)"),
-    (0x0b05, 0x180b, "MT7612U (Asus USB-N53 B1)"),
-    (0x0e8d, 0x7612, "MT7612U (Alfa AWUS036ACM)"),
-    (0x057c, 0x8503, "MT7612U (AVM FRITZ!WLAN AC860)"),
-    (0x7392, 0xb711, "MT7612U (Edimax EW-7722UAC)"),
-    (0x0e8d, 0x7632, "MT7662U (HC-M7662BU1)"),
-    (0x0471, 0x2126, "MT7612U (LiteOn WN4516R)"),
-    (0x0471, 0x7600, "MT7612U (LiteOn WN4519R)"),
-    (0x2c4e, 0x0103, "MT7612U (Mercury UD13)"),
-    (0x0846, 0x9014, "MT7612U (Netgear WNDA3100v3)"),
-    (0x0846, 0x9053, "MT7612U (Netgear A6210)"),
-    (0x045e, 0x02e6, "MT7612U (Xbox One Wireless Adapter)"),
-    (0x045e, 0x02fe, "MT7612U (Xbox One Wireless Adapter)"),
-    (0x2357, 0x0137, "MT7612U (TP-Link TL-WDN6200)"),
+    (0x0b05, 0x1833, "MT7612U", "ASUS", "USB-AC54"),
+    (0x0b05, 0x17eb, "MT7612U", "ASUS", "USB-AC55"),
+    (0x0b05, 0x180b, "MT7612U", "ASUS", "USB-N53 B1"),
+    (0x0e8d, 0x7612, "MT7612U", None, "ALFA AWUS036ACM / Aukey USB-AC1200"),
+    (0x057c, 0x8503, "MT7612U", "AVM", "FRITZ!WLAN AC860"),
+    (0x7392, 0xb711, "MT7612U", "Edimax", "EW-7722UAC"),
+    (0x0e8d, 0x7632, "MT7662U", None, "HC-M7662BU1"),
+    (0x0471, 0x2126, "MT7612U", "LiteOn", "WN4516R"),
+    (0x0471, 0x7600, "MT7612U", "LiteOn", "WN4519R"),
+    (0x2c4e, 0x0103, "MT7612U", "Mercury", "UD13"),
+    (0x0846, 0x9014, "MT7632U", "Netgear", "WNDA3100v3"),
+    (0x0846, 0x9053, "MT7612U", "Netgear", "A6210"),
+    (0x045e, 0x02e6, "MT7612U", "Microsoft", "Xbox One Wireless Adapter"),
+    (0x045e, 0x02fe, "MT7612U", "Microsoft", "Xbox One Wireless Adapter"),
+    (0x2357, 0x0137, "MT7612U", "TP-Link", "TL-WDN6200"),
 ]
 
 # ---------------------------------------------------------------------------

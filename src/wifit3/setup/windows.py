@@ -477,7 +477,7 @@ class SetupWindows(Setup):
 
     async def install(self, device_id: DeviceID, ui: Prompter) -> bool:
         from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
-        if not await ui.ask(ConfirmInstallDialog(device_id.description)):
+        if not await ui.ask(ConfirmInstallDialog(device_id.description, chipset=device_id.chipset)):
             return False
 
         ui.status(f"Installing WinUSB driver for {device_id.description}… (up to a minute)")
@@ -507,7 +507,7 @@ class SetupWindows(Setup):
 
     async def uninstall(self, device_id: DeviceID, ui: Prompter) -> SetupResult:
         from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
-        name = device_id.description.split("(")[0].strip()
+        name = device_id.chipset
         if await ui.ask(ConfirmUninstallDialog(name, "win")) is None:
             return SetupResult(ok=False, cancelled=True, message="Uninstall cancelled.")
         ui.status(f"Removing wifit3 driver for {device_id.description}…")

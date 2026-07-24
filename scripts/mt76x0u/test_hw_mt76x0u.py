@@ -75,14 +75,15 @@ def info(msg: str) -> None:
 
 def open_device():
     backend = libusb_package.get_libusb1_backend()
-    for vid, pid, desc in USB_IDS_MT76X0U:
+    for vid, pid, chipset, vendor, product in USB_IDS_MT76X0U:
         found = usb.core.find(idVendor=vid, idProduct=pid, backend=backend)
         if found is not None:
-            print(f"[*] Matched device: {desc} ({vid:04x}:{pid:04x})")
-            return found, DeviceID(vid, pid, desc)
+            entry = DeviceID(vid, pid, chipset, vendor, product)
+            print(f"[*] Matched device: {entry.description} ({vid:04x}:{pid:04x})")
+            return found, entry
     fail(
         "No supported MT76x0U device found. Expected one of: "
-        + ", ".join(f"{v:04x}:{p:04x}" for v, p, _ in USB_IDS_MT76X0U)
+        + ", ".join(f"{v:04x}:{p:04x}" for v, p, *_ in USB_IDS_MT76X0U)
     )
 
 

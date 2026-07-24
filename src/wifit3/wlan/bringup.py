@@ -156,5 +156,5 @@ class BringupManager:
 
     @staticmethod
     def _fault_message(device_id, e: BringUpError) -> str:
-        chip = device_id.description.split(" (")[0]
+        chip = device_id.chipset
         return f"{chip}: {e.stage} failed" + (f": {e.detail}" if e.detail else "")
