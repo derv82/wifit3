@@ -61,7 +61,7 @@ async def test_hotplug_prompt_yes_pools_the_card(monkeypatch):
                 break
         assert isinstance(app.screen, NewDeviceDialog)
 
-        await pilot.click("#btn-yes")
+        app.screen.dismiss(True)          # user presses Yes (the button->dismiss wiring is in test_new_device)
         for _ in range(40):
             await pilot.pause()
             if app.array is not None and app.array.members:
