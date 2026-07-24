@@ -49,14 +49,26 @@ def main():
 
     print("=== Device ===")
     print(f"  bus {dev.bus}  address {dev.address}")
-    print(f"  bcdUSB     0x{dev.bcdUSB:04x}")
+    print(f"  idVendor   0x{dev.idVendor:04x}")
+    print(f"  idProduct  0x{dev.idProduct:04x}")
+    print(f"  bcdDevice  0x{dev.bcdDevice:04x}   <-- device release number (the 2-byte field)")
+    print(f"  bcdUSB     0x{dev.bcdUSB:04x}   (port-dependent, not a model id)")
     speed = getattr(dev, "speed", None)
-    print(f"  speed      {speed}  ({SPEED_NAMES.get(speed, 'unknown')})")
-    try:
-        print(f"  manufact.  {usb.util.get_string(dev, dev.iManufacturer)}")
-        print(f"  product    {usb.util.get_string(dev, dev.iProduct)}")
-    except Exception as e:
-        print(f"  (string descriptors unreadable: {e})")
+    print(f"  speed      {speed}  ({SPEED_NAMES.get(speed, 'unknown')})  (port-dependent)")
+    print(f"  bDeviceClass    0x{dev.bDeviceClass:02x}  subclass 0x{dev.bDeviceSubClass:02x}  "
+          f"proto 0x{dev.bDeviceProtocol:02x}")
+
+    def safe_str(idx):
+        if not idx:
+            return f"(no string, index {idx})"
+        try:
+            return repr(usb.util.get_string(dev, idx))
+        except Exception as e:
+            return f"(unreadable: {type(e).__name__}: {e})"
+
+    print(f"  iManufacturer[{dev.iManufacturer}]  {safe_str(dev.iManufacturer)}")
+    print(f"  iProduct[{dev.iProduct}]       {safe_str(dev.iProduct)}")
+    print(f"  iSerialNumber[{dev.iSerialNumber}]  {safe_str(dev.iSerialNumber)}")
 
     print("\n=== Configurations / Interfaces / Endpoints ===")
     try:
