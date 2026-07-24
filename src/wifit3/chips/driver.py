@@ -82,6 +82,11 @@ class Driver(ABC):
     mac_address: Optional[str]
     """The card's own MAC address, or None before it is read."""
 
+    product_name: Optional[str] = None
+    """The card's exact retail model. Defaults to None; a driver that can tell same-VID:PID variants
+    apart by OUI (mt7921au: AXML vs PAU0F) seeds it from its DeviceID and narrows it during bring-up.
+    The UI reads this in preference to the static SUPPORTED_IDS name; None means 'use that name'."""
+
     is_warm: bool
     """True if the chip was found already initialised (cold bring-up skipped)."""
 

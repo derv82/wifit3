@@ -20,6 +20,7 @@ from textual.widgets import Static
 from ...ansi_art import make_black_transparent
 
 _ASSETS = Path(__file__).parent.parent.parent / "assets"
+_GENERIC = "focus-card.ans"        # fallback card art when no per-card art resolves
 _LED = (0, 128, 0)                 # dark green = the animation target
 
 # Hybrid LED levels (green channel, 0-255). Idle is a *dim* breathe band so the
@@ -32,7 +33,12 @@ _FLICKER_GREEN = 255
 
 @lru_cache(maxsize=None)
 def _load(name: str) -> Text:
-    return Text.from_ansi((_ASSETS / name).read_text(encoding="utf-8"))
+    try:
+        raw = (_ASSETS / name).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        # A map entry pointing at a not-yet-drawn .ans must never crash the screen.
+        raw = (_ASSETS / _GENERIC).read_text(encoding="utf-8")
+    return Text.from_ansi(raw)
 
 
 def art_size(name: str) -> tuple[int, int]:
@@ -142,3 +148,93 @@ class BreathingArt(Static):
     def _repaint(self) -> None:
         green = _FLICKER_GREEN if self._blink == "on" else _breathe_green(self._phase)
         self.update(_paint(self._name, green))
+
+    def set_art(self, name: str) -> None:
+        """Swap which .ans this widget shows: the card art follows the selected/primary card. No-op
+        when unchanged; re-pins the box (art may differ in size) and repaints now rather than
+        waiting up to a frame for the next tick."""
+        if name == self._name:
+            return
+        self._name = name
+        w, h = art_size(name)
+        self.styles.width = w
+        self.styles.height = h
+        self._repaint()
+
+
+# --- Card art selection -----------------------------------------------------
+# Per-card art lives in assets/cards/. It's picked by the product_name the driver reports (mt7921au
+# refines AXML vs PAU0F by OUI; every other card uses its static SUPPORTED_IDS name), falling back
+# to a per-chipset default, then the generic focus-card art. Renaming a product_name, a chipset, or
+# an .ans breaks these maps by design (a UI-only string->string coupling, kept next to the art).
+_ART_BY_PRODUCT: dict[str, str] = {
+    "ALFA AWUS036ACH": "cards/card-awus036ach.ans",
+    "ALFA AWUS036ACS": "cards/card-awus036acs.ans",
+    "ALFA AWUS036AXML": "cards/card-awus036axml.ans",
+    "Panda PAU0F": "cards/card-pau0f.ans",
+    "ALFA AWUS036AXML / Panda PAU0F": "cards/card-pau0f.ans",   # OUI unresolved -> default PAU0F
+    "ALFA AWUS036H": "cards/card-awus036h.ans",
+    "ALFA AWUS036NH": "cards/card-awus036nh.ans",
+    "ALFA AWUS036NHA": "cards/card-awus036nha.ans",
+    "ALFA AWUS1900": "cards/card-awus1900.ans",
+    "Archer T3U Plus": "cards/card-archert3uplus.ans",
+    "Panda PAU05 / PAU06": "cards/card-pau06.ans",
+    "Panda PAU09 N600": "cards/card-pau09n600.ans",
+    "TL-WN722N v2/v3": "cards/card-tpwn722nv23.ans",
+}
+# For the four non-Realtek rows below this IS the art (they carry no product_name); RTL8821CU's
+# Archer T3U Plus product row usually resolves first, so its chipset default is a rarely-hit spare.
+_ART_BY_CHIPSET: dict[str, str] = {
+    "RTL8821CU": "cards/card-auscomer600.ans",
+    "RT2570": "cards/card-buffalonintendo.ans",
+    "RT5370": "cards/card-lotekoo150.ans",
+    "MT7610U": "cards/card-awus036achm.ans",
+    "MT7612U": "cards/card-awus036acm.ans",
+}
+
+
+@lru_cache(maxsize=None)
+def _exists(name: str) -> bool:
+    return (_ASSETS / name).is_file()
+
+
+def _card_art(iface) -> str | None:
+    """The per-card .ans for one interface (product then chipset), or None if it has no art file."""
+    name = getattr(getattr(iface, "driver", None), "product_name", None) or getattr(iface, "product_name", None)
+    for cand in (_ART_BY_PRODUCT.get(name or ""), _ART_BY_CHIPSET.get(getattr(iface, "chipset", None) or "")):
+        if cand and _exists(cand):
+            return cand
+    return None
+
+
+def art_path_for(iface) -> str:
+    """The .ans filename to show for a card: product_name -> chipset -> generic."""
+    return _card_art(iface) or _GENERIC
+
+
+def pick_primary(members):
+    """The pool member whose art the card endpoint shows: the first with real per-card art, else the
+    first member (order doesn't matter for the pick, only that one is chosen)."""
+    for iface in members:
+        if _card_art(iface):
+            return iface
+    return members[0] if members else None
+
+
+def pool_art(members) -> str:
+    """The .ans for the whole pool: the primary's art, or the generic when the pool is empty."""
+    primary = pick_primary(members)
+    return art_path_for(primary) if primary is not None else _GENERIC
+
+
+def card_label(members) -> str:
+    """Label under the card art: the shown card's product_name (fallback chipset), with a ``+N``
+    suffix counting the other pooled cards. ``"no card"`` when the pool is empty."""
+    primary = pick_primary(members)
+    if primary is None:
+        return "no card"
+    name = (getattr(getattr(primary, "driver", None), "product_name", None)
+            or getattr(primary, "product_name", None)
+            or getattr(primary, "chipset", None) or "card")
+    extra = len(members) - 1
+    return f"{name} +{extra}" if extra > 0 else name

@@ -58,7 +58,9 @@ class MT7921AUDriver(Driver):
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "MT7921AUDriver":
-        return cls(dev)
+        drv = cls(dev)
+        drv.product_name = id_entry.product_name   # the Splash/SUPPORTED_IDS label; connect() narrows by OUI
+        return drv
 
     def __init__(self, dev):
         super().__init__()   # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
@@ -128,6 +130,26 @@ class MT7921AUDriver(Driver):
         logger.info("MT7921AU warm-check: MT_CONN_ON_MISC=0x%x", misc)
         return (misc & MT_TOP_MISC2_FW_N9_RDY) != 0
 
+    @staticmethod
+    def derive_product_name(mac: Optional[str]) -> Optional[str]:
+        """AXML and PAU0F ship as one VID:PID; the burned-in OUI is the only tell.
+        (ALFA 00:c0:ca:ba:4e:91, Panda 9c:ef:d5:f6:44:a4.) None when the MAC is unknown."""
+        if not mac:
+            return None
+        oui = mac[:8].lower()
+        if oui == "00:c0:ca":
+            return "ALFA AWUS036AXML"
+        if oui == "9c:ef:d5":
+            return "Panda PAU0F"
+        return None
+
+    def _refine_product_name(self) -> None:
+        """Narrow product_name past the shared SUPPORTED_IDS default once the MAC is read. A MAC we
+        can't place (unknown OUI, or None on a query miss) leaves the default untouched."""
+        refined = self.derive_product_name(self.mac_address)
+        if refined:
+            self.product_name = refined
+
     async def _cold_boot(self, progress_cb: Optional[ProgressCallback]) -> bool:
         """Full bring-up of a cold chip: firmware upload, post-boot device init,
         monitor entry. The RX reader is started by load_firmware."""
@@ -143,6 +165,7 @@ class MT7921AUDriver(Driver):
         self._init_state = await chip_init.post_boot_init(self.transport)
         caps = self._init_state.caps
         self.mac_address = caps.mac
+        self._refine_product_name()
         self._antenna_mask = caps.antenna_mask
         self._nic_has_6ghz = int(caps.has_6ghz)
         self._log_nic_caps(caps)
@@ -209,6 +232,7 @@ class MT7921AUDriver(Driver):
             caps = mcu.parse_nic_capability(resp or b"")
             if caps.mac:
                 self.mac_address = caps.mac
+                self._refine_product_name()
                 self._antenna_mask = caps.antenna_mask
                 self._nic_has_6ghz = int(caps.has_6ghz)
                 self._log_nic_caps(caps)

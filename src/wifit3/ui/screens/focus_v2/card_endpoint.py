@@ -17,6 +17,7 @@ class CardEndpoint(Vertical):
         super().__init__(**kwargs)
         self._snap = snap
         self._last_dynamic: str | None = None      # last-pushed dynamic line; skip no-op repaints
+        self._last: dict[str, str] = {}            # last-pushed identity label values; skip no-op repaints
 
     def compose(self) -> ComposeResult:
         yield BreathingArt("focus-card.ans", classes="endpoint-art")
@@ -43,6 +44,26 @@ class CardEndpoint(Vertical):
         dyn = self.query_one("#card-dynamic", Label)
         dyn.update(snap.card_dynamic)
         dyn.display = bool(snap.card_dynamic)
+
+    def update_identity(self, label: str, bssid: str | None) -> None:
+        """Re-apply the card's identity (product label + own BSSID) when it changes. The pool can
+        change under us (plug/unplug) while Focus is open, so identity can't be a compose-once value.
+        The BSSID line shows only for a single card (a multi-card pool has no single MAC)."""
+        self._push("#card-chipset", label)
+        if self._push("#card-bssid", bssid or ""):
+            self.query_one("#card-bssid", Label).display = bool(bssid)
+
+    def set_art(self, name: str) -> None:
+        """Point the card art at ``name`` (BreathingArt.set_art no-ops when unchanged)."""
+        self.query_one(BreathingArt).set_art(name)
+
+    def _push(self, sel: str, value: str) -> bool:
+        """Update a label only when its value changed; return whether it changed."""
+        if self._last.get(sel) == value:
+            return False
+        self._last[sel] = value
+        self.query_one(sel, Label).update(value)
+        return True
 
     def flicker(self) -> None:
         """Pulse the card LED. The screen calls this when we TX a frame."""

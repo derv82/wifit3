@@ -135,6 +135,11 @@ class WlanInterface:
         parts = type(self.driver).__module__.split(".")
         return parts[-2] if len(parts) >= 2 else parts[-1]
 
+    @property
+    def mac_address(self) -> Optional[str]:
+        """The card's own MAC (the driver reads it during bring-up), or None before connect()."""
+        return getattr(self.driver, "mac_address", None)
+
     def active_monitor_warning(self) -> Optional[str]:
         """Treelog warning (rich markup) if this card can't HW-ACK a spoofed MAC, else None."""
         support = self.driver.FAKE_MAC

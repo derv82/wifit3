@@ -55,6 +55,7 @@ from .clients_list import ClientsList
 from .packet_dashboard import PacketDashboard
 from .log_band import LogBand
 from .router_endpoint import RouterEndpoint
+from . import art
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +260,15 @@ class FocusViewV2(Screen):
         btn.variant = state.variant
         btn.tooltip = state.reason or None
 
+    def _sync_card(self) -> None:
+        """Refresh the card endpoint's label + art from the live pool. Polled from the tick because
+        WlanArray has no arrival callback: a plug/unplug is only observed by re-reading members."""
+        members = self.app.array.members if self.app.array else []
+        card = self.query_one("#card", CardEndpoint)
+        card.update_identity(art.card_label(members),
+                             members[0].mac_address if len(members) == 1 else None)
+        card.set_art(art.pool_art(members))
+
     def _refresh_buttons(self) -> None:
         """Drive the conditional attack buttons from derive_buttons."""
         ap = getattr(self.app, "target_ap", None)
@@ -303,6 +313,7 @@ class FocusViewV2(Screen):
         self._snap = snap
         self.query_one("#dashboard", PacketDashboard).reconfigure(snap.dashboard, array, ap.bssid)
         self.query_one("#card", CardEndpoint).update_dynamic(snap)
+        self._sync_card()
         self.query_one("#router", RouterEndpoint).update_dynamic(snap)
         self.query_one("#status", Static).update(self._render_status(snap.status))
         self.query_one("#clients", ClientsList).sync(snap.clients)
@@ -422,6 +433,7 @@ class FocusViewV2(Screen):
             self._last_status = snap.status
             self.query_one("#status", Static).update(self._render_status(snap.status))
         self.query_one("#card", CardEndpoint).update_dynamic(snap)
+        self._sync_card()
         self.query_one("#router", RouterEndpoint).update_dynamic(snap)
         clients = self.query_one("#clients", ClientsList)
         clients.sync(snap.clients)
