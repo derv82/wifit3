@@ -57,21 +57,28 @@ class BringupManager:
         self.prompter = prompter
         self._name_counter = 0
 
-    async def run(self, device_id) -> BringupResult:
+    async def run(self, device_id, *, bail_at_permissions: bool = False,
+                  pool_others: bool = True) -> BringupResult:
         """Bring ``device_id`` up (installing setup if the card can't be opened yet) and pool it.
-        Shows the progress modal for the whole flow."""
+        Shows the progress modal for the whole flow. ``bail_at_permissions`` returns a FAILED result
+        instead of running setup when the card needs it (mid-session Windows, where a WinUSB install
+        is disruptive). ``pool_others`` also brings up every other ready card (Splash START); a
+        hotplug passes False so only the confirmed card comes up."""
         await self.prompter.open(f"Bringing up {device_id.description}…")
         try:
-            return await self._run(device_id)
+            return await self._run(device_id, bail_at_permissions=bail_at_permissions,
+                                   pool_others=pool_others)
         finally:
             self.prompter.close()
 
-    async def _run(self, device_id) -> BringupResult:
+    async def _run(self, device_id, *, bail_at_permissions: bool, pool_others: bool) -> BringupResult:
         try:
-            await self._connect_and_pool(device_id)
+            await self._connect_and_pool(device_id, pool_others=pool_others)
             return BringupResult.ready()
         except BringUpPermissionsError:
-            pass                                          # fixable: fall through to setup
+            if bail_at_permissions:
+                return BringupResult.failed("Installation required. START it from the main menu.")
+            # else fixable: fall through to setup
         except BringUpError as e:
             return BringupResult.failed(self._fault_message(device_id, e))
 
@@ -79,7 +86,7 @@ class BringupManager:
             return BringupResult.cancelled()              # declined or failed (setup already reported)
 
         try:
-            await self._connect_and_pool(device_id)
+            await self._connect_and_pool(device_id, pool_others=pool_others)
             return BringupResult.ready()
         except BringUpError as e:
             return BringupResult.failed(self._fault_message(device_id, e))
@@ -93,7 +100,7 @@ class BringupManager:
         finally:
             self.prompter.close()
 
-    async def _connect_and_pool(self, device_id) -> None:
+    async def _connect_and_pool(self, device_id, *, pool_others: bool = True) -> None:
         iface = build_interface(device_id, name=self._next_name())
         if iface is None:
             raise BringUpError("discover", "card not present")
@@ -107,7 +114,8 @@ class BringupManager:
                 pass
             raise
         self._ensure_array().attach(iface)
-        await self._pool_ready_others(exclude=device_id)
+        if pool_others:
+            await self._pool_ready_others(exclude=device_id)
 
     def _ensure_array(self) -> WlanArray:
         if self.app.array is None:

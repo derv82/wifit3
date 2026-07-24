@@ -161,3 +161,39 @@ async def test_modal_closed_even_on_failure(monkeypatch):
 async def test_uninstall_delegates_to_setup(monkeypatch):
     res = await _mgr().uninstall(_DEV)
     assert isinstance(res, SetupResult) and res.ok and res.message == "removed"
+
+
+_OTHER = DeviceID(0x148F, 0x5370, "RT5370")
+
+
+def _stub_build_recording(monkeypatch, built):
+    def _build(device_id, name="wlan0"):
+        built.append((device_id.vid, device_id.pid))
+        iface = FakeInterface(ok=True)
+        iface.name, iface.vid, iface.pid = name, device_id.vid, device_id.pid
+        iface.description = device_id.description
+        return iface
+    monkeypatch.setattr(bringup, "build_interface", _build)
+    monkeypatch.setattr(bringup, "find_devices", lambda: [_DEV, _OTHER])
+
+
+async def test_bail_at_permissions_skips_setup(monkeypatch):
+    _queue_builds(monkeypatch, FakeInterface(exc=BringUpPermissionsError("open", "no winusb")))
+    setup = FakeSetup(install=True)
+    res = await _mgr(setup=setup).run(_DEV, bail_at_permissions=True)
+    assert res.status is Status.FAILED and "Installation required" in res.message
+    assert setup.installed == 0
+
+
+async def test_pool_others_false_builds_only_the_confirmed_card(monkeypatch):
+    built = []
+    _stub_build_recording(monkeypatch, built)
+    res = await _mgr().run(_DEV, pool_others=False)
+    assert res.status is Status.READY and built == [(_DEV.vid, _DEV.pid)]
+
+
+async def test_pool_others_true_also_builds_the_other(monkeypatch):
+    built = []
+    _stub_build_recording(monkeypatch, built)
+    res = await _mgr().run(_DEV, pool_others=True)
+    assert res.status is Status.READY and (_OTHER.vid, _OTHER.pid) in built
