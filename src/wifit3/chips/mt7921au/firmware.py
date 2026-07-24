@@ -14,6 +14,8 @@ import usb.core
 import usb.util
 from pathlib import Path
 
+from wifit3.errors import BringUpError, is_permission_error
+
 from .transport import MT7921AUTransport
 # Star-imports the chip's register/PHY constants; the names resolve at runtime
 # but ruff can't see them statically, so suppress the import-* lints file-wide.
@@ -56,6 +58,10 @@ class MT7921AUFirmwareLoader:
                             self.transport.clear_halt(ep)
                     return intf.bInterfaceNumber
         except Exception as e:
+            # A permission failure (no udev access / node not writable) must NOT be swallowed: it
+            # means the card needs setup, and the engine offers the install when it propagates.
+            if is_permission_error(e):
+                raise
             logger.debug(f"vendor-interface claim: {e}")
         return None
 
@@ -86,6 +92,9 @@ class MT7921AUFirmwareLoader:
         try:
             chip_id = self.transport.read_reg32(MT_CHIP_ID_ADDR)
         except usb.core.USBError as e:
+            if is_permission_error(e):
+                # Not warm/wedged: we lack access to the node. Propagate so the engine offers setup.
+                raise BringUpError("permissions", str(e)) from e
             logger.error(
                 f"Chip-id read failed ({e}). The control endpoint is unresponsive — "
                 "the chip is warm or wedged from a prior boot, which userland cannot "
