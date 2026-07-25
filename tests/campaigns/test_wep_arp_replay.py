@@ -92,12 +92,12 @@ def _replay(mocker, collector, **kw):
     iface.send_raw = _send
     iface.send_no_wait = _send
     r = WepArpReplay(iface, ap, collector, **kw)
-    # Instant cycles for logic tests: a tiny burst (rate is now a per-window
-    # packet COUNT) + a zero-length window (no 1s wait). start() re-reads
-    # _PO_START_PPS, so override it too. P&O's own logic is tested directly.
+    # Instant cycles for logic tests: a tiny per-window inject count + a zero-length window (no
+    # wait). start() re-seeds the target from _CTRL_START, so override that too. The controller's
+    # own logic is tested directly below.
     r._WINDOW_S = 0.0
-    r._rate = 4
-    r._PO_START_PPS = 4
+    r._target = 4
+    r._CTRL_START = 4
     return r
 
 
@@ -246,46 +246,67 @@ async def test_pause_resume(mocker):
     r.stop()
 
 
-# ---- P&O rate controller (per-1s-window) -----------------------------------
-# Drive _maybe_adjust_rate directly: set the last window's IVs/s + prev, call it.
+# ---- climb-with-peak-memory rate controller --------------------------------
+# Drive _maybe_adjust_rate directly: set state=replaying + this window's echo rate, call it.
+# Setting _echo_ewma == _last_echo_rate makes the internal EWMA an identity, so asserts are exact.
 
 
-def _po_setup(mocker, rate=100.0, step=32.0, prev=50.0):
+def _ctrl_setup(mocker, target=100.0, best_echo=50.0, best_target=100.0, echo=100.0):
     r = _replay(mocker, FakeCollector({0xAA: 5}, [GOOD]))
     r.state = "replaying"
-    r._rate = rate
-    r._rate_step = step
-    r._po_prev_ivs_s = prev
+    r._ctrl_climbing = True
+    r._ctrl_misses = 0
+    r._target = target
+    r._best_echo = best_echo
+    r._best_target = best_target
+    r._echo_ewma = echo          # == last, so the EWMA update is an identity
+    r._last_echo_rate = echo
     return r
 
 
-def test_po_keeps_direction_when_ivs_improve(mocker):
-    r = _po_setup(mocker, rate=100.0, step=32.0, prev=50.0)
-    r._ivs_ewma = 60.0             # smoothed 60 > prev 50 → improved
+def test_ctrl_climbs_when_echo_improves(mocker):
+    r = _ctrl_setup(mocker, target=100.0, best_echo=50.0, echo=100.0)
     r._maybe_adjust_rate()
-    assert r._rate_step == 32.0     # same direction
-    assert r._rate == 132.0
+    assert r._best_echo == 100.0 and r._best_target == 100.0   # new peak remembered
+    assert r._target == 125.0                                  # 100 * _CTRL_GROW, keep climbing
+    assert r._ctrl_climbing
 
 
-def test_po_reverses_when_ivs_drop(mocker):
-    r = _po_setup(mocker, rate=100.0, step=32.0, prev=50.0)
-    r._ivs_ewma = 30.0            # smoothed 30 < 50 (beyond deadband) → worse
+def test_ctrl_settles_back_after_two_bad_windows(mocker):
+    # Climbed past the peak; echoes dropped. One bad window is tolerated (relay lag); the second
+    # snaps back to best_target and stops climbing.
+    r = _ctrl_setup(mocker, target=156.0, best_echo=100.0, best_target=100.0, echo=60.0)
     r._maybe_adjust_rate()
-    assert r._rate_step == -32.0    # reversed
-    assert r._rate == 68.0
+    assert r._ctrl_climbing and r._ctrl_misses == 1            # one lagged window tolerated
+    r._echo_ewma = r._last_echo_rate = 60.0
+    r._maybe_adjust_rate()
+    assert not r._ctrl_climbing
+    assert r._target == 100.0                                  # settled back to the remembered peak
 
 
-def test_po_holds_and_resets_baseline_when_not_replaying(mocker):
-    r = _po_setup(mocker)
+def test_ctrl_holds_then_reprobes(mocker):
+    r = _ctrl_setup(mocker, target=100.0, best_echo=100.0, best_target=100.0, echo=100.0)
+    r._ctrl_climbing = False
+    r._ctrl_since_probe = r._CTRL_REPROBE_WINDOWS - 1
+    r._maybe_adjust_rate()
+    assert r._ctrl_climbing and r._ctrl_since_probe == 0       # re-probe kicked in
+
+
+def test_ctrl_below_ceiling_climbs_toward_all_gas(mocker):
+    # Echoes keep rising with the target (below the AP's relay ceiling): the target grows every
+    # window -> drives toward all-gas rather than settling low (the naive pace-to-echo failure).
+    r = _ctrl_setup(mocker, target=100.0, best_echo=0.0, echo=100.0)
+    seen = []
+    for _ in range(4):
+        r._maybe_adjust_rate()
+        seen.append(r._target)
+        r._echo_ewma = r._last_echo_rate = r._echo_ewma * 1.5   # echoes keep improving
+    assert seen == sorted(seen) and seen[-1] > seen[0]         # monotonically climbing
+    assert r._ctrl_climbing
+
+
+def test_ctrl_ignored_when_not_replaying(mocker):
+    r = _ctrl_setup(mocker, target=100.0)
     r.state = "testing"
     r._maybe_adjust_rate()
-    assert r._rate == 100.0          # unchanged while not replaying
-    assert r._po_prev_ivs_s == -1.0  # baseline reset for the next replay run
-    assert r._ivs_ewma == -1.0       # smoothing reset too
-
-
-def test_po_clamps_to_max(mocker):
-    r = _po_setup(mocker, rate=985.0, step=32.0, prev=50.0)
-    r._ivs_ewma = 80.0            # improving → keeps +step → 1017, clamped
-    r._maybe_adjust_rate()
-    assert r._rate == r._PO_MAX_PPS
+    assert r._target == 100.0                                  # untouched while not replaying
