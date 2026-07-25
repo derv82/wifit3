@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from wifit3.campaigns.auth_assoc import Association, WlanTransport, str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from wifit3.campaigns.wps.registrar import PinResult, WpsRegistrar
+from wifit3.wlan.array import WlanArray
 from wifit3.wlan.discovery import build_interfaces, close_interfaces
 
 
@@ -117,16 +118,20 @@ async def discover_iface(debug: bool, card: str = ""):
     info(f"Using {iface.name}: {iface.description}")
     if not await iface.connect(progress_cb=lambda p, m: None):
         fail("Driver connect() failed. Replug and retry.")
-    return ifaces, iface
+    # get_access_points() lives on the WlanArray (the sink/registry) now, not the interface. Pool
+    # the connected card so find_ap() and the WpsCampaign see the AP registry the app builds.
+    array = WlanArray()
+    array.attach(iface)
+    return ifaces, iface, array
 
 
-async def find_ap(iface, channel: int, bssid: str | None, ssid: str | None, scan_s: float):
+async def find_ap(iface, array, channel: int, bssid: str | None, ssid: str | None, scan_s: float):
     step(f"Park on channel {channel}, find the AP")
     if not await iface.set_channel(channel):
         fail(f"set_channel({channel}) failed.")
     deadline = time.time() + scan_s
     while time.time() < deadline:
-        for ap in iface.get_access_points():
+        for ap in array.get_access_points():
             if bssid and ap.bssid.lower() != bssid.lower():
                 continue
             if ssid and (ap.ssid or "") != ssid:
@@ -189,12 +194,12 @@ async def main_async(args) -> int:
     if not known_pin:
         fail("No PIN to try (give --pin or populate data_dumps/wps_pin.txt).")
 
-    ifaces, iface = await discover_iface(args.debug)
+    ifaces, iface, array = await discover_iface(args.debug)
     capture: list = []
     iface.register_rx_callback(lambda pkt: capture.append((time.monotonic(), pkt.raw)))
     our_mac = bytes([0x02, 0xAA, 0xBB]) + struct.pack(">I", int(time.time()))[1:]
     try:
-        found_ap = await find_ap(iface, channel, bssid, ssid, args.scan_secs)
+        found_ap = await find_ap(iface, array, channel, bssid, ssid, args.scan_secs)
 
         if args.campaign:
             from types import SimpleNamespace
@@ -203,7 +208,7 @@ async def main_async(args) -> int:
             target = found_ap or SimpleNamespace(bssid=bssid, ssid=ssid,
                                                  channel=channel, wps_locked=False)
             step(f"Run full WpsCampaign (up to {args.max_secs:.0f}s)")
-            camp = WpsCampaign(iface, target, log=lambda m: print(f"    {m}"))
+            camp = WpsCampaign(array, target, log=lambda m: print(f"    {m}"))
             camp.start()
             end = time.time() + args.max_secs
             while time.time() < end and camp.status in ("idle", "running", "paused", "locked"):

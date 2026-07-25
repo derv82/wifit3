@@ -305,7 +305,7 @@ async def mode_timing(iface, tgt, args, tap=None):
     return rows
 
 
-async def mode_campaign(iface, tgt, args):
+async def mode_campaign(iface, array, tgt, args):
     """Drive the REAL WpsCampaign from a seeded near-answer state, end-to-end validation
     of the refactored campaign (auto-ACK off, no one-shot, resend) cracking a live AP."""
     import json as _json
@@ -333,7 +333,7 @@ async def mode_campaign(iface, tgt, args):
                              wps_locked=False)
     print(f"\n=== CAMPAIGN from seed (first_half={args.seed_first_half}, p2_index={args.seed_p2}), "
           f"up to {args.max_secs:.0f}s ===")
-    camp = WpsCampaign(iface, target, state_dir=tmp, log=lambda m: print(f"    {m}"))
+    camp = WpsCampaign(array, target, state_dir=tmp, log=lambda m: print(f"    {m}"))
     camp.run()
     end = time.monotonic() + args.max_secs
     while time.monotonic() < end and camp.status in ("idle", "running", "paused", "locked"):
@@ -357,11 +357,11 @@ async def main_async(args) -> int:
         return 2
     tgt = {"bssid": bssid, "ssid": args.ssid or d.get("ssid", ""),
            "channel": args.channel or int(d.get("channel", "1")), "pin": args.pin or d.get("pin")}
-    _mgr, iface = await discover_iface(args.debug, args.card)
-    await find_ap(iface, tgt["channel"], bssid, tgt["ssid"], args.scan_secs)
+    ifaces, iface, array = await discover_iface(args.debug, args.card)
+    await find_ap(iface, array, tgt["channel"], bssid, tgt["ssid"], args.scan_secs)
     tap = sniffer = None
     if args.sniffer_card:
-        sniffer = next((i for i in _mgr.interfaces
+        sniffer = next((i for i in ifaces
                         if args.sniffer_card.lower() in f"{i.name} {i.description}".lower()
                         and i is not iface), None)
         if sniffer is None:
@@ -379,7 +379,7 @@ async def main_async(args) -> int:
         if args.mode == "timing":
             await mode_timing(iface, tgt, args, tap)
         elif args.mode == "campaign":
-            await mode_campaign(iface, tgt, args)
+            await mode_campaign(iface, array, tgt, args)
     finally:
         await iface.close()
         if sniffer is not None:
