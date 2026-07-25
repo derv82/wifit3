@@ -96,6 +96,27 @@ confirms the card auto-ACKs the AP: **us→AP ACKs ~8/attempt** (AP→us ~6–12
 
 ---
 
+### RTL8812AU  (rtl8812audkms) — ALFA AWUS036ACH  · also THE sniffer card
+*2.4 + 5 GHz · swept 2026-07-24 — no-replug rows only; RX/Port pending baseline flip*
+
+**ACKs** — confirms the existing ✅ (keyed on Addr2, SPOOFABLE); matches ACK-DRIVER-REDESIGN.md.
+- auto-ACK (rx_autoack, n=100, prober=mt7921): spoofed AM-on SPOOFABLE, silicon yes, controls 0. Absolute
+  count inflated (~1400) — the mt7921 prober retransmits each inject ~14× and the 8812 ACKs every copy;
+  verdict robust, count is a prober artifact (see note).
+- stop-on-ACK (tx_retries, n=100, sniffer=mt7921): AM-off real AP median **1** (stops on ACK without active
+  monitor — keys on Addr2), dead target ~49. Matches table (real AP 1, dead ~41).
+
+**WPS**: 3/3 to M7 (from the 2026-07-24 script-validation run, no sniffer) — confirms ✅. Not re-run (budget).
+
+**RX / Baseline A/B**: PENDING — needs the linux-bound flip.
+
+**Methodology note (applies to every card's ACK rows):** use a Realtek/Atheros (stop-on-Addr2) card as the
+ACK-lab prober/sniffer, not a MediaTek/Ralink. A MediaTek prober (mt7921) retries each inject to its
+~14-copy limit, inflating the rx_autoack ACK count ~14× (verdict unaffected). The 8812 as sniffer gives
+clean 1-copy-per-ACK counts — which is why it's the designated sniffer.
+
+---
+
 <!-- PER-CARD TEMPLATE — copy one block per swept card, fill, drop the comment markers.
 
 ### <CHIPSET>  (<driver-slug>)
