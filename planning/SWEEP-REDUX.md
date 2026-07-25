@@ -69,6 +69,24 @@ RTL8814AU (AWUS1900). Validated the diag/lab scripts on hardware before the real
 
 ---
 
+### 2026-07-24 — 8812 linux reference: the DKMS `8812au` (our port source) won't build on kernel 6.19
+
+The 8812's linux baseline uses **mainline `rtw88_8812au`** (labeled `rtl8812au_mainline`), NOT the exact
+DKMS `8812au` from `usb_dumps_new/captures_8812au/driver-source/` we ported from. Tried to dkms-install
+the latter (matches how 8814au/8821cu are installed here); it won't compile on kernel 6.19.14. Three
+blockers diagnosed — build attempted only in `/usr/src`, then **rolled back cleanly** (mainline restored,
+blocklist conf removed, no bricking):
+1. `EXTRA_CFLAGS` (deprecated; Kbuild ≥6.13 ignores it) → the `-I…/include` path is silently dropped.
+   Fix: `sed 's/EXTRA_CFLAGS/ccflags-y/g' Makefile` (409 lines; matches the 8814au Makefile that builds).
+2. Removed timer API (≥6.15/6.16): `del_timer` / `del_timer_sync` / `from_timer` — 24 errors. Needs a
+   compat shim (the building 8814au 5.8.5.1 source has one to port).
+3. Missing header `halrf/halrf_psd.h` — 5 errors; a PSD feature references an absent file.
+Consequence: the 8812 Port A/B is vs mainline — valid for beacon-RATE (the headline metric) but breadth
+is understated (mainline rtw88 monitor is partial: ch1 779 frames vs mt7921u's 4000). For the exact-port
+reference, either patch the source (fixes 1–3) or use a newer morrownr release. Flagged, not blocking.
+
+---
+
 ### MT7921AU  (mt7921au) — ALFA AWUS036AXML
 *2.4 + 5 GHz 802.11ax · swept 2026-07-24 — no-replug rows only; RX/Port pending baseline flip*
 
