@@ -54,7 +54,7 @@ async def run(args) -> int:
         await close_interfaces(ifaces)
         return 1
 
-    chip = _chip(iface)
+    chip = args.chip or _chip(iface)
     health = Health(chip, "wifit3")
     cur_channel = {"ch": 0}
 
@@ -105,6 +105,9 @@ def main() -> int:
     p.add_argument("--secs", type=float, default=15.0, help="Dwell seconds per channel.")
     p.add_argument("--card", default="",
                    help="substring of the adapter to bring up (e.g. 8812, mt7921); default: first found.")
+    p.add_argument("--chip", default=None,
+                   help="output slug override (default: derived from the driver). Use a suffix like "
+                        "mt7921au_axml to keep same-chipset cards' baselines from clobbering each other.")
     add_reference_args(p)
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
