@@ -69,6 +69,33 @@ RTL8814AU (AWUS1900). Validated the diag/lab scripts on hardware before the real
 
 ---
 
+### MT7921AU  (mt7921au) — ALFA AWUS036AXML
+*2.4 + 5 GHz 802.11ax · swept 2026-07-24 — no-replug rows only; RX/Port pending baseline flip*
+
+**ACKs** — both axes match ACK-DRIVER-REDESIGN.md; the `❌` in VERIFICATION is **stale** (predates the
+FAKE_MAC / active-monitor work).
+- auto-ACK (rx_autoack, n=100, ch1): spoofed AM-on **99/100**, AM-off 0, own-silicon 0, bogus 0 →
+  SPOOFABLE (auto-ACKs a *spoofed* MAC via active monitor, not its silicon MAC). Matches table (2G 102/0/0/0).
+- stop-on-ACK (tx_retries, n=100, ch1): AM-off real AP median **15** (ignores the AP's 1125 ACKs), AM-on
+  median **1**; dead target ~14 both ways → needs active monitor. Matches table (2G 13→1, dead ~13).
+
+**WPS** (wps_lab timing, campaign-faithful `--auto-ack --ack-resend --ack-resends 1`, n=5, test router ch1):
+assoc **5/5**, reached M5 **5/5**, M7 **5/5**, 0 timeouts. M7 arrival med **2602 ms** (min 2557, max 4086 —
+the max is attempt#0 with a 1582 ms cold-bring-up assoc; steady state ~2560–2630 ms). Sniffer (8812)
+confirms the card auto-ACKs the AP: **us→AP ACKs ~8/attempt** (AP→us ~6–12). Clean — NOT the
+"chatty/fragile, no HW-ACK" the chip doc still describes.
+
+**RX / Baseline A/B**: PENDING — needs the linux-bound flip (baseline-linux) then baseline-wifit3.
+
+**Proposed grade/doc changes (need your approval — I don't edit VERIFICATION/chip-doc unprompted):**
+- VERIFICATION `ACKs ❌ → ✅` (or `⚠️` "spoofed MAC only, active-monitor-gated; not silicon MAC"). Grade B may lift.
+- WPS is clean (5/5 M7) — supports the existing ✅ and contradicts the chip doc's WPS caveat.
+- MT7921AU.md Gotchas "auto-ACK unimplemented" + "WPS chatty/fragile, no HW-ACK" are stale — worth a
+  dated debug-log entry / Gotcha correction.
+- Bring-up carries the +10 s Linux clear-halt delay (already logged in the chip doc).
+
+---
+
 <!-- PER-CARD TEMPLATE — copy one block per swept card, fill, drop the comment markers.
 
 ### <CHIPSET>  (<driver-slug>)
