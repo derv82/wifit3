@@ -219,10 +219,10 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | **Grade** | **A** | 2026-07-25 | Best-in-batch RX + faithful dual-band port, full attack suite. |
 | RX | ✅ | 2026-07-06 | ref2g 8.6/8.9 (97%), ref5g 9.3/9.6 (97%); breadth 112/52 (best 2.4, matches); RSSI −1.4 dB. |
 | Port | ✅ | 2026-07-06 | Matches mt76 both bands. |
-| TX | ✅ | 2026-06-12 | Live deauth dropped client. |
-| Handshake | ✅ | 2026-06-12 | Deauth → 4-way (28 EAPOL, M1–M4). |
-| PMKID | ✅ | 2026-07-25 | Active extract (auto-ACK works). |
-| WEP | ✅ | 2026-06-12 | ChopChop + ARP replay ~350 IVs/s. |
+| TX | ✅ | 2026-07-25 | Inject 2.4 + 5 GHz. |
+| Handshake | ✅ | 2026-07-25 | Deauth → 4-way (M1–M4). |
+| PMKID | ✅ | 2026-07-25 | Passive capture + active extract. |
+| WEP | ✅ | 2026-07-25 | ChopChop + ARP replay ~220 IVs/s. |
 | WPS | ✅ | 2026-07-24 | PIN → M7 (5/5, auto-ACK). |
 | ACKs | ✅ | 2026-07-24 | Auto-ACK forged MAC via active monitor (spoofed MAC). |
 | Stress | ✅ | 2026-06-19 | 30-min 38-ch dual-band soak, flat. |
