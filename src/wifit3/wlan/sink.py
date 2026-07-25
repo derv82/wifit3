@@ -54,6 +54,11 @@ def _bssid_byte_diff(a: str, b: str) -> int:
     return sum(1 for x, y in zip(pa, pb) if x != y)
 
 
+def _fmt_frame(tag: str, ftype: str, src, dest, bssid) -> str:
+    """One consistent line for a captured 802.11 frame."""
+    return f"[{tag}] {ftype:<9} {src} → {dest}  (bssid {bssid})"
+
+
 class WlanSink:
     """The deduplicated 802.11 picture across all cards in a session."""
 
@@ -88,6 +93,13 @@ class WlanSink:
         beacon carries no channel of its own."""
         frame_type = pkt.type
         bssid = pkt.bssid
+
+        if (
+            frame_type in ("data", "eapol", "wep_data", "assoc_resp", "reassoc_resp",
+                           "deauth", "disassoc")
+            or frame_type.startswith("mgmt_")
+        ) and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("%s", _fmt_frame("RXFRAME", frame_type, pkt.source, pkt.dest, bssid))
 
         if not bssid or bssid == "Unknown" or bssid == "ff:ff:ff:ff:ff:ff":
             return
@@ -406,6 +418,9 @@ class WlanSink:
             parsed = WlanFrameParser.parse_80211_frame(frame_bytes, 0)
             if parsed is None:
                 return
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("%s", _fmt_frame("TXFRAME", parsed.type,
+                                              parsed.source, parsed.dest, parsed.bssid))
             bssid = parsed.bssid
             if bssid and bssid not in ("Unknown", "ff:ff:ff:ff:ff:ff"):
                 self.packet_stats.record_tx(bssid, parsed.type == "deauth")
