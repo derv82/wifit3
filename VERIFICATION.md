@@ -27,7 +27,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5572](#rt5572) | ✅ | ⚠️ | ✅ | ✅ | ✅ | B |
-| [MT7921AU](#mt7921au) | ✅ | ✅ | ❌ | ✅ | ✅ | B |
+| [MT7921AU](#mt7921au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ❌ | ✅ | ✅ | C |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ⬜ | ⚠️ | D |
@@ -214,23 +214,17 @@ live in each chip's `<CHIP>.md` (linked under its table).
 ### MT7921AU
 *ALFA AWUS036AXML / Panda PAU0F · 2.4 / 5 GHz*
 
-> **No active-monitor / auto-ACK.** The mt76 driver we ported doesn't appear to support
-> Active Monitor Mode, so the card won't auto-ACK frames addressed to its MAC. That makes
-> conversational attacks (PMKID and WPS) chatty and prone to timeout/failure. Corroborated
-> upstream: [openwrt/mt76#839](https://github.com/openwrt/mt76/issues/839) ·
-> [morrownr/USB-WiFi#107](https://github.com/morrownr/USB-WiFi/issues/107).
-
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **80% (B)** | 2026-07-06 | Best-in-batch RX + faithful port; capped by no-auto-ACK (conversational attacks). |
+| **Grade** | **A** | 2026-07-25 | Best-in-batch RX + faithful dual-band port, full attack suite. |
 | RX | ✅ | 2026-07-06 | ref2g 8.6/8.9 (97%), ref5g 9.3/9.6 (97%); breadth 112/52 (best 2.4, matches); RSSI −1.4 dB. |
 | Port | ✅ | 2026-07-06 | Matches mt76 both bands. |
 | TX | ✅ | 2026-06-12 | Live deauth dropped client. |
 | Handshake | ✅ | 2026-06-12 | Deauth → 4-way (28 EAPOL, M1–M4). |
-| PMKID | ⚠️ | 2026-06-23 | Auto-ACKing not supported. |
+| PMKID | ✅ | 2026-07-25 | Active extract (auto-ACK works). |
 | WEP | ✅ | 2026-06-12 | ChopChop + ARP replay ~350 IVs/s. |
-| WPS | ⚠️ | 2026-06-23 | Auto-ACKing not supported. |
-| ACKs | ❌ | 2026-06-23 | mt76 has no active-monitor auto-ACK (see note above). |
+| WPS | ✅ | 2026-07-24 | PIN → M7 (5/5, auto-ACK). |
+| ACKs | ✅ | 2026-07-24 | Auto-ACK forged MAC via active monitor (spoofed MAC). |
 | Stress | ✅ | 2026-06-19 | 30-min 38-ch dual-band soak, flat. |
 
 → [MT7921AU.md](src/wifit3/chips/mt7921au/MT7921AU.md)
