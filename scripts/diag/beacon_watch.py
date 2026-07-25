@@ -35,6 +35,9 @@ from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
+sys.path.insert(0, str(_HERE))
+
+from _diaglib import pick_interface  # noqa: E402
 
 from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
 
@@ -158,6 +161,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="(live mode) Watch window in seconds (default: 15).")
     p.add_argument("--bssid", type=str, default=None,
                    help="Report this BSSID instead of the best-heard one.")
+    p.add_argument("--card", type=str, default="",
+                   help="(live mode) substring of the adapter to bring up; default: first found.")
     p.add_argument("--no-dig", action="store_true",
                    help="(live mode) Disable the driver's DIG/AGC watchdog before connect "
                         "(no-op for drivers without one), isolates its RX effect.")
@@ -178,10 +183,10 @@ async def run_live(args) -> int:
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
-    if len(ifaces) > 1:
-        print(f"[!] {len(ifaces)} interfaces, using {ifaces[0].name}. "
-              "Unplug others to test in isolation.", file=sys.stderr)
-    iface = ifaces[0]
+    iface = pick_interface(ifaces, getattr(args, "card", ""))
+    if iface is None:
+        await close_interfaces(ifaces)
+        return 1
 
     def _progress(pct: float, msg: str) -> None:
         print(f"  [{int(pct * 100):3d}%] {msg}", file=sys.stderr)

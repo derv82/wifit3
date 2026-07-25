@@ -33,6 +33,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE))
 
+from _diaglib import pick_interface  # noqa: E402
 from probes import ALL_PROBES  # noqa: E402
 from report import write_csv, write_markdown  # noqa: E402
 
@@ -72,6 +73,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--debug", action="store_true",
         help="Enable DEBUG-level logging.",
+    )
+    parser.add_argument(
+        "--card", default="",
+        help="substring of the adapter to bring up (e.g. 8812, mt7921); default: first found.",
     )
     # Every probe contributes:
     #  * a ``--skip-<probe.name>`` flag (skip_<sanitised_name>)
@@ -127,13 +132,10 @@ async def main() -> int:
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
-    if len(ifaces) > 1:
-        print(
-            f"[!] Found {len(ifaces)} interfaces, using {ifaces[0].name}. "
-            "Unplug others to test in isolation.",
-            file=sys.stderr,
-        )
-    iface = ifaces[0]
+    iface = pick_interface(ifaces, args.card)
+    if iface is None:
+        await close_interfaces(ifaces)
+        return 1
     print(f"[+] Selected {iface.name}: {iface.description}", file=sys.stderr)
 
     try:

@@ -19,7 +19,8 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE))
 
-from driver_health import Health  # noqa: E402
+from _diaglib import add_reference_args, load_reference_aps, pick_interface, ref_bssids  # noqa: E402
+from driver_health import Health, diff  # noqa: E402
 
 from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
 
@@ -34,9 +35,10 @@ async def run(args) -> int:
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
-    iface = ifaces[0]
-    if len(ifaces) > 1:
-        print(f"[!] {len(ifaces)} interfaces, using {iface.name}; unplug others.", file=sys.stderr)
+    iface = pick_interface(ifaces, args.card)
+    if iface is None:
+        await close_interfaces(ifaces)
+        return 1
 
     def _progress(pct: float, msg: str) -> None:
         print(f"  [{int(pct * 100):3d}%] {msg}", file=sys.stderr)
@@ -83,8 +85,17 @@ async def run(args) -> int:
     finally:
         await close_interfaces(ifaces)
 
-    health.to_json(_HERE / f"wifit3-{chip}.json")
-    print(f"[*] next: baseline-linux.py --chip {chip} (--capture or --pcap)", file=sys.stderr)
+    wifit3_json = _HERE / f"wifit3-{chip}.json"
+    health.to_json(wifit3_json)
+    # A/B diff fires from whichever side runs second. In the settled sweep order (linux first,
+    # wifit3 second) the diff would otherwise never print, since only baseline-linux used to call
+    # it. Pin the reference AP(s) so the beacon-rate line doesn't drift to a transient AP.
+    linux_json = _HERE / f"linux-{chip}.json"
+    if linux_json.exists():
+        diff(wifit3_json, linux_json, ref_bssids=ref_bssids(load_reference_aps(args)) or None)
+    else:
+        print(f"[*] no {linux_json.name} yet - run baseline-linux.py --chip {chip} "
+              f"(--capture or --pcap) for the A/B.", file=sys.stderr)
     return 0
 
 
@@ -92,6 +103,9 @@ def main() -> int:
     p = argparse.ArgumentParser(description="wifit3-side card health baseline.")
     p.add_argument("--channels", default=None, help="Comma-separated; default SUPPORTED_CHANNELS.")
     p.add_argument("--secs", type=float, default=15.0, help="Dwell seconds per channel.")
+    p.add_argument("--card", default="",
+                   help="substring of the adapter to bring up (e.g. 8812, mt7921); default: first found.")
+    add_reference_args(p)
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
     if args.debug:

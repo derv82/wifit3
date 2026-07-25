@@ -33,6 +33,9 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE))
 
+from _diaglib import (  # noqa: E402
+    add_reference_args, load_reference_aps, pick_kernel_iface, ref_bssids, ref_channels,
+)
 from driver_health import Health, diff  # noqa: E402
 
 from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
@@ -173,22 +176,36 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Linux-side card health baseline.")
     p.add_argument("--chip", required=True, help="Chip slug for the output filename.")
     p.add_argument("--capture", action="store_true", help="Capture live (Kali, root).")
-    p.add_argument("--iface", default="wlan0",
-                   help="BASE interface (capture mode); airmon-ng brings it to monitor.")
+    p.add_argument("--iface", default="",
+                   help="BASE interface (capture mode); airmon-ng brings it to monitor. "
+                        "Default: auto-detect the sole wireless netdev (or use --card).")
+    p.add_argument("--card", default="",
+                   help="substring of the kernel iface/driver to pick (e.g. rtl, mt), when more "
+                        "than one wireless netdev is present.")
     p.add_argument("--no-airmon", action="store_true",
                    help="Skip the airmon-ng dance; use --iface as an existing monitor iface "
                         "(NOT recommended: the A/B must match how the capture started the driver).")
-    p.add_argument("--channels", default="1,6,11", help="Channels (capture mode).")
+    p.add_argument("--channels", default=None,
+                   help="Channels (capture mode). Default: the reference-AP channels, else 1,6,11.")
     p.add_argument("--secs", type=int, default=15, help="Seconds per channel (capture mode).")
     p.add_argument("--pcap", nargs="+", default=[], metavar="CH=FILE",
                    help="Parse mode: one channel=pcap per channel.")
+    add_reference_args(p)
     args = p.parse_args()
 
+    refs = load_reference_aps(args)
     health = Health(args.chip, "linux")
     if args.capture:
-        mon = args.iface if args.no_airmon else setup_monitor(args.iface)
+        base = pick_kernel_iface(args.iface, args.card)
+        if base is None:
+            return 1
+        if args.channels:
+            chan_list = [int(c) for c in args.channels.split(",") if c.strip()]
+        else:
+            chan_list = ref_channels(refs) or [1, 6, 11]
+        mon = base if args.no_airmon else setup_monitor(base)
         try:
-            for ch in (int(c) for c in args.channels.split(",") if c.strip()):
+            for ch in chan_list:
                 path = capture(mon, ch, args.secs)
                 if path is not None:
                     feed_pcap(health, path, ch)
@@ -207,7 +224,7 @@ def main() -> int:
     health.to_json(out)
     wifit3 = _HERE / f"wifit3-{args.chip}.json"
     if wifit3.exists():
-        diff(wifit3, out)
+        diff(wifit3, out, ref_bssids=ref_bssids(refs) or None)
     else:
         print(f"[*] no {wifit3.name} yet - run baseline-wifit3.py, then "
               f"`python driver_health.py --diff {wifit3.name} {out.name}`", file=sys.stderr)
