@@ -103,7 +103,9 @@ the max is attempt#0 with a 1582 ms cold-bring-up assoc; steady state ~2560–26
 confirms the card auto-ACKs the AP: **us→AP ACKs ~8/attempt** (AP→us ~6–12). Clean — NOT the
 "chatty/fragile, no HW-ACK" the chip doc still describes.
 
-**RX / Baseline A/B**: PENDING — needs the linux-bound flip (baseline-linux) then baseline-wifit3.
+**RX / Baseline A/B** (default driver vs `mt7921u`, ch1+161, 15 s/ch): ref2g mud2g **8.3/s vs 9.4 (88%)**;
+ref5g mud **9.7/s (match)**. RSSI median **−0.1 dB** (4 common APs). Breadth 4 vs 6 (2.4) · 1 vs 4 (5 GHz)
+— short 2-channel dwell. Channel tune 2/2 heard. → RX solid (5 GHz ref perfect, 2.4 ref ~88%).
 
 **Proposed grade/doc changes (need your approval — I don't edit VERIFICATION/chip-doc unprompted):**
 - VERIFICATION `ACKs ❌ → ✅` (or `⚠️` "spoofed MAC only, active-monitor-gated; not silicon MAC"). Grade B may lift.
@@ -126,7 +128,14 @@ confirms the card auto-ACKs the AP: **us→AP ACKs ~8/attempt** (AP→us ~6–12
 
 **WPS**: 3/3 to M7 (from the 2026-07-24 script-validation run, no sniffer) — confirms ✅. Not re-run (budget).
 
-**RX / Baseline A/B**: PENDING — needs the linux-bound flip.
+**RX / Baseline A/B** (ch1+161, 15 s/ch):
+- **DKMS port** (default / ships) vs FRESH mainline `rtw88_8812au`: mud2g **9.0/s vs 9.4 (96%)**, mud **9.8/s
+  (match)**; breadth **12 vs 12 (2.4) · 4 vs 4 (5 GHz) — matches mainline**; RSSI median −2.0 dB; tune 2/2.
+  → RX on par with the mainline kernel driver. (No fresh linux-DKMS reference — that driver won't build on
+  6.19, see above; the mainline kernel is the fresh apples-to-apples bar.)
+- **Mainline port** (`WIFIT3_RTL8812=mainline`): **RX WEDGED — 0 frames**, synth lost lock on the ch1→161
+  cross-band hop ("replug to recover"). Run invalid. Secondary port (DKMS is default); needs a fresh-replug
+  re-test, likely single-band, since the 2.4↔5 hop is the trigger.
 
 **Methodology note (applies to every card's ACK rows):** use a Realtek/Atheros (stop-on-Addr2) card as the
 ACK-lab prober/sniffer, not a MediaTek/Ralink. A MediaTek prober (mt7921) retries each inject to its
