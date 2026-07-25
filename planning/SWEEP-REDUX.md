@@ -26,6 +26,49 @@ Legend as `VERIFICATION.md`: ✅ works · ⚠️ caveat · ❌ broken · ⬜ not
 
 ---
 
+## Process notes (meta) — running log
+
+### 2026-07-24 — pre-sweep prep + script validation (agent, no user present)
+Cards plugged (all 3 wifit3-bound): MT7921AU (AWUS036AXML), RTL8812AU (AWUS036ACH),
+RTL8814AU (AWUS1900). Validated the diag/lab scripts on hardware before the real sweep.
+
+**Scripts validated live (kali user, no sudo needed for Realtek):**
+- `beacon_watch --card 8812` — RX + card-select OK (301 beacons/8 s, ~6.5/s best AP).
+- `baseline-wifit3 --card 8812 --chip rtl8812audkms` — full A/B pipeline OK: reference-AP
+  pinning (both bands), reversed-order diff fired, old json archived to `history/`.
+- `rx_autoack --test-card 8814 --prober-card 8812` — 30/30 spoofed AM-on, 0/0 controls;
+  matches ACK-DRIVER-REDESIGN (8814 SPOOFABLE).
+- `tx_retries --inject-card 8814 --sniffer-card 8812 --target <AirLink>` — real AP median 1
+  copy (stops on ACK), dead target ~13; matches ACK-DRIVER-REDESIGN.
+- `wps_lab --mode timing --card 8812 --auto-ack --ack-resend --ack-resends 1` — 3/3 M7 after
+  a repair (below). Rich per-stage latency is exactly the WPS-row detail we want.
+
+**Bugs found + fixed this session:**
+- `wps_lab` / `wps_probe` had bit-rotted vs the WlanInterface/WlanArray/manager split — crashed
+  on the first PIN attempt (`iface.get_access_points`, `_mgr.interfaces`, `WpsCampaign(iface,…)`).
+  Repaired (commit 27275a19); campaign mode wired to a real `WlanArray` too.
+- `baseline-wifit3` had no `--chip` override, so same-chipset cards clobbered one file. Added
+  `--chip` (matches the `mt7921au_axml` / `rt5372_pau06` slug convention already in `history/`).
+
+**Open issues for the real sweep:**
+- **MT7921AU is not sweepable right now.** No `60-wifit3-mt7921au.rules` exists → its usbfs node
+  stays `root:root` (kali user can't open it; the 16 Realtek/Ralink/Atheros rules use `GROUP=sudo`).
+  Under sudo it opens but **firmware load fails** (`MCU send_bulk failed` / `PATCH_SEM_CONTROL: no
+  response`) — classic needs-cold-replug state. When we reach the mt7921 card: replug + confirm a
+  wifit3 rule covers it (the app installs rules at runtime; the diag scripts do NOT).
+- **Same-chipset AXML + PAU0F share VID:PID `0e8d:7961`** → identical description → `--card` can't
+  tell them apart. Sweep them one-at-a-time with distinct `--chip mt7921au_axml` / `_pau0f` slugs
+  (or `--card wlanN` if both are plugged, but enum order isn't stable).
+- `baseline-linux` untested this session (cards are wifit3-bound, not kernel-bound) — its
+  compile/argparse/`--card` wiring is verified, but the airmon path needs a kernel-bound card.
+
+**Suggested plan tweaks to discuss after card #1:**
+- WPS row: run `--mode timing … --auto-ack --ack-resend --ack-resends 1 --attempts 5` (campaign-
+  faithful ACK behavior + diagnostics). Keep attempts ≤ ~5/round vs the AirLink 30-then-lock budget.
+- For the mt7921 pair, decide the udev-rule fix (you own rule install/uninstall) before its sweep.
+
+---
+
 <!-- PER-CARD TEMPLATE — copy one block per swept card, fill, drop the comment markers.
 
 ### <CHIPSET>  (<driver-slug>)
