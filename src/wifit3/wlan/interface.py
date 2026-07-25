@@ -1,14 +1,15 @@
-"""The device-agnostic radio (``WlanInterface``): per-card channel control, raw RX fan-out, and
-frame injection via a chipset driver. The 802.11 picture (AP/client registry, WEP capture, packet
-stats) lives in ``WlanSink``, owned by the ``WlanArray`` this interface is pooled into."""
+"""One card (``WlanInterface``): per-card channel control, raw RX fan-out, and frame injection via a
+chipset driver. The 802.11 state (AP/client registry, WEP capture, packet stats) lives in
+``WlanSink``, owned by the ``WlanArray`` this interface is pooled into."""
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from typing import List, Optional, Callable, Any
 
 import usb.core
 
-from wifit3.chips.driver import FakeMacSupport
+from wifit3.chips.driver import Driver, FakeMacSupport
 from wifit3.errors import (
     BringUpError, BringUpPermissionsError, is_device_gone, is_permission_error,
 )
@@ -38,11 +39,11 @@ class DeauthResult:
 
 
 class WlanInterface:
-    """One card's radio: channel control, raw RX fan-out, and frame injection. Pooled into a
-    ``WlanArray``, which owns the 802.11 picture and elects this card for attacks."""
-    def __init__(self, driver_instance: Any, name: str, description: str,
+    """One card: channel control, raw RX fan-out, and frame injection. Pooled into a
+    ``WlanArray``, which owns the 802.11 state and elects this card for attacks."""
+    def __init__(self, driver_instance: Driver, name: str, description: str,
                  vid: Optional[int] = None, pid: Optional[int] = None,
-                 dev: Any = None, chipset: Optional[str] = None,
+                 dev: Optional[usb.core.Device] = None, chipset: Optional[str] = None,
                  vendor: Optional[str] = None, product_name: Optional[str] = None):
         self.driver = driver_instance
         self.name = name
@@ -60,7 +61,7 @@ class WlanInterface:
         self._device_lost = False
 
         # TX observer (frame_bytes) wired by WlanArray to WlanSink.record_tx: the array owns the
-        # packet-stats picture, the radio just fires the event.
+        # packet-stats, the card just fires the event.
         self.on_tx: Optional[Callable[[bytes], None]] = None
 
         self._hopping_task: Optional[asyncio.Task] = None
@@ -73,7 +74,7 @@ class WlanInterface:
 
     def _on_frame_parsed(self, pkt: Packet) -> None:
         """Fan the driver's parsed frame out to raw subscribers (the array's _ingest, campaigns).
-        The 802.11 picture is built from this stream by WlanArray/WlanSink, not here."""
+        The 802.11 state is built from this stream by WlanArray/WlanSink, not here."""
         if self._rx_callbacks:
             self._fire_rx_callbacks(pkt)
 
@@ -100,15 +101,24 @@ class WlanInterface:
             self.current_channel = channel
         return success
 
-    async def set_fake_mac(self, mac: Any, bssid: Any = None) -> Optional[str]:
-        """Ask the driver to HW-ACK frames addressed to ``mac`` (active-monitor). Returns the MAC
-        the card will actually ACK as (the caller registers it as forged via the array), or None if
-        the card can't spoof-ACK."""
+    async def set_fake_mac(self, mac: Any = None, bssid: Any = None) -> Optional[str]:
+        """Enable active-monitor (HW-ACK frames addressed to our forged STA) and return the MAC the
+        card will ACK as, or None if it can't. With no ``mac`` the address is chosen for the card: a
+        random locally-administered one for SPOOFABLE, the card's own MAC for FIXED_MAC (which only
+        ACKs its own address). The caller adopts the returned MAC as its STA identity."""
         support = self.driver.FAKE_MAC
         if support in (FakeMacSupport.NONE, FakeMacSupport.UNIMPLEMENTED):
             logger.info("set_fake_mac: %s, active-monitor unavailable (%s)",
                         self._chipset, support.value)
             return None
+        if mac is None:
+            if support is FakeMacSupport.SPOOFABLE:
+                mac = bytes([0x02]) + os.urandom(5)
+            elif self.mac_address:                 # FIXED_MAC: only its own address is ACKable
+                mac = self.mac_address
+            else:
+                logger.info("set_fake_mac: %s FIXED_MAC but own MAC unknown; skipping", self._chipset)
+                return None
         mac_b = self._to_mac_bytes(mac)
         bssid_b = self._to_mac_bytes(bssid) if bssid is not None else None
         assumed = await self.driver.enter_active_monitor(mac_b, bssid_b)

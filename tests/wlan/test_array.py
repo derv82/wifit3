@@ -141,14 +141,33 @@ def test_ingest_drops_our_own_forged_frames():
 
 
 def test_ingest_drops_our_own_self_mac_transmissions():
-    """A pooled RX card hears the TX card's WEP replays over the air; frames sourced from our own
-    fake STA (a self-MAC) must be dropped so they don't inflate the IV rate."""
+    """A pooled RX card hears the TX card's WEP replay (ToDS) over the air; a frame whose transmitter
+    (Addr2) is our own fake STA must be dropped so it doesn't inflate the IV rate."""
     card = FakeIface("wlan0", [6])
     a = _pool(card)
-    mac = a.register_self_mac("aa:bb:cc:dd:ee:01", "11:22:33:44:55:66")
+    a.register_self_mac("aa:bb:cc:dd:ee:01", "11:22:33:44:55:66")
+    bssid, mac = b"\x11\x22\x33\x44\x55\x66", b"\xaa\xbb\xcc\xdd\xee\x01"
+    raw = b"\x08\x01\x00\x00" + bssid + mac + bssid + b"\x00\x00" + b"\x00" * 12   # ToDS, Addr2 = us
     card.emit(pkt({"type": "data", "to_ds": True, "bssid": "11:22:33:44:55:66",
-                   "source": mac, "dest": "11:22:33:44:55:66", "rssi": -40}))
-    assert a._dedupe.rx.get("wlan0", 0) == 0    # dropped before dedupe / picture
+                   "source": "aa:bb:cc:dd:ee:01", "dest": "11:22:33:44:55:66",
+                   "rssi": -40, "raw": raw}))
+    assert a._dedupe.rx.get("wlan0", 0) == 0    # transmitter == self-MAC → dropped before dedupe
+
+
+def test_ingest_counts_ap_echo_of_our_replay():
+    """The AP's rebroadcast of our replayed WEP ARP is FromDS with our MAC in Addr3 (source) but the
+    BSSID as transmitter (Addr2). It carries a FRESH IV, so it must NOT be dropped even though our MAC
+    is a registered self-MAC -- the regression that zeroed the WEP IV rate (keying on source, not TA)."""
+    card = FakeIface("wlan0", [6])
+    a = _pool(card)
+    a.register_self_mac("aa:bb:cc:dd:ee:01", "11:22:33:44:55:66")
+    bssid, mac = b"\x11\x22\x33\x44\x55\x66", b"\xaa\xbb\xcc\xdd\xee\x01"
+    bcast = b"\xff\xff\xff\xff\xff\xff"
+    raw = b"\x08\x42\x00\x00" + bcast + bssid + mac + b"\x00\x00" + b"\x00" * 12   # FromDS, Addr2=BSSID
+    card.emit(pkt({"type": "data", "from_ds": True, "bssid": "11:22:33:44:55:66",
+                   "source": "aa:bb:cc:dd:ee:01", "dest": "ff:ff:ff:ff:ff:ff",
+                   "rssi": -40, "raw": raw}))
+    assert a._dedupe.rx.get("wlan0", 0) == 1    # transmitter == BSSID → survives the filter
 
 
 def test_array_of_one_processes_distinct_frames():

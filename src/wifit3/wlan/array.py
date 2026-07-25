@@ -1,5 +1,5 @@
 """The card pool (``WlanArray``): one per session. It (1) consolidates every member card's raw RX
-into a single deduplicated 802.11 picture (``WlanSink``), and (2) hands out a card for a campaign,
+into a single deduplicated 802.11 state (``WlanSink``), and (2) hands out a card for a campaign,
 deauth or interaction via ``select_iface``. It is not a radio facade: it has no ``inject_frame`` or
 ``deauth``. Active TX runs on the selected ``WlanInterface`` itself; the array only picks it.
 
@@ -57,7 +57,7 @@ class WlanArray:
 
     def attach(self, iface: WlanInterface) -> WlanInterface:
         """Pool an already-connected interface: switch it to raw fan-out (the array's WlanSink is
-        the picture now), point its TX stats at the sink, register it as a dedupe source, and
+        the shared state now), point its TX stats at the sink, register it as a dedupe source, and
         subscribe the array to its raw RX + disconnect."""
         self._members.append(iface)
         if self._loop is None:
@@ -150,12 +150,13 @@ class WlanArray:
 
     def _ingest(self, iface: WlanInterface, pkt: Packet) -> None:
         """One card's raw frame: drop our own transmissions, dedupe across cards, and fold the novel
-        copy into the picture (every card contributes its own signal, even on a duplicate)."""
+        copy into the shared 802.11 state (every card still contributes its own signal on a dup)."""
         card_id = iface.name
-        # Drop frames WE transmitted (forged attack MACs + our fake STA). Another pooled card hears
-        # the TX card's injections over the air, and counting them inflates the RX picture: a WEP
-        # ARP replay reuses one IV, so it is noise, not fresh keystream, yet it bloats the IV rate.
-        if pkt.source in self._sink.forged_macs or pkt.source in self._sink.self_macs:
+        # Drop frames WE transmitted, keyed on the transmitter (Addr2/TA), NOT pkt.source: on a
+        # FromDS frame source is addr3, so the AP's fresh-IV rebroadcast of our replayed ARP (our MAC
+        # in addr3, BSSID as TA) would be dropped and zero the IV rate. TA-keying counts it and still
+        # drops a second card hearing our own ToDS injection (TA == our MAC).
+        if pkt.transmitter in self._sink.forged_macs or pkt.transmitter in self._sink.self_macs:
             return
         if self._dedupe.submit(card_id, pkt.raw, time.monotonic()):
             self._sink.update(pkt, card_id, channel_hint=iface.current_channel)

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from concurrent.futures import ProcessPoolExecutor
 from typing import Callable, Optional
 
@@ -101,15 +102,26 @@ class WepCampaign(Campaign):
         )
 
     async def _loop(self) -> None:
-        """Start the fake-auth + ARP-replay daemons, then supervise the PTW crack."""
+        """Pick our STA MAC by card class, arm active monitor, then run fake-auth + ARP replay and
+        supervise the PTW crack."""
         self._active = True
         self._log(
             f"[bold green]ARP Replay starting[/bold green] on "
             f"[bold]{escape(self.target.ssid or '<hidden>')}[/bold]"
         )
         self._log(treelog.leaf("[dim](deauth or chop if no ARPs appear)[/dim]"))
+        # Active monitor chooses the STA MAC the card can get ACKed (random for SPOOFABLE, the card's
+        # own for FIXED_MAC) and returns it; None means the card can't active-monitor, so use a random
+        # STA and no AM (the driver's send-once path). fake-auth, replay and chopchop share this MAC.
+        armed = await self.iface.set_fake_mac()
+        if armed:
+            source_mac = bytes(int(b, 16) for b in armed.split(":"))
+        else:
+            source_mac = bytes([0x02]) + os.urandom(5)
+        self.fake_auth.source_mac = source_mac
+        self.replay.source_mac = source_mac
+        self.array.register_self_mac(source_mac, self.target.bssid)
         self.fake_auth.start()
-        self.array.register_self_mac(self.fake_auth.source_mac, self.target.bssid)  # the YOU client
         self.replay.start()
         # One reusable worker process for the crack search
         self._crack_pool = ProcessPoolExecutor(max_workers=1)
@@ -163,6 +175,8 @@ class WepCampaign(Campaign):
         # Stop replay (TX) before fake-auth
         self.replay.stop()
         self.fake_auth.stop()
+        if self.iface is not None:
+            await self.iface.clear_fake_mac()   # exit active monitor
         self.array.unregister_self_mac(self.fake_auth.source_mac)
         self._active = False
         # Quiet when we stopped because we WON

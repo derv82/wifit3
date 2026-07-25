@@ -22,6 +22,9 @@ async def test_campaign_starts_and_stops_both_subattacks(mocker):
     iface.send_raw = mocker.AsyncMock(return_value=True)
     iface.send_no_wait = mocker.AsyncMock(return_value=True)
     iface.set_channel = mocker.AsyncMock(return_value=True)
+    iface.set_fake_mac = mocker.AsyncMock(return_value=None)   # NONE-card path: random MAC, no AM
+    iface.clear_fake_mac = mocker.AsyncMock()
+    iface.select_iface.return_value = iface                    # campaign's self.iface is this mock
     iface.current_channel = 6
     iface.wep_store = WepCaptureStore()
     ap = AccessPoint(bssid="11:22:33:44:55:66", ssid="W", channel=6, encryption="WEP")

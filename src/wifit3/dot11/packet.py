@@ -16,6 +16,11 @@ def is_group_mac(mac: str) -> bool:
         return True   # unparseable → never treat as a client
 
 
+def _mac_str(mac: bytes) -> str:
+    """Lowercase colon-hex, matching how the parser formats every address."""
+    return ":".join(f"{b:02x}" for b in mac)
+
+
 @dataclass(slots=True, kw_only=True)
 class Packet:
     type: str                 # airodump-style label: "beacon", "eapol", "wep_data", "mgmt_5", …
@@ -29,6 +34,13 @@ class Packet:
     rssi: int
     raw: bytes
     ssid: Optional[str] = None   # on beacon/probe_resp/probe_req/assoc_req; None elsewhere
+
+    @property
+    def transmitter(self) -> str:
+        """Addr2 (TA): the station that actually transmitted this frame -- the source for ToDS/mgmt,
+        the BSSID for FromDS. Identifies a frame as one we sent (our TA), which ``source`` (addr3 on
+        a FromDS frame) does not."""
+        return _mac_str(self.raw[10:16]) if len(self.raw) >= 16 else self.bssid
 
     @property
     def client_mac(self) -> Optional[str]:

@@ -1,23 +1,12 @@
-"""WEP fake authentication (`aireplay-ng -1`).
+"""WEP fake authentication (`aireplay-ng -1`): Open-System auth + association as a forged STA so the
+AP accepts the frames we inject (ARP replay, fragmentation, chopchop). Generates no IVs itself; it's
+the gate the rest of the WEP suite needs.
 
-Open-System Authentication + Association as a forged STA so the AP will accept
-frames we inject later (ARP replay, fragmentation, chopchop). On its own it
-generates no IVs. It's the prerequisite that unlocks the rest of the WEP suite.
-
-LAZY / on-demand: ``start()`` only arms us (registers our MAC + an RX filter so
-we still *hear* deauths); it does NOT authenticate. We stay invisible until a TX
-path actually has something to send and calls ``ensure_associated()``, so the
-user isn't sitting "associated for no reason", re-announcing every interval. The
-TX paths' own data frames keep the AP's inactivity timer alive while they run;
-an explicit Deauth/Disassoc (or a replay stall) flips us out of ``associated``
-so the *next* ``ensure_associated()`` re-auths within one window. No periodic
-keepalive.
-
-``ensure_associated()`` retries silently (3 attempts, ~1s each) and only logs a
-FAILURE (once per episode), and a one-line "recovered" if it later comes back.
-Routine success is silent; the live status lives in the Focus SECURITY panel via
-``state`` (idle / authenticating / associated / failed), ``next_reauth_at`` and
-``fail_reason``.
+Lazy: ``start()`` only registers an RX watcher for the AP's auth/assoc/deauth replies to our MAC; it
+does not authenticate. A TX path calls ``ensure_associated()`` when it has something to send, which
+runs the auth+assoc exchange (3 tries, backoff) and flips back to unassociated on a deauth/disassoc
+so the next call re-auths. The STA MAC is set by the campaign (chosen for the card + active monitor).
+Status for the Focus panel: ``state`` / ``next_reauth_at`` / ``fail_reason``.
 """
 
 from __future__ import annotations
@@ -27,11 +16,14 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from wifit3.models import AccessPoint
 from wifit3.dot11.auth_assoc import auth_req, assoc_req
 from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
+
+if TYPE_CHECKING:
+    from wifit3.wlan.interface import WlanInterface
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +63,7 @@ class WepFakeAuth:
 
     def __init__(
         self,
-        iface,
+        iface: "WlanInterface",
         target: AccessPoint,
         source_mac: Optional[bytes] = None,
         assoc_timeout: float = 1.0,
@@ -98,7 +90,7 @@ class WepFakeAuth:
     # ---- Lifecycle ----------------------------------------------------------
 
     def start(self) -> None:
-        """Arm: register the self MAC + RX filter. Does NOT authenticate."""
+        """Register the RX watcher for the AP's replies to us. Does NOT authenticate (lazy)."""
         if self._active:
             return
         self._active = True
@@ -107,7 +99,7 @@ class WepFakeAuth:
         self.fail_reason = None
         self.next_reauth_at = None
         self._announced_failure = False
-        # Self-MAC registration (the YOU client) is the campaign's job via the array; radio-only here.
+        # The campaign registers our STA MAC with the array (drop-filter); we only watch RX here.
         self.iface.register_rx_callback(self._rx_cb)
         logger.info("[WEP-FakeAuth] Armed on %s as %s (lazy auth)",
                     self.target.bssid, _mac_str(self.source_mac))
