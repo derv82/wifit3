@@ -239,7 +239,10 @@ async def fake_auth(iface, tap: Tap, bssid: bytes, our_mac: bytes, essid: str,
 
 
 async def run(iface, args, bssid: bytes) -> int:
-    our_mac = bytes([0x02]) + os.urandom(5)
+    if args.own_mac and iface.mac_address:
+        our_mac = _mac(iface.mac_address)   # FIXED_MAC cards only HW-ACK their own address
+    else:
+        our_mac = bytes([0x02]) + os.urandom(5)
     tap = Tap(bssid, our_mac)
     iface.register_rx_callback(tap)
     frame = forge_encrypted_arp(bssid, our_mac, parse_wep_key(args.pass_))
@@ -261,27 +264,36 @@ async def run(iface, args, bssid: bytes) -> int:
 
     drv = iface.driver
     if args.generate:
-        print(f"\n[Phase C] GENERATE: replaying for {args.generate:g}s "
-              f"(re-auth on deauth). Ctrl-C to stop.")
-        end = time.time() + args.generate
+        duty = max(0.0, min(1.0, args.duty))
+        print(f"\n[Phase C] GENERATE {args.generate:g}s: duty={duty:g} "
+              f"(inject {duty * args.window:g}s / sleep {(1 - duty) * args.window:g}s per "
+              f"{args.window:g}s window)")
+        start = time.time()
+        end = start + args.generate
         tap.reset()
         total_inj = 0
-        last_report = time.time()
+        last_report = start
         while time.time() < end:
-            await iface.send_no_wait(frame)
-            total_inj += 1
-            if total_inj % 20 == 0:
-                await asyncio.sleep(0.005)   # brief yield so RX drains
+            cyc = time.time()
+            burst_end = cyc + duty * args.window
+            while time.time() < burst_end and time.time() < end:
+                await iface.send_no_wait(frame)
+                total_inj += 1
+                if args.delay:
+                    await asyncio.sleep(args.delay)
             if tap.deauth_to_us:
                 print("  deauthed -> re-associating")
                 tap.deauth_to_us = 0
                 await fake_auth(iface, tap, bssid, our_mac, args.essid, args.active_monitor)
-            if time.time() - last_report >= 2.0:
+            rest = args.window - (time.time() - cyc)
+            if rest > 0:
+                await asyncio.sleep(rest)
+            if time.time() - last_report >= 3.0:
                 last_report = time.time()
-                print(f"  injected={total_inj} echoes={tap.echoes} "
-                      f"distinct_IVs={len(tap.echo_ivs)}")
-        print(f"  DONE: injected={total_inj} echoes={tap.echoes} "
-              f"distinct fresh IVs={len(tap.echo_ivs)}")
+                print(f"  injected={total_inj} usable_IVs={len(tap.echo_ivs)}")
+        dur = time.time() - start
+        print(f"  DONE: duty={duty:g}  injected={total_inj} ({total_inj / dur:.0f}/s)  "
+              f"usable IVs={len(tap.echo_ivs)} ({len(tap.echo_ivs) / dur:.0f}/s)")
         return 0
 
     # One-shot diagnostic burst.
@@ -318,6 +330,14 @@ async def main() -> int:
     ap.add_argument("--generate", type=float, default=0.0,
                     help="sustained-replay seconds (traffic generator); 0 = one-shot diagnostic")
     ap.add_argument("--count", type=int, default=60, help="one-shot burst inject count")
+    ap.add_argument("--delay", type=float, default=0.0,
+                    help="seconds between injects within a burst (0 = all-gas)")
+    ap.add_argument("--duty", type=float, default=1.0,
+                    help="TX duty cycle in --generate: inject duty*window, sleep the rest (1.0 = AGNB)")
+    ap.add_argument("--window", type=float, default=1.0,
+                    help="duty-cycle window length in seconds (default 1.0)")
+    ap.add_argument("--own-mac", action="store_true",
+                    help="fake-auth as the card's own MAC (FIXED_MAC cards only HW-ACK that)")
     ap.add_argument("--card", type=str, default="", help="adapter substring (default: first found)")
     args = ap.parse_args()
 
