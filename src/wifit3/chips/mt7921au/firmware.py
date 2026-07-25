@@ -153,9 +153,8 @@ class MT7921AUFirmwareLoader:
         # upload (~89 ms after PATCH_SEM_RELEASE): two boot-status reads with
         # wValue=0x30, wLength=64. Source unknown (possibly btusb concurrent
         # init, possibly mt76 reset path). Cheap to replicate, side-effect-free.
-        for i in range(2):
-            bs = self.transport.read_boot_status(length=64)
-            logger.debug(f"boot_status[{i}] ({len(bs)} B): {bs[:32].hex()}{'...' if len(bs)>32 else ''}")
+        for _ in range(2):
+            self.transport.read_boot_status(length=64)
 
         # Drain any MCU responses that arrived during patch upload, so we can
         # see what the device sent back (now that DL_MODE_NEED_RSP bit is correct).
@@ -224,7 +223,6 @@ class MT7921AUFirmwareLoader:
         val = self.transport.read_reg32_unified(addr)
         new = (val & ~clear_mask) | set_mask
         self.transport.write_reg32_unified(addr, new)
-        logger.debug(f"rmw 0x{addr:08x}: 0x{val:08x} → 0x{new:08x}")
 
     def _dma_init(self, resume: bool = False):
         """Port of mt792xu_dma_init (mt792x_usb.c) — pre-firmware WFDMA bring-up,
@@ -288,8 +286,6 @@ class MT7921AUFirmwareLoader:
         v = self.transport.read_reg32_unified(MT_SSUSB_EPCTL_CSR_EP_RST_OPT)
         new = v & ~MT_EPCTL_EP_RST_OPT_MASK
         self.transport.write_reg32_unified(MT_SSUSB_EPCTL_CSR_EP_RST_OPT, new)
-        logger.debug(f"epctl_rst_opt 0x{MT_SSUSB_EPCTL_CSR_EP_RST_OPT:08x}: "
-                     f"0x{v:08x} -> 0x{new:08x}")
 
     def _rx_evt_ep4(self):
         """mt792xu_dma_rx_evt_ep4 — route RX events (the firmware-up signal and
@@ -354,21 +350,15 @@ class MT7921AUFirmwareLoader:
         """
         wValue = (addr >> 16) & 0xFFFF
         wIndex = addr & 0xFFFF
-        last_logged_val = None
-        for i in range(attempts):
+        for _ in range(attempts):
             res = self.transport.read_vendor_request(
                 MT_VEND_READ_RECIPIENT, MT_VEND_READ_REG_REQ,
                 wValue, wIndex, 4, timeout=read_timeout_ms,
             )
             if len(res) >= 4:
                 val = struct.unpack("<I", res)[0]
-                if val != last_logged_val:
-                    logger.debug(f"poll 0x{addr:08x} attempt {i}: 0x{val:08x}")
-                    last_logged_val = val
                 if (val & mask) == expected:
                     return True
-            elif i % 10 == 0:
-                logger.debug(f"poll 0x{addr:08x} attempt {i}: read failed")
             await asyncio.sleep(delay)
         return False
 
@@ -403,7 +393,6 @@ class MT7921AUFirmwareLoader:
         if resp is None:
             logger.error("PATCH_SEM_CONTROL get: no response")
             return False
-        logger.debug(f"PATCH_SEM get response: {resp[:32].hex()}")
 
         try:
             # 2. For each section, send PATCH_START_REQ then FW_SCATTER chunks.
@@ -540,19 +529,14 @@ class MT7921AUFirmwareLoader:
     # ------------------------------------------------------------------
 
     async def _send_fw_chunks(self, blob: bytes, offset: int, length: int, label: str) -> bool:
-        import time
         sent = 0
         chunk_idx = 0
         while sent < length:
             cur = min(MAX_FW_CHUNK, length - sent)
             chunk = blob[offset + sent: offset + sent + cur]
-            t0 = time.monotonic()
             if not await self.transport.send_fw_chunk(chunk, timeout_ms=5000):
                 logger.error(f"FW_SCATTER failed for {label} at chunk {chunk_idx} (offset {sent}/{length})")
                 return False
-            dt = (time.monotonic() - t0) * 1000
-            if dt > 50 or chunk_idx < 5:
-                logger.debug(f"FW_SCATTER {label} chunk {chunk_idx}: {cur}B in {dt:.0f}ms")
             sent += cur
             chunk_idx += 1
             await asyncio.sleep(0)

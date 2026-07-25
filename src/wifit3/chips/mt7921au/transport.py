@@ -230,8 +230,6 @@ class MT7921AUTransport:
         Returns None if wait_resp is False or the wait times out.
         """
         frame, seq = self._build_mcu_frame(cmd, payload)
-        logger.debug(f"MCU TX cmd=0x{cmd:x} seq=0x{seq:02x} len={len(frame)} payload={payload.hex()}")
-
         ok = await self.send_bulk_checked(frame, EP_OUT_MCU, timeout=2000)
         if not ok:
             # On USB 2.0 the device sometimes takes >2s to ACK the URB
@@ -269,12 +267,7 @@ class MT7921AUTransport:
                 return None
             rseq = data[29] if len(data) > 29 else None
             if rseq == seq:
-                eid = data[28] if len(data) > 28 else None
-                logger.debug(f"MCU RX cmd=0x{cmd:x} seq=0x{seq:02x} eid=0x{eid:02x} "
-                             f"len={len(data)} bytes[:64]={data[:64].hex()}")
                 return data
-            logger.debug(f"MCU RX skip seq=0x{rseq if rseq is None else format(rseq, '02x')} "
-                         f"(waiting for 0x{seq:02x})")
 
     async def send_fw_chunk(self, chunk: bytes, timeout_ms: int = 1000) -> bool:
         """
