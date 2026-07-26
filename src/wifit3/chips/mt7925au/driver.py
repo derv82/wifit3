@@ -119,7 +119,7 @@ class MT7925AUDriver(Driver):
 
         if progress_cb:
             progress_cb(0.9, "Enabling monitor mode...")
-        await chip_init.enter_monitor(self.transport, self._channel)
+        await chip_init.enter_monitor(self.transport, self._channel, state.caps.has_6ghz)
         if progress_cb:
             progress_cb(1.0, "Done")
         logger.info("MT7925AU monitor mode ready on channel %d (MAC %s).",

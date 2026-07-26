@@ -8,7 +8,7 @@ set_eeprom, the mac_init register block, then monitor entry.
 import logging
 from dataclasses import dataclass
 
-from . import mac, mcu
+from . import mac, mcu, txpower
 from .transport import MT7925AUTransport
 # ruff: noqa: F403, F405
 from .constants import *
@@ -50,15 +50,18 @@ async def post_boot_init(transport: MT7925AUTransport) -> InitState:
     return InitState(caps=caps)
 
 
-async def enter_monitor(transport: MT7925AUTransport, channel: int) -> None:
+async def enter_monitor(transport: MT7925AUTransport, channel: int,
+                        has_6ghz: bool = True) -> None:
     """Bring the chip into monitor mode on ``channel`` (the mac80211 add_interface +
     start + config(MONITOR) + configure_filter path). Sends the connac3 UNI commands
     the capture shows; CHIP_CONFIG (thermal/deep-sleep) get no ack, the rest do."""
     t = transport
-    # init_work device tuning.
+    # init_work device tuning + the per-band TX power tables (world "00", 20 dBm).
     await t.send_mcu_command(*mcu.thermal_gband(), wait_resp=False)
     await t.send_mcu_command(*mcu.thermal_aband(), wait_resp=False)
     await t.send_mcu_command(*mcu.set_deep_sleep(False), wait_resp=False)
+    for cmd, payload in txpower.rate_txpower_all(has_6ghz):
+        await t.send_mcu_command(cmd, payload, wait_resp=False)
     await t.send_mcu_command(*mcu.set_rts_thresh())
     # __mt7925_start: reset the MIB counters, then add the monitor vif.
     mac.reset_counters(t)

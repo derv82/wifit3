@@ -25,6 +25,7 @@ from wifit3.chips.mt7925au import init as mt_init  # noqa: E402
 from wifit3.chips.mt7925au import mac as mt_mac  # noqa: E402
 from wifit3.chips.mt7925au import mcu as mt_mcu  # noqa: E402
 from wifit3.chips.mt7925au import rx as mt_rx  # noqa: E402
+from wifit3.chips.mt7925au import txpower as mt_txpower  # noqa: E402
 from wifit3.chips.mt7925au.constants import (  # noqa: E402
     MT7925_RXD_SEQ_OFF, MT_MIB_SDR9, MT_MIB_SDR3, MT_TX_AGG_CNT, MT_WTBL_UPDATE,
     MT792x_WTBL_RESERVED, EP_OUT_MCU,
@@ -67,13 +68,11 @@ def waivers() -> E.WaiverSet:
             match=lambda op: op.cls == "ctrl" and op.reqtype == "standard",
         ),
         E.Waiver(
-            "cfg80211 regulatory (SET_DOMAIN_INFO / SET_POWER_LIMIT)",
-            "The Linux regulatory notifier (mt7925_regd_notifier) programs the channel "
-            "domain and per-country CLC power tables when cfg80211 applies a regdomain. "
-            "wifit3 runs userland (WinUSB has no cfg80211 regd subsystem), so the port never "
-            "emits these; reproducing them would mean hardcoding one country's power tables.",
-            match=lambda op: _mcu_cid(op) in (MCU_UNI_CMD_SET_DOMAIN_INFO,
-                                              MCU_UNI_CMD_SET_POWER_LIMIT),
+            "cfg80211 channel domain (SET_DOMAIN_INFO)",
+            "mt7925_mcu_set_channel_domain's per-channel flags are cfg80211's world-regdom "
+            "IEEE80211_CHAN_* bits (net/wireless/reg.c), not derivable from the mt76 tree, "
+            "so the two SET_DOMAIN_INFO ops stay waived. SET_POWER_LIMIT is now reproduced.",
+            match=lambda op: _mcu_cid(op) == MCU_UNI_CMD_SET_DOMAIN_INFO,
         ),
     )
 
@@ -212,6 +211,14 @@ async def _send_op_mcu(dev: E.ReplayDevice, q, disp):
     await _make_transport(dev, q).send_mcu_command(*disp, wait_resp=False)
 
 
+async def _drive_txpower(dev: E.ReplayDevice, q):
+    """Drive the full per-band SET_POWER_LIMIT batch (mt7925_mcu_set_rate_txpower) at the
+    cursor. The card has 6 GHz, so all three bands are emitted."""
+    t = _make_transport(dev, q)
+    for cmd, payload in mt_txpower.rate_txpower_all(has_6ghz=True):
+        await t.send_mcu_command(cmd, payload, wait_resp=False)
+
+
 async def _drive_operational(walk: E.Walk, state: dict):
     """Dispatch each operational burst to the real routine that emits it: mac_work
     (reset_counters / survey / MIB), the add_interface WCID update, or a monitor MCU
@@ -234,6 +241,10 @@ async def _drive_operational(walk: E.Walk, state: dict):
             walk.run(lambda dev: mt_init._wtbl_update(_make_transport(dev, q),
                                                       MT792x_WTBL_RESERVED),
                      "init.wtbl_update (add_interface)")
+        elif (op.cls == "bulk" and op.ep == EP_OUT_MCU
+              and (op.data[38] | (op.data[39] << 8)) == MCU_UNI_CMD_SET_POWER_LIMIT):
+            await walk.run_async(lambda dev: _drive_txpower(dev, q),
+                                 "txpower.rate_txpower")
         elif op.cls == "bulk" and op.ep == EP_OUT_MCU:
             disp = _decode_operational_mcu(op.data)
             if disp is None:
