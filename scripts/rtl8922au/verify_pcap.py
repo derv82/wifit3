@@ -27,8 +27,8 @@ DEFAULT_CAP = "usb_dumps_new2/captures_rtw89_8922au_git/capture-1.pcap"
 RTW89_USB_VENQT = 0x05
 
 # usbmon mon_bin record offsets.
-_OFF_TYPE, _OFF_XFER, _OFF_DEV, _OFF_LENCAP, _OFF_SETUP, _OFF_DATA = 8, 9, 11, 36, 40, 64
-_URB_SUBMIT, _URB_COMPLETE, _XFER_CTRL = 0x53, 0x43, 0x02
+_OFF_TYPE, _OFF_XFER, _OFF_EP, _OFF_DEV, _OFF_LENCAP, _OFF_SETUP, _OFF_DATA = 8, 9, 10, 11, 36, 40, 64
+_URB_SUBMIT, _URB_COMPLETE, _XFER_CTRL, _XFER_BULK = 0x53, 0x43, 0x02, 0x03
 _MIN_RECORD = _OFF_SETUP + 8      # a record must reach through the 8-byte setup packet
 
 
@@ -46,9 +46,10 @@ Waiver = namedtuple("Waiver", "name why match")
 
 
 # usbcore drives enumeration (GET_DESCRIPTOR / SET_CONFIGURATION etc.), not the wifi driver.
+# Bulk-OUT ops are never waived: they are the driver's firmware/TX transfers to reproduce.
 WAIVERS = [
     Waiver("USB enumeration", "standard control requests usbcore issues while enumerating",
-           lambda op: op["breq"] != RTW89_USB_VENQT),
+           lambda op: op["kind"] == "ctrl" and op["breq"] != RTW89_USB_VENQT),
 ]
 
 
@@ -78,33 +79,45 @@ def detect_dev(pkts: list[bytes]) -> int | None:
 
 
 def build_ops(pkts: list[bytes], dev: int) -> list[dict]:
-    """Every control op for the device in capture order (enumeration included, so it is
-    waived and logged rather than dropped). A read's value is stitched on from its COMPLETE
-    record. Each op: {breq, is_in, wval, widx, wlen, data, frame}."""
+    """Every control op plus every bulk-OUT op for the device in capture order. Enumeration
+    control ops are kept (waived + logged, not dropped). Bulk-OUT submits (firmware chunks, TX)
+    are the driver's to reproduce, so they are real ops. Bulk-IN (RX) is not a discrete driver
+    op and is skipped. A control read's value is stitched on from its COMPLETE record.
+    Control op: {kind:'ctrl', breq, is_in, wval, widx, wlen, data, frame}.
+    Bulk op: {kind:'bulk', ep, wlen, data, frame}."""
     ops: list[dict] = []
     pending: dict[bytes, dict] = {}
     frame = 0
     for pkt in pkts:
         frame += 1
-        if len(pkt) < _MIN_RECORD or pkt[_OFF_DEV] != dev or pkt[_OFF_XFER] != _XFER_CTRL:
+        if len(pkt) < _MIN_RECORD or pkt[_OFF_DEV] != dev:
             continue
         urb = bytes(pkt[0:8])
-        if pkt[_OFF_TYPE] == _URB_SUBMIT:
-            wval, widx, wlen = struct.unpack_from("<HHH", pkt, _OFF_SETUP + 2)
-            op = {"breq": pkt[_OFF_SETUP + 1], "is_in": bool(pkt[_OFF_SETUP] & 0x80),
-                  "wval": wval, "widx": widx, "wlen": wlen, "data": b"", "frame": frame}
-            if op["is_in"]:
-                pending[urb] = op
-                ops.append(op)
-            else:
-                dlen = min(wlen, len(pkt) - _OFF_DATA)
-                op["data"] = bytes(pkt[_OFF_DATA:_OFF_DATA + dlen]) if dlen > 0 else b""
-                ops.append(op)
-        elif pkt[_OFF_TYPE] == _URB_COMPLETE:
-            op = pending.pop(urb, None)
-            if op is not None:
-                dlen = min(op["wlen"], len(pkt) - _OFF_DATA)
-                op["data"] = bytes(pkt[_OFF_DATA:_OFF_DATA + dlen]) if dlen > 0 else b""
+        if pkt[_OFF_XFER] == _XFER_CTRL:
+            if pkt[_OFF_TYPE] == _URB_SUBMIT:
+                wval, widx, wlen = struct.unpack_from("<HHH", pkt, _OFF_SETUP + 2)
+                op = {"kind": "ctrl", "breq": pkt[_OFF_SETUP + 1],
+                      "is_in": bool(pkt[_OFF_SETUP] & 0x80),
+                      "wval": wval, "widx": widx, "wlen": wlen, "data": b"", "frame": frame}
+                if op["is_in"]:
+                    pending[urb] = op
+                    ops.append(op)
+                else:
+                    dlen = min(wlen, len(pkt) - _OFF_DATA)
+                    op["data"] = bytes(pkt[_OFF_DATA:_OFF_DATA + dlen]) if dlen > 0 else b""
+                    ops.append(op)
+            elif pkt[_OFF_TYPE] == _URB_COMPLETE:
+                op = pending.pop(urb, None)
+                if op is not None:
+                    dlen = min(op["wlen"], len(pkt) - _OFF_DATA)
+                    op["data"] = bytes(pkt[_OFF_DATA:_OFF_DATA + dlen]) if dlen > 0 else b""
+        elif pkt[_OFF_XFER] == _XFER_BULK and pkt[_OFF_TYPE] == _URB_SUBMIT \
+                and not (pkt[_OFF_EP] & 0x80):
+            wlen = struct.unpack_from("<I", pkt, _OFF_LENCAP)[0]
+            dlen = min(wlen, len(pkt) - _OFF_DATA)
+            ops.append({"kind": "bulk", "breq": None, "ep": pkt[_OFF_EP],
+                        "wlen": wlen, "data": bytes(pkt[_OFF_DATA:_OFF_DATA + dlen]),
+                        "frame": frame})
     return ops
 
 
@@ -113,6 +126,8 @@ def _waiver_for(op: dict) -> Waiver | None:
 
 
 def _fmt(op: dict) -> str:
+    if op["kind"] == "bulk":
+        return f"bulk-OUT ep=0x{op['ep']:02x} ({op['wlen']}B) {op['data'][:16].hex()}… @f{op['frame']}"
     addr = op["wval"] | (op["widx"] << 16)       # rtw89 addr decode
     tag = "" if op["breq"] == RTW89_USB_VENQT else f" breq=0x{op['breq']:02x}"
     if op["is_in"]:
@@ -151,6 +166,9 @@ class ReplayDev:
     def ctrl_transfer(self, bmRequestType, bRequest, wValue, wIndex, data_or_wLength, timeout=None):
         op = self._next()
         is_in = bool(bmRequestType & 0x80)
+        if op["kind"] != "ctrl":
+            raise Divergence(f"op #{self.i - 1}: port issued a control transfer, wire has "
+                             f"{_fmt(op)}", self.i - 1)
         if bRequest != op["breq"] or is_in != op["is_in"] \
                 or wValue != op["wval"] or wIndex != op["widx"]:
             raise Divergence(
@@ -163,6 +181,21 @@ class ReplayDev:
                                  f"{op['data'].hex()} @f{op['frame']}", self.i - 1)
         self.matched += 1
         return bytearray(op["data"]) if is_in else len(op["data"])
+
+    def write(self, endpoint, data, timeout=None):
+        """Bulk-OUT write. Matches the next op, which must be a bulk op with the same endpoint
+        and byte-identical payload."""
+        op = self._next()
+        payload = bytes(data)
+        if op["kind"] != "bulk":
+            raise Divergence(f"op #{self.i - 1}: port issued a bulk-OUT to ep 0x{endpoint:02x} "
+                             f"({len(payload)}B), wire has {_fmt(op)}", self.i - 1)
+        if endpoint != op["ep"] or payload != op["data"]:
+            raise Divergence(
+                f"op #{self.i - 1}: bulk-OUT ep=0x{endpoint:02x} {len(payload)}B "
+                f"{payload[:16].hex()}… vs wire {_fmt(op)}", self.i - 1)
+        self.matched += 1
+        return len(payload)
 
     def dispose_resources(self, *a):
         pass
@@ -198,9 +231,11 @@ def run(cap: str | None = None) -> int:
         print(f"FAIL: no VENQT device found in {path}")
         return 1
     ops = build_ops(pkts, dev)
-    n_reg = sum(1 for o in ops if o["breq"] == RTW89_USB_VENQT)
-    print(f"verify_pcap rtl8922au: {Path(path).name}, dev{dev}, {len(ops)} control ops "
-          f"({n_reg} register / VENQT)")
+    n_reg = sum(1 for o in ops if o["kind"] == "ctrl" and o["breq"] == RTW89_USB_VENQT)
+    n_bulk = sum(1 for o in ops if o["kind"] == "bulk")
+    n_driver = n_reg + n_bulk         # ops the driver must reproduce (register + bulk-OUT)
+    print(f"verify_pcap rtl8922au: {Path(path).name}, dev{dev}, {len(ops)} ops "
+          f"({n_reg} register / VENQT, {n_bulk} bulk-OUT)")
 
     replay = ReplayDev(ops)
     driver = RTL8922AUDriver.from_usb_device(replay, RTL8922AUDriver.SUPPORTED_IDS[0])
@@ -215,7 +250,8 @@ def run(cap: str | None = None) -> int:
         print(f"  harness error {type(e).__name__}: {e} (reproduced {replay.matched})")
         return 2
 
-    print(f"\nREPRODUCED (real driver code): {replay.matched}/{n_reg} register ops")
+    print(f"\nREPRODUCED (real driver code): {replay.matched}/{n_driver} driver ops "
+          f"({n_reg} register + {n_bulk} bulk-OUT)")
     if replay.waived:
         for name, b in replay.waived.items():
             fr = f"frames {min(b.frames)}-{max(b.frames)}" if b.frames else ""
@@ -228,13 +264,13 @@ def run(cap: str | None = None) -> int:
         print(replay.stack_trace(diverged.idx))
         return 1
     front = replay.next_register_op()
-    if front is None and replay.matched == n_reg:
-        print("\nRESULT: PASS. Every register op reproduced by real driver code.")
+    if front is None and replay.matched == n_driver:
+        print("\nRESULT: PASS. Every register + bulk-OUT op reproduced by real driver code.")
         return 0
     if front is not None:
         print(f"\nFRONTIER: op #{front} = {_fmt(ops[front])}. Port this next.")
         print(replay.stack_trace(front))
-    print(f"\nRESULT: INCOMPLETE. {replay.matched}/{n_reg} register ops reproduced.")
+    print(f"\nRESULT: INCOMPLETE. {replay.matched}/{n_driver} driver ops reproduced.")
     return 1
 
 

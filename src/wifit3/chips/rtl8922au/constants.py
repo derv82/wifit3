@@ -301,6 +301,12 @@ B_BE_BOOT_MODE = 1 << 19         # reg.h; same bit as B_AX_BOOT_MODE
 R_BE_BOOT_REASON = 0x01E6        # reg.h
 B_BE_BOOT_REASON_MASK = 0x7      # GENMASK(2, 0). reg.h
 
+# Firmware-download suit: secure-boot malloc + H2C/DLFW path-ready poll. [SRC] fw.c:1963-1971,
+# mac_be.c:757-766, reg.h.
+SECURE_BOOT_MALLOC_VALUE = 0x20248000  # 8922A NORMAL/WOWLAN. fw.c:1965
+B_BE_H2C_PATH_RDY = 1 << 1       # reg.h:4544
+B_BE_DLFW_PATH_RDY = 1 << 0      # reg.h:4545
+
 # XTAL_SI indirect register access. [SRC] mac.c:7179-7233, reg.h/mac.h.
 R_AX_WLAN_XTAL_SI_CTRL = 0x0270  # reg.h:268 (same address as the BE name)
 B_AX_WL_XTAL_SI_ADDR_MASK = 0x000000FF     # GENMASK(7, 0). reg.h:278
