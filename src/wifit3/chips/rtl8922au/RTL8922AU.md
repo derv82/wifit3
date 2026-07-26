@@ -6,7 +6,7 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 5014/163814 driver ops reproduced and committed (capture-1; ~5057/5083 on
+Cold-boot bring-up, 5037/163814 driver ops reproduced and committed (capture-1; ~5080/5106 on
 capture-2/3, poll-count variance only). `verify_pcap` now walks both VENQT control ops and
 bulk-OUT ops; all three captures stop at the same frontier. What is ported:
 - USB register-access transport (`rtw89_usb_vendorreq` + read/write ops + `read_cmac`), the
@@ -38,11 +38,14 @@ bulk-OUT ops; all three captures stop at the same frontier. What is ported:
   (DBCC qta), full `hfc_init(en=true)`, `sta_sch_init`, `mpdu_proc_init`, `sec_eng_init`,
   `txpktctrl_init`, `mlo_init`.
 
-Frontier: op #5023, `write 0x103c4 = 0ff00000` = `cmac_init_be(0)` (mac_be.c:1756). After
-cmac_init comes `dbcc_enable_be(true)` (qta is DBCC), the DMAC/CMAC IMR enables, `err_imr_ctrl`,
-`set_host_rpr_be`, and the 8922A RSP_CHK_SIG clear, which finish `trx_init_be`. Then `mac_init`
-does `feat_init`; then `core_start` continues into BB reg init, RF init, RFK calibration, the
-channel tune, and monitor-mode RX enable. None of that is ported yet.
+`cmac_init_be(0)` is under way (`scheduler_init`, `addr_cam_init`, `rx_fltr_init` with the
+sniffer-mode bit, `nav_ctrl_init`; `cca_ctrl_init_be` is a no-op). Frontier: op #5046,
+`read 0x1144a` = `spatial_reuse_init_be`, then `tmac_init`, `trxptcl_init`, `rmac_init`,
+`resp_pktctl_init`, `cmac_com_init`, `ptcl_init`, and the rest of `cmac_init_be` (mac_be.c:1756).
+After cmac_init comes `dbcc_enable_be(true)` (qta is DBCC), the DMAC/CMAC IMR enables,
+`err_imr_ctrl`, `set_host_rpr_be`, and the 8922A RSP_CHK_SIG clear, which finish `trx_init_be`.
+Then `mac_init` does `feat_init`; then `core_start` continues into BB reg init, RF init, RFK
+calibration, the channel tune, and monitor-mode RX enable. None of that is ported yet.
 
 ### Gotchas found while porting (not obvious from a single read)
 
@@ -122,12 +125,13 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #5023)
+## Next (from op #5046)
 
-Inside `rtw89_mac_init` -> `trx_init_be` (mac_be.c:2302), `dmac_init_be` is done; the frontier is
-`cmac_init_be(0)` (mac_be.c:1756), `write 0x103c4 = 0ff00000`. `cmac_init_be` is a long sequence
-of sub-inits (scheduler, addr-cam, protocol, TX/RX-ptcl, resp-pkt, security-CAM, etc.) mostly
-CMAC-window registers (0x10000+, band-1 at +0x4000). After it: `dbcc_enable_be(true)` (qta is
+Inside `rtw89_mac_init` -> `trx_init_be` (mac_be.c:2302), `dmac_init_be` is done and `cmac_init_be`
+is partway (through `nav_ctrl_init`). The frontier is `spatial_reuse_init_be` (`read 0x1144a`).
+The remaining `cmac_init_be` sub-inits (spatial-reuse, tmac, trxptcl, rmac, resp-pktctl, com,
+ptcl, ...) are mostly CMAC-window registers (0x10000+, band-1 at +0x4000). After it:
+`dbcc_enable_be(true)` (qta is
 DBCC), `enable_imr_be(DMAC_SEL)` + `enable_imr_be(CMAC_SEL)`, `err_imr_ctrl_be(true)`,
 `set_host_rpr_be`, then the 8922A `R_BE_RSP_CHK_SIG` clear -> `trx_init_be` returns. Then
 `mac_init` runs `feat_init` + `mac_post_init` (USB no-op) + `send_all_early_h2c` +
@@ -206,3 +210,6 @@ describing them, no jargon. No em-dashes and none of the banned words anywhere; 
 - 2026-07-26 M14: `enable_bb_rf` + `sys_init`, then all of `dmac_init_be`: `dle_init(DBCC)`, full
   `hfc_init(en=true)`, `sta_sch_init`, `mpdu_proc_init`, `sec_eng_init`, `txpktctrl_init`,
   `mlo_init`. 5014 ops. Frontier at `cmac_init_be(0)`.
+- 2026-07-26 M15: `cmac_init_be` start: `scheduler_init` (5023), `addr_cam_init` + `rx_fltr_init`
+  (sniffer mode, 5031), `nav_ctrl_init` (`cca_ctrl_init_be` no-op, 5037). Frontier
+  `spatial_reuse_init_be`.
