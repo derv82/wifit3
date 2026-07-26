@@ -84,6 +84,19 @@ from .constants import (
     RTW89_HCIFC_STF, RTW89_DMA_H2C, HFC_CH_CFG_CH8, HFC_PUB_CFG_P8, HFC_PREC_CFG_C6,
     R_BE_SS_CTRL, B_BE_SS_INIT_DONE, B_BE_WARM_INIT, B_BE_BAND_TRIG_EN, B_BE_BAND1_TRIG_EN,
     B_BE_SS_EN,
+    R_BE_MPDU_PROC, B_BE_APPEND_FCS, R_BE_CUT_AMSDU_CTRL, TRXCFG_MPDU_PROC_CUT_CTRL,
+    B_BE_CA_CHK_ADDRCAM_EN, R_BE_HDR_SHCUT_SETTING, B_BE_TX_MAC_MPDU_PROC_EN,
+    B_BE_TX_HW_ACK_POLICY_EN, B_BE_TX_HW_SEQ_EN, B_BE_TX_ADDR_MLD_TO_LIK,
+    R_BE_RX_HDRTRNS, TRXCFG_MPDU_PROC_RX_HDR_CONV, B_BE_HC_ADDR_HIT_EN, R_BE_DISP_FWD_WLAN_0,
+    B_BE_FWD_WLAN_CPU_TYPE_0_DATA_MASK, B_BE_FWD_WLAN_CPU_TYPE_0_MNG_MASK,
+    B_BE_FWD_WLAN_CPU_TYPE_0_CTL_MASK, B_BE_FWD_WLAN_CPU_TYPE_1_MASK,
+    R_BE_SEC_ENG_CTRL, B_BE_SEC_PRE_ENQUE_TX, B_BE_CLK_EN_CGCMP, B_BE_CLK_EN_WAPI,
+    B_BE_CLK_EN_WEP_TKIP, B_BE_BMC_MGNT_DEC, B_BE_UC_MGNT_DEC, B_BE_MC_DEC, B_BE_BC_DEC,
+    B_BE_SEC_RX_DEC, B_BE_SEC_TX_ENC, R_BE_SEC_MPDU_PROC, B_BE_APPEND_ICV, B_BE_APPEND_MIC,
+    R_BE_TXPKTCTL_MPDUINFO_CFG, B_BE_MPDUINFO_FEN, B_BE_MPDUINFO_PKTID_MASK,
+    B_BE_MPDUINFO_B1_BADDR_MASK, MPDU_INFO_B1_OFST,
+    R_BE_MLO_INIT_CTL, B_BE_MLO_TABLE_INIT_DONE, B_BE_MLO_TABLE_REINIT, B_BE_MLO_HW_CHGLINK_EN,
+    R_BE_CMAC_SHARE_ACQCHK_CFG_0, B_BE_R_MACID_ACQ_CHK_EN,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -931,13 +944,71 @@ def sta_sch_init(t) -> None:
     t.write32_clr(R_BE_SS_CTRL, B_BE_BAND_TRIG_EN | B_BE_BAND1_TRIG_EN)
 
 
+def mpdu_proc_init(t) -> None:
+    """mpdu_proc_init_be: FCS append, cut-AMSDU control, the TX header-shortcut settings, RX
+    header-translation, and the WLAN-CPU forward types. The HDR_SHCUT write32_set re-reads the
+    register (a source quirk that overrides the local clear of TX_ADDR_MLD_TO_LIK).
+    [SRC] mac_be.c:1000-1033."""
+    t.write32_set(R_BE_MPDU_PROC, B_BE_APPEND_FCS)
+    t.write32(R_BE_CUT_AMSDU_CTRL, TRXCFG_MPDU_PROC_CUT_CTRL | B_BE_CA_CHK_ADDRCAM_EN)
+    val = t.read32(R_BE_HDR_SHCUT_SETTING)
+    val = ((val | B_BE_TX_HW_SEQ_EN | B_BE_TX_HW_ACK_POLICY_EN | B_BE_TX_MAC_MPDU_PROC_EN)
+           & ~B_BE_TX_ADDR_MLD_TO_LIK & 0xFFFFFFFF)
+    t.write32_set(R_BE_HDR_SHCUT_SETTING, val)
+    t.write32(R_BE_RX_HDRTRNS, TRXCFG_MPDU_PROC_RX_HDR_CONV | B_BE_HC_ADDR_HIT_EN)
+    val = t.read32(R_BE_DISP_FWD_WLAN_0)
+    val = field_replace(val, B_BE_FWD_WLAN_CPU_TYPE_0_DATA_MASK, 1)
+    val = field_replace(val, B_BE_FWD_WLAN_CPU_TYPE_0_MNG_MASK, 1)
+    val = field_replace(val, B_BE_FWD_WLAN_CPU_TYPE_0_CTL_MASK, 1)
+    val = field_replace(val, B_BE_FWD_WLAN_CPU_TYPE_1_MASK, 1)
+    t.write32(R_BE_DISP_FWD_WLAN_0, val)
+
+
+def sec_eng_init(t) -> None:
+    """sec_eng_init_be: enable the security-engine clocks and the TX-encrypt / RX-decrypt paths,
+    then the ICV/MIC append. [SRC] mac_be.c:1035-1059."""
+    val = t.read32(R_BE_SEC_ENG_CTRL)
+    val |= (B_BE_CLK_EN_CGCMP | B_BE_CLK_EN_WAPI | B_BE_CLK_EN_WEP_TKIP
+            | B_BE_SEC_TX_ENC | B_BE_SEC_RX_DEC | B_BE_MC_DEC | B_BE_BC_DEC
+            | B_BE_BMC_MGNT_DEC | B_BE_UC_MGNT_DEC | B_BE_SEC_PRE_ENQUE_TX)
+    t.write32(R_BE_SEC_ENG_CTRL, val)
+    t.write32_set(R_BE_SEC_MPDU_PROC, B_BE_APPEND_ICV | B_BE_APPEND_MIC)
+
+
+def txpktctrl_init(t) -> None:
+    """txpktctrl_init_be: program the MPDU-info table. pktid is the DBCC ple free-page count
+    (dle_info.ple_free_pg); the band-1 base offset is the fixed MPDU_INFO_B1_OFST since the 8922A
+    has no dle_input (that is 8922D+). [SRC] mac_be.c:1061-1091."""
+    pktid = PLE_SIZE7_LNK_PGE_NUM           # dle_info.ple_free_pg for the DBCC config
+    val = t.read32(R_BE_TXPKTCTL_MPDUINFO_CFG)
+    val = field_replace(val, B_BE_MPDUINFO_PKTID_MASK, pktid)
+    val = field_replace(val, B_BE_MPDUINFO_B1_BADDR_MASK, MPDU_INFO_B1_OFST)
+    val |= B_BE_MPDUINFO_FEN
+    t.write32(R_BE_TXPKTCTL_MPDUINFO_CFG, val)
+
+
+def mlo_init(t) -> None:
+    """mlo_init_be: pulse the MLO table reinit, wait init-done, then enable HW change-link and the
+    MACID acquire check. reg is R_BE_SS_CTRL on the 8922A. [SRC] mac_be.c:1093-1129."""
+    val = t.read32(R_BE_MLO_INIT_CTL)
+    t.write32(R_BE_MLO_INIT_CTL, val | B_BE_MLO_TABLE_REINIT)
+    t.write32(R_BE_MLO_INIT_CTL, val & ~B_BE_MLO_TABLE_REINIT & 0xFFFFFFFF)
+    _poll32(t, R_BE_MLO_INIT_CTL, lambda v: v & B_BE_MLO_TABLE_INIT_DONE)
+    t.write32_set(R_BE_SS_CTRL, B_BE_MLO_HW_CHGLINK_EN)
+    t.write32_set(R_BE_CMAC_SHARE_ACQCHK_CFG_0, B_BE_R_MACID_ACQ_CHK_EN)
+
+
 def dmac_init(t) -> None:
     """dmac_init_be(0): the DMAC-side operating init. dle_init (DBCC qta), hfc_init (operating),
-    sta_sch_init, then mpdu_proc/sec_eng/txpktctrl/mlo. preload_init is a no-op on USB (not
-    qta_poh). [SRC] mac_be.c:1131-1184, mac.c:preload_init."""
+    sta_sch_init, mpdu_proc_init, sec_eng_init, txpktctrl_init, mlo_init. preload_init is a no-op
+    on USB (not qta_poh). [SRC] mac_be.c:1131-1184, mac.c:preload_init."""
     dle_init(t, "DBCC")
     hfc_init(t, True, True, True)           # reset, en=True, h2c_en=True (operating path)
     sta_sch_init(t)
+    mpdu_proc_init(t)
+    sec_eng_init(t)
+    txpktctrl_init(t)
+    mlo_init(t)
 
 
 def trx_init(t) -> None:

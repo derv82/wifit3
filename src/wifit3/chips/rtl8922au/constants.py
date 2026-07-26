@@ -388,6 +388,57 @@ B_BE_BAND_TRIG_EN = 1 << 28      # reg.h:6229
 B_BE_BAND1_TRIG_EN = 1 << 9      # reg.h:6239
 B_BE_SS_EN = 1 << 0              # reg.h:6247
 
+# MPDU processor init (mpdu_proc_init_be). [SRC] mac_be.c:1000-1033, reg.h.
+R_BE_MPDU_PROC = 0x9C00          # reg.h:5967
+B_BE_APPEND_FCS = 1 << 0         # reg.h:5977
+R_BE_CUT_AMSDU_CTRL = 0x9C94     # reg.h:5994
+TRXCFG_MPDU_PROC_CUT_CTRL = 0x010E05F0   # reg.h:1836
+B_BE_CA_CHK_ADDRCAM_EN = 1 << 29 # reg.h:5997
+R_BE_HDR_SHCUT_SETTING = 0x9B00  # reg.h:5955
+B_BE_TX_MAC_MPDU_PROC_EN = 1 << 2  # reg.h:5958
+B_BE_TX_HW_ACK_POLICY_EN = 1 << 1  # reg.h:5959
+B_BE_TX_HW_SEQ_EN = 1 << 0       # reg.h:5960
+B_BE_TX_ADDR_MLD_TO_LIK = 1 << 4 # reg.h:5956
+R_BE_RX_HDRTRNS = 0x9CC0         # reg.h:6008
+TRXCFG_MPDU_PROC_RX_HDR_CONV = 0x00000000  # reg.h:6015
+B_BE_HC_ADDR_HIT_EN = 1 << 3     # reg.h:6011
+R_BE_DISP_FWD_WLAN_0 = 0x8938    # reg.h:5446
+B_BE_FWD_WLAN_CPU_TYPE_0_DATA_MASK = 0x00000003  # GENMASK(1, 0). reg.h:5462
+B_BE_FWD_WLAN_CPU_TYPE_0_MNG_MASK = 0x0000000C   # GENMASK(3, 2). reg.h:5461
+B_BE_FWD_WLAN_CPU_TYPE_0_CTL_MASK = 0x00000030   # GENMASK(5, 4). reg.h:5460
+B_BE_FWD_WLAN_CPU_TYPE_1_MASK = 0x000000C0       # GENMASK(7, 6). reg.h:5459
+
+# Security engine init (sec_eng_init_be). [SRC] mac_be.c:1035-1059, reg.h.
+R_BE_SEC_ENG_CTRL = 0x9D00       # reg.h:6023
+B_BE_SEC_PRE_ENQUE_TX = 1 << 11  # reg.h:6037
+B_BE_CLK_EN_CGCMP = 1 << 10      # reg.h:6038
+B_BE_CLK_EN_WAPI = 1 << 9        # reg.h:6039
+B_BE_CLK_EN_WEP_TKIP = 1 << 8    # reg.h:6040
+B_BE_BMC_MGNT_DEC = 1 << 5       # reg.h:6041
+B_BE_UC_MGNT_DEC = 1 << 4        # reg.h:6042
+B_BE_MC_DEC = 1 << 3             # reg.h:6043
+B_BE_BC_DEC = 1 << 2             # reg.h:6044
+B_BE_SEC_RX_DEC = 1 << 1         # reg.h:6045
+B_BE_SEC_TX_ENC = 1 << 0         # reg.h:6046
+R_BE_SEC_MPDU_PROC = 0x9D04      # reg.h:6048
+B_BE_APPEND_ICV = 1 << 1         # reg.h:6056
+B_BE_APPEND_MIC = 1 << 0         # reg.h:6057
+
+# TX packet-control MPDU-info init (txpktctrl_init_be). [SRC] mac_be.c:1061-1091, reg.h.
+R_BE_TXPKTCTL_MPDUINFO_CFG = 0x9F10      # reg.h:6097
+B_BE_MPDUINFO_FEN = 1 << 31              # reg.h:6098
+B_BE_MPDUINFO_PKTID_MASK = 0x0FFF0000    # GENMASK(27, 16). reg.h:6099
+B_BE_MPDUINFO_B1_BADDR_MASK = 0x0000003F # GENMASK(5, 0). reg.h:6100
+MPDU_INFO_B1_OFST = 18                   # reg.h:6101; dle_input is NULL on 8922A (after-8922D only)
+
+# MLO table init (mlo_init_be). [SRC] mac_be.c:1093-1129, reg.h.
+R_BE_MLO_INIT_CTL = 0xA114               # reg.h:6189
+B_BE_MLO_TABLE_INIT_DONE = 1 << 31       # reg.h:6190
+B_BE_MLO_TABLE_REINIT = 1 << 23          # reg.h:6192
+B_BE_MLO_HW_CHGLINK_EN = 1 << 10         # reg.h:6238
+R_BE_CMAC_SHARE_ACQCHK_CFG_0 = 0x0E010   # reg.h:6443
+B_BE_R_MACID_ACQ_CHK_EN = 1 << 0         # reg.h:6448
+
 # Firmware-download preconfig (rtw89_mac_fwdl_preconfig_be). [SRC] mac_be.c:625-629, reg.h.
 R_BE_FW_AUTO_CAL_DELAY = 0x0188          # reg.h
 B_BE_WCPU_FW_DELAY_COUNT_VALID = 1 << 15  # reg.h
