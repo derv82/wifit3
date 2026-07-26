@@ -135,6 +135,7 @@ class ReplayDev:
         self.i = 0
         self.matched = 0
         self.waived: dict[str, _Bucket] = {}
+        self.speed = 3        # this capture is USB 2 (high-speed); the USB mode switch runs
 
     def _next(self) -> dict:
         while self.i < len(self.ops):

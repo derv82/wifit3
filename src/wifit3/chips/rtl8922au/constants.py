@@ -31,3 +31,36 @@ R_BE_PAD_CTRL2 = 0x00C4          # USB pad control (rtw89_usb_switch_mode_be). r
 R_AX_SYS_CFG1 = 0x00F0           # reg.h:195
 R_BE_SYS_CHIPINFO = 0x00FC       # HW id / chip info. reg.h:4314
 R_BE_WLAN_XTAL_SI_CTRL = 0x0270  # crystal SI control. reg.h:4670
+
+# rtw89_usb_switch_mode_be: USB2/3 mode switch on R_BE_PAD_CTRL2. [SRC] usb.c:1143-1170, reg.h.
+_LIBUSB_SPEED_SUPER = 4          # libusb/pyusb Device.speed for SuperSpeed (USB 3)
+USB_SWITCH_DELAY = 0xF           # reg.h:178
+B_BE_MATCH_CNT = 0xFF00          # GENMASK(15, 8). reg.h:4263
+B_BE_RSM_EN_V1 = 1 << 16         # reg.h:4262
+B_BE_NO_PDN_CHIPOFF_V1 = 1 << 17  # reg.h:4261
+B_BE_USB3_FORCE = 1 << 21        # reg.h:4260
+B_BE_USB2_FORCE = 1 << 22        # reg.h:4259
+B_BE_FORCE_U3_CK = 1 << 23       # reg.h:4258
+B_BE_FORCE_U2_CK = 1 << 24       # reg.h:4257
+B_BE_FORCE_CLK_U2 = 1 << 25      # reg.h:4256
+B_BE_USB_AUTO_INSTALL_MASK = 1 << 28  # reg.h:4255
+B_BE_USB3_LANE_MODE = 1 << 29    # reg.h:4254
+B_BE_USB3_GEN_MODE = 1 << 30     # reg.h:4253
+B_BE_USB23_SW_MODE = 1 << 31     # reg.h:4252
+
+# rtw89_read_chip_ver: chip version / hw id. [SRC] core.c:7091, reg.h/mac.h.
+B_AX_CHIP_VER_MASK = 0xF000      # GENMASK(15, 12). reg.h:196
+B_BE_HW_ID_MASK = 0xFF           # GENMASK(7, 0). reg.h:4319
+
+# XTAL_SI indirect register access. [SRC] mac.c:7179-7233, reg.h/mac.h.
+R_AX_WLAN_XTAL_SI_CTRL = 0x0270  # reg.h:268 (same address as the BE name)
+B_AX_WL_XTAL_SI_ADDR_MASK = 0x000000FF     # GENMASK(7, 0). reg.h:278
+B_AX_WL_XTAL_SI_DATA_MASK = 0x0000FF00     # GENMASK(15, 8). reg.h:277
+B_AX_WL_XTAL_SI_MODE_MASK = 0x03000000     # GENMASK(25, 24). reg.h:273
+B_AX_WL_XTAL_SI_CMD_POLL = 1 << 31         # BIT(31). reg.h:269
+XTAL_SI_NORMAL_READ = 0x01       # reg.h:275
+XTAL_SI_CV = 0x41                # mac.h:1666
+XTAL_SI_ACV_MASK = 0x0F          # GENMASK(3, 0). mac.h:1667
+XTAL_SI_CHIP_ID_L = 0xFD         # mac.h:1696
+XTAL_SI_CHIP_ID_H = 0xFE         # mac.h:1697
+XTAL_SI_POLL_ATTEMPTS = 1000     # read_poll_timeout(50us, 50ms). [SRC] mac.c:7221

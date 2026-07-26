@@ -8,7 +8,13 @@ import usb.core
 import usb.util
 
 from ..driver import Driver, DeviceID, ProgressCallback
-from .constants import R_BE_PAD_CTRL2
+from . import mac
+from .constants import (
+    R_BE_PAD_CTRL2, _LIBUSB_SPEED_SUPER, USB_SWITCH_DELAY, B_BE_MATCH_CNT,
+    B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
+    B_BE_USB3_FORCE, B_BE_USB2_FORCE, B_BE_FORCE_U3_CK, B_BE_FORCE_U2_CK, B_BE_FORCE_CLK_U2,
+    B_BE_USB3_GEN_MODE, B_BE_USB3_LANE_MODE,
+)
 from .transport import RTL8922AUTransport
 
 logger = logging.getLogger(__name__)
@@ -82,13 +88,37 @@ class RTL8922AUDriver(Driver):
         return None
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
-        """Claim the vendor interface and read R_BE_PAD_CTRL2, the first register the rtw89
-        USB probe reads (rtw89_usb_switch_mode_be). [SRC] usb.c:1143-1189."""
+        """Cold-boot bring-up: claim the vendor interface, run the USB mode switch, read the
+        chip version/id. [SRC] usb.c rtw89_usb_probe, core.c rtw89_read_chip_ver."""
         iface = self._claim_vendor_interface()
         logger.info("RTL8922AU: claimed vendor interface %s", iface)
-        pad_ctrl2 = self.transport.read32(R_BE_PAD_CTRL2)
-        logger.info("RTL8922AU: R_BE_PAD_CTRL2 = 0x%08x", pad_ctrl2)
+        self._switch_usb_mode()
+        ver = mac.read_chip_ver(self.transport)
+        logger.info("RTL8922AU: cv=0x%x acv=0x%x cid=0x%x aid=0x%x",
+                    ver["cv"], ver["acv"], ver["cid"], ver["aid"])
         return True
+
+    def _switch_usb_mode(self) -> None:
+        """rtw89_usb_switch_mode: SuperSpeed (USB 3 / USB-C) needs no switch; USB 2 runs the
+        BE mode switch. [SRC] usb.c:1172-1189."""
+        if getattr(self.dev, "speed", None) == _LIBUSB_SPEED_SUPER:
+            return
+        self._switch_mode_be()
+
+    def _switch_mode_be(self) -> None:
+        """rtw89_usb_switch_mode_be: read PAD_CTRL2; return if already switched (a USB 2 port
+        that ran this before), else force USB 2/3 mode. [SRC] usb.c:1143-1170."""
+        pad = self.transport.read32(R_BE_PAD_CTRL2)
+        if mac.field_get(B_BE_MATCH_CNT, pad) == USB_SWITCH_DELAY:
+            return
+        # TODO: verify, untested here. The cold-boot capture was already switched, so the
+        # force-mode write below does not fire. [SRC] usb.c:1156-1167.
+        pad = (pad & ~B_BE_MATCH_CNT) | mac.field_prep(B_BE_MATCH_CNT, USB_SWITCH_DELAY)
+        pad |= (B_BE_RSM_EN_V1 | B_BE_NO_PDN_CHIPOFF_V1
+                | B_BE_USB_AUTO_INSTALL_MASK | B_BE_USB23_SW_MODE)
+        pad &= ~(B_BE_USB3_FORCE | B_BE_USB2_FORCE | B_BE_FORCE_U3_CK | B_BE_FORCE_U2_CK
+                 | B_BE_FORCE_CLK_U2 | B_BE_USB3_GEN_MODE | B_BE_USB3_LANE_MODE)
+        self.transport.write32_quiet(R_BE_PAD_CTRL2, pad)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         raise NotImplementedError
