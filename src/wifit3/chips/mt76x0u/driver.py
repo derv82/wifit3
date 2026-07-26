@@ -993,8 +993,13 @@ class MT76x0UDriver(Driver):
         globally in TX_RTY_CFG at connect) retransmits an un-ACKed unicast. The sequence number
         is already stamped by ``_stamp_tx_seq`` (the base calls it before this)."""
         from .tx import TXError, inject_80211_frame
+        loop = asyncio.get_running_loop()
         try:
-            n = inject_80211_frame(self.transport, frame_bytes, request_ack=True, wcid=0xFF)
+            # Offload the blocking build+bulk-OUT so a sync write can't stall the event loop.
+            # No _hw_lock here: the bulk-OUT endpoint, not the control-register batches it guards.
+            n = await loop.run_in_executor(
+                None, lambda: inject_80211_frame(self.transport, frame_bytes,
+                                                 request_ack=True, wcid=0xFF))
         except TXError as e:
             logger.error("MT7610U: inject_frame failed: %s", e)
             return False
