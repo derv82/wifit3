@@ -114,6 +114,19 @@ from .constants import (
     R_BE_WMAC_NAV_CTL, B_BE_WMAC_NAV_UPPER_EN, B_BE_WMAC_PLCP_UP_NAV_EN, B_BE_WMAC_TF_UP_NAV_EN,
     B_BE_WMAC_NAV_UPPER_MASK, NAV_25MS, R_BE_SPECIAL_TX_SETTING, B_BE_BMC_NAV_PROTECT,
     R_BE_TRXPTCL_RESP_0, B_BE_WMAC_MBA_DUR_FORCE,
+    R_BE_RX_SR_CTRL, B_BE_SR_CTRL_PLCP_EN, B_BE_SR_EN, R_BE_BSSID_SRC_CTRL, B_BE_PLCP_SRC_EN,
+    R_BE_TB_PPDU_CTRL, B_BE_QOSNULL_UPD_MUEDCA_EN, R_BE_WMTX_TCR_BE_4,
+    B_BE_EHT_HE_PPDU_4XLTF_ZLD_USTIMER_MASK, B_BE_EHT_HE_PPDU_2XLTF_ZLD_USTIMER_MASK,
+    R_BE_MAC_LOOPBACK, S_BE_MACLBK_PLCP_DLY_DEF, B_BE_MACLBK_PLCP_DLY_MASK, B_BE_MACLBK_EN,
+    WMAC_SPEC_SIFS_CCK, B_BE_WMAC_SPEC_SIFS_CCK_MASK,
+    WMAC_SPEC_SIFS_OFDM_1115E, B_BE_WMAC_SPEC_SIFS_OFDM_MASK, R_BE_WMAC_ACK_BA_RESP_LEGACY,
+    B_BE_ACK_BA_RESP_LEGACY_CHK_EDCCA, R_BE_WMAC_ACK_BA_RESP_HE, B_BE_ACK_BA_RESP_HE_CHK_EDCCA,
+    R_BE_WMAC_ACK_BA_RESP_EHT_LEG_PUNC, B_BE_ACK_BA_EHT_LEG_PUNC_CHK_EDCCA, R_BE_RXTRIG_TEST_USER_2,
+    B_BE_RXTRIG_FCSCHK_EN, R_BE_TRXPTCL_RESP_1, B_BE_FTM_RRSR_RATE_EN_MASK,
+    B_BE_WMAC_RESP_DOPPLEB_BE_EN, B_BE_WMAC_RESP_DCM_EN, B_BE_WMAC_RESP_REF_RATE_SEL,
+    B_BE_WMAC_RESP_REF_RATE_MASK, R_BE_PTCL_RRSR1, B_BE_RRSR_RATE_EN_MASK, B_BE_RRSR_CCK_MASK,
+    B_BE_RSC_MASK, R_BE_PTCL_RRSR0, B_BE_RRSR_OFDM_MASK, B_BE_RRSR_HT_MASK, B_BE_RRSR_VHT_MASK,
+    B_BE_RRSR_HE_MASK,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -1093,7 +1106,63 @@ def nav_ctrl_init(t, mac_idx: int) -> None:
     t.write32_set(R_BE_TRXPTCL_RESP_0 + off, B_BE_WMAC_MBA_DUR_FORCE)
 
 
-def cmac_init(t, mac_idx: int) -> None:
+def spatial_reuse_init(t, mac_idx: int) -> None:
+    """spatial_reuse_init_be: disable spatial-reuse RX, enable the PLCP BSSID source.
+    [SRC] mac_be.c:1376-1396."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    t.write8_clr(R_BE_RX_SR_CTRL + off, B_BE_SR_EN | B_BE_SR_CTRL_PLCP_EN)
+    t.write8_set(R_BE_BSSID_SRC_CTRL + off, B_BE_PLCP_SRC_EN)
+
+
+def tmac_init(t, mac_idx: int) -> None:
+    """tmac_init_be (8922A): clear the QoS-null MU-EDCA update, set the EHT/HE PPDU 4x/2x-LTF
+    zero-LD micro-timers. [SRC] mac_be.c:1398-1423."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    t.write32_clr(R_BE_TB_PPDU_CTRL + off, B_BE_QOSNULL_UPD_MUEDCA_EN)
+    t.write32_mask(R_BE_WMTX_TCR_BE_4 + off, B_BE_EHT_HE_PPDU_4XLTF_ZLD_USTIMER_MASK, 0x12)
+    t.write32_mask(R_BE_WMTX_TCR_BE_4 + off, B_BE_EHT_HE_PPDU_2XLTF_ZLD_USTIMER_MASK, 0xe)
+
+
+def trxptcl_init(t, mac_idx: int, cv: int) -> None:
+    """trxptcl_init_be (8922A): MAC-loopback PLCP delay (loopback off), PHYINTF enable, the
+    response SIFS values, clear the ACK/BA EDCCA checks, RX-trigger FCS check, mask down the
+    response and RRSR rate tables, and apply the rrsr ref-rate (REF_RATE_SEL cleared). The 8922D
+    PLCP-CRC branch is skipped; the CAV-only RSC=1 write runs only on the A-cut. [SRC] mac_be.c:1425-1502."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    val = t.read32(R_BE_MAC_LOOPBACK + off)
+    val = field_replace(val, B_BE_MACLBK_PLCP_DLY_MASK, S_BE_MACLBK_PLCP_DLY_DEF) & ~B_BE_MACLBK_EN
+    t.write32(R_BE_MAC_LOOPBACK + off, val & 0xFFFFFFFF)
+    t.write32_set(R_BE_CMAC_FUNC_EN + off, B_BE_PHYINTF_EN)
+
+    val = t.read32(R_BE_TRXPTCL_RESP_0 + off)
+    val = field_replace(val, B_BE_WMAC_SPEC_SIFS_CCK_MASK, WMAC_SPEC_SIFS_CCK)
+    val = field_replace(val, B_BE_WMAC_SPEC_SIFS_OFDM_MASK, WMAC_SPEC_SIFS_OFDM_1115E)
+    t.write32(R_BE_TRXPTCL_RESP_0 + off, val)
+
+    t.write32_clr(R_BE_WMAC_ACK_BA_RESP_LEGACY + off, B_BE_ACK_BA_RESP_LEGACY_CHK_EDCCA)
+    t.write32_clr(R_BE_WMAC_ACK_BA_RESP_HE + off, B_BE_ACK_BA_RESP_HE_CHK_EDCCA)
+    t.write32_clr(R_BE_WMAC_ACK_BA_RESP_EHT_LEG_PUNC + off, B_BE_ACK_BA_EHT_LEG_PUNC_CHK_EDCCA)
+    t.write32_set(R_BE_RXTRIG_TEST_USER_2 + off, B_BE_RXTRIG_FCSCHK_EN)
+
+    val = t.read32(R_BE_TRXPTCL_RESP_1 + off)
+    val &= (B_BE_FTM_RRSR_RATE_EN_MASK | B_BE_WMAC_RESP_DOPPLEB_BE_EN | B_BE_WMAC_RESP_DCM_EN
+            | B_BE_WMAC_RESP_REF_RATE_MASK)
+    t.write32(R_BE_TRXPTCL_RESP_1 + off, val)
+    t.write32_mask(R_BE_TRXPTCL_RESP_1 + off, B_BE_WMAC_RESP_REF_RATE_SEL, 0)   # rrsr.ref_rate
+
+    val = t.read32(R_BE_PTCL_RRSR1 + off)
+    val &= (B_BE_RRSR_RATE_EN_MASK | B_BE_RRSR_CCK_MASK | B_BE_RSC_MASK)
+    t.write32(R_BE_PTCL_RRSR1 + off, val)
+
+    val = t.read32(R_BE_PTCL_RRSR0 + off)
+    val &= (B_BE_RRSR_OFDM_MASK | B_BE_RRSR_HT_MASK | B_BE_RRSR_VHT_MASK | B_BE_RRSR_HE_MASK)
+    t.write32(R_BE_PTCL_RRSR0 + off, val)
+
+    if cv == CHIP_CAV:
+        t.write32_mask(R_BE_PTCL_RRSR1 + off, B_BE_RSC_MASK, 1)
+
+
+def cmac_init(t, mac_idx: int, cv: int) -> None:
     """cmac_init_be: the CMAC-side operating init (scheduler, addr-cam, rx-filter, cca/nav,
     spatial-reuse, tmac, trxptcl, rmac, resp-pktctl, com, ptcl, ...). cca_ctrl_init_be is a no-op.
     [SRC] mac_be.c:1756+."""
@@ -1101,13 +1170,16 @@ def cmac_init(t, mac_idx: int) -> None:
     addr_cam_init(t, mac_idx)
     rx_fltr_init(t, mac_idx)
     nav_ctrl_init(t, mac_idx)
+    spatial_reuse_init(t, mac_idx)
+    tmac_init(t, mac_idx)
+    trxptcl_init(t, mac_idx, cv)
 
 
-def trx_init(t) -> None:
+def trx_init(t, cv: int) -> None:
     """trx_init_be: dmac_init then cmac_init, the dbcc enable (qta is DBCC), the DMAC/CMAC IMR
     enables, host-rpr, and the 8922A rsp-chk-sig clear. [SRC] mac_be.c:2302-2352."""
     dmac_init(t)
-    cmac_init(t, RTW89_MAC_0)
+    cmac_init(t, RTW89_MAC_0, cv)
 
 
 def mac_init(t, h2c_ep: int, cv: int) -> None:
@@ -1117,4 +1189,4 @@ def mac_init(t, h2c_ep: int, cv: int) -> None:
     partial_init(t, h2c_ep, cv, include_bb=True)
     enable_bb_rf(t)
     sys_init(t)
-    trx_init(t)
+    trx_init(t, cv)
