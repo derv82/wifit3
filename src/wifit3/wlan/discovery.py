@@ -40,6 +40,7 @@ def _import_driver_classes() -> Dict[str, Type[Driver]]:
         from wifit3.chips.mt76x0u.driver import MT76x0UDriver
         from wifit3.chips.mt76x2u.driver import MT76x2UDriver
         from wifit3.chips.mt7921au.driver import MT7921AUDriver
+        from wifit3.chips.mt7925au.driver import MT7925AUDriver
         from wifit3.chips.rt2500usb.driver import RT2500USBDriver
         from wifit3.chips.rt2800usb.driver import RT2800USBDriver
         from wifit3.chips.rt3070.driver import RT3070Driver
@@ -73,6 +74,7 @@ def _import_driver_classes() -> Dict[str, Type[Driver]]:
             "mt76x0u": MT76x0UDriver,
             "mt76x2u": MT76x2UDriver,
             "mt7921au": MT7921AUDriver,
+            "mt7925au": MT7925AUDriver,
             "rtl8922au": RTL8922AUDriver,
 
             # Kernel + DKMS drivers

@@ -99,6 +99,8 @@ REGISTRY: dict[str, Chip] = {
                     "Realtek RTL8187L / rtl818x (vendor 0x05)"),
     "mt7921au": Chip("mt7921au", "mt7921au/verify_pcap.py",
                      "MediaTek MT7921AU connac2 unified-bus (cold-boot + FW + MCU + TX)"),
+    "mt7925au": Chip("mt7925au", "mt7925au/verify_pcap.py",
+                     "MediaTek MT7925U connac3 unified-bus (cold-boot firmware; M1)"),
     "mt76x2u": Chip("mt76x2u", "mt76x2u/verify_pcap.py",
                     "MediaTek MT7612U mt76-USB (vendor 0x06/0x07; cold-boot + FW + MCU + TX)"),
     "mt76x0u": Chip("mt76x0u", "mt76x0u/verify_pcap.py",
