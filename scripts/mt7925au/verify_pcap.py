@@ -19,6 +19,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import mt76_verify_replay as E  # noqa: E402
 import wifit3.chips.mt7925au as mt_pkg  # noqa: E402
+from wifit3.chips.mt7925au import init as mt_init  # noqa: E402
 from wifit3.chips.mt7925au import rx as mt_rx  # noqa: E402
 from wifit3.chips.mt7925au.constants import MT7925_RXD_SEQ_OFF  # noqa: E402
 from wifit3.chips.mt7925au.firmware import MT7925AUFirmwareLoader  # noqa: E402
@@ -123,9 +124,17 @@ async def _drive_firmware(dev: E.ReplayDevice, state: dict):
     return await loader.load_firmware()
 
 
+async def _drive_postboot(dev: E.ReplayDevice, state: dict):
+    """Run the port's post_boot_init over the cursor (run_firmware tail, FW_DL_EN
+    clear, mac_init, CLC, monitor entry)."""
+    t = _make_transport(dev, state["q"])
+    return await mt_init.post_boot_init(t)
+
+
 async def _run_bringup(walk: E.Walk, state: dict):
     state["q"] = _WireMcuQueue(walk.cap.responses)
     await walk.run_async(lambda dev: _drive_firmware(dev, state), "firmware.load_firmware")
+    await walk.run_async(lambda dev: _drive_postboot(dev, state), "init.post_boot_init")
 
 
 def run(cap: str | None = None, verbose: bool = False) -> int:

@@ -203,3 +203,106 @@ MT7925_RXD_STATUS_OFF = 40
 MT_RXD0_LENGTH    = 0x0000FFFF   # GENMASK(15, 0)
 PKT_TYPE_RX_EVENT = 7            # MCU response / firmware event
 PKT_TYPE_NORMAL   = 2            # 802.11 frame
+
+# ===========================================================================
+# Post-boot init (mt7925_mac_init, mt792x_mac_init_band). Addresses/bits verbatim
+# from mt7925/regs.h + mt792x_regs.h. mt7925 MDP/WTBL bases DIFFER from mt7921.
+# ===========================================================================
+
+# mt7925_mac_init (mt7925/init.c:82-84): MDP de-agg + max RX len.
+MT_MDP_DCR1            = 0x820cc804   # MT_MDP(0x004), mt7925/regs.h:16
+MT_MDP_DCR1_MAX_RX_LEN = 0x0000FFF8  # GENMASK(15,3), :17
+MDP_MAX_RX_LEN        = 1536
+MT_MDP_DCR0           = 0x820cc800    # MT_MDP(0x000), :12
+MT_MDP_DCR0_DAMSDU_EN = 0x00008000   # BIT(15), :13
+
+# per-WCID admission-count clear (mt7925_mac_wtbl_update, mt7925/mac.c:13).
+MT_WTBL_UPDATE                 = 0x820d4380   # MT_WTBLON_TOP(0x380), mt7925/regs.h:88
+MT_WTBL_UPDATE_WLAN_IDX        = 0x00000FFF   # GENMASK(11,0), :89
+MT_WTBL_UPDATE_ADM_COUNT_CLEAR = 0x00004000   # BIT(14), :90
+MT_WTBL_UPDATE_BUSY            = 0x80000000   # BIT(31), mt792x_regs.h:160
+MT792x_WTBL_SIZE     = 20   # mt792x.h:18
+MT792x_WTBL_RESERVED = 19   # MT792x_WTBL_SIZE - 1, mt792x.h:19
+
+# per-band bases (mt792x_regs.h): band0 unless b.
+def MT_WF_TMAC_BASE(b):     return 0x820f4000 if b else 0x820e4000
+def MT_WF_RMAC_BASE(b):     return 0x820f5000 if b else 0x820e5000
+def MT_WF_MIB_BASE(b):      return 0x820fd000 if b else 0x820ed000
+def MT_WF_DMA_BASE(b):      return 0x820f7000 if b else 0x820e7000
+def MT_WTBLOFF_TOP_BASE(b): return 0x820f9000 if b else 0x820e9000
+
+# mt792x_mac_init_band (mt792x_mac.c:285-311).
+def MT_TMAC_CTCR0(b):        return MT_WF_TMAC_BASE(b) + 0x0f4   # :46
+MT_TMAC_CTCR0_INS_DDLMT_REFTIME      = 0x0000003F   # GENMASK(5,0), :47
+MT_TMAC_CTCR0_INS_DDLMT_EN           = 0x00020000   # BIT(17), :48
+MT_TMAC_CTCR0_INS_DDLMT_VHT_SMPDU_EN = 0x00040000   # BIT(18), :49
+TMAC_CTCR0_REFTIME_VAL = 0x3f
+def MT_WF_RMAC_MIB_TIME0(b):    return MT_WF_RMAC_BASE(b) + 0x3c4   # :251
+def MT_WF_RMAC_MIB_AIRTIME0(b): return MT_WF_RMAC_BASE(b) + 0x380   # :257
+MT_WF_RMAC_MIB_RXTIME_EN = 0x40000000   # BIT(30), :253
+def MT_MIB_SCR1(b):         return MT_WF_MIB_BASE(b) + 0x004   # :98
+MT_MIB_TXDUR_EN = 0x00000100   # BIT(8), :99
+MT_MIB_RXDUR_EN = 0x00000200   # BIT(9), :100
+def MT_DMA_DCR0(b):         return MT_WF_DMA_BASE(b) + 0x000   # :57
+MT_DMA_DCR0_MAX_RX_LEN = 0x0000FFF8   # GENMASK(15,3), :58
+DMA_DCR0_MAX_RX_LEN_VAL = 1536
+MT_DMA_DCR0_RXD_G5_EN  = 0x00800000   # BIT(23), :59
+def MT_WTBLOFF_TOP_RSCR(b): return MT_WTBLOFF_TOP_BASE(b) + 0x008   # :65
+MT_WTBLOFF_TOP_RSCR_RCPI_MODE  = 0xC0000000   # GENMASK(31,30), :66
+MT_WTBLOFF_TOP_RSCR_RCPI_PARAM = 0x03000000   # GENMASK(25,24), :67
+RSCR_RCPI_PARAM_VAL = 0x3
+
+# basic-rate fixed-rate table (mt7925_mac_set_fixed_rate_table, mac.c:157).
+MT_WTBL_ITCR      = 0x820d43b0   # MT_WTBLON_TOP(0x3b0), mt792x_regs.h:162
+MT_WTBL_ITCR_WR   = 0x00010000   # BIT(16), :163
+MT_WTBL_ITCR_EXEC = 0x80000000   # BIT(31), :164
+MT_WTBL_ITDR0     = 0x820d43b8   # :165
+MT_WTBL_ITDR1     = 0x820d43bc   # :166
+MT_WTBL_SPE_IDX_SEL = 0x00000040 # BIT(6), :167
+MT792x_BASIC_RATES_TBL = 11      # mt792x.h:36
+# rate_idx per mt76_rates entry: FIELD_PREP(MODE, hw>>8) | FIELD_PREP(IDX, hw&0xff),
+# MODE=GENMASK(9,6), IDX=GENMASK(5,0) (mt76_connac3_mac.h). 4 CCK + 8 OFDM.
+BASIC_RATE_IDX = [0x000, 0x001, 0x002, 0x003,
+                  0x04b, 0x04f, 0x04a, 0x04e, 0x049, 0x04d, 0x048, 0x04c]
+
+# ===========================================================================
+# connac3 UNI / CE command ids + tags (mt76_connac_mcu.h, mt7925/mcu.h).
+# ===========================================================================
+MCU_UNI_CMD_DEV_INFO_UPDATE = 0x01
+MCU_UNI_CMD_BSS_INFO_UPDATE = 0x02
+MCU_UNI_CMD_HIF_CTRL        = 0x07
+MCU_UNI_CMD_BAND_CONFIG     = 0x08
+MCU_UNI_CMD_WSYS_CONFIG     = 0x0b
+MCU_UNI_CMD_CHIP_CONFIG     = 0x0e
+MCU_UNI_CMD_SNIFFER         = 0x24
+MCU_UNI_CMD_EFUSE_CTRL      = 0x2d
+MCU_CE_CMD_SET_CHAN_DOMAIN  = 0x0f
+
+# tags (mt7925/mcu.h; DEV_INFO_ACTIVE/UNI_BSS_INFO_BASIC in mt76_connac_mcu.h).
+UNI_CHIP_CONFIG_CHIP_CFG = 0x2   # mt7925/mcu.h:118
+UNI_CHIP_CONFIG_NIC_CAPA = 0x3   # :119
+UNI_BAND_CONFIG_SET_MAC80211_RX_FILTER = 0x0C   # :125
+UNI_WSYS_CONFIG_FW_LOG_CTRL = 0   # :129 (first in enum)
+UNI_EFUSE_BUFFER_MODE       = 2   # :135 (UNI_EFUSE_ACCESS=1 first)
+UNI_SNIFFER_ENABLE = 0            # :196
+UNI_SNIFFER_CONFIG = 1            # :197
+UNI_BSS_INFO_BASIC = 0            # mt76_connac_mcu.h:1363
+DEV_INFO_ACTIVE    = 0            # mt76_connac_mcu.h:1009 (first in enum)
+
+# GET_NIC_CAPAB reply TLV tags (mt76_connac_mcu.h enum).
+MT_NIC_CAP_MAC_ADDR = 0x07
+MT_NIC_CAP_PHY      = 0x08
+MT_NIC_CAP_6G       = 0x18
+
+# EFUSE buffer mode (mt76_connac_mcu.h:1145,1151).
+EE_MODE_EFUSE   = 0
+EE_FORMAT_WHOLE = 1
+
+# monitor BSS conn_type = STA_TYPE_AP | NETWORK_INFRA (mt76_connac_mcu.c:1201).
+CONNECTION_INFRA_AP = (1 << 1) | (1 << 16)   # 0x00010002
+
+# config_sniffer ch_band code (2.4->1, 5->2, 6->3).
+CH_BAND_2GHZ = 1
+CH_BAND_5GHZ = 2
+
+MT_RTS_THRESH_DEFAULT = 0x92b   # __mt7925_start

@@ -14,6 +14,7 @@ The connac3 txd differs from connac2 (mt7921) in one dword: ``txd[1] = 0x0000400
 Values come from constants.py (grepped from source), never typed from memory.
 """
 import struct
+from dataclasses import dataclass
 
 # ruff: noqa: F403, F405
 from .constants import *
@@ -56,7 +57,7 @@ def build_mcu_frame(cmd, payload, seq):
     """
     mcu_cmd = cmd & _F_ID
     uni = bool(cmd & _F_UNI)
-    txd_size = MCU_TXD_SIZE
+    txd_size = UNI_TXD_SIZE if uni else MCU_TXD_SIZE   # sizeof(uni_txd)=48, sizeof(mcu_txd)=64
     skb_len = txd_size + len(payload)            # skb->len when the SDIO hdr is added
 
     t = SDIO_HDR_SIZE                            # txd starts after the 4-byte SDIO hdr
@@ -75,7 +76,11 @@ def build_mcu_frame(cmd, payload, seq):
         frame[t + 37] = MCU_PKT_ID
         frame[t + 39] = seq & 0xFF
         frame[t + 42] = MCU_S2D_H2N
-        frame[t + 43] = MCU_CMD_UNI_EXT_ACK              # option
+        option = MCU_CMD_UNI_QUERY_ACK if (cmd & _F_QUERY) else MCU_CMD_UNI_EXT_ACK
+        # HIF_CTRL / CHIP_CONFIG do not request a fw reply (mt7925_mcu_fill_message).
+        if mcu_cmd in (MCU_UNI_CMD_HIF_CTRL, MCU_UNI_CMD_CHIP_CONFIG):
+            option &= ~MCU_CMD_ACK
+        frame[t + 43] = option
     else:
         struct.pack_into("<H", frame, t + 34, MCU_PQ_ID)
         frame[t + 36] = mcu_cmd                          # cid
@@ -99,8 +104,12 @@ def build_mcu_frame(cmd, payload, seq):
     return bytes(frame)
 
 
-# uni_txd.option = MCU_CMD_UNI_EXT_ACK = ACK | UNI | SET (used by M2+ UNI commands).
-MCU_CMD_UNI_EXT_ACK = 0x07
+# uni_txd fields (mt76_connac_mcu.h:1163-1169). option = ACK|UNI|SET for a set
+# command, ACK|UNI for a query. UNI txd is 48 B (sizeof mt76_connac2_mcu_uni_txd).
+UNI_TXD_SIZE        = 48
+MCU_CMD_ACK           = 0x01   # BIT(0)
+MCU_CMD_UNI_EXT_ACK   = 0x07   # MCU_CMD_ACK | MCU_CMD_UNI | MCU_CMD_SET
+MCU_CMD_UNI_QUERY_ACK = 0x03   # MCU_CMD_ACK | MCU_CMD_UNI
 
 
 # ===========================================================================
@@ -168,3 +177,83 @@ def fw_start(override_addr: int):
     region set an override address (is_wa is always false for mt7925 USB)."""
     option = FW_START_OVERRIDE if override_addr else 0
     return MCU_CMD(MCU_CMD_FW_START_REQ), struct.pack("<II", option, override_addr)
+
+
+# ===========================================================================
+# Post-boot run_firmware tail + device init (connac3 UNI commands).
+# ===========================================================================
+
+def get_nic_capability():
+    """mt7925_mcu_get_nic_capability (mt7925/mcu.c:924) — MCU_UNI_CMD(CHIP_CONFIG) QUERY.
+    Payload { u8 _rsv[4]; __le16 tag=NIC_CAPA; __le16 len=4 }. The reply carries the
+    card MAC + phy/band caps (parse_nic_capability)."""
+    # Sent as a SET (not QUERY); CHIP_CONFIG clears the option ACK bit in build_mcu_frame.
+    # The reply (with the same seq) still arrives on EP 0x84 and carries the caps.
+    payload = struct.pack("<4xHH", UNI_CHIP_CONFIG_NIC_CAPA, 4)
+    return MCU_UNI_CMD(MCU_UNI_CMD_CHIP_CONFIG), payload
+
+
+def fw_log_2_host(ctrl: int):
+    """mt7925_mcu_fw_log_2_host (mt7925/mcu.c:819) — MCU_UNI_CMD(WSYS_CONFIG).
+    Payload { u8 _rsv[4]; __le16 tag=FW_LOG_CTRL; __le16 len=8; u8 ctrl; u8 interval; u8 _rsv2[2] }."""
+    payload = struct.pack("<4xHHBB2x", UNI_WSYS_CONFIG_FW_LOG_CTRL, 8, ctrl, 0)
+    return MCU_UNI_CMD(MCU_UNI_CMD_WSYS_CONFIG), payload
+
+
+def set_eeprom():
+    """mt7925_mcu_set_eeprom (mt7925/mcu.c:1477) — MCU_UNI_CMD(EFUSE_CTRL).
+    Payload { u8 _rsv[4]; __le16 tag=BUFFER_MODE; __le16 len=8; u8 buffer_mode=EFUSE;
+    u8 format=WHOLE; __le16 buf_len=0 }."""
+    payload = struct.pack("<4xHHBBH", UNI_EFUSE_BUFFER_MODE, 8, EE_MODE_EFUSE, EE_FORMAT_WHOLE, 0)
+    return MCU_UNI_CMD(MCU_UNI_CMD_EFUSE_CTRL), payload
+
+
+@dataclass
+class NicCaps:
+    """Per-card capability from the GET_NIC_CAPAB reply (defaults = 2x2 dual-band)."""
+    mac: "str | None" = None
+    antenna_mask: int = 0x3
+    has_2ghz: bool = True
+    has_5ghz: bool = True
+    has_6ghz: bool = False
+
+
+# mt7925_mcu_parse_phy_cap struct byte order (mt7925/mcu.c:877): ht,vht,_5g,max_bw,
+# nss,dbdc,tx_ldpc,rx_ldpc,tx_stbc,rx_stbc,hw_path,he,eht (all u8).
+_PHY_CAP_NSS = 4
+_PHY_CAP_HW_PATH = 10
+_WF0_24G = 1 << 0
+_WF0_5G = 1 << 1
+
+
+def parse_nic_capability(resp: bytes) -> NicCaps:
+    """Walk the GET_NIC_CAPAB reply for the per-card caps (mt7925/mcu.c:949-988). ``resp``
+    is the raw response buffer; the reply body (mt76_connac_cap_hdr + {tag,len} TLVs)
+    starts after the 44-byte mt7925_mcu_rxd. Each TLV's ``len`` includes its 4-byte
+    header. Best-effort: fields with no TLV keep the reference defaults."""
+    caps = NicCaps()
+    if not resp or len(resp) < MT7925_RXD_HDR_SIZE + 4:
+        return caps
+    body = resp[MT7925_RXD_HDR_SIZE:]
+    n_element = struct.unpack_from("<H", body, 0)[0]
+    off = 4
+    for _ in range(n_element):
+        if off + 4 > len(body):
+            break
+        tag, tlv_len = struct.unpack_from("<HH", body, off)
+        if tlv_len < 4 or off + tlv_len > len(body):
+            break
+        data = body[off + 4:off + tlv_len]
+        if tag == MT_NIC_CAP_MAC_ADDR and len(data) >= 6:
+            caps.mac = ":".join(f"{b:02x}" for b in data[:6])
+        elif tag == MT_NIC_CAP_PHY and len(data) > _PHY_CAP_HW_PATH:
+            nss = data[_PHY_CAP_NSS]
+            hw_path = data[_PHY_CAP_HW_PATH]
+            if nss:
+                caps.antenna_mask = (1 << nss) - 1
+            caps.has_2ghz = bool(hw_path & _WF0_24G)
+            caps.has_5ghz = bool(hw_path & _WF0_5G)
+        elif tag == MT_NIC_CAP_6G and len(data) >= 1:
+            caps.has_6ghz = bool(data[0])
+        off += tlv_len
+    return caps
