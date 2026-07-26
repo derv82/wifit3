@@ -25,7 +25,9 @@ from .constants import (
     R_BE_SECURE_BOOT_MALLOC_INFO, SECURE_BOOT_MALLOC_VALUE,
     R_BE_WCPU_FW_CTRL, B_BE_H2C_PATH_RDY, B_BE_DLFW_PATH_RDY,
     R_AX_HALT_H2C_CTRL, R_AX_HALT_C2H_CTRL,
-    B_BE_WLANCPU_FWDL_EN,
+    B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
+    RTW89_FW_ELEMENT_ID_BBMCU0, RTW89_FW_ELEMENT_ALIGN, FW_ELEMENT_HDR_SIZE,
+    FW_ELEMENT_BBMCU_CV_OFFSET,
     PWR_POLL_ATTEMPTS,
     R_BE_H2CREG_DATA0, R_BE_C2HREG_DATA0, R_BE_H2CREG_CTRL, B_BE_H2CREG_TRIGGER, R_BE_C2HREG_CTRL,
     R_BE_MAILBOX_COUNTER, B_MAILBOX_H2C_CNT_MASK, B_MAILBOX_C2H_CNT_MASK,
@@ -58,6 +60,28 @@ def load_fw_suit(cv: int) -> bytes:
     if best is None:
         raise RuntimeError("rtl8922au: no suitable NORMAL firmware in mfw file")
     return data[best[1]:best[1] + best[2]]
+
+
+def _align(x: int, a: int) -> int:
+    return (x + a - 1) & ~(a - 1)
+
+
+def load_bbmcu_suit(cv: int) -> bytes:
+    """rtw89_fw_recognize_elements -> __rtw89_fw_recognize_from_elm: return the first BBMCU0
+    firmware element whose cut is at or below hal.cv. Elements follow the mfw container, each a
+    32-byte header then its contents; BBMCU cut is at offset 24. [SRC] fw.c:783-806, 1562-1622."""
+    data = _ASSET_PATH.read_bytes()
+    fw_nr = data[1]
+    off = 16 + (fw_nr - 1) * 16                       # last mfw_info entry
+    shift, size = struct.unpack_from("<II", data, off + 4)
+    offset = _align(shift + size, RTW89_FW_ELEMENT_ALIGN)   # mfw_get_size, aligned
+    while offset + FW_ELEMENT_HDR_SIZE < len(data):
+        elem_id, elm_size = struct.unpack_from("<II", data, offset)
+        if elem_id == RTW89_FW_ELEMENT_ID_BBMCU0 and data[offset + FW_ELEMENT_BBMCU_CV_OFFSET] <= cv:
+            start = offset + FW_ELEMENT_HDR_SIZE
+            return data[start:start + elm_size]
+        offset = _align(offset + FW_ELEMENT_HDR_SIZE + elm_size, RTW89_FW_ELEMENT_ALIGN)
+    raise RuntimeError("rtl8922au: no suitable BBMCU0 firmware element")
 
 
 def parse_hdr_v1(fw: bytes) -> dict:
@@ -215,25 +239,29 @@ def _fwdl_check_path_ready(t, h2c_or_fwdl: bool) -> None:
     _poll(t, R_BE_WCPU_FW_CTRL, lambda v: v & check)
 
 
-def _fwdl_ready(v: int, wcpu_fwdl_done: bool) -> bool:
-    """fwdl_get_status_be reduced to "is the status firmware-init-ready?". For the WCPU-FWDL-DONE
-    check that is when the WLAN-CPU download-enable bit clears; for both checks the raw status
-    field reading 3 also maps to init-ready (fwdl_status_map[3]). [SRC] mac_be.c:709-755."""
-    if wcpu_fwdl_done and not (v & B_BE_WLANCPU_FWDL_EN):
+def _fwdl_ready(v: int, done_mask: int) -> bool:
+    """fwdl_get_status_be reduced to "is the status firmware-init-ready?". The per-type download
+    -enable bit clearing (WLAN-CPU / BBMCU0) reports ready; for every check the raw status field
+    reading 3 also maps to init-ready (fwdl_status_map[3]). [SRC] mac_be.c:709-755."""
+    if done_mask and not (v & done_mask):
         return True
     return _gb(v, 26, 0xF) == 3          # fwdl_status_map[3] == RTW89_FWDL_WCPU_FW_INIT_RDY
 
 
-def _fw_check_rdy(t, wcpu_fwdl_done: bool) -> None:
-    """rtw89_fw_check_rdy: poll WCPU_FW_CTRL until the status reads firmware-init-ready.
-    [SRC] fw.c:106-138."""
-    _poll(t, R_BE_WCPU_FW_CTRL, lambda v: _fwdl_ready(v, wcpu_fwdl_done))
+def _fw_check_rdy(t, done_mask: int) -> None:
+    """rtw89_fw_check_rdy: poll WCPU_FW_CTRL until the status reads firmware-init-ready. done_mask
+    is the download-enable bit for the suit type (0 for the FreeRTOS-done check, which is
+    status-only). [SRC] fw.c:106-138, mac_be.c:730-745."""
+    _poll(t, R_BE_WCPU_FW_CTRL, lambda v: _fwdl_ready(v, done_mask))
 
 
-def download_suit(t, h2c_ep: int, fw: bytes, info: dict) -> None:
-    """rtw89_fw_download_suit: the 8922A secure-boot malloc write, the H2C path-ready wait, the
-    header download, the DLFW path-ready wait, and the section downloads. [SRC] fw.c:1948-1981."""
-    t.write32(R_BE_SECURE_BOOT_MALLOC_INFO, SECURE_BOOT_MALLOC_VALUE)
+def download_suit(t, h2c_ep: int, fw: bytes, info: dict, is_bbmcu: bool = False) -> None:
+    """rtw89_fw_download_suit: the 8922A secure-boot malloc write (NORMAL/WOWLAN only), the H2C
+    path-ready wait, the header download, the DLFW path-ready wait, and the section downloads. The
+    trailing ready check is BB0-FWDL-DONE for a BBMCU suit, WCPU-FWDL-DONE otherwise.
+    [SRC] fw.c:1948-1981, 1865-1908."""
+    if not is_bbmcu:
+        t.write32(R_BE_SECURE_BOOT_MALLOC_INFO, SECURE_BOOT_MALLOC_VALUE)   # fw.c:1963-1965
     _fwdl_check_path_ready(t, True)
     t.bulk_out(h2c_ep, build_hdr_packet(fw, info))
     _fwdl_check_path_ready(t, False)
@@ -241,7 +269,8 @@ def download_suit(t, h2c_ep: int, fw: bytes, info: dict) -> None:
     t.write32(R_AX_HALT_C2H_CTRL, 0)
     for pkt in build_body_packets(fw, info):
         t.bulk_out(h2c_ep, pkt)
-    _fw_check_rdy(t, True)               # RTW89_FWDL_CHECK_WCPU_FWDL_DONE. [SRC] fw.c:1899-1900
+    done_mask = B_BE_BBMCU0_FWDL_EN if is_bbmcu else B_BE_WLANCPU_FWDL_EN
+    _fw_check_rdy(t, done_mask)          # BB0-FWDL-DONE / WCPU-FWDL-DONE. [SRC] fw.c:1865-1900
 
 
 def download(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
@@ -251,13 +280,13 @@ def download(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
     fw = load_fw_suit(cv)
     info = parse_hdr_v1(fw)
     download_suit(t, h2c_ep, fw, info)
-    if include_bb:
-        # TODO: BB-MCU suit re-download (bbmcu_nr=1). [SRC] fw.c:2004-2010. Ported next milestone.
-        pass
+    if include_bb:                                    # bbmcu_nr=1: one BBMCU0 suit. [SRC] fw.c:2004-2010
+        bbmcu = load_bbmcu_suit(cv)
+        download_suit(t, h2c_ep, bbmcu, parse_hdr_v1(bbmcu), is_bbmcu=True)
     t.h2c_counter = 0                                 # fw_info reset. [SRC] fw.c:2014-2015
     t.c2h_counter = 0
     time.sleep(0.005)                                 # mdelay(5). [SRC] fw.c:2019
-    _fw_check_rdy(t, False)                           # RTW89_FWDL_CHECK_FREERTOS_DONE
+    _fw_check_rdy(t, 0)                               # RTW89_FWDL_CHECK_FREERTOS_DONE (status-only)
 
 
 def _write_h2c_reg(t, h2c_id: int, content_len: int, w0: int) -> None:
