@@ -6,35 +6,47 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 271/162623 register ops reproduced and committed (capture-1; 272/273 on
-capture-2/3, poll-count variance only). All three stop at the same frontier. What is ported:
-- USB register-access transport (`rtw89_usb_vendorreq` + read/write ops + `read_cmac`), plus the
-  read-modify-write helpers (`write8/16/32_set/clr`, `write16/32_mask`).
+Cold-boot bring-up, 4265/163814 driver ops reproduced and committed (capture-1; 4286/4300 on
+capture-2/3, poll-count variance only). `verify_pcap` now walks both VENQT control ops and
+bulk-OUT ops; all three captures stop at the same frontier. What is ported:
+- USB register-access transport (`rtw89_usb_vendorreq` + read/write ops + `read_cmac`), the
+  read-modify-write helpers (`write8/16/32_set/clr`, `write16/32_mask`), and `bulk_out`.
 - USB mode-switch (`rtw89_usb_switch_mode`, speed-branched) + `read_chip_ver`.
 - MAC power-on: `rtw89_mac_pwr_on` -> `power_switch(on=True)` in full (boot-mode handoff,
   `reset_pwr_state_be` all three MAC-state arms, `rtw8922a_pwr_on_func`, then the first-probe
-  efuse reads `efuse_read_ecv`/`efuse_read_fw_secure` and the coex scoreboard notify).
-- `rtw89_mac_partial_init(include_bb=False)` (from `rtw89_chip_efuse_info_setup`): HCI/DMAC
-  pre-en, `dle_init(QTA_DLFW)`, `hfc_init`, `fwdl_preconfig`.
-- Firmware-download open: `disable_cpu` + `fwdl_enable_wcpu` (`set_cpu_en` + `wcpu_on`).
+  efuse reads and the coex scoreboard notify).
+- `rtw89_mac_partial_init(include_bb=False)`: HCI/DMAC pre-en, `dle_init(QTA_DLFW)`, `hfc_init`,
+  `fwdl_preconfig`, then `rtw89_fw_download`.
+- **Firmware download** (`firmware.py`): multi-firmware container parse, v1 header parse with the
+  formatted-MSSC security sections, the H2C/fwdl packet build (24-byte TX descriptor + 8-byte
+  fwcmd header + tweaked firmware header), and the section transfers over bulk-OUT ep 0x07. The
+  header + all 212 section packets byte-match. Blob in `assets/rtw8922a_fw-4.bin` (see FIRMWARE.md).
+- `parse_efuse_map` (physical 0x1300 dump + USB MAC read from 0x4078) + `parse_phycap_map`
+  (0x38 dump at 0x1700). The RF/board logical extraction is deferred (software, no wire ops).
 
-Frontier: op #280, `write 0x184 = 0x20248000` (the 8922A secure-boot malloc write that opens
-`rtw89_fw_download_suit`). The firmware bulk transfer, MAC init, RF/BB init, channel tune, and TX
-are not yet ported.
+Frontier: op #4274, `read 0x68` (a third `cnv_efuse_state` opening another efuse-style dump; this
+is inside `rtw89_mac_setup_phycap` / `rtw89_mac_read_phycap`, the H2C+phycap query to the running
+firmware). MAC init, RF/BB init, channel tune, and TX are not yet ported.
 
 ### Gotchas found while porting (not obvious from a single read)
 
-- The cold-boot capture takes the **boot-mode branch** of `power_switch_boot_mode` (the boot-ROM
-  handoff bit is set), and `reset_pwr_state_be` finds the MAC already **`MAC_ON`**, not off, so it
-  runs the MAC-on arm.
+- The cold-boot capture takes the **boot-mode branch** of `power_switch_boot_mode`, and
+  `reset_pwr_state_be` finds the MAC already **`MAC_ON`**, so it runs the MAC-on arm.
 - `dle_init(DLFW)` calls `get_dle_mem_cfg(ext_mode=SCC)` last, which sets `dle_info.qta_mode = SCC`.
-  So `hfc_reset_param` (in `hfc_init`) reads back **SCC**, and the H2C page precedence comes from
-  the USB SCC config `hfc_prec_cfg_c5` (h2c_prec=32), not DLFW's c2. State-order matters here.
-- `rtw89_mac_partial_init` ends with `rtw89_fw_download` (fw.c) inside it; the firmware is
-  downloaded during `chip_efuse_info_setup`, before `parse_efuse_map`. `wait_firmware_completion`
-  and `fw_recognize` are file-side (no wire ops).
-- pcap_slicer maps frames 1-178 to `<hardware_plugin_and_initialization>` (pure USB enumeration,
-  the 9 waived ops); the whole register bring-up runs under the first `airmon-ng start` phase.
+  So `hfc_reset_param` reads back **SCC** and the H2C page precedence is `hfc_prec_cfg_c5` (32),
+  not DLFW's c2. State-order matters.
+- `rtw89_mac_partial_init` ends with `rtw89_fw_download` inside it; firmware is downloaded during
+  `chip_efuse_info_setup`, before `parse_efuse_map`. `wait_firmware_completion` / `fw_recognize`
+  are file-side (no wire ops).
+- The firmware header packet's only tweak vs the raw file is `w6` SEC_NUM 4->3: two security
+  sections exist and the second (last) is marked `ignore`, compacted out, and the header trimmed
+  16 bytes to 96. The `.bin` is a multi-firmware container; the NORMAL sub-firmware for cut 1 (at
+  `hal.cv`=2) starts at shift 64.
+- The two `fw_check_rdy` calls differ: WCPU-FWDL-DONE stops when `B_BE_WLANCPU_FWDL_EN` clears;
+  FREERTOS-DONE stops when the status field (bits 26-29) reads raw 3. Do not merge them (the
+  merged OR condition ends the FreeRTOS poll early on some captures).
+- pcap_slicer maps frames 1-178 to enumeration (the 9 waived ops); the whole register bring-up
+  runs under the first `airmon-ng start` phase. Bulk-OUT ep 0x07 = `out_pipe[bulkout_id[H2C]=2]`.
 
 ## Source
 
@@ -78,17 +90,18 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #280)
+## Next (from op #4274)
 
-`rtw89_fw_download_suit` (fw.c:1948): the 8922A secure-boot malloc write (op #280), then
-`fwdl_check_path_ready` (poll `B_BE_DLFW_PATH_RDY`), `rtw89_fw_download_hdr`, and
-`rtw89_fw_download_main`. The header and body go out over **bulk-OUT** (the FW sections), which
-the VENQT-only `verify_pcap` does not yet walk: extend `build_ops` to include the bulk-OUT URBs
-(usbmon xfer type 0x03) before porting this, per the methodology's step 3. The firmware blob is
-`/usr/lib/firmware/rtw89/rtw8922a_fw.bin` (also in the bundle's `driver-source/firmware/`); parse
-it with `rtw89_fw_hdr_parser`. After the transfer, `fw_check_rdy(FREERTOS_DONE)` polls
-`R_BE_WCPU_FW_CTRL`. Then `parse_efuse_map`/`parse_phycap_map` (a 0x1300-byte logical-efuse dump
-via the DDV path already ported in `dump_physical_efuse_map`), and on to `rtw89_mac_init`.
+`rtw89_mac_setup_phycap` (mac.c:3222-3335): `setup_phycap_part0`/`part1` call
+`rtw89_mac_read_phycap`, an H2C query to the now-running firmware whose C2H reply is read back;
+the frontier's `cnv_efuse_state`/dump-shaped ops belong to that path. This is the first H2C
+*command* (not fwdl): port `rtw89_h2c_tx` for a normal H2C (via `rtw89_h2c_pkt_set_hdr`, not the
+fwdl header) and the C2H read. Then `rtw89_core_setup_phycap` (sw), `hci_mac_pre_deinit` (USB
+no-op), and chip_info_setup finishes with `rtw89_fw_recognize_elements` (BB/RF firmware element
+tables from the file) + `rtw89_mac_pwr_off`. After that the real `rtw89_core_start` path runs
+`rtw89_mac_init` (DMAC/CMAC full init), BB/RF init + calibration, channel tune, and monitor RX.
+Keep verifying each against all three captures; the RF/board logical-efuse extraction deferred in
+`parse_efuse_map` will be needed once RF init reads `efuse->rfe_type` etc.
 
 ## Style
 
@@ -108,3 +121,9 @@ describing them, no jargon. No em-dashes and none of the banned words anywhere; 
 - 2026-07-26 M5c: `hfc_init` + `fwdl_preconfig` finish `mac_partial_init`. 227 ops.
 - 2026-07-26 M6a: WLAN-CPU disable + firmware-download enable (`disable_cpu`, `fwdl_enable_wcpu`).
   271 ops. Frontier at `fw_download_suit` (bulk-OUT firmware transfer next).
+- 2026-07-26 M6-pre: `verify_pcap` bulk-OUT support + `fw_download_suit` pre-transfer control ops
+  (secure-boot malloc, H2C path-ready). 274 ops.
+- 2026-07-26 M6b: firmware download (mfw parse, v1 header + security sections, TX-desc/H2C-fwdl
+  packet build, section bulk-OUT, ready polls). 521 ops. Blob `assets/rtw8922a_fw-4.bin`.
+- 2026-07-26 M7: `parse_efuse_map` (0x1300 dump + USB MAC read) + `parse_phycap_map` (0x38 dump).
+  4265 ops. Frontier at `setup_phycap` (`rtw89_mac_read_phycap` H2C next).
