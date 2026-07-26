@@ -320,6 +320,16 @@ PLE_QT9 = (0, 0, 32, 256, 0, 0, 0, 0, 0, 0, 1, 0, 0)   # ..h2d; 8922A stops befo
 # ext_wde_min_qt_wcpu = SCC wde_qt0_v1.wcpu (qta_mode defaults to SCC). mac.c:1792, core.c:6990.
 EXT_WDE_MIN_QT_WCPU = 6
 
+# 8922A dle_mem[QTA_DBCC] config for the USB-2 path. [SRC] rtw8922a.c:206-210, mac.c.
+S_AX_PLE_PAGE_SEL_256 = 2        # mac.h:615
+WDE_SIZE8_LNK_PGE_NUM = 634      # wde_size8_v1={PG_64, 634, 6}. mac.c
+WDE_SIZE8_SRT_OFST = 0
+PLE_SIZE7_LNK_PGE_NUM = 2027     # ple_size7_v1={PG_256, 2027, 109, 40960}. mac.c
+PLE_SIZE7_SRT_OFST = 40960
+WDE_QT8_V1 = (608, 6, 0, 20)     # (hif, wcpu, pkt_in, cpu_io). mac.c
+PLE_QT14_V1 = (939, 0, 16, 24, 7, 14, 57, 57, 24, 9, 1, 4, 0)          # ple_min_qt. mac.c
+PLE_QT15_V1 = (939, 0, 16, 24, 882, 889, 932, 932, 899, 9, 1, 879, 0)  # ple_max_qt. mac.c
+
 # HCI flow control init (rtw89_mac_hfc_init, reset+h2c-only path). [SRC] mac.c:1194-1246, mac_be.c.
 R_BE_HCI_FC_CTRL = 0xB700        # reg.h
 B_BE_HCI_FC_EN = 1 << 0          # reg.h

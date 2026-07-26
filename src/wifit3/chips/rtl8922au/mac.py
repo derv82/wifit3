@@ -64,7 +64,9 @@ from .constants import (
     R_BE_WDE_PKTBUF_CFG, R_BE_PLE_PKTBUF_CFG,
     B_BE_WDE_PAGE_SEL_MASK, B_BE_WDE_START_BOUND_MASK, B_BE_WDE_FREE_PAGE_NUM_MASK,
     B_BE_PLE_PAGE_SEL_MASK, B_BE_PLE_START_BOUND_MASK, B_BE_PLE_FREE_PAGE_NUM_MASK,
-    S_AX_WDE_PAGE_SEL_64, S_AX_PLE_PAGE_SEL_128, DLE_BOUND_UNIT,
+    S_AX_WDE_PAGE_SEL_64, S_AX_PLE_PAGE_SEL_128, S_AX_PLE_PAGE_SEL_256, DLE_BOUND_UNIT,
+    WDE_SIZE8_LNK_PGE_NUM, WDE_SIZE8_SRT_OFST, PLE_SIZE7_LNK_PGE_NUM, PLE_SIZE7_SRT_OFST,
+    WDE_QT8_V1, PLE_QT14_V1, PLE_QT15_V1,
     R_BE_WDE_QTA0_CFG, R_BE_PLE_QTA0_CFG, B_BE_QTA_MIN_SIZE_MASK, B_BE_QTA_MAX_SIZE_MASK,
     R_AX_WDE_INI_STATUS, R_AX_PLE_INI_STATUS, WDE_MGN_INI_RDY, PLE_MGN_INI_RDY,
     WDE_SIZE3_LNK_PGE_NUM, WDE_SIZE3_SRT_OFST, PLE_SIZE3_LNK_PGE_NUM, PLE_SIZE3_SRT_OFST,
@@ -556,19 +558,39 @@ def dle_clk_en(t, enable: bool) -> None:
         t.write32_clr(R_BE_DMAC_CLK_EN, bits)
 
 
-def dle_mix_cfg(t) -> None:
-    """dle_mix_cfg_be for the QTA_DLFW size config (wde_size3_v1 / ple_size3_v1): WDE 64B pages,
-    PLE 128B pages, with the free-page count and start bound. [SRC] mac_be.c:239-295."""
+# dle_mem configs keyed by qta_mode. Each rtw89_dle_size is (page_sel, lnk_pge_num, srt_ofst);
+# ext_wcpu None == INVALID_QT_WCPU. [SRC] rtw8922a.c:191-215 (DLFW / USB-2 DBCC).
+_DLE_CFG = {
+    "DLFW": {
+        "wde_size": (S_AX_WDE_PAGE_SEL_64, WDE_SIZE3_LNK_PGE_NUM, WDE_SIZE3_SRT_OFST),
+        "ple_size": (S_AX_PLE_PAGE_SEL_128, PLE_SIZE3_LNK_PGE_NUM, PLE_SIZE3_SRT_OFST),
+        "wde_qt": (0, 0, 0, 0),          # wde_qt4, all zero
+        "ple_min_qt": PLE_QT9, "ple_max_qt": PLE_QT9,
+        "ext_wcpu": EXT_WDE_MIN_QT_WCPU,
+    },
+    "DBCC": {
+        "wde_size": (S_AX_WDE_PAGE_SEL_64, WDE_SIZE8_LNK_PGE_NUM, WDE_SIZE8_SRT_OFST),
+        "ple_size": (S_AX_PLE_PAGE_SEL_256, PLE_SIZE7_LNK_PGE_NUM, PLE_SIZE7_SRT_OFST),
+        "wde_qt": WDE_QT8_V1,
+        "ple_min_qt": PLE_QT14_V1, "ple_max_qt": PLE_QT15_V1,
+        "ext_wcpu": None,
+    },
+}
+
+
+def dle_mix_cfg(t, wde_size, ple_size) -> None:
+    """dle_mix_cfg_be: program the WDE/PLE packet-buffer page-select, start bound, and free-page
+    count from the mode's rtw89_dle_size pair. [SRC] mac_be.c:239-295."""
     val = t.read32(R_BE_WDE_PKTBUF_CFG)
-    val = field_replace(val, B_BE_WDE_PAGE_SEL_MASK, S_AX_WDE_PAGE_SEL_64)
-    val = field_replace(val, B_BE_WDE_START_BOUND_MASK, WDE_SIZE3_SRT_OFST // DLE_BOUND_UNIT)
-    val = field_replace(val, B_BE_WDE_FREE_PAGE_NUM_MASK, WDE_SIZE3_LNK_PGE_NUM)
+    val = field_replace(val, B_BE_WDE_PAGE_SEL_MASK, wde_size[0])
+    val = field_replace(val, B_BE_WDE_START_BOUND_MASK, wde_size[2] // DLE_BOUND_UNIT)
+    val = field_replace(val, B_BE_WDE_FREE_PAGE_NUM_MASK, wde_size[1])
     t.write32(R_BE_WDE_PKTBUF_CFG, val)
 
     val = t.read32(R_BE_PLE_PKTBUF_CFG)
-    val = field_replace(val, B_BE_PLE_PAGE_SEL_MASK, S_AX_PLE_PAGE_SEL_128)
-    val = field_replace(val, B_BE_PLE_START_BOUND_MASK, PLE_SIZE3_SRT_OFST // DLE_BOUND_UNIT)
-    val = field_replace(val, B_BE_PLE_FREE_PAGE_NUM_MASK, PLE_SIZE3_LNK_PGE_NUM)
+    val = field_replace(val, B_BE_PLE_PAGE_SEL_MASK, ple_size[0])
+    val = field_replace(val, B_BE_PLE_START_BOUND_MASK, ple_size[2] // DLE_BOUND_UNIT)
+    val = field_replace(val, B_BE_PLE_FREE_PAGE_NUM_MASK, ple_size[1])
     t.write32(R_BE_PLE_PKTBUF_CFG, val)
 
 
@@ -578,16 +600,19 @@ def _set_quota(t, reg: int, min_v: int, max_v: int) -> None:
               | field_prep(B_BE_QTA_MAX_SIZE_MASK, max_v))
 
 
-def dle_quota_cfg(t) -> None:
-    """dle_quota_cfg for QTA_DLFW: wde_qt4 (all zero) and ple_qt9, min == max. WDE Q1 takes the
-    ext SCC wcpu. 8922A stops PLE before Q13 (snrpt). [SRC] mac.c:2264-2272, mac_be.c:326-367."""
-    _set_quota(t, R_BE_WDE_QTA0_CFG + 0 * 4, 0, 0)                                      # hif
-    _set_quota(t, R_BE_WDE_QTA0_CFG + 1 * 4, EXT_WDE_MIN_QT_WCPU, EXT_WDE_MIN_QT_WCPU)  # wcpu
+def dle_quota_cfg(t, wde_qt, ple_min_qt, ple_max_qt, ext_wcpu) -> None:
+    """dle_quota_cfg -> wde_quota_cfg_be + ple_quota_cfg_be. WDE min == max (one struct); the wcpu
+    slot takes ext_wcpu when the DLFW ext config gives one, else the struct's own wcpu. 8922A stops
+    PLE before snrpt (index 13). [SRC] mac.c:2264-2272, mac_be.c:326-367."""
+    min_wcpu = ext_wcpu if ext_wcpu is not None else wde_qt[1]
+    max_wcpu = max(wde_qt[1], min_wcpu)
+    _set_quota(t, R_BE_WDE_QTA0_CFG + 0 * 4, wde_qt[0], wde_qt[0])   # hif
+    _set_quota(t, R_BE_WDE_QTA0_CFG + 1 * 4, min_wcpu, max_wcpu)     # wcpu
     _set_quota(t, R_BE_WDE_QTA0_CFG + 2 * 4, 0, 0)
-    _set_quota(t, R_BE_WDE_QTA0_CFG + 3 * 4, 0, 0)                                      # pkt_in
-    _set_quota(t, R_BE_WDE_QTA0_CFG + 4 * 4, 0, 0)                                      # cpu_io
-    for i, q in enumerate(PLE_QT9):
-        _set_quota(t, R_BE_PLE_QTA0_CFG + i * 4, q, q)
+    _set_quota(t, R_BE_WDE_QTA0_CFG + 3 * 4, wde_qt[2], wde_qt[2])   # pkt_in
+    _set_quota(t, R_BE_WDE_QTA0_CFG + 4 * 4, wde_qt[3], wde_qt[3])   # cpu_io
+    for i in range(len(ple_min_qt)):
+        _set_quota(t, R_BE_PLE_QTA0_CFG + i * 4, ple_min_qt[i], ple_max_qt[i])
 
 
 def chk_dle_rdy(t, wde_or_ple: bool) -> None:
@@ -598,14 +623,15 @@ def chk_dle_rdy(t, wde_or_ple: bool) -> None:
     _poll32(t, reg, lambda v: (v & mask) == mask)
 
 
-def dle_init(t) -> None:
-    """rtw89_mac_dle_init(RTW89_QTA_DLFW): configure the DLE (WDE/PLE) packet-buffer sizes and
-    quotas for firmware download, then wait for the managers ready. [SRC] mac.c:2274-2343.
-    check_mac_en is a software-flag test (DMAC_FUNC was set in pwr_on), so it emits no wire op."""
+def dle_init(t, mode: str) -> None:
+    """rtw89_mac_dle_init: configure the DLE (WDE/PLE) packet-buffer sizes and quotas for the qta
+    mode ("DLFW" for firmware download, "DBCC" for the operating BE mode), then wait for the
+    managers ready. [SRC] mac.c:2274-2343. check_mac_en is a software-flag test, so no wire op."""
+    cfg = _DLE_CFG[mode]
     dle_func_en(t, False)
     dle_clk_en(t, True)
-    dle_mix_cfg(t)
-    dle_quota_cfg(t)
+    dle_mix_cfg(t, cfg["wde_size"], cfg["ple_size"])
+    dle_quota_cfg(t, cfg["wde_qt"], cfg["ple_min_qt"], cfg["ple_max_qt"], cfg["ext_wcpu"])
     dle_func_en(t, True)
     chk_dle_rdy(t, True)
     chk_dle_rdy(t, False)
@@ -797,7 +823,7 @@ def partial_init(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
         chip_bb_preinit(t)
     hci_func_en(t)
     dmac_func_pre_en(t)
-    dle_init(t)
+    dle_init(t, "DLFW")
     hfc_init(t)
     fwdl_preconfig(t)
     fw_download(t, h2c_ep, cv, include_bb)
@@ -818,6 +844,18 @@ def sys_init(t) -> None:
     cmac_func_en(t, RTW89_MAC_0)
 
 
+def dmac_init(t) -> None:
+    """dmac_init_be(0): the DMAC-side operating init. Starts with dle_init in the DBCC qta mode.
+    preload_init is a no-op on USB (not qta_poh). [SRC] mac_be.c:1131-1184, mac.c:preload_init."""
+    dle_init(t, "DBCC")
+
+
+def trx_init(t) -> None:
+    """trx_init_be: dmac_init then cmac_init, the dbcc enable (qta is DBCC), the DMAC/CMAC IMR
+    enables, host-rpr, and the 8922A rsp-chk-sig clear. [SRC] mac_be.c:2302-2352."""
+    dmac_init(t)
+
+
 def mac_init(t, h2c_ep: int, cv: int) -> None:
     """rtw89_mac_init: the interface-up MAC bring-up. partial_init(include_bb=True) (BB preinit +
     BB-MCU firmware re-download), enable_bb_rf, sys_init, then trx_init + feat_init.
@@ -825,3 +863,4 @@ def mac_init(t, h2c_ep: int, cv: int) -> None:
     partial_init(t, h2c_ep, cv, include_bb=True)
     enable_bb_rf(t)
     sys_init(t)
+    trx_init(t)
