@@ -268,6 +268,39 @@ R_BE_FW_AUTO_CAL_DELAY = 0x0188          # reg.h
 B_BE_WCPU_FW_DELAY_COUNT_VALID = 1 << 15  # reg.h
 B_BE_WCPU_FW_DELAY_COUNT_MASK = 0x7FFF    # GENMASK(14, 0). reg.h
 
+# WCPU disable + firmware-download enable (rtw89_mac_disable_cpu_be, fwdl_enable_wcpu_be,
+# set_cpu_en, wcpu_on). [SRC] mac_be.c:603-707, reg.h.
+B_BE_WCPU_EN = 1 << 1            # reg.h
+B_BE_HOLD_AFTER_RESET = 1 << 11  # reg.h
+R_BE_WCPU_FW_CTRL = 0x01E0       # reg.h
+B_BE_RUN_ENV_MASK = 0xC0000000   # GENMASK(31, 30). reg.h
+B_BE_WLANCPU_FWDL_EN = 1 << 9    # reg.h
+B_BE_BBMCU0_FWDL_EN = 1 << 11    # reg.h
+B_BE_WDT_PLT_RST_EN = 1 << 17    # reg.h
+B_BE_WCPU_ROM_CUT_GET = 1 << 8   # reg.h
+R_BE_DCPU_PLATFORM_ENABLE = 0x0888  # reg.h
+B_BE_DCPU_PLATFORM_EN = 1 << 0   # reg.h
+R_BE_UDM0 = 0x01F0               # reg.h
+R_BE_UDM1 = 0x01F4               # reg.h
+R_BE_UDM2 = 0x01F8               # reg.h
+R_BE_HALT_H2C_CTRL = 0x0160      # reg.h
+R_BE_HALT_C2H_CTRL = 0x0164      # reg.h
+R_BE_HALT_H2C = 0x0168           # reg.h
+R_BE_HALT_C2H = 0x016C           # reg.h
+R_BE_BOOT_DBG = 0x78F0           # reg.h
+R_BE_HISR0 = 0x01A4              # reg.h
+B_BE_HALT_C2H_INT = 1 << 21      # reg.h
+R_BE_SYS_CLK_CTRL = 0x0008       # reg.h
+B_BE_CPU_CLK_EN = 1 << 14        # reg.h
+R_BE_SYS_CFG5 = 0x0170           # reg.h
+B_BE_WDT_WAKE_PCIE_EN = 1 << 10  # reg.h
+B_BE_WDT_WAKE_USB_EN = 1 << 9    # reg.h
+R_BE_SECURE_BOOT_MALLOC_INFO = 0x0184  # reg.h
+R_BE_GPIO_MUXCFG = 0x0040        # reg.h; same address as R_AX_GPIO_MUXCFG
+B_BE_BOOT_MODE = 1 << 19         # reg.h; same bit as B_AX_BOOT_MODE
+R_BE_BOOT_REASON = 0x01E6        # reg.h
+B_BE_BOOT_REASON_MASK = 0x7      # GENMASK(2, 0). reg.h
+
 # XTAL_SI indirect register access. [SRC] mac.c:7179-7233, reg.h/mac.h.
 R_AX_WLAN_XTAL_SI_CTRL = 0x0270  # reg.h:268 (same address as the BE name)
 B_AX_WL_XTAL_SI_ADDR_MASK = 0x000000FF     # GENMASK(7, 0). reg.h:278

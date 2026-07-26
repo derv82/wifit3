@@ -62,6 +62,16 @@ from .constants import (
     R_BE_HCI_FC_CTRL, B_BE_HCI_FC_EN, B_BE_HCI_FC_CH12_EN,
     R_BE_CH_PAGE_CTRL, B_BE_PREC_PAGE_CH12_V1_MASK, HFC_H2C_PREC,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
+    B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
+    R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
+    B_BE_WDT_PLT_RST_EN, B_BE_WCPU_ROM_CUT_GET,
+    R_BE_DCPU_PLATFORM_ENABLE, B_BE_DCPU_PLATFORM_EN,
+    R_BE_UDM0, R_BE_UDM1, R_BE_UDM2,
+    R_BE_HALT_H2C_CTRL, R_BE_HALT_C2H_CTRL, R_BE_HALT_H2C, R_BE_HALT_C2H,
+    R_BE_BOOT_DBG, R_BE_HISR0, B_BE_HALT_C2H_INT,
+    R_BE_SYS_CLK_CTRL, B_BE_CPU_CLK_EN, R_BE_SYS_CFG5,
+    B_BE_WDT_WAKE_PCIE_EN, B_BE_WDT_WAKE_USB_EN, R_BE_SECURE_BOOT_MALLOC_INFO,
+    R_BE_GPIO_MUXCFG, B_BE_BOOT_MODE, R_BE_BOOT_REASON, B_BE_BOOT_REASON_MASK,
 )
 
 
@@ -499,9 +509,78 @@ def fwdl_preconfig(t) -> None:
     t.write32_mask(R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_MASK, 0)
 
 
+def disable_cpu(t) -> None:
+    """rtw89_mac_disable_cpu_be: park the WLAN CPU (hold-after-reset toggle), clear the run-env
+    and AON debug registers before a fresh firmware download. [SRC] mac_be.c:603-623."""
+    t.write32_clr(R_BE_PLATFORM_ENABLE, B_BE_WCPU_EN)
+    t.write32_set(R_BE_PLATFORM_ENABLE, B_BE_HOLD_AFTER_RESET)
+    t.write32_set(R_BE_PLATFORM_ENABLE, B_BE_WCPU_EN)
+    t.write32(R_BE_WCPU_FW_CTRL, t.read32(R_BE_WCPU_FW_CTRL) & B_BE_RUN_ENV_MASK)
+    t.write32_set(R_BE_DCPU_PLATFORM_ENABLE, B_BE_DCPU_PLATFORM_EN)   # chip_id == RTL8922A
+    t.write32(R_BE_UDM0, 0)
+    t.write32(R_BE_HALT_C2H, 0)
+    t.write32(R_BE_UDM2, 0)
+
+
+def set_cpu_en(t, include_bb: bool) -> None:
+    """set_cpu_en: arm the WLAN CPU (and, when downloading BB MCU, the BBMCU0) for firmware
+    download. [SRC] mac_be.c:631-639."""
+    bits = B_BE_WLANCPU_FWDL_EN
+    if include_bb:
+        bits |= B_BE_BBMCU0_FWDL_EN
+    t.write32_set(R_BE_WCPU_FW_CTRL, bits)
+
+
+def wcpu_on(t, boot_reason: int, dlfw: bool) -> None:
+    """wcpu_on: clear the boot/halt mailbox state, enable the CPU clock, set the boot reason,
+    and pulse the WLAN CPU out of reset. [SRC] mac_be.c:641-698. The pre-boot AON warnings are
+    read-only diagnostics; the reads are reproduced. On the 8922A the HOST_EXIST write is
+    skipped; with dlfw the trailing FreeRTOS-ready poll is skipped."""
+    t.read32(R_BE_HALT_C2H)
+    t.read32(R_BE_UDM1)
+    t.read32(R_BE_UDM2)
+    t.write32(R_BE_UDM1, 0)
+    t.write32(R_BE_UDM2, 0)
+    t.write32(R_BE_BOOT_DBG, 0)
+    t.write32(R_BE_HALT_H2C, 0)
+    t.write32(R_BE_HALT_C2H, 0)
+    t.write32(R_BE_HALT_H2C_CTRL, 0)
+    t.write32(R_BE_HALT_C2H_CTRL, 0)
+    t.read32(R_BE_HISR0)
+    t.write32(R_BE_HISR0, B_BE_HALT_C2H_INT)
+    t.write32_set(R_BE_SYS_CLK_CTRL, B_BE_CPU_CLK_EN)
+    t.write32_clr(R_BE_SYS_CFG5, B_BE_WDT_WAKE_PCIE_EN | B_BE_WDT_WAKE_USB_EN)
+    t.write32_clr(R_BE_WCPU_FW_CTRL, B_BE_WDT_PLT_RST_EN | B_BE_WCPU_ROM_CUT_GET)
+    t.write32(R_BE_SECURE_BOOT_MALLOC_INFO, 0)
+    t.write32_clr(R_BE_GPIO_MUXCFG, B_BE_BOOT_MODE)
+    # chip_id == RTL8922A: the non-8922A HOST_EXIST set is skipped. [SRC] mac_be.c:683-684.
+    t.write16_mask(R_BE_BOOT_REASON, B_BE_BOOT_REASON_MASK, boot_reason)
+    t.write32_clr(R_BE_PLATFORM_ENABLE, B_BE_WCPU_EN)
+    t.write32_clr(R_BE_PLATFORM_ENABLE, B_BE_HOLD_AFTER_RESET)
+    t.write32_set(R_BE_PLATFORM_ENABLE, B_BE_WCPU_EN)
+    # dlfw is True on the download path, so the FreeRTOS-ready poll is skipped. [SRC] mac_be.c:691.
+
+
+def fwdl_enable_wcpu(t, boot_reason: int, dlfw: bool, include_bb: bool) -> None:
+    """rtw89_mac_fwdl_enable_wcpu_be: arm the CPU download bits, then boot the WLAN CPU.
+    [SRC] mac_be.c:700-707."""
+    set_cpu_en(t, include_bb)
+    wcpu_on(t, boot_reason, dlfw)
+
+
+def fw_download(t) -> None:
+    """rtw89_fw_download(RTW89_FW_NORMAL, include_bb=False): disable the CPU and enable it for
+    download. [SRC] fw.c:1984-2047, mac.c:4334. The firmware-suit transfer (download_hdr /
+    download_main over bulk-OUT) and the ready check are the next milestone."""
+    disable_cpu(t)
+    fwdl_enable_wcpu(t, 0, True, False)
+    # TODO: next milestone. rtw89_fw_download_suit: fwdl_check_path_ready, download_hdr,
+    # download_main (bulk-OUT firmware sections), fw_check_rdy. [SRC] fw.c:1948-2025.
+
+
 def partial_init(t) -> None:
     """rtw89_mac_partial_init(include_bb=False) as reached from rtw89_chip_efuse_info_setup:
-    the pre-firmware DMAC bring-up. [SRC] mac.c:4307-4333, core.c:7268-7273.
+    the pre-firmware DMAC bring-up, then the firmware download. [SRC] mac.c:4307-4338.
     include_bb is False here, so chip_bb_preinit is skipped; the USB hci mac_pre_init is a
     no-op on the 8922A. [SRC] usb.c:797-804."""
     ctrl_hci_dma_trx(t, True)
@@ -510,3 +589,4 @@ def partial_init(t) -> None:
     dle_init(t)
     hfc_init(t)
     fwdl_preconfig(t)
+    fw_download(t)

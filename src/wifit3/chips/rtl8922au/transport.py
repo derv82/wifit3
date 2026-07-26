@@ -118,6 +118,12 @@ class RTL8922AUTransport:
         val = (self.read32(addr) & ~mask & 0xFFFFFFFF) | ((data << shift) & mask)
         self.write32(addr, val)
 
+    def write16_mask(self, addr: int, mask: int, data: int) -> None:
+        """rtw89_write16_mask: 16-bit read-modify-write `mask`'s field to `data`. [SRC] core.h."""
+        shift = (mask & -mask).bit_length() - 1
+        val = (self.read16(addr) & ~mask & 0xFFFF) | ((data << shift) & mask)
+        self.write16(addr, val)
+
     def _read_cmac(self, addr: int) -> int:
         """rtw89_usb_read_cmac: read a CMAC-window register, re-enabling its clock and
         re-reading while it returns R32_DEAD. [SRC] usb.c:83-108."""
