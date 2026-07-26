@@ -103,6 +103,14 @@ class RTL8922AUTransport:
         """rtw89_write8_clr: byte read-modify-write, bits masked out. [SRC] core.h:7210."""
         self.write8(addr, self.read8(addr) & ~bits & 0xFF)
 
+    def write16_set(self, addr: int, bits: int) -> None:
+        """rtw89_write16_set: 16-bit read-modify-write, bits OR'd in. [SRC] core.h."""
+        self.write16(addr, self.read16(addr) | bits)
+
+    def write16_clr(self, addr: int, bits: int) -> None:
+        """rtw89_write16_clr: 16-bit read-modify-write, bits masked out. [SRC] core.h."""
+        self.write16(addr, self.read16(addr) & ~bits & 0xFFFF)
+
     def _read_cmac(self, addr: int) -> int:
         """rtw89_usb_read_cmac: read a CMAC-window register, re-enabling its clock and
         re-reading while it returns R32_DEAD. [SRC] usb.c:83-108."""

@@ -177,6 +177,31 @@ B_BE_RESP_PKTCTL_EN = 1 << 7
 # read_poll_timeout budget for the power-on polls (kernel timeout_us/sleep_us ~= 3000). [SRC] mac_be.c.
 PWR_POLL_ATTEMPTS = 3000
 
+# Post-pwr-on tail of power_switch(on=True): efuse reads, scoreboard notify. [SRC] mac.c:1557-1568.
+# Physical efuse dump + state convert. [SRC] efuse_be.c, reg.h.
+R_BE_WL_BT_PWR_CTRL = 0x0068     # reg.h:4032
+B_BE_BT_DISN_EN = 1 << 16        # reg.h
+B_BE_WHOLE_SYS_PWR_STE_MASK = 0x03FF0000  # GENMASK(25, 16). reg.h
+MAC_AX_SYS_ACT = 0x220           # reg.h:4690
+R_BE_EFUSE_CTRL = 0x0030         # reg.h:3996
+B_BE_EF_ADDR_MASK = 0xFFFF       # GENMASK(15, 0). reg.h
+B_BE_EF_RDY = 1 << 29            # reg.h:3998
+R_BE_EFUSE_CTRL_1_V1 = 0x0034    # reg.h
+R_BE_EFUSE_CTRL_2_V1 = 0x00A4    # reg.h
+B_BE_EF_BURST = 1 << 19          # reg.h
+# efuse chip-version read (rtw89_efuse_read_ecv_be). [SRC] efuse_be.c:516-540, efuse.h.
+EF_FV_OFSET_BE_V1 = 0x17CA       # efuse.h:15
+EF_CV_MASK = 0xF0                # GENMASK(7, 4). efuse.h
+EF_CV_INV = 15                   # efuse.h
+# efuse secure-boot selector (rtw89_efuse_read_fw_secure_be). [SRC] efuse_be.c:468-514, efuse.h.
+EFUSE_SEC_BE_START = 0x1580      # efuse.h
+EFUSE_SEC_BE_SIZE = 4            # efuse.h
+EFUSE_SB_CRYP_SEL_ADDR = 0x1582  # efuse.h
+EFUSE_SB_CRYP_SEL_DEFAULT = 0xFFFF  # efuse.h
+# BT-coex scoreboard notify (rtw89_mac_update_scoreboard). [SRC] mac.c:1506-1519, rtw8922a.c:3300.
+R_BE_SCOREBOARD = 0x00AC         # reg.h
+MAC_AX_NOTIFY_TP_MAJOR = 0x81    # mac.h
+
 # XTAL_SI indirect register access. [SRC] mac.c:7179-7233, reg.h/mac.h.
 R_AX_WLAN_XTAL_SI_CTRL = 0x0270  # reg.h:268 (same address as the BE name)
 B_AX_WL_XTAL_SI_ADDR_MASK = 0x000000FF     # GENMASK(7, 0). reg.h:278

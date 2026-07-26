@@ -40,6 +40,12 @@ from .constants import (
     R_BE_CMAC_FUNC_EN, B_BE_CMAC_EN, B_BE_CMAC_TXEN, B_BE_CMAC_RXEN, B_BE_SIGB_EN,
     B_BE_PHYINTF_EN, B_BE_CMAC_DMA_EN, B_BE_PTCLTOP_EN, B_BE_SCHEDULER_EN, B_BE_TMAC_EN,
     B_BE_RMAC_EN, B_BE_TXTIME_EN, B_BE_RESP_PKTCTL_EN,
+    R_BE_WL_BT_PWR_CTRL, B_BE_BT_DISN_EN, B_BE_WHOLE_SYS_PWR_STE_MASK, MAC_AX_SYS_ACT,
+    R_BE_EFUSE_CTRL, B_BE_EF_ADDR_MASK, B_BE_EF_RDY, R_BE_EFUSE_CTRL_1_V1,
+    R_BE_EFUSE_CTRL_2_V1, B_BE_EF_BURST,
+    EF_FV_OFSET_BE_V1, EF_CV_MASK, EF_CV_INV,
+    EFUSE_SEC_BE_START, EFUSE_SEC_BE_SIZE, EFUSE_SB_CRYP_SEL_ADDR, EFUSE_SB_CRYP_SEL_DEFAULT,
+    R_BE_SCOREBOARD, MAC_AX_NOTIFY_TP_MAJOR,
 )
 
 
@@ -244,10 +250,98 @@ def pwr_on_func(t, cv: int) -> None:
     t.write32_set(R_BE_FEN_RST_ENABLE, B_BE_FEN_BB_IP_RSTN | B_BE_FEN_BBPLAT_RSTB)
 
 
+def cnv_efuse_state(t, idle: bool) -> None:
+    """rtw89_cnv_efuse_state_be: toggle the BT-disable bit around an efuse access, waiting for
+    the whole-system power state to go active on entry. [SRC] efuse_be.c:143-162."""
+    if idle:
+        t.write32_set(R_BE_WL_BT_PWR_CTRL, B_BE_BT_DISN_EN)
+    else:
+        t.write32_clr(R_BE_WL_BT_PWR_CTRL, B_BE_BT_DISN_EN)
+        _poll32(t, R_BE_IC_PWR_STATE, lambda v: v == MAC_AX_SYS_ACT,
+                mask=B_BE_WHOLE_SYS_PWR_STE_MASK)
+
+
+def _enable_efuse_pwr_cut_ddv(t, cv: int) -> None:
+    """rtw89_enable_efuse_pwr_cut_ddv_be. The aphy patch runs on every 8922A cut except CAV.
+    [SRC] efuse_be.c:23-42."""
+    aphy_patch = cv != CHIP_CAV      # chip_id is RTL8922A
+    t.write8_set(R_BE_PMC_DBG_CTRL2, B_BE_SYSON_DIS_PMCR_BE_WRMSK)
+    if aphy_patch:
+        t.write16_set(R_BE_SYS_ISO_CTRL, B_BE_PWC_EV2EF_S)
+        time.sleep(0.001)            # mdelay(1). [SRC] efuse_be.c:36
+        t.write16_set(R_BE_SYS_ISO_CTRL, B_BE_PWC_EV2EF_B)
+        t.write16_clr(R_BE_SYS_ISO_CTRL, B_BE_ISO_EB2CORE)
+    t.write32_set(R_BE_EFUSE_CTRL_2_V1, B_BE_EF_BURST)
+
+
+def _disable_efuse_pwr_cut_ddv(t, cv: int) -> None:
+    """rtw89_disable_efuse_pwr_cut_ddv_be. [SRC] efuse_be.c:44-62."""
+    aphy_patch = cv != CHIP_CAV      # chip_id is RTL8922A
+    if aphy_patch:
+        t.write16_set(R_BE_SYS_ISO_CTRL, B_BE_ISO_EB2CORE)
+        t.write16_clr(R_BE_SYS_ISO_CTRL, B_BE_PWC_EV2EF_B)
+        time.sleep(0.001)            # mdelay(1). [SRC] efuse_be.c:56
+        t.write16_clr(R_BE_SYS_ISO_CTRL, B_BE_PWC_EV2EF_S)
+    t.write8_clr(R_BE_PMC_DBG_CTRL2, B_BE_SYSON_DIS_PMCR_BE_WRMSK)
+    t.write32_clr(R_BE_EFUSE_CTRL_2_V1, B_BE_EF_BURST)
+
+
+def dump_physical_efuse_map(t, cv: int, dump_addr: int, dump_size: int) -> bytes:
+    """rtw89_dump_physical_efuse_map_be (dav=false): read `dump_size` bytes of physical efuse
+    from `dump_addr` (both 4-aligned) via the DDV controller, bracketed by the state convert
+    and power-cut enable/disable. [SRC] efuse_be.c:64-97, 164-193."""
+    cnv_efuse_state(t, False)
+    _enable_efuse_pwr_cut_ddv(t, cv)
+    out = bytearray()
+    for addr in range(dump_addr, dump_addr + dump_size, 4):
+        efuse_ctl = field_prep(B_BE_EF_ADDR_MASK, addr)
+        t.write32(R_BE_EFUSE_CTRL, efuse_ctl & ~B_BE_EF_RDY & 0xFFFFFFFF)
+        _poll32(t, R_BE_EFUSE_CTRL, lambda v: v & B_BE_EF_RDY)
+        out += t.read32(R_BE_EFUSE_CTRL_1_V1).to_bytes(4, "little")
+    _disable_efuse_pwr_cut_ddv(t, cv)
+    cnv_efuse_state(t, True)
+    return bytes(out)
+
+
+def efuse_read_ecv(t, cv: int) -> int:
+    """rtw89_efuse_read_ecv_be: read the efuse chip-version nibble and adopt it as the cut,
+    unless it reads invalid. [SRC] efuse_be.c:516-540. Returns the cv to use for later access."""
+    dump_addr = EF_FV_OFSET_BE_V1 & ~0x3
+    buff = dump_physical_efuse_map(t, cv, dump_addr, 4)
+    ecv = field_get(EF_CV_MASK, buff[EF_FV_OFSET_BE_V1 & 0x3])
+    if ecv == EF_CV_INV:
+        return cv
+    return ecv
+
+
+def efuse_read_fw_secure(t, cv: int) -> None:
+    """rtw89_efuse_read_fw_secure_be: dump the secure-boot selector. [SRC] efuse_be.c:468-514.
+    This card reads the default selector (secure boot off), so the MSS parse is skipped."""
+    sec_map = dump_physical_efuse_map(t, cv, EFUSE_SEC_BE_START, EFUSE_SEC_BE_SIZE)
+    i = EFUSE_SB_CRYP_SEL_ADDR - EFUSE_SEC_BE_START
+    sb_cryp_sel = sec_map[i] | (sec_map[i + 1] << 8)
+    if sb_cryp_sel == EFUSE_SB_CRYP_SEL_DEFAULT:
+        return
+    # TODO: verify, untested here. Secure-boot MSS parse (rtw89_efuse_recognize_mss_info_v1);
+    # this card reads the default selector, so it never runs. [SRC] efuse_be.c:490-505.
+
+
+def update_scoreboard(t, val: int) -> None:
+    """rtw89_mac_update_scoreboard: notify the BT-coex firmware over the scoreboard register.
+    8922A btc_sb has one entry (R_BE_SCOREBOARD). [SRC] mac.c:1506-1519, rtw8922a.c:3300."""
+    t.write8(R_BE_SCOREBOARD + 3, val)
+
+
 def mac_pwr_on(t, cv: int) -> None:
     """rtw89_mac_pwr_on -> rtw89_mac_power_switch(on=True): boot-mode handoff, reset the power
-    state, run the chip power-on sequence. [SRC] mac.c:1586-1599, 1521-1553.
-    The post-sequence efuse reads, scoreboard notify, and AON-intr clear are the next milestone."""
+    state, run the chip power-on sequence, then the first-probe efuse reads and coex notify.
+    [SRC] mac.c:1586-1599, 1521-1568."""
     power_switch_boot_mode(t)
     reset_pwr_state_be(t)
     pwr_on_func(t, cv)
+    # power_switch(on=True) tail. On first probe (RTW89_FLAG_PROBE_DONE unset) the efuse reads
+    # run; efuse_read_ecv can update the cut used by the secure-boot dump. [SRC] mac.c:1557-1568.
+    cv = efuse_read_ecv(t, cv)
+    efuse_read_fw_secure(t, cv)
+    update_scoreboard(t, MAC_AX_NOTIFY_TP_MAJOR)
+    # rtw89_mac_clr_aon_intr -> clr_aon_intr_be is PCIE-only; a no-op on USB. [SRC] mac_be.c:2064.
