@@ -252,6 +252,22 @@ PLE_QT9 = (0, 0, 32, 256, 0, 0, 0, 0, 0, 0, 1, 0, 0)   # ..h2d; 8922A stops befo
 # ext_wde_min_qt_wcpu = SCC wde_qt0_v1.wcpu (qta_mode defaults to SCC). mac.c:1792, core.c:6990.
 EXT_WDE_MIN_QT_WCPU = 6
 
+# HCI flow control init (rtw89_mac_hfc_init, reset+h2c-only path). [SRC] mac.c:1194-1246, mac_be.c.
+R_BE_HCI_FC_CTRL = 0xB700        # reg.h
+B_BE_HCI_FC_EN = 1 << 0          # reg.h
+B_BE_HCI_FC_CH12_EN = 1 << 3     # reg.h
+R_BE_CH_PAGE_CTRL = 0xB704       # reg.h
+B_BE_PREC_PAGE_CH12_V1_MASK = 0x003F0000  # GENMASK(21, 16). reg.h:6385
+# hfc_reset_param takes dle_info.qta_mode, which dle_init's ext_mode lookup left at SCC, so the
+# h2c precedence is the USB SCC config hfc_prec_cfg_c5.h2c_prec, not DLFW's c2. [SRC] mac.c:1906,
+# rtw8922a.c:111-112 (usb2 SCC), mac.c:1720 (hfc_prec_cfg_c5).
+HFC_H2C_PREC = 32
+
+# Firmware-download preconfig (rtw89_mac_fwdl_preconfig_be). [SRC] mac_be.c:625-629, reg.h.
+R_BE_FW_AUTO_CAL_DELAY = 0x0188          # reg.h
+B_BE_WCPU_FW_DELAY_COUNT_VALID = 1 << 15  # reg.h
+B_BE_WCPU_FW_DELAY_COUNT_MASK = 0x7FFF    # GENMASK(14, 0). reg.h
+
 # XTAL_SI indirect register access. [SRC] mac.c:7179-7233, reg.h/mac.h.
 R_AX_WLAN_XTAL_SI_CTRL = 0x0270  # reg.h:268 (same address as the BE name)
 B_AX_WL_XTAL_SI_ADDR_MASK = 0x000000FF     # GENMASK(7, 0). reg.h:278

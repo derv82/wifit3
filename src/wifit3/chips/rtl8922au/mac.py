@@ -59,6 +59,9 @@ from .constants import (
     R_AX_WDE_INI_STATUS, R_AX_PLE_INI_STATUS, WDE_MGN_INI_RDY, PLE_MGN_INI_RDY,
     WDE_SIZE3_LNK_PGE_NUM, WDE_SIZE3_SRT_OFST, PLE_SIZE3_LNK_PGE_NUM, PLE_SIZE3_SRT_OFST,
     PLE_QT9, EXT_WDE_MIN_QT_WCPU,
+    R_BE_HCI_FC_CTRL, B_BE_HCI_FC_EN, B_BE_HCI_FC_CH12_EN,
+    R_BE_CH_PAGE_CTRL, B_BE_PREC_PAGE_CH12_V1_MASK, HFC_H2C_PREC,
+    R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
 )
 
 
@@ -465,13 +468,45 @@ def dle_init(t) -> None:
     chk_dle_rdy(t, False)
 
 
+def hfc_func_en(t, en: bool, h2c_en: bool) -> None:
+    """hfc_func_en_be: toggle the HCI flow-control enable and the CH12 (H2C) enable.
+    [SRC] mac_be.c:202-214."""
+    val = t.read32(R_BE_HCI_FC_CTRL)
+    val = (val | B_BE_HCI_FC_EN) if en else (val & ~B_BE_HCI_FC_EN & 0xFFFFFFFF)
+    val = (val | B_BE_HCI_FC_CH12_EN) if h2c_en else (val & ~B_BE_HCI_FC_CH12_EN & 0xFFFFFFFF)
+    t.write32(R_BE_HCI_FC_CTRL, val)
+
+
+def hfc_h2c_cfg(t) -> None:
+    """hfc_h2c_cfg_be: program the H2C (CH12) page precedence. [SRC] mac_be.c:152-160."""
+    t.write32(R_BE_CH_PAGE_CTRL, field_prep(B_BE_PREC_PAGE_CH12_V1_MASK, HFC_H2C_PREC))
+
+
+def hfc_init(t) -> None:
+    """rtw89_mac_hfc_init(reset=True, en=False, h2c_en=True): reset the flow-control params
+    (software), then take the H2C-only path: disable FC, program the H2C precedence, enable
+    the H2C channel. The AC-channel and public-quota setup is skipped by that early return.
+    [SRC] mac.c:1194-1246. check_mac_en is a software-flag test, so it emits no wire op."""
+    hfc_func_en(t, False, False)
+    hfc_h2c_cfg(t)
+    hfc_func_en(t, False, True)
+
+
+def fwdl_preconfig(t) -> None:
+    """rtw89_mac_fwdl_preconfig_be: clear the WCPU firmware auto-cal delay before download.
+    [SRC] mac_be.c:625-629."""
+    t.write32_clr(R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID)
+    t.write32_mask(R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_MASK, 0)
+
+
 def partial_init(t) -> None:
     """rtw89_mac_partial_init(include_bb=False) as reached from rtw89_chip_efuse_info_setup:
     the pre-firmware DMAC bring-up. [SRC] mac.c:4307-4333, core.c:7268-7273.
-    include_bb is False here, so chip_bb_preinit is skipped."""
+    include_bb is False here, so chip_bb_preinit is skipped; the USB hci mac_pre_init is a
+    no-op on the 8922A. [SRC] usb.c:797-804."""
     ctrl_hci_dma_trx(t, True)
     hci_func_en(t)
     dmac_func_pre_en(t)
     dle_init(t)
-    # TODO: next milestones. hfc_init [SRC] mac.c:4272; then the USB hci mac_pre_init
-    # [SRC] usb.c:797; then rtw89_mac_fwdl_preconfig [SRC] mac.c:4332.
+    hfc_init(t)
+    fwdl_preconfig(t)

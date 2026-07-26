@@ -111,6 +111,13 @@ class RTL8922AUTransport:
         """rtw89_write16_clr: 16-bit read-modify-write, bits masked out. [SRC] core.h."""
         self.write16(addr, self.read16(addr) & ~bits & 0xFFFF)
 
+    def write32_mask(self, addr: int, mask: int, data: int) -> None:
+        """rtw89_write32_mask: read-modify-write `mask`'s field to `data`. [SRC] core.h.
+        shift = mask's trailing-zero count."""
+        shift = (mask & -mask).bit_length() - 1
+        val = (self.read32(addr) & ~mask & 0xFFFFFFFF) | ((data << shift) & mask)
+        self.write32(addr, val)
+
     def _read_cmac(self, addr: int) -> int:
         """rtw89_usb_read_cmac: read a CMAC-window register, re-enabling its clock and
         re-reading while it returns R32_DEAD. [SRC] usb.c:83-108."""
