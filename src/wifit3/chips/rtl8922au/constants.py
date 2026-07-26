@@ -341,6 +341,45 @@ B_BE_PREC_PAGE_CH12_V1_MASK = 0x003F0000  # GENMASK(21, 16). reg.h:6385
 # rtw8922a.c:111-112 (usb2 SCC), mac.c:1720 (hfc_prec_cfg_c5).
 HFC_H2C_PREC = 32
 
+# Full HFC init (rtw89_mac_hfc_init en=true): per-channel + public + prec config for USB-2 DBCC.
+# [SRC] mac.c:972-1246, mac_be.c:162-200, rtw8922a.c hfc tables, reg.h.
+R_BE_CH0_PAGE_CTRL = 0xB718      # reg.h:6389; ach_page_ctrl base
+R_BE_CH0_PAGE_INFO = 0xB750      # reg.h:6394; ach_page_info base
+R_BE_PUB_PAGE_CTRL1 = 0xB790     # reg.h:6402
+R_BE_PUB_PAGE_CTRL2 = 0xB794     # reg.h:6406
+R_BE_PUB_PAGE_INFO3 = 0xB78C     # reg.h:6398
+R_BE_PUB_PAGE_INFO1 = 0xB79C     # reg.h:6409
+R_BE_PUB_PAGE_INFO2 = 0xB7A0     # reg.h:6413
+R_BE_WP_PAGE_CTRL1 = 0xB7A4      # reg.h:6416
+R_BE_WP_PAGE_CTRL2 = 0xB7A8      # reg.h:6424
+R_BE_WP_PAGE_INFO1 = 0xB7AC      # reg.h:6427
+B_AX_MAX_PG_MASK = 0x1FFF0000    # GENMASK(28, 16). reg.h:1097
+B_AX_MIN_PG_MASK = 0x00001FFF    # GENMASK(12, 0). reg.h:1098
+B_AX_GRP = 1 << 31               # reg.h:1099
+B_AX_PUBPG_G1_MASK = 0x1FFF0000  # GENMASK(28, 16). reg.h:1134
+B_AX_PUBPG_G0_MASK = 0x00001FFF  # GENMASK(12, 0). reg.h:1135
+B_AX_WP_THRD_MASK = 0x00001FFF   # GENMASK(12, 0). reg.h:1152
+B_BE_PREC_PAGE_CH011_V1_MASK = 0x0000003F   # GENMASK(5, 0). reg.h:6387
+B_BE_PUBPG_ALL_MASK = 0x00001FFF            # GENMASK(12, 0). reg.h:6407
+B_BE_PREC_PAGE_WP_CH811_MASK = 0x01FF0000   # GENMASK(24, 16). reg.h:6417
+B_BE_PREC_PAGE_WP_CH07_MASK = 0x000001FF    # GENMASK(8, 0). reg.h:6418
+B_BE_HCI_FC_CH12_FULL_COND_MASK = 0x00000C00      # GENMASK(11, 10). reg.h:6376
+B_BE_HCI_FC_WP_CH811_FULL_COND_MASK = 0x00000300  # GENMASK(9, 8). reg.h:6377
+B_BE_HCI_FC_WP_CH07_FULL_COND_MASK = 0x000000C0   # GENMASK(7, 6). reg.h:6378
+B_BE_HCI_FC_WD_FULL_COND_MASK = 0x00000030        # GENMASK(5, 4). reg.h:6379
+B_BE_HCI_FC_MODE_MASK = 0x00000006                # GENMASK(2, 1). reg.h:6381
+RTW89_HCIFC_STF = 1              # core.h:4991
+RTW89_DMA_H2C = 12               # hfc channel loop bound: ACH0..B1HIQ. core.h dma ch enum
+# ch8 / pubcfg_p8 / prec_cfg_c6 for USB-2 DBCC. [SRC] rtw8922a.c (chcfg_ch8, pubcfg_p8), mac.c (c6).
+HFC_CH_CFG_CH8 = (               # (min, max, grp) per DMA channel ACH0..H2D
+    (24, 196, 0), (0, 0, 0), (54, 226, 0), (0, 0, 0), (54, 196, 1), (0, 0, 1),
+    (54, 196, 1), (0, 0, 1), (54, 226, 0), (0, 0, 0), (54, 196, 1), (0, 0, 0),
+    (0, 0, 0), (0, 0, 0), (0, 0, 0),
+)
+HFC_PUB_CFG_P8 = (304, 304, 608, 96)             # (grp0, grp1, pub_max, wp_thrd)
+HFC_PREC_CFG_C6 = (8, 32, 148, 148, 1, 1, 0, 1)  # (ch011_prec, h2c_prec, wp07_prec, wp811_prec,
+#                                                   ch011_full_cond, h2c_full_cond, wp07_fc, wp811_fc)
+
 # Firmware-download preconfig (rtw89_mac_fwdl_preconfig_be). [SRC] mac_be.c:625-629, reg.h.
 R_BE_FW_AUTO_CAL_DELAY = 0x0188          # reg.h
 B_BE_WCPU_FW_DELAY_COUNT_VALID = 1 << 15  # reg.h

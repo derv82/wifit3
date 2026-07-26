@@ -73,6 +73,15 @@ from .constants import (
     PLE_QT9, EXT_WDE_MIN_QT_WCPU,
     R_BE_HCI_FC_CTRL, B_BE_HCI_FC_EN, B_BE_HCI_FC_CH12_EN,
     R_BE_CH_PAGE_CTRL, B_BE_PREC_PAGE_CH12_V1_MASK, HFC_H2C_PREC,
+    R_BE_CH0_PAGE_CTRL, R_BE_CH0_PAGE_INFO, R_BE_PUB_PAGE_CTRL1, R_BE_PUB_PAGE_CTRL2,
+    R_BE_PUB_PAGE_INFO1, R_BE_PUB_PAGE_INFO2, R_BE_PUB_PAGE_INFO3,
+    R_BE_WP_PAGE_CTRL1, R_BE_WP_PAGE_CTRL2, R_BE_WP_PAGE_INFO1,
+    B_AX_MAX_PG_MASK, B_AX_MIN_PG_MASK, B_AX_GRP, B_AX_PUBPG_G0_MASK, B_AX_PUBPG_G1_MASK,
+    B_AX_WP_THRD_MASK, B_BE_PREC_PAGE_CH011_V1_MASK, B_BE_PUBPG_ALL_MASK,
+    B_BE_PREC_PAGE_WP_CH07_MASK, B_BE_PREC_PAGE_WP_CH811_MASK,
+    B_BE_HCI_FC_CH12_FULL_COND_MASK, B_BE_HCI_FC_WP_CH811_FULL_COND_MASK,
+    B_BE_HCI_FC_WP_CH07_FULL_COND_MASK, B_BE_HCI_FC_WD_FULL_COND_MASK, B_BE_HCI_FC_MODE_MASK,
+    RTW89_HCIFC_STF, RTW89_DMA_H2C, HFC_CH_CFG_CH8, HFC_PUB_CFG_P8, HFC_PREC_CFG_C6,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -651,14 +660,81 @@ def hfc_h2c_cfg(t) -> None:
     t.write32(R_BE_CH_PAGE_CTRL, field_prep(B_BE_PREC_PAGE_CH12_V1_MASK, HFC_H2C_PREC))
 
 
-def hfc_init(t) -> None:
-    """rtw89_mac_hfc_init(reset=True, en=False, h2c_en=True): reset the flow-control params
-    (software), then take the H2C-only path: disable FC, program the H2C precedence, enable
-    the H2C channel. The AC-channel and public-quota setup is skipped by that early return.
-    [SRC] mac.c:1194-1246. check_mac_en is a software-flag test, so it emits no wire op."""
+def hfc_ch_ctrl(t, ch: int) -> None:
+    """hfc_ch_ctrl: write the DMA channel's (min, max, grp) page config from the ch8 table.
+    [SRC] mac.c:972-998."""
+    mn, mx, grp = HFC_CH_CFG_CH8[ch]
+    val = field_prep(B_AX_MIN_PG_MASK, mn) | field_prep(B_AX_MAX_PG_MASK, mx) | (B_AX_GRP if grp else 0)
+    t.write32(R_BE_CH0_PAGE_CTRL + ch * 4, val)
+
+
+def hfc_pub_ctrl(t) -> None:
+    """hfc_pub_ctrl: public group page counts and the write-port threshold. [SRC] mac.c:1027-1051."""
+    grp0, grp1, _pub_max, wp_thrd = HFC_PUB_CFG_P8
+    t.write32(R_BE_PUB_PAGE_CTRL1,
+              field_prep(B_AX_PUBPG_G0_MASK, grp0) | field_prep(B_AX_PUBPG_G1_MASK, grp1))
+    t.write32(R_BE_WP_PAGE_CTRL2, field_prep(B_AX_WP_THRD_MASK, wp_thrd))
+
+
+def hfc_mix_cfg(t) -> None:
+    """hfc_mix_cfg_be: page precedence, public max, WP precedence, then the flow-control mode and
+    per-queue full-condition fields, from the prec_cfg_c6 / pubcfg_p8 tables. [SRC] mac_be.c:162-200."""
+    ch011_prec, h2c_prec, wp07_prec, wp811_prec, ch011_fc, h2c_fc, wp07_fc, wp811_fc = HFC_PREC_CFG_C6
+    pub_max = HFC_PUB_CFG_P8[2]
+    t.write32(R_BE_CH_PAGE_CTRL, field_prep(B_BE_PREC_PAGE_CH011_V1_MASK, ch011_prec)
+              | field_prep(B_BE_PREC_PAGE_CH12_V1_MASK, h2c_prec))
+    t.write32(R_BE_PUB_PAGE_CTRL2, field_prep(B_BE_PUBPG_ALL_MASK, pub_max))
+    t.write32(R_BE_WP_PAGE_CTRL1, field_prep(B_BE_PREC_PAGE_WP_CH07_MASK, wp07_prec)
+              | field_prep(B_BE_PREC_PAGE_WP_CH811_MASK, wp811_prec))
+    val = t.read32(R_BE_HCI_FC_CTRL)
+    val = field_replace(val, B_BE_HCI_FC_MODE_MASK, RTW89_HCIFC_STF)
+    val = field_replace(val, B_BE_HCI_FC_WD_FULL_COND_MASK, ch011_fc)
+    val = field_replace(val, B_BE_HCI_FC_CH12_FULL_COND_MASK, h2c_fc)
+    val = field_replace(val, B_BE_HCI_FC_WP_CH07_FULL_COND_MASK, wp07_fc)
+    val = field_replace(val, B_BE_HCI_FC_WP_CH811_FULL_COND_MASK, wp811_fc)
+    t.write32(R_BE_HCI_FC_CTRL, val)
+
+
+def hfc_upd_ch_info(t, ch: int) -> None:
+    """hfc_upd_ch_info: read back the channel's available/used page counts into software state.
+    [SRC] mac.c:1000-1024."""
+    t.read32(R_BE_CH0_PAGE_INFO + ch * 4)
+
+
+def hfc_get_mix_info(t) -> None:
+    """hfc_get_mix_info_be: read back the public/WP page info and the flow-control config into
+    software state. All reads, in the source's order. [SRC] mac_be.c hfc_get_mix_info_be."""
+    t.read32(R_BE_PUB_PAGE_INFO1)
+    t.read32(R_BE_PUB_PAGE_INFO3)
+    t.read32(R_BE_PUB_PAGE_INFO2)
+    t.read32(R_BE_WP_PAGE_INFO1)
+    t.read32(R_BE_HCI_FC_CTRL)
+    t.read32(R_BE_CH_PAGE_CTRL)
+    t.read32(R_BE_PUB_PAGE_CTRL2)
+    t.read32(R_BE_WP_PAGE_CTRL1)
+    t.read32(R_BE_WP_PAGE_CTRL2)
+    t.read32(R_BE_PUB_PAGE_CTRL1)
+
+
+def hfc_init(t, reset: bool, en: bool, h2c_en: bool) -> None:
+    """rtw89_mac_hfc_init: reset the flow-control params (software), disable FC, then either the
+    H2C-only download path (en=False: program H2C precedence, enable H2C) or the full operating
+    path (per-channel + public + mix config, enable, then read the counters back). dma_ch_mask is
+    0 on the 8922A so no channel is skipped. [SRC] mac.c:1194-1246."""
     hfc_func_en(t, False, False)
-    hfc_h2c_cfg(t)
-    hfc_func_en(t, False, True)
+    if not en and h2c_en:
+        hfc_h2c_cfg(t)
+        hfc_func_en(t, en, h2c_en)
+        return
+    for ch in range(RTW89_DMA_H2C):
+        hfc_ch_ctrl(t, ch)
+    hfc_pub_ctrl(t)
+    hfc_mix_cfg(t)
+    if en or h2c_en:
+        hfc_func_en(t, en, h2c_en)          # udelay(10) after: sub-resolution, no wire op
+    for ch in range(RTW89_DMA_H2C):
+        hfc_upd_ch_info(t, ch)
+    hfc_get_mix_info(t)
 
 
 def fwdl_preconfig(t) -> None:
@@ -824,7 +900,7 @@ def partial_init(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
     hci_func_en(t)
     dmac_func_pre_en(t)
     dle_init(t, "DLFW")
-    hfc_init(t)
+    hfc_init(t, True, False, True)          # reset, en=False, h2c_en=True (download path)
     fwdl_preconfig(t)
     fw_download(t, h2c_ep, cv, include_bb)
 
@@ -848,6 +924,7 @@ def dmac_init(t) -> None:
     """dmac_init_be(0): the DMAC-side operating init. Starts with dle_init in the DBCC qta mode.
     preload_init is a no-op on USB (not qta_poh). [SRC] mac_be.c:1131-1184, mac.c:preload_init."""
     dle_init(t, "DBCC")
+    hfc_init(t, True, True, True)           # reset, en=True, h2c_en=True (operating path)
 
 
 def trx_init(t) -> None:
