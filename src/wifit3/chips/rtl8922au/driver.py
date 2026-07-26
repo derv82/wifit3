@@ -17,9 +17,27 @@ logger = logging.getLogger(__name__)
 class RTL8922AUDriver(Driver):
     """Realtek RTL8922A (802.11be) USB driver, ported from the rtw89 vendor source."""
 
+    # The full rtw_8922au_id_table. [SRC] rtw8922au.c rtw_8922au_id_table. Retail brand/model
+    # come from a runtime OUI read; only the card in hand (0b05:1d84) and the ASUS VID are named.
     SUPPORTED_IDS = [
-        DeviceID(vid=0x0B05, pid=0x1D84, chipset="RTL8922AU",
-                 vendor="ASUS", product_name="USB-BE93"),
+        DeviceID(vid=0x0411, pid=0x03ef, chipset="RTL8922AU"),
+        DeviceID(vid=0x0502, pid=0x76d7, chipset="RTL8922AU"),
+        DeviceID(vid=0x056e, pid=0x4025, chipset="RTL8922AU"),
+        DeviceID(vid=0x056e, pid=0x4026, chipset="RTL8922AU"),
+        DeviceID(vid=0x057c, pid=0x8701, chipset="RTL8922AU"),
+        DeviceID(vid=0x0b05, pid=0x1bcf, chipset="RTL8922AU", vendor="ASUS"),
+        DeviceID(vid=0x0b05, pid=0x1bd2, chipset="RTL8922AU", vendor="ASUS"),
+        DeviceID(vid=0x0b05, pid=0x1d84, chipset="RTL8922AU", vendor="ASUS", product_name="USB-BE93"),
+        DeviceID(vid=0x0bda, pid=0x8912, chipset="RTL8922AU"),
+        DeviceID(vid=0x0db0, pid=0xda0e, chipset="RTL8922AU"),
+        DeviceID(vid=0x2001, pid=0x332b, chipset="RTL8922AU"),
+        DeviceID(vid=0x2c4e, pid=0x0125, chipset="RTL8922AU"),
+        DeviceID(vid=0x3625, pid=0x010a, chipset="RTL8922AU"),
+        DeviceID(vid=0x37ad, pid=0x0100, chipset="RTL8922AU"),
+        DeviceID(vid=0x37ad, pid=0x0101, chipset="RTL8922AU"),
+        DeviceID(vid=0x7392, pid=0x3822, chipset="RTL8922AU"),
+        DeviceID(vid=0x7392, pid=0x4822, chipset="RTL8922AU"),
+        DeviceID(vid=0x7392, pid=0x5822, chipset="RTL8922AU"),
     ]
     # 2.4 GHz + 5 GHz at 20 MHz. TODO: verify + add the 6 GHz plan (8922a support_bands
     # includes 6 GHz). [SRC] rtw8922a.c:3210.
