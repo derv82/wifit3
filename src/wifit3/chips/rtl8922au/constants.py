@@ -51,6 +51,131 @@ B_BE_USB23_SW_MODE = 1 << 31     # reg.h:4252
 # rtw89_read_chip_ver: chip version / hw id. [SRC] core.c:7091, reg.h/mac.h.
 B_AX_CHIP_VER_MASK = 0xF000      # GENMASK(15, 12). reg.h:196
 B_BE_HW_ID_MASK = 0xFF           # GENMASK(7, 0). reg.h:4319
+CHIP_CAV = 0                     # first enum rtw89_cv. core.h:365
+
+# XTAL_SI indirect write extras (rtw89_mac_write_xtal_si). [SRC] mac_be.c:413-441, reg.h/mac.h.
+# The BE field positions match the AX ones, so the AX masks above cover the shared fields.
+B_AX_WL_XTAL_SI_BITMASK_MASK = 0x00FF0000  # GENMASK(23, 16). reg.h:276
+XTAL_SI_NORMAL_WRITE = 0x00      # reg.h:274
+XTAL_SI_PLL = 0xE0               # mac.h:1694
+XTAL_SI_PLL_1 = 0xE1             # mac.h:1695
+XTAL_SI_ANAPAR_WL = 0x90         # mac.h:1681
+XTAL_SI_WL_RFC_S0 = 0x80         # mac.h:1675
+XTAL_SI_WL_RFC_S1 = 0x81         # mac.h:1678
+XTAL_SI_XREF_RF1 = 0x2D          # mac.h:1664
+XTAL_SI_XREF_RF2 = 0x2E          # mac.h:1665
+XTAL_SI_SRAM_CTRL = 0xA1         # mac.h:1690
+XTAL_SI_SRAM_DIS = 1 << 1        # BIT(1). mac.h:1691
+
+# MAC power-on: boot-mode handoff (rtw89_mac_power_switch_boot_mode). [SRC] mac.c:1480-1495, reg.h.
+R_AX_GPIO_MUXCFG = 0x0040        # reg.h:81
+B_AX_BOOT_MODE = 1 << 19         # reg.h:82
+R_AX_SYS_PW_CTRL = 0x0004        # reg.h:21
+B_AX_APFN_ONMAC = 1 << 8         # reg.h:35
+R_AX_SYS_STATUS1 = 0x00F4        # reg.h:198
+B_AX_AUTO_WLPON = 1 << 10        # reg.h:200
+R_AX_RSV_CTRL = 0x001C           # reg.h:47
+B_AX_R_DIS_PRST = 1 << 6         # reg.h:48
+
+# reset_pwr_state (rtw89_mac_reset_pwr_state_be). [SRC] mac_be.c:474-601, reg.h.
+R_BE_SYSON_FSM_MON = 0x00A0      # reg.h:4215
+WLAN_FSM_MASK = 0xFFFFFF         # reg.h:4226
+WLAN_FSM_SET = 0x4000000         # reg.h:4227
+WLAN_FSM_STATE_MASK = 0x1FF      # reg.h:4228
+WLAN_FSM_IDLE = 0                # reg.h:4229
+R_BE_IC_PWR_STATE = 0x03F0       # reg.h:4688
+B_BE_WLMAC_PWR_STE_MASK = 0x300  # GENMASK(9, 8). reg.h:4691
+MAC_AX_MAC_OFF = 0               # reg.h:330
+MAC_AX_MAC_ON = 1                # mac.h
+MAC_AX_MAC_LPS = 2               # mac.h
+R_BE_HCI_OPT_CTRL = 0x0074       # reg.h:4082
+B_BE_HAXIDMA_IO_EN = 1 << 24     # reg.h:4087
+B_BE_HAXIDMA_IO_ST = 1 << 27     # reg.h:4085
+B_BE_HAXIDMA_BACKUP_RESTORE_ST = 1 << 26  # reg.h:4086
+B_BE_HCI_WLAN_IO_EN = 1 << 28    # reg.h
+B_BE_HCI_WLAN_IO_ST = 1 << 31    # reg.h
+R_BE_SYS_PW_CTRL = 0x0004        # reg.h
+B_BE_EN_WLON = 1 << 16           # reg.h
+B_BE_APFM_SWLPS = 1 << 10        # reg.h
+B_BE_APFM_OFFMAC = 1 << 9        # reg.h
+R_BE_WLLPS_CTRL = 0x0090         # reg.h
+B_BE_FORCE_LEAVE_LPS = 1 << 3    # reg.h
+
+# 8922A power-on sequence (rtw8922a_pwr_on_func). [SRC] rtw8922a.c:475-634, reg.h.
+B_BE_AFSM_WLSUS_EN = 1 << 11
+B_BE_AFSM_PCIE_SUS_EN = 1 << 12
+B_BE_DIS_WLBT_PDNSUSEN_SOPC = 1 << 18
+B_BE_DIS_WLBT_LPSEN_LOPC = 1 << 1
+B_BE_APDM_HPDN = 1 << 15
+B_BE_RDY_SYSPWR = 1 << 17
+R_BE_WLRESUME_CTRL = 0x0094
+B_BE_LPSROP_CMAC0 = 1 << 12
+B_BE_LPSROP_CMAC1 = 1 << 13
+B_BE_APFN_ONMAC = 1 << 8
+R_BE_AFE_ON_CTRL1 = 0x0244
+B_BE_REG_CK_MON_CK960M_EN = 1 << 28
+R_BE_ANAPAR_POW_MAC = 0x0016
+B_BE_POW_PC_LDO_PORT0 = 1 << 2
+B_BE_POW_PC_LDO_PORT1 = 1 << 3
+R_BE_FEN_RST_ENABLE = 0x0084
+B_BE_R_SYM_ISO_ADDA_P02PP = 1 << 20
+B_BE_R_SYM_ISO_ADDA_P12PP = 1 << 21
+B_BE_FEN_BB_IP_RSTN = 1 << 1
+B_BE_FEN_BBPLAT_RSTB = 1 << 0
+R_BE_PLATFORM_ENABLE = 0x0088
+B_BE_PLATFORM_EN = 1 << 0
+R_BE_SYS_ADIE_PAD_PWR_CTRL = 0x0018
+B_BE_SYM_PADPDN_WL_RFC1_1P3 = 1 << 6
+B_BE_SYM_PADPDN_WL_RFC0_1P3 = 1 << 5
+R_BE_PMC_DBG_CTRL2 = 0x00CC
+B_BE_SYSON_DIS_PMCR_BE_WRMSK = 1 << 2
+R_BE_SYS_ISO_CTRL = 0x0000
+B_BE_ISO_EB2CORE = 1 << 8
+B_BE_PWC_EV2EF_B = 1 << 15
+B_BE_PWC_EV2EF_S = 1 << 14
+R_BE_DMAC_FUNC_EN = 0x8400
+B_BE_MAC_FUNC_EN = 1 << 30
+B_BE_DMAC_FUNC_EN = 1 << 29
+B_BE_MPDU_PROC_EN = 1 << 28
+B_BE_WD_RLS_EN = 1 << 27
+B_BE_DLE_WDE_EN = 1 << 26
+B_BE_TXPKT_CTRL_EN = 1 << 25
+B_BE_STA_SCH_EN = 1 << 24
+B_BE_DLE_PLE_EN = 1 << 23
+B_BE_PKT_BUF_EN = 1 << 22
+B_BE_DMAC_TBL_EN = 1 << 21
+B_BE_PKT_IN_EN = 1 << 20
+B_BE_DLE_CPUIO_EN = 1 << 19
+B_BE_DISPATCHER_EN = 1 << 18
+B_BE_BBRPT_EN = 1 << 17
+B_BE_MAC_SEC_EN = 1 << 16
+B_BE_H_AXIDMA_EN = 1 << 14
+B_BE_DMAC_MLO_EN = 1 << 11
+B_BE_PLRLS_EN = 1 << 10
+B_BE_P_AXIDMA_EN = 1 << 9
+B_BE_DLE_DATACPUIO_EN = 1 << 8
+B_BE_LTR_CTL_EN = 1 << 7
+R_BE_CMAC_SHARE_FUNC_EN = 0xE000
+B_BE_CMAC_SHARE_EN = 1 << 30
+B_BE_RESPBA_EN = 1 << 2
+B_BE_ADDRSRCH_EN = 1 << 1
+B_BE_BTCOEX_EN = 1 << 0
+R_BE_CMAC_FUNC_EN = 0x10000
+B_BE_CMAC_EN = 1 << 30
+B_BE_CMAC_TXEN = 1 << 29
+B_BE_CMAC_RXEN = 1 << 28
+B_BE_SIGB_EN = 1 << 6
+B_BE_PHYINTF_EN = 1 << 5
+B_BE_CMAC_DMA_EN = 1 << 4
+B_BE_PTCLTOP_EN = 1 << 3
+B_BE_SCHEDULER_EN = 1 << 2
+B_BE_TMAC_EN = 1 << 1
+B_BE_RMAC_EN = 1 << 0
+B_BE_TXTIME_EN = 1 << 8
+B_BE_RESP_PKTCTL_EN = 1 << 7
+
+# read_poll_timeout budget for the power-on polls (kernel timeout_us/sleep_us ~= 3000). [SRC] mac_be.c.
+PWR_POLL_ATTEMPTS = 3000
 
 # XTAL_SI indirect register access. [SRC] mac.c:7179-7233, reg.h/mac.h.
 R_AX_WLAN_XTAL_SI_CTRL = 0x0270  # reg.h:268 (same address as the BE name)

@@ -87,6 +87,22 @@ class RTL8922AUTransport:
         """write32 with the kernel's warn suppressed; identical wire op. [SRC] usb.c:171-177."""
         self.write32(addr, val)
 
+    def write32_set(self, addr: int, bits: int) -> None:
+        """rtw89_write32_set: read-modify-write, bits OR'd in. [SRC] core.h:7201."""
+        self.write32(addr, self.read32(addr) | bits)
+
+    def write32_clr(self, addr: int, bits: int) -> None:
+        """rtw89_write32_clr: read-modify-write, bits masked out. [SRC] core.h:7228."""
+        self.write32(addr, self.read32(addr) & ~bits & 0xFFFFFFFF)
+
+    def write8_set(self, addr: int, bits: int) -> None:
+        """rtw89_write8_set: byte read-modify-write, bits OR'd in. [SRC] core.h:7183."""
+        self.write8(addr, self.read8(addr) | bits)
+
+    def write8_clr(self, addr: int, bits: int) -> None:
+        """rtw89_write8_clr: byte read-modify-write, bits masked out. [SRC] core.h:7210."""
+        self.write8(addr, self.read8(addr) & ~bits & 0xFF)
+
     def _read_cmac(self, addr: int) -> int:
         """rtw89_usb_read_cmac: read a CMAC-window register, re-enabling its clock and
         re-reading while it returns R32_DEAD. [SRC] usb.c:83-108."""
