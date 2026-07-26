@@ -98,6 +98,8 @@ R_BE_SYS_PW_CTRL = 0x0004        # reg.h
 B_BE_EN_WLON = 1 << 16           # reg.h
 B_BE_APFM_SWLPS = 1 << 10        # reg.h
 B_BE_APFM_OFFMAC = 1 << 9        # reg.h
+B_BE_SOP_EASWR = 1 << 30         # reg.h:3830
+B_BE_XTAL_OFF_A_DIE = 1 << 22    # reg.h:3838
 R_BE_WLLPS_CTRL = 0x0090         # reg.h
 B_BE_FORCE_LEAVE_LPS = 1 << 3    # reg.h
 
@@ -201,6 +203,7 @@ EFUSE_SB_CRYP_SEL_DEFAULT = 0xFFFF  # efuse.h
 # BT-coex scoreboard notify (rtw89_mac_update_scoreboard). [SRC] mac.c:1506-1519, rtw8922a.c:3300.
 R_BE_SCOREBOARD = 0x00AC         # reg.h
 MAC_AX_NOTIFY_TP_MAJOR = 0x81    # mac.h
+MAC_AX_NOTIFY_PWR_MAJOR = 0x80   # reg.h:162
 
 # DMAC pre-init (rtw89_mac_partial_init -> dmac_pre_init). [SRC] mac.c:4258-4279, mac_be.c:369-410.
 R_BE_HCI_FUNC_EN = 0x7880        # reg.h:4861; 8922a hci_func_en_addr (rtw8922a.c:3274)

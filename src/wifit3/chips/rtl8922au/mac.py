@@ -45,7 +45,8 @@ from .constants import (
     R_BE_EFUSE_CTRL_2_V1, B_BE_EF_BURST,
     EF_FV_OFSET_BE_V1, EF_CV_MASK, EF_CV_INV,
     EFUSE_SEC_BE_START, EFUSE_SEC_BE_SIZE, EFUSE_SB_CRYP_SEL_ADDR, EFUSE_SB_CRYP_SEL_DEFAULT,
-    R_BE_SCOREBOARD, MAC_AX_NOTIFY_TP_MAJOR,
+    R_BE_SCOREBOARD, MAC_AX_NOTIFY_TP_MAJOR, MAC_AX_NOTIFY_PWR_MAJOR,
+    B_BE_SOP_EASWR, B_BE_XTAL_OFF_A_DIE,
     R_BE_HCI_FUNC_EN, B_BE_HCI_TXDMA_EN, B_BE_HCI_RXDMA_EN,
     R_BE_HAXI_INIT_CFG1, B_BE_DMA_MODE_MASK, S_BE_DMA_MOD_USB, B_BE_STOP_AXI_MST,
     B_BE_TXDMA_EN, B_BE_RXDMA_EN, R_BE_HAXI_DMA_STOP1, B_BE_TX_STOP1_MASK,
@@ -380,6 +381,55 @@ def mac_pwr_on(t, cv: int) -> None:
     efuse_read_fw_secure(t, cv)
     update_scoreboard(t, MAC_AX_NOTIFY_TP_MAJOR)
     # rtw89_mac_clr_aon_intr -> clr_aon_intr_be is PCIE-only; a no-op on USB. [SRC] mac_be.c:2064.
+
+
+def pwr_off_func(t) -> None:
+    """rtw8922a_pwr_off_func (USB arm): unwind the analog/xtal config, drive the MAC to off,
+    and put the A-die to sleep. [SRC] rtw8922a.c:636-742. The two PCIE-only blocks are behind
+    the hci-type test; this card is USB, so they never run."""
+    write_xtal_si(t, XTAL_SI_ANAPAR_WL, 0x10, 0x10)
+    write_xtal_si(t, XTAL_SI_ANAPAR_WL, 0x00, 0x08)
+    write_xtal_si(t, XTAL_SI_ANAPAR_WL, 0x00, 0x04)
+    write_xtal_si(t, XTAL_SI_WL_RFC_S0, 0xC6, 0xFF)
+    write_xtal_si(t, XTAL_SI_WL_RFC_S1, 0xC6, 0xFF)
+    write_xtal_si(t, XTAL_SI_ANAPAR_WL, 0x80, 0x80)
+    write_xtal_si(t, XTAL_SI_ANAPAR_WL, 0x00, 0x02)
+    write_xtal_si(t, XTAL_SI_ANAPAR_WL, 0x00, 0x01)
+    write_xtal_si(t, XTAL_SI_PLL, 0x02, 0xFF)
+    write_xtal_si(t, XTAL_SI_PLL, 0x00, 0xFF)
+
+    t.write32_set(R_BE_FEN_RST_ENABLE, B_BE_R_SYM_ISO_ADDA_P02PP | B_BE_R_SYM_ISO_ADDA_P12PP)
+    t.write8_clr(R_BE_ANAPAR_POW_MAC, B_BE_POW_PC_LDO_PORT0 | B_BE_POW_PC_LDO_PORT1)
+    t.write32_set(R_BE_SYS_PW_CTRL, B_BE_EN_WLON)
+    t.write8_clr(R_BE_FEN_RST_ENABLE, B_BE_FEN_BB_IP_RSTN | B_BE_FEN_BBPLAT_RSTB)
+    t.write32_clr(R_BE_SYS_ADIE_PAD_PWR_CTRL, B_BE_SYM_PADPDN_WL_RFC0_1P3)
+
+    write_xtal_si(t, XTAL_SI_ANAPAR_WL, 0x00, 0x20)
+    t.write32_clr(R_BE_SYS_ADIE_PAD_PWR_CTRL, B_BE_SYM_PADPDN_WL_RFC1_1P3)
+    write_xtal_si(t, XTAL_SI_ANAPAR_WL, 0x00, 0x40)
+
+    # TODO: verify, untested here. PCIE-only HAXIDMA disable+poll. [SRC] rtw8922a.c:691-707.
+
+    t.write32_clr(R_BE_HCI_OPT_CTRL, B_BE_HCI_WLAN_IO_EN)
+    _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not (v & B_BE_HCI_WLAN_IO_ST))
+    t.write32_set(R_BE_SYS_PW_CTRL, B_BE_APFM_OFFMAC)
+    _poll32(t, R_BE_SYS_PW_CTRL, lambda v: not (v & B_BE_APFM_OFFMAC))
+
+    t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_SOP_EASWR)     # chip_id == RTL8922A, hci == USB
+    t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_XTAL_OFF_A_DIE)
+    val32 = t.read32(R_BE_SYS_PW_CTRL)
+    val32 = (val32 | B_BE_AFSM_WLSUS_EN) & ~B_BE_AFSM_PCIE_SUS_EN & 0xFFFFFFFF
+    t.write32(R_BE_SYS_PW_CTRL, val32)
+    t.write32(R_BE_UDM1, 0)
+
+
+def mac_pwr_off(t) -> None:
+    """rtw89_mac_pwr_off -> rtw89_mac_power_switch(on=False): boot-mode handoff (a no-op now the
+    boot bit was cleared on power-on), run the chip power-off sequence, then the coex notify.
+    [SRC] mac.c:1601-1604, 1521-1584. reset_pwr_state runs only on the power-on path."""
+    power_switch_boot_mode(t)
+    pwr_off_func(t)
+    update_scoreboard(t, MAC_AX_NOTIFY_PWR_MAJOR)
 
 
 def ctrl_hci_dma_trx(t, enable: bool) -> None:
