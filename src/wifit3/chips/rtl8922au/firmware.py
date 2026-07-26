@@ -244,13 +244,16 @@ def download_suit(t, h2c_ep: int, fw: bytes, info: dict) -> None:
     _fw_check_rdy(t, True)               # RTW89_FWDL_CHECK_WCPU_FWDL_DONE. [SRC] fw.c:1899-1900
 
 
-def download(t, h2c_ep: int, cv: int) -> None:
-    """rtw89_fw_download (NORMAL, include_bb=False) minus the CPU disable/enable done in mac.py:
-    load the firmware suit, run the transfer, reset the mailbox counters, then wait for the
-    FreeRTOS-ready status. [SRC] fw.c:1984-2047."""
+def download(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
+    """rtw89_fw_download (NORMAL) minus the CPU disable/enable done in mac.py: load the NORMAL
+    firmware suit, run the transfer, then (when include_bb) the BB-MCU suit transfers, reset the
+    mailbox counters, and wait for the FreeRTOS-ready status. [SRC] fw.c:1984-2047."""
     fw = load_fw_suit(cv)
     info = parse_hdr_v1(fw)
     download_suit(t, h2c_ep, fw, info)
+    if include_bb:
+        # TODO: BB-MCU suit re-download (bbmcu_nr=1). [SRC] fw.c:2004-2010. Ported next milestone.
+        pass
     t.h2c_counter = 0                                 # fw_info reset. [SRC] fw.c:2014-2015
     t.c2h_counter = 0
     time.sleep(0.005)                                 # mdelay(5). [SRC] fw.c:2019

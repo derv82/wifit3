@@ -126,6 +126,9 @@ class RTL8922AUDriver(Driver):
         # Interface-up path: rtw89_ops_start -> rtw89_core_start -> rtw89_mac_preinit (the second
         # pwr_on, then mac_func_en). [SRC] core.c:6626-6635, mac.c:4341-4357.
         mac.mac_preinit(self.transport, ver["cv"])
+        # phy_init_bb_afe applies a firmware AFE table; this card ships no afe element, so it is a
+        # no-op. Then rtw89_mac_init: partial_init(include_bb=True). [SRC] core.c:6640-6648, phy.c:1968.
+        mac.mac_init(self.transport, self._h2c_ep, ver["cv"])
         return True
 
     def _switch_usb_mode(self) -> None:

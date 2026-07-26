@@ -210,6 +210,28 @@ B_BE_CMAC_FUNC_EN_SET = (B_BE_CMAC_EN | B_BE_CMAC_TXEN | B_BE_CMAC_RXEN
                          | B_BE_CMAC_CRPRT | B_BE_TXTIME_EN | B_BE_RESP_PKTCTL_EN
                          | B_BE_SIGB_EN)  # reg.h:6581
 
+# BB preinit (rtw89_chip_bb_preinit -> rtw8922a_bb_preinit + bbmcu_cr_init).
+# [SRC] rtw8922a.c:1753-1818, core.h:7725, phy.h:10,804. dbcc_en is set on BE chips
+# (core.c:6992), so bb_preinit runs for PHY_0 and PHY_1.
+RTW89_PHY_0 = 0                          # core.h rtw89_phy_idx
+RTW89_PHY_1 = 1
+R_BE_DMAC_SYS_CR32B = 0x842C             # reg.h:4958
+B_BE_DMAC_BB_PHY0_MASK = 0x0000FFFF      # GENMASK(15, 0). reg.h:4960
+B_BE_DMAC_BB_PHY1_MASK = 0xFFFF0000      # GENMASK(31, 16). reg.h:4959
+B_BE_FEN_BB1_IP_RSTN = 1 << 9            # reg.h:4149
+B_BE_FEN_BB1PLAT_RSTB = 1 << 8           # reg.h:4150
+B_BE_BOOT_RDY1 = 1 << 10                 # reg.h:4148
+B_BE_BOOT_RDY0 = 1 << 2                  # reg.h:4153
+R_BE_MEM_PWR_CTRL = 0x00D0               # reg.h:4278
+B_BE_MEM_BBMCU0_DS_V1 = 1 << 17          # reg.h:4292
+RTW89_BBMCU_ADDR_OFFSET = 0x30000        # phy.h:10
+BB_MCU_INIT_REG = (                      # bb_mcu0_init_reg == bb_mcu1_init_reg. rtw8922a.c:1753-1777
+    (0x6990, 0x00000000), (0x6994, 0x00000000), (0x6998, 0x00000000),
+    (0x6820, 0xFFFFFFFE), (0x6800, 0xC0000FFE), (0x6808, 0x76543210),
+    (0x6814, 0xBFBFB000), (0x6818, 0x0478C009), (0x6800, 0xC0000FFF),
+    (0x6820, 0xFFFFFFFF),
+)
+
 # read_poll_timeout budget for the power-on polls (kernel timeout_us/sleep_us ~= 3000). [SRC] mac_be.c.
 PWR_POLL_ATTEMPTS = 3000
 

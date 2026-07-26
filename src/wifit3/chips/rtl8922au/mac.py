@@ -53,6 +53,9 @@ from .constants import (
     B_BE_R_SYM_WLCMAC0_ALL_EN, B_BE_R_SYM_WLCMAC1_ALL_EN,
     B_BE_R_SYM_ISO_CMAC02PP, B_BE_R_SYM_ISO_CMAC12PP, B_BE_CMAC0_FEN, B_BE_CMAC1_FEN,
     R_BE_CK_EN, B_BE_CK_EN_SET, B_BE_CMAC_FUNC_EN_SET,
+    RTW89_PHY_0, RTW89_PHY_1, R_BE_DMAC_SYS_CR32B, B_BE_DMAC_BB_PHY0_MASK, B_BE_DMAC_BB_PHY1_MASK,
+    B_BE_FEN_BB1_IP_RSTN, B_BE_FEN_BB1PLAT_RSTB, B_BE_BOOT_RDY0, B_BE_BOOT_RDY1,
+    R_BE_MEM_PWR_CTRL, B_BE_MEM_BBMCU0_DS_V1, RTW89_BBMCU_ADDR_OFFSET, BB_MCU_INIT_REG,
     R_BE_HCI_FUNC_EN, B_BE_HCI_TXDMA_EN, B_BE_HCI_RXDMA_EN,
     R_BE_HAXI_INIT_CFG1, B_BE_DMA_MODE_MASK, S_BE_DMA_MOD_USB, B_BE_STOP_AXI_MST,
     B_BE_TXDMA_EN, B_BE_RXDMA_EN, R_BE_HAXI_DMA_STOP1, B_BE_TX_STOP1_MASK,
@@ -694,13 +697,49 @@ def fwdl_enable_wcpu(t, boot_reason: int, dlfw: bool, include_bb: bool) -> None:
     wcpu_on(t, boot_reason, dlfw)
 
 
-def fw_download(t, h2c_ep: int, cv: int) -> None:
-    """rtw89_fw_download(RTW89_FW_NORMAL, include_bb=False): park the CPU, enable it for download,
-    then transfer the firmware suit (mfw parse, header + section bulk-OUT, ready poll) via the
-    firmware module. [SRC] fw.c:1984-2047, mac.c:4334."""
+def fw_download(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
+    """rtw89_fw_download(RTW89_FW_NORMAL): park the CPU, enable it for download, then transfer the
+    NORMAL firmware suit (and, when include_bb, the BB-MCU suits) via the firmware module.
+    [SRC] fw.c:1984-2047, mac.c:4334."""
     disable_cpu(t)
-    fwdl_enable_wcpu(t, 0, True, False)
-    firmware.download(t, h2c_ep, cv)
+    fwdl_enable_wcpu(t, 0, True, include_bb)
+    firmware.download(t, h2c_ep, cv, include_bb)
+
+
+def bbmcu_write32(t, addr: int, data: int, phy_idx: int) -> None:
+    """rtw89_bbmcu_write32: BB-MCU register write. PHY_1's low regs shift +0x20000 first; every
+    write shifts +BBMCU_ADDR_OFFSET. [SRC] phy.h:804-811."""
+    if phy_idx and addr < 0x10000:
+        addr += 0x20000
+    t.write32(addr + RTW89_BBMCU_ADDR_OFFSET, data)
+
+
+_DMAC_SYS_MASK = (B_BE_DMAC_BB_PHY0_MASK, B_BE_DMAC_BB_PHY1_MASK)       # rtw8922a.c:1797
+_BBRST_MASK = (B_BE_FEN_BBPLAT_RSTB, B_BE_FEN_BB1PLAT_RSTB)             # rtw8922a.c:1798
+_GLBRST_MASK = (B_BE_FEN_BB_IP_RSTN, B_BE_FEN_BB1_IP_RSTN)             # rtw8922a.c:1799
+_MCU_BOOTRDY_MASK = (B_BE_BOOT_RDY0, B_BE_BOOT_RDY1)                    # rtw8922a.c:1800
+
+
+def bb_preinit(t, phy_idx: int) -> None:
+    """rtw8922a_bb_preinit: reset the BB IP/platform, mark the MCU boot-ready, power the BBMCU
+    memory, then load the per-PHY BB-MCU init table. [SRC] rtw8922a.c:1802-1818."""
+    rdy = 1 if phy_idx == RTW89_PHY_1 else 0
+    t.write32_mask(R_BE_DMAC_SYS_CR32B, _DMAC_SYS_MASK[phy_idx], 0x7FF9)
+    t.write32_mask(R_BE_FEN_RST_ENABLE, _GLBRST_MASK[phy_idx], 0x0)
+    t.write32_mask(R_BE_FEN_RST_ENABLE, _BBRST_MASK[phy_idx], 0x0)
+    t.write32_mask(R_BE_FEN_RST_ENABLE, _GLBRST_MASK[phy_idx], 0x1)
+    t.write32_mask(R_BE_FEN_RST_ENABLE, _MCU_BOOTRDY_MASK[phy_idx], rdy)
+    t.write32_mask(R_BE_MEM_PWR_CTRL, B_BE_MEM_BBMCU0_DS_V1, 0)
+    # fsleep(1): 1us settle, sub-resolution in Python and no wire op. [SRC] rtw8922a.c:1816
+    for addr, data in BB_MCU_INIT_REG:
+        bbmcu_write32(t, addr, data, phy_idx)
+
+
+def chip_bb_preinit(t) -> None:
+    """rtw89_chip_bb_preinit: 8922A runs bb_preinit for PHY_0 and, since dbcc_en is set on BE
+    chips, PHY_1. [SRC] core.h:7725-7734, core.c:6992-6993."""
+    bb_preinit(t, RTW89_PHY_0)
+    bb_preinit(t, RTW89_PHY_1)
 
 
 def parse_efuse_map(t, cv: int) -> dict:
@@ -744,15 +783,23 @@ def setup_phycap(t) -> None:
     read_phycap(t, 1)      # part1, expects C2H id RTW89_FWCMD_C2HREG_FUNC_PHY_CAP_PART1
 
 
-def partial_init(t, h2c_ep: int, cv: int) -> None:
-    """rtw89_mac_partial_init(include_bb=False) as reached from rtw89_chip_efuse_info_setup:
-    the pre-firmware DMAC bring-up, then the firmware download. [SRC] mac.c:4307-4338.
-    include_bb is False here, so chip_bb_preinit is skipped; the USB hci mac_pre_init is a
-    no-op on the 8922A. [SRC] usb.c:797-804."""
+def partial_init(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
+    """rtw89_mac_partial_init: the pre-firmware DMAC bring-up (dmac_pre_init inlined as
+    hci_func_en + dmac_func_pre_en + dle_init + hfc_init), then the firmware download.
+    [SRC] mac.c:4307-4338. When include_bb (the interface-up mac_init call) chip_bb_preinit runs
+    first; the USB hci mac_pre_init is a no-op on the 8922A. [SRC] usb.c:797-804."""
     ctrl_hci_dma_trx(t, True)
+    if include_bb:
+        chip_bb_preinit(t)
     hci_func_en(t)
     dmac_func_pre_en(t)
     dle_init(t)
     hfc_init(t)
     fwdl_preconfig(t)
-    fw_download(t, h2c_ep, cv)
+    fw_download(t, h2c_ep, cv, include_bb)
+
+
+def mac_init(t, h2c_ep: int, cv: int) -> None:
+    """rtw89_mac_init: the interface-up MAC bring-up. Starts with partial_init(include_bb=True)
+    (BB preinit + the BB-MCU firmware re-download). [SRC] mac.c:4359-4400."""
+    partial_init(t, h2c_ep, cv, include_bb=True)
