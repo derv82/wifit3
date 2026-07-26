@@ -37,7 +37,12 @@ import sys
 import shutil
 import tempfile
 import os
+import re
 from pathlib import Path
+
+# A 5 GHz channel renders as "5.NNN GHz" (iwlist) or "5NNN[.N] MHz" (iw phy info); a
+# 2.4 GHz frequency matches neither. Used by detect_5g against whichever tool answered.
+_FIVE_GHZ_RE = re.compile(r"5\.\d+\s*GHz|\b5\d{3}(?:\.\d+)?\s*MHz")
 
 
 class LogHelper:
@@ -166,10 +171,25 @@ class Capture:
         return None
 
     @staticmethod
-    def detect_5g(iwlist_text):
-        """True if `iwlist <iface> freq` lists a 5 GHz channel. 5 GHz frequencies
-        render as `5.NNN GHz`; no 2.4 GHz channel frequency contains `5.`."""
-        return "5." in iwlist_text
+    def parse_first_monitor(iw_text):
+        """The first `type monitor` interface in `iw dev`, whatever its name/phy. Used when
+        a card USB-resets during monitor-mode entry (mt7925u) and re-enumerates under a new
+        name, so the pre-start base_iface no longer maps to it."""
+        current_iface = None
+        for line in iw_text.splitlines():
+            s = line.strip()
+            if s.startswith("Interface "):
+                current_iface = s.split("Interface ", 1)[1].strip()
+            elif s == "type monitor" and current_iface:
+                return current_iface
+        return None
+
+    @staticmethod
+    def detect_5g(freq_text):
+        """True if `freq_text` lists a 5 GHz channel. Accepts both `iw phy <phy> info`
+        (`5180.0 MHz`) and `iwlist <iface> freq` (`5.18 GHz`) — some drivers (mt7925u)
+        report nothing via iwlist, so the caller prefers `iw phy` and falls back."""
+        return bool(_FIVE_GHZ_RE.search(freq_text))
 
     @staticmethod
     def next_capture_paths(dest_dir):
@@ -683,19 +703,46 @@ class Capture:
         self.snapshot_usb("post-airmon")
 
         # --- Interface / band / chipset detection ---
+        # mt7925u (and other mt76 USB parts) USB-reset on monitor-mode entry, re-enumerating
+        # under a NEW interface name/phy — so the pre-start base_iface stops mapping to the
+        # card. Give the reset a moment to settle, then trust the monitor vif that actually
+        # exists now; if the reset ate airmon's vif entirely, retry once on the card's current
+        # (post-reset) managed interface.
+        time.sleep(2)
         iw_out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout
-        self.mon_iface = self.parse_monitor_iface(iw_out, self.base_iface)
+        self.mon_iface = (self.parse_monitor_iface(iw_out, self.base_iface)
+                          or self.parse_first_monitor(iw_out))
         if not self.mon_iface:
-            self.logger.log_main(f"[!] Warning: no monitor interface for {self.base_iface}. Falling back to {self.base_iface}.")
+            current = sorted(self.parse_wifi_ifaces(iw_out))
+            if current:
+                self.base_iface = current[-1]
+                self.logger.log_main(f"[*] Card re-enumerated; retrying monitor-mode on {self.base_iface}")
+                self.run_cmd(["sudo", "airmon-ng", "start", self.base_iface], timeout=30)
+                iw_out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout
+                self.mon_iface = (self.parse_monitor_iface(iw_out, self.base_iface)
+                                  or self.parse_first_monitor(iw_out))
+        if not self.mon_iface:
+            self.logger.log_main(f"[!] Warning: no monitor interface found. Falling back to {self.base_iface}.")
             self.mon_iface = self.base_iface
 
-        freq_out = subprocess.run(["iwlist", self.mon_iface, "freq"], capture_output=True, text=True).stdout
+        # Prefer `iw phy` (mt7925u & others report nothing via iwlist); query the card's
+        # OWN phy so a second card can't false-positive. Fall back to iwlist if needed.
+        iw_info = subprocess.run(["iw", "dev", self.mon_iface, "info"], capture_output=True, text=True).stdout
+        m = re.search(r"wiphy (\d+)", iw_info)
+        freq_out = ""
+        if m:
+            freq_out = subprocess.run(["iw", "phy", f"phy{m.group(1)}", "info"], capture_output=True, text=True).stdout
+        if not self.detect_5g(freq_out):
+            freq_out += subprocess.run(["iwlist", self.mon_iface, "freq"], capture_output=True, text=True).stdout
         self.supports_5g = self.detect_5g(freq_out)
         self.logger.log_main("[*] 5GHz Support Detected." if self.supports_5g
                              else "[!] 5GHz Support NOT detected. Skipping 5GHz sequence.")
 
+        # Key the chipset lookup on the monitor vif that actually exists (its name survives
+        # a re-enumeration; base_iface may not). Fall back to base_iface.
         airmon_check = subprocess.run(["airmon-ng"], capture_output=True, text=True).stdout
-        self.chipset = self.parse_chipset(airmon_check, self.base_iface) or "unknown"
+        self.chipset = (self.parse_chipset(airmon_check, self.mon_iface)
+                        or self.parse_chipset(airmon_check, self.base_iface) or "unknown")
         self.logger.log_main(f"[*] Detected Monitor Interface: {self.mon_iface}")
         self.logger.log_main(f"[*] Detected Chipset/Driver:  {self.chipset}")
 

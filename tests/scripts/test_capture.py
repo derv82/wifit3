@@ -157,6 +157,15 @@ def test_parse_monitor_iface_none_when_no_monitor():
     assert Capture.parse_monitor_iface(IW_DEV_NO_MONITOR, "wlan1") is None
 
 
+def test_parse_first_monitor_finds_any_monitor():
+    # A re-enumerated card's monitor vif, found by type regardless of its name.
+    assert Capture.parse_first_monitor(IW_DEV) == "wlan1mon"
+
+
+def test_parse_first_monitor_none_when_no_monitor():
+    assert Capture.parse_first_monitor(IW_DEV_NO_MONITOR) is None
+
+
 def test_detect_5g_true_when_present():
     assert Capture.detect_5g(IWLIST_5G) is True
 
