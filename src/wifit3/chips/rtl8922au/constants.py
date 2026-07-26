@@ -439,6 +439,31 @@ B_BE_MLO_HW_CHGLINK_EN = 1 << 10         # reg.h:6238
 R_BE_CMAC_SHARE_ACQCHK_CFG_0 = 0x0E010   # reg.h:6443
 B_BE_R_MACID_ACQ_CHK_EN = 1 << 0         # reg.h:6448
 
+# CMAC init - scheduler_init_be (8922A, non-D). CMAC-window regs, band-0 base. [SRC] mac_be.c:1186-1245.
+R_BE_HE_CTN_CHK_CCA_NAV = 0x103C4        # reg.h:6921
+B_BE_HE_CTN_CHK_TX_NAV = 1 << 15         # reg.h:6923
+B_BE_HE_CTN_CHK_INTRA_NAV = 1 << 14      # reg.h:6924
+B_BE_HE_CTN_CHK_BASIC_NAV = 1 << 13      # reg.h:6925
+B_BE_HE_CTN_CHK_NO_GNT_WL = 1 << 12      # reg.h:6926
+B_BE_HE_CTN_CHK_EDCCA_BITMAP = 1 << 3    # reg.h:6935
+B_BE_HE_CTN_CHK_CCA_BITMAP = 1 << 2      # reg.h:6936
+B_BE_HE_CTN_CHK_EDCCA_P20 = 1 << 1       # reg.h:6937
+B_BE_HE_CTN_CHK_CCA_P20 = 1 << 0         # reg.h:6938
+R_BE_HE_SIFS_CHK_CCA_NAV = 0x103B4       # reg.h:6902
+B_BE_HE_SIFS_CHK_NO_GNT_WL = 1 << 12     # reg.h:6907
+B_BE_HE_SIFS_CHK_EDCCA_BITMAP = 1 << 3   # reg.h:6916
+B_BE_HE_SIFS_CHK_EDCCA_P20 = 1 << 1      # reg.h:6918
+R_BE_TB_CHK_CCA_NAV = 0x103AC            # reg.h:6883
+B_BE_TB_CHK_BASIC_NAV = 1 << 13          # reg.h:6887
+B_BE_TB_CHK_NO_GNT_WL = 1 << 12          # reg.h:6888
+B_BE_TB_CHK_EDCCA_BITMAP = 1 << 3        # reg.h:6897
+R_BE_CCA_CFG_0 = 0x10340                 # reg.h:6811
+B_BE_NO_GNT_WL_EN = 1 << 5               # reg.h:6828
+R_BE_EDCA_BCNQ_PARAM = 0x10324           # reg.h:6789
+B_BE_BCNQ_CW_MASK = 0xFF000000           # GENMASK(31, 24). reg.h:6791
+B_BE_BCNQ_AIFS_MASK = 0x00FF0000         # GENMASK(23, 16). reg.h:6792
+BCN_IFS_25US = 0x19                      # reg.h:6793
+
 # Firmware-download preconfig (rtw89_mac_fwdl_preconfig_be). [SRC] mac_be.c:625-629, reg.h.
 R_BE_FW_AUTO_CAL_DELAY = 0x0188          # reg.h
 B_BE_WCPU_FW_DELAY_COUNT_VALID = 1 << 15  # reg.h

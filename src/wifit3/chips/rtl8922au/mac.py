@@ -97,6 +97,13 @@ from .constants import (
     B_BE_MPDUINFO_B1_BADDR_MASK, MPDU_INFO_B1_OFST,
     R_BE_MLO_INIT_CTL, B_BE_MLO_TABLE_INIT_DONE, B_BE_MLO_TABLE_REINIT, B_BE_MLO_HW_CHGLINK_EN,
     R_BE_CMAC_SHARE_ACQCHK_CFG_0, B_BE_R_MACID_ACQ_CHK_EN,
+    R_BE_HE_CTN_CHK_CCA_NAV, B_BE_HE_CTN_CHK_TX_NAV, B_BE_HE_CTN_CHK_INTRA_NAV,
+    B_BE_HE_CTN_CHK_BASIC_NAV, B_BE_HE_CTN_CHK_NO_GNT_WL, B_BE_HE_CTN_CHK_EDCCA_BITMAP,
+    B_BE_HE_CTN_CHK_CCA_BITMAP, B_BE_HE_CTN_CHK_EDCCA_P20, B_BE_HE_CTN_CHK_CCA_P20,
+    R_BE_HE_SIFS_CHK_CCA_NAV, B_BE_HE_SIFS_CHK_NO_GNT_WL, B_BE_HE_SIFS_CHK_EDCCA_BITMAP,
+    B_BE_HE_SIFS_CHK_EDCCA_P20, R_BE_TB_CHK_CCA_NAV, B_BE_TB_CHK_BASIC_NAV, B_BE_TB_CHK_NO_GNT_WL,
+    B_BE_TB_CHK_EDCCA_BITMAP, R_BE_CCA_CFG_0, B_BE_NO_GNT_WL_EN, R_BE_EDCA_BCNQ_PARAM,
+    B_BE_BCNQ_CW_MASK, B_BE_BCNQ_AIFS_MASK, BCN_IFS_25US,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -1011,10 +1018,35 @@ def dmac_init(t) -> None:
     mlo_init(t)
 
 
+def scheduler_init(t, mac_idx: int) -> None:
+    """scheduler_init_be (8922A, non-D): the HE contention / SIFS / TB NAV+CCA check masks, clear
+    the no-grant-WL CCA enable, then the beacon-queue CW/AIFS. is_qta_poh is false on USB so the
+    prebackoff config is skipped. [SRC] mac_be.c:1186-1245."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    t.write32(R_BE_HE_CTN_CHK_CCA_NAV + off,
+              B_BE_HE_CTN_CHK_CCA_P20 | B_BE_HE_CTN_CHK_EDCCA_P20 | B_BE_HE_CTN_CHK_CCA_BITMAP
+              | B_BE_HE_CTN_CHK_EDCCA_BITMAP | B_BE_HE_CTN_CHK_NO_GNT_WL | B_BE_HE_CTN_CHK_BASIC_NAV
+              | B_BE_HE_CTN_CHK_INTRA_NAV | B_BE_HE_CTN_CHK_TX_NAV)
+    t.write32(R_BE_HE_SIFS_CHK_CCA_NAV + off,
+              B_BE_HE_SIFS_CHK_EDCCA_P20 | B_BE_HE_SIFS_CHK_EDCCA_BITMAP | B_BE_HE_SIFS_CHK_NO_GNT_WL)
+    t.write32(R_BE_TB_CHK_CCA_NAV + off,
+              B_BE_TB_CHK_EDCCA_BITMAP | B_BE_TB_CHK_NO_GNT_WL | B_BE_TB_CHK_BASIC_NAV)
+    t.write32_clr(R_BE_CCA_CFG_0 + off, B_BE_NO_GNT_WL_EN)
+    t.write32_mask(R_BE_EDCA_BCNQ_PARAM + off, B_BE_BCNQ_CW_MASK, 0x32)
+    t.write32_mask(R_BE_EDCA_BCNQ_PARAM + off, B_BE_BCNQ_AIFS_MASK, BCN_IFS_25US)
+
+
+def cmac_init(t, mac_idx: int) -> None:
+    """cmac_init_be: the CMAC-side operating init (scheduler, addr-cam, rx-filter, cca/nav,
+    spatial-reuse, tmac, trxptcl, rmac, resp-pktctl, com, ptcl, ...). [SRC] mac_be.c:1756+."""
+    scheduler_init(t, mac_idx)
+
+
 def trx_init(t) -> None:
     """trx_init_be: dmac_init then cmac_init, the dbcc enable (qta is DBCC), the DMAC/CMAC IMR
     enables, host-rpr, and the 8922A rsp-chk-sig clear. [SRC] mac_be.c:2302-2352."""
     dmac_init(t)
+    cmac_init(t, RTW89_MAC_0)
 
 
 def mac_init(t, h2c_ep: int, cv: int) -> None:
