@@ -104,6 +104,13 @@ from .constants import (
     B_BE_HE_SIFS_CHK_EDCCA_P20, R_BE_TB_CHK_CCA_NAV, B_BE_TB_CHK_BASIC_NAV, B_BE_TB_CHK_NO_GNT_WL,
     B_BE_TB_CHK_EDCCA_BITMAP, R_BE_CCA_CFG_0, B_BE_NO_GNT_WL_EN, R_BE_EDCA_BCNQ_PARAM,
     B_BE_BCNQ_CW_MASK, B_BE_BCNQ_AIFS_MASK, BCN_IFS_25US,
+    R_BE_ADDR_CAM_CTRL, B_BE_ADDR_CAM_RANGE_MASK, ADDR_CAM_SERCH_RANGE, B_BE_ADDR_CAM_CLR,
+    B_BE_ADDR_CAM_EN,
+    R_BE_MGNT_FLTR, R_BE_CTRL_FLTR, R_BE_DATA_FLTR, RX_FLTR_FRAME_ACCEPT_BE, R_BE_RX_FLTR_OPT,
+    B_BE_UID_FILTER_MASK, B_BE_A_BC_CAM_MATCH, B_BE_A_UC_CAM_MATCH, B_BE_A_MC, B_BE_A_BC,
+    B_BE_A_A1_MATCH, B_BE_SNIFFER_MODE, R_BE_PLCP_HDR_FLTR, B_BE_HE_SIGB_CRC_CHK,
+    B_BE_VHT_MU_SIGB_CRC_CHK, B_BE_VHT_SU_SIGB_CRC_CHK, B_BE_SIGA_CRC_CHK, B_BE_LSIG_PARITY_CHK_EN,
+    B_BE_CCK_SIG_CHK, B_BE_CCK_CRC_CHK,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -1036,10 +1043,47 @@ def scheduler_init(t, mac_idx: int) -> None:
     t.write32_mask(R_BE_EDCA_BCNQ_PARAM + off, B_BE_BCNQ_AIFS_MASK, BCN_IFS_25US)
 
 
+def addr_cam_init(t, mac_idx: int) -> None:
+    """addr_cam_init_be: set the address-CAM search range and enable, request a clear on MAC_0,
+    then poll the clear done. [SRC] mac_be.c:1247-1276."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    val = t.read32(R_BE_ADDR_CAM_CTRL + off)
+    val = field_replace(val, B_BE_ADDR_CAM_RANGE_MASK, ADDR_CAM_SERCH_RANGE) | B_BE_ADDR_CAM_EN
+    if mac_idx == RTW89_MAC_0:
+        val |= B_BE_ADDR_CAM_CLR
+    t.write32(R_BE_ADDR_CAM_CTRL + off, val)
+    for _ in range(PWR_POLL_ATTEMPTS):
+        if not (t.read16(R_BE_ADDR_CAM_CTRL + off) & B_BE_ADDR_CAM_CLR):
+            break
+
+
+def _typ_fltr_opt(t, reg: int, mac_idx: int) -> None:
+    """rtw89_mac_typ_fltr_opt_be(FWD_TO_HOST): accept the frame type into the host. [SRC] mac_be.c:1275."""
+    t.write32(reg + mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET, RX_FLTR_FRAME_ACCEPT_BE)
+
+
+def rx_fltr_init(t, mac_idx: int) -> None:
+    """rx_fltr_init_be: accept mgnt/ctrl/data to host, set the RX filter options (sniffer mode plus
+    the CAM/BC/MC address matches and a UID filter of 15), and the PLCP-header CRC checks. The
+    sniffer-mode bit is what puts RX into monitor. [SRC] mac_be.c:1315-1336."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    _typ_fltr_opt(t, R_BE_MGNT_FLTR, mac_idx)
+    _typ_fltr_opt(t, R_BE_CTRL_FLTR, mac_idx)
+    _typ_fltr_opt(t, R_BE_DATA_FLTR, mac_idx)
+    t.write32(R_BE_RX_FLTR_OPT + off,
+              B_BE_A_BC_CAM_MATCH | B_BE_A_UC_CAM_MATCH | B_BE_A_MC | B_BE_A_BC
+              | B_BE_A_A1_MATCH | B_BE_SNIFFER_MODE | field_prep(B_BE_UID_FILTER_MASK, 15))
+    t.write16(R_BE_PLCP_HDR_FLTR + off,
+              B_BE_HE_SIGB_CRC_CHK | B_BE_VHT_MU_SIGB_CRC_CHK | B_BE_VHT_SU_SIGB_CRC_CHK
+              | B_BE_SIGA_CRC_CHK | B_BE_LSIG_PARITY_CHK_EN | B_BE_CCK_SIG_CHK | B_BE_CCK_CRC_CHK)
+
+
 def cmac_init(t, mac_idx: int) -> None:
     """cmac_init_be: the CMAC-side operating init (scheduler, addr-cam, rx-filter, cca/nav,
     spatial-reuse, tmac, trxptcl, rmac, resp-pktctl, com, ptcl, ...). [SRC] mac_be.c:1756+."""
     scheduler_init(t, mac_idx)
+    addr_cam_init(t, mac_idx)
+    rx_fltr_init(t, mac_idx)
 
 
 def trx_init(t) -> None:

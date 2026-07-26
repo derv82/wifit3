@@ -463,6 +463,33 @@ R_BE_EDCA_BCNQ_PARAM = 0x10324           # reg.h:6789
 B_BE_BCNQ_CW_MASK = 0xFF000000           # GENMASK(31, 24). reg.h:6791
 B_BE_BCNQ_AIFS_MASK = 0x00FF0000         # GENMASK(23, 16). reg.h:6792
 BCN_IFS_25US = 0x19                      # reg.h:6793
+# addr_cam_init_be. [SRC] mac_be.c:1247-1276.
+R_BE_ADDR_CAM_CTRL = 0x11434             # reg.h:8180
+B_BE_ADDR_CAM_RANGE_MASK = 0x00FF0000    # GENMASK(23, 16). reg.h:8182
+ADDR_CAM_SERCH_RANGE = 0x7F              # reg.h:8183
+B_BE_ADDR_CAM_CLR = 1 << 8               # reg.h:8187
+B_BE_ADDR_CAM_EN = 1 << 0                # reg.h:8190
+# rx_fltr_init_be (type filters + RX filter opt + PLCP CRC). [SRC] mac_be.c:1275-1336.
+R_BE_MGNT_FLTR = 0x11428                 # reg.h:8172
+R_BE_CTRL_FLTR = 0x11424                 # reg.h:8166
+R_BE_DATA_FLTR = 0x1142C                 # reg.h:8176
+RX_FLTR_FRAME_ACCEPT_BE = 0xFFFF         # reg.h:8170
+R_BE_RX_FLTR_OPT = 0x11420               # reg.h:8147
+B_BE_UID_FILTER_MASK = 0xFF000000        # GENMASK(31, 24). reg.h:8149
+B_BE_A_BC_CAM_MATCH = 1 << 5             # reg.h:8159
+B_BE_A_UC_CAM_MATCH = 1 << 4             # reg.h:8160
+B_BE_A_MC = 1 << 3                       # reg.h:8161
+B_BE_A_BC = 1 << 2                       # reg.h:8162
+B_BE_A_A1_MATCH = 1 << 1                 # reg.h:8163
+B_BE_SNIFFER_MODE = 1 << 0               # reg.h:8164
+R_BE_PLCP_HDR_FLTR = 0x11404             # reg.h:8123
+B_BE_HE_SIGB_CRC_CHK = 1 << 6            # reg.h:8128
+B_BE_VHT_MU_SIGB_CRC_CHK = 1 << 5        # reg.h:8129
+B_BE_VHT_SU_SIGB_CRC_CHK = 1 << 4        # reg.h:8130
+B_BE_SIGA_CRC_CHK = 1 << 3               # reg.h:8131
+B_BE_LSIG_PARITY_CHK_EN = 1 << 2         # reg.h:8132
+B_BE_CCK_SIG_CHK = 1 << 1                # reg.h:8133
+B_BE_CCK_CRC_CHK = 1 << 0                # reg.h:8134
 
 # Firmware-download preconfig (rtw89_mac_fwdl_preconfig_be). [SRC] mac_be.c:625-629, reg.h.
 R_BE_FW_AUTO_CAL_DELAY = 0x0188          # reg.h
