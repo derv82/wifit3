@@ -274,13 +274,16 @@ MCU_UNI_CMD_HIF_CTRL        = 0x07
 MCU_UNI_CMD_BAND_CONFIG     = 0x08
 MCU_UNI_CMD_WSYS_CONFIG     = 0x0b
 MCU_UNI_CMD_CHIP_CONFIG     = 0x0e
+MCU_UNI_CMD_SET_DOMAIN_INFO = 0x15   # cfg80211 regulatory (waived)
 MCU_UNI_CMD_SNIFFER         = 0x24
+MCU_UNI_CMD_SET_POWER_LIMIT = 0x2c   # cfg80211 regulatory / CLC power tables (waived)
 MCU_UNI_CMD_EFUSE_CTRL      = 0x2d
 MCU_CE_CMD_SET_CHAN_DOMAIN  = 0x0f
 
 # tags (mt7925/mcu.h; DEV_INFO_ACTIVE/UNI_BSS_INFO_BASIC in mt76_connac_mcu.h).
 UNI_CHIP_CONFIG_CHIP_CFG = 0x2   # mt7925/mcu.h:118
 UNI_CHIP_CONFIG_NIC_CAPA = 0x3   # :119
+UNI_BAND_CONFIG_RTS_THRESHOLD          = 0x08   # :124
 UNI_BAND_CONFIG_SET_MAC80211_RX_FILTER = 0x0C   # :125
 UNI_WSYS_CONFIG_FW_LOG_CTRL = 0   # :129 (first in enum)
 UNI_EFUSE_BUFFER_MODE       = 2   # :135 (UNI_EFUSE_ACCESS=1 first)
@@ -306,3 +309,38 @@ CH_BAND_2GHZ = 1
 CH_BAND_5GHZ = 2
 
 MT_RTS_THRESH_DEFAULT = 0x92b   # __mt7925_start
+
+# ===========================================================================
+# mt792x_mac_work periodic reads (mt792x_mac.c). Band-0 addresses; bases already
+# defined above. RXTIME_CLR = BIT(31). Register list verbatim from mt792x_regs.h.
+# ===========================================================================
+MT_WF_RMAC_MIB_RXTIME_CLR = 0x80000000   # BIT(31), mt792x_regs.h:252
+def MT_WF_RMAC_MIB_AIRTIME14(b): return MT_WF_RMAC_BASE(b) + 0x3b8   # :255
+
+# survey burst (mt792x_phy_update_channel): SDR9, SDR36, SDR37, AIRTIME14, set TIME0.
+def MT_MIB_SDR9(b):  return MT_WF_MIB_BASE(b) + 0x02c   # :107
+def MT_MIB_SDR36(b): return MT_WF_MIB_BASE(b) + 0x054   # :128
+def MT_MIB_SDR37(b): return MT_WF_MIB_BASE(b) + 0x058   # :130
+
+# MIB burst (mt792x_mac_update_mib_stats), in read order.
+def MT_MIB_SDR3(b):     return MT_WF_MIB_BASE(b) + 0x698   # :102
+def MT_MIB_MB_BSDR3(b): return MT_WF_MIB_BASE(b) + 0x520   # :146
+def MT_MIB_MB_BSDR2(b): return MT_WF_MIB_BASE(b) + 0x518   # :144
+def MT_MIB_MB_BSDR0(b): return MT_WF_MIB_BASE(b) + 0x688   # :140
+def MT_MIB_MB_BSDR1(b): return MT_WF_MIB_BASE(b) + 0x690   # :142
+def MT_MIB_SDR12(b):    return MT_WF_MIB_BASE(b) + 0x558   # :110
+def MT_MIB_SDR14(b):    return MT_WF_MIB_BASE(b) + 0x564   # :111
+def MT_MIB_SDR15(b):    return MT_WF_MIB_BASE(b) + 0x568   # :112
+def MT_MIB_SDR32(b):    return MT_WF_MIB_BASE(b) + 0x7a8   # :121
+def MT_MIB_SDR5(b):     return MT_WF_MIB_BASE(b) + 0x780   # :105
+def MT_MIB_SDR22(b):    return MT_WF_MIB_BASE(b) + 0x770   # :117
+def MT_MIB_SDR23(b):    return MT_WF_MIB_BASE(b) + 0x774   # :118
+def MT_MIB_SDR31(b):    return MT_WF_MIB_BASE(b) + 0x55c   # :119
+def MT_WF_ETBF_BASE(b):   return 0x820fa000 if b else 0x820ea000   # :81
+def MT_ETBF_TX_APP_CNT(b): return MT_WF_ETBF_BASE(b) + 0x150   # :84
+def MT_ETBF_RX_FB_CNT(b):  return MT_WF_ETBF_BASE(b) + 0x158   # :88
+MT_PLE_BASE = 0x820c0000   # :17
+def MT_PLE_AMSDU_PACK_MSDU_CNT(n): return MT_PLE_BASE + 0x10e0 + (n << 2)   # :26
+def MT_TX_AGG_CNT(b, n):  return MT_WF_MIB_BASE(b) + 0x7dc + (n << 2)   # :152
+def MT_TX_AGG_CNT2(b, n): return MT_WF_MIB_BASE(b) + 0x7ec + (n << 2)   # :153
+MT792x_MIB_TX_AMSDU_LEN = 8   # ARRAY_SIZE(mib->tx_amsdu)

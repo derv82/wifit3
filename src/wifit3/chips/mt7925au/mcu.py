@@ -257,3 +257,123 @@ def parse_nic_capability(resp: bytes) -> NicCaps:
             caps.has_6ghz = bool(data[0])
         off += tlv_len
     return caps
+
+
+# ===========================================================================
+# Monitor entry + channel tune (connac3 UNI). Byte layouts matched to the wire;
+# DEV_INFO/BSS_INFO/SNIFFER are shared connac code (same as mt7921), rxfilter is
+# the mt7925 UNI BAND_CONFIG form.
+# ===========================================================================
+
+# The monitor vif: band_idx 0xff, wcid = MT792x_WTBL_RESERVED (19).
+_MON_BAND_IDX = 0xff
+_MON_WCID = MT792x_WTBL_RESERVED
+
+
+def uni_dev_info(active=True, omac_addr=b"\x00" * 6):
+    """mt76_connac_mcu_uni_add_dev DEV_INFO half — MCU_UNI_CMD(DEV_INFO_UPDATE).
+    hdr{omac_idx=0, band_idx=0xff, pad} + tlv{tag=DEV_INFO_ACTIVE, len=12, active,
+    link_idx=0, omac_addr[6]}."""
+    hdr = struct.pack("<BBH", 0, _MON_BAND_IDX, 0)
+    tlv = struct.pack("<HHBB6s", DEV_INFO_ACTIVE, 12, 1 if active else 0, 0, omac_addr)
+    return MCU_UNI_CMD(MCU_UNI_CMD_DEV_INFO_UPDATE), hdr + tlv
+
+
+def uni_bss_info(active=True, bssid=b"\x00" * 6, conn_type=CONNECTION_INFRA_AP):
+    """mt76_connac_mcu_uni_add_dev BSS_INFO half — MCU_UNI_CMD(BSS_INFO_UPDATE).
+    hdr{bss_idx=0, pad[3]} + mt76_connac_bss_basic_tlv (32 B). band_idx 0xff,
+    bmc_tx_wlan_idx = sta_idx = the monitor wcid (19)."""
+    hdr = struct.pack("<B3x", 0)
+    basic = struct.pack(
+        "<HHBBBBIBB6sHHBBHHBB",
+        UNI_BSS_INFO_BASIC, 32,                 # tag, len
+        1 if active else 0, 0, 0, _MON_BAND_IDX,  # active, omac_idx, hw_bss_idx, band_idx
+        conn_type,                              # conn_type
+        1, 0,                                   # conn_state, wmm_idx
+        bssid,
+        _MON_WCID, 0,                           # bmc_tx_wlan_idx, bcn_interval
+        0, 0,                                   # dtim_period, phymode
+        _MON_WCID, 0,                           # sta_idx, nonht_basic_phy
+        0, 0,                                   # phymode_ext, link_idx
+    )
+    return MCU_UNI_CMD(MCU_UNI_CMD_BSS_INFO_UPDATE), hdr + basic
+
+
+def set_sniffer(enable, band_idx=0):
+    """mt7925_mcu_set_sniffer — MCU_UNI_CMD(SNIFFER) enable TLV (tag 0).
+    hdr{band_idx, pad[3]} + tlv{tag=ENABLE, len=8, enable, pad[3]}."""
+    hdr = struct.pack("<B3x", band_idx)
+    tlv = struct.pack("<HHB3x", UNI_SNIFFER_ENABLE, 8, 1 if enable else 0)
+    return MCU_UNI_CMD(MCU_UNI_CMD_SNIFFER), hdr + tlv
+
+
+def _ch_band(channel):
+    return CH_BAND_2GHZ if channel <= 14 else CH_BAND_5GHZ
+
+
+def config_sniffer(channel, band_idx=0):
+    """mt7925_mcu_config_sniffer — MCU_UNI_CMD(SNIFFER) config TLV (tag 1), 20 MHz.
+    hdr{band_idx, pad[3]} + tlv{tag=CONFIG, len=16, aid, ch_band, bw=0, control_ch,
+    sco=0, center_ch, center_ch2=0, drop_err=1, pad[3]}. control_ch==center_ch for 20 MHz."""
+    hdr = struct.pack("<B3x", band_idx)
+    tlv = struct.pack("<HHHBBBBBBB3x",
+                      UNI_SNIFFER_CONFIG, 16, 0,        # tag, len, aid
+                      _ch_band(channel), 0,             # ch_band, bw
+                      channel, 0, channel,              # control_ch, sco, center_ch
+                      0, 1)                             # center_ch2, drop_err
+    return MCU_UNI_CMD(MCU_UNI_CMD_SNIFFER), hdr + tlv
+
+
+def set_rts_thresh(val=MT_RTS_THRESH_DEFAULT, band_idx=0):
+    """mt7925_mcu_set_rts_thresh (mt7925/mcu.c:3550) — MCU_UNI_CMD(BAND_CONFIG) RTS TLV.
+    { band_idx; rsv[3]; tag=RTS_THRESHOLD; len=12; len_thresh=val; pkt_thresh=2 }."""
+    payload = struct.pack("<B3xHHII", band_idx, UNI_BAND_CONFIG_RTS_THRESHOLD, 12, val, 0x2)
+    return MCU_UNI_CMD(MCU_UNI_CMD_BAND_CONFIG), payload
+
+
+def set_rxfilter(fif, bit_map=0, bit_op=0, band_idx=0):
+    """mt7925_mcu_set_rxfilter — MCU_UNI_CMD(BAND_CONFIG) RX-filter TLV (tag 0x0C).
+    { band_idx; rsv1[3]; tag; len=68; mode = fif?0:1; rsv2[3]; fif; bit_map; bit_op;
+    pad[51] }. DIFFERS FROM mt7921 (CE SET_RX_FILTER, mode fif?1:2)."""
+    mode = 0 if fif else 1
+    payload = struct.pack("<B3xHHB3xIIB51x",
+                          band_idx, UNI_BAND_CONFIG_SET_MAC80211_RX_FILTER, 68,
+                          mode, fif, bit_map, bit_op)
+    return MCU_UNI_CMD(MCU_UNI_CMD_BAND_CONFIG), payload
+
+
+# mt7925_configure_filter flags (mt7925/main.c). Monitor sets ENABLE|CONTROL|OTHER_BSS.
+MT_FILTER_ENABLE    = 1 << 31
+MT_FILTER_FCSFAIL   = 1 << 2
+MT_FILTER_CONTROL   = 1 << 5
+MT_FILTER_OTHER_BSS = 1 << 6
+
+
+def chip_config(cmd: bytes):
+    """mt7925_mcu_chip_config (mt7925/mcu.c:994) — MCU_UNI_CMD(CHIP_CONFIG), CHIP_CFG tag.
+    Carries mt76_connac_config { id; type; resp_type; data_size; resv; data[320] } with
+    ``cmd`` an ASCII command string. data_size = strlen + 1 (the NUL)."""
+    data = cmd.ljust(320, b"\x00")
+    config = struct.pack("<HBBHH", 0, 0, 0, len(cmd) + 1, 0) + data
+    payload = struct.pack("<4xHH", UNI_CHIP_CONFIG_CHIP_CFG, 4 + len(config)) + config
+    return MCU_UNI_CMD(MCU_UNI_CMD_CHIP_CONFIG), payload
+
+
+def set_deep_sleep(enable):
+    """mt7925_mcu_set_deep_sleep (mt7925/mcu.c:1018). USB leaves ds_enable 0, so init
+    sends "KeepFullPwr 1"."""
+    return chip_config(b"KeepFullPwr %d" % (0 if enable else 1))
+
+
+# mt7925_mcu_set_thermal_protect (mt7925/mcu.c:1028-1041): two hardcoded chip_config
+# command strings (10 params each), Gband then Aband.
+THERMAL_GBAND = b"ThermalProtGband 0 100 90 80 30 1 1 115 105 5"
+THERMAL_ABAND = b"ThermalProtAband 1 100 90 80 30 1 1 115 105 5"
+
+
+def thermal_gband():
+    return chip_config(THERMAL_GBAND)
+
+
+def thermal_aband():
+    return chip_config(THERMAL_ABAND)

@@ -4,7 +4,7 @@ from typing import Callable, Optional
 
 import usb.core
 
-from . import rx
+from . import mcu, rx
 from .transport import MT7925AUTransport
 from .firmware import MT7925AUFirmwareLoader
 # ruff: noqa: F403, F405
@@ -74,7 +74,11 @@ class MT7925AUDriver(Driver):
         raise BringUpError("post-boot", "MT7925AU post-boot init not yet ported (M2)")
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        raise BringUpError("set-channel", "MT7925AU channel tune not yet ported (M3)")
+        """Tune to a 20 MHz channel via the monitor sniffer config (UNI SNIFFER, tag 1)."""
+        cmd, payload = mcu.config_sniffer(channel)
+        await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
+        self._channel = channel
+        return True
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         logger.error("MT7925AU TX not yet ported (M5)")
