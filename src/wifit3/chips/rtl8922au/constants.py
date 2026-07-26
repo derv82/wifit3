@@ -567,6 +567,35 @@ RX_MAX_LEN_UNIT = 512                   # mac_be.c:1522
 RX_SPEC_MAX_LEN = 11454 + 512           # mac_be.c:1523
 RTW89_PLE_PG_256 = 256                  # mac.h:611; dle_info.ple_pg_size for DBCC
 
+# resp_pktctl_init_be + cmac_com_init_be + ptcl_init_be (8922A, USB). [SRC] mac_be.c:1589-1732.
+PLE_RSVD_QT2 = (1, 56, 28, 6, 6, 6, 6, 0, 0, 0)  # (mpdu_info_tbl, b0_csi, ...) ple_rsvd_qt2. mac.c
+R_BE_RESP_CSI_RESERVED_PAGE = 0x11810   # reg.h:8320
+B_BE_CSI_RESERVED_PAGE_NUM_MASK = 0x0FFF0000    # GENMASK(27, 16). reg.h:8322
+B_BE_CSI_RESERVED_START_PAGE_MASK = 0x00000FFF  # GENMASK(11, 0). reg.h:8323
+R_BE_TX_SUB_BAND_VALUE = 0x10088        # reg.h:6629
+B_BE_TXSB_160M_MASK = 0x0000F000        # GENMASK(15, 12). reg.h:6633
+B_BE_TXSB_80M_MASK = 0x00000F00         # GENMASK(11, 8). reg.h:6636
+B_BE_TXSB_40M_MASK = 0x000000F0         # GENMASK(7, 4). reg.h:6640
+B_BE_TXSB_20M_MASK = 0x0000000F         # GENMASK(3, 0). reg.h:6644
+S_BE_TXSB_160M_1 = 1                    # reg.h:6635
+S_BE_TXSB_80M_2 = 2                     # reg.h:6638
+S_BE_TXSB_40M_4 = 4                     # reg.h:6643
+S_BE_TXSB_20M_8 = 8                     # reg.h:6645
+R_BE_PTCL_COMMON_SETTING_0 = 0x10800    # reg.h:7067
+B_BE_PTCL_TRIGGER_SS_EN_UL = 1 << 4     # reg.h:7074
+B_BE_PTCL_TRIGGER_SS_EN_1 = 1 << 3      # reg.h:7075
+B_BE_PTCL_TRIGGER_SS_EN_0 = 1 << 2      # reg.h:7076
+B_BE_CMAC_TX_MODE_1 = 1 << 1            # reg.h:7077
+B_BE_CMAC_TX_MODE_0 = 1 << 0            # reg.h:7078
+R_BE_AMPDU_AGG_LIMIT = 0x10810          # reg.h:7118
+B_BE_AMPDU_MAX_TIME_MASK = 0xFF000000   # GENMASK(31, 24). reg.h:7120
+AMPDU_MAX_TIME = 0x9E                   # reg.h:7121
+# cmac_dma_init_be. [SRC] mac_be.c:1734-1753.
+R_BE_RX_CTRL_1 = 0x10C0C                # reg.h:7462
+B_BE_RXDMA_TXRPT_QUEUE_ID_SW_MASK = 0x7E000000     # GENMASK(30, 25). reg.h:7464
+B_BE_RXDMA_F2PCMDRPT_QUEUE_ID_SW_MASK = 0x00FC0000  # GENMASK(23, 18). reg.h:7465
+WLCPU_RXCH2_QID = 0xA                   # reg.h:7469
+
 # Firmware-download preconfig (rtw89_mac_fwdl_preconfig_be). [SRC] mac_be.c:625-629, reg.h.
 R_BE_FW_AUTO_CAL_DELAY = 0x0188          # reg.h
 B_BE_WCPU_FW_DELAY_COUNT_VALID = 1 << 15  # reg.h

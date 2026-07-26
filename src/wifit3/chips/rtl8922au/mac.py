@@ -132,6 +132,14 @@ from .constants import (
     TRXCFG_RMAC_DATA_TO, B_BE_RX_DLK_RST_EN, B_BE_RX_MPDU_MAX_LEN_MASK, R_BE_RCR, B_BE_BUSY_CHKSN,
     R_BE_RX_PLCP_EXT_OPTION_1, B_BE_PLCP_SU_PSDU_LEN_SRC, PLD_RLS_MAX_PG, RX_MAX_LEN_UNIT,
     RX_SPEC_MAX_LEN, RTW89_PLE_PG_256,
+    PLE_RSVD_QT2, R_BE_RESP_CSI_RESERVED_PAGE, B_BE_CSI_RESERVED_PAGE_NUM_MASK,
+    B_BE_CSI_RESERVED_START_PAGE_MASK, R_BE_TX_SUB_BAND_VALUE, B_BE_TXSB_160M_MASK,
+    B_BE_TXSB_80M_MASK, B_BE_TXSB_40M_MASK, B_BE_TXSB_20M_MASK, S_BE_TXSB_160M_1, S_BE_TXSB_80M_2,
+    S_BE_TXSB_40M_4, S_BE_TXSB_20M_8, R_BE_PTCL_COMMON_SETTING_0, B_BE_PTCL_TRIGGER_SS_EN_UL,
+    B_BE_PTCL_TRIGGER_SS_EN_1, B_BE_PTCL_TRIGGER_SS_EN_0, B_BE_CMAC_TX_MODE_1, B_BE_CMAC_TX_MODE_0,
+    R_BE_AMPDU_AGG_LIMIT, B_BE_AMPDU_MAX_TIME_MASK, AMPDU_MAX_TIME,
+    R_BE_RX_CTRL_1, B_BE_RXDMA_TXRPT_QUEUE_ID_SW_MASK, B_BE_RXDMA_F2PCMDRPT_QUEUE_ID_SW_MASK,
+    WLCPU_RXCH2_QID,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -1196,6 +1204,47 @@ def rmac_init(t, mac_idx: int) -> None:
     t.write16_set(R_BE_RX_PLCP_EXT_OPTION_1 + off, B_BE_PLCP_SU_PSDU_LEN_SRC)
 
 
+def resp_pktctl_init(t, mac_idx: int) -> None:
+    """resp_pktctl_init_be: the CSI-response reserved page. pktid = DBCC ple free-page + the
+    reserved mpdu-info-tbl pages; the page count is b0_csi + 1. [SRC] mac_be.c:1589-1616."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    pktid = PLE_SIZE7_LNK_PGE_NUM + PLE_RSVD_QT2[0]   # ple_free_pg + rsvd_qt.mpdu_info_tbl
+    pg_num = PLE_RSVD_QT2[1]                          # rsvd_qt.b0_csi
+    t.write32_mask(R_BE_RESP_CSI_RESERVED_PAGE + off, B_BE_CSI_RESERVED_START_PAGE_MASK, pktid)
+    t.write32_mask(R_BE_RESP_CSI_RESERVED_PAGE + off, B_BE_CSI_RESERVED_PAGE_NUM_MASK, pg_num + 1)
+
+
+def cmac_com_init(t, mac_idx: int) -> None:
+    """cmac_com_init_be (MAC0): the TX sub-band values. [SRC] mac_be.c:1618-1644."""
+    val = t.read32(R_BE_TX_SUB_BAND_VALUE)
+    val = field_replace(val, B_BE_TXSB_20M_MASK, S_BE_TXSB_20M_8)
+    val = field_replace(val, B_BE_TXSB_40M_MASK, S_BE_TXSB_40M_4)
+    val = field_replace(val, B_BE_TXSB_80M_MASK, S_BE_TXSB_80M_2)
+    val = field_replace(val, B_BE_TXSB_160M_MASK, S_BE_TXSB_160M_1)
+    t.write32(R_BE_TX_SUB_BAND_VALUE, val)
+
+
+def ptcl_init(t, mac_idx: int) -> None:
+    """ptcl_init_be (8922A, USB): CMAC TX modes on, spatial-trigger SS off, AMPDU max time. The
+    qta_poh SIFS/FSM block and the PCIE-only preload block are skipped on USB. [SRC] mac_be.c:1646-1732."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    val = t.read8(R_BE_PTCL_COMMON_SETTING_0 + off)
+    val |= B_BE_CMAC_TX_MODE_0 | B_BE_CMAC_TX_MODE_1
+    val &= ~(B_BE_PTCL_TRIGGER_SS_EN_0 | B_BE_PTCL_TRIGGER_SS_EN_1 | B_BE_PTCL_TRIGGER_SS_EN_UL) & 0xFF
+    t.write8(R_BE_PTCL_COMMON_SETTING_0 + off, val)
+    t.write32_mask(R_BE_AMPDU_AGG_LIMIT + off, B_BE_AMPDU_MAX_TIME_MASK, AMPDU_MAX_TIME)
+
+
+def cmac_dma_init(t, mac_idx: int) -> None:
+    """cmac_dma_init_be: route the TX-report and F2P-cmd-report RX queues to the WLAN-CPU RX
+    channel 2. [SRC] mac_be.c:1734-1753."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    val = t.read32(R_BE_RX_CTRL_1 + off)
+    val = field_replace(val, B_BE_RXDMA_TXRPT_QUEUE_ID_SW_MASK, WLCPU_RXCH2_QID)
+    val = field_replace(val, B_BE_RXDMA_F2PCMDRPT_QUEUE_ID_SW_MASK, WLCPU_RXCH2_QID)
+    t.write32(R_BE_RX_CTRL_1 + off, val)
+
+
 def cmac_init(t, mac_idx: int, cv: int) -> None:
     """cmac_init_be: the CMAC-side operating init (scheduler, addr-cam, rx-filter, cca/nav,
     spatial-reuse, tmac, trxptcl, rmac, resp-pktctl, com, ptcl, ...). cca_ctrl_init_be is a no-op.
@@ -1208,6 +1257,10 @@ def cmac_init(t, mac_idx: int, cv: int) -> None:
     tmac_init(t, mac_idx)
     trxptcl_init(t, mac_idx, cv)
     rmac_init(t, mac_idx)
+    resp_pktctl_init(t, mac_idx)
+    cmac_com_init(t, mac_idx)
+    ptcl_init(t, mac_idx)
+    cmac_dma_init(t, mac_idx)
 
 
 def trx_init(t, cv: int) -> None:
