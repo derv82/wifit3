@@ -112,6 +112,10 @@ class RTL8922AUDriver(Driver):
         # rtw89_chip_info_setup continues: wait_firmware_completion + fw_recognize are file-side
         # (no wire ops), then chip_efuse_info_setup -> mac_partial_init. [SRC] core.c:7367-7423.
         mac.partial_init(self.transport, self._h2c_ep, ver["cv"])
+        # chip_efuse_info_setup continues after partial_init: dump the logical efuse + phycap.
+        # [SRC] core.c:7268-7291.
+        mac.parse_efuse_map(self.transport, ver["cv"])
+        mac.parse_phycap_map(self.transport, ver["cv"])
         return True
 
     def _switch_usb_mode(self) -> None:

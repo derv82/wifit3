@@ -352,6 +352,16 @@ FORMATTED_MSSC = 0xFF
 MSS_POOL_HDR_LEN = 32            # sizeof(rtw89_fw_mss_pool_hdr) without rmp_tbl[]. fw.h
 MSS_SIGNATURE = b"\x4d\x53\x53\x4b\x50\x4f\x4f\x4c"  # "MSSKPOOL". fw.c:41
 
+# Logical efuse + phycap dump (rtw89_parse_efuse_map_be / rtw89_parse_phycap_map_be).
+# [SRC] efuse_be.c:341-433, reg.h, rtw8922a.c.
+R_BE_SYS_WL_EFUSE_CTRL = 0x000A  # reg.h:3866
+B_BE_AUTOLOAD_SUS = 1 << 5       # reg.h:3873
+PHYSICAL_EFUSE_SIZE = 0x1300     # chip->physical_efuse_size. rtw8922a.c:3242
+PHYCAP_ADDR = 0x1700             # chip->phycap_addr. rtw8922a.c:3248
+PHYCAP_SIZE = 0x38               # chip->phycap_size. rtw8922a.c:3249
+R_BE_EFUSE_USB_MACADDR = 0x4078  # rtw8922a_read_efuse_usb reads the MAC here. rtw8922a.c:856
+ETH_ALEN = 6
+
 # XTAL_SI indirect register access. [SRC] mac.c:7179-7233, reg.h/mac.h.
 R_AX_WLAN_XTAL_SI_CTRL = 0x0270  # reg.h:268 (same address as the BE name)
 B_AX_WL_XTAL_SI_ADDR_MASK = 0x000000FF     # GENMASK(7, 0). reg.h:278

@@ -72,6 +72,8 @@ from .constants import (
     R_BE_SYS_CLK_CTRL, B_BE_CPU_CLK_EN, R_BE_SYS_CFG5,
     B_BE_WDT_WAKE_PCIE_EN, B_BE_WDT_WAKE_USB_EN, R_BE_SECURE_BOOT_MALLOC_INFO,
     R_BE_GPIO_MUXCFG, B_BE_BOOT_MODE, R_BE_BOOT_REASON, B_BE_BOOT_REASON_MASK,
+    R_BE_SYS_WL_EFUSE_CTRL, B_BE_AUTOLOAD_SUS,
+    PHYSICAL_EFUSE_SIZE, PHYCAP_ADDR, PHYCAP_SIZE, R_BE_EFUSE_USB_MACADDR, ETH_ALEN,
 )
 from . import firmware
 
@@ -576,6 +578,28 @@ def fw_download(t, h2c_ep: int, cv: int) -> None:
     disable_cpu(t)
     fwdl_enable_wcpu(t, 0, True, False)
     firmware.download(t, h2c_ep, cv)
+
+
+def parse_efuse_map(t, cv: int) -> dict:
+    """rtw89_parse_efuse_map_be: check autoload, dump the full physical efuse map, then run the
+    logical HCI-DIG (USB) and RF block parses. The DAV dump is skipped (dav_phy_efuse_size 0).
+    The RF-block parse is pure software; the USB HCI-DIG block reads the MAC address from a
+    register. [SRC] efuse_be.c:341-399, rtw8922a.c:854-895.
+    TODO: verify, the RF/board logical extraction (rfe_type, xtal, gain, tssi) is not yet done."""
+    field_get(B_BE_AUTOLOAD_SUS, t.read16(R_BE_SYS_WL_EFUSE_CTRL))   # efuse->valid
+    phy_map = dump_physical_efuse_map(t, cv, 0, PHYSICAL_EFUSE_SIZE)
+    addr = bytearray()
+    for off in range(0, ETH_ALEN, 2):                # rtw8922a_read_efuse_usb, from R_BE 0x4078
+        val = t.read16(R_BE_EFUSE_USB_MACADDR + off)
+        addr += bytes((val & 0xFF, (val >> 8) & 0xFF))
+    return {"phy_map": phy_map, "mac_addr": bytes(addr)}
+
+
+def parse_phycap_map(t, cv: int) -> bytes:
+    """rtw89_parse_phycap_map_be: dump the phy-capability efuse block. chip->ops->read_phycap
+    parses it in software. [SRC] efuse_be.c:402-433, rtw8922a.c:1033.
+    TODO: verify, read_phycap (RF path / antenna extraction) is not yet ported."""
+    return dump_physical_efuse_map(t, cv, PHYCAP_ADDR, PHYCAP_SIZE)
 
 
 def partial_init(t, h2c_ep: int, cv: int) -> None:
