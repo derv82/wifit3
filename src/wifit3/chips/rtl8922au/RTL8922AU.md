@@ -6,7 +6,7 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 4307/163814 driver ops reproduced and committed (capture-1; 4328/4342 on
+Cold-boot bring-up, 5014/163814 driver ops reproduced and committed (capture-1; ~5057/5083 on
 capture-2/3, poll-count variance only). `verify_pcap` now walks both VENQT control ops and
 bulk-OUT ops; all three captures stop at the same frontier. What is ported:
 - USB register-access transport (`rtw89_usb_vendorreq` + read/write ops + `read_cmac`), the
@@ -25,13 +25,24 @@ bulk-OUT ops; all three captures stop at the same frontier. What is ported:
   (0x38 dump at 0x1700). The RF/board logical extraction is deferred (software, no wire ops).
 - `setup_phycap` via the **register H2C/C2H mailbox** (`firmware.msg_reg`: H2CREG/C2HREG at
   0x7140-0x7164, nibble counters at 0x1F5), reading phy-cap part0 + part1 from the running fw.
+- `mac_pwr_off` (`rtw8922a_pwr_off_func` USB arm + `power_switch(on=False)`): the `out:` tail of
+  `chip_info_setup`. Then `rfkill_polling_init` (GPIO9 pinmux/mode + initial poll) closes probe.
+- **Interface-up path** `rtw89_core_start`: `mac_preinit` (second `mac_pwr_on`, this time
+  `probe_done` so no efuse tail, and `reset_pwr_state_be` takes the **MAC_OFF** arm; then
+  `mac_func_en` powers+enables CMAC0 **and** CMAC1). `phy_init_bb_afe` is a no-op (no afe elm).
+- `rtw89_mac_init` so far: `partial_init(include_bb=True)` = `chip_bb_preinit` (bb_preinit PHY_0
+  and PHY_1, `bbmcu_write32` +0x30000 tables) then the **NORMAL firmware re-download** + the
+  **BB-MCU suit** (`firmware.load_bbmcu_suit`: first BBMCU0 element after the mfw region, contents
+  at hdr+32; skips the malloc write, ends on a BB0-FWDL-DONE check). Then `enable_bb_rf`,
+  `sys_init` (cmac_func_en only, cmac_pwr already done), and **all of `dmac_init_be`**: `dle_init`
+  (DBCC qta), full `hfc_init(en=true)`, `sta_sch_init`, `mpdu_proc_init`, `sec_eng_init`,
+  `txpktctrl_init`, `mlo_init`.
 
-Frontier: op #4316, `read 0x40` then a run of `XTAL_SI` writes at 0x270 (xtal/analog config),
-then FEN_RST/ANAPAR touches. This is the tail of `rtw89_chip_info_setup` (`chip_data_setup` /
-`core_setup_rfe_parms`, which sets the efuse xtal cap via `rtw89_mac_write_xtal_si`), which ends
-with `rtw89_mac_pwr_off`. After that the interface-up path `rtw89_core_start` -> `rtw89_mac_init`
-re-powers and does the full MAC/BB/RF init. MAC init, RF/BB init, channel tune, and TX are not
-yet ported.
+Frontier: op #5023, `write 0x103c4 = 0ff00000` = `cmac_init_be(0)` (mac_be.c:1756). After
+cmac_init comes `dbcc_enable_be(true)` (qta is DBCC), the DMAC/CMAC IMR enables, `err_imr_ctrl`,
+`set_host_rpr_be`, and the 8922A RSP_CHK_SIG clear, which finish `trx_init_be`. Then `mac_init`
+does `feat_init`; then `core_start` continues into BB reg init, RF init, RFK calibration, the
+channel tune, and monitor-mode RX enable. None of that is ported yet.
 
 ### Gotchas found while porting (not obvious from a single read)
 
@@ -40,6 +51,19 @@ yet ported.
 - `dle_init(DLFW)` calls `get_dle_mem_cfg(ext_mode=SCC)` last, which sets `dle_info.qta_mode = SCC`.
   So `hfc_reset_param` reads back **SCC** and the H2C page precedence is `hfc_prec_cfg_c5` (32),
   not DLFW's c2. State-order matters.
+- **The operating qta_mode is `RTW89_QTA_DBCC`, not SCC.** `rtw89_core_init` sets `dbcc_en=true`
+  and `qta_mode=DBCC` for every BE chip (`core.c:6992`). So `chip_bb_preinit` runs both PHY_0 and
+  PHY_1, and the operating `dle_init` uses the USB-2 **DBCC** `dle_mem` config (`wde_size8_v1` /
+  `ple_size7_v1`, `wde_qt8_v1`, `ple_qt14/15_v1`), the `hfc` USB-2 DBCC param (`chcfg_ch8`,
+  `pubcfg_p8`, `prec_cfg_c6`). The earlier handoff's SCC guess was wrong. `dle_mem`/`hfc_param_ini`
+  are selected by `hci.dle_type` = USB2. Config tables are in `constants.py` (`_DLE_CFG`, `HFC_*`).
+- `mpdu_proc_init_be`'s `HDR_SHCUT_SETTING` uses `write32_set(reg, val32)`, which re-reads the
+  register and ORs `val32` -- so the local `&= ~TX_ADDR_MLD_TO_LIK` is overridden. Reproduce the
+  double read, don't "fix" it.
+- Several MAC-init sub-functions no-op because of software flags/config: `preload_init` (not
+  qta_poh on USB), `dmac_func_en_be` / `cmac_share_func_en_be` (RTL8922A returns 0), and
+  `sys_init`'s `cmac_pwr_en(MAC_0)` (CMAC0 already powered in `mac_func_en`, tracked by the
+  transport's `cmac_pwr` set). `dle_input` is NULL on the 8922A (8922D+ only).
 - `rtw89_mac_partial_init` ends with `rtw89_fw_download` inside it; firmware is downloaded during
   `chip_efuse_info_setup`, before `parse_efuse_map`. `wait_firmware_completion` / `fw_recognize`
   are file-side (no wire ops).
@@ -98,24 +122,30 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #4316)
+## Next (from op #5023)
 
-The frontier is the tail of `rtw89_chip_info_setup` (core.c:7367): after `chip_efuse_info_setup`
-returns it runs `rtw89_fw_recognize_elements` (BB/RF element tables parsed from the fw file, no
-wire ops), `rtw89_chip_board_info_setup`, `rtw89_chip_data_setup`, `rtw89_core_setup_rfe_parms`,
-then `out: rtw89_mac_pwr_off`. The op #4316 `read 0x40` + XTAL_SI run at 0x270 is the xtal-cap /
-analog write done here (via `rtw89_mac_write_xtal_si`, already ported as `firmware`/`mac` has the
-xtal helper; reuse `mac.write_xtal_si`). Trace which of board/data-setup emits those XTAL_SI ops
-and port it, then the `mac_pwr_off` sequence (`rtw8922a_pwr_off_func`, rtw8922a.c:636).
+Inside `rtw89_mac_init` -> `trx_init_be` (mac_be.c:2302), `dmac_init_be` is done; the frontier is
+`cmac_init_be(0)` (mac_be.c:1756), `write 0x103c4 = 0ff00000`. `cmac_init_be` is a long sequence
+of sub-inits (scheduler, addr-cam, protocol, TX/RX-ptcl, resp-pkt, security-CAM, etc.) mostly
+CMAC-window registers (0x10000+, band-1 at +0x4000). After it: `dbcc_enable_be(true)` (qta is
+DBCC), `enable_imr_be(DMAC_SEL)` + `enable_imr_be(CMAC_SEL)`, `err_imr_ctrl_be(true)`,
+`set_host_rpr_be`, then the 8922A `R_BE_RSP_CHK_SIG` clear -> `trx_init_be` returns. Then
+`mac_init` runs `feat_init` + `mac_post_init` (USB no-op) + `send_all_early_h2c` +
+`h2c_set_ofld_cfg`.
 
-After chip_info_setup, the interface-up path is the big one: `rtw89_ops_start` -> `rtw89_core_start`
--> `rtw89_mac_init` (a *second* `pwr_on`, then full DMAC/CMAC init, TRX, DLE in the operating
-`SCC` qta-mode this time not DLFW), then BB/RF init + calibration (`rtw8922a` RFK tables), the
-channel tune, and monitor-mode RX enable. Watch for the second `pwr_on` and a `dle_init` with the
-SCC config (needs the SCC dle_mem entries: `wde_size0_v1`, `ple_size0_v1`, `wde_qt0_v1`,
-`ple_qt0/qt1` etc., a generalization of the DLFW-only tables in `constants.py`). The deferred
-RF/board logical-efuse extraction (`efuse->rfe_type`, xtal_cap, gain/tssi in `parse_efuse_map`,
-and the phy-cap parse in `setup_phycap`) will be needed once RF init reads those values.
+Then `core_start` continues (core.c:6650+): `btc_ntfy_poweron`, `chip_reset_bb_rf`,
+`phy_init_bb_reg` (the big BB register tables from the fw file), `chip_bb_postinit`
+(`rtw8922a_bb_postinit`), `phy_init_rf_reg`, `btc_ntfy_init`, `phy_dm_init`, the EDCCA/PPDU-status
+/phy-rpt band setup, `update_rts_threshold`, `hci_start`. After that the channel tune
+(`rtw8922a_set_channel` + RFK) and monitor-mode RX enable. The deferred RF/board logical-efuse
+extraction (`efuse->rfe_type`, xtal_cap, gain/tssi in `parse_efuse_map`, and the phy-cap parse in
+`setup_phycap`) will be needed once RF init reads those values.
+
+The port loop from here is the same: read the sub-function, grep register/bit values, port citing
+`file:line`, `verify_pcap`, fix at the FRONTIER/DIVERGENCE trace, commit each milestone. The
+scratch dumper at `/tmp/.../scratchpad/dop.py` (recreate: import `scripts/rtl8922au/verify_pcap`,
+`build_ops`, print a window with `_fmt`) shows the exact wire ops with decoded write values around
+a frontier; decode a couple of writes to confirm masks before porting a table-heavy function.
 
 ## Working efficiently (notes for a fresh-context agent)
 
@@ -165,3 +195,14 @@ describing them, no jargon. No em-dashes and none of the banned words anywhere; 
   4265 ops. Frontier at `setup_phycap` (`rtw89_mac_read_phycap` H2C next).
 - 2026-07-26 M8: register H2C/C2H mailbox (`rtw89_fw_msg_reg`) + `setup_phycap` (phy-cap part0/1
   query to the running fw). 4307 ops. Frontier at chip_info_setup tail (XTAL_SI / data-setup).
+- 2026-07-26 M9: `mac_pwr_off` (`rtw8922a_pwr_off_func` USB arm + `power_switch(off)`), the `out:`
+  tail of chip_info_setup. 4358 ops. The XTAL_SI 0x270 run belongs to pwr_off, not data-setup.
+- 2026-07-26 M10: `rfkill_polling_init` (GPIO9 pinmux/mode + forced + wiphy-work poll). 4364 ops.
+- 2026-07-26 M11: second `mac_pwr_on` (`probe_done`, reset_pwr_state MAC_OFF arm) + `mac_func_en`
+  (CMAC0+CMAC1). 4485 ops. Frontier `phy_init_bb_afe` (no-op) -> `mac_init`.
+- 2026-07-26 M12: `chip_bb_preinit` (bb_preinit PHY_0+1, bbmcu tables) + `partial_init(include_bb)`
+  NORMAL fw re-download. 4871 ops. Frontier at the BB-MCU suit.
+- 2026-07-26 M13: BB-MCU firmware suit download (`load_bbmcu_suit`, BB0-FWDL-DONE check). 4902 ops.
+- 2026-07-26 M14: `enable_bb_rf` + `sys_init`, then all of `dmac_init_be`: `dle_init(DBCC)`, full
+  `hfc_init(en=true)`, `sta_sch_init`, `mpdu_proc_init`, `sec_eng_init`, `txpktctrl_init`,
+  `mlo_init`. 5014 ops. Frontier at `cmac_init_be(0)`.
