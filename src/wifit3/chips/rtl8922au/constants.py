@@ -490,6 +490,17 @@ B_BE_SIGA_CRC_CHK = 1 << 3               # reg.h:8131
 B_BE_LSIG_PARITY_CHK_EN = 1 << 2         # reg.h:8132
 B_BE_CCK_SIG_CHK = 1 << 1                # reg.h:8133
 B_BE_CCK_CRC_CHK = 1 << 0                # reg.h:8134
+# nav_ctrl_init_be (cca_ctrl_init_be is a no-op). [SRC] mac_be.c nav_ctrl_init_be.
+R_BE_WMAC_NAV_CTL = 0x11080             # reg.h:7695
+B_BE_WMAC_NAV_UPPER_EN = 1 << 26        # reg.h:7697
+B_BE_WMAC_PLCP_UP_NAV_EN = 1 << 17      # reg.h:7699
+B_BE_WMAC_TF_UP_NAV_EN = 1 << 16        # reg.h:7700
+B_BE_WMAC_NAV_UPPER_MASK = 0x0000FF00   # GENMASK(15, 8). reg.h:7701
+NAV_25MS = 0xC4                         # reg.h:7702
+R_BE_SPECIAL_TX_SETTING = 0x10820       # reg.h:7134
+B_BE_BMC_NAV_PROTECT = 1 << 26          # reg.h:7140
+R_BE_TRXPTCL_RESP_0 = 0x11004           # reg.h:7652
+B_BE_WMAC_MBA_DUR_FORCE = 1 << 16       # reg.h:7665
 
 # Firmware-download preconfig (rtw89_mac_fwdl_preconfig_be). [SRC] mac_be.c:625-629, reg.h.
 R_BE_FW_AUTO_CAL_DELAY = 0x0188          # reg.h

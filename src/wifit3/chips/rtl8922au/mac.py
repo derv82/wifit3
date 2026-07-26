@@ -111,6 +111,9 @@ from .constants import (
     B_BE_A_A1_MATCH, B_BE_SNIFFER_MODE, R_BE_PLCP_HDR_FLTR, B_BE_HE_SIGB_CRC_CHK,
     B_BE_VHT_MU_SIGB_CRC_CHK, B_BE_VHT_SU_SIGB_CRC_CHK, B_BE_SIGA_CRC_CHK, B_BE_LSIG_PARITY_CHK_EN,
     B_BE_CCK_SIG_CHK, B_BE_CCK_CRC_CHK,
+    R_BE_WMAC_NAV_CTL, B_BE_WMAC_NAV_UPPER_EN, B_BE_WMAC_PLCP_UP_NAV_EN, B_BE_WMAC_TF_UP_NAV_EN,
+    B_BE_WMAC_NAV_UPPER_MASK, NAV_25MS, R_BE_SPECIAL_TX_SETTING, B_BE_BMC_NAV_PROTECT,
+    R_BE_TRXPTCL_RESP_0, B_BE_WMAC_MBA_DUR_FORCE,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -1078,12 +1081,26 @@ def rx_fltr_init(t, mac_idx: int) -> None:
               | B_BE_SIGA_CRC_CHK | B_BE_LSIG_PARITY_CHK_EN | B_BE_CCK_SIG_CHK | B_BE_CCK_CRC_CHK)
 
 
+def nav_ctrl_init(t, mac_idx: int) -> None:
+    """nav_ctrl_init_be: NAV upper-bound + TF-up enable (PLCP-up disabled), clear the BMC NAV
+    protect, force the MBA duration. cca_ctrl_init_be is a no-op. [SRC] mac_be.c nav_ctrl_init_be."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    val = t.read32(R_BE_WMAC_NAV_CTL + off)
+    val = (val & ~B_BE_WMAC_PLCP_UP_NAV_EN & 0xFFFFFFFF) | B_BE_WMAC_TF_UP_NAV_EN | B_BE_WMAC_NAV_UPPER_EN
+    val = field_replace(val, B_BE_WMAC_NAV_UPPER_MASK, NAV_25MS)
+    t.write32(R_BE_WMAC_NAV_CTL + off, val)
+    t.write32_clr(R_BE_SPECIAL_TX_SETTING + off, B_BE_BMC_NAV_PROTECT)
+    t.write32_set(R_BE_TRXPTCL_RESP_0 + off, B_BE_WMAC_MBA_DUR_FORCE)
+
+
 def cmac_init(t, mac_idx: int) -> None:
     """cmac_init_be: the CMAC-side operating init (scheduler, addr-cam, rx-filter, cca/nav,
-    spatial-reuse, tmac, trxptcl, rmac, resp-pktctl, com, ptcl, ...). [SRC] mac_be.c:1756+."""
+    spatial-reuse, tmac, trxptcl, rmac, resp-pktctl, com, ptcl, ...). cca_ctrl_init_be is a no-op.
+    [SRC] mac_be.c:1756+."""
     scheduler_init(t, mac_idx)
     addr_cam_init(t, mac_idx)
     rx_fltr_init(t, mac_idx)
+    nav_ctrl_init(t, mac_idx)
 
 
 def trx_init(t) -> None:
