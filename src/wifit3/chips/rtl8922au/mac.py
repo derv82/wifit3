@@ -82,6 +82,8 @@ from .constants import (
     B_BE_HCI_FC_CH12_FULL_COND_MASK, B_BE_HCI_FC_WP_CH811_FULL_COND_MASK,
     B_BE_HCI_FC_WP_CH07_FULL_COND_MASK, B_BE_HCI_FC_WD_FULL_COND_MASK, B_BE_HCI_FC_MODE_MASK,
     RTW89_HCIFC_STF, RTW89_DMA_H2C, HFC_CH_CFG_CH8, HFC_PUB_CFG_P8, HFC_PREC_CFG_C6,
+    R_BE_SS_CTRL, B_BE_SS_INIT_DONE, B_BE_WARM_INIT, B_BE_BAND_TRIG_EN, B_BE_BAND1_TRIG_EN,
+    B_BE_SS_EN,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -920,11 +922,22 @@ def sys_init(t) -> None:
     cmac_func_en(t, RTW89_MAC_0)
 
 
+def sta_sch_init(t) -> None:
+    """sta_sch_init_be (8922A, non-D): enable the STA scheduler, wait init-done, set warm-init,
+    clear the band trigger enables. [SRC] mac_be.c:971-998."""
+    t.write8_set(R_BE_SS_CTRL, B_BE_SS_EN)
+    _poll32(t, R_BE_SS_CTRL, lambda v: v & B_BE_SS_INIT_DONE)
+    t.write32_set(R_BE_SS_CTRL, B_BE_WARM_INIT)
+    t.write32_clr(R_BE_SS_CTRL, B_BE_BAND_TRIG_EN | B_BE_BAND1_TRIG_EN)
+
+
 def dmac_init(t) -> None:
-    """dmac_init_be(0): the DMAC-side operating init. Starts with dle_init in the DBCC qta mode.
-    preload_init is a no-op on USB (not qta_poh). [SRC] mac_be.c:1131-1184, mac.c:preload_init."""
+    """dmac_init_be(0): the DMAC-side operating init. dle_init (DBCC qta), hfc_init (operating),
+    sta_sch_init, then mpdu_proc/sec_eng/txpktctrl/mlo. preload_init is a no-op on USB (not
+    qta_poh). [SRC] mac_be.c:1131-1184, mac.c:preload_init."""
     dle_init(t, "DBCC")
     hfc_init(t, True, True, True)           # reset, en=True, h2c_en=True (operating path)
+    sta_sch_init(t)
 
 
 def trx_init(t) -> None:

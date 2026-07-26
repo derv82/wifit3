@@ -380,6 +380,14 @@ HFC_PUB_CFG_P8 = (304, 304, 608, 96)             # (grp0, grp1, pub_max, wp_thrd
 HFC_PREC_CFG_C6 = (8, 32, 148, 148, 1, 1, 0, 1)  # (ch011_prec, h2c_prec, wp07_prec, wp811_prec,
 #                                                   ch011_full_cond, h2c_full_cond, wp07_fc, wp811_fc)
 
+# STA scheduler init (sta_sch_init_be). [SRC] mac_be.c:971-998, reg.h.
+R_BE_SS_CTRL = 0xA310            # reg.h:6224
+B_BE_SS_INIT_DONE = 1 << 31      # reg.h:6226
+B_BE_WARM_INIT = 1 << 29         # reg.h:6228
+B_BE_BAND_TRIG_EN = 1 << 28      # reg.h:6229
+B_BE_BAND1_TRIG_EN = 1 << 9      # reg.h:6239
+B_BE_SS_EN = 1 << 0              # reg.h:6247
+
 # Firmware-download preconfig (rtw89_mac_fwdl_preconfig_be). [SRC] mac_be.c:625-629, reg.h.
 R_BE_FW_AUTO_CAL_DELAY = 0x0188          # reg.h
 B_BE_WCPU_FW_DELAY_COUNT_VALID = 1 << 15  # reg.h
