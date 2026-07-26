@@ -217,6 +217,41 @@ B_BE_TX_STOP1_MASK = 0x7FFF      # B_BE_STOP_CH0..CH14. reg.h:6307-6321
 R_BE_DMAC_TABLE_CTRL = 0x8420    # reg.h:4945
 B_BE_DMAC_ADDR_MODE = 1 << 12    # reg.h
 
+# DLE init (rtw89_mac_dle_init, QTA_DLFW mode). [SRC] mac.c:2274-2343, mac_be.c:216-312, reg.h.
+R_BE_DMAC_CLK_EN = 0x8404        # reg.h
+B_BE_DLE_WDE_CLK_EN = 1 << 26    # reg.h
+B_BE_DLE_PLE_CLK_EN = 1 << 23    # reg.h
+R_BE_WDE_PKTBUF_CFG = 0x8C08     # reg.h
+R_BE_PLE_PKTBUF_CFG = 0x9008     # reg.h
+B_BE_WDE_PAGE_SEL_MASK = 0x3            # GENMASK(1, 0). reg.h
+B_BE_WDE_START_BOUND_MASK = 0x7F00      # GENMASK(14, 8). reg.h
+B_BE_WDE_FREE_PAGE_NUM_MASK = 0x1FFF0000  # GENMASK(28, 16). reg.h
+B_BE_PLE_PAGE_SEL_MASK = 0x3            # GENMASK(1, 0). reg.h
+B_BE_PLE_START_BOUND_MASK = 0x7F00      # GENMASK(14, 8). reg.h
+B_BE_PLE_FREE_PAGE_NUM_MASK = 0x1FFF0000  # GENMASK(28, 16). reg.h
+S_AX_WDE_PAGE_SEL_64 = 0         # mac.h:605
+S_AX_PLE_PAGE_SEL_128 = 1        # mac.h:614
+DLE_BOUND_UNIT = 8 * 1024        # mac.h
+R_BE_WDE_QTA0_CFG = 0x8C40       # reg.h:5560; QTAn_CFG = QTA0 + n*4
+R_BE_PLE_QTA0_CFG = 0x9040       # reg.h:5681
+B_BE_QTA_MIN_SIZE_MASK = 0xFFF          # GENMASK(11, 0), uniform across QTAn. reg.h
+B_BE_QTA_MAX_SIZE_MASK = 0x0FFF0000     # GENMASK(27, 16), uniform across QTAn. reg.h
+R_AX_WDE_INI_STATUS = 0x8D00     # reg.h
+R_AX_PLE_INI_STATUS = 0x9100     # reg.h
+WDE_MGN_INI_RDY = 0x3            # B_AX_WDE_Q_MGN_INI_RDY | B_AX_WDE_BUF_MGN_INI_RDY. reg.h:1387-1388
+PLE_MGN_INI_RDY = 0x3            # B_AX_PLE_Q_MGN_INI_RDY | B_AX_PLE_BUF_MGN_INI_RDY. reg.h:1595-1596
+# 8922A dle_mem[QTA_DLFW] config. [SRC] rtw8922a.c:191-195, mac.c:1729/1762/1797/1833.
+# rtw89_dle_size = (pge_size, lnk_pge_num, unlnk_pge_num, srt_ofst).
+WDE_SIZE3_LNK_PGE_NUM = 0        # wde_size3_v1. mac.c:1729
+WDE_SIZE3_SRT_OFST = 0
+PLE_SIZE3_LNK_PGE_NUM = 2928     # ple_size3_v1. mac.c:1762
+PLE_SIZE3_SRT_OFST = 212992
+# rtw89_wde_quota = (hif, wcpu, pkt_in, cpu_io); wde_qt4 is all zero. mac.c:1797.
+# rtw89_ple_quota fields; ple_qt9 (min == max for DLFW). mac.c:1833.
+PLE_QT9 = (0, 0, 32, 256, 0, 0, 0, 0, 0, 0, 1, 0, 0)   # ..h2d; 8922A stops before snrpt(13)
+# ext_wde_min_qt_wcpu = SCC wde_qt0_v1.wcpu (qta_mode defaults to SCC). mac.c:1792, core.c:6990.
+EXT_WDE_MIN_QT_WCPU = 6
+
 # XTAL_SI indirect register access. [SRC] mac.c:7179-7233, reg.h/mac.h.
 R_AX_WLAN_XTAL_SI_CTRL = 0x0270  # reg.h:268 (same address as the BE name)
 B_AX_WL_XTAL_SI_ADDR_MASK = 0x000000FF     # GENMASK(7, 0). reg.h:278

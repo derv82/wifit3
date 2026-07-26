@@ -50,6 +50,15 @@ from .constants import (
     R_BE_HAXI_INIT_CFG1, B_BE_DMA_MODE_MASK, S_BE_DMA_MOD_USB, B_BE_STOP_AXI_MST,
     B_BE_TXDMA_EN, B_BE_RXDMA_EN, R_BE_HAXI_DMA_STOP1, B_BE_TX_STOP1_MASK,
     R_BE_DMAC_TABLE_CTRL, B_BE_DMAC_ADDR_MODE,
+    R_BE_DMAC_CLK_EN, B_BE_DLE_WDE_CLK_EN, B_BE_DLE_PLE_CLK_EN,
+    R_BE_WDE_PKTBUF_CFG, R_BE_PLE_PKTBUF_CFG,
+    B_BE_WDE_PAGE_SEL_MASK, B_BE_WDE_START_BOUND_MASK, B_BE_WDE_FREE_PAGE_NUM_MASK,
+    B_BE_PLE_PAGE_SEL_MASK, B_BE_PLE_START_BOUND_MASK, B_BE_PLE_FREE_PAGE_NUM_MASK,
+    S_AX_WDE_PAGE_SEL_64, S_AX_PLE_PAGE_SEL_128, DLE_BOUND_UNIT,
+    R_BE_WDE_QTA0_CFG, R_BE_PLE_QTA0_CFG, B_BE_QTA_MIN_SIZE_MASK, B_BE_QTA_MAX_SIZE_MASK,
+    R_AX_WDE_INI_STATUS, R_AX_PLE_INI_STATUS, WDE_MGN_INI_RDY, PLE_MGN_INI_RDY,
+    WDE_SIZE3_LNK_PGE_NUM, WDE_SIZE3_SRT_OFST, PLE_SIZE3_LNK_PGE_NUM, PLE_SIZE3_SRT_OFST,
+    PLE_QT9, EXT_WDE_MIN_QT_WCPU,
 )
 
 
@@ -383,6 +392,79 @@ def dmac_func_pre_en(t) -> None:
     t.write32_set(R_BE_DMAC_TABLE_CTRL, B_BE_DMAC_ADDR_MODE)
 
 
+def dle_func_en(t, enable: bool) -> None:
+    """dle_func_en_be: WDE+PLE function enable on DMAC_FUNC_EN. [SRC] mac_be.c:216-224."""
+    bits = B_BE_DLE_WDE_EN | B_BE_DLE_PLE_EN
+    if enable:
+        t.write32_set(R_BE_DMAC_FUNC_EN, bits)
+    else:
+        t.write32_clr(R_BE_DMAC_FUNC_EN, bits)
+
+
+def dle_clk_en(t, enable: bool) -> None:
+    """dle_clk_en_be: WDE+PLE clock enable (RTL8922A only). [SRC] mac_be.c:226-237."""
+    bits = B_BE_DLE_WDE_CLK_EN | B_BE_DLE_PLE_CLK_EN
+    if enable:
+        t.write32_set(R_BE_DMAC_CLK_EN, bits)
+    else:
+        t.write32_clr(R_BE_DMAC_CLK_EN, bits)
+
+
+def dle_mix_cfg(t) -> None:
+    """dle_mix_cfg_be for the QTA_DLFW size config (wde_size3_v1 / ple_size3_v1): WDE 64B pages,
+    PLE 128B pages, with the free-page count and start bound. [SRC] mac_be.c:239-295."""
+    val = t.read32(R_BE_WDE_PKTBUF_CFG)
+    val = field_replace(val, B_BE_WDE_PAGE_SEL_MASK, S_AX_WDE_PAGE_SEL_64)
+    val = field_replace(val, B_BE_WDE_START_BOUND_MASK, WDE_SIZE3_SRT_OFST // DLE_BOUND_UNIT)
+    val = field_replace(val, B_BE_WDE_FREE_PAGE_NUM_MASK, WDE_SIZE3_LNK_PGE_NUM)
+    t.write32(R_BE_WDE_PKTBUF_CFG, val)
+
+    val = t.read32(R_BE_PLE_PKTBUF_CFG)
+    val = field_replace(val, B_BE_PLE_PAGE_SEL_MASK, S_AX_PLE_PAGE_SEL_128)
+    val = field_replace(val, B_BE_PLE_START_BOUND_MASK, PLE_SIZE3_SRT_OFST // DLE_BOUND_UNIT)
+    val = field_replace(val, B_BE_PLE_FREE_PAGE_NUM_MASK, PLE_SIZE3_LNK_PGE_NUM)
+    t.write32(R_BE_PLE_PKTBUF_CFG, val)
+
+
+def _set_quota(t, reg: int, min_v: int, max_v: int) -> None:
+    """SET_QUOTA_VAL: pack a (min, max) size pair into a QTAn_CFG register. [SRC] mac_be.c:315-322."""
+    t.write32(reg, field_prep(B_BE_QTA_MIN_SIZE_MASK, min_v)
+              | field_prep(B_BE_QTA_MAX_SIZE_MASK, max_v))
+
+
+def dle_quota_cfg(t) -> None:
+    """dle_quota_cfg for QTA_DLFW: wde_qt4 (all zero) and ple_qt9, min == max. WDE Q1 takes the
+    ext SCC wcpu. 8922A stops PLE before Q13 (snrpt). [SRC] mac.c:2264-2272, mac_be.c:326-367."""
+    _set_quota(t, R_BE_WDE_QTA0_CFG + 0 * 4, 0, 0)                                      # hif
+    _set_quota(t, R_BE_WDE_QTA0_CFG + 1 * 4, EXT_WDE_MIN_QT_WCPU, EXT_WDE_MIN_QT_WCPU)  # wcpu
+    _set_quota(t, R_BE_WDE_QTA0_CFG + 2 * 4, 0, 0)
+    _set_quota(t, R_BE_WDE_QTA0_CFG + 3 * 4, 0, 0)                                      # pkt_in
+    _set_quota(t, R_BE_WDE_QTA0_CFG + 4 * 4, 0, 0)                                      # cpu_io
+    for i, q in enumerate(PLE_QT9):
+        _set_quota(t, R_BE_PLE_QTA0_CFG + i * 4, q, q)
+
+
+def chk_dle_rdy(t, wde_or_ple: bool) -> None:
+    """chk_dle_rdy_be: poll WDE (or PLE) init status until the manager-ready bits set.
+    [SRC] mac_be.c:297-312."""
+    reg = R_AX_WDE_INI_STATUS if wde_or_ple else R_AX_PLE_INI_STATUS
+    mask = WDE_MGN_INI_RDY if wde_or_ple else PLE_MGN_INI_RDY
+    _poll32(t, reg, lambda v: (v & mask) == mask)
+
+
+def dle_init(t) -> None:
+    """rtw89_mac_dle_init(RTW89_QTA_DLFW): configure the DLE (WDE/PLE) packet-buffer sizes and
+    quotas for firmware download, then wait for the managers ready. [SRC] mac.c:2274-2343.
+    check_mac_en is a software-flag test (DMAC_FUNC was set in pwr_on), so it emits no wire op."""
+    dle_func_en(t, False)
+    dle_clk_en(t, True)
+    dle_mix_cfg(t)
+    dle_quota_cfg(t)
+    dle_func_en(t, True)
+    chk_dle_rdy(t, True)
+    chk_dle_rdy(t, False)
+
+
 def partial_init(t) -> None:
     """rtw89_mac_partial_init(include_bb=False) as reached from rtw89_chip_efuse_info_setup:
     the pre-firmware DMAC bring-up. [SRC] mac.c:4307-4333, core.c:7268-7273.
@@ -390,5 +472,6 @@ def partial_init(t) -> None:
     ctrl_hci_dma_trx(t, True)
     hci_func_en(t)
     dmac_func_pre_en(t)
-    # TODO: next milestones. dle_init + hfc_init [SRC] mac.c:4266-4276; then the USB
-    # hci mac_pre_init [SRC] usb.c:797; then rtw89_mac_fwdl_preconfig [SRC] mac.c:4332.
+    dle_init(t)
+    # TODO: next milestones. hfc_init [SRC] mac.c:4272; then the USB hci mac_pre_init
+    # [SRC] usb.c:797; then rtw89_mac_fwdl_preconfig [SRC] mac.c:4332.
