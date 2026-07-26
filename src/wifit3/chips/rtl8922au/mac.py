@@ -74,6 +74,7 @@ from .constants import (
     R_BE_GPIO_MUXCFG, B_BE_BOOT_MODE, R_BE_BOOT_REASON, B_BE_BOOT_REASON_MASK,
     R_BE_SYS_WL_EFUSE_CTRL, B_BE_AUTOLOAD_SUS,
     PHYSICAL_EFUSE_SIZE, PHYCAP_ADDR, PHYCAP_SIZE, R_BE_EFUSE_USB_MACADDR, ETH_ALEN,
+    RTW89_FWCMD_H2CREG_FUNC_GET_FEATURE, RTW89_H2CREG_GET_FEATURE_PART_NUM,
 )
 from . import firmware
 
@@ -600,6 +601,25 @@ def parse_phycap_map(t, cv: int) -> bytes:
     parses it in software. [SRC] efuse_be.c:402-433, rtw8922a.c:1033.
     TODO: verify, read_phycap (RF path / antenna extraction) is not yet ported."""
     return dump_physical_efuse_map(t, cv, PHYCAP_ADDR, PHYCAP_SIZE)
+
+
+def read_phycap(t, part_num: int) -> dict:
+    """rtw89_mac_read_phycap: query the running firmware for its phy capabilities over the
+    register mailbox, bracketed by the efuse-state toggle. [SRC] mac.c:3177-3220."""
+    cnv_efuse_state(t, False)
+    w0 = field_prep(RTW89_H2CREG_GET_FEATURE_PART_NUM, part_num)
+    c2h = firmware.msg_reg(t, RTW89_FWCMD_H2CREG_FUNC_GET_FEATURE, 2, w0)
+    cnv_efuse_state(t, True)
+    return c2h
+
+
+def setup_phycap(t) -> None:
+    """rtw89_mac_setup_phycap: read the two phy-capability parts from firmware. The C2H payloads
+    (tx/rx nss, antenna, QAM) are parsed in software. [SRC] mac.c:3222-3336.
+    TODO: verify, the hal extraction (tx_nss/rx_nss/antenna/no_eht/no_mcs_12_13) is not yet done;
+    RF/BB init will need it. part1 runs unless the NO_PHYCAP_P1 fw feature is set (it is not here)."""
+    read_phycap(t, 0)      # part0, expects C2H id RTW89_FWCMD_C2HREG_FUNC_PHY_CAP
+    read_phycap(t, 1)      # part1, expects C2H id RTW89_FWCMD_C2HREG_FUNC_PHY_CAP_PART1
 
 
 def partial_init(t, h2c_ep: int, cv: int) -> None:

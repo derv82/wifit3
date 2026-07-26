@@ -27,6 +27,11 @@ from .constants import (
     R_AX_HALT_H2C_CTRL, R_AX_HALT_C2H_CTRL,
     B_BE_WLANCPU_FWDL_EN,
     PWR_POLL_ATTEMPTS,
+    R_BE_H2CREG_DATA0, R_BE_C2HREG_DATA0, R_BE_H2CREG_CTRL, B_BE_H2CREG_TRIGGER, R_BE_C2HREG_CTRL,
+    R_BE_MAILBOX_COUNTER, B_MAILBOX_H2C_CNT_MASK, B_MAILBOX_C2H_CNT_MASK,
+    RTW89_H2CREG_MAX, RTW89_C2HREG_MAX, RTW89_H2CREG_HDR_LEN, RTW89_C2HREG_HDR_LEN,
+    RTW89_H2CREG_HDR_FUNC_MASK, RTW89_H2CREG_HDR_LEN_MASK,
+    RTW89_C2HREG_HDR_FUNC_MASK,
 )
 
 _ASSET_PATH = Path(__file__).resolve().parent / "assets" / FW_ASSET
@@ -241,10 +246,51 @@ def download_suit(t, h2c_ep: int, fw: bytes, info: dict) -> None:
 
 def download(t, h2c_ep: int, cv: int) -> None:
     """rtw89_fw_download (NORMAL, include_bb=False) minus the CPU disable/enable done in mac.py:
-    load the firmware suit, run the transfer, then wait for the FreeRTOS-ready status.
-    [SRC] fw.c:1984-2047."""
+    load the firmware suit, run the transfer, reset the mailbox counters, then wait for the
+    FreeRTOS-ready status. [SRC] fw.c:1984-2047."""
     fw = load_fw_suit(cv)
     info = parse_hdr_v1(fw)
     download_suit(t, h2c_ep, fw, info)
+    t.h2c_counter = 0                                 # fw_info reset. [SRC] fw.c:2014-2015
+    t.c2h_counter = 0
     time.sleep(0.005)                                 # mdelay(5). [SRC] fw.c:2019
     _fw_check_rdy(t, False)                           # RTW89_FWDL_CHECK_FREERTOS_DONE
+
+
+def _write_h2c_reg(t, h2c_id: int, content_len: int, w0: int) -> None:
+    """rtw89_fw_write_h2c_reg: wait for the H2C mailbox free, write the 4 H2CREG dwords, bump the
+    H2C counter, and trigger. [SRC] fw.c:8229-8260."""
+    for _ in range(PWR_POLL_ATTEMPTS):
+        if t.read8(R_BE_H2CREG_CTRL) == 0:
+            break
+    length = (content_len + RTW89_H2CREG_HDR_LEN + 3) // 4     # DIV_ROUND_UP(., 4)
+    w0 = (w0 & ~RTW89_H2CREG_HDR_FUNC_MASK) | (h2c_id & RTW89_H2CREG_HDR_FUNC_MASK)
+    w0 = (w0 & ~RTW89_H2CREG_HDR_LEN_MASK) | ((length << 8) & RTW89_H2CREG_HDR_LEN_MASK)
+    regs = [w0, 0, 0, 0]
+    for i in range(RTW89_H2CREG_MAX):
+        t.write32(R_BE_H2CREG_DATA0 + i * 4, regs[i])
+    t.h2c_counter = (t.h2c_counter + 1) & 0xFF
+    t.write8_mask(R_BE_MAILBOX_COUNTER, B_MAILBOX_H2C_CNT_MASK, t.h2c_counter)
+    t.write8(R_BE_H2CREG_CTRL, B_BE_H2CREG_TRIGGER)
+
+
+def _read_c2h_reg(t) -> dict:
+    """rtw89_fw_read_c2h_reg: wait for the C2H mailbox ready, read the 4 C2HREG dwords, ack, bump
+    the C2H counter, and decode the header. [SRC] fw.c:8262-8305."""
+    for _ in range(PWR_POLL_ATTEMPTS):
+        if t.read8(R_BE_C2HREG_CTRL):
+            break
+    regs = [t.read32(R_BE_C2HREG_DATA0 + i * 4) for i in range(RTW89_C2HREG_MAX)]
+    t.write8(R_BE_C2HREG_CTRL, 0)
+    cid = regs[0] & RTW89_C2HREG_HDR_FUNC_MASK
+    content_len = (_gb(regs[0], 8, 0xF) << 2) - RTW89_C2HREG_HDR_LEN
+    t.c2h_counter = (t.c2h_counter + 1) & 0xFF
+    t.write8_mask(R_BE_MAILBOX_COUNTER, B_MAILBOX_C2H_CNT_MASK, t.c2h_counter)
+    return {"id": cid, "content_len": content_len, "w": regs}
+
+
+def msg_reg(t, h2c_id: int, content_len: int, w0: int) -> dict:
+    """rtw89_fw_msg_reg: one register-mailbox round-trip (write H2CREG, read C2HREG).
+    [SRC] fw.c:8307-8335."""
+    _write_h2c_reg(t, h2c_id, content_len, w0)
+    return _read_c2h_reg(t)

@@ -362,6 +362,28 @@ PHYCAP_SIZE = 0x38               # chip->phycap_size. rtw8922a.c:3249
 R_BE_EFUSE_USB_MACADDR = 0x4078  # rtw8922a_read_efuse_usb reads the MAC here. rtw8922a.c:856
 ETH_ALEN = 6
 
+# Register H2C/C2H firmware mailbox (rtw89_fw_msg_reg). [SRC] fw.c:8229-8335, reg.h, fw.h.
+R_BE_H2CREG_DATA0 = 0x7140       # reg.h:4848; DATAn = DATA0 + n*4
+R_BE_C2HREG_DATA0 = 0x7150       # reg.h:4852
+R_BE_H2CREG_CTRL = 0x7160        # reg.h:4856
+B_BE_H2CREG_TRIGGER = 1 << 0     # reg.h:4857
+R_BE_C2HREG_CTRL = 0x7164        # reg.h:4858
+R_BE_MAILBOX_COUNTER = 0x01F5    # R_BE_UDM1 + 1. reg.h:4566
+B_MAILBOX_H2C_CNT_MASK = 0x0F    # UDM1 H2C_DEQ_CNT >> 8. reg.h:4569
+B_MAILBOX_C2H_CNT_MASK = 0xF0    # UDM1 C2H_ENQ_CNT >> 8. reg.h:4568
+RTW89_H2CREG_MAX = 4             # fw.h:117
+RTW89_C2HREG_MAX = 4             # fw.h:118
+RTW89_H2CREG_HDR_LEN = 2         # fw.h:120
+RTW89_C2HREG_HDR_LEN = 2         # fw.h:119
+RTW89_H2CREG_HDR_FUNC_MASK = 0x7F      # GENMASK(6, 0). fw.h:101
+RTW89_H2CREG_HDR_LEN_MASK = 0xF00      # GENMASK(11, 8). fw.h:102
+RTW89_H2CREG_GET_FEATURE_PART_NUM = 0xFF0000  # GENMASK(23, 16). fw.h:115
+RTW89_C2HREG_HDR_FUNC_MASK = 0x7F      # GENMASK(6, 0). fw.h:25
+RTW89_C2HREG_HDR_LEN_MASK = 0xF00      # GENMASK(11, 8). fw.h:27
+RTW89_FWCMD_H2CREG_FUNC_GET_FEATURE = 3      # fw.h:149
+RTW89_FWCMD_C2HREG_FUNC_PHY_CAP = 3          # fw.h:163
+RTW89_FWCMD_C2HREG_FUNC_PHY_CAP_PART1 = 0xC  # fw.h:166
+
 # XTAL_SI indirect register access. [SRC] mac.c:7179-7233, reg.h/mac.h.
 R_AX_WLAN_XTAL_SI_CTRL = 0x0270  # reg.h:268 (same address as the BE name)
 B_AX_WL_XTAL_SI_ADDR_MASK = 0x000000FF     # GENMASK(7, 0). reg.h:278

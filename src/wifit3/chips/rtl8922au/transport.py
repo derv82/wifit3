@@ -26,6 +26,8 @@ class RTL8922AUTransport:
 
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
+        self.h2c_counter = 0        # fw_info h2c/c2h register-mailbox counters. [SRC] fw.c:2012-2015
+        self.c2h_counter = 0
 
     def _vendorreq(self, addr: int, data: bytes, length: int, reqtype: int) -> bytes:
         """rtw89_usb_vendorreq: one endpoint-0 vendor control transfer, retried up to 10
@@ -123,6 +125,12 @@ class RTL8922AUTransport:
         shift = (mask & -mask).bit_length() - 1
         val = (self.read16(addr) & ~mask & 0xFFFF) | ((data << shift) & mask)
         self.write16(addr, val)
+
+    def write8_mask(self, addr: int, mask: int, data: int) -> None:
+        """rtw89_write8_mask: byte read-modify-write `mask`'s field to `data`. [SRC] core.h."""
+        shift = (mask & -mask).bit_length() - 1
+        val = (self.read8(addr) & ~mask & 0xFF) | ((data << shift) & mask)
+        self.write8(addr, val)
 
     def bulk_out(self, endpoint: int, data: bytes) -> None:
         """One bulk-OUT transfer (firmware chunk / H2C). rtw89_usb_write_port submits a URB to

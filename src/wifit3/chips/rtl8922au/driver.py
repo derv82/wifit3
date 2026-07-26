@@ -116,6 +116,7 @@ class RTL8922AUDriver(Driver):
         # [SRC] core.c:7268-7291.
         mac.parse_efuse_map(self.transport, ver["cv"])
         mac.parse_phycap_map(self.transport, ver["cv"])
+        mac.setup_phycap(self.transport)          # H2C phy-capability query to the running fw
         return True
 
     def _switch_usb_mode(self) -> None:
