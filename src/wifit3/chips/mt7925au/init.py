@@ -8,7 +8,7 @@ set_eeprom, the mac_init register block, then monitor entry.
 import logging
 from dataclasses import dataclass
 
-from . import mcu
+from . import mac, mcu
 from .transport import MT7925AUTransport
 # ruff: noqa: F403, F405
 from .constants import *
@@ -48,6 +48,29 @@ async def post_boot_init(transport: MT7925AUTransport) -> InitState:
     _mac_init(transport)
 
     return InitState(caps=caps)
+
+
+async def enter_monitor(transport: MT7925AUTransport, channel: int) -> None:
+    """Bring the chip into monitor mode on ``channel`` (the mac80211 add_interface +
+    start + config(MONITOR) + configure_filter path). Sends the connac3 UNI commands
+    the capture shows; CHIP_CONFIG (thermal/deep-sleep) get no ack, the rest do."""
+    t = transport
+    # init_work device tuning.
+    await t.send_mcu_command(*mcu.thermal_gband(), wait_resp=False)
+    await t.send_mcu_command(*mcu.thermal_aband(), wait_resp=False)
+    await t.send_mcu_command(*mcu.set_deep_sleep(False), wait_resp=False)
+    await t.send_mcu_command(*mcu.set_rts_thresh())
+    # __mt7925_start: reset the MIB counters, then add the monitor vif.
+    mac.reset_counters(t)
+    _wtbl_update(t, MT792x_WTBL_RESERVED)
+    await t.send_mcu_command(*mcu.uni_dev_info(True))
+    await t.send_mcu_command(*mcu.uni_bss_info(True))
+    # config(MONITOR) + configure_filter.
+    await t.send_mcu_command(*mcu.set_sniffer(True))
+    await t.send_mcu_command(*mcu.config_sniffer(channel))
+    await t.send_mcu_command(*mcu.set_rxfilter(mcu.MT_FILTER_ENABLE
+                                              | mcu.MT_FILTER_CONTROL | mcu.MT_FILTER_OTHER_BSS))
+    await t.send_mcu_command(*mcu.uni_bss_pm_disable())
 
 
 def _mac_init(t: MT7925AUTransport) -> None:

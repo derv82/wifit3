@@ -4,6 +4,7 @@ from typing import Callable, Optional
 
 import usb.core
 
+from . import init as chip_init
 from . import mcu, rx
 from .transport import MT7925AUTransport
 from .firmware import MT7925AUFirmwareLoader
@@ -63,15 +64,28 @@ class MT7925AUDriver(Driver):
         self.transport._on_fatal = cb
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
-        """Cold-boot the firmware. Post-boot init + monitor entry land with M2."""
+        """Cold-boot the firmware, run post-boot device init, and enter monitor mode."""
         if progress_cb:
             progress_cb(0.1, "Uploading MT7925AU firmware...")
         self.transport.subscribe(self._on_raw_rx)
         if not await self.firmware.load_firmware():
             raise BringUpError("firmware", "MT7925AU firmware load failed")
         self.transport.start_rx()
-        # M2: post_boot_init + enter_monitor.
-        raise BringUpError("post-boot", "MT7925AU post-boot init not yet ported (M2)")
+
+        if progress_cb:
+            progress_cb(0.6, "Configuring device...")
+        state = await chip_init.post_boot_init(self.transport)
+        self.mac_address = state.caps.mac
+        self._antenna_mask = state.caps.antenna_mask
+
+        if progress_cb:
+            progress_cb(0.9, "Enabling monitor mode...")
+        await chip_init.enter_monitor(self.transport, self._channel)
+        if progress_cb:
+            progress_cb(1.0, "Done")
+        logger.info("MT7925AU monitor mode ready on channel %d (MAC %s).",
+                    self._channel, self.mac_address)
+        return True
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Tune to a 20 MHz channel via the monitor sniffer config (UNI SNIFFER, tag 1)."""

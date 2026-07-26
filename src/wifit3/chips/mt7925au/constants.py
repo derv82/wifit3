@@ -199,10 +199,21 @@ MT7925_RXD_SEQ_OFF  = 37
 # PATCH_SEM_CONTROL / PATCH_FINISH_REQ pull sizeof(rxd)-4, so the status byte is at 40.
 MT7925_RXD_STATUS_OFF = 40
 
-# RX descriptor (connac3, mt76_connac3_mac). rxd0 PKT_TYPE GENMASK(31,27), LENGTH GENMASK(15,0).
-MT_RXD0_LENGTH    = 0x0000FFFF   # GENMASK(15, 0)
+# RX descriptor (connac3, mt76_connac3_mac.h). rxd0 PKT_TYPE GENMASK(31,27), LENGTH GENMASK(15,0).
+MT_RXD0_LENGTH    = 0x0000FFFF   # GENMASK(15, 0) — total RX bytes (RXD + MPDU, FCS stripped)
 PKT_TYPE_RX_EVENT = 7            # MCU response / firmware event
 PKT_TYPE_NORMAL   = 2            # 802.11 frame
+# rxd1 group-present bits (each adds descriptor words before the MPDU), :38-42.
+MT_RXD1_NORMAL_GROUP_1 = 1 << 16
+MT_RXD1_NORMAL_GROUP_2 = 1 << 17
+MT_RXD1_NORMAL_GROUP_3 = 1 << 18
+MT_RXD1_NORMAL_GROUP_4 = 1 << 19
+MT_RXD1_NORMAL_GROUP_5 = 1 << 20
+# rxd2 HDR_OFFSET GENMASK(15,13): remove_pad = 2*this bytes of header padding, :57.
+MT_RXD2_NORMAL_HDR_OFFSET_SHIFT = 13
+MT_RXD2_NORMAL_HDR_OFFSET_MASK  = 0x7
+MT_RXD3_NORMAL_FCS_ERR = 1 << 24   # BIT(24), :80
+MT_PRXV_RCPI0 = 0xFF               # GENMASK(7,0) in rxv[3], :112 — RCPI to dBm
 
 # ===========================================================================
 # Post-boot init (mt7925_mac_init, mt792x_mac_init_band). Addresses/bits verbatim

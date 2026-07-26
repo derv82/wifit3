@@ -42,6 +42,41 @@ def classify(data: bytes) -> str:
 
 
 def decode_frame(data: bytes, antenna_mask: int):
-    """Strip the connac3 RX descriptor and return (mpdu_off, mpdu_end, rssi, fcs_err),
-    or None. Completed with the operational RX milestone."""
-    return None
+    """Strip the connac3 RX descriptor (mt7925_mac_fill_rx, mt7925/mac.c:354) and return
+    (mpdu_off, mpdu_end, rssi, fcs_err), or None on a malformed/too-short buffer.
+
+    The RXD is 8 dwords, plus 4 more per present GROUP (rxd1 bits 16-19) and 24 for
+    GROUP_5 inside GROUP_3. The MPDU begins at that offset + 2*remove_pad; the total RX
+    byte count (rxd0 LENGTH) is where it ends (the HW already stripped the FCS). RSSI is
+    RCPI0 from the GROUP_3 P-RXV word rxv[3]."""
+    if len(data) < 32:
+        return None
+    rxd0, rxd1, rxd2, rxd3 = struct.unpack_from("<IIII", data, 0)
+    length = rxd0 & MT_RXD0_LENGTH
+    if length > len(data):
+        length = len(data)
+    fcs_err = bool(rxd3 & MT_RXD3_NORMAL_FCS_ERR)
+    remove_pad = (rxd2 >> MT_RXD2_NORMAL_HDR_OFFSET_SHIFT) & MT_RXD2_NORMAL_HDR_OFFSET_MASK
+
+    off = 8 * 4                                   # base RXD: 8 dwords
+    rssi = None
+    if rxd1 & MT_RXD1_NORMAL_GROUP_4:
+        off += 4 * 4
+    if rxd1 & MT_RXD1_NORMAL_GROUP_1:
+        off += 4 * 4
+    if rxd1 & MT_RXD1_NORMAL_GROUP_2:
+        off += 4 * 4
+    if rxd1 & MT_RXD1_NORMAL_GROUP_3:
+        if off + 16 > len(data):
+            return None
+        v3 = struct.unpack_from("<I", data, off + 12)[0]   # rxv[3]
+        rcpi = v3 & MT_PRXV_RCPI0
+        rssi = (rcpi - 220) // 2                  # to_rssi: RCPI to dBm
+        off += 4 * 4
+        if rxd1 & MT_RXD1_NORMAL_GROUP_5:
+            off += 24 * 4
+
+    mpdu_off = off + 2 * remove_pad
+    if mpdu_off >= length:
+        return None
+    return mpdu_off, length, rssi, fcs_err
