@@ -127,6 +127,11 @@ from .constants import (
     B_BE_WMAC_RESP_REF_RATE_MASK, R_BE_PTCL_RRSR1, B_BE_RRSR_RATE_EN_MASK, B_BE_RRSR_CCK_MASK,
     B_BE_RSC_MASK, R_BE_PTCL_RRSR0, B_BE_RRSR_OFDM_MASK, B_BE_RRSR_HT_MASK, B_BE_RRSR_VHT_MASK,
     B_BE_RRSR_HE_MASK,
+    R_BE_RESPBA_CAM_CTRL, B_BE_BACAM_RST_MASK, S_BE_BACAM_RST_DONE, S_BE_BACAM_RST_ALL,
+    R_BE_DLK_PROTECT_CTL, B_BE_RX_DLK_CCA_TIME_MASK, TRXCFG_RMAC_CCA_TO, B_BE_RX_DLK_DATA_TIME_MASK,
+    TRXCFG_RMAC_DATA_TO, B_BE_RX_DLK_RST_EN, B_BE_RX_MPDU_MAX_LEN_MASK, R_BE_RCR, B_BE_BUSY_CHKSN,
+    R_BE_RX_PLCP_EXT_OPTION_1, B_BE_PLCP_SU_PSDU_LEN_SRC, PLD_RLS_MAX_PG, RX_MAX_LEN_UNIT,
+    RX_SPEC_MAX_LEN, RTW89_PLE_PG_256,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -1162,6 +1167,35 @@ def trxptcl_init(t, mac_idx: int, cv: int) -> None:
         t.write32_mask(R_BE_PTCL_RRSR1 + off, B_BE_RSC_MASK, 1)
 
 
+def _rst_bacam(t) -> None:
+    """rst_bacam_be: reset the whole response-BA CAM, poll reset-done. [SRC] mac_be.c:1504-1519."""
+    t.write32_mask(R_BE_RESPBA_CAM_CTRL, B_BE_BACAM_RST_MASK, S_BE_BACAM_RST_ALL)
+    for _ in range(PWR_POLL_ATTEMPTS):
+        if field_get(B_BE_BACAM_RST_MASK, t.read32(R_BE_RESPBA_CAM_CTRL)) == S_BE_BACAM_RST_DONE:
+            break
+
+
+def rmac_init(t, mac_idx: int) -> None:
+    """rmac_init_be (8922A): reset the BA-CAM (MAC0 only), set the RX dead-lock protect timers, the
+    RX MPDU max length (derived from the DBCC c0 RX quota and PLE page size), disable the VHT-SU
+    SIGB CRC check, and set busy-checksum + the SU PSDU-length source. [SRC] mac_be.c:1525-1587."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    if mac_idx == RTW89_MAC_0:
+        _rst_bacam(t)
+    val = t.read16(R_BE_DLK_PROTECT_CTL + off)
+    val = field_replace(val, B_BE_RX_DLK_DATA_TIME_MASK, TRXCFG_RMAC_DATA_TO)
+    val = field_replace(val, B_BE_RX_DLK_CCA_TIME_MASK, TRXCFG_RMAC_CCA_TO) | B_BE_RX_DLK_RST_EN
+    t.write16(R_BE_DLK_PROTECT_CTL + off, val & 0xFFFF)
+
+    c0_rx_qta = PLE_QT14_V1[6]                        # dle_info.c0_rx_qta = ple_min_qt.cma0_dma
+    rx_max_pg = min(c0_rx_qta, PLD_RLS_MAX_PG)
+    rx_max_len = min(rx_max_pg * RTW89_PLE_PG_256, RX_SPEC_MAX_LEN) // RX_MAX_LEN_UNIT
+    t.write32_mask(R_BE_RX_FLTR_OPT + off, B_BE_RX_MPDU_MAX_LEN_MASK, rx_max_len)
+    t.write8_clr(R_BE_PLCP_HDR_FLTR + off, B_BE_VHT_SU_SIGB_CRC_CHK)
+    t.write16_set(R_BE_RCR + off, B_BE_BUSY_CHKSN)
+    t.write16_set(R_BE_RX_PLCP_EXT_OPTION_1 + off, B_BE_PLCP_SU_PSDU_LEN_SRC)
+
+
 def cmac_init(t, mac_idx: int, cv: int) -> None:
     """cmac_init_be: the CMAC-side operating init (scheduler, addr-cam, rx-filter, cca/nav,
     spatial-reuse, tmac, trxptcl, rmac, resp-pktctl, com, ptcl, ...). cca_ctrl_init_be is a no-op.
@@ -1173,6 +1207,7 @@ def cmac_init(t, mac_idx: int, cv: int) -> None:
     spatial_reuse_init(t, mac_idx)
     tmac_init(t, mac_idx)
     trxptcl_init(t, mac_idx, cv)
+    rmac_init(t, mac_idx)
 
 
 def trx_init(t, cv: int) -> None:

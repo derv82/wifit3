@@ -546,6 +546,27 @@ B_BE_RRSR_HT_MASK = 0x0000FF00          # GENMASK(15, 8). reg.h:6653
 B_BE_RRSR_VHT_MASK = 0x00FF0000         # GENMASK(23, 16). reg.h:6652
 B_BE_RRSR_HE_MASK = 0xFF000000          # GENMASK(31, 24). reg.h:6651
 
+# rmac_init_be + rst_bacam_be (8922A). [SRC] mac_be.c:1504-1587, mac.c:2921.
+R_BE_RESPBA_CAM_CTRL = 0x1143C          # reg.h:8192
+B_BE_BACAM_RST_MASK = 0x3               # GENMASK(1, 0). reg.h:8203
+S_BE_BACAM_RST_DONE = 0                 # reg.h:8204
+S_BE_BACAM_RST_ALL = 2                  # reg.h:8206
+R_BE_DLK_PROTECT_CTL = 0x11402          # reg.h:8112
+B_BE_RX_DLK_CCA_TIME_MASK = 0x0000FF00  # GENMASK(15, 8). reg.h:8114
+TRXCFG_RMAC_CCA_TO = 32                 # reg.h:8115
+B_BE_RX_DLK_DATA_TIME_MASK = 0x000000F0 # GENMASK(7, 4). reg.h:8116
+TRXCFG_RMAC_DATA_TO = 15                # reg.h:8117
+B_BE_RX_DLK_RST_EN = 1 << 1             # reg.h:8120
+B_BE_RX_MPDU_MAX_LEN_MASK = 0x003F0000  # GENMASK(21, 16). reg.h:8151
+R_BE_RCR = 0x11400                      # reg.h:8099
+B_BE_BUSY_CHKSN = 1 << 15               # reg.h:8101
+R_BE_RX_PLCP_EXT_OPTION_1 = 0x11514     # reg.h:8293
+B_BE_PLCP_SU_PSDU_LEN_SRC = 1 << 8      # reg.h:8302
+PLD_RLS_MAX_PG = 127                    # mac_be.c:1521
+RX_MAX_LEN_UNIT = 512                   # mac_be.c:1522
+RX_SPEC_MAX_LEN = 11454 + 512           # mac_be.c:1523
+RTW89_PLE_PG_256 = 256                  # mac.h:611; dle_info.ple_pg_size for DBCC
+
 # Firmware-download preconfig (rtw89_mac_fwdl_preconfig_be). [SRC] mac_be.c:625-629, reg.h.
 R_BE_FW_AUTO_CAL_DELAY = 0x0188          # reg.h
 B_BE_WCPU_FW_DELAY_COUNT_VALID = 1 << 15  # reg.h
