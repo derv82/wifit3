@@ -13,7 +13,7 @@ from .constants import (
     R_BE_PAD_CTRL2, _LIBUSB_SPEED_SUPER, USB_SWITCH_DELAY, B_BE_MATCH_CNT,
     B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
     B_BE_USB3_FORCE, B_BE_USB2_FORCE, B_BE_FORCE_U3_CK, B_BE_FORCE_U2_CK, B_BE_FORCE_CLK_U2,
-    B_BE_USB3_GEN_MODE, B_BE_USB3_LANE_MODE,
+    B_BE_USB3_GEN_MODE, B_BE_USB3_LANE_MODE, BULKOUT_ID_H2C,
 )
 from .transport import RTL8922AUTransport
 
@@ -59,6 +59,7 @@ class RTL8922AUDriver(Driver):
         self.transport: Optional[RTL8922AUTransport] = None
         self._rx_cb: Optional[Callable] = None
         self._disconnect_cb: Optional[Callable[[], None]] = None
+        self._h2c_ep: Optional[int] = None
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8922AUDriver":
@@ -84,8 +85,19 @@ class RTL8922AUDriver(Driver):
             except (NotImplementedError, usb.core.USBError):
                 pass
             usb.util.claim_interface(self.dev, intf.bInterfaceNumber)
+            self._discover_bulkout(intf)
             return intf.bInterfaceNumber
         return None
+
+    def _discover_bulkout(self, intf) -> None:
+        """Map DMA channels to bulk-OUT endpoints: out_pipe is the interface's bulk-OUT endpoint
+        addresses in order; the H2C channel uses out_pipe[bulkout_id[DMA_H2C]]. [SRC] usb.c:1030-1056,
+        rtw8922au.c:27 (bulkout_id[DMA_H2C]=2)."""
+        out_pipe = [ep.bEndpointAddress for ep in intf
+                    if usb.util.endpoint_direction(ep.bEndpointAddress) == usb.util.ENDPOINT_OUT
+                    and usb.util.endpoint_type(ep.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK]
+        if len(out_pipe) > BULKOUT_ID_H2C:
+            self._h2c_ep = out_pipe[BULKOUT_ID_H2C]
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """Cold-boot bring-up: claim the vendor interface, run the USB mode switch, read the
@@ -99,7 +111,7 @@ class RTL8922AUDriver(Driver):
         mac.mac_pwr_on(self.transport, ver["cv"])
         # rtw89_chip_info_setup continues: wait_firmware_completion + fw_recognize are file-side
         # (no wire ops), then chip_efuse_info_setup -> mac_partial_init. [SRC] core.c:7367-7423.
-        mac.partial_init(self.transport)
+        mac.partial_init(self.transport, self._h2c_ep, ver["cv"])
         return True
 
     def _switch_usb_mode(self) -> None:

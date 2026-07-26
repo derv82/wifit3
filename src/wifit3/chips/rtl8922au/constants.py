@@ -306,6 +306,51 @@ B_BE_BOOT_REASON_MASK = 0x7      # GENMASK(2, 0). reg.h
 SECURE_BOOT_MALLOC_VALUE = 0x20248000  # 8922A NORMAL/WOWLAN. fw.c:1965
 B_BE_H2C_PATH_RDY = 1 << 1       # reg.h:4544
 B_BE_DLFW_PATH_RDY = 1 << 0      # reg.h:4545
+R_AX_HALT_H2C_CTRL = 0x0160      # reg.h; same address as R_BE_HALT_H2C_CTRL
+R_AX_HALT_C2H_CTRL = 0x0164      # reg.h; same address as R_BE_HALT_C2H_CTRL
+B_BE_WCPU_FWDL_STATUS_MASK = 0x3C000000  # GENMASK(29, 26). reg.h
+RTW89_FWDL_WCPU_FW_INIT_RDY = 7  # fw.h:18
+
+# Firmware file + H2C/fwdl packet build. [SRC] fw.c, fw.h, usb.c, txrx.h, rtw8922a.c/rtw8922au.c.
+FW_ASSET = "rtw8922a_fw-4.bin"   # multi-firmware file the capture loaded (fw_format 4)
+RTW89_MFW_SIG = 0xFF             # fw.h:4293
+RTW89_FW_NORMAL = 1             # enum rtw89_fw_type. fw.h
+FWDL_SECTION_PER_PKT_LEN = 2020  # fw.h:287 (AX part_size; BE reads it from the header)
+H2C_DESC_SIZE = 24               # sizeof(rtw89_rxdesc_short_v2). rtw8922a.c:3275
+H2C_HEADER_LEN = 8               # fw.h:4599
+RTW89_USB_MOD512_PADDING = 4     # usb.h:18
+BULKOUT_ID_H2C = 2               # bulkout_id[RTW89_DMA_H2C]. rtw8922au.c:27
+# TX descriptor dword0 (rtw89_build_txwd_fwcmd0_v2). [SRC] core.c:1892, txrx.h:490-495.
+BE_RXD_RPKT_LEN_MASK = 0x3FFF    # GENMASK(13, 0)
+BE_RXD_RPKT_TYPE_SHIFT = 24      # GENMASK(29, 24)
+RTW89_CORE_RX_TYPE_H2C = 13      # core.h:402
+RTW89_CORE_RX_TYPE_FWDL = 14     # core.h:403
+# H2C fwcmd header (rtw89_h2c_pkt_set_hdr_fwdl). [SRC] fw.c:1649-1666, fw.h:4599-4667.
+H2C_HDR_CAT_MAC = 0x1            # fw.h:4617
+H2C_CL_MAC_FWDL = 0x3           # fw.h:4666
+H2C_HDR_CLASS_SHIFT = 2          # H2C_HDR_CLASS = GENMASK(7, 2). fw.h:4601
+H2C_HDR_TOTAL_LEN_MASK = 0x3FFF  # GENMASK(13, 0). fw.h:4605
+# v1 firmware header fields. [SRC] fw.h:682-687.
+FW_HDR_V1_W5_HDR_SIZE_SHIFT = 16     # GENMASK(31, 16)
+FW_HDR_V1_W6_SEC_NUM_SHIFT = 8       # GENMASK(15, 8)
+FW_HDR_V1_W6_SEC_NUM_MASK = 0xFF00
+FW_HDR_V1_W6_DSP_CHKSUM = 1 << 24
+FW_HDR_V1_W7_PART_SIZE_MASK = 0xFFFF  # GENMASK(15, 0)
+FW_HDR_V1_W7_DYN_HDR = 1 << 16
+# v1 section header fields. [SRC] fw.h:697-706.
+FWSECTION_HDR_V1_W1_SEC_SIZE_MASK = 0xFFFFFF     # GENMASK(23, 0)
+FWSECTION_HDR_V1_W1_SECTIONTYPE_SHIFT = 24       # GENMASK(27, 24)
+FWSECTION_HDR_V1_W1_CHECKSUM = 1 << 28
+FWSECTION_HDR_V1_W2_MSSC_MASK = 0xFF             # GENMASK(7, 0)
+# Security-section / MSS pool. [SRC] fw.c:41,71-362, fw.h:286-287.
+FWDL_SECURITY_SECTION_TYPE = 9
+FWDL_SECTION_CHKSUM_LEN = 8
+FWDL_SECURITY_SIGLEN = 512
+FWDL_SECURITY_CHKSUM_LEN = 8
+FWDL_MSS_POOL_DEFKEYSETS_SIZE = 8
+FORMATTED_MSSC = 0xFF
+MSS_POOL_HDR_LEN = 32            # sizeof(rtw89_fw_mss_pool_hdr) without rmp_tbl[]. fw.h
+MSS_SIGNATURE = b"\x4d\x53\x53\x4b\x50\x4f\x4f\x4c"  # "MSSKPOOL". fw.c:41
 
 # XTAL_SI indirect register access. [SRC] mac.c:7179-7233, reg.h/mac.h.
 R_AX_WLAN_XTAL_SI_CTRL = 0x0270  # reg.h:268 (same address as the BE name)

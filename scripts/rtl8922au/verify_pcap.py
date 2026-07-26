@@ -240,6 +240,9 @@ def run(cap: str | None = None) -> int:
     replay = ReplayDev(ops)
     driver = RTL8922AUDriver.from_usb_device(replay, RTL8922AUDriver.SUPPORTED_IDS[0])
     driver._claim_vendor_interface = lambda: 0        # no live USB to claim
+    # The bulk-OUT endpoint is discovered from the interface descriptor on real hardware; here it
+    # is taken from the capture's first bulk-OUT op (the H2C/fwdl channel).
+    driver._h2c_ep = next((o["ep"] for o in ops if o["kind"] == "bulk"), None)
 
     diverged = None
     try:

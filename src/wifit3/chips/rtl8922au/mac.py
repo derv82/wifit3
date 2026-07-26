@@ -72,8 +72,8 @@ from .constants import (
     R_BE_SYS_CLK_CTRL, B_BE_CPU_CLK_EN, R_BE_SYS_CFG5,
     B_BE_WDT_WAKE_PCIE_EN, B_BE_WDT_WAKE_USB_EN, R_BE_SECURE_BOOT_MALLOC_INFO,
     R_BE_GPIO_MUXCFG, B_BE_BOOT_MODE, R_BE_BOOT_REASON, B_BE_BOOT_REASON_MASK,
-    SECURE_BOOT_MALLOC_VALUE, B_BE_H2C_PATH_RDY, B_BE_DLFW_PATH_RDY,
 )
+from . import firmware
 
 
 def field_replace(val: int, mask: int, field: int) -> int:
@@ -569,28 +569,16 @@ def fwdl_enable_wcpu(t, boot_reason: int, dlfw: bool, include_bb: bool) -> None:
     wcpu_on(t, boot_reason, dlfw)
 
 
-def fwdl_check_path_ready(t, h2c_or_fwdl: bool) -> None:
-    """rtw89_fwdl_check_path_ready_be: poll WCPU_FW_CTRL until the H2C (or DLFW) path is ready.
-    [SRC] mac_be.c:757-766."""
-    check = B_BE_H2C_PATH_RDY if h2c_or_fwdl else B_BE_DLFW_PATH_RDY
-    _poll32(t, R_BE_WCPU_FW_CTRL, lambda v: v & check)
-
-
-def fw_download(t) -> None:
-    """rtw89_fw_download(RTW89_FW_NORMAL, include_bb=False): disable the CPU, enable it for
-    download, then run the firmware-suit transfer. [SRC] fw.c:1948-2047, mac.c:4334.
-    fw_hdr_parser and fwdl_secure_idmem_share_mode (NULL on the 8922A) are software; the 8922A
-    secure-boot malloc write and the H2C path-ready poll precede the bulk-OUT transfer."""
+def fw_download(t, h2c_ep: int, cv: int) -> None:
+    """rtw89_fw_download(RTW89_FW_NORMAL, include_bb=False): park the CPU, enable it for download,
+    then transfer the firmware suit (mfw parse, header + section bulk-OUT, ready poll) via the
+    firmware module. [SRC] fw.c:1984-2047, mac.c:4334."""
     disable_cpu(t)
     fwdl_enable_wcpu(t, 0, True, False)
-    t.write32(R_BE_SECURE_BOOT_MALLOC_INFO, SECURE_BOOT_MALLOC_VALUE)
-    fwdl_check_path_ready(t, True)
-    # TODO: next milestone. download_hdr + download_main (bulk-OUT firmware sections) + the
-    # fw_check_rdy poll. Needs the packed-firmware parse (rtw89_fw_hdr_parser_v1) and the
-    # TX-descriptor + H2C-fwdl packet build. [SRC] fw.c:1721-1908.
+    firmware.download(t, h2c_ep, cv)
 
 
-def partial_init(t) -> None:
+def partial_init(t, h2c_ep: int, cv: int) -> None:
     """rtw89_mac_partial_init(include_bb=False) as reached from rtw89_chip_efuse_info_setup:
     the pre-firmware DMAC bring-up, then the firmware download. [SRC] mac.c:4307-4338.
     include_bb is False here, so chip_bb_preinit is skipped; the USB hci mac_pre_init is a
@@ -601,4 +589,4 @@ def partial_init(t) -> None:
     dle_init(t)
     hfc_init(t)
     fwdl_preconfig(t)
-    fw_download(t)
+    fw_download(t, h2c_ep, cv)

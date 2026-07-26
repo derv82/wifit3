@@ -124,6 +124,11 @@ class RTL8922AUTransport:
         val = (self.read16(addr) & ~mask & 0xFFFF) | ((data << shift) & mask)
         self.write16(addr, val)
 
+    def bulk_out(self, endpoint: int, data: bytes) -> None:
+        """One bulk-OUT transfer (firmware chunk / H2C). rtw89_usb_write_port submits a URB to
+        the DMA channel's OUT pipe. [SRC] usb.c:264-289."""
+        self.dev.write(endpoint, data, RTW89_USB_VENDORREQ_TIMEOUT_MS)
+
     def _read_cmac(self, addr: int) -> int:
         """rtw89_usb_read_cmac: read a CMAC-window register, re-enabling its clock and
         re-reading while it returns R32_DEAD. [SRC] usb.c:83-108."""
