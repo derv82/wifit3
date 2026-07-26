@@ -299,6 +299,13 @@ def uni_bss_info(active=True, bssid=b"\x00" * 6, conn_type=CONNECTION_INFRA_AP):
     return MCU_UNI_CMD(MCU_UNI_CMD_BSS_INFO_UPDATE), hdr + basic
 
 
+def uni_bss_pm_disable():
+    """mt7925_mcu_set_bss_pm(enable=false) (mt7925/mcu.c:1576) — BSS_INFO_UPDATE with a
+    PM_DISABLE tlv. hdr{bss_idx=0, pad[3]} + {tag=PM_DISABLE, len=4}."""
+    return (MCU_UNI_CMD(MCU_UNI_CMD_BSS_INFO_UPDATE),
+            struct.pack("<B3xHH", 0, UNI_BSS_INFO_PM_DISABLE, 4))
+
+
 def set_sniffer(enable, band_idx=0):
     """mt7925_mcu_set_sniffer — MCU_UNI_CMD(SNIFFER) enable TLV (tag 0).
     hdr{band_idx, pad[3]} + tlv{tag=ENABLE, len=8, enable, pad[3]}."""

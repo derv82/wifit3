@@ -289,7 +289,8 @@ UNI_WSYS_CONFIG_FW_LOG_CTRL = 0   # :129 (first in enum)
 UNI_EFUSE_BUFFER_MODE       = 2   # :135 (UNI_EFUSE_ACCESS=1 first)
 UNI_SNIFFER_ENABLE = 0            # :196
 UNI_SNIFFER_CONFIG = 1            # :197
-UNI_BSS_INFO_BASIC = 0            # mt76_connac_mcu.h:1363
+UNI_BSS_INFO_BASIC       = 0      # mt76_connac_mcu.h:1363
+UNI_BSS_INFO_PM_DISABLE  = 27     # mt76_connac_mcu.h:1384
 DEV_INFO_ACTIVE    = 0            # mt76_connac_mcu.h:1009 (first in enum)
 
 # GET_NIC_CAPAB reply TLV tags (mt76_connac_mcu.h enum).

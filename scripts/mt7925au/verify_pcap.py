@@ -32,7 +32,7 @@ from wifit3.chips.mt7925au.constants import (  # noqa: E402
     MCU_UNI_CMD_BAND_CONFIG, MCU_UNI_CMD_CHIP_CONFIG, MCU_UNI_CMD_SET_DOMAIN_INFO,
     MCU_UNI_CMD_SET_POWER_LIMIT, UNI_SNIFFER_ENABLE, UNI_SNIFFER_CONFIG,
     UNI_BAND_CONFIG_SET_MAC80211_RX_FILTER, UNI_BAND_CONFIG_RTS_THRESHOLD,
-    UNI_BSS_INFO_BASIC,
+    UNI_BSS_INFO_BASIC, UNI_BSS_INFO_PM_DISABLE,
 )
 from wifit3.chips.mt7925au.firmware import MT7925AUFirmwareLoader  # noqa: E402
 from wifit3.chips.mt7925au.transport import MT7925AUTransport  # noqa: E402
@@ -178,8 +178,10 @@ def _decode_operational_mcu(f: bytes):
         return mt_mcu.uni_dev_info(True, bytes(p[10:16]))
     if cid == MCU_UNI_CMD_BSS_INFO_UPDATE:
         tag = p[4] | (p[5] << 8)
+        if tag == UNI_BSS_INFO_PM_DISABLE:
+            return mt_mcu.uni_bss_pm_disable()
         if tag != UNI_BSS_INFO_BASIC or len(p) < 36:
-            return None                          # secondary BSS tlv: frontier
+            return None                          # other secondary BSS tlv: frontier
         conn_type = struct.unpack_from("<I", p, 12)[0]
         return mt_mcu.uni_bss_info(True, bytes(p[18:24]), conn_type=conn_type)
     if cid == MCU_UNI_CMD_SNIFFER:
@@ -191,8 +193,8 @@ def _decode_operational_mcu(f: bytes):
     if cid == MCU_UNI_CMD_BAND_CONFIG:
         tag = p[4] | (p[5] << 8)
         if tag == UNI_BAND_CONFIG_SET_MAC80211_RX_FILTER:
-            fif = struct.unpack_from("<I", p, 12)[0]
-            return mt_mcu.set_rxfilter(fif)
+            fif, bit_map = struct.unpack_from("<II", p, 12)
+            return mt_mcu.set_rxfilter(fif, bit_map, p[20])
         if tag == UNI_BAND_CONFIG_RTS_THRESHOLD:
             return mt_mcu.set_rts_thresh(struct.unpack_from("<I", p, 8)[0])
     if cid == MCU_UNI_CMD_CHIP_CONFIG:
