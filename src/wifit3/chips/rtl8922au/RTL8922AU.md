@@ -6,7 +6,7 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 4265/163814 driver ops reproduced and committed (capture-1; 4286/4300 on
+Cold-boot bring-up, 4307/163814 driver ops reproduced and committed (capture-1; 4328/4342 on
 capture-2/3, poll-count variance only). `verify_pcap` now walks both VENQT control ops and
 bulk-OUT ops; all three captures stop at the same frontier. What is ported:
 - USB register-access transport (`rtw89_usb_vendorreq` + read/write ops + `read_cmac`), the
@@ -23,10 +23,15 @@ bulk-OUT ops; all three captures stop at the same frontier. What is ported:
   header + all 212 section packets byte-match. Blob in `assets/rtw8922a_fw-4.bin` (see FIRMWARE.md).
 - `parse_efuse_map` (physical 0x1300 dump + USB MAC read from 0x4078) + `parse_phycap_map`
   (0x38 dump at 0x1700). The RF/board logical extraction is deferred (software, no wire ops).
+- `setup_phycap` via the **register H2C/C2H mailbox** (`firmware.msg_reg`: H2CREG/C2HREG at
+  0x7140-0x7164, nibble counters at 0x1F5), reading phy-cap part0 + part1 from the running fw.
 
-Frontier: op #4274, `read 0x68` (a third `cnv_efuse_state` opening another efuse-style dump; this
-is inside `rtw89_mac_setup_phycap` / `rtw89_mac_read_phycap`, the H2C+phycap query to the running
-firmware). MAC init, RF/BB init, channel tune, and TX are not yet ported.
+Frontier: op #4316, `read 0x40` then a run of `XTAL_SI` writes at 0x270 (xtal/analog config),
+then FEN_RST/ANAPAR touches. This is the tail of `rtw89_chip_info_setup` (`chip_data_setup` /
+`core_setup_rfe_parms`, which sets the efuse xtal cap via `rtw89_mac_write_xtal_si`), which ends
+with `rtw89_mac_pwr_off`. After that the interface-up path `rtw89_core_start` -> `rtw89_mac_init`
+re-powers and does the full MAC/BB/RF init. MAC init, RF/BB init, channel tune, and TX are not
+yet ported.
 
 ### Gotchas found while porting (not obvious from a single read)
 
@@ -47,6 +52,9 @@ firmware). MAC init, RF/BB init, channel tune, and TX are not yet ported.
   merged OR condition ends the FreeRTOS poll early on some captures).
 - pcap_slicer maps frames 1-178 to enumeration (the 9 waived ops); the whole register bring-up
   runs under the first `airmon-ng start` phase. Bulk-OUT ep 0x07 = `out_pipe[bulkout_id[H2C]=2]`.
+- The register H2C/C2H mailbox counters live in nibbles of 0x1F5 (h2c=low, c2h=high) and are
+  monotonic per session (reset to 0 by fw download). `transport` holds `h2c_counter`/`c2h_counter`.
+  `rtw89_fw_msg_reg` is data-table glue (not a `_be` pointer); only `cnv_efuse_state` is.
 
 ## Source
 
@@ -90,18 +98,46 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #4274)
+## Next (from op #4316)
 
-`rtw89_mac_setup_phycap` (mac.c:3222-3335): `setup_phycap_part0`/`part1` call
-`rtw89_mac_read_phycap`, an H2C query to the now-running firmware whose C2H reply is read back;
-the frontier's `cnv_efuse_state`/dump-shaped ops belong to that path. This is the first H2C
-*command* (not fwdl): port `rtw89_h2c_tx` for a normal H2C (via `rtw89_h2c_pkt_set_hdr`, not the
-fwdl header) and the C2H read. Then `rtw89_core_setup_phycap` (sw), `hci_mac_pre_deinit` (USB
-no-op), and chip_info_setup finishes with `rtw89_fw_recognize_elements` (BB/RF firmware element
-tables from the file) + `rtw89_mac_pwr_off`. After that the real `rtw89_core_start` path runs
-`rtw89_mac_init` (DMAC/CMAC full init), BB/RF init + calibration, channel tune, and monitor RX.
-Keep verifying each against all three captures; the RF/board logical-efuse extraction deferred in
-`parse_efuse_map` will be needed once RF init reads `efuse->rfe_type` etc.
+The frontier is the tail of `rtw89_chip_info_setup` (core.c:7367): after `chip_efuse_info_setup`
+returns it runs `rtw89_fw_recognize_elements` (BB/RF element tables parsed from the fw file, no
+wire ops), `rtw89_chip_board_info_setup`, `rtw89_chip_data_setup`, `rtw89_core_setup_rfe_parms`,
+then `out: rtw89_mac_pwr_off`. The op #4316 `read 0x40` + XTAL_SI run at 0x270 is the xtal-cap /
+analog write done here (via `rtw89_mac_write_xtal_si`, already ported as `firmware`/`mac` has the
+xtal helper; reuse `mac.write_xtal_si`). Trace which of board/data-setup emits those XTAL_SI ops
+and port it, then the `mac_pwr_off` sequence (`rtw8922a_pwr_off_func`, rtw8922a.c:636).
+
+After chip_info_setup, the interface-up path is the big one: `rtw89_ops_start` -> `rtw89_core_start`
+-> `rtw89_mac_init` (a *second* `pwr_on`, then full DMAC/CMAC init, TRX, DLE in the operating
+`SCC` qta-mode this time not DLFW), then BB/RF init + calibration (`rtw8922a` RFK tables), the
+channel tune, and monitor-mode RX enable. Watch for the second `pwr_on` and a `dle_init` with the
+SCC config (needs the SCC dle_mem entries: `wde_size0_v1`, `ple_size0_v1`, `wde_qt0_v1`,
+`ple_qt0/qt1` etc., a generalization of the DLFW-only tables in `constants.py`). The deferred
+RF/board logical-efuse extraction (`efuse->rfe_type`, xtal_cap, gain/tssi in `parse_efuse_map`,
+and the phy-cap parse in `setup_phycap`) will be needed once RF init reads those values.
+
+## Working efficiently (notes for a fresh-context agent)
+
+The port loop that has worked: read the source function -> grep the exact register/bit values
+(`grep -m1 "define SYM " reg.h`) -> port it citing `file:line` -> `uv run python
+scripts/verify_pcap.py rtl8922au` -> the FRONTIER/DIVERGENCE trace names the next op or the exact
+mismatch -> fix -> commit each milestone. Keep milestones small; commit when all three captures
+advance to the same frontier.
+
+To keep context low:
+- **Delegate large source-mapping to a subagent** (general-purpose). It worked well for the H2C
+  mailbox: ask for a tight spec (function logic in order + a register/value table with `file:line`
+  + how payload words are built), and port from the returned spec instead of reading five files
+  yourself. Good candidates ahead: `rtw89_mac_init` (huge), the BB/RF init + RFK tables.
+- Use a tiny scratch dumper (recreate `/tmp/dop.py`: import `scripts/rtl8922au/verify_pcap`,
+  `build_ops`, print a mixed ctrl+bulk op window) to see the exact wire ops around a frontier
+  without re-reading the pcap by hand. Run it with `uv run` from the repo root (a leading `cd`
+  elsewhere breaks the venv).
+- Simulate before you port when bytes are involved (the fw-download packet build was validated in
+  a throwaway script against the captured frames before writing `firmware.py`). Cheaper than
+  iterating the real port.
+- Don't re-read files you just wrote; the verify tool is the source of truth for correctness.
 
 ## Style
 
@@ -127,3 +163,5 @@ describing them, no jargon. No em-dashes and none of the banned words anywhere; 
   packet build, section bulk-OUT, ready polls). 521 ops. Blob `assets/rtw8922a_fw-4.bin`.
 - 2026-07-26 M7: `parse_efuse_map` (0x1300 dump + USB MAC read) + `parse_phycap_map` (0x38 dump).
   4265 ops. Frontier at `setup_phycap` (`rtw89_mac_read_phycap` H2C next).
+- 2026-07-26 M8: register H2C/C2H mailbox (`rtw89_fw_msg_reg`) + `setup_phycap` (phy-cap part0/1
+  query to the running fw). 4307 ops. Frontier at chip_info_setup tail (XTAL_SI / data-setup).
