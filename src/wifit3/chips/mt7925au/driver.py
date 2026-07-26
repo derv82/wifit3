@@ -63,11 +63,50 @@ class MT7925AUDriver(Driver):
     def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
         self.transport._on_fatal = cb
 
+    def _detect_warm(self) -> bool:
+        """True if firmware is already running (FW_N9_RDY set) from a prior session. Claims
+        the vendor interface for register access but does NOT clear-halt or reset — a warm
+        chip must not be cold-booted (mcu_power_on would poison its pipes on WinUSB)."""
+        self.firmware._claim_vendor_interface(clear_halts=False)
+        try:
+            misc = self.transport.read_reg32(MT_CONN_ON_MISC)
+        except usb.core.USBError:
+            return False
+        return (misc & MT_TOP_MISC2_FW_N9_RDY) != 0
+
+    async def _warm_reattach(self, progress_cb: Optional[ProgressCallback]) -> bool:
+        """Light reattach to firmware already running in monitor mode. Re-post RX and
+        re-read the card MAC; if that MCU query fails, the warm chip's bulk pipes are
+        wedged (a WinUSB fresh-handle hazard userland cannot always recover), so ask for
+        a replug. A full DMA-resume reattach (mt7921u_resume model) is a TODO."""
+        logger.info("MT7925AU warm reattach (firmware already running)...")
+        if progress_cb:
+            progress_cb(0.5, "Reattaching to running firmware...")
+        self.transport.start_rx()
+        resp = await self.transport.send_mcu_command(*mcu.get_nic_capability())
+        caps = mcu.parse_nic_capability(resp or b"")
+        if not caps.mac:
+            raise BringUpError("warm-wedged", "The chip is warm and its bulk pipes are "
+                               "wedged. Please unplug, wait a few seconds, replug, and retry.")
+        self.mac_address = caps.mac
+        self._antenna_mask = caps.antenna_mask
+        await self.set_channel(self._channel)
+        self.is_warm = True
+        if progress_cb:
+            progress_cb(1.0, "Done")
+        logger.info("MT7925AU warm reattach ready on channel %d (MAC %s).",
+                    self._channel, self.mac_address)
+        return True
+
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
-        """Cold-boot the firmware, run post-boot device init, and enter monitor mode."""
+        """Cold-boot the firmware and enter monitor mode, or light-reattach if firmware is
+        already running (warm)."""
+        self.transport.subscribe(self._on_raw_rx)
+        if self._detect_warm():
+            return await self._warm_reattach(progress_cb)
+
         if progress_cb:
             progress_cb(0.1, "Uploading MT7925AU firmware...")
-        self.transport.subscribe(self._on_raw_rx)
         if not await self.firmware.load_firmware():
             raise BringUpError("firmware", "MT7925AU firmware load failed")
         self.transport.start_rx()
