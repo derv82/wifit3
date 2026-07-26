@@ -176,6 +176,40 @@ B_BE_RMAC_EN = 1 << 0
 B_BE_TXTIME_EN = 1 << 8
 B_BE_RESP_PKTCTL_EN = 1 << 7
 
+# Second power-on's mac_func_en (rtw89_mac_func_en_be, cmac_pwr_en_be, cmac_func_en_be).
+# [SRC] mac_be.c:804-969, reg.h.
+RTW89_MAC_0 = 0                          # core.h rtw89_mac_idx
+RTW89_MAC_1 = 1
+RTW89_MAC_BE_BAND_REG_OFFSET = 0x4000    # mac.h:591; reg_by_idx offset for CMAC1 (band 1)
+R_BE_AFE_CTRL1 = 0x0024                  # reg.h:3958
+B_BE_R_SYM_WLCMAC0_ALL_EN = 0x1F000000   # BIT(24..28). reg.h:3963
+B_BE_R_SYM_WLCMAC1_ALL_EN = 0x0000001F   # BIT(0..4). reg.h:3984
+B_BE_R_SYM_ISO_CMAC12PP = 1 << 25        # reg.h:4138
+B_BE_R_SYM_ISO_CMAC02PP = 1 << 24        # reg.h:4139
+B_BE_CMAC1_FEN = 1 << 17                 # reg.h:4144
+B_BE_CMAC0_FEN = 1 << 16                 # reg.h:4145
+R_BE_CK_EN = 0x10004                     # reg.h:6587
+B_BE_CMAC_CKEN = 1 << 30                 # reg.h:6589
+B_BE_TXTIME_CKEN = 1 << 8                # reg.h:6592
+B_BE_RESP_PKTCTL_CKEN = 1 << 7           # reg.h:6593
+B_BE_SIGB_CKEN = 1 << 6                  # reg.h:6594
+B_BE_PHYINTF_CKEN = 1 << 5               # reg.h:6595
+B_BE_CMAC_DMA_CKEN = 1 << 4              # reg.h:6596
+B_BE_PTCLTOP_CKEN = 1 << 3               # reg.h:6597
+B_BE_SCHEDULER_CKEN = 1 << 2             # reg.h:6598
+B_BE_TMAC_CKEN = 1 << 1                  # reg.h:6599
+B_BE_RMAC_CKEN = 1 << 0                  # reg.h:6600
+B_BE_CK_EN_SET = (B_BE_CMAC_CKEN | B_BE_PHYINTF_CKEN | B_BE_CMAC_DMA_CKEN
+                  | B_BE_PTCLTOP_CKEN | B_BE_SCHEDULER_CKEN | B_BE_TMAC_CKEN
+                  | B_BE_RMAC_CKEN | B_BE_TXTIME_CKEN | B_BE_RESP_PKTCTL_CKEN
+                  | B_BE_SIGB_CKEN)      # reg.h:6587
+B_BE_CMAC_CRPRT = 1 << 31                # reg.h:6557
+B_BE_CMAC_FUNC_EN_SET = (B_BE_CMAC_EN | B_BE_CMAC_TXEN | B_BE_CMAC_RXEN
+                         | B_BE_PHYINTF_EN | B_BE_CMAC_DMA_EN | B_BE_PTCLTOP_EN
+                         | B_BE_SCHEDULER_EN | B_BE_TMAC_EN | B_BE_RMAC_EN
+                         | B_BE_CMAC_CRPRT | B_BE_TXTIME_EN | B_BE_RESP_PKTCTL_EN
+                         | B_BE_SIGB_EN)  # reg.h:6581
+
 # read_poll_timeout budget for the power-on polls (kernel timeout_us/sleep_us ~= 3000). [SRC] mac_be.c.
 PWR_POLL_ATTEMPTS = 3000
 

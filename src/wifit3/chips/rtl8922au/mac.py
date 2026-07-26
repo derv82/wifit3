@@ -49,6 +49,10 @@ from .constants import (
     B_BE_SOP_EASWR, B_BE_XTAL_OFF_A_DIE,
     R_BE_GPIO8_15_FUNC_SEL, B_BE_PINMUX_GPIO9_FUNC_SEL_MASK, RFKILL_PINMUX_GPIO9_DATA,
     R_BE_GPIO_EXT_CTRL, B_BE_GPIO_MOD_9, B_BE_GPIO_IO_SEL_9, B_BE_GPIO_IN_9,
+    RTW89_MAC_0, RTW89_MAC_1, RTW89_MAC_BE_BAND_REG_OFFSET, R_BE_AFE_CTRL1,
+    B_BE_R_SYM_WLCMAC0_ALL_EN, B_BE_R_SYM_WLCMAC1_ALL_EN,
+    B_BE_R_SYM_ISO_CMAC02PP, B_BE_R_SYM_ISO_CMAC12PP, B_BE_CMAC0_FEN, B_BE_CMAC1_FEN,
+    R_BE_CK_EN, B_BE_CK_EN_SET, B_BE_CMAC_FUNC_EN_SET,
     R_BE_HCI_FUNC_EN, B_BE_HCI_TXDMA_EN, B_BE_HCI_RXDMA_EN,
     R_BE_HAXI_INIT_CFG1, B_BE_DMA_MODE_MASK, S_BE_DMA_MOD_USB, B_BE_STOP_AXI_MST,
     B_BE_TXDMA_EN, B_BE_RXDMA_EN, R_BE_HAXI_DMA_STOP1, B_BE_TX_STOP1_MASK,
@@ -370,19 +374,62 @@ def update_scoreboard(t, val: int) -> None:
     t.write8(R_BE_SCOREBOARD + 3, val)
 
 
-def mac_pwr_on(t, cv: int) -> None:
+def mac_pwr_on(t, cv: int, probe_done: bool = False) -> None:
     """rtw89_mac_pwr_on -> rtw89_mac_power_switch(on=True): boot-mode handoff, reset the power
     state, run the chip power-on sequence, then the first-probe efuse reads and coex notify.
-    [SRC] mac.c:1586-1599, 1521-1568."""
+    [SRC] mac.c:1586-1599, 1521-1568. probe_done marks the interface-up re-power, where
+    RTW89_FLAG_PROBE_DONE is set (usb.c:1320), so the efuse-read tail is skipped."""
     power_switch_boot_mode(t)
     reset_pwr_state_be(t)
     pwr_on_func(t, cv)
     # power_switch(on=True) tail. On first probe (RTW89_FLAG_PROBE_DONE unset) the efuse reads
     # run; efuse_read_ecv can update the cut used by the secure-boot dump. [SRC] mac.c:1557-1568.
-    cv = efuse_read_ecv(t, cv)
-    efuse_read_fw_secure(t, cv)
+    if not probe_done:
+        cv = efuse_read_ecv(t, cv)
+        efuse_read_fw_secure(t, cv)
     update_scoreboard(t, MAC_AX_NOTIFY_TP_MAJOR)
     # rtw89_mac_clr_aon_intr -> clr_aon_intr_be is PCIE-only; a no-op on USB. [SRC] mac_be.c:2064.
+
+
+def cmac_pwr_en(t, mac_idx: int) -> None:
+    """cmac_pwr_en_be(en=True): power the CMAC analog and release its port isolation.
+    [SRC] mac_be.c:804-857. The CMACn power-cut flag starts clear, so the enable arm runs."""
+    if mac_idx == RTW89_MAC_0:
+        t.write32_set(R_BE_AFE_CTRL1, B_BE_R_SYM_WLCMAC0_ALL_EN)
+        t.write32_clr(R_BE_FEN_RST_ENABLE, B_BE_R_SYM_ISO_CMAC02PP)
+        t.write32_set(R_BE_FEN_RST_ENABLE, B_BE_CMAC0_FEN)
+    else:
+        t.write32_set(R_BE_AFE_CTRL1, B_BE_R_SYM_WLCMAC1_ALL_EN)
+        t.write32_clr(R_BE_FEN_RST_ENABLE, B_BE_R_SYM_ISO_CMAC12PP)
+        t.write32_set(R_BE_FEN_RST_ENABLE, B_BE_CMAC1_FEN)
+
+
+def cmac_func_en(t, mac_idx: int) -> None:
+    """cmac_func_en_be(en=True): enable the CMAC clocks then the function bits. reg_by_idx adds
+    the band-1 offset for CMAC1. [SRC] mac_be.c:860-900, mac.h:1183-1188."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    t.write32_set(R_BE_CK_EN + off, B_BE_CK_EN_SET)
+    t.write32_set(R_BE_CMAC_FUNC_EN + off, B_BE_CMAC_FUNC_EN_SET)
+
+
+def mac_func_en(t) -> None:
+    """rtw89_mac_func_en_be: dmac and cmac-share func-en are no-ops on the 8922A; read
+    FEN_RST_ENABLE and, per the CMAC0/1 FEN bits it reports, power then enable those CMACs.
+    [SRC] mac_be.c:934-969. The cold-boot capture reports both CMAC0 and CMAC1 enabled."""
+    val = t.read32(R_BE_FEN_RST_ENABLE)
+    if val & B_BE_CMAC0_FEN:
+        cmac_pwr_en(t, RTW89_MAC_0)
+        cmac_func_en(t, RTW89_MAC_0)
+    if val & B_BE_CMAC1_FEN:
+        cmac_pwr_en(t, RTW89_MAC_1)
+        cmac_func_en(t, RTW89_MAC_1)
+
+
+def mac_preinit(t, cv: int) -> None:
+    """rtw89_mac_preinit: the interface-up re-power (probe done, so the efuse-read tail is
+    skipped) then the 8922A mac_func_en. [SRC] mac.c:4341-4357."""
+    mac_pwr_on(t, cv, probe_done=True)
+    mac_func_en(t)
 
 
 def pwr_off_func(t) -> None:

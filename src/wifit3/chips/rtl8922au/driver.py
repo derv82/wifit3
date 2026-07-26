@@ -123,6 +123,9 @@ class RTL8922AUDriver(Driver):
         # rtw89_core_register_hw tail: the rfkill GPIO polling init closes out probe.
         # [SRC] core.c:7582.
         mac.rfkill_polling_init(self.transport)
+        # Interface-up path: rtw89_ops_start -> rtw89_core_start -> rtw89_mac_preinit (the second
+        # pwr_on, then mac_func_en). [SRC] core.c:6626-6635, mac.c:4341-4357.
+        mac.mac_preinit(self.transport, ver["cv"])
         return True
 
     def _switch_usb_mode(self) -> None:
