@@ -46,7 +46,16 @@ from .constants import (
     EF_FV_OFSET_BE_V1, EF_CV_MASK, EF_CV_INV,
     EFUSE_SEC_BE_START, EFUSE_SEC_BE_SIZE, EFUSE_SB_CRYP_SEL_ADDR, EFUSE_SB_CRYP_SEL_DEFAULT,
     R_BE_SCOREBOARD, MAC_AX_NOTIFY_TP_MAJOR,
+    R_BE_HCI_FUNC_EN, B_BE_HCI_TXDMA_EN, B_BE_HCI_RXDMA_EN,
+    R_BE_HAXI_INIT_CFG1, B_BE_DMA_MODE_MASK, S_BE_DMA_MOD_USB, B_BE_STOP_AXI_MST,
+    B_BE_TXDMA_EN, B_BE_RXDMA_EN, R_BE_HAXI_DMA_STOP1, B_BE_TX_STOP1_MASK,
+    R_BE_DMAC_TABLE_CTRL, B_BE_DMAC_ADDR_MODE,
 )
+
+
+def field_replace(val: int, mask: int, field: int) -> int:
+    """u32_replace_bits: overwrite `mask`'s field of `val` with `field`."""
+    return (val & ~mask & 0xFFFFFFFF) | field_prep(mask, field)
 
 
 def _shift(mask: int) -> int:
@@ -345,3 +354,41 @@ def mac_pwr_on(t, cv: int) -> None:
     efuse_read_fw_secure(t, cv)
     update_scoreboard(t, MAC_AX_NOTIFY_TP_MAJOR)
     # rtw89_mac_clr_aon_intr -> clr_aon_intr_be is PCIE-only; a no-op on USB. [SRC] mac_be.c:2064.
+
+
+def ctrl_hci_dma_trx(t, enable: bool) -> None:
+    """rtw89_mac_ctrl_hci_dma_trx: toggle HCI TX+RX DMA on hci_func_en_addr (R_BE_HCI_FUNC_EN
+    for the 8922A). [SRC] mac.h:1613-1624, rtw8922a.c:3274."""
+    bits = B_BE_HCI_TXDMA_EN | B_BE_HCI_RXDMA_EN
+    if enable:
+        t.write32_set(R_BE_HCI_FUNC_EN, bits)
+    else:
+        t.write32_clr(R_BE_HCI_FUNC_EN, bits)
+
+
+def hci_func_en(t) -> None:
+    """rtw89_mac_hci_func_en_be: enable HCI TX+RX DMA. [SRC] mac_be.c:369-373."""
+    t.write32_set(R_BE_HCI_FUNC_EN, B_BE_HCI_TXDMA_EN | B_BE_HCI_RXDMA_EN)
+
+
+def dmac_func_pre_en(t) -> None:
+    """rtw89_mac_dmac_func_pre_en_be (USB arm): select USB DMA mode, enable TX/RX DMA and the
+    AXI master, release the TX stop channels, set DMAC table addressing. [SRC] mac_be.c:375-410.
+    Only the USB and RTL8922A branches are taken here; PCIE/SDIO and the _V1 mask are elsewhere."""
+    val = t.read32(R_BE_HAXI_INIT_CFG1)
+    val = field_replace(val, B_BE_DMA_MODE_MASK, S_BE_DMA_MOD_USB)
+    val = (val & ~B_BE_STOP_AXI_MST & 0xFFFFFFFF) | B_BE_TXDMA_EN | B_BE_RXDMA_EN
+    t.write32(R_BE_HAXI_INIT_CFG1, val)
+    t.write32_clr(R_BE_HAXI_DMA_STOP1, B_BE_TX_STOP1_MASK)   # chip_id == RTL8922A
+    t.write32_set(R_BE_DMAC_TABLE_CTRL, B_BE_DMAC_ADDR_MODE)
+
+
+def partial_init(t) -> None:
+    """rtw89_mac_partial_init(include_bb=False) as reached from rtw89_chip_efuse_info_setup:
+    the pre-firmware DMAC bring-up. [SRC] mac.c:4307-4333, core.c:7268-7273.
+    include_bb is False here, so chip_bb_preinit is skipped."""
+    ctrl_hci_dma_trx(t, True)
+    hci_func_en(t)
+    dmac_func_pre_en(t)
+    # TODO: next milestones. dle_init + hfc_init [SRC] mac.c:4266-4276; then the USB
+    # hci mac_pre_init [SRC] usb.c:797; then rtw89_mac_fwdl_preconfig [SRC] mac.c:4332.

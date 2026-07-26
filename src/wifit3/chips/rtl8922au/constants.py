@@ -202,6 +202,21 @@ EFUSE_SB_CRYP_SEL_DEFAULT = 0xFFFF  # efuse.h
 R_BE_SCOREBOARD = 0x00AC         # reg.h
 MAC_AX_NOTIFY_TP_MAJOR = 0x81    # mac.h
 
+# DMAC pre-init (rtw89_mac_partial_init -> dmac_pre_init). [SRC] mac.c:4258-4279, mac_be.c:369-410.
+R_BE_HCI_FUNC_EN = 0x7880        # reg.h:4861; 8922a hci_func_en_addr (rtw8922a.c:3274)
+B_BE_HCI_TXDMA_EN = 1 << 0       # reg.h; same bit as B_AX_HCI_TXDMA_EN
+B_BE_HCI_RXDMA_EN = 1 << 1       # reg.h; same bit as B_AX_HCI_RXDMA_EN
+R_BE_HAXI_INIT_CFG1 = 0xB000     # reg.h:6283
+B_BE_DMA_MODE_MASK = 0x0700      # GENMASK(10, 8). reg.h
+S_BE_DMA_MOD_USB = 0x4           # reg.h
+B_BE_STOP_AXI_MST = 1 << 7       # reg.h
+B_BE_TXDMA_EN = 1 << 4           # reg.h
+B_BE_RXDMA_EN = 1 << 5           # reg.h
+R_BE_HAXI_DMA_STOP1 = 0xB010     # reg.h:6305
+B_BE_TX_STOP1_MASK = 0x7FFF      # B_BE_STOP_CH0..CH14. reg.h:6307-6321
+R_BE_DMAC_TABLE_CTRL = 0x8420    # reg.h:4945
+B_BE_DMAC_ADDR_MODE = 1 << 12    # reg.h
+
 # XTAL_SI indirect register access. [SRC] mac.c:7179-7233, reg.h/mac.h.
 R_AX_WLAN_XTAL_SI_CTRL = 0x0270  # reg.h:268 (same address as the BE name)
 B_AX_WL_XTAL_SI_ADDR_MASK = 0x000000FF     # GENMASK(7, 0). reg.h:278
