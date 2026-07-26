@@ -395,8 +395,11 @@ def mac_pwr_on(t, cv: int, probe_done: bool = False) -> None:
 
 
 def cmac_pwr_en(t, mac_idx: int) -> None:
-    """cmac_pwr_en_be(en=True): power the CMAC analog and release its port isolation.
-    [SRC] mac_be.c:804-857. The CMACn power-cut flag starts clear, so the enable arm runs."""
+    """cmac_pwr_en_be(en=True): power the CMAC analog and release its port isolation. Skipped when
+    that CMAC is already powered (RTW89_FLAG_CMACn_PWR), so a later sys_init re-call is a no-op.
+    [SRC] mac_be.c:804-857."""
+    if mac_idx in t.cmac_pwr:
+        return
     if mac_idx == RTW89_MAC_0:
         t.write32_set(R_BE_AFE_CTRL1, B_BE_R_SYM_WLCMAC0_ALL_EN)
         t.write32_clr(R_BE_FEN_RST_ENABLE, B_BE_R_SYM_ISO_CMAC02PP)
@@ -405,6 +408,7 @@ def cmac_pwr_en(t, mac_idx: int) -> None:
         t.write32_set(R_BE_AFE_CTRL1, B_BE_R_SYM_WLCMAC1_ALL_EN)
         t.write32_clr(R_BE_FEN_RST_ENABLE, B_BE_R_SYM_ISO_CMAC12PP)
         t.write32_set(R_BE_FEN_RST_ENABLE, B_BE_CMAC1_FEN)
+    t.cmac_pwr.add(mac_idx)
 
 
 def cmac_func_en(t, mac_idx: int) -> None:
@@ -799,7 +803,25 @@ def partial_init(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
     fw_download(t, h2c_ep, cv, include_bb)
 
 
+def enable_bb_rf(t) -> None:
+    """rtw8922a_mac_enable_bb_rf: release the BB platform/IP reset and open both PHYs' DMAC-BB
+    path. [SRC] rtw8922a.c:3076, rtw8922a.c enable_bb_rf."""
+    t.write8_set(R_BE_FEN_RST_ENABLE, B_BE_FEN_BBPLAT_RSTB | B_BE_FEN_BB_IP_RSTN)
+    t.write32(R_BE_DMAC_SYS_CR32B, 0x7FF97FF9)
+
+
+def sys_init(t) -> None:
+    """sys_init_be: dmac/cmac-share func-en are no-ops on the 8922A; cmac_pwr_en(MAC_0) already
+    ran in mac_func_en so it is a no-op here, leaving cmac_func_en(MAC_0). chip_func_en is a
+    no-op. [SRC] mac_be.c:907-932."""
+    cmac_pwr_en(t, RTW89_MAC_0)
+    cmac_func_en(t, RTW89_MAC_0)
+
+
 def mac_init(t, h2c_ep: int, cv: int) -> None:
-    """rtw89_mac_init: the interface-up MAC bring-up. Starts with partial_init(include_bb=True)
-    (BB preinit + the BB-MCU firmware re-download). [SRC] mac.c:4359-4400."""
+    """rtw89_mac_init: the interface-up MAC bring-up. partial_init(include_bb=True) (BB preinit +
+    BB-MCU firmware re-download), enable_bb_rf, sys_init, then trx_init + feat_init.
+    [SRC] mac.c:4359-4400."""
     partial_init(t, h2c_ep, cv, include_bb=True)
+    enable_bb_rf(t)
+    sys_init(t)

@@ -28,6 +28,7 @@ class RTL8922AUTransport:
         self.dev = dev
         self.h2c_counter = 0        # fw_info h2c/c2h register-mailbox counters. [SRC] fw.c:2012-2015
         self.c2h_counter = 0
+        self.cmac_pwr = set()       # RTW89_FLAG_CMACn_PWR: which CMACs are powered. [SRC] mac_be.c:810
 
     def _vendorreq(self, addr: int, data: bytes, length: int, reqtype: int) -> bytes:
         """rtw89_usb_vendorreq: one endpoint-0 vendor control transfer, retried up to 10
