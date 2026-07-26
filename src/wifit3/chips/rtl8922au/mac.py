@@ -47,6 +47,8 @@ from .constants import (
     EFUSE_SEC_BE_START, EFUSE_SEC_BE_SIZE, EFUSE_SB_CRYP_SEL_ADDR, EFUSE_SB_CRYP_SEL_DEFAULT,
     R_BE_SCOREBOARD, MAC_AX_NOTIFY_TP_MAJOR, MAC_AX_NOTIFY_PWR_MAJOR,
     B_BE_SOP_EASWR, B_BE_XTAL_OFF_A_DIE,
+    R_BE_GPIO8_15_FUNC_SEL, B_BE_PINMUX_GPIO9_FUNC_SEL_MASK, RFKILL_PINMUX_GPIO9_DATA,
+    R_BE_GPIO_EXT_CTRL, B_BE_GPIO_MOD_9, B_BE_GPIO_IO_SEL_9, B_BE_GPIO_IN_9,
     R_BE_HCI_FUNC_EN, B_BE_HCI_TXDMA_EN, B_BE_HCI_RXDMA_EN,
     R_BE_HAXI_INIT_CFG1, B_BE_DMA_MODE_MASK, S_BE_DMA_MOD_USB, B_BE_STOP_AXI_MST,
     B_BE_TXDMA_EN, B_BE_RXDMA_EN, R_BE_HAXI_DMA_STOP1, B_BE_TX_STOP1_MASK,
@@ -430,6 +432,29 @@ def mac_pwr_off(t) -> None:
     power_switch_boot_mode(t)
     pwr_off_func(t)
     update_scoreboard(t, MAC_AX_NOTIFY_PWR_MAJOR)
+
+
+def rfkill_init(t) -> None:
+    """rtw89_core_rfkill_init: program the GPIO9 rfkill pinmux and its mode/direction.
+    [SRC] core.c:7308-7316, rtw8922a.c:330-337. mode addr is GPIO_EXT_CTRL+2 (the upper 16
+    bits), so the mask is shifted down 16."""
+    t.write16_mask(R_BE_GPIO8_15_FUNC_SEL, B_BE_PINMUX_GPIO9_FUNC_SEL_MASK, RFKILL_PINMUX_GPIO9_DATA)
+    t.write16_mask(R_BE_GPIO_EXT_CTRL + 2, (B_BE_GPIO_MOD_9 | B_BE_GPIO_IO_SEL_9) >> 16, 0)
+
+
+def rfkill_get(t) -> bool:
+    """rtw89_core_rfkill_get: blocked when the GPIO9 input pin reads low.
+    [SRC] core.c:7318-7323, rtw8922a.c:3299."""
+    return not field_get(B_BE_GPIO_IN_9, t.read8(R_BE_GPIO_EXT_CTRL))
+
+
+def rfkill_polling_init(t) -> None:
+    """rtw89_rfkill_polling_init: set up the rfkill GPIO, do the forced initial poll, then the
+    read the kernel's wiphy polling work fires immediately after (a force=false poll that just
+    re-reads the pin). [SRC] core.c:7325-7333, mac80211.c:2031. The set_hw_state side is software."""
+    rfkill_init(t)
+    rfkill_get(t)
+    rfkill_get(t)
 
 
 def ctrl_hci_dma_trx(t, enable: bool) -> None:

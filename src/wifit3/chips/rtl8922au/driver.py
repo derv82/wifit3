@@ -120,6 +120,9 @@ class RTL8922AUDriver(Driver):
         # chip_info_setup's out: path powers the MAC back off. rtw89_core_start re-powers it.
         # [SRC] core.c:7419-7422.
         mac.mac_pwr_off(self.transport)
+        # rtw89_core_register_hw tail: the rfkill GPIO polling init closes out probe.
+        # [SRC] core.c:7582.
+        mac.rfkill_polling_init(self.transport)
         return True
 
     def _switch_usb_mode(self) -> None:

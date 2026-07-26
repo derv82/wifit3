@@ -205,6 +205,15 @@ R_BE_SCOREBOARD = 0x00AC         # reg.h
 MAC_AX_NOTIFY_TP_MAJOR = 0x81    # mac.h
 MAC_AX_NOTIFY_PWR_MAJOR = 0x80   # reg.h:162
 
+# RF-kill GPIO9 polling (rtw89_rfkill_polling_init). [SRC] rtw8922a.c:330-337, reg.h:4023-4030,4667-4668.
+R_BE_GPIO8_15_FUNC_SEL = 0x02D4          # reg.h:4667
+B_BE_PINMUX_GPIO9_FUNC_SEL_MASK = 0xF0   # GENMASK(7, 4). reg.h:4668
+RFKILL_PINMUX_GPIO9_DATA = 0xF           # rtw8922a.c:333
+R_BE_GPIO_EXT_CTRL = 0x0060              # reg.h:4023
+B_BE_GPIO_MOD_9 = 1 << 25                # reg.h:4025
+B_BE_GPIO_IO_SEL_9 = 1 << 17            # reg.h:4027
+B_BE_GPIO_IN_9 = 1 << 1                  # reg.h:4030
+
 # DMAC pre-init (rtw89_mac_partial_init -> dmac_pre_init). [SRC] mac.c:4258-4279, mac_be.c:369-410.
 R_BE_HCI_FUNC_EN = 0x7880        # reg.h:4861; 8922a hci_func_en_addr (rtw8922a.c:3274)
 B_BE_HCI_TXDMA_EN = 1 << 0       # reg.h; same bit as B_AX_HCI_TXDMA_EN
