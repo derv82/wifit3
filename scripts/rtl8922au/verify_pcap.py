@@ -39,6 +39,9 @@ _B_FC0_MASK = 0x1FFF             # GENMASK(12, 0): central_freq
 # physts read of R_PLCP_HISTOGRAM. [SRC] mac.c:2686, phy.c:7140 (+ CR_BASE_BE 0x20000).
 _R_RX_FLTR_OPT_ABS = 0x11420
 _R_PLCP_HISTOGRAM_ABS = 0x20738
+# The periodic DM watchdog (rtw89_track_work) is an async producer; it opens with env_monitor's
+# read of R_IFS_TOTAL_BE4. [SRC] core.c:5473, phy.c:7020.
+_R_IFS_TOTAL_ABS = 0x20EEC
 
 # usbmon mon_bin record offsets.
 _OFF_TYPE, _OFF_XFER, _OFF_EP, _OFF_DEV, _OFF_LENCAP, _OFF_SETUP, _OFF_DATA = 8, 9, 10, 11, 36, 40, 64
@@ -305,6 +308,8 @@ async def _drive(driver: RTL8922AUDriver, replay: "ReplayDev", ops: list[dict]) 
             driver.configure_filter(rx_fltr)
         elif _is_ctrl_read(op, _R_PLCP_HISTOGRAM_ABS):
             driver.config_monitor()
+        elif _is_ctrl_read(op, _R_IFS_TOTAL_ABS):
+            driver.dm_watchdog()
         else:
             break
     return hops

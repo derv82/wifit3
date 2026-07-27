@@ -1116,6 +1116,30 @@ B_IFS_T_TH_HIGH = 0xFFFF0000     # GENMASK(31, 16)
 B_IFS_T_EN = 1 << 15
 IFS_CLM_TH_LOW = (0, 3, 9, 33)
 IFS_CLM_TH_HIGH = (2, 8, 32, 128)
+# env_monitor track: ifs_clm result reads + ifs_clm_set + ccx_trigger. reg.h:8941-8944, 9194-9236
+R_CLM_EDCCA_RDY_V1 = 0x0EC8
+B_CLM_EDCCA_RDY = 1 << 16
+R_IFS_CLM_TX_CNT_V1 = 0x0ECC
+R_IFS_CLM_CCA_V1 = 0x0ED0
+R_IFS_CLM_FA_V1 = 0x0ED4
+R_IFS_HIS_V1 = 0x0ED8
+R_IFS_AVG_L_V1 = 0x0EDC
+R_IFS_AVG_H_V1 = 0x0EE0
+R_IFS_CCA_L_V1 = 0x0EE4
+R_IFS_CCA_H_V1 = 0x0EE8
+R_IFSCNT_V1 = 0x0EEC
+B_IFSCNT_DONE_MSK = 1 << 16
+B_IFS_CLM_PERIOD_MSK = 0xFFFF0000        # GENMASK(31, 16)
+B_IFS_CLM_COUNTER_UNIT_MSK = 0x0000C000  # GENMASK(15, 14)
+B_IFS_COUNTER_CLR_MSK = 1 << 13
+CCX_PERIOD_1900MS = 59375                # ms_to_period_unit(1900): (1900*250) >> 3. phy.c:6320
+CCX_UNIT_32US = 3                        # RTW89_CCX_32_US. phy.h:106
+# edcca track: rtw89_phy_edcca_thre_calc. reg.h:9638-9639, 9951-9953
+R_SEG0R_EDCCA_LVL_BE = 0x69EC
+B_EDCCA_LVL_MSK0 = 0x000000FF            # GENMASK(7, 0)
+B_EDCCA_LVL_MSK1 = 0x0000FF00            # GENMASK(15, 8)
+R_SEG0R_PPDU_LVL_BE = 0x69F0
+EDCCA_MAX = 249                          # phy.h:149 (0xF9), the no-link edcca threshold
 # physts. phy.c:7127-7207, phy.h
 R_PLCP_HISTOGRAM = 0x0738
 B_STS_DIS_TRIG_BY_FAIL = 1 << 3
@@ -1146,6 +1170,18 @@ R_BMODE_PDTH_EN_V2 = 0x6718
 B_BMODE_PDTH_LIMIT_EN = 1 << 30
 R_BMODE_PDTH_V2 = 0x6708
 B_BMODE_PDTH_LOWER_BOUND = 0xFF000000  # GENMASK(31, 24)
+# dig track (rtw89_phy_dig): pd-threshold math + no-link adaptivity. phy.c:7292-7347, 7458, 7654-7743
+PD_TH_MIN_RSSI = 8               # phy.h:134
+PD_TH_MAX_RSSI = 70              # phy.h:133
+CCKPD_TH_MIN_RSSI = -18          # phy.h:135
+IGI_RSSI_MAX = 110               # phy.h:132
+DIG_RSSI_NOLINK = 22             # rssi_nolink. phy.c:7292
+DIG_FA_TH_NOLINK = (196, 352, 440, 528)   # phy.c:7296
+DIG_PD_LOW_TH_OFST = 16          # pd_low_th_offset (BW20, BE has no SB-filter comp). phy.c:7346
+DIG_IGI_MAX_PERF = 0x5A          # igi_max_performance_mode. phy.c:7347
+DIG_ABS_IGI_MIN = 0x0C           # phy.c:7743
+DIG_IGI_RSSI_MIN = 10            # phy.c:7742
+DIG_IGI_OFFSET_MAX = 25          # phy.c:7458
 # cfo: crystal cap + dcfo. phy.c:5007-5102, phy_be.c:204-209
 XTAL_SI_XTAL_SC_XO = 0x05        # mac.h:1651
 XTAL_SI_XTAL_SC_XI = 0x04        # mac.h:1649

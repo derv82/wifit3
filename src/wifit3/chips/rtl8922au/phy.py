@@ -52,6 +52,15 @@ from .constants import (
     IE01_CMN_OFDM, IE04_07_EXT_PATH, IE09_FTR_0, IE10_FTR_PLCP_EXT, IE13_DL_MU_DEF, IE20_DBG_OFDM,
     R_SEG0R_PD_V2, B_SEG0R_PD_LOWER_BOUND, B_SEG0R_PD_SR_EN,
     R_BMODE_PDTH_EN_V2, B_BMODE_PDTH_LIMIT_EN, R_BMODE_PDTH_V2, B_BMODE_PDTH_LOWER_BOUND,
+    PD_TH_MIN_RSSI, PD_TH_MAX_RSSI, CCKPD_TH_MIN_RSSI, IGI_RSSI_MAX, DIG_RSSI_NOLINK,
+    DIG_FA_TH_NOLINK, DIG_PD_LOW_TH_OFST, DIG_IGI_MAX_PERF, DIG_ABS_IGI_MIN, DIG_IGI_RSSI_MIN,
+    DIG_IGI_OFFSET_MAX,
+    R_IFSCNT_V1, B_IFSCNT_DONE_MSK, R_IFS_CLM_TX_CNT_V1, R_IFS_CLM_CCA_V1, R_IFS_CLM_FA_V1,
+    R_IFS_HIS_V1, R_IFS_AVG_L_V1, R_IFS_AVG_H_V1, R_IFS_CCA_L_V1, R_IFS_CCA_H_V1,
+    R_CLM_EDCCA_RDY_V1, B_CLM_EDCCA_RDY, B_IFS_CLM_PERIOD_MSK, B_IFS_CLM_COUNTER_UNIT_MSK,
+    B_IFS_COUNTER_CLR_MSK,
+    CCX_PERIOD_1900MS, CCX_UNIT_32US, R_SEG0R_EDCCA_LVL_BE, B_EDCCA_LVL_MSK0, B_EDCCA_LVL_MSK1,
+    R_SEG0R_PPDU_LVL_BE, EDCCA_MAX, R_BE_GPIO_EXT_CTRL,
     XTAL_SI_XTAL_SC_XO, XTAL_SI_XTAL_SC_XI, B_AX_XTAL_SC_MASK, XTAL_SC_MASK,
     R_DCFO_OPT_BE, B_DCFO_OPT_EN_BE, R_DCFO_WEIGHT_BE, B_DCFO_WEIGHT_MSK_BE,
     R_TX_COLLISION_T2R_ST_BE, B_TX_COLLISION_T2R_ST_BE_M,
@@ -470,13 +479,31 @@ def physts_parsing_init(t, monitor: bool) -> None:
     _physts_one(t, 1, monitor)
 
 
+def _clampu(v: int, lo: int, hi: int) -> int:
+    return lo if v < lo else hi if v > hi else v
+
+
+def _dyn_pd_th(t, phy_idx: int, rssi: int, igi_rssi: int, enable: bool) -> None:
+    """rtw89_phy_dig_dyn_pd_th: OFDM + CCK PD-threshold lower bounds for BW20 (BE has no SB-filter
+    comp). Shared by the DIG reset (enable=False) and the watchdog track. [SRC] phy.c:7654."""
+    under = DIG_PD_LOW_TH_OFST
+    final = min(rssi, igi_rssi)
+    if enable:
+        ofdm_cca_th = _clampu(final, PD_TH_MIN_RSSI + under, PD_TH_MAX_RSSI + under)
+        pd_val = (ofdm_cca_th - under - PD_TH_MIN_RSSI) >> 1
+    else:
+        pd_val = 0
+    _phy_write32_idx(t, R_SEG0R_PD_V2, B_SEG0R_PD_LOWER_BOUND, pd_val, phy_idx)
+    _phy_write32_idx(t, R_SEG0R_PD_V2, B_SEG0R_PD_SR_EN, 1 if enable else 0, phy_idx)
+    _phy_write32_idx(t, R_BMODE_PDTH_EN_V2, B_BMODE_PDTH_LIMIT_EN, 1 if enable else 0, phy_idx)
+    cck_cca_th = max(final - under, CCKPD_TH_MIN_RSSI)
+    _phy_write32_idx(t, R_BMODE_PDTH_V2, B_BMODE_PDTH_LOWER_BOUND, (cck_cca_th - IGI_RSSI_MAX) & 0xFF, phy_idx)
+
+
 def _dig_one(t, phy_idx: int) -> None:
-    """rtw89_phy_dig_dyn_pd_th(enable=false): pd bounds cleared, CCK lower bound = 0x82 (from
-    igi_rssi 0 / BW20 at cold init). [SRC] phy.c:7652, phy.h:132-141."""
-    _phy_write32_idx(t, R_SEG0R_PD_V2, B_SEG0R_PD_LOWER_BOUND, 0, phy_idx)
-    _phy_write32_idx(t, R_SEG0R_PD_V2, B_SEG0R_PD_SR_EN, 0, phy_idx)
-    _phy_write32_idx(t, R_BMODE_PDTH_EN_V2, B_BMODE_PDTH_LIMIT_EN, 0, phy_idx)
-    _phy_write32_idx(t, R_BMODE_PDTH_V2, B_BMODE_PDTH_LOWER_BOUND, 0x82, phy_idx)
+    """rtw89_phy_dig_reset: dyn_pd_th(rssi_nolink, enable=False) while igi_rssi is still 0, so CCK
+    lower bound resolves to 0x82. [SRC] phy.c:7708."""
+    _dyn_pd_th(t, phy_idx, DIG_RSSI_NOLINK, 0, enable=False)
 
 
 def _cfo_init(t) -> None:
@@ -565,6 +592,91 @@ def dm_init(t, cv: int) -> None:
     _edcca_one(t, 0)
     _edcca_one(t, 1)
     _ch_info_init(t)
+
+
+# --- periodic DM watchdog (rtw89_track_work). Only env_monitor / dig / edcca emit ops for an idle
+# monitor vif; stat/cfo/antdiv track and the rest are structural no-ops. Runs for PHY_0's active BB.
+# [SRC] core.c:5473. ---
+
+def _ifs_clm_get_result(t, phy_idx: int) -> tuple:
+    """rtw89_phy_ifs_clm_get_result: read the IFS-CLM counters, or bail after one read if the
+    measurement is not done. Returns the (cck_fa, ofdm_fa) counts. [SRC] phy.c:6732."""
+    if not (_phy_read32_idx(t, R_IFSCNT_V1, phy_idx) & B_IFSCNT_DONE_MSK):
+        return 0, 0
+    _phy_read32_idx(t, R_IFS_CLM_TX_CNT_V1, phy_idx)   # ifs_clm_tx / edcca_excl_cca
+    _phy_read32_idx(t, R_IFS_CLM_TX_CNT_V1, phy_idx)
+    _phy_read32_idx(t, R_IFS_CLM_CCA_V1, phy_idx)      # cck/ofdm cca_excl_fa
+    _phy_read32_idx(t, R_IFS_CLM_CCA_V1, phy_idx)
+    fa = _phy_read32_idx(t, R_IFS_CLM_FA_V1, phy_idx)  # cckfa 15:0, ofdmfa 31:16
+    _phy_read32_idx(t, R_IFS_CLM_FA_V1, phy_idx)
+    for _ in range(4):
+        _phy_read32_idx(t, R_IFS_HIS_V1, phy_idx)      # his[0..3], same addr in the BE table
+    for reg in (R_IFS_AVG_L_V1, R_IFS_AVG_H_V1, R_IFS_CCA_L_V1, R_IFS_CCA_H_V1):
+        _phy_read32_idx(t, reg, phy_idx)
+        _phy_read32_idx(t, reg, phy_idx)
+    _phy_read32_idx(t, R_IFSCNT_V1, phy_idx)           # total_ifs
+    return fa & 0xFFFF, (fa >> 16) & 0xFFFF
+
+
+def _env_monitor_track(t, phy_idx: int) -> tuple:
+    """__rtw89_phy_env_monitor_track: ifs_clm result read, the always-failing edcca_clm read, then
+    ifs_clm_set (period/unit on the first firing) + ccx_trigger. [SRC] phy.c:7020."""
+    cck_fa, ofdm_fa = _ifs_clm_get_result(t, phy_idx)
+    if _phy_read32_idx(t, R_CLM_EDCCA_RDY_V1, phy_idx) & B_CLM_EDCCA_RDY:   # edcca_clm_get_result
+        _phy_read32_idx(t, R_CLM_EDCCA_RDY_V1, phy_idx)   # rdy set: read the edcca_clm_cnt field
+    if t.env_ifs_clm_mntr_time != 1900:
+        _phy_write32_idx(t, R_IFS_COUNTER, B_IFS_CLM_PERIOD_MSK, CCX_PERIOD_1900MS, phy_idx)
+        _phy_write32_idx(t, R_IFS_COUNTER, B_IFS_CLM_COUNTER_UNIT_MSK, CCX_UNIT_32US, phy_idx)
+        t.env_ifs_clm_mntr_time = 1900
+    _phy_write32_idx(t, R_IFS_COUNTER, B_IFS_COUNTER_CLR_MSK, 0, phy_idx)   # ccx_trigger
+    _phy_write32_idx(t, R_CCX, B_MEASUREMENT_TRIG_MSK, 0, phy_idx)
+    _phy_write32_idx(t, R_IFS_COUNTER, B_IFS_COUNTER_CLR_MSK, 1, phy_idx)
+    _phy_write32_idx(t, R_CCX, B_MEASUREMENT_TRIG_MSK, 1, phy_idx)
+    return cck_fa, ofdm_fa
+
+
+def _dig_track(t, phy_idx: int, cck_fa: int, ofdm_fa: int) -> None:
+    """rtw89_phy_dig for a never-linked monitor vif: rssi = rssi_nolink, igi_fa_rssi accumulates the
+    (idle: zero) false-alarm offset, then dyn_pd_th(enable=True). [SRC] phy.c:7904."""
+    igi_rssi = DIG_RSSI_NOLINK                         # dig_update_rssi_info, not linked
+    cck_permil = (cck_fa * 1000 + CCX_PERIOD_1900MS // 2) // CCX_PERIOD_1900MS
+    ofdm_permil = (ofdm_fa * 1000 + CCX_PERIOD_1900MS // 2) // CCX_PERIOD_1900MS
+    fa_ratio = cck_permil + ofdm_permil
+    noisy_lv = sum(1 for th in DIG_FA_TH_NOLINK if fa_ratio >= th)      # RTW89_DIG_NOISY_LEVEL0..MAX
+    if noisy_lv == 0 and t.dig_fa_rssi_ofst < 2:
+        igi_offset = 0
+    else:
+        igi_offset = t.dig_fa_rssi_ofst + noisy_lv * 2
+    t.dig_fa_rssi_ofst = min(igi_offset, DIG_IGI_OFFSET_MAX)
+    igi_min = max(igi_rssi - DIG_IGI_RSSI_MIN, 0)
+    dyn_igi_max = min(igi_min + DIG_IGI_OFFSET_MAX, DIG_IGI_MAX_PERF)
+    dyn_igi_min = max(igi_min, DIG_ABS_IGI_MIN)
+    if dyn_igi_max >= dyn_igi_min:
+        t.dig_igi_fa_rssi = _clampu(t.dig_igi_fa_rssi + t.dig_fa_rssi_ofst, dyn_igi_min, dyn_igi_max)
+    else:
+        t.dig_igi_fa_rssi = dyn_igi_max
+    _dyn_pd_th(t, phy_idx, t.dig_igi_fa_rssi, igi_rssi, enable=True)
+
+
+def _edcca_track(t, phy_idx: int) -> None:
+    """rtw89_phy_edcca_thre_calc: on a threshold change (once: no-link th = EDCCA_MAX) write the
+    EDCCA and PPDU levels. [SRC] phy.c:8803."""
+    th = EDCCA_MAX                                     # not linked
+    if th == t.edcca_th_old:
+        return
+    t.edcca_th_old = th
+    _phy_write32_idx(t, R_SEG0R_EDCCA_LVL_BE, B_EDCCA_LVL_MSK0, th, phy_idx)
+    _phy_write32_idx(t, R_SEG0R_EDCCA_LVL_BE, B_EDCCA_LVL_MSK1, th, phy_idx)
+    _phy_write32_idx(t, R_SEG0R_PPDU_LVL_BE, B_EDCCA_LVL_MSK1, th, phy_idx)
+
+
+def dm_watchdog(t) -> None:
+    """One firing of rtw89_track_work for PHY_0's active BB: env-monitor ifs_clm + ccx trigger, DIG
+    dyn_pd_th, EDCCA threshold, then the rfkill GPIO poll. [SRC] core.c:5473."""
+    cck_fa, ofdm_fa = _env_monitor_track(t, 0)
+    _dig_track(t, 0, cck_fa, ofdm_fa)
+    _edcca_track(t, 0)
+    t.read8(R_BE_GPIO_EXT_CTRL)     # rtw89_core_rfkill_poll -> read8_mask(B_BE_GPIO_IN_9). core.c:7343
 
 
 # --- rfk_hw_init + init_rf_nctl. [SRC] rtw8922a_rfk.c, phy.c:2100-2135, phy_be.c:443. ---

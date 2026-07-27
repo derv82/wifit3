@@ -207,6 +207,11 @@ class RTL8922AUDriver(Driver):
         for both PHYs. [SRC] mac80211.c:109."""
         phy.physts_parsing_init(self.transport, monitor=True)
 
+    def dm_watchdog(self) -> None:
+        """One firing of the periodic DM watchdog (rtw89_track_work): the env-monitor / dig / edcca
+        tracking that runs on a timer while monitoring. [SRC] core.c:5473."""
+        phy.dm_watchdog(self.transport)
+
     async def close(self) -> None:
         if self.dev is not None:
             usb.util.dispose_resources(self.dev)

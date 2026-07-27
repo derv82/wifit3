@@ -46,6 +46,12 @@ class RTL8922AUTransport:
         self.entity_active = [False, False]   # hal.entity_active[phy]: per-PHY, set once tuned.
         self.last_band = [None, None]         # prev chan band per PHY, for chan_rcd->band_changed.
         #                                       [SRC] core.h:5507, chan.c:212, core.c:541-558.
+        # Periodic DM watchdog (rtw89_track_work) state for PHY_0's BB. All one-shot at the first
+        # firing while idle. [SRC] phy.c env_monitor/dig/edcca track.
+        self.env_ifs_clm_mntr_time = 0        # env->ifs_clm_mntr_time (0 -> 1900 first firing)
+        self.dig_igi_fa_rssi = 0              # dig->igi_fa_rssi accumulator (-> 12 while no-link)
+        self.dig_fa_rssi_ofst = 0             # dig->fa_rssi_ofst (stays 0 until a noisy firing)
+        self.edcca_th_old = 0                 # edcca_bak->th_old (0 -> 249 first firing)
         self.rfe_type = 0           # efuse->rfe_type, from the RF-block logical parse. [SRC] rtw8922a.c:866
         self.tssi_cck = [0, 0]      # efuse TSSI cck_tssi[0] per path (2G group 0). [SRC] rtw8922a.c:744
         self.tssi_mcs = [0, 0]      # efuse TSSI bw40_tssi[0] per path (2G group 0)
