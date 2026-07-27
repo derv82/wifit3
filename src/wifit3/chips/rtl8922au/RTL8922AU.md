@@ -45,10 +45,12 @@ Everything is **2G/HT20-only** so far (5/6G raises in set_gain / set_rx_gain_nor
 / ctrl_bw / set_channel_mac, the txpwr limit tables, and `rfk._tssi`). The whole capture is ~150k
 ops; each hop's tune is ~750 ops for PHY_0 plus the PHY_1 mirror.
 
-**Hardware:** the live `connect()` smoke test passed on the ASUS USB-BE93 at SuperSpeed
-(`scripts/rtl8922au/test_hw.py`): PyUSB drives the device, firmware uploads, and the init poll loops
-converge on real silicon. That was the one hardware check wanted for now; **further hardware testing
-is deferred until the port fully verifies** against the pcap. Keep working offline via `verify_pcap`.
+**Hardware:** `scripts/rtl8922au/test_hw.py` passes on the ASUS USB-BE93: `connect()` completes in
+~3s and `set_channel()` succeeds for ch 1/6/36 (2.4 GHz + 5 GHz), so the whole bring-up + tune runs
+on real silicon, not just against the pcap. It matches the device by VID:PID, so the co-plugged
+rtl8812au is untouched. USB-2 quirk: the mode switch re-enumerates the card to SuperSpeed and the
+driver doesn't re-acquire the handle, so the first `connect()` on a fresh USB-2 plug hangs (re-run,
+or use USB-3). RX (the bulk-IN reader + RX descriptor decode) is not ported, so no frames arrive yet.
 
 ### Gotchas found while porting (not obvious from a single read)
 
