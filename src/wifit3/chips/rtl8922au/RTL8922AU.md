@@ -11,9 +11,15 @@ capture-2/3, poll-count variance only). `verify_pcap` walks both VENQT control o
 ops; all three captures stop at the same frontier. **All of `rtw89_core_start` AND the entire
 mac80211 add-interface are reproduced, and the first per-channel `set_channel` unit is mostly
 ported** (pre_set_channel bb/rf, set_channel_help enter/hal_reset, set_channel_mac, ctrl_sco_cck).
-The frontier is inside `rtw8922a_ctrl_ch` at **`set_gain`** (op #13146, BB reg 0x2409c), which
-reads the **deferred efuse RF gain arrays** (the next un-defer). The per-channel loop is ~150k ops,
-the bulk of what remains; one channel's unit is ~750 ops and the rest are replays of the same code.
+The frontier is inside `rtw8922a_ctrl_ch` at **`set_gain`** (op #13146, BB reg 0x2409c). `set_gain`
+= `set_lna_tia_gain` + `set_rpl_gain`, both reading `rtwdev->bb_gain.be` (the `lna_gain`/`tia_gain`/
+`lna_op1db`/`rpl` arrays) and applying them via the `bb_gain_lna`/`bb_gain_tia`/`bb_op1db_*`
+reg-def tables (per gain_band from `chan->subband_type`, bw_type, path A/B). **`bb_gain.be` is
+populated from the firmware BB-gain element** (`elm_info->bb_gain`, phy.c:1960), NOT efuse. So the
+next un-defer is the **BB-gain FW element parse** (a `_be` parser into the gain arrays), then the
+apply. This is a data-heavy subsystem: a good subagent-spec candidate (dump the ctrl_ch ground
+truth in `/tmp/.../scratchpad/gt_ctrl_ch.txt`, hand a subagent the element parser + the reg-def
+tables + the ground truth, get a byte-spec). The per-channel loop is ~150k ops, one unit ~750 ops.
 
 Newly ported this session (see the Log M35-M38): the whole **mac80211 add-interface**
 (`rtw89_mac_vif_init` + `btc_ntfy_role_info`, ops 13014-13066) and the **first set_channel step**
@@ -208,16 +214,18 @@ through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data f
 the whole add-interface are done; the frontier is now inside the first `rtw8922a_set_channel`
 (rtw8922a.c:2232 = `set_channel_mac` + `set_channel_bb` + `set_channel_rf`).
 
-1. **`rtw8922a_pre_set_channel_rf` (op #13079-13105), the frontier.** Masked HWSI RF writes: path A
-   on 0x22adc(write)/0x22c24(read)/0x22ae0, then path B on 0x22bdc/0x22d24/0x22be0. Uses the existing
-   `phy.write_rf` masked-HWSI path. Read rtw8922a.c `rtw8922a_pre_set_channel_rf`; the writes are
-   per-path RF-register RMWs (0x22ae0/0x22be0 are the HWSI data regs, 0x22c24/0x22d24 the read-back).
-2. **`set_channel_mac` + `set_channel_bb` (op #13106+).** MAC ch/bw regs (0x10398, 0x11440,
-   0x22800/0x22900, 0x2e610/0x2e710, ...) then the BB gain/RF tables, ctrl_ch/bw, spur elim. The
-   deferred efuse RF gain/tssi arrays are the likely next un-defer (set_channel_bb reads them).
-3. **`set_channel_rf`, then `rtw8922a_rfk`** (`_rfk_by_channel`: TXGAPK/RX-DCK/IQK/DPK/TSSI, mostly
-   fw-offload H2C cat=2 cls 0x8/0x9/0x10 + masked HWSI RF writes). Delegate per-calibration subagent
-   specs. `rtw8922a_rfk_init` itself is software-only.
+1. **`ctrl_ch` -> `set_gain` (op #13146, the frontier).** `set_lna_tia_gain` + `set_rpl_gain`, per
+   path A/B, applying `bb_gain.be` arrays via `bb_gain_lna`/`bb_gain_tia`/`bb_op1db_*` reg-def tables
+   (rtw8922a.c:1381/1170+). Prerequisite: parse the **BB-gain FW element** into the gain arrays (the
+   `_be` parser, phy.c around 1453/1960). Then the rest of `ctrl_ch` (band_sel, rx_gain_normal,
+   R_FC0 freq write, sco, cck_params, R_MAC_PIN_SEL chan_idx), `ctrl_bw`, `ctrl_cck_en`,
+   `spur_elimination`, R_RSTB_ASYNC, `tssi_reset`. All in `phy.set_channel_bb` (currently only
+   `ctrl_sco_cck` is done).
+2. **`set_channel_rf`** (rtw8922a_rfk.c), **`set_txpwr`**, then **`set_channel_help(leave)`**
+   (hal_reset re-enable + post_set_channel bb/rf -> digital_pwr_comp + ctrl_mlo), then **`rtw8922a_rfk`**
+   (`_rfk_by_channel`: TXGAPK/RX-DCK/IQK/DPK/TSSI, mostly fw-offload H2C cat=2 cls 0x8/0x9/0x10 +
+   masked HWSI RF writes). Delegate per-calibration subagent specs. `rtw8922a_rfk_init` is
+   software-only. `chan.set_channel` and `phy.set_channel_help(leave)` already have the TODO slots.
 
 The same code runs per channel; only channel-table written values differ (replay supplies reads).
 A pragmatic sub-goal: get ONE channel's set_channel+RFK correct; the rest are replays. The subagent
