@@ -353,7 +353,7 @@ MCU_UNI_CMD_HIF_CTRL        = 0x07
 MCU_UNI_CMD_BAND_CONFIG     = 0x08
 MCU_UNI_CMD_WSYS_CONFIG     = 0x0b
 MCU_UNI_CMD_CHIP_CONFIG     = 0x0e
-MCU_UNI_CMD_SET_DOMAIN_INFO = 0x15   # cfg80211 regulatory (waived)
+MCU_UNI_CMD_SET_DOMAIN_INFO = 0x15   # cfg80211 regulatory (world-"00" regdom)
 MCU_UNI_CMD_SNIFFER         = 0x24
 MCU_UNI_CMD_SET_POWER_LIMIT = 0x2c   # cfg80211 regulatory / CLC power tables (waived)
 MCU_UNI_CMD_EFUSE_CTRL      = 0x2d
@@ -389,6 +389,18 @@ CH_BAND_2GHZ = 1
 CH_BAND_5GHZ = 2
 
 MT_RTS_THRESH_DEFAULT = 0x92b   # __mt7925_start
+
+# SET_DOMAIN_INFO per-channel flag bits (enum ieee80211_channel_flags,
+# include/net/cfg80211.h). Only the bits the world-"00" regdom sets are named here;
+# mt7925_mcu_set_channel_domain serializes chan->flags verbatim. See mcu.py W00_* tables.
+CHAN_NO_IR        = 0x00000002   # BIT(1)  no initiating radiation (passive scan only)
+CHAN_RADAR        = 0x00000008   # BIT(3)  DFS: radar detection required
+CHAN_NO_HT40PLUS  = 0x00000010   # BIT(4)  no HT40+ (no valid channel 20 MHz above)
+CHAN_NO_HT40MINUS = 0x00000020   # BIT(5)  no HT40- (no valid channel 20 MHz below)
+CHAN_NO_OFDM      = 0x00000040   # BIT(6)  DSSS only (2.4 GHz ch 14)
+CHAN_NO_80MHZ     = 0x00000080   # BIT(7)
+CHAN_NO_160MHZ    = 0x00000100   # BIT(8)
+CHAN_NO_320MHZ    = 0x00080000   # BIT(19) — set on every channel (no 320 MHz in world "00")
 
 # ===========================================================================
 # mt792x_mac_work periodic reads (mt792x_mac.c). Band-0 addresses; bases already

@@ -60,6 +60,9 @@ async def enter_monitor(transport: MT7925AUTransport, channel: int,
     await t.send_mcu_command(*mcu.thermal_gband(), wait_resp=False)
     await t.send_mcu_command(*mcu.thermal_aband(), wait_resp=False)
     await t.send_mcu_command(*mcu.set_deep_sleep(False), wait_resp=False)
+    # __mt7925_start / regd: hand the device the world-"00" channel domain so it applies
+    # the regulatory TX-power/DFS limits, then the per-band TX power tables.
+    await t.send_mcu_command(*mcu.set_channel_domain())
     for cmd, payload in txpower.rate_txpower_all(has_6ghz):
         await t.send_mcu_command(cmd, payload, wait_resp=False)
     await t.send_mcu_command(*mcu.set_rts_thresh())

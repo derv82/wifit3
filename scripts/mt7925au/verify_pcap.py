@@ -88,13 +88,6 @@ def waivers() -> E.WaiverSet:
             "when airmon-ng starts monitor). The wifi driver never emits them.",
             match=lambda op: op.cls == "ctrl" and op.reqtype == "standard",
         ),
-        E.Waiver(
-            "cfg80211 channel domain (SET_DOMAIN_INFO)",
-            "mt7925_mcu_set_channel_domain's per-channel flags are cfg80211's world-regdom "
-            "IEEE80211_CHAN_* bits (net/wireless/reg.c), not derivable from the mt76 tree, "
-            "so the two SET_DOMAIN_INFO ops stay waived. SET_POWER_LIMIT is now reproduced.",
-            match=lambda op: _mcu_cid(op) == MCU_UNI_CMD_SET_DOMAIN_INFO,
-        ),
     )
 
 
@@ -194,6 +187,8 @@ def _decode_operational_mcu(f: bytes):
     read off the wire. None if unrecognised (a frontier)."""
     cid = f[38] | (f[39] << 8)
     p = f[52:]                                   # payload (+ frame pad; encoders re-pad)
+    if cid == MCU_UNI_CMD_SET_DOMAIN_INFO:
+        return mt_mcu.set_channel_domain()       # world-"00" regdom (fixed)
     if cid == MCU_UNI_CMD_DEV_INFO_UPDATE:
         return mt_mcu.uni_dev_info(True, bytes(p[10:16]))
     if cid == MCU_UNI_CMD_BSS_INFO_UPDATE:

@@ -331,6 +331,61 @@ def config_sniffer(channel, band_idx=0):
     return MCU_UNI_CMD(MCU_UNI_CMD_SNIFFER), hdr + tlv
 
 
+# World-"00" default regdom (net/wireless/reg.c world_regdom) applied to the mt76
+# channel plan (mac80211.c mt76_channels_2ghz/5ghz). With no country set, cfg80211 uses
+# region "00", whose per-channel flags are fixed and public; we encode that output
+# directly (byte-identical to what Linux region-00 produces, and to the capture) rather
+# than port cfg80211's regulatory engine. World "00" is: NO_IR (passive) on 2.4 GHz
+# ch12-14 and every 5 GHz channel, DSSS-only on ch14, DFS/RADAR on 5 GHz 52-64 + 100-144,
+# 2.4 GHz capped at 40 MHz (NO_80/160), and HT40+/- cleared at each sub-band edge. 6 GHz
+# is fully world-disabled, so no 6 GHz channels are emitted. Every channel carries
+# NO_320MHZ. Flag bits: constants.CHAN_*.
+_B = CHAN_NO_320MHZ
+_2G_40 = CHAN_NO_160MHZ | CHAN_NO_80MHZ          # 2.4 GHz capped at 40 MHz
+_DFS = CHAN_RADAR | CHAN_NO_IR                    # 5 GHz DFS sub-bands
+W00_2G = [
+    (1,  _B | _2G_40 | CHAN_NO_HT40MINUS),
+    (2,  _B | _2G_40 | CHAN_NO_HT40MINUS),
+    (3,  _B | _2G_40 | CHAN_NO_HT40MINUS),
+    (4,  _B | _2G_40 | CHAN_NO_HT40MINUS),
+    (5,  _B | _2G_40),
+    (6,  _B | _2G_40),
+    (7,  _B | _2G_40),
+    (8,  _B | _2G_40),
+    (9,  _B | _2G_40),
+    (10, _B | _2G_40 | CHAN_NO_HT40PLUS),
+    (11, _B | _2G_40 | CHAN_NO_HT40PLUS),
+    (12, _B | CHAN_NO_160MHZ | CHAN_NO_HT40PLUS | CHAN_NO_IR),   # 2467-2482 rule (NO-IR)
+    (13, _B | CHAN_NO_160MHZ | CHAN_NO_HT40PLUS | CHAN_NO_IR),
+    (14, _B | _2G_40 | CHAN_NO_OFDM | CHAN_NO_HT40MINUS | CHAN_NO_HT40PLUS | CHAN_NO_IR),
+]
+W00_5G = [
+    (36,  _B | CHAN_NO_HT40MINUS),
+    (40,  _B), (44, _B), (48, _B),
+    (52,  _B | _DFS), (56, _B | _DFS), (60, _B | _DFS),
+    (64,  _B | CHAN_NO_HT40PLUS | _DFS),
+    (100, _B | CHAN_NO_HT40MINUS | _DFS),
+    (104, _B | _DFS), (108, _B | _DFS), (112, _B | _DFS), (116, _B | _DFS),
+    (120, _B | _DFS), (124, _B | _DFS), (128, _B | _DFS), (132, _B | _DFS),
+    (136, _B | _DFS), (140, _B | _DFS),
+    (144, _B | CHAN_NO_HT40PLUS | _DFS),
+    (149, _B | CHAN_NO_160MHZ | CHAN_NO_HT40MINUS),
+    (153, _B | CHAN_NO_160MHZ), (157, _B | CHAN_NO_160MHZ), (161, _B | CHAN_NO_160MHZ),
+    (165, _B | CHAN_NO_160MHZ | CHAN_NO_HT40PLUS),
+]
+
+
+def set_channel_domain():
+    """mt7925_mcu_set_channel_domain (mt7925/mcu.c:3249) for the world-"00" regdom.
+    hdr{alpha2="00\\0\\0", bw_2g=0, bw_5g=3, bw_6g=3, pad} + n_ch{tag=2, len, n_2ch,
+    n_5ch, n_6ch, pad} + per-channel{hw_value:le16, pad:le16, flags:le32}. len =
+    sizeof(n_chan)(8) + n_channels*8 (mcu.c:3345). 6 GHz world-disabled: none emitted."""
+    chans = b"".join(struct.pack("<HHI", hv, 0, fl) for hv, fl in W00_2G + W00_5G)
+    hdr = struct.pack("<4sBBBx", b"00", 0, 3, 3)
+    n_ch = struct.pack("<HHBBBx", 2, 8 + len(chans), len(W00_2G), len(W00_5G), 0)
+    return MCU_UNI_CMD(MCU_UNI_CMD_SET_DOMAIN_INFO), hdr + n_ch + chans
+
+
 def set_rts_thresh(val=MT_RTS_THRESH_DEFAULT, band_idx=0):
     """mt7925_mcu_set_rts_thresh (mt7925/mcu.c:3550) — MCU_UNI_CMD(BAND_CONFIG) RTS TLV.
     { band_idx; rsv[3]; tag=RTS_THRESHOLD; len=12; len_thresh=val; pkt_thresh=2 }."""
