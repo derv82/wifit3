@@ -37,7 +37,7 @@ class MT7925AUDriver(Driver):
         100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
         149, 153, 157, 161, 165,
     ]
-    FAKE_MAC = FakeMacSupport.UNIMPLEMENTED
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
     LINUX_REPLUG_AFTER_MODPROBE = True
 
     @classmethod
@@ -173,6 +173,30 @@ class MT7925AUDriver(Driver):
         frag = struct.unpack_from("<H", buf, 22)[0] & 0x000F
         struct.pack_into("<H", buf, 22, (self._tx_seq << 4) | frag)
         return bytes(buf)
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Arm HW auto-ACK for ``mac`` by programming it as the device omac (connac
+        auto-ACKs frames whose RA == omac); return the MAC armed. The monitor BSS is
+        already active from bring-up, so this is DEV_INFO with a non-zero omac, plus the
+        peer ``bssid`` into the BSS when given. That BSS goes in as CONNECTION_MONITOR
+        (conn_type=0), not the bring-up INFRA_AP: under INFRA_AP a peer bssid switches the
+        firmware to a peer-STA context that kills the omac auto-ACK. Reversed by
+        exit_active_monitor. Same mt792x DEV_INFO/BSS_INFO mechanism as mt7921au."""
+        await self.transport.send_mcu_command(*mcu.uni_dev_info(True, bytes(mac)),
+                                              wait_resp=False)
+        if bssid is not None:
+            await self.transport.send_mcu_command(
+                *mcu.uni_bss_info(True, bytes(bssid), conn_type=CONNECTION_MONITOR),
+                wait_resp=False)
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the plain-monitor baseline (re-zero the omac + BSS bssid). The BSS stays
+        active: its resting state since bring-up, where a zero omac matches nothing."""
+        await self.transport.send_mcu_command(*mcu.uni_dev_info(True, b"\x00" * 6),
+                                              wait_resp=False)
+        await self.transport.send_mcu_command(*mcu.uni_bss_info(True, b"\x00" * 6),
+                                              wait_resp=False)
 
     async def _enable_rx_acks(self) -> None:
         return None

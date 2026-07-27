@@ -383,6 +383,9 @@ EE_FORMAT_WHOLE = 1
 
 # monitor BSS conn_type = STA_TYPE_AP | NETWORK_INFRA (mt76_connac_mcu.c:1201).
 CONNECTION_INFRA_AP = (1 << 1) | (1 << 16)   # 0x00010002
+# conn_type for active-monitor: the omac auto-ACK survives only under a MONITOR BSS.
+# INFRA_AP + a peer bssid switches the FW to a peer-STA context that kills it.
+CONNECTION_MONITOR = 0
 
 # config_sniffer ch_band code (2.4->1, 5->2, 6->3).
 CH_BAND_2GHZ = 1
