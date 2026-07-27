@@ -568,10 +568,10 @@ class Capture:
         self.run_cmd(["sudo", "iw", "dev", self.mon_iface, "set", "channel",
                       str(channel)], timeout=10)
         self.run_cmd(["sudo", "aireplay-ng", "-a", bssid, "--test",
-                      self.mon_iface], timeout=60)
+                      "--ignore-negative-one", self.mon_iface], timeout=60)
         if client:
             self.run_cmd(["sudo", "aireplay-ng", "-0", "1", "-a", bssid,
-                          "-c", client, self.mon_iface], timeout=30)
+                          "--ignore-negative-one", "-c", client, self.mon_iface], timeout=30)
         else:
             self.logger.log_main(
                 f"[*] No client for the {label} pass; skipping its deauth.")
