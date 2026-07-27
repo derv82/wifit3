@@ -6,10 +6,29 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 5323/163814 driver ops reproduced and committed (capture-1; ~5366/5392 on
-capture-2/3, poll-count variance only). `verify_pcap` now walks both VENQT control ops and
-bulk-OUT ops; all three captures stop at the same frontier. **`rtw89_mac_init` is complete**;
-the frontier is `rtw89_core_start`'s BB register init. What is ported:
+Cold-boot bring-up, 10479/163814 driver ops reproduced and committed (capture-1; ~10510/10553 on
+capture-2/3, poll-count variance only). `verify_pcap` walks both VENQT control ops and bulk-OUT
+ops; all three captures stop at the same frontier. **`rtw89_mac_init` is complete, and so is
+`rtw89_core_start` through the BB/RF register tables.** The frontier is inside `rtw89_btc_ntfy_init`
+(the coex fw H2Cs / `_run_coex`). Newly ported since the mac_init handoff (see the Log):
+- **`rtw89_phy_init_bb_reg`** (`phy.py`): the firmware BB register table for PHY_0 and (DBCC) PHY_1,
+  with the headline (rfe_type/cv) selection and the if/elif/else conditional walk. init_txpwr_unit
+  and bb_reset are no-ops on the 8922A; bb_gain is software-only (gain arrays, deferred to RFK). 396
+  wire writes. `firmware.element_regs` pulls the reg2 pairs from the BB_REG fw element.
+- **The efuse rfe_type extraction** (`mac.parse_efuse_map`): the RF-block physical->logical parse
+  (`rtw89_eeprom_parser_be`) now runs, setting `t.rfe_type` (=1 on this card) and `t.xtal_cap`. This
+  was the handoff's deferred item; tssi/gain-offset arrays are still deferred (RFK-time).
+- **`rtw8922a_bb_postinit`** (`phy.py`): FEN reset + BB rate-edge/slope/magnitude block, PHY_0 then
+  PHY_1; set_phy_regs writes both phys, so the block runs four times across the two invocations.
+- **`rtw89_phy_init_rf_reg`** (`phy.py`): the RADIO_A/B firmware tables applied through the HWSI
+  (DDIE) RF-write (`write_full_rf_v2_a`: poll idle, write addr/data word) or the ad_sel direct-RMW,
+  plus the per-path OUTSRC H2C of the stored entries. The 8922A stores RADIO_A at reg2.idx slot 1
+  (rf_path A) and RADIO_B at slot 0 (rf_path B), so slot 0 = path B runs first. ~9000 wire ops.
+- **`rtw89_btc_ntfy_init` (partial, `coex.py`)**: `btc_set_rfe` (software: rfe_type 1 -> 2-antenna
+  shared, BT-general on RF path B) + `btc_init_cfg` (per-path trx-mask LUT, PTA priority, break/ZB
+  tables), then the BT scoreboard read and the WL tx-power coex disable (`set_wl_tx_power`).
+
+Everything below is the pre-existing mac_init port; it remains ported:
 - USB register-access transport (`rtw89_usb_vendorreq` + read/write ops + `read_cmac`), the
   read-modify-write helpers (`write8/16/32_set/clr`, `write16/32_mask`), and `bulk_out`.
 - USB mode-switch (`rtw89_usb_switch_mode`, speed-branched) + `read_chip_ver`.
@@ -54,20 +73,39 @@ the frontier is `rtw89_core_start`'s BB register init. What is ported:
   BIT/GENMASK/OR eval) into `constants.py` (`IMR_DMAC_REGS`, `IMR_CMAC_REGS`). Reuse that resolver
   for the next big data tables.
 
-Frontier: op #5332, `write 0x20000 = 1e000000`, the start of `rtw89_core_start`'s BB register init
-(`rtw89_phy_init_bb_reg`, core.c:6659). The remaining `core_start` (core.c:6650+) is the big one:
-`btc_ntfy_poweron`, `chip_reset_bb_rf`, `phy_init_bb_reg` (BB register tables from the fw file,
-~2750 register ops), `bb_postinit` (`rtw8922a_bb_postinit`), `phy_init_rf_reg`, `btc_ntfy_init`,
-`phy_dm_init`, then the BB/RF MCU **H2C table commands** (cat=2 class=0x8/0x9/0x10, seq 4+, some
-900+ bytes -- use `firmware.h2c_command`), the EDCCA/PPDU/phy-rpt band setup, `update_rts_threshold`,
-`hci_start`, then the channel tune (`rtw8922a_set_channel` + RFK) and monitor-mode RX enable. The
-deferred RF/board logical-efuse extraction (`efuse->rfe_type`, xtal_cap, gain/tssi in
-`parse_efuse_map`, phy-cap parse in `setup_phycap`) will be needed once RF init reads those values.
+Frontier: op #10488, a coex fw H2C (bulk-OUT ep 0x07, cat=2/class=0x10 OUTSRC-BTC), inside
+`rtw89_btc_ntfy_init` after `set_wl_tx_power`. The remaining `ntfy_init` (coex.c:7746) is: the coex
+fw H2Cs (`btc_fw_set_monreg` func 2, `rtw89_btc_fw_set_slots` func 1, `_fw_set_drv_info` INIT/CTRL
+func 5, plus func 0/3), each a fixed-ish payload behind `firmware.h2c_command` (seq flows from
+`t.h2c_seq`, now 6), the scoreboard register write (RMW at R_BE_SCOREBOARD 0xac, op #10496-97, from
+`_run_coex` syncing `wl->scbd`), then **`_run_coex`** proper: the coex action engine, a large
+stateful policy body (it emits the 0x2047c/0x11a40/0x26b48/0x20044/0x20c00... register writes plus
+more H2Cs). `_run_coex` is the hard part of what remains before `phy_dm_init`.
+
+After `ntfy_init`, `core_start` continues (core.c:6666+): `rtw89_phy_dm_init` (stat/dig/cfo/edcca/
+bb_wrap init, then `rtw89_chip_rfk_hw_init` + `rtw89_phy_init_rf_nctl` (the RF_NCTL fw element) +
+`rtw89_chip_rfk_init` = **RFK calibration, the bulk of the remaining ~150k ops**), the EDCCA/PPDU/
+phy-rpt band setup, `update_rts_threshold`, `hci_start`, then the channel tune (`rtw8922a_set_channel`
++ RFK) and monitor-mode RX enable. Still-deferred efuse extraction: the RF gain/tssi arrays and the
+phy-cap parse (RFK-time); rfe_type/xtal_cap are now extracted.
+
+Note: the coex subsystem (`_run_coex` especially) is large and stateful. The handoff's "delegate
+large source-mapping to a subagent" note applies squarely here; a subagent spec of `_run_coex`'s
+cold-init action path (which action functions fire, in order, with their register/H2C footprint)
+would make the port far cheaper than reading coex.c end to end.
 
 ### Gotchas found while porting (not obvious from a single read)
 
 - The cold-boot capture takes the **boot-mode branch** of `power_switch_boot_mode`, and
   `reset_pwr_state_be` finds the MAC already **`MAC_ON`**, so it runs the MAC-on arm.
+- **RF radio element idx-slot vs rf_path are swapped.** `rtw89_phy_init_rf_reg` iterates
+  `rf_radio[slot]` for slot 0,1, but `build_phy_tbl_from_elm` stores each RADIO element at
+  `rf_radio[elm.reg2.idx]`, and idx != arg.rf_path here: RADIO_A (id 4, arg.rf_path A) has idx=1,
+  RADIO_B (id 5, arg.rf_path B) has idx=0. So slot 0 = RADIO_B = **path B runs first** (capture:
+  0x22d24/0x22be0 before 0x22c24/0x22ae0). Use `element_regs_with_idx` and iterate by slot.
+- **Displayed write hex in the verify trace is little-endian bytes**, not the u32. `write ... =
+  1e000000` is the u32 `0x0000001e`; an HWSI RF write `= ef000002` is `0x020000ef` (addr 0xef, data
+  BIT(17)). The port's `write32` packs LE, so this only matters when hand-decoding the trace.
 - `dle_init(DLFW)` calls `get_dle_mem_cfg(ext_mode=SCC)` last, which sets `dle_info.qta_mode = SCC`.
   So `hfc_reset_param` reads back **SCC** and the H2C page precedence is `hfc_prec_cfg_c5` (32),
   not DLFW's c2. State-order matters.
@@ -142,26 +180,34 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #5332)
+## Next (from op #10488)
 
-`rtw89_mac_init` is complete. The frontier is `rtw89_core_start` (core.c:6626) resuming after
-`mac_init`: `btc_ntfy_poweron` (software/coex), `chip_reset_bb_rf`, then `rtw89_phy_init_bb_reg`
-(core.c:6659), which writes the big BB register tables from the fw file (op #5332 `write 0x20000`
-is the first). These BB/RF register tables and the RFK calibration are the bulk of what remains
-(the capture is 163814 ops; ~158k are still ahead, mostly these tables). After BB reg init:
-`rtw8922a_bb_postinit`, `phy_init_rf_reg`, `btc_ntfy_init`, `phy_dm_init`, the EDCCA/PPDU-status
-/phy-rpt band setup, `update_rts_threshold`, `hci_start`. Interleaved are the **BB/RF MCU H2C
-table commands** (seen in the capture at cat=2 class=0x8/0x9/0x10, seq 4+, some 900+ bytes each):
-build them with `firmware.h2c_command`. Then the channel tune (`rtw8922a_set_channel` + RFK) and
-monitor-mode RX enable. The deferred RF/board logical-efuse extraction (`efuse->rfe_type`,
-xtal_cap, gain/tssi in `parse_efuse_map`, and the phy-cap parse in `setup_phycap`) will be needed
-once RF init reads those values.
+The frontier is inside `rtw89_btc_ntfy_init` (coex.c:7746), which `coex.py` ports partway (through
+`set_wl_tx_power`). What remains in `ntfy_init`:
+1. The coex fw H2Cs, in capture order: `btc_fw_set_monreg` (class 0x10 func 2, seq 6), then
+   `rtw89_btc_fw_set_slots` (func 1), `_fw_set_drv_info(INIT)` / `(CTRL)` (func 5), and the func 0/3
+   commands. Each is a fixed-or-computed payload behind `firmware.h2c_command` with cat=`H2C_CAT_OUTSRC`
+   (2), class=`H2C_CL_OUTSRC_BTC` (0x10). Read `btc_fw_set_monreg`, `rtw89_btc_fw_set_slots`,
+   `_fw_set_drv_info` (coex.c) and reconstruct the payload structs. Note `_send_fw_cmd` uses
+   `rtw89_fw_h2c_raw_with_hdr(..., rack=false, dack=true)`.
+2. The scoreboard register write (RMW at R_BE_SCOREBOARD 0xac, op #10496-97) and the `_run_coex`
+   action engine (op #10499+: 0x2047c/0x11a40/0x26b48/0x20044/0x20c00 register writes + more H2Cs).
+   `_run_coex(BTC_RSN_NTFY_INIT)` on a cold path with no BT is a bounded-but-large policy body; a
+   subagent spec of which action functions fire in order (with their register/H2C footprint) is the
+   efficient way in. This is the hardest chunk before `phy_dm_init`.
 
-Two reusable assets are in place for this: `firmware.h2c_command` (any H2C command) and the
-reg.h resolver at `/tmp/.../scratchpad/imr.py` (recreate it: parse reg.h, eval BIT/GENMASK/OR, emit
-tuples) for the large BB/RF register tables. `rtw89_phy_write32` BB addresses are in the 0x20000+
-space; check whether the driver applies them directly or as a `(addr, data)` table from the fw
-element (`rtw89_fw_recognize_elements` parsed the BB/RF element tables file-side already).
+After `ntfy_init`: `rtw89_phy_dm_init` (BB stat/dig/cfo/edcca/bb_wrap init, then the RF_NCTL fw
+element via `rtw89_phy_init_rf_nctl` and **RFK calibration** = the bulk of the remaining ~150k ops),
+the EDCCA/PPDU/phy-rpt band setup, `update_rts_threshold`, `hci_start`, then the channel tune
+(`rtw8922a_set_channel` + RFK) and monitor-mode RX enable. Deferred efuse: RF gain/tssi arrays and
+the phy-cap parse (RFK-time). `firmware.element_regs`/`element_regs_with_idx` already pull any reg2
+fw element (RF_NCTL is id 8); reuse for the NCTL table.
+
+Two reusable assets are in place: `firmware.h2c_command` (any H2C) and the reg.h resolver at
+`/tmp/.../scratchpad/imr.py` (recreate: parse reg.h, eval BIT/GENMASK/OR, emit tuples) for large
+data tables. The scratch RF/coex dumpers used this session live under the scratchpad (`rf3.py`,
+`h2c.py`: import `scripts/rtl8922au/verify_pcap`, `build_ops`, decode a window; `h2c.py` decodes an
+H2C's cat/class/func/seq from the bulk-OUT bytes) -- recreate as needed.
 
 The port loop from here is the same: read the sub-function, grep register/bit values, port citing
 `file:line`, `verify_pcap`, fix at the FRONTIER/DIVERGENCE trace, commit each milestone. The
@@ -246,3 +292,13 @@ describing them, no jargon. No em-dashes and none of the banned words anywhere; 
 - 2026-07-26 M23: `mac_init` tail: `feat_init` (2 init-ba-cam-users H2C), `mac_post_init`
   (rx_agg_cfg_v3), `set_ofld_cfg` H2C. **rtw89_mac_init complete.** 5323 ops. Frontier at
   `core_start` BB register init (`phy_init_bb_reg`).
+- 2026-07-26 M24: `phy_init_bb_reg` (`phy.py`): BB register table PHY_0+PHY_1 (headline rfe/cv
+  select + if/elif/else walk) + the efuse RF-block logical parse for rfe_type (=1)/xtal_cap. 5719.
+- 2026-07-26 M25: `rtw8922a_bb_postinit` PHY_0+PHY_1 (FEN reset + rate-edge/slope/magnitude block;
+  set_phy_regs writes both phys, so 4x across the two calls). 5893.
+- 2026-07-26 M26: `phy_init_rf_reg` (RADIO_A/B tables via HWSI/ad_sel RF writes + per-path OUTSRC
+  H2C; slot 0=RADIO_B=path B first). `element_regs_with_idx` exposes the reg2 slot. 10431.
+- 2026-07-26 M27: `btc_ntfy_init` part 1 (`coex.py`): `btc_set_rfe` (sw, 2-ant shared, BTG=path B)
+  + `btc_init_cfg` (per-path trx-mask LUT, PTA priority, break/ZB tables). 10470.
+- 2026-07-26 M28: `btc_ntfy_init` part 2: BT scoreboard read (`_update_bt_scbd`) + WL tx-power
+  coex disable (`set_wl_tx_power`, both disable arms). 10479. Frontier at the coex fw H2Cs.
