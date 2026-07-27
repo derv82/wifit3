@@ -11,6 +11,9 @@ from .constants import (
     R_BTC_COEX_WL_REQ_BE, B_BTC_RSP_ACK_HI, B_BTC_TX_BCN_HI, B_BTC_TX_TRI_HI, B_BTC_TX_NULL_HI,
     R_BE_BT_BREAK_TABLE, BTC_BREAK_PARAM, R_BTC_ZB_COEX_TBL_0, R_BTC_ZB_COEX_TBL_1,
     R_BTC_ZB_BREAK_TBL, BTC_ZB_COEX_TBL_VAL, BTC_ZB_BREAK_TBL_VAL,
+    R_BE_SCOREBOARD, WL_TX_POWER_NO_BTC_CTRL,
+    R_BE_PWR_RATE_CTRL, R_BE_PWR_REG_CTRL, R_BE_PWR_COEX_CTRL,
+    B_BE_FORCE_PWR_BY_RATE_EN, B_BE_FORCE_PWR_BY_RATE_VAL, B_BE_PWR_BT_EN, B_BE_PWR_BT_VAL,
 )
 from . import phy
 
@@ -59,8 +62,31 @@ def _init_cfg(t, ant: dict) -> None:
     t.write32(R_BTC_ZB_BREAK_TBL, BTC_ZB_BREAK_TBL_VAL)
 
 
+def _set_wl_txpwr_ctrl(t, txpwr_val: int) -> None:
+    """rtw8922a_btc_set_wl_txpwr_ctrl: force-power and BT-power control on PHY_0 (get_txpwr_cr is
+    identity for PHY_0). WL_TX_POWER_NO_BTC_CTRL passes 0xffff to both fields (the disable arms).
+    [SRC] rtw8922a.c:2836-2867, mac.h:1573."""
+    ctrl_all_time = txpwr_val & 0xFFFF
+    ctrl_gnt_bt = (txpwr_val >> 16) & 0xFFFF
+    if ctrl_all_time == 0xFFFF:
+        t.write32_mask(R_BE_PWR_RATE_CTRL, B_BE_FORCE_PWR_BY_RATE_EN, 0x0)
+        t.write32_mask(R_BE_PWR_RATE_CTRL, B_BE_FORCE_PWR_BY_RATE_VAL, 0x0)
+    else:
+        t.write32_mask(R_BE_PWR_RATE_CTRL, B_BE_FORCE_PWR_BY_RATE_VAL, ctrl_all_time)
+        t.write32_mask(R_BE_PWR_RATE_CTRL, B_BE_FORCE_PWR_BY_RATE_EN, 0x1)
+    if ctrl_gnt_bt == 0xFFFF:
+        t.write32_mask(R_BE_PWR_REG_CTRL, B_BE_PWR_BT_EN, 0x0)
+        t.write32_mask(R_BE_PWR_COEX_CTRL, B_BE_PWR_BT_VAL, 0x0)
+    else:
+        t.write32_mask(R_BE_PWR_COEX_CTRL, B_BE_PWR_BT_VAL, ctrl_gnt_bt)
+        t.write32_mask(R_BE_PWR_REG_CTRL, B_BE_PWR_BT_EN, 0x1)
+
+
 def ntfy_init(t, h2c_ep: int, cv: int) -> None:
-    """rtw89_btc_ntfy_init(BTC_MODE_NORMAL): the wire-emitting part is btc_set_rfe (software) plus
-    btc_init_cfg. [SRC] coex.c:7746."""
+    """rtw89_btc_ntfy_init(BTC_MODE_NORMAL): btc_set_rfe + btc_init_cfg, then the BT scoreboard
+    read, the WL tx-power coex disable, and (todo) the coex fw H2Cs and _run_coex. The scoreboard
+    write and get_ctrl_path are software / no-op on the 8922A. [SRC] coex.c:7746."""
     ant = _set_rfe(t.rfe_type, cv)
     _init_cfg(t, ant)
+    t.read32(R_BE_SCOREBOARD)                 # _update_bt_scbd -> _read_scbd (mac_get_sb)
+    _set_wl_txpwr_ctrl(t, WL_TX_POWER_NO_BTC_CTRL)   # _set_wl_tx_power(RTW89_BTC_WL_DEF_TX_PWR)

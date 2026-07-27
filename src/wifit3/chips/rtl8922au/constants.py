@@ -940,6 +940,16 @@ R_BTC_ZB_COEX_TBL_1 = 0xE32C    # coex.h
 R_BTC_ZB_BREAK_TBL = 0xE350     # coex.h
 BTC_ZB_COEX_TBL_VAL = 0xDA5A5A5A  # rtw8922a.c:2827-2830
 BTC_ZB_BREAK_TBL_VAL = 0xF0FFFFFF
+# scoreboard + WL tx-power coex control. [SRC] coex.c:3016-3060, rtw8922a.c:2836-2867, reg.h.
+R_BE_SCOREBOARD = 0x00AC         # reg.h:4247; chip->btc_sb.n[0].get
+WL_TX_POWER_NO_BTC_CTRL = 0xFFFFFFFF  # GENMASK(31, 0). coex.c:3016
+R_BE_PWR_RATE_CTRL = 0x11A2C     # reg.h:8406
+R_BE_PWR_REG_CTRL = 0x11A50      # reg.h:8436
+R_BE_PWR_COEX_CTRL = 0x11A54     # reg.h:8439
+B_BE_FORCE_PWR_BY_RATE_EN = 1 << 19    # reg.h
+B_BE_FORCE_PWR_BY_RATE_VAL = 0x1FF00000  # GENMASK(28, 20). reg.h
+B_BE_PWR_BT_EN = 1 << 23         # reg.h
+B_BE_PWR_BT_VAL = 0x000001FF     # GENMASK(8, 0). reg.h
 
 # Register H2C/C2H firmware mailbox (rtw89_fw_msg_reg). [SRC] fw.c:8229-8335, reg.h, fw.h.
 R_BE_H2CREG_DATA0 = 0x7140       # reg.h:4848; DATAn = DATA0 + n*4
