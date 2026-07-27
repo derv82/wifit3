@@ -61,6 +61,8 @@ from .constants import (
     R_CLK_GCK, B_CLK_GCK, R_IOQ_IQK_DPK, B_IOQ_IQK_DPK_CLKEN, R_IQK_DPK_RST, B_IQK_DPK_RST,
     R_IQK_DPK_PRST, B_IQK_DPK_PRST, R_IQK_DPK_PRST_C1, R_TXRFC, B_TXRFC_RST,
     R_IQK_DPK_RST_C1, R_TXRFC_C1,
+    B_BE_PWR_REF_CTRL_OFDM, B_BE_PWR_REF_CTRL_CCK, RR_BIASA,
+    RR_BIASA_TXG_V1, RR_BIASA_TXA_V1, RR_BIASD_TXG_V1, RR_BIASD_TXA_V1,
 )
 from . import firmware, mac
 
@@ -569,3 +571,26 @@ def init_rf_nctl(t, cv: int) -> None:
     regs = firmware.element_regs(RTW89_FW_ELEMENT_ID_RF_NCTL)
     hs, hidx = _sel_headline(regs, t.rfe_type, cv)
     _init_reg(regs, hs, hidx, lambda a, d: _config_bb_reg(t, a, d, False))
+
+
+# --- set_txpwr_ctrl + power_trim. [SRC] rtw8922a.c:2429,942-1041. ---
+
+def set_txpwr_ctrl(t) -> None:
+    """rtw8922a_set_txpwr_ctrl -> set_txpwr_ref: clear the OFDM then CCK power reference on both
+    bands (get_txpwr_cr adds +0x4000 for band 1). [SRC] rtw8922a.c:2429-2445, 2559."""
+    for band in (0, MAC_BAND1_OFFSET):
+        t.write32_mask(R_BE_PWR_REF_CTRL + band, B_BE_PWR_REF_CTRL_OFDM, 0)
+        t.write32_mask(R_BE_PWR_REF_CTRL + band, B_BE_PWR_REF_CTRL_CCK, 0)
+
+
+def power_trim(t) -> None:
+    """rtw8922a_power_trim: pa_bias then pad_bias, per path, from the phycap trim nibbles.
+    [SRC] rtw8922a.c:965-1041."""
+    if not t.pg_pa_bias_trim:
+        return
+    for i in (RF_PATH_A, RF_PATH_B):
+        write_rf(t, i, RR_BIASA, RR_BIASA_TXG_V1, t.pa_bias_trim[i] & 0xF)
+        write_rf(t, i, RR_BIASA, RR_BIASA_TXA_V1, (t.pa_bias_trim[i] >> 4) & 0xF)
+    for i in (RF_PATH_A, RF_PATH_B):
+        write_rf(t, i, RR_BIASA, RR_BIASD_TXG_V1, t.pad_bias_trim[i] & 0xF)
+        write_rf(t, i, RR_BIASA, RR_BIASD_TXA_V1, (t.pad_bias_trim[i] >> 4) & 0xF)

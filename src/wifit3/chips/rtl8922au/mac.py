@@ -170,6 +170,7 @@ from .constants import (
     R_BE_GPIO_MUXCFG, B_BE_BOOT_MODE, R_BE_BOOT_REASON, B_BE_BOOT_REASON_MASK,
     R_BE_SYS_WL_EFUSE_CTRL, B_BE_AUTOLOAD_SUS,
     PHYSICAL_EFUSE_SIZE, PHYCAP_ADDR, PHYCAP_SIZE, R_BE_EFUSE_USB_MACADDR, ETH_ALEN,
+    PHYCAP_PA_PAD_CHECK_OFST, PABIAS_TRIM_OFST, PADBIAS_TRIM_OFST,
     RTW89_FWCMD_H2CREG_FUNC_GET_FEATURE, RTW89_H2CREG_GET_FEATURE_PART_NUM,
     SEC_CTRL_EFUSE_SIZE, EFUSE_RF_BLOCK_OFFSET, EFUSE_RF_BLOCK_SIZE,
     EFUSE_BLOCK_ID_MASK, EFUSE_BLOCK_SIZE_MASK,
@@ -985,10 +986,14 @@ def parse_efuse_map(t, cv: int) -> dict:
 
 
 def parse_phycap_map(t, cv: int) -> bytes:
-    """rtw89_parse_phycap_map_be: dump the phy-capability efuse block. chip->ops->read_phycap
-    parses it in software. [SRC] efuse_be.c:402-433, rtw8922a.c:1033.
-    TODO: verify, read_phycap (RF path / antenna extraction) is not yet ported."""
-    return dump_physical_efuse_map(t, cv, PHYCAP_ADDR, PHYCAP_SIZE)
+    """rtw89_parse_phycap_map_be: dump the phy-cap efuse block and (rtw8922a_read_phycap) parse the
+    PA/PAD bias trim into transport state for power_trim. thermal trim is deferred. [SRC]
+    efuse_be.c:402-433, rtw8922a.c:942-1041."""
+    cap = dump_physical_efuse_map(t, cv, PHYCAP_ADDR, PHYCAP_SIZE)
+    t.pg_pa_bias_trim = cap[PHYCAP_PA_PAD_CHECK_OFST - PHYCAP_ADDR] != 0xFF
+    t.pa_bias_trim = [cap[o - PHYCAP_ADDR] for o in PABIAS_TRIM_OFST]
+    t.pad_bias_trim = [cap[o - PHYCAP_ADDR] for o in PADBIAS_TRIM_OFST]
+    return cap
 
 
 def read_phycap(t, part_num: int) -> dict:

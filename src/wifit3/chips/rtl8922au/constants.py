@@ -1133,6 +1133,18 @@ B_TXRFC_RST = 0x00E00000             # GENMASK(23, 21)
 R_IQK_DPK_RST_C1 = 0x1C6C
 R_TXRFC_C1 = 0x1C7C
 
+# set_txpwr_ref + power_trim (phycap PA/PAD bias). [SRC] rtw8922a.c:2429,942-1041, reg.h.
+B_BE_PWR_REF_CTRL_OFDM = 0x000003FE  # GENMASK(9, 1)
+B_BE_PWR_REF_CTRL_CCK = 0x0007FC00   # GENMASK(18, 10)
+RR_BIASA = 0x60
+RR_BIASA_TXG_V1 = 0x0000000F         # GENMASK(3, 0)
+RR_BIASA_TXA_V1 = 0x00000F00         # GENMASK(11, 8)
+RR_BIASD_TXG_V1 = 0x000000F0         # GENMASK(7, 4)
+RR_BIASD_TXA_V1 = 0x0000F000         # GENMASK(15, 12)
+PHYCAP_PA_PAD_CHECK_OFST = 0x1700    # check_pa_pad_trim_addr. rtw8922a.c:946
+PABIAS_TRIM_OFST = (0x1707, 0x1734)  # pabias_trim_addr[]. rtw8922a.c:944
+PADBIAS_TRIM_OFST = (0x1708, 0x1735) # pad_bias_trim_addr[]. rtw8922a.c:994
+
 # Register H2C/C2H firmware mailbox (rtw89_fw_msg_reg). [SRC] fw.c:8229-8335, reg.h, fw.h.
 R_BE_H2CREG_DATA0 = 0x7140       # reg.h:4848; DATAn = DATA0 + n*4
 R_BE_C2HREG_DATA0 = 0x7150       # reg.h:4852

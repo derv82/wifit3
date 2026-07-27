@@ -138,6 +138,9 @@ class RTL8922AUDriver(Driver):
         phy.dm_init(self.transport, ver["cv"])    # phy_dm_init BB inits (pre-RFK). core.c:6665
         phy.rfk_hw_init(self.transport)           # chip_rfk_hw_init (syn/ktbl/pll). phy.c:8256
         phy.init_rf_nctl(self.transport, ver["cv"])   # preinit + RF_NCTL fw table. phy.c:8257
+        # rfk_init is software-only. Then set_txpwr_ctrl + power_trim. [SRC] phy.c:8259-8261.
+        phy.set_txpwr_ctrl(self.transport)
+        phy.power_trim(self.transport)
         return True
 
     def _switch_usb_mode(self) -> None:

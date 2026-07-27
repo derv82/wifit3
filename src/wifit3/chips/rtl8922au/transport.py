@@ -32,6 +32,9 @@ class RTL8922AUTransport:
         self.cmac_pwr = set()       # RTW89_FLAG_CMACn_PWR: which CMACs are powered. [SRC] mac_be.c:810
         self.rfe_type = 0           # efuse->rfe_type, from the RF-block logical parse. [SRC] rtw8922a.c:866
         self.xtal_cap = 0           # efuse->xtal_cap. [SRC] rtw8922a.c:867
+        self.pg_pa_bias_trim = False   # phycap PA/PAD-bias PG present. [SRC] rtw8922a.c:954
+        self.pa_bias_trim = [0, 0]     # per-path PA bias nibbles from phycap. [SRC] rtw8922a.c:957
+        self.pad_bias_trim = [0, 0]    # per-path PAD bias nibbles. [SRC] rtw8922a.c:1000
 
     def _vendorreq(self, addr: int, data: bytes, length: int, reqtype: int) -> bytes:
         """rtw89_usb_vendorreq: one endpoint-0 vendor control transfer, retried up to 10
