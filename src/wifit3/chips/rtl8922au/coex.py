@@ -222,6 +222,32 @@ def ntfy_init(t, h2c_ep: int, cv: int) -> None:
     _run_coex_ntfy_init(t, h2c_ep)
 
 
+_CXST_OFF = 0                                    # s_def[CXST_OFF] = the first slot. core.h:2660
+_TDMA_OFF = bytes(7) + bytes((0x01,))            # t_def[CXTD_OFF] with option_ctrl set by the action
+
+
+def _set_policy_full(t, ep: int) -> None:
+    """_set_policy(BTC_CXP_OFF_BT) at role-start: the full policy TLV pair, not a delta. TDMA is
+    CXTD_OFF with option_ctrl=1; the slot TLV carries every CXST_MAX slot from s_def, CXST_OFF's
+    cxtbl overridden to 0xe5555555. [SRC] coex.c:_set_policy / _append_tdma / _append_slot_v7."""
+    tdma_tlv = bytes((0x00, 0x07, 0x08)) + _TDMA_OFF     # tlv v7: type TDMA, ver 7, len 8
+    slots = b""
+    for i, (dur, cxtbl, cxtype) in enumerate(_SLOT_DEF):
+        if i == _CXST_OFF:
+            cxtbl = 0xE5555555
+        slots += bytes((i,)) + struct.pack("<HHI", dur, cxtype, cxtbl)
+    slot_tlv = bytes((0x01, 0x07, 0x09)) + slots         # tlv v7: type SLOT, ver 7, per-record len 9
+    _btc_h2c(t, ep, BTF_SET_CX_POLICY, tdma_tlv + slot_tlv, dack=True)
+
+
+def ntfy_role_info(t, ep: int) -> None:
+    """rtw89_btc_ntfy_role_info(BTC_ROLE_START) for the monitor vif: _run_coex re-sends the full
+    OFF-BT policy (tdma + all slots) and syncs the drv scoreboard. The role/OSI drv-info were
+    already staged during ntfy_init, so only the policy and scoreboard change. [SRC] mac80211.c:154."""
+    _set_policy_full(t, ep)
+    _cfg_sb(t, BTC_WSCB_INIT)
+
+
 def ntfy_radio_state_wl_on(t, cv: int) -> None:
     """rtw89_btc_ntfy_radio_state(BTC_RFCTRL_WL_ON): fw_en_rpt is a no-op (MREG already reported),
     _write_scbd is software, then _update_bt_scbd reads the scoreboard and btc_init_cfg re-runs the

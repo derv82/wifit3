@@ -163,6 +163,8 @@ class RTL8922AUDriver(Driver):
         firmware.h2c_cam(self.transport, ep)                    # rtw89_cam_init is software-only
         firmware.h2c_default_cmac_tbl(self.transport, ep, macid=0)
         firmware.h2c_default_dmac_tbl(self.transport, ep, macid=0)
+        # __rtw89_ops_add_iface_link tail: btc_ntfy_role_info(BTC_ROLE_START). [SRC] mac80211.c:154.
+        coex.ntfy_role_info(self.transport, ep)
         return True
 
     def _switch_usb_mode(self) -> None:
