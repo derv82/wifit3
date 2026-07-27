@@ -6,7 +6,23 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 13820/163814 driver ops reproduced and committed (capture-1; capture-2/3 stop at
+Cold-boot bring-up + the **entire first per-channel tune for both PHYs** reproduced and committed
+(capture-1: 14614/163814 ops; capture-2/3 stop at the same frontier). The frontier is now
+**op #14623 = the monitor RX-filter block** (`R_BE_RX_FLTR_OPT` 0x11420 + a ~380-op BB RX-config
+block at 0x207xx). This is a mac80211 `configure_filter` (promiscuous monitor RX), a SEPARATE op
+from `__rtw89_set_channel`: it fires irregularly (after hop 1 and hop 3, not per-hop), so the verify
+harness's connect()+hops loop does not drive it yet. It is the RX-enable path and needs a new driver
+method + a harness step (drive it once after the first hop). Porting it is what unblocks a live
+beacon-RX test.
+
+Per-hop = TWO `__rtw89_set_channel` calls: PHY_0/MAC_0 then PHY_1/MAC_1 (same channel). PHY_0 runs
+the full tune (mac/bb/rf/txpwr/help-leave + btc_switch_band + rfk_band_changed + the pure-monitor
+rfk_channel: pre_ntfy/txgapk/iqk/tssi/dpk/rxdck). PHY_1 reuses the same functions with phy_idx=1
+(txpwr shifts +0x4000, RF1 ref table, PHY_1 BB offset) but skips rfk_channel (the monitor vif's link
+is PHY_0-only) and skips the coex policy H2C (deduped, unchanged). The efuse-TSSI parse
+(t.tssi_cck/mcs/therm) and the 300B TSSI H2C builder are validated byte-for-byte.
+
+Earlier status (still true): cold-boot bring-up, all committed (capture-1; capture-2/3 stop at
 the same frontier, poll-count variance only). `verify_pcap` walks both VENQT control ops and bulk-OUT
 ops. **All of `rtw89_core_start`, the entire mac80211 add-interface, and the first per-channel tune
 through `set_channel_help(leave)` are reproduced: set_channel_mac, set_channel_bb, set_channel_rf,
@@ -119,11 +135,21 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #13829): the per-channel RFK
+## Next (from op #14623): the monitor RX-filter / configure_filter block
 
-The whole channel tune through `set_channel_help(leave)` is done; only the RFK remains before one
-channel fully reproduces (then the walk auto-advances to the next of the 202 hops). Two chip ops in
-`__rtw89_set_channel` order:
+The whole per-channel tune (both PHYs, incl. RFK) is done. The frontier is the ~380-op RX-filter
+block: `R_BE_RX_FLTR_OPT` (0x11420 MAC_0, 0x15420 MAC_1) then a run of 0x207xx BB RMWs. This is
+mac80211 `ieee80211_ops.configure_filter` setting promiscuous monitor RX, plus the BB RX-path
+config. It fires irregularly (0x11420 writes at ops 14624/14732, 17811/17815, ...), not per-hop, so
+it does NOT belong in `chan.set_channel`. Port it as a new driver method (e.g. the monitor RX-enable
+/ set-filter path) and extend `scripts/rtl8922au/verify_pcap.py` `_drive` to call it once after the
+first hop (mirror how it detects hop openers). This is the RX-enable path: once it lands, `test_hw.py`
+can add a live beacon-RX check. Source: grep `configure_filter` / `rtw89_ops_configure_filter` and
+`rtw89_mac_cfg_ppdu_status` / RX-filter setup in mac.c/mac80211.c.
+
+## Done (RFK, ops 13829-14622): the per-channel RFK + PHY_1 tune
+
+Two chip ops in `__rtw89_set_channel` order, now ported (see rfk.py / coex.py / chan.py):
 
 1. **`rtw8922a_rfk_band_changed` (op #13829, the frontier)** = `rtw89_phy_rfk_tssi_and_wait(SCAN, 6)`:
    one TSSI-offload H2C (`rtw89_fw_h2c_rf_tssi`, class `H2C_CL_OUTSRC_RF_FW_RFK` 0xb, func
