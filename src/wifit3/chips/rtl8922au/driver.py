@@ -12,8 +12,9 @@ from wifit3.dot11.parser import WlanFrameParser
 
 from ..driver import Driver, DeviceID, ProgressCallback
 from ..rx_reader import RxReaderThread
-from . import chan, coex, firmware, mac, phy, rfk
+from . import chan, coex, firmware, mac, phy, rfk, tx
 from .rx import iter_bulk_frames, RX_RECVBUF_SZ
+from .tx import BULKOUT_ID_B0MG
 from .constants import (
     R_BE_PAD_CTRL2, _LIBUSB_SPEED_SUPER, USB_SWITCH_DELAY, B_BE_MATCH_CNT,
     B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
@@ -67,6 +68,9 @@ class RTL8922AUDriver(Driver):
         self._h2c_ep: Optional[int] = None
         self._bulk_in_ep: Optional[int] = None
         self._rx_reader: Optional[RxReaderThread] = None
+        self._mgmt_ep: Optional[int] = None
+        self._tx_seq: int = 0
+        self._band_is_2g: bool = True
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8922AUDriver":
@@ -105,6 +109,8 @@ class RTL8922AUDriver(Driver):
                     and usb.util.endpoint_type(ep.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK]
         if len(out_pipe) > BULKOUT_ID_H2C:
             self._h2c_ep = out_pipe[BULKOUT_ID_H2C]
+        if len(out_pipe) > BULKOUT_ID_B0MG:
+            self._mgmt_ep = out_pipe[BULKOUT_ID_B0MG]     # B0MG queue = out_pipe[0]. rtw8922au.c:23
         # in_pipe[0] is the RX pipe. [SRC] usb.c:1030-1043, 543.
         in_pipe = [ep.bEndpointAddress for ep in intf
                    if usb.util.endpoint_direction(ep.bEndpointAddress) == usb.util.ENDPOINT_IN
@@ -249,6 +255,7 @@ class RTL8922AUDriver(Driver):
         """One per-channel tune, the unit airmon-ng drives per hop. mlo_1_1 selects the MLO mode the
         entity recalc lands on for this hop. [SRC] core.c __rtw89_set_channel."""
         chan.set_channel(self.transport, channel, self._h2c_ep, mlo_1_1=mlo_1_1)
+        self._band_is_2g = channel <= 14                  # picks the mgmt TX basic rate (CCK1 vs OFDM6)
         return True
 
     def configure_filter(self, rx_fltr: int) -> None:
@@ -276,10 +283,29 @@ class RTL8922AUDriver(Driver):
             usb.util.dispose_resources(self.dev)
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        raise NotImplementedError
+        """Prepend the BE mgmt TX descriptor and bulk-OUT the frame once on the B0MG pipe (0x05)."""
+        if self._mgmt_ep is None:
+            logger.error("RTL8922AU inject_frame: no mgmt bulk-OUT endpoint (not connected?)")
+            return False
+        desc = tx.build_tx_desc_mgmt(frame_bytes, band_is_2g=self._band_is_2g)
+        payload = desc + frame_bytes
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self.transport.bulk_out(self._mgmt_ep, payload))
+            return True
+        except usb.core.USBError as e:
+            logger.error("RTL8922AU inject_frame: bulk-OUT failed: %s", e)
+            return False
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
-        raise NotImplementedError
+        """Write an incrementing 12-bit sequence into the frame's seq_ctrl (BE has no HW seq
+        override), so the on-air seq matches the descriptor's WIFI_SEQ. [SRC] core.c:1255."""
+        if len(frame_bytes) < 24:
+            return frame_bytes
+        self._tx_seq = (self._tx_seq + 1) & 0xFFF
+        b = bytearray(frame_bytes)
+        b[22:24] = ((self._tx_seq << 4) & 0xFFFF).to_bytes(2, "little")
+        return bytes(b)
 
     async def _enable_rx_acks(self) -> None:
         raise NotImplementedError
