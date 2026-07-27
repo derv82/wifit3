@@ -6,22 +6,32 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 13399/163814 driver ops reproduced and committed (capture-1; ~13415/13456 on
-capture-2/3, poll-count variance only). `verify_pcap` walks both VENQT control ops and bulk-OUT
-ops; all three captures stop at the same frontier. **All of `rtw89_core_start`, the entire mac80211
-add-interface, and `rtw8922a_set_channel_mac` + `rtw8922a_set_channel_bb` (the full BB half of the
-first per-channel tune) are reproduced.** The frontier is **`rtw8922a_set_channel_rf`** (op #13408,
-the masked-HWSI RF writes on 0x22adc/0x22c24/0x22ae0 path A and 0x22bdc/0x22d24/0x22be0 path B).
+Cold-boot bring-up, 13820/163814 driver ops reproduced and committed (capture-1; capture-2/3 stop at
+the same frontier, poll-count variance only). `verify_pcap` walks both VENQT control ops and bulk-OUT
+ops. **All of `rtw89_core_start`, the entire mac80211 add-interface, and the first per-channel tune
+through `set_channel_help(leave)` are reproduced: set_channel_mac, set_channel_bb, set_channel_rf,
+the full `set_txpwr`, and `set_channel_done` (post_set_channel bb/rf).** The frontier is now the
+**per-channel RFK** (op #13829, `rfk_band_changed` -> `rtw89_phy_rfk_tssi_and_wait`, an H2C bulk-OUT
+on ep 0x07), followed by `rfk_channel_for_pure_mon_vif` (pre_ntfy / txgapk / iqk / tssi / dpk / rxdck
+offload H2Cs with interleaved BTC-notify and HWSI RF writes; report_wait is completion-based, so it
+emits no register ops).
 
-set_channel_bb is complete: pre_set_channel bb/rf, set_channel_help(enter)/hal_reset, set_channel_mac,
-then all of set_channel_bb (ctrl_sco_cck, ctrl_ch [set_gain, band_sel, set_rx_gain_normal, freq/sco/
-cck-params/chan-idx], ctrl_bw, ctrl_cck_en, spur_elimination, tssi_reset). Two data subsystems were
-un-deferred: the **BB-gain FW element** (`phy._decode_bb_gain`, 804 reg2 pairs -> the be gain arrays,
-cached on the transport; applied by set_gain via the reg-def tables) and the **efuse rx-gain offset**
-(`mac._parse_gain_offset` at parse_efuse_map -> `transport.gain_offset`, applied by set_rx_gain_normal).
-Both are 2G-only so far (5/6G raises in set_gain / set_rx_gain_normal / encode_chan_idx / ctrl_bw /
-set_channel_mac -- monitor hops are HT20 2.4/5 GHz, and 5G will need the gain_a tables + 5G bands).
-The per-channel loop is ~150k ops, one unit ~750 ops.
+**Live hardware smoke test PASSED** (ASUS USB-BE93 `0b05:1d84`, SuperSpeed): `driver.connect()` runs
+firmware upload + MAC/BB init + add-interface on real silicon with the poll loops converging (see
+`scripts/rtl8922au/test_hw.py`). At SuperSpeed the rtw89 mode switch is skipped, so there is no
+re-enumeration. RX is not yet testable (the channel does not fully tune until the RFK lands).
+
+set_channel_bb: pre_set_channel bb/rf, set_channel_help(enter)/hal_reset, set_channel_mac, then all of
+set_channel_bb (ctrl_sco_cck, ctrl_ch, ctrl_bw, ctrl_cck_en, spur_elimination, tssi_reset). set_channel_rf
+is `ctl_band_ch_bw` (RF 0x18/0x10018 per path via `phy.read_rf`/`write_rf`). set_txpwr is a new
+`txpwr.py`: the firmware txpwr elements (BYRATE/LMT_2GHZ/LMT_RU_2GHZ/TX_SHAPE_LMT via
+`firmware.txpwr_conf`) drive byrate/offset/tx_shape/limit/limit_ru, then the 8922a diff/ref/sar. The
+card's efuse country is "00" so **regd resolves to RTW89_WW**. set_channel_done is hal_reset(leave) +
+digital_pwr_comp LTPC tables + `ctrl_mlo(MLO_2_PLUS_0_1RF)` + rfk_mlo_ctrl (set_syn01 + chlk_reload).
+Two earlier data subsystems: the **BB-gain FW element** and the **efuse rx-gain offset**, both cached
+on the transport. Everything is 2G/HT20-only so far (5/6G raises in set_gain / set_rx_gain_normal /
+encode_chan_idx / ctrl_bw / set_channel_mac and the txpwr limit tables). The per-channel loop is
+~150k ops, one unit ~750 ops.
 
 ### Gotchas found while porting (not obvious from a single read)
 
@@ -109,25 +119,25 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #13408)
+## Next (from op #13829): the per-channel RFK
 
-**The per-channel channel-tune + RFK loop, ~150k ops, the bulk of what remains.** `core_start`, the
-whole add-interface, and set_channel_mac + set_channel_bb are done. `chan.set_channel` has TODO
-slots for what's left of the unit:
+The whole channel tune through `set_channel_help(leave)` is done; only the RFK remains before one
+channel fully reproduces (then the walk auto-advances to the next of the 202 hops). Two chip ops in
+`__rtw89_set_channel` order:
 
-1. **`rtw8922a_set_channel_rf` (op #13408, the frontier).** Masked-HWSI RF writes: path A on
-   0x22adc(write)/0x22c24(read)/0x22ae0, path B on 0x22bdc/0x22d24/0x22be0 (uses the existing
-   `phy.write_rf` masked-HWSI path). Read `rtw8922a_set_channel_rf` in rtw8922a_rfk.c; the RF-register
-   values are channel-dependent (freq/band tables).
-2. **`set_txpwr`** (chip op) for the channel, then **`set_channel_help(leave)`** (`phy.set_channel_help`
-   already has the leave arm stubbed with a NotImplementedError: hal_reset re-enable + post_set_channel
-   bb/rf -> digital_pwr_comp + ctrl_mlo), then **`rtw8922a_rfk`** (`_rfk_by_channel`: TXGAPK/RX-DCK/
-   IQK/DPK/TSSI, mostly fw-offload H2C cat=2 cls 0x8/0x9/0x10 + masked HWSI RF writes). Delegate
-   per-calibration subagent specs. `rtw8922a_rfk_init` is software-only.
+1. **`rtw8922a_rfk_band_changed` (op #13829, the frontier)** = `rtw89_phy_rfk_tssi_and_wait(SCAN, 6)`:
+   one TSSI-offload H2C (`rtw89_fw_h2c_rf_tssi`, class `H2C_CL_OUTSRC_RF_FW_RFK` 0xb, func
+   `RFK_TSSI_OFFLOAD` 0x0) then a completion wait (no wire ops). The payload pulls efuse-TSSI de +
+   thermal-meter tables (`fill_fwcmd_efuse_to_de` / `_tmeter_tbl`), so the efuse-TSSI parse may need
+   un-deferring first (see `rtw8922a_efuse_parsing_tssi`, rtw8922a.c:744).
+2. **`rfk_channel_for_pure_mon_vif` -> `rtw8922a_rfk_channel`**: btc_ntfy_wl_rfk(START), stop_sch_tx,
+   `_wait_rx_mode(RF_AB)`, then pre_ntfy / txgapk / iqk / tssi(NORMAL) / dpk / rxdck offload H2Cs
+   (each an H2C + completion wait), with interleaved BTC-notify writes and masked-HWSI RF writes,
+   then resume_sch_tx + btc_ntfy_wl_rfk(STOP). Reuse `rfk.py`'s H2C helpers and `phy.write_rf`.
 
-The subagent workflow (proven for the BB-gain element): dump the ground-truth op window with the
-scratch `dop.py`, hand a subagent the source + our infra (`firmware.element_regs`, `phy.write_rf`)
-+ the ground truth, get a byte-spec reconciled to the wire, port, `verify_pcap`, commit.
+Report_wait is completion-based (waits on a C2H that the replay never sends), so it emits no register
+ops: verify sees H2C, then the next real op. Dump each H2C's exact bytes with `dop.py` and reconstruct
+the payload (the "simulate before you port" workflow used for byrate/limit) before writing the builder.
 
 **One recurring trap:** the MLO mode is MLO_2_PLUS_0 at set_channel (single PHY_0 monitor vif),
 not the core_start MLO_1_PLUS_1. Any rtw8922a helper that branches on `mlo_dbcc_mode == MLO_1_PLUS_1`
