@@ -888,12 +888,19 @@ def _set_gain(t, chan: dict, path: int, phy_idx: int) -> None:
     _set_rpl_gain(t, g, gband, path, phy_idx)
 
 
+_BAND_SEL = (0x4160, 0x4560)             # rtw8922a_ctrl_ch band_sel[path]. rtw8922a.c:1494
+_B_BAND_SEL = 1 << 26                    # BIT(26)
+
+
 def _ctrl_ch(t, chan: dict, phy_idx: int) -> None:
-    """rtw8922a_ctrl_ch: per-path gain, then band-sel, rx-gain, center-freq, sco, cck-params,
-    chan-idx. Only set_gain (both paths) is ported so far. [SRC] rtw8922a.c:1490."""
+    """rtw8922a_ctrl_ch: per-path gain, band-sel, rx-gain, center-freq, sco, cck-params, chan-idx.
+    set_gain (both paths) + band_sel are ported so far. [SRC] rtw8922a.c:1490."""
     _set_gain(t, chan, RF_PATH_A, phy_idx)
     _set_gain(t, chan, RF_PATH_B, phy_idx)
-    # TODO: band_sel (0x4160/0x4560), set_rx_gain_normal, R_FC0 freq write, sco, cck_params,
+    is_2g = 1 if chan["band_type"] == RTW89_BAND_2G else 0
+    for path in (RF_PATH_A, RF_PATH_B):
+        _phy_write32_idx(t, _BAND_SEL[path], _B_BAND_SEL, is_2g, phy_idx)
+    # TODO: set_rx_gain_normal (needs efuse gain-offset), R_FC0 freq write, sco, cck_params,
     #       R_MAC_PIN_SEL chan_idx.
 
 
