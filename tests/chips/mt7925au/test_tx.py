@@ -34,9 +34,21 @@ DEAUTH_WIRE = bytes.fromhex(
 
 
 def test_build_tx_deauth_byte_exact():
-    frame = tx.build_tx(DEAUTH_MPDU, wcid_idx=MT792x_WTBL_RESERVED)
+    # The captured aireplay frame set MT_TXD3_NO_ACK; production build_tx never does, so the
+    # replay-only build_tx_no_ack is what reproduces the exact captured bytes.
+    frame = tx.build_tx_no_ack(DEAUTH_MPDU, wcid_idx=MT792x_WTBL_RESERVED)
     assert frame == DEAUTH_WIRE
     assert len(frame) == 100
+
+
+def test_no_ack_gutted_from_production():
+    """Production build_tx never sets NO_ACK (the chip HW-retries until ACKed); only the
+    replay-only builder sets it, to byte-match the capture."""
+    prod = tx.build_tx(DEAUTH_MPDU, wcid_idx=19)
+    replay = tx.build_tx_no_ack(DEAUTH_MPDU, wcid_idx=19)
+    assert struct.unpack_from("<16I", prod, 4)[3] & 1 == 0     # NO_ACK clear
+    assert struct.unpack_from("<16I", replay, 4)[3] & 1 == 1   # replay sets it
+    assert prod != replay and len(prod) == len(replay)
 
 
 def test_txwi_fields():
@@ -54,7 +66,7 @@ def test_txwi_fields():
     assert txwi[3] >> 31 == 1                # SN_VALID
     assert (txwi[3] >> 28) & 1 == 1          # BA_DISABLE
     assert (txwi[3] >> 11) & 0x1F == 15      # REM_TX_COUNT
-    assert txwi[3] & 1 == 1                  # NO_ACK
+    assert txwi[3] & 1 == 0                  # NO_ACK never set by production build_tx
     assert (txwi[6] >> 16) & 0x3F == 15      # TX_RATE = basic_rates_idx
     assert txwi[7] == 0
     assert txwi[8:] == (0,) * 8              # trailing 32 B of the 64 B TXD stay zero

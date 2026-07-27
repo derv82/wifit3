@@ -69,14 +69,14 @@ def ieee80211_hdrlen(fc: int) -> int:
 
 
 def build_txwi(mpdu: bytes, *, wcid_idx: int, omac_idx: int = MON_TX_OMAC_IDX,
-               band_idx: int = MON_TX_BAND_IDX, rate_idx: int = MON_TX_RATE_IDX,
-               no_ack: bool = True) -> bytes:
+               band_idx: int = MON_TX_BAND_IDX, rate_idx: int = MON_TX_RATE_IDX) -> bytes:
     """Port of mt7925_mac_write_txwi (+ _write_txwi_80211) for a monitor-injected raw
     802.11 frame. Returns the 64-byte connac3 TXD (txwi[0..7] filled, [8..15] zero).
 
-    ``mpdu`` is the bare 802.11 frame (no descriptor, no pad). The injected-frame
-    branch reads the 802.11 sequence from ``mpdu``'s seq_ctrl; only that (and, for WEP,
-    the IV) legitimately differs run-to-run."""
+    ``mpdu`` is the bare 802.11 frame (no descriptor, no pad). The injected-frame branch
+    reads the 802.11 sequence from ``mpdu``'s seq_ctrl. Only that (and, for WEP, the IV)
+    legitimately differs run-to-run, plus MT_TXD3_NO_ACK: wifit3 never sets it (see below),
+    but aireplay set it in the mt7925u TX capture, so the verify masks that bit."""
     fc = struct.unpack_from("<H", mpdu, 0)[0]
     multicast = bool(mpdu[4] & 0x01)                 # addr1 group bit
 
@@ -94,11 +94,13 @@ def build_txwi(mpdu: bytes, *, wcid_idx: int, omac_idx: int = MON_TX_OMAC_IDX,
     if band_idx:
         txwi[1] |= (band_idx << 12) & MT_TXD1_TGID
 
+    # REM_TX_COUNT=15 is the HW ACK-based retry limit; NO_ACK is never set, so the frame
+    # always requests an ACK and the chip retransmits until the recipient ACKs (that HW
+    # retry is inject_frame's only retransmission). NO_ACK was gutted project-wide as a
+    # footgun; matches every other wifit3 driver.
     txwi[3] = (TXD3_REM_TX_COUNT_UNLTD << 11) & MT_TXD3_REM_TX_COUNT
-    if no_ack:
-        txwi[3] |= MT_TXD3_NO_ACK
 
-    txwi[5] = 0                                      # pid 0: NO_ACK injection wants no TX status
+    txwi[5] = 0                                      # pid 0: no host TX-status reporting
 
     txwi[6] = MT_TXD6_DAS | ((1 << 4) & MT_TXD6_MSDU_CNT) | MT_TXD6_DIS_MAT
 
@@ -143,3 +145,17 @@ def build_tx(mpdu: bytes, *, wcid_idx: int, **kw) -> bytes:
     frame = hdr + body
     pad = ((len(frame) + 3) & ~3) - len(frame) + 4
     return frame + b"\x00" * pad
+
+
+# txwi[3] byte offset in the framed TX: 4-byte SDIO hdr + dword 3 of the TXD.
+_TXWI3_OFF = SDIO_HDR_SIZE + 3 * 4
+
+
+def build_tx_no_ack(mpdu: bytes, *, wcid_idx: int, **kw) -> bytes:
+    """Replay-only. The aireplay frames in the mt7925u TX capture set MT_TXD3_NO_ACK, which
+    the production `build_tx` deliberately never does (NO_ACK is gutted; the chip HW-retries
+    until ACKed instead). verify_pcap uses this to byte-match those exact captured frames.
+    NOT an inject path: nothing in the driver calls it."""
+    frame = bytearray(build_tx(mpdu, wcid_idx=wcid_idx, **kw))
+    frame[_TXWI3_OFF] |= MT_TXD3_NO_ACK          # txwi[3] bit0 (little-endian low byte)
+    return bytes(frame)
