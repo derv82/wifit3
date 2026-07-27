@@ -148,6 +148,7 @@ from .constants import (
     R_BE_TXPKTCTL_B1_PRELD_CFG1, B_BE_B0_PRELD_FEN, B_BE_B0_PRELD_USEMAXSZ_MASK,
     B_BE_B0_PRELD_CAM_G1ENTNUM_MASK, B_BE_B0_PRELD_CAM_G0ENTNUM_MASK,
     B_BE_B0_PRELD_NXT_TXENDWIN_MASK, B_BE_B0_PRELD_NXT_RSVMINSZ_MASK,
+    IMR_DMAC_REGS, IMR_CMAC_REGS,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -1338,10 +1339,19 @@ def preload_init(t, mac_idx: int) -> None:
     t.write32(reg0, val)
 
 
+def enable_imr(t, mac_idx: int, table) -> None:
+    """enable_imr_be: apply an IMR (addr, clr, set) table at the band offset. The 8922D-only
+    NO_RX_ERR write is skipped. [SRC] mac_be.c:2085-2115, rtw8922a.c:269-323."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    for addr, clr, st in table:
+        val = t.read32(addr + off)
+        t.write32(addr + off, (val & ~clr & 0xFFFFFFFF) | st)
+
+
 def band1_enable(t, cv: int) -> None:
     """band1_enable_be: TX-idle poll, DBCC quota change, band-1 TX preload, then CMAC1 func-en and
-    a second full cmac_init at the band-1 offset, the band-1 BB enable. cmac_pwr_en(MAC1) already
-    ran in mac_func_en. [SRC] mac_be.c band1_enable_be."""
+    a second full cmac_init at the band-1 offset, the band-1 BB enable, then the CMAC1 IMR.
+    cmac_pwr_en(MAC1) already ran in mac_func_en. [SRC] mac_be.c band1_enable_be."""
     tx_idle_poll_band(t, RTW89_MAC_0)
     dle_quota_change(t)
     preload_init(t, RTW89_MAC_1)
@@ -1349,6 +1359,7 @@ def band1_enable(t, cv: int) -> None:
     cmac_func_en(t, RTW89_MAC_1)
     cmac_init(t, RTW89_MAC_1, cv)
     dbcc_bb_ctrl(t)
+    enable_imr(t, RTW89_MAC_1, IMR_CMAC_REGS)
 
 
 def dbcc_enable(t, cv: int) -> None:
@@ -1362,6 +1373,8 @@ def trx_init(t, cv: int) -> None:
     dmac_init(t)
     cmac_init(t, RTW89_MAC_0, cv)
     dbcc_enable(t, cv)
+    enable_imr(t, RTW89_MAC_0, IMR_DMAC_REGS)
+    enable_imr(t, RTW89_MAC_0, IMR_CMAC_REGS)
 
 
 def mac_init(t, h2c_ep: int, cv: int) -> None:
