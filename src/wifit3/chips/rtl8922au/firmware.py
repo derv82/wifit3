@@ -34,7 +34,17 @@ from .constants import (
     RTW89_H2CREG_MAX, RTW89_C2HREG_MAX, RTW89_H2CREG_HDR_LEN, RTW89_C2HREG_HDR_LEN,
     RTW89_H2CREG_HDR_FUNC_MASK, RTW89_H2CREG_HDR_LEN_MASK,
     RTW89_C2HREG_HDR_FUNC_MASK,
+    FWCMD_TYPE_H2C, H2C_CAT_MAC, H2C_CL_MAC_MEDIA_RPT, H2C_FUNC_NOTIFY_DBCC,
+    H2C_HDR_CAT_MASK, H2C_HDR_CLASS_MASK, H2C_HDR_FUNC_MASK, H2C_HDR_DEL_TYPE_MASK,
+    H2C_HDR_H2C_SEQ_MASK, H2C_HDR_TOTAL_LEN_MASK, H2C_HDR_REC_ACK, H2C_HDR_DONE_ACK,
+    RTW89_H2C_NOTIFY_DBCC_EN,
 )
+
+
+def _pb(mask: int, val: int) -> int:
+    """FIELD_PREP: place `val` into `mask`'s field."""
+    shift = (mask & -mask).bit_length() - 1
+    return (val << shift) & mask
 
 _ASSET_PATH = Path(__file__).resolve().parent / "assets" / FW_ASSET
 
@@ -283,10 +293,35 @@ def download(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
     if include_bb:                                    # bbmcu_nr=1: one BBMCU0 suit. [SRC] fw.c:2004-2010
         bbmcu = load_bbmcu_suit(cv)
         download_suit(t, h2c_ep, bbmcu, parse_hdr_v1(bbmcu), is_bbmcu=True)
-    t.h2c_counter = 0                                 # fw_info reset. [SRC] fw.c:2014-2015
+    t.h2c_seq = 0                                     # fw_info reset. [SRC] fw.c:2012-2015
+    t.h2c_counter = 0
     t.c2h_counter = 0
     time.sleep(0.005)                                 # mdelay(5). [SRC] fw.c:2019
     _fw_check_rdy(t, 0)                               # RTW89_FWDL_CHECK_FREERTOS_DONE (status-only)
+
+
+def h2c_command(t, h2c_ep: int, cat: int, cls: int, func: int, payload: bytes,
+                rack: bool = False, dack: bool = True) -> None:
+    """rtw89_h2c_pkt_set_hdr + rtw89_h2c_tx (USB fwcmd): an 8-byte fwcmd header (BE, so no AX
+    rack override) plus the payload behind the H2C TX descriptor, sent on the H2C bulk-OUT.
+    [SRC] fw.c:1624-1647, core.c:1336-1375, usb.c:360-399, core.c:1892-1900."""
+    total = len(payload) + H2C_HEADER_LEN
+    hdr0 = (_pb(H2C_HDR_DEL_TYPE_MASK, FWCMD_TYPE_H2C) | _pb(H2C_HDR_CAT_MASK, cat)
+            | _pb(H2C_HDR_CLASS_MASK, cls) | _pb(H2C_HDR_FUNC_MASK, func)
+            | _pb(H2C_HDR_H2C_SEQ_MASK, t.h2c_seq))
+    hdr1 = (_pb(H2C_HDR_TOTAL_LEN_MASK, total) | (H2C_HDR_REC_ACK if rack else 0)
+            | (H2C_HDR_DONE_ACK if dack else 0))
+    t.h2c_seq = (t.h2c_seq + 1) & 0xFF
+    fwcmd = struct.pack("<II", hdr0, hdr1) + payload
+    pkt = _pad_mod512(fwcmd)
+    t.bulk_out(h2c_ep, _txd(len(pkt), False) + pkt)
+
+
+def h2c_notify_dbcc(t, h2c_ep: int, en: bool) -> None:
+    """rtw89_fw_h2c_notify_dbcc: tell the running fw that band 1 (DBCC) is up. [SRC] fw.c."""
+    w0 = _pb(RTW89_H2C_NOTIFY_DBCC_EN, 1 if en else 0)
+    h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_MEDIA_RPT, H2C_FUNC_NOTIFY_DBCC,
+                struct.pack("<I", w0), rack=False, dack=True)
 
 
 def _write_h2c_reg(t, h2c_id: int, content_len: int, w0: int) -> None:

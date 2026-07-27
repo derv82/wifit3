@@ -1362,17 +1362,19 @@ def band1_enable(t, cv: int) -> None:
     enable_imr(t, RTW89_MAC_1, IMR_CMAC_REGS)
 
 
-def dbcc_enable(t, cv: int) -> None:
-    """dbcc_enable_be(True): bring up band 1 (the notify-dbcc H2C to the fw follows). [SRC] mac_be.c."""
+def dbcc_enable(t, cv: int, h2c_ep: int) -> None:
+    """dbcc_enable_be(True): bring up band 1, then notify the running fw (FW_RDY is set after the
+    firmware download). [SRC] mac_be.c dbcc_enable_be."""
     band1_enable(t, cv)
+    firmware.h2c_notify_dbcc(t, h2c_ep, True)
 
 
-def trx_init(t, cv: int) -> None:
+def trx_init(t, cv: int, h2c_ep: int) -> None:
     """trx_init_be: dmac_init then cmac_init, the dbcc enable (qta is DBCC), the DMAC/CMAC IMR
     enables, host-rpr, and the 8922A rsp-chk-sig clear. [SRC] mac_be.c:2302-2352."""
     dmac_init(t)
     cmac_init(t, RTW89_MAC_0, cv)
-    dbcc_enable(t, cv)
+    dbcc_enable(t, cv, h2c_ep)
     enable_imr(t, RTW89_MAC_0, IMR_DMAC_REGS)
     enable_imr(t, RTW89_MAC_0, IMR_CMAC_REGS)
 
@@ -1384,4 +1386,4 @@ def mac_init(t, h2c_ep: int, cv: int) -> None:
     partial_init(t, h2c_ep, cv, include_bb=True)
     enable_bb_rf(t)
     sys_init(t)
-    trx_init(t, cv)
+    trx_init(t, cv, h2c_ep)
