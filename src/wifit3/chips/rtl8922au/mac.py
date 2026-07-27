@@ -1017,7 +1017,9 @@ def _parse_tssi(t, rf: bytes) -> None:
     groups from its first byte, bw40_tssi holds 5 2G groups from byte 6; the thermals are at
     0xd0/0xd1. [SRC] rtw8922a.c:744-771, rtw8922a.h:13-69, core.h:5980."""
     t.tssi_cck = [list(rf[0x10:0x16]), list(rf[0x3A:0x40])]   # path_a/b cck_tssi[0..5]
-    t.tssi_mcs = [list(rf[0x16:0x1B]), list(rf[0x40:0x45])]   # path_a/b bw40_tssi[0..4] (2G)
+    # bw40_tssi[0..4] (2G groups) then bw40_1s_tssi_5g[0..13] (5G groups 5..18). rtw8922a.c:756-767
+    t.tssi_mcs = [list(rf[0x16:0x1B]) + list(rf[0x22:0x30]),
+                  list(rf[0x40:0x45]) + list(rf[0x4C:0x5A])]
     t.tssi_therm = [rf[0xD0], rf[0xD1]]              # path_a/b _therm
 
 
