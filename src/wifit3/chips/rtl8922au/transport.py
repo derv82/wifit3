@@ -32,6 +32,8 @@ class RTL8922AUTransport:
         self.cmac_pwr = set()       # RTW89_FLAG_CMACn_PWR: which CMACs are powered. [SRC] mac_be.c:810
         self.cv = 0                 # chip cut version (hal.cv), set from read_chip_ver at connect
         self.bb_gain = None         # decoded BB-gain FW element (be gain arrays), cached lazily
+        self.gain_offset = [[0] * 5, [0] * 5]   # efuse rx-gain offset per path (2G_CCK/OFDM, 5G L/M/H)
+        self.gain_offset_valid = False          # efuse_gain.offset_valid. rtw8922a.c:826
         self.mlo_1_1 = True         # mlo_dbcc_mode == MLO_1_PLUS_1_1RF: core_init default for BE;
         #                             recalcs to MLO_2_PLUS_0_1RF once the PHY_0 vif has a chanctx.
         #                             [SRC] core.c:6995, chan.c:485-534.

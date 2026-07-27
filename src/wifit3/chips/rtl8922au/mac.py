@@ -181,6 +181,7 @@ from .constants import (
     EFUSE_BLOCK_ID_MASK, EFUSE_BLOCK_SIZE_MASK,
     EFUSE_HDR_PAGE_MASK, EFUSE_HDR_OFFSET_MASK, EFUSE_HDR_WORD_EN_MASK,
     EFUSE_RFE_TYPE_OFST, EFUSE_XTAL_K_OFST,
+    EFUSE_RX_GAIN_A_OFST, EFUSE_RX_GAIN_B_OFST, EFUSE_RX_GAIN_ENUM_ORDER,
     R_BE_PORT_CFG_P0, R_BE_TBTT_PROHIB_P0, R_BE_BCNERLYINT_CFG_P0, R_BE_TBTTERLYINT_CFG_P0,
     R_BE_TBTT_AGG_P0, R_BE_BCN_SPACE_CFG_P0, R_BE_BCN_AREA_P0, R_BE_DTIM_CTRL_P0,
     R_BE_MBSSID_CTRL, R_BE_P0MB_HGQ_WINDOW_CFG_0, R_BE_MBSSID_DROP_0, R_BE_PTCL_BSS_COLOR_0,
@@ -1003,8 +1004,23 @@ def parse_efuse_map(t, cv: int) -> dict:
     rf = _parse_logical_efuse_block(phy_map, EFUSE_RF_BLOCK_OFFSET, EFUSE_RF_BLOCK_SIZE)
     t.rfe_type = rf[EFUSE_RFE_TYPE_OFST]             # rtw8922a_read_efuse_rf. rtw8922a.c:866
     t.xtal_cap = rf[EFUSE_XTAL_K_OFST]
+    _parse_gain_offset(t, rf)                        # rtw8922a_efuse_parsing_gain_offset. rtw8922a.c:778
     return {"phy_map": phy_map, "mac_addr": bytes(addr),
             "rfe_type": t.rfe_type, "xtal_cap": t.xtal_cap}
+
+
+def _parse_gain_offset(t, rf: bytes) -> None:
+    """rtw8922a_efuse_parsing_gain_offset (2G/5G): read the per-path rx-gain offsets from the
+    block-1 map, transform sign-bit+U(7,2) to S(8,2), and set gain_offset_valid. 6G is deferred.
+    [SRC] rtw8922a.c:778-827."""
+    all_ff = all_00 = True
+    for path, base in ((0, EFUSE_RX_GAIN_A_OFST), (1, EFUSE_RX_GAIN_B_OFST)):
+        for k, enum_idx in enumerate(EFUSE_RX_GAIN_ENUM_ORDER):
+            raw = rf[base + k]
+            all_ff = all_ff and raw == 0xFF
+            all_00 = all_00 and raw == 0x00
+            t.gain_offset[path][enum_idx] = ((raw ^ 0x7F) + 1) & 0xFF if raw & 0x80 else raw
+    t.gain_offset_valid = not all_ff and not all_00
 
 
 def parse_phycap_map(t, cv: int) -> bytes:

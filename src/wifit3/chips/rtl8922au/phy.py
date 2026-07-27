@@ -10,6 +10,8 @@ import time
 from .constants import (
     CHIP_CAV, RTW89_BAND_2G,
     R_BK_FC0INV, B_BK_FC0INV, R_CCK_FC0INV, B_CCK_FC0INV, RTW89_FW_ELEMENT_ID_BB_GAIN,
+    GAIN_OFFSET_2G_CCK, GAIN_OFFSET_2G_OFDM, R_MGAIN_BIAS, B_MGAIN_BIAS_BW20, B_MGAIN_BIAS_BW40,
+    R_CCK_RPL_OFST, B_CCK_RPL_OFST,
     RTW89_FW_ELEMENT_ID_BB_REG, CR_BASE_BE, BYPASS_CR_DATA,
     PHY_HEADLINE_VALID, PHY_COND_BRANCH_IF, PHY_COND_BRANCH_ELIF, PHY_COND_BRANCH_ELSE,
     PHY_COND_BRANCH_END, PHY_COND_CHECK, PHY_COND_DONT_CARE,
@@ -890,18 +892,78 @@ def _set_gain(t, chan: dict, path: int, phy_idx: int) -> None:
 
 _BAND_SEL = (0x4160, 0x4560)             # rtw8922a_ctrl_ch band_sel[path]. rtw8922a.c:1494
 _B_BAND_SEL = 1 << 26                    # BIT(26)
+# set_rx_gain_normal_ofdm per-path reg tables. [SRC] rtw8922a.c:1420-1424.
+_RSSI_OFST = (0x40C8, 0x44C8)
+_RPL_BIAS_COMP = (0x41E8, 0x45E8)
+_RPL_EXT_COMP = (0x41F8, 0x45F8)
+_RSSI_TB_BIAS_COMP = (0x41F8, 0x45F8)
+_RSSI_TB_EXT_COMP = (0x4208, 0x4608)
+
+
+def _clamp_s8(v: int) -> int:
+    return -128 if v < -128 else (127 if v > 127 else v)
+
+
+def _set_rx_gain_normal_cck(t, path: int, phy_idx: int) -> None:
+    """rtw8922a_set_rx_gain_normal_cck: MGAIN bias (bw20/40) + CCK RPL offset from the 2G-CCK
+    gain-offset. [SRC] rtw8922a.c:1391."""
+    value = _s8(t.gain_offset[path][GAIN_OFFSET_2G_CCK])
+    value = -value
+    fraction = value & 0x3
+    if fraction:
+        _phy_write32_mask(t, R_MGAIN_BIAS, B_MGAIN_BIAS_BW20, (0x4 - fraction) << 1)
+        _phy_write32_mask(t, R_MGAIN_BIAS, B_MGAIN_BIAS_BW40, (0x4 - fraction) << 1)
+        value >>= 2
+        _phy_write32_mask(t, R_CCK_RPL_OFST, B_CCK_RPL_OFST, value + 1 + 0xDC)
+    else:
+        _phy_write32_mask(t, R_MGAIN_BIAS, B_MGAIN_BIAS_BW20, 0)
+        _phy_write32_mask(t, R_MGAIN_BIAS, B_MGAIN_BIAS_BW40, 0)
+        value >>= 2
+        _phy_write32_mask(t, R_CCK_RPL_OFST, B_CCK_RPL_OFST, value + 0xDC)
+
+
+def _set_rx_gain_normal_ofdm(t, gain_band: int, path: int, phy_idx: int) -> None:
+    """rtw8922a_set_rx_gain_normal_ofdm: RSSI offset + the RPL/TB bias/ext compensation triplet
+    (value*-4 split into three clamped s8 parts). [SRC] rtw8922a.c:1416."""
+    value = _s8(t.gain_offset[path][gain_band])
+    _phy_write32_mask(t, _RSSI_OFST[path], 0xFF000000, value + 0xF8)
+    value *= -4
+    v1 = _clamp_s8(value)
+    value -= v1
+    v2 = _clamp_s8(value)
+    value -= v2
+    v3 = _clamp_s8(value)
+    _phy_write32_mask(t, _RPL_BIAS_COMP[path], 0xFF, v1)
+    _phy_write32_mask(t, _RPL_EXT_COMP[path], 0xFF, v2)
+    _phy_write32_mask(t, _RPL_EXT_COMP[path], 0xFF00, v3)
+    _phy_write32_mask(t, _RSSI_TB_BIAS_COMP[path], 0xFF0000, v1)
+    _phy_write32_mask(t, _RSSI_TB_EXT_COMP[path], 0xFF0000, v2)
+    _phy_write32_mask(t, _RSSI_TB_EXT_COMP[path], 0xFF000000, v3)
+
+
+def _set_rx_gain_normal(t, chan: dict, path: int, phy_idx: int) -> None:
+    """rtw8922a_set_rx_gain_normal: on 2G the CCK path plus the OFDM path (2G_OFDM band). Nothing
+    if the efuse gain offset is invalid. [SRC] rtw8922a.c:1448."""
+    if not t.gain_offset_valid:
+        return
+    if chan["band_type"] == RTW89_BAND_2G:
+        _set_rx_gain_normal_cck(t, path, phy_idx)
+        _set_rx_gain_normal_ofdm(t, GAIN_OFFSET_2G_OFDM, path, phy_idx)
+    else:
+        raise NotImplementedError("set_rx_gain_normal 5/6G gain-offset band not ported yet")
 
 
 def _ctrl_ch(t, chan: dict, phy_idx: int) -> None:
     """rtw8922a_ctrl_ch: per-path gain, band-sel, rx-gain, center-freq, sco, cck-params, chan-idx.
-    set_gain (both paths) + band_sel are ported so far. [SRC] rtw8922a.c:1490."""
+    set_gain + band_sel + set_rx_gain_normal are ported so far. [SRC] rtw8922a.c:1490."""
     _set_gain(t, chan, RF_PATH_A, phy_idx)
     _set_gain(t, chan, RF_PATH_B, phy_idx)
     is_2g = 1 if chan["band_type"] == RTW89_BAND_2G else 0
     for path in (RF_PATH_A, RF_PATH_B):
         _phy_write32_idx(t, _BAND_SEL[path], _B_BAND_SEL, is_2g, phy_idx)
-    # TODO: set_rx_gain_normal (needs efuse gain-offset), R_FC0 freq write, sco, cck_params,
-    #       R_MAC_PIN_SEL chan_idx.
+    _set_rx_gain_normal(t, chan, RF_PATH_A, phy_idx)
+    _set_rx_gain_normal(t, chan, RF_PATH_B, phy_idx)
+    # TODO: R_FC0 freq write, sco, cck_params, R_MAC_PIN_SEL chan_idx.
 
 
 def set_channel_bb(t, chan: dict, phy_idx: int = 0) -> None:

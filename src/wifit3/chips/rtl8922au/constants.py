@@ -79,6 +79,20 @@ B_BK_FC0INV = 0x7FFFF                # GENMASK(18, 0). reg.h:9948
 R_CCK_FC0INV = 0x675C                # reg.h:9949
 B_CCK_FC0INV = 0x7FFFF               # GENMASK(18, 0). reg.h:9950
 
+# efuse rx-gain offset (rtw8922a_efuse_parsing_gain_offset) + set_rx_gain_normal. [SRC]
+# rtw8922a.c:778, rtw8922a.h:56-57, reg.h.
+EFUSE_RX_GAIN_A_OFST = 0xD4          # struct rtw8922a_efuse.rx_gain_a (in the block-1 map)
+EFUSE_RX_GAIN_B_OFST = 0xD9          # struct rtw8922a_efuse.rx_gain_b
+# rx_gain struct order -> rtw89_gain_offset enum: [_2g_ofdm, _2g_cck, _5g_low, _5g_mid, _5g_high].
+EFUSE_RX_GAIN_ENUM_ORDER = (1, 0, 2, 3, 4)   # core.h:301 enum rtw89_gain_offset
+GAIN_OFFSET_2G_CCK = 0               # core.h:302
+GAIN_OFFSET_2G_OFDM = 1              # core.h:303
+R_MGAIN_BIAS = 0x672C                # reg.h:9942
+B_MGAIN_BIAS_BW20 = 0xF              # GENMASK(3, 0). reg.h:9943
+B_MGAIN_BIAS_BW40 = 0xF0             # GENMASK(7, 4). reg.h:9944
+R_CCK_RPL_OFST = 0x6750              # reg.h:9945
+B_CCK_RPL_OFST = 0xFF                # GENMASK(7, 0). reg.h:9946
+
 # XTAL_SI indirect write extras (rtw89_mac_write_xtal_si). [SRC] mac_be.c:413-441, reg.h/mac.h.
 # The BE field positions match the AX ones, so the AX masks above cover the shared fields.
 B_AX_WL_XTAL_SI_BITMASK_MASK = 0x00FF0000  # GENMASK(23, 16). reg.h:276
