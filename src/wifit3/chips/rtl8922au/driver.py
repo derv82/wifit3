@@ -135,6 +135,7 @@ class RTL8922AUDriver(Driver):
         phy.chip_bb_postinit(self.transport)      # rtw8922a_bb_postinit PHY_0+PHY_1. core.c:6660
         phy.init_rf_reg(self.transport, self._h2c_ep, ver["cv"])   # RF radio tables. core.c:6662
         coex.ntfy_init(self.transport, self._h2c_ep, ver["cv"])    # btc_ntfy_init. core.c:6664
+        phy.dm_init(self.transport, ver["cv"])    # phy_dm_init BB inits (pre-RFK). core.c:6665
         return True
 
     def _switch_usb_mode(self) -> None:

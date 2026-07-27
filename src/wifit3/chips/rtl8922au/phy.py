@@ -23,8 +23,37 @@ from .constants import (
     B_HWSI_BUSY, B_HWSI_DATA_ADDR, B_HWSI_DATA_VAL,
     H2C_CAT_OUTSRC, H2C_CL_OUTSRC_RF_REG_A, H2C_CL_OUTSRC_RF_REG_B,
     RTW89_H2C_RF_PAGE_SIZE, RTW89_H2C_RF_PAGE_NUM,
+    MASKDWORD, MAC_BAND1_OFFSET,
+    R_EN_SND_WO_NDP, R_EN_SND_WO_NDP_C1, B_EN_SND_WO_NDP, R_BE_PWR_BOOST, B_BE_PWR_CTRL_SEL,
+    R_DBCC, B_DBCC_EN, R_DBCC_FA, B_DBCC_FA, R_AFEDAC0, B_AFEDAC0, R_AFEDAC1, B_AFEDAC1,
+    R_EMLSR, B_EMLSR_PARM,
+    R_CCX, B_CCX_EN_MSK, B_CCX_TRIG_OPT_MSK, B_MEASUREMENT_TRIG_MSK, B_CCX_EDCCA_OPT_MSK_V1,
+    R_IFS_COUNTER, B_IFS_COLLECT_EN, R_IFS_T, B_IFS_T_TH_LOW, B_IFS_T_TH_HIGH, B_IFS_T_EN,
+    IFS_CLM_TH_LOW, IFS_CLM_TH_HIGH,
+    R_PLCP_HISTOGRAM, B_STS_DIS_TRIG_BY_FAIL, B_STS_DIS_TRIG_BY_BRK,
+    R_PHY_STS_BITMAP_START, R_PHY_STS_BITMAP_EHT, RTW89_PHYSTS_BITMAP_NUM, RTW89_RSVD_9,
+    RTW89_HE_MU, RTW89_VHT_MU, RTW89_TRIG_BASE_PPDU, RTW89_CCK_PKT, RTW89_HT_PKT, RTW89_EHT_PKT,
+    IE01_CMN_OFDM, IE04_07_EXT_PATH, IE13_DL_MU_DEF, IE20_DBG_OFDM,
+    R_SEG0R_PD_V2, B_SEG0R_PD_LOWER_BOUND, B_SEG0R_PD_SR_EN,
+    R_BMODE_PDTH_EN_V2, B_BMODE_PDTH_LIMIT_EN, R_BMODE_PDTH_V2, B_BMODE_PDTH_LOWER_BOUND,
+    XTAL_SI_XTAL_SC_XO, XTAL_SI_XTAL_SC_XI, B_AX_XTAL_SC_MASK, XTAL_SC_MASK,
+    R_DCFO_OPT_BE, B_DCFO_OPT_EN_BE, R_DCFO_WEIGHT_BE, B_DCFO_WEIGHT_MSK_BE,
+    R_TX_COLLISION_T2R_ST_BE, B_TX_COLLISION_T2R_ST_BE_M,
+    R_CHINFO_SEG, B_CHINFO_SEG_LEN, B_CHINFO_SEG, R_CHINFO_DATA, B_CHINFO_DATA_BITMAP,
+    R_CHINFO_ELM_SRC, B_CHINFO_ELM_BITMAP, B_CHINFO_SRC, R_CHINFO_TYPE_SCAL, B_CHINFO_TYPE,
+    B_CHINFO_SCAL,
+    R_BE_PWR_MACID_PATH_BASE, R_BE_PWR_MACID_LMT_BASE, R_BE_PWR_BY_RATE, R_BE_PWR_BY_RATE_END,
+    R_BE_PWR_RULMT_START, R_BE_PWR_RULMT_END, R_BE_PWR_RATE_OFST_CTRL, R_BE_PWR_RATE_OFST_END,
+    R_BE_PWR_FTM_SS, B_BE_PWR_BY_RATE_DBW_ON, R_BE_PWR_REF_CTRL, B_BE_PWR_OFST_LMT_DB,
+    R_BE_PWR_OFST_LMTBF, B_BE_PWR_OFST_LMTBF_DB, R_BE_PWR_RATE_CTRL, B_BE_PWR_OFST_BYRATE_DB,
+    R_BE_PWR_OFST_RULMT, B_BE_PWR_OFST_RULMT_DB, R_BE_PWR_OFST_SW, B_BE_PWR_OFST_SW_DB,
+    R_BE_PWR_FORCE_LMT, B_BE_PWR_FORCE_LMT_ON, B_BE_FORCE_PWR_BY_RATE_EN,
+    B_BE_PWR_FORCE_RU_ENON, B_BE_PWR_FORCE_RU_ON, R_BE_PWR_FORCE_MACID, B_BE_PWR_FORCE_MACID_ALL,
+    R_BE_PWR_COEX_CTRL, B_BE_PWR_FORCE_COEX_ON, B_BE_PWR_FORCE_RATE_ON,
+    R_BE_PWR_FTM, PWR_FTM_VAL, R_BE_PWR_LISTEN_PATH, B_BE_PWR_LISTEN_PATH_EN,
+    R_BE_PWR_RSSI_TARGET_LMT, R_BE_PWR_TH, PWR_RSSI_TARGET_LMT_VAL, PWR_TH_VAL,
 )
-from . import firmware
+from . import firmware, mac
 
 
 def _phy0_phy1_offset(addr: int) -> int:
@@ -252,3 +281,194 @@ def init_rf_reg(t, h2c_ep: int, cv: int) -> None:
         store = []
         _init_reg(regs, hs, hidx, lambda a, d, p=rf_path, s=store: _config_rf_reg(t, p, a, d, s))
         _config_rf_reg_fw(t, h2c_ep, rf_path, store)
+
+
+# --- rtw89_phy_dm_init BB inits (pre-RFK). [SRC] phy.c:8236, phy_be.c, rtw8922a.c. ---
+
+def _phy_write32_clr(t, addr: int, bits: int) -> None:
+    """rtw89_phy_write32_clr: masked BB register RMW clearing bits. [SRC] phy.h:759."""
+    t.write32_clr(addr + CR_BASE_BE, bits)
+
+
+def _phy_write32_idx_set(t, addr: int, bits: int, phy_idx: int) -> None:
+    """rtw89_phy_write32_idx_set: PHY_1 shifted set. [SRC] phy.c:2179."""
+    if phy_idx == 1:
+        addr += _phy0_phy1_offset(addr)
+    t.write32_set(addr + CR_BASE_BE, bits)
+
+
+def _phy_read32_idx(t, addr: int, phy_idx: int) -> int:
+    """rtw89_phy_read32_idx (MASKDWORD): full BB register read, PHY_1 shifted. [SRC] phy.c:2198."""
+    if phy_idx == 1:
+        addr += _phy0_phy1_offset(addr)
+    return t.read32(addr + CR_BASE_BE)
+
+
+def _ctrl_afe_dac(t, path: int) -> None:
+    """rtw8922a_ctrl_afe_dac for the default BW20 chan. [SRC] rtw8922a.c:1727."""
+    ofst = 0x100 if path == RF_PATH_B else 0
+    _phy_write32_mask(t, R_AFEDAC0 + ofst, B_AFEDAC0, 0xE)
+    _phy_write32_mask(t, R_AFEDAC1 + ofst, B_AFEDAC1, 0x7)
+
+
+def _ctrl_mlo(t) -> None:
+    """rtw8922a_ctrl_mlo(MLO_1_PLUS_1_1RF): DBCC enable, per-path AFE-DAC, EMLSR params.
+    [SRC] rtw8922a.c:2103."""
+    _phy_write32_mask(t, R_DBCC, B_DBCC_EN, 0x1)
+    _phy_write32_mask(t, R_DBCC_FA, B_DBCC_FA, 0x0)
+    _ctrl_afe_dac(t, RF_PATH_A)
+    _ctrl_afe_dac(t, RF_PATH_B)
+    for parm in (0x6180, 0x7BAB, 0x3BAB, 0x3AAB):
+        _phy_write32_mask(t, R_EMLSR, B_EMLSR_PARM, parm)
+
+
+def _bb_sethw(t) -> None:
+    """rtw8922a_bb_sethw. [SRC] rtw8922a.c:2147."""
+    _phy_write32_clr(t, R_EN_SND_WO_NDP, B_EN_SND_WO_NDP)
+    _phy_write32_clr(t, R_EN_SND_WO_NDP_C1, B_EN_SND_WO_NDP)
+    t.write32_mask(R_BE_PWR_BOOST, B_BE_PWR_CTRL_SEL, 0)
+    t.write32_mask(R_BE_PWR_BOOST + MAC_BAND1_OFFSET, B_BE_PWR_CTRL_SEL, 0)   # dbcc
+    _ctrl_mlo(t)
+
+
+def _env_monitor_one(t, phy_idx: int) -> None:
+    """ccx_top_setting_init + ifs_clm_setting_init. [SRC] phy.c:6285, 6479."""
+    _phy_write32_idx(t, R_CCX, B_CCX_EN_MSK, 1, phy_idx)
+    _phy_write32_idx(t, R_CCX, B_CCX_TRIG_OPT_MSK, 1, phy_idx)
+    _phy_write32_idx(t, R_CCX, B_MEASUREMENT_TRIG_MSK, 1, phy_idx)
+    _phy_write32_idx(t, R_CCX, B_CCX_EDCCA_OPT_MSK_V1, 0, phy_idx)   # BW20_0 = 0
+    for i in range(4):
+        _phy_write32_idx(t, R_IFS_T[i], B_IFS_T_TH_LOW, IFS_CLM_TH_LOW[i], phy_idx)
+    for i in range(4):
+        _phy_write32_idx(t, R_IFS_T[i], B_IFS_T_TH_HIGH, IFS_CLM_TH_HIGH[i], phy_idx)
+    _phy_write32_idx(t, R_IFS_COUNTER, B_IFS_COLLECT_EN, 1, phy_idx)
+    for i in range(4):
+        _phy_write32_idx(t, R_IFS_T[i], B_IFS_T_EN, 1, phy_idx)
+
+
+def _ie_bitmap_addr(i: int) -> int:
+    """rtw89_phy_get_ie_bitmap_addr with the page-9 collapse. [SRC] phy.c:7066-7095."""
+    if i == RTW89_EHT_PKT:
+        return R_PHY_STS_BITMAP_EHT
+    page = i - 1 if i > RTW89_RSVD_9 else i
+    return R_PHY_STS_BITMAP_START + (page << 2)
+
+
+def _physts_one(t, phy_idx: int) -> None:
+    """__rtw89_physts_parsing_init: disable fail/brk report, then the per-packet IE bitmap loop
+    (monitor mode off, so no MU/SU monitor IEs). [SRC] phy.c:7157-7207."""
+    _phy_write32_idx_set(t, R_PLCP_HISTOGRAM, B_STS_DIS_TRIG_BY_FAIL, phy_idx)
+    _phy_write32_idx_set(t, R_PLCP_HISTOGRAM, B_STS_DIS_TRIG_BY_BRK, phy_idx)
+    for i in range(RTW89_PHYSTS_BITMAP_NUM):
+        if i == RTW89_RSVD_9:
+            continue
+        addr = _ie_bitmap_addr(i)
+        val = _phy_read32_idx(t, addr, phy_idx)                  # get_ie_bitmap
+        if i in (RTW89_HE_MU, RTW89_VHT_MU):
+            val |= IE13_DL_MU_DEF
+        elif i == RTW89_TRIG_BASE_PPDU:
+            val |= IE13_DL_MU_DEF | IE01_CMN_OFDM
+        elif i >= RTW89_CCK_PKT:
+            val &= ~IE04_07_EXT_PATH
+            if i == RTW89_CCK_PKT:
+                val |= IE01_CMN_OFDM
+            elif i >= RTW89_HT_PKT:
+                val |= IE20_DBG_OFDM
+        _phy_write32_idx(t, addr, MASKDWORD, val & 0xFFFFFFFF, phy_idx)   # set_ie_bitmap
+
+
+def _dig_one(t, phy_idx: int) -> None:
+    """rtw89_phy_dig_dyn_pd_th(enable=false): pd bounds cleared, CCK lower bound = 0x82 (from
+    igi_rssi 0 / BW20 at cold init). [SRC] phy.c:7652, phy.h:132-141."""
+    _phy_write32_idx(t, R_SEG0R_PD_V2, B_SEG0R_PD_LOWER_BOUND, 0, phy_idx)
+    _phy_write32_idx(t, R_SEG0R_PD_V2, B_SEG0R_PD_SR_EN, 0, phy_idx)
+    _phy_write32_idx(t, R_BMODE_PDTH_EN_V2, B_BMODE_PDTH_LIMIT_EN, 0, phy_idx)
+    _phy_write32_idx(t, R_BMODE_PDTH_V2, B_BMODE_PDTH_LOWER_BOUND, 0x82, phy_idx)
+
+
+def _cfo_init(t) -> None:
+    """rtw89_phy_cfo_init: set the crystal cap (XO/XI write + read-back over xtal_si) then the
+    DCFO comp enable/weight. [SRC] phy.c:5007-5102."""
+    cap = t.xtal_cap & B_AX_XTAL_SC_MASK
+    mac.write_xtal_si(t, XTAL_SI_XTAL_SC_XO, cap, XTAL_SC_MASK)
+    mac.write_xtal_si(t, XTAL_SI_XTAL_SC_XI, cap, XTAL_SC_MASK)
+    mac.read_xtal_si(t, XTAL_SI_XTAL_SC_XO)
+    mac.read_xtal_si(t, XTAL_SI_XTAL_SC_XI)
+    _set_phy_regs(t, R_DCFO_OPT_BE, B_DCFO_OPT_EN_BE, 1)
+    _set_phy_regs(t, R_DCFO_WEIGHT_BE, B_DCFO_WEIGHT_MSK_BE, 8)
+
+
+def _edcca_one(t, phy_idx: int) -> None:
+    """__rtw89_phy_edcca_init (cv != CAV, so only the T2R state write). [SRC] phy.c:8202."""
+    _phy_write32_idx(t, R_TX_COLLISION_T2R_ST_BE, B_TX_COLLISION_T2R_ST_BE_M, 0x29, phy_idx)
+
+
+def _ch_info_init(t) -> None:
+    """rtw89_phy_ch_info_init_be. [SRC] phy_be.c:1155."""
+    _phy_write32_mask(t, R_CHINFO_SEG, B_CHINFO_SEG_LEN, 0)
+    _phy_write32_mask(t, R_CHINFO_SEG, B_CHINFO_SEG, 0xF)
+    _phy_write32_mask(t, R_CHINFO_DATA, B_CHINFO_DATA_BITMAP, 1)
+    _set_phy_regs(t, R_CHINFO_ELM_SRC, B_CHINFO_ELM_BITMAP, 0x40303)
+    _set_phy_regs(t, R_CHINFO_ELM_SRC, B_CHINFO_SRC, 0)
+    _set_phy_regs(t, R_CHINFO_TYPE_SCAL, B_CHINFO_TYPE, 3)
+    _set_phy_regs(t, R_CHINFO_TYPE_SCAL, B_CHINFO_SCAL, 0)
+
+
+def _bb_wrap_one(t, mac_idx: int) -> None:
+    """__rtw89_phy_bb_wrap_init_be for one MAC. tx_path/pwr-by-macid/listen-path/ul-pwr are not
+    mac-scoped (repeat both passes); tpu/force-cr/ftm take the band-1 offset. [SRC] phy_be.c:1135."""
+    band = MAC_BAND1_OFFSET if mac_idx else 0
+    for i in range(32):                                          # tx_path_by_macid_init
+        t.write32(R_BE_PWR_MACID_PATH_BASE + i * 4, 0)
+    for i in range(0, 4 * 32, 4):                                # pwr_by_macid_init
+        t.write32(R_BE_PWR_MACID_LMT_BASE + i, 0)
+    # tpu_set_all(mac_idx)
+    t.write32_mask(R_BE_PWR_FTM_SS + band, B_BE_PWR_BY_RATE_DBW_ON, 0x3)
+    for a in range(R_BE_PWR_BY_RATE, R_BE_PWR_BY_RATE_END + 4, 4):
+        t.write32(a + band, 0)
+    for a in range(R_BE_PWR_RULMT_START, R_BE_PWR_RULMT_END + 4, 4):
+        t.write32(a + band, 0)
+    for a in range(R_BE_PWR_RATE_OFST_CTRL, R_BE_PWR_RATE_OFST_END + 4, 4):
+        t.write32(a + band, 0)
+    t.write32_mask(R_BE_PWR_REF_CTRL + band, B_BE_PWR_OFST_LMT_DB, 0)
+    t.write32_mask(R_BE_PWR_OFST_LMTBF + band, B_BE_PWR_OFST_LMTBF_DB, 0)
+    t.write32_mask(R_BE_PWR_RATE_CTRL + band, B_BE_PWR_OFST_BYRATE_DB, 0)
+    t.write32_mask(R_BE_PWR_OFST_RULMT + band, B_BE_PWR_OFST_RULMT_DB, 0)
+    t.write32_mask(R_BE_PWR_OFST_SW + band, B_BE_PWR_OFST_SW_DB, 0)
+    # tx_rfsi_ctrl_init: no-op (not RTL8922D)
+    # force_cr_init(mac_idx)
+    t.write32_mask(R_BE_PWR_FORCE_LMT + band, B_BE_PWR_FORCE_LMT_ON, 0)
+    t.write32_mask(R_BE_PWR_RATE_CTRL + band, B_BE_FORCE_PWR_BY_RATE_EN, 0)
+    t.write32_mask(R_BE_PWR_OFST_RULMT + band, B_BE_PWR_FORCE_RU_ENON, 0)
+    t.write32_mask(R_BE_PWR_OFST_RULMT + band, B_BE_PWR_FORCE_RU_ON, 0)
+    t.write32_mask(R_BE_PWR_FORCE_MACID + band, B_BE_PWR_FORCE_MACID_ALL, 0)
+    t.write32_mask(R_BE_PWR_COEX_CTRL + band, B_BE_PWR_FORCE_COEX_ON, 0)
+    t.write32_mask(R_BE_PWR_BOOST + band, B_BE_PWR_FORCE_RATE_ON, 0)
+    # ftm_init(mac_idx)
+    t.write32(R_BE_PWR_FTM + band, PWR_FTM_VAL)
+    t.write32_mask(R_BE_PWR_FTM_SS + band, 0x7, 0)
+    # listen_path_en_init: always MAC_1
+    t.write32_mask(R_BE_PWR_LISTEN_PATH + MAC_BAND1_OFFSET, B_BE_PWR_LISTEN_PATH_EN, 0x2)
+    # ul_pwr: both MACs, not scoped by mac_idx
+    for m in (0, MAC_BAND1_OFFSET):
+        t.write32(R_BE_PWR_RSSI_TARGET_LMT + m, PWR_RSSI_TARGET_LMT_VAL)
+        t.write32(R_BE_PWR_TH + m, PWR_TH_VAL)
+
+
+def dm_init(t, cv: int) -> None:
+    """rtw89_phy_dm_init up to (not including) the RFK calibration: bb_sethw, env-monitor, physts,
+    dig, cfo, bb-wrap, edcca, ch-info. stat/diag/nhm/ul-tb/antdiv/rfe-gpio are no-ops on this chip.
+    [SRC] phy.c:8236-8262."""
+    _bb_sethw(t)
+    _env_monitor_one(t, 0)
+    _env_monitor_one(t, 1)
+    _physts_one(t, 0)
+    _physts_one(t, 1)
+    _dig_one(t, 0)
+    _dig_one(t, 1)
+    _cfo_init(t)
+    _bb_wrap_one(t, 0)
+    _bb_wrap_one(t, 1)
+    _edcca_one(t, 0)
+    _edcca_one(t, 1)
+    _ch_info_init(t)
