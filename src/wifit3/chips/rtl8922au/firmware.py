@@ -50,6 +50,7 @@ from .constants import (
     JOININFO_EML_PADDING_DELAY_256US, JOININFO_EMLSR_TRANSITION_DELAY_256US,
     ADDR_CAM_W1_LEN, ADDR_CAM_W2_VALID, ADDR_CAM_W9_SEC_ENT_MODE, ADDR_CAM_W12_BSSID_LEN,
     ADDR_CAM_W13_BSSID_VALID, ADDR_CAM_W13_BSSID_MASK, ADDR_CAM_ENT_SHORT_SIZE,
+    ADDR_CAM_W2_NET_TYPE, ADDR_CAM_W2_SMA_HASH, ADDR_CAM_W2_TMA_HASH, RTW89_NET_TYPE_NO_LINK,
     BSSID_CAM_ENT_SIZE, RTW89_ADDR_CAM_SEC_NORMAL, RTW89_BSSID_MATCH_ALL,
 )
 
@@ -453,18 +454,41 @@ def h2c_join_info(t, h2c_ep: int, macid: int, wifi_role: int, dis_conn: bool) ->
                 struct.pack("<III", w0, w1, 0), rack=False, dack=True)
 
 
-def h2c_cam(t, h2c_ep: int) -> None:
-    """rtw89_fw_h2c_cam(ROLE_CREATE, addrcam_ver 0): the monitor no-link addr-cam + bssid-cam.
-    Every station/BSSID address is zero here; only the entry lengths, valid bits, sec-mode, and
-    the match-all BSSID mask are set. [SRC] fw.c:2281, cam.c:768/819, cam.h:15."""
+def _addr_hash(addr: bytes) -> int:
+    """rtw89_cam_addr_hash(start=0): XOR of the six MAC bytes. [SRC] cam.c rtw89_cam_addr_hash."""
+    h = 0
+    for b in addr:
+        h ^= b
+    return h
+
+
+def h2c_addr_cam(t, h2c_ep: int, *, sma: bytes, tma: bytes, net_type: int,
+                 bssid: bytes, bssid_mask: int) -> None:
+    """rtw89_fw_h2c_cam(addrcam_ver 0): addr-cam entry 0 + bssid-cam. SMA is the address the RX
+    responder auto-ACKs (matched against a received frame's addr1); TMA/bssid are the peer AP.
+    [SRC] fw.c:2281, cam.c:819 fill_addr_cam_info + cam.c:768 fill_bssid_cam_info, cam.h:38-116."""
     w = [0] * 15
     w[1] = _pb(ADDR_CAM_W1_LEN, ADDR_CAM_ENT_SHORT_SIZE)
-    w[2] = _pb(ADDR_CAM_W2_VALID, 1)
+    w[2] = (_pb(ADDR_CAM_W2_VALID, 1) | _pb(ADDR_CAM_W2_NET_TYPE, net_type)
+            | _pb(ADDR_CAM_W2_SMA_HASH, _addr_hash(sma)) | _pb(ADDR_CAM_W2_TMA_HASH, _addr_hash(tma)))
+    w[4] = int.from_bytes(sma[0:4], "little")                       # SMA0..3
+    w[5] = int.from_bytes(sma[4:6], "little") | (int.from_bytes(tma[0:2], "little") << 16)  # SMA4/5,TMA0/1
+    w[6] = int.from_bytes(tma[2:6], "little")                       # TMA2..5
     w[9] = _pb(ADDR_CAM_W9_SEC_ENT_MODE, RTW89_ADDR_CAM_SEC_NORMAL)
     w[12] = _pb(ADDR_CAM_W12_BSSID_LEN, BSSID_CAM_ENT_SIZE)
-    w[13] = _pb(ADDR_CAM_W13_BSSID_VALID, 1) | _pb(ADDR_CAM_W13_BSSID_MASK, RTW89_BSSID_MATCH_ALL)
+    w[13] = (_pb(ADDR_CAM_W13_BSSID_VALID, 1) | _pb(ADDR_CAM_W13_BSSID_MASK, bssid_mask)
+             | (bssid[0] << 16) | (bssid[1] << 24))                 # BSSID0/1
+    w[14] = int.from_bytes(bssid[2:6], "little")                    # BSSID2..5
     h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_ADDR_CAM_UPDATE, H2C_FUNC_MAC_ADDR_CAM_UPD,
                 struct.pack("<15I", *w), rack=False, dack=True)
+
+
+def h2c_cam(t, h2c_ep: int) -> None:
+    """rtw89_fw_h2c_cam(ROLE_CREATE, addrcam_ver 0): the monitor no-link addr-cam + bssid-cam.
+    Every station/BSSID address is zero; net_type NO_LINK, match-all BSSID mask. [SRC] fw.c:2281."""
+    z = b"\x00" * 6
+    h2c_addr_cam(t, h2c_ep, sma=z, tma=z, net_type=RTW89_NET_TYPE_NO_LINK,
+                 bssid=z, bssid_mask=RTW89_BSSID_MATCH_ALL)
 
 
 # rtw89_fw_h2c_default_cmac_tbl_g7: the g7 default CMAC table (c0, w0..w15, m0..m15 = 33 u32).

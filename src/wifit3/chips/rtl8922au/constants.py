@@ -885,6 +885,9 @@ JOININFO_EMLSR_TRANSITION_DELAY_256US = 5  # IEEE80211_EML_CAP_EMLSR_TRANSITION_
 # addr-cam v0 (addrcam_ver 0) fields. [SRC] cam.h:38-116, mac.h:16-17, core.h:473, cam.h:12.
 ADDR_CAM_W1_LEN = 0xFF0000           # GENMASK(23, 16)
 ADDR_CAM_W2_VALID = 0x1              # BIT(0)
+ADDR_CAM_W2_NET_TYPE = 0x6           # GENMASK(2, 1). cam.h:45
+ADDR_CAM_W2_SMA_HASH = 0xFF0000      # GENMASK(23, 16). cam.h:51
+ADDR_CAM_W2_TMA_HASH = 0xFF000000    # GENMASK(31, 24). cam.h:52
 ADDR_CAM_W9_SEC_ENT_MODE = 0x30000   # GENMASK(17, 16)
 ADDR_CAM_W12_BSSID_LEN = 0xFF0000    # GENMASK(23, 16)
 ADDR_CAM_W13_BSSID_VALID = 0x1       # BIT(0)
@@ -1577,6 +1580,7 @@ B_AX_BCAID_P0_MASK = 0x7FF              # GENMASK(10, 0). reg.h:3406
 
 # port_update defaults + monitor net_type. [SRC] mac.c:4547-4554, core.h:413.
 RTW89_NET_TYPE_NO_LINK = 0       # monitor vif keeps zero-init net_type. core.h:413
+RTW89_NET_TYPE_INFRA = 2         # a STA linked to an AP: the auto-ACK state. core.h:415
 BCN_INTERVAL = 100               # mac.c:4547
 BCN_ERLY_DEF = 160               # mac.c:4548
 BCN_SETUP_DEF = 2                # mac.c:4549
