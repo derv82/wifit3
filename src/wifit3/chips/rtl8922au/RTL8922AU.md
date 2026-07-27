@@ -6,11 +6,12 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, the monitor bring-up (configure_filter + monitor physts), the per-hop MLO-mode
-handling, the periodic env-monitor DM watchdog, and **every 2.4 GHz hop (ch1-14)** are reproduced and
-committed (capture-1: 86453/163814 ops; capture-2/3 stop at the same frontier, poll-count variance
-only). `verify_pcap` walks VENQT control ops and bulk-OUT (fw/H2C) ops. Frontier: the **first 5 GHz
-hop** (~op #86453), which raises `NotImplementedError` at `set_gain` (the deferred 5/6G branches).
+**`verify_pcap` reports `RESULT: PASS` on all three cold-boot captures.** Every register (VENQT
+control) and bulk-OUT (fw/H2C) op of the whole recorded conversation is reproduced by real driver
+code: the cold-boot bring-up, the monitor bring-up (configure_filter + monitor physts), the per-hop
+MLO-mode handling, the periodic env-monitor DM watchdog, and all 101/103 channel hops across **both
+2.4 GHz (ch1-14) and 5 GHz (ch36-165, HT20)**. The offline port is complete; what remains is hardware
+bring-up + the TX/attack features (see the project task list and `planning/`).
 
 What reproduces: all of `rtw89_core_start`, the mac80211 add-interface, and per-hop the FULL
 `__rtw89_set_channel` for **both PHYs**. A hop is TWO `__rtw89_set_channel` calls: PHY_0/MAC_0 then
@@ -135,22 +136,23 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #86453): the deferred 5/6 GHz tune branches
+## Next: hardware bring-up + the TX/attack features
 
-Every 2.4 GHz hop reproduces; the walk now stops at the first 5 GHz hop (ch36). The 5/6G paths raise
-`NotImplementedError` today and must be ported band-by-band, verifying each against the pcap:
+The offline pcap verification is complete (`RESULT: PASS`, all three captures). The remaining work is
+no longer pcap-driven:
 
-- `phy.set_channel_bb` -> `_set_gain` / `_set_rx_gain_normal` (5G gain tables, the bw40_1s_tssi_5g /
-  gain_g vs gain_a columns), `encode_chan_idx`, `_ctrl_bw` (40/80/160 MHz).
-- `mac.set_channel_mac` (5G band/sub-band arm).
-- `txpwr.py` limit tables (LMT_5GHZ / LMT_RU_5GHZ + tx_shape) and the 5G diff/ref/sar.
-- `rfk._tssi` 5/6G de: uses `phy_tssi_get_ofdm_de`'s EXTRA-group interpolation (average of two adjacent
-  groups, `PHY_TSSI_EXTRA_GROUP`) plus the `bw40_1s_tssi_5g` efuse array and `bw_diff_5g`; ground-truth
-  5G de bytes are in the capture (extract per channel like the 2G table was).
+- **Cold hardware bring-up smoke test** on the ASUS USB-BE93. The device is cold/fresh, wifit3's
+  udev+modprobe rules are installed (PyUSB works from userland), and a second card (rtl8812au) is also
+  plugged in, so any test script must take a `--card` arg and select by chip, not "first device". Mirror
+  a sibling RTL driver's warm-attach path (8822bu / 8814au) before running anything that could wedge the
+  card. `scripts/rtl8922au/test_hw.py`.
+- **TX / active-monitor features**: forged-MAC active monitor (ACK), `inject_frame` (no No-ACK flag; add
+  a test-only no-ACK path to verify TX bytes, cf. commit d58e6f252), hardware ACK-based retries, and the
+  WEP / WPS labs. These need `tx.py` (TX descriptor build + bulk-OUT), not yet written.
 
-Recorded 5G channels in the capture: 36-165 (the tssi H2Cs give the full list). Delegate the
-per-function 5G byte-spec to a subagent (the pattern that worked for physts / TSSI / the DM watchdog),
-port from it, `verify_pcap`, commit each band.
+Only the 5/6 GHz **20 MHz** paths are exercised by the capture; the 40/80/160/320 MHz branches in
+`_ctrl_bw`, `_set_txpwr_limit`, and `_fill_limit_*` still raise (not needed for the monitor hops, but
+required if wider bandwidths are ever tuned).
 
 **Recurring trap (still relevant):** at set_channel the MLO mode is MLO_2_PLUS_0_1RF (single PHY_0
 monitor vif), not the core_start MLO_1_PLUS_1_1RF. Any helper that branches on the mode must handle
