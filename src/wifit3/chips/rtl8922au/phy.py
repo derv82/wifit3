@@ -52,6 +52,15 @@ from .constants import (
     R_BE_PWR_COEX_CTRL, B_BE_PWR_FORCE_COEX_ON, B_BE_PWR_FORCE_RATE_ON,
     R_BE_PWR_FTM, PWR_FTM_VAL, R_BE_PWR_LISTEN_PATH, B_BE_PWR_LISTEN_PATH_EN,
     R_BE_PWR_RSSI_TARGET_LMT, R_BE_PWR_TH, PWR_RSSI_TARGET_LMT_VAL, PWR_TH_VAL,
+    HWSI_ADD_ADDR, B_HWSI_ADD_CTL_MASK, B_HWSI_ADD_MASK, B_HWSI_ADD_RD, B_HWSI_VAL_RDONE,
+    B_HWSI_ADD_POLL_MASK, RR_POW, RR_POW_SYN_V1, RR_MODOPT, RR_TXG_SEL,
+    R_COEF_SEL, R_COEF_SEL_C1, B_COEF_SEL_EN, B_COEF_SEL_IQC_V1, B_COEF_SEL_MDPD_V1,
+    R_CFIR_LUT, R_CFIR_LUT_C1, B_CFIR_LUT_G3, B_CFIR_LUT_G5,
+    XTAL_SI_PLL_1, XTAL_SI_APBT, XTAL_SI_XTAL_PLL, RTW89_FW_ELEMENT_ID_RF_NCTL,
+    R_GOTX_IQKDPK_C0, R_GOTX_IQKDPK_C1, B_GOTX_IQKDPK, R_IQKDPK_HC, B_IQKDPK_HC,
+    R_CLK_GCK, B_CLK_GCK, R_IOQ_IQK_DPK, B_IOQ_IQK_DPK_CLKEN, R_IQK_DPK_RST, B_IQK_DPK_RST,
+    R_IQK_DPK_PRST, B_IQK_DPK_PRST, R_IQK_DPK_PRST_C1, R_TXRFC, B_TXRFC_RST,
+    R_IQK_DPK_RST_C1, R_TXRFC_C1,
 )
 from . import firmware, mac
 
@@ -226,14 +235,38 @@ def _write_full_rf_v2_a(t, rf_path: int, addr: int, data: int) -> None:
     t.write32(HWSI_OFST_ADDR[rf_path] + CR_BASE_BE, val)
 
 
-def write_rf(t, rf_path: int, addr: int, data: int) -> None:
-    """rtw89_phy_write_rf_v2 with mask == RFREG_MASK (no read-back): the ad_sel (DAV) direct-address
-    RMW, else the HWSI (DDIE) write. [SRC] phy.c:write_rf_v2 / write_rf_a_v2 / write_rf."""
+def _read_full_rf_v2_a(t, rf_path: int, addr: int) -> int:
+    """rtw89_phy_read_full_rf_v2_a: HWSI RF register read (set addr, poll, read data). [SRC] phy.c."""
+    add_reg = HWSI_ADD_ADDR[rf_path] + CR_BASE_BE
+    val_reg = HWSI_IDLE_ADDR[rf_path] + CR_BASE_BE
+    t.write32_mask(add_reg, B_HWSI_ADD_CTL_MASK, 0x1)
+    for _ in range(3800):
+        if not (t.read32(val_reg) & B_HWSI_BUSY):
+            break
+    t.write32_mask(add_reg, B_HWSI_ADD_MASK, addr)
+    t.write32_mask(add_reg, B_HWSI_ADD_RD, 0x1)
+    for _ in range(3800):
+        if t.read32(val_reg) & B_HWSI_VAL_RDONE:
+            break
+    val = t.read32(val_reg) & RFREG_MASK
+    t.write32_mask(add_reg, B_HWSI_ADD_POLL_MASK, 0)
+    return val
+
+
+def write_rf(t, rf_path: int, addr: int, mask: int, data: int) -> None:
+    """rtw89_phy_write_rf_v2: the ad_sel (DAV) direct-address RMW, else the HWSI (DDIE) write. A
+    full-mask write skips the read-back; a partial mask reads the RF register first. [SRC] phy.c:
+    write_rf_v2 / write_rf_a_v2 / write_rf."""
     if addr & RTW89_RF_ADDR_ADSEL_MASK:
         direct = RF_BASE_ADDR[rf_path] + ((addr & 0xFF) << 2)
-        t.write32_mask(direct + CR_BASE_BE, RFREG_MASK, data)
+        t.write32_mask(direct + CR_BASE_BE, mask & RFREG_MASK, data)
+        return
+    if mask == RFREG_MASK:
+        val = data
     else:
-        _write_full_rf_v2_a(t, rf_path, addr, data)
+        shift = (mask & -mask).bit_length() - 1
+        val = (_read_full_rf_v2_a(t, rf_path, addr) & ~mask & 0xFFFFFFFF) | ((data << shift) & mask)
+    _write_full_rf_v2_a(t, rf_path, addr, val)
 
 
 def _config_rf_reg(t, rf_path: int, addr: int, data: int, store: list) -> None:
@@ -242,7 +275,7 @@ def _config_rf_reg(t, rf_path: int, addr: int, data: int, store: list) -> None:
     if addr == 0xFE:
         time.sleep(0.050)
         return
-    write_rf(t, rf_path, addr, data)
+    write_rf(t, rf_path, addr, RFREG_MASK, data)
     if addr < 0x100:
         return
     store.append(((addr << 20) | data) & 0xFFFFFFFF)   # rf_reg store. phy.c cofig_rf_reg_store
@@ -472,3 +505,67 @@ def dm_init(t, cv: int) -> None:
     _edcca_one(t, 0)
     _edcca_one(t, 1)
     _ch_info_init(t)
+
+
+# --- rfk_hw_init + init_rf_nctl. [SRC] rtw8922a_rfk.c, phy.c:2100-2135, phy_be.c:443. ---
+
+def _set_syn01_cbv(t) -> None:
+    """rtw8922a_set_syn01_cbv(RF_SYN_ALLON): power both synthesizers. [SRC] rtw8922a_rfk.c:145."""
+    write_rf(t, RF_PATH_A, RR_POW, RR_POW_SYN_V1, 0xF)
+    write_rf(t, RF_PATH_B, RR_POW, RR_POW_SYN_V1, 0xF)
+
+
+def _chlk_ktbl_sel(t, rf_path: int, idx: int) -> None:
+    """rtw8922a_chlk_ktbl_sel: select the per-path calibration coefficient tables (idx 0 cold).
+    [SRC] rtw8922a_rfk.c:174."""
+    coef = R_COEF_SEL_C1 if rf_path == RF_PATH_B else R_COEF_SEL
+    cfir = R_CFIR_LUT_C1 if rf_path == RF_PATH_B else R_CFIR_LUT
+    _phy_write32_mask(t, coef, B_COEF_SEL_EN, 0x1)
+    _phy_write32_mask(t, coef, B_COEF_SEL_IQC_V1, idx)
+    _phy_write32_mask(t, coef, B_COEF_SEL_MDPD_V1, idx)
+    write_rf(t, rf_path, RR_MODOPT, RR_TXG_SEL, 0x4 | idx)
+    g3 = _phy_read32_idx(t, coef, 0) & 0x1                  # read R_COEF_SEL BIT(0)
+    _phy_write32_mask(t, cfir, B_CFIR_LUT_G3, g3)
+    g5 = (_phy_read32_idx(t, coef, 0) >> 1) & 0x1           # read R_COEF_SEL BIT(1)
+    _phy_write32_mask(t, cfir, B_CFIR_LUT_G5, g5)
+
+
+def _rfk_pll_init(t) -> None:
+    """rtw8922a_rfk_pll_init: three xtal_si read-modify-writes. [SRC] rtw8922a_rfk.c:325."""
+    mac.write_xtal_si(t, XTAL_SI_PLL_1, mac.read_xtal_si(t, XTAL_SI_PLL_1) | 0xF8, 0xFF)
+    mac.write_xtal_si(t, XTAL_SI_APBT, mac.read_xtal_si(t, XTAL_SI_APBT) & ~0x60 & 0xFF, 0xFF)
+    mac.write_xtal_si(t, XTAL_SI_XTAL_PLL, mac.read_xtal_si(t, XTAL_SI_XTAL_PLL) | 0x38, 0xFF)
+
+
+def rfk_hw_init(t) -> None:
+    """rtw8922a_rfk_hw_init: syn power (DBCC MLO), the per-path coefficient-table select, and the
+    RFK PLL init. [SRC] rtw8922a_rfk.c:352."""
+    _set_syn01_cbv(t)                                       # rfk_mlo_ctrl -> set_syn01
+    _chlk_ktbl_sel(t, RF_PATH_A, 0)                          # chlk_reload -> ktbl_sel (idx 0 cold)
+    _chlk_ktbl_sel(t, RF_PATH_B, 0)
+    _rfk_pll_init(t)
+
+
+def _preinit_rf_nctl(t) -> None:
+    """rtw89_phy_preinit_rf_nctl_be: IQK/DPK clock + reset before the NCTL table. [SRC] phy_be.c:443."""
+    _phy_write32_mask(t, R_GOTX_IQKDPK_C0, B_GOTX_IQKDPK, 0x3)
+    _phy_write32_mask(t, R_GOTX_IQKDPK_C1, B_GOTX_IQKDPK, 0x3)
+    _phy_write32_mask(t, R_IQKDPK_HC, B_IQKDPK_HC, 0x1)
+    _phy_write32_mask(t, R_CLK_GCK, B_CLK_GCK, 0xFFFFF)
+    _phy_write32_mask(t, R_IOQ_IQK_DPK, B_IOQ_IQK_DPK_CLKEN, 0x3)
+    _phy_write32_mask(t, R_IQK_DPK_RST, B_IQK_DPK_RST, 0x1)
+    _phy_write32_mask(t, R_IQK_DPK_PRST, B_IQK_DPK_PRST, 0x1)
+    _phy_write32_mask(t, R_IQK_DPK_PRST_C1, B_IQK_DPK_PRST, 0x1)
+    _phy_write32_mask(t, R_TXRFC, B_TXRFC_RST, 0x1)
+    _phy_write32_mask(t, R_IQK_DPK_RST_C1, B_IQK_DPK_RST, 0x1)          # dbcc
+    _phy_write32_mask(t, R_TXRFC_C1, B_TXRFC_RST, 0x1)                 # dbcc
+
+
+def init_rf_nctl(t, cv: int) -> None:
+    """rtw89_phy_init_rf_nctl: the preinit clock/reset then the RF_NCTL fw-element register table
+    (config_bb_reg, single pass, rfe/cv-filtered). nctl_post_table is NULL on the 8922A. [SRC]
+    phy.c:2123-2135."""
+    _preinit_rf_nctl(t)
+    regs = firmware.element_regs(RTW89_FW_ELEMENT_ID_RF_NCTL)
+    hs, hidx = _sel_headline(regs, t.rfe_type, cv)
+    _init_reg(regs, hs, hidx, lambda a, d: _config_bb_reg(t, a, d, False))

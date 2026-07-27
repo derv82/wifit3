@@ -7,7 +7,7 @@ B, and btc_init_cfg programs the per-path trx-mask LUT and the PTA priority / br
 import struct
 
 from .constants import (
-    RF_PATH_A, RF_PATH_B, RR_LUTWE, RR_LUTWA, RR_LUTWD0, B_LUTWEN,
+    RF_PATH_A, RF_PATH_B, RR_LUTWE, RR_LUTWA, RR_LUTWD0, B_LUTWEN, RFREG_MASK,
     BTC_BT_SS_GROUP, BTC_BT_TX_GROUP, BTC_BT_RX_GROUP,
     BTC_TRX_MASK_SS, BTC_TRX_MASK_RX, BTC_TRX_MASK_TX_BTG, BTC_TRX_MASK_TX,
     R_BTC_COEX_WL_REQ_BE, B_BTC_RSP_ACK_HI, B_BTC_TX_BCN_HI, B_BTC_TX_TRI_HI, B_BTC_TX_NULL_HI,
@@ -61,8 +61,8 @@ def _set_rfe(rfe_type: int, cv: int) -> dict:
 
 def _set_trx_mask(t, path: int, group: int, val: int) -> None:
     """rtw8922a_set_trx_mask: write the group index then its WL trx-mask value. [SRC] rtw8922a.c:2771."""
-    phy.write_rf(t, path, RR_LUTWA, group)
-    phy.write_rf(t, path, RR_LUTWD0, val)
+    phy.write_rf(t, path, RR_LUTWA, RFREG_MASK, group)
+    phy.write_rf(t, path, RR_LUTWD0, RFREG_MASK, val)
 
 
 def _init_cfg(t, ant: dict) -> None:
@@ -74,14 +74,14 @@ def _init_cfg(t, ant: dict) -> None:
         path_min, path_max = RF_PATH_A, RF_PATH_B
 
     for path in range(path_min, path_max + 1):
-        phy.write_rf(t, path, RR_LUTWE, B_LUTWEN)
+        phy.write_rf(t, path, RR_LUTWE, RFREG_MASK, B_LUTWEN)
         _set_trx_mask(t, path, BTC_BT_SS_GROUP, BTC_TRX_MASK_SS)
         _set_trx_mask(t, path, BTC_BT_RX_GROUP, BTC_TRX_MASK_RX)
         if ant["shared"] and ant["btg_pos"] == path:
             _set_trx_mask(t, path, BTC_BT_TX_GROUP, BTC_TRX_MASK_TX_BTG)
         else:
             _set_trx_mask(t, path, BTC_BT_TX_GROUP, BTC_TRX_MASK_TX)
-        phy.write_rf(t, path, RR_LUTWE, 0)
+        phy.write_rf(t, path, RR_LUTWE, RFREG_MASK, 0)
 
     wl_pri = B_BTC_RSP_ACK_HI | B_BTC_TX_BCN_HI | B_BTC_TX_TRI_HI | B_BTC_TX_NULL_HI
     t.write32(R_BTC_COEX_WL_REQ_BE, wl_pri)
