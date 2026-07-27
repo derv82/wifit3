@@ -31,6 +31,7 @@ class RTL8922AUTransport:
         self.h2c_seq = 0            # fw_info.h2c_seq: fwcmd sequence number. [SRC] fw.c:1639,2012
         self.cmac_pwr = set()       # RTW89_FLAG_CMACn_PWR: which CMACs are powered. [SRC] mac_be.c:810
         self.wl_scbd = 0x00004003   # btc wl->scbd (BTC_WSCB_INIT), toggled by _write_scbd. coex.c:698
+        self.coex_policy = None      # last SET_CX_POLICY payload; _run_coex re-sends only on change
         self.cv = 0                 # chip cut version (hal.cv), set from read_chip_ver at connect
         self.bb_gain = None         # decoded BB-gain FW element (be gain arrays), cached lazily
         self.byr = None             # by-rate txpwr table [band][bw] from the fw element, cached lazily

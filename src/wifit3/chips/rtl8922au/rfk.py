@@ -27,7 +27,7 @@ _TSSI_FTABLE_2G = bytes.fromhex(
 )
 
 
-def _tssi(t, chan: dict, tssi_mode: int) -> bytes:
+def _tssi(t, chan: dict, tssi_mode: int, phy_idx: int) -> bytes:
     """rtw89_h2c_rf_tssi payload (300 bytes): the per-path CCK/OFDM de (efuse TSSI, trim 0 on the
     8922A), the thermal, and the 2G thermal-delta ftable. 2.4 GHz group-0 only. [SRC] fw.c:7600,
     fw.h:4960, phy.c:4793 fill_fwcmd_efuse_to_de / 4856 fill_fwcmd_tmeter_tbl."""
@@ -36,7 +36,7 @@ def _tssi(t, chan: dict, tssi_mode: int) -> bytes:
     cck, mcs, therm = t.tssi_cck, t.tssi_mcs, t.tssi_therm
     b = bytearray(300)
     struct.pack_into("<H", b, 0, 300)
-    b[2], b[3], b[4], b[5], b[6], b[7] = 0, chan["channel"], chan["band_width"], RTW89_BAND_2G, 1, t.cv
+    b[2], b[3], b[4], b[5], b[6], b[7] = phy_idx, chan["channel"], chan["band_width"], RTW89_BAND_2G, 1, t.cv
     def _put2(off, pair):
         b[off], b[off + 1] = pair[0] & 0xFF, pair[1] & 0xFF
     for off in (10, 12, 14):                                    # cck 20m/40m/efuse (base 0)
@@ -137,7 +137,7 @@ def rfk_init_late(t, ep: int) -> None:
 
 def rfk_band_changed(t, ep: int, chan: dict, phy_idx: int) -> None:
     """rtw8922a_rfk_band_changed: rtw89_phy_rfk_tssi_and_wait(RTW89_TSSI_SCAN). [SRC] rtw8922a.c:2412."""
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TSSI_OFFLOAD, _tssi(t, chan, RTW89_TSSI_SCAN))
+    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TSSI_OFFLOAD, _tssi(t, chan, RTW89_TSSI_SCAN, phy_idx))
 
 
 def rfk_channel(t, ep: int, chan: dict, phy_idx: int) -> None:
@@ -155,7 +155,7 @@ def rfk_channel(t, ep: int, chan: dict, phy_idx: int) -> None:
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_NOTIFY, H2C_FUNC_OUTSRC_RF_MCC_INFO, _pre_ntfy_mcc(mode, 1))
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TXGAPK_OFFLOAD, _txgapk(phy_idx, band, bw, ch, t.cv))
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_IQK_OFFLOAD, _iqk(phy_idx, band, bw, ch, t.cv))
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TSSI_OFFLOAD, _tssi(t, chan, RTW89_TSSI_NORMAL))
+    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TSSI_OFFLOAD, _tssi(t, chan, RTW89_TSSI_NORMAL, phy_idx))
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_DPK_OFFLOAD, _dpk(phy_idx, band, bw, ch))
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_RXDCK_OFFLOAD, _rxdck(0, ch, 1))  # PHY_0 fixed
     mac.resume_sch_tx(t, mac_idx, tx_en)

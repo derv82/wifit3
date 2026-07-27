@@ -53,7 +53,9 @@ def _set_channel_one(t, ep: int, chan: dict, phy_idx: int, mac_idx: int) -> None
     phy.set_channel_help(t, t.cv, band, enter=False, phy_idx=phy_idx, mac_idx=mac_idx, tx_en=tx_en)
     coex.ntfy_switch_band(t, ep)                     # !entity_active on the first tune
     rfk.rfk_band_changed(t, ep, chan, phy_idx)
-    rfk.rfk_channel(t, ep, chan, phy_idx)            # rfk_channel_for_pure_mon_vif
+    # rfk_channel_for_pure_mon_vif runs only where the monitor vif has a link: PHY_0 only.
+    if phy_idx == 0:
+        rfk.rfk_channel(t, ep, chan, phy_idx)
 
 
 def set_channel(t, channel: int, ep: int = None) -> dict:
@@ -63,5 +65,5 @@ def set_channel(t, channel: int, ep: int = None) -> dict:
     chan = make_chan(channel)
     t.mlo_1_1 = False
     _set_channel_one(t, ep, chan, phy_idx=0, mac_idx=0)
-    # TODO: __rtw89_set_channel for PHY_1/MAC_1 (the ~1100-op mirror at ops 13870-15008).
+    _set_channel_one(t, ep, chan, phy_idx=1, mac_idx=1)
     return chan

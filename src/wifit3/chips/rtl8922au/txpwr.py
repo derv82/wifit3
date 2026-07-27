@@ -4,7 +4,7 @@ Parses the firmware TXPWR_BYRATE element into the by-rate table, then writes the
 by-rate and rate-offset registers. tx-shape, limit, limit_ru, and the 8922a diff/ref/sar steps
 are still TODO. [SRC] rtw8922a.c:2545, phy_be.c:1222-1305.
 """
-from . import firmware
+from . import firmware, mac, phy
 from .constants import (
     RTW89_FW_ELEMENT_ID_TXPWR_BYRATE, RTW89_BAND_2G, RTW89_BAND_NUM, RTW89_BYR_BW_NUM,
     RTW89_RS_CCK, RTW89_RS_OFDM, RTW89_RS_MCS, RTW89_RS_HEDCM, RTW89_RS_OFFSET,
@@ -26,6 +26,8 @@ from .constants import (
     R_TXAGC_REF_DBM_P0, B_TXAGC_OFDM_REF_DBM_P0, B_TXAGC_CCK_REF_DBM_P0,
     R_TSSI_K_P0, B_TSSI_K_OFDM_P0, R_P0_TXPWRB_BE, R_P1_TXPWRB_BE, B_TXPWRB_MAX_BE,
     R_BE_PWR_REF_CTRL, B_BE_PWR_REF_CTRL_OFDM, B_BE_PWR_REF_CTRL_CCK,
+    R_TXAGC_REF_DBM_RF1_P0, B_TXAGC_OFDM_REF_DBM_RF1_P0, B_TXAGC_CCK_REF_DBM_RF1_P0,
+    R_TSSI_K_RF1_P0, B_TSSI_K_OFDM_RF1_P0,
 )
 
 
@@ -115,10 +117,9 @@ def _read_byrate(byr: dict, band: int, bw: int, rs: int, idx: int, nss: int, ofd
 
 
 def _mac_txpwr_write32(t, phy_idx: int, reg_base: int, val: int) -> None:
-    """rtw89_mac_txpwr_write32 for PHY_0: reg maps to itself (no CMAC-1 shift). [SRC] mac.h:1559."""
-    if phy_idx != 0:
-        raise NotImplementedError("txpwr write on PHY_1 not needed for monitor hops")
-    t.write32(reg_base, val & 0xFFFFFFFF)
+    """rtw89_mac_txpwr_write32: the txpwr register, shifted +0x4000 for the MAC_1 (PHY_1) band.
+    [SRC] mac.h:1559, mac_be.c get_txpwr_cr_be."""
+    t.write32(mac._reg_by_idx(reg_base, phy_idx), val & 0xFFFFFFFF)
 
 
 # rtw89_byr_spec_be: (rs, init_idx, ofdma, num_of_idx, no_over_bw40, no_multi_nss). [SRC] phy_be.c:1181.
@@ -323,26 +324,29 @@ def _load_tx_shape(t) -> list:
 
 def _set_tx_shape(t, chan: dict, phy_idx: int) -> None:
     """rtw8922a_set_tx_shape: tx_shape_lmt[band][OFDM][regd] selects bb_tx_triangular on/off
-    (R_BEDGE3 B_BEDGE_CFG). [SRC] rtw8922a.c:2501, 2493."""
-    if phy_idx != 0:
-        raise NotImplementedError("tx_shape on PHY_1 not needed for monitor hops")
+    (R_BEDGE3 B_BEDGE_CFG, PHY_1 shifted). [SRC] rtw8922a.c:2501, 2493."""
     band = chan["band_type"]
     idx = _load_tx_shape(t)[band][RTW89_RS_OFDM][_regd_get(band)]
-    t.write32_mask(R_BEDGE3 + CR_BASE_BE, B_BEDGE_CFG, 0 if idx == 0 else 1)
+    phy._phy_write32_idx(t, R_BEDGE3, B_BEDGE_CFG, 0 if idx == 0 else 1, phy_idx)
 
 
-# rtw8922a_txpwr_ref[RTW89_PHY_0]: (ofdm ref, cck ref, tssi-k) reg/mask triples. [SRC] rtw8922a.c:2443.
-_TXPWR_REF_P0 = ((R_TXAGC_REF_DBM_P0, B_TXAGC_OFDM_REF_DBM_P0),
-                 (R_TXAGC_REF_DBM_P0, B_TXAGC_CCK_REF_DBM_P0),
-                 (R_TSSI_K_P0, B_TSSI_K_OFDM_P0))
+# rtw8922a_txpwr_ref[phy_idx]: (ofdm ref, cck ref, tssi-k) reg/mask triples; RF1 set for PHY_1.
+# [SRC] rtw8922a.c:2443.
+_TXPWR_REF = (
+    ((R_TXAGC_REF_DBM_P0, B_TXAGC_OFDM_REF_DBM_P0),
+     (R_TXAGC_REF_DBM_P0, B_TXAGC_CCK_REF_DBM_P0),
+     (R_TSSI_K_P0, B_TSSI_K_OFDM_P0)),
+    ((R_TXAGC_REF_DBM_RF1_P0, B_TXAGC_OFDM_REF_DBM_RF1_P0),
+     (R_TXAGC_REF_DBM_RF1_P0, B_TXAGC_CCK_REF_DBM_RF1_P0),
+     (R_TSSI_K_RF1_P0, B_TSSI_K_OFDM_RF1_P0)),
+)
 
 
 def _set_txpwr_diff(t, chan: dict, phy_idx: int) -> None:
     """rtw8922a_set_txpwr_diff: per-path OFDM/CCK reference (ofst_dec) and TSSI-K. Without antenna
     gain (WW) pwr_ofst is 0, and this CBV cut keeps pwr_ref 0, so ofst_dec is 0 and tssi_k the base.
     [SRC] rtw8922a.c:2454."""
-    if phy_idx != 0:
-        raise NotImplementedError("txpwr diff on PHY_1 not needed for monitor hops")
+    ref = _TXPWR_REF[phy_idx]
     pwr_ofst = 0                                   # ant_gain_pwr_offset: 0 without antenna gain
     tssi_k_ofst = abs(pwr_ofst) + TSSI_K_BASE
     pwr_ref = (16 if t.cv == CHIP_CAV else 0) << TXPWR_FACTOR_RF
@@ -353,20 +357,17 @@ def _set_txpwr_diff(t, chan: dict, phy_idx: int) -> None:
               tssi_k_ofst if pwr_ofst > 0 else TSSI_K_BASE)
     for i in range(RTW89_NTX_NUM):
         po = TXPWR_DIFF_PATH_OFST[i]
-        t.write32_mask(_TXPWR_REF_P0[0][0] + po + CR_BASE_BE, _TXPWR_REF_P0[0][1],
-                       ofst_dec[i] & 0xFFFFFFFF)
-        t.write32_mask(_TXPWR_REF_P0[1][0] + po + CR_BASE_BE, _TXPWR_REF_P0[1][1],
-                       ofst_dec[i] & 0xFFFFFFFF)
-        t.write32_mask(_TXPWR_REF_P0[2][0] + po + CR_BASE_BE, _TXPWR_REF_P0[2][1],
-                       tssi_k[i] & 0xFFFFFFFF)
+        t.write32_mask(ref[0][0] + po + CR_BASE_BE, ref[0][1], ofst_dec[i] & 0xFFFFFFFF)
+        t.write32_mask(ref[1][0] + po + CR_BASE_BE, ref[1][1], ofst_dec[i] & 0xFFFFFFFF)
+        t.write32_mask(ref[2][0] + po + CR_BASE_BE, ref[2][1], tssi_k[i] & 0xFFFFFFFF)
 
 
 def _set_txpwr_ref(t, phy_idx: int) -> None:
-    """rtw8922a_set_txpwr_ref: zero the OFDM and CCK power references. [SRC] rtw8922a.c:2429."""
-    if phy_idx != 0:
-        raise NotImplementedError("txpwr ref on PHY_1 not needed for monitor hops")
-    t.write32_mask(R_BE_PWR_REF_CTRL, B_BE_PWR_REF_CTRL_OFDM, 0)
-    t.write32_mask(R_BE_PWR_REF_CTRL, B_BE_PWR_REF_CTRL_CCK, 0)
+    """rtw8922a_set_txpwr_ref: zero the OFDM and CCK power references (PHY_1 shifted +0x4000).
+    [SRC] rtw8922a.c:2429."""
+    reg = mac._reg_by_idx(R_BE_PWR_REF_CTRL, phy_idx)
+    t.write32_mask(reg, B_BE_PWR_REF_CTRL_OFDM, 0)
+    t.write32_mask(reg, B_BE_PWR_REF_CTRL_CCK, 0)
 
 
 def _set_txpwr_sar_diff(t, chan: dict, phy_idx: int) -> None:

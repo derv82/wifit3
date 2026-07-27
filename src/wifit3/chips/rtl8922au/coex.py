@@ -259,11 +259,14 @@ def ntfy_radio_state_wl_on(t, cv: int) -> None:
 
 def ntfy_switch_band(t, ep: int) -> None:
     """rtw89_btc_ntfy_switch_band: _update_dbcc_band is software, then _run_coex(NTFY_SWBAND) resends
-    the steady WL-only policy. With BT idle the only wire op is one SET_CX_POLICY H2C carrying the
-    TDMA-off TLV (t_def[CXTD_OFF]); the slot TLV is unchanged so nothing is appended. [SRC]
-    coex.c:7852-7871, 3672, 2721-2755."""
-    tdma = bytes((0x00, 0x07, 0x08)) + bytes(8)    # policy TLV: type TDMA, ver 7, len 8, all-zero (off)
-    _btc_h2c(t, ep, BTF_SET_CX_POLICY, tdma, dack=True)
+    the steady WL-only policy (TDMA-off TLV, t_def[CXTD_OFF]) only when the policy changed. So the
+    PHY_0 tune emits the H2C and the PHY_1 tune (same policy) emits nothing. [SRC] coex.c:7852-7871,
+    3672, 2721-2755."""
+    policy = bytes((0x00, 0x07, 0x08)) + bytes(8)  # policy TLV: type TDMA, ver 7, len 8, all-zero (off)
+    if policy == t.coex_policy:
+        return
+    t.coex_policy = policy
+    _btc_h2c(t, ep, BTF_SET_CX_POLICY, policy, dack=True)
 
 
 def _write_scbd(t, bits: int, state: bool) -> None:
