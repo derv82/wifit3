@@ -914,9 +914,11 @@ _SCO_CCK = (0x2BDAC, 0x2BF21, 0x2C095, 0x2C209, 0x2C37E, 0x2C4F2, 0x2C666,
 
 
 def _ctrl_sco_cck(t, primary_ch: int, phy_idx: int) -> None:
-    """rtw8922a_ctrl_sco_cck: the per-2G-channel Barker/CCK FC0-inverse thresholds. [SRC]
-    rtw8922a.c:1149."""
-    ch_element = primary_ch - 1                  # primary_ch < 14 for 2G
+    """rtw8922a_ctrl_sco_cck: the per-2G-channel Barker/CCK FC0-inverse thresholds. Channel 14
+    (primary_ch >= 14) returns without writing. [SRC] rtw8922a.c:1149."""
+    if primary_ch >= 14:
+        return
+    ch_element = primary_ch - 1
     _phy_write32_idx(t, R_BK_FC0INV, B_BK_FC0INV, _SCO_BARKER[ch_element], phy_idx)
     _phy_write32_idx(t, R_CCK_FC0INV, B_CCK_FC0INV, _SCO_CCK[ch_element], phy_idx)
 
