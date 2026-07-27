@@ -6,12 +6,14 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 13070/163814 driver ops reproduced and committed (capture-1; ~13086/13128 on
+Cold-boot bring-up, 13137/163814 driver ops reproduced and committed (capture-1; ~13153/13194 on
 capture-2/3, poll-count variance only). `verify_pcap` walks both VENQT control ops and bulk-OUT
 ops; all three captures stop at the same frontier. **All of `rtw89_core_start` AND the entire
-mac80211 add-interface are now reproduced.** The frontier is now **inside the per-channel
-channel-tune + RFK loop** (op #13079, `rtw8922a_pre_set_channel_rf`), after the head
-`pre_set_channel_bb`. This loop is ~150k ops, the bulk of what remains.
+mac80211 add-interface are reproduced, and the first per-channel `set_channel` unit is mostly
+ported** (pre_set_channel bb/rf, set_channel_help enter/hal_reset, set_channel_mac, ctrl_sco_cck).
+The frontier is inside `rtw8922a_ctrl_ch` at **`set_gain`** (op #13146, BB reg 0x2409c), which
+reads the **deferred efuse RF gain arrays** (the next un-defer). The per-channel loop is ~150k ops,
+the bulk of what remains; one channel's unit is ~750 ops and the rest are replays of the same code.
 
 Newly ported this session (see the Log M35-M38): the whole **mac80211 add-interface**
 (`rtw89_mac_vif_init` + `btc_ntfy_role_info`, ops 13014-13066) and the **first set_channel step**
@@ -365,3 +367,13 @@ describing them, no jargon. No em-dashes and none of the banned words anywhere; 
   orchestrator) + `Driver.set_channel()`; `connect()` ends after add-interface. `verify_pcap` drives
   hops via a walk that peeks the R_DBCC opener, decodes the channel from the R_FC0 freq write, and
   calls `driver.set_channel(ch)` (rtl8814au/rtl8821cu pattern). First hop decodes to ch 1. 13070.
+- 2026-07-26 M40: `pre_set_channel_rf` (`phy`): set_syn01_cbv power per MLO mode (PHY_0 non-1+1 ->
+  RF_SYN_ON_OFF, syn A on / B off) via masked HWSI RF writes. cv now carried on the transport. 13097.
+- 2026-07-26 M41: `set_channel_help(enter)` + `hal_reset` (`phy`): stop_sch_tx, cfg_ppdu_status off,
+  dfs/tssi/adc off, bb_reset off. Fixed the MLO-mode trap: the monitor vif recalcs mlo_dbcc_mode
+  MLO_1_PLUS_1 -> MLO_2_PLUS_0, so tssi_cont_en/adc_en run BOTH paths (via `transport.mlo_1_1`, True
+  through core_start, False at set_channel). `_hal_reset`/`_bb_reset_en` take `band`. 13122.
+- 2026-07-26 M42: `set_channel_mac` (`mac`): rf-mod (20M), TX sub-band + primary-20 bitmap,
+  band-mode check-rate (2G/5G), default-bw SIFS MACTXEN. 20 MHz only (monitor). 13133.
+- 2026-07-26 M43: `set_channel_bb` head `ctrl_sco_cck` (`phy`): per-2G-channel Barker/CCK FC0-inv
+  thresholds (ch_element = primary_ch - 1). 13137. Frontier at ctrl_ch/set_gain (0x2409c).
