@@ -49,11 +49,13 @@ def set_channel(t, channel: int, phy_idx: int = 0, mac_idx: int = 0) -> dict:
     # The single PHY_0 monitor vif recalcs mlo_dbcc_mode to MLO_2_PLUS_0_1RF (both RF paths active
     # on band 0), so hal_reset's tssi/adc run both paths. [SRC] chan.c:485-534.
     t.mlo_1_1 = False
-    phy.set_channel_help(t, t.cv, chan["band_type"], enter=True, phy_idx=phy_idx, mac_idx=mac_idx)
+    tx_en = phy.set_channel_help(t, t.cv, chan["band_type"], enter=True, phy_idx=phy_idx,
+                                 mac_idx=mac_idx)
     mac.set_channel_mac(t, chan, mac_idx)
     phy.set_channel_bb(t, chan, phy_idx)
     phy.set_channel_rf(t, chan, phy_idx)
     txpwr.set_txpwr(t, chan, phy_idx)
-    # TODO: set_channel_help(leave) + post_set_channel bb/rf; rtw8922a_rfk(chan).
-    #       tx_en from help(enter) feeds help(leave).
+    phy.set_channel_help(t, t.cv, chan["band_type"], enter=False, phy_idx=phy_idx,
+                         mac_idx=mac_idx, tx_en=tx_en)
+    # TODO: rfk_band_changed + rfk_channel_for_pure_mon_vif (the RFK calibrations).
     return chan

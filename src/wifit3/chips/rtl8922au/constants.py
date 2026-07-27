@@ -1243,6 +1243,13 @@ B_TXPWRB_MAX_BE = 0x001FF000            # GENMASK(20, 12)
 TXPWR_DIFF_PATH_OFST = (0x0, 0x100)     # rtw8922a_set_txpwr_diff path_ofst[]. rtw8922a.c:2460
 TSSI_K_BASE = 0x12                      # rtw8922a_set_txpwr_diff tssi_k_base. rtw8922a.c:2462
 RTW89_SAR_TXPWR_MAC_MAX = 63            # sar.h:10
+
+# post_set_channel: MLO modes + digital power compensation. [SRC] core.h:4164, rtw8922a.c:2012.
+MLO_1_PLUS_1_1RF = 0x1011               # MLO_MODE_FOR_BB0_BB1_RF(1,1,1). core.h:4164
+MLO_2_PLUS_0_1RF = 0x1002               # MLO_MODE_FOR_BB0_BB1_RF(2,0,1). core.h:4164
+DIGITAL_PWR_COMP_REG_NUM = 22           # rtw8922a.c:2012
+R_BE_LTPC_T0_PATH0 = 0xBA28             # reg.h:6430
+R_BE_LTPC_T0_PATH1 = 0xBB28             # reg.h:6431
 R_BE_PWR_RATE_OFST_CTRL = 0x11A30
 R_BE_PWR_RATE_OFST_END = 0x11A38
 R_BE_PWR_FTM_SS = 0x11B04

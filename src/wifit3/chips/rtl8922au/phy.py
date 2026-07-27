@@ -84,6 +84,8 @@ from .constants import (
     R_FC0INV_SBW, B_RX_1RCCA, R_BRK_R, B_HTMCS_LMT, B_VHTMCS_LMT, R_BRK_HE, B_N_USR_MAX,
     B_NSS_MAX, B_TB_NSS_MAX, R_BRK_EHT, B_RXEHT_NSS_MAX, R_BRK_RXEHT, B_RXEHTTB_NSS_MAX,
     B_RXEHT_N_USER_MAX, HE_N_USER_MAX_8922A,
+    MLO_1_PLUS_1_1RF, MLO_2_PLUS_0_1RF, DIGITAL_PWR_COMP_REG_NUM,
+    R_BE_LTPC_T0_PATH0, R_BE_LTPC_T0_PATH1,
 )
 from . import firmware, mac
 
@@ -377,14 +379,26 @@ def _ctrl_afe_dac(t, path: int) -> None:
     _phy_write32_mask(t, R_AFEDAC1 + ofst, B_AFEDAC1, 0x7)
 
 
-def _ctrl_mlo(t) -> None:
-    """rtw8922a_ctrl_mlo(MLO_1_PLUS_1_1RF): DBCC enable, per-path AFE-DAC, EMLSR params.
+def _ctrl_mlo(t, mode: int) -> None:
+    """rtw8922a_ctrl_mlo: DBCC enable/free-agent per MLO mode, per-path AFE-DAC, EMLSR params.
+    MLO_1_PLUS_1_1RF (core_start) enables DBCC; MLO_2_PLUS_0_1RF (single monitor vif) sets DBCC_FA.
     [SRC] rtw8922a.c:2103."""
-    _phy_write32_mask(t, R_DBCC, B_DBCC_EN, 0x1)
-    _phy_write32_mask(t, R_DBCC_FA, B_DBCC_FA, 0x0)
+    if mode == MLO_1_PLUS_1_1RF:
+        _phy_write32_mask(t, R_DBCC, B_DBCC_EN, 0x1)
+        _phy_write32_mask(t, R_DBCC_FA, B_DBCC_FA, 0x0)
+    elif mode == MLO_2_PLUS_0_1RF:
+        _phy_write32_mask(t, R_DBCC, B_DBCC_EN, 0x0)
+        _phy_write32_mask(t, R_DBCC_FA, B_DBCC_FA, 0x1)
+    else:
+        raise NotImplementedError(f"ctrl_mlo mode {mode:#x} not ported")
     _ctrl_afe_dac(t, RF_PATH_A)
     _ctrl_afe_dac(t, RF_PATH_B)
-    for parm in (0x6180, 0x7BAB, 0x3BAB, 0x3AAB):
+    _phy_write32_mask(t, R_EMLSR, B_EMLSR_PARM, 0x6180)
+    if mode == MLO_2_PLUS_0_1RF:
+        parms = (0xBBAB, 0xABA9, 0xEBA9, 0xEAA9)
+    else:
+        parms = (0x7BAB, 0x3BAB, 0x3AAB)
+    for parm in parms:
         _phy_write32_mask(t, R_EMLSR, B_EMLSR_PARM, parm)
 
 
@@ -394,7 +408,7 @@ def _bb_sethw(t) -> None:
     _phy_write32_clr(t, R_EN_SND_WO_NDP_C1, B_EN_SND_WO_NDP)
     t.write32_mask(R_BE_PWR_BOOST, B_BE_PWR_CTRL_SEL, 0)
     t.write32_mask(R_BE_PWR_BOOST + MAC_BAND1_OFFSET, B_BE_PWR_CTRL_SEL, 0)   # dbcc
-    _ctrl_mlo(t)
+    _ctrl_mlo(t, MLO_1_PLUS_1_1RF)
 
 
 def _env_monitor_one(t, phy_idx: int) -> None:
@@ -1151,15 +1165,84 @@ def pre_set_channel_rf(t, cv: int, phy_idx: int = 0) -> None:
     _set_syn01_cbv(t, syn)
 
 
+# rtw8922a_digital_pwr_comp_2g_{s0,s1}_val[nss-1]: LTPC coefficient tables per path. [SRC] rtw8922a.c:2013.
+_DIGITAL_PWR_COMP_2G_S0 = (
+    (0x012C0064, 0x04B00258, 0x00432710, 0x019000A7, 0x06400320, 0x0D05091D, 0x14D50FA0,
+     0x00000000, 0x01010000, 0x00000101, 0x01010101, 0x02020201, 0x02010000, 0x03030202,
+     0x00000303, 0x03020101, 0x06060504, 0x01010000, 0x06050403, 0x01000606, 0x05040202, 0x07070706),
+    (0x012C0064, 0x04B00258, 0x00432710, 0x019000A7, 0x06400320, 0x0D05091D, 0x14D50FA0,
+     0x00000000, 0x01010100, 0x00000101, 0x01000000, 0x01010101, 0x01010000, 0x02020202,
+     0x00000404, 0x03020101, 0x04040303, 0x02010000, 0x03030303, 0x00000505, 0x03030201, 0x05050303),
+)
+_DIGITAL_PWR_COMP_2G_S1 = (
+    (0x012C0064, 0x04B00258, 0x00432710, 0x019000A7, 0x06400320, 0x0D05091D, 0x14D50FA0,
+     0x01010000, 0x01010101, 0x00000101, 0x01010100, 0x01010101, 0x01010000, 0x02020202,
+     0x01000202, 0x02020101, 0x03030202, 0x02010000, 0x05040403, 0x01000606, 0x05040302, 0x07070605),
+    (0x012C0064, 0x04B00258, 0x00432710, 0x019000A7, 0x06400320, 0x0D05091D, 0x14D50FA0,
+     0x00000000, 0x01010100, 0x00000101, 0x01010000, 0x02020201, 0x02010100, 0x03030202,
+     0x01000404, 0x04030201, 0x05050404, 0x01010100, 0x04030303, 0x01000505, 0x03030101, 0x05050404),
+)
+
+
+def _set_digital_pwr_comp(t, band: int, nss: int, path: int) -> None:
+    """rtw8922a_set_digital_pwr_comp: write the LTPC compensation table for band/nss/path. 2G only.
+    [SRC] rtw8922a.c:2055."""
+    if band != RTW89_BAND_2G:
+        raise NotImplementedError("digital_pwr_comp 5G table not ported yet")
+    row = 0 if nss == 1 else 1
+    tbl = _DIGITAL_PWR_COMP_2G_S0[row] if path == RF_PATH_A else _DIGITAL_PWR_COMP_2G_S1[row]
+    addr = R_BE_LTPC_T0_PATH0 if path == RF_PATH_A else R_BE_LTPC_T0_PATH1
+    for i in range(DIGITAL_PWR_COMP_REG_NUM):
+        t.write32(addr + CR_BASE_BE, tbl[i])
+        addr += 4
+
+
+def _digital_pwr_comp(t, band: int, phy_idx: int) -> None:
+    """rtw8922a_digital_pwr_comp: mlo_1_1 does one path (nss 1); else both paths at nss 2. [SRC]
+    rtw8922a.c:2043."""
+    if t.mlo_1_1:
+        _set_digital_pwr_comp(t, band, 1, RF_PATH_A if phy_idx == 0 else RF_PATH_B)
+    else:
+        _set_digital_pwr_comp(t, band, 2, RF_PATH_A)
+        _set_digital_pwr_comp(t, band, 2, RF_PATH_B)
+
+
+def _post_set_channel_bb(t, band: int, phy_idx: int) -> None:
+    """rtw8922a_post_set_channel_bb (dbcc_en): digital power compensation then ctrl_mlo. [SRC]
+    rtw8922a.c:2159."""
+    _digital_pwr_comp(t, band, phy_idx)
+    _ctrl_mlo(t, MLO_1_PLUS_1_1RF if t.mlo_1_1 else MLO_2_PLUS_0_1RF)
+
+
+def _chlk_reload(t) -> None:
+    """rtw8922a_chlk_reload: per-path coefficient-table select. The single monitor channel with no
+    MCC resolves both tables to index 0. [SRC] rtw8922a_rfk.c:281."""
+    _chlk_ktbl_sel(t, RF_PATH_A, 0)
+    _chlk_ktbl_sel(t, RF_PATH_B, 0)
+
+
+def _rfk_mlo_ctrl(t) -> None:
+    """rtw8922a_rfk_mlo_ctrl: syn power per MLO mode (mlo_1_1 all-on, else PHY_0 on/off) then the
+    coefficient-table reload. [SRC] rtw8922a_rfk.c:293."""
+    _set_syn01_cbv(t, RF_SYN_ALLON if t.mlo_1_1 else RF_SYN_ON_OFF)
+    _chlk_reload(t)
+
+
+def post_set_channel_rf(t, phy_idx: int = 0) -> None:
+    """rtw8922a_post_set_channel_rf: rfk_mlo_ctrl. [SRC] rtw8922a_rfk.c:378."""
+    _rfk_mlo_ctrl(t)
+
+
 def set_channel_help(t, cv: int, band: int, enter: bool, phy_idx: int = 0, mac_idx: int = 0,
                      tx_en: int = 0) -> int:
     """rtw8922a_set_channel_help: on enter, pre_set_channel bb/rf then hal_reset quiesce; on leave,
     hal_reset re-enable then post_set_channel bb/rf. Returns tx_en (needed for the leave call).
-    Only the enter arm is ported so far. [SRC] rtw8922a.c:2321."""
+    [SRC] rtw8922a.c:2321."""
     if enter:
         pre_set_channel_bb(t, phy_idx)
         pre_set_channel_rf(t, cv, phy_idx)
     tx_en = _hal_reset(t, phy_idx, mac_idx, band, enter, tx_en)
     if not enter:
-        raise NotImplementedError("set_channel_help leave (post_set_channel bb/rf) not ported yet")
+        _post_set_channel_bb(t, band, phy_idx)
+        post_set_channel_rf(t, phy_idx)
     return tx_en
