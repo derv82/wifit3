@@ -853,6 +853,48 @@ PHY_COND_BRANCH_END = 0xB        # phy.h:27
 PHY_COND_CHECK = 0x4             # phy.h:28
 PHY_COND_DONT_CARE = 0xFF        # phy.h:29
 
+# rtw8922a_bb_postinit register/bit table. [SRC] rtw8922a.c:1798-1849, reg.h.
+R_BE_FEN_RST_ENABLE = 0x0084
+B_BE_FEN_BBPLAT_RSTB = 1 << 0    # bbrst_mask[0]
+B_BE_FEN_BB1PLAT_RSTB = 1 << 8   # bbrst_mask[1]
+B_BE_BOOT_RDY0 = 1 << 2          # mcu_bootrdy_mask[0]
+B_BE_BOOT_RDY1 = 1 << 10         # mcu_bootrdy_mask[1]
+R_BBCLK = 0x0000
+B_CLK_640M = 1 << 2
+R_TXSCALE = 0x6284
+B_TXFCTR_EN = 1 << 19
+R_TXFCTR = 0x627C
+B_TXFCTR_THD = 0x000FFC00        # GENMASK(19, 10)
+R_SLOPE = 0x6B6C
+B_EHT_RATE_TH = 0xF0000000       # GENMASK(31, 28)
+B_SLOPE_A = 0x00003FFF           # GENMASK(13, 0)
+B_SLOPE_B = 0x0FFFC000           # GENMASK(27, 14)
+R_BEDGE = 0x6BFC
+B_HE_RATE_TH = 0x78000000        # GENMASK(30, 27)
+B_EHT_MCS14 = 1 << 31
+R_BEDGE2 = 0x6C00
+B_HT_VHT_TH = 0x00000FFF         # GENMASK(11, 0)
+B_EHT_MCS15 = 1 << 31
+R_BEDGE3 = 0x6C04
+B_EHTTB_EN = 1 << 15
+B_HEERSU_EN = 1 << 19
+B_HEMU_EN = 1 << 21
+B_TB_EN = 1 << 23
+R_SU_PUNC = 0x6C08
+B_SU_PUNC_EN = 1 << 1
+R_BEDGE5 = 0x6C10
+B_HWGEN_EN = 1 << 25
+B_PWROFST_COMP = 1 << 20
+R_MAG_AB = 0x6BF8
+B_BY_SLOPE = 0xFF000000          # GENMASK(31, 24)
+B_MAG_AB = 0x00FFFFFF            # GENMASK(23, 0)
+R_MAG_A = 0x6BF4
+B_MGA_AEND = 0xFF000000          # GENMASK(31, 24)
+R_SC_CORNER = 0x6B70
+B_SC_CORNER = 0x000007FF         # GENMASK(10, 0)
+R_UDP_COEEF = 0x0CBC
+B_UDP_COEEF = 1 << 19
+
 # Register H2C/C2H firmware mailbox (rtw89_fw_msg_reg). [SRC] fw.c:8229-8335, reg.h, fw.h.
 R_BE_H2CREG_DATA0 = 0x7140       # reg.h:4848; DATAn = DATA0 + n*4
 R_BE_C2HREG_DATA0 = 0x7150       # reg.h:4852
