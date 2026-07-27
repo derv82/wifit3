@@ -8,7 +8,7 @@ import usb.core
 import usb.util
 
 from ..driver import Driver, DeviceID, ProgressCallback
-from . import coex, mac, phy
+from . import coex, mac, phy, rfk
 from .constants import (
     R_BE_PAD_CTRL2, _LIBUSB_SPEED_SUPER, USB_SWITCH_DELAY, B_BE_MATCH_CNT,
     B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
@@ -138,9 +138,16 @@ class RTL8922AUDriver(Driver):
         phy.dm_init(self.transport, ver["cv"])    # phy_dm_init BB inits (pre-RFK). core.c:6665
         phy.rfk_hw_init(self.transport)           # chip_rfk_hw_init (syn/ktbl/pll). phy.c:8256
         phy.init_rf_nctl(self.transport, ver["cv"])   # preinit + RF_NCTL fw table. phy.c:8257
-        # rfk_init is software-only. Then set_txpwr_ctrl + power_trim. [SRC] phy.c:8259-8261.
+        # rfk_init is software-only. Then set_txpwr_ctrl + power_trim + cfg_txrx_path. phy.c:8259-8262.
         phy.set_txpwr_ctrl(self.transport)
         phy.power_trim(self.transport)
+        phy.bb_cfg_txrx_path(self.transport)
+        # core_start tail: edcca-bands (8922A no-op), ppdu/phy-rpt/rts band cfgs, rfk_init_late.
+        # [SRC] core.c:6667-6685.
+        mac.cfg_ppdu_status_bands(self.transport)
+        mac.cfg_phy_rpt_bands(self.transport)
+        mac.update_rts_threshold(self.transport)
+        rfk.rfk_init_late(self.transport, self._h2c_ep)
         return True
 
     def _switch_usb_mode(self) -> None:

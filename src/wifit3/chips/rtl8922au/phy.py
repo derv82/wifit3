@@ -63,6 +63,12 @@ from .constants import (
     R_IQK_DPK_RST_C1, R_TXRFC_C1,
     B_BE_PWR_REF_CTRL_OFDM, B_BE_PWR_REF_CTRL_CCK, RR_BIASA,
     RR_BIASA_TXG_V1, RR_BIASA_TXA_V1, RR_BIASD_TXG_V1, RR_BIASD_TXA_V1,
+    R_ADC_FIFO_V1, B_ADC_FIFO_EN_V1, R_DFS_EN, B_DFS_EN, R_TSSI_PWR, B_TSSI_CONT_EN,
+    R_TXPWR_RST, B_TXPWR_RST, R_RSTB_ASYNC, B_RSTB_ASYNC_ALL, R_RXCCA_BE1, B_RXCCA_BE1_DIS,
+    R_PD_CTRL, B_PD_HIT_DIS, R_MAC_SEL, B_MAC_SEL, PATH_COM_CR_AB, R_ANT_CHBW, B_ANT_RX_SG0,
+    R_FC0INV_SBW, B_RX_1RCCA, R_BRK_R, B_HTMCS_LMT, B_VHTMCS_LMT, R_BRK_HE, B_N_USR_MAX,
+    B_NSS_MAX, B_TB_NSS_MAX, R_BRK_EHT, B_RXEHT_NSS_MAX, R_BRK_RXEHT, B_RXEHTTB_NSS_MAX,
+    B_RXEHT_N_USER_MAX, HE_N_USER_MAX_8922A,
 )
 from . import firmware, mac
 
@@ -594,3 +600,110 @@ def power_trim(t) -> None:
     for i in (RF_PATH_A, RF_PATH_B):
         write_rf(t, i, RR_BIASA, RR_BIASD_TXG_V1, t.pad_bias_trim[i] & 0xF)
         write_rf(t, i, RR_BIASA, RR_BIASD_TXA_V1, (t.pad_bias_trim[i] >> 4) & 0xF)
+
+
+# --- bb_cfg_txrx_path (hal_reset + ctrl_trx_path). [SRC] rtw8922a.c:2298-2626. ---
+
+def _adc_en(t, phy_idx: int, en: bool) -> None:
+    """rtw8922a_adc_en: MLO 1+1 uses path A for phy0, path B for phy1 (shared FIFO reg). [SRC]
+    rtw8922a.c:2276."""
+    path = RF_PATH_A if phy_idx == 0 else RF_PATH_B
+    val = (t.read32(R_ADC_FIFO_V1 + CR_BASE_BE) >> 24) & 0xFF
+    bit = 0x1 if path == RF_PATH_A else 0x2
+    val = (val & ~bit) if en else (val | bit)
+    _phy_write32_mask(t, R_ADC_FIFO_V1, B_ADC_FIFO_EN_V1, val & 0xFF)
+
+
+def _dfs_en(t, phy_idx: int, en: bool) -> None:
+    """rtw8922a_dfs_en: both paths. [SRC] rtw8922a.c:2229-2246."""
+    for ofst in (0, 0x100):
+        _phy_write32_idx(t, R_DFS_EN + ofst, B_DFS_EN, 1 if en else 0, phy_idx)
+
+
+def _tssi_cont_en(t, phy_idx: int, en: bool) -> None:
+    """rtw8922a_tssi_cont_en_phyidx: MLO 1+1 uses path A for phy0, path B for phy1. [SRC]
+    rtw8922a_rfk.c:21-40."""
+    path = RF_PATH_A if phy_idx == 0 else RF_PATH_B
+    _phy_write32_mask(t, R_TSSI_PWR[path], B_TSSI_CONT_EN, 0 if en else 1)
+
+
+def _tssi_reset(t, phy_idx: int) -> None:
+    """rtw8922a_tssi_reset: MLO 1+1 resets RSTA for phy0, RSTB for phy1. [SRC] rtw8922a.c:2016."""
+    reg = R_TXPWR_RST[phy_idx]
+    _phy_write32_mask(t, reg, B_TXPWR_RST, 0)
+    _phy_write32_mask(t, reg, B_TXPWR_RST, 1)
+
+
+def _bb_reset_en(t, phy_idx: int, en: bool) -> None:
+    """rtw8922a_bb_reset_en, 2G band. [SRC] rtw8922a.c:1851."""
+    if en:
+        _phy_write32_idx(t, R_RSTB_ASYNC, B_RSTB_ASYNC_ALL, 1, phy_idx)
+        _phy_write32_idx(t, R_RXCCA_BE1, B_RXCCA_BE1_DIS, 0, phy_idx)   # band == 2G
+        _phy_write32_idx(t, R_PD_CTRL, B_PD_HIT_DIS, 0, phy_idx)
+    else:
+        _phy_write32_idx(t, R_RXCCA_BE1, B_RXCCA_BE1_DIS, 1, phy_idx)
+        _phy_write32_idx(t, R_PD_CTRL, B_PD_HIT_DIS, 1, phy_idx)
+        _phy_write32_idx(t, R_RSTB_ASYNC, B_RSTB_ASYNC_ALL, 0, phy_idx)
+
+
+def _hal_reset(t, phy_idx: int, mac_idx: int, enter: bool, tx_en: int) -> int:
+    """rtw8922a_hal_reset: quiesce (enter) or re-enable (leave) TX/RX around the trx-path change.
+    [SRC] rtw8922a.c:2299."""
+    if enter:
+        tx_en = mac.stop_sch_tx(t, mac_idx)
+        mac.cfg_ppdu_status(t, mac_idx, False)
+        _dfs_en(t, phy_idx, False)
+        _tssi_cont_en(t, phy_idx, False)
+        _adc_en(t, phy_idx, False)
+        _bb_reset_en(t, phy_idx, False)
+        return tx_en
+    mac.cfg_ppdu_status(t, mac_idx, True)
+    _adc_en(t, phy_idx, True)
+    _dfs_en(t, phy_idx, True)
+    _tssi_cont_en(t, phy_idx, True)
+    _bb_reset_en(t, phy_idx, True)
+    mac.resume_sch_tx(t, mac_idx, tx_en)
+    return tx_en
+
+
+def _cfg_rx_nss_limit(t, phy_idx: int) -> None:
+    """rtw8922a_cfg_rx_nss_limit(rx_nss=2). [SRC] rtw8922a.c:1927."""
+    _phy_write32_idx(t, R_BRK_R, B_HTMCS_LMT, 1, phy_idx)
+    _phy_write32_idx(t, R_BRK_R, B_VHTMCS_LMT, 1, phy_idx)
+    _phy_write32_idx(t, R_BRK_HE, B_N_USR_MAX, HE_N_USER_MAX_8922A, phy_idx)
+    _phy_write32_idx(t, R_BRK_HE, B_NSS_MAX, 1, phy_idx)
+    _phy_write32_idx(t, R_BRK_HE, B_TB_NSS_MAX, 1, phy_idx)
+    _phy_write32_idx(t, R_BRK_EHT, B_RXEHT_NSS_MAX, 1, phy_idx)
+    _phy_write32_idx(t, R_BRK_RXEHT, B_RXEHTTB_NSS_MAX, 1, phy_idx)
+    _phy_write32_idx(t, R_BRK_RXEHT, B_RXEHT_N_USER_MAX, HE_N_USER_MAX_8922A, phy_idx)
+
+
+def _ctrl_tx_path_tmac(t, phy_idx: int) -> None:
+    """rtw8922a_ctrl_tx_path_tmac(RF_PATH_AB). [SRC] rtw8922a.c:1867."""
+    _phy_write32_idx(t, R_MAC_SEL, B_MAC_SEL, 0, phy_idx)
+    for addr, data in PATH_COM_CR_AB:
+        t.write32(mac._reg_by_idx(addr, phy_idx), data)
+
+
+def _ctrl_rx_path_tmac(t, phy_idx: int) -> None:
+    """rtw8922a_ctrl_rx_path_tmac(RF_PATH_AB): clear SG0, set AB, nss-limit, tssi reset. [SRC]
+    rtw8922a.c:1981."""
+    _phy_write32_idx(t, R_ANT_CHBW, B_ANT_RX_SG0, 0, phy_idx)
+    _phy_write32_idx(t, R_ANT_CHBW, B_ANT_RX_SG0, 3, phy_idx)
+    _phy_write32_idx(t, R_FC0INV_SBW, B_RX_1RCCA, 3, phy_idx)
+    _cfg_rx_nss_limit(t, phy_idx)
+    _tssi_reset(t, phy_idx)
+
+
+def bb_cfg_txrx_path(t) -> None:
+    """rtw8922a_bb_cfg_txrx_path: quiesce both bands, set the AB tx/rx paths + rx-nss, re-enable.
+    [SRC] rtw8922a.c:2565-2626."""
+    tx_en = [0, 0]
+    tx_en[0] = _hal_reset(t, 0, 0, True, 0)
+    tx_en[1] = _hal_reset(t, 1, 1, True, 0)
+    for phy_idx in (0, 1):                       # ctrl_trx_path(AB, 2, AB, 2)
+        _ctrl_tx_path_tmac(t, phy_idx)
+        _ctrl_rx_path_tmac(t, phy_idx)
+        _cfg_rx_nss_limit(t, phy_idx)
+    _hal_reset(t, 0, 0, False, tx_en[0])
+    _hal_reset(t, 1, 1, False, tx_en[1])

@@ -171,6 +171,11 @@ from .constants import (
     R_BE_SYS_WL_EFUSE_CTRL, B_BE_AUTOLOAD_SUS,
     PHYSICAL_EFUSE_SIZE, PHYCAP_ADDR, PHYCAP_SIZE, R_BE_EFUSE_USB_MACADDR, ETH_ALEN,
     PHYCAP_PA_PAD_CHECK_OFST, PABIAS_TRIM_OFST, PADBIAS_TRIM_OFST,
+    MAC_BAND1_OFFSET, R_BE_CTN_DRV_TXEN, B_BE_CTN_TXEN_ALL_MASK,
+    R_BE_PPDU_STAT, B_BE_PPDU_STAT_RPT_EN, R_BE_HW_PPDU_STATUS, B_BE_FWD_PPDU_STAT_MASK,
+    PPDU_STAT_RPT_VAL, B_BE_PHY_RPT_SZ_MASK, B_BE_HDR_CNV_SZ_MASK,
+    MAC_AX_PHY_RPT_SIZE_8, R_BE_DRV_INFO_OPTION, B_BE_DRV_INFO_PHYRPT_EN,
+    R_BE_AGG_LEN_HT_0, B_AX_RTS_TXTIME_TH_MASK, B_AX_RTS_LEN_TH_MASK, RTS_TXTIME_TH, RTS_LEN_TH,
     RTW89_FWCMD_H2CREG_FUNC_GET_FEATURE, RTW89_H2CREG_GET_FEATURE_PART_NUM,
     SEC_CTRL_EFUSE_SIZE, EFUSE_RF_BLOCK_OFFSET, EFUSE_RF_BLOCK_SIZE,
     EFUSE_BLOCK_ID_MASK, EFUSE_BLOCK_SIZE_MASK,
@@ -1490,3 +1495,65 @@ def mac_init(t, h2c_ep: int, cv: int) -> None:
     feat_init(t, h2c_ep)
     mac_post_init(t)
     firmware.h2c_set_ofld_cfg(t, h2c_ep)
+
+
+# --- bb_cfg_txrx_path MAC helpers + band cfgs. [SRC] mac_be.c:2489-2704, mac.c:6317. ---
+
+def _reg_by_idx(addr: int, mac_idx: int) -> int:
+    """rtw89_mac_reg_by_idx: band-1 registers sit at +0x4000. [SRC] mac.h:1183."""
+    return addr + (MAC_BAND1_OFFSET if mac_idx else 0)
+
+
+def _set_hw_sch_tx_en(t, mac_idx: int, tx_en: int, mask: int) -> None:
+    """rtw89_set_hw_sch_tx_en_v2: read-modify-write the drv-txen field. [SRC] mac_be.c:2519."""
+    reg = _reg_by_idx(R_BE_CTN_DRV_TXEN, mac_idx)
+    val = (t.read32(reg) & ~mask & 0xFFFFFFFF) | (tx_en & mask)
+    t.write32(reg, val)
+
+
+def stop_sch_tx(t, mac_idx: int) -> int:
+    """rtw89_mac_stop_sch_tx_v2(SEL_ALL): save the drv-txen (one read), then RMW-clear it (a second
+    read + write). [SRC] mac_be.c:2532."""
+    tx_en = t.read32(_reg_by_idx(R_BE_CTN_DRV_TXEN, mac_idx))
+    _set_hw_sch_tx_en(t, mac_idx, 0, B_BE_CTN_TXEN_ALL_MASK)
+    return tx_en
+
+
+def resume_sch_tx(t, mac_idx: int, tx_en: int) -> None:
+    """rtw89_mac_resume_sch_tx_v2: restore the saved drv-txen. [SRC] mac_be.c:2578."""
+    _set_hw_sch_tx_en(t, mac_idx, tx_en, B_BE_CTN_TXEN_ALL_MASK)
+
+
+def cfg_ppdu_status(t, mac_idx: int, enable: bool) -> None:
+    """rtw89_mac_cfg_ppdu_status_be. [SRC] mac_be.c:2672."""
+    reg = _reg_by_idx(R_BE_PPDU_STAT, mac_idx)
+    if not enable:
+        t.write32_clr(reg, B_BE_PPDU_STAT_RPT_EN)
+        return
+    t.write32_mask(R_BE_HW_PPDU_STATUS, B_BE_FWD_PPDU_STAT_MASK, 3)
+    t.write32(reg, PPDU_STAT_RPT_VAL)
+
+
+def cfg_ppdu_status_bands(t) -> None:
+    """rtw89_mac_cfg_ppdu_status_bands(true): both bands. [SRC] core.c:6668."""
+    cfg_ppdu_status(t, 0, True)
+    cfg_ppdu_status(t, 1, True)
+
+
+def cfg_phy_rpt_bands(t) -> None:
+    """rtw89_mac_cfg_phy_rpt_bands(true): PHY-report size + drv-info enable, both bands.
+    [SRC] mac_be.c:2598, core.c:6669."""
+    for mac_idx in (0, 1):
+        reg = _reg_by_idx(R_BE_RCR, mac_idx)
+        t.write32_mask(reg, B_BE_PHY_RPT_SZ_MASK, MAC_AX_PHY_RPT_SIZE_8)
+        t.write32_mask(reg, B_BE_HDR_CNV_SZ_MASK, 0)
+        t.write32_mask(_reg_by_idx(R_BE_DRV_INFO_OPTION, mac_idx), B_BE_DRV_INFO_PHYRPT_EN, 1)
+
+
+def update_rts_threshold(t) -> None:
+    """__rtw89_mac_update_rts_threshold: the default RTS time/len thresholds, both bands (16-bit).
+    [SRC] mac.c:6317."""
+    for mac_idx in (0, 1):
+        reg = _reg_by_idx(R_BE_AGG_LEN_HT_0, mac_idx)
+        t.write16_mask(reg, B_AX_RTS_TXTIME_TH_MASK, RTS_TXTIME_TH)
+        t.write16_mask(reg, B_AX_RTS_LEN_TH_MASK, RTS_LEN_TH)

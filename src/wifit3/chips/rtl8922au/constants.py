@@ -1145,6 +1145,73 @@ PHYCAP_PA_PAD_CHECK_OFST = 0x1700    # check_pa_pad_trim_addr. rtw8922a.c:946
 PABIAS_TRIM_OFST = (0x1707, 0x1734)  # pabias_trim_addr[]. rtw8922a.c:944
 PADBIAS_TRIM_OFST = (0x1708, 0x1735) # pad_bias_trim_addr[]. rtw8922a.c:994
 
+# bb_cfg_txrx_path (hal_reset + ctrl_trx_path) + mac band cfgs. [SRC] rtw8922a.c:2298-2626,
+# mac_be.c:2585-2704, mac.c:6317, reg.h.
+R_BE_CTN_DRV_TXEN = 0x10398
+B_BE_CTN_TXEN_ALL_MASK = 0x0003FFFF  # GENMASK(17, 0)
+R_BE_PPDU_STAT = 0x11440
+B_BE_PPDU_STAT_RPT_EN = 1 << 0
+R_DFS_EN = 0x2800                    # dfs_en_idx base; path B +0x100. rtw8922a.c:2229
+B_DFS_EN = 1 << 1
+R_TSSI_PWR = (0xE610, 0xE710)        # R_TSSI_PWR_P0/P1. tssi_cont_en
+B_TSSI_CONT_EN = 1 << 3
+R_ADC_FIFO_V1 = 0x10FC
+B_ADC_FIFO_EN_V1 = 0xFF000000        # GENMASK(31, 24)
+R_RXCCA_BE1 = 0x0520
+B_RXCCA_BE1_DIS = 1 << 0
+R_PD_CTRL = 0x0C3C
+B_PD_HIT_DIS = 1 << 9
+R_RSTB_ASYNC = 0x0704
+B_RSTB_ASYNC_ALL = 1 << 1
+R_MAC_SEL = 0x09A4
+B_MAC_SEL = 0x000E0000               # GENMASK(19, 17)
+PATH_COM_CR_AB = (                   # ctrl_tx_path_tmac RF_PATH_AB. rtw8922a.c:1872-1910
+    (0x11A00, 0x21C86900), (0x11A04, 0x00E4E433), (0x11A08, 0x39390CC9),
+    (0x11A0C, 0x4E433240), (0x11A10, 0x90CC900E), (0x11A14, 0x00240393),
+    (0x11A18, 0x201C8600),
+)
+R_ANT_CHBW = 0x6B54
+B_ANT_RX_SG0 = 0x0000000F            # GENMASK(3, 0)
+R_FC0INV_SBW = 0x6B50
+B_RX_1RCCA = 0x0003C000              # GENMASK(17, 14)
+R_BRK_R = 0x0418
+B_HTMCS_LMT = 0x00000300             # GENMASK(9, 8)
+B_VHTMCS_LMT = 0x00600000            # GENMASK(22, 21)
+R_BRK_HE = 0x0480
+B_N_USR_MAX = 0x00003FC0             # GENMASK(13, 6)
+B_NSS_MAX = 0x0001C000               # GENMASK(16, 14)
+B_TB_NSS_MAX = 0x03800000            # GENMASK(25, 23)
+R_BRK_EHT = 0x0474
+B_RXEHT_NSS_MAX = 0x0000001C         # GENMASK(4, 2)
+R_BRK_RXEHT = 0x0478
+B_RXEHTTB_NSS_MAX = 0x0001C000       # GENMASK(16, 14)
+B_RXEHT_N_USER_MAX = 0xFF000000      # GENMASK(31, 24)
+HE_N_USER_MAX_8922A = 4
+R_TXPWR_RST = (0xE60C, 0xE70C)       # R_TXPWR_RSTA/B (per phy). tssi_reset
+B_TXPWR_RST = 1 << 16                # B_TXPWR_RSTA/B
+R_BE_HW_PPDU_STATUS = 0x9C30
+B_BE_FWD_PPDU_STAT_MASK = 0x000000FF # GENMASK(7, 0)
+PPDU_STAT_RPT_VAL = 0x6D             # RPT_EN|APP_RX_CNT|APP_PLCP_HDR|RPT_CRC32|RPT_DMA
+R_BE_RCR = 0x11400
+B_BE_PHY_RPT_SZ_MASK = 0x00000030    # GENMASK(5, 4)
+B_BE_HDR_CNV_SZ_MASK = 0x000000C0    # GENMASK(7, 6)
+MAC_AX_PHY_RPT_SIZE_8 = 1            # mac.h:177
+R_BE_DRV_INFO_OPTION = 0x11470
+B_BE_DRV_INFO_PHYRPT_EN = 1 << 0
+R_BE_AGG_LEN_HT_0 = 0x10814
+B_AX_RTS_TXTIME_TH_MASK = 0x0000FF00 # GENMASK(15, 8)
+B_AX_RTS_LEN_TH_MASK = 0x000000FF    # GENMASK(7, 0)
+RTS_TXTIME_TH = 2                    # 88 >> 5 (default rts_threshold). mac.c:6318
+RTS_LEN_TH = 0xFF                    # 4080 >> 4
+
+# rfk_init_late H2Cs. [SRC] rtw8922a.c:2349-2367, fw.c:7360-7846, fw.h:4818-4831.
+H2C_CL_OUTSRC_RF_FW_RFK = 0xB
+H2C_CL_OUTSRC_RF_FW_NOTIFY = 0xA
+H2C_FUNC_RFK_PRE_NOTIFY = 0x8
+H2C_FUNC_RFK_DACK_OFFLOAD = 0x5
+H2C_FUNC_RFK_RXDCK_OFFLOAD = 0x6
+H2C_FUNC_OUTSRC_RF_MCC_INFO = 0xF
+
 # Register H2C/C2H firmware mailbox (rtw89_fw_msg_reg). [SRC] fw.c:8229-8335, reg.h, fw.h.
 R_BE_H2CREG_DATA0 = 0x7140       # reg.h:4848; DATAn = DATA0 + n*4
 R_BE_C2HREG_DATA0 = 0x7150       # reg.h:4852
