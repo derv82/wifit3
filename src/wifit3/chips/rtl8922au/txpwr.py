@@ -22,6 +22,10 @@ from .constants import (
     RTW89_RU26, RTW89_RU52, RTW89_RU106, RTW89_RU52_26, RTW89_RU106_26, RTW89_RU_SEC_NUM_BE,
     RTW89_TXPWR_LMT_PAGE_SIZE_BE, RTW89_TXPWR_LMT_RU_PAGE_SIZE_BE,
     R_BE_PWR_LMT, R_BE_PWR_RU_LMT, R_BEDGE3, B_BEDGE_CFG, CR_BASE_BE,
+    CHIP_CAV, TXPWR_FACTOR_BB, TSSI_K_BASE, TXPWR_DIFF_PATH_OFST, RTW89_SAR_TXPWR_MAC_MAX,
+    R_TXAGC_REF_DBM_P0, B_TXAGC_OFDM_REF_DBM_P0, B_TXAGC_CCK_REF_DBM_P0,
+    R_TSSI_K_P0, B_TSSI_K_OFDM_P0, R_P0_TXPWRB_BE, R_P1_TXPWRB_BE, B_TXPWRB_MAX_BE,
+    R_BE_PWR_REF_CTRL, B_BE_PWR_REF_CTRL_OFDM, B_BE_PWR_REF_CTRL_CCK,
 )
 
 
@@ -327,11 +331,62 @@ def _set_tx_shape(t, chan: dict, phy_idx: int) -> None:
     t.write32_mask(R_BEDGE3 + CR_BASE_BE, B_BEDGE_CFG, 0 if idx == 0 else 1)
 
 
+# rtw8922a_txpwr_ref[RTW89_PHY_0]: (ofdm ref, cck ref, tssi-k) reg/mask triples. [SRC] rtw8922a.c:2443.
+_TXPWR_REF_P0 = ((R_TXAGC_REF_DBM_P0, B_TXAGC_OFDM_REF_DBM_P0),
+                 (R_TXAGC_REF_DBM_P0, B_TXAGC_CCK_REF_DBM_P0),
+                 (R_TSSI_K_P0, B_TSSI_K_OFDM_P0))
+
+
+def _set_txpwr_diff(t, chan: dict, phy_idx: int) -> None:
+    """rtw8922a_set_txpwr_diff: per-path OFDM/CCK reference (ofst_dec) and TSSI-K. Without antenna
+    gain (WW) pwr_ofst is 0, and this CBV cut keeps pwr_ref 0, so ofst_dec is 0 and tssi_k the base.
+    [SRC] rtw8922a.c:2454."""
+    if phy_idx != 0:
+        raise NotImplementedError("txpwr diff on PHY_1 not needed for monitor hops")
+    pwr_ofst = 0                                   # ant_gain_pwr_offset: 0 without antenna gain
+    tssi_k_ofst = abs(pwr_ofst) + TSSI_K_BASE
+    pwr_ref = (16 if t.cv == CHIP_CAV else 0) << TXPWR_FACTOR_RF
+    pwr_ref_ofst = pwr_ref - (abs(pwr_ofst) >> (TXPWR_FACTOR_BB - TXPWR_FACTOR_RF))
+    ofst_dec = (pwr_ref if pwr_ofst > 0 else pwr_ref_ofst,
+                pwr_ref_ofst if pwr_ofst > 0 else pwr_ref)
+    tssi_k = (TSSI_K_BASE if pwr_ofst > 0 else tssi_k_ofst,
+              tssi_k_ofst if pwr_ofst > 0 else TSSI_K_BASE)
+    for i in range(RTW89_NTX_NUM):
+        po = TXPWR_DIFF_PATH_OFST[i]
+        t.write32_mask(_TXPWR_REF_P0[0][0] + po + CR_BASE_BE, _TXPWR_REF_P0[0][1],
+                       ofst_dec[i] & 0xFFFFFFFF)
+        t.write32_mask(_TXPWR_REF_P0[1][0] + po + CR_BASE_BE, _TXPWR_REF_P0[1][1],
+                       ofst_dec[i] & 0xFFFFFFFF)
+        t.write32_mask(_TXPWR_REF_P0[2][0] + po + CR_BASE_BE, _TXPWR_REF_P0[2][1],
+                       tssi_k[i] & 0xFFFFFFFF)
+
+
+def _set_txpwr_ref(t, phy_idx: int) -> None:
+    """rtw8922a_set_txpwr_ref: zero the OFDM and CCK power references. [SRC] rtw8922a.c:2429."""
+    if phy_idx != 0:
+        raise NotImplementedError("txpwr ref on PHY_1 not needed for monitor hops")
+    t.write32_mask(R_BE_PWR_REF_CTRL, B_BE_PWR_REF_CTRL_OFDM, 0)
+    t.write32_mask(R_BE_PWR_REF_CTRL, B_BE_PWR_REF_CTRL_CCK, 0)
+
+
+def _set_txpwr_sar_diff(t, chan: dict, phy_idx: int) -> None:
+    """rtw8922a_set_txpwr_sar_diff: the SAR max per path (PHY_0 only). No SAR source, so the query
+    returns the MAC max, converted to RF units. [SRC] rtw8922a.c:2520."""
+    if phy_idx != 0:
+        return
+    sar_rf = RTW89_SAR_TXPWR_MAC_MAX << (TXPWR_FACTOR_RF - TXPWR_FACTOR_MAC)
+    t.write32_mask(R_P0_TXPWRB_BE + CR_BASE_BE, B_TXPWRB_MAX_BE, sar_rf)
+    t.write32_mask(R_P1_TXPWRB_BE + CR_BASE_BE, B_TXPWRB_MAX_BE, sar_rf)
+
+
 def set_txpwr(t, chan: dict, phy_idx: int = 0) -> None:
-    """rtw8922a_set_txpwr: byrate, offset, tx_shape, limit, limit_ru ported; the 8922a
-    diff/ref/sar per-path steps are still TODO. [SRC] rtw8922a.c:2545."""
+    """rtw8922a_set_txpwr: byrate, offset, tx_shape, limit, limit_ru, then the 8922a per-path
+    diff/ref/sar steps. [SRC] rtw8922a.c:2545."""
     _set_txpwr_byrate(t, chan, phy_idx)
     _set_txpwr_offset(t, chan, phy_idx)
     _set_tx_shape(t, chan, phy_idx)
     _set_txpwr_limit(t, chan, phy_idx)
     _set_txpwr_limit_ru(t, chan, phy_idx)
+    _set_txpwr_diff(t, chan, phy_idx)
+    _set_txpwr_ref(t, phy_idx)
+    _set_txpwr_sar_diff(t, chan, phy_idx)

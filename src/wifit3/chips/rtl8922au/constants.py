@@ -1204,6 +1204,7 @@ RTW89_RATE_OFFSET_DLRU_HE = 6
 RTW89_RATE_OFFSET_EHT = 7
 TXPWR_FACTOR_RF = 2                     # chip->txpwr_factor_rf. rtw8922a.c:3201
 TXPWR_FACTOR_MAC = 1                    # chip->txpwr_factor_mac. rtw8922a.c:3202
+TXPWR_FACTOR_BB = 3                     # chip->txpwr_factor_bb. rtw8922a.c:3200
 
 # txpwr limit / limit_ru / tx-shape tables. [SRC] fw.h:4337-4344, phy.h:509-568, core.h:840-1172.
 RTW89_FW_ELEMENT_ID_TXPWR_LMT_2GHZ = 10       # fw.h:4338
@@ -1230,6 +1231,18 @@ RTW89_TXPWR_LMT_RU_PAGE_SIZE_BE = 80    # phy.h:561
 R_BE_PWR_LMT = 0x11FAC                  # reg.h:8460
 R_BE_PWR_RU_LMT = 0x12048               # reg.h:8463
 B_BEDGE_CFG = 0x3                       # GENMASK(1, 0). reg.h:9994
+# rtw8922a_set_txpwr diff/ref/sar (per-path reference + tssi_k + SAR max). [SRC] rtw8922a.c:2429.
+R_TXAGC_REF_DBM_P0 = 0xE628             # reg.h:10456
+B_TXAGC_OFDM_REF_DBM_P0 = 0x000001FF    # GENMASK(8, 0)
+B_TXAGC_CCK_REF_DBM_P0 = 0x0003FE00     # GENMASK(17, 9)
+R_TSSI_K_P0 = 0xE6A0                    # reg.h:10459
+B_TSSI_K_OFDM_P0 = 0x3FF00000           # GENMASK(29, 20)
+R_P0_TXPWRB_BE = 0xE61C                 # reg.h:10447
+R_P1_TXPWRB_BE = 0xE71C                 # reg.h:10448
+B_TXPWRB_MAX_BE = 0x001FF000            # GENMASK(20, 12)
+TXPWR_DIFF_PATH_OFST = (0x0, 0x100)     # rtw8922a_set_txpwr_diff path_ofst[]. rtw8922a.c:2460
+TSSI_K_BASE = 0x12                      # rtw8922a_set_txpwr_diff tssi_k_base. rtw8922a.c:2462
+RTW89_SAR_TXPWR_MAC_MAX = 63            # sar.h:10
 R_BE_PWR_RATE_OFST_CTRL = 0x11A30
 R_BE_PWR_RATE_OFST_END = 0x11A38
 R_BE_PWR_FTM_SS = 0x11B04
