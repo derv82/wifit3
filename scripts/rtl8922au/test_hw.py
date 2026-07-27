@@ -5,20 +5,22 @@ De-risks the PyUSB -> device path on real silicon, which pcap-verify cannot: ver
 proves our byte order matches a recording, never that the device answers in real time.
 
 Validates, driving RTL8922AUDriver directly (no device manager):
-  1. Device found on USB (any SUPPORTED_IDS VID:PID)
+  1. Device found on USB (matched by SUPPORTED_IDS VID:PID, so a co-plugged card is untouched)
   2. A single chip-version read returns non-garbage (control-IN works)
   3. driver.connect() completes: firmware upload (bulk-OUT) + power-on + MAC/BB init +
      mac80211 add-interface, all with poll loops converging on live hardware
+  4. set_channel() completes for 2.4 GHz and 5 GHz channels (the per-channel tune + RFK)
 
-RX/channel-tune is NOT exercised: rtw8922a_set_channel_rf + RFK are not ported yet, so
-the RF is never tuned and no frames arrive. This script transmits NOTHING.
+RX is NOT exercised (the bulk-IN reader / RX descriptor decode is not ported), so no frames
+arrive. This script transmits NOTHING.
 
-At SuperSpeed (USB 3) the rtw89 mode switch is skipped, so there is no re-enumeration.
-On a USB-2 path the switch may re-enumerate the device (untested); prefer USB 3 here.
+At SuperSpeed (USB 3) the rtw89 mode switch is skipped. On a USB-2 path the mode switch fires
+a force-mode write that RE-ENUMERATES the device to SuperSpeed; the current driver does not
+re-acquire the handle, so the FIRST connect() on a fresh USB-2 plug hangs. Re-run once (the
+card is now on USB 3) or use a USB-3 port. Verified working at SuperSpeed on the ASUS USB-BE93.
 
 Usage (card plugged in; kernel driver unbound or a wifit3 udev rule + replug):
-    sudo .venv/bin/python scripts/rtl8922au/test_hw.py
-    sudo .venv/bin/python scripts/rtl8922au/test_hw.py --debug
+    uv run python scripts/rtl8922au/test_hw.py [--debug]
 """
 import argparse
 import asyncio
@@ -104,9 +106,19 @@ async def main(args):
         fail("connect() returned False (check logs above)")
     ok("connect() succeeded: firmware upload + MAC/BB init + add-interface completed on live silicon")
 
+    step("set_channel() [per-channel tune + RFK, 2.4 GHz and 5 GHz]")
+    for ch in (1, 6, 36):
+        try:
+            await asyncio.wait_for(driver.set_channel(ch), timeout=30)
+        except asyncio.TimeoutError:
+            fail(f"set_channel({ch}) timed out (device hung during the tune)")
+        except Exception as e:  # noqa: BLE001
+            fail(f"set_channel({ch}) raised {type(e).__name__}: {e}")
+        ok(f"set_channel({ch}) completed on live silicon")
+
     step("Cleanup")
     await driver.close()
-    print("\n=== CONNECT BRING-UP PASSED (RX awaits set_channel_rf + RFK port) ===")
+    print("\n=== CONNECT + CHANNEL-TUNE BRING-UP PASSED (RX awaits the bulk-IN reader port) ===")
 
 
 if __name__ == "__main__":
