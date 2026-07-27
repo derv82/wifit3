@@ -951,6 +951,26 @@ B_BE_FORCE_PWR_BY_RATE_VAL = 0x1FF00000  # GENMASK(28, 20). reg.h
 B_BE_PWR_BT_EN = 1 << 23         # reg.h
 B_BE_PWR_BT_VAL = 0x000001FF     # GENMASK(8, 0). reg.h
 
+# Coex fw H2Cs + _run_coex(NTFY_INIT) cold path. [SRC] coex.c, fw.c, mac.c, rtw8922a.c, fw.h, reg.h.
+# Coex version rtw89_btc_ver_defs[2] (RTL8922A, >=0.35.71): fcxmreg7/fcxslots7/fcxbtcrpt8/fcxinit7
+# /fcxctrl7/fwlrole8/fcxosi1/drvinfo_type2. [SRC] coex.c:152-159.
+H2C_CL_OUTSRC_BTC = 0x10         # BTFC_SET. fw.h:2339
+BTF_SET_REPORT_EN = 0            # fw.h:2344
+BTF_SET_SLOT_TABLE = 1
+BTF_SET_MREG_TABLE = 2
+BTF_SET_CX_POLICY = 3
+BTF_SET_DRV_INFO = 5
+R_BE_BT_PLT = 0x1087C            # reg.h:7219
+B_BE_TX_PLT_GNT_WL = 1 << 0      # reg.h:7223
+B_BE_RX_PLT_GNT_WL = 1 << 4      # reg.h:7227
+B_BE_PLT_EN = 1 << 8             # reg.h:7231
+B_MAC_AX_SB_FW_MASK = 0x7F000000    # GENMASK(30, 24). reg.h:159
+B_AX_TOGGLE = 1 << 31            # reg.h:157
+B_MAC_AX_BTGS1_NOTIFY = 1 << 0   # reg.h:160
+MAC_AX_NOTIFY_TP_MAJOR = 0x81    # reg.h:161 (POWERON set)
+B_MAC_AX_SB_DRV_MASK = 0x00FFFFFF   # GENMASK(23, 0). reg.h
+BTC_WSCB_INIT = 0x00004003       # ACTIVE|ON|BTLOG = BIT0|BIT1|BIT14. coex.c:698-710
+
 # Register H2C/C2H firmware mailbox (rtw89_fw_msg_reg). [SRC] fw.c:8229-8335, reg.h, fw.h.
 R_BE_H2CREG_DATA0 = 0x7140       # reg.h:4848; DATAn = DATA0 + n*4
 R_BE_C2HREG_DATA0 = 0x7150       # reg.h:4852

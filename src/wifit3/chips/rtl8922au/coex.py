@@ -4,6 +4,8 @@ rtw89_btc_ntfy_init configures the WL/BT antenna sharing before the interface ru
 (rfe_type 1) btc_set_rfe resolves to a 2-antenna shared setup with the BT-general path on RF path
 B, and btc_init_cfg programs the per-path trx-mask LUT and the PTA priority / break tables.
 """
+import struct
+
 from .constants import (
     RF_PATH_A, RF_PATH_B, RR_LUTWE, RR_LUTWA, RR_LUTWD0, B_LUTWEN,
     BTC_BT_SS_GROUP, BTC_BT_TX_GROUP, BTC_BT_RX_GROUP,
@@ -14,8 +16,35 @@ from .constants import (
     R_BE_SCOREBOARD, WL_TX_POWER_NO_BTC_CTRL,
     R_BE_PWR_RATE_CTRL, R_BE_PWR_REG_CTRL, R_BE_PWR_COEX_CTRL,
     B_BE_FORCE_PWR_BY_RATE_EN, B_BE_FORCE_PWR_BY_RATE_VAL, B_BE_PWR_BT_EN, B_BE_PWR_BT_VAL,
+    H2C_CAT_OUTSRC, H2C_CL_OUTSRC_BTC,
+    BTF_SET_REPORT_EN, BTF_SET_SLOT_TABLE, BTF_SET_MREG_TABLE, BTF_SET_CX_POLICY, BTF_SET_DRV_INFO,
+    R_BE_BT_PLT, B_BE_TX_PLT_GNT_WL, B_BE_RX_PLT_GNT_WL, B_BE_PLT_EN,
+    B_MAC_AX_SB_FW_MASK, B_AX_TOGGLE, B_MAC_AX_BTGS1_NOTIFY, MAC_AX_NOTIFY_TP_MAJOR,
+    B_MAC_AX_SB_DRV_MASK, BTC_WSCB_INIT,
 )
-from . import phy
+from . import firmware, phy
+
+# The coex fw structs are version-selected (rtw89_btc_ver_defs[2] for this fw); the cold-init H2C
+# payloads for THIS card (rfe_type 1, 2-ant shared, BTG on path B, no BT) are fixed. Values and
+# byte layouts verified against the capture. [SRC] coex.c:152-159, 399-404, 336-341, core.h.
+REG_MAC, REG_BB = 0, 1
+_MON_REG = [                                     # rtw89_btc_8922a_mon_reg[]. rtw8922a.c:2904-2924
+    (REG_MAC, 4, 0xE300), (REG_MAC, 4, 0xE320), (REG_MAC, 4, 0xE324), (REG_MAC, 4, 0xE328),
+    (REG_MAC, 4, 0xE32C), (REG_MAC, 4, 0xE330), (REG_MAC, 4, 0xE334), (REG_MAC, 4, 0xE338),
+    (REG_MAC, 4, 0xE344), (REG_MAC, 4, 0xE348), (REG_MAC, 4, 0xE34C), (REG_MAC, 4, 0xE350),
+    (REG_MAC, 4, 0x11A2C), (REG_MAC, 4, 0x11A50),
+    (REG_BB, 4, 0x980), (REG_BB, 4, 0x660), (REG_BB, 4, 0x1660), (REG_BB, 4, 0x418C),
+    (REG_BB, 4, 0x518C),
+]
+_SLOT_MIX, _SLOT_ISO = 0, 1
+_SLOT_DEF = [                                     # s_def[CXST_*] = (dur, cxtbl, cxtype). coex.c:81-100
+    (100, 0x55555555, _SLOT_MIX), (5, 0xEA5A5A5A, _SLOT_ISO), (70, 0xEA5A5A5A, _SLOT_ISO),
+    (15, 0xEA5A5A5A, _SLOT_ISO), (15, 0xEA5A5A5A, _SLOT_ISO), (250, 0xE5555555, _SLOT_MIX),
+    (7, 0xEA5A5A5A, _SLOT_MIX), (5, 0xE5555555, _SLOT_MIX), (50, 0xE5555555, _SLOT_MIX),
+    (20, 0xEA5A5A5A, _SLOT_ISO), (500, 0x55555555, _SLOT_MIX), (5, 0xEA5A5A5A, _SLOT_MIX),
+    (5, 0xFFFFFFFF, _SLOT_ISO), (5, 0xE5555555, _SLOT_MIX), (5, 0x55555555, _SLOT_MIX),
+    (250, 0xEA5A5A5A, _SLOT_MIX), (50, 0xFFFFFFFF, _SLOT_ISO), (50, 0xFFFFDFFF, _SLOT_ISO),
+]
 
 
 def _set_rfe(rfe_type: int, cv: int) -> dict:
@@ -82,11 +111,112 @@ def _set_wl_txpwr_ctrl(t, txpwr_val: int) -> None:
         t.write32_mask(R_BE_PWR_REG_CTRL, B_BE_PWR_BT_EN, 0x1)
 
 
+def _btc_h2c(t, ep: int, func: int, payload: bytes, dack: bool) -> None:
+    """A coex BTFC_SET H2C: cat OUTSRC, class BTC. _send_fw_cmd uses dack=True; the cxdrv_* family
+    uses dack=False. [SRC] coex.c:877-914, fw.c:5815."""
+    firmware.h2c_command(t, ep, H2C_CAT_OUTSRC, H2C_CL_OUTSRC_BTC, func, payload,
+                         rack=False, dack=dack)
+
+
+def _fw_set_monreg(t, ep: int) -> None:
+    """btc_fw_set_monreg (mreg table v7) + fw_en_rpt(RPT_EN_MREG). [SRC] coex.c:2642-2702, 399-404."""
+    body = b"".join(struct.pack("<HHI", typ, nbytes, off) for typ, nbytes, off in _MON_REG)
+    _btc_h2c(t, ep, BTF_SET_MREG_TABLE, bytes((0x02, 0x07, len(_MON_REG))) + body, dack=True)
+    _btc_h2c(t, ep, BTF_SET_REPORT_EN,                    # rpt_ver(RPT_EN_MREG) = BIT(2)
+             bytes((0x00, 0x08, 0x04)) + struct.pack("<I", 0x00000004), dack=True)
+
+
+def _fw_set_slots(t, ep: int) -> None:
+    """rtw89_btc_fw_set_slots (slot table v7): CXST_MAX slots from s_def. [SRC] coex.c:2554-2576."""
+    body = b"".join(struct.pack("<HHI", dur, cxtype, cxtbl) for dur, cxtbl, cxtype in _SLOT_DEF)
+    _btc_h2c(t, ep, BTF_SET_SLOT_TABLE, bytes((0x01, 0x07, len(_SLOT_DEF))) + body, dack=True)
+
+
+def _fw_set_drv_info_init(t, ep: int) -> None:
+    """_fw_set_drv_info(CXDRVINFO_INIT) -> cxdrv_init_v7: 24-byte init/module/ant info for this
+    card (rfe_type 1, shared 2-ant, BTG path B). [SRC] coex.c:2772-2790, fw.c:5831, core.h:2305."""
+    payload = bytes((
+        0x00, 0x07, 0x18,                        # hdr: type INIT, ver 7, len 24
+        0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,   # guard_ch, wl_only, init_ok, ...
+        0x01, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,   # module: rfe_type, kt_ver, bt_pos(BTG), ...
+        0x00, 0x02, 0x0A, 0x00, 0x00, 0x01, 0x00, 0x00,   # ant: type SHARED, num 2, iso 10, btg_pos B
+    ))
+    _btc_h2c(t, ep, BTF_SET_DRV_INFO, payload, dack=False)
+
+
+def _fw_set_drv_info_ctrl(t, ep: int) -> None:
+    """_fw_set_drv_info(CXDRVINFO_CTRL) -> cxdrv_ctrl_v7: manual 0, igno_bt 1. drvinfo_type 2 keeps
+    type=CXDRVINFO_CTRL(6). [SRC] coex.c:2800-2806, fw.c:6305, core.h:3334."""
+    _btc_h2c(t, ep, BTF_SET_DRV_INFO,
+             bytes((0x06, 0x07, 0x04, 0x00, 0x01, 0x00, 0x00)), dack=False)
+
+
+def _cfg_plt(t) -> None:
+    """rtw89_mac_cfg_plt_be for _set_bt_plut(GNT_WL): PTA GNT_WL on tx+rx, PLT enabled, band 0.
+    A plain 16-bit write. [SRC] coex.c:4444-4473, mac_be.c:2489-2512."""
+    t.write16(R_BE_BT_PLT, B_BE_TX_PLT_GNT_WL | B_BE_RX_PLT_GNT_WL | B_BE_PLT_EN)
+
+
+def _set_policy_off(t, ep: int) -> None:
+    """_set_policy(BTC_CXP_OFF_BT): the only slot delta vs s_def is CXST_OFF's cxtbl -> 0xe5555555,
+    sent as a one-record policy TLV (SET_CX_POLICY). [SRC] coex.c:3672-3679, 4058-4067, 2312-2374."""
+    slot = struct.pack("<HHI", 100, _SLOT_MIX, 0xE5555555)      # CXST_OFF updated
+    payload = bytes((0x01, 0x07, 0x09, 0x00)) + slot           # tlv v7: type SLOT, ver 7, len 9, id 0
+    _btc_h2c(t, ep, BTF_SET_CX_POLICY, payload, dack=True)
+
+
+def _fw_set_drv_info_role(t, ep: int) -> None:
+    """_fw_set_drv_info(CXDRVINFO_ROLE) -> cxdrv_role_v8: no role set on cold init, so the 164-byte
+    body is all zero. [SRC] coex.c:5616, fw.c:6177, fw.h:2475."""
+    _btc_h2c(t, ep, BTF_SET_DRV_INFO, bytes((0x01, 0x08, 0xA4)) + bytes(164), dack=False)
+
+
+def _cfg_sb(t, scbd: int) -> None:
+    """rtw89_mac_cfg_sb: read the fw half of the scoreboard, keep it (minus BTGS1_NOTIFY, plus the
+    power-on TP-major flag), and write our drv scoreboard with the toggle bit. POWERON is set by
+    this point. [SRC] mac.c:6606-6625, coex.c:5624-5630."""
+    fw_sb = (t.read32(R_BE_SCOREBOARD) & B_MAC_AX_SB_FW_MASK) >> 24
+    fw_sb = (fw_sb & ~B_MAC_AX_BTGS1_NOTIFY) | MAC_AX_NOTIFY_TP_MAJOR
+    val = B_AX_TOGGLE | (scbd & B_MAC_AX_SB_DRV_MASK) | ((fw_sb & 0x7F) << 24)
+    t.write32(R_BE_SCOREBOARD, val)
+    # fsleep(1000) after the write is a delay, not a wire op.
+
+
+def _fw_set_drv_info_osi(t, ep: int) -> None:
+    """_fw_set_drv_info(CXDRVINFO_OSI) -> cxdrv_osi_info: the GNT/WLACT config _set_gnt_v1 staged
+    (fcxosi=1 ships it here instead of writing GNT registers). [SRC] coex.c:5632-5640, fw.c:6220."""
+    payload = bytes((
+        0x07, 0x01, 0x14,                        # hdr: type OSI(7), ver fcxosi 1, len 20
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,      # rf_band[2], btg_rx[2], nbtg_tx[2]
+        0x01, 0x00, 0x01, 0x01,                  # gnt_set[0]: BT SW_LO (en1 v0), WL SW_HI (en1 v1)
+        0x01, 0x00, 0x01, 0x01,                  # gnt_set[1]
+        0x01, 0x01, 0x00, 0x00,                  # wlact_set[0] SW_HI, wlact_set[1]
+        0x00, 0x00,                              # pta_req_hw_band, rf_gbt_source
+    ))
+    _btc_h2c(t, ep, BTF_SET_DRV_INFO, payload, dack=False)
+
+
+def _run_coex_ntfy_init(t, ep: int) -> None:
+    """_run_coex(BTC_RSN_NTFY_INIT) on the cold/no-BT path: _action_wl_init (set_bt_plut PLT write,
+    OFF-BT policy) then _action_common (role info, scoreboard sync, OSI GNT info). The set_ant GNT
+    and every other action are software no-ops here. [SRC] coex.c:7491-7609, 4722-4728, 5583-5643."""
+    _cfg_plt(t)                                  # _set_bt_plut(GNT_WL)
+    _set_policy_off(t, ep)                        # _set_policy(BTC_CXP_OFF_BT)
+    _fw_set_drv_info_role(t, ep)                  # _action_common: CXDRVINFO_ROLE
+    _cfg_sb(t, BTC_WSCB_INIT)                      # scbd_change sync (mac_cfg_sb)
+    _fw_set_drv_info_osi(t, ep)                   # CXDRVINFO_OSI (fcxosi=1)
+
+
 def ntfy_init(t, h2c_ep: int, cv: int) -> None:
-    """rtw89_btc_ntfy_init(BTC_MODE_NORMAL): btc_set_rfe + btc_init_cfg, then the BT scoreboard
-    read, the WL tx-power coex disable, and (todo) the coex fw H2Cs and _run_coex. The scoreboard
-    write and get_ctrl_path are software / no-op on the 8922A. [SRC] coex.c:7746."""
+    """rtw89_btc_ntfy_init(BTC_MODE_NORMAL): btc_set_rfe + btc_init_cfg, the BT scoreboard read and
+    WL tx-power coex disable, the coex fw setup H2Cs (monreg, slots, drv-info init/ctrl), then
+    _run_coex. get_ctrl_path and _write_scbd are software / no-op on the 8922A. [SRC] coex.c:7746."""
     ant = _set_rfe(t.rfe_type, cv)
     _init_cfg(t, ant)
     t.read32(R_BE_SCOREBOARD)                 # _update_bt_scbd -> _read_scbd (mac_get_sb)
     _set_wl_txpwr_ctrl(t, WL_TX_POWER_NO_BTC_CTRL)   # _set_wl_tx_power(RTW89_BTC_WL_DEF_TX_PWR)
+    _fw_set_monreg(t, h2c_ep)
+    _fw_set_slots(t, h2c_ep)
+    _fw_set_drv_info_init(t, h2c_ep)
+    _fw_set_drv_info_ctrl(t, h2c_ep)
+    _run_coex_ntfy_init(t, h2c_ep)
