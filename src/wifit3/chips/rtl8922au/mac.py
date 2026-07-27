@@ -139,7 +139,15 @@ from .constants import (
     B_BE_PTCL_TRIGGER_SS_EN_1, B_BE_PTCL_TRIGGER_SS_EN_0, B_BE_CMAC_TX_MODE_1, B_BE_CMAC_TX_MODE_0,
     R_BE_AMPDU_AGG_LIMIT, B_BE_AMPDU_MAX_TIME_MASK, AMPDU_MAX_TIME,
     R_BE_RX_CTRL_1, B_BE_RXDMA_TXRPT_QUEUE_ID_SW_MASK, B_BE_RXDMA_F2PCMDRPT_QUEUE_ID_SW_MASK,
-    WLCPU_RXCH2_QID,
+    WLCPU_RXCH2_QID, S_BE_TXSB_160M_0, S_BE_TXSB_80M_0, S_BE_TXSB_40M_1, S_BE_TXSB_20M_2,
+    R_BE_PTCL_TX_CTN_SEL, B_BE_PTCL_BUSY, R_BE_PLE_BUFMGN_CTL, B_BE_PLE_AVAL_UPD_REQ,
+    B_BE_PLE_AVAL_UPD_QTAID_MASK, PLE_QTAID_B0_TXPL, PLE_QTAID_CMAC0_RX,
+    PRELD_AMSDU_SIZE, PRELD_NEXT_MIN_SIZE, PRELD_NEXT_WND, PRELD_B0_ENT_NUM, PRELD_B1_ENT_NUM,
+    PRELD_MISCQ_ENT_NUM_8922A, PRELD_B0_ACQ_ENT_NUM_8922A, PRELD_B1_ACQ_ENT_NUM_8922A,
+    R_BE_TXPKTCTL_B0_PRELD_CFG0, R_BE_TXPKTCTL_B0_PRELD_CFG1, R_BE_TXPKTCTL_B1_PRELD_CFG0,
+    R_BE_TXPKTCTL_B1_PRELD_CFG1, B_BE_B0_PRELD_FEN, B_BE_B0_PRELD_USEMAXSZ_MASK,
+    B_BE_B0_PRELD_CAM_G1ENTNUM_MASK, B_BE_B0_PRELD_CAM_G0ENTNUM_MASK,
+    B_BE_B0_PRELD_NXT_TXENDWIN_MASK, B_BE_B0_PRELD_NXT_RSVMINSZ_MASK,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -1205,23 +1213,36 @@ def rmac_init(t, mac_idx: int) -> None:
 
 
 def resp_pktctl_init(t, mac_idx: int) -> None:
-    """resp_pktctl_init_be: the CSI-response reserved page. pktid = DBCC ple free-page + the
-    reserved mpdu-info-tbl pages; the page count is b0_csi + 1. [SRC] mac_be.c:1589-1616."""
+    """resp_pktctl_init_be: the CSI-response reserved page from the B0/B1 CSI reserved quota.
+    pktid = DBCC ple free-page + reserved mpdu-info-tbl (+ b0_csi for band 1); the page count is
+    the band's csi pages + 1. [SRC] mac_be.c:1589-1616, mac.c:1946-1954."""
     off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
-    pktid = PLE_SIZE7_LNK_PGE_NUM + PLE_RSVD_QT2[0]   # ple_free_pg + rsvd_qt.mpdu_info_tbl
-    pg_num = PLE_RSVD_QT2[1]                          # rsvd_qt.b0_csi
+    if mac_idx == RTW89_MAC_1:                        # DLE_RSVD_QT_B1_CSI
+        pktid = PLE_SIZE7_LNK_PGE_NUM + PLE_RSVD_QT2[0] + PLE_RSVD_QT2[1]
+        pg_num = PLE_RSVD_QT2[2]                      # b1_csi
+    else:                                             # DLE_RSVD_QT_B0_CSI
+        pktid = PLE_SIZE7_LNK_PGE_NUM + PLE_RSVD_QT2[0]
+        pg_num = PLE_RSVD_QT2[1]                      # b0_csi
     t.write32_mask(R_BE_RESP_CSI_RESERVED_PAGE + off, B_BE_CSI_RESERVED_START_PAGE_MASK, pktid)
     t.write32_mask(R_BE_RESP_CSI_RESERVED_PAGE + off, B_BE_CSI_RESERVED_PAGE_NUM_MASK, pg_num + 1)
 
 
+_TXSB_20M = (S_BE_TXSB_20M_8, S_BE_TXSB_20M_2)      # per mac_idx. mac_be.c:1629-1639
+_TXSB_40M = (S_BE_TXSB_40M_4, S_BE_TXSB_40M_1)
+_TXSB_80M = (S_BE_TXSB_80M_2, S_BE_TXSB_80M_0)
+_TXSB_160M = (S_BE_TXSB_160M_1, S_BE_TXSB_160M_0)
+
+
 def cmac_com_init(t, mac_idx: int) -> None:
-    """cmac_com_init_be (MAC0): the TX sub-band values. [SRC] mac_be.c:1618-1644."""
-    val = t.read32(R_BE_TX_SUB_BAND_VALUE)
-    val = field_replace(val, B_BE_TXSB_20M_MASK, S_BE_TXSB_20M_8)
-    val = field_replace(val, B_BE_TXSB_40M_MASK, S_BE_TXSB_40M_4)
-    val = field_replace(val, B_BE_TXSB_80M_MASK, S_BE_TXSB_80M_2)
-    val = field_replace(val, B_BE_TXSB_160M_MASK, S_BE_TXSB_160M_1)
-    t.write32(R_BE_TX_SUB_BAND_VALUE, val)
+    """cmac_com_init_be: the per-band TX sub-band values (band-1 register is the +0x4000 alias).
+    [SRC] mac_be.c:1618-1644."""
+    reg = R_BE_TX_SUB_BAND_VALUE + mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    val = t.read32(reg)
+    val = field_replace(val, B_BE_TXSB_20M_MASK, _TXSB_20M[mac_idx])
+    val = field_replace(val, B_BE_TXSB_40M_MASK, _TXSB_40M[mac_idx])
+    val = field_replace(val, B_BE_TXSB_80M_MASK, _TXSB_80M[mac_idx])
+    val = field_replace(val, B_BE_TXSB_160M_MASK, _TXSB_160M[mac_idx])
+    t.write32(reg, val)
 
 
 def ptcl_init(t, mac_idx: int) -> None:
@@ -1263,11 +1284,84 @@ def cmac_init(t, mac_idx: int, cv: int) -> None:
     cmac_dma_init(t, mac_idx)
 
 
+def tx_idle_poll_band(t, mac_idx: int) -> None:
+    """tx_idle_poll_band_be: poll the band's PTCL TX-contention until not busy. [SRC] mac_be.c:1846-1862."""
+    off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
+    for _ in range(PWR_POLL_ATTEMPTS):
+        if not (t.read8(R_BE_PTCL_TX_CTN_SEL + off) & B_BE_PTCL_BUSY):
+            break
+
+
+def _dle_upd_qta_aval_page_ple(t, quota_id: int) -> None:
+    """dle_upd_qta_aval_page_be(PLE): request a PLE available-page recompute for the quota id.
+    [SRC] mac_be.c dle_upd_qta_aval_page_be."""
+    t.write32_mask(R_BE_PLE_BUFMGN_CTL, B_BE_PLE_AVAL_UPD_QTAID_MASK, quota_id)
+    t.write32_set(R_BE_PLE_BUFMGN_CTL, B_BE_PLE_AVAL_UPD_REQ)
+    _poll32(t, R_BE_PLE_BUFMGN_CTL, lambda v: not (v & B_BE_PLE_AVAL_UPD_REQ))
+
+
+def dle_quota_change(t) -> None:
+    """rtw89_mac_dle_quota_change(DBCC, band1): re-apply the DBCC quotas, then recompute the PLE
+    available pages for the B0-TX and CMAC0-RX quotas. [SRC] mac.c dle_quota_change, mac_be.c."""
+    cfg = _DLE_CFG["DBCC"]
+    dle_quota_cfg(t, cfg["wde_qt"], cfg["ple_min_qt"], cfg["ple_max_qt"], cfg["ext_wcpu"])
+    _dle_upd_qta_aval_page_ple(t, PLE_QTAID_B0_TXPL)
+    _dle_upd_qta_aval_page_ple(t, PLE_QTAID_CMAC0_RX)
+
+
+def dbcc_bb_ctrl(t) -> None:
+    """dbcc_bb_ctrl_be(bb1_en=True): release the band-1 BB platform/IP reset. [SRC] mac_be.c."""
+    t.write32_set(R_BE_FEN_RST_ENABLE, B_BE_FEN_BB1PLAT_RSTB | B_BE_FEN_BB1_IP_RSTN)
+
+
+_PRELD_CFG0 = (R_BE_TXPKTCTL_B0_PRELD_CFG0, R_BE_TXPKTCTL_B1_PRELD_CFG0)
+_PRELD_CFG1 = (R_BE_TXPKTCTL_B0_PRELD_CFG1, R_BE_TXPKTCTL_B1_PRELD_CFG1)
+_PRELD_ENT_NUM = (PRELD_B0_ENT_NUM, PRELD_B1_ENT_NUM)
+_PRELD_ACQ_ENT_NUM = (PRELD_B0_ACQ_ENT_NUM_8922A, PRELD_B1_ACQ_ENT_NUM_8922A)
+
+
+def preload_init(t, mac_idx: int) -> None:
+    """preload_init_be (chip op, always runs for the 8922A). The is_qta_poh-gated mac.c wrapper
+    no-ops on USB, so this is only reached for MAC_1 in band1_enable. Program the per-band TX
+    preload next-window / entry counts / max size. [SRC] mac_be.c:2013-2058."""
+    max_preld_size = _PRELD_ENT_NUM[mac_idx] * PRELD_AMSDU_SIZE
+    reg1 = _PRELD_CFG1[mac_idx]
+    val = t.read32(reg1)
+    val = field_replace(val, B_BE_B0_PRELD_NXT_TXENDWIN_MASK, PRELD_NEXT_WND)
+    val = field_replace(val, B_BE_B0_PRELD_NXT_RSVMINSZ_MASK, PRELD_NEXT_MIN_SIZE)
+    t.write32(reg1, val)
+    reg0 = _PRELD_CFG0[mac_idx]
+    val = t.read32(reg0)
+    val = field_replace(val, B_BE_B0_PRELD_CAM_G0ENTNUM_MASK, _PRELD_ACQ_ENT_NUM[mac_idx])
+    val = field_replace(val, B_BE_B0_PRELD_CAM_G1ENTNUM_MASK, PRELD_MISCQ_ENT_NUM_8922A)
+    val = field_replace(val, B_BE_B0_PRELD_USEMAXSZ_MASK, max_preld_size) | B_BE_B0_PRELD_FEN
+    t.write32(reg0, val)
+
+
+def band1_enable(t, cv: int) -> None:
+    """band1_enable_be: TX-idle poll, DBCC quota change, band-1 TX preload, then CMAC1 func-en and
+    a second full cmac_init at the band-1 offset, the band-1 BB enable. cmac_pwr_en(MAC1) already
+    ran in mac_func_en. [SRC] mac_be.c band1_enable_be."""
+    tx_idle_poll_band(t, RTW89_MAC_0)
+    dle_quota_change(t)
+    preload_init(t, RTW89_MAC_1)
+    cmac_pwr_en(t, RTW89_MAC_1)          # no-op: CMAC1 already powered in mac_func_en
+    cmac_func_en(t, RTW89_MAC_1)
+    cmac_init(t, RTW89_MAC_1, cv)
+    dbcc_bb_ctrl(t)
+
+
+def dbcc_enable(t, cv: int) -> None:
+    """dbcc_enable_be(True): bring up band 1 (the notify-dbcc H2C to the fw follows). [SRC] mac_be.c."""
+    band1_enable(t, cv)
+
+
 def trx_init(t, cv: int) -> None:
     """trx_init_be: dmac_init then cmac_init, the dbcc enable (qta is DBCC), the DMAC/CMAC IMR
     enables, host-rpr, and the 8922A rsp-chk-sig clear. [SRC] mac_be.c:2302-2352."""
     dmac_init(t)
     cmac_init(t, RTW89_MAC_0, cv)
+    dbcc_enable(t, cv)
 
 
 def mac_init(t, h2c_ep: int, cv: int) -> None:

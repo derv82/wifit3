@@ -581,6 +581,10 @@ S_BE_TXSB_160M_1 = 1                    # reg.h:6635
 S_BE_TXSB_80M_2 = 2                     # reg.h:6638
 S_BE_TXSB_40M_4 = 4                     # reg.h:6643
 S_BE_TXSB_20M_8 = 8                     # reg.h:6645
+S_BE_TXSB_160M_0 = 0                    # reg.h:6634; MAC_1 sub-band values
+S_BE_TXSB_80M_0 = 0                     # reg.h:6637
+S_BE_TXSB_40M_1 = 1                     # reg.h:6642
+S_BE_TXSB_20M_2 = 2                     # reg.h:6647
 R_BE_PTCL_COMMON_SETTING_0 = 0x10800    # reg.h:7067
 B_BE_PTCL_TRIGGER_SS_EN_UL = 1 << 4     # reg.h:7074
 B_BE_PTCL_TRIGGER_SS_EN_1 = 1 << 3      # reg.h:7075
@@ -595,6 +599,34 @@ R_BE_RX_CTRL_1 = 0x10C0C                # reg.h:7462
 B_BE_RXDMA_TXRPT_QUEUE_ID_SW_MASK = 0x7E000000     # GENMASK(30, 25). reg.h:7464
 B_BE_RXDMA_F2PCMDRPT_QUEUE_ID_SW_MASK = 0x00FC0000  # GENMASK(23, 18). reg.h:7465
 WLCPU_RXCH2_QID = 0xA                   # reg.h:7469
+
+# dbcc_enable_be -> band1_enable_be (qta is DBCC). [SRC] mac_be.c band1_enable_be, dle_quota_change_be.
+R_BE_PTCL_TX_CTN_SEL = 0x108EC          # reg.h:7335
+B_BE_PTCL_BUSY = 1 << 7                 # reg.h:7338
+R_BE_PLE_BUFMGN_CTL = 0x9010            # reg.h:5590
+B_BE_PLE_AVAL_UPD_REQ = 1 << 29         # reg.h:5591
+B_BE_PLE_AVAL_UPD_QTAID_MASK = 0x0F000000  # GENMASK(27, 24). reg.h:5592
+PLE_QTAID_B0_TXPL = 0                   # mac.h:146
+PLE_QTAID_CMAC0_RX = 6                  # mac.h:152
+# preload_init_be chip op (always runs for 8922A; reached for MAC_1 in band1_enable). [SRC] mac_be.c:2013-2058.
+PRELD_AMSDU_SIZE = 52                   # reg.h:1984
+PRELD_NEXT_MIN_SIZE = 255               # reg.h:1985
+PRELD_NEXT_WND = 1                      # reg.h:1991
+PRELD_B0_ENT_NUM = 10                   # reg.h:1982
+PRELD_B1_ENT_NUM = 4                    # reg.h:2054
+PRELD_MISCQ_ENT_NUM_8922A = 2           # reg.h:6108
+PRELD_B0_ACQ_ENT_NUM_8922A = 8          # reg.h:6111
+PRELD_B1_ACQ_ENT_NUM_8922A = 2          # reg.h:6112
+R_BE_TXPKTCTL_B0_PRELD_CFG0 = 0x9F48    # reg.h:6104
+R_BE_TXPKTCTL_B0_PRELD_CFG1 = 0x9F4C    # reg.h:6115
+R_BE_TXPKTCTL_B1_PRELD_CFG0 = 0x9F88    # reg.h:6149
+R_BE_TXPKTCTL_B1_PRELD_CFG1 = 0x9F8C    # reg.h:6155
+B_BE_B0_PRELD_FEN = 1 << 31             # reg.h:6105
+B_BE_B0_PRELD_USEMAXSZ_MASK = 0x03FF0000     # GENMASK(25, 16). reg.h:6106
+B_BE_B0_PRELD_CAM_G1ENTNUM_MASK = 0x00001F00 # GENMASK(12, 8). reg.h:6107
+B_BE_B0_PRELD_CAM_G0ENTNUM_MASK = 0x0000001F # GENMASK(4, 0). reg.h:6110
+B_BE_B0_PRELD_NXT_TXENDWIN_MASK = 0x00000F00 # GENMASK(11, 8). reg.h:6116
+B_BE_B0_PRELD_NXT_RSVMINSZ_MASK = 0x000000FF # GENMASK(7, 0). reg.h:6117
 
 # Firmware-download preconfig (rtw89_mac_fwdl_preconfig_be). [SRC] mac_be.c:625-629, reg.h.
 R_BE_FW_AUTO_CAL_DELAY = 0x0188          # reg.h
