@@ -10,10 +10,12 @@ where the source and captures are, how to verify, and what to port next.
 control) and bulk-OUT (fw/H2C) op of the whole recorded conversation is reproduced by real driver
 code: the cold-boot bring-up, the monitor bring-up (configure_filter + monitor physts), the per-hop
 MLO-mode handling, the periodic env-monitor DM watchdog, and all 101/103 channel hops across **both
-2.4 GHz (ch1-14) and 5 GHz (ch36-165, HT20)**. On live hardware the card is a working monitor
-interface end to end: cold `connect()` + `set_channel()` (2.4 + 5 GHz) + RX (real beacons parsed).
-What remains is **TX**: `tx.py` (TX descriptor build + inject_frame) and the active-monitor / attack
-features that build on it (see the project task list and `planning/`).
+2.4 GHz (ch1-14) and 5 GHz (ch36-165, HT20)**. On live hardware the card is a working monitor +
+injection interface end to end: cold `connect()` + `set_channel()` (2.4 + 5 GHz) + RX (real beacons
+parsed) + TX (`inject_frame` validated: a broadcast probe request drew 38 probe responses to the
+forged SA). What remains is the higher-level active-monitor / attack layer: emitting HW ACKs for a
+forged MAC (enter_active_monitor + `_enable/_disable_rx_acks`), the ACK-tally retry path, and the WEP
+/ WPS labs (see the project task list and `planning/`).
 
 What reproduces: all of `rtw89_core_start`, the mac80211 add-interface, and per-hop the FULL
 `__rtw89_set_channel` for **both PHYs**. A hop is TWO `__rtw89_set_channel` calls: PHY_0/MAC_0 then
