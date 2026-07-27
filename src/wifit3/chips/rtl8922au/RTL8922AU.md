@@ -218,11 +218,22 @@ the whole add-interface are done; the frontier is now inside the first `rtw8922a
    specs. `rtw8922a_rfk_init` itself is software-only.
 
 The same code runs per channel; only channel-table written values differ (replay supplies reads).
-A pragmatic sub-goal: get ONE channel's set_channel+RFK correct; the rest are replays. **Structure:**
-consider a `chan.py` module + a real `Driver.set_channel()`; discuss with the lead first (the
-cold-boot first tune is driven inline from `connect()` for now). The subagent workflow that worked
-all session: dump the ground-truth op window (`dop.py`), hand a subagent that + source pointers +
-this cheatsheet, ask for an ordered byte-spec reconciled to ground truth, port, `verify_pcap`, commit.
+A pragmatic sub-goal: get ONE channel's set_channel+RFK correct; the rest are replays. The subagent
+workflow that worked all session: dump the ground-truth op window (`dop.py`), hand a subagent that +
+source pointers + this cheatsheet, ask for an ordered byte-spec reconciled to ground truth, port,
+`verify_pcap`, commit.
+
+**Structure is in place** (`chan.py` + `Driver.set_channel()`): `connect()` ends after the
+add-interface; each channel tune runs through `chan.set_channel(t, channel)`, which mirrors
+`__rtw89_set_channel` (help-enter -> set_channel mac/bb/rf -> set_txpwr -> help-exit -> rfk) and
+so far calls only `phy.pre_set_channel_bb` (the rest are TODO in `chan.set_channel`). Keep adding
+the sub-functions there. `verify_pcap` drives the hops the way the other RTL ports do
+(rtl8814au/rtl8821cu): after `connect()`, `_drive` peeks the `pre_set_channel_bb` opener (read
+`R_DBCC` 0x26b48), decodes the target channel from the upcoming `R_FC0` (0x26b4c) center-freq write
+via `chan.freq_to_channel` (the single source of truth for channel<->freq), and dispatches
+`driver.set_channel(ch)`. The capture has 202 R_FC0 writes (the hop count). As each set_channel
+sub-function lands, one channel's unit grows until it fully reproduces, then the walk auto-advances
+to the next hop.
 
 Reusable assets: `firmware.h2c_command` (any H2C), `firmware.element_regs`/`element_regs_with_idx`
 (any reg2 fw element), `phy.write_rf` (masked/full HWSI + ad_sel RF write), the reg.h resolver
@@ -350,3 +361,7 @@ describing them, no jargon. No em-dashes and none of the banned words anywhere; 
 - 2026-07-26 M38: set_channel head `pre_set_channel_bb` (`phy.pre_set_channel_bb`, PHY_0): clear
   R_DBCC B_DBCC_EN + five B_EMLSR_PARM writes. Starts the per-channel loop. 13070. Frontier at
   `pre_set_channel_rf` (op #13079).
+- 2026-07-26 M39: channel-hop infrastructure. `chan.py` (channel<->freq map + `set_channel`
+  orchestrator) + `Driver.set_channel()`; `connect()` ends after add-interface. `verify_pcap` drives
+  hops via a walk that peeks the R_DBCC opener, decodes the channel from the R_FC0 freq write, and
+  calls `driver.set_channel(ch)` (rtl8814au/rtl8821cu pattern). First hop decodes to ch 1. 13070.
