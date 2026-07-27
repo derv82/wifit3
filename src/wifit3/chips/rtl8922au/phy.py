@@ -12,6 +12,8 @@ from .constants import (
     R_BK_FC0INV, B_BK_FC0INV, R_CCK_FC0INV, B_CCK_FC0INV, RTW89_FW_ELEMENT_ID_BB_GAIN,
     GAIN_OFFSET_2G_CCK, GAIN_OFFSET_2G_OFDM, R_MGAIN_BIAS, B_MGAIN_BIAS_BW20, B_MGAIN_BIAS_BW40,
     R_CCK_RPL_OFST, B_CCK_RPL_OFST,
+    R_FC0, B_FC0, B_FC0_INV, R_PCOEFF01, B_PCOEFF, R_MAC_PIN_SEL, B_CH_IDX_SEG0,
+    RTW89_CH_BASE_IDX_2G, RTW89_CH_BASE_IDX_MASK, RTW89_CH_OFFSET_MASK,
     RTW89_FW_ELEMENT_ID_BB_REG, CR_BASE_BE, BYPASS_CR_DATA,
     PHY_HEADLINE_VALID, PHY_COND_BRANCH_IF, PHY_COND_BRANCH_ELIF, PHY_COND_BRANCH_ELSE,
     PHY_COND_BRANCH_END, PHY_COND_CHECK, PHY_COND_DONT_CARE,
@@ -953,6 +955,27 @@ def _set_rx_gain_normal(t, chan: dict, path: int, phy_idx: int) -> None:
         raise NotImplementedError("set_rx_gain_normal 5/6G gain-offset band not ported yet")
 
 
+# rtw8922a_set_cck_parameters R_PCOEFF tables (ch 14 vs the rest). [SRC] rtw8922a.c:1466.
+_PCOEFF_CH14 = (0x3B13FF, 0x1C42DE, 0xFDB0AD, 0xF60F6E, 0xFD8F92, 0x02D011, 0x01C02C, 0xFFF00A)
+_PCOEFF_OTHER = (0x3A63CA, 0x2A833F, 0x1491F8, 0x03C0B0, 0xFCCFF1, 0xFCCFC3, 0xFEBFDC, 0xFFDFF7)
+
+
+def _set_cck_parameters(t, central_ch: int, phy_idx: int) -> None:
+    """rtw8922a_set_cck_parameters: the 8 CCK phase-coefficient registers (R_PCOEFF01..EF), one
+    table for ch 14 and one for every other 2G channel. [SRC] rtw8922a.c:1466."""
+    vals = _PCOEFF_CH14 if central_ch == 14 else _PCOEFF_OTHER
+    for i, v in enumerate(vals):
+        _phy_write32_idx(t, R_PCOEFF01 + i * 4, B_PCOEFF, v, phy_idx)
+
+
+def _encode_chan_idx(central_ch: int, band: int) -> int:
+    """rtw89_encode_chan_idx (2G): base-idx 2G plus the channel in the offset field. [SRC]
+    phy.c:8574-8593."""
+    if band != RTW89_BAND_2G:
+        raise NotImplementedError("encode_chan_idx 5/6G (base-idx scan) not ported yet")
+    return ((RTW89_CH_BASE_IDX_2G << 4) & RTW89_CH_BASE_IDX_MASK) | (central_ch & RTW89_CH_OFFSET_MASK)
+
+
 def _ctrl_ch(t, chan: dict, phy_idx: int) -> None:
     """rtw8922a_ctrl_ch: per-path gain, band-sel, rx-gain, center-freq, sco, cck-params, chan-idx.
     set_gain + band_sel + set_rx_gain_normal are ported so far. [SRC] rtw8922a.c:1490."""
@@ -963,7 +986,14 @@ def _ctrl_ch(t, chan: dict, phy_idx: int) -> None:
         _phy_write32_idx(t, _BAND_SEL[path], _B_BAND_SEL, is_2g, phy_idx)
     _set_rx_gain_normal(t, chan, RF_PATH_A, phy_idx)
     _set_rx_gain_normal(t, chan, RF_PATH_B, phy_idx)
-    # TODO: R_FC0 freq write, sco, cck_params, R_MAC_PIN_SEL chan_idx.
+    freq = chan["freq"]
+    _phy_write32_idx(t, R_FC0, B_FC0, freq, phy_idx)
+    sco = (262144 + freq // 2) // freq             # DIV_ROUND_CLOSEST(1 << 18, central_freq)
+    _phy_write32_idx(t, R_FC0INV_SBW, B_FC0_INV, sco, phy_idx)
+    if chan["band_type"] == RTW89_BAND_2G:
+        _set_cck_parameters(t, chan["channel"], phy_idx)
+    chan_idx = _encode_chan_idx(chan["primary_channel"], chan["band_type"])
+    _phy_write32_idx(t, R_MAC_PIN_SEL, B_CH_IDX_SEG0, chan_idx, phy_idx)
 
 
 def set_channel_bb(t, chan: dict, phy_idx: int = 0) -> None:
