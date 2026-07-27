@@ -139,6 +139,28 @@ Report_wait is completion-based (waits on a C2H that the replay never sends), so
 ops: verify sees H2C, then the next real op. Dump each H2C's exact bytes with `dop.py` and reconstruct
 the payload (the "simulate before you port" workflow used for byrate/limit) before writing the builder.
 
+**The RFK H2C sequence, decoded from the wire (cat is always 2 = OUTSRC; class 0xb =
+`H2C_CL_OUTSRC_RF_FW_RFK`, 0xa = `..._FW_NOTIFY`, 0x10 = the BTC/coex class):**
+
+    op 13829  class 0x10 func 0x3  (11B)   btc_ntfy_switch_band     <- FRONTIER, coex, not in coex.py yet
+    op 13830  class 0xb  func 0x0  (300B)  rfk_band_changed: TSSI(SCAN)   efuse-TSSI de + tmeter tables
+    13831-13858  register/RF ops              btc_ntfy_wl_rfk(START) writes + stop_sch_tx + _wait_rx_mode
+    op 13859  class 0xb  func 0x8  (84B)   pre_ntfy      (rfk.py already has _pre_ntfy for init_late)
+    op 13860  class 0xa  func 0xf  (36B)   mcc notify    (rfk.py already has _pre_ntfy_mcc)
+    op 13861  class 0xb  func 0x4  (8B)    txgapk
+    op 13862  class 0xb  func 0x1  (8B)    iqk
+    op 13863  class 0xb  func 0x0  (300B)  tssi(NORMAL)
+    op 13864  class 0xb  func 0x3  (8B)    dpk
+    op 13865  class 0xb  func 0x6  (9B)    rxdck
+
+Blockers/notes for the RFK: (1) the very first op is `btc_ntfy_switch_band` (coex class 0x10) and
+`btc_ntfy_wl_rfk` (START/STOP around the calibrations) -- neither is in `coex.py` yet, and the wire
+can't advance past 13829 until switch_band reproduces. (2) The two 300B TSSI payloads need the
+efuse-TSSI parse un-deferred (`rtw8922a_efuse_parsing_tssi`, rtw8922a.c:744) plus
+`rtw89_phy_rfk_tssi_fill_fwcmd_efuse_to_de` / `_tmeter_tbl` (phy.c). (3) txgapk/iqk/dpk/rxdck are tiny
+fixed payloads (like rfk.py's `_dack`/`_rxdck`); dump their 8-9B bytes and mirror. Header framing is
+`firmware.h2c_command(cat=2, cls, func, payload)` (already verified); only payloads are new.
+
 **One recurring trap:** the MLO mode is MLO_2_PLUS_0 at set_channel (single PHY_0 monitor vif),
 not the core_start MLO_1_PLUS_1. Any rtw8922a helper that branches on `mlo_dbcc_mode == MLO_1_PLUS_1`
 (tssi_cont_en, adc_en, tssi_reset so far, and likely some RFK helpers) must do BOTH RF paths at
