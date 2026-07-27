@@ -10,8 +10,10 @@ where the source and captures are, how to verify, and what to port next.
 control) and bulk-OUT (fw/H2C) op of the whole recorded conversation is reproduced by real driver
 code: the cold-boot bring-up, the monitor bring-up (configure_filter + monitor physts), the per-hop
 MLO-mode handling, the periodic env-monitor DM watchdog, and all 101/103 channel hops across **both
-2.4 GHz (ch1-14) and 5 GHz (ch36-165, HT20)**. The offline port is complete; what remains is hardware
-bring-up + the TX/attack features (see the project task list and `planning/`).
+2.4 GHz (ch1-14) and 5 GHz (ch36-165, HT20)**. On live hardware the card is a working monitor
+interface end to end: cold `connect()` + `set_channel()` (2.4 + 5 GHz) + RX (real beacons parsed).
+What remains is **TX**: `tx.py` (TX descriptor build + inject_frame) and the active-monitor / attack
+features that build on it (see the project task list and `planning/`).
 
 What reproduces: all of `rtw89_core_start`, the mac80211 add-interface, and per-hop the FULL
 `__rtw89_set_channel` for **both PHYs**. A hop is TWO `__rtw89_set_channel` calls: PHY_0/MAC_0 then
@@ -50,7 +52,10 @@ ops; each hop's tune is ~750 ops for PHY_0 plus the PHY_1 mirror.
 on real silicon, not just against the pcap. It matches the device by VID:PID, so the co-plugged
 rtl8812au is untouched. USB-2 quirk: the mode switch re-enumerates the card to SuperSpeed and the
 driver doesn't re-acquire the handle, so the first `connect()` on a fresh USB-2 plug hangs (re-run,
-or use USB-3). RX (the bulk-IN reader + RX descriptor decode) is not ported, so no frames arrive yet.
+or use USB-3). **RX works**: `connect()` starts the shared `RxReaderThread` on the vendor-interface
+bulk-IN, `rx.iter_bulk_frames` strips the BE v2 rx descriptor (16-byte aligned), and real beacons
+parse through `WlanFrameParser` with correct BSSID/SSID/RSSI (validated live: `mud2g` ch1 -67 dBm,
+`dd-wrt` ch6, etc.). So the card is a working monitor interface end to end (boot + tune + receive).
 
 ### Gotchas found while porting (not obvious from a single read)
 
