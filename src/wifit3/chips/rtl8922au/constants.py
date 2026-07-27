@@ -55,6 +55,23 @@ CHIP_CAV = 0                     # first enum rtw89_cv. core.h:365
 RTW89_BAND_2G = 0                # enum rtw89_band. core.h
 RTW89_BAND_5G = 1
 RTW89_BAND_6G = 2
+RTW89_CHANNEL_WIDTH_20 = 0       # enum rtw89_bandwidth. core.h
+
+# rtw8922a_set_channel_mac. [SRC] rtw8922a.c:1048, reg.h.
+R_BE_WMAC_RFMOD = 0x10010            # reg.h:6606
+B_BE_WMAC_RFMOD_MASK = 0x7           # GENMASK(2, 0). reg.h:6609
+BE_WMAC_RFMOD_20M = 0                # reg.h:6610
+R_BE_TX_SUB_BAND_VALUE = 0x10088     # reg.h:6629
+B_BE_PRI20_BITMAP_MASK = 0xFFFF0000  # GENMASK(31, 16). reg.h:6631
+BE_PRI20_BITMAP_MAX = 15             # reg.h:6632
+R_BE_TXRATE_CHK = 0x10828            # reg.h:7156
+B_BE_BAND_MODE = 1 << 4              # BIT(4). reg.h:7162
+B_BE_RTS_LIMIT_IN_OFDM6 = 1 << 1     # BIT(1). reg.h:7164
+B_BE_CHECK_CCK_EN = 1 << 0           # BIT(0). reg.h:7165
+R_BE_PREBKF_CFG_1 = 0x1033C          # reg.h:6804
+B_BE_SIFS_MACTXEN_T1_MASK = 0x7F     # GENMASK(6, 0). reg.h:6809
+R_BE_MUEDCA_EN = 0x10370             # reg.h:6850
+B_BE_SIFS_MACTXEN_TB_T1_MASK = 0x7F0000  # GENMASK(22, 16). reg.h:6854
 
 # XTAL_SI indirect write extras (rtw89_mac_write_xtal_si). [SRC] mac_be.c:413-441, reg.h/mac.h.
 # The BE field positions match the AX ones, so the AX masks above cover the shared fields.

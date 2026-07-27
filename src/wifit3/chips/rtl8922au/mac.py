@@ -193,6 +193,11 @@ from .constants import (
     B_AX_UPD_HGQMD, B_AX_UPD_TIMIE, B_AX_BCAID_P0_MASK,
     RTW89_NET_TYPE_NO_LINK, BCN_INTERVAL, BCN_ERLY_DEF, BCN_SETUP_DEF, BCN_HOLD_DEF,
     BCN_MASK_DEF, TBTT_ERLY_DEF, TBTT_AGG_DEF,
+    RTW89_BAND_2G, RTW89_CHANNEL_WIDTH_20,
+    R_BE_WMAC_RFMOD, B_BE_WMAC_RFMOD_MASK, BE_WMAC_RFMOD_20M,
+    B_BE_PRI20_BITMAP_MASK, BE_PRI20_BITMAP_MAX,
+    R_BE_TXRATE_CHK, B_BE_BAND_MODE, B_BE_RTS_LIMIT_IN_OFDM6, B_BE_CHECK_CCK_EN,
+    R_BE_PREBKF_CFG_1, B_BE_SIFS_MACTXEN_T1_MASK, R_BE_MUEDCA_EN, B_BE_SIFS_MACTXEN_TB_T1_MASK,
 )
 from . import firmware
 
@@ -1606,3 +1611,25 @@ def port_update(t) -> None:
     # port_tsf_resync_all early-returns (only the monitor vif). mac.c:5033.
     t.write32_mask(R_BE_BCNERLYINT_CFG_P0, B_AX_BCNERLY_MASK, BCN_ERLY_DEF)  # bcn_early. mac.c:4948
     t.write32_mask(R_BE_BCN_PSR_RPT_P0, B_AX_BCAID_P0_MASK, 0)   # bcn_psr_rpt, bssid_index 0. mac.c:4973
+
+
+def set_channel_mac(t, chan: dict, mac_idx: int = 0) -> None:
+    """rtw8922a_set_channel_mac: RF-mod (bandwidth), TX sub-band + primary-20 bitmap, the band-mode
+    check-rate, and the SIFS MACTXEN thresholds. 20 MHz only (monitor hops). [SRC] rtw8922a.c:1048."""
+    bw = chan["band_width"]
+    band = chan["band_type"]
+    if bw != RTW89_CHANNEL_WIDTH_20:
+        raise NotImplementedError("set_channel_mac >20MHz (txsb) not needed for monitor hops")
+    rf_mod_val, txsb, txsb20 = BE_WMAC_RFMOD_20M, 0, 0
+    if txsb20 <= BE_PRI20_BITMAP_MAX:
+        txsb |= field_prep(B_BE_PRI20_BITMAP_MASK, 1 << txsb20)
+    t.write8_mask(_reg_by_idx(R_BE_WMAC_RFMOD, mac_idx), B_BE_WMAC_RFMOD_MASK, rf_mod_val)
+    t.write32(_reg_by_idx(R_BE_TX_SUB_BAND_VALUE, mac_idx), txsb)
+    chk_rate_mask = B_BE_BAND_MODE if band == RTW89_BAND_2G \
+        else (B_BE_CHECK_CCK_EN | B_BE_RTS_LIMIT_IN_OFDM6)
+    chk = _reg_by_idx(R_BE_TXRATE_CHK, mac_idx)
+    t.write8_clr(chk, B_BE_BAND_MODE | B_BE_CHECK_CCK_EN | B_BE_RTS_LIMIT_IN_OFDM6)
+    t.write8_set(chk, chk_rate_mask)
+    # bandwidth switch: 20 MHz takes the default arm (SIFS MACTXEN 0x3f / 0x3e). rtw8922a.c:1130.
+    t.write32_mask(_reg_by_idx(R_BE_PREBKF_CFG_1, mac_idx), B_BE_SIFS_MACTXEN_T1_MASK, 0x3F)
+    t.write32_mask(_reg_by_idx(R_BE_MUEDCA_EN, mac_idx), B_BE_SIFS_MACTXEN_TB_T1_MASK, 0x3E)

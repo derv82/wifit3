@@ -4,10 +4,8 @@ Builds the rtw89_chan for a channel and runs the per-channel BB/RF/MAC tune plus
 airmon-ng drives once per hop. Only the head (pre_set_channel_bb) is ported so far; the rest are
 marked TODO. [SRC] core.c:531 __rtw89_set_channel, rtw8922a.c:2232 set_channel.
 """
-from . import phy
-from .constants import RTW89_BAND_2G, RTW89_BAND_5G, RTW89_BAND_6G
-
-RTW89_CHANNEL_WIDTH_20 = 0       # core.h
+from . import mac, phy
+from .constants import RTW89_BAND_2G, RTW89_BAND_5G, RTW89_BAND_6G, RTW89_CHANNEL_WIDTH_20
 
 
 def band_of(channel: int) -> int:
@@ -52,6 +50,7 @@ def set_channel(t, channel: int, phy_idx: int = 0, mac_idx: int = 0) -> dict:
     # on band 0), so hal_reset's tssi/adc run both paths. [SRC] chan.c:485-534.
     t.mlo_1_1 = False
     phy.set_channel_help(t, t.cv, chan["band_type"], enter=True, phy_idx=phy_idx, mac_idx=mac_idx)
-    # TODO: set_channel_mac/bb/rf(chan, phy_idx); set_txpwr(chan); set_channel_help(leave) +
+    mac.set_channel_mac(t, chan, mac_idx)
+    # TODO: set_channel_bb/rf(chan, phy_idx); set_txpwr(chan); set_channel_help(leave) +
     #       post_set_channel bb/rf; rtw8922a_rfk(chan). tx_en from help(enter) feeds help(leave).
     return chan
