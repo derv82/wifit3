@@ -1012,12 +1012,12 @@ def parse_efuse_map(t, cv: int) -> dict:
 
 
 def _parse_tssi(t, rf: bytes) -> None:
-    """rtw8922a_efuse_parsing_tssi: the 2G group-0 TSSI de + per-path thermal used by the RFK TSSI
-    H2C. `tssi_offset` is 42 bytes/path (path_a at 0x10, path_b at 0x3a); cck_tssi[0] and
-    bw40_tssi[0] are its first byte and byte 6; the thermals are at 0xd0/0xd1. [SRC] rtw8922a.c:744,
-    rtw8922a.h:13-69."""
-    t.tssi_cck = [rf[0x10], rf[0x3A]]                # path_a/b cck_tssi[0]
-    t.tssi_mcs = [rf[0x16], rf[0x40]]                # path_a/b bw40_tssi[0]
+    """rtw8922a_efuse_parsing_tssi: the per-group 2G TSSI de tables + per-path thermal used by the
+    RFK TSSI H2C. `tssi_offset` is 42 bytes/path (path_a at 0x10, path_b at 0x3a); cck_tssi holds 6
+    groups from its first byte, bw40_tssi holds 5 2G groups from byte 6; the thermals are at
+    0xd0/0xd1. [SRC] rtw8922a.c:744-771, rtw8922a.h:13-69, core.h:5980."""
+    t.tssi_cck = [list(rf[0x10:0x16]), list(rf[0x3A:0x40])]   # path_a/b cck_tssi[0..5]
+    t.tssi_mcs = [list(rf[0x16:0x1B]), list(rf[0x40:0x45])]   # path_a/b bw40_tssi[0..4] (2G)
     t.tssi_therm = [rf[0xD0], rf[0xD1]]              # path_a/b _therm
 
 

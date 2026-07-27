@@ -27,13 +27,44 @@ _TSSI_FTABLE_2G = bytes.fromhex(
 )
 
 
+def _cck_group_2g(ch: int) -> int:
+    """phy_tssi_get_cck_group, 2.4 GHz branch. [SRC] phy.c:4351."""
+    if ch <= 2:
+        return 0
+    if ch <= 5:
+        return 1
+    if ch <= 8:
+        return 2
+    if ch <= 11:
+        return 3
+    if ch <= 13:
+        return 4
+    return 5                                          # ch 14
+
+
+def _ofdm_group_2g(ch: int) -> int:
+    """phy_tssi_get_ofdm_group, 2.4 GHz branch (no EXTRA/interpolation groups here). [SRC] phy.c:4379."""
+    if ch <= 2:
+        return 0
+    if ch <= 5:
+        return 1
+    if ch <= 8:
+        return 2
+    if ch <= 11:
+        return 3
+    return 4                                          # ch 12-14
+
+
 def _tssi(t, chan: dict, tssi_mode: int, phy_idx: int) -> bytes:
-    """rtw89_h2c_rf_tssi payload (300 bytes): the per-path CCK/OFDM de (efuse TSSI, trim 0 on the
-    8922A), the thermal, and the 2G thermal-delta ftable. 2.4 GHz group-0 only. [SRC] fw.c:7600,
+    """rtw89_h2c_rf_tssi payload (300 bytes): the per-path CCK/OFDM de (efuse TSSI by channel group,
+    trim 0 on the 8922A), the thermal, and the 2G thermal-delta ftable. 2.4 GHz only. [SRC] fw.c:7600,
     fw.h:4960, phy.c:4793 fill_fwcmd_efuse_to_de / 4856 fill_fwcmd_tmeter_tbl."""
     if chan["band_type"] != RTW89_BAND_2G:
         raise NotImplementedError("rfk tssi 5/6G de + ftable not ported yet")
-    cck, mcs, therm = t.tssi_cck, t.tssi_mcs, t.tssi_therm
+    cg, og = _cck_group_2g(chan["channel"]), _ofdm_group_2g(chan["channel"])
+    cck = [t.tssi_cck[0][cg], t.tssi_cck[1][cg]]      # trim_de is 0 on the 8922A, so de = efuse byte
+    mcs = [t.tssi_mcs[0][og], t.tssi_mcs[1][og]]
+    therm = t.tssi_therm
     b = bytearray(300)
     struct.pack_into("<H", b, 0, 300)
     b[2], b[3], b[4], b[5], b[6], b[7] = phy_idx, chan["channel"], chan["band_width"], RTW89_BAND_2G, 1, t.cv
