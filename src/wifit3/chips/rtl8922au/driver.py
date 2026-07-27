@@ -106,6 +106,7 @@ class RTL8922AUDriver(Driver):
         logger.info("RTL8922AU: claimed vendor interface %s", iface)
         self._switch_usb_mode()
         ver = mac.read_chip_ver(self.transport)
+        self.transport.cv = ver["cv"]
         logger.info("RTL8922AU: cv=0x%x acv=0x%x cid=0x%x aid=0x%x",
                     ver["cv"], ver["acv"], ver["cid"], ver["aid"])
         mac.mac_pwr_on(self.transport, ver["cv"])

@@ -30,6 +30,7 @@ class RTL8922AUTransport:
         self.c2h_counter = 0
         self.h2c_seq = 0            # fw_info.h2c_seq: fwcmd sequence number. [SRC] fw.c:1639,2012
         self.cmac_pwr = set()       # RTW89_FLAG_CMACn_PWR: which CMACs are powered. [SRC] mac_be.c:810
+        self.cv = 0                 # chip cut version (hal.cv), set from read_chip_ver at connect
         self.rfe_type = 0           # efuse->rfe_type, from the RF-block logical parse. [SRC] rtw8922a.c:866
         self.xtal_cap = 0           # efuse->xtal_cap. [SRC] rtw8922a.c:867
         self.pg_pa_bias_trim = False   # phycap PA/PAD-bias PG present. [SRC] rtw8922a.c:954

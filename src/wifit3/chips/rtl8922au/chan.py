@@ -50,7 +50,9 @@ def set_channel(t, channel: int, phy_idx: int = 0, mac_idx: int = 0) -> dict:
     post_set_channel bb/rf], then rfk. Only the head pre_set_channel_bb is ported so far.
     [SRC] core.c:531, rtw8922a.c:2321 set_channel_help / 2232 set_channel."""
     chan = make_chan(channel)
+    # set_channel_help(enter):
     phy.pre_set_channel_bb(t, phy_idx)
-    # TODO: pre_set_channel_rf(phy_idx); hal_reset(enter); set_channel_mac/bb/rf(chan, phy_idx);
-    #       set_txpwr(chan); hal_reset(exit) + post_set_channel bb/rf; rtw8922a_rfk(chan).
+    phy.pre_set_channel_rf(t, t.cv, phy_idx)
+    # TODO: hal_reset(enter); set_channel_mac/bb/rf(chan, phy_idx); set_txpwr(chan);
+    #       hal_reset(exit) + post_set_channel bb/rf; rtw8922a_rfk(chan).
     return chan

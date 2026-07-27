@@ -8,6 +8,7 @@ import struct
 import time
 
 from .constants import (
+    CHIP_CAV,
     RTW89_FW_ELEMENT_ID_BB_REG, CR_BASE_BE, BYPASS_CR_DATA,
     PHY_HEADLINE_VALID, PHY_COND_BRANCH_IF, PHY_COND_BRANCH_ELIF, PHY_COND_BRANCH_ELSE,
     PHY_COND_BRANCH_END, PHY_COND_CHECK, PHY_COND_DONT_CARE,
@@ -517,10 +518,17 @@ def dm_init(t, cv: int) -> None:
 
 # --- rfk_hw_init + init_rf_nctl. [SRC] rtw8922a_rfk.c, phy.c:2100-2135, phy_be.c:443. ---
 
-def _set_syn01_cbv(t) -> None:
-    """rtw8922a_set_syn01_cbv(RF_SYN_ALLON): power both synthesizers. [SRC] rtw8922a_rfk.c:145."""
-    write_rf(t, RF_PATH_A, RR_POW, RR_POW_SYN_V1, 0xF)
-    write_rf(t, RF_PATH_B, RR_POW, RR_POW_SYN_V1, 0xF)
+RF_SYN_ON_OFF, RF_SYN_OFF_ON, RF_SYN_ALLON, RF_SYN_ALLOFF = 0, 1, 2, 3   # rtw8922a_rfk.c:110
+_SYN01_CBV = {RF_SYN_ON_OFF: (0xF, 0x0), RF_SYN_OFF_ON: (0x0, 0xF),
+              RF_SYN_ALLON: (0xF, 0xF), RF_SYN_ALLOFF: (0x0, 0x0)}
+
+
+def _set_syn01_cbv(t, syn: int) -> None:
+    """rtw8922a_set_syn01_cbv: per-path synthesizer power (RR_POW_SYN_V1). cbv (non-A-cut) sets
+    each path in one write. [SRC] rtw8922a_rfk.c:145."""
+    pa, pb = _SYN01_CBV[syn]
+    write_rf(t, RF_PATH_A, RR_POW, RR_POW_SYN_V1, pa)
+    write_rf(t, RF_PATH_B, RR_POW, RR_POW_SYN_V1, pb)
 
 
 def _chlk_ktbl_sel(t, rf_path: int, idx: int) -> None:
@@ -548,7 +556,7 @@ def _rfk_pll_init(t) -> None:
 def rfk_hw_init(t) -> None:
     """rtw8922a_rfk_hw_init: syn power (DBCC MLO), the per-path coefficient-table select, and the
     RFK PLL init. [SRC] rtw8922a_rfk.c:352."""
-    _set_syn01_cbv(t)                                       # rfk_mlo_ctrl -> set_syn01
+    _set_syn01_cbv(t, RF_SYN_ALLON)                         # rfk_mlo_ctrl -> set_syn01
     _chlk_ktbl_sel(t, RF_PATH_A, 0)                          # chlk_reload -> ktbl_sel (idx 0 cold)
     _chlk_ktbl_sel(t, RF_PATH_B, 0)
     _rfk_pll_init(t)
@@ -717,3 +725,12 @@ def pre_set_channel_bb(t, phy_idx: int = 0) -> None:
         else (0xBBAB, 0xAFFF, 0xEFFF, 0xEEFF)
     for parm in parms:
         _phy_write32_mask(t, R_EMLSR, B_EMLSR_PARM, parm)
+
+
+def pre_set_channel_rf(t, cv: int, phy_idx: int = 0) -> None:
+    """rtw8922a_pre_set_channel_rf (dbcc_en): set_syn01 power per MLO mode. The single monitor vif
+    on PHY_0 is not mlo_1_1, so RF_SYN_ON_OFF (syn on path A, off path B). [SRC] rtw8922a_rfk.c:360."""
+    if cv == CHIP_CAV:
+        raise NotImplementedError("set_syn01 A-cut path not needed on this card")
+    syn = RF_SYN_ON_OFF if phy_idx == 0 else RF_SYN_OFF_ON
+    _set_syn01_cbv(t, syn)
