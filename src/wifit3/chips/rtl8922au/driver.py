@@ -13,7 +13,7 @@ from .constants import (
     R_BE_PAD_CTRL2, _LIBUSB_SPEED_SUPER, USB_SWITCH_DELAY, B_BE_MATCH_CNT,
     B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
     B_BE_USB3_FORCE, B_BE_USB2_FORCE, B_BE_FORCE_U3_CK, B_BE_FORCE_U2_CK, B_BE_FORCE_CLK_U2,
-    B_BE_USB3_GEN_MODE, B_BE_USB3_LANE_MODE, BULKOUT_ID_H2C,
+    B_BE_USB3_GEN_MODE, B_BE_USB3_LANE_MODE, BULKOUT_ID_H2C, RTW89_WIFI_ROLE_MONITOR,
 )
 from .transport import RTL8922AUTransport
 
@@ -155,6 +155,14 @@ class RTL8922AUDriver(Driver):
         # mac80211 add-interface (airmon-ng monitor vif): rtw89_mac_vif_init -> port_update
         # (port-config regs) then the H2C burst, plus btc_ntfy_role_info. [SRC] mac.c:5044.
         mac.port_update(self.transport)
+        ep = self._h2c_ep
+        firmware.h2c_macid_pause(self.transport, ep, sh=0, grp=0, pause=False)  # set_macid_pause(false)
+        firmware.h2c_role_maintain(self.transport, ep, macid=0, wifi_role=RTW89_WIFI_ROLE_MONITOR)
+        firmware.h2c_join_info(self.transport, ep, macid=0, wifi_role=RTW89_WIFI_ROLE_MONITOR,
+                               dis_conn=True)
+        firmware.h2c_cam(self.transport, ep)                    # rtw89_cam_init is software-only
+        firmware.h2c_default_cmac_tbl(self.transport, ep, macid=0)
+        firmware.h2c_default_dmac_tbl(self.transport, ep, macid=0)
         return True
 
     def _switch_usb_mode(self) -> None:

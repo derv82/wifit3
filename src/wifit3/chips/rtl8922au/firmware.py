@@ -41,6 +41,16 @@ from .constants import (
     H2C_CL_BA_CAM, H2C_FUNC_MAC_BA_CAM_INIT, RTW89_H2C_BA_CAM_INIT_USERS_MASK,
     RTW89_H2C_BA_CAM_INIT_OFFSET_MASK, RTW89_H2C_BA_CAM_INIT_BAND_SEL,
     H2C_CL_MAC_FW_OFLD, H2C_FUNC_OFLD_CFG, H2C_OFLD_CFG,
+    H2C_CL_MAC_FR_EXCHG, H2C_CL_MAC_ADDR_CAM_UPDATE, H2C_FUNC_MAC_ADDR_CAM_UPD,
+    H2C_FUNC_MAC_JOININFO, H2C_FUNC_MAC_FWROLE_MAINTAIN, H2C_FUNC_MAC_DCTLINFO_UD_V2,
+    H2C_FUNC_MAC_CCTLINFO_UD_G7, H2C_FUNC_MAC_MACID_PAUSE_SLEEP,
+    ROLE_MAINTAIN_W0_MACID, ROLE_MAINTAIN_W0_WIFI_ROLE,
+    JOININFO_W0_MACID, JOININFO_W0_OP, JOININFO_W0_WIFI_ROLE, JOININFO_W1_MLO_MODE,
+    JOININFO_W1_EMLSR_PADDING, JOININFO_W1_EMLSR_TRANS_DELAY,
+    JOININFO_EML_PADDING_DELAY_256US, JOININFO_EMLSR_TRANSITION_DELAY_256US,
+    ADDR_CAM_W1_LEN, ADDR_CAM_W2_VALID, ADDR_CAM_W9_SEC_ENT_MODE, ADDR_CAM_W12_BSSID_LEN,
+    ADDR_CAM_W13_BSSID_VALID, ADDR_CAM_W13_BSSID_MASK, ADDR_CAM_ENT_SHORT_SIZE,
+    BSSID_CAM_ENT_SIZE, RTW89_ADDR_CAM_SEC_NORMAL, RTW89_BSSID_MATCH_ALL,
 )
 
 
@@ -376,6 +386,97 @@ def h2c_set_ofld_cfg(t, h2c_ep: int) -> None:
     """rtw89_fw_h2c_set_ofld_cfg: a fixed 8-byte offload config. [SRC] fw.c:5311."""
     h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_FW_OFLD, H2C_FUNC_OFLD_CFG,
                 H2C_OFLD_CFG, rack=False, dack=True)
+
+
+def h2c_macid_pause(t, h2c_ep: int, sh: int, grp: int, pause: bool) -> None:
+    """rtw89_fw_h2c_macid_pause (MACID_PAUSE_SLEEP feature): struct of 4 per-group u32 arrays
+    (pause/pause_mask/sleep/sleep_mask) in n[0]; only the mask arrays are set when not pausing.
+    [SRC] fw.c:5172-5217, fw.h:320."""
+    payload = bytearray(256)
+    setbit = 1 << sh
+    struct.pack_into("<I", payload, 16 + grp * 4, setbit)   # n[0].pause_mask_grp[grp]
+    struct.pack_into("<I", payload, 48 + grp * 4, setbit)   # n[0].sleep_mask_grp[grp]
+    if pause:
+        struct.pack_into("<I", payload, 0 + grp * 4, setbit)    # n[0].pause_grp[grp]
+        struct.pack_into("<I", payload, 32 + grp * 4, setbit)   # n[0].sleep_grp[grp]
+    h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_FW_OFLD, H2C_FUNC_MAC_MACID_PAUSE_SLEEP,
+                bytes(payload), rack=True, dack=False)
+
+
+def h2c_role_maintain(t, h2c_ep: int, macid: int, wifi_role: int) -> None:
+    """rtw89_fw_h2c_role_maintain(ROLE_CREATE): w0 of macid/self_role/upd_mode/wifi_role/band/
+    port; a monitor create leaves all but macid and wifi_role at 0. [SRC] fw.c:4937, fw.h:1813."""
+    w0 = _pb(ROLE_MAINTAIN_W0_MACID, macid) | _pb(ROLE_MAINTAIN_W0_WIFI_ROLE, wifi_role)
+    h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_MEDIA_RPT, H2C_FUNC_MAC_FWROLE_MAINTAIN,
+                struct.pack("<I", w0), rack=False, dack=True)
+
+
+def h2c_join_info(t, h2c_ep: int, macid: int, wifi_role: int, dis_conn: bool) -> None:
+    """rtw89_fw_h2c_join_info (BE v1): w0 carries macid/op(dis_conn)/net_type/role; w1 the MLSR
+    MLO mode + the EMLSR padding/transition 256us caps. [SRC] fw.c:5033-5122, fw.h:1837."""
+    w0 = (_pb(JOININFO_W0_MACID, macid) | _pb(JOININFO_W0_OP, 1 if dis_conn else 0)
+          | _pb(JOININFO_W0_WIFI_ROLE, wifi_role))
+    w1 = (_pb(JOININFO_W1_MLO_MODE, 1)
+          | _pb(JOININFO_W1_EMLSR_PADDING, JOININFO_EML_PADDING_DELAY_256US)
+          | _pb(JOININFO_W1_EMLSR_TRANS_DELAY, JOININFO_EMLSR_TRANSITION_DELAY_256US))
+    h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_MEDIA_RPT, H2C_FUNC_MAC_JOININFO,
+                struct.pack("<III", w0, w1, 0), rack=False, dack=True)
+
+
+def h2c_cam(t, h2c_ep: int) -> None:
+    """rtw89_fw_h2c_cam(ROLE_CREATE, addrcam_ver 0): the monitor no-link addr-cam + bssid-cam.
+    Every station/BSSID address is zero here; only the entry lengths, valid bits, sec-mode, and
+    the match-all BSSID mask are set. [SRC] fw.c:2281, cam.c:768/819, cam.h:15."""
+    w = [0] * 15
+    w[1] = _pb(ADDR_CAM_W1_LEN, ADDR_CAM_ENT_SHORT_SIZE)
+    w[2] = _pb(ADDR_CAM_W2_VALID, 1)
+    w[9] = _pb(ADDR_CAM_W9_SEC_ENT_MODE, RTW89_ADDR_CAM_SEC_NORMAL)
+    w[12] = _pb(ADDR_CAM_W12_BSSID_LEN, BSSID_CAM_ENT_SIZE)
+    w[13] = _pb(ADDR_CAM_W13_BSSID_VALID, 1) | _pb(ADDR_CAM_W13_BSSID_MASK, RTW89_BSSID_MATCH_ALL)
+    h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_ADDR_CAM_UPDATE, H2C_FUNC_MAC_ADDR_CAM_UPD,
+                struct.pack("<15I", *w), rack=False, dack=True)
+
+
+# rtw89_fw_h2c_default_cmac_tbl_g7: the g7 default CMAC table (c0, w0..w15, m0..m15 = 33 u32).
+# Only c0.MACID and w0.MGQ_RPT_EN (= hci.tx_rpt_enabled, always 1 for USB) are dynamic; the rest
+# is the fixed default plus each word's _ALL write mask. [SRC] fw.c:3641-3706, fw.h:1404.
+_CMAC_G7_WORDS = (
+    0x00000080,                                                              # c0: MACID 0 | OP 1
+    0x00200004, 0x400A0004, 0x0, 0x0, 0xFFFF0000, 0x000002AA, 0x0000B000,    # w0..w7
+    0x000B8109, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,                      # w8..w15
+    0xFFF7FFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFDFFF, 0xFFFF7FFF,   # m0..m5
+    0x80FFFFFF, 0xEFFFEFFF, 0x0000FFFF, 0x0, 0x0, 0x0, 0x0, 0x0,             # m6..m13
+    0xFFFFFFFF, 0x0FFFFFFF,                                                   # m14..m15
+)
+
+# rtw89_fw_h2c_default_dmac_tbl_v2: the v2 default DMAC table (c0, w0..w15, m0..m15 = 33 u32).
+# All value words are 0 (only c0.MACID varies); m0..m12 are the _ALL write masks. [SRC] fw.c:2454.
+_DMAC_V2_WORDS = (
+    0x00000080,                                                              # c0: MACID 0 | OP 1
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,   # w0..w15
+    0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFE0, 0xFFFFFF0F,   # m0..m5
+    0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,   # m6..m11
+    0x0000FFFF, 0x0, 0x0, 0x0,                                                # m12..m15
+)
+
+
+_CCTL_C0_MACID = 0x7F                # CCTLINFO_G7_C0_MACID / DCTLINFO_V2_C0_MACID: GENMASK(6, 0)
+
+
+def h2c_default_cmac_tbl(t, h2c_ep: int, macid: int = 0) -> None:
+    """The g7 default CMAC table for a new role. [SRC] fw.c:3641."""
+    words = list(_CMAC_G7_WORDS)
+    words[0] = (words[0] & ~_CCTL_C0_MACID) | (macid & _CCTL_C0_MACID)
+    h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_FR_EXCHG, H2C_FUNC_MAC_CCTLINFO_UD_G7,
+                struct.pack("<33I", *words), rack=False, dack=True)
+
+
+def h2c_default_dmac_tbl(t, h2c_ep: int, macid: int = 0) -> None:
+    """The v2 default DMAC table for a new role. [SRC] fw.c:2454."""
+    words = list(_DMAC_V2_WORDS)
+    words[0] = (words[0] & ~_CCTL_C0_MACID) | (macid & _CCTL_C0_MACID)
+    h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_FR_EXCHG, H2C_FUNC_MAC_DCTLINFO_UD_V2,
+                struct.pack("<33I", *words), rack=False, dack=False)
 
 
 def _write_h2c_reg(t, h2c_id: int, content_len: int, w0: int) -> None:

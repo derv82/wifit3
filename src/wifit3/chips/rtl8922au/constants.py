@@ -771,6 +771,41 @@ BACAM_1024BMP_OCC_ENTRY = 4      # mac.c rtw89_mac_feat_init
 H2C_CL_MAC_FW_OFLD = 0x9         # fw.h:4691
 H2C_FUNC_OFLD_CFG = 0x14         # fw.h:4698
 H2C_OFLD_CFG = bytes((0x09, 0x00, 0x00, 0x00, 0x5E, 0x00, 0x00, 0x00))  # fw.c:5311
+
+# mac80211 add-interface H2C burst (rtw89_mac_vif_init). [SRC] fw.h:4670-4706.
+H2C_CL_MAC_FR_EXCHG = 0x5             # fw.h:4670
+H2C_CL_MAC_ADDR_CAM_UPDATE = 0x6     # fw.h:4681
+H2C_FUNC_MAC_ADDR_CAM_UPD = 0x0      # fw.h:4682
+H2C_FUNC_MAC_JOININFO = 0x0          # fw.h:4686
+H2C_FUNC_MAC_FWROLE_MAINTAIN = 0x4   # fw.h:4687
+H2C_FUNC_MAC_DCTLINFO_UD_V2 = 0xc    # fw.h:4675
+H2C_FUNC_MAC_CCTLINFO_UD_G7 = 0x11   # fw.h:4678
+H2C_FUNC_MAC_MACID_PAUSE_SLEEP = 0x28  # fw.h:4706
+RTW89_WIFI_ROLE_MONITOR = 7          # core.h:427
+
+# role_maintain w0 fields. [SRC] fw.h:1813-1819.
+ROLE_MAINTAIN_W0_MACID = 0xFF        # GENMASK(7, 0)
+ROLE_MAINTAIN_W0_WIFI_ROLE = 0x1E000  # GENMASK(16, 13)
+# join_info v1 w0/w1 fields. [SRC] fw.h:1837-1862.
+JOININFO_W0_MACID = 0xFF             # GENMASK(7, 0)
+JOININFO_W0_OP = 0x100               # BIT(8): dis_conn
+JOININFO_W0_WIFI_ROLE = 0x3C000000   # GENMASK(29, 26)
+JOININFO_W1_MLO_MODE = 0x1000        # BIT(12): MLSR=1
+JOININFO_W1_EMLSR_PADDING = 0x70000  # GENMASK(18, 16)
+JOININFO_W1_EMLSR_TRANS_DELAY = 0x380000  # GENMASK(21, 19)
+JOININFO_EML_PADDING_DELAY_256US = 4      # IEEE80211_EML_CAP_EML_PADDING_DELAY_256US. fw.c:5108
+JOININFO_EMLSR_TRANSITION_DELAY_256US = 5  # IEEE80211_EML_CAP_EMLSR_TRANSITION_DELAY_256US. fw.c:5111
+# addr-cam v0 (addrcam_ver 0) fields. [SRC] cam.h:38-116, mac.h:16-17, core.h:473, cam.h:12.
+ADDR_CAM_W1_LEN = 0xFF0000           # GENMASK(23, 16)
+ADDR_CAM_W2_VALID = 0x1              # BIT(0)
+ADDR_CAM_W9_SEC_ENT_MODE = 0x30000   # GENMASK(17, 16)
+ADDR_CAM_W12_BSSID_LEN = 0xFF0000    # GENMASK(23, 16)
+ADDR_CAM_W13_BSSID_VALID = 0x1       # BIT(0)
+ADDR_CAM_W13_BSSID_MASK = 0xFC       # GENMASK(7, 2)
+ADDR_CAM_ENT_SHORT_SIZE = 0x20       # mac.h:16
+BSSID_CAM_ENT_SIZE = 0x08            # mac.h:17
+RTW89_ADDR_CAM_SEC_NORMAL = 2        # core.h:473
+RTW89_BSSID_MATCH_ALL = 0x3F         # GENMASK(5, 0). cam.h:12
 # USB mac_post_init -> rx_agg_cfg_v3 (8922A). [SRC] usb.c rtw89_usb_rx_agg_cfg_v3, usb.h:32-38.
 R_BE_RXAGG_0_V1 = 0x6000         # usb.h:32
 B_BE_RXAGG_0_EN = 1 << 31        # usb.h:33
