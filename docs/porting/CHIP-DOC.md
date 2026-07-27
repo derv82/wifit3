@@ -30,10 +30,13 @@ C, so the name is the cross-reference.
 **Scripts**: the reusable diagnostics, grouped, one line each. Mark the one-offs that are safe to
 delete.
 
-**Debug log**: dated, append-only, at the bottom. One entry per durable finding: the fact and how
-it was established. No "we suspected X, turned out Y" essays, no op-offset progress stamps, no
-"VERIFIED" stamps. When a finding hardens into a caveat, move it up into Known Problems or the
-code; keep a dated entry only while it still helps (an open problem plus what's been ruled out).
+**Debug log**: at the bottom, for open or unresolved findings only. One entry per finding: a live
+investigation and what's been ruled out, or a durable non-obvious fact worth keeping. Date an entry
+so a reader can judge how current it is. This is **not** a port-order or milestone log: no "ported
+X", no op-offset progress stamps, no "VERIFIED" stamps, no "we suspected X, turned out Y" essays.
+That history is in git. Prune ruthlessly: when a finding hardens into a caveat, move it into Known
+Problems or the code and drop the entry; delete an entry once it stops helping. An empty section is
+the correct steady state.
 
 ## Skeleton
 
@@ -46,5 +49,5 @@ code; keep a dated entry only while it still helps (an open problem plus what's 
 ## Known Problems            what breaks, when, current state, bulleted
 ## Driver Entry Points       feature -> module/function, one bullet each
 ## Scripts                   reusable diagnostics, grouped, one line each
-## Debug log                 dated, append-only; durable findings, no essays
+## Debug log                 open/unresolved findings + what's ruled out; NOT a port-order log
 ```
