@@ -27,7 +27,7 @@ from .constants import (
     R_AX_HALT_H2C_CTRL, R_AX_HALT_C2H_CTRL,
     B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
     RTW89_FW_ELEMENT_ID_BBMCU0, RTW89_FW_ELEMENT_ALIGN, FW_ELEMENT_HDR_SIZE,
-    FW_ELEMENT_BBMCU_CV_OFFSET,
+    FW_ELEMENT_BBMCU_CV_OFFSET, RTW89_TXPWR_CONF_DFLT_RFE_TYPE,
     PWR_POLL_ATTEMPTS,
     R_BE_H2CREG_DATA0, R_BE_C2HREG_DATA0, R_BE_H2CREG_CTRL, B_BE_H2CREG_TRIGGER, R_BE_C2HREG_CTRL,
     R_BE_MAILBOX_COUNTER, B_MAILBOX_H2C_CNT_MASK, B_MAILBOX_C2H_CNT_MASK,
@@ -133,6 +133,36 @@ def element_regs_with_idx(elem_id: int, hal_aid: int = 0) -> tuple:
 def element_regs(elem_id: int, hal_aid: int = 0) -> list:
     """element_regs_with_idx without the idx byte, for tables that are not radio-slot-indexed."""
     return element_regs_with_idx(elem_id, hal_aid)[1]
+
+
+def txpwr_conf(elem_id: int, rfe_type: int) -> tuple:
+    """The FW txpwr element (ent_sz, num_ents, content bytes) for elem_id: prefer the entry whose
+    rfe_type matches the efuse (last wins), else fall back to the default rfe_type 0. The txpwr
+    sub-header sits at the union (offset 24): rsvd0, rsvd1, rfe_type, ent_sz, num_ents(le32),
+    content. [SRC] fw.c:1165-1215, fw.h __rtw89_fw_txpwr_element."""
+    data = _ASSET_PATH.read_bytes()
+    fw_nr = data[1]
+    off = 16 + (fw_nr - 1) * 16
+    shift, size = struct.unpack_from("<II", data, off + 4)
+    offset = _align(shift + size, RTW89_FW_ELEMENT_ALIGN)
+    chosen = None                       # (rfe_type, ent_sz, num_ents, content)
+    while offset + FW_ELEMENT_HDR_SIZE < len(data):
+        eid, elm_size = struct.unpack_from("<II", data, offset)
+        if eid == elem_id:
+            e_rfe = data[offset + 26]
+            ent_sz = data[offset + 27]
+            num_ents = struct.unpack_from("<I", data, offset + 28)[0]
+            start = offset + FW_ELEMENT_HDR_SIZE
+            content = data[start:start + num_ents * ent_sz]
+            if e_rfe == rfe_type:
+                chosen = (e_rfe, ent_sz, num_ents, content)
+            elif e_rfe == RTW89_TXPWR_CONF_DFLT_RFE_TYPE and (
+                    chosen is None or chosen[0] == RTW89_TXPWR_CONF_DFLT_RFE_TYPE):
+                chosen = (e_rfe, ent_sz, num_ents, content)
+        offset = _align(offset + FW_ELEMENT_HDR_SIZE + elm_size, RTW89_FW_ELEMENT_ALIGN)
+    if chosen is None:
+        raise RuntimeError(f"rtl8922au: no txpwr element id={elem_id} rfe={rfe_type}")
+    return chosen[1], chosen[2], chosen[3]
 
 
 def parse_hdr_v1(fw: bytes) -> dict:

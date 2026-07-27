@@ -1170,6 +1170,40 @@ R_BE_PWR_BY_RATE = 0x11E00
 R_BE_PWR_BY_RATE_END = 0x12044
 R_BE_PWR_RULMT_START = 0x12048
 R_BE_PWR_RULMT_END = 0x120E4
+
+# Firmware txpwr elements (byrate/limit tables) + the rate taxonomy that indexes them.
+# [SRC] fw.h:4337, core.h:889-995, phy.h:1124, rtw8922a.c:3201.
+RTW89_FW_ELEMENT_ID_TXPWR_BYRATE = 9    # fw.h:4337
+RTW89_TXPWR_CONF_DFLT_RFE_TYPE = 0      # core.h:4492
+RTW89_RS_CCK = 0                        # enum rtw89_rate_section. core.h:882
+RTW89_RS_OFDM = 1
+RTW89_RS_MCS = 2
+RTW89_RS_HEDCM = 3
+RTW89_RS_OFFSET = 4
+RTW89_RATE_CCK_NUM = 4                  # core.h:899
+RTW89_RATE_OFDM_NUM = 8
+RTW89_RATE_HEDCM_NUM = 4
+RTW89_RATE_MCS_NUM = 16                 # __RTW89_RATE_MCS_NUM. core.h:905
+RTW89_RATE_OFFSET_NUM = 8               # __RTW89_RATE_OFFSET_NUM. core.h:892
+RTW89_RATE_OFFSET_NUM_BE = 8            # RTW89_RATE_OFFSET_EHT + 1. core.h:895
+RTW89_NON_OFDMA = 0                     # enum rtw89_ofdma_type. core.h:931
+RTW89_OFDMA = 1
+RTW89_OFDMA_NUM = 2
+RTW89_NSS_NUM = 4                       # core.h:915
+RTW89_NSS_HEDCM_NUM = 2                 # core.h:912
+RTW89_BYR_BW_NUM = 5                    # RTW89_CHANNEL_WIDTH_320 + 1. core.h:1153
+RTW89_BAND_NUM = 3                      # core.h:504
+# rtw89_rate_offset_indexes: the packing order of R_BE_PWR_RATE_OFST_CTRL. core.h:884.
+RTW89_RATE_OFFSET_HE = 0
+RTW89_RATE_OFFSET_VHT = 1
+RTW89_RATE_OFFSET_HT = 2
+RTW89_RATE_OFFSET_OFDM = 3
+RTW89_RATE_OFFSET_CCK = 4
+RTW89_RATE_OFFSET_DLRU_EHT = 5
+RTW89_RATE_OFFSET_DLRU_HE = 6
+RTW89_RATE_OFFSET_EHT = 7
+TXPWR_FACTOR_RF = 2                     # chip->txpwr_factor_rf. rtw8922a.c:3201
+TXPWR_FACTOR_MAC = 1                    # chip->txpwr_factor_mac. rtw8922a.c:3202
 R_BE_PWR_RATE_OFST_CTRL = 0x11A30
 R_BE_PWR_RATE_OFST_END = 0x11A38
 R_BE_PWR_FTM_SS = 0x11B04

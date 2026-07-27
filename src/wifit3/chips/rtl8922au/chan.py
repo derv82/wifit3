@@ -4,7 +4,7 @@ Builds the rtw89_chan for a channel and runs the per-channel BB/RF/MAC tune plus
 airmon-ng drives once per hop. Only the head (pre_set_channel_bb) is ported so far; the rest are
 marked TODO. [SRC] core.c:531 __rtw89_set_channel, rtw8922a.c:2232 set_channel.
 """
-from . import mac, phy
+from . import mac, phy, txpwr
 from .constants import RTW89_BAND_2G, RTW89_BAND_5G, RTW89_BAND_6G, RTW89_CHANNEL_WIDTH_20
 
 
@@ -53,6 +53,7 @@ def set_channel(t, channel: int, phy_idx: int = 0, mac_idx: int = 0) -> dict:
     mac.set_channel_mac(t, chan, mac_idx)
     phy.set_channel_bb(t, chan, phy_idx)
     phy.set_channel_rf(t, chan, phy_idx)
-    # TODO: set_txpwr(chan); set_channel_help(leave) + post_set_channel bb/rf; rtw8922a_rfk(chan).
+    txpwr.set_txpwr(t, chan, phy_idx)
+    # TODO: set_channel_help(leave) + post_set_channel bb/rf; rtw8922a_rfk(chan).
     #       tx_en from help(enter) feeds help(leave).
     return chan
