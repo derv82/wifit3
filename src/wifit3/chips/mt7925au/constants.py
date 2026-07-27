@@ -216,6 +216,74 @@ MT_RXD3_NORMAL_FCS_ERR = 1 << 24   # BIT(24), :80
 MT_PRXV_RCPI0 = 0xFF               # GENMASK(7,0) in rxv[3], :112 — RCPI to dBm
 
 # ===========================================================================
+# TX descriptor (connac3 TXWI, mt7925_mac_write_txwi). USB layout per frame:
+# [4B SDIO hdr][64B TXD][802.11 MPDU][pad]. The TXD is MT_SDIO_TXD_SIZE and the
+# writer fills txwi[0..7] (32 B); the trailing 32 B stay zero. Masks verbatim
+# from mt76_connac3_mac.h; sizes from mt76_connac.h.
+# ===========================================================================
+MT_TXD_SIZE      = 8 * 4              # mt76_connac.h:34 — base TXD (8 dwords)
+MT_SDIO_TXD_SIZE = MT_TXD_SIZE + 8 * 4  # mt76_connac.h:40 — USB/SDIO TXD (64 B)
+
+# mt792x_skb_add_usb_sdio_hdr (mt792x.h:499): tx_bytes = skb->len (USB), pkt_type.
+MT792x_SDIO_HDR_TX_BYTES = 0x0000FFFF   # GENMASK(15,0), mt792x.h:54
+
+# txwi[0] (mt76_connac3_mac.h:216-219).
+MT_TXD0_Q_IDX    = 0xFE000000   # GENMASK(31,25)
+MT_TXD0_PKT_FMT  = 0x01800000   # GENMASK(24,23)
+MT_TXD0_TX_BYTES = 0x0000FFFF   # GENMASK(15,0)
+# tx_pkt_type (mt76_connac3_mac.h:174-178) + lmac queue idx (:11-18).
+MT_TX_TYPE_SF  = 1              # USB/SDIO short-format (mmio would be CT)
+MT_LMAC_ALTX0  = 0x10          # alt-TX queue for mgmt/PSD
+
+# txwi[1] (mt76_connac3_mac.h:221-229).
+MT_TXD1_FIXED_RATE = 1 << 31   # BIT(31)
+MT_TXD1_OWN_MAC    = 0x7E000000  # GENMASK(30,25)
+MT_TXD1_TID        = 0x01E00000  # GENMASK(24,21)
+MT_TXD1_HDR_INFO   = 0x001F0000  # GENMASK(20,16)
+MT_TXD1_HDR_FORMAT = 0x0000C000  # GENMASK(15,14)
+MT_TXD1_TGID       = 0x00003000  # GENMASK(13,12)
+MT_TXD1_WLAN_IDX   = 0x00000FFF  # GENMASK(11,0)
+# hdr_format enum (mt76_connac3_mac.h:167-171).
+MT_HDR_FORMAT_802_3  = 0
+MT_HDR_FORMAT_802_11 = 2
+
+# txwi[2] frame type/subtype (mt76_connac3_mac.h:240-241).
+MT_TXD2_FRAME_TYPE = 0x00000030  # GENMASK(5,4)
+MT_TXD2_SUB_TYPE   = 0x0000000F  # GENMASK(3,0)
+
+# txwi[3] (mt76_connac3_mac.h:243-255).
+MT_TXD3_SN_VALID      = 1 << 31  # BIT(31)
+MT_TXD3_BA_DISABLE    = 1 << 28  # BIT(28)
+MT_TXD3_SEQ           = 0x0FFF0000  # GENMASK(27,16)
+MT_TXD3_REM_TX_COUNT  = 0x0000F800  # GENMASK(15,11)
+MT_TXD3_HW_AMSDU      = 1 << 5   # BIT(5)
+MT_TXD3_BCM           = 1 << 4   # BIT(4)
+MT_TXD3_PROTECT_FRAME = 1 << 1   # BIT(1)
+MT_TXD3_NO_ACK        = 1 << 0   # BIT(0)
+TXD3_REM_TX_COUNT_UNLTD = 15     # write_txwi seeds REM_TX_COUNT with 15
+
+# txwi[5] (mt76_connac3_mac.h:267).
+MT_TXD5_PID = 0x000000FF   # GENMASK(7,0)
+
+# txwi[6] (mt76_connac3_mac.h:273-280).
+MT_TXD6_TX_RATE  = 0x003F0000  # GENMASK(21,16)
+MT_TXD6_MSDU_CNT = 0x000003F0  # GENMASK(9,4)
+MT_TXD6_DIS_MAT  = 1 << 3      # BIT(3)
+MT_TXD6_DAS      = 1 << 2      # BIT(2)
+
+# tx_mgnt_type (mt76_connac3_mac.h:194-198): mgmt frames carry MT_TX_NORMAL.
+MT_TX_NORMAL = 0
+
+# Monitor-vif TX context (mt7925/main.c:375-392, mt792x_mac.c). The monitor link is
+# vif idx 0: omac_idx 0, band_idx 0xff (masked to TGID=3), wcid = MT792x_WTBL_RESERVED
+# (19). basic_rates_idx = MT792x_BASIC_RATES_TBL + 4 because the phy's default chandef
+# lands on 5 GHz (the last band with world-enabled channels; mac80211.c:395-418), so
+# main.c:382 takes the non-2.4GHz branch. Constant for the monitor vif's lifetime.
+MON_TX_OMAC_IDX  = 0
+MON_TX_BAND_IDX  = 0xff
+MON_TX_RATE_IDX  = 11 + 4   # MT792x_BASIC_RATES_TBL(mt792x.h:36) + 4 = 15
+
+# ===========================================================================
 # Post-boot init (mt7925_mac_init, mt792x_mac_init_band). Addresses/bits verbatim
 # from mt7925/regs.h + mt792x_regs.h. mt7925 MDP/WTBL bases DIFFER from mt7921.
 # ===========================================================================

@@ -25,10 +25,11 @@ from wifit3.chips.mt7925au import init as mt_init  # noqa: E402
 from wifit3.chips.mt7925au import mac as mt_mac  # noqa: E402
 from wifit3.chips.mt7925au import mcu as mt_mcu  # noqa: E402
 from wifit3.chips.mt7925au import rx as mt_rx  # noqa: E402
+from wifit3.chips.mt7925au import tx as mt_tx  # noqa: E402
 from wifit3.chips.mt7925au import txpower as mt_txpower  # noqa: E402
 from wifit3.chips.mt7925au.constants import (  # noqa: E402
     MT7925_RXD_SEQ_OFF, MT_MIB_SDR9, MT_MIB_SDR3, MT_TX_AGG_CNT, MT_WTBL_UPDATE,
-    MT792x_WTBL_RESERVED, EP_OUT_MCU,
+    MT792x_WTBL_RESERVED, EP_OUT_MCU, EP_OUT_HCCA, MT_SDIO_TXD_SIZE, SDIO_HDR_SIZE,
     MCU_UNI_CMD_DEV_INFO_UPDATE, MCU_UNI_CMD_BSS_INFO_UPDATE, MCU_UNI_CMD_SNIFFER,
     MCU_UNI_CMD_BAND_CONFIG, MCU_UNI_CMD_CHIP_CONFIG, MCU_UNI_CMD_SET_DOMAIN_INFO,
     MCU_UNI_CMD_SET_POWER_LIMIT, UNI_SNIFFER_ENABLE, UNI_SNIFFER_CONFIG,
@@ -55,6 +56,26 @@ def _mcu_cid(op) -> "int | None":
     if op.cls == "bulk" and op.ep == EP_OUT_MCU and len(op.data) > 39:
         return op.data[38] | (op.data[39] << 8)
     return None
+
+
+# TX (EP 0x09) frame carve: [4B SDIO hdr][64B TXD][MPDU][pad]. The MPDU length is the
+# SDIO tx_bytes (TXD + MPDU) minus the TXD.
+_TX_MPDU_OFF = SDIO_HDR_SIZE + MT_SDIO_TXD_SIZE
+
+
+def _tx_mpdu(data: bytes) -> bytes:
+    tx_bytes = data[0] | (data[1] << 8)
+    return data[_TX_MPDU_OFF:_TX_MPDU_OFF + (tx_bytes - MT_SDIO_TXD_SIZE)]
+
+
+def _is_ctrl_tx(op) -> bool:
+    """True for an EP-0x09 frame carrying an 802.11 control MPDU (ftype 1). aireplay's
+    RTS/control frames carry a tid from skb->priority (offline-underivable) and are not
+    frames wifit3's inject path emits, so they stay waived."""
+    if op.cls == "bulk" and op.ep == EP_OUT_HCCA and len(op.data) > _TX_MPDU_OFF + 1:
+        fc = op.data[_TX_MPDU_OFF] | (op.data[_TX_MPDU_OFF + 1] << 8)
+        return (fc & 0x0C) == 0x04
+    return False
 
 
 def waivers() -> E.WaiverSet:
@@ -252,7 +273,7 @@ async def _drive_operational(walk: E.Walk, state: dict):
             await walk.run_async(lambda dev, d=disp: _send_op_mcu(dev, q, d),
                                  "operational.monitor MCU")
         else:
-            break                                # unknown burst opener: frontier
+            break                                # unknown burst opener (incl. TX): frontier
 
 
 async def _run_bringup(walk: E.Walk, state: dict):
@@ -260,6 +281,53 @@ async def _run_bringup(walk: E.Walk, state: dict):
     await walk.run_async(lambda dev: _drive_firmware(dev, state), "firmware.load_firmware")
     await walk.run_async(lambda dev: _drive_postboot(dev, state), "init.post_boot_init")
     await _drive_operational(walk, state)
+
+
+def _tx_bytematch(capture, title: str) -> "bool | None":
+    """CHECK-4-style TX byte-diff (methodology 6.4): rebuild each captured EP-0x09 frame
+    with tx.build_tx (the bytes driver._inject_frame sends) and diff against the wire.
+
+    The operational tail interleaves mac_work register reads with aireplay's TX writes on
+    separate kernel threads, so it is not strict-cursor-walkable; this phase byte-matches
+    the TX frames directly. Only the 802.11 sequence (and, for WEP, the IV) may differ, and
+    here we feed the captured MPDU so even those match. Returns True if every injectable
+    (mgmt) frame reproduced byte-exact, None if the capture carries no TX."""
+    tx = [op for op in capture.ops if op.cls == "bulk" and op.ep == EP_OUT_HCCA]
+    if not tx:
+        return None
+
+    match = miss = ctrl = 0
+    misses: list = []
+    for op in tx:
+        if _is_ctrl_tx(op):
+            ctrl += 1
+            continue
+        mpdu = _tx_mpdu(op.data)
+        built = mt_tx.build_tx(mpdu, wcid_idx=MT792x_WTBL_RESERVED)
+        if built == op.data:
+            match += 1
+        else:
+            miss += 1
+            if len(misses) < 5:
+                n = min(len(built), len(op.data))
+                d = next((k for k in range(n) if built[k] != op.data[k]), n)
+                misses.append((op.idx, op.frame, d,
+                               op.data[d:d + 4].hex(), built[d:d + 4].hex()))
+
+    bar = "=" * 78
+    print(f"\n{bar}\nTX BYTE-MATCH (mt7925au) · {title} · EP 0x09 (HCCA)\n{bar}")
+    print(f"injectable mgmt frames reproduced byte-exact: {match}/{match + miss}")
+    if ctrl:
+        print(f"control frames (RTS) out of scope .........: {ctrl}  "
+              "(aireplay-injected; TXWI tid from skb->priority, not a wifit3 inject frame)")
+    for idx, frame, d, wb, pb in misses:
+        print(f"    MISS op #{idx} @f{frame} byte {d}: wire {wb} vs port {pb}")
+    print("-" * 78)
+    if miss == 0:
+        print("RESULT: TX PASS. Every injected mgmt frame reproduced byte-exact.")
+    else:
+        print(f"RESULT: TX FAIL. {miss} mgmt frame(s) diverged; see above.")
+    return miss == 0
 
 
 def run(cap: str | None = None, verbose: bool = False) -> int:
@@ -303,7 +371,25 @@ def _run(cap: str | None) -> int:
     except Exception as e:  # noqa: BLE001
         print(f"\n[harness] bring-up raised {type(e).__name__}: {e}")
 
-    return walk.report(title)
+    rc = walk.report(title)
+    tx_ok = _tx_bytematch(capture, Path(path).name)
+    if tx_ok is None:
+        return rc                                # RX/monitor capture: no TX phase
+
+    # TX capture: the bring-up walk stops (unwalked tail) at the first TX frame because the
+    # operational tail interleaves mac_work reads with aireplay TX and is not strict-cursor-
+    # walkable. That stop is expected, not a bug — a real bug would either set ledger.frontier
+    # (a divergence) or stop at a non-TX op before the TX region.
+    stop = walk.peek()
+    stopped_at_tx = (walk.ledger.frontier is None and stop is not None
+                     and stop.cls == "bulk" and stop.ep == EP_OUT_HCCA)
+    print(f"\n{'=' * 78}")
+    if stopped_at_tx and tx_ok:
+        print("OVERALL: bring-up replayed with no divergence up to the first TX frame, and "
+              "every injected mgmt frame byte-matched.")
+        return 0
+    print("OVERALL: TX capture verification did not fully pass; see sections above.")
+    return 1
 
 
 def main() -> int:

@@ -1,11 +1,12 @@
 import logging
+import struct
 from pathlib import Path
 from typing import Callable, Optional
 
 import usb.core
 
 from . import init as chip_init
-from . import mcu, rx
+from . import mcu, rx, tx
 from .transport import MT7925AUTransport
 from .firmware import MT7925AUFirmwareLoader
 # ruff: noqa: F403, F405
@@ -56,6 +57,9 @@ class MT7925AUDriver(Driver):
         self.is_warm: bool = False
         self.mac_address: Optional[str] = None
         self._antenna_mask: int = 0x3
+        self._tx_seq: int = 0
+        # The monitor link's TX wcid (mt7925/main.c:390: MT792x_WTBL_RESERVED - vif idx 0).
+        self._tx_wcid: int = MT792x_WTBL_RESERVED
 
     def register_rx_callback(self, callback: Callable[[dict], None]):
         self._rx_callback = callback
@@ -134,11 +138,22 @@ class MT7925AUDriver(Driver):
         return True
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        logger.error("MT7925AU TX not yet ported (M5)")
-        return False
+        """Build the connac3 TXWI for a raw 802.11 frame and send it once over the HCCA
+        bulk-OUT (EP 0x09), the mgmt/PSD endpoint the mt76 xmit path routes injected
+        frames to. The TXWI reads the 802.11 sequence from the frame itself."""
+        wire = tx.build_tx(frame_bytes, wcid_idx=self._tx_wcid)
+        return await self.transport.send_bulk_checked(wire, EP_OUT_HCCA)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
-        return frame_bytes
+        """Stamp an incrementing 12-bit 802.11 sequence into seq_ctrl (bytes 22-23),
+        preserving the 4-bit fragment field. build_tx copies it into txwi[3] SEQ."""
+        if len(frame_bytes) < 24:
+            return frame_bytes
+        self._tx_seq = (self._tx_seq + 1) & 0xFFF
+        buf = bytearray(frame_bytes)
+        frag = struct.unpack_from("<H", buf, 22)[0] & 0x000F
+        struct.pack_into("<H", buf, 22, (self._tx_seq << 4) | frag)
+        return bytes(buf)
 
     async def _enable_rx_acks(self) -> None:
         return None
