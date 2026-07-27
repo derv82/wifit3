@@ -828,6 +828,31 @@ PHYCAP_SIZE = 0x38               # chip->phycap_size. rtw8922a.c:3249
 R_BE_EFUSE_USB_MACADDR = 0x4078  # rtw8922a_read_efuse_usb reads the MAC here. rtw8922a.c:856
 ETH_ALEN = 6
 
+# Physical->logical efuse parse (rtw89_eeprom_parser_be) for the RF block, and the RF-block
+# field offsets read by rtw8922a_read_efuse_rf. [SRC] efuse_be.c:196-305, rtw8922a.c:436,861-873.
+SEC_CTRL_EFUSE_SIZE = 4          # chip->sec_ctrl_efuse_size. rtw8922a.c:3241
+EFUSE_RF_BLOCK_OFFSET = 0x10000  # efuse_blocks[RF].offset. rtw8922a.c:436
+EFUSE_RF_BLOCK_SIZE = 0x240      # efuse_blocks[RF].size. rtw8922a.c:436
+EFUSE_BLOCK_ID_MASK = 0xFFFF0000    # GENMASK(31, 16). efuse.h:10
+EFUSE_BLOCK_SIZE_MASK = 0x0000FFFF  # GENMASK(15, 0). efuse.h:11
+EFUSE_HDR_PAGE_MASK = 0x000E0000    # GENMASK(19, 17). efuse_be.c:196
+EFUSE_HDR_OFFSET_MASK = 0x0001FFF0  # GENMASK(16, 4). efuse_be.c:197
+EFUSE_HDR_WORD_EN_MASK = 0x0000000F # GENMASK(3, 0). efuse_be.c:199
+EFUSE_RFE_TYPE_OFST = 0xCA       # struct rtw8922a_efuse.rfe_type. rtw8922a.h:51
+EFUSE_XTAL_K_OFST = 0xB9         # struct rtw8922a_efuse.xtal_k. rtw8922a.h:47
+
+# BB register init (rtw89_phy_init_bb_reg). [SRC] phy.c:1940-1966, phy.h:13-29, core.h:206.
+RTW89_FW_ELEMENT_ID_BB_REG = 2   # enum rtw89_fw_element_id. fw.h:4330
+CR_BASE_BE = 0x20000             # rtw89_phy_gen_be.cr_base. phy_be.c:1899
+BYPASS_CR_DATA = 0xBABECAFE      # core.h:206
+PHY_HEADLINE_VALID = 0xF         # phy.h:14
+PHY_COND_BRANCH_IF = 0x8         # phy.h:24
+PHY_COND_BRANCH_ELIF = 0x9       # phy.h:25
+PHY_COND_BRANCH_ELSE = 0xA       # phy.h:26
+PHY_COND_BRANCH_END = 0xB        # phy.h:27
+PHY_COND_CHECK = 0x4             # phy.h:28
+PHY_COND_DONT_CARE = 0xFF        # phy.h:29
+
 # Register H2C/C2H firmware mailbox (rtw89_fw_msg_reg). [SRC] fw.c:8229-8335, reg.h, fw.h.
 R_BE_H2CREG_DATA0 = 0x7140       # reg.h:4848; DATAn = DATA0 + n*4
 R_BE_C2HREG_DATA0 = 0x7150       # reg.h:4852

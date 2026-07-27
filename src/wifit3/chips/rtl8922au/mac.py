@@ -171,6 +171,10 @@ from .constants import (
     R_BE_SYS_WL_EFUSE_CTRL, B_BE_AUTOLOAD_SUS,
     PHYSICAL_EFUSE_SIZE, PHYCAP_ADDR, PHYCAP_SIZE, R_BE_EFUSE_USB_MACADDR, ETH_ALEN,
     RTW89_FWCMD_H2CREG_FUNC_GET_FEATURE, RTW89_H2CREG_GET_FEATURE_PART_NUM,
+    SEC_CTRL_EFUSE_SIZE, EFUSE_RF_BLOCK_OFFSET, EFUSE_RF_BLOCK_SIZE,
+    EFUSE_BLOCK_ID_MASK, EFUSE_BLOCK_SIZE_MASK,
+    EFUSE_HDR_PAGE_MASK, EFUSE_HDR_OFFSET_MASK, EFUSE_HDR_WORD_EN_MASK,
+    EFUSE_RFE_TYPE_OFST, EFUSE_XTAL_K_OFST,
 )
 from . import firmware
 
@@ -923,19 +927,61 @@ def chip_bb_preinit(t) -> None:
     bb_preinit(t, RTW89_PHY_1)
 
 
+def _parse_logical_efuse_block(phy_map: bytes, block_offset: int, size: int) -> bytes:
+    """rtw89_eeprom_parser_be for one non-ADIE block: walk the physical map's 3-byte headers and
+    scatter each 2-byte word into the block's logical map by its decoded logical index.
+    [SRC] efuse_be.c:210-306."""
+    page = field_get(EFUSE_BLOCK_ID_MASK, block_offset)
+    page_offset = field_get(EFUSE_BLOCK_SIZE_MASK, block_offset)
+    lo = page_offset & ~1
+    hi = (page_offset + size + 1) & ~1
+    log_map = bytearray(b"\xff" * size)
+    i = SEC_CTRL_EFUSE_SIZE
+    while i < len(phy_map):
+        h1, h2, h3 = phy_map[i], phy_map[i + 1], phy_map[i + 2]
+        if h1 == 0xFF or h2 == 0xFF or h3 == 0xFF:
+            break
+        i += 3
+        hdr = (h1 << 16) | (h2 << 8) | h3
+        blk_page = field_get(EFUSE_HDR_PAGE_MASK, hdr)
+        blk_idx = field_get(EFUSE_HDR_OFFSET_MASK, hdr)
+        word_en = field_get(EFUSE_HDR_WORD_EN_MASK, hdr)
+        for k in range(4):
+            if word_en & (1 << k):
+                continue
+            if i >= len(phy_map) - 1:
+                return bytes(log_map)
+            log_idx = (blk_idx << 3) + (k << 1)
+            if blk_page == page and lo <= log_idx < hi:
+                v0, v1 = phy_map[i], phy_map[i + 1]
+                if log_idx == lo and page_offset > lo:
+                    log_map[log_idx - page_offset + 1] = v1
+                elif log_idx + 2 == hi and page_offset + size < hi:
+                    log_map[log_idx - page_offset] = v0
+                else:
+                    log_map[log_idx - page_offset] = v0
+                    log_map[log_idx - page_offset + 1] = v1
+            i += 2
+    return bytes(log_map)
+
+
 def parse_efuse_map(t, cv: int) -> dict:
     """rtw89_parse_efuse_map_be: check autoload, dump the full physical efuse map, then run the
     logical HCI-DIG (USB) and RF block parses. The DAV dump is skipped (dav_phy_efuse_size 0).
-    The RF-block parse is pure software; the USB HCI-DIG block reads the MAC address from a
-    register. [SRC] efuse_be.c:341-399, rtw8922a.c:854-895.
-    TODO: verify, the RF/board logical extraction (rfe_type, xtal, gain, tssi) is not yet done."""
+    The USB HCI-DIG block reads the MAC address from a register; the RF block parse (software)
+    yields rfe_type/xtal_cap. The tssi/gain-offset arrays are deferred (RFK-time). [SRC]
+    efuse_be.c:341-399, rtw8922a.c:854-895."""
     field_get(B_BE_AUTOLOAD_SUS, t.read16(R_BE_SYS_WL_EFUSE_CTRL))   # efuse->valid
     phy_map = dump_physical_efuse_map(t, cv, 0, PHYSICAL_EFUSE_SIZE)
     addr = bytearray()
     for off in range(0, ETH_ALEN, 2):                # rtw8922a_read_efuse_usb, from R_BE 0x4078
         val = t.read16(R_BE_EFUSE_USB_MACADDR + off)
         addr += bytes((val & 0xFF, (val >> 8) & 0xFF))
-    return {"phy_map": phy_map, "mac_addr": bytes(addr)}
+    rf = _parse_logical_efuse_block(phy_map, EFUSE_RF_BLOCK_OFFSET, EFUSE_RF_BLOCK_SIZE)
+    t.rfe_type = rf[EFUSE_RFE_TYPE_OFST]             # rtw8922a_read_efuse_rf. rtw8922a.c:866
+    t.xtal_cap = rf[EFUSE_XTAL_K_OFST]
+    return {"phy_map": phy_map, "mac_addr": bytes(addr),
+            "rfe_type": t.rfe_type, "xtal_cap": t.xtal_cap}
 
 
 def parse_phycap_map(t, cv: int) -> bytes:

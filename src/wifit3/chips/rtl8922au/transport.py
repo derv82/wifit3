@@ -30,6 +30,8 @@ class RTL8922AUTransport:
         self.c2h_counter = 0
         self.h2c_seq = 0            # fw_info.h2c_seq: fwcmd sequence number. [SRC] fw.c:1639,2012
         self.cmac_pwr = set()       # RTW89_FLAG_CMACn_PWR: which CMACs are powered. [SRC] mac_be.c:810
+        self.rfe_type = 0           # efuse->rfe_type, from the RF-block logical parse. [SRC] rtw8922a.c:866
+        self.xtal_cap = 0           # efuse->xtal_cap. [SRC] rtw8922a.c:867
 
     def _vendorreq(self, addr: int, data: bytes, length: int, reqtype: int) -> bytes:
         """rtw89_usb_vendorreq: one endpoint-0 vendor control transfer, retried up to 10

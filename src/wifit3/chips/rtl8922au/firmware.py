@@ -97,6 +97,27 @@ def load_bbmcu_suit(cv: int) -> bytes:
     raise RuntimeError("rtl8922au: no suitable BBMCU0 firmware element")
 
 
+def element_regs(elem_id: int, hal_aid: int = 0) -> list:
+    """rtw89_build_phy_tbl_from_elm: the (addr, data) reg2 pairs of the first firmware element
+    with `elem_id` whose aid is 0 or matches hal_aid. Elements follow the mfw container, each a
+    32-byte header (24 fixed + 8-byte reg2 idx/rsvd prefix) then size/8 little-endian reg pairs.
+    [SRC] fw.c:1081-1160, 1562-1622, fw.h:4496-4520."""
+    data = _ASSET_PATH.read_bytes()
+    fw_nr = data[1]
+    off = 16 + (fw_nr - 1) * 16
+    shift, size = struct.unpack_from("<II", data, off + 4)
+    offset = _align(shift + size, RTW89_FW_ELEMENT_ALIGN)
+    while offset + FW_ELEMENT_HDR_SIZE < len(data):
+        eid, elm_size = struct.unpack_from("<II", data, offset)
+        aid = struct.unpack_from("<H", data, offset + 12)[0]
+        if eid == elem_id and (aid == 0 or aid == hal_aid):
+            start = offset + FW_ELEMENT_HDR_SIZE       # past the 8-byte reg2 idx/rsvd prefix
+            n = elm_size // 8
+            return [struct.unpack_from("<II", data, start + i * 8) for i in range(n)]
+        offset = _align(offset + FW_ELEMENT_HDR_SIZE + elm_size, RTW89_FW_ELEMENT_ALIGN)
+    raise RuntimeError(f"rtl8922au: no firmware element id={elem_id}")
+
+
 def parse_hdr_v1(fw: bytes) -> dict:
     """rtw89_fw_hdr_parser_v1 + the per-section parse (including the formatted-MSSC security
     handling that marks the second key variant `ignore`). [SRC] fw.c:404-537.

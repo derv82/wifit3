@@ -8,7 +8,7 @@ import usb.core
 import usb.util
 
 from ..driver import Driver, DeviceID, ProgressCallback
-from . import mac
+from . import mac, phy
 from .constants import (
     R_BE_PAD_CTRL2, _LIBUSB_SPEED_SUPER, USB_SWITCH_DELAY, B_BE_MATCH_CNT,
     B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
@@ -129,6 +129,9 @@ class RTL8922AUDriver(Driver):
         # phy_init_bb_afe applies a firmware AFE table; this card ships no afe element, so it is a
         # no-op. Then rtw89_mac_init: partial_init(include_bb=True). [SRC] core.c:6640-6648, phy.c:1968.
         mac.mac_init(self.transport, self._h2c_ep, ver["cv"])
+        # core_start resumes after mac_init: btc_ntfy_poweron + chip_reset_bb_rf are no-ops on BE,
+        # then phy_init_bb_reg writes the firmware BB register tables. [SRC] core.c:6648-6659.
+        phy.init_bb_reg(self.transport, ver["cv"])
         return True
 
     def _switch_usb_mode(self) -> None:
