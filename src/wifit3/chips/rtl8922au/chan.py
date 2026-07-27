@@ -5,10 +5,8 @@ airmon-ng drives once per hop. Only the head (pre_set_channel_bb) is ported so f
 marked TODO. [SRC] core.c:531 __rtw89_set_channel, rtw8922a.c:2232 set_channel.
 """
 from . import phy
+from .constants import RTW89_BAND_2G, RTW89_BAND_5G, RTW89_BAND_6G
 
-RTW89_BAND_2G = 0                # core.h
-RTW89_BAND_5G = 1
-RTW89_BAND_6G = 2
 RTW89_CHANNEL_WIDTH_20 = 0       # core.h
 
 
@@ -50,9 +48,10 @@ def set_channel(t, channel: int, phy_idx: int = 0, mac_idx: int = 0) -> dict:
     post_set_channel bb/rf], then rfk. Only the head pre_set_channel_bb is ported so far.
     [SRC] core.c:531, rtw8922a.c:2321 set_channel_help / 2232 set_channel."""
     chan = make_chan(channel)
-    # set_channel_help(enter):
-    phy.pre_set_channel_bb(t, phy_idx)
-    phy.pre_set_channel_rf(t, t.cv, phy_idx)
-    # TODO: hal_reset(enter); set_channel_mac/bb/rf(chan, phy_idx); set_txpwr(chan);
-    #       hal_reset(exit) + post_set_channel bb/rf; rtw8922a_rfk(chan).
+    # The single PHY_0 monitor vif recalcs mlo_dbcc_mode to MLO_2_PLUS_0_1RF (both RF paths active
+    # on band 0), so hal_reset's tssi/adc run both paths. [SRC] chan.c:485-534.
+    t.mlo_1_1 = False
+    phy.set_channel_help(t, t.cv, chan["band_type"], enter=True, phy_idx=phy_idx, mac_idx=mac_idx)
+    # TODO: set_channel_mac/bb/rf(chan, phy_idx); set_txpwr(chan); set_channel_help(leave) +
+    #       post_set_channel bb/rf; rtw8922a_rfk(chan). tx_en from help(enter) feeds help(leave).
     return chan

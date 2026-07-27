@@ -52,6 +52,9 @@ B_BE_USB23_SW_MODE = 1 << 31     # reg.h:4252
 B_AX_CHIP_VER_MASK = 0xF000      # GENMASK(15, 12). reg.h:196
 B_BE_HW_ID_MASK = 0xFF           # GENMASK(7, 0). reg.h:4319
 CHIP_CAV = 0                     # first enum rtw89_cv. core.h:365
+RTW89_BAND_2G = 0                # enum rtw89_band. core.h
+RTW89_BAND_5G = 1
+RTW89_BAND_6G = 2
 
 # XTAL_SI indirect write extras (rtw89_mac_write_xtal_si). [SRC] mac_be.c:413-441, reg.h/mac.h.
 # The BE field positions match the AX ones, so the AX masks above cover the shared fields.

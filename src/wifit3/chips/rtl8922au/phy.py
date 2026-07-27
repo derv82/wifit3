@@ -8,7 +8,7 @@ import struct
 import time
 
 from .constants import (
-    CHIP_CAV,
+    CHIP_CAV, RTW89_BAND_2G,
     RTW89_FW_ELEMENT_ID_BB_REG, CR_BASE_BE, BYPASS_CR_DATA,
     PHY_HEADLINE_VALID, PHY_COND_BRANCH_IF, PHY_COND_BRANCH_ELIF, PHY_COND_BRANCH_ELSE,
     PHY_COND_BRANCH_END, PHY_COND_CHECK, PHY_COND_DONT_CARE,
@@ -612,14 +612,22 @@ def power_trim(t) -> None:
 
 # --- bb_cfg_txrx_path (hal_reset + ctrl_trx_path). [SRC] rtw8922a.c:2298-2626. ---
 
-def _adc_en(t, phy_idx: int, en: bool) -> None:
-    """rtw8922a_adc_en: MLO 1+1 uses path A for phy0, path B for phy1 (shared FIFO reg). [SRC]
-    rtw8922a.c:2276."""
-    path = RF_PATH_A if phy_idx == 0 else RF_PATH_B
+def _adc_en_path(t, path: int, en: bool) -> None:
+    """rtw8922a_adc_en_path: RMW the path's enable bit in the shared R_ADC_FIFO_V1 field. [SRC]
+    rtw8922a.c:2263."""
     val = (t.read32(R_ADC_FIFO_V1 + CR_BASE_BE) >> 24) & 0xFF
     bit = 0x1 if path == RF_PATH_A else 0x2
     val = (val & ~bit) if en else (val | bit)
     _phy_write32_mask(t, R_ADC_FIFO_V1, B_ADC_FIFO_EN_V1, val & 0xFF)
+
+
+def _adc_en(t, phy_idx: int, en: bool) -> None:
+    """rtw8922a_adc_en: MLO 1+1 does one path by phy_idx, else both paths. [SRC] rtw8922a.c:2285."""
+    if t.mlo_1_1:
+        _adc_en_path(t, RF_PATH_A if phy_idx == 0 else RF_PATH_B, en)
+    else:
+        _adc_en_path(t, RF_PATH_A, en)
+        _adc_en_path(t, RF_PATH_B, en)
 
 
 def _dfs_en(t, phy_idx: int, en: bool) -> None:
@@ -629,10 +637,15 @@ def _dfs_en(t, phy_idx: int, en: bool) -> None:
 
 
 def _tssi_cont_en(t, phy_idx: int, en: bool) -> None:
-    """rtw8922a_tssi_cont_en_phyidx: MLO 1+1 uses path A for phy0, path B for phy1. [SRC]
+    """rtw8922a_tssi_cont_en_phyidx: MLO 1+1 does one path by phy_idx, else both paths. [SRC]
     rtw8922a_rfk.c:21-40."""
-    path = RF_PATH_A if phy_idx == 0 else RF_PATH_B
-    _phy_write32_mask(t, R_TSSI_PWR[path], B_TSSI_CONT_EN, 0 if en else 1)
+    val = 0 if en else 1
+    if t.mlo_1_1:
+        path = RF_PATH_A if phy_idx == 0 else RF_PATH_B
+        _phy_write32_mask(t, R_TSSI_PWR[path], B_TSSI_CONT_EN, val)
+    else:
+        _phy_write32_mask(t, R_TSSI_PWR[RF_PATH_A], B_TSSI_CONT_EN, val)
+        _phy_write32_mask(t, R_TSSI_PWR[RF_PATH_B], B_TSSI_CONT_EN, val)
 
 
 def _tssi_reset(t, phy_idx: int) -> None:
@@ -642,11 +655,12 @@ def _tssi_reset(t, phy_idx: int) -> None:
     _phy_write32_mask(t, reg, B_TXPWR_RST, 1)
 
 
-def _bb_reset_en(t, phy_idx: int, en: bool) -> None:
-    """rtw8922a_bb_reset_en, 2G band. [SRC] rtw8922a.c:1851."""
+def _bb_reset_en(t, phy_idx: int, band: int, en: bool) -> None:
+    """rtw8922a_bb_reset_en: the RXCCA re-enable only on the 2G band. [SRC] rtw8922a.c:1851."""
     if en:
         _phy_write32_idx(t, R_RSTB_ASYNC, B_RSTB_ASYNC_ALL, 1, phy_idx)
-        _phy_write32_idx(t, R_RXCCA_BE1, B_RXCCA_BE1_DIS, 0, phy_idx)   # band == 2G
+        if band == RTW89_BAND_2G:
+            _phy_write32_idx(t, R_RXCCA_BE1, B_RXCCA_BE1_DIS, 0, phy_idx)
         _phy_write32_idx(t, R_PD_CTRL, B_PD_HIT_DIS, 0, phy_idx)
     else:
         _phy_write32_idx(t, R_RXCCA_BE1, B_RXCCA_BE1_DIS, 1, phy_idx)
@@ -654,8 +668,8 @@ def _bb_reset_en(t, phy_idx: int, en: bool) -> None:
         _phy_write32_idx(t, R_RSTB_ASYNC, B_RSTB_ASYNC_ALL, 0, phy_idx)
 
 
-def _hal_reset(t, phy_idx: int, mac_idx: int, enter: bool, tx_en: int) -> int:
-    """rtw8922a_hal_reset: quiesce (enter) or re-enable (leave) TX/RX around the trx-path change.
+def _hal_reset(t, phy_idx: int, mac_idx: int, band: int, enter: bool, tx_en: int) -> int:
+    """rtw8922a_hal_reset: quiesce (enter) or re-enable (leave) TX/RX around a channel/path change.
     [SRC] rtw8922a.c:2299."""
     if enter:
         tx_en = mac.stop_sch_tx(t, mac_idx)
@@ -663,13 +677,13 @@ def _hal_reset(t, phy_idx: int, mac_idx: int, enter: bool, tx_en: int) -> int:
         _dfs_en(t, phy_idx, False)
         _tssi_cont_en(t, phy_idx, False)
         _adc_en(t, phy_idx, False)
-        _bb_reset_en(t, phy_idx, False)
+        _bb_reset_en(t, phy_idx, band, False)
         return tx_en
     mac.cfg_ppdu_status(t, mac_idx, True)
     _adc_en(t, phy_idx, True)
     _dfs_en(t, phy_idx, True)
     _tssi_cont_en(t, phy_idx, True)
-    _bb_reset_en(t, phy_idx, True)
+    _bb_reset_en(t, phy_idx, band, True)
     mac.resume_sch_tx(t, mac_idx, tx_en)
     return tx_en
 
@@ -707,14 +721,14 @@ def bb_cfg_txrx_path(t) -> None:
     """rtw8922a_bb_cfg_txrx_path: quiesce both bands, set the AB tx/rx paths + rx-nss, re-enable.
     [SRC] rtw8922a.c:2565-2626."""
     tx_en = [0, 0]
-    tx_en[0] = _hal_reset(t, 0, 0, True, 0)
-    tx_en[1] = _hal_reset(t, 1, 1, True, 0)
+    tx_en[0] = _hal_reset(t, 0, 0, RTW89_BAND_2G, True, 0)
+    tx_en[1] = _hal_reset(t, 1, 1, RTW89_BAND_2G, True, 0)
     for phy_idx in (0, 1):                       # ctrl_trx_path(AB, 2, AB, 2)
         _ctrl_tx_path_tmac(t, phy_idx)
         _ctrl_rx_path_tmac(t, phy_idx)
         _cfg_rx_nss_limit(t, phy_idx)
-    _hal_reset(t, 0, 0, False, tx_en[0])
-    _hal_reset(t, 1, 1, False, tx_en[1])
+    _hal_reset(t, 0, 0, RTW89_BAND_2G, False, tx_en[0])
+    _hal_reset(t, 1, 1, RTW89_BAND_2G, False, tx_en[1])
 
 
 def pre_set_channel_bb(t, phy_idx: int = 0) -> None:
@@ -728,9 +742,26 @@ def pre_set_channel_bb(t, phy_idx: int = 0) -> None:
 
 
 def pre_set_channel_rf(t, cv: int, phy_idx: int = 0) -> None:
-    """rtw8922a_pre_set_channel_rf (dbcc_en): set_syn01 power per MLO mode. The single monitor vif
-    on PHY_0 is not mlo_1_1, so RF_SYN_ON_OFF (syn on path A, off path B). [SRC] rtw8922a_rfk.c:360."""
+    """rtw8922a_pre_set_channel_rf (dbcc_en): set_syn01 power per MLO mode. mlo_1_1 powers both;
+    else PHY_0 -> ON_OFF (syn A on, B off), PHY_1 -> OFF_ON. [SRC] rtw8922a_rfk.c:360."""
     if cv == CHIP_CAV:
         raise NotImplementedError("set_syn01 A-cut path not needed on this card")
-    syn = RF_SYN_ON_OFF if phy_idx == 0 else RF_SYN_OFF_ON
+    if t.mlo_1_1:
+        syn = RF_SYN_ALLON
+    else:
+        syn = RF_SYN_ON_OFF if phy_idx == 0 else RF_SYN_OFF_ON
     _set_syn01_cbv(t, syn)
+
+
+def set_channel_help(t, cv: int, band: int, enter: bool, phy_idx: int = 0, mac_idx: int = 0,
+                     tx_en: int = 0) -> int:
+    """rtw8922a_set_channel_help: on enter, pre_set_channel bb/rf then hal_reset quiesce; on leave,
+    hal_reset re-enable then post_set_channel bb/rf. Returns tx_en (needed for the leave call).
+    Only the enter arm is ported so far. [SRC] rtw8922a.c:2321."""
+    if enter:
+        pre_set_channel_bb(t, phy_idx)
+        pre_set_channel_rf(t, cv, phy_idx)
+    tx_en = _hal_reset(t, phy_idx, mac_idx, band, enter, tx_en)
+    if not enter:
+        raise NotImplementedError("set_channel_help leave (post_set_channel bb/rf) not ported yet")
+    return tx_en
