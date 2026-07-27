@@ -37,6 +37,8 @@ class RTL8922AUTransport:
         self.byr = None             # by-rate txpwr table [band][bw] from the fw element, cached lazily
         self.lmt_2g = None          # 2G txpwr limit table from the fw element, cached lazily
         self.lmt_ru_2g = None       # 2G txpwr limit-RU table from the fw element, cached lazily
+        self.lmt_5g = None          # 5G txpwr limit table from the fw element, cached lazily
+        self.lmt_ru_5g = None       # 5G txpwr limit-RU table from the fw element, cached lazily
         self.tx_shape_lmt = None    # tx-shape limit table from the fw element, cached lazily
         self.gain_offset = [[0] * 5, [0] * 5]   # efuse rx-gain offset per path (2G_CCK/OFDM, 5G L/M/H)
         self.gain_offset_valid = False          # efuse_gain.offset_valid. rtw8922a.c:826

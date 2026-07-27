@@ -1262,7 +1262,9 @@ TXPWR_FACTOR_BB = 3                     # chip->txpwr_factor_bb. rtw8922a.c:3200
 
 # txpwr limit / limit_ru / tx-shape tables. [SRC] fw.h:4337-4344, phy.h:509-568, core.h:840-1172.
 RTW89_FW_ELEMENT_ID_TXPWR_LMT_2GHZ = 10       # fw.h:4338
+RTW89_FW_ELEMENT_ID_TXPWR_LMT_5GHZ = 11       # fw.h:4339
 RTW89_FW_ELEMENT_ID_TXPWR_LMT_RU_2GHZ = 13    # fw.h:4341
+RTW89_FW_ELEMENT_ID_TXPWR_LMT_RU_5GHZ = 14    # fw.h:4342
 RTW89_FW_ELEMENT_ID_TX_SHAPE_LMT = 16         # fw.h:4344
 RTW89_RS_LMT_NUM = 3                     # RTW89_RS_MCS + 1. core.h:879
 RTW89_RS_TX_SHAPE_NUM = 2               # RTW89_RS_OFDM + 1. core.h:880
@@ -1272,6 +1274,8 @@ RTW89_REGD_NUM = 16                     # enum rtw89_regulation_type. core.h
 RTW89_WW = 0                            # RTW89_WW regulatory domain. core.h
 RTW89_2G_CH_NUM = 14                    # core.h:840
 RTW89_2G_BW_NUM = 2                     # RTW89_CHANNEL_WIDTH_40 + 1. core.h:1150
+RTW89_5G_CH_NUM = 53                    # core.h:851
+RTW89_5G_BW_NUM = 4                     # RTW89_CHANNEL_WIDTH_160 + 1. core.h:1151
 RTW89_RU_NUM = 5                        # core.h:1172
 RTW89_RU26 = 0                          # core.h:1164
 RTW89_RU52 = 1
