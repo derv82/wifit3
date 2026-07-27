@@ -15,9 +15,9 @@ injection interface end to end: cold `connect()` + `set_channel()` (2.4 + 5 GHz)
 parsed) + TX (`inject_frame` validated: a broadcast probe request drew 38 probe responses to the
 forged SA). RX-ACK admission (`_enable/_disable_rx_acks`) is a documented no-op (monitor mode
 already forwards all control subtypes to host, so the AP's ACKs reach RX), and the driver reads +
-exposes its efuse MAC. **Forged-MAC auto-ACK (`enter_active_monitor`) is unresolved and left
-`FAKE_MAC = UNIMPLEMENTED`** (investigation below). What remains after that is the WEP / WPS labs
-(see the project task list and `planning/`).
+exposes its efuse MAC. **Forged-MAC auto-ACK (`enter_active_monitor`) works: `FAKE_MAC = SPOOFABLE`**
+(bench-confirmed, notes below). What remains is the WEP / WPS labs (see the project task list and
+`planning/`).
 
 What reproduces: all of `rtw89_core_start`, the mac80211 add-interface, and per-hop the FULL
 `__rtw89_set_channel` for **both PHYs**. A hop is TWO `__rtw89_set_channel` calls: PHY_0/MAC_0 then
@@ -147,44 +147,42 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Active monitor (auto-ACK): open
+## Active monitor (auto-ACK): solved
 
-`enter_active_monitor` (make the card HW-ACK a forged/chosen MAC while monitoring) is **not solved**
-on rtw89. It is `FAKE_MAC = UNIMPLEMENTED`; the base's `NotImplementedError` stands. This is the one
-missing piece for the WEP/WPS labs (they impersonate a client and need its frames ACKed). What was
-established (bench: ASUS USB-BE93 DUT + RTL8812AU prober, `scripts/ack_lab/rx_autoack.py`, ch1):
+`enter_active_monitor` makes the card HW-ACK a forged/chosen MAC while still monitoring, and it works.
+`FAKE_MAC = SPOOFABLE`.
 
-- **Every prior card's trick has no target here.** The rtl8xxxu family (8812/8814/8821/8821cu/8822/
-  8188eus) writes the forged MAC to the **`REG_MACID`** hardware register and the responder HW-ACKs
-  `RA == REG_MACID`; mt76x writes `MT_MAC_ADDR` + `U2ME`; mt7921 programs a DEV `omac`. rtw89 (WiFi 7)
-  is a different architecture: an exhaustive reg.h / source search found **no self-MAC register** (AX
-  or BE). The self-address lives only in the firmware **address CAM** (SMA), matched via
-  `B_BE_A_UC_CAM_MATCH` / `A1_MATCH`. Scan programs its random MAC the same way (`h2c_cam(scan_mac)`)
-  and does auto-ACK, so the mechanism exists inside association/scan-offload firmware state.
-- **Reception works; the responder never fires.** With RX healthy the DUT received 100/100 frames sent
-  to the forged MAC yet auto-ACKed 0. Tried (all 0/100, spoofed and silicon): addr-cam SMA in
-  net_type {NO_LINK, INFRA}; + `join_info` connected; + `role_maintain` TYPE_CHANGE to STATION; +
-  clearing `B_BE_SNIFFER_MODE`. Clearing sniffer mode dropped RX to zero (no unicast-to-me path from
-  the CAM SMA alone).
-- **Do not ship the speculative arming.** The `set_sniffer_mode` clear + role churn in
-  `enter_active_monitor` (no clean re-init) is the likely cause of the RX wedging observed over many
-  connect cycles. That code was reverted. `dev.reset()` / sysfs re-authorize re-enumerate but do not
-  cut power, so a wedged RX-DMA survives them: a physical replug is the only recovery here.
+**The trigger is one thing: program the addr-cam SMA** (`firmware.h2c_addr_cam`, entry 0,
+net_type NO_LINK). The RX responder auto-ACKs a received frame whose addr1 matches that SMA. Nothing
+else is needed. Everything I first tried on top of it (a `net_type` INFRA/AD_HOC change, `join_info`
+connected, `role_maintain` STATION, port-config `rx_sw`/`TSF_UDT`, clearing `B_BE_SNIFFER_MODE`, the
+responder CCA check) was a **red herring**, chased because of a flaky-RX confound (below).
 
-Next leads for a healthy card (both untested, the card wedged first):
-1. **Program SMA = the card's real efuse MAC**, not `00:00:00:00:00:00`. The captured monitor vif came
-   up with a zero SMA (verify_pcap is byte-exact), so the hardware currently holds no self-address at
-   all. rtl8xxxu self-ACKs because `REG_MACID` holds the perm MAC from boot; try the CAM analog.
-2. **Read the hardware's verdict directly:** `BE_RXD_A1_MATCH` (rx-desc W3 bit10) + `BE_RXD_ADDR_CAM_VLD`
-   (W2 bit14). Inject to a programmed SMA, decode those bits: `A1_MATCH=1` means the CAM made the
-   address "me" (responder-enable is the gap); `=0` means the CAM SMA is not the match source.
-   A ready tally hook: `rx.iter_bulk_frames` + these two words; drive it through the running
-   `RxReaderThread` (a direct bulk read starves RX).
+Bench-confirmed (ASUS USB-BE93 DUT + RTL8812AU prober, ch1, `scripts/rtl8922au/`):
+- `driver_check.py` / `confirm.py` case A: program the SMA, nothing else -> `ACKed 100/100`.
+- `a1match.py`: with the SMA programmed the rx-desc `BE_RXD_A1_MATCH` bit is 1 on 100% of to-SMA
+  frames (forged and silicon), 0 on broadcast. The hardware reads the CAM SMA as "me".
+- `monitor_check.py`: while armed, the DUT still receives foreign toDS traffic (addr1 != SMA) and
+  ACKs **only** the armed MAC (foreign frames get 0 ACKs). So it stays a real promiscuous monitor.
+
+**The flaky-RX confound (why this took so long).** The 8922A's bulk-IN RX DMA wedges after repeated
+cold-boot-of-a-warm-chip cycles: `connect()` always cold-boots, and `dev.reset()` / sysfs re-authorize
+re-enumerate without cutting power, so a wedged pipe survives them. Only a physical replug recovers
+it. When RX is wedged the DUT receives nothing, so it auto-ACKs nothing, which read as a long string
+of false `0/100` negatives across every approach. The tells: a run's `total_wifi`/`DUT_recv` is 0
+when wedged, hundreds when healthy; auto-ACK tracks that perfectly. Diagnostics print `DUT_recv` and
+retry across connects to catch a healthy window. The rtl8xxxu `REG_MACID` note still holds (rtw89 has
+no self-MAC register; the addr-cam SMA is the analog), but no port/role/sniffer change was ever
+needed.
+
+The `scripts/rtl8922au/` diagnostics (`_amlib.py` harness + `confirm.py`/`driver_check.py`/
+`monitor_check.py`/`a1match.py`/`ack_*.py`) are kept for the next chip or a regression check; leave
+the 8812 sniffer plugged and re-run any of them after a physical replug.
 
 ## Next
 
-- **WEP / WPS labs** (see the project task list and `planning/`). Blocked on active-monitor auto-ACK
-  above for the client-impersonation ACKs; the passive/injection pieces do not need it.
+- **WEP / WPS labs** (see the project task list and `planning/`). Now unblocked: active monitor
+  supplies the client-impersonation ACKs.
 - `inject_frame` has no No-ACK flag path; add a test-only no-ACK path to verify TX bytes (cf. commit
   d58e6f252) if needed.
 

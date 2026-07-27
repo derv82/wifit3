@@ -20,6 +20,7 @@ from .constants import (
     B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
     B_BE_USB3_FORCE, B_BE_USB2_FORCE, B_BE_FORCE_U3_CK, B_BE_FORCE_U2_CK, B_BE_FORCE_CLK_U2,
     B_BE_USB3_GEN_MODE, B_BE_USB3_LANE_MODE, BULKOUT_ID_H2C, RTW89_WIFI_ROLE_MONITOR,
+    RTW89_NET_TYPE_NO_LINK, RTW89_BSSID_MATCH_ALL,
 )
 from .transport import RTL8922AUTransport
 
@@ -51,9 +52,10 @@ class RTL8922AUDriver(Driver):
         DeviceID(vid=0x7392, pid=0x4822, chipset="RTL8922AU"),
         DeviceID(vid=0x7392, pid=0x5822, chipset="RTL8922AU"),
     ]
-    # Forged-MAC auto-ACK is unresolved on rtw89 (no rtl8xxxu-style REG_MACID; the addr-cam SMA
-    # alone doesn't arm the responder in monitor mode). See RTL8922AU.md.
-    FAKE_MAC = FakeMacSupport.UNIMPLEMENTED
+    # Auto-ACKs an arbitrary forged MAC by programming it as the addr-cam SMA (enter_active_monitor);
+    # bench-confirmed the card still monitors foreign/toDS traffic and ACKs only the armed MAC.
+    # [SRC] cam.c:819 (SMA = the vif's own mac_addr, matched against a received frame's addr1).
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     # 2.4 GHz + 5 GHz at 20 MHz. TODO: verify + add the 6 GHz plan (8922a support_bands
     # includes 6 GHz). [SRC] rtw8922a.c:3210.
@@ -75,6 +77,7 @@ class RTL8922AUDriver(Driver):
         self._mgmt_ep: Optional[int] = None
         self._tx_seq: int = 0
         self._band_is_2g: bool = True
+        self._active_mac: Optional[bytes] = None
         self.mac_address: Optional[str] = None
 
     @classmethod
@@ -323,6 +326,29 @@ class RTL8922AUDriver(Driver):
         """Matches _enable_rx_acks: nothing to undo (monitor always admits ACKs)."""
         return
 
-    # enter_active_monitor / exit_active_monitor are intentionally NOT overridden: forged-MAC
-    # auto-ACK is unresolved on rtw89 (FAKE_MAC UNIMPLEMENTED). The base raises NotImplementedError.
-    # See RTL8922AU.md "Active monitor (auto-ACK): open" for the investigation and next leads.
+    async def enter_active_monitor(self, mac: bytes,
+                                   bssid: Optional[bytes] = None) -> bytes:
+        """Arm HW auto-ACK for ``mac`` by programming it as addr-cam entry 0's SMA (the RX addr1 the
+        responder auto-ACKs). Programming the SMA is the whole trigger: the card keeps monitoring all
+        traffic and ACKs only this MAC (bench-confirmed). TMA/bssid-cam = ``bssid`` (exact match) or
+        match-all when no peer is given. Return the MAC armed. [SRC] cam.c:819."""
+        if self._h2c_ep is None:
+            raise RuntimeError("RTL8922AU enter_active_monitor: not connected")
+        sma = bytes(mac)
+        tma = bytes(bssid) if bssid is not None else b"\x00" * 6
+        bssid_mask = RTW89_BSSID_MATCH_ALL if bssid is None else 0
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: firmware.h2c_addr_cam(
+                self.transport, self._h2c_ep, sma=sma, tma=tma,
+                net_type=RTW89_NET_TYPE_NO_LINK, bssid=tma, bssid_mask=bssid_mask))
+        self._active_mac = sma
+        return sma
+
+    async def exit_active_monitor(self) -> None:
+        """Re-zero the addr-cam SMA (the connect-time h2c_cam baseline) so the responder stops
+        auto-ACKing."""
+        if self._h2c_ep is None:
+            return
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: firmware.h2c_cam(self.transport, self._h2c_ep))
+        self._active_mac = None
