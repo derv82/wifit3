@@ -707,3 +707,13 @@ def bb_cfg_txrx_path(t) -> None:
         _cfg_rx_nss_limit(t, phy_idx)
     _hal_reset(t, 0, 0, False, tx_en[0])
     _hal_reset(t, 1, 1, False, tx_en[1])
+
+
+def pre_set_channel_bb(t, phy_idx: int = 0) -> None:
+    """rtw8922a_pre_set_channel_bb (dbcc_en): clear DBCC_EN, then load the per-PHY EMLSR parm
+    table. Runs at the head of the per-channel set_channel. [SRC] rtw8922a.c:2199."""
+    _phy_write32_mask(t, R_DBCC, B_DBCC_EN, 0x0)
+    parms = (0x6180, 0xBBAB, 0xABA9, 0xEBA9, 0xEAA9) if phy_idx == 0 \
+        else (0xBBAB, 0xAFFF, 0xEFFF, 0xEEFF)
+    for parm in parms:
+        _phy_write32_mask(t, R_EMLSR, B_EMLSR_PARM, parm)

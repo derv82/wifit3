@@ -165,6 +165,9 @@ class RTL8922AUDriver(Driver):
         firmware.h2c_default_dmac_tbl(self.transport, ep, macid=0)
         # __rtw89_ops_add_iface_link tail: btc_ntfy_role_info(BTC_ROLE_START). [SRC] mac80211.c:154.
         coex.ntfy_role_info(self.transport, ep)
+        # First mac80211 channel tune (airmon-ng): rtw8922a_set_channel head, pre_set_channel_bb.
+        # [SRC] rtw8922a.c:2328.
+        phy.pre_set_channel_bb(self.transport, phy_idx=0)
         return True
 
     def _switch_usb_mode(self) -> None:
