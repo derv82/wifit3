@@ -4,7 +4,7 @@ Builds the rtw89_chan for a channel and runs the per-channel BB/RF/MAC tune plus
 airmon-ng drives once per hop. Only the head (pre_set_channel_bb) is ported so far; the rest are
 marked TODO. [SRC] core.c:531 __rtw89_set_channel, rtw8922a.c:2232 set_channel.
 """
-from . import mac, phy, txpwr
+from . import mac, phy, txpwr, coex, rfk
 from .constants import RTW89_BAND_2G, RTW89_BAND_5G, RTW89_BAND_6G, RTW89_CHANNEL_WIDTH_20
 
 
@@ -40,22 +40,28 @@ def make_chan(channel: int, bandwidth: int = RTW89_CHANNEL_WIDTH_20) -> dict:
             "band_width": bandwidth, "freq": channel_to_freq(channel, band), "pri_sb_idx": 0}
 
 
-def set_channel(t, channel: int, phy_idx: int = 0, mac_idx: int = 0) -> dict:
-    """One per-channel tune: __rtw89_set_channel = set_channel_help(enter) [pre_set_channel bb/rf +
-    hal_reset], set_channel (mac/bb/rf), set_txpwr, set_channel_help(exit) [hal_reset +
-    post_set_channel bb/rf], then rfk. Only the head pre_set_channel_bb is ported so far.
-    [SRC] core.c:531, rtw8922a.c:2321 set_channel_help / 2232 set_channel."""
-    chan = make_chan(channel)
-    # The single PHY_0 monitor vif recalcs mlo_dbcc_mode to MLO_2_PLUS_0_1RF (both RF paths active
-    # on band 0), so hal_reset's tssi/adc run both paths. [SRC] chan.c:485-534.
-    t.mlo_1_1 = False
-    tx_en = phy.set_channel_help(t, t.cv, chan["band_type"], enter=True, phy_idx=phy_idx,
-                                 mac_idx=mac_idx)
+def _set_channel_one(t, ep: int, chan: dict, phy_idx: int, mac_idx: int) -> None:
+    """__rtw89_set_channel for one PHY: help(enter), set_channel mac/bb/rf, set_txpwr, help(leave),
+    then (first tune / band change) btc_switch_band + rfk_band_changed, then the pure-monitor RFK.
+    [SRC] core.c:531."""
+    band = chan["band_type"]
+    tx_en = phy.set_channel_help(t, t.cv, band, enter=True, phy_idx=phy_idx, mac_idx=mac_idx)
     mac.set_channel_mac(t, chan, mac_idx)
     phy.set_channel_bb(t, chan, phy_idx)
     phy.set_channel_rf(t, chan, phy_idx)
     txpwr.set_txpwr(t, chan, phy_idx)
-    phy.set_channel_help(t, t.cv, chan["band_type"], enter=False, phy_idx=phy_idx,
-                         mac_idx=mac_idx, tx_en=tx_en)
-    # TODO: rfk_band_changed + rfk_channel_for_pure_mon_vif (the RFK calibrations).
+    phy.set_channel_help(t, t.cv, band, enter=False, phy_idx=phy_idx, mac_idx=mac_idx, tx_en=tx_en)
+    coex.ntfy_switch_band(t, ep)                     # !entity_active on the first tune
+    rfk.rfk_band_changed(t, ep, chan, phy_idx)
+    rfk.rfk_channel(t, ep, chan, phy_idx)            # rfk_channel_for_pure_mon_vif
+
+
+def set_channel(t, channel: int, ep: int = None) -> dict:
+    """rtw89_set_channel: for a BE chip, __rtw89_set_channel runs for PHY_0/MAC_0 then PHY_1/MAC_1
+    (same monitor channel). The single PHY_0 vif recalcs mlo_dbcc_mode to MLO_2_PLUS_0_1RF, so the
+    per-path helpers run both RF paths. Only the PHY_0 tune is wired so far. [SRC] core.c:563."""
+    chan = make_chan(channel)
+    t.mlo_1_1 = False
+    _set_channel_one(t, ep, chan, phy_idx=0, mac_idx=0)
+    # TODO: __rtw89_set_channel for PHY_1/MAC_1 (the ~1100-op mirror at ops 13870-15008).
     return chan

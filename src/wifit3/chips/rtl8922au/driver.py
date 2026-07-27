@@ -192,7 +192,7 @@ class RTL8922AUDriver(Driver):
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """One per-channel tune, the unit airmon-ng drives per hop. [SRC] core.c __rtw89_set_channel."""
-        chan.set_channel(self.transport, channel)
+        chan.set_channel(self.transport, channel, self._h2c_ep)
         return True
 
     async def close(self) -> None:

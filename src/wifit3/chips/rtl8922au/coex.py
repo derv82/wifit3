@@ -20,7 +20,7 @@ from .constants import (
     BTF_SET_REPORT_EN, BTF_SET_SLOT_TABLE, BTF_SET_MREG_TABLE, BTF_SET_CX_POLICY, BTF_SET_DRV_INFO,
     R_BE_BT_PLT, B_BE_TX_PLT_GNT_WL, B_BE_RX_PLT_GNT_WL, B_BE_PLT_EN,
     B_MAC_AX_SB_FW_MASK, B_AX_TOGGLE, B_MAC_AX_BTGS1_NOTIFY, MAC_AX_NOTIFY_TP_MAJOR,
-    B_MAC_AX_SB_DRV_MASK, BTC_WSCB_INIT,
+    B_MAC_AX_SB_DRV_MASK, BTC_WSCB_INIT, BTC_WSCB_WLRFK,
 )
 from . import firmware, phy
 
@@ -255,3 +255,28 @@ def ntfy_radio_state_wl_on(t, cv: int) -> None:
     [SRC] coex.c:btc_ntfy_radio_state."""
     t.read32(R_BE_SCOREBOARD)                 # _update_bt_scbd -> _read_scbd
     _init_cfg(t, _set_rfe(t.rfe_type, cv))
+
+
+def ntfy_switch_band(t, ep: int) -> None:
+    """rtw89_btc_ntfy_switch_band: _update_dbcc_band is software, then _run_coex(NTFY_SWBAND) resends
+    the steady WL-only policy. With BT idle the only wire op is one SET_CX_POLICY H2C carrying the
+    TDMA-off TLV (t_def[CXTD_OFF]); the slot TLV is unchanged so nothing is appended. [SRC]
+    coex.c:7852-7871, 3672, 2721-2755."""
+    tdma = bytes((0x00, 0x07, 0x08)) + bytes(8)    # policy TLV: type TDMA, ver 7, len 8, all-zero (off)
+    _btc_h2c(t, ep, BTF_SET_CX_POLICY, tdma, dack=True)
+
+
+def _write_scbd(t, bits: int, state: bool) -> None:
+    """_write_scbd: set/clear `bits` in the tracked wl scoreboard, then push it via cfg_sb. [SRC]
+    coex.c:_write_scbd."""
+    t.wl_scbd = (t.wl_scbd | bits) if state else (t.wl_scbd & ~bits & 0xFFFFFFFF)
+    _cfg_sb(t, t.wl_scbd)
+
+
+def ntfy_wl_rfk(t, ep: int, start: bool) -> None:
+    """rtw89_btc_ntfy_wl_rfk(BTC_WRFKT_CHLK): on START, _chk_wl_rfk_request reads the BT scoreboard
+    (BT idle -> allow) then sets the WLRFK scoreboard bit; on STOP it clears it. _run_coex here
+    emits no further ops. [SRC] coex.c:8366-8432."""
+    if start:
+        t.read32(R_BE_SCOREBOARD)             # _chk_wl_rfk_request -> _update_bt_scbd -> _read_scbd
+    _write_scbd(t, BTC_WSCB_WLRFK, start)

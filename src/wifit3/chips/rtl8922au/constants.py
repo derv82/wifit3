@@ -1080,6 +1080,7 @@ B_MAC_AX_BTGS1_NOTIFY = 1 << 0   # reg.h:160
 MAC_AX_NOTIFY_TP_MAJOR = 0x81    # reg.h:161 (POWERON set)
 B_MAC_AX_SB_DRV_MASK = 0x00FFFFFF   # GENMASK(23, 0). reg.h
 BTC_WSCB_INIT = 0x00004003       # ACTIVE|ON|BTLOG = BIT0|BIT1|BIT14. coex.c:698-710
+BTC_WSCB_WLRFK = 1 << 11         # coex.c:707
 
 # rtw89_phy_dm_init BB inits (pre-RFK). [SRC] phy.c:8236, phy_be.c, rtw8922a.c, reg.h.
 MASKDWORD = 0xFFFFFFFF
@@ -1315,6 +1316,8 @@ RTW89_CHANNEL_WIDTH_320 = 4      # core.h:1118
 RR_POW = 0xA0
 RR_POW_SYN_V1 = 0x0000000F           # GENMASK(3, 0)
 RR_MODOPT = 0x01
+RR_MOD = 0x00                        # reg.h:8484 (RF mode register)
+RR_MOD_MASK = 0x000F0000             # GENMASK(19, 16). reg.h:8488
 RR_TXG_SEL = 0x000E0000              # GENMASK(19, 17)
 R_COEF_SEL = 0x8104
 R_COEF_SEL_C1 = 0x8204
@@ -1426,6 +1429,13 @@ H2C_FUNC_RFK_PRE_NOTIFY = 0x8
 H2C_FUNC_RFK_DACK_OFFLOAD = 0x5
 H2C_FUNC_RFK_RXDCK_OFFLOAD = 0x6
 H2C_FUNC_OUTSRC_RF_MCC_INFO = 0xF
+# per-channel RFK offload funcs (H2C_CL_OUTSRC_RF_FW_RFK). [SRC] fw.h:4825-4831.
+H2C_FUNC_RFK_TSSI_OFFLOAD = 0x0
+H2C_FUNC_RFK_IQK_OFFLOAD = 0x1
+H2C_FUNC_RFK_DPK_OFFLOAD = 0x3
+H2C_FUNC_RFK_TXGAPK_OFFLOAD = 0x4
+RTW89_TSSI_NORMAL = 0            # enum rtw89_tssi_mode. core.h:5963
+RTW89_TSSI_SCAN = 1
 
 # Register H2C/C2H firmware mailbox (rtw89_fw_msg_reg). [SRC] fw.c:8229-8335, reg.h, fw.h.
 R_BE_H2CREG_DATA0 = 0x7140       # reg.h:4848; DATAn = DATA0 + n*4

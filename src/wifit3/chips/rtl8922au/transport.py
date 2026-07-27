@@ -30,6 +30,7 @@ class RTL8922AUTransport:
         self.c2h_counter = 0
         self.h2c_seq = 0            # fw_info.h2c_seq: fwcmd sequence number. [SRC] fw.c:1639,2012
         self.cmac_pwr = set()       # RTW89_FLAG_CMACn_PWR: which CMACs are powered. [SRC] mac_be.c:810
+        self.wl_scbd = 0x00004003   # btc wl->scbd (BTC_WSCB_INIT), toggled by _write_scbd. coex.c:698
         self.cv = 0                 # chip cut version (hal.cv), set from read_chip_ver at connect
         self.bb_gain = None         # decoded BB-gain FW element (be gain arrays), cached lazily
         self.byr = None             # by-rate txpwr table [band][bw] from the fw element, cached lazily
@@ -42,6 +43,9 @@ class RTL8922AUTransport:
         #                             recalcs to MLO_2_PLUS_0_1RF once the PHY_0 vif has a chanctx.
         #                             [SRC] core.c:6995, chan.c:485-534.
         self.rfe_type = 0           # efuse->rfe_type, from the RF-block logical parse. [SRC] rtw8922a.c:866
+        self.tssi_cck = [0, 0]      # efuse TSSI cck_tssi[0] per path (2G group 0). [SRC] rtw8922a.c:744
+        self.tssi_mcs = [0, 0]      # efuse TSSI bw40_tssi[0] per path (2G group 0)
+        self.tssi_therm = [0, 0]    # efuse per-path thermal (path_a/b_therm)
         self.xtal_cap = 0           # efuse->xtal_cap. [SRC] rtw8922a.c:867
         self.pg_pa_bias_trim = False   # phycap PA/PAD-bias PG present. [SRC] rtw8922a.c:954
         self.pa_bias_trim = [0, 0]     # per-path PA bias nibbles from phycap. [SRC] rtw8922a.c:957

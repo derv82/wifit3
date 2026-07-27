@@ -1005,8 +1005,19 @@ def parse_efuse_map(t, cv: int) -> dict:
     t.rfe_type = rf[EFUSE_RFE_TYPE_OFST]             # rtw8922a_read_efuse_rf. rtw8922a.c:866
     t.xtal_cap = rf[EFUSE_XTAL_K_OFST]
     _parse_gain_offset(t, rf)                        # rtw8922a_efuse_parsing_gain_offset. rtw8922a.c:778
+    _parse_tssi(t, rf)                               # rtw8922a_efuse_parsing_tssi. rtw8922a.c:744
     return {"phy_map": phy_map, "mac_addr": bytes(addr),
             "rfe_type": t.rfe_type, "xtal_cap": t.xtal_cap}
+
+
+def _parse_tssi(t, rf: bytes) -> None:
+    """rtw8922a_efuse_parsing_tssi: the 2G group-0 TSSI de + per-path thermal used by the RFK TSSI
+    H2C. `tssi_offset` is 42 bytes/path (path_a at 0x10, path_b at 0x3a); cck_tssi[0] and
+    bw40_tssi[0] are its first byte and byte 6; the thermals are at 0xd0/0xd1. [SRC] rtw8922a.c:744,
+    rtw8922a.h:13-69."""
+    t.tssi_cck = [rf[0x10], rf[0x3A]]                # path_a/b cck_tssi[0]
+    t.tssi_mcs = [rf[0x16], rf[0x40]]                # path_a/b bw40_tssi[0]
+    t.tssi_therm = [rf[0xD0], rf[0xD1]]              # path_a/b _therm
 
 
 def _parse_gain_offset(t, rf: bytes) -> None:
