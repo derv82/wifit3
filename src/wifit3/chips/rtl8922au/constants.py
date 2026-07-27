@@ -117,6 +117,11 @@ B_GAIN_MAP0_EN = 1 << 0              # BIT(0). reg.h:10429
 R_GAIN_MAP1 = 0xE54C                 # reg.h:10430
 B_GAIN_MAP1_EN = 1 << 0              # BIT(0). reg.h:10431
 B_BW40_2XFFT = 1 << 31               # BIT(31). reg.h:9960
+# rtw8922a_ctrl_cck_en. [SRC] rtw8922a.c, reg.h.
+R_UPD_CLK_ADC = 0x0700               # reg.h:8834
+B_ENABLE_CCK = 1 << 5                # BIT(5). reg.h:8838
+R_PD_ARBITER_OFF = 0x0C80            # reg.h:8986
+B_PD_ARBITER_OFF = 1 << 31           # BIT(31). reg.h:8987
 
 # XTAL_SI indirect write extras (rtw89_mac_write_xtal_si). [SRC] mac_be.c:413-441, reg.h/mac.h.
 # The BE field positions match the AX ones, so the AX masks above cover the shared fields.
