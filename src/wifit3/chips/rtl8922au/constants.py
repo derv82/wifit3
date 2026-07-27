@@ -761,6 +761,23 @@ H2C_HDR_H2C_SEQ_MASK = 0xFF000000   # GENMASK(31, 24). fw.h:4604
 H2C_HDR_REC_ACK = 1 << 14        # fw.h:4606
 H2C_HDR_DONE_ACK = 1 << 15       # fw.h:4607
 RTW89_H2C_NOTIFY_DBCC_EN = 1 << 0  # fw.h:1868
+# mac_init tail: feat_init (init_ba_cam_users x2) + set_ofld_cfg. [SRC] mac.c, fw.c.
+H2C_CL_BA_CAM = 0xc              # fw.h:4734
+H2C_FUNC_MAC_BA_CAM_INIT = 0x2   # fw.h:4737
+RTW89_H2C_BA_CAM_INIT_USERS_MASK = 0x000000FF   # GENMASK(7, 0). fw.h:1958
+RTW89_H2C_BA_CAM_INIT_OFFSET_MASK = 0x000FF000  # GENMASK(19, 12). fw.h:1959
+RTW89_H2C_BA_CAM_INIT_BAND_SEL = 1 << 24        # fw.h:1960
+BACAM_1024BMP_OCC_ENTRY = 4      # mac.c rtw89_mac_feat_init
+H2C_CL_MAC_FW_OFLD = 0x9         # fw.h:4691
+H2C_FUNC_OFLD_CFG = 0x14         # fw.h:4698
+H2C_OFLD_CFG = bytes((0x09, 0x00, 0x00, 0x00, 0x5E, 0x00, 0x00, 0x00))  # fw.c:5311
+# USB mac_post_init -> rx_agg_cfg_v3 (8922A). [SRC] usb.c rtw89_usb_rx_agg_cfg_v3, usb.h:32-38.
+R_BE_RXAGG_0_V1 = 0x6000         # usb.h:32
+B_BE_RXAGG_0_EN = 1 << 31        # usb.h:33
+B_BE_RXAGG_0_NUM_TH = 0x00FF0000       # GENMASK(23, 16). usb.h:34
+B_BE_RXAGG_0_TIME_32US_TH = 0x0000FF00 # GENMASK(15, 8). usb.h:35
+B_BE_RXAGG_0_BUF_SZ_1K = 0x000000FF    # GENMASK(7, 0). usb.h:36
+R_BE_RXAGG_1_V1 = 0x6004         # usb.h:38
 RTW89_FW_ELEMENT_ALIGN = 16      # fw.h:4325
 FW_ELEMENT_HDR_SIZE = 32         # sizeof(rtw89_fw_element_hdr): 24 fixed + 8 union. fw.h:4496
 FW_ELEMENT_BBMCU_CV_OFFSET = 24  # rtw89_fw_element_hdr.u.bbmcu.cv. fw.h:4518

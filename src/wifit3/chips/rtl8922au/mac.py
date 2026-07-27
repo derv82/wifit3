@@ -154,7 +154,9 @@ from .constants import (
     RTW89_RPR_MODE_STF, R_BE_RLSRPT0_CFG0, B_BE_RLSRPT0_QID_MASK, WDRLS_DEST_QID_STF,
     R_BE_RLSRPT0_CFG1, S_BE_WDRLS_FLTR_TXOK, S_BE_WDRLS_FLTR_RTYLMT, S_BE_WDRLS_FLTR_LIFTIM,
     S_BE_WDRLS_FLTR_MACID, B_BE_RLSRPT0_FLTR_MAP_MASK, B_BE_RLSRPT0_TO_MASK, B_BE_RLSRPT0_AGGNUM_MASK,
-    R_BE_RSP_CHK_SIG, B_BE_RSP_STATIC_RTS_CHK_SERV_BW_EN,
+    R_BE_RSP_CHK_SIG, B_BE_RSP_STATIC_RTS_CHK_SERV_BW_EN, BACAM_1024BMP_OCC_ENTRY,
+    R_BE_RXAGG_0_V1, B_BE_RXAGG_0_EN, B_BE_RXAGG_0_NUM_TH, B_BE_RXAGG_0_TIME_32US_TH,
+    B_BE_RXAGG_0_BUF_SZ_1K, R_BE_RXAGG_1_V1,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -1410,11 +1412,30 @@ def trx_init(t, cv: int, h2c_ep: int) -> None:
     t.write32_clr(R_BE_RSP_CHK_SIG, B_BE_RSP_STATIC_RTS_CHK_SERV_BW_EN)   # chip_id == RTL8922A
 
 
+def feat_init(t, h2c_ep: int) -> None:
+    """rtw89_mac_feat_init: bacam_ver is V1 on the 8922A, so seed the BA-CAM users for MAC_0 and
+    MAC_1 (1 RU-support STA each). [SRC] mac.c rtw89_mac_feat_init."""
+    firmware.h2c_init_ba_cam_users(t, h2c_ep, 1, 0, RTW89_MAC_0)
+    firmware.h2c_init_ba_cam_users(t, h2c_ep, 1, 1 * BACAM_1024BMP_OCC_ENTRY, RTW89_MAC_1)
+
+
+def mac_post_init(t) -> None:
+    """rtw89_usb_ops_mac_post_init -> rx_agg_cfg_v3 (8922A): enable RX aggregation (num-th 255,
+    32us time, 20 * 1K buffer). The non-8922A SSPHY/endpoint config is skipped. [SRC] usb.c:881."""
+    rxagg0 = (B_BE_RXAGG_0_EN | field_prep(B_BE_RXAGG_0_NUM_TH, 255)
+              | field_prep(B_BE_RXAGG_0_TIME_32US_TH, 32) | field_prep(B_BE_RXAGG_0_BUF_SZ_1K, 20))
+    t.write32(R_BE_RXAGG_0_V1, rxagg0)
+    t.write32(R_BE_RXAGG_1_V1, 0x1F)
+
+
 def mac_init(t, h2c_ep: int, cv: int) -> None:
     """rtw89_mac_init: the interface-up MAC bring-up. partial_init(include_bb=True) (BB preinit +
-    BB-MCU firmware re-download), enable_bb_rf, sys_init, then trx_init + feat_init.
-    [SRC] mac.c:4359-4400."""
+    BB-MCU firmware re-download), enable_bb_rf, sys_init, trx_init, feat_init, the USB mac_post_init
+    (RX aggregation), then the fw offload config H2C. The early-h2c list is empty. [SRC] mac.c:4359-4400."""
     partial_init(t, h2c_ep, cv, include_bb=True)
     enable_bb_rf(t)
     sys_init(t)
     trx_init(t, cv, h2c_ep)
+    feat_init(t, h2c_ep)
+    mac_post_init(t)
+    firmware.h2c_set_ofld_cfg(t, h2c_ep)

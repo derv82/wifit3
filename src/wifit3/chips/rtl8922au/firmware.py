@@ -38,6 +38,9 @@ from .constants import (
     H2C_HDR_CAT_MASK, H2C_HDR_CLASS_MASK, H2C_HDR_FUNC_MASK, H2C_HDR_DEL_TYPE_MASK,
     H2C_HDR_H2C_SEQ_MASK, H2C_HDR_REC_ACK, H2C_HDR_DONE_ACK,
     RTW89_H2C_NOTIFY_DBCC_EN,
+    H2C_CL_BA_CAM, H2C_FUNC_MAC_BA_CAM_INIT, RTW89_H2C_BA_CAM_INIT_USERS_MASK,
+    RTW89_H2C_BA_CAM_INIT_OFFSET_MASK, RTW89_H2C_BA_CAM_INIT_BAND_SEL,
+    H2C_CL_MAC_FW_OFLD, H2C_FUNC_OFLD_CFG, H2C_OFLD_CFG,
 )
 
 
@@ -322,6 +325,21 @@ def h2c_notify_dbcc(t, h2c_ep: int, en: bool) -> None:
     w0 = _pb(RTW89_H2C_NOTIFY_DBCC_EN, 1 if en else 0)
     h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_MEDIA_RPT, H2C_FUNC_NOTIFY_DBCC,
                 struct.pack("<I", w0), rack=False, dack=True)
+
+
+def h2c_init_ba_cam_users(t, h2c_ep: int, users: int, offset: int, mac_idx: int) -> None:
+    """rtw89_fw_h2c_init_ba_cam_users: seed the BA-CAM user/offset/band for a MAC. [SRC] fw.c."""
+    w0 = (_pb(RTW89_H2C_BA_CAM_INIT_USERS_MASK, users)
+          | _pb(RTW89_H2C_BA_CAM_INIT_OFFSET_MASK, offset)
+          | _pb(RTW89_H2C_BA_CAM_INIT_BAND_SEL, mac_idx))
+    h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_BA_CAM, H2C_FUNC_MAC_BA_CAM_INIT,
+                struct.pack("<I", w0), rack=False, dack=True)
+
+
+def h2c_set_ofld_cfg(t, h2c_ep: int) -> None:
+    """rtw89_fw_h2c_set_ofld_cfg: a fixed 8-byte offload config. [SRC] fw.c:5311."""
+    h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_FW_OFLD, H2C_FUNC_OFLD_CFG,
+                H2C_OFLD_CFG, rack=False, dack=True)
 
 
 def _write_h2c_reg(t, h2c_id: int, content_len: int, w0: int) -> None:
