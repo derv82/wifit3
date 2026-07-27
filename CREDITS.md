@@ -50,35 +50,35 @@ The people who wrote and maintained these drivers in `drivers/net/wireless/`, ac
 Ralink (`rt2x00`), MediaTek (`mt76`), Atheros (`ath9k`), and Realtek (`rtl818x`, `rtw88`)
 trees.
 
-- **Stanislaw Gruszka** ([@sgruszka](https://github.com/sgruszka)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, MT7610U, MT7612U, MT7921AU, AR9271
-- **Lorenzo Bianconi** ([@LorenzoBianconi](https://github.com/LorenzoBianconi)) — MT7610U, MT7612U, MT7921AU, AR9271
-- **Felix Fietkau** ([@nbd168](https://github.com/nbd168)) — MT7610U, MT7612U, MT7921AU, AR9271
+- **Stanislaw Gruszka** ([@sgruszka](https://github.com/sgruszka)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, MT7610U, MT7612U, MT7921AU, MT7925AU, AR9271
+- **Lorenzo Bianconi** ([@LorenzoBianconi](https://github.com/LorenzoBianconi)) — MT7610U, MT7612U, MT7921AU, MT7925AU, AR9271
+- **Felix Fietkau** ([@nbd168](https://github.com/nbd168)) — MT7610U, MT7612U, MT7921AU, MT7925AU, AR9271
 - **Ivo van Doorn** — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Gertjan van Wingerde** — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Helmut Schaa** — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Sujith Manoharan** — AR9271
 - **Bitterblue Smith** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
-- **Sean Wang** ([@moore-bros](https://github.com/moore-bros)) — MT7610U, MT7612U, MT7921AU
-- **Ryder Lee** ([@ryderlee1110](https://github.com/ryderlee1110)) — MT7610U, MT7612U, MT7921AU
+- **Sean Wang** ([@moore-bros](https://github.com/moore-bros)) — MT7610U, MT7612U, MT7921AU, MT7925AU
+- **Ryder Lee** ([@ryderlee1110](https://github.com/ryderlee1110)) — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Yan-Hsuan Chuang** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Ping-Ke Shih** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Gabor Juhos** ([@juhosg](https://github.com/juhosg)) — RT2800USB, RT3070, RT5370, RT5372, RT5572, AR9271
 - **John W. Linville** ([@linvjw](https://github.com/linvjw)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, AR9271, RTL8187
 - **Luis R. Rodriguez** ([@mcgrof](https://github.com/mcgrof)) — AR9271
-- **Shayne Chen** ([@csyuanc](https://github.com/csyuanc)) — MT7610U, MT7612U, MT7921AU
+- **Shayne Chen** ([@csyuanc](https://github.com/csyuanc)) — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Po-Hao Huang** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Ching-Te Ku** ([@ku920601](https://github.com/ku920601)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
-- **Deren Wu** ([@deren](https://github.com/deren)) — MT7610U, MT7612U, MT7921AU
+- **Deren Wu** ([@deren](https://github.com/deren)) — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Larry Finger** ([@lwfinger](https://github.com/lwfinger)) — RTL8187, RTL8822BU
 - **Michael Wu** — RTL8187
 - **Bartlomiej Zolnierkiewicz** — RT2800USB, RT3070, RT5370, RT5372, RT5572
-- **Ming Yen Hsieh** — MT7610U, MT7612U, MT7921AU
+- **Ming Yen Hsieh** — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Zong-Zhe Yang** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Chin-Yen Lee** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Tzu-En Huang** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Oleksij Rempel** ([@olerem](https://github.com/olerem)) — AR9271
 - **Rajkumar Manoharan** — AR9271
-- **Peter Chiu** — MT7610U, MT7612U, MT7921AU
+- **Peter Chiu** — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Daniel Golle** ([@dangowrt](https://github.com/dangowrt)) — RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Tomislav Požega** ([@psyborg55](https://github.com/psyborg55)) — RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Xose Vazquez Perez** ([@xosevp](https://github.com/xosevp)) — RT2800USB, RT3070, RT5370, RT5372, RT5572
@@ -86,16 +86,16 @@ trees.
 - **Chih-Kang Chang** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Sascha Hauer** ([@saschahauer](https://github.com/saschahauer)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Martin Blumenstingl** ([@xdarklight](https://github.com/xdarklight)) — RTL8822BU, AR9271
-- **Howard Hsu** ([@haogroot](https://github.com/haogroot)) — MT7610U, MT7612U, MT7921AU
-- **Quan Zhou** ([@Quanzhoucen](https://github.com/Quanzhoucen)) — MT7921AU
-- **Leon Yen** ([@leon-yen](https://github.com/leon-yen)) — MT7921AU
+- **Howard Hsu** ([@haogroot](https://github.com/haogroot)) — MT7610U, MT7612U, MT7921AU, MT7925AU
+- **Quan Zhou** ([@Quanzhoucen](https://github.com/Quanzhoucen)) — MT7921AU, MT7925AU
+- **Leon Yen** ([@leon-yen](https://github.com/leon-yen)) — MT7921AU, MT7925AU
 - **Vasanthakumar Thiagarajan** — AR9271
 - **Mohammed Shafi Shajakhan** — AR9271
 - **Hin-Tak Leung** — RTL8187
 - **Herton Ronaldo Krzesinski** — RTL8187
 - **Dmitry Antipov** ([@dmantipov](https://github.com/dmantipov)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Miaoqing Pan** ([@miaoqing-pan](https://github.com/miaoqing-pan)) — AR9271
-- **Ben Greear** ([@greearb](https://github.com/greearb)) — MT7921AU, AR9271
+- **Ben Greear** ([@greearb](https://github.com/greearb)) — MT7921AU, MT7925AU, AR9271
 
 ### Foundational maintainers
 

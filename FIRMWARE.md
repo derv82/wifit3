@@ -1,6 +1,6 @@
 # Firmware provenance
 
-Wifit3 is licensed **GPL-2.0-only**, but the 22 firmware blobs it ships under
+Wifit3 is licensed **GPL-2.0-only**, but the 24 firmware blobs it ships under
 `src/wifit3/chips/<chip>/assets/` (`*.bin`, plus the ath9k `*.fw`) are **not** GPL. Each is a vendor binary that the
 silicon needs loaded at bring-up, redistributed here *verbatim* under its own
 manufacturer's license, exactly as Linux's
@@ -31,6 +31,8 @@ the verification detail, frame ranges, and hashes; this file is the licensing su
 | `rtl8188eufw.bin` (dkms) | RTL8188EUS (vendor DKMS) | aircrack-ng/kimocoder `8188eus` DKMS (`array_mp_8188e_t_fw_nic`) | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ SHA-256 == linux-firmware copy |
 | `WIFI_MT7961_patch_mcu_1_2_hdr.bin` | MT7921AU | `linux-firmware` `mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin` | MediaTek redistributable (`LICENCE.mediatek`) | ✅ SHA-256 vs linux-firmware |
 | `WIFI_RAM_CODE_MT7961_1.bin` | MT7921AU | `linux-firmware` `mediatek/WIFI_RAM_CODE_MT7961_1.bin` | MediaTek redistributable (`LICENCE.mediatek`) | ✅ SHA-256 vs linux-firmware |
+| `WIFI_MT7925_PATCH_MCU_1_1_hdr.bin` | MT7925AU | `linux-firmware` `mediatek/mt7925/WIFI_MT7925_PATCH_MCU_1_1_hdr.bin` | MediaTek redistributable (`LICENCE.mediatek`) | ✅ FW download byte-exact in `verify_pcap` (197792 B, sha256 `8b68c73d…`) |
+| `WIFI_RAM_CODE_MT7925_1_1.bin` | MT7925AU | `linux-firmware` `mediatek/mt7925/WIFI_RAM_CODE_MT7925_1_1.bin` | MediaTek redistributable (`LICENCE.mediatek`) | ✅ FW download byte-exact in `verify_pcap` (1246968 B, sha256 `f156ca10…`) |
 | `mt7662_ilm.bin` | MT7612U (MT76x2U) | `linux-firmware` `mediatek/mt7662.bin` (ILM region) | Ralink/MediaTek redistributable (`LICENCE.ralink_a_mediatek_company_firmware`) | ✅ == `mt7662.bin[32:32+ilm_len]` |
 | `mt7662_dlm.bin` | MT7612U (MT76x2U) | `linux-firmware` `mediatek/mt7662.bin` (DLM region) | Ralink/MediaTek redistributable (`LICENCE.ralink_a_mediatek_company_firmware`) | ✅ == `mt7662.bin` DLM region |
 | `mt7662_rom_patch_body.bin` | MT7612U (MT76x2U) | `linux-firmware` `mediatek/mt7662_rom_patch.bin` (30-B header stripped) | Ralink/MediaTek redistributable (`LICENCE.ralink_a_mediatek_company_firmware`) | ✅ == `mt7662_rom_patch.bin[30:]` |
@@ -90,9 +92,10 @@ combination with an OSI-approved open-source-licensed operating system.
 
 ### MediaTek — `LICENCE.mediatek`
 
-Covers the MT7921AU (`WIFI_MT7961_*`, `WIFI_RAM_CODE_MT7961_*`) and MT7610U
-(`mt7610e`/`mt7610u`) blobs. (The MT7612U `mt7662*` blobs are **not** here: `WHENCE` files
-them under the Ralink/MediaTek license below.) `WHENCE` marks the MediaTek blobs:
+Covers the MT7921AU (`WIFI_MT7961_*`, `WIFI_RAM_CODE_MT7961_*`), MT7925AU
+(`WIFI_MT7925_PATCH_MCU_1_1_hdr`, `WIFI_RAM_CODE_MT7925_1_1`, filed under `mediatek/mt7925/`),
+and MT7610U (`mt7610e`/`mt7610u`) blobs. (The MT7612U `mt7662*` blobs are **not** here:
+`WHENCE` files them under the Ralink/MediaTek license below.) `WHENCE` marks the MediaTek blobs:
 
 > Licence: Redistributable. See LICENCE.mediatek for details.
 
