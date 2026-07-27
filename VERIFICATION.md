@@ -32,6 +32,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ⚠️ | ✅ | ✅ | C |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
+| [MT7925AU](#mt7925au) | – | ✅ | ✅ | – | – | – |
 
 ## Per-card notes
 
@@ -341,6 +342,24 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 | Stress | ✅ | 2026-07-08 | 30-min 14-ch soak, flat (trend 1.22, no death-detect). |
 
 → [RT5370.md](src/wifit3/chips/rt5370/RT5370.md)
+
+### MT7925AU
+*Netgear A9000 · 2.4 / 5 GHz · Wi-Fi 7 (connac3)*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **–** | 2026-07-26 | In progress: TX/ACKs/handshake/PMKID/WPS done; RX + port baseline (diag scripts, Linux) and WEP + stress pending. |
+| RX | – | | Baseline pending (diag/baseline scripts, Linux). |
+| Port | – | | Baseline pending; cold-boot verify_pcap reproduces every driver op (3 pcaps). |
+| TX | ✅ | 2026-07-26 | Inject 2.4 + 5 GHz; TXWI byte-exact vs 2 TX pcaps. |
+| Handshake | ✅ | 2026-07-26 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-07-26 | Captured. |
+| ACKs | ✅ | 2026-07-26 | Active monitor auto-ACKs a forged MAC; HW ACK-retries to REM_TX_COUNT (ack_lab). |
+| WPS | ✅ | 2026-07-26 | PIN → M7, 5/5 with active monitor (wps_lab). |
+| WEP | – | | Not yet tested. |
+| Stress | – | | Not yet tested. |
+
+→ [MT7925AU.md](src/wifit3/chips/mt7925au/MT7925AU.md)
 
 ## Unsupported
 
