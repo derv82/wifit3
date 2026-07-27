@@ -152,6 +152,9 @@ class RTL8922AUDriver(Driver):
         # init_ba_cam + tas_fw_timer are no-ops at cold boot. [SRC] core.c:6687-6690.
         coex.ntfy_radio_state_wl_on(self.transport, ver["cv"])
         firmware.h2c_fw_log(self.transport, self._h2c_ep, enable=False)
+        # mac80211 add-interface (airmon-ng monitor vif): rtw89_mac_vif_init -> port_update
+        # (port-config regs) then the H2C burst, plus btc_ntfy_role_info. [SRC] mac.c:5044.
+        mac.port_update(self.transport)
         return True
 
     def _switch_usb_mode(self) -> None:

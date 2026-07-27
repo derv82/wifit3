@@ -181,6 +181,18 @@ from .constants import (
     EFUSE_BLOCK_ID_MASK, EFUSE_BLOCK_SIZE_MASK,
     EFUSE_HDR_PAGE_MASK, EFUSE_HDR_OFFSET_MASK, EFUSE_HDR_WORD_EN_MASK,
     EFUSE_RFE_TYPE_OFST, EFUSE_XTAL_K_OFST,
+    R_BE_PORT_CFG_P0, R_BE_TBTT_PROHIB_P0, R_BE_BCNERLYINT_CFG_P0, R_BE_TBTTERLYINT_CFG_P0,
+    R_BE_TBTT_AGG_P0, R_BE_BCN_SPACE_CFG_P0, R_BE_BCN_AREA_P0, R_BE_DTIM_CTRL_P0,
+    R_BE_MBSSID_CTRL, R_BE_P0MB_HGQ_WINDOW_CFG_0, R_BE_MBSSID_DROP_0, R_BE_PTCL_BSS_COLOR_0,
+    R_BE_WMTX_MOREDATA_TSFT_STMP_CTL, R_BE_BCN_PSR_RPT_P0,
+    B_AX_BRK_SETUP, B_AX_TBTT_PROHIB_EN, B_AX_BCNTX_EN, B_AX_NET_TYPE_MASK,
+    B_AX_RX_BSSID_FIT_EN, B_AX_TSF_UDT_EN, B_AX_PORT_FUNC_EN, B_AX_TXBCN_RPT_EN,
+    B_AX_RXBCN_RPT_EN, B_AX_TBTT_HOLD_MASK, B_AX_TBTT_SETUP_MASK, B_AX_BCN_MSK_AREA_MASK,
+    B_AX_BCNERLY_MASK, B_AX_TBTTERLY_MASK, B_AX_TBTT_AGG_NUM_MASK, B_AX_BCN_SPACE_MASK,
+    B_AX_DTIM_NUM_MASK, B_AX_P0MB_ALL_MASK, B_AX_PORT_DROP_4_0_MASK, B_AX_BSS_COLOR_PORT_0_MASK,
+    B_AX_UPD_HGQMD, B_AX_UPD_TIMIE, B_AX_BCAID_P0_MASK,
+    RTW89_NET_TYPE_NO_LINK, BCN_INTERVAL, BCN_ERLY_DEF, BCN_SETUP_DEF, BCN_HOLD_DEF,
+    BCN_MASK_DEF, TBTT_ERLY_DEF, TBTT_AGG_DEF,
 )
 from . import firmware
 
@@ -1557,3 +1569,40 @@ def update_rts_threshold(t) -> None:
         reg = _reg_by_idx(R_BE_AGG_LEN_HT_0, mac_idx)
         t.write16_mask(reg, B_AX_RTS_TXTIME_TH_MASK, RTS_TXTIME_TH)
         t.write16_mask(reg, B_AX_RTS_LEN_TH_MASK, RTS_LEN_TH)
+
+
+def port_update(t) -> None:
+    """rtw89_mac_port_update for the monitor vif (net_type NO_LINK, port 0, band 0). Each
+    port_cfg_* sub-function is a read-modify-write of a port register. [SRC] mac.c:5103."""
+    net_type = RTW89_NET_TYPE_NO_LINK
+    # port_cfg_func_sw: the FUNC_EN guard reads port_cfg; cold-boot reads 0, so it returns after
+    # the single read (no func_sw writes on the wire). [SRC] mac.c:4567.
+    t.read32(R_BE_PORT_CFG_P0)
+    t.write32_clr(R_BE_PORT_CFG_P0, B_AX_TXBCN_RPT_EN)          # port_cfg_tx_rpt(false). mac.c:4616
+    t.write32_clr(R_BE_PORT_CFG_P0, B_AX_RXBCN_RPT_EN)          # port_cfg_rx_rpt(false). mac.c:4630
+    t.write32_mask(R_BE_PORT_CFG_P0, B_AX_NET_TYPE_MASK, net_type)   # port_cfg_net_type. mac.c:4640
+    # port_cfg_bcn_prct: en = net_type != NO_LINK -> false, so clear. mac.c:4649.
+    t.write32_clr(R_BE_PORT_CFG_P0, B_AX_TBTT_PROHIB_EN | B_AX_BRK_SETUP)
+    t.write32_clr(R_BE_PORT_CFG_P0, B_AX_RX_BSSID_FIT_EN)       # port_cfg_rx_sw: en false. mac.c:4670
+    t.write32_clr(R_BE_PORT_CFG_P0, B_AX_TSF_UDT_EN)            # rx_sync_by_nettype: en false. mac.c:4682
+    t.write32_clr(R_BE_PORT_CFG_P0, B_AX_BCNTX_EN)             # tx_sw_by_nettype: en false. mac.c:4703
+    # port_cfg_bcn_intv: monitor beacon_int==0 -> BCN_INTERVAL. mac.c:4776.
+    t.write32_mask(R_BE_BCN_SPACE_CFG_P0, B_AX_BCN_SPACE_MASK, BCN_INTERVAL)
+    t.write8(R_BE_P0MB_HGQ_WINDOW_CFG_0, 0)                    # port_cfg_hiq_win: not AP -> 0. mac.c:4790
+    # port_cfg_hiq_dtim. mac.c:4810.
+    t.write8_set(R_BE_WMTX_MOREDATA_TSFT_STMP_CTL, B_AX_UPD_HGQMD | B_AX_UPD_TIMIE)
+    t.write16_mask(R_BE_DTIM_CTRL_P0, B_AX_DTIM_NUM_MASK, 0)   # dtim_period 0. mac.c:4812
+    # port_cfg_hiq_drop: clear the port's drop bits (BIT(16) via field_prep + BIT(0) for port 0). mac.c:4921.
+    t.write32_clr(R_BE_MBSSID_DROP_0, field_prep(B_AX_PORT_DROP_4_0_MASK, 1) | 1)
+    # port_cfg_bcn_setup_time / bcn_hold_time (shared reg, RMW preserves the other field). mac.c:4822/4832.
+    t.write32_mask(R_BE_TBTT_PROHIB_P0, B_AX_TBTT_SETUP_MASK, BCN_SETUP_DEF)
+    t.write32_mask(R_BE_TBTT_PROHIB_P0, B_AX_TBTT_HOLD_MASK, BCN_HOLD_DEF)
+    t.write32_mask(R_BE_BCN_AREA_P0, B_AX_BCN_MSK_AREA_MASK, BCN_MASK_DEF)   # bcn_mask_area. mac.c:4842
+    t.write16_mask(R_BE_TBTTERLYINT_CFG_P0, B_AX_TBTTERLY_MASK, TBTT_ERLY_DEF)   # tbtt_early. mac.c:4852
+    t.write16_mask(R_BE_TBTT_AGG_P0, B_AX_TBTT_AGG_NUM_MASK, TBTT_AGG_DEF)   # tbtt_agg. mac.c:4862
+    t.write32_mask(R_BE_PTCL_BSS_COLOR_0, B_AX_BSS_COLOR_PORT_0_MASK, 0)     # bss_color 0. mac.c:4891
+    t.write32_clr(R_BE_MBSSID_CTRL, B_AX_P0MB_ALL_MASK)        # port_cfg_mbssid (not AP). mac.c:4907
+    t.write32_set(R_BE_PORT_CFG_P0, B_AX_PORT_FUNC_EN)         # port_cfg_func_en(true). mac.c:4935
+    # port_tsf_resync_all early-returns (only the monitor vif). mac.c:5033.
+    t.write32_mask(R_BE_BCNERLYINT_CFG_P0, B_AX_BCNERLY_MASK, BCN_ERLY_DEF)  # bcn_early. mac.c:4948
+    t.write32_mask(R_BE_BCN_PSR_RPT_P0, B_AX_BCAID_P0_MASK, 0)   # bcn_psr_rpt, bssid_index 0. mac.c:4973

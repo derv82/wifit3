@@ -1246,3 +1246,54 @@ XTAL_SI_ACV_MASK = 0x0F          # GENMASK(3, 0). mac.h:1667
 XTAL_SI_CHIP_ID_L = 0xFD         # mac.h:1696
 XTAL_SI_CHIP_ID_H = 0xFE         # mac.h:1697
 XTAL_SI_POLL_ATTEMPTS = 1000     # read_poll_timeout(50us, 50ms). [SRC] mac.c:7221
+
+# mac80211 add-interface: rtw89_mac_port_update port-config registers (port 0, band 0).
+# The BE port base is rtw89_port_base_be. [SRC] mac_be.c:35, reg.h.
+R_BE_PORT_CFG_P0 = 0x10400              # reg.h:6951
+R_BE_TBTT_PROHIB_P0 = 0x10404           # reg.h:6972
+R_BE_BCNERLYINT_CFG_P0 = 0x1040C        # reg.h:6982
+R_BE_TBTTERLYINT_CFG_P0 = 0x1040E       # reg.h:6986
+R_BE_TBTT_AGG_P0 = 0x10412              # reg.h:6990
+R_BE_BCN_SPACE_CFG_P0 = 0x10414         # reg.h:6994
+R_BE_BCN_AREA_P0 = 0x10408              # reg.h:6977
+R_BE_DTIM_CTRL_P0 = 0x10426             # reg.h:7018
+R_BE_MBSSID_CTRL = 0x10568              # reg.h:7042
+R_BE_P0MB_HGQ_WINDOW_CFG_0 = 0x10590    # reg.h:7062
+R_BE_MBSSID_DROP_0 = 0x1083C            # reg.h:7174
+R_BE_PTCL_BSS_COLOR_0 = 0x108A0         # reg.h:7233
+R_BE_WMTX_MOREDATA_TSFT_STMP_CTL = 0x10E08   # reg.h:7619 (port_base .md_tsft)
+R_BE_BCN_PSR_RPT_P0 = 0x11484           # reg.h:8250
+
+B_AX_BRK_SETUP = 1 << 16                # BIT(16). reg.h:2384
+B_AX_TBTT_PROHIB_EN = 1 << 13           # BIT(13). reg.h:2387
+B_AX_BCNTX_EN = 1 << 12                 # BIT(12). reg.h:2388
+B_AX_NET_TYPE_MASK = 0xC00              # GENMASK(11, 10). reg.h:2389
+B_AX_RX_BSSID_FIT_EN = 1 << 4           # BIT(4). reg.h:2395
+B_AX_TSF_UDT_EN = 1 << 3                # BIT(3). reg.h:2396
+B_AX_PORT_FUNC_EN = 1 << 2              # BIT(2). reg.h:2397
+B_AX_TXBCN_RPT_EN = 1 << 1              # BIT(1). reg.h:2398
+B_AX_RXBCN_RPT_EN = 1 << 0             # BIT(0). reg.h:2399
+B_AX_TBTT_HOLD_MASK = 0xFFF0000         # GENMASK(27, 16). reg.h:2406
+B_AX_TBTT_SETUP_MASK = 0xFF             # GENMASK(7, 0). reg.h:2407
+B_AX_BCN_MSK_AREA_MASK = 0xFFF0000      # GENMASK(27, 16). reg.h:2414
+B_AX_BCNERLY_MASK = 0xFFF               # GENMASK(11, 0). reg.h:2422
+B_AX_TBTTERLY_MASK = 0xFFF              # GENMASK(11, 0). reg.h:2429
+B_AX_TBTT_AGG_NUM_MASK = 0xFF00         # GENMASK(15, 8). reg.h:2436
+B_AX_BCN_SPACE_MASK = 0xFFFF            # GENMASK(15, 0). reg.h:2444
+B_AX_DTIM_NUM_MASK = 0xFF00             # GENMASK(15, 8). reg.h:2483
+B_AX_P0MB_ALL_MASK = 0xFFFFFE           # GENMASK(23, 1). reg.h:2526
+B_AX_PORT_DROP_4_0_MASK = 0x1F0000      # GENMASK(20, 16). reg.h:2606
+B_AX_BSS_COLOR_PORT_0_MASK = 0x3F       # B_AX_BSS_COLOB_AX_PORT_0_MASK, GENMASK(5, 0). reg.h:2640
+B_AX_UPD_HGQMD = 1 << 1                 # BIT(1). reg.h:2997
+B_AX_UPD_TIMIE = 1 << 0                 # BIT(0). reg.h:2998
+B_AX_BCAID_P0_MASK = 0x7FF              # GENMASK(10, 0). reg.h:3406
+
+# port_update defaults + monitor net_type. [SRC] mac.c:4547-4554, core.h:413.
+RTW89_NET_TYPE_NO_LINK = 0       # monitor vif keeps zero-init net_type. core.h:413
+BCN_INTERVAL = 100               # mac.c:4547
+BCN_ERLY_DEF = 160               # mac.c:4548
+BCN_SETUP_DEF = 2                # mac.c:4549
+BCN_HOLD_DEF = 200               # mac.c:4551
+BCN_MASK_DEF = 0                 # mac.c:4552
+TBTT_ERLY_DEF = 5                # mac.c:4553
+TBTT_AGG_DEF = 1                 # mac.c:4554
