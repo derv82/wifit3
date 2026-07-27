@@ -87,6 +87,14 @@ EFUSE_RX_GAIN_B_OFST = 0xD9          # struct rtw8922a_efuse.rx_gain_b
 EFUSE_RX_GAIN_ENUM_ORDER = (1, 0, 2, 3, 4)   # core.h:301 enum rtw89_gain_offset
 GAIN_OFFSET_2G_CCK = 0               # core.h:302
 GAIN_OFFSET_2G_OFDM = 1              # core.h:303
+GAIN_OFFSET_5G_LOW = 2               # core.h:304
+GAIN_OFFSET_5G_MID = 3               # core.h:305
+GAIN_OFFSET_5G_HIGH = 4              # core.h:306
+# rtw89_bb_gain_band_be (gband key into the decoded BB-gain dict). core.h:6259
+RTW89_BB_GAIN_BAND_2G = 0
+RTW89_BB_GAIN_BAND_5G_L = 1
+RTW89_BB_GAIN_BAND_5G_M = 2
+RTW89_BB_GAIN_BAND_5G_H = 3
 R_MGAIN_BIAS = 0x672C                # reg.h:9942
 B_MGAIN_BIAS_BW20 = 0xF              # GENMASK(3, 0). reg.h:9943
 B_MGAIN_BIAS_BW40 = 0xF0             # GENMASK(7, 4). reg.h:9944
@@ -105,6 +113,10 @@ B_CH_IDX_SEG0 = 0xFF0000             # GENMASK(23, 16). reg.h:8853
 RTW89_CH_BASE_IDX_2G = 0             # phy.c:8574
 RTW89_CH_BASE_IDX_MASK = 0xF0        # GENMASK(7, 4). phy.c:8580
 RTW89_CH_OFFSET_MASK = 0xF           # GENMASK(3, 0). phy.c:8581
+RTW89_CH_BASE_TABLE = (1, 0xFF, 36, 100, 132, 149, 0xFF,
+                       1, 33, 65, 97, 129, 161, 193, 225, 0xFF)   # phy.c:8571
+RTW89_CH_BASE_IDX_5G_FIRST = 2       # phy.c:8575
+RTW89_CH_BASE_IDX_5G_LAST = 5        # phy.c:8576
 
 # rtw8922a_ctrl_bw. [SRC] rtw8922a.c:1528, reg.h.
 B_CHBW_BW = 0x7000                   # GENMASK(14, 12). reg.h:9969

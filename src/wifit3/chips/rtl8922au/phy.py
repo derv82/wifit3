@@ -15,7 +15,10 @@ from .constants import (
     INV_RF_DATA, RF_A, RF_B, RF_AB,
     RTW89_CHANNEL_WIDTH_40, RTW89_CHANNEL_WIDTH_80, RTW89_CHANNEL_WIDTH_160, RTW89_CHANNEL_WIDTH_320,
     R_BK_FC0INV, B_BK_FC0INV, R_CCK_FC0INV, B_CCK_FC0INV, RTW89_FW_ELEMENT_ID_BB_GAIN,
-    GAIN_OFFSET_2G_CCK, GAIN_OFFSET_2G_OFDM, R_MGAIN_BIAS, B_MGAIN_BIAS_BW20, B_MGAIN_BIAS_BW40,
+    GAIN_OFFSET_2G_CCK, GAIN_OFFSET_2G_OFDM, GAIN_OFFSET_5G_LOW, GAIN_OFFSET_5G_MID,
+    GAIN_OFFSET_5G_HIGH, RTW89_BB_GAIN_BAND_2G, RTW89_BB_GAIN_BAND_5G_L, RTW89_BB_GAIN_BAND_5G_M,
+    RTW89_BB_GAIN_BAND_5G_H, RTW89_CH_BASE_TABLE, RTW89_CH_BASE_IDX_5G_FIRST,
+    RTW89_CH_BASE_IDX_5G_LAST, R_MGAIN_BIAS, B_MGAIN_BIAS_BW20, B_MGAIN_BIAS_BW40,
     R_CCK_RPL_OFST, B_CCK_RPL_OFST,
     R_FC0, B_FC0, B_FC0_INV, R_PCOEFF01, B_PCOEFF, R_MAC_PIN_SEL, B_CH_IDX_SEG0,
     RTW89_CH_BASE_IDX_2G, RTW89_CH_BASE_IDX_MASK, RTW89_CH_OFFSET_MASK, RTW89_CHANNEL_WIDTH_20,
@@ -942,6 +945,25 @@ _BB_OP1DB_TIA_LNA = (
     (0x40B8, 0x44B8, 0xFF), (0x40B8, 0x44B8, 0xFF00), (0x40B8, 0x44B8, 0xFF0000),
     (0x40B8, 0x44B8, 0xFF000000), (0x40BC, 0x44BC, 0xFF), (0x40BC, 0x44BC, 0xFF00),
 )
+# gain_a columns for band != 2G (the TIA collapses to a single 0x4054). [SRC] rtw8922a.c:1204-1262.
+_BB_GAIN_LNA_A = (
+    (0x406C, 0x446C, 0xFF), (0x406C, 0x446C, 0xFF0000),
+    (0x4070, 0x4470, 0xFF), (0x4070, 0x4470, 0xFF0000),
+    (0x4074, 0x4474, 0xFF), (0x4074, 0x4474, 0xFF0000),
+    (0x4078, 0x4478, 0xFF),
+)
+_BB_GAIN_TIA_A = ((0x4054, 0x4454, 0x1FF), (0x4054, 0x4454, 0x3FE00))
+_BB_OP1DB_LNA_A = (
+    (0x4078, 0x4478, 0xFF000000),
+    (0x407C, 0x447C, 0xFF), (0x407C, 0x447C, 0xFF00), (0x407C, 0x447C, 0xFF0000),
+    (0x407C, 0x447C, 0xFF000000), (0x4080, 0x4480, 0xFF), (0x4080, 0x4480, 0xFF00),
+)
+_BB_OP1DB_TIA_LNA_A = (
+    (0x4080, 0x4480, 0xFF000000),
+    (0x4084, 0x4484, 0xFF), (0x4084, 0x4484, 0xFF00), (0x4084, 0x4484, 0xFF0000),
+    (0x4084, 0x4484, 0xFF000000), (0x4088, 0x4488, 0xFF), (0x4088, 0x4488, 0xFF00),
+    (0x4088, 0x4488, 0xFF0000),
+)
 # RPL compensation tables: (addr, mask); path B ORs 0x400. [SRC] rtw8922a.c:1177-1202.
 _RPL_BW160 = ((0x41E8, 0xFF00), (0x41E8, 0xFF0000), (0x41E8, 0xFF000000), (0x41EC, 0xFF),
               (0x41EC, 0xFF00), (0x41EC, 0xFF0000), (0x41EC, 0xFF000000), (0x41F0, 0xFF))
@@ -1015,17 +1037,36 @@ def _decode_bb_gain(t) -> dict:
     return g
 
 
-def _set_lna_tia_gain(t, g: dict, gband: int, bw: int, path: int, phy_idx: int) -> None:
-    """rtw8922a_set_lna_tia_gain: LNA, TIA, op1db-LNA, op1db-TIA-LNA gains for one path (2G gain_g).
-    [SRC] rtw8922a.c:1316."""
+def _gain_subband_5g(ch: int) -> int:
+    """rtw89_get_subband_type (5G): sub-band by channel; the C default folds to band 1. [SRC]
+    chan.c:19."""
+    if 100 <= ch <= 144:
+        return 3                                       # RTW89_CH_5G_BAND_3
+    if 149 <= ch <= 177:
+        return 4                                       # RTW89_CH_5G_BAND_4
+    return 1                                           # RTW89_CH_5G_BAND_1 (36-64, default)
+
+
+_5G_SUBBAND_GBAND = {1: RTW89_BB_GAIN_BAND_5G_L, 3: RTW89_BB_GAIN_BAND_5G_M, 4: RTW89_BB_GAIN_BAND_5G_H}
+_5G_SUBBAND_OFST = {1: GAIN_OFFSET_5G_LOW, 3: GAIN_OFFSET_5G_MID, 4: GAIN_OFFSET_5G_HIGH}
+
+
+def _set_lna_tia_gain(t, g: dict, gband: int, bw: int, path: int, phy_idx: int, is_2g: bool) -> None:
+    """rtw8922a_set_lna_tia_gain: LNA, TIA, op1db-LNA, op1db-TIA-LNA gains for one path. The gain_g
+    (2G) or gain_a (5/6G) register columns; the values come from the same decoded dict. [SRC]
+    rtw8922a.c:1316."""
     col = 0 if path == RF_PATH_A else 1
-    for i, e in enumerate(_BB_GAIN_LNA):
+    lna = _BB_GAIN_LNA if is_2g else _BB_GAIN_LNA_A
+    tia = _BB_GAIN_TIA if is_2g else _BB_GAIN_TIA_A
+    op1db_lna = _BB_OP1DB_LNA if is_2g else _BB_OP1DB_LNA_A
+    op1db_tia = _BB_OP1DB_TIA_LNA if is_2g else _BB_OP1DB_TIA_LNA_A
+    for i, e in enumerate(lna):
         _phy_write32_idx(t, e[col], e[2], _s8(g["lna_gain"].get((gband, bw, path, i), 0)), phy_idx)
-    for i, e in enumerate(_BB_GAIN_TIA):
+    for i, e in enumerate(tia):
         _phy_write32_idx(t, e[col], e[2], _s8(g["tia_gain"].get((gband, bw, path, i), 0)), phy_idx)
-    for i, e in enumerate(_BB_OP1DB_LNA):
+    for i, e in enumerate(op1db_lna):
         _phy_write32_idx(t, e[col], e[2], _s8(g["lna_op1db"].get((gband, bw, path, i), 0)), phy_idx)
-    for i, e in enumerate(_BB_OP1DB_TIA_LNA):
+    for i, e in enumerate(op1db_tia):
         _phy_write32_idx(t, e[col], e[2], _s8(g["tia_lna_op1db"].get((gband, bw, path, i), 0)), phy_idx)
 
 
@@ -1045,12 +1086,17 @@ def _set_rpl_gain(t, g: dict, gband: int, path: int, phy_idx: int) -> None:
 
 def _set_gain(t, chan: dict, path: int, phy_idx: int) -> None:
     """rtw8922a_set_gain: LNA/TIA/op1db then RPL for one path, from the decoded BB-gain element.
-    2G only for now (5/6G needs the gain_a tables + 5G gain_band). [SRC] rtw8922a.c:1381."""
-    if chan["band_type"] != RTW89_BAND_2G:
-        raise NotImplementedError("set_gain 5G/6G not ported yet")
-    gband, bw = 0, 0                    # RTW89_BB_GAIN_BAND_2G_BE, RTW89_BB_BW_20_40 (<=40 MHz)
+    2G uses the gain_g columns / band 2G; 5G uses gain_a / the sub-band gband. [SRC] rtw8922a.c:1381."""
+    band = chan["band_type"]
+    if band == RTW89_BAND_2G:
+        gband = RTW89_BB_GAIN_BAND_2G
+    elif band == RTW89_BAND_5G:
+        gband = _5G_SUBBAND_GBAND[_gain_subband_5g(chan["channel"])]
+    else:
+        raise NotImplementedError("set_gain 6G not ported yet")
+    bw = 0                             # RTW89_BB_BW_20_40 (<= 40 MHz)
     g = _decode_bb_gain(t)
-    _set_lna_tia_gain(t, g, gband, bw, path, phy_idx)
+    _set_lna_tia_gain(t, g, gband, bw, path, phy_idx, band == RTW89_BAND_2G)
     _set_rpl_gain(t, g, gband, path, phy_idx)
 
 
@@ -1110,11 +1156,14 @@ def _set_rx_gain_normal(t, chan: dict, path: int, phy_idx: int) -> None:
     if the efuse gain offset is invalid. [SRC] rtw8922a.c:1448."""
     if not t.gain_offset_valid:
         return
-    if chan["band_type"] == RTW89_BAND_2G:
+    band = chan["band_type"]
+    if band == RTW89_BAND_2G:
         _set_rx_gain_normal_cck(t, path, phy_idx)
         _set_rx_gain_normal_ofdm(t, GAIN_OFFSET_2G_OFDM, path, phy_idx)
+    elif band == RTW89_BAND_5G:
+        _set_rx_gain_normal_ofdm(t, _5G_SUBBAND_OFST[_gain_subband_5g(chan["channel"])], path, phy_idx)
     else:
-        raise NotImplementedError("set_rx_gain_normal 5/6G gain-offset band not ported yet")
+        raise NotImplementedError("set_rx_gain_normal 6G not ported yet")
 
 
 # rtw8922a_set_cck_parameters R_PCOEFF tables (ch 14 vs the rest). [SRC] rtw8922a.c:1466.
@@ -1131,11 +1180,19 @@ def _set_cck_parameters(t, central_ch: int, phy_idx: int) -> None:
 
 
 def _encode_chan_idx(central_ch: int, band: int) -> int:
-    """rtw89_encode_chan_idx (2G): base-idx 2G plus the channel in the offset field. [SRC]
-    phy.c:8574-8593."""
-    if band != RTW89_BAND_2G:
-        raise NotImplementedError("encode_chan_idx 5/6G (base-idx scan) not ported yet")
-    return ((RTW89_CH_BASE_IDX_2G << 4) & RTW89_CH_BASE_IDX_MASK) | (central_ch & RTW89_CH_OFFSET_MASK)
+    """rtw89_encode_chan_idx: 2G puts the channel in the offset field; 5G scans the base table for
+    the sub-band idx and encodes (central_ch - base) >> 1. [SRC] phy.c:8574-8620."""
+    if band == RTW89_BAND_2G:
+        return ((RTW89_CH_BASE_IDX_2G << 4) & RTW89_CH_BASE_IDX_MASK) \
+            | (central_ch & RTW89_CH_OFFSET_MASK)
+    if band == RTW89_BAND_5G:
+        idx = next((i for i in range(RTW89_CH_BASE_IDX_5G_LAST, RTW89_CH_BASE_IDX_5G_FIRST - 1, -1)
+                    if central_ch >= RTW89_CH_BASE_TABLE[i]), None)
+        if idx is None:
+            return 0
+        return ((idx << 4) & RTW89_CH_BASE_IDX_MASK) \
+            | (((central_ch - RTW89_CH_BASE_TABLE[idx]) >> 1) & RTW89_CH_OFFSET_MASK)
+    raise NotImplementedError("encode_chan_idx 6G not ported yet")
 
 
 def _ctrl_ch(t, chan: dict, phy_idx: int) -> None:
@@ -1311,13 +1368,25 @@ _DIGITAL_PWR_COMP_2G_S1 = (
 )
 
 
+# rtw8922a_digital_pwr_comp_val[nss-1]: the 5/6G LTPC table (path-independent). [SRC] rtw8922a.c:2039.
+_DIGITAL_PWR_COMP_VAL = (
+    (0x012C0096, 0x044C02BC, 0x00322710, 0x015E0096, 0x03C8028A, 0x0BB80708, 0x17701194,
+     0x02020100, 0x03030303, 0x01000303, 0x05030302, 0x06060605, 0x06050300, 0x0A090807,
+     0x02000B0B, 0x09080604, 0x0D0D0C0B, 0x08060400, 0x110F0C0B, 0x05001111, 0x0D0C0907, 0x12121210),
+    (0x012C0096, 0x044C02BC, 0x00322710, 0x015E0096, 0x03C8028A, 0x0BB80708, 0x17701194,
+     0x04030201, 0x05050505, 0x01000505, 0x07060504, 0x09090908, 0x09070400, 0x0E0D0C0B,
+     0x03000E0E, 0x0D0B0907, 0x1010100F, 0x0B080500, 0x1512100D, 0x05001515, 0x100D0B08, 0x15151512),
+)
+
+
 def _set_digital_pwr_comp(t, band: int, nss: int, path: int) -> None:
-    """rtw8922a_set_digital_pwr_comp: write the LTPC compensation table for band/nss/path. 2G only.
-    [SRC] rtw8922a.c:2055."""
-    if band != RTW89_BAND_2G:
-        raise NotImplementedError("digital_pwr_comp 5G table not ported yet")
+    """rtw8922a_set_digital_pwr_comp: write the LTPC compensation table for band/nss/path. 2G picks a
+    per-path (s0/s1) table; 5/6G uses one path-independent table. [SRC] rtw8922a.c:2055."""
     row = 0 if nss == 1 else 1
-    tbl = _DIGITAL_PWR_COMP_2G_S0[row] if path == RF_PATH_A else _DIGITAL_PWR_COMP_2G_S1[row]
+    if band == RTW89_BAND_2G:
+        tbl = _DIGITAL_PWR_COMP_2G_S0[row] if path == RF_PATH_A else _DIGITAL_PWR_COMP_2G_S1[row]
+    else:
+        tbl = _DIGITAL_PWR_COMP_VAL[row]
     addr = R_BE_LTPC_T0_PATH0 if path == RF_PATH_A else R_BE_LTPC_T0_PATH1
     for i in range(DIGITAL_PWR_COMP_REG_NUM):
         t.write32(addr + CR_BASE_BE, tbl[i])
