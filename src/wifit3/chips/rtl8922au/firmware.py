@@ -364,6 +364,14 @@ def h2c_init_ba_cam_users(t, h2c_ep: int, users: int, offset: int, mac_idx: int)
                 struct.pack("<I", w0), rack=False, dack=True)
 
 
+def h2c_fw_log(t, h2c_ep: int, enable: bool) -> None:
+    """rtw89_fw_h2c_fw_log: level LOUD, path C2H, component bitmap only when enabled (off at cold
+    boot). cat MAC, class FW_INFO, func LOG_CFG. [SRC] fw.c:rtw89_fw_h2c_fw_log."""
+    comp = 0x0000012D if enable else 0        # INIT|TASK|PS|ERROR|MLO|SCAN when enabled
+    payload = struct.pack("<III", 0x00000204, comp, 0)   # w0 = LEVEL_LOUD | PATH(BIT C2H)
+    h2c_command(t, h2c_ep, H2C_CAT_MAC, 0x0, 0x0, payload, rack=False, dack=False)
+
+
 def h2c_set_ofld_cfg(t, h2c_ep: int) -> None:
     """rtw89_fw_h2c_set_ofld_cfg: a fixed 8-byte offload config. [SRC] fw.c:5311."""
     h2c_command(t, h2c_ep, H2C_CAT_MAC, H2C_CL_MAC_FW_OFLD, H2C_FUNC_OFLD_CFG,

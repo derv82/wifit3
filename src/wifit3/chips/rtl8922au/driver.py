@@ -8,7 +8,7 @@ import usb.core
 import usb.util
 
 from ..driver import Driver, DeviceID, ProgressCallback
-from . import coex, mac, phy, rfk
+from . import coex, firmware, mac, phy, rfk
 from .constants import (
     R_BE_PAD_CTRL2, _LIBUSB_SPEED_SUPER, USB_SWITCH_DELAY, B_BE_MATCH_CNT,
     B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
@@ -148,6 +148,10 @@ class RTL8922AUDriver(Driver):
         mac.cfg_phy_rpt_bands(self.transport)
         mac.update_rts_threshold(self.transport)
         rfk.rfk_init_late(self.transport, self._h2c_ep)
+        # core_start tail: btc radio-state WL_ON re-runs btc_init_cfg, then fw_log (disabled here);
+        # init_ba_cam + tas_fw_timer are no-ops at cold boot. [SRC] core.c:6687-6690.
+        coex.ntfy_radio_state_wl_on(self.transport, ver["cv"])
+        firmware.h2c_fw_log(self.transport, self._h2c_ep, enable=False)
         return True
 
     def _switch_usb_mode(self) -> None:

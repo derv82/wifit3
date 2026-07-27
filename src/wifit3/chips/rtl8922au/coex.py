@@ -220,3 +220,12 @@ def ntfy_init(t, h2c_ep: int, cv: int) -> None:
     _fw_set_drv_info_init(t, h2c_ep)
     _fw_set_drv_info_ctrl(t, h2c_ep)
     _run_coex_ntfy_init(t, h2c_ep)
+
+
+def ntfy_radio_state_wl_on(t, cv: int) -> None:
+    """rtw89_btc_ntfy_radio_state(BTC_RFCTRL_WL_ON): fw_en_rpt is a no-op (MREG already reported),
+    _write_scbd is software, then _update_bt_scbd reads the scoreboard and btc_init_cfg re-runs the
+    trx-mask/PTA/ZB setup. _run_coex(NTFY_RADIO_STATE) emits nothing on this cold WL-on path.
+    [SRC] coex.c:btc_ntfy_radio_state."""
+    t.read32(R_BE_SCOREBOARD)                 # _update_bt_scbd -> _read_scbd
+    _init_cfg(t, _set_rfe(t.rfe_type, cv))
