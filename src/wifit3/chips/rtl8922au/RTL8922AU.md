@@ -6,9 +6,10 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 5037/163814 driver ops reproduced and committed (capture-1; ~5080/5106 on
+Cold-boot bring-up, 5323/163814 driver ops reproduced and committed (capture-1; ~5366/5392 on
 capture-2/3, poll-count variance only). `verify_pcap` now walks both VENQT control ops and
-bulk-OUT ops; all three captures stop at the same frontier. What is ported:
+bulk-OUT ops; all three captures stop at the same frontier. **`rtw89_mac_init` is complete**;
+the frontier is `rtw89_core_start`'s BB register init. What is ported:
 - USB register-access transport (`rtw89_usb_vendorreq` + read/write ops + `read_cmac`), the
   read-modify-write helpers (`write8/16/32_set/clr`, `write16/32_mask`), and `bulk_out`.
 - USB mode-switch (`rtw89_usb_switch_mode`, speed-branched) + `read_chip_ver`.
@@ -38,14 +39,30 @@ bulk-OUT ops; all three captures stop at the same frontier. What is ported:
   (DBCC qta), full `hfc_init(en=true)`, `sta_sch_init`, `mpdu_proc_init`, `sec_eng_init`,
   `txpktctrl_init`, `mlo_init`.
 
-`cmac_init_be(0)` is under way (`scheduler_init`, `addr_cam_init`, `rx_fltr_init` with the
-sniffer-mode bit, `nav_ctrl_init`; `cca_ctrl_init_be` is a no-op). Frontier: op #5046,
-`read 0x1144a` = `spatial_reuse_init_be`, then `tmac_init`, `trxptcl_init`, `rmac_init`,
-`resp_pktctl_init`, `cmac_com_init`, `ptcl_init`, and the rest of `cmac_init_be` (mac_be.c:1756).
-After cmac_init comes `dbcc_enable_be(true)` (qta is DBCC), the DMAC/CMAC IMR enables,
-`err_imr_ctrl`, `set_host_rpr_be`, and the 8922A RSP_CHK_SIG clear, which finish `trx_init_be`.
-Then `mac_init` does `feat_init`; then `core_start` continues into BB reg init, RF init, RFK
-calibration, the channel tune, and monitor-mode RX enable. None of that is ported yet.
+- **All of `rtw89_mac_init`**: `trx_init_be` = `dmac_init_be` + `cmac_init_be(MAC_0)` (scheduler,
+  addr-cam, rx-filter with the sniffer-mode bit, nav, spatial-reuse, tmac, trxptcl, rmac,
+  resp-pktctl, cmac-com, ptcl, cmac-dma) + `dbcc_enable_be(true)` (band-1: TX-idle poll, DBCC
+  quota change, band-1 TX preload, CMAC1 func-en, a second full `cmac_init` at +0x4000, BB1 enable,
+  CMAC1 IMR, then the notify-dbcc H2C) + the MAC_0 DMAC/CMAC IMR tables + `err_imr_ctrl` +
+  `set_host_rpr` + RSP_CHK_SIG clear. Then `feat_init` (2 init-ba-cam-users H2C), `mac_post_init`
+  (USB `rx_agg_cfg_v3`), and `set_ofld_cfg` (H2C).
+- **General H2C-command infrastructure** (`firmware.h2c_command`): the 8-byte fwcmd header
+  (type/cat/class/func/seq, total-len, rec/done-ack) + payload behind an H2C TX descriptor, on the
+  H2C bulk-OUT, with the `fw.h2c_seq` counter (reset after the fw download). Reusable for every
+  later H2C. Built so far: `notify_dbcc`, `init_ba_cam_users`, `set_ofld_cfg`.
+- The IMR tables were extracted from reg.h with a resolver script (`/tmp/.../scratchpad/imr.py`:
+  BIT/GENMASK/OR eval) into `constants.py` (`IMR_DMAC_REGS`, `IMR_CMAC_REGS`). Reuse that resolver
+  for the next big data tables.
+
+Frontier: op #5332, `write 0x20000 = 1e000000`, the start of `rtw89_core_start`'s BB register init
+(`rtw89_phy_init_bb_reg`, core.c:6659). The remaining `core_start` (core.c:6650+) is the big one:
+`btc_ntfy_poweron`, `chip_reset_bb_rf`, `phy_init_bb_reg` (BB register tables from the fw file,
+~2750 register ops), `bb_postinit` (`rtw8922a_bb_postinit`), `phy_init_rf_reg`, `btc_ntfy_init`,
+`phy_dm_init`, then the BB/RF MCU **H2C table commands** (cat=2 class=0x8/0x9/0x10, seq 4+, some
+900+ bytes -- use `firmware.h2c_command`), the EDCCA/PPDU/phy-rpt band setup, `update_rts_threshold`,
+`hci_start`, then the channel tune (`rtw8922a_set_channel` + RFK) and monitor-mode RX enable. The
+deferred RF/board logical-efuse extraction (`efuse->rfe_type`, xtal_cap, gain/tssi in
+`parse_efuse_map`, phy-cap parse in `setup_phycap`) will be needed once RF init reads those values.
 
 ### Gotchas found while porting (not obvious from a single read)
 
@@ -125,25 +142,26 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #5046)
+## Next (from op #5332)
 
-Inside `rtw89_mac_init` -> `trx_init_be` (mac_be.c:2302), `dmac_init_be` is done and `cmac_init_be`
-is partway (through `nav_ctrl_init`). The frontier is `spatial_reuse_init_be` (`read 0x1144a`).
-The remaining `cmac_init_be` sub-inits (spatial-reuse, tmac, trxptcl, rmac, resp-pktctl, com,
-ptcl, ...) are mostly CMAC-window registers (0x10000+, band-1 at +0x4000). After it:
-`dbcc_enable_be(true)` (qta is
-DBCC), `enable_imr_be(DMAC_SEL)` + `enable_imr_be(CMAC_SEL)`, `err_imr_ctrl_be(true)`,
-`set_host_rpr_be`, then the 8922A `R_BE_RSP_CHK_SIG` clear -> `trx_init_be` returns. Then
-`mac_init` runs `feat_init` + `mac_post_init` (USB no-op) + `send_all_early_h2c` +
-`h2c_set_ofld_cfg`.
+`rtw89_mac_init` is complete. The frontier is `rtw89_core_start` (core.c:6626) resuming after
+`mac_init`: `btc_ntfy_poweron` (software/coex), `chip_reset_bb_rf`, then `rtw89_phy_init_bb_reg`
+(core.c:6659), which writes the big BB register tables from the fw file (op #5332 `write 0x20000`
+is the first). These BB/RF register tables and the RFK calibration are the bulk of what remains
+(the capture is 163814 ops; ~158k are still ahead, mostly these tables). After BB reg init:
+`rtw8922a_bb_postinit`, `phy_init_rf_reg`, `btc_ntfy_init`, `phy_dm_init`, the EDCCA/PPDU-status
+/phy-rpt band setup, `update_rts_threshold`, `hci_start`. Interleaved are the **BB/RF MCU H2C
+table commands** (seen in the capture at cat=2 class=0x8/0x9/0x10, seq 4+, some 900+ bytes each):
+build them with `firmware.h2c_command`. Then the channel tune (`rtw8922a_set_channel` + RFK) and
+monitor-mode RX enable. The deferred RF/board logical-efuse extraction (`efuse->rfe_type`,
+xtal_cap, gain/tssi in `parse_efuse_map`, and the phy-cap parse in `setup_phycap`) will be needed
+once RF init reads those values.
 
-Then `core_start` continues (core.c:6650+): `btc_ntfy_poweron`, `chip_reset_bb_rf`,
-`phy_init_bb_reg` (the big BB register tables from the fw file), `chip_bb_postinit`
-(`rtw8922a_bb_postinit`), `phy_init_rf_reg`, `btc_ntfy_init`, `phy_dm_init`, the EDCCA/PPDU-status
-/phy-rpt band setup, `update_rts_threshold`, `hci_start`. After that the channel tune
-(`rtw8922a_set_channel` + RFK) and monitor-mode RX enable. The deferred RF/board logical-efuse
-extraction (`efuse->rfe_type`, xtal_cap, gain/tssi in `parse_efuse_map`, and the phy-cap parse in
-`setup_phycap`) will be needed once RF init reads those values.
+Two reusable assets are in place for this: `firmware.h2c_command` (any H2C command) and the
+reg.h resolver at `/tmp/.../scratchpad/imr.py` (recreate it: parse reg.h, eval BIT/GENMASK/OR, emit
+tuples) for the large BB/RF register tables. `rtw89_phy_write32` BB addresses are in the 0x20000+
+space; check whether the driver applies them directly or as a `(addr, data)` table from the fw
+element (`rtw89_fw_recognize_elements` parsed the BB/RF element tables file-side already).
 
 The port loop from here is the same: read the sub-function, grep register/bit values, port citing
 `file:line`, `verify_pcap`, fix at the FRONTIER/DIVERGENCE trace, commit each milestone. The
@@ -213,3 +231,18 @@ describing them, no jargon. No em-dashes and none of the banned words anywhere; 
 - 2026-07-26 M15: `cmac_init_be` start: `scheduler_init` (5023), `addr_cam_init` + `rx_fltr_init`
   (sniffer mode, 5031), `nav_ctrl_init` (`cca_ctrl_init_be` no-op, 5037). Frontier
   `spatial_reuse_init_be`.
+- 2026-07-26 M16: cmac_init `spatial_reuse` + `tmac` + `trxptcl` (cv threaded for the CAV-only
+  RSC write; this card is not A-cut). 5069 ops.
+- 2026-07-26 M17: cmac_init `rmac_init` (+ `rst_bacam`; RX max len from the DBCC c0 quota). 5082.
+- 2026-07-26 M18: cmac_init `resp_pktctl` + `cmac_com` + `ptcl` + `cmac_dma`. cmac_init_be done. 5094.
+- 2026-07-26 M19: `dbcc_enable` band-1 bring-up: tx-idle poll, dle_quota_change, band-1 preload
+  (chip op always runs on 8922A), CMAC1 func-en, a 2nd full `cmac_init` at +0x4000, dbcc_bb_ctrl.
+  5210 ops (resp_pktctl/cmac_com now mac_idx-aware).
+- 2026-07-26 M20: `enable_imr` (DMAC + CMAC IMR tables, resolver-extracted). CMAC1 IMR + MAC0
+  DMAC/CMAC IMRs. 5234, then 5307 with the H2C below.
+- 2026-07-26 M21: general H2C-command infra (`firmware.h2c_command`, `fw.h2c_seq`) + `notify_dbcc`.
+  5307 ops.
+- 2026-07-26 M22: `trx_init` tail: `err_imr_ctrl` + `set_host_rpr` + RSP_CHK_SIG clear. 5318.
+- 2026-07-26 M23: `mac_init` tail: `feat_init` (2 init-ba-cam-users H2C), `mac_post_init`
+  (rx_agg_cfg_v3), `set_ofld_cfg` H2C. **rtw89_mac_init complete.** 5323 ops. Frontier at
+  `core_start` BB register init (`phy_init_bb_reg`).
