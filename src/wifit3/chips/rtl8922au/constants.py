@@ -106,6 +106,18 @@ RTW89_CH_BASE_IDX_2G = 0             # phy.c:8574
 RTW89_CH_BASE_IDX_MASK = 0xF0        # GENMASK(7, 4). phy.c:8580
 RTW89_CH_OFFSET_MASK = 0xF           # GENMASK(3, 0). phy.c:8581
 
+# rtw8922a_ctrl_bw. [SRC] rtw8922a.c:1528, reg.h.
+B_CHBW_BW = 0x7000                   # GENMASK(14, 12). reg.h:9969
+B_CHBW_PRICH = 0xF00                 # GENMASK(11, 8). reg.h:9970
+B_SMALLBW = 0xC0000000               # GENMASK(31, 30). reg.h:9963
+R_DAC_CLK = 0x625C                   # reg.h:9917
+B_DAC_CLK = 0xC0000000               # GENMASK(31, 30). reg.h:9918
+R_GAIN_MAP0 = 0xE44C                 # reg.h:10428
+B_GAIN_MAP0_EN = 1 << 0              # BIT(0). reg.h:10429
+R_GAIN_MAP1 = 0xE54C                 # reg.h:10430
+B_GAIN_MAP1_EN = 1 << 0              # BIT(0). reg.h:10431
+B_BW40_2XFFT = 1 << 31               # BIT(31). reg.h:9960
+
 # XTAL_SI indirect write extras (rtw89_mac_write_xtal_si). [SRC] mac_be.c:413-441, reg.h/mac.h.
 # The BE field positions match the AX ones, so the AX masks above cover the shared fields.
 B_AX_WL_XTAL_SI_BITMASK_MASK = 0x00FF0000  # GENMASK(23, 16). reg.h:276

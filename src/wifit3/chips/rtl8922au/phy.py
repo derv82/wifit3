@@ -13,7 +13,9 @@ from .constants import (
     GAIN_OFFSET_2G_CCK, GAIN_OFFSET_2G_OFDM, R_MGAIN_BIAS, B_MGAIN_BIAS_BW20, B_MGAIN_BIAS_BW40,
     R_CCK_RPL_OFST, B_CCK_RPL_OFST,
     R_FC0, B_FC0, B_FC0_INV, R_PCOEFF01, B_PCOEFF, R_MAC_PIN_SEL, B_CH_IDX_SEG0,
-    RTW89_CH_BASE_IDX_2G, RTW89_CH_BASE_IDX_MASK, RTW89_CH_OFFSET_MASK,
+    RTW89_CH_BASE_IDX_2G, RTW89_CH_BASE_IDX_MASK, RTW89_CH_OFFSET_MASK, RTW89_CHANNEL_WIDTH_20,
+    B_CHBW_BW, B_CHBW_PRICH, B_SMALLBW, R_DAC_CLK, B_DAC_CLK, R_GAIN_MAP0, B_GAIN_MAP0_EN,
+    R_GAIN_MAP1, B_GAIN_MAP1_EN, B_BW40_2XFFT,
     RTW89_FW_ELEMENT_ID_BB_REG, CR_BASE_BE, BYPASS_CR_DATA,
     PHY_HEADLINE_VALID, PHY_COND_BRANCH_IF, PHY_COND_BRANCH_ELIF, PHY_COND_BRANCH_ELSE,
     PHY_COND_BRANCH_END, PHY_COND_CHECK, PHY_COND_DONT_CARE,
@@ -996,16 +998,30 @@ def _ctrl_ch(t, chan: dict, phy_idx: int) -> None:
     _phy_write32_idx(t, R_MAC_PIN_SEL, B_CH_IDX_SEG0, chan_idx, phy_idx)
 
 
+def _ctrl_bw(t, pri_sb: int, bw: int, phy_idx: int) -> None:
+    """rtw8922a_ctrl_bw: the channel-bandwidth BB config (20 MHz only for monitor hops). [SRC]
+    rtw8922a.c:1528."""
+    if bw != RTW89_CHANNEL_WIDTH_20:
+        raise NotImplementedError("ctrl_bw >20MHz not needed for monitor hops")
+    _phy_write32_idx(t, R_ANT_CHBW, B_CHBW_BW, 0, phy_idx)
+    _phy_write32_idx(t, R_FC0INV_SBW, B_SMALLBW, 0, phy_idx)
+    _phy_write32_idx(t, R_ANT_CHBW, B_CHBW_PRICH, 0, phy_idx)
+    _phy_write32_idx(t, R_DAC_CLK, B_DAC_CLK, 1, phy_idx)
+    _phy_write32_idx(t, R_GAIN_MAP0, B_GAIN_MAP0_EN, 0, phy_idx)
+    _phy_write32_idx(t, R_GAIN_MAP1, B_GAIN_MAP1_EN, 0, phy_idx)
+    _phy_write32_idx(t, R_FC0, B_BW40_2XFFT, 0, phy_idx)     # bw != 40 MHz
+
+
 def set_channel_bb(t, chan: dict, phy_idx: int = 0) -> None:
     """rtw8922a_set_channel_bb: 2G CCK sco thresholds, then ctrl_ch (gain + freq tables), ctrl_bw,
-    ctrl_cck_en, spur elimination. ctrl_sco_cck + ctrl_ch's set_gain are ported. [SRC]
+    ctrl_cck_en, spur elimination. ctrl_sco_cck + ctrl_ch + ctrl_bw are ported. [SRC]
     rtw8922a.c:2179."""
     cck_en = chan["band_type"] == RTW89_BAND_2G
     if cck_en:
         _ctrl_sco_cck(t, chan["primary_channel"], phy_idx)
     _ctrl_ch(t, chan, phy_idx)
-    # TODO: ctrl_bw(pri_sb, bw); ctrl_cck_en(cck_en); spur_elimination(chan); R_RSTB_ASYNC;
-    #       tssi_reset(AB).
+    _ctrl_bw(t, chan["pri_sb_idx"], chan["band_width"], phy_idx)
+    # TODO: ctrl_cck_en(cck_en); spur_elimination(chan); R_RSTB_ASYNC; tssi_reset(AB).
 
 
 def pre_set_channel_rf(t, cv: int, phy_idx: int = 0) -> None:

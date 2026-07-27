@@ -37,7 +37,7 @@ def make_chan(channel: int, bandwidth: int = RTW89_CHANNEL_WIDTH_20) -> dict:
     """rtw89_chan_create for a monitor tune: primary == center (20 MHz). [SRC] chan.c:131."""
     band = band_of(channel)
     return {"channel": channel, "primary_channel": channel, "band_type": band,
-            "band_width": bandwidth, "freq": channel_to_freq(channel, band)}
+            "band_width": bandwidth, "freq": channel_to_freq(channel, band), "pri_sb_idx": 0}
 
 
 def set_channel(t, channel: int, phy_idx: int = 0, mac_idx: int = 0) -> dict:
