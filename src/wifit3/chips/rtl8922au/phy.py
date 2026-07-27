@@ -4,6 +4,7 @@ rtw89_phy_init_bb_reg applies the firmware's BB register table for PHY_0 and (DB
 table is condition-coded: a headline block picks the (rfe_type, cv) branch, then if/elif/else
 markers select which register writes apply under it. [SRC] phy.c:1940-1966.
 """
+import struct
 import time
 
 from .constants import (
@@ -17,6 +18,11 @@ from .constants import (
     R_BEDGE3, B_EHTTB_EN, B_HEERSU_EN, B_HEMU_EN, B_TB_EN, R_SU_PUNC, B_SU_PUNC_EN,
     R_BEDGE5, B_HWGEN_EN, B_PWROFST_COMP, R_MAG_AB, B_BY_SLOPE, B_MAG_AB,
     R_MAG_A, B_MGA_AEND, R_SC_CORNER, B_SC_CORNER, R_UDP_COEEF, B_UDP_COEEF,
+    RTW89_FW_ELEMENT_ID_RADIO_A, RTW89_FW_ELEMENT_ID_RADIO_B, RF_PATH_A, RF_PATH_B,
+    RTW89_RF_ADDR_ADSEL_MASK, RFREG_MASK, RF_BASE_ADDR, HWSI_IDLE_ADDR, HWSI_OFST_ADDR,
+    B_HWSI_BUSY, B_HWSI_DATA_ADDR, B_HWSI_DATA_VAL,
+    H2C_CAT_OUTSRC, H2C_CL_OUTSRC_RF_REG_A, H2C_CL_OUTSRC_RF_REG_B,
+    RTW89_H2C_RF_PAGE_SIZE, RTW89_H2C_RF_PAGE_NUM,
 )
 from . import firmware
 
@@ -79,9 +85,9 @@ def _sel_headline(regs: list, rfe: int, cv: int) -> tuple:
     return hs, 0
 
 
-def _init_reg(t, regs: list, hs: int, hidx: int, phy1: bool) -> None:
-    """rtw89_phy_init_reg's conditional walk: apply each register write under the branch selected
-    by cfg_target. [SRC] phy.c:1896-1936."""
+def _init_reg(regs: list, hs: int, hidx: int, config) -> None:
+    """rtw89_phy_init_reg's conditional walk: call config(addr, data) for each register write
+    under the branch selected by cfg_target. [SRC] phy.c:1896-1936."""
     cfg_target = regs[hidx][0] & 0x0FFFFFFF
     is_matched = True
     target_found = False
@@ -108,7 +114,7 @@ def _init_reg(t, regs: list, hs: int, hidx: int, phy1: bool) -> None:
                 is_matched = False
                 target_found = False
         elif is_matched:
-            _config_bb_reg(t, a, d, phy1)
+            config(a, d)
 
 
 def init_bb_reg(t, cv: int) -> None:
@@ -117,8 +123,8 @@ def init_bb_reg(t, cv: int) -> None:
     software gain arrays only. [SRC] phy.c:1940-1966, rtw8922a.c:3101,1923."""
     regs = firmware.element_regs(RTW89_FW_ELEMENT_ID_BB_REG)
     hs, hidx = _sel_headline(regs, t.rfe_type, cv)
-    _init_reg(t, regs, hs, hidx, phy1=False)
-    _init_reg(t, regs, hs, hidx, phy1=True)          # dbcc_en is always true on the 8922A
+    _init_reg(regs, hs, hidx, lambda a, d: _config_bb_reg(t, a, d, False))
+    _init_reg(regs, hs, hidx, lambda a, d: _config_bb_reg(t, a, d, True))   # dbcc always on
 
 
 def _phy_write32_mask(t, addr: int, mask: int, data: int) -> None:
@@ -179,3 +185,70 @@ def chip_bb_postinit(t) -> None:
     """rtw89_chip_bb_postinit: run bb_postinit for PHY_0 then (DBCC) PHY_1. [SRC] core.h/phy.c."""
     _bb_postinit(t, 0)
     _bb_postinit(t, 1)
+
+
+def _write_full_rf_v2_a(t, rf_path: int, addr: int, data: int) -> None:
+    """rtw89_phy_write_full_rf_v2_a: poll the HWSI idle bit, then write the addr/data-encoded word.
+    [SRC] phy.c write_full_rf_v2_a."""
+    for _ in range(3800):
+        if not (t.read32(HWSI_IDLE_ADDR[rf_path] + CR_BASE_BE) & B_HWSI_BUSY):
+            break
+    val = (addr & B_HWSI_DATA_ADDR) | ((data << 8) & B_HWSI_DATA_VAL)
+    t.write32(HWSI_OFST_ADDR[rf_path] + CR_BASE_BE, val)
+
+
+def _write_rf(t, rf_path: int, addr: int, data: int) -> None:
+    """rtw89_phy_write_rf_v2: the ad_sel (DAV) direct-address RMW or the HWSI (DDIE) write, with
+    mask == RFREG_MASK so no read-back. [SRC] phy.c:write_rf_v2 / write_rf_a_v2 / write_rf."""
+    if addr & RTW89_RF_ADDR_ADSEL_MASK:
+        direct = RF_BASE_ADDR[rf_path] + ((addr & 0xFF) << 2)
+        t.write32_mask(direct + CR_BASE_BE, RFREG_MASK, data)
+    else:
+        _write_full_rf_v2_a(t, rf_path, addr, data)
+
+
+def _config_rf_reg(t, rf_path: int, addr: int, data: int, store: list) -> None:
+    """rtw89_phy_config_rf_reg_v1: the 0xfe flow-control delay, else the RF write and (for addr
+    >= 0x100) the fw-H2C store entry (addr << 20 | data). [SRC] phy.c:1768-1786, 8321-8340."""
+    if addr == 0xFE:
+        time.sleep(0.050)
+        return
+    _write_rf(t, rf_path, addr, data)
+    if addr < 0x100:
+        return
+    store.append(((addr << 20) | data) & 0xFFFFFFFF)   # rf_reg store. phy.c cofig_rf_reg_store
+
+
+def _config_rf_reg_fw(t, h2c_ep: int, rf_path: int, store: list) -> None:
+    """rtw89_phy_config_rf_reg_fw: send the stored RF entries as OUTSRC H2C(s), one per page of
+    RTW89_H2C_RF_PAGE_SIZE, the page index as the H2C func. [SRC] phy.c config_rf_reg_fw, fw.c."""
+    cls = H2C_CL_OUTSRC_RF_REG_A if rf_path == RF_PATH_A else H2C_CL_OUTSRC_RF_REG_B
+    remain = len(store)
+    if remain > RTW89_H2C_RF_PAGE_NUM * RTW89_H2C_RF_PAGE_SIZE:
+        raise RuntimeError("rtl8922au: rf reg h2c exceeds page budget")
+    page = 0
+    while remain:
+        n = min(remain, RTW89_H2C_RF_PAGE_SIZE)
+        base = page * RTW89_H2C_RF_PAGE_SIZE
+        payload = b"".join(struct.pack("<I", store[base + i]) for i in range(n))
+        firmware.h2c_command(t, h2c_ep, H2C_CAT_OUTSRC, cls, page, payload, rack=False, dack=False)
+        remain -= n
+        page += 1
+
+
+def init_rf_reg(t, h2c_ep: int, cv: int) -> None:
+    """rtw89_phy_init_rf_reg(noio=false): for each radio slot, apply the firmware RF register
+    table (config_rf_reg_v1) then hand the fw the stored entries. The 8922A stores RADIO_A at
+    slot 1 (rf_path A) and RADIO_B at slot 0 (rf_path B), so slot 0 (path B) runs first.
+    [SRC] phy.c:2060-2098, fw.c:1081-1112."""
+    rf_radio = {}
+    for eid, rf_path in ((RTW89_FW_ELEMENT_ID_RADIO_A, RF_PATH_A),
+                         (RTW89_FW_ELEMENT_ID_RADIO_B, RF_PATH_B)):
+        idx, regs = firmware.element_regs_with_idx(eid)
+        rf_radio[idx] = (regs, rf_path)
+    for slot in range(len(rf_radio)):
+        regs, rf_path = rf_radio[slot]
+        hs, hidx = _sel_headline(regs, t.rfe_type, cv)
+        store = []
+        _init_reg(regs, hs, hidx, lambda a, d, p=rf_path, s=store: _config_rf_reg(t, p, a, d, s))
+        _config_rf_reg_fw(t, h2c_ep, rf_path, store)

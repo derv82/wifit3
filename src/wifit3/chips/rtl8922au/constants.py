@@ -895,6 +895,26 @@ B_SC_CORNER = 0x000007FF         # GENMASK(10, 0)
 R_UDP_COEEF = 0x0CBC
 B_UDP_COEEF = 1 << 19
 
+# RF register init (rtw89_phy_init_rf_reg + write_full_rf_v2_a / write_rf).
+# [SRC] phy.c:2060-2098, 1183-1206, phy.c write_full_rf_v2_a, rtw8922a.c:3083-3188, fw.c:rf_reg.
+RTW89_FW_ELEMENT_ID_RADIO_A = 4  # enum rtw89_fw_element_id. fw.h:4332
+RTW89_FW_ELEMENT_ID_RADIO_B = 5  # fw.h:4333
+RF_PATH_A = 0
+RF_PATH_B = 1
+RTW89_RF_ADDR_ADSEL_MASK = 1 << 16  # phy.h:11
+RFREG_MASK = 0xFFFFF             # core.h RFREG_MASK
+RF_BASE_ADDR = (0xE000, 0xF000)  # chip->rf_base_addr. rtw8922a.c:3188
+HWSI_IDLE_ADDR = (0x2C24, 0x2D24)   # write_full_rf_v2_a addr_is_idle[]. phy.c
+HWSI_OFST_ADDR = (0x2AE0, 0x2BE0)   # write_full_rf_v2_a addr_ofst[]. phy.c
+B_HWSI_BUSY = 1 << 29            # write_full_rf_v2_a poll bit. phy.c
+B_HWSI_DATA_ADDR = 0x000000FF    # GENMASK(7, 0). reg.h
+B_HWSI_DATA_VAL = 0x0FFFFF00     # GENMASK(27, 8). reg.h
+H2C_CAT_OUTSRC = 0x2             # fw.h:4618
+H2C_CL_OUTSRC_RF_REG_A = 0x8     # fw.h
+H2C_CL_OUTSRC_RF_REG_B = 0x9     # fw.h
+RTW89_H2C_RF_PAGE_SIZE = 500     # fw.h
+RTW89_H2C_RF_PAGE_NUM = 3        # fw.h
+
 # Register H2C/C2H firmware mailbox (rtw89_fw_msg_reg). [SRC] fw.c:8229-8335, reg.h, fw.h.
 R_BE_H2CREG_DATA0 = 0x7140       # reg.h:4848; DATAn = DATA0 + n*4
 R_BE_C2HREG_DATA0 = 0x7150       # reg.h:4852

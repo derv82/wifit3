@@ -133,6 +133,7 @@ class RTL8922AUDriver(Driver):
         # then phy_init_bb_reg writes the firmware BB register tables. [SRC] core.c:6648-6659.
         phy.init_bb_reg(self.transport, ver["cv"])
         phy.chip_bb_postinit(self.transport)      # rtw8922a_bb_postinit PHY_0+PHY_1. core.c:6660
+        phy.init_rf_reg(self.transport, self._h2c_ep, ver["cv"])   # RF radio tables. core.c:6662
         return True
 
     def _switch_usb_mode(self) -> None:
