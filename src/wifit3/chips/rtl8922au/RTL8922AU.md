@@ -6,14 +6,14 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 12964/163814 driver ops reproduced and committed (capture-1; ~12977/13021 on
+Cold-boot bring-up, 13005/163814 driver ops reproduced and committed (capture-1; ~13021/13063 on
 capture-2/3, poll-count variance only). `verify_pcap` walks both VENQT control ops and bulk-OUT
-ops; all three captures stop at the same frontier. **`rtw89_mac_init` is complete, and so is nearly
-all of `rtw89_core_start`'s fixed init** (BB/RF register tables, all of coex, `phy_dm_init`, RFK
-hw-init + RF-NCTL, txpwr/power-trim, bb_cfg_txrx_path, band cfgs, rfk_init_late). The frontier is
-the `core_start` tail (btc radio-state WL_ON + fw_log/init_ba_cam/tas, then the first mac80211
-add-interface), after which the **per-channel channel-tune + RFK loop** begins (op ~13067, ~150k
-ops, the bulk of what remains). Newly ported since the mac_init handoff (see the Log):
+ops; all three captures stop at the same frontier. **All of `rtw89_core_start` is now reproduced**
+(mac_init, BB/RF register tables, all of coex, `phy_dm_init`, RFK hw-init + RF-NCTL, txpwr/
+power-trim, bb_cfg_txrx_path, band cfgs, rfk_init_late, btc radio-state WL_ON, fw_log). The frontier
+is the **first mac80211 add-interface** (op #13014, vif/monitor setup: MAC regs 0x10400+), after
+which the **per-channel channel-tune + RFK loop** begins (~op 13067, ~150k ops, the bulk of what
+remains). Newly ported since the mac_init handoff (see the Log):
 - **`rtw89_phy_init_bb_reg`** (`phy.py`): the firmware BB register table for PHY_0 and (DBCC) PHY_1,
   headline (rfe_type/cv) selection + the if/elif/else walk. `firmware.element_regs` pulls the reg2
   pairs. init_txpwr_unit/bb_reset are no-ops; bb_gain is software-only.
@@ -79,10 +79,10 @@ Everything below is the pre-existing mac_init port; it remains ported:
   BIT/GENMASK/OR eval) into `constants.py` (`IMR_DMAC_REGS`, `IMR_CMAC_REGS`). Reuse that resolver
   for the next big data tables.
 
-Frontier: op #12973, `read 0xac`, the `core_start` tail after `rfk_init_late`: `btc_ntfy_radio_state
-(WL_ON)` (RF writes on 0x22adc/0x22be0 + BT-coex table regs 0xe3xx), then `fw_h2c_fw_log`,
-`fw_h2c_init_ba_cam`, `tas_fw_timer`, then the **first mac80211 add-interface** (vif setup: MAC regs
-0x10400-0x11484 + an H2C burst, ops ~13014-13066). All one-time. `core.c:6686-6689`.
+Frontier: op #13014, `read 0x10400`, the **first mac80211 add-interface** (`rtw89_ops_add_interface`:
+vif/addr-cam/bssid-cam setup, MAC regs 0x10400-0x11484 + an H2C burst, ops ~13014-13066). This runs
+when airmon-ng creates the monitor vif, after `rtw89_core_start` returns. A new subsystem worth a
+subagent spec. `rtw89_core_start` itself is fully reproduced.
 
 Then **the per-channel channel-tune + RFK loop begins at op ~13067** (marker: `RMW R_DBCC (0x26b48)
 <- 0` immediately followed by five `R_EMLSR (0x20044)` writes `0x86180000/0x8bbab000/0x8aba9000/
@@ -309,3 +309,6 @@ describing them, no jargon. No em-dashes and none of the banned words anywhere; 
 - 2026-07-26 M33: `bb_cfg_txrx_path` (hal_reset + ctrl_trx_path) + band cfgs (ppdu/phy-rpt/rts) +
   `rfk_init_late` (per-phy DACK+RXDCK H2C; `rfk.py`). 12964. Frontier at `core_start` tail
   (btc radio-state / add-interface), then the per-channel channel-tune + RFK loop.
+- 2026-07-26 M34: `core_start` tail: `btc_ntfy_radio_state(WL_ON)` (re-runs btc_init_cfg;
+  `coex.ntfy_radio_state_wl_on`) + `fw_h2c_fw_log` (disabled). init_ba_cam/tas no-op. 13005.
+  **rtw89_core_start complete.** Frontier at the first mac80211 add-interface (op #13014).
