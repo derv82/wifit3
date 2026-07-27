@@ -348,7 +348,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **–** | 2026-07-26 | In progress: TX/ACKs/handshake/PMKID/WPS done; RX + port baseline (diag scripts, Linux) and WEP + stress pending. |
+| **Grade** | **–** | 2026-07-26 | In progress: TX/ACKs/handshake/PMKID/WPS/WEP done; RX + port + stress baseline pending (diag scripts, Linux). |
 | RX | – | | Baseline pending (diag/baseline scripts, Linux). |
 | Port | – | | Baseline pending; cold-boot verify_pcap reproduces every driver op (3 pcaps). |
 | TX | ✅ | 2026-07-26 | Inject 2.4 + 5 GHz; TXWI byte-exact vs 2 TX pcaps. |
@@ -356,7 +356,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 | PMKID | ✅ | 2026-07-26 | Captured. |
 | ACKs | ✅ | 2026-07-26 | Active monitor auto-ACKs a forged MAC; HW ACK-retries to REM_TX_COUNT (ack_lab). |
 | WPS | ✅ | 2026-07-26 | PIN → M7, 5/5 with active monitor (wps_lab). |
-| WEP | – | | Not yet tested. |
+| WEP | ✅ | 2026-07-26 | 2.4 GHz ChopChop + ARP replay ~300 IVs/s. |
 | Stress | – | | Not yet tested. |
 
 → [MT7925AU.md](src/wifit3/chips/mt7925au/MT7925AU.md)
