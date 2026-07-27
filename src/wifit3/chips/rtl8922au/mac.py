@@ -149,6 +149,12 @@ from .constants import (
     B_BE_B0_PRELD_CAM_G1ENTNUM_MASK, B_BE_B0_PRELD_CAM_G0ENTNUM_MASK,
     B_BE_B0_PRELD_NXT_TXENDWIN_MASK, B_BE_B0_PRELD_NXT_RSVMINSZ_MASK,
     IMR_DMAC_REGS, IMR_CMAC_REGS,
+    R_BE_DMAC_ERR_IMR, DMAC_ERR_IMR_EN, B_BE_DMAC_NOTX_ERR_INT_EN, R_BE_CMAC_ERR_IMR,
+    R_BE_CMAC_ERR_IMR_C1, CMAC0_ERR_IMR_EN, CMAC1_ERR_IMR_EN, R_BE_WDRLS_CFG, B_BE_WDRLS_MODE_MASK,
+    RTW89_RPR_MODE_STF, R_BE_RLSRPT0_CFG0, B_BE_RLSRPT0_QID_MASK, WDRLS_DEST_QID_STF,
+    R_BE_RLSRPT0_CFG1, S_BE_WDRLS_FLTR_TXOK, S_BE_WDRLS_FLTR_RTYLMT, S_BE_WDRLS_FLTR_LIFTIM,
+    S_BE_WDRLS_FLTR_MACID, B_BE_RLSRPT0_FLTR_MAP_MASK, B_BE_RLSRPT0_TO_MASK, B_BE_RLSRPT0_AGGNUM_MASK,
+    R_BE_RSP_CHK_SIG, B_BE_RSP_STATIC_RTS_CHK_SERV_BW_EN,
     R_BE_FW_AUTO_CAL_DELAY, B_BE_WCPU_FW_DELAY_COUNT_VALID, B_BE_WCPU_FW_DELAY_COUNT_MASK,
     B_BE_WCPU_EN, B_BE_HOLD_AFTER_RESET,
     R_BE_WCPU_FW_CTRL, B_BE_RUN_ENV_MASK, B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
@@ -1369,14 +1375,39 @@ def dbcc_enable(t, cv: int, h2c_ep: int) -> None:
     firmware.h2c_notify_dbcc(t, h2c_ep, True)
 
 
+def err_imr_ctrl(t) -> None:
+    """err_imr_ctrl_be(en=True): enable the DMAC (minus NOTX) and CMAC0/CMAC1 error IMRs. The C1
+    write runs because dbcc_en is set. [SRC] mac_be.c err_imr_ctrl_be."""
+    t.write32(R_BE_DMAC_ERR_IMR, DMAC_ERR_IMR_EN & ~B_BE_DMAC_NOTX_ERR_INT_EN & 0xFFFFFFFF)
+    t.write32(R_BE_CMAC_ERR_IMR, CMAC0_ERR_IMR_EN)
+    t.write32(R_BE_CMAC_ERR_IMR_C1, CMAC1_ERR_IMR_EN)
+
+
+def set_host_rpr(t) -> None:
+    """set_host_rpr_be (8922A, non-POH STF mode): the WD-release report mode/queue and the release
+    report filter map (TXOK/RTYLMT/LIFTIM/MACID), aggregation, and timeout. [SRC] mac_be.c set_host_rpr_be."""
+    fltr = (S_BE_WDRLS_FLTR_TXOK | S_BE_WDRLS_FLTR_RTYLMT | S_BE_WDRLS_FLTR_LIFTIM
+            | S_BE_WDRLS_FLTR_MACID)
+    t.write32_mask(R_BE_WDRLS_CFG, B_BE_WDRLS_MODE_MASK, RTW89_RPR_MODE_STF)
+    t.write32_mask(R_BE_RLSRPT0_CFG0, B_BE_RLSRPT0_QID_MASK, WDRLS_DEST_QID_STF)
+    val = t.read32(R_BE_RLSRPT0_CFG1)
+    val = field_replace(val, B_BE_RLSRPT0_FLTR_MAP_MASK, fltr)
+    val = field_replace(val, B_BE_RLSRPT0_AGGNUM_MASK, 30)
+    val = field_replace(val, B_BE_RLSRPT0_TO_MASK, 255)
+    t.write32(R_BE_RLSRPT0_CFG1, val)
+
+
 def trx_init(t, cv: int, h2c_ep: int) -> None:
     """trx_init_be: dmac_init then cmac_init, the dbcc enable (qta is DBCC), the DMAC/CMAC IMR
-    enables, host-rpr, and the 8922A rsp-chk-sig clear. [SRC] mac_be.c:2302-2352."""
+    enables, err-imr-ctrl, host-rpr, and the 8922A rsp-chk-sig clear. [SRC] mac_be.c:2302-2352."""
     dmac_init(t)
     cmac_init(t, RTW89_MAC_0, cv)
     dbcc_enable(t, cv, h2c_ep)
     enable_imr(t, RTW89_MAC_0, IMR_DMAC_REGS)
     enable_imr(t, RTW89_MAC_0, IMR_CMAC_REGS)
+    err_imr_ctrl(t)
+    set_host_rpr(t)
+    t.write32_clr(R_BE_RSP_CHK_SIG, B_BE_RSP_STATIC_RTS_CHK_SERV_BW_EN)   # chip_id == RTL8922A
 
 
 def mac_init(t, h2c_ep: int, cv: int) -> None:

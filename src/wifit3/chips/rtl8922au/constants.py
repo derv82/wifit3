@@ -655,6 +655,31 @@ IMR_DMAC_REGS = (
     (0x0A218, 0x00000001, 0x00000001),   # R_BE_PLRLS_ERR_IMR
     (0x0B0B8, 0x000000FB, 0x000000FB),   # R_BE_HAXI_IDCT_MSK
 )
+# trx_init tail: err_imr_ctrl_be + set_host_rpr_be + rsp_chk_sig clear. [SRC] mac_be.c, reg.h.
+R_BE_DMAC_ERR_IMR = 0x8520              # reg.h:5079
+DMAC_ERR_IMR_EN = 0xFFFFFFFF            # GENMASK(31, 0). reg.h:676
+B_BE_DMAC_NOTX_ERR_INT_EN = 1 << 21     # reg.h:5080
+R_BE_CMAC_ERR_IMR = 0x10160             # reg.h:6678
+R_BE_CMAC_ERR_IMR_C1 = 0x14160          # reg.h:6679
+CMAC0_ERR_IMR_EN = 0xFFFFFFFF           # GENMASK(31, 0). reg.h:2211
+CMAC1_ERR_IMR_EN = 0xFFFFFFFF           # GENMASK(31, 0). reg.h:2212
+R_BE_WDRLS_CFG = 0x9408                 # reg.h:5756
+B_BE_WDRLS_MODE_MASK = 0x3              # GENMASK(1, 0). reg.h:5760
+RTW89_RPR_MODE_STF = 1                  # core.h:5010
+R_BE_RLSRPT0_CFG0 = 0x9440              # reg.h:5794
+B_BE_RLSRPT0_QID_MASK = 0x3F            # GENMASK(5, 0). reg.h:5798
+WDRLS_DEST_QID_STF = 0                  # reg.h:5800
+R_BE_RLSRPT0_CFG1 = 0x9444              # reg.h:5802
+S_BE_WDRLS_FLTR_TXOK = 1                # reg.h:5810
+S_BE_WDRLS_FLTR_RTYLMT = 2             # reg.h:5811
+S_BE_WDRLS_FLTR_LIFTIM = 4             # reg.h:5812
+S_BE_WDRLS_FLTR_MACID = 8              # reg.h:5813
+B_BE_RLSRPT0_FLTR_MAP_MASK = 0x0F000000   # GENMASK(27, 24). reg.h:5809
+B_BE_RLSRPT0_TO_MASK = 0x00FF0000         # GENMASK(23, 16). reg.h:5814
+B_BE_RLSRPT0_AGGNUM_MASK = 0x000000FF     # GENMASK(7, 0). reg.h:5815
+R_BE_RSP_CHK_SIG = 0x11000              # reg.h:7638
+B_BE_RSP_STATIC_RTS_CHK_SERV_BW_EN = 1 << 30  # reg.h:7640
+
 IMR_CMAC_REGS = (
     (0x11884, 0x0001FF7B, 0x0001987B),   # R_BE_RESP_IMR
     (0x10C04, 0x7FFFFE00, 0x7FFFFE00),   # R_BE_RX_ERROR_FLAG_IMR
