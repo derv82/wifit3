@@ -213,7 +213,10 @@ MT_RXD1_NORMAL_GROUP_5 = 1 << 20
 MT_RXD2_NORMAL_HDR_OFFSET_SHIFT = 13
 MT_RXD2_NORMAL_HDR_OFFSET_MASK  = 0x7
 MT_RXD3_NORMAL_FCS_ERR = 1 << 24   # BIT(24), :80
-MT_PRXV_RCPI0 = 0xFF               # GENMASK(7,0) in rxv[3], :112 — RCPI to dBm
+MT_PRXV_RCPI0 = 0xFF               # GENMASK(7,0) in rxv[3], connac3_mac.h:112 (chain-0 RCPI)
+MT_PRXV_RCPI1 = 0xFF00             # GENMASK(15,8),  :111 (chain-1 RCPI)
+MT_PRXV_RCPI2 = 0xFF0000           # GENMASK(23,16), :110 (chain-2 RCPI)
+MT_PRXV_RCPI3 = 0xFF000000         # GENMASK(31,24), :109 (chain-3 RCPI)
 
 # ===========================================================================
 # TX descriptor (connac3 TXWI, mt7925_mac_write_txwi). USB layout per frame:

@@ -41,6 +41,36 @@ def classify(data: bytes) -> str:
     return "80211"
 
 
+def _to_rssi(rcpi: int) -> int:
+    """mt7925.h to_rssi: (RCPI - 220) / 2, C integer division (truncates toward zero,
+    not Python floor: they differ by 1 dB on odd values)."""
+    return int((rcpi - 220) / 2)
+
+
+def _rx_signal(chain_mask: int, chain_signal) -> int:
+    """mt76_rx_signal (mac80211.c:1203): the strongest chain in chain_mask plus a
+    diversity bonus per additional chain (+3 dB if equal, +2 within 2 dB, +1 within
+    6 dB). Chains outside the mask or reading positive (unpopulated) are skipped."""
+    signal = -128
+    chains = chain_mask
+    i = 0
+    while chains and i < len(chain_signal):
+        cur = chain_signal[i]
+        if (chains & 1) and cur <= 0:
+            if cur > signal:
+                cur, signal = signal, cur
+            diff = signal - cur
+            if diff == 0:
+                signal += 3
+            elif diff <= 2:
+                signal += 2
+            elif diff <= 6:
+                signal += 1
+        chains >>= 1
+        i += 1
+    return signal
+
+
 def decode_frame(data: bytes, antenna_mask: int):
     """Strip the connac3 RX descriptor (mt7925_mac_fill_rx, mt7925/mac.c:354) and return
     (mpdu_off, mpdu_end, rssi, fcs_err), or None on a malformed/too-short buffer.
@@ -48,7 +78,8 @@ def decode_frame(data: bytes, antenna_mask: int):
     The RXD is 8 dwords, plus 4 more per present GROUP (rxd1 bits 16-19) and 24 for
     GROUP_5 inside GROUP_3. The MPDU begins at that offset + 2*remove_pad; the total RX
     byte count (rxd0 LENGTH) is where it ends (the HW already stripped the FCS). RSSI is
-    RCPI0 from the GROUP_3 P-RXV word rxv[3]."""
+    the mt76_rx_signal diversity-combine of the per-chain RCPIs in rxv[3] over the
+    antenna_mask (mt7925_mac_fill_rx:521-525), not chain-0 alone."""
     if len(data) < 32:
         return None
     rxd0, rxd1, rxd2, rxd3 = struct.unpack_from("<IIII", data, 0)
@@ -70,8 +101,13 @@ def decode_frame(data: bytes, antenna_mask: int):
         if off + 16 > len(data):
             return None
         v3 = struct.unpack_from("<I", data, off + 12)[0]   # rxv[3]
-        rcpi = v3 & MT_PRXV_RCPI0
-        rssi = (rcpi - 220) // 2                  # to_rssi: RCPI to dBm
+        chain_signal = [
+            _to_rssi(v3 & MT_PRXV_RCPI0),
+            _to_rssi((v3 & MT_PRXV_RCPI1) >> 8),
+            _to_rssi((v3 & MT_PRXV_RCPI2) >> 16),
+            _to_rssi((v3 & MT_PRXV_RCPI3) >> 24),
+        ]
+        rssi = _rx_signal(antenna_mask, chain_signal)
         off += 4 * 4
         if rxd1 & MT_RXD1_NORMAL_GROUP_5:
             off += 24 * 4
