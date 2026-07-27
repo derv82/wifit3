@@ -110,7 +110,7 @@ class LongRunProbe(Probe):
                     break
                 now = time.time()
                 active_since = now - bucket_sec
-                a_total, a_24, a_5, _ = snapshot_active(iface, active_since)
+                a_total, a_24, a_5, _ = snapshot_active(args.array, active_since)
                 frames_now = counter.count
                 frames_delta = frames_now - last_frame_count
                 snapshots.append(dict(

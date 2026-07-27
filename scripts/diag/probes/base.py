@@ -46,9 +46,9 @@ class FrameCounter:
         self.count += 1
 
 
-def snapshot_active(iface, since: float):
+def snapshot_active(array, since: float):
     """Return (active_total, active_24, active_5, channels_seen)."""
-    aps = [ap for ap in list(iface.access_points.values()) if ap.last_seen >= since]
+    aps = [ap for ap in list(array.access_points.values()) if ap.last_seen >= since]
     a24 = sum(1 for ap in aps if classify_band(ap.channel) == "2.4")
     a5 = sum(1 for ap in aps if classify_band(ap.channel) == "5")
     chans_seen = {ap.channel for ap in aps}

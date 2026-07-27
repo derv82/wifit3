@@ -67,14 +67,14 @@ class BaselineProbe(Probe):
                 window_start = time.time()
                 start_frames = counter.count
                 pre_known = {
-                    bssid for bssid, ap in list(iface.access_points.items())
+                    bssid for bssid, ap in list(args.array.access_points.items())
                     if ap.channel == ch
                 }
                 await asyncio.sleep(dwell_sec)
                 frames = counter.count - start_frames
 
                 active = [
-                    ap for ap in list(iface.access_points.values())
+                    ap for ap in list(args.array.access_points.values())
                     if ap.channel == ch and ap.last_seen >= window_start
                 ]
                 active_bssids = {ap.bssid for ap in active}

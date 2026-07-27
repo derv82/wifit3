@@ -38,6 +38,7 @@ from probes import ALL_PROBES  # noqa: E402
 from report import write_csv, write_markdown  # noqa: E402
 
 from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
+from wifit3.wlan.array import WlanArray  # noqa: E402
 
 logger = logging.getLogger("diag.sweep")
 
@@ -144,6 +145,10 @@ async def main() -> int:
         print(f"[-] Bring-up failed: {e}", file=sys.stderr)
         await close_interfaces(ifaces)
         return 1
+
+    array = WlanArray()
+    array.attach(iface)
+    args.array = array
 
     if args.channels:
         channels = [int(x.strip()) for x in args.channels.split(",") if x.strip()]
