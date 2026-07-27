@@ -50,6 +50,7 @@ Only the devices listed below will work with wifit3.
 | ALFA AWUS036**ACM** | MediaTek MT7612U | 2.4 / 5 GHz |
 | ALFA AWUS036**ACHM** | MediaTek MT7610U | 2.4 / 5 GHz |
 | ALFA AWUS036**AXML** / Panda PAU0F | MediaTek MT7921AU | 2.4 / 5 GHz |
+| Netgear A9000 | MediaTek MT7925U | 2.4 / 5 GHz |
 | ALFA AWUS036**ACS** | Realtek RTL8821AU | 2.4 / 5 GHz |
 | ALFA AWUS036**ACH** | Realtek RTL8812AU | 2.4 / 5 GHz |
 | ALFA AWUS1900 | Realtek RTL8814AU | 2.4 / 5 GHz |
