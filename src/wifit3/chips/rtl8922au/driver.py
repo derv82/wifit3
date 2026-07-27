@@ -190,10 +190,22 @@ class RTL8922AUDriver(Driver):
                  | B_BE_FORCE_CLK_U2 | B_BE_USB3_GEN_MODE | B_BE_USB3_LANE_MODE)
         self.transport.write32_quiet(R_BE_PAD_CTRL2, pad)
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """One per-channel tune, the unit airmon-ng drives per hop. [SRC] core.c __rtw89_set_channel."""
-        chan.set_channel(self.transport, channel, self._h2c_ep)
+    async def set_channel(self, channel: int, scan: bool = False, mlo_1_1: bool = False) -> bool:
+        """One per-channel tune, the unit airmon-ng drives per hop. mlo_1_1 selects the MLO mode the
+        entity recalc lands on for this hop. [SRC] core.c __rtw89_set_channel."""
+        chan.set_channel(self.transport, channel, self._h2c_ep, mlo_1_1=mlo_1_1)
         return True
+
+    def configure_filter(self, rx_fltr: int) -> None:
+        """rtw89_ops_configure_filter tail: write the RX filter to both MACs (dbcc_en). rx_fltr is
+        the mac80211 filter-policy value (sniffer-mode + the accept flags). [SRC] mac80211.c:388."""
+        mac.set_rx_fltr(self.transport, 0, rx_fltr)
+        mac.set_rx_fltr(self.transport, 1, rx_fltr)
+
+    def config_monitor(self) -> None:
+        """rtw89_ops_config on a CONF_CHANGE_MONITOR change: re-run physts parsing with monitor IEs
+        for both PHYs. [SRC] mac80211.c:109."""
+        phy.physts_parsing_init(self.transport, monitor=True)
 
     async def close(self) -> None:
         if self.dev is not None:

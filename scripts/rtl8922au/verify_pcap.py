@@ -34,6 +34,12 @@ _R_DBCC_ABS = 0x26B48
 _R_FC0_ABS = 0x26B4C
 _B_FC0_MASK = 0x1FFF             # GENMASK(12, 0): central_freq
 
+# Non-hop mac80211 ops the driver also emits, dispatched by their opening read. configure_filter
+# opens with the read of R_BE_RX_FLTR_OPT (MAC_0); config(CONF_CHANGE_MONITOR) opens with the
+# physts read of R_PLCP_HISTOGRAM. [SRC] mac.c:2686, phy.c:7140 (+ CR_BASE_BE 0x20000).
+_R_RX_FLTR_OPT_ABS = 0x11420
+_R_PLCP_HISTOGRAM_ABS = 0x20738
+
 # usbmon mon_bin record offsets.
 _OFF_TYPE, _OFF_XFER, _OFF_EP, _OFF_DEV, _OFF_LENCAP, _OFF_SETUP, _OFF_DATA = 8, 9, 10, 11, 36, 40, 64
 _URB_SUBMIT, _URB_COMPLETE, _XFER_CTRL, _XFER_BULK = 0x53, 0x43, 0x02, 0x03
@@ -236,6 +242,34 @@ def _is_hop_opener(op: dict) -> bool:
     return op["kind"] == "ctrl" and op["is_in"] and _op_addr(op) == _R_DBCC_ABS
 
 
+def _is_ctrl_read(op: dict, addr: int) -> bool:
+    return op["kind"] == "ctrl" and op["is_in"] and _op_addr(op) == addr
+
+
+_R_SYN_PATH_B_ABS = 0x22BE0       # HWSI_OFST_ADDR[RF_PATH_B]: pre_set_channel_rf writes RR_POW here
+
+
+def _peek_mlo_1_1(ops: list[dict], start: int, window: int = 300) -> bool:
+    """The MLO mode (is_mlo_1_1) the entity recalc lands on is a host-driven input; read it from the
+    hop's first path-B synthesizer-power write (pre_set_channel_rf): RR_POW_SYN_V1 nibble 0xF is
+    RF_SYN_ALLON (mlo_1_1), 0x0 is RF_SYN_ON_OFF (PHY_0 of a non-1_1 mode). [SRC] rtw8922a_rfk.c:367."""
+    for op in ops[start:start + window]:
+        if op["kind"] == "ctrl" and not op["is_in"] and _op_addr(op) == _R_SYN_PATH_B_ABS \
+                and len(op["data"]) == 4:
+            return ((struct.unpack("<I", op["data"])[0] >> 8) & 0xF) == 0xF
+    return False
+
+
+def _peek_rx_fltr(ops: list[dict], start: int, window: int = 4) -> int | None:
+    """The RX-filter value is a mac80211 filter-policy input (which accept flags are on); read it
+    from the write that follows the opening read, like the channel is read from R_FC0."""
+    for op in ops[start:start + window]:
+        if op["kind"] == "ctrl" and not op["is_in"] and _op_addr(op) == _R_RX_FLTR_OPT_ABS \
+                and len(op["data"]) == 4:
+            return struct.unpack("<I", op["data"])[0]
+    return None
+
+
 def _peek_channel(ops: list[dict], start: int, window: int = 600) -> int | None:
     """The channel a hop targets is a runtime input (airodump picks it); read it from the upcoming
     R_FC0 center-freq write, then map freq -> channel. [SRC] rtw8922a.c:1517."""
@@ -248,19 +282,31 @@ def _peek_channel(ops: list[dict], start: int, window: int = 600) -> int | None:
 
 
 async def _drive(driver: RTL8922AUDriver, replay: "ReplayDev", ops: list[dict]) -> int:
-    """Cold bring-up via connect(), then dispatch each per-channel set_channel unit to
-    driver.set_channel(peeked channel). Returns the hop count. Divergence propagates."""
+    """Cold bring-up via connect(), then dispatch the mac80211 op stream by its opening read: a
+    per-channel set_channel (R_DBCC), a configure_filter (R_BE_RX_FLTR_OPT), or a monitor-config
+    physts (R_PLCP_HISTOGRAM). Returns the hop count. Divergence propagates."""
     await driver.connect()
     hops = 0
     while True:
         j = replay.next_register_op()
-        if j is None or not _is_hop_opener(ops[j]):
+        if j is None:
             break
-        ch = _peek_channel(ops, j)
-        if ch is None:
+        op = ops[j]
+        if _is_hop_opener(op):
+            ch = _peek_channel(ops, j)
+            if ch is None:
+                break
+            await driver.set_channel(ch, mlo_1_1=_peek_mlo_1_1(ops, j))
+            hops += 1
+        elif _is_ctrl_read(op, _R_RX_FLTR_OPT_ABS):
+            rx_fltr = _peek_rx_fltr(ops, j)
+            if rx_fltr is None:
+                break
+            driver.configure_filter(rx_fltr)
+        elif _is_ctrl_read(op, _R_PLCP_HISTOGRAM_ABS):
+            driver.config_monitor()
+        else:
             break
-        await driver.set_channel(ch)
-        hops += 1
     return hops
 
 

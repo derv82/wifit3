@@ -129,7 +129,8 @@ from .constants import (
     B_BE_RRSR_HE_MASK,
     R_BE_RESPBA_CAM_CTRL, B_BE_BACAM_RST_MASK, S_BE_BACAM_RST_DONE, S_BE_BACAM_RST_ALL,
     R_BE_DLK_PROTECT_CTL, B_BE_RX_DLK_CCA_TIME_MASK, TRXCFG_RMAC_CCA_TO, B_BE_RX_DLK_DATA_TIME_MASK,
-    TRXCFG_RMAC_DATA_TO, B_BE_RX_DLK_RST_EN, B_BE_RX_MPDU_MAX_LEN_MASK, R_BE_RCR, B_BE_BUSY_CHKSN,
+    TRXCFG_RMAC_DATA_TO, B_BE_RX_DLK_RST_EN, B_BE_RX_MPDU_MAX_LEN_MASK, B_BE_RX_FLTR_CFG_MASK,
+    R_BE_RCR, B_BE_BUSY_CHKSN,
     R_BE_RX_PLCP_EXT_OPTION_1, B_BE_PLCP_SU_PSDU_LEN_SRC, PLD_RLS_MAX_PG, RX_MAX_LEN_UNIT,
     RX_SPEC_MAX_LEN, RTW89_PLE_PG_256,
     PLE_RSVD_QT2, R_BE_RESP_CSI_RESERVED_PAGE, B_BE_CSI_RESERVED_PAGE_NUM_MASK,
@@ -1222,6 +1223,15 @@ def rx_fltr_init(t, mac_idx: int) -> None:
     t.write16(R_BE_PLCP_HDR_FLTR + off,
               B_BE_HE_SIGB_CRC_CHK | B_BE_VHT_MU_SIGB_CRC_CHK | B_BE_VHT_SU_SIGB_CRC_CHK
               | B_BE_SIGA_CRC_CHK | B_BE_LSIG_PARITY_CHK_EN | B_BE_CCK_SIG_CHK | B_BE_CCK_CRC_CHK)
+
+
+def set_rx_fltr(t, mac_idx: int, rx_fltr: int) -> None:
+    """rtw89_mac_set_rx_fltr: RMW the RX filter options, keeping the (non-contiguous) MPDU-max-len
+    field from the device. rx_fltr is the mac80211 filter-policy value. [SRC] mac.c:2678."""
+    reg = _reg_by_idx(R_BE_RX_FLTR_OPT, mac_idx)
+    val = t.read32(reg)
+    val = (val & ~B_BE_RX_FLTR_CFG_MASK & 0xFFFFFFFF) | (rx_fltr & B_BE_RX_FLTR_CFG_MASK)
+    t.write32(reg, val)
 
 
 def nav_ctrl_init(t, mac_idx: int) -> None:

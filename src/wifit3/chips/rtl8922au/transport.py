@@ -43,6 +43,9 @@ class RTL8922AUTransport:
         self.mlo_1_1 = True         # mlo_dbcc_mode == MLO_1_PLUS_1_1RF: core_init default for BE;
         #                             recalcs to MLO_2_PLUS_0_1RF once the PHY_0 vif has a chanctx.
         #                             [SRC] core.c:6995, chan.c:485-534.
+        self.entity_active = [False, False]   # hal.entity_active[phy]: per-PHY, set once tuned.
+        self.last_band = [None, None]         # prev chan band per PHY, for chan_rcd->band_changed.
+        #                                       [SRC] core.h:5507, chan.c:212, core.c:541-558.
         self.rfe_type = 0           # efuse->rfe_type, from the RF-block logical parse. [SRC] rtw8922a.c:866
         self.tssi_cck = [0, 0]      # efuse TSSI cck_tssi[0] per path (2G group 0). [SRC] rtw8922a.c:744
         self.tssi_mcs = [0, 0]      # efuse TSSI bw40_tssi[0] per path (2G group 0)

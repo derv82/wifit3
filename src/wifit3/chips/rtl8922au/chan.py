@@ -51,19 +51,24 @@ def _set_channel_one(t, ep: int, chan: dict, phy_idx: int, mac_idx: int) -> None
     phy.set_channel_rf(t, chan, phy_idx)
     txpwr.set_txpwr(t, chan, phy_idx)
     phy.set_channel_help(t, t.cv, band, enter=False, phy_idx=phy_idx, mac_idx=mac_idx, tx_en=tx_en)
-    coex.ntfy_switch_band(t, ep)                     # !entity_active on the first tune
-    rfk.rfk_band_changed(t, ep, chan, phy_idx)
+    band_changed = t.last_band[phy_idx] is not None and t.last_band[phy_idx] != band
+    if not t.entity_active[phy_idx] or band_changed:
+        coex.ntfy_switch_band(t, ep)
+        rfk.rfk_band_changed(t, ep, chan, phy_idx)
+    t.entity_active[phy_idx] = True
+    t.last_band[phy_idx] = band
     # rfk_channel_for_pure_mon_vif runs only where the monitor vif has a link: PHY_0 only.
     if phy_idx == 0:
         rfk.rfk_channel(t, ep, chan, phy_idx)
 
 
-def set_channel(t, channel: int, ep: int = None) -> dict:
+def set_channel(t, channel: int, ep: int = None, mlo_1_1: bool = False) -> dict:
     """rtw89_set_channel: for a BE chip, __rtw89_set_channel runs for PHY_0/MAC_0 then PHY_1/MAC_1
-    (same monitor channel). The single PHY_0 vif recalcs mlo_dbcc_mode to MLO_2_PLUS_0_1RF, so the
-    per-path helpers run both RF paths. Only the PHY_0 tune is wired so far. [SRC] core.c:563."""
+    (same monitor channel). rtw89_entity_recalc picks the MLO mode per hop from the active-link map;
+    the monitor setup flips it (MLO_2_PLUS_0_1RF vs MLO_1_PLUS_1_1RF), so mlo_1_1 is a per-hop input.
+    [SRC] core.c:563, chan.c:485 rtw89_entity_sel_mlo_dbcc_mode."""
     chan = make_chan(channel)
-    t.mlo_1_1 = False
+    t.mlo_1_1 = mlo_1_1
     _set_channel_one(t, ep, chan, phy_idx=0, mac_idx=0)
     _set_channel_one(t, ep, chan, phy_idx=1, mac_idx=1)
     return chan

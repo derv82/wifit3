@@ -94,9 +94,10 @@ def _txgapk(phy_idx: int, band: int, bw: int, ch: int, cv: int) -> bytes:
     return bytes((8, 2, phy_idx, RF_AB, band, bw, ch, cv))
 
 
-def _iqk(phy_idx: int, band: int, bw: int, ch: int, cv: int) -> bytes:
-    """rtw89_fw_h2c_rf_iqk: {len=8, ktype=0, phy, kpath=RF_AB, band, bw, ch, cv}. [SRC] fw.c:7641."""
-    return bytes((8, 0, phy_idx, RF_AB, band, bw, ch, cv))
+def _iqk(phy_idx: int, band: int, bw: int, ch: int, cv: int, kpath: int) -> bytes:
+    """rtw89_fw_h2c_rf_iqk: {len=8, ktype=0, phy, kpath, band, bw, ch, cv}. Unlike the other RFK
+    H2Cs, iqk's kpath is rtw89_phy_get_kpath (per MLO mode), not RF_AB. [SRC] fw.c:7641,7678."""
+    return bytes((8, 0, phy_idx, kpath, band, bw, ch, cv))
 
 
 def _dpk(phy_idx: int, band: int, bw: int, ch: int) -> bytes:
@@ -152,9 +153,11 @@ def rfk_channel(t, ep: int, chan: dict, phy_idx: int) -> None:
     _wait_rx_mode(t, RF_AB)
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_PRE_NOTIFY,
          _pre_ntfy(phy_idx, mode, 1 if t.mlo_1_1 else 0, ch))
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_NOTIFY, H2C_FUNC_OUTSRC_RF_MCC_INFO, _pre_ntfy_mcc(mode, 1))
+    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_NOTIFY, H2C_FUNC_OUTSRC_RF_MCC_INFO,
+         _pre_ntfy_mcc(mode, phy._chan_to_rf18_val(chan)))
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TXGAPK_OFFLOAD, _txgapk(phy_idx, band, bw, ch, t.cv))
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_IQK_OFFLOAD, _iqk(phy_idx, band, bw, ch, t.cv))
+    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_IQK_OFFLOAD,
+         _iqk(phy_idx, band, bw, ch, t.cv, phy._get_kpath(t, phy_idx)))
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TSSI_OFFLOAD, _tssi(t, chan, RTW89_TSSI_NORMAL, phy_idx))
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_DPK_OFFLOAD, _dpk(phy_idx, band, bw, ch))
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_RXDCK_OFFLOAD, _rxdck(0, ch, 1))  # PHY_0 fixed

@@ -48,7 +48,8 @@ from .constants import (
     R_PLCP_HISTOGRAM, B_STS_DIS_TRIG_BY_FAIL, B_STS_DIS_TRIG_BY_BRK,
     R_PHY_STS_BITMAP_START, R_PHY_STS_BITMAP_EHT, RTW89_PHYSTS_BITMAP_NUM, RTW89_RSVD_9,
     RTW89_HE_MU, RTW89_VHT_MU, RTW89_TRIG_BASE_PPDU, RTW89_CCK_PKT, RTW89_HT_PKT, RTW89_EHT_PKT,
-    IE01_CMN_OFDM, IE04_07_EXT_PATH, IE13_DL_MU_DEF, IE20_DBG_OFDM,
+    RTW89_VHT_PKT, RTW89_HE_PKT,
+    IE01_CMN_OFDM, IE04_07_EXT_PATH, IE09_FTR_0, IE10_FTR_PLCP_EXT, IE13_DL_MU_DEF, IE20_DBG_OFDM,
     R_SEG0R_PD_V2, B_SEG0R_PD_LOWER_BOUND, B_SEG0R_PD_SR_EN,
     R_BMODE_PDTH_EN_V2, B_BMODE_PDTH_LIMIT_EN, R_BMODE_PDTH_V2, B_BMODE_PDTH_LOWER_BOUND,
     XTAL_SI_XTAL_SC_XO, XTAL_SI_XTAL_SC_XI, B_AX_XTAL_SC_MASK, XTAL_SC_MASK,
@@ -434,9 +435,12 @@ def _ie_bitmap_addr(i: int) -> int:
     return R_PHY_STS_BITMAP_START + (page << 2)
 
 
-def _physts_one(t, phy_idx: int) -> None:
-    """__rtw89_physts_parsing_init: disable fail/brk report, then the per-packet IE bitmap loop
-    (monitor mode off, so no MU/SU monitor IEs). [SRC] phy.c:7157-7207."""
+def _physts_one(t, phy_idx: int, monitor: bool = False) -> None:
+    """__rtw89_physts_parsing_init: disable fail/brk report, then the per-packet IE bitmap loop.
+    In monitor mode the MU pages gain FTR_0 + FTR_PLCP_EXT (physt_gen < 2) and the SU HE/VHT pages
+    gain FTR_0. [SRC] phy.c:7157-7207."""
+    mu_ies = (IE09_FTR_0 | IE10_FTR_PLCP_EXT) if monitor else 0
+    su_ies = IE09_FTR_0 if monitor else 0
     _phy_write32_idx_set(t, R_PLCP_HISTOGRAM, B_STS_DIS_TRIG_BY_FAIL, phy_idx)
     _phy_write32_idx_set(t, R_PLCP_HISTOGRAM, B_STS_DIS_TRIG_BY_BRK, phy_idx)
     for i in range(RTW89_PHYSTS_BITMAP_NUM):
@@ -445,7 +449,7 @@ def _physts_one(t, phy_idx: int) -> None:
         addr = _ie_bitmap_addr(i)
         val = _phy_read32_idx(t, addr, phy_idx)                  # get_ie_bitmap
         if i in (RTW89_HE_MU, RTW89_VHT_MU):
-            val |= IE13_DL_MU_DEF
+            val |= IE13_DL_MU_DEF | mu_ies
         elif i == RTW89_TRIG_BASE_PPDU:
             val |= IE13_DL_MU_DEF | IE01_CMN_OFDM
         elif i >= RTW89_CCK_PKT:
@@ -454,7 +458,16 @@ def _physts_one(t, phy_idx: int) -> None:
                 val |= IE01_CMN_OFDM
             elif i >= RTW89_HT_PKT:
                 val |= IE20_DBG_OFDM
+        if i in (RTW89_HE_PKT, RTW89_VHT_PKT):
+            val |= su_ies
         _phy_write32_idx(t, addr, MASKDWORD, val & 0xFFFFFFFF, phy_idx)   # set_ie_bitmap
+
+
+def physts_parsing_init(t, monitor: bool) -> None:
+    """rtw89_physts_parsing_init for both PHYs (dbcc). Re-run on a mac80211 monitor-mode change
+    with monitor=True to add the MU/SU monitor IEs. [SRC] phy.c:7210, mac80211.c:109."""
+    _physts_one(t, 0, monitor)
+    _physts_one(t, 1, monitor)
 
 
 def _dig_one(t, phy_idx: int) -> None:
