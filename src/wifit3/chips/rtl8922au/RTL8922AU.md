@@ -7,10 +7,10 @@ where the source and captures are, how to verify, and what to port next.
 ## Status
 
 Cold-boot bring-up, the monitor bring-up (configure_filter + monitor physts), the per-hop MLO-mode
-handling, and the first three per-channel hops (2.4 GHz) are reproduced and committed (capture-1:
-17753/163814 ops; capture-2/3 stop at the same frontier, poll-count variance only). `verify_pcap`
-walks VENQT control ops and bulk-OUT (fw/H2C) ops. Frontier: **op #17762** = the periodic env-monitor
-DM watchdog (read of `R_IFS_TOTAL_BE4` 0x20eec).
+handling, the periodic env-monitor DM watchdog, and **every 2.4 GHz hop (ch1-14)** are reproduced and
+committed (capture-1: 86453/163814 ops; capture-2/3 stop at the same frontier, poll-count variance
+only). `verify_pcap` walks VENQT control ops and bulk-OUT (fw/H2C) ops. Frontier: the **first 5 GHz
+hop** (~op #86453), which raises `NotImplementedError` at `set_gain` (the deferred 5/6G branches).
 
 What reproduces: all of `rtw89_core_start`, the mac80211 add-interface, and per-hop the FULL
 `__rtw89_set_channel` for **both PHYs**. A hop is TWO `__rtw89_set_channel` calls: PHY_0/MAC_0 then
@@ -135,27 +135,22 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #17762): the periodic env-monitor DM watchdog
+## Next (from op #86453): the deferred 5/6 GHz tune branches
 
-The next block is the periodic DM watchdog (`rtw89_track_work`, core.c:5473): stat_track,
-env_monitor_track, dig, cfo_track, antdiv_track, edcca_track. It is an **async producer** (fires on a
-timer at irregular ops: 17762, 20845, 29966, 39052, 45125, ...), so it must not go in
-`chan.set_channel`. On the wire it is env_monitor (ifs_clm counters at 0x20ecc-0x20eec, ifs_clm_set +
-ccx at 0x20c00/0x20c28) + dig (`R_SEG0R_PD_V2` 0x26a74, `R_BMODE_PDTH` 0x26708/0x26718) + edcca_track
-(`R_SEG0R_EDCCA_LVL_BE` 0x269ec, `R_SEG0R_PPDU_LVL_BE` 0x269f0); stat/cfo/antdiv look like no-ops at
-idle. Because the capture has no traffic, every counter reads back 0, so the adaptive algorithms
-collapse to fixed idle-state field writes (read-modify-write, the non-field bits echoed from the
-replayed read). The op count varies per firing (FIRE1 44 ops with edcca, FIRE2 38 without), driven by
-per-function period counters / ccx racing state that must be tracked to stay byte-exact.
+Every 2.4 GHz hop reproduces; the walk now stops at the first 5 GHz hop (ch36). The 5/6G paths raise
+`NotImplementedError` today and must be ported band-by-band, verifying each against the pcap:
 
-Port as a driver method (e.g. `dm_watchdog`) for PHY_0's active BB; add a `verify_pcap._drive` dispatch
-hook keyed on the opener read of `R_IFS_TOTAL_BE4` (0x20eec), like the configure_filter / physts hooks.
+- `phy.set_channel_bb` -> `_set_gain` / `_set_rx_gain_normal` (5G gain tables, the bw40_1s_tssi_5g /
+  gain_g vs gain_a columns), `encode_chan_idx`, `_ctrl_bw` (40/80/160 MHz).
+- `mac.set_channel_mac` (5G band/sub-band arm).
+- `txpwr.py` limit tables (LMT_5GHZ / LMT_RU_5GHZ + tx_shape) and the 5G diff/ref/sar.
+- `rfk._tssi` 5/6G de: uses `phy_tssi_get_ofdm_de`'s EXTRA-group interpolation (average of two adjacent
+  groups, `PHY_TSSI_EXTRA_GROUP`) plus the `bw40_1s_tssi_5g` efuse array and `bw_diff_5g`; ground-truth
+  5G de bytes are in the capture (extract per channel like the 2G table was).
 
-After the watchdog, the rest is the **per-channel hop loop** interleaved with more watchdogs and
-configure_filter bursts. The tune code is channel-agnostic (replay supplies the reads; only
-channel-table WRITTEN values differ), so the 2.4 GHz hops (ch1-14) should auto-advance. The first 5 GHz
-hop (ch36, ~tssi index 50 in capture order) needs the deferred 5/6G branches (the 2G/HT20-only list in
-Status).
+Recorded 5G channels in the capture: 36-165 (the tssi H2Cs give the full list). Delegate the
+per-function 5G byte-spec to a subagent (the pattern that worked for physts / TSSI / the DM watchdog),
+port from it, `verify_pcap`, commit each band.
 
 **Recurring trap (still relevant):** at set_channel the MLO mode is MLO_2_PLUS_0_1RF (single PHY_0
 monitor vif), not the core_start MLO_1_PLUS_1_1RF. Any helper that branches on the mode must handle
