@@ -32,7 +32,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ⚠️ | ✅ | ✅ | C |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
-| [MT7925AU](#mt7925au) | – | ✅ | ✅ | – | – | – |
+| [MT7925AU](#mt7925au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 
 ## Per-card notes
 
@@ -348,16 +348,16 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **–** | 2026-07-26 | In progress: TX/ACKs/handshake/PMKID/WPS/WEP done; RX + port + stress baseline pending (diag scripts, Linux). |
-| RX | – | | Baseline pending (diag/baseline scripts, Linux). |
-| Port | – | | Baseline pending; cold-boot verify_pcap reproduces every driver op (3 pcaps). |
+| **Grade** | **A** | 2026-07-27 | Kernel-parity dual-band RX and full attack suite; flat 20-min soak. |
+| RX | ✅ | 2026-07-27 | ref2g 8.9/8.71, ref5g 9.8/9.79 (match); breadth matches linux both bands; RSSI +0.1 dB; 2/2 tune, 0 silent, 0 cross. |
+| Port | ✅ | 2026-07-27 | Matches mt7925u both bands; accurate RSSI. |
 | TX | ✅ | 2026-07-26 | Inject 2.4 + 5 GHz; TXWI byte-exact vs 2 TX pcaps. |
 | Handshake | ✅ | 2026-07-26 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-07-26 | Captured. |
-| ACKs | ✅ | 2026-07-26 | Active monitor auto-ACKs a forged MAC; HW ACK-retries to REM_TX_COUNT (ack_lab). |
-| WPS | ✅ | 2026-07-26 | PIN → M7, 5/5 with active monitor (wps_lab). |
+| ACKs | ✅ | 2026-07-27 | Auto-ACKs a forged MAC via active monitor (100/100); HW ACK-retries to REM_TX_COUNT, stop-on-ACK on a valid target. |
+| WPS | ✅ | 2026-07-27 | PIN → M7, 5/5 (active monitor). |
 | WEP | ✅ | 2026-07-26 | 2.4 GHz ChopChop + ARP replay ~300 IVs/s. |
-| Stress | – | | Not yet tested. |
+| Stress | ✅ | 2026-07-27 | 20-min 38-ch soak, flat (trend 1.00, no death-detect). |
 
 → [MT7925AU.md](src/wifit3/chips/mt7925au/MT7925AU.md)
 
