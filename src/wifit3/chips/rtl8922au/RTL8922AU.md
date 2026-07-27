@@ -6,20 +6,22 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 13137/163814 driver ops reproduced and committed (capture-1; ~13153/13194 on
+Cold-boot bring-up, 13399/163814 driver ops reproduced and committed (capture-1; ~13415/13456 on
 capture-2/3, poll-count variance only). `verify_pcap` walks both VENQT control ops and bulk-OUT
-ops; all three captures stop at the same frontier. **All of `rtw89_core_start` AND the entire
-mac80211 add-interface are reproduced, and the first per-channel `set_channel` unit is mostly
-ported** (pre_set_channel bb/rf, set_channel_help enter/hal_reset, set_channel_mac, ctrl_sco_cck).
-The frontier is inside `rtw8922a_ctrl_ch` at **`set_gain`** (op #13146, BB reg 0x2409c). `set_gain`
-= `set_lna_tia_gain` + `set_rpl_gain`, both reading `rtwdev->bb_gain.be` (the `lna_gain`/`tia_gain`/
-`lna_op1db`/`rpl` arrays) and applying them via the `bb_gain_lna`/`bb_gain_tia`/`bb_op1db_*`
-reg-def tables (per gain_band from `chan->subband_type`, bw_type, path A/B). **`bb_gain.be` is
-populated from the firmware BB-gain element** (`elm_info->bb_gain`, phy.c:1960), NOT efuse. So the
-next un-defer is the **BB-gain FW element parse** (a `_be` parser into the gain arrays), then the
-apply. This is a data-heavy subsystem: a good subagent-spec candidate (dump the ctrl_ch ground
-truth in `/tmp/.../scratchpad/gt_ctrl_ch.txt`, hand a subagent the element parser + the reg-def
-tables + the ground truth, get a byte-spec). The per-channel loop is ~150k ops, one unit ~750 ops.
+ops; all three captures stop at the same frontier. **All of `rtw89_core_start`, the entire mac80211
+add-interface, and `rtw8922a_set_channel_mac` + `rtw8922a_set_channel_bb` (the full BB half of the
+first per-channel tune) are reproduced.** The frontier is **`rtw8922a_set_channel_rf`** (op #13408,
+the masked-HWSI RF writes on 0x22adc/0x22c24/0x22ae0 path A and 0x22bdc/0x22d24/0x22be0 path B).
+
+set_channel_bb is complete: pre_set_channel bb/rf, set_channel_help(enter)/hal_reset, set_channel_mac,
+then all of set_channel_bb (ctrl_sco_cck, ctrl_ch [set_gain, band_sel, set_rx_gain_normal, freq/sco/
+cck-params/chan-idx], ctrl_bw, ctrl_cck_en, spur_elimination, tssi_reset). Two data subsystems were
+un-deferred: the **BB-gain FW element** (`phy._decode_bb_gain`, 804 reg2 pairs -> the be gain arrays,
+cached on the transport; applied by set_gain via the reg-def tables) and the **efuse rx-gain offset**
+(`mac._parse_gain_offset` at parse_efuse_map -> `transport.gain_offset`, applied by set_rx_gain_normal).
+Both are 2G-only so far (5/6G raises in set_gain / set_rx_gain_normal / encode_chan_idx / ctrl_bw /
+set_channel_mac -- monitor hops are HT20 2.4/5 GHz, and 5G will need the gain_a tables + 5G bands).
+The per-channel loop is ~150k ops, one unit ~750 ops.
 
 Newly ported this session (see the Log M35-M38): the whole **mac80211 add-interface**
 (`rtw89_mac_vif_init` + `btc_ntfy_role_info`, ops 13014-13066) and the **first set_channel step**
@@ -208,24 +210,30 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #13079)
+## Next (from op #13408)
 
-**The per-channel channel-tune + RFK loop, ~150k ops, the bulk of what remains.** `core_start` and
-the whole add-interface are done; the frontier is now inside the first `rtw8922a_set_channel`
-(rtw8922a.c:2232 = `set_channel_mac` + `set_channel_bb` + `set_channel_rf`).
+**The per-channel channel-tune + RFK loop, ~150k ops, the bulk of what remains.** `core_start`, the
+whole add-interface, and set_channel_mac + set_channel_bb are done. `chan.set_channel` has TODO
+slots for what's left of the unit:
 
-1. **`ctrl_ch` -> `set_gain` (op #13146, the frontier).** `set_lna_tia_gain` + `set_rpl_gain`, per
-   path A/B, applying `bb_gain.be` arrays via `bb_gain_lna`/`bb_gain_tia`/`bb_op1db_*` reg-def tables
-   (rtw8922a.c:1381/1170+). Prerequisite: parse the **BB-gain FW element** into the gain arrays (the
-   `_be` parser, phy.c around 1453/1960). Then the rest of `ctrl_ch` (band_sel, rx_gain_normal,
-   R_FC0 freq write, sco, cck_params, R_MAC_PIN_SEL chan_idx), `ctrl_bw`, `ctrl_cck_en`,
-   `spur_elimination`, R_RSTB_ASYNC, `tssi_reset`. All in `phy.set_channel_bb` (currently only
-   `ctrl_sco_cck` is done).
-2. **`set_channel_rf`** (rtw8922a_rfk.c), **`set_txpwr`**, then **`set_channel_help(leave)`**
-   (hal_reset re-enable + post_set_channel bb/rf -> digital_pwr_comp + ctrl_mlo), then **`rtw8922a_rfk`**
-   (`_rfk_by_channel`: TXGAPK/RX-DCK/IQK/DPK/TSSI, mostly fw-offload H2C cat=2 cls 0x8/0x9/0x10 +
-   masked HWSI RF writes). Delegate per-calibration subagent specs. `rtw8922a_rfk_init` is
-   software-only. `chan.set_channel` and `phy.set_channel_help(leave)` already have the TODO slots.
+1. **`rtw8922a_set_channel_rf` (op #13408, the frontier).** Masked-HWSI RF writes: path A on
+   0x22adc(write)/0x22c24(read)/0x22ae0, path B on 0x22bdc/0x22d24/0x22be0 (uses the existing
+   `phy.write_rf` masked-HWSI path). Read `rtw8922a_set_channel_rf` in rtw8922a_rfk.c; the RF-register
+   values are channel-dependent (freq/band tables).
+2. **`set_txpwr`** (chip op) for the channel, then **`set_channel_help(leave)`** (`phy.set_channel_help`
+   already has the leave arm stubbed with a NotImplementedError: hal_reset re-enable + post_set_channel
+   bb/rf -> digital_pwr_comp + ctrl_mlo), then **`rtw8922a_rfk`** (`_rfk_by_channel`: TXGAPK/RX-DCK/
+   IQK/DPK/TSSI, mostly fw-offload H2C cat=2 cls 0x8/0x9/0x10 + masked HWSI RF writes). Delegate
+   per-calibration subagent specs. `rtw8922a_rfk_init` is software-only.
+
+The subagent workflow (proven for the BB-gain element): dump the ground-truth op window with the
+scratch `dop.py`, hand a subagent the source + our infra (`firmware.element_regs`, `phy.write_rf`)
++ the ground truth, get a byte-spec reconciled to the wire, port, `verify_pcap`, commit.
+
+**One recurring trap:** the MLO mode is MLO_2_PLUS_0 at set_channel (single PHY_0 monitor vif),
+not the core_start MLO_1_PLUS_1. Any rtw8922a helper that branches on `mlo_dbcc_mode == MLO_1_PLUS_1`
+(tssi_cont_en, adc_en, tssi_reset so far, and likely some RFK helpers) must do BOTH RF paths at
+set_channel. Thread it via `transport.mlo_1_1` (True through core_start, set False in chan.set_channel).
 
 The same code runs per channel; only channel-table written values differ (replay supplies reads).
 A pragmatic sub-goal: get ONE channel's set_channel+RFK correct; the rest are replays. The subagent
@@ -385,3 +393,18 @@ describing them, no jargon. No em-dashes and none of the banned words anywhere; 
   band-mode check-rate (2G/5G), default-bw SIFS MACTXEN. 20 MHz only (monitor). 13133.
 - 2026-07-26 M43: `set_channel_bb` head `ctrl_sco_cck` (`phy`): per-2G-channel Barker/CCK FC0-inv
   thresholds (ch_element = primary_ch - 1). 13137. Frontier at ctrl_ch/set_gain (0x2409c).
+- 2026-07-27 M44: `set_gain` (`phy`): decode the BB-gain FW element (`_decode_bb_gain`, addr packs
+  type/path/bw/gain_band/cfg_type; guards bw>=2/gband>=12/path>=2) into the be gain arrays, apply
+  LNA/TIA/op1db + RPL (signed s8) via the reg-def tables, both paths. Subagent-spec'd + reconciled
+  byte-for-byte. 13293.
+- 2026-07-27 M45: `set_rx_gain_normal` (`phy`) + efuse gain-offset (`mac._parse_gain_offset`):
+  block-1 map rx_gain_a@0xD4/b@0xD9, sign-bit+U(7,2)->S(8,2). CCK MGAIN/RPL + OFDM RSSI/RPL/TB
+  compensation. 13337.
+- 2026-07-27 M46: `ctrl_ch` tail (`phy`): band_sel, R_FC0 freq, R_FC0INV_SBW sco, set_cck_parameters
+  (R_PCOEFF), R_MAC_PIN_SEL chan-idx (encode_chan_idx 2G). **ctrl_ch complete.** 13359.
+- 2026-07-27 M47: `ctrl_bw` (`phy`): 20 MHz BB bandwidth config (ANT_CHBW, SMALLBW, DAC_CLK,
+  GAIN_MAP, BW40_2XFFT). 13373.
+- 2026-07-27 M48: `ctrl_cck_en` (`phy`): CCK RXCCA/ADC-clock/PD-arbiter enable. 13379.
+- 2026-07-27 M49: `spur_elimination` (spur_freq 0 -> disable CSI/NBI notches) + set_channel_bb tail
+  (R_RSTB_ASYNC + tssi_reset, mode-aware both-paths fix). **rtw8922a_set_channel_bb complete.**
+  13399. Frontier at set_channel_rf (0x22adc).
