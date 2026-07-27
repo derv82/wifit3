@@ -915,6 +915,32 @@ H2C_CL_OUTSRC_RF_REG_B = 0x9     # fw.h
 RTW89_H2C_RF_PAGE_SIZE = 500     # fw.h
 RTW89_H2C_RF_PAGE_NUM = 3        # fw.h
 
+# BT-coex init (rtw89_btc_ntfy_init -> rtw8922a_btc_set_rfe / btc_init_cfg).
+# [SRC] coex.c:7746, rtw8922a.c:2727-2833, reg.h, coex.h.
+RR_LUTWE = 0xEF                  # reg.h RR_LUTWE (trx-mask enable)
+RR_LUTWA = 0x33                 # reg.h RR_LUTWA (group select)
+RR_LUTWD0 = 0x3F                # reg.h RR_LUTWD0 (mask value)
+B_LUTWEN = 1 << 17              # DEBUG_LUT_RFMODE_MASK. rtw8922a.c:2802
+BTC_BT_SS_GROUP = 0x0           # coex.h
+BTC_BT_TX_GROUP = 0x2           # coex.h
+BTC_BT_RX_GROUP = 0x3           # coex.h
+BTC_TRX_MASK_SS = 0x5FF         # rtw8922a.c:2805
+BTC_TRX_MASK_RX = 0x5DF         # rtw8922a.c:2808
+BTC_TRX_MASK_TX_BTG = 0x55F     # rtw8922a.c:2814 (shared ant, btg path)
+BTC_TRX_MASK_TX = 0x5FF         # rtw8922a.c:2816
+R_BTC_COEX_WL_REQ_BE = 0xE324   # reg.h
+B_BTC_RSP_ACK_HI = 1 << 10      # reg.h
+B_BTC_TX_BCN_HI = 1 << 22       # reg.h
+B_BTC_TX_TRI_HI = 1 << 17       # reg.h
+B_BTC_TX_NULL_HI = 1 << 23      # reg.h
+R_BE_BT_BREAK_TABLE = 0xE344    # reg.h
+BTC_BREAK_PARAM = 0xF0FFFFFF    # reg.h
+R_BTC_ZB_COEX_TBL_0 = 0xE328    # coex.h
+R_BTC_ZB_COEX_TBL_1 = 0xE32C    # coex.h
+R_BTC_ZB_BREAK_TBL = 0xE350     # coex.h
+BTC_ZB_COEX_TBL_VAL = 0xDA5A5A5A  # rtw8922a.c:2827-2830
+BTC_ZB_BREAK_TBL_VAL = 0xF0FFFFFF
+
 # Register H2C/C2H firmware mailbox (rtw89_fw_msg_reg). [SRC] fw.c:8229-8335, reg.h, fw.h.
 R_BE_H2CREG_DATA0 = 0x7140       # reg.h:4848; DATAn = DATA0 + n*4
 R_BE_C2HREG_DATA0 = 0x7150       # reg.h:4852

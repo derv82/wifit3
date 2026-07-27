@@ -197,9 +197,9 @@ def _write_full_rf_v2_a(t, rf_path: int, addr: int, data: int) -> None:
     t.write32(HWSI_OFST_ADDR[rf_path] + CR_BASE_BE, val)
 
 
-def _write_rf(t, rf_path: int, addr: int, data: int) -> None:
-    """rtw89_phy_write_rf_v2: the ad_sel (DAV) direct-address RMW or the HWSI (DDIE) write, with
-    mask == RFREG_MASK so no read-back. [SRC] phy.c:write_rf_v2 / write_rf_a_v2 / write_rf."""
+def write_rf(t, rf_path: int, addr: int, data: int) -> None:
+    """rtw89_phy_write_rf_v2 with mask == RFREG_MASK (no read-back): the ad_sel (DAV) direct-address
+    RMW, else the HWSI (DDIE) write. [SRC] phy.c:write_rf_v2 / write_rf_a_v2 / write_rf."""
     if addr & RTW89_RF_ADDR_ADSEL_MASK:
         direct = RF_BASE_ADDR[rf_path] + ((addr & 0xFF) << 2)
         t.write32_mask(direct + CR_BASE_BE, RFREG_MASK, data)
@@ -213,7 +213,7 @@ def _config_rf_reg(t, rf_path: int, addr: int, data: int, store: list) -> None:
     if addr == 0xFE:
         time.sleep(0.050)
         return
-    _write_rf(t, rf_path, addr, data)
+    write_rf(t, rf_path, addr, data)
     if addr < 0x100:
         return
     store.append(((addr << 20) | data) & 0xFFFFFFFF)   # rf_reg store. phy.c cofig_rf_reg_store

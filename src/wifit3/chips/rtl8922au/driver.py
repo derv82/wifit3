@@ -8,7 +8,7 @@ import usb.core
 import usb.util
 
 from ..driver import Driver, DeviceID, ProgressCallback
-from . import mac, phy
+from . import coex, mac, phy
 from .constants import (
     R_BE_PAD_CTRL2, _LIBUSB_SPEED_SUPER, USB_SWITCH_DELAY, B_BE_MATCH_CNT,
     B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
@@ -134,6 +134,7 @@ class RTL8922AUDriver(Driver):
         phy.init_bb_reg(self.transport, ver["cv"])
         phy.chip_bb_postinit(self.transport)      # rtw8922a_bb_postinit PHY_0+PHY_1. core.c:6660
         phy.init_rf_reg(self.transport, self._h2c_ep, ver["cv"])   # RF radio tables. core.c:6662
+        coex.ntfy_init(self.transport, self._h2c_ep, ver["cv"])    # btc_ntfy_init. core.c:6664
         return True
 
     def _switch_usb_mode(self) -> None:
