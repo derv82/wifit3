@@ -10,11 +10,18 @@ from .constants import (
     RTW89_RS_CCK, RTW89_RS_OFDM, RTW89_RS_MCS, RTW89_RS_HEDCM, RTW89_RS_OFFSET,
     RTW89_RATE_CCK_NUM, RTW89_RATE_OFDM_NUM, RTW89_RATE_HEDCM_NUM, RTW89_RATE_MCS_NUM,
     RTW89_RATE_OFFSET_NUM, RTW89_RATE_OFFSET_NUM_BE, RTW89_NON_OFDMA, RTW89_OFDMA, RTW89_OFDMA_NUM,
-    RTW89_NSS_NUM, RTW89_NSS_HEDCM_NUM, RTW89_CHANNEL_WIDTH_40, RTW89_CHANNEL_WIDTH_320,
+    RTW89_NSS_NUM, RTW89_NSS_HEDCM_NUM, RTW89_CHANNEL_WIDTH_20, RTW89_CHANNEL_WIDTH_40,
+    RTW89_CHANNEL_WIDTH_320,
     RTW89_RATE_OFFSET_CCK, RTW89_RATE_OFFSET_OFDM, RTW89_RATE_OFFSET_HT, RTW89_RATE_OFFSET_VHT,
     RTW89_RATE_OFFSET_HE, RTW89_RATE_OFFSET_EHT, RTW89_RATE_OFFSET_DLRU_HE,
     RTW89_RATE_OFFSET_DLRU_EHT, TXPWR_FACTOR_RF, TXPWR_FACTOR_MAC,
     R_BE_PWR_BY_RATE, R_BE_PWR_RATE_OFST_CTRL,
+    RTW89_FW_ELEMENT_ID_TXPWR_LMT_2GHZ, RTW89_FW_ELEMENT_ID_TXPWR_LMT_RU_2GHZ,
+    RTW89_FW_ELEMENT_ID_TX_SHAPE_LMT, RTW89_RS_LMT_NUM, RTW89_RS_TX_SHAPE_NUM, RTW89_BF_NUM,
+    RTW89_NTX_NUM, RTW89_REGD_NUM, RTW89_WW, RTW89_2G_CH_NUM, RTW89_2G_BW_NUM, RTW89_RU_NUM,
+    RTW89_RU26, RTW89_RU52, RTW89_RU106, RTW89_RU52_26, RTW89_RU106_26, RTW89_RU_SEC_NUM_BE,
+    RTW89_TXPWR_LMT_PAGE_SIZE_BE, RTW89_TXPWR_LMT_RU_PAGE_SIZE_BE,
+    R_BE_PWR_LMT, R_BE_PWR_RU_LMT, R_BEDGE3, B_BEDGE_CFG, CR_BASE_BE,
 )
 
 
@@ -167,8 +174,164 @@ def _set_txpwr_offset(t, chan: dict, phy_idx: int) -> None:
     _mac_txpwr_write32(t, phy_idx, R_BE_PWR_RATE_OFST_CTRL, val)
 
 
+def _regd_get(band: int) -> int:
+    """rtw89_regd_get: this card's efuse country code is "00" (worldwide roaming), so every band
+    resolves to RTW89_WW. [SRC] regd.c rtw89_regd_init_hint / rtw89_regd_get."""
+    return RTW89_WW
+
+
+def _load_lmt(t, band: int) -> list:
+    """rtw89_fw_load_txpwr_lmt_2ghz: parse the TXPWR_LMT_2GHZ element into
+    v[bw][ntx][rs][bf][regd][ch], cached. 5/6G tables are not needed for 2.4 GHz hops. [SRC]
+    fw.c:11176, core.h:4523."""
+    if band != RTW89_BAND_2G:
+        raise NotImplementedError("txpwr limit 5/6G table not ported yet")
+    if t.lmt_2g is not None:
+        return t.lmt_2g
+    ent_sz, num, content = firmware.txpwr_conf(RTW89_FW_ELEMENT_ID_TXPWR_LMT_2GHZ, t.rfe_type)
+    v = [[[[[[0] * RTW89_2G_CH_NUM for _ in range(RTW89_REGD_NUM)] for _ in range(RTW89_BF_NUM)]
+           for _ in range(RTW89_RS_LMT_NUM)] for _ in range(RTW89_NTX_NUM)]
+         for _ in range(RTW89_2G_BW_NUM)]
+    for i in range(num):
+        b = i * ent_sz
+        bw, nt, rs, bf, regd, ch_idx = content[b:b + 6]
+        if ent_sz > 7 and any(content[b + 7:b + ent_sz]):
+            continue
+        if (bw >= RTW89_2G_BW_NUM or nt >= RTW89_NTX_NUM or rs >= RTW89_RS_LMT_NUM
+                or bf >= RTW89_BF_NUM or regd >= RTW89_REGD_NUM or ch_idx >= RTW89_2G_CH_NUM):
+            continue
+        v[bw][nt][rs][bf][regd][ch_idx] = _s8(content[b + 6])
+    t.lmt_2g = v
+    return v
+
+
+def _read_limit(v: list, bw: int, ntx: int, rs: int, bf: int, ch: int, regd: int) -> int:
+    """rtw89_phy_read_txpwr_limit (2G, no ant-gain/SAR): the regd cell, else the WW fallback.
+    [SRC] phy.c:2631."""
+    ch_idx = ch - 1                          # rtw89_channel_to_idx 2G
+    lmt = v[bw][ntx][rs][bf][regd][ch_idx] or v[bw][ntx][rs][bf][RTW89_WW][ch_idx]
+    return _rf_to_mac(lmt) & 0xFF
+
+
+def _fill_limit_20m(v: list, ntx: int, ch: int, regd: int) -> bytearray:
+    """phy_fill_limit_20m_be packed into the rtw89_txpwr_limit_be byte layout (cck_20m, cck_40m,
+    ofdm, mcs_20m[0], each [bf]); the rest stay 0. [SRC] phy_be.c:1333, phy.h:534."""
+    buf = bytearray(RTW89_TXPWR_LMT_PAGE_SIZE_BE)
+    for bf in range(RTW89_BF_NUM):
+        buf[0 + bf] = _read_limit(v, RTW89_CHANNEL_WIDTH_20, ntx, RTW89_RS_CCK, bf, ch, regd)
+        buf[2 + bf] = _read_limit(v, RTW89_CHANNEL_WIDTH_40, ntx, RTW89_RS_CCK, bf, ch, regd)
+        buf[4 + bf] = _read_limit(v, RTW89_CHANNEL_WIDTH_20, ntx, RTW89_RS_OFDM, bf, ch, regd)
+        buf[6 + bf] = _read_limit(v, RTW89_CHANNEL_WIDTH_20, ntx, RTW89_RS_MCS, bf, ch, regd)
+    return buf
+
+
+def _write_page(t, phy_idx: int, addr: int, buf: bytearray) -> int:
+    """Write a filled txpwr page 4 bytes/word, returning the next address. [SRC] phy_be.c:1582."""
+    for j in range(0, len(buf), 4):
+        _mac_txpwr_write32(t, phy_idx, addr,
+                           buf[j] | (buf[j + 1] << 8) | (buf[j + 2] << 16) | (buf[j + 3] << 24))
+        addr += 4
+    return addr
+
+
+def _set_txpwr_limit(t, chan: dict, phy_idx: int) -> None:
+    """rtw89_phy_set_txpwr_limit_be: fill + write the limit page for ntx 0..1 from R_BE_PWR_LMT.
+    [SRC] phy_be.c:1562."""
+    if chan["band_width"] != RTW89_CHANNEL_WIDTH_20:
+        raise NotImplementedError("txpwr limit >20MHz not needed for monitor hops")
+    v = _load_lmt(t, chan["band_type"])
+    regd = _regd_get(chan["band_type"])
+    addr = R_BE_PWR_LMT
+    for ntx in range(RTW89_NTX_NUM):
+        addr = _write_page(t, phy_idx, addr, _fill_limit_20m(v, ntx, chan["channel"], regd))
+
+
+def _load_lmt_ru(t, band: int) -> list:
+    """rtw89_fw_load_txpwr_lmt_ru_2ghz: parse TXPWR_LMT_RU_2GHZ into v[ru][ntx][regd][ch], cached.
+    [SRC] fw.c, core.h:4545."""
+    if band != RTW89_BAND_2G:
+        raise NotImplementedError("txpwr limit_ru 5/6G table not ported yet")
+    if t.lmt_ru_2g is not None:
+        return t.lmt_ru_2g
+    ent_sz, num, content = firmware.txpwr_conf(RTW89_FW_ELEMENT_ID_TXPWR_LMT_RU_2GHZ, t.rfe_type)
+    v = [[[[0] * RTW89_2G_CH_NUM for _ in range(RTW89_REGD_NUM)] for _ in range(RTW89_NTX_NUM)]
+         for _ in range(RTW89_RU_NUM)]
+    for i in range(num):
+        b = i * ent_sz
+        ru, nt, regd, ch_idx = content[b:b + 4]
+        if ent_sz > 5 and any(content[b + 5:b + ent_sz]):
+            continue
+        if (ru >= RTW89_RU_NUM or nt >= RTW89_NTX_NUM or regd >= RTW89_REGD_NUM
+                or ch_idx >= RTW89_2G_CH_NUM):
+            continue
+        v[ru][nt][regd][ch_idx] = _s8(content[b + 4])
+    t.lmt_ru_2g = v
+    return v
+
+
+def _read_limit_ru(v: list, ru: int, ntx: int, ch: int, regd: int) -> int:
+    """rtw89_phy_read_txpwr_limit_ru (2G, no ant-gain/SAR): the regd cell, else the WW fallback.
+    [SRC] phy.c read_txpwr_limit_ru."""
+    ch_idx = ch - 1
+    lmt = v[ru][ntx][regd][ch_idx] or v[ru][ntx][RTW89_WW][ch_idx]
+    return _rf_to_mac(lmt) & 0xFF
+
+
+def _fill_limit_ru_20m(v: list, ntx: int, ch: int, regd: int) -> bytearray:
+    """phy_fill_limit_ru_20m_be: index 0 of each 16-wide RU section (ru26/52/106/52_26/106_26).
+    [SRC] phy_be.c:1611, phy.h:563."""
+    buf = bytearray(RTW89_TXPWR_LMT_RU_PAGE_SIZE_BE)
+    for n, ru in enumerate((RTW89_RU26, RTW89_RU52, RTW89_RU106, RTW89_RU52_26, RTW89_RU106_26)):
+        buf[n * RTW89_RU_SEC_NUM_BE] = _read_limit_ru(v, ru, ntx, ch, regd)
+    return buf
+
+
+def _set_txpwr_limit_ru(t, chan: dict, phy_idx: int) -> None:
+    """rtw89_phy_set_txpwr_limit_ru_be: fill + write the limit-RU page for ntx 0..1 from
+    R_BE_PWR_RU_LMT (8922A takes no large-MRU tail). [SRC] phy_be.c:1857."""
+    if chan["band_width"] != RTW89_CHANNEL_WIDTH_20:
+        raise NotImplementedError("txpwr limit_ru >20MHz not needed for monitor hops")
+    v = _load_lmt_ru(t, chan["band_type"])
+    regd = _regd_get(chan["band_type"])
+    addr = R_BE_PWR_RU_LMT
+    for ntx in range(RTW89_NTX_NUM):
+        addr = _write_page(t, phy_idx, addr, _fill_limit_ru_20m(v, ntx, chan["channel"], regd))
+
+
+def _load_tx_shape(t) -> list:
+    """rtw89_fw_load_tx_shape_lmt: parse TX_SHAPE_LMT into v[band][tx_shape_rs][regd], cached.
+    [SRC] fw.c, core.h:4564."""
+    if t.tx_shape_lmt is not None:
+        return t.tx_shape_lmt
+    ent_sz, num, content = firmware.txpwr_conf(RTW89_FW_ELEMENT_ID_TX_SHAPE_LMT, t.rfe_type)
+    v = [[[0] * RTW89_REGD_NUM for _ in range(RTW89_RS_TX_SHAPE_NUM)] for _ in range(RTW89_BAND_NUM)]
+    for i in range(num):
+        b = i * ent_sz
+        band, rs, regd = content[b:b + 3]
+        if ent_sz > 4 and any(content[b + 4:b + ent_sz]):
+            continue
+        if band >= RTW89_BAND_NUM or rs >= RTW89_RS_TX_SHAPE_NUM or regd >= RTW89_REGD_NUM:
+            continue
+        v[band][rs][regd] = content[b + 3]
+    t.tx_shape_lmt = v
+    return v
+
+
+def _set_tx_shape(t, chan: dict, phy_idx: int) -> None:
+    """rtw8922a_set_tx_shape: tx_shape_lmt[band][OFDM][regd] selects bb_tx_triangular on/off
+    (R_BEDGE3 B_BEDGE_CFG). [SRC] rtw8922a.c:2501, 2493."""
+    if phy_idx != 0:
+        raise NotImplementedError("tx_shape on PHY_1 not needed for monitor hops")
+    band = chan["band_type"]
+    idx = _load_tx_shape(t)[band][RTW89_RS_OFDM][_regd_get(band)]
+    t.write32_mask(R_BEDGE3 + CR_BASE_BE, B_BEDGE_CFG, 0 if idx == 0 else 1)
+
+
 def set_txpwr(t, chan: dict, phy_idx: int = 0) -> None:
-    """rtw8922a_set_txpwr: byrate + offset ported so far; tx_shape, limit, limit_ru, and the 8922a
-    diff/ref/sar steps are still TODO. [SRC] rtw8922a.c:2545."""
+    """rtw8922a_set_txpwr: byrate, offset, tx_shape, limit, limit_ru ported; the 8922a
+    diff/ref/sar per-path steps are still TODO. [SRC] rtw8922a.c:2545."""
     _set_txpwr_byrate(t, chan, phy_idx)
     _set_txpwr_offset(t, chan, phy_idx)
+    _set_tx_shape(t, chan, phy_idx)
+    _set_txpwr_limit(t, chan, phy_idx)
+    _set_txpwr_limit_ru(t, chan, phy_idx)
