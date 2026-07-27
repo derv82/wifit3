@@ -6,9 +6,11 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up + the **entire first per-channel tune for both PHYs** are reproduced and committed
-(capture-1: 14614/163814 ops; capture-2/3 stop at the same frontier, poll-count variance only).
-`verify_pcap` walks VENQT control ops and bulk-OUT (fw/H2C) ops. Frontier: **op #14623**.
+Cold-boot bring-up, the monitor bring-up (configure_filter + monitor physts), the per-hop MLO-mode
+handling, and the first three per-channel hops (2.4 GHz) are reproduced and committed (capture-1:
+17753/163814 ops; capture-2/3 stop at the same frontier, poll-count variance only). `verify_pcap`
+walks VENQT control ops and bulk-OUT (fw/H2C) ops. Frontier: **op #17762** = the periodic env-monitor
+DM watchdog (read of `R_IFS_TOTAL_BE4` 0x20eec).
 
 What reproduces: all of `rtw89_core_start`, the mac80211 add-interface, and per-hop the FULL
 `__rtw89_set_channel` for **both PHYs**. A hop is TWO `__rtw89_set_channel` calls: PHY_0/MAC_0 then
@@ -17,6 +19,18 @@ PHY_1/MAC_1 (same monitor channel), driven by one `chan.set_channel`. PHY_0 runs
 rfk_band_changed + the pure-monitor rfk_channel: pre_ntfy/txgapk/iqk/tssi/dpk/rxdck). PHY_1 reuses
 the PHY_0 functions with phy_idx=1 (txpwr shifts +0x4000, RF1 ref table, PHY_1 BB offset) but skips
 rfk_channel (the monitor vif's link is PHY_0-only) and the coex policy H2C (deduped, unchanged).
+
+The mac80211 op stream after the first hop is now dispatched by `verify_pcap._drive` by each op's
+opening read: `R_DBCC` (0x26b48) = `set_channel`, `R_BE_RX_FLTR_OPT` (0x11420) = `configure_filter`,
+`R_PLCP_HISTOGRAM` (0x20738) = `config_monitor` (monitor physts). Two per-hop runtime inputs are
+peeked from the wire like the channel is: the RX-filter value (a mac80211 filter-policy input) and
+`mlo_1_1` (the MLO mode the entity recalc lands on, peeked from the pre_set_channel_rf syn write:
+RR_POW_SYN_V1 nibble 0xF = ALLON = MLO_1_PLUS_1). Threaded via `t.mlo_1_1`. The band-change work
+(btc_switch_band + rfk_band_changed) now runs only when `!entity_active[phy]` or the band changed
+(tracked in `t.entity_active`/`t.last_band`). iqk's kpath is `rtw89_phy_get_kpath` (RF_A for
+MLO_1_PLUS_1 PHY_0), not RF_AB. rfk `pre_ntfy_mcc` carries `chan_to_rf18(channel)`. The 2.4 GHz TSSI
+de is per-group (`_parse_tssi` stores the full cck/bw40 efuse arrays; `_tssi` selects by
+`phy_tssi_get_cck_group`/`get_ofdm_group`).
 
 Module map for the tune: set_channel_rf = `phy.set_channel_rf` (ctl_band_ch_bw, RF 0x18/0x10018 per
 path via `phy.read_rf`/`write_rf`). set_txpwr = `txpwr.py` (firmware txpwr elements
@@ -121,30 +135,27 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #14623): the configure_filter / RX-filter block
+## Next (from op #17762): the periodic env-monitor DM watchdog
 
-The next block to reproduce is a mac80211 `ieee80211_ops.configure_filter` (`rtw89_ops_configure_filter`,
-mac80211.c:316) followed by a ~380-op BB run. configure_filter writes the RX filter via
-`rtw89_mac_set_rx_fltr` -> `R_BE_RX_FLTR_OPT` (0x11420 for MAC_0, 0x15420 for MAC_1), built from
-`hal.rx_fltr` modified by flags + the monitor `B_AX_SNIFFER_MODE` bit; the observed value is
-`0x0f174439`. It is NOT part of `__rtw89_set_channel` and fires irregularly (0x11420 writes at ops
-14624/14732, 17811/17815, ...), so it must not go in `chan.set_channel`. Two things to work out:
+The next block is the periodic DM watchdog (`rtw89_track_work`, core.c:5473): stat_track,
+env_monitor_track, dig, cfo_track, antdiv_track, edcca_track. It is an **async producer** (fires on a
+timer at irregular ops: 17762, 20845, 29966, 39052, 45125, ...), so it must not go in
+`chan.set_channel`. On the wire it is env_monitor (ifs_clm counters at 0x20ecc-0x20eec, ifs_clm_set +
+ccx at 0x20c00/0x20c28) + dig (`R_SEG0R_PD_V2` 0x26a74, `R_BMODE_PDTH` 0x26708/0x26718) + edcca_track
+(`R_SEG0R_EDCCA_LVL_BE` 0x269ec, `R_SEG0R_PPDU_LVL_BE` 0x269f0); stat/cfo/antdiv look like no-ops at
+idle. Because the capture has no traffic, every counter reads back 0, so the adaptive algorithms
+collapse to fixed idle-state field writes (read-modify-write, the non-field bits echoed from the
+replayed read). The op count varies per firing (FIRE1 44 ops with edcca, FIRE2 38 without), driven by
+per-function period counters / ccx racing state that must be tracked to stay byte-exact.
 
-1. **The exact op sequence.** Dump 14623-15008 with `dop.py`. It is two `R_BE_RX_FLTR_OPT` writes
-   (14624 MAC_0, 14626 MAC_1) then a ~380-op 0x207xx BB block, then a second RX-filter write at
-   14732. Identify the BB block (grep `rtw89_mac_cfg_ppdu_status`, the 0x207xx / R_BE registers, and
-   any monitor/ppdu-status setup in mac.c). It may be more than one mac80211 op back to back.
-2. **How the harness drives it.** `verify_pcap._drive` only does `connect()` + per-hop `set_channel`,
-   and this op is neither. Add a hook: after a hop, if the next op is the configure_filter opener (a
-   write to `R_BE_RX_FLTR_OPT`), call a new driver method once, then resume the hop walk. Port the
-   driver side as a standalone method (e.g. `set_rx_filter` / a monitor-config step), not inside the
-   tune.
+Port as a driver method (e.g. `dm_watchdog`) for PHY_0's active BB; add a `verify_pcap._drive` dispatch
+hook keyed on the opener read of `R_IFS_TOTAL_BE4` (0x20eec), like the configure_filter / physts hooks.
 
-After that block, the rest is the **per-channel hop loop** (~150k ops, ~200 hops). The tune code is
-channel-agnostic (replay supplies the reads; only channel-table WRITTEN values differ), so once one
-channel's full unit and this configure_filter block reproduce, the walk should auto-advance through
-the remaining 2.4-GHz hops with little new code. The 5/6-GHz hops need the deferred 5/6G branches
-(the 2G/HT20-only list in Status).
+After the watchdog, the rest is the **per-channel hop loop** interleaved with more watchdogs and
+configure_filter bursts. The tune code is channel-agnostic (replay supplies the reads; only
+channel-table WRITTEN values differ), so the 2.4 GHz hops (ch1-14) should auto-advance. The first 5 GHz
+hop (ch36, ~tssi index 50 in capture order) needs the deferred 5/6G branches (the 2G/HT20-only list in
+Status).
 
 **Recurring trap (still relevant):** at set_channel the MLO mode is MLO_2_PLUS_0_1RF (single PHY_0
 monitor vif), not the core_start MLO_1_PLUS_1_1RF. Any helper that branches on the mode must handle
