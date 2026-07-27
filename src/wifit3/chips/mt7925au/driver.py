@@ -79,21 +79,40 @@ class MT7925AUDriver(Driver):
         return (misc & MT_TOP_MISC2_FW_N9_RDY) != 0
 
     async def _warm_reattach(self, progress_cb: Optional[ProgressCallback]) -> bool:
-        """Light reattach to firmware already running in monitor mode. Re-post RX and
-        re-read the card MAC; if that MCU query fails, the warm chip's bulk pipes are
-        wedged (a WinUSB fresh-handle hazard userland cannot always recover), so ask for
-        a replug. A full DMA-resume reattach (mt7921u_resume model) is a TODO."""
+        """Light reattach to firmware already running in monitor mode (kernel mt7921u_resume
+        model): no reset, no mcu_power_on, no reload, no post-boot init. Re-establish only
+        the host interface:
+
+          - a light dma_init(resume) IFF the WFDMA NEED_REINIT latch was cleared
+            (mt792x_dma_need_reinit); a normal reconnect leaves it set, so skipped.
+          - drain any RX the prior session left buffered on EP 0x84 (a fresh WinUSB handle
+            otherwise reads that stale data first and shadows the MCU reply).
+          - re-post RX (== mt76u_resume_rx) and re-read the caps.
+
+        GET_NIC_CAPAB is best-effort with a few retries: a fresh WinUSB handle can need a
+        beat to settle, and a failed query leaves the card usable (only MAC-less), never a
+        hard replug. This mirrors the mt7921au sibling on the same mt792x stack."""
         logger.info("MT7925AU warm reattach (firmware already running)...")
         if progress_cb:
             progress_cb(0.5, "Reattaching to running firmware...")
+        if self.firmware.dma_need_reinit():
+            logger.info("WFDMA needs re-init; running light dma_init(resume).")
+            self.firmware._dma_init(resume=True)
+        self.transport.drain_rx()
         self.transport.start_rx()
-        resp = await self.transport.send_mcu_command(*mcu.get_nic_capability())
-        caps = mcu.parse_nic_capability(resp or b"")
-        if not caps.mac:
-            raise BringUpError("warm-wedged", "The chip is warm and its bulk pipes are "
-                               "wedged. Please unplug, wait a few seconds, replug, and retry.")
-        self.mac_address = caps.mac
-        self._antenna_mask = caps.antenna_mask
+
+        caps = mcu.NicCaps()
+        for _ in range(3):
+            resp = await self.transport.send_mcu_command(*mcu.get_nic_capability())
+            caps = mcu.parse_nic_capability(resp or b"")
+            if caps.mac:
+                break
+        if caps.mac:
+            self.mac_address = caps.mac
+            self._antenna_mask = caps.antenna_mask
+        else:
+            logger.warning("MT7925AU warm reattach: GET_NIC_CAPAB unanswered after retries; "
+                           "continuing MAC-less (the card is still usable).")
         await self.set_channel(self._channel)
         self.is_warm = True
         if progress_cb:

@@ -69,6 +69,22 @@ class MT7925AUTransport:
             return None
         return bytes(data) if data else None
 
+    def drain_rx(self, max_iters: int = 8, timeout_ms: int = 20) -> int:
+        """Discard any bulk-IN buffered from a prior session, direct (reader thread not yet
+        started). A warm chip's EP 0x84 still holds the previous process's un-read RX/MCU
+        frames; draining them keeps the first seq-matched MCU response from being shadowed
+        by stale data. A timeout (empty pipe) or USB error ends the drain."""
+        n = 0
+        for _ in range(max_iters):
+            try:
+                data = self.dev.read(EP_IN_BULK, RX_READ_SIZE, timeout=timeout_ms)
+            except usb.core.USBError:
+                break
+            if not data:
+                break
+            n += 1
+        return n
+
     def _dispatch(self, data: bytes):
         """Runs on the event loop. MCU response -> the command queue; frame -> callback."""
         if rx.classify(data) == "mcu":

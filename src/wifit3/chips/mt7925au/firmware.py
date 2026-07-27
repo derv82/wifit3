@@ -138,9 +138,13 @@ class MT7925AUFirmwareLoader:
 
     # ---- mt792xu_dma_init (mt792x_usb.c) ----------------------------------
 
-    def _dma_init(self):
+    def _dma_init(self, resume: bool = False):
         """Pre-firmware WFDMA bring-up in kernel order (mt792xu_wfdma_init, then WLCFG,
-        then dma_rx_evt_ep4 + epctl_rst_opt). Every mt76_set/clear is a read+write."""
+        then dma_rx_evt_ep4 + epctl_rst_opt). Every mt76_set/clear is a read+write.
+
+        ``resume=True`` is the kernel's mt792xu_dma_init(dev, resume) light path: it stops
+        after WLCFG (skips rx_evt_ep4 + epctl_rst_opt), used by the warm reattach when the
+        WFDMA NEED_REINIT latch says re-init is needed (see driver._warm_reattach)."""
         t = self.transport
         # mt792xu_dma_prefetch — TX-ring prefetch depth + base pointer.
         for idx, cnt, base in MT_DMA_PREFETCH_CONF:
@@ -177,6 +181,9 @@ class MT7925AUFirmwareLoader:
         t.clear_bits(MT_UDMA_WLCFG_0, MT_WL_RX_AGG_TO | MT_WL_RX_AGG_LMT)
         t.clear_bits(MT_UDMA_WLCFG_1, MT_WL_RX_AGG_PKT_LMT)
 
+        if resume:
+            return   # mt792xu_dma_init(resume): stop before rx_evt_ep4 + epctl_rst_opt
+
         # mt792xu_dma_rx_evt_ep4 — route RX events (MCU resp + FW-up signal) to EP 0x84.
         for _ in range(100):
             if not (t.read_reg32(MT_UWFDMA0_GLO_CFG) & MT_WFDMA0_GLO_CFG_RX_DMA_BUSY):
@@ -201,6 +208,13 @@ class MT7925AUFirmwareLoader:
             v = self.transport.read_reg32(MT_SSUSB_EPCTL_CSR_EP_RST_OPT)
             self.transport.write_reg32(MT_SSUSB_EPCTL_CSR_EP_RST_OPT,
                                        v & ~MT_EPCTL_EP_RST_OPT_MASK)
+
+    def dma_need_reinit(self) -> bool:
+        """mt792x_dma_need_reinit (mt792x.h:357): True when the WFDMA NEED_REINIT latch is
+        CLEAR. `_dma_init` sets it, so a warm chip whose firmware is still running reads it
+        SET and this returns False (no re-init). The warm reattach gates its light
+        dma_init(resume) on this, exactly like mt7921u_resume."""
+        return not (self.transport.read_reg32(MT_WFDMA_DUMMY_CR) & MT_WFDMA_NEED_REINIT)
 
     # ---- ROM patch (mt76_connac2_load_patch) ------------------------------
 

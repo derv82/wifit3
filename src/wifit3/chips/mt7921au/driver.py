@@ -219,26 +219,34 @@ class MT7921AUDriver(Driver):
         if self.firmware.dma_need_reinit():
             logger.info("WFDMA needs re-init; running light dma_init(resume).")
             self.firmware._dma_init(resume=True)
+        # Drain any RX the prior session left buffered on EP 0x84 before re-posting the
+        # reader: a fresh WinUSB handle otherwise reads that stale data first and shadows
+        # the GET_NIC_CAPAB reply below (seq-mismatch -> the query times out).
+        self.transport.drain_rx()
         self.transport.start_rx()
 
         # Warm skips post_boot_init, so mac_address would stay None and antenna_mask its 0x3
         # default. GET_NIC_CAPAB is a firmware query the already-running FW answers with the
         # silicon MAC + caps (HW-verified on a warm chip: returns 9c:ef:d5:.. + real caps),
-        # needing no re-init, so read it here to fill both. Best-effort: a failed query leaves
-        # the card usable, only MAC-less.
-        try:
-            cmd, payload = mcu.get_nic_capability()
-            resp = await self.transport.send_mcu_command(cmd, payload)
-            caps = mcu.parse_nic_capability(resp or b"")
+        # needing no re-init, so read it here to fill both. Best-effort with a few retries
+        # (a fresh handle can need a beat to settle): a failed query leaves the card usable,
+        # only MAC-less.
+        for _ in range(3):
+            try:
+                cmd, payload = mcu.get_nic_capability()
+                resp = await self.transport.send_mcu_command(cmd, payload)
+                caps = mcu.parse_nic_capability(resp or b"")
+            except Exception as e:                   # noqa: BLE001
+                logger.warning("MT7921AU warm reattach: GET_NIC_CAPAB failed (%s); "
+                               "mac_address stays None.", e)
+                break
             if caps.mac:
                 self.mac_address = caps.mac
                 self._refine_product_name()
                 self._antenna_mask = caps.antenna_mask
                 self._nic_has_6ghz = int(caps.has_6ghz)
                 self._log_nic_caps(caps)
-        except Exception as e:                       # noqa: BLE001
-            logger.warning("MT7921AU warm reattach: GET_NIC_CAPAB failed (%s); "
-                           "mac_address stays None.", e)
+                break
 
         if progress_cb:
             progress_cb(0.9, "Tuning...")
