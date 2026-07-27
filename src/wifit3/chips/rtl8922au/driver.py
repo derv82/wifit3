@@ -1,14 +1,19 @@
 """RTL8922AU driver: Realtek RTL8922A (802.11be) over USB, ported from rtw89-7.2.
 See RTL8922AU.md.
 """
+import asyncio
 import logging
 from typing import Callable, Optional
 
 import usb.core
 import usb.util
 
+from wifit3.dot11.parser import WlanFrameParser
+
 from ..driver import Driver, DeviceID, ProgressCallback
+from ..rx_reader import RxReaderThread
 from . import chan, coex, firmware, mac, phy, rfk
+from .rx import iter_bulk_frames, RX_RECVBUF_SZ
 from .constants import (
     R_BE_PAD_CTRL2, _LIBUSB_SPEED_SUPER, USB_SWITCH_DELAY, B_BE_MATCH_CNT,
     B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
@@ -60,6 +65,8 @@ class RTL8922AUDriver(Driver):
         self._rx_cb: Optional[Callable] = None
         self._disconnect_cb: Optional[Callable[[], None]] = None
         self._h2c_ep: Optional[int] = None
+        self._bulk_in_ep: Optional[int] = None
+        self._rx_reader: Optional[RxReaderThread] = None
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8922AUDriver":
@@ -98,6 +105,12 @@ class RTL8922AUDriver(Driver):
                     and usb.util.endpoint_type(ep.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK]
         if len(out_pipe) > BULKOUT_ID_H2C:
             self._h2c_ep = out_pipe[BULKOUT_ID_H2C]
+        # in_pipe[0] is the RX pipe. [SRC] usb.c:1030-1043, 543.
+        in_pipe = [ep.bEndpointAddress for ep in intf
+                   if usb.util.endpoint_direction(ep.bEndpointAddress) == usb.util.ENDPOINT_IN
+                   and usb.util.endpoint_type(ep.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK]
+        if in_pipe:
+            self._bulk_in_ep = in_pipe[0]
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """Cold-boot bring-up: claim the vendor interface, run the USB mode switch, read the
@@ -166,7 +179,49 @@ class RTL8922AUDriver(Driver):
         firmware.h2c_default_dmac_tbl(self.transport, ep, macid=0)
         # __rtw89_ops_add_iface_link tail: btc_ntfy_role_info(BTC_ROLE_START). [SRC] mac80211.c:154.
         coex.ntfy_role_info(self.transport, ep)
+        # RX is already running after the init above (sniffer filter + RXDMA + phy-rpt append), so
+        # start the bulk-IN reader last, once the pipe is warm. [SRC] usb.c:772 (start is a no-op).
+        self._start_rx_reader()
         return True
+
+    def _start_rx_reader(self) -> None:
+        if self._bulk_in_ep is None:
+            logger.warning("RTL8922AU: no bulk-IN endpoint; RX disabled")
+            return
+        self._rx_reader = RxReaderThread(
+            asyncio.get_event_loop(), self._rx_read_once, self._rx_dispatch,
+            name="rtl8922au-rx",
+            on_fatal=lambda e: self._disconnect_cb() if self._disconnect_cb else None,
+        )
+        self._rx_reader.start()
+
+    def _rx_read_once(self) -> Optional[bytes]:
+        """One blocking bulk-IN read; None on a benign timeout. Runs on the reader thread."""
+        try:
+            return bytes(self.dev.read(self._bulk_in_ep, RX_RECVBUF_SZ, 100))
+        except usb.core.USBError as e:
+            err = getattr(e, "errno", None)
+            if err in (110, 10060) or "timeout" in str(e).lower():
+                return None
+            raise
+
+    def _rx_dispatch(self, buf: bytes) -> None:
+        """Split a bulk buffer into MPDUs, tally ACKs, parse the rest to the RX callback."""
+        cb = self._rx_cb
+        if not cb and not self._ack_detect_on:
+            return
+        for _stat, mpdu, rssi in iter_bulk_frames(buf):
+            if len(mpdu) == 10 and mpdu[0] == 0xD4:       # an ACK control frame
+                self.record_ack(mpdu)
+                continue
+            if not cb:
+                continue
+            parsed = WlanFrameParser.parse_80211_frame(mpdu, rssi if rssi is not None else -100)
+            if parsed:
+                try:
+                    cb(parsed)
+                except Exception:                          # noqa: BLE001
+                    logger.exception("RTL8922AU RX callback raised")
 
     def _switch_usb_mode(self) -> None:
         """rtw89_usb_switch_mode: SuperSpeed (USB 3 / USB-C) needs no switch; USB 2 runs the
@@ -213,6 +268,10 @@ class RTL8922AUDriver(Driver):
         phy.dm_watchdog(self.transport)
 
     async def close(self) -> None:
+        # Stop the reader before releasing USB: it is still calling dev.read() until stopped.
+        if self._rx_reader is not None:
+            await self._rx_reader.stop()
+            self._rx_reader = None
         if self.dev is not None:
             usb.util.dispose_resources(self.dev)
 
