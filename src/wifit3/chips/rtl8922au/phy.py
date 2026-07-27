@@ -9,7 +9,7 @@ import time
 
 from .constants import (
     CHIP_CAV, RTW89_BAND_2G,
-    R_BK_FC0INV, B_BK_FC0INV, R_CCK_FC0INV, B_CCK_FC0INV,
+    R_BK_FC0INV, B_BK_FC0INV, R_CCK_FC0INV, B_CCK_FC0INV, RTW89_FW_ELEMENT_ID_BB_GAIN,
     RTW89_FW_ELEMENT_ID_BB_REG, CR_BASE_BE, BYPASS_CR_DATA,
     PHY_HEADLINE_VALID, PHY_COND_BRANCH_IF, PHY_COND_BRANCH_ELIF, PHY_COND_BRANCH_ELSE,
     PHY_COND_BRANCH_END, PHY_COND_CHECK, PHY_COND_DONT_CARE,
@@ -757,15 +757,156 @@ def _ctrl_sco_cck(t, primary_ch: int, phy_idx: int) -> None:
     _phy_write32_idx(t, R_CCK_FC0INV, B_CCK_FC0INV, _SCO_CCK[ch_element], phy_idx)
 
 
+# set_gain reg-def tables: (gain_g[path A], gain_g[path B], gain_g_mask). 2G uses the gain_g
+# columns. [SRC] rtw8922a.c:1204-1262.
+_BB_GAIN_LNA = (
+    (0x409C, 0x449C, 0xFF00), (0x409C, 0x449C, 0xFF000000),
+    (0x40A0, 0x44A0, 0xFF00), (0x40A0, 0x44A0, 0xFF000000),
+    (0x40A4, 0x44A4, 0xFF00), (0x40A4, 0x44A4, 0xFF000000),
+    (0x40A8, 0x44A8, 0xFF00),
+)
+_BB_GAIN_TIA = ((0x4054, 0x4454, 0x7FC0000), (0x4058, 0x4458, 0x1FF))
+_BB_OP1DB_LNA = (
+    (0x40AC, 0x44AC, 0xFF00), (0x40AC, 0x44AC, 0xFF0000), (0x40AC, 0x44AC, 0xFF000000),
+    (0x40B0, 0x44B0, 0xFF), (0x40B0, 0x44B0, 0xFF00), (0x40B0, 0x44B0, 0xFF0000),
+    (0x40B0, 0x44B0, 0xFF000000),
+)
+_BB_OP1DB_TIA_LNA = (
+    (0x40B4, 0x44B4, 0xFF0000), (0x40B4, 0x44B4, 0xFF000000),
+    (0x40B8, 0x44B8, 0xFF), (0x40B8, 0x44B8, 0xFF00), (0x40B8, 0x44B8, 0xFF0000),
+    (0x40B8, 0x44B8, 0xFF000000), (0x40BC, 0x44BC, 0xFF), (0x40BC, 0x44BC, 0xFF00),
+)
+# RPL compensation tables: (addr, mask); path B ORs 0x400. [SRC] rtw8922a.c:1177-1202.
+_RPL_BW160 = ((0x41E8, 0xFF00), (0x41E8, 0xFF0000), (0x41E8, 0xFF000000), (0x41EC, 0xFF),
+              (0x41EC, 0xFF00), (0x41EC, 0xFF0000), (0x41EC, 0xFF000000), (0x41F0, 0xFF))
+_RPL_BW80 = ((0x41F4, 0xFF), (0x41F4, 0xFF00), (0x41F4, 0xFF0000), (0x41F4, 0xFF000000))
+_RPL_BW40 = ((0x41F0, 0xFF0000), (0x41F0, 0xFF000000))
+_RPL_BW20 = ((0x41F0, 0xFF00),)
+
+
+def _s8(b: int) -> int:
+    return b - 256 if b >= 128 else b
+
+
+def _le_bytes(data: int, n: int) -> list:
+    return [(data >> (8 * i)) & 0xFF for i in range(n)]
+
+
+def _decode_bb_gain(t) -> dict:
+    """rtw89_phy_config_bb_gain_be: decode the BB-gain FW element (reg2 pairs) into the be gain
+    arrays, cached on the transport. Each pair's addr packs type/path/bw/gain_band/cfg_type; the
+    data bytes fill consecutive array slots. [SRC] phy_be.c:265-441, fw.c:1099."""
+    if t.bb_gain is not None:
+        return t.bb_gain
+    g = {k: {} for k in ("lna_gain", "tia_gain", "lna_op1db", "tia_lna_op1db",
+                         "rpl_20", "rpl_40", "rpl_80", "rpl_160")}
+    for addr, data in firmware.element_regs(RTW89_FW_ELEMENT_ID_BB_GAIN):
+        typ = addr & 0xFF
+        path = (addr >> 8) & 0xF
+        bw = (addr >> 12) & 0xF
+        gband = (addr >> 16) & 0xFF
+        cfg = (addr >> 24) & 0xFF
+        if bw >= 2 or gband >= 12 or path >= 2 or 0xF9 <= addr <= 0xFE:
+            continue
+        if cfg == 0:                                       # gain_error (lna/tia)
+            if typ == 0:
+                for i, b in enumerate(_le_bytes(data, 4)):
+                    g["lna_gain"][(gband, bw, path, i)] = b
+            elif typ == 1:
+                for k, b in enumerate(_le_bytes(data, 3)):
+                    g["lna_gain"][(gband, bw, path, 4 + k)] = b
+            elif typ == 2:
+                for i, b in enumerate(_le_bytes(data, 2)):
+                    g["tia_gain"][(gband, bw, path, i)] = b
+        elif cfg == 1:                                     # rpl_ofst
+            sub0, sub1 = typ & 0xF, (typ >> 4) & 0xF
+            if sub1 == 0:
+                g["rpl_20"][(gband, path, 0)] = data & 0xFF
+            elif sub1 == 1:
+                for i, b in enumerate(_le_bytes(data, 2)):
+                    g["rpl_40"][(gband, path, i)] = b
+            elif sub1 == 2:
+                for i, b in enumerate(_le_bytes(data, 4)):
+                    g["rpl_80"][(gband, path, i)] = b
+            elif sub1 == 3:
+                ofst = 0 if sub0 == 0 else 4
+                for k, b in enumerate(_le_bytes(data, 4)):
+                    g["rpl_160"][(gband, path, k + ofst)] = b
+        elif cfg == 3:                                     # op1db
+            if typ == 0:
+                for i, b in enumerate(_le_bytes(data, 4)):
+                    g["lna_op1db"][(gband, bw, path, i)] = b
+            elif typ == 1:
+                for k, b in enumerate(_le_bytes(data, 3)):
+                    g["lna_op1db"][(gband, bw, path, 4 + k)] = b
+            elif typ == 2:
+                for i, b in enumerate(_le_bytes(data, 4)):
+                    g["tia_lna_op1db"][(gband, bw, path, i)] = b
+            elif typ == 3:
+                for k, b in enumerate(_le_bytes(data, 4)):
+                    g["tia_lna_op1db"][(gband, bw, path, 4 + k)] = b
+    t.bb_gain = g
+    return g
+
+
+def _set_lna_tia_gain(t, g: dict, gband: int, bw: int, path: int, phy_idx: int) -> None:
+    """rtw8922a_set_lna_tia_gain: LNA, TIA, op1db-LNA, op1db-TIA-LNA gains for one path (2G gain_g).
+    [SRC] rtw8922a.c:1316."""
+    col = 0 if path == RF_PATH_A else 1
+    for i, e in enumerate(_BB_GAIN_LNA):
+        _phy_write32_idx(t, e[col], e[2], _s8(g["lna_gain"].get((gband, bw, path, i), 0)), phy_idx)
+    for i, e in enumerate(_BB_GAIN_TIA):
+        _phy_write32_idx(t, e[col], e[2], _s8(g["tia_gain"].get((gband, bw, path, i), 0)), phy_idx)
+    for i, e in enumerate(_BB_OP1DB_LNA):
+        _phy_write32_idx(t, e[col], e[2], _s8(g["lna_op1db"].get((gband, bw, path, i), 0)), phy_idx)
+    for i, e in enumerate(_BB_OP1DB_TIA_LNA):
+        _phy_write32_idx(t, e[col], e[2], _s8(g["tia_lna_op1db"].get((gband, bw, path, i), 0)), phy_idx)
+
+
+def _set_rpl_gain(t, g: dict, gband: int, path: int, phy_idx: int) -> None:
+    """rtw8922a_set_rpl_gain: RPL compensation offsets for one path (path B +0x400). [SRC]
+    rtw8922a.c:1271."""
+    pofs = 0x400 if path == RF_PATH_B else 0
+    for i, (a, mask) in enumerate(_RPL_BW160):
+        _phy_write32_idx(t, a | pofs, mask, _s8(g["rpl_160"].get((gband, path, i), 0)), phy_idx)
+    for i, (a, mask) in enumerate(_RPL_BW80):
+        _phy_write32_idx(t, a | pofs, mask, _s8(g["rpl_80"].get((gband, path, i), 0)), phy_idx)
+    for i, (a, mask) in enumerate(_RPL_BW40):
+        _phy_write32_idx(t, a | pofs, mask, _s8(g["rpl_40"].get((gband, path, i), 0)), phy_idx)
+    for i, (a, mask) in enumerate(_RPL_BW20):
+        _phy_write32_idx(t, a | pofs, mask, _s8(g["rpl_20"].get((gband, path, i), 0)), phy_idx)
+
+
+def _set_gain(t, chan: dict, path: int, phy_idx: int) -> None:
+    """rtw8922a_set_gain: LNA/TIA/op1db then RPL for one path, from the decoded BB-gain element.
+    2G only for now (5/6G needs the gain_a tables + 5G gain_band). [SRC] rtw8922a.c:1381."""
+    if chan["band_type"] != RTW89_BAND_2G:
+        raise NotImplementedError("set_gain 5G/6G not ported yet")
+    gband, bw = 0, 0                    # RTW89_BB_GAIN_BAND_2G_BE, RTW89_BB_BW_20_40 (<=40 MHz)
+    g = _decode_bb_gain(t)
+    _set_lna_tia_gain(t, g, gband, bw, path, phy_idx)
+    _set_rpl_gain(t, g, gband, path, phy_idx)
+
+
+def _ctrl_ch(t, chan: dict, phy_idx: int) -> None:
+    """rtw8922a_ctrl_ch: per-path gain, then band-sel, rx-gain, center-freq, sco, cck-params,
+    chan-idx. Only set_gain (both paths) is ported so far. [SRC] rtw8922a.c:1490."""
+    _set_gain(t, chan, RF_PATH_A, phy_idx)
+    _set_gain(t, chan, RF_PATH_B, phy_idx)
+    # TODO: band_sel (0x4160/0x4560), set_rx_gain_normal, R_FC0 freq write, sco, cck_params,
+    #       R_MAC_PIN_SEL chan_idx.
+
+
 def set_channel_bb(t, chan: dict, phy_idx: int = 0) -> None:
     """rtw8922a_set_channel_bb: 2G CCK sco thresholds, then ctrl_ch (gain + freq tables), ctrl_bw,
-    ctrl_cck_en, spur elimination. Only ctrl_sco_cck is ported so far. [SRC] rtw8922a.c:2179."""
+    ctrl_cck_en, spur elimination. ctrl_sco_cck + ctrl_ch's set_gain are ported. [SRC]
+    rtw8922a.c:2179."""
     cck_en = chan["band_type"] == RTW89_BAND_2G
     if cck_en:
         _ctrl_sco_cck(t, chan["primary_channel"], phy_idx)
-    # TODO: ctrl_ch(chan) [set_gain, band_sel, rx_gain_normal, R_FC0 freq, cck_params, chan_idx];
-    #       ctrl_bw(pri_sb, bw); ctrl_cck_en(cck_en); spur_elimination(chan); R_RSTB_ASYNC;
-    #       tssi_reset(AB). The gain tables need the deferred efuse RF gain arrays.
+    _ctrl_ch(t, chan, phy_idx)
+    # TODO: ctrl_bw(pri_sb, bw); ctrl_cck_en(cck_en); spur_elimination(chan); R_RSTB_ASYNC;
+    #       tssi_reset(AB).
 
 
 def pre_set_channel_rf(t, cv: int, phy_idx: int = 0) -> None:

@@ -31,6 +31,7 @@ class RTL8922AUTransport:
         self.h2c_seq = 0            # fw_info.h2c_seq: fwcmd sequence number. [SRC] fw.c:1639,2012
         self.cmac_pwr = set()       # RTW89_FLAG_CMACn_PWR: which CMACs are powered. [SRC] mac_be.c:810
         self.cv = 0                 # chip cut version (hal.cv), set from read_chip_ver at connect
+        self.bb_gain = None         # decoded BB-gain FW element (be gain arrays), cached lazily
         self.mlo_1_1 = True         # mlo_dbcc_mode == MLO_1_PLUS_1_1RF: core_init default for BE;
         #                             recalcs to MLO_2_PLUS_0_1RF once the PHY_0 vif has a chanctx.
         #                             [SRC] core.c:6995, chan.c:485-534.

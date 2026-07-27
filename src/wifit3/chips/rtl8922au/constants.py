@@ -904,6 +904,7 @@ EFUSE_XTAL_K_OFST = 0xB9         # struct rtw8922a_efuse.xtal_k. rtw8922a.h:47
 
 # BB register init (rtw89_phy_init_bb_reg). [SRC] phy.c:1940-1966, phy.h:13-29, core.h:206.
 RTW89_FW_ELEMENT_ID_BB_REG = 2   # enum rtw89_fw_element_id. fw.h:4330
+RTW89_FW_ELEMENT_ID_BB_GAIN = 3  # fw.h:4331
 CR_BASE_BE = 0x20000             # rtw89_phy_gen_be.cr_base. phy_be.c:1899
 BYPASS_CR_DATA = 0xBABECAFE      # core.h:206
 PHY_HEADLINE_VALID = 0xF         # phy.h:14
