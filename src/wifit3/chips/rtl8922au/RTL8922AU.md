@@ -6,14 +6,30 @@ where the source and captures are, how to verify, and what to port next.
 
 ## Status
 
-Cold-boot bring-up, 13005/163814 driver ops reproduced and committed (capture-1; ~13021/13063 on
+Cold-boot bring-up, 13070/163814 driver ops reproduced and committed (capture-1; ~13086/13128 on
 capture-2/3, poll-count variance only). `verify_pcap` walks both VENQT control ops and bulk-OUT
-ops; all three captures stop at the same frontier. **All of `rtw89_core_start` is now reproduced**
+ops; all three captures stop at the same frontier. **All of `rtw89_core_start` AND the entire
+mac80211 add-interface are now reproduced.** The frontier is now **inside the per-channel
+channel-tune + RFK loop** (op #13079, `rtw8922a_pre_set_channel_rf`), after the head
+`pre_set_channel_bb`. This loop is ~150k ops, the bulk of what remains.
+
+Newly ported this session (see the Log M35-M38): the whole **mac80211 add-interface**
+(`rtw89_mac_vif_init` + `btc_ntfy_role_info`, ops 13014-13066) and the **first set_channel step**
+(`pre_set_channel_bb`, ops 13067-13078). Add-interface breakdown:
+- **`rtw89_mac_port_update`** (`mac.port_update`): the 28 `port_cfg_*` sub-functions as port-0
+  register RMWs (0x10400 base). Monitor net_type is NO_LINK (zero-init), so `func_sw` early-returns
+  after the FUNC_EN guard read and every en-branch takes the clear arm.
+- **The 6 MAC H2Cs** (`firmware.h2c_*`): macid_pause (SLEEP variant), role_maintain (wifi_role
+  MONITOR=7), join_info (BE v1, MLSR + EMLSR 256us caps), h2c_cam (addrcam_ver 0, all addresses
+  zero), and the g7 CMAC / v2 DMAC default tables (c0 MACID is GENMASK(6,0), OP is BIT(7); rest is a
+  fixed template + `_ALL` write masks stored as `_CMAC_G7_WORDS`/`_DMAC_V2_WORDS`).
+- **`btc_ntfy_role_info(BTC_ROLE_START)`** (`coex.ntfy_role_info`): `_run_coex` re-sends the full
+  OFF-BT policy (CXTD_OFF tdma option_ctrl=1 + all CXST_MAX slots from `_SLOT_DEF`, CXST_OFF cxtbl
+  overridden to 0xe5555555) as a two-TLV SET_CX_POLICY, then the 0xac scoreboard RMW via `_cfg_sb`.
+
+Everything below is the pre-existing `rtw89_core_start`/mac_init port; it remains ported
 (mac_init, BB/RF register tables, all of coex, `phy_dm_init`, RFK hw-init + RF-NCTL, txpwr/
-power-trim, bb_cfg_txrx_path, band cfgs, rfk_init_late, btc radio-state WL_ON, fw_log). The frontier
-is the **first mac80211 add-interface** (op #13014, vif/monitor setup: MAC regs 0x10400+), after
-which the **per-channel channel-tune + RFK loop** begins (~op 13067, ~150k ops, the bulk of what
-remains). Newly ported since the mac_init handoff (see the Log):
+power-trim, bb_cfg_txrx_path, band cfgs, rfk_init_late, btc radio-state WL_ON, fw_log):
 - **`rtw89_phy_init_bb_reg`** (`phy.py`): the firmware BB register table for PHY_0 and (DBCC) PHY_1,
   headline (rfe_type/cv) selection + the if/elif/else walk. `firmware.element_regs` pulls the reg2
   pairs. init_txpwr_unit/bb_reset are no-ops; bb_gain is software-only.
@@ -79,19 +95,24 @@ Everything below is the pre-existing mac_init port; it remains ported:
   BIT/GENMASK/OR eval) into `constants.py` (`IMR_DMAC_REGS`, `IMR_CMAC_REGS`). Reuse that resolver
   for the next big data tables.
 
-Frontier: op #13014, `read 0x10400`, the **first mac80211 add-interface** (`rtw89_ops_add_interface`:
-vif/addr-cam/bssid-cam setup, MAC regs 0x10400-0x11484 + an H2C burst, ops ~13014-13066). This runs
-when airmon-ng creates the monitor vif, after `rtw89_core_start` returns. A new subsystem worth a
-subagent spec. `rtw89_core_start` itself is fully reproduced.
+Frontier: op #13079, `read 0x22adc`, `rtw8922a_pre_set_channel_rf` (masked HWSI RF writes on path A
+`0x22adc`/`0x22c24`/`0x22ae0` then path B `0x22bdc`/`0x22d24`/`0x22be0`, ops 13079-13105). This is
+inside the per-channel `rtw8922a_set_channel`, whose head `pre_set_channel_bb` (ops 13067-13078) is
+already ported (`phy.pre_set_channel_bb`). `rtw89_core_start` and the whole mac80211 add-interface
+are fully reproduced.
 
-Then **the per-channel channel-tune + RFK loop begins at op ~13067** (marker: `RMW R_DBCC (0x26b48)
-<- 0` immediately followed by five `R_EMLSR (0x20044)` writes `0x86180000/0x8bbab000/0x8aba9000/
-0x8eba9000/0x8eaa9000` = `rtw8922a_pre_set_channel_bb`). This is ~150k ops, the bulk of what remains:
-`rtw8922a_set_channel` (pre_set_channel bb/rf, set_channel_bb gain/RF tables, ctrl_ch/bw, spur) +
-`rtw8922a_rfk` (TXGAPK/IQK/DPK/TSSI, mostly fw-offload H2C + HWSI RF writes), repeated per channel
-as airmon-ng tunes the band. `rtw8922a_rfk_init` itself is software-only. The per-channel unit is the
-same code each iteration; values differ by channel params + hardware reads (replay supplies reads).
-Deferred efuse RF gain/tssi arrays will likely be needed once set_channel_bb reads them.
+**The per-channel channel-tune + RFK loop** is ~150k ops, the bulk of what remains. `rtw8922a_set_channel`
+(rtw8922a.c:2232) = `set_channel_mac` + `set_channel_bb` (gain/RF tables, ctrl_ch/bw, spur) +
+`set_channel_rf`; its head is `pre_set_channel_bb` (done) then `pre_set_channel_rf` (frontier). Then
+`rtw8922a_rfk` (TXGAPK/IQK/DPK/TSSI, mostly fw-offload H2C + HWSI RF writes), repeated per channel as
+airmon-ng tunes the band. `rtw8922a_rfk_init` itself is software-only. The per-channel unit is the same
+code each iteration; values differ by channel params + hardware reads (replay supplies reads). Deferred
+efuse RF gain/tssi arrays will likely be needed once set_channel_bb reads them. The masked-HWSI RF
+write path (`phy.write_rf`) and `rfk.py` are already in place. **Design note for whoever continues:**
+`set_channel` is worth its own `chan.py` module + a real `Driver.set_channel()` method (currently
+`raise NotImplementedError`); the cold-boot first tune is being driven inline from `connect()` for now,
+but that structure should be discussed with the lead before building it out. The op #13067 marker below
+(pre_set_channel_bb) is now ported; the next marker is `pre_set_channel_rf` at op #13079.
 
 ### Gotchas found while porting (not obvious from a single read)
 
@@ -179,24 +200,29 @@ CMAC-window reads (`0xC000..0xFFFF`) can return `0xDEADBEEF` until the CMAC cloc
 `read_cmac` re-enables it and re-reads. [SRC] usb.c:83-108. Indirect crystal-SI registers go
 through `read_xtal_si` (write a command to `XTAL_SI_CTRL`, poll, read the data field).
 
-## Next (from op #12973)
+## Next (from op #13079)
 
-1. **`core_start` tail (op #12973-~13066), one-time.** `btc_ntfy_radio_state(WL_ON)` (coex.c: RF
-   writes on 0x22adc/0x22be0 + BT-coex regs 0xe324/0xe344/0xe328/0xe32c/0xe350), then
-   `rtw89_fw_h2c_fw_log`, `rtw89_fw_h2c_init_ba_cam`, `tas_fw_timer_enable`, then the first
-   **mac80211 add-interface** (`rtw89_ops_add_interface`: vif/addr-cam MAC regs 0x10400-0x11484 + an
-   H2C burst cat=1 cls 0x9/0x8/0x6/0x5 and cat=2 cls 0x10 func3, + a 0xac scoreboard RMW). This is a
-   new subsystem (vif setup) worth a subagent spec.
-2. **The per-channel channel-tune + RFK loop (op ~13067+), ~150k ops, the bulk.** Marker for the
-   first `set_channel`: `RMW R_DBCC (0x26b48) <- 0` then five `R_EMLSR (0x20044)` writes. Port
-   `rtw8922a_set_channel` (rtw8922a.c: `set_channel_help` enter -> `pre_set_channel_bb/rf`,
-   `set_channel_bb` (gain/RF tables, ctrl_ch/bw, spur elim), `set_channel_rf`) then `rtw8922a_rfk`
-   (`_rfk_by_channel`: TXGAPK/RX-DCK/IQK/DPK/TSSI, mostly fw-offload H2C cat=2 cls 0x8/0x9/0x10 +
-   masked HWSI RF writes). Delegate per-calibration subagent specs. The same code runs per channel;
-   the masked-HWSI RF read path (`phy.write_rf` + `_read_full_rf_v2_a`) and `rfk.py` are already in
-   place. The deferred efuse RF gain/tssi arrays are the likely next un-defer (set_channel_bb reads
-   them). A pragmatic sub-goal: get ONE channel's set_channel+RFK correct; the rest are replays of
-   the same code driven by the captured reads (only channel-table written values differ).
+**The per-channel channel-tune + RFK loop, ~150k ops, the bulk of what remains.** `core_start` and
+the whole add-interface are done; the frontier is now inside the first `rtw8922a_set_channel`
+(rtw8922a.c:2232 = `set_channel_mac` + `set_channel_bb` + `set_channel_rf`).
+
+1. **`rtw8922a_pre_set_channel_rf` (op #13079-13105), the frontier.** Masked HWSI RF writes: path A
+   on 0x22adc(write)/0x22c24(read)/0x22ae0, then path B on 0x22bdc/0x22d24/0x22be0. Uses the existing
+   `phy.write_rf` masked-HWSI path. Read rtw8922a.c `rtw8922a_pre_set_channel_rf`; the writes are
+   per-path RF-register RMWs (0x22ae0/0x22be0 are the HWSI data regs, 0x22c24/0x22d24 the read-back).
+2. **`set_channel_mac` + `set_channel_bb` (op #13106+).** MAC ch/bw regs (0x10398, 0x11440,
+   0x22800/0x22900, 0x2e610/0x2e710, ...) then the BB gain/RF tables, ctrl_ch/bw, spur elim. The
+   deferred efuse RF gain/tssi arrays are the likely next un-defer (set_channel_bb reads them).
+3. **`set_channel_rf`, then `rtw8922a_rfk`** (`_rfk_by_channel`: TXGAPK/RX-DCK/IQK/DPK/TSSI, mostly
+   fw-offload H2C cat=2 cls 0x8/0x9/0x10 + masked HWSI RF writes). Delegate per-calibration subagent
+   specs. `rtw8922a_rfk_init` itself is software-only.
+
+The same code runs per channel; only channel-table written values differ (replay supplies reads).
+A pragmatic sub-goal: get ONE channel's set_channel+RFK correct; the rest are replays. **Structure:**
+consider a `chan.py` module + a real `Driver.set_channel()`; discuss with the lead first (the
+cold-boot first tune is driven inline from `connect()` for now). The subagent workflow that worked
+all session: dump the ground-truth op window (`dop.py`), hand a subagent that + source pointers +
+this cheatsheet, ask for an ordered byte-spec reconciled to ground truth, port, `verify_pcap`, commit.
 
 Reusable assets: `firmware.h2c_command` (any H2C), `firmware.element_regs`/`element_regs_with_idx`
 (any reg2 fw element), `phy.write_rf` (masked/full HWSI + ad_sel RF write), the reg.h resolver
@@ -312,3 +338,15 @@ describing them, no jargon. No em-dashes and none of the banned words anywhere; 
 - 2026-07-26 M34: `core_start` tail: `btc_ntfy_radio_state(WL_ON)` (re-runs btc_init_cfg;
   `coex.ntfy_radio_state_wl_on`) + `fw_h2c_fw_log` (disabled). init_ba_cam/tas no-op. 13005.
   **rtw89_core_start complete.** Frontier at the first mac80211 add-interface (op #13014).
+- 2026-07-26 M35: add-interface `rtw89_mac_port_update` (`mac.port_update`): the 28 `port_cfg_*`
+  port-0 register RMWs (0x10400 base); monitor net_type NO_LINK -> func_sw early-returns, en-arms
+  clear. 13049.
+- 2026-07-26 M36: add-interface MAC H2C burst (`firmware.h2c_macid_pause`/`role_maintain`/
+  `join_info`/`cam`/`default_cmac_tbl` g7/`default_dmac_tbl` v2). c0 MACID is GENMASK(6,0), OP BIT(7).
+  13055.
+- 2026-07-26 M37: add-interface `btc_ntfy_role_info(BTC_ROLE_START)` (`coex.ntfy_role_info`): full
+  OFF-BT policy (tdma option_ctrl=1 + all CXST_MAX slots, CXST_OFF cxtbl 0xe5555555) as SET_CX_POLICY,
+  then the 0xac scoreboard RMW via `_cfg_sb`. **mac80211 add-interface complete.** 13058.
+- 2026-07-26 M38: set_channel head `pre_set_channel_bb` (`phy.pre_set_channel_bb`, PHY_0): clear
+  R_DBCC B_DBCC_EN + five B_EMLSR_PARM writes. Starts the per-channel loop. 13070. Frontier at
+  `pre_set_channel_rf` (op #13079).
