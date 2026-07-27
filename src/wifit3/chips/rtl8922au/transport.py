@@ -127,6 +127,11 @@ class RTL8922AUTransport:
         """rtw89_write16_clr: 16-bit read-modify-write, bits masked out. [SRC] core.h."""
         self.write16(addr, self.read16(addr) & ~bits & 0xFFFF)
 
+    def read32_mask(self, addr: int, mask: int) -> int:
+        """rtw89_read32_mask: read `addr`, return `mask`'s field shifted down. [SRC] core.h."""
+        shift = (mask & -mask).bit_length() - 1
+        return (self.read32(addr) & mask) >> shift
+
     def write32_mask(self, addr: int, mask: int, data: int) -> None:
         """rtw89_write32_mask: read-modify-write `mask`'s field to `data`. [SRC] core.h.
         shift = mask's trailing-zero count."""

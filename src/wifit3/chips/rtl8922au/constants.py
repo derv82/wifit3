@@ -1207,6 +1207,31 @@ B_HWSI_ADD_MASK = 0x00000FF0         # GENMASK(11, 4)
 B_HWSI_ADD_RD = 1 << 2
 B_HWSI_VAL_RDONE = 1 << 31
 B_HWSI_ADD_POLL_MASK = 0x00000003    # GENMASK(1, 0)
+
+# rtw8922a_ctl_band_ch_bw / chan_to_rf18_val: the RF 0x18 (CFGCH) channel/band/bw config word.
+# [SRC] reg.h:8530-8551, core.h:205/1092, rtw8922a.c:2685.
+RR_CFGCH = 0x18                  # reg.h:8530
+RR_CFGCH_V1 = 0x10018            # reg.h:8531 (ad_sel bit set: the DAV direct-address path)
+RR_CFGCH_BAND1 = 0x30000         # GENMASK(17, 16). reg.h:8532
+RR_CFGCH_BAND0 = 0x300           # GENMASK(9, 8). reg.h:8540
+RR_CFGCH_BW_V2 = 0x1C00          # GENMASK(12, 10). reg.h:8544
+RR_CFGCH_CH = 0xFF               # GENMASK(7, 0). reg.h:8551
+CFGCH_BAND1_5G = 1               # reg.h:8534
+CFGCH_BAND1_6G = 3               # reg.h:8535
+CFGCH_BAND0_5G = 1               # reg.h:8542
+CFGCH_BAND0_6G = 0               # reg.h:8543
+CFGCH_BW_V2_40M = 1              # reg.h:8546
+CFGCH_BW_V2_80M = 2              # reg.h:8547
+CFGCH_BW_V2_160M = 3            # reg.h:8548
+CFGCH_BW_V2_320M = 4            # reg.h:8549
+INV_RF_DATA = 0xFFFFFFFF         # core.h:205
+RF_A = 1 << 0                    # enum rtw89_rf_path_bit. core.h:1093
+RF_B = 1 << 1                    # core.h:1094
+RF_AB = RF_A | RF_B              # core.h:1098
+RTW89_CHANNEL_WIDTH_40 = 1       # enum rtw89_bandwidth. core.h:1115
+RTW89_CHANNEL_WIDTH_80 = 2       # core.h:1116
+RTW89_CHANNEL_WIDTH_160 = 3      # core.h:1117
+RTW89_CHANNEL_WIDTH_320 = 4      # core.h:1118
 RR_POW = 0xA0
 RR_POW_SYN_V1 = 0x0000000F           # GENMASK(3, 0)
 RR_MODOPT = 0x01

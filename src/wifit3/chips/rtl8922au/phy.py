@@ -8,7 +8,12 @@ import struct
 import time
 
 from .constants import (
-    CHIP_CAV, RTW89_BAND_2G,
+    CHIP_CAV, RTW89_BAND_2G, RTW89_BAND_5G, RTW89_BAND_6G,
+    RR_CFGCH, RR_CFGCH_V1, RR_CFGCH_BAND1, RR_CFGCH_BAND0, RR_CFGCH_BW_V2, RR_CFGCH_CH,
+    CFGCH_BAND1_5G, CFGCH_BAND1_6G, CFGCH_BAND0_5G, CFGCH_BAND0_6G,
+    CFGCH_BW_V2_40M, CFGCH_BW_V2_80M, CFGCH_BW_V2_160M, CFGCH_BW_V2_320M,
+    INV_RF_DATA, RF_A, RF_B, RF_AB,
+    RTW89_CHANNEL_WIDTH_40, RTW89_CHANNEL_WIDTH_80, RTW89_CHANNEL_WIDTH_160, RTW89_CHANNEL_WIDTH_320,
     R_BK_FC0INV, B_BK_FC0INV, R_CCK_FC0INV, B_CCK_FC0INV, RTW89_FW_ELEMENT_ID_BB_GAIN,
     GAIN_OFFSET_2G_CCK, GAIN_OFFSET_2G_OFDM, R_MGAIN_BIAS, B_MGAIN_BIAS_BW20, B_MGAIN_BIAS_BW40,
     R_CCK_RPL_OFST, B_CCK_RPL_OFST,
@@ -285,6 +290,16 @@ def write_rf(t, rf_path: int, addr: int, mask: int, data: int) -> None:
         shift = (mask & -mask).bit_length() - 1
         val = (_read_full_rf_v2_a(t, rf_path, addr) & ~mask & 0xFFFFFFFF) | ((data << shift) & mask)
     _write_full_rf_v2_a(t, rf_path, addr, val)
+
+
+def read_rf(t, rf_path: int, addr: int, mask: int) -> int:
+    """rtw89_phy_read_rf_v2: the ad_sel (DAV) direct-address read at rf_base + (addr<<2), else the
+    HWSI (DDIE) read then mask-shift. [SRC] phy.c:1104 / 983 / 1094."""
+    if addr & RTW89_RF_ADDR_ADSEL_MASK:
+        direct = RF_BASE_ADDR[rf_path] + ((addr & 0xFF) << 2)
+        return t.read32_mask(direct + CR_BASE_BE, mask & RFREG_MASK)
+    shift = (mask & -mask).bit_length() - 1
+    return (_read_full_rf_v2_a(t, rf_path, addr) & mask) >> shift
 
 
 def _config_rf_reg(t, rf_path: int, addr: int, data: int, store: list) -> None:
@@ -1051,6 +1066,77 @@ def set_channel_bb(t, chan: dict, phy_idx: int = 0) -> None:
     _spur_elimination(t, chan, phy_idx)
     _phy_write32_idx(t, R_RSTB_ASYNC, B_RSTB_ASYNC_ALL, 1, phy_idx)
     _tssi_reset(t, phy_idx)
+
+
+def _enc(mask: int, val: int) -> int:
+    """u32_encode_bits: shift val into mask's field. [SRC] bitfield.h."""
+    return (val << ((mask & -mask).bit_length() - 1)) & mask
+
+
+def _chan_to_rf18_val(chan: dict) -> int:
+    """rtw8922a_chan_to_rf18_val: pack channel + band + bandwidth into the RF 0x18 (CFGCH) fields.
+    [SRC] rtw8922a.c:2685."""
+    val = _enc(RR_CFGCH_CH, chan["channel"])
+    band = chan["band_type"]
+    if band == RTW89_BAND_5G:
+        val |= _enc(RR_CFGCH_BAND1, CFGCH_BAND1_5G) | _enc(RR_CFGCH_BAND0, CFGCH_BAND0_5G)
+    elif band == RTW89_BAND_6G:
+        val |= _enc(RR_CFGCH_BAND1, CFGCH_BAND1_6G) | _enc(RR_CFGCH_BAND0, CFGCH_BAND0_6G)
+    bw = chan["band_width"]
+    if bw == RTW89_CHANNEL_WIDTH_40:
+        val |= _enc(RR_CFGCH_BW_V2, CFGCH_BW_V2_40M)
+    elif bw == RTW89_CHANNEL_WIDTH_80:
+        val |= _enc(RR_CFGCH_BW_V2, CFGCH_BW_V2_80M)
+    elif bw == RTW89_CHANNEL_WIDTH_160:
+        val |= _enc(RR_CFGCH_BW_V2, CFGCH_BW_V2_160M)
+    elif bw == RTW89_CHANNEL_WIDTH_320:
+        val |= _enc(RR_CFGCH_BW_V2, CFGCH_BW_V2_320M)
+    return val
+
+
+def _get_kpath(t, phy_idx: int) -> int:
+    """rtw89_phy_get_kpath for the two MLO modes this port reaches: MLO_1_PLUS_1_1RF is one path
+    per PHY, MLO_2_PLUS_0_1RF (single monitor vif) is both paths. [SRC] phy.c:8866."""
+    if t.mlo_1_1:
+        return RF_A if phy_idx == 0 else RF_B
+    return RF_AB
+
+
+def _get_syn_sel(t, phy_idx: int) -> int:
+    """rtw89_phy_get_syn_sel: PHY_0 -> path A, PHY_1 -> path B for both MLO modes here. [SRC]
+    phy.c:8900."""
+    return RF_PATH_A if phy_idx == 0 else RF_PATH_B
+
+
+_RF_CFGCH_ADDR = (RR_CFGCH, RR_CFGCH_V1)
+_RR_CFGCH_CLR = RR_CFGCH_BAND1 | RR_CFGCH_BW_V2 | RR_CFGCH_BAND0 | RR_CFGCH_CH
+
+
+def _ctl_band_ch_bw(t, chan: dict, phy_idx: int) -> None:
+    """rtw8922a_ctl_band_ch_bw: read RF 0x18 (HWSI) + 0x10018 (DAV direct) per path, clear the
+    band/bw/ch fields, OR in the channel's rf18 value, write each back. Paths follow kpath.
+    [SRC] rtw8922a_rfk.c:37."""
+    rf_reg = {path: [read_rf(t, path, _RF_CFGCH_ADDR[i], RFREG_MASK) for i in range(2)]
+              for path in (RF_PATH_A, RF_PATH_B)}
+    kpath = _get_kpath(t, phy_idx)
+    synpath = _get_syn_sel(t, phy_idx)
+    if read_rf(t, synpath, RR_CFGCH, RFREG_MASK) == INV_RF_DATA:
+        raise RuntimeError("rtl8922au: invalid RF18 value")
+    rf18_val = _chan_to_rf18_val(chan)
+    for path in (RF_PATH_A, RF_PATH_B):
+        if not (kpath & (1 << path)):
+            continue
+        for i in range(2):
+            if rf_reg[path][i] == INV_RF_DATA:
+                raise RuntimeError(f"rtl8922au: invalid RF_0x18 for path {path}")
+            v = (rf_reg[path][i] & ~_RR_CFGCH_CLR & RFREG_MASK) | rf18_val
+            write_rf(t, path, _RF_CFGCH_ADDR[i], RFREG_MASK, v)
+
+
+def set_channel_rf(t, chan: dict, phy_idx: int = 0) -> None:
+    """rtw8922a_set_channel_rf -> ctl_band_ch_bw. The CAV-only LUT writes are skipped (this card is
+    a CBV cut). [SRC] rtw8922a_rfk.c:103, 84-100."""
+    _ctl_band_ch_bw(t, chan, phy_idx)
 
 
 def pre_set_channel_rf(t, cv: int, phy_idx: int = 0) -> None:
