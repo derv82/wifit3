@@ -8,7 +8,7 @@ import usb.core
 import usb.util
 
 from ..driver import Driver, DeviceID, ProgressCallback
-from . import coex, firmware, mac, phy, rfk
+from . import chan, coex, firmware, mac, phy, rfk
 from .constants import (
     R_BE_PAD_CTRL2, _LIBUSB_SPEED_SUPER, USB_SWITCH_DELAY, B_BE_MATCH_CNT,
     B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
@@ -165,9 +165,6 @@ class RTL8922AUDriver(Driver):
         firmware.h2c_default_dmac_tbl(self.transport, ep, macid=0)
         # __rtw89_ops_add_iface_link tail: btc_ntfy_role_info(BTC_ROLE_START). [SRC] mac80211.c:154.
         coex.ntfy_role_info(self.transport, ep)
-        # First mac80211 channel tune (airmon-ng): rtw8922a_set_channel head, pre_set_channel_bb.
-        # [SRC] rtw8922a.c:2328.
-        phy.pre_set_channel_bb(self.transport, phy_idx=0)
         return True
 
     def _switch_usb_mode(self) -> None:
@@ -193,7 +190,9 @@ class RTL8922AUDriver(Driver):
         self.transport.write32_quiet(R_BE_PAD_CTRL2, pad)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        raise NotImplementedError
+        """One per-channel tune, the unit airmon-ng drives per hop. [SRC] core.c __rtw89_set_channel."""
+        chan.set_channel(self.transport, channel)
+        return True
 
     async def close(self) -> None:
         if self.dev is not None:

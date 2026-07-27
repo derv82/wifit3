@@ -22,9 +22,17 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
 from wifit3.chips.rtl8922au.driver import RTL8922AUDriver  # noqa: E402
+from wifit3.chips.rtl8922au import chan as chanmod  # noqa: E402
 
 DEFAULT_CAP = "usb_dumps_new2/captures_rtw89_8922au_git/capture-1.pcap"
 RTW89_USB_VENQT = 0x05
+
+# Channel-hop dispatch markers (per-channel set_channel unit). The unit opens with the
+# pre_set_channel_bb read of R_DBCC; the target channel rides the R_FC0 center-freq write a few
+# hundred ops later. [SRC] rtw8922a.c:2206 (R_DBCC 0x6b48), 1517 (R_FC0 0x6b4c), CR_BASE_BE 0x20000.
+_R_DBCC_ABS = 0x26B48
+_R_FC0_ABS = 0x26B4C
+_B_FC0_MASK = 0x1FFF             # GENMASK(12, 0): central_freq
 
 # usbmon mon_bin record offsets.
 _OFF_TYPE, _OFF_XFER, _OFF_EP, _OFF_DEV, _OFF_LENCAP, _OFF_SETUP, _OFF_DATA = 8, 9, 10, 11, 36, 40, 64
@@ -219,6 +227,43 @@ class ReplayDev:
         return "\n".join(lines)
 
 
+def _op_addr(op: dict) -> int:
+    return op["wval"] | (op["widx"] << 16)
+
+
+def _is_hop_opener(op: dict) -> bool:
+    """The per-channel unit opens with pre_set_channel_bb's read of R_DBCC."""
+    return op["kind"] == "ctrl" and op["is_in"] and _op_addr(op) == _R_DBCC_ABS
+
+
+def _peek_channel(ops: list[dict], start: int, window: int = 600) -> int | None:
+    """The channel a hop targets is a runtime input (airodump picks it); read it from the upcoming
+    R_FC0 center-freq write, then map freq -> channel. [SRC] rtw8922a.c:1517."""
+    for op in ops[start:start + window]:
+        if op["kind"] == "ctrl" and not op["is_in"] and _op_addr(op) == _R_FC0_ABS \
+                and len(op["data"]) == 4:
+            freq = struct.unpack("<I", op["data"])[0] & _B_FC0_MASK
+            return chanmod.freq_to_channel(freq)
+    return None
+
+
+async def _drive(driver: RTL8922AUDriver, replay: "ReplayDev", ops: list[dict]) -> int:
+    """Cold bring-up via connect(), then dispatch each per-channel set_channel unit to
+    driver.set_channel(peeked channel). Returns the hop count. Divergence propagates."""
+    await driver.connect()
+    hops = 0
+    while True:
+        j = replay.next_register_op()
+        if j is None or not _is_hop_opener(ops[j]):
+            break
+        ch = _peek_channel(ops, j)
+        if ch is None:
+            break
+        await driver.set_channel(ch)
+        hops += 1
+    return hops
+
+
 def run(cap: str | None = None) -> int:
     logging.getLogger("wifit3").setLevel(logging.CRITICAL)
     path = cap or DEFAULT_CAP
@@ -245,13 +290,16 @@ def run(cap: str | None = None) -> int:
     driver._h2c_ep = next((o["ep"] for o in ops if o["kind"] == "bulk"), None)
 
     diverged = None
+    hops = 0
     try:
-        asyncio.run(driver.connect())
+        hops = asyncio.run(_drive(driver, replay, ops))
     except Divergence as e:
         diverged = e
     except Exception as e:  # noqa: BLE001
         print(f"  harness error {type(e).__name__}: {e} (reproduced {replay.matched})")
         return 2
+    if hops:
+        print(f"CHANNEL HOPS: {hops} set_channel unit(s) driven via driver.set_channel().")
 
     print(f"\nREPRODUCED (real driver code): {replay.matched}/{n_driver} driver ops "
           f"({n_reg} register + {n_bulk} bulk-OUT)")
