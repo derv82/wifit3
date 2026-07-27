@@ -51,6 +51,7 @@ def set_channel(t, channel: int, phy_idx: int = 0, mac_idx: int = 0) -> dict:
     t.mlo_1_1 = False
     phy.set_channel_help(t, t.cv, chan["band_type"], enter=True, phy_idx=phy_idx, mac_idx=mac_idx)
     mac.set_channel_mac(t, chan, mac_idx)
-    # TODO: set_channel_bb/rf(chan, phy_idx); set_txpwr(chan); set_channel_help(leave) +
+    phy.set_channel_bb(t, chan, phy_idx)
+    # TODO: set_channel_rf(chan, phy_idx); set_txpwr(chan); set_channel_help(leave) +
     #       post_set_channel bb/rf; rtw8922a_rfk(chan). tx_en from help(enter) feeds help(leave).
     return chan

@@ -9,6 +9,7 @@ import time
 
 from .constants import (
     CHIP_CAV, RTW89_BAND_2G,
+    R_BK_FC0INV, B_BK_FC0INV, R_CCK_FC0INV, B_CCK_FC0INV,
     RTW89_FW_ELEMENT_ID_BB_REG, CR_BASE_BE, BYPASS_CR_DATA,
     PHY_HEADLINE_VALID, PHY_COND_BRANCH_IF, PHY_COND_BRANCH_ELIF, PHY_COND_BRANCH_ELSE,
     PHY_COND_BRANCH_END, PHY_COND_CHECK, PHY_COND_DONT_CARE,
@@ -739,6 +740,32 @@ def pre_set_channel_bb(t, phy_idx: int = 0) -> None:
         else (0xBBAB, 0xAFFF, 0xEFFF, 0xEEFF)
     for parm in parms:
         _phy_write32_mask(t, R_EMLSR, B_EMLSR_PARM, parm)
+
+
+# rtw8922a_sco_barker_threshold / rtw8922a_sco_cck_threshold, ch 1-14. [SRC] rtw8922a.c:1139.
+_SCO_BARKER = (0x1FE4F, 0x1FF5E, 0x2006C, 0x2017B, 0x2028A, 0x20399, 0x204A8,
+               0x205B6, 0x206C5, 0x207D4, 0x208E3, 0x209F2, 0x20B00, 0x20D8A)
+_SCO_CCK = (0x2BDAC, 0x2BF21, 0x2C095, 0x2C209, 0x2C37E, 0x2C4F2, 0x2C666,
+            0x2C7DB, 0x2C94F, 0x2CAC3, 0x2CC38, 0x2CDAC, 0x2CF21, 0x2D29E)
+
+
+def _ctrl_sco_cck(t, primary_ch: int, phy_idx: int) -> None:
+    """rtw8922a_ctrl_sco_cck: the per-2G-channel Barker/CCK FC0-inverse thresholds. [SRC]
+    rtw8922a.c:1149."""
+    ch_element = primary_ch - 1                  # primary_ch < 14 for 2G
+    _phy_write32_idx(t, R_BK_FC0INV, B_BK_FC0INV, _SCO_BARKER[ch_element], phy_idx)
+    _phy_write32_idx(t, R_CCK_FC0INV, B_CCK_FC0INV, _SCO_CCK[ch_element], phy_idx)
+
+
+def set_channel_bb(t, chan: dict, phy_idx: int = 0) -> None:
+    """rtw8922a_set_channel_bb: 2G CCK sco thresholds, then ctrl_ch (gain + freq tables), ctrl_bw,
+    ctrl_cck_en, spur elimination. Only ctrl_sco_cck is ported so far. [SRC] rtw8922a.c:2179."""
+    cck_en = chan["band_type"] == RTW89_BAND_2G
+    if cck_en:
+        _ctrl_sco_cck(t, chan["primary_channel"], phy_idx)
+    # TODO: ctrl_ch(chan) [set_gain, band_sel, rx_gain_normal, R_FC0 freq, cck_params, chan_idx];
+    #       ctrl_bw(pri_sb, bw); ctrl_cck_en(cck_en); spur_elimination(chan); R_RSTB_ASYNC;
+    #       tssi_reset(AB). The gain tables need the deferred efuse RF gain arrays.
 
 
 def pre_set_channel_rf(t, cv: int, phy_idx: int = 0) -> None:

@@ -73,6 +73,12 @@ B_BE_SIFS_MACTXEN_T1_MASK = 0x7F     # GENMASK(6, 0). reg.h:6809
 R_BE_MUEDCA_EN = 0x10370             # reg.h:6850
 B_BE_SIFS_MACTXEN_TB_T1_MASK = 0x7F0000  # GENMASK(22, 16). reg.h:6854
 
+# rtw8922a_ctrl_sco_cck (set_channel_bb, 2G). [SRC] rtw8922a.c:1149, reg.h.
+R_BK_FC0INV = 0x6758                 # reg.h:9947
+B_BK_FC0INV = 0x7FFFF                # GENMASK(18, 0). reg.h:9948
+R_CCK_FC0INV = 0x675C                # reg.h:9949
+B_CCK_FC0INV = 0x7FFFF               # GENMASK(18, 0). reg.h:9950
+
 # XTAL_SI indirect write extras (rtw89_mac_write_xtal_si). [SRC] mac_be.c:413-441, reg.h/mac.h.
 # The BE field positions match the AX ones, so the AX masks above cover the shared fields.
 B_AX_WL_XTAL_SI_BITMASK_MASK = 0x00FF0000  # GENMASK(23, 16). reg.h:276
