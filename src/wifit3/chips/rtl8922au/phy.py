@@ -17,6 +17,7 @@ from .constants import (
     B_CHBW_BW, B_CHBW_PRICH, B_SMALLBW, R_DAC_CLK, B_DAC_CLK, R_GAIN_MAP0, B_GAIN_MAP0_EN,
     R_GAIN_MAP1, B_GAIN_MAP1_EN, B_BW40_2XFFT,
     R_UPD_CLK_ADC, B_ENABLE_CCK, R_PD_ARBITER_OFF, B_PD_ARBITER_OFF,
+    R_S0S1_CSI_WGT, B_S0S1_CSI_WGT_EN, B_NBI_NOTCH_EN,
     RTW89_FW_ELEMENT_ID_BB_REG, CR_BASE_BE, BYPASS_CR_DATA,
     PHY_HEADLINE_VALID, PHY_COND_BRANCH_IF, PHY_COND_BRANCH_ELIF, PHY_COND_BRANCH_ELSE,
     PHY_COND_BRANCH_END, PHY_COND_CHECK, PHY_COND_DONT_CARE,
@@ -657,10 +658,12 @@ def _tssi_cont_en(t, phy_idx: int, en: bool) -> None:
 
 
 def _tssi_reset(t, phy_idx: int) -> None:
-    """rtw8922a_tssi_reset: MLO 1+1 resets RSTA for phy0, RSTB for phy1. [SRC] rtw8922a.c:2016."""
-    reg = R_TXPWR_RST[phy_idx]
-    _phy_write32_mask(t, reg, B_TXPWR_RST, 0)
-    _phy_write32_mask(t, reg, B_TXPWR_RST, 1)
+    """rtw8922a_tssi_reset: MLO 1+1 resets one path by phy_idx (RSTA phy0 / RSTB phy1), else both
+    paths. [SRC] rtw8922a.c:2016."""
+    regs = (R_TXPWR_RST[phy_idx],) if t.mlo_1_1 else (R_TXPWR_RST[0], R_TXPWR_RST[1])
+    for reg in regs:
+        _phy_write32_mask(t, reg, B_TXPWR_RST, 0)
+        _phy_write32_mask(t, reg, B_TXPWR_RST, 1)
 
 
 def _bb_reset_en(t, phy_idx: int, band: int, en: bool) -> None:
@@ -1013,6 +1016,20 @@ def _ctrl_bw(t, pri_sb: int, bw: int, phy_idx: int) -> None:
     _phy_write32_idx(t, R_FC0, B_BW40_2XFFT, 0, phy_idx)     # bw != 40 MHz
 
 
+# nbi notch enable regs per path (notch1_en, notch2_en). [SRC] rtw8922a.c nbi_reg_def.
+_NBI_NOTCH_EN = ((0x41A0, 0x41AC), (0x45A0, 0x45AC))
+
+
+def _spur_elimination(t, chan: dict, phy_idx: int) -> None:
+    """rtw8922a_spur_elimination: with no spur (spur_freq 0 for this chip) just disable the CSI
+    weight and both NBI notches on each path. [SRC] rtw8922a.c:1593, set_csi/nbi_tone_idx."""
+    _phy_write32_idx(t, R_S0S1_CSI_WGT, B_S0S1_CSI_WGT_EN, 0, phy_idx)   # set_csi_tone_idx
+    for path in (RF_PATH_A, RF_PATH_B):
+        notch1, notch2 = _NBI_NOTCH_EN[path]
+        _phy_write32_idx(t, notch1, B_NBI_NOTCH_EN, 0, phy_idx)
+        _phy_write32_idx(t, notch2, B_NBI_NOTCH_EN, 0, phy_idx)
+
+
 def _ctrl_cck_en(t, cck_en: bool, phy_idx: int) -> None:
     """rtw8922a_ctrl_cck_en: enable/disable the CCK receiver (RXCCA, ADC clock, PD arbiter). [SRC]
     rtw8922a.c."""
@@ -1031,7 +1048,9 @@ def set_channel_bb(t, chan: dict, phy_idx: int = 0) -> None:
     _ctrl_ch(t, chan, phy_idx)
     _ctrl_bw(t, chan["pri_sb_idx"], chan["band_width"], phy_idx)
     _ctrl_cck_en(t, cck_en, phy_idx)
-    # TODO: spur_elimination(chan) [csi/nbi tone idx]; R_RSTB_ASYNC; tssi_reset(AB).
+    _spur_elimination(t, chan, phy_idx)
+    _phy_write32_idx(t, R_RSTB_ASYNC, B_RSTB_ASYNC_ALL, 1, phy_idx)
+    _tssi_reset(t, phy_idx)
 
 
 def pre_set_channel_rf(t, cv: int, phy_idx: int = 0) -> None:

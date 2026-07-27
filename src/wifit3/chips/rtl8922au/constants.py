@@ -117,6 +117,10 @@ B_GAIN_MAP0_EN = 1 << 0              # BIT(0). reg.h:10429
 R_GAIN_MAP1 = 0xE54C                 # reg.h:10430
 B_GAIN_MAP1_EN = 1 << 0              # BIT(0). reg.h:10431
 B_BW40_2XFFT = 1 << 31               # BIT(31). reg.h:9960
+# rtw8922a_spur_elimination (spur_freq 0 -> disable notches/CSI). [SRC] rtw8922a.c:1593-.
+R_S0S1_CSI_WGT = 0x4D34              # reg.h:9748
+B_S0S1_CSI_WGT_EN = 1 << 0           # BIT(0). reg.h:9749
+B_NBI_NOTCH_EN = 0x1000              # nbi notch1_en/notch2_en mask. rtw8922a.c nbi_reg_def
 # rtw8922a_ctrl_cck_en. [SRC] rtw8922a.c, reg.h.
 R_UPD_CLK_ADC = 0x0700               # reg.h:8834
 B_ENABLE_CCK = 1 << 5                # BIT(5). reg.h:8838
