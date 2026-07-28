@@ -568,6 +568,12 @@ B_BE_A_MC = 1 << 3                       # reg.h:8161
 B_BE_A_BC = 1 << 2                       # reg.h:8162
 B_BE_A_A1_MATCH = 1 << 1                 # reg.h:8163
 B_BE_SNIFFER_MODE = 1 << 0               # reg.h:8164
+# rtw89_ops_configure_filter's steady RX-filter value for a pure monitor vif (airmon-ng): sniffer
+# on, UC+BC CAM match, plus DEFAULT_AX_RX_FLTR's bit10 (A_PWR_MGNT) + bit14 (A_FTM_REQ), UID=15;
+# A1_MATCH/BC/MC/BCN_CHK all cleared (promiscuous). set_rx_fltr's RMW re-adds the device's
+# MPDU-max-len (bits 16-21) so the register lands at 0x0F174431 on both MACs, matching the capture.
+# [SRC] mac80211.c:316 rtw89_ops_configure_filter, reg.h:3346 DEFAULT_AX_RX_FLTR.
+DEFAULT_MON_RX_FLTR = 0x0F004431
 R_BE_PLCP_HDR_FLTR = 0x11404             # reg.h:8123
 B_BE_HE_SIGB_CRC_CHK = 1 << 6            # reg.h:8128
 B_BE_VHT_MU_SIGB_CRC_CHK = 1 << 5        # reg.h:8129

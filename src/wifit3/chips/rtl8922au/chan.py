@@ -63,10 +63,11 @@ def _set_channel_one(t, ep: int, chan: dict, phy_idx: int, mac_idx: int) -> None
 
 
 def set_channel(t, channel: int, ep: int = None, mlo_1_1: bool = False) -> dict:
-    """rtw89_set_channel: for a BE chip, __rtw89_set_channel runs for PHY_0/MAC_0 then PHY_1/MAC_1
-    (same monitor channel). rtw89_entity_recalc picks the MLO mode per hop from the active-link map;
-    the monitor setup flips it (MLO_2_PLUS_0_1RF vs MLO_1_PLUS_1_1RF), so mlo_1_1 is a per-hop input.
-    [SRC] core.c:563, chan.c:485 rtw89_entity_sel_mlo_dbcc_mode."""
+    """One rtw89_set_channel pass: for a BE chip, __rtw89_set_channel runs for PHY_0/MAC_0 then
+    PHY_1/MAC_1 (same monitor channel). This is one of the TWO passes the driver runs per hop (the
+    prehdl double-tune in driver._tune_hop): mlo_1_1=False is the forced-PHY_0 (2+0) pass, True is
+    the cleared (1+1) pass. mlo_1_1 selects the MLO mode rtw89_entity_sel_mlo_dbcc_mode lands on.
+    [SRC] core.c:563 __rtw89_set_channel, chan.c:485 rtw89_entity_sel_mlo_dbcc_mode."""
     chan = make_chan(channel)
     t.mlo_1_1 = mlo_1_1
     _set_channel_one(t, ep, chan, phy_idx=0, mac_idx=0)

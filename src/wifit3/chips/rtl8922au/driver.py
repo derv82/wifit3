@@ -24,6 +24,7 @@ from .constants import (
     B_BE_USB3_FORCE, B_BE_USB2_FORCE, B_BE_FORCE_U3_CK, B_BE_FORCE_U2_CK, B_BE_FORCE_CLK_U2,
     B_BE_USB3_GEN_MODE, B_BE_USB3_LANE_MODE, BULKOUT_ID_H2C, RTW89_WIFI_ROLE_MONITOR,
     RTW89_NET_TYPE_NO_LINK, RTW89_BSSID_MATCH_ALL, R_BE_SYS_CHIPINFO, B_BE_HW_ID_MASK,
+    DEFAULT_MON_RX_FLTR,
 )
 from .transport import RTL8922AUTransport
 
@@ -77,13 +78,16 @@ class RTL8922AUDriver(Driver):
         self.dev: Optional[usb.core.Device] = None
         self.transport: Optional[RTL8922AUTransport] = None
         self._rx_cb: Optional[Callable] = None
-        self._disconnect_cb: Optional[Callable[[], None]] = None
+        self._disconnect_cb: Optional[Callable[[Exception], None]] = None
         self._h2c_ep: Optional[int] = None
         self._bulk_in_ep: Optional[int] = None
         self._rx_reader: Optional[RxReaderThread] = None
         self._mgmt_ep: Optional[int] = None
         self._tx_seq: int = 0
         self._band_is_2g: bool = True
+        # entity_force_hw model for the prehdl double-tune: True = next pass is the forced-PHY_0 (2+0)
+        # pass, False = the cleared (1+1) pass. A hop resets it True. [SRC] core.c:501-512.
+        self._prehdl_force_phy0: bool = True
         self._active_mac: Optional[bytes] = None
         self.mac_address: Optional[str] = None
         self._vid: Optional[int] = None      # for re-finding the card after the mode-switch re-enum
@@ -100,7 +104,7 @@ class RTL8922AUDriver(Driver):
     def register_rx_callback(self, cb: Callable) -> None:
         self._rx_cb = cb
 
-    def register_disconnect_callback(self, cb: Callable[[], None]) -> None:
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
         self._disconnect_cb = cb
 
     def _claim_vendor_interface(self) -> Optional[int]:
@@ -145,11 +149,20 @@ class RTL8922AUDriver(Driver):
         await asyncio.sleep(0)
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
-        """Cold-boot bring-up: claim the vendor interface, run the USB mode switch, read the
-        chip version/id. [SRC] usb.c rtw89_usb_probe, core.c rtw89_read_chip_ver."""
+        """Public bring-up. Claims the vendor USB interface (a PyUSB action with no wire bytes, so it
+        never appears in a capture), then runs _bringup(), which is everything that DOES appear on
+        the wire. verify_pcap drives _bringup() directly, so it exercises the driver's real bring-up
+        ordering minus the interface claim. [SRC] usb.c rtw89_usb_probe."""
         await self._p(progress_cb, 0.02, "Claiming USB interface")
         iface = self._claim_vendor_interface()
         logger.info("RTL8922AU: claimed vendor interface %s", iface)
+        return await self._bringup(progress_cb)
+
+    async def _bringup(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        """The cold-boot bring-up exactly as it appears in the capture: USB mode-switch check, chip
+        version, MAC power-on, firmware download, efuse/phycap, MAC/BB/RF init, RFK, monitor up.
+        Everything here emits wire bytes; verify_pcap replays against this. [SRC] core.c
+        rtw89_read_chip_ver, rtw89_core_start."""
         # On USB 2 this re-enumerates the card and re-acquires the handle (a few seconds).
         await self._p(progress_cb, 0.05, "USB mode switch")
         self._switch_usb_mode()
@@ -237,7 +250,7 @@ class RTL8922AUDriver(Driver):
         self._rx_reader = RxReaderThread(
             asyncio.get_event_loop(), self._rx_read_once, self._rx_dispatch,
             name="rtl8922au-rx",
-            on_fatal=lambda e: self._disconnect_cb() if self._disconnect_cb else None,
+            on_fatal=lambda e: self._disconnect_cb(e) if self._disconnect_cb else None,
         )
         # The reader IS the RFK-report C2H receiver, so the per-step RFK waits are only meaningful
         # once it runs. verify_pcap never starts it, so those waits stay no-ops there.
@@ -347,21 +360,42 @@ class RTL8922AUDriver(Driver):
         raise BringUpError("re-enumeration",
                            "card did not re-appear after the USB mode switch; please replug")
 
-    async def set_channel(self, channel: int, scan: bool = False, mlo_1_1: bool = False) -> bool:
-        """One per-channel tune (airmon-ng's per-hop unit). Runs off the event loop: the tune blocks
-        on the firmware RFK completions (~1.8s on USB), so it must not stall the UI/RX loop. mlo_1_1
-        selects the MLO mode the entity recalc lands on. [SRC] core.c __rtw89_set_channel."""
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+        """One monitor hop = rtw89_chip_rfk_channel's prehdl double-tune. First a forced-PHY_0 pass
+        (MLO_2_PLUS_0_1RF) so the per-channel RFK calibrates the active path, then a pass with the
+        force cleared (MLO_1_PLUS_1_1RF), which is the operating state: both BB/RF chains up. Ending
+        in 1+1 keeps PHY_1's RX chain on (the ~2x beacon yield). The prehdl double-tune is active
+        because airmon-ng removes the station vif, nulling pure_monitor_mode_vif (mon=false). The
+        driver derives both modes from the modelled entity force; it is not handed them. Runs off the
+        event loop (each pass blocks on firmware RFK completions). [SRC] core.c:489-513."""
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None, chan.set_channel, self.transport, channel, self._h2c_ep, mlo_1_1)
+        await loop.run_in_executor(None, self._tune_hop, channel)
         self._band_is_2g = channel <= 14                  # picks the mgmt TX basic rate (CCK1 vs OFDM6)
         return True
 
-    def configure_filter(self, rx_fltr: int) -> None:
-        """rtw89_ops_configure_filter tail: write the RX filter to both MACs (dbcc_en). rx_fltr is
-        the mac80211 filter-policy value (sniffer-mode + the accept flags). [SRC] mac80211.c:388."""
-        mac.set_rx_fltr(self.transport, 0, rx_fltr)
-        mac.set_rx_fltr(self.transport, 1, rx_fltr)
+    def _tune_hop(self, channel: int) -> None:
+        """The two set_channel passes of one hop, off the event loop: reset the entity force to PHY_0,
+        then two passes -> 2+0 then 1+1 (ends 1+1, both chains). [SRC] core.c:501-512."""
+        self._prehdl_force_phy0 = True
+        self._tune_pass(channel)          # forced PHY_0 -> 2+0 (+ RFK calibrates the active path)
+        self._tune_pass(channel)          # force cleared -> 1+1 (operating state)
+
+    def _tune_pass(self, channel: int) -> None:
+        """One rtw89_set_channel pass. Derives the MLO mode from the modelled entity force
+        (rtw89_entity_sel_mlo_dbcc_mode): forced PHY_0 -> MLO_2_PLUS_0_1RF, cleared ->
+        MLO_1_PLUS_1_1RF; then clears the force, as rtw89_chip_rfk_channel does after the RFK pass.
+        No wire peek. verify drives this per pass so the mac80211 monitor-setup ops can interleave
+        between the two passes as they do on the wire. [SRC] core.c:501-512, chan.c:490-506."""
+        mlo_1_1 = not self._prehdl_force_phy0       # forced PHY_0 => 2+0 (False); cleared => 1+1 (True)
+        chan.set_channel(self.transport, channel, self._h2c_ep, mlo_1_1=mlo_1_1)
+        self._prehdl_force_phy0 = not self._prehdl_force_phy0
+
+    def configure_filter(self) -> None:
+        """rtw89_ops_configure_filter tail: write the monitor RX-filter policy to both MACs (dbcc_en).
+        The driver derives the value (DEFAULT_MON_RX_FLTR) from the pure-monitor filter flags rather
+        than being handed it; set_rx_fltr's RMW re-adds each MAC's MPDU-max-len. [SRC] mac80211.c:388."""
+        mac.set_rx_fltr(self.transport, 0, DEFAULT_MON_RX_FLTR)
+        mac.set_rx_fltr(self.transport, 1, DEFAULT_MON_RX_FLTR)
 
     def config_monitor(self) -> None:
         """rtw89_ops_config on a CONF_CHANGE_MONITOR change: re-run physts parsing with monitor IEs
