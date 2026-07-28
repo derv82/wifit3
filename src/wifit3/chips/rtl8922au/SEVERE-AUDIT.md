@@ -8,6 +8,76 @@ values and zero timing, and it carries driver logic that feeds the port answers)
 very little, and we treat every simplification in the port as suspect until re-checked against the
 rtw89-7.2 C source at `/usr/src/rtw89-7.2`.
 
+## HANDOFF: remaining P1 kernel-behavior port (start here next session)
+
+The RX-critical work is done + hardware-validated (RFK/C2H waits, packet-C2H receive, mode-switch
+re-enum handling, connect progress). What remains is "port what the C does that the port skips",
+under the mandate to be correct for the **chipset** (any 8922au / any silicon revision), not for the
+one bench card. None is the RX bug; all are real correctness/robustness work.
+
+### OPEN HARDWARE ISSUE: USB-C is buggy (user-reported, uncharacterized)
+On USB-C (SuperSpeed) the card is "really buggy" (user-reported; specific symptoms not yet captured).
+Earlier this session it did enumerate SuperSpeed on USB-C and pass connect + RX, so this is a
+regression or an instability to reproduce and characterize next. Different code path from USB-2: on
+USB-C the mode switch does NOT fire (already SuperSpeed), so the re-enum handling is not involved.
+Prime suspects to check: SuperSpeed RX-DMA / reader-thread behavior at 5 Gbps, concurrent
+control+bulk transfer stability, and whether connect() / set_channel behave differently when
+`dev.speed == SuperSpeed`. First step: get exact symptoms + a repro (beacon_watch + rfk_validate on
+the USB-C plug), compare to the USB-2 numbers above.
+
+### Independent, low-risk items
+1. **h2c_fw_log comp bitmap** (`firmware.py:411`). Port the correct mask `0x14001806` = BIT(INIT 1,
+   TASK 2, PS 11, ERROR 12, MLO 26, SCAN 28) [SRC fw.c:2826, fw.h:192]; the port hard-codes
+   `0x0000012D` (wrong). Also add a way to actually ENABLE fw logging (a flag / a
+   `scripts/rtl8922au/` helper) so it is usable to diagnose RX/TX from the firmware side.
+2. **FW-download retry** (`mac.fw_download` / `firmware.download`). Kernel retries
+   `__rtw89_fw_download` up to 5x [SRC fw.c:2034]; the port does one attempt and aborts on a
+   transient USB glitch (seen on mt76 / flaky links). Wrap the download + its ready-poll in a 5x
+   retry.
+3. **Dropped efuse cv (ecv)** (`mac.mac_pwr_on`, ~line 506). `efuse_read_ecv` result is a local var
+   and discarded; the kernel writes it to the GLOBAL `hal.cv` [SRC efuse_be.c:536], authoritative for
+   every later cv branch (pwr_on_func aphy patch, efuse_pwr_cut_ddv, trxptcl_init). Make it update
+   `transport.cv`. A different-revision 8922au (register-cut != efuse-cut) takes the wrong init
+   branch today.
+### mlo_1_1 (the important one) — investigation state, NOT yet fixed
+WiFi 7 (802.11be) runs on 2.4/5/6 GHz (not a separate band); the 8922a is a 2x2 chip with two RF
+paths (chains A + B) and two BB PHYs. mlo_1_1 is the DBCC mode: MLO_1_PLUS_1_1RF (True) vs
+MLO_2_PLUS_0_1RF (False). `MLO_MODE_FOR_BB0_BB1_RF(bb0_streams, bb1_streams, rf)` [core.h:4166].
+
+Established:
+- True -> `set_syn01(ALLON)`: both RF synths on (both RX chains). False -> after both tune passes the
+  net synth state is path-A OFF, path-B on (one chain). [SRC rtw8922a_rfk.c:145 set_syn01_cbv, :364
+  pre_set_channel_rf].
+- HARDWARE: `rfk_validate.py --mlo 1` (True) roughly DOUBLED beacons vs `--mlo 0` (False). Both
+  chains materially help RX; frozen-False costs ~half our RX.
+- The capture ends every channel in True (1+1): wrap `driver.set_channel`, run verify's real `_drive`
+  -> strict per-channel `(ch,False),(ch,True)` pairs (50 True / 51 False on capture-1).
+- Mode is chosen by `rtw89_entity_recalc` from the vif's chanctx-assigned link count:
+  `entity_force_hw==PHY_0 -> 2+0`; else `active_hws` BIT(0) -> 2+0, BIT(0)|BIT(1) -> 1+1
+  [chan.c:484 sel_mlo_dbcc_mode]. The port models neither links nor entity_recalc; it freezes False.
+
+UNRESOLVED (finish before implementing):
+- WHERE the capture's two-call-per-channel comes from. It is NOT the `prehdl_link` dance in
+  `rtw89_chip_rfk_channel` (core.c:489): that needs `!WITH_RFK_PRE_NOTIFY` (old fw) AND `!mon`; the
+  8922a fw HAS pre-notify and our vif is `pure_monitor_mode_vif` (so `mon=true`). Prime suspect: the
+  SCAN path (airmon-ng + airodump hw-scan hops the channel). Read `rtw89_hw_scan*` on BE and decide
+  whether the SECOND call (1+1/True) is the monitor's steady mode or a scan artifact.
+- WHY 2+0 ("2 streams on PHY_0", which sounds like both chains) empirically yields ONE chain while
+  1+1 yields both. Gap between the enum's stream semantics and set_syn01's synth mechanism I could
+  not fully reconcile. Empirical answer (True = 2 chains, ~2x RX) is solid; the RF-arch "why" is not.
+- Whether the wifite monitor vif SHOULD carry 1 or 2 chanctx-assigned links (that decides 2+0 vs 1+1
+  via entity_recalc).
+
+Recommended fix: do what the kernel does. Model the pure-monitor vif's steady mode via entity_recalc
+(after the scan-path analysis), confirm it lands on 1+1 for our single monitor, and tune 1+1 so both
+chains come up. The blunt "tune mlo_1_1=True" matches the observed steady state and doubles RX, but
+confirm entity_recalc actually yields it so it is principled, not a magic constant. THEN strip
+`_peek_mlo_1_1` (driver logic) out of verify_pcap once the driver computes the mode itself. Validate:
+soak both chains, confirm ~2x beacons is stable and RFK still lands 26/26.
+
+Note for whoever finishes this: the mode also feeds IQK kpath, ADC enable, TSSI, digital-pwr-comp,
+and ctrl_mlo (the DBCC RX-path split), so a mode change is not just the synth write.
+
 ## Operating premise (the audit lens)
 
 The dominant failure mode in this port is a skip that reads as reasonable: the code says "we don't
