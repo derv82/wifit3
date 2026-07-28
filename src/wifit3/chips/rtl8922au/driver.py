@@ -3,12 +3,15 @@ See RTL8922AU.md.
 """
 import asyncio
 import logging
+import time
 from typing import Callable, Optional
 
+import libusb_package
 import usb.core
 import usb.util
 
 from wifit3.dot11.parser import WlanFrameParser
+from wifit3.errors import BringUpError
 
 from ..driver import Driver, DeviceID, FakeMacSupport, ProgressCallback
 from ..rx_reader import RxReaderThread
@@ -20,7 +23,7 @@ from .constants import (
     B_BE_RSM_EN_V1, B_BE_NO_PDN_CHIPOFF_V1, B_BE_USB_AUTO_INSTALL_MASK, B_BE_USB23_SW_MODE,
     B_BE_USB3_FORCE, B_BE_USB2_FORCE, B_BE_FORCE_U3_CK, B_BE_FORCE_U2_CK, B_BE_FORCE_CLK_U2,
     B_BE_USB3_GEN_MODE, B_BE_USB3_LANE_MODE, BULKOUT_ID_H2C, RTW89_WIFI_ROLE_MONITOR,
-    RTW89_NET_TYPE_NO_LINK, RTW89_BSSID_MATCH_ALL,
+    RTW89_NET_TYPE_NO_LINK, RTW89_BSSID_MATCH_ALL, R_BE_SYS_CHIPINFO, B_BE_HW_ID_MASK,
 )
 from .transport import RTL8922AUTransport
 
@@ -57,6 +60,10 @@ class RTL8922AUDriver(Driver):
     # [SRC] cam.c:819 (SMA = the vif's own mac_addr, matched against a received frame's addr1).
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
+    # On a USB-2 port the rtw89 mode switch re-enumerates the card mid-connect(); connect() re-acquires
+    # its own handle, so no user re-action is needed. [SRC] usb.c rtw89_usb_switch_mode_be.
+    DEVICE_REENUMERATES = True
+
     # 2.4 GHz + 5 GHz (non-DFS only) at 20 MHz. DFS channels (52-64, 100-144) are excluded: wifite
     # ships non-DFS only, and a DFS hop hears nothing without a CAC dwell. TODO: 6 GHz (8922a
     # support_bands includes it). [SRC] rtw8922a.c:3210.
@@ -79,11 +86,14 @@ class RTL8922AUDriver(Driver):
         self._band_is_2g: bool = True
         self._active_mac: Optional[bytes] = None
         self.mac_address: Optional[str] = None
+        self._vid: Optional[int] = None      # for re-finding the card after the mode-switch re-enum
+        self._pid: Optional[int] = None
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8922AUDriver":
         self = cls()
         self.dev = dev
+        self._vid, self._pid = id_entry.vid, id_entry.pid   # to re-find the card after the re-enum
         self.transport = RTL8922AUTransport(dev)
         return self
 
@@ -126,22 +136,37 @@ class RTL8922AUDriver(Driver):
         if in_pipe:
             self._bulk_in_ep = in_pipe[0]
 
+    async def _p(self, progress_cb: Optional[ProgressCallback], pct: float, msg: str) -> None:
+        """Report a bring-up step and yield so the UI loop can repaint (connect() runs its heavy
+        synchronous phases on the loop thread)."""
+        logger.info("RTL8922AU connect [%3d%%] %s", int(pct * 100), msg)
+        if progress_cb:
+            progress_cb(pct, msg)
+        await asyncio.sleep(0)
+
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """Cold-boot bring-up: claim the vendor interface, run the USB mode switch, read the
         chip version/id. [SRC] usb.c rtw89_usb_probe, core.c rtw89_read_chip_ver."""
+        await self._p(progress_cb, 0.02, "Claiming USB interface")
         iface = self._claim_vendor_interface()
         logger.info("RTL8922AU: claimed vendor interface %s", iface)
+        # On USB 2 this re-enumerates the card and re-acquires the handle (a few seconds).
+        await self._p(progress_cb, 0.05, "USB mode switch")
         self._switch_usb_mode()
+        await self._p(progress_cb, 0.10, "Reading chip version")
         ver = mac.read_chip_ver(self.transport)
         self.transport.cv = ver["cv"]
         logger.info("RTL8922AU: cv=0x%x acv=0x%x cid=0x%x aid=0x%x",
                     ver["cv"], ver["acv"], ver["cid"], ver["aid"])
+        await self._p(progress_cb, 0.15, "MAC power-on")
         mac.mac_pwr_on(self.transport, ver["cv"])
         # rtw89_chip_info_setup continues: wait_firmware_completion + fw_recognize are file-side
         # (no wire ops), then chip_efuse_info_setup -> mac_partial_init. [SRC] core.c:7367-7423.
+        await self._p(progress_cb, 0.25, "Firmware download + DMAC init")
         mac.partial_init(self.transport, self._h2c_ep, ver["cv"])
         # chip_efuse_info_setup continues after partial_init: dump the logical efuse + phycap.
         # [SRC] core.c:7268-7291.
+        await self._p(progress_cb, 0.35, "Reading efuse + PHY caps")
         efuse = mac.parse_efuse_map(self.transport, ver["cv"])
         self.mac_address = ":".join(f"{b:02x}" for b in efuse["mac_addr"])
         mac.parse_phycap_map(self.transport, ver["cv"])
@@ -154,12 +179,14 @@ class RTL8922AUDriver(Driver):
         mac.rfkill_polling_init(self.transport)
         # Interface-up path: rtw89_ops_start -> rtw89_core_start -> rtw89_mac_preinit (the second
         # pwr_on, then mac_func_en). [SRC] core.c:6626-6635, mac.c:4341-4357.
+        await self._p(progress_cb, 0.45, "MAC re-power + init")
         mac.mac_preinit(self.transport, ver["cv"])
         # phy_init_bb_afe applies a firmware AFE table; this card ships no afe element, so it is a
         # no-op. Then rtw89_mac_init: partial_init(include_bb=True). [SRC] core.c:6640-6648, phy.c:1968.
         mac.mac_init(self.transport, self._h2c_ep, ver["cv"])
         # core_start resumes after mac_init: btc_ntfy_poweron + chip_reset_bb_rf are no-ops on BE,
         # then phy_init_bb_reg writes the firmware BB register tables. [SRC] core.c:6648-6659.
+        await self._p(progress_cb, 0.60, "BB/RF register init")
         phy.init_bb_reg(self.transport, ver["cv"])
         phy.chip_bb_postinit(self.transport)      # rtw8922a_bb_postinit PHY_0+PHY_1. core.c:6660
         phy.init_rf_reg(self.transport, self._h2c_ep, ver["cv"])   # RF radio tables. core.c:6662
@@ -180,6 +207,7 @@ class RTL8922AUDriver(Driver):
         # (pkt_type=10) are received and the per-step waits land. The reader signals RFK completions
         # on its own thread (_scan_rfk_c2h), so this works even while connect() blocks the loop.
         self._start_rx_reader()
+        await self._p(progress_cb, 0.75, "RF calibration (RFK)")
         rfk.rfk_init_late(self.transport, self._h2c_ep)
         # core_start tail: btc radio-state WL_ON re-runs btc_init_cfg, then fw_log (disabled here);
         # init_ba_cam + tas_fw_timer are no-ops at cold boot. [SRC] core.c:6687-6690.
@@ -187,6 +215,7 @@ class RTL8922AUDriver(Driver):
         firmware.h2c_fw_log(self.transport, self._h2c_ep, enable=False)
         # mac80211 add-interface (airmon-ng monitor vif): rtw89_mac_vif_init -> port_update
         # (port-config regs) then the H2C burst, plus btc_ntfy_role_info. [SRC] mac.c:5044.
+        await self._p(progress_cb, 0.90, "Monitor interface up")
         mac.port_update(self.transport)
         ep = self._h2c_ep
         firmware.h2c_macid_pause(self.transport, ep, sh=0, grp=0, pause=False)  # set_macid_pause(false)
@@ -198,6 +227,7 @@ class RTL8922AUDriver(Driver):
         firmware.h2c_default_dmac_tbl(self.transport, ep, macid=0)
         # __rtw89_ops_add_iface_link tail: btc_ntfy_role_info(BTC_ROLE_START). [SRC] mac80211.c:154.
         coex.ntfy_role_info(self.transport, ep)
+        await self._p(progress_cb, 1.00, f"Online ({self.mac_address})")
         return True
 
     def _start_rx_reader(self) -> None:
@@ -268,19 +298,54 @@ class RTL8922AUDriver(Driver):
         self._switch_mode_be()
 
     def _switch_mode_be(self) -> None:
-        """rtw89_usb_switch_mode_be: read PAD_CTRL2; return if already switched (a USB 2 port
-        that ran this before), else force USB 2/3 mode. [SRC] usb.c:1143-1170."""
+        """rtw89_usb_switch_mode_be: read PAD_CTRL2; return if already switched (a USB 2 port that ran
+        this before), else force the mode switch. On USB 2 the force-write RE-ENUMERATES the card
+        (new address, same VID:PID), killing this handle, so re-acquire it before connect() continues.
+        [SRC] usb.c:1143-1170."""
         pad = self.transport.read32(R_BE_PAD_CTRL2)
         if mac.field_get(B_BE_MATCH_CNT, pad) == USB_SWITCH_DELAY:
             return
-        # TODO: verify, untested here. The cold-boot capture was already switched, so the
-        # force-mode write below does not fire. [SRC] usb.c:1156-1167.
         pad = (pad & ~B_BE_MATCH_CNT) | mac.field_prep(B_BE_MATCH_CNT, USB_SWITCH_DELAY)
         pad |= (B_BE_RSM_EN_V1 | B_BE_NO_PDN_CHIPOFF_V1
                 | B_BE_USB_AUTO_INSTALL_MASK | B_BE_USB23_SW_MODE)
         pad &= ~(B_BE_USB3_FORCE | B_BE_USB2_FORCE | B_BE_FORCE_U3_CK | B_BE_FORCE_U2_CK
                  | B_BE_FORCE_CLK_U2 | B_BE_USB3_GEN_MODE | B_BE_USB3_LANE_MODE)
-        self.transport.write32_quiet(R_BE_PAD_CTRL2, pad)
+        old_addr = getattr(self.dev, "address", None)
+        self.transport.write32_quiet(R_BE_PAD_CTRL2, pad)   # triggers the re-enumeration
+        self._reacquire_after_reenum(old_addr)
+
+    def _reacquire_after_reenum(self, old_addr: Optional[int]) -> None:
+        """The mode-switch write re-enumerated the card, so the current handle is dead. Release it,
+        wait for the card to re-appear (same VID:PID, usually a new address), verify it answers as the
+        8922A, and rebuild the transport + interface claim on the fresh handle. Mirrors the kernel
+        re-probe; ar9271_v2 does the same after its firmware re-enum."""
+        try:
+            usb.util.dispose_resources(self.dev)
+        except Exception:                                   # noqa: BLE001
+            pass
+        backend = libusb_package.get_libusb1_backend()
+        for i in range(40):                                 # up to ~10 s for the re-enum to settle
+            time.sleep(0.25)
+            dev = usb.core.find(idVendor=self._vid, idProduct=self._pid, backend=backend)
+            if dev is None:
+                continue
+            # Skip the stale pre-switch device (same address) for the first ~2 s so the re-enum can
+            # move it; after that accept a same-address device (address reuse / no-op switch).
+            if getattr(dev, "address", None) == old_addr and i < 8:
+                continue
+            try:
+                t = RTL8922AUTransport(dev)
+                if mac.field_get(B_BE_HW_ID_MASK, t.read32(R_BE_SYS_CHIPINFO)) != 0x71:
+                    continue                                # present but not answering as 8922A yet
+            except usb.core.USBError:
+                continue
+            self.dev, self.transport = dev, t
+            self._claim_vendor_interface()                  # detach kernel + claim + rediscover eps
+            logger.info("RTL8922AU: re-acquired after mode-switch re-enum (addr %s -> %s)",
+                        old_addr, getattr(dev, "address", None))
+            return
+        raise BringUpError("re-enumeration",
+                           "card did not re-appear after the USB mode switch; please replug")
 
     async def set_channel(self, channel: int, scan: bool = False, mlo_1_1: bool = False) -> bool:
         """One per-channel tune (airmon-ng's per-hop unit). Runs off the event loop: the tune blocks

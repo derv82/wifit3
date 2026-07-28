@@ -75,6 +75,12 @@ class Driver(ABC):
     """Whether Linux setup must request a physical replug before ``connect()`` (default
     True: a kernel-warmed chip usually can't reach a clean cold state in userland)."""
 
+    DEVICE_REENUMERATES: ClassVar[bool] = False
+    """True if ``connect()`` can trigger a USB re-enumeration mid-bring-up (the handle drops and the
+    device re-appears, usually at a new address). The driver re-acquires its own handle internally,
+    so no user re-action is needed; discovery/UI should treat a transient disappearance during
+    ``connect()`` as expected, not an unplug. Default False."""
+
     MAX_ACK_DELAY: ClassVar[float] = 0.02
     """Default wait window for ``inject_frame_slow_retry``. An 802.11 ACK returns within SIFS
     (~10 us); ACKs via RxReader arrive ~20 ms later (averaged ~15 ms on Windows)."""
