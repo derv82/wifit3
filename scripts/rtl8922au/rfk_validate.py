@@ -80,7 +80,7 @@ async def main(args):
         before = dict(stats)
         beacons.clear()
         t = time.monotonic()
-        await drv.set_channel(ch)
+        await drv.set_channel(ch, mlo_1_1=bool(args.mlo))
         tune_s = time.monotonic() - t
         d_ok = stats["ok"] - before["ok"]
         d_to = stats["timeout_or_fail"] - before["timeout_or_fail"]
@@ -102,4 +102,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--channels", type=int, nargs="+", default=[1, 36, 1])
     p.add_argument("--watch", type=int, default=20)
+    p.add_argument("--mlo", type=int, choices=(0, 1), default=0,
+                   help="mlo_1_1 for the tune: 0=2+0 (path-B only, current default), "
+                        "1=1+1 (both synths ALLON). Compare beacon rates to test the G5 hypothesis.")
     sys.exit(asyncio.run(main(p.parse_args())))

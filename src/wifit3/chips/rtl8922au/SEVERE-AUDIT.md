@@ -39,7 +39,7 @@ verify_pcap replays the captured USB control/bulk-OUT stream against the real `c
 | G3 | HIGH cap / COND for RX | phycap RF/antenna reply discarded: `setup_phycap` waits for the register-C2H response then throws away tx_nss/rx_nss/antenna/QAM/no_eht/no_mcs_12_13. Audit A: the ONLY RX-wire consumer is `bb_cfg_txrx_path` (hard-codes RF_PATH_AB + rx_nss=2 at phy.py:888); on a 2x2 card the C also lands on RF_PATH_AB so the discard is BENIGN. Bites only if THIS dongle's fw reports 1-antenna/asymmetric. Verify the fw antenna report on hardware | `mac.c:3222` setup_phycap_part0/1, `rtw8922a.c:2626` bb_cfg_txrx_path | not started; likely benign (2x2), verify on HW |
 | G7 | MEDIUM | `mac_pwr_on` reads the efuse chip-version (`efuse_read_ecv`) into a LOCAL var and discards it; the kernel writes it to `hal.cv` GLOBALLY (efuse_be.c:536), making the efuse cut authoritative for every later cv branch (pwr_on_func aphy, efuse_pwr_cut_ddv, trxptcl_init). The port keeps using the R_AX_SYS_CFG1 register cut. Latent: wrong branch if register-cut != efuse-cut | efuse_be.c:516, mac.c:1557 | audit-found (A#2) |
 | G4 | LOW (was HIGH) | `configure_filter` + `config_monitor` have no live caller, BUT `rx_fltr_init` (mac.py:1214, called at 1396 in the connect path) already sets B_BE_SNIFFER_MODE + accept mgnt/ctrl/data to host, so the base monitor filter IS established at connect (beacons were received). configure_filter is a mac80211 re-apply, not required for static monitor. Audit item: confirm B_BE_A_A1_MATCH + sniffer actually passes ALL frames (not just addr1==self) | `mac_be.c:1315` rx_fltr_init_be, `mac80211.c:388` ops_configure_filter | downgraded; audit A1_MATCH |
-| G5 | MED-HIGH | `mlo_1_1` hard-coded False live (interface never passes it); capture flips it per hop. Driver must compute the MLO mode itself (entity recalc), then remove `_peek_mlo_1_1` from verify | `chan.c:485` rtw89_entity_sel_mlo_dbcc_mode, `core.c:563` | not started |
+| G5 | HIGH (2nd RX factor?) | `mlo_1_1` frozen False live -> net path-A synth OFF (only path B RX on 2x2). Capture ends every channel in True (1+1, both synths ALLON) via a False-then-True two-call sequence. Fix once G1/G2 HW-validated: tune True (both paths) or replicate the two-call. Then remove `_peek_mlo_1_1` from verify. See findings log | `rtw8922a_rfk.c:145` set_syn01_cbv, `chan.c:484` entity table | RESOLVED (analysis); HW-test True vs False |
 | G6 | MEDIUM | `set_channel` ran synchronously on the event loop (UI freeze every hop); the tune must run off-loop | driver.set_channel | **DONE (off-loop executor) with G1/G2** |
 
 ## Audit backlog (P2: interrogate after P1)
@@ -66,6 +66,67 @@ against the C source. Seed list from a first grep; expand as the audit proceeds.
 ## Findings log
 
 (newest first; each entry: what, why it matters, C ref, action)
+
+- **2026-07-27 mlo_1_1 CONTRADICTION RESOLVED (Audit B#5 vs Audit C#1) + likely 2nd RX factor.**
+  Audit B said False is correct (entity_recalc -> 2+0 for 1 link); Audit C said False strands the
+  path-A synth (RX killer) and the capture alternates. I got the ground truth by wrapping
+  driver.set_channel and running verify's real `_drive`: **the capture dispatches set_channel TWICE
+  per channel, (ch, False) then (ch, True), ALWAYS ending on True** (capture-1: 50 True / 51 False,
+  strict F,T pairs). So:
+  - The steady-state mode the kernel leaves per channel is **MLO_1_PLUS_1_1RF (True)**: both passes
+    write RF_SYN_ALLON, so **path A synth = f AND path B synth = f (both RX paths ON)**.
+  - Our live driver calls set_channel ONCE per hop with mlo_1_1=False -> PHY_0 writes ON_OFF (A=f,
+    B=0), PHY_1 writes OFF_ON (A=0, B=f); net end-state **A=0 (OFF), B=f**. On a 2x2 card only path B
+    receives -> degraded/one-chain RX. Mechanism confirmed at rtw8922a_rfk.c:145-160
+    (set_syn01_cbv) + :364-374 (pre_set_channel_rf), entity table chan.c:484-506.
+  - entity_recalc gives True only when the monitor vif has 2 chanctx-assigned links (BIT(0)|BIT(1));
+    the capture's kernel monitor vif clearly ends with 2 links. Our port models neither the link
+    count nor the two-call-per-channel sequence.
+  - **This is a plausible SECOND RX root cause** (path-A dead) on top of G1/G2 (RFK no-wait).
+    Non-determinism could come from RFK (fixed) while the one-chain loss is this.
+  - **DO NOT ship an mlo change blind.** Options once G1/G2 is HW-validated: (a) tune with
+    mlo_1_1=True so both synths stay ALLON, or (b) replicate the kernel's False-then-True per hop
+    (2x tune cost). Discriminate on hardware: tune False vs True and compare beacons/RSSI on both
+    RX chains. If G1/G2 alone makes RX solid, path-B-only may be sufficient and this is cosmetic.
+  - Also revisit the PHY_0-only rfk_channel guard (Audit C#3): under a correct 1+1 mode PHY_1 also
+    has a link and would run per-hop RFK; the port skips it.
+
+- **2026-07-27 Audits B (phy.py) + D (firmware.py/coex.py) complete.** Both corroborate A: the port
+  is faithful; the RX bug is not in these files; the evidence points to the now-fixed C2H/RFK gap.
+  - **G5 RESOLVED-ish (Audit B#5): `mlo_1_1=False` live is CORRECT** for a single monitor vif.
+    core_init sets MLO_1_PLUS_1_1RF; entity_recalc for one active link (BIT(0)) yields
+    MLO_2_PLUS_0_1RF (chan.c:491), so False at hop time / True at init matches the real driver. NOT
+    an RX bug. OPEN QUESTION: my earlier `_peek_mlo_1_1` found True on ~62% of capture hop-openers,
+    which contradicts "capture is 2+0". Reconcile the peek (scan-window artifact?) before removing
+    it from verify; the hard-coding is also fragile for any non-single-monitor scenario
+    (`MLO_DBCC_NOT_SUPPORT` is unreachable, `_ctrl_mlo`/`_get_kpath` would mishandle it).
+  - **Dropped settle waits in phy.py (Audit B#1-4)** = things the C does that we skip. Likely masked
+    by USB control-transfer latency (>=125us) but genuinely omitted; restore for faithfulness:
+    - B#1 [MED] `_read_full_rf_v2_a` (phy.py:281): missing `udelay(2)` between RD-trigger and RDONE
+      poll -> a stale RDONE could return a wrong RF word (channel/band RMW corruption). rtw8922a_rfk.c
+      read path / phy.c:1076.
+    - B#2 [MED] `_ctl_band_ch_bw` (phy.py:1324): missing `fsleep(100)` after EACH CFGCH RF write
+      (up to 4/hop), the actual synth channel/band/BW writes. rtw8922a_rfk.c:81.
+    - B#3 [LOW-MED] `_hal_reset` enter (phy.py:842): missing `fsleep(40)` between adc_en(false) and
+      bb_reset_en(false). rtw8922a.c:2309.
+    - B#4 [LOW] `_bb_reset_en` disable (phy.py:833): missing `fsleep(1)` before RSTB_ASYNC_ALL clear.
+      rtw8922a.c:1863.
+  - **Audit D real bug (D#1) [LOW/latent]: `h2c_fw_log` comp bitmap wrong**: port sends 0x0000012D,
+    C is BIT(1,2,11,12,26,28)=0x14001806. Latent because connect calls it with enable=False (comp=0).
+    Fix the constant. fw.c:2826, fw.h:192.
+  - **Audit D robustness (D#5) [LOW]: FW download single attempt** vs kernel's 5 retries
+    (fw.c:2034); a transient failure aborts connect (could read as non-deterministic bring-up).
+  - **Audit D (D#6) [LOW]: `_write_h2c_reg`/`_read_c2h_reg`** spin 3000x with no timeout abort and
+    read stale C2HREG on exhaustion (msg_reg used once, off RX path; low impact).
+  - VERIFIED-OK (do NOT re-suspect): phy RX gain (CCK/OFDM, efuse per-path offsets), LNA/TIA/op1db/
+    RPL gains (real values, not zeros), DIG/PD-threshold (support_igi false for 8922A is a genuine
+    no-op), HWSI RF write path, channel programming values (_chan_to_rf18/_encode_chan_idx/_ctrl_ch/
+    _ctrl_bw/spur), physts, set_channel_help ordering, both-PHY tune. firmware: H2C header packing,
+    rack/dack (all connect H2C are fire-and-forget in C too, none dropped a wait), msg_reg wait,
+    addr_cam v0 / default dmac v2 / cmac g7 layouts, the full FW-download flow + completion waits,
+    all class/cat/func constants. coex: _cfg_sb, ntfy_radio_state early-return, slot TLV format
+    (per-hop coex simplifications diverge from _run_coex/_action_common but are no-ops for BT-absent
+    monitor).
 
 - **2026-07-27 Audit A (mac.py power + phycap) complete.** Headline: the register-level init is
   FAITHFUL to the C (verified branch guards, poll masks, read orderings, RMW quirks, efuse struct
