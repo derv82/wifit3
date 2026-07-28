@@ -4,6 +4,7 @@ rfk_init_late runs the boot-time DACK + RXDCK per phy, all as firmware offload H
 sends the command and the fw does the calibration). The per-channel RFK (IQK/DPK/TSSI) comes with
 set_channel. [SRC] rtw8922a.c:2349-2367.
 """
+import logging
 import struct
 
 from .constants import (
@@ -214,17 +215,42 @@ def _wait_rx_mode(t, kpath: int) -> None:
                 break
 
 
+logger = logging.getLogger(__name__)
+
+RFK_USB_MS_MULT = 4       # rtw89_phy_rfk_report_wait multiplies the timeout by 4 on USB. [SRC] phy.c:4066
+_RFK_STATE_OK = 1         # RTW89_RFK_STATE_OK. [SRC] core.h:5657
+
+
 def _h2c(t, ep: int, cls: int, func: int, payload: bytes) -> None:
     firmware.h2c_command(t, ep, H2C_CAT_OUTSRC, cls, func, payload, rack=False, dack=False)
+
+
+def _h2c_wait(t, ep: int, cls: int, func: int, payload: bytes, ms: int) -> None:
+    """Send an RFK offload H2C and block on its firmware C2H report, the userland
+    rtw89_phy_rfk_*_and_wait. ``ms`` is the kernel per-step timeout; USB multiplies it by 4. The
+    report is signalled from the RX reader thread (transport.RfkWait). On timeout/fail we log and
+    continue, matching the kernel (rtw8922a_rfk_channel ignores the return). [SRC] phy.c:4189+,
+    rtw8922a.c:2388."""
+    rw = getattr(t, "rfk_wait", None)
+    if rw is None or not rw.enabled:
+        # No live C2H receiver (pcap replay, or before the RX reader starts): fire-and-forget, same
+        # bytes as the kernel emits. The wait only matters against real firmware.
+        _h2c(t, ep, cls, func, payload)
+        return
+    rw.prep()
+    _h2c(t, ep, cls, func, payload)
+    st = rw.wait(ms * RFK_USB_MS_MULT / 1000.0)
+    if st != _RFK_STATE_OK:
+        logger.warning("RFK cls=0x%x func=%d report=%s (timeout/fail, ms=%d)", cls, func, st, ms)
 
 
 def _init_late_one(t, ep: int, phy_idx: int) -> None:
     """__rtw8922a_rfk_init_late(phy): pre-notify (+mcc), DACK, RXDCK, all fw offload. [SRC]
     rtw8922a.c:2349."""
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_PRE_NOTIFY, _pre_ntfy(phy_idx))
+    _h2c_wait(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_PRE_NOTIFY, _pre_ntfy(phy_idx), 5)
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_NOTIFY, H2C_FUNC_OUTSRC_RF_MCC_INFO, _pre_ntfy_mcc())
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_DACK_OFFLOAD, _dack(phy_idx))
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_RXDCK_OFFLOAD, _rxdck(phy_idx))
+    _h2c_wait(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_DACK_OFFLOAD, _dack(phy_idx), 58)
+    _h2c_wait(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_RXDCK_OFFLOAD, _rxdck(phy_idx), 128)
 
 
 def rfk_init_late(t, ep: int) -> None:
@@ -234,8 +260,9 @@ def rfk_init_late(t, ep: int) -> None:
 
 
 def rfk_band_changed(t, ep: int, chan: dict, phy_idx: int) -> None:
-    """rtw8922a_rfk_band_changed: rtw89_phy_rfk_tssi_and_wait(RTW89_TSSI_SCAN). [SRC] rtw8922a.c:2412."""
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TSSI_OFFLOAD, _tssi(t, chan, RTW89_TSSI_SCAN, phy_idx))
+    """rtw8922a_rfk_band_changed: rtw89_phy_rfk_tssi_and_wait(RTW89_TSSI_SCAN, 6). [SRC] rtw8922a.c:2412."""
+    _h2c_wait(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TSSI_OFFLOAD,
+              _tssi(t, chan, RTW89_TSSI_SCAN, phy_idx), 6)
 
 
 def rfk_channel(t, ep: int, chan: dict, phy_idx: int) -> None:
@@ -248,16 +275,18 @@ def rfk_channel(t, ep: int, chan: dict, phy_idx: int) -> None:
     coex.ntfy_wl_rfk(t, ep, start=True)
     tx_en = mac.stop_sch_tx(t, mac_idx)
     _wait_rx_mode(t, RF_AB)
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_PRE_NOTIFY,
-         _pre_ntfy(phy_idx, mode, 1 if t.mlo_1_1 else 0, ch, band))
+    _h2c_wait(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_PRE_NOTIFY,
+              _pre_ntfy(phy_idx, mode, 1 if t.mlo_1_1 else 0, ch, band), 5)
     _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_NOTIFY, H2C_FUNC_OUTSRC_RF_MCC_INFO,
          _pre_ntfy_mcc(mode, phy._chan_to_rf18_val(chan)))
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TXGAPK_OFFLOAD, _txgapk(phy_idx, band, bw, ch, t.cv))
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_IQK_OFFLOAD,
-         _iqk(phy_idx, band, bw, ch, t.cv, phy._get_kpath(t, phy_idx)))
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TSSI_OFFLOAD, _tssi(t, chan, RTW89_TSSI_NORMAL, phy_idx))
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_DPK_OFFLOAD, _dpk(phy_idx, band, bw, ch))
-    _h2c(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_RXDCK_OFFLOAD,
-         _rxdck(0, ch, 1, band, bw))  # PHY_0 fixed
+    _h2c_wait(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TXGAPK_OFFLOAD,
+              _txgapk(phy_idx, band, bw, ch, t.cv), 54)
+    _h2c_wait(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_IQK_OFFLOAD,
+              _iqk(phy_idx, band, bw, ch, t.cv, phy._get_kpath(t, phy_idx)), 84)
+    _h2c_wait(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_TSSI_OFFLOAD,
+              _tssi(t, chan, RTW89_TSSI_NORMAL, phy_idx), 20)
+    _h2c_wait(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_DPK_OFFLOAD, _dpk(phy_idx, band, bw, ch), 34)
+    _h2c_wait(t, ep, H2C_CL_OUTSRC_RF_FW_RFK, H2C_FUNC_RFK_RXDCK_OFFLOAD,
+              _rxdck(0, ch, 1, band, bw), 32)  # PHY_0 fixed
     mac.resume_sch_tx(t, mac_idx, tx_en)
     coex.ntfy_wl_rfk(t, ep, start=False)

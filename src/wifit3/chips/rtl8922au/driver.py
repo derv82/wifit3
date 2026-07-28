@@ -13,7 +13,7 @@ from wifit3.dot11.parser import WlanFrameParser
 from ..driver import Driver, DeviceID, FakeMacSupport, ProgressCallback
 from ..rx_reader import RxReaderThread
 from . import chan, coex, firmware, mac, phy, rfk, tx
-from .rx import iter_bulk_frames, RX_RECVBUF_SZ
+from .rx import iter_bulk_frames, parse_c2h_hdr, RX_RECVBUF_SZ, RX_TYPE_WIFI, RX_TYPE_C2H
 from .tx import BULKOUT_ID_B0MG
 from .constants import (
     R_BE_PAD_CTRL2, _LIBUSB_SPEED_SUPER, USB_SWITCH_DELAY, B_BE_MATCH_CNT,
@@ -176,6 +176,10 @@ class RTL8922AUDriver(Driver):
         mac.cfg_ppdu_status_bands(self.transport)
         mac.cfg_phy_rpt_bands(self.transport)
         mac.update_rts_threshold(self.transport)
+        # Start the bulk-IN reader BEFORE rfk_init_late so the firmware's RFK completion C2H reports
+        # (pkt_type=10) are received and the per-step waits land. The reader signals RFK completions
+        # on its own thread (_scan_rfk_c2h), so this works even while connect() blocks the loop.
+        self._start_rx_reader()
         rfk.rfk_init_late(self.transport, self._h2c_ep)
         # core_start tail: btc radio-state WL_ON re-runs btc_init_cfg, then fw_log (disabled here);
         # init_ba_cam + tas_fw_timer are no-ops at cold boot. [SRC] core.c:6687-6690.
@@ -194,9 +198,6 @@ class RTL8922AUDriver(Driver):
         firmware.h2c_default_dmac_tbl(self.transport, ep, macid=0)
         # __rtw89_ops_add_iface_link tail: btc_ntfy_role_info(BTC_ROLE_START). [SRC] mac80211.c:154.
         coex.ntfy_role_info(self.transport, ep)
-        # RX is already running after the init above (sniffer filter + RXDMA + phy-rpt append), so
-        # start the bulk-IN reader last, once the pipe is warm. [SRC] usb.c:772 (start is a no-op).
-        self._start_rx_reader()
         return True
 
     def _start_rx_reader(self) -> None:
@@ -208,24 +209,45 @@ class RTL8922AUDriver(Driver):
             name="rtl8922au-rx",
             on_fatal=lambda e: self._disconnect_cb() if self._disconnect_cb else None,
         )
+        # The reader IS the RFK-report C2H receiver, so the per-step RFK waits are only meaningful
+        # once it runs. verify_pcap never starts it, so those waits stay no-ops there.
+        self.transport.rfk_wait.enabled = True
         self._rx_reader.start()
 
     def _rx_read_once(self) -> Optional[bytes]:
-        """One blocking bulk-IN read; None on a benign timeout. Runs on the reader thread."""
+        """One blocking bulk-IN read; None on a benign timeout. Runs on the reader thread. While an
+        RFK offload is pending, scan the buffer for the firmware's completion C2H here (on the reader
+        thread, off the loop) so the tuner's wait lands even while the loop is blocked in connect()."""
         try:
-            return bytes(self.dev.read(self._bulk_in_ep, RX_RECVBUF_SZ, 100))
+            buf = bytes(self.dev.read(self._bulk_in_ep, RX_RECVBUF_SZ, 100))
         except usb.core.USBError as e:
             err = getattr(e, "errno", None)
             if err in (110, 10060) or "timeout" in str(e).lower():
                 return None
             raise
+        if self.transport.rfk_wait.armed:
+            self._scan_rfk_c2h(buf)
+        return buf
+
+    def _scan_rfk_c2h(self, buf: bytes) -> None:
+        """Reader-thread scan for the firmware RFK-report C2H (OUTSRC / RFK_REPORT / STATE) and
+        signal the pending tuner wait with the report's state byte. [SRC] phy.c:4093
+        rtw89_phy_c2h_rfk_report_state, fw.h:5254 rtw89_c2h_rfk_report (state at byte 8)."""
+        for pkt_type, payload, _rssi in iter_bulk_frames(buf):
+            if pkt_type != RX_TYPE_C2H:
+                continue
+            if parse_c2h_hdr(payload) == (2, 0x9, 0) and len(payload) >= 9:  # OUTSRC, RFK_REPORT, STATE
+                self.transport.rfk_wait.signal(payload[8])
 
     def _rx_dispatch(self, buf: bytes) -> None:
-        """Split a bulk buffer into MPDUs, tally ACKs, parse the rest to the RX callback."""
+        """Split a bulk buffer into MPDUs, tally ACKs, parse the rest to the RX callback. C2H
+        firmware reports are handled on the reader thread (_scan_rfk_c2h), not here."""
         cb = self._rx_cb
         if not cb and not self._ack_detect_on:
             return
-        for _stat, mpdu, rssi in iter_bulk_frames(buf):
+        for pkt_type, mpdu, rssi in iter_bulk_frames(buf):
+            if pkt_type != RX_TYPE_WIFI:
+                continue
             if len(mpdu) == 10 and mpdu[0] == 0xD4:       # an ACK control frame
                 self.record_ack(mpdu)
                 continue
@@ -261,9 +283,12 @@ class RTL8922AUDriver(Driver):
         self.transport.write32_quiet(R_BE_PAD_CTRL2, pad)
 
     async def set_channel(self, channel: int, scan: bool = False, mlo_1_1: bool = False) -> bool:
-        """One per-channel tune, the unit airmon-ng drives per hop. mlo_1_1 selects the MLO mode the
-        entity recalc lands on for this hop. [SRC] core.c __rtw89_set_channel."""
-        chan.set_channel(self.transport, channel, self._h2c_ep, mlo_1_1=mlo_1_1)
+        """One per-channel tune (airmon-ng's per-hop unit). Runs off the event loop: the tune blocks
+        on the firmware RFK completions (~1.8s on USB), so it must not stall the UI/RX loop. mlo_1_1
+        selects the MLO mode the entity recalc lands on. [SRC] core.c __rtw89_set_channel."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None, chan.set_channel, self.transport, channel, self._h2c_ep, mlo_1_1)
         self._band_is_2g = channel <= 14                  # picks the mgmt TX basic rate (CCK1 vs OFDM6)
         return True
 

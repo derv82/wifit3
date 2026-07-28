@@ -5,6 +5,8 @@ a CMAC-window register can come back R32_DEAD until its clock is on, so read_cma
 the clock and re-reads. This is the layer every later op sits on.
 """
 import struct
+import threading
+from typing import Optional
 
 import usb.core
 
@@ -21,11 +23,43 @@ def _access_cmac(addr: int) -> bool:
     return R_AX_CMAC_REG_START <= addr <= R_AX_CMAC_REG_END
 
 
+class RfkWait:
+    """Cross-thread wait for a firmware RFK-report C2H, the userland analog of
+    rtw89_phy_rfk_report_wait (phy.c:4055). The tuner arms it (`prep`) before an RFK offload H2C
+    and blocks on `wait`; the RX reader thread parses the pkt_type=10 report and calls `signal`.
+    Signalled off the reader thread (not the asyncio loop) so a wait works whether the tuner runs
+    on the loop (connect) or an executor (set_channel). `armed` lets the reader skip the C2H scan
+    when no RFK is pending. [SRC] core.c:6491 rtw89_wait_for_cond, phy.c:4045 report_prep."""
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+        self.enabled = False                   # set True once a live C2H receiver (the RX reader)
+        #                                        exists; when False (e.g. pcap replay) waits no-op
+        self.armed = False
+        self.state: Optional[int] = None       # enum rtw89_rfk_report_state; 1 == OK
+
+    def prep(self) -> None:
+        self.state = None
+        self._event.clear()
+        self.armed = True
+
+    def signal(self, state: int) -> None:
+        self.state = state
+        self.armed = False
+        self._event.set()
+
+    def wait(self, timeout_s: float) -> Optional[int]:
+        got = self._event.wait(timeout_s)
+        self.armed = False
+        return self.state if got else None
+
+
 class RTL8922AUTransport:
     """Vendor-control register access for the rtw89 8922A over USB."""
 
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
+        self.rfk_wait = RfkWait()   # firmware RFK-report completion, signalled from the RX reader
         self.h2c_counter = 0        # fw_info h2c/c2h register-mailbox counters. [SRC] fw.c:2012-2015
         self.c2h_counter = 0
         self.h2c_seq = 0            # fw_info.h2c_seq: fwcmd sequence number. [SRC] fw.c:1639,2012
