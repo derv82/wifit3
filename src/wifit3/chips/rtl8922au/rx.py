@@ -57,8 +57,8 @@ def iter_bulk_frames(buf: bytes):
             break
         if pkt_type == RX_TYPE_WIFI:
             rssi = None
-            if phy_rpt_len >= 8:                          # inline phy report holds the RSSI
-                rpt = struct.unpack_from("<I", buf, pos + rxd_len)[0]
+            if phy_rpt_len == 8:                          # phy report present iff sizeof(rxd_rpt_v2)
+                rpt = struct.unpack_from("<I", buf, pos + rxd_len)[0]  # BE_RXD_PHY_RSSI = GENMASK(11,0)
                 rssi = _rssi_dbm(rpt & 0xFFF)
             mpdu = bytes(buf[pos + mpdu_off:pos + mpdu_off + max(pkt_size - 4, 0)])
             yield RX_TYPE_WIFI, mpdu, rssi
