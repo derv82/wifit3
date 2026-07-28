@@ -58,7 +58,8 @@ def _instrument(rfk_wait, stats):
 async def main(args):
     dev, did = _find()
     if dev is None:
-        print("[-] device not found"); return 1
+        print("[-] device not found")
+        return 1
     print(f"[*] {did.vid:04x}:{did.pid:04x} speed={getattr(dev,'speed',None)} addr={dev.address}")
     drv = RTL8922AUDriver.from_usb_device(dev, did)
     stats = {"prepped": 0, "signaled": 0, "ok": 0, "timeout_or_fail": 0, "states": Counter()}
