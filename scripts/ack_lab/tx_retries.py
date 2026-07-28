@@ -162,11 +162,11 @@ async def main(a) -> None:
     print(f"[+] sniffer:  {sniffer.description}")
 
     print("[*] connecting both cards...")
-    # Connect sequentially, not via gather: two Realtek cards driving RF-register bring-up over
-    # USB at once can collide (rtl8821au_dkms loses its handle mid-config). The app connects one
-    # card at a time; mirror that.
-    inj_ok = await injector.connect()
+    # Connect sequentially, not via gather: two cards driving USB bring-up at once collide
+    # (rtl8821au_dkms loses its handle mid-config; an mt76's FW upload can reset a shared VM hub and
+    # drop the other card). Sniffer first so an mt76 sniffer's FW-load/reset predates the injector.
     snf_ok = await sniffer.connect()
+    inj_ok = await injector.connect()
     if not (inj_ok and snf_ok):
         print(f"[-] connect failed (injector={inj_ok} sniffer={snf_ok})")
         return
