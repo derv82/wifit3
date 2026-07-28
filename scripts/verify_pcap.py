@@ -22,6 +22,7 @@ re-enumeration and its own decoder (ar9271_v2/verify_pcap.py).
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import sys
 from pathlib import Path
 
@@ -46,7 +47,7 @@ class Chip:
         self.desc = desc
         self.pointer = pointer      # set => not a register byte-diff; print and exit 0
 
-    def run(self, cap: str | None) -> int:
+    def run(self, cap: str | None, verbose: bool = False) -> int:
         if self.pointer:
             print(f"{self.key}: {self.pointer}")
             return 0
@@ -54,7 +55,10 @@ class Chip:
         if not path.exists():
             print(f"{self.key}: recipe not found at {path}")
             return 2
-        return _load(self.key, path).run(cap)
+        fn = _load(self.key, path).run
+        if "verbose" in inspect.signature(fn).parameters:   # only recipes that opt into it
+            return fn(cap, verbose=verbose)
+        return fn(cap)
 
 
 def _load(key: str, path: Path):
@@ -125,12 +129,14 @@ def main(argv: list[str]) -> int:
     if argv[0] == "--list":
         _print_chips()
         return 0
-    key = argv[0]
+    pos = [a for a in argv if not a.startswith("-")]
+    verbose = "--verbose" in argv
+    key = pos[0]
     if key not in REGISTRY:
         print(f"unknown chip '{key}'. --list to see registered chips.")
         return 2
-    cap = argv[1] if len(argv) > 1 else None
-    return REGISTRY[key].run(cap)
+    cap = pos[1] if len(pos) > 1 else None
+    return REGISTRY[key].run(cap, verbose=verbose)
 
 
 if __name__ == "__main__":

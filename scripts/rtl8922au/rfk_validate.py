@@ -63,7 +63,6 @@ async def main(args):
     print(f"[*] {did.vid:04x}:{did.pid:04x} speed={getattr(dev,'speed',None)} addr={dev.address}")
     drv = RTL8922AUDriver.from_usb_device(dev, did)
     stats = {"prepped": 0, "signaled": 0, "ok": 0, "timeout_or_fail": 0, "states": Counter()}
-    _instrument(drv.transport.rfk_wait, stats)
 
     beacons = Counter()
     drv.register_rx_callback(lambda pkt: beacons.update([pkt.type]) if pkt else None)
@@ -72,15 +71,18 @@ async def main(args):
     print("[*] connect() ...")
     ok = await drv.connect(progress_cb=lambda p, m: None)
     print(f"[*] connect ok={ok} in {time.monotonic()-t0:.1f}s")
-    print(f"[*] RFK during connect (init_late): prepped={stats['prepped']} "
-          f"landed_OK={stats['ok']} timeout/fail={stats['timeout_or_fail']} "
-          f"report_states={dict(stats['states'])}")
+    # Instrument AFTER connect: on USB-2 the mode switch re-enumerates and connect rebuilds the
+    # transport (a fresh rfk_wait), so we must wrap the FINAL transport's rfk_wait to see the per-hop
+    # RFK waits. init_late's RFK (during connect) is on the earlier transport and not counted here.
+    _instrument(drv.transport.rfk_wait, stats)
+    print(f"[*] rfk_wait.enabled={drv.transport.rfk_wait.enabled} (reader running); "
+          "per-hop RFK measured below")
 
     for ch in args.channels:
         before = dict(stats)
         beacons.clear()
         t = time.monotonic()
-        await drv.set_channel(ch, mlo_1_1=bool(args.mlo))
+        await drv.set_channel(ch)     # the driver runs the prehdl double-tune (2+0 then 1+1) itself
         tune_s = time.monotonic() - t
         d_ok = stats["ok"] - before["ok"]
         d_to = stats["timeout_or_fail"] - before["timeout_or_fail"]
@@ -102,7 +104,6 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--channels", type=int, nargs="+", default=[1, 36, 1])
     p.add_argument("--watch", type=int, default=20)
-    p.add_argument("--mlo", type=int, choices=(0, 1), default=0,
-                   help="mlo_1_1 for the tune: 0=2+0 (path-B only, current default), "
-                        "1=1+1 (both synths ALLON). Compare beacon rates to test the G5 hypothesis.")
+    # --mlo is gone: the driver now derives + runs the prehdl double-tune (2+0 then 1+1) per hop, so
+    # every tune ends in 1+1 (both RX chains). This harness validates that path lands + RX is steady.
     sys.exit(asyncio.run(main(p.parse_args())))
