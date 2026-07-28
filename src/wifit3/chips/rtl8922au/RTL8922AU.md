@@ -29,10 +29,12 @@ rfk_channel (the monitor vif's link is PHY_0-only) and the coex policy H2C (dedu
 
 The mac80211 op stream after the first hop is now dispatched by `verify_pcap._drive` by each op's
 opening read: `R_DBCC` (0x26b48) = `set_channel`, `R_BE_RX_FLTR_OPT` (0x11420) = `configure_filter`,
-`R_PLCP_HISTOGRAM` (0x20738) = `config_monitor` (monitor physts). Two per-hop runtime inputs are
-peeked from the wire like the channel is: the RX-filter value (a mac80211 filter-policy input) and
-`mlo_1_1` (the MLO mode the entity recalc lands on, peeked from the pre_set_channel_rf syn write:
-RR_POW_SYN_V1 nibble 0xF = ALLON = MLO_1_PLUS_1). Threaded via `t.mlo_1_1`. The band-change work
+`R_PLCP_HISTOGRAM` (0x20738) = `config_monitor` (monitor physts). The channel is the only per-hop
+runtime input still read from the wire (airodump picks it). `mlo_1_1` and the RX-filter value are now
+DERIVED by the driver, not peeked (the peeks that fed them are gone): `configure_filter` computes the
+monitor filter (`DEFAULT_MON_RX_FLTR` = 0x0F004431), and `set_channel` runs the prehdl double-tune
+(rtw89_chip_rfk_channel, core.c:489-513) deriving each pass's MLO mode from a modelled entity force
+(`_prehdl_force_phy0`): forced PHY_0 -> 2+0, cleared -> 1+1. The band-change work
 (btc_switch_band + rfk_band_changed) now runs only when `!entity_active[phy]` or the band changed
 (tracked in `t.entity_active`/`t.last_band`). iqk's kpath is `rtw89_phy_get_kpath` (RF_A for
 MLO_1_PLUS_1 PHY_0), not RF_AB. rfk `pre_ntfy_mcc` carries `chan_to_rf18(channel)`. The 2.4 GHz TSSI
@@ -60,6 +62,17 @@ or use USB-3). **RX works**: `connect()` starts the shared `RxReaderThread` on t
 bulk-IN, `rx.iter_bulk_frames` strips the BE v2 rx descriptor (16-byte aligned), and real beacons
 parse through `WlanFrameParser` with correct BSSID/SSID/RSSI (validated live: `mud2g` ch1 -67 dBm,
 `dd-wrt` ch6, etc.). So the card is a working monitor interface end to end (boot + tune + receive).
+
+### USB speed and RX
+
+RX yield tracks the negotiated USB link speed. Same spot, 15-20s hop:
+- USB 2.0 (`dev.speed == 3`): ~70-90 unique APs.
+- USB 3.0 (`dev.speed == 4`): ~15; 2.4 GHz hit hardest.
+
+Cause not pinned down (port / cable / negotiation, not chased). The check is `dev.speed`: if it
+reads 4, move the card to a path that comes up 3. `PAD_CTRL2` force writes land but do not survive
+the re-enum, so software cannot pick the speed. The kernel corroborates: `rtw89_usb_switch_mode`
+logs "2.4 GHz performance may be better in a USB 2 port" on SuperSpeed.
 
 ### Gotchas found while porting (not obvious from a single read)
 
@@ -190,10 +203,13 @@ Only the 5/6 GHz **20 MHz** paths are exercised by the capture; the 40/80/160/32
 `_ctrl_bw`, `_set_txpwr_limit`, and `_fill_limit_*` still raise (not needed for the monitor hops, but
 required if wider bandwidths are ever tuned).
 
-**Recurring trap (still relevant):** at set_channel the MLO mode is MLO_2_PLUS_0_1RF (single PHY_0
-monitor vif), not the core_start MLO_1_PLUS_1_1RF. Any helper that branches on the mode must handle
-both; thread it via `transport.mlo_1_1` (True through core_start, set False in `chan.set_channel`).
-The `_get_kpath`/`_get_syn_sel` helpers in phy.py already encode the per-mode path selection.
+**Recurring trap (still relevant):** each hop is a TWO-pass prehdl double-tune, not one tune. Pass 1
+is MLO_2_PLUS_0_1RF (entity force = PHY_0) so the per-channel RFK calibrates the active path; pass 2
+is MLO_1_PLUS_1_1RF (force cleared) and is the operating state the hop ENDS in (both RX chains up).
+Freezing the mode at 2+0 (the old behavior) left PHY_1's RX chain off, ~half the beacons. Any helper
+that branches on the mode must handle both; the mode is threaded via `transport.mlo_1_1`, set per pass
+by `chan.set_channel` from the value the driver derives (`driver._tune_pass`). The
+`_get_kpath`/`_get_syn_sel` helpers in phy.py already encode the per-mode path selection.
 
 **Reusable assets:** `firmware.h2c_command` (any H2C), `firmware.txpwr_conf` (any txpwr fw element),
 `firmware.element_regs`/`element_regs_with_idx` (any reg2 fw element), `phy.read_rf`/`phy.write_rf`
