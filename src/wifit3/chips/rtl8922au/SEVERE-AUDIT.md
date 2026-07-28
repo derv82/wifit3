@@ -36,7 +36,8 @@ verify_pcap replays the captured USB control/bulk-OUT stream against the real `c
 |----|----------|-----|----------|--------|
 | G1 | CRITICAL | Packet-C2H receive path (pkt_type=10) entirely unported; `rx.py` yielded only pkt_type==0 (WIFI) and dropped all firmware reports | `usb.c` rx_handler -> `core.c` rtw89_core_rx (pkt_type != WIFI -> process_report) -> `fw.c:8110` rtw89_fw_c2h_handle | **PORTED (offline); needs HW test** |
 | G2 | CRITICAL | RFK report wait missing: `rfk_channel`/`rfk_band_changed`/`rfk_init_late` fired calibration H2Cs back-to-back with zero wait; kernel blocks on the C2H RFK report per step, `ms*=4` on USB (~1.8s/hop) | `phy.c:4055` rtw89_phy_rfk_report_wait, `rtw8922a.c:2388` rfk_channel | **PORTED (offline); needs HW test** |
-| G3 | HIGH | phycap RF/antenna reply discarded: `setup_phycap` waits for the register-C2H response then throws away tx_nss/rx_nss/antenna/QAM/no_eht/no_mcs_12_13 | `mac.c:3222` setup_phycap_part0/1, rtw8922a hal extraction | not started |
+| G3 | HIGH cap / COND for RX | phycap RF/antenna reply discarded: `setup_phycap` waits for the register-C2H response then throws away tx_nss/rx_nss/antenna/QAM/no_eht/no_mcs_12_13. Audit A: the ONLY RX-wire consumer is `bb_cfg_txrx_path` (hard-codes RF_PATH_AB + rx_nss=2 at phy.py:888); on a 2x2 card the C also lands on RF_PATH_AB so the discard is BENIGN. Bites only if THIS dongle's fw reports 1-antenna/asymmetric. Verify the fw antenna report on hardware | `mac.c:3222` setup_phycap_part0/1, `rtw8922a.c:2626` bb_cfg_txrx_path | not started; likely benign (2x2), verify on HW |
+| G7 | MEDIUM | `mac_pwr_on` reads the efuse chip-version (`efuse_read_ecv`) into a LOCAL var and discards it; the kernel writes it to `hal.cv` GLOBALLY (efuse_be.c:536), making the efuse cut authoritative for every later cv branch (pwr_on_func aphy, efuse_pwr_cut_ddv, trxptcl_init). The port keeps using the R_AX_SYS_CFG1 register cut. Latent: wrong branch if register-cut != efuse-cut | efuse_be.c:516, mac.c:1557 | audit-found (A#2) |
 | G4 | LOW (was HIGH) | `configure_filter` + `config_monitor` have no live caller, BUT `rx_fltr_init` (mac.py:1214, called at 1396 in the connect path) already sets B_BE_SNIFFER_MODE + accept mgnt/ctrl/data to host, so the base monitor filter IS established at connect (beacons were received). configure_filter is a mac80211 re-apply, not required for static monitor. Audit item: confirm B_BE_A_A1_MATCH + sniffer actually passes ALL frames (not just addr1==self) | `mac_be.c:1315` rx_fltr_init_be, `mac80211.c:388` ops_configure_filter | downgraded; audit A1_MATCH |
 | G5 | MED-HIGH | `mlo_1_1` hard-coded False live (interface never passes it); capture flips it per hop. Driver must compute the MLO mode itself (entity recalc), then remove `_peek_mlo_1_1` from verify | `chan.c:485` rtw89_entity_sel_mlo_dbcc_mode, `core.c:563` | not started |
 | G6 | MEDIUM | `set_channel` ran synchronously on the event loop (UI freeze every hop); the tune must run off-loop | driver.set_channel | **DONE (off-loop executor) with G1/G2** |
@@ -65,6 +66,28 @@ against the C source. Seed list from a first grep; expand as the audit proceeds.
 ## Findings log
 
 (newest first; each entry: what, why it matters, C ref, action)
+
+- **2026-07-27 Audit A (mac.py power + phycap) complete.** Headline: the register-level init is
+  FAITHFUL to the C (verified branch guards, poll masks, read orderings, RMW quirks, efuse struct
+  offsets). All genuine gaps are in software/firmware-response data replay cannot see; none is a
+  certain RX root cause for a 2x2 8922AU. Strongest RX suspects remain the now-fixed C2H/RFK gaps.
+  - G3 refined (above): phycap discard benign on 2x2; conditional otherwise.
+  - G7 (new, MED): efuse cv (ecv) dropped, above.
+  - LOW/latent to port for robustness (not RX-critical):
+    - `read_phycap` drops the C2H `id` check (mac.c:3213 -EINVAL on mismatch); a stale C2H is
+      silently accepted.
+    - `parse_efuse_map` drops `country_code[0/1]` (regd input; wifite drives its own channels).
+    - `parse_phycap_map` drops `thermal_trim` (0x1706/0x1733) entirely (docstring "deferred" is
+      unbacked); feeds thermal protection + TSSI thermal comp, not RX.
+    - 6G gain-offset + tssi sub-bands unparsed (6G only).
+    - no zero-MAC fallback (`is_zero_ether_addr` -> random) after efuse read.
+    - `mac_pwr_off` does not clear `t.cmac_pwr`; a second cold cycle in one process would skip
+      CMAC re-power (ties to the "don't cold-boot a warm chip" theme).
+  - VERIFIED-OK (do NOT re-suspect): power_switch/reset_pwr_state/pwr_on_func/pwr_off_func,
+    mac_func_en + the 8922A no-op func-ens, the whole partial_init chain, the firmware-download
+    completion waits (present), efuse plumbing + struct offsets, read_chip_ver, and the RX-relevant
+    CMAC/DMAC init (rx_fltr_init sniffer+UID15, rmac_init, mpdu_proc HDR_SHCUT quirk is real in C,
+    cfg_phy_rpt_bands, set_channel_mac 20MHz arm).
 
 - **2026-07-27 G1+G2+G6 ported (offline).** Added the packet-C2H receive path and the per-step RFK
   report waits. Design (a lead-level call, flagged for review):
