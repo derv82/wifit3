@@ -85,11 +85,16 @@ async def main(a) -> None:
     print(f"[+] prober:     {prober.description}")
 
     print("[*] connecting both...")
-    d_ok, p_ok = await asyncio.gather(dut.connect(), prober.connect())
+    # Connect sequentially, not via gather: two heavy USB cold-boots at once collide on one hub (the
+    # mt76 FW upload times out, a Realtek card can lose its handle). Prober first: an mt76 prober's
+    # FW upload can reset a shared (VM) USB hub and drop an already-up DUT, so bring it up first.
+    p_ok = await prober.connect()
+    d_ok = await dut.connect()
     if not (d_ok and p_ok):
         print(f"[-] connect failed (dut={d_ok} prober={p_ok})")
         return
-    await asyncio.gather(dut.set_channel(a.channel), prober.set_channel(a.channel))
+    await dut.set_channel(a.channel)
+    await prober.set_channel(a.channel)
     try:
         await prober.driver.enable_rx_acks()
     except Exception as e:                            # noqa: BLE001
