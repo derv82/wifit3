@@ -1,6 +1,8 @@
 """BringupManager.run: connect-first, then setup-on-permission-failure, then retry. The engine is
 exercised headless with a fake app / setup / prompter and a stubbed discovery layer; the only real
 collaborator is WlanArray (the card really gets pooled)."""
+from dataclasses import replace
+
 import wifit3.wlan.bringup as bringup
 from wifit3.chips.driver import DeviceID
 from wifit3.errors import BringUpError, BringUpPermissionsError
@@ -15,9 +17,14 @@ class FakeInterface:
 
     def __init__(self, *, exc=None, ok=True):
         self.vid, self.pid, self.description = _DEV.vid, _DEV.pid, _DEV.description
+        self.bus, self.address = _DEV.bus, _DEV.address
         self.name = "wlan?"
         self.on_tx = None
         self._exc, self._ok = exc, ok
+
+    @property
+    def instance_key(self):
+        return (self.vid, self.pid, self.bus, self.address)
 
     def register_rx_callback(self, cb):
         pass
@@ -171,6 +178,7 @@ def _stub_build_recording(monkeypatch, built):
         built.append((device_id.vid, device_id.pid))
         iface = FakeInterface(ok=True)
         iface.name, iface.vid, iface.pid = name, device_id.vid, device_id.pid
+        iface.bus, iface.address = device_id.bus, device_id.address
         iface.description = device_id.description
         return iface
     monkeypatch.setattr(bringup, "build_interface", _build)
@@ -197,6 +205,31 @@ async def test_pool_others_true_also_builds_the_other(monkeypatch):
     _stub_build_recording(monkeypatch, built)
     res = await _mgr().run(_DEV, pool_others=True)
     assert res.status is Status.READY and (_OTHER.vid, _OTHER.pid) in built
+
+
+async def test_pool_others_brings_up_a_second_identical_card(monkeypatch):
+    # Two of the same model on different ports (distinct bus/address). Both must pool: the bug was
+    # build_interface re-grabbing the first VID:PID match, so only one ever came up.
+    built = []
+    dev1 = replace(_DEV, bus=1, address=4)
+    dev2 = replace(_DEV, bus=1, address=5)
+
+    def _build(device_id, name="wlan0"):
+        built.append(device_id.instance_key)
+        iface = FakeInterface(ok=True)
+        iface.name = name
+        iface.vid, iface.pid = device_id.vid, device_id.pid
+        iface.bus, iface.address = device_id.bus, device_id.address
+        iface.description = device_id.description
+        return iface
+
+    monkeypatch.setattr(bringup, "build_interface", _build)
+    monkeypatch.setattr(bringup, "find_devices", lambda: [dev1, dev2])
+    app = FakeApp()
+    res = await _mgr(app).run(dev1, pool_others=True)
+    assert res.status is Status.READY
+    assert built == [dev1.instance_key, dev2.instance_key]
+    assert len(app.array.members) == 2
 
 
 async def test_connect_returning_false_is_failed_not_pooled(monkeypatch):

@@ -19,8 +19,9 @@ def _fresh_registry():
 
 
 class _FakeDev:
-    def __init__(self, vid, pid):
+    def __init__(self, vid, pid, bus=1, address=1):
         self.idVendor, self.idProduct = vid, pid
+        self.bus, self.address = bus, address
 
 
 def _driver_for(vid, pid):
@@ -124,21 +125,42 @@ def _stub_scan(monkeypatch, handles):
     monkeypatch.setattr(discovery, "_scan_bus", lambda backend: handles)
 
 
-def test_find_devices_returns_matched_ids(monkeypatch):
+def test_find_devices_tags_each_match_with_its_bus_address(monkeypatch):
     d1 = DeviceID(0x0BDA, 0x8813, "RTL8814AU")
     d2 = DeviceID(0x148F, 0x5370, "RT5370")
-    _stub_scan(monkeypatch, [(_FakeDev(0x0BDA, 0x8813), _FakeDriver, d1),
-                             (_FakeDev(0x148F, 0x5370), _FakeDriver, d2)])
-    assert discovery.find_devices() == [d1, d2]
+    _stub_scan(monkeypatch, [(_FakeDev(0x0BDA, 0x8813, bus=1, address=4), _FakeDriver, d1),
+                             (_FakeDev(0x148F, 0x5370, bus=1, address=5), _FakeDriver, d2)])
+    out = discovery.find_devices()
+    assert [d.instance_key for d in out] == [(0x0BDA, 0x8813, 1, 4), (0x148F, 0x5370, 1, 5)]
+
+
+def test_find_devices_distinguishes_two_identical_cards(monkeypatch):
+    d = DeviceID(0x0E8D, 0x7961, "MT7921AU")
+    _stub_scan(monkeypatch, [(_FakeDev(0x0E8D, 0x7961, bus=2, address=32), _FakeDriver, d),
+                             (_FakeDev(0x0E8D, 0x7961, bus=2, address=35), _FakeDriver, d)])
+    out = discovery.find_devices()
+    assert len({x.instance_key for x in out}) == 2
 
 
 def test_build_interface_dispatches_matching_driver(monkeypatch):
     entry = DeviceID(0x0BDA, 0x8813, "RTL8814AU")
-    dev = _FakeDev(0x0BDA, 0x8813)
+    dev = _FakeDev(0x0BDA, 0x8813, bus=1, address=7)
     _stub_scan(monkeypatch, [(dev, _FakeDriver, entry)])
     iface = discovery.build_interface(entry, name="wlan3")
     assert iface is not None
     assert iface.name == "wlan3" and iface.vid == 0x0BDA and iface.dev is dev
+    assert iface.instance_key == (0x0BDA, 0x8813, 1, 7)
+
+
+def test_build_interface_selects_the_addressed_instance(monkeypatch):
+    # Two identical cards on the bus; the entry names one by (bus, address). build_interface must
+    # open THAT one, not the first VID:PID match (the two-identical-cards hotplug bug).
+    entry = DeviceID(0x0E8D, 0x7961, "MT7921AU", bus=2, address=35)
+    first = _FakeDev(0x0E8D, 0x7961, bus=2, address=32)
+    second = _FakeDev(0x0E8D, 0x7961, bus=2, address=35)
+    _stub_scan(monkeypatch, [(first, _FakeDriver, entry), (second, _FakeDriver, entry)])
+    iface = discovery.build_interface(entry)
+    assert iface is not None and iface.dev is second
 
 
 def test_build_interface_none_when_absent(monkeypatch):

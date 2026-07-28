@@ -4,8 +4,11 @@ from wifit3.chips.driver import DeviceID
 from wifit3.errors import WifiteFatalError
 from wifit3.wlan.device_listener import DeviceListener, _diff
 
-A = DeviceID(0x0BDA, 0x8813, "RTL8814AU")
-B = DeviceID(0x148F, 0x5370, "RT5370")
+# Live instances as find_devices() returns them: tagged with a (bus, address). A and A2 are the same
+# model on two ports (a real twin pair); B is a different card.
+A = DeviceID(0x0BDA, 0x8813, "RTL8814AU", bus=1, address=4)
+A2 = DeviceID(0x0BDA, 0x8813, "RTL8814AU", bus=1, address=5)
+B = DeviceID(0x148F, 0x5370, "RT5370", bus=1, address=6)
 
 
 def test_diff_arrival():
@@ -16,8 +19,15 @@ def test_diff_departure():
     assert _diff([A], [A, B]) == ([], [B])
 
 
-def test_diff_twins_count_once_per_extra():
-    assert _diff([A, A], [A]) == ([A], [])
+def test_diff_twins_are_distinct_instances():
+    # Same VID:PID, different address: the second card is its own arrival, not a no-op.
+    assert _diff([A, A2], [A]) == ([A2], [])
+
+
+def test_diff_replug_is_departure_then_arrival():
+    # A replug of the same card lands at a new address, so the old instance departs and the new
+    # one arrives (the modal-on-every-replug behaviour).
+    assert _diff([A2], [A]) == ([A2], [A])
 
 
 def test_diff_no_change_is_order_independent():

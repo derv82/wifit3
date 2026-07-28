@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import sys
+from dataclasses import replace
 from typing import Dict, List, NoReturn, Optional, Type
 
 import libusb_package
@@ -151,17 +152,26 @@ def _scan_bus(backend) -> List[tuple]:
 
 
 def find_devices() -> List[DeviceID]:
-    """Every supported card present on the USB bus right now, one DeviceID per physical match."""
+    """Every supported card present on the USB bus right now, one DeviceID per physical match, tagged
+    with its (bus, address) so two identical cards on different ports are distinguishable."""
     backend = libusb_package.get_libusb1_backend()
-    return [entry for _dev, _cls, entry in _scan_bus(backend)]
+    return [replace(entry, bus=dev.bus, address=dev.address)
+            for dev, _cls, entry in _scan_bus(backend)]
 
 
 def build_interface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanInterface]:
-    """The (unconnected) WlanInterface for the present card matching ``device_id``'s VID:PID, or None
-    if none is on the bus or its driver can't be constructed. ``iface.connect()`` opens it, not this."""
+    """The (unconnected) WlanInterface for the present card matching ``device_id``, or None if it
+    isn't on the bus or its driver can't be constructed. When ``device_id`` carries an instance
+    address (bus + address, as find_devices tags them) the exact physical card is opened, not just
+    the first VID:PID match: that's what lets a second identical card come up while the first is live.
+    A bare catalog DeviceID (bus/address None) falls back to the first VID:PID match. ``iface.connect()``
+    opens it, not this."""
     backend = libusb_package.get_libusb1_backend()
+    want_instance = device_id.bus is not None and device_id.address is not None
     for dev, driver_cls, entry in _scan_bus(backend):
         if entry.vid != device_id.vid or entry.pid != device_id.pid:
+            continue
+        if want_instance and (dev.bus, dev.address) != (device_id.bus, device_id.address):
             continue
         try:
             driver = driver_cls.from_usb_device(dev, entry)
@@ -172,7 +182,8 @@ def build_interface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanIn
         return WlanInterface(driver, name, entry.description,
                              vid=entry.vid, pid=entry.pid, dev=dev,
                              chipset=entry.chipset, vendor=entry.vendor,
-                             product_name=entry.product_name)
+                             product_name=entry.product_name,
+                             bus=dev.bus, address=dev.address)
     return None
 
 
@@ -191,7 +202,8 @@ def build_interfaces() -> List[WlanInterface]:
         out.append(WlanInterface(driver, f"wlan{len(out)}", entry.description,
                                  vid=entry.vid, pid=entry.pid, dev=dev,
                                  chipset=entry.chipset, vendor=entry.vendor,
-                                 product_name=entry.product_name))
+                                 product_name=entry.product_name,
+                                 bus=dev.bus, address=dev.address))
     return out
 
 

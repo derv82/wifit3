@@ -15,6 +15,7 @@ from wifit3.ui.screens.splash import SplashView
 def _fake_iface():
     return SimpleNamespace(
         name="wlan0", description="RT5372 (test)", vid=0x148F, pid=0x5372,
+        bus=1, address=1, instance_key=(0x148F, 0x5372, 1, 1),
         supported_channels=[1, 6, 11], on_tx=None,
         register_rx_callback=lambda cb: None, register_disconnect_callback=lambda cb: None,
         connect=AsyncMock(return_value=True), close=AsyncMock())

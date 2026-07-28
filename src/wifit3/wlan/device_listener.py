@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import Counter
 from typing import Callable, List, Optional, Tuple
 
 from wifit3.chips.driver import DeviceID
@@ -19,20 +18,13 @@ OnFatal = Callable[[WifiteFatalError], None]
 
 
 def _diff(current: List[DeviceID], seen: List[DeviceID]) -> Tuple[List[DeviceID], List[DeviceID]]:
-    """(arrived, departed) as multisets keyed by (vid, pid), so two identical cards count twice and a
-    replug of the same model reads as a genuine arrival. Order is not significant."""
-    cur = Counter((d.vid, d.pid) for d in current)
-    old = Counter((d.vid, d.pid) for d in seen)
-    rep_cur = {(d.vid, d.pid): d for d in current}
-    rep_old = {(d.vid, d.pid): d for d in seen}
-    arrived: List[DeviceID] = []
-    departed: List[DeviceID] = []
-    for key in set(cur) | set(old):
-        delta = cur[key] - old[key]
-        if delta > 0:
-            arrived += [rep_cur[key]] * delta
-        elif delta < 0:
-            departed += [rep_old[key]] * (-delta)
+    """(arrived, departed) keyed by each card's instance_key (vid, pid, bus, address), so two identical
+    models on different ports are distinct arrivals and a replug (new address) reads as a departure
+    plus a fresh arrival. Order is not significant."""
+    cur = {d.instance_key: d for d in current}
+    old = {d.instance_key: d for d in seen}
+    arrived = [d for k, d in cur.items() if k not in old]
+    departed = [d for k, d in old.items() if k not in cur]
     return arrived, departed
 
 

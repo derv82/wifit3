@@ -44,7 +44,8 @@ class WlanInterface:
     def __init__(self, driver_instance: Driver, name: str, description: str,
                  vid: Optional[int] = None, pid: Optional[int] = None,
                  dev: Optional[usb.core.Device] = None, chipset: Optional[str] = None,
-                 vendor: Optional[str] = None, product_name: Optional[str] = None):
+                 vendor: Optional[str] = None, product_name: Optional[str] = None,
+                 bus: Optional[int] = None, address: Optional[int] = None):
         self.driver = driver_instance
         self.name = name
         self.description = description
@@ -54,6 +55,8 @@ class WlanInterface:
         self.vid = vid
         self.pid = pid
         self.dev = dev
+        self.bus = bus
+        self.address = address
         self.current_channel = 1
 
         self._rx_callbacks: List[Callable[[Packet], None]] = []
@@ -138,6 +141,11 @@ class WlanInterface:
         if isinstance(mac, bytes):
             return mac
         return bytes(int(x, 16) for x in str(mac).split(":"))
+
+    @property
+    def instance_key(self) -> tuple:
+        """(vid, pid, bus, address): which physical card this is, for pool-membership de-dup."""
+        return (self.vid, self.pid, self.bus, self.address)
 
     @property
     def _chipset(self) -> str:

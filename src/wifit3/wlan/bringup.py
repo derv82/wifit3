@@ -128,15 +128,15 @@ class BringupManager:
         return self.app.array
 
     async def _pool_ready_others(self, *, exclude) -> None:
-        """Best-effort: bring up every other present, already-openable supported card into the pool
-        so a multi-card session starts merged. Sequential (two cards driving RF over USB at once can
-        collide). A card needing setup raises and is skipped; it can be started on a later pass. Two
-        identical cards (same VID:PID) pool only one for now: DeviceID can't tell them apart."""
+        """Best-effort: bring up every other present, already-openable supported card into the pool so
+        a multi-card session starts merged. Cards are keyed by their (bus, address) instance, so a
+        second identical model joins too (not just the first VID:PID match). Sequential (two cards
+        driving RF over USB at once can collide). A card needing setup raises and is skipped; it can
+        be started on a later pass."""
         array = self.app.array
-        pooled = {(m.vid, m.pid) for m in array.members}
+        pooled = {m.instance_key for m in array.members}
         for other in find_devices():
-            key = (other.vid, other.pid)
-            if key == (exclude.vid, exclude.pid) or key in pooled:
+            if other.instance_key == exclude.instance_key or other.instance_key in pooled:
                 continue
             iface = build_interface(other, name=self._next_name())
             if iface is None:
@@ -144,7 +144,7 @@ class BringupManager:
             try:
                 if await iface.connect():
                     array.attach(iface)
-                    pooled.add(key)
+                    pooled.add(other.instance_key)
                     self.app.notify(f"{other.description} joined the pool", timeout=4)
             except Exception:
                 logger.info("secondary card %s failed to join", other.description, exc_info=True)
