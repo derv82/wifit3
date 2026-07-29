@@ -232,8 +232,6 @@ class PmkidHarvestAttack(Campaign):
                         f"[PMKID] {self.target.bssid} answered with a PMKID-less M1: "
                         f"this AP doesn't expose one; not retrying."
                     )
-                    self.log("[bold]M1[/bold] received: "
-                             "[orange1 italic]no PMKID KDE[/orange1 italic]")
                     return
                 await asyncio.sleep(0.05)
 

@@ -222,7 +222,7 @@ class WepChopChop:
             self._bytes_done = 0
             self._bytes_total = len(cipher) - _CHOP_FLOOR
             # Group header (plain) + a detail branch
-            self._log("[cyan]ChopChop:[/cyan] forging packet…")
+            self._log("[bold cyan]ChopChop:[/bold cyan] forging packet…")
             self._log(treelog.branch(
                 f"[dim]{len(cipher)}B cipher, ~{self._bytes_total} bytes to "
                 f"recover[/dim]"
@@ -511,7 +511,7 @@ class WepChopChop:
     def _succeed(self, forged: bytes) -> None:
         self._set_state("success")
         self._log(treelog.leaf_ok(
-            "[green]ChopChop packet forged[/green] [dim](broadcast ARP)[/dim]"
+            "[bold green]ChopChop packet forged[/bold green] [dim](broadcast ARP)[/dim]"
         ))
         # Immediate handoff (mirrors frag): stop, hand the forged ARP over.
         self._active = False
@@ -525,7 +525,7 @@ class WepChopChop:
 
     def _set_state(self, state: str) -> None:
         if state == "seeding" and self.state != "seeding":
-            self._log("[cyan]ChopChop:[/cyan] waiting for ARP or IP frame…")
+            self._log("[bold cyan]ChopChop:[/bold cyan] waiting for ARP or IP frame…")
         self.state = state
 
     def _maybe_heartbeat(self) -> None:

@@ -33,7 +33,8 @@ class ClientsList(Vertical):
 
     def compose(self) -> ComposeResult:
         # Broadcast button pinned at the top; only the row list scrolls below it.
-        yield Button("Deauth all", id="deauth-all", classes="bcast-btn")
+        yield Button("Deauth all", id="deauth-all", classes="bcast-btn",
+                     tooltip="Deauthenticate all clients (Broadcast)")
         yield VerticalScroll(
             *(self._make_row(c.bssid, c.power, c.packets) for c in self._clients),
             id="client-rows",
@@ -110,7 +111,7 @@ class ClientsList(Vertical):
         return Horizontal(
             Label(mac, classes="cl-bssid"),
             pwr, pkts,
-            Button("✕", id=btn_id, classes="cl-deauth"),
+            Button("✕", id=btn_id, classes="cl-deauth", tooltip="Deauthenticate Client"),
             classes="client-row", id=_row_id(mac),
         )
 

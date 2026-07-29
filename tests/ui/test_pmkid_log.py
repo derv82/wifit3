@@ -37,7 +37,7 @@ def test_no_response_echoes_tx_but_has_no_m1():
     assert "Auth request" in lines[1] and "Assoc. request" in lines[2]
     assert not any("M1 Message" in ln for ln in lines)         # no M1 ever arrived
     assert "└─►" in lines[-1]                                   # neutral leaf, not └─╳
-    assert "[bold orange1]M1 not received[/bold orange1]" in lines[-1]
+    assert "[bold bright_red]M1 not received[/bold bright_red]" in lines[-1]
     assert "AP did not respond" in lines[-1]
 
 

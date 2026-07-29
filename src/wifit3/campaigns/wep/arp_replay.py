@@ -204,7 +204,7 @@ class WepArpReplay:
         if cand is not self._winner:
             self.stats.candidates_tried += 1
         self._log(
-            f"[green]ARP Replay:[/green] [white]Testing candidate packet "
+            f"[bold green]ARP Replay:[/bold green] [white]Testing candidate packet "
             f"({len(cand)} B)…[/white]"
         )
 
@@ -367,7 +367,7 @@ class WepArpReplay:
                 "[bold green]replayable[/bold green]"
             ))
             self._log(treelog.leaf_ok(
-                "[green]ARP Replaying now[/green] [dim]for IVs[/dim]"
+                "[bold green]ARP Replaying now[/bold green] [dim]for IVs[/dim]"
             ))
         elif (time.time() - self._trial_started) >= self._TRIAL_WINDOW:
             failed_len = len(self._current)
@@ -433,5 +433,5 @@ class WepArpReplay:
             return
         self._last_state = state
         if state == "waiting-arp":
-            self._log("[green]ARP Replay:[/green] [white]waiting for ARP[/white]")
+            self._log("[bold green]ARP Replay:[/bold green] [white]waiting for ARP[/white]")
 

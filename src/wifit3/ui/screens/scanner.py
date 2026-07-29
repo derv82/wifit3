@@ -24,7 +24,7 @@ from ..capture_events import (
     CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
 )
 from ..encryption_format import format_encryption_markup, wep_key_ascii
-from wifit3.wlan.channels import band_label, band_ranges
+from wifit3.wlan.channels import band_ranges
 
 from .channel_filter import ChannelFilterDialog
 
@@ -73,6 +73,24 @@ def _cells_key(cells: List[Text]) -> tuple:
         (c.plain, str(c.style), tuple((s.start, s.end, str(s.style)) for s in c.spans))
         for c in cells
     )
+
+
+def device_scan_summary(members) -> Optional[str]:
+    """The scanning pool as a log line: 'N devices: CHIP (2+5G)', 2.4 GHz cyan, 5 GHz green."""
+    if not members:
+        return None
+    tags = []
+    for m in members:
+        lo = any(c <= 14 for c in m.supported_channels)
+        hi = any(c > 14 for c in m.supported_channels)
+        bands = []
+        if lo:
+            bands.append("[bold cyan]2[/]" if hi else "[bold cyan]2G[/]")
+        if hi:
+            bands.append("[bold green]5G[/]")
+        tags.append(f"[bold]{m.chipset}[/] ({'+'.join(bands)})")
+    noun = "device" if len(members) == 1 else "devices"
+    return f"Scanning with [bold cyan]{len(members)}[/] {noun}: {', '.join(tags)}"
 
 
 class _APScanTable(DataTable):
@@ -176,11 +194,9 @@ class ScannerView(Screen):
         if summary:
             rows.append(summary)
         if array:
-            hopped = self._channel_filter or list(array.supported_channels)
-            rows.append(
-                "Hopping [italic]all available channels[/italic] "
-                f"[bold cyan]{band_label(hopped)}[/bold cyan]"
-            )
+            device_line = device_scan_summary(array.members)
+            if device_line:
+                rows.append(device_line)
         else:
             rows.append("[yellow]No active interface[/yellow]")
         for i, row in enumerate(rows):

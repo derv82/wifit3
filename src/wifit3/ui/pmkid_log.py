@@ -24,7 +24,7 @@ _EXTRACTED = "[black bold on green] ✓ PMKID Extracted [/black bold on green]"
 _FAIL_LEAF = {
     PmkidFail.NO_KDE:       ("[black bold on orange1] No PMKID in M1 [/black bold on orange1]",
                              "AP does not send PMKID in M1"),
-    PmkidFail.NO_RESPONSE:  ("[bold orange1]M1 not received[/bold orange1]", "AP did not respond"),
+    PmkidFail.NO_RESPONSE:  ("[bold bright_red]M1 not received[/bold bright_red]", "AP did not respond"),
     PmkidFail.PMF_REQUIRED: ("[bold orange1]PMF Required[/bold orange1]",
                              "AP only associates protected clients"),
     PmkidFail.NO_PSK_AKM:   ("[bold orange1]No PSK AKM[/bold orange1]",

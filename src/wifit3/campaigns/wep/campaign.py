@@ -28,7 +28,6 @@ from typing import Callable, Optional
 from rich.markup import escape
 
 from wifit3.models import AccessPoint
-from wifit3.campaigns import treelog
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.wep.fake_auth import WepFakeAuth
 from wifit3.campaigns.wep.arp_replay import WepArpReplay
@@ -109,7 +108,6 @@ class WepCampaign(Campaign):
             f"[bold green]ARP Replay starting[/bold green] on "
             f"[bold]{escape(self.target.ssid or '<hidden>')}[/bold]"
         )
-        self._log(treelog.leaf("[dim](deauth or chop if no ARPs appear)[/dim]"))
         # Active monitor chooses the STA MAC the card can get ACKed (random for SPOOFABLE, the card's
         # own for FIXED_MAC) and returns it; None means the card can't active-monitor, so use a random
         # STA and no AM (the driver's send-once path). fake-auth, replay and chopchop share this MAC.

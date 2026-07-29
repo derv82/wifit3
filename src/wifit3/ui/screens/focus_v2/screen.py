@@ -85,6 +85,17 @@ _ATTACK_BUTTONS = [
 _CAMPAIGN_BUTTON_ID = {cls.key: cls.button_id for cls in fm.BUTTON_CAMPAIGNS}
 _CAMPAIGN_BUTTON_ID["chop"] = "btn-chop"  # WEP sub-action
 
+# Static button tooltips, keyed by live label so toggled buttons get idle/run-specific tips.
+_BUTTON_TIPS = {
+    "ARP Replay": "Listen for & replay ARP packets",
+    "Stop Replay": "Stop the entire WEP campaign.",
+    "ChopChop": "Forge a replayable packet",
+    "Stop Chop": "Interrupt chopping and return to ARP replay",
+    "PMKID": "Associate to extract PMKID (some APs not applicable)",
+    "WPS PIN": "Start a WPS PIN brute-force campaign",
+    "WPA ↓": "EXPERIMENTAL: Respond to probe requests with non-WPA3 AKMs",
+}
+
 
 # Pretty-print a capture filename, skipping the <bssid>_<epoch> middle
 _FILENAME_MIDDLE = re.compile(r"_[0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5}_\d+_")
@@ -127,9 +138,11 @@ class FocusViewV2(Screen):
     FocusViewV2 { layout: vertical; background: $surface; }
 
     #topbar { height: %(top)d; }
+    #actions { width: auto; height: 100%%; }
     #topbar Button { height: 3; width: auto; min-width: 0; margin: 0 1 0 0; }
     /* No background override on .attack-btn */
     #status { width: 1fr; height: 3; content-align: center middle; text-align: center; }
+    #rspacer { width: 0; height: 1; }
 
     #mid { height: 1fr; }
     #card, #router { width: %(ew)d; align: center middle; }
@@ -185,6 +198,7 @@ class FocusViewV2(Screen):
             "chop": self._toggle_chop,
         }
         self._binding_sig: Optional[tuple] = None
+        self._rspacer_w = -1                          # last-set spacer width; skip no-op relayouts
 
     # ----- compose -----------------------------------------------------------
 
@@ -192,13 +206,16 @@ class FocusViewV2(Screen):
         self._snap = self._snapshot()
         yield Header()
         with Horizontal(id="topbar"):
-            yield Button("‹ Scanner", id="back")
-            # The full attack set is composed once (hidden); derive_buttons shows the ones that fit the target.
-            for bid, label in _ATTACK_BUTTONS:
-                btn = Button(label, id=bid, classes="attack-btn")
-                btn.display = False
-                yield btn
+            with Horizontal(id="actions"):
+                yield Button("‹ Scanner", id="back")
+                # The full attack set is composed once (hidden); derive_buttons shows the ones that fit the target.
+                for bid, label in _ATTACK_BUTTONS:
+                    btn = Button(label, id=bid, classes="attack-btn")
+                    btn.display = False
+                    yield btn
             yield Static(self._render_status(self._snap.status), id="status")
+            # Right spacer to accurately align status to sparklines.
+            yield Static("", id="rspacer")
         with Horizontal(id="mid"):
             yield CardEndpoint(self._snap, id="card")
             yield PacketDashboard(self._snap.dashboard, id="dashboard")
@@ -258,7 +275,7 @@ class FocusViewV2(Screen):
         btn.disabled = state.disabled
         btn.label = state.label
         btn.variant = state.variant
-        btn.tooltip = state.reason or None
+        btn.tooltip = state.reason or _BUTTON_TIPS.get(str(state.label))
 
     def _sync_card(self) -> None:
         """Refresh the card endpoint's label + art from the live pool. Polled from the tick because
@@ -318,6 +335,7 @@ class FocusViewV2(Screen):
         self.query_one("#status", Static).update(self._render_status(snap.status))
         self.query_one("#clients", ClientsList).sync(snap.clients)
         self._refresh_buttons()
+        self._balance_status()
         self._refresh_status_footer()  # dashboard footer (cleared by reconfigure)
 
         # Log initial "target acquired"
@@ -439,6 +457,7 @@ class FocusViewV2(Screen):
         clients.sync(snap.clients)
         clients.set_deauth_enabled(not fm.deauth_blocked(ap))
         self._refresh_buttons()
+        self._balance_status()
         self._sync_bindings()
         self._refresh_status_footer()
         array = self.app.array
@@ -455,6 +474,18 @@ class FocusViewV2(Screen):
         self.query_one("#bottom").styles.height = avail - center
         pad = max(0, round((self.size.width - _PAD_START) * _PAD_RATE))
         mid.styles.padding = (0, pad, 0, pad)
+        self._balance_status()
+
+    def _balance_status(self) -> None:
+        """Center the status label over the sparklines despite the button row on its left."""
+        topbar_w = self.query_one("#topbar").content_size.width
+        actions_w = self.query_one("#actions").outer_size.width
+        widest = max((Text.from_markup(s, emoji=False).cell_len
+                      for s in self._snap.status), default=0)
+        spacer = min(actions_w, max(0, topbar_w - actions_w - widest))
+        if spacer != self._rspacer_w:
+            self._rspacer_w = spacer
+            self.query_one("#rspacer", Static).styles.width = spacer
 
     def _refresh_status_footer(self) -> None:
         """Refresh status footer under sparklines."""
@@ -706,7 +737,7 @@ class FocusViewV2(Screen):
                     f"[dim bold](BSSID: {escape(camp.target.bssid)})[/dim bold]")
             self.notify(body, title=f"{CAPTURE_TOAST_TITLES[CaptureKind.PMKID]} (M1)", timeout=6)
         elif getattr(camp, "stopped", False):
-            self._log(treelog.leaf_fail("[yellow]Stopped[/yellow] PMKID harvesting"))
+            self._log(treelog.leaf_fail("[bright_red bold]Stopped harvest[/]"))
         else:
             self._emit_lines(pmkid_log.verdict_failure(camp.fail_reason))
 
