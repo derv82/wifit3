@@ -81,6 +81,7 @@ _ETHERTYPE_IP = bytes([0x08, 0x00])
 # Stop chopping once only SNAP+ethertype (bytes 0..7) would remain, that's
 # always-known structure, nothing to gain by chopping into it.
 _CHOP_FLOOR = 8
+_CHOP_PACKET_MAX_LEN = 50   # skip long ciphers: chop is ~2s/byte, an ARP seed is ~40B
 # IP header reconstruction (aireplay's header_rec) covers bytes 0..11 only:
 # SNAP + IP version/IHL + TOS + total-length. A wall deeper than this would hide
 # genuinely-unknown IP fields (id / flags / TTL / …) we can't derive, so an IP
@@ -217,6 +218,8 @@ class WepChopChop:
                 continue
             iv, keyid, cipher = parsed
             if iv in self._tried:
+                continue
+            if len(cipher) > _CHOP_PACKET_MAX_LEN:
                 continue
             self._cur_iv, self._cur_keyid, self._cur_cipher = iv, keyid, cipher
             self._bytes_done = 0
