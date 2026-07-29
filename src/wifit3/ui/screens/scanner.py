@@ -3,11 +3,13 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from textual.app import ComposeResult
+from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.reactive import Reactive
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, RichLog
+from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
 from rich.color import Color
 from rich.markup import escape
 from rich.style import Style
@@ -93,6 +95,34 @@ def device_scan_summary(members) -> Optional[str]:
     return f"Scanning with [bold cyan]{len(members)}[/] {noun}: {', '.join(tags)}"
 
 
+class _ChannelReadout(HeaderClock):
+    """Header right slot: the live hopped channel(s), polled from the pool, not a clock."""
+    DEFAULT_CSS = "_ChannelReadout { width: auto; }"
+    # layout=True so a change re-sizes this auto-width slot; a plain repaint
+    # leaves it 0-wide until the next resize.
+    channels: Reactive[str] = Reactive("", layout=True)
+
+    def _on_mount(self, event) -> None:
+        self._poll()                          # populate before the first layout
+        self.set_interval(0.25, self._poll)   # hop cadence
+
+    def _poll(self) -> None:
+        array = getattr(self.app, "array", None)
+        members = array.members if array else []
+        self.channels = " | ".join(f"CH:{m.current_channel:>3}" for m in members)
+
+    def render(self) -> RenderResult:
+        return Text(self.channels)
+
+
+class _ScannerHeader(Header):
+    """Header whose right slot shows the hopped channel(s) in place of the clock."""
+    def compose(self) -> ComposeResult:
+        yield HeaderIcon().data_bind(Header.icon)
+        yield HeaderTitle()
+        yield _ChannelReadout()
+
+
 class _APScanTable(DataTable):
     """AP list table that can re-pin its row cursor without moving the viewport."""
 
@@ -173,7 +203,7 @@ class ScannerView(Screen):
     # ----- Compose / mount ---------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield _ScannerHeader()
         with Vertical():
             table = _APScanTable(cursor_type="row", id="ap-table")
             for key, label in self._COLUMNS:
