@@ -15,7 +15,7 @@ from enum import Enum, auto
 from wifit3.errors import BringUpError, BringUpPermissionsError
 from wifit3.setup.base import Setup, SetupResult
 from wifit3.wlan.array import WlanArray
-from wifit3.wlan.discovery import build_interface, find_devices
+from wifit3.wlan.discovery import build_interface
 
 logger = logging.getLogger(__name__)
 
@@ -57,23 +57,20 @@ class BringupManager:
         self.prompter = prompter
         self._name_counter = 0
 
-    async def run(self, device_id, *, bail_at_permissions: bool = False,
-                  pool_others: bool = True) -> BringupResult:
-        """Bring ``device_id`` up (installing setup if the card can't be opened yet) and pool it.
-        Shows the progress modal for the whole flow. ``bail_at_permissions`` returns a FAILED result
-        instead of running setup when the card needs it (mid-session Windows, where a WinUSB install
-        is disruptive). ``pool_others`` also brings up every other ready card (Splash START); a
-        hotplug passes False so only the confirmed card comes up."""
+    async def run(self, device_id, *, bail_at_permissions: bool = False) -> BringupResult:
+        """Bring ``device_id`` up (installing setup if the card can't be opened yet) and pool it. Brings
+        up exactly this one card: the caller decides the set (Splash loops over the checked cards). Shows
+        the progress modal for the whole flow. ``bail_at_permissions`` returns a FAILED result instead of
+        running setup when the card needs it (mid-session Windows, where a WinUSB install is disruptive)."""
         await self.prompter.open(f"Bringing up {device_id.description}…")
         try:
-            return await self._run(device_id, bail_at_permissions=bail_at_permissions,
-                                   pool_others=pool_others)
+            return await self._run(device_id, bail_at_permissions=bail_at_permissions)
         finally:
             self.prompter.close()
 
-    async def _run(self, device_id, *, bail_at_permissions: bool, pool_others: bool) -> BringupResult:
+    async def _run(self, device_id, *, bail_at_permissions: bool) -> BringupResult:
         try:
-            await self._connect_and_pool(device_id, pool_others=pool_others)
+            await self._connect_and_pool(device_id)
             return BringupResult.ready()
         except BringUpPermissionsError:
             if bail_at_permissions:
@@ -86,7 +83,7 @@ class BringupManager:
             return BringupResult.cancelled()              # declined or failed (setup already reported)
 
         try:
-            await self._connect_and_pool(device_id, pool_others=pool_others)
+            await self._connect_and_pool(device_id)
             return BringupResult.ready()
         except BringUpError as e:
             return BringupResult.failed(self._fault_message(device_id, e))
@@ -100,7 +97,7 @@ class BringupManager:
         finally:
             self.prompter.close()
 
-    async def _connect_and_pool(self, device_id, *, pool_others: bool = True) -> None:
+    async def _connect_and_pool(self, device_id) -> None:
         iface = build_interface(device_id, name=self._next_name())
         if iface is None:
             raise BringUpError("discover", "card not present")
@@ -117,8 +114,6 @@ class BringupManager:
                 pass
             raise
         self._ensure_array().attach(iface)
-        if pool_others:
-            await self._pool_ready_others(exclude=device_id)
 
     def _ensure_array(self) -> WlanArray:
         if self.app.array is None:
@@ -126,28 +121,6 @@ class BringupManager:
             array.register_disconnect_callback(self.app.notify_device_lost)
             self.app.array = array
         return self.app.array
-
-    async def _pool_ready_others(self, *, exclude) -> None:
-        """Best-effort: bring up every other present, already-openable supported card into the pool so
-        a multi-card session starts merged. Cards are keyed by their (bus, address) instance, so a
-        second identical model joins too (not just the first VID:PID match). Sequential (two cards
-        driving RF over USB at once can collide). A card needing setup raises and is skipped; it can
-        be started on a later pass."""
-        array = self.app.array
-        pooled = {m.instance_key for m in array.members}
-        for other in find_devices():
-            if other.instance_key == exclude.instance_key or other.instance_key in pooled:
-                continue
-            iface = build_interface(other, name=self._next_name())
-            if iface is None:
-                continue
-            try:
-                if await iface.connect():
-                    array.attach(iface)
-                    pooled.add(other.instance_key)
-                    self.app.notify(f"{other.description} joined the pool", timeout=4)
-            except Exception:
-                logger.info("secondary card %s failed to join", other.description, exc_info=True)
 
     def _next_name(self) -> str:
         name = f"wlan{self._name_counter}"

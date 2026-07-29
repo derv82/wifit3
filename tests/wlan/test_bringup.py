@@ -104,7 +104,6 @@ def _queue_builds(monkeypatch, *ifaces):
         return iface
 
     monkeypatch.setattr(bringup, "build_interface", _build)
-    monkeypatch.setattr(bringup, "find_devices", lambda: [_DEV])   # only the primary is present
 
 
 def _mgr(app=None, setup=None):
@@ -170,21 +169,6 @@ async def test_uninstall_delegates_to_setup(monkeypatch):
     assert isinstance(res, SetupResult) and res.ok and res.message == "removed"
 
 
-_OTHER = DeviceID(0x148F, 0x5370, "RT5370")
-
-
-def _stub_build_recording(monkeypatch, built):
-    def _build(device_id, name="wlan0"):
-        built.append((device_id.vid, device_id.pid))
-        iface = FakeInterface(ok=True)
-        iface.name, iface.vid, iface.pid = name, device_id.vid, device_id.pid
-        iface.bus, iface.address = device_id.bus, device_id.address
-        iface.description = device_id.description
-        return iface
-    monkeypatch.setattr(bringup, "build_interface", _build)
-    monkeypatch.setattr(bringup, "find_devices", lambda: [_DEV, _OTHER])
-
-
 async def test_bail_at_permissions_skips_setup(monkeypatch):
     _queue_builds(monkeypatch, FakeInterface(exc=BringUpPermissionsError("open", "no winusb")))
     setup = FakeSetup(install=True)
@@ -193,26 +177,10 @@ async def test_bail_at_permissions_skips_setup(monkeypatch):
     assert setup.installed == 0
 
 
-async def test_pool_others_false_builds_only_the_confirmed_card(monkeypatch):
+async def test_run_brings_up_only_the_given_card(monkeypatch):
+    # No silent auto-pool: run() builds exactly the one card it is given (Splash loops over the
+    # user-checked cards itself), never anything else on the bus.
     built = []
-    _stub_build_recording(monkeypatch, built)
-    res = await _mgr().run(_DEV, pool_others=False)
-    assert res.status is Status.READY and built == [(_DEV.vid, _DEV.pid)]
-
-
-async def test_pool_others_true_also_builds_the_other(monkeypatch):
-    built = []
-    _stub_build_recording(monkeypatch, built)
-    res = await _mgr().run(_DEV, pool_others=True)
-    assert res.status is Status.READY and (_OTHER.vid, _OTHER.pid) in built
-
-
-async def test_pool_others_brings_up_a_second_identical_card(monkeypatch):
-    # Two of the same model on different ports (distinct bus/address). Both must pool: the bug was
-    # build_interface re-grabbing the first VID:PID match, so only one ever came up.
-    built = []
-    dev1 = replace(_DEV, bus=1, address=4)
-    dev2 = replace(_DEV, bus=1, address=5)
 
     def _build(device_id, name="wlan0"):
         built.append(device_id.instance_key)
@@ -220,16 +188,15 @@ async def test_pool_others_brings_up_a_second_identical_card(monkeypatch):
         iface.name = name
         iface.vid, iface.pid = device_id.vid, device_id.pid
         iface.bus, iface.address = device_id.bus, device_id.address
-        iface.description = device_id.description
         return iface
 
     monkeypatch.setattr(bringup, "build_interface", _build)
-    monkeypatch.setattr(bringup, "find_devices", lambda: [dev1, dev2])
     app = FakeApp()
-    res = await _mgr(app).run(dev1, pool_others=True)
+    dev = replace(_DEV, bus=1, address=4)
+    res = await _mgr(app).run(dev)
     assert res.status is Status.READY
-    assert built == [dev1.instance_key, dev2.instance_key]
-    assert len(app.array.members) == 2
+    assert built == [dev.instance_key]
+    assert len(app.array.members) == 1
 
 
 async def test_connect_returning_false_is_failed_not_pooled(monkeypatch):

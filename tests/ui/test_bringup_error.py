@@ -65,7 +65,6 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
         name="rtl8187", description="RTL8187L (test)", vid=0x0BDA, pid=0x8187,
         dev=None, connect=driver.connect, close=AsyncMock())
     monkeypatch.setattr(bringup, "build_interface", lambda device_id, name="wlan0": iface)
-    monkeypatch.setattr(bringup, "find_devices", lambda: [])
     dev = DeviceID(0x0BDA, 0x8187, "RTL8187L", product_name="test")
 
     app = WifiteApp()
@@ -76,7 +75,7 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
         toasts: list[tuple] = []
         monkeypatch.setattr(splash, "notify", lambda *a, **k: toasts.append((a, k)))
 
-        splash.perform_start(dev)              # @work: pump the loop until it surfaces
+        splash.perform_start([dev])            # @work: pump the loop until it surfaces
         label = splash.query_one("#error-label", Label)
         for _ in range(30):
             await pilot.pause()

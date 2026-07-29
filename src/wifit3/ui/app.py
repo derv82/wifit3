@@ -77,23 +77,30 @@ class WifiteApp(App):
         align: center middle;
         margin-top: 1;
     }
-    #start-btn {
-        height: 3;
+    #button-col {
+        width: auto;
+        height: auto;
         margin-left: 2;
+    }
+    #button-col Button {
+        width: 13;
+        height: 3;
+    }
+    #button-col Button:focus {
+        text-style: bold reverse;   /* clear cue when Tab lands on START / Uninstall */
+    }
+    #start-btn {
         color: white;
         text-style: bold;
     }
     #uninstall-btn {
-        height: 3;
-        width: 7;
-        min-width: 7;
-        margin-left: 1;
+        margin-top: 1;              /* stacked under START */
     }
     #status-label {
         content-align: center middle;
         margin-bottom: 1;
     }
-    ListView {
+    ListView, #device-select {
         width: 52;                  /* fits the longest card name */
         height: auto;
         max-height: 12;
@@ -152,7 +159,7 @@ class WifiteApp(App):
             for dev in arrived:
                 if await self.push_screen_wait(NewDeviceDialog(dev.description)):
                     res = await self.bringup.run(
-                        dev, bail_at_permissions=(sys.platform == "win32"), pool_others=False)
+                        dev, bail_at_permissions=(sys.platform == "win32"))
                     if res.status is Status.FAILED:
                         self.notify(res.message, severity="error")
                     elif res.status is Status.READY:

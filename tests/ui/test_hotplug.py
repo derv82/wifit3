@@ -46,7 +46,6 @@ async def test_hotplug_prompt_yes_pools_the_card(monkeypatch):
     dev = DeviceID(0x0BDA, 0x8812, "RTL8812AU (test)")
     iface = _FakeIface(dev)
     monkeypatch.setattr(bringup, "build_interface", lambda device_id, name="wlan0": iface)
-    monkeypatch.setattr(bringup, "find_devices", lambda: [])   # pool-others finds nothing else
 
     app = WifiteApp()
     async with app.run_test() as pilot:
