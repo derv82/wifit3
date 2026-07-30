@@ -93,6 +93,17 @@ class Rtl8188eusDkmsDriver(Driver):
         self._on_lost = cb
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        """Wrap the blocking bring-up so a USB fault (e.g. the intermittent EFUSE-read ENOENT)
+        surfaces as a BringUpError instead of a raw USBError that slips past
+        WlanInterface.connect's handler as a hard crash."""
+        try:
+            return await self._bringup(progress_cb)
+        except BringUpError:
+            raise
+        except Exception as e:   # noqa: BLE001 — USBError/others during bring-up -> clean failure
+            raise BringUpError("bring-up", str(e)) from e
+
+    async def _bringup(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()
 
         if progress_cb:

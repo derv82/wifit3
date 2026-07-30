@@ -44,6 +44,9 @@ def load_firmware_blob() -> bytes:
 
 
 # --- 8051 / MCU-IO reset [SRC] rtl8188e_hal_init.c _MCUIO_Reset88E / _8051Reset88E
+_POST_RESET_SETTLE_S = 0.020   # userland-only pause after the 8051 CPU reset (see _8051_reset)
+
+
 def _mcuio_reset(t, reset: bool) -> None:
     u = t.read8(REG_RSV_CTRL)
     t.write8(REG_RSV_CTRL, u & ~BIT(1))
@@ -60,6 +63,9 @@ def _8051_reset(t) -> None:
     t.write8(REG_SYS_FUNC_EN + 1, u & ~BIT(2))
     _mcuio_reset(t, False)
     t.write8(REG_SYS_FUNC_EN + 1, u | BIT(2))   # cached u, no re-read (per vendor)
+    # Userland-only settle (the vendor has none): a WinUSB ctrl_transfer in the window while the
+    # 8051 leaves CPU reset intermittently returns ENOENT; let it recover before the next read.
+    time.sleep(_POST_RESET_SETTLE_S)
 
 
 # --- FW download enable/disable [SRC] _FWDownloadEnable_8188E
