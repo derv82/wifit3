@@ -39,9 +39,7 @@ class MT7921AUDriver(Driver):
     # Dual-band Wi-Fi 6 radio, 20 MHz primary. 2.4 GHz (1-13) + the 5 GHz 20 MHz
     # channels of the world regulatory domain (regdomain.CHANNELS_5GHZ).
     SUPPORTED_CHANNELS = list(range(1, 14)) + [
-        36, 40, 44, 48, 52, 56, 60, 64,
-        100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
-        149, 153, 157, 161, 165,
+        36, 40, 44, 48, 149, 153, 157, 161, 165,
     ]
     # Bench (rx_autoack, 2026-07-16): auto-ACKs a spoofed MAC via active monitor on both
     # bands (2G 102/100, 5G 100/100); does NOT ACK its own silicon MAC. Behaves SPOOFABLE.
