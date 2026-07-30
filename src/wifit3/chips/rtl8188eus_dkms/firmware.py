@@ -44,7 +44,7 @@ def load_firmware_blob() -> bytes:
 
 
 # --- 8051 / MCU-IO reset [SRC] rtl8188e_hal_init.c _MCUIO_Reset88E / _8051Reset88E
-_POST_RESET_SETTLE_S = 0.020   # userland-only pause after the 8051 CPU reset (see _8051_reset)
+_POST_RESET_SETTLE_S = 0.1   # userland-only pause after the 8051 CPU reset (see _8051_reset)
 
 
 def _mcuio_reset(t, reset: bool) -> None:

@@ -58,7 +58,14 @@ async def main() -> int:
     p.add_argument("n", nargs="?", type=int, default=20, help="number of bring-ups (default: 20)")
     p.add_argument("--settle", type=float, default=1.5,
                    help="seconds between bring-ups, to let the card cold-settle. Default: 1.5.")
+    p.add_argument("--reset-settle", type=float, default=None,
+                   help="override the driver's post-8051-reset settle (seconds), to sweep it.")
     args = p.parse_args()
+
+    if args.reset_settle is not None:
+        from wifit3.chips.rtl8188eus_dkms import firmware
+        firmware._POST_RESET_SETTLE_S = args.reset_settle
+        print(f"[*] post-reset settle overridden to {args.reset_settle}s")
 
     ok = fail = crash = 0
     for i in range(1, args.n + 1):
