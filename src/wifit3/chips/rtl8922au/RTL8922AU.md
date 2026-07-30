@@ -198,6 +198,10 @@ the 8812 sniffer plugged and re-run any of them after a physical replug.
   supplies the client-impersonation ACKs.
 - `inject_frame` has no No-ACK flag path; add a test-only no-ACK path to verify TX bytes (cf. commit
   d58e6f252) if needed.
+- **Slow set_channel (~0.5-1 s/hop):** each hop runs the full two-pass RFK (iqk/dpk/tssi/rxdck) for
+  both PHYs, ~1500 USB control ops. The kernel skips most of that RFK unless the band/context
+  changed; we redo it every hop. Deferred (works fine, just slow); skip the redundant RFK to speed
+  hopping if it ever matters.
 
 Only the 5/6 GHz **20 MHz** paths are exercised by the capture; the 40/80/160/320 MHz branches in
 `_ctrl_bw`, `_set_txpwr_limit`, and `_fill_limit_*` still raise (not needed for the monitor hops, but

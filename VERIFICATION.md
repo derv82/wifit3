@@ -33,7 +33,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
 | [MT7925AU](#mt7925au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | ? |
+| [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 
 ## Per-card notes
 
@@ -89,7 +89,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | WEP | ✅ | 2026-07-25 | ChopChop + ARP replay ~170 IVs/s. |
 | WPS | ✅ | 2026-07-25 | PIN → M7 (5/5); PBC (~20 EAPOL). |
 | ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (Addr2-keyed). |
-| Stress | ✅ | 2026-06-16 | 30-min soak flat (mainline degrades/collapses). |
+| Stress | ✅ | 2026-07-30 | 30-min soak, flat (trend 0.97); mainline degrades/collapses. |
 
 → [RTL8188EUS_DKMS.md](src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
 
@@ -367,15 +367,15 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **?** | N/A | Accurate rtw89 port (verify_pcap PASS ×3); dual-band RX/TX/auto-ACK live. WEP/WPS labs still to run. |
-| RX | ✅ | N/A | Dual-band monitor RX, beacons parse. Yield tracks USB speed (USB2 ~70-90 APs, USB3 ~15, 2.4 GHz worst). |
-| TX | ✅ | N/A | inject_frame live: broadcast probe req drew 38 probe responses to the forged SA. |
-| ACKs | ✅ | N/A | Auto-ACKs a forged MAC via active monitor (SPOOFABLE, bench-confirmed). |
+| **Grade** | **A** | 2026-07-30 | Accurate rtw89 port (verify_pcap PASS ×3); full attack suite works on USB-A. USB-3 starves RX (see RX). |
+| RX | ✅ | 2026-07-30 | Dual-band monitor RX; yield tracks USB speed (USB-A ~70-90 APs, USB-3 ~16, 2.4 GHz worst). |
+| TX | ✅ | 2026-07-30 | Deauth + WPS + PMKID inject, 2.4 + 5 GHz (probe-req drew 38 responses). |
+| ACKs | ✅ | 2026-07-30 | Auto-ACKs a forged MAC via active monitor (SPOOFABLE); WPS-PIN + PMKID confirm it. |
 | Port | ✅ | N/A | verify_pcap PASS on all 3 cold-boot captures (register + bulk-OUT byte-for-byte), both bands. |
-| Handshake | ⬜ | N/A | Not yet run. |
-| PMKID | ⬜ | N/A | Not yet run. |
-| WEP | ⬜ | N/A | Not yet run. |
-| WPS | ⬜ | N/A | Not yet run. |
+| Handshake | ✅ | 2026-07-30 | Deauth → 4-way, 2.4 + 5 GHz. |
+| PMKID | ✅ | 2026-07-30 | Passive + active, 2.4 + 5 GHz. |
+| WEP | ✅ | 2026-07-30 | USB-A: ChopChop 32B/15s, ARP ~180 IVs/s. USB-3: ~1min/32B, ~8 IVs/s (RX-starved). |
+| WPS | ✅ | 2026-07-30 | PIN works. |
 | Stress | ✅ | 2026-07-29 | 30-min USB-A soak, flat (93→102 active, trend ~1.0). USB-3 drops RX to ~15 (2.4 GHz hit hardest). |
 
 → [RTL8922AU.md](src/wifit3/chips/rtl8922au/RTL8922AU.md)
