@@ -54,6 +54,7 @@ Only the devices listed below will work with wifit3.
 | ALFA AWUS036**ACS** | Realtek RTL8821AU | 2.4 / 5 GHz |
 | ALFA AWUS036**ACH** | Realtek RTL8812AU | 2.4 / 5 GHz |
 | ALFA AWUS1900 | Realtek RTL8814AU | 2.4 / 5 GHz |
+| ASUS USB-BE93 | Realtek RTL8922AU | 2.4 / 5 GHz |
 | ALFA AWUS036**H** | Realtek RTL8187L | 2.4 GHz |
 | ALFA AWUS036**NH** | Ralink RT3070 | 2.4 GHz |
 | TP-Link T3U Plus | Realtek RTL8822BU | 2.4 / 5 GHz |
