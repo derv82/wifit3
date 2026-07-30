@@ -23,10 +23,30 @@ def _emit(log, msg: str) -> None:
 
 
 # ---- USB (wifit3-driver) interface selection -------------------------------
-def pick_interface(ifaces, card: str = "", *, log=None):
-    """The interface whose ``"<name> <description>"`` contains ``card`` (case-insensitive),
-    or ``ifaces[0]`` when ``card`` is blank. Returns None (after printing the roster) if a
-    non-blank ``card`` matches nothing."""
+def _parse_instance(instance: str) -> tuple[int, int] | None:
+    """``"BUS:ADDR"`` (decimal, as pyusb reports dev.bus/dev.address) to ``(bus, addr)``, or None
+    if malformed."""
+    try:
+        bus, _, addr = instance.partition(":")
+        return int(bus), int(addr)
+    except ValueError:
+        return None
+
+
+def pick_interface(ifaces, card: str = "", *, instance: str = "", log=None):
+    """The interface to bring up. An explicit ``instance`` (``"BUS:ADDR"``) wins: it names one exact
+    physical card, the only way to tell two identical VID:PIDs apart (soak_all launches one subprocess
+    per card this way). Else the interface whose ``"<name> <description>"`` contains ``card``
+    (case-insensitive), or ``ifaces[0]`` when both are blank. Returns None (after printing the roster)
+    if a non-blank ``instance``/``card`` matches nothing."""
+    if instance:
+        want = _parse_instance(instance)
+        matches = [i for i in ifaces if (i.bus, i.address) == want] if want else []
+        if not matches:
+            roster = ", ".join(f"{i.bus}:{i.address} ({i.description})" for i in ifaces)
+            _emit(log, f"[-] no card at instance '{instance}'. Found: {roster}")
+            return None
+        return matches[0]
     if not card:
         if len(ifaces) > 1:
             _emit(log, f"[!] {len(ifaces)} interfaces; using {ifaces[0].name}. "

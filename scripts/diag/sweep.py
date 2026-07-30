@@ -79,6 +79,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--card", default="",
         help="substring of the adapter to bring up (e.g. 8812, mt7921); default: first found.",
     )
+    parser.add_argument(
+        "--instance", default="",
+        help="exact physical card as BUS:ADDR (wins over --card); the only way to tell two "
+        "identical VID:PIDs apart. soak_all.py uses this per subprocess.",
+    )
     # Every probe contributes:
     #  * a ``--skip-<probe.name>`` flag (skip_<sanitised_name>)
     #  * any probe-specific flags via probe.add_args
@@ -133,7 +138,7 @@ async def main() -> int:
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
-    iface = pick_interface(ifaces, args.card)
+    iface = pick_interface(ifaces, args.card, instance=args.instance)
     if iface is None:
         await close_interfaces(ifaces)
         return 1
