@@ -33,9 +33,7 @@ class MT7925AUDriver(Driver):
     # Dual-band Wi-Fi 7 radio, 20 MHz primary. 2.4 GHz (1-13) + the 5 GHz 20 MHz
     # channels the capture sweeps (main.log: 36..165).
     SUPPORTED_CHANNELS = list(range(1, 14)) + [
-        36, 40, 44, 48, 52, 56, 60, 64,
-        100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
-        149, 153, 157, 161, 165,
+        36, 40, 44, 48, 149, 153, 157, 161, 165,
     ]
     FAKE_MAC = FakeMacSupport.SPOOFABLE
     LINUX_REPLUG_AFTER_MODPROBE = True
