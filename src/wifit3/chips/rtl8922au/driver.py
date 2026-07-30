@@ -44,7 +44,7 @@ class RTL8922AUDriver(Driver):
         DeviceID(vid=0x057c, pid=0x8701, chipset="RTL8922AU"),
         DeviceID(vid=0x0b05, pid=0x1bcf, chipset="RTL8922AU", vendor="ASUS"),
         DeviceID(vid=0x0b05, pid=0x1bd2, chipset="RTL8922AU", vendor="ASUS"),
-        DeviceID(vid=0x0b05, pid=0x1d84, chipset="RTL8922AU", vendor="ASUS", product_name="USB-BE93"),
+        DeviceID(vid=0x0b05, pid=0x1d84, chipset="RTL8922AU", product_name="ASUS USB-BE93"),
         DeviceID(vid=0x0bda, pid=0x8912, chipset="RTL8922AU"),
         DeviceID(vid=0x0db0, pid=0xda0e, chipset="RTL8922AU"),
         DeviceID(vid=0x2001, pid=0x332b, chipset="RTL8922AU"),

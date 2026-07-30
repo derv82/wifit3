@@ -70,7 +70,7 @@ _REF_CUT = 4                    # hal chip_ver / dm cut_version
 
 class Rtl8821cuDkmsDriver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(USB_VID_REALTEK, USB_PID_8821CU, "RTL8821CU"),
+        DeviceID(USB_VID_REALTEK, USB_PID_8821CU, "RTL8821CU", product_name="Auscoumer 600 Mbps"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE

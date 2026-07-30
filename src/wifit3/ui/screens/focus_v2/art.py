@@ -181,6 +181,8 @@ _ART_BY_PRODUCT: dict[str, str] = {
     "Panda PAU05 / PAU06": "cards/card-pau06.ans",
     "Panda PAU09 N600": "cards/card-pau09n600.ans",
     "TL-WN722N v2/v3": "cards/card-tpwn722nv23.ans",
+    "Netgear A9000": "cards/card-netgeara9000.ans",
+    "ASUS USB-BE93": "cards/card-asusbe93.ans",
 }
 # For the four non-Realtek rows below this IS the art (they carry no product_name); RTL8821CU's
 # Archer T3U Plus product row usually resolves first, so its chipset default is a rarely-hit spare.
