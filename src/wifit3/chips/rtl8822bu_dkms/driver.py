@@ -43,6 +43,9 @@ _BULK_OUT_EP_TX = 0x05                          # 8822b bulk-OUT (FW/TX)
 CHANNELS_2G = list(range(1, 14))
 CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
+# Scan set excludes the DFS band (52-144): passive-scan-only, radar-shared, home APs avoid it.
+# set_channel + verify_channels still drive the full CHANNELS_5G above, byte-for-byte vs the capture.
+CHANNELS_5G_NON_DFS = [36, 40, 44, 48, 149, 153, 157, 161, 165]
 
 # The pcap-gated reference card's EFUSE/chip-cut burn (TP-Link Archer T3U+). A card whose burn
 # differs runs ported-but-hardware-untested branches (FEM CCA table / RFE pinmux / SoML RxHP arm),
@@ -89,7 +92,7 @@ class Rtl8822buDkmsDriver(Driver):
         DeviceID(USB_VID_REALTEK, USB_PID_T3U_PLUS, "RTL8822BU",
                  vendor="TP-Link", product_name="Archer T3U Plus"),
     ]
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G_NON_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: Rtl8822buTransport):

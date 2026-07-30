@@ -51,6 +51,9 @@ _BULK_OUT_EP_TX = 0x02   # the 8812's 3-out-EP map (0x02/0x03/0x04); TX (M6) sen
 CHANNELS_2G = list(range(1, 14))
 CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
+# Scan set excludes the DFS band (52-144): passive-scan-only, radar-shared, home APs avoid it.
+# set_channel + verify_channels still drive the full CHANNELS_5G above, byte-for-byte vs the capture.
+CHANNELS_5G_NON_DFS = [36, 40, 44, 48, 149, 153, 157, 161, 165]
 
 
 class Rtl8812auDkmsDriver(Driver):
@@ -58,7 +61,7 @@ class Rtl8812auDkmsDriver(Driver):
         DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACH, "RTL8812AU",
                  product_name="ALFA AWUS036ACH"),
     ]
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G_NON_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: Rtl88xxauTransport):
