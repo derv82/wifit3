@@ -21,7 +21,7 @@ from wifit3.wlan.wep_store import WepCaptureStore
 
 logger = logging.getLogger(__name__)
 
-# Prefer the most attack-capable card for TX (see _FAKE_MAC_RANK below).
+# Prefer the most attack-capable card for TX (see fake_mac_rank below).
 _FAKE_MAC_RANK = {
     FakeMacSupport.SPOOFABLE: 0,
     FakeMacSupport.FIXED_MAC: 1,
@@ -30,11 +30,18 @@ _FAKE_MAC_RANK = {
 }
 
 
+def fake_mac_rank(iface) -> int:
+    """A card's TX-capability rank, lower = more attack-capable (UNIMPLEMENTED/unknown sorts last).
+    The public read of _FAKE_MAC_RANK for callers that rank cards (select_iface, the TX picker)."""
+    return _FAKE_MAC_RANK.get(getattr(getattr(iface, "driver", None), "FAKE_MAC", None), 9)
+
+
 class WlanArray:
     """A pool of WlanInterfaces feeding one shared WlanSink, plus card selection for attacks."""
 
     def __init__(self, sink: Optional[WlanSink] = None, window: float = 0.3):
         self._members: List[WlanInterface] = []
+        self._preferred: Optional[WlanInterface] = None   # user's session TX pick; see select_iface
         self._sink = sink or WlanSink()
         self._dedupe = StreamMerger(window=window)
         self._rx_callbacks: List[Callable[[Packet], None]] = []      # deduped stream
@@ -111,6 +118,8 @@ class WlanArray:
         card down to stop its async tasks; hot_unplug passes False since it already closed."""
         if iface in self._members:
             self._members.remove(iface)
+        if iface is self._preferred:
+            self._preferred = None      # pinned card unplugged: fall back to auto until re-picked
         self._dedupe.remove_source(iface.name)
         remaining = len(self._members)
         logger.info("pool: lost %s; %d card(s) remain", iface.name, remaining)
@@ -126,13 +135,26 @@ class WlanArray:
 
     # ----- card selection ----------------------------------------------------
 
+    @property
+    def preferred(self) -> Optional[WlanInterface]:
+        return self._preferred
+
+    def prefer(self, iface: Optional[WlanInterface]) -> None:
+        """Pin a card as the session TX pick. ``select_iface`` returns it for any target it can
+        reach; None restores pure capability ranking. In-memory only (a replug is a fresh object,
+        so it re-picks). Cleared automatically when the pinned card is lost."""
+        self._preferred = iface
+
     def select_iface(self, channel: int) -> Optional[WlanInterface]:
-        """The most attack-capable card that can tune to ``channel``, or None when no live card can
-        reach the band (e.g. a 5 GHz target with only 2.4 GHz cards left)."""
+        """The card to TX on for ``channel``: the user's pinned card when it can reach the band,
+        else the most attack-capable card that can. None when no live card can reach the band at
+        all (e.g. a 5 GHz target with only 2.4 GHz cards left)."""
         cands = [m for m in self._members if channel in m.supported_channels]
         if not cands:
             return None
-        return min(cands, key=lambda m: _FAKE_MAC_RANK.get(m.driver.FAKE_MAC, 9))
+        if self._preferred in cands:
+            return self._preferred
+        return min(cands, key=fake_mac_rank)
 
     # ----- deduped RX subscription (no v1 consumer, kept for future) ----------
 

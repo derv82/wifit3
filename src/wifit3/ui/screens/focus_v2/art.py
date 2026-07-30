@@ -229,14 +229,9 @@ def pool_art(members) -> str:
     return art_path_for(primary) if primary is not None else _GENERIC
 
 
-def card_label(members) -> str:
-    """Label under the card art: the shown card's product_name (fallback chipset), with a ``+N``
-    suffix counting the other pooled cards. ``"no card"`` when the pool is empty."""
-    primary = pick_primary(members)
-    if primary is None:
-        return "no card"
-    name = (getattr(getattr(primary, "driver", None), "product_name", None)
-            or getattr(primary, "product_name", None)
-            or getattr(primary, "chipset", None) or "card")
-    extra = len(members) - 1
-    return f"{name} +{extra}" if extra > 0 else name
+def display_name(iface) -> str:
+    """One card's human name: its driver-refined product_name (mt7921au OUI split), else the static
+    product_name, else the bare chipset. ``"card"`` when nothing is set."""
+    return (getattr(getattr(iface, "driver", None), "product_name", None)
+            or getattr(iface, "product_name", None)
+            or getattr(iface, "chipset", None) or "card")

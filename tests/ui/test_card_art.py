@@ -77,21 +77,6 @@ def test_pool_art_empty_is_generic():
     assert art.pool_art([_iface(product_name="ALFA AWUS036H")]) == "cards/card-awus036h.ans"
 
 
-def test_card_label_single_multi_and_empty():
-    axml = _iface(product_name="ALFA AWUS036AXML / Panda PAU0F", driver_product="Panda PAU0F")
-    assert art.card_label([axml]) == "Panda PAU0F"
-    assert art.card_label([axml, _iface(product_name="ALFA AWUS036H")]) == "Panda PAU0F +1"
-    assert art.card_label([axml, axml, axml]) == "Panda PAU0F +2"
-    assert art.card_label([]) == "no card"
-
-
-def test_card_label_falls_back_to_chipset():
-    # No product_name (the RT2570 / RT5370 / MT76x0U rows) -> the label is the bare chipset string,
-    # even though the art still resolves via the chipset tier (card-buffalonintendo.ans etc).
-    assert art.card_label([_iface(chipset="RT2570")]) == "RT2570"
-    assert art.card_label([_iface(chipset="RT9999")]) == "RT9999"
-
-
 # --- BreathingArt.set_art (runtime swap) ------------------------------------
 
 def test_breathing_art_set_art_swaps_and_noops():
@@ -134,6 +119,7 @@ async def test_sync_card_updates_mounted_endpoint():
         scr._sync_card()
         await pilot.pause()
         card = scr.query_one("#card", CardEndpoint)
+        from wifit3.ui.screens.focus_v2.tx_picker import TxDevicePicker
         assert card.query_one(BreathingArt)._name == "cards/card-awus036h.ans"
-        assert card._last["#card-chipset"] == "ALFA AWUS036H"
+        assert card.query_one(TxDevicePicker)._text == "ALFA AWUS036H"   # single card -> plain name
         assert card._last["#card-bssid"] == "00:11:22:33:44:55"   # single card -> its MAC shows

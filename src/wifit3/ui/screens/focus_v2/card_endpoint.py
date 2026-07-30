@@ -10,6 +10,7 @@ from textual.containers import Vertical
 from textual.widgets import Label
 
 from .art import BreathingArt
+from .tx_picker import TxDevicePicker
 
 
 class CardEndpoint(Vertical):
@@ -21,7 +22,9 @@ class CardEndpoint(Vertical):
 
     def compose(self) -> ComposeResult:
         yield BreathingArt("focus-card.ans", classes="endpoint-art")
-        yield Label(self._snap.card_chipset, classes="card-static", id="card-chipset")
+        # The product-name slot is the TX-device picker: a plain label with one card, a dropdown
+        # to pin the injection card with two or more. Driven by sync_picker from the screen tick.
+        yield TxDevicePicker(self._snap.card_chipset, id="tx-picker")
         # Always present (the card MAC is static per card) so a later tick can
         # show/hide it; hidden when the driver doesn't expose its own BSSID.
         bssid = Label(self._snap.card_bssid or "", classes="card-static", id="card-bssid")
@@ -45,11 +48,13 @@ class CardEndpoint(Vertical):
         dyn.update(snap.card_dynamic)
         dyn.display = bool(snap.card_dynamic)
 
-    def update_identity(self, label: str, bssid: str | None) -> None:
-        """Re-apply the card's identity (product label + own BSSID) when it changes. The pool can
-        change under us (plug/unplug) while Focus is open, so identity can't be a compose-once value.
-        The BSSID line shows only for a single card (a multi-card pool has no single MAC)."""
-        self._push("#card-chipset", label)
+    def sync_picker(self, members, channel, current, locked: bool) -> None:
+        """Refresh the TX-device picker (trigger name + dropdown state) from the live pool."""
+        self.query_one(TxDevicePicker).sync(members, channel, current, locked)
+
+    def update_bssid(self, bssid: str | None) -> None:
+        """Re-apply the card's own BSSID line. Shows only for a single card (a multi-card pool has
+        no single MAC). The pool can change under us (plug/unplug) while Focus is open."""
         if self._push("#card-bssid", bssid or ""):
             self.query_one("#card-bssid", Label).display = bool(bssid)
 

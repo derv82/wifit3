@@ -105,6 +105,38 @@ def test_select_iface_returns_only_card_even_if_spoof_incapable():
     assert a.select_iface(6) is weak
 
 
+def test_prefer_pins_a_card_over_capability_rank():
+    weak = FakeIface("wlan0", [1, 6, 11], fake_mac=FakeMacSupport.NONE)
+    strong = FakeIface("wlan1", [1, 6, 11], fake_mac=FakeMacSupport.SPOOFABLE)
+    a = _pool(weak, strong)
+    assert a.select_iface(6) is strong                       # default: most capable
+    a.prefer(weak)
+    assert a.preferred is weak
+    assert a.select_iface(6) is weak                         # pin wins even though it's weaker
+    a.prefer(None)
+    assert a.select_iface(6) is strong                       # cleared: back to rank
+
+
+def test_prefer_falls_back_to_rank_when_pin_cant_reach_band():
+    two4 = FakeIface("wlan0", [1, 6, 11])
+    five = FakeIface("wlan1", [36, 44])
+    a = _pool(two4, five)
+    a.prefer(two4)
+    assert a.select_iface(44) is five     # pinned 2.4 card can't reach ch44: fall back
+    assert a.select_iface(6) is two4      # pin still honored for targets it can reach
+    assert a.preferred is two4            # a fallback for one target doesn't clear the pin
+
+
+def test_member_lost_clears_a_pinned_card():
+    two4 = FakeIface("wlan0", [1, 6, 11])
+    other = FakeIface("wlan1", [1, 6, 11], fake_mac=FakeMacSupport.NONE)
+    a = _pool(two4, other)
+    a.prefer(two4)
+    two4.emit_disconnect(RuntimeError("unplugged"))
+    assert a.preferred is None
+    assert a.select_iface(6) is other     # only survivor
+
+
 # ----- ingest / dedupe -------------------------------------------------------
 
 def test_ingest_novel_populates_sink_with_card_signal():

@@ -32,6 +32,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Static
 
 from wifit3.campaigns import treelog
+from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
 from wifit3.campaigns.wpa3_downgrade import WPA3DowngradeAttack
@@ -51,6 +52,7 @@ from ...eapol_aggregate import EapolAggregator
 from ... import pmkid_log
 from ...encryption_format import wep_key_ascii
 from .card_endpoint import CardEndpoint
+from .tx_picker import TxDevicePicker
 from .clients_list import ClientsList
 from .packet_dashboard import PacketDashboard
 from .log_band import LogBand
@@ -278,13 +280,31 @@ class FocusViewV2(Screen):
         btn.tooltip = state.reason or _BUTTON_TIPS.get(str(state.label))
 
     def _sync_card(self) -> None:
-        """Refresh the card endpoint's label + art from the live pool. Polled from the tick because
-        WlanArray has no arrival callback: a plug/unplug is only observed by re-reading members."""
-        members = self.app.array.members if self.app.array else []
+        """Refresh the card endpoint (picker + art) from the live pool, polled because WlanArray has
+        no arrival callback. The shown card is the TX card: the campaign's locked one, else
+        select_iface's pick for this target."""
+        array = self.app.array
+        members = array.members if array else []
+        active = Campaign.active
+        ap = getattr(self.app, "target_ap", None)
+        if active is not None:
+            primary = active.iface
+        elif ap is not None and array is not None:
+            primary = array.select_iface(ap.channel)
+        else:
+            primary = None
+        primary = primary or art.pick_primary(members)   # no capable card: still show something
         card = self.query_one("#card", CardEndpoint)
-        card.update_identity(art.card_label(members),
-                             members[0].mac_address if len(members) == 1 else None)
-        card.set_art(art.pool_art(members))
+        card.set_art(art.art_path_for(primary) if primary is not None else art.pool_art(members))
+        card.sync_picker(members, ap.channel if ap is not None else None,
+                         primary, active is not None)
+        card.update_bssid(members[0].mac_address if len(members) == 1 else None)
+
+    def on_tx_device_picker_selected(self, event: TxDevicePicker.Selected) -> None:
+        """User pinned a TX card in the picker: record the preference and re-sync the endpoint."""
+        if self.app.array is not None:
+            self.app.array.prefer(event.iface)
+        self._sync_card()
 
     def _refresh_buttons(self) -> None:
         """Drive the conditional attack buttons from derive_buttons."""
