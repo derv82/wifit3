@@ -84,6 +84,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="exact physical card as BUS:ADDR (wins over --card); the only way to tell two "
         "identical VID:PIDs apart. soak_all.py uses this per subprocess.",
     )
+    parser.add_argument(
+        "--bringup-signal", default="",
+        help="internal: soak_all passes a path here; sweep touches it once bring-up completes, "
+        "so the supervisor can serialize cold-boots. Ignored when empty.",
+    )
     # Every probe contributes:
     #  * a ``--skip-<probe.name>`` flag (skip_<sanitised_name>)
     #  * any probe-specific flags via probe.add_args
@@ -150,6 +155,14 @@ async def main() -> int:
         print(f"[-] Bring-up failed: {e}", file=sys.stderr)
         await close_interfaces(ifaces)
         return 1
+
+    # Bring-up done: touch the signal file so soak_all can start the next card's cold-boot with
+    # the bus to itself (overlapping cold-boots intermittently collide).
+    if args.bringup_signal:
+        try:
+            Path(args.bringup_signal).write_text("ok", encoding="utf-8")
+        except OSError:
+            pass
 
     array = WlanArray()
     array.attach(iface)
