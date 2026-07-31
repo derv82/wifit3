@@ -23,7 +23,10 @@ class _Overlay(Screen):
 
 
 class _FakeIface:
-    """_poll_pbc only needs get_access_points; on_screen_resume needs start_hopping."""
+    """Stubs app.array: get_access_points for _poll_pbc, start_hopping for on_screen_resume,
+    members for the header's _ChannelReadout._poll timer."""
+    members = []
+
     def __init__(self, aps):
         self._aps = aps
 
