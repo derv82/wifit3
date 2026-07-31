@@ -19,18 +19,20 @@ wifit3 is fundamentally different from its predecessor, [wifite2](https://github
    * Admin is required to install [WinUSB drivers](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/introduction-to-winusb-for-developers) on Windows (automated).
    * After setup/install, wifit3 runs without privilege escalation.
 * *Far* fewer dependencies: PyUSB/libusb (USB) and Textual/Rich (TUI).
-  * No aircrack/airmon/reaver/bully/hcxdumptool/etc.
+  * No aircrack, airmon, reaver, bully, hcxdumptool, etc.
 
 ## Features
 
-- **Live scan**: Lists Access Points (APs) with channel hopping, signal, encryption, WPS state, and WPA3/SAE detection.
+- **Multi-card**: listen on every plugged-in and supported device, improves capturing, select TX device.
+- **Live scan**: lists Access Points (APs) with channel hopping, signal, encryption, WPS state, and WPA3/SAE detection.
+- **VAP Decloaking**: identifies and tags hidden Virtual APs (VAPs) with its physical AP.
+- **Live packet dashboard**: real-time traffic sparklines (beacons, data, injects, deauths) for the focused target.
 - **PMKID**: passive capture and active harvest, saves as HashCat `.hc22000` filetype.
 - **WPA/WPA2 handshakes**: passive 4-way capture and deauth-triggered capture, proper handshake validation, compact PCAP and `.hc22000` saves.
-- **WPS PIN Brute-force**: Resumable WPS PIN brute-force sessions.
-- **WPS PushButton Extraction**: Detects when an AP's WPS button is pressed, automatically extracts PSK.
-- **VAP Decloaking**: Identifies and tags hidden Virtual APs (VAPs) with its physical AP.
-- **WEP suite**: ARP replay, ChopChop, fake auth, PTW key recovery.
-- **Live packet dashboard**: real-time traffic sparklines (beacons, data, injects, deauths) for the focused target.
+- **WPS PushButton Extraction**: detects when an AP's WPS button is pressed, automatically extracts PSK.
+- **WPS PIN Brute-force**: resumable WPS PIN brute-force sessions.
+- **WEP suite**: ARP replay, ChopChop, fake auth, PTW key recovery. For anyone trapped in 2006.
+- **WiFFy**: helpful assistant that provides useful messages during the WinUSB installation process.
 
 ## Screenshots
 
@@ -40,32 +42,33 @@ wifit3 is fundamentally different from its predecessor, [wifite2](https://github
 
 ## Supported hardware
 
-Only the devices listed below will work with wifit3.
-
 *If your USB device is not listed there, wifit3 will not work with it.*
+
+A matching chipset does not guarantee that your wireless card will work
+(wifit3 has not been tested on every make/model/variant of the chipsets below).
 
 | Card | Chipset | Bands |
 |---|---|---|
 | ALFA AWUS036**NHA** | Atheros AR9271 | 2.4 GHz |
 | ALFA AWUS036**ACM** | MediaTek MT7612U | 2.4 / 5 GHz |
-| ALFA AWUS036**ACHM** | MediaTek MT7610U | 2.4 / 5 GHz |
+| ALFA AWUS036**ACHM** / Panda PAU0B | MediaTek MT7610U | 2.4 / 5 GHz |
 | ALFA AWUS036**AXML** / Panda PAU0F | MediaTek MT7921AU | 2.4 / 5 GHz |
 | Netgear A9000 | MediaTek MT7925U | 2.4 / 5 GHz |
 | ALFA AWUS036**ACS** | Realtek RTL8821AU | 2.4 / 5 GHz |
 | ALFA AWUS036**ACH** | Realtek RTL8812AU | 2.4 / 5 GHz |
 | ALFA AWUS1900 | Realtek RTL8814AU | 2.4 / 5 GHz |
 | ASUS USB-BE93 | Realtek RTL8922AU | 2.4 / 5 GHz |
-| ALFA AWUS036**H** | Realtek RTL8187L | 2.4 GHz |
-| ALFA AWUS036**NH** | Ralink RT3070 | 2.4 GHz |
+| TP-Link TL-WN722N v2/v3 | Realtek RTL8188EUS | 2.4 GHz |
 | TP-Link T3U Plus | Realtek RTL8822BU | 2.4 / 5 GHz |
 | Auscoumer 600 Mbps | Realtek RTL8821CU | 2.4 / 5 GHz |
-| TP-Link TL-WN722N v2/v3 | Realtek RTL8188EUS | 2.4 GHz |
+| ALFA AWUS036**NH** | Ralink RT3070 | 2.4 GHz |
 | Panda PAU05 / PAU06 | Ralink RT5372 | 2.4 GHz |
 | Panda PAU09 N600 | Ralink RT5572 | 2.4 / 5 GHz |
-| Buffalo Nintendo Wi-Fi USB Controller | Ralink RT2570 | 2.4 GHz |
 | LOTEKOO 150 Mbps | Ralink RT5370 | 2.4 GHz |
+| ALFA AWUS036**H** | Realtek RTL8187L | 2.4 GHz |
+| Buffalo Nintendo Wi-Fi USB Controller | Ralink RT2570 | 2.4 GHz |
 
-[VERIFICATION.md](VERIFICATION.md) has detailed information about each card's capability and performance.
+See [VERIFICATION.md](VERIFICATION.md) for detailed information about each card's capabilities and performance.
 
 ## Install
 
@@ -121,6 +124,10 @@ This sidesteps the operating system's wireless stack completely, including Windo
 (Network Driver Interface Specification), which would otherwise block Monitor Mode and
 injection. The bytes sent to the card are the same on either OS, so a single codebase runs
 on both Linux and Windows.
+
+Mini-Drivers also enables wifit3's multi-card feature: Plug in multiple (supported)
+wireless devices and wifit3 will "cross the streams", improving the chances of capturing
+packets and overall RX.
 
 ### Ported from C to Python by a coding agent
 

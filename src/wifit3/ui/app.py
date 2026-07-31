@@ -62,7 +62,7 @@ def _configure_file_logging(default: Optional[str] = None) -> None:
 class WifiteApp(App):
     """wifit3 TUI Main App."""
 
-    TITLE = "wifit3 - Wireless Auditor"
+    TITLE = "wifit3 - Wireless Auditor - derv82"
 
     CSS = """
     /* Force single-line header to avoid Textual's "click to expand" behavior */
