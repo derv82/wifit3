@@ -1,30 +1,85 @@
-# ACK redesign — Driver parent class
+# ACK Lab: Scripts for diagnosing ACKs
 
-Status: `chips/driver.py` implemented per your notes. Nothing else touched. Not committed.
-Suite green (1737 passed), lint clean. The 22 drivers are UNCHANGED, so the new base code is
-dormant (they still override the public methods and never call `super().__init__()`).
+## Wifit3's ACK architecture
 
-## What goes into chips/driver.py
+Three layers. A **campaign** (pmkid / WPS-pin / WPS-pbc / wep) asks a **`WlanInterface`** to inject
+and to watch for the recipient's ACK; the interface delegates to its **`Driver`**, which owns every
+ACK mechanism; each chip's RX reader taps `record_ack` on incoming ACK frames. Two independent things
+travel under the word "ACK": whether we *hear* the recipient's ACK (the RX tally) and whether our card
+*emits* an ACK for a chosen/spoofed MAC (active monitor + the chip's own TX HW-retry). The four
+measured features are named in the glossary below (A/B/C + Active Monitor); this is where each lives.
 
-New base `__init__` (3 fields, replaces the old 7-field-per-driver set):
+Typical ACKed exchange (WPS / PMKID): `set_fake_mac()` (so the AP's unicast reaches us and the chip
+auto-ACKs it, or the AP abandons the session) → `enable_rx_acks()` (arm the tally) → `send_until_ack()`
+/ `acks_seen()` (did the AP ACK our frame?). Deauth needs none of this: it only *reports* endpoint ACKs.
 
-```python
-self._tx_ack_enabled: bool = False              # detection armed?
-self._seen_ack: bool = False                    # ACK to _tx_mac_address seen since reset
-self._tx_mac_address: Optional[bytes] = None    # source MAC of our in-flight inject
-```
+### `Driver` (ABC, `chips/driver.py`): owns the mechanism
 
-Concrete public methods + per-chip hooks (hooks `raise NotImplementedError`, per your note):
+- **Injection**
+  - `inject_frame(frame)`: send once, fire-and-forget; registers the frame's Addr2 in the tally,
+    stamps the seq, calls the chip hook. The chip's own HW ACK-retry is the only retransmission.
+  - `inject_frame_slow_retry(frame, timeout, max_resends)`: software ACK-retry: send, watch RX for an
+    ACK to our Addr2, resend on silence up to `max_resends`. Needs the tally armed (feature C).
+  - `_inject_frame(frame)` *(hook)*: build the chip's TX descriptor and bulk-OUT it once.
+  - `_stamp_tx_seq(frame)` *(hook)*: stamp an incrementing 802.11 sequence, or identity if the HW
+    assigns it (the per-inject seq the sniffer keys the retry histogram on).
+  - `_extract_mac(frame)`: the Addr2/TA (`frame[10:16]`) the recipient's ACK returns to.
+- **RX-ACK tally: do we *hear* the ACK? (features A + C)**
+  - `enable_rx_acks()` / `disable_rx_acks()`: arm/disarm the tally: reset state, then call the hook.
+  - `_enable_rx_acks()` / `_disable_rx_acks()` *(hooks)*: flip the RX-filter bit that admits ACK
+    control frames (FC=0xD4) to RX (Realtek RXFLTMAP1 / MediaTek MT_RX_FILTR_CFG), or a documented
+    no-op on cards whose monitor filter already admits them.
+  - `record_ack(frame)`: a chip's RX reader calls this per ACK; tallies it when armed and the ACK's
+    RA (`frame[4:10]`) is a source MAC we injected as.
+  - `acks_seen(mac)`: ACKs tallied to source `mac` since the last arm.
+  - state (base `__init__`): `_ack_detect_on` (armed?), `_our_tx_macs` (MACs we count ACKs for),
+    `_ack_counts` (MAC → count).
+- **Active monitor: does our card *emit* an ACK? (feature D)**
+  - `enter_active_monitor(mac, bssid)`: program `mac` into the chip's MAC register so the HW
+    auto-ACKs frames addressed to it while staying in monitor mode. Base raises `NotImplementedError`;
+    SPOOFABLE / FIXED_MAC chips override.
+  - `exit_active_monitor()`: restore the card's real MAC (stop ACKing the forged one).
+- **Capability / timing (class attrs)**
+  - `FAKE_MAC` (a `FakeMacSupport`): the chip's auto-ACK ability, ordered `SPOOFABLE` > `FIXED_MAC` >
+    `NONE` > `UNIMPLEMENTED`. Drives `enter_active_monitor` support and TX-card election.
+  - `MAX_ACK_DELAY`: the slow-retry wait window (~20 ms RX-tap round-trip vs ~10 us on-air).
 
-- `inject_frame(...)` — the resend loop + wait-for-ack, calls `await self._inject_frame(frame_bytes, use_no_ack)`
-- `_inject_frame(frame_bytes, use_no_ack)` — hook: one send, no retry/wait
-- `_extract_mac(frame_bytes)` — `frame_bytes[10:16]` (you referenced it)
-- `enable_ack_detect()` / `disable_ack_detect()` — reset state, then `await self._{en,dis}able_ack_detect()`
-- `_enable_ack_detect()` / `_disable_ack_detect()` — hooks: hardware RX-filter only
-- `record_ack(frame)` — `ra = frame[4:10]; if ra == self._tx_mac_address: self._seen_ack = True`
-- `acks_seen(...)` — **removed** from the base.
+### `chips/<chip>/driver.py` (+ `rx.py`): per-silicon hooks
 
----
+- `_inject_frame` / `_stamp_tx_seq` / `_enable_rx_acks` / `_disable_rx_acks`: the hooks above, one
+  register/descriptor path per silicon family.
+- `enter_active_monitor` / `exit_active_monitor`: the MAC-register write (Realtek RCR/MACID,
+  Atheros `AR_STA_ID`, MediaTek MCU cmd), on SPOOFABLE / FIXED_MAC chips only.
+- RX reader → `self.record_ack(...)`: every chip's bulk-IN loop recognizes an ACK frame (FC=0xD4)
+  and feeds it (full MPDU, or a synthesized `\x00\x00\x00\x00 + RA` on chips that report only the RA)
+  to the base tally.
+
+### `WlanInterface` (`wlan/interface.py`): the per-card facade campaigns call
+
+- `send_no_wait(frame)`: fire-and-forget inject (→ `driver.inject_frame`); also fires TX stats.
+- `send_until_ack(frame, max_retries)`: inject + wait for the link-ACK (→ `inject_frame_slow_retry`).
+- `enable_rx_acks()` / `disable_rx_acks()` / `acks_seen(mac)`: arm / disarm / read the tally (→ driver).
+- `set_fake_mac(mac=None, bssid=None)`: enter active monitor and return the MAC we'll ACK as: a random
+  locally-administered MAC for SPOOFABLE, the card's own for FIXED_MAC, `None` if the card can't.
+- `clear_fake_mac()`: exit active monitor.
+- `active_monitor_warning()`: Rich-markup warning when the card can't HW-ACK a spoofed MAC, else `None`.
+- `deauth_broadcast` / `deauth_client`: build + spray deauths; `deauth_client` tallies how many frames
+  each endpoint ACKed (reads the RX tally).
+
+### `WlanArray` (`wlan/array.py`): elects the card that TXes
+
+- `select_iface(channel)`: the card to TX (and thus ACK) on: the user's pinned card, else the most
+  auto-ACK-capable card that reaches the channel.
+- `fake_mac_rank(iface)` *(module fn)*: orders cards by `FAKE_MAC` (SPOOFABLE < FIXED_MAC < NONE <
+  UNIMPLEMENTED); the key `select_iface` and the TX picker rank on.
+- `register_self_mac` / `register_forged_mac`: tell the shared RX sink a MAC is ours (a spoofed
+  active-monitor MAC, or an injected source), so our own TX isn't ingested as a real station.
+
+### Callers (`campaigns/`)
+
+- `pmkid.py`, `pin.py` (WPS PIN), `pbc.py` (WPS PBC): `set_fake_mac` → `enable_rx_acks` → `send_until_ack`
+  / `acks_seen`. The AP must ACK us or it abandons the EAPOL/WPS exchange.
+- `wep/campaign.py`: `set_fake_mac` so ARP-replay / ChopChop frames are ACK-delivered.
 
 ## ACK feature model (proposed glossary)
 
