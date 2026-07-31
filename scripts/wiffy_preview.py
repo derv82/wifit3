@@ -6,9 +6,9 @@
 
 It pushes the real BringupProgressModal over a fake dimmed splash and slides WiFFy in, so what you
 see is exactly what the Windows install shows. Keys: [space] skip to the next message (great for
-eyeballing every message fast)  [i] re-show  [o] slide out ok  [e] slide out error  [q] quit. To
-tune the text-hole overlay, set _HOLE_* / the #wiffy-text background in src/wifit3/ui/wiffy.py (a
-loud `background: magenta` makes misalignment obvious), then flip back.
+eyeballing every message fast)  [i] install pack  [u] uninstall pack  [o] slide out ok  [e] slide
+out error  [q] quit. To tune the text-hole overlay, set _HOLE_* / the #wiffy-text background in
+src/wifit3/ui/wiffy.py (a loud `background: magenta` makes misalignment obvious), then flip back.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from textual.screen import Screen
 from textual.widgets import Label, Static
 
 from wifit3.ui.screens.bringup_progress import BringupProgressModal
-from wifit3.ui.wiffy import INSTALL_LINES, WiffyAssistant
+from wifit3.ui.wiffy import INSTALL_LINES, UNINSTALL_LINES, WiffyAssistant
 
 
 class _FakeSplash(Screen):
@@ -44,7 +44,8 @@ class WiffyPreview(App):
     # All priority=True: over the modal the app has no focused widget, so non-priority app bindings
     # never fire. Priority routes the key to the app first, regardless of focus.
     BINDINGS = [Binding("space", "skip", "Next message", priority=True),
-                Binding("i", "show", "Re-show", priority=True),
+                Binding("i", "show", "Install msgs", priority=True),
+                Binding("u", "show_uninstall", "Uninstall msgs", priority=True),
                 Binding("o", "out_ok", "Slide out ok", priority=True),
                 Binding("e", "out_err", "Slide out error", priority=True),
                 Binding("q", "quit", "Quit", priority=True),
@@ -54,13 +55,23 @@ class WiffyPreview(App):
         self.push_screen(_FakeSplash())
         self.action_show()
 
-    def action_show(self) -> None:
-        self._modal = BringupProgressModal("Installing WinUSB driver for RTL8814AU (Alfa AWUS1900)…")
+    def _open(self, title: str, status: str, lines) -> None:
+        if getattr(self, "_modal", None) is not None and self._modal.is_mounted:
+            self._modal.dismiss()          # reopen replaces, so install/uninstall don't stack
+        self._modal = BringupProgressModal(title)
         self.push_screen(self._modal)
-        self._modal.set_status("wdi-simple: waiting for Windows to install the driver…")
+        self._modal.set_status(status)
         self.call_after_refresh(
             lambda: self._modal.run_worker(
-                self._modal.show_assistant(*INSTALL_LINES, intro_delay=0.4), name="wiffy-show"))
+                self._modal.show_assistant(*lines, intro_delay=0.4), name="wiffy-show"))
+
+    def action_show(self) -> None:
+        self._open("Installing WinUSB driver for RTL8814AU (Alfa AWUS1900)…",
+                   "wdi-simple: waiting for Windows to install the driver…", INSTALL_LINES)
+
+    def action_show_uninstall(self) -> None:
+        self._open("Removing wifit3 driver for RTL8814AU (Alfa AWUS1900)…",
+                   "pnputil: removing the WinUSB driver…", UNINSTALL_LINES)
 
     def action_skip(self) -> None:
         for w in self._modal.query(WiffyAssistant):

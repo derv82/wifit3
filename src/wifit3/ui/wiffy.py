@@ -65,8 +65,8 @@ _INSTALL_MESSAGES = [
 ]
 _UNINSTALL_GREETING = ("You did it? You hacked", "the ENTIRE planet?", "", "Restoring driver now...")
 _UNINSTALL_MESSAGES = [
-    ('Your card now goes', 'back to being a', 'boring Wi-Fi card.', '', 'ZeroCool would be', 'so disappointed!'),
-    ("I'll be here when", 'you want to', 'HACK THE PLANET again'),
+    ('Your card now goes', 'back to being a', 'boring Wi-Fi card.', '', 'ZeroCool would be', 'so disappointed.'),
+    ("I'll be here when", 'you want to', 'HACK THE PLANET again!'),
     ("You'll be back", "they always come back"),
 ]
 
@@ -89,6 +89,7 @@ class WiffyAssistant(Container):
         position: absolute; offset: {_HOLE_X} {_HOLE_Y};
         width: {_HOLE_W}; height: {_HOLE_H};
         background: #ffff00; color: black;   /* classic Clippy; matches the baked border's yellow */
+        visibility: hidden;   /* revealed in enter() once chat1 (the bubble outline) is in place */
     }}
     """
 
@@ -151,6 +152,7 @@ class WiffyAssistant(Container):
         if self._exiting:
             return
         self.query_one("#wiffy-sprite", Static).update(self._chat1)   # bubble pops in, in place
+        self.query_one("#wiffy-text", Label).styles.visibility = "visible"   # now reveal the text box
         self._entered = True
         self._schedule_wiggle()
         self._dialogue = self.run_worker(self._run_dialogue(), name="wiffy-dialogue")
