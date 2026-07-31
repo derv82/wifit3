@@ -329,6 +329,6 @@ class WepFragmentation:
         self._last_heartbeat = now
         if self.state == "injecting":
             self._log(treelog.branch(
-                f"[dim]round[/dim] [white]{self._round}[/white] "
+                f"[dim]round[/dim] {self._round} "
                 f"[dim]no relay yet…[/dim]"
             ))

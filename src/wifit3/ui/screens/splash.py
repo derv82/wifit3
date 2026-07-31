@@ -216,7 +216,7 @@ class SplashView(Screen):
     def _ready_prompt(self) -> str:
         """The 'ready to go' status line: only 2+ cards need a 'select' step, one card is pre-armed."""
         prefix = "Select card(s) and " if self._using_multi() else ""
-        return f"[bold lightgreen]{prefix}Press START to begin scanning[/bold lightgreen]"
+        return f"[bold $text-success]{prefix}Press START to begin scanning[/]"
 
     def _start_targets(self) -> list:
         """The DeviceIDs to bring up: the checked rows (2+ cards) or the single present card."""

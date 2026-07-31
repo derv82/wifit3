@@ -204,8 +204,8 @@ class WepArpReplay:
         if cand is not self._winner:
             self.stats.candidates_tried += 1
         self._log(
-            f"[bold green]ARP Replay:[/bold green] [white]Testing candidate packet "
-            f"({len(cand)} B)…[/white]"
+            f"[bold green]ARP Replay:[/bold green] Testing candidate packet "
+            f"({len(cand)} B)…"
         )
 
     # ---- Replay loop --------------------------------------------------------
@@ -433,5 +433,5 @@ class WepArpReplay:
             return
         self._last_state = state
         if state == "waiting-arp":
-            self._log("[bold green]ARP Replay:[/bold green] [white]waiting for ARP[/white]")
+            self._log("[bold green]ARP Replay:[/bold green] waiting for ARP")
 

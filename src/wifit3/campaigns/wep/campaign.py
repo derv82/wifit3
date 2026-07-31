@@ -142,7 +142,7 @@ class WepCampaign(Campaign):
                 self._crack_started = True
                 self._log(
                     "[bold cyan]Cracking Key[/bold cyan] with "
-                    "[white]>10k IVs[/white] [dim](may require >40K)[/dim]"
+                    ">10k IVs [dim](may require >40K)[/dim]"
                 )
             # Ship the (picklable) cracker to the worker.
             try:

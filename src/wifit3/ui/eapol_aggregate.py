@@ -80,7 +80,7 @@ def _render_tree(client_mac: str, burst: _Burst, hs_ev, instance: int,
     ``save_hint`` (the screen's short 'saved: captures/…' string) closes the tree
     as its terminal leaf, so the save note lives *inside* the handshake tree
     rather than as a stray left-aligned line below it."""
-    header = f"[bold]4-Way Handshake[/bold] [dim]·[/dim] Client: [white]{client_mac}[/white]"
+    header = f"[bold]4-Way Handshake[/bold] [dim]·[/dim] Client: [bold]{client_mac}[/bold]"
     nums = sorted(burst.msgs, key=lambda m: (m == 0, m))   # M1..M4, unclassified last
     label_w = max((len(_msg_label(m, burst.msgs[m].count)) for m in nums), default=0)
     bodies = []
@@ -114,7 +114,7 @@ def _render_reannounce(client_mac: str, hs_ev, instance: int) -> list[str]:
     (its per-frame detail was suppressed, so there's no tree to redraw)."""
     return [f"[black bold on green] ✓ Valid 4-Way Handshake ({hs_ev.pair_label}) "
             f"[/black bold on green] [dim](capture ×{instance})[/dim] "
-            f"[white]{client_mac}[/white]"]
+            f"[bold]{client_mac}[/bold]"]
 
 
 class EapolAggregator:

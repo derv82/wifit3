@@ -180,7 +180,7 @@ class WepFakeAuth:
         if not self._announced_failure:
             self._announced_failure = True
             self._log(
-                f"[red]✗ Fake-Auth failed:[/red] [white]{self.fail_reason}[/white] "
+                f"[red]✗ Fake-Auth failed:[/red] {self.fail_reason} "
                 f"[dim](retry in {int(self._FAIL_BACKOFF)}s)[/dim]"
             )
         return False

@@ -177,7 +177,7 @@ class WpsCampaign(Campaign):
                     # In-progress with first-half locked in. Surface it.
                     self.log(f"resumed campaign: [cyan]{st.tested:,}[/cyan]"
                              f"/11,000 pins, [cyan bold]{st.first_half}[/cyan bold]"
-                             f"[white bold]????[/white bold]")
+                             f"[bold]????[/bold]")
                 else:
                     self.log(f"resumed campaign: [cyan]{st.tested:,}[/cyan]"
                              f"/11,000 pins")
@@ -391,7 +391,7 @@ class WpsCampaign(Campaign):
         if self._tx_ack:
             await self.iface.enable_rx_acks()
         name = self.target.ssid or self.bssid
-        logger.debug("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
+        logger.info("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
         if self._oui_pin_count:
             self.log(f"[dim]Prioritizing [bold]{self._oui_pin_count} OUI-matching "
                      f"default PIN(s)[/bold][/dim]")

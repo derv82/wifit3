@@ -367,7 +367,7 @@ class FocusViewV2(Screen):
             self._log("[bold]Target acquired:[/bold] "
                       "[dim italic]cloaked network (hidden SSID)[/dim italic]")
         self._log(treelog.branch(f"[dim]Encryption:[/dim] {enc}"))
-        self._log(treelog.branch(f"[dim]BSSID:[/dim] [white]{ap.bssid}[/white]"))
+        self._log(treelog.branch(f"[dim]BSSID:[/dim] {ap.bssid}"))
         if array:
             try:
                 ok = await array.set_channel(ap.channel, scan=False)
@@ -429,7 +429,7 @@ class FocusViewV2(Screen):
                 self._log(line(f"{label}  [black bold on cyan] {escape(cap.value or '?')} "
                                f"[/black bold on cyan] [dim]{dt:%Y-%m-%d %H:%M}[/dim]"))
             else:
-                self._log(line(f"{label}  [white]{dt:%Y-%m-%d}[/white] "
+                self._log(line(f"{label}  {dt:%Y-%m-%d} "
                                f"[dim]{dt:%H:%M}[/dim]"))
         if wps_progress is not None:
             self._log(treelog.leaf(wps_progress) if rows else wps_progress)
@@ -804,7 +804,7 @@ class FocusViewV2(Screen):
             return
         self._log(f"[bold cyan]WPA3 Downgrade ACTIVE[/bold cyan] on [bold]{escape(ap.ssid)}[/bold]")
         self._log(treelog.branch(
-            "[dim]responding to probe requests with[/dim] [white bold]WPA2-only[/white bold]"))
+            "[dim]responding to probe requests with[/dim] [bold]WPA2-only[/bold]"))
         self._log(treelog.leaf("[dim](reconnects take minutes to hours)[/dim]"))
 
     def _stop_wpa3_down(self) -> None:
