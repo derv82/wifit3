@@ -33,9 +33,9 @@ logger = logging.getLogger(__name__)
 
 _BIN = Path(__file__).parent / "bin"
 
-# CPU arch -> bundled-binary subdir. x64 only for now: libwdi's VS2022 workflow builds
-# x64/Win32, so there's no arm64 wdi-simple.exe yet (RELEASE-PLAN.md §2d).
-_ARCH_DIRS = {"amd64": "win-x64", "x86_64": "win-x64"}
+# CPU arch (platform.machine(), lowercased) -> bundled-binary subdir. "AMD64" on 64-bit
+# Intel/AMD, "ARM64" on Windows-on-ARM. 32-bit x86 is intentionally unsupported.
+_ARCH_DIRS = {"amd64": "win-x64", "x86_64": "win-x64", "arm64": "win-arm64"}
 
 _WDI_TYPE_WINUSB = 0                # wdi-simple --type 0
 _WDI_PENDING_TIMEOUT_MS = 120_000  # wdi-simple --timeout: how long it waits for a pending install
@@ -164,7 +164,7 @@ def wdi_simple_path() -> Path:
     sub = _ARCH_DIRS.get(platform.machine().lower())
     if sub is None:
         raise FileNotFoundError(
-            f"No bundled wdi-simple.exe for arch {platform.machine()!r} (x64 only)")
+            f"No bundled wdi-simple.exe for arch {platform.machine()!r} (x64 and arm64 only)")
     exe = _BIN / sub / "wdi-simple.exe"
     if not exe.is_file():
         raise FileNotFoundError(f"Bundled wdi-simple.exe missing at {exe}")
