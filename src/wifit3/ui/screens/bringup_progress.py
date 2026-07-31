@@ -3,6 +3,7 @@ any screen. Confirm / replug / error dialogs stack on top of it and pop back to 
 rewritten into another modal."""
 from __future__ import annotations
 
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
@@ -18,8 +19,9 @@ class BringupProgressModal(ModalScreen):
     set_progress; carries no logic of its own."""
 
     DEFAULT_CSS = """
-    BringupProgressModal { align: center middle; }
+    BringupProgressModal { align: center middle; layers: dialog wiffy; }
     BringupProgressModal #dialog {
+        layer: dialog;
         width: 64; max-width: 90%; height: auto;
         border: thick $success; background: $surface; padding: 1 2;
     }
@@ -33,6 +35,7 @@ class BringupProgressModal(ModalScreen):
         super().__init__()
         self._title = title
         self._status = "Starting…"
+        self._wiffy = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -50,3 +53,21 @@ class BringupProgressModal(ModalScreen):
     def set_progress(self, fraction: float) -> None:
         if self.is_mounted:
             self.query_one(ProgressBar).progress = max(0.0, min(1.0, fraction)) * 100
+
+    async def show_assistant(self, greeting: str, messages: list[str],
+                             *, intro_delay: float = 2.0) -> None:
+        """Mount WiFFy and kick off his slide-in. Fire-and-forget: enter() self-paces the intro
+        delay + animation while the elevated op runs; hide_assistant() reverses it."""
+        from wifit3.ui.wiffy import WiffyAssistant
+        self._wiffy = WiffyAssistant(greeting, list(messages))
+        await self.mount(self._wiffy)
+        self._wiffy.run_worker(self._wiffy.enter(intro_delay=intro_delay), name="wiffy-enter")
+
+    async def hide_assistant(self, ok: bool) -> None:
+        if self._wiffy is not None:
+            await self._wiffy.exit(ok=ok)
+            self._wiffy = None
+
+    def on_resize(self, event: events.Resize) -> None:
+        if self._wiffy is not None:
+            self._wiffy.reposition()

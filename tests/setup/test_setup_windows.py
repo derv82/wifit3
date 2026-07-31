@@ -25,6 +25,12 @@ class FakePrompter:
     def error(self, title, body):
         self.errors.append((title, body))
 
+    def begin_assistant(self, greeting, messages, *, intro_delay=2.0):
+        self.assistant = "begun"
+
+    async def end_assistant(self, ok):
+        self.assistant = ("ended", ok)
+
 
 class _Install:
     def __init__(self, ok=True, message="", cancelled=False, wdi_code=None, detail=None):

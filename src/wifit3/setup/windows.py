@@ -480,7 +480,9 @@ class SetupWindows(Setup):
         if not await ui.ask(ConfirmInstallDialog(device_id.description, chipset=device_id.chipset)):
             return False
 
+        from wifit3.ui.wiffy import INSTALL_LINES
         ui.status(f"Installing WinUSB driver for {device_id.description}… (up to a minute)")
+        ui.begin_assistant(*INSTALL_LINES)
         tail = asyncio.create_task(self._tail_log(ui))
         try:
             result = await asyncio.to_thread(
@@ -491,6 +493,7 @@ class SetupWindows(Setup):
                 await tail
             except asyncio.CancelledError:
                 pass
+        await ui.end_assistant(result.ok)   # slide WiFFy out (fast on failure) before any error dialog
 
         if not result.ok:
             if not result.cancelled:
@@ -510,8 +513,12 @@ class SetupWindows(Setup):
         name = device_id.chipset
         if await ui.ask(ConfirmUninstallDialog(name, "win")) is None:
             return SetupResult(ok=False, cancelled=True, message="Uninstall cancelled.")
+        from wifit3.ui.wiffy import UNINSTALL_LINES
         ui.status(f"Removing wifit3 driver for {device_id.description}…")
+        # pnputil is quick and streams nothing, so give WiFFy a short intro so he still gets a line in.
+        ui.begin_assistant(*UNINSTALL_LINES, intro_delay=0.5)
         result = await asyncio.to_thread(restore_driver, device_id.vid, device_id.pid)
+        await ui.end_assistant(result.ok)
         return SetupResult(ok=result.ok, message=result.message, cancelled=result.cancelled,
                            detail=result.detail)
 

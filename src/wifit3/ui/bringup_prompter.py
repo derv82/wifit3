@@ -47,3 +47,14 @@ class BringupPrompter:
             return await wait_for_presence(device_id.vid, device_id.pid, present=present)
         outcome = await self._app.push_screen_wait(ReplugModal(device_id.description, _present))
         return outcome == "replugged"
+
+    def begin_assistant(self, greeting: str, messages: list[str],
+                        *, intro_delay: float = 2.0) -> None:
+        if self._modal is not None:
+            self._app.run_worker(
+                self._modal.show_assistant(greeting, messages, intro_delay=intro_delay),
+                name="wiffy-show")
+
+    async def end_assistant(self, ok: bool) -> None:
+        if self._modal is not None:
+            await self._modal.hide_assistant(ok)

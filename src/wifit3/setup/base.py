@@ -39,6 +39,14 @@ class Prompter(Protocol):
     def status(self, message: str) -> None: ...
     def error(self, title: str, body: str) -> None: ...
 
+    def begin_assistant(self, greeting: str, messages: list[str],
+                        *, intro_delay: float = 2.0) -> None:
+        """Optional: show an idle-time assistant (WiFFy) over the progress modal during a long
+        elevated op. No-op unless the UI wants one; only Windows setup drives these."""
+        ...
+
+    async def end_assistant(self, ok: bool) -> None: ...
+
 
 class Setup(ABC):
     """The privileged, OS-specific step that makes a card openable from userland."""
