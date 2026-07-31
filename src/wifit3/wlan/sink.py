@@ -11,6 +11,7 @@ import logging
 import time
 from typing import Dict, List, Optional, Set
 
+from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
 from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.packet import (
@@ -98,8 +99,8 @@ class WlanSink:
             frame_type in ("data", "eapol", "wep_data", "assoc_resp", "reassoc_resp",
                            "deauth", "disassoc")
             or frame_type.startswith("mgmt_")
-        ) and logger.isEnabledFor(logging.DEBUG):
-            logger.debug("%s", _fmt_frame("RXFRAME", frame_type, pkt.source, pkt.dest, bssid))
+        ) and logger.isEnabledFor(TRACE):
+            logger.trace("%s", _fmt_frame("RXFRAME", frame_type, pkt.source, pkt.dest, bssid))
 
         if not bssid or bssid == "Unknown" or bssid == "ff:ff:ff:ff:ff:ff":
             return
@@ -170,8 +171,8 @@ class WlanSink:
             self._record_ap_signal(ap, card_id, rssi)
             self._recompute_siblings_for(bssid)
             if self._is_real_ssid(ssid):
-                logger.info('[RXFRAME] %-9s New AP on Ch %s: %s ("%s")',
-                            "beacon", channel, bssid, ssid)
+                logger.trace('[RXFRAME] %-9s New AP on Ch %s: %s ("%s")',
+                             "beacon", channel, bssid, ssid)
         else:
             ap = self.access_points[bssid]
             old_channel = ap.channel
@@ -418,8 +419,8 @@ class WlanSink:
             parsed = WlanFrameParser.parse_80211_frame(frame_bytes, 0)
             if parsed is None:
                 return
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("%s", _fmt_frame("TXFRAME", parsed.type,
+            if logger.isEnabledFor(TRACE):
+                logger.trace("%s", _fmt_frame("TXFRAME", parsed.type,
                                               parsed.source, parsed.dest, parsed.bssid))
             bssid = parsed.bssid
             if bssid and bssid not in ("Unknown", "ff:ff:ff:ff:ff:ff"):
