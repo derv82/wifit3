@@ -48,7 +48,7 @@ class BringupPrompter:
         outcome = await self._app.push_screen_wait(ReplugModal(device_id.description, _present))
         return outcome == "replugged"
 
-    def begin_assistant(self, greeting: str, messages: list[str],
+    def begin_assistant(self, greeting: tuple[str, ...], messages: list[tuple[str, ...]],
                         *, intro_delay: float = 2.0) -> None:
         if self._modal is not None:
             self._app.run_worker(

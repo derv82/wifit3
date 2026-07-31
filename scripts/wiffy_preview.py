@@ -5,9 +5,10 @@
     uv run textual run --dev scripts/wiffy_preview.py
 
 It pushes the real BringupProgressModal over a fake dimmed splash and slides WiFFy in, so what you
-see is exactly what the Windows install shows. Keys: [i] re-show  [o] slide out ok  [e] slide out
-error  [q] quit. To tune the text-hole overlay, set _HOLE_* / the #wiffy-text background in
-src/wifit3/ui/wiffy.py (a loud `background: magenta` makes misalignment obvious), then flip back.
+see is exactly what the Windows install shows. Keys: [space] skip to the next message (great for
+eyeballing every message fast)  [i] re-show  [o] slide out ok  [e] slide out error  [q] quit. To
+tune the text-hole overlay, set _HOLE_* / the #wiffy-text background in src/wifit3/ui/wiffy.py (a
+loud `background: magenta` makes misalignment obvious), then flip back.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from textual.screen import Screen
 from textual.widgets import Label, Static
 
 from wifit3.ui.screens.bringup_progress import BringupProgressModal
-from wifit3.ui.wiffy import INSTALL_LINES
+from wifit3.ui.wiffy import INSTALL_LINES, WiffyAssistant
 
 
 class _FakeSplash(Screen):
@@ -40,9 +41,12 @@ class _FakeSplash(Screen):
 
 class WiffyPreview(App):
     CSS = "Screen { background: $background; }"
-    # priority=True so quit fires even while the modal is the focused screen (else it swallows them).
-    BINDINGS = [("i", "show", "Re-show"), ("o", "out_ok", "Slide out ok"),
-                ("e", "out_err", "Slide out error"),
+    # All priority=True: over the modal the app has no focused widget, so non-priority app bindings
+    # never fire. Priority routes the key to the app first, regardless of focus.
+    BINDINGS = [Binding("space", "skip", "Next message", priority=True),
+                Binding("i", "show", "Re-show", priority=True),
+                Binding("o", "out_ok", "Slide out ok", priority=True),
+                Binding("e", "out_err", "Slide out error", priority=True),
                 Binding("q", "quit", "Quit", priority=True),
                 Binding("ctrl+c", "quit", "Quit", priority=True)]
 
@@ -57,6 +61,10 @@ class WiffyPreview(App):
         self.call_after_refresh(
             lambda: self._modal.run_worker(
                 self._modal.show_assistant(*INSTALL_LINES, intro_delay=0.4), name="wiffy-show"))
+
+    def action_skip(self) -> None:
+        for w in self._modal.query(WiffyAssistant):
+            w.skip()
 
     def action_out_ok(self) -> None:
         self._modal.run_worker(self._end(True), name="wiffy-end")

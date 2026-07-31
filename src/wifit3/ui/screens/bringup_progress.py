@@ -54,7 +54,7 @@ class BringupProgressModal(ModalScreen):
         if self.is_mounted:
             self.query_one(ProgressBar).progress = max(0.0, min(1.0, fraction)) * 100
 
-    async def show_assistant(self, greeting: str, messages: list[str],
+    async def show_assistant(self, greeting: tuple[str, ...], messages: list[tuple[str, ...]],
                              *, intro_delay: float = 2.0) -> None:
         """Mount WiFFy and kick off his slide-in. Fire-and-forget: enter() self-paces the intro
         delay + animation while the elevated op runs; hide_assistant() reverses it."""

@@ -47,23 +47,27 @@ def _frames() -> tuple[Text, Text, list[Text]]:
     return _load("wiffy_nochat.ans"), _load(base), alts
 
 
-# GREETING plays once on entry; MESSAGES rotate (shuffled, no repeat until the pack is exhausted).
-_INSTALL_GREETING = "It looks like you're trying to HACK THE PLANET! I can help!"
+# Each message is a tuple of lines; they render joined by a blank line ("\n\n"), so pre-break lines
+# to <=~21 cols (the bubble is 23 wide) and keep to <=7 elements (a message renders 2N-1 rows and
+# the bubble is 14 tall). GREETING plays once on entry; MESSAGES rotate (shuffled, no repeat until
+# the pack is exhausted). Tune wording/spacing live with scripts/wiffy_preview.py ([space] = next).
+_INSTALL_GREETING = ("Hi, I'm WiFFy!", "\nIt looks like", "you are trying to", "HACK THE PLANET!!!", "", "I can help!")
 _INSTALL_MESSAGES = [
-    "Binding WinUSB so libusb can talk to your card. Science!",
-    "wdi-simple.exe is slow because it's savoring the moment.",
-    "2% for five minutes is a personality, not a bug.",
-    "Zadig? Never heard of her. WinUSB is my co-pilot now.",
-    "Capturing WPA handshakes? Bold. I respect it.",
-    "Monitor mode: engaged. Vibes: immaculate.",
-    "Only audit networks you own. Probably.",
-    "Almost there. Windows just types slower than I do.",
+    ('\nI can help to recover', '"your" password from', '"your" router.', '', 'Just ask me how!'),
+    ('\nSee Wifite on Netflix:', 'How To Sell Drugs Online:\n  Season 2 Episode 2\n  (6:20)', 'Youngbloods:\n  Season 2 Episode 1\n  (49:00)'),
+    ('', 'If you were on Linux,', "you'd be cracking", 'PMKIDs by now.'),
+    ('', 'I only exist because', 'installing WinUSB', 'is extremely slow.', '', '..up to 5 minutes!'),
+    ('\nThe first rule of', 'wifit3 club is:', '', 'DO NOT TALK ABOUT', 'WIFIT3 CLUB'),
+    ('', 'I want to apologize', 'in advance for', 'dropping handshakes.'),
+    ('Remember:', '', 'Only audit networks', 'that you own!', '', '                lol'),
+    # ('Everyone asks', '"WiFi?"', '', 'but nobody asks', '"HowFi?"'),
+    # ('Did you know?', '', 'The 2.4GHz wave is', '~6 in / 12.5cm long.', '', '5GHz is half that:', '~3in / 6cm.'),
 ]
-_UNINSTALL_GREETING = "Leaving so soon? Putting your driver back..."
+_UNINSTALL_GREETING = ("You did it? You hacked", "the ENTIRE planet?", "", "Restoring driver now...")
 _UNINSTALL_MESSAGES = [
-    "It's not you, it's your driver stack.",
-    "Your card goes back to being a boring Wi-Fi card. Sad.",
-    "I'll be here when you want to HACK THE PLANET again.",
+    ('Your card now goes', 'back to being a', 'boring Wi-Fi card.', '', 'ZeroCool would be', 'so disappointed!'),
+    ("I'll be here when", 'you want to', 'HACK THE PLANET again'),
+    ("You'll be back", "they always come back"),
 ]
 
 INSTALL_LINES = (_INSTALL_GREETING, _INSTALL_MESSAGES)
@@ -98,7 +102,7 @@ class WiffyAssistant(Container):
     WIGGLE_MIN, WIGGLE_MAX = 4.0, 8.0   # random gap between "breathing" twitches
     WIGGLE_HOLD = 1.0             # how long an alt frame shows before snapping back to chat1
 
-    def __init__(self, greeting: str, messages: list[str]) -> None:
+    def __init__(self, greeting: tuple[str, ...], messages: list[tuple[str, ...]]) -> None:
         super().__init__()
         self._nochat, self._chat1, self._alts = _frames()
         self._greeting = greeting
@@ -164,14 +168,26 @@ class WiffyAssistant(Container):
             await asyncio.sleep(dur)
         await self.remove()
 
-    async def _run_dialogue(self) -> None:
-        await self._type(self._greeting)
-        await asyncio.sleep(self.HOLD)
+    async def _run_dialogue(self, greeting_first: bool = True) -> None:
+        if greeting_first:
+            await self._type(self._greeting)
+            await asyncio.sleep(self.HOLD)
         while True:
             await self._type(self._next_message())
             await asyncio.sleep(self.HOLD)
 
-    async def _type(self, text: str) -> None:
+    def skip(self) -> None:
+        """Preview affordance ([space]): abandon the current line/pause and start typing the next
+        message now. Cancels the dialogue worker and restarts it past the greeting."""
+        if not self._entered or self._exiting:
+            return
+        if self._dialogue is not None:
+            self._dialogue.cancel()
+        self._dialogue = self.run_worker(
+            self._run_dialogue(greeting_first=False), name="wiffy-dialogue")
+
+    async def _type(self, lines: tuple[str, ...]) -> None:
+        text = "\n" + "\n\n".join(lines)      # blank line between each, so short messages fill the bubble
         label = self.query_one("#wiffy-text", Label)
         label.update("")
         buf = ""
@@ -180,7 +196,7 @@ class WiffyAssistant(Container):
             label.update(buf)
             await asyncio.sleep(self.TYPE_INTERVAL)
 
-    def _next_message(self) -> str:
+    def _next_message(self) -> tuple[str, ...]:
         if not self._queue:
             self._queue = list(range(len(self._messages)))
             random.shuffle(self._queue)

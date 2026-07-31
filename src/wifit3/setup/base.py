@@ -39,7 +39,7 @@ class Prompter(Protocol):
     def status(self, message: str) -> None: ...
     def error(self, title: str, body: str) -> None: ...
 
-    def begin_assistant(self, greeting: str, messages: list[str],
+    def begin_assistant(self, greeting: tuple[str, ...], messages: list[tuple[str, ...]],
                         *, intro_delay: float = 2.0) -> None:
         """Optional: show an idle-time assistant (WiFFy) over the progress modal during a long
         elevated op. No-op unless the UI wants one; only Windows setup drives these."""
