@@ -27,9 +27,3 @@ def test_replug_required_by_default_and_when_explicit():
         v, p = _first_id(cls)
         t = target_for_vidpid(v, p)
         assert t is not None and t.replug_after_modprobe is True, cls.__name__
-
-
-def test_missing_attr_defaults_to_replug_required():
-    class _Bare:
-        SUPPORTED_IDS = []
-    assert bool(getattr(_Bare, "LINUX_REPLUG_AFTER_MODPROBE", True)) is True

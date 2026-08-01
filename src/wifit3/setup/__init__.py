@@ -39,9 +39,8 @@ def target_for_vidpid(vid: int, pid: int) -> SetupTarget | None:
         for entry in driver_cls.SUPPORTED_IDS:
             if entry.vid == vid and entry.pid == pid:
                 ids = tuple(sorted({(e.vid, e.pid) for e in driver_cls.SUPPORTED_IDS}))
-                hints = tuple(getattr(driver_cls, "CONFLICTING_LINUX_MODULES", ()) or ())
                 return SetupTarget(
-                    key=key, description=entry.description, ids=ids, module_hints=hints,
-                    replug_after_modprobe=bool(
-                        getattr(driver_cls, "LINUX_REPLUG_AFTER_MODPROBE", True)))
+                    key=key, description=entry.description, ids=ids,
+                    module_hints=tuple(driver_cls.CONFLICTING_LINUX_MODULES),
+                    replug_after_modprobe=driver_cls.LINUX_REPLUG_AFTER_MODPROBE)
     return None
