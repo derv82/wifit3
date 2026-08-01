@@ -438,6 +438,8 @@ class MT76x0UDriver(Driver):
             logger.error("MT7610U: eeprom_init failed: %s", e)
             return False
         self.mac_address = self.efuse_full.mac_address
+        if self.mac_address[:8].lower() == "9c:ef:d5":
+            self.product_name = "Panda PAU0B"
         logger.info(
             "MT7610U EFUSE: chip_id=0x%04x ver=0x%02x fae=0x%02x  MAC=%s  "
             "tx=%d rx=%d  bands=%s%s  freq_off=%d  temp_off=%d  "
