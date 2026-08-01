@@ -1,6 +1,6 @@
 """Windows WinUSB binding via the bundled wdi-simple.exe (libwdi).
 
-:func:`install_winusb` shells out to a vendored, *unsigned* ``wdi-simple.exe`` under UAC
+The install path shells out to a vendored, *unsigned* ``wdi-simple.exe`` under UAC
 elevation (``ShellExecuteExW`` ``"runas"``) to bind a card to WinUSB so libusb can open it.
 :func:`restore_driver` reverses that: it finds the WinUSB/libusb driver bound to the card
 (SetupAPI, the same enumeration libwdi uses) and ``pnputil /delete-driver … /uninstall``s
@@ -23,7 +23,7 @@ import platform
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from wifit3.chips.driver import DeviceID
@@ -151,10 +151,11 @@ class RestoreResult:
 
 @dataclass(frozen=True)
 class _ElevatedRun:
-    """Low-level result of a single elevated launch (see :func:`_run_elevated`)."""
+    """Low-level result of an elevated launch (see :func:`_launch_elevated`)."""
     launched: bool        # did ShellExecuteExW start the process at all?
     win_error: int        # GetLastError when not launched (e.g. 1223 = UAC declined)
-    exit_code: int | None  # signed process exit code, or None if launched-but-timed-out
+    exit_code: int | None  # signed exit code; None until _wait_elevated, or on timeout
+    hproc: int | None = None  # process handle from launch, consumed by _wait_elevated
 
 
 def wdi_simple_path() -> Path:
@@ -248,20 +249,12 @@ def _restore_command(inf: str) -> str:
     return f'/c pnputil /delete-driver "{inf}" /uninstall /force && pnputil /scan-devices'
 
 
-def _run_elevated(file: str, params: str) -> _ElevatedRun:
-    """Launch ``file params`` elevated (UAC), wait for it, and read its exit code.
-
-    Windows-only and blocking. Call OFF the event loop. A declined UAC prompt surfaces as
-    ``launched=False`` with ``win_error == ERROR_CANCELLED``."""
+def _launch_elevated(file: str, params: str) -> _ElevatedRun:
+    """Raise the UAC prompt for ``file params``; return once it is dismissed, before the wait. A
+    declined prompt is ``launched=False``; on accept ``hproc`` holds the process. Call OFF the loop."""
     shell32 = ctypes.WinDLL("shell32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     shell32.ShellExecuteExW.restype = ctypes.c_bool
     shell32.ShellExecuteExW.argtypes = [ctypes.c_void_p]
-    kernel32.WaitForSingleObject.restype = ctypes.c_ulong
-    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
-    kernel32.GetExitCodeProcess.restype = ctypes.c_bool
-    kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
-    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
 
     info = _SHELLEXECUTEINFOW()
     info.cbSize = ctypes.sizeof(info)
@@ -273,31 +266,54 @@ def _run_elevated(file: str, params: str) -> _ElevatedRun:
 
     if not shell32.ShellExecuteExW(ctypes.byref(info)):
         return _ElevatedRun(launched=False, win_error=ctypes.get_last_error(), exit_code=None)
+    return _ElevatedRun(launched=True, win_error=0, exit_code=None, hproc=info.hProcess)
 
-    hproc = info.hProcess
+
+def _wait_elevated(run: _ElevatedRun) -> _ElevatedRun:
+    """Block until the launched process exits, fill in its exit code (None on timeout), close the
+    handle. ``run`` must be a launched :func:`_launch_elevated`. Call OFF the loop."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.WaitForSingleObject.restype = ctypes.c_ulong
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel32.GetExitCodeProcess.restype = ctypes.c_bool
+    kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
     try:
-        if kernel32.WaitForSingleObject(hproc, _PROCESS_WAIT_MS) == _WAIT_TIMEOUT:
-            logger.warning("Elevated %s didn't exit within %d ms", file, _PROCESS_WAIT_MS)
-            return _ElevatedRun(launched=True, win_error=0, exit_code=None)
+        if kernel32.WaitForSingleObject(run.hproc, _PROCESS_WAIT_MS) == _WAIT_TIMEOUT:
+            logger.warning("Elevated process didn't exit within %d ms", _PROCESS_WAIT_MS)
+            return run
         code = ctypes.c_ulong(0)
-        kernel32.GetExitCodeProcess(hproc, ctypes.byref(code))
-        return _ElevatedRun(launched=True, win_error=0, exit_code=_signed32(code.value))
+        kernel32.GetExitCodeProcess(run.hproc, ctypes.byref(code))
+        return replace(run, exit_code=_signed32(code.value))
     finally:
-        kernel32.CloseHandle(hproc)
+        kernel32.CloseHandle(run.hproc)
 
 
-def install_winusb(vid: int, pid: int, iid: int | None = None,
-                   name: str | None = None) -> InstallResult:
-    """Bind ``vid:pid`` to WinUSB by running the bundled wdi-simple.exe **elevated**.
+def _run_elevated(file: str, params: str) -> _ElevatedRun:
+    """Launch elevated and block until exit: :func:`_launch_elevated` then :func:`_wait_elevated`."""
+    run = _launch_elevated(file, params)
+    return _wait_elevated(run) if run.launched else run
 
-    Driver install is inherently privileged, so this raises one UAC prompt and blocks until
-    the elevated process exits. Call it OFF the Textual event loop. wdi-simple runs from a
-    redirected batch so its console output (which can't pipe back across the UAC boundary) is
-    captured to a log and echoed to ``wifit3.log``. Returns an :class:`InstallResult`; it does
-    not raise for an install *failure* (reported via the result), only for a broken
-    environment (non-Windows, or a missing bundled exe)."""
+
+@dataclass(frozen=True)
+class _PendingInstall:
+    """A WinUSB install staged and past the UAC prompt: the launch outcome + where its log lands.
+    ``error`` is set only when staging failed before the prompt (nothing launched)."""
+    logpath: Path
+    run: _ElevatedRun | None = None
+    error: InstallResult | None = None
+
+    @property
+    def launched(self) -> bool:
+        return self.run is not None and self.run.launched
+
+
+def _launch_winusb(vid: int, pid: int, iid: int | None = None,
+                   name: str | None = None) -> _PendingInstall:
+    """Stage the wdi-simple batch and raise the UAC prompt; return once it is dismissed, before the
+    install runs. Windows-only. Call OFF the Textual event loop."""
     if sys.platform != "win32":
-        raise RuntimeError("install_winusb is Windows-only")
+        raise RuntimeError("WinUSB install is Windows-only")
 
     exe = wdi_simple_path()
     # Absolute, user-writable extraction dir. See _build_args() for why the default fails.
@@ -318,11 +334,19 @@ def install_winusb(vid: int, pid: int, iid: int | None = None,
     try:
         batpath.write_text(bat, encoding="mbcs")
     except OSError as e:
-        return InstallResult(ok=False, message=f"Couldn't stage the installer: {e}")
+        return _PendingInstall(logpath=logpath,
+                               error=InstallResult(ok=False, message=f"Couldn't stage the installer: {e}"))
     logger.info("WinUSB install (elevated): %s %s", exe.name, args_str)
+    return _PendingInstall(logpath=logpath, run=_launch_elevated(str(batpath), ""))
 
-    run = _run_elevated(str(batpath), "")
-    output = _read_text(logpath)
+
+def _finish_winusb(pending: _PendingInstall) -> InstallResult:
+    """Wait for the staged install to finish and read wdi-simple's exit code + log into an
+    :class:`InstallResult`. Install *failure* is reported via the result, never by raising."""
+    if pending.error is not None:
+        return pending.error
+    run = _wait_elevated(pending.run) if pending.run.launched else pending.run
+    output = _read_text(pending.logpath)
     if output:
         logger.info("wdi-simple output:\n%s", output)
 
@@ -483,18 +507,20 @@ class SetupWindows(Setup):
 
         from wifit3.ui.wiffy import INSTALL_LINES
         ui.status(f"Installing WinUSB driver for {device_id.description}… (up to a minute)")
-        ui.begin_assistant(*INSTALL_LINES)
         tail = asyncio.create_task(self._tail_log(ui))
         try:
-            result = await asyncio.to_thread(
-                install_winusb, device_id.vid, device_id.pid, name=device_id.description)
+            pending = await asyncio.to_thread(
+                _launch_winusb, device_id.vid, device_id.pid, name=device_id.description)
+            if pending.launched:
+                ui.begin_assistant(*INSTALL_LINES)   # UAC dismissed; the install itself starts now
+            result = await asyncio.to_thread(_finish_winusb, pending)
         finally:
             tail.cancel()
             try:
                 await tail
             except asyncio.CancelledError:
                 pass
-        await ui.end_assistant(result.ok)   # slide WiFFy out (fast on failure) before any error dialog
+        await ui.end_assistant(result.ok)   # slide the assistant out (fast on failure) before any error
 
         if not result.ok:
             if not result.cancelled:
