@@ -48,16 +48,11 @@ def write_mac_address(t: RT5372Transport, mac: bytes, u2me_mask: int = 0x00) -> 
 
 
 def is_chip_warm(t: RT5372Transport) -> bool:
-    """True if a prior bring-up already ran — the PBF pre-init bit (0x2000) is clear.
-
-    A fresh cold plug reads ``PBF_SYS_CTRL = 0x2F80`` (READY | pre-init | …);
-    ``usb_init_registers`` clears bit 13 [SRC rt2800usb.c rt2800usb_init_registers], so
-    READY-set + pre-init-clear means the chip is already inited — by us, since ``close()``
-    disposes the USB handle but never resets the radio. A garbage / 0 / 0xFFFF read leaves
-    pre-init set or READY clear ⇒ defaults to **cold** (safe). This is a runtime warm check,
-    **not** part of the kernel cold sequence, so the cold-capture gate does not model it."""
+    """True only if wifit3 left this chip inited in monitor mode: safe to skip FW + init."""
     reg = t.register_read(C.PBF_SYS_CTRL)
-    return bool(reg & C.PBF_SYS_CTRL_READY) and not (reg & C.PBF_SYS_CTRL_PRE_INIT)
+    if not (reg & C.PBF_SYS_CTRL_READY) or (reg & C.PBF_SYS_CTRL_PRE_INIT):
+        return False
+    return not (t.register_read(C.RX_FILTER_CFG) & C.RX_FILTER_CFG_DROP_NOT_TO_ME)
 
 
 # --- radio-on sequence (rt2x00lib_enable_radio + rt2800usb_set_device_state) ---
