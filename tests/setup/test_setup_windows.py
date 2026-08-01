@@ -46,27 +46,27 @@ class _Restore:
 async def test_install_declined_runs_nothing(monkeypatch):
     called = []
     monkeypatch.setattr(win, "install_winusb", lambda *a, **k: called.append(1) or _Install())
-    assert await win.SetupWindows().install(_DEV, FakePrompter(ask=False)) is False
+    assert await win.SetupWindows().install(_DEV, FakePrompter(ask=False)) is None
     assert called == []
 
 
 async def test_install_success(monkeypatch):
     monkeypatch.setattr(win, "install_winusb", lambda *a, **k: _Install(ok=True))
-    assert await win.SetupWindows().install(_DEV, FakePrompter()) is True
+    assert await win.SetupWindows().install(_DEV, FakePrompter()) is _DEV
 
 
 async def test_install_failure_reports_code_and_detail(monkeypatch):
     monkeypatch.setattr(win, "install_winusb", lambda *a, **k: _Install(
         ok=False, message="Windows refused the unsigned driver package.", wdi_code=-19, detail="bad inf"))
     ui = FakePrompter()
-    assert await win.SetupWindows().install(_DEV, ui) is False
+    assert await win.SetupWindows().install(_DEV, ui) is None
     assert ui.errors and "libwdi code -19" in ui.errors[0][1] and "bad inf" in ui.errors[0][1]
 
 
 async def test_install_cancelled_shows_no_error(monkeypatch):
     monkeypatch.setattr(win, "install_winusb", lambda *a, **k: _Install(ok=False, cancelled=True))
     ui = FakePrompter()
-    assert await win.SetupWindows().install(_DEV, ui) is False
+    assert await win.SetupWindows().install(_DEV, ui) is None
     assert ui.errors == []
 
 

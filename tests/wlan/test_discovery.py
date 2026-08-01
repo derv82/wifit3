@@ -177,3 +177,17 @@ def test_build_interface_none_when_driver_raises(monkeypatch):
     entry = DeviceID(0x0BDA, 0x8813, "RTL8814AU")
     _stub_scan(monkeypatch, [(_FakeDev(0x0BDA, 0x8813), _Boom, entry)])
     assert discovery.build_interface(entry) is None
+
+
+def test_usb_node_path_targets_the_addressed_instance(monkeypatch):
+    entry = DeviceID(0x0E8D, 0x7961, "MT7921AU", bus=2, address=35)
+    first = _FakeDev(0x0E8D, 0x7961, bus=2, address=32)
+    second = _FakeDev(0x0E8D, 0x7961, bus=2, address=35)
+    _stub_scan(monkeypatch, [(first, _FakeDriver, entry), (second, _FakeDriver, entry)])
+    assert discovery.usb_node_path(entry) == "/dev/bus/usb/002/035"
+
+
+def test_usb_node_path_first_match_for_catalog_entry(monkeypatch):
+    entry = DeviceID(0x148F, 0x5370, "RT5370")   # no (bus, address)
+    _stub_scan(monkeypatch, [(_FakeDev(0x148F, 0x5370, bus=1, address=5), _FakeDriver, entry)])
+    assert discovery.usb_node_path(entry) == "/dev/bus/usb/001/005"

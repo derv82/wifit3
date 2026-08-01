@@ -147,9 +147,12 @@ class WifiteApp(App):
         each newly-plugged card."""
         if any(isinstance(s, SplashView) for s in self.screen_stack):
             self.get_screen("splash", SplashView).render_devices(current)
-        elif arrived:
+            return
+        # Ignore already-attached devices
+        fresh = [d for d in arrived if not (self.array and self.array.contains(d))]
+        if fresh:
             self.devices.pause()          # pause synchronously so the next tick can't stack a prompt
-            self._prompt_hotplug(arrived)
+            self._prompt_hotplug(fresh)
 
     @work(exclusive=True)
     async def _prompt_hotplug(self, arrived) -> None:

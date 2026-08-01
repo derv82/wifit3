@@ -79,7 +79,8 @@ class BringupManager:
         except BringUpError as e:
             return BringupResult.failed(self._fault_message(device_id, e))
 
-        if not await self.setup.install(device_id, self.prompter):
+        device_id = await self.setup.install(device_id, self.prompter)
+        if device_id is None:
             return BringupResult.cancelled()              # declined or failed (setup already reported)
 
         try:

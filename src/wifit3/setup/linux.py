@@ -580,11 +580,11 @@ class SetupLinux(Setup):
     under one elevation prompt. A kernel-warmed chip usually needs a physical replug after the
     modprobe unload to reach a clean cold state; ``install`` drives that through the Prompter."""
 
-    async def install(self, device_id: DeviceID, ui: Prompter) -> bool:
+    async def install(self, device_id: DeviceID, ui: Prompter) -> DeviceID | None:
         target = target_for_vidpid(device_id.vid, device_id.pid)
         if target is None:
             ui.error("Device setup", "This card isn't a supported chipset for setup.")
-            return False
+            return None
 
         # Copy is the user's exact wording; do not paraphrase it.
         from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
@@ -607,20 +607,22 @@ class SetupLinux(Setup):
             verb="Install rule + blocklist for",
             confirm_label="Install"))
         if not confirmed:
-            return False
+            return None
 
         ui.status(f"Installing udev rule + blocklist for {chip}…")
         result = await asyncio.to_thread(install_rule, target, node=usb_node_path(device_id))
         if not result.ok:
             if not result.cancelled:
                 ui.error("Couldn't install the device rules", result.message)
-            return False
+            return None
 
         if target.replug_after_modprobe:
             # A kernel-warmed chip can't cold-reset in userland; only a physical replug recovers RX.
-            if not await ui.wait_replug(device_id):
+            replugged = await ui.wait_replug(device_id)
+            if replugged is None:
                 ui.status(f"Rules installed for {chip}. Replug, then press START.")
-                return False
+                return None
+            device_id = replugged
 
         # install_rule chgrp'd the live node; wait for udev to actually make it writable.
         ui.status("Applying device access…")
@@ -629,8 +631,8 @@ class SetupLinux(Setup):
                 "Device access didn't take effect",
                 f"The udev rule + blocklist are installed, but {device_id.description} hasn't picked "
                 f"up access yet. Unplug and replug the card, then press START.")
-            return False
-        return True
+            return None
+        return device_id
 
     async def uninstall(self, device_id: DeviceID, ui: Prompter) -> SetupResult:
         target = target_for_vidpid(device_id.vid, device_id.pid)
@@ -668,18 +670,18 @@ class SetupLinux(Setup):
 
     async def _wait_for_access(self, device_id: DeviceID, *, writable: bool,
                                timeout: float = 5.0, interval: float = 0.1) -> bool:
-        """Block until the card's usbfs node reaches ``writable`` (or ``timeout``). Re-resolves the
-        node each tick because a replug re-enumerates the card to a new bus/address."""
+        """Block until the card's node reaches ``writable``, or ``timeout``."""
+        node = usb_node_path(device_id)
+        if node is None:
+            return False
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
-            node = usb_node_path(device_id)
-            if node is not None:
-                try:
-                    if os.access(node, os.W_OK) == writable:
-                        return True
-                except OSError:
-                    pass
+            try:
+                if os.access(node, os.W_OK) == writable:
+                    return True
+            except OSError:
+                pass
             if loop.time() >= deadline:
                 return False
             await asyncio.sleep(interval)

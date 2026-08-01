@@ -3,10 +3,15 @@ bring-up path that touches Textual. It carries no decisions (the "humble object"
 pushes a screen or updates a label. BringupManager owns its lifecycle via open()/close()."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from wifit3.ui.screens.bringup_progress import BringupProgressModal
 from wifit3.ui.screens.replug import ReplugModal
 from wifit3.ui.screens.setup_error import SetupErrorDialog
-from wifit3.wlan.discovery import wait_for_presence
+from wifit3.wlan.discovery import wait_for_arrival, wait_for_departure
+
+if TYPE_CHECKING:
+    from wifit3.chips.driver import DeviceID
 
 
 class BringupPrompter:
@@ -42,11 +47,19 @@ class BringupPrompter:
     async def ask(self, dialog):
         return await self._app.push_screen_wait(dialog)
 
-    async def wait_replug(self, device_id) -> bool:
+    async def wait_replug(self, device_id) -> DeviceID | None:
+        """The re-enumerated card after the unplug/replug (new bus/address), or None if skipped."""
+        replugged = None
+
         async def _present(present: bool) -> bool:
-            return await wait_for_presence(device_id.vid, device_id.pid, present=present)
+            nonlocal replugged
+            if not present:                               # phase 1: this card leaves the bus
+                return await wait_for_departure(device_id)
+            replugged = await wait_for_arrival(device_id)  # phase 2: a fresh instance returns
+            return replugged is not None
+
         outcome = await self._app.push_screen_wait(ReplugModal(device_id.description, _present))
-        return outcome == "replugged"
+        return replugged if outcome == "replugged" else None
 
     def begin_assistant(self, greeting: tuple[str, ...], messages: list[tuple[str, ...]],
                         *, intro_delay: float = 2.0) -> None:

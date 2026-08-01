@@ -184,6 +184,8 @@ def build_interface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanIn
                              chipset=entry.chipset, vendor=entry.vendor,
                              product_name=entry.product_name,
                              bus=dev.bus, address=dev.address)
+    logger.debug("build_interface: no live %04x:%04x instance (bus=%s addr=%s)",
+                 device_id.vid, device_id.pid, device_id.bus, device_id.address)
     return None
 
 
@@ -218,25 +220,43 @@ async def close_interfaces(ifaces) -> None:
 
 def usb_node_path(device_id: DeviceID) -> Optional[str]:
     """The usbfs node ``/dev/bus/usb/BBB/DDD`` of the present card matching ``device_id`` (Linux),
-    or None if it isn't on the bus. The path the udev rule / chgrp acts on."""
+    or None if it isn't on the bus. Honors the (bus, address) instance when set, so the right node is
+    returned with identical siblings plugged in. The path the udev rule / chgrp acts on."""
     backend = libusb_package.get_libusb1_backend()
+    want_instance = device_id.bus is not None and device_id.address is not None
     for dev, _cls, entry in _scan_bus(backend):
-        if entry.vid == device_id.vid and entry.pid == device_id.pid:
-            return f"/dev/bus/usb/{dev.bus:03d}/{dev.address:03d}"
+        if (entry.vid, entry.pid) != (device_id.vid, device_id.pid):
+            continue
+        if want_instance and (dev.bus, dev.address) != (device_id.bus, device_id.address):
+            continue
+        return f"/dev/bus/usb/{dev.bus:03d}/{dev.address:03d}"
     return None
 
 
-async def wait_for_presence(vid: int, pid: int, *, present: bool,
-                            timeout: float = 120.0, interval: float = 0.3) -> bool:
-    """Block until the card ``vid:pid`` is present (or absent) on the bus, or ``timeout`` elapses.
-    Polls the cheap enumeration only (no interface build/teardown), so it never disturbs live cards."""
+async def wait_for_departure(device_id: DeviceID, *, timeout: float = 120.0,
+                             interval: float = 0.3) -> bool:
+    """Block until ``device_id``'s exact instance leaves the bus, or ``timeout`` elapses."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while True:
-        devs = await asyncio.to_thread(find_devices)
-        here = any(d.vid == vid and d.pid == pid for d in devs)
-        if here == present:
+        present = {d.instance_key for d in await asyncio.to_thread(find_devices)}
+        if device_id.instance_key not in present:
             return True
         if loop.time() >= deadline:
             return False
+        await asyncio.sleep(interval)
+
+
+async def wait_for_arrival(device_id: DeviceID, *, timeout: float = 120.0,
+                           interval: float = 0.3) -> Optional[DeviceID]:
+    """The card matching ``device_id``'s VID:PID once it appears on the bus, or None on timeout."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    baseline = {d.instance_key for d in await asyncio.to_thread(find_devices)}
+    while True:
+        for d in await asyncio.to_thread(find_devices):
+            if (d.vid, d.pid) == (device_id.vid, device_id.pid) and d.instance_key not in baseline:
+                return d
+        if loop.time() >= deadline:
+            return None
         await asyncio.sleep(interval)

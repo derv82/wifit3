@@ -35,7 +35,7 @@ class Prompter(Protocol):
         """Show ``dialog`` (a ModalScreen) and return whatever it dismisses with."""
         ...
 
-    async def wait_replug(self, device_id: DeviceID) -> bool: ...
+    async def wait_replug(self, device_id: DeviceID) -> DeviceID | None: ...
     def status(self, message: str) -> None: ...
     def error(self, title: str, body: str) -> None: ...
 
@@ -64,10 +64,10 @@ class Setup(ABC):
         return NoSetup()
 
     @abstractmethod
-    async def install(self, device_id: DeviceID, ui: Prompter) -> bool:
+    async def install(self, device_id: DeviceID, ui: Prompter) -> DeviceID | None:
         """Make ``device_id`` openable: show the confirm dialog, elevate, and on Linux drive the
-        replug. Returns True when the caller should retry connect, False on decline or failure (the
-        Prompter has already shown any error)."""
+        replug. Returns the card to connect to (re-addressed if a replug happened), or None on decline
+        or failure (the Prompter has already shown any error)."""
         ...
 
     @abstractmethod
@@ -79,8 +79,8 @@ class Setup(ABC):
 class NoSetup(Setup):
     """No privileged setup exists on this OS: nothing to install, nothing to reverse."""
 
-    async def install(self, device_id: DeviceID, ui: Prompter) -> bool:
-        return False
+    async def install(self, device_id: DeviceID, ui: Prompter) -> DeviceID | None:
+        return None
 
     async def uninstall(self, device_id: DeviceID, ui: Prompter) -> SetupResult:
         return SetupResult(ok=True, message="No device setup is needed on this platform.")

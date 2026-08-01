@@ -56,16 +56,18 @@ class WlanArray:
         self._rehop_tasks: Set[asyncio.Task] = set()
         self._close_tasks: Set[asyncio.Task] = set()   # closing vanished cards; never cancelled
 
-    # ----- pool membership ---------------------------------------------------
+    # ----- membership --------------------------------------------------------
 
     @property
     def members(self) -> List[WlanInterface]:
         return list(self._members)
 
+    def contains(self, device_id) -> bool:
+        """Whether the exact card (bus, address) named by ``device_id`` is already attached."""
+        return any(m.instance_key == device_id.instance_key for m in self._members)
+
     def attach(self, iface: WlanInterface) -> WlanInterface:
-        """Pool an already-connected interface: switch it to raw fan-out (the array's WlanSink is
-        the shared state now), point its TX stats at the sink, register it as a dedupe source, and
-        subscribe the array to its raw RX + disconnect."""
+        """Attach an already-connected interface."""
         self._members.append(iface)
         if self._loop is None:
             try:
@@ -76,7 +78,7 @@ class WlanArray:
         iface.on_tx = self._sink.record_tx
         iface.register_rx_callback(lambda pkt, i=iface: self._ingest(i, pkt))
         iface.register_disconnect_callback(lambda exc, i=iface: self._member_lost(i, exc))
-        logger.info("pool: attached %s (%s); %d card(s)", iface.name, iface.description,
+        logger.info("attached %s (%s); %d card(s)", iface.name, iface.description,
                     len(self._members))
         if self._hopping:
             self._repartition()   # a card joined mid-hop: re-spread the channels across the pool
@@ -108,7 +110,7 @@ class WlanArray:
         try:
             await iface.close()
         except Exception:
-            logger.exception("pool: close failed during hot_unplug of %s", iface.name)
+            logger.exception("close failed during hot_unplug of %s", iface.name)
         self._member_lost(iface, None, close=False)   # already closed above
 
     def _member_lost(self, iface: WlanInterface, exc: Optional[Exception], *,
@@ -122,7 +124,7 @@ class WlanArray:
             self._preferred = None      # pinned card unplugged: fall back to auto until re-picked
         self._dedupe.remove_source(iface.name)
         remaining = len(self._members)
-        logger.info("pool: lost %s; %d card(s) remain", iface.name, remaining)
+        logger.info("lost %s; %d card(s) remain", iface.name, remaining)
         if close:
             self._close_lost(iface)   # stop the dead card's async tasks (watchdog / RX / hop)
         if self._hopping and remaining:
@@ -253,7 +255,7 @@ class WlanArray:
                 if await m.set_channel(channel, scan=scan):
                     tuned_any = True
             except Exception:
-                logger.exception("pool: %s failed to tune to channel %d", m.name, channel)
+                logger.exception("%s failed to tune to channel %d", m.name, channel)
         return tuned_any
 
     def _partition(self, channels: List[int]) -> dict:
@@ -336,7 +338,7 @@ class WlanArray:
             try:
                 await iface.close()
             except Exception:
-                logger.debug("pool: close of lost %s raised (device gone)", iface.name, exc_info=True)
+                logger.debug("close of lost %s raised (device gone)", iface.name, exc_info=True)
 
         def _spawn(loop) -> None:
             task = loop.create_task(_close())

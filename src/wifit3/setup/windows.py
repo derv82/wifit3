@@ -475,10 +475,10 @@ class SetupWindows(Setup):
     """Windows device setup: bind the card to WinUSB (so libusb can open it) via the bundled
     wdi-simple.exe under one UAC prompt, and reverse it with pnputil. No replug concept exists."""
 
-    async def install(self, device_id: DeviceID, ui: Prompter) -> bool:
+    async def install(self, device_id: DeviceID, ui: Prompter) -> DeviceID | None:
         from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
         if not await ui.ask(ConfirmInstallDialog(device_id.description, chipset=device_id.chipset)):
-            return False
+            return None
 
         from wifit3.ui.wiffy import INSTALL_LINES
         ui.status(f"Installing WinUSB driver for {device_id.description}… (up to a minute)")
@@ -505,8 +505,8 @@ class SetupWindows(Setup):
                 detail = " · ".join(bits)
                 ui.error("WinUSB install failed",
                          f"{result.message} ({detail})" if detail else result.message)
-            return False
-        return True
+            return None
+        return device_id
 
     async def uninstall(self, device_id: DeviceID, ui: Prompter) -> SetupResult:
         from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog

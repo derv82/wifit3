@@ -87,7 +87,7 @@ class FakeSetup:
 
     async def install(self, device_id, ui):
         self.installed += 1
-        return self._install
+        return device_id if self._install else None
 
     async def uninstall(self, device_id, ui):
         return SetupResult(ok=True, message="removed")

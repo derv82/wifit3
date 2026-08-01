@@ -24,7 +24,7 @@ _DEV = DeviceID(0x0BDA, 0x8813, "Test card")
 
 
 async def test_nosetup_install_declines():
-    assert await NoSetup().install(_DEV, _FakePrompter()) is False
+    assert await NoSetup().install(_DEV, _FakePrompter()) is None
 
 
 async def test_nosetup_uninstall_reports_ok():

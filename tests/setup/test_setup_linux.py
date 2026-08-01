@@ -3,13 +3,15 @@ uninstall radii. The privileged pieces (install_rule, remove_rule, plan_uninstal
 stubbed here since test_linux.py covers their internals; these tests pin the sequence SetupLinux
 drives and how it turns each outcome into a bool / SetupResult, with a FakePrompter and no hardware.
 """
+from dataclasses import replace
+
 import pytest
 
 import wifit3.setup.linux as lin
 from wifit3.chips.driver import DeviceID
 from wifit3.setup import SetupTarget
 
-_DEV = DeviceID(0x0BDA, 0x8813, "RTL8814AU (Alfa AWUS1900)")
+_DEV = DeviceID(0x0BDA, 0x8813, "RTL8814AU (Alfa AWUS1900)", bus=1, address=5)
 
 
 def _target(*, replug=False):
@@ -26,7 +28,7 @@ class FakePrompter:
         return self._ask
 
     async def wait_replug(self, device_id):
-        return self._replug
+        return replace(device_id, address=99) if self._replug else None
 
     def status(self, message):
         self.statuses.append(message)
@@ -77,7 +79,7 @@ async def test_install_declined_writes_nothing(monkeypatch):
     called = []
     monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: _target())
     monkeypatch.setattr(lin, "install_rule", lambda *a, **k: called.append(1) or _Result())
-    assert await lin.SetupLinux().install(_DEV, FakePrompter(ask=False)) is False
+    assert await lin.SetupLinux().install(_DEV, FakePrompter(ask=False)) is None
     assert called == []
 
 
@@ -85,27 +87,28 @@ async def test_install_happy_no_replug(monkeypatch):
     monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: _target(replug=False))
     monkeypatch.setattr(lin, "install_rule", lambda *a, **k: _Result(ok=True))
     monkeypatch.setattr(lin.SetupLinux, "_wait_for_access", _access_ok)
-    assert await lin.SetupLinux().install(_DEV, FakePrompter()) is True
+    assert await lin.SetupLinux().install(_DEV, FakePrompter()) is _DEV
 
 
-async def test_install_waits_for_replug(monkeypatch):
+async def test_install_returns_the_replugged_card(monkeypatch):
     monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: _target(replug=True))
     monkeypatch.setattr(lin, "install_rule", lambda *a, **k: _Result(ok=True))
     monkeypatch.setattr(lin.SetupLinux, "_wait_for_access", _access_ok)
-    assert await lin.SetupLinux().install(_DEV, FakePrompter(replug=True)) is True
+    got = await lin.SetupLinux().install(_DEV, FakePrompter(replug=True))
+    assert got is not None and got.address == 99   # the re-addressed card, not the pre-unplug one
 
 
-async def test_install_replug_skipped_returns_false(monkeypatch):
+async def test_install_replug_skipped_returns_none(monkeypatch):
     monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: _target(replug=True))
     monkeypatch.setattr(lin, "install_rule", lambda *a, **k: _Result(ok=True))
-    assert await lin.SetupLinux().install(_DEV, FakePrompter(replug=False)) is False
+    assert await lin.SetupLinux().install(_DEV, FakePrompter(replug=False)) is None
 
 
 async def test_install_rule_failure_reports_error(monkeypatch):
     monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: _target())
     monkeypatch.setattr(lin, "install_rule", lambda *a, **k: _Result(ok=False, message="boom"))
     ui = FakePrompter()
-    assert await lin.SetupLinux().install(_DEV, ui) is False
+    assert await lin.SetupLinux().install(_DEV, ui) is None
     assert ui.errors and ui.errors[0][0] == "Couldn't install the device rules"
 
 
@@ -113,7 +116,7 @@ async def test_install_cancelled_elevation_shows_no_error(monkeypatch):
     monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: _target())
     monkeypatch.setattr(lin, "install_rule", lambda *a, **k: _Result(ok=False, cancelled=True))
     ui = FakePrompter()
-    assert await lin.SetupLinux().install(_DEV, ui) is False
+    assert await lin.SetupLinux().install(_DEV, ui) is None
     assert ui.errors == []
 
 
@@ -122,14 +125,14 @@ async def test_install_access_never_takes_effect(monkeypatch):
     monkeypatch.setattr(lin, "install_rule", lambda *a, **k: _Result(ok=True))
     monkeypatch.setattr(lin.SetupLinux, "_wait_for_access", _access_never)
     ui = FakePrompter()
-    assert await lin.SetupLinux().install(_DEV, ui) is False
+    assert await lin.SetupLinux().install(_DEV, ui) is None
     assert ui.errors and "didn't take effect" in ui.errors[0][0]
 
 
 async def test_install_unsupported_chipset(monkeypatch):
     monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: None)
     ui = FakePrompter()
-    assert await lin.SetupLinux().install(_DEV, ui) is False
+    assert await lin.SetupLinux().install(_DEV, ui) is None
     assert ui.errors
 
 
