@@ -239,11 +239,15 @@ class WlanArray:
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """STACK: tune every channel-capable member to ``channel`` (focus/PBC), one at a time. A card
-        already on it, or that can't reach it, is skipped; a card that fails to tune is logged and the
-        rest still tune. Returns True if at least one card ended up on ``channel``."""
+        that can't reach it is skipped; a card already on it counts as success (the postcondition
+        holds); a card that fails to tune is logged and the rest still tune. Returns True if at least
+        one card is on ``channel``."""
         tuned_any = False
         for m in self._members:
-            if channel not in m.supported_channels or m.current_channel == channel:
+            if channel not in m.supported_channels:
+                continue
+            if m.current_channel == channel:
+                tuned_any = True                    # already there: it IS on the channel
                 continue
             try:
                 if await m.set_channel(channel, scan=scan):
