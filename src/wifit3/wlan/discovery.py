@@ -159,6 +159,14 @@ def find_devices() -> List[DeviceID]:
             for dev, _cls, entry in _scan_bus(backend)]
 
 
+def find_device(device_id: DeviceID) -> Optional[DeviceID]:
+    """The live device with ``device_id``'s VID:PID, tagged with its current (bus, address), or None."""
+    for dev in find_devices():
+        if (dev.vid, dev.pid) == (device_id.vid, device_id.pid):
+            return dev
+    return None
+
+
 def build_interface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanInterface]:
     """The (unconnected) WlanInterface for the present card matching ``device_id``, or None if it
     isn't on the bus or its driver can't be constructed. When ``device_id`` carries an instance

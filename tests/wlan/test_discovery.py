@@ -142,6 +142,20 @@ def test_find_devices_distinguishes_two_identical_cards(monkeypatch):
     assert len({x.instance_key for x in out}) == 2
 
 
+def test_find_device_returns_the_current_address_for_a_moved_device(monkeypatch):
+    # device_id carries a stale address (WinUSB moved it); find_device returns the live one.
+    stale = DeviceID(0x148F, 0x5372, "RT5372", bus=2, address=63)
+    _stub_scan(monkeypatch, [(_FakeDev(0x148F, 0x5372, bus=2, address=64), _FakeDriver,
+                              DeviceID(0x148F, 0x5372, "RT5372"))])
+    got = discovery.find_device(stale)
+    assert got is not None and got.instance_key == (0x148F, 0x5372, 2, 64)
+
+
+def test_find_device_none_when_vidpid_absent(monkeypatch):
+    _stub_scan(monkeypatch, [])
+    assert discovery.find_device(DeviceID(0x1, 0x2, "nope")) is None
+
+
 def test_build_interface_dispatches_matching_driver(monkeypatch):
     entry = DeviceID(0x0BDA, 0x8813, "RTL8814AU")
     dev = _FakeDev(0x0BDA, 0x8813, bus=1, address=7)

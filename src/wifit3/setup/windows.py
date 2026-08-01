@@ -28,6 +28,7 @@ from pathlib import Path
 
 from wifit3.chips.driver import DeviceID
 from wifit3.setup.base import Prompter, Setup, SetupResult
+from wifit3.wlan.discovery import find_device
 
 logger = logging.getLogger(__name__)
 
@@ -506,7 +507,8 @@ class SetupWindows(Setup):
                 ui.error("WinUSB install failed",
                          f"{result.message} ({detail})" if detail else result.message)
             return None
-        return device_id
+        # WinUSB may re-enumerate the device to a new USB address.
+        return await asyncio.to_thread(find_device, device_id) or device_id
 
     async def uninstall(self, device_id: DeviceID, ui: Prompter) -> SetupResult:
         from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog

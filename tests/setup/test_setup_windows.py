@@ -1,6 +1,6 @@
-"""SetupWindows orchestration: confirm -> install_winusb -> bool, and the restore path. The elevated
-calls (install_winusb / restore_driver) are stubbed; test_windows.py covers their helpers.
-"""
+"""SetupWindows install/uninstall; the elevated calls are stubbed (see test_windows.py)."""
+from dataclasses import replace
+
 import wifit3.setup.windows as win
 from wifit3.chips.driver import DeviceID
 from wifit3.setup.base import SetupResult
@@ -50,8 +50,18 @@ async def test_install_declined_runs_nothing(monkeypatch):
     assert called == []
 
 
-async def test_install_success(monkeypatch):
+async def test_install_returns_device_at_new_address(monkeypatch):
+    # WinUSB may re-enumerate the device to a new address; install finds it again and returns it.
+    live = replace(_DEV, bus=2, address=64)
     monkeypatch.setattr(win, "install_winusb", lambda *a, **k: _Install(ok=True))
+    monkeypatch.setattr(win, "find_device", lambda dev: live)
+    assert await win.SetupWindows().install(_DEV, FakePrompter()) is live
+
+
+async def test_install_falls_back_when_device_not_found(monkeypatch):
+    # find_device returns None (device not on the bus): fall back to the original device_id.
+    monkeypatch.setattr(win, "install_winusb", lambda *a, **k: _Install(ok=True))
+    monkeypatch.setattr(win, "find_device", lambda dev: None)
     assert await win.SetupWindows().install(_DEV, FakePrompter()) is _DEV
 
 
