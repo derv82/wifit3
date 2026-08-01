@@ -286,11 +286,9 @@ class WlanInterface:
         return res
 
     async def start_hopping(self, channels: List[int] = None, interval: float = 0.5):
-        """Spawns an asyncio task to loop through channels."""
+        """Spawn the hop task across ``channels``. Called again while already hopping, it replaces the
+        running hop (the array re-spreads this way when a card is added or removed), not a no-op."""
         async with self._hop_lock:
-            if self._is_hopping:
-                return
-
             if not channels:
                 channels = self.supported_channels or [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
 
@@ -298,6 +296,7 @@ class WlanInterface:
             # first sort tick. SUPPORTED_CHANNELS stays sequential for the filter UI.
             channels = scan_hop_order(channels)
 
+            await self._cancel_hop_task()
             self._is_hopping = True
             self._hopping_task = asyncio.create_task(self._hop_loop(channels, interval))
             logger.info(
@@ -329,23 +328,27 @@ class WlanInterface:
     async def stop_hopping(self):
         """Cancel the hopping task, then drain any in-flight tune."""
         async with self._hop_lock:
-            task = self._hopping_task
             self._is_hopping = False
-            self._hopping_task = None
-            if task:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-            tune = self._tune_task
-            self._tune_task = None
-            if tune is not None and not tune.done():
-                try:
-                    await tune
-                except Exception:
-                    pass
+            await self._cancel_hop_task()
             logger.info(f"Stopped channel hopping on {self._chipset}")
+
+    async def _cancel_hop_task(self):
+        """Cancel the running hop task and drain any in-flight tune. The caller holds ``_hop_lock``."""
+        task = self._hopping_task
+        self._hopping_task = None
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        tune = self._tune_task
+        self._tune_task = None
+        if tune is not None and not tune.done():
+            try:
+                await tune
+            except Exception:
+                pass
 
     async def close(self):
         """Halts the driver loops and releases the USB interface."""

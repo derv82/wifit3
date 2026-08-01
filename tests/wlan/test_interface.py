@@ -24,6 +24,36 @@ def test_on_device_lost_latches_and_fans_once(mocker):
     assert iface._is_hopping is False
 
 
+async def test_start_hopping_retargets_a_running_hopper(mocker):
+    """Calling start_hopping again while hopping replaces the channel set, not a no-op. The array
+    relies on this to re-spread coverage when a card is added or removed."""
+    driver = mocker.MagicMock()
+    tuned = []
+
+    async def rec(channel, scan=False):
+        tuned.append(channel)
+        return True
+
+    driver.set_channel = rec
+    iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
+
+    await iface.start_hopping(channels=[1], interval=0.01)
+    for _ in range(100):
+        if 1 in tuned:
+            break
+        await asyncio.sleep(0.01)
+
+    await iface.start_hopping(channels=[6], interval=0.01)   # retarget while hopping
+    tuned.clear()
+    for _ in range(100):
+        if 6 in tuned:
+            break
+        await asyncio.sleep(0.01)
+    await iface.stop_hopping()
+
+    assert 6 in tuned and 1 not in tuned   # now covering the new set, not the old
+
+
 async def test_hopper_surfaces_device_gone_and_stops(mocker):
     """An unplug mid-hop: the hopper's tune raises device-gone, the guard routes it to the
     disconnect sink and stops hopping instead of killing the hop task with an unhandled raise."""
