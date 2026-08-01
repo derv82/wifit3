@@ -35,7 +35,7 @@ def test_derive_product_name_unknown_or_missing():
 # --- art_path_for: product -> chipset -> generic ----------------------------
 
 def test_art_path_for_product_hit():
-    assert art.art_path_for(_iface(product_name="Panda PAU05 / PAU06")) == "cards/card-pau06.ans"
+    assert art.art_path_for(_iface(product_name="Panda PAU05/06")) == "cards/card-pau06.ans"
 
 
 def test_art_path_for_driver_refined_name_wins():
