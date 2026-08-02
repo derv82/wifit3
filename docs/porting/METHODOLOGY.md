@@ -203,13 +203,13 @@ the reference AP first, and flip the default only once the new port ties or beat
 
 ## Housekeeping — every new port
 
-- **Credits** — add the upstream driver's substantive contributors to CREDITS.md, mapped to the
+- **Credits** — add the upstream driver's substantive contributors to docs/CREDITS.md, mapped to the
   new card. Tally commit authorship of the kernel path (and the vendor repo); beware kernel file
   renames (GitHub's `?path=` filter doesn't follow them, so scrape the pre-reorg path too). Drop
   tree-wide mechanical committers; keep the real builders.
 - **Licensing** — wifit3 is GPL-2.0-only (a derivative of GPLv2 drivers). Any firmware blob in
   `chips/<chip>/assets/` is not GPL: record its provenance + redistribution terms from
-  linux-firmware's WHENCE and byte-verify the blob (see FIRMWARE.md).
+  linux-firmware's WHENCE and byte-verify the blob (see docs/FIRMWARE.md).
 
 ## Terms
 

@@ -111,7 +111,7 @@ A few more of the driver authors we ported from:
 - **Sujith Manoharan** and the **ath9k** team; **Bitterblue Smith** and the Realtek **rtw88** team.
 
 The full list (every substantive contributor to the drivers we ported, and the cards they
-enabled) is in **[CREDITS.md](CREDITS.md)**.
+enabled) is in **[CREDITS.md](docs/CREDITS.md)**.
 
 ## Mini-Drivers
 
@@ -159,7 +159,7 @@ The loop in brief:
 
 Wifit3 is licensed under the **GNU General Public License v2.0** (GPL-2.0-only): see
 [LICENSE](LICENSE). The userland drivers are ports of GPLv2 Linux kernel and vendor DKMS
-drivers, so GPLv2 is the natural fit; the upstream authors are credited in [CREDITS.md](CREDITS.md).
+drivers, so GPLv2 is the natural fit; the upstream authors are credited in [CREDITS.md](docs/CREDITS.md).
 
 **Source for binary releases.** The prebuilt executables on the Releases page are built from
 this repository. The complete corresponding source for any released binary is this repository
@@ -169,7 +169,7 @@ binary is offered.
 **Firmware is not GPL.** The vendor firmware blobs that Wifit3 loads onto the cards are
 redistributed verbatim under their own manufacturers' licenses (Realtek / MediaTek / Ralink),
 *not* the GPL. Each ships with its license text alongside it; provenance and byte-verification
-are documented in [FIRMWARE.md](FIRMWARE.md).
+are documented in [FIRMWARE.md](docs/FIRMWARE.md).
 
 ## Disclaimer
 

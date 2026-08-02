@@ -42,7 +42,7 @@ milestone against the cold-boot pcap, and ship the chip's `<CHIP>.md` reference.
 [`docs/porting/CHIP-DOC.md`](docs/porting/CHIP-DOC.md).
 
 Your PR should include the `<CHIP>.md` reference, evidence it works (at minimum the offline pcap
-verification), and credits for the upstream driver's authors in CREDITS.md.
+verification), and credits for the upstream driver's authors in docs/CREDITS.md.
 
 ## Commits & pull requests
 
@@ -58,5 +58,5 @@ verification), and credits for the upstream driver's authors in CREDITS.md.
 By submitting a PR you agree your contribution is licensed under **GPL-2.0-only** (wifit3 is a
 derivative of GPLv2 kernel/vendor drivers, not optional), and that you have the right to
 contribute it. Any firmware blob under `chips/<chip>/assets/` is not GPL: record its provenance
-and redistribution terms (see [FIRMWARE.md](FIRMWARE.md)) and byte-verify it against
+and redistribution terms (see [FIRMWARE.md](docs/FIRMWARE.md)) and byte-verify it against
 linux-firmware.
