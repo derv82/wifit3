@@ -68,7 +68,7 @@ A matching chipset does not guarantee that your wireless card will work
 | ALFA AWUS036**H** | Realtek RTL8187L | 2.4 GHz |
 | Buffalo Nintendo Wi-Fi USB Controller | Ralink RT2570 | 2.4 GHz |
 
-See [VERIFICATION.md](VERIFICATION.md) for detailed information about each card's capabilities and performance.
+See [Supported Hardware](docs/SUPPORTED-HARDWARE.md) for detailed information about each card's capabilities and performance.
 
 ## Install
 

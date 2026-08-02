@@ -52,7 +52,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (Addr2-keyed). |
 | Stress | ✅ | 2026-07-29 | 30-min 13-ch soak, flat (trend 0.91). |
 
-→ [AR9271_V2.md](src/wifit3/chips/ar9271_v2/AR9271_V2.md)
+→ [AR9271_V2.md](../src/wifit3/chips/ar9271_v2/AR9271_V2.md)
 
 ### RTL8187L
 *ALFA AWUS036H · 2.4 GHz*
@@ -70,7 +70,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | WPS | ✅ | 2026-07-25 | PIN → M7 (4/5, via the silicon-MAC path). |
 | Stress | ✅ | 2026-07-29 | 30-min 13-ch soak, flat (trend 1.06). |
 
-→ [RTL8187L.md](src/wifit3/chips/rtl8187/RTL8187L.md)
+→ [RTL8187L.md](../src/wifit3/chips/rtl8187/RTL8187L.md)
 
 ### RTL8188EUS
 *TP-Link TL-WN722N v2/v3 · 2.4 GHz*
@@ -91,7 +91,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (Addr2-keyed). |
 | Stress | ✅ | 2026-07-30 | 30-min soak, flat (trend 0.97); mainline degrades/collapses. |
 
-→ [RTL8188EUS_DKMS.md](src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
+→ [RTL8188EUS_DKMS.md](../src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](../src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
 
 ### RTL8821AU
 *ALFA AWUS036ACS · 2.4 / 5 GHz*
@@ -110,7 +110,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ✅ | 2026-07-25 | HW-ACK forged MAC (WPS/PMKID). |
 | Stress | ✅ | 2026-07-30 | 30-min 22-ch dual-band soak, flat (trend 1.03). |
 
-→ [RTL8821AU.md](src/wifit3/chips/rtl8821au/RTL8821AU.md) (mainline) · [RTL8821AU_DKMS.md](src/wifit3/chips/rtl8821au_dkms/RTL8821AU_DKMS.md) (default)
+→ [RTL8821AU.md](../src/wifit3/chips/rtl8821au/RTL8821AU.md) (mainline) · [RTL8821AU_DKMS.md](../src/wifit3/chips/rtl8821au_dkms/RTL8821AU_DKMS.md) (default)
 
 ### RTL8812AU
 *ALFA AWUS036ACH · 2.4 / 5 GHz*
@@ -134,7 +134,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ✅ | 2026-07-25 | HW-ACK forged MAC (WPS/PMKID). |
 | Stress | ✅ | 2026-07-29 | 30-min 22-ch dual-band soak, flat (trend 1.08). |
 
-→ [RTL8812AU_DKMS.md](src/wifit3/chips/rtl8812au_dkms/RTL8812AU_DKMS.md) (default) · [RTL8812AU.md](src/wifit3/chips/rtl8812au/RTL8812AU.md) (mainline)
+→ [RTL8812AU_DKMS.md](../src/wifit3/chips/rtl8812au_dkms/RTL8812AU_DKMS.md) (default) · [RTL8812AU.md](../src/wifit3/chips/rtl8812au/RTL8812AU.md) (mainline)
 
 ### RTL8822BU
 *TP-Link Archer T3U Plus v1 · 2.4 / 5 GHz*
@@ -154,7 +154,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (spoofed + silicon). |
 | Stress | ✅ | 2026-07-30 | 30-min 22-ch soak, flat (trend 0.94, no death-detect). |
 
-→ [RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
+→ [RTL8822BU_DKMS.md](../src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](../src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
 
 ### RTL8814AU
 *ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*
@@ -177,7 +177,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (Addr2-keyed). |
 | Stress | ✅ | 2026-07-29 | 30-min 22-ch flat (trend 1.04). Continuous hopping avoids wedge. |
 
-→ [RTL8814AU.md](src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
+→ [RTL8814AU.md](../src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](../src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
 ### MT7612U
 *ALFA AWUS036ACM · 2.4 / 5 GHz*
@@ -194,7 +194,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (spoofed + silicon). |
 | Stress | ✅ | 2026-07-29 | 30-min 22-ch dual-band soak, flat (trend 0.98, TSSI-on). |
 
-→ [MT76X2U.md](src/wifit3/chips/mt76x2u/MT76X2U.md)
+→ [MT76X2U.md](../src/wifit3/chips/mt76x2u/MT76X2U.md)
 
 ### MT7610U
 *ALFA AWUS036ACHM · 2.4 / 5 GHz*
@@ -211,7 +211,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (spoofed + silicon). |
 | Stress | ✅ | 2026-07-29 | 30-min 22-ch dual-band soak, flat (trend 1.01). |
 
-→ [MT76X0U.md](src/wifit3/chips/mt76x0u/MT76X0U.md)
+→ [MT76X0U.md](../src/wifit3/chips/mt76x0u/MT76X0U.md)
 
 ### MT7921AU
 *ALFA AWUS036AXML / Panda PAU0F · 2.4 / 5 GHz*
@@ -229,7 +229,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (spoofed MAC). |
 | Stress | ✅ | 2026-07-29 | 30-min 22-ch dual-band soak, flat (trend 1.08). |
 
-→ [MT7921AU.md](src/wifit3/chips/mt7921au/MT7921AU.md)
+→ [MT7921AU.md](../src/wifit3/chips/mt7921au/MT7921AU.md)
 
 ### RT5372
 *Panda PAU05 + PAU06 · 2.4 GHz · 2T2R*
@@ -247,7 +247,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ✅ | 2026-07-25 | WPS PIN/PBC → auto-ACK. |
 | Stress | ✅ | 2026-07-30 | 30-min 14-ch soak, flat (PAU05 1.13, PAU06 0.91). |
 
-→ [RT5372.md](src/wifit3/chips/rt5372/RT5372.md) (default) · [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md) (rt2800usb fallback)
+→ [RT5372.md](../src/wifit3/chips/rt5372/RT5372.md) (default) · [RT2800USB.md](../src/wifit3/chips/rt2800usb/RT2800USB.md) (rt2800usb fallback)
 
 ### RT5572
 *Panda PAU09 N600 · 2.4 / 5 GHz · 2T2R*
@@ -268,7 +268,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor. |
 | Stress | ✅ | 2026-07-29 | 30-min 22-ch soak, flat (trend 1.04). |
 
-→ [RT5572.md](src/wifit3/chips/rt5572/RT5572.md)
+→ [RT5572.md](../src/wifit3/chips/rt5572/RT5572.md)
 
 ### RT3070
 *ALFA AWUS036NH · 2.4 GHz · 1T1R*
@@ -288,7 +288,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 | WPS | ✅ | 2026-07-25 | PIN → M7 (5/5). |
 | Stress | ✅ | 2026-07-29 | 30-min 14-ch soak, flat (trend 1.01). |
 
-→ [RT3070.md](src/wifit3/chips/rt3070/RT3070.md)
+→ [RT3070.md](../src/wifit3/chips/rt3070/RT3070.md)
 
 ### RT2500USB
 *Buffalo Nintendo Wi-Fi / RT2570 · 2.4 GHz*
@@ -308,7 +308,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 | WPS | ✅ | 2026-07-25 | PIN → M7 (5/5) but slow (~4.2 s median, via AP retransmits, no auto-ACK). |
 | Stress | ⚠️ | 2026-07-29 | Solo: 30-min soak, mild late taper. Died at 2m in a 4-card soak (bus contention, not the driver). |
 
-→ [RT2500USB.md](src/wifit3/chips/rt2500usb/RT2500USB.md)
+→ [RT2500USB.md](../src/wifit3/chips/rt2500usb/RT2500USB.md)
 
 ### RTL8821CU
 *Auscoumer 600 Mbps · 2.4 / 5 GHz*
@@ -325,7 +325,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 | ACKs | ✅ | 2026-06-24 | HW-ACK forged MAC (WPS + 5 GHz PMKID/deauth). |
 | Stress | ✅ | 2026-07-29 | 30-min 22-ch soak, flat (trend 0.96, no death-detect). |
 
-→ [RTL8821CU_DKMS.md](src/wifit3/chips/rtl8821cu_dkms/RTL8821CU_DKMS.md)
+→ [RTL8821CU_DKMS.md](../src/wifit3/chips/rtl8821cu_dkms/RTL8821CU_DKMS.md)
 
 ### RT5370
 *LOTEKOO 150 Mbps · 2.4 GHz · 1T1R*
@@ -342,7 +342,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 | ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (stop-on-ACK imperfect). |
 | Stress | ✅ | 2026-07-30 | 30-min 14-ch soak, flat (trend 1.02, no death-detect). |
 
-→ [RT5370.md](src/wifit3/chips/rt5370/RT5370.md)
+→ [RT5370.md](../src/wifit3/chips/rt5370/RT5370.md)
 
 ### MT7925AU
 *Netgear A9000 · 2.4 / 5 GHz · Wi-Fi 7 (connac3)*
@@ -360,7 +360,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 | WEP | ✅ | 2026-07-26 | 2.4 GHz ChopChop + ARP replay ~300 IVs/s. |
 | Stress | ✅ | 2026-07-29 | 30-min 22-ch soak, flat (trend 1.01, no death-detect). |
 
-→ [MT7925AU.md](src/wifit3/chips/mt7925au/MT7925AU.md)
+→ [MT7925AU.md](../src/wifit3/chips/mt7925au/MT7925AU.md)
 
 ### RTL8922AU
 *ASUS USB-BE93 · 2.4 / 5 GHz · Wi-Fi 7 (rtw89 8922A)*
@@ -378,7 +378,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 | WPS | ✅ | 2026-07-30 | PIN works. |
 | Stress | ✅ | 2026-07-29 | 30-min USB-A soak, flat (93→102 active, trend ~1.0). USB-3 drops RX to ~15 (2.4 GHz hit hardest). |
 
-→ [RTL8922AU.md](src/wifit3/chips/rtl8922au/RTL8922AU.md)
+→ [RTL8922AU.md](../src/wifit3/chips/rtl8922au/RTL8922AU.md)
 
 ## Unsupported
 
@@ -387,7 +387,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 Our only unit (bought 2015) is has a blank EFUSE (no factory RF calibration),
 so it can't validate the chip. The `rt2800usb` driver is shared with the working RT5372/RT5572,
 so the port itself stays supported; re-test if a genuine unit turns up.
-→ [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md)
+→ [RT2800USB.md](../src/wifit3/chips/rt2800usb/RT2800USB.md)
 
 ## Stress soak
 

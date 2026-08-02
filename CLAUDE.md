@@ -12,11 +12,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Porting / bringing up a chip?** The playbook lives in `docs/porting/METHODOLOGY.md` (or run `/port <chip>`): port from the C source, verify each milestone against the cold-boot pcap, commit each. Run the loop to a stopping point yourself: surface only for a decision you can't make from source+pcap, the live-TX gate, a committed milestone, or a real block. Don't narrate progress.
 - **Register READs can mutate device state: never assume two reads commute, never reorder them vs the capture.** Read-to-clear status regs, latch-on-read pairs, FIFO pops, indirect-access auto-advance: `READ X; READ Y` ≠ `READ Y; READ X` on silicon, and out-of-order reads strand the card in a state the capture never visited. So the verify tool's strict-positional cursor (reads included) is a *correctness* gate, not pedantry: a reordered-read divergence is a real driver bug to fix, never a tolerance to add.
 - **Per-chipset port-reference docs**: each chip dir has a `<CHIP>.md`: a short README for the chip (status, gotchas, orientation, scripts, and a debug log for open/unresolved findings). Keep it to what isn't already in the code. The debug log is for a live investigation and what's been ruled out, never a port-order/milestone log (that history is in git). Template + rules in `docs/porting/CHIP-DOC.md`.
-- **Human-facing docs are the face of the project.** `README.md` + `VERIFICATION.md`: edit only when the user asks, and show the proposed edit for approval before writing (terse, observational, no port-accuracy braggadocio; that belongs in `<CHIP>.md` + commits). Prefer prose direction over multiple-choice for these.
+- **Human-facing docs are the face of the project.** `README.md` + `docs/SUPPORTED-HARDWARE.md`: edit only when the user asks, and show the proposed edit for approval before writing (terse, observational, no port-accuracy braggadocio; that belongs in `<CHIP>.md` + commits). Prefer prose direction over multiple-choice for these.
 - **Within `chips/`, don't re-use code from another driver.** *Why:* a shared core meant a fix for one card forced re-testing every card and risked regressing the others.
 - **Lead's rule**: discuss class design (`Driver` vs `WlanInterface` responsibilities, etc.) BEFORE execution. Treat the user as Senior Lead.
 - **Never write to auto-memory without asking.** Before saving or updating any file under the auto-memory dir (`MEMORY.md` + its entries), show the user the proposed entry and wait for explicit approval. This overrides the default proactive-save behavior. The user owns what goes into always-loaded context.
-- **Planning docs** (NOT auto-loaded, open as needed): `docs/planning/FEATURES.md` (capabilities to build), `docs/planning/BUGS.md` (defects + QoL to fix). Current per-card state: `VERIFICATION.md` (grading process: `docs/verification-methodology.md`). Porting playbook: `docs/porting/` (or `/port <chip>`).
+- **Planning docs** (NOT auto-loaded, open as needed): `docs/planning/FEATURES.md` (capabilities to build), `docs/planning/BUGS.md` (defects + QoL to fix). Current per-card state: `docs/SUPPORTED-HARDWARE.md` (grading process: `docs/verification-methodology.md`). Porting playbook: `docs/porting/` (or `/port <chip>`).
 
 ## Commands
 
@@ -74,7 +74,7 @@ Not every chip uses every module; add modules as the chip's protocol needs them.
 
 ### Supported Hardware
 
-See `README.md` for the user-facing supported-cards table, and `VERIFICATION.md` for the full per-attack verification matrix.
+See `README.md` for the user-facing supported-cards table, and `docs/SUPPORTED-HARDWARE.md` for the full per-attack verification matrix.
 
 ### Adding a New Chipset
 

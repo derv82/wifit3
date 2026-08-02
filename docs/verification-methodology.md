@@ -1,9 +1,9 @@
 # Verification methodology
 
-How each card in `VERIFICATION.md` earns its row. That doc is **results only**: grades, per-card
+How each card in `SUPPORTED-HARDWARE.md` earns its row. That doc is **results only**: grades, per-card
 notes, the matrix. This doc is the **process** behind it: the columns, the grade rubric, the per-card
 checklist, and the metric definitions. Not auto-loaded; open when running a verification pass or
-editing `VERIFICATION.md`.
+editing `SUPPORTED-HARDWARE.md`.
 
 The tooling lives in `scripts/diag/` (`baseline-linux.py`, `baseline-wifit3.py`, `driver_health.py`);
 `scripts/diag/HEALTH-CHECK.md` documents those scripts. This doc is the layer above them: what we

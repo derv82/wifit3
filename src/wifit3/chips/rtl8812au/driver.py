@@ -7,7 +7,7 @@
    userland recovery (replug required). It is a known rtw88 HW limitation that the in-tree
    driver shares; ``post_mac_init_phy``/``dynamic.py`` only delay it ~2-4x. Reach this
    driver only via ``WIFIT3_RTL8812=mainline``, and only for FIXED-CHANNEL, non-hopping
-   work — never a multi-band scan. See VERIFICATION.md.
+   work — never a multi-band scan. See docs/SUPPORTED-HARDWARE.md.
 
 Bring-up flow:
 

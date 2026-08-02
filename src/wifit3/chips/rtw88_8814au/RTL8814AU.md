@@ -6,7 +6,7 @@ segmented firmware path, so its closest already-ported sibling is the 8822BU, no
 
 ## Status
 
-Ported, RX hardware-validated, graded C in `VERIFICATION.md` (full attack matrix passes; RX path
+Ported, RX hardware-validated, graded C in `docs/SUPPORTED-HARDWARE.md` (full attack matrix passes; RX path
 complete, 0/100 cold boots deaf). The DKMS sibling `rtl8814au_dkms` is the manager default — it
 fixes the weak mainline 2.4 GHz signal. TX/deauth works but at uncalibrated baseline power. Still
 open: calibrated full-power TX and the 2.4 GHz RX weakness below.
