@@ -144,7 +144,6 @@ frames steady-to-rising (~2.3k→~3.3k per 60 s bucket), 5 GHz active held ~44 t
 loss), no death event. Kills the suspected ~2 s channel-switch settle — dropped from Gotchas. Two soak
 WARNs are benign, not driver defects: 3.9% "garbage OUI" is broadcast `ff:ff:ff:ff:ff:ff` flagged by
 the OUI-sanity heuristic, and 20.8% beacon-channel mismatch is adjacent-channel bleed at 0.5 s dwell.
-Report: `scripts/diag/reports/mt76x2u_20260708-053217.md`.
 
 Also corrected the enumeration Gotcha: the Alfa presents the wireless interface directly (`0e8d:7612`,
 vendor-specific, 8 EPs, no MSD) — the mass-storage "DISK" front-end (Realtek `0bda:1a2b` → mode-switch)

@@ -6,14 +6,6 @@ Known bugs live in `BUGS.md`.
 
 ## Low Priority
 
-### Multi-card support
-
-Run 2+ USB cards in one session: pool RX, split TX. Possible because drivers are generic
-(no global state); the work is making the layer *above* them multi-instance.
-Capabilities: pooled RX (~2× beacons/EAPOL, union AP list), hot-plug add/remove mid-session,
-split the channel set across cards, dedicate one card to TX so a deauth can't deafen our own
-RX, one-card-per-target. **Complexity: big refactor**.
-
 ### Test & Fix macOS support
 
 Figure out how to detect & access drivers from userland in OSX.
@@ -35,43 +27,6 @@ confidence)`, blank if low; full breakdown in the Focus detail panel.
 **Complexity.** Moderate: display is the hard part, not the resolver. (Killed a full
 OUI→vendor DB in the Scanner table: cells too cramped for vendor strings, and an OUI names the
 Wi-Fi *module* maker, not the device: disambiguation needs IE fingerprinting anyway.)
-
-### Per-AP persistent log
-
-**Problem.** The Focus log is per-session and per-target. Switch APs (or bounce to Scanner)
-and the previous AP's attack log is gone. Re-entering a target you already worked shows a blank
-log, even though its handshake / WPS / WEP history is exactly what you'd want back.
-
-**Model.** One new field on `AccessPoint` (`models/__init__.py`, a plain `@dataclass`): a capped
-ring buffer `log_history: deque[str] = field(default_factory=lambda: deque(maxlen=200))`. It
-stores the *composed* line (timestamp prefix included) so replay shows the original event
-times, not the revisit time. It lives on the AP object, so its lifetime is that AP's lifetime
-in the session registry: in-memory only, gone on app exit, never touches disk.
-
-**Capture.** `FocusViewV2._log` (`screen.py:543`) is the single chokepoint: every line flows
-through it. Build the line once (`[dim]{ts}[/dim]  {markup}`), write it to the `LogBand`, and,
-when a target is bound (`self._target_ap`), also append it to `self._target_ap.log_history`.
-Lines emitted with no target (the demo seed) are simply not stored.
-
-**Replay.** `_enter_target` (`screen.py:292`) today does `LogBand.clear()` then re-seeds via
-`_log`. Change to: clear, then if `ap.log_history` is non-empty replay it straight into the band
-(`LogBand.write`, *not* `_log`, so replay doesn't re-capture itself) and skip the fresh seed
-block; otherwise seed as now (first visit). A `─ resumed ─` divider before the live stream keeps
-the boundary readable. The seed lines (Target acquired / BSSID / encryption / tuned-to-channel)
-are themselves `_log` calls and thus already in `log_history`, so re-seeding on revisit would
-duplicate them. That first-visit-vs-revisit branch is the one real piece of logic here.
-
-**Cap & tradeoff.** `maxlen` makes append O(1) and growth bounded: ~200 lines × ~60 B × N APs ≈
-a few hundred KB even for a crowded scan, negligible. The cost is that a marathon WPS PIN sweep
-(thousands of lines) keeps only its last ~200 per AP; the live band still shows everything in
-the moment, only the *replay* is truncated to the tail. The cap is a single constant to tune if
-a use case wants deeper scrollback.
-
-**Out of scope.** ScannerView keeps its own session log (`_write_log`); this is the Focus
-per-target log only. Mirroring it for the scanner would be a separate, optional follow-up.
-
-**Complexity.** Low: one dataclass field, one append in `_log`, one replay branch in
-`_enter_target`. No threading, no disk, no new widgets.
 
 ### VAULT — loot manager ("HACKLEBOX")
 

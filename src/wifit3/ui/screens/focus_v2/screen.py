@@ -571,7 +571,7 @@ class FocusViewV2(Screen):
             self._log(
                 f"[black bold on yellow] {escape(ev.value or '?')} [/black bold on yellow] "
                 f"4-way from [bold]{short_sta(ev.client_mac)}[/bold] "
-                f"[dim](not crackable, -m 22000)[/dim]"
+                f"[dim](not crackable)[/dim]"
             )
         elif ev.kind == CaptureKind.DECLOAK:
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")

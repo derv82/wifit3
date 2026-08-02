@@ -29,7 +29,7 @@ PA-LNA / antenna / channel-plan assumptions) were tuned to reproduce the recorde
 cannot validate a constant against the wire you derived it from; it only catches a wrong value that
 changes a *captured register write*. `beacon_watch` only catches catastrophic RX loss on the one
 channel/scenario tested. We were blind to a whole gap class until a question about the `misc` names
-accidentally surfaced it (see Debug log). A severe audit (`SEVERE-AUDIT.md`) cleared the RX/waiver/
+accidentally surfaced it (see Debug log). A severe audit cleared the RX/waiver/
 EFUSE axes, but that is not a line-by-line proof of the whole driver.
 
 **The comments are the porter's assumptions written as fact, and some are wrong.** e.g.

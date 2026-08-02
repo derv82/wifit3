@@ -73,7 +73,7 @@ crystal, and runs a per-tune IQ calibration (BBP158/159 indirect pairs) on every
 
 **Focus-entry channel tune sometimes doesn't take the first time** (0 beacons; re-entering Focus
 fixes it). Reproduced on the MT7610U too, so it's a bug in the **shared Focus→set_channel path**,
-not RT3572-specific. Tracked in `planning/FEATURES.md` § Bugs/QoL.
+not RT3572-specific.
 
 ## Orientation
 

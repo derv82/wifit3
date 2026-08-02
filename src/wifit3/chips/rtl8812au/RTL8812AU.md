@@ -52,7 +52,7 @@ active paths. DFS 5 GHz channels (52..144) are excluded from `SUPPORTED_CHANNELS
 `set_channel` accepts them if asked explicitly.
 
 **Hop-death gives the Scanner no feedback** — targets fade dark, the list empties, no banner. The
-driver logs the warning; surfacing it in the UI is tracked in `planning/RELEASE-PLAN.md` § 2c.
+driver logs the warning, but the Scanner UI doesn't surface it.
 
 ## Orientation
 
