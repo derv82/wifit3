@@ -3,11 +3,11 @@
 A USB-only wireless auditor that runs in userland on Linux and Windows.
 
 <p align="center">
-  <img src="screenshots/wifit3-1-splash.png" alt="Wifit3 splash / adapter picker" width="700">
+  <img src="assets/wifit3-1-splash.png" alt="Wifit3 splash / adapter picker" width="700">
 </p>
 
 <p align="center">
-  <img src="screenshots/wifit3-demo.gif" alt="Wifit3 in action: WPS PushButton PSK capture" width="700">
+  <img src="assets/wifit3-demo.gif" alt="Wifit3 in action: WPS PushButton PSK capture" width="700">
 </p>
 
 wifit3 is fundamentally different from its predecessor, [wifite2](https://github.com/derv82/wifite2):
@@ -38,7 +38,7 @@ wifit3 is fundamentally different from its predecessor, [wifite2](https://github
 
 | Scanner | Focus (single target) |
 |---|---|
-| ![Scanner](screenshots/wifit3-2-scanner.png) | ![Focus](screenshots/wifit3-3-focus-handshake.png) |
+| ![Scanner](assets/wifit3-2-scanner.png) | ![Focus](assets/wifit3-3-focus-handshake.png) |
 
 ## Supported hardware
 
