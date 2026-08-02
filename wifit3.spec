@@ -64,7 +64,7 @@ pyz = PYZ(a.pure)
 # App icon: .ico is a Windows resource; a Linux ELF has no icon slot (PyInstaller ignores icon=
 # there), so the icon is Windows-only. Fall back to None if the file is absent so a build never
 # fails over a missing icon.
-_icon = "packaging/wifit3.ico" if sys.platform == "win32" else None
+_icon = "screenshots/wifit3.ico" if sys.platform == "win32" else None
 if _icon and not os.path.isfile(_icon):
     _icon = None
 
