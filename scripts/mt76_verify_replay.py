@@ -1,7 +1,7 @@
 """Single-cursor replay engine for the mt76-USB family (connac MT7921AU/MT7925U and the
 MULTI_WRITE MT76x0U/MT76x2U). Drives the real port bring-up over a captured usbmon op
 stream and reports which ops matched, which were waived by name, and the first that did
-not. Per-chip wiring lives in mt76_verify_pcap.py.
+not. Per-chip wiring lives in each chip's scripts/<chip>/verify_pcap.py.
 """
 from __future__ import annotations
 
