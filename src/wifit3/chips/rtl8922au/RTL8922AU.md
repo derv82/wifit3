@@ -17,7 +17,7 @@ forged SA). RX-ACK admission (`_enable/_disable_rx_acks`) is a documented no-op 
 already forwards all control subtypes to host, so the AP's ACKs reach RX), and the driver reads +
 exposes its efuse MAC. **Forged-MAC auto-ACK (`enter_active_monitor`) works: `FAKE_MAC = SPOOFABLE`**
 (bench-confirmed, notes below). What remains is the WEP / WPS labs (see the project task list and
-`planning/`).
+`docs/planning/`).
 
 What reproduces: all of `rtw89_core_start`, the mac80211 add-interface, and per-hop the FULL
 `__rtw89_set_channel` for **both PHYs**. A hop is TWO `__rtw89_set_channel` calls: PHY_0/MAC_0 then
@@ -194,7 +194,7 @@ the 8812 sniffer plugged and re-run any of them after a physical replug.
 
 ## Next
 
-- **WEP / WPS labs** (see the project task list and `planning/`). Now unblocked: active monitor
+- **WEP / WPS labs** (see the project task list and `docs/planning/`). Now unblocked: active monitor
   supplies the client-impersonation ACKs.
 - `inject_frame` has no No-ACK flag path; add a test-only no-ACK path to verify TX bytes (cf. commit
   d58e6f252) if needed.

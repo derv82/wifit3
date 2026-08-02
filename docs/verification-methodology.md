@@ -82,7 +82,7 @@ real-world APs in a US environment.
   own beacons / silent / cross-channel; median RSSI delta vs Linux on shared APs).
 - **Sustained IVs/s** — `total_IVs / ARP-replay-window` (replay start → crack). The card's TX
   throughput ceiling under load; the number that predicts time-to-crack.
-- **Deauth sent/ACKed** — *(deferred; tracked in `planning/FEATURES.md`)* unicast-deauth ACK count in
+- **Deauth sent/ACKed** — *(deferred; tracked in `docs/planning/FEATURES.md`)* unicast-deauth ACK count in
   a post-burst window; a reachability readout, observational (not a grade input).
 
 ## DKMS vs mainline
