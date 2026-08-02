@@ -30,7 +30,7 @@ from wifit3.chips.mt7921au.constants import (  # noqa: E402
 from wifit3.chips.mt7921au.firmware import MT7921AUFirmwareLoader  # noqa: E402
 from wifit3.chips.mt7921au.transport import MT7921AUTransport  # noqa: E402
 
-DEFAULT_CAP = "usb_dumps_new/captures_mt7921u_pau0f-no-adapter-scatter/capture-3.pcap"
+DEFAULT_CAP = "driver_captures/captures_mt7921u_pau0f-no-adapter-scatter/capture-3.pcap"
 ASSETS = Path(mt_pkg.__file__).parent / "assets"
 
 # First register read of each periodic mac_work sub-sequence, so its burst is recognisable.

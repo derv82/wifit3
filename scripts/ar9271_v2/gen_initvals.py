@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-SRC = REPO / "data_dumps" / "ath9k-source-v6.18.12" / "ar9002_initvals.h"
+SRC = REPO / "driver_sources" / "ath9k-source-v6.18.12" / "ar9002_initvals.h"
 OUT = REPO / "src" / "wifit3" / "chips" / "ar9271_v2" / "initvals.py"
 
 TABLES = ["ar9271Modes_9271", "ar9271Common_9271", "ar9271Modes_9271_ANI_reg",

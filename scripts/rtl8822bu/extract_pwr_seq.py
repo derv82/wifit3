@@ -1,6 +1,6 @@
 """Extract rtw_pwr_seq_cmd tables for 8822b from the kernel C source.
 
-Parses `data_dumps/rtw88-source-v6.18/rtw8822b.c` and emits Python tuples
+Parses `driver_sources/rtw88-source-v6.18/rtw8822b.c` and emits Python tuples
 matching `wifit3.chips.rtw88_base.power_seq` conventions:
 
     (offset, cut_mask, intf_mask, base, cmd, mask, value)
@@ -15,7 +15,7 @@ import argparse
 import re
 from pathlib import Path
 
-# Symbolic name → integer value, taken from `data_dumps/rtw88-source-v6.18/main.h`.
+# Symbolic name → integer value, taken from `driver_sources/rtw88-source-v6.18/main.h`.
 SYMBOL_TABLE = {
     # Cut masks (main.h:946..954)
     "RTW_PWR_CUT_TEST_MSK": 0x01,
@@ -152,7 +152,7 @@ def main() -> int:
         f.write('"""Power-on / power-off sub-sequences for RTL8822BU.\n')
         f.write("\n")
         f.write("Direct extraction of `rtw_pwr_seq_cmd` tables from\n")
-        f.write("`data_dumps/rtw88-source-v6.18/rtw8822b.c` via\n")
+        f.write("`driver_sources/rtw88-source-v6.18/rtw8822b.c` via\n")
         f.write("`scripts/rtl8822bu/extract_pwr_seq.py`. Each tuple is\n")
         f.write("(offset, cut_mask, intf_mask, base, cmd, mask, value) — matches\n")
         f.write("the C struct rtw_pwr_seq_cmd field order.\n")

@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-SRC = REPO / "usb_dumps_new/captures_rtl8821au/driver-source/hal/phydm/rtl8821a"
+SRC = REPO / "driver_captures/captures_rtl8821au/driver-source/hal/phydm/rtl8821a"
 OUTDIR = REPO / "src/wifit3/chips/rtl8821au_dkms"
 
 TABLES = [

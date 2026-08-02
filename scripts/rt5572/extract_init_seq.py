@@ -31,6 +31,6 @@ def extract_init_seq(pcap_path):
         f.write("]\n")
 
 if __name__ == "__main__":
-    pcap = "usb_dumps/captures_rt2800usb_rt5572/capture-1.pcap"
+    pcap = "driver_captures/captures_rt2800usb_rt5572/capture-1.pcap"
     extract_init_seq(pcap)
     print("Done.")

@@ -6,7 +6,7 @@ every ~1.3-1.8 s (``rtl8187_rfkill_poll``). On the wire it is a fixed 3-op signa
 read GPIO0, clear the rfkill bit on GPIO0, read GPIO1 — so the acceptance gate dispatches
 it as a periodic async producer interleaved with the bring-up + channel hops.
 
-[SRC] ``data_dumps/rtl818x-source-v6.18/rtl8187/rfkill.c`` + ``rtl8187.h`` (the mask).
+[SRC] ``driver_sources/rtl818x-source-v6.18/rtl8187/rfkill.c`` + ``rtl8187.h`` (the mask).
 """
 from __future__ import annotations
 

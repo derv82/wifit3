@@ -45,7 +45,7 @@ from wifit3.chips.rtl8187.probe import probe  # noqa: E402
 from wifit3.chips.rtl8187.rtl8225 import build_rf_init, rtl8225_chan  # noqa: E402
 from wifit3.chips.rtl8187.transport import RTL8187Transport  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8187"
+CAP_DIR = REPO / "driver_captures" / "captures_rtl8187_2"
 
 # Reverse-map the RF7 synth word the channel tune writes (via the 8051 fast path,
 # wValue=0x07/wIndex=0x8225) back to its channel — how the walk learns which channel a
@@ -132,7 +132,7 @@ def _walk_operational(w: Walk, setup, power, rx_conf: int) -> dict | None:
 def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no real settle delays
     # Accept either a bare capture name (under the default capture dir) or an explicit path,
-    # so the Post-Port "verify every capture" pass can point at the older usb_dumps/ ones.
+    # so the Post-Port "verify every capture" pass can point at the older driver_captures/ ones.
     arg = cap or "capture-1"
     cand = Path(arg)
     if cand.exists():

@@ -21,7 +21,7 @@ RULES (do not violate — this is the whole point of the gate):
     disaster this rewrite exists to prevent.
   * NEVER copy logic from chips/rt2800usb/ — it is a *structural* reference only and has a
     CONFIRMED EFUSE word-vs-byte addressing bug (see chips/rt3070/RT3070.md). Port from the
-    kernel C in data_dumps/rt2x00-source-v6.18/ and let THIS wire confirm it.
+    kernel C in driver_sources/rt2x00-source-v6.18/ and let THIS wire confirm it.
   * The cursor only advances by reproducing the wire or by an explicit named waiver.
 
 We do not run airmon-ng / airodump-ng / iw / aireplay-ng against the port; the chip only sees
@@ -45,7 +45,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import rt2x00_pcap_replay as rp  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rt3070"
+CAP_DIR = REPO / "driver_captures" / "captures_rt3070"
 MAC_CSR0 = 0x1000          # silicon id + revision; the first vendor op of the probe
 
 # The clean-room driver you are building. These imports fail until you scaffold the modules;
@@ -95,7 +95,7 @@ def _walk_init(w: Walk, out: dict) -> None:
     long before the firmware load (frames 2031+) — so this is NOT the FW-first sketch the
     template shipped with. ``rt2800_probe_hw`` flattened, then ``rt2x00lib_start``.
 
-    Source: data_dumps/rt2x00-source-v6.18/{rt2800usb.c,rt2800lib.c,rt2x00dev.c}.
+    Source: driver_sources/rt2x00-source-v6.18/{rt2800usb.c,rt2800lib.c,rt2x00dev.c}.
 
     probe_rt     read MAC_CSR0 (chip id/rev)         rt2800_probe_rt (11987)
     efuse        autorun + EFUSE 32 word-blocks       rt2800usb_read_eeprom (594) ->

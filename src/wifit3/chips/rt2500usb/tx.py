@@ -8,7 +8,7 @@ bulk-OUT endpoint (EP 0x01).
 Rate: **1 Mbps CCK, long preamble** — the universal management-frame
 injection rate (deauth/probe). The PLCP fields are computed the way the
 rt2x00 layer does for CCK and verified byte-for-byte against the
-capture's aireplay deauth TXD (usb_dumps/captures_rt2500usb/capture-1
+capture's aireplay deauth TXD (driver_captures/captures_rt2500usb/capture-1
 frame 9895):
 
     word0 = 0x001a10f0  count=26 retry=15 ACK=0 NEW_SEQ=1 IFS=0 CCK

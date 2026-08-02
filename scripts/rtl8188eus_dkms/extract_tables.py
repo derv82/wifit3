@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-PHYDM = (REPO / "usb_dumps_new" / "captures_8188eu" / "driver-source"
+PHYDM = (REPO / "driver_captures" / "captures_8188eu" / "driver-source"
          / "hal" / "phydm" / "rtl8188e")
 OUT_DIR = REPO / "src" / "wifit3" / "chips" / "rtl8188eus_dkms"
 

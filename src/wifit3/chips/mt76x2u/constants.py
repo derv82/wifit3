@@ -4,13 +4,13 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Ported from Linux mt76 (kernel v6.18) by wifit3, 2026.
 
 All register addresses and vendor request codes were derived from
-``data_dumps/mt76-source-v6.18/`` and confirmed against
-``usb_dumps/captures_mt76x2u/capture-1.pcap`` cold-boot traffic.
+``driver_sources/mt76-source-v6.18/`` and confirmed against
+``driver_captures/captures_mt76x2u/capture-1.pcap`` cold-boot traffic.
 """
 
 # ---------------------------------------------------------------------------
 # Known VID:PIDs claimed by mt76x2u in the kernel id_table.
-# [SRC] data_dumps/mt76-source-v6.18/mt76x2/usb.c:12
+# [SRC] driver_sources/mt76-source-v6.18/mt76x2/usb.c:12
 # ---------------------------------------------------------------------------
 USB_IDS_MT76X2U = [
     (0x0b05, 0x1833, "MT7612U", "ASUS", "USB-AC54"),
@@ -32,7 +32,7 @@ USB_IDS_MT76X2U = [
 
 # ---------------------------------------------------------------------------
 # Vendor request codes (enum mt76_usb_vendor_req).
-# [SRC] data_dumps/mt76-source-v6.18/mt76.h:617
+# [SRC] driver_sources/mt76-source-v6.18/mt76.h:617
 # ---------------------------------------------------------------------------
 MT_VEND_DEV_MODE     = 0x01  # device-mode write (FW reset, IVB, ...)
 MT_VEND_POWER_ON     = 0x04
@@ -54,19 +54,19 @@ MT_VEND_TYPE_MASK   = MT_VEND_TYPE_EEPROM | MT_VEND_TYPE_CFG
 
 # ---------------------------------------------------------------------------
 # Register addresses.
-# [SRC] data_dumps/mt76-source-v6.18/mt76x02_regs.h
+# [SRC] driver_sources/mt76-source-v6.18/mt76x02_regs.h
 # ---------------------------------------------------------------------------
 MT_ASIC_VERSION = 0x0000  # mt76x02 ASIC version (REV_E1..E5 in low nibble)
 
 # FCE-bus registers (target of MT_VEND_WRITE_FCE during FW upload).
-# [SRC] data_dumps/mt76-source-v6.18/mt76x02_usb_mcu.c:15
+# [SRC] driver_sources/mt76-source-v6.18/mt76x02_usb_mcu.c:15
 MT_FCE_DMA_ADDR = 0x0230
 MT_FCE_DMA_LEN  = 0x0234
 MT_TX_CPU_FROM_FCE_CPU_DESC_IDX = 0x09a8
 
 # MCU registers (polled for FW-ready signals).
-# [SRC] data_dumps/mt76-source-v6.18/mt76x02_mcu.h:13
-# [SRC] data_dumps/mt76-source-v6.18/mt76x2/mcu.h:13
+# [SRC] driver_sources/mt76-source-v6.18/mt76x02_mcu.h:13
+# [SRC] driver_sources/mt76-source-v6.18/mt76x2/mcu.h:13
 MT_MCU_COM_REG0      = 0x0730  # main FW running latch (bit 0)
 MT_MCU_CLOCK_CTL     = 0x0708  # rev>=E3 ROM-patch-applied latch (bit 0)
 MT_MCU_SEMAPHORE_03  = 0x07BC  # ROM-patch semaphore (NOT used for MT7612)
@@ -487,7 +487,7 @@ MT_CFG_BBP_SW_RESET            = 0x0064  # bit(18) BBP reset
 
 # ---------------------------------------------------------------------------
 # USB endpoint order (kernel iterates intf descriptors and assigns by index).
-# [SRC] data_dumps/mt76-source-v6.18/usb.c:292
+# [SRC] driver_sources/mt76-source-v6.18/usb.c:292
 # [SRC] mt76.h:632 (enum mt76u_in_ep / mt76u_out_ep)
 # [WIRE] confirmed via pyusb dump of 0e8d:7612 on dev machine.
 # Endpoint order in descriptor: bulk-IN 0x84, 0x85; bulk-OUT 0x08, 0x04, 0x05,
@@ -511,7 +511,7 @@ ILM_SIZE            = 64448
 DLM_SIZE            = 17428
 
 # Firmware upload offsets in chip SRAM.
-# [SRC] data_dumps/mt76-source-v6.18/mt76x2/usb_mcu.c:17
+# [SRC] driver_sources/mt76-source-v6.18/mt76x2/usb_mcu.c:17
 MT76U_MCU_ILM_OFFSET       = 0x080000
 MT76U_MCU_DLM_OFFSET       = 0x110000
 MT76U_MCU_DLM_OFFSET_E3    = 0x110800  # rev>=E3 adds 0x800

@@ -107,4 +107,4 @@ def analyze_pcap(pcap_file):
         print(f"[*] Finished reading file. Ended on state: {state}")
 
 if __name__ == "__main__":
-    analyze_pcap(r"usb_dumps\round2\awus036h_1.pcap")
+    analyze_pcap(r"driver_captures\round2\awus036h_1.pcap")

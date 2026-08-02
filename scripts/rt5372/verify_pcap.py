@@ -17,7 +17,7 @@ RULES (do not violate — this is the whole point of the gate):
   * NEVER edit this file to make it print PASS.
   * NEVER copy logic from chips/rt2800usb/ — it is the imitation port, highly inaccurate per the
     Pcap Replay, that this clean-room driver replaces (and has a CONFIRMED EFUSE word-vs-byte
-    addressing bug). Port from the kernel C in data_dumps/rt2x00-source-v6.18/ and let THIS wire
+    addressing bug). Port from the kernel C in driver_sources/rt2x00-source-v6.18/ and let THIS wire
     confirm it.
   * The cursor only advances by reproducing the wire or by an explicit named waiver.
 
@@ -42,7 +42,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import rt2x00_pcap_replay as rp  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps" / "captures_rt2800usb_rt5372"
+CAP_DIR = REPO / "driver_captures" / "captures_rt2800usb_rt5372"
 MAC_CSR0 = 0x1000          # silicon id + revision; the first vendor op of the probe
 
 # The clean-room driver you are building. These imports fail until you scaffold the modules;
@@ -91,7 +91,7 @@ def _walk_init(w: Walk, out: dict) -> None:
     firmware → enable_radio. The chip's EEPROM is read via EFUSE at *probe* time, long
     before the firmware load. ``rt2800_probe_hw`` flattened, then ``rt2x00lib_start``.
 
-    Source: data_dumps/rt2x00-source-v6.18/{rt2800usb.c,rt2800lib.c,rt2x00dev.c}.
+    Source: driver_sources/rt2x00-source-v6.18/{rt2800usb.c,rt2800lib.c,rt2x00dev.c}.
 
     probe_rt     read MAC_CSR0 (chip id/rev = 0x5392)  rt2800_probe_rt (11987)
     efuse        autorun + EFUSE 32 word-blocks         rt2800usb_read_eeprom (594) ->

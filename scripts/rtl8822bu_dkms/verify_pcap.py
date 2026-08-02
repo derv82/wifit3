@@ -25,7 +25,7 @@ import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms import bringup, mac  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E402
 
-DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_rtl88x2bu" / "capture-1.pcap"
+DEFAULT_CAP = REPO / "driver_captures" / "captures_rtl88x2bu" / "capture-1.pcap"
 
 # cold_bringup reproduces the ENTIRE vendor chip init `rtl8822b_init`, byte-for-byte to op 9855:
 # chip-ID/EFUSE/power/FW/MAC/BB/RF -> the full odm_dm_init (DIG/CCK-PD/env-monitor/adaptivity/ra-info

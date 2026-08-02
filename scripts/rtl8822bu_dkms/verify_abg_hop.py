@@ -35,7 +35,7 @@ import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms import chan, chipid, efuse, txpower, usbphy  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl88x2bu"
+CAP_DIR = REPO / "driver_captures" / "captures_rtl88x2bu"
 RF_A_0x18_WRITE = 0x0C90        # SIPI RF-write: value = (addr<<20)|data; addr 0x18 => RF18 (channel)
 AGC_TBL_IDX = 0x0958            # switch_channel's first BB write — marks a new hop
 

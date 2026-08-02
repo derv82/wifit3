@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-SRC = REPO / "usb_dumps_new/captures_rtl8821au/driver-source/hal/phydm/rtl8821a/halhwimg8821a_mac.c"
+SRC = REPO / "driver_captures/captures_rtl8821au/driver-source/hal/phydm/rtl8821a/halhwimg8821a_mac.c"
 OUT = REPO / "src/wifit3/chips/rtl8821au_dkms/mac_reg_tbl.py"
 
 

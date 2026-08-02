@@ -27,7 +27,7 @@ import usb.core
 import usb.util
 
 
-# Kernel mt76x0u id_table — data_dumps/mt76-source-v6.18/mt76x0/usb.c:14-43.
+# Kernel mt76x0u id_table — driver_sources/mt76-source-v6.18/mt76x0/usb.c:14-43.
 # Format: (vid, pid, "vendor/model")
 MT76X0U_USB_IDS: list[tuple[int, int, str]] = [
     (0x148F, 0x7610, "MediaTek MT7610U reference"),

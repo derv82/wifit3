@@ -1,6 +1,6 @@
 """Extract rtw8822b init tables from kernel C source to Python data files.
 
-Source: data_dumps/rtw88-source-v6.18/rtw8822b_table.c
+Source: driver_sources/rtw88-source-v6.18/rtw8822b_table.c
 Output: src/wifit3/chips/rtl8822bu/assets/{mac,agc,bb,rf_a,rf_b}_tbl.py
 
 The five tables are arrays of u32 in C, walked 2 at a time by the rtw88
@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "data_dumps/rtw88-source-v6.18/rtw8822b_table.c"
+SRC = ROOT / "driver_sources/rtw88-source-v6.18/rtw8822b_table.c"
 OUT_DIR = ROOT / "src/wifit3/chips/rtl8822bu/assets"
 
 TABLES = ("mac", "agc", "bb", "rf_a", "rf_b")

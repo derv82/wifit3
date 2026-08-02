@@ -1,7 +1,7 @@
 """Power-on / power-off sequences for RTL8812AU.
 
 Direct port of the `rtw_pwr_seq_cmd` tables from
-`data_dumps/rtw88-source-v6.18/rtw8812a_table.c` (lines 2259..2613).
+`driver_sources/rtw88-source-v6.18/rtw8812a_table.c` (lines 2259..2613).
 Each tuple maps 1:1 to a C struct entry so the tables can be audited
 against upstream.
 

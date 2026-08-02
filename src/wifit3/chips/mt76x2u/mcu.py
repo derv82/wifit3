@@ -4,10 +4,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Ported from Linux mt76 (kernel v6.18) by wifit3, 2026.
 
 Mirrors:
-  - data_dumps/mt76-source-v6.18/mt76x02_usb_mcu.c       (__mt76x02u_mcu_send_msg,
+  - driver_sources/mt76-source-v6.18/mt76x02_usb_mcu.c       (__mt76x02u_mcu_send_msg,
                                                           mt76x02u_mcu_wait_resp)
-  - data_dumps/mt76-source-v6.18/mt76x02_mcu.c           (function_select / radio_state)
-  - data_dumps/mt76-source-v6.18/mt76x02_usb_core.c      (mt76x02u_skb_dma_info — TXINFO)
+  - driver_sources/mt76-source-v6.18/mt76x02_mcu.c           (function_select / radio_state)
+  - driver_sources/mt76-source-v6.18/mt76x02_usb_core.c      (mt76x02u_skb_dma_info — TXINFO)
 
 Wire format on EP 0x08 (MT_EP_OUT_INBAND_CMD):
 

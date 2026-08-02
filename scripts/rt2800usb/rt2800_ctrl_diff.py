@@ -29,7 +29,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-KERNEL_PCAP = Path(__file__).parent.parent.parent / "usb_dumps" / "captures_rt2800usb_rt5372" / "capture-1.pcap"
+KERNEL_PCAP = Path(__file__).parent.parent.parent / "driver_captures" / "captures_rt2800usb_rt5372" / "capture-1.pcap"
 
 # Decode hints — populated from rt2800.h address constants.
 REGISTER_NAMES = {

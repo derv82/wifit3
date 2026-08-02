@@ -82,7 +82,7 @@ from wifit3.chips.mt76x2u.power import (  # noqa: E402
 )
 from wifit3.chips.mt76x2u.transport import MT76x2UTransport  # noqa: E402
 
-DEFAULT_CAP = "usb_dumps_new2/captures_mt76x2u_5g-injection/capture-1.pcap"
+DEFAULT_CAP = "driver_captures/captures_mt76x2u_5g-injection/capture-1.pcap"
 
 # mt76x02 MCU CMD_SWITCH_CHANNEL_OP (the channel rides in payload[0]). [SRC] mt76x02_mcu.h:36
 _CMD_SWITCH_CHANNEL_OP = 30

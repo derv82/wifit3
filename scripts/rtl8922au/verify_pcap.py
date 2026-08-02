@@ -25,7 +25,7 @@ from wifit3.chips.rtl8922au.driver import RTL8922AUDriver  # noqa: E402
 from wifit3.chips.rtl8922au import chan as chanmod  # noqa: E402
 from wifit3.chips.rtl8922au.rx import iter_bulk_frames  # noqa: E402
 
-DEFAULT_CAP = "usb_dumps_new2/captures_rtw89_8922au_git/capture-1.pcap"
+DEFAULT_CAP = "driver_captures/captures_rtw89_8922au_git/capture-1.pcap"
 RTW89_USB_VENQT = 0x05
 
 # Channel-hop dispatch markers (per-channel set_channel unit). The unit opens with the

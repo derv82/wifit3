@@ -44,7 +44,7 @@ _SURVEY_FIRST = MT_MIB_SDR9(0)      # 0x820ed02c
 _MIB_FIRST = MT_MIB_SDR3(0)         # 0x820ed698
 _RESET_FIRST = MT_TX_AGG_CNT(0, 0)  # 0x820ed7dc (only as the FIRST op of a burst)
 
-DEFAULT_CAP = "usb_dumps_new2/captures_mt7925u/capture-1.pcap"
+DEFAULT_CAP = "driver_captures/captures_mt7925u/capture-1.pcap"
 ASSETS = Path(mt_pkg.__file__).parent / "assets"
 
 # MCU frame seq byte on the wire (EP 0x08 bulk-OUT): txd offset 39 + 4B SDIO hdr = 43.

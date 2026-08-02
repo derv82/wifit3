@@ -20,7 +20,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 VENDOR_FW_C = (
-    REPO / "usb_dumps_new" / "captures_rtl8814au" / "driver-source"
+    REPO / "driver_captures" / "captures_rtl8814au" / "driver-source"
     / "hal" / "rtl8814a" / "hal8814a_fw.c"
 )
 OUT = REPO / "src" / "wifit3" / "chips" / "rtl8814au_dkms" / "assets" / "rtl8814au_fw.bin"

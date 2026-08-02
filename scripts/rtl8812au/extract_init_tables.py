@@ -1,6 +1,6 @@
 """Extract rtw8812a init tables from kernel C source to Python data files.
 
-Source: data_dumps/rtw88-source-v6.18/rtw8812a_table.c
+Source: driver_sources/rtw88-source-v6.18/rtw8812a_table.c
 Output: src/wifit3/chips/rtl8812au/assets/{mac,agc,bb,rf_a,rf_b}_tbl.py
 
 8812A has FIVE tables vs 8821A's four (rf_b is the second RF chain — 8812A
@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "data_dumps/rtw88-source-v6.18/rtw8812a_table.c"
+SRC = ROOT / "driver_sources/rtw88-source-v6.18/rtw8812a_table.c"
 OUT_DIR = ROOT / "src/wifit3/chips/rtl8812au/assets"
 
 TABLES = ("mac", "agc", "bb", "rf_a", "rf_b")

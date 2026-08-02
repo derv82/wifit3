@@ -35,7 +35,7 @@ from wifit3.chips.rtl8812au_dkms import (  # noqa: E402
 
 REG_SYS_CFG = 0x00F0
 CHANNEL = 1
-DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_8812au" / "capture-2.pcap"
+DEFAULT_CAP = REPO / "driver_captures" / "captures_8812au" / "capture-2.pcap"
 
 
 def run(cap: str | None = None) -> int:

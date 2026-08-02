@@ -11,7 +11,7 @@ warm reattach) is silicon-agnostic. Per-silicon code lives in
 dispatched at runtime by ``silicon_id``.
 
 Bring-up flow (mirrors ``rt2800_probe_hw`` from
-data_dumps/rt2x00-source-v6.18/rt2800lib.c, with the rt2x00 framework
+driver_sources/rt2x00-source-v6.18/rt2800lib.c, with the rt2x00 framework
 + rt2x00usb layers flattened into wifit3's per-chip module shape):
 
     connect()

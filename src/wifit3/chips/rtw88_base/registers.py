@@ -4,7 +4,7 @@ These addresses are shared across the rtw88 USB chips (8821a, 8812a, 8822b,
 8822c, 8723d, 8814a, ...). Each chip's own `constants.py` may re-export
 these and add chip-specific bits.
 
-Source: `data_dumps/rtw88-source-v6.18/reg.h`.
+Source: `driver_sources/rtw88-source-v6.18/reg.h`.
 """
 
 from __future__ import annotations

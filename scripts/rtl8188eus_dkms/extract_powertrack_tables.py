@@ -27,11 +27,11 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-HALRF = (REPO / "usb_dumps_new" / "captures_8188eu" / "driver-source"
+HALRF = (REPO / "driver_captures" / "captures_8188eu" / "driver-source"
          / "hal" / "phydm" / "halrf")
 SRC_C = HALRF / "halrf_powertracking_ce.c"
 SRC_H = HALRF / "halrf_powertracking_ce.h"
-HWIMG = (REPO / "usb_dumps_new" / "captures_8188eu" / "driver-source"
+HWIMG = (REPO / "driver_captures" / "captures_8188eu" / "driver-source"
          / "hal" / "phydm" / "rtl8188e" / "halhwimg8188e_rf.c")
 OUT = (REPO / "src" / "wifit3" / "chips" / "rtl8188eus_dkms" / "powertrack_tbl.py")
 

@@ -466,7 +466,7 @@ def txpower_to_dev(channel: int, txpower: int) -> int:
 # requested channel and yields 0 URBs of decodable RX on our test hw.
 #
 # Picking the value:
-#   * Kernel pcap evidence — `usb_dumps/captures_rt2800usb_rt3572/`:
+#   * Kernel pcap evidence — `driver_captures/captures_rt2800usb_rt3572/`:
 #       - rt2800lib.c:7929 init_rfcsr_3572 writes a hardcoded 0x3C to
 #         RFCSR23 as the chip's post-init magic value (NOT a freq trim).
 #       - rt2800lib.c:2722 (config_channel_rf3052) does the real RMW:

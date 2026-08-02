@@ -45,7 +45,7 @@ MAC init is `power_on` (pre-FW FIFO/LLT + post-FW queue/wmac/edca/ARFR). PHY ini
 loads mac/bb/agc/rf_a tables then runs `switch_band`. Channel tune is `chan.set_channel` (RF
 read-modify-write via SIPI path A). RX decode + reader thread live in `rx.py` / `driver.py`. The
 phy-cond walker (`phy_cond.py`) mirrors `rtw_parse_tbl_phy_cond`. Names match the vendor C — grep
-`data_dumps/rtw88-source-v6.18/` to cross-reference.
+`driver_sources/rtw88-source-v6.18/` to cross-reference.
 
 The EFUSE read (512× write32 to `REG_EFUSE_CTRL`) happens at pcap frames 936–3122 — this is where
 `cut`, `rfe_option`, btcoex, and ext_lna/pa flags come from; it is *not* LLT.

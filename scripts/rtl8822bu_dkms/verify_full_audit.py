@@ -35,7 +35,7 @@ from wifit3.chips.rtl8822bu_dkms import (bringup, chan, chipid, efuse, mac,  # n
                                          txpower, usbphy)
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl88x2bu"
+CAP_DIR = REPO / "driver_captures" / "captures_rtl88x2bu"
 _IW_LINE = re.compile(r"^\[(\d+\.\d+)\] Executing:.*set channel (\d+)")
 SCAN_WINDOW = 8000          # max ops to forward-scan for a resync before declaring DIVERGENT
 

@@ -96,9 +96,9 @@ from wifit3.chips.rt2800usb.tx import (  # noqa: E402
 # Search the RT5572 (PAU09, full 2.4+5 GHz tune sweep) capture first, then the
 # older RT5572- and RT5372-class ones.
 CAP_DIRS = [
-    REPO / "usb_dumps_new2" / "captures_rt2800usb_rt5572",  # RT5572 / PAU09, full sweep
-    REPO / "usb_dumps" / "captures_rt2800usb_rt5372",       # RT5372 / PAU05-class
-    REPO / "usb_dumps_new" / "captures_rt2800usb",          # RT5572 / PAU09-class
+    REPO / "driver_captures" / "captures_rt2800usb_rt5572_2",  # RT5572 / PAU09, full sweep
+    REPO / "driver_captures" / "captures_rt2800usb_rt5372",       # RT5372 / PAU05-class
+    REPO / "driver_captures" / "captures_rt2800usb",          # RT5572 / PAU09-class
 ]
 
 

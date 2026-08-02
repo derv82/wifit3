@@ -72,7 +72,7 @@ def test_run_cmd_fatal_timeout_throws(tmp_path):
 # ---------------------------------------------------------------------------
 # Pure text parsers, extracted as Capture staticmethods so they're callable
 # without constructing Capture (which spins up a TemporaryDirectory). Fixtures
-# are sanitized samples from usb_dumps/captures_*/ (no real BSSIDs).
+# are sanitized samples from driver_captures/captures_*/ (no real BSSIDs).
 # ---------------------------------------------------------------------------
 
 # airmon-ng status table: PHY  Interface  Driver  Chipset

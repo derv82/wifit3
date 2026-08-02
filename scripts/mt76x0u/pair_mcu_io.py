@@ -4,7 +4,7 @@ frames in time order, matches by sequence number, prints OK/MISSING/STALE.
 
 Usage:
     uv run python scripts/mt76x0u/pair_mcu_io.py \\
-        --pcap usb_dumps/captures_mt76x0u/capture-2.pcap \\
+        --pcap driver_captures/captures_mt76x0u/capture-2.pcap \\
         --device 14 --frames 4913-5742 --label KERNEL
 
 Output marks any of:

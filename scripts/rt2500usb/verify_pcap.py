@@ -50,7 +50,7 @@ from wifit3.chips.rt2500usb.constants import (  # noqa: E402
 from wifit3.chips.rt2500usb.chan import RF_VALS_2525E, RF2525E_HALFBAND  # noqa: E402
 from wifit3.chips.rt2500usb.transport import RT2500USBTransport, get_field16  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rt2500usb"
+CAP_DIR = REPO / "driver_captures" / "captures_rt2500usb_2"
 
 # (half-band RF[2], RF[4]) low-16 → channel. RF2525E channel pairs share a
 # half-band (ch2/ch3 = 0x08ae), so the tune's first two PHY_CSR9 writes

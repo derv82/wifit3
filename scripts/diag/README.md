@@ -21,7 +21,7 @@ scripts/diag/
   report.py           ← markdown + CSV renderer (walks each probe)
   reports/            ← gitignored output
   beacon_watch.py        ← standalone RX-health: live beacons/s off the card
-  beacon_watch_usbcap.py ← same count from a usb_dumps_new/ capture (A/B vs the kernel)
+  beacon_watch_usbcap.py ← same count from a driver_captures/ capture (A/B vs the kernel)
 ```
 
 Diag is dev tooling: it lives under `scripts/` deliberately so it

@@ -52,7 +52,7 @@ def extract_sequence(pcap_path, limit=1000):
     return sequence
 
 if __name__ == "__main__":
-    seq = extract_sequence('usb_dumps/rt5572/pau09n600_1.pcap', 1000)
+    seq = extract_sequence('driver_captures/rt5572/pau09n600_1.pcap', 1000)
     with open('rt5572_init_trace.txt', 'w') as f:
         for s in seq:
             f.write(s + '\n')

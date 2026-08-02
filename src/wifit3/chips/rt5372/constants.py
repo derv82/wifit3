@@ -1,7 +1,7 @@
 """Register addresses, bitfields and magic constants for the Ralink RT5372 (RT5392).
 
 Every symbol here is transcribed verbatim from the mainline kernel headers in
-``data_dumps/rt2x00-source-v6.18/`` — never typed from memory [[feedback_constants_from_source]].
+``driver_sources/rt2x00-source-v6.18/`` — never typed from memory [[feedback_constants_from_source]].
 ``[SRC]`` cites the header + line so a future reader can re-verify.
 
 Field masks follow the kernel ``FIELD32`` convention: the mask marks the bit

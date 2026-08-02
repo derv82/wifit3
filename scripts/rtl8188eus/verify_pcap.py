@@ -6,7 +6,7 @@ vendor 0x05, address in wValue), so it reuses the shared Realtek replay engine.
 
 This capture set is the **mainline rtl8xxxu** cold boot (``airmon-ng.log``: driver rtl8xxxu) --
 the driver this port mirrors -- so the register *sequence* replays byte-for-byte, not just the
-blob. (The DKMS/vendor ``realtek-rtl8188eus`` boot in ``usb_dumps_new/captures_8188eu/`` is the
+blob. (The DKMS/vendor ``realtek-rtl8188eus`` boot in ``driver_captures/captures_8188eu/`` is the
 target of a separate vendor port.) Coverage grows milestone-by-milestone as the port is walked
 against the kernel source:
 
@@ -45,7 +45,7 @@ from wifit3.chips.rtl8188eus.constants import (  # noqa: E402
 )
 from wifit3.chips.rtl8188eus.efuse import EfuseDefaults  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps" / "captures_rtl8xxxu"
+CAP_DIR = REPO / "driver_captures" / "captures_rtl8xxxu"
 _WHOLE = (1, 10 ** 9)
 _FW_REGION_END = REG_FW_START_ADDRESS + 0x1000   # chunks restart at 0x1000 each page
 _MAC_INIT_FIRST_REG = 0x0026                      # rtl8188e_mac_init_table[0] (8188e.c:19)

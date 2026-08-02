@@ -1,7 +1,7 @@
 """Vendor control-transfer transport for the RTL8187L.
 
 Mirrors ``rtl818x_iowrite{8,16,32}_idx`` and ``rtl818x_ioread{8,16,32}_idx``
-from ``data_dumps/rtl818x-source-v6.18/rtl8187/rtl8225.c:22-113``.
+from ``driver_sources/rtl818x-source-v6.18/rtl8187/rtl8225.c:22-113``.
 
 Every register access is a single vendor control transfer:
 

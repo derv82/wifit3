@@ -1,4 +1,4 @@
-"""Shared rtw88-family infrastructure (cleanroom RE of `data_dumps/rtw88-source-v6.18/`).
+"""Shared rtw88-family infrastructure (cleanroom RE of `driver_sources/rtw88-source-v6.18/`).
 
 Every rtw88 USB chip (8821a, 8812a, 8814a, 8822b, 8822c, 8723d, …) shares:
 

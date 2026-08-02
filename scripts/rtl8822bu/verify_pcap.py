@@ -40,7 +40,7 @@ from wifit3.chips.rtl8822bu.phy import EfuseDefaults, phy_set_param  # noqa: E40
 from wifit3.chips.rtl8822bu.transport import RTL8822BUTransport  # noqa: E402
 
 CHANNEL = 1
-DEFAULT_CAP = REPO / "usb_dumps" / "captures_rtw88_8822bu" / "capture-1.pcap"
+DEFAULT_CAP = REPO / "driver_captures" / "captures_rtw88_8822bu" / "capture-1.pcap"
 
 
 class ReplayDev:

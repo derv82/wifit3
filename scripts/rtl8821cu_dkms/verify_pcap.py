@@ -33,7 +33,7 @@ import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8821cu_dkms import btc, efuse, led, tx, watchdog  # noqa: E402
 from wifit3.chips.rtl8821cu_dkms.driver import Rtl8821cuDkmsDriver  # noqa: E402
 
-DEFAULT_CAP = REPO / "usb_dumps_new2" / "captures_rtl8821cu" / "capture-1.pcap"
+DEFAULT_CAP = REPO / "driver_captures" / "captures_rtl8821cu" / "capture-1.pcap"
 
 # Operational-dispatch openers (each the unique first op of a vendor handler at the cursor):
 _OP_HOP = 0x2860                 # R: read_rf(0x18) = 0x2800+(0x18<<2) opens a same-band tune

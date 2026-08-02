@@ -26,7 +26,7 @@ Usage:
 
     # Full dump (human-readable, with [f=N t=Xs] prefix for each line):
     uv run python scripts/mt76x0u/mt76x0u_wire_dump.py \\
-        --pcap usb_dumps/captures_mt76x0u/capture-2.pcap \\
+        --pcap driver_captures/captures_mt76x0u/capture-2.pcap \\
         --device 14
 
     # Diff-friendly (no per-line prefix — feed two outputs to `diff -u`):

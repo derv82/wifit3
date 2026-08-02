@@ -2,7 +2,7 @@
 
 Addresses are resolved for the AR9271 (the only silicon this driver claims). Where the kernel
 macro is chip-conditional, the comment records the resolved branch so the value is traceable
-to the source. Citations: ``data_dumps/ath9k-source-v6.18.12/<file>:line`` at v6.18.12.
+to the source. Citations: ``driver_sources/ath9k-source-v6.18.12/<file>:line`` at v6.18.12.
 """
 from __future__ import annotations
 

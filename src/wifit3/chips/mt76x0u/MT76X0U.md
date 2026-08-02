@@ -106,7 +106,7 @@ Monitor-mode RX is already handled (this driver is the source of the monitor-dev
 `driver.py` clears `MT_RX_FILTR_CFG` PROMISC + OTHER_BSS and overrides the address-match registers with the
 bare MAC so unicast DATA (incl. EAPOL, ToDS) isn't dropped.
 
-Names match the kernel C (sources under `data_dumps/mt76-source-v6.18/`), so grep there to cross-reference.
+Names match the kernel C (sources under `driver_sources/mt76-source-v6.18/`), so grep there to cross-reference.
 
 ## Scripts
 

@@ -33,7 +33,7 @@ Reassembled file layout:
                                 ^^^^^^^^^^^^^^^^^^^^^
                                 first 64B of "ILM section" per kernel split
 
-Per data_dumps/mt76-source-v6.18/mt76x0/usb_mcu.c:29-44 the kernel
+Per driver_sources/mt76-source-v6.18/mt76x0/usb_mcu.c:29-44 the kernel
 holds back the first MT_MCU_IVB_SIZE (0x40) bytes of the FW payload for
 the IVB trigger and uploads the remainder of the ILM section to chip
 offset 0x40. So when we see chunks uploaded to chip dst 0x40, 0x40+X,

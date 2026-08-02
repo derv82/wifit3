@@ -51,7 +51,7 @@ from wifit3.chips.mt7921au.constants import (
 from wifit3.chips.mt7921au.firmware import MT7921AUFirmwareLoader
 from wifit3.chips.mt7921au.transport import MT7921AUTransport
 
-DEFAULT_CAP = "usb_dumps_new/captures_mt7921u_pau0f-no-adapter-scatter/capture-3.pcap"
+DEFAULT_CAP = "driver_captures/captures_mt7921u_pau0f-no-adapter-scatter/capture-3.pcap"
 PREFETCH0 = 0x7C024600        # first WFDMA-init register touched - start of CHECK 1 window
 REG_BREQ = {0x63, 0x66, 0x01, 0x02}   # unified rd/wr + UHW rd/wr (register access)
 # The boot-status query (bRequest 0x01, wValue 0x30, 64-byte read) decodes to this

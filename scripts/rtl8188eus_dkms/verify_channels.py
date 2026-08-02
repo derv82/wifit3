@@ -34,7 +34,7 @@ from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL  # noqa:
 REG_SYS_CFG = 0x00F0
 REG_RXFLTMAP1 = 0x06A2     # airmon monitor-prefix tail (last op before the channel set)
 REG_MSR = 0x0102           # monitor opmode entry (first op after the channel set)
-CAP_DIR = REPO / "usb_dumps_new" / "captures_8188eu"
+CAP_DIR = REPO / "driver_captures" / "captures_8188eu"
 
 
 def _strip(ops):

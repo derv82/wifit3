@@ -5,8 +5,8 @@ from pathlib import Path
 import re
 
 def extract_and_compact():
-    pcap_path = "usb_dumps/captures_rt2800usb_rt5572/capture-1.pcap"
-    log_path = "usb_dumps/captures_rt2800usb_rt5572/capture-1_logs/main.log"
+    pcap_path = "driver_captures/captures_rt2800usb_rt5572/capture-1.pcap"
+    log_path = "driver_captures/captures_rt2800usb_rt5572/capture-1_logs/main.log"
     
     commands = []
     pattern = re.compile(r'^\[(\d+\.\d+)\]\s+\[T=\d+\.\d+s\]\s+Running:.*set channel (\d+)')

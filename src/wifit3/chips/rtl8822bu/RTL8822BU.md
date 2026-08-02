@@ -1,7 +1,7 @@
 # RTL8822BU
 
 A port of the rtw88-family driver for RTL8822B silicon: 2T2R, 2.4 + 5 GHz 802.11ac, modern iDDMA
-firmware path (not the 8051 legacy path). Verified against `usb_dumps/captures_rtw88_8822bu/capture-1.pcap`
+firmware path (not the 8051 legacy path). Verified against `driver_captures/captures_rtw88_8822bu/capture-1.pcap`
 and runtime-tested on a TP-Link Archer T3U Plus v1 (`2357:0138`, CUT_D, MP chip). Shares
 `chips/rtw88_base/` infra; the init tables and channel-tune are 8822b-specific.
 
@@ -64,7 +64,7 @@ port of `rtw8822b_phy_set_param` — it loads mac/agc/bb/rf_a/rf_b via the phy_c
 / 5g) ports `rtw8822b_set_channel`. RX/RSSI decode is in `rx.py`; TX-desc build is `tx.py:build_tx_desc_mgmt`.
 Warm-detect is `mac.is_chip_warm`. DIG watchdog is `dynamic.py`, wired in `driver._finish_attach`.
 
-Names match the vendor C (`data_dumps/rtw88-source-v6.18/`), so grep there to cross-reference.
+Names match the vendor C (`driver_sources/rtw88-source-v6.18/`), so grep there to cross-reference.
 
 ## Scripts
 

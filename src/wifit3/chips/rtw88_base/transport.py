@@ -1,6 +1,6 @@
 """Synchronous USB transport for any rtw88-family USB chip.
 
-Mirrors `rtw_usb_read/write` from `data_dumps/rtw88-source-v6.18/usb.c` —
+Mirrors `rtw_usb_read/write` from `driver_sources/rtw88-source-v6.18/usb.c` —
 every register access is a single vendor control transfer:
 
     bRequest      = 0x05    (RTW_USB_CMD_REQ)

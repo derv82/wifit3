@@ -1,7 +1,7 @@
 """Power-on / power-off sequences for RTL8821AU.
 
 Direct translation of the rtw_pwr_seq_cmd tables from
-`data_dumps/rtw88-source-v6.18/rtw8821a_table.c`. Each tuple maps 1:1
+`driver_sources/rtw88-source-v6.18/rtw8821a_table.c`. Each tuple maps 1:1
 to a C struct entry so the tables can be audited against upstream.
 
 Semantics (mirroring `rtw_sub_pwr_seq_parser` in `mac.c:185`):

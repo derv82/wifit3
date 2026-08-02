@@ -62,7 +62,7 @@ def write_pcap(path: Path, frames: list) -> int:
 
 
 def load_default_target() -> dict:
-    path = Path(__file__).parent.parent.parent / "data_dumps" / "wps_pin.txt"
+    path = Path(__file__).parent.parent.parent / "driver_sources" / "wps_pin.txt"
     out: dict = {}
     if path.exists():
         for line in path.read_text().splitlines():
@@ -89,7 +89,7 @@ async def main_async(args) -> int:
     ssid = args.ssid if args.ssid is not None else d.get("ssid", "")
     channel = args.channel or int(d.get("channel", "1"))
     if not bssid:
-        fail("No target BSSID (give --bssid or populate data_dumps/wps_pin.txt).")
+        fail("No target BSSID (give --bssid or populate driver_sources/wps_pin.txt).")
 
     ifaces, iface = await discover_iface(args.debug)
     capture: list = []
@@ -149,7 +149,7 @@ async def main_async(args) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--bssid", help="target BSSID (default: data_dumps/wps_pin.txt)")
+    p.add_argument("--bssid", help="target BSSID (default: driver_sources/wps_pin.txt)")
     p.add_argument("--ssid", help="target SSID (default: from wps_pin.txt)")
     p.add_argument("--channel", type=int, help="target channel (default: from wps_pin.txt)")
     p.add_argument("--now", action="store_true",

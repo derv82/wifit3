@@ -11,7 +11,7 @@ fate as the cursor advances:
 There is **no legitimate waiver** — every op reproduce-or-fail to the last frame: the whole
 control conversation (init + airmon STA->monitor dance + airodump hops + the phydm
 dynamic-check watchdog) AND the aireplay-ng bulk-OUT injections. Two capture sets are wired:
-``usb_dumps_new`` (2.4 GHz aireplay, the default) and ``usb_dumps_new2`` (5 GHz injection,
+``captures_rtl8814au`` (2.4 GHz aireplay, the default) and ``captures_rtl8814au_2`` (5 GHz injection,
 select with a ``new2/`` prefix). Both PASS 100% byte-for-byte.
 
 We do not run airmon/airodump/iw against our port; the chip only sees register writes, so
@@ -42,8 +42,8 @@ from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver  # noqa: E402
 # Two capture sets. Select the 5 GHz one with a "new2/" prefix (e.g. "new2/capture-1");
 # a bare capture name defaults to the 2.4 GHz set.
 CAP_DIRS = {
-    "new":  REPO / "usb_dumps_new"  / "captures_rtl8814au",   # Kali 6.18, 2.4 GHz aireplay
-    "new2": REPO / "usb_dumps_new2" / "captures_rtl8814au",   # Kali 6.19 (this VM), 5 GHz injection
+    "new":  REPO / "driver_captures"  / "captures_rtl8814au",   # Kali 6.18, 2.4 GHz aireplay
+    "new2": REPO / "driver_captures" / "captures_rtl8814au_2",   # Kali 6.19 (this VM), 5 GHz injection
 }
 # dev-addr per (set, capture); anything absent falls back to find_card_device(pcap).
 DEV_ADDR = {

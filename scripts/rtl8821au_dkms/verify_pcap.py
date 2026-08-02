@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8821au_dkms import bb, chan, dig, efuse, firmware, mac, monitor, rf, txpower  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8821au"
+CAP_DIR = REPO / "driver_captures" / "captures_rtl8821au"
 DEV_ADDR = {"capture-1": 39}      # lsusb devnum; capture-2/3 TBD
 WINDOW = (2523, 9302)             # airmon-ng start phase (power-on + FW upload)
 START_ADDR = 0x0005               # first card_enable_flow access (CARDDIS_TO_CARDEMU)

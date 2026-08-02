@@ -45,7 +45,7 @@ _TXWI_LEN = 20
 # MT_PHY_TYPE_OFDM=1 [SRC] mt76.h:327.
 #
 # 2.4 GHz: CCK 1 Mbps (PHY=CCK, idx=0 → 0x0000) — verified on the wire in
-# usb_dumps/captures_mt76x2u/capture-1.pcap (frame 32207, aireplay-ng's first
+# driver_captures/captures_mt76x2u/capture-1.pcap (frame 32207, aireplay-ng's first
 # deauth bulk-OUT). 1 Mbps CCK is universally a basic rate so the AP accepts it.
 _TXWI_RATE_CCK_1MBPS = 0x0000
 # 5 GHz: OFDM 6 Mbps (OFDM_RATE(0,60) → hw_value=(OFDM<<8)|0 → phy=1,idx=0 →

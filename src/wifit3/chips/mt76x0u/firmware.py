@@ -1,7 +1,7 @@
 """MT76x0U firmware upload (M1).
 
 Ports `mt76x0u_load_firmware` + `mt76x02u_mcu_fw_send_data` from
-`data_dumps/mt76-source-v6.18/mt76x0/usb_mcu.c` and the surrounding
+`driver_sources/mt76-source-v6.18/mt76x0/usb_mcu.c` and the surrounding
 `mt76x0_chip_onoff` + `mt76x02_wait_for_mac` helpers.
 
 See `MT76X0U.md` for the wire-confirmed 15-step sequence and the

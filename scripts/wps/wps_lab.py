@@ -42,7 +42,7 @@ from wifit3.campaigns.auth_assoc import (  # noqa: E402
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie  # noqa: E402
 from wifit3.campaigns.wps.registrar import WpsRegistrar  # noqa: E402
 
-# Safety: the lab only targets the BSSID configured in data_dumps/wps_pin.txt (gitignored),
+# Safety: the lab only targets the BSSID configured in driver_sources/wps_pin.txt (gitignored),
 # the user's own test router. No real BSSID is hardcoded here (it must not enter git).
 RESULTS = Path(__file__).parent / "lab_results.jsonl"
 
@@ -353,7 +353,7 @@ async def main_async(args) -> int:
     bssid = (args.bssid or allowed).lower()
     if bssid != allowed and not args.force:
         print("REFUSING: target is not the configured test router "
-              "(data_dumps/wps_pin.txt). Use --force only if you own it.")
+              "(driver_sources/wps_pin.txt). Use --force only if you own it.")
         return 2
     tgt = {"bssid": bssid, "ssid": args.ssid or d.get("ssid", ""),
            "channel": args.channel or int(d.get("channel", "1")), "pin": args.pin or d.get("pin")}

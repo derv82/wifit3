@@ -1,5 +1,5 @@
 """PHY init tables for RTL8188EUS, mechanically extracted from
-`data_dumps/rtl8xxxu-source-v6.18/8188e.c` by
+`driver_sources/rtl8xxxu-source-v6.18/8188e.c` by
 `scripts/rtl8188eus/extract_phy_tables.py`. Do not edit by hand:
 re-run the extractor instead if the kernel source updates.
 

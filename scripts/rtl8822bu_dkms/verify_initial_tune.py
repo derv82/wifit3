@@ -25,7 +25,7 @@ import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms import chan, chipid, efuse, txpower, usbphy  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl88x2bu"
+CAP_DIR = REPO / "driver_captures" / "captures_rtl88x2bu"
 RF_A_0x18_READ = 0x2860         # switch_band/switch_channel open by reading RF_A 0x18 (BB 0x2800+0x18*4)
 # Cold init ends op 9855 / frame 19965; monitor-enable lands f20405. The initial channel-set is the
 # window between: the first RF_A-0x18 read at/after this frame begins switch_band(ch1).

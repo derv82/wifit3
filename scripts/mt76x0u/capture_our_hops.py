@@ -1,6 +1,6 @@
 """capture_our_hops.py -- start tshark USB capture, run wifit3 doing channel
 hops, stop tshark. Output: a .pcap of OUR driver's wire traffic, capturable
-side-by-side with the kernel's `usb_dumps/captures_mt76x0u/capture-2.pcap`.
+side-by-side with the kernel's `driver_captures/captures_mt76x0u/capture-2.pcap`.
 
 The hop sequence matches what the kernel's main.log shows for capture-2:
 ch 1, 2, 3, 4, 5, 6 with 1-second gaps between iw set channel commands.
@@ -196,8 +196,8 @@ async def main_async(args):
     print()
     print("Compare against kernel pcap:")
     print("  uv run python scripts/pcap_slicer.py \\")
-    print("    usb_dumps/captures_mt76x0u/capture-2_logs/main.log \\")
-    print("    usb_dumps/captures_mt76x0u/capture-2.pcap")
+    print("    driver_captures/captures_mt76x0u/capture-2_logs/main.log \\")
+    print("    driver_captures/captures_mt76x0u/capture-2.pcap")
 
     return 0
 

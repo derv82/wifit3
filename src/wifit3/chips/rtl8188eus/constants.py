@@ -1,6 +1,6 @@
 """RTL8188EUS — MAC register addresses + bit flags needed for M1.
 
-Symbols mirror `data_dumps/rtl8xxxu-source-v6.18/regs.h` (line numbers
+Symbols mirror `driver_sources/rtl8xxxu-source-v6.18/regs.h` (line numbers
 cited inline). Only the constants the FW-upload + 8051-ready path needs
 are pulled in for M1; MAC/PHY/RF init constants come in later milestones.
 """

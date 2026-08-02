@@ -23,7 +23,7 @@ interleaved into the stream (the LED-blink timer's GPIO writes, the sw-scan conf
 RULES (do not violate — this is the whole point of the gate):
   * NEVER edit this file to make it print PASS.
   * NEVER read chips/ar9271/ (the v1 port) — v2 is a blind re-port from the kernel C in
-    data_dumps/ath9k-source-v6.18.12/. Let THIS wire confirm it.
+    driver_sources/ath9k-source-v6.18.12/. Let THIS wire confirm it.
   * The cursor only advances by reproducing the wire or by an explicit named exception.
 
     uv run python scripts/verify_pcap.py ar9271_v2 [capture-1|capture-2|capture-3]
@@ -41,7 +41,7 @@ sys.path.insert(0, str(REPO / "scripts" / "ar9271_v2"))
 
 import ar9271_pcap_replay as rp  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new2" / "captures_ath9k_htc_newddevice"
+CAP_DIR = REPO / "driver_captures" / "captures_ath9k_htc_newddevice"
 
 _IMPORT_ERR = None
 try:

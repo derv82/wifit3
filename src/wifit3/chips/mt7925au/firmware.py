@@ -3,7 +3,7 @@
 Port of the mt7925u cold-boot download path: mt792xu_mcu_power_on, mt792xu_dma_init
 (mt792x_usb.c), then mt7925_run_firmware -> mt792x_load_firmware -> connac2 patch +
 RAM upload + FW_START (mt76_connac_mcu.c). Verified against
-usb_dumps_new2/captures_mt7925u/ with scripts/mt7925au/verify_pcap.py.
+driver_captures/captures_mt7925u/ with scripts/mt7925au/verify_pcap.py.
 
 The firmware container is the connac2 format, reused verbatim by mt7925. The
 connac3-specific bits live in mcu.py (txd[1]) and mcu.init_download (the extra

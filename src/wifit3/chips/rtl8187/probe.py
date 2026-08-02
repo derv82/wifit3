@@ -6,7 +6,7 @@ kernel emits on the bus, so the acceptance gate reproduces it single-cursor. Not
 hardcoded: the per-channel TX power read here is what feeds every ``set_tx_power`` (the RF
 init's channel-1 refresh and each channel tune).
 
-[SRC] ``data_dumps/rtl818x-source-v6.18/rtl8187/dev.c`` (rtl8187_probe, lines ~1490-1648).
+[SRC] ``driver_sources/rtl818x-source-v6.18/rtl8187/dev.c`` (rtl8187_probe, lines ~1490-1648).
 """
 from __future__ import annotations
 

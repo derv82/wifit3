@@ -1,7 +1,7 @@
 """MT76x0U per-channel frequency tables — ported 1:1 from kernel
 `initvals_phy.h` (post-line 320).
 
-[SRC] data_dumps/mt76-source-v6.18/mt76x0/initvals_phy.h:320-631
+[SRC] driver_sources/mt76-source-v6.18/mt76x0/initvals_phy.h:320-631
 
 Four tables consumed by `mt76x0_phy_set_chan_rf_params`:
   - FREQUENCY_PLAN          — 125 entries × 20 fields (PLL fractional-N params per channel)

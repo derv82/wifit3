@@ -633,7 +633,7 @@ class MT76x0UDriver(Driver):
                 # writes, 6x cal commands in every kernel set_channel(N) pcap
                 # window. Single-shot leaves the chip's MCU mid-state and the
                 # next channel switch's first command wedges. See wire-diff
-                # against usb_dumps/captures_mt76x0u/capture-2.pcap.
+                # against driver_captures/captures_mt76x0u/capture-2.pcap.
                 for _invocation in (1, 2):
                     self.last_set_channel_state = set_channel_20mhz(
                         self.transport, self.mcu, channel,

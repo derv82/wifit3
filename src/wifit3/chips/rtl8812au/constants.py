@@ -10,7 +10,7 @@ For M1 we only need the bits required to:
 Anything beyond that (post-FW MAC init, PHY tables, channel tune, RX/TX)
 is M2+ scope and lives outside this file.
 
-Reference: `data_dumps/rtw88-source-v6.18/rtw8812a.c` + `rtw8812a.h`.
+Reference: `driver_sources/rtw88-source-v6.18/rtw8812a.c` + `rtw8812a.h`.
 """
 
 from __future__ import annotations

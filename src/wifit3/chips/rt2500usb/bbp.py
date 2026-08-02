@@ -8,7 +8,7 @@ of rt2500usb.c:
   * rt2500usb_wait_bbp_ready (882-895)
   * rt2500usb_init_bbp     (898-951)
 
-Verified against usb_dumps/captures_rt2500usb/capture-2: the 31 fixed
+Verified against driver_captures/captures_rt2500usb/capture-2: the 31 fixed
 BBP writes land at frames 311..(503) and match the kernel list 1:1;
 frame 303 is the bbp_read(0) issued by wait_bbp_ready. The EEPROM
 override loop (words 0x0e-0x1d) is applied last.

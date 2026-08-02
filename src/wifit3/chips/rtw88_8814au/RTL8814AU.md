@@ -77,7 +77,7 @@ is `*_tbl.py` (mac/agc/bb/rf_a/b/c/d, ~29k u32s ported 1:1 from `rtw8814a_table.
 per-path RF_CFGCH + spur_calibration). RX desc decode + RSSI (jaguar phy_status, OFDM = 2nd-lowest
 of 4 per-path gains −110) is `rx.py`; monitor RCR is `rx.apply_monitor_rcr`. The IGI watchdog is
 `dynamic.py`. TX desc (40-byte, 10 u32, no DATARATE_FB_LIMIT) is `tx.py`. Names match the kernel C
-in `data_dumps/rtw88-source-v6.18/` — grep there to cross-reference.
+in `driver_sources/rtw88-source-v6.18/` — grep there to cross-reference.
 
 `rfe_option` comes from EFUSE (`efuse.py`, resolved per `rtw8814a_read_rfe_type`: bit7→USB) and gates
 the AGC/RF table branches; an early placeholder (=1) loaded a valid-but-suboptimal gain variant.

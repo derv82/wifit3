@@ -13,7 +13,7 @@ different from the kernel cold boot from the very start (a defensive read the ke
 live-EEPROM read where the kernel slurped upfront, a reordered write, ...). The gate's job is
 to localize that first difference exactly — not to paper over it.
 
-FAMILY wire format (mt76u, ``data_dumps/mt76-source-v6.18/usb.c``):
+FAMILY wire format (mt76u, ``driver_sources/mt76-source-v6.18/usb.c``):
 
     bRequest 0x06 = MT_VEND_MULTI_WRITE   (bmRequestType 0x40, OUT, 4-byte data)
     bRequest 0x07 = MT_VEND_MULTI_READ    (bmRequestType 0xC0, IN,  4-byte data)

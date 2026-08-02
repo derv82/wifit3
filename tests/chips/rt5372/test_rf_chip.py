@@ -5,7 +5,7 @@ The generalization goal: run on ANY 148f:5372 card regardless of EEPROM contents
 The RT5392 silicon is fixed (drives init_bbp/init_rfcsr), but the RF chip and the
 antenna chain count come from the runtime EEPROM — RF5372 (2T2R, the captured
 reference) vs RF5370 (1T1R) vs RF5390/RF5392, distinguished only by EEPROM_CHIP_ID.
-[SRC] data_dumps/rt2x00-source-v6.18/rt2800lib.c:11182-11235 (RF resolve),
+[SRC] driver_sources/rt2x00-source-v6.18/rt2800lib.c:11182-11235 (RF resolve),
 3387-3474 (config_channel_rf53xx RFCSR59 tables).
 """
 from __future__ import annotations

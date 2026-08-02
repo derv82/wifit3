@@ -56,7 +56,7 @@ Run per card; **document into that card's subsection at each step, overwriting s
 top-level matrix is *not* touched until every card is done.
 
 1. **Linux baseline first** (card bound to its kernel driver). Verify the bound driver matches the one
-   we ported from (`modinfo` / the source bundle in `usb_dumps_new/`), else the comparison is
+   we ported from (`modinfo` / the source bundle in `driver_captures/`), else the comparison is
    apples-to-oranges. Run `baseline-linux.py --capture` over the card's channels.
 2. **Replug into wifit3-ready state** (install rules, then *physically replug*: stale warm state
    carries over otherwise), confirm beacons. Run `baseline-wifit3.py` over the **same** channels.
@@ -93,7 +93,7 @@ into the non-default). Two distinct comparisons:
 - **Justify the default** — wifit3-dkms vs wifit3-mainline, both userland, no kernel driver needed.
 - **True Port %** — wifit3-<variant> vs the Linux **same** driver; needs that kernel driver installed
   (in-tree Ralink is already present; out-of-tree Realtek DKMS drivers must be installed: source
-  versions are in `usb_dumps_new/driver-sources/`). Where the matching driver isn't installed, note
+  versions are in `driver_captures/driver-sources/`). Where the matching driver isn't installed, note
   `Port` as measured against mainline instead: a cross-driver number, not true fidelity.
 
 ## Subsection template

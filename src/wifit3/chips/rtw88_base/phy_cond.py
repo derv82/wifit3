@@ -28,9 +28,9 @@ on the 8812A/8821A path (mirrors `check_positive` for those chips):
     type_apa  : 8   bits 24..31
 
 References:
-    data_dumps/rtw88-source-v6.18/phy.c:1150  check_positive
-    data_dumps/rtw88-source-v6.18/phy.c:1193  rtw_parse_tbl_phy_cond
-    data_dumps/rtw88-source-v6.18/main.h:1845 struct rtw_phy_cond
+    driver_sources/rtw88-source-v6.18/phy.c:1150  check_positive
+    driver_sources/rtw88-source-v6.18/phy.c:1193  rtw_parse_tbl_phy_cond
+    driver_sources/rtw88-source-v6.18/main.h:1845 struct rtw_phy_cond
 """
 from __future__ import annotations
 

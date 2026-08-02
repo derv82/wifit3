@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8821au_dkms import efuse  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8821au"
+CAP_DIR = REPO / "driver_captures" / "captures_rtl8821au"
 DEV_ADDR = {"capture-1": 39}
 WINDOW = (60, 2520)          # probe phase: chip-version read -> efuse byte loop
 START_ADDR = 0x00F0          # first ReadChipVersion access

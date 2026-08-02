@@ -2,9 +2,9 @@
 
 Ported from:
 
-    data_dumps/rt2x00-source-v6.18/rt2x00.h        (chipset IDs)
-    data_dumps/rt2x00-source-v6.18/rt2x00usb.h     (vendor request codes)
-    data_dumps/rt2x00-source-v6.18/rt2800.h        (register addresses)
+    driver_sources/rt2x00-source-v6.18/rt2x00.h        (chipset IDs)
+    driver_sources/rt2x00-source-v6.18/rt2x00usb.h     (vendor request codes)
+    driver_sources/rt2x00-source-v6.18/rt2800.h        (register addresses)
 
 This module starts small (just what M1 needs to identify the chip) and
 grows as later milestones land — same shape as rtl8187's constants.py.
@@ -554,7 +554,7 @@ USB_EP_BULK_OUT_AC_BE = 0x02
 # descriptor order: 1st bulk-OUT (= 0x01) is AC_VO. Mgmt frames in
 # mac80211 default to the highest-priority queue (AC_VO), so kernel
 # inject (aireplay-ng deauths) all go through EP 0x01. Verified from
-# usb_dumps/captures_rt2800usb_rt3572/capture-1.pcap frame 43087.
+# driver_captures/captures_rt2800usb_rt3572/capture-1.pcap frame 43087.
 # [SRC] rt2x00usb.c:579-595
 USB_EP_BULK_OUT_AC_VO = 0x01
 

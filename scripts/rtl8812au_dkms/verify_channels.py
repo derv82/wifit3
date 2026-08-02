@@ -37,7 +37,7 @@ from wifit3.chips.rtl8812au_dkms import chan, efuse, txpower  # noqa: E402
 REG_CCK_CHECK = 0x0454
 _IW_LINE = re.compile(r"^\[(\d+\.\d+)\] Executing:.*set channel (\d+)")
 _TXAGC_LO, _TXAGC_HI = 0x0C20, 0x0E54   # direct TXAGC span, both paths (A 0xC20.., B 0xE20..)
-CAP_DIR = REPO / "usb_dumps_new" / "captures_8812au"
+CAP_DIR = REPO / "driver_captures" / "captures_8812au"
 
 
 def _frame_epochs(pcap: Path):

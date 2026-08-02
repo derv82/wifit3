@@ -4,8 +4,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Ported from Linux mt76 (kernel v6.18) by wifit3, 2026.
 
 Mirrors:
-  - data_dumps/mt76-source-v6.18/mt76x2/usb_mcu.c       (mt76x2u_mcu_fw_init)
-  - data_dumps/mt76-source-v6.18/mt76x02_usb_mcu.c      (__mt76x02u_mcu_fw_send_data,
+  - driver_sources/mt76-source-v6.18/mt76x2/usb_mcu.c       (mt76x2u_mcu_fw_init)
+  - driver_sources/mt76-source-v6.18/mt76x02_usb_mcu.c      (__mt76x02u_mcu_fw_send_data,
                                                          mt76x02u_mcu_fw_reset)
 
 ROM-patch semaphore: `rom_protect = !is_mt7612(dev)`. On the reference 0x7612
@@ -59,7 +59,7 @@ from .transport import MT76x2UTransport
 logger = logging.getLogger(__name__)
 
 # MCU message header bitfields (4-byte little-endian).
-# [SRC] data_dumps/mt76-source-v6.18/mt76x02_dma.h:32
+# [SRC] driver_sources/mt76-source-v6.18/mt76x02_dma.h:32
 _MT_MCU_MSG_TYPE_CMD = 1 << 30
 _MT_MCU_MSG_PORT_SHIFT = 27
 _CPU_TX_PORT = 2  # enum dma_msg_port

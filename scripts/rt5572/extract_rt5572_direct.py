@@ -3,7 +3,7 @@ import binascii
 
 def extract():
     cmd = [
-        'tshark', '-r', 'usb_dumps/rt5572/pau09n600_1.pcap',
+        'tshark', '-r', 'driver_captures/rt5572/pau09n600_1.pcap',
         '-Y', 'usb.setup.wIndex >= 12288 and usb.setup.wIndex < 16384 and usb.setup.bRequest == 6',
         '-T', 'fields', '-e', 'usb.setup.wIndex', '-e', 'usb.data_fragment'
     ]

@@ -18,7 +18,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 BB_C = (
-    REPO / "usb_dumps_new" / "captures_rtl8814au" / "driver-source"
+    REPO / "driver_captures" / "captures_rtl8814au" / "driver-source"
     / "hal" / "phydm" / "rtl8814a" / "halhwimg8814a_bb.c"
 )
 OUT_DIR = REPO / "src" / "wifit3" / "chips" / "rtl8814au_dkms"

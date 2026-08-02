@@ -1,6 +1,6 @@
 """RTL8225/RTL8225z2 RF init + SPI primitives.
 
-Ported from ``data_dumps/rtl818x-source-v6.18/rtl8187/rtl8225.c``.
+Ported from ``driver_sources/rtl818x-source-v6.18/rtl8187/rtl8225.c``.
 
 The RTL8187L's transceiver is an external RF chip (the "Realtek RTL8225",
 later revved to "RTL8225z2" — the BCD vs. z2 split is what

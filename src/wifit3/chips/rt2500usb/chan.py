@@ -12,7 +12,7 @@ six kernel rf_vals tables are ported so the driver tunes whichever synth the
 EEPROM reports. The RT2500USB.md reference unit is RF2525E; the other five are
 ported 1:1 but not hardware-verified (see config_channel's untested-variant log).
 
-Verified against usb_dumps/captures_rt2500usb/capture-2 channel-1 set
+Verified against driver_captures/captures_rt2500usb/capture-2 channel-1 set
 (frames 1237-1271): the RF2525E "half-band first" RF[2] write
 (0x000008aa → PHY_CSR9=0x08aa, PHY_CSR10=0x9400) and the full
 RF[1..4] sequence match the kernel 1:1. (The capture used power_level

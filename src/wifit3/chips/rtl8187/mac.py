@@ -1,7 +1,7 @@
 """RTL8187L MAC-layer bring-up + warm/cold helpers.
 
 Mirrors ``rtl8187_{set_anaparam,cmd_reset,init_hw,start}`` from
-``data_dumps/rtl818x-source-v6.18/rtl8187/dev.c``.
+``driver_sources/rtl818x-source-v6.18/rtl8187/dev.c``.
 
 The RF init step inside ``init_hw`` (``priv->rf->init(dev)``) is stubbed
 in this milestone and ported in M2b — without it the chip's MAC comes

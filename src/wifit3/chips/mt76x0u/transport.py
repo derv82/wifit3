@@ -1,7 +1,7 @@
 """Synchronous USB transport for MT76x0U.
 
 Ported from Linux mt76 (kernel v6.18) for wifit3, 2026.
-Mirrors the mt76u USB-bus helpers in `data_dumps/mt76-source-v6.18/usb.c`
+Mirrors the mt76u USB-bus helpers in `driver_sources/mt76-source-v6.18/usb.c`
 (mt76u_rr / mt76u_wr / mt76u_single_wr / mt76u_bulk_msg).
 
 For M1 (FW upload → FW_READY ack) we need only:
@@ -44,7 +44,7 @@ from .wire_log import WIRE_LOG
 
 logger = logging.getLogger(__name__)
 
-# Match kernel __mt76u_vendor_request — [SRC] data_dumps/mt76-source-v6.18/usb.c:11-12.
+# Match kernel __mt76u_vendor_request — [SRC] driver_sources/mt76-source-v6.18/usb.c:11-12.
 # Without retry, the first vendor xfer after mt76x02u_mcu_fw_reset stalls
 # because the chip is temporarily unresponsive (~10-50ms typical) while the
 # MCU resets. The kernel retries through it transparently.
@@ -233,7 +233,7 @@ class MT76x0UTransport:
     # ------------------------------------------------------------------
     # MT_VEND_WRITE_FCE single_wr — 32-bit value split into two control
     # transfers, NO payload either time.
-    # [SRC] data_dumps/mt76-source-v6.18/usb.c:215 (mt76u_single_wr).
+    # [SRC] driver_sources/mt76-source-v6.18/usb.c:215 (mt76u_single_wr).
     # ------------------------------------------------------------------
     def single_wr(self, reg: int, val: int) -> None:
         """Encode a 32-bit value via 2 control transfers (low half, then high)."""

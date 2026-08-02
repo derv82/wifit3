@@ -1,7 +1,7 @@
 """RTL8188EUS USB transport — vendor-control register reads/writes.
 
 Mirrors `rtl8xxxu_read8/16/32` and `rtl8xxxu_write8/16/32` from
-`data_dumps/rtl8xxxu-source-v6.18/core.c` (lines 599-825). All MAC
+`driver_sources/rtl8xxxu-source-v6.18/core.c` (lines 599-825). All MAC
 register access is a single vendor control transfer:
 
     bRequest      = 0x05   (REALTEK_USB_CMD_REQ)

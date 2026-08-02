@@ -4,7 +4,7 @@ Ported 1:1 from the rt2800usb parent's rt2800_init_eeprom decode (see
 git ce8f3ef). The 148f:5572 card this driver claims reports RT5592 silicon,
 which HARDCODES RF5592 — so for every admitted card the RF chip is fixed, not
 EEPROM-derived. These tests pin that plus the inherited RT3572/RT5392 branches.
-[SRC] data_dumps/rt2x00-source-v6.18/rt2800lib.c:11182-11235.
+[SRC] driver_sources/rt2x00-source-v6.18/rt2800lib.c:11182-11235.
 """
 from __future__ import annotations
 

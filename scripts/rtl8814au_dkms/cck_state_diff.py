@@ -29,7 +29,7 @@ import dump_tune_regs as dt  # noqa: E402  (reuse _bring_up)
 from wifit3.chips.rtl8814au_dkms import constants as C  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.transport import Rtl8814auTransport  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8814au"
+CAP_DIR = REPO / "driver_captures" / "captures_rtl8814au"
 
 # Range is CLI-selectable: `cck_state_diff.py [capture] [LO] [HI]`. Default = BB AGC/CCK block.
 # Registers that COUNT/latch/adapt at runtime are excluded — they legitimately differ from a

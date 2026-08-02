@@ -119,7 +119,7 @@ rfe_types). `Rtl8812auDkmsDriver` (`driver.py`) starts the RX reader before the 
 gate, runs a 2-path DIG watchdog (`dig.watchdog_tick`), then enters monitor. TX rides the
 shared base fake-txdesc (`rtl8812a_fill_fake_txdesc`) on bulk-OUT 0x02.
 
-Names match the vendor C — vendor source + captures in `usb_dumps_new/captures_8812au/`
+Names match the vendor C — vendor source + captures in `driver_captures/captures_8812au/`
 (8812a HAL in `hal/rtl8812a/` + `hal/phydm/`). capture-2/3 are complete; capture-1 is
 truncated. The confirm-`0bda:8812`-enumerates-first habit matters: the squishy USB-C→A
 adapter falls out, and a vanished device is a fallen plug, not a result.

@@ -43,7 +43,7 @@ from wifit3.chips.rt5572.bring_up import bring_up  # noqa: E402
 from wifit3.chips.rt5572.monitor import enable_monitor, reapply_filter  # noqa: E402
 from wifit3.chips.rt5572.transport import RT5572Transport  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new2" / "captures_rt2800usb_rt5572"
+CAP_DIR = REPO / "driver_captures" / "captures_rt2800usb_rt5572_2"
 MAC_CSR0 = 0x1000
 TX_STA_FIFO = 0x1718
 

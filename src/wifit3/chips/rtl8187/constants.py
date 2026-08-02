@@ -2,8 +2,8 @@
 
 Ported from the kernel headers:
 
-    data_dumps/rtl818x-source-v6.18/rtl818x.h       (struct rtl818x_csr + flags)
-    data_dumps/rtl818x-source-v6.18/rtl8187/rtl8187.h (USB request constants)
+    driver_sources/rtl818x-source-v6.18/rtl818x.h       (struct rtl818x_csr + flags)
+    driver_sources/rtl818x-source-v6.18/rtl8187/rtl8187.h (USB request constants)
 
 The kernel maps the CSR struct at virtual base ``0xFF00`` (see
 ``rtl8187_probe``: ``priv->map = (struct rtl818x_csr *)0xFF00``), so the

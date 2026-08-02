@@ -8,7 +8,7 @@ that surface under the chip-local name and ships the blob loader.
 About the asset blob: `assets/rtw8812a_fw.bin` is the canonical
 `linux-firmware/rtw88/rtw8812a_fw.bin` (27030 bytes = 32B legacy header +
 26998B body). Body bytes are byte-for-byte identical to what the kernel
-uploaded in `usb_dumps/captures_rtw88_8812au/capture-1.pcap`.
+uploaded in `driver_captures/captures_rtw88_8812au/capture-1.pcap`.
 
 `download_firmware_legacy` strips the 32B header and uploads the body
 exactly as the kernel does.

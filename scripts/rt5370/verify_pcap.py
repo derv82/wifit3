@@ -17,7 +17,7 @@ RULES (do not violate — this is the whole point of the gate):
   * NEVER edit this file to make it print PASS.
   * NEVER copy logic from chips/rt2800usb/ — it is the imitation port (confirmed EFUSE
     word-vs-byte bug) that the clean-room drivers replace. Port from the kernel C in
-    data_dumps/rt2x00-source-v6.18/ and let THIS wire confirm it. The rt5372 sibling's
+    driver_sources/rt2x00-source-v6.18/ and let THIS wire confirm it. The rt5372 sibling's
     init_bbp_53xx / config_channel_rf53xx are the SAME shared kernel functions, but every
     RT5390-specific value (init_rfcsr_5390, the rev-F RFCSR55/59 channel tables) is ported
     fresh from the C — a green walk is necessary, not sufficient.
@@ -38,7 +38,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import rt2x00_pcap_replay as rp  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new2" / "captures_rt2800usb_rt5370"
+CAP_DIR = REPO / "driver_captures" / "captures_rt2800usb_rt5370"
 MAC_CSR0 = 0x1000          # silicon id + revision; the first vendor op of the probe
 
 _IMPORT_ERR = None
@@ -79,7 +79,7 @@ def _walk_init(w: Walk, out: dict) -> None:
     """Deterministic cold bring-up, one cursor, no re-anchoring. Mirrors driver.py
     _bringup(). WIRE ORDER (rt2x00 family): probe → EFUSE → gpio → firmware → enable_radio.
 
-    Source: data_dumps/rt2x00-source-v6.18/{rt2800usb.c,rt2800lib.c,rt2x00dev.c}.
+    Source: driver_sources/rt2x00-source-v6.18/{rt2800usb.c,rt2800lib.c,rt2x00dev.c}.
 
     probe_rt     read MAC_CSR0 (chip id/rev = 0x5390)  rt2800_probe_rt (11987)
     efuse        autorun + EFUSE 32 word-blocks         rt2800usb_read_eeprom (594) ->

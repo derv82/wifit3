@@ -1,6 +1,6 @@
 """AR9271 (ath9k_htc) register/protocol constants, ported verbatim from the v6.18.12 kernel.
 
-Citations are to ``data_dumps/ath9k-source-v6.18.12/`` — file:line at the v6.18.12 tag.
+Citations are to ``driver_sources/ath9k-source-v6.18.12/`` — file:line at the v6.18.12 tag.
 Never type a value from memory; every constant here is grepped out of the C source.
 """
 from __future__ import annotations

@@ -305,7 +305,7 @@ MT_TOP_MISC2_FW_N9_RDY    = 0x3     # GENMASK(1,0): firmware fully ready
 # ===========================================================================
 # Post-boot device init. All reachable over the unified bus (0x5F/0xDF) like
 # dma_init — verified from the capture. Addresses/masks grepped verbatim from
-# data_dumps/mt76-source-v6.18/{mt7921/regs.h, mt792x_regs.h}.
+# driver_sources/mt76-source-v6.18/{mt7921/regs.h, mt792x_regs.h}.
 # ===========================================================================
 
 # EFUSE buffer mode (mt76_connac_mcu.h EE_MODE_* / EE_FORMAT_*).

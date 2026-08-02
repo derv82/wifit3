@@ -1,7 +1,7 @@
 """RTL8188EUS driver — TP-Link TL-WN722N v2/v3 (Realtek RTL8188EUS).
 
 Cleanroom port of the kernel `rtl8xxxu` driver's 8188e fileops vector
-(`data_dumps/rtl8xxxu-source-v6.18/8188e.c:1835-1885`).
+(`driver_sources/rtl8xxxu-source-v6.18/8188e.c:1835-1885`).
 
 M1-M7 scope (complete bring-up):
 

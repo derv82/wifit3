@@ -1,7 +1,7 @@
 """Realtek RTL8822BU (rtw88 family, modern iDDMA FW path) protocol constants.
 
-Verified against `data_dumps/rtw88-source-v6.18/rtw8822b{,u}.{c,h}` +
-`usb_dumps/captures_rtw88_8822bu/capture-1.pcap`. See RTL8822BU.md for
+Verified against `driver_sources/rtw88-source-v6.18/rtw8822b{,u}.{c,h}` +
+`driver_captures/captures_rtw88_8822bu/capture-1.pcap`. See RTL8822BU.md for
 provenance citations on each fact.
 
 Re-exports the family-shared register addresses from

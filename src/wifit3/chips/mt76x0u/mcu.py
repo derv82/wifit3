@@ -10,7 +10,7 @@ command channel instead of raw vendor xfers:
     CMD_SEQ (matches request) + EVT_TYPE (0=EVT_CMD_DONE on success).
 
 Ported from `mt76x02_usb_mcu.c::__mt76x02u_mcu_send_msg` and
-`mt76x02u_mcu_wait_resp`. See [SRC] data_dumps/mt76-source-v6.18/.
+`mt76x02u_mcu_wait_resp`. See [SRC] driver_sources/mt76-source-v6.18/.
 
 Per [[feedback_prefer_fork_over_base]] this is a fresh port — no imports
 from chips/mt76x2u/.

@@ -7,7 +7,7 @@ Port of rt2500usb.c:
   * rt2500usb_set_state (981-1017)                          -> set_state
   * monitor-mode deviation (vs STA-mode config_filter)      -> apply_monitor_filter
 
-The init sequence matches usb_dumps/captures_rt2500usb/capture-2 frames
+The init sequence matches driver_captures/captures_rt2500usb/capture-2 frames
 203-299 one-for-one (verified pre-port). RT2570 needs no firmware, so a
 "warm" chip is simply one a prior session already initialised
 (MAC_CSR1.HOST_READY latched).

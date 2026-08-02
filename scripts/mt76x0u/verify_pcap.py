@@ -56,7 +56,7 @@ from wifit3.chips.mt76x0u.mcu import MCUChannel  # noqa: E402
 from wifit3.chips.mt76x0u.phy import init_bbp, phy_init  # noqa: E402
 from wifit3.chips.mt76x0u.transport import MT76x0UTransport  # noqa: E402
 
-DEFAULT_CAP = "usb_dumps_new/captures_mt76x0u/capture-1.pcap"
+DEFAULT_CAP = "driver_captures/captures_mt76x0u_2/capture-1.pcap"
 ASSETS = REPO / "src" / "wifit3" / "chips" / "mt76x0u" / "assets"
 
 _TXWI_LEN = 20

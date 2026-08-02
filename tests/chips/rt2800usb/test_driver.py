@@ -1394,7 +1394,7 @@ def test_set_channel_writes_correct_synth_for_each_2g_channel(monkeypatch):
 def test_build_tx_descriptors_default_shape():
     """For a 26-byte deauth + use_no_ack=True + MCS=0/CCK, the descriptors
     mirror kernel rt2800usb aireplay-ng deauth TXWI (verified against
-    usb_dumps/captures_rt2800usb_rt3572/capture-1.pcap frame 43087):
+    driver_captures/captures_rt2800usb_rt3572/capture-1.pcap frame 43087):
     MPDU byte count = 26, ACK = 0, NSEQ = 0, WCID = 0, WIV = 1,
     QSEL = EDCA (2), TX_OP = HT_TXOP_NONE (3), PACKETID_QUEUE = 0,
     PACKETID_ENTRY = 2."""

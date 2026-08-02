@@ -70,7 +70,7 @@ reattaches + RX-smoke-tests the pipe. Channel/band logic is in `chan.py` + `phy.
 
 FW asset is the canonical `linux-firmware/rtw88/rtw8812a_fw.bin` (27030 B = 32 B legacy header +
 26998 B body); body byte-verified identical to the pcap-extracted body. Names match the kernel C —
-grep `data_dumps/rtw88-source-v6.18/`.
+grep `driver_sources/rtw88-source-v6.18/`.
 
 ## Scripts
 

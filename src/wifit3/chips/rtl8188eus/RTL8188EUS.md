@@ -74,7 +74,7 @@ the WINT_INIT_READY poll or the loaded image never runs; flip MAC TX/RX enable o
 `phy.init_phy_rf_8188e`) → IQK/LCK (`iqk.py`) → channel (`chan.set_channel_2g_20mhz`) →
 `phy.enable_rf`. RX path: `rx.parse_rxdesc16`/`iter_bulk_frames`; TX: `tx.send_mgmt_frame`.
 Warm path: `mac.is_chip_warm` + `driver._warm_reattach`. Names match the kernel C — grep
-`data_dumps/rtl8xxxu-source-v6.18/8188e.c` (the fileops vector at `8188e.c:1835`) to
+`driver_sources/rtl8xxxu-source-v6.18/8188e.c` (the fileops vector at `8188e.c:1835`) to
 cross-reference. The init tables are mechanically extracted from kernel source; re-run the
 extractor if it updates.
 

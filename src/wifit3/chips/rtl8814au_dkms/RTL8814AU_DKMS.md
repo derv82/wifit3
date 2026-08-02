@@ -9,7 +9,7 @@
 - Link: https://github.com/morrownr/8814au — **not** aircrack-ng/rtl8814au.
 - Type: DKMS (PHYDM/ODM vendor tree).
 - Version: commit `b1866ce2b857a8dfe2e147e19eb8eca0a842ce18` (v5.8.5.1, 2026-02-11).
-- Location (vendored in-repo): `usb_dumps_new/captures_rtl8814au/driver-source/`.
+- Location (vendored in-repo): `driver_captures/captures_rtl8814au/driver-source/`.
 
 ## Python Port Details
 - VID/PID: `0bda:8813`; the default driver for it (`WIFIT3_RTL8814=mainline` selects the rtw88 port).
@@ -66,7 +66,7 @@ We only have the rfe=1 ALFA capture, so non-rfe-1 branches can't be pcap-gated �
 - 20 MHz primary only (40/80 out of scope); the USB3 firmware/burst branch is unported (see [EFUSE variants → Untested variants](#untested-variants-ported-from-c-hardware-unverified-residual-gaps)).
 
 ## Driver Entry Points
-Feature → where to start reading. Names match the vendor C (grep `usb_dumps_new/captures_rtl8814au/driver-source/`).
+Feature → where to start reading. Names match the vendor C (grep `driver_captures/captures_rtl8814au/driver-source/`).
 - Bring-up: `driver.connect` → `_bringup` (EFUSE → firmware → MAC/BB/RF → tune → DIG seed → turn-on → monitor); mirrors `rtl8814au_hal_init`.
 - EFUSE / chip params: `efuse.read_chip_params` — `rfe_type`, `crystal_cap`, MAC, per-path TX-power, bb-swing, `antenna_option`/`rf_path`/`max_tx_cnt` (see [EFUSE variants](#efuse-variants--any-card-support)).
 - Firmware upload: `firmware.bring_up` (3081 IDDMA bulk path).

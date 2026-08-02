@@ -1,6 +1,6 @@
 """Extract rtw8821a init tables from kernel C source to Python data files.
 
-Source: data_dumps/rtw88-source-v6.18/rtw8821a_table.c
+Source: driver_sources/rtw88-source-v6.18/rtw8821a_table.c
 Output: src/wifit3/chips/rtl8821au/assets/{mac,agc,bb,rf_a}_tbl.py
 
 The four tables (`rtw8821a_mac`, `rtw8821a_agc`, `rtw8821a_bb`, `rtw8821a_rf_a`)
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "data_dumps/rtw88-source-v6.18/rtw8821a_table.c"
+SRC = ROOT / "driver_sources/rtw88-source-v6.18/rtw8821a_table.c"
 OUT_DIR = ROOT / "src/wifit3/chips/rtl8821au/assets"
 
 TABLES = ("mac", "agc", "bb", "rf_a")

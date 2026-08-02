@@ -4,7 +4,7 @@ The mt76x2u kernel driver uploads two firmware blobs in sequence:
   1. ROM patch (mt7662_rom_patch.bin) -> SRAM offset 0x00090000
   2. Main FW    (mt7662.bin)            -> ILM @ 0x00080000, DLM @ 0x00110000(+0x800 if rev>=E3)
 
-Per data_dumps/mt76-source-v6.18/mt76x02_usb_mcu.c::__mt76x02u_mcu_fw_send_data,
+Per driver_sources/mt76-source-v6.18/mt76x02_usb_mcu.c::__mt76x02u_mcu_fw_send_data,
 each chunk is uploaded as:
 
   vendor write (bReq=0x42, MT_VEND_WRITE_FCE):

@@ -1,7 +1,7 @@
 """RTL8188EUS post-FW MAC init + LLT setup.
 
 Cleanroom port of the post-`start_firmware` MAC bring-up path from
-`data_dumps/rtl8xxxu-source-v6.18/`:
+`driver_sources/rtl8xxxu-source-v6.18/`:
 
 * `rtl8xxxu_init_mac`              — `core.c:2187-2226` (mactable + REG_MAX_AGGR_NUM)
 * `rtl8xxxu_init_queue_reserved_page` — `core.c:3815-3845` (TX FIFO partition)

@@ -13,7 +13,7 @@ window; each is an aggregated [rxdesc|drvinfo|mpdu] buffer the Tally walk alread
 
 Usage:
     uv run python scripts/rtl8822bu_dkms/cck_capref.py            # default: cap-1 FIXED-CH1 window
-    uv run python scripts/rtl8822bu_dkms/cck_capref.py --pcap usb_dumps_new/.../capture-1.pcap \
+    uv run python scripts/rtl8822bu_dkms/cck_capref.py --pcap driver_captures/.../capture-1.pcap \
         --start 1780355738.466 --end 1780355753.704
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from cck_diag import Tally   # noqa: E402  (same-dir diagnostic; reuse the rx_pkt_desc walk)
 
 TSHARK = r"C:/Program Files/Wireshark/tshark.exe"
-DEFAULT_PCAP = ("usb_dumps_new/captures_rtl88x2bu/capture-1.pcap")
+DEFAULT_PCAP = ("driver_captures/captures_rtl88x2bu/capture-1.pcap")
 # main.log: [FIXED-CH1] start 1780355738.466 .. stop 1780355753.704 (15.2 s, fixed channel 1).
 FIXED_CH1_START, FIXED_CH1_END = 1780355738.466, 1780355753.704
 

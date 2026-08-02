@@ -52,7 +52,7 @@ Cold bring-up is `mac.py` (`init_registers` + `init_bbp` + the MAC_CSR17 set_sta
 handshake). Channel tune + RF2525E/RF2525 tables are in `chan.py`; the AGC seed is `bbp.reset_tuner`.
 Monitor RX filter is `mac.config_filter`. RX decode (RXD-at-end) is `rx.py`; TX-desc build is `tx.py`.
 `monitor.py` holds the rt2x00 call order (`enable_monitor` + `tune_hop`), shared by the driver and
-the verify gate. Names match the kernel C — grep `data_dumps/rt2x00-source-v6.18/rt2500usb.c`.
+the verify gate. Names match the kernel C — grep `driver_sources/rt2x00-source-v6.18/rt2500usb.c`.
 
 ## Scripts
 

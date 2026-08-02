@@ -75,7 +75,7 @@ cap-2/3 diverge there on a stale `central_ch_8822b` module-global (the captures 
 module via replug, no rmmod; cold-boot cap-1's `central_ch=0` is the correct model). Benign
 cross-capture artifact, not a port bug. Everything earlier is byte-clean on all three.
 
-**Cleanroom.** Port only from `usb_dumps_new/captures_rtl88x2bu/driver-source/` (HALMAC + PHYDM).
+**Cleanroom.** Port only from `driver_captures/captures_rtl88x2bu/driver-source/` (HALMAC + PHYDM).
 Do NOT open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/rtl8822bu/` — reading them
 produces a hybrid. The shared gate engine `scripts/rtw88_pcap_replay.py` is fine (family tooling).
 

@@ -1,7 +1,7 @@
 """Realtek RTL8814AU (rtw88 family, WCPU_3081 / iDDMA FW path) constants.
 
-Verified against `data_dumps/rtw88-source-v6.18/rtw8814a{,u}.{c,h}` +
-`usb_dumps/captures_rtw88_8814au/capture-1.pcap`. See RTL8814AU.md for the
+Verified against `driver_sources/rtw88-source-v6.18/rtw8814a{,u}.{c,h}` +
+`driver_captures/captures_rtw88_8814au/capture-1.pcap`. See RTL8814AU.md for the
 provenance of each fact.
 
 The 8814A's firmware/MAC path is the same modern iDDMA path as the 8822B

@@ -1,7 +1,7 @@
 """Realtek RTL8821AU protocol constants (rtw88 family).
 
-Verified facts captured from `data_dumps/rtw88-source-v6.18/` and pcap
-`usb_dumps/captures_rtw88_8821au/capture-1.pcap`. Every value here is
+Verified facts captured from `driver_sources/rtw88-source-v6.18/` and pcap
+`driver_captures/captures_rtw88_8821au/capture-1.pcap`. Every value here is
 either a direct source citation or a wire-confirmed observation. See
 `RTL8821AU.md` for provenance.
 """

@@ -1,6 +1,6 @@
 """MT76x0U init-value tables — ported 1:1 from kernel `initvals_init.h`.
 
-[SRC] data_dumps/mt76-source-v6.18/mt76x0/initvals_init.h
+[SRC] driver_sources/mt76-source-v6.18/mt76x0/initvals_init.h
 
 These are the two MAC register tables uploaded via the MCU
 `CMD_RANDOM_WRITE` command during `mt76x0_init_mac_registers`. Each entry

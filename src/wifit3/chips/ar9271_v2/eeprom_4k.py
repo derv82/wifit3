@@ -3,7 +3,7 @@
 The bytes in ``hw.eeprom`` are the raw little-endian image of ``struct ar5416_eeprom_4k``
 (``__packed``), 376 bytes / 188 words read from word 64. This module decodes only the fields
 the TX-power computation needs; offsets are derived 1:1 from the packed layout in
-``data_dumps/ath9k-source-v6.18.12/eeprom.h`` (base_eep_header_4k 32B, custData 20B,
+``driver_sources/ath9k-source-v6.18.12/eeprom.h`` (base_eep_header_4k 32B, custData 20B,
 modal_eep_4k_header 68B, then the cal/target/ctl arrays).
 """
 from __future__ import annotations

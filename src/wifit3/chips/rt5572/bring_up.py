@@ -12,7 +12,7 @@ Order mirrors the RT5572/RF5592 cold-boot capture byte-for-byte:
     radio-on (MCU_LED + MCU_WAKEUP) → USB-DMA + WPDMA wait →
     init_registers → prepare_bbp → init_bbp → init_rfcsr → enable_radio_finish
 
-[SRC] data_dumps/rt2x00-source-v6.18/{rt2800usb.c,rt2800lib.c,rt2x00dev.c}:
+[SRC] driver_sources/rt2x00-source-v6.18/{rt2800usb.c,rt2800lib.c,rt2x00dev.c}:
 rt2800_probe_hw → rt2x00lib_start → rt2800usb_enable_radio.
 """
 from __future__ import annotations

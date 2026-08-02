@@ -141,7 +141,7 @@ def scan(pcap_path: Path) -> None:
 
 
 def main() -> int:
-    pcap_dir = Path("usb_dumps/captures_mt76x0u")
+    pcap_dir = Path("driver_captures/captures_mt76x0u")
     for p in sorted(pcap_dir.glob("capture-*.pcap")):
         scan(p)
     return 0

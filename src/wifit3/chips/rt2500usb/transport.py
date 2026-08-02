@@ -14,7 +14,7 @@ Wire format for a 2-byte (16-bit) CSR read/write:
 
 This is the *same* vendor-request scheme as rt2800usb — only the
 register width differs (RT2570 CSRs are 16-bit; rt2800 are 32-bit).
-Verified against usb_dumps/captures_rt2500usb (capture-2/3): the
+Verified against driver_captures/captures_rt2500usb (capture-2/3): the
 cold-boot probe issues req=7 reads + req=6 writes with wLength=2 and
 the address in wIndex.
 

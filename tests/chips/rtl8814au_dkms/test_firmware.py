@@ -1,7 +1,7 @@
 """Hardware-free regression for the RTL8814AU (DKMS) firmware-download primitives.
 
 Golden TX-descriptor bytes are taken verbatim from the cold-boot capture
-(``usb_dumps_new/captures_rtl8814au/capture-1.pcap``); these lock the wire-exact
+(``driver_captures/captures_rtl8814au/capture-1.pcap``); these lock the wire-exact
 descriptor + checksum so a future refactor can't silently drift. The full
 USB-replay verification lives in ``scripts/rtl8814au_dkms/verify_m1_pcap.py``.
 """

@@ -4,7 +4,7 @@ Composition only: every step delegates to the layered modules in this
 package (mac.py, rtl8225.py, chan.py, rx.py, tx.py, transport.py).
 
 Bring-up flow (mirrors `rtl8187_probe` + `rtl8187_init_hw` + `rtl8187_start`
-from data_dumps/rtl818x-source-v6.18/rtl8187/dev.c):
+from driver_sources/rtl818x-source-v6.18/rtl8187/dev.c):
 
     connect()
       -> claim USB interface (cfg + claim)

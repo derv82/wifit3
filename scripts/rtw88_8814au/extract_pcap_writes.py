@@ -10,7 +10,7 @@ Goal: diff against our driver's init to find missing/wrong steps.
 
 Usage:
     uv run scripts/rtw88_8814au/extract_pcap_writes.py \
-        usb_dumps/captures_rtw88_8814au/capture-1.pcap [--all] [--max-frame N]
+        driver_captures/captures_rtw88_8814au/capture-1.pcap [--all] [--max-frame N]
 """
 from __future__ import annotations
 

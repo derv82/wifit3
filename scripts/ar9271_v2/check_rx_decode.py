@@ -23,7 +23,7 @@ import ar9271_pcap_replay as rp  # noqa: E402
 from wifit3.chips.ar9271_v2 import rx_decode  # noqa: E402
 from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new2" / "captures_ath9k_htc_newddevice"
+CAP_DIR = REPO / "driver_captures" / "captures_ath9k_htc_newddevice"
 
 
 _H = rx_decode.HTC_FRAME_HDR_LEN + rx_decode.RX_STATUS_LEN   # htc hdr + rx_status = 48

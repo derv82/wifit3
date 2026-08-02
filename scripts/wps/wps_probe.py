@@ -7,7 +7,7 @@ exchange, which you can't answer offline. This probe associates to one AP and
 runs PIN attempt(s) end to end, logging the headline lines and dumping every
 RX frame to a .pcap for analysis.
 
-Default target = data_dumps/wps_pin.txt (your AirLink test box). With no --pin
+Default target = driver_sources/wps_pin.txt (your AirLink test box). With no --pin
 it runs TWO attempts against the known PIN:
   1. a deliberately-WRONG pin (correct first half, corrupted second half) →
      expect "WPS PIN ........ incorrect" detected after the M6 NACK, which also
@@ -79,8 +79,8 @@ def write_pcap(path: Path, frames: list) -> int:
 
 
 def load_default_target() -> dict:
-    """Parse data_dumps/wps_pin.txt (gitignored): SSID/BSSID/Channel/PIN/PW."""
-    path = Path(__file__).parent.parent.parent / "data_dumps" / "wps_pin.txt"
+    """Parse driver_sources/wps_pin.txt (gitignored): SSID/BSSID/Channel/PIN/PW."""
+    path = Path(__file__).parent.parent.parent / "driver_sources" / "wps_pin.txt"
     out: dict = {}
     if not path.exists():
         return out
@@ -190,9 +190,9 @@ async def main_async(args) -> int:
     channel = args.channel or int(defaults.get("channel", "1"))
     known_pin = args.pin or defaults.get("pin")
     if not bssid:
-        fail("No target BSSID (give --bssid or populate data_dumps/wps_pin.txt).")
+        fail("No target BSSID (give --bssid or populate driver_sources/wps_pin.txt).")
     if not known_pin:
-        fail("No PIN to try (give --pin or populate data_dumps/wps_pin.txt).")
+        fail("No PIN to try (give --pin or populate driver_sources/wps_pin.txt).")
 
     ifaces, iface, array = await discover_iface(args.debug)
     capture: list = []
@@ -252,7 +252,7 @@ async def main_async(args) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--bssid", help="target AP BSSID (default: data_dumps/wps_pin.txt)")
+    p.add_argument("--bssid", help="target AP BSSID (default: driver_sources/wps_pin.txt)")
     p.add_argument("--ssid", help="target AP SSID (default: from wps_pin.txt)")
     p.add_argument("--channel", type=int, help="target channel (default: from wps_pin.txt)")
     p.add_argument("--pin", help="try a single specific 8-digit PIN instead of the wrong+correct pair")

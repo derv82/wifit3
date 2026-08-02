@@ -5,7 +5,7 @@ Re-run after kernel updates:
     uv run python scripts/rtl8188eus/extract_phy_tables.py
 
 Reads:
-    data_dumps/rtl8xxxu-source-v6.18/8188e.c
+    driver_sources/rtl8xxxu-source-v6.18/8188e.c
 
 Writes:
     src/wifit3/chips/rtl8188eus/phy_tables.py
@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-SRC = Path("data_dumps/rtl8xxxu-source-v6.18/8188e.c")
+SRC = Path("driver_sources/rtl8xxxu-source-v6.18/8188e.c")
 OUT = Path("src/wifit3/chips/rtl8188eus/phy_tables.py")
 
 
@@ -71,7 +71,7 @@ def main() -> None:
 
     lines = [
         '"""PHY init tables for RTL8188EUS, mechanically extracted from',
-        "`data_dumps/rtl8xxxu-source-v6.18/8188e.c` by",
+        "`driver_sources/rtl8xxxu-source-v6.18/8188e.c` by",
         "`scripts/rtl8188eus/extract_phy_tables.py`. Do not edit by hand:",
         "re-run the extractor instead if the kernel source updates.",
         "",

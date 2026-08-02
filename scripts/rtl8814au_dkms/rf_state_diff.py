@@ -30,7 +30,7 @@ from wifit3.chips.rtl8814au_dkms import constants as C  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.rf import _rf_read  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.transport import Rtl8814auTransport  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8814au"
+CAP_DIR = REPO / "driver_captures" / "captures_rtl8814au"
 LSSI = {0x0C90: "a", 0x0E90: "b", 0x1890: "c", 0x1A90: "d"}
 # RF regs that are per-channel/bw or RFK-dynamic (legitimately differ from a ch1-only snapshot).
 _DYN = {0x18}     # CHNLBW (channel + bw) — per-hop; our bring-up is ch1 only

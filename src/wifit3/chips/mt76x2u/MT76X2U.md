@@ -126,7 +126,7 @@ the address selecting bRequest: none → MULTI_READ/WRITE (MAC/BB/RF), `BIT(30)`
 RX decode + monitor filtering: `mac.py::mac_start(monitor=True)` clears the `MT_RX_FILTR_CFG`
 unicast/BSSID drop bits so ToDS capture works. Endpoints are assigned positionally in descriptor
 order (`mt76u_set_endpoints`): in_ep `0x84`/`0x85`, out_ep `0x04`–`0x09`, with `0x08` the inband-cmd
-EP used for FW upload + MCU. Names match the kernel; grep `data_dumps/mt76-source-v6.18/` to
+EP used for FW upload + MCU. Names match the kernel; grep `driver_sources/mt76-source-v6.18/` to
 cross-reference.
 
 ## Scripts

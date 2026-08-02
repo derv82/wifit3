@@ -1,7 +1,7 @@
 # MT7925AU (MediaTek MT7925U, Wi-Fi 7 / connac3) constants.
 #
 # Every value is grepped verbatim from the kernel source at
-# data_dumps/mt76-source-v6.19.14/ (Linux stable v6.19.14, commit b9dbb45). The
+# driver_sources/mt76-source-v6.19.14/ (Linux stable v6.19.14, commit b9dbb45). The
 # mt792x/connac register layer is shared with mt7921 (mt792x_regs.h, mt792x_usb.c);
 # the chip-id, firmware container and connac3 MCU/descriptor formats are
 # mt7925-specific. file:line citations point into that tree.

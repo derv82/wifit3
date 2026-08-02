@@ -2,7 +2,7 @@
 
 Cleanroom: every value here is grepped verbatim from the vendor DKMS source
 (``hal/rtl8814a/`` + ``include/``) and cross-checked against the cold-boot pcap
-(``usb_dumps_new/captures_rtl8814au/capture-1.pcap``). [SRC] cites the vendor
+(``driver_captures/captures_rtl8814au/capture-1.pcap``). [SRC] cites the vendor
 file; [WIRE] cites the capture frame range that exercises the value.
 
 This is the Realtek PHYDM/ODM vendor stack, NOT mainline rtw88 — addresses and

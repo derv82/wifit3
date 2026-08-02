@@ -1,7 +1,7 @@
 """MT76x0U EFUSE (on-die "EEPROM") reads (M2).
 
 Ports `mt76x02_efuse_read` + `mt76x02_get_efuse_data` + helpers from
-`data_dumps/mt76-source-v6.18/mt76x02_eeprom.c` and `mt76x0/eeprom.c`.
+`driver_sources/mt76-source-v6.18/mt76x02_eeprom.c` and `mt76x0/eeprom.c`.
 
 EFUSE is the chip's on-die one-time-programmable memory holding per-card
 calibration data: MAC address, RF frequency offset, TX path / RX path

@@ -12,7 +12,7 @@ and trims the skb to ``RXD_W0_DATABYTE_COUNT``. So:
   * RSSI dBm  = RXD_W1_RSSI - rssi_offset   (offset 120 unless EEPROM-set)
   * RXD_W0 carries CRC/PHYSICAL error + OFDM/MY_BSS flags
 
-Verified against usb_dumps/captures_rt2500usb/capture-2 frame 1453: a
+Verified against driver_captures/captures_rt2500usb/capture-2 frame 1453: a
 232-byte URB decoded to a 215-byte CCK beacon at RSSI -46 dBm with one
 alignment-pad byte before the descriptor.
 """

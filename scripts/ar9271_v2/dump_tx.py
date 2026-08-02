@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "scripts" / "ar9271_v2"))
 import ar9271_pcap_replay as rp  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new2" / "captures_ath9k_htc_newddevice"
+CAP_DIR = REPO / "driver_captures" / "captures_ath9k_htc_newddevice"
 
 # 802.11 frame-control byte 0 (subtype<<4 | type<<2 | version)
 _FC = {0x40: "ProbeReq", 0x50: "ProbeResp", 0x80: "Beacon", 0xb0: "Auth", 0xc0: "Deauth",

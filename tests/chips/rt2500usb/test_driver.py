@@ -6,7 +6,7 @@ without touching USB.
 
 Fixtures are SYNTHETIC (fake MAC/BSSID/SSID) on purpose — we never bake a
 real device's identifiers into the repo. The on-wire values these mirror
-are verified separately against usb_dumps/captures_rt2500usb in
+are verified separately against driver_captures/captures_rt2500usb in
 RT2500USB.md.
 """
 from __future__ import annotations

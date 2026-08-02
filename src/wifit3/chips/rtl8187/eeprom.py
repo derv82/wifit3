@@ -10,7 +10,7 @@ Every bit clocked drives EEPROM_CMD in PROGRAM mode with the four SPI lines (CS/
 and every value read back samples DO on the same register — so the read is fully on the
 wire and the acceptance gate reproduces it byte-for-byte.
 
-[SRC] ``data_dumps/rtl818x-source-v6.18/eeprom_93cx6.c`` (the lib) +
+[SRC] ``driver_sources/rtl818x-source-v6.18/eeprom_93cx6.c`` (the lib) +
 ``rtl8187/dev.c`` (the EEPROM_CMD callbacks).
 """
 from __future__ import annotations

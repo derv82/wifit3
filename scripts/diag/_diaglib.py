@@ -5,7 +5,7 @@ Two jobs the sweep asked every diag script to share:
     so several cards can be plugged in at once and each script still targets the right one.
     ``pick_interface`` is the wifit3-driver (USB) side; ``pick_kernel_iface`` the Linux-netdev side.
   * reference APs: the fixed 2.4 / 5 GHz beacon sources the A/B pins its beacon-rate line to.
-    BSSIDs never enter git, so they load from ``data_dumps/reference_aps.txt`` (gitignored) with
+    BSSIDs never enter git, so they load from ``driver_sources/reference_aps.txt`` (gitignored) with
     ``--bssid2g/--channel2g/--bssid5g/--channel5g`` overriding (same flag names as capture.py).
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ import os
 import sys
 from pathlib import Path
 
-_DATA = Path(__file__).resolve().parent.parent.parent / "data_dumps"
+_DATA = Path(__file__).resolve().parent.parent.parent / "driver_sources"
 _REF_FILE = _DATA / "reference_aps.txt"
 
 

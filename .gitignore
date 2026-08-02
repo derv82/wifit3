@@ -23,8 +23,8 @@ build/
 
 # Project specifics
 captures/
-data_dumps/
-usb_dumps*/
+driver_sources/
+driver_captures*/
 kali/
 scripts/diag/*.json
 scripts/diag/history/

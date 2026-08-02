@@ -4,7 +4,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Ported from Linux mt76 (kernel v6.18) by wifit3, 2026.
 
 Mirrors the mt76u USB-bus helpers in
-``data_dumps/mt76-source-v6.18/usb.c`` (mt76u_rr / mt76u_wr / mt76u_single_wr).
+``driver_sources/mt76-source-v6.18/usb.c`` (mt76u_rr / mt76u_wr / mt76u_single_wr).
 
 Register access is virtual-addressed: the top 2 bits select a bus
 (`MT_VEND_TYPE_EEPROM` / `MT_VEND_TYPE_CFG` / default), which in turn picks
@@ -106,7 +106,7 @@ class MT76x2UTransport:
     def single_wr_fce(self, addr: int, val: int) -> None:
         """Write a 32-bit value to an FCE register as TWO control transfers.
 
-        Per ``mt76u_single_wr`` (data_dumps/mt76-source-v6.18/usb.c:215),
+        Per ``mt76u_single_wr`` (driver_sources/mt76-source-v6.18/usb.c:215),
         FCE register programming during FW upload uses a peculiar encoding:
         the 32-bit value is split across two control transfers, each with
         the value-half in wValue and NO data payload.

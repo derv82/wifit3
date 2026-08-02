@@ -1,7 +1,7 @@
 """RTL8821CU (vendor rtl8821cu-5.12.0.4 / HALMAC) — register + protocol constants.
 
 Cleanroom: every value here is pasted verbatim from the vendor source, cited
-``[SRC] <file>:<line>`` against ``usb_dumps_new2/captures_rtl8821cu/driver-source/``.
+``[SRC] <file>:<line>`` against ``driver_captures/captures_rtl8821cu/driver-source/``.
 Do NOT type a constant from memory — grep it out.
 
 Scope so far: milestone 1 (USB transport + the HALMAC card-enable power sequence).

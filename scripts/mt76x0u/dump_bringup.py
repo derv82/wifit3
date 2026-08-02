@@ -35,7 +35,7 @@ REG_NAMES = {
     0x1004: "(undocumented init; kernel writes 0x2c here)",
 }
 
-# bRequest -> name. Per data_dumps/mt76-source-v6.18/mt76x02_usb.h-ish.
+# bRequest -> name. Per driver_sources/mt76-source-v6.18/mt76x02_usb.h-ish.
 BREQ_NAMES = {
     0x01: "MT_VEND_DEV_MODE",
     0x06: "MT_VEND_MULTI_WRITE",
@@ -205,7 +205,7 @@ def dump_window(pcap_path, first_frame, last_frame):
 
 
 def main():
-    pcap = Path("usb_dumps/captures_mt76x0u/capture-2.pcap")
+    pcap = Path("driver_captures/captures_mt76x0u/capture-2.pcap")
     first = int(sys.argv[1]) if len(sys.argv) > 1 else 1
     last = int(sys.argv[2]) if len(sys.argv) > 2 else 500
     print(f"=== mt76x0u bring-up transcript: {pcap.name} frames {first}..{last} ===\n")

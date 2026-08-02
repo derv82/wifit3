@@ -1,6 +1,6 @@
 """MT76x0U register addresses, vendor requests, and bit masks.
 
-Every constant here is grepped verbatim from data_dumps/mt76-source-v6.18/
+Every constant here is grepped verbatim from driver_sources/mt76-source-v6.18/
 and cross-checked against capture-2.pcap WIRE evidence. See MT76X0U.md for
 the verification table. Do NOT add a symbol here without a corresponding
 [SRC] line in the kernel and (where applicable) a [WIRE] confirmation.
@@ -12,7 +12,7 @@ shared `mt76x02_base/` module until 2+ feature-complete siblings exist.
 from __future__ import annotations
 
 # ============================================================
-# USB device id_table — ported 1:1 from data_dumps/mt76-source-v6.18/
+# USB device id_table — ported 1:1 from driver_sources/mt76-source-v6.18/
 # mt76x0/usb.c:14-43. Format matches what test_hw_mt76x0u.py uses.
 # ============================================================
 USB_IDS_MT76X0U: list[tuple[int, int, str, str | None, str | None]] = [
@@ -111,7 +111,7 @@ MT_TXOP_EXT_CCA_DLY_DEFAULT = 0x58
 
 # ============================================================
 # Vendor bRequest codes — mt76 family shared.
-# [SRC] data_dumps/mt76-source-v6.18/mt76x02_usb_core.c
+# [SRC] driver_sources/mt76-source-v6.18/mt76x02_usb_core.c
 # ============================================================
 MT_VEND_DEV_MODE      = 0x01   # control: FW reset / IVB trigger via wValue
 MT_VEND_MULTI_WRITE   = 0x06   # default-bus register write (4 bytes payload)

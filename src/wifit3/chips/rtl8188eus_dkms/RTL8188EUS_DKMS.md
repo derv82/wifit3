@@ -93,7 +93,7 @@ The phydm RX seed lives in `dm.init_hal_dm` (DIG/NHM/adaptivity + the data-depen
 M4a RF read). RX decode + RSSI is `rx.py`; TX desc is `tx.py`. The efuse probe-read mechanism uses
 the IOL engine reading the physical map out of the TX packet buffer (PKTBUF debug regs `0x140/0x143/
 0x144/0x148`), *not* REG_EFUSE_CTRL (`0x30`, never touched). Names match the vendor C, so grep
-`usb_dumps_new/captures_8188eu/driver-source/` to cross-reference.
+`driver_captures/captures_8188eu/driver-source/` to cross-reference.
 
 FW blob `assets/rtl8188eufw.bin` is byte-identical (SHA256) to linux-firmware `rtl8188eufw.bin`,
 extracted by `scripts/rtl8188eus_dkms/extract_fw.py`.
@@ -144,7 +144,7 @@ init table gates on the BT bit; 5G ext-PA/LNA (ALNA/APA) is `#if 0` in the vendo
 
 ### 2026-07-07 — RX gap: parity fixed-channel, but REAL in the hopping sweep; waiver audit; efuse guard
 
-Autonomous RX-gap + verify-audit pass (4 captures incl. the new `usb_dumps_new2/captures_8188eu`).
+Autonomous RX-gap + verify-audit pass (4 captures incl. the new `driver_captures/captures_8188eu_2`).
 
 - **RX gap: parity on a fixed strong AP, but a REAL ~18% gap in the hopping sweep.** Fixed-channel
   60 s cold soak on the reference AP (−56 dBm, strong), ch1: our DKMS **port** = **6.5 bcn/s (67% of

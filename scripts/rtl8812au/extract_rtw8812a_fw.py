@@ -87,7 +87,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument(
         "--pcap",
-        default="usb_dumps/captures_rtw88_8812au/capture-1.pcap",
+        default="driver_captures/captures_rtw88_8812au/capture-1.pcap",
         type=Path,
     )
     p.add_argument("--start-frame", type=int, default=1)

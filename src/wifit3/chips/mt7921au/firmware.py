@@ -1,8 +1,8 @@
 """
 MT7921AU firmware loader.
 
-Verified against usb_dumps/captures_mt7921u/capture-3.pcap and
-data_dumps/mt76-source-v6.18/mt76_connac_mcu.c (mt76_connac2_load_patch,
+Verified against driver_captures/captures_mt7921u/capture-3.pcap and
+driver_sources/mt76-source-v6.18/mt76_connac_mcu.c (mt76_connac2_load_patch,
 mt76_connac_mcu_send_ram_firmware).
 
 See src/wifit3/chips/mt7921au/MT7921AU.md for wire-format details.

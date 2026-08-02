@@ -134,7 +134,7 @@ a `wlan` interface under `rtw89_8922au_git` for hardware testing and re-captures
 
 ## Capture
 
-`usb_dumps_new2/captures_rtw89_8922au_git/` (capture-1/2/3, cold boot). Taken on a USB-2 path:
+`driver_captures/captures_rtw89_8922au_git/` (capture-1/2/3, cold boot). Taken on a USB-2 path:
 `rtw89_usb_switch_mode` early-returns on SuperSpeed, so `switch_mode_be` reads `R_BE_PAD_CTRL2`
 and the pcap opens with that read. Verify against all three per the methodology's step 6.
 

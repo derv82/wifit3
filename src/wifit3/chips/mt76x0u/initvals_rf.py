@@ -1,6 +1,6 @@
 """MT76x0U RF init-value tables — ported 1:1 from kernel `initvals_phy.h`.
 
-[SRC] data_dumps/mt76-source-v6.18/mt76x0/initvals_phy.h
+[SRC] driver_sources/mt76-source-v6.18/mt76x0/initvals_phy.h
 
 Six tables consumed by `mt76x0_phy_rf_init`:
   - RF_CENTRAL_TAB         — bank 0 init (via rf_patch_reg_array)

@@ -42,7 +42,7 @@ from wifit3.chips.rtl8188eus_dkms import (  # noqa: E402
 from wifit3.chips.rtl8188eus_dkms import constants as C  # noqa: E402
 from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL  # noqa: E402
 
-DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_8188eu" / "capture-1.pcap"
+DEFAULT_CAP = REPO / "driver_captures" / "captures_8188eu" / "capture-1.pcap"
 
 REG_APS_FSMCO_B2 = 0x0006   # first power-seq op (CARDEMU_TO_ACT step-1 poll) — the init anchor
 REG_SYS_CFG = 0x00F0        # 32-bit SYS_CFG read; used to anchor the walk (see _is_syscfg_read)

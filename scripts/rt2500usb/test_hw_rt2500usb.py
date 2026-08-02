@@ -25,7 +25,7 @@ Phase summary (mirrors the milestone breakdown):
                     0x01 (1 Mbps CCK). REQUIRES --bssid + --client
                     (deliberate, authorized testing only). (M5)
 
-Ground truth (usb_dumps/captures_rt2500usb/capture-2, cold-boot probe):
+Ground truth (driver_captures/captures_rt2500usb/capture-2, cold-boot probe):
   * MAC_CSR0 read returns a small, non-0xFFFF value (observed 0x0005).
   * EEPROM read = 110 bytes (EEPROM_SIZE 0x6e); MAC at byte offset 4
     carries the Buffalo OUI 00:0D:0B; EEPROM word 0x0b RF_TYPE = RF2525E.

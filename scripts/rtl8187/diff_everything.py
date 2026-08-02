@@ -2,9 +2,9 @@ import subprocess
 import os
 
 PCAPS = [
-    r"usb_dumps\round2\awus036h_1.pcap",
-    r"usb_dumps\round2\awus036h_2.pcap",
-    r"usb_dumps\round2\awus036h_3.pcap"
+    r"driver_captures\round2\awus036h_1.pcap",
+    r"driver_captures\round2\awus036h_2.pcap",
+    r"driver_captures\round2\awus036h_3.pcap"
 ]
 
 def extract_all_writes(pcap_file):

@@ -142,7 +142,7 @@ def phy_set_txpower_regs(transport: MT76x2UTransport, band_2g: bool,
     by a typical AP every ~10 s as a "weak/dead" client (3 assocs/30s);
     AR9271 with proper PA stays associated the full session (1 assoc/30s).
 
-    Values verified against ``usb_dumps/captures_mt76x2u/capture-1.pcap``
+    Values verified against ``driver_captures/captures_mt76x2u/capture-1.pcap``
     (airmon-ng start phase, frames 2781-3924).
     """
     if band_2g:
