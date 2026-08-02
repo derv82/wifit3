@@ -22,7 +22,11 @@ uv sync --group dev          # install (editable + dev deps)
 uv run wifit3                # run
 uv run pytest                # tests: no hardware needed, USB is mocked
 uv run ruff check src/       # lint
+uv run pyinstaller wifit3.spec --noconfirm   # build a standalone binary to dist/wifit3[.exe]
 ```
+
+PyInstaller doesn't cross-compile: build each target on that OS (Windows -> `dist\wifit3.exe`,
+Linux -> `dist/wifit3`). Build config lives in `wifit3.spec`.
 
 Don't run `ruff format`. The tree is hand-formatted (~99-col) and the formatter is disabled
 repo-wide; lint with `ruff check` and match the surrounding style by hand.
