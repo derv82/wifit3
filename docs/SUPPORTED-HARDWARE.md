@@ -11,6 +11,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 - **ACKs**: radio HW-ACKs a forged MAC. WPS relies heavily on Auto-ACKing, PMKID less so, Deauth/WEP not at all.
 - **Port**: performance comparison to the Linux driver port (RX breadth & quality).
 - **Stress**: 30-min channel-hopping soak, only tracks RX degradation over time.
+- **Grade**: summary/rollup of the above metrics as a final letter grade.
 
 ## Matrix
 
@@ -18,25 +19,24 @@ live in each chip's `<CHIP>.md` (linked under its table).
 |---|:--:|:--:|:--:|:--:|:--:|:--:|
 | [AR9271](#ar9271) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7612U](#mt7612u) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8821CU](#rtl8821cu) | ⚠️ | ✅ | ✅ | ⚠️ | ✅ | B |
-| [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | B |
-| [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RT5572](#rt5572) | ✅ | ⚠️ | ✅ | ✅ | ✅ | B |
 | [MT7921AU](#mt7921au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8187L](#rtl8187l) | ✅ | ✅ | ⚠️ | ✅ | ✅ | C |
-| [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
-| [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
 | [MT7925AU](#mt7925au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | B |
+| [RT5572](#rt5572) | ✅ | ⚠️ | ✅ | ✅ | ✅ | B |
+| [RTL8821CU](#rtl8821cu) | ⚠️ | ✅ | ✅ | ⚠️ | ✅ | B |
+| [RTL8187L](#rtl8187l) | ✅ | ✅ | ⚠️ | ✅ | ✅ | C |
+| [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
+| [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
 
-## Per-card notes
-
+## Atheros Chipset
 ### AR9271
 *ALFA AWUS036NHA · 2.4 GHz*
 
@@ -54,6 +54,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 → [AR9271_V2.md](../src/wifit3/chips/ar9271_v2/AR9271_V2.md)
 
+## Realtek Chipsets
 ### RTL8187L
 *ALFA AWUS036H · 2.4 GHz*
 
@@ -93,25 +94,6 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 → [RTL8188EUS_DKMS.md](../src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](../src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
 
-### RTL8821AU
-*ALFA AWUS036ACS · 2.4 / 5 GHz*
-
-> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8821=mainline` opts back.
-
-| Capability | Status | Date | Notes |
-|---|:--:|---|---|
-| **Grade** | **91% (A)** | 2026-07-25 | Clean dual-band on both variants, full attack suite, no wedge. |
-| RX | ✅ | 2026-07-07 | DKMS ref2g 7.0/7.8 (90%), ref5g 9.3/9.6 (97%), breadth 66/31; mainline 91% too. |
-| Port | ✅ | 2026-07-07 | Matches linux both bands, DKMS + mainline. |
-| Handshake | ✅ | 2026-07-25 | Deauth → 4-way. |
-| PMKID | ✅ | 2026-07-25 | Passive + active. |
-| WEP | ✅ | 2026-07-25 | Replay + ChopChop. |
-| WPS | ✅ | 2026-07-25 | PIN + PBC. |
-| ACKs | ✅ | 2026-07-25 | HW-ACK forged MAC (WPS/PMKID). |
-| Stress | ✅ | 2026-07-30 | 30-min 22-ch dual-band soak, flat (trend 1.03). |
-
-→ [RTL8821AU.md](../src/wifit3/chips/rtl8821au/RTL8821AU.md) (mainline) · [RTL8821AU_DKMS.md](../src/wifit3/chips/rtl8821au_dkms/RTL8821AU_DKMS.md) (default)
-
 ### RTL8812AU
 *ALFA AWUS036ACH · 2.4 / 5 GHz*
 
@@ -136,26 +118,6 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 → [RTL8812AU_DKMS.md](../src/wifit3/chips/rtl8812au_dkms/RTL8812AU_DKMS.md) (default) · [RTL8812AU.md](../src/wifit3/chips/rtl8812au/RTL8812AU.md) (mainline)
 
-### RTL8822BU
-*TP-Link Archer T3U Plus v1 · 2.4 / 5 GHz*
-
-> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8822=mainline` opts back.
-
-| Capability | Status | Date | Notes |
-|---|:--:|---|---|
-| **Grade** | **90% (A)** | 2026-07-25 | Dual-band kernel-parity RX + full attack suite. |
-| RX | ✅ | 2026-07-08 | 2G: 6.5 vs 6.4/s (102%), 5G: 9.5 vs 9.7/s (99%); breadth 78/36 (2G+5G); RSSI −0.5 dB. |
-| Port | ✅ | 2026-07-08 | Matches linux-DKMS (88x2bu) both bands. |
-| TX | ✅ | 2026-07-25 | Deauth & PMKID extraction. |
-| Handshake | ✅ | 2026-06-16 | Deauth → full M1–M4. |
-| PMKID | ✅ | 2026-07-25 | Passive capture + extract. |
-| WEP | ✅ | 2026-07-25 | ChopChop + ARP replay ~140 IVs/s. |
-| WPS | ✅ | 2026-07-25 | PIN → M7 (5/5). |
-| ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (spoofed + silicon). |
-| Stress | ✅ | 2026-07-30 | 30-min 22-ch soak, flat (trend 0.94, no death-detect). |
-
-→ [RTL8822BU_DKMS.md](../src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](../src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
-
 ### RTL8814AU
 *ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*
 
@@ -179,23 +141,81 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 → [RTL8814AU.md](../src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](../src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
-### MT7612U
-*ALFA AWUS036ACM · 2.4 / 5 GHz*
+### RTL8821AU
+*ALFA AWUS036ACS · 2.4 / 5 GHz*
+
+> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8821=mainline` opts back.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **93% (A)** | 2026-07-25 | Faithful dual-band port, linux-parity RX, full suite. |
-| RX | ✅ | 2026-07-06 | 2G: 7.6/8.3 b/s (92%), 5G: 8.9/9.7 (92%); breadth 109/43 (matches); RSSI −1.5 dB. |
-| Port | ✅ | 2026-07-06 | Matches mt76x2u both bands. |
-| Handshake | ✅ | 2026-07-25 | Deauth → 4-way (M1–M4). |
-| PMKID | ✅ | 2026-07-25 | Passive + active (2.4 + 5 GHz). |
-| WEP | ✅ | 2026-07-25 | Replay + ChopChop ~160 IVs/s. |
-| WPS | ✅ | 2026-07-25 | PIN → M7 (4/5). |
+| **Grade** | **91% (A)** | 2026-07-25 | Clean dual-band on both variants, full attack suite, no wedge. |
+| RX | ✅ | 2026-07-07 | DKMS ref2g 7.0/7.8 (90%), ref5g 9.3/9.6 (97%), breadth 66/31; mainline 91% too. |
+| Port | ✅ | 2026-07-07 | Matches linux both bands, DKMS + mainline. |
+| Handshake | ✅ | 2026-07-25 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-07-25 | Passive + active. |
+| WEP | ✅ | 2026-07-25 | Replay + ChopChop. |
+| WPS | ✅ | 2026-07-25 | PIN + PBC. |
+| ACKs | ✅ | 2026-07-25 | HW-ACK forged MAC (WPS/PMKID). |
+| Stress | ✅ | 2026-07-30 | 30-min 22-ch dual-band soak, flat (trend 1.03). |
+
+→ [RTL8821AU.md](../src/wifit3/chips/rtl8821au/RTL8821AU.md) (mainline) · [RTL8821AU_DKMS.md](../src/wifit3/chips/rtl8821au_dkms/RTL8821AU_DKMS.md) (default)
+
+### RTL8821CU
+*Auscoumer 600 Mbps · 2.4 / 5 GHz*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **B** | 2026-07-25 | Full dual-band attack suite; 2.4 GHz can come up silent after a 5→2.4 switch (until switched back). |
+| RX | ⚠️ | 2026-07-25 | Matches Linux both bands on a clean connect; 2.4 GHz can go silent after a 5→2.4 switch. |
+| Port | ⚠️ | 2026-07-25 | Unfaithful port: the 2.4-after-5 silence is a bug in our port, not Linux. |
+| Handshake | ✅ | 2026-06-24 | 4-way captured. |
+| PMKID | ✅ | 2026-06-24 | Capture + active extract (2.4 + 5). |
+| WEP | ✅ | 2026-07-06 | 2.4 ChopChop + ARP replay ~225 IVs/s (no 5 GHz WEP target). |
+| WPS | ✅ | 2026-06-24 | PBC: ~25 EAPOLs (HW-ACK forged MAC). |
+| ACKs | ✅ | 2026-06-24 | HW-ACK forged MAC (WPS + 5 GHz PMKID/deauth). |
+| Stress | ✅ | 2026-07-29 | 30-min 22-ch soak, flat (trend 0.96, no death-detect). |
+
+→ [RTL8821CU_DKMS.md](../src/wifit3/chips/rtl8821cu_dkms/RTL8821CU_DKMS.md)
+
+### RTL8822BU
+*TP-Link Archer T3U Plus v1 · 2.4 / 5 GHz*
+
+> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8822=mainline` opts back.
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **90% (A)** | 2026-07-25 | Dual-band kernel-parity RX + full attack suite. |
+| RX | ✅ | 2026-07-08 | 2G: 6.5 vs 6.4/s (102%), 5G: 9.5 vs 9.7/s (99%); breadth 78/36 (2G+5G); RSSI −0.5 dB. |
+| Port | ✅ | 2026-07-08 | Matches linux-DKMS (88x2bu) both bands. |
+| TX | ✅ | 2026-07-25 | Deauth & PMKID extraction. |
+| Handshake | ✅ | 2026-06-16 | Deauth → full M1–M4. |
+| PMKID | ✅ | 2026-07-25 | Passive capture + extract. |
+| WEP | ✅ | 2026-07-25 | ChopChop + ARP replay ~140 IVs/s. |
+| WPS | ✅ | 2026-07-25 | PIN → M7 (5/5). |
 | ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (spoofed + silicon). |
-| Stress | ✅ | 2026-07-29 | 30-min 22-ch dual-band soak, flat (trend 0.98, TSSI-on). |
+| Stress | ✅ | 2026-07-30 | 30-min 22-ch soak, flat (trend 0.94, no death-detect). |
 
-→ [MT76X2U.md](../src/wifit3/chips/mt76x2u/MT76X2U.md)
+→ [RTL8822BU_DKMS.md](../src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](../src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
 
+### RTL8922AU
+*ASUS USB-BE93 · 2.4 / 5 GHz · Wi-Fi 7 (rtw89 8922A)*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **A** | 2026-07-30 | Accurate rtw89 port (verify_pcap PASS ×3); full attack suite works on USB-A. USB-3 starves RX (see RX). |
+| RX | ✅ | 2026-07-30 | Dual-band monitor RX; yield tracks USB speed (USB-A ~70-90 APs, USB-3 ~16, 2.4 GHz worst). |
+| TX | ✅ | 2026-07-30 | Deauth + WPS + PMKID inject, 2.4 + 5 GHz (probe-req drew 38 responses). |
+| ACKs | ✅ | 2026-07-30 | Auto-ACKs a forged MAC via active monitor (SPOOFABLE); WPS-PIN + PMKID confirm it. |
+| Port | ✅ | N/A | verify_pcap PASS on all 3 cold-boot captures (register + bulk-OUT byte-for-byte), both bands. |
+| Handshake | ✅ | 2026-07-30 | Deauth → 4-way, 2.4 + 5 GHz. |
+| PMKID | ✅ | 2026-07-30 | Passive + active, 2.4 + 5 GHz. |
+| WEP | ✅ | 2026-07-30 | USB-A: ChopChop 32B/15s, ARP ~180 IVs/s. USB-3: ~1min/32B, ~8 IVs/s (RX-starved). |
+| WPS | ✅ | 2026-07-30 | PIN works. |
+| Stress | ✅ | 2026-07-29 | 30-min USB-A soak, flat (93→102 active, trend ~1.0). USB-3 drops RX to ~15 (2.4 GHz hit hardest). |
+
+→ [RTL8922AU.md](../src/wifit3/chips/rtl8922au/RTL8922AU.md)
+
+## Mediatek Chipsets
 ### MT7610U
 *ALFA AWUS036ACHM · 2.4 / 5 GHz*
 
@@ -212,6 +232,23 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Stress | ✅ | 2026-07-29 | 30-min 22-ch dual-band soak, flat (trend 1.01). |
 
 → [MT76X0U.md](../src/wifit3/chips/mt76x0u/MT76X0U.md)
+
+### MT7612U
+*ALFA AWUS036ACM · 2.4 / 5 GHz*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **93% (A)** | 2026-07-25 | Faithful dual-band port, linux-parity RX, full suite. |
+| RX | ✅ | 2026-07-06 | 2G: 7.6/8.3 b/s (92%), 5G: 8.9/9.7 (92%); breadth 109/43 (matches); RSSI −1.5 dB. |
+| Port | ✅ | 2026-07-06 | Matches mt76x2u both bands. |
+| Handshake | ✅ | 2026-07-25 | Deauth → 4-way (M1–M4). |
+| PMKID | ✅ | 2026-07-25 | Passive + active (2.4 + 5 GHz). |
+| WEP | ✅ | 2026-07-25 | Replay + ChopChop ~160 IVs/s. |
+| WPS | ✅ | 2026-07-25 | PIN → M7 (4/5). |
+| ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (spoofed + silicon). |
+| Stress | ✅ | 2026-07-29 | 30-min 22-ch dual-band soak, flat (trend 0.98, TSSI-on). |
+
+→ [MT76X2U.md](../src/wifit3/chips/mt76x2u/MT76X2U.md)
 
 ### MT7921AU
 *ALFA AWUS036AXML / Panda PAU0F · 2.4 / 5 GHz*
@@ -230,6 +267,82 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Stress | ✅ | 2026-07-29 | 30-min 22-ch dual-band soak, flat (trend 1.08). |
 
 → [MT7921AU.md](../src/wifit3/chips/mt7921au/MT7921AU.md)
+
+### MT7925AU
+*Netgear A9000 · 2.4 / 5 GHz · Wi-Fi 7 (connac3)*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **A** | 2026-07-27 | Kernel-parity dual-band RX and full attack suite; flat 20-min soak. |
+| RX | ✅ | 2026-07-27 | 2G: 8.9/8.71 (match), 5G: 9.8/9.79 (match); breadth = Linux; RSSI +0.1 dB. |
+| Port | ✅ | 2026-07-27 | Matches mt7925u both bands; accurate RSSI. |
+| TX | ✅ | 2026-07-26 | Inject 2.4 + 5 GHz; TXWI byte-exact vs 2 TX pcaps. |
+| Handshake | ✅ | 2026-07-26 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-07-26 | Captured. |
+| ACKs | ✅ | 2026-07-27 | Auto-ACKs forged MACs (via Active Monitor); HW ACK-retries. |
+| WPS | ✅ | 2026-07-27 | PIN → M7, 5/5 (active monitor). |
+| WEP | ✅ | 2026-07-26 | 2.4 GHz ChopChop + ARP replay ~300 IVs/s. |
+| Stress | ✅ | 2026-07-29 | 30-min 22-ch soak, flat (trend 1.01, no death-detect). |
+
+→ [MT7925AU.md](../src/wifit3/chips/mt7925au/MT7925AU.md)
+
+## Ralink Chipsets
+### RT2500USB
+*Buffalo Nintendo Wi-Fi / RT2570 · 2.4 GHz*
+
+> My first wireless card: It gets an "A" in my book simply for still working after 20 years!
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **D** | 2026-07-25 | RX flakey when "holding it wrong", no ACK-based retries at all (not even fixed-MAC). Beloved. |
+| RX | ⚠️ | 2026-07-25 | Good when good: 8.4 vs 8.1/s Linux, RSSI −0.2. Drops to near-dead in bad spells. |
+| TX | ✅ | 2026-07-25 | Deauth + PMKID + WEP inject; one copy per frame (no ACK-based retry). |
+| ACKs | ❌ | 2026-07-25 | NONE: auto-ACKs nothing, not even its own silicon MAC (no active monitor / autoresponder). |
+| Port | ✅ | 2026-07-25 | Matches rt2500usb RX, captured in a good spell; intermittency makes it hard to reproduce. |
+| Handshake | ✅ | 2026-07-25 | Deauth → reconnect (M1–M3). |
+| PMKID | ✅ | 2026-07-25 | Passive + active extract. |
+| WEP | ⚠️ | 2026-07-25 | ARP ~50 IVs/s; ChopChop fails due to no ACK-based delivery. |
+| WPS | ✅ | 2026-07-25 | PIN → M7 (5/5) but slow (~4.2 s median, via AP retransmits, no auto-ACK). |
+| Stress | ⚠️ | 2026-07-29 | Solo: 30-min soak, mild late taper. Died at 2m in a 4-card soak (bus contention, not the driver). |
+
+→ [RT2500USB.md](../src/wifit3/chips/rt2500usb/RT2500USB.md)
+
+### RT3070
+*ALFA AWUS036NH · 2.4 GHz · 1T1R*
+
+Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **A** | 2026-07-25 | Full 2.4 GHz attack suite; now with a Linux baseline (kernel-parity RX). |
+| RX | ✅ | 2026-07-25 | Ref AP 6.9 vs 6.6/s (matches); RSSI accurate. |
+| TX | ✅ | 2026-07-25 | Deauth byte-match w/ aireplay-ng. |
+| ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (needs it for stop-on-ACK). |
+| Port | ✅ | 2026-07-25 | Matches rt2800usb: Ref AP beacon rate + RSSI parity. |
+| Handshake | ✅ | 2026-07-25 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-07-25 | Passive + active extract. |
+| WEP | ✅ | 2026-07-25 | ChopChop + ARP replay ~136 IVs/s. |
+| WPS | ✅ | 2026-07-25 | PIN → M7 (5/5). |
+| Stress | ✅ | 2026-07-29 | 30-min 14-ch soak, flat (trend 1.01). |
+
+→ [RT3070.md](../src/wifit3/chips/rt3070/RT3070.md)
+
+### RT5370
+*LOTEKOO 150 Mbps · 2.4 GHz · 1T1R*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **80% (B)** | 2026-07-25 | Kernel-parity RX, nano 1T1R front-end is limited (1/2 good card); WPS flaky. |
+| RX | ✅ | 2026-07-08 | ref AP 8.6 vs 9.1/s (95%); breadth 50 vs 57; RSSI +0.8 dB (accurate). |
+| Port | ✅ | 2026-07-08 | Matches rt2800usb: beacon rate + RSSI parity; accurate RSSI (+0.8 dB). |
+| Handshake | ✅ | 2026-07-25 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-07-25 | Capture + active extract. |
+| WEP | ✅ | 2026-07-25 | 2.4 GHz ChopChop + ARP replay ~200 IVs/s. |
+| WPS | ⚠️ | 2026-07-25 | PIN → M7 but flaky (3-4/5, ~7.6 s median), imperfect stop-on-ACK. |
+| ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (stop-on-ACK imperfect). |
+| Stress | ✅ | 2026-07-30 | 30-min 14-ch soak, flat (trend 1.02, no death-detect). |
+
+→ [RT5370.md](../src/wifit3/chips/rt5370/RT5370.md)
 
 ### RT5372
 *Panda PAU05 + PAU06 · 2.4 GHz · 2T2R*
@@ -270,123 +383,13 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 → [RT5572.md](../src/wifit3/chips/rt5572/RT5572.md)
 
-### RT3070
-*ALFA AWUS036NH · 2.4 GHz · 1T1R*
-
-Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
-
-| Capability | Status | Date | Notes |
-|---|:--:|---|---|
-| **Grade** | **A** | 2026-07-25 | Full 2.4 GHz attack suite; now with a Linux baseline (kernel-parity RX). |
-| RX | ✅ | 2026-07-25 | Ref AP 6.9 vs 6.6/s (matches); RSSI accurate. |
-| TX | ✅ | 2026-07-25 | Deauth byte-match w/ aireplay-ng. |
-| ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (needs it for stop-on-ACK). |
-| Port | ✅ | 2026-07-25 | Matches rt2800usb: Ref AP beacon rate + RSSI parity. |
-| Handshake | ✅ | 2026-07-25 | Deauth → 4-way. |
-| PMKID | ✅ | 2026-07-25 | Passive + active extract. |
-| WEP | ✅ | 2026-07-25 | ChopChop + ARP replay ~136 IVs/s. |
-| WPS | ✅ | 2026-07-25 | PIN → M7 (5/5). |
-| Stress | ✅ | 2026-07-29 | 30-min 14-ch soak, flat (trend 1.01). |
-
-→ [RT3070.md](../src/wifit3/chips/rt3070/RT3070.md)
-
-### RT2500USB
-*Buffalo Nintendo Wi-Fi / RT2570 · 2.4 GHz*
-
-> My first wireless card: It gets an "A" in my book simply for still working after 20 years!
-
-| Capability | Status | Date | Notes |
-|---|:--:|---|---|
-| **Grade** | **D** | 2026-07-25 | RX flakey when "holding it wrong", no ACK-based retries at all (not even fixed-MAC). Beloved. |
-| RX | ⚠️ | 2026-07-25 | Good when good: 8.4 vs 8.1/s Linux, RSSI −0.2. Drops to near-dead in bad spells. |
-| TX | ✅ | 2026-07-25 | Deauth + PMKID + WEP inject; one copy per frame (no ACK-based retry). |
-| ACKs | ❌ | 2026-07-25 | NONE: auto-ACKs nothing, not even its own silicon MAC (no active monitor / autoresponder). |
-| Port | ✅ | 2026-07-25 | Matches rt2500usb RX, captured in a good spell; intermittency makes it hard to reproduce. |
-| Handshake | ✅ | 2026-07-25 | Deauth → reconnect (M1–M3). |
-| PMKID | ✅ | 2026-07-25 | Passive + active extract. |
-| WEP | ⚠️ | 2026-07-25 | ARP ~50 IVs/s; ChopChop fails due to no ACK-based delivery. |
-| WPS | ✅ | 2026-07-25 | PIN → M7 (5/5) but slow (~4.2 s median, via AP retransmits, no auto-ACK). |
-| Stress | ⚠️ | 2026-07-29 | Solo: 30-min soak, mild late taper. Died at 2m in a 4-card soak (bus contention, not the driver). |
-
-→ [RT2500USB.md](../src/wifit3/chips/rt2500usb/RT2500USB.md)
-
-### RTL8821CU
-*Auscoumer 600 Mbps · 2.4 / 5 GHz*
-
-| Capability | Status | Date | Notes |
-|---|:--:|---|---|
-| **Grade** | **B** | 2026-07-25 | Full dual-band attack suite; 2.4 GHz can come up silent after a 5→2.4 switch (until switched back). |
-| RX | ⚠️ | 2026-07-25 | Matches Linux both bands on a clean connect; 2.4 GHz can go silent after a 5→2.4 switch. |
-| Port | ⚠️ | 2026-07-25 | Unfaithful port: the 2.4-after-5 silence is a bug in our port, not Linux. |
-| Handshake | ✅ | 2026-06-24 | 4-way captured. |
-| PMKID | ✅ | 2026-06-24 | Capture + active extract (2.4 + 5). |
-| WEP | ✅ | 2026-07-06 | 2.4 ChopChop + ARP replay ~225 IVs/s (no 5 GHz WEP target). |
-| WPS | ✅ | 2026-06-24 | PBC: ~25 EAPOLs (HW-ACK forged MAC). |
-| ACKs | ✅ | 2026-06-24 | HW-ACK forged MAC (WPS + 5 GHz PMKID/deauth). |
-| Stress | ✅ | 2026-07-29 | 30-min 22-ch soak, flat (trend 0.96, no death-detect). |
-
-→ [RTL8821CU_DKMS.md](../src/wifit3/chips/rtl8821cu_dkms/RTL8821CU_DKMS.md)
-
-### RT5370
-*LOTEKOO 150 Mbps · 2.4 GHz · 1T1R*
-
-| Capability | Status | Date | Notes |
-|---|:--:|---|---|
-| **Grade** | **80% (B)** | 2026-07-25 | Kernel-parity RX, nano 1T1R front-end is limited (1/2 good card); WPS flaky. |
-| RX | ✅ | 2026-07-08 | ref AP 8.6 vs 9.1/s (95%); breadth 50 vs 57; RSSI +0.8 dB (accurate). |
-| Port | ✅ | 2026-07-08 | Matches rt2800usb: beacon rate + RSSI parity; accurate RSSI (+0.8 dB). |
-| Handshake | ✅ | 2026-07-25 | Deauth → 4-way. |
-| PMKID | ✅ | 2026-07-25 | Capture + active extract. |
-| WEP | ✅ | 2026-07-25 | 2.4 GHz ChopChop + ARP replay ~200 IVs/s. |
-| WPS | ⚠️ | 2026-07-25 | PIN → M7 but flaky (3-4/5, ~7.6 s median), imperfect stop-on-ACK. |
-| ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (stop-on-ACK imperfect). |
-| Stress | ✅ | 2026-07-30 | 30-min 14-ch soak, flat (trend 1.02, no death-detect). |
-
-→ [RT5370.md](../src/wifit3/chips/rt5370/RT5370.md)
-
-### MT7925AU
-*Netgear A9000 · 2.4 / 5 GHz · Wi-Fi 7 (connac3)*
-
-| Capability | Status | Date | Notes |
-|---|:--:|---|---|
-| **Grade** | **A** | 2026-07-27 | Kernel-parity dual-band RX and full attack suite; flat 20-min soak. |
-| RX | ✅ | 2026-07-27 | 2G: 8.9/8.71 (match), 5G: 9.8/9.79 (match); breadth = Linux; RSSI +0.1 dB. |
-| Port | ✅ | 2026-07-27 | Matches mt7925u both bands; accurate RSSI. |
-| TX | ✅ | 2026-07-26 | Inject 2.4 + 5 GHz; TXWI byte-exact vs 2 TX pcaps. |
-| Handshake | ✅ | 2026-07-26 | Deauth → 4-way. |
-| PMKID | ✅ | 2026-07-26 | Captured. |
-| ACKs | ✅ | 2026-07-27 | Auto-ACKs forged MACs (via Active Monitor); HW ACK-retries. |
-| WPS | ✅ | 2026-07-27 | PIN → M7, 5/5 (active monitor). |
-| WEP | ✅ | 2026-07-26 | 2.4 GHz ChopChop + ARP replay ~300 IVs/s. |
-| Stress | ✅ | 2026-07-29 | 30-min 22-ch soak, flat (trend 1.01, no death-detect). |
-
-→ [MT7925AU.md](../src/wifit3/chips/mt7925au/MT7925AU.md)
-
-### RTL8922AU
-*ASUS USB-BE93 · 2.4 / 5 GHz · Wi-Fi 7 (rtw89 8922A)*
-
-| Capability | Status | Date | Notes |
-|---|:--:|---|---|
-| **Grade** | **A** | 2026-07-30 | Accurate rtw89 port (verify_pcap PASS ×3); full attack suite works on USB-A. USB-3 starves RX (see RX). |
-| RX | ✅ | 2026-07-30 | Dual-band monitor RX; yield tracks USB speed (USB-A ~70-90 APs, USB-3 ~16, 2.4 GHz worst). |
-| TX | ✅ | 2026-07-30 | Deauth + WPS + PMKID inject, 2.4 + 5 GHz (probe-req drew 38 responses). |
-| ACKs | ✅ | 2026-07-30 | Auto-ACKs a forged MAC via active monitor (SPOOFABLE); WPS-PIN + PMKID confirm it. |
-| Port | ✅ | N/A | verify_pcap PASS on all 3 cold-boot captures (register + bulk-OUT byte-for-byte), both bands. |
-| Handshake | ✅ | 2026-07-30 | Deauth → 4-way, 2.4 + 5 GHz. |
-| PMKID | ✅ | 2026-07-30 | Passive + active, 2.4 + 5 GHz. |
-| WEP | ✅ | 2026-07-30 | USB-A: ChopChop 32B/15s, ARP ~180 IVs/s. USB-3: ~1min/32B, ~8 IVs/s (RX-starved). |
-| WPS | ✅ | 2026-07-30 | PIN works. |
-| Stress | ✅ | 2026-07-29 | 30-min USB-A soak, flat (93→102 active, trend ~1.0). USB-3 drops RX to ~15 (2.4 GHz hit hardest). |
-
-→ [RTL8922AU.md](../src/wifit3/chips/rtl8922au/RTL8922AU.md)
-
 ## Unsupported
 
 ### RT3572 (ALFA AWUS051NH v2): untested
 
-Our only unit (bought 2015) is has a blank EFUSE (no factory RF calibration),
-so it can't validate the chip. The `rt2800usb` driver is shared with the working RT5372/RT5572,
-so the port itself stays supported; re-test if a genuine unit turns up.
+Our only unit (bought 2015) has a blank EFUSE (no factory RF calibration), so it can't
+validate the chip.
+
 → [RT2800USB.md](../src/wifit3/chips/rt2800usb/RT2800USB.md)
 
 ## Stress soak
