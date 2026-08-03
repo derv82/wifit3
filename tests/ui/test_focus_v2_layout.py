@@ -5,6 +5,7 @@ look good") stay the human's call, fed by the exported SVGs.
 
 Sizes are pinned headless via ``run_test(size=...)``: no real terminal."""
 import pytest
+import pytest_asyncio
 from textual.app import App
 from textual.widgets import Button
 
@@ -20,6 +21,16 @@ class _Host(App):
     """Minimal host: push the v2 screen straight in (no device manager)."""
     def on_mount(self) -> None:
         self.push_screen(FocusViewV2())
+
+
+@pytest_asyncio.fixture(loop_scope="module", scope="module")
+async def layout_host():
+    """One 120x40 boot shared by the target-less static-layout tests (geometry stays
+    per-size below: run_test's size can't change on a live screen)."""
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0)
+        yield app.screen
 
 
 @pytest.mark.parametrize("w,h", [(80, 24), (80, 30), (100, 35), (120, 40)])
@@ -58,31 +69,27 @@ async def test_layout_geometry(w, h):
         assert bot.height == avail - expected_center
 
 
-async def test_topbar_is_the_action_area_and_card_has_no_buttons():
-    app = _Host()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0)
-        scr = app.screen
-        # Back button + the full conditional attack set (5 derive_buttons ids +
-        # the transient btn-stop-pbc, all shown/hidden per target/tick) live in the
-        # top action area; none remain in the card column.
-        assert len(scr.query("#topbar Button")) == 7
-        for bid in ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin",
-                    "btn-wpa3-down", "btn-stop-pbc"):
-            assert scr.query_one(f"#topbar #{bid}", Button) is not None
-        assert len(scr.query("#card Button")) == 0
+@pytest.mark.asyncio(loop_scope="module")
+async def test_topbar_is_the_action_area_and_card_has_no_buttons(layout_host):
+    scr = layout_host
+    # Back button + the full conditional attack set (5 derive_buttons ids +
+    # the transient btn-stop-pbc, all shown/hidden per target/tick) live in the
+    # top action area; none remain in the card column.
+    assert len(scr.query("#topbar Button")) == 7
+    for bid in ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin",
+                "btn-wpa3-down", "btn-stop-pbc"):
+        assert scr.query_one(f"#topbar #{bid}", Button) is not None
+    assert len(scr.query("#card Button")) == 0
 
 
-async def test_dashboard_rows_and_rate_vs_count():
-    app = _Host()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0)
-        dash = app.screen.query_one("#dashboard")
-        assert len(dash._rows) == 5
-        as_rate = {r.key: r.as_rate for r in dash._rows}
-        # eapol reads as a recent count (a handshake is ~4 frames); the rest /s.
-        assert as_rate["eapol"] is False
-        assert all(as_rate[k] for k in ("beacon", "data", "inject", "deauth"))
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_rows_and_rate_vs_count(layout_host):
+    dash = layout_host.query_one("#dashboard")
+    assert len(dash._rows) == 5
+    as_rate = {r.key: r.as_rate for r in dash._rows}
+    # eapol reads as a recent count (a handshake is ~4 frames); the rest /s.
+    assert as_rate["eapol"] is False
+    assert all(as_rate[k] for k in ("beacon", "data", "inject", "deauth"))
 
 
 def test_breathe_changes_green_leds():
