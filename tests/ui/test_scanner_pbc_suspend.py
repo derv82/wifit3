@@ -51,7 +51,7 @@ async def test_pbc_poll_bails_while_suspended_then_acts_when_foreground():
     app = WifiteApp()
     async with app.run_test() as pilot:
         app.push_screen("scanner")
-        await pilot.pause()
+        await pilot.pause(0)
         scanner = app.screen
         assert isinstance(scanner, ScannerView)
 
@@ -62,7 +62,7 @@ async def test_pbc_poll_bails_while_suspended_then_acts_when_foreground():
 
         # Suspended under an overlay: must NOT act (and must not consume the edge).
         app.push_screen(_Overlay())
-        await pilot.pause()
+        await pilot.pause(0)
         assert app.screen is not scanner     # genuinely suspended …
         assert scanner.is_current            # … yet is_current is still True: the trap
         scanner._poll_pbc()
@@ -70,7 +70,7 @@ async def test_pbc_poll_bails_while_suspended_then_acts_when_foreground():
 
         # Foreground again: the still-open window is acted on (edge survived).
         app.pop_screen()
-        await pilot.pause()
+        await pilot.pause(0)
         assert app.screen is scanner
         scanner._poll_pbc()
         scanner._on_pbc_window.assert_called_once()

@@ -125,7 +125,7 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
 
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         assert isinstance(focus, FocusViewV2)
 
@@ -144,7 +144,7 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         replay = b"\x00" * 8
         iface._on_frame_parsed(_eapol(bssid, client, 1, replay, to_ap=False, pmkid=b"\xaa" * 16))
         focus._tick()
-        await pilot.pause()
+        await pilot.pause(0)
         text = _log_text(log)
         # M1 is buffered (deferred aggregation) so its tree isn't logged yet,
         # but PMKID is an immediate win banner.
@@ -155,7 +155,7 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         # immediately (first crackable pair), carrying the buffered M1 detail.
         iface._on_frame_parsed(_eapol(bssid, client, 2, replay, to_ap=True))
         focus._tick()
-        await pilot.pause()
+        await pilot.pause(0)
         text = _log_text(log)
         assert "Valid 4-Way Handshake" in text, text
         assert "M1" in text and "ANonce" in text and "M2" in text, text
@@ -184,7 +184,7 @@ async def test_focus_resume_repins_channel_when_radio_drifted():
     ap = array.access_points[bssid]
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         tuned: list = []
 
@@ -221,7 +221,7 @@ async def test_v2_capture_wins_do_not_double_toast():
     ap = array.access_points[bssid]
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         toasts: list = []
         focus.notify = lambda msg, **kw: toasts.append((kw.get("title"), msg))
@@ -231,7 +231,7 @@ async def test_v2_capture_wins_do_not_double_toast():
         iface._on_frame_parsed(_eapol(bssid, client, 1, replay, to_ap=False, pmkid=b"\xaa" * 16))
         iface._on_frame_parsed(_eapol(bssid, client, 2, replay, to_ap=True))
         focus._tick()
-        await pilot.pause()
+        await pilot.pause(0)
 
         titles = [t for t, _ in toasts]
         assert "PMKID captured" not in titles, toasts
@@ -255,7 +255,7 @@ async def test_v2_stop_pbc_button_frees_radio_and_suppresses_rearm():
     ap = array.access_points[bssid]                      # window CLOSED during mount
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         if focus._tick_timer:
             focus._tick_timer.stop()                     # drive _tick by hand: no auto-invade race
@@ -349,7 +349,7 @@ async def test_v2_recovered_wps_psk_shows_in_status():
     ap.wps_pbc_psk = "hunter2"          # as set by a successful PBC capture
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         status = str(app.screen.query_one("#status", Static).render())
         assert "WPS PSK recovered" in status, status
 
@@ -371,16 +371,16 @@ async def test_v2_reenter_same_target_no_duplicate_client_ids():
 
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         focus._tick()
-        await pilot.pause()
+        await pilot.pause(0)
         assert len(focus.query(f"#{rid}")) == 1                 # mounted once
 
         # Re-acquire the same target (as a Scanner→Focus return does).
         await focus._enter_target()
         focus._tick()
-        await pilot.pause()
+        await pilot.pause(0)
         assert len(focus.query(f"#{rid}")) == 1                 # still one, no dup/crash
         assert client in focus.query_one("#clients", ClientsList)._known
 
@@ -400,10 +400,10 @@ async def test_v2_pmf_required_disables_deauth_and_logs():
                                 "dest": bssid, "rssi": -60, "raw": b"d"}))
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         focus._tick()
-        await pilot.pause()
+        await pilot.pause(0)
         clients = focus.query_one("#clients", ClientsList)
         deauth_btns = list(clients.query(Button))
         assert deauth_btns and all(b.disabled for b in deauth_btns), deauth_btns
@@ -420,7 +420,7 @@ async def test_v2_target_acquired_log_names_encryption():
     ap = array.access_points[bssid]
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         text = _log_text(app.screen.query_one("#log", LogBand))
         assert "Target acquired" in text and "WPA2" in text, text
 
@@ -450,7 +450,7 @@ async def test_v2_button_wiring():
 
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
 
         # WPA2 (no WPS, not WPA3): only PMKID is plausible. The rest hide.
@@ -461,7 +461,7 @@ async def test_v2_button_wiring():
         # The inline ✕ resolves to its client, and the handler reaches deauth.
         clients = focus.query_one("#clients", ClientsList)
         focus._tick()
-        await pilot.pause()
+        await pilot.pause(0)
         btn_id = next(b for b, m in clients._by_button.items() if m == client)
         assert clients.client_mac(btn_id) == client
         await focus._run_deauth_selected(client)
@@ -484,7 +484,7 @@ async def test_v2_wep_initial_load_surfaces_history_and_listening():
 
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         text = _log_text(focus.query_one("#log", LogBand))
         assert "Existing captures" in text, text

@@ -55,19 +55,19 @@ async def test_hotplug_prompt_yes_pools_the_card(monkeypatch):
     app = WifiteApp()
     async with app.run_test() as pilot:
         app.switch_screen("scanner")          # leave Splash so an arrival counts as a hotplug
-        await pilot.pause()
+        await pilot.pause(0)
         assert isinstance(app.screen, ScannerView)
 
         app._on_devices_changed([dev], [dev], [])
         for _ in range(20):
-            await pilot.pause()
+            await pilot.pause(0)
             if isinstance(app.screen, NewDeviceDialog):
                 break
         assert isinstance(app.screen, NewDeviceDialog)
 
         app.screen.dismiss(True)          # user presses Yes (the button->dismiss wiring is in test_new_device)
         for _ in range(40):
-            await pilot.pause()
+            await pilot.pause(0)
             if app.array is not None and app.array.members:
                 break
         assert app.array is not None and len(app.array.members) == 1
@@ -86,22 +86,22 @@ async def test_re_arrival_of_pooled_card_does_not_prompt(monkeypatch):
     app = WifiteApp()
     async with app.run_test() as pilot:
         app.switch_screen("scanner")
-        await pilot.pause()
+        await pilot.pause(0)
         app._on_devices_changed([dev], [dev], [])
         for _ in range(20):
-            await pilot.pause()
+            await pilot.pause(0)
             if isinstance(app.screen, NewDeviceDialog):
                 break
         app.screen.dismiss(True)
         for _ in range(40):
-            await pilot.pause()
+            await pilot.pause(0)
             if app.array is not None and app.array.members:
                 break
         assert app.array is not None and len(app.array.members) == 1
 
         app._on_devices_changed([dev], [dev], [])   # same instance re-arrives
         for _ in range(20):
-            await pilot.pause()
+            await pilot.pause(0)
         assert isinstance(app.screen, ScannerView)  # no second prompt
         assert len(app.array.members) == 1
 
@@ -114,7 +114,7 @@ async def test_arrival_on_splash_updates_the_list_not_a_prompt():
     async with app.run_test() as pilot:
         assert isinstance(app.screen, SplashView)
         app._on_devices_changed([dev], [dev], [])
-        await pilot.pause()
+        await pilot.pause(0)
         assert isinstance(app.screen, SplashView)     # no prompt on Splash
         labels = [str(i.query_one("Label").render()) for i in app.screen.query("ListView > ListItem")]
         assert any("RT5370 (test)" in text for text in labels)

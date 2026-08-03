@@ -27,7 +27,7 @@ class _Host(App):
 async def test_single_card_channel_is_visible_on_first_paint():
     app = _Host(_Array([1]))
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         readout = app.query_one(_ChannelReadout)
         assert readout.channels == "CH:  1"
         assert readout.region.width > 0        # sized without a resize
@@ -36,7 +36,7 @@ async def test_single_card_channel_is_visible_on_first_paint():
 async def test_multi_card_joined_and_width_padded():
     app = _Host(_Array([9, 149]))
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         readout = app.query_one(_ChannelReadout)
         # width-3 channel field keeps every token 6 cells wide (no jarring on 9->10, 44->149).
         assert readout.channels == "CH:  9 | CH:149"
@@ -45,6 +45,6 @@ async def test_multi_card_joined_and_width_padded():
 async def test_no_array_is_blank():
     app = _Host(None)
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         readout = app.query_one(_ChannelReadout)
         assert readout.channels == ""

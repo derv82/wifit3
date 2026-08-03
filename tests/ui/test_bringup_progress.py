@@ -14,9 +14,9 @@ class _Host(App):
 async def test_status_and_progress_update():
     app = _Host()
     async with app.run_test(size=(100, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         app.modal.set_status("Installing WinUSB…")
         app.modal.set_progress(0.5)
-        await pilot.pause()
+        await pilot.pause(0)
         assert str(app.modal.query_one("#status", Label).render()) == "Installing WinUSB…"
         assert app.modal.query_one(ProgressBar).progress == 50

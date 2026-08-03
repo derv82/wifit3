@@ -32,14 +32,14 @@ async def test_modal_dismisses_replugged_when_cycle_detected():
     app = _Host(_fast)
     async with app.run_test(size=(100, 40)) as pilot:
         for _ in range(6):
-            await pilot.pause()
+            await pilot.pause(0)
     assert app.result == "replugged"
 
 
 async def test_skip_button_dismisses_skip():
     app = _Host(_hang)
     async with app.run_test(size=(100, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         await pilot.click("#btn-skip")
-        await pilot.pause()
+        await pilot.pause(0)
     assert app.result == "skip"

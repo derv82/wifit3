@@ -28,8 +28,8 @@ async def test_device_lost_from_offloop_context_shows_recoverable_modal():
         loop = asyncio.get_running_loop()
         # The last card's loss re-emits (exc, remaining=0) via the threadsafe hop.
         loop.call_soon_threadsafe(app.notify_device_lost, usb.core.USBError("gone", errno=19), 0)
-        await pilot.pause()
-        await pilot.pause()
+        await pilot.pause(0)
+        await pilot.pause(0)
         assert isinstance(app.screen, RecoverableErrorModal)
         assert app.screen._error.title == "Adapter disconnected"
 
@@ -48,10 +48,10 @@ async def test_back_to_splash_tears_down_interface_and_returns():
         app.array = SimpleNamespace(close=_close)
         app.target_ap = object()
         app.push_screen(RecoverableErrorModal(WifiteDeviceLostError("Test Card")))
-        await pilot.pause()
+        await pilot.pause(0)
 
         await app.recover_to_splash()
-        await pilot.pause()   # let the re-entered splash settle
+        await pilot.pause(0)   # let the re-entered splash settle
 
         assert closed["count"] == 1               # dead pool torn down exactly once
         assert app.array is None
@@ -67,8 +67,8 @@ async def test_no_usb_backend_shows_fatal_modal(monkeypatch):
 
     app = WifiteApp()
     async with app.run_test() as pilot:
-        await pilot.pause()   # on_mount -> poll_usb fires, should catch and push the modal
-        await pilot.pause()
+        await pilot.pause(0)   # on_mount -> poll_usb fires, should catch and push the modal
+        await pilot.pause(0)
         assert isinstance(app.screen, FatalErrorModal)
         assert app.screen._error.title == "USB backend unavailable"
         assert "libusb" in app.screen._error.message
@@ -83,12 +83,12 @@ async def test_fatal_modal_compact_with_details_expanded(monkeypatch):
     monkeypatch.setattr("usb.core.find", _raise_no_backend)
     app = WifiteApp()
     async with app.run_test(size=(90, 40)) as pilot:
-        await pilot.pause()
-        await pilot.pause()
+        await pilot.pause(0)
+        await pilot.pause(0)
         modal = app.screen
         assert isinstance(modal, FatalErrorModal)
         modal.query_one(Collapsible).collapsed = False     # expand Details
-        await pilot.pause()
+        await pilot.pause(0)
         assert modal.query_one("#trace-scroll").size.height <= 10          # trace scrolls, capped
         assert modal.query_one("#button-row").region.bottom <= app.size.height   # buttons on-screen
 
@@ -113,10 +113,10 @@ async def test_reset_for_reentry_clears_a_frozen_splash():
         splash.query_one("#start-btn", Button).disabled = True
         resumed = MagicMock()
         app.devices.resume = resumed           # spy the device-watch resume
-        await pilot.pause()
+        await pilot.pause(0)
 
         splash.reset_for_reentry()
-        await pilot.pause()
+        await pilot.pause(0)
 
         assert splash._is_initializing is False
         assert len(device_list.children) == 0

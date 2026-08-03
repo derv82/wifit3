@@ -26,7 +26,7 @@ class _Host(App):
 async def test_buttons_stay_on_screen(w, h):
     app = _Host()
     async with app.run_test(size=(w, h)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         dialog = app.screen
         assert isinstance(dialog, ChannelFilterDialog)
         # The list shrinks/scrolls inside the dialog instead of overflowing it.
@@ -43,7 +43,7 @@ async def test_list_not_collapsed_when_roomy():
     and the buttons are still on-screen."""
     app = _Host()
     async with app.run_test(size=(100, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         dialog = app.screen
         assert dialog.query_one(SelectionList).region.height >= 12
         for bid in ("#btn-ok", "#btn-cancel"):

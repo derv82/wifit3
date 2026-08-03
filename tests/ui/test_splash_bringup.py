@@ -40,7 +40,7 @@ async def test_start_pools_card_and_requests_scanner(monkeypatch):
 
         splash.perform_start([dev])
         for _ in range(40):
-            await pilot.pause()
+            await pilot.pause(0)
             if switched:
                 break
 
@@ -63,12 +63,12 @@ async def test_multi_card_start_brings_up_only_checked(monkeypatch):
         assert isinstance(splash, SplashView)
 
         splash.render_devices([devA, devB])
-        await pilot.pause()
+        await pilot.pause(0)
         sl = splash.query_one("#device-select", SelectionList)
         assert sl.display is True and sorted(sl.selected) == [0, 1]
 
         sl.deselect(1)                       # uncheck devB
-        await pilot.pause()
+        await pilot.pause(0)
         assert sl.selected == [0]
 
         ran = []
@@ -82,7 +82,7 @@ async def test_multi_card_start_brings_up_only_checked(monkeypatch):
 
         splash.action_start()
         for _ in range(40):
-            await pilot.pause()
+            await pilot.pause(0)
             if ran:
                 break
 
@@ -99,7 +99,7 @@ async def test_enter_uninstalls_when_uninstall_button_focused(monkeypatch):
     async with app.run_test() as pilot:
         splash = app.screen
         splash.render_devices([dev])         # single card -> ListView, highlighted
-        await pilot.pause()
+        await pilot.pause(0)
 
         uninstalled, started = [], []
 
@@ -115,10 +115,10 @@ async def test_enter_uninstalls_when_uninstall_button_focused(monkeypatch):
         monkeypatch.setattr(app.bringup, "run", _fake_run)
 
         splash.query_one("#uninstall-btn").focus()
-        await pilot.pause()
+        await pilot.pause(0)
         splash.action_enter()
         for _ in range(40):
-            await pilot.pause()
+            await pilot.pause(0)
             if uninstalled:
                 break
 
@@ -143,15 +143,15 @@ async def test_single_click_highlights_double_click_starts(monkeypatch):
         monkeypatch.setattr(app, "switch_screen", lambda name: started.append(("switch", name)))
         splash = app.screen
         splash.render_devices([dev])
-        await pilot.pause()
+        await pilot.pause(0)
 
         await pilot.click("#device-list ListItem")            # single click
-        await pilot.pause()
+        await pilot.pause(0)
         assert started == []                                  # highlight only, no start
 
         await pilot.click("#device-list ListItem", times=2)   # double click
         for _ in range(40):
-            await pilot.pause()
+            await pilot.pause(0)
             if started:
                 break
         assert dev in started                                 # started, like Enter / START

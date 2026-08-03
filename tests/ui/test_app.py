@@ -24,7 +24,7 @@ async def test_app_layout_and_boot():
         
         # Manually transition to Scanner View
         pilot.app.push_screen("scanner")
-        await pilot.pause()
+        await pilot.pause(0)
         
         assert isinstance(pilot.app.screen, ScannerView)
         

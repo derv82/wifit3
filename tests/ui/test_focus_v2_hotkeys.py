@@ -117,7 +117,7 @@ async def test_deauth_hotkey_gated_on_pmf_not_clients():
     iface, array, ap = _wpa2_target(bssid)
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         focus._tick()
         assert focus.check_action("deauth_all", ()) is True        # no clients → still active
@@ -139,16 +139,16 @@ async def test_deauth_broadcast_button_always_visible():
     iface, array, ap = _wpa2_target(bssid)
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         focus._tick()
-        await pilot.pause()
+        await pilot.pause(0)
         bcast = focus.query_one("#clients", ClientsList).query_one("#deauth-all")
         assert bcast.display is True                                # visible with no clients
 
         iface._on_frame_parsed(_client_data(bssid, client))
         focus._tick()
-        await pilot.pause()
+        await pilot.pause(0)
         assert bcast.display is True                                # still visible with a client
 
 
@@ -163,7 +163,7 @@ async def test_campaign_hotkeys_mirror_buttons_wpa2():
     iface, array, ap = _wpa2_target()
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         focus._tick()
         assert focus.check_action("campaign", ("pmkid",)) is True
@@ -184,7 +184,7 @@ async def test_campaign_hotkeys_wep_chop_greyed_until_replay():
     ap.akm_suites = []          # a real WEP AP carries no PSK AKM → PMKID hidden
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         focus._tick()
         assert focus.check_action("campaign", ("wep",)) is True
@@ -199,7 +199,7 @@ async def test_campaign_and_deauth_keys_hidden_with_no_target():
     iface, array, ap = _wpa2_target()
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         focus._target_ap = None
         assert focus.check_action("campaign", ("pmkid",)) is False
@@ -214,14 +214,14 @@ async def test_footer_shows_campaign_keys_per_family():
     iface, array, ap = _wpa2_target()
     app = _Host(array, ap)
     async with app.run_test(size=(160, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         focus._tick()
         # The Footer rebuilds its FooterKey children reactively; under full-suite
         # load a single pause can race that rebuild (empty query). Wait for it.
         keys: set = set()
         for _ in range(20):
-            await pilot.pause()
+            await pilot.pause(0)
             keys = {k.key for k in focus.query(FooterKey)}
             if keys:
                 break
@@ -238,7 +238,7 @@ async def test_action_campaign_dispatches_to_toggle():
     iface, array, ap = _wpa2_target()
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         fired = []
         focus._campaign_toggles["pmkid"] = lambda: fired.append("pmkid")
@@ -263,7 +263,7 @@ async def test_w_toggles_shared_pbc_flag(tmp_path, monkeypatch):
     iface, array, ap = _wpa2_target()
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         assert app.pbc_enabled is True
         focus.action_wps_pbc_mode()
@@ -283,7 +283,7 @@ async def test_focus_pbc_autocapture_gated_on_flag(tmp_path, monkeypatch):
     ap.wps = True                        # WPS present, but the walk window is closed…
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = app.screen
         started = []
         focus._start_pbc_capture = lambda a: started.append(a)

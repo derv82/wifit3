@@ -114,10 +114,10 @@ async def test_sync_card_updates_mounted_endpoint():
 
     app = _Host()
     async with app.run_test(size=(100, 35)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         scr = app.screen
         scr._sync_card()
-        await pilot.pause()
+        await pilot.pause(0)
         card = scr.query_one("#card", CardEndpoint)
         from wifit3.ui.screens.focus_v2.tx_picker import TxDevicePicker
         assert card.query_one(BreathingArt)._name == "cards/card-awus036h.ans"

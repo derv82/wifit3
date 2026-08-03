@@ -13,7 +13,7 @@ async def _prompt(pilot, app):
     result = {}
     app.push_screen(NewDeviceDialog("RTL8812AU (Alfa AWUS036ACH)"),
                     lambda value: result.__setitem__("value", value))
-    await pilot.pause()
+    await pilot.pause(0)
     return result
 
 
@@ -34,7 +34,7 @@ async def test_yes_dismisses_true():
     async with app.run_test() as pilot:
         result = await _prompt(pilot, app)
         await pilot.click("#btn-yes")
-        await pilot.pause()
+        await pilot.pause(0)
         assert result["value"] is True
 
 
@@ -44,7 +44,7 @@ async def test_no_dismisses_false():
     async with app.run_test() as pilot:
         result = await _prompt(pilot, app)
         await pilot.click("#btn-no")
-        await pilot.pause()
+        await pilot.pause(0)
         assert result["value"] is False
 
 
@@ -54,5 +54,5 @@ async def test_escape_declines():
     async with app.run_test() as pilot:
         result = await _prompt(pilot, app)
         await pilot.press("escape")
-        await pilot.pause()
+        await pilot.pause(0)
         assert result["value"] is False

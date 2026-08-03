@@ -78,7 +78,7 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
         splash.perform_start([dev])            # @work: pump the loop until it surfaces
         label = splash.query_one("#error-label", Label)
         for _ in range(30):
-            await pilot.pause()
+            await pilot.pause(0)
             if label.display:
                 break
 

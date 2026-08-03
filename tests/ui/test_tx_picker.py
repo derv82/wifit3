@@ -66,7 +66,7 @@ async def test_picker_single_card_is_a_plain_label():
     async with _Host().run_test(size=(80, 24)) as pilot:
         p = pilot.app.query_one(TxDevicePicker)
         p.sync([solo], 6, solo, locked=False)
-        await pilot.pause()
+        await pilot.pause(0)
         assert p._text == "ALFA AWUS036ACM"     # no caret
         assert p.can_focus is False             # nothing to open
 
@@ -86,18 +86,18 @@ async def test_picker_opens_and_pins_the_chosen_card():
     async with _Host().run_test(size=(80, 24)) as pilot:
         p = pilot.app.query_one(TxDevicePicker)
         p.sync([a, b], 6, a, locked=False)
-        await pilot.pause()
+        await pilot.pause(0)
         assert p._text.endswith("▼") and p.can_focus is True
 
         p.action_open()
-        await pilot.pause()
+        await pilot.pause(0)
         ol = p.query_one("#tx-overlay")
         assert ol.display is True and ol.option_count == 2
 
         ol.highlighted = 1                       # move off the current (a) onto b
-        await pilot.pause()
+        await pilot.pause(0)
         await pilot.press("enter")
-        await pilot.pause()
+        await pilot.pause(0)
         assert picked == [b]
         assert p.query_one("#tx-overlay").display is False   # closed after select
 
@@ -113,8 +113,8 @@ async def test_picker_locked_during_campaign_wont_open():
     async with _Host().run_test(size=(80, 24)) as pilot:
         p = pilot.app.query_one(TxDevicePicker)
         p.sync([a, b], 6, a, locked=True)
-        await pilot.pause()
+        await pilot.pause(0)
         assert p.can_focus is False and not p._text.endswith("▼")
         p.action_open()
-        await pilot.pause()
+        await pilot.pause(0)
         assert p.query_one("#tx-overlay").display is False

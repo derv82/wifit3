@@ -16,7 +16,7 @@ async def test_scanner_capture_win_raises_toast():
     app = WifiteApp()
     async with app.run_test() as pilot:
         app.push_screen("scanner")
-        await pilot.pause()
+        await pilot.pause(0)
         scanner = app.screen
         assert isinstance(scanner, ScannerView)
 
@@ -38,7 +38,7 @@ async def test_scanner_withheld_handshake_is_log_only_no_toast():
     app = WifiteApp()
     async with app.run_test() as pilot:
         app.push_screen("scanner")
-        await pilot.pause()
+        await pilot.pause(0)
         scanner = app.screen
 
         toasts: list = []

@@ -26,7 +26,7 @@ class _Host(App):
 async def test_layout_geometry(w, h):
     app = _Host()
     async with app.run_test(size=(w, h)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         scr = app.screen
 
         def reg(sel):
@@ -61,7 +61,7 @@ async def test_layout_geometry(w, h):
 async def test_topbar_is_the_action_area_and_card_has_no_buttons():
     app = _Host()
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         scr = app.screen
         # Back button + the full conditional attack set (5 derive_buttons ids +
         # the transient btn-stop-pbc, all shown/hidden per target/tick) live in the
@@ -76,7 +76,7 @@ async def test_topbar_is_the_action_area_and_card_has_no_buttons():
 async def test_dashboard_rows_and_rate_vs_count():
     app = _Host()
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         dash = app.screen.query_one("#dashboard")
         assert len(dash._rows) == 5
         as_rate = {r.key: r.as_rate for r in dash._rows}

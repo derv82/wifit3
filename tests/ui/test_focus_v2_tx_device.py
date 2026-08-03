@@ -65,7 +65,7 @@ def _two_card_focus():
 async def test_focus_peeks_elected_tx_card_then_pins_the_chosen_one():
     array, ap, m0, m1 = _two_card_focus()
     async with _Host(array, ap).run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         focus = pilot.app.screen
         card = focus.query_one("#card", CardEndpoint)
         picker = card.query_one(TxDevicePicker)
@@ -79,14 +79,14 @@ async def test_focus_peeks_elected_tx_card_then_pins_the_chosen_one():
 
         # Open the overlay inside the real Focus layout and pin the other card.
         picker.action_open()
-        await pilot.pause()
+        await pilot.pause(0)
         overlay = picker.query_one("#tx-overlay")
         assert overlay.display is True and overlay.option_count == 2
 
         overlay.highlighted = 1          # members order [m0, m1] -> m1
-        await pilot.pause()
+        await pilot.pause(0)
         await pilot.press("enter")
-        await pilot.pause()
+        await pilot.pause(0)
 
         # The pin took, and the endpoint re-synced to the pinned card (label + art swap).
         assert array.preferred is m1
