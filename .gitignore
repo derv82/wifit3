@@ -26,8 +26,8 @@ captures/
 driver_sources/
 driver_captures*/
 kali/
-scripts/diag/*.json
-scripts/diag/history/
+scripts/baseline/*.json
+scripts/baseline/history/
 scratch/
 *.log
 # Probe captures (WEP frag/chopchop, WPS, …) — real on-air frames from the

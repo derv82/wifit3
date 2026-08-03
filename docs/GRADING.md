@@ -5,8 +5,8 @@ notes, the matrix. This doc is the **process** behind it: the columns, the grade
 checklist, and the metric definitions. Not auto-loaded; open when running a verification pass or
 editing `SUPPORTED-HARDWARE.md`.
 
-The tooling lives in `scripts/diag/` (`baseline_linux.py`, `baseline_wifit3.py`, `baseline_diff.py`);
-`scripts/diag/BASELINING.md` documents those scripts. This doc is the layer above them: what we
+The tooling lives in `scripts/baseline/` (`baseline_linux.py`, `baseline_wifit3.py`, `baseline_diff.py`);
+`scripts/baseline/BASELINING.md` documents those scripts. This doc is the layer above them: what we
 measure, how we score it, how we fill a card's subsection.
 
 ## Two axes, kept separate
