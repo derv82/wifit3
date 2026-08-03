@@ -219,7 +219,7 @@ settled 5→2.4 re-cycle) holds across a 60-cycle soak (was ~20% deaf pre-fix). 
 
 ### 2026-07-08 — RSSI: reject saturated jgr2 pwdb (impossible +dBm)
 
-The baseline-linux/wifit3 A/B caught one AP reading +47 dB hot vs the kernel. A weak/marginal frame
+The baseline_linux/wifit3 A/B caught one AP reading +47 dB hot vs the kernel. A weak/marginal frame
 can carry a jgr2 pwdb byte in 111..145, which `pwdb-110` decodes to an impossible +1..+35 dBm — the
 formula and `cck_new_agc=1` are both vendor-correct (rx_ant_status=0x3, both paths valid); the vendor
 just survives it via per-STA IIR smoothing (`phydm_process_rssi_for_dm`) that the per-frame path

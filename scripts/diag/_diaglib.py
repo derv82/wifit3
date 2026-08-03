@@ -1,4 +1,4 @@
-"""Shared helpers for the diag CLIs (baseline-wifit3 / baseline-linux / beacon_watch / sweep).
+"""Shared helpers for the diag CLIs (baseline_wifit3 / baseline_linux / beacon_watch / sweep).
 
 Two jobs the sweep asked every diag script to share:
   * ``--card <substr>``: pick ONE adapter by a case-insensitive substring of its name/description,
@@ -62,7 +62,7 @@ def pick_interface(ifaces, card: str = "", *, instance: str = "", log=None):
     return matches[0]
 
 
-# ---- Linux netdev selection (kernel-driver side, baseline-linux) ------------
+# ---- Linux netdev selection (kernel-driver side, baseline_linux) ------------
 def list_wireless_ifaces() -> list[tuple[str, str | None]]:
     """``[(ifname, kernel_driver_or_None)]`` for every 802.11 netdev (has ``phy80211/``)."""
     base = Path("/sys/class/net")
@@ -84,7 +84,7 @@ def list_wireless_ifaces() -> list[tuple[str, str | None]]:
 
 
 def pick_kernel_iface(iface: str = "", card: str = "", *, log=None):
-    """Resolve the base netdev for baseline-linux: an explicit ``--iface`` wins; else a
+    """Resolve the base netdev for baseline_linux: an explicit ``--iface`` wins; else a
     ``--card`` substring over ``"<ifname> <driver>"``; else the sole wireless iface. Returns
     None (after printing the roster) if ``--card`` matches nothing or the choice is ambiguous."""
     if iface:

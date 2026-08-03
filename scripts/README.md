@@ -15,7 +15,7 @@ scripts/
 ├─ chips/        One directory per chipset. Each has its verify_pcap.py recipe, test_hw.py live
 │                bring-up, and any firmware/table extractors + per-chip debug probes.
 ├─ diag/         Hardware measurement + health harness: sweep.py soak, beacon_watch{,_usbcap}.py
-│                RX A/B, driver_health + baselines.
+│                RX A/B, and the baseline_* kernel-parity trio.
 ├─ ack/          auto-ACK / ACK-retry bench probes. The model is written up in docs/ACKS.md.
 ├─ wps/          WPS PIN/PBC hardware ground-truth probes + a reliability lab.
 ├─ wep/          wep_lab.py: WEP TX-throughput tester.

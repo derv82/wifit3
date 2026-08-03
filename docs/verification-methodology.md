@@ -5,8 +5,8 @@ notes, the matrix. This doc is the **process** behind it: the columns, the grade
 checklist, and the metric definitions. Not auto-loaded; open when running a verification pass or
 editing `SUPPORTED-HARDWARE.md`.
 
-The tooling lives in `scripts/diag/` (`baseline-linux.py`, `baseline-wifit3.py`, `driver_health.py`);
-`scripts/diag/HEALTH-CHECK.md` documents those scripts. This doc is the layer above them: what we
+The tooling lives in `scripts/diag/` (`baseline_linux.py`, `baseline_wifit3.py`, `baseline_diff.py`);
+`scripts/diag/BASELINING.md` documents those scripts. This doc is the layer above them: what we
 measure, how we score it, how we fill a card's subsection.
 
 ## Two axes, kept separate
@@ -57,10 +57,10 @@ top-level matrix is *not* touched until every card is done.
 
 1. **Linux baseline first** (card bound to its kernel driver). Verify the bound driver matches the one
    we ported from (`modinfo` / the source bundle in `driver_captures/`), else the comparison is
-   apples-to-oranges. Run `baseline-linux.py --capture` over the card's channels.
+   apples-to-oranges. Run `baseline_linux.py --capture` over the card's channels.
 2. **Replug into wifit3-ready state** (install rules, then *physically replug*: stale warm state
-   carries over otherwise), confirm beacons. Run `baseline-wifit3.py` over the **same** channels.
-3. **Compare** — `driver_health.py --diff wifit3-<slug>.json linux-<slug>.json` → the **Port %** and
+   carries over otherwise), confirm beacons. Run `baseline_wifit3.py` over the **same** channels.
+3. **Compare** — `baseline_diff.py --diff wifit3-<slug>.json linux-<slug>.json` → the **Port %** and
    the RX numbers (beacon rate, breadth, channel tune, RSSI).
 4. **TX attacks** (user runs live TX): Deauth, PMKID, WPS PBC, WEP (2.4 GHz). On 5 GHz: Deauth,
    PMKID, WPS PBC (WEP skipped: no 5 GHz WEP target). Record sustained IVs/s from the WEP crack.
@@ -78,7 +78,7 @@ real-world APs in a US environment.
 - **Beacon rate** — beacons/sec from a **pinned reference AP** (by BSSID, supplied at runtime, kept
   out of git). Current references: `ref2g` (2.4 GHz, ch1) and `ref5g` (5 GHz, ch149; can drift: reject
   the run if it's off-channel). Read straight from the baseline rollup.
-- **Breadth / channel tune / RSSI** — from `driver_health` (APs per band; channels that heard their
+- **Breadth / channel tune / RSSI** — from `baseline_diff` (APs per band; channels that heard their
   own beacons / silent / cross-channel; median RSSI delta vs Linux on shared APs).
 - **Sustained IVs/s** — `total_IVs / ARP-replay-window` (replay start → crack). The card's TX
   throughput ceiling under load; the number that predicts time-to-crack.

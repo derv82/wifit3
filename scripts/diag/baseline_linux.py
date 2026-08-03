@@ -9,12 +9,12 @@ real tcpdump capture).
 
 Capture mode (Kali, needs root + a monitor interface: ``airmon-ng start <dev>``)::
 
-    sudo python baseline-linux.py --capture --iface wlan0mon --chip rt5370 \
+    sudo python baseline_linux.py --capture --iface wlan0mon --chip rt5370 \
         --channels 1,6,11 --secs 15
 
 Parse mode (read pcaps you already have, one per channel)::
 
-    python baseline-linux.py --chip rt5370 --pcap 1=cap-ch1.pcap 6=cap-ch6.pcap
+    python baseline_linux.py --chip rt5370 --pcap 1=cap-ch1.pcap 6=cap-ch6.pcap
 
 Writes ``linux-<chip>.json`` and, if ``wifit3-<chip>.json`` exists alongside,
 prints the diff.
@@ -36,7 +36,7 @@ sys.path.insert(0, str(_HERE))
 from _diaglib import (  # noqa: E402
     add_reference_args, load_reference_aps, pick_kernel_iface, ref_bssids, ref_channels,
 )
-from driver_health import Health, diff  # noqa: E402
+from baseline_diff import Health, diff  # noqa: E402
 
 from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
@@ -226,8 +226,8 @@ def main() -> int:
     if wifit3.exists():
         diff(wifit3, out, ref_bssids=ref_bssids(refs) or None)
     else:
-        print(f"[*] no {wifit3.name} yet - run baseline-wifit3.py, then "
-              f"`python driver_health.py --diff {wifit3.name} {out.name}`", file=sys.stderr)
+        print(f"[*] no {wifit3.name} yet - run baseline_wifit3.py, then "
+              f"`python baseline_diff.py --diff {wifit3.name} {out.name}`", file=sys.stderr)
     return 0
 
 

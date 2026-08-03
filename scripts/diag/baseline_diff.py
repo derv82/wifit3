@@ -13,7 +13,7 @@ never the maths.
 
 Run::
 
-    python driver_health.py --diff wifit3-rt5370.json linux-rt5370.json
+    python baseline_diff.py --diff wifit3-rt5370.json linux-rt5370.json
 """
 from __future__ import annotations
 
@@ -182,8 +182,8 @@ def _best_channel_persec(rollup: dict, bssid: str) -> tuple[dict, int]:
 
 def _rate_matched(w: dict, lin: dict, bssid: str) -> tuple[float, float, int]:
     """Beacon rate for ``bssid`` in each rollup over a COMMON window: the min of the
-    two observed spans. Removes the dwell/span asymmetry (baseline-wifit3 dwells ~16 s
-    vs baseline-linux ~14 s, and rate = beacons/span) that otherwise reads as a
+    two observed spans. Removes the dwell/span asymmetry (baseline_wifit3 dwells ~16 s
+    vs baseline_linux ~14 s, and rate = beacons/span) that otherwise reads as a
     systematic ~12% penalty on wifit3 on every AP. Returns (wrate, lrate, window)."""
     wps, wspan = _best_channel_persec(w, bssid)
     lps, lspan = _best_channel_persec(lin, bssid)
@@ -217,7 +217,7 @@ def diff(wifit3_path: str | Path, linux_path: str | Path,
         out.append(line)
 
     # Beacon rate from the reference AP(s), compared over a matched window so the
-    # baseline-wifit3-vs-baseline-linux dwell asymmetry doesn't masquerade as a driver
+    # baseline_wifit3-vs-baseline_linux dwell asymmetry doesn't masquerade as a driver
     # gap. 0.3/s tolerance = sampling noise, not a real deficit. --ref pins one or more
     # stable reference BSSIDs (e.g. a fixed AP per band); default is the single AP linux
     # heard most, which can drift to a different transient AP run-to-run.

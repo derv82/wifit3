@@ -4,8 +4,8 @@ Brings up our userland driver, dwells on each channel, and feeds every beacon
 to the shared aggregator via the SAME ``feed(ts, parsed, rssi, channel)`` call
 the Linux side uses. Writes ``wifit3-<chip>.json``.
 
-    python baseline-wifit3.py                         # SUPPORTED_CHANNELS
-    python baseline-wifit3.py --channels 1,6,11 --secs 15
+    python baseline_wifit3.py                         # SUPPORTED_CHANNELS
+    python baseline_wifit3.py --channels 1,6,11 --secs 15
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE))
 
 from _diaglib import add_reference_args, load_reference_aps, pick_interface, ref_bssids  # noqa: E402
-from driver_health import Health, diff  # noqa: E402
+from baseline_diff import Health, diff  # noqa: E402
 
 from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
 
@@ -88,13 +88,13 @@ async def run(args) -> int:
     wifit3_json = _HERE / f"wifit3-{chip}.json"
     health.to_json(wifit3_json)
     # A/B diff fires from whichever side runs second. In the settled sweep order (linux first,
-    # wifit3 second) the diff would otherwise never print, since only baseline-linux used to call
+    # wifit3 second) the diff would otherwise never print, since only baseline_linux used to call
     # it. Pin the reference AP(s) so the beacon-rate line doesn't drift to a transient AP.
     linux_json = _HERE / f"linux-{chip}.json"
     if linux_json.exists():
         diff(wifit3_json, linux_json, ref_bssids=ref_bssids(load_reference_aps(args)) or None)
     else:
-        print(f"[*] no {linux_json.name} yet - run baseline-linux.py --chip {chip} "
+        print(f"[*] no {linux_json.name} yet - run baseline_linux.py --chip {chip} "
               f"(--capture or --pcap) for the A/B.", file=sys.stderr)
     return 0
 

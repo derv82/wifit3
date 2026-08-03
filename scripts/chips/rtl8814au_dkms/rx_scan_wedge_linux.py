@@ -18,7 +18,6 @@ dwell are counted from the pcap; <threshold = wedged. Read-only (monitor capture
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -28,10 +27,8 @@ from pathlib import Path
 _HERE = Path(__file__).resolve()
 sys.path.insert(0, str(_HERE.parents[3] / "src"))
 
-_spec = importlib.util.spec_from_file_location(
-    "baseline_linux", _HERE.parents[1] / "diag" / "baseline-linux.py")
-_bl = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_bl)
+sys.path.insert(0, str(_HERE.parents[2] / "diag"))
+import baseline_linux as _bl  # noqa: E402
 
 from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
 
