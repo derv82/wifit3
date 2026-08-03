@@ -34,29 +34,15 @@ from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
+sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
+from dev import pick_interface  # noqa: E402
 from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
 from wifit3.dot11.auth_assoc import auth_req, assoc_req  # noqa: E402
 from wifit3.dot11.wep.crypto import arp_request_plaintext, wep_encrypt  # noqa: E402
 from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket  # noqa: E402
 
 BROADCAST = b"\xff" * 6
-
-
-def pick_interface(ifaces, card: str = ""):
-    """The interface whose "<name> <description>" contains ``card`` (case-insensitive),
-    or the first when ``card`` is blank; None (after printing the roster) on no match."""
-    if not card:
-        if len(ifaces) > 1:
-            print(f"[!] {len(ifaces)} interfaces; using {ifaces[0].name}. "
-                  f"Pass --card <substr> to pick another.")
-        return ifaces[0] if ifaces else None
-    matches = [i for i in ifaces if card.lower() in f"{i.name} {i.description}".lower()]
-    if not matches:
-        roster = ", ".join(f"{i.name} ({i.description})" for i in ifaces)
-        print(f"[-] no card matches {card!r}. Found: {roster}")
-        return None
-    return matches[0]
 
 
 def _mac(s: str) -> bytes:

@@ -32,10 +32,10 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
-from _diaglib import (  # noqa: E402
-    add_reference_args, load_reference_aps, pick_kernel_iface, ref_bssids, ref_channels,
-)
+from _diaglib import add_reference_args, load_reference_aps, ref_bssids, ref_channels  # noqa: E402
+from dev import pick_kernel_iface  # noqa: E402
 from baseline_diff import Health, diff  # noqa: E402
 
 from wifit3.dot11.parser import WlanFrameParser  # noqa: E402

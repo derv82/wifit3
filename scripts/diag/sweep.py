@@ -32,8 +32,9 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
-from _diaglib import pick_interface  # noqa: E402
+from dev import pick_interface  # noqa: E402
 from probes import ALL_PROBES  # noqa: E402
 from report import write_csv, write_markdown  # noqa: E402
 

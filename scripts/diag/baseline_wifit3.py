@@ -18,8 +18,10 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
-from _diaglib import add_reference_args, load_reference_aps, pick_interface, ref_bssids  # noqa: E402
+from _diaglib import add_reference_args, load_reference_aps, ref_bssids  # noqa: E402
+from dev import pick_interface  # noqa: E402
 from baseline_diff import Health, diff  # noqa: E402
 
 from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
