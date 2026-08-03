@@ -18,9 +18,9 @@ it runs TWO attempts against the known PIN:
 This TRANSMITS (auth/assoc + EAPOL). Run it only against a network you own.
 
 Usage (at the box):
-    uv run python scripts/diag/wps/wps_probe.py
-    uv run python scripts/diag/wps/wps_probe.py --pin 01030365          # single PIN
-    uv run python scripts/diag/wps/wps_probe.py --bssid AA:.. --ssid X --channel 1
+    uv run python scripts/wps/wps_probe.py
+    uv run python scripts/wps/wps_probe.py --pin 01030365          # single PIN
+    uv run python scripts/wps/wps_probe.py --bssid AA:.. --ssid X --channel 1
     # add --debug for verbose USB/driver logs
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from wifit3.campaigns.auth_assoc import Association, WlanTransport, str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
@@ -80,7 +80,7 @@ def write_pcap(path: Path, frames: list) -> int:
 
 def load_default_target() -> dict:
     """Parse driver_sources/wps_pin.txt (gitignored): SSID/BSSID/Channel/PIN/PW."""
-    path = Path(__file__).parent.parent.parent.parent / "driver_sources" / "wps_pin.txt"
+    path = Path(__file__).parent.parent.parent / "driver_sources" / "wps_pin.txt"
     out: dict = {}
     if not path.exists():
         return out

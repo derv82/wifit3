@@ -28,7 +28,7 @@ try:
 except Exception:                                                 # noqa: BLE001
     pass
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from wifit3.wlan.discovery import build_interfaces
 from wifit3.dot11 import build_deauth

@@ -10,9 +10,9 @@ Detection is passive (AccessPoint.wps_pbc_active, from beacons). This probe:
 This TRANSMITS (assoc + EAPOL). Run it only against a network you own.
 
 Usage (at your AirLink box):
-    uv run python scripts/diag/wps/pbc_probe.py            # wait for you to press WPS
-    uv run python scripts/diag/wps/pbc_probe.py --now      # attempt immediately (window already open)
-    uv run python scripts/diag/wps/pbc_probe.py --bssid AA:.. --ssid X --channel 1
+    uv run python scripts/wps/pbc_probe.py            # wait for you to press WPS
+    uv run python scripts/wps/pbc_probe.py --now      # attempt immediately (window already open)
+    uv run python scripts/wps/pbc_probe.py --bssid AA:.. --ssid X --channel 1
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.wps.registrar import PinResult
@@ -62,7 +62,7 @@ def write_pcap(path: Path, frames: list) -> int:
 
 
 def load_default_target() -> dict:
-    path = Path(__file__).parent.parent.parent.parent / "driver_sources" / "wps_pin.txt"
+    path = Path(__file__).parent.parent.parent / "driver_sources" / "wps_pin.txt"
     out: dict = {}
     if path.exists():
         for line in path.read_text().splitlines():

@@ -103,7 +103,7 @@ redesign; the hardware behaviour is measured in the two tables below.
 
 ## ACK Lab Scripts
 
-Two bench probes in `scripts/diag/ack/`. Both drive the same `WlanDeviceManager().refresh()` +
+Two bench probes in `scripts/ack/`. Both drive the same `WlanDeviceManager().refresh()` +
 `iface.connect()` path the app uses (`connect()` is the full cold bring-up, monitor mode included),
 use only the shared driver interface so they run on any chipset, and pick cards by a case-insensitive
 substring of the adapter name that must support the requested channel.
@@ -117,7 +117,7 @@ retry limit. Four scenarios: active monitor off/on, crossed with `--target` and 
 (unreachable) address. On a card that can't spoof, the active-monitor pass is replaced by one that
 injects as the card's own silicon MAC.
 
-    uv run python scripts/diag/ack/tx_retries.py --inject-card 8812 --target <BSSID> --channel 1
+    uv run python scripts/ack/tx_retries.py --inject-card 8812 --target <BSSID> --channel 1
 
 Per scenario it prints a one-line summary (frames seen, total copies, ACKs back, median) and a
 vertical histogram of copies-per-inject.
@@ -128,7 +128,7 @@ monitor for a spoofed MAC; a prober injects unicast frames to that MAC (sourced 
 MAC) and counts the ACKs coming back to the probe MAC via its own ACK tap. Controls: active monitor
 off, and a bogus MAC. It also probes the card's own silicon MAC. No AP needed.
 
-    uv run python scripts/diag/ack/rx_autoack.py --test-card 8822 --channel 1
+    uv run python scripts/ack/rx_autoack.py --test-card 8822 --channel 1
 
 Every control returning ~0 is what validates a run.
 

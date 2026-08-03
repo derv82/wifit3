@@ -15,9 +15,10 @@ scripts/
 ├─ chips/        One directory per chipset. Each has its verify_pcap.py recipe, test_hw.py live
 │                bring-up, and any firmware/table extractors + per-chip debug probes.
 ├─ diag/         Hardware measurement + health harness: sweep.py soak, beacon_watch{,_usbcap}.py
-│  │             RX A/B, driver_health + baselines, wep_lab.py (TX throughput).
-│  ├─ ack/       auto-ACK / ACK-retry bench probes. The model is written up in docs/ACKS.md.
-│  └─ wps/       WPS PIN/PBC hardware ground-truth probes + a reliability lab.
+│                RX A/B, driver_health + baselines.
+├─ ack/          auto-ACK / ACK-retry bench probes. The model is written up in docs/ACKS.md.
+├─ wps/          WPS PIN/PBC hardware ground-truth probes + a reliability lab.
+├─ wep/          wep_lab.py: WEP TX-throughput tester.
 ├─ ui/           Rendering helpers: render_cardart.py (.ans card art -> PNG), wiffy_preview.py.
 ├─ generators/   Generators that (re)write source under src/ (e.g. the WPS OUI table).
 └─ release.py    Bump __version__, commit, tag; pushing the vX.Y.Z tag builds + publishes.

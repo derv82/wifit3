@@ -17,9 +17,9 @@ BSSID/SSID/key is baked in -- all come from the CLI.
 
 Live TX against a network you do not own is illegal. Point this only at your own AP.
 
-    uv run python scripts/diag/wep_lab.py --essid myssid --channel 6 --pass abcde
-    uv run python scripts/diag/wep_lab.py --essid myssid --channel 6 --pass 6162636465 --generate 120
-    uv run python scripts/diag/wep_lab.py --essid myssid --channel 6 --pass abcde --no-active-monitor
+    uv run python scripts/wep/wep_lab.py --essid myssid --channel 6 --pass abcde
+    uv run python scripts/wep/wep_lab.py --essid myssid --channel 6 --pass 6162636465 --generate 120
+    uv run python scripts/wep/wep_lab.py --essid myssid --channel 6 --pass abcde --no-active-monitor
 """
 from __future__ import annotations
 

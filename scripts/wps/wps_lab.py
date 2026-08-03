@@ -12,7 +12,7 @@ Modes:
             and measure how often that recovers the reply.
 
 SAFETY: this TRANSMITS (auth/assoc + EAPOL). Hardcoded to the AirLink test box.
-Every run appends a JSON line to scripts/diag/wps/lab_results.jsonl for offline analysis.
+Every run appends a JSON line to scripts/wps/lab_results.jsonl for offline analysis.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Windows consoles default to cp1252; this script prints arrows / em-dashes. Force UTF-8 so a

@@ -336,7 +336,7 @@ CONNECTION_INFRA_AP = (1 << 1) | (1 << 16)   # STA_TYPE_AP | NETWORK_INFRA = 0x1
 # BSS is not INFRA_AP+active; that combination switches the firmware to a peer-STA/WCID association
 # context we never populate (no add_sta), so the card auto-ACKs nothing. Yet a real AP's frames are
 # only auto-ACKed when the peer bssid IS programmed (bssid=0 -> the FW won't ACK them). So active
-# monitor needs bssid + conn_type=0. Bench-confirmed on the AXML (scripts/diag/ack bisect + real-AP
+# monitor needs bssid + conn_type=0. Bench-confirmed on the AXML (scripts/ack bisect + real-AP
 # assoc A/B vs AirLink, 2026-07-17): INFRA_AP+bssid -> 0 ACKs; conn_type=0+bssid -> auto-ACKs.
 CONNECTION_MONITOR = 0
 
