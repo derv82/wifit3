@@ -56,8 +56,8 @@ the verify gate. Names match the kernel C — grep `driver_sources/rt2x00-source
 
 ## Scripts
 
-- `scripts/rt2500usb/verify_pcap.py` — single monotonic cursor over init → monitor entry → every hop.
-- `scripts/rt2500usb/test_hw_rt2500usb.py --phase {open,macinit,bbpinit,chaninit,rx}` — incremental bring-up; `--phase rx` drains the bulk-IN pipe for the PLCP/FCS-noise diagnostics above.
+- `scripts/chips/rt2500usb/verify_pcap.py` — single monotonic cursor over init → monitor entry → every hop.
+- `scripts/chips/rt2500usb/test_hw_rt2500usb.py --phase {open,macinit,bbpinit,chaninit,rx}` — incremental bring-up; `--phase rx` drains the bulk-IN pipe for the PLCP/FCS-noise diagnostics above.
 
 ## Debug log
 

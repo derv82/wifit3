@@ -1,7 +1,7 @@
 """MAC-level bring-up for the RT3070: chip probe, radio enable, register init.
 
 Ported from ``rt2800lib.c`` (chip logic) + ``rt2800usb.c`` (USB glue), confirmed
-against captures_rt3070/capture-1 by ``scripts/verify_pcap.py rt3070``.
+against captures_rt3070/capture-1 by ``scripts/porting/verify_pcap.py rt3070``.
 
 Scope note: the kernel's ``rt2800_init_registers`` is a giant per-chip switch. We
 port the RF30xx-family path (RT3070, and the RT3071/RT3090 siblings that share

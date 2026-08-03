@@ -1,6 +1,6 @@
 # Auto-extracted from vendor C array array_mp_8821a_radioa[] (halhwimg8821a_rf.c).
 # Raw u32 stream (incl. phy_cond IF/ELSE rows); resolved by phy_cond.apply_table.
-# Regenerate with scripts/rtl8821au_dkms/extract_bb_rf_tables.py.
+# Regenerate with scripts/chips/rtl8821au_dkms/extract_bb_rf_tables.py.
 RF_RADIOA = (
     0x00000018, 0x0001712A, 0x00000056, 0x00051CF2, 0x00000066, 0x00040000, 0x00000000, 0x00010000,
     0x0000001E, 0x00080000, 0x00000082, 0x00000830, 0x00000083, 0x00021800, 0x00000084, 0x00028000,

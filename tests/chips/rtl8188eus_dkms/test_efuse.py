@@ -1,7 +1,7 @@
 """Hardware-free regression for the RTL8188EUS (DKMS) IOL engine + efuse patch.
 
 Full byte-for-byte replay (incl. the watchdog-filtered stream) lives in
-``scripts/rtl8188eus_dkms/verify_pcap.py``.
+``scripts/chips/rtl8188eus_dkms/verify_pcap.py``.
 """
 from wifit3.chips.rtl8188eus_dkms import efuse
 from wifit3.chips.rtl8188eus_dkms.constants import (

@@ -106,7 +106,7 @@ verbatim (see CODE-STYLE.md).
 ## Step 3 — Verify each milestone against the pcap
 
 After porting a milestone, check it against the pcap with the verify tool
-(`uv run python scripts/verify_pcap.py <chip>`; the tool's internals are documented in that script
+(`uv run python scripts/porting/verify_pcap.py <chip>`; the tool's internals are documented in that script
 and the per-chip `scripts/<chip>/verify_pcap.py`).
 
 Source is the guide, the pcap is the test. Port from the source, then replay the pcap to confirm

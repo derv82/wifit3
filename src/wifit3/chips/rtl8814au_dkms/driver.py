@@ -15,7 +15,7 @@ the ch153 spur notch (M5f, minor RX polish).
 ``rtw88_8814au`` port loads only when ``WIFIT3_RTL8814=mainline`` is set in the
 environment (the ``env_or_none(..., "mainline", RTL8814AUDriver) or Rtl8814auDkmsDriver``
 fallthrough). So ``beacon_watch`` / the app exercise THIS driver unless that env var
-is set; ``scripts/rtl8814au_dkms/`` drives the bring-up + handlers directly.
+is set; ``scripts/chips/rtl8814au_dkms/`` drives the bring-up + handlers directly.
 """
 from __future__ import annotations
 
@@ -133,7 +133,7 @@ class Rtl8814auDkmsDriver(Driver):
 
     def _bringup(self, t, progress=None):
         """Cold register-I/O bring-up in wire order — the ONE source of truth for the sequence,
-        shared verbatim by ``connect()`` (live) and ``scripts/rtl8814au_dkms/verify_pcap.py``
+        shared verbatim by ``connect()`` (live) and ``scripts/chips/rtl8814au_dkms/verify_pcap.py``
         (replay), so the gate verifies THIS code, not a copy.
 
         Every op here is in the cold-boot capture byte-for-byte: EFUSE probe, firmware upload,

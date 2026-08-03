@@ -435,7 +435,7 @@ def phy_init_haldm(t, info) -> DmState:
     # _dc_cancellation is INTENTIONALLY NOT RUN — it is the RX coin-toss root cause on this card.
     # Its ck320 (320 MHz BB clock) stop/restart ([SRC] phydm.c:3598-3603) intermittently fails to
     # re-lock the demod, killing RX on BOTH bands ~half of cold boots; a settle delay does not
-    # rescue it, only skipping the toggle does (scripts/rtl8821cu_dkms/dc_{ab,steps,ck320}.py). The
+    # rescue it, only skipping the toggle does (scripts/chips/rtl8821cu_dkms/dc_{ab,steps,ck320}.py). The
     # cal's DC compensation is unneeded here (disabling it changes nothing, and skipping the cal
     # *raises* the beacon rate on both bands). The byte-gate therefore now diverges at the first
     # dc_cancellation op — a deliberate, hardware-driven deviation (see RTL8821CU_DKMS.md). The

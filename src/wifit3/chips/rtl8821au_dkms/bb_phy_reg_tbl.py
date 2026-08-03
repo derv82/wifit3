@@ -1,6 +1,6 @@
 # Auto-extracted from vendor C array array_mp_8821a_phy_reg[] (halhwimg8821a_bb.c).
 # Raw u32 stream (incl. phy_cond IF/ELSE rows); resolved by phy_cond.apply_table.
-# Regenerate with scripts/rtl8821au_dkms/extract_bb_rf_tables.py.
+# Regenerate with scripts/chips/rtl8821au_dkms/extract_bb_rf_tables.py.
 BB_PHY_REG = (
     0x00000800, 0x0020D090, 0x00000804, 0x080112E0, 0x00000808, 0x0E028211, 0x0000080C, 0x92131111,
     0x00000810, 0x20101261, 0x00000814, 0x020C3D10, 0x00000818, 0x03A00385, 0x00000820, 0x00000000,

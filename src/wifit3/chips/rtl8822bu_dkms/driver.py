@@ -1,7 +1,7 @@
 """RTL8822BU / 2T2R driver — vendor (HALMAC/PHYDM) cleanroom port.
 
 `connect()` runs the deterministic cold bring-up the byte-for-byte gate verifies
-(`scripts/rtl8822bu_dkms/verify_pcap.py` → `bringup.cold_bringup`): the entire vendor `rtl8822b_init`
+(`scripts/chips/rtl8822bu_dkms/verify_pcap.py` → `bringup.cold_bringup`): the entire vendor `rtl8822b_init`
 — chip-ID/USB-PHY → EFUSE → two-cycle power/FW/MAC → BB/AGC/crystal/RF tables → full `odm_dm_init`
 (RX seed + RF-cal tail) → `phy_bf_init`/wifi-only-coex/`init_misc`. It then tunes to the default
 channel (`chan.set_channel_bw`, byte-verified against the capture's airodump hops), starts the bulk-IN
@@ -11,7 +11,7 @@ RXFLTMAP0/1/2=0xFFFF). RX frames decode via `rx.iter_frames` (24-byte rx_pkt_des
 RSSI, FCS-stripped).
 
 Not registered in the manager (the mainline `chips/rtl8822bu/` owns 2357:0138); this `_dkms` port
-is exercised standalone via `scripts/rtl8822bu_dkms/test_hw.py`. `inject_frame` is a stub — the TX
+is exercised standalone via `scripts/chips/rtl8822bu_dkms/test_hw.py`. `inject_frame` is a stub — the TX
 descriptor is a later milestone, and the agent never fires live TX.
 """
 from __future__ import annotations

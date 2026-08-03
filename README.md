@@ -145,7 +145,7 @@ The loop in brief:
    automates the capture (`usbmon` via `tshark`) and pulls the driver's C source.
 2. **Start the port:** `/port <chip>` (e.g. `/port rt5370`), a Claude-specific command. The agent
    wires the capture into
-   [verify_pcap.py](https://github.com/derv82/wifit3/blob/master/scripts/verify_pcap.py) so the
+   [verify_pcap.py](https://github.com/derv82/wifit3/blob/master/scripts/porting/verify_pcap.py) so the
    capture can be replayed & verified against the new driver without touching the hardware at all.
 3. **Port to the recording.** `verify_pcap.py` reports the next USB instruction where the port's
    output diverges from the capture. The agent uses the C source to fix it, replays, and repeats

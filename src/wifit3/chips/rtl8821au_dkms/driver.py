@@ -140,7 +140,7 @@ class Rtl8821auDkmsDriver(Driver):
             progress_cb(0.6, "Configuring MAC / BB / RF + channel tune + TX power + phydm seed")
 
         # Deterministic init chain M2 -> M5 §2 (all pcap-verified except the live
-        # EDCCA search). Keep in sync with scripts/rtl8821au_dkms/verify_pcap.py.
+        # EDCCA search). Keep in sync with scripts/chips/rtl8821au_dkms/verify_pcap.py.
         def _init(t):
             mac.phy_mac_config(t)                     # M2: MAC register table
             mac.mac_init_misc(t)                      # M2: queue/MISC + REG_CR

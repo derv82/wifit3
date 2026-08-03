@@ -4,7 +4,7 @@ Activated by setting the env var `WIFIT3_WIRE_LOG_FILE=/path/to/log.txt`
 *before* the driver is instantiated. When unset, every method is a no-op
 with zero file I/O — overhead is one attribute check per USB call.
 
-Output format matches `scripts/mt76x0u/mt76x0u_wire_dump.py --no-prefix`
+Output format matches `scripts/chips/mt76x0u/mt76x0u_wire_dump.py --no-prefix`
 line-for-line, so `diff -u kernel.wire.txt ours.wire.txt` works directly.
 
 Why a separate logger from the existing Python `logging` framework?

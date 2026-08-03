@@ -76,8 +76,8 @@ module via replug, no rmmod; cold-boot cap-1's `central_ch=0` is the correct mod
 cross-capture artifact, not a port bug. Everything earlier is byte-clean on all three.
 
 **Cleanroom.** Port only from `driver_captures/captures_rtl88x2bu/driver-source/` (HALMAC + PHYDM).
-Do NOT open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/rtl8822bu/` — reading them
-produces a hybrid. The shared gate engine `scripts/rtw88_pcap_replay.py` is fine (family tooling).
+Do NOT open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/chips/rtl8822bu/` — reading them
+produces a hybrid. The shared gate engine `scripts/porting/rtw88_pcap_replay.py` is fine (family tooling).
 
 ## Board variants (non-reference EFUSE burns)
 

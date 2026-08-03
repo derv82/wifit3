@@ -1,7 +1,7 @@
 """Tests for the EFUSE logical-map walker and rfe_option resolution.
 
 Targets pure-Python logic only (no USB transport). Real hardware testing
-of the read path lives in scripts/rtl8812au/test_hw_rtl8812au.py --phase efuse.
+of the read path lives in scripts/chips/rtl8812au/test_hw_rtl8812au.py --phase efuse.
 """
 
 from __future__ import annotations

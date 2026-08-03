@@ -1,7 +1,7 @@
 """Chip-access transport for the Ralink RT5370 (RT5390).
 
 Two layers, both ported line-by-line from the mainline kernel and confirmed
-against this card's cold-boot capture by ``scripts/verify_pcap.py rt5370``:
+against this card's cold-boot capture by ``scripts/porting/verify_pcap.py rt5370``:
 
 * the **rt2x00usb USB layer** [SRC rt2x00usb.c / rt2x00usb.h] — the vendor
   control-transfer register access (``register_read``/``register_write`` and

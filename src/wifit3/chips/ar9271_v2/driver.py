@@ -1,7 +1,7 @@
 """AR9271 (ath9k_htc) driver — clean-room v2 re-port from the v6.18.12 kernel source.
 
 A fresh bring-up against the mainline ``htc_9271-1.4.0.fw`` protocol, verified op-by-op against
-the cold-boot pcap (``scripts/ar9271_v2/verify_pcap.py``). The cold init + channel-hop sequencing
+the cold-boot pcap (``scripts/chips/ar9271_v2/verify_pcap.py``). The cold init + channel-hop sequencing
 lives in ``bringup.py``; ``connect`` / ``set_channel`` drive it, and the same methods are what the
 verify gate replays — so the bytes the gate checks are exactly the product's.
 

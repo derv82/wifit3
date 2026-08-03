@@ -108,7 +108,7 @@ def load_firmware_blob() -> bytes:
     if not FW_BLOB_PATH.exists():
         raise FileNotFoundError(
             f"FW blob not found: {FW_BLOB_PATH}\n"
-            "Run scripts/rtl8822bu/extract_rtl8822bu_fw.py first."
+            "Run scripts/chips/rtl8822bu/extract_rtl8822bu_fw.py first."
         )
     data = FW_BLOB_PATH.read_bytes()
     expected = DMEM_UPLOAD_SIZE + IMEM_UPLOAD_SIZE

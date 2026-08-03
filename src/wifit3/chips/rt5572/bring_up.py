@@ -1,7 +1,7 @@
 """The rt5572 cold register bring-up, in the kernel's exact wire order.
 
 ONE source of truth, shared by ``driver.connect()`` (the live path) and
-``scripts/rt5572/verify_pcap.py`` (the acceptance gate). Because both call THIS
+``scripts/chips/rt5572/verify_pcap.py`` (the acceptance gate). Because both call THIS
 function, the gate exercises exactly what connect() runs on hardware — there is
 no second copy to drift. Change the sequence here and the gate re-tests it.
 

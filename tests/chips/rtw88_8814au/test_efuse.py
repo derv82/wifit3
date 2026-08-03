@@ -3,7 +3,7 @@ TX-power-by-rate bitfield parse (the riskiest new code — 42 B/path with packed
 signed s8:4 diffs), the word-enable logical-map walker, and rfe_option resolve.
 
 Pure Python only (no USB transport). Real read-path testing lives in
-scripts/rtw88_8814au/test_hw_8814au.py --phase efuse.
+scripts/chips/rtw88_8814au/test_hw_8814au.py --phase efuse.
 """
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 
 Locks the conditional-walker outcome on this board (driver1 = 0x00040200, plain
 board) so the MAC reg table reproduces the cold-boot wire. Full byte-for-byte
-replay lives in ``scripts/rtl8188eus_dkms/verify_pcap.py``.
+replay lives in ``scripts/chips/rtl8188eus_dkms/verify_pcap.py``.
 """
 from wifit3.chips.rtl8188eus_dkms import mac, phy_cond
 

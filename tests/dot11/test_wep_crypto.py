@@ -170,7 +170,7 @@ def test_chopchop_iterates_keeping_frames_valid():
 # These prove the SEND side is self-consistent: a simulated AP that decrypts +
 # reassembles our fragments recovers exactly what we fragmented. That's a
 # consistency check, NOT proof the real dd-wrt box reassembles + relays. Only
-# the on-air probe (scripts/wep/frag_probe.py) can establish that.
+# an on-air WEP fragmentation probe can establish that.
 
 _SNAP_ARP_PREFIX = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06])
 

@@ -1,7 +1,7 @@
 """RTL8822BU power-on / power-off flows.
 
 Loads the per-chip pwr_seq tables (extracted from kernel C by
-`scripts/rtl8822bu/extract_pwr_seq.py`) and exposes the two top-level
+`scripts/chips/rtl8822bu/extract_pwr_seq.py`) and exposes the two top-level
 flows that `mac.py:rtw_mac_power_switch` runs.
 """
 

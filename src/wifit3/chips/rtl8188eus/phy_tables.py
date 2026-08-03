@@ -1,6 +1,6 @@
 """PHY init tables for RTL8188EUS, mechanically extracted from
 `driver_sources/rtl8xxxu-source-v6.18/8188e.c` by
-`scripts/rtl8188eus/extract_phy_tables.py`. Do not edit by hand:
+`scripts/chips/rtl8188eus/extract_phy_tables.py`. Do not edit by hand:
 re-run the extractor instead if the kernel source updates.
 
 * PHY_INIT_TABLE_8188E       = rtl8188eu_phy_init_table   (BB regs 0x800-0xfac)

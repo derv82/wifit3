@@ -182,7 +182,7 @@ def cold_bringup(t):
     """The deterministic cold init the driver's connect() runs, in the order the wire shows (see
     module docstring), through monitor entry. Returns the ``EfuseInfo`` so the operational phase
     (airodump channel hops + the LED blink) can drive ``chan.set_channel``. Verified byte-for-byte
-    by ``scripts/verify_pcap.py rtl8821cu_dkms``. connect() runs these same phases individually for
+    by ``scripts/porting/verify_pcap.py rtl8821cu_dkms``. connect() runs these same phases individually for
     progress reporting; this flat wrapper is what the no-loop verify path drives."""
     info = phase_chip_info(t)
     phase_fw_caps(t, info)

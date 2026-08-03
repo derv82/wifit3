@@ -79,9 +79,7 @@ Feature → where to start reading. Names match the vendor C (grep `driver_captu
 ## Scripts
 - **Gates:** `verify_pcap.py` (byte-diff the whole cold-boot capture), `verify_pcap_selftest.py` (mutate each op-class, assert the gate FAILs), `verify_efuse_pcap.py` (efuse read).
 - **Live RX:** `scan_hw.py` (beacon/AP count, `--band`), `ab_scan.py` (replug A/B vs mainline), `rx_saturation_probe.py` (per-AP CCK/OFDM + `cck_pd_lv` trace).
-- **Register diffs:** `cck_state_diff.py`, `rf_state_diff.py`, `dump_tune_regs.py` (live vs kernel).
-- **TX (live, targeted, `--dry-run`):** `deauth_hw.py`, `wep_replay_hw.py`.
-- **Vendor extraction:** `extract_fw.py`, `extract_bb_tables.py`, `extract_rf_tables.py`.
+- **Register diffs:** `cck_state_diff.py`, `rf_state_diff.py`, `dump_tune_regs.py` (live vs kernel).- **Vendor extraction:** `extract_fw.py`, `extract_bb_tables.py`, `extract_rf_tables.py`.
 - **Smoke:** `test_hw.py`.
 - **Wedge investigation (one-offs, deletable once the wedge is closed):** `rx_scan_wedge{,_linux}.py`, `rx_death_repro{,_linux}.py`, `rx_dwell_char.py`, `rx_pipe_probe.py`, `rx_wedge_{poke,regdiff,cure,settle}.py`, `hopdwell_watch.py`.
 

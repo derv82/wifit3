@@ -50,7 +50,7 @@ def _frames() -> tuple[Text, Text, list[Text]]:
 # Each message is a tuple of lines; they render joined by a blank line ("\n\n"), so pre-break lines
 # to <=~21 cols (the bubble is 23 wide) and keep to <=7 elements (a message renders 2N-1 rows and
 # the bubble is 14 tall). GREETING plays once on entry; MESSAGES rotate (shuffled, no repeat until
-# the pack is exhausted). Tune wording/spacing live with scripts/wiffy_preview.py ([space] = next).
+# the pack is exhausted). Tune wording/spacing live with scripts/ui/wiffy_preview.py ([space] = next).
 _INSTALL_GREETING = ("Hi, I'm WiFFy!", "\nIt looks like", "you are trying to", "HACK THE PLANET!!!", "", "I can help!")
 _INSTALL_MESSAGES = [
     ('\nI can help to recover', '"your" password from', '"your" router.', '', 'Just ask me how!'),

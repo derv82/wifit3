@@ -2,7 +2,7 @@
 
 The TXWI dwords below are exactly those the mt76 xmit path emits for a directed deauth
 (the port is byte-verified 573/573 against the real TX captures in
-scripts/mt7925au/verify_pcap.py). MAC addresses here are synthetic placeholders: the
+scripts/chips/mt7925au/verify_pcap.py). MAC addresses here are synthetic placeholders: the
 TXWI does not depend on the address bytes (only addr1's group bit and seq_ctrl), so the
 descriptor is identical. These lock the per-field TXWI layout against a silent regress.
 """

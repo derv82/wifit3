@@ -9,7 +9,7 @@ page (4 KB), each page split into 196-byte / 8-byte / 1-byte control writes
 The blob (``assets/rtl8188eufw.bin``) is the vendor ``array_mp_8188e_t_fw_nic[]``
 verbatim — byte-identical to linux-firmware ``rtl8188eufw.bin`` (SHA256 match).
 Every register access matches the vendor read/write width and ordering and
-reproduces the cold-boot capture byte-for-byte (``scripts/rtl8188eus_dkms/
+reproduces the cold-boot capture byte-for-byte (``scripts/chips/rtl8188eus_dkms/
 verify_pcap.py``). [WIRE] cap1 frames 1195..1681 (ops 552..795).
 """
 from __future__ import annotations

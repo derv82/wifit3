@@ -20,7 +20,7 @@ mistaken for a working replay). Once the AP echoes one, we lock on and keep
 replaying it. If a locked winner stalls (likely we got de-associated) we ask
 fake-auth to re-auth and keep the same seed rather than discarding it.
 
-Rate control (climb-with-peak-memory, validated in scripts/wep_lab.py across
+Rate control (climb-with-peak-memory, validated in scripts/diag/wep_lab.py across
 SPOOFABLE / FIXED_MAC / NONE cards): each 2-second window (> the AP's ~1-2s
 relay lag) blasts ``_target`` injects at the card's full speed, then sleeps the
 remainder so the rebroadcasts have RX airtime. After each window it climbs
@@ -72,7 +72,7 @@ class ArpReplayStats:
 class WepArpReplay:
     """ARP-replay loop: patient candidate testing + a climb-with-peak-memory inject-rate controller."""
 
-    # Climb-with-peak-memory rate controller (see scripts/wep_lab.py --strategy adaptive). Window is
+    # Climb-with-peak-memory rate controller (see scripts/diag/wep_lab.py --strategy adaptive). Window is
     # 2s (> the AP's ~1-2s relay lag) so a window's echoes are not smeared across separate bursts.
     _WINDOW_S = 2.0
     _CTRL_START = 100.0         # kickstart injects per window

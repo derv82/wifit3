@@ -1,7 +1,7 @@
 """RTL8822BU cold bring-up — the deterministic init the byte-for-byte gate verifies.
 
 `cold_bringup(t)` runs the exact vendor op sequence that
-`scripts/rtl8822bu_dkms/verify_pcap.py` reproduces against capture-1/2/3: chip-ID/USB-PHY,
+`scripts/chips/rtl8822bu_dkms/verify_pcap.py` reproduces against capture-1/2/3: chip-ID/USB-PHY,
 EFUSE probe, the `hal_read_mac_hidden_rpt` cycle (power-on + FW + MAC + FW-info + C2H read +
 power-off), then the real `rtl8822b_hal_init` cycle (cold power-on + FW + MAC + init_mac_register
 + config_rx_info + enable_bb_rf + BB phy-reg/AGC + crystal cap + RF-A/RF-B). Both the driver

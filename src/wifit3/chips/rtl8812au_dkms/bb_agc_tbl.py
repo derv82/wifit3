@@ -1,6 +1,6 @@
 # Auto-extracted from vendor C array array_mp_8812a_agc_tab[] (halhwimg8812a_bb.c).
 # Raw u32 stream (incl. phy_cond IF/ELSE rows); resolved by phy_cond.apply_table.
-# Regenerate with scripts/rtl8812au_dkms/extract_tables.py.
+# Regenerate with scripts/chips/rtl8812au_dkms/extract_tables.py.
 BB_AGC_TAB = (
     0x80000001, 0x00000000, 0x40000000, 0x00000000, 0x0000081C, 0xFC000001, 0x0000081C, 0xFB020001,
     0x0000081C, 0xFA040001, 0x0000081C, 0xF9060001, 0x0000081C, 0xF8080001, 0x0000081C, 0xF70A0001,

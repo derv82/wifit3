@@ -2,7 +2,7 @@
 
 Locks the stateful RfRegChnlVal RMW (channel field then 20 MHz BW field) and the two
 RF_CHNLBW writes. Full byte-for-byte replay of the initial tune lives in
-``scripts/rtl8188eus_dkms/verify_channels.py``.
+``scripts/chips/rtl8188eus_dkms/verify_channels.py``.
 """
 from wifit3.chips.rtl8188eus_dkms import chan
 from wifit3.chips.rtl8188eus_dkms.efuse import TxPwr2G

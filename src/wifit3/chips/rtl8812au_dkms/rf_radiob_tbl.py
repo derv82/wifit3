@@ -1,6 +1,6 @@
 # Auto-extracted from vendor C array array_mp_8812a_radiob[] (halhwimg8812a_rf.c).
 # Raw u32 stream (incl. phy_cond IF/ELSE rows); resolved by phy_cond.apply_table.
-# Regenerate with scripts/rtl8812au_dkms/extract_tables.py.
+# Regenerate with scripts/chips/rtl8812au_dkms/extract_tables.py.
 RF_RADIOB = (
     0x00000056, 0x00051CF2, 0x00000066, 0x00040000, 0x00000089, 0x00000080, 0x80000001, 0x00000000,
     0x40000000, 0x00000000, 0x00000086, 0x00014B3A, 0x90000001, 0x00000005, 0x40000000, 0x00000000,

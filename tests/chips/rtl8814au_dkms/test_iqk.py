@@ -1,7 +1,7 @@
 """Hardware-free regression for the M3d IQK one-shots (halrf_iqk_8814a).
 
 The full byte-for-byte check vs the cold-boot capture is
-``scripts/rtl8814au_dkms/verify_pcap.py`` (capture-1 5G + capture-3 2.4G both reproduce the
+``scripts/chips/rtl8814au_dkms/verify_pcap.py`` (capture-1 5G + capture-3 2.4G both reproduce the
 whole IQK block). These pin the DATA-DEPENDENT control flow the spec flags as replay hotspots
 so the port is provably DRIVEN BY THE WIRE READS, not a fixed transcript: the LOK poll length,
 the LOK DAC fill computed from ``0x1bfc``, and the ``while (fail)`` retry bounded by the

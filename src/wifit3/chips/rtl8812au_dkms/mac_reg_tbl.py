@@ -1,6 +1,6 @@
 # Auto-extracted from vendor C array array_mp_8812a_mac_reg[] (halhwimg8812a_mac.c).
 # Raw u32 stream (incl. phy_cond IF/ELSE rows); resolved by phy_cond.apply_table.
-# Regenerate with scripts/rtl8812au_dkms/extract_tables.py.
+# Regenerate with scripts/chips/rtl8812au_dkms/extract_tables.py.
 MAC_REG = (
     0x00000010, 0x0000000C, 0x80000200, 0x00000000, 0x40000000, 0x00000000, 0x00000011, 0x00000066,
     0xA0000000, 0x00000000, 0x00000011, 0x0000005A, 0xB0000000, 0x00000000, 0x00000025, 0x0000000F,

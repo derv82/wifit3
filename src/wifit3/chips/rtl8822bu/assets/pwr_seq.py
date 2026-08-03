@@ -2,7 +2,7 @@
 
 Direct extraction of `rtw_pwr_seq_cmd` tables from
 `driver_sources/rtw88-source-v6.18/rtw8822b.c` via
-`scripts/rtl8822bu/extract_pwr_seq.py`. Each tuple is
+`scripts/chips/rtl8822bu/extract_pwr_seq.py`. Each tuple is
 (offset, cut_mask, intf_mask, base, cmd, mask, value) — matches
 the C struct rtw_pwr_seq_cmd field order.
 """

@@ -1,7 +1,7 @@
 """Hardware-free regression for the cut-gated channel-tune branches.
 
 The full byte-for-byte check vs the cold-boot capture is
-`scripts/rtl8821cu_dkms/verify_pcap.py` (the pcap card is cut 4). This pins the A-cut
+`scripts/chips/rtl8821cu_dkms/verify_pcap.py` (the pcap card is cut 4). This pins the A-cut
 (ODM_CUT_A) RF 0xb8 LCK-fix that a non-reference silicon revision would take, and confirms
 the reference cut leaves RF 0xb8 untouched (byte-identical).
 """

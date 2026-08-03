@@ -9,7 +9,7 @@ HIGH bulk-OUT lane.
 
 Warm chips (FW already running) skip M1 and re-run M2-M5. Shares the modern
 RTW_WCPU_3081 iDDMA path with the 8822bu. See RTL8814AU.md + the phased
-`scripts/rtw88_8814au/test_hw_8814au.py` for per-milestone HW gates.
+`scripts/chips/rtw88_8814au/test_hw_8814au.py` for per-milestone HW gates.
 """
 
 from __future__ import annotations

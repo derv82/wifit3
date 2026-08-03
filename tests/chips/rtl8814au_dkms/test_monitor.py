@@ -1,7 +1,7 @@
 """Hardware-free regression for the M3b-2 monitor opmode entry.
 
 The targeted byte-for-byte check vs the cold-boot capture lives in
-`scripts/rtl8814au_dkms/verify_pcap.py` (verify_monitor_block); this pins the
+`scripts/chips/rtl8814au_dkms/verify_pcap.py` (verify_monitor_block); this pins the
 monitor RCR value and the accept-all RX filter maps.
 """
 from wifit3.chips.rtl8814au_dkms import monitor

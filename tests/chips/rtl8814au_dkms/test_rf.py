@@ -1,7 +1,7 @@
 """Hardware-free regression for the M2c RF radio tables + RCK1 copy.
 
 The full byte-for-byte check vs the cold-boot capture is
-`scripts/rtl8814au_dkms/verify_pcap.py`; this pins the RF write/read encoding and
+`scripts/chips/rtl8814au_dkms/verify_pcap.py`; this pins the RF write/read encoding and
 the per-path taken-row counts.
 """
 from wifit3.chips.rtl8814au_dkms import constants as C

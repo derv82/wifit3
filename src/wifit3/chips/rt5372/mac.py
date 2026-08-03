@@ -1,7 +1,7 @@
 """MAC-level bring-up for the RT5372 (RT5392): chip probe, radio enable, register init.
 
 Ported from ``rt2800lib.c`` (chip logic) + ``rt2800usb.c`` (USB glue), confirmed
-against captures_rt2800usb_rt5372/capture-1 by ``scripts/verify_pcap.py rt5372``.
+against captures_rt2800usb_rt5372/capture-1 by ``scripts/porting/verify_pcap.py rt5372``.
 
 Scope note: the kernel's ``rt2800_init_registers`` is a giant per-chip switch. We
 port the RT5390/RT5392 (RF53xx) path; the only chip-gated divergence from the family

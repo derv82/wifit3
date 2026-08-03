@@ -1,6 +1,6 @@
 # Auto-extracted from halhwimg8821a_mac.c array_mp_8821a_mac_reg[] (8821a MAC_REG).
 # Flat (addr, byte-value) list applied in order via write8 by PHY_MACConfig8812.
-# Do not hand-edit; regenerate with scripts/rtl8821au_dkms/extract_mac_tbl.py.
+# Do not hand-edit; regenerate with scripts/chips/rtl8821au_dkms/extract_mac_tbl.py.
 MAC_REG_TABLE = [
     (0x0421, 0x0F),
     (0x0428, 0x0A),

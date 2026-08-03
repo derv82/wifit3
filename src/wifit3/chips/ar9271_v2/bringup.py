@@ -6,7 +6,7 @@ take the chip from a freshly firmware-booted state to a monitor-mode receiver on
 retune it (full ath9k_hw_reset or fast channel change) on a hop. All register I/O funnels through
 the WMI channel's transport, so the same code drives live silicon and the pcap-replay gate — the
 gate builds the driver over a ReplayDevice transport and calls ``driver.connect`` / ``set_channel``
-(``scripts/ar9271_v2/verify_pcap.py``); nothing here knows which it is.
+(``scripts/chips/ar9271_v2/verify_pcap.py``); nothing here knows which it is.
 
 Ported op-for-op from ath9k_htc start + ath9k_htc_set_channel [SRC] htc_drv_main.c:225/916 +
 ath9k_hw_reset / ath9k_hw_do_fastcc [SRC] hw.c:1859/1788. The byte-exact wire order is the

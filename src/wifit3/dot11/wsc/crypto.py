@@ -10,7 +10,7 @@ Anchors (so this isn't validated only against itself):
   * HMAC-SHA256 / SHA-256: stdlib ``hmac`` / ``hashlib``.
   * DH MODP group 5: the RFC 3526 1536-bit constant.
   * The full DH→KDF→AuthKey chain: proven on-air the moment a real AP accepts
-    our M2 Authenticator and proceeds to M3 (``scripts/wps/wps_probe.py``).
+    our M2 Authenticator and proceeds to M3 (``scripts/diag/wps/wps_probe.py``).
 
 Key derivation (hostapd ``wps_derive_keys``):
     DHKey = SHA-256( zeropad(g^AB mod p, 192) )

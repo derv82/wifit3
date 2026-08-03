@@ -2,7 +2,7 @@
 
 Hal_ReadRFEType_8812A's BIT7 external-PA/LNA decode + the type-4 workaround, and the C-cut
 silicon test, were previously hardcoded to the ALFA's values. These pin the ported vendor
-branches (the captured card is byte-diffed by `scripts/rtl8812au_dkms/verify_pcap.py`).
+branches (the captured card is byte-diffed by `scripts/chips/rtl8812au_dkms/verify_pcap.py`).
 """
 from wifit3.chips.rtl8812au_dkms import efuse
 

@@ -1,4 +1,4 @@
-"""AR9271 initvals tables — generated from ar9002_initvals.h by scripts/ar9271_v2/gen_initvals.py.
+"""AR9271 initvals tables — generated from ar9002_initvals.h by scripts/chips/ar9271_v2/gen_initvals.py.
 
 Do not edit by hand; re-run the generator. Each row is [reg, col1, ...]; for 2.4 GHz the
 mode column index is 4 (modesIndex), and Common is [reg, val]."""

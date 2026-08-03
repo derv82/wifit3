@@ -4,7 +4,7 @@
 RFCSR init → radio-on), then the monitor entry (``enable_monitor``: interface-up filter →
 post-radio config → monitor filter) and the default channel tune, and starts the bulk-IN
 RX reader. Every wire op through the channel hops is byte-diffed against the cold-boot
-capture by ``scripts/verify_pcap.py rt5370`` (the operational gate).
+capture by ``scripts/porting/verify_pcap.py rt5370`` (the operational gate).
 
 TX (``inject_frame`` → ``tx.send_frame``) is wired but **never fired by
 the driver** — injection/deauth is the user's explicit action [[passive_by_default]].
@@ -99,7 +99,7 @@ class RT5370Driver(Driver):
     # ---- bring-up (blocking; run in an executor) --------------------------
     def _bringup(self) -> None:
         """Cold bring-up in wire order — the cold path stays in lockstep with
-        ``scripts/verify_pcap.py rt5370`` ``_walk_init`` (the gate replays it). The leading
+        ``scripts/porting/verify_pcap.py rt5370`` ``_walk_init`` (the gate replays it). The leading
         warm check is **runtime-only** (the cold capture has no such read, so the gate does
         not model it): on a re-run without a replug the chip is still inited + in monitor with
         RX live (``close()`` disposes the USB handle but never resets the radio), so we skip FW

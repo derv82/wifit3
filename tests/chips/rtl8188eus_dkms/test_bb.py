@@ -1,6 +1,6 @@
 """Hardware-free regression for the RTL8188EUS (DKMS) BB config + crystal cap.
 
-Full byte-for-byte replay lives in ``scripts/rtl8188eus_dkms/verify_pcap.py``;
+Full byte-for-byte replay lives in ``scripts/chips/rtl8188eus_dkms/verify_pcap.py``;
 this locks the prologue, the crystal-cap mask math, and that PHY_REG/AGC rows are
 full-32-bit writes.
 """

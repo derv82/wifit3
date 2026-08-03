@@ -1,7 +1,7 @@
 """Hardware-free regression for the EFUSE read + chip-param decode.
 
 The full byte-for-byte check vs the cold-boot capture is
-`scripts/rtl8814au_dkms/verify_efuse_pcap.py`; this pins the header-unpacking and
+`scripts/chips/rtl8814au_dkms/verify_efuse_pcap.py`; this pins the header-unpacking and
 the parsers on synthetic input.
 """
 from wifit3.chips.rtl8814au_dkms import constants as C

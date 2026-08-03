@@ -10,13 +10,13 @@ The dynamic-check task mirrors the vendor ``rtw_dynamic_chk_wk_hdl`` (rtw_cmd.c)
 runs the silent-reset status poll (``sreset.py``) then the no-link phydm DIG/AGC watchdog
 (``dig.py`` — the runtime adaptation of the M7 IGI/CCK/thermal/NHM seed, central to the RX
 goal). The whole operational stream (monitor entry, per-hop channel tunes, every tick) is
-byte-diffed against the cold-boot capture by ``scripts/rtl8188eus_dkms/verify_pcap.py``. The
+byte-diffed against the cold-boot capture by ``scripts/chips/rtl8188eus_dkms/verify_pcap.py``. The
 TX path (``tx.py`` + ``inject_frame``) is wired and HW-confirmed (deauth/EAPOL on the air).
 
 Registered in ``wlan/discovery.py`` behind ``WIFIT3_RTL8188`` — the mainline-derived
 ``rtl8188eus`` stays the default for 2357:010c until this vendor port is hardware-proven to
 tie/beat it on 2.4 GHz breadth; ``WIFIT3_RTL8188=dkms`` opts in. Exercise via
-``scripts/rtl8188eus_dkms/``.
+``scripts/chips/rtl8188eus_dkms/``.
 """
 from __future__ import annotations
 
@@ -223,7 +223,7 @@ class Rtl8188eusDkmsDriver(Driver):
 
     def _phy_config(self, params) -> None:
         """The deterministic init chain after firmware (all pcap-verified — keep in sync
-        with scripts/rtl8188eus_dkms/verify_pcap.py), then the monitor opmode entry. The
+        with scripts/chips/rtl8188eus_dkms/verify_pcap.py), then the monitor opmode entry. The
         firmware was already uploaded in connect()."""
         t = self.transport
         # phydm board/LNA-type driver words gate the board-conditional init-table rows

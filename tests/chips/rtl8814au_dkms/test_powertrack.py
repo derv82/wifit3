@@ -1,7 +1,7 @@
 """Hardware-free regression for the M3c thermal TX-power tracking (halrf MIX_MODE).
 
 The full byte-for-byte check vs the cold-boot capture is
-``scripts/rtl8814au_dkms/verify_pcap.py``; these pin the swing math so the pcap value is
+``scripts/chips/rtl8814au_dkms/verify_pcap.py``; these pin the swing math so the pcap value is
 provably COMPUTED (from the delta-swing tables + the EFUSE thermal base), not hardcoded:
 the negative-delta chain, the per-path register writes, and the per-hop clear + band-switch
 ``default_ofdm_index`` reload.

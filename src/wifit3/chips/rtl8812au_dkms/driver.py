@@ -2,7 +2,7 @@
 
 Status: 2.4 GHz monitor RX complete and hardware-confirmed (real beacons off the
 antenna). ``connect()`` runs the deterministic cold-boot bring-up exactly as the
-byte-for-byte gate verifies it (``scripts/rtl8812au_dkms/verify_pcap.py``): EFUSE probe
+byte-for-byte gate verifies it (``scripts/chips/rtl8812au_dkms/verify_pcap.py``): EFUSE probe
 -> firmware download -> MAC -> BB/RF (both paths) -> 2.4 GHz channel tune -> per-rate TX
 power -> the phydm InitHalDm DIG/AGC/EDCCA seed (incl. the live PWDB-EDCCA search) ->
 morrownr's monitor opmode + set-channel RX-START tail. It then starts the bulk-IN RX
@@ -303,8 +303,7 @@ class Rtl8812auDkmsDriver(Driver):
         set_channel / the DIG watchdog via ``_io_lock`` so a frame is never emitted mid-retune.
 
         No byte-for-byte gate backs this path — morrownr's cold-boot captures contain no
-        successful card TX. It is a source port of the vendor fake-txdesc; the live gate is
-        ``scripts/rtl8812au_dkms/deauth_hw.py``."""
+        successful card TX. It is a source port of the vendor fake-txdesc."""
         if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read the BMC bit
             return False
         loop = asyncio.get_running_loop()

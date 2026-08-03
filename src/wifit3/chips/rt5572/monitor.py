@@ -4,7 +4,7 @@ This is the operational counterpart to ``bring_up.py``. Where ``bring_up`` is th
 cold register init that mac80211 runs before the interface exists, ``enable_monitor``
 is the exact register sequence mac80211/airmon issues when the monitor interface
 comes *up* — and, like ``bring_up``, it is ONE function shared by ``driver.connect()``
-(the live path) and the acceptance gate (``scripts/rt5572/verify_pcap.py``). The gate
+(the live path) and the acceptance gate (``scripts/chips/rt5572/verify_pcap.py``). The gate
 drives this real function, so it tests exactly what connect() runs; there is no second
 copy to drift.
 

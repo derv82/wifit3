@@ -9,7 +9,7 @@ Sibling of `chips/rtl8188eus/` (mainline), ported from the Realtek vendor/DKMS d
 ## Status
 
 Cold init + firmware boot, channel tune, monitor RX, and TX all work on hardware (live TL-WN722N
-v2): a 28 s hop saw 78 APs / 940 beacons / 1527 frames, and `deauth_hw.py` landed (target
+v2): a 28 s hop saw 78 APs / 940 beacons / 1527 frames, and a live deauth landed (target
 reconnected, 20/20 captured EAPOL to/from it). RX is promiscuous both directions — client→AP ToDS
 data is captured, so the crackable WPA M2 is reachable (no ToDS-filter gap). `verify_pcap` is clean
 end-to-end on all three captures.
@@ -96,7 +96,7 @@ the IOL engine reading the physical map out of the TX packet buffer (PKTBUF debu
 `driver_captures/captures_8188eu/driver-source/` to cross-reference.
 
 FW blob `assets/rtl8188eufw.bin` is byte-identical (SHA256) to linux-firmware `rtl8188eufw.bin`,
-extracted by `scripts/rtl8188eus_dkms/extract_fw.py`.
+extracted by `scripts/chips/rtl8188eus_dkms/extract_fw.py`.
 
 ## Scripts
 
@@ -104,8 +104,6 @@ extracted by `scripts/rtl8188eus_dkms/extract_fw.py`.
 - `verify_pcap.py` — cold-boot byte gate (cap1/2/3).
 - `verify_channels.py` — byte-diff the initial ch1 channel set on all three captures.
 - `beacon_watch.py` (live) / `beacon_watch_usbcap.py` (capture) — the RX-health A/B.
-- `deauth_hw.py` — live TX smoke test (deauth + reconnect + EAPOL capture).
-
 ## Debug log
 
 ### 2026-07-11 — generalize the EFUSE board options (external PA/LNA), reference byte-identical
@@ -231,7 +229,7 @@ was. Now gated on the ready bit.
 
 ### 2026-06-07 — RX/TX proven on hardware
 
-Live TL-WN722N v2: 78 APs / 940 beacons / 1527 frames in a 28 s hop (canary clean). `deauth_hw.py`
+Live TL-WN722N v2: 78 APs / 940 beacons / 1527 frames in a 28 s hop (canary clean). A live deauth run
 injected 300 deauth on ch1 with no pipe fault; the target reconnected and 20/20 captured EAPOL were
 to/from it. RX confirmed both directions: 9 M2/M4 (ToDS) + 11 M1/M3 (FromDS) + 262 ToDS data. The
 bug that initially blocked bring-up was `firmware.download_firmware` returning `None` on success,

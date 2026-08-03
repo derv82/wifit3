@@ -11,7 +11,7 @@ module takes over at mt7921_run_firmware's tail.
   __mt7921_init_hardware      -> set_eeprom, mac_init (+ rts_thresh)
   ... regd_update, monitor entry, channel — ported incrementally below
 
-The single-cursor CHECK 3 gate (scripts/mt7921au/verify_pcap.py) drives this
+The single-cursor CHECK 3 gate (scripts/chips/mt7921au/verify_pcap.py) drives this
 against the captured wire; every op here reproduces the capture byte-for-byte.
 """
 import logging

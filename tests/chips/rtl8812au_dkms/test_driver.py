@@ -1,7 +1,7 @@
 """rtl8812au_dkms driver glue NOT covered by the byte-for-byte pcap gate:
 the RX dispatch fan-out, the 2.4 GHz-only ``set_channel`` guard (5 GHz is M7),
 and the M6 ``inject_frame`` stub. (The bring-up sequence is verified in
-``scripts/rtl8812au_dkms/verify_pcap.py``; the thread/loop hand-off in
+``scripts/chips/rtl8812au_dkms/verify_pcap.py``; the thread/loop hand-off in
 ``tests/chips/test_rx_reader.py``.)"""
 from types import SimpleNamespace
 from unittest.mock import MagicMock

@@ -13,7 +13,7 @@ GET_NIC_CAPAB reply — a 1:1 mirror of the kernel — are:
 
 Both captured reference units (pau0f + AXML) report the SAME caps — nss=2 (antenna_mask
 0x3), hw_path=0xF (2.4+5 GHz), has_6ghz=1 — so every gate defaults to that config and the
-cold-boot wire stays byte-identical (scripts/mt7921au/verify_pcap.py PASS).
+cold-boot wire stays byte-identical (scripts/chips/mt7921au/verify_pcap.py PASS).
 """
 import struct
 

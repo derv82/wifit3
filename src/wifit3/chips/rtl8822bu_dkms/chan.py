@@ -4,7 +4,7 @@ Ports config_phydm_switch_channel_8822b `[SRC] phydm_hal_api8822b.c:1808` (2.4 +
 its inline helpers (phydm_igi_toggle_8822b, phydm_ccapar_by_rfe_8822b), and the channel-change
 spur reset (phydm_spur_calibration_8822b -> phydm_dsde_init). This is the work a single
 `iw set channel N` triggers in the vendor driver — verified hop-by-hop against the cold-boot
-capture's airodump `--band abg` sweep (see scripts/rtl8822bu_dkms/verify_channels.py).
+capture's airodump `--band abg` sweep (see scripts/chips/rtl8822bu_dkms/verify_channels.py).
 
 The band switch (config_phydm_switch_band_8822b, only on a 2.4<->5 crossing) and the bandwidth
 re-apply (mac_switch_bandwidth=HALMAC cfg_bw + config_phydm_switch_bandwidth_8822b) complete

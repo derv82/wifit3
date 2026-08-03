@@ -1,6 +1,6 @@
 """RTL8821CU / 1T1R 802.11ac — vendor (HALMAC/PHYDM) cleanroom DKMS port.
 
-The byte-for-byte gate (``scripts/rtl8821cu_dkms/verify_pcap.py``) drives this driver's public
+The byte-for-byte gate (``scripts/chips/rtl8821cu_dkms/verify_pcap.py``) drives this driver's public
 interface — ``connect`` (cold init + airmon monitor entry), ``set_channel`` (the airodump hops)
 and ``inject_frame`` (the aireplay-ng test + deauth TX) — and reproduces the **entire** cold-boot
 capture (all 21409 ctrl + bulk-OUT ops) byte-for-byte, so what the gate verifies is exactly the
@@ -12,7 +12,7 @@ interface, starts the bulk-IN ``RxReaderThread``, runs ``bringup.cold_bringup`` 
 MAC/BB/RF + BT-coex + the ch1 monitor tune over the ep-0x05 FW/TX pipe — which leaves the chip in
 the vendor's exact receiving config, byte-for-byte), then runs the phydm watchdog on a background
 task. ``set_channel`` and ``inject_frame`` drive the phydm tune and the TX-descriptor path. The
-whole cold-boot pcap is reproduced byte-for-byte by ``scripts/rtl8821cu_dkms/verify_pcap.py``, and
+whole cold-boot pcap is reproduced byte-for-byte by ``scripts/chips/rtl8821cu_dkms/verify_pcap.py``, and
 cold init is HW-validated (FW boots). Hardware status — including the open monitor-RX demod fault
 (frames received, ~99% fail CRC) — is tracked in RTL8821CU_DKMS.md. Warm reattach and the ZeroCD
 mode-switch discovery blocker are open. Shares no code with the other Realtek drivers (anti-DRY).
@@ -127,7 +127,7 @@ class Rtl8821cuDkmsDriver(Driver):
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """Cold bring-up + airmon monitor entry (``bringup.cold_bringup``), caching the decoded
         EFUSE/board info that ``set_channel`` and the watchdog/coex producers key on. The cold path
-        is reproduced byte-for-byte by ``scripts/rtl8821cu_dkms/verify_pcap.py`` — which drives this
+        is reproduced byte-for-byte by ``scripts/chips/rtl8821cu_dkms/verify_pcap.py`` — which drives this
         method synchronously with NO running loop, so that path skips the RX reader (host->chip
         only). Under a real event loop the bulk-IN RX reader starts FIRST: the monitor RX-enable
         lives inside ``cold_bringup``, and the kernel posts RX URBs before that gate — a reader

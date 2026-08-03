@@ -15,7 +15,7 @@ is ``_FWFreeToGo8814A`` polling CPU_DL_READY in REG_8051FW_CTRL.
 
 Every register access here matches the vendor read/write width and ordering, and
 reproduces the cold-boot capture byte-for-byte (verify via
-``scripts/rtl8814au_dkms/verify_m1_pcap.py``). [WIRE] cap1 frames 5713..6667.
+``scripts/chips/rtl8814au_dkms/verify_m1_pcap.py``). [WIRE] cap1 frames 5713..6667.
 """
 from __future__ import annotations
 

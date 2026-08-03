@@ -1,7 +1,7 @@
 """Single source of truth for the mt76x0u wire-dump line format.
 
 Used by both:
-  - `scripts/mt76x0u/mt76x0u_wire_dump.py` (extracts from a pcap)
+  - `scripts/chips/mt76x0u/mt76x0u_wire_dump.py` (extracts from a pcap)
   - `src/wifit3/chips/mt76x0u/wire_log.py`  (live in-driver logger)
 
 Each `fmt_*` function returns exactly one line of text. Two outputs from

@@ -53,7 +53,7 @@ Everything is **2G/HT20-only** so far (5/6G raises in set_gain / set_rx_gain_nor
 / ctrl_bw / set_channel_mac, the txpwr limit tables, and `rfk._tssi`). The whole capture is ~150k
 ops; each hop's tune is ~750 ops for PHY_0 plus the PHY_1 mirror.
 
-**Hardware:** `scripts/rtl8922au/test_hw.py` passes on the ASUS USB-BE93: `connect()` completes in
+**Hardware:** `scripts/chips/rtl8922au/test_hw.py` passes on the ASUS USB-BE93: `connect()` completes in
 ~3s and `set_channel()` succeeds for ch 1/6/36 (2.4 GHz + 5 GHz), so the whole bring-up + tune runs
 on real silicon, not just against the pcap. It matches the device by VID:PID, so the co-plugged
 rtl8812au is untouched. USB-2 quirk: the mode switch re-enumerates the card to SuperSpeed and the
@@ -140,7 +140,7 @@ and the pcap opens with that read. Verify against all three per the methodology'
 
 ## Verify
 
-    uv run python scripts/verify_pcap.py rtl8922au [capture]
+    uv run python scripts/porting/verify_pcap.py rtl8922au [capture]
 
 One forward cursor over the device's VENQT control ops, driving the real `connect()`. Ops the
 driver never emits (USB enumeration) are waived by name and logged, never dropped. It cannot
@@ -171,7 +171,7 @@ else is needed. Everything I first tried on top of it (a `net_type` INFRA/AD_HOC
 connected, `role_maintain` STATION, port-config `rx_sw`/`TSF_UDT`, clearing `B_BE_SNIFFER_MODE`, the
 responder CCA check) was a **red herring**, chased because of a flaky-RX confound (below).
 
-Bench-confirmed (ASUS USB-BE93 DUT + RTL8812AU prober, ch1, `scripts/rtl8922au/`):
+Bench-confirmed (ASUS USB-BE93 DUT + RTL8812AU prober, ch1, `scripts/chips/rtl8922au/`):
 - `driver_check.py` / `confirm.py` case A: program the SMA, nothing else -> `ACKed 100/100`.
 - `a1match.py`: with the SMA programmed the rx-desc `BE_RXD_A1_MATCH` bit is 1 on 100% of to-SMA
   frames (forged and silicon), 0 on broadcast. The hardware reads the CAM SMA as "me".
@@ -188,7 +188,7 @@ retry across connects to catch a healthy window. The rtl8xxxu `REG_MACID` note s
 no self-MAC register; the addr-cam SMA is the analog), but no port/role/sniffer change was ever
 needed.
 
-The `scripts/rtl8922au/` diagnostics (`_amlib.py` harness + `confirm.py`/`driver_check.py`/
+The `scripts/chips/rtl8922au/` diagnostics (`_amlib.py` harness + `confirm.py`/`driver_check.py`/
 `monitor_check.py`/`a1match.py`/`ack_*.py`) are kept for the next chip or a regression check; leave
 the 8812 sniffer plugged and re-run any of them after a physical replug.
 
@@ -218,7 +218,7 @@ by `chan.set_channel` from the value the driver derives (`driver._tune_pass`). T
 **Reusable assets:** `firmware.h2c_command` (any H2C), `firmware.txpwr_conf` (any txpwr fw element),
 `firmware.element_regs`/`element_regs_with_idx` (any reg2 fw element), `phy.read_rf`/`phy.write_rf`
 (HWSI + ad_sel RF access), `mac._reg_by_idx` (MAC_1 +0x4000 shift), and the scratch dumper
-`/tmp/.../scratchpad/dop.py` (recreate: import `scripts/rtl8922au/verify_pcap`, `build_ops`, print a
+`/tmp/.../scratchpad/dop.py` (recreate: import `scripts/chips/rtl8922au/verify_pcap`, `build_ops`, print a
 window with `_fmt`). The subagent workflow that worked for the RFK: dump the ground-truth op window,
 hand a general-purpose subagent that file + source pointers + this doc, ask for an ordered byte-spec
 reconciled to the wire, port from it, `verify_pcap`, commit.
@@ -227,7 +227,7 @@ reconciled to the wire, port from it, `verify_pcap`, commit.
 
 The port loop that has worked: read the source function -> grep the exact register/bit values
 (`grep -m1 "define SYM " reg.h`) -> port it citing `file:line` -> `uv run python
-scripts/verify_pcap.py rtl8922au` -> the FRONTIER/DIVERGENCE trace names the next op or the exact
+scripts/porting/verify_pcap.py rtl8922au` -> the FRONTIER/DIVERGENCE trace names the next op or the exact
 mismatch -> fix -> commit each milestone. Keep milestones small; commit when all three captures
 advance to the same frontier.
 
@@ -236,7 +236,7 @@ To keep context low:
   mailbox: ask for a tight spec (function logic in order + a register/value table with `file:line`
   + how payload words are built), and port from the returned spec instead of reading five files
   yourself. Good candidates ahead: `rtw89_mac_init` (huge), the BB/RF init + RFK tables.
-- Use a tiny scratch dumper (recreate `/tmp/dop.py`: import `scripts/rtl8922au/verify_pcap`,
+- Use a tiny scratch dumper (recreate `/tmp/dop.py`: import `scripts/chips/rtl8922au/verify_pcap`,
   `build_ops`, print a mixed ctrl+bulk op window) to see the exact wire ops around a frontier
   without re-reading the pcap by hand. Run it with `uv run` from the repo root (a leading `cd`
   elsewhere breaks the venv).

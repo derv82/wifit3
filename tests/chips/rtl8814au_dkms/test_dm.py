@@ -1,7 +1,7 @@
 """Hardware-free regression for the M3a InitHalDm (phydm) seed.
 
 The full byte-for-byte check vs the cold-boot capture is
-`scripts/rtl8814au_dkms/verify_pcap.py`; this pins the IGI-derived NHM thresholds
+`scripts/chips/rtl8814au_dkms/verify_pcap.py`; this pins the IGI-derived NHM thresholds
 and the masked-write masks that the differ would otherwise only catch on hardware.
 """
 from wifit3.chips.rtl8814au_dkms import dm

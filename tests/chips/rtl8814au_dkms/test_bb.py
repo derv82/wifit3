@@ -1,7 +1,7 @@
 """Hardware-free regression for the M2b BB tables + the shared phydm walker.
 
 The full byte-for-byte check vs the cold-boot capture is
-`scripts/rtl8814au_dkms/verify_pcap.py`; this pins the walker's branch logic and
+`scripts/chips/rtl8814au_dkms/verify_pcap.py`; this pins the walker's branch logic and
 the chip-param `driver1` that selects taken rows.
 """
 from wifit3.chips.rtl8814au_dkms import phy_cond

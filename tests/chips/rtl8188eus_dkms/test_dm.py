@@ -3,7 +3,7 @@
 Locks the deterministic seed (GPIO, IGI-derived NHM thresholds, EDCCA encoding, LNA
 gain rows) and that the EDCCA pwdb search terminates on a clear band. The full
 byte-for-byte replay (incl. capture-2's data-dependent 279-op loop) lives in
-``scripts/rtl8188eus_dkms/verify_pcap.py``.
+``scripts/chips/rtl8188eus_dkms/verify_pcap.py``.
 """
 from wifit3.chips.rtl8188eus_dkms import dm
 

@@ -1,6 +1,6 @@
 """Hardware-free regression for the RTL8188EUS (DKMS) RF (radio-A) config.
 
-Full byte-for-byte replay lives in ``scripts/rtl8188eus_dkms/verify_pcap.py``;
+Full byte-for-byte replay lives in ``scripts/chips/rtl8188eus_dkms/verify_pcap.py``;
 this locks the LSSI write encoding and the RFENV setup ordering.
 """
 from wifit3.chips.rtl8188eus_dkms import rf

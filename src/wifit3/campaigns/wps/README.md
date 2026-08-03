@@ -76,7 +76,7 @@ low-latency path, bypassing the UI-polled registry.
 
 ## Hardware-verified behavior
 
-Rebuilt from live ground-truth (`scripts/wps/wps_lab.py`) after the field showed false
+Rebuilt from live ground-truth (`scripts/diag/wps/wps_lab.py`) after the field showed false
 "first half wrong" reports and missed cracks. Most prior heuristics turned out to be
 flaky-TX artifacts, not real AP behavior:
 

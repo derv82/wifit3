@@ -2,7 +2,7 @@
 
 Standalone RF5592 port, split from the rt2800usb parent (see RT5572.md for why).
 The cold register bring-up is ``bring_up.bring_up(transport)`` — ONE function shared
-with the acceptance gate (``scripts/rt5572/verify_pcap.py``), so the gate exercises
+with the acceptance gate (``scripts/chips/rt5572/verify_pcap.py``), so the gate exercises
 exactly what ``connect()`` runs on hardware. connect() = claim → bring_up() →
 write MAC + monitor filter → set_channel(1) → RX loop + link tuner.
 """
@@ -159,7 +159,7 @@ class RT5572Driver(Driver):
             await loop.run_in_executor(None, self._claim)
 
             # THE cold register bring-up — one call to the shared bring_up(), the
-            # exact sequence the acceptance gate (scripts/rt5572/verify_pcap.py)
+            # exact sequence the acceptance gate (scripts/chips/rt5572/verify_pcap.py)
             # replays byte-for-byte. No inline step list here: connect() and the
             # gate run the same code, so they cannot drift.
             state = await loop.run_in_executor(

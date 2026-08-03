@@ -2,7 +2,7 @@
 
 Locks the per-rate index math (base + extra_bias, clamped) and the path-A rate->
 register/byte map against the cold-boot wire (capture-1 ops 1589-1628, init channel 6).
-Full byte-for-byte replay lives in ``scripts/rtl8188eus_dkms/verify_pcap.py``.
+Full byte-for-byte replay lives in ``scripts/chips/rtl8188eus_dkms/verify_pcap.py``.
 """
 from wifit3.chips.rtl8188eus_dkms import txpower
 from wifit3.chips.rtl8188eus_dkms.efuse import TxPwr2G

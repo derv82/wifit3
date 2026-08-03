@@ -108,8 +108,6 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 - `verify_pcap.py` — the cold-boot byte gate.
 - `verify_channels.py` — byte-diffs every `iw set channel` window (all 36 hops) against the runtime tune.
 - `verify_efuse_pcap.py` — replay-diffs the EFUSE read block.
-- `deauth_hw.py` / `wep_replay_hw.py` — user-run live TX smoke tests.
-
 ## Debug log
 
 ### 2026-06-04 — A/B vs mainline; the DIG-health canary

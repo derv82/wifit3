@@ -1,7 +1,7 @@
 """Generalization tests for the rt5370 (RT5390) driver: prove it decodes + tunes for
 ANY 148f:5370 EEPROM burn (RF chip, chain count, BT-coex), not just the captured
 reference (RF5370, 1T1R, non-BT, rev-F). The cold-boot wire byte-identity is the job of
-scripts/rt5370/verify_pcap.py; these cover the runtime-EEPROM branches it can't (its
+scripts/chips/rt5370/verify_pcap.py; these cover the runtime-EEPROM branches it can't (its
 capture only ever shows the one card)."""
 from __future__ import annotations
 
