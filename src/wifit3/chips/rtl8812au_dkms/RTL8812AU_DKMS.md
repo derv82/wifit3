@@ -165,7 +165,7 @@ actual value.
 
 ### 2026-06-05 — 30-min dual-band soak, no degradation
 
-`scripts/diag/sweep.py --skip-baseline --longrun-min 30 --hop-interval 0.25` over all 38
+`scripts/rx/soak.py --skip-baseline --longrun-min 30 --hop-interval 0.25` over all 38
 channels (2.4 + 5 GHz incl. DFS): active BSSIDs 118→121 (first-3 vs last-3 60 s buckets,
 ratio 1.03), 5 GHz active count flat ~49–57 the whole run — the band that wedges mainline at
 ~110 s — frames steady ~1.6–2.2 k/60 s. Two diag WARNs are fast-hop measurement artifacts,

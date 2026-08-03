@@ -1,6 +1,6 @@
 """Diagnostic probes.
 
-Ordered registry: sweep.py iterates this list to register CLI flags
+Ordered registry: soak.py iterates this list to register CLI flags
 and to run the active probes. Order is the run order; passive probes
 attach first regardless.
 """

@@ -10,11 +10,11 @@ true per-second beacon rate out of these captures: airodump's own `.cap`
 deduplicates beacons to one-per-AP, and `capture-N.pcap` is USB, not over-air.
 
     # primary: pin one BSSID, get its true per-second beacon series + % loss
-    uv run python scripts/diag/beacon_watch_usbcap.py CAP.pcap --bssid 11:22:33:44:55:66
+    uv run python scripts/rx/beacon_watch_usbcap.py CAP.pcap --bssid 11:22:33:44:55:66
 
     # discovery: no BSSID -> report the best-heard AP (a frequency floor drops
     #            the descriptor-noise singletons; only needed without --bssid)
-    uv run python scripts/diag/beacon_watch_usbcap.py CAP.pcap
+    uv run python scripts/rx/beacon_watch_usbcap.py CAP.pcap
 
 The signature is `8000 <dur> ffffffffffff <SA> <BSSID>` (beacon frame-control,
 broadcast DA, transmitter, BSSID), matched in lowercase no-colon hex. Pinning a

@@ -1,4 +1,0 @@
-# Per-run sweep output — machine-generated, don't track.
-*.md
-*.csv
-!.gitignore

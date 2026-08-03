@@ -1,30 +1,30 @@
-"""Multi-card soak supervisor: run a long sweep on every connected card at once.
+"""Multi-card soak supervisor: run a long soak on every connected card at once.
 
-Discovers every supported card on the bus and runs one ``sweep.py`` subprocess per physical
+Discovers every supported card on the bus and runs one ``soak.py`` subprocess per physical
 card, each targeting its exact ``--instance BUS:ADDR`` (the only way to tell two identical
 VID:PIDs apart) and running a ``--longrun-min`` degradation soak.
 
 **Bring-ups are serialized; soaks run concurrently.** A cold-boot (FW upload + MAC/BB/RF
 config) is the fragile part: two overlapping on the bus intermittently collide (an mt76 FW
 upload times out, a Realtek card throws libusb ENOENT mid-config). So the supervisor brings up
-ONE card at a time (it waits for sweep to touch a bring-up signal file before starting the
+ONE card at a time (it waits for soak to touch a bring-up signal file before starting the
 next) and only then lets the soaks overlap. A cold-boot that dies before the signal is retried
 (``--retries``). The soak-time bus contention that follows is real and intended: that's the
 multi-card load this tool exists to baseline.
 
 One process per card means one sink per card, so each card's active-BSSID soak stays clean and
 one card's RX-death or USB drop can't kill the others. Each subprocess writes its own report
-under ``scripts/diag/reports/``; this supervisor tees each child's console to
+under ``scripts/rx/reports/``; this supervisor tees each child's console to
 ``reports/soak_<slug>_<bus>-<addr>.log`` and prints each card's report path + exit code at the end.
 
 Run::
 
-    uv run python scripts/diag/soak_all.py                 # 30-min soak, every card
-    uv run python scripts/diag/soak_all.py --minutes 60
-    uv run python scripts/diag/soak_all.py --card 8812     # only cards matching a substring
-    uv run python scripts/diag/soak_all.py --list          # show what would run, then exit
+    uv run python scripts/rx/soak_all.py                 # 30-min soak, every card
+    uv run python scripts/rx/soak_all.py --minutes 60
+    uv run python scripts/rx/soak_all.py --card 8812     # only cards matching a substring
+    uv run python scripts/rx/soak_all.py --list          # show what would run, then exit
 
-Any flag this supervisor does not recognise is forwarded verbatim to every ``sweep.py`` child
+Any flag this supervisor does not recognise is forwarded verbatim to every ``soak.py`` child
 (e.g. ``--skip-baseline``, ``--bucket-sec 30``, ``--death-timeout-sec 0``).
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ sys.path.insert(0, str(_HERE.parent.parent / "src"))
 
 from wifit3.wlan.discovery import find_devices  # noqa: E402
 
-SWEEP = _HERE / "sweep.py"
+SOAK = _HERE / "soak.py"
 REPORTS_DIR = _HERE / "reports"
 _REPORT_LINE = re.compile(r"\[\+\] Report:\s*(.+)$")
 _RETRY_SETTLE = 3.0   # seconds to let a card recover before re-attempting a failed bring-up
@@ -53,10 +53,10 @@ def _slug(text: str) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Launch a long sweep soak on every connected card, serializing bring-ups.",
+        description="Launch a long soak on every connected card, serializing bring-ups.",
     )
     p.add_argument("--minutes", type=float, default=30.0,
-                   help="Soak duration per card (forwarded as sweep's --longrun-min). Default: 30.")
+                   help="Soak duration per card (forwarded as soak's --longrun-min). Default: 30.")
     p.add_argument("--card", default="",
                    help="Only soak cards whose description contains this substring (default: all).")
     p.add_argument("--retries", type=int, default=2,
@@ -71,7 +71,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--list", action="store_true",
                    help="Print the cards that would be soaked, then exit.")
     p.add_argument("--dry-run", action="store_true",
-                   help="Print each sweep command without launching it.")
+                   help="Print each soak command without launching it.")
     return p
 
 
@@ -88,8 +88,8 @@ def _paths(d) -> tuple[Path, Path]:
     return REPORTS_DIR / f"soak_{stem}.log", REPORTS_DIR / f".bringup_{stem}"
 
 
-def _sweep_cmd(d, extra, minutes: float, signal_path: Path) -> list[str]:
-    return [sys.executable, str(SWEEP), "--instance", f"{d.bus}:{d.address}",
+def _soak_cmd(d, extra, minutes: float, signal_path: Path) -> list[str]:
+    return [sys.executable, str(SOAK), "--instance", f"{d.bus}:{d.address}",
             "--longrun-min", str(minutes), "--bringup-signal", str(signal_path), *extra]
 
 
@@ -103,7 +103,7 @@ def _kill(proc) -> None:
 
 
 def _await_bringup(proc, signal_path: Path, timeout: float) -> bool:
-    """Block until sweep touches ``signal_path`` (bring-up done -> True) or the process exits /
+    """Block until soak touches ``signal_path`` (bring-up done -> True) or the process exits /
     times out (failed -> False)."""
     deadline = time.monotonic() + timeout
     while True:
@@ -117,7 +117,7 @@ def _await_bringup(proc, signal_path: Path, timeout: float) -> bool:
 
 
 def _bring_up(d, extra, opts):
-    """Serialized launch + retry. Starts d's sweep and waits for its bring-up signal, so the NEXT
+    """Serialized launch + retry. Starts d's soak and waits for its bring-up signal, so the NEXT
     card cold-boots alone on the bus. A cold-boot that dies before the signal (the RTL8188EUS
     intermittent ENOENT, an mt76 FW-upload timeout) is relaunched up to ``opts.retries`` times.
     Returns the running (d, proc, log, log_path) job once soaking, or None if every attempt failed."""
@@ -128,7 +128,7 @@ def _bring_up(d, extra, opts):
               f"(attempt {attempt + 1}/{opts.retries + 1})...", file=sys.stderr)
         signal_path.unlink(missing_ok=True)   # clear any stale signal from a prior attempt
         log = log_path.open("w", encoding="utf-8")
-        proc = subprocess.Popen(_sweep_cmd(d, extra, opts.minutes, signal_path),
+        proc = subprocess.Popen(_soak_cmd(d, extra, opts.minutes, signal_path),
                                 stdout=log, stderr=subprocess.STDOUT)
         if _await_bringup(proc, signal_path, opts.bringup_timeout):
             signal_path.unlink(missing_ok=True)
@@ -163,7 +163,7 @@ def main() -> int:
     if known.dry_run:
         for d in devs:
             _log, signal_path = _paths(d)
-            print(f"[dry-run] {' '.join(_sweep_cmd(d, extra, known.minutes, signal_path))}",
+            print(f"[dry-run] {' '.join(_soak_cmd(d, extra, known.minutes, signal_path))}",
                   file=sys.stderr)
         return 0
 
@@ -211,7 +211,7 @@ def main() -> int:
 
 
 def _find_report(log_path: Path) -> str | None:
-    """The report path a sweep child printed (``[+] Report: ...``), read back from its log."""
+    """The report path a soak child printed (``[+] Report: ...``), read back from its log."""
     try:
         for line in reversed(log_path.read_text(encoding="utf-8", errors="replace").splitlines()):
             m = _REPORT_LINE.search(line)

@@ -16,9 +16,9 @@ AP was heard best (most beacons), unless you pin one with ``--bssid``. That
 answers the portable question ("what's the highest beacons/sec this card
 can hear here?") instead of an inflated all-APs sum.
 
-    uv run python scripts/diag/beacon_watch.py
-    uv run python scripts/diag/beacon_watch.py --bssid 11:22:33:44:55:66
-    uv run python scripts/diag/beacon_watch.py --pcap captures_x/capture-1_logs/airodump-fixed-ch1.cap
+    uv run python scripts/rx/beacon_watch.py
+    uv run python scripts/rx/beacon_watch.py --bssid 11:22:33:44:55:66
+    uv run python scripts/rx/beacon_watch.py --pcap captures_x/capture-1_logs/airodump-fixed-ch1.cap
 
 Writes nothing to disk. BSSIDs are runtime args only. Never hardcode one.
 """

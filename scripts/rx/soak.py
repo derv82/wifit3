@@ -1,19 +1,19 @@
-"""Diagnostic sweep: thin CLI over the probe registry.
+"""Diagnostic soak: thin CLI over the probe registry.
 
 Discovers a connected card, brings it up, runs every enabled probe in
 ``probes.ALL_PROBES`` order, and writes a Markdown report + sibling
-CSV under ``scripts/diag/reports/``.
+CSV under ``scripts/rx/reports/``.
 
 Run::
 
-    uv run python scripts/diag/sweep.py
-    uv run python scripts/diag/sweep.py --list-probes
-    uv run python scripts/diag/sweep.py --skip-baseline --longrun-min 30
-    uv run python scripts/diag/sweep.py --duration-multiplier 3
+    uv run python scripts/rx/soak.py
+    uv run python scripts/rx/soak.py --list-probes
+    uv run python scripts/rx/soak.py --skip-baseline --longrun-min 30
+    uv run python scripts/rx/soak.py --duration-multiplier 3
 
 The probe registry (``probes/__init__.py``) is the source of truth for
 what runs. Each probe owns its own CLI flags, verdict/report rendering,
-and CSV section; sweep.py just orchestrates.
+and CSV section; soak.py just orchestrates.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from pathlib import Path
 # Add src/ to sys.path so we can `import wifit3.*` without an editable
 # install. AND make the parent of `probes/` importable so `from probes
 # import ...` resolves; Python auto-adds the script's own dir to
-# sys.path[0] when running ``python scripts/diag/sweep.py``, so this
+# sys.path[0] when running ``python scripts/rx/soak.py``, so this
 # only matters for unusual invocations.
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
@@ -41,7 +41,7 @@ from report import write_csv, write_markdown  # noqa: E402
 from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
 from wifit3.wlan.array import WlanArray  # noqa: E402
 
-logger = logging.getLogger("diag.sweep")
+logger = logging.getLogger("rx.soak")
 
 REPORTS_DIR = _HERE / "reports"
 
@@ -54,7 +54,7 @@ def _chipset_slug(iface) -> str:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Wifit3 diagnostic sweep: runs every enabled probe in "
+            "Wifit3 diagnostic soak: runs every enabled probe in "
             "probes.ALL_PROBES against the first connected card and "
             "writes a Markdown report + CSV."
         ),
@@ -87,7 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--bringup-signal", default="",
-        help="internal: soak_all passes a path here; sweep touches it once bring-up completes, "
+        help="internal: soak_all passes a path here; soak touches it once bring-up completes, "
         "so the supervisor can serialize cold-boots. Ignored when empty.",
     )
     # Every probe contributes:

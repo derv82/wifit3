@@ -132,7 +132,7 @@ cross-reference.
 ## Scripts
 
 - `extract_mt7662_fw.py` — splits the bulk-OUT FW chunks out of the cold-boot pcap into `assets/`.
-- `scripts/diag/sweep.py` — multi-channel RX soak / longrun stress (used for the 30-min dual-band run).
+- `scripts/rx/soak.py` — multi-channel RX soak / longrun stress (used for the 30-min dual-band run).
 - `verify_pcap.py` — offline cold-boot byte gate against `captures_mt76x2u/capture-1.pcap`.
 
 ## Debug log

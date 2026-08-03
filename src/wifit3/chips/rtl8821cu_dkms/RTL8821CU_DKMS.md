@@ -103,7 +103,7 @@ match the vendor C, so grep the bundle's `driver-source/` to cross-reference.
 ## Scripts
 
 - `verify_pcap.py` — the cold-boot byte gate (PASS; excepts the skipped dc_cancellation block).
-- `scripts/diag/beacon_watch.py` (+ `beacon_watch_usbcap.py`) — live beacons/s vs the kernel baseline.
+- `scripts/rx/beacon_watch.py` (+ `beacon_watch_usbcap.py`) — live beacons/s vs the kernel baseline.
 - `bringup_hop.py` — continuous dual-band RX-health check, GOOD/DEAD per launch.
 - `dc_ab.py` / `dc_steps.py` — the A/B harnesses that pinned the dc_cancellation ck320 bug; kept for re-validation.
 

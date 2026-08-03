@@ -1,6 +1,6 @@
 """Probe protocol + shared helpers used by every diagnostic probe.
 
-The sweep harness orchestrates probes in three phases:
+The soak harness orchestrates probes in three phases:
 
 1. **attach**: every enabled probe gets a chance to register rx
    callbacks or stash setup state. Runs before any active probe does
@@ -76,7 +76,7 @@ class Probe(Protocol):
     name: str
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
-        """Register probe-specific CLI flags. sweep.py adds the
+        """Register probe-specific CLI flags. soak.py adds the
         ``--skip-<name>`` flag itself; probes only add their own."""
         ...
 

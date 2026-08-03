@@ -14,13 +14,16 @@ scripts/
 │                shared replay engines (rtw88 / rt2x00 / mt76usb) + pcap_slicer, peek_frame, usb_speed.
 ├─ chips/        One directory per chipset. Each has its verify_pcap.py recipe, test_hw.py live
 │                bring-up, and any firmware/table extractors + per-chip debug probes.
-├─ diag/         Hardware measurement + health harness: sweep.py soak, beacon_watch{,_usbcap}.py
-│                RX A/B, and the baseline_* kernel-parity trio.
+├─ baseline/     wifit3 vs the Linux kernel driver on the same card: baseline_{linux,wifit3}.py
+│                collect a rollup, baseline_diff.py compares. Docs: baseline/BASELINING.md.
+├─ rx/           This card's own RX health: soak.py (long hop/soak), beacon_watch{,_usbcap}.py
+│                (quick beacon count), + the probes/ soak drives.
 ├─ ack/          auto-ACK / ACK-retry bench probes. The model is written up in docs/ACKS.md.
 ├─ wps/          WPS PIN/PBC hardware ground-truth probes + a reliability lab.
 ├─ wep/          wep_lab.py: WEP TX-throughput tester.
 ├─ ui/           Rendering helpers: render_cardart.py (.ans card art -> PNG), wiffy_preview.py.
 ├─ generators/   Generators that (re)write source under src/ (e.g. the WPS OUI table).
+├─ dev.py        Shared helpers any script imports (currently the card picker).
 └─ release.py    Bump __version__, commit, tag; pushing the vX.Y.Z tag builds + publishes.
 ```
 

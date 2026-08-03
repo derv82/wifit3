@@ -27,7 +27,7 @@ def write_markdown(
 ) -> None:
     chipset = _chipset_slug(iface)
     lines: list[str] = []
-    lines.append(f"# Diagnostic sweep: {chipset}")
+    lines.append(f"# Diagnostic soak: {chipset}")
     lines.append("")
     lines.append(f"- **Device**: {iface.description}")
     lines.append(f"- **Driver**: {type(iface.driver).__name__}")

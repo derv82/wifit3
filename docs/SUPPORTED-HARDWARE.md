@@ -430,7 +430,7 @@ validate the chip.
 
 ## Stress soak
 
-A **30-minute** sustained-hop soak: `scripts/diag/sweep.py --skip-baseline --longrun-min 30`,
+A **30-minute** sustained-hop soak: `scripts/rx/soak.py --skip-baseline --longrun-min 30`,
 hopping all channels. ✅ = no degradation trend across the 60 s buckets *and* post-soak attacks pass.
 
 *Why 30 min, not an hour:* across a dozen cards a 1-hour bar is a full day of hands-on

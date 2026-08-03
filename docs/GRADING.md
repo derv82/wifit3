@@ -64,7 +64,7 @@ top-level matrix is *not* touched until every card is done.
    the RX numbers (beacon rate, breadth, channel tune, RSSI).
 4. **TX attacks** (user runs live TX): Deauth, PMKID, WPS PBC, WEP (2.4 GHz). On 5 GHz: Deauth,
    PMKID, WPS PBC (WEP skipped: no 5 GHz WEP target). Record sustained IVs/s from the WEP crack.
-5. **Soak** — 20-min sustained hop (`sweep.py --skip-baseline --longrun-min 20`); flat = pass.
+5. **Soak** — 20-min sustained hop (`soak.py --skip-baseline --longrun-min 20`); flat = pass.
    Deferrable: it's the last RX datapoint, so grade the rest first and backfill (grade
    provisional-on-soak until it lands).
 
