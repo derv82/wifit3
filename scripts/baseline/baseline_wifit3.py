@@ -21,7 +21,7 @@ sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
 from shared import Health, add_reference_args, load_reference_aps, ref_bssids
-from dev import pick_interface
+from dev import select_device
 from baseline_diff import diff
 
 from wifit3.wlan.discovery import build_interfaces, close_interfaces
@@ -37,7 +37,7 @@ async def run(args) -> int:
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
-    iface = pick_interface(ifaces, args.card)
+    iface = select_device(ifaces, args.card)
     if iface is None:
         await close_interfaces(ifaces)
         return 1

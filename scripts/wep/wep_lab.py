@@ -36,7 +36,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
-from dev import pick_interface
+from dev import select_device
 from wifit3.wlan.discovery import build_interfaces, close_interfaces
 from wifit3.dot11.auth_assoc import auth_req, assoc_req
 from wifit3.dot11.wep.crypto import arp_request_plaintext, wep_encrypt
@@ -400,7 +400,7 @@ async def main() -> int:
 
     print("[*] Discovering interfaces...")
     ifaces = build_interfaces()
-    iface = pick_interface(ifaces, args.card)
+    iface = select_device(ifaces, args.card)
     if iface is None:
         await close_interfaces(ifaces)
         return 1

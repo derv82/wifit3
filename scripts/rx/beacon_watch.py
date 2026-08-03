@@ -37,7 +37,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
-from dev import pick_interface
+from dev import select_device
 
 from wifit3.wlan.discovery import build_interfaces, close_interfaces
 
@@ -183,7 +183,7 @@ async def run_live(args) -> int:
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
-    iface = pick_interface(ifaces, getattr(args, "card", ""))
+    iface = select_device(ifaces, getattr(args, "card", ""))
     if iface is None:
         await close_interfaces(ifaces)
         return 1

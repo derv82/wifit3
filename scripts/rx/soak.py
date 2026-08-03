@@ -34,7 +34,7 @@ sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
-from dev import pick_interface
+from dev import select_device
 from probes import ALL_PROBES
 from report import write_csv, write_markdown
 
@@ -144,7 +144,7 @@ async def main() -> int:
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
-    iface = pick_interface(ifaces, args.card, instance=args.instance)
+    iface = select_device(ifaces, args.card, instance=args.instance)
     if iface is None:
         await close_interfaces(ifaces)
         return 1
