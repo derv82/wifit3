@@ -19,12 +19,24 @@ def git(*args):
     return r.stdout.strip()
 
 
+USAGE = "usage: release.py [major|minor|patch] [--push]"
+
+
 def main():
     args = sys.argv[1:]
+    if "-h" in args or "--help" in args:
+        print(USAGE)
+        return
+    unknown = [a for a in args if a.startswith("-") and a != "--push"]
+    if unknown:
+        sys.exit(f"unknown flag(s): {' '.join(unknown)}\n{USAGE}")
     push = "--push" in args
-    part = next((a for a in args if not a.startswith("-")), "patch")
+    positional = [a for a in args if not a.startswith("-")]
+    if len(positional) > 1:
+        sys.exit(f"one version part at a time\n{USAGE}")
+    part = positional[0] if positional else "patch"
     if part not in IDX:
-        sys.exit(f"usage: release.py [major|minor|patch] [--push]  (got {part!r})")
+        sys.exit(f"{USAGE}  (got {part!r})")
 
     if git("status", "--porcelain"):
         sys.exit("working tree dirty: commit or stash first")
