@@ -25,8 +25,6 @@ class _Host(App):
 
 @pytest_asyncio.fixture(loop_scope="module", scope="module")
 async def layout_host():
-    """One 120x40 boot shared by the target-less static-layout tests (geometry stays
-    per-size below: run_test's size can't change on a live screen)."""
     app = _Host()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0)

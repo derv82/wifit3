@@ -124,8 +124,6 @@ def _wpa2_target(bssid="aa:bb:cc:dd:ee:01", ssid="TESTNET", ch=1):
 
 @pytest_asyncio.fixture(loop_scope="module", scope="module")
 async def focus_host():
-    """One shared Focus boot; the state-only tests re-point it via _enter_target rather
-    than booting their own _Host (the pattern from test_focus_v2_hotkeys)."""
     iface, array, ap = _wpa2_target()
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -135,7 +133,6 @@ async def focus_host():
 
 
 async def _rebind(host, array, ap):
-    """Re-point the shared screen at a fresh target and let it re-sync."""
     app, focus, pilot = host
     app.array, app.target_ap = array, ap
     await focus._enter_target()

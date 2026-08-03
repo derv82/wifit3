@@ -5,9 +5,6 @@ must keep the cursor (highlight) on the same row WITHOUT moving the viewport,
 while the stock move_cursor still scrolls the cursor into view. These are the two
 halves of the "don't snap the viewport on auto-sort, but don't let the selection
 silently drift either" fix.
-
-One 50-row table is booted once; each test resets it to the top first (the cost here
-is the boot, and these are pure method calls, no clicks).
 """
 import pytest
 import pytest_asyncio
@@ -40,7 +37,6 @@ async def table_host():
 
 
 async def _reset(table, pilot):
-    """Return the shared table to its just-mounted state: top of the list, row 0, no suppression."""
     table._suppress_scroll = False
     table.move_cursor(row=0, animate=False)
     await pilot.pause(0)
@@ -77,5 +73,5 @@ async def test_pin_releases_suppress_flag_after_refresh(table_host):
     table, pilot = table_host
     await _reset(table, pilot)
     table.pin_cursor_row(40)
-    await pilot.pause()   # _release_scroll fires via call_after_refresh: must span a render, so idle-wait, not pause(0)
+    await pilot.pause()   # _release_scroll runs after a render (call_after_refresh); pause() waits for it
     assert table._suppress_scroll is False
