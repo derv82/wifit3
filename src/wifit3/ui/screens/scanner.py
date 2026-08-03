@@ -38,6 +38,13 @@ _FADE_STEPS = 10
 
 SORT_INTERVAL_S = 2.0  # Table sort delay
 
+# The 🥓 beacon counter increments ~10x/s per live AP. Stepping the *displayed*
+# value that fast rewrote every row every frame and pinned the compositor (the
+# dominant scanner CPU cost). Stepping it at most this often lets a steadily-
+# beaconing row hold still between steps, so its table line stops re-rendering.
+# The beacon-arrival flash still fires on the real count, so liveness is intact.
+BEACON_DISPLAY_INTERVAL_S = 1.0
+
 
 def _hex_rgb(h: str) -> tuple[int, int, int]:
     h = h.lstrip("#")
@@ -189,6 +196,8 @@ class ScannerView(Screen):
         # cell highlight.
         self._prev_beacons: Dict[str, int] = {}
         self._beacon_flash_until: Dict[str, float] = {}
+        # Throttled 🥓 count actually shown, per BSSID: (value, last-stepped-at).
+        self._beacon_shown: Dict[str, tuple[int, float]] = {}
         # Per-BSSID last render key (fade bucket + cell content).
         self._render_key: Dict[str, tuple] = {}
         self._fade_enabled: bool = True
@@ -341,7 +350,10 @@ class ScannerView(Screen):
             self._prev_beacons[ap.bssid] = ap.beacons
             flash_bacon = now < self._beacon_flash_until.get(ap.bssid, 0.0)
 
-            raw = self._build_cells(ap, n_cli, flash_bacon=flash_bacon)
+            shown_beacons = self._display_beacons(ap, now)
+            raw = self._build_cells(
+                ap, n_cli, flash_bacon=flash_bacon, beacons_display=shown_beacons
+            )
             # Render key = fade bucket + bg + pre-fade cell content.
             render_key = (factor, bg, _cells_key(raw))
 
@@ -393,6 +405,7 @@ class ScannerView(Screen):
             self.ap_cache.pop(bssid, None)
             self._prev_beacons.pop(bssid, None)
             self._beacon_flash_until.pop(bssid, None)
+            self._beacon_shown.pop(bssid, None)
             self._render_key.pop(bssid, None)
             try:
                 table.remove_row(bssid)
@@ -401,12 +414,25 @@ class ScannerView(Screen):
 
     # ----- Cell construction -------------------------------------------------
 
+    def _display_beacons(self, ap: AccessPoint, now: float) -> int:
+        """The 🥓 count to show: the real count, but stepped at most every
+        BEACON_DISPLAY_INTERVAL_S so a steadily-beaconing row holds still between
+        steps. Steps immediately if the count dropped (counter reset / new AP)."""
+        shown = self._beacon_shown.get(ap.bssid)
+        if (shown is None or (now - shown[1]) >= BEACON_DISPLAY_INTERVAL_S
+                or ap.beacons < shown[0]):
+            self._beacon_shown[ap.bssid] = (ap.beacons, now)
+            return ap.beacons
+        return shown[0]
+
     def _build_cells(
-        self, ap: AccessPoint, n_clients: int, flash_bacon: bool = False
+        self, ap: AccessPoint, n_clients: int, flash_bacon: bool = False,
+        beacons_display: Optional[int] = None,
     ) -> List[Text]:
         """Build the per-column full-color Text cells for one AP row."""
         fg = self._theme_fg
         bacon_style = f"{fg} bold" if flash_bacon else fg
+        beacons = ap.beacons if beacons_display is None else beacons_display
         if ap.wps:
             wps_cell = Text("WPS 🔒" if ap.wps_locked else "WPS", style=fg)
         else:
@@ -415,7 +441,7 @@ class ScannerView(Screen):
             Text(ap.bssid, style=fg),
             Text(str(ap.channel), justify="right", style=fg),
             Text(f"{ap.signal} dBm", justify="right", style=fg),
-            Text(str(ap.beacons), justify="right", style=bacon_style),
+            Text(str(beacons), justify="right", style=bacon_style),
             Text(str(n_clients) if n_clients else "", justify="right", style=fg),
             # style=fg gives the bare '→' between WPA3/WPA2 a fadeable base color.
             Text.from_markup(format_encryption_markup(ap, muted=fg), emoji=False, style=fg),
@@ -843,6 +869,7 @@ class ScannerView(Screen):
             self.ap_cache.pop(bssid, None)
             self._prev_beacons.pop(bssid, None)
             self._beacon_flash_until.pop(bssid, None)
+            self._beacon_shown.pop(bssid, None)
             self._render_key.pop(bssid, None)
             try:
                 table.remove_row(bssid)
