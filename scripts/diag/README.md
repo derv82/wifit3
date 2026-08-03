@@ -2,7 +2,7 @@
 
 Hardware measurement tooling: run one card, get numbers (unplug the rest). Feeds
 `docs/SUPPORTED-HARDWARE.md`; the grading process that reads these numbers is
-`docs/verification-methodology.md`. Reports and rollups carry live BSSIDs, so they stay gitignored.
+`docs/GRADING.md`. Reports and rollups carry live BSSIDs, so they stay gitignored.
 
 Two families, one shared helper:
 

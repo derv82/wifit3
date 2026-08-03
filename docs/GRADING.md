@@ -1,4 +1,4 @@
-# Verification methodology
+# Grading
 
 How each card in `SUPPORTED-HARDWARE.md` earns its row. That doc is **results only**: grades, per-card
 notes, the matrix. This doc is the **process** behind it: the columns, the grade rubric, the per-card

@@ -2,7 +2,7 @@
 
 Compare our userland driver against the Linux/Kali stack on the same card, back-to-back, so a
 difference is the driver or the RF, not the test tooling. Run on Kali. The grading that consumes
-these numbers is `docs/verification-methodology.md`.
+these numbers is `docs/GRADING.md`.
 
 ## Scripts
 - `baseline_wifit3.py` bring up our driver, sweep the channels, write `wifit3-<chip>.json`.
@@ -31,4 +31,4 @@ Each line reads `value | gap from Linux | gap from the best card so far`:
 - Channel tune: `N/N channels heard their own beacons | silent | cross-channel`.
 
 Per-channel numbers stay in the JSON; the terminal shows the rollup. "Best card" is just the max
-across the JSONs collected so far: no matrix or letter grades (that's verification-methodology.md).
+across the JSONs collected so far: no matrix or letter grades (that's GRADING.md).
