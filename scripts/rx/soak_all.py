@@ -39,7 +39,7 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 
-from wifit3.wlan.discovery import find_devices  # noqa: E402
+from wifit3.wlan.discovery import find_devices
 
 SOAK = _HERE / "soak.py"
 REPORTS_DIR = _HERE / "reports"

@@ -12,13 +12,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
-import usb.core          # noqa: E402
-import usb.util          # noqa: E402
-import libusb_package    # noqa: E402
+import usb.core
+import usb.util
+import libusb_package
 
-from wifit3.wlan.discovery import build_interfaces          # noqa: E402
-from wifit3.chips.rtl8922au import firmware                 # noqa: E402
-from wifit3.chips.rtl8922au.constants import (              # noqa: E402
+from wifit3.wlan.discovery import build_interfaces
+from wifit3.chips.rtl8922au import firmware
+from wifit3.chips.rtl8922au.constants import (
     ADDR_CAM_W1_LEN, ADDR_CAM_W2_VALID, ADDR_CAM_W9_SEC_ENT_MODE, ADDR_CAM_W12_BSSID_LEN,
     ADDR_CAM_W13_BSSID_VALID, ADDR_CAM_W13_BSSID_MASK, ADDR_CAM_ENT_SHORT_SIZE, BSSID_CAM_ENT_SIZE,
     RTW89_ADDR_CAM_SEC_NORMAL, RTW89_BSSID_MATCH_ALL, RTW89_NET_TYPE_NO_LINK,

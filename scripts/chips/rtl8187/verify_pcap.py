@@ -33,17 +33,17 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8187 import chan, mac, rfkill  # noqa: E402
-from wifit3.chips.rtl8187.constants import (  # noqa: E402
+import rtw88_pcap_replay as rp
+from wifit3.chips.rtl8187 import chan, mac, rfkill
+from wifit3.chips.rtl8187.constants import (
     REG_GPIO0,
     REG_RX_CONF,
     REG_TALLY_CNT,
     REG_TX_CONF,
 )
-from wifit3.chips.rtl8187.probe import probe  # noqa: E402
-from wifit3.chips.rtl8187.rtl8225 import build_rf_init, rtl8225_chan  # noqa: E402
-from wifit3.chips.rtl8187.transport import RTL8187Transport  # noqa: E402
+from wifit3.chips.rtl8187.probe import probe
+from wifit3.chips.rtl8187.rtl8225 import build_rf_init, rtl8225_chan
+from wifit3.chips.rtl8187.transport import RTL8187Transport
 
 CAP_DIR = REPO / "driver_captures" / "captures_rtl8187_2"
 

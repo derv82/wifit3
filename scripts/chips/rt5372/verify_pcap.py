@@ -40,7 +40,7 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rt2x00_pcap_replay as rp  # noqa: E402
+import rt2x00_pcap_replay as rp
 
 CAP_DIR = REPO / "driver_captures" / "captures_rt2800usb_rt5372"
 MAC_CSR0 = 0x1000          # silicon id + revision; the first vendor op of the probe
@@ -50,8 +50,8 @@ MAC_CSR0 = 0x1000          # silicon id + revision; the first vendor op of the p
 # milestone in _walk_init starts reproducing wire and the frontier advances.
 _IMPORT_ERR = None
 try:
-    from wifit3.chips.rt5372.transport import RT5372Transport  # noqa: E402
-    from wifit3.chips.rt5372 import (  # noqa: E402
+    from wifit3.chips.rt5372.transport import RT5372Transport
+    from wifit3.chips.rt5372 import (
         bbp, chan, constants as C, eeprom, firmware, mac, monitor, rfcsr)
 except ImportError as e:  # driver not scaffolded yet
     _IMPORT_ERR = e

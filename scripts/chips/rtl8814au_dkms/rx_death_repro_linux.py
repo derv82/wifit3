@@ -28,10 +28,10 @@ _HERE = Path(__file__).resolve()
 sys.path.insert(0, str(_HERE.parents[3] / "src"))
 
 # Reuse the baseline_linux monitor + radiotap-pcap helpers.
-sys.path.insert(0, str(_HERE.parents[2] / "diag"))
-import baseline_linux as _bl  # noqa: E402
+sys.path.insert(0, str(_HERE.parents[2] / "baseline"))
+import baseline_linux as _bl
 
-from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser
 
 _DEVNULL = subprocess.DEVNULL
 

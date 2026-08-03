@@ -28,8 +28,8 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8812au_dkms import (  # noqa: E402
+import rtw88_pcap_replay as rp
+from wifit3.chips.rtl8812au_dkms import (
     bb, chan, dig, efuse, firmware, mac, monitor, rf, txpower,
 )
 

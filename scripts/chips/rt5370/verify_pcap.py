@@ -36,15 +36,15 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rt2x00_pcap_replay as rp  # noqa: E402
+import rt2x00_pcap_replay as rp
 
 CAP_DIR = REPO / "driver_captures" / "captures_rt2800usb_rt5370"
 MAC_CSR0 = 0x1000          # silicon id + revision; the first vendor op of the probe
 
 _IMPORT_ERR = None
 try:
-    from wifit3.chips.rt5370.transport import RT5370Transport  # noqa: E402
-    from wifit3.chips.rt5370 import (  # noqa: E402
+    from wifit3.chips.rt5370.transport import RT5370Transport
+    from wifit3.chips.rt5370 import (
         bbp, chan, constants as C, eeprom, firmware, mac, monitor, rfcsr)
 except ImportError as e:  # driver not scaffolded yet
     _IMPORT_ERR = e

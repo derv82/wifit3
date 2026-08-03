@@ -20,11 +20,11 @@ sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
-from shared import Health, add_reference_args, load_reference_aps, ref_bssids  # noqa: E402
-from dev import pick_interface  # noqa: E402
-from baseline_diff import diff  # noqa: E402
+from shared import Health, add_reference_args, load_reference_aps, ref_bssids
+from dev import pick_interface
+from baseline_diff import diff
 
-from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
+from wifit3.wlan.discovery import build_interfaces, close_interfaces
 
 
 def _chip(iface) -> str:

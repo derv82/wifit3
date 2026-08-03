@@ -42,14 +42,14 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rt2x00_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rt2800usb import chan as _chan  # noqa: E402
-from wifit3.chips.rt2800usb import bbp as _bbp  # noqa: E402
-from wifit3.chips.rt2800usb import firmware as _fw  # noqa: E402
-from wifit3.chips.rt2800usb import mac as _mac  # noqa: E402
-from wifit3.chips.rt2800usb import reg_init as _reg  # noqa: E402
-from wifit3.chips.rt2800usb import rfcsr as _rfcsr  # noqa: E402
-from wifit3.chips.rt2800usb.constants import (  # noqa: E402
+import rt2x00_pcap_replay as rp
+from wifit3.chips.rt2800usb import chan as _chan
+from wifit3.chips.rt2800usb import bbp as _bbp
+from wifit3.chips.rt2800usb import firmware as _fw
+from wifit3.chips.rt2800usb import mac as _mac
+from wifit3.chips.rt2800usb import reg_init as _reg
+from wifit3.chips.rt2800usb import rfcsr as _rfcsr
+from wifit3.chips.rt2800usb.constants import (
     BBP_CSR_CFG,
     CH_IDLE_STA,
     FIF_ALLMULTI,
@@ -77,18 +77,18 @@ from wifit3.chips.rt2800usb.constants import (  # noqa: E402
     TXWI_W1_PACKETID_ENTRY,
     TXWI_W1_PACKETID_QUEUE,
 )
-from wifit3.chips.rt2800usb.link_tuner import (  # noqa: E402
+from wifit3.chips.rt2800usb.link_tuner import (
     get_default_vgc,
     set_vgc,
 )
-from wifit3.chips.rt2800usb.eeprom import (  # noqa: E402
+from wifit3.chips.rt2800usb.eeprom import (
     EEPROM_OFFSET_FREQ,
     parse_eeprom,
     read_eeprom_efuse,
 )
-from wifit3.chips.rt2800usb.firmware import load_firmware_blob  # noqa: E402
-from wifit3.chips.rt2800usb.transport import RT2800USBTransport  # noqa: E402
-from wifit3.chips.rt2800usb.tx import (  # noqa: E402
+from wifit3.chips.rt2800usb.firmware import load_firmware_blob
+from wifit3.chips.rt2800usb.transport import RT2800USBTransport
+from wifit3.chips.rt2800usb.tx import (
     build_tx_descriptors,
     txwi_size_for_silicon,
 )

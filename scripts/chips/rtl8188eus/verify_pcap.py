@@ -33,9 +33,9 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8188eus import firmware, iqk, mac, phy  # noqa: E402
-from wifit3.chips.rtl8188eus.constants import (  # noqa: E402
+import rtw88_pcap_replay as rp
+from wifit3.chips.rtl8188eus import firmware, iqk, mac, phy
+from wifit3.chips.rtl8188eus.constants import (
     FW_HEADER_SIZE,
     REG_AFE_XTAL_CTRL,
     REG_FPGA0_XCD_SWITCH_CTRL,
@@ -43,7 +43,7 @@ from wifit3.chips.rtl8188eus.constants import (  # noqa: E402
     REG_OFDM1_LSTF,
     XTAL0_SHIFT,
 )
-from wifit3.chips.rtl8188eus.efuse import EfuseDefaults  # noqa: E402
+from wifit3.chips.rtl8188eus.efuse import EfuseDefaults
 
 CAP_DIR = REPO / "driver_captures" / "captures_rtl8xxxu"
 _WHOLE = (1, 10 ** 9)

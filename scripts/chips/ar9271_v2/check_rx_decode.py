@@ -19,9 +19,9 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "chips" / "ar9271_v2"))
 
-import ar9271_pcap_replay as rp  # noqa: E402
-from wifit3.chips.ar9271_v2 import rx_decode  # noqa: E402
-from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
+import ar9271_pcap_replay as rp
+from wifit3.chips.ar9271_v2 import rx_decode
+from wifit3.dot11.parser import WlanFrameParser
 
 CAP_DIR = REPO / "driver_captures" / "captures_ath9k_htc_newddevice"
 

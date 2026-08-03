@@ -21,9 +21,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 
-from wifit3.chips.rtl8922au.driver import RTL8922AUDriver  # noqa: E402
-from wifit3.chips.rtl8922au import chan as chanmod  # noqa: E402
-from wifit3.chips.rtl8922au.rx import iter_bulk_frames  # noqa: E402
+from wifit3.chips.rtl8922au.driver import RTL8922AUDriver
+from wifit3.chips.rtl8922au import chan as chanmod
+from wifit3.chips.rtl8922au.rx import iter_bulk_frames
 
 DEFAULT_CAP = "driver_captures/captures_rtw89_8922au_git/capture-1.pcap"
 RTW89_USB_VENQT = 0x05

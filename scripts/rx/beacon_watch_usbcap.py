@@ -35,7 +35,7 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 
-from beacon_watch import summarize  # noqa: E402  (shared histogram renderer)
+from beacon_watch import summarize  # (shared histogram renderer)
 
 # One beacon per 102.4 ms beacon interval (100 TU), the single-AP wire ceiling.
 BEACON_CEILING = 9.77

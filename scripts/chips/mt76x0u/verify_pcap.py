@@ -38,13 +38,13 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import mt76usb_pcap_replay as rp  # noqa: E402
+import mt76usb_pcap_replay as rp
 
-from wifit3.chips.mt76x0u import tx as mt_tx  # noqa: E402
-from wifit3.chips.mt76x0u.constants import Q_SELECT  # noqa: E402
-from wifit3.chips.mt76x0u.eeprom import read_efuse_full  # noqa: E402
-from wifit3.chips.mt76x0u.firmware import FirmwareUploader  # noqa: E402
-from wifit3.chips.mt76x0u.mac import (  # noqa: E402
+from wifit3.chips.mt76x0u import tx as mt_tx
+from wifit3.chips.mt76x0u.constants import Q_SELECT
+from wifit3.chips.mt76x0u.eeprom import read_efuse_full
+from wifit3.chips.mt76x0u.firmware import FirmwareUploader
+from wifit3.chips.mt76x0u.mac import (
     clear_shared_keys,
     clear_wcids,
     init_mac_registers,
@@ -52,9 +52,9 @@ from wifit3.chips.mt76x0u.mac import (  # noqa: E402
     wait_for_txrx_idle,
     wait_for_wpdma,
 )
-from wifit3.chips.mt76x0u.mcu import MCUChannel  # noqa: E402
-from wifit3.chips.mt76x0u.phy import init_bbp, phy_init  # noqa: E402
-from wifit3.chips.mt76x0u.transport import MT76x0UTransport  # noqa: E402
+from wifit3.chips.mt76x0u.mcu import MCUChannel
+from wifit3.chips.mt76x0u.phy import init_bbp, phy_init
+from wifit3.chips.mt76x0u.transport import MT76x0UTransport
 
 DEFAULT_CAP = "driver_captures/captures_mt76x0u_2/capture-1.pcap"
 ASSETS = REPO / "src" / "wifit3" / "chips" / "mt76x0u" / "assets"

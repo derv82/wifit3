@@ -34,12 +34,12 @@ sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
-from dev import pick_interface  # noqa: E402
-from probes import ALL_PROBES  # noqa: E402
-from report import write_csv, write_markdown  # noqa: E402
+from dev import pick_interface
+from probes import ALL_PROBES
+from report import write_csv, write_markdown
 
-from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
-from wifit3.wlan.array import WlanArray  # noqa: E402
+from wifit3.wlan.discovery import build_interfaces, close_interfaces
+from wifit3.wlan.array import WlanArray
 
 logger = logging.getLogger("rx.soak")
 

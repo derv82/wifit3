@@ -17,17 +17,17 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import struct  # noqa: E402
+import struct
 
-import mt76_verify_replay as E  # noqa: E402
-import wifit3.chips.mt7925au as mt_pkg  # noqa: E402
-from wifit3.chips.mt7925au import init as mt_init  # noqa: E402
-from wifit3.chips.mt7925au import mac as mt_mac  # noqa: E402
-from wifit3.chips.mt7925au import mcu as mt_mcu  # noqa: E402
-from wifit3.chips.mt7925au import rx as mt_rx  # noqa: E402
-from wifit3.chips.mt7925au import tx as mt_tx  # noqa: E402
-from wifit3.chips.mt7925au import txpower as mt_txpower  # noqa: E402
-from wifit3.chips.mt7925au.constants import (  # noqa: E402
+import mt76_verify_replay as E
+import wifit3.chips.mt7925au as mt_pkg
+from wifit3.chips.mt7925au import init as mt_init
+from wifit3.chips.mt7925au import mac as mt_mac
+from wifit3.chips.mt7925au import mcu as mt_mcu
+from wifit3.chips.mt7925au import rx as mt_rx
+from wifit3.chips.mt7925au import tx as mt_tx
+from wifit3.chips.mt7925au import txpower as mt_txpower
+from wifit3.chips.mt7925au.constants import (
     MT7925_RXD_SEQ_OFF, MT_MIB_SDR9, MT_MIB_SDR3, MT_TX_AGG_CNT, MT_WTBL_UPDATE,
     MT792x_WTBL_RESERVED, EP_OUT_MCU, EP_OUT_HCCA, MT_SDIO_TXD_SIZE, SDIO_HDR_SIZE,
     MCU_UNI_CMD_DEV_INFO_UPDATE, MCU_UNI_CMD_BSS_INFO_UPDATE, MCU_UNI_CMD_SNIFFER,
@@ -36,8 +36,8 @@ from wifit3.chips.mt7925au.constants import (  # noqa: E402
     UNI_BAND_CONFIG_SET_MAC80211_RX_FILTER, UNI_BAND_CONFIG_RTS_THRESHOLD,
     UNI_BSS_INFO_BASIC, UNI_BSS_INFO_PM_DISABLE,
 )
-from wifit3.chips.mt7925au.firmware import MT7925AUFirmwareLoader  # noqa: E402
-from wifit3.chips.mt7925au.transport import MT7925AUTransport  # noqa: E402
+from wifit3.chips.mt7925au.firmware import MT7925AUFirmwareLoader
+from wifit3.chips.mt7925au.transport import MT7925AUTransport
 
 # mac_work burst first-read markers (band 0).
 _SURVEY_FIRST = MT_MIB_SDR9(0)      # 0x820ed02c

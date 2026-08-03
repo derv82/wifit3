@@ -37,9 +37,9 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
-from dev import pick_interface  # noqa: E402
+from dev import pick_interface
 
-from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
+from wifit3.wlan.discovery import build_interfaces, close_interfaces
 
 _BAR_MAX = 40  # cap the bar so a busy second can't wrap the terminal
 

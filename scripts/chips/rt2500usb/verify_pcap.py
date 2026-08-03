@@ -33,9 +33,9 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rt2x00_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rt2500usb import bbp, chan, mac, monitor  # noqa: E402
-from wifit3.chips.rt2500usb.constants import (  # noqa: E402
+import rt2x00_pcap_replay as rp
+from wifit3.chips.rt2500usb import bbp, chan, mac, monitor
+from wifit3.chips.rt2500usb.constants import (
     EEPROM_ANTENNA,
     EEPROM_ANTENNA_RF_TYPE,
     MAC_CSR0,
@@ -47,8 +47,8 @@ from wifit3.chips.rt2500usb.constants import (  # noqa: E402
     USB_EEPROM_READ,
     USB_MODE_TEST,
 )
-from wifit3.chips.rt2500usb.chan import RF_VALS_2525E, RF2525E_HALFBAND  # noqa: E402
-from wifit3.chips.rt2500usb.transport import RT2500USBTransport, get_field16  # noqa: E402
+from wifit3.chips.rt2500usb.chan import RF_VALS_2525E, RF2525E_HALFBAND
+from wifit3.chips.rt2500usb.transport import RT2500USBTransport, get_field16
 
 CAP_DIR = REPO / "driver_captures" / "captures_rt2500usb_2"
 

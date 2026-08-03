@@ -38,18 +38,18 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import mt76usb_pcap_replay as rp  # noqa: E402
+import mt76usb_pcap_replay as rp
 
-from wifit3.chips.mt76x2u import tx as mt_tx  # noqa: E402
-from wifit3.chips.mt76x2u.chan import (  # noqa: E402
+from wifit3.chips.mt76x2u import tx as mt_tx
+from wifit3.chips.mt76x2u.chan import (
     phy_channel_calibrate,
     set_channel_20mhz,
 )
-from wifit3.chips.mt76x2u.constants import (  # noqa: E402
+from wifit3.chips.mt76x2u.constants import (
     MT_ASIC_VERSION,
     MT_MCU_COM_REG0,
 )
-from wifit3.chips.mt76x2u.eeprom import (  # noqa: E402
+from wifit3.chips.mt76x2u.eeprom import (
     read_mac_address,
     read_nic_conf_0,
     read_power_info,
@@ -57,7 +57,7 @@ from wifit3.chips.mt76x2u.eeprom import (  # noqa: E402
     read_rx_high_gain_2g,
     read_rx_high_gain_5g,
 )
-from wifit3.chips.mt76x2u.mac import (  # noqa: E402
+from wifit3.chips.mt76x2u.mac import (
     init_beacon_config,
     mac_cc_reset,
     mac_reset,
@@ -65,22 +65,22 @@ from wifit3.chips.mt76x2u.mac import (  # noqa: E402
     mac_start,
     wait_for_txrx_idle,
 )
-from wifit3.chips.mt76x2u.mcu import McuChannel, mcu_init  # noqa: E402
-from wifit3.chips.mt76x2u.phy import (  # noqa: E402
+from wifit3.chips.mt76x2u.mcu import McuChannel, mcu_init
+from wifit3.chips.mt76x2u.phy import (
     Mt76x2CalState,
     mcu_load_cr,
     phy_set_rxpath,
     phy_set_txdac,
 )
-from wifit3.chips.mt76x2u.firmware import upload_firmware  # noqa: E402
-from wifit3.chips.mt76x2u.power import (  # noqa: E402
+from wifit3.chips.mt76x2u.firmware import upload_firmware
+from wifit3.chips.mt76x2u.power import (
     init_dma,
     power_on,
     reset_wlan,
     wait_for_mac,
     wait_for_wpdma_idle,
 )
-from wifit3.chips.mt76x2u.transport import MT76x2UTransport  # noqa: E402
+from wifit3.chips.mt76x2u.transport import MT76x2UTransport
 
 DEFAULT_CAP = "driver_captures/captures_mt76x2u_5g-injection/capture-1.pcap"
 

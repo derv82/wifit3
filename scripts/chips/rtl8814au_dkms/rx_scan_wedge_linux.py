@@ -27,10 +27,10 @@ from pathlib import Path
 _HERE = Path(__file__).resolve()
 sys.path.insert(0, str(_HERE.parents[3] / "src"))
 
-sys.path.insert(0, str(_HERE.parents[2] / "diag"))
-import baseline_linux as _bl  # noqa: E402
+sys.path.insert(0, str(_HERE.parents[2] / "baseline"))
+import baseline_linux as _bl
 
-from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser
 
 _DEVNULL = subprocess.DEVNULL
 _HOP5 = [157, 165, 149]      # non-DFS 5 GHz; end on 149 to match the userland repro's cross-from channel

@@ -19,16 +19,16 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 sys.path.insert(0, str(REPO / "scripts" / "chips" / "rtl8814au_dkms"))
 
-import libusb_package  # noqa: E402
-import usb.core  # noqa: E402
+import libusb_package
+import usb.core
 
-import rtw88_pcap_replay as rp  # noqa: E402
-import verify_pcap as vp  # noqa: E402
-import dump_tune_regs as dt  # noqa: E402
+import rtw88_pcap_replay as rp
+import verify_pcap as vp
+import dump_tune_regs as dt
 
-from wifit3.chips.rtl8814au_dkms import constants as C  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.rf import _rf_read  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.transport import Rtl8814auTransport  # noqa: E402
+from wifit3.chips.rtl8814au_dkms import constants as C
+from wifit3.chips.rtl8814au_dkms.rf import _rf_read
+from wifit3.chips.rtl8814au_dkms.transport import Rtl8814auTransport
 
 CAP_DIR = REPO / "driver_captures" / "captures_rtl8814au"
 LSSI = {0x0C90: "a", 0x0E90: "b", 0x1890: "c", 0x1A90: "d"}

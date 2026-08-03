@@ -36,11 +36,11 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
-from dev import pick_interface  # noqa: E402
-from wifit3.wlan.discovery import build_interfaces, close_interfaces  # noqa: E402
-from wifit3.dot11.auth_assoc import auth_req, assoc_req  # noqa: E402
-from wifit3.dot11.wep.crypto import arp_request_plaintext, wep_encrypt  # noqa: E402
-from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket  # noqa: E402
+from dev import pick_interface
+from wifit3.wlan.discovery import build_interfaces, close_interfaces
+from wifit3.dot11.auth_assoc import auth_req, assoc_req
+from wifit3.dot11.wep.crypto import arp_request_plaintext, wep_encrypt
+from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
 
 BROADCAST = b"\xff" * 6
 

@@ -49,7 +49,7 @@ from pathlib import Path
 # Add project src/ to path so we can import the shared wire_format module.
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
-from wifit3.chips.mt76x0u.wire_format import (  # noqa: E402
+from wifit3.chips.mt76x0u.wire_format import (
     fmt_fw_chunk,
     fmt_mcu_in,
     fmt_mcu_out,

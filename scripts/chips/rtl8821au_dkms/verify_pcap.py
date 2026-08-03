@@ -25,8 +25,8 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8821au_dkms import bb, chan, dig, efuse, firmware, mac, monitor, rf, txpower  # noqa: E402
+import rtw88_pcap_replay as rp
+from wifit3.chips.rtl8821au_dkms import bb, chan, dig, efuse, firmware, mac, monitor, rf, txpower
 
 CAP_DIR = REPO / "driver_captures" / "captures_rtl8821au"
 DEV_ADDR = {"capture-1": 39}      # lsusb devnum; capture-2/3 TBD

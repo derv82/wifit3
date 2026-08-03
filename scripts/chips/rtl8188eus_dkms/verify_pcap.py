@@ -34,13 +34,13 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8188eus_dkms import (  # noqa: E402
+import rtw88_pcap_replay as rp
+from wifit3.chips.rtl8188eus_dkms import (
     bb, chan, dig, dm, efuse, firmware, mac, monitor, powertrack, pwrseq, rf, sreset,
     txpower,
 )
-from wifit3.chips.rtl8188eus_dkms import constants as C  # noqa: E402
-from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL  # noqa: E402
+from wifit3.chips.rtl8188eus_dkms import constants as C
+from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL
 
 DEFAULT_CAP = REPO / "driver_captures" / "captures_8188eu" / "capture-1.pcap"
 

@@ -50,6 +50,11 @@ force-exclude = true
 [tool.ruff.format]
 exclude = ["**/*.py"]
 
+[tool.ruff.lint.per-file-ignores]
+# Scripts prepend sys.path (src/ + sibling helpers) before importing, so those imports sit
+# below the top of the file on purpose. Silence E402 here instead of a per-line # noqa on each.
+"scripts/**" = ["E402"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

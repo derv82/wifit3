@@ -34,10 +34,10 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8814au_dkms import monitor, watchdog  # noqa: E402
-from wifit3.chips.rtl8814au_dkms import constants as C  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver  # noqa: E402
+import rtw88_pcap_replay as rp
+from wifit3.chips.rtl8814au_dkms import monitor, watchdog
+from wifit3.chips.rtl8814au_dkms import constants as C
+from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
 
 # Two capture sets. Select the 5 GHz one with a "new2/" prefix (e.g. "new2/capture-1");
 # a bare capture name defaults to the 2.4 GHz set.

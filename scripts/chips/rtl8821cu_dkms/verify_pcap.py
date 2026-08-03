@@ -29,9 +29,9 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8821cu_dkms import btc, efuse, led, tx, watchdog  # noqa: E402
-from wifit3.chips.rtl8821cu_dkms.driver import Rtl8821cuDkmsDriver  # noqa: E402
+import rtw88_pcap_replay as rp
+from wifit3.chips.rtl8821cu_dkms import btc, efuse, led, tx, watchdog
+from wifit3.chips.rtl8821cu_dkms.driver import Rtl8821cuDkmsDriver
 
 DEFAULT_CAP = REPO / "driver_captures" / "captures_rtl8821cu" / "capture-1.pcap"
 

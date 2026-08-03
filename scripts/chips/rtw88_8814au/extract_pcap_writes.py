@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "rtl8822bu"))
-from extract_rtl8822bu_fw import _iter_urbs  # noqa: E402
+from extract_rtl8822bu_fw import _iter_urbs
 
 # Address ranges that are bulk init *tables* (BB/AGC/RF/EFUSE), collapsed in
 # the default view so the discrete control writes stand out.

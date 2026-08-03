@@ -23,7 +23,7 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import importlib.util  # noqa: E402
+import importlib.util
 
 # Load the CHIP-specific verify_pcap by path — a bare `import verify_pcap` resolves to the
 # top-level scripts/porting/verify_pcap.py dispatcher (also on sys.path), which has no run().
@@ -32,7 +32,7 @@ _spec = importlib.util.spec_from_file_location(
 vp = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(vp)
 
-from wifit3.chips.rtl8814au_dkms import chan, driver as drv_mod, iqk, watchdog  # noqa: E402
+from wifit3.chips.rtl8814au_dkms import chan, driver as drv_mod, iqk, watchdog
 
 
 class Mutation:

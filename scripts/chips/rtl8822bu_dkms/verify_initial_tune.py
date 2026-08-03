@@ -21,9 +21,9 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8822bu_dkms import chan, chipid, efuse, txpower, usbphy  # noqa: E402
-from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E402
+import rtw88_pcap_replay as rp
+from wifit3.chips.rtl8822bu_dkms import chan, chipid, efuse, txpower, usbphy
+from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport
 
 CAP_DIR = REPO / "driver_captures" / "captures_rtl88x2bu"
 RF_A_0x18_READ = 0x2860         # switch_band/switch_channel open by reading RF_A 0x18 (BB 0x2800+0x18*4)

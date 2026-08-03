@@ -22,10 +22,10 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))                       # rtw88_pcap_replay (codec)
 sys.path.insert(0, str(REPO / "scripts" / "chips" / "rtl8814au_dkms"))    # verify_pcap (DEV_ADDR)
 
-import rtw88_pcap_replay as rp  # noqa: E402
-import verify_pcap as vp  # noqa: E402
+import rtw88_pcap_replay as rp
+import verify_pcap as vp
 
-from wifit3.chips.rtl8814au_dkms import efuse  # noqa: E402
+from wifit3.chips.rtl8814au_dkms import efuse
 
 # Expected decoded params (same physical card across all three boots).
 EXP_RFE_TYPE = 1

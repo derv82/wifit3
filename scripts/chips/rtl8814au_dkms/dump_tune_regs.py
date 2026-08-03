@@ -20,19 +20,19 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 
-import libusb_package  # noqa: E402
-import usb.core  # noqa: E402
+import libusb_package
+import usb.core
 
-from wifit3.chips.rtl8814au_dkms import constants as C  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.bb import phy_bb_config  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.chan import init_tune, set_channel_bw, set_rfe_reg_init  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.dm import init_hal_dm  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.efuse import read_chip_params  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.firmware import bring_up  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.mac import hal_init_turn_on, mac_init_misc, phy_mac_config  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.monitor import enable_rx_bar, enter_monitor, set_sta_opmode  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.rf import _rf_read, phy_rf_config  # noqa: E402
-from wifit3.chips.rtl8814au_dkms.transport import Rtl8814auTransport  # noqa: E402
+from wifit3.chips.rtl8814au_dkms import constants as C
+from wifit3.chips.rtl8814au_dkms.bb import phy_bb_config
+from wifit3.chips.rtl8814au_dkms.chan import init_tune, set_channel_bw, set_rfe_reg_init
+from wifit3.chips.rtl8814au_dkms.dm import init_hal_dm
+from wifit3.chips.rtl8814au_dkms.efuse import read_chip_params
+from wifit3.chips.rtl8814au_dkms.firmware import bring_up
+from wifit3.chips.rtl8814au_dkms.mac import hal_init_turn_on, mac_init_misc, phy_mac_config
+from wifit3.chips.rtl8814au_dkms.monitor import enable_rx_bar, enter_monitor, set_sta_opmode
+from wifit3.chips.rtl8814au_dkms.rf import _rf_read, phy_rf_config
+from wifit3.chips.rtl8814au_dkms.transport import Rtl8814auTransport
 
 FW_BIN = REPO / "src" / "wifit3" / "chips" / "rtl8814au_dkms" / "assets" / "rtl8814au_fw.bin"
 

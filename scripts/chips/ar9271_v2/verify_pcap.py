@@ -39,14 +39,14 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 sys.path.insert(0, str(REPO / "scripts" / "chips" / "ar9271_v2"))
 
-import ar9271_pcap_replay as rp  # noqa: E402
+import ar9271_pcap_replay as rp
 
 CAP_DIR = REPO / "driver_captures" / "captures_ath9k_htc_newddevice"
 
 _IMPORT_ERR = None
 try:
-    from wifit3.chips.ar9271_v2 import constants as C, gpio, reg as R, rx, tx  # noqa: E402
-    from wifit3.chips.ar9271_v2.driver import AR9271V2Driver  # noqa: E402
+    from wifit3.chips.ar9271_v2 import constants as C, gpio, reg as R, rx, tx
+    from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
 except ImportError as e:                                  # driver not scaffolded yet
     _IMPORT_ERR = e
 

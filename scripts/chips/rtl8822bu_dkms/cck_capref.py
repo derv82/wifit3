@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from cck_diag import Tally   # noqa: E402  (same-dir diagnostic; reuse the rx_pkt_desc walk)
+from cck_diag import Tally   # (same-dir diagnostic; reuse the rx_pkt_desc walk)
 
 TSHARK = r"C:/Program Files/Wireshark/tshark.exe"
 DEFAULT_PCAP = ("driver_captures/captures_rtl88x2bu/capture-1.pcap")

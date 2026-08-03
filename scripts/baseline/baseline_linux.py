@@ -34,11 +34,11 @@ sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
-from shared import Health, add_reference_args, load_reference_aps, ref_bssids, ref_channels  # noqa: E402
-from dev import pick_kernel_iface  # noqa: E402
-from baseline_diff import diff  # noqa: E402
+from shared import Health, add_reference_args, load_reference_aps, ref_bssids, ref_channels
+from dev import pick_kernel_iface
+from baseline_diff import diff
 
-from wifit3.dot11.parser import WlanFrameParser  # noqa: E402
+from wifit3.dot11.parser import WlanFrameParser
 
 # radiotap main-namespace field (size, align) by present-bit index, up to the
 # antenna-signal field (bit 5), all we need to locate RSSI + the FCS flag.
