@@ -43,7 +43,7 @@ SORT_INTERVAL_S = 2.0  # Table sort delay
 # dominant scanner CPU cost). Stepping it at most this often lets a steadily-
 # beaconing row hold still between steps, so its table line stops re-rendering.
 # The beacon-arrival flash still fires on the real count, so liveness is intact.
-BEACON_DISPLAY_INTERVAL_S = 1.0
+BEACON_DISPLAY_INTERVAL_S = 0.5
 
 
 def _hex_rgb(h: str) -> tuple[int, int, int]:
