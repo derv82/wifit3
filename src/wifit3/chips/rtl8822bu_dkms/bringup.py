@@ -71,7 +71,7 @@ def cold_bringup(t):
     cal.env_monitor_init(t)                # phydm_env_monitor_init: NHM + CLM + FAHM env-monitor
     cal.adaptivity_init(t)                 # phydm_adaptivity_init: EDCCA seed
     cal.ra_info_init(t)                    # phydm_ra_info_init: rate-adaptation + ARFR tables
-    # phydm_rssi_monitor_init is a software no-op (no wire ops).
+    # phydm_rssi_monitor_init is a software no-op.
     cal.cfo_tracking_init(t)               # phydm_cfo_tracking_init: crystal-cap-by-WiFi (0x10[6])
     cal.rf_init(t)                         # phydm_rf_init: tx-power-track init (get_swing_index 0xc1c)
     cal.dc_cancellation(t, st)             # phydm_dc_cancellation: RX DC-offset measure + cancel

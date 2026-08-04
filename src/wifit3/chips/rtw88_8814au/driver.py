@@ -206,10 +206,10 @@ class RTL8814AUDriver(Driver):
             raise BringUpError("rx", "RX pipe failed to start")
 
         # PHY/RF bring-up. The DIG-max-coverage seed + RX-aggregation-off fixes
-        # made cold boots reliable, so the deaf re-roll is on probation: 1 attempt
-        # (no re-roll) — a deaf boot now fails connect() loudly instead of being
-        # silently re-rolled. If 10/10 cold boots stay clean, drop the loop +
-        # liveness probe entirely. See RTL8814AU.md known gaps.
+        # made cold boots reliable, so the deaf re-roll is on probation: 1 attempt.
+        # A deaf boot now fails connect() loudly instead of being silently
+        # re-rolled. If 10/10 cold boots stay clean, drop the loop + liveness
+        # probe entirely. See RTL8814AU.md known gaps.
         _PHY_RF_ATTEMPTS = 1
         alive = False
         for attempt in range(_PHY_RF_ATTEMPTS):

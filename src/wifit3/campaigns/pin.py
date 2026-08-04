@@ -169,7 +169,7 @@ class WpsCampaign(Campaign):
                 st = CampaignState(**{k: data[k] for k in data if k in CampaignState.__annotations__})
                 if st.found_pin:
                     # Previous run recovered the PIN. The user clicking WPS PIN
-                    # again means "re-verify against the live AP", handled by
+                    # again means "verify against the live AP", handled by
                     # _run switching to the "verify" phase.
                     self.log(f"resumed campaign: previously recovered PIN "
                              f"[black bold on cyan] {st.found_pin} [/black bold on cyan]")

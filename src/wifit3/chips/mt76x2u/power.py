@@ -249,7 +249,7 @@ def init_dma(transport: MT76x2UTransport) -> None:
     """Post-FW USB DMA config. [SRC] mt76x2/usb_init.c:13 (mt76x2u_init_dma).
 
     Sets RX_DROP_OR_PAD + bulk-EN flags, CLEARS RX_BULK_AGG_EN so that we
-    receive one frame per URB (no aggregation — simpler to parse).
+    receive one frame per URB (simpler to parse).
     """
     val = transport.read32(MT_VEND_TYPE_CFG | MT_USB_U3DMA_CFG)
     val |= (MT_USB_DMA_CFG_RX_DROP_OR_PAD

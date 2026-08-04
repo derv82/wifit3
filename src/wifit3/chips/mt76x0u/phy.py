@@ -1017,7 +1017,7 @@ def phy_wait_bbp_ready(transport: MT76x0UTransport) -> int:
     """Port of `mt76x0_phy_wait_bbp_ready` (mt76x0/phy.c:185-203).
 
     Polls `MT_BBP(CORE, 0)` up to 20 times, breaking when the value is
-    neither 0 nor all-1s. Kernel uses a busy-poll (no sleep) — on USB each
+    neither 0 nor all-1s. Kernel busy-polls — on USB each
     read is a control transfer (~ms), so the wall-clock is ~20 ms worst-case.
 
     Returns the BBP version (the read value). Raises PHYInitError on

@@ -5,7 +5,7 @@ Root cause (proven from wifit3.log @ 02:54:29.9): entering Focus stops channel h
 ``stop_hopping``'s ``await task`` returns while the cancelled hop tune's ``run_in_executor``
 thread is still draining ``set_channel_20mhz`` on the control endpoint. Focus's ``set_channel``
 then spawns a second thread; the two interleave their RF/BBP register batches and the chip
-lands on a corrupt channel ("0 beacons until you re-enter Focus"). Same class as the rt3070
+lands on a corrupt channel ("0 beacons until you return to Focus"). Same class as the rt3070
 RX-DMA wedge — fixed the same way, with a ``threading.Lock`` held by the executor work.
 
 No hardware: ``set_channel_20mhz`` is stubbed with a thread-concurrency counter. Run from two

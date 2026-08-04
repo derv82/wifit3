@@ -85,7 +85,7 @@ def config_error_name(code: Optional[int]) -> str:
     return WSC_CONFIG_ERRORS.get(code, f"unknown(0x{code:02x})")
 
 
-# After this many EAP-Req/Identity with no M1, the AP is "stuck at identity" (won't proceed).
+# After this many EAP-Req/Identity with no M1, the AP is "stuck at identity".
 _IDENTITY_STALL = 8
 
 # 802.11 reason codes (disassoc/deauth): the AP's stated reason for kicking us.

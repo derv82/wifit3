@@ -190,7 +190,7 @@ def parse_rx_urb(
     """Decode one bulk-IN URB → RxFrame, or None if malformed.
 
     Returns None when:
-      * URB shorter than RXINFO + RXWI + RXD (no room for descriptors)
+      * URB shorter than RXINFO + RXWI + RXD
       * rx_pkt_len from RXINFO is 0 or exceeds the URB
       * MPDU byte count from RXWI is < 4 (can't even have an FCS to strip)
     """

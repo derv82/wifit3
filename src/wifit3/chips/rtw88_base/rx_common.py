@@ -151,7 +151,7 @@ def iter_bulk_frames(
         # Confirmed via FCSDIAG CRC32 trailer tally on RTL8821AU (6000/6000
         # frames had a valid CRC32 tail). The 8812AU/8822BU/8814AU share this
         # descriptor format and almost certainly behave the same, but each
-        # needs an independent HW re-test (scan + WEP + WPA + WPS) before
+        # needs an independent HW test (scan + WEP + WPA + WPS) before
         # being marked verified.
         mpdu = bytes(buf[mpdu_start: mpdu_start + max(stat.pkt_len - 4, 0)])
 

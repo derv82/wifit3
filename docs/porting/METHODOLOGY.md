@@ -170,7 +170,7 @@ A clean verify and flowing beacons are necessary, not sufficient. Both gates are
 hardcoded to match the recording, and to uncaptured paths (TX-descriptor variants, power-save,
 sreset, runtime recal). The agent does 1–6; 7 is the user's.
 
-1. **Zero waivers, everywhere** — re-read the verify report end to end (cold bring-up, monitor
+1. **Zero waivers, everywhere** — read the verify report again, end to end (cold bring-up, monitor
    entry, hops, injection/deauth). A waiver is an un-ported op hiding.
 2. **Coverage audit** — confirm every reachable branch is ported or carries a `# TODO: verify`
    with its gate cited. Walk the graph for branches dropped without a marker; classify each leaf
@@ -192,10 +192,10 @@ sreset, runtime recal). The agent does 1–6; 7 is the user's.
 
 The Realtek 11ac cards went mainline-rtw88 → vendor DKMS for ~2× the 2.4 GHz monitor breadth.
 Mainline rtw88 and the vendor stack are different codebases above the same registers, so the gap
-lives in the shared RX path and re-porting from the vendor source recovers it. Cards with no
+lives in the shared RX path and porting again from the vendor source recovers it. Cards with no
 vendor fork (MediaTek, Atheros, RTL8187) stay on mainline.
 
-When re-porting from a different source tree, keep both drivers and A/B them. The new port lands
+When porting again from a different source tree, keep both drivers and A/B them. The new port lands
 in a sibling package (`chips/rtl<chip>_dkms/`); the old one stays. Both register for the same
 VID:PID, ordered by a per-family env var, new port default. Port in a fresh session with only the
 vendor source and the new pcap in view, and treat it as a new bring-up. Baseline the old driver at

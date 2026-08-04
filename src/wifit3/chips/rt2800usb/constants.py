@@ -528,7 +528,7 @@ RXD_W0_CRC_ERROR = 0x00000100
 RXD_W0_L2PAD = 0x00004000      # [SRC] rt2800usb.h:91 — 2B hdr/body align pad
 
 # ----------------------------------------------------------------------
-# USB endpoint addresses (re-stated here for the rx/tx modules).
+# USB endpoint addresses (repeated here for the rx/tx modules).
 # Per the kernel rt2800usb_probe + endpoint enumeration:
 #   bulk-IN  data : 0x84
 #   bulk-OUT data : 0x01..0x06 (EDCA QSEL prio queues; 0x05 = EDCA Q0)

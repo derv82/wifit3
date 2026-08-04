@@ -316,7 +316,7 @@ class Rtl8188eusDkmsDriver(Driver):
         return frame_bytes
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
-        """Re-point REG_MACID to ``mac`` so the hardware HW-ACKs frames to it.
+        """Point REG_MACID to ``mac`` so the hardware HW-ACKs frames to it.
         Reversed by exit_active_monitor."""
         await self._set_self_mac(bytes(mac))
         return bytes(mac)

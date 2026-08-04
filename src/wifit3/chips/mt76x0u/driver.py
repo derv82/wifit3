@@ -1016,7 +1016,7 @@ class MT76x0UDriver(Driver):
         """Software-stamp an incrementing 802.11 sequence number into seq_ctrl. build_txwi sets
         no NSEQ, so the mt76x02 chip transmits the MPDU's seq_ctrl as-is; without this every
         inject reuses seq 0 and the AP dedups a multi-frame run as retransmissions. The base
-        calls this once before ``_inject_frame`` (a resend re-sends the identical frame)."""
+        calls this once before ``_inject_frame`` (a resend transmits the identical frame)."""
         from .tx import stamp_seq_ctrl
         buf = bytearray(frame_bytes)
         self._tx_seqno = stamp_seq_ctrl(buf, self._tx_seqno)

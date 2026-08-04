@@ -158,7 +158,7 @@ def _switch_band_5g(t, bb_swing_a: int, bb_swing_b: int, rfe_type: int = 0) -> N
     _set_rfe_5g(t, rfe_type)                  # phy_SetRFEReg8812 (5 GHz, both paths)
     set_bb(t, 0x080C, 0x000000F0, 0x0)       # rTxPath (mp_mode==0)
     set_bb(t, 0x0A04, 0x0F000000, 0xF)       # rCCK_RX (mp_mode==0)
-    _update_tx_basic_rate(t, 0x0150)         # WIRELESS_11A basic rates (OFDM only, no CCK)
+    _update_tx_basic_rate(t, 0x0150)         # WIRELESS_11A basic rates (OFDM only)
     _set_bb_swing(t, bb_swing_a, bb_swing_b)  # phy_SetBBSwingByBand_8812A (band tail)
 
 

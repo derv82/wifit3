@@ -18,7 +18,7 @@ response wedged the chip and we couldn't debug it, because we didn't know which 
 kernel and which had silently diverged.
 
 **How to apply:** treat any claim in a chip's `<CHIP>.md` as a hypothesis unless its evidence is a
-specific pcap frame range you can re-verify.
+specific pcap frame range you can verify again.
 
 ## Over-port: partial ports compile, run, and silently degrade
 
@@ -80,7 +80,7 @@ mt76x02.h.)
 
 When `connect()` hits a chip already running from a prior session: detect warm cheaply (read
 registers that survive between processes, e.g. rtw88: `REG_MCUFW_CTRL` FW_READY + `REG_CR`
-MACTXEN|MACRXEN) and skip the whole bring-up. Reattach lightly (re-claim the interface,
+MACTXEN|MACRXEN) and skip the whole bring-up. Reattach lightly (claim the interface,
 `clear_halt` the bulk pipes, start RX polling), then smoke-test with a ~1.5 s bulk-IN read; if it's
 silent, surface a clear "please replug" rather than retrying.
 
@@ -123,7 +123,7 @@ verify monitor RX against its airmon-ng pcap rather than theorizing.
    own CRC32 check must strip the pad first, or every QoS frame (all downlink-unicast plus the whole
    4-way) silently FCS-fails while beacons pass. Symptom: scanning works, zero passive handshakes.
 4. **FCS trailer in saved pcaps** — fixed generically in `persist/pcap.write_pcap` (`_strip_fcs`
-   drops the last 4 bytes only when they're a valid CRC32 of the rest). Don't re-fix this per-driver
+   drops the last 4 bytes only when they're a valid CRC32 of the rest). Don't fix this again per-driver
    in `parse_rx_frame`: `raw` is the MPDU as the chip delivered it; normalization happens once, at
    the pcap boundary.
 5. **RX callback delivers FCS-stripped MPDUs** — every driver strips the trailing 4-byte FCS before

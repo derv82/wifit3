@@ -87,7 +87,7 @@ class Driver(ABC):
     DEVICE_REENUMERATES: ClassVar[bool] = False
     """True if ``connect()`` can trigger a USB re-enumeration mid-bring-up (the handle drops and the
     device re-appears, usually at a new address). The driver re-acquires its own handle internally,
-    so no user re-action is needed; discovery/UI should treat a transient disappearance during
+    so no user action is needed; discovery/UI should treat a transient disappearance during
     ``connect()`` as expected, not an unplug. Default False."""
 
     MAX_ACK_DELAY: ClassVar[float] = 0.02

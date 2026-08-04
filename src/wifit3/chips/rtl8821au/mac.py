@@ -495,7 +495,7 @@ def post_fw_mac_init(transport: RTL8821AUTransport, fifo: FifoConf) -> None:
     transport.write8(REG_HMETFR, 0x0F)
     # rtw88xxa.c:1083 — kernel does rtw_load_table(chip->mac_tbl) here. We
     # defer it to M4c so this milestone stays a tight register-write set.
-    # If the rest of M4b needs it earlier than expected we'll re-order.
+    # If the rest of M4b needs it earlier than expected we'll reorder.
 
     init_queue_reserved_page(transport, fifo)
     init_tx_buffer_boundary(transport, fifo)

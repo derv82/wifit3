@@ -45,7 +45,7 @@ def _write_firmware(t: RT5370Transport, blob: bytes) -> None:
 
 def upload(t: RT5370Transport, blob: bytes) -> None:
     """Full firmware load orchestration [SRC rt2800lib.c:714-792 rt2800_load_firmware]."""
-    # If driver doesn't wake firmware here, a re-up would hang forever.
+    # If driver doesn't wake firmware here, uploading it again would hang forever.
     t.register_write(C.AUTOWAKEUP_CFG, 0x00000000)
 
     if not t.wait_csr_ready():

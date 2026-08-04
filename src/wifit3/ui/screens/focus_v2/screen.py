@@ -301,7 +301,7 @@ class FocusViewV2(Screen):
         card.update_bssid(members[0].mac_address if len(members) == 1 else None)
 
     def on_tx_device_picker_selected(self, event: TxDevicePicker.Selected) -> None:
-        """User pinned a TX card in the picker: record the preference and re-sync the endpoint."""
+        """User pinned a TX card in the picker: record the preference and sync the endpoint."""
         if self.app.array is not None:
             self.app.array.prefer(event.iface)
         self._sync_card()
@@ -687,7 +687,7 @@ class FocusViewV2(Screen):
             logger.exception("Broadcast deauth crashed")
             self._log(treelog.leaf_fail(f"Broadcast failed: {escape(str(exc))}"))
             return
-        # Broadcast frames are never ACKed: a neutral leaf (no green ✓, no ACK verdict).
+        # Broadcast frames are never ACKed: a neutral leaf (no green ✓).
         self._log(treelog.leaf(f"sent {sent} de-auth frames [dim](AP→broadcast)[/dim]"))
 
     async def _run_deauth_selected(self, mac: str) -> None:

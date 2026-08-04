@@ -65,7 +65,7 @@ def normal_mode_setup_5xxx(t: RT5370Transport, ev: EepromValues) -> None:
 
 def init_rfcsr_5390(t: RT5370Transport, chip: ChipInfo, ev: EepromValues) -> None:
     """[SRC rt2800lib.c:8296-8392 rt2800_init_rfcsr_5390]. Returns None — RT5390 has no
-    init-derived per-tune calibration (no RX-filter loopback).
+    init-derived per-tune RX-filter-loopback calibration.
 
     Six entries (RFCSR 6/25/46/53/56/61) fork on REV_RT5390F; this card reads rev 0x0502
     == REV_RT5390F so ``f`` is True. This is a USB-only driver, so ``rt2x00_is_usb()`` is

@@ -7,7 +7,7 @@ the *same path* the kernel takes (a shortcut to the endpoint can carry different
 state and hide an RX bug):
 
   1. enable_rx_bar           init_hw_mlme_ext -> HW_VAR_ENABLE_RX_BAR [SRC hal_com.c:12384]
-  2. (channel re-tune)       init_hw_mlme_ext -> set_channel_bwmode   (chan.set_channel_bw)
+  2. (channel tune)          init_hw_mlme_ext -> set_channel_bwmode   (chan.set_channel_bw)
   3. set_sta_opmode          hw_var_set_opmode(_HW_STATE_STATION_)    [SRC rtl8814a_hal_init.c:3204]
   4. enter_monitor           hw_var_set_opmode(_HW_STATE_MONITOR_)    [SRC rtl8814a_hal_init.c:3222]
 

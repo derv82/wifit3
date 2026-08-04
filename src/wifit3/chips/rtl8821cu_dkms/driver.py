@@ -299,7 +299,7 @@ class Rtl8821cuDkmsDriver(Driver):
         return frame_bytes
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
-        """Re-point REG_MACID to ``mac`` so the hardware HW-ACKs frames addressed to it while
+        """Point REG_MACID at ``mac`` so the hardware HW-ACKs frames addressed to it while
         staying in monitor mode — the accept-all monitor RCR (AAP) still HW-ACKs RA==REG_MACID,
         so no RCR flip is needed. MAC-only, mirroring the proven Realtek siblings. Reversed by
         exit_active_monitor. ``bssid`` is unused (register-MAC ACK is a pure RA-match)."""

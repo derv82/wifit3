@@ -1,6 +1,6 @@
 """RTL8822BU RX-side glue.
 
-Re-uses :mod:`wifit3.chips.rtw88_base.rx_common` for endpoint probing and
+Reuses :mod:`wifit3.chips.rtw88_base.rx_common` for endpoint probing and
 the 24-byte rx_pkt_desc decoder. Adds an 8822b-specific phy_status RSSI
 parser (pages 0/1, mirrors `rtw8822b.c:query_phy_status`).
 """

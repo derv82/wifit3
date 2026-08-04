@@ -5,7 +5,7 @@ Ports the phydm DIG watchdog [SRC phydm_dig.c phydm_dig] for the always-monitor
 (IGI) toward fewer false alarms, clamp to the no-link bounds, and write it to all
 four RF paths. Run every ~2 s (the kernel DIG-watchdog cadence). This adapts the M3a
 DIG *seed* to the live RF environment — the long-session breadth/stability payoff of
-the re-port. It only reads FA counters and writes the RX gain (no TX), so it is
+the port. It only reads FA counters and writes the RX gain (no TX), so it is
 passive.
 
 Scope — the no-link monitor path only. wifit3 never associates, so the vendor DIG's

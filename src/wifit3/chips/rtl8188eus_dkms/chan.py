@@ -2,7 +2,7 @@
 
 This card is 2.4 GHz / 1T1R. A tune is [SRC] rtl8188e_phycfg.c:1745/1531:
   PHY_SwChnl8188E -> _PHY_SwChnl8188E:
-    PHY_SetTxPowerLevel8188E(channel)               # s1 (re-tune TX power for the group)
+    PHY_SetTxPowerLevel8188E(channel)               # s1 (tune TX power for the group)
     RfRegChnlVal[A] = (RfRegChnlVal[A] & ~0x3ff) | channel ; write RF_CHNLBW
   PHY_SetBWMode8188E(20 MHz) -> _PHY_SetBWMode88E:
     REG_BWOPMODE |= BW_OPMODE_20MHZ

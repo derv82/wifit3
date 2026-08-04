@@ -10,7 +10,7 @@ Known bugs live in `BUGS.md`.
 
 Figure out how to detect & access drivers from userland in OSX.
 
-The viable path is a **codeless kext** (Info.plist only, no code) per supported card.
+The viable path is a **codeless kext** (Info.plist only) per supported card.
 Each plist declares the adapter's VID:PID with a high `IOProbeScore` so the kernel
 binds the do-nothing kext and leaves the USB interface unclaimed for libusb. 
 Unverified. No macOS hardware tested. Parked until someone wants it.

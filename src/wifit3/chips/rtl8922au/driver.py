@@ -62,7 +62,7 @@ class RTL8922AUDriver(Driver):
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     # On a USB-2 port the rtw89 mode switch re-enumerates the card mid-connect(); connect() re-acquires
-    # its own handle, so no user re-action is needed. [SRC] usb.c rtw89_usb_switch_mode_be.
+    # its own handle, so no user action is needed. [SRC] usb.c rtw89_usb_switch_mode_be.
     DEVICE_REENUMERATES = True
 
     # 2.4 GHz + 5 GHz (non-DFS only) at 20 MHz. DFS channels (52-64, 100-144) are excluded: wifite
