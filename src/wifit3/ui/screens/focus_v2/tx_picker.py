@@ -20,6 +20,12 @@ from wifit3.wlan.channels import band_label
 
 from .art import display_name
 
+_NAME_MAX = 16
+
+
+def _trim_name(name: str) -> str:
+    return name if len(name) <= _NAME_MAX else name[:_NAME_MAX].rstrip() + "…"
+
 
 @dataclass
 class DeviceRow:
@@ -79,7 +85,7 @@ class TxDevicePicker(Widget):
     TxDevicePicker #tx-overlay {
         display: none; width: 30; max-height: 8;
         overlay: screen; constrain: none inside;
-        background: $surface; border: round $accent; padding: 0;
+        background: $surface; border: round ansi_cyan; padding: 0;
     }
     TxDevicePicker.-expanded #tx-overlay { display: block; }
     """
@@ -118,7 +124,7 @@ class TxDevicePicker(Widget):
         self._can_open = len(self._members) > 1 and not locked
         self.can_focus = self._can_open
         name = display_name(current) if current is not None else "no card"
-        text = f"{name}  ▼" if self._can_open else name
+        text = f"{_trim_name(name)} ▼" if self._can_open else name
         if self.is_mounted:
             if text != self._text:
                 self.query_one("#card-chipset", Static).update(text)
