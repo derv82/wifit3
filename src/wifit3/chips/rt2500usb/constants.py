@@ -43,7 +43,7 @@ RT2500USB_DEVICE_TABLE: list[tuple[int, int, str, str | None, str | None]] = [
     (0x0411, 0x005e, "RT2570", "Buffalo", "WLI-U2-KG54-YB"),
     (0x0411, 0x0066, "RT2570", "Buffalo", "WLI-U2-KG54"),
     (0x0411, 0x0067, "RT2570", "Buffalo", "WLI-U2-KG54-AI"),
-    (0x0411, 0x008b, "RT2570", "Buffalo", "Nintendo Wi-Fi USB Connector"),
+    (0x0411, 0x008b, "RT2570", "Buffalo", "Nintendo Wi-Fi"),
     (0x0411, 0x0097, "RT2570", "Buffalo", "WLI-U2-KG54-BB"),
     (0x0db0, 0x6861, "RT2570", "MSI", "MS-6861"),
     (0x0db0, 0x6865, "RT2570", "MSI", "MS-6865"),
