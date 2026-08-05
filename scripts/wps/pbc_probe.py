@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.wps.registrar import PinResult
-from wifit3.wlan.discovery import build_interfaces, close_interfaces
+from wifit3.device.manager import wlan_ifaces, wlan_close
 
 
 def step(label):
@@ -73,7 +73,7 @@ def load_default_target() -> dict:
 
 
 async def discover_iface(debug):
-    ifaces = build_interfaces()
+    ifaces = wlan_ifaces()
     if not ifaces:
         fail("No supported wifit3 card found.")
     iface = ifaces[0]
@@ -143,7 +143,7 @@ async def main_async(args) -> int:
         return 0
     finally:
         step("Release device")
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         info("Closed.")
 
 

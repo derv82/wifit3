@@ -1,18 +1,18 @@
 """Splash START drives the engine end-to-end for the happy path: a connectable card is pooled into
-the array and the scanner is requested. The real WifiteApp / BringupManager / BringupPrompter (the
-progress modal really opens and closes) run; only build_interface is stubbed."""
+the array and the scanner is requested. The real WifiteApp / DeviceManager / BringupPrompter (the
+progress modal really opens and closes) run; only wlan_iface is stubbed."""
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from textual.widgets import SelectionList
 
-import wifit3.wlan.bringup as bringup
+import wifit3.device.manager as manager
 from wifit3.chips.driver import DeviceID
+from wifit3.device.manager import BringupResult
 from wifit3.setup.base import SetupResult
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
-from wifit3.wlan.bringup import BringupResult
 
 
 def _fake_iface():
@@ -28,7 +28,7 @@ def _fake_iface():
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_start_pools_card_and_requests_scanner(monkeypatch):
     iface = _fake_iface()
-    monkeypatch.setattr(bringup, "build_interface", lambda device_id, name="wlan0": iface)
+    monkeypatch.setattr(manager, "wlan_iface", lambda device_id, name="wlan0": iface)
     dev = DeviceID(0x148F, 0x5372, "RT5372 (test)")
 
     app = WifiteApp()
@@ -77,7 +77,7 @@ async def test_multi_card_start_brings_up_only_checked(monkeypatch):
             ran.append(device_id)
             return BringupResult.ready()
 
-        monkeypatch.setattr(app.bringup, "run", _fake_run)
+        monkeypatch.setattr(app.device_manager, "bringup", _fake_run)
         monkeypatch.setattr(app, "switch_screen", lambda name: None)
 
         splash.action_start()
@@ -111,8 +111,8 @@ async def test_enter_uninstalls_when_uninstall_button_focused(monkeypatch):
             started.append(device_id)
             return BringupResult.ready()
 
-        monkeypatch.setattr(app.bringup, "uninstall", _fake_uninstall)
-        monkeypatch.setattr(app.bringup, "run", _fake_run)
+        monkeypatch.setattr(app.device_manager, "uninstall", _fake_uninstall)
+        monkeypatch.setattr(app.device_manager, "bringup", _fake_run)
 
         splash.query_one("#uninstall-btn").focus()
         await pilot.pause(0)
@@ -139,7 +139,7 @@ async def test_single_click_highlights_double_click_starts(monkeypatch):
         return BringupResult.ready()
 
     async with app.run_test(size=(120, 40)) as pilot:
-        app.bringup.run = _fake_run
+        app.device_manager.bringup = _fake_run
         monkeypatch.setattr(app, "switch_screen", lambda name: started.append(("switch", name)))
         splash = app.screen
         splash.render_devices([dev])

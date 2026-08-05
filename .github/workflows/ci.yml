@@ -40,13 +40,13 @@ jobs:
         run: uv run pytest
 
       # Catches a syntax/import error in any module the test suite doesn't reach — importing the
-      # UI pulls the Textual path, and _import_driver_classes() imports every chips/*/driver.py.
+      # UI pulls the Textual path, and calling every import_driver() imports every chips/*/driver.py.
       - name: Import smoke (UI + every driver registers)
         run: |
           uv run python - <<'PY'
           from wifit3.ui.app import WifiteApp  # noqa: F401  -- UI + textual import path
-          from wifit3.wlan.discovery import _import_driver_classes
-          n = len(_import_driver_classes())
-          print(f"{n} drivers import cleanly")
-          assert n >= 10, f"driver registry looks broken: {n}"
+          from wifit3.device.manager import supported_ids
+          classes = {import_driver() for (_entry, _key, import_driver) in supported_ids().values()}
+          print(f"{len(classes)} driver classes import cleanly across {len(supported_ids())} VID:PIDs")
+          assert len(classes) >= 10, f"driver registry looks broken: {len(classes)}"
           PY

@@ -65,6 +65,7 @@ from wifit3.chips.rt2500usb.constants import (
     USB_MODE_TEST,
     USB_SINGLE_WRITE,
 )
+from wifit3.chips.rt2500usb import SUPPORTED_IDS
 from wifit3.chips.rt2500usb.driver import RT2500USBDriver
 from wifit3.chips.rt2500usb.mac import (
     apply_monitor_filter,
@@ -483,15 +484,16 @@ def test_build_tx_urb_starts_with_desc():
 # Driver registration surface
 # ----------------------------------------------------------------------
 def test_driver_claims_nintendo_connector():
-    ids = {(d.vid, d.pid) for d in RT2500USBDriver.SUPPORTED_IDS}
+    ids = {(d.vid, d.pid) for d in SUPPORTED_IDS}
     assert (0x0411, 0x008B) in ids
-    assert len(RT2500USBDriver.SUPPORTED_IDS) == 29   # 31 kernel rows minus 2 non-RT2570 (BCM4320, ISL3887)
+    assert len(SUPPORTED_IDS) == 29   # 31 kernel rows minus 2 non-RT2570 (BCM4320, ISL3887)
     assert RT2500USBDriver.SUPPORTED_CHANNELS == list(range(1, 15))
 
 
 def test_driver_registered_in_manager():
-    from wifit3.wlan.discovery import _import_driver_classes
-    assert RT2500USBDriver in _import_driver_classes().values()
+    from wifit3.device.manager import driver_for
+    cls, _ = driver_for(0x0411, 0x008B)   # the Nintendo/RT2570 id claimed above
+    assert cls is RT2500USBDriver
 
 
 class FakeUsbDev:

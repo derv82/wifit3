@@ -35,9 +35,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from wifit3.chips.driver import DeviceID
+from wifit3.device.manager import linux_node_path as usb_node_path
 from wifit3.setup import SetupTarget, target_for_vidpid
 from wifit3.setup.base import Prompter, Setup, SetupResult
-from wifit3.wlan.discovery import usb_node_path
 
 logger = logging.getLogger(__name__)
 

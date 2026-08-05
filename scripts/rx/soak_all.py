@@ -39,7 +39,7 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent.parent / "src"))
 
-from wifit3.wlan.discovery import find_devices
+from wifit3.device.manager import devices
 
 SOAK = _HERE / "soak.py"
 REPORTS_DIR = _HERE / "reports"
@@ -76,7 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _select(card: str):
-    devs = find_devices()
+    devs = devices()
     if card:
         devs = [d for d in devs if card.lower() in d.description.lower()]
     return devs

@@ -24,7 +24,7 @@ from shared import Health, add_reference_args, load_reference_aps, ref_bssids
 from dev import select_device
 from baseline_diff import diff
 
-from wifit3.wlan.discovery import build_interfaces, close_interfaces
+from wifit3.device.manager import wlan_ifaces, wlan_close
 
 
 def _chip(iface) -> str:
@@ -33,13 +33,13 @@ def _chip(iface) -> str:
 
 async def run(args) -> int:
     print("[*] Discovering interfaces...", file=sys.stderr)
-    ifaces = build_interfaces()
+    ifaces = wlan_ifaces()
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
     iface = select_device(ifaces, args.card)
     if iface is None:
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         return 1
 
     def _progress(pct: float, msg: str) -> None:
@@ -49,11 +49,11 @@ async def run(args) -> int:
     try:
         if not await iface.connect(progress_cb=_progress):
             print("[-] Bring-up returned False.", file=sys.stderr)
-            await close_interfaces(ifaces)
+            await wlan_close(ifaces)
             return 1
     except Exception as e:  # noqa: BLE001, USB bring-up can raise
         print(f"[-] Bring-up failed: {e}", file=sys.stderr)
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         return 1
 
     chip = args.chip or _chip(iface)
@@ -85,7 +85,7 @@ async def run(args) -> int:
     except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n[!] Interrupted: writing partial.", file=sys.stderr)
     finally:
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
 
     wifit3_json = _HERE / f"wifit3-{chip}.json"
     health.to_json(wifit3_json)

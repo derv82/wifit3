@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
 from wifit3.chips.rtl8821cu_dkms import driver as drv
 from wifit3.chips.rtl8821cu_dkms.rf import read_rf
-from wifit3.wlan.discovery import build_interface, find_devices
+from wifit3.device.manager import wlan_iface, devices
 
 _CHIPSET = "RTL8821CU"
 _RF18_5G_BIT = 1 << 16
@@ -56,7 +56,7 @@ async def _prime_reband(self, loop) -> None:
 
 
 def _find_devid():
-    return next((d for d in find_devices() if d.chipset == _CHIPSET), None)
+    return next((d for d in devices() if d.chipset == _CHIPSET), None)
 
 
 async def _worker(args) -> int:
@@ -68,7 +68,7 @@ async def _worker(args) -> int:
     devid = _find_devid()
     if devid is None:
         return 1
-    iface = build_interface(devid)
+    iface = wlan_iface(devid)
     if not await iface.connect():
         return 1
     counter = BeaconCounter()

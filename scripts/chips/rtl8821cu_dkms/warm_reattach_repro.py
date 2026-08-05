@@ -34,7 +34,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
 from wifit3.chips.rtl8821cu_dkms.rf import read_rf
-from wifit3.wlan.discovery import build_interface, find_devices
+from wifit3.device.manager import wlan_iface, devices
 
 _CHIPSET = "RTL8821CU"
 _RF18_5G_BIT = 1 << 16
@@ -55,7 +55,7 @@ class BeaconCounter:
 
 
 def _find_devid():
-    return next((d for d in find_devices() if d.chipset == _CHIPSET), None)
+    return next((d for d in devices() if d.chipset == _CHIPSET), None)
 
 
 async def _rf18_bit16(iface) -> Optional[bool]:
@@ -109,9 +109,9 @@ def _summary(mode: str, results: dict, thresh: int) -> None:
 
 
 async def _bringup(devid):
-    iface = build_interface(devid)
+    iface = wlan_iface(devid)
     if iface is None:
-        raise RuntimeError("build_interface returned None")
+        raise RuntimeError("wlan_iface returned None")
     if not await iface.connect():
         raise RuntimeError("connect() returned False")
     return iface

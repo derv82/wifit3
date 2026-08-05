@@ -1,14 +1,24 @@
-"""DeviceListener: the multiset diff and poll_once's change / pause / fatal behaviour."""
-import wifit3.wlan.device_listener as dl
+"""DeviceWatch: the multiset diff and poll's change / pause / fatal behaviour."""
 from wifit3.chips.driver import DeviceID
+from wifit3.device.watch import DeviceWatch, _diff
 from wifit3.errors import WifiteFatalError
-from wifit3.wlan.device_listener import DeviceListener, _diff
 
-# Live instances as find_devices() returns them: tagged with a (bus, address). A and A2 are the same
+# Live instances as devices() returns them: tagged with a (bus, address). A and A2 are the same
 # model on two ports (a real twin pair); B is a different card.
 A = DeviceID(0x0BDA, 0x8813, "RTL8814AU", bus=1, address=4)
 A2 = DeviceID(0x0BDA, 0x8813, "RTL8814AU", bus=1, address=5)
 B = DeviceID(0x148F, 0x5370, "RT5370", bus=1, address=6)
+
+
+class _DM:
+    """A DeviceManager stand-in whose devices() returns a fixed list (or raises)."""
+    def __init__(self, devs):
+        self._devs = devs
+
+    def devices(self):
+        if isinstance(self._devs, Exception):
+            raise self._devs
+        return self._devs
 
 
 def test_diff_arrival():
@@ -34,36 +44,30 @@ def test_diff_no_change_is_order_independent():
     assert _diff([A, B], [B, A]) == ([], [])
 
 
-async def test_poll_fires_on_change_then_stays_quiet(monkeypatch):
+async def test_poll_fires_on_change_then_stays_quiet():
     events = []
-    listener = DeviceListener(on_change=lambda c, a, d: events.append((c, a, d)))
-    monkeypatch.setattr(dl, "find_devices", lambda: [A])
-    await listener.poll_once()
-    assert events == [([A], [A], [])] and listener.present() == [A]
-    await listener.poll_once()                    # unchanged -> no second event
+    watch = DeviceWatch(_DM([A]), on_change=lambda c, a, d: events.append((c, a, d)))
+    await watch.poll()
+    assert events == [([A], [A], [])] and watch.present() == [A]
+    await watch.poll()                             # unchanged -> no second event
     assert len(events) == 1
 
 
-async def test_poll_paused_is_noop(monkeypatch):
+async def test_poll_paused_is_noop():
     events = []
-    listener = DeviceListener(on_change=lambda c, a, d: events.append(1))
-    monkeypatch.setattr(dl, "find_devices", lambda: [A])
-    listener.pause()
-    await listener.poll_once()
+    watch = DeviceWatch(_DM([A]), on_change=lambda c, a, d: events.append(1))
+    watch.pause()
+    await watch.poll()
     assert events == []
-    listener.resume()
-    await listener.poll_once()
+    watch.resume()
+    await watch.poll()
     assert events == [1]
 
 
-async def test_poll_fatal_reports_once_then_stops(monkeypatch):
+async def test_poll_fatal_reports_once_then_stops():
     fatals = []
-
-    def boom():
-        raise WifiteFatalError("USB backend unavailable", "no libusb")
-
-    listener = DeviceListener(on_change=lambda *a: None, on_fatal=fatals.append)
-    monkeypatch.setattr(dl, "find_devices", boom)
-    await listener.poll_once()
-    await listener.poll_once()
+    watch = DeviceWatch(_DM(WifiteFatalError("USB backend unavailable", "no libusb")),
+                        on_change=lambda *a: None, on_fatal=fatals.append)
+    await watch.poll()
+    await watch.poll()
     assert len(fatals) == 1

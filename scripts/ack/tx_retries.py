@@ -30,7 +30,7 @@ except Exception:                                                 # noqa: BLE001
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from wifit3.wlan.discovery import build_interfaces
+from wifit3.device.manager import wlan_ifaces
 from wifit3.dot11 import build_deauth
 from wifit3.chips.driver import FakeMacSupport
 
@@ -135,7 +135,7 @@ async def run_scenario(injector, sniffer, counter: CopyCounter, *, active_monito
 async def main(a) -> None:
     logging.basicConfig(level=logging.DEBUG if a.debug else logging.ERROR)
 
-    ifaces = build_interfaces()
+    ifaces = wlan_ifaces()
     if len(ifaces) < 2:
         print(f"[-] need two cards (injector + sniffer); found {len(ifaces)}")
         return

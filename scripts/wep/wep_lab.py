@@ -37,7 +37,7 @@ sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
 from dev import select_device
-from wifit3.wlan.discovery import build_interfaces, close_interfaces
+from wifit3.device.manager import wlan_ifaces, wlan_close
 from wifit3.dot11.auth_assoc import auth_req, assoc_req
 from wifit3.dot11.wep.crypto import arp_request_plaintext, wep_encrypt
 from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
@@ -399,10 +399,10 @@ async def main() -> int:
     parse_wep_key(args.pass_)   # validate early
 
     print("[*] Discovering interfaces...")
-    ifaces = build_interfaces()
+    ifaces = wlan_ifaces()
     iface = select_device(ifaces, args.card)
     if iface is None:
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         return 1
 
     def _progress(pct, msg):
@@ -411,11 +411,11 @@ async def main() -> int:
     print(f"[*] Bringing up {iface.description}...")
     try:
         if not await iface.connect(progress_cb=_progress):
-            await close_interfaces(ifaces)
+            await wlan_close(ifaces)
             return 1
     except Exception as e:  # noqa: BLE001
         print(f"[-] bring-up failed: {e}")
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         return 1
     print(f"[*] card MAC: {iface.mac_address}")
 
@@ -432,7 +432,7 @@ async def main() -> int:
             await iface.disable_rx_acks()
         except Exception:  # noqa: BLE001
             pass
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
     return rc
 
 

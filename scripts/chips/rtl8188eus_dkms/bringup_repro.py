@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
 from wifit3.errors import BringUpError
-from wifit3.wlan.discovery import build_interface, find_devices
+from wifit3.device.manager import wlan_iface, devices
 
 _CHIPSET = "RTL8188EUS"
 
@@ -31,12 +31,12 @@ _CHIPSET = "RTL8188EUS"
 async def _one(settle: float) -> tuple[bool | None, str]:
     """Discover + cold-boot the 8188 once. Returns (ok, detail); ok is None when the card isn't
     on the bus. Closes the card either way, then settles."""
-    dev_id = next((d for d in find_devices() if d.chipset == _CHIPSET), None)
+    dev_id = next((d for d in devices() if d.chipset == _CHIPSET), None)
     if dev_id is None:
         return None, f"no {_CHIPSET} on the bus"
-    iface = build_interface(dev_id)
+    iface = wlan_iface(dev_id)
     if iface is None:
-        return None, "build_interface returned None"
+        return None, "wlan_iface returned None"
     try:
         ok = await iface.driver.connect()
         return bool(ok), "connected" if ok else "connect() returned False"

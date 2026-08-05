@@ -16,7 +16,7 @@ import usb.core
 import usb.util
 import libusb_package
 
-from wifit3.wlan.discovery import build_interfaces
+from wifit3.device.manager import wlan_ifaces
 from wifit3.chips.rtl8922au import firmware
 from wifit3.chips.rtl8922au.constants import (
     ADDR_CAM_W1_LEN, ADDR_CAM_W2_VALID, ADDR_CAM_W9_SEC_ENT_MODE, ADDR_CAM_W12_BSSID_LEN,
@@ -59,7 +59,7 @@ def reset_device():
 
 
 def pick(dut_sub="8922", prober_sub="8812"):
-    ifaces = build_interfaces()
+    ifaces = wlan_ifaces()
     dut = next((i for i in ifaces if dut_sub in (i.description or "").lower()), None)
     prober = next((i for i in ifaces if i is not dut and prober_sub in (i.description or "").lower()), None)
     if dut is None or prober is None:

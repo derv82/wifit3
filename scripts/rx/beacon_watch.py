@@ -39,7 +39,7 @@ sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
 from dev import select_device
 
-from wifit3.wlan.discovery import build_interfaces, close_interfaces
+from wifit3.device.manager import wlan_ifaces, wlan_close
 
 _BAR_MAX = 40  # cap the bar so a busy second can't wrap the terminal
 
@@ -179,13 +179,13 @@ def run_pcap(args) -> int:
 
 async def run_live(args) -> int:
     print("[*] Discovering interfaces...", file=sys.stderr)
-    ifaces = build_interfaces()
+    ifaces = wlan_ifaces()
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
     iface = select_device(ifaces, getattr(args, "card", ""))
     if iface is None:
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         return 1
 
     def _progress(pct: float, msg: str) -> None:
@@ -204,11 +204,11 @@ async def run_live(args) -> int:
         ok = await iface.connect(progress_cb=_progress)
     except Exception as e:  # noqa: BLE001, bring-up can raise on USB error
         print(f"[-] Bring-up failed: {e}", file=sys.stderr)
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         return 1
     if not ok:
         print("[-] Bring-up returned False.", file=sys.stderr)
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         return 1
 
     collector = BeaconCollector()
@@ -217,7 +217,7 @@ async def run_live(args) -> int:
           file=sys.stderr)
     if not await iface.set_channel(args.channel):
         print(f"[-] set_channel({args.channel}) failed.", file=sys.stderr)
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         return 1
 
     start = time.monotonic()
@@ -232,7 +232,7 @@ async def run_live(args) -> int:
     except KeyboardInterrupt:
         pass
     print("", file=sys.stderr)
-    await close_interfaces(ifaces)
+    await wlan_close(ifaces)
 
     events = [(t - start, b) for t, b in collector.events if t >= start]
     summarize(events, n_secs, args.bssid, source_label=iface.name)

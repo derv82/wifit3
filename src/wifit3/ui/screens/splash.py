@@ -11,9 +11,14 @@ from textual.containers import Vertical, Center, Horizontal
 from textual import events, work
 from rich.text import Text
 
+from typing import TYPE_CHECKING
+
 from wifit3.ui.ansi_art import make_black_transparent
 from wifit3.ui.screens.setup_error import SetupErrorDialog
-from wifit3.wlan.bringup import Status
+from wifit3.device.manager import Status
+
+if TYPE_CHECKING:
+    from wifit3.ui.app import WifiteApp
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +86,10 @@ LOGO = load_logo()
 
 class SplashView(Screen):
     """Splash + device picker: the logo, the list of live cards, Start and Uninstall buttons. START
-    and Uninstall delegate the whole bring-up / setup flow to ``app.bringup``; the splash only picks
-    the cards and reports the terminal result."""
+    and Uninstall delegate the whole bring-up / setup flow to ``app.device_manager``; the splash only
+    picks the cards and reports the terminal result."""
+
+    app: "WifiteApp"
 
     BINDINGS = [
         ("q", "app.quit", "Quit"),
@@ -92,7 +99,7 @@ class SplashView(Screen):
     def __init__(self):
         super().__init__()
         self._is_initializing = False
-        # DeviceIDs from the last render (the app's DeviceListener feeds them), indexed to the rows.
+        # DeviceIDs from the last render (the app's DeviceWatch feeds them), indexed to the rows.
         self._devices = []
 
     def compose(self) -> ComposeResult:
@@ -151,11 +158,11 @@ class SplashView(Screen):
         re-run) so restore the scanning state, resume the device watch perform_start paused, and
         render the currently-present cards right away (not on the next 0.5s tick)."""
         self._enter_scanning_mode()
-        self.app.devices.resume()
-        self.render_devices(self.app.devices.present())
+        self.app.device_watch.resume()
+        self.render_devices(self.app.device_watch.present())
 
     def render_devices(self, devices) -> None:
-        """Render the current device list. Called by the app's DeviceListener on plug/unplug. One card
+        """Render the current device list. Called by the app's DeviceWatch on plug/unplug. One card
         shows a plain ListView; 2+ show a default-all-checked SelectionList so the user picks a subset."""
         if self._is_initializing:
             return
@@ -281,7 +288,7 @@ class SplashView(Screen):
 
     def _enter_busy(self) -> None:
         self._is_initializing = True
-        self.app.devices.pause()          # freeze the device watch so the list can't churn mid-bring-up
+        self.app.device_watch.pause()     # freeze the device watch so the list can't churn mid-bring-up
         single_list, multi_list = self._both_lists()
         single_list.disabled = True
         multi_list.disabled = True
@@ -290,7 +297,7 @@ class SplashView(Screen):
 
     def _exit_busy(self) -> None:
         self._is_initializing = False
-        self.app.devices.resume()
+        self.app.device_watch.resume()
         single_list, multi_list = self._both_lists()
         single_list.disabled = False
         multi_list.disabled = False
@@ -309,7 +316,7 @@ class SplashView(Screen):
         failures = []
         try:
             for dev in devices:
-                res = await self.app.bringup.run(dev)
+                res = await self.app.device_manager.bringup(dev)
                 if res.status is Status.READY:
                     pooled += 1
                 elif res.status is Status.FAILED:
@@ -332,7 +339,7 @@ class SplashView(Screen):
         self._clear_error()
         self._enter_busy()
         try:
-            res = await self.app.bringup.uninstall(device_id)
+            res = await self.app.device_manager.uninstall(device_id)
         finally:
             self._exit_busy()
 

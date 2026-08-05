@@ -14,7 +14,7 @@ import pytest
 import usb.core
 from textual.widgets import Label
 
-import wifit3.wlan.bringup as bringup
+import wifit3.device.manager as manager
 from wifit3.chips.driver import DeviceID
 from wifit3.chips.rt2800usb.driver import RT2800USBDriver
 from wifit3.chips.rtl8187.driver import RTL8187Driver
@@ -60,11 +60,11 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
                         Mock(side_effect=usb.core.USBError("simulated init failure")))
 
     # Interface whose connect() IS the real driver's, so the failure travels the true path:
-    # build_interface -> driver init -> BringUpError -> engine -> splash. close() is the cleanup.
+    # wlan_iface -> driver init -> BringUpError -> engine -> splash. close() is the cleanup.
     iface = SimpleNamespace(
         name="rtl8187", description="RTL8187L (test)", vid=0x0BDA, pid=0x8187,
         dev=None, connect=driver.connect, close=AsyncMock())
-    monkeypatch.setattr(bringup, "build_interface", lambda device_id, name="wlan0": iface)
+    monkeypatch.setattr(manager, "wlan_iface", lambda device_id, name="wlan0": iface)
     dev = DeviceID(0x0BDA, 0x8187, "RTL8187L", product_name="test")
 
     app = WifiteApp()

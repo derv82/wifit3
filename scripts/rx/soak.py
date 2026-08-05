@@ -38,7 +38,7 @@ from dev import select_device
 from probes import ALL_PROBES
 from report import write_csv, write_markdown
 
-from wifit3.wlan.discovery import build_interfaces, close_interfaces
+from wifit3.device.manager import wlan_ifaces, wlan_close
 from wifit3.wlan.array import WlanArray
 
 logger = logging.getLogger("rx.soak")
@@ -140,13 +140,13 @@ async def main() -> int:
             probe.apply_multiplier(args, args.duration_multiplier)
 
     print("[*] Discovering interfaces...", file=sys.stderr)
-    ifaces = build_interfaces()
+    ifaces = wlan_ifaces()
     if not ifaces:
         print("[-] No supported devices found.", file=sys.stderr)
         return 1
     iface = select_device(ifaces, args.card, instance=args.instance)
     if iface is None:
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         return 1
     print(f"[+] Selected {iface.name}: {iface.description}", file=sys.stderr)
 
@@ -154,7 +154,7 @@ async def main() -> int:
         await _connect(iface)
     except Exception as e:
         print(f"[-] Bring-up failed: {e}", file=sys.stderr)
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         return 1
 
     # Bring-up done: touch the signal file so soak_all can start the next card's cold-boot with
@@ -227,9 +227,9 @@ async def main() -> int:
     # close can itself raise on USB disconnect; isolate so a
     # teardown failure can't kill the render path.
     try:
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
     except Exception as e:
-        print(f"[!] close_interfaces() raised: {e}", file=sys.stderr)
+        print(f"[!] wlan_close() raised: {e}", file=sys.stderr)
 
     # Everything below this point runs unconditionally: the whole
     # point of the fix is that Ctrl+C / USB disconnect / driver

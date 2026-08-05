@@ -1,7 +1,7 @@
 import asyncio
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding
@@ -29,6 +29,9 @@ from ..encryption_format import format_encryption_markup, wep_key_ascii
 from wifit3.wlan.channels import band_ranges
 
 from .channel_filter import ChannelFilterDialog
+
+if TYPE_CHECKING:
+    from wifit3.ui.app import WifiteApp
 
 
 FADE_DURATION_S = 30.0  # Seconds to fade a row after the AP does not see a beacon.
@@ -152,6 +155,8 @@ class _APScanTable(DataTable):
 
 class ScannerView(Screen):
     """The main AP scanning list screen."""
+
+    app: "WifiteApp"
 
     BINDINGS = [
         Binding("q", "app.quit", "Quit", show=True),

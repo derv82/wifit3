@@ -1,10 +1,10 @@
 """Mid-session hotplug end-to-end: an arrival while on the Scanner prompts, and Yes brings the card
-into the pool. The real WifiteApp / BringupManager / prompter run; only build_interface is stubbed."""
+into the pool. The real WifiteApp / DeviceManager / prompter run; only wlan_iface is stubbed."""
 from unittest.mock import AsyncMock
 
 import pytest
 
-import wifit3.wlan.bringup as bringup
+import wifit3.device.manager as manager
 from wifit3.chips.driver import DeviceID
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.new_device import NewDeviceDialog
@@ -50,7 +50,7 @@ class _FakeIface:
 async def test_hotplug_prompt_yes_pools_the_card(monkeypatch):
     dev = DeviceID(0x0BDA, 0x8812, "RTL8812AU (test)")
     iface = _FakeIface(dev)
-    monkeypatch.setattr(bringup, "build_interface", lambda device_id, name="wlan0": iface)
+    monkeypatch.setattr(manager, "wlan_iface", lambda device_id, name="wlan0": iface)
 
     app = WifiteApp()
     async with app.run_test() as pilot:
@@ -81,7 +81,7 @@ async def test_re_arrival_of_pooled_card_does_not_prompt(monkeypatch):
     # pooled, the listener must not prompt to bring it up again.
     dev = DeviceID(0x0BDA, 0x8812, "RTL8812AU (test)", bus=1, address=9)
     iface = _FakeIface(dev)
-    monkeypatch.setattr(bringup, "build_interface", lambda device_id, name="wlan0": iface)
+    monkeypatch.setattr(manager, "wlan_iface", lambda device_id, name="wlan0": iface)
 
     app = WifiteApp()
     async with app.run_test() as pilot:

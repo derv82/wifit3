@@ -39,7 +39,7 @@ from wifit3.campaigns.auth_assoc import Association, WlanTransport, str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from wifit3.campaigns.wps.registrar import PinResult, WpsRegistrar
 from wifit3.wlan.array import WlanArray
-from wifit3.wlan.discovery import build_interfaces, close_interfaces
+from wifit3.device.manager import wlan_ifaces, wlan_close
 
 
 def step(label: str) -> None:
@@ -103,7 +103,7 @@ def derive_wrong_pin(pin: str) -> str:
 
 
 async def discover_iface(debug: bool, card: str = ""):
-    ifaces = build_interfaces()
+    ifaces = wlan_ifaces()
     if not ifaces:
         fail("No supported wifit3 card found. Plug it in (Zadig→WinUSB on Windows) and retry.")
     if card:
@@ -246,7 +246,7 @@ async def main_async(args) -> int:
         return 0
     finally:
         step("Release device")
-        await close_interfaces(ifaces)
+        await wlan_close(ifaces)
         info("Closed.")
 
 

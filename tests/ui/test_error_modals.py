@@ -112,7 +112,7 @@ async def test_reset_for_reentry_clears_a_frozen_splash():
         device_list.disabled = True
         splash.query_one("#start-btn", Button).disabled = True
         resumed = MagicMock()
-        app.devices.resume = resumed           # spy the device-watch resume
+        app.device_watch.resume = resumed      # spy the device-watch resume
         await pilot.pause(0)
 
         splash.reset_for_reentry()

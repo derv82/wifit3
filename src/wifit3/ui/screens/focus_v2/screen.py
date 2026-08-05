@@ -21,7 +21,7 @@ import re
 import time
 from collections import deque
 from datetime import datetime
-from typing import Optional, Set
+from typing import TYPE_CHECKING, Optional, Set
 
 from rich.markup import escape
 from rich.text import Text
@@ -58,6 +58,9 @@ from .packet_dashboard import PacketDashboard
 from .log_band import LogBand
 from .router_endpoint import RouterEndpoint
 from . import art
+
+if TYPE_CHECKING:
+    from wifit3.ui.app import WifiteApp
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +123,8 @@ def _wep_key_chip(key_hex) -> str:
 
 
 class FocusViewV2(Screen):
+    app: "WifiteApp"
+
     HORIZONTAL_BREAKPOINTS = [(0, "-compact"), (100, "-normal"), (140, "-wide")]
 
     # Attack hotkeys come from the campaign registry

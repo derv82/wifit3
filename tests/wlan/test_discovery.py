@@ -1,31 +1,26 @@
-"""Driver registry (env A/B switch for the Realtek 11ac pairs) + the discovery surface.
+"""Driver registry (env A/B switch for the Realtek 11ac pairs) + the device-scan surface.
 
-The DKMS port and the mainline driver claim the same VID:PID. The registry resolves each pair to a
-single driver via ``env_or_none``; the env var picks which, defaulting to DKMS. ``find_devices`` /
-``build_interface`` are the enumeration + factory the bring-up engine drives.
+The DKMS port and the mainline driver claim the same VID:PID. The family table resolves each pair to a
+single driver via its env var; the var picks which, defaulting to DKMS. ``devices`` / ``wlan_iface``
+are the enumeration + factory the bring-up engine drives.
 """
 import pytest
+import usb.core
 
+import wifit3.device.manager as manager
 from wifit3.chips.driver import DeviceID
-from wifit3.wlan import discovery
 
 
 @pytest.fixture(autouse=True)
 def _fresh_registry():
-    # The registry is built once and cached; null it so each test's env var is read fresh.
-    discovery._DRIVER_CLASSES = None
+    # The VID:PID map is built once and cached; clear it so each test's env var is read fresh.
+    manager.supported_ids.cache_clear()
     yield
-    discovery._DRIVER_CLASSES = None
-
-
-class _FakeDev:
-    def __init__(self, vid, pid, bus=1, address=1):
-        self.idVendor, self.idProduct = vid, pid
-        self.bus, self.address = bus, address
+    manager.supported_ids.cache_clear()
 
 
 def _driver_for(vid, pid):
-    cls, _ = discovery._match_driver(_FakeDev(vid, pid))
+    cls, _ = manager.driver_for(vid, pid)
     return cls.__name__
 
 
@@ -45,8 +40,8 @@ def test_rtl8821_unknown_value_stays_dkms(monkeypatch):
 
 
 def test_both_8821_drivers_claim_0811():
-    from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
-    assert (0x0BDA, 0x0811) in {(e.vid, e.pid) for e in Rtl8821auDkmsDriver.SUPPORTED_IDS}
+    from wifit3.chips.rtl8821au_dkms import SUPPORTED_IDS
+    assert (0x0BDA, 0x0811) in {(e.vid, e.pid) for e in SUPPORTED_IDS}
 
 
 def test_rtl8814_default_is_dkms(monkeypatch):
@@ -75,8 +70,8 @@ def test_rtl8812_unknown_value_stays_dkms(monkeypatch):
 
 
 def test_both_8812_drivers_claim_8812():
-    from wifit3.chips.rtl8812au_dkms.driver import Rtl8812auDkmsDriver
-    assert (0x0BDA, 0x8812) in {(e.vid, e.pid) for e in Rtl8812auDkmsDriver.SUPPORTED_IDS}
+    from wifit3.chips.rtl8812au_dkms import SUPPORTED_IDS
+    assert (0x0BDA, 0x8812) in {(e.vid, e.pid) for e in SUPPORTED_IDS}
 
 
 def test_rtl8822_default_is_dkms(monkeypatch):
@@ -95,11 +90,23 @@ def test_rtl8822_unknown_value_stays_dkms(monkeypatch):
 
 
 def test_both_8822_drivers_claim_0138():
-    from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
-    assert (0x2357, 0x0138) in {(e.vid, e.pid) for e in Rtl8822buDkmsDriver.SUPPORTED_IDS}
+    from wifit3.chips.rtl8822bu_dkms import SUPPORTED_IDS
+    assert (0x2357, 0x0138) in {(e.vid, e.pid) for e in SUPPORTED_IDS}
 
 
-# --- find_devices / build_interface --------------------------------------------------------------
+def test_key_is_the_family_key_not_the_package_dir():
+    # The setup key must stay the family key (ar9271, not ar9271_v2), so a prior install's files resolve.
+    _cls, key = manager.driver_for(0x0CF3, 0x9271)
+    assert key == "ar9271"
+
+
+# --- devices / wlan_iface ------------------------------------------------------------------------
+
+class _FakeDev:
+    def __init__(self, vid, pid, bus=1, address=1):
+        self.idVendor, self.idProduct = vid, pid
+        self.bus, self.address = bus, address
+
 
 class _FakeDriver:
     """Minimal driver satisfying WlanInterface's constructor (registers two callbacks)."""
@@ -120,88 +127,105 @@ class _FakeDriver:
         self._disc = cb
 
 
-def _stub_scan(monkeypatch, handles):
-    monkeypatch.setattr(discovery.libusb_package, "get_libusb1_backend", lambda: None)
-    monkeypatch.setattr(discovery, "_scan_bus", lambda backend: handles)
+def _stub_bus(monkeypatch, devs):
+    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
+    monkeypatch.setattr(usb.core, "find", lambda **kw: list(devs))
 
 
-def test_find_devices_tags_each_match_with_its_bus_address(monkeypatch):
-    d1 = DeviceID(0x0BDA, 0x8813, "RTL8814AU")
-    d2 = DeviceID(0x148F, 0x5370, "RT5370")
-    _stub_scan(monkeypatch, [(_FakeDev(0x0BDA, 0x8813, bus=1, address=4), _FakeDriver, d1),
-                             (_FakeDev(0x148F, 0x5370, bus=1, address=5), _FakeDriver, d2)])
-    out = discovery.find_devices()
+def test_devices_tags_each_match_with_its_bus_address(monkeypatch):
+    _stub_bus(monkeypatch, [_FakeDev(0x0BDA, 0x8813, bus=1, address=4),
+                            _FakeDev(0x148F, 0x5370, bus=1, address=5)])
+    out = manager.devices()
     assert [d.instance_key for d in out] == [(0x0BDA, 0x8813, 1, 4), (0x148F, 0x5370, 1, 5)]
 
 
-def test_find_devices_distinguishes_two_identical_cards(monkeypatch):
-    d = DeviceID(0x0E8D, 0x7961, "MT7921AU")
-    _stub_scan(monkeypatch, [(_FakeDev(0x0E8D, 0x7961, bus=2, address=32), _FakeDriver, d),
-                             (_FakeDev(0x0E8D, 0x7961, bus=2, address=35), _FakeDriver, d)])
-    out = discovery.find_devices()
-    assert len({x.instance_key for x in out}) == 2
+def test_devices_ignores_unsupported_vidpid(monkeypatch):
+    _stub_bus(monkeypatch, [_FakeDev(0x1234, 0x5678, bus=1, address=4),
+                            _FakeDev(0x148F, 0x5370, bus=1, address=5)])
+    assert [d.instance_key for d in manager.devices()] == [(0x148F, 0x5370, 1, 5)]
 
 
-def test_find_device_returns_the_current_address_for_a_moved_device(monkeypatch):
-    # device_id carries a stale address (WinUSB moved it); find_device returns the live one.
+def test_devices_distinguishes_two_identical_cards(monkeypatch):
+    _stub_bus(monkeypatch, [_FakeDev(0x0E8D, 0x7961, bus=2, address=32),
+                            _FakeDev(0x0E8D, 0x7961, bus=2, address=35)])
+    assert len({x.instance_key for x in manager.devices()}) == 2
+
+
+def test_device_returns_the_current_address_for_a_moved_device(monkeypatch):
+    # device_id carries a stale address (WinUSB moved it); device() returns the live one.
     stale = DeviceID(0x148F, 0x5372, "RT5372", bus=2, address=63)
-    _stub_scan(monkeypatch, [(_FakeDev(0x148F, 0x5372, bus=2, address=64), _FakeDriver,
-                              DeviceID(0x148F, 0x5372, "RT5372"))])
-    got = discovery.find_device(stale)
+    _stub_bus(monkeypatch, [_FakeDev(0x148F, 0x5372, bus=2, address=64)])
+    got = manager.device(stale)
     assert got is not None and got.instance_key == (0x148F, 0x5372, 2, 64)
 
 
-def test_find_device_none_when_vidpid_absent(monkeypatch):
-    _stub_scan(monkeypatch, [])
-    assert discovery.find_device(DeviceID(0x1, 0x2, "nope")) is None
+def test_device_none_when_vidpid_absent(monkeypatch):
+    _stub_bus(monkeypatch, [])
+    assert manager.device(DeviceID(0x1, 0x2, "nope")) is None
 
 
-def test_build_interface_dispatches_matching_driver(monkeypatch):
-    entry = DeviceID(0x0BDA, 0x8813, "RTL8814AU")
+def test_wlan_iface_dispatches_matching_driver(monkeypatch):
+    entry = DeviceID(0x0BDA, 0x8813, "RTL8814AU", bus=1, address=7)
     dev = _FakeDev(0x0BDA, 0x8813, bus=1, address=7)
-    _stub_scan(monkeypatch, [(dev, _FakeDriver, entry)])
-    iface = discovery.build_interface(entry, name="wlan3")
+    monkeypatch.setattr(manager, "driver_for", lambda v, p: (_FakeDriver, "rtl8814au"))
+    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
+    monkeypatch.setattr(usb.core, "find", lambda **kw: dev)
+    iface = manager.wlan_iface(entry, name="wlan3")
     assert iface is not None
     assert iface.name == "wlan3" and iface.vid == 0x0BDA and iface.dev is dev
     assert iface.instance_key == (0x0BDA, 0x8813, 1, 7)
 
 
-def test_build_interface_selects_the_addressed_instance(monkeypatch):
-    # Two identical cards on the bus; the entry names one by (bus, address). build_interface must
-    # open THAT one, not the first VID:PID match (the two-identical-cards hotplug bug).
+def test_wlan_iface_selects_the_addressed_instance(monkeypatch):
+    # Two identical cards on the bus; the entry names one by (bus, address). wlan_iface must open THAT
+    # one via a targeted find, not the first VID:PID match (the two-identical-cards hotplug bug).
     entry = DeviceID(0x0E8D, 0x7961, "MT7921AU", bus=2, address=35)
-    first = _FakeDev(0x0E8D, 0x7961, bus=2, address=32)
     second = _FakeDev(0x0E8D, 0x7961, bus=2, address=35)
-    _stub_scan(monkeypatch, [(first, _FakeDriver, entry), (second, _FakeDriver, entry)])
-    iface = discovery.build_interface(entry)
+    seen = {}
+
+    def _find(**kw):
+        seen.update(kw)
+        return second if kw.get("address") == 35 else None
+
+    monkeypatch.setattr(manager, "driver_for", lambda v, p: (_FakeDriver, "mt7921au"))
+    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
+    monkeypatch.setattr(usb.core, "find", _find)
+    iface = manager.wlan_iface(entry)
     assert iface is not None and iface.dev is second
+    assert seen["bus"] == 2 and seen["address"] == 35
 
 
-def test_build_interface_none_when_absent(monkeypatch):
-    _stub_scan(monkeypatch, [])
-    assert discovery.build_interface(DeviceID(0x1, 0x2, "nope")) is None
+def test_wlan_iface_none_when_absent(monkeypatch):
+    monkeypatch.setattr(manager, "driver_for", lambda v, p: (_FakeDriver, "k"))
+    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
+    monkeypatch.setattr(usb.core, "find", lambda **kw: None)
+    assert manager.wlan_iface(DeviceID(0x0BDA, 0x8813, "RTL8814AU")) is None
 
 
-def test_build_interface_none_when_driver_raises(monkeypatch):
+def test_wlan_iface_none_when_unsupported(monkeypatch):
+    assert manager.wlan_iface(DeviceID(0x1, 0x2, "nope")) is None
+
+
+def test_wlan_iface_none_when_driver_raises(monkeypatch):
     class _Boom(_FakeDriver):
         @classmethod
         def from_usb_device(cls, dev, id_entry):
             raise RuntimeError("not ported yet")
 
-    entry = DeviceID(0x0BDA, 0x8813, "RTL8814AU")
-    _stub_scan(monkeypatch, [(_FakeDev(0x0BDA, 0x8813), _Boom, entry)])
-    assert discovery.build_interface(entry) is None
+    monkeypatch.setattr(manager, "driver_for", lambda v, p: (_Boom, "k"))
+    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
+    monkeypatch.setattr(usb.core, "find", lambda **kw: _FakeDev(0x0BDA, 0x8813))
+    assert manager.wlan_iface(DeviceID(0x0BDA, 0x8813, "RTL8814AU")) is None
 
 
-def test_usb_node_path_targets_the_addressed_instance(monkeypatch):
+def test_linux_node_path_targets_the_addressed_instance(monkeypatch):
     entry = DeviceID(0x0E8D, 0x7961, "MT7921AU", bus=2, address=35)
-    first = _FakeDev(0x0E8D, 0x7961, bus=2, address=32)
-    second = _FakeDev(0x0E8D, 0x7961, bus=2, address=35)
-    _stub_scan(monkeypatch, [(first, _FakeDriver, entry), (second, _FakeDriver, entry)])
-    assert discovery.usb_node_path(entry) == "/dev/bus/usb/002/035"
+    _stub_bus(monkeypatch, [_FakeDev(0x0E8D, 0x7961, bus=2, address=32),
+                            _FakeDev(0x0E8D, 0x7961, bus=2, address=35)])
+    assert manager.linux_node_path(entry) == "/dev/bus/usb/002/035"
 
 
-def test_usb_node_path_first_match_for_catalog_entry(monkeypatch):
+def test_linux_node_path_first_match_for_catalog_entry(monkeypatch):
     entry = DeviceID(0x148F, 0x5370, "RT5370")   # no (bus, address)
-    _stub_scan(monkeypatch, [(_FakeDev(0x148F, 0x5370, bus=1, address=5), _FakeDriver, entry)])
-    assert discovery.usb_node_path(entry) == "/dev/bus/usb/001/005"
+    _stub_bus(monkeypatch, [_FakeDev(0x148F, 0x5370, bus=1, address=5)])
+    assert manager.linux_node_path(entry) == "/dev/bus/usb/001/005"

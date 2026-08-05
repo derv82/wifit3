@@ -31,16 +31,18 @@ def target_for_vidpid(vid: int, pid: int) -> SetupTarget | None:
     Live module discovery (sysfs / ``modprobe -R``) is authoritative at install time; the
     driver's optional ``CONFLICTING_LINUX_MODULES`` rides along as a fallback hint for the
     degenerate "device not plugged in" path. Import is deferred to sidestep the chip-driver
-    import cycle.
+    import cycle; ``key`` is the family/map key, so a prior install's setup files still resolve.
     """
-    from wifit3.wlan.discovery import _import_driver_classes
+    from wifit3.device.manager import driver_for, supported_ids
 
-    for key, driver_cls in _import_driver_classes().items():
-        for entry in driver_cls.SUPPORTED_IDS:
-            if entry.vid == vid and entry.pid == pid:
-                ids = tuple(sorted({(e.vid, e.pid) for e in driver_cls.SUPPORTED_IDS}))
-                return SetupTarget(
-                    key=key, description=entry.description, ids=ids,
-                    module_hints=tuple(driver_cls.CONFLICTING_LINUX_MODULES),
-                    replug_after_modprobe=driver_cls.LINUX_REPLUG_AFTER_MODPROBE)
-    return None
+    smap = supported_ids()
+    got = smap.get((vid, pid))
+    if got is None:
+        return None
+    entry, key, _import = got
+    driver_cls, _ = driver_for(vid, pid)
+    ids = tuple(sorted(vp for vp, (_e, k, _i) in smap.items() if k == key))
+    return SetupTarget(
+        key=key, description=entry.description, ids=ids,
+        module_hints=tuple(driver_cls.CONFLICTING_LINUX_MODULES),
+        replug_after_modprobe=driver_cls.LINUX_REPLUG_AFTER_MODPROBE)
