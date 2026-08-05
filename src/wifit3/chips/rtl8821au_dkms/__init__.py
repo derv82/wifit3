@@ -5,14 +5,43 @@ Cleanroom re-port from the Lucid-Duck ``8821au-20210708`` 5.12.5.2 vendor source
 beside the mainline-derived ``chips/rtl8821au/`` as a sibling; both register for
 0bda:0811 and are ordered by ``$WIFIT3_RTL8821`` (DKMS default, ``=mainline``
 falls back). See ``RTL8821AU_DKMS.md`` for the per-milestone ground truth.
+
+VID:PID set kept in lockstep with the mainline sibling ``chips/rtl8821au`` (all one silicon).
 """
 from wifit3.models.device_id import DeviceID
 
-from .constants import USB_PID_AWUS036ACS, USB_VID_REALTEK
+_IDS = (
+    (0x0BDA, 0x0811, "RTL8821AU", None, "ALFA AWUS036ACS"),
+    (0x0BDA, 0x0821, "RTL8821AU", None, None),
+    (0x0BDA, 0x8822, "RTL8821AU", None, None),
+    (0x0BDA, 0xA811, "RTL8821AU", None, None),
+    (0x0BDA, 0x0820, "RTL8821AU", None, None),
+    (0x0BDA, 0x0823, "RTL8821AU", None, None),
+    (0x0411, 0x0242, "RTL8821AU", None, "ELECOM WDC-433DU2H"),
+    (0x0411, 0x029B, "RTL8821AU", None, "Buffalo WI-U2-433DHP"),
+    (0x04BB, 0x0953, "RTL8821AU", None, "I-O DATA Edimax"),
+    (0x056E, 0x4007, "RTL8821AU", None, "Elecom WDC-433DU2HBK"),
+    (0x056E, 0x400E, "RTL8821AU", None, "ELECOM"),
+    (0x056E, 0x400F, "RTL8821AU", None, "ELECOM"),
+    (0x056E, 0x4010, "RTL8821AU", None, "ELECOM"),
+    (0x0846, 0x9052, "RTL8821AU", None, "Netgear A6100"),
+    (0x0E66, 0x0023, "RTL8821AU", None, "HAWKING Edimax"),
+    (0x2001, 0x3314, "RTL8821AU", None, "D-Link Cameo"),
+    (0x2001, 0x3318, "RTL8821AU", None, "D-Link Cameo"),
+    (0x2019, 0xAB32, "RTL8821AU", None, "Planex GW-450S"),
+    (0x2357, 0x011E, "RTL8821AU", None, "TP-Link T2U Nano"),
+    (0x2357, 0x011F, "RTL8821AU", None, "TP-Link Archer AC600 T2U Nano"),
+    (0x2357, 0x0120, "RTL8821AU", None, "TP-Link T2U Plus"),
+    (0x3823, 0x6249, "RTL8821AU", None, "Obihai OBiWiFi"),
+    (0x7392, 0xA811, "RTL8821AU", None, "Edimax"),
+    (0x7392, 0xA812, "RTL8821AU", None, "Edimax EW-7811UTC"),
+    (0x7392, 0xA813, "RTL8821AU", None, "Edimax EW-7811UAC"),
+    (0x7392, 0xB611, "RTL8821AU", None, "Edimax EW-7811UCB"),
+)
 
 SUPPORTED_IDS = [
-    DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACS, "RTL8821AU",
-             product_name="ALFA AWUS036ACS"),
+    DeviceID(vid, pid, chipset, vendor, product)
+    for (vid, pid, chipset, vendor, product) in _IDS
 ]
 
 

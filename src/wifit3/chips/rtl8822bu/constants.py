@@ -117,6 +117,16 @@ USB_IDS_8822BU: tuple[tuple[int, int, str, str | None, str | None], ...] = (
     (0x2C4E, 0x010A, "RTL8822BU", "Mercusys", "MA30N"),
     (0x0411, 0x03D1, "RTL8822BU", "Buffalo", "WI-U2-866DM"),
     (0x0411, 0x03D0, "RTL8822BU", "Buffalo", "WI-U3-866DHP"),
+    (0x04CA, 0x8602, "RTL8822BU", "LiteOn", None),
+    (0x056E, 0x4011, "RTL8822BU", "Elecom", None),
+    (0x0B05, 0x1870, "RTL8822BU", "ASUS", None),
+    (0x0B05, 0x1874, "RTL8822BU", "ASUS", None),
+    (0x0BDA, 0x2102, "RTL8822BU", None, None),
+    (0x0E66, 0x0025, "RTL8822BU", "Hawking", "HW12ACU"),
+    (0x2001, 0x331F, "RTL8822BU", "D-Link", "DWA-183 D"),
+    (0x2001, 0x3322, "RTL8822BU", "D-Link", "DWA-T185 rev A1"),
+    (0x20F4, 0x805A, "RTL8822BU", "TRENDnet", "TEW-805UBH"),
+    (0x20F4, 0x808A, "RTL8822BU", "TRENDnet", "TEW-808UBM"),
 )
 
 # --- Chip parameters (rtw_chip_info from rtw8822b.c:2496..2618) ------------

@@ -55,10 +55,16 @@ class FakeTransport:
         return bytes(self.regs.get(addr + i, 0) for i in range(length))
 
 
-def test_supported_id_is_8187L():
-    [entry] = SUPPORTED_IDS
-    assert entry.vid == USB_VID_REALTEK == 0x0BDA
-    assert entry.pid == USB_PID_RTL8187 == 0x8187
+def test_supported_ids_are_8187L_only():
+    # The full DEVICE_RTL8187 (8187L) set from the kernel table. The DEVICE_RTL8187B
+    # ids are a different chip (separate TX header + init) and must stay excluded.
+    ids = {(d.vid, d.pid) for d in SUPPORTED_IDS}
+    assert (USB_VID_REALTEK, USB_PID_RTL8187) == (0x0BDA, 0x8187)
+    assert (0x0BDA, 0x8187) in ids   # ALFA AWUS036H, the lab device
+    assert all(d.chipset == "RTL8187L" for d in SUPPORTED_IDS)
+    rtl8187b = {(0x0BDA, 0x8189), (0x0BDA, 0x8197), (0x0BDA, 0x8198), (0x050D, 0x705E),
+                (0x0846, 0x4260), (0x0DF6, 0x0028), (0x0DF6, 0x0029), (0x1737, 0x0073)}
+    assert ids.isdisjoint(rtl8187b)
 
 
 def test_supported_channels_are_2g_only():

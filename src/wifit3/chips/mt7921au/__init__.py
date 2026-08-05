@@ -1,7 +1,16 @@
 from wifit3.models.device_id import DeviceID
 
+_IDS = (
+    (0x0E8D, 0x7961, "MT7921AU", None, "ALFA AWUS036AXML / Panda PAU0F"),
+    (0x3574, 0x6211, "MT7921AU", None, "Netgear A8000 AXE3000"),
+    (0x0846, 0x9060, "MT7921AU", None, "Netgear A7500"),
+    (0x0846, 0x9065, "MT7921AU", None, "TP-Link TXE50UH"),
+    (0x35BC, 0x0107, "MT7921AU", None, None),
+)
+
 SUPPORTED_IDS = [
-    DeviceID(0x0e8d, 0x7961, "MT7921AU", product_name="ALFA AWUS036AXML / Panda PAU0F"),
+    DeviceID(vid, pid, chipset, vendor, product)
+    for (vid, pid, chipset, vendor, product) in _IDS
 ]
 
 
