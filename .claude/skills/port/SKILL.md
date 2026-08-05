@@ -24,6 +24,20 @@ the reference doc you ship with it.
 
 Read only this chip's C source while porting, not other chips' drivers (METHODOLOGY explains why).
 
+## Scaffolding the chip package
+
+Creating `chips/<name>/`? Two registration rules the `Driver` ABC does not enforce:
+
+- **`__init__.py` declares the VID:PIDs, not the driver class.** It sets
+  `SUPPORTED_IDS = [DeviceID(...), ...]` (`from wifit3.models.device_id import DeviceID`) plus a
+  `def import_driver(): from .driver import <Class>; return <Class>`, and must NOT import `driver.py`
+  at module top (discovery reads the light `__init__` and imports the driver only on a VID:PID match).
+  Copy the shape from `chips/rtl8812au/__init__.py`.
+- The driver class declares `SUPPORTED_CHANNELS` only; `SUPPORTED_IDS` is not on it. Discovery is a
+  pkgutil walk over `chips/*` (no manual registry to edit). If the setup key differs from the package
+  dir, or two packages share a VID:PID (the Realtek mainline/DKMS pairs), add a `_FAMILIES` row in
+  `device/manager.py`. METHODOLOGY Step 1 has the detail.
+
 ## When to surface to the user
 
 Run the loop to a stopping point on your own. Surface only when:

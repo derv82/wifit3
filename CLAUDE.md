@@ -54,14 +54,18 @@ Wifit3 is a userland 802.11 auditing tool. It communicates directly with USB wir
 Not a clean top-to-bottom stack (the real flow is more tangled), but the points of interest:
 
 ```
-ui/      Textual screens (Splash → Scanner → Focus); WifiteApp holds the device manager + active interface
-wlan/    WlanDeviceManager (USB scan, VID:PID → driver), WlanInterface (802.11 abstraction:
-         channel hopping, AP/Client registry, handshake tracking), WlanFrameParser (pure-Python parser)
-engine/  models.py (Pydantic: AccessPoint, Client, Handshake); attacks/ (SAE probe, etc.)
+ui/      Textual screens (Splash → Scanner → Focus); WifiteApp holds the DeviceManager + active interface
+device/  DeviceManager + the VID:PID map (USB scan, VID:PID → driver, read WITHOUT importing the
+         driver), DeviceWatch (plug-in / un-plug callbacks)
+wlan/    WlanInterface (802.11 abstraction: channel hopping, AP/Client registry, handshake tracking),
+         WlanFrameParser (the Python 802.11 frame parser)
+models/  project-wide dataclasses: AccessPoint, Client, Handshake, DeviceID
+campaigns/ attack flows (deauth/handshake capture, PMKID, WPS, WEP, SAE probe, ...)
 chips/   driver.py is the Driver ABC; one dir per chip subclasses it
 
 A chip dir (chips/<chipset>/) is typically shaped:
-  driver.py         subclasses the Driver ABC; declares SUPPORTED_IDS + SUPPORTED_CHANNELS
+  __init__.py       SUPPORTED_IDS + import_driver (the VID:PID list, read without importing driver.py)
+  driver.py         subclasses the Driver ABC; declares SUPPORTED_CHANNELS
   transport.py      raw USB read/write (control transfers + bulk I/O)
   firmware.py       firmware upload
   constants.py      register addresses, command IDs, magic bytes
@@ -78,16 +82,18 @@ See `README.md` for the user-facing supported-cards table, and `docs/SUPPORTED-H
 
 ### Adding a New Chipset
 
-The manager is a generic VID:PID discovery loop: each driver declares its own hardware. To register a new chip:
+Discovery is a `pkgutil` walk over `chips/*` that reads each package's light `__init__` (its VID:PID list) WITHOUT importing the driver; the matched driver is imported only on a hit. There is no manual registry to edit. To add a chip:
 
-1. Create `src/wifit3/chips/<name>/` with at minimum `driver.py`, `transport.py`, `constants.py` (+ `firmware.py` if the chip needs a FW upload).
-2. `driver.py` must subclass the `Driver` ABC (`wifit3.chips.driver`); Python enforces the surface at instantiation. Concretely:
-   - Class attr `SUPPORTED_IDS: list[DeviceID]` — every VID:PID this driver claims, with a human-readable description and any chip-id discriminator in `extras={}`.
-   - Class attr `SUPPORTED_CHANNELS: list[int]` — every channel the driver can tune to (consumed by `WlanInterface.start_hopping`).
-   - Classmethod `from_usb_device(cls, dev, id_entry) -> Driver` — driver-side construction (transport wrapping, chip_id reads from `extras`, etc.). Keeps the manager free of chip-specific switches.
+1. Create `src/wifit3/chips/<name>/` with at minimum `__init__.py`, `driver.py`, `transport.py`, `constants.py` (+ `firmware.py` if the chip needs a FW upload).
+2. `chips/<name>/__init__.py` declares the hardware, and must NOT import `driver.py` at module top:
+   - `SUPPORTED_IDS: list[DeviceID]` (`from wifit3.models import DeviceID`): every VID:PID this driver claims, with a human-readable description and any chip-id discriminator in `extras={}`.
+   - `def import_driver()`: the one heavy import, lazy (`from .driver import <Class>; return <Class>`).
+3. `driver.py` must subclass the `Driver` ABC (`wifit3.chips.driver`); Python enforces the surface at instantiation:
+   - Class attr `SUPPORTED_CHANNELS: list[int]`: every channel the driver can tune to (consumed by `WlanInterface.start_hopping`). `SUPPORTED_IDS` lives in `__init__.py`, not on the class.
+   - Classmethod `from_usb_device(cls, dev, id_entry) -> Driver`: driver-side construction (transport wrapping, chip_id reads from `extras`).
    - Runtime methods: `connect()`, `set_channel()`, `inject_frame()`, `close()`, plus the `register_rx_callback()` hook.
-3. Add the driver class to `_all_drivers()` in `wifit3/wlan/manager.py` (lazy registry: order is the priority for VID:PID disambiguation).
-4. Drop a `<CHIP>.md` port-reference doc next to the driver (skeleton + rules in `docs/porting/CHIP-DOC.md`).
+4. Only if the chip's setup key must differ from its dir name, or two packages claim the same VID:PID (the Realtek mainline/DKMS pairs): add a row to `_FAMILIES` in `device/manager.py`. Otherwise there is nothing else to register.
+5. Drop a `<CHIP>.md` port-reference doc next to the driver (skeleton + rules in `docs/porting/CHIP-DOC.md`).
 
 The cold-vs-warm distinction is a per-driver concern: if a previous session left the chip running, `connect()` should detect that and skip the bring-up. See `chips/rtl8821au/mac.py:is_chip_warm()` + `driver.py:_warm_reattach` for the pattern (light reattach + smoke-test the bulk-IN pipe; surface a clear "please replug" message if the USB pipe is wedged: that path can't always be recovered in userland on Windows+WinUSB).
 

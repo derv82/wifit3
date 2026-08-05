@@ -76,7 +76,19 @@ A few things hold for every driver:
   messages and the chip doc, never in code.
 - Start the chip's reference doc (CHIP-DOC.md) as you go.
 
-The `Driver` ABC your `driver.py` must subclass is in CLAUDE.md → "Adding a New Chipset".
+The `Driver` ABC your `driver.py` must subclass is in CLAUDE.md → "Adding a New Chipset" (the
+runtime methods + `SUPPORTED_CHANNELS`). Two registration rules the ABC does not enforce:
+
+- **`chips/<name>/__init__.py` declares the VID:PIDs**, not the driver class. It sets
+  `SUPPORTED_IDS = [DeviceID(...), ...]` (`from wifit3.models.device_id import DeviceID`) and a
+  `def import_driver(): from .driver import <Class>; return <Class>`. It must NOT import `driver.py`
+  at module top: discovery reads the light `__init__` and imports the heavy driver only on a VID:PID
+  match. Copy the shape from `chips/rtl8812au/__init__.py`.
+- **`SUPPORTED_IDS` is not a driver-class attr; `SUPPORTED_CHANNELS` is.** Discovery is a pkgutil walk
+  over `chips/*` importing each light `__init__` (`device/manager.py`, `supported_ids()`): there is no
+  manual registry list to edit. If the chip's setup key differs from its package dir, or two packages
+  ship on the same VID:PID (the Realtek mainline/DKMS pairs), add a `_FAMILIES` row in
+  `device/manager.py`.
 
 ## Step 2 — Port the whole graph; skip nothing by name
 
@@ -196,8 +208,9 @@ lives in the shared RX path and porting again from the vendor source recovers it
 vendor fork (MediaTek, Atheros, RTL8187) stay on mainline.
 
 When porting again from a different source tree, keep both drivers and A/B them. The new port lands
-in a sibling package (`chips/rtl<chip>_dkms/`); the old one stays. Both register for the same
-VID:PID, ordered by a per-family env var, new port default. Port in a fresh session with only the
+in a sibling package (`chips/rtl<chip>_dkms/`); the old one stays. Both declare the same VID:PID in
+their `__init__.py`; a `_FAMILIES` row in `device/manager.py` picks between them (`default` = the new
+DKMS port, `mainline` = the old, flipped by the family's env var). Port in a fresh session with only the
 vendor source and the new pcap in view, and treat it as a new bring-up. Baseline the old driver at
 the reference AP first, and flip the default only once the new port ties or beats it on hardware.
 
