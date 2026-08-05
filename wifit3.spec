@@ -14,7 +14,7 @@
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 # Collects firmware blobs (*.bin, *.fw), ANSI art (*.ans), and Windows installer (wdi-simple.exe)
 datas = collect_data_files("wifit3")
@@ -32,6 +32,11 @@ for _pkg in ("libusb_package", "textual", "rich"):
     datas += _d
     binaries += _b
     hiddenimports += _h
+
+# Chip drivers are discovered at runtime by a pkgutil walk over wifit3.chips (device/manager.py),
+# never statically imported, so PyInstaller's analysis can't see them and a onefile build ships
+# with zero drivers: the app launches but finds no interfaces. Force every chip subpackage in.
+hiddenimports += collect_submodules("wifit3.chips")
 
 # libusb_package.get_library_path() locates the libusb shared lib via importlib.resources, i.e.
 # it must sit at libusb_package/libusb-1.0.* INSIDE the package dir of the bundle. collect_all

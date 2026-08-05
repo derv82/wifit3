@@ -5,7 +5,7 @@ async def _smoke() -> None:
     """Headless self-test: prove the PyInstaller bundle is intact, then exit. Used by CI to
     catch bundling breaks the unit-test import-smoke can't.
 
-    Two checks:
+    Three checks:
       1. The bundled libusb shared lib is where ``libusb_package.get_library_path()`` looks
          (``libusb_package/libusb-1.0.*``) and actually loads. A onefile build can misplace it,
          which breaks USB enumeration with "No backend available". We deliberately do NOT
@@ -13,6 +13,9 @@ async def _smoke() -> None:
          so init legitimately fails there. That's a runtime-env concern, not a packaging break.
       2. ``App.run_test()`` mounts every screen headless (no TTY), pulling the widget .tcss and
          logo assets that a broken ``collect_all`` would silently drop.
+      3. ``supported_ids()`` is non-empty: the pkgutil chip-discovery walk only enumerates
+         drivers PyInstaller actually collected, so an empty map means the bundle shipped with
+         no drivers and the app would launch but show zero interfaces.
     """
     import ctypes
     import os
@@ -29,6 +32,14 @@ async def _smoke() -> None:
     app = WifiteApp()
     async with app.run_test() as pilot:
         await pilot.pause()
+
+    # Chip discovery actually finds drivers. supported_ids() walks wifit3.chips via pkgutil; if
+    # PyInstaller didn't collect the dynamically-imported chip packages the map is empty and the
+    # app launches fine but shows zero interfaces. That is the break this check exists to catch.
+    from wifit3.device.manager import supported_ids
+
+    if not supported_ids():
+        raise RuntimeError("chip discovery found no driver packages (PyInstaller bundling break)")
 
 
 def main() -> None:
