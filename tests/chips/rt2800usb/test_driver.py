@@ -20,6 +20,7 @@ from wifit3.chips.rt2800usb.constants import (
     USB_PID_RT3572,
     USB_VID_RALINK,
 )
+from wifit3.chips.rt2800usb import SUPPORTED_IDS
 from wifit3.chips.rt2800usb.driver import RT2800USBDriver
 from wifit3.chips.rt2800usb.mac import (
     is_chip_warm,
@@ -81,11 +82,11 @@ RecordingTransport = FakeTransport
 def test_supported_ids_cover_all_variants():
     # 148f:5572 (RT5572 / PAU09) moved to the standalone chips/rt5572 driver;
     # rt2800usb now claims only RT3572 (the AWUS051NH v2).
-    pids = {entry.pid for entry in RT2800USBDriver.SUPPORTED_IDS}
+    pids = {entry.pid for entry in SUPPORTED_IDS}
     assert pids == {USB_PID_RT3572}
-    assert all(entry.vid == USB_VID_RALINK for entry in RT2800USBDriver.SUPPORTED_IDS)
+    assert all(entry.vid == USB_VID_RALINK for entry in SUPPORTED_IDS)
     # chip_id hints are populated for downstream variant dispatch
-    hints = {entry.extras["chip_id"] for entry in RT2800USBDriver.SUPPORTED_IDS}
+    hints = {entry.extras["chip_id"] for entry in SUPPORTED_IDS}
     assert hints == {"rt3572"}
 
 

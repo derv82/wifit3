@@ -19,6 +19,7 @@ from wifit3.chips.rtl8187.constants import (
     USB_PID_RTL8187,
     USB_VID_REALTEK,
 )
+from wifit3.chips.rtl8187 import SUPPORTED_IDS
 from wifit3.chips.rtl8187.driver import RTL8187Driver
 from wifit3.chips.rtl8187.mac import (
     cold_bring_up,
@@ -55,7 +56,7 @@ class FakeTransport:
 
 
 def test_supported_id_is_8187L():
-    [entry] = RTL8187Driver.SUPPORTED_IDS
+    [entry] = SUPPORTED_IDS
     assert entry.vid == USB_VID_REALTEK == 0x0BDA
     assert entry.pid == USB_PID_RTL8187 == 0x8187
 

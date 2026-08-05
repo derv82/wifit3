@@ -34,7 +34,7 @@ from ..rx_reader import RxReaderThread
 from .bb import phy_bb_config
 from .chan import init_tune, set_channel_bw, set_rfe_reg_init
 from .constants import (
-    BAND_MAX, BBSWING_DEFAULT, CHANNELS_2G, CHANNELS_5G_NON_DFS, PID_RTL8814AU, VID_REALTEK,
+    BAND_MAX, BBSWING_DEFAULT, CHANNELS_2G, CHANNELS_5G_NON_DFS,
 )
 from .dm import init_hal_dm
 from .watchdog import WATCHDOG_PERIOD_S, WatchdogState
@@ -76,10 +76,6 @@ def _detect_super_speed(transport: Rtl8814auTransport) -> bool:
 
 
 class Rtl8814auDkmsDriver(Driver):
-    SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(VID_REALTEK, PID_RTL8814AU, "RTL8814AU",
-                 product_name="ALFA AWUS1900"),
-    ]
     # 2.4 GHz + 5 GHz, 20 MHz primary (M5a band switch / M5b select / M5c runtime / M5d TX
     # power) — both bands tune with correct per-rate TX power for RX and inject. Non-DFS 5 GHz
     # only in the advertised set; set_channel still tunes DFS, we just don't hop it.

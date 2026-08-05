@@ -82,9 +82,6 @@ logger = logging.getLogger(__name__)
 class RTL8188EUSDriver(Driver):
     """Driver for the Realtek RTL8188EUS (e.g. TP-Link TL-WN722N v2/v3)."""
 
-    SUPPORTED_IDS = [
-        DeviceID(0x2357, 0x010C, "RTL8188EUS", vendor="TP-Link", product_name="TL-WN722N v2/v3"),
-    ]
     # 2.4 GHz only.
     SUPPORTED_CHANNELS = list(range(1, 14))
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant

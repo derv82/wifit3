@@ -33,7 +33,7 @@ from wifit3.chips.rtw88_base.registers import (
     BIT_RXDMA_EN,
 )
 from . import constants as C
-from .constants import REG_CCA_OFDM, REG_SYS_CFG1, USB_IDS_8814AU
+from .constants import REG_CCA_OFDM, REG_SYS_CFG1
 from .firmware import (
     download_firmware,
     download_firmware_validate,
@@ -57,10 +57,6 @@ _BAND_RELOCK_ATTEMPTS = 4
 class RTL8814AUDriver(Driver):
     """Driver for Realtek RTL8814AU (Alfa AWUS1900, 4T4R). M1: FW upload only."""
 
-    SUPPORTED_IDS = [
-        DeviceID(vid, pid, chipset, vendor, product)
-        for (vid, pid, chipset, vendor, product) in USB_IDS_8814AU
-    ]
     # 2.4 GHz 1..13 + non-DFS 5 GHz. Channel tune lands in M3; this advertises
     # the chip's reach for when WlanInterface.start_hopping consumes it.
     SUPPORTED_CHANNELS = list(range(1, 14)) + [36, 40, 44, 48, 149, 153, 157, 161, 165]

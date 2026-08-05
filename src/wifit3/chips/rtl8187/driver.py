@@ -42,7 +42,7 @@ from wifit3.errors import BringUpError, BringUpPermissionsError
 from wifit3.dot11.parser import WlanFrameParser
 
 from .chan import config_channel as _config_channel
-from .constants import REG_CMD, CMD_RX_ENABLE, CMD_TX_ENABLE, USB_PID_RTL8187, USB_VID_REALTEK
+from .constants import REG_CMD, CMD_RX_ENABLE, CMD_TX_ENABLE
 from .mac import (
     ChipVariant,
     cold_bring_up,
@@ -66,9 +66,6 @@ class RTL8187Driver(Driver):
     driver — see module docstring for the milestone breakdown.
     """
 
-    SUPPORTED_IDS = [
-        DeviceID(USB_VID_REALTEK, USB_PID_RTL8187, "RTL8187L", product_name="ALFA AWUS036H"),
-    ]
     # 2.4 GHz channels 1..13. Channel 14 is JP-only and the chip supports
     # it (rtl818x_channels[13].center_freq=2484) but we leave it off the
     # default hop list to match the other 2.4 GHz drivers.

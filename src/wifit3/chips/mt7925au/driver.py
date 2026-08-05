@@ -26,10 +26,6 @@ class MT7925AUDriver(Driver):
     RX decode and TX are in progress.
     """
 
-    SUPPORTED_IDS = [
-        DeviceID(0x0e8d, 0x7925, "MT7925AU", product_name="MediaTek MT7925U"),
-        DeviceID(0x0846, 0x9072, "MT7925AU", product_name="Netgear A9000"),
-    ]
     # Dual-band Wi-Fi 7 radio, 20 MHz primary. 2.4 GHz (1-13) + the 5 GHz 20 MHz
     # channels the capture sweeps (main.log: 36..165).
     SUPPORTED_CHANNELS = list(range(1, 14)) + [

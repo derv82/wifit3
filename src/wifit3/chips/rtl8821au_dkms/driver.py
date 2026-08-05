@@ -32,7 +32,6 @@ from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
 from . import bb, chan, dig, efuse, firmware, mac, monitor, phy_cond, rf, txpower
-from .constants import USB_PID_AWUS036ACS, USB_VID_REALTEK
 from .rx import iter_frames
 from .transport import RTL8821AUDkmsTransport
 from .tx import build_mgmt_txdesc
@@ -57,10 +56,6 @@ def _load_firmware() -> bytes:
 
 
 class Rtl8821auDkmsDriver(Driver):
-    SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACS, "RTL8821AU",
-                 product_name="ALFA AWUS036ACS"),
-    ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G_NON_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 

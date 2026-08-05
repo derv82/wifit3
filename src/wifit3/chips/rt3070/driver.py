@@ -39,9 +39,6 @@ _SCAN_START_CHANNEL = 1            # first channel tuned at connect
 
 
 class RT3070Driver(Driver):
-    SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(_VID_RALINK, _PID_RT3070, "RT3070", product_name="ALFA AWUS036NH"),
-    ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))   # 2.4 GHz, 20 MHz
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 

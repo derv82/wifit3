@@ -88,10 +88,6 @@ def _rx_state_line(t) -> str:
 
 
 class Rtl8822buDkmsDriver(Driver):
-    SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(USB_VID_REALTEK, USB_PID_T3U_PLUS, "RTL8822BU",
-                 vendor="TP-Link", product_name="Archer T3U Plus"),
-    ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G_NON_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 

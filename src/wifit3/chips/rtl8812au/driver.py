@@ -55,7 +55,6 @@ from .chan import (
     set_channel_2g_20mhz,
     set_channel_5g_20mhz,
 )
-from .constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
 from .dynamic import (
     DigState,
     PwrTrackState,
@@ -124,10 +123,6 @@ class RTL8812AUDriver(Driver):
     and 40/80 MHz bandwidths are M-LATER.
     """
 
-    SUPPORTED_IDS = [
-        DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACH, "RTL8812AU",
-                 product_name="ALFA AWUS036ACH"),
-    ]
     # 2.4 GHz channels 1..13 + non-DFS 5 GHz (UNII-1 + UNII-3). DFS channels
     # are excluded by default to avoid the regulator-required clearance.
     SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)

@@ -22,8 +22,6 @@ from .constants import (
     RT_RT5592,
     TXWI_PHYMODE_CCK,
     TXWI_PHYMODE_OFDM,
-    USB_PID_RT5572,
-    USB_VID_RALINK,
 )
 from wifit3.dot11.parser import WlanFrameParser
 
@@ -52,10 +50,6 @@ logger = logging.getLogger(__name__)
 class RT5572Driver(Driver):
     """Driver for the Panda PAU09 N600 (silicon RT5592 / RF5592), 2.4 + 5 GHz 2T2R."""
 
-    SUPPORTED_IDS = [
-        DeviceID(USB_VID_RALINK, USB_PID_RT5572, "RT5572",
-                 product_name="Panda PAU09 N600", extras={"chip_id": "rt5572"}),
-    ]
     SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 

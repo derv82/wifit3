@@ -39,9 +39,6 @@ _RX_BUF_SIZE = 16384          # [SRC] hif_usb.h:60 MAX_RX_BUF_SIZE — one bulk-
 class AR9271V2Driver(Driver):
     """Atheros AR9271 / ALFA AWUS036NHA — 2.4 GHz, soft-MAC, ath9k_htc firmware."""
 
-    SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(C.AR9271_VID, C.AR9271_PID, "AR9271", product_name="ALFA AWUS036NHA"),
-    ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 14))   # 2.4 GHz only, no 5 GHz radio
     CONFLICTING_LINUX_MODULES: ClassVar[List[str]] = ["ath9k_htc"]   # modprobe blacklist hint
     LINUX_REPLUG_AFTER_MODPROBE: ClassVar[bool] = False   # self-colds: FW download re-enumerates

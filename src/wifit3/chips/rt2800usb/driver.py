@@ -59,8 +59,6 @@ from .constants import (
     RT_RT5592,
     TXWI_PHYMODE_CCK,
     TXWI_PHYMODE_OFDM,
-    USB_PID_RT3572,
-    USB_VID_RALINK,
 )
 from wifit3.dot11.parser import WlanFrameParser
 
@@ -97,11 +95,6 @@ class RT2800USBDriver(Driver):
     extras + the silicon ID read from MAC_CSR0 at connect() time.
     """
 
-    SUPPORTED_IDS = [
-        DeviceID(USB_VID_RALINK, USB_PID_RT3572, "RT3572",
-                 product_name="ALFA AWUS051NH v2", extras={"chip_id": "rt3572"}),
-        # 148f:5572 (RT5572 / PAU09) is now the standalone chips/rt5572 driver.
-    ]
     #     0x3572 silicon (RT3572 / AWUS051NH v2) → 2.4 + 5 GHz non-DFS
     _CHANNELS_BY_CHIP: dict = {
         "rt3572": list(range(1, 14)) + list(CHANNELS_5G_NON_DFS),

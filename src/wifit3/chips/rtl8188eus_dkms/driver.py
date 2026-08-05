@@ -37,7 +37,7 @@ from . import (
     bb, chan, dig, dm, efuse, firmware, mac, monitor, phy_cond, powertrack, pwrseq, rf,
     sreset, tx, txpower,
 )
-from .constants import DEFAULT_INIT_CHANNEL, PID, VID
+from .constants import DEFAULT_INIT_CHANNEL
 from .rx import iter_frames
 from .transport import Rtl8188eusTransport
 
@@ -52,10 +52,6 @@ def _load_firmware() -> bytes:
 
 
 class Rtl8188eusDkmsDriver(Driver):
-    SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(VID, PID, "RTL8188EUS",
-                 vendor="TP-Link", product_name="TL-WN722N v2/v3"),
-    ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(chan.CHANNELS_2G)   # 2.4 GHz, 20 MHz
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 

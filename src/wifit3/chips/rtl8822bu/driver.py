@@ -32,7 +32,6 @@ from .chan import (
 )
 from .constants import (
     REG_SYS_CFG1,
-    USB_IDS_8822BU,
 )
 from .dynamic import DigState, dig_init, dig_step, read_total_fa_cnt
 from .firmware import (
@@ -67,10 +66,6 @@ logger = logging.getLogger(__name__)
 class RTL8822BUDriver(Driver):
     """Driver for Realtek RTL8822BU (TP-Link T3U, ASUS USB-AC55, Edimax, ...)."""
 
-    SUPPORTED_IDS = [
-        DeviceID(vid, pid, chipset, vendor, product)
-        for (vid, pid, chipset, vendor, product) in USB_IDS_8822BU
-    ]
     # 2.4 GHz channels 1..13 + non-DFS 5 GHz (UNII-1 + UNII-3).
     SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant

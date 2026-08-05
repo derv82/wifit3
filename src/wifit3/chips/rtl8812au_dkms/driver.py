@@ -39,7 +39,6 @@ from ..rtl88xxau_base.transport import Rtl88xxauTransport
 from ..rtl88xxau_base.tx import build_mgmt_txdesc
 from ..rx_reader import RxReaderThread
 from . import bb, chan, dig, efuse, firmware, mac, monitor, rf, txpower
-from .constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
 from .rx import iter_frames
 
 logger = logging.getLogger(__name__)
@@ -57,10 +56,6 @@ CHANNELS_5G_NON_DFS = [36, 40, 44, 48, 149, 153, 157, 161, 165]
 
 
 class Rtl8812auDkmsDriver(Driver):
-    SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACH, "RTL8812AU",
-                 product_name="ALFA AWUS036ACH"),
-    ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G_NON_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 

@@ -29,7 +29,6 @@ from .constants import (
     MT_MAC_SYS_CTRL_ENABLE_TX,
     MT_RX_FILTR_CFG,
     MT_RX_FILTR_CFG_ACK,
-    USB_IDS_MT76X0U,
 )
 from .eeprom import EEPROMError, EFUSEFullInfo, read_efuse_full
 from .firmware import FirmwareError, FirmwareUploader
@@ -58,11 +57,6 @@ FW_FILE_FALLBACK = ASSETS_DIR / "mt7610u_linux-firmware.bin"
 
 class MT76x0UDriver(Driver):
     """Driver for MT7610U-family USB cards (e.g. Alfa AWUS036ACHM). WIRE-verified on 0e8d:7610."""
-
-    SUPPORTED_IDS = [
-        DeviceID(vid, pid, chipset, vendor, product)
-        for (vid, pid, chipset, vendor, product) in USB_IDS_MT76X0U
-    ]
 
     # Same channel-set assumption as mt76x2u: 2.4 GHz 1..13 + non-DFS 5 GHz.
     # The MT7610U is single-stream (1T1R) but covers both bands. Refine when

@@ -79,9 +79,6 @@ class RTL8821AUDriver(Driver):
     TX injection is not yet implemented (M7).
     """
 
-    SUPPORTED_IDS = [
-        DeviceID(0x0BDA, 0x0811, "RTL8821AU", product_name="ALFA AWUS036ACS"),
-    ]
     # 2.4 GHz channels 1..13 + non-DFS 5 GHz UNII-1 (36..48) + UNII-3
     # (149..165). DFS channels are excluded by default to avoid the
     # regulator-required clearance dance.

@@ -32,7 +32,6 @@ from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
 from . import bringup, chan, efuse, mac, phy, tx, watchdog
-from .constants import USB_PID_8821CU, USB_VID_REALTEK
 from .rx import iter_frames
 from .transport import Rtl8821cuTransport
 
@@ -65,9 +64,6 @@ _REF_CUT = 4                    # hal chip_ver / dm cut_version
 
 
 class Rtl8821cuDkmsDriver(Driver):
-    SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(USB_VID_REALTEK, USB_PID_8821CU, "RTL8821CU", product_name="Auscoumer 600 Mbps"),
-    ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE
 
