@@ -1,0 +1,20 @@
+# Dependabot: keep runtime deps (pyproject.toml / uv.lock) and CI actions patched.
+# Weekly and grouped into one PR per ecosystem to stay low-noise for a solo maintainer.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
