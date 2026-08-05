@@ -43,7 +43,7 @@ jobs:
             build_path: dist/wifit3
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Fail the build if the pushed tag (vX.Y.Z) doesn't match __version__ — the single source
       # of truth. pyproject derives its version from it (hatchling dynamic version), so we grep
@@ -61,7 +61,7 @@ jobs:
           fi
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
           enable-cache: true
@@ -94,7 +94,7 @@ jobs:
           cp "${{ matrix.build_path }}" "out/${{ matrix.artifact_name }}"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: out/${{ matrix.artifact_name }}
@@ -111,13 +111,13 @@ jobs:
       contents: write  # required to create the Release and upload assets
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true  # flatten every artifact into ./artifacts
 
       - name: Publish release with binaries
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: artifacts/**
           generate_release_notes: true   # auto-changelog from commits/PRs since the last tag
