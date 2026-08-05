@@ -1,4 +1,14 @@
 """RTL8814AU vendor (morrownr DKMS) cleanroom port. See RTL8814AU_DKMS.md."""
-from .driver import Rtl8814auDkmsDriver
+from wifit3.models.device_id import DeviceID
 
-__all__ = ["Rtl8814auDkmsDriver"]
+from .constants import PID_RTL8814AU, VID_REALTEK
+
+SUPPORTED_IDS = [
+    DeviceID(VID_REALTEK, PID_RTL8814AU, "RTL8814AU",
+             product_name="ALFA AWUS1900"),
+]
+
+
+def import_driver():
+    from .driver import Rtl8814auDkmsDriver
+    return Rtl8814auDkmsDriver

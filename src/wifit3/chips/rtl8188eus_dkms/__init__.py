@@ -8,3 +8,15 @@ coordinates, and per-milestone status.
 In progress (bring-up): M1 (power-on + firmware upload + FW-ready) is ported and
 pcap-verified. MAC/BB/RF/efuse/calibration/RX/TX milestones follow.
 """
+from wifit3.models.device_id import DeviceID
+
+from .constants import PID, VID
+
+SUPPORTED_IDS = [
+    DeviceID(VID, PID, "RTL8188EUS", vendor="TP-Link", product_name="TL-WN722N v2/v3"),
+]
+
+
+def import_driver():
+    from .driver import Rtl8188eusDkmsDriver
+    return Rtl8188eusDkmsDriver

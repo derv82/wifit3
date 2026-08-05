@@ -11,3 +11,16 @@ cold-boot bring-up is verified **byte-for-byte** against morrownr's 8812au USB c
 ``hal/phydm/`` are the vendor C source. See ``RTL8812AU_DKMS.md`` for the verified ground
 truth and the byte-for-byte gate.
 """
+from wifit3.models.device_id import DeviceID
+
+from .constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
+
+SUPPORTED_IDS = [
+    DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACH, "RTL8812AU",
+             product_name="ALFA AWUS036ACH"),
+]
+
+
+def import_driver():
+    from .driver import Rtl8812auDkmsDriver
+    return Rtl8812auDkmsDriver

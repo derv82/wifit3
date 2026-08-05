@@ -1,10 +1,13 @@
-"""RTL8822BU vendor/DKMS port (morrownr rtl88x2bu 5.13.1) — CLEANROOM, WIP.
+"""RTL8822BU vendor/DKMS driver package: its VID:PID, readable without importing driver.py."""
+from wifit3.models.device_id import DeviceID
 
-Empty on purpose: this package is to be filled in a fresh cleanroom session
-from the vendor source only. Start at ``RTL8822BU_DKMS.md`` in this directory.
+# vid/pid inlined from driver.py's USB_VID_REALTEK / USB_PID_T3U_PLUS to stay driver-import-free.
+SUPPORTED_IDS = [
+    DeviceID(0x2357, 0x0138, "RTL8822BU",
+             vendor="TP-Link", product_name="Archer T3U Plus"),
+]
 
-Do NOT port by copying ``chips/rtl8822bu/`` (the mainline rtw88-derived driver)
-— this is the HALMAC/PHYDM vendor stack, a different codebase above the same
-registers. The sanctioned references are the vendor source and the sibling
-``chips/rtl8812au_dkms/`` (closest analog: 2T2R 11ac).
-"""
+
+def import_driver():
+    from .driver import Rtl8822buDkmsDriver
+    return Rtl8822buDkmsDriver
