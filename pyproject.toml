@@ -50,6 +50,10 @@ force-exclude = true
 [tool.ruff.format]
 exclude = ["**/*.py"]
 
+[tool.ruff.lint]
+# Pin the enforced rules to ruff's long-standing default (pyflakes + core pycodestyle).
+select = ["E4", "E7", "E9", "F"]
+
 [tool.ruff.lint.per-file-ignores]
 # Scripts prepend sys.path (src/ + sibling helpers) before importing, so those imports sit
 # below the top of the file on purpose. Silence E402 here instead of a per-line # noqa on each.
