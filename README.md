@@ -1,6 +1,8 @@
 # wifit3: USB Wireless Auditor
 
-A USB-only wireless auditor that runs in userland on Linux and Windows.
+> A wireless auditor that runs on Linux and Windows, comes with its own built-in drivers.
+
+> *At least* one of the [supported USB adapters](#supported-hardware) is **required**.
 
 <p align="center">
   <img src="assets/wifit3-1-splash.png" alt="Wifit3 splash / adapter picker" width="700">
@@ -21,9 +23,17 @@ wifit3 is fundamentally different from its predecessor, [wifite2](https://github
 * *Far* fewer dependencies: PyUSB/libusb (USB) and Textual/Rich (TUI).
   * No aircrack, airmon, reaver, bully, hcxdumptool, etc.
 
+## Status: Beta *("Works On My Machine")*
+
+[Thoroughly tested](docs/SUPPORTED-HARDWARE.md) only on my own machine, with the cards I physically own.
+
+Other wireless cards with a supported chipset may not behave as expected.
+
+Bug reports are genuinely welcome: [open an issue](https://github.com/derv82/wifit3/issues).
+
 ## Features
 
-- **Multi-card**: listen on every plugged-in and supported device, improves capturing, select TX device.
+- **Multi-card**: listen on every plugged-in and supported device, improves capturing; TX device selection.
 - **Live scan**: lists Access Points (APs) with channel hopping, signal, encryption, WPS state, and WPA3/SAE detection.
 - **VAP Decloaking**: identifies and tags hidden Virtual APs (VAPs) with its physical AP.
 - **Live packet dashboard**: real-time traffic sparklines (beacons, data, injects, deauths) for the focused target.
@@ -44,8 +54,7 @@ wifit3 is fundamentally different from its predecessor, [wifite2](https://github
 
 *If your USB device is not listed there, wifit3 will not work with it.*
 
-A matching chipset does not guarantee that your wireless card will work
-(wifit3 has not been tested on every make/model/variant of the chipsets below).
+A matching chipset does not guarantee that your wireless card will work.
 
 | Card | Chipset | Bands |
 |---|---|---|
@@ -72,12 +81,23 @@ See [Supported Hardware](docs/SUPPORTED-HARDWARE.md) for detailed information ab
 
 ## Install
 
+### Download (recommended)
+
+Grab a prebuilt binary from the [**Releases**](https://github.com/derv82/wifit3/releases/latest)
+
+- **Windows** — download `wifit3-windows-x64.exe` and run it.
+- **Linux** — download `wifit3-linux-x64`, then `chmod +x wifit3-linux-x64 && ./wifit3-linux-x64`.
+
+### Run from source
+
 Wifit3 uses [`uv`](https://docs.astral.sh/uv/) (requires internet access to pull dependencies for the first run):
 
 ```
 uv sync
 uv run wifit3
 ```
+
+### First-run setup
 
 **Windows**: Wifit3 offers to install the **WinUSB** driver for your device. The bundled installer
 self-elevates for that one step (a single UAC prompt), after which no Administrator privileges are needed to run Wifit3.
@@ -87,7 +107,7 @@ the card's kernel driver (so the kernel stops grabbing it). Afterward Wifit3 run
 
 ### Uninstall
 
-Click the red ` x ` button on Wifit3's Splash screen to uninstall
+Click the red `Uninstall` button on Wifit3's Splash screen to uninstall
 * **Windows:** Uninstalls WinUSB driver, relinquishing control to Windows' installed driver.
 * **Linux:** Deletes udev & modprobe rules, kernel assumes control of the driver after a replug.
 
