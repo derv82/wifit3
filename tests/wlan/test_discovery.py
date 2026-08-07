@@ -94,6 +94,10 @@ def test_both_8822_drivers_claim_0138():
     assert (0x2357, 0x0138) in {(e.vid, e.pid) for e in SUPPORTED_IDS}
 
 
+def test_rtl8822cu_0137_selects_its_native_driver():
+    assert _driver_for(0x2357, 0x0137) == "RTL8822CUDriver"
+
+
 def test_key_is_the_family_key_not_the_package_dir():
     # The setup key must stay the family key (ar9271, not ar9271_v2), so a prior install's files resolve.
     _cls, key = manager.driver_for(0x0CF3, 0x9271)

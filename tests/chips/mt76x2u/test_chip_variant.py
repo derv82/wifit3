@@ -48,6 +48,11 @@ class FakeTransport:
 _COEX_RMW = (C.MT_COEXCFG0, C.MT_COEXCFG0_COEX_EN, 0)
 
 
+def test_tp_link_2357_0137_is_not_claimed_as_mt7612u():
+    """FAST's RTL8812CU INF claims this ID; it is not an mt76x2u device."""
+    assert (0x2357, 0x0137) not in {(vid, pid) for vid, pid, *_ in C.USB_IDS_MT76X2U}
+
+
 # ---------------------------------------------------------------------------
 # mac_reset — COEXCFG0 clear gated on is_mt7612
 # ---------------------------------------------------------------------------
