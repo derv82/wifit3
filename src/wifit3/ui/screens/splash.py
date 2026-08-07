@@ -148,9 +148,13 @@ class SplashView(Screen):
         self.query_one("#status-label", Label).update("Scanning for compatible hardware…")
 
     async def on_mount(self) -> None:
-        platform_hint = "the WinUSB driver" if sys.platform == "win32" else "the udev/modprobe rules"
-        self.query_one("#uninstall-btn", Button).tooltip = (
-            f"Uninstall {platform_hint} for the highlighted card")
+        uninstall = self.query_one("#uninstall-btn", Button)
+        if sys.platform == "darwin":
+            # macOS has no install step, so there's nothing to uninstall.
+            uninstall.display = False
+        else:
+            hint = "the WinUSB driver" if sys.platform == "win32" else "the udev/modprobe rules"
+            uninstall.tooltip = f"Uninstall {hint} for the highlighted card"
         self._enter_scanning_mode()
 
     def reset_for_reentry(self) -> None:

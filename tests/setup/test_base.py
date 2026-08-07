@@ -32,6 +32,12 @@ async def test_nosetup_uninstall_reports_ok():
     assert isinstance(res, SetupResult) and res.ok and not res.cancelled
 
 
-def test_for_platform_falls_back_to_nosetup(monkeypatch):
+def test_for_platform_macos(monkeypatch):
+    from wifit3.setup.macos import SetupMacOS
     monkeypatch.setattr(sys, "platform", "darwin")
+    assert isinstance(Setup.for_platform(), SetupMacOS)
+
+
+def test_for_platform_falls_back_to_nosetup(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "sunos5")
     assert isinstance(Setup.for_platform(), NoSetup)
