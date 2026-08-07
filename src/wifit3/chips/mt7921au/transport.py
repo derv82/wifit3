@@ -28,8 +28,14 @@ class MT7921AUTransport:
     """
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
-        self._loop = asyncio.get_event_loop()
         self._rx: Optional[RxReaderThread] = None
+
+    @property
+    def _loop(self) -> asyncio.AbstractEventLoop:
+        """The running event loop, resolved lazily: construction can happen with no current
+        loop (Python 3.14 raises where older versions implicitly created one), and every
+        consumer (start_rx, the send paths) already runs inside one."""
+        return asyncio.get_event_loop()
         self._mcu_rx_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._callback = None
         # Terminal RX-reader failure sink (unplug). The driver sets this via its
