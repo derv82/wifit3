@@ -41,6 +41,10 @@ _FADE_STEPS = 10
 
 SORT_INTERVAL_S = 2.0  # Table sort delay
 
+# RTL8822CU needs a longer settle window than the kernel-backed adapters: its
+# channel change is a sequence of USB register writes plus RF lock time.
+SCAN_HOP_INTERVAL_S = 0.75
+
 # The 🥓 beacon counter increments ~10x/s per live AP. Stepping the *displayed*
 # value that fast rewrote every row every frame and pinned the compositor (the
 # dominant scanner CPU cost). Stepping it at most this often lets a steadily-
@@ -283,7 +287,7 @@ class ScannerView(Screen):
         if not array:
             return
         await array.start_hopping(
-            channels=self._channel_filter, interval=0.25
+            channels=self._channel_filter, interval=SCAN_HOP_INTERVAL_S
         )
 
     # ----- Column header / sort indicator ------------------------------------
@@ -771,7 +775,7 @@ class ScannerView(Screen):
             self._pbc_capturing = False
             if self.app.screen is self:
                 # Resume hopping only if we're still the foreground screen (not Focus).
-                await array.start_hopping(channels=self._channel_filter, interval=0.25)
+                await array.start_hopping(channels=self._channel_filter, interval=SCAN_HOP_INTERVAL_S)
 
     def action_toggle_fade(self) -> None:
         self._fade_enabled = not self._fade_enabled
@@ -842,7 +846,7 @@ class ScannerView(Screen):
         self._channel_filter = result
         await array.stop_hopping()
         dropped = self._prune_aps_outside(result)
-        await array.start_hopping(channels=result, interval=0.25)
+        await array.start_hopping(channels=result, interval=SCAN_HOP_INTERVAL_S)
 
         pieces = [
             f"[bold cyan]{name}[/bold cyan] [dim]({rngs})[/dim]"
