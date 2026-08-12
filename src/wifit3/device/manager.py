@@ -289,6 +289,12 @@ class DeviceManager:
             self.prompter.close()
 
     async def _bringup(self, device_id, *, bail_at_permissions: bool) -> BringupResult:
+        if self.setup.requires_setup(device_id):
+            if bail_at_permissions:
+                return BringupResult.failed("Installation required. START it from the main menu.")
+            device_id = await self.setup.install(device_id, self.prompter)
+            if device_id is None:
+                return BringupResult.cancelled()
         try:
             await self._connect_and_attach(device_id)
             return BringupResult.ready()

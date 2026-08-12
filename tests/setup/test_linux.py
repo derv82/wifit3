@@ -266,17 +266,21 @@ def test_install_rule_success_stages_pair_and_elevates(monkeypatch, tmp_path):
     _force_linux_nonroot(monkeypatch, tmp_path)
     monkeypatch.setattr(lin, "_choose_escalation_method", lambda: "pkexec")
     seen = {}
-    monkeypatch.setattr(lin, "run_privileged", lambda cmd, method: seen.update(cmd=cmd) or 0)
+    def _run(cmd, method):                                # staged files still exist until the finally
+        seen["cmd"] = cmd
+        seen["rule"] = next(tmp_path.glob("*wifit3-ar9271.rules")).read_text()
+        seen["conf"] = next(tmp_path.glob("*wifit3-ar9271.conf")).read_text()
+        return 0
+    monkeypatch.setattr(lin, "run_privileged", _run)
     r = install_rule(_target(), node="/dev/bus/usb/003/053")
     assert r.ok and not r.cancelled
     assert "replug" in r.message.lower()
     assert r.detail == blacklist_path("ar9271")
-    rule = (tmp_path / "wifit3-ar9271.rules").read_text()
-    conf = (tmp_path / "wifit3-ar9271.conf").read_text()
-    assert rule.count('SUBSYSTEM=="usb"') == 1            # per-chipset, not the fleet
-    assert "blacklist ath9k_htc" in conf
+    assert seen["rule"].count('SUBSYSTEM=="usb"') == 1    # per-chipset, not the fleet
+    assert "blacklist ath9k_htc" in seen["conf"]
     assert "60-wifit3-ar9271.rules" in seen["cmd"] and "wifit3-ar9271.conf" in seen["cmd"]
     assert "chgrp sudo /dev/bus/usb/003/053" in seen["cmd"]
+    assert not list(tmp_path.glob("*wifit3-ar9271.*"))    # staged pair cleaned up after install
 
 
 def test_install_rule_root_writes_blacklist_without_elevation(monkeypatch, tmp_path):
@@ -292,7 +296,7 @@ def test_install_rule_root_writes_blacklist_without_elevation(monkeypatch, tmp_p
     assert r.ok and not elevated                          # root never elevates
     assert "wifit3-ar9271.conf" in seen["cmd"]            # blacklist still written as root
     assert ".rules" not in seen["cmd"]                    # but no access rule (root opens directly)
-    assert not (tmp_path / "wifit3-ar9271.rules").exists()
+    assert not list(tmp_path.glob("*wifit3-ar9271.rules"))
 
 
 def test_install_rule_fails_when_in_no_admin_group(monkeypatch, tmp_path):

@@ -85,6 +85,9 @@ class FakeSetup:
         self._install = install
         self.installed = 0
 
+    def requires_setup(self, device_id):
+        return False
+
     async def install(self, device_id, ui):
         self.installed += 1
         return device_id if self._install else None

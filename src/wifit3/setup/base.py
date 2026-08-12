@@ -63,6 +63,10 @@ class Setup(ABC):
             return SetupLinux()
         return NoSetup()
 
+    def requires_setup(self, device_id: DeviceID) -> bool:
+        """True if ``device_id`` needs the privileged setup before it can be opened."""
+        return False
+
     @abstractmethod
     async def install(self, device_id: DeviceID, ui: Prompter) -> DeviceID | None:
         """Make ``device_id`` openable: show the confirm dialog, elevate, and on Linux drive the
