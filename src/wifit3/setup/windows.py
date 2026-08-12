@@ -501,7 +501,10 @@ class SetupWindows(Setup):
     wdi-simple.exe under one UAC prompt, and reverse it with pnputil. No replug concept exists."""
 
     def requires_setup(self, device_id: DeviceID) -> bool:
-        """True when the device isn't on a WinUSB/libusb driver, so libusb can't open it yet."""
+        """True when a present device isn't on a WinUSB/libusb driver, so libusb can't open it yet.
+        Absent from the bus -> False (nothing to bind; connect surfaces the absence)."""
+        if find_device(device_id) is None:
+            return False
         return _find_winusb_inf(device_id.vid, device_id.pid) is None
 
     async def install(self, device_id: DeviceID, ui: Prompter) -> DeviceID | None:

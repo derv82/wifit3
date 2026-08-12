@@ -50,14 +50,21 @@ def _pending(launched=True, win_error=0):
     return win._PendingInstall(logpath=Path("wdi.log"), run=run)
 
 
-def test_requires_setup_true_when_not_winusb_bound(monkeypatch):
-    # None covers both "on a native/other driver" and "not present": either way, needs the install.
+def test_requires_setup_true_when_present_and_not_winusb_bound(monkeypatch):
+    monkeypatch.setattr(win, "find_device", lambda dev: dev)          # present on the bus
     monkeypatch.setattr(win, "_find_winusb_inf", lambda vid, pid: None)
     assert win.SetupWindows().requires_setup(_DEV) is True
 
 
 def test_requires_setup_false_when_winusb_bound(monkeypatch):
+    monkeypatch.setattr(win, "find_device", lambda dev: dev)
     monkeypatch.setattr(win, "_find_winusb_inf", lambda vid, pid: "oem42.inf")
+    assert win.SetupWindows().requires_setup(_DEV) is False
+
+
+def test_requires_setup_false_when_absent(monkeypatch):
+    # Not on the bus: nothing to bind, so no proactive install (connect surfaces the absence instead).
+    monkeypatch.setattr(win, "find_device", lambda dev: None)
     assert win.SetupWindows().requires_setup(_DEV) is False
 
 
