@@ -50,6 +50,17 @@ def _pending(launched=True, win_error=0):
     return win._PendingInstall(logpath=Path("wdi.log"), run=run)
 
 
+def test_requires_setup_true_when_not_winusb_bound(monkeypatch):
+    # None covers both "on a native/other driver" and "not present": either way, needs the install.
+    monkeypatch.setattr(win, "_find_winusb_inf", lambda vid, pid: None)
+    assert win.SetupWindows().requires_setup(_DEV) is True
+
+
+def test_requires_setup_false_when_winusb_bound(monkeypatch):
+    monkeypatch.setattr(win, "_find_winusb_inf", lambda vid, pid: "oem42.inf")
+    assert win.SetupWindows().requires_setup(_DEV) is False
+
+
 async def test_install_declined_runs_nothing(monkeypatch):
     called = []
     monkeypatch.setattr(win, "_launch_winusb", lambda *a, **k: called.append(1) or _pending())
