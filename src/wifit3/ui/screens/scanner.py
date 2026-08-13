@@ -29,6 +29,7 @@ from ..encryption_format import format_encryption_markup, wep_key_ascii
 from wifit3.wlan.channels import band_ranges
 
 from .channel_filter import ChannelFilterDialog
+from .filter import FilterBar, ScanFilter
 
 if TYPE_CHECKING:
     from wifit3.ui.app import WifiteApp
@@ -161,9 +162,10 @@ class ScannerView(Screen):
     BINDINGS = [
         Binding("q", "app.quit", "Quit", show=True),
         Binding("c", "change_channel", "Channel Filter", show=True),
+        Binding("e", "focus_encryption", "Encryption", show=True),
         Binding("s", "cycle_sort", "Sort Col", show=True),
         Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
-        Binding("f", "toggle_fade", "Toggle Fade", show=True),
+        Binding("f", "focus_filter", "Filter", show=True),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
@@ -196,6 +198,7 @@ class ScannerView(Screen):
         self._sort_idx = 2         # Default to POWER
         self._sort_reverse = True  # Descending
         self._channel_filter: Optional[List[int]] = None
+        self._scan_filter: ScanFilter = ScanFilter()
         self._events = CaptureEventDetector(granular_eapol=False)
         # Per-BSSID prev-beacon-count + flash-deadline for "beacon arrived"
         # cell highlight.
@@ -205,7 +208,6 @@ class ScannerView(Screen):
         self._beacon_shown: Dict[str, tuple[int, float]] = {}
         # Per-BSSID last render key (fade bucket + cell content).
         self._render_key: Dict[str, tuple] = {}
-        self._fade_enabled: bool = True
         # captures/ history, loaded once at mount and hydrated onto APs by
         # BSSID so previously-saved handshakes/PMKIDs/WEP keys re-badge.
         self._capture_index: Dict[str, List[PersistedCapture]] = {}
@@ -218,7 +220,10 @@ class ScannerView(Screen):
 
     def compose(self) -> ComposeResult:
         yield _ScannerHeader()
+        array = self.app.array
+        supported = list(array.supported_channels) if array else []
         with Vertical():
+            yield FilterBar(supported)
             table = _APScanTable(cursor_type="row", id="ap-table")
             for key, label in self._COLUMNS:
                 # Reserve 2 chars in every header to account for sort indicator
@@ -230,6 +235,7 @@ class ScannerView(Screen):
     async def on_mount(self) -> None:
         log = self.query_one("#system-log", RichLog)
         self._update_column_headers()
+        self.query_one("#ap-table", DataTable).focus()
         array = self.app.array
 
         log.write(treelog.header("Scanner initialized"))
@@ -329,11 +335,19 @@ class ScannerView(Screen):
 
         fade_span = max(0.001, FADE_DURATION_S - GRACE_DURATION_S)
 
-        fade_enabled = self._fade_enabled
-
         for ap in array.get_access_points():
+            guessed_ssid = (
+                self._best_named_sibling_ssid(ap)
+                if self._scan_filter.text and ap.ssid is None
+                else None
+            )
+            if not self._scan_filter.matches(ap, ssid=guessed_ssid):
+                if ap.bssid in self.ap_cache:
+                    self._forget_row(ap.bssid, drop_from_array=False)
+                continue
+
             age = now - ap.last_seen
-            if fade_enabled and age >= FADE_DURATION_S:
+            if age >= FADE_DURATION_S:
                 continue
 
             if not ap.persisted:
@@ -342,7 +356,7 @@ class ScannerView(Screen):
                     ap.persisted = hist
 
             n_cli = client_counts.get(ap.bssid, 0)
-            if not fade_enabled or age <= GRACE_DURATION_S:
+            if age <= GRACE_DURATION_S:
                 factor = 0.0
             else:
                 prog = min(1.0, (age - GRACE_DURATION_S) / fade_span)
@@ -395,27 +409,27 @@ class ScannerView(Screen):
     def _evict_expired_aps(self) -> None:
         if not self.app.array:
             return
-        if not self._fade_enabled:
-            return
-        array = self.app.array
-        table = self.query_one("#ap-table", DataTable)
         now = time.time()
-
         to_drop = [
             bssid for bssid, ap in self.ap_cache.items()
             if (now - ap.last_seen) >= FADE_DURATION_S
         ]
         for bssid in to_drop:
-            array.access_points.pop(bssid, None)
-            self.ap_cache.pop(bssid, None)
-            self._prev_beacons.pop(bssid, None)
-            self._beacon_flash_until.pop(bssid, None)
-            self._beacon_shown.pop(bssid, None)
-            self._render_key.pop(bssid, None)
-            try:
-                table.remove_row(bssid)
-            except Exception:
-                pass
+            self._forget_row(bssid, drop_from_array=True)
+
+    def _forget_row(self, bssid: str, *, drop_from_array: bool) -> None:
+        """Drop the AP's row and caches; drop_from_array also evicts it from the registry."""
+        if drop_from_array and self.app.array:
+            self.app.array.access_points.pop(bssid, None)
+        self.ap_cache.pop(bssid, None)
+        self._prev_beacons.pop(bssid, None)
+        self._beacon_flash_until.pop(bssid, None)
+        self._beacon_shown.pop(bssid, None)
+        self._render_key.pop(bssid, None)
+        try:
+            self.query_one("#ap-table", DataTable).remove_row(bssid)
+        except Exception:
+            pass
 
     # ----- Cell construction -------------------------------------------------
 
@@ -773,19 +787,11 @@ class ScannerView(Screen):
                 # Resume hopping only if we're still the foreground screen (not Focus).
                 await array.start_hopping(channels=self._channel_filter, interval=0.25)
 
-    def action_toggle_fade(self) -> None:
-        self._fade_enabled = not self._fade_enabled
-        log = self.query_one("#system-log", RichLog)
-        if self._fade_enabled:
-            log.write(
-                " [bright_green]●[/bright_green] [bold]Fade Inactive AccessPoints[/bold] is [bold]on[/bold] "
-                "[dim](idle APs slowly fade out)[/dim]"
-            )
-        else:
-            log.write(
-                " [orange1]●[/orange1] [bold]Fade Inactive AccessPoints[/bold] is [bold]off[/bold] "
-                "[dim](rows never fade)[/dim]"
-            )
+    def action_focus_filter(self) -> None:
+        self.query_one(FilterBar).focus_text()
+
+    def action_focus_encryption(self) -> None:
+        self.query_one(FilterBar).focus_encryption()
 
     def action_cycle_sort(self) -> None:
         self._sort_idx = (self._sort_idx + 1) % len(self._COLUMNS)
@@ -830,23 +836,28 @@ class ScannerView(Screen):
     async def _on_channel_filter_result(
         self, result: Optional[List[int]]
     ) -> None:
-        log = self.query_one("#system-log", RichLog)
         if result is None:
-            log.write("[dim]Channel filter unchanged.[/dim]")
-            return
+            self.query_one("#system-log", RichLog).write("[dim]Channel filter unchanged.[/dim]")
+        else:
+            await self._apply_channel_filter(result)
+        self.query_one(FilterBar).set_channels(self._channel_filter)
+        self.query_one("#ap-table", DataTable).focus()
 
+    async def _apply_channel_filter(self, channels: List[int]) -> None:
+        """Re-point the hopper; a full-band pick becomes None so hotplug keeps re-spreading it."""
         array = self.app.array
         if not array:
             return
-
-        self._channel_filter = result
+        full_band = set(channels) == set(array.supported_channels)
+        self._channel_filter = None if full_band else channels
         await array.stop_hopping()
-        dropped = self._prune_aps_outside(result)
-        await array.start_hopping(channels=result, interval=0.25)
+        dropped = self._prune_aps_outside(channels)
+        await array.start_hopping(channels=self._channel_filter, interval=0.25)
 
+        log = self.query_one("#system-log", RichLog)
         pieces = [
             f"[bold cyan]{name}[/bold cyan] [dim]({rngs})[/dim]"
-            for name, rngs in band_ranges(result)
+            for name, rngs in band_ranges(channels)
         ]
         summary = " and ".join(pieces) if pieces else "[dim]no channels[/dim]"
         log.write(f" [dim]●[/dim] [bold]Channel hopping[/bold] across {summary}")
@@ -857,29 +868,27 @@ class ScannerView(Screen):
                              f"{noun} outside the filter[/dim]")
             )
 
+    # ----- Filter bar --------------------------------------------------------
+
+    def on_filter_bar_scan_filter_changed(self, message: FilterBar.ScanFilterChanged) -> None:
+        self._scan_filter = message.scan_filter
+        self.refresh_table()
+
+    def on_filter_bar_edit_channels(self) -> None:
+        self.action_change_channel()
+
     def _prune_aps_outside(self, channels: List[int]) -> int:
         array = self.app.array
         if not array:
             return 0
         keep = set(channels)
-        table = self.query_one("#ap-table", DataTable)
-
         stale = [
             bssid
             for bssid, ap in array.access_points.items()
             if ap.channel not in keep
         ]
         for bssid in stale:
-            array.access_points.pop(bssid, None)
-            self.ap_cache.pop(bssid, None)
-            self._prev_beacons.pop(bssid, None)
-            self._beacon_flash_until.pop(bssid, None)
-            self._beacon_shown.pop(bssid, None)
-            self._render_key.pop(bssid, None)
-            try:
-                table.remove_row(bssid)
-            except Exception:
-                pass  # Row may already be gone if a race occurred with refresh_table.
+            self._forget_row(bssid, drop_from_array=True)
         return len(stale)
 
     async def on_data_table_row_selected(

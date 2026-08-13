@@ -1,6 +1,7 @@
 """Render AccessPoint security info as Rich-markup for the UI."""
 from __future__ import annotations
 
+from enum import Enum
 from typing import List, Optional
 
 from wifit3.models import AccessPoint
@@ -14,6 +15,39 @@ from wifit3.models import AccessPoint
 _ATTACKABLE = "bright_green"
 _NO_ATTACK_YET = "yellow"
 _OUT_OF_SCOPE = "red"
+
+
+class EncryptionType(Enum):
+    """One security bucket per AP; the single classification the ENCRYPT column and
+    the scan filter both read, so the two can never disagree."""
+    OPEN = "OPEN"
+    WEP = "WEP"
+    WPA1 = "WPA"
+    WPA2 = "WPA2"
+    WPA3_TRANSITION = "WPA3_TRANSITION"
+    WPA3 = "WPA3"
+    OWE = "OWE"
+    UNKNOWN = "UNKNOWN"
+
+    @classmethod
+    def from_ap(cls, ap: AccessPoint) -> "EncryptionType":
+        """Bucket an AP, RSN evidence winning over the legacy ``encryption`` string."""
+        if ap.wpa3 and ap.transition_mode:
+            return cls.WPA3_TRANSITION
+        if ap.wpa3:
+            return cls.WPA3
+        if "OWE" in ap.akms:
+            return cls.OWE
+        if ap.akms:
+            return cls.WPA2
+        enc = (ap.encryption or "").upper()
+        if enc in ("", "OPEN", "UNKNOWN"):
+            return cls.OPEN
+        if enc == "WEP":
+            return cls.WEP
+        if enc == "WPA" or enc.startswith("WPA-"):
+            return cls.WPA1
+        return cls.UNKNOWN
 
 
 def _format_iv_count(n: int) -> str:
@@ -72,47 +106,48 @@ def format_encryption_markup(
     akms_tok = _simplified_akms(ap.akms)
     cipher = ap.pairwise_cipher
     show_cipher = detailed and cipher is not None
+    enc_type = EncryptionType.from_ap(ap)
 
     # WPA3 Transition (SAE + PSK): render as WPA3→2.
-    if ap.wpa3 and ap.transition_mode:
+    if enc_type is EncryptionType.WPA3_TRANSITION:
         head = f"[bright_red]WPA3[/bright_red]→[{_ATTACKABLE}]2[/{_ATTACKABLE}]"
         if not detailed:
             return head
         return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
 
     # Pure WPA3-SAE: no usable attack yet.
-    if ap.wpa3:
+    if enc_type is EncryptionType.WPA3:
         head = "[bright_red]WPA3[/bright_red]"
         return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
 
     # OWE (Enhanced Open): no attack yet.
-    if "OWE" in ap.akms:
+    if enc_type is EncryptionType.OWE:
         return f"[{_NO_ATTACK_YET}]OWE[/{_NO_ATTACK_YET}]"
 
     # Any RSN-based modern WPA2: attackable.
-    if ap.akms:
+    if enc_type is EncryptionType.WPA2:
         head = f"[{_ATTACKABLE}]WPA2[/{_ATTACKABLE}]"
         return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
 
-    # Fallback to the legacy encryption string for OPEN/WEP/WPA1.
-    enc = (ap.encryption or "").upper()
-    if enc == "OPEN" or not enc or enc == "UNKNOWN":
+    if enc_type is EncryptionType.OPEN:
         return f"[{muted}]OPEN[/{muted}]"
-    if enc == "WEP":
+
+    if enc_type is EncryptionType.WEP:
         # Attackable now (IV capture → replay → crack).
         head = f"[{_ATTACKABLE}]WEP[/{_ATTACKABLE}]"
         if detailed:
             return head
         n = ap.wep.unique_ivs if ap.wep else 0
         return head + f"[{muted}]·{_format_iv_count(n)} IVs[/{muted}]"
-    if enc.startswith("WPA-") or enc == "WPA":
+
+    if enc_type is EncryptionType.WPA1:
         # Legacy WPA1 vendor IE: TKIP universal. Out of scope for wifit3.
         head = f"[{_OUT_OF_SCOPE}]WPA[/{_OUT_OF_SCOPE}]"
         tail = f" [{muted}](PSK·TKIP)[/{muted}]" if detailed else f" [{muted}](PSK)[/{muted}]"
         return head + tail
 
     # Unknown: show raw string muted.
-    return f"[{muted}]{enc}[/{muted}]"
+    return f"[{muted}]{(ap.encryption or '').upper()}[/{muted}]"
 
 
 def wep_key_ascii(key_hex: str) -> str:
