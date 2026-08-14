@@ -12,12 +12,16 @@ from ..campaigns.campaign import Campaign
 from ..campaigns.pmkid import PmkidHarvestAttack
 from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
+from wifit3.crack.handshake import pmkid_crackable
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.wpa3_downgrade import WPA3DowngradeAttack
+from ..campaigns.csa_deauth import CsaDeauthAttack
 
 # Attack-button campaigns in button-row order.
-BUTTON_CAMPAIGNS = [WepCampaign, PmkidHarvestAttack, WpsCampaign, WPA3DowngradeAttack]
-_BUTTON_ORDER = ["btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin", "btn-wpa3-down"]
+BUTTON_CAMPAIGNS = [WepCampaign, PmkidHarvestAttack, WpsCampaign, WPA3DowngradeAttack,
+                    CsaDeauthAttack]
+_BUTTON_ORDER = ["btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin", "btn-wpa3-down",
+                 "btn-csa"]
 
 
 @dataclass
@@ -26,6 +30,7 @@ class Campaigns:
     wep: Any = None                # WepCampaign | None
     wps: Any = None                # WpsCampaign | None
     wpa3_down: Any = None          # WPA3DowngradeAttack | None
+    csa: Any = None                # CsaDeauthAttack | None
     pbc_busy: bool = False
 
 
@@ -323,6 +328,8 @@ def card_dynamic(campaigns: Campaigns) -> str:
         return "● WPS PIN"
     if campaigns.wpa3_down is not None:
         return "● downgrading"
+    if campaigns.csa is not None:
+        return "● CSA Deauth"
     if campaigns.pbc_busy:
         return "● WPS PBC"
     return ""
@@ -383,6 +390,12 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
         return ["[bold cyan]● WPA Downgrade active[/bold cyan]",
                 f"[dim]spoofing WPA2-only · {st.responses_sent} responses[/dim]"]
 
+    # 3b. CSA deauth daemon running.
+    if campaigns.csa is not None:
+        st = campaigns.csa.stats
+        return ["[bold cyan]● CSA Deauth active[/bold cyan]",
+                f"[dim]channel-switch beacons broadcast · {st.beacons_sent} sent[/dim]"]
+
     # 4. Recovered credentials, when idle: WEP key / WPS PSK.
     if ap.wep_key is not None or any(p.kind == "WEP" for p in ap.persisted):
         return ["[black bold on green] ✓ WEP key recovered [/black bold on green]",
@@ -400,7 +413,7 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
         return ["[green]● Listening for WEP IVs[/green]"]
 
     n_complete, n_partial, msg_counts = count_handshakes(ap)
-    n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid)
+    n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid and pmkid_crackable(hs))
     if n_complete or n_pmkid:
         bits = []
         if n_complete:

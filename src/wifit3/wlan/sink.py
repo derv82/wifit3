@@ -139,6 +139,7 @@ class WlanSink:
         transition_mode = pkt.transition_mode
         pmf_capable = pkt.pmf_capable
         pmf_required = pkt.pmf_required
+        beacon_protection = pkt.beacon_protection
         wps = pkt.wps
         wps_locked = pkt.wps_locked
         wps_version = pkt.wps_version
@@ -160,6 +161,7 @@ class WlanSink:
                 transition_mode=transition_mode,
                 pmf_capable=pmf_capable,
                 pmf_required=pmf_required,
+                beacon_protection=beacon_protection,
                 wps=wps,
                 wps_locked=wps_locked,
                 wps_version=wps_version,
@@ -198,6 +200,7 @@ class WlanSink:
                 ap.transition_mode = transition_mode
                 ap.pmf_capable = pmf_capable
                 ap.pmf_required = pmf_required
+                ap.beacon_protection = beacon_protection
             # Only refresh WPS when this frame carried the IE.
             if wps:
                 ap.wps = True

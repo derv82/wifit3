@@ -96,6 +96,7 @@ class WlanFrameParser:
                 "transition_mode": tags.get("transition_mode", False),
                 "pmf_capable": tags.get("pmf_capable", False),
                 "pmf_required": tags.get("pmf_required", False),
+                "beacon_protection": tags.get("beacon_protection", False),
                 "pairwise_cipher": tags.get("pairwise_cipher"),
                 "akms": tags.get("akms", []),
                 "akm_suites": tags.get("akm_suites", []),
@@ -467,6 +468,7 @@ class WlanFrameParser:
         transition_mode = False
         pmf_capable = False
         pmf_required = False
+        beacon_protection = False
         pairwise_cipher: Optional[str] = None
         akms: List[str] = []
         akm_suites: List[int] = []
@@ -508,6 +510,9 @@ class WlanFrameParser:
             elif tag_id == 192: # VHT Operation: center freq seg 0 at byte 1
                 if tag_len >= 2:
                     channel_vht = tag_data[1]
+            elif tag_id == 127: # Extended Capabilities: bit 84 = Beacon Protection Enabled
+                if tag_len >= 11:
+                    beacon_protection = bool(tag_data[10] & 0x10)   # bit 84 = octet 10, bit 4
             elif tag_id == 48: # RSN (WPA2/WPA3)
                 has_rsn = True
                 # Preserve the raw IE bytes (with tag header) so the PMKID
@@ -555,6 +560,7 @@ class WlanFrameParser:
         parsed["transition_mode"] = transition_mode
         parsed["pmf_capable"] = pmf_capable
         parsed["pmf_required"] = pmf_required
+        parsed["beacon_protection"] = beacon_protection
         parsed["pairwise_cipher"] = pairwise_cipher
         parsed["akms"] = akms
         parsed["akm_suites"] = akm_suites

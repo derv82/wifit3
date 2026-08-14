@@ -73,6 +73,7 @@ class BeaconPacket(Packet):
     transition_mode: bool = False
     pmf_capable: bool = False
     pmf_required: bool = False
+    beacon_protection: bool = False
     wps: bool = False
     wps_locked: bool = False
     wps_state: Optional[int] = None

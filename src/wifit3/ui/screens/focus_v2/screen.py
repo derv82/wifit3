@@ -36,6 +36,7 @@ from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
 from wifit3.campaigns.wpa3_downgrade import WPA3DowngradeAttack
+from wifit3.campaigns.csa_deauth import CsaDeauthAttack
 from wifit3.campaigns.pin import WpsCampaign, load_run_state, run_progress_line
 from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.wps.registrar import PinResult
@@ -81,7 +82,7 @@ _PBC_RETRY_COOLDOWN_S = 3.0
 
 _ATTACK_BUTTONS = [
     ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-pmkid", "PMKID"),
-    ("btn-wps-pin", "WPS PIN"), ("btn-wpa3-down", "WPA ↓"),
+    ("btn-wps-pin", "WPS PIN"), ("btn-wpa3-down", "WPA ↓"), ("btn-csa", "CSA"),
     # Transient: shown only while a PBC capture runs, driven directly (not via derive_buttons).
     ("btn-stop-pbc", "Stop PBC"),
 ]
@@ -99,6 +100,8 @@ _BUTTON_TIPS = {
     "PMKID": "Associate to extract PMKID (some APs not applicable)",
     "WPS PIN": "Start a WPS PIN brute-force campaign",
     "WPA ↓": "EXPERIMENTAL: Respond to probe requests with non-WPA3 AKMs",
+    "CSA": "Deauth with Channel Switch Announcement",
+    "Stop CSA": "Stop broadcasting CSA beacons",
 }
 
 
@@ -194,6 +197,7 @@ class FocusViewV2(Screen):
         self._wep_campaign: Optional[WepCampaign] = None
         self._wps_campaign: Optional[WpsCampaign] = None
         self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
+        self._csa_attack: Optional[CsaDeauthAttack] = None
         self._pbc_campaign: Optional[WpsPbcCapture] = None
         self._pbc_user_stopped = False
         self._pbc_retry_after = 0.0   # monotonic time before which we won't re-arm a PBC retry
@@ -261,7 +265,8 @@ class FocusViewV2(Screen):
     def _campaigns(self) -> fm.Campaigns:
         return fm.Campaigns(
             wep=self._wep_campaign, wps=self._wps_campaign,
-            wpa3_down=self._wpa3_down_attack, pbc_busy=self._pbc_busy(),
+            wpa3_down=self._wpa3_down_attack, csa=self._csa_attack,
+            pbc_busy=self._pbc_busy(),
         )
 
     def _snapshot(self) -> fm.FocusSnapshot:
@@ -333,6 +338,7 @@ class FocusViewV2(Screen):
     async def _enter_target(self) -> None:
         """Bind to ``app.target_ap``: stop campaigns, reset state, update panels/radio/log."""
         self._stop_wpa3_down()
+        self._stop_csa()
         self._stop_generate_ivs()
         self._stop_pbc_capture()
         self._stop_wps_pin()
@@ -467,7 +473,7 @@ class FocusViewV2(Screen):
                 and time.monotonic() >= self._pbc_retry_after
                 and not self._pbc_busy() and not self._pbc_user_stopped and not ap.has_psk
                 and self._wep_campaign is None and self._wpa3_down_attack is None
-                and self._wps_campaign is None):
+                and self._csa_attack is None and self._wps_campaign is None):
             self._start_pbc_capture(ap)
 
         snap = self._snapshot()
@@ -612,6 +618,8 @@ class FocusViewV2(Screen):
             self._toggle_wps_pin()
         elif bid == "btn-wpa3-down":
             self._toggle_wpa3_down()
+        elif bid == "btn-csa":
+            self._toggle_csa()
         elif bid == "btn-gen-ivs":
             self._toggle_generate_ivs()
         elif bid == "btn-chop":
@@ -829,6 +837,55 @@ class FocusViewV2(Screen):
             f"[dim]Probe requests: {stats.directed_probes} directed, "
             f"{stats.wildcard_probes} wildcard[/dim]"))
 
+    # ----- CSA deauth --------------------------------------------------------
+
+    def _toggle_csa(self) -> None:
+        if self._csa_attack:
+            self._stop_csa()
+        else:
+            self._start_csa()
+        self._refresh_buttons()
+
+    def _start_csa(self) -> None:
+        ap = self._target_ap
+        array = self.app.array
+        if not ap or not array:
+            self._log("[red]✗ No target / interface. Cannot start CSA Deauth.[/red]")
+            return
+        if not ap.last_beacon_frame:
+            self._log("[yellow]⚠ No beacon captured yet: wait for the AP to beacon, then retry.[/yellow]")
+            return
+        try:
+            self._csa_attack = CsaDeauthAttack(array, ap)
+            self._csa_attack.run()
+        except Exception as exc:
+            logger.exception("CSA Deauth start failed")
+            self._log(f"[bold red]✗ CSA Deauth failed to start:[/bold red] {escape(str(exc))}")
+            self._csa_attack = None
+            return
+        self._log(f"[bold cyan]CSA Deauth ACTIVE[/bold cyan] on "
+                  f"[bold]{escape(ap.ssid or ap.bssid)}[/bold]")
+        self._log(treelog.branch(
+            f"[dim]broadcasting channel-switch beacons →[/dim] "
+            f"[bold]CH {self._csa_attack.target_channel}[/bold]"))
+        if ap.beacon_protection:
+            self._log(treelog.leaf(
+                "[yellow]⚠ beacon protection advertised: clients that negotiated it will reject these[/yellow]"))
+        else:
+            self._log(treelog.leaf("[dim](bypasses PMF; no beacon protection advertised)[/dim]"))
+
+    def _stop_csa(self) -> None:
+        if not self._csa_attack:
+            return
+        stats = self._csa_attack.stats
+        self._csa_attack.request_stop()
+        self._csa_attack = None
+        duration = max(1, int(time.time() - stats.started_at))
+        self._log("[bold red]CSA Deauth stopped[/bold red]")
+        self._log(treelog.leaf(
+            f"[dim]Sent {stats.beacons_sent} CSA beacons in "
+            f"{fm.format_duration(duration)}[/dim]"))
+
     # ----- WEP: Generate IVs (Replay) + Chop ---------------------------------
 
     def _toggle_generate_ivs(self) -> None:
@@ -1009,6 +1066,7 @@ class FocusViewV2(Screen):
     async def action_go_back(self) -> None:
         # Tear down any running attack: Scanner doesn't own the AP's channel, and a forged daemon would keep injecting.
         self._stop_wpa3_down()
+        self._stop_csa()
         self._stop_generate_ivs()
         self._stop_pbc_capture()
         self._stop_wps_pin()

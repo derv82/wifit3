@@ -452,8 +452,9 @@ async def test_v2_button_wiring(focus_host):
     focus = await _rebind(focus_host, array, ap)
     _, _, pilot = focus_host
 
-    # WPA2 (no WPS, not WPA3): only PMKID is plausible. The rest hide.
+    # WPA2 (no WPS, not WPA3): PMKID + CSA apply (both RSN attacks). The rest hide.
     assert focus.query_one("#btn-pmkid", Button).display is True
+    assert focus.query_one("#btn-csa", Button).display is True
     for bid in ("#btn-gen-ivs", "#btn-chop", "#btn-wps-pin", "#btn-wpa3-down"):
         assert focus.query_one(bid, Button).display is False, bid
 

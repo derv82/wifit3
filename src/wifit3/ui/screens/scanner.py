@@ -21,6 +21,7 @@ from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.models import AccessPoint, PersistedCapture
 from wifit3.persist.save import save_handshake, save_pmkid, save_wps_pbc
+from wifit3.crack.handshake import pmkid_crackable
 
 from ..capture_events import (
     CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
@@ -519,7 +520,8 @@ class ScannerView(Screen):
         kinds = {p.kind for p in ap.persisted}
         has_hs = kinds.__contains__("HS") or any(
             hs.is_complete for hs in ap.handshakes.values())
-        has_pmk = "PMKID" in kinds or any(hs.pmkid for hs in ap.handshakes.values())
+        has_pmk = "PMKID" in kinds or any(
+            hs.pmkid and pmkid_crackable(hs) for hs in ap.handshakes.values())
         has_wep = "WEP" in kinds or ap.wep_key is not None
         has_wps = "WPS" in kinds or ap.wps_pbc_psk is not None
         parts: List[str] = []

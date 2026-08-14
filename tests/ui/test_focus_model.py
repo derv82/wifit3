@@ -9,6 +9,7 @@ import pytest
 
 from wifit3.campaigns.campaign import Campaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
+from wifit3.models import Handshake
 from wifit3.ui import focus_model as fm
 
 
@@ -67,6 +68,26 @@ def test_headline_active_campaign_outranks_recovered_key():
     assert "Replaying" in h[0]
     assert "recovered" not in joined.lower()
     assert "1,234" in joined
+
+
+def _pmkid_ap(akm_client):
+    hs = Handshake(bssid="aa:bb:cc:dd:ee:01", client_mac="11:22:33:44:55:66",
+                   pmkid=bytes(16), akm_client=akm_client, beacon_frame=b"x")
+    return types.SimpleNamespace(encryption="WPA2", wep_key=None, persisted=[], wep=None,
+                                 known_psk=None, handshakes={"11:22:33:44:55:66": hs})
+
+
+def test_headline_sae_pmkid_is_not_a_captured_win():
+    """A WPA3/SAE PMKID lands on the handshake but save_pmkid withholds it, so the
+    headline must NOT claim 'Captured … saved' (the false-save bug)."""
+    joined = " ".join(fm.derive_headline(_pmkid_ap(akm_client=8), None, fm.Campaigns()))
+    assert "Captured" not in joined and "PMKID ×" not in joined
+    assert "saved to captures/" not in joined
+
+
+def test_headline_psk_pmkid_is_a_captured_win():
+    joined = " ".join(fm.derive_headline(_pmkid_ap(akm_client=2), None, fm.Campaigns()))
+    assert "Captured" in joined and "PMKID ×1" in joined
 
 
 def test_headline_chop_and_crack_states():
@@ -265,12 +286,14 @@ def test_buttons_wpa3_transition_shows_pmkid_and_downgrade():
     assert _bs(b["btn-wpa3-down"]) == (True, False, "WPA ↓", "primary")
 
 
-def test_buttons_wpa3_only_sae_hides_everything():
-    """SAE-only: PMKID isn't crackable, no transition/WPS → no attack buttons."""
+def test_buttons_wpa3_only_sae_hides_everything_but_csa():
+    """SAE-only: PMKID isn't crackable, no transition/WPS → those hide. CSA still shows:
+    it disrupts via unprotected beacons, so it applies to any RSN incl. pure WPA3."""
     b = fm.derive_buttons(
         _rsn_ap(encryption="WPA3", wpa3=True, transition_mode=False, akms=("SAE",)))
     assert all(not b[bid].visible for bid in
                ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin", "btn-wpa3-down"))
+    assert b["btn-csa"].visible is True
 
 
 def test_buttons_mutex_running_wps_disables_siblings():
@@ -325,7 +348,7 @@ def test_buttons_open_hides_pmkid():
     b = fm.derive_buttons(_rsn_ap(encryption="OPEN", akms=()))
     assert b["btn-pmkid"].visible is False
     assert all(not b[bid].visible for bid in
-               ("btn-gen-ivs", "btn-chop", "btn-wps-pin", "btn-wpa3-down"))
+               ("btn-gen-ivs", "btn-chop", "btn-wps-pin", "btn-wpa3-down", "btn-csa"))
 
 
 def test_buttons_unconfirmed_encryption_shows_pmkid_disabled_with_reason():

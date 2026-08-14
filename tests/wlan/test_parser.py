@@ -211,6 +211,27 @@ def test_wpa2_wpa3_transition_mode():
     assert parsed.pmf_required is False
 
 
+def _extcap_ie(*, beacon_protection: bool) -> bytes:
+    """Extended Capabilities IE (tag 127), 11 octets; bit 84 = octet 10 bit 4 = Beacon Protection."""
+    field = bytearray(11)
+    if beacon_protection:
+        field[10] |= 0x10
+    return bytes([0x7f, len(field)]) + bytes(field)
+
+
+def test_beacon_protection_detected_from_ext_capabilities():
+    frame = _build_beacon(rsn_ie=_rsn_ie(akms=(0x08,), rsn_caps=0x00c0),
+                          wpa_vendor_ie=_extcap_ie(beacon_protection=True))
+    assert WlanFrameParser.parse_80211_frame(frame, -50).beacon_protection is True
+
+
+def test_beacon_protection_absent_when_bit_clear_or_ie_missing():
+    with_ie = _build_beacon(wpa_vendor_ie=_extcap_ie(beacon_protection=False))
+    without = _build_beacon()
+    assert WlanFrameParser.parse_80211_frame(with_ie, -50).beacon_protection is False
+    assert WlanFrameParser.parse_80211_frame(without, -50).beacon_protection is False
+
+
 def test_wpa2_enterprise_eap():
     """WPA2-EAP (corporate / 802.1X): AKM 0x01."""
     rsn = _rsn_ie(pairwise_ciphers=(0x04,), akms=(0x01,))

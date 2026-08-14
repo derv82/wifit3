@@ -43,6 +43,7 @@ class AccessPoint:
     transition_mode: bool = False
     pmf_capable: bool = False
     pmf_required: bool = False
+    beacon_protection: bool = False
 
     # WPS state decoded from the WPS vendor IE (tag 221, OUI 00:50:F2 type 4).
     wps: bool = False
