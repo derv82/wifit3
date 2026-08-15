@@ -190,7 +190,7 @@ async def test_campaign_hotkeys_mirror_buttons_wpa2(focus_host):
     focus = await _rebind(focus_host, array, ap)
     focus._tick()
     assert focus.check_action("campaign", ("pmkid",)) is True
-    for camp in ("wep", "chop", "wps", "wpa3down"):
+    for camp in ("wep", "chop", "wps"):
         assert focus.check_action("campaign", (camp,)) is False, camp
 
 

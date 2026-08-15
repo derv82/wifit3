@@ -4,7 +4,10 @@
 ``EvilTwinCampaign`` (campaign.py) elects the two interfaces, runs the punt, and detects completion.
 """
 from .fake_ap import FakeAP, FakeApStats, ClientProgress, ClientPhase
-from .campaign import EvilTwinCampaign, EvilTwinInput, PuntMode
+from .campaign import (
+    EvilTwinCampaign, EvilTwinInput, PuntMode, default_punt_mode, csa_target_channel,
+)
 
 __all__ = ["FakeAP", "FakeApStats", "ClientProgress", "ClientPhase",
-           "EvilTwinCampaign", "EvilTwinInput", "PuntMode"]
+           "EvilTwinCampaign", "EvilTwinInput", "PuntMode", "default_punt_mode",
+           "csa_target_channel"]

@@ -106,7 +106,7 @@ class WpsCampaign(Campaign):
                 and bool(getattr(ap, "wps", False)))
 
     @classmethod
-    def ineligible_reason(cls, ap):
+    def ineligible_reason(cls, ap, num_ifaces=None):
         return "WPS locked" if getattr(ap, "wps_locked", False) else None
 
     def __init__(self, array, target, state_dir="captures", log=None,

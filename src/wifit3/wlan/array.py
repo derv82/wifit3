@@ -183,6 +183,10 @@ class WlanArray:
         # drops a second card hearing our own ToDS injection (TA == our MAC).
         if pkt.transmitter in self._sink.forged_macs or pkt.transmitter in self._sink.self_macs:
             return
+        # This card is hosting an EvilTwin FakeAP and hears its own beacon/responses loop back
+        # (TA = the cloned BSSID): drop them so the WPA2 clone doesn't overwrite the real AP entry.
+        if pkt.transmitter == iface.fakeap_bssid:
+            return
         if self._dedupe.submit(card_id, pkt.raw, time.monotonic()):
             self._sink.update(pkt, card_id, channel_hint=iface.current_channel)
             for cb in self._rx_callbacks:

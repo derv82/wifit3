@@ -21,6 +21,7 @@ class FakeIface:
         self.description = description
         self._channels = list(channels)
         self.current_channel = channels[0]
+        self.fakeap_bssid = None
         self.driver = SimpleNamespace(FAKE_MAC=fake_mac, SUPPORTED_CHANNELS=list(channels))
         self.on_tx = None
         self._rx = []
@@ -170,6 +171,17 @@ def test_ingest_drops_our_own_forged_frames():
     a.register_forged_mac("aa:bb:cc:dd:ee:ff")
     card.emit(_beacon(_raw(), rssi=-40))     # source == the forged BSSID
     assert a.get_access_points() == []        # never entered the picture
+
+
+def test_ingest_drops_fakeap_own_beacon_echo():
+    """A card hosting an EvilTwin FakeAP hears its own cloned beacon loop back (TA == the cloned
+    BSSID): drop it so the WPA2 clone never overwrites the real AP's sink entry. Unlike a forged MAC,
+    the BSSID is NOT registered globally (the real AP shares it, on the other card)."""
+    card = FakeIface("wlan0", [1])
+    a = _pool(card)
+    card.fakeap_bssid = "aa:bb:cc:dd:ee:ff"
+    card.emit(_beacon(_raw(), rssi=-40))     # transmitter == the BSSID this card impersonates
+    assert a.get_access_points() == []
 
 
 def test_ingest_drops_our_own_self_mac_transmissions():

@@ -35,8 +35,9 @@ from wifit3.campaigns import treelog
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
-from wifit3.campaigns.wpa3_downgrade import WPA3DowngradeAttack
-from wifit3.campaigns.csa_deauth import CsaDeauthAttack
+from wifit3.campaigns.eviltwin import (
+    EvilTwinCampaign, EvilTwinInput, default_punt_mode, csa_target_channel,
+)
 from wifit3.campaigns.pin import WpsCampaign, load_run_state, run_progress_line
 from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.wps.registrar import PinResult
@@ -82,8 +83,7 @@ _PBC_RETRY_COOLDOWN_S = 3.0
 
 _ATTACK_BUTTONS = [
     ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-pmkid", "PMKID"),
-    ("btn-wps-pin", "WPS PIN"), ("btn-wpa3-down", "WPA ↓"), ("btn-csa", "CSA"),
-    # Transient: shown only while a PBC capture runs, driven directly (not via derive_buttons).
+    ("btn-wps-pin", "WPS PIN"), ("btn-eviltwin", "EvilTwin"),
     ("btn-stop-pbc", "Stop PBC"),
 ]
 
@@ -99,9 +99,8 @@ _BUTTON_TIPS = {
     "Stop Chop": "Interrupt chopping and return to ARP replay",
     "PMKID": "Associate to extract PMKID (some APs not applicable)",
     "WPS PIN": "Start a WPS PIN brute-force campaign",
-    "WPA ↓": "EXPERIMENTAL: Respond to probe requests with non-WPA3 AKMs",
-    "CSA": "Deauth with Channel Switch Announcement",
-    "Stop CSA": "Stop broadcasting CSA beacons",
+    "EvilTwin": "Punt clients onto a WPA2 twin to capture a crackable handshake",
+    "Stop EvilTwin": "Tear down the twin and return clients to the AP",
 }
 
 
@@ -196,8 +195,7 @@ class FocusViewV2(Screen):
         # Live campaign handles
         self._wep_campaign: Optional[WepCampaign] = None
         self._wps_campaign: Optional[WpsCampaign] = None
-        self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
-        self._csa_attack: Optional[CsaDeauthAttack] = None
+        self._eviltwin_attack: Optional[EvilTwinCampaign] = None
         self._pbc_campaign: Optional[WpsPbcCapture] = None
         self._pbc_user_stopped = False
         self._pbc_retry_after = 0.0   # monotonic time before which we won't re-arm a PBC retry
@@ -205,8 +203,7 @@ class FocusViewV2(Screen):
         self._prev_stats = None
         self._campaign_toggles = {
             "wep": self._toggle_generate_ivs, "pmkid": self._toggle_pmkid,
-            "wps": self._toggle_wps_pin, "wpa3down": self._toggle_wpa3_down,
-            "chop": self._toggle_chop,
+            "wps": self._toggle_wps_pin, "chop": self._toggle_chop,
         }
         self._binding_sig: Optional[tuple] = None
         self._rspacer_w = -1                          # last-set spacer width; skip no-op relayouts
@@ -265,7 +262,7 @@ class FocusViewV2(Screen):
     def _campaigns(self) -> fm.Campaigns:
         return fm.Campaigns(
             wep=self._wep_campaign, wps=self._wps_campaign,
-            wpa3_down=self._wpa3_down_attack, csa=self._csa_attack,
+            eviltwin=self._eviltwin_attack,
             pbc_busy=self._pbc_busy(),
         )
 
@@ -321,7 +318,9 @@ class FocusViewV2(Screen):
         ap = getattr(self.app, "target_ap", None)
         if ap is None:
             return
-        for bid, state in fm.derive_buttons(ap).items():
+        array = self.app.array
+        num_ifaces = len(array.members) if array else 0
+        for bid, state in fm.derive_buttons(ap, num_ifaces).items():
             self._apply_button(f"#{bid}", state)
         stop_pbc = self.query_one("#btn-stop-pbc", Button)
         if self._pbc_busy():
@@ -337,8 +336,7 @@ class FocusViewV2(Screen):
 
     async def _enter_target(self) -> None:
         """Bind to ``app.target_ap``: stop campaigns, reset state, update panels/radio/log."""
-        self._stop_wpa3_down()
-        self._stop_csa()
+        self._stop_eviltwin()
         self._stop_generate_ivs()
         self._stop_pbc_capture()
         self._stop_wps_pin()
@@ -464,6 +462,8 @@ class FocusViewV2(Screen):
             self._stop_generate_ivs()
         if self._pmkid_campaign is not None and self._pmkid_campaign.done:
             self._finish_pmkid()
+        if self._eviltwin_attack is not None and self._eviltwin_attack.done:
+            self._finish_eviltwin()
         if self._pbc_campaign is not None and self._pbc_campaign.done:
             self._finish_pbc_capture(ap)
         # Clear the manual-stop suppression when the window closes; a fresh one re-arms.
@@ -472,8 +472,8 @@ class FocusViewV2(Screen):
         if (ap.wps_pbc_active and getattr(self.app, "pbc_enabled", True)
                 and time.monotonic() >= self._pbc_retry_after
                 and not self._pbc_busy() and not self._pbc_user_stopped and not ap.has_psk
-                and self._wep_campaign is None and self._wpa3_down_attack is None
-                and self._csa_attack is None and self._wps_campaign is None):
+                and self._wep_campaign is None and self._wps_campaign is None
+                and self._eviltwin_attack is None):
             self._start_pbc_capture(ap)
 
         snap = self._snapshot()
@@ -616,10 +616,8 @@ class FocusViewV2(Screen):
             self._toggle_pmkid()
         elif bid == "btn-wps-pin":
             self._toggle_wps_pin()
-        elif bid == "btn-wpa3-down":
-            self._toggle_wpa3_down()
-        elif bid == "btn-csa":
-            self._toggle_csa()
+        elif bid == "btn-eviltwin":
+            self._toggle_eviltwin()
         elif bid == "btn-gen-ivs":
             self._toggle_generate_ivs()
         elif bid == "btn-chop":
@@ -784,107 +782,62 @@ class FocusViewV2(Screen):
         if self._pmkid_campaign is not None:
             self._pmkid_campaign.request_stop()
 
-    # ----- WPA3 downgrade ----------------------------------------------------
+    # ----- EvilTwin ----------------------------------------------------------
 
-    def _toggle_wpa3_down(self) -> None:
-        if self._wpa3_down_attack:
-            self._stop_wpa3_down()
+    def _toggle_eviltwin(self) -> None:
+        if self._eviltwin_attack:
+            self._stop_eviltwin()
         else:
-            self._start_wpa3_down()
+            self._start_eviltwin()
         self._refresh_buttons()
 
-    def _start_wpa3_down(self) -> None:
+    def _start_eviltwin(self) -> None:
         ap = self._target_ap
         array = self.app.array
         if not ap or not array:
-            self._log("[red]✗ No target / interface. Cannot start WPA3 Down.[/red]")
+            self._log("[red]✗ No target / interface. Cannot start EvilTwin.[/red]")
             return
-        if not ap.ssid:
-            self._log("[yellow]⚠ Cannot run WPA3 Down on a hidden AP: "
-                      "SSID unknown, no probe-response payload to forge.[/yellow]")
+        tx_iface = array.select_iface(ap.channel)
+        twin_iface = next((m for m in array.members if m is not tx_iface), None)
+        if tx_iface is None or twin_iface is None:
+            self._log("[yellow]EvilTwin requires 2 or more wireless interfaces.[/yellow]")
             return
-        if not ap.transition_mode:
-            self._log("[yellow]⚠ Target is pure WPA3 (no WPA2 fallback advertised): "
-                      "downgrade not possible.[/yellow]")
-            return
+        twin_channel = csa_target_channel(ap.channel)
+        evil_input = EvilTwinInput(twin_iface=twin_iface, punt_iface=tx_iface,
+                                   twin_channel=twin_channel, punt_mode=default_punt_mode(ap))
         try:
-            self._wpa3_down_attack = WPA3DowngradeAttack(array, ap)
-            self._wpa3_down_attack.run()
+            self._eviltwin_attack = EvilTwinCampaign(array, ap, evil_input)
+            self._eviltwin_attack.run()
         except Exception as exc:
-            logger.exception("WPA3 Down start failed")
-            self._log(f"[bold red]✗ WPA3 Down failed to start:[/bold red] {escape(str(exc))}")
-            self._wpa3_down_attack = None
+            logger.exception("EvilTwin start failed")
+            self._log(f"[bold red]✗ EvilTwin failed to start:[/bold red] {escape(str(exc))}")
+            self._eviltwin_attack = None
             return
-        self._log(f"[bold cyan]WPA3 Downgrade ACTIVE[/bold cyan] on [bold]{escape(ap.ssid)}[/bold]")
-        self._log(treelog.branch(
-            "[dim]responding to probe requests with[/dim] [bold]WPA2-only[/bold]"))
-        self._log(treelog.leaf("[dim](reconnects take minutes to hours)[/dim]"))
-
-    def _stop_wpa3_down(self) -> None:
-        if not self._wpa3_down_attack:
-            return
-        attack = self._wpa3_down_attack
-        stats = attack.stats
-        attack.request_stop()
-        self._wpa3_down_attack = None
-        duration = max(1, int(time.time() - stats.started_at))
-        failed = f" ({stats.responses_failed} failed)" if stats.responses_failed else ""
-        self._log("[bold red]WPA3 Downgrade stopped[/bold red]")
-        self._log(treelog.branch(
-            f"[dim]Sent {stats.responses_sent} probe responses in "
-            f"{fm.format_duration(duration)}{failed}[/dim]"))
-        self._log(treelog.leaf(
-            f"[dim]Probe requests: {stats.directed_probes} directed, "
-            f"{stats.wildcard_probes} wildcard[/dim]"))
-
-    # ----- CSA deauth --------------------------------------------------------
-
-    def _toggle_csa(self) -> None:
-        if self._csa_attack:
-            self._stop_csa()
-        else:
-            self._start_csa()
-        self._refresh_buttons()
-
-    def _start_csa(self) -> None:
-        ap = self._target_ap
-        array = self.app.array
-        if not ap or not array:
-            self._log("[red]✗ No target / interface. Cannot start CSA Deauth.[/red]")
-            return
-        if not ap.last_beacon_frame:
-            self._log("[yellow]⚠ No beacon captured yet: wait for the AP to beacon, then retry.[/yellow]")
-            return
-        try:
-            self._csa_attack = CsaDeauthAttack(array, ap)
-            self._csa_attack.run()
-        except Exception as exc:
-            logger.exception("CSA Deauth start failed")
-            self._log(f"[bold red]✗ CSA Deauth failed to start:[/bold red] {escape(str(exc))}")
-            self._csa_attack = None
-            return
-        self._log(f"[bold cyan]CSA Deauth ACTIVE[/bold cyan] on "
+        self._log(f"[bold cyan]EvilTwin ACTIVE[/bold cyan] on "
                   f"[bold]{escape(ap.ssid or ap.bssid)}[/bold]")
         self._log(treelog.branch(
-            f"[dim]broadcasting channel-switch beacons →[/dim] "
-            f"[bold]CH {self._csa_attack.target_channel}[/bold]"))
-        if ap.beacon_protection:
-            self._log(treelog.leaf(
-                "[yellow]⚠ beacon protection advertised: clients that negotiated it will reject these[/yellow]"))
-        else:
-            self._log(treelog.leaf("[dim](bypasses PMF; no beacon protection advertised)[/dim]"))
+            f"[dim]WPA2 twin on[/dim] [bold]CH {twin_channel}[/bold] "
+            f"[dim]· {evil_input.punt_mode.value} punt on CH {ap.channel}[/dim]"))
+        self._log(treelog.leaf("[dim]waiting for a client's M2…[/dim]"))
 
-    def _stop_csa(self) -> None:
-        if not self._csa_attack:
+    def _stop_eviltwin(self) -> None:
+        """User-initiated stop. Auto-stop on capture is reaped by `_finish_eviltwin`."""
+        if not self._eviltwin_attack:
             return
-        stats = self._csa_attack.stats
-        self._csa_attack.request_stop()
-        self._csa_attack = None
-        duration = max(1, int(time.time() - stats.started_at))
-        self._log("[bold red]CSA Deauth stopped[/bold red]")
-        self._log(treelog.leaf(
-            f"[dim]Sent {stats.beacons_sent} CSA beacons in "
-            f"{fm.format_duration(duration)}[/dim]"))
+        self._eviltwin_attack.request_stop()
+        self._eviltwin_attack = None
+        self._log("[bold red]EvilTwin stopped[/bold red]")
+
+    def _finish_eviltwin(self) -> None:
+        """Reap a campaign that ran to completion on its own (its task is done, the radio is
+        released). Captured is the normal path (the save banner already fired); a done-without-capture
+        is a crash the base logged."""
+        captured = self._eviltwin_attack.captured
+        self._eviltwin_attack = None
+        if captured:
+            self._log("[bold green]✓ EvilTwin captured a crackable handshake[/bold green]")
+        else:
+            self._log("[bold red]EvilTwin stopped[/bold red]")
 
     # ----- WEP: Generate IVs (Replay) + Chop ---------------------------------
 
@@ -1065,8 +1018,7 @@ class FocusViewV2(Screen):
 
     async def action_go_back(self) -> None:
         # Tear down any running attack: Scanner doesn't own the AP's channel, and a forged daemon would keep injecting.
-        self._stop_wpa3_down()
-        self._stop_csa()
+        self._stop_eviltwin()
         self._stop_generate_ivs()
         self._stop_pbc_capture()
         self._stop_wps_pin()

@@ -5,7 +5,8 @@ import asyncio
 import struct
 from types import SimpleNamespace
 
-from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput, PuntMode
+from wifit3.campaigns.campaign import Campaign
+from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput, PuntMode, default_punt_mode
 from wifit3.dot11.ap import eapol_m1
 from wifit3.dot11.eapol import eapol_key, data_header, LLC_SNAP_EAPOL
 from wifit3.dot11.ie import ssid_ie, rates_ie, ds_param_ie, GENERIC_RSN_IE
@@ -102,6 +103,15 @@ def test_visible_and_ineligible():
                                 last_beacon_frame=None, akm_suites=[2])
     assert EvilTwinCampaign.ineligible_reason(no_beacon) == "no beacon captured yet"
     assert EvilTwinCampaign.ineligible_reason(_target()) is None
+    assert EvilTwinCampaign.ineligible_reason(
+        _target(), num_ifaces=1) == "Requires 2 or more wireless interfaces"
+    assert EvilTwinCampaign.ineligible_reason(_target(), num_ifaces=2) is None
+
+
+def test_default_punt_mode():
+    assert default_punt_mode(SimpleNamespace(pmf_required=True, pmf_capable=True)) is PuntMode.CSA
+    assert default_punt_mode(SimpleNamespace(pmf_required=False, pmf_capable=True)) is PuntMode.BOTH
+    assert default_punt_mode(SimpleNamespace(pmf_required=False, pmf_capable=False)) is PuntMode.DEAUTH
 
 
 def test_punt_frames_by_mode():
@@ -123,7 +133,7 @@ async def test_arms_punts_and_tears_down():
     await task
     await camp.teardown()
     assert twin.fake_mac_arms >= 1                    # twin armed on the exact BSSID
-    assert twin.current_channel == 1                  # twin on its own channel
+    assert twin.current_channel == 11                 # restored to the target channel on teardown
     assert twin.sent                                  # twin beaconed
     assert punt.current_channel == 11 and punt.sent   # punt ran on the target channel
     assert twin.fake_mac_clears == 1                  # torn down once
@@ -153,3 +163,19 @@ def test_record_injected_m1_pairs_with_real_m2():
     hs = ap.handshakes[_CLIENT]
     assert {m.msg_num for m in hs.messages} == {1, 2}
     assert crackable_pairs(hs)
+
+
+async def test_run_drives_loop_and_restores_channel():
+    array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
+    array.select_iface = lambda channel: punt        # the base _drive liveness election
+    array.access_points[_BSSID] = SimpleNamespace(handshakes={})
+    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, mode=PuntMode.CSA))
+    try:
+        assert camp.run() is True                    # claims the radio, schedules _drive
+        await asyncio.sleep(0.05)
+        await camp.stop()                            # cooperative stop, awaits teardown
+    finally:
+        Campaign.active = None
+    assert twin.fake_mac_arms >= 1                    # _loop actually ran (not skipped)
+    assert twin.current_channel == 11                # teardown restored the twin channel
+    assert punt.sent                                 # the CSA punt went out the TX card
