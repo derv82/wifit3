@@ -120,6 +120,13 @@ class WlanSink:
         if ap is not None:
             self._record_ap_signal(ap, card_id, rssi)
 
+    def record_injected_eapol(self, frame: bytes) -> None:
+        """Fold EvilTwin's injected M1 into the sink, bypassing the array's own-frame RX filter, so
+        a client's M2 pairs with it."""
+        pkt = WlanFrameParser.parse_80211_frame(frame, 0)
+        if isinstance(pkt, EapolPacket):
+            self._on_eapol_frame(pkt)
+
     # ----- typed handlers ----------------------------------------------------
 
     def _on_beacon_frame(self, pkt: Packet, card_id: str, channel_hint: int) -> bool:

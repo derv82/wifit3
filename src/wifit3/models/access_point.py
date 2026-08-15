@@ -98,6 +98,11 @@ class AccessPoint:
         return max(self.signal_by_card.values(), default=-100)
 
     @property
+    def bssid_bytes(self) -> bytes:
+        """The BSSID as 6 raw bytes, for frame builders."""
+        return bytes(int(octet, 16) for octet in self.bssid.split(":"))
+
+    @property
     def wps_pbc_active(self) -> bool:
         """True during a WPS Push-Button walk window: the AP advertises PBC
         (Device Password ID 0x0004) with an active Selected Registrar."""

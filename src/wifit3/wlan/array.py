@@ -221,6 +221,9 @@ class WlanArray:
     def register_forged_mac(self, mac) -> None:
         self._sink.register_forged_mac(mac)
 
+    def record_injected_eapol(self, frame) -> None:
+        self._sink.record_injected_eapol(frame)
+
     def register_self_mac(self, mac, bssid: Optional[str] = None) -> str:
         return self._sink.register_self_mac(mac, bssid)
 
