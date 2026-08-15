@@ -16,6 +16,7 @@ from wifit3.errors import (
 from wifit3.wlan.channels import scan_hop_order
 from wifit3.dot11.packet import Packet
 from wifit3.dot11.deauth import build_deauth, _deauth_nav_bytes
+from wifit3.dot11.mac import str_to_mac, mac_to_str
 
 logger = logging.getLogger(__name__)
 
@@ -122,10 +123,10 @@ class WlanInterface:
             else:
                 logger.info("set_fake_mac: %s FIXED_MAC but own MAC unknown; skipping", self._chipset)
                 return None
-        mac_b = self._to_mac_bytes(mac)
-        bssid_b = self._to_mac_bytes(bssid) if bssid is not None else None
+        mac_b = str_to_mac(mac)
+        bssid_b = str_to_mac(bssid) if bssid is not None else None
         assumed = await self.driver.enter_active_monitor(mac_b, bssid_b)
-        assumed_str = ":".join(f"{b:02x}" for b in assumed)
+        assumed_str = mac_to_str(assumed)
         logger.info("[FAKEMAC] %s now HW-ACKing %s", self._chipset, assumed_str)
         return assumed_str
 
@@ -134,13 +135,6 @@ class WlanInterface:
         if self.driver.FAKE_MAC in (FakeMacSupport.SPOOFABLE, FakeMacSupport.FIXED_MAC):
             await self.driver.exit_active_monitor()
             logger.info("[FAKEMAC] %s restored plain monitor", self._chipset)
-
-    @staticmethod
-    def _to_mac_bytes(mac: Any) -> bytes:
-        """Coerce a MAC given as 6 raw bytes or a colon-separated string to bytes."""
-        if isinstance(mac, bytes):
-            return mac
-        return bytes(int(x, 16) for x in str(mac).split(":"))
 
     @property
     def instance_key(self) -> tuple:
@@ -242,7 +236,7 @@ class WlanInterface:
     async def deauth_broadcast(self, ap_bssid: str, count: int = 20) -> int:
         """Spray AP→broadcast de-auth frames. The caller has this card tuned to the AP's channel."""
         ap_bssid = ap_bssid.lower()
-        ap_mac = self._to_mac_bytes(ap_bssid)
+        ap_mac = str_to_mac(ap_bssid)
         bcast = b"\xff\xff\xff\xff\xff\xff"
         frame = self._deauth_frame(bcast, ap_mac, ap_mac, "ff:ff:ff:ff:ff:ff")
         logger.info("Injecting broadcast de-auth (%dx) on CH %d from %s",
@@ -260,8 +254,8 @@ class WlanInterface:
         sender); Client->AP frames are ACKed by the AP (RA = the client MAC we spoofed)."""
         ap_bssid = ap_bssid.lower()
         client_bssid = client_bssid.lower()
-        ap_mac = self._to_mac_bytes(ap_bssid)
-        cl_mac = self._to_mac_bytes(client_bssid)
+        ap_mac = str_to_mac(ap_bssid)
+        cl_mac = str_to_mac(client_bssid)
         client_deauth = self._deauth_frame(cl_mac, ap_mac, ap_mac, client_bssid)   # AP→Client
         ap_deauth = self._deauth_frame(ap_mac, cl_mac, ap_mac, ap_bssid)           # Client→AP
         logger.info("Injecting client de-auth (%dx pairs) on CH %d: %s <-> %s",

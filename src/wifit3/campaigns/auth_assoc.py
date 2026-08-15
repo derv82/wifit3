@@ -19,7 +19,7 @@ import os
 import time
 from typing import Callable, Optional
 
-from wifit3.dot11 import build_deauth
+from wifit3.dot11 import build_deauth, str_to_mac
 from wifit3.dot11.auth_assoc import auth_req, assoc_req
 from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
 
@@ -29,10 +29,6 @@ _SUBTYPE_ASSOC_RESP = 0x01
 _SUBTYPE_AUTH = 0x0B
 _SUBTYPE_DEAUTH = 0x0C
 _SUBTYPE_DISASSOC = 0x0A
-
-
-def str_to_mac(s: str) -> bytes:
-    return bytes(int(x, 16) for x in s.split(":"))
 
 
 def random_client_mac() -> bytes:

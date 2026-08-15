@@ -4,6 +4,7 @@
 import struct
 from typing import Optional, List, Dict, Any
 
+from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
     AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
@@ -45,9 +46,9 @@ class WlanFrameParser:
         to_ds = (fc1 & 0x01) != 0
         from_ds = (fc1 & 0x02) != 0
 
-        addr1 = cls._mac_to_str(frame[4:10])
-        addr2 = cls._mac_to_str(frame[10:16])
-        addr3 = cls._mac_to_str(frame[16:22])
+        addr1 = mac_to_str(frame[4:10])
+        addr2 = mac_to_str(frame[10:16])
+        addr3 = mac_to_str(frame[16:22])
 
         if not to_ds and not from_ds: # Ad-hoc, Mgmt, or Ctrl
             dest = addr1
@@ -369,12 +370,6 @@ class WlanFrameParser:
             return True
 
         return False
-
-    @staticmethod
-    def _mac_to_str(mac_bytes: bytes) -> str:
-        if len(mac_bytes) != 6:
-            return "00:00:00:00:00:00"
-        return ":".join(f"{b:02x}" for b in mac_bytes)
 
     @staticmethod
     def _wps_version2(vext: bytes) -> Optional[int]:

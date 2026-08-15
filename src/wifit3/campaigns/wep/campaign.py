@@ -28,6 +28,7 @@ from typing import Callable, Optional
 from rich.markup import escape
 
 from wifit3.models import AccessPoint
+from wifit3.dot11 import str_to_mac
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.wep.fake_auth import WepFakeAuth
 from wifit3.campaigns.wep.arp_replay import WepArpReplay
@@ -113,7 +114,7 @@ class WepCampaign(Campaign):
         # STA and no AM (the driver's send-once path). fake-auth, replay and chopchop share this MAC.
         armed = await self.iface.set_fake_mac()
         if armed:
-            source_mac = bytes(int(b, 16) for b in armed.split(":"))
+            source_mac = str_to_mac(armed)
         else:
             source_mac = bytes([0x02]) + os.urandom(5)
         self.fake_auth.source_mac = source_mac

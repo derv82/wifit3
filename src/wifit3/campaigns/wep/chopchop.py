@@ -53,6 +53,7 @@ import zlib
 from typing import Awaitable, Callable, Optional
 
 from wifit3.models import AccessPoint
+from wifit3.dot11 import str_to_mac
 from wifit3.campaigns import treelog
 from wifit3.dot11.wep.crypto import (
     CRC32_RESIDUE,
@@ -94,10 +95,6 @@ _SENTINEL = 256
 
 async def _always_associated() -> bool:
     return True
-
-
-def _str_to_mac(s: str) -> bytes:
-    return bytes(int(x, 16) for x in s.split(":"))
 
 
 def _hdr_len(fc0: int, fc1: int) -> int:
@@ -142,7 +139,7 @@ class WepChopChop:
         self.iface = iface
         self.target = target
         self.bssid = target.bssid
-        self.bssid_bytes = _str_to_mac(target.bssid)
+        self.bssid_bytes = str_to_mac(target.bssid)
         self.store = store
         self.source_mac = source_mac
         self._on_forged_arp = on_forged_arp

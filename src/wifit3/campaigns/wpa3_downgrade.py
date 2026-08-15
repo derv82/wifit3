@@ -24,20 +24,13 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from wifit3.models import AccessPoint
+from wifit3.dot11 import mac_to_str, str_to_mac
 from wifit3.dot11.probe import probe_resp
 from wifit3.dot11.packet import ProbeReqPacket
 
 from .campaign import Campaign
 
 logger = logging.getLogger(__name__)
-
-
-def _mac_str(b: bytes) -> str:
-    return ":".join(f"{x:02x}" for x in b)
-
-
-def _str_to_mac(s: str) -> bytes:
-    return bytes(int(x, 16) for x in s.split(":"))
 
 
 @dataclass
@@ -79,7 +72,7 @@ class WPA3DowngradeAttack(Campaign):
         self.stats = WPA3DowngradeStats()
         self._active = False
         self._target_ssid_bytes = target.ssid.encode("utf-8", errors="ignore")
-        self._bssid_bytes = _str_to_mac(target.bssid)
+        self._bssid_bytes = str_to_mac(target.bssid)
         self._template = probe_resp(self._bssid_bytes, self.target.ssid, self.target.channel)
 
     # -- Lifecycle ------------------------------------------------------------
@@ -160,5 +153,5 @@ class WPA3DowngradeAttack(Campaign):
         # SECURITY-panel status line, not one event-log line per probe (which would flood it).
         logger.debug(
             "[WPA3-Down] %s probe from %s → forged WPA2-only resp (ok=%s)",
-            probe_kind, _mac_str(client_mac), ok,
+            probe_kind, mac_to_str(client_mac), ok,
         )

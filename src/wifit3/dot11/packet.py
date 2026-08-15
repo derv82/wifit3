@@ -5,6 +5,8 @@ foundational leaf that ``parser`` and everything upstream can import.
 from dataclasses import dataclass, field
 from typing import Optional, List
 
+from wifit3.dot11.mac import mac_to_str
+
 
 def is_group_mac(mac: str) -> bool:
     """True for a group (multicast/broadcast) MAC: the I/G bit (LSB of the first octet) is
@@ -14,11 +16,6 @@ def is_group_mac(mac: str) -> bool:
         return bool(int(mac.split(":", 1)[0], 16) & 1)
     except (ValueError, IndexError):
         return True   # unparseable → never treat as a client
-
-
-def _mac_str(mac: bytes) -> str:
-    """Lowercase colon-hex, matching how the parser formats every address."""
-    return ":".join(f"{b:02x}" for b in mac)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -40,7 +37,7 @@ class Packet:
         """Addr2 (TA): the station that actually transmitted this frame -- the source for ToDS/mgmt,
         the BSSID for FromDS. Identifies a frame as one we sent (our TA), which ``source`` (addr3 on
         a FromDS frame) does not."""
-        return _mac_str(self.raw[10:16]) if len(self.raw) >= 16 else self.bssid
+        return mac_to_str(self.raw[10:16]) if len(self.raw) >= 16 else self.bssid
 
     @property
     def client_mac(self) -> Optional[str]:

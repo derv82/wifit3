@@ -9,6 +9,7 @@ import time
 from typing import List, Optional
 
 from wifit3.models import AccessPoint
+from wifit3.dot11 import mac_to_str, str_to_mac
 from wifit3.dot11.probe import probe_req
 
 logger = logging.getLogger(__name__)
@@ -41,18 +42,10 @@ def build_candidates(base: str) -> List[str]:
     return out
 
 
-def _str_to_mac(mac: str) -> bytes:
-    return bytes(int(x, 16) for x in mac.split(":"))
-
-
 def _random_client_mac() -> bytes:
     """Locally-administered, unicast MAC. LAA bit set, multicast bit clear."""
     rnd = os.urandom(5)
     return bytes([0x02]) + rnd
-
-
-def _mac_bytes_to_str(b: bytes) -> str:
-    return ":".join(f"{x:02x}" for x in b)
 
 
 class DecloakAttack:
@@ -69,7 +62,7 @@ class DecloakAttack:
         self.array = array
         self.target = target
         self.base_ssid = base_ssid
-        self.bssid_bytes = _str_to_mac(target.bssid)
+        self.bssid_bytes = str_to_mac(target.bssid)
         self.source_mac = source_mac or _random_client_mac()
         # When non-None, bypass build_candidates() and use this list verbatim
         # (a hook for supplying SSIDs directly; currently exercised only by tests).
@@ -106,7 +99,7 @@ class DecloakAttack:
                else f"base '{self.base_ssid}'")
         logger.info(
             f"[DECLOAK] {self.target.bssid}: trying {len(candidates)} candidates "
-            f"({src}) as STA {_mac_bytes_to_str(self.source_mac)}"
+            f"({src}) as STA {mac_to_str(self.source_mac)}"
         )
 
         for candidate in candidates:

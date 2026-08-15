@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Optional
 
 from wifit3.models import AccessPoint
+from wifit3.dot11 import mac_to_str, str_to_mac
 from wifit3.dot11.auth_assoc import auth_req, assoc_req
 from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
 
@@ -32,14 +33,6 @@ _SUBTYPE_ASSOC_RESP = 0x01
 _SUBTYPE_AUTH = 0x0B
 _SUBTYPE_DEAUTH = 0x0C
 _SUBTYPE_DISASSOC = 0x0A
-
-
-def _mac_str(b: bytes) -> str:
-    return ":".join(f"{x:02x}" for x in b)
-
-
-def _str_to_mac(s: str) -> bytes:
-    return bytes(int(x, 16) for x in s.split(":"))
 
 
 def _random_client_mac() -> bytes:
@@ -71,7 +64,7 @@ class WepFakeAuth:
     ):
         self.iface = iface
         self.target = target
-        self.bssid_bytes = _str_to_mac(target.bssid)
+        self.bssid_bytes = str_to_mac(target.bssid)
         self.source_mac = source_mac or _random_client_mac()
         self.assoc_timeout = assoc_timeout
         self._log = log_callback or (lambda _msg: None)
@@ -102,7 +95,7 @@ class WepFakeAuth:
         # The campaign registers our STA MAC with the array (drop-filter); we only watch RX here.
         self.iface.register_rx_callback(self._rx_cb)
         logger.info("[WEP-FakeAuth] Armed on %s as %s (lazy auth)",
-                    self.target.bssid, _mac_str(self.source_mac))
+                    self.target.bssid, mac_to_str(self.source_mac))
 
     def stop(self) -> FakeAuthStats:
         """Tear down the RX filter and drop the YOU client."""
@@ -167,7 +160,7 @@ class WepFakeAuth:
                 if self._announced_failure:
                     self._log(
                         "[green]✓ Fake-Auth recovered[/green] "
-                        f"[dim](associated as {_mac_str(self.source_mac)})[/dim]"
+                        f"[dim](associated as {mac_to_str(self.source_mac)})[/dim]"
                     )
                     self._announced_failure = False
                 return True

@@ -13,8 +13,9 @@ from typing import Optional
 
 from .campaign import Campaign
 from .auth_assoc import (
-    Association, WlanTransport, build_client_leaving, random_client_mac, str_to_mac,
+    Association, WlanTransport, build_client_leaving, random_client_mac,
 )
+from wifit3.dot11 import str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_ENROLLEE, wps_assoc_ie
 from .wps.enrollee import WpsEnrollee
 from .wps.registrar import AttemptOutcome, PinResult

@@ -17,13 +17,10 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional
 
 from wifit3.dot11.ap import auth_resp, assoc_resp, eapol_m1
+from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.probe import probe_resp
 
 _BEACON_PERIOD_S = 100 * 1024 / 1_000_000       # 100 TU
-
-
-def _mac_str(b: bytes) -> str:
-    return ":".join(f"{x:02x}" for x in b)
 
 
 class ClientPhase(enum.IntEnum):
@@ -131,12 +128,12 @@ class FakeAP:
 
     def _on_auth(self, client: bytes) -> None:
         self.stats.auth += 1
-        self._advance(_mac_str(client), ClientPhase.AUTHED)
+        self._advance(mac_to_str(client), ClientPhase.AUTHED)
         self._tx(auth_resp(self.bssid, client))
 
     def _on_assoc(self, client: bytes) -> None:
         self.stats.assoc += 1
-        cs = _mac_str(client)
+        cs = mac_to_str(client)
         self._advance(cs, ClientPhase.ASSOCED)
         self._tx(assoc_resp(self.bssid, client))
         anonce = os.urandom(32)
@@ -149,7 +146,7 @@ class FakeAP:
     def _on_m2(self, pkt, client: bytes) -> None:
         if getattr(pkt, "msg_num", 0) != 2:
             return
-        cs = _mac_str(client)
+        cs = mac_to_str(client)
         rec = self.stats.clients.get(cs)
         if rec is not None and rec.phase >= ClientPhase.GOT_M2:
             return

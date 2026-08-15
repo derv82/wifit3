@@ -28,7 +28,8 @@ from typing import Optional
 from .campaign import Campaign
 from .wps import known_pins
 from .wps import pins as pinmod
-from .auth_assoc import Association, WlanTransport, random_client_mac, str_to_mac
+from .auth_assoc import Association, WlanTransport, random_client_mac
+from wifit3.dot11 import str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from .wps.lock import LockTracker
 from .wps.registrar import AttemptOutcome, PinResult, WpsRegistrar, config_error_name

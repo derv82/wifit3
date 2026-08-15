@@ -67,7 +67,7 @@ class _FakeArray:
 
 
 def _target():
-    return SimpleNamespace(bssid=_BSSID, bssid_bytes=_BSSID_B, ssid=_SSID, channel=11,
+    return SimpleNamespace(bssid=_BSSID, ssid=_SSID, channel=11,
                            last_beacon_frame=_BEACON, akm_suites=[2])
 
 

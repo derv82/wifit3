@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from wifit3.dot11 import build_deauth
+from wifit3.dot11 import build_deauth, str_to_mac
 from wifit3.dot11.ap import beacon_clone
 from wifit3.dot11.csa import build_csa_beacon
 from wifit3.crack.handshake import crackable_pairs
@@ -70,7 +70,7 @@ class EvilTwinCampaign(Campaign):
         self.log = log or (lambda _m: None)
         self.ssid = target.ssid
         self.bssid = target.bssid
-        self.bssid_bytes = target.bssid_bytes
+        self.bssid_bytes = str_to_mac(target.bssid)
         self.target_channel = target.channel
         self.twin_iface = evil_input.twin_iface
         self.punt_iface = evil_input.punt_iface

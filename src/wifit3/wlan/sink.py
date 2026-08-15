@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Set
 
 from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
 from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage
+from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
@@ -393,7 +394,7 @@ class WlanSink:
     def register_forged_mac(self, mac) -> None:
         """Mark ``mac`` as one we forged for an active attack (so ingest drops our own frames)."""
         if isinstance(mac, bytes):
-            mac_str = ":".join(f"{b:02x}" for b in mac)
+            mac_str = mac_to_str(mac)
         else:
             mac_str = str(mac).lower()
         self.forged_macs.add(mac_str)
@@ -401,7 +402,7 @@ class WlanSink:
     def register_self_mac(self, mac, bssid: Optional[str] = None) -> str:
         """Mark ``mac`` as our own forged STA."""
         if isinstance(mac, bytes):
-            mac_str = ":".join(f"{b:02x}" for b in mac)
+            mac_str = mac_to_str(mac)
         else:
             mac_str = str(mac).lower()
         self.self_macs.add(mac_str)
@@ -417,7 +418,7 @@ class WlanSink:
     def unregister_self_mac(self, mac) -> None:
         """Inverse of register_self_mac."""
         if isinstance(mac, bytes):
-            mac_str = ":".join(f"{b:02x}" for b in mac)
+            mac_str = mac_to_str(mac)
         else:
             mac_str = str(mac).lower()
         self.self_macs.discard(mac_str)
