@@ -210,8 +210,8 @@ class PmkidHarvestAttack(Campaign):
                     # We have M1, clean-up.
                     await self._send_leaving_deauth()
                     if hs.pmkid:
-                        if hs.akm_client is None:
-                            hs.akm_client = _AKM_PSK   # we negotiated PSK in our Assoc
+                        if hs.pmkid_akm is None:
+                            hs.pmkid_akm = _AKM_PSK   # we negotiated PSK in our Assoc
                         logger.info(
                             f"[PMKID] Harvested {hs.pmkid.hex()} from {self.target.bssid} "
                             f"(STA {mac_to_str(self.source_mac)})"

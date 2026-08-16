@@ -70,9 +70,9 @@ def test_headline_active_campaign_outranks_recovered_key():
     assert "1,234" in joined
 
 
-def _pmkid_ap(akm_client):
+def _pmkid_ap(pmkid_akm):
     hs = Handshake(bssid="aa:bb:cc:dd:ee:01", client_mac="11:22:33:44:55:66",
-                   pmkid=bytes(16), akm_client=akm_client, beacon_frame=b"x")
+                   pmkid=bytes(16), pmkid_akm=pmkid_akm, beacon_frame=b"x")
     return types.SimpleNamespace(encryption="WPA2", wep_key=None, persisted=[], wep=None,
                                  known_psk=None, handshakes={"11:22:33:44:55:66": hs})
 
@@ -80,13 +80,13 @@ def _pmkid_ap(akm_client):
 def test_headline_sae_pmkid_is_not_a_captured_win():
     """A WPA3/SAE PMKID lands on the handshake but save_pmkid withholds it, so the
     headline must NOT claim 'Captured … saved' (the false-save bug)."""
-    joined = " ".join(fm.derive_headline(_pmkid_ap(akm_client=8), None, fm.Campaigns()))
+    joined = " ".join(fm.derive_headline(_pmkid_ap(pmkid_akm=8), None, fm.Campaigns()))
     assert "Captured" not in joined and "PMKID ×" not in joined
     assert "saved to captures/" not in joined
 
 
 def test_headline_psk_pmkid_is_a_captured_win():
-    joined = " ".join(fm.derive_headline(_pmkid_ap(akm_client=2), None, fm.Campaigns()))
+    joined = " ".join(fm.derive_headline(_pmkid_ap(pmkid_akm=2), None, fm.Campaigns()))
     assert "Captured" in joined and "PMKID ×1" in joined
 
 

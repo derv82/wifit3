@@ -23,6 +23,9 @@ class HandshakeMessage:
     # Arrival time (epoch seconds), stamped by the interface on capture. Used to bind
     # frames to a single handshake instance. 0.0 = unset.
     timestamp: float = 0.0
+    # AKM (00-0F-AC:N) this association negotiated, snapshotted at capture (the frame's
+    # own RSN IE, else the client's assoc selection). Gates crackability per instance.
+    akm: Optional[int] = None
 
 
 @dataclass
@@ -42,14 +45,11 @@ class Handshake:
 
     # Captured PMKID bytes (16 B from the RSN IE in EAPOL M1).
     pmkid: Optional[bytes] = None
+    # AKM (00-0F-AC:N) in effect when the PMKID was captured; gates pmkid_crackable.
+    pmkid_akm: Optional[int] = None
 
-    # Negotiated AKM for THIS association (00-0F-AC:N).
-    # Read from the cleartext RSN IE from the client's EAPOL M2 (Client-level).
-    # None until an M2 is seen. Authoritative over `akm_offered` (AP-level).
-    akm_client: Optional[int] = None
-    # The AP's offered AKM suites (00-0F-AC:N) from its beacon RSN IE.
-    # Stamped by the interface so crackability can be decided without the AP in hand.
-    # See crack.handshake (eapol_crackable / pmkid_crackable).
+    # The AP's offered AKM suites (00-0F-AC:N) from its beacon RSN IE, the fallback
+    # when a frame's own AKM is unknown. See crack.handshake.
     akm_offered: List[int] = field(default_factory=list)
 
     # -- Crack-validity --------------------------------------------------------

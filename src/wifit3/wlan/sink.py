@@ -315,6 +315,14 @@ class WlanSink:
             # Refresh in case the handshake was created before the AP's RSN IE was known.
             hs.akm_offered = list(ap.akm_suites)
 
+        # AKM this association negotiated, snapshotted now: this frame's own RSN IE
+        # (M2/M3), else the client's assoc-time selection.
+        akm = pkt.akm
+        if akm is None:
+            client_obj = self.clients.get(client_mac)
+            if client_obj is not None:
+                akm = client_obj.akm_selected
+
         # Forged MACs keep a Handshake (for PMKID) but skip the EAPOL list.
         if client_mac not in self.forged_macs and not hs.has_message(raw_frame):
             eapol = HandshakeMessage(
@@ -325,25 +333,17 @@ class WlanSink:
                 mic=pkt.mic or b"",
                 key_data_len=pkt.key_data_len,
                 eapol_payload=pkt.payload,
+                akm=akm,
                 timestamp=time.time(),
             )
             hs.messages.append(eapol)
             msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"
             logger.info(f"[{msg_label}] {bssid} <-> {client_mac} (replay {eapol.replay_hex})")
 
-        # Client's negotiated AKM.
-        akm = pkt.akm
-        if akm is not None:
-            hs.akm_client = akm
-        elif hs.akm_client is None:
-            # No M2 yet (e.g. a PMKID-only capture), fall back to client's advertised AKM.
-            client_obj = self.clients.get(client_mac)
-            if client_obj is not None and client_obj.akm_selected is not None:
-                hs.akm_client = client_obj.akm_selected
-
         pmkid = pkt.pmkid
         if pmkid and not hs.pmkid:
             hs.pmkid = pmkid
+            hs.pmkid_akm = akm
             logger.info(f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}")
         return True
 

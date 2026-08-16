@@ -95,7 +95,7 @@ class _FakeIface:
                 self._cb(WlanFrameParser.parse_80211_frame(self._assoc_resp(our_mac, bssid), -40))
             if self._deliver_m1:                              # the AP "replies" with M1
                 src = ":".join(f"{b:02x}" for b in our_mac)
-                self.ap.handshakes[src] = SimpleNamespace(pmkid=self._pmkid, akm_client=None)
+                self.ap.handshakes[src] = SimpleNamespace(pmkid=self._pmkid, pmkid_akm=None)
         return True
 
 

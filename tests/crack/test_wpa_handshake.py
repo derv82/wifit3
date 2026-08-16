@@ -11,7 +11,7 @@ def _rc(n: int) -> str:
     return n.to_bytes(8, "big").hex()
 
 
-def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0):
+def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0, akm=None):
     """An HandshakeMessage with the fields crackability cares about. `complete=False`
     simulates a clipped 802.1X payload; `mic=False` an M1-style no-MIC frame."""
     return HandshakeMessage(
@@ -23,6 +23,7 @@ def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0):
         key_data_len=0,
         eapol_payload=(bytes(120) if complete else bytes(50)),
         timestamp=ts,
+        akm=akm,
     )
 
 
@@ -158,19 +159,29 @@ def test_describe_flags():
 
 def _m1m2(*, offered, client=None):
     """A structurally perfect M1+M2 (always a crackable pair if the AKM allows),
-    tagged with the AP's offered AKM suites and the client's chosen one."""
-    hs = _hs(_frame(1, 5, nonce=ANONCE, mic=False), _frame(2, 5, nonce=SNONCE))
+    tagged with the AP's offered AKM suites and the client's chosen one (on the M2)."""
+    hs = _hs(_frame(1, 5, nonce=ANONCE, mic=False), _frame(2, 5, nonce=SNONCE, akm=client))
     hs.akm_offered = list(offered)
-    hs.akm_client = client
     return hs
 
 
 def _hs_pmkid(*, offered, client=None):
     hs = Handshake(bssid="aa:bb:cc:dd:ee:ff", client_mac="11:22:33:44:55:66",
-                   beacon_frame=b"B", pmkid=b"\x01" * 16)
+                   beacon_frame=b"B", pmkid=b"\x01" * 16, pmkid_akm=client)
     hs.akm_offered = list(offered)
-    hs.akm_client = client
     return hs
+
+
+def _keystone_akm(hs):
+    return next((f.akm for f in hs.messages if f.msg_num == 2), None)
+
+
+def _verdict(hs):
+    return wpa.eapol_verdict(_keystone_akm(hs), hs.akm_offered)
+
+
+def _label(hs):
+    return wpa.uncrackable_label(_keystone_akm(hs), hs.akm_offered)
 
 
 # --- EAPOL (WPA*02) gate: suppress SAE + FT-PSK ------------------------------
@@ -179,8 +190,7 @@ def test_sae_only_ap_suppresses_handshake():
     """The user's Beryl AX: beacon offers SAE only → every 4-way is uncrackable,
     so no pair is emitted (and thus no banner / save / hashline)."""
     hs = _m1m2(offered=[8])
-    assert wpa.eapol_verdict(hs) == "uncrackable"
-    assert not wpa.eapol_crackable(hs)
+    assert _verdict(hs) == "uncrackable"
     assert wpa.crackable_pairs(hs) == []
 
 
@@ -192,21 +202,21 @@ def test_sae_ext_key_only_ap_suppresses_handshake():
 def test_transition_ap_psk_client_is_crackable():
     """Transition AP, but THIS client negotiated PSK (M2 RSN IE) → crackable."""
     hs = _m1m2(offered=[2, 8], client=2)
-    assert wpa.eapol_verdict(hs) == "crackable"
+    assert _verdict(hs) == "crackable"
     assert len(wpa.crackable_pairs(hs)) == 1
 
 
 def test_transition_ap_sae_client_suppressed():
     """Same transition AP, but this client chose SAE → uncrackable."""
     hs = _m1m2(offered=[2, 8], client=8)
-    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert _verdict(hs) == "uncrackable"
     assert wpa.crackable_pairs(hs) == []
 
 
 def test_transition_ap_unknown_client_not_emitted():
     """Transition AP with no M2 AKM yet: can't confirm which side → withhold."""
     hs = _m1m2(offered=[2, 8], client=None)
-    assert wpa.eapol_verdict(hs) == "unknown"
+    assert _verdict(hs) == "unknown"
     assert wpa.crackable_pairs(hs) == []
 
 
@@ -214,9 +224,9 @@ def test_ft_psk_handshake_suppressed():
     """FT-PSK (4) is PSK-derived, but hashcat -m 22000 has no FT mode → the
     handshake is NOT emitted, and the trace badges 'FT'."""
     hs = _m1m2(offered=[4], client=4)
-    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert _verdict(hs) == "uncrackable"
     assert wpa.crackable_pairs(hs) == []
-    assert wpa.uncrackable_label(hs) == "FT"
+    assert _label(hs) == "FT"
 
 
 def test_ft_psk_only_ap_suppressed_without_client_akm():
@@ -225,17 +235,32 @@ def test_ft_psk_only_ap_suppressed_without_client_akm():
 
 def test_wpa2_plus_ft_unknown_client_withheld():
     """WPA2+FT AP (PSK + FT-PSK), client AKM unknown → can't tell → withhold."""
-    assert wpa.eapol_verdict(_m1m2(offered=[2, 4])) == "unknown"
+    assert _verdict(_m1m2(offered=[2, 4])) == "unknown"
 
 
 def test_no_sae_or_ft_offered_is_unchanged():
     """Plain WPA2-PSK (no SAE/FT): behaves exactly as before: the gate only ever
     removes SAE/FT false-positives, never plain-PSK captures."""
     hs = _m1m2(offered=[2])
-    assert wpa.eapol_verdict(hs) == "crackable"
+    assert _verdict(hs) == "crackable"
     assert len(wpa.crackable_pairs(hs)) == 1
     # No AKM info at all (fixtures / pre-AKM captures): still crackable.
     assert len(wpa.crackable_pairs(_m1m2(offered=[]))) == 1
+
+
+def test_mixed_akm_only_the_psk_instance_is_crackable():
+    """The EvilTwin bug: an SAE 4-way (akm 8) then a later PSK 4-way (akm 2) pool into
+    one handshake; only the PSK instance cracks, the SAE one stays withheld + badged."""
+    hs = _hs(
+        _frame(1, 5, nonce=b"\xaa" * 32, mic=False, ts=100.0, akm=8),   # SAE assoc
+        _frame(2, 5, nonce=b"\x11" * 32, ts=100.1, akm=8),
+        _frame(1, 9, nonce=b"\xbb" * 32, mic=False, ts=200.0, akm=2),   # PSK assoc (the twin)
+        _frame(2, 9, nonce=b"\x22" * 32, ts=200.1, akm=2),
+    )
+    hs.akm_offered = [2, 8]                                             # transition AP
+    pairs = wpa.crackable_pairs(hs)
+    assert len(pairs) == 1 and pairs[0].mic_frame.akm == 2             # the PSK keystone only
+    assert wpa.withheld_capture_label(hs) == "SAE"                     # SAE instance still surfaced
 
 
 # --- EAPOL gate: suppress EAP / Enterprise (PMK from the MSK, no passphrase) --
@@ -244,9 +269,9 @@ def test_eap_only_ap_suppresses_handshake():
     """Enterprise AP (EAP AKM): a full 4-way is captured but the PMK comes from
     the 802.1X MSK, not a passphrase → hashcat -m 22000 can't touch it."""
     hs = _m1m2(offered=[1])
-    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert _verdict(hs) == "uncrackable"
     assert wpa.crackable_pairs(hs) == []
-    assert wpa.uncrackable_label(hs) == "EAP/Enterprise"
+    assert _label(hs) == "EAP/Enterprise"
     assert wpa.withheld_capture_label(hs) == "EAP/Enterprise"
 
 
@@ -259,14 +284,14 @@ def test_eap_variants_all_suppressed():
 def test_transition_ap_eap_client_suppressed():
     """WPA2-Enterprise/PSK transition, THIS client negotiated EAP → withheld + badged."""
     hs = _m1m2(offered=[1, 2], client=1)
-    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert _verdict(hs) == "uncrackable"
     assert wpa.withheld_capture_label(hs) == "EAP/Enterprise"
 
 
 def test_transition_ap_psk_client_over_eap_is_crackable():
     """Same transition AP, but this client negotiated PSK → crackable, no EAP badge."""
     hs = _m1m2(offered=[1, 2], client=2)
-    assert wpa.eapol_verdict(hs) == "crackable"
+    assert _verdict(hs) == "crackable"
     assert len(wpa.crackable_pairs(hs)) == 1
     assert wpa.withheld_capture_label(hs) is None
 
@@ -275,7 +300,7 @@ def test_transition_ap_eap_unknown_client_not_badged_eap():
     """EAP+PSK offered, client unknown: withhold (could be PSK), but don't badge it
     EAP: we can't confirm which side, so no misleading 'EAP/Enterprise' line."""
     hs = _m1m2(offered=[1, 2], client=None)
-    assert wpa.eapol_verdict(hs) == "unknown"
+    assert _verdict(hs) == "unknown"
     assert wpa.crackable_pairs(hs) == []
     assert wpa.withheld_capture_label(hs) is None
 
@@ -285,15 +310,15 @@ def test_withheld_capture_label_needs_a_usable_pairing():
     so the log line means 'you got a handshake but it's worthless', not noise."""
     m1_only = _hs(_frame(1, 5, nonce=ANONCE, mic=False))
     m1_only.akm_offered = [1]
-    assert wpa.uncrackable_label(m1_only) == "EAP/Enterprise"   # AKM says EAP
+    assert wpa.uncrackable_label(None, m1_only.akm_offered) == "EAP/Enterprise"   # AKM says EAP
     assert wpa.withheld_capture_label(m1_only) is None          # but no usable pair
 
 
-def test_withheld_capture_label_silent_for_sae_ft_and_psk():
-    """The withheld badge covers only the false-positive AKMs (EAP/OWE): SAE + FT
-    are withheld too but stay silent, and a plain-PSK capture isn't badged at all."""
-    assert wpa.withheld_capture_label(_m1m2(offered=[8])) is None            # SAE → silent
-    assert wpa.withheld_capture_label(_m1m2(offered=[4], client=4)) is None  # FT → silent
+def test_withheld_capture_label_badges_sae_and_ft():
+    """SAE and FT are captured-but-uncrackable too, so they now badge; a plain-PSK
+    capture still isn't badged at all."""
+    assert wpa.withheld_capture_label(_m1m2(offered=[8])) == "SAE"
+    assert wpa.withheld_capture_label(_m1m2(offered=[4], client=4)) == "FT"
     assert wpa.withheld_capture_label(_m1m2(offered=[2])) is None            # crackable PSK
 
 
@@ -303,9 +328,9 @@ def test_owe_only_ap_suppresses_handshake():
     """OWE (Enhanced Open, AKM 18): a full 4-way is captured but the PMK is ECDH-
     derived, not a passphrase → hashcat -m 22000 can't touch it; badged 'OWE'."""
     hs = _m1m2(offered=[18])
-    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert _verdict(hs) == "uncrackable"
     assert wpa.crackable_pairs(hs) == []
-    assert wpa.uncrackable_label(hs) == "OWE"
+    assert _label(hs) == "OWE"
     assert wpa.withheld_capture_label(hs) == "OWE"
 
 
@@ -313,13 +338,13 @@ def test_owe_client_akm_suppressed_and_badged():
     """Client's negotiated AKM = OWE → withheld + badged, authoritative even with no
     beacon AKM list parsed yet."""
     hs = _m1m2(offered=[], client=18)
-    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert _verdict(hs) == "uncrackable"
     assert wpa.withheld_capture_label(hs) == "OWE"
 
 
 def test_owe_label_not_confused_with_sae():
     """An OWE-only AP must badge 'OWE', never fall through to the 'SAE' default."""
-    assert wpa.uncrackable_label(_m1m2(offered=[18])) == "OWE"
+    assert _label(_m1m2(offered=[18])) == "OWE"
     assert wpa.withheld_capture_label(_m1m2(offered=[18])) == "OWE"
 
 
@@ -327,7 +352,7 @@ def test_owe_needs_a_usable_pairing():
     """Like EAP: the OWE badge fires only on a real captured 4-way, not a stray M1."""
     m1_only = _hs(_frame(1, 5, nonce=ANONCE, mic=False))
     m1_only.akm_offered = [18]
-    assert wpa.uncrackable_label(m1_only) == "OWE"
+    assert wpa.uncrackable_label(None, m1_only.akm_offered) == "OWE"
     assert wpa.withheld_capture_label(m1_only) is None
 
 
@@ -369,7 +394,6 @@ def test_akm6_eapol_crackable_but_pmkid_not():
     """The split that motivates two gates: an AKM-6 (PSK-SHA256) network's EAPOL
     cracks (keyver → AES-CMAC), but its PMKID (HMAC-SHA256) does not."""
     eapol = _m1m2(offered=[6], client=6)
-    assert wpa.eapol_crackable(eapol)
     assert len(wpa.crackable_pairs(eapol)) == 1
     assert not wpa.pmkid_crackable(_hs_pmkid(offered=[6], client=6))
 

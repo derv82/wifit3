@@ -85,14 +85,13 @@ def _input(twin, punt, mode=PuntMode.BOTH, period=0.5):
 
 
 def _crackable_hs():
-    hs = Handshake(bssid=_BSSID, client_mac=_CLIENT, beacon_frame=_BEACON,
-                   akm_offered=[2], akm_client=2)
+    hs = Handshake(bssid=_BSSID, client_mac=_CLIENT, beacon_frame=_BEACON, akm_offered=[2])
     hs.messages.append(HandshakeMessage(raw=b"", msg_num=1, replay_hex="0000000000000005",
                                         nonce=b"\xaa" * 32, mic=bytes(16), key_data_len=0,
                                         eapol_payload=bytes(120), timestamp=1.0))
     hs.messages.append(HandshakeMessage(raw=b"", msg_num=2, replay_hex="0000000000000005",
                                         nonce=b"\x02" * 32, mic=b"\x11" * 16, key_data_len=0,
-                                        eapol_payload=bytes(120), timestamp=1.1))
+                                        eapol_payload=bytes(120), akm=2, timestamp=1.1))
     return hs
 
 
