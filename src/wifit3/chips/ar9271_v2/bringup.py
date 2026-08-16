@@ -17,6 +17,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+from wifit3.errors import BringUpError
+
 from . import ani, calib, chan as chanmod, constants as C, eeprom, gpio, htc, hw as hwmod
 from . import key, mac_queue, phy, phy_board, phy_power, reg as R, rx
 from .transport import AR9271Transport
@@ -26,6 +28,16 @@ from .wmi import (
     WMI_STOP_RECV_CMDID)
 
 _MODE_11NG = struct.pack(">H", 1)             # WMI_SET_MODE body: HTC_MODE_11NG
+
+
+def _require_supported_fw(major: int, minor: int) -> None:
+    """Reject firmware older than the port target, or a foreign image left running by another
+    driver (ath9k_init_firmware_version [SRC] htc_drv_init.c:785). A mismatch -> replug for a clean boot."""
+    if major != C.FW_VERSION_MAJOR_REQ or minor < C.FW_VERSION_MINOR_REQ:
+        raise BringUpError(
+            f"AR9271 firmware {major}.{minor} is not the supported "
+            f"{C.FW_VERSION_MAJOR_REQ}.{C.FW_VERSION_MINOR_REQ}+ (another driver may have loaded it). "
+            "Unplug the device, wait a few seconds, replug, and try again.")
 
 
 @dataclass
@@ -75,7 +87,7 @@ def cold_bringup(t: AR9271Transport) -> BringupResult:
     eeprom.init(hw)
     ani.ani_init(hw)
     key.init_crypto(hw)
-    wmi.get_fw_version()
+    _require_supported_fw(*wmi.get_fw_version())
 
     # ath9k_htc_start wake path: a COLD chip reset (chip was FULL_SLEEPed after probe), then
     # init_pll for the initial channel (mac80211 default = ch1, 2412 MHz).
@@ -178,6 +190,7 @@ def warm_reattach(t: AR9271Transport) -> BringupResult:
         raise RuntimeError(f"warm reattach: WMI not responding after toggle resync ({last_err})")
     if not hw.is_9271():
         raise RuntimeError(f"warm reattach: unexpected macVersion 0x{hw.macVersion:x}")
+    _require_supported_fw(*wmi.get_fw_version())   # foreign/older firmware -> replug, don't warm-adopt
     eeprom.init(hw)                                # read-only: 4k map -> macaddr + chain masks
     mac_queue.init_tx_queues(hw)                   # driver-side alloc (no wire)
     # Mirror the firmware's existing monitor state so the reset below re-applies the same RX filter.

@@ -19,6 +19,11 @@ AR9271_FIRMWARE_TEXT = 0x903000       # [SRC] hif_usb.h:44 text entry point
 FW_CHUNK = 4096                       # [SRC] hif_usb.c:1074/1081 kzalloc(4096) + min(len,4096)
 USB_MSG_TIMEOUT = 1000                # [SRC] hif_usb.h:74 (ms)
 
+# Minimum supported firmware, ported from ath9k_init_firmware_version [SRC] htc.h
+# MAJOR_VERSION_REQ / MINOR_VERSION_REQ. get_fw_version reports (1, 4) for htc_9271-1.4.0.fw.
+FW_VERSION_MAJOR_REQ = 1
+FW_VERSION_MINOR_REQ = 3
+
 # bmRequestType for the two FW control writes: 0x40 | USB_DIR_OUT.
 # USB_DIR_OUT == 0x00, so the byte on the wire is 0x40 (vendor, host->device).
 # [SRC] hif_usb.c:1086,1110.
