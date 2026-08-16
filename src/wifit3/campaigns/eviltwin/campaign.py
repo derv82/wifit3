@@ -152,9 +152,10 @@ class EvilTwinCampaign(Campaign):
             return
         try:
             await self.fakeap.stop()      # stop the WPA2 beacon + responder first
-            self.array.stop_ignoring_stray_beacons(self.bssid)
             await self._csa_return()      # then announce the switch-back, uninterleaved
         finally:
+            # _csa_return still beacons on the decoy channel, so keep filtering until it's done
+            self.array.stop_ignoring_stray_beacons(self.bssid)
             await self.twin_iface.set_channel(self.target_channel)   # un-strand the twin card
 
     async def _csa_return(self) -> None:
