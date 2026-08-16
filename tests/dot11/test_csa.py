@@ -1,8 +1,10 @@
 """Pure-spec tests for the CSA IE + beacon-rewrite builders."""
 import pytest
 
-from wifit3.dot11.ie import csa_ie, ssid_ie, rates_ie, ds_param_ie
+from wifit3.dot11.ie import csa_ie, ssid_ie, rates_ie, ds_param_ie, secondary_channel_offset_ie
 from wifit3.dot11.csa import build_csa_beacon
+
+_SCO = secondary_channel_offset_ie(0)          # every CSA beacon trails a 20 MHz secondary-offset IE
 
 _BODY = bytes(range(36))          # stand-in 24B header + 12B fixed; only its bytes must survive
 
@@ -16,7 +18,7 @@ def test_appends_csa_and_preserves_header_and_tags():
     beacon = _BODY + ssid_ie("Net") + rates_ie() + ds_param_ie(6)
     out = build_csa_beacon(beacon, 14)
     assert out[:22] == _BODY[:22] and out[24:36] == _BODY[24:36]
-    assert out.endswith(csa_ie(14))
+    assert out.endswith(csa_ie(14) + _SCO)
     assert ssid_ie("Net") in out and ds_param_ie(6) in out
 
 
@@ -29,7 +31,7 @@ def test_replaces_a_stale_csa_element():
     beacon = _BODY + ssid_ie("Net") + csa_ie(6) + ds_param_ie(6)
     out = build_csa_beacon(beacon, 14)
     assert out.count(bytes([0x25])) == 1            # only one CSA element id survives
-    assert out.endswith(csa_ie(14))
+    assert out.endswith(csa_ie(14) + _SCO)
     assert csa_ie(6) not in out
 
 
@@ -38,7 +40,7 @@ def test_trailing_junk_past_last_ie_is_dropped():
     out = build_csa_beacon(beacon, 14)
     expected = bytearray(_BODY)
     expected[22:24] = b"\x00\x00"
-    assert out == bytes(expected) + ssid_ie("Net") + csa_ie(14)
+    assert out == bytes(expected) + ssid_ie("Net") + csa_ie(14) + _SCO
 
 
 def test_rejects_a_beacon_too_short_for_the_fixed_body():
@@ -47,5 +49,5 @@ def test_rejects_a_beacon_too_short_for_the_fixed_body():
 
 
 def test_switch_count_is_carried_into_the_csa_element():
-    assert build_csa_beacon(_BODY + ssid_ie("Net"), 6, count=3).endswith(csa_ie(6, count=3))
-    assert build_csa_beacon(_BODY + ssid_ie("Net"), 6).endswith(csa_ie(6, count=0))
+    assert build_csa_beacon(_BODY + ssid_ie("Net"), 6, count=3).endswith(csa_ie(6, count=3) + _SCO)
+    assert build_csa_beacon(_BODY + ssid_ie("Net"), 6).endswith(csa_ie(6, count=0) + _SCO)

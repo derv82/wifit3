@@ -1,5 +1,5 @@
 """CSA beacon rewrite: splice a Channel Switch Announcement into a captured beacon (pure spec)."""
-from wifit3.dot11.ie import csa_ie
+from wifit3.dot11.ie import csa_ie, secondary_channel_offset_ie
 
 _ELEMID_CSA = 0x25
 _BEACON_BODY_LEN = 36   # 24B MAC header + 12B fixed (timestamp, interval, capability); IEs follow
@@ -23,4 +23,4 @@ def build_csa_beacon(beacon: bytes, new_channel: int, count: int = 0) -> bytes:
         if tags[ptr] != _ELEMID_CSA:
             kept += tags[ptr:end]
         ptr = end
-    return bytes(header) + bytes(kept) + csa_ie(new_channel, count=count)
+    return bytes(header) + bytes(kept) + csa_ie(new_channel, count=count) + secondary_channel_offset_ie(0)
