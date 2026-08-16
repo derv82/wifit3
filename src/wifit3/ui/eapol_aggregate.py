@@ -74,7 +74,7 @@ def _msg_label(msg_num: int, count: int) -> str:
 
 
 def _render_tree(client_mac: str, burst: _Burst, hs_ev, instance: int,
-                 save_hint: str | None = None) -> list[str]:
+                 save_hint: str | None = None, uncrackable: str | None = None) -> list[str]:
     """A burst (+ optional completion event + save note) as treelog markup lines.
 
     ``save_hint`` (the screen's short 'saved: captures/…' string) closes the tree
@@ -102,6 +102,11 @@ def _render_tree(client_mac: str, burst: _Burst, hs_ev, instance: int,
             lines.append(treelog.leaf(save_hint))
         else:
             lines.append(treelog.leaf(verdict))            # … else verdict closes it
+    elif uncrackable:                                      # real handshake, AKM can't crack
+        leaf = (f"[black bold on yellow] ✗ {uncrackable} 4-Way Handshake "
+                f"[/black bold on yellow] [dim](not crackable)[/dim]")
+        lines += [treelog.branch(b) for b in bodies]
+        lines.append(treelog.leaf(leaf))
     else:                                                  # partial: no verdict
         for i, body in enumerate(bodies):
             connector = treelog.leaf if i == len(bodies) - 1 else treelog.branch
@@ -155,11 +160,13 @@ class EapolAggregator:
             return _render_tree(ev.client_mac, burst, ev, n, save_hint)
         return _render_reannounce(ev.client_mac, ev, n)
 
-    def tick(self, now: float) -> list[list[str]]:
-        """Flush per-client bursts quiet for >= ``settle_s`` (partials, no
-        verdict). Returns a list of trees (each a list of markup lines)."""
+    def tick(self, now: float, label_for=None) -> list[list[str]]:
+        """Flush per-client bursts quiet for >= ``settle_s``. ``label_for(mac)`` supplies an
+        uncrackable reason (SAE/FT/…) to close a real-but-uncrackable handshake's tree."""
         out = []
         for mac in list(self._bursts):
             if now - self._bursts[mac].last_ts >= self._settle:
-                out.append(_render_tree(mac, self._bursts.pop(mac), None, 0))
+                burst = self._bursts.pop(mac)
+                reason = label_for(mac) if label_for else None
+                out.append(_render_tree(mac, burst, None, 0, uncrackable=reason))
         return out

@@ -246,6 +246,13 @@ def withheld_capture_label(hs: Handshake) -> Optional[str]:
     return None
 
 
+def handshake_uncrackable_label(hs: Handshake) -> Optional[str]:
+    """Badge (SAE/FT/EAP/OWE) for this handshake's negotiated AKM, from its frames (no
+    complete pair required, unlike withheld_capture_label), or None if crackable/unknown."""
+    akm = next((f.akm for f in reversed(hs.messages) if f.akm is not None), None)
+    return uncrackable_label(akm, hs.akm_offered)
+
+
 def _pairs_ignoring_akm(hs: Handshake) -> List[CrackablePair]:
     """The pairing algorithm alone, *before* the AKM crackability gate, extracted
     the way hcxpcapngtool does. Callers that want the real crackable set must use

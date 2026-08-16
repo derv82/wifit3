@@ -41,6 +41,7 @@ from wifit3.campaigns.eviltwin import (
 from wifit3.campaigns.pin import WpsCampaign, load_run_state, run_progress_line
 from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.wps.registrar import PinResult
+from wifit3.crack.handshake import handshake_uncrackable_label
 from wifit3.persist.save import (
     save_handshake, save_pmkid, save_wep_key, save_wps_pbc, save_wps_pin,
 )
@@ -561,13 +562,18 @@ class FocusViewV2(Screen):
                 self._emit_lines(self._eapol_agg.on_handshake(ev, now, save_hint=hint))
             else:
                 self._log_capture_event(ev, ap)
-        # Flush any per-client bursts that have gone quiet
-        for lines in self._eapol_agg.tick(now):
+        # Flush any per-client bursts that have gone quiet; label real-but-uncrackable ones.
+        for lines in self._eapol_agg.tick(now, label_for=lambda mac: self._uncrackable_reason(ap, mac)):
             self._emit_lines(lines)
 
     def _emit_lines(self, lines) -> None:
         for ln in lines:
             self._log(ln)
+
+    def _uncrackable_reason(self, ap, mac: str) -> str | None:
+        """The uncrackable-AKM badge (SAE/FT/EAP/OWE) for a client's handshake, else None."""
+        hs = ap.handshakes.get(mac)
+        return handshake_uncrackable_label(hs) if hs is not None else None
 
     def _log_capture_event(self, ev: CaptureEvent, ap) -> None:
         if ev.kind == CaptureKind.PMKID:
@@ -578,12 +584,6 @@ class FocusViewV2(Screen):
             result = save_pmkid(ap, ev.client_mac)
             if result is not None:
                 self._log(treelog.leaf(_save_line(result)))
-        elif ev.kind == CaptureKind.UNCRACKABLE_HANDSHAKE:
-            self._log(
-                f"[black bold on yellow] {escape(ev.value or '?')} [/black bold on yellow] "
-                f"4-way from [bold]{short_sta(ev.client_mac)}[/bold] "
-                f"[dim](not crackable)[/dim]"
-            )
         elif ev.kind == CaptureKind.DECLOAK:
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._log(

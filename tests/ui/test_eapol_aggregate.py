@@ -69,6 +69,29 @@ def test_partial_waits_for_settle_then_flushes_once():
     assert agg.tick(now=10.0) == []                            # burst consumed
 
 
+def test_uncrackable_handshake_closes_with_the_reason():
+    agg = EapolAggregator(settle_s=3.0)
+    agg.on_eapol(_eapol(1), now=0.0)
+    agg.on_eapol(_eapol(2), now=0.1)                           # a real (keystone-bearing) 4-way
+    text = "\n".join(agg.tick(now=5.0, label_for=lambda mac: "SAE")[0])
+    assert "SAE 4-Way Handshake" in text and "not crackable" in text
+    assert "Valid 4-Way Handshake" not in text
+
+
+def test_incomplete_uncrackable_still_labelled():
+    agg = EapolAggregator(settle_s=3.0)
+    agg.on_eapol(_eapol(1), now=0.0)                           # M1 only: no valid pair, still SAE
+    text = "\n".join(agg.tick(now=5.0, label_for=lambda mac: "SAE")[0])
+    assert "SAE 4-Way Handshake" in text and "not crackable" in text
+
+
+def test_no_reason_leaf_when_label_is_none():
+    agg = EapolAggregator(settle_s=3.0)
+    agg.on_eapol(_eapol(1), now=0.0)
+    text = "\n".join(agg.tick(now=5.0, label_for=lambda mac: None)[0])
+    assert "not crackable" not in text
+
+
 def test_suppress_until_new_instance():
     agg = EapolAggregator()
     agg.on_eapol(_eapol(1), now=0.0)

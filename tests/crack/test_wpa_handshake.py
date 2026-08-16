@@ -322,6 +322,16 @@ def test_withheld_capture_label_badges_sae_and_ft():
     assert wpa.withheld_capture_label(_m1m2(offered=[2])) is None            # crackable PSK
 
 
+def test_handshake_uncrackable_label_needs_no_pair():
+    """Unlike withheld_capture_label, it reads the AKM off any frame, so an incomplete
+    SAE handshake (a lone M2) is still named; a crackable PSK frame is not."""
+    sae = _hs(_frame(2, 5, nonce=SNONCE, akm=8))               # M2 only, no valid pair
+    sae.akm_offered = [8]
+    assert wpa.withheld_capture_label(sae) is None
+    assert wpa.handshake_uncrackable_label(sae) == "SAE"
+    assert wpa.handshake_uncrackable_label(_hs(_frame(2, 5, nonce=SNONCE, akm=2))) is None
+
+
 # --- EAPOL gate: suppress OWE / Enhanced Open (PMK from ECDH, no password) ----
 
 def test_owe_only_ap_suppresses_handshake():
