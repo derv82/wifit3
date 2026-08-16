@@ -35,6 +35,30 @@ logger = logging.getLogger(__name__)
 
 _RX_BUF_SIZE = 16384          # [SRC] hif_usb.h:60 MAX_RX_BUF_SIZE — one bulk-IN read
 
+# TP-Link OUIs (maclookup.app, 2026-08). 0cf3:9271 is only ever an AR9271, and TP-Link's sole AR9271
+# product is the TL-WN722N v1, so any TP-Link OUI on this VID:PID identifies a v1 (see
+# derive_product_name). Newer entries never match a v1 unit but are harmless — same product either way.
+_TPLINK_OUIS = frozenset("""
+00:0a:eb 00:14:78 00:19:e0 00:1d:0f 00:21:27 00:23:cd 00:25:86 00:27:19 04:f9:f8 08:1f:71
+08:57:00 0c:4b:54 0c:72:2c 0c:80:63 0c:82:68 10:fe:ed 14:75:90 14:86:92 14:cc:20 14:cf:92
+14:d8:64 14:e6:e4 18:a6:f7 18:d6:c7 18:f2:2c 1c:3b:f3 1c:44:19 1c:fa:68 20:6b:e7 20:dc:e6
+24:5a:5f 24:69:68 28:2c:b2 28:ee:52 2c:79:be 30:b4:9e 30:b5:c2 30:fc:68 34:96:72 34:e8:94
+34:f7:16 38:83:45 3c:06:a7 3c:46:d8 3c:6a:48 3c:84:6a 40:16:9f 40:3f:8c 44:66:90 44:b3:2d
+48:0e:ec 48:5f:08 48:7d:2e 4c:10:d5 50:3e:aa 50:bd:5f 50:c7:bf 50:d4:f7 50:fa:84 54:75:95
+54:a7:03 54:c8:0f 54:e6:fc 58:41:20 5c:63:bf 5c:89:9a 60:29:2b 60:32:b1 60:3a:7c 60:a3:e3
+60:e3:27 64:56:01 64:66:b3 64:6e:97 64:70:02 68:77:24 68:dd:b7 68:ff:7b 6c:b1:58 6c:e8:73
+70:4f:57 74:05:a5 74:39:89 74:da:88 74:ea:3a 78:44:fd 78:60:5b 78:a1:06 7c:8b:ca 7c:b5:9b
+80:89:17 80:8f:1d 80:ae:54 80:ea:07 84:16:f9 84:b8:90 84:d8:1b 88:25:93 88:99:86 8c:21:0a
+8c:a6:df 90:9a:4a 90:ae:1b 90:f6:52 94:0c:6d 94:d9:b3 98:48:27 98:97:cc 98:da:c4 98:de:d0
+9c:21:6a 9c:47:82 9c:a6:15 a0:f3:c1 a4:1a:3a a4:2b:b0 a8:15:4d a8:57:4e ac:84:c6 b0:48:7a
+b0:4e:26 b0:95:75 b0:95:8e b0:be:76 b8:f8:83 bc:46:99 bc:d1:77 c0:25:e9 c0:4a:00 c0:61:18
+c0:c9:e3 c0:e4:2d c4:6e:1f c4:71:54 c4:e9:84 cc:08:fb cc:32:e5 cc:34:29 d0:37:45 d0:76:e7
+d0:c7:c0 d4:01:6d d4:6e:0e d8:07:b6 d8:0d:17 d8:15:0d d8:47:32 d8:5d:4c dc:00:77 dc:fe:18
+e0:05:c5 e4:c3:2a e4:d3:32 e8:94:f6 e8:de:27 ec:08:6b ec:17:2f ec:26:ca ec:60:73 ec:88:8f
+f0:f3:36 f4:2a:7d f4:6d:2f f4:83:cd f4:84:8d f4:ec:38 f4:f2:6d f8:1a:67 f8:6f:b0 f8:8c:21
+f8:c9:03 f8:ce:21 f8:d1:11 fc:d7:33
+""".split())
+
 
 class AR9271V2Driver(Driver):
     """Atheros AR9271 / ALFA AWUS036NHA — 2.4 GHz, soft-MAC, ath9k_htc firmware."""
@@ -58,7 +82,26 @@ class AR9271V2Driver(Driver):
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "AR9271V2Driver":
-        return cls(dev)
+        drv = cls(dev)
+        drv.product_name = id_entry.product_name   # SUPPORTED_IDS label; _adopt narrows by OUI
+        return drv
+
+    @staticmethod
+    def derive_product_name(mac: Optional[str]) -> Optional[str]:
+        """Split the shared 0cf3:9271 label by OUI: a TP-Link OUI is the TL-WN722N v1, any other
+        real MAC is the ALFA AWUS036NHA. None only when the MAC is unknown (keeps the combined)."""
+        if not mac:
+            return None
+        if mac[:8].lower() in _TPLINK_OUIS:
+            return "TL-WN722N v1"
+        return "ALFA AWUS036NHA"
+
+    def _refine_product_name(self) -> None:
+        """Narrow the combined SUPPORTED_IDS label to one make once the EEPROM MAC is read; a
+        MAC-less state leaves the combined label."""
+        refined = self.derive_product_name(self.mac_address)
+        if refined:
+            self.product_name = refined
 
     @classmethod
     def for_replay(cls, wmi, hw, endpoints: dict) -> "AR9271V2Driver":
@@ -84,6 +127,7 @@ class AR9271V2Driver(Driver):
         self.transport = res.wmi.t
         self.endpoints = res.endpoints
         self.mac_address = ":".join(f"{b:02x}" for b in res.hw.macaddr)
+        self._refine_product_name()
         self._init_tx(res.endpoints)
         self._log_detected_config(res.hw)
 

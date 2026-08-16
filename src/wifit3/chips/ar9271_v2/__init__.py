@@ -6,7 +6,7 @@ dual-band entries are a different device (separate firmware) this port does not 
 from wifit3.models.device_id import DeviceID
 
 _IDS = (
-    (0x0CF3, 0x9271, "AR9271", None, "ALFA AWUS036NHA"),
+    (0x0CF3, 0x9271, "AR9271", None, "ALFA AWUS036NHA / TL-WN722N v1"),
     (0x0CF3, 0x1006, "AR9271", None, None),
     (0x0846, 0x9030, "AR9271", None, "Netgear N150"),
     (0x07B8, 0x9271, "AR9271", None, "Altai WA1011N-GU"),

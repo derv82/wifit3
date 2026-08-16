@@ -163,10 +163,6 @@ class BreathingArt(Static):
 
 
 # --- Card art selection -----------------------------------------------------
-# Per-card art lives in assets/cards/. It's picked by the product_name the driver reports (mt7921au
-# refines AXML vs PAU0F by OUI; every other card uses its static SUPPORTED_IDS name), falling back
-# to a per-chipset default, then the generic focus-card art. Renaming a product_name, a chipset, or
-# an .ans breaks these maps by design (a UI-only string->string coupling, kept next to the art).
 _ART_BY_PRODUCT: dict[str, str] = {
     "ALFA AWUS036ACH": "cards/card-awus036ach.ans",
     "ALFA AWUS036ACS": "cards/card-awus036acs.ans",
@@ -176,17 +172,17 @@ _ART_BY_PRODUCT: dict[str, str] = {
     "ALFA AWUS036H": "cards/card-awus036h.ans",
     "ALFA AWUS036NH": "cards/card-awus036nh.ans",
     "ALFA AWUS036NHA": "cards/card-awus036nha.ans",
+    "ALFA AWUS036NHA / TL-WN722N v1": "cards/card-awus036nha.ans",   # OUI unresolved -> default ALFA
     "ALFA AWUS1900": "cards/card-awus1900.ans",
     "Archer T3U Plus": "cards/card-archert3uplus.ans",
     "Panda PAU05/06": "cards/card-pau06.ans",
     "Panda PAU0B": "cards/card-pau0b.ans",
     "Panda PAU09 N600": "cards/card-pau09n600.ans",
+    "TL-WN722N v1": "cards/card-tpwn722nv23.ans",       # AR9271 sibling; same physical card, same art
     "TL-WN722N v2/v3": "cards/card-tpwn722nv23.ans",
     "Netgear A9000": "cards/card-netgeara9000.ans",
     "ASUS USB-BE93": "cards/card-asusbe93.ans",
 }
-# For the four non-Realtek rows below this IS the art (they carry no product_name); RTL8821CU's
-# Archer T3U Plus product row usually resolves first, so its chipset default is a rarely-hit spare.
 _ART_BY_CHIPSET: dict[str, str] = {
     "RTL8821CU": "cards/card-auscomer600.ans",
     "RT2570": "cards/card-buffalonintendo.ans",
