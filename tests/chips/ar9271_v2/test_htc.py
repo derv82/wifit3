@@ -1,5 +1,7 @@
 """M2a: the HTC handshake emits the exact connect/config/complete frames and learns the
 endpoint map from the target's responses."""
+import pytest
+
 from wifit3.chips.ar9271_v2 import constants as C, htc
 from wifit3.chips.ar9271_v2.transport import AR9271Transport
 
@@ -53,3 +55,16 @@ def test_handshake_frames_and_endpoint_map():
     assert st.endpoints[C.WMI_CONTROL_SVC] == 1
     assert st.endpoints[C.WMI_MGMT_SVC] == 5
     assert st.credit_size == 0x0140
+
+
+def test_process_ready_rejects_stale_reg_in_prefix():
+    # The real crash: stale bytes ahead of a valid HTC_READY.
+    crash = bytes.fromhex("00c60000") + _READY
+    with pytest.raises(htc.HTCReadyError) as ei:
+        htc.process_ready(AR9271Transport(FakeDev([crash])), htc.HTCState())
+    assert ei.value.raw == crash
+
+
+def test_process_ready_rejects_short_frame():
+    with pytest.raises(htc.HTCReadyError):
+        htc.process_ready(AR9271Transport(FakeDev([bytes.fromhex("0000000800")])), htc.HTCState())
