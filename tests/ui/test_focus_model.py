@@ -396,7 +396,8 @@ def test_headline_eviltwin_active_and_captured():
                                  fakeap=types.SimpleNamespace(stats=stats))
     campaigns = fm.Campaigns(eviltwin=camp)
     active = fm.derive_headline(_rsn_ap(), None, campaigns)
-    assert "EvilTwin active" in active[0]
-    assert "auth 2" in active[1] and "assoc 1" in active[1]
+    assert "EvilTwin active" in active[0] and "CH 1" in active[0]
+    assert "auth:2" in active[1] and "assoc:1" in active[1]
+    assert "3 direct" in active[2] and "5 wildcard" in active[2]
     camp.captured = True
     assert "Captured" in fm.derive_headline(_rsn_ap(), None, campaigns)[0]

@@ -813,12 +813,10 @@ class FocusViewV2(Screen):
             self._log(f"[bold red]✗ EvilTwin failed to start:[/bold red] {escape(str(exc))}")
             self._eviltwin_attack = None
             return
-        self._log(f"[bold cyan]EvilTwin ACTIVE[/bold cyan] on "
-                  f"[bold]{escape(ap.ssid or ap.bssid)}[/bold]")
-        self._log(treelog.branch(
-            f"[dim]WPA2 twin on[/dim] [bold]CH {twin_channel}[/bold] "
-            f"[dim]· {evil_input.punt_mode.value} punt on CH {ap.channel}[/dim]"))
-        self._log(treelog.leaf("[dim]waiting for a client's M2…[/dim]"))
+        self._log(f"[bold cyan]EvilTwin[/bold cyan] of "
+                  f"[bold cyan]{escape(ap.ssid or ap.bssid)}[/bold cyan] active on ch {twin_channel}")
+        self._log(treelog.branch(f"[italic]punting clients[/italic] [dim]on[/dim] ch {ap.channel}"))
+        self._log(treelog.leaf("[dim]waiting for clients to auth…[/dim]"))
 
     def _stop_eviltwin(self) -> None:
         """User-initiated stop. Auto-stop on capture is reaped by `_finish_eviltwin`."""

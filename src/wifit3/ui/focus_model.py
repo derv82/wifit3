@@ -386,12 +386,10 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
                     "[dim]saved to captures/[/dim]"]
         stats = getattr(camp.fakeap, "stats", None)
         if stats is None:
-            return ["[bold cyan]● EvilTwin arming…[/bold cyan]",
-                    f"[dim]twin on CH {camp.twin_channel}[/dim]"]
-        return ["[bold cyan]● EvilTwin active[/bold cyan]",
-                f"[dim]twin CH {camp.twin_channel} · auth {stats.auth} "
-                f"assoc {stats.assoc} M2 {stats.m2}[/dim]",
-                f"[dim]probes: {stats.probes_direct} directed, "
+            return [f"[bold cyan]EvilTwin arming…[/bold cyan] on CH {camp.twin_channel}"]
+        return [f"[bold cyan]EvilTwin active[/bold cyan] on CH {camp.twin_channel}",
+                f"[dim]auth:{stats.auth} · assoc:{stats.assoc} · M2:{stats.m2}[/dim]",
+                f"[dim]probes: {stats.probes_direct} direct · "
                 f"{stats.probes_wildcard} wildcard[/dim]"]
 
     # 4. Recovered credentials, when idle: WEP key / WPS PSK.
