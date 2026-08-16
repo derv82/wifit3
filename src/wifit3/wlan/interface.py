@@ -59,10 +59,6 @@ class WlanInterface:
         self.bus = bus
         self.address = address
         self.current_channel = 1
-        # Set to a BSSID (str) while this card hosts an EvilTwin FakeAP: the array drops frames it
-        # hears with that TA (our own beacons/responses loop back) so the WPA2 clone never overwrites
-        # the real AP's sink entry. None when the card isn't impersonating an AP.
-        self.fakeap_bssid: Optional[str] = None
 
         self._rx_callbacks: List[Callable[[Packet], None]] = []
         self._disconnect_callbacks: List[Callable[[Exception], None]] = []

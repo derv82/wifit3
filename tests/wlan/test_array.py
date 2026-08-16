@@ -21,7 +21,6 @@ class FakeIface:
         self.description = description
         self._channels = list(channels)
         self.current_channel = channels[0]
-        self.fakeap_bssid = None
         self.driver = SimpleNamespace(FAKE_MAC=fake_mac, SUPPORTED_CHANNELS=list(channels))
         self.on_tx = None
         self._rx = []
@@ -70,9 +69,9 @@ def _raw(seq=b"\x00\x00", a2=b"\xaa\xbb\xcc\xdd\xee\xff", retry=False):
     return fc + b"\x00\x00" + b"\xff\xff\xff\xff\xff\xff" + a2 + a2 + seq + b"\x00" * 12
 
 
-def _beacon(raw, bssid="aa:bb:cc:dd:ee:ff", rssi=-40):
+def _beacon(raw, bssid="aa:bb:cc:dd:ee:ff", rssi=-40, channel=6):
     return pkt({"type": "beacon", "bssid": bssid, "source": bssid, "dest": "ff:ff:ff:ff:ff:ff",
-               "rssi": rssi, "ssid": "AP", "channel": 6, "raw": raw})
+               "rssi": rssi, "ssid": "AP", "channel": channel, "raw": raw})
 
 
 def _pool(*ifaces):
@@ -173,15 +172,16 @@ def test_ingest_drops_our_own_forged_frames():
     assert a.get_access_points() == []        # never entered the picture
 
 
-def test_ingest_drops_fakeap_own_beacon_echo():
-    """A card hosting an EvilTwin FakeAP hears its own cloned beacon loop back (TA == the cloned
-    BSSID): drop it so the WPA2 clone never overwrites the real AP's sink entry. Unlike a forged MAC,
-    the BSSID is NOT registered globally (the real AP shares it, on the other card)."""
+def test_ingest_drops_stray_beacon_but_keeps_the_real_ap():
+    """A beacon on a BSSID's registered stray (decoy) channel is our twin looping back and is dropped;
+    the real AP shares the BSSID on its own channel and still lands."""
     card = FakeIface("wlan0", [1])
     a = _pool(card)
-    card.fakeap_bssid = "aa:bb:cc:dd:ee:ff"
-    card.emit(_beacon(_raw(), rssi=-40))     # transmitter == the BSSID this card impersonates
+    a.ignore_stray_beacons("aa:bb:cc:dd:ee:ff", 6)
+    card.emit(_beacon(_raw(), rssi=-40, channel=6))              # twin on the decoy channel
     assert a.get_access_points() == []
+    card.emit(_beacon(_raw(seq=b"\x10\x00"), rssi=-50, channel=1))   # real AP on its own channel
+    assert list(a.access_points) == ["aa:bb:cc:dd:ee:ff"]
 
 
 def test_ingest_drops_our_own_self_mac_transmissions():

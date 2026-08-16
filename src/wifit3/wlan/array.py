@@ -11,7 +11,7 @@ import time
 from typing import Callable, Dict, List, Optional, Set
 
 from wifit3.chips.driver import FakeMacSupport
-from wifit3.dot11.packet import Packet
+from wifit3.dot11.packet import BeaconPacket, Packet
 from wifit3.models import AccessPoint, Client
 from wifit3.wlan.dedupe import StreamMerger
 from wifit3.wlan.interface import WlanInterface
@@ -44,6 +44,7 @@ class WlanArray:
         self._preferred: Optional[WlanInterface] = None   # user's session TX pick; see select_iface
         self._sink = sink or WlanSink()
         self._dedupe = StreamMerger(window=window)
+        self._stray_beacon_channels: Dict[str, int] = {}  # bssid -> decoy channel; its beacons are ours
         self._rx_callbacks: List[Callable[[Packet], None]] = []      # deduped stream
         self._disconnect_callbacks: List[Callable[[Exception, int], None]] = []
         self._name_counter = 0
@@ -183,9 +184,7 @@ class WlanArray:
         # drops a second card hearing our own ToDS injection (TA == our MAC).
         if pkt.transmitter in self._sink.forged_macs or pkt.transmitter in self._sink.self_macs:
             return
-        # This card is hosting an EvilTwin FakeAP and hears its own beacon/responses loop back
-        # (TA = the cloned BSSID): drop them so the WPA2 clone doesn't overwrite the real AP entry.
-        if pkt.transmitter == iface.fakeap_bssid:
+        if self._is_stray_beacon(pkt):
             return
         if self._dedupe.submit(card_id, pkt.raw, time.monotonic()):
             self._sink.update(pkt, card_id, channel_hint=iface.current_channel)
@@ -196,6 +195,17 @@ class WlanArray:
                     logger.exception("Deduped RX callback failed")
         else:
             self._sink.record_signal(card_id, pkt.bssid, pkt.rssi)
+
+    def ignore_stray_beacons(self, bssid: str, channel: int) -> None:
+        """Drop this BSSID's beacons/probe-resps on ``channel``."""
+        self._stray_beacon_channels[bssid] = channel
+
+    def stop_ignoring_stray_beacons(self, bssid: str) -> None:
+        self._stray_beacon_channels.pop(bssid, None)
+
+    def _is_stray_beacon(self, pkt: Packet) -> bool:
+        return (isinstance(pkt, BeaconPacket)
+                and self._stray_beacon_channels.get(pkt.bssid) == pkt.channel)
 
     # ----- sink facade -------------------------------------------------------
 

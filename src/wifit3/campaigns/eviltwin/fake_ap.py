@@ -70,16 +70,12 @@ class FakeAP:
         if self.iface.current_channel != self.channel:
             await self.iface.set_channel(self.channel)
         await self.iface.set_fake_mac(self.bssid, self.bssid)
-        # Our own beacons/responses (TA = the cloned BSSID) loop back on this card's RX; tag them so
-        # the array drops them instead of folding the WPA2 clone into the real AP's sink entry.
-        self.iface.fakeap_bssid = mac_to_str(self.bssid)
         if self.rx_source is not None:
             self.rx_source.register_rx_callback(self.on_rx)
         self._beacon_task = asyncio.create_task(self._beacon_loop())
 
     async def stop(self) -> None:
         self._running = False
-        self.iface.fakeap_bssid = None
         if self._beacon_task is not None:
             self._beacon_task.cancel()
         if self.rx_source is not None:

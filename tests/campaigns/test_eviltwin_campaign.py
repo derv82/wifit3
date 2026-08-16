@@ -59,12 +59,19 @@ class _FakeArray:
     def __init__(self):
         self.access_points: dict = {}
         self.seeded_m1: list[bytes] = []
+        self.stray_beacons: dict = {}
 
     def select_iface(self, channel):
         return None
 
     def record_injected_eapol(self, frame) -> None:
         self.seeded_m1.append(bytes(frame))
+
+    def ignore_stray_beacons(self, bssid, channel) -> None:
+        self.stray_beacons[bssid] = channel
+
+    def stop_ignoring_stray_beacons(self, bssid) -> None:
+        self.stray_beacons.pop(bssid, None)
 
 
 def _target():
