@@ -79,9 +79,6 @@ class _FakeArray:
     def mark_evil_twin(self, bssid) -> None:
         self.evil_twins.add(bssid)
 
-    def unmark_evil_twin(self, bssid) -> None:
-        self.evil_twins.discard(bssid)
-
 
 def _target():
     return SimpleNamespace(bssid=_BSSID, ssid=_SSID, channel=11,
@@ -147,9 +144,9 @@ async def test_own_bssid_marks_twin_and_keys_capture_on_it():
     assert camp.twin_bssid == own_s
     assert camp.twin_beacon[10:16] == own_b and camp.twin_beacon[16:22] == own_b  # Addr2/Addr3 rewritten
     await asyncio.wait_for(camp._loop(), timeout=1.0)   # exits at once: capture is on the twin entry
-    assert own_s in array.evil_twins                    # hidden from the scanner while running
+    assert own_s in array.evil_twins                    # hidden from the scanner
     await camp.teardown()
-    assert own_s not in array.evil_twins                # unmarked on teardown
+    assert own_s in array.evil_twins                    # stays hidden after teardown (no re-attack)
     assert camp.captured
 
 

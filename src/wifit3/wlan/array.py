@@ -252,10 +252,6 @@ class WlanArray:
         """Hide this BSSID's AP from get_access_points(include_eviltwin=False): it's our own twin."""
         self._evil_twin_bssids.add(bssid.lower())
 
-    def unmark_evil_twin(self, bssid: str) -> None:
-        """Inverse of mark_evil_twin."""
-        self._evil_twin_bssids.discard(bssid.lower())
-
     # ----- channel policy ----------------------------------------------------
 
     @property

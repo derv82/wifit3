@@ -153,8 +153,6 @@ class EvilTwinCampaign(Campaign):
         finally:
             if self.same_bssid:
                 self.array.stop_ignoring_stray_beacons(self.twin_bssid)
-            else:
-                self.array.unmark_evil_twin(self.twin_bssid)
             await self.twin_iface.set_channel(self.target_channel)
 
     async def _csa_return(self) -> None:
