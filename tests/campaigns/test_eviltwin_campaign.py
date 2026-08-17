@@ -6,7 +6,9 @@ import struct
 from types import SimpleNamespace
 
 from wifit3.campaigns.campaign import Campaign
-from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput, PuntMode, default_punt_mode
+from wifit3.campaigns.eviltwin import (
+    EvilTwinCampaign, EvilTwinInput, PuntMode, default_punt_mode, csa_target_channel,
+)
 from wifit3.dot11.ap import eapol_m1
 from wifit3.dot11.eapol import eapol_key, data_header, LLC_SNAP_EAPOL
 from wifit3.dot11.ie import ssid_ie, rates_ie, ds_param_ie, GENERIC_RSN_IE
@@ -60,6 +62,7 @@ class _FakeArray:
         self.access_points: dict = {}
         self.seeded_m1: list[bytes] = []
         self.stray_beacons: dict = {}
+        self.evil_twins: set = set()
 
     def select_iface(self, channel):
         return None
@@ -73,14 +76,20 @@ class _FakeArray:
     def stop_ignoring_stray_beacons(self, bssid) -> None:
         self.stray_beacons.pop(bssid, None)
 
+    def mark_evil_twin(self, bssid) -> None:
+        self.evil_twins.add(bssid)
+
+    def unmark_evil_twin(self, bssid) -> None:
+        self.evil_twins.discard(bssid)
+
 
 def _target():
     return SimpleNamespace(bssid=_BSSID, ssid=_SSID, channel=11,
                            last_beacon_frame=_BEACON, akm_suites=[2])
 
 
-def _input(twin, punt, mode=PuntMode.BOTH, period=0.5):
-    return EvilTwinInput(twin_iface=twin, punt_iface=punt, twin_channel=1,
+def _input(twin, punt, mode=PuntMode.BOTH, period=0.5, bssid=_BSSID):
+    return EvilTwinInput(twin_iface=twin, punt_iface=punt, twin_channel=1, twin_bssid=bssid,
                          punt_mode=mode, punt_period_sec=period)
 
 
@@ -120,13 +129,28 @@ def test_default_punt_mode():
     assert default_punt_mode(SimpleNamespace(pmf_required=False, pmf_capable=False)) is PuntMode.DEAUTH
 
 
-def test_punt_frames_by_mode():
+def test_csa_target_channel():
+    assert csa_target_channel(1) == 6                 # 2.4G decoy
+    assert csa_target_channel(11) == 1
+    assert csa_target_channel(36) == 40               # 5G target stays in-band
+    assert csa_target_channel(11, 1) == 1             # preferred honored when off the AP's channel
+    assert csa_target_channel(11, 11) == 1            # preferred == AP channel -> decoy (the no-op guard)
+
+
+async def test_own_bssid_marks_twin_and_keys_capture_on_it():
     array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
-    cases = {PuntMode.CSA: [0x80], PuntMode.DEAUTH: [0xC0],
-             PuntMode.BOTH: [0x80, 0xC0], PuntMode.NONE: []}
-    for mode, want_subtypes in cases.items():
-        camp = EvilTwinCampaign(array, _target(), _input(twin, punt, mode=mode))
-        assert [f[0] for f in camp._punt_frames()] == want_subtypes
+    own_b = bytes.fromhex("9483c48c3f79")            # target BSSID + 1 nibble: an own-BSSID twin
+    own_s = "94:83:c4:8c:3f:79"
+    array.access_points[own_s] = SimpleNamespace(handshakes={_CLIENT: _crackable_hs()})
+    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, mode=PuntMode.CSA, bssid=own_s))
+    assert camp.same_bssid is False
+    assert camp.twin_bssid == own_s
+    assert camp.twin_beacon[10:16] == own_b and camp.twin_beacon[16:22] == own_b  # Addr2/Addr3 rewritten
+    await asyncio.wait_for(camp._loop(), timeout=1.0)   # exits at once: capture is on the twin entry
+    assert own_s in array.evil_twins                    # hidden from the scanner while running
+    await camp.teardown()
+    assert own_s not in array.evil_twins                # unmarked on teardown
+    assert camp.captured
 
 
 async def test_arms_punts_and_tears_down():

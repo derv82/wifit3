@@ -804,7 +804,8 @@ class FocusViewV2(Screen):
             return
         twin_channel = csa_target_channel(ap.channel)
         evil_input = EvilTwinInput(twin_iface=twin_iface, punt_iface=tx_iface,
-                                   twin_channel=twin_channel, punt_mode=default_punt_mode(ap))
+                                   twin_channel=twin_channel, twin_bssid=ap.bssid,
+                                   punt_mode=default_punt_mode(ap))
         try:
             self._eviltwin_attack = EvilTwinCampaign(array, ap, evil_input)
             self._eviltwin_attack.run()

@@ -19,7 +19,7 @@ class _FakeArray:
         self.forged_macs = set()
         self.supported_channels = supported
 
-    def get_access_points(self):
+    def get_access_points(self, include_eviltwin=True):
         return list(self.access_points.values())
 
     async def start_hopping(self, channels=None, interval=0.25):
