@@ -45,6 +45,7 @@ class WlanArray:
         self._sink = sink or WlanSink()
         self._dedupe = StreamMerger(window=window)
         self._stray_beacon_channels: Dict[str, int] = {}  # bssid -> decoy channel; its beacons are ours
+        self._evil_twin_bssids: Set[str] = set()          # our own twin APs; hidden from the scanner
         self._rx_callbacks: List[Callable[[Packet], None]] = []      # deduped stream
         self._disconnect_callbacks: List[Callable[[Exception, int], None]] = []
         self._name_counter = 0
@@ -229,8 +230,11 @@ class WlanArray:
     def packet_stats(self) -> PacketStats:
         return self._sink.packet_stats
 
-    def get_access_points(self) -> List[AccessPoint]:
-        return self._sink.get_access_points()
+    def get_access_points(self, include_eviltwin: bool = True) -> List[AccessPoint]:
+        aps = self._sink.get_access_points()
+        if include_eviltwin:
+            return aps
+        return [ap for ap in aps if ap.bssid not in self._evil_twin_bssids]
 
     def register_forged_mac(self, mac) -> None:
         self._sink.register_forged_mac(mac)
@@ -243,6 +247,14 @@ class WlanArray:
 
     def unregister_self_mac(self, mac) -> None:
         self._sink.unregister_self_mac(mac)
+
+    def mark_evil_twin(self, bssid: str) -> None:
+        """Hide this BSSID's AP from get_access_points(include_eviltwin=False): it's our own twin."""
+        self._evil_twin_bssids.add(bssid.lower())
+
+    def unmark_evil_twin(self, bssid: str) -> None:
+        """Inverse of mark_evil_twin."""
+        self._evil_twin_bssids.discard(bssid.lower())
 
     # ----- channel policy ----------------------------------------------------
 

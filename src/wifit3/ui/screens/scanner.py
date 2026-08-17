@@ -336,7 +336,7 @@ class ScannerView(Screen):
 
         fade_span = max(0.001, FADE_DURATION_S - GRACE_DURATION_S)
 
-        for ap in array.get_access_points():
+        for ap in array.get_access_points(include_eviltwin=False):
             guessed_ssid = (
                 self._best_named_sibling_ssid(ap)
                 if self._scan_filter.text and ap.ssid is None

