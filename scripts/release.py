@@ -38,8 +38,8 @@ def main():
     if part not in IDX:
         sys.exit(f"{USAGE}  (got {part!r})")
 
-    if git("status", "--porcelain"):
-        sys.exit("working tree dirty: commit or stash first")
+    if git("status", "--porcelain", "--untracked-files=no"):  # untracked docs don't block; only INIT is staged below
+        sys.exit("tracked changes present: commit or stash first")
     if git("rev-parse", "--abbrev-ref", "HEAD") != "master":
         sys.exit("not on master")
 
