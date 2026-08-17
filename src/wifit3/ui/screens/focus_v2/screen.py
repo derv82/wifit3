@@ -35,9 +35,8 @@ from wifit3.campaigns import treelog
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
-from wifit3.campaigns.eviltwin import (
-    EvilTwinCampaign, EvilTwinInput, default_punt_mode, csa_target_channel,
-)
+from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput
+from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal
 from wifit3.campaigns.pin import WpsCampaign, load_run_state, run_progress_line
 from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.wps.registrar import PinResult
@@ -797,15 +796,17 @@ class FocusViewV2(Screen):
         if not ap or not array:
             self._log("[red]✗ No target / interface. Cannot start EvilTwin.[/red]")
             return
-        tx_iface = array.select_iface(ap.channel)
-        twin_iface = next((m for m in array.members if m is not tx_iface), None)
-        if tx_iface is None or twin_iface is None:
+        if len(array.members) < 2:
             self._log("[yellow]EvilTwin requires 2 or more wireless interfaces.[/yellow]")
             return
-        twin_channel = csa_target_channel(ap.channel)
-        evil_input = EvilTwinInput(twin_iface=twin_iface, punt_iface=tx_iface,
-                                   twin_channel=twin_channel, twin_bssid=ap.bssid,
-                                   punt_mode=default_punt_mode(ap))
+        self.app.push_screen(EvilTwinInputModal(ap, array.members), self._on_eviltwin_input)
+
+    def _on_eviltwin_input(self, evil_input: Optional[EvilTwinInput]) -> None:
+        if evil_input is None:
+            return
+        ap, array = self._target_ap, self.app.array
+        if not ap or not array:
+            return
         try:
             self._eviltwin_attack = EvilTwinCampaign(array, ap, evil_input)
             self._eviltwin_attack.run()
@@ -814,8 +815,8 @@ class FocusViewV2(Screen):
             self._log(f"[bold red]✗ EvilTwin failed to start:[/bold red] {escape(str(exc))}")
             self._eviltwin_attack = None
             return
-        self._log(f"[bold cyan]EvilTwin[/bold cyan] of "
-                  f"[bold cyan]{escape(ap.ssid or ap.bssid)}[/bold cyan] active on ch {twin_channel}")
+        self._log(f"[bold cyan]EvilTwin[/bold cyan] of [bold cyan]"
+                  f"{escape(ap.ssid or ap.bssid)}[/bold cyan] active on ch {evil_input.twin_channel}")
         self._log(treelog.branch(f"[italic]punting clients[/italic] [dim]on[/dim] ch {ap.channel}"))
         self._log(treelog.leaf("[dim]waiting for clients to auth…[/dim]"))
 
