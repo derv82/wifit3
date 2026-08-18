@@ -127,5 +127,5 @@ class Campaign:
         return False
 
     @classmethod
-    def ineligible_reason(cls, ap, num_ifaces: Optional[int] = None) -> Optional[str]:
+    def ineligible_reason(cls, ap) -> Optional[str]:
         return None

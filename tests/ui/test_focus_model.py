@@ -311,7 +311,7 @@ def test_buttons_mutex_running_wps_disables_siblings():
 def test_buttons_running_eviltwin_toggles_and_blocks_pmkid():
     ap = _rsn_ap(wpa3=True, transition_mode=True)
     Campaign.active = _running("eviltwin")
-    b = fm.derive_buttons(ap, num_ifaces=2)
+    b = fm.derive_buttons(ap)
     assert _bs(b["btn-eviltwin"]) == (True, False, "Stop EvilTwin", "error")
     assert b["btn-pmkid"].disabled is True
 
@@ -321,7 +321,7 @@ def test_buttons_running_pmkid_shows_stop_and_blocks_others():
     Stop button AND (the flip) blocks the sibling attacks."""
     ap = _rsn_ap(wpa3=True, transition_mode=True, wps=True)
     Campaign.active = _running("pmkid")
-    b = fm.derive_buttons(ap, num_ifaces=2)
+    b = fm.derive_buttons(ap)
     assert _bs(b["btn-pmkid"]) == (True, False, "Stop PMKID", "error")
     assert b["btn-wps-pin"].disabled is True
     assert b["btn-eviltwin"].disabled is True
@@ -381,13 +381,10 @@ def test_card_dynamic_each_state():
     assert fm.card_dynamic(fm.Campaigns(pbc_busy=True)) == "● WPS PBC"
 
 
-def test_buttons_eviltwin_needs_two_cards():
+def test_buttons_eviltwin_enabled_single_card():
     ap = _rsn_ap(akms=("PSK",))
-    one = fm.derive_buttons(ap, num_ifaces=1)["btn-eviltwin"]
-    assert one.visible is True and one.disabled is True
-    assert one.reason == "Requires 2 or more wireless interfaces"
-    two = fm.derive_buttons(ap, num_ifaces=2)["btn-eviltwin"]
-    assert two.visible is True and two.disabled is False and two.reason == ""
+    st = fm.derive_buttons(ap)["btn-eviltwin"]
+    assert st.visible is True and st.disabled is False and st.reason == ""
 
 
 def test_headline_eviltwin_active_and_captured():

@@ -266,7 +266,7 @@ class ButtonState:
     reason: str = ""      # why it's disabled (shown as the button tooltip); "" when enabled
 
 
-def derive_buttons(ap, num_ifaces: Optional[int] = None) -> dict[str, ButtonState]:
+def derive_buttons(ap) -> dict[str, ButtonState]:
     """Per-button state, keyed by button id, registry-driven."""
     active = Campaign.active
     states: dict[str, ButtonState] = {}
@@ -278,7 +278,7 @@ def derive_buttons(ap, num_ifaces: Optional[int] = None) -> dict[str, ButtonStat
                 label=cls.run_label, variant=cls.run_variant)
         else:
             other = active is not None and active.key != cls.key
-            reason = cls.ineligible_reason(ap, num_ifaces)
+            reason = cls.ineligible_reason(ap)
             states[cls.button_id] = ButtonState(
                 visible=vis,
                 disabled=reason is not None or other,
@@ -464,7 +464,7 @@ def build_snapshot(ap, array, campaigns: Campaigns, samples: deque,
     """Compose a :class:`FocusSnapshot` from the derivations for the v2 layout."""
     rate, _count = beacon_rate(ap, samples, now)
     chipset, card_bssid = card_identity(array)
-    btns = derive_buttons(ap, len(array.members) if array else 0)
+    btns = derive_buttons(ap)
     button_labels = [btns[bid].label for bid in _BUTTON_ORDER if btns[bid].visible]
     clients = client_rows(ap, array) if array else []
     essid = truncate_ssid(ap.ssid) if ap.ssid else "‹hidden›"

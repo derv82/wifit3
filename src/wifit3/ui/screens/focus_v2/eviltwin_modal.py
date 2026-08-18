@@ -55,6 +55,7 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
     def __init__(self, target, members: List) -> None:
         super().__init__()
         self.target = target
+        self._single = len(members) == 1     # one card: host + punt share the target's channel
         self._hosts = sorted((m for m in members if _can_host(m)), key=fake_mac_rank)
         self._punters = list(members)
         self._by_name = {m.name: m for m in members}
@@ -74,11 +75,12 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
             yield Label(f"EvilTwin channel  (target on CH {self.target.channel})",
                         classes="field-label")
             yield Select(self._channel_options(twin), value=self._default_channel(twin),
-                         allow_blank=False, id="twin-channel", classes="field")
+                         allow_blank=False, id="twin-channel", classes="field",
+                         disabled=self._single)
 
             yield Label("EvilTwin BSSID", classes="field-label")
             with Horizontal(id="bssid-row", classes="field"):
-                yield Input(value=self.target.bssid, id="twin-bssid")
+                yield Input(value=self._default_bssid(), id="twin-bssid")
                 yield Button("Same", id="bssid-same")
                 yield Button("+1", id="bssid-plus1")
                 yield Button("Random", id="bssid-random")
@@ -110,16 +112,23 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
     # ----- interface / channel wiring ---------------------------------------
 
     def _channel_options(self, twin) -> List:
+        if self._single:                        # locked to the target: one card can't host off-channel
+            return [(f"CH {self.target.channel}", self.target.channel)]
         chans = twin.supported_channels if twin else [self.target.channel]
         return [(f"CH {c}" + ("  (same as target)" if c == self.target.channel else ""), c)
                 for c in chans]
 
     def _default_channel(self, twin) -> int:
+        if self._single:
+            return self.target.channel
         chans = twin.supported_channels if twin else [self.target.channel]
         for c in (csa_target_channel(self.target.channel), self.target.channel):
             if c in chans:
                 return c
         return chans[0]
+
+    def _default_bssid(self) -> str:
+        return _plus_one(self.target.bssid) if self._single else self.target.bssid
 
     def _selected(self, widget_id: str):
         return self._by_name.get(self.query_one(f"#{widget_id}", Select).value)

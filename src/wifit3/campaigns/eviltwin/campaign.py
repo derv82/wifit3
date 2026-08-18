@@ -11,7 +11,7 @@ from typing import Optional
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.ap import beacon_clone
 from wifit3.dot11.csa import build_csa_beacon
-from wifit3.crack.handshake import crackable_pairs
+from wifit3.crack.handshake import crackable_pairs, pmkid_crackable
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.eviltwin.fake_ap import FakeAP
 from wifit3.campaigns.eviltwin.punter import Punter, PuntMode, BURST_SIZE, FRAME_GAP_SEC
@@ -68,9 +68,7 @@ class EvilTwinCampaign(Campaign):
         return bool(ap.ssid) and bool(ap.akm_suites)
 
     @classmethod
-    def ineligible_reason(cls, ap, num_ifaces: Optional[int] = None) -> Optional[str]:
-        if num_ifaces is not None and num_ifaces < 2:
-            return "Requires 2 or more wireless interfaces"
+    def ineligible_reason(cls, ap) -> Optional[str]:
         if not ap.last_beacon_frame:
             return "no beacon captured yet"
         return None
@@ -139,10 +137,13 @@ class EvilTwinCampaign(Campaign):
             elapsed += _POLL_SEC
 
     def _has_crackable_capture(self) -> bool:
-        ap = self.array.access_points.get(self.twin_bssid)
-        if ap is None:
-            return False
-        return any(crackable_pairs(hs) for hs in ap.handshakes.values())
+        # Twin BSSID holds our forged M2; the target BSSID holds any real 4-way / PMKID after a punt.
+        for bssid in {self.twin_bssid, self.ap.bssid.lower()}:
+            ap = self.array.access_points.get(bssid)
+            if ap and any(crackable_pairs(hs) or (hs.pmkid and pmkid_crackable(hs))
+                          for hs in ap.handshakes.values()):
+                return True
+        return False
 
     async def teardown(self) -> None:
         if self.fakeap is None:

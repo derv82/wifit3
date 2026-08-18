@@ -101,6 +101,12 @@ def _crackable_hs():
     return hs
 
 
+def _pmkid_hs():
+    hs = Handshake(bssid=_BSSID, client_mac=_CLIENT, beacon_frame=_BEACON, akm_offered=[2])
+    hs.pmkid, hs.pmkid_akm = b"\x33" * 16, 2       # crackable PSK PMKID, no 4-way pairs
+    return hs
+
+
 def _client_m2(snonce: bytes) -> bytes:
     payload = eapol_key(key_info=0x010A, key_len=0, replay=1, nonce=snonce, key_data=GENERIC_RSN_IE,
                         mic=bytes(range(16)))
@@ -115,9 +121,6 @@ def test_visible_and_ineligible():
                                 last_beacon_frame=None, akm_suites=[2])
     assert EvilTwinCampaign.ineligible_reason(no_beacon) == "no beacon captured yet"
     assert EvilTwinCampaign.ineligible_reason(_target()) is None
-    assert EvilTwinCampaign.ineligible_reason(
-        _target(), num_ifaces=1) == "Requires 2 or more wireless interfaces"
-    assert EvilTwinCampaign.ineligible_reason(_target(), num_ifaces=2) is None
 
 
 def test_default_punt_mode():
@@ -176,6 +179,26 @@ async def test_stops_when_sink_has_crackable_handshake():
     assert camp.captured
     assert twin.fake_mac_arms >= 1                     # twin still stood up
     assert punt.sent == []                             # never punted: capture was already there
+
+
+async def test_stops_on_real_ap_handshake_with_distinct_twin():
+    # Single-card/distinct twin: a 4-way sniffed on the REAL AP (target BSSID) after a punt kicks a
+    # client back onto it also completes, not just a forged M2 on the twin's own BSSID.
+    array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
+    array.access_points[_BSSID] = SimpleNamespace(handshakes={_CLIENT: _crackable_hs()})
+    camp = EvilTwinCampaign(array, _target(),
+                            _input(twin, punt, mode=PuntMode.DEAUTH, bssid="94:83:c4:8c:3f:79"))
+    assert camp.same_bssid is False
+    await asyncio.wait_for(camp._loop(), timeout=1.0)
+    assert camp.captured
+
+
+async def test_stops_on_crackable_pmkid():
+    array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
+    array.access_points[_BSSID] = SimpleNamespace(handshakes={_CLIENT: _pmkid_hs()})
+    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, mode=PuntMode.DEAUTH))
+    await asyncio.wait_for(camp._loop(), timeout=1.0)
+    assert camp.captured
 
 
 def test_record_injected_m1_pairs_with_real_m2():

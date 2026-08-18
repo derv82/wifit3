@@ -318,9 +318,7 @@ class FocusViewV2(Screen):
         ap = getattr(self.app, "target_ap", None)
         if ap is None:
             return
-        array = self.app.array
-        num_ifaces = len(array.members) if array else 0
-        for bid, state in fm.derive_buttons(ap, num_ifaces).items():
+        for bid, state in fm.derive_buttons(ap).items():
             self._apply_button(f"#{bid}", state)
         stop_pbc = self.query_one("#btn-stop-pbc", Button)
         if self._pbc_busy():
@@ -793,11 +791,8 @@ class FocusViewV2(Screen):
     def _start_eviltwin(self) -> None:
         ap = self._target_ap
         array = self.app.array
-        if not ap or not array:
+        if not ap or not array or not array.members:
             self._log("[red]✗ No target / interface. Cannot start EvilTwin.[/red]")
-            return
-        if len(array.members) < 2:
-            self._log("[yellow]EvilTwin requires 2 or more wireless interfaces.[/yellow]")
             return
         self.app.push_screen(EvilTwinInputModal(ap, array.members), self._on_eviltwin_input)
 
@@ -816,7 +811,8 @@ class FocusViewV2(Screen):
             self._eviltwin_attack = None
             return
         self._log(f"[bold cyan]EvilTwin[/bold cyan] of [bold cyan]"
-                  f"{escape(ap.ssid or ap.bssid)}[/bold cyan] active on ch {evil_input.twin_channel}")
+                  f"{escape(ap.ssid or ap.bssid)}[/bold cyan] active on ch {evil_input.twin_channel}"
+                  f" [dim]({evil_input.twin_bssid})[/dim]")
         self._log(treelog.branch(f"[italic]punting clients[/italic] [dim]on[/dim] ch {ap.channel}"))
         self._log(treelog.leaf("[dim]waiting for clients to auth…[/dim]"))
 

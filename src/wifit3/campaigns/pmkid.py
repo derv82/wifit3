@@ -83,7 +83,7 @@ class PmkidHarvestAttack(Campaign):
         return getattr(ap, "encryption", None) in (None, "Unknown")  # unconfirmed → disabled
 
     @classmethod
-    def ineligible_reason(cls, ap, num_ifaces: Optional[int] = None) -> Optional[str]:
+    def ineligible_reason(cls, ap) -> Optional[str]:
         """None (enabled) once a PSK AKM is confirmed."""
         if set(_HARVESTABLE_AKMS) & set(getattr(ap, "akm_suites", None) or ()):
             return None
