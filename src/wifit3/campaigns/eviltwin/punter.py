@@ -25,10 +25,10 @@ class PuntMode(enum.Enum):
 
 class Punter:
     def __init__(self, modes: Iterable[PuntMode], real_beacon: bytes, target_bssid: bytes,
-                 csa_channel: int, twin_bssid: bytes, twin_channel: int):
+                 csa_channel: int, twin_bssid: bytes, twin_channel: int, source_channel: int):
         self.modes = tuple(modes)
         self._deauth = build_deauth(_BROADCAST, target_bssid, target_bssid, _DEAUTH_REASON)
-        self._csa = build_csa_beacon(real_beacon, csa_channel)
+        self._csa = build_csa_beacon(real_beacon, csa_channel, from_channel=source_channel)
         self._target_bssid = target_bssid
         self._twin_bssid = twin_bssid
         self._twin_channel = twin_channel

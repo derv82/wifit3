@@ -288,7 +288,8 @@ async def main(a) -> None:
         csa_frames = []
         if a.punt in ("csa", "both"):
             counts = range(a.csa_count, -1, -1) if a.csa_count > 0 else [0]
-            csa_frames = [build_csa_beacon(base, a.channel, count=c) for c in counts]
+            csa_frames = [build_csa_beacon(base, a.channel, from_channel=a.target_channel, count=c)
+                          for c in counts]
         deauth_frame = build_deauth(_BCAST, bssid, bssid, 7) if a.punt in ("deauth", "both") else None
         tasks.append(asyncio.create_task(_punt_loop(
             txcard, a.target_channel, csa_frames, deauth_frame, a.csa_count,

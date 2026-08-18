@@ -1,14 +1,16 @@
-"""CSA beacon rewrite: splice a Channel Switch Announcement into a captured beacon (pure spec)."""
-from wifit3.dot11.ie import csa_ie, secondary_channel_offset_ie
+"""CSA/ECSA beacon rewrite: splice channel-switch announcement elements into a captured beacon."""
+from wifit3.dot11.chan import channel_operating_class, same_band
+from wifit3.dot11.ie import csa_ie, ecsa_ie, secondary_channel_offset_ie
 
 _ELEMID_CSA = 0x25
+_ELEMID_ECSA = 0x3C
 _BEACON_BODY_LEN = 36   # 24B MAC header + 12B fixed (timestamp, interval, capability); IEs follow
 
 
-def build_csa_beacon(beacon: bytes, new_channel: int, count: int = 0) -> bytes:
-    """The AP's beacon, sequence-control zeroed (the injector re-stamps each frame), with any
-    existing CSA element replaced by a fresh CSA to ``new_channel``. ``count`` is the Channel
-    Switch Count (0 = switch immediately; N = switch after N more beacons). Injectable MPDU."""
+def build_csa_beacon(beacon: bytes, new_channel: int, *, from_channel: int, count: int = 0) -> bytes:
+    """The AP's beacon announcing a switch to ``new_channel``, seq-control zeroed for HW-restamp.
+    Always carries an ECSA (tag 60, band-aware via operating class); adds legacy CSA (tag 37) only for
+    a same-band switch, since a bare channel number is ambiguous across bands. Injectable MPDU."""
     if len(beacon) < _BEACON_BODY_LEN:
         raise ValueError(f"beacon too short to rewrite: {len(beacon)} bytes")
     header = bytearray(beacon[:_BEACON_BODY_LEN])
@@ -20,7 +22,11 @@ def build_csa_beacon(beacon: bytes, new_channel: int, count: int = 0) -> bytes:
         end = ptr + 2 + tags[ptr + 1]
         if end > len(tags):
             break
-        if tags[ptr] != _ELEMID_CSA:
+        if tags[ptr] not in (_ELEMID_CSA, _ELEMID_ECSA):
             kept += tags[ptr:end]
         ptr = end
-    return bytes(header) + bytes(kept) + csa_ie(new_channel, count=count) + secondary_channel_offset_ie(0)
+    switch = bytearray()
+    if same_band(from_channel, new_channel):
+        switch += csa_ie(new_channel, count=count)
+    switch += ecsa_ie(new_channel, operating_class=channel_operating_class(new_channel), count=count)
+    return bytes(header) + bytes(kept) + bytes(switch) + secondary_channel_offset_ie(0)

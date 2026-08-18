@@ -24,7 +24,8 @@ class _FakeIface:
 
 
 def _punter(modes):
-    return Punter(modes, _BEACON, _BSSID_B, csa_channel=1, twin_bssid=_TWIN_B, twin_channel=6)
+    return Punter(modes, _BEACON, _BSSID_B, csa_channel=1, twin_bssid=_TWIN_B, twin_channel=6,
+                  source_channel=11)
 
 
 async def test_punt_frames_by_mode():
@@ -55,5 +56,5 @@ async def test_csa_channel_is_decoupled():
     a, b = _FakeIface(), _FakeIface()
     await _punter((PuntMode.CSA,)).punt(a)
     await Punter((PuntMode.CSA,), _BEACON, _BSSID_B, csa_channel=6,
-                 twin_bssid=_TWIN_B, twin_channel=6).punt(b)
+                 twin_bssid=_TWIN_B, twin_channel=6, source_channel=11).punt(b)
     assert a.sent[0] != b.sent[0]      # different CSA target channel -> different beacon bytes

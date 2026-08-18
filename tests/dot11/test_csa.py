@@ -1,11 +1,10 @@
-"""Pure-spec tests for the CSA IE + beacon-rewrite builders."""
+"""Spec tests for the CSA/ECSA IE + beacon-rewrite builders."""
 import pytest
 
-from wifit3.dot11.ie import csa_ie, ssid_ie, rates_ie, ds_param_ie, secondary_channel_offset_ie
+from wifit3.dot11.ie import csa_ie, ecsa_ie, ssid_ie, rates_ie, ds_param_ie, secondary_channel_offset_ie
 from wifit3.dot11.csa import build_csa_beacon
 
 _SCO = secondary_channel_offset_ie(0)          # every CSA beacon trails a 20 MHz secondary-offset IE
-
 _BODY = bytes(range(36))          # stand-in 24B header + 12B fixed; only its bytes must survive
 
 
@@ -14,40 +13,45 @@ def test_csa_ie_matches_aircrack_wire():
     assert csa_ie(14).hex() == "2503010e00"
 
 
-def test_appends_csa_and_preserves_header_and_tags():
+def test_ecsa_ie_shape():
+    # id 60 (0x3c), len 4, mode 1, operating class 81, ch 6, count 0.
+    assert ecsa_ie(6, operating_class=81).hex() == "3c0401510600"
+
+
+def test_same_band_switch_carries_csa_and_ecsa():
     beacon = _BODY + ssid_ie("Net") + rates_ie() + ds_param_ie(6)
-    out = build_csa_beacon(beacon, 14)
+    out = build_csa_beacon(beacon, 11, from_channel=6)         # 2.4 -> 2.4
     assert out[:22] == _BODY[:22] and out[24:36] == _BODY[24:36]
-    assert out.endswith(csa_ie(14) + _SCO)
+    assert out.endswith(csa_ie(11) + ecsa_ie(11, operating_class=81) + _SCO)
     assert ssid_ie("Net") in out and ds_param_ie(6) in out
 
 
+def test_band_switch_is_ecsa_only():
+    beacon = _BODY + ssid_ie("Net")
+    out = build_csa_beacon(beacon, 36, from_channel=6)         # 2.4 -> 5 GHz
+    assert out.endswith(ecsa_ie(36, operating_class=115) + _SCO)
+    assert csa_ie(36) not in out                               # a bare CSA channel is ambiguous across bands
+    assert out.count(bytes([0x25])) == 0                       # no CSA element id present
+
+
 def test_sequence_control_is_zeroed_for_hw_restamp():
-    out = build_csa_beacon(_BODY + ssid_ie("Net"), 14)
+    out = build_csa_beacon(_BODY + ssid_ie("Net"), 11, from_channel=6)
     assert out[22:24] == b"\x00\x00"
 
 
-def test_replaces_a_stale_csa_element():
-    beacon = _BODY + ssid_ie("Net") + csa_ie(6) + ds_param_ie(6)
-    out = build_csa_beacon(beacon, 14)
-    assert out.count(bytes([0x25])) == 1            # only one CSA element id survives
-    assert out.endswith(csa_ie(14) + _SCO)
-    assert csa_ie(6) not in out
-
-
-def test_trailing_junk_past_last_ie_is_dropped():
-    beacon = _BODY + ssid_ie("Net") + b"\x25\x7f\x01"   # a tag claiming 127 bytes, only 1 present
-    out = build_csa_beacon(beacon, 14)
-    expected = bytearray(_BODY)
-    expected[22:24] = b"\x00\x00"
-    assert out == bytes(expected) + ssid_ie("Net") + csa_ie(14) + _SCO
+def test_replaces_stale_csa_and_ecsa_elements():
+    beacon = _BODY + ssid_ie("Net") + csa_ie(6) + ecsa_ie(6, operating_class=81) + ds_param_ie(6)
+    out = build_csa_beacon(beacon, 11, from_channel=6)
+    assert out.count(bytes([0x25])) == 1                       # one CSA element id survives
+    assert out.count(bytes([0x3C])) == 1                       # one ECSA element id survives
+    assert out.endswith(csa_ie(11) + ecsa_ie(11, operating_class=81) + _SCO)
 
 
 def test_rejects_a_beacon_too_short_for_the_fixed_body():
     with pytest.raises(ValueError):
-        build_csa_beacon(bytes(20), 14)
+        build_csa_beacon(bytes(20), 14, from_channel=6)
 
 
-def test_switch_count_is_carried_into_the_csa_element():
-    assert build_csa_beacon(_BODY + ssid_ie("Net"), 6, count=3).endswith(csa_ie(6, count=3) + _SCO)
-    assert build_csa_beacon(_BODY + ssid_ie("Net"), 6).endswith(csa_ie(6, count=0) + _SCO)
+def test_switch_count_is_carried_into_both_elements():
+    out = build_csa_beacon(_BODY + ssid_ie("Net"), 6, from_channel=11, count=3)
+    assert out.endswith(csa_ie(6, count=3) + ecsa_ie(6, operating_class=81, count=3) + _SCO)

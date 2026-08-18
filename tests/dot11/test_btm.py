@@ -2,28 +2,13 @@
 import pytest
 
 from wifit3.dot11.btm import (
-    build_btm_request, neighbor_report_ie, channel_operating_class,
+    build_btm_request, neighbor_report_ie,
     BTM_PREFERRED_CANDIDATE_LIST, BTM_ABRIDGED, BTM_DISASSOC_IMMINENT,
 )
 
 _CLIENT = bytes.fromhex("aabbccddeeff")
 _AP = bytes.fromhex("001122334455")
 _TWIN = bytes.fromhex("001122334456")
-
-
-def test_channel_operating_class_2ghz_and_5ghz():
-    assert channel_operating_class(1) == 81
-    assert channel_operating_class(13) == 81
-    assert channel_operating_class(14) == 82
-    assert channel_operating_class(36) == 115
-    assert channel_operating_class(64) == 118
-    assert channel_operating_class(100) == 121
-    assert channel_operating_class(157) == 125
-
-
-def test_channel_operating_class_rejects_unmapped():
-    with pytest.raises(ValueError):
-        channel_operating_class(200)
 
 
 def test_neighbor_report_ie_shape_with_preference():

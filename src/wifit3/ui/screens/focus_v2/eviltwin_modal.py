@@ -94,7 +94,7 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
             with Horizontal(classes="field"):
                 yield Checkbox("De-auth", value=PuntMode.DEAUTH in d_modes,
                                id="punt-deauth", disabled=pmf)
-                yield Checkbox("Chan. Switch Ann.", value=PuntMode.CSA in d_modes, id="punt-csa")
+                yield Checkbox("Chan. Switch", value=PuntMode.CSA in d_modes, id="punt-csa")
                 yield Checkbox("BSS-Trans.", value=PuntMode.BTM in d_modes,
                                id="punt-btm", disabled=pmf)
 

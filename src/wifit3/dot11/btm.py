@@ -5,6 +5,8 @@ BSS: unicast, robust (unforgeable) once PMF is negotiated.
 """
 from typing import Optional
 
+from wifit3.dot11.chan import channel_operating_class
+
 _SUBTYPE_ACTION = 0x0D            # mgmt subtype 13 → FC first byte 0xD0
 _CAT_WNM = 0x0A                   # Action category 10 (WNM)
 _WNM_BTM_REQUEST = 0x07          # WNM action 7 (BSS Transition Management Request)
@@ -22,24 +24,6 @@ BTM_ESS_DISASSOC_IMMINENT = 0x10
 # this AP, negotiate": the truthful signal for a twin whose security posture may differ.
 _BSSID_INFO_REACHABLE = 0x00000003
 _PHY_TYPE_HT = 7                 # dot11PHYType: ht(7); 5 GHz VHT is 9 (pass phy_type= to override)
-
-
-def channel_operating_class(channel: int) -> int:
-    """Global operating class (802.11-2020 Table E-4) for a 20 MHz channel. Raises for a
-    channel outside the mapped 2.4/5 GHz ranges (pass operating_class= explicitly instead)."""
-    if 1 <= channel <= 13:
-        return 81
-    if channel == 14:
-        return 82
-    if 36 <= channel <= 48:
-        return 115
-    if 52 <= channel <= 64:
-        return 118
-    if 100 <= channel <= 144:
-        return 121
-    if 149 <= channel <= 177:
-        return 125
-    raise ValueError(f"no operating class mapping for channel {channel}")
 
 
 def neighbor_report_ie(bssid: bytes, operating_class: int, channel: int, *,
