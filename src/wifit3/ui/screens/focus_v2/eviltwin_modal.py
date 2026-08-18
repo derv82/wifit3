@@ -12,7 +12,7 @@ from wifit3.chips.driver import FakeMacSupport
 from wifit3.wlan.array import fake_mac_rank
 from wifit3.ui.screens.focus_v2.art import display_name
 from wifit3.campaigns.eviltwin import (
-    EvilTwinInput, PuntMode, default_punt_mode, csa_target_channel,
+    EvilTwinInput, PuntMode, default_punt_modes, csa_target_channel,
 )
 
 _MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
@@ -63,7 +63,8 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
     def compose(self) -> ComposeResult:
         twin = self._hosts[0] if self._hosts else None
         punter = next((m for m in self._punters if m is not twin), twin)
-        d_mode = default_punt_mode(self.target)
+        d_modes = default_punt_modes(self.target)
+        pmf = self.target.pmf_required
         with Vertical(id="dialog"):
             yield Label("Evil Twin", id="title")
 
@@ -91,10 +92,11 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
                          allow_blank=False, id="punt-iface", classes="field")
 
             with Horizontal(classes="field"):
-                yield Checkbox("De-auth", value=d_mode in (PuntMode.DEAUTH, PuntMode.BOTH),
-                               id="punt-deauth")
-                yield Checkbox("Chan. Switch Ann.", value=d_mode in (PuntMode.CSA, PuntMode.BOTH),
-                               id="punt-csa")
+                yield Checkbox("De-auth", value=PuntMode.DEAUTH in d_modes,
+                               id="punt-deauth", disabled=pmf)
+                yield Checkbox("Chan. Switch Ann.", value=PuntMode.CSA in d_modes, id="punt-csa")
+                yield Checkbox("BSS-Trans.", value=PuntMode.BTM in d_modes,
+                               id="punt-btm", disabled=pmf)
 
             yield Label("Punt cycle", classes="field-label")
             yield Select([(label, i) for i, (label, *_) in enumerate(_CYCLES)],
@@ -108,6 +110,9 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
     def on_mount(self) -> None:
         self._sync_bssid_field()
         self._sync_warning()
+        if self.target.pmf_required:                # robust-frame punts can't be forged under PMF
+            self.query_one("#punt-deauth", Checkbox).tooltip = "Can't send deauths: PMF active"
+            self.query_one("#punt-btm", Checkbox).tooltip = "Can't send BTMs: PMF active"
 
     # ----- interface / channel wiring ---------------------------------------
 
@@ -190,18 +195,12 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
         _, period, once = _CYCLES[self.query_one("#punt-cycle", Select).value]
         self.dismiss(EvilTwinInput(
             twin_iface=twin, punt_iface=punter, twin_channel=channel, twin_bssid=twin_bssid,
-            punt_mode=self._punt_mode(), csa_channel=None, punt_period_sec=period, punt_once=once))
+            punt_modes=self._punt_modes(), csa_channel=None, punt_period_sec=period, punt_once=once))
 
-    def _punt_mode(self) -> PuntMode:
-        deauth = self.query_one("#punt-deauth", Checkbox).value
-        csa = self.query_one("#punt-csa", Checkbox).value
-        if deauth and csa:
-            return PuntMode.BOTH
-        if deauth:
-            return PuntMode.DEAUTH
-        if csa:
-            return PuntMode.CSA
-        return PuntMode.NONE
+    def _punt_modes(self) -> tuple[PuntMode, ...]:
+        checked = {"punt-deauth": PuntMode.DEAUTH, "punt-csa": PuntMode.CSA, "punt-btm": PuntMode.BTM}
+        return tuple(mode for bid, mode in checked.items()
+                     if self.query_one(f"#{bid}", Checkbox).value)
 
     def _error(self, text: str) -> None:
         self.query_one("#warn", Label).update(f"[red]{text}[/red]")

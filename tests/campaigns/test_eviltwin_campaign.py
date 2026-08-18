@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.eviltwin import (
-    EvilTwinCampaign, EvilTwinInput, PuntMode, default_punt_mode, csa_target_channel,
+    EvilTwinCampaign, EvilTwinInput, PuntMode, default_punt_modes, csa_target_channel,
 )
 from wifit3.dot11.ap import eapol_m1
 from wifit3.dot11.eapol import eapol_key, data_header, LLC_SNAP_EAPOL
@@ -60,6 +60,7 @@ class _FakeIface:
 class _FakeArray:
     def __init__(self):
         self.access_points: dict = {}
+        self.clients: dict = {}
         self.seeded_m1: list[bytes] = []
         self.stray_beacons: dict = {}
         self.evil_twins: set = set()
@@ -85,9 +86,9 @@ def _target():
                            last_beacon_frame=_BEACON, akm_suites=[2])
 
 
-def _input(twin, punt, mode=PuntMode.BOTH, period=0.5, bssid=_BSSID):
+def _input(twin, punt, modes=(PuntMode.DEAUTH, PuntMode.CSA), period=0.5, bssid=_BSSID):
     return EvilTwinInput(twin_iface=twin, punt_iface=punt, twin_channel=1, twin_bssid=bssid,
-                         punt_mode=mode, punt_period_sec=period)
+                         punt_modes=modes, punt_period_sec=period)
 
 
 def _crackable_hs():
@@ -123,10 +124,10 @@ def test_visible_and_ineligible():
     assert EvilTwinCampaign.ineligible_reason(_target()) is None
 
 
-def test_default_punt_mode():
-    assert default_punt_mode(SimpleNamespace(pmf_required=True, pmf_capable=True)) is PuntMode.CSA
-    assert default_punt_mode(SimpleNamespace(pmf_required=False, pmf_capable=True)) is PuntMode.BOTH
-    assert default_punt_mode(SimpleNamespace(pmf_required=False, pmf_capable=False)) is PuntMode.DEAUTH
+def test_default_punt_modes():
+    assert default_punt_modes(SimpleNamespace(pmf_required=True)) == (PuntMode.CSA,)
+    assert default_punt_modes(SimpleNamespace(pmf_required=False)) == (
+        PuntMode.DEAUTH, PuntMode.CSA, PuntMode.BTM)
 
 
 def test_csa_target_channel():
@@ -142,7 +143,7 @@ async def test_own_bssid_marks_twin_and_keys_capture_on_it():
     own_b = bytes.fromhex("9483c48c3f79")            # target BSSID + 1 nibble: an own-BSSID twin
     own_s = "94:83:c4:8c:3f:79"
     array.access_points[own_s] = SimpleNamespace(handshakes={_CLIENT: _crackable_hs()})
-    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, mode=PuntMode.CSA, bssid=own_s))
+    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, modes=(PuntMode.CSA,), bssid=own_s))
     assert camp.same_bssid is False
     assert camp.twin_bssid == own_s
     assert camp.twin_beacon[10:16] == own_b and camp.twin_beacon[16:22] == own_b  # Addr2/Addr3 rewritten
@@ -156,7 +157,7 @@ async def test_own_bssid_marks_twin_and_keys_capture_on_it():
 async def test_arms_punts_and_tears_down():
     array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
     array.access_points[_BSSID] = SimpleNamespace(handshakes={})   # nothing crackable yet
-    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, mode=PuntMode.BOTH))
+    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, modes=(PuntMode.DEAUTH, PuntMode.CSA)))
     task = asyncio.create_task(camp._loop())
     await asyncio.sleep(0.05)
     camp.stopped = True
@@ -173,7 +174,7 @@ async def test_arms_punts_and_tears_down():
 async def test_stops_when_sink_has_crackable_handshake():
     array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
     array.access_points[_BSSID] = SimpleNamespace(handshakes={_CLIENT: _crackable_hs()})
-    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, mode=PuntMode.BOTH))
+    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, modes=(PuntMode.DEAUTH, PuntMode.CSA)))
     await asyncio.wait_for(camp._loop(), timeout=1.0)   # exits at once: already captured
     await camp.teardown()
     assert camp.captured
@@ -187,7 +188,7 @@ async def test_stops_on_real_ap_handshake_with_distinct_twin():
     array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
     array.access_points[_BSSID] = SimpleNamespace(handshakes={_CLIENT: _crackable_hs()})
     camp = EvilTwinCampaign(array, _target(),
-                            _input(twin, punt, mode=PuntMode.DEAUTH, bssid="94:83:c4:8c:3f:79"))
+                            _input(twin, punt, modes=(PuntMode.DEAUTH,), bssid="94:83:c4:8c:3f:79"))
     assert camp.same_bssid is False
     await asyncio.wait_for(camp._loop(), timeout=1.0)
     assert camp.captured
@@ -196,7 +197,7 @@ async def test_stops_on_real_ap_handshake_with_distinct_twin():
 async def test_stops_on_crackable_pmkid():
     array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
     array.access_points[_BSSID] = SimpleNamespace(handshakes={_CLIENT: _pmkid_hs()})
-    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, mode=PuntMode.DEAUTH))
+    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, modes=(PuntMode.DEAUTH,)))
     await asyncio.wait_for(camp._loop(), timeout=1.0)
     assert camp.captured
 
@@ -219,7 +220,7 @@ async def test_run_drives_loop_and_restores_channel():
     array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
     array.select_iface = lambda channel: punt        # the base _drive liveness election
     array.access_points[_BSSID] = SimpleNamespace(handshakes={})
-    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, mode=PuntMode.CSA))
+    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, modes=(PuntMode.CSA,)))
     try:
         assert camp.run() is True                    # claims the radio, schedules _drive
         await asyncio.sleep(0.05)
