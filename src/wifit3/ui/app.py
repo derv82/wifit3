@@ -117,6 +117,9 @@ class WifiteApp(App):
         margin-right: 1;
         min-width: 12;
     }
+    /* App CSS outranks a widget's DEFAULT_CSS, so lower the global min-width for the
+       EvilTwin modal's compact BSSID buttons from here, not the modal. */
+    EvilTwinInputModal #bssid-btns Button { min-width: 4; }
     """
 
     def __init__(self, default_log_level: Optional[str] = None):

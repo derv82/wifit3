@@ -18,7 +18,7 @@ def test_single_card_locks_channel_to_target_and_bumps_bssid():
     target = SimpleNamespace(channel=6, bssid="94:83:c4:8c:3f:78")
     m = _modal(True, target)
     assert m._default_channel(None) == 6
-    assert m._channel_options(None) == [("CH 6", 6)]
+    assert m._channel_options(None) == [("6 (target)", 6)]
     assert m._default_bssid() == "94:83:c4:8c:3f:79"
 
 
@@ -27,6 +27,7 @@ def test_multi_card_keeps_decoy_channel_and_target_bssid():
     m = _modal(False, target)
     twin = SimpleNamespace(supported_channels=[1, 6, 11])
     assert m._default_channel(twin) == 6                        # CSA decoy off ch 1
+    assert m._channel_options(twin) == [("1 (target)", 1), ("6", 6), ("11", 11)]
     assert m._default_bssid() == "94:83:c4:8c:3f:78"
 
 

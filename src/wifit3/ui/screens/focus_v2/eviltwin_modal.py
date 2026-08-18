@@ -40,15 +40,23 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
     DEFAULT_CSS = """
     EvilTwinInputModal { align: center middle; }
     EvilTwinInputModal #dialog {
-        width: 64; height: auto; max-height: 90%;
+        width: 60; height: auto; max-height: 90%;
         border: thick $primary; background: $surface; padding: 1 2;
     }
-    EvilTwinInputModal #title { content-align: center middle; margin-bottom: 1; text-style: bold; }
-    EvilTwinInputModal .field { height: auto; margin-bottom: 1; }
-    EvilTwinInputModal .field-label { color: $text-muted; }
-    EvilTwinInputModal #bssid-row Button { margin-left: 1; min-width: 8; }
-    EvilTwinInputModal #warn { color: $text-warning; content-align: center middle; height: auto; }
-    EvilTwinInputModal #button-row { dock: bottom; height: auto; align: center middle; }
+    EvilTwinInputModal #title { width: 1fr; content-align: center middle; margin-bottom: 1; text-style: bold; }
+    EvilTwinInputModal .row { height: auto; margin-bottom: 0; }
+    EvilTwinInputModal .row-label { width: 20; height: 3; content-align: left middle; color: $text-muted; }
+    EvilTwinInputModal .row Select { width: 1fr; }
+    EvilTwinInputModal #bssid-col { width: 1fr; height: auto; }
+    EvilTwinInputModal #bssid-btns { height: auto; }
+    EvilTwinInputModal #bssid-btns Button {   /* min-width set in app.py: App CSS outranks DEFAULT_CSS */
+        width: auto; height: 1; border: none; padding: 0 1; margin-right: 2;
+        background: $primary; color: auto;
+    }
+    EvilTwinInputModal #punt-methods { height: auto; margin: 0; }
+    EvilTwinInputModal #punt-methods Checkbox { border: none; height: 1; padding: 0 1; background: transparent; }
+    EvilTwinInputModal #warn { color: $text-warning; content-align: center middle; height: auto; display: none; }
+    EvilTwinInputModal #button-row { height: auto; align: center middle; margin-top: 0; }
     EvilTwinInputModal #button-row Button { margin: 0 1; }
     """
 
@@ -68,39 +76,44 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
         with Vertical(id="dialog"):
             yield Label("Evil Twin", id="title")
 
-            yield Label("EvilTwin interface", classes="field-label")
-            yield Select([(display_name(m), m.name) for m in self._hosts],
-                         value=twin.name if twin else Select.BLANK,
-                         allow_blank=False, id="twin-iface", classes="field")
+            with Horizontal(classes="row"):
+                yield Label("EvilTwin interface", classes="row-label")
+                yield Select([(display_name(m), m.name) for m in self._hosts],
+                             value=twin.name if twin else Select.BLANK,
+                             allow_blank=False, id="twin-iface")
 
-            yield Label(f"EvilTwin channel  (target on CH {self.target.channel})",
-                        classes="field-label")
-            yield Select(self._channel_options(twin), value=self._default_channel(twin),
-                         allow_blank=False, id="twin-channel", classes="field",
-                         disabled=self._single)
+            with Horizontal(classes="row"):
+                yield Label("EvilTwin channel", classes="row-label")
+                yield Select(self._channel_options(twin), value=self._default_channel(twin),
+                             allow_blank=False, id="twin-channel", disabled=self._single)
 
-            yield Label("EvilTwin BSSID", classes="field-label")
-            with Horizontal(id="bssid-row", classes="field"):
-                yield Input(value=self._default_bssid(), id="twin-bssid")
-                yield Button("Same", id="bssid-same")
-                yield Button("+1", id="bssid-plus1")
-                yield Button("Random", id="bssid-random")
+            with Horizontal(classes="row"):
+                yield Label("EvilTwin BSSID", classes="row-label")
+                with Vertical(id="bssid-col"):
+                    yield Input(value=self._default_bssid(), id="twin-bssid")
+                    with Horizontal(id="bssid-btns"):
+                        yield Button("Same", id="bssid-same")
+                        yield Button("+1", id="bssid-plus1")
+                        yield Button("Rand", id="bssid-random")
 
-            yield Label("Punter interface", classes="field-label")
-            yield Select([(display_name(m), m.name) for m in self._punters],
-                         value=punter.name if punter else Select.BLANK,
-                         allow_blank=False, id="punt-iface", classes="field")
+            with Horizontal(classes="row"):
+                yield Label("Punter interface", classes="row-label")
+                yield Select([(display_name(m), m.name) for m in self._punters],
+                             value=punter.name if punter else Select.BLANK,
+                             allow_blank=False, id="punt-iface")
 
-            with Horizontal(classes="field"):
-                yield Checkbox("De-auth", value=PuntMode.DEAUTH in d_modes,
+            with Vertical(id="punt-methods"):
+                yield Checkbox("De-authenticate", value=PuntMode.DEAUTH in d_modes,
                                id="punt-deauth", disabled=pmf)
-                yield Checkbox("Chan. Switch", value=PuntMode.CSA in d_modes, id="punt-csa")
-                yield Checkbox("BSS-Trans.", value=PuntMode.BTM in d_modes,
+                yield Checkbox("Channel Switch Announcement", value=PuntMode.CSA in d_modes,
+                               id="punt-csa")
+                yield Checkbox("BSS-Transition Mode (BTM)", value=PuntMode.BTM in d_modes,
                                id="punt-btm", disabled=pmf)
 
-            yield Label("Punt cycle", classes="field-label")
-            yield Select([(label, i) for i, (label, *_) in enumerate(_CYCLES)],
-                         value=_DEFAULT_CYCLE, allow_blank=False, id="punt-cycle", classes="field")
+            with Horizontal(classes="row"):
+                yield Label("Punt cycle", classes="row-label")
+                yield Select([(label, i) for i, (label, *_) in enumerate(_CYCLES)],
+                             value=_DEFAULT_CYCLE, allow_blank=False, id="punt-cycle")
 
             yield Label("", id="warn")
             with Horizontal(id="button-row"):
@@ -118,10 +131,12 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
 
     def _channel_options(self, twin) -> List:
         if self._single:                        # locked to the target: one card can't host off-channel
-            return [(f"CH {self.target.channel}", self.target.channel)]
+            return [(self._channel_label(self.target.channel), self.target.channel)]
         chans = twin.supported_channels if twin else [self.target.channel]
-        return [(f"CH {c}" + ("  (same as target)" if c == self.target.channel else ""), c)
-                for c in chans]
+        return [(self._channel_label(c), c) for c in chans]
+
+    def _channel_label(self, channel: int) -> str:
+        return f"{channel} (target)" if channel == self.target.channel else str(channel)
 
     def _default_channel(self, twin) -> int:
         if self._single:
@@ -159,8 +174,13 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
 
     def _sync_warning(self) -> None:
         same_iface = self._selected("twin-iface") is self._selected("punt-iface")
-        self.query_one("#warn", Label).update(
-            "EvilTwin works best with 2 different interfaces" if same_iface else "")
+        self._set_warn("EvilTwin works best with 2 different interfaces" if same_iface else "")
+
+    def _set_warn(self, text: str) -> None:
+        """Update the warning line and collapse it to zero rows when there's nothing to say."""
+        warn = self.query_one("#warn", Label)
+        warn.update(text)
+        warn.display = bool(text)
 
     # ----- buttons -----------------------------------------------------------
 
@@ -203,7 +223,7 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
                      if self.query_one(f"#{bid}", Checkbox).value)
 
     def _error(self, text: str) -> None:
-        self.query_one("#warn", Label).update(f"[red]{text}[/red]")
+        self._set_warn(f"[red]{text}[/red]")
 
 
 def _can_host(iface) -> bool:
