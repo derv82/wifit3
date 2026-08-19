@@ -176,7 +176,7 @@ _ART_BY_PRODUCT: dict[str, str] = {
     "ALFA AWUS1900": "cards/card-awus1900.ans",
     "Archer T3U Plus": "cards/card-archert3uplus.ans",
     "TP-Link T2U Plus": "cards/card-archert2uplus.ans",
-    "TP-Link Archer T2U Nano": "cards/card-archert2unano.ans",
+    "TP-Link T2U Nano": "cards/card-archert2unano.ans",
     "TP-Link Archer AC600 T2U Nano": "cards/card-archert2unano.ans",
     "Panda PAU05/06": "cards/card-pau06.ans",
     "Panda PAU0B": "cards/card-pau0b.ans",
