@@ -41,6 +41,8 @@ _LABELS = {
     "asusbe93": "ASUS USB-BE93", "awus036achm": "ALFA AWUS036ACHM",
     "awus036acm": "ALFA AWUS036ACM", "awus036axml": "ALFA AWUS036AXML",
     "pau0f": "Panda PAU0F", "netgeara9000": "Netgear A9000",
+    "archert2unano": "TP-Link Archer T2U Nano",
+    "archert2uplus": "TP-Link Archer T2U Plus",
     "buffalonintendo": "Buffalo Nintendo Wi-Fi", "awus036nh": "ALFA AWUS036NH",
     "lotekoo150": "LOTEKOO 150", "pau06": "Panda PAU06",
     "pau09n600": "Panda PAU09 N600", "pau0b": "Panda PAU0B",

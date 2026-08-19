@@ -154,7 +154,11 @@ live in each chip's `<CHIP>.md` (linked under its table).
 ### RTL8821AU
 <img align="right" width="127" height="165" src="../assets/cardart/card-awus036acs.png" alt="ALFA AWUS036ACS">
 
-*ALFA AWUS036ACS · 2.4 / 5 GHz*
+<img align="right" width="127" src="../assets/cardart/card-archert2uplus.png" alt="TP-Link Archer T2U Plus">
+
+<img align="right" width="127" src="../assets/cardart/card-archert2unano.png" alt="TP-Link Archer T2U Nano">
+
+*ALFA AWUS036ACS / TP-Link Archer T2U Plus / TP-Link Archer T2U Nano · 2.4 / 5 GHz*
 
 > **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8821=mainline` opts back.
 
