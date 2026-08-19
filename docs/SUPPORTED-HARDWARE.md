@@ -152,11 +152,9 @@ live in each chip's `<CHIP>.md` (linked under its table).
 → [RTL8814AU.md](../src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](../src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
 ### RTL8821AU
-<img align="right" width="127" height="165" src="../assets/cardart/card-awus036acs.png" alt="ALFA AWUS036ACS">
-
-<img align="right" width="127" src="../assets/cardart/card-archert2uplus.png" alt="TP-Link Archer T2U Plus">
-
-<img align="right" width="127" src="../assets/cardart/card-archert2unano.png" alt="TP-Link Archer T2U Nano">
+<img align="right" style="margin-left: 12px" width="127" height="165" src="../assets/cardart/card-awus036acs.png" alt="ALFA AWUS036ACS">
+<img align="right" height="165" src="../assets/cardart/card-archert2uplus.png" alt="TP-Link Archer T2U Plus">
+<img align="right" height="165" src="../assets/cardart/card-archert2unano.png" alt="TP-Link Archer T2U Nano">
 
 *ALFA AWUS036ACS / TP-Link Archer T2U Plus / TP-Link Archer T2U Nano · 2.4 / 5 GHz*
 
