@@ -71,8 +71,7 @@ class WlanSink:
         self.clients: Dict[str, Client] = {}
         self.wep_store = WepCaptureStore()  # WEP IV tallying
         self.packet_stats = PacketStats()   # Packet dashboard source
-        self.forged_macs: Set[str] = set()  # MACs we forged for active attacks
-        self.self_macs: Set[str] = set()    # Forged STA MAC for WEP fake-auth
+        self.own_macs: Set[str] = set()     # MACs we transmit as; dropped at ingest, never a client
 
     # ----- signal (per-card) -------------------------------------------------
 
@@ -261,13 +260,11 @@ class WlanSink:
         bssid = pkt.bssid
         rssi = pkt.rssi
         client_mac = pkt.client_mac
-        if not client_mac or client_mac in self.forged_macs:
+        if not client_mac or client_mac in self.own_macs:
             return True
 
         if client_mac not in self.clients:
-            self.clients[client_mac] = Client(
-                mac=client_mac, is_self=client_mac in self.self_macs,
-            )
+            self.clients[client_mac] = Client(mac=client_mac)
         client = self.clients[client_mac]
         self._record_client_signal(client, card_id, rssi)
         client.packets += 1
@@ -324,7 +321,7 @@ class WlanSink:
                 akm = client_obj.akm_selected
 
         # Forged MACs keep a Handshake (for PMKID) but skip the EAPOL list.
-        if client_mac not in self.forged_macs and not hs.has_message(raw_frame):
+        if client_mac not in self.own_macs and not hs.has_message(raw_frame):
             eapol = HandshakeMessage(
                 raw=raw_frame,
                 msg_num=pkt.msg_num,
@@ -391,38 +388,32 @@ class WlanSink:
         """A list of discovered Access Points."""
         return list(self.access_points.values())
 
-    def register_forged_mac(self, mac) -> None:
-        """Mark ``mac`` as one we forged for an active attack (so ingest drops our own frames)."""
-        if isinstance(mac, bytes):
-            mac_str = mac_to_str(mac)
-        else:
-            mac_str = str(mac).lower()
-        self.forged_macs.add(mac_str)
-
-    def register_self_mac(self, mac, bssid: Optional[str] = None) -> str:
-        """Mark ``mac`` as our own forged STA."""
-        if isinstance(mac, bytes):
-            mac_str = mac_to_str(mac)
-        else:
-            mac_str = str(mac).lower()
-        self.self_macs.add(mac_str)
-        client = self.clients.get(mac_str)
-        if client is None:
-            self.clients[mac_str] = Client(mac=mac_str, bssid=bssid, is_self=True)
-        else:
-            client.is_self = True
-            if bssid:
-                client.bssid = bssid
+    def register_own_mac(self, mac) -> str:
+        """Mark ``mac`` as one we transmit as: ingest drops its frames, and it never becomes a client."""
+        mac_str = mac_to_str(mac) if isinstance(mac, (bytes, bytearray)) else str(mac).lower()
+        self.own_macs.add(mac_str)
+        self.clients.pop(mac_str, None)
         return mac_str
 
+    def unregister_own_mac(self, mac) -> None:
+        """Inverse of ``register_own_mac``."""
+        mac_str = mac_to_str(mac) if isinstance(mac, (bytes, bytearray)) else str(mac).lower()
+        self.own_macs.discard(mac_str)
+
+    # Back-compat names the campaigns still call; all funnel to the single own-MAC set.
+    def register_forged_mac(self, mac) -> None:
+        self.register_own_mac(mac)
+
+    def register_self_mac(self, mac, bssid=None) -> str:
+        return self.register_own_mac(mac)
+
     def unregister_self_mac(self, mac) -> None:
-        """Inverse of register_self_mac."""
-        if isinstance(mac, bytes):
-            mac_str = mac_to_str(mac)
-        else:
-            mac_str = str(mac).lower()
-        self.self_macs.discard(mac_str)
-        self.clients.pop(mac_str, None)
+        self.unregister_own_mac(mac)
+
+    @property
+    def forged_macs(self):
+        """Back-compat alias the UI reads to hide our own STA from client lists."""
+        return self.own_macs
 
     def record_tx(self, frame_bytes: bytes) -> None:
         """Classify an outgoing frame for the packet dashboard (deauth vs other). Best-effort."""

@@ -17,6 +17,7 @@ from wifit3.wlan.dedupe import StreamMerger
 from wifit3.wlan.interface import WlanInterface
 from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.sink import WlanSink
+from wifit3.wlan.lease import Lease
 from wifit3.wlan.wep_store import WepCaptureStore
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,19 @@ class WlanArray:
             return self._preferred
         return min(cands, key=fake_mac_rank)
 
+    def lease(self, channel=None, fake_mac=None, bssid=None, ack_tally=False, iface=None) -> Lease:
+        """Scoped hold on one interface (selected by ``channel`` unless ``iface`` is given).
+        Restores channel, fake MAC and ACK tally on exit; raises when no interface can serve."""
+        target = iface
+        if target is None and channel is not None:
+            target = self.select_iface(channel)
+        if target is None:
+            target = self._members[0] if self._members else None
+        if target is None:
+            raise RuntimeError("no interface available to lease")
+        return Lease(self, target, channel=channel, fake_mac=fake_mac,
+                     bssid=bssid, ack_tally=ack_tally)
+
     # ----- deduped RX subscription (no v1 consumer, kept for future) ----------
 
     def register_rx_callback(self, cb: Callable[[Packet], None]) -> None:
@@ -183,7 +197,7 @@ class WlanArray:
         # FromDS frame source is addr3, so the AP's fresh-IV rebroadcast of our replayed ARP (our MAC
         # in addr3, BSSID as TA) would be dropped and zero the IV rate. TA-keying counts it and still
         # drops a second card hearing our own ToDS injection (TA == our MAC).
-        if pkt.transmitter in self._sink.forged_macs or pkt.transmitter in self._sink.self_macs:
+        if pkt.transmitter in self._sink.own_macs:
             return
         if self._is_stray_beacon(pkt):
             return
@@ -238,6 +252,12 @@ class WlanArray:
 
     def register_forged_mac(self, mac) -> None:
         self._sink.register_forged_mac(mac)
+
+    def register_own_mac(self, mac) -> str:
+        return self._sink.register_own_mac(mac)
+
+    def unregister_own_mac(self, mac) -> None:
+        self._sink.unregister_own_mac(mac)
 
     def record_injected_eapol(self, frame) -> None:
         self._sink.record_injected_eapol(frame)

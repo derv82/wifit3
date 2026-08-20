@@ -308,7 +308,7 @@ def client_rows(ap, array) -> list[ClientRow]:
     for mac, client in array.clients.items():
         if client.bssid != ap.bssid:
             continue
-        if mac in forged or client.is_self:
+        if mac in forged:
             continue
         rows.append(ClientRow(bssid=mac, power=client.signal, packets=client.packets))
     return rows
