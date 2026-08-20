@@ -29,6 +29,7 @@ from rich.markup import escape
 
 from wifit3.models import AccessPoint
 from wifit3.dot11 import str_to_mac
+from wifit3.wlan.lease import SPOOFABLE
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.wep.fake_auth import WepFakeAuth
 from wifit3.campaigns.wep.arp_replay import WepArpReplay
@@ -75,6 +76,8 @@ class WepCampaign(Campaign):
         self.target = target
         self._log = log_callback or (lambda _m: None)
         self._active = False
+        self._lease = None           # campaign-lifetime hold: STA MAC + channel
+        self._own_fallback = None    # STA MAC we registered ourselves on a can't-AM card
 
         self.cracker = PtwCracker()
         self.recovered_key: Optional[bytes] = None
@@ -102,24 +105,28 @@ class WepCampaign(Campaign):
         )
 
     async def _loop(self) -> None:
-        """Pick our STA MAC by card class, arm active monitor, then run fake-auth + ARP replay and
-        supervise the PTW crack."""
+        """Hold one lease (STA MAC + channel) for the campaign, then run fake-auth + ARP replay and
+        supervise the PTW crack. The STA stays own-registered so our fixed-IV ARP isn't recounted."""
         self._active = True
         self._log(
             f"[bold green]ARP Replay starting[/bold green] on "
             f"[bold]{escape(self.target.ssid or '<hidden>')}[/bold]"
         )
-        # Active monitor chooses the STA MAC the card can get ACKed (random for SPOOFABLE, the card's
-        # own for FIXED_MAC) and returns it; None means the card can't active-monitor, so use a random
-        # STA and no AM (the driver's send-once path). fake-auth, replay and chopchop share this MAC.
-        armed = await self.iface.set_fake_mac()
-        if armed:
-            source_mac = str_to_mac(armed)
+        # The lease arms active monitor (random STA for SPOOFABLE, the card's own for FIXED_MAC),
+        # registers that STA as own and holds it for the whole run. fake-auth, replay and chopchop
+        # share this MAC.
+        self._lease = self.array.lease(channel=self.target.channel, fake_mac=SPOOFABLE,
+                                       bssid=self.target.bssid, iface=self.iface)
+        await self._lease.acquire()
+        if self._lease.mac:
+            source_mac = str_to_mac(self._lease.mac)
         else:
+            # A card that can't active-monitor: the lease armed/registered nothing, so pick a random
+            # STA and register it ourselves to keep the own-TX (fixed-IV) drop for the whole replay.
             source_mac = bytes([0x02]) + os.urandom(5)
+            self._own_fallback = self.array.register_own_mac(source_mac)
         self.fake_auth.source_mac = source_mac
         self.replay.source_mac = source_mac
-        self.array.register_self_mac(source_mac, self.target.bssid)
         self.fake_auth.start()
         self.replay.start()
         # One reusable worker process for the crack search
@@ -171,12 +178,15 @@ class WepCampaign(Campaign):
             self.chop.stop()
             self.chop = None
             self._log("[dim]· ChopChop stopped (Generate IVs ended)[/dim]")
-        # Stop replay (TX) before fake-auth
+        # Stop replay (TX) before releasing the lease that disarms the card.
         self.replay.stop()
         self.fake_auth.stop()
-        if self.iface is not None:
-            await self.iface.clear_fake_mac()   # exit active monitor
-        self.array.unregister_self_mac(self.fake_auth.source_mac)
+        if self._own_fallback is not None:
+            self.array.unregister_own_mac(self._own_fallback)
+            self._own_fallback = None
+        if self._lease is not None:
+            await self._lease.release()   # exit active monitor + restore channel
+            self._lease = None
         self._active = False
         # Quiet when we stopped because we WON
         if self.recovered_key is None:
