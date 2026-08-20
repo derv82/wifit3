@@ -6,7 +6,7 @@ from textual.app import App
 from typing import Optional
 
 from wifit3.chips import log_trace
-from wifit3.config import AppConfig, load_config, save_config
+from wifit3.persist.config import AppConfig, load_config, save_config
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
 from wifit3.device.manager import DeviceManager, Status
 from wifit3.device.watch import DeviceWatch

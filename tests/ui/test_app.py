@@ -43,7 +43,7 @@ async def test_app_layout_and_boot():
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_app_loads_and_saves_theme_config(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("wifit3.config.user_config_dir", None)
+    monkeypatch.setattr("wifit3.persist.config.user_config_dir", None)
     (tmp_path / "config.toml").write_text('theme = "ansi-dark"\n')
 
     app = WifiteApp()
