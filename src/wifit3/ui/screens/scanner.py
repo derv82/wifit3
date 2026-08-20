@@ -282,6 +282,10 @@ class ScannerView(Screen):
 
     async def on_mount(self) -> None:
         log = self.query_one("#system-log", RichLog)
+        sort_key = getattr(self.app.config, "scanner_sort", "signal")
+        self._sort_idx = next(
+            (i for i, (key, _label) in enumerate(self._COLUMNS) if key == sort_key), 2)
+        self._sort_reverse = getattr(self.app.config, "scanner_sort_reverse", True)
         self._update_column_headers()
         self.query_one("#ap-table", DataTable).focus()
         array = self.app.array
@@ -846,11 +850,15 @@ class ScannerView(Screen):
 
     def action_cycle_sort(self) -> None:
         self._sort_idx = (self._sort_idx + 1) % len(self._COLUMNS)
+        self.app.config.scanner_sort = self._COLUMNS[self._sort_idx][0]
+        self.app.save_preferences()
         self._update_column_headers()
         self._apply_sort()
 
     def action_toggle_sort_dir(self) -> None:
         self._sort_reverse = not self._sort_reverse
+        self.app.config.scanner_sort_reverse = self._sort_reverse
+        self.app.save_preferences()
         self._update_column_headers()
         self._apply_sort()
 
@@ -965,6 +973,9 @@ class ScannerView(Screen):
                 self._sort_reverse = not self._sort_reverse
             else:
                 self._sort_idx = idx
+            self.app.config.scanner_sort = self._COLUMNS[self._sort_idx][0]
+            self.app.config.scanner_sort_reverse = self._sort_reverse
+            self.app.save_preferences()
             self._update_column_headers()
             self._apply_sort()
             return

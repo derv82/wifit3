@@ -38,6 +38,8 @@ class AppConfig:
     scalar/list/dict types from TOML/JSON, so older/newer config files remain compatible.
     """
     theme: str = "textual-dark"
+    scanner_sort: str = "signal"
+    scanner_sort_reverse: bool = True
 
 
 _LOCAL_NAMES = ("config.toml", "config.json")
