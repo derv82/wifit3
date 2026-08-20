@@ -6,11 +6,15 @@ import wifit3.persist.config as cfg
 def test_load_config_from_local_toml(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cfg, "user_config_dir", None)
-    Path("config.toml").write_text('theme = "ansi-dark"\nfuture_setting = true\n')
+    Path("config.toml").write_text(
+        'theme = "ansi-dark"\nfuture_list = ["a", "b"]\nfuture_map = { key = "value" }\n')
 
     loaded = cfg.load_config()
 
     assert loaded.theme == "ansi-dark"
+    raw = cfg._load_file(Path("config.toml"))
+    assert raw["future_list"] == ["a", "b"]
+    assert raw["future_map"] == {"key": "value"}
 
 
 def test_load_config_from_local_json(monkeypatch, tmp_path):
@@ -52,5 +56,9 @@ def test_config_scalar_coercion_helpers():
     assert cfg._coerce("42", int, 0) == 42
     assert cfg._coerce("1.5", float, 0.0) == 1.5
     assert cfg._coerce("  ansi-dark  ", str, "textual-dark") == "ansi-dark"
+    assert cfg._coerce(["1", 2], list[int], []) == [1, 2]
+    assert cfg._coerce({"one": "1", "two": 2}, dict[str, int], {}) == {"one": 1, "two": 2}
     assert cfg._toml_value(True) == "true"
     assert cfg._toml_value("ansi-dark") == '"ansi-dark"'
+    assert cfg._toml_value(["a", 2, False]) == '["a", 2, false]'
+    assert cfg._toml_value({"key": ["value"]}) == '{ key = ["value"] }'

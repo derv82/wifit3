@@ -5,17 +5,23 @@ Primary location is the OS config dir from platformdirs. A repo/current-director
 for source checkouts, dev runs, and platforms where the config dir cannot be created.
 
 Adding a setting is deliberately boring: add a typed field with a default to
-``AppConfig`` (supported scalar types: ``str``, ``bool``, ``int``, ``float``), read it
-from ``app.config`` / copy it into app state, and call ``app.save_preferences()`` after
-the UI changes it. Unknown keys are ignored, missing/bad values keep the dataclass
-default, and saving writes every ``AppConfig`` field back to TOML/JSON.
+``AppConfig`` (supported types: ``str``, ``bool``, ``int``, ``float``, ``list[T]``,
+``dict[K, V]``), read it from ``app.config`` / copy it into app state, and call
+``app.save_preferences()`` after the UI changes it. Unknown keys are ignored,
+missing/bad values keep the dataclass default, and saving writes every
+``AppConfig`` field back to TOML/JSON.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-from typing import Any, get_type_hints
+from typing import Any, get_args, get_origin, get_type_hints
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib
 
 try:
     from platformdirs import user_config_dir
@@ -28,8 +34,8 @@ class AppConfig:
     """User preferences.
 
     To add a setting: declare a typed field with a default here, then read/write it
-    through ``app.config``. ``load_config`` ignores unknown keys and coerces simple
-    scalar types from TOML/JSON, so older/newer config files remain compatible.
+    through ``app.config``. ``load_config`` ignores unknown keys and coerces supported
+    scalar/list/dict types from TOML/JSON, so older/newer config files remain compatible.
     """
     theme: str = "textual-dark"
 
@@ -60,32 +66,9 @@ def candidate_paths() -> list[Path]:
     return paths
 
 
-def _parse_scalar(value: str) -> Any:
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-        return value[1:-1]
-    lower = value.lower()
-    if lower in ("true", "false"):
-        return lower == "true"
-    try:
-        return int(value)
-    except ValueError:
-        pass
-    try:
-        return float(value)
-    except ValueError:
-        return value
-
-
 def _load_toml(path: Path) -> dict[str, Any]:
-    data: dict[str, Any] = {}
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if not line or line.startswith("[") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        data[key.strip()] = _parse_scalar(value)
-    return data
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
 
 
 def _load_file(path: Path) -> dict[str, Any]:
@@ -95,7 +78,27 @@ def _load_file(path: Path) -> dict[str, Any]:
     return _load_toml(path)
 
 
-def _coerce(value: Any, expected: type, default: Any) -> Any:
+def _coerce(value: Any, expected, default: Any) -> Any:
+    origin = get_origin(expected)
+    args = get_args(expected)
+    if origin is list:
+        if not isinstance(value, list):
+            return default
+        item_type = args[0] if args else Any
+        return [_coerce(v, item_type, v) for v in value]
+    if origin is dict:
+        if not isinstance(value, dict):
+            return default
+        key_type = args[0] if args else Any
+        val_type = args[1] if len(args) > 1 else Any
+        out: dict[Any, Any] = {}
+        for k, v in value.items():
+            ck = _coerce(k, key_type, k)
+            cv = _coerce(v, val_type, v)
+            out[ck] = cv
+        return out
+    if expected is Any:
+        return value
     if expected is bool:
         if isinstance(value, bool):
             return value
@@ -150,6 +153,14 @@ def _toml_value(value: Any) -> str:
         return str(value).lower()
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    if isinstance(value, dict):
+        items = []
+        for k, v in value.items():
+            key = k if isinstance(k, str) and k.replace("_", "").isalnum() else json.dumps(str(k))
+            items.append(f"{key} = {_toml_value(v)}")
+        return "{ " + ", ".join(items) + " }"
     return json.dumps(str(value))
 
 
