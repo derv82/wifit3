@@ -6,6 +6,7 @@ from textual.app import App
 from typing import Optional
 
 from wifit3.chips import log_trace
+from wifit3.config import AppConfig, load_config, save_config
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
 from wifit3.device.manager import DeviceManager, Status
 from wifit3.device.watch import DeviceWatch
@@ -131,11 +132,23 @@ class WifiteApp(App):
                                         on_change=self._on_devices_changed,
                                         on_fatal=self._on_usb_fatal)
         self.target_ap: Optional[AccessPoint] = None
+        self.config: AppConfig = load_config()
+        self._save_theme_changes = False
         # WPS PBC auto-invade preference, shared across screens (Scanner + Focus
         # both read/toggle it via 'w'). On by default: the one active-TX exception
         # to passive-by-default (auto-captures a PSK when any AP's button is pressed).
         self.pbc_enabled: bool = True
-        self.theme = "textual-dark"
+        self.theme = self.config.theme
+        self._save_theme_changes = True
+
+    def save_preferences(self) -> None:
+        self.config.theme = self.theme
+        save_config(self.config)
+
+    def _watch_theme(self, theme_name: str) -> None:
+        super()._watch_theme(theme_name)
+        if getattr(self, "_save_theme_changes", False):
+            self.save_preferences()
 
     def on_mount(self) -> None:
         """Register screens, push the splash, and start the always-on device watch."""
