@@ -80,3 +80,14 @@ async def test_lease_spoofable_arm_failure_registers_nothing():
     iface, arr = FakeIface(armed=None), FakeArray()
     async with Lease(arr, iface, fake_mac=SPOOFABLE):
         assert arr.own == set()
+
+
+async def test_lease_rearm_swaps_the_armed_mac():
+    iface, arr = FakeIface(armed=None), FakeArray()          # un-ACKed: own == requested
+    lease = Lease(arr, iface, fake_mac="02:aa:aa:aa:aa:01")
+    async with lease:
+        assert arr.own == {"02:aa:aa:aa:aa:01"}
+        await lease.rearm("02:bb:bb:bb:bb:02")
+        assert arr.own == {"02:bb:bb:bb:bb:02"}              # old released, new registered
+        assert lease.mac == "02:bb:bb:bb:bb:02"
+    assert arr.own == set()                                  # released on exit

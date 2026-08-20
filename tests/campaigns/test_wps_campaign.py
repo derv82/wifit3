@@ -34,11 +34,23 @@ def _driver():
 
 
 def _iface():
-    ns = SimpleNamespace(access_points={}, driver=_driver(),
+    ns = SimpleNamespace(access_points={}, driver=_driver(), current_channel=1,
                          set_fake_mac=_set_fake_mac, clear_fake_mac=_clear_fake_mac,
                          enable_rx_acks=_noop_async, disable_rx_acks=_noop_async,
                          acks_seen=lambda _mac: 0)
     ns.select_iface = lambda channel: ns   # doubles as the WlanArray
+
+    async def _set_channel(ch, *a, **k):
+        ns.current_channel = ch
+    ns.set_channel = _set_channel
+    ns.register_own_mac = lambda mac: mac if isinstance(mac, str) else ":".join(f"{b:02x}" for b in mac)
+    ns.unregister_own_mac = lambda _mac: None
+
+    def _lease(channel=None, fake_mac=None, bssid=None, ack_tally=False, iface=None):
+        from wifit3.wlan.lease import Lease
+        return Lease(ns, iface or ns, channel=channel, fake_mac=fake_mac,
+                     bssid=bssid, ack_tally=ack_tally)
+    ns.lease = _lease
     return ns
 
 
@@ -213,21 +225,27 @@ async def test_rate_limit_does_not_skip_untested_pin(tmp_path, monkeypatch):
     assert c.state.tested < c.state.attempts
 
 
-async def test_teardown_saves_state_and_clears_fake_mac(tmp_path):
-    # The base lifecycle calls teardown() on every exit: it must checkpoint the
-    # .run resume file and release the active-monitor MAC (the old _run finally).
+async def test_teardown_releases_lease_and_saves_state(tmp_path):
+    # teardown() runs on every exit: it checkpoints the resume file and releases the
+    # lease (which clears the armed active-monitor MAC). No run means no lease to release.
     cleared = []
 
     async def _clear(*_a, **_k):
         cleared.append(True)
 
-    iface = SimpleNamespace(access_points={}, driver=_driver(), set_fake_mac=_set_fake_mac, clear_fake_mac=_clear,
-                            enable_rx_acks=_noop_async, disable_rx_acks=_noop_async, acks_seen=lambda _mac: 0)
-    iface.select_iface = lambda channel: iface   # doubles as the WlanArray
+    async def _armed(mac, bssid=None):
+        return ":".join(f"{b:02x}" for b in mac)   # HW-ACK armed, so release clears it
+
+    iface = _iface()
+    iface.set_fake_mac = _armed
+    iface.clear_fake_mac = _clear
     c = WpsCampaign(iface, _target(), state_dir=str(tmp_path), log=lambda m: None)
     c.state.tested = 42
+    c._lease = iface.lease(channel=c.channel, fake_mac=c.our_mac, ack_tally=c._tx_ack)
+    await c._lease.acquire()
     await c.teardown()
-    assert cleared == [True]
+    assert cleared == [True]                       # lease release cleared the armed MAC
+    assert c._lease is None
     assert _state_path(str(tmp_path), "02:00:00:00:00:ff").exists()
 
 

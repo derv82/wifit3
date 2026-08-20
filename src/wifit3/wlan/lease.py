@@ -24,19 +24,29 @@ class Lease:
         self._own_mac: Optional[str] = None
         self._armed = False
 
+    async def _arm(self, fake_mac) -> None:
+        requested = None if fake_mac is SPOOFABLE else fake_mac
+        armed = await self.iface.set_fake_mac(requested, self._bssid)
+        self._armed = armed is not None
+        # Register whatever we transmit as: the armed MAC, else the concrete MAC we
+        # asked for (we still send from it even when the card can't HW-ACK it).
+        own = armed or requested
+        self._own_mac = self._array.register_own_mac(own) if own is not None else None
+
+    async def _disarm(self) -> None:
+        if self._armed:
+            await self.iface.clear_fake_mac()
+        if self._own_mac is not None:
+            self._array.unregister_own_mac(self._own_mac)
+        self._armed = False
+        self._own_mac = None
+
     async def __aenter__(self):
         self._orig_channel = self.iface.current_channel
         if self._channel is not None:
             await self.iface.set_channel(self._channel)
         if self._fake_mac is not None:
-            requested = None if self._fake_mac is SPOOFABLE else self._fake_mac
-            armed = await self.iface.set_fake_mac(requested, self._bssid)
-            self._armed = armed is not None
-            # Register whatever we transmit as: the armed MAC, else the concrete MAC we
-            # asked for (we still send from it even when the card can't HW-ACK it).
-            own = armed or requested
-            if own is not None:
-                self._own_mac = self._array.register_own_mac(own)
+            await self._arm(self._fake_mac)
         if self._ack_tally:
             await self.iface.enable_rx_acks()
         return self.iface
@@ -44,13 +54,27 @@ class Lease:
     async def __aexit__(self, *exc) -> bool:
         if self._ack_tally:
             await self.iface.disable_rx_acks()
-        if self._armed:
-            await self.iface.clear_fake_mac()
-        if self._own_mac is not None:
-            self._array.unregister_own_mac(self._own_mac)
+        await self._disarm()
         if self._channel is not None and self._orig_channel is not None:
             await self.iface.set_channel(self._orig_channel)
         return False
+
+    async def rearm(self, fake_mac, bssid=None):
+        """Swap the armed fake MAC mid-lease: clear the old, arm ``fake_mac``; returns the new own MAC."""
+        if bssid is not None:
+            self._bssid = bssid
+        await self._disarm()
+        await self._arm(fake_mac)
+        self._fake_mac = fake_mac
+        return self._own_mac
+
+    async def acquire(self):
+        """Enter the lease imperatively, for a campaign that holds it across method calls."""
+        return await self.__aenter__()
+
+    async def release(self) -> None:
+        """Exit the lease imperatively; the inverse of ``acquire``."""
+        await self.__aexit__(None, None, None)
 
     @property
     def mac(self) -> Optional[str]:
