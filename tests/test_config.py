@@ -1,6 +1,17 @@
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import wifit3.persist.config as cfg
+
+
+@dataclass
+class _TypedConfig:
+    name: str = "default"
+    enabled: bool = False
+    count: int = 1
+    ratio: float = 1.0
+    items: list[int] = field(default_factory=lambda: [1])
+    labels: dict[str, list[str]] = field(default_factory=lambda: {"default": ["label"]})
 
 
 def test_load_config_from_local_toml(monkeypatch, tmp_path):
@@ -40,14 +51,49 @@ def test_platform_config_takes_precedence(monkeypatch, tmp_path):
     assert loaded.theme == "platform"
 
 
-def test_save_config_writes_toml(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cfg, "user_config_dir", None)
+def test_save_config_writes_supported_toml_types(tmp_path):
+    path = tmp_path / "config.toml"
 
-    path = cfg.save_config(cfg.AppConfig(theme="ansi-dark"))
+    cfg.save_config(_TypedConfig(
+        name="custom", enabled=True, count=42, ratio=1.5,
+        items=[1, 2], labels={"known": ["a", "b"]}), path)
 
-    assert path == Path("config.toml")
-    assert path.read_text() == 'theme = "ansi-dark"\n'
+    assert cfg._load_file(path) == {
+        "name": "custom",
+        "enabled": True,
+        "count": 42,
+        "ratio": 1.5,
+        "items": [1, 2],
+        "labels": {"known": ["a", "b"]},
+    }
+
+
+def test_config_type_coercion_uses_dataclass_defaults(monkeypatch):
+    monkeypatch.setattr(cfg, "AppConfig", _TypedConfig)
+
+    loaded = cfg._from_dict({
+        "name": "  custom  ",
+        "enabled": "yes",
+        "count": "42",
+        "ratio": "1.5",
+        "items": ["2", 3],
+        "labels": {"known": ["a", "b"]},
+    })
+
+    assert loaded == _TypedConfig(
+        name="custom", enabled=True, count=42, ratio=1.5,
+        items=[2, 3], labels={"known": ["a", "b"]})
+
+    loaded = cfg._from_dict({
+        "name": "",
+        "enabled": "maybe",
+        "count": object(),
+        "ratio": object(),
+        "items": "not-a-list",
+        "labels": "not-a-dict",
+    })
+
+    assert loaded == _TypedConfig()
 
 
 def test_config_scalar_coercion_helpers():
