@@ -232,6 +232,7 @@ class WifiteApp(App):
         self.target_ap = None
 
     async def action_quit(self):
+        self.save_preferences()
         if self.array:
             await self.array.close()
         self.exit()

@@ -54,3 +54,17 @@ async def test_app_loads_and_saves_theme_config(monkeypatch, tmp_path):
         await pilot.pause(0)
 
     assert (tmp_path / "config.toml").read_text() == 'theme = "textual-dark"\n'
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_app_quit_saves_preferences(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("wifit3.persist.config.user_config_dir", None)
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        pilot.app.theme = "ansi-dark"
+        await pilot.app.action_quit()
+
+    assert (tmp_path / "config.toml").read_text() == 'theme = "ansi-dark"\n'
