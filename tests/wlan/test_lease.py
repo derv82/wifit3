@@ -66,3 +66,17 @@ async def test_lease_channel_only_restores_original():
     async with Lease(arr, iface, channel=11):
         assert iface.current_channel == 11
     assert iface.current_channel == 3
+
+
+async def test_lease_registers_concrete_mac_when_arming_fails():
+    iface, arr = FakeIface(armed=None), FakeArray()
+    async with Lease(arr, iface, fake_mac="02:11:22:33:44:55") as got:
+        assert got is iface
+        assert "02:11:22:33:44:55" in arr.own          # still transmit from it, un-ACKed
+    assert arr.own == set()
+
+
+async def test_lease_spoofable_arm_failure_registers_nothing():
+    iface, arr = FakeIface(armed=None), FakeArray()
+    async with Lease(arr, iface, fake_mac=SPOOFABLE):
+        assert arr.own == set()

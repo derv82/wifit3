@@ -22,6 +22,7 @@ class Lease:
         self._ack_tally = ack_tally
         self._orig_channel: Optional[int] = None
         self._own_mac: Optional[str] = None
+        self._armed = False
 
     async def __aenter__(self):
         self._orig_channel = self.iface.current_channel
@@ -30,8 +31,12 @@ class Lease:
         if self._fake_mac is not None:
             requested = None if self._fake_mac is SPOOFABLE else self._fake_mac
             armed = await self.iface.set_fake_mac(requested, self._bssid)
-            if armed:
-                self._own_mac = self._array.register_own_mac(armed)
+            self._armed = armed is not None
+            # Register whatever we transmit as: the armed MAC, else the concrete MAC we
+            # asked for (we still send from it even when the card can't HW-ACK it).
+            own = armed or requested
+            if own is not None:
+                self._own_mac = self._array.register_own_mac(own)
         if self._ack_tally:
             await self.iface.enable_rx_acks()
         return self.iface
@@ -39,8 +44,9 @@ class Lease:
     async def __aexit__(self, *exc) -> bool:
         if self._ack_tally:
             await self.iface.disable_rx_acks()
-        if self._own_mac is not None:
+        if self._armed:
             await self.iface.clear_fake_mac()
+        if self._own_mac is not None:
             self._array.unregister_own_mac(self._own_mac)
         if self._channel is not None and self._orig_channel is not None:
             await self.iface.set_channel(self._orig_channel)
