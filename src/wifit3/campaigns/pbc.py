@@ -66,48 +66,49 @@ class WpsPbcCapture(Campaign):
             return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped before start")
         if self.iface is None:
             return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="no card can reach channel")
-        armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
-        if armed:
-            self.our_mac = str_to_mac(armed)
-        self.array.register_forged_mac(self.our_mac)   # transport is radio-only; register here
-        await self.iface.enable_rx_acks()
-        assoc = Association(self.iface, self.bssid, self.target.ssid or "",
-                            self.channel, our_mac=self.our_mac,
-                            assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE),
-                            should_stop=lambda: self.stopped)
-        assoc.start()
-        warning = self.iface.active_monitor_warning()
-        if isinstance(warning, str):
-            self.log(warning)
-            self.log("[dim]Continuing anyway (expect failures/timeouts)[/dim]")
-        transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac,
-                                  tx_observer=self.tx_observer)
-        transport.start()
-        outcome = None
-        try:
-            if self.stopped:
-                outcome = AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped by user")
-            else:
-                if not await assoc.associate():
-                    self.log(f"assoc failed ({assoc.fail_reason}); running EAPOL anyway")
-                outcome = await WpsEnrollee(transport, str_to_mac(self.bssid),
-                                            self.our_mac, log=self.log,
-                                            should_stop=lambda: self.stopped,
-                                            msg_timeout=8.0, eapol_start_timeout=6.0,
-                                            overall_timeout=40.0,
-                                            tx_ack=True,
-                                            ack_resends=4).run()
-        finally:
-            # Abandoning a (possibly mid-exchange) attempt: tell the AP we're
-            # leaving so it drops our EAP session.
-            if outcome is None or outcome.result is not PinResult.SUCCESS:
-                try:
-                    await self.iface.send_no_wait(
-                        build_client_leaving(str_to_mac(self.bssid), self.our_mac))
-                except Exception:
-                    logger.debug("PBC leaving-deauth failed", exc_info=True)
-            await self.iface.disable_rx_acks()
-            await self.iface.clear_fake_mac()
-            transport.stop()
-            assoc.stop()
+        # The lease arms active-monitor + own-MAC registration + ACK tally on enter, and
+        # clears all three (and restores the channel) on exit.
+        lease = self.array.lease(channel=self.channel, fake_mac=self.our_mac,
+                                 bssid=str_to_mac(self.bssid), ack_tally=True, iface=self.iface)
+        async with lease as iface:
+            if lease.mac:
+                self.our_mac = str_to_mac(lease.mac)
+            assoc = Association(iface, self.bssid, self.target.ssid or "",
+                                self.channel, our_mac=self.our_mac,
+                                assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE),
+                                should_stop=lambda: self.stopped)
+            assoc.start()
+            warning = iface.active_monitor_warning()
+            if isinstance(warning, str):
+                self.log(warning)
+                self.log("[dim]Continuing anyway (expect failures/timeouts)[/dim]")
+            transport = WlanTransport(iface, str_to_mac(self.bssid), self.our_mac,
+                                      tx_observer=self.tx_observer)
+            transport.start()
+            outcome = None
+            try:
+                if self.stopped:
+                    outcome = AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped by user")
+                else:
+                    if not await assoc.associate():
+                        self.log(f"assoc failed ({assoc.fail_reason}); running EAPOL anyway")
+                    outcome = await WpsEnrollee(transport, str_to_mac(self.bssid),
+                                                self.our_mac, log=self.log,
+                                                should_stop=lambda: self.stopped,
+                                                msg_timeout=8.0, eapol_start_timeout=6.0,
+                                                overall_timeout=40.0,
+                                                tx_ack=True,
+                                                ack_resends=4).run()
+            finally:
+                # Abandoning a (possibly mid-exchange) attempt: tell the AP we're leaving so
+                # it drops our EAP session. Sent while the lease is still open (own MAC still
+                # armed), so our own leaving-deauth is TA-dropped from the sink.
+                if outcome is None or outcome.result is not PinResult.SUCCESS:
+                    try:
+                        await iface.send_no_wait(
+                            build_client_leaving(str_to_mac(self.bssid), self.our_mac))
+                    except Exception:
+                        logger.debug("PBC leaving-deauth failed", exc_info=True)
+                transport.stop()
+                assoc.stop()
         return outcome
