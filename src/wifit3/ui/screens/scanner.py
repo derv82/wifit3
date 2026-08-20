@@ -51,9 +51,57 @@ SORT_INTERVAL_S = 2.0  # Table sort delay
 BEACON_DISPLAY_INTERVAL_S = 0.5
 
 
-def _hex_rgb(h: str) -> tuple[int, int, int]:
-    h = h.lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+_ANSI_RGB = {
+    "ansi_black": (0, 0, 0),
+    "ansi_red": (128, 0, 0),
+    "ansi_green": (0, 128, 0),
+    "ansi_yellow": (128, 128, 0),
+    "ansi_blue": (0, 0, 128),
+    "ansi_magenta": (128, 0, 128),
+    "ansi_cyan": (0, 128, 128),
+    "ansi_white": (192, 192, 192),
+    "ansi_bright_black": (128, 128, 128),
+    "ansi_bright_red": (255, 0, 0),
+    "ansi_bright_green": (0, 255, 0),
+    "ansi_bright_yellow": (255, 255, 0),
+    "ansi_bright_blue": (0, 0, 255),
+    "ansi_bright_magenta": (255, 0, 255),
+    "ansi_bright_cyan": (0, 255, 255),
+    "ansi_bright_white": (255, 255, 255),
+}
+_ANSI_STYLE = {
+    name: name.removeprefix("ansi_")
+    for name in _ANSI_RGB
+}
+_ANSI_STYLE["ansi_default"] = ""
+_ANSI_STYLE["transparent"] = ""
+
+
+def _theme_rgb(value: str | None, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
+    if not value or value in ("transparent", "ansi_default"):
+        return fallback
+    if value in _ANSI_RGB:
+        return _ANSI_RGB[value]
+    h = value.lstrip("#")
+    if len(h) == 6:
+        try:
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        except ValueError:
+            pass
+    return fallback
+
+
+def _parse_style(style) -> Style:
+    if isinstance(style, Style):
+        return style
+    if not style:
+        return Style()
+    tokens = [_ANSI_STYLE.get(tok, tok) for tok in str(style).split()]
+    cleaned = " ".join(tok for tok in tokens if tok)
+    try:
+        return Style.parse(cleaned) if cleaned else Style()
+    except Exception:
+        return Style()
 
 
 def _fade_text(text: Text, factor: float, bg: tuple[int, int, int]) -> Text:
@@ -62,13 +110,12 @@ def _fade_text(text: Text, factor: float, bg: tuple[int, int, int]) -> Text:
         return text
 
     def _fade(style):
-        if isinstance(style, str):
-            style = Style.parse(style) if style else Style()
-        if style.color is None:
-            return style
-        t = style.color.get_truecolor()
+        parsed = _parse_style(style)
+        if parsed.color is None:
+            return parsed
+        t = parsed.color.get_truecolor()
         s = 1.0 - factor
-        return style + Style(color=Color.from_rgb(
+        return parsed + Style(color=Color.from_rgb(
             t.red * s + bg[0] * factor,
             t.green * s + bg[1] * factor,
             t.blue * s + bg[2] * factor,
@@ -330,8 +377,10 @@ class ScannerView(Screen):
 
         now = time.time()
         tv = self.app.theme_variables
-        # Fade toward $surface (actual bg), not $background (the screen bg).
-        bg = _hex_rgb(tv.get("surface", tv.get("background", "#000000")))
+        # Fade toward $surface (actual bg), not $background (the screen bg). Some Textual
+        # themes use symbolic tokens (``transparent`` / ``ansi_default``), so fall back safely.
+        bg_fallback = _theme_rgb(tv.get("background"), (0, 0, 0))
+        bg = _theme_rgb(tv.get("surface"), bg_fallback)
         self._theme_fg = tv.get("foreground", "#ffffff")
 
         fade_span = max(0.001, FADE_DURATION_S - GRACE_DURATION_S)
