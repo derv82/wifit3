@@ -265,11 +265,23 @@ def _bs(b):
     return (b.visible, b.disabled, b.label, b.variant)
 
 
-def test_buttons_wpa2_psk_no_wps_only_pmkid_visible():
+def test_buttons_wpa2_psk_no_wps_pmkid_and_deauth_visible():
     b = fm.derive_buttons(_rsn_ap(akms=("PSK",), wps=False))
     assert _bs(b["btn-pmkid"]) == (True, False, "PMKID", "primary")
+    assert _bs(b["btn-deauth"]) == (True, False, "Deauth", "primary")
     assert b["btn-wps-pin"].visible is False
     assert b["btn-gen-ivs"].visible is False and b["btn-chop"].visible is False
+
+
+def test_buttons_deauth_hidden_for_sae_open_wep_and_pmf():
+    """Deauth shows only for a confirmed PSK-family AKM with PMF off: SAE-only,
+    open, WEP and PMF-Required all hide it (deauth can't provoke a crackable PSK
+    handshake, or PMF protects the frame)."""
+    assert fm.derive_buttons(_rsn_ap(akms=("PSK",)))["btn-deauth"].visible is True
+    assert fm.derive_buttons(_rsn_ap(akms=("SAE",)))["btn-deauth"].visible is False
+    assert fm.derive_buttons(_rsn_ap(encryption="OPEN", akms=()))["btn-deauth"].visible is False
+    assert fm.derive_buttons(_wep_btn_ap())["btn-deauth"].visible is False
+    assert fm.derive_buttons(_rsn_ap(akms=("PSK",), pmf_required=True))["btn-deauth"].visible is False
 
 
 def test_buttons_wpa2_wps_unlocked_pin_enabled():
@@ -295,7 +307,7 @@ def test_buttons_wpa3_only_sae_shows_eviltwin():
     b = fm.derive_buttons(
         _rsn_ap(encryption="WPA3", wpa3=True, transition_mode=False, akms=("SAE",)))
     assert all(not b[bid].visible for bid in
-               ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin"))
+               ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-deauth", "btn-wps-pin"))
     assert b["btn-eviltwin"].visible is True
 
 
@@ -351,7 +363,7 @@ def test_buttons_open_hides_pmkid():
     b = fm.derive_buttons(_rsn_ap(encryption="OPEN", akms=()))
     assert b["btn-pmkid"].visible is False
     assert all(not b[bid].visible for bid in
-               ("btn-gen-ivs", "btn-chop", "btn-wps-pin", "btn-eviltwin"))
+               ("btn-gen-ivs", "btn-chop", "btn-deauth", "btn-wps-pin", "btn-eviltwin"))
 
 
 def test_buttons_unconfirmed_encryption_shows_pmkid_disabled_with_reason():
@@ -377,6 +389,7 @@ def test_card_dynamic_each_state():
     assert fm.card_dynamic(fm.Campaigns(wep=_wep_camp())) == "● replaying"
     assert fm.card_dynamic(fm.Campaigns(wep=_wep_camp(chop=True))) == "● chopping"
     assert fm.card_dynamic(fm.Campaigns(wps=object())) == "● WPS PIN"
+    assert fm.card_dynamic(fm.Campaigns(deauth=object())) == "● Deauth"
     assert fm.card_dynamic(fm.Campaigns(eviltwin=object())) == "● EvilTwin"
     assert fm.card_dynamic(fm.Campaigns(pbc_busy=True)) == "● WPS PBC"
 

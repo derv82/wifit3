@@ -70,11 +70,11 @@ async def test_layout_geometry(w, h):
 @pytest.mark.asyncio(loop_scope="module")
 async def test_topbar_is_the_action_area_and_card_has_no_buttons(layout_host):
     scr = layout_host
-    # Back button + the full conditional attack set (5 derive_buttons ids +
+    # Back button + the full conditional attack set (6 derive_buttons ids +
     # the transient btn-stop-pbc, all shown/hidden per target/tick) live in the
     # top action area; none remain in the card column.
-    assert len(scr.query("#topbar Button")) == 7
-    for bid in ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin",
+    assert len(scr.query("#topbar Button")) == 8
+    for bid in ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-deauth", "btn-wps-pin",
                 "btn-eviltwin", "btn-stop-pbc"):
         assert scr.query_one(f"#topbar #{bid}", Button) is not None
     assert len(scr.query("#card Button")) == 0

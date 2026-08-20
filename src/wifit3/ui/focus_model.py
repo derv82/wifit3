@@ -14,11 +14,12 @@ from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.crack.handshake import pmkid_crackable
 from ..campaigns.pin import WpsCampaign
+from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
 
 # Attack-button campaigns in button-row order.
-BUTTON_CAMPAIGNS = [WepCampaign, PmkidHarvestAttack, WpsCampaign, EvilTwinCampaign]
-_BUTTON_ORDER = ["btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin", "btn-eviltwin"]
+BUTTON_CAMPAIGNS = [WepCampaign, PmkidHarvestAttack, DeauthCampaign, WpsCampaign, EvilTwinCampaign]
+_BUTTON_ORDER = ["btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-deauth", "btn-wps-pin", "btn-eviltwin"]
 
 
 @dataclass
@@ -26,6 +27,7 @@ class Campaigns:
     """The live attack-campaign handles a Focus screen owns."""
     wep: Optional[WepCampaign] = None
     wps: Optional[WpsCampaign] = None
+    deauth: Optional[DeauthCampaign] = None
     eviltwin: Optional[EvilTwinCampaign] = None
     pbc_busy: bool = False
 
@@ -322,6 +324,8 @@ def card_dynamic(campaigns: Campaigns) -> str:
         return "● replaying"
     if campaigns.wps is not None:
         return "● WPS PIN"
+    if campaigns.deauth is not None:
+        return "● Deauth"
     if campaigns.eviltwin is not None:
         return "● EvilTwin"
     if campaigns.pbc_busy:
@@ -391,6 +395,13 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
                 f"[dim]auth:{stats.auth} · assoc:{stats.assoc} · M2:{stats.m2}[/dim]",
                 f"[dim]probes: {stats.probes_direct} direct · "
                 f"{stats.probes_wildcard} wildcard[/dim]"]
+
+    # 3b. Deauth campaign running: provoking a re-handshake for the passive capture.
+    deauth = campaigns.deauth
+    if deauth is not None:
+        return ["[bold cyan]● Deauth[/bold cyan] forcing a re-handshake",
+                f"[dim]client acks:{deauth.client_acks}/{deauth.client_sent} · "
+                f"bcast:{deauth.bcast_sent}[/dim]"]
 
     # 4. Recovered credentials, when idle: WEP key / WPS PSK.
     if ap.wep_key is not None or any(p.kind == "WEP" for p in ap.persisted):
