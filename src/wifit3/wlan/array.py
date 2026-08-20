@@ -286,7 +286,7 @@ class WlanArray:
     def _partition(self, channels: List[int]) -> dict:
         """SPREAD: give each channel to one capable card, balancing counts, so N cards cover N-way
         more air per hop. Iterate channels high-first (5 GHz before 2.4 GHz) so a dual-band card
-        absorbs the scarce 5 GHz work before the all-band 2.4 GHz channels spread — that keeps cards
+        absorbs the scarce 5 GHz work before the all-band 2.4 GHz channels spread. That keeps cards
         on-band and avoids costly band switches. Any card the spread leaves empty (more cards than
         channels) then hops every filter channel it supports, doubling up for redundant RX rather
         than stranding on its last channel. A channel no card supports is dropped."""
@@ -325,7 +325,7 @@ class WlanArray:
                              return_exceptions=True)
 
     def _run_on_loop(self, spawn) -> None:
-        """Call ``spawn(loop)`` on the array's event loop — directly when already on it (attach), or
+        """Call ``spawn(loop)`` on the array's event loop: directly when already on it (attach), or
         via call_soon_threadsafe when not (the RX-reader disconnect path runs off the loop)."""
         loop = self._loop
         if loop is None:
@@ -357,7 +357,7 @@ class WlanArray:
 
     def _close_lost(self, iface: WlanInterface) -> None:
         """Stop a vanished card's async tasks (watchdog, RX reader, hop) by closing it. The device is
-        gone, so close() may itself raise doing USB ops on a dead handle — swallow everything. Runs on
+        gone, so close() may itself raise doing USB ops on a dead handle, so swallow everything. Runs on
         the array's loop (_member_lost fires off the RX-reader thread)."""
         async def _close() -> None:
             try:

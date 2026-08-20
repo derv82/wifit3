@@ -492,7 +492,7 @@ def fake_snapshot() -> FocusSnapshot:
         status=[
             "● EvilTwin active",
             "WPA2 twin up · waiting for M1·M2",
-            "handshake:  M1 ✓   M2 —",
+            "handshake:  M1 ✓   M2 -",
         ],
         power_dbm=-71,
         signal=6.0,
