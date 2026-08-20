@@ -203,6 +203,7 @@ class WlanArray:
             return
         if self._dedupe.submit(card_id, pkt.raw, time.monotonic()):
             self._sink.update(pkt, card_id, channel_hint=iface.current_channel)
+            self._sink.dispatch_rx(pkt)
             for cb in self._rx_callbacks:
                 try:
                     cb(pkt)
@@ -243,6 +244,12 @@ class WlanArray:
     @property
     def packet_stats(self) -> PacketStats:
         return self._sink.packet_stats
+
+    async def next_frame(self, match, timeout: float):
+        return await self._sink.next_frame(match, timeout)
+
+    async def wait_until(self, condition, timeout: float, poll: float = 0.05) -> bool:
+        return await self._sink.wait_until(condition, timeout, poll)
 
     def get_access_points(self, include_eviltwin: bool = True) -> List[AccessPoint]:
         aps = self._sink.get_access_points()

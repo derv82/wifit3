@@ -7,7 +7,9 @@ Moved here (largely verbatim) from ``WlanInterface``, which becomes a pure per-c
 addition for multicard is ``card_id``: RSSI is tracked per receiving card in ``signal_by_card`` so
 the Power reading can pick the strongest antenna, while every other field (beacons, IEs, clients,
 handshakes) is updated once, on the deduplicated (novel) copy only."""
+import asyncio
 import logging
+import threading
 import time
 from typing import Dict, List, Optional, Set
 
@@ -22,6 +24,11 @@ from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.wep_store import WepCaptureStore
 
 logger = logging.getLogger(__name__)
+
+
+def _set_result(fut, value) -> None:
+    if not fut.done():
+        fut.set_result(value)
 
 
 def _enc_rank(label: str) -> int:
@@ -72,6 +79,8 @@ class WlanSink:
         self.wep_store = WepCaptureStore()  # WEP IV tallying
         self.packet_stats = PacketStats()   # Packet dashboard source
         self.own_macs: Set[str] = set()     # MACs we transmit as; dropped at ingest, never a client
+        self._waiters: list = []            # (match, future, loop) for the next_frame await-API
+        self._waiters_lock = threading.Lock()
 
     # ----- signal (per-card) -------------------------------------------------
 
@@ -387,6 +396,45 @@ class WlanSink:
     def get_access_points(self) -> List[AccessPoint]:
         """A list of discovered Access Points."""
         return list(self.access_points.values())
+
+    def dispatch_rx(self, pkt) -> None:
+        """Resolve any next_frame waiters this deduped RX frame matches."""
+        with self._waiters_lock:
+            waiters = list(self._waiters)
+        for match, fut, loop in waiters:
+            if fut.done():
+                continue
+            try:
+                hit = match(pkt)
+            except Exception:
+                hit = False
+            if hit:
+                loop.call_soon_threadsafe(_set_result, fut, pkt)
+
+    async def next_frame(self, match, timeout: float):
+        """Await the first deduped RX frame for which ``match(pkt)`` is true, else None on timeout."""
+        loop = asyncio.get_event_loop()
+        fut = loop.create_future()
+        entry = (match, fut, loop)
+        with self._waiters_lock:
+            self._waiters.append(entry)
+        try:
+            return await asyncio.wait_for(fut, timeout)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            with self._waiters_lock:
+                if entry in self._waiters:
+                    self._waiters.remove(entry)
+
+    async def wait_until(self, condition, timeout: float, poll: float = 0.05) -> bool:
+        """Poll ``condition()`` until it is true or ``timeout`` elapses; returns the final truth."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if condition():
+                return True
+            await asyncio.sleep(poll)
+        return bool(condition())
 
     def register_own_mac(self, mac) -> str:
         """Mark ``mac`` as one we transmit as: ingest drops its frames, and it never becomes a client."""
