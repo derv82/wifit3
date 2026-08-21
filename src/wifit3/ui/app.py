@@ -6,7 +6,7 @@ from textual.app import App
 from typing import Optional
 
 from wifit3.chips import log_trace
-from wifit3.persist.config import AppConfig, load_config, save_config
+from wifit3.persist.config import Config, ConfigError
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
 from wifit3.device.manager import DeviceManager, Status
 from wifit3.device.watch import DeviceWatch
@@ -132,26 +132,32 @@ class WifiteApp(App):
                                         on_change=self._on_devices_changed,
                                         on_fatal=self._on_usb_fatal)
         self.target_ap: Optional[AccessPoint] = None
-        self.config: AppConfig = load_config()
-        self._save_theme_changes = False
+        self._config_error: Optional[str] = None
+        try:
+            Config.load()
+        except ConfigError as e:
+            self._config_error = str(e)
         # WPS PBC auto-invade preference, shared across screens (Scanner + Focus
         # both read/toggle it via 'w'). On by default: the one active-TX exception
         # to passive-by-default (auto-captures a PSK when any AP's button is pressed).
         self.pbc_enabled: bool = True
-        self.theme = self.config.theme
-        self._save_theme_changes = True
+        self.theme = Config.theme
 
-    def save_preferences(self) -> None:
-        self.config.theme = self.theme
-        save_config(self.config)
+    def persist_config(self) -> None:
+        try:
+            Config.save()
+        except ConfigError as e:
+            self.notify(str(e), severity="error", title="Config")
 
-    def _watch_theme(self, theme_name: str) -> None:
-        super()._watch_theme(theme_name)
-        if getattr(self, "_save_theme_changes", False):
-            self.save_preferences()
+    def watch_theme(self, theme: str) -> None:
+        if theme != Config.theme:
+            Config.theme = theme
+            self.persist_config()
 
     def on_mount(self) -> None:
         """Register screens, push the splash, and start the always-on device watch."""
+        if self._config_error:
+            self.notify(self._config_error, severity="error", title="Config")
         self.install_screen(SplashView(), name="splash")
         self.install_screen(ScannerView(), name="scanner")
         self.install_screen(FocusViewV2(), name="focus")
@@ -232,7 +238,7 @@ class WifiteApp(App):
         self.target_ap = None
 
     async def action_quit(self):
-        self.save_preferences()
+        self.persist_config()
         if self.array:
             await self.array.close()
         self.exit()
