@@ -111,13 +111,16 @@ class RTL8822CUDriver(Driver):
                 progress_cb(0.96, "Loading RTL8822C BB/RF tables")
             rfe_type = self.efuse.rfe_type
             await loop.run_in_executor(None, enable_bb_rf, self.transport)
-            await loop.run_in_executor(
-                None, lambda: initialize_phy(self.transport, cut=self.chip_info.cut, rfe_type=rfe_type)
-            )
             if progress_cb:
                 progress_cb(0.98, "Configuring RTL8822C monitor RX")
             await loop.run_in_executor(None, init_rx_mac, self.transport)
             await loop.run_in_executor(None, enter_monitor_mode, self.transport)
+            # The BB/RF tables must be (re)applied after the monitor-MAC setup: on this USB
+            # adapter, running them before init_rx_mac/enter_monitor_mode leaves the 2.4 GHz
+            # RX chain wedged (zero frames on ch1 after connect) until they are replayed.
+            await loop.run_in_executor(
+                None, lambda: initialize_phy(self.transport, cut=self.chip_info.cut, rfe_type=rfe_type)
+            )
             await loop.run_in_executor(None, set_channel_20mhz, self.transport, 1)
         except (IOError, usb.core.USBError) as exc:
             raise BringUpError("firmware", str(exc)) from exc
