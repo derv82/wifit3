@@ -84,8 +84,8 @@ _PAD_RATE = 0.4
 _PBC_RETRY_COOLDOWN_S = 3.0
 
 _ATTACK_BUTTONS = [
-    ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-pmkid", "PMKID"),
-    ("btn-deauth", "Deauth"), ("btn-wps-pin", "WPS PIN"), ("btn-eviltwin", "EvilTwin"),
+    ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-deauth", "AutoDeauth"),
+    ("btn-pmkid", "PMKID"), ("btn-wps-pin", "WPS PIN"), ("btn-eviltwin", "EvilTwin"),
     ("btn-stop-pbc", "Stop PBC"),
 ]
 
@@ -134,6 +134,7 @@ class FocusViewV2(Screen):
     # Attack hotkeys come from the campaign registry
     BINDINGS = [
         Binding("escape", "go_back", "Back", show=True),
+        Binding("d", "deauth_all", "Deauth", show=True),
         *[Binding(cls.hotkey[0], f"campaign('{cls.key}')", cls.hotkey[1], show=True)
           for cls in fm.BUTTON_CAMPAIGNS if cls.hotkey],
         Binding("c", "campaign('chop')", "ChopChop", show=True),
@@ -653,6 +654,10 @@ class FocusViewV2(Screen):
             if st is None or not st.visible:
                 return False
             return None if st.disabled else True
+        if action == "deauth_all":
+            if ap is None:
+                return False
+            return None if fm.deauth_blocked(ap) else True
         return True
 
     def _sync_bindings(self) -> None:
@@ -674,6 +679,10 @@ class FocusViewV2(Screen):
         if toggle is not None:
             toggle()
         self._sync_bindings()
+
+    def action_deauth_all(self) -> None:
+        """'d': one-shot broadcast deauth, matching the client-panel button."""
+        self.run_worker(self._run_deauth_broadcast(), exclusive=True)
 
     def action_wps_pbc_mode(self) -> None:
         """'w': toggle the shared WPS PBC auto-invade."""

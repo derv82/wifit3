@@ -270,7 +270,7 @@ def _bs(b):
 def test_buttons_wpa2_psk_no_wps_pmkid_and_deauth_visible():
     b = fm.derive_buttons(_rsn_ap(akms=("PSK",), wps=False))
     assert _bs(b["btn-pmkid"]) == (True, False, "PMKID", "primary")
-    assert _bs(b["btn-deauth"]) == (True, False, "Deauth", "primary")
+    assert _bs(b["btn-deauth"]) == (True, False, "Auto Deauth", "primary")
     assert b["btn-wps-pin"].visible is False
     assert b["btn-gen-ivs"].visible is False and b["btn-chop"].visible is False
 

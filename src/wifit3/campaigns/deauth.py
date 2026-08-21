@@ -29,8 +29,8 @@ class DeauthCampaign(Campaign):
 
     button_id = "btn-deauth"
     key = "deauth"
-    hotkey = ("d", "Deauth")
-    idle_label = "Deauth"
+    hotkey = ("D", "Auto Deauth")
+    idle_label = "Auto Deauth"
     run_label = "Stop Deauth"
     idle_variant = "primary"
     run_variant = "error"
