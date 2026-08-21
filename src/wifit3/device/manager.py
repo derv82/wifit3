@@ -7,6 +7,7 @@ only on a match (``driver_for`` / bring-up).
 """
 from __future__ import annotations
 
+import errno
 import functools
 import importlib
 import logging
@@ -20,7 +21,7 @@ from typing import TYPE_CHECKING, List, NoReturn, Optional, Tuple
 import libusb_package
 import usb.core
 
-from wifit3.errors import BringUpError, BringUpPermissionsError, WifiteFatalError
+from wifit3.errors import BringUpError, BringUpPermissionsError, WifiteFatalError, is_device_gone
 from wifit3.models.device_id import DeviceID
 from wifit3.setup.base import Setup, SetupResult
 from wifit3.wlan.array import WlanArray
@@ -304,6 +305,8 @@ class DeviceManager:
             # else fixable: fall through to setup
         except BringUpError as e:
             return BringupResult.failed(self._fault_message(device_id, e))
+        except OSError as e:
+            return BringupResult.failed(self._usb_fault_message(device_id, e))
 
         device_id = await self.setup.install(device_id, self.prompter)
         if device_id is None:
@@ -314,6 +317,8 @@ class DeviceManager:
             return BringupResult.ready()
         except BringUpError as e:
             return BringupResult.failed(self._fault_message(device_id, e))
+        except OSError as e:
+            return BringupResult.failed(self._usb_fault_message(device_id, e))
 
     async def uninstall(self, device_id) -> SetupResult:
         """Reverse a prior setup for ``device_id`` (the splash's ✕ button). Shows the progress modal
@@ -358,3 +363,10 @@ class DeviceManager:
     def _fault_message(device_id, e: BringUpError) -> str:
         chip = device_id.chipset
         return f"{chip}: {e.stage} failed" + (f": {e.detail}" if e.detail else "")
+
+    @staticmethod
+    def _usb_fault_message(device_id, e: OSError) -> str:
+        chip = device_id.chipset
+        if is_device_gone(e) or e.errno in (errno.EIO, errno.ENODEV):
+            return f"{chip}: adapter disconnected during bring-up; replug it and try again"
+        return f"{chip}: USB I/O failed during bring-up: {e}"
