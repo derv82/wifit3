@@ -11,6 +11,14 @@ def test_access_point_model_defaults():
     assert ap.pmf_capable is False
 
 
+def test_is_hidden():
+    """Hidden until we hold a usable SSID: None and the '<hidden>' placeholder both count."""
+    assert AccessPoint(bssid="00:11:22:33:44:55").is_hidden is True
+    assert AccessPoint(bssid="00:11:22:33:44:55", ssid="<hidden>").is_hidden is True
+    assert AccessPoint(bssid="00:11:22:33:44:55", ssid="").is_hidden is True
+    assert AccessPoint(bssid="00:11:22:33:44:55", ssid="Rai2.4").is_hidden is False
+
+
 def test_wps_pbc_active_detection():
     ap = AccessPoint(bssid="00:11:22:33:44:55", wps=True)
     assert ap.wps_pbc_active is False                       # no registrar window

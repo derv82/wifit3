@@ -122,3 +122,8 @@ class AccessPoint:
     def has_psk(self) -> bool:
         """True once we hold this AP's passphrase (see known_psk)."""
         return self.known_psk is not None
+
+    @property
+    def is_hidden(self) -> bool:
+        """No usable SSID: never seen, or still the "<hidden>" placeholder."""
+        return not (self.ssid and self.ssid != "<hidden>")

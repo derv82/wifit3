@@ -191,7 +191,7 @@ def _rsn_ap(*, encryption="WPA2", akms=("PSK",), wpa3=False, transition_mode=Fal
         akm_suites = [_AKM_NUM[a] for a in akms if a in _AKM_NUM]
     return types.SimpleNamespace(
         encryption=encryption, akms=akms, akm_suites=akm_suites, pairwise_cipher="CCMP",
-        ssid=ssid, last_beacon_frame=last_beacon_frame,
+        ssid=ssid, is_hidden=not (ssid and ssid != "<hidden>"), last_beacon_frame=last_beacon_frame,
         wpa3=wpa3, transition_mode=transition_mode, wep=None,
         pmf_required=pmf_required, pmf_capable=pmf_capable, bssid="aa:bb:cc:dd:ee:ff",
         wps=wps, wps_locked=wps_locked, wps_version=wps_version)
@@ -237,7 +237,7 @@ def test_status_footer_wep_is_fakeauth_and_usable_ivs():
 
 def _wep_btn_ap():
     return types.SimpleNamespace(encryption="WEP", wps=None, wpa3=False,
-                                 transition_mode=False, wps_locked=False,
+                                 transition_mode=False, wps_locked=False, is_hidden=False,
                                  ssid="WepNet", akm_suites=[], bssid="aa:bb:cc:dd:ee:ff", last_beacon_frame=b"\x80\x00beacon")
 
 
@@ -295,6 +295,28 @@ def test_buttons_wpa2_wps_unlocked_pin_enabled():
 def test_buttons_wpa2_wps_locked_pin_visible_but_disabled():
     b = fm.derive_buttons(_rsn_ap(wps=True, wps_locked=True))
     assert _bs(b["btn-wps-pin"]) == (True, True, "WPS PIN", "primary")
+
+
+def test_buttons_hidden_ssid_disables_assoc_attacks():
+    """A hidden AP (no known SSID) can't be associated, so every auth/assoc button is
+    visible-but-disabled with a hidden-SSID reason: PMKID, WPS PIN, WEP fake-auth."""
+    pmkid = fm.derive_buttons(_rsn_ap(akms=("PSK",), wps=True, ssid=None))
+    assert pmkid["btn-pmkid"].disabled is True and "hidden" in pmkid["btn-pmkid"].reason
+    assert pmkid["btn-wps-pin"].disabled is True and "hidden" in pmkid["btn-wps-pin"].reason
+    wep = fm.derive_buttons(_wep_hidden_ap())
+    assert wep["btn-gen-ivs"].disabled is True and "hidden" in wep["btn-gen-ivs"].reason
+
+
+def test_buttons_hidden_leaves_deauth_enabled():
+    """Deauth spoofs addresses (no association), so a hidden SSID does not disable it."""
+    b = fm.derive_buttons(_rsn_ap(akms=("PSK",), ssid=None))
+    assert b["btn-deauth"].visible is True and b["btn-deauth"].disabled is False
+
+
+def _wep_hidden_ap():
+    ap = _wep_btn_ap()
+    ap.ssid, ap.is_hidden = None, True
+    return ap
 
 
 def test_buttons_wpa3_transition_shows_pmkid_and_eviltwin():
