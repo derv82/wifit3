@@ -13,6 +13,24 @@ from rich.style import Style
 from rich.text import Text
 
 _BLACK = (0, 0, 0)
+_LOGO_COLOR_MAP = {
+    (0, 255, 0): "logo_color_primary",
+    (0, 128, 0): "logo_color_secondary",
+    (255, 255, 255): "logo_text_primary",
+    (128, 128, 128): "logo_text_secondary",
+}
+_LOGO_DARK_DEFAULTS = {
+    "logo_color_primary": "#00ff00",
+    "logo_color_secondary": "#008000",
+    "logo_text_primary": "#ffffff",
+    "logo_text_secondary": "#808080",
+}
+_LOGO_LIGHT_DEFAULTS = {
+    "logo_color_primary": "#00bb00",
+    "logo_color_secondary": "#008000",
+    "logo_text_primary": "#111111",
+    "logo_text_secondary": "#666666",
+}
 _CONSOLE = Console()          # only for get_style_at_offset; never writes output
 
 
@@ -20,16 +38,55 @@ def is_black(color: Color | None) -> bool:
     return color is not None and color.triplet is not None and tuple(color.triplet) == _BLACK
 
 
-def _without_bgcolor(style: Style) -> Style:
-    """``style`` with the background unset (preserving fg + text attributes)."""
+def _style_like(style: Style, *, color: Color | str | None, bgcolor: Color | str | None) -> Style:
     return Style(
-        color=style.color,
+        color=color, bgcolor=bgcolor,
         bold=style.bold, dim=style.dim, italic=style.italic,
         underline=style.underline, blink=style.blink, blink2=style.blink2,
         reverse=style.reverse, conceal=style.conceal, strike=style.strike,
         underline2=style.underline2, frame=style.frame,
         encircle=style.encircle, overline=style.overline, link=style.link,
     )
+
+
+def _without_bgcolor(style: Style) -> Style:
+    """``style`` with the background unset (preserving fg + text attributes)."""
+    return _style_like(style, color=style.color, bgcolor=None)
+
+
+def _mapped_logo_color(
+    color: Color | None,
+    variables: dict[str, str],
+    defaults: dict[str, str],
+) -> Color | str | None:
+    if color is None or color.triplet is None:
+        return color
+    key = _LOGO_COLOR_MAP.get(tuple(color.triplet))
+    return variables.get(key, defaults.get(key, color)) if key else color
+
+
+def recolor_logo(text: Text, variables: dict[str, str], *, dark: bool = True) -> Text:
+    """Replace the logo's four baked ANSI colors with theme-provided logo variables.
+
+    Supported variables: ``logo_color_primary``, ``logo_color_secondary``,
+    ``logo_text_primary`` and ``logo_text_secondary``. Missing variables use a
+    dark/light fallback palette matching Textual's active theme mode.
+    """
+    defaults = _LOGO_DARK_DEFAULTS if dark else _LOGO_LIGHT_DEFAULTS
+    out = text.copy()
+    spans = []
+    for span in out.spans:
+        style = Style.parse(span.style) if isinstance(span.style, str) else span.style
+        if not isinstance(style, Style):
+            spans.append(span)
+            continue
+        spans.append(span._replace(style=_style_like(
+            style,
+            color=_mapped_logo_color(style.color, variables, defaults),
+            bgcolor=_mapped_logo_color(style.bgcolor, variables, defaults),
+        )))
+    out.spans = spans
+    return out
 
 
 def make_black_transparent(text: Text, *, blank_black_ink: bool = False) -> Text:

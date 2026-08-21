@@ -53,6 +53,9 @@ def main() -> None:
     parser.add_argument(
         "--smoke", action="store_true",
         help="Boot the TUI headless, render one frame, and exit 0 (CI bundling self-test).")
+    parser.add_argument(
+        "--theme-reload", action="store_true",
+        help="Developer mode: poll theme TOML files and reload changed themes while running.")
     args = parser.parse_args()
 
     if args.smoke:
@@ -69,7 +72,7 @@ def main() -> None:
 
     # Released builds default to a DEBUG wifit3.log so field bug reports arrive with a
     # trace already captured; WIFIT3_LOG=off opts out, =trace bumps to the firehose.
-    WifiteApp(default_log_level="debug").run()
+    WifiteApp(default_log_level="debug", theme_reload=args.theme_reload).run()
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 from textual import work
-from textual.app import App
+from textual.app import App, InvalidThemeError
 from typing import Optional
 
 from wifit3.chips import log_trace
@@ -18,6 +18,7 @@ from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
 from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
 from .screens.new_device import NewDeviceDialog
+from .themes import ThemeFilePoller, register_app_themes
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class WifiteApp(App):
     EvilTwinInputModal #bssid-btns Button { min-width: 4; }
     """
 
-    def __init__(self, default_log_level: Optional[str] = None):
+    def __init__(self, default_log_level: Optional[str] = None, *, theme_reload: bool = False):
         _configure_file_logging(default_log_level)
         super().__init__()
         self.array: Optional[WlanArray] = None
@@ -141,7 +142,46 @@ class WifiteApp(App):
         # both read/toggle it via 'w'). On by default: the one active-TX exception
         # to passive-by-default (auto-captures a PSK when any AP's button is pressed).
         self.pbc_enabled: bool = True
-        self.theme = Config.theme
+        self.theme_reload = theme_reload
+        self._theme_poller = ThemeFilePoller()
+        self._theme_timer = None
+        register_app_themes(self)
+        self._theme_poller.start()
+        self._apply_config_theme()
+
+    def _apply_config_theme(self) -> None:
+        try:
+            self.theme = Config.theme
+        except InvalidThemeError:
+            bad = Config.theme
+            Config.theme = "textual-dark"
+            self.theme = Config.theme
+            try:
+                Config.save()
+            except ConfigError as e:
+                self._config_error = str(e)
+            else:
+                self._config_error = f"Unknown theme {bad!r}; reset to textual-dark."
+        self._refresh_theme_dependents()
+
+    def _reload_themes_if_changed(self) -> None:
+        result = self._theme_poller.reload_if_changed(self)
+        if not result.changed:
+            return
+        self._apply_config_theme()
+        if result.skipped:
+            self.notify(
+                f"Skipped invalid theme file(s): {', '.join(result.skipped)}",
+                severity="warning", title="Themes",
+            )
+        elif result.registered:
+            self.notify("Theme file changes reloaded.", severity="information", title="Themes")
+
+    def _refresh_theme_dependents(self) -> None:
+        for screen in self.screen_stack:
+            refresh = getattr(screen, "refresh_theme_art", None)
+            if refresh is not None:
+                refresh()
 
     def persist_config(self) -> None:
         try:
@@ -153,6 +193,7 @@ class WifiteApp(App):
         if theme != Config.theme:
             Config.theme = theme
             self.persist_config()
+        self._refresh_theme_dependents()
 
     def on_mount(self) -> None:
         """Register screens, push the splash, and start the always-on device watch."""
@@ -163,6 +204,8 @@ class WifiteApp(App):
         self.install_screen(FocusViewV2(), name="focus")
         self.push_screen("splash")
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
+        if self.theme_reload:
+            self._theme_timer = self.set_interval(1.0, self._reload_themes_if_changed)
         self.call_after_refresh(self.device_watch.poll)
 
     def _on_devices_changed(self, current, arrived, departed) -> None:
