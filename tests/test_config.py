@@ -1,7 +1,7 @@
 import pytest
 
 import wifit3.persist.config as cfg
-from wifit3.persist.config import Config, ConfigError
+from wifit3.persist.config import DEFAULT_THEME, Config, ConfigError
 
 
 @pytest.fixture(autouse=True)
