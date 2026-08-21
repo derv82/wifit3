@@ -58,12 +58,7 @@ class ThemeFilePoller:
 
 
 def register_app_themes(app, *, user_dir: Path | None = None) -> ThemeReloadResult:
-    """Register packaged Wifit3 themes, then user-defined themes.
-
-    User themes are registered second so a user may intentionally override a Wifit3 theme name.
-    Built-in Textual themes are owned by Textual. Hardcoded Wifit3-blacklisted themes are
-    removed after registration.
-    """
+    """Register packaged Wifit3 themes, then user-defined themes."""
     registered: list[str] = []
     skipped: list[str] = []
     for path in _theme_files(BUILTIN_THEMES_DIR):

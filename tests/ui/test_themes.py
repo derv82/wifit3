@@ -38,7 +38,7 @@ def test_register_app_themes_keeps_textual_themes_available():
 
 
 def test_builtin_green_theme_defines_selection_colors():
-    theme = load_theme_file(BUILTIN_THEMES_DIR / "wifit3-green.toml")
+    theme = load_theme_file(BUILTIN_THEMES_DIR / "wifit3-green-dark.toml")
 
     assert theme.variables["block-cursor-background"] == "#00ff88"
     assert theme.variables["block-hover-background"] == "#163322"
@@ -253,5 +253,5 @@ name = "live-theme"
     result = poller.reload_if_changed(app)
 
     assert result.changed is True
-    assert result.registered == ("wifit3-green", "live-theme")
+    assert result.registered == ("wifit3-green-dark", "live-theme")
     assert app.themes["live-theme"].primary == "#00ff88"

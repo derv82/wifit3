@@ -26,7 +26,7 @@ def config_path(tmp_path, monkeypatch):
 
 def test_load_missing_file_keeps_defaults(config_path):
     Config.load()
-    assert Config.theme == "textual-dark"
+    assert Config.theme == DEFAULT_THEME
     assert Config.scanner_sort == "signal"
     assert Config.scanner_sort_reverse is True
 

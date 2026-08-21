@@ -66,12 +66,7 @@ def _mapped_logo_color(
 
 
 def recolor_logo(text: Text, variables: dict[str, str], *, dark: bool = True) -> Text:
-    """Replace the logo's four baked ANSI colors with theme-provided logo variables.
-
-    Supported variables: ``logo_color_primary``, ``logo_color_secondary``,
-    ``logo_text_primary`` and ``logo_text_secondary``. Missing variables use a
-    dark/light fallback palette matching Textual's active theme mode.
-    """
+    """Replace the logo's baked ANSI palette with theme logo variables."""
     defaults = _LOGO_DARK_DEFAULTS if dark else _LOGO_LIGHT_DEFAULTS
     out = text.copy()
     spans = []
@@ -90,12 +85,7 @@ def recolor_logo(text: Text, variables: dict[str, str], *, dark: bool = True) ->
 
 
 def make_black_transparent(text: Text, *, blank_black_ink: bool = False) -> Text:
-    """Drop pure-black backgrounds so ``text`` inherits the theme surface.
-
-    With ``blank_black_ink`` also blank black-foreground glyphs, for art that
-    draws *with* black ink, not just on a black canvas (the Focus endpoint art).
-    Without it, black ink is kept (the Splash logo draws in colour on a black
-    canvas, so only the canvas is dropped)."""
+    """Drop pure-black backgrounds so ``text`` inherits the theme surface."""
     if not blank_black_ink:
         out = text.copy()
         out.spans = [
