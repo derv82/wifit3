@@ -110,6 +110,7 @@ class _Host(App):
         super().__init__()
         self.array = array
         self.target_ap = ap
+        self.pbc_enabled = True
 
     def on_mount(self) -> None:
         self.push_screen(FocusViewV2())

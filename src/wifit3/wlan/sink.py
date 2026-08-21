@@ -288,10 +288,10 @@ class WlanSink:
         if frame_type == "probe_req" and self._is_real_ssid(pkt.ssid):
             client.probed_ssids.add(pkt.ssid)
 
-        if frame_type == "assoc_req":
+        if frame_type in ("assoc_req", "reassoc_req"):
             ap = self.access_points.get(bssid)
             if ap is not None and self._is_real_ssid(pkt.ssid):
-                self._decloak(ap, pkt.ssid, "assoc_req")
+                self._decloak(ap, pkt.ssid, frame_type)
         return True
 
     def _on_eapol_frame(self, pkt: Packet) -> bool:

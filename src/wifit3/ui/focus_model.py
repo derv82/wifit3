@@ -13,6 +13,7 @@ from ..campaigns.pmkid import PmkidHarvestAttack
 from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.crack.handshake import pmkid_crackable
+from wifit3.persist.config import Config
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
@@ -271,6 +272,7 @@ class ButtonState:
 def derive_buttons(ap) -> dict[str, ButtonState]:
     """Per-button state, keyed by button id, registry-driven."""
     active = Campaign.active
+    silenced = Config.is_silenced(ap.bssid)
     states: dict[str, ButtonState] = {}
     for cls in BUTTON_CAMPAIGNS:
         vis = cls.visible(ap)
@@ -280,7 +282,7 @@ def derive_buttons(ap) -> dict[str, ButtonState]:
                 label=cls.run_label, variant=cls.run_variant)
         else:
             other = active is not None and active.key != cls.key
-            reason = cls.ineligible_reason(ap)
+            reason = "AP silenced" if silenced else cls.ineligible_reason(ap)
             states[cls.button_id] = ButtonState(
                 visible=vis,
                 disabled=reason is not None or other,
@@ -291,7 +293,7 @@ def derive_buttons(ap) -> dict[str, ButtonState]:
     chopping = wep_running and getattr(active, "chop_active", False)
     states["btn-chop"] = ButtonState(
         visible=WepCampaign.visible(ap),
-        disabled=not wep_running,
+        disabled=not wep_running or silenced,
         label="Stop Chop" if chopping else "ChopChop",
         variant="warning" if chopping else "primary",
     )
@@ -410,6 +412,10 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
     if ap.known_psk:
         return ["[black bold on green] ✓ WPS PSK recovered [/black bold on green]",
                 "[dim]see the event log for the passphrase[/dim]"]
+
+    if Config.is_silenced(ap.bssid):
+        return ["[dim]● Silenced[/dim]",
+                "[dim]campaigns off, handshakes ignored · press s to resume[/dim]"]
 
     # 4-5. Passive capture state: captured / partial / listening.
     if wep:

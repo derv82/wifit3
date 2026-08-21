@@ -66,6 +66,13 @@ class WepCampaign(Campaign):
     def visible(cls, ap) -> bool:
         return (getattr(ap, "encryption", None) or "").upper() == "WEP"
 
+    @classmethod
+    def ineligible_reason(cls, ap) -> Optional[str]:
+        """Fake-auth associates, so it needs a known SSID (hidden APs can't be joined)."""
+        if ap.is_hidden:
+            return "hidden SSID: can't associate"
+        return None
+
     def __init__(
         self,
         array,

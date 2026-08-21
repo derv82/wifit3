@@ -302,6 +302,21 @@ def test_assoc_req_without_rsn_has_no_akm():
     assert parsed.assoc_akm is None
 
 
+def test_assoc_req_extracts_ssid():
+    """The assoc-req SSID IE (offset 28) is what decloaks a hidden AP."""
+    parsed = WlanFrameParser.parse_80211_frame(_build_assoc_req(b"", ssid=b"HiddenNet"), -50)
+    assert parsed.type == "assoc_req"
+    assert parsed.ssid == "HiddenNet"
+
+
+def test_reassoc_req_extracts_ssid_past_current_ap_field():
+    """Reassoc's +6 Current AP field shifts the SSID IE to offset 34."""
+    parsed = WlanFrameParser.parse_80211_frame(
+        _build_assoc_req(b"", reassoc=True, ssid=b"HiddenNet"), -50)
+    assert parsed.type == "reassoc_req"
+    assert parsed.ssid == "HiddenNet"
+
+
 def test_wpa2_psk_tkip_legacy_cipher():
     """Some old routers still advertise TKIP for pairwise."""
     rsn = _rsn_ie(pairwise_ciphers=(0x02,), akms=(0x02,))

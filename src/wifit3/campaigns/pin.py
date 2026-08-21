@@ -107,6 +107,8 @@ class WpsCampaign(Campaign):
 
     @classmethod
     def ineligible_reason(cls, ap):
+        if ap.is_hidden:
+            return "hidden SSID: can't associate"
         return "WPS locked" if getattr(ap, "wps_locked", False) else None
 
     def __init__(self, array, target, state_dir="captures", log=None,
