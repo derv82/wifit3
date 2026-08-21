@@ -139,9 +139,16 @@ class RTL8822CUDriver(Driver):
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         try:
-            await asyncio.get_running_loop().run_in_executor(
-                None, self._retune_channel, channel
-            )
+            if scan:
+                # Fast hop: the vendor's runtime ``switch_channel_bw`` sequence only. Replaying the
+                # whole AGC/BB/RF init tables on every hop is what forced the 0.75 s dwell; the
+                # hopper now gets the cheap path and can dwell at the normal cadence.
+                await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: set_channel_20mhz(self.transport, channel))
+            else:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, self._retune_channel, channel
+                )
             self._current_channel = channel
             self.current_band_is_2g = channel <= 14
             return True
@@ -150,12 +157,14 @@ class RTL8822CUDriver(Driver):
             return False
 
     def _retune_channel(self, channel: int) -> None:
-        """Restore the complete RTL8822C PHY state before a runtime retune.
+        """Full lock-time retune: restore the complete RTL8822C PHY state.
 
-        The vendor driver reapplies the band-specific BB/RF tables when crossing
-        channels.  A bare RF18 write leaves stale AGC/RXBB state on this USB
-        adapter; experimentally that locks RX to the boot channel only.  The
-        table replay is deterministic and is the same sequence used at bring-up.
+        ``set_channel(scan=False)`` (campaign focus/PBC lock) replays the band-specific
+        BB/RF tables before the runtime switch. The vendor driver reapplies them when
+        crossing channels, and a bare RF18 write leaves stale AGC/RXBB state on this
+        USB adapter; experimentally that locks RX to the boot channel only. The table
+        replay is deterministic and is the same sequence used at bring-up. The scanner's
+        transient hops take ``set_channel_20mhz`` directly instead (see ``set_channel``).
         """
         if self.chip_info is None or self.efuse is None:
             raise RuntimeError("RTL8822CU PHY metadata is unavailable")

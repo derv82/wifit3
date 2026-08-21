@@ -27,6 +27,7 @@ USB_IDS_MT76X2U = [
     (0x0846, 0x9053, "MT7612U", "Netgear", "A6210"),
     (0x045e, 0x02e6, "MT7612U", "Microsoft", "Xbox One Wireless Adapter"),
     (0x045e, 0x02fe, "MT7612U", "Microsoft", "Xbox One Wireless Adapter"),
+    (0x2357, 0x0137, "MT7612U", "TP-Link", "TL-WDN6200"),
 ]
 
 # ---------------------------------------------------------------------------

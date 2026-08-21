@@ -166,3 +166,44 @@ def test_tap_off_by_default():
     d._our_tx_macs.add(ra)
     d._rx_dispatch(_ack_buf(ra))    # _ack_detect_on stays False
     assert d.acks_seen(ra) == 0
+
+
+async def test_set_channel_scan_takes_the_fast_path(monkeypatch):
+    from types import SimpleNamespace
+
+    d = _driver()
+    d.chip_info = SimpleNamespace(cut=5)
+    d.efuse = SimpleNamespace(rfe_type=3)
+    fast: list[int] = []
+    full: list[int] = []
+    monkeypatch.setattr(drv, "set_channel_20mhz", lambda transport, ch: fast.append(ch))
+    monkeypatch.setattr(drv, "initialize_phy", lambda *a, **k: full.append(a))
+    assert await d.set_channel(6, scan=True) is True
+    assert fast == [6]
+    assert full == []
+    assert d._current_channel == 6 and d.current_band_is_2g is True
+
+
+async def test_set_channel_lock_replays_the_phy_tables(monkeypatch):
+    from types import SimpleNamespace
+
+    d = _driver()
+    d.chip_info = SimpleNamespace(cut=5)
+    d.efuse = SimpleNamespace(rfe_type=3)
+    fast: list[int] = []
+    full: list[int] = []
+    monkeypatch.setattr(drv, "set_channel_20mhz", lambda transport, ch: fast.append(ch))
+    monkeypatch.setattr(drv, "initialize_phy", lambda *a, **k: full.append(a))
+    assert await d.set_channel(149, scan=False) is True
+    assert full and fast == [149]
+    assert d._current_channel == 149 and d.current_band_is_2g is False
+
+
+async def test_set_channel_scan_reports_failure(monkeypatch):
+    d = _driver()
+
+    def _boom(transport, ch):
+        raise ValueError("bad channel")
+
+    monkeypatch.setattr(drv, "set_channel_20mhz", _boom)
+    assert await d.set_channel(200, scan=True) is False
