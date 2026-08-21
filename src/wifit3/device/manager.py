@@ -7,6 +7,7 @@ only on a match (``driver_for`` / bring-up).
 """
 from __future__ import annotations
 
+import errno
 import functools
 import importlib
 import logging
@@ -304,7 +305,7 @@ class DeviceManager:
             # else fixable: fall through to setup
         except BringUpError as e:
             return BringupResult.failed(self._fault_message(device_id, e))
-        except (usb.core.USBError, OSError) as e:
+        except OSError as e:
             return BringupResult.failed(self._usb_fault_message(device_id, e))
 
         device_id = await self.setup.install(device_id, self.prompter)
@@ -316,7 +317,7 @@ class DeviceManager:
             return BringupResult.ready()
         except BringUpError as e:
             return BringupResult.failed(self._fault_message(device_id, e))
-        except (usb.core.USBError, OSError) as e:
+        except OSError as e:
             return BringupResult.failed(self._usb_fault_message(device_id, e))
 
     async def uninstall(self, device_id) -> SetupResult:
@@ -364,8 +365,8 @@ class DeviceManager:
         return f"{chip}: {e.stage} failed" + (f": {e.detail}" if e.detail else "")
 
     @staticmethod
-    def _usb_fault_message(device_id, e: usb.core.USBError | OSError) -> str:
+    def _usb_fault_message(device_id, e: OSError) -> str:
         chip = device_id.chipset
-        if is_device_gone(e) or getattr(e, "errno", None) in (5, 19):
+        if is_device_gone(e) or e.errno in (errno.EIO, errno.ENODEV):
             return f"{chip}: adapter disconnected during bring-up; replug it and try again"
         return f"{chip}: USB I/O failed during bring-up: {e}"
