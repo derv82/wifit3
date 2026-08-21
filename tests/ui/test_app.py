@@ -1,4 +1,5 @@
 import pytest
+
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
@@ -36,3 +37,4 @@ async def test_app_layout_and_boot():
         
         # Check that FocusViewV2 is registered (but requires target_ap to mount properly without escaping immediately, so we won't push it here)
         assert "focus" in pilot.app._installed_screens
+
