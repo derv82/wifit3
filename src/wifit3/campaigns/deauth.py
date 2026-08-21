@@ -12,6 +12,7 @@ import logging
 
 from wifit3.crack.handshake import crackable_pairs, pmkid_crackable
 
+from . import treelog
 from .campaign import Campaign
 
 logger = logging.getLogger(__name__)
@@ -79,18 +80,20 @@ class DeauthCampaign(Campaign):
 
     async def _loop(self) -> None:
         self._baseline = self._crackable_count()
-        self.log(f"targeting {len(self._target_clients())} client(s) + broadcast")
+        self.log(treelog.leaf(f"targeting {len(self._target_clients())} client(s) + broadcast"))
         async with self.array.lease(channel=self.target.channel, iface=self.iface) as iface:
             while not self.stopped and not self._new_capture():
                 for mac in self._target_clients():
                     if self.stopped or self._new_capture():
                         break
+                    self.log(f"Deauthing client [cyan]{mac}[/cyan]…")
                     res = await iface.deauth_client(self.target.bssid, mac, rounds=BURST_ROUNDS)
                     self.client_sent += res.total_sent
                     self.client_acks += res.total_acked
                     await self._settle()
                 if self.stopped or self._new_capture():
                     break
+                self.log("Deauthing [cyan]broadcast[/cyan]…")
                 self.bcast_sent += await iface.deauth_broadcast(self.target.bssid,
                                                                 count=BCAST_COUNT)
                 await self._settle()

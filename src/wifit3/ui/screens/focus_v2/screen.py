@@ -821,8 +821,7 @@ class FocusViewV2(Screen):
             return
         self._log(f"[bold]Deauth[/bold] of [bold]{escape(ap.ssid or ap.bssid)}[/bold]: "
                   "forcing a re-handshake")
-        self._deauth_campaign = DeauthCampaign(
-            array, ap, log=lambda m: self._log(treelog.branch(m)))
+        self._deauth_campaign = DeauthCampaign(array, ap, log=self._log)
         self._deauth_campaign.run()
 
     def _user_stop_deauth(self) -> None:
@@ -838,9 +837,9 @@ class FocusViewV2(Screen):
         if camp is None:
             return
         if camp.captured:
-            self._log(treelog.leaf("[bold green]✓ Deauth provoked a crackable handshake[/bold green]"))
+            self._log("[bold green]✓ Deauth provoked a crackable handshake[/bold green]")
         else:
-            self._log(treelog.leaf_fail("[bright_red bold]Deauth stopped[/]"))
+            self._log("[bright_red bold]Deauth stopped[/]")
 
     # ----- EvilTwin ----------------------------------------------------------
 
