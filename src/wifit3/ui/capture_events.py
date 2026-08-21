@@ -24,6 +24,7 @@ DECLOAK_METHOD_LABELS = {
     "beacon": "Beacon Leak",
     "probe_resp": "Probe Response",
     "assoc_req": "Association Request",
+    "reassoc_req": "Reassociation Request",
 }
 
 
@@ -70,7 +71,7 @@ class CaptureEvent:
     has_pmkid: Optional[bool] = None
     # handshake_complete-only
     pair_label: Optional[str] = None
-    # decloak-only: "probe_resp" | "assoc_req" (future: "mbssid_ie", "beacon_leak")
+    # decloak-only: "beacon"/"probe_resp"/"assoc_req"/"reassoc_req" (future: "mbssid_ie")
     method: Optional[str] = None
     # recovered credential for WEP_KEY / WPS_* kinds (key hex / PSK / PIN); the
     # kind says which it is. None for the others.

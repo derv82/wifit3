@@ -111,22 +111,28 @@ class WlanFrameParser:
                     fields[key] = tags[key]
             return BeaconPacket(**base, **fields)
 
-        if subtype in (cls.SUBTYPE_PROBE_REQ, cls.SUBTYPE_ASSOC_REQ):
+        if subtype == cls.SUBTYPE_PROBE_REQ:
             tags = cls._parse_tags(frame, subtype)
             if tags is None:
                 return None
-            ssid = tags.get("ssid")
-            if subtype == cls.SUBTYPE_ASSOC_REQ:
-                # Client's selected AKM from the RSN IE (24 hdr + cap + listen = 28).
-                return AssocRequestPacket(
-                    **base, type="assoc_req", ssid=ssid,
-                    assoc_akm=cls._first_rsn_akm(frame, 28))
-            return ProbeReqPacket(**base, type="probe_req", ssid=ssid)
+            return ProbeReqPacket(**base, type="probe_req", ssid=tags.get("ssid"))
+
+        if subtype == cls.SUBTYPE_ASSOC_REQ:
+            tags = cls._parse_tags(frame, subtype)
+            if tags is None:
+                return None
+            # Client's selected AKM from the RSN IE (24 hdr + cap + listen = 28).
+            return AssocRequestPacket(
+                **base, type="assoc_req", ssid=tags.get("ssid"),
+                assoc_akm=cls._first_rsn_akm(frame, 28))
 
         if subtype == cls.SUBTYPE_REASSOC_REQ:
-            # +6 past Assoc's offset for the Current AP Address field (34 = 28 + 6).
+            tags = cls._parse_tags(frame, subtype)
+            if tags is None:
+                return None
+            # 34 = assoc's 28 + 6-byte Current AP Address.
             return AssocRequestPacket(
-                **base, type="reassoc_req",
+                **base, type="reassoc_req", ssid=tags.get("ssid"),
                 assoc_akm=cls._first_rsn_akm(frame, 34))
 
         if subtype == cls.SUBTYPE_ASSOC_RESP:
@@ -447,6 +453,10 @@ class WlanFrameParser:
             ptr = 36 # Skip 24-byte HDR + 12-byte Fixed Params
         elif subtype == cls.SUBTYPE_PROBE_REQ:
             ptr = 24 # 24-byte HDR + 0-byte Fixed Params
+        elif subtype == cls.SUBTYPE_ASSOC_REQ:
+            ptr = 28 # 24-byte HDR + Capability(2) + Listen Interval(2)
+        elif subtype == cls.SUBTYPE_REASSOC_REQ:
+            ptr = 34 # assoc offset + Current AP Address(6)
         else:
             return parsed
 

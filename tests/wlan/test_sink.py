@@ -98,6 +98,28 @@ def test_assoc_req_stamps_client_akm():
     assert s.clients[client].akm_selected == 0x02
 
 
+def test_decloak_via_assoc_req():
+    """A client's assoc-req SSID IE decloaks the hidden AP it's joining."""
+    s = WlanSink()
+    s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid": "<hidden>"}), W0)
+    assert s.access_points[BSSID].ssid is None
+    s.update(pkt({"type": "assoc_req", "bssid": BSSID, "source": "12:22:33:44:55:66",
+                  "dest": BSSID, "rssi": -45, "ssid": "Real_Name"}), W0)
+    ap = s.access_points[BSSID]
+    assert ap.ssid == "Real_Name" and ap.decloak_method == "assoc_req"
+
+
+def test_decloak_via_reassoc_req():
+    """Reassoc-req carries the SSID too (PMF doesn't protect it), so it decloaks as well."""
+    s = WlanSink()
+    s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid": "<hidden>"}), W0)
+    assert s.access_points[BSSID].ssid is None
+    s.update(pkt({"type": "reassoc_req", "bssid": BSSID, "source": "12:22:33:44:55:66",
+                  "dest": BSSID, "rssi": -45, "ssid": "Real_Name"}), W0)
+    ap = s.access_points[BSSID]
+    assert ap.ssid == "Real_Name" and ap.decloak_method == "reassoc_req"
+
+
 def test_from_ds_client_is_receiver_not_addr3_origin():
     s = WlanSink()
     client, upstream = "12:22:33:44:55:66", "de:ad:be:ef:00:01"
