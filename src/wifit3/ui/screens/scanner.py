@@ -591,6 +591,8 @@ class ScannerView(Screen):
     # ----- Capture-event logging ---------------------------------------------
 
     def _drain_capture_events(self, ap: AccessPoint, forged_macs) -> None:
+        if Config.is_silenced(ap.bssid):
+            return
         for ev in self._events.poll(ap, forged_macs=forged_macs):
             self._log_capture_event(ev, ap)
 
@@ -783,6 +785,8 @@ class ScannerView(Screen):
             self._on_pbc_window(ap)
 
     def _on_pbc_window(self, ap: AccessPoint) -> None:
+        if Config.is_silenced(ap.bssid):
+            return
         label = escape(ap.ssid or ap.bssid)
         self._write_log(
             f"[bold cyan]WPS PushButton [italic]auto-invade:[/italic][/bold cyan] "

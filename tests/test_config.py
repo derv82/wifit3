@@ -6,10 +6,11 @@ from wifit3.persist.config import Config, ConfigError
 
 @pytest.fixture(autouse=True)
 def _restore_defaults():
-    saved = {k: getattr(Config, k) for k in ("theme", "scanner_sort", "scanner_sort_reverse")}
+    keys = ("theme", "scanner_sort", "scanner_sort_reverse", "silenced_bssids")
+    saved = {k: getattr(Config, k) for k in keys}
     yield
     for k, v in saved.items():
-        setattr(Config, k, v)
+        setattr(Config, k, list(v) if isinstance(v, list) else v)
 
 
 @pytest.fixture
@@ -78,3 +79,39 @@ def test_fmt_scalars():
     assert cfg._fmt(False) == "false"
     assert cfg._fmt(3) == "3"
     assert cfg._fmt("signal") == "'signal'"
+
+
+def test_fmt_list():
+    assert cfg._fmt([]) == "[]"
+    assert cfg._fmt(["aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"]) == \
+        "['aa:bb:cc:dd:ee:ff', '11:22:33:44:55:66']"
+
+
+def test_silenced_bssids_save_load_roundtrip(config_path):
+    Config.silenced_bssids = ["aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"]
+    Config.save()
+    assert "silenced_bssids = ['aa:bb:cc:dd:ee:ff', '11:22:33:44:55:66']" \
+        in config_path.read_text("utf-8")
+    Config.silenced_bssids = []
+    Config.load()
+    assert Config.silenced_bssids == ["aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"]
+
+
+def test_silenced_bssids_load_normalizes_case(config_path):
+    config_path.write_text("silenced_bssids = ['AA:BB:CC:DD:EE:FF']\n")
+    Config.load()
+    assert Config.silenced_bssids == ["aa:bb:cc:dd:ee:ff"]
+
+
+def test_silenced_bssids_bad_type_keeps_default(config_path):
+    Config.silenced_bssids = []
+    config_path.write_text('silenced_bssids = "not-a-list"\n')
+    Config.load()
+    assert Config.silenced_bssids == []
+
+
+def test_is_silenced_is_case_insensitive():
+    Config.silenced_bssids = ["aa:bb:cc:dd:ee:ff"]
+    assert Config.is_silenced("AA:BB:CC:DD:EE:FF") is True
+    assert Config.is_silenced("aa:bb:cc:dd:ee:ff") is True
+    assert Config.is_silenced("11:22:33:44:55:66") is False

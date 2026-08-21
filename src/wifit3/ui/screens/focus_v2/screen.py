@@ -45,6 +45,7 @@ from wifit3.crack.handshake import handshake_uncrackable_label
 from wifit3.persist.save import (
     save_handshake, save_pmkid, save_wep_key, save_wps_pbc, save_wps_pin,
 )
+from wifit3.persist.config import Config
 
 from ... import focus_model as fm
 from ...capture_events import (
@@ -137,6 +138,7 @@ class FocusViewV2(Screen):
           for cls in fm.BUTTON_CAMPAIGNS if cls.hotkey],
         Binding("c", "campaign('chop')", "ChopChop", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
+        Binding("s", "toggle_silence", "Silence", show=True),
         Binding("q", "app.quit", "Quit", show=True),
     ]
 
@@ -471,11 +473,7 @@ class FocusViewV2(Screen):
         # Clear the manual-stop suppression when the window closes; a fresh one re-arms.
         if not ap.wps_pbc_active:
             self._pbc_user_stopped = False
-        if (ap.wps_pbc_active and getattr(self.app, "pbc_enabled", True)
-                and time.monotonic() >= self._pbc_retry_after
-                and not self._pbc_busy() and not self._pbc_user_stopped and not ap.has_psk
-                and self._wep_campaign is None and self._wps_campaign is None
-                and self._deauth_campaign is None and self._eviltwin_attack is None):
+        if self._should_auto_invade_pbc(ap):
             self._start_pbc_capture(ap)
 
         snap = self._snapshot()
@@ -496,6 +494,17 @@ class FocusViewV2(Screen):
         array = self.app.array
         self._drive_leds(ap, array)
         self._drain_capture_events(ap, array.forged_macs if array else set(), time.time())
+
+    def _should_auto_invade_pbc(self, ap) -> bool:
+        if not (ap.wps_pbc_active and self.app.pbc_enabled):
+            return False
+        if Config.is_silenced(ap.bssid) or ap.has_psk or self._pbc_user_stopped:
+            return False
+        if time.monotonic() < self._pbc_retry_after or self._pbc_busy():
+            return False
+        # no other attack owns the target
+        return (self._wep_campaign is None and self._wps_campaign is None
+                and self._deauth_campaign is None and self._eviltwin_attack is None)
 
     def _distribute(self) -> None:
         """Fill the mid band to full 2-row sparklines."""
@@ -553,6 +562,8 @@ class FocusViewV2(Screen):
 
     def _drain_capture_events(self, ap, forged_macs: Set[str], now: float) -> None:
         # EAPOL + handshake completions go through the aggregator (one tree per client); PMKID / decloak are immediate.
+        if Config.is_silenced(ap.bssid):
+            return
         for ev in self._events.poll(ap, forged_macs=forged_macs):
             if ev.kind == CaptureKind.EAPOL:
                 self._eapol_agg.on_eapol(ev, now)
@@ -674,6 +685,21 @@ class FocusViewV2(Screen):
         else:
             self._log("[bold]WPS PushButton Extraction[/bold] "
                       "[yellow]disabled[/yellow] [dim](detect only, press w to toggle)[/dim]")
+
+    def action_toggle_silence(self) -> None:
+        """'s': silence the focused AP (disable campaigns, ignore its handshakes/PMKIDs)."""
+        if self._target_ap is None:
+            return
+        bssid = self._target_ap.bssid.lower()
+        if bssid in Config.silenced_bssids:
+            Config.silenced_bssids.remove(bssid)
+            self._log("[green]● AP unsilenced[/green]")
+        else:
+            Config.silenced_bssids.append(bssid)
+            self._log("[yellow]● AP silenced: campaigns disabled, handshakes ignored[/yellow]")
+        self.app.persist_config()
+        self._refresh_buttons()
+        self._sync_bindings()
 
     # ----- deauth ------------------------------------------------------------
 

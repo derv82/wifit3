@@ -11,6 +11,7 @@ from wifit3.campaigns.campaign import Campaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.models import Handshake
 from wifit3.ui import focus_model as fm
+from wifit3.persist.config import Config
 
 
 @pytest.fixture(autouse=True)
@@ -33,7 +34,7 @@ def _wep_ap(*, wep_key=None, persisted_wep=False, unique_ivs=0):
     return types.SimpleNamespace(
         encryption="WEP", wep_key=wep_key, persisted=persisted,
         wep=types.SimpleNamespace(unique_ivs=unique_ivs),
-        handshakes={}, wpa3=False, transition_mode=False,
+        handshakes={}, wpa3=False, transition_mode=False, bssid="aa:bb:cc:dd:ee:ff",
     )
 
 
@@ -49,6 +50,7 @@ def _wpa_ap(*, known_psk=None):
     return types.SimpleNamespace(
         encryption="WPA2", wep_key=None, persisted=[], wep=None,
         handshakes={}, wpa3=False, transition_mode=False, known_psk=known_psk,
+        bssid="aa:bb:cc:dd:ee:ff",
     )
 
 
@@ -74,7 +76,7 @@ def _pmkid_ap(pmkid_akm):
     hs = Handshake(bssid="aa:bb:cc:dd:ee:01", client_mac="11:22:33:44:55:66",
                    pmkid=bytes(16), pmkid_akm=pmkid_akm, beacon_frame=b"x")
     return types.SimpleNamespace(encryption="WPA2", wep_key=None, persisted=[], wep=None,
-                                 known_psk=None, handshakes={"11:22:33:44:55:66": hs})
+                                 known_psk=None, handshakes={"11:22:33:44:55:66": hs}, bssid="aa:bb:cc:dd:ee:ff")
 
 
 def test_headline_sae_pmkid_is_not_a_captured_win():
@@ -236,7 +238,7 @@ def test_status_footer_wep_is_fakeauth_and_usable_ivs():
 def _wep_btn_ap():
     return types.SimpleNamespace(encryption="WEP", wps=None, wpa3=False,
                                  transition_mode=False, wps_locked=False,
-                                 ssid="WepNet", akm_suites=[], last_beacon_frame=b"\x80\x00beacon")
+                                 ssid="WepNet", akm_suites=[], bssid="aa:bb:cc:dd:ee:ff", last_beacon_frame=b"\x80\x00beacon")
 
 
 def test_derive_buttons_wep_labels_and_variants():
@@ -411,3 +413,20 @@ def test_headline_eviltwin_active_and_captured():
     assert "3 direct" in active[2] and "5 wildcard" in active[2]
     camp.captured = True
     assert "Captured" in fm.derive_headline(_rsn_ap(), None, campaigns)[0]
+
+
+def test_derive_buttons_all_disabled_when_silenced(monkeypatch):
+    """Silencing an AP disables every campaign button (deauth included)."""
+    ap = _rsn_ap(akms=("PSK",))
+    monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
+    btns = fm.derive_buttons(ap)
+    for bid in ("btn-gen-ivs", "btn-pmkid", "btn-deauth", "btn-wps-pin",
+                "btn-eviltwin", "btn-chop"):
+        assert btns[bid].disabled is True
+    assert btns["btn-deauth"].reason == "AP silenced"
+
+
+def test_headline_silenced_outranks_listening(monkeypatch):
+    ap = _wpa_ap(known_psk=None)
+    monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
+    assert "Silenced" in fm.derive_headline(ap, None, fm.Campaigns())[0]
