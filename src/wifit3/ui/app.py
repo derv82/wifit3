@@ -6,7 +6,7 @@ from textual.app import App, InvalidThemeError
 from typing import Optional
 
 from wifit3.chips import log_trace
-from wifit3.persist.config import DEFAULT_THEME, Config, ConfigError
+from wifit3.persist.config import Config, ConfigError
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
 from wifit3.device.manager import DeviceManager, Status
 from wifit3.device.watch import DeviceWatch
@@ -154,14 +154,14 @@ class WifiteApp(App):
             self.theme = Config.theme
         except InvalidThemeError:
             bad = Config.theme
-            Config.theme = DEFAULT_THEME
+            Config.theme = "textual-dark"
             self.theme = Config.theme
             try:
                 Config.save()
             except ConfigError as e:
                 self._config_error = str(e)
             else:
-                self._config_error = f"Unknown theme {bad!r}; reset to {DEFAULT_THEME}."
+                self._config_error = f"Unknown theme {bad!r}; reset to textual-dark."
         self._refresh_theme_dependents()
 
     def _reload_themes_if_changed(self) -> None:

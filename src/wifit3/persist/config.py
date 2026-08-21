@@ -7,7 +7,6 @@ from pathlib import Path
 from platformdirs import user_config_dir
 
 _PATH = Path(user_config_dir("wifit3", appauthor=False)) / "config.toml"
-DEFAULT_THEME = "wifit3-green-dark"
 
 
 class ConfigError(Exception):
@@ -15,7 +14,7 @@ class ConfigError(Exception):
 
 
 class Config:
-    theme: str = DEFAULT_THEME
+    theme: str = "textual-dark"
     scanner_sort: str = "signal"
     scanner_sort_reverse: bool = True
     silenced_bssids: list[str] = []

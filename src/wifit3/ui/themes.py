@@ -26,6 +26,8 @@ _COLOR_KEYS = {
     "primary", "secondary", "warning", "error", "success", "accent", "foreground",
     "background", "surface", "panel", "boost",
 }
+# Removes matching registered themes from Wifit3's available theme list.
+BLACKLISTED_THEME_NAMES: list[str] = []
 
 
 @dataclass(frozen=True)
@@ -59,7 +61,8 @@ def register_app_themes(app, *, user_dir: Path | None = None) -> ThemeReloadResu
     """Register packaged Wifit3 themes, then user-defined themes.
 
     User themes are registered second so a user may intentionally override a Wifit3 theme name.
-    Built-in Textual themes are owned by Textual and are not touched here.
+    Built-in Textual themes are owned by Textual. Hardcoded Wifit3-blacklisted themes are
+    removed after registration.
     """
     registered: list[str] = []
     skipped: list[str] = []
@@ -67,10 +70,25 @@ def register_app_themes(app, *, user_dir: Path | None = None) -> ThemeReloadResu
         _register_theme_file(app, path, registered, skipped)
     for path in _theme_files(user_dir or USER_THEMES_DIR):
         _register_theme_file(app, path, registered, skipped)
+    unregister_blacklisted_themes(app)
     return ThemeReloadResult(
         changed=bool(registered or skipped),
         registered=tuple(registered), skipped=tuple(skipped),
     )
+
+
+def is_theme_blacklisted(name: str) -> bool:
+    return name in BLACKLISTED_THEME_NAMES
+
+
+def unregister_blacklisted_themes(app) -> None:
+    themes = getattr(app, "_registered_themes", None)
+    if themes is None:
+        themes = getattr(app, "available_themes", None)
+    if themes is None:
+        return
+    for name in BLACKLISTED_THEME_NAMES:
+        themes.pop(name, None)
 
 
 def _theme_files(path: Path) -> list[Path]:

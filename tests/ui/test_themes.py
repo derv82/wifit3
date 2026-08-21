@@ -8,9 +8,11 @@ from textual.widgets import Static
 from wifit3.ui.ansi_art import recolor_logo
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.themes import (
+    BLACKLISTED_THEME_NAMES,
     BUILTIN_THEMES_DIR,
     ThemeFilePoller,
     ThemeLoadError,
+    is_theme_blacklisted,
     load_theme_file,
     register_app_themes,
 )
@@ -19,13 +21,24 @@ from wifit3.ui.themes import (
 class _ThemeApp:
     def __init__(self):
         self.themes = {}
+        self.available_themes = self.themes
 
     def register_theme(self, theme):
         self.themes[theme.name] = theme
 
 
+def test_register_app_themes_keeps_textual_themes_available():
+    app = WifiteApp()
+
+    assert BLACKLISTED_THEME_NAMES == []
+    assert not is_theme_blacklisted("textual-dark")
+    assert "wifit3-green-dark" in app.available_themes
+    assert "textual-dark" in app.available_themes
+    assert "textual-light" in app.available_themes
+
+
 def test_builtin_green_theme_defines_selection_colors():
-    theme = load_theme_file(BUILTIN_THEMES_DIR / "wifit3-green-dark.toml")
+    theme = load_theme_file(BUILTIN_THEMES_DIR / "wifit3-green.toml")
 
     assert theme.variables["block-cursor-background"] == "#00ff88"
     assert theme.variables["block-hover-background"] == "#163322"
@@ -240,5 +253,5 @@ name = "live-theme"
     result = poller.reload_if_changed(app)
 
     assert result.changed is True
-    assert result.registered == ("wifit3-green-dark", "live-theme")
+    assert result.registered == ("wifit3-green", "live-theme")
     assert app.themes["live-theme"].primary == "#00ff88"
