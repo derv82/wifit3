@@ -337,3 +337,15 @@ def set_channel_20mhz(transport: RTL8822CUTransport, channel: int) -> None:
     _write_bb_mask(transport, 0x1830, 1 << 29, 1)
     _write_bb_mask(transport, 0x4130, 1 << 29, 1)
     _apply_phy_changes(transport)
+
+
+def set_channel_fast(transport: RTL8822CUTransport, channel: int) -> None:
+    """Fast scan hop: re-arm the CCK/OFDM RX blocks, then run the runtime switch.
+
+    ``set_channel_20mhz`` alone wedges the 2.4 GHz RX chain under rapid hopping (only a
+    full table replay revives it). Re-running the post PHY-parameter init — a handful of
+    BB writes that re-enable the RX blocks — before the switch keeps the radio receiving
+    at the scanner's cadence. Hardware-verified on the 2357:0137 adapter.
+    """
+    _phy_parameter_init(transport, post=True)
+    set_channel_20mhz(transport, channel)

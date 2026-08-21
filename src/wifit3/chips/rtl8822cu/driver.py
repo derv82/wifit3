@@ -25,7 +25,7 @@ from .mac import (
     mac_power_on,
     set_mac_addr,
 )
-from .phy import initialize_phy, set_channel_20mhz
+from .phy import initialize_phy, set_channel_20mhz, set_channel_fast
 from .rx import iter_bulk_frames, read_rx_burst
 from .transport import EndpointLayout, RTL8822CUTransport
 from .tx import TX_DESC_QSEL_MGMT, build_tx_desc_mgmt, pick_bulk_out_ep, write_bulk
@@ -115,12 +115,14 @@ class RTL8822CUDriver(Driver):
                 progress_cb(0.98, "Configuring RTL8822C monitor RX")
             await loop.run_in_executor(None, init_rx_mac, self.transport)
             await loop.run_in_executor(None, enter_monitor_mode, self.transport)
-            # The BB/RF tables must be (re)applied after the monitor-MAC setup: on this USB
-            # adapter, running them before init_rx_mac/enter_monitor_mode leaves the 2.4 GHz
-            # RX chain wedged (zero frames on ch1 after connect) until they are replayed.
-            await loop.run_in_executor(
-                None, lambda: initialize_phy(self.transport, cut=self.chip_info.cut, rfe_type=rfe_type)
-            )
+            # The BB/RF tables must be applied after the monitor-MAC setup, and the first
+            # application right after firmware boot does not reliably latch the RX chain on
+            # this adapter (post-connect RX can stay silent). The second replay establishes
+            # the working receiver; hardware-verified on the 2357:0137 adapter.
+            for _ in range(2):
+                await loop.run_in_executor(
+                    None, lambda: initialize_phy(self.transport, cut=self.chip_info.cut, rfe_type=rfe_type)
+                )
             await loop.run_in_executor(None, set_channel_20mhz, self.transport, 1)
         except (IOError, usb.core.USBError) as exc:
             raise BringUpError("firmware", str(exc)) from exc
@@ -143,11 +145,12 @@ class RTL8822CUDriver(Driver):
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         try:
             if scan:
-                # Fast hop: the vendor's runtime ``switch_channel_bw`` sequence only. Replaying the
-                # whole AGC/BB/RF init tables on every hop is what forced the 0.75 s dwell; the
-                # hopper now gets the cheap path and can dwell at the normal cadence.
+                # Fast hop: re-arm the RX blocks then the runtime ``switch_channel_bw``
+                # sequence. A bare ``set_channel_20mhz`` wedges the 2.4 GHz chain under rapid
+                # hopping; the per-hop post-init is a handful of writes and keeps the radio
+                # receiving at the scanner cadence (hardware-verified).
                 await asyncio.get_running_loop().run_in_executor(
-                    None, lambda: set_channel_20mhz(self.transport, channel))
+                    None, lambda: set_channel_fast(self.transport, channel))
             else:
                 await asyncio.get_running_loop().run_in_executor(
                     None, self._retune_channel, channel
@@ -167,7 +170,7 @@ class RTL8822CUDriver(Driver):
         crossing channels, and a bare RF18 write leaves stale AGC/RXBB state on this
         USB adapter; experimentally that locks RX to the boot channel only. The table
         replay is deterministic and is the same sequence used at bring-up. The scanner's
-        transient hops take ``set_channel_20mhz`` directly instead (see ``set_channel``).
+        transient hops take ``set_channel_fast`` instead (see ``set_channel``).
         """
         if self.chip_info is None or self.efuse is None:
             raise RuntimeError("RTL8822CU PHY metadata is unavailable")

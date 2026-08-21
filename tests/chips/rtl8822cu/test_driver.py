@@ -176,7 +176,7 @@ async def test_set_channel_scan_takes_the_fast_path(monkeypatch):
     d.efuse = SimpleNamespace(rfe_type=3)
     fast: list[int] = []
     full: list[int] = []
-    monkeypatch.setattr(drv, "set_channel_20mhz", lambda transport, ch: fast.append(ch))
+    monkeypatch.setattr(drv, "set_channel_fast", lambda transport, ch: fast.append(ch))
     monkeypatch.setattr(drv, "initialize_phy", lambda *a, **k: full.append(a))
     assert await d.set_channel(6, scan=True) is True
     assert fast == [6]
@@ -205,5 +205,5 @@ async def test_set_channel_scan_reports_failure(monkeypatch):
     def _boom(transport, ch):
         raise ValueError("bad channel")
 
-    monkeypatch.setattr(drv, "set_channel_20mhz", _boom)
+    monkeypatch.setattr(drv, "set_channel_fast", _boom)
     assert await d.set_channel(200, scan=True) is False
