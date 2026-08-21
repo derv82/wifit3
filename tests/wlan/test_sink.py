@@ -138,15 +138,21 @@ def test_forged_mac_does_not_create_client_or_append_eapol():
     assert hs.pmkid == pmkid and hs.messages == []
 
 
-def test_register_and_unregister_self_mac():
+def test_register_and_unregister_own_mac():
     s = WlanSink()
-    mac = s.register_self_mac(b"\x02\x00\x00\x00\x00\x01", bssid="12:22:33:44:55:66")
+    mac = s.register_own_mac(b"\x02\x00\x00\x00\x00\x01")
     assert mac == "02:00:00:00:00:01"
-    c = s.clients[mac]
-    assert c.is_self is True and c.bssid == "12:22:33:44:55:66"
-    assert mac in s.self_macs and mac not in s.forged_macs
-    s.unregister_self_mac(mac)
-    assert mac not in s.clients and mac not in s.self_macs
+    assert mac in s.own_macs and mac not in s.clients   # our own MAC is never a client
+    s.unregister_own_mac(mac)
+    assert mac not in s.own_macs
+
+
+def test_self_and_forged_aliases_funnel_to_own_macs():
+    s = WlanSink()
+    s.register_forged_mac("aa:bb:cc:dd:ee:01")
+    s.register_self_mac("aa:bb:cc:dd:ee:02", bssid="12:22:33:44:55:66")
+    assert {"aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"} <= s.own_macs
+    assert s.forged_macs == s.own_macs                  # back-compat alias
 
 
 def test_wep_ivs_tallied_onto_ap():

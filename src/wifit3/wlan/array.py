@@ -17,6 +17,7 @@ from wifit3.wlan.dedupe import StreamMerger
 from wifit3.wlan.interface import WlanInterface
 from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.sink import WlanSink
+from wifit3.wlan.lease import Lease
 from wifit3.wlan.wep_store import WepCaptureStore
 
 logger = logging.getLogger(__name__)
@@ -160,6 +161,19 @@ class WlanArray:
             return self._preferred
         return min(cands, key=fake_mac_rank)
 
+    def lease(self, channel=None, fake_mac=None, bssid=None, ack_tally=False, iface=None) -> Lease:
+        """Scoped hold on one interface (selected by ``channel`` unless ``iface`` is given).
+        Restores channel, fake MAC and ACK tally on exit; raises when no interface can serve."""
+        target = iface
+        if target is None and channel is not None:
+            target = self.select_iface(channel)
+        if target is None:
+            target = self._members[0] if self._members else None
+        if target is None:
+            raise RuntimeError("no interface available to lease")
+        return Lease(self, target, channel=channel, fake_mac=fake_mac,
+                     bssid=bssid, ack_tally=ack_tally)
+
     # ----- deduped RX subscription (no v1 consumer, kept for future) ----------
 
     def register_rx_callback(self, cb: Callable[[Packet], None]) -> None:
@@ -183,12 +197,13 @@ class WlanArray:
         # FromDS frame source is addr3, so the AP's fresh-IV rebroadcast of our replayed ARP (our MAC
         # in addr3, BSSID as TA) would be dropped and zero the IV rate. TA-keying counts it and still
         # drops a second card hearing our own ToDS injection (TA == our MAC).
-        if pkt.transmitter in self._sink.forged_macs or pkt.transmitter in self._sink.self_macs:
+        if pkt.transmitter in self._sink.own_macs:
             return
         if self._is_stray_beacon(pkt):
             return
         if self._dedupe.submit(card_id, pkt.raw, time.monotonic()):
             self._sink.update(pkt, card_id, channel_hint=iface.current_channel)
+            self._sink.dispatch_rx(pkt)
             for cb in self._rx_callbacks:
                 try:
                     cb(pkt)
@@ -230,6 +245,12 @@ class WlanArray:
     def packet_stats(self) -> PacketStats:
         return self._sink.packet_stats
 
+    async def next_frame(self, match, timeout: float):
+        return await self._sink.next_frame(match, timeout)
+
+    async def wait_until(self, condition, timeout: float, poll: float = 0.05) -> bool:
+        return await self._sink.wait_until(condition, timeout, poll)
+
     def get_access_points(self, include_eviltwin: bool = True) -> List[AccessPoint]:
         aps = self._sink.get_access_points()
         if include_eviltwin:
@@ -238,6 +259,12 @@ class WlanArray:
 
     def register_forged_mac(self, mac) -> None:
         self._sink.register_forged_mac(mac)
+
+    def register_own_mac(self, mac) -> str:
+        return self._sink.register_own_mac(mac)
+
+    def unregister_own_mac(self, mac) -> None:
+        self._sink.unregister_own_mac(mac)
 
     def record_injected_eapol(self, frame) -> None:
         self._sink.record_injected_eapol(frame)
@@ -286,7 +313,7 @@ class WlanArray:
     def _partition(self, channels: List[int]) -> dict:
         """SPREAD: give each channel to one capable card, balancing counts, so N cards cover N-way
         more air per hop. Iterate channels high-first (5 GHz before 2.4 GHz) so a dual-band card
-        absorbs the scarce 5 GHz work before the all-band 2.4 GHz channels spread — that keeps cards
+        absorbs the scarce 5 GHz work before the all-band 2.4 GHz channels spread. That keeps cards
         on-band and avoids costly band switches. Any card the spread leaves empty (more cards than
         channels) then hops every filter channel it supports, doubling up for redundant RX rather
         than stranding on its last channel. A channel no card supports is dropped."""
@@ -325,7 +352,7 @@ class WlanArray:
                              return_exceptions=True)
 
     def _run_on_loop(self, spawn) -> None:
-        """Call ``spawn(loop)`` on the array's event loop — directly when already on it (attach), or
+        """Call ``spawn(loop)`` on the array's event loop: directly when already on it (attach), or
         via call_soon_threadsafe when not (the RX-reader disconnect path runs off the loop)."""
         loop = self._loop
         if loop is None:
@@ -357,7 +384,7 @@ class WlanArray:
 
     def _close_lost(self, iface: WlanInterface) -> None:
         """Stop a vanished card's async tasks (watchdog, RX reader, hop) by closing it. The device is
-        gone, so close() may itself raise doing USB ops on a dead handle — swallow everything. Runs on
+        gone, so close() may itself raise doing USB ops on a dead handle, so swallow everything. Runs on
         the array's loop (_member_lost fires off the RX-reader thread)."""
         async def _close() -> None:
             try:

@@ -46,6 +46,17 @@ class _FakeIface:
     def register_forged_mac(self, mac):
         pass
 
+    def register_own_mac(self, mac):
+        return mac if isinstance(mac, str) else ":".join(f"{b:02x}" for b in mac)
+
+    def unregister_own_mac(self, mac):
+        pass
+
+    def lease(self, channel=None, fake_mac=None, bssid=None, ack_tally=False, iface=None):
+        from wifit3.wlan.lease import Lease
+        return Lease(self, iface or self, channel=channel, fake_mac=fake_mac,
+                     bssid=bssid, ack_tally=ack_tally)
+
     def register_rx_callback(self, cb):
         self._cb = cb
 

@@ -126,7 +126,7 @@ class EvilTwinCampaign(Campaign):
         """MACs associated to the real target AP: the STAs a BTM punt steers to the twin."""
         target = self.ap.bssid.lower()
         return [str_to_mac(c.mac) for c in self.array.clients.values()
-                if not c.is_self and (c.bssid or "").lower() == target]
+                if (c.bssid or "").lower() == target]
 
     def _should_punt(self, already_punted: bool) -> bool:
         if self.punter is None or self.punt_period_sec is None:

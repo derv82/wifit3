@@ -122,6 +122,7 @@ class WpsCampaign(Campaign):
         self.our_mac = random_client_mac()
         self.assoc: Optional[Association] = None
         self.transport: Optional[WlanTransport] = None
+        self._lease = None
         self._tx_ack = True
         self._ack_resends = 1        # max resends of an un-ACKed M-frame
         self._ap_ever_acked = False  # If AP ever ACK'd any of our frames
@@ -201,11 +202,9 @@ class WpsCampaign(Campaign):
         """Exit-driven cleanup (every exit: done / stop / crash)."""
         self._save_state()
         self._teardown()
-        card = self.iface
-        if card is not None:
-            await card.clear_fake_mac()
-            if self._tx_ack:
-                await card.disable_rx_acks()
+        if self._lease is not None:
+            await self._lease.release()
+            self._lease = None
 
     def pause(self) -> None:
         self._paused = True
@@ -238,12 +237,13 @@ class WpsCampaign(Campaign):
     # ---- the sweep ----------------------------------------------------------
     async def _ensure_session(self) -> bool:
         if self.assoc is None:
-            # Arm fake_mac so the chip HW-ACKs the AP so it stops retransmitting. A no-op return
-            # on a card that can't spoof-ACK. A FIXED_MAC card returns its silicon MAC.
-            armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
-            if armed:
-                self.our_mac = str_to_mac(armed)
-            self.array.register_forged_mac(self.our_mac)   # transport is radio-only; register here
+            # The lease armed our fake MAC (HW-ACK); a _rotate_mac changes it, so re-arm then.
+            rotated = (self._lease is not None and self._lease.mac
+                       and str_to_mac(self._lease.mac) != self.our_mac)
+            if rotated:
+                await self._lease.rearm(self.our_mac)
+                if self._lease.mac:
+                    self.our_mac = str_to_mac(self._lease.mac)
             self.assoc = Association(self.iface, self.bssid, self.target.ssid or "",
                                      self.channel, our_mac=self.our_mac,
                                      assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR),
@@ -389,8 +389,11 @@ class WpsCampaign(Campaign):
 
     async def _loop(self) -> None:
         self.status = "running"
-        if self._tx_ack:
-            await self.iface.enable_rx_acks()
+        self._lease = self.array.lease(channel=self.channel, fake_mac=self.our_mac,
+                                       bssid=str_to_mac(self.bssid), ack_tally=self._tx_ack)
+        await self._lease.acquire()
+        if self._lease.mac:
+            self.our_mac = str_to_mac(self._lease.mac)
         name = self.target.ssid or self.bssid
         logger.info("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
         if self._oui_pin_count:
@@ -482,7 +485,7 @@ class WpsCampaign(Campaign):
             logger.exception("WPS campaign crashed")
             self.status = "error"
             self.log(f"[red]campaign error:[/red] {e}")
-        # save + _teardown + clear_fake_mac now run in teardown() (every exit).
+        # save + _teardown + lease release now run in teardown() (every exit).
 
     def _beacon_locked(self) -> bool:
         ap = self.array.access_points.get(self.bssid)

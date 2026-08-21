@@ -6,6 +6,8 @@ active). Covers the deauth-clients screen, the campaign keys mirroring derive_bu
 per encryption family, the shared WPS-PBC toggle, and the PBC auto-capture guard.
 Driven by a real WlanInterface (mock driver), no hardware.
 """
+from types import SimpleNamespace
+
 import pytest
 import pytest_asyncio
 from textual.app import App
@@ -140,23 +142,24 @@ async def _rebind(host, array, ap):
 
 
 @pytest.mark.asyncio(loop_scope="module")
-async def test_deauth_hotkey_gated_on_pmf_not_clients(focus_host):
-    """'d' (broadcast deauth) is active even with no known clients (True) (it hits
-    every STA), stays active once a client appears (True), and is greyed only when
-    the AP requires PMF (None)."""
+async def test_deauth_campaign_key_visible_on_psk_hidden_on_pmf(focus_host):
+    """'d' now toggles the Deauth campaign (the one-shot 'Deauth all' button keeps
+    its click but loses the key): active on WPA2-PSK with no clients (True, it can
+    still broadcast), still active once a client appears (True), and HIDDEN (False,
+    not greyed) once the AP requires PMF, which protects the deauth."""
     bssid, client = "aa:bb:cc:dd:ee:01", "9c:b6:d0:1a:2b:3c"
     iface, array, ap = _wpa2_target(bssid)
     focus = await _rebind(focus_host, array, ap)
     focus._tick()
-    assert focus.check_action("deauth_all", ()) is True        # no clients → still active
+    assert focus.check_action("campaign", ("deauth",)) is True    # no clients → still active
 
     iface._on_frame_parsed(_client_data(bssid, client))
     focus._tick()
-    assert focus.check_action("deauth_all", ()) is True        # a client → active
+    assert focus.check_action("campaign", ("deauth",)) is True    # a client → active
 
     ap.pmf_required = True
     focus._tick()
-    assert focus.check_action("deauth_all", ()) is None        # PMF → greyed
+    assert focus.check_action("campaign", ("deauth",)) is False   # PMF → hidden
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -183,13 +186,14 @@ async def test_deauth_broadcast_button_always_visible(focus_host):
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_campaign_hotkeys_mirror_buttons_wpa2(focus_host):
-    """On a plain WPA2 AP (no WPS, not WPA3): PMKID is the only plausible attack,
-    so 'p' is active and every other campaign key is hidden, exactly the button
-    row's visibility (test_v2_button_wiring)."""
+    """On a plain WPA2 AP (no WPS, not WPA3): PMKID and Deauth are the plausible
+    attacks, so 'p' and 'd' are active and every other campaign key is hidden,
+    exactly the button row's visibility (test_v2_button_wiring)."""
     iface, array, ap = _wpa2_target()
     focus = await _rebind(focus_host, array, ap)
     focus._tick()
     assert focus.check_action("campaign", ("pmkid",)) is True
+    assert focus.check_action("campaign", ("deauth",)) is True
     for camp in ("wep", "chop", "wps"):
         assert focus.check_action("campaign", (camp,)) is False, camp
 
@@ -214,7 +218,7 @@ async def test_campaign_and_deauth_keys_hidden_with_no_target(focus_host):
     focus = await _rebind(focus_host, array, ap)
     focus._target_ap = None
     assert focus.check_action("campaign", ("pmkid",)) is False
-    assert focus.check_action("deauth_all", ()) is False
+    assert focus.check_action("campaign", ("deauth",)) is False
     assert focus.check_action("wps_pbc_mode", ()) is True       # non-conditional
 
 
@@ -241,8 +245,22 @@ async def test_footer_shows_campaign_keys_per_family():
                 break
         assert "p" in keys
         assert "r" not in keys and "c" not in keys
-        # 'd' (broadcast deauth) is available with no clients; 'w' always available.
+        # 'd' now toggles the Deauth campaign (visible on WPA2-PSK); 'w' always available.
         assert "w" in keys and "d" in keys
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_deauth_button_click_routes_to_campaign_toggle(focus_host, monkeypatch):
+    """Clicking the Deauth campaign button toggles the campaign. Its id ('btn-deauth')
+    ends with '-deauth', exactly like the inline client ✕, so on_button_pressed must
+    match it BEFORE the endswith('-deauth') branch (the earlier bug: the click fell
+    through to the inline path, resolved to no client, and did nothing)."""
+    iface, array, ap = _wpa2_target()
+    focus = await _rebind(focus_host, array, ap)
+    fired = []
+    monkeypatch.setattr(focus, "_toggle_deauth", lambda: fired.append("deauth"))
+    await focus.on_button_pressed(SimpleNamespace(button=SimpleNamespace(id="btn-deauth")))
+    assert fired == ["deauth"]
 
 
 @pytest.mark.asyncio(loop_scope="module")

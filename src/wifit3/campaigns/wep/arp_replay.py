@@ -303,7 +303,7 @@ class WepArpReplay:
         t0 = time.time()
         sent = 0
         for _ in range(int(round(self._target))):
-            # Stop if torn down, or (safety) if the burst has run 2x the window — a slow card at a
+            # Stop if torn down, or (safety) if the burst has run 2x the window. A slow card at a
             # high target just runs all-gas; the guard only bounds a pathological overrun.
             if not self._active or (self._WINDOW_S > 0 and (time.time() - t0) >= 2 * self._WINDOW_S):
                 break

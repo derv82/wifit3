@@ -187,7 +187,7 @@ class Capture:
     @staticmethod
     def detect_5g(freq_text):
         """True if `freq_text` lists a 5 GHz channel. Accepts both `iw phy <phy> info`
-        (`5180.0 MHz`) and `iwlist <iface> freq` (`5.18 GHz`) — some drivers (mt7925u)
+        (`5180.0 MHz`) and `iwlist <iface> freq` (`5.18 GHz`). Some drivers (mt7925u)
         report nothing via iwlist, so the caller prefers `iw phy` and falls back."""
         return bool(_FIVE_GHZ_RE.search(freq_text))
 
@@ -704,7 +704,7 @@ class Capture:
 
         # --- Interface / band / chipset detection ---
         # mt7925u (and other mt76 USB parts) USB-reset on monitor-mode entry, re-enumerating
-        # under a NEW interface name/phy — so the pre-start base_iface stops mapping to the
+        # under a NEW interface name/phy, so the pre-start base_iface stops mapping to the
         # card. Give the reset a moment to settle, then trust the monitor vif that actually
         # exists now; if the reset ate airmon's vif entirely, retry once on the card's current
         # (post-reset) managed interface.

@@ -452,8 +452,9 @@ async def test_v2_button_wiring(focus_host):
     focus = await _rebind(focus_host, array, ap)
     _, _, pilot = focus_host
 
-    # WPA2 (no WPS, not WPA3): PMKID + EvilTwin apply (both RSN attacks). The rest hide.
+    # WPA2 (no WPS, not WPA3): PMKID + Deauth + EvilTwin apply. The rest hide.
     assert focus.query_one("#btn-pmkid", Button).display is True
+    assert focus.query_one("#btn-deauth", Button).display is True
     assert focus.query_one("#btn-eviltwin", Button).display is True
     for bid in ("#btn-gen-ivs", "#btn-chop", "#btn-wps-pin"):
         assert focus.query_one(bid, Button).display is False, bid
