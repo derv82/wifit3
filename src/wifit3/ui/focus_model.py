@@ -19,8 +19,6 @@ from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
 
 # Attack-button campaigns in button-row order.
-#BUTTON_CAMPAIGNS = [WepCampaign, PmkidHarvestAttack, DeauthCampaign, WpsCampaign, EvilTwinCampaign]
-#_BUTTON_ORDER = ["btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-deauth", "btn-wps-pin", "btn-eviltwin"] # kept for future, delete if okay with swapped buttons
 BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign, EvilTwinCampaign]
 _BUTTON_ORDER = ["btn-gen-ivs", "btn-chop", "btn-deauth", "btn-pmkid", "btn-wps-pin", "btn-eviltwin"]
 
