@@ -39,6 +39,7 @@ _LABELS = {
     "awus1900": "ALFA AWUS1900", "awus036acs": "ALFA AWUS036ACS",
     "auscomer600": "Auscoumer 600", "archert3u": "TP-Link Archer T3U",
     "archert3uplus": "TP-Link Archer T3U Plus", "archert4u": "TP-Link Archer T4U V3",
+    "archert4uplus": "TP-Link Archer T4U Plus",
     "asusbe93": "ASUS USB-BE93", "awus036achm": "ALFA AWUS036ACHM",
     "awus036acm": "ALFA AWUS036ACM", "awus036axml": "ALFA AWUS036AXML",
     "pau0f": "Panda PAU0F", "netgeara9000": "Netgear A9000",
