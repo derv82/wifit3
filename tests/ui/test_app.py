@@ -1,9 +1,12 @@
 import pytest
 
+from wifit3.persist.config import DEFAULT_THEME, Config
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
 from textual.widgets import RichLog, DataTable
+
+
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")  # ui/conftest.py
@@ -37,4 +40,34 @@ async def test_app_layout_and_boot():
         
         # Check that FocusViewV2 is registered (but requires target_ap to mount properly without escaping immediately, so we won't push it here)
         assert "focus" in pilot.app._installed_screens
+
+
+@pytest.mark.usefixtures("no_usb_devices")
+def test_app_refreshes_theme_art_when_theme_changes(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setattr("wifit3.persist.config._PATH", config_path)
+    Config.theme = "textual-dark"
+    app = WifiteApp()
+    refreshed = []
+    monkeypatch.setattr(app, "_refresh_theme_dependents", lambda: refreshed.append(True))
+
+    app.watch_theme("textual-light")
+
+    assert refreshed == [True]
+    assert Config.theme == "textual-light"
+
+
+@pytest.mark.usefixtures("no_usb_devices")
+def test_app_resets_invalid_saved_theme(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("theme = 'missing-theme'\n", encoding="utf-8")
+    monkeypatch.setattr("wifit3.persist.config._PATH", config_path)
+    Config.theme = DEFAULT_THEME
+
+    app = WifiteApp()
+
+    assert app.theme == DEFAULT_THEME
+    assert Config.theme == DEFAULT_THEME
+    assert f"theme = '{DEFAULT_THEME}'" in config_path.read_text(encoding="utf-8")
+
 

@@ -1,16 +1,20 @@
 import pytest
 
 import wifit3.persist.config as cfg
-from wifit3.persist.config import Config, ConfigError
+from wifit3.persist.config import DEFAULT_THEME, Config, ConfigError
 
 
 @pytest.fixture(autouse=True)
 def _restore_defaults():
-    keys = ("theme", "scanner_sort", "scanner_sort_reverse", "silenced_bssids")
-    saved = {k: getattr(Config, k) for k in keys}
+    Config.theme = DEFAULT_THEME
+    Config.scanner_sort = "signal"
+    Config.scanner_sort_reverse = True
+    Config.silenced_bssids = []
     yield
-    for k, v in saved.items():
-        setattr(Config, k, list(v) if isinstance(v, list) else v)
+    Config.theme = DEFAULT_THEME
+    Config.scanner_sort = "signal"
+    Config.scanner_sort_reverse = True
+    Config.silenced_bssids = []
 
 
 @pytest.fixture
@@ -22,7 +26,7 @@ def config_path(tmp_path, monkeypatch):
 
 def test_load_missing_file_keeps_defaults(config_path):
     Config.load()
-    assert Config.theme == "textual-dark"
+    assert Config.theme == DEFAULT_THEME
     assert Config.scanner_sort == "signal"
     assert Config.scanner_sort_reverse is True
 

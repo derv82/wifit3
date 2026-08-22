@@ -13,7 +13,7 @@ from rich.text import Text
 
 from typing import TYPE_CHECKING
 
-from wifit3.ui.ansi_art import make_black_transparent
+from wifit3.ui.ansi_art import make_black_transparent, recolor_logo
 from wifit3.ui.screens.setup_error import SetupErrorDialog
 from wifit3.device.manager import Status
 
@@ -106,7 +106,7 @@ class SplashView(Screen):
         yield Header(show_clock=False)
         with Vertical(id="splash-container"):
             with Center():
-                yield Static(LOGO, id="ascii-art")
+                yield Static(self._logo(), id="ascii-art")
             with Center():
                 yield Label("Scanning for compatible hardware…", id="status-label")
             with Center():
@@ -130,6 +130,14 @@ class SplashView(Screen):
         checkbox list shown for 2+. render_devices displays exactly one at a time."""
         return (self.query_one("#device-list", ListView),
                 self.query_one("#device-select", SelectionList))
+
+    def _logo(self) -> Text:
+        theme = self.app.current_theme
+        return recolor_logo(LOGO, theme.variables, dark=theme.dark)
+
+    def refresh_theme_art(self) -> None:
+        logo = self.query_one("#ascii-art", Static)
+        logo.update(self._logo())
 
     def _enter_scanning_mode(self) -> None:
         """The 'pick a card' resting state."""

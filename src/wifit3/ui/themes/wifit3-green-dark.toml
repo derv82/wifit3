@@ -1,0 +1,30 @@
+schema = 1
+
+[theme]
+name = "wifit3-green-dark"
+display_name = "Wifit3 Green Dark"
+dark = true
+
+[colors]
+primary = "#00ff88"
+secondary = "#00c8ff"
+accent = "#00ff88"
+foreground = "#d8ffe8"
+background = "#050805"
+surface = "#0b120b"
+panel = "#101810"
+success = "#00ff88"
+warning = "#ffd75f"
+error = "#ff5f5f"
+
+[variables]
+block-cursor-background = "#00ff88"
+block-cursor-blurred-background = "#1f5f3f"
+block-hover-background = "#163322"
+input-selection-background = "#005f3a"
+screen-selection-background = "#007a48"
+
+logo_color_primary = "#00ff22"
+logo_color_secondary = "#008f22"
+logo_text_primary = "#f4fff8"
+logo_text_secondary = "#7aa88a"
