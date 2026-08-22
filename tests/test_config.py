@@ -1,16 +1,21 @@
+import copy
+
 import pytest
 
 import wifit3.persist.config as cfg
 from wifit3.persist.config import Config, ConfigError
 
+_DEFAULTS = {n: getattr(Config, n)
+             for n in ("theme", "scanner_sort", "scanner_sort_reverse", "silenced_bssids")}
+
 
 @pytest.fixture(autouse=True)
 def _restore_defaults():
-    keys = ("theme", "scanner_sort", "scanner_sort_reverse", "silenced_bssids")
-    saved = {k: getattr(Config, k) for k in keys}
+    for n, v in _DEFAULTS.items():
+        setattr(Config, n, copy.deepcopy(v))
     yield
-    for k, v in saved.items():
-        setattr(Config, k, list(v) if isinstance(v, list) else v)
+    for n, v in _DEFAULTS.items():
+        setattr(Config, n, copy.deepcopy(v))
 
 
 @pytest.fixture
@@ -21,10 +26,9 @@ def config_path(tmp_path, monkeypatch):
 
 
 def test_load_missing_file_keeps_defaults(config_path):
+    before = {n: getattr(Config, n) for n in _DEFAULTS}
     Config.load()
-    assert Config.theme == "textual-dark"
-    assert Config.scanner_sort == "signal"
-    assert Config.scanner_sort_reverse is True
+    assert all(getattr(Config, n) == before[n] for n in before)
 
 
 def test_load_reads_values_and_ignores_unknown_keys(config_path):
