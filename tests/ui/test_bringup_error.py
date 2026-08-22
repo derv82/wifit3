@@ -18,6 +18,7 @@ import wifit3.device.manager as manager
 from wifit3.chips.driver import DeviceID
 from wifit3.chips.rt2800usb.driver import RT2800USBDriver
 from wifit3.chips.rtl8187.driver import RTL8187Driver
+from wifit3.device.manager import DeviceManager, Status
 from wifit3.errors import BringUpError
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
@@ -46,6 +47,59 @@ async def test_rt2800usb_init_io_failure_becomes_bringuperror(monkeypatch):
 
     with pytest.raises(BringUpError):
         await driver.connect()
+
+
+class _NoSetup:
+    def requires_setup(self, device_id):
+        return False
+
+    async def install(self, device_id, ui):
+        return device_id
+
+    async def uninstall(self, device_id, ui):
+        raise AssertionError("not used")
+
+
+class _Prompter:
+    async def open(self, title):
+        pass
+
+    def close(self):
+        pass
+
+    def status_progress(self, fraction, message):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_disconnect_during_bringup_becomes_failed_result(monkeypatch):
+    err = usb.core.USBError("No such device", errno=19)
+    err.backend_error_code = -4
+    iface = SimpleNamespace(name="wlan0", connect=AsyncMock(side_effect=err), close=AsyncMock())
+    monkeypatch.setattr(manager, "wlan_iface", lambda device_id, name="wlan0": iface)
+
+    dm = DeviceManager(SimpleNamespace(array=None, notify_device_lost=lambda *a: None),
+                       setup=_NoSetup(), prompter=_Prompter())
+    res = await dm.bringup(DeviceID(0x0BDA, 0x8187, "RTL8187L", product_name="test"))
+
+    assert res.status is Status.FAILED
+    assert "disconnected during bring-up" in res.message
+    iface.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_io_error_during_bringup_becomes_failed_result(monkeypatch):
+    err = OSError(5, "Input/output error")
+    iface = SimpleNamespace(name="wlan0", connect=AsyncMock(side_effect=err), close=AsyncMock())
+    monkeypatch.setattr(manager, "wlan_iface", lambda device_id, name="wlan0": iface)
+
+    dm = DeviceManager(SimpleNamespace(array=None, notify_device_lost=lambda *a: None),
+                       setup=_NoSetup(), prompter=_Prompter())
+    res = await dm.bringup(DeviceID(0x0BDA, 0x8187, "RTL8187L", product_name="test"))
+
+    assert res.status is Status.FAILED
+    assert "disconnected during bring-up" in res.message
+    iface.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
