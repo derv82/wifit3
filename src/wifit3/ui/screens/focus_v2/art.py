@@ -89,6 +89,10 @@ def _breathe_level(phase: float) -> int:
     return int(round(_BREATHE_LO + (_BREATHE_HI - _BREATHE_LO) * factor))
 
 
+def _breathe_green(phase: float) -> int:
+    return _breathe_level(phase)
+
+
 def breathe(name: str, phase: float) -> Text:
     """The art with its LED cells at the idle-breathe level for ``phase``. The
     flicker spike rides on top of this in :class:`BreathingArt`."""
