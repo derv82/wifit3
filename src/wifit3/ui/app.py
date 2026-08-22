@@ -18,6 +18,7 @@ from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
 from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
 from .screens.new_device import NewDeviceDialog
+from .themes import register_app_themes
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,7 @@ class WifiteApp(App):
         # both read/toggle it via 'w'). On by default: the one active-TX exception
         # to passive-by-default (auto-captures a PSK when any AP's button is pressed).
         self.pbc_enabled: bool = True
+        register_app_themes(self)
         self.theme = Config.theme
 
     def persist_config(self) -> None:

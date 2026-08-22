@@ -56,9 +56,8 @@ def _led_marker(color: Color | None) -> tuple[int, int, int] | None:
 
 @lru_cache(maxsize=None)
 def _transparent(name: str) -> Text:
-    """Art with pure-black cells made transparent (both the black canvas and the
-    black ink), so it blends into the theme surface. See ``ui/ansi_art``."""
-    return make_black_transparent(_load(name), blank_black_ink=True)
+    """Art with pure-black backgrounds made transparent."""
+    return make_black_transparent(_load(name))
 
 
 def _paint(name: str, level: int) -> Text:
