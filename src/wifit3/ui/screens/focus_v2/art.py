@@ -1,10 +1,10 @@
-"""Endpoint ANSI art + the green-LED breathe.
+"""Endpoint ANSI art + the LED breathe.
 
 The ``.ans`` files are pre-rendered 24-bit art, 20x10 cells each. Convention:
-any cell painted dark green ``rgb(0,128,0)`` is a live-indicator LED. The
-breather lerps it toward bright green ``(0,255,0)`` and back on a slow cycle, so
-the art self-describes what animates without coordinate tables in code (paint a
-cell dark green and it breathes).
+any cell painted dark green ``rgb(0,128,0)`` or dark teal ``rgb(0,128,128)`` is
+a live-indicator LED. The breather lerps marked cells toward the same hue at
+higher intensity and back on a slow cycle, so the art self-describes what
+animates without coordinate tables in code.
 """
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ from ...ansi_art import make_black_transparent
 
 _ASSETS = Path(__file__).parent.parent.parent / "assets"
 _GENERIC = "focus-card.ans"        # fallback card art when no per-card art resolves
-_LED = (0, 128, 0)                 # dark green = the animation target
+_LED_MARKERS = ((0, 128, 0), (0, 128, 128))
 
-# Hybrid LED levels (green channel, 0-255). Idle is a *dim* breathe band so the
+# Hybrid LED levels (active channel, 0-255). Idle is a *dim* breathe band so the
 # art reads "alive but quiet"; a real packet punches a bright flicker spike well
 # above that band, so activity is unmistakable against the idle glow.
 _BREATHE_LO = 60
@@ -47,8 +47,11 @@ def art_size(name: str) -> tuple[int, int]:
     return max((len(ln.plain) for ln in lines), default=0), len(lines)
 
 
-def _is_led(color: Color | None) -> bool:
-    return color is not None and color.triplet is not None and tuple(color.triplet) == _LED
+def _led_marker(color: Color | None) -> tuple[int, int, int] | None:
+    if color is None or color.triplet is None:
+        return None
+    triplet = tuple(color.triplet)
+    return triplet if triplet in _LED_MARKERS else None
 
 
 @lru_cache(maxsize=None)
@@ -58,26 +61,30 @@ def _transparent(name: str) -> Text:
     return make_black_transparent(_load(name), blank_black_ink=True)
 
 
-def _paint(name: str, green: int) -> Text:
-    """The (transparent) art with its LED cells set to ``rgb(0, green, 0)``.
+def _paint(name: str, level: int) -> Text:
+    """The transparent art with its LED marker cells set to the current level.
     Returns a fresh Text each call (copied from the cached ``_transparent``
     source). Textual takes ownership of the renderable, so a shared/cached
     instance must not be handed to ``update()``."""
-    lit = Color.from_rgb(0, green, 0)
     src = _transparent(name)
     spans: list[Span] = []
     for span in src.spans:
         st = span.style
-        if isinstance(st, Style) and _is_led(st.color):
-            st = st + Style(color=lit)
+        marker = _led_marker(st.color) if isinstance(st, Style) else None
+        if marker is not None:
+            st = st + Style(color=Color.from_rgb(
+                level if marker[0] else 0,
+                level if marker[1] else 0,
+                level if marker[2] else 0,
+            ))
         spans.append(Span(span.start, span.end, st))
     out = src.copy()
     out.spans = spans
     return out
 
 
-def _breathe_green(phase: float) -> int:
-    """Idle-glow green level for ``phase`` (0..1, one smooth lo->hi->lo cycle)."""
+def _breathe_level(phase: float) -> int:
+    """Idle-glow level for ``phase`` (0..1, one smooth lo->hi->lo cycle)."""
     factor = (1.0 - math.cos(2.0 * math.pi * phase)) / 2.0      # 0 -> 1 -> 0
     return int(round(_BREATHE_LO + (_BREATHE_HI - _BREATHE_LO) * factor))
 
@@ -85,11 +92,11 @@ def _breathe_green(phase: float) -> int:
 def breathe(name: str, phase: float) -> Text:
     """The art with its LED cells at the idle-breathe level for ``phase``. The
     flicker spike rides on top of this in :class:`BreathingArt`."""
-    return _paint(name, _breathe_green(phase))
+    return _paint(name, _breathe_level(phase))
 
 
 class BreathingArt(Static):
-    """Endpoint art whose green LED cells do a dim idle *breathe*, with a bright
+    """Endpoint art whose LED marker cells do a dim idle *breathe*, with a bright
     *flicker* spike on each real packet (instrumentation, not decoration).
 
     The screen calls :meth:`pulse` on traffic: RX for the router, TX for the
@@ -146,8 +153,8 @@ class BreathingArt(Static):
             self._blink = "idle"
 
     def _repaint(self) -> None:
-        green = _FLICKER_GREEN if self._blink == "on" else _breathe_green(self._phase)
-        self.update(_paint(self._name, green))
+        level = _FLICKER_GREEN if self._blink == "on" else _breathe_level(self._phase)
+        self.update(_paint(self._name, level))
 
     def set_art(self, name: str) -> None:
         """Swap which .ans this widget shows: the card art follows the selected/primary card. No-op
@@ -196,6 +203,8 @@ _ART_BY_PRODUCT: dict[str, str] = {
     "TL-WN722N v2/v3": "cards/card-tpwn722nv23.ans",
     "Netgear A9000": "cards/card-netgeara9000.ans",
     "ASUS USB-BE93": "cards/card-asusbe93.ans",
+    "Archer TX20U Plus": "cards/card-archertx20uplus.ans",
+    "TP-Link Archer TX20U Plus": "cards/card-archertx20uplus.ans",
 }
 _ART_BY_CHIPSET: dict[str, str] = {
     "RTL8821CU": "cards/card-auscomer600.ans",
