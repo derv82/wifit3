@@ -73,9 +73,7 @@ def load_logo() -> Text:
     logo_path = Path(__file__).parent.parent / "assets" / "logo_sm.ans"
     try:
         if logo_path.exists():
-            return make_black_transparent(
-                Text.from_ansi(logo_path.read_text(encoding="utf-8"))
-            )
+            return make_black_transparent(Text.from_ansi(logo_path.read_text(encoding="utf-8")))
     except Exception:
         pass
 
@@ -156,6 +154,7 @@ class SplashView(Screen):
         self.query_one("#status-label", Label).update("Scanning for compatible hardware…")
 
     async def on_mount(self) -> None:
+        self.app.theme_changed_signal.subscribe(self, lambda _theme: self.refresh_theme_art())
         platform_hint = "the WinUSB driver" if sys.platform == "win32" else "the udev/modprobe rules"
         self.query_one("#uninstall-btn", Button).tooltip = (
             f"Uninstall {platform_hint} for the highlighted card")
