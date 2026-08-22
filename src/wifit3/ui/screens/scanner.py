@@ -245,6 +245,7 @@ class ScannerView(Screen):
         self.ap_cache: Dict[str, AccessPoint] = {}
         self._refresh_timer = None
         self._sort_timer = None
+        self._sort_requested = False
         self._sort_idx = 2         # Default to POWER
         self._sort_reverse = True  # Descending
         self._channel_filter: Optional[List[int]] = None
@@ -258,6 +259,7 @@ class ScannerView(Screen):
         self._beacon_shown: Dict[str, tuple[int, float]] = {}
         # Per-BSSID last render key (fade bucket + cell content).
         self._render_key: Dict[str, tuple] = {}
+        self._sort_requested = False
         # captures/ history, loaded once at mount and hydrated onto APs by
         # BSSID so previously-saved handshakes/PMKIDs/WEP keys re-badge.
         self._capture_index: Dict[str, List[PersistedCapture]] = {}
@@ -435,6 +437,7 @@ class ScannerView(Screen):
                 self.ap_cache[ap.bssid] = ap
                 self._render_key[ap.bssid] = render_key
                 table.add_row(*(_fade_text(c, factor, bg) for c in raw), key=ap.bssid)
+                self._request_sort()
             else:
                 # Decloak event: already logged here.
                 old_ssid = self.ap_cache[ap.bssid].ssid
@@ -455,6 +458,16 @@ class ScannerView(Screen):
                         table.update_cell(ap.bssid, col_key, cell)
 
             self._drain_capture_events(ap, array.forged_macs)
+
+    def _request_sort(self) -> None:
+        if self._sort_requested:
+            return
+        self._sort_requested = True
+        self.call_after_refresh(self._apply_requested_sort)
+
+    def _apply_requested_sort(self) -> None:
+        self._sort_requested = False
+        self._apply_sort(scroll_to_cursor=False)
 
     def _apply_sort_and_evict(self) -> None:
         """Re-sort the table and drop fully-faded APs. Runs every 2 s."""

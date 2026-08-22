@@ -103,6 +103,30 @@ def test_build_cells_marks_silenced_aps():
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
+async def test_new_ap_addition_requests_sort_after_refresh():
+    weak = AccessPoint(bssid="aa:bb:cc:00:00:30", ssid="WeakNet", channel=1)
+    weak.signal_by_card["wlan0"] = -80
+    strong = AccessPoint(bssid="aa:bb:cc:00:00:31", ssid="StrongNet", channel=1)
+    strong.signal_by_card["wlan0"] = -30
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        app.array = _FakeArray([weak, strong], [1, 6, 11])
+        app.push_screen("scanner")
+        await pilot.pause(0)
+        scanner = app.screen
+        assert isinstance(scanner, ScannerView)
+        table = scanner.query_one("#ap-table", DataTable)
+
+        scanner.refresh_table()
+        await pilot.pause()
+
+        assert table.get_row_at(0)[1].plain == strong.bssid
+        assert table.get_row_at(1)[1].plain == weak.bssid
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
 async def test_silence_sort_direction_prioritizes_or_deprioritizes_silenced_rows():
     normal = AccessPoint(bssid="aa:bb:cc:00:00:21", ssid="NormalNet", channel=1)
     quiet = AccessPoint(bssid="aa:bb:cc:00:00:22", ssid="QuietNet", channel=1)
