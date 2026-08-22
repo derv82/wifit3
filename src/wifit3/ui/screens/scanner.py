@@ -223,6 +223,7 @@ class ScannerView(Screen):
 
     # (column_key, display_label). Order here = on-screen order.
     _COLUMNS = [
+        ("silenced", "S"),
         ("bssid", "BSSID"),
         ("channel", "CH"),
         ("signal", "POWER"),
@@ -510,7 +511,9 @@ class ScannerView(Screen):
             wps_cell = Text("WPS 🔒" if ap.wps_locked else "WPS", style=fg)
         else:
             wps_cell = Text("", style=fg)
+        silenced = Config.is_silenced(ap.bssid)
         return [
+            Text("S" if silenced else "", style="yellow bold" if silenced else fg),
             Text(ap.bssid, style=fg),
             Text(str(ap.channel), justify="right", style=fg),
             Text(f"{ap.signal} dBm", justify="right", style=fg),
@@ -687,36 +690,42 @@ class ScannerView(Screen):
         sort_key, _ = self._COLUMNS[self._sort_idx]
 
         reverse = self._sort_reverse
-        # Only numeric columns try the int/float fast path.
-        is_numeric_col = sort_key in self._RIGHT_ALIGNED
+        if sort_key == "silenced":
+            def _silence_key(val):
+                return bool(val.plain.strip() if isinstance(val, Text) else str(val).strip())
 
-        def _key(val):
-            if isinstance(val, Text):
-                val = val.plain
-            s = str(val).strip()
-            is_empty = not s
+            table.sort(sort_key, key=_silence_key, reverse=not reverse)
+        else:
+            # Only numeric columns try the int/float fast path.
+            is_numeric_col = sort_key in self._RIGHT_ALIGNED
 
-            if is_empty:
-                primary: object = 0 if is_numeric_col else ""
-            elif is_numeric_col:
-                # Strip non-numeric suffix (e.g. " dBm")
-                head = s.split()[0]
-                try:
-                    primary = int(head)
-                except ValueError:
+            def _key(val):
+                if isinstance(val, Text):
+                    val = val.plain
+                s = str(val).strip()
+                is_empty = not s
+
+                if is_empty:
+                    primary: object = 0 if is_numeric_col else ""
+                elif is_numeric_col:
+                    # Strip non-numeric suffix (e.g. " dBm")
+                    head = s.split()[0]
                     try:
-                        primary = float(head)
+                        primary = int(head)
                     except ValueError:
-                        # Numeric column with garbage content - sort last.
-                        primary = float("inf") if not reverse else float("-inf")
-            else:
-                primary = s.lower()
+                        try:
+                            primary = float(head)
+                        except ValueError:
+                            # Numeric column with garbage content - sort last.
+                            primary = float("inf") if not reverse else float("-inf")
+                else:
+                    primary = s.lower()
 
-            # Force empties to the bottom in BOTH sort directions.
-            sentinel = int(is_empty != reverse)
-            return (sentinel, primary)
+                # Force empties to the bottom in BOTH sort directions.
+                sentinel = int(is_empty != reverse)
+                return (sentinel, primary)
 
-        table.sort(sort_key, key=_key, reverse=reverse)
+            table.sort(sort_key, key=_key, reverse=reverse)
 
         if current_key:
             try:

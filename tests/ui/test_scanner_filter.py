@@ -5,6 +5,7 @@ import pytest
 from textual.widgets import Button, DataTable
 
 from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.filter import EncryptionFilter, ScanFilter
 from wifit3.ui.screens.scanner import ScannerView
@@ -84,6 +85,52 @@ async def test_text_filter_matches_hidden_ap_via_guessed_sibling():
         assert named.bssid in scanner.ap_cache              # matches by its own SSID
         assert hidden.bssid in scanner.ap_cache             # matches via the guessed sibling name
         assert other.bssid not in scanner.ap_cache
+
+
+def test_build_cells_marks_silenced_aps():
+    scanner = ScannerView()
+    scanner._theme_fg = "white"
+    ap = AccessPoint(bssid="aa:bb:cc:00:00:20", ssid="QuietNet", channel=1)
+
+    Config.silenced_bssids = []
+    assert scanner._build_cells(ap, n_clients=0)[0].plain == ""
+
+    Config.silenced_bssids = [ap.bssid]
+    cell = scanner._build_cells(ap, n_clients=0)[0]
+    assert cell.plain == "S"
+    assert set(str(cell.style).split()) == {"yellow", "bold"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_silence_sort_direction_prioritizes_or_deprioritizes_silenced_rows():
+    normal = AccessPoint(bssid="aa:bb:cc:00:00:21", ssid="NormalNet", channel=1)
+    quiet = AccessPoint(bssid="aa:bb:cc:00:00:22", ssid="QuietNet", channel=1)
+    Config.silenced_bssids = [quiet.bssid]
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        app.array = _FakeArray([quiet, normal], [1, 6, 11])
+        app.push_screen("scanner")
+        await pilot.pause(0)
+        scanner = app.screen
+        assert isinstance(scanner, ScannerView)
+        table = scanner.query_one("#ap-table", DataTable)
+
+        scanner.refresh_table()
+        scanner._sort_idx = next(i for i, (key, _label) in enumerate(scanner._COLUMNS) if key == "silenced")
+
+        scanner._sort_reverse = False
+        scanner._apply_sort()
+        await pilot.pause(0)
+        assert table.get_row_at(0)[1].plain == quiet.bssid
+        assert table.get_row_at(1)[1].plain == normal.bssid
+
+        scanner._sort_reverse = True
+        scanner._apply_sort()
+        await pilot.pause(0)
+        assert table.get_row_at(0)[1].plain == normal.bssid
+        assert table.get_row_at(1)[1].plain == quiet.bssid
 
 
 @pytest.mark.asyncio
