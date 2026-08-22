@@ -16,7 +16,7 @@ import pkgutil
 import sys
 from dataclasses import dataclass, replace
 from enum import Enum, auto
-from typing import TYPE_CHECKING, List, NoReturn, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, List, NoReturn, Optional, Tuple
 
 import libusb_package
 import usb.core
@@ -80,6 +80,26 @@ _FAMILIES: List[Family] = [
 ]
 
 
+def _resolve_23570137(dev: usb.core.Device) -> str:
+    """Pick the package for a live 2357:0137 (mt76x2u owns bulk-IN 0x85; the 8822CU lacks it)."""
+    try:
+        cfg = dev.get_active_configuration()
+    except Exception:
+        return "mt76x2u"                       # can't inspect -> mainline default
+    for intf in cfg:
+        if any(ep.bEndpointAddress == 0x85 for ep in intf):
+            return "mt76x2u"
+    return "rtl8822cu"
+
+
+# VID:PIDs reused across chipsets. ``default`` is the package that wins when a live device can't be
+# classified (keeps mainline compatibility); ``resolver`` inspects the live USB descriptors and may
+# swap to a sibling package at scan time.
+_AMBIGUOUS_SLOTS: dict[tuple[int, int], tuple[str, Callable[[usb.core.Device], str]]] = {
+    (0x2357, 0x0137): ("mt76x2u", _resolve_23570137),
+}
+
+
 def _winner_dir(fam: Family) -> str:
     """The package dir the family resolves to: ``mainline`` when its env var opts in, else ``default``."""
     if fam.mainline and os.environ.get(fam.env or "", "").strip().lower() == "mainline":
@@ -89,10 +109,12 @@ def _winner_dir(fam: Family) -> str:
 
 @functools.cache
 def supported_ids() -> dict:
-    """``{(vid, pid): (DeviceID, key, import_driver)}`` for every supported card, built by importing
-    each ``chips/*`` package's light ``__init__`` (no driver). Family members resolve to one winner
-    package per family ``key``; a non-package or a package without ``SUPPORTED_IDS`` (the ``*_base``
-    helpers) is skipped. Cached; ``supported_ids.cache_clear()`` rebuilds (e.g. after an env change)."""
+    """``{(vid, pid): [(DeviceID, key, import_driver), ...]}`` for every supported card, built by
+    importing each ``chips/*`` package's light ``__init__`` (no driver). Family members resolve to
+    one winner package per family ``key``; a non-package or a package without ``SUPPORTED_IDS`` (the
+    ``*_base`` helpers) is skipped. An ``_AMBIGUOUS_SLOTS`` VID:PID keeps every sibling claim (the
+    mainline-compatible one first). Cached; ``supported_ids.cache_clear()`` rebuilds (e.g. after an
+    env change)."""
     from wifit3 import chips as chips_pkg
 
     fam_by_dir: dict = {}
@@ -103,7 +125,6 @@ def supported_ids() -> dict:
     winners = {fam.key: _winner_dir(fam) for fam in _FAMILIES}
 
     mapping: dict = {}
-    nonfamily_slots: set = set()
     for _finder, name, ispkg in pkgutil.iter_modules(chips_pkg.__path__, chips_pkg.__name__ + "."):
         if not ispkg:
             continue                                   # loose module (driver, log_trace, rx_reader)
@@ -122,23 +143,40 @@ def supported_ids() -> dict:
         import_driver = mod.import_driver
         for entry in ids:
             slot = (entry.vid, entry.pid)
-            if fam is None:
-                assert slot not in nonfamily_slots, (
+            if fam is None and slot not in _AMBIGUOUS_SLOTS:
+                assert slot not in mapping, (
                     f"VID:PID {slot[0]:#06x}:{slot[1]:#06x} claimed by two packages; "
-                    f"add a family-table row to disambiguate")
-                nonfamily_slots.add(slot)
-            mapping[slot] = (entry, key, import_driver)
+                    f"add a family-table row or an _AMBIGUOUS_SLOTS entry to disambiguate")
+            mapping.setdefault(slot, []).append((entry, key, import_driver))
+    for slot, (default_dir, _resolver) in _AMBIGUOUS_SLOTS.items():
+        claims = mapping.get(slot)
+        if claims:
+            # Mainline-compatible claim first, so ``driver_for`` (catalog-only, no live device)
+            # keeps mainline behavior; live scans re-resolve per device.
+            claims.sort(key=lambda claim: claim[1] != default_dir)
     return mapping
 
 
 def driver_for(vid: int, pid: int) -> Optional[Tuple[type["Driver"], str]]:
-    """``(driver class, setup key)`` for the driver that claims ``vid:pid``, or None. The HEAVY path:
-    it calls ``import_driver()``, so the light bus scan must not route through it."""
-    got = supported_ids().get((vid, pid))
-    if got is None:
+    """``(driver class, setup key)`` for the default driver that claims ``vid:pid`` (the
+    mainline-compatible member of an ambiguous VID:PID), or None. HEAVY: calls ``import_driver()``."""
+    claims = supported_ids().get((vid, pid))
+    if not claims:
         return None
-    _entry, key, import_driver = got
+    _entry, key, import_driver = claims[0]
     return import_driver(), key
+
+
+def _resolve_claim(dev: usb.core.Device, claims: list):
+    """The claim that wins for the live ``dev`` among several sharing one VID:PID."""
+    if len(claims) == 1:
+        return claims[0]
+    _default_dir, resolver = _AMBIGUOUS_SLOTS[(dev.idVendor, dev.idProduct)]
+    winner = resolver(dev)
+    for claim in claims:
+        if claim[1] == winner:
+            return claim
+    return claims[0]
 
 
 def _raise_usblib_fatal(cause: Exception) -> NoReturn:
@@ -172,9 +210,10 @@ def devices() -> List[DeviceID]:
     smap = supported_ids()
     out: List[DeviceID] = []
     for dev in _bus_devices(backend):
-        got = smap.get((dev.idVendor, dev.idProduct))
-        if got is not None:
-            out.append(replace(got[0], bus=dev.bus, address=dev.address))
+        claims = smap.get((dev.idVendor, dev.idProduct))
+        if claims:
+            entry, _key, _drv = _resolve_claim(dev, claims)
+            out.append(replace(entry, bus=dev.bus, address=dev.address))
     return out
 
 
@@ -215,15 +254,27 @@ def wlan_iface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanInterfa
     ``devices()`` tags them) the exact physical card is opened via a targeted ``usb.core.find``; a
     bare catalog DeviceID (bus/address None) falls back to the first VID:PID match. ``connect()``
     opens it, not this."""
-    got = driver_for(device_id.vid, device_id.pid)
-    if got is None:
+    claims = supported_ids().get((device_id.vid, device_id.pid))
+    if not claims:
         return None
-    driver_cls, _key = got
     dev = _live_dev(device_id)
     if dev is None:
         logger.debug("wlan_iface: no live %04x:%04x instance (bus=%s addr=%s)",
                      device_id.vid, device_id.pid, device_id.bus, device_id.address)
         return None
+    if len(claims) > 1:
+        _entry, _key, import_driver = _resolve_claim(dev, claims)
+        try:
+            driver_cls = import_driver()
+        except Exception as e:
+            logger.debug("wlan_iface: %04x:%04x (ambiguous): %s",
+                         device_id.vid, device_id.pid, e)
+            return None
+    else:
+        got = driver_for(device_id.vid, device_id.pid)
+        if got is None:
+            return None
+        driver_cls, _key = got
     try:
         driver = driver_cls.from_usb_device(dev, device_id)
     except Exception as e:

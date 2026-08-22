@@ -94,6 +94,45 @@ def test_both_8822_drivers_claim_0138():
     assert (0x2357, 0x0138) in {(e.vid, e.pid) for e in SUPPORTED_IDS}
 
 
+def test_23570137_catalog_default_is_mt76x2u():
+    # The catalog (no live device) keeps the mainline claim for the reused VID:PID.
+    assert _driver_for(0x2357, 0x0137) == "MT76x2UDriver"
+
+
+def test_23570137_mt76x2u_layout_resolves_mt7612u(monkeypatch):
+    # MT7612U exposes bulk-IN 0x85 (CMD_RESP); the 8822CU does not.
+    _stub_bus(monkeypatch, [_FakeDev(0x2357, 0x0137, endpoints=[0x84, 0x85, 0x08, 0x05, 0x06])])
+    assert [d.chipset for d in manager.devices()] == ["MT7612U"]
+
+
+def test_23570137_rtl8822cu_layout_resolves_8822cu(monkeypatch):
+    # RTL8822CU: single bulk-IN 0x84, bulk-OUT 0x05/0x06/0x08 (0x87 is an interrupt event EP).
+    _stub_bus(monkeypatch, [_FakeDev(0x2357, 0x0137, endpoints=[0x84, 0x05, 0x06, 0x08])])
+    assert [d.chipset for d in manager.devices()] == ["RTL8822CU"]
+
+
+def test_wlan_iface_23570137_dispatches_resolved_rtl8822cu(monkeypatch):
+    dev = _FakeDev(0x2357, 0x0137, endpoints=[0x84, 0x05, 0x06, 0x08])
+    entry = DeviceID(0x2357, 0x0137, "RTL8822CU", bus=1, address=1)
+    monkeypatch.setattr(manager, "driver_for", lambda v, p: pytest.fail("catalog default must not win"))
+    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
+    monkeypatch.setattr(usb.core, "find", lambda **kw: dev)
+    iface = manager.wlan_iface(entry)
+    assert iface is not None
+    assert type(iface.driver).__name__ == "RTL8822CUDriver"
+
+
+def test_wlan_iface_23570137_with_ep85_dispatches_mt76x2u(monkeypatch):
+    dev = _FakeDev(0x2357, 0x0137, endpoints=[0x84, 0x85, 0x08, 0x05, 0x06])
+    entry = DeviceID(0x2357, 0x0137, "MT7612U", bus=1, address=1)
+    monkeypatch.setattr(manager, "driver_for", lambda v, p: pytest.fail("catalog default must not win"))
+    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
+    monkeypatch.setattr(usb.core, "find", lambda **kw: dev)
+    iface = manager.wlan_iface(entry)
+    assert iface is not None
+    assert type(iface.driver).__name__ == "MT76x2UDriver"
+
+
 def test_key_is_the_family_key_not_the_package_dir():
     # The setup key must stay the family key (ar9271, not ar9271_v2), so a prior install's files resolve.
     _cls, key = manager.driver_for(0x0CF3, 0x9271)
@@ -102,10 +141,27 @@ def test_key_is_the_family_key_not_the_package_dir():
 
 # --- devices / wlan_iface ------------------------------------------------------------------------
 
+class _FakeEP:
+    def __init__(self, addr):
+        self.bEndpointAddress = addr
+
+
 class _FakeDev:
-    def __init__(self, vid, pid, bus=1, address=1):
+    def __init__(self, vid, pid, bus=1, address=1, endpoints=()):
         self.idVendor, self.idProduct = vid, pid
         self.bus, self.address = bus, address
+        self._eps = tuple(_FakeEP(a) for a in endpoints)
+
+    def get_active_configuration(self):
+        if not self._eps:
+            raise RuntimeError("fake device has no active configuration")
+        eps = self._eps
+
+        class _Intf:
+            def __iter__(self):
+                return iter(eps)
+
+        return iter([_Intf()])
 
 
 class _FakeDriver:

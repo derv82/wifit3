@@ -28,6 +28,7 @@ the verification detail, frame ranges, and hashes; this file is the licensing su
 | `rtl8814au_fw.bin` | RTL8814AU (vendor DKMS) | morrownr `8814au` DKMS `hal8814a_fw.c` (`array_mp_8814a_fw_nic`) | Realtek redistributable (same Realtek FW terms) | ✅ vendor C array == pcap bulk payload (68320 B) |
 | `rtl8821au_fw.bin` | RTL8821AU (vendor DKMS) | Lucid-Duck `8821au` DKMS `hal/rtl8821a` (vendor FW array) | Realtek redistributable (same Realtek FW terms) | ✅ FW page-write byte-exact in `verify_pcap` (30880 B) |
 | `rtl8822bu_fw.bin` | RTL8822BU (vendor DKMS) | morrownr `88x2bu` DKMS (`array_mp_8822b_fw_nic` v30.20) | Realtek redistributable (same Realtek FW terms) | ✅ download byte-exact in `verify_pcap` (161240 B) |
+| `rtl8822c_fw_nic.bin` | RTL8822CU (vendor DKMS) | `rtl88x2cu` GPL `hal/rtl8822c/hal8822c_fw.c` (`array_mp_8822c_fw_nic` v9.17) | Realtek redistributable (same Realtek FW terms) | ✅ HALMAC container parse (v9.17, 200624 B) |
 | `rtl8188eufw.bin` (dkms) | RTL8188EUS (vendor DKMS) | aircrack-ng/kimocoder `8188eus` DKMS (`array_mp_8188e_t_fw_nic`) | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ SHA-256 == linux-firmware copy |
 | `WIFI_MT7961_patch_mcu_1_2_hdr.bin` | MT7921AU | `linux-firmware` `mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin` | MediaTek redistributable (`LICENCE.mediatek`) | ✅ SHA-256 vs linux-firmware |
 | `WIFI_RAM_CODE_MT7961_1.bin` | MT7921AU | `linux-firmware` `mediatek/WIFI_RAM_CODE_MT7961_1.bin` | MediaTek redistributable (`LICENCE.mediatek`) | ✅ SHA-256 vs linux-firmware |

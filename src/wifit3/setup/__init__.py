@@ -36,12 +36,13 @@ def target_for_vidpid(vid: int, pid: int) -> SetupTarget | None:
     from wifit3.device.manager import driver_for, supported_ids
 
     smap = supported_ids()
-    got = smap.get((vid, pid))
-    if got is None:
+    claims = smap.get((vid, pid))
+    if not claims:
         return None
-    entry, key, _import = got
+    entry, key, _import = claims[0]
     driver_cls, _ = driver_for(vid, pid)
-    ids = tuple(sorted(vp for vp, (_e, k, _i) in smap.items() if k == key))
+    ids = tuple(sorted(vp for vp, vclaims in smap.items()
+                       for _e, k, _i in vclaims if k == key))
     return SetupTarget(
         key=key, description=entry.description, ids=ids,
         module_hints=tuple(driver_cls.CONFLICTING_LINUX_MODULES),
