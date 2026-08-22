@@ -69,7 +69,8 @@ A matching chipset does not guarantee that your wireless card will work.
 | ASUS USB-BE93 | Realtek RTL8922AU | 2.4 / 5 GHz |
 | TP-Link TL-WN722N v2/v3 | Realtek RTL8188EUS | 2.4 GHz |
 | TP-Link T3U Plus | Realtek RTL8822BU | 2.4 / 5 GHz |
-| TP-Link Archer T2U Plus / Archer T2U Nano | Realtek RTL8821AU | 2.4 / 5 GHz |
+| TP-Link Archer AC600 T2U Nano | Realtek RTL8821AU | 2.4 / 5 GHz |
+| TP-Link T2U Plus | Realtek RTL8821AU | 2.4 / 5 GHz |
 | Auscoumer 600 Mbps | Realtek RTL8821CU | 2.4 / 5 GHz |
 | ALFA AWUS036**NH** | Ralink RT3070 | 2.4 GHz |
 | Panda PAU05 / PAU06 | Ralink RT5372 | 2.4 GHz |
