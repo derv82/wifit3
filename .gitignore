@@ -20,6 +20,9 @@ htmlcov/
 # PyInstaller intermediate build dir (the bundle output under dist/ is ignored by dist/.gitignore).
 # wifit3.spec IS committed — it's the build config.
 build/
+dist/
+out/
+
 
 # Project specifics
 captures/

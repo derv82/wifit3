@@ -223,6 +223,7 @@ class ScannerView(Screen):
 
     # (column_key, display_label). Order here = on-screen order.
     _COLUMNS = [
+        ("silenced", "S"),
         ("bssid", "BSSID"),
         ("channel", "CH"),
         ("signal", "POWER"),
@@ -244,6 +245,7 @@ class ScannerView(Screen):
         self.ap_cache: Dict[str, AccessPoint] = {}
         self._refresh_timer = None
         self._sort_timer = None
+        self._sort_requested = False
         self._sort_idx = 2         # Default to POWER
         self._sort_reverse = True  # Descending
         self._channel_filter: Optional[List[int]] = None
@@ -257,6 +259,7 @@ class ScannerView(Screen):
         self._beacon_shown: Dict[str, tuple[int, float]] = {}
         # Per-BSSID last render key (fade bucket + cell content).
         self._render_key: Dict[str, tuple] = {}
+        self._sort_requested = False
         # captures/ history, loaded once at mount and hydrated onto APs by
         # BSSID so previously-saved handshakes/PMKIDs/WEP keys re-badge.
         self._capture_index: Dict[str, List[PersistedCapture]] = {}
@@ -434,6 +437,7 @@ class ScannerView(Screen):
                 self.ap_cache[ap.bssid] = ap
                 self._render_key[ap.bssid] = render_key
                 table.add_row(*(_fade_text(c, factor, bg) for c in raw), key=ap.bssid)
+                self._request_sort()
             else:
                 # Decloak event: already logged here.
                 old_ssid = self.ap_cache[ap.bssid].ssid
@@ -454,6 +458,16 @@ class ScannerView(Screen):
                         table.update_cell(ap.bssid, col_key, cell)
 
             self._drain_capture_events(ap, array.forged_macs)
+
+    def _request_sort(self) -> None:
+        if self._sort_requested:
+            return
+        self._sort_requested = True
+        self.call_after_refresh(self._apply_requested_sort)
+
+    def _apply_requested_sort(self) -> None:
+        self._sort_requested = False
+        self._apply_sort(scroll_to_cursor=False)
 
     def _apply_sort_and_evict(self) -> None:
         """Re-sort the table and drop fully-faded APs. Runs every 2 s."""
@@ -510,7 +524,9 @@ class ScannerView(Screen):
             wps_cell = Text("WPS 🔒" if ap.wps_locked else "WPS", style=fg)
         else:
             wps_cell = Text("", style=fg)
+        silenced = Config.is_silenced(ap.bssid)
         return [
+            Text("S" if silenced else "", style="yellow bold" if silenced else fg),
             Text(ap.bssid, style=fg),
             Text(str(ap.channel), justify="right", style=fg),
             Text(f"{ap.signal} dBm", justify="right", style=fg),
@@ -687,36 +703,42 @@ class ScannerView(Screen):
         sort_key, _ = self._COLUMNS[self._sort_idx]
 
         reverse = self._sort_reverse
-        # Only numeric columns try the int/float fast path.
-        is_numeric_col = sort_key in self._RIGHT_ALIGNED
+        if sort_key == "silenced":
+            def _silence_key(val):
+                return bool(val.plain.strip() if isinstance(val, Text) else str(val).strip())
 
-        def _key(val):
-            if isinstance(val, Text):
-                val = val.plain
-            s = str(val).strip()
-            is_empty = not s
+            table.sort(sort_key, key=_silence_key, reverse=not reverse)
+        else:
+            # Only numeric columns try the int/float fast path.
+            is_numeric_col = sort_key in self._RIGHT_ALIGNED
 
-            if is_empty:
-                primary: object = 0 if is_numeric_col else ""
-            elif is_numeric_col:
-                # Strip non-numeric suffix (e.g. " dBm")
-                head = s.split()[0]
-                try:
-                    primary = int(head)
-                except ValueError:
+            def _key(val):
+                if isinstance(val, Text):
+                    val = val.plain
+                s = str(val).strip()
+                is_empty = not s
+
+                if is_empty:
+                    primary: object = 0 if is_numeric_col else ""
+                elif is_numeric_col:
+                    # Strip non-numeric suffix (e.g. " dBm")
+                    head = s.split()[0]
                     try:
-                        primary = float(head)
+                        primary = int(head)
                     except ValueError:
-                        # Numeric column with garbage content - sort last.
-                        primary = float("inf") if not reverse else float("-inf")
-            else:
-                primary = s.lower()
+                        try:
+                            primary = float(head)
+                        except ValueError:
+                            # Numeric column with garbage content - sort last.
+                            primary = float("inf") if not reverse else float("-inf")
+                else:
+                    primary = s.lower()
 
-            # Force empties to the bottom in BOTH sort directions.
-            sentinel = int(is_empty != reverse)
-            return (sentinel, primary)
+                # Force empties to the bottom in BOTH sort directions.
+                sentinel = int(is_empty != reverse)
+                return (sentinel, primary)
 
-        table.sort(sort_key, key=_key, reverse=reverse)
+            table.sort(sort_key, key=_key, reverse=reverse)
 
         if current_key:
             try:
