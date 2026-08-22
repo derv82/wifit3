@@ -175,6 +175,8 @@ _ART_BY_PRODUCT: dict[str, str] = {
     "ALFA AWUS036NHA / TL-WN722N v1": "cards/card-awus036nha.ans",   # OUI unresolved -> default ALFA
     "ALFA AWUS1900": "cards/card-awus1900.ans",
     "Archer T3U Plus": "cards/card-archert3uplus.ans",
+    "TP-Link Archer T3U Plus": "cards/card-archert3uplus.ans",
+    "TP-Link Archer T3U": "cards/card-archert3u.ans",
     "TP-Link Archer T2U Plus": "cards/card-archert2uplus.ans",
     "TP-Link T2U Plus": "cards/card-archert2uplus.ans",
     "TP-Link Archer AC600 T2U Nano": "cards/card-archert2u.ans",
