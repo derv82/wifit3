@@ -18,7 +18,7 @@ class WepStats:
 @dataclass
 class PersistedCapture:
     """One previously-saved capture artifact found under captures/."""
-    kind: Literal["HS", "PMKID", "WEP", "WPS"]
+    type: Literal["HS", "PMKID", "WEP", "WPS"]
     timestamp: int                  # epoch seconds, parsed from the filename
     path: str                       # source file under captures/
     value: Optional[str] = None     # WEP key (hex) / WPS PSK; None for HS/PMKID
@@ -115,7 +115,7 @@ class AccessPoint:
         return (
             self.wps_pbc_psk
             or self.wps_pin_psk
-            or next((p.value for p in self.persisted if p.kind == "WPS" and p.value), None)
+            or next((p.value for p in self.persisted if p.type == "WPS" and p.value), None)
         )
 
     @property

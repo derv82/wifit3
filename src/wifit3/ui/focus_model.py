@@ -406,7 +406,7 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
                 f"bcast:{deauth.bcast_sent}[/dim]"]
 
     # 4. Recovered credentials, when idle: WEP key / WPS PSK.
-    if ap.wep_key is not None or any(p.kind == "WEP" for p in ap.persisted):
+    if ap.wep_key is not None or any(p.type == "WEP" for p in ap.persisted):
         return ["[black bold on green] ✓ WEP key recovered [/black bold on green]",
                 "[dim]see the event log for the key[/dim]"]
     if ap.known_psk:

@@ -139,7 +139,8 @@ class FocusViewV2(Screen):
           for cls in fm.BUTTON_CAMPAIGNS if cls.hotkey],
         Binding("c", "campaign('chop')", "ChopChop", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
-        Binding("s", "toggle_silence", "Silence", show=True),
+        Binding("s", "silence", "Silence", show=True),
+        Binding("s", "unsilence", "unSilence", show=True),
         Binding("q", "app.quit", "Quit", show=True),
     ]
 
@@ -401,6 +402,10 @@ class FocusViewV2(Screen):
 
         self._log_persisted_history(ap)
 
+        if Config.is_silenced(ap.bssid):
+            self._log_silenced()
+            return
+
         enc = (ap.encryption or "").upper()
         if enc == "WEP":
             self._log("[bold italic]Passively listening[/bold italic] for [bold]WEP IVs[/bold]")
@@ -416,13 +421,13 @@ class FocusViewV2(Screen):
         wps_progress = run_progress_line(wps_state) if wps_state else None
         if not ap.persisted and not wps_progress:
             return
-        by_kind: dict[str, list] = {}
+        by_type: dict[str, list] = {}
         for cap in sorted(ap.persisted, key=lambda c: c.timestamp, reverse=True):
-            by_kind.setdefault(cap.kind, []).append(cap)
+            by_type.setdefault(cap.type, []).append(cap)
 
         nouns = {"HS": "Handshake", "PMKID": "PMKID", "WEP": "WEP Key", "WPS": "WPS PSK"}
         # Newest of each kind, newest kind first; the label column is padded so the dates line up.
-        rows = sorted(((k, caps[0], len(caps)) for k, caps in by_kind.items()),
+        rows = sorted(((k, caps[0], len(caps)) for k, caps in by_type.items()),
                       key=lambda r: r[1].timestamp, reverse=True)
         if rows:
             self._log("[bold]Existing captures[/bold] in [cyan]captures/[/cyan]:")
@@ -658,6 +663,10 @@ class FocusViewV2(Screen):
             if ap is None:
                 return False
             return None if fm.deauth_blocked(ap) else True
+        if action == "silence":
+            return False if (ap is not None and Config.is_silenced(ap.bssid)) else True
+        if action == "unsilence":
+            return True if (ap is not None and Config.is_silenced(ap.bssid)) else False
         return True
 
     def _sync_bindings(self) -> None:
@@ -668,7 +677,7 @@ class FocusViewV2(Screen):
         else:
             btns = fm.derive_buttons(ap)
             sig = (tuple((bid, s.visible, s.disabled) for bid, s in btns.items()),
-                   fm.deauth_blocked(ap))
+                   fm.deauth_blocked(ap), Config.is_silenced(ap.bssid))
         if sig != self._binding_sig:
             self._binding_sig = sig
             self.refresh_bindings()
@@ -697,20 +706,32 @@ class FocusViewV2(Screen):
             self._log("[bold]WPS PushButton Extraction[/bold] "
                       "[yellow]disabled[/yellow] [dim](detect only, press w to toggle)[/dim]")
 
-    def action_toggle_silence(self) -> None:
-        """'s': silence the focused AP (disable campaigns, ignore its handshakes/PMKIDs)."""
+    def action_silence(self) -> None:
+        self._toggle_silence()
+
+    def action_unsilence(self) -> None:
+        self._toggle_silence()
+
+    def _toggle_silence(self) -> None:
+        """Flip the focused AP's silenced state (campaigns off, handshakes/PMKIDs ignored)."""
         if self._target_ap is None:
             return
         bssid = self._target_ap.bssid.lower()
         if bssid in Config.silenced_bssids:
             Config.silenced_bssids.remove(bssid)
-            self._log("[green]● AP unsilenced[/green]")
+            self._log("[green bold] ● AP [italic]Un[/italic]Silenced ✓[/]")
+            self._log("[dim green]" + treelog.leaf("campaigns enabled, listening for handshakes") + "[/]")
         else:
             Config.silenced_bssids.append(bssid)
-            self._log("[yellow]● AP silenced: campaigns disabled, handshakes ignored[/yellow]")
+            self._log_silenced()
         self.app.persist_config()
         self._refresh_buttons()
         self._sync_bindings()
+
+    def _log_silenced(self) -> None:
+        self._log("[yellow bold] ● AP Silenced[/] [red]✗S[/]")
+        self._log("[yellow dim]" + treelog.branch("campaigns disabled, handshakes ignored.") + "[/]")
+        self._log("[yellow dim]" + treelog.leaf("press [bold]s[/bold] to unsilence.") + "[/]")
 
     # ----- deauth ------------------------------------------------------------
 

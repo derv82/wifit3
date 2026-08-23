@@ -4,7 +4,8 @@ it straight back without having to rediscover it."""
 import pytest
 from textual.widgets import Button, DataTable
 
-from wifit3.models import AccessPoint
+from wifit3.models import AccessPoint, PersistedCapture
+from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.filter import EncryptionFilter, ScanFilter
 from wifit3.ui.screens.scanner import ScannerView
@@ -104,3 +105,30 @@ async def test_channel_modal_returns_focus_to_table():
         for _ in range(2):
             await pilot.pause()
         assert app.focused is table
+
+
+def test_ssid_chips_zero_one_two(monkeypatch):
+    ap = AccessPoint(bssid="aa:bb:cc:00:00:40", ssid="Net", channel=1)
+
+    monkeypatch.setattr(Config, "silenced_bssids", [])
+    assert ScannerView._ssid_chips_markup(ap) == ""
+
+    monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
+    assert ScannerView._ssid_chips_markup(ap) == "[red]✗S[/red]"
+
+    ap.persisted = [PersistedCapture(type="HS", timestamp=0, path="x")]
+    assert ScannerView._ssid_chips_markup(ap) == "[red]✗S[/red] [green]✓HS[/green]"
+
+
+def test_ssid_cell_clips_wide_ssid_to_cap(monkeypatch):
+    """SSID width must be measured in display cells, not chars: a wide (2-cell)
+    SSID over the cap gets clipped, and its trailing chip survives the clip."""
+    scanner = ScannerView()
+    scanner._theme_fg = "white"
+    ap = AccessPoint(bssid="aa:bb:cc:00:00:41", ssid="ネ" * 40, channel=1)  # 80 cells
+    monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
+
+    cell = scanner._ssid_cell(ap)
+    assert cell.cell_len <= ScannerView._SSID_CELL_MAX
+    assert cell.plain.endswith("✗S")
+    assert "…" in cell.plain

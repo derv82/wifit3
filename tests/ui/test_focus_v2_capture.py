@@ -482,7 +482,7 @@ async def test_v2_wep_initial_load_surfaces_history_and_listening():
     ap = array.access_points[bssid]
     ap.encryption = "WEP"
     ap.persisted = [PersistedCapture(
-        kind="WEP", value="6162636465", timestamp=1748487420, path="dd-wrt_wep.txt")]
+        type="WEP", value="6162636465", timestamp=1748487420, path="dd-wrt_wep.txt")]
 
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:

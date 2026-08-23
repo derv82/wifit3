@@ -73,15 +73,15 @@ def _parse_file(path: Path) -> List[PersistedCapture]:
         key = _read_wep_key(path)
         if key is None:
             return []
-        return [PersistedCapture(kind="WEP", timestamp=epoch,
+        return [PersistedCapture(type="WEP", timestamp=epoch,
                                  value=key, path=str(path))]
     if kind in ("wps_pin", "wps_pbc") and ext == "txt":
-        return [PersistedCapture(kind="WPS", timestamp=epoch,
+        return [PersistedCapture(type="WPS", timestamp=epoch,
                                  value=_read_wps_psk(path), path=str(path))]
     if kind == "handshake" and ext == "hc22000":
-        return [PersistedCapture(kind="HS", timestamp=epoch, path=str(path))]
+        return [PersistedCapture(type="HS", timestamp=epoch, path=str(path))]
     if kind == "pmkid" and ext == "hc22000":
-        return [PersistedCapture(kind="PMKID", timestamp=epoch, path=str(path))]
+        return [PersistedCapture(type="PMKID", timestamp=epoch, path=str(path))]
     # .pcap companion + any other shape: the hashline/text sibling has the verdict.
     return []
 
@@ -111,13 +111,13 @@ def load_capture_index(captures_dir: Path | str = "captures") -> Dict[str, List[
 
 def summarize(index: Dict[str, List[PersistedCapture]]) -> tuple[int, int, int, int]:
     """(handshakes, pmkids, wep_keys, wps_psks) as a count of *APs* that have each
-    kind, de-duped per AP: an AP with 11 saved handshakes counts as one, not
+    type, de-duped per AP: an AP with 11 saved handshakes counts as one, not
     eleven."""
     hs = pmkid = wep = wps = 0
     for caps in index.values():
-        kinds = {c.kind for c in caps}
-        hs += "HS" in kinds
-        pmkid += "PMKID" in kinds
-        wep += "WEP" in kinds
-        wps += "WPS" in kinds
+        types = {c.type for c in caps}
+        hs += "HS" in types
+        pmkid += "PMKID" in types
+        wep += "WEP" in types
+        wps += "WPS" in types
     return hs, pmkid, wep, wps

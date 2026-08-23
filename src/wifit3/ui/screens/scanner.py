@@ -519,39 +519,28 @@ class ScannerView(Screen):
             # style=fg gives the bare '→' between WPA3/WPA2 a fadeable base color.
             Text.from_markup(format_encryption_markup(ap, muted=fg), emoji=False, style=fg),
             wps_cell,
-            self._ssid_markup(ap),
+            self._ssid_cell(ap),
         ]
 
     # Cap the SSID+badges cell so the trailing capture badges never overflow.
     _SSID_CELL_MAX = 32
 
-    def _ssid_markup(self, ap: AccessPoint) -> Text:
-        """Three SSID rendering states:
-          - Confirmed       → bold     ("RealNetwork")
-          - Hidden, no hint → italic   ("<Hidden>")
-          - Hidden, guess   → italic + trailing '?'  ("SiblingName?")
-        """
+    def _ssid_cell(self, ap: AccessPoint) -> Text:
+        """name (bold=named, italic=hidden, +'?'=sibling guess) + chips."""
         if ap.ssid:
-            ssid_str, style = ap.ssid, f"{self._theme_fg} bold"
+            name = Text(ap.ssid, style=f"{self._theme_fg} bold")
         else:
-            sib_ssid = self._best_named_sibling_ssid(ap)
-            if sib_ssid:
-                ssid_str, style = f"{sib_ssid}?", f"{self._theme_fg} italic"
-            else:
-                ssid_str, style = "<Hidden>", f"{self._theme_fg} italic"
+            sib = self._best_named_sibling_ssid(ap)
+            name = Text(f"{sib}?" if sib else "<Hidden>", style=f"{self._theme_fg} italic")
 
-        markers_markup = self._capture_marker_markup(ap)
-        if not markers_markup:
-            return Text(ssid_str, style=style)
-
-        markers_text = Text.from_markup(markers_markup, emoji=False)
-        avail = self._SSID_CELL_MAX - 1 - markers_text.cell_len  # 1 = separator
-        if avail >= 1 and len(ssid_str) > avail:
-            ssid_str = ssid_str[: max(1, avail - 1)] + "…"
-        text = Text(ssid_str, style=style)
-        text.append(" ")
-        text.append_text(markers_text)
-        return text
+        chips_markup = self._ssid_chips_markup(ap)  # Silenced, HS, PMK, WEP, PSK
+        chips_text = Text.from_markup(chips_markup, emoji=False) if chips_markup else None
+        reserved = 1 + chips_text.cell_len if chips_text else 0   # 1 = separator space
+        name.truncate(max(1, self._SSID_CELL_MAX - reserved), overflow="ellipsis")
+        if chips_text:
+            name.append(" ")
+            name.append_text(chips_text)
+        return name
 
     def _best_named_sibling_ssid(self, ap: AccessPoint) -> Optional[str]:
         """Guess the sibling SSID to display for a hidden AP."""
@@ -568,25 +557,22 @@ class ScannerView(Screen):
         return best_ssid
 
     @staticmethod
-    def _capture_marker_markup(ap: AccessPoint) -> str:
+    def _ssid_chips_markup(ap: AccessPoint) -> str:
         """Badges next to SSID for HS, PMK, WEP, WPS."""
-        kinds = {p.kind for p in ap.persisted}
-        has_hs = kinds.__contains__("HS") or any(
-            hs.is_complete for hs in ap.handshakes.values())
-        has_pmk = "PMKID" in kinds or any(
-            hs.pmkid and pmkid_crackable(hs) for hs in ap.handshakes.values())
-        has_wep = "WEP" in kinds or ap.wep_key is not None
-        has_wps = "WPS" in kinds or ap.wps_pbc_psk is not None
-        parts: List[str] = []
-        if has_hs:
-            parts.append("[green]✓HS[/green]")
-        if has_pmk:
-            parts.append("[green]✓PMK[/green]")
-        if has_wep:
-            parts.append("[green]✓WEP[/green]")
-        if has_wps:
-            parts.append("[green]✓WPS[/green]")
-        return " ".join(parts)
+        types = {p.type for p in ap.persisted}
+        has_hs  = "HS"    in types or any(hs.is_complete for hs in ap.handshakes.values())
+        has_pmk = "PMKID" in types or any(hs.pmkid and pmkid_crackable(hs) for hs in ap.handshakes.values())
+        has_wep = "WEP"   in types or ap.wep_key is not None
+        has_wps = "WPS"   in types or ap.wps_pbc_psk is not None
+        silent = Config.is_silenced(ap.bssid)
+        badges = [
+            (silent, "[red]✗S[/red]"),
+            (has_hs, "[green]✓HS[/green]"),
+            (has_pmk, "[green]✓PMK[/green]"),
+            (has_wep, "[green]✓WEP[/green]"),
+            (has_wps, "[green]✓WPS[/green]"),
+        ]
+        return " ".join(text for cond, text in badges if cond)
 
     # ----- Capture-event logging ---------------------------------------------
 
@@ -796,7 +782,7 @@ class ScannerView(Screen):
             self._write_log(treelog.leaf("[dim]auto-invade off: press [bold]w[/bold] to enable[/dim]"))
             return
         if ap.has_psk:
-            wps = next((p for p in ap.persisted if p.kind == "WPS" and p.value), None)
+            wps = next((p for p in ap.persisted if p.type == "WPS" and p.value), None)
             where = f" [dim]({escape(Path(wps.path).name)})[/dim]" if wps else ""
             self._write_log(treelog.leaf(f"[italic]already captured[/italic]{where}"))
             return

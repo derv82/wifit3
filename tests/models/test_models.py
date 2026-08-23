@@ -65,15 +65,15 @@ def test_has_psk():
 
     # A prior session's WPS capture loaded from disk (PBC or PIN file → kind WPS).
     ap4 = AccessPoint(bssid="00:11:22:33:44:88")
-    ap4.persisted = [PersistedCapture(kind="WPS", timestamp=0, value="diskpsk", path="x_wps_pbc.txt")]
+    ap4.persisted = [PersistedCapture(type="WPS", timestamp=0, value="diskpsk", path="x_wps_pbc.txt")]
     assert ap4.has_psk is True
     assert ap4.known_psk == "diskpsk"
 
     # Other persisted kinds (HS/PMKID/WEP) are not a PSK → no block.
     ap5 = AccessPoint(bssid="00:11:22:33:44:99")
     ap5.persisted = [
-        PersistedCapture(kind="HS", timestamp=0, path="x_handshake.hc22000"),
-        PersistedCapture(kind="WEP", timestamp=0, value="abcde", path="x_wep_key.txt"),
+        PersistedCapture(type="HS", timestamp=0, path="x_handshake.hc22000"),
+        PersistedCapture(type="WEP", timestamp=0, value="abcde", path="x_wep_key.txt"),
     ]
     assert ap5.has_psk is False
     assert ap5.known_psk is None

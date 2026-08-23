@@ -30,7 +30,7 @@ def _running(key, **extra):
 def _wep_ap(*, wep_key=None, persisted_wep=False, unique_ivs=0):
     persisted = []
     if persisted_wep:
-        persisted = [types.SimpleNamespace(kind="WEP", value="6162636465", timestamp=0)]
+        persisted = [types.SimpleNamespace(type="WEP", value="6162636465", timestamp=0)]
     return types.SimpleNamespace(
         encryption="WEP", wep_key=wep_key, persisted=persisted,
         wep=types.SimpleNamespace(unique_ivs=unique_ivs),
