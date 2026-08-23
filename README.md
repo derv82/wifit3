@@ -98,6 +98,10 @@ uv sync
 uv run wifit3
 ```
 
+### Build
+
+Build using `uv run pyinstaller wifit3.spec --noconfirm --clean` (Windows: `dist/wifit3.exe`, Linux: `dist/wifit3`).
+
 ### First-run setup
 
 **Windows**: Wifit3 offers to install the **WinUSB** driver for your device. The bundled installer
