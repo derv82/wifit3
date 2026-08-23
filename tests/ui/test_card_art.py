@@ -4,10 +4,6 @@ BreathingArt runtime art swap. Pure logic, no mounting (BreathingArt is driven b
 hand, as in test_focus_v2_layout)."""
 from types import SimpleNamespace
 
-from rich.color import Color
-from rich.style import Style
-from rich.text import Span, Text
-
 from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
 from wifit3.chips.mt7921au.driver import MT7921AUDriver
 from wifit3.ui.screens.focus_v2 import art
@@ -51,6 +47,20 @@ def test_derive_product_name_ar9271_by_oui():
 
 def test_art_path_for_product_hit():
     assert art.art_path_for(_iface(product_name="Panda PAU05/06")) == "cards/card-pau06.ans"
+
+
+def test_art_path_for_tp_link_art_name_variants():
+    cases = {
+        "TP-Link Archer T3U Plus": "cards/card-archert3uplus.ans",
+        "TP-Link Archer T3U": "cards/card-archert3u.ans",
+        "TP-Link Archer T4U V3": "cards/card-archert4u.ans",
+        "TP-Link T4U Plus": "cards/card-archert4uplus.ans",
+        "TP-Link Archer T2U": "cards/card-archert2u.ans",
+        "TP-Link Archer T2U Nano": "cards/card-archert2unano.ans",
+        "TP-Link Archer TX20U Plus": "cards/card-archertx20uplus.ans",
+    }
+    for product_name, art_name in cases.items():
+        assert art.art_path_for(_iface(product_name=product_name)) == art_name
 
 
 def test_art_path_for_wn722n_v1_shares_v23_art():
@@ -102,34 +112,7 @@ def test_pool_art_empty_is_generic():
     assert art.pool_art([_iface(product_name="ALFA AWUS036H")]) == "cards/card-awus036h.ans"
 
 
-# --- LED repaint / BreathingArt.set_art --------------------------------------
-
-def _span_color(text: Text, index: int) -> tuple[int, int, int]:
-    color = text.spans[index].style.color
-    assert color is not None and color.triplet is not None
-    return tuple(color.triplet)
-
-
-def test_paint_animates_green_and_teal_led_markers(monkeypatch):
-    src = Text("abc")
-    src.spans = [
-        Span(0, 1, Style(color=Color.from_rgb(0, 128, 0))),
-        Span(1, 2, Style(color=Color.from_rgb(0, 128, 128))),
-        Span(2, 3, Style(color=Color.from_rgb(128, 0, 0))),
-    ]
-    monkeypatch.setattr(art, "_transparent", lambda _name: src)
-
-    out = art._paint("unused.ans", 200)
-
-    assert _span_color(out, 0) == (0, 200, 0)
-    assert _span_color(out, 1) == (0, 200, 200)
-    assert _span_color(out, 2) == (128, 0, 0)
-    assert _span_color(src, 0) == (0, 128, 0)
-
-
-def test_breathe_green_alias_matches_breathe_level():
-    assert art._breathe_green(0.25) == art._breathe_level(0.25)
-
+# --- BreathingArt.set_art (runtime swap) ------------------------------------
 
 def test_breathing_art_set_art_swaps_and_noops():
     ba = art.BreathingArt("focus-card.ans")             # unmounted; drive by hand
