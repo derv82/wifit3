@@ -56,28 +56,26 @@ Bug reports are genuinely welcome: [open an issue](https://github.com/derv82/wif
 
 A matching chipset does not guarantee that your wireless card will work.
 
-| Card | Chipset | Bands |
+| Chipset | Bands | Cards (Make + Model) |
 |---|---|---|
-| ALFA AWUS036**NHA** | Atheros AR9271 | 2.4 GHz |
-| ALFA AWUS036**ACM** | MediaTek MT7612U | 2.4 / 5 GHz |
-| ALFA AWUS036**ACHM** / Panda PAU0B | MediaTek MT7610U | 2.4 / 5 GHz |
-| ALFA AWUS036**AXML** / Panda PAU0F | MediaTek MT7921AU | 2.4 / 5 GHz |
-| Netgear A9000 | MediaTek MT7925U | 2.4 / 5 GHz |
-| ALFA AWUS036**ACS** | Realtek RTL8821AU | 2.4 / 5 GHz |
-| ALFA AWUS036**ACH** | Realtek RTL8812AU | 2.4 / 5 GHz |
-| ALFA AWUS1900 | Realtek RTL8814AU | 2.4 / 5 GHz |
-| ASUS USB-BE93 | Realtek RTL8922AU | 2.4 / 5 GHz |
-| TP-Link TL-WN722N v2/v3 | Realtek RTL8188EUS | 2.4 GHz |
-| TP-Link T3U Plus | Realtek RTL8822BU | 2.4 / 5 GHz |
-| TP-Link Archer AC600 T2U Nano | Realtek RTL8821AU | 2.4 / 5 GHz |
-| TP-Link T2U Plus | Realtek RTL8821AU | 2.4 / 5 GHz |
-| Auscoumer 600 Mbps | Realtek RTL8821CU | 2.4 / 5 GHz |
-| ALFA AWUS036**NH** | Ralink RT3070 | 2.4 GHz |
-| Panda PAU05 / PAU06 | Ralink RT5372 | 2.4 GHz |
-| Panda PAU09 N600 | Ralink RT5572 | 2.4 / 5 GHz |
-| LOTEKOO 150 Mbps | Ralink RT5370 | 2.4 GHz |
-| ALFA AWUS036**H** | Realtek RTL8187L | 2.4 GHz |
-| Buffalo Nintendo Wi-Fi USB Controller | Ralink RT2570 | 2.4 GHz |
+| Atheros AR9271 | 2.4 GHz | ALFA AWUS036**NHA**, TP-Link TL-WN722N V1 |
+| MediaTek MT7610U | 2.4 / 5 GHz | ALFA AWUS036**ACHM**, Panda PAU0B |
+| MediaTek MT7612U | 2.4 / 5 GHz | ALFA AWUS036**ACM** |
+| MediaTek MT7921AU | 2.4 / 5 GHz | ALFA AWUS036**AXML**, Panda PAU0F |
+| MediaTek MT7925U | 2.4 / 5 GHz | Netgear A9000 |
+| Realtek RTL8812AU | 2.4 / 5 GHz | ALFA AWUS036**ACH** |
+| Realtek RTL8814AU | 2.4 / 5 GHz | ALFA AWUS1900 |
+| Realtek RTL8821AU | 2.4 / 5 GHz | ALFA AWUS036**ACS**, TP-Link Archer T2U Plus/Nano |
+| Realtek RTL8821CU | 2.4 / 5 GHz | Auscoumer 600 Mbps |
+| Realtek RTL8922AU | 2.4 / 5 GHz | ASUS USB-BE93 |
+| Realtek RTL8822BU | 2.4 / 5 GHz | TP-Link T3U Plus |
+| Realtek RTL8187L | 2.4 GHz | ALFA AWUS036**H** |
+| Realtek RTL8188EUS | 2.4 GHz | TP-Link TL-WN722N v2/v3 |
+| Ralink RT2570 | 2.4 GHz | Buffalo Nintendo Wi-Fi USB Controller |
+| Ralink RT3070 | 2.4 GHz | ALFA AWUS036**NH** |
+| Ralink RT5370 | 2.4 GHz | LOTEKOO 150 Mbps |
+| Ralink RT5372 | 2.4 GHz | Panda PAU05/PAU06 |
+| Ralink RT5572 | 2.4 / 5 GHz | Panda PAU09 N600 |
 
 See [Supported Hardware](docs/SUPPORTED-HARDWARE.md) for detailed information about each card's capabilities and performance.
 
@@ -98,6 +96,10 @@ Wifit3 uses [`uv`](https://docs.astral.sh/uv/) (requires internet access to pull
 uv sync
 uv run wifit3
 ```
+
+### Build
+
+Build using `uv run pyinstaller wifit3.spec --noconfirm --clean` (Windows: `dist/wifit3.exe`, Linux: `dist/wifit3`).
 
 ### First-run setup
 
