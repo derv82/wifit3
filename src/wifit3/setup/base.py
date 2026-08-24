@@ -3,7 +3,7 @@
 Bringing a card to a driveable state can need a privileged step the kernel/OS won't do for us:
 WinUSB binding on Windows, a udev rule + modprobe blacklist on Linux. ``Setup`` is that step.
 ``SetupWindows`` / ``SetupLinux`` implement it; ``SetupMacOS`` is the no-op for macOS (no kernel
-driver ever binds these cards there). the bring-up engine calls :meth:`Setup.for_platform`
+driver ever binds these cards there). The bring-up engine calls :meth:`Setup.for_platform`
 once and never branches on the OS again. Every user interaction (confirm, replug, progress, error)
 goes through the injected :class:`Prompter`, so a ``Setup`` is testable with no Textual app and no
 hardware.
