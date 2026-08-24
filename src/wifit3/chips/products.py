@@ -278,9 +278,10 @@ class Netgear(ProductName):
     A6150       = "Netgear A6150"
     A6200_V2    = "Netgear A6200 v2"
     A6210       = "Netgear A6210"
-    A7000       = "Netgear A7000"
-    A7500       = "Netgear A7500"
-    A9000       = "Netgear A9000"
+    A7000       = "Netgear A7000"  # https://wikidevi.wi-cat.ru/Netgear_A7000
+    A7500       = "Netgear A7500"  # https://wikidevi.wi-cat.ru/Netgear_A9000 (mentioned)
+    A8000       = "Netgear A8000"  # https://wikidevi.wi-cat.ru/Netgear_A8000
+    A9000       = "Netgear A9000"  # https://wikidevi.wi-cat.ru/Netgear_A9000
     N150        = "Netgear N150"
     RTL8187     = "Netgear RTL8187"
     WG111_V1_V2 = "WG111 v1/v2"
@@ -368,23 +369,21 @@ class TPLink(ProductName):
     ARCHER_T3U       = "Archer T3U"      # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T3U
     ARCHER_T3U_NANO  = "Archer T3U Nano" # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T3U_Nano
     ARCHER_T3U_PLUS  = "Archer T3U Plus" # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T3U_Plus
-    ARCHER_T4U       = "Archer T4U"
-    ARCHER_T4UH      = "Archer T4UH"
-    ARCHER_T4UHP     = "Archer T4UHP"
-    ARCHER_T4UHP_V2  = "Archer T4UHP v2"
-    ARCHER_T4UH_V2   = "Archer T4UH v2"
-    ARCHER_T4U_PLUS  = "Archer T4U Plus"
-    ARCHER_T4U_V2    = "Archer T4U v2"
-    ARCHER_T4U_V3    = "Archer T4U V3"
-    ARCHER_T9UH      = "Archer T9UH"
-    ARCHER_TX20U_PLUS = "Archer TX20U+"
-    TL_WDN5200       = "TL-WDN5200"
-    TL_WDN6200       = "TL-WDN6200"
-    TL_WN322G_V2_V3  = "TL-WN322G v2/v3"
-    TL_WN722N_V1     = "TL-WN722N v1"
-    TL_WN722N_V2_V3  = "TL-WN722N v2/v3"
-    TL_WN723N_V2_3_4 = "TL-WN723N v2/3/4"
-    TXE50UH          = "TP-Link TXE50UH"
+    ARCHER_T4U       = "Archer T4U"      # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U
+    ARCHER_T4UH      = "Archer T4UH"     # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4UH
+    ARCHER_T4UH_V2   = "Archer T4UH v2"  # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4UH
+    ARCHER_T4UHP     = "Archer T4UHP"    # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4UHP
+    ARCHER_T4UHP_V2  = "Archer T4UHP v2" # https://linux-hardware.org/?id=usb:2357-0122
+    ARCHER_T4U_PLUS  = "Archer T4U Plus" # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U_Plus
+    ARCHER_T4U_V2    = "Archer T4U v2"   # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U_v2
+    ARCHER_T4U_V3    = "Archer T4U V3"   # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U_v3
+    ARCHER_T9UH      = "Archer T9UH"     # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T9UH
+    ARCHER_TX20U_PLUS = "Archer TX20U+"  # https://wikidevi.wi-cat.ru/TP-LINK_Archer_TX35U_Plus (diff page) says: TP-LINK Archer TX20U Plus (AX1800) • RTL8832AU [2357:013f]
+    TL_WDN6200       = "TL-WDN6200"      # https://github.com/aircrack-ng/rtl8812au/issues/1262
+    TL_WN322G_V2_V3  = "TL-WN322G v2/v3" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN322G_v3
+    TL_WN722N_V1     = "TL-WN722N v1"    # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v1.x
+    TL_WN722N_V2_V3  = "TL-WN722N v2/v3" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v2 & v3
+    TL_WN723N_V2_3_4 = "TL-WN723N v2/3/4" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN723N_v3
 
 
 class TRENDnet(ProductName):

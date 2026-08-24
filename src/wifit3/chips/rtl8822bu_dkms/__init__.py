@@ -8,13 +8,14 @@ from wifit3.chips.products import ASUS, Buffalo, CCandC, DLink, Edimax, Elecom, 
 _IDS = (
     (0x2357, 0x0138, "RTL8822BU", None, TPLink.ARCHER_T3U_PLUS),
     (0x2357, 0x012D, "RTL8822BU", None, TPLink.ARCHER_T3U),
-    (0x2357, 0x0115, "RTL8822BU", None, TPLink.ARCHER_T4U_V3),
+    # 2357:0115 could be one of: T4U Plus, T4U v3, T4U v3.2 https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U_v3
+    (0x2357, 0x0115, "RTL8822BU", None, TPLink.ARCHER_T4U_V3),  # Chosen by dice roll.
     (0x2357, 0x012E, "RTL8822BU", None, TPLink.ARCHER_T3U_NANO),
-    (0x2357, 0x0116, "RTL8822BU", None, None),
-    (0x2357, 0x0117, "RTL8822BU", None, None),
-    (0x0BDA, 0xB812, "RTL8822BU", None, None),
-    (0x0BDA, 0xB82C, "RTL8822BU", None, None),
-    (0x0BDA, 0xB81A, "RTL8822BU", None, None),
+    (0x2357, 0x0116, "RTL8822BU", None, None),  # (TP-Link) Wireless USB Adapter https://linux-hardware.org/?id=usb:2357-0116
+    (0x2357, 0x0117, "RTL8822BU", None, None),  # (TP-Link) High Power Wireless USB Adapter https://linux-hardware.org/?id=usb:2357-0117
+    (0x0BDA, 0xB812, "RTL8822BU", None, None),  # (Realtek) RTL88x2bu [AC1200 Techkey] https://linux-hardware.org/?id=usb:0BDA-B812
+    (0x0BDA, 0xB82C, "RTL8822BU", None, None),  # (Realtek) 802.11ac NIC https://linux-hardware.org/?id=usb:0BDA-B82C
+    (0x0BDA, 0xB81A, "RTL8822BU", None, None),  # (Realtek) 8812BU Wireless LAN 802.11ac USB NIC https://linux-hardware.org/?id=usb:0BDA-B81A
     (0x0B05, 0x1841, "RTL8822BU", None, ASUS.USB_AC55_B1),
     (0x0B05, 0x184C, "RTL8822BU", None, ASUS.USB_AC53_NANO),
     (0x0B05, 0x19AA, "RTL8822BU", None, ASUS.USB_AC58_A1),
@@ -25,8 +26,8 @@ _IDS = (
     (0x0846, 0x9055, "RTL8822BU", None, Netgear.A6150),
     (0x7392, 0xB822, "RTL8822BU", None, Edimax.EW_7822ULC),
     (0x7392, 0xC822, "RTL8822BU", None, Edimax.EW_7822UTC),
-    (0x7392, 0xD822, "RTL8822BU", None, None),
-    (0x7392, 0xE822, "RTL8822BU", None, None),
+    (0x7392, 0xD822, "RTL8822BU", None, None),  # (Edimax) Dacota Platinum AC1200 USB 2.0 Wireless Adapter https://linux-hardware.org/?id=usb:7392-D822
+    (0x7392, 0xE822, "RTL8822BU", None, None),  # (Edimax) Dacota Platinum AC1200 USB 3.0 Wireless Adapter https://linux-hardware.org/?id=usb:7392-E822
     (0x7392, 0xF822, "RTL8822BU", None, Edimax.EW_7822UAD),
     (0x2C4E, 0x0107, "RTL8822BU", None, Mercusys.MA30H),
     (0x2C4E, 0x010A, "RTL8822BU", None, Mercusys.MA30N),
