@@ -55,7 +55,7 @@ def test_art_path_for_tp_link_archer_constants():
         TPLink.ARCHER_T3U_PLUS: "cards/card-archert3uplus.ans",
         TPLink.ARCHER_T3U: "cards/card-archert3u.ans",
         TPLink.ARCHER_T4U_V3: "cards/card-archert4u.ans",
-        TPLink.ARCHER_T4UHP: "cards/card-archert4uplus.ans",
+        TPLink.ARCHER_T4U_PLUS: "cards/card-archert4uplus.ans",
         TPLink.ARCHER_T2U: "cards/card-archert2uplus.ans",
         TPLink.ARCHER_T2U_NANO: "cards/card-archert2unano.ans",
         TPLink.ARCHER_TX20U_PLUS: "cards/card-archertx20uplus.ans",
