@@ -87,6 +87,8 @@ Grab a prebuilt binary from the [**Releases**](https://github.com/derv82/wifit3/
 
 - **Windows** — download `wifit3-windows-x64.exe` and run it.
 - **Linux** — download `wifit3-linux-x64`, then `chmod +x wifit3-linux-x64 && ./wifit3-linux-x64`.
+- **macOS (Apple Silicon):** download `wifit3-macos-arm64`, then clear the download quarantine and run it:
+  `xattr -d com.apple.quarantine wifit3-macos-arm64 && chmod +x wifit3-macos-arm64 && ./wifit3-macos-arm64`
 
 ### Run from source
 
@@ -108,6 +110,9 @@ self-elevates for that one step (a single UAC prompt), after which no Administra
 
 **Linux**: Wifit3 offers to create udev and modprobe rules which enable userland access. These rules blocklist 
 the card's kernel driver (so the kernel stops grabbing it). Afterward Wifit3 runs without `sudo`.
+
+**macOS**: No driver install is needed. macOS asks to allow the USB device on first plug-in: choose
+*Allow*, afterwards wifit3 can see & interact with the device.
 
 ### Uninstall
 
