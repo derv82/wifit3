@@ -50,15 +50,15 @@ def test_art_path_for_product_hit():
     assert art.art_path_for(_iface(product_name="Panda PAU05/06")) == "cards/card-pau06.ans"
 
 
-def test_art_path_for_tp_link_art_name_variants():
+def test_art_path_for_tp_link_archer_constants():
     cases = {
-        "TP-Link Archer T3U Plus": "cards/card-archert3uplus.ans",
-        "TP-Link Archer T3U": "cards/card-archert3u.ans",
-        "TP-Link Archer T4U V3": "cards/card-archert4u.ans",
-        "TP-Link T4U Plus": "cards/card-archert4uplus.ans",
-        "TP-Link Archer T2U": "cards/card-archert2u.ans",
-        "TP-Link Archer T2U Nano": "cards/card-archert2unano.ans",
-        "TP-Link Archer TX20U Plus": "cards/card-archertx20uplus.ans",
+        TPLink.ARCHER_T3U_PLUS: "cards/card-archert3uplus.ans",
+        TPLink.ARCHER_T3U: "cards/card-archert3u.ans",
+        TPLink.ARCHER_T4U_V3: "cards/card-archert4u.ans",
+        TPLink.ARCHER_T4UHP: "cards/card-archert4uplus.ans",
+        TPLink.ARCHER_T2U: "cards/card-archert2uplus.ans",
+        TPLink.ARCHER_T2U_NANO: "cards/card-archert2unano.ans",
+        TPLink.ARCHER_TX20U_PLUS: "cards/card-archertx20uplus.ans",
     }
     for product_name, art_name in cases.items():
         assert art.art_path_for(_iface(product_name=product_name)) == art_name

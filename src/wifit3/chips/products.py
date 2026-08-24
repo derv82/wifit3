@@ -374,6 +374,7 @@ class TPLink(ProductName):
     ARCHER_T4U_V2    = "Archer T4U v2"
     ARCHER_T4U_V3    = "Archer T4U V3"
     ARCHER_T9UH      = "Archer T9UH"
+    ARCHER_TX20U_PLUS = "Archer TX20U Plus"
     TL_WDN5200       = "TL-WDN5200"
     TL_WDN6200       = "TL-WDN6200"
     TL_WN322G_V2_V3  = "TL-WN322G v2/v3"
