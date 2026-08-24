@@ -7,9 +7,10 @@ register sequences are re-ported here verbatim from the vendor `rtl8821cu-5.12.0
 Full RTL8821CU/8811CU VID:PID set from the vendor rtl8821cu table (``.driver_info = RTL8821C``).
 """
 from wifit3.models.device_id import DeviceID
+from wifit3.chips.products import Auscoumer, DLink, Edimax, TOTOLINK
 
 _IDS = (
-    (0x0BDA, 0xC820, "RTL8821CU", None, "Auscoumer 600 Mbps"),
+    (0x0BDA, 0xC820, "RTL8821CU", None, Auscoumer._600),
     (0x0BDA, 0xB82B, "RTL8821CU", None, None),
     (0x0BDA, 0xB820, "RTL8821CU", None, None),
     (0x0BDA, 0xC821, "RTL8821CU", None, None),
@@ -17,12 +18,12 @@ _IDS = (
     (0x0BDA, 0xC82B, "RTL8821CU", None, None),
     (0x0BDA, 0xC811, "RTL8821CU", None, None),
     (0x0BDA, 0x8811, "RTL8821CU", None, None),
-    (0x0BDA, 0x2006, "RTL8821CU", None, "TOTOLINK A650UA v3"),
+    (0x0BDA, 0x2006, "RTL8821CU", None, TOTOLINK.A650UA_V3),
     (0x0BDA, 0x8731, "RTL8821CU", None, None),
     (0x0BDA, 0xC80C, "RTL8821CU", None, None),
-    (0x7392, 0xC811, "RTL8821CU", None, "Edimax 8811CU"),
-    (0x7392, 0xD811, "RTL8821CU", None, "Edimax 8811CU"),
-    (0x2001, 0x331D, "RTL8821CU", None, "D-Link DWA-171C"),
+    (0x7392, 0xC811, "RTL8821CU", None, Edimax._8811CU),
+    (0x7392, 0xD811, "RTL8821CU", None, Edimax._8811CU),
+    (0x2001, 0x331D, "RTL8821CU", None, DLink.DWA_171C),
 )
 
 SUPPORTED_IDS = [

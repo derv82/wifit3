@@ -17,6 +17,7 @@ from rich.style import Style
 from rich.text import Span, Text
 from textual.widgets import Static
 
+from wifit3.chips.products import AMBIGUOUS_AR9271, AMBIGUOUS_MT7921AU, ALFA, ASUS, Netgear, Panda, TPLink
 from ...ansi_art import make_black_transparent
 
 _ASSETS = Path(__file__).parent.parent.parent / "assets"
@@ -163,27 +164,33 @@ class BreathingArt(Static):
 
 # --- Card art selection -----------------------------------------------------
 _ART_BY_PRODUCT: dict[str, str] = {
-    "ALFA AWUS036ACH": "cards/card-awus036ach.ans",
-    "ALFA AWUS036ACS": "cards/card-awus036acs.ans",
-    "ALFA AWUS036AXML": "cards/card-awus036axml.ans",
-    "Panda PAU0F": "cards/card-pau0f.ans",
-    "ALFA AWUS036AXML / Panda PAU0F": "cards/card-pau0f.ans",   # OUI unresolved -> default PAU0F
-    "ALFA AWUS036H": "cards/card-awus036h.ans",
-    "ALFA AWUS036NH": "cards/card-awus036nh.ans",
-    "ALFA AWUS036NHA": "cards/card-awus036nha.ans",
-    "ALFA AWUS036NHA / TL-WN722N v1": "cards/card-awus036nha.ans",   # OUI unresolved -> default ALFA
-    "ALFA AWUS1900": "cards/card-awus1900.ans",
-    "Archer T3U Plus": "cards/card-archert3uplus.ans",
-    "TP-Link T2U Plus": "cards/card-archert2uplus.ans",
-    "TP-Link T2U Nano": "cards/card-archert2unano.ans",
-    "TP-Link Archer AC600 T2U Nano": "cards/card-archert2unano.ans",
-    "Panda PAU05/06": "cards/card-pau06.ans",
-    "Panda PAU0B": "cards/card-pau0b.ans",
-    "Panda PAU09 N600": "cards/card-pau09n600.ans",
-    "TL-WN722N v1": "cards/card-tpwn722nv23.ans",       # AR9271 sibling; same physical card, same art
-    "TL-WN722N v2/v3": "cards/card-tpwn722nv23.ans",
-    "Netgear A9000": "cards/card-netgeara9000.ans",
-    "ASUS USB-BE93": "cards/card-asusbe93.ans",
+    ALFA.AWUS036ACH: "cards/card-awus036ach.ans",
+    ALFA.AWUS036ACS: "cards/card-awus036acs.ans",
+    ALFA.AWUS036AXML: "cards/card-awus036axml.ans",
+    ALFA.AWUS036H: "cards/card-awus036h.ans",
+    ALFA.AWUS036NH: "cards/card-awus036nh.ans",
+    ALFA.AWUS036NHA: "cards/card-awus036nha.ans",
+    ALFA.AWUS1900: "cards/card-awus1900.ans",
+    AMBIGUOUS_AR9271: "cards/card-awus036nha.ans",   # OUI unresolved -> default ALFA
+    AMBIGUOUS_MT7921AU: "cards/card-pau0f.ans",   # OUI unresolved -> default PAU0F
+    ASUS.USB_BE93: "cards/card-asusbe93.ans",
+    Netgear.A9000: "cards/card-netgeara9000.ans",
+    Panda.PAU05_06: "cards/card-pau06.ans",
+    Panda.PAU09_N600: "cards/card-pau09n600.ans",
+    Panda.PAU0B: "cards/card-pau0b.ans",
+    Panda.PAU0F: "cards/card-pau0f.ans",
+    TPLink.ARCHER_T2U: "cards/card-archert2u.ans",
+    TPLink.ARCHER_T2U_V2: "cards/card-archert2u.ans",
+    TPLink.ARCHER_T2U_V3: "cards/card-archert2u.ans",
+    TPLink.ARCHER_T2U_PLUS: "cards/card-archert2uplus.ans",
+    TPLink.ARCHER_T2U_NANO: "cards/card-archert2unano.ans",
+    TPLink.ARCHER_T3U: "cards/card-archert3u.ans",
+    TPLink.ARCHER_T3U_PLUS: "cards/card-archert3uplus.ans",
+    TPLink.ARCHER_T4U_PLUS: "cards/card-archert4uplus.ans",
+    TPLink.ARCHER_T4U_V3: "cards/card-archert4u.ans",
+    TPLink.ARCHER_TX20U_PLUS: "cards/card-archertx20uplus.ans",
+    TPLink.TL_WN722N_V1: "cards/card-tpwn722nv23.ans",       # AR9271 sibling; same physical card, same art
+    TPLink.TL_WN722N_V2_V3: "cards/card-tpwn722nv23.ans",
 }
 _ART_BY_CHIPSET: dict[str, str] = {
     "RTL8821CU": "cards/card-auscomer600.ans",

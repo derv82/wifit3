@@ -152,11 +152,9 @@ live in each chip's `<CHIP>.md` (linked under its table).
 → [RTL8814AU.md](../src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](../src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
 ### RTL8821AU
-<img align="right" style="margin-left: 12px" width="127" height="165" src="../assets/cardart/card-awus036acs.png" alt="ALFA AWUS036ACS">
-<img align="right" height="165" src="../assets/cardart/card-archert2uplus.png" alt="TP-Link Archer T2U Plus">
-<img align="right" height="165" src="../assets/cardart/card-archert2unano.png" alt="TP-Link Archer T2U Nano">
+<img align="right" width="140" src="../assets/cardart/stack-rtl8821au.png" alt="ALFA AWUS036ACS (top) / Archer T2U+ (middle) / Archer T2U (bottom)">
 
-*ALFA AWUS036ACS / TP-Link Archer T2U Plus / TP-Link Archer T2U Nano · 2.4 / 5 GHz*
+*ALFA AWUS036ACS / Archer T2U+ / Archer T2U · 2.4 / 5 GHz*
 
 > **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8821=mainline` opts back.
 

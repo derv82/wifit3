@@ -34,18 +34,45 @@ _LABEL_RGB = (150, 150, 150)
 
 # stem (sans ``card-``) -> make+model shown under the art. Falls back to the upper-cased stem.
 _LABELS = {
-    "awus036nha": "ALFA AWUS036NHA", "awus036h": "ALFA AWUS036H",
-    "tpwn722nv23": "TP-Link TL-WN722N", "awus036ach": "ALFA AWUS036ACH",
-    "awus1900": "ALFA AWUS1900", "awus036acs": "ALFA AWUS036ACS",
-    "auscomer600": "Auscoumer 600", "archert3uplus": "TP-Link Archer T3U Plus",
-    "asusbe93": "ASUS USB-BE93", "awus036achm": "ALFA AWUS036ACHM",
-    "awus036acm": "ALFA AWUS036ACM", "awus036axml": "ALFA AWUS036AXML",
-    "pau0f": "Panda PAU0F", "netgeara9000": "Netgear A9000",
-    "archert2unano": "TP-Link Archer T2U Nano",
-    "archert2uplus": "TP-Link Archer T2U Plus",
-    "buffalonintendo": "Buffalo Nintendo Wi-Fi", "awus036nh": "ALFA AWUS036NH",
-    "lotekoo150": "LOTEKOO 150", "pau06": "Panda PAU06",
-    "pau09n600": "Panda PAU09 N600", "pau0b": "Panda PAU0B",
+    # ALFA
+    "awus036h":    "ALFA AWUS036H",
+    "awus036nh":   "ALFA AWUS036NH",
+    "awus036nha":  "ALFA AWUS036NHA",
+    "awus036ach":  "ALFA AWUS036ACH",
+    "awus036achm": "ALFA AWUS036ACHM",
+    "awus036acm":  "ALFA AWUS036ACM",
+    "awus036acs":  "ALFA AWUS036ACS",
+    "awus036axml": "ALFA AWUS036AXML",
+    "awus1900":    "ALFA AWUS1900",
+
+    # Panda
+    "pau06":     "Panda PAU06",
+    "pau09n600": "Panda PAU09 N600",
+    "pau0f":     "Panda PAU0F",
+    "pau0b":     "Panda PAU0B",
+
+    # TP-Link
+    "tpwn722nv23":     "TP-Link TL-WN722N V2/V3",
+    "archert2u":       "TP-Link Archer T2U",
+    "archert2uplus":   "TP-Link Archer T2U Plus",
+    "archert2unano":   "TP-Link Archer T2U Nano",
+    "archert3u":       "TP-Link Archer T3U",
+    "archert3uplus":   "TP-Link Archer T3U Plus",
+    "archert4u":       "TP-Link Archer T4U V3",
+    "archert4uplus":   "TP-Link Archer T4U Plus",
+    "archertx20uplus": "TP-Link Archer TX20U Plus",
+
+    "asusbe93":        "ASUS USB-BE93",
+    "auscomer600":     "Auscoumer 600",
+    "buffalonintendo": "Buffalo Nintendo Wi-Fi",
+    "lotekoo150":      "LOTEKOO 150",
+    "netgeara9000":    "Netgear A9000",
+}
+
+
+_STACKS = {
+    "stack-mt7921au":  ["card-awus036axml", "card-pau0f"],
+    "stack-rtl8821au": ["card-awus036acs", "card-archert2uplus", "card-archert2u"],
 }
 
 
@@ -271,6 +298,12 @@ def main(argv=None):
             continue
         out, w, h = convert(p, args.out, args.scale)
         print(f"{os.path.basename(p):28s} -> {os.path.relpath(out, _ROOT)}  ({w}x{h})")
+    if not args.cards:                                  # a full run refreshes the stacks too
+        for name, stems in _STACKS.items():
+            img = _stack_vertical(_resolve(stems), args.scale, args.gap)
+            out = os.path.join(args.out, name + ".png")
+            img.save(out)
+            print(f"{name:28s} -> {os.path.relpath(out, _ROOT)}  ({img.width}x{img.height})")
 
 
 if __name__ == "__main__":

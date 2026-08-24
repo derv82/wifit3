@@ -16,6 +16,7 @@ Bitfield masks are stored as raw ``(mask)`` ints; use the helpers in
 ``transport`` (get_field16 / set_field16) to extract/insert.
 """
 from __future__ import annotations
+from wifit3.chips.products import ASUS, Belkin, Buffalo, DLink, Gigabyte, Hercules, Linksys, MSI, NovaTech, Ralink, Sagem, Siemens, Spairon, SureCom, VTech, Zinwell
 
 # ---------------------------------------------------------------------------
 # USB device identity (rt2500usb.c device table). The Buffalo/Melco
@@ -29,35 +30,35 @@ USB_PID_NINTENDO_WIFI = 0x008b
 # The 0x050d:0x7051 (Broadcom BCM4320) and 0x0707:0xee13 (Intersil ISL3887) rows
 # from the kernel table are dropped: neither is an RT2570 this driver can drive.
 RT2500USB_DEVICE_TABLE: list[tuple[int, int, str, str | None, str | None]] = [
-    (0x0b05, 0x1706, "RT2570", "ASUS", "WL-167g"),
-    (0x0b05, 0x1707, "RT2570", "ASUS", "WL-167g"),
-    (0x050d, 0x7050, "RT2570", "Belkin", "F5D7050 v2000"),
-    (0x13b1, 0x000d, "RT2570", "Linksys", "WUSB54G v4"),
-    (0x13b1, 0x0011, "RT2570", "Linksys", "WUSB54GP v4.0"),
-    (0x13b1, 0x001a, "RT2570", "Linksys", "HU200TS"),
-    (0x14b2, 0x3c02, "RT2570", "Conceptronic", "C54RU"),
-    (0x2001, 0x3c00, "RT2570", "D-Link", "DWL-G122 rev B1"),
-    (0x1044, 0x8001, "RT2570", "Gigabyte", "GN-54G"),
-    (0x1044, 0x8007, "RT2570", "Gigabyte", "GN-WBKG"),
-    (0x06f8, 0xe000, "RT2570", "Hercules", "HWGUSB2-54"),
-    (0x0411, 0x005e, "RT2570", "Buffalo", "WLI-U2-KG54-YB"),
-    (0x0411, 0x0066, "RT2570", "Buffalo", "WLI-U2-KG54"),
-    (0x0411, 0x0067, "RT2570", "Buffalo", "WLI-U2-KG54-AI"),
-    (0x0411, 0x008b, "RT2570", "Buffalo", "Nintendo Wi-Fi"),
-    (0x0411, 0x0097, "RT2570", "Buffalo", "WLI-U2-KG54-BB"),
-    (0x0db0, 0x6861, "RT2570", "MSI", "MS-6861"),
-    (0x0db0, 0x6865, "RT2570", "MSI", "MS-6865"),
-    (0x0db0, 0x6869, "RT2570", "MSI", "MS-6869"),
+    (0x0b05, 0x1706, "RT2570", None, ASUS.WL_167G),
+    (0x0b05, 0x1707, "RT2570", None, ASUS.WL_167G),
+    (0x050d, 0x7050, "RT2570", None, Belkin.F5D7050),
+    (0x13b1, 0x000d, "RT2570", None, Linksys.WUSB54G_V4),
+    (0x13b1, 0x0011, "RT2570", None, Linksys.WUSB54GP_V4),
+    (0x13b1, 0x001a, "RT2570", None, Linksys.HU200TS),
+    (0x14b2, 0x3c02, "RT2570", None, Ralink.C54RUV2),
+    (0x2001, 0x3c00, "RT2570", None, DLink.DWL_G122_REV_B1),
+    (0x1044, 0x8001, "RT2570", None, Gigabyte.GN_54G),
+    (0x1044, 0x8007, "RT2570", None, Gigabyte.GN_WBKG),
+    (0x06f8, 0xe000, "RT2570", None, Hercules.HWGUSB2_54),
+    (0x0411, 0x005e, "RT2570", None, Buffalo.WLI_U2_KG54_YB),
+    (0x0411, 0x0066, "RT2570", None, Buffalo.WLI_U2_KG54),
+    (0x0411, 0x0067, "RT2570", None, Buffalo.WLI_U2_KG54_AI),
+    (0x0411, 0x008b, "RT2570", None, Buffalo.WI_FI),
+    (0x0411, 0x0097, "RT2570", None, Buffalo.WLI_U2_KG54_BB),
+    (0x0db0, 0x6861, "RT2570", None, MSI.MS_6861),
+    (0x0db0, 0x6865, "RT2570", None, MSI.MS_6865),
+    (0x0db0, 0x6869, "RT2570", None, MSI.MS_6869),
     (0x148f, 0x1706, "RT2570", None, None),
     (0x148f, 0x2570, "RT2570", None, None),
     (0x148f, 0x9020, "RT2570", None, None),
-    (0x079b, 0x004b, "RT2570", "Sagem", "Wi-Fi 11g"),
-    (0x0681, 0x3c06, "RT2570", "Siemens", "54g USB Network Adapter"),
-    (0x114b, 0x0110, "RT2570", "Spairon", "Turbolink UB801R"),
-    (0x0769, 0x11f3, "RT2570", "SureCom", "EP-9001-g"),
-    (0x0eb0, 0x9020, "RT2570", None, "Trust / NovaTech NV-902"),
-    (0x0f88, 0x3012, "RT2570", "VTech", None),
-    (0x5a57, 0x0260, "RT2570", "Zinwell", "ZWX-G261"),
+    (0x079b, 0x004b, "RT2570", None, Sagem.WIFI_11G),
+    (0x0681, 0x3c06, "RT2570", None, Siemens._54G),
+    (0x114b, 0x0110, "RT2570", None, Spairon.UB801R),
+    (0x0769, 0x11f3, "RT2570", None, SureCom.RT2570),
+    (0x0eb0, 0x9020, "RT2570", None, NovaTech.NV_902W),
+    (0x0f88, 0x3012, "RT2570", None, VTech.RT2570),
+    (0x5a57, 0x0260, "RT2570", None, Zinwell.ZWX_G261),
 ]
 
 # ---------------------------------------------------------------------------

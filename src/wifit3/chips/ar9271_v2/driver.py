@@ -25,6 +25,7 @@ import usb.util
 
 from wifit3.chips.rx_reader import RxReaderThread
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
+from wifit3.chips.products import ALFA, TPLink
 from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
@@ -93,8 +94,8 @@ class AR9271V2Driver(Driver):
         if not mac:
             return None
         if mac[:8].lower() in _TPLINK_OUIS:
-            return "TL-WN722N v1"
-        return "ALFA AWUS036NHA"
+            return TPLink.TL_WN722N_V1
+        return ALFA.AWUS036NHA
 
     def _refine_product_name(self) -> None:
         """Narrow the combined SUPPORTED_IDS label to one make once the EEPROM MAC is read; a

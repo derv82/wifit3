@@ -13,6 +13,7 @@ from .firmware import MT7921AUFirmwareLoader
 # ruff: noqa: F403, F405
 from .constants import *
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
+from wifit3.chips.products import ALFA, Panda
 from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
@@ -133,9 +134,9 @@ class MT7921AUDriver(Driver):
             return None
         oui = mac[:8].lower()
         if oui == "00:c0:ca":
-            return "ALFA AWUS036AXML"
+            return ALFA.AWUS036AXML
         if oui == "9c:ef:d5":
-            return "Panda PAU0F"
+            return Panda.PAU0F
         return None
 
     def _refine_product_name(self) -> None:
