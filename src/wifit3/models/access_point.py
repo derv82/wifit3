@@ -18,7 +18,7 @@ class WepStats:
 @dataclass
 class PersistedCapture:
     """One previously-saved capture artifact found under captures/."""
-    kind: Literal["HS", "PMKID", "WEP", "WPS"]
+    type: Literal["HS", "PMKID", "WEP", "WPS"]
     timestamp: int                  # epoch seconds, parsed from the filename
     path: str                       # source file under captures/
     value: Optional[str] = None     # WEP key (hex) / WPS PSK; None for HS/PMKID
@@ -43,6 +43,7 @@ class AccessPoint:
     transition_mode: bool = False
     pmf_capable: bool = False
     pmf_required: bool = False
+    beacon_protection: bool = False
 
     # WPS state decoded from the WPS vendor IE (tag 221, OUI 00:50:F2 type 4).
     wps: bool = False
@@ -114,10 +115,15 @@ class AccessPoint:
         return (
             self.wps_pbc_psk
             or self.wps_pin_psk
-            or next((p.value for p in self.persisted if p.kind == "WPS" and p.value), None)
+            or next((p.value for p in self.persisted if p.type == "WPS" and p.value), None)
         )
 
     @property
     def has_psk(self) -> bool:
         """True once we hold this AP's passphrase (see known_psk)."""
         return self.known_psk is not None
+
+    @property
+    def is_hidden(self) -> bool:
+        """No usable SSID: never seen, or still the "<hidden>" placeholder."""
+        return not (self.ssid and self.ssid != "<hidden>")

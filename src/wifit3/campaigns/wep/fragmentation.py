@@ -46,6 +46,7 @@ import time
 from typing import Awaitable, Callable, List, Optional
 
 from wifit3.models import AccessPoint
+from wifit3.dot11 import str_to_mac
 from wifit3.campaigns import treelog
 from wifit3.dot11.wep.crypto import (
     arp_request_plaintext,
@@ -64,10 +65,6 @@ _SEED_ETHERTYPES = (0x0800, 0x0806)
 
 async def _always_associated() -> bool:
     return True
-
-
-def _str_to_mac(s: str) -> bytes:
-    return bytes(int(x, 16) for x in s.split(":"))
 
 
 def _hdr_len(fc0: int, fc1: int) -> int:
@@ -192,7 +189,7 @@ class WepFragmentation:
                     )
                     self._frags = build_fragments(
                         seed_ks, iv, payload,
-                        bssid=_str_to_mac(self.bssid),
+                        bssid=str_to_mac(self.bssid),
                         source_mac=self.source_mac,
                         dest_mac=_BROADCAST,
                     )

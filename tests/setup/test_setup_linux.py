@@ -3,6 +3,7 @@ uninstall radii. The privileged pieces (install_rule, remove_rule, plan_uninstal
 stubbed here since test_linux.py covers their internals; these tests pin the sequence SetupLinux
 drives and how it turns each outcome into a bool / SetupResult, with a FakePrompter and no hardware.
 """
+import sys
 from dataclasses import replace
 
 import pytest
@@ -180,4 +181,13 @@ async def test_uninstall_not_revoked_message(monkeypatch):
     monkeypatch.setattr(lin, "remove_rule", lambda *a, **k: _Result(ok=True, message="removed"))
     monkeypatch.setattr(lin.SetupLinux, "_wait_for_access", _access_never)
     res = await lin.SetupLinux().uninstall(_DEV, FakePrompter(ask="narrow"))
-    assert res.ok and "keeps access until" in res.message
+    assert res.ok and "fully revoke access" in res.message
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="os.geteuid is POSIX-only")
+async def test_wait_for_access_short_circuits_for_root(monkeypatch):
+    # os.access ignores perm bits for root, so waiting for a revoke would spin the full timeout;
+    # under root either target state is treated as already reached.
+    monkeypatch.setattr(lin.os, "geteuid", lambda: 0)
+    assert await lin.SetupLinux()._wait_for_access(_DEV, writable=False) is True
+    assert await lin.SetupLinux()._wait_for_access(_DEV, writable=True) is True

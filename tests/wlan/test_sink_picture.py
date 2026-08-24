@@ -101,7 +101,7 @@ def test_transition_pmkid_only_classified_via_assoc():
                       "eapol_nonce": b"\x01" * 32, "eapol_mic": b"\x00" * 16, "eapol_key_data_len": 0,
                       "eapol_payload": b"\x00" * 99, "eapol_pmkid": b"\x07" * 16}), W0)
         hs = s.access_points[b].handshakes[client]
-        assert hs.pmkid == b"\x07" * 16 and hs.akm_client == client_akm
+        assert hs.pmkid == b"\x07" * 16 and hs.pmkid_akm == client_akm
         assert wpa.pmkid_crackable(hs) is expect_crackable
 
 

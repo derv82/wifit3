@@ -38,38 +38,38 @@ class TestLoadCaptureIndex:
         idx = load_capture_index(tmp_path)
         assert _BSSID_COLON in idx
         caps = idx[_BSSID_COLON]
-        assert len(caps) == 1 and caps[0].kind == "HS"
+        assert len(caps) == 1 and caps[0].type == "HS"
         assert caps[0].timestamp == 1700000000
 
     def test_pmkid_hc22000(self, tmp_path):
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000001_pmkid.hc22000", _PMKID_LINE)
         caps = load_capture_index(tmp_path)[_BSSID_COLON]
-        assert [c.kind for c in caps] == ["PMKID"]
+        assert [c.type for c in caps] == ["PMKID"]
 
     def test_handshake_and_pmkid_as_separate_files(self, tmp_path):
-        # Post-refactor, each kind is its own file (no more mixed .hc22000).
+        # Post-refactor, each type is its own file (no more mixed .hc22000).
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000002_handshake.hc22000", _HS_LINE)
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000003_pmkid.hc22000", _PMKID_LINE)
-        kinds = {c.kind for c in load_capture_index(tmp_path)[_BSSID_COLON]}
-        assert kinds == {"HS", "PMKID"}
+        types = {c.type for c in load_capture_index(tmp_path)[_BSSID_COLON]}
+        assert types == {"HS", "PMKID"}
 
     def test_wep_key_txt(self, tmp_path):
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000004_wep_key.txt", _WEPKEY_TXT)
         caps = load_capture_index(tmp_path)[_BSSID_COLON]
         assert len(caps) == 1
-        assert caps[0].kind == "WEP" and caps[0].value == "6162636465"
+        assert caps[0].type == "WEP" and caps[0].value == "6162636465"
 
     def test_wps_pbc_txt(self, tmp_path):
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000005_wps_pbc.txt", _WPS_PBC_TXT)
         caps = load_capture_index(tmp_path)[_BSSID_COLON]
         assert len(caps) == 1
-        assert caps[0].kind == "WPS" and caps[0].value == "yxws3tik"
+        assert caps[0].type == "WPS" and caps[0].value == "yxws3tik"
 
     def test_wps_pin_txt(self, tmp_path):
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000006_wps_pin.txt", _WPS_PIN_TXT)
         caps = load_capture_index(tmp_path)[_BSSID_COLON]
         assert len(caps) == 1
-        assert caps[0].kind == "WPS" and caps[0].value == "abcdefgh"
+        assert caps[0].type == "WPS" and caps[0].value == "abcdefgh"
 
     def test_pcap_companion_is_ignored(self, tmp_path):
         # A handshake.pcap on its own contributes no PersistedCapture. Its

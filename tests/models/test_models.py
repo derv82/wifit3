@@ -11,6 +11,14 @@ def test_access_point_model_defaults():
     assert ap.pmf_capable is False
 
 
+def test_is_hidden():
+    """Hidden until we hold a usable SSID: None and the '<hidden>' placeholder both count."""
+    assert AccessPoint(bssid="00:11:22:33:44:55").is_hidden is True
+    assert AccessPoint(bssid="00:11:22:33:44:55", ssid="<hidden>").is_hidden is True
+    assert AccessPoint(bssid="00:11:22:33:44:55", ssid="").is_hidden is True
+    assert AccessPoint(bssid="00:11:22:33:44:55", ssid="Rai2.4").is_hidden is False
+
+
 def test_wps_pbc_active_detection():
     ap = AccessPoint(bssid="00:11:22:33:44:55", wps=True)
     assert ap.wps_pbc_active is False                       # no registrar window
@@ -57,15 +65,15 @@ def test_has_psk():
 
     # A prior session's WPS capture loaded from disk (PBC or PIN file → kind WPS).
     ap4 = AccessPoint(bssid="00:11:22:33:44:88")
-    ap4.persisted = [PersistedCapture(kind="WPS", timestamp=0, value="diskpsk", path="x_wps_pbc.txt")]
+    ap4.persisted = [PersistedCapture(type="WPS", timestamp=0, value="diskpsk", path="x_wps_pbc.txt")]
     assert ap4.has_psk is True
     assert ap4.known_psk == "diskpsk"
 
     # Other persisted kinds (HS/PMKID/WEP) are not a PSK → no block.
     ap5 = AccessPoint(bssid="00:11:22:33:44:99")
     ap5.persisted = [
-        PersistedCapture(kind="HS", timestamp=0, path="x_handshake.hc22000"),
-        PersistedCapture(kind="WEP", timestamp=0, value="abcde", path="x_wep_key.txt"),
+        PersistedCapture(type="HS", timestamp=0, path="x_handshake.hc22000"),
+        PersistedCapture(type="WEP", timestamp=0, value="abcde", path="x_wep_key.txt"),
     ]
     assert ap5.has_psk is False
     assert ap5.known_psk is None

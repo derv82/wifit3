@@ -19,8 +19,10 @@ from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.persist.capture_history import load_capture_index, summarize
+from wifit3.persist.config import Config
 from wifit3.models import AccessPoint, PersistedCapture
 from wifit3.persist.save import save_handshake, save_pmkid, save_wps_pbc
+from wifit3.crack.handshake import pmkid_crackable
 
 from ..capture_events import (
     CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
@@ -29,6 +31,7 @@ from ..encryption_format import format_encryption_markup, wep_key_ascii
 from wifit3.wlan.channels import band_ranges
 
 from .channel_filter import ChannelFilterDialog
+from .filter import FilterBar, ScanFilter
 
 if TYPE_CHECKING:
     from wifit3.ui.app import WifiteApp
@@ -49,9 +52,57 @@ SORT_INTERVAL_S = 2.0  # Table sort delay
 BEACON_DISPLAY_INTERVAL_S = 0.5
 
 
-def _hex_rgb(h: str) -> tuple[int, int, int]:
-    h = h.lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+_ANSI_RGB = {
+    "ansi_black": (0, 0, 0),
+    "ansi_red": (128, 0, 0),
+    "ansi_green": (0, 128, 0),
+    "ansi_yellow": (128, 128, 0),
+    "ansi_blue": (0, 0, 128),
+    "ansi_magenta": (128, 0, 128),
+    "ansi_cyan": (0, 128, 128),
+    "ansi_white": (192, 192, 192),
+    "ansi_bright_black": (128, 128, 128),
+    "ansi_bright_red": (255, 0, 0),
+    "ansi_bright_green": (0, 255, 0),
+    "ansi_bright_yellow": (255, 255, 0),
+    "ansi_bright_blue": (0, 0, 255),
+    "ansi_bright_magenta": (255, 0, 255),
+    "ansi_bright_cyan": (0, 255, 255),
+    "ansi_bright_white": (255, 255, 255),
+}
+_ANSI_STYLE = {
+    name: name.removeprefix("ansi_")
+    for name in _ANSI_RGB
+}
+_ANSI_STYLE["ansi_default"] = ""
+_ANSI_STYLE["transparent"] = ""
+
+
+def _theme_rgb(value: str | None, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
+    if not value or value in ("transparent", "ansi_default"):
+        return fallback
+    if value in _ANSI_RGB:
+        return _ANSI_RGB[value]
+    h = value.lstrip("#")
+    if len(h) == 6:
+        try:
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        except ValueError:
+            pass
+    return fallback
+
+
+def _parse_style(style) -> Style:
+    if isinstance(style, Style):
+        return style
+    if not style:
+        return Style()
+    tokens = [_ANSI_STYLE.get(tok, tok) for tok in str(style).split()]
+    cleaned = " ".join(tok for tok in tokens if tok)
+    try:
+        return Style.parse(cleaned) if cleaned else Style()
+    except Exception:
+        return Style()
 
 
 def _fade_text(text: Text, factor: float, bg: tuple[int, int, int]) -> Text:
@@ -60,13 +111,12 @@ def _fade_text(text: Text, factor: float, bg: tuple[int, int, int]) -> Text:
         return text
 
     def _fade(style):
-        if isinstance(style, str):
-            style = Style.parse(style) if style else Style()
-        if style.color is None:
-            return style
-        t = style.color.get_truecolor()
+        parsed = _parse_style(style)
+        if parsed.color is None:
+            return parsed
+        t = parsed.color.get_truecolor()
         s = 1.0 - factor
-        return style + Style(color=Color.from_rgb(
+        return parsed + Style(color=Color.from_rgb(
             t.red * s + bg[0] * factor,
             t.green * s + bg[1] * factor,
             t.blue * s + bg[2] * factor,
@@ -161,9 +211,10 @@ class ScannerView(Screen):
     BINDINGS = [
         Binding("q", "app.quit", "Quit", show=True),
         Binding("c", "change_channel", "Channel Filter", show=True),
+        Binding("e", "focus_encryption", "Encryption", show=True),
         Binding("s", "cycle_sort", "Sort Col", show=True),
         Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
-        Binding("f", "toggle_fade", "Toggle Fade", show=True),
+        Binding("f", "focus_filter", "Filter", show=True),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
@@ -196,6 +247,7 @@ class ScannerView(Screen):
         self._sort_idx = 2         # Default to POWER
         self._sort_reverse = True  # Descending
         self._channel_filter: Optional[List[int]] = None
+        self._scan_filter: ScanFilter = ScanFilter()
         self._events = CaptureEventDetector(granular_eapol=False)
         # Per-BSSID prev-beacon-count + flash-deadline for "beacon arrived"
         # cell highlight.
@@ -205,7 +257,6 @@ class ScannerView(Screen):
         self._beacon_shown: Dict[str, tuple[int, float]] = {}
         # Per-BSSID last render key (fade bucket + cell content).
         self._render_key: Dict[str, tuple] = {}
-        self._fade_enabled: bool = True
         # captures/ history, loaded once at mount and hydrated onto APs by
         # BSSID so previously-saved handshakes/PMKIDs/WEP keys re-badge.
         self._capture_index: Dict[str, List[PersistedCapture]] = {}
@@ -218,7 +269,10 @@ class ScannerView(Screen):
 
     def compose(self) -> ComposeResult:
         yield _ScannerHeader()
+        array = self.app.array
+        supported = list(array.supported_channels) if array else []
         with Vertical():
+            yield FilterBar(supported)
             table = _APScanTable(cursor_type="row", id="ap-table")
             for key, label in self._COLUMNS:
                 # Reserve 2 chars in every header to account for sort indicator
@@ -229,7 +283,11 @@ class ScannerView(Screen):
 
     async def on_mount(self) -> None:
         log = self.query_one("#system-log", RichLog)
+        self._sort_idx = next(
+            (i for i, (key, _label) in enumerate(self._COLUMNS) if key == Config.scanner_sort), 2)
+        self._sort_reverse = Config.scanner_sort_reverse
         self._update_column_headers()
+        self.query_one("#ap-table", DataTable).focus()
         array = self.app.array
 
         log.write(treelog.header("Scanner initialized"))
@@ -323,17 +381,27 @@ class ScannerView(Screen):
 
         now = time.time()
         tv = self.app.theme_variables
-        # Fade toward $surface (actual bg), not $background (the screen bg).
-        bg = _hex_rgb(tv.get("surface", tv.get("background", "#000000")))
+        # Fade toward $surface (actual bg), not $background (the screen bg). Some Textual
+        # themes use symbolic tokens (``transparent`` / ``ansi_default``), so fall back safely.
+        bg_fallback = _theme_rgb(tv.get("background"), (0, 0, 0))
+        bg = _theme_rgb(tv.get("surface"), bg_fallback)
         self._theme_fg = tv.get("foreground", "#ffffff")
 
         fade_span = max(0.001, FADE_DURATION_S - GRACE_DURATION_S)
 
-        fade_enabled = self._fade_enabled
+        for ap in array.get_access_points(include_eviltwin=False):
+            guessed_ssid = (
+                self._best_named_sibling_ssid(ap)
+                if self._scan_filter.text and ap.ssid is None
+                else None
+            )
+            if not self._scan_filter.matches(ap, ssid=guessed_ssid):
+                if ap.bssid in self.ap_cache:
+                    self._forget_row(ap.bssid, drop_from_array=False)
+                continue
 
-        for ap in array.get_access_points():
             age = now - ap.last_seen
-            if fade_enabled and age >= FADE_DURATION_S:
+            if age >= FADE_DURATION_S:
                 continue
 
             if not ap.persisted:
@@ -342,7 +410,7 @@ class ScannerView(Screen):
                     ap.persisted = hist
 
             n_cli = client_counts.get(ap.bssid, 0)
-            if not fade_enabled or age <= GRACE_DURATION_S:
+            if age <= GRACE_DURATION_S:
                 factor = 0.0
             else:
                 prog = min(1.0, (age - GRACE_DURATION_S) / fade_span)
@@ -395,27 +463,27 @@ class ScannerView(Screen):
     def _evict_expired_aps(self) -> None:
         if not self.app.array:
             return
-        if not self._fade_enabled:
-            return
-        array = self.app.array
-        table = self.query_one("#ap-table", DataTable)
         now = time.time()
-
         to_drop = [
             bssid for bssid, ap in self.ap_cache.items()
             if (now - ap.last_seen) >= FADE_DURATION_S
         ]
         for bssid in to_drop:
-            array.access_points.pop(bssid, None)
-            self.ap_cache.pop(bssid, None)
-            self._prev_beacons.pop(bssid, None)
-            self._beacon_flash_until.pop(bssid, None)
-            self._beacon_shown.pop(bssid, None)
-            self._render_key.pop(bssid, None)
-            try:
-                table.remove_row(bssid)
-            except Exception:
-                pass
+            self._forget_row(bssid, drop_from_array=True)
+
+    def _forget_row(self, bssid: str, *, drop_from_array: bool) -> None:
+        """Drop the AP's row and caches; drop_from_array also evicts it from the registry."""
+        if drop_from_array and self.app.array:
+            self.app.array.access_points.pop(bssid, None)
+        self.ap_cache.pop(bssid, None)
+        self._prev_beacons.pop(bssid, None)
+        self._beacon_flash_until.pop(bssid, None)
+        self._beacon_shown.pop(bssid, None)
+        self._render_key.pop(bssid, None)
+        try:
+            self.query_one("#ap-table", DataTable).remove_row(bssid)
+        except Exception:
+            pass
 
     # ----- Cell construction -------------------------------------------------
 
@@ -451,39 +519,28 @@ class ScannerView(Screen):
             # style=fg gives the bare '→' between WPA3/WPA2 a fadeable base color.
             Text.from_markup(format_encryption_markup(ap, muted=fg), emoji=False, style=fg),
             wps_cell,
-            self._ssid_markup(ap),
+            self._ssid_cell(ap),
         ]
 
     # Cap the SSID+badges cell so the trailing capture badges never overflow.
     _SSID_CELL_MAX = 32
 
-    def _ssid_markup(self, ap: AccessPoint) -> Text:
-        """Three SSID rendering states:
-          - Confirmed       → bold     ("RealNetwork")
-          - Hidden, no hint → italic   ("<Hidden>")
-          - Hidden, guess   → italic + trailing '?'  ("SiblingName?")
-        """
+    def _ssid_cell(self, ap: AccessPoint) -> Text:
+        """name (bold=named, italic=hidden, +'?'=sibling guess) + chips."""
         if ap.ssid:
-            ssid_str, style = ap.ssid, f"{self._theme_fg} bold"
+            name = Text(ap.ssid, style=f"{self._theme_fg} bold")
         else:
-            sib_ssid = self._best_named_sibling_ssid(ap)
-            if sib_ssid:
-                ssid_str, style = f"{sib_ssid}?", f"{self._theme_fg} italic"
-            else:
-                ssid_str, style = "<Hidden>", f"{self._theme_fg} italic"
+            sib = self._best_named_sibling_ssid(ap)
+            name = Text(f"{sib}?" if sib else "<Hidden>", style=f"{self._theme_fg} italic")
 
-        markers_markup = self._capture_marker_markup(ap)
-        if not markers_markup:
-            return Text(ssid_str, style=style)
-
-        markers_text = Text.from_markup(markers_markup, emoji=False)
-        avail = self._SSID_CELL_MAX - 1 - markers_text.cell_len  # 1 = separator
-        if avail >= 1 and len(ssid_str) > avail:
-            ssid_str = ssid_str[: max(1, avail - 1)] + "…"
-        text = Text(ssid_str, style=style)
-        text.append(" ")
-        text.append_text(markers_text)
-        return text
+        chips_markup = self._ssid_chips_markup(ap)  # Silenced, HS, PMK, WEP, PSK
+        chips_text = Text.from_markup(chips_markup, emoji=False) if chips_markup else None
+        reserved = 1 + chips_text.cell_len if chips_text else 0   # 1 = separator space
+        name.truncate(max(1, self._SSID_CELL_MAX - reserved), overflow="ellipsis")
+        if chips_text:
+            name.append(" ")
+            name.append_text(chips_text)
+        return name
 
     def _best_named_sibling_ssid(self, ap: AccessPoint) -> Optional[str]:
         """Guess the sibling SSID to display for a hidden AP."""
@@ -500,28 +557,28 @@ class ScannerView(Screen):
         return best_ssid
 
     @staticmethod
-    def _capture_marker_markup(ap: AccessPoint) -> str:
+    def _ssid_chips_markup(ap: AccessPoint) -> str:
         """Badges next to SSID for HS, PMK, WEP, WPS."""
-        kinds = {p.kind for p in ap.persisted}
-        has_hs = kinds.__contains__("HS") or any(
-            hs.is_complete for hs in ap.handshakes.values())
-        has_pmk = "PMKID" in kinds or any(hs.pmkid for hs in ap.handshakes.values())
-        has_wep = "WEP" in kinds or ap.wep_key is not None
-        has_wps = "WPS" in kinds or ap.wps_pbc_psk is not None
-        parts: List[str] = []
-        if has_hs:
-            parts.append("[green]✓HS[/green]")
-        if has_pmk:
-            parts.append("[green]✓PMK[/green]")
-        if has_wep:
-            parts.append("[green]✓WEP[/green]")
-        if has_wps:
-            parts.append("[green]✓WPS[/green]")
-        return " ".join(parts)
+        types = {p.type for p in ap.persisted}
+        has_hs  = "HS"    in types or any(hs.is_complete for hs in ap.handshakes.values())
+        has_pmk = "PMKID" in types or any(hs.pmkid and pmkid_crackable(hs) for hs in ap.handshakes.values())
+        has_wep = "WEP"   in types or ap.wep_key is not None
+        has_wps = "WPS"   in types or ap.wps_pbc_psk is not None
+        silent = Config.is_silenced(ap.bssid)
+        badges = [
+            (silent, "[red]✗S[/red]"),
+            (has_hs, "[green]✓HS[/green]"),
+            (has_pmk, "[green]✓PMK[/green]"),
+            (has_wep, "[green]✓WEP[/green]"),
+            (has_wps, "[green]✓WPS[/green]"),
+        ]
+        return " ".join(text for cond, text in badges if cond)
 
     # ----- Capture-event logging ---------------------------------------------
 
     def _drain_capture_events(self, ap: AccessPoint, forged_macs) -> None:
+        if Config.is_silenced(ap.bssid):
+            return
         for ev in self._events.poll(ap, forged_macs=forged_macs):
             self._log_capture_event(ev, ap)
 
@@ -714,6 +771,8 @@ class ScannerView(Screen):
             self._on_pbc_window(ap)
 
     def _on_pbc_window(self, ap: AccessPoint) -> None:
+        if Config.is_silenced(ap.bssid):
+            return
         label = escape(ap.ssid or ap.bssid)
         self._write_log(
             f"[bold cyan]WPS PushButton [italic]auto-invade:[/italic][/bold cyan] "
@@ -723,7 +782,7 @@ class ScannerView(Screen):
             self._write_log(treelog.leaf("[dim]auto-invade off: press [bold]w[/bold] to enable[/dim]"))
             return
         if ap.has_psk:
-            wps = next((p for p in ap.persisted if p.kind == "WPS" and p.value), None)
+            wps = next((p for p in ap.persisted if p.type == "WPS" and p.value), None)
             where = f" [dim]({escape(Path(wps.path).name)})[/dim]" if wps else ""
             self._write_log(treelog.leaf(f"[italic]already captured[/italic]{where}"))
             return
@@ -773,27 +832,23 @@ class ScannerView(Screen):
                 # Resume hopping only if we're still the foreground screen (not Focus).
                 await array.start_hopping(channels=self._channel_filter, interval=0.25)
 
-    def action_toggle_fade(self) -> None:
-        self._fade_enabled = not self._fade_enabled
-        log = self.query_one("#system-log", RichLog)
-        if self._fade_enabled:
-            log.write(
-                " [bright_green]●[/bright_green] [bold]Fade Inactive AccessPoints[/bold] is [bold]on[/bold] "
-                "[dim](idle APs slowly fade out)[/dim]"
-            )
-        else:
-            log.write(
-                " [orange1]●[/orange1] [bold]Fade Inactive AccessPoints[/bold] is [bold]off[/bold] "
-                "[dim](rows never fade)[/dim]"
-            )
+    def action_focus_filter(self) -> None:
+        self.query_one(FilterBar).focus_text()
+
+    def action_focus_encryption(self) -> None:
+        self.query_one(FilterBar).focus_encryption()
 
     def action_cycle_sort(self) -> None:
         self._sort_idx = (self._sort_idx + 1) % len(self._COLUMNS)
+        Config.scanner_sort = self._COLUMNS[self._sort_idx][0]
+        self.app.persist_config()
         self._update_column_headers()
         self._apply_sort()
 
     def action_toggle_sort_dir(self) -> None:
         self._sort_reverse = not self._sort_reverse
+        Config.scanner_sort_reverse = self._sort_reverse
+        self.app.persist_config()
         self._update_column_headers()
         self._apply_sort()
 
@@ -830,23 +885,28 @@ class ScannerView(Screen):
     async def _on_channel_filter_result(
         self, result: Optional[List[int]]
     ) -> None:
-        log = self.query_one("#system-log", RichLog)
         if result is None:
-            log.write("[dim]Channel filter unchanged.[/dim]")
-            return
+            self.query_one("#system-log", RichLog).write("[dim]Channel filter unchanged.[/dim]")
+        else:
+            await self._apply_channel_filter(result)
+        self.query_one(FilterBar).set_channels(self._channel_filter)
+        self.query_one("#ap-table", DataTable).focus()
 
+    async def _apply_channel_filter(self, channels: List[int]) -> None:
+        """Re-point the hopper; a full-band pick becomes None so hotplug keeps re-spreading it."""
         array = self.app.array
         if not array:
             return
-
-        self._channel_filter = result
+        full_band = set(channels) == set(array.supported_channels)
+        self._channel_filter = None if full_band else channels
         await array.stop_hopping()
-        dropped = self._prune_aps_outside(result)
-        await array.start_hopping(channels=result, interval=0.25)
+        dropped = self._prune_aps_outside(channels)
+        await array.start_hopping(channels=self._channel_filter, interval=0.25)
 
+        log = self.query_one("#system-log", RichLog)
         pieces = [
             f"[bold cyan]{name}[/bold cyan] [dim]({rngs})[/dim]"
-            for name, rngs in band_ranges(result)
+            for name, rngs in band_ranges(channels)
         ]
         summary = " and ".join(pieces) if pieces else "[dim]no channels[/dim]"
         log.write(f" [dim]●[/dim] [bold]Channel hopping[/bold] across {summary}")
@@ -857,29 +917,27 @@ class ScannerView(Screen):
                              f"{noun} outside the filter[/dim]")
             )
 
+    # ----- Filter bar --------------------------------------------------------
+
+    def on_filter_bar_scan_filter_changed(self, message: FilterBar.ScanFilterChanged) -> None:
+        self._scan_filter = message.scan_filter
+        self.refresh_table()
+
+    def on_filter_bar_edit_channels(self) -> None:
+        self.action_change_channel()
+
     def _prune_aps_outside(self, channels: List[int]) -> int:
         array = self.app.array
         if not array:
             return 0
         keep = set(channels)
-        table = self.query_one("#ap-table", DataTable)
-
         stale = [
             bssid
             for bssid, ap in array.access_points.items()
             if ap.channel not in keep
         ]
         for bssid in stale:
-            array.access_points.pop(bssid, None)
-            self.ap_cache.pop(bssid, None)
-            self._prev_beacons.pop(bssid, None)
-            self._beacon_flash_until.pop(bssid, None)
-            self._beacon_shown.pop(bssid, None)
-            self._render_key.pop(bssid, None)
-            try:
-                table.remove_row(bssid)
-            except Exception:
-                pass  # Row may already be gone if a race occurred with refresh_table.
+            self._forget_row(bssid, drop_from_array=True)
         return len(stale)
 
     async def on_data_table_row_selected(
@@ -905,6 +963,9 @@ class ScannerView(Screen):
                 self._sort_reverse = not self._sort_reverse
             else:
                 self._sort_idx = idx
+            Config.scanner_sort = self._COLUMNS[self._sort_idx][0]
+            Config.scanner_sort_reverse = self._sort_reverse
+            self.app.persist_config()
             self._update_column_headers()
             self._apply_sort()
             return

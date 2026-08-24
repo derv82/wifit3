@@ -500,6 +500,13 @@ class SetupWindows(Setup):
     """Windows device setup: bind the card to WinUSB (so libusb can open it) via the bundled
     wdi-simple.exe under one UAC prompt, and reverse it with pnputil. No replug concept exists."""
 
+    def requires_setup(self, device_id: DeviceID) -> bool:
+        """True when a present device isn't on a WinUSB/libusb driver, so libusb can't open it yet.
+        Absent from the bus -> False (nothing to bind; connect surfaces the absence)."""
+        if find_device(device_id) is None:
+            return False
+        return _find_winusb_inf(device_id.vid, device_id.pid) is None
+
     async def install(self, device_id: DeviceID, ui: Prompter) -> DeviceID | None:
         from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
         if not await ui.ask(ConfirmInstallDialog(device_id.description, chipset=device_id.chipset)):

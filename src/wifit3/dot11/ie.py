@@ -40,6 +40,21 @@ def ds_param_ie(channel: int) -> bytes:
     return bytes([0x03, 0x01, channel & 0xFF])
 
 
+def csa_ie(new_channel: int, *, mode: int = 1, count: int = 0) -> bytes:
+    """Channel Switch Announcement IE (tag 37): mode (1 = halt TX until the switch), target channel, count."""
+    return bytes([0x25, 0x03, mode & 0xFF, new_channel & 0xFF, count & 0xFF])
+
+
+def ecsa_ie(new_channel: int, *, operating_class: int, mode: int = 1, count: int = 0) -> bytes:
+    """Extended Channel Switch Announcement IE (tag 60): mode, new operating class, target channel, count."""
+    return bytes([0x3C, 0x04, mode & 0xFF, operating_class & 0xFF, new_channel & 0xFF, count & 0xFF])
+
+
+def secondary_channel_offset_ie(offset: int = 0) -> bytes:
+    """Secondary Channel Offset IE (tag 62): 0 = SCN (20 MHz), 1 = above, 3 = below."""
+    return bytes([0x3E, 0x01, offset & 0xFF])
+
+
 def force_psk_akm(rsn_ie: bytes, akm: int = _AKM_PSK, *, pmf_capable: bool = False) -> Optional[bytes]:
     """Rewrite an RSN IE to a single ``00-0F-AC:akm`` AKM (PSK by default) over the
     AP's ciphers, authoring a client RSN tail that mirrors the AP's PMF posture:

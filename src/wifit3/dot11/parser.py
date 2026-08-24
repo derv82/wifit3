@@ -4,6 +4,7 @@
 import struct
 from typing import Optional, List, Dict, Any
 
+from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
     AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
@@ -45,9 +46,9 @@ class WlanFrameParser:
         to_ds = (fc1 & 0x01) != 0
         from_ds = (fc1 & 0x02) != 0
 
-        addr1 = cls._mac_to_str(frame[4:10])
-        addr2 = cls._mac_to_str(frame[10:16])
-        addr3 = cls._mac_to_str(frame[16:22])
+        addr1 = mac_to_str(frame[4:10])
+        addr2 = mac_to_str(frame[10:16])
+        addr3 = mac_to_str(frame[16:22])
 
         if not to_ds and not from_ds: # Ad-hoc, Mgmt, or Ctrl
             dest = addr1
@@ -96,6 +97,7 @@ class WlanFrameParser:
                 "transition_mode": tags.get("transition_mode", False),
                 "pmf_capable": tags.get("pmf_capable", False),
                 "pmf_required": tags.get("pmf_required", False),
+                "beacon_protection": tags.get("beacon_protection", False),
                 "pairwise_cipher": tags.get("pairwise_cipher"),
                 "akms": tags.get("akms", []),
                 "akm_suites": tags.get("akm_suites", []),
@@ -109,22 +111,28 @@ class WlanFrameParser:
                     fields[key] = tags[key]
             return BeaconPacket(**base, **fields)
 
-        if subtype in (cls.SUBTYPE_PROBE_REQ, cls.SUBTYPE_ASSOC_REQ):
+        if subtype == cls.SUBTYPE_PROBE_REQ:
             tags = cls._parse_tags(frame, subtype)
             if tags is None:
                 return None
-            ssid = tags.get("ssid")
-            if subtype == cls.SUBTYPE_ASSOC_REQ:
-                # Client's selected AKM from the RSN IE (24 hdr + cap + listen = 28).
-                return AssocRequestPacket(
-                    **base, type="assoc_req", ssid=ssid,
-                    assoc_akm=cls._first_rsn_akm(frame, 28))
-            return ProbeReqPacket(**base, type="probe_req", ssid=ssid)
+            return ProbeReqPacket(**base, type="probe_req", ssid=tags.get("ssid"))
+
+        if subtype == cls.SUBTYPE_ASSOC_REQ:
+            tags = cls._parse_tags(frame, subtype)
+            if tags is None:
+                return None
+            # Client's selected AKM from the RSN IE (24 hdr + cap + listen = 28).
+            return AssocRequestPacket(
+                **base, type="assoc_req", ssid=tags.get("ssid"),
+                assoc_akm=cls._first_rsn_akm(frame, 28))
 
         if subtype == cls.SUBTYPE_REASSOC_REQ:
-            # +6 past Assoc's offset for the Current AP Address field (34 = 28 + 6).
+            tags = cls._parse_tags(frame, subtype)
+            if tags is None:
+                return None
+            # 34 = assoc's 28 + 6-byte Current AP Address.
             return AssocRequestPacket(
-                **base, type="reassoc_req",
+                **base, type="reassoc_req", ssid=tags.get("ssid"),
                 assoc_akm=cls._first_rsn_akm(frame, 34))
 
         if subtype == cls.SUBTYPE_ASSOC_RESP:
@@ -370,12 +378,6 @@ class WlanFrameParser:
         return False
 
     @staticmethod
-    def _mac_to_str(mac_bytes: bytes) -> str:
-        if len(mac_bytes) != 6:
-            return "00:00:00:00:00:00"
-        return ":".join(f"{b:02x}" for b in mac_bytes)
-
-    @staticmethod
     def _wps_version2(vext: bytes) -> Optional[int]:
         """Pull the WPS 2.0 Version2 value from a WPS Vendor Extension
         attribute. The value is the WFA vendor id (00:37:2A) followed by
@@ -451,6 +453,10 @@ class WlanFrameParser:
             ptr = 36 # Skip 24-byte HDR + 12-byte Fixed Params
         elif subtype == cls.SUBTYPE_PROBE_REQ:
             ptr = 24 # 24-byte HDR + 0-byte Fixed Params
+        elif subtype == cls.SUBTYPE_ASSOC_REQ:
+            ptr = 28 # 24-byte HDR + Capability(2) + Listen Interval(2)
+        elif subtype == cls.SUBTYPE_REASSOC_REQ:
+            ptr = 34 # assoc offset + Current AP Address(6)
         else:
             return parsed
 
@@ -467,6 +473,7 @@ class WlanFrameParser:
         transition_mode = False
         pmf_capable = False
         pmf_required = False
+        beacon_protection = False
         pairwise_cipher: Optional[str] = None
         akms: List[str] = []
         akm_suites: List[int] = []
@@ -508,6 +515,9 @@ class WlanFrameParser:
             elif tag_id == 192: # VHT Operation: center freq seg 0 at byte 1
                 if tag_len >= 2:
                     channel_vht = tag_data[1]
+            elif tag_id == 127: # Extended Capabilities: bit 84 = Beacon Protection Enabled
+                if tag_len >= 11:
+                    beacon_protection = bool(tag_data[10] & 0x10)   # bit 84 = octet 10, bit 4
             elif tag_id == 48: # RSN (WPA2/WPA3)
                 has_rsn = True
                 # Preserve the raw IE bytes (with tag header) so the PMKID
@@ -555,6 +565,7 @@ class WlanFrameParser:
         parsed["transition_mode"] = transition_mode
         parsed["pmf_capable"] = pmf_capable
         parsed["pmf_required"] = pmf_required
+        parsed["beacon_protection"] = beacon_protection
         parsed["pairwise_cipher"] = pairwise_cipher
         parsed["akms"] = akms
         parsed["akm_suites"] = akm_suites

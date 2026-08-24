@@ -110,6 +110,7 @@ class _Host(App):
         super().__init__()
         self.array = array
         self.target_ap = ap
+        self.pbc_enabled = True
 
     def on_mount(self) -> None:
         self.push_screen(FocusViewV2())
@@ -452,9 +453,11 @@ async def test_v2_button_wiring(focus_host):
     focus = await _rebind(focus_host, array, ap)
     _, _, pilot = focus_host
 
-    # WPA2 (no WPS, not WPA3): only PMKID is plausible. The rest hide.
+    # WPA2 (no WPS, not WPA3): PMKID + Deauth + EvilTwin apply. The rest hide.
     assert focus.query_one("#btn-pmkid", Button).display is True
-    for bid in ("#btn-gen-ivs", "#btn-chop", "#btn-wps-pin", "#btn-wpa3-down"):
+    assert focus.query_one("#btn-deauth", Button).display is True
+    assert focus.query_one("#btn-eviltwin", Button).display is True
+    for bid in ("#btn-gen-ivs", "#btn-chop", "#btn-wps-pin"):
         assert focus.query_one(bid, Button).display is False, bid
 
     # The inline ✕ resolves to its client, and the handler reaches deauth.
@@ -479,7 +482,7 @@ async def test_v2_wep_initial_load_surfaces_history_and_listening():
     ap = array.access_points[bssid]
     ap.encryption = "WEP"
     ap.persisted = [PersistedCapture(
-        kind="WEP", value="6162636465", timestamp=1748487420, path="dd-wrt_wep.txt")]
+        type="WEP", value="6162636465", timestamp=1748487420, path="dd-wrt_wep.txt")]
 
     app = _Host(array, ap)
     async with app.run_test(size=(120, 40)) as pilot:

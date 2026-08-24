@@ -32,7 +32,7 @@ class Campaign:
     active: Optional["Campaign"] = None
 
     button_id: Optional[str] = None   # the Focus button this campaign owns; None = no button (PBC)
-    key: str = ""                     # mutex/registry identity: "wep"/"wps"/"wpa3down"/"pmkid"/"pbc"
+    key: str = ""                     # mutex/registry identity: "wep"/"wps"/"eviltwin"/"pmkid"/"pbc"
     # Focus footer command: (keycap, short label), or None for no hotkey
     hotkey: Optional[tuple[str, str]] = None
     stoppable: bool = True            # False = fire-once; button stays disabled, never flips to "Stop X"
@@ -128,5 +128,4 @@ class Campaign:
 
     @classmethod
     def ineligible_reason(cls, ap) -> Optional[str]:
-        """Given it's visible: ``None`` = eligible (enabled); a string = disabled."""
         return None

@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable, List, Optional
 
 from wifit3.models import AccessPoint
+from wifit3.dot11 import str_to_mac
 from wifit3.campaigns import treelog
 
 logger = logging.getLogger(__name__)
@@ -49,10 +50,6 @@ _BROADCAST = b"\xff" * 6
 
 async def _always_associated() -> bool:
     return True
-
-
-def _str_to_mac(s: str) -> bytes:
-    return bytes(int(x, 16) for x in s.split(":"))
 
 
 @dataclass
@@ -99,7 +96,7 @@ class WepArpReplay:
         self.iface = iface
         self.target = target
         self.bssid = target.bssid
-        self.bssid_bytes = _str_to_mac(target.bssid)
+        self.bssid_bytes = str_to_mac(target.bssid)
         self.source_mac = source_mac or (bytes([0x02]) + os.urandom(5))
         self.collector = collector
         self._ensure_associated = ensure_associated or _always_associated
@@ -306,7 +303,7 @@ class WepArpReplay:
         t0 = time.time()
         sent = 0
         for _ in range(int(round(self._target))):
-            # Stop if torn down, or (safety) if the burst has run 2x the window — a slow card at a
+            # Stop if torn down, or (safety) if the burst has run 2x the window. A slow card at a
             # high target just runs all-gas; the guard only bounds a pathological overrun.
             if not self._active or (self._WINDOW_S > 0 and (time.time() - t0) >= 2 * self._WINDOW_S):
                 break

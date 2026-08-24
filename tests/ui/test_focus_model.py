@@ -9,7 +9,9 @@ import pytest
 
 from wifit3.campaigns.campaign import Campaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
+from wifit3.models import Handshake
 from wifit3.ui import focus_model as fm
+from wifit3.persist.config import Config
 
 
 @pytest.fixture(autouse=True)
@@ -28,11 +30,11 @@ def _running(key, **extra):
 def _wep_ap(*, wep_key=None, persisted_wep=False, unique_ivs=0):
     persisted = []
     if persisted_wep:
-        persisted = [types.SimpleNamespace(kind="WEP", value="6162636465", timestamp=0)]
+        persisted = [types.SimpleNamespace(type="WEP", value="6162636465", timestamp=0)]
     return types.SimpleNamespace(
         encryption="WEP", wep_key=wep_key, persisted=persisted,
         wep=types.SimpleNamespace(unique_ivs=unique_ivs),
-        handshakes={}, wpa3=False, transition_mode=False,
+        handshakes={}, wpa3=False, transition_mode=False, bssid="aa:bb:cc:dd:ee:ff",
     )
 
 
@@ -48,6 +50,7 @@ def _wpa_ap(*, known_psk=None):
     return types.SimpleNamespace(
         encryption="WPA2", wep_key=None, persisted=[], wep=None,
         handshakes={}, wpa3=False, transition_mode=False, known_psk=known_psk,
+        bssid="aa:bb:cc:dd:ee:ff",
     )
 
 
@@ -67,6 +70,26 @@ def test_headline_active_campaign_outranks_recovered_key():
     assert "Replaying" in h[0]
     assert "recovered" not in joined.lower()
     assert "1,234" in joined
+
+
+def _pmkid_ap(pmkid_akm):
+    hs = Handshake(bssid="aa:bb:cc:dd:ee:01", client_mac="11:22:33:44:55:66",
+                   pmkid=bytes(16), pmkid_akm=pmkid_akm, beacon_frame=b"x")
+    return types.SimpleNamespace(encryption="WPA2", wep_key=None, persisted=[], wep=None,
+                                 known_psk=None, handshakes={"11:22:33:44:55:66": hs}, bssid="aa:bb:cc:dd:ee:ff")
+
+
+def test_headline_sae_pmkid_is_not_a_captured_win():
+    """A WPA3/SAE PMKID lands on the handshake but save_pmkid withholds it, so the
+    headline must NOT claim 'Captured … saved' (the false-save bug)."""
+    joined = " ".join(fm.derive_headline(_pmkid_ap(pmkid_akm=8), None, fm.Campaigns()))
+    assert "Captured" not in joined and "PMKID ×" not in joined
+    assert "saved to captures/" not in joined
+
+
+def test_headline_psk_pmkid_is_a_captured_win():
+    joined = " ".join(fm.derive_headline(_pmkid_ap(pmkid_akm=2), None, fm.Campaigns()))
+    assert "Captured" in joined and "PMKID ×1" in joined
 
 
 def test_headline_chop_and_crack_states():
@@ -160,13 +183,15 @@ _AKM_NUM = {"PSK": 2, "PSK-SHA256": 6, "SAE": 8, "802.1X": 1, "EAP": 1, "FT-PSK"
 
 
 def _rsn_ap(*, encryption="WPA2", akms=("PSK",), wpa3=False, transition_mode=False,
-            pmf_required=False, pmf_capable=False, akm_suites=None,
+            pmf_required=False, pmf_capable=False, akm_suites=None, ssid="EvilNet",
+            last_beacon_frame=b"\x80\x00beacon",
             wps=False, wps_locked=False, wps_version="1.0"):
     akms = list(akms)
     if akm_suites is None:
         akm_suites = [_AKM_NUM[a] for a in akms if a in _AKM_NUM]
     return types.SimpleNamespace(
         encryption=encryption, akms=akms, akm_suites=akm_suites, pairwise_cipher="CCMP",
+        ssid=ssid, is_hidden=not (ssid and ssid != "<hidden>"), last_beacon_frame=last_beacon_frame,
         wpa3=wpa3, transition_mode=transition_mode, wep=None,
         pmf_required=pmf_required, pmf_capable=pmf_capable, bssid="aa:bb:cc:dd:ee:ff",
         wps=wps, wps_locked=wps_locked, wps_version=wps_version)
@@ -212,7 +237,8 @@ def test_status_footer_wep_is_fakeauth_and_usable_ivs():
 
 def _wep_btn_ap():
     return types.SimpleNamespace(encryption="WEP", wps=None, wpa3=False,
-                                 transition_mode=False, wps_locked=False)
+                                 transition_mode=False, wps_locked=False, is_hidden=False,
+                                 ssid="WepNet", akm_suites=[], bssid="aa:bb:cc:dd:ee:ff", last_beacon_frame=b"\x80\x00beacon")
 
 
 def test_derive_buttons_wep_labels_and_variants():
@@ -241,11 +267,23 @@ def _bs(b):
     return (b.visible, b.disabled, b.label, b.variant)
 
 
-def test_buttons_wpa2_psk_no_wps_only_pmkid_visible():
+def test_buttons_wpa2_psk_no_wps_pmkid_and_deauth_visible():
     b = fm.derive_buttons(_rsn_ap(akms=("PSK",), wps=False))
     assert _bs(b["btn-pmkid"]) == (True, False, "PMKID", "primary")
-    assert b["btn-wps-pin"].visible is False and b["btn-wpa3-down"].visible is False
+    assert _bs(b["btn-deauth"]) == (True, False, "AutoDeauth", "primary")
+    assert b["btn-wps-pin"].visible is False
     assert b["btn-gen-ivs"].visible is False and b["btn-chop"].visible is False
+
+
+def test_buttons_deauth_hidden_for_sae_open_wep_and_pmf():
+    """Deauth shows only for a confirmed PSK-family AKM with PMF off: SAE-only,
+    open, WEP and PMF-Required all hide it (deauth can't provoke a crackable PSK
+    handshake, or PMF protects the frame)."""
+    assert fm.derive_buttons(_rsn_ap(akms=("PSK",)))["btn-deauth"].visible is True
+    assert fm.derive_buttons(_rsn_ap(akms=("SAE",)))["btn-deauth"].visible is False
+    assert fm.derive_buttons(_rsn_ap(encryption="OPEN", akms=()))["btn-deauth"].visible is False
+    assert fm.derive_buttons(_wep_btn_ap())["btn-deauth"].visible is False
+    assert fm.derive_buttons(_rsn_ap(akms=("PSK",), pmf_required=True))["btn-deauth"].visible is False
 
 
 def test_buttons_wpa2_wps_unlocked_pin_enabled():
@@ -259,18 +297,42 @@ def test_buttons_wpa2_wps_locked_pin_visible_but_disabled():
     assert _bs(b["btn-wps-pin"]) == (True, True, "WPS PIN", "primary")
 
 
-def test_buttons_wpa3_transition_shows_pmkid_and_downgrade():
+def test_buttons_hidden_ssid_disables_assoc_attacks():
+    """A hidden AP (no known SSID) can't be associated, so every auth/assoc button is
+    visible-but-disabled with a hidden-SSID reason: PMKID, WPS PIN, WEP fake-auth."""
+    pmkid = fm.derive_buttons(_rsn_ap(akms=("PSK",), wps=True, ssid=None))
+    assert pmkid["btn-pmkid"].disabled is True and "hidden" in pmkid["btn-pmkid"].reason
+    assert pmkid["btn-wps-pin"].disabled is True and "hidden" in pmkid["btn-wps-pin"].reason
+    wep = fm.derive_buttons(_wep_hidden_ap())
+    assert wep["btn-gen-ivs"].disabled is True and "hidden" in wep["btn-gen-ivs"].reason
+
+
+def test_buttons_hidden_leaves_deauth_enabled():
+    """Deauth spoofs addresses (no association), so a hidden SSID does not disable it."""
+    b = fm.derive_buttons(_rsn_ap(akms=("PSK",), ssid=None))
+    assert b["btn-deauth"].visible is True and b["btn-deauth"].disabled is False
+
+
+def _wep_hidden_ap():
+    ap = _wep_btn_ap()
+    ap.ssid, ap.is_hidden = None, True
+    return ap
+
+
+def test_buttons_wpa3_transition_shows_pmkid_and_eviltwin():
     b = fm.derive_buttons(_rsn_ap(wpa3=True, transition_mode=True))
     assert b["btn-pmkid"].visible is True and b["btn-pmkid"].disabled is False
-    assert _bs(b["btn-wpa3-down"]) == (True, False, "WPA ↓", "primary")
+    assert b["btn-eviltwin"].visible is True
 
 
-def test_buttons_wpa3_only_sae_hides_everything():
-    """SAE-only: PMKID isn't crackable, no transition/WPS → no attack buttons."""
+def test_buttons_wpa3_only_sae_shows_eviltwin():
+    """SAE-only: PMKID isn't crackable, no transition/WPS → those hide. EvilTwin still shows:
+    it applies to any RSN incl. pure WPA3 (it herds SAE clients to a PSK twin)."""
     b = fm.derive_buttons(
         _rsn_ap(encryption="WPA3", wpa3=True, transition_mode=False, akms=("SAE",)))
     assert all(not b[bid].visible for bid in
-               ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin", "btn-wpa3-down"))
+               ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-deauth", "btn-wps-pin"))
+    assert b["btn-eviltwin"].visible is True
 
 
 def test_buttons_mutex_running_wps_disables_siblings():
@@ -279,14 +341,14 @@ def test_buttons_mutex_running_wps_disables_siblings():
     b = fm.derive_buttons(ap)
     assert _bs(b["btn-wps-pin"]) == (True, False, "Stop PIN", "error")
     assert b["btn-pmkid"].disabled is True               # radio owned by WPS
-    assert _bs(b["btn-wpa3-down"]) == (True, True, "WPA ↓", "primary")
+    assert _bs(b["btn-eviltwin"]) == (True, True, "EvilTwin", "primary")
 
 
-def test_buttons_running_wpa3_down_toggles_and_blocks_pmkid():
+def test_buttons_running_eviltwin_toggles_and_blocks_pmkid():
     ap = _rsn_ap(wpa3=True, transition_mode=True)
-    Campaign.active = _running("wpa3down")
+    Campaign.active = _running("eviltwin")
     b = fm.derive_buttons(ap)
-    assert _bs(b["btn-wpa3-down"]) == (True, False, "Stop ↓", "primary")
+    assert _bs(b["btn-eviltwin"]) == (True, False, "Stop EvilTwin", "error")
     assert b["btn-pmkid"].disabled is True
 
 
@@ -298,7 +360,7 @@ def test_buttons_running_pmkid_shows_stop_and_blocks_others():
     b = fm.derive_buttons(ap)
     assert _bs(b["btn-pmkid"]) == (True, False, "Stop PMKID", "error")
     assert b["btn-wps-pin"].disabled is True
-    assert b["btn-wpa3-down"].disabled is True
+    assert b["btn-eviltwin"].disabled is True
 
 
 def test_other_long_running_tx_mutex_and_excludes():
@@ -325,7 +387,7 @@ def test_buttons_open_hides_pmkid():
     b = fm.derive_buttons(_rsn_ap(encryption="OPEN", akms=()))
     assert b["btn-pmkid"].visible is False
     assert all(not b[bid].visible for bid in
-               ("btn-gen-ivs", "btn-chop", "btn-wps-pin", "btn-wpa3-down"))
+               ("btn-gen-ivs", "btn-chop", "btn-deauth", "btn-wps-pin", "btn-eviltwin"))
 
 
 def test_buttons_unconfirmed_encryption_shows_pmkid_disabled_with_reason():
@@ -351,5 +413,42 @@ def test_card_dynamic_each_state():
     assert fm.card_dynamic(fm.Campaigns(wep=_wep_camp())) == "● replaying"
     assert fm.card_dynamic(fm.Campaigns(wep=_wep_camp(chop=True))) == "● chopping"
     assert fm.card_dynamic(fm.Campaigns(wps=object())) == "● WPS PIN"
-    assert fm.card_dynamic(fm.Campaigns(wpa3_down=object())) == "● downgrading"
+    assert fm.card_dynamic(fm.Campaigns(deauth=object())) == "● Deauth"
+    assert fm.card_dynamic(fm.Campaigns(eviltwin=object())) == "● EvilTwin"
     assert fm.card_dynamic(fm.Campaigns(pbc_busy=True)) == "● WPS PBC"
+
+
+def test_buttons_eviltwin_enabled_single_card():
+    ap = _rsn_ap(akms=("PSK",))
+    st = fm.derive_buttons(ap)["btn-eviltwin"]
+    assert st.visible is True and st.disabled is False and st.reason == ""
+
+
+def test_headline_eviltwin_active_and_captured():
+    stats = types.SimpleNamespace(auth=2, assoc=1, m2=0, probes_direct=3, probes_wildcard=5)
+    camp = types.SimpleNamespace(captured=False, twin_channel=1,
+                                 fakeap=types.SimpleNamespace(stats=stats))
+    campaigns = fm.Campaigns(eviltwin=camp)
+    active = fm.derive_headline(_rsn_ap(), None, campaigns)
+    assert "EvilTwin active" in active[0] and "CH 1" in active[0]
+    assert "auth:2" in active[1] and "assoc:1" in active[1]
+    assert "3 direct" in active[2] and "5 wildcard" in active[2]
+    camp.captured = True
+    assert "Captured" in fm.derive_headline(_rsn_ap(), None, campaigns)[0]
+
+
+def test_derive_buttons_all_disabled_when_silenced(monkeypatch):
+    """Silencing an AP disables every campaign button (deauth included)."""
+    ap = _rsn_ap(akms=("PSK",))
+    monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
+    btns = fm.derive_buttons(ap)
+    for bid in ("btn-gen-ivs", "btn-pmkid", "btn-deauth", "btn-wps-pin",
+                "btn-eviltwin", "btn-chop"):
+        assert btns[bid].disabled is True
+    assert btns["btn-deauth"].reason == "AP silenced"
+
+
+def test_headline_silenced_outranks_listening(monkeypatch):
+    ap = _wpa_ap(known_psk=None)
+    monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
+    assert "Silenced" in fm.derive_headline(ap, None, fm.Campaigns())[0]

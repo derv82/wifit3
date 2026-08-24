@@ -312,10 +312,12 @@ def _manual_hint(key: str) -> str:
 
 
 def _stage(name: str, text: str | None) -> str | None:
+    """Stage ``text`` in a unique mkstemp file (a fixed /tmp name trips fs.protected_regular under sudo)."""
     if text is None:
         return None
-    p = str(Path(tempfile.gettempdir()) / name)
-    Path(p).write_text(text)
+    fd, p = tempfile.mkstemp(suffix=f"-{name}")
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
     return p
 
 
@@ -476,30 +478,38 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupR
     except OSError as e:
         return LinuxSetupResult(ok=False, message=f"Couldn't stage the setup files: {e}")
 
-    cmd = _install_cmd(tmp_rule=tmp_rule, key=target.key, tmp_blacklist=tmp_blacklist,
-                       modules=modules, group=group, node=node)
+    try:
+        cmd = _install_cmd(tmp_rule=tmp_rule, key=target.key, tmp_blacklist=tmp_blacklist,
+                           modules=modules, group=group, node=node)
 
-    if is_root:
-        rc = _run_as_root(cmd)
-    else:
-        method = _choose_escalation_method()
-        if method is None:
+        if is_root:
+            rc = _run_as_root(cmd)
+        else:
+            method = _choose_escalation_method()
+            if method is None:
+                return LinuxSetupResult(
+                    ok=False, detail=_manual_hint(target.key),
+                    message="No graphical elevator (pkexec/sudo) found to install the udev rule + blocklist.")
+            rc = run_privileged(cmd, method)
+
+        if rc == 0:
+            detail = blacklist_path(target.key) if modules else (
+                "Couldn't determine the kernel module to blacklist. The card may be re-grabbed on "
+                "replug. Tell us the chipset so we can add a fallback hint.")
+            return LinuxSetupResult(ok=True, detail=detail, message=_REPLUG_MSG)
+        if rc == 126:
             return LinuxSetupResult(
-                ok=False, detail=_manual_hint(target.key),
-                message="No graphical elevator (pkexec/sudo) found to install the udev rule + blocklist.")
-        rc = run_privileged(cmd, method)
-
-    if rc == 0:
-        detail = blacklist_path(target.key) if modules else (
-            "Couldn't determine the kernel module to blacklist. The card may be re-grabbed on "
-            "replug. Tell us the chipset so we can add a fallback hint.")
-        return LinuxSetupResult(ok=True, detail=detail, message=_REPLUG_MSG)
-    if rc == 126:
-        return LinuxSetupResult(
-            ok=False, cancelled=True,
-            message="Authorization dismissed. The udev rule + blocklist were not installed.")
-    return LinuxSetupResult(ok=False, detail=_manual_hint(target.key),
-                            message=f"Couldn't install the udev rule + blocklist (exit {rc}).")
+                ok=False, cancelled=True,
+                message="Authorization dismissed. The udev rule + blocklist were not installed.")
+        return LinuxSetupResult(ok=False, detail=_manual_hint(target.key),
+                                message=f"Couldn't install the udev rule + blocklist (exit {rc}).")
+    finally:
+        for tmp in (tmp_rule, tmp_blacklist):
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
 
 
 def remove_rule(target: SetupTarget, *, node: str | None = None,
@@ -579,6 +589,10 @@ class SetupLinux(Setup):
     """Linux device setup: a udev access rule + a modprobe blacklist for the card's chipset, written
     under one elevation prompt. A kernel-warmed chip usually needs a physical replug after the
     modprobe unload to reach a clean cold state; ``install`` drives that through the Prompter."""
+
+    def requires_setup(self, device_id: DeviceID) -> bool:
+        """True when a kernel driver is bound to the card, so a cold bring-up would collide."""
+        return kernel_driver_bound([(device_id.vid, device_id.pid)])
 
     async def install(self, device_id: DeviceID, ui: Prompter) -> DeviceID | None:
         target = target_for_vidpid(device_id.vid, device_id.pid)
@@ -664,13 +678,14 @@ class SetupLinux(Setup):
         if not await self._wait_for_access(device_id, writable=False):
             return SetupResult(
                 ok=True, detail=result.detail,
-                message=(f"The rule is gone, but {device_id.description} keeps access until it's "
-                         f"replugged. Unplug and replug the card to fully revoke."))
+                message="Rules removed. Replug the card to fully revoke access.")
         return SetupResult(ok=True, message=result.message, detail=result.detail)
 
     async def _wait_for_access(self, device_id: DeviceID, *, writable: bool,
                                timeout: float = 5.0, interval: float = 0.1) -> bool:
         """Block until the card's node reaches ``writable``, or ``timeout``."""
+        if os.geteuid() == 0:
+            return True            # root opens the node regardless of the rule; os.access can't see a revoke
         node = usb_node_path(device_id)
         if node is None:
             return False

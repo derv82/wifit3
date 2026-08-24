@@ -7,12 +7,15 @@ Moved here (largely verbatim) from ``WlanInterface``, which becomes a pure per-c
 addition for multicard is ``card_id``: RSSI is tracked per receiving card in ``signal_by_card`` so
 the Power reading can pick the strongest antenna, while every other field (beacons, IEs, clients,
 handshakes) is updated once, on the deduplicated (novel) copy only."""
+import asyncio
 import logging
+import threading
 import time
 from typing import Dict, List, Optional, Set
 
 from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
 from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage
+from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
@@ -21,6 +24,11 @@ from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.wep_store import WepCaptureStore
 
 logger = logging.getLogger(__name__)
+
+
+def _set_result(fut, value) -> None:
+    if not fut.done():
+        fut.set_result(value)
 
 
 def _enc_rank(label: str) -> int:
@@ -70,8 +78,9 @@ class WlanSink:
         self.clients: Dict[str, Client] = {}
         self.wep_store = WepCaptureStore()  # WEP IV tallying
         self.packet_stats = PacketStats()   # Packet dashboard source
-        self.forged_macs: Set[str] = set()  # MACs we forged for active attacks
-        self.self_macs: Set[str] = set()    # Forged STA MAC for WEP fake-auth
+        self.own_macs: Set[str] = set()     # MACs we transmit as; dropped at ingest, never a client
+        self._waiters: list = []            # (match, future, loop) for the next_frame await-API
+        self._waiters_lock = threading.Lock()
 
     # ----- signal (per-card) -------------------------------------------------
 
@@ -120,6 +129,13 @@ class WlanSink:
         if ap is not None:
             self._record_ap_signal(ap, card_id, rssi)
 
+    def record_injected_eapol(self, frame: bytes) -> None:
+        """Fold EvilTwin's injected M1 into the sink, bypassing the array's own-frame RX filter, so
+        a client's M2 pairs with it."""
+        pkt = WlanFrameParser.parse_80211_frame(frame, 0)
+        if isinstance(pkt, EapolPacket):
+            self._on_eapol_frame(pkt)
+
     # ----- typed handlers ----------------------------------------------------
 
     def _on_beacon_frame(self, pkt: Packet, card_id: str, channel_hint: int) -> bool:
@@ -139,6 +155,7 @@ class WlanSink:
         transition_mode = pkt.transition_mode
         pmf_capable = pkt.pmf_capable
         pmf_required = pkt.pmf_required
+        beacon_protection = pkt.beacon_protection
         wps = pkt.wps
         wps_locked = pkt.wps_locked
         wps_version = pkt.wps_version
@@ -160,6 +177,7 @@ class WlanSink:
                 transition_mode=transition_mode,
                 pmf_capable=pmf_capable,
                 pmf_required=pmf_required,
+                beacon_protection=beacon_protection,
                 wps=wps,
                 wps_locked=wps_locked,
                 wps_version=wps_version,
@@ -198,6 +216,7 @@ class WlanSink:
                 ap.transition_mode = transition_mode
                 ap.pmf_capable = pmf_capable
                 ap.pmf_required = pmf_required
+                ap.beacon_protection = beacon_protection
             # Only refresh WPS when this frame carried the IE.
             if wps:
                 ap.wps = True
@@ -250,13 +269,11 @@ class WlanSink:
         bssid = pkt.bssid
         rssi = pkt.rssi
         client_mac = pkt.client_mac
-        if not client_mac or client_mac in self.forged_macs:
+        if not client_mac or client_mac in self.own_macs:
             return True
 
         if client_mac not in self.clients:
-            self.clients[client_mac] = Client(
-                mac=client_mac, is_self=client_mac in self.self_macs,
-            )
+            self.clients[client_mac] = Client(mac=client_mac)
         client = self.clients[client_mac]
         self._record_client_signal(client, card_id, rssi)
         client.packets += 1
@@ -271,10 +288,10 @@ class WlanSink:
         if frame_type == "probe_req" and self._is_real_ssid(pkt.ssid):
             client.probed_ssids.add(pkt.ssid)
 
-        if frame_type == "assoc_req":
+        if frame_type in ("assoc_req", "reassoc_req"):
             ap = self.access_points.get(bssid)
             if ap is not None and self._is_real_ssid(pkt.ssid):
-                self._decloak(ap, pkt.ssid, "assoc_req")
+                self._decloak(ap, pkt.ssid, frame_type)
         return True
 
     def _on_eapol_frame(self, pkt: Packet) -> bool:
@@ -304,8 +321,16 @@ class WlanSink:
             # Refresh in case the handshake was created before the AP's RSN IE was known.
             hs.akm_offered = list(ap.akm_suites)
 
+        # AKM this association negotiated, snapshotted now: this frame's own RSN IE
+        # (M2/M3), else the client's assoc-time selection.
+        akm = pkt.akm
+        if akm is None:
+            client_obj = self.clients.get(client_mac)
+            if client_obj is not None:
+                akm = client_obj.akm_selected
+
         # Forged MACs keep a Handshake (for PMKID) but skip the EAPOL list.
-        if client_mac not in self.forged_macs and not hs.has_message(raw_frame):
+        if client_mac not in self.own_macs and not hs.has_message(raw_frame):
             eapol = HandshakeMessage(
                 raw=raw_frame,
                 msg_num=pkt.msg_num,
@@ -314,25 +339,17 @@ class WlanSink:
                 mic=pkt.mic or b"",
                 key_data_len=pkt.key_data_len,
                 eapol_payload=pkt.payload,
+                akm=akm,
                 timestamp=time.time(),
             )
             hs.messages.append(eapol)
             msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"
             logger.info(f"[{msg_label}] {bssid} <-> {client_mac} (replay {eapol.replay_hex})")
 
-        # Client's negotiated AKM.
-        akm = pkt.akm
-        if akm is not None:
-            hs.akm_client = akm
-        elif hs.akm_client is None:
-            # No M2 yet (e.g. a PMKID-only capture), fall back to client's advertised AKM.
-            client_obj = self.clients.get(client_mac)
-            if client_obj is not None and client_obj.akm_selected is not None:
-                hs.akm_client = client_obj.akm_selected
-
         pmkid = pkt.pmkid
         if pmkid and not hs.pmkid:
             hs.pmkid = pmkid
+            hs.pmkid_akm = akm
             logger.info(f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}")
         return True
 
@@ -380,38 +397,71 @@ class WlanSink:
         """A list of discovered Access Points."""
         return list(self.access_points.values())
 
-    def register_forged_mac(self, mac) -> None:
-        """Mark ``mac`` as one we forged for an active attack (so ingest drops our own frames)."""
-        if isinstance(mac, bytes):
-            mac_str = ":".join(f"{b:02x}" for b in mac)
-        else:
-            mac_str = str(mac).lower()
-        self.forged_macs.add(mac_str)
+    def dispatch_rx(self, pkt) -> None:
+        """Resolve any next_frame waiters this deduped RX frame matches."""
+        with self._waiters_lock:
+            waiters = list(self._waiters)
+        for match, fut, loop in waiters:
+            if fut.done():
+                continue
+            try:
+                hit = match(pkt)
+            except Exception:
+                hit = False
+            if hit:
+                loop.call_soon_threadsafe(_set_result, fut, pkt)
 
-    def register_self_mac(self, mac, bssid: Optional[str] = None) -> str:
-        """Mark ``mac`` as our own forged STA."""
-        if isinstance(mac, bytes):
-            mac_str = ":".join(f"{b:02x}" for b in mac)
-        else:
-            mac_str = str(mac).lower()
-        self.self_macs.add(mac_str)
-        client = self.clients.get(mac_str)
-        if client is None:
-            self.clients[mac_str] = Client(mac=mac_str, bssid=bssid, is_self=True)
-        else:
-            client.is_self = True
-            if bssid:
-                client.bssid = bssid
+    async def next_frame(self, match, timeout: float):
+        """Await the first deduped RX frame for which ``match(pkt)`` is true, else None on timeout."""
+        loop = asyncio.get_event_loop()
+        fut = loop.create_future()
+        entry = (match, fut, loop)
+        with self._waiters_lock:
+            self._waiters.append(entry)
+        try:
+            return await asyncio.wait_for(fut, timeout)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            with self._waiters_lock:
+                if entry in self._waiters:
+                    self._waiters.remove(entry)
+
+    async def wait_until(self, condition, timeout: float, poll: float = 0.05) -> bool:
+        """Poll ``condition()`` until it is true or ``timeout`` elapses; returns the final truth."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if condition():
+                return True
+            await asyncio.sleep(poll)
+        return bool(condition())
+
+    def register_own_mac(self, mac) -> str:
+        """Mark ``mac`` as one we transmit as: ingest drops its frames, and it never becomes a client."""
+        mac_str = mac_to_str(mac) if isinstance(mac, (bytes, bytearray)) else str(mac).lower()
+        self.own_macs.add(mac_str)
+        self.clients.pop(mac_str, None)
         return mac_str
 
+    def unregister_own_mac(self, mac) -> None:
+        """Inverse of ``register_own_mac``."""
+        mac_str = mac_to_str(mac) if isinstance(mac, (bytes, bytearray)) else str(mac).lower()
+        self.own_macs.discard(mac_str)
+
+    # Back-compat names the campaigns still call; all funnel to the single own-MAC set.
+    def register_forged_mac(self, mac) -> None:
+        self.register_own_mac(mac)
+
+    def register_self_mac(self, mac, bssid=None) -> str:
+        return self.register_own_mac(mac)
+
     def unregister_self_mac(self, mac) -> None:
-        """Inverse of register_self_mac."""
-        if isinstance(mac, bytes):
-            mac_str = ":".join(f"{b:02x}" for b in mac)
-        else:
-            mac_str = str(mac).lower()
-        self.self_macs.discard(mac_str)
-        self.clients.pop(mac_str, None)
+        self.unregister_own_mac(mac)
+
+    @property
+    def forged_macs(self):
+        """Back-compat alias the UI reads to hide our own STA from client lists."""
+        return self.own_macs
 
     def record_tx(self, frame_bytes: bytes) -> None:
         """Classify an outgoing frame for the packet dashboard (deauth vs other). Best-effort."""

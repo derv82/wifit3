@@ -18,15 +18,15 @@ def _first_id(cls):
 
 
 def test_self_cold_chips_auto_connect():
-    for cls in (AR9271V2Driver, MT76x0UDriver, MT76x2UDriver):
+    for cls in (MT76x0UDriver, MT76x2UDriver):
         v, p = _first_id(cls)
         t = target_for_vidpid(v, p)
         assert t is not None and t.replug_after_modprobe is False, cls.__name__
 
 
 def test_replug_required_by_default_and_when_explicit():
-    # RT5372 sets nothing → picks up the safe default; mt7921au sets it explicitly.
-    for cls in (RT5372Driver, MT7921AUDriver):
+    # RT5372 sets nothing → picks up the safe default; mt7921au and ar9271 set it explicitly.
+    for cls in (RT5372Driver, MT7921AUDriver, AR9271V2Driver):
         v, p = _first_id(cls)
         t = target_for_vidpid(v, p)
         assert t is not None and t.replug_after_modprobe is True, cls.__name__

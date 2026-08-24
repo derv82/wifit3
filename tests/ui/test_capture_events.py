@@ -46,10 +46,9 @@ def test_handshake_complete_refires_per_instance():
     assert sum(e.kind == "handshake_complete" for e in det.poll(ap)) == 1
 
 
-def _hs_with(ap, *, offered, client=None, pmkid=None):
+def _hs_with(ap, *, offered, pmkid=None):
     hs = Handshake(bssid=ap.bssid, client_mac="11:22:33:44:55:66", beacon_frame=b"B")
     hs.akm_offered = list(offered)
-    hs.akm_client = client
     hs.pmkid = pmkid
     ap.handshakes[hs.client_mac] = hs
     return hs
@@ -69,29 +68,23 @@ def test_sae_handshake_emits_eapol_but_no_completion():
     assert len(eapols) == 2
 
 
-def test_owe_and_eap_emit_withheld_banner_sae_stays_silent():
+def test_withheld_banner_badges_owe_eap_sae_and_ft():
     """A withheld 4-way is announced once per AP with its badge (so it's not a silent
-    capture failure) for the false-positive AKMs EAP + OWE; SAE/FT stay silent
-    (they were never mis-reported as crackable)."""
+    capture failure): EAP, OWE, and now SAE/FT too."""
     det = CaptureEventDetector(granular_eapol=False)
 
-    owe = AccessPoint(bssid="aa:bb:cc:dd:ee:f5", ssid="OpenNet")
-    hs = _hs_with(owe, offered=[18])                          # OWE-only AP
-    hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
-    ev = [e for e in det.poll(owe) if e.kind == CaptureKind.UNCRACKABLE_HANDSHAKE]
-    assert len(ev) == 1 and ev[0].value == "OWE"
-    assert not any(e.kind == CaptureKind.UNCRACKABLE_HANDSHAKE for e in det.poll(owe))  # once/AP
-
-    eap = AccessPoint(bssid="aa:bb:cc:dd:ee:f6", ssid="CorpNet")
-    hs = _hs_with(eap, offered=[1])                           # EAP-only AP
-    hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
-    ev = [e for e in det.poll(eap) if e.kind == CaptureKind.UNCRACKABLE_HANDSHAKE]
-    assert len(ev) == 1 and ev[0].value == "EAP/Enterprise"
-
-    sae = AccessPoint(bssid="aa:bb:cc:dd:ee:f7", ssid="Wpa3Net")
-    hs = _hs_with(sae, offered=[8])                           # SAE-only AP → silent
-    hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
-    assert not any(e.kind == CaptureKind.UNCRACKABLE_HANDSHAKE for e in det.poll(sae))
+    for bssid, offered, badge in (
+        ("aa:bb:cc:dd:ee:f5", [18], "OWE"),
+        ("aa:bb:cc:dd:ee:f6", [1], "EAP/Enterprise"),
+        ("aa:bb:cc:dd:ee:f7", [8], "SAE"),
+        ("aa:bb:cc:dd:ee:f8", [4], "FT"),
+    ):
+        ap = AccessPoint(bssid=bssid, ssid="Net")
+        hs = _hs_with(ap, offered=offered)
+        hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
+        ev = [e for e in det.poll(ap) if e.kind == CaptureKind.UNCRACKABLE_HANDSHAKE]
+        assert len(ev) == 1 and ev[0].value == badge, badge
+        assert not any(e.kind == CaptureKind.UNCRACKABLE_HANDSHAKE for e in det.poll(ap))  # once/AP
 
 
 def test_wpa2_handshake_emits_completion_banner():
@@ -122,7 +115,7 @@ def test_transition_pmkid_withheld_until_m2_confirms_psk():
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:f3", ssid="X")
     hs = _hs_with(ap, offered=[2, 8], pmkid=b"\x03" * 16)   # transition, client unknown
     assert not any(e.kind == CaptureKind.PMKID for e in det.poll(ap))
-    hs.akm_client = 2                                       # M2 says PSK
+    hs.pmkid_akm = 2                                        # M2 says PSK
     assert sum(e.kind == CaptureKind.PMKID for e in det.poll(ap)) == 1
 
 

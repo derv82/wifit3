@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import Counter, deque
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
 from rich.markup import escape
 
@@ -12,20 +12,24 @@ from ..campaigns.campaign import Campaign
 from ..campaigns.pmkid import PmkidHarvestAttack
 from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
+from wifit3.crack.handshake import pmkid_crackable
+from wifit3.persist.config import Config
 from ..campaigns.pin import WpsCampaign
-from ..campaigns.wpa3_downgrade import WPA3DowngradeAttack
+from ..campaigns.deauth import DeauthCampaign
+from ..campaigns.eviltwin import EvilTwinCampaign
 
 # Attack-button campaigns in button-row order.
-BUTTON_CAMPAIGNS = [WepCampaign, PmkidHarvestAttack, WpsCampaign, WPA3DowngradeAttack]
-_BUTTON_ORDER = ["btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin", "btn-wpa3-down"]
+BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign, EvilTwinCampaign]
+_BUTTON_ORDER = ["btn-gen-ivs", "btn-chop", "btn-deauth", "btn-pmkid", "btn-wps-pin", "btn-eviltwin"]
 
 
 @dataclass
 class Campaigns:
     """The live attack-campaign handles a Focus screen owns."""
-    wep: Any = None                # WepCampaign | None
-    wps: Any = None                # WpsCampaign | None
-    wpa3_down: Any = None          # WPA3DowngradeAttack | None
+    wep: Optional[WepCampaign] = None
+    wps: Optional[WpsCampaign] = None
+    deauth: Optional[DeauthCampaign] = None
+    eviltwin: Optional[EvilTwinCampaign] = None
     pbc_busy: bool = False
 
 
@@ -268,6 +272,7 @@ class ButtonState:
 def derive_buttons(ap) -> dict[str, ButtonState]:
     """Per-button state, keyed by button id, registry-driven."""
     active = Campaign.active
+    silenced = Config.is_silenced(ap.bssid)
     states: dict[str, ButtonState] = {}
     for cls in BUTTON_CAMPAIGNS:
         vis = cls.visible(ap)
@@ -277,7 +282,7 @@ def derive_buttons(ap) -> dict[str, ButtonState]:
                 label=cls.run_label, variant=cls.run_variant)
         else:
             other = active is not None and active.key != cls.key
-            reason = cls.ineligible_reason(ap)
+            reason = "AP silenced" if silenced else cls.ineligible_reason(ap)
             states[cls.button_id] = ButtonState(
                 visible=vis,
                 disabled=reason is not None or other,
@@ -288,7 +293,7 @@ def derive_buttons(ap) -> dict[str, ButtonState]:
     chopping = wep_running and getattr(active, "chop_active", False)
     states["btn-chop"] = ButtonState(
         visible=WepCampaign.visible(ap),
-        disabled=not wep_running,
+        disabled=not wep_running or silenced,
         label="Stop Chop" if chopping else "ChopChop",
         variant="warning" if chopping else "primary",
     )
@@ -307,7 +312,7 @@ def client_rows(ap, array) -> list[ClientRow]:
     for mac, client in array.clients.items():
         if client.bssid != ap.bssid:
             continue
-        if mac in forged or client.is_self:
+        if mac in forged:
             continue
         rows.append(ClientRow(bssid=mac, power=client.signal, packets=client.packets))
     return rows
@@ -321,8 +326,10 @@ def card_dynamic(campaigns: Campaigns) -> str:
         return "● replaying"
     if campaigns.wps is not None:
         return "● WPS PIN"
-    if campaigns.wpa3_down is not None:
-        return "● downgrading"
+    if campaigns.deauth is not None:
+        return "● Deauth"
+    if campaigns.eviltwin is not None:
+        return "● EvilTwin"
     if campaigns.pbc_busy:
         return "● WPS PBC"
     return ""
@@ -377,19 +384,38 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
         return ["[bold cyan]● WPS PIN brute-force[/bold cyan]",
                 f"[dim]{wps_status_markup(wps)}[/dim]"]
 
-    # 3. WPA3 downgrade daemon running.
-    if campaigns.wpa3_down is not None:
-        st = campaigns.wpa3_down.stats
-        return ["[bold cyan]● WPA Downgrade active[/bold cyan]",
-                f"[dim]spoofing WPA2-only · {st.responses_sent} responses[/dim]"]
+    # 3. EvilTwin campaign running.
+    if campaigns.eviltwin is not None:
+        camp = campaigns.eviltwin
+        if camp.captured:
+            return ["[black bold on green] ✓ Captured [/black bold on green] crackable M2",
+                    "[dim]saved to captures/[/dim]"]
+        stats = getattr(camp.fakeap, "stats", None)
+        if stats is None:
+            return [f"[bold cyan]EvilTwin arming…[/bold cyan] on CH {camp.twin_channel}"]
+        return [f"[bold cyan]EvilTwin active[/bold cyan] on CH {camp.twin_channel}",
+                f"[dim]auth:{stats.auth} · assoc:{stats.assoc} · M2:{stats.m2}[/dim]",
+                f"[dim]probes: {stats.probes_direct} direct · "
+                f"{stats.probes_wildcard} wildcard[/dim]"]
+
+    # 3b. Deauth campaign running: provoking a re-handshake for the passive capture.
+    deauth = campaigns.deauth
+    if deauth is not None:
+        return ["[bold cyan]● Deauth[/bold cyan] forcing a re-handshake",
+                f"[dim]client acks:{deauth.client_acks}/{deauth.client_sent} · "
+                f"bcast:{deauth.bcast_sent}[/dim]"]
 
     # 4. Recovered credentials, when idle: WEP key / WPS PSK.
-    if ap.wep_key is not None or any(p.kind == "WEP" for p in ap.persisted):
+    if ap.wep_key is not None or any(p.type == "WEP" for p in ap.persisted):
         return ["[black bold on green] ✓ WEP key recovered [/black bold on green]",
                 "[dim]see the event log for the key[/dim]"]
     if ap.known_psk:
         return ["[black bold on green] ✓ WPS PSK recovered [/black bold on green]",
                 "[dim]see the event log for the passphrase[/dim]"]
+
+    if Config.is_silenced(ap.bssid):
+        return ["[dim]● Silenced[/dim]",
+                "[dim]campaigns off, handshakes ignored · press s to resume[/dim]"]
 
     # 4-5. Passive capture state: captured / partial / listening.
     if wep:
@@ -400,7 +426,7 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
         return ["[green]● Listening for WEP IVs[/green]"]
 
     n_complete, n_partial, msg_counts = count_handshakes(ap)
-    n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid)
+    n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid and pmkid_crackable(hs))
     if n_complete or n_pmkid:
         bits = []
         if n_complete:
@@ -478,19 +504,19 @@ def build_snapshot(ap, array, campaigns: Campaigns, samples: deque,
 
 
 def fake_snapshot() -> FocusSnapshot:
-    """The WPA2-downgrade scenario from the redesign mockup."""
+    """The EvilTwin scenario from the redesign mockup."""
     return FocusSnapshot(
         status=[
-            "● WPA Downgrade active",
-            "deauthing 2 clients · waiting for M1·M2",
-            "handshake:  M1 ✓   M2 —",
+            "● EvilTwin active",
+            "WPA2 twin up · waiting for M1·M2",
+            "handshake:  M1 ✓   M2 -",
         ],
         power_dbm=-71,
         signal=6.0,
         card_chipset="rtl8187l",
         card_bssid="00:c0:ca:11:22:33",
-        card_dynamic="● deauthing",
-        buttons=["Extract PMKID", "WPA Downgrade", "WPS Brute Force"],
+        card_dynamic="● EvilTwin",
+        buttons=["Extract PMKID", "EvilTwin", "WPS Brute Force"],
         ap_essid="HomeNetwork",
         ap_bssid="a2:b3:c4:d5:e6:f0",
         ap_channel=6,

@@ -4,6 +4,7 @@ BreathingArt runtime art swap. Pure logic, no mounting (BreathingArt is driven b
 hand, as in test_focus_v2_layout)."""
 from types import SimpleNamespace
 
+from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
 from wifit3.chips.mt7921au.driver import MT7921AUDriver
 from wifit3.ui.screens.focus_v2 import art
 
@@ -32,10 +33,30 @@ def test_derive_product_name_unknown_or_missing():
     assert MT7921AUDriver.derive_product_name("") is None
 
 
+def test_derive_product_name_ar9271_by_oui():
+    # 0cf3:9271 is shared: a TP-Link OUI is the WN722N v1, any other real MAC defaults to the ALFA.
+    assert AR9271V2Driver.derive_product_name("f4:ec:38:aa:bb:cc") == "TL-WN722N v1"
+    assert AR9271V2Driver.derive_product_name("F4:EC:38:AA:BB:CC") == "TL-WN722N v1"
+    assert AR9271V2Driver.derive_product_name("00:c0:ca:aa:bb:cc") == "ALFA AWUS036NHA"   # ALFA OUI
+    assert AR9271V2Driver.derive_product_name("de:ad:be:ef:00:01") == "ALFA AWUS036NHA"   # unknown -> ALFA
+    assert AR9271V2Driver.derive_product_name(None) is None                               # MAC-less -> combined
+    assert AR9271V2Driver.derive_product_name("") is None
+
+
 # --- art_path_for: product -> chipset -> generic ----------------------------
 
 def test_art_path_for_product_hit():
     assert art.art_path_for(_iface(product_name="Panda PAU05/06")) == "cards/card-pau06.ans"
+
+
+def test_art_path_for_wn722n_v1_shares_v23_art():
+    assert art.art_path_for(_iface(product_name="TL-WN722N v1")) == "cards/card-tpwn722nv23.ans"
+
+
+def test_art_path_for_ar9271_combined_label_defaults_to_alfa():
+    # Pre-connect / MAC-less: the unsplit label resolves to the ALFA art, not the generic fallback.
+    combined = "ALFA AWUS036NHA / TL-WN722N v1"
+    assert art.art_path_for(_iface(product_name=combined)) == "cards/card-awus036nha.ans"
 
 
 def test_art_path_for_driver_refined_name_wins():

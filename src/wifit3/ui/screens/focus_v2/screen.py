@@ -35,13 +35,17 @@ from wifit3.campaigns import treelog
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
-from wifit3.campaigns.wpa3_downgrade import WPA3DowngradeAttack
+from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput
+from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal
 from wifit3.campaigns.pin import WpsCampaign, load_run_state, run_progress_line
+from wifit3.campaigns.deauth import DeauthCampaign
 from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.wps.registrar import PinResult
+from wifit3.crack.handshake import handshake_uncrackable_label
 from wifit3.persist.save import (
     save_handshake, save_pmkid, save_wep_key, save_wps_pbc, save_wps_pin,
 )
+from wifit3.persist.config import Config
 
 from ... import focus_model as fm
 from ...capture_events import (
@@ -80,9 +84,8 @@ _PAD_RATE = 0.4
 _PBC_RETRY_COOLDOWN_S = 3.0
 
 _ATTACK_BUTTONS = [
-    ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-pmkid", "PMKID"),
-    ("btn-wps-pin", "WPS PIN"), ("btn-wpa3-down", "WPA ↓"),
-    # Transient: shown only while a PBC capture runs, driven directly (not via derive_buttons).
+    ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-deauth", "AutoDeauth"),
+    ("btn-pmkid", "PMKID"), ("btn-wps-pin", "WPS PIN"), ("btn-eviltwin", "EvilTwin"),
     ("btn-stop-pbc", "Stop PBC"),
 ]
 
@@ -98,7 +101,8 @@ _BUTTON_TIPS = {
     "Stop Chop": "Interrupt chopping and return to ARP replay",
     "PMKID": "Associate to extract PMKID (some APs not applicable)",
     "WPS PIN": "Start a WPS PIN brute-force campaign",
-    "WPA ↓": "EXPERIMENTAL: Respond to probe requests with non-WPA3 AKMs",
+    "EvilTwin": "Punt clients onto a WPA2 twin to capture a crackable handshake",
+    "Stop EvilTwin": "Tear down the twin and return clients to the AP",
 }
 
 
@@ -130,11 +134,13 @@ class FocusViewV2(Screen):
     # Attack hotkeys come from the campaign registry
     BINDINGS = [
         Binding("escape", "go_back", "Back", show=True),
+        Binding("d", "deauth_all", "Deauth", show=True),
         *[Binding(cls.hotkey[0], f"campaign('{cls.key}')", cls.hotkey[1], show=True)
           for cls in fm.BUTTON_CAMPAIGNS if cls.hotkey],
         Binding("c", "campaign('chop')", "ChopChop", show=True),
-        Binding("d", "deauth_all", "Deauth all", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
+        Binding("s", "silence", "Silence", show=True),
+        Binding("s", "unsilence", "unSilence", show=True),
         Binding("q", "app.quit", "Quit", show=True),
     ]
 
@@ -193,16 +199,17 @@ class FocusViewV2(Screen):
         # Live campaign handles
         self._wep_campaign: Optional[WepCampaign] = None
         self._wps_campaign: Optional[WpsCampaign] = None
-        self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
+        self._eviltwin_attack: Optional[EvilTwinCampaign] = None
         self._pbc_campaign: Optional[WpsPbcCapture] = None
         self._pbc_user_stopped = False
         self._pbc_retry_after = 0.0   # monotonic time before which we won't re-arm a PBC retry
         self._pmkid_campaign: Optional[PmkidHarvestAttack] = None
+        self._deauth_campaign: Optional[DeauthCampaign] = None
         self._prev_stats = None
         self._campaign_toggles = {
             "wep": self._toggle_generate_ivs, "pmkid": self._toggle_pmkid,
-            "wps": self._toggle_wps_pin, "wpa3down": self._toggle_wpa3_down,
-            "chop": self._toggle_chop,
+            "wps": self._toggle_wps_pin, "chop": self._toggle_chop,
+            "deauth": self._toggle_deauth,
         }
         self._binding_sig: Optional[tuple] = None
         self._rspacer_w = -1                          # last-set spacer width; skip no-op relayouts
@@ -261,7 +268,8 @@ class FocusViewV2(Screen):
     def _campaigns(self) -> fm.Campaigns:
         return fm.Campaigns(
             wep=self._wep_campaign, wps=self._wps_campaign,
-            wpa3_down=self._wpa3_down_attack, pbc_busy=self._pbc_busy(),
+            deauth=self._deauth_campaign, eviltwin=self._eviltwin_attack,
+            pbc_busy=self._pbc_busy(),
         )
 
     def _snapshot(self) -> fm.FocusSnapshot:
@@ -332,7 +340,7 @@ class FocusViewV2(Screen):
 
     async def _enter_target(self) -> None:
         """Bind to ``app.target_ap``: stop campaigns, reset state, update panels/radio/log."""
-        self._stop_wpa3_down()
+        self._stop_eviltwin()
         self._stop_generate_ivs()
         self._stop_pbc_capture()
         self._stop_wps_pin()
@@ -394,6 +402,10 @@ class FocusViewV2(Screen):
 
         self._log_persisted_history(ap)
 
+        if Config.is_silenced(ap.bssid):
+            self._log_silenced()
+            return
+
         enc = (ap.encryption or "").upper()
         if enc == "WEP":
             self._log("[bold italic]Passively listening[/bold italic] for [bold]WEP IVs[/bold]")
@@ -409,13 +421,13 @@ class FocusViewV2(Screen):
         wps_progress = run_progress_line(wps_state) if wps_state else None
         if not ap.persisted and not wps_progress:
             return
-        by_kind: dict[str, list] = {}
+        by_type: dict[str, list] = {}
         for cap in sorted(ap.persisted, key=lambda c: c.timestamp, reverse=True):
-            by_kind.setdefault(cap.kind, []).append(cap)
+            by_type.setdefault(cap.type, []).append(cap)
 
         nouns = {"HS": "Handshake", "PMKID": "PMKID", "WEP": "WEP Key", "WPS": "WPS PSK"}
         # Newest of each kind, newest kind first; the label column is padded so the dates line up.
-        rows = sorted(((k, caps[0], len(caps)) for k, caps in by_kind.items()),
+        rows = sorted(((k, caps[0], len(caps)) for k, caps in by_type.items()),
                       key=lambda r: r[1].timestamp, reverse=True)
         if rows:
             self._log("[bold]Existing captures[/bold] in [cyan]captures/[/cyan]:")
@@ -458,16 +470,16 @@ class FocusViewV2(Screen):
             self._stop_generate_ivs()
         if self._pmkid_campaign is not None and self._pmkid_campaign.done:
             self._finish_pmkid()
+        if self._deauth_campaign is not None and self._deauth_campaign.done:
+            self._finish_deauth()
+        if self._eviltwin_attack is not None and self._eviltwin_attack.done:
+            self._finish_eviltwin()
         if self._pbc_campaign is not None and self._pbc_campaign.done:
             self._finish_pbc_capture(ap)
         # Clear the manual-stop suppression when the window closes; a fresh one re-arms.
         if not ap.wps_pbc_active:
             self._pbc_user_stopped = False
-        if (ap.wps_pbc_active and getattr(self.app, "pbc_enabled", True)
-                and time.monotonic() >= self._pbc_retry_after
-                and not self._pbc_busy() and not self._pbc_user_stopped and not ap.has_psk
-                and self._wep_campaign is None and self._wpa3_down_attack is None
-                and self._wps_campaign is None):
+        if self._should_auto_invade_pbc(ap):
             self._start_pbc_capture(ap)
 
         snap = self._snapshot()
@@ -488,6 +500,19 @@ class FocusViewV2(Screen):
         array = self.app.array
         self._drive_leds(ap, array)
         self._drain_capture_events(ap, array.forged_macs if array else set(), time.time())
+
+    def _should_auto_invade_pbc(self, ap) -> bool:
+        if not (ap.wps_pbc_active and self.app.pbc_enabled):
+            return False
+        if Config.is_silenced(ap.bssid) or ap.is_hidden:
+            return False
+        if ap.has_psk or self._pbc_user_stopped:
+            return False
+        if time.monotonic() < self._pbc_retry_after or self._pbc_busy():
+            return False
+        # no other attack owns the target
+        return (self._wep_campaign is None and self._wps_campaign is None
+                and self._deauth_campaign is None and self._eviltwin_attack is None)
 
     def _distribute(self) -> None:
         """Fill the mid band to full 2-row sparklines."""
@@ -545,6 +570,8 @@ class FocusViewV2(Screen):
 
     def _drain_capture_events(self, ap, forged_macs: Set[str], now: float) -> None:
         # EAPOL + handshake completions go through the aggregator (one tree per client); PMKID / decloak are immediate.
+        if Config.is_silenced(ap.bssid):
+            return
         for ev in self._events.poll(ap, forged_macs=forged_macs):
             if ev.kind == CaptureKind.EAPOL:
                 self._eapol_agg.on_eapol(ev, now)
@@ -555,13 +582,18 @@ class FocusViewV2(Screen):
                 self._emit_lines(self._eapol_agg.on_handshake(ev, now, save_hint=hint))
             else:
                 self._log_capture_event(ev, ap)
-        # Flush any per-client bursts that have gone quiet
-        for lines in self._eapol_agg.tick(now):
+        # Flush any per-client bursts that have gone quiet; label real-but-uncrackable ones.
+        for lines in self._eapol_agg.tick(now, label_for=lambda mac: self._uncrackable_reason(ap, mac)):
             self._emit_lines(lines)
 
     def _emit_lines(self, lines) -> None:
         for ln in lines:
             self._log(ln)
+
+    def _uncrackable_reason(self, ap, mac: str) -> str | None:
+        """The uncrackable-AKM badge (SAE/FT/EAP/OWE) for a client's handshake, else None."""
+        hs = ap.handshakes.get(mac)
+        return handshake_uncrackable_label(hs) if hs is not None else None
 
     def _log_capture_event(self, ev: CaptureEvent, ap) -> None:
         if ev.kind == CaptureKind.PMKID:
@@ -572,12 +604,6 @@ class FocusViewV2(Screen):
             result = save_pmkid(ap, ev.client_mac)
             if result is not None:
                 self._log(treelog.leaf(_save_line(result)))
-        elif ev.kind == CaptureKind.UNCRACKABLE_HANDSHAKE:
-            self._log(
-                f"[black bold on yellow] {escape(ev.value or '?')} [/black bold on yellow] "
-                f"4-way from [bold]{short_sta(ev.client_mac)}[/bold] "
-                f"[dim](not crackable)[/dim]"
-            )
         elif ev.kind == CaptureKind.DECLOAK:
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._log(
@@ -602,6 +628,8 @@ class FocusViewV2(Screen):
             await self.action_go_back()
         elif bid == "deauth-all":
             self.run_worker(self._run_deauth_broadcast(), exclusive=True)
+        elif bid == "btn-deauth":                       # before the inline-client ✕ (also ends "-deauth")
+            self._toggle_deauth()
         elif bid.endswith("-deauth"):
             mac = self.query_one("#clients", ClientsList).client_mac(bid)
             if mac:
@@ -610,8 +638,8 @@ class FocusViewV2(Screen):
             self._toggle_pmkid()
         elif bid == "btn-wps-pin":
             self._toggle_wps_pin()
-        elif bid == "btn-wpa3-down":
-            self._toggle_wpa3_down()
+        elif bid == "btn-eviltwin":
+            self._toggle_eviltwin()
         elif bid == "btn-gen-ivs":
             self._toggle_generate_ivs()
         elif bid == "btn-chop":
@@ -634,8 +662,11 @@ class FocusViewV2(Screen):
         if action == "deauth_all":
             if ap is None:
                 return False
-            # Broadcast deauth is valid with no known clients; greyed only on PMF-Required.
             return None if fm.deauth_blocked(ap) else True
+        if action == "silence":
+            return False if (ap is not None and Config.is_silenced(ap.bssid)) else True
+        if action == "unsilence":
+            return True if (ap is not None and Config.is_silenced(ap.bssid)) else False
         return True
 
     def _sync_bindings(self) -> None:
@@ -646,14 +677,10 @@ class FocusViewV2(Screen):
         else:
             btns = fm.derive_buttons(ap)
             sig = (tuple((bid, s.visible, s.disabled) for bid, s in btns.items()),
-                   fm.deauth_blocked(ap))
+                   fm.deauth_blocked(ap), Config.is_silenced(ap.bssid))
         if sig != self._binding_sig:
             self._binding_sig = sig
             self.refresh_bindings()
-
-    def action_deauth_all(self) -> None:
-        """'d': broadcast-deauth every client (the panel button's twin)."""
-        self.run_worker(self._run_deauth_broadcast(), exclusive=True)
 
     def action_campaign(self, camp_key: str) -> None:
         """Toggle a hotkey's campaign."""
@@ -661,6 +688,10 @@ class FocusViewV2(Screen):
         if toggle is not None:
             toggle()
         self._sync_bindings()
+
+    def action_deauth_all(self) -> None:
+        """'d': one-shot broadcast deauth, matching the client-panel button."""
+        self.run_worker(self._run_deauth_broadcast(), exclusive=True)
 
     def action_wps_pbc_mode(self) -> None:
         """'w': toggle the shared WPS PBC auto-invade."""
@@ -674,6 +705,33 @@ class FocusViewV2(Screen):
         else:
             self._log("[bold]WPS PushButton Extraction[/bold] "
                       "[yellow]disabled[/yellow] [dim](detect only, press w to toggle)[/dim]")
+
+    def action_silence(self) -> None:
+        self._toggle_silence()
+
+    def action_unsilence(self) -> None:
+        self._toggle_silence()
+
+    def _toggle_silence(self) -> None:
+        """Flip the focused AP's silenced state (campaigns off, handshakes/PMKIDs ignored)."""
+        if self._target_ap is None:
+            return
+        bssid = self._target_ap.bssid.lower()
+        if bssid in Config.silenced_bssids:
+            Config.silenced_bssids.remove(bssid)
+            self._log("[green bold] ● AP [italic]Un[/italic]Silenced ✓[/]")
+            self._log("[dim green]" + treelog.leaf("campaigns enabled, listening for handshakes") + "[/]")
+        else:
+            Config.silenced_bssids.append(bssid)
+            self._log_silenced()
+        self.app.persist_config()
+        self._refresh_buttons()
+        self._sync_bindings()
+
+    def _log_silenced(self) -> None:
+        self._log("[yellow bold] ● AP Silenced[/] [red]✗S[/]")
+        self._log("[yellow dim]" + treelog.branch("campaigns disabled, handshakes ignored.") + "[/]")
+        self._log("[yellow dim]" + treelog.leaf("press [bold]s[/bold] to unsilence.") + "[/]")
 
     # ----- deauth ------------------------------------------------------------
 
@@ -776,58 +834,100 @@ class FocusViewV2(Screen):
         if self._pmkid_campaign is not None:
             self._pmkid_campaign.request_stop()
 
-    # ----- WPA3 downgrade ----------------------------------------------------
+    # ----- Deauth ------------------------------------------------------------
 
-    def _toggle_wpa3_down(self) -> None:
-        if self._wpa3_down_attack:
-            self._stop_wpa3_down()
+    def _toggle_deauth(self) -> None:
+        if self._deauth_campaign is not None:
+            self._user_stop_deauth()
         else:
-            self._start_wpa3_down()
+            self._start_deauth()
         self._refresh_buttons()
 
-    def _start_wpa3_down(self) -> None:
+    def _start_deauth(self) -> None:
+        if self._deauth_campaign is not None:
+            return
         ap = self._target_ap
         array = self.app.array
         if not ap or not array:
-            self._log("[red]✗ No target / interface. Cannot start WPA3 Down.[/red]")
+            self._log("[red]✗ No target / interface. Aborting Deauth.[/red]")
             return
-        if not ap.ssid:
-            self._log("[yellow]⚠ Cannot run WPA3 Down on a hidden AP: "
-                      "SSID unknown, no probe-response payload to forge.[/yellow]")
+        self._log(f"[bold]Deauth[/bold] of [bold]{escape(ap.ssid or ap.bssid)}[/bold]: "
+                  "forcing a re-handshake")
+        self._deauth_campaign = DeauthCampaign(array, ap, log=self._log)
+        self._deauth_campaign.run()
+
+    def _user_stop_deauth(self) -> None:
+        """The 'Stop Deauth' button."""
+        if self._deauth_campaign is not None:
+            self._deauth_campaign.request_stop()
+
+    def _finish_deauth(self) -> None:
+        """Reap a completed deauth run. A captured handshake is saved+toasted by the
+        always-on capture path (CaptureKind.HANDSHAKE); we only log the campaign's end."""
+        camp = self._deauth_campaign
+        self._deauth_campaign = None
+        if camp is None:
             return
-        if not ap.transition_mode:
-            self._log("[yellow]⚠ Target is pure WPA3 (no WPA2 fallback advertised): "
-                      "downgrade not possible.[/yellow]")
+        if camp.captured:
+            self._log("[bold green]✓ Deauth provoked a crackable handshake[/bold green]")
+        else:
+            self._log("[bright_red bold]Deauth stopped[/]")
+
+    # ----- EvilTwin ----------------------------------------------------------
+
+    def _toggle_eviltwin(self) -> None:
+        if self._eviltwin_attack:
+            self._stop_eviltwin()
+        else:
+            self._start_eviltwin()
+        self._refresh_buttons()
+
+    def _start_eviltwin(self) -> None:
+        ap = self._target_ap
+        array = self.app.array
+        if not ap or not array or not array.members:
+            self._log("[red]✗ No target / interface. Cannot start EvilTwin.[/red]")
+            return
+        self.app.push_screen(EvilTwinInputModal(ap, array.members), self._on_eviltwin_input)
+
+    def _on_eviltwin_input(self, evil_input: Optional[EvilTwinInput]) -> None:
+        if evil_input is None:
+            return
+        ap, array = self._target_ap, self.app.array
+        if not ap or not array:
             return
         try:
-            self._wpa3_down_attack = WPA3DowngradeAttack(array, ap)
-            self._wpa3_down_attack.run()
+            self._eviltwin_attack = EvilTwinCampaign(array, ap, evil_input)
+            self._eviltwin_attack.run()
         except Exception as exc:
-            logger.exception("WPA3 Down start failed")
-            self._log(f"[bold red]✗ WPA3 Down failed to start:[/bold red] {escape(str(exc))}")
-            self._wpa3_down_attack = None
+            logger.exception("EvilTwin start failed")
+            self._log(f"[bold red]✗ EvilTwin failed to start:[/bold red] {escape(str(exc))}")
+            self._eviltwin_attack = None
             return
-        self._log(f"[bold cyan]WPA3 Downgrade ACTIVE[/bold cyan] on [bold]{escape(ap.ssid)}[/bold]")
-        self._log(treelog.branch(
-            "[dim]responding to probe requests with[/dim] [bold]WPA2-only[/bold]"))
-        self._log(treelog.leaf("[dim](reconnects take minutes to hours)[/dim]"))
+        self._log(f"[bold cyan]EvilTwin[/bold cyan] of [bold cyan]"
+                  f"{escape(ap.ssid or ap.bssid)}[/bold cyan] active on ch {evil_input.twin_channel}"
+                  f" [dim]({evil_input.twin_bssid})[/dim]")
+        self._log(treelog.branch(f"[italic]punting clients[/italic] [dim]on[/dim] ch {ap.channel}"))
+        self._log(treelog.leaf("[dim]waiting for clients to auth…[/dim]"))
 
-    def _stop_wpa3_down(self) -> None:
-        if not self._wpa3_down_attack:
+    def _stop_eviltwin(self) -> None:
+        """User-initiated stop. Auto-stop on capture is reaped by `_finish_eviltwin`."""
+        if not self._eviltwin_attack:
             return
-        attack = self._wpa3_down_attack
-        stats = attack.stats
-        attack.request_stop()
-        self._wpa3_down_attack = None
-        duration = max(1, int(time.time() - stats.started_at))
-        failed = f" ({stats.responses_failed} failed)" if stats.responses_failed else ""
-        self._log("[bold red]WPA3 Downgrade stopped[/bold red]")
-        self._log(treelog.branch(
-            f"[dim]Sent {stats.responses_sent} probe responses in "
-            f"{fm.format_duration(duration)}{failed}[/dim]"))
-        self._log(treelog.leaf(
-            f"[dim]Probe requests: {stats.directed_probes} directed, "
-            f"{stats.wildcard_probes} wildcard[/dim]"))
+        self._eviltwin_attack.request_stop()
+        self._eviltwin_attack = None
+        self._log("[bold red]EvilTwin stopped[/bold red]")
+
+    def _finish_eviltwin(self) -> None:
+        """Reap a campaign that ran to completion on its own (its task is done, the radio is
+        released). Captured is the normal path (the save banner already fired); a done-without-capture
+        is a crash the base logged."""
+        captured = self._eviltwin_attack.captured
+        self._eviltwin_attack = None
+        if captured:
+            self._log("[bold green]✓ EvilTwin captured a crackable handshake[/bold green]")
+        else:
+            self._log("[bold red]EvilTwin stopped[/bold red]")
 
     # ----- WEP: Generate IVs (Replay) + Chop ---------------------------------
 
@@ -1008,7 +1108,7 @@ class FocusViewV2(Screen):
 
     async def action_go_back(self) -> None:
         # Tear down any running attack: Scanner doesn't own the AP's channel, and a forged daemon would keep injecting.
-        self._stop_wpa3_down()
+        self._stop_eviltwin()
         self._stop_generate_ivs()
         self._stop_pbc_capture()
         self._stop_wps_pin()

@@ -1,0 +1,43 @@
+name: Hardware request
+description: Ask for a USB Wi-Fi adapter to be supported.
+title: "[Hardware]: "
+labels: ["hardware-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Request wifit3 to support a new wireless USB adapter.
+  - type: input
+    id: adapter
+    attributes:
+      label: Adapter (make and model)
+      description: The retail name, exactly as it's sold.
+      placeholder: "Alfa AWUS036AXM, TP-Link Archer T3U, Panda PAU0F, etc."
+    validations:
+      required: true
+  - type: input
+    id: link
+    attributes:
+      label: Store / product link
+      description: An Amazon or vendor URL, so we can identify the exact chipset and hardware revision.
+      placeholder: "https://..."
+  - type: dropdown
+    id: have-it
+    attributes:
+      label: Do you have this adapter?
+      description: Whoever holds the hardware is the only one who can capture and test it, so this matters.
+      options:
+        - "Yes, and I can help capture / test it"
+        - "Yes, but I'd rather not get involved in porting"
+        - "No, I'm requesting it or thinking of buying it"
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this adapter hasn't been requested already.
+          required: true
+        - label: This adapter is known to support monitor mode + injection on Linux.
+          required: true

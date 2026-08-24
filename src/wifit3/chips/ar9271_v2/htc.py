@@ -20,6 +20,14 @@ from .transport import AR9271Transport
 logger = logging.getLogger(__name__)
 
 
+class HTCReadyError(Exception):
+    """First post-boot HTC frame wasn't HTC_READY."""
+
+    def __init__(self, raw: bytes) -> None:
+        self.raw = raw
+        super().__init__(f"expected HTC_READY, got {raw.hex(' ')}")
+
+
 def frame(epid: int, payload: bytes, flags: int = 0) -> bytes:
     """Prepend the htc_frame_hdr — mirrors htc_issue_send [SRC] htc_hst.c:29-33."""
     return struct.pack(">BBH", epid, flags, len(payload)) + b"\x00\x00\x00\x00" + payload
@@ -43,9 +51,9 @@ def process_ready(t: AR9271Transport, st: HTCState) -> None:
     """Consume the target's HTC_READY (credits + credit_size) [SRC] htc_hst.c:88-101."""
     msg = t.reg_in()
     payload = msg[C.HTC_FRAME_HDR_LEN:]
-    message_id, credits, credit_size = struct.unpack_from(">HHH", payload)
-    if message_id != C.HTC_MSG_READY_ID:
-        raise ValueError(f"expected HTC_READY, got message_id 0x{message_id:04x}")
+    if len(payload) < 6 or struct.unpack_from(">H", payload)[0] != C.HTC_MSG_READY_ID:
+        raise HTCReadyError(msg)
+    _, credits, credit_size = struct.unpack_from(">HHH", payload)
     st.credit_size = credit_size
     logger.debug("HTC ready: credits=%d credit_size=%d", credits, credit_size)
 
