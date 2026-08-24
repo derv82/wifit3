@@ -2,7 +2,9 @@
 
 This package is the privileged action layer behind the splash's Install / Restore (✕) buttons and
 the bring-up engine, dispatched by :class:`wifit3.setup.base.Setup`: WinUSB bind/unbind on Windows,
-kernel detach + udev on Linux, a no-op on macOS (no kernel driver ever binds these cards there). The per-chipset VID:PID list each step needs comes from the driver
+kernel detach + udev on Linux, tailored messaging on macOS (no kernel driver binds the supported
+RTL/MT/RT/AR cards there; chips the macOS kernel binds itself, e.g. Broadcom USB, get their own
+handling). The per-chipset VID:PID list each step needs comes from the driver
 registry (:func:`target_for_vidpid`), never hand-maintained.
 """
 from __future__ import annotations

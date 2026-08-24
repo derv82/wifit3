@@ -40,6 +40,13 @@ class Driver(ABC):
     CONFLICTING_LINUX_MODULES: ClassVar[List[str]] = []
     """Leaf kernel module(s) that bind this chipset; Linux setup blacklists them."""
 
+    MACOS_KERNEL_BINDS_CHIP: ClassVar[bool] = False
+    """True if the macOS kernel ships a built-in driver that claims this chipset (real case:
+    Broadcom USB silicon — Apple's own kext binds it; RTL/MT/RT/AR cards have no macOS driver, so
+    nothing binds them). macOS setup handles such cards specifically: libusb cannot detach a
+    kernel driver on Darwin and Apple kexts are SIP-protected, so there is no userland unbind —
+    the setup tailors its messaging and lets the connect attempt surface the real error."""
+
     LINUX_REPLUG_AFTER_MODPROBE: ClassVar[bool] = True
     """Whether Linux setup must request a physical replug before ``connect()`` (default
     True: a kernel-warmed chip usually can't reach a clean cold state in userland)."""
