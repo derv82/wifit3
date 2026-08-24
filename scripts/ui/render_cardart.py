@@ -70,6 +70,12 @@ _LABELS = {
 }
 
 
+_STACKS = {
+    "stack-mt7921au":  ["card-awus036axml", "card-pau0f"],
+    "stack-rtl8821au": ["card-awus036acs", "card-archert2uplus", "card-archert2u"],
+}
+
+
 def _label_for(stem: str) -> str:
     key = stem[5:] if stem.startswith("card-") else stem
     return _LABELS.get(key, key.upper())
@@ -292,6 +298,12 @@ def main(argv=None):
             continue
         out, w, h = convert(p, args.out, args.scale)
         print(f"{os.path.basename(p):28s} -> {os.path.relpath(out, _ROOT)}  ({w}x{h})")
+    if not args.cards:                                  # a full run refreshes the stacks too
+        for name, stems in _STACKS.items():
+            img = _stack_vertical(_resolve(stems), args.scale, args.gap)
+            out = os.path.join(args.out, name + ".png")
+            img.save(out)
+            print(f"{name:28s} -> {os.path.relpath(out, _ROOT)}  ({img.width}x{img.height})")
 
 
 if __name__ == "__main__":
