@@ -167,13 +167,18 @@ _ART_BY_PRODUCT: dict[str, str] = {
     ALFA.AWUS036ACH: "cards/card-awus036ach.ans",
     ALFA.AWUS036ACS: "cards/card-awus036acs.ans",
     ALFA.AWUS036AXML: "cards/card-awus036axml.ans",
-    Panda.PAU0F: "cards/card-pau0f.ans",
-    AMBIGUOUS_MT7921AU: "cards/card-pau0f.ans",   # OUI unresolved -> default PAU0F
     ALFA.AWUS036H: "cards/card-awus036h.ans",
     ALFA.AWUS036NH: "cards/card-awus036nh.ans",
     ALFA.AWUS036NHA: "cards/card-awus036nha.ans",
-    AMBIGUOUS_AR9271: "cards/card-awus036nha.ans",   # OUI unresolved -> default ALFA
     ALFA.AWUS1900: "cards/card-awus1900.ans",
+    AMBIGUOUS_AR9271: "cards/card-awus036nha.ans",   # OUI unresolved -> default ALFA
+    AMBIGUOUS_MT7921AU: "cards/card-pau0f.ans",   # OUI unresolved -> default PAU0F
+    ASUS.USB_BE93: "cards/card-asusbe93.ans",
+    Netgear.A9000: "cards/card-netgeara9000.ans",
+    Panda.PAU05_06: "cards/card-pau06.ans",
+    Panda.PAU09_N600: "cards/card-pau09n600.ans",
+    Panda.PAU0B: "cards/card-pau0b.ans",
+    Panda.PAU0F: "cards/card-pau0f.ans",
     # TP-Link Archer cards (art from PR #23). card-archert2u.ans is intentionally
     # unmapped: no SUPPORTED_IDS device carries a plain "Archer T2U" product_name.
     TPLink.ARCHER_T2U: "cards/card-archert2uplus.ans",
@@ -181,16 +186,11 @@ _ART_BY_PRODUCT: dict[str, str] = {
     TPLink.ARCHER_T2U_V3: "cards/card-archert2unano.ans",
     TPLink.ARCHER_T3U: "cards/card-archert3u.ans",
     TPLink.ARCHER_T3U_PLUS: "cards/card-archert3uplus.ans",
-    TPLink.ARCHER_T4U_V3: "cards/card-archert4u.ans",
     TPLink.ARCHER_T4UHP: "cards/card-archert4uplus.ans",
+    TPLink.ARCHER_T4U_V3: "cards/card-archert4u.ans",
     TPLink.ARCHER_TX20U_PLUS: "cards/card-archertx20uplus.ans",
-    Panda.PAU05_06: "cards/card-pau06.ans",
-    Panda.PAU0B: "cards/card-pau0b.ans",
-    Panda.PAU09_N600: "cards/card-pau09n600.ans",
     TPLink.TL_WN722N_V1: "cards/card-tpwn722nv23.ans",       # AR9271 sibling; same physical card, same art
     TPLink.TL_WN722N_V2_V3: "cards/card-tpwn722nv23.ans",
-    Netgear.A9000: "cards/card-netgeara9000.ans",
-    ASUS.USB_BE93: "cards/card-asusbe93.ans",
 }
 _ART_BY_CHIPSET: dict[str, str] = {
     "RTL8821CU": "cards/card-auscomer600.ans",
