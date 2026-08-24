@@ -226,7 +226,7 @@ class RTL8922AUDriver(Driver):
             logger.warning("RTL8922AU: no bulk-IN endpoint; RX disabled")
             return
         self._rx_reader = RxReaderThread(
-            asyncio.get_event_loop(), self._rx_read_once, self._rx_dispatch,
+            asyncio.get_running_loop(), self._rx_read_once, self._rx_dispatch,
             name="rtl8922au-rx",
             on_fatal=lambda e: self._disconnect_cb(e) if self._disconnect_cb else None,
         )

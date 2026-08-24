@@ -39,7 +39,7 @@ class MT7921AUTransport:
 
     @property
     def _loop(self) -> asyncio.AbstractEventLoop:
-        """The event loop, resolved lazily so construction needs no running loop (3.14-safe)."""
+        """The event loop, resolved lazily so construction needs no running loop."""
         return asyncio.get_event_loop()
 
     def subscribe(self, callback):
