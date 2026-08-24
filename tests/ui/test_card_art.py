@@ -158,3 +158,24 @@ async def test_sync_card_updates_mounted_endpoint():
         assert card.query_one(BreathingArt)._name == "cards/card-awus036h.ans"
         assert card.query_one(TxDevicePicker)._text == "AWUS036H"   # single card -> plain name
         assert card._last["#card-bssid"] == "00:11:22:33:44:55"   # single card -> its MAC shows
+
+
+# --- every supported device resolves loadable art (no crashes) --------------
+
+def test_every_supported_device_renders_art():
+    """Every VID:PID in every chip's SUPPORTED_IDS must resolve to a real, loadable
+    card art (its own or the generic fallback) without raising, so no supported
+    device can crash the card endpoint. A DeviceID stands in for the interface:
+    art selection only reads .driver / .product_name / .chipset via getattr."""
+    from wifit3.device import manager
+
+    manager.supported_ids.cache_clear()
+    ids = manager.supported_ids()
+    assert ids, "no supported devices were discovered"
+
+    for (vid, pid), (entry, _key, _import) in sorted(ids.items()):
+        who = f"{vid:#06x}:{pid:#06x} ({entry.product_name or entry.chipset})"
+        path = art.art_path_for(entry)
+        assert isinstance(path, str) and path, f"{who}: no art path"
+        assert art._exists(path), f"{who}: art {path!r} is missing on disk"
+        assert art.art_size(path)[0] > 0, f"{who}: art {path!r} rendered empty"
