@@ -193,7 +193,7 @@ class AR9271V2Driver(Driver):
             logger.warning("ar9271_v2: post-boot handshake mis-framed (first bytes %s); "
                            "tearing down for one clean retry", e.raw[:8].hex(" "))
             await self._teardown_cold_attempt()
-            redev = await self._await_reenumeration()
+            redev = await self._await_reenumeration(self.transport.dev)
             if redev is not None:
                 self.transport = AR9271Transport(redev)
             try:
@@ -233,6 +233,13 @@ class AR9271V2Driver(Driver):
                     "few seconds, replug, and try again.") from e
 
         cold_dev = self.transport.dev
+        cold_ports = tuple(getattr(cold_dev, "port_numbers", None) or ())
+        allow_unlocated_fallback = False
+        if not cold_ports:
+            backend = libusb_package.get_libusb1_backend()
+            matches = usb.core.find(find_all=True, idVendor=C.AR9271_VID,
+                                    idProduct=C.AR9271_PID, backend=backend)
+            allow_unlocated_fallback = len(list(matches or ())) == 1
         _p(0.10, "Downloading AR9271 firmware...")
         await loop.run_in_executor(None, firmware.download, self.transport, fw)
         try:
@@ -241,7 +248,8 @@ class AR9271V2Driver(Driver):
             pass
 
         _p(0.30, "Waiting for AR9271 to re-enumerate...")
-        redev = await self._await_reenumeration()
+        redev = await self._await_reenumeration(
+            cold_dev, allow_unlocated_fallback=allow_unlocated_fallback)
         if redev is None:
             raise BringUpError(
                 "re-enumeration",
@@ -273,13 +281,37 @@ class AR9271V2Driver(Driver):
         except Exception:  # noqa: BLE001
             pass
 
-    async def _await_reenumeration(self) -> Optional[usb.core.Device]:
+    async def _await_reenumeration(
+            self, original: usb.core.Device, *, allow_unlocated_fallback: bool = False,
+    ) -> Optional[usb.core.Device]:
+        """Reacquire this physical card, not an identical sibling.
+
+        AR9271 firmware boot may change the USB device address.  ``port_numbers`` is the stable
+        physical route through that boot; VID:PID is not sufficient when two AR9271 cards are
+        attached.  Linux may retain the address across this firmware boot.  If the backend has no
+        topology, an unchanged address is safe; an address change is safe only when this was the
+        sole matching card before boot.
+        """
         backend = libusb_package.get_libusb1_backend()
+        original_bus = getattr(original, "bus", None)
+        original_address = getattr(original, "address", None)
+        original_ports = tuple(getattr(original, "port_numbers", None) or ())
         for _ in range(12):                 # ~3 s; the chip boots its text image and re-attaches
             await asyncio.sleep(0.25)
-            dev = usb.core.find(idVendor=C.AR9271_VID, idProduct=C.AR9271_PID, backend=backend)
-            if dev is not None:
+            found = usb.core.find(find_all=True, idVendor=C.AR9271_VID,
+                                  idProduct=C.AR9271_PID, backend=backend)
+            matches = list(found or ())
+            for dev in matches:
+                if original_ports:
+                    if (getattr(dev, "bus", None) != original_bus
+                            or tuple(getattr(dev, "port_numbers", None) or ()) != original_ports):
+                        continue
+                elif (getattr(dev, "bus", None), getattr(dev, "address", None)) != (
+                        original_bus, original_address):
+                    continue
                 return dev
+            if not original_ports and allow_unlocated_fallback and len(matches) == 1:
+                return matches[0]
         return None
 
     def _is_chip_warm(self) -> bool:
