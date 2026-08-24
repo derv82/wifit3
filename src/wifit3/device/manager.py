@@ -150,6 +150,11 @@ def _raise_usblib_fatal(cause: Exception) -> NoReturn:
             "  Debian / Ubuntu / Kali:   sudo apt install libudev1\n"
             "  Fedora / RHEL:            sudo dnf install systemd-libs\n"
             "  Arch:                     sudo pacman -S systemd-libs")
+    elif sys.platform == "darwin":
+        message = (
+            "The bundled libusb failed to load. Reinstall wifit3: the install is likely corrupt. "
+            "If it persists, check that the Mac's architecture (Apple Silicon / Intel) matches "
+            "the installed package.")
     else:
         message = (
             "The bundled libusb failed to initialize. Reinstall wifit3: the install is likely "

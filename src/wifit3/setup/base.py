@@ -2,7 +2,8 @@
 
 Bringing a card to a driveable state can need a privileged step the kernel/OS won't do for us:
 WinUSB binding on Windows, a udev rule + modprobe blacklist on Linux. ``Setup`` is that step.
-``SetupWindows`` / ``SetupLinux`` implement it; the bring-up engine calls :meth:`Setup.for_platform`
+``SetupWindows`` / ``SetupLinux`` implement it; ``SetupMacOS`` is the no-op for macOS (no kernel
+driver ever binds these cards there). The bring-up engine calls :meth:`Setup.for_platform`
 once and never branches on the OS again. Every user interaction (confirm, replug, progress, error)
 goes through the injected :class:`Prompter`, so a ``Setup`` is testable with no Textual app and no
 hardware.
@@ -53,7 +54,8 @@ class Setup(ABC):
 
     @staticmethod
     def for_platform() -> "Setup":
-        """The Setup for the current OS: WinUSB on Windows, udev+modprobe on Linux, a no-op else.
+        """The Setup for the current OS: WinUSB on Windows, udev+modprobe on Linux, a no-op
+        retry on macOS (nothing ever binds the card there), a plain no-op anywhere else.
         The only place setup dispatches on ``sys.platform``."""
         if sys.platform == "win32":
             from wifit3.setup.windows import SetupWindows
@@ -61,6 +63,9 @@ class Setup(ABC):
         if sys.platform.startswith("linux"):
             from wifit3.setup.linux import SetupLinux
             return SetupLinux()
+        if sys.platform == "darwin":
+            from wifit3.setup.macos import SetupMacOS
+            return SetupMacOS()
         return NoSetup()
 
     def requires_setup(self, device_id: DeviceID) -> bool:

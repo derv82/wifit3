@@ -50,7 +50,7 @@ class WlanTransport:
         self.our_mac = our_mac
         self.tx_observer = tx_observer
         self._q: asyncio.Queue = asyncio.Queue()
-        self._loop = asyncio.get_event_loop()
+        self._loop = asyncio.get_running_loop()
         self._active = False
 
     def _rx_cb(self, pkt) -> None:

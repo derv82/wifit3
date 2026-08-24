@@ -28,15 +28,19 @@ class MT7921AUTransport:
     """
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
-        self._loop = asyncio.get_event_loop()
         self._rx: Optional[RxReaderThread] = None
         self._mcu_rx_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._callback = None
         # Terminal RX-reader failure sink (unplug). The driver sets this via its
         # register_disconnect_callback; start_rx hands it to the RxReaderThread.
         self._on_fatal: Optional[Callable[[Exception], None]] = None
-        # MCU sequence counter — Linux uses 4-bit wrap, skips 0
+        # MCU sequence counter: Linux uses 4-bit wrap, skips 0
         self._mcu_seq = 0
+
+    @property
+    def _loop(self) -> asyncio.AbstractEventLoop:
+        """The event loop, resolved lazily so construction needs no running loop."""
+        return asyncio.get_event_loop()
 
     def subscribe(self, callback):
         self._callback = callback

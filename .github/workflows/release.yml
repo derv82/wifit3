@@ -6,9 +6,9 @@
 #   2. `release` waits for all builds, DOWNLOADS every artifact, and attaches them to a
 #      GitHub Release for the pushed tag (softprops/action-gh-release).
 #
-# PyInstaller does not cross-compile, hence one job per target OS. macOS is intentionally
-# excluded — its GitHub-hosted runners bill ~10x private-repo minutes (Windows is 2x,
-# Linux 1x). See wifit3.spec.
+# PyInstaller does not cross-compile, hence one job per target OS. macOS runners are free for
+# public repos, so the Apple Silicon (arm64) binary is built too. Intel macOS runners are being
+# retired by GitHub, so they are skipped. See wifit3.spec.
 #
 # Trigger: push a version tag, e.g.  git tag v0.1.0 && git push origin v0.1.0
 # Dry run: the "Run workflow" button (workflow_dispatch) builds + uploads artifacts you can
@@ -40,6 +40,9 @@ jobs:
             build_path: dist/wifit3.exe
           - os: ubuntu-22.04          # build on older glibc so the binary runs on more distros
             artifact_name: wifit3-linux-x64
+            build_path: dist/wifit3
+          - os: macos-14              # Apple Silicon (arm64)
+            artifact_name: wifit3-macos-arm64
             build_path: dist/wifit3
 
     steps:
