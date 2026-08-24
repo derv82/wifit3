@@ -53,25 +53,26 @@ from wifit3.chips.rtw88_base.registers import (  # noqa: F401
     REG_TXDMA_STATUS,
     TX_DESC_QSEL_BEACON,
 )
+from wifit3.chips.products import ALFA, ASUS, DLink, Edimax, Elecom, Hawking, Netgear, TPLink, TRENDnet
 
 # --- USB IDs (rtw_8814au_id_table in rtw8814au.c) --------------------------
 # The Alfa AWUS1900 enumerates as the Realtek default 0x0bda:0x8813. The rest
 # are the kernel's full table (other vendors' 8814AU dongles).
 USB_IDS_8814AU: tuple[tuple[int, int, str, str | None, str | None], ...] = (
-    (0x0BDA, 0x8813, "RTL8814AU", None, "ALFA AWUS1900"),
-    (0x056E, 0x400B, "RTL8814AU", "Elecom", "WDC-1300SU2"),
-    (0x056E, 0x400D, "RTL8814AU", "Elecom", "WDC-1300SU3"),
-    (0x0846, 0x9054, "RTL8814AU", "Netgear", "A7000"),
-    (0x0B05, 0x1817, "RTL8814AU", "ASUS", "USB-AC68"),
-    (0x0B05, 0x1852, "RTL8814AU", "ASUS", "USB-AC68"),
-    (0x0B05, 0x1853, "RTL8814AU", "ASUS", "USB-AC68"),
-    (0x0E66, 0x0026, "RTL8814AU", "Hawking", "HW17ACU"),
-    (0x2001, 0x331A, "RTL8814AU", "D-Link", "DWA-192"),
-    (0x20F4, 0x809A, "RTL8814AU", "TRENDnet", "TEW-809UB"),
-    (0x20F4, 0x809B, "RTL8814AU", "TRENDnet", "TEW-809UB"),
-    (0x2357, 0x0106, "RTL8814AU", "TP-Link", "Archer T9UH"),
-    (0x7392, 0xA834, "RTL8814AU", "Edimax", "EW-7833UAC"),
-    (0x7392, 0xA833, "RTL8814AU", "Edimax", "EW-7833UAC"),
+    (0x0BDA, 0x8813, "RTL8814AU", None, ALFA.AWUS1900),
+    (0x056E, 0x400B, "RTL8814AU", None, Elecom.WDC_1300SU2),
+    (0x056E, 0x400D, "RTL8814AU", None, Elecom.WDC_1300SU3),
+    (0x0846, 0x9054, "RTL8814AU", None, Netgear.A7000),
+    (0x0B05, 0x1817, "RTL8814AU", None, ASUS.USB_AC68),
+    (0x0B05, 0x1852, "RTL8814AU", None, ASUS.USB_AC68),
+    (0x0B05, 0x1853, "RTL8814AU", None, ASUS.USB_AC68),
+    (0x0E66, 0x0026, "RTL8814AU", None, Hawking.HW17ACU),
+    (0x2001, 0x331A, "RTL8814AU", None, DLink.DWA_192),
+    (0x20F4, 0x809A, "RTL8814AU", None, TRENDnet.TEW_809UB),
+    (0x20F4, 0x809B, "RTL8814AU", None, TRENDnet.TEW_809UB),
+    (0x2357, 0x0106, "RTL8814AU", None, TPLink.ARCHER_T9UH),
+    (0x7392, 0xA834, "RTL8814AU", None, Edimax.EW_7833UAC),
+    (0x7392, 0xA833, "RTL8814AU", None, Edimax.EW_7833UAC),
 )
 
 # --- Chip parameters (rtw8814a_hw_spec, rtw8814a.c:2180) -------------------

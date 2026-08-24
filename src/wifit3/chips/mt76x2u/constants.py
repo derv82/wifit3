@@ -7,27 +7,28 @@ All register addresses and vendor request codes were derived from
 ``driver_sources/mt76-source-v6.18/`` and confirmed against
 ``driver_captures/captures_mt76x2u/capture-1.pcap`` cold-boot traffic.
 """
+from wifit3.chips.products import AMBIGUOUS_MT7612U, ASUS, AVM, Edimax, HighCloud, LiteOn, Mercury, Microsoft, Netgear, TPLink
 
 # ---------------------------------------------------------------------------
 # Known VID:PIDs claimed by mt76x2u in the kernel id_table.
 # [SRC] driver_sources/mt76-source-v6.18/mt76x2/usb.c:12
 # ---------------------------------------------------------------------------
 USB_IDS_MT76X2U = [
-    (0x0b05, 0x1833, "MT7612U", "ASUS", "USB-AC54"),
-    (0x0b05, 0x17eb, "MT7612U", "ASUS", "USB-AC55"),
-    (0x0b05, 0x180b, "MT7612U", "ASUS", "USB-N53 B1"),
-    (0x0e8d, 0x7612, "MT7612U", None, "ALFA AWUS036ACM / Aukey USB-AC1200"),
-    (0x057c, 0x8503, "MT7612U", "AVM", "FRITZ!WLAN AC860"),
-    (0x7392, 0xb711, "MT7612U", "Edimax", "EW-7722UAC"),
-    (0x0e8d, 0x7632, "MT7662U", None, "HC-M7662BU1"),
-    (0x0471, 0x2126, "MT7612U", "LiteOn", "WN4516R"),
-    (0x0471, 0x7600, "MT7612U", "LiteOn", "WN4519R"),
-    (0x2c4e, 0x0103, "MT7612U", "Mercury", "UD13"),
-    (0x0846, 0x9014, "MT7632U", "Netgear", "WNDA3100v3"),
-    (0x0846, 0x9053, "MT7612U", "Netgear", "A6210"),
-    (0x045e, 0x02e6, "MT7612U", "Microsoft", "Xbox One Wireless Adapter"),
-    (0x045e, 0x02fe, "MT7612U", "Microsoft", "Xbox One Wireless Adapter"),
-    (0x2357, 0x0137, "MT7612U", "TP-Link", "TL-WDN6200"),
+    (0x0b05, 0x1833, "MT7612U", None, ASUS.USB_AC54),
+    (0x0b05, 0x17eb, "MT7612U", None, ASUS.USB_AC55),
+    (0x0b05, 0x180b, "MT7612U", None, ASUS.USB_N53_B1),
+    (0x0e8d, 0x7612, "MT7612U", None, AMBIGUOUS_MT7612U),
+    (0x057c, 0x8503, "MT7612U", None, AVM.FRITZ_WLAN_AC860),
+    (0x7392, 0xb711, "MT7612U", None, Edimax.EW_7722UAC),
+    (0x0e8d, 0x7632, "MT7662U", None, HighCloud.HC_M7662BU1),
+    (0x0471, 0x2126, "MT7612U", None, LiteOn.WN4516R),
+    (0x0471, 0x7600, "MT7612U", None, LiteOn.WN4519R),
+    (0x2c4e, 0x0103, "MT7612U", None, Mercury.UD13),
+    (0x0846, 0x9014, "MT7632U", None, Netgear.WNDA3100V3),
+    (0x0846, 0x9053, "MT7612U", None, Netgear.A6210),
+    (0x045e, 0x02e6, "MT7612U", None, Microsoft.ADAPTER_E6),
+    (0x045e, 0x02fe, "MT7612U", None, Microsoft.ADAPTER_FE),
+    (0x2357, 0x0137, "MT7612U", None, TPLink.TL_WDN6200),
 ]
 
 # ---------------------------------------------------------------------------

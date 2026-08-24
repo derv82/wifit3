@@ -53,7 +53,7 @@ class _Host(App):
 
 def _two_card_focus():
     m0 = _member("wlan0", "Netgear A9000")     # art: card-netgeara9000.ans
-    m1 = _member("wlan1", "ALFA AWUS036H")     # art: card-awus036h.ans
+    m1 = _member("wlan1", "AWUS036H")     # art: card-awus036h.ans
     array = WlanArray()
     array.attach(m0)
     array.attach(m1)
@@ -91,6 +91,6 @@ async def test_focus_peeks_elected_tx_card_then_pins_the_chosen_one():
         # The pin took, and the endpoint re-synced to the pinned card (label + art swap).
         assert array.preferred is m1
         assert picker._current is m1
-        assert picker._text.startswith("ALFA AWUS036H")
+        assert picker._text.startswith("AWUS036H")
         assert card.query_one(BreathingArt)._name == "cards/card-awus036h.ans"
         assert overlay.display is False

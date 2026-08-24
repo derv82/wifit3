@@ -1,8 +1,9 @@
 """rt3070 chipset driver (Ralink RT3070, ALFA AWUS036NH)."""
 from wifit3.models.device_id import DeviceID
+from wifit3.chips.products import ALFA
 
 SUPPORTED_IDS = [
-    DeviceID(0x148F, 0x3070, "RT3070", product_name="ALFA AWUS036NH"),
+    DeviceID(0x148F, 0x3070, "RT3070", product_name=ALFA.AWUS036NH),
 ]
 
 

@@ -10,6 +10,7 @@ of chips/mt76x2u/constants.py — duplication is fine, do NOT extract to a
 shared `mt76x02_base/` module until 2+ feature-complete siblings exist.
 """
 from __future__ import annotations
+from wifit3.chips.products import ALFA, ASUS, AVM, AboCom, Comcast, DLink, Devolo, Edimax, IODATA, Linksys, Planex, Sitecom, TPLink, TRENDnet, Zyxel
 
 # ============================================================
 # USB device id_table — ported 1:1 from driver_sources/mt76-source-v6.18/
@@ -17,27 +18,27 @@ from __future__ import annotations
 # ============================================================
 USB_IDS_MT76X0U: list[tuple[int, int, str, str | None, str | None]] = [
     (0x148F, 0x7610, "MT7610U", None, None),
-    (0x13B1, 0x003E, "MT7610U", "Linksys", "AE6000"),
-    (0x0E8D, 0x7610, "MT7610U", "ALFA", "AWUS036ACHM"),
-    (0x7392, 0xa711, "MT7610U", "Edimax", "EW-7711MAC"),
-    (0x148F, 0x761a, "MT7610U", "TP-Link", "TL-WDN5200"),
-    (0x148F, 0x760a, "MT7610U", "TP-Link", None),
-    (0x0B05, 0x17d1, "MT7610U", "ASUS", "USB-AC51"),
-    (0x0B05, 0x17db, "MT7610U", "ASUS", "USB-AC50"),
-    (0x0DF6, 0x0075, "MT7610U", "Sitecom", "WLA-3100"),
-    (0x2019, 0xab31, "MT7610U", "Planex", "GW-450D"),
-    (0x2001, 0x3d02, "MT7610U", "D-Link", "DWA-171 rev B1"),
-    (0x0586, 0x3425, "MT7610U", "Zyxel", "NWD6505"),
-    (0x07B8, 0x7610, "MT7610U", "AboCom", "AU7212"),
-    (0x04BB, 0x0951, "MT7610U", "I-O DATA", "WN-AC433UK"),
-    (0x057C, 0x8502, "MT7610U", "AVM", "FRITZ!WLAN USB Stick AC 430"),
-    (0x293C, 0x5702, "MT7610U", "Comcast", "Xfinity KXW02AAA"),
-    (0x20F4, 0x806b, "MT7610U", "TRENDnet", "TEW-806UBH"),
-    (0x7392, 0xc711, "MT7610U", "Devolo", "WiFi Stick ac"),
-    (0x0DF6, 0x0079, "MT7610U", "Sitecom", "AC Stick"),
-    (0x2357, 0x0123, "MT7610U", "TP-Link", "Archer T2UHP"),
-    (0x2357, 0x010b, "MT7610U", "TP-Link", "Archer T2UHP"),
-    (0x2357, 0x0105, "MT7610U", "TP-Link", "Archer T1U"),
+    (0x13B1, 0x003E, "MT7610U", None, Linksys.AE6000),
+    (0x0E8D, 0x7610, "MT7610U", None, ALFA.AWUS036ACHM),
+    (0x7392, 0xa711, "MT7610U", None, Edimax.EW_7711MAC),
+    (0x148F, 0x761a, "MT7610U", None, TPLink.TL_WDN5200),
+    (0x148F, 0x760a, "MT7610U", None, None),
+    (0x0B05, 0x17d1, "MT7610U", None, ASUS.USB_AC51),
+    (0x0B05, 0x17db, "MT7610U", None, ASUS.USB_AC50),
+    (0x0DF6, 0x0075, "MT7610U", None, Sitecom.WLA_3100),
+    (0x2019, 0xab31, "MT7610U", None, Planex.GW_450D),
+    (0x2001, 0x3d02, "MT7610U", None, DLink.DWA_171_REV_B),
+    (0x0586, 0x3425, "MT7610U", None, Zyxel.NWD6505),
+    (0x07B8, 0x7610, "MT7610U", None, AboCom.AU7212),
+    (0x04BB, 0x0951, "MT7610U", None, IODATA.WN_AC433UK),
+    (0x057C, 0x8502, "MT7610U", None, AVM.FRITZ_WLAN_AC430),
+    (0x293C, 0x5702, "MT7610U", None, Comcast.KXW02AAA),
+    (0x20F4, 0x806b, "MT7610U", None, TRENDnet.TEW_806UBH),
+    (0x7392, 0xc711, "MT7610U", None, Devolo.STICK),
+    (0x0DF6, 0x0079, "MT7610U", None, Sitecom.WL3001),
+    (0x2357, 0x0123, "MT7610U", None, TPLink.ARCHER_T2UHP),
+    (0x2357, 0x010b, "MT7610U", None, TPLink.ARCHER_T2UHP),
+    (0x2357, 0x0105, "MT7610U", None, TPLink.ARCHER_T1U),
     (0x0E8D, 0x7630, "MT7630U", None, None),
     (0x0E8D, 0x7650, "MT7650U", None, None),
 ]
