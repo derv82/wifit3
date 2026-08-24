@@ -34,22 +34,39 @@ _LABEL_RGB = (150, 150, 150)
 
 # stem (sans ``card-``) -> make+model shown under the art. Falls back to the upper-cased stem.
 _LABELS = {
-    "awus036nha": "ALFA AWUS036NHA", "awus036h": "ALFA AWUS036H",
-    "tpwn722nv23": "TP-Link TL-WN722N", "awus036ach": "ALFA AWUS036ACH",
-    "awus1900": "ALFA AWUS1900", "awus036acs": "ALFA AWUS036ACS",
-    "auscomer600": "Auscoumer 600", "archert3u": "TP-Link Archer T3U",
-    "archert3uplus": "TP-Link Archer T3U Plus", "archert4u": "TP-Link Archer T4U V3",
-    "archert4uplus": "TP-Link Archer T4U Plus",
-    "asusbe93": "ASUS USB-BE93", "archertx20uplus": "TP-Link Archer TX20U Plus",
+    # ALFA
+    "awus036h":    "ALFA AWUS036H",
+    "awus036nh":   "ALFA AWUS036NH",
+    "awus036nha":  "ALFA AWUS036NHA",
+    "awus036ach":  "ALFA AWUS036ACH",
     "awus036achm": "ALFA AWUS036ACHM",
-    "awus036acm": "ALFA AWUS036ACM", "awus036axml": "ALFA AWUS036AXML",
-    "pau0f": "Panda PAU0F", "netgeara9000": "Netgear A9000",
-    "archert2u": "TP-Link Archer AC600 T2U Nano",
-    "archert2uplus": "TP-Link T2U Plus",
-    "archert2unano": "TP-Link T2U Nano",
-    "buffalonintendo": "Buffalo Nintendo Wi-Fi", "awus036nh": "ALFA AWUS036NH",
-    "lotekoo150": "LOTEKOO 150", "pau06": "Panda PAU06",
-    "pau09n600": "Panda PAU09 N600", "pau0b": "Panda PAU0B",
+    "awus036acm":  "ALFA AWUS036ACM",
+    "awus036acs":  "ALFA AWUS036ACS",
+    "awus036axml": "ALFA AWUS036AXML",
+    "awus1900":    "ALFA AWUS1900",
+
+    # Panda
+    "pau06":     "Panda PAU06",
+    "pau09n600": "Panda PAU09 N600",
+    "pau0f":     "Panda PAU0F",
+    "pau0b":     "Panda PAU0B",
+
+    # TP-Link
+    "tpwn722nv23":     "TP-Link TL-WN722N V2/V3",
+    "archert2u":       "TP-Link Archer T2U",
+    "archert2uplus":   "TP-Link Archer T2U Plus",
+    "archert2unano":   "TP-Link Archer T2U Nano",
+    "archert3u":       "TP-Link Archer T3U",
+    "archert3uplus":   "TP-Link Archer T3U Plus",
+    "archert4u":       "TP-Link Archer T4U V3",
+    "archert4uplus":   "TP-Link Archer T4U Plus",
+    "archertx20uplus": "TP-Link Archer TX20U Plus",
+
+    "asusbe93":        "ASUS USB-BE93",
+    "auscomer600":     "Auscoumer 600",
+    "buffalonintendo": "Buffalo Nintendo Wi-Fi",
+    "lotekoo150":      "LOTEKOO 150",
+    "netgeara9000":    "Netgear A9000",
 }
 
 

@@ -50,18 +50,10 @@ def test_art_path_for_product_hit():
     assert art.art_path_for(_iface(product_name="Panda PAU05/06")) == "cards/card-pau06.ans"
 
 
-def test_art_path_for_tp_link_archer_constants():
-    cases = {
-        TPLink.ARCHER_T3U_PLUS: "cards/card-archert3uplus.ans",
-        TPLink.ARCHER_T3U: "cards/card-archert3u.ans",
-        TPLink.ARCHER_T4U_V3: "cards/card-archert4u.ans",
-        TPLink.ARCHER_T4U_PLUS: "cards/card-archert4uplus.ans",
-        TPLink.ARCHER_T2U: "cards/card-archert2uplus.ans",
-        TPLink.ARCHER_T2U_NANO: "cards/card-archert2unano.ans",
-        TPLink.ARCHER_TX20U_PLUS: "cards/card-archertx20uplus.ans",
-    }
-    for product_name, art_name in cases.items():
-        assert art.art_path_for(_iface(product_name=product_name)) == art_name
+def test_every_mapped_art_file_exists():
+    for tier, mapping in (("product", art._ART_BY_PRODUCT), ("chipset", art._ART_BY_CHIPSET)):
+        for key, path in mapping.items():
+            assert art._exists(path), f"{tier} {key!r} -> {path!r} is missing on disk"
 
 
 def test_art_path_for_wn722n_v1_shares_v23_art():

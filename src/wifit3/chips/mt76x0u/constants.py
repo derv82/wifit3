@@ -17,12 +17,13 @@ from wifit3.chips.products import ALFA, ASUS, AVM, AboCom, Comcast, DLink, Devol
 # mt76x0/usb.c:14-43. Format matches what test_hw_mt76x0u.py uses.
 # ============================================================
 USB_IDS_MT76X0U: list[tuple[int, int, str, str | None, str | None]] = [
-    (0x148F, 0x7610, "MT7610U", None, None),
+    (0x148F, 0x7610, "MT7610U", None, None),  # Generic https://linux-hardware.org/?id=usb:148f-7610
     (0x13B1, 0x003E, "MT7610U", None, Linksys.AE6000),
     (0x0E8D, 0x7610, "MT7610U", None, ALFA.AWUS036ACHM),
     (0x7392, 0xa711, "MT7610U", None, Edimax.EW_7711MAC),
-    (0x148F, 0x761a, "MT7610U", None, TPLink.TL_WDN5200),
-    (0x148F, 0x760a, "MT7610U", None, None),
+    # 148f:761a can be one of Archer T2U, Archer T2UH, or TL-WDN5200 - https://wikidevi.wi-cat.ru/TP-LINK_Archer_T2U
+    (0x148F, 0x761a, "MT7610U", None, TPLink.ARCHER_T2U),  # Chosen by a dice roll.
+    (0x148F, 0x760a, "MT7610U", None, None),  # (Ralink) MT7601U https://linux-hardware.org/?id=usb:148f-760a
     (0x0B05, 0x17d1, "MT7610U", None, ASUS.USB_AC51),
     (0x0B05, 0x17db, "MT7610U", None, ASUS.USB_AC50),
     (0x0DF6, 0x0075, "MT7610U", None, Sitecom.WLA_3100),
@@ -39,8 +40,8 @@ USB_IDS_MT76X0U: list[tuple[int, int, str, str | None, str | None]] = [
     (0x2357, 0x0123, "MT7610U", None, TPLink.ARCHER_T2UHP),
     (0x2357, 0x010b, "MT7610U", None, TPLink.ARCHER_T2UHP),
     (0x2357, 0x0105, "MT7610U", None, TPLink.ARCHER_T1U),
-    (0x0E8D, 0x7630, "MT7630U", None, None),
-    (0x0E8D, 0x7650, "MT7650U", None, None),
+    (0x0E8D, 0x7630, "MT7630U", None, None),  # Generic https://linux-hardware.org/?id=usb:0e8d-7630
+    (0x0E8D, 0x7650, "MT7650U", None, TPLink.ARCHER_T2U_V2),
 ]
 
 # ============================================================

@@ -358,14 +358,16 @@ class TOTOLINK(ProductName):
 
 
 class TPLink(ProductName):
-    ARCHER_T1U       = "Archer T1U"
-    ARCHER_T2U       = "Archer T2U+"
-    ARCHER_T2UHP     = "Archer T2UHP"
-    ARCHER_T2U_NANO  = "Archer T2U Nano"
-    ARCHER_T2U_V3    = "Archer T2U v3"
-    ARCHER_T3U       = "Archer T3U"
-    ARCHER_T3U_NANO  = "Archer T3U Nano"
-    ARCHER_T3U_PLUS  = "Archer T3U Plus"
+    ARCHER_T1U       = "Archer T1U"      # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T1U
+    ARCHER_T2U       = "Archer T2U"      # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T2U
+    ARCHER_T2U_V2    = "Archer T2U v2"   # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T2U_v2
+    ARCHER_T2U_V3    = "Archer T2U v3"   # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T2U_v3
+    ARCHER_T2U_PLUS  = "Archer T2U+"     # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T2U_Plus
+    ARCHER_T2UHP     = "Archer T2UHP"    # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T2UHP
+    ARCHER_T2U_NANO  = "Archer T2U Nano" # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T2U_Nano
+    ARCHER_T3U       = "Archer T3U"      # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T3U
+    ARCHER_T3U_NANO  = "Archer T3U Nano" # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T3U_Nano
+    ARCHER_T3U_PLUS  = "Archer T3U Plus" # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T3U_Plus
     ARCHER_T4U       = "Archer T4U"
     ARCHER_T4UH      = "Archer T4UH"
     ARCHER_T4UHP     = "Archer T4UHP"

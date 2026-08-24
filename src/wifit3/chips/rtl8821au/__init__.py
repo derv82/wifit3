@@ -8,11 +8,11 @@ from wifit3.chips.products import ALFA, Buffalo, DLink, Edimax, Elecom, Hawking,
 
 _IDS = (
     (0x0BDA, 0x0811, "RTL8821AU", None, ALFA.AWUS036ACS),
-    (0x0BDA, 0x0821, "RTL8821AU", None, None),
-    (0x0BDA, 0x8822, "RTL8821AU", None, None),
-    (0x0BDA, 0xA811, "RTL8821AU", None, None),
-    (0x0BDA, 0x0820, "RTL8821AU", None, None),
-    (0x0BDA, 0x0823, "RTL8821AU", None, None),
+    (0x0BDA, 0x0821, "RTL8821AU", None, None),  # (Realtek) RTL8821A Bluetooth     https://linux-hardware.org/?id=usb:0bda-0821
+    (0x0BDA, 0x8822, "RTL8821AU", None, None),  # (Realtek) RTL8821AU 802.11ac     http://linux-hardware.org/?id=usb:0bda-8822
+    (0x0BDA, 0xA811, "RTL8821AU", None, None),  # (Realtek) RTL8811AU 802.11abgnac https://linux-hardware.org/?id=usb:0bda-a811
+    (0x0BDA, 0x0820, "RTL8821AU", None, None),  # (Realtek) RTL8821AU 802.11ac     http://linux-hardware.org/?id=usb:0bda-0820
+    (0x0BDA, 0x0823, "RTL8821AU", None, None),  # (Realtek/I-O DATA) 802.11ac      http://linux-hardware.org/?id=usb:0bda-0823
     (0x0411, 0x0242, "RTL8821AU", None, Buffalo.WI_U2_433DM),
     (0x0411, 0x029B, "RTL8821AU", None, Buffalo.WI_U2_433DHP),
     (0x04BB, 0x0953, "RTL8821AU", None, IODATA.WN_AC867U),
@@ -27,7 +27,7 @@ _IDS = (
     (0x2019, 0xAB32, "RTL8821AU", None, Planex.GW_450S),
     (0x2357, 0x011E, "RTL8821AU", None, TPLink.ARCHER_T2U_NANO),
     (0x2357, 0x011F, "RTL8821AU", None, TPLink.ARCHER_T2U_V3),
-    (0x2357, 0x0120, "RTL8821AU", None, TPLink.ARCHER_T2U),
+    (0x2357, 0x0120, "RTL8821AU", None, TPLink.ARCHER_T2U_PLUS),
     (0x3823, 0x6249, "RTL8821AU", None, Obihai.OBIWIFI),
     (0x7392, 0xA811, "RTL8821AU", None, Edimax.EW_7811UTC),
     (0x7392, 0xA812, "RTL8821AU", None, Edimax.EW_7811UTC_AC),

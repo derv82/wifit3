@@ -179,11 +179,11 @@ _ART_BY_PRODUCT: dict[str, str] = {
     Panda.PAU09_N600: "cards/card-pau09n600.ans",
     Panda.PAU0B: "cards/card-pau0b.ans",
     Panda.PAU0F: "cards/card-pau0f.ans",
-    # TP-Link Archer cards (art from PR #23). card-archert2u.ans is intentionally
-    # unmapped: no SUPPORTED_IDS device carries a plain "Archer T2U" product_name.
-    TPLink.ARCHER_T2U: "cards/card-archert2uplus.ans",
+    TPLink.ARCHER_T2U: "cards/card-archert2u.ans",
+    TPLink.ARCHER_T2U_V2: "cards/card-archert2u.ans",
+    TPLink.ARCHER_T2U_V3: "cards/card-archert2u.ans",
+    TPLink.ARCHER_T2U_PLUS: "cards/card-archert2uplus.ans",
     TPLink.ARCHER_T2U_NANO: "cards/card-archert2unano.ans",
-    TPLink.ARCHER_T2U_V3: "cards/card-archert2unano.ans",
     TPLink.ARCHER_T3U: "cards/card-archert3u.ans",
     TPLink.ARCHER_T3U_PLUS: "cards/card-archert3uplus.ans",
     TPLink.ARCHER_T4U_PLUS: "cards/card-archert4uplus.ans",
