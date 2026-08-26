@@ -249,6 +249,18 @@ jobs:
 
       - name: Package .pkg.tar.zst (arch linux)
         run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v[0-9]* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0.${GITHUB_RUN_NUMBER}"
+          fi
+
+          binary="dist/wifit3-linux-x64"
+          chmod +x "$binary" # i know its redundant but just to be sure
+          mkdir -p out
+
           # Arch Linux package. This wraps the prebuilt binary, so use the -bin package name.
           pkgname="wifit3-bin"
           pkgver="${version//-/_}"
