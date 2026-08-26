@@ -287,9 +287,11 @@ jobs:
           }
           EOF
 
-          (cd "$archbuild" && makepkg --noconfirm --cleanbuild --nodeps)
-          mv "$archbuild/${pkgname}-${pkgver}-${pkgrel}-x86_64.pkg.tar.zst" out/
-          tar --list -f "out/${pkgname}-${pkgver}-${pkgrel}-x86_64.pkg.tar.zst"
+          (cd "$archbuild" && PKGEXT='.pkg.tar.zst' makepkg --noconfirm --cleanbuild --nodeps)
+          archpkg=$(find "$archbuild" -maxdepth 1 -name "${pkgname}-${pkgver}-${pkgrel}-x86_64.pkg.tar.*" -print -quit)
+          test -n "$archpkg"
+          mv "$archpkg" out/
+          tar --list -f "out/$(basename "$archpkg")"
 
       - name: Upload Linux packages
         uses: actions/upload-artifact@v7
