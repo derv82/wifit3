@@ -186,9 +186,95 @@ jobs:
           path: out/wifit3-macos-universal2
           if-no-files-found: error
 
+  package-linux:
+    name: Package Linux redistributables
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download Linux binary
+        uses: actions/download-artifact@v8
+        with:
+          name: wifit3-linux-x64
+          path: dist
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pacman-package-manager fakeroot binutils file zstd
+
+      - name: Package .deb and Arch package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME#v}"
+          binary="dist/wifit3-linux-x64"
+          chmod +x "$binary"
+          mkdir -p out
+
+          # Debian / Ubuntu package.
+          debroot="pkg/deb"
+          rm -rf "$debroot"
+          install -Dm755 "$binary" "$debroot/usr/bin/wifit3-linux-x64"
+          ln -s wifit3-linux-x64 "$debroot/usr/bin/wifit3"
+          mkdir -p "$debroot/DEBIAN"
+
+          cat > "$debroot/DEBIAN/control" <<EOF
+          Package: wifit3
+          Version: $version
+          Section: net
+          Priority: optional
+          Architecture: amd64
+          Maintainer: derv82
+          Homepage: https://github.com/derv82/wifit3
+          Description: Wifite but USB-only & cross-platform.
+          An Userland 802.11 auditing tool. GPL-2.0
+          EOF
+
+          dpkg-deb --build --root-owner-group "$debroot" "out/wifit3_${version}_amd64.deb"
+          dpkg-deb --info "out/wifit3_${version}_amd64.deb"
+          dpkg-deb --contents "out/wifit3_${version}_amd64.deb"
+
+          # Arch Linux package. This wraps the prebuilt binary, so use the -bin package name.
+          pkgname="wifit3-bin"
+          pkgver="${version//-/_}"
+          pkgrel="1"
+          archbuild="pkg/arch-build"
+          rm -rf "$archbuild"
+          mkdir -p "$archbuild"
+          cp "$binary" "$archbuild/wifit3-linux-x64"
+          cat > "$archbuild/PKGBUILD" <<EOF
+          pkgname=$pkgname
+          pkgver=$pkgver
+          pkgrel=$pkgrel
+          pkgdesc='Wifite but USB-only & cross-platform.'
+          arch=('x86_64')
+          url='https://github.com/derv82/wifit3'
+          license=('GPL-2.0')
+          depends=('glibc')
+          source=('wifit3-linux-x64')
+          sha256sums=('SKIP')
+
+          package() {
+            install -Dm755 "\$srcdir/wifit3-linux-x64" "\$pkgdir/usr/bin/wifit3-linux-x64"
+            ln -s wifit3-linux-x64 "\$pkgdir/usr/bin/wifit3"
+          }
+          EOF
+
+          (cd "$archbuild" && makepkg --noconfirm --cleanbuild)
+          mv "$archbuild/${pkgname}-${pkgver}-${pkgrel}-x86_64.pkg.tar.zst" out/
+          tar --list -f "out/${pkgname}-${pkgver}-${pkgrel}-x86_64.pkg.tar.zst"
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-packages
+          path: out/*
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
-    needs: [build, build-macos]
+    needs: [build, build-macos, package-linux]
     # Only publish for an actual tag push; a manual workflow_dispatch just leaves the
     # artifacts attached to the run for download.
     if: startsWith(github.ref, 'refs/tags/')
