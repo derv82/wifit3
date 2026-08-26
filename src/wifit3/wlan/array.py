@@ -292,19 +292,19 @@ class WlanArray:
         return sorted(seen)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """STACK: tune every channel-capable member to ``channel`` (focus/PBC), one at a time. A card
-        that can't reach it is skipped; a card already on it counts as success (the postcondition
-        holds); a card that fails to tune is logged and the rest still tune. Returns True if at least
-        one card is on ``channel``."""
+        """Sets channel on supported devices, returns True if any device is on channel."""
         tuned_any = False
+        tasks = []
         for m in self._members:
             if channel not in m.supported_channels:
                 continue
             if m.current_channel == channel:
                 tuned_any = True                    # already there: it IS on the channel
                 continue
+            tasks.append((m, asyncio.create_task(m.set_channel(channel, scan=scan))))
+        for m, task in tasks:
             try:
-                if await m.set_channel(channel, scan=scan):
+                if await task:
                     tuned_any = True
             except Exception:
                 logger.exception("%s failed to tune to channel %d", m.name, channel)
