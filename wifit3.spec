@@ -64,7 +64,10 @@ a = Analysis(
     runtime_hooks=[],
     # pyshark shells out to a separate Wireshark/tshark install (can't be bundled) and is
     # dev/RE-only; the rest are dev tooling that has no place in a distributed build.
-    excludes=["pyshark", "pytest", "ruff", "textual_dev"],
+    # PIL: pillow is a dev-only dep (asset generation in scripts/); nothing in src/ imports it,
+    # yet it leaks into the analysis graph and its thin .so aborts the universal2 build
+    # (IncompatibleBinaryArchError). Excluding it also shrinks the Windows/Linux binaries.
+    excludes=["pyshark", "pytest", "ruff", "textual_dev", "PIL"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
