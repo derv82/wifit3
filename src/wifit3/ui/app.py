@@ -5,6 +5,7 @@ from textual import work
 from textual.app import App
 from typing import Optional
 
+from wifit3 import __version__
 from wifit3.chips import log_trace
 from wifit3.persist.config import Config, ConfigError
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
@@ -64,7 +65,7 @@ def _configure_file_logging(default: Optional[str] = None) -> None:
 class WifiteApp(App):
     """wifit3 TUI Main App."""
 
-    TITLE = "wifit3 - Wireless Auditor - derv82"
+    TITLE = f"wifit3 v{__version__} - derv82"
 
     CSS = """
     /* Force single-line header to avoid Textual's "click to expand" behavior */

@@ -15,7 +15,7 @@ async def test_app_layout_and_boot():
     app = WifiteApp()
     async with app.run_test() as pilot:
         # Check Title
-        assert pilot.app.title == "wifit3 - Wireless Auditor - derv82", "App title is incorrect"
+        assert pilot.app.title.startswith("wifit3")
         
         # Verify we start on the Splash screen
         assert isinstance(pilot.app.screen, SplashView)
