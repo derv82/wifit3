@@ -189,7 +189,9 @@ jobs:
   package-linux:
     name: Package Linux redistributables
     needs: build
-    runs-on: ubuntu-22.04
+    # Packaging only: the binary still comes from the ubuntu-22.04 build artifact above.
+    # ubuntu-24.04 has Debian's Arch makepkg/pacman tooling available via apt.
+    runs-on: ubuntu-24.04
     steps:
       - name: Download Linux binary
         uses: actions/download-artifact@v8
