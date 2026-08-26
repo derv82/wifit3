@@ -213,7 +213,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          version="${GITHUB_REF_NAME#v}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v[0-9]* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0.${GITHUB_RUN_NUMBER}"
+          fi
           binary="dist/wifit3-linux-x64"
           chmod +x "$binary"
           mkdir -p out
@@ -234,7 +238,7 @@ jobs:
           Maintainer: derv82
           Homepage: https://github.com/derv82/wifit3
           Description: Wifite but USB-only & cross-platform.
-          An Userland 802.11 auditing tool. GPL-2.0
+           An userland 802.11 auditing tool. GPL-2.0
           EOF
 
           dpkg-deb --build --root-owner-group "$debroot" "out/wifit3_${version}_amd64.deb"
