@@ -206,9 +206,11 @@ jobs:
           sudo add-apt-repository -y universe
           sudo apt-get update
           apt-cache policy pacman-package-manager
-          sudo apt-get install -y pacman-package-manager fakeroot binutils file zstd
+          sudo apt-get install -y pacman-package-manager fakeroot binutils file zstd libarchive-tools
+          sudo mkdir -p /var/lib/pacman/local
+          sudo chmod -R a+rwx /var/lib/pacman
 
-      - name: Package .deb and Arch package
+      - name: Package .deb (Debian / Ubuntu)
         shell: bash
         run: |
           set -euo pipefail
@@ -245,6 +247,8 @@ jobs:
           dpkg-deb --info "out/wifit3_${version}_amd64.deb"
           dpkg-deb --contents "out/wifit3_${version}_amd64.deb"
 
+      - name: Package .pkg.tar.zst (arch linux)
+        run: |
           # Arch Linux package. This wraps the prebuilt binary, so use the -bin package name.
           pkgname="wifit3-bin"
           pkgver="${version//-/_}"
