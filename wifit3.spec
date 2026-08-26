@@ -1,7 +1,7 @@
 # PyInstaller build spec for wifit3 — build with: uv run pyinstaller wifit3.spec
 #
 # Produces a single self-contained onefile binary — dist/wifit3.exe on Windows, dist/wifit3 on
-# Linux. PyInstaller does NOT cross-compile: build each target ON that OS. macOS is not a build target.
+# Linux/macOS. PyInstaller does NOT cross-compile: build each target on that OS.
 #
 # onefile (active) vs onedir tradeoff:
 #   onefile: one binary; unpacks into a temp dir on each launch (slower cold start), trips AV/SmartScreen more.
@@ -61,7 +61,7 @@ a = Analysis(
     runtime_hooks=[],
     # pyshark shells out to a separate Wireshark/tshark install (can't be bundled) and is
     # dev/RE-only; the rest are dev tooling that has no place in a distributed build.
-    excludes=["pyshark", "pytest", "ruff", "textual_dev"],
+    excludes=["pyshark", "pytest", "ruff", "textual_dev", "PIL"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -86,6 +86,9 @@ exe = EXE(
     upx=False,
     console=True,
     icon=_icon,
+    # universal2 (fat Intel+arm64) on macOS; thin elsewhere. Strict arch validation will abort
+    # the build if any bundled binary isn't fat — that's the desired loud failure.
+    target_arch="universal2" if sys.platform == "darwin" else None,
     runtime_tmpdir=None,
 )
 

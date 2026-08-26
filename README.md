@@ -87,8 +87,10 @@ Grab a prebuilt binary from the [**Releases**](https://github.com/derv82/wifit3/
 
 - **Windows** — download `wifit3-windows-x64.exe` and run it.
 - **Linux** — download `wifit3-linux-x64`, then `chmod +x wifit3-linux-x64 && ./wifit3-linux-x64`.
-- **macOS (Apple Silicon):** download `wifit3-macos-arm64`, then clear the download quarantine and run it:
-  `xattr -d com.apple.quarantine wifit3-macos-arm64 && chmod +x wifit3-macos-arm64 && ./wifit3-macos-arm64`
+- **macOS (Apple Silicon + Intel):**
+  1. Download `wifit3-macos-universal2`
+  2. Bypass quarantine: `xattr -d com.apple.quarantine wifit3-macos-universal2 && chmod +x wifit3-macos-universal2`
+  3. Run it: `./wifit3-macos-universal2`
 
 ### Run from source
 
@@ -101,7 +103,7 @@ uv run wifit3
 
 ### Build
 
-Build using `uv run pyinstaller wifit3.spec --noconfirm --clean` (Windows: `dist/wifit3.exe`, Linux: `dist/wifit3`).
+Build using `uv run pyinstaller wifit3.spec --noconfirm --clean` (Windows: `dist/wifit3.exe`, Linux/OSX: `dist/wifit3`).
 
 ### First-run setup
 
