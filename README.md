@@ -87,8 +87,8 @@ Grab a prebuilt binary from the [**Releases**](https://github.com/derv82/wifit3/
 
 - **Windows** — download `wifit3-windows-x64.exe` and run it.
 - **Linux** — download `wifit3-linux-x64`, then `chmod +x wifit3-linux-x64 && ./wifit3-linux-x64`.
-- **macOS (Apple Silicon):** download `wifit3-macos-arm64`, then clear the download quarantine and run it:
-  `xattr -d com.apple.quarantine wifit3-macos-arm64 && chmod +x wifit3-macos-arm64 && ./wifit3-macos-arm64`
+- **macOS (Apple Silicon + Intel):** download `wifit3-macos-universal2`, then clear the download quarantine and run it:
+  `xattr -d com.apple.quarantine wifit3-macos-universal2 && chmod +x wifit3-macos-universal2 && ./wifit3-macos-universal2`
 
 ### Run from source
 

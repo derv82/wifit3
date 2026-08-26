@@ -1,7 +1,10 @@
 # PyInstaller build spec for wifit3 — build with: uv run pyinstaller wifit3.spec
 #
 # Produces a single self-contained onefile binary — dist/wifit3.exe on Windows, dist/wifit3 on
-# Linux. PyInstaller does NOT cross-compile: build each target ON that OS. macOS is not a build target.
+# Linux/macOS. PyInstaller does NOT cross-compile: build each target ON that OS. The macOS build
+# (release.yml's build-macos job) targets universal2 (Intel + Apple Silicon in one binary); that
+# requires a universal2 CPython (python.org installer — uv/setup-python pythons are thin) and every
+# bundled binary to be fat, so the workflow lipo-fattens the thin libusb dylib before building.
 #
 # onefile (active) vs onedir tradeoff:
 #   onefile: one binary; unpacks into a temp dir on each launch (slower cold start), trips AV/SmartScreen more.
@@ -86,6 +89,9 @@ exe = EXE(
     upx=False,
     console=True,
     icon=_icon,
+    # universal2 (fat Intel+arm64) on macOS; thin elsewhere. Strict arch validation will abort
+    # the build if any bundled binary isn't fat — that's the desired loud failure.
+    target_arch="universal2" if sys.platform == "darwin" else None,
     runtime_tmpdir=None,
 )
 

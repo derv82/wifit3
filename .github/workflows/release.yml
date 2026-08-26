@@ -6,9 +6,10 @@
 #   2. `release` waits for all builds, DOWNLOADS every artifact, and attaches them to a
 #      GitHub Release for the pushed tag (softprops/action-gh-release).
 #
-# PyInstaller does not cross-compile, hence one job per target OS. macOS runners are free for
-# public repos, so the Apple Silicon (arm64) binary is built too. Intel macOS runners are being
-# retired by GitHub, so they are skipped. See wifit3.spec.
+# PyInstaller does not cross-compile, hence one job per target OS. macOS ships as a single
+# universal2 binary (Intel x86_64 + Apple Silicon arm64) built on an arm64 runner — see the
+# build-macos job. Building universal2 on arm64 also survives GitHub's Aug-2027 retirement of
+# its last Intel runner (macos-15-intel). macOS runners are free for public repos.
 #
 # Trigger: push a version tag, e.g.  git tag v0.1.0 && git push origin v0.1.0
 # Dry run: the "Run workflow" button (workflow_dispatch) builds + uploads artifacts you can
@@ -41,9 +42,7 @@ jobs:
           - os: ubuntu-22.04          # build on older glibc so the binary runs on more distros
             artifact_name: wifit3-linux-x64
             build_path: dist/wifit3
-          - os: macos-14              # Apple Silicon (arm64)
-            artifact_name: wifit3-macos-arm64
-            build_path: dist/wifit3
+          # macOS is NOT in this matrix: it needs a universal2 toolchain (see build-macos).
 
     steps:
       - uses: actions/checkout@v7
@@ -103,9 +102,101 @@ jobs:
           path: out/${{ matrix.artifact_name }}
           if-no-files-found: error
 
+  # macOS universal2 (one fat binary: Intel x86_64 + Apple Silicon arm64). Built on an arm64
+  # runner, so this survives GitHub's Aug-2027 retirement of Intel runners (macos-15-intel).
+  # universal2 needs a FAT interpreter and fat bundled binaries — see the inline comments.
+  build-macos:
+    name: Build (macos universal2)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same tag/version gate as the build matrix job.
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          proj=$(grep -m1 '^__version__ = ' src/wifit3/__init__.py | sed -E 's/.*"(.*)".*/\1/')
+          echo "tag=$tag  __version__=$proj"
+          if [ "$tag" != "$proj" ]; then
+            echo "::error::Tag v$tag does not match src/wifit3/__init__.py __version__ $proj"
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      # uv-managed and setup-python CPython builds are THIN (single-arch); only the python.org
+      # installer ships universal2. Pin 3.12.10 — the last 3.12.x with a macOS installer (later
+      # 3.12.x are source-only security releases). Matches the matrix jobs' python-version "3.12".
+      - name: Install universal2 CPython (python.org)
+        run: |
+          curl -fsSL -o /tmp/python.pkg https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg
+          sudo installer -pkg /tmp/python.pkg -target /
+          /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 -c \
+            "import sysconfig; p = sysconfig.get_platform(); assert 'universal2' in p, p; print('universal2 python OK:', p)"
+
+      - name: Sync env (runtime + dev deps, incl. PyInstaller) against the universal2 interpreter
+        run: uv sync --group dev --python /Library/Frameworks/Python.framework/Versions/3.12/bin/python3
+
+      # libusb_package ships only THIN macOS wheels (separate x86_64/arm64), and PyInstaller's
+      # strict arch validation aborts a universal2 build on any non-fat binary. lipo the two thin
+      # dylibs into one fat dylib and swap it into the venv before building. Verified locally:
+      # the fattened dylib still loads via libusb_package.get_library_path() and passes --smoke.
+      - name: Fatten the bundled libusb dylib (universal2)
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          ver=$(uv run --no-sync python -c "from importlib.metadata import version; print(version('libusb-package'))")
+          echo "fattening libusb-package $ver"
+          for plat in macosx_10_9_x86_64 macosx_11_0_arm64; do
+            url=$(curl -fsSL "https://pypi.org/pypi/libusb-package/$ver/json" | python3 -c \
+              "import json,sys; print(next(u['url'] for u in json.load(sys.stdin)['urls'] if '$plat' in u['filename']))")
+            curl -fsSL -o "$work/$plat.whl" "$url"
+            unzip -qo "$work/$plat.whl" -d "$work/$plat"
+          done
+          x64lib=$(find "$work/macosx_10_9_x86_64" -name 'libusb-1.0*' -type f)
+          armlib=$(find "$work/macosx_11_0_arm64" -name 'libusb-1.0*' -type f)
+          target=$(find .venv -name 'libusb-1.0*' -path '*libusb_package*' -type f)
+          lipo -create "$x64lib" "$armlib" -output "$work/libusb-fat.dylib"
+          codesign --sign - --force "$work/libusb-fat.dylib"  # re-ad-hoc-sign: arm64 requires a valid sig
+          cp "$work/libusb-fat.dylib" "$target"
+          lipo -archs "$target" | grep -qw x86_64 && lipo -archs "$target" | grep -qw arm64
+
+      - name: Build onefile binary (universal2)
+        run: uv run --no-sync pyinstaller wifit3.spec --noconfirm --clean
+
+      # Boot the bundle on BOTH slices: arm64 natively, x86_64 under Rosetta (installed on demand;
+      # available on GitHub's arm64 runners). Catches a thin-sliced lib or dropped data file per-arch.
+      - name: Smoke-test the bundle (arm64 native + x86_64 Rosetta)
+        shell: bash
+        run: |
+          set -euo pipefail
+          lipo -archs dist/wifit3
+          lipo -archs dist/wifit3 | grep -qw x86_64 && lipo -archs dist/wifit3 | grep -qw arm64
+          dist/wifit3 --version
+          dist/wifit3 --smoke
+          sudo softwareupdate --install-rosetta --agree-to-license
+          arch -x86_64 dist/wifit3 --smoke
+          echo "universal2 bundle smoke OK"
+
+      - name: Stage artifact
+        run: |
+          mkdir -p out
+          cp dist/wifit3 out/wifit3-macos-universal2
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: wifit3-macos-universal2
+          path: out/wifit3-macos-universal2
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, build-macos]
     # Only publish for an actual tag push; a manual workflow_dispatch just leaves the
     # artifacts attached to the run for download.
     if: startsWith(github.ref, 'refs/tags/')
