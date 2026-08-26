@@ -16,7 +16,8 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
-build-dev.sh  # if you need this tool -> CONTRIBUTING.md has the exact command to be used instead :3
+# if you need this tool -> CONTRIBUTING.md has the exact command to be used instead :3
+build-dev.sh
 
 # PyInstaller build dir
 build/
