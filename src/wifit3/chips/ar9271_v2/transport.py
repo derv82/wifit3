@@ -9,11 +9,13 @@ interrupt pipes (HTC/WMI + RX/TX) land with M2.
 """
 from __future__ import annotations
 
+import usb
+
 from . import constants as C
 
 
 class AR9271Transport:
-    def __init__(self, dev):
+    def __init__(self, dev: usb.core.Device):
         self.dev = dev
 
     def control_out(self, bRequest: int, wValue: int, data: bytes | None) -> int:

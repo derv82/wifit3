@@ -34,7 +34,7 @@ async def test_reenumeration_allows_linux_to_retain_address():
 
 
 @pytest.mark.asyncio
-async def test_reenumeration_without_topology_keeps_same_address():
+async def test_reenumeration_without_ports_keeps_same_address():
     original = SimpleNamespace(bus=1, address=7, port_numbers=None)
     sibling = SimpleNamespace(bus=1, address=6, port_numbers=None)
     driver = AR9271V2Driver(original)
@@ -48,7 +48,7 @@ async def test_reenumeration_without_topology_keeps_same_address():
 
 
 @pytest.mark.asyncio
-async def test_reenumeration_without_topology_never_selects_sibling():
+async def test_reenumeration_without_ports_never_selects_sibling():
     original = SimpleNamespace(bus=1, address=7, port_numbers=None)
     sibling = SimpleNamespace(bus=1, address=6, port_numbers=None)
     driver = AR9271V2Driver(original)
@@ -61,13 +61,13 @@ async def test_reenumeration_without_topology_never_selects_sibling():
 
 
 @pytest.mark.asyncio
-async def test_reenumeration_without_topology_allows_known_single_card_address_change():
+async def test_reenumeration_without_ports_allows_known_single_card_address_change():
     original = SimpleNamespace(bus=1, address=7, port_numbers=None)
     rebooted = SimpleNamespace(bus=1, address=8, port_numbers=None)
     driver = AR9271V2Driver(original)
 
     with (patch("wifit3.chips.ar9271_v2.driver.asyncio.sleep"),
           patch("wifit3.chips.ar9271_v2.driver.usb.core.find", return_value=[rebooted])):
-        found = await driver._await_reenumeration(original, allow_unlocated_fallback=True)
+        found = await driver._await_reenumeration(original, unique_vidpid=True)
 
     assert found is rebooted
