@@ -1,10 +1,7 @@
 # PyInstaller build spec for wifit3 — build with: uv run pyinstaller wifit3.spec
 #
 # Produces a single self-contained onefile binary — dist/wifit3.exe on Windows, dist/wifit3 on
-# Linux/macOS. PyInstaller does NOT cross-compile: build each target ON that OS. The macOS build
-# (release.yml's build-macos job) targets universal2 (Intel + Apple Silicon in one binary); that
-# requires a universal2 CPython (python.org installer — uv/setup-python pythons are thin) and every
-# bundled binary to be fat, so the workflow lipo-fattens the thin libusb dylib before building.
+# Linux/macOS. PyInstaller does NOT cross-compile: build each target on that OS.
 #
 # onefile (active) vs onedir tradeoff:
 #   onefile: one binary; unpacks into a temp dir on each launch (slower cold start), trips AV/SmartScreen more.
@@ -64,9 +61,6 @@ a = Analysis(
     runtime_hooks=[],
     # pyshark shells out to a separate Wireshark/tshark install (can't be bundled) and is
     # dev/RE-only; the rest are dev tooling that has no place in a distributed build.
-    # PIL: pillow is a dev-only dep (asset generation in scripts/); nothing in src/ imports it,
-    # yet it leaks into the analysis graph and its thin .so aborts the universal2 build
-    # (IncompatibleBinaryArchError). Excluding it also shrinks the Windows/Linux binaries.
     excludes=["pyshark", "pytest", "ruff", "textual_dev", "PIL"],
     noarchive=False,
 )
