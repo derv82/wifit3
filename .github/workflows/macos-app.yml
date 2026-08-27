@@ -1,0 +1,158 @@
+# Experimental manual-only macOS app/DMG packaging.
+# This does not publish a Release; it uploads a drag-to-Applications DMG for local testing.
+
+name: macOS App DMG
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: macos-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-app:
+    name: Build experimental macOS app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      # The python.org installer ships universal2, pinned to 3.12.10 (the last 3.12.x with a macOS installer).
+      - name: Install universal2 CPython (python.org)
+        run: |
+          curl -fsSL -o /tmp/python.pkg https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg
+          sudo installer -pkg /tmp/python.pkg -target /
+          /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 -c \
+            "import sysconfig; p = sysconfig.get_platform(); assert 'universal2' in p, p; print('universal2 python OK:', p)"
+
+      - name: Sync uv env
+        run: uv sync --group dev --python /Library/Frameworks/Python.framework/Versions/3.12/bin/python3
+
+      - name: Download libusb, lipo a fat dylib (universal2)
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          ver=$(uv run --no-sync python -c "from importlib.metadata import version; print(version('libusb-package'))")
+          echo "fattening libusb-package $ver"
+          for plat in macosx_10_9_x86_64 macosx_11_0_arm64; do
+            url=$(curl -fsSL "https://pypi.org/pypi/libusb-package/$ver/json" | python3 -c \
+              "import json,sys; print(next(u['url'] for u in json.load(sys.stdin)['urls'] if '$plat' in u['filename']))")
+            curl -fsSL -o "$work/$plat.whl" "$url"
+            unzip -qo "$work/$plat.whl" -d "$work/$plat"
+          done
+          x64lib=$(find "$work/macosx_10_9_x86_64" -name 'libusb-1.0*' -type f)
+          armlib=$(find "$work/macosx_11_0_arm64" -name 'libusb-1.0*' -type f)
+          target=$(find .venv -name 'libusb-1.0*' -path '*libusb_package*' -type f)
+          lipo -create "$x64lib" "$armlib" -output "$work/libusb-fat.dylib"
+          codesign --sign - --force "$work/libusb-fat.dylib"
+          cp "$work/libusb-fat.dylib" "$target"
+          lipo_output=$(lipo -archs "$target")
+          grep -qw x86_64 <<<"$lipo_output" && grep -qw arm64 <<<"$lipo_output"
+
+      - name: Build onefile binary (universal2)
+        run: uv run --no-sync pyinstaller wifit3.spec --noconfirm --clean
+
+      - name: Smoke-test the bundle (arm64 native + x86_64 Rosetta)
+        shell: bash
+        run: |
+          set -euo pipefail
+          lipo_output=$(lipo -archs dist/wifit3)
+          grep -qw x86_64 <<<"$lipo_output" && grep -qw arm64 <<<"$lipo_output"
+          dist/wifit3 --version
+          dist/wifit3 --smoke
+          sudo softwareupdate --install-rosetta --agree-to-license
+          arch -x86_64 dist/wifit3 --smoke
+          echo "universal2 bundle smoke OK"
+
+      - name: Build .app bundle
+        id: build_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v[0-9]* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0.${GITHUB_RUN_NUMBER}"
+          fi
+          app="out/Wifit3.app"
+          rm -rf out
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp dist/wifit3 "$app/Contents/Resources/wifit3"
+          chmod +x "$app/Contents/Resources/wifit3"
+
+          cat > "$app/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleExecutable</key>
+            <string>Wifit3</string>
+            <key>CFBundleIdentifier</key>
+            <string>dev.derv82.wifit3</string>
+            <key>CFBundleName</key>
+            <string>Wifit3</string>
+            <key>CFBundleDisplayName</key>
+            <string>Wifit3</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>$version</string>
+            <key>CFBundleVersion</key>
+            <string>${GITHUB_RUN_NUMBER}</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>11.0</string>
+          </dict>
+          </plist>
+          EOF
+
+          cat > "$app/Contents/MacOS/Wifit3" <<'EOF'
+          #!/bin/bash
+          set -euo pipefail
+          app_dir="$(cd "$(dirname "$0")/.." && pwd)"
+          bin="$app_dir/Resources/wifit3"
+          osascript <<APPLESCRIPT
+          tell application "Terminal"
+            activate
+            do script quoted form of "$bin"
+          end tell
+          APPLESCRIPT
+          EOF
+          chmod +x "$app/Contents/MacOS/Wifit3"
+
+          codesign --sign - --force --deep "$app"
+          plutil -lint "$app/Contents/Info.plist"
+          echo "app_path=$app" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build drag-to-Applications DMG
+        id: build_dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg_name="wifit3-macos-universal2-${{ steps.build_app.outputs.version }}.dmg"
+          rm -rf dmgroot
+          mkdir -p dmgroot
+          ditto "${{ steps.build_app.outputs.app_path }}" "dmgroot/Wifit3.app"
+          ln -s /Applications dmgroot/Applications
+          hdiutil create \
+            -volname "Wifit3" \
+            -srcfolder dmgroot \
+            -ov \
+            -format UDZO \
+            "out/$dmg_name"
+          hdiutil verify "out/$dmg_name"
+          echo "dmg_name=$dmg_name" >> "$GITHUB_OUTPUT"
+          echo "dmg_path=out/$dmg_name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.build_dmg.outputs.dmg_name }}
+          path: ${{ steps.build_dmg.outputs.dmg_path }}
+          if-no-files-found: error
