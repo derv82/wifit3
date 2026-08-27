@@ -187,6 +187,7 @@ class ScannerView(Screen):
         Binding("f", "focus_filter", "Filter", show=True),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
+        Binding("v", "open_vault", "Vault", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
     ]
@@ -903,6 +904,9 @@ class ScannerView(Screen):
             if self.app.screen is self:
                 # Resume hopping only if we're still the foreground screen (not Focus).
                 await array.start_hopping(channels=self._channel_filter, interval=0.25)
+
+    def action_open_vault(self) -> None:
+        self.app.push_screen("vault")
 
     def action_focus_filter(self) -> None:
         self.query_one(FilterBar).focus_text()

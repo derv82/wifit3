@@ -13,28 +13,37 @@ clicking Toast notification -> opens releases page.
 
 We could automate this as well (opt-**in**), in Preferences: `[x] Automatically check for updates`
 
-### VAULT — loot manager ("HACKLEBOX")
+### VAULT — loot manager ("HACKLEBOX") — DONE (core view; Check/Hashcat/add deferred)
 
 **Problem.** Half of Wifite's UX is effectively the OS file manager: squinting at `captures/` full
 of long BSSID-encoded filenames. The loot (handshakes, PMKIDs, cracked PSKs) deserves a real view,
 not a directory listing.
 
-**What.** One screen that owns everything we've captured/cracked: handshakes, PMKIDs, PSKs,
-passwords, the occasional WPS PIN (→ its PSK), WEP keys (nobody uses WEP, but still). Per-entry:
-add / remove / export / copy. Bulk: **Export all as Zip**, **Show directory** (`open captures/` /
-`explorer.exe captures/`) for the folks who still want the files.
+**Shipped.** `ui/screens/vault.py:VaultView`, opened from the Scanner (hotkey `v`) -- read-only
+otherwise, no radio/interface dependency, works with no card plugged in. One `DataTable` over
+`persist.capture_history.load_capture_index()` (already existed, built for the Scanner's own
+capture-badge history -- VAULT is genuinely "just a new screen over" it, per the original
+complexity note), newest-first, re-scanned from disk on every visit (`on_screen_resume`) so a
+save from a running campaign shows up next time you open it. `PersistedCapture` gained an `ssid`
+field (parsed from the filename, previously discarded) so the table can show a name, not just a
+BSSID. Per-entry: **Remove** (`r`, deletes the file + reloads), **Copy** (`c`, the WEP/WPS
+credential itself, or -- since HS/PMKID have no single "value" -- the file's own hashcat hashline
+content, via Textual's native OSC-52 clipboard). Bulk: **Export all as Zip** (`z`, always written
+*beside* `captures/`, never inside it, so a re-export can never bundle a previous export into
+itself) and **Show directory** (`o`, `xdg-open`/`open`/`explorer` per platform). Verified with a
+real Textual SVG render (title bar, columns, newest-first ordering, footer keybindings all
+correct), not just unit assertions.
 
-**Check button.** Re-authenticate against the live AP and confirm a stored PSK still works. The
-association layer we're untangling now is exactly the primitive this needs (open-auth + assoc +
-4-way with the candidate PSK). Rare to *have* a plaintext password, but when we do, verifying it is
-a genuinely nice touch.
-
-**Launch Hashcat.** Per-entry button to fire hashcat with the right mode/hashline (leans on the
-per-attack mode map noted in the enterprise graveyard entry). Cracked PSKs auto-add back into the
-VAULT. The loop closes itself.
-
-**Complexity.** Moderate: mostly a new screen over the existing `persist/save` + `crack/hc22000_format` layers;
-the "Check" path reuses the association primitive; hashcat launch is a subprocess + parse.
+**Deferred, not attempted:**
+- **"add" (manually enter a credential you already have from elsewhere).** No design decided yet
+  for the entry form; low value next to the read/remove/copy path that's actually built.
+- **Check button** (re-authenticate against the live AP to confirm a stored PSK still works).
+  Needs a real target AP in range to test meaningfully, and VAULT has no "current target"/card
+  context to decide which interface would even attempt it -- a class-design question for a
+  session with hardware in the loop, not a solo overnight guess.
+- **Launch Hashcat** (subprocess launch of an external tool). Spawning and babysitting an external
+  process has real UX questions (detached terminal? inline output? which mode per capture type?)
+  worth a quick design pass rather than silently picking conventions unasked.
 
 ------------
 

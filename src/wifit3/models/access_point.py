@@ -24,6 +24,7 @@ class PersistedCapture:
     timestamp: int                  # epoch seconds, parsed from the filename
     path: str                       # source file under captures/
     value: Optional[str] = None     # WEP key (hex) / WPS PSK; None for HS/PMKID
+    ssid: Optional[str] = None      # parsed from the filename, for display (VAULT)
 
 
 @dataclass

@@ -83,20 +83,21 @@ def _parse_file(path: Path) -> List[PersistedCapture]:
     epoch = int(m.group("epoch"))
     kind = m.group("kind")
     ext = m.group("ext")
+    ssid = m.group("ssid")
 
     if kind == "wep_key" and ext == "txt":
         key = _read_wep_key(path)
         if key is None:
             return []
         return [PersistedCapture(type="WEP", timestamp=epoch,
-                                 value=key, path=str(path))]
+                                 value=key, path=str(path), ssid=ssid)]
     if kind in ("wps_pin", "wps_pbc") and ext == "txt":
         return [PersistedCapture(type="WPS", timestamp=epoch,
-                                 value=_read_wps_psk(path), path=str(path))]
+                                 value=_read_wps_psk(path), path=str(path), ssid=ssid)]
     if kind == "handshake" and ext == "hc22000":
-        return [PersistedCapture(type="HS", timestamp=epoch, path=str(path))]
+        return [PersistedCapture(type="HS", timestamp=epoch, path=str(path), ssid=ssid)]
     if kind == "pmkid" and ext == "hc22000":
-        return [PersistedCapture(type="PMKID", timestamp=epoch, path=str(path))]
+        return [PersistedCapture(type="PMKID", timestamp=epoch, path=str(path), ssid=ssid)]
     # .pcap companion + any other shape: the hashline/text sibling has the verdict.
     return []
 
