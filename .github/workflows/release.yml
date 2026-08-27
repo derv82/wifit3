@@ -211,6 +211,7 @@ jobs:
           sudo chmod -R a+rwx /var/lib/pacman
 
       - name: Package .deb (Debian / Ubuntu)
+        id: package_deb
         shell: bash
         run: |
           set -euo pipefail
@@ -243,11 +244,23 @@ jobs:
            An userland 802.11 auditing tool. GPL-2.0
           EOF
 
-          dpkg-deb --build --root-owner-group "$debroot" "out/wifit3_${version}_amd64.deb"
-          dpkg-deb --info "out/wifit3_${version}_amd64.deb"
-          dpkg-deb --contents "out/wifit3_${version}_amd64.deb"
+          deb_path="out/wifit3_${version}_amd64.deb"
+          dpkg-deb --build --root-owner-group "$debroot" "$deb_path"
+          dpkg-deb --info "$deb_path"
+          dpkg-deb --contents "$deb_path"
+          echo "deb_name=$(basename "$deb_path")" >> "$GITHUB_OUTPUT"
+          echo "deb_path=$deb_path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package_deb.outputs.deb_name }}
+          path: ${{ steps.package_deb.outputs.deb_path }}
+          if-no-files-found: error
 
       - name: Package .pkg.tar.zst (arch linux)
+        id: package_arch
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -274,6 +287,7 @@ jobs:
           pkgver=$pkgver
           pkgrel=$pkgrel
           pkgdesc='Wifite but USB-only & cross-platform.'
+          packager='Github Actions'
           arch=('x86_64')
           url='https://github.com/derv82/wifit3'
           license=('GPL-2.0')
@@ -290,14 +304,17 @@ jobs:
           (cd "$archbuild" && PKGEXT='.pkg.tar.zst' makepkg --noconfirm --cleanbuild --nodeps)
           archpkg=$(find "$archbuild" -maxdepth 1 -name "${pkgname}-${pkgver}-${pkgrel}-x86_64.pkg.tar.*" -print -quit)
           test -n "$archpkg"
-          mv "$archpkg" out/
-          tar --list -f "out/$(basename "$archpkg")"
+          arch_path="out/$(basename "$archpkg")"
+          mv "$archpkg" "$arch_path"
+          tar --list -f "$arch_path"
+          echo "arch_name=$(basename "$arch_path")" >> "$GITHUB_OUTPUT"
+          echo "arch_path=$arch_path" >> "$GITHUB_OUTPUT"
 
-      - name: Upload Linux packages
+      - name: Upload Arch package
         uses: actions/upload-artifact@v7
         with:
-          name: linux-packages
-          path: out/*
+          name: ${{ steps.package_arch.outputs.arch_name }}
+          path: ${{ steps.package_arch.outputs.arch_path }}
           if-no-files-found: error
 
   release:
