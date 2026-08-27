@@ -205,10 +205,27 @@ jobs:
           sudo apt-get install -y software-properties-common
           sudo add-apt-repository -y universe
           sudo apt-get update
-          apt-cache policy pacman-package-manager
           sudo apt-get install -y pacman-package-manager fakeroot binutils file zstd libarchive-tools
           sudo mkdir -p /var/lib/pacman/local
           sudo chmod -R a+rwx /var/lib/pacman
+
+      - name: Resolve package metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v[0-9]* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0.${GITHUB_RUN_NUMBER}"
+          fi
+          {
+            echo "PACKAGE_VERSION=$version"
+            echo "ARCH_PKGVER=${version//-/_}"
+            echo "PACKAGE_REL=1"
+            echo "PACKAGE_DESC=Wifite but USB-only & cross-platform."
+            echo "PACKAGE_URL=https://github.com/derv82/wifit3"
+            echo "PACKAGE_LICENSE=GPL-2.0"
+          } >> "$GITHUB_ENV"
 
       - name: Package .deb (Debian / Ubuntu)
         id: package_deb
@@ -216,11 +233,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v[0-9]* ]]; then
-            version="${GITHUB_REF_NAME#v}"
-          else
-            version="0.0.0.${GITHUB_RUN_NUMBER}"
-          fi
+          version="$PACKAGE_VERSION"
           binary="dist/wifit3-linux-x64"
           chmod +x "$binary"
           mkdir -p out
@@ -239,9 +252,9 @@ jobs:
           Priority: optional
           Architecture: amd64
           Maintainer: derv82
-          Homepage: https://github.com/derv82/wifit3
-          Description: Wifite but USB-only & cross-platform.
-           An userland 802.11 auditing tool. GPL-2.0
+          Homepage: $PACKAGE_URL
+          Description: $PACKAGE_DESC
+           An userland 802.11 auditing tool. $PACKAGE_LICENSE
           EOF
 
           deb_path="out/wifit3_${version}_amd64.deb"
@@ -260,24 +273,18 @@ jobs:
 
       - name: Package .pkg.tar.zst (arch linux)
         id: package_arch
-        shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v[0-9]* ]]; then
-            version="${GITHUB_REF_NAME#v}"
-          else
-            version="0.0.0.${GITHUB_RUN_NUMBER}"
-          fi
-
+          version="$PACKAGE_VERSION"
           binary="dist/wifit3-linux-x64"
           chmod +x "$binary" # i know its redundant but just to be sure
           mkdir -p out
 
           # Arch Linux package. This wraps the prebuilt binary, so use the -bin package name.
           pkgname="wifit3-bin"
-          pkgver="${version//-/_}"
-          pkgrel="1"
+          pkgver="$ARCH_PKGVER"
+          pkgrel="$PACKAGE_REL"
           archbuild="pkg/arch-build"
           rm -rf "$archbuild"
           mkdir -p "$archbuild"
@@ -286,11 +293,11 @@ jobs:
           pkgname=$pkgname
           pkgver=$pkgver
           pkgrel=$pkgrel
-          pkgdesc='Wifite but USB-only & cross-platform.'
+          pkgdesc='$PACKAGE_DESC'
           packager='Github Actions'
           arch=('x86_64')
-          url='https://github.com/derv82/wifit3'
-          license=('GPL-2.0')
+          url='$PACKAGE_URL'
+          license=('$PACKAGE_LICENSE')
           depends=('glibc')
           source=('wifit3-linux-x64')
           sha256sums=('SKIP')
