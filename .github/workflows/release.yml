@@ -204,8 +204,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y software-properties-common
           sudo add-apt-repository -y universe
+
           sudo apt-get update
           sudo apt-get install -y pacman-package-manager fakeroot binutils file zstd libarchive-tools
+
           sudo mkdir -p /var/lib/pacman/local
           sudo chmod -R a+rwx /var/lib/pacman
 
@@ -213,6 +215,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v[0-9]* ]]; then
             version="${GITHUB_REF_NAME#v}"
           else
@@ -261,6 +264,7 @@ jobs:
           dpkg-deb --build --root-owner-group "$debroot" "$deb_path"
           dpkg-deb --info "$deb_path"
           dpkg-deb --contents "$deb_path"
+
           echo "deb_name=$(basename "$deb_path")" >> "$GITHUB_OUTPUT"
           echo "deb_path=$deb_path" >> "$GITHUB_OUTPUT"
 
@@ -309,11 +313,11 @@ jobs:
           EOF
 
           (cd "$archbuild" && PKGEXT='.pkg.tar.zst' makepkg --noconfirm --cleanbuild --nodeps)
-          archpkg=$(find "$archbuild" -maxdepth 1 -name "${pkgname}-${pkgver}-${pkgrel}-x86_64.pkg.tar.*" -print -quit)
-          test -n "$archpkg"
+
+          archpkg="$archbuild/${pkgname}-${pkgver}-${pkgrel}-x86_64.pkg.tar.zst"
           arch_path="out/$(basename "$archpkg")"
           mv "$archpkg" "$arch_path"
-          tar --list -f "$arch_path"
+
           echo "arch_name=$(basename "$arch_path")" >> "$GITHUB_OUTPUT"
           echo "arch_path=$arch_path" >> "$GITHUB_OUTPUT"
 
