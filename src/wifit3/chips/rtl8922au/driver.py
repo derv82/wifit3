@@ -47,7 +47,7 @@ class RTL8922AUDriver(Driver):
     # ships non-DFS only, and a DFS hop hears nothing without a CAC dwell. TODO: 6 GHz (8922a
     # support_bands includes it). [SRC] rtw8922a.c:3210.
     SUPPORTED_CHANNELS = (
-        list(range(1, 14))
+        list(range(1, 15))
         + [36, 40, 44, 48, 149, 153, 157, 161, 165]
     )
 
