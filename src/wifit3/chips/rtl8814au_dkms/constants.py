@@ -328,9 +328,8 @@ rCCK0_TxFilter2 = 0x0A24
 rCCK0_DebugPort = 0x0A28
 
 # Tunable channels @ 20 MHz (the channel-tune logic handles these sub-bands). 2.4 GHz
-# is 1-13 (ch14's CCK-DFIR arm is unported + absent from the captures); 5 GHz is the
-# standard UNII-1/2/2e/3 20 MHz set (the channels airodump hopped in the captures).
-CHANNELS_2G = tuple(range(1, 14))
+# is 1-14; 5 GHz is the standard UNII-1/2/2e/3 20 MHz set.
+CHANNELS_2G = tuple(range(1, 15))
 CHANNELS_5G = (36, 40, 44, 48, 52, 56, 60, 64,
                100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
                149, 153, 157, 161, 165)

@@ -63,19 +63,22 @@ _SW = (0x200, 0x200, 0x200, 0x200)   # 0 dB per-path BB-swing, both bands
 
 
 def test_set_channel_bw_cck_dfir_arms():
-    # channels 1-11 vs 12-13 use different CCK TX-filter values.
+    # channels 1-11 vs 12-13 vs 14 use different CCK TX-filter values.
     rec = Rec()
     chan._phy_sw_chnl(rec, 6, _SW, _SW, chan.C.BAND_ON_2_4G)
     assert ("W32", 0x0A24, 0x090E1317) in rec.ops   # ch<=11 arm
     rec = Rec()
     chan._phy_sw_chnl(rec, 12, _SW, _SW, chan.C.BAND_ON_2_4G)
     assert ("W32", 0x0A24, 0x090E1217) in rec.ops   # ch 12-13 arm
+    rec = Rec()
+    chan._phy_sw_chnl(rec, 14, _SW, _SW, chan.C.BAND_ON_2_4G)
+    assert ("W32", 0x0A24, 0x00000E17) in rec.ops   # ch 14 arm
 
 
 def test_set_channel_bw_rejects_unsupported_channel():
     # Accepts 2.4 GHz + 5 GHz 20 MHz channels; a non-center / out-of-set channel
-    # (e.g. 38, or 2.4G ch14 whose CCK-DFIR arm is unported) is rejected.
-    for bad in (38, 14, 200, 0):
+    # (e.g. 38) is rejected.
+    for bad in (38, 15, 200, 0):
         with pytest.raises(NotImplementedError):
             chan.set_channel_bw(Rec(reads={0x454: 0x80}), bad, (), (), _SW, _SW)
 

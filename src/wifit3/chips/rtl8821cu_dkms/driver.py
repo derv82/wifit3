@@ -37,7 +37,7 @@ from .transport import Rtl8821cuTransport
 
 logger = logging.getLogger(__name__)
 
-CHANNELS_2G = list(range(1, 14))
+CHANNELS_2G = list(range(1, 15))
 # Non-DFS 5 GHz only for now; the capture also tunes DFS 52..144 but set_channel
 # (and the DFS tune path) is a later milestone — see RTL8821CU_DKMS.md.
 CHANNELS_5G = [36, 40, 44, 48, 149, 153, 157, 161, 165]

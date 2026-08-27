@@ -213,9 +213,14 @@ def _switch_channel(t, central_ch: int, cut: int) -> None:
     set_bb_reg(t, 0x0860, 0x1FFE0000, 0x96A)               # clock-offset fc
     if cut == _ODM_CUT_A:                                   # [SRC] :851-852 A-cut LCK fix 0xb8[19]=1
         rf_b8 |= 1 << 19
-    set_bb_reg(t, 0x0A24, _MASKDWORD, t.rega24)            # cached CCK TX filter
-    set_bb_reg(t, 0x0A28, 0x0000FFFF, t.rega28 & 0xFFFF)
-    set_bb_reg(t, 0x0AAC, _MASKDWORD, t.regaac)
+    if central_ch == 14:
+        set_bb_reg(t, 0x0A24, _MASKDWORD, 0x0000b81c)
+        set_bb_reg(t, 0x0A28, 0x0000FFFF, 0x0000)
+        set_bb_reg(t, 0x0AAC, _MASKDWORD, 0x00003667)
+    else:
+        set_bb_reg(t, 0x0A24, _MASKDWORD, t.rega24)            # cached CCK TX filter
+        set_bb_reg(t, 0x0A28, 0x0000FFFF, t.rega28 & 0xFFFF)
+        set_bb_reg(t, 0x0AAC, _MASKDWORD, t.regaac)
     ts = dm.TrxStop()
     dm.stop_ic_trx(t, True, ts)
     write_rf(t, 0x18, rf18)

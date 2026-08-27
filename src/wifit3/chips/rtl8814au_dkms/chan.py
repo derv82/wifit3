@@ -210,8 +210,11 @@ def _phy_sw_chnl(t, channel: int, bb_swing_2g: tuple, bb_swing_5g: tuple,
     if channel <= 14:
         if 1 <= channel <= 11:
             f2, dbg = 0x090E1317, 0x00000204
-        else:                                 # channels 12-13
+        elif 12 <= channel <= 13:
             f2, dbg = 0x090E1217, 0x00000305
+        elif channel == 14:
+            f2, dbg = 0x00000E17, 0x00000000
+
         t.write32(C.rCCK0_TxFilter1, 0x1A1B0030)
         t.write32(C.rCCK0_TxFilter2, f2)
         t.write32(C.rCCK0_DebugPort, dbg)
