@@ -113,7 +113,7 @@ class Rtl8188eusDkmsDriver(Driver):
         raw_thermal = params.efuse_map[0xBA]
         self._eeprom_thermal = 0x18 if raw_thermal == 0xFF else raw_thermal
         self._board = params.board
-        logger.info("RTL8188EUS efuse: crystal_cap=0x%02x mac=%s",
+        logger.debug("RTL8188EUS efuse: crystal_cap=0x%02x mac=%s",
                     params.crystal_cap,
                     params.mac_address.hex(":") if params.mac_address else "<none>")
         # Board-option config log (efuse 0xCA). The reference card is internal PA+LNA;

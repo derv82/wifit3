@@ -66,7 +66,7 @@ def load_firmware_blob() -> bytes:
         raise ValueError(
             f"firmware signature 0x{signature:04x} is not 8188e (expected 0x88e0/family)"
         )
-    logger.info(
+    logger.debug(
         "rtl8188eufw.bin: %d bytes, signature=0x%04x, v%d.%d",
         len(data), signature, major, minor,
     )
@@ -209,7 +209,7 @@ def start_firmware(t: RTL8188EUSTransport) -> None:
     # Wait for firmware to become ready.
     for i in range(RTL8XXXU_FIRMWARE_POLL_MAX):
         if t.read32(REG_MCU_FW_DL) & MCU_WINT_INIT_READY:
-            logger.info("MCU_WINT_INIT_READY set after %d polls (~%d µs)", i + 1, (i + 1) * 100)
+            logger.debug("MCU_WINT_INIT_READY set after %d polls (~%d µs)", i + 1, (i + 1) * 100)
             break
         # Kernel sleeps `udelay(100)` per iteration. asyncio.sleep would be
         # nicer but this function is sync (callable from the bring-up path).

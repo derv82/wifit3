@@ -189,7 +189,7 @@ def load_mac_table(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> int:
         lambda a, d: _cfg_mac(transport, a, d),
         chip_id=RTW_CHIP_TYPE_8812A,
     )
-    logger.info("mac_tbl: dispatched %d write8 ops", n)
+    logger.debug("mac_tbl: dispatched %d write8 ops", n)
     return n
 
 
@@ -199,7 +199,7 @@ def load_bb_table(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> int:
         lambda a, d: _cfg_bb(transport, a, d),
         chip_id=RTW_CHIP_TYPE_8812A,
     )
-    logger.info("bb_tbl: dispatched %d write32 ops", n)
+    logger.debug("bb_tbl: dispatched %d write32 ops", n)
     return n
 
 
@@ -209,7 +209,7 @@ def load_agc_table(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> int:
         lambda a, d: _cfg_agc(transport, a, d),
         chip_id=RTW_CHIP_TYPE_8812A,
     )
-    logger.info("agc_tbl: dispatched %d write32 ops", n)
+    logger.debug("agc_tbl: dispatched %d write32 ops", n)
     return n
 
 
@@ -219,7 +219,7 @@ def load_rf_a_table(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> int:
         rf_a_tbl.TABLE, device_cond(efuse), cfg,
         chip_id=RTW_CHIP_TYPE_8812A,
     )
-    logger.info("rf_a_tbl: dispatched %d RF SIPI writes (path A)", n)
+    logger.debug("rf_a_tbl: dispatched %d RF SIPI writes (path A)", n)
     return n
 
 
@@ -229,7 +229,7 @@ def load_rf_b_table(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> int:
         rf_b_tbl.TABLE, device_cond(efuse), cfg,
         chip_id=RTW_CHIP_TYPE_8812A,
     )
-    logger.info("rf_b_tbl: dispatched %d RF SIPI writes (path B)", n)
+    logger.debug("rf_b_tbl: dispatched %d RF SIPI writes (path B)", n)
     return n
 
 
@@ -562,7 +562,7 @@ def post_mac_init_phy(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> No
 
     # 1219 — read cck_high_power (informational, RX side uses it later).
     val = transport.read32(REG_CCK_RPT_FORMAT)
-    logger.info(
+    logger.debug(
         "cck_high_power flag = %d (REG_CCK_RPT_FORMAT=0x%08x)",
         1 if val & BIT_CCK_RPT_FORMAT else 0, val,
     )
@@ -580,7 +580,7 @@ def post_mac_init_phy(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> No
     )
     transport.write32_set(_REG_RCR, _BIT_APP_PHYSTS)
     transport.write8(_REG_RX_DRVINFO_SZ, _PHY_STATUS_SIZE)
-    logger.info(
+    logger.debug(
         "drv_info_cfg: REG_RCR |= APP_PHYSTS, REG_RX_DRVINFO_SZ=%d → readback=0x%08x / 0x%02x",
         _PHY_STATUS_SIZE,
         transport.read32(_REG_RCR),

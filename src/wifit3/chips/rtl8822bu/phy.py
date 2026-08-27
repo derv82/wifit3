@@ -134,26 +134,26 @@ def load_init_tables(transport: RTL8822BUTransport, efuse: EfuseDefaults) -> Non
         MAC_TABLE, dev, lambda a, d: _do_cfg_mac(transport, a, d),
         chip_id=chip_id,
     )
-    logger.info("loaded MAC table: %d writes", n)
+    logger.debug("loaded MAC table: %d writes", n)
 
     n = parse_tbl_phy_cond(
         BB_TABLE, dev, lambda a, d: _do_cfg_bb(transport, a, d),
         chip_id=chip_id,
     )
-    logger.info("loaded BB  table: %d writes (incl delays)", n)
+    logger.debug("loaded BB  table: %d writes (incl delays)", n)
 
     n = parse_tbl_phy_cond(
         AGC_TABLE, dev, lambda a, d: _do_cfg_agc(transport, a, d),
         chip_id=chip_id,
     )
-    logger.info("loaded AGC table: %d writes", n)
+    logger.debug("loaded AGC table: %d writes", n)
 
     n = parse_tbl_phy_cond(
         RF_A_TABLE, dev,
         lambda a, d: _do_cfg_rf(transport, a, d, path="a"),
         chip_id=chip_id,
     )
-    logger.info("loaded RF_A table: %d writes (incl delays)", n)
+    logger.debug("loaded RF_A table: %d writes (incl delays)", n)
 
     if efuse.antenna_tx_paths > 1 or efuse.antenna_rx_paths > 1:
         n = parse_tbl_phy_cond(
@@ -161,7 +161,7 @@ def load_init_tables(transport: RTL8822BUTransport, efuse: EfuseDefaults) -> Non
             lambda a, d: _do_cfg_rf(transport, a, d, path="b"),
             chip_id=chip_id,
         )
-        logger.info("loaded RF_B table: %d writes (incl delays)", n)
+        logger.debug("loaded RF_B table: %d writes (incl delays)", n)
 
 
 def phy_set_param(transport: RTL8822BUTransport,

@@ -302,14 +302,14 @@ def read_efuse_8812a(transport: RTL8812AUTransport) -> EfuseRead:
     Returns an :class:`EfuseRead` with both raw and derived fields.
     Raises IOError on EFUSE read timeout.
     """
-    logger.info("EFUSE: granting access...")
+    logger.debug("EFUSE: granting access...")
     _efuse_grant(transport, on=True)
     try:
         _switch_efuse_bank_wifi(transport)
-        logger.info("EFUSE: dumping %d physical bytes...", EFUSE_PHYSICAL_SIZE)
+        logger.debug("EFUSE: dumping %d physical bytes...", EFUSE_PHYSICAL_SIZE)
         t0 = time.monotonic()
         phy_map = dump_physical_efuse_map(transport)
-        logger.info("EFUSE: physical dump done in %.0f ms", (time.monotonic() - t0) * 1000)
+        logger.debug("EFUSE: physical dump done in %.0f ms", (time.monotonic() - t0) * 1000)
     finally:
         _efuse_grant(transport, on=False)
 

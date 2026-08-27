@@ -70,7 +70,7 @@ class MT7921AUFirmwareLoader:
     # ------------------------------------------------------------------
 
     async def load_firmware(self) -> bool:
-        logger.info("Starting MT7921AU firmware upload sequence...")
+        logger.debug("Starting MT7921AU firmware upload sequence...")
 
         # Claim the vendor-specific (class 0xFF) interface that owns the bulk EPs.
         # Its number differs per unit (PAU0F=0, AWUS036AXML=3), so detect it.
@@ -79,7 +79,7 @@ class MT7921AUFirmwareLoader:
         # wire, so the device-side toggles stay put; they then desync after ~4
         # packets and the bulk OUT pipe silently NAKs everything afterward.
         iface = self._claim_vendor_interface()
-        logger.info(f"Claimed vendor-specific interface {iface}")
+        logger.debug(f"Claimed vendor-specific interface {iface}")
         await asyncio.sleep(0.2)
 
         # Chip-id read doubles as a control-endpoint liveness check. A COLD chip
@@ -119,7 +119,7 @@ class MT7921AUFirmwareLoader:
             )
             return False
 
-        logger.info("Sending MCU power-on...")
+        logger.debug("Sending MCU power-on...")
         self.transport.send_vendor_request(
             MT_VEND_WRITE_RECIPIENT, MT_VEND_POWER_ON, 0x0000, 0x0001
         )
@@ -128,7 +128,7 @@ class MT7921AUFirmwareLoader:
                                     MT_TOP_MISC2_FW_PWR_ON, attempts=50, delay=0.01):
             logger.error("MCU power-on timeout")
             return False
-        logger.info("MCU powered on.")
+        logger.debug("MCU powered on.")
 
         # Start the single RX reader BEFORE dma_init enables RX_DMA — mirrors the
         # kernel order (mt76u_alloc_queues before mt792xu_dma_init) so a read is
@@ -161,9 +161,9 @@ class MT7921AUFirmwareLoader:
         drained = 0
         while not self.transport._mcu_rx_queue.empty():
             resp = self.transport._mcu_rx_queue.get_nowait()
-            logger.info(f"post-patch MCU drain msg {drained} ({len(resp)} B): {resp[:32].hex()}{'...' if len(resp)>32 else ''}")
+            logger.debug(f"post-patch MCU drain msg {drained} ({len(resp)} B): {resp[:32].hex()}{'...' if len(resp)>32 else ''}")
             drained += 1
-        logger.info(f"post-patch MCU drain: {drained} response(s) consumed")
+        logger.debug(f"post-patch MCU drain: {drained} response(s) consumed")
 
         if not await self._load_ram():
             # _load_ram waits for the FW_START boot event (MCU_EVENT_FW_START,
@@ -179,7 +179,7 @@ class MT7921AUFirmwareLoader:
         if await self._poll_reg(MT_CONN_ON_MISC, MT_TOP_MISC2_FW_N9_RDY,
                                 MT_TOP_MISC2_FW_N9_RDY,
                                 attempts=15, delay=0.1, read_timeout_ms=300):
-            logger.info("FW_N9_RDY confirmed over EP0.")
+            logger.debug("FW_N9_RDY confirmed over EP0.")
         else:
             logger.warning("FW_N9_RDY unconfirmed over EP0 — boot event already "
                            "received, continuing.")
@@ -187,7 +187,7 @@ class MT7921AUFirmwareLoader:
         # FW_DL_EN stays set here. The kernel clears it in mt7921u_mcu_init only
         # AFTER mt7921_run_firmware's tail (get_nic_capability + fw_log_2_host),
         # so the post-boot bring-up (init.post_boot_init) clears it in wire order.
-        logger.info("MT7921AU firmware ready (FW_DL_EN still set for run_firmware tail).")
+        logger.debug("MT7921AU firmware ready (FW_DL_EN still set for run_firmware tail).")
         return True
 
     def _log_boot_diagnostics(self):
@@ -404,7 +404,7 @@ class MT7921AUFirmwareLoader:
                 offs = struct.unpack(">I", sec[4:8])[0]
                 addr = struct.unpack(">I", sec[12:16])[0]
                 length = struct.unpack(">I", sec[16:20])[0]
-                logger.info(f"Patch section {i}: addr=0x{addr:08x} len={length} offs=0x{offs:x}")
+                logger.debug(f"Patch section {i}: addr=0x{addr:08x} len={length} offs=0x{offs:x}")
 
                 # The chip answers PATCH_START_REQ with a generic ack (eid=0x01) on
                 # EP 0x84. Wait for it before streaming the section — the kernel's
@@ -437,7 +437,7 @@ class MT7921AUFirmwareLoader:
                 struct.pack("<I", PATCH_SEM_RELEASE),
             )
 
-        logger.info("ROM patch loaded.")
+        logger.debug("ROM patch loaded.")
         return True
 
     # ------------------------------------------------------------------
@@ -462,7 +462,7 @@ class MT7921AUFirmwareLoader:
         n_region = trailer[2]
         fw_ver = trailer[7:17].rstrip(b"\x00").decode("ascii", errors="replace")
         build_date = trailer[17:32].rstrip(b"\x00").decode("ascii", errors="replace")
-        logger.info(f"WM: chip_id=0x{trailer[0]:02x} n_region={n_region} ver={fw_ver!r} build={build_date!r}")
+        logger.debug(f"WM: chip_id=0x{trailer[0]:02x} n_region={n_region} ver={fw_ver!r} build={build_date!r}")
         if n_region == 0 or n_region > 16:
             logger.error(f"Implausible WM n_region={n_region}")
             return False
@@ -479,10 +479,10 @@ class MT7921AUFirmwareLoader:
             addr = struct.unpack("<I", reg[16:20])[0]
             length = struct.unpack("<I", reg[20:24])[0]
             feature_set = reg[24]
-            logger.info(f"WM region {i}: addr=0x{addr:08x} len={length} feature_set=0x{feature_set:02x}")
+            logger.debug(f"WM region {i}: addr=0x{addr:08x} len={length} feature_set=0x{feature_set:02x}")
 
             if feature_set & FW_FEATURE_NON_DL:
-                logger.info("  → NON_DL, skipping upload")
+                logger.debug("  -> NON_DL, skipping upload")
                 offset += length
                 continue
 
@@ -510,7 +510,7 @@ class MT7921AUFirmwareLoader:
         # bulk-IN event — not the EP0 FW_N9_RDY control poll, which can go dead at
         # the boot handoff — is the authoritative boot signal.
         option = FW_START_OVERRIDE if override_addr else 0
-        logger.info(f"FW_START_REQ (override=0x{override_addr:x}, option=0x{option:x}); "
+        logger.debug(f"FW_START_REQ (override=0x{override_addr:x}, option=0x{option:x}); "
                     "awaiting MCU_EVENT_FW_START...")
         resp = await self.transport.send_mcu_command(
             MCU_CMD_FW_START_REQ,
@@ -521,7 +521,7 @@ class MT7921AUFirmwareLoader:
             logger.error("FW_START_REQ: MCU_EVENT_FW_START never arrived")
             return False
         eid = resp[28] if len(resp) > 28 else None
-        logger.info(f"Firmware booted — MCU_EVENT_FW_START received (eid=0x{eid:02x}).")
+        logger.debug(f"Firmware booted - MCU_EVENT_FW_START received (eid=0x{eid:02x}).")
         return True
 
     # ------------------------------------------------------------------
@@ -540,5 +540,5 @@ class MT7921AUFirmwareLoader:
             sent += cur
             chunk_idx += 1
             await asyncio.sleep(0)
-        logger.info(f"FW_SCATTER {label}: {sent} bytes in {chunk_idx} chunks")
+        logger.debug(f"FW_SCATTER {label}: {sent} bytes in {chunk_idx} chunks")
         return True

@@ -34,9 +34,9 @@ class MT7921AUDriver(Driver):
     re-sync the channel. Cold chips take the full _cold_boot path.
     """
 
-    # Dual-band Wi-Fi 6 radio, 20 MHz primary. 2.4 GHz (1-13) + the 5 GHz 20 MHz
+    # Dual-band Wi-Fi 6 radio, 20 MHz primary. 2.4 GHz (1-14) + the 5 GHz 20 MHz
     # channels of the world regulatory domain (regdomain.CHANNELS_5GHZ).
-    SUPPORTED_CHANNELS = list(range(1, 14)) + [
+    SUPPORTED_CHANNELS = list(range(1, 15)) + [
         36, 40, 44, 48, 149, 153, 157, 161, 165,
     ]
     # Bench (rx_autoack, 2026-07-16): auto-ACKs a spoofed MAC via active monitor on both
@@ -123,7 +123,7 @@ class MT7921AUDriver(Driver):
             misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
         except usb.core.USBError:
             return False
-        logger.info("MT7921AU warm-check: MT_CONN_ON_MISC=0x%x", misc)
+        logger.debug("MT7921AU warm-check: MT_CONN_ON_MISC=0x%x", misc)
         return (misc & MT_TOP_MISC2_FW_N9_RDY) != 0
 
     @staticmethod
@@ -157,7 +157,7 @@ class MT7921AUDriver(Driver):
 
         if progress_cb:
             progress_cb(0.6, "Configuring device...")
-        logger.info("Running MT7921AU post-boot init...")
+        logger.debug("Running MT7921AU post-boot init...")
         self._init_state = await chip_init.post_boot_init(self.transport)
         caps = self._init_state.caps
         self.mac_address = caps.mac
@@ -187,7 +187,7 @@ class MT7921AUDriver(Driver):
         summary = (f"MAC {caps.mac}, antenna_mask 0x{caps.antenna_mask:x} ({n}x{n}), "
                    f"bands 2.4={int(caps.has_2ghz)} 5={int(caps.has_5ghz)} 6={int(caps.has_6ghz)}")
         if caps.is_reference:
-            logger.info("MT7921AU NIC caps: %s", summary)
+            logger.debug("MT7921AU NIC caps: %s", summary)
         else:
             logger.warning("MT7921AU NIC caps [untested variant]: %s (reference: "
                            "antenna_mask 0x3, all bands). Running the ported runtime "

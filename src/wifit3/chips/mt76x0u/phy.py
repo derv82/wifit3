@@ -250,25 +250,25 @@ def phy_rf_init(
       8. DAC reset: rf_set / rf_clear / rf_set MT_RF(0, 73) BIT(7)
       9. VCO cal trigger: rf_set(MT_RF(0, 4), 0x80)
     """
-    logger.info("phy_rf_init: rf_central_tab (%d entries, patched)",
+    logger.debug("phy_rf_init: rf_central_tab (%d entries, patched)",
                 len(RF_CENTRAL_TAB))
     rf_patch_reg_array(mcu, RF_CENTRAL_TAB, is_mt7630=is_mt7630)
 
-    logger.info("phy_rf_init: rf_2g_channel_0_tab (%d entries, patched)",
+    logger.debug("phy_rf_init: rf_2g_channel_0_tab (%d entries, patched)",
                 len(RF_2G_CHANNEL_0_TAB))
     rf_patch_reg_array(mcu, RF_2G_CHANNEL_0_TAB, is_mt7630=is_mt7630)
 
-    logger.info("phy_rf_init: rf_5g_channel_0_tab (%d entries via MCU)",
+    logger.debug("phy_rf_init: rf_5g_channel_0_tab (%d entries via MCU)",
                 len(RF_5G_CHANNEL_0_TAB))
     mcu.random_write(MT_MCU_MEMMAP_RF, RF_5G_CHANNEL_0_TAB)
 
-    logger.info("phy_rf_init: rf_vga_channel_0_tab (%d entries via MCU)",
+    logger.debug("phy_rf_init: rf_vga_channel_0_tab (%d entries via MCU)",
                 len(RF_VGA_CHANNEL_0_TAB))
     mcu.random_write(MT_MCU_MEMMAP_RF, RF_VGA_CHANNEL_0_TAB)
 
     bw_writes = sum(1 for bw_band, _, _ in RF_BW_SWITCH_TAB
                     if _filter_bw_switch_default(bw_band))
-    logger.info("phy_rf_init: rf_bw_switch_tab: writing %d/%d filtered entries",
+    logger.debug("phy_rf_init: rf_bw_switch_tab: writing %d/%d filtered entries",
                 bw_writes, len(RF_BW_SWITCH_TAB))
     for bw_band, reg, value in RF_BW_SWITCH_TAB:
         if _filter_bw_switch_default(bw_band):
@@ -276,7 +276,7 @@ def phy_rf_init(
 
     band_writes = sum(1 for bw_band, _, _ in RF_BAND_SWITCH_TAB
                       if bw_band & RF_G_BAND)
-    logger.info("phy_rf_init: rf_band_switch_tab: writing %d/%d G_BAND entries",
+    logger.debug("phy_rf_init: rf_band_switch_tab: writing %d/%d G_BAND entries",
                 band_writes, len(RF_BAND_SWITCH_TAB))
     for bw_band, reg, value in RF_BAND_SWITCH_TAB:
         if bw_band & RF_G_BAND:
@@ -285,19 +285,19 @@ def phy_rf_init(
     # Freq cal — kernel: `min_t(u8, dev->cal.rx.freq_offset, 0xbf)`.
     # Coerce to unsigned u8 (matches `min_t(u8, ...)` truncation) then min.
     clamped = min(freq_offset & 0xFF, 0xBF)
-    logger.info("phy_rf_init: freq cal MT_RF(0,22) = 0x%02x (freq_offset=%d)",
+    logger.debug("phy_rf_init: freq cal MT_RF(0,22) = 0x%02x (freq_offset=%d)",
                 clamped, freq_offset)
     rf_wr(mcu, MT_RF(0, 22), clamped)
     rf_rr(mcu, MT_RF(0, 22))   # kernel reads back for sync
 
     # DAC reset: set / clear / set BIT(7) of MT_RF(0, 73). [SRC] phy.c:1199-1201.
-    logger.info("phy_rf_init: DAC reset (toggle MT_RF(0,73) BIT(7))")
+    logger.debug("phy_rf_init: DAC reset (toggle MT_RF(0,73) BIT(7))")
     rf_set(mcu, MT_RF(0, 73), 0x80)
     rf_clear(mcu, MT_RF(0, 73), 0x80)
     rf_set(mcu, MT_RF(0, 73), 0x80)
 
     # VCO calibration trigger. [SRC] phy.c:1204.
-    logger.info("phy_rf_init: VCO cal trigger (set MT_RF(0,4) bit 7)")
+    logger.debug("phy_rf_init: VCO cal trigger (set MT_RF(0,4) bit 7)")
     rf_set(mcu, MT_RF(0, 4), 0x80)
 
 
@@ -563,7 +563,7 @@ def phy_set_chan_bbp_params(
         else:
             transport.write32(reg, value)
         writes += 1
-    logger.info("phy_set_chan_bbp_params: %d writes for rf_bw_band=0x%04x "
+    logger.debug("phy_set_chan_bbp_params: %d writes for rf_bw_band=0x%04x "
                 "lna_gain=%d", writes, rf_bw_band, lna_gain)
     return writes
 
@@ -656,7 +656,7 @@ def phy_calibrate(
             val = 0x901
     else:
         val = 0x600
-    logger.info("phy_calibrate: CMD_CAL_FULL param=0x%x", val)
+    logger.debug("phy_calibrate: CMD_CAL_FULL param=0x%x", val)
     mcu.calibrate(MCU_CAL_FULL, val)
     mcu.calibrate(MCU_CAL_LC, 1 if is_5ghz else 0)
     _time.sleep(0.018)          # usleep_range(15000, 20000) ~= 15-20 ms
@@ -721,7 +721,7 @@ def phy_set_chan_rf_params(
     # Per kernel: `rf_band = mt76x0_frequency_plan[i].band;` — overrides
     # the rf_bw_band-derived band with the per-channel-specific band tag.
     rf_band = fi.band
-    logger.info("phy_set_chan_rf_params: ch=%d sdm=%s pll_n=0x%04x "
+    logger.debug("phy_set_chan_rf_params: ch=%d sdm=%s pll_n=0x%04x "
                 "pll_sdm_k=0x%05x rf_band=0x%04x",
                 channel, use_sdm, fi.pll_n, fi.pll_sdm_k, rf_band)
 
@@ -786,7 +786,7 @@ def phy_set_chan_rf_params(
     ]
     if bw_pairs:
         mcu.random_write(MT_MCU_MEMMAP_RF, bw_pairs)
-    logger.info("phy_set_chan_rf_params: rf_bw_switch_tab → %d writes "
+    logger.debug("phy_set_chan_rf_params: rf_bw_switch_tab → %d writes "
                 "(batched) for rf_bw=0x%02x rf_band=0x%04x",
                 len(bw_pairs), rf_bw, rf_band)
 
@@ -799,7 +799,7 @@ def phy_set_chan_rf_params(
     ]
     if band_pairs:
         mcu.random_write(MT_MCU_MEMMAP_RF, band_pairs)
-    logger.info("phy_set_chan_rf_params: rf_band_switch_tab → %d writes (batched)",
+    logger.debug("phy_set_chan_rf_params: rf_band_switch_tab → %d writes (batched)",
                 len(band_pairs))
 
     # Clear MT_RF_MISC bits 2-3 (will be set in the ext_pa branch below).
@@ -831,7 +831,7 @@ def phy_set_chan_rf_params(
         ]
         if ext_pairs:
             mcu.random_write(MT_MCU_MEMMAP_RF, ext_pairs)
-        logger.info("phy_set_chan_rf_params: ext PA enabled → %d ext_pa_tab writes (batched)",
+        logger.debug("phy_set_chan_rf_params: ext PA enabled → %d ext_pa_tab writes (batched)",
                     len(ext_pairs))
 
     # Per-band TX gain / ALC.
@@ -885,7 +885,7 @@ def set_channel_20mhz(
     ch_group_index = 0
     width = NL80211_CHAN_WIDTH_20
 
-    logger.info("set_channel_20mhz: ch=%d band=%s rf_bw_band=0x%04x",
+    logger.debug("set_channel_20mhz: ch=%d band=%s rf_bw_band=0x%04x",
                 channel, "2.4G" if band == NL80211_BAND_2GHZ else "5G",
                 rf_bw_band)
 
@@ -942,7 +942,7 @@ def set_channel_20mhz(
 
     # Step 15: mt76x02_init_agc_gain — read AGC gain init values.
     agc_gain_init = init_agc_gain(transport)
-    logger.info("set_channel_20mhz: agc_gain_init = [0x%02x, 0x%02x]",
+    logger.debug("set_channel_20mhz: agc_gain_init = [0x%02x, 0x%02x]",
                 agc_gain_init[0], agc_gain_init[1])
 
     # Step 16: mt76x0_phy_calibrate(power_on=False).
@@ -950,7 +950,7 @@ def set_channel_20mhz(
                   is_mt7630=is_mt7630)
 
     # Step 17 SKIPPED: mt76x0_phy_set_txpower — TX path only.
-    logger.info("set_channel_20mhz: M4a complete (TX power deferred — RX-only)")
+    logger.debug("set_channel_20mhz: M4a complete (TX power deferred - RX-only)")
 
     # Read post-state for assertions.
     from .constants import MT_BBP_TXBE
@@ -1049,9 +1049,9 @@ def init_bbp(transport: MT76x0UTransport, mcu: MCUChannel) -> int:
     Returns the BBP version from step 1.
     """
     bbp_version = phy_wait_bbp_ready(transport)
-    logger.info("init_bbp: BBP version = 0x%08x", bbp_version)
+    logger.debug("init_bbp: BBP version = 0x%08x", bbp_version)
 
-    logger.info("init_bbp: uploading bbp_init_tab (%d pairs via MCU)",
+    logger.debug("init_bbp: uploading bbp_init_tab (%d pairs via MCU)",
                 len(BBP_INIT_TAB))
     mcu.random_write(MT_MCU_MEMMAP_WLAN, BBP_INIT_TAB)
 
@@ -1059,15 +1059,15 @@ def init_bbp(transport: MT76x0UTransport, mcu: MCUChannel) -> int:
     # [SRC] mt76x0/init.c:97-103.
     want = RF_G_BAND | RF_BW_20
     switch_pairs = filter_bbp_switch_tab(want)
-    logger.info("init_bbp: writing %d filtered bbp_switch_tab entries "
+    logger.debug("init_bbp: writing %d filtered bbp_switch_tab entries "
                 "via direct vendor xfers (mask=0x%04x)",
                 len(switch_pairs), want)
     for reg, value in switch_pairs:
         transport.write32(reg, value)
 
-    logger.info("init_bbp: uploading dcoc_tab (%d pairs via MCU)",
+    logger.debug("init_bbp: uploading dcoc_tab (%d pairs via MCU)",
                 len(DCOC_TAB))
     mcu.random_write(MT_MCU_MEMMAP_WLAN, DCOC_TAB)
 
-    logger.info("init_bbp: done")
+    logger.debug("init_bbp: done")
     return bbp_version

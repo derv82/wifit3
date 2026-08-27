@@ -59,9 +59,9 @@ class MT7925AUFirmwareLoader:
         return None
 
     async def load_firmware(self) -> bool:
-        logger.info("Starting MT7925AU firmware upload...")
+        logger.debug("Starting MT7925AU firmware upload...")
         iface = self._claim_vendor_interface()
-        logger.info(f"Claimed vendor-specific interface {iface}")
+        logger.debug(f"Claimed vendor-specific interface {iface}")
         await asyncio.sleep(0.2)
 
         # Probe pre-DMA (mt7925u_probe): chip-id then hw-rev (mdev->rev is built from
@@ -88,7 +88,7 @@ class MT7925AUFirmwareLoader:
             return False
 
         # mt792xu_mcu_power_on: MT_VEND_POWER_ON (OUT, wValue 0, wIndex 1), then poll.
-        logger.info("MCU power-on...")
+        logger.debug("MCU power-on...")
         self.transport.dev.ctrl_transfer(
             bmRequestType=MT_REQ_OUT_VENDOR, bRequest=MT_VEND_POWER_ON,
             wValue=0x0000, wIndex=0x0001, data_or_wLength=b"")
@@ -116,10 +116,10 @@ class MT7925AUFirmwareLoader:
         if await self._poll_reg(MT_CONN_ON_MISC, MT_TOP_MISC2_FW_N9_RDY,
                                 MT_TOP_MISC2_FW_N9_RDY, attempts=15, delay=0.1,
                                 read_timeout_ms=300):
-            logger.info("FW_N9_RDY confirmed.")
+            logger.debug("FW_N9_RDY confirmed.")
         else:
             logger.warning("FW_N9_RDY unconfirmed over EP0 — FW_START ack already received.")
-        logger.info("MT7925AU firmware ready.")
+        logger.debug("MT7925AU firmware ready.")
         return True
 
     async def _poll_reg(self, addr, mask, expected, attempts=50, delay=0.01,
@@ -251,7 +251,7 @@ class MT7925AUFirmwareLoader:
                 if (sec_type & PATCH_SEC_TYPE_MASK) != PATCH_SEC_TYPE_INFO:
                     continue
                 mode = mcu.get_data_mode(sec_info)
-                logger.info(f"Patch section {i}: addr=0x{addr:08x} len={length} mode=0x{mode:08x}")
+                logger.debug(f"Patch section {i}: addr=0x{addr:08x} len={length} mode=0x{mode:08x}")
                 ack = await self.transport.send_mcu_command(
                     *mcu.init_download(addr, length, mode),
                     wait_resp=True, resp_timeout_ms=3000)
@@ -269,7 +269,7 @@ class MT7925AUFirmwareLoader:
         finally:
             await self.transport.send_mcu_command(*mcu.patch_sem_ctrl(get=False))
 
-        logger.info("ROM patch loaded.")
+        logger.debug("ROM patch loaded.")
         return True
 
     # ---- WM RAM (mt76_connac2_load_ram) -----------------------------------
@@ -299,7 +299,7 @@ class MT7925AUFirmwareLoader:
             addr = struct.unpack_from("<I", reg, 16)[0]
             length = struct.unpack_from("<I", reg, 20)[0]
             feature_set = reg[24]
-            logger.info(f"WM region {i}: addr=0x{addr:08x} len={length} "
+            logger.debug(f"WM region {i}: addr=0x{addr:08x} len={length} "
                         f"feature_set=0x{feature_set:02x}")
             if feature_set & FW_FEATURE_NON_DL:
                 offset += length
@@ -322,7 +322,7 @@ class MT7925AUFirmwareLoader:
         if resp is None:
             logger.error("FW_START_REQ: MCU_EVENT_FW_START never arrived")
             return False
-        logger.info("Firmware booted — FW_START ack received.")
+        logger.info("Firmware booted: FW_START ack received.")
         return True
 
     async def _send_fw_chunks(self, blob: bytes, offset: int, length: int, label: str) -> bool:

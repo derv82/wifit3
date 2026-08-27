@@ -169,7 +169,7 @@ def mac_power_on(transport: RTL8822BUTransport,
         from .constants import REG_SYS_CFG1
         chip_version = transport.read32(REG_SYS_CFG1)
         cut_mask = cut_mask_from_sys_cfg1(chip_version)
-        logger.info("rtw_mac_power_on: chip_version=0x%08x cut_mask=0x%02x",
+        logger.debug("rtw_mac_power_on: chip_version=0x%08x cut_mask=0x%02x",
                     chip_version, cut_mask)
 
     rtw_mac_pre_system_cfg(transport)
@@ -177,7 +177,7 @@ def mac_power_on(transport: RTL8822BUTransport,
     ret = rtw_mac_power_switch(transport, True, cut_mask=cut_mask)
     if ret == -114:  # -EALREADY
         # Cycle: off, then on (mac.c:387..396).
-        logger.info("rtw_mac_power_switch returned -EALREADY; cycling off→on")
+        logger.debug("rtw_mac_power_switch returned -EALREADY; cycling off→on")
         rtw_mac_power_switch(transport, False, cut_mask=cut_mask)
         rtw_mac_pre_system_cfg(transport)
         ret = rtw_mac_power_switch(transport, True, cut_mask=cut_mask)
@@ -292,7 +292,7 @@ def apply_monitor_rx_filter(transport: RTL8822BUTransport) -> None:
     REG_RCR = 0x0608
     transport.write32(REG_RCR, RCR_MONITOR)
     rcr = transport.read32(REG_RCR)
-    logger.info(
+    logger.debug(
         "RX filter readback: RCR=0x%08x (AAP=%d CBSSID_DATA=%d)",
         rcr, 1 if rcr & 0x1 else 0, 1 if rcr & (1 << 6) else 0,
     )

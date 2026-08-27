@@ -180,7 +180,7 @@ class RT2500USBDriver(Driver):
         if self.rf_type == VERIFIED_RF:
             return
         if is_rf_ported(self.rf_type):
-            logger.info("RF chip %s: kernel rf_vals table ported, not yet "
+            logger.debug("RF chip %s: kernel rf_vals table ported, not yet "
                         "hardware-verified on this port (reference is RF2525E)", name)
         else:
             logger.warning("RF chip %s is not one of the six RT2500 RF chips — "
@@ -391,4 +391,4 @@ class RT2500USBDriver(Driver):
             await self._rx_reader.stop()
             self._rx_reader = None
         self._release()
-        logger.info("rt2500usb driver closed")
+        logger.debug("rt2500usb driver closed")

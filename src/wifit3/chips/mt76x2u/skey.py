@@ -109,7 +109,7 @@ def shared_key_table_clear(transport: MT76x2UTransport) -> None:
     for vif_idx in range(MT76_N_VIFS):
         for key_idx in range(MT76_N_KEYS_PER_VIF):
             mt76x02_mac_shared_key_setup(transport, vif_idx, key_idx, key=None)
-    logger.info(
-        "MT7612U: Shared key table cleared (%d vifs × %d keys)",
+    logger.debug(
+        "MT7612U: Shared key table cleared (%d vifs x %d keys)",
         MT76_N_VIFS, MT76_N_KEYS_PER_VIF,
     )

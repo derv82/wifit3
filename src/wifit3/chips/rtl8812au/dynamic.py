@@ -83,7 +83,7 @@ def dig_init(transport: RTL8812AUTransport) -> DigState:
     of chip->dig[0]. No write: the AGC table already set IGI during phy bring-up;
     the watchdog walks it from here."""
     igi = transport.read32(C.REG_RXIGI_A) & C.DIG_IGI_MASK
-    logger.info("DIG init: seeded IGI from REG_RXIGI_A = 0x%02x", igi)
+    logger.debug("DIG init: seeded IGI from REG_RXIGI_A = 0x%02x", igi)
     return DigState(igi=igi, history=[igi] * 4)
 
 
@@ -170,10 +170,10 @@ def pwrtrack_init(transport: RTL8812AUTransport, efuse_thermal: int) -> PwrTrack
     live = read_thermal(transport)
     if efuse_thermal == 0xFF:
         ref = live
-        logger.info("PwrTrack init: efuse thermal=0xff — using live=%d as reference", live)
+        logger.debug("PwrTrack init: efuse thermal=0xff - using live=%d as reference", live)
     else:
         ref = efuse_thermal
-        logger.info("PwrTrack init: ref(efuse)=%d live=%d drift=%d (LCK @ >=%d)",
+        logger.debug("PwrTrack init: ref(efuse)=%d live=%d drift=%d (LCK @ >=%d)",
                     ref, live, abs(live - ref), C.PWRTRACK_IQK_THRESHOLD)
     state = PwrTrackState(thermal_meter_k=ref)
     state.avg.add(live)
@@ -220,6 +220,6 @@ def pwrtrack_step(transport: RTL8812AUTransport, state: PwrTrackState) -> bool:
     if state.ticks_since_lck >= C.LCK_PERIOD_TICKS:
         state.ticks_since_lck = 0
         do_lck(transport)
-        logger.info("PwrTrack: periodic LCK (VCO re-lock); thermal avg=%d", state.avg.read())
+        logger.debug("PwrTrack: periodic LCK (VCO re-lock); thermal avg=%d", state.avg.read())
         return True
     return False

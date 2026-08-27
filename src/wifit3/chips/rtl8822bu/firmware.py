@@ -530,7 +530,7 @@ def download_firmware(
 
     # DMEM section
     dmem = fw_blob[:DMEM_UPLOAD_SIZE]
-    logger.info("uploading DMEM: %d bytes → 0x%08x", len(dmem), DMEM_ADDR)
+    logger.debug("uploading DMEM: %d bytes -> 0x%08x", len(dmem), DMEM_ADDR)
     _section_upload(dev, transport, dmem, DMEM_ADDR,
                     rsvd_pg_head=rsvd_pg_head,
                     progress_cb=progress_cb,
@@ -539,7 +539,7 @@ def download_firmware(
 
     # IMEM section
     imem = fw_blob[DMEM_UPLOAD_SIZE:]
-    logger.info("uploading IMEM: %d bytes → 0x%08x", len(imem), IMEM_ADDR)
+    logger.debug("uploading IMEM: %d bytes -> 0x%08x", len(imem), IMEM_ADDR)
     _section_upload(dev, transport, imem, IMEM_ADDR,
                     rsvd_pg_head=rsvd_pg_head,
                     progress_cb=progress_cb,

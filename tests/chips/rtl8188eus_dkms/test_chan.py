@@ -65,4 +65,4 @@ def test_set_channel_preserves_upper_bits_and_steps_channel():
 
 
 def test_channels_2g():
-    assert chan.CHANNELS_2G == list(range(1, 14))
+    assert chan.CHANNELS_2G == list(range(1, 15))

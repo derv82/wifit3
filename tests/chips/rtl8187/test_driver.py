@@ -68,9 +68,8 @@ def test_supported_ids_are_8187L_only():
 
 
 def test_supported_channels_are_2g_only():
-    # Channel 14 is JP-only and intentionally left out — match the
-    # behaviour of the other 2.4 GHz drivers.
-    assert RTL8187Driver.SUPPORTED_CHANNELS == list(range(1, 14))
+    # 2.4 GHz only (now including ch14, JP-only CCK); no 5 GHz radio.
+    assert RTL8187Driver.SUPPORTED_CHANNELS == list(range(1, 15))
 
 
 def test_detect_chip_variant_default_8187L_vB():

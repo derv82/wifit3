@@ -59,11 +59,11 @@ FW_FILE_FALLBACK = ASSETS_DIR / "mt7610u_linux-firmware.bin"
 class MT76x0UDriver(Driver):
     """Driver for MT7610U-family USB cards (e.g. Alfa AWUS036ACHM). WIRE-verified on 0e8d:7610."""
 
-    # Same channel-set assumption as mt76x2u: 2.4 GHz 1..13 + non-DFS 5 GHz.
+    # Same channel-set assumption as mt76x2u: 2.4 GHz 1..14 + non-DFS 5 GHz.
     # The MT7610U is single-stream (1T1R) but covers both bands. Refine when
     # M2 channel tuning lands; for now the list only matters for the UI.
     SUPPORTED_CHANNELS = (
-        list(range(1, 14))
+        list(range(1, 15))
         + [36, 40, 44, 48]
         + [149, 153, 157, 161, 165]
     )
@@ -334,7 +334,7 @@ class MT76x0UDriver(Driver):
                     self.mcu_smoke["via_vendor_read"], self.mcu_smoke["via_mcu_read"],
                 )
                 return False
-            logger.info(
+            logger.debug(
                 "MT7610U: MCU CMD_RANDOM_READ round-trip OK "
                 "(MAC_CSR0 via MCU = 0x%08x)", self.mcu_smoke["via_mcu_read"],
             )
@@ -381,7 +381,7 @@ class MT76x0UDriver(Driver):
             logger.error("MT7610U: wait_for_txrx_idle timed out")
             return False
         self.mac_status_after_init = self.transport.read32(MT_MAC_STATUS)
-        logger.info("MT7610U: MAC_STATUS after init = 0x%08x (TX|RX idle)",
+        logger.debug("MT7610U: MAC_STATUS after init = 0x%08x (TX|RX idle)",
                     self.mac_status_after_init)
 
         # ---- M3b: init_bbp [SRC] mt76x0/init.c:192.
@@ -392,13 +392,13 @@ class MT76x0UDriver(Driver):
         except (PHYInitError, MCUError, usb.core.USBError) as e:
             logger.error("MT7610U: init_bbp failed: %s", e)
             return False
-        logger.info("MT7610U: BBP version = 0x%08x", self.bbp_version)
+        logger.debug("MT7610U: BBP version = 0x%08x", self.bbp_version)
 
         # ---- M3c step 13: cache RX_FILTR_CFG. [SRC] mt76x0/init.c:196 —
         # `dev->mt76.rxfilter = mt76_rr(dev, MT_RX_FILTR_CFG);`
         try:
             self.rxfilter_default = self.transport.read32(MT_RX_FILTR_CFG)
-            logger.info("MT7610U: RX_FILTR_CFG default = 0x%08x",
+            logger.debug("MT7610U: RX_FILTR_CFG default = 0x%08x",
                         self.rxfilter_default)
         except usb.core.USBError as e:
             logger.error("MT7610U: RX_FILTR_CFG read failed: %s", e)
@@ -519,7 +519,7 @@ class MT76x0UDriver(Driver):
                 (MT_TXOP_TRUN_EN_DEFAULT << MT_TXOP_TRUN_EN_SHIFT)
                 | (MT_TXOP_EXT_CCA_DLY_DEFAULT << MT_TXOP_EXT_CCA_DLY_SHIFT),
             )
-            logger.info("MT7610U: TXOP_CTRL_CFG + US_CYC_CFG written "
+            logger.debug("MT7610U: TXOP_CTRL_CFG + US_CYC_CFG written "
                         "(EDCA TXOP grants now possible)")
         except usb.core.USBError as e:
             logger.error("MT7610U: TXOP/US_CYC write failed: %s", e)
@@ -550,7 +550,7 @@ class MT76x0UDriver(Driver):
                 MT_RX_FILTR_CFG_PROMISC | MT_RX_FILTR_CFG_OTHER_BSS
             )
             self.transport.write32(MT_RX_FILTR_CFG, monitor_filter)
-            logger.info(
+            logger.debug(
                 "MT7610U: RX_FILTR_CFG = 0x%08x (monitor — DROP_UC_NOME + "
                 "DROP_OTHER_BSS bits cleared; was 0x%08x default)",
                 monitor_filter, base,
@@ -576,7 +576,7 @@ class MT76x0UDriver(Driver):
                 # Plain MAC upper 2 bytes — no U2ME_MASK, no AP-mode bits.
                 self.transport.write32(MT_MAC_ADDR_DW1, mac_hi)
                 self.transport.write32(MT_MAC_BSSID_DW1, mac_hi)
-                logger.info(
+                logger.debug(
                     "MT7610U: MT_MAC_ADDR_DW1=0x%08x, MT_MAC_BSSID_DW1=0x%08x "
                     "(U2ME_MASK + MBSS_MODE/LOCAL/MBEACON_N cleared for monitor)",
                     mac_hi, mac_hi,
@@ -599,7 +599,7 @@ class MT76x0UDriver(Driver):
             from .phy import phy_calibrate
             phy_calibrate(self.transport, self.mcu, channel=6, power_on=True,
                           is_mt7630=self.is_mt7630)
-            logger.info("MT7610U: initial phy_calibrate(power_on=True) OK")
+            logger.debug("MT7610U: initial phy_calibrate(power_on=True) OK")
         except (MCUError, usb.core.USBError) as e:
             logger.error("MT7610U: initial phy_calibrate failed: %s", e)
             return False
@@ -635,7 +635,7 @@ class MT76x0UDriver(Driver):
                         efuse_full=self.efuse_full, is_mt7630=self.is_mt7630,
                     )
                 self.current_channel = channel
-                logger.info("MT7610U: set_channel(%d) OK", channel)
+                logger.debug("MT7610U: set_channel(%d) OK", channel)
                 WIRE_LOG.marker(f"end set_channel({channel}) OK")
                 return True
             except (PHYInitError, MCUError, usb.core.USBError) as e:
@@ -667,7 +667,7 @@ class MT76x0UDriver(Driver):
             MT_MAC_SYS_CTRL,
             MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX,
         )
-        logger.info("MT7610U: MAC TRX enabled "
+        logger.debug("MT7610U: MAC TRX enabled "
                     "(MAC_SYS_CTRL = ENABLE_TX | ENABLE_RX = 0x0C)")
 
     def _drain_bulk_in_to_empty(self, max_iters: int = 32,
@@ -976,7 +976,7 @@ class MT76x0UDriver(Driver):
         monitor, which makes the chip EMIT ACKs.)"""
         loop = asyncio.get_running_loop()
         new = await loop.run_in_executor(None, self._set_ack_admit, True)
-        logger.info("MT7610U RX-ACK admit ON (RX_FILTR_CFG=0x%08x, ACK bit clear)", new)
+        logger.debug("MT7610U RX-ACK admit ON (RX_FILTR_CFG=0x%08x, ACK bit clear)", new)
 
     async def _disable_rx_acks(self) -> None:
         """Restore the default monitor RX filter (re-set MT_RX_FILTR_CFG_ACK), matching

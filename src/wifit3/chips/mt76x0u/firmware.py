@@ -149,7 +149,7 @@ class FirmwareUploader:
         Per [[feedback_port_all_cases]] all branches are ported here.
         """
         val = self.t.read32(MT_WLAN_FUN_CTRL)
-        logger.info("chip_onoff(enable=%s, reset=%s) %s: initial WLAN_FUN_CTRL=0x%08x  "
+        logger.debug("chip_onoff(enable=%s, reset=%s) %s: initial WLAN_FUN_CTRL=0x%08x  "
                     "(WLAN_EN=%d, WLAN_CLK_EN=%d)",
                     enable, reset, label, val,
                     1 if val & MT_WLAN_FUN_CTRL_WLAN_EN else 0,

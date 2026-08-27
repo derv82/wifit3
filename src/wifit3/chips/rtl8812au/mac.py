@@ -434,7 +434,7 @@ def apply_monitor_rx_filter(transport: RTL8812AUTransport) -> None:
     """
     transport.write32(REG_RCR, RCR_MONITOR)
     rcr = transport.read32(REG_RCR)
-    logger.info(
+    logger.debug(
         "RX filter readback: RCR=0x%08x (AAP=%d CBSSID_DATA=%d)",
         rcr, 1 if rcr & 0x1 else 0, 1 if rcr & (1 << 6) else 0,
     )
@@ -458,7 +458,7 @@ def configure_rx_aggregation(transport: RTL8812AUTransport, *, log: bool = True)
     transport.write16(REG_RXDMA_AGG_PG_TH, val16)
     transport.write8_set(REG_TXDMA_PQ_MAP, BIT_RXDMA_AGG_EN)
     if log:
-        logger.info(
+        logger.debug(
             "RX-DMA aggregation armed (monitor): REG_RXDMA_AGG_PG_TH=0x%04x, "
             "BIT_RXDMA_AGG_EN set in REG_TXDMA_PQ_MAP", val16,
         )

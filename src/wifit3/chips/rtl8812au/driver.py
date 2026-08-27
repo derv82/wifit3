@@ -123,9 +123,9 @@ class RTL8812AUDriver(Driver):
     and 40/80 MHz bandwidths are M-LATER.
     """
 
-    # 2.4 GHz channels 1..13 + non-DFS 5 GHz (UNII-1 + UNII-3). DFS channels
+    # 2.4 GHz channels 1..14 + non-DFS 5 GHz (UNII-1 + UNII-3). DFS channels
     # are excluded by default to avoid the regulator-required clearance.
-    SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
+    SUPPORTED_CHANNELS = list(range(1, 15)) + list(CHANNELS_5G_NON_DFS)
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
@@ -185,7 +185,7 @@ class RTL8812AUDriver(Driver):
             raise IOError(f"set_configuration failed: {e}") from e
         usb.util.claim_interface(self.dev, 0)
         self._claimed = True
-        logger.info("claimed USB interface 0")
+        logger.debug("claimed USB interface 0")
 
     def _release(self) -> None:
         if not self._claimed:
@@ -408,7 +408,7 @@ class RTL8812AUDriver(Driver):
         for _ in range(attempts):
             data = await loop.run_in_executor(None, _try_read)
             if data:
-                logger.info("RX smoke test: got %d bytes — pipe is alive", len(data))
+                logger.debug("RX smoke test: got %d bytes - pipe is alive", len(data))
                 return True
         return False
 

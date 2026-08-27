@@ -40,7 +40,7 @@ USB_PID_T3U_PLUS = 0x0138
 _DEFAULT_CHANNEL = 1
 _HEAL_5G_CHANNEL = 36                           # 5 GHz channel used to re-cycle a stuck cold synth
 _BULK_OUT_EP_TX = 0x05                          # 8822b bulk-OUT (FW/TX)
-CHANNELS_2G = list(range(1, 14))
+CHANNELS_2G = list(range(1, 15))
 CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
 # Scan set excludes the DFS band (52-144): passive-scan-only, radar-shared, home APs avoid it.

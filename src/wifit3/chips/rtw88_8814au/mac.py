@@ -165,7 +165,7 @@ def mac_power_on(transport: RTL8814AUTransport,
     if cut_mask is None:
         chip_version = transport.read32(REG_SYS_CFG1)
         cut_mask = cut_mask_from_sys_cfg1(chip_version)
-        logger.info("mac_power_on: chip_version=0x%08x cut_mask=0x%02x",
+        logger.debug("mac_power_on: chip_version=0x%08x cut_mask=0x%02x",
                     chip_version, cut_mask)
 
     rtw_mac_pre_system_cfg(transport)

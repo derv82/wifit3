@@ -97,12 +97,12 @@ class RT2800USBDriver(Driver):
 
     #     0x3572 silicon (RT3572 / AWUS051NH v2) → 2.4 + 5 GHz non-DFS
     _CHANNELS_BY_CHIP: dict = {
-        "rt3572": list(range(1, 14)) + list(CHANNELS_5G_NON_DFS),
+        "rt3572": list(range(1, 15)) + list(CHANNELS_5G_NON_DFS),
     }
     # Class-level fallback = union of all variants. Used only if a hint is
     # missing (e.g. test code instantiates without going through
     # from_usb_device). Instance __init__ overlays the per-chip list.
-    SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
+    SUPPORTED_CHANNELS = list(range(1, 15)) + list(CHANNELS_5G_NON_DFS)
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
@@ -238,11 +238,7 @@ class RT2800USBDriver(Driver):
             self.is_warm = warm
             logger.info("is_warm: %s", warm)
             if warm:
-                logger.info(
-                    "warm chip — re-running FW upload anyway (M2a; warm "
-                    "short-circuit will land once M2b/c stabilize the "
-                    "post-init register state)"
-                )
+                logger.info("warm chip, re-running FW upload anyway")
 
             _progress(0.40, "Uploading rt2870.bin firmware + MCU boot")
             fw_bytes = await loop.run_in_executor(None, load_firmware_blob)
@@ -264,7 +260,7 @@ class RT2800USBDriver(Driver):
             pbf = await loop.run_in_executor(None, self.transport.read32, PBF_SYS_CTRL)
             if not (pbf & PBF_SYS_CTRL_READY):
                 raise BringUpError("firmware", f"post-FW PBF.READY not set (PBF_SYS_CTRL=0x{pbf:08x})")
-            logger.info("post-FW PBF_SYS_CTRL=0x%08x — READY latched", pbf)
+            logger.debug("post-FW PBF_SYS_CTRL=0x%08x - READY latched", pbf)
 
             # rt2800usb_init_registers (the USB-reset drv hook) is nested inside
             # init_registers now (matching rt2800_init_registers: disable_wpdma →
@@ -275,7 +271,7 @@ class RT2800USBDriver(Driver):
                 eeprom_buf = await loop.run_in_executor(None, read_eeprom_efuse, self.transport)
                 self._eeprom = parse_eeprom(eeprom_buf)
                 self.mac_address = ":".join(f"{b:02x}" for b in self._eeprom.mac_address)
-                logger.info(
+                logger.debug(
                     "EFUSE: MAC=%s, lna_gain_bg=%d, freq_offset=%d, "
                     "nic_conf0=0x%04x, nic_conf1=0x%04x",
                     self.mac_address, self._eeprom.lna_gain_bg,
@@ -378,7 +374,7 @@ class RT2800USBDriver(Driver):
             except (IOError, usb.core.USBError, NotImplementedError) as e:
                 raise BringUpError("init_rfcsr", str(e)) from e
             if self._rf_cal is not None:
-                logger.info(
+                logger.debug(
                     "RF filter cal: bw20=0x%02x bw40=0x%02x bbp25=0x%02x bbp26=0x%02x",
                     self._rf_cal.calibration_bw20, self._rf_cal.calibration_bw40,
                     self._rf_cal.bbp25, self._rf_cal.bbp26,
@@ -430,7 +426,7 @@ class RT2800USBDriver(Driver):
                 self._xtal_40mhz = await loop.run_in_executor(
                     None, is_xtal_40mhz, self.transport
                 )
-                logger.info(
+                logger.debug(
                     "RT5592 xtal: %s MHz (MAC_DEBUG_INDEX.XTAL=%d)",
                     "40" if self._xtal_40mhz else "20", int(self._xtal_40mhz),
                 )
@@ -695,7 +691,7 @@ class RT2800USBDriver(Driver):
         except usb.core.USBError as e:
             logger.error("rt2800usb inject_frame USBError: %s", e)
             return False
-        logger.debug("inject_frame: ch=%d len=%d txwi=%dB phymode=%d bulk-OUT accepted %d bytes",
+        logger.trace("inject_frame: ch=%d len=%d txwi=%dB phymode=%d bulk-OUT accepted %d bytes",
                      self.current_channel, len(frame_bytes), txwi_sz, phymode, sent)
         if logger.isEnabledFor(logging.DEBUG):
             await loop.run_in_executor(None, self._dump_tx_counters, "post-inject")
@@ -816,4 +812,4 @@ class RT2800USBDriver(Driver):
             await self._rx_reader.stop()
             self._rx_reader = None
         self._release()
-        logger.info("rt2800usb driver closed")
+        logger.debug("rt2800usb driver closed")

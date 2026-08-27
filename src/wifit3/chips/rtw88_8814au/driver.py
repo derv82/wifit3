@@ -23,6 +23,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
+from wifit3.chips import log_trace
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
@@ -59,7 +60,7 @@ class RTL8814AUDriver(Driver):
 
     # 2.4 GHz 1..13 + non-DFS 5 GHz. Channel tune lands in M3; this advertises
     # the chip's reach for when WlanInterface.start_hopping consumes it.
-    SUPPORTED_CHANNELS = list(range(1, 14)) + [36, 40, 44, 48, 149, 153, 157, 161, 165]
+    SUPPORTED_CHANNELS = list(range(1, 15)) + [36, 40, 44, 48, 149, 153, 157, 161, 165]
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
@@ -111,7 +112,7 @@ class RTL8814AUDriver(Driver):
             raise IOError(f"set_configuration failed: {e}") from e
         usb.util.claim_interface(self.dev, 0)
         self._claimed = True
-        logger.info("claimed USB interface 0")
+        logger.debug("claimed USB interface 0")
 
     def _release(self) -> None:
         if not self._claimed:
@@ -152,7 +153,7 @@ class RTL8814AUDriver(Driver):
             None, self.transport.read32, REG_SYS_CFG1
         )
         cut_mask = cut_mask_from_sys_cfg1(chip_version)
-        logger.info("REG_SYS_CFG1=0x%08x cut_mask=0x%02x", chip_version, cut_mask)
+        logger.debug("REG_SYS_CFG1=0x%08x cut_mask=0x%02x", chip_version, cut_mask)
 
         # M1 — power-on + FW upload. Cold only; a warm chip already has FW
         # running (is_chip_warm), and re-powering would reset it.
@@ -179,7 +180,7 @@ class RTL8814AUDriver(Driver):
         await loop.run_in_executor(
             None, lambda: rtw_init_trx_cfg(self.transport, bulkout)
         )
-        logger.info("RTL8814AU M2: TRX/LLT init done (%d bulk-OUT eps)", bulkout)
+        logger.debug("RTL8814AU M2: TRX/LLT init done (%d bulk-OUT eps)", bulkout)
 
         _progress(0.85, "Reading EFUSE (rfe_option, MAC, crystal_cap)")
         er = await loop.run_in_executor(None, read_efuse, self.transport)
@@ -229,7 +230,7 @@ class RTL8814AUDriver(Driver):
                 if attempt:
                     logger.info("RTL8814AU: RF came up after %d re-init(s)", attempt)
                 break
-            logger.warning("RTL8814AU: RF-deaf on attempt %d/%d — re-rolling phy",
+            logger.warning("RTL8814AU: RF-deaf on attempt %d/%d - re-rolling phy",
                            attempt + 1, _PHY_RF_ATTEMPTS)
         if not alive:
             raise BringUpError(
@@ -244,7 +245,7 @@ class RTL8814AUDriver(Driver):
         # count every 2 s (what the kernel does; we didn't). Keeps RX sensitive
         # without the static-gain deaf lottery.
         self._watchdog_task = asyncio.create_task(self._dig_watchdog())
-        logger.info("RTL8814AU M5: RX online (monitor) + DIG watchdog.")
+        logger.debug("RTL8814AU M5: RX online (monitor) + DIG watchdog.")
         self._log_rx_dma_state("online")
         _progress(1.00, "RTL8814AU online (monitor RX; inject pending)")
         return True
@@ -260,6 +261,8 @@ class RTL8814AUDriver(Driver):
         DMA — or has the BB itself gone dead? The filter readback flags whether
         RCR/RXFLTMAP drifted from what mac_init_for_rx wrote. All read-only."""
         if not self._rx_stats:
+            return
+        if not logger.isEnabledFor(log_trace.TRACE):
             return
         try:
             cr = self.transport.read32(C.REG_CR)
@@ -279,13 +282,13 @@ class RTL8814AUDriver(Driver):
         flt_bad = "" if (flt0, flt1, flt2) == (
             C.RXFLTMAP0_8814A, C.RXFLTMAP1_8814A, C.RXFLTMAP2_8814A) else " !=init"
         crc_str = "" if crc_ok is None else f" BB-crc-ok(2s)={crc_ok}"
-        logger.info(
+        logger.debug(
             "RX-DMA state [%s]: CR=0x%08x(rxdma_en=%d hci_rxdma=%d macrxen=%d) "
             "RXPKT_NUM=0x%08x(idle=%d) PQ_MAP=0x%08x(agg_en=%d) BNDY=0x%04x MODE=0x%02x%s",
             tag, cr, bool(cr & BIT_RXDMA_EN), bool(cr & BIT_HCI_RXDMA_EN),
             bool(cr & BIT_MACRXEN), pkt, bool(pkt & C.BIT_RXDMA_IDLE),
             pq, bool(pq & C.BIT_RXDMA_AGG_EN), bndy, mode, crc_str)
-        logger.info(
+        logger.debug(
             "RX filter [%s]: RCR=0x%08x(aap=%d)%s FLTMAP=%04x/%04x/%04x%s",
             tag, rcr, bool(rcr & 0x1), rcr_bad, flt0, flt1, flt2, flt_bad)
 

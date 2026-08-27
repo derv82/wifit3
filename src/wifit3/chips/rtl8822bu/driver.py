@@ -66,8 +66,8 @@ logger = logging.getLogger(__name__)
 class RTL8822BUDriver(Driver):
     """Driver for Realtek RTL8822BU (TP-Link T3U, ASUS USB-AC55, Edimax, ...)."""
 
-    # 2.4 GHz channels 1..13 + non-DFS 5 GHz (UNII-1 + UNII-3).
-    SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
+    # 2.4 GHz channels 1..14 + non-DFS 5 GHz (UNII-1 + UNII-3).
+    SUPPORTED_CHANNELS = list(range(1, 15)) + list(CHANNELS_5G_NON_DFS)
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
@@ -117,7 +117,7 @@ class RTL8822BUDriver(Driver):
             raise IOError(f"set_configuration failed: {e}") from e
         usb.util.claim_interface(self.dev, 0)
         self._claimed = True
-        logger.info("claimed USB interface 0")
+        logger.debug("claimed USB interface 0")
 
     def _reset_bulk_pipes(self) -> None:
         eps = [self._bulk_in_ep] if self._bulk_in_ep is not None else []
@@ -165,10 +165,10 @@ class RTL8822BUDriver(Driver):
             _progress(0.05, "Probing chip state")
             warm = await loop.run_in_executor(None, is_chip_warm, self.transport)
             if warm:
-                logger.info("RTL8822BU is WARM — reattaching to running session")
+                logger.info("RTL8822BU is WARM, reattaching to running session")
                 return await self._warm_reattach(_progress)
 
-            logger.info("RTL8822BU is COLD — running full bring-up")
+            logger.info("RTL8822BU is COLD, running full bring-up")
             return await self._cold_bring_up(_progress)
 
         except (IOError, usb.core.USBError, NotImplementedError) as e:
@@ -182,7 +182,7 @@ class RTL8822BUDriver(Driver):
             None, self.transport.read32, REG_SYS_CFG1
         )
         cut_mask = cut_mask_from_sys_cfg1(chip_version)
-        logger.info("REG_SYS_CFG1=0x%08x cut_mask=0x%02x", chip_version, cut_mask)
+        logger.debug("REG_SYS_CFG1=0x%08x cut_mask=0x%02x", chip_version, cut_mask)
 
         _progress(0.15, "MAC power-on")
         await loop.run_in_executor(
@@ -304,7 +304,7 @@ class RTL8822BUDriver(Driver):
         for _ in range(attempts):
             data = await loop.run_in_executor(None, _try_read)
             if data:
-                logger.info("RX smoke test: got %d bytes — pipe is alive", len(data))
+                logger.debug("RX smoke test: got %d bytes - pipe is alive", len(data))
                 return True
         return False
 

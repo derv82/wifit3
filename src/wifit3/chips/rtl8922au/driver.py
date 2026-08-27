@@ -147,7 +147,7 @@ class RTL8922AUDriver(Driver):
         await self._p(progress_cb, 0.10, "Reading chip version")
         ver = mac.read_chip_ver(self.transport)
         self.transport.cv = ver["cv"]
-        logger.info("RTL8922AU: cv=0x%x acv=0x%x cid=0x%x aid=0x%x",
+        logger.debug("RTL8922AU: cv=0x%x acv=0x%x cid=0x%x aid=0x%x",
                     ver["cv"], ver["acv"], ver["cid"], ver["aid"])
         await self._p(progress_cb, 0.15, "MAC power-on")
         mac.mac_pwr_on(self.transport, ver["cv"])

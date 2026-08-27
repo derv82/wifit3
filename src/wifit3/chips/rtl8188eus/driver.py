@@ -134,10 +134,10 @@ class RTL8188EUSDriver(Driver):
             warm = await loop.run_in_executor(None, is_chip_warm, self.transport)
 
             if warm:
-                logger.info("RTL8188EUS is WARM — reattaching to running session")
+                logger.info("RTL8188EUS is WARM, reattaching to running session")
                 return await self._warm_reattach(_update)
 
-            logger.info("RTL8188EUS is COLD — running full bring-up")
+            logger.info("RTL8188EUS is COLD, running full bring-up")
             return await self._cold_bring_up(_update)
         except Exception as e:
             raise BringUpError("bring-up", str(e)) from e
@@ -203,7 +203,7 @@ class RTL8188EUSDriver(Driver):
 
         _update(0.10, "Reading chip ID...")
         sys_cfg = await loop.run_in_executor(None, self.transport.read32, REG_SYS_CFG)
-        logger.info("REG_SYS_CFG = 0x%08x", sys_cfg)
+        logger.debug("REG_SYS_CFG = 0x%08x", sys_cfg)
 
         _update(0.15, "Power on (disabled -> emu -> active)...")
         await loop.run_in_executor(None, self._power_on)
@@ -380,7 +380,7 @@ class RTL8188EUSDriver(Driver):
         for _ in range(attempts):
             data = await loop.run_in_executor(None, _try_read)
             if data:
-                logger.info("RX smoke test: got %d bytes — pipe alive", len(data))
+                logger.debug("RX smoke test: got %d bytes - pipe alive", len(data))
                 return True
         return False
 

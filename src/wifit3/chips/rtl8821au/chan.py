@@ -148,7 +148,7 @@ def set_channel_2g_20mhz(
     """
     if not (1 <= channel <= 14):
         raise ValueError(f"2.4 GHz channel must be 1..14, got {channel}")
-    logger.info("set_channel_2g_20mhz: ch=%d primary_idx=%d", channel, primary_chan_idx)
+    logger.debug("set_channel_2g_20mhz: ch=%d primary_idx=%d", channel, primary_chan_idx)
     _switch_channel(transport, channel)
     _post_set_bw_mode_20mhz(transport, primary_chan_idx)
     _set_channel_rf_20mhz(transport)
@@ -182,7 +182,7 @@ def set_channel_5g_20mhz(
     """
     if channel not in CHANNELS_5G_ALL:
         raise ValueError(f"unsupported 5 GHz channel: {channel}")
-    logger.info("set_channel_5g_20mhz: ch=%d primary_idx=%d", channel, primary_chan_idx)
+    logger.debug("set_channel_5g_20mhz: ch=%d primary_idx=%d", channel, primary_chan_idx)
     _switch_channel(transport, channel)
     _post_set_bw_mode_20mhz(transport, primary_chan_idx)
     _set_channel_rf_20mhz(transport)

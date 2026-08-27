@@ -142,4 +142,4 @@ def set_channel_2g_20mhz(t: RTL8188EUSTransport, channel: int) -> None:
     val32 |= MODE_AG_BW_20MHZ_8723B
     write_rfreg(t, RF_A, RF6052_REG_MODE_AG, val32)
 
-    logger.info("tuned to channel %d @ 20 MHz", channel)
+    logger.debug("tuned to channel %d @ 20 MHz", channel)

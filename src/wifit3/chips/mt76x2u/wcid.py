@@ -99,4 +99,4 @@ def wcid_table_clear(transport: MT76x2UTransport) -> None:
     """
     for i in range(MT76_N_WCIDS):
         mt76x02_mac_wcid_setup(transport, i, vif_idx=0, mac=None)
-    logger.info("MT7612U: WCID table cleared (%d slots)", MT76_N_WCIDS)
+    logger.debug("MT7612U: WCID table cleared (%d slots)", MT76_N_WCIDS)

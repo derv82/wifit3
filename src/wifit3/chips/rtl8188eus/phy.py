@@ -201,16 +201,16 @@ def init_phy_bb(t: RTL8188EUSTransport) -> None:
     # not OR-in)
     t.write8(REG_SYS_FUNC, SYS_FUNC_USBA | SYS_FUNC_USBD | SYS_FUNC_BB_GLB_RSTN | SYS_FUNC_BBRSTB)
 
-    logger.info("loading PHY_INIT_TABLE_8188E (%d entries)", len(PHY_INIT_TABLE_8188E))
+    logger.debug("loading PHY_INIT_TABLE_8188E (%d entries)", len(PHY_INIT_TABLE_8188E))
     init_phy_regs(t, PHY_INIT_TABLE_8188E)
 
-    logger.info("loading AGC_TABLE_8188E (%d entries)", len(AGC_TABLE_8188E))
+    logger.debug("loading AGC_TABLE_8188E (%d entries)", len(AGC_TABLE_8188E))
     init_phy_regs(t, AGC_TABLE_8188E)
 
 
 def init_phy_rf_8188e(t: RTL8188EUSTransport) -> None:
     """Port of `rtl8188eu_init_phy_rf` (8188e.c:605-608)."""
-    logger.info("loading RADIO_A_INIT_TABLE_8188E (%d entries)", len(RADIO_A_INIT_TABLE_8188E))
+    logger.debug("loading RADIO_A_INIT_TABLE_8188E (%d entries)", len(RADIO_A_INIT_TABLE_8188E))
     init_phy_rf(t, RADIO_A_INIT_TABLE_8188E, RF_A)
 
 
@@ -330,7 +330,7 @@ def set_tx_power(
     t.write32(REG_TX_AGC_A_MCS11_MCS08, mcs)
     t.write32(REG_TX_AGC_A_MCS15_MCS12, mcs)
 
-    logger.info(
+    logger.debug(
         "TX power set: ch %d (group=%d cck_group=%d) cck=0x%02x ofdm=0x%02x mcs=0x%02x",
         channel, group, cck_group, cck, ofdmbase & 0xFF, mcsbase & 0xFF,
     )

@@ -314,7 +314,7 @@ def apply_monitor_rx_filter(t: RTL8188EUSTransport) -> None:
     """
     t.write32(REG_RCR, RCR_MONITOR)
     rcr = t.read32(REG_RCR)
-    logger.info("RX filter readback: RCR=0x%08x (ACCEPT_AP=%d)",
+    logger.debug("RX filter readback: RCR=0x%08x (ACCEPT_AP=%d)",
                 rcr, 1 if rcr & 0x1 else 0)
 
 
@@ -374,26 +374,26 @@ def post_fw_mac_init(t: RTL8188EUSTransport) -> None:
     on return. ``REG_TRXFF_BNDY`` writes happen before the MAC enable
     flip per the 88E HW bug.
     """
-    logger.info("applying 8188e MAC init table (78 byte writes + MAX_AGGR_NUM)")
+    logger.debug("applying 8188e MAC init table (78 byte writes + MAX_AGGR_NUM)")
     apply_mac_init_table(t)
 
-    logger.info("init_queue_reserved_page (normal queue only)")
+    logger.debug("init_queue_reserved_page (normal queue only)")
     init_queue_reserved_page(t)
 
-    logger.info("init_queue_priority (2-bulk-OUT: HIGH=EP0x02, NORMAL=EP0x03)")
+    logger.debug("init_queue_priority (2-bulk-OUT: HIGH=EP0x02, NORMAL=EP0x03)")
     init_queue_priority_2ep(t)
 
-    logger.info("set REG_TRXFF_BNDY+2 = 0x%04x (RX page boundary)", TRXFF_BOUNDARY_8188E)
+    logger.debug("set REG_TRXFF_BNDY+2 = 0x%04x (RX page boundary)", TRXFF_BOUNDARY_8188E)
     set_trxff_rx_page_boundary(t)
 
-    logger.info("set TX buffer boundary block (REG_TRXFF_BNDY = 0x%02x)", TOTAL_PAGE_NUM_8188E + 1)
+    logger.debug("set TX buffer boundary block (REG_TRXFF_BNDY = 0x%02x)", TOTAL_PAGE_NUM_8188E + 1)
     set_tx_buffer_boundary(t)
 
-    logger.info("set REG_PBP (page size 128 for RX and TX)")
+    logger.debug("set REG_PBP (page size 128 for RX and TX)")
     set_pbp(t)
 
-    logger.info("init_llt_table (176 polled LLT writes)")
+    logger.debug("init_llt_table (176 polled LLT writes)")
     init_llt_table(t)
 
-    logger.info("flip CR_MAC_TX_ENABLE | CR_MAC_RX_ENABLE in REG_CR")
+    logger.debug("flip CR_MAC_TX_ENABLE | CR_MAC_RX_ENABLE in REG_CR")
     enable_mac_tx_rx(t)

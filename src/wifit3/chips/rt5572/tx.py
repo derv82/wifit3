@@ -33,6 +33,8 @@ import struct
 
 import usb.core
 
+from wifit3.chips import log_trace
+
 from .constants import (
     RT_RT5592,
     TXINFO_W0_QSEL,
@@ -185,7 +187,8 @@ def inject_frame(
     pad_len = (-len(frame)) & 3
     payload = prefix + frame + (b"\x00" * pad_len) + b"\x00\x00\x00\x00"
 
-    logger.debug("bulk-OUT EP 0x%02x (%dB): %s", ep, len(payload), payload.hex())
+    if logger.isEnabledFor(log_trace.TRACE):
+        logger.trace("bulk-OUT EP 0x%02x (%dB): %s", ep, len(payload), payload.hex())
     sent = dev.write(ep, payload, timeout_ms)
     if sent != len(payload):
         logger.warning(

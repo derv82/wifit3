@@ -392,7 +392,7 @@ def set_channel_2g_20mhz(transport: RTL8822BUTransport, channel: int,
                          is_2t2r: bool = True) -> None:
     if not (1 <= channel <= 14):
         raise ValueError(f"2.4 GHz channel must be 1..14, got {channel}")
-    logger.info("set_channel_2g_20mhz ch=%d (2T2R=%s)", channel, is_2t2r)
+    logger.debug("set_channel_2g_20mhz ch=%d (2T2R=%s)", channel, is_2t2r)
 
     set_channel_bb_2g_20mhz(transport, channel)
     set_channel_mac(transport, channel, RTW_CHANNEL_WIDTH_20)
@@ -410,7 +410,7 @@ def set_channel_5g_20mhz(transport: RTL8822BUTransport, channel: int,
                          is_2t2r: bool = True) -> None:
     if channel not in CHANNELS_5G_ALL:
         raise ValueError(f"unsupported 5 GHz channel: {channel}")
-    logger.info("set_channel_5g_20mhz ch=%d (2T2R=%s)", channel, is_2t2r)
+    logger.debug("set_channel_5g_20mhz ch=%d (2T2R=%s)", channel, is_2t2r)
 
     set_channel_bb_5g_20mhz(transport, channel)
     set_channel_mac(transport, channel, RTW_CHANNEL_WIDTH_20)

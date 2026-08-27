@@ -26,9 +26,9 @@ class MT7925AUDriver(Driver):
     RX decode and TX are in progress.
     """
 
-    # Dual-band Wi-Fi 7 radio, 20 MHz primary. 2.4 GHz (1-13) + the 5 GHz 20 MHz
+    # Dual-band Wi-Fi 7 radio, 20 MHz primary. 2.4 GHz (1-14) + the 5 GHz 20 MHz
     # channels the capture sweeps (main.log: 36..165).
-    SUPPORTED_CHANNELS = list(range(1, 14)) + [
+    SUPPORTED_CHANNELS = list(range(1, 15)) + [
         36, 40, 44, 48, 149, 153, 157, 161, 165,
     ]
     FAKE_MAC = FakeMacSupport.SPOOFABLE

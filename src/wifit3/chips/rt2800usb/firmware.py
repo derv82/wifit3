@@ -243,7 +243,7 @@ def load_firmware(
             "firmware CRC mismatch — blob may be corrupt or for a "
             "different chip family"
         )
-    logger.info(
+    logger.debug(
         "firmware: %d-byte blob, using section @offset=%d, CRC OK",
         len(fw_bytes), offset,
     )
@@ -266,7 +266,7 @@ def load_firmware(
     # not-autorun, so the upload proceeds — but the probe op is on the wire.
     # [SRC] rt2800usb.c:210-244.
     if t.autorun_detect():
-        logger.info("NIC in AutoRun mode — skipping FW RAM upload")
+        logger.info("NIC in AutoRun mode, skipping FW RAM upload")
     else:
         # Stream the FW chunk into chip RAM at FIRMWARE_IMAGE_BASE.
         t.write_multi(FIRMWARE_IMAGE_BASE, chunk)

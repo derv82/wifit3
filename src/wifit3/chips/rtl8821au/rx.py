@@ -75,7 +75,7 @@ def probe_endpoints(dev: usb.core.Device, *, configuration: int = 0,
             (bulk_in if is_in else bulk_out).append(ep_num | (0x80 if is_in else 0))
         elif attr == 0x03 and is_in:  # interrupt
             interrupt.append(addr)
-    logger.info(
+    logger.debug(
         "endpoints: bulk_in=%s bulk_out=%s interrupt=%s",
         [f"0x{e:02x}" for e in bulk_in],
         [f"0x{e:02x}" for e in bulk_out],

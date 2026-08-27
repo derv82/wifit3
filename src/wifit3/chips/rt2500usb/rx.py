@@ -64,7 +64,7 @@ def probe_endpoints(dev: usb.core.Device, *, interface: int = 0) -> Endpoints:
         if (ep.bmAttributes & 0x03) != 0x02:   # bulk only
             continue
         (bulk_in if addr & 0x80 else bulk_out).append(addr)
-    logger.info(
+    logger.debug(
         "endpoints: bulk_in=%s bulk_out=%s",
         [f"0x{e:02x}" for e in bulk_in],
         [f"0x{e:02x}" for e in bulk_out],

@@ -88,11 +88,11 @@ class MT76x2UDriver(Driver):
     firmware upload.
     """
 
-    # 2.4 GHz channels 1..13 + non-DFS 5 GHz (UNII-1 + UNII-3).
+    # 2.4 GHz channels 1..14 + non-DFS 5 GHz (UNII-1 + UNII-3).
     # DFS bands (52..144) are PHY-capable on this chip but require radar
     # detection support we won't ship; left out until that lands.
     SUPPORTED_CHANNELS = (
-        list(range(1, 14))
+        list(range(1, 15))
         + [36, 40, 44, 48]
         + [149, 153, 157, 161, 165]
     )
@@ -329,7 +329,7 @@ class MT76x2UDriver(Driver):
         # but the EEPROM value is static, so read once at connect).
         try:
             self._rx_high_gain_2g = read_rx_high_gain_2g(self.transport)
-            logger.info(
+            logger.debug(
                 "MT7612U: RX high-gain 2G offsets ch0=%d ch1=%d",
                 self._rx_high_gain_2g[0], self._rx_high_gain_2g[1],
             )
@@ -350,15 +350,15 @@ class MT76x2UDriver(Driver):
             eeprom_tssi = False
         env_tssi = os.environ.get("WIFIT3_MT76X2U_TSSI", "").strip()
         self._tssi_enabled = False if env_tssi == "0" else eeprom_tssi
-        logger.info(
+        logger.debug(
             "MT7612U: TSSI eeprom=%s env=%r → enabled=%s",
             eeprom_tssi, env_tssi, self._tssi_enabled,
         )
-        logger.info(
+        logger.debug(
             "MT7612U: phy_set_txpower gate enabled=%s",
             self._set_txpower_enabled,
         )
-        logger.info(
+        logger.debug(
             "MT7612U: MAC=%s eeprom_chip=0x%04x chainmask=0x%04x "
             "(rx=%d tx=%d) pa_int_2g=%s lna_ext_2g=%s",
             self.mac_address, self.eeprom_chip_id, self.chainmask,

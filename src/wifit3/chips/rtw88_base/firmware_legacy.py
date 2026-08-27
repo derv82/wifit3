@@ -146,7 +146,7 @@ def download_firmware_legacy(
     size = len(body)
     total_pages, tail = divmod(size, DLFW_PAGE_SIZE_LEGACY)
 
-    logger.info(
+    logger.debug(
         "fw: %d body bytes -> %d full page(s) + %d tail byte(s)",
         size, total_pages, tail,
     )
@@ -173,7 +173,7 @@ def download_firmware_legacy(
     while time.monotonic() < deadline:
         last_val = transport.read8(REG_MCUFW_CTRL)
         if last_val & BIT_FWDL_CHK_RPT:
-            logger.info("fw: BIT_FWDL_CHK_RPT set -> upload ACKed (REG_MCUFW_CTRL=0x%02x)", last_val)
+            logger.debug("fw: BIT_FWDL_CHK_RPT set -> upload ACKed (REG_MCUFW_CTRL=0x%02x)", last_val)
             return True
         time.sleep(0.010)
 
@@ -204,7 +204,7 @@ def download_firmware_validate_legacy(transport: Rtw88Transport) -> tuple[bool, 
     while time.monotonic() < deadline:
         last = transport.read32(REG_MCUFW_CTRL)
         if (last & FW_READY_LEGACY) == FW_READY_LEGACY:
-            logger.info("fw validate: FW_READY_LEGACY satisfied (0x%08x)", last)
+            logger.debug("fw validate: FW_READY_LEGACY satisfied (0x%08x)", last)
             return True, last
         time.sleep(0.020)
 

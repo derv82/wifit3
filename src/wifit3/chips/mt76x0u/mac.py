@@ -131,11 +131,11 @@ def init_mac_registers(
     address is `MT_MCU_MEMMAP_WLAN + reg`. The 4 explicit writes go via
     direct vendor xfers (transport.write32 / set_bits / clear_bits).
     """
-    logger.info("init_mac_registers: uploading common_mac_reg_table (%d pairs)",
+    logger.debug("init_mac_registers: uploading common_mac_reg_table (%d pairs)",
                 len(COMMON_MAC_REG_TABLE))
     mcu.random_write(MT_MCU_MEMMAP_WLAN, COMMON_MAC_REG_TABLE)
 
-    logger.info("init_mac_registers: uploading mt76x0_mac_reg_table (%d pairs)",
+    logger.debug("init_mac_registers: uploading mt76x0_mac_reg_table (%d pairs)",
                 len(MT76X0_MAC_REG_TABLE))
     mcu.random_write(MT_MCU_MEMMAP_WLAN, MT76X0_MAC_REG_TABLE)
 
@@ -157,7 +157,7 @@ def init_mac_registers(
     val = (val & ~0x3ff) | (0x201 & 0x3ff)
     transport.write32(MT_WMM_CTRL, val)
 
-    logger.info("init_mac_registers: done (%d table writes + 4 explicit writes)",
+    logger.debug("init_mac_registers: done (%d table writes + 4 explicit writes)",
                 len(COMMON_MAC_REG_TABLE) + len(MT76X0_MAC_REG_TABLE))
 
 
@@ -236,7 +236,7 @@ def clear_shared_keys(transport: MT76x0UTransport) -> None:
 
     For 16 vifs × 4 keys = 64 iterations × 10 transactions = ~640 transactions.
     """
-    logger.info("clear_shared_keys: 16 vifs × 4 keys = 64 entries")
+    logger.debug("clear_shared_keys: 16 vifs × 4 keys = 64 entries")
     zero32 = b"\x00" * 32
     for vif_idx in range(16):
         skey_mode_reg = MT_SKEY_MODE(vif_idx)
@@ -254,7 +254,7 @@ def clear_shared_keys(transport: MT76x0UTransport) -> None:
                     zero32[word_i * 4: word_i * 4 + 4], "little"
                 )
                 transport.write32(skey_base + word_i * 4, word_val)
-    logger.info("clear_shared_keys: done")
+    logger.debug("clear_shared_keys: done")
 
 
 def clear_wcids(transport: MT76x0UTransport) -> None:
@@ -269,7 +269,7 @@ def clear_wcids(transport: MT76x0UTransport) -> None:
 
     256 iterations × 1-3 transactions each = ~512 transactions.
     """
-    logger.info("clear_wcids: 256 entries")
+    logger.debug("clear_wcids: 256 entries")
     for idx in range(256):
         # attr = 0 (BSS_IDX=0, no BSS_IDX_EXT bit, etc.)
         attr = (
@@ -281,4 +281,4 @@ def clear_wcids(transport: MT76x0UTransport) -> None:
             # mt76_wr_copy(MT_WCID_ADDR(idx), zero_addr, 8) → 2× u32 writes.
             transport.write32(MT_WCID_ADDR(idx), 0)
             transport.write32(MT_WCID_ADDR(idx) + 4, 0)
-    logger.info("clear_wcids: done")
+    logger.debug("clear_wcids: done")

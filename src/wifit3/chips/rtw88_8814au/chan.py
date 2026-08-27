@@ -30,7 +30,7 @@ from .transport import RTL8814AUTransport
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_CHANNELS_2G = list(range(1, 14))
+SUPPORTED_CHANNELS_2G = list(range(1, 15))
 SUPPORTED_CHANNELS_5G = [36, 40, 44, 48, 149, 153, 157, 161, 165]
 
 
@@ -342,5 +342,5 @@ def set_channel(transport: RTL8814AUTransport, channel: int, *,
     _cck_tx_dfir(transport, channel)
     _set_bw_mode(transport, new_band, channel, bw, primary_chan_idx, rf_path_num,
                  rfe_option)
-    logger.info("tuned to channel %d (band %s, 20 MHz)",
+    logger.debug("tuned to channel %d (band %s, 20 MHz)",
                 channel, "5G" if new_band == C.RTW_BAND_5G else "2G")

@@ -317,9 +317,9 @@ def detect_rf(t: RTL8187Transport, asic_rev: int) -> RfVariant:
     rtl8225_write(t, 0, 0x0B7, asic_rev)
 
     if reg8 == 0x588 and reg9 == 0x700:
-        logger.info("RF detect: reg8=0x%x reg9=0x%x → RTL8225z2", reg8, reg9)
+        logger.debug("RF detect: reg8=0x%x reg9=0x%x → RTL8225z2", reg8, reg9)
         return RfVariant.RTL8225Z2
-    logger.info("RF detect: reg8=0x%x reg9=0x%x → RTL8225 (BCD)", reg8, reg9)
+    logger.debug("RF detect: reg8=0x%x reg9=0x%x → RTL8225 (BCD)", reg8, reg9)
     return RfVariant.RTL8225
 
 

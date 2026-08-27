@@ -47,7 +47,7 @@ _DEFAULT_CHANNEL = 1     # connect-time tune target (matches morrownr's cold-boo
 _BULK_OUT_EP_TX = 0x02   # the 8812's 3-out-EP map (0x02/0x03/0x04); TX (M6) sends on 0x02
 # 20 MHz primary, both bands. The 5 GHz set matches the UNII channels the cold-boot
 # capture hopped (and verify_channels byte-diffs the band switch + each hop).
-CHANNELS_2G = list(range(1, 14))
+CHANNELS_2G = list(range(1, 15))
 CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
 # Scan set excludes the DFS band (52-144): passive-scan-only, radar-shared, home APs avoid it.
@@ -108,7 +108,7 @@ class Rtl8812auDkmsDriver(Driver):
         except usb.core.USBError as e:
             raise IOError(f"set_configuration failed: {e}") from e
         usb.util.claim_interface(dev, 0)
-        logger.info("claimed USB interface 0")
+        logger.debug("claimed USB interface 0")
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()

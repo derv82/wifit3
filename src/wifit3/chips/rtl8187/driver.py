@@ -66,10 +66,9 @@ class RTL8187Driver(Driver):
     driver — see module docstring for the milestone breakdown.
     """
 
-    # 2.4 GHz channels 1..13. Channel 14 is JP-only and the chip supports
-    # it (rtl818x_channels[13].center_freq=2484) but we leave it off the
-    # default hop list to match the other 2.4 GHz drivers.
-    SUPPORTED_CHANNELS = list(range(1, 14))
+    # 2.4 GHz channels 1..14. Ch14 is JP-only (CCK/11b) but the chip tunes it
+    # (rtl818x_channels[13].center_freq=2484) and the ch14 CCK power table is wired.
+    SUPPORTED_CHANNELS = list(range(1, 15))
     # FIXED_MAC: the 8187L auto-ACKs its own silicon MAC in monitor mode (bench 2026-07-16:
     # 111 ACKs / 100 injects to the silicon MAC), but has no active monitor to program a
     # forged MAC, so a spoofed source is never ACKed.
@@ -138,7 +137,7 @@ class RTL8187Driver(Driver):
                 raise BringUpPermissionsError("claim", str(e)) from e
             raise
         self._claimed = True
-        logger.info("claimed USB interface 0")
+        logger.debug("claimed USB interface 0")
 
     def _release(self) -> None:
         if not self._claimed:
@@ -179,7 +178,7 @@ class RTL8187Driver(Driver):
             self._rf_setup = pr.setup
             self._power = pr.power
             self.mac_address = ":".join(f"{b:02x}" for b in pr.mac)
-            logger.info(
+            logger.debug(
                 "probe: mac=%s, chip=%s, asic_rev=%d, rf=%s",
                 self.mac_address, pr.chip.name, pr.setup.asic_rev, pr.setup.variant.value,
             )
@@ -205,8 +204,7 @@ class RTL8187Driver(Driver):
             # 31-67 frames/s (RSSI all -4). The ~2 s cold init is the price of correct
             # RX — supersedes the earlier warm-reattach optimisation, whose beacons/s
             # check was ceiling-capped and missed the degradation.
-            logger.info("is_warm (CMD bits)=%s — re-initialising RF anyway "
-                        "(warm RF state is unreliable across reopen on the 8187L)", warm)
+            logger.info("is_warm (CMD bits)=%s, re-initialising RF anyway", warm)
             _progress(0.50, "Building RF init callback")
             rf_init = build_rf_init(self.transport, self._rf_setup, self._power)
             _progress(0.55, "Cold bring-up (init_hw + RF + start + monitor entry)")
@@ -221,7 +219,7 @@ class RTL8187Driver(Driver):
                     "bring-up finished but CMD=0x%02x missing TX/RX enable bits", cmd
                 )
                 return False
-            logger.info("CMD=0x%02x — TX_ENABLE + RX_ENABLE latched", cmd)
+            logger.debug("CMD=0x%02x - TX_ENABLE + RX_ENABLE latched", cmd)
 
             _progress(0.85, "Starting RX loop")
             self._rx_reader = RxReaderThread(
@@ -346,4 +344,4 @@ class RTL8187Driver(Driver):
             await self._rx_reader.stop()
             self._rx_reader = None
         self._release()
-        logger.info("RTL8187 driver closed")
+        logger.debug("RTL8187 driver closed")

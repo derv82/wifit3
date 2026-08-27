@@ -133,7 +133,7 @@ def load_mac_table(transport: RTL8814AUTransport,
         MAC_TABLE, dev, lambda a, d: _do_cfg_mac(transport, a, d),
         chip_id=_CHIP_ID,
     )
-    logger.info("loaded MAC table: %d writes", n)
+    logger.debug("loaded MAC table: %d writes", n)
     return n
 
 
@@ -149,11 +149,11 @@ def load_init_tables(transport: RTL8814AUTransport, efuse: EfuseDefaults) -> Non
 
     n = parse_tbl_phy_cond(
         BB_TABLE, dev, lambda a, d: _do_cfg_bb(transport, a, d), chip_id=_CHIP_ID)
-    logger.info("loaded BB  table: %d writes (incl delays)", n)
+    logger.debug("loaded BB  table: %d writes (incl delays)", n)
 
     n = parse_tbl_phy_cond(
         AGC_TABLE, dev, lambda a, d: _do_cfg_agc(transport, a, d), chip_id=_CHIP_ID)
-    logger.info("loaded AGC table: %d writes", n)
+    logger.debug("loaded AGC table: %d writes", n)
 
     # crystal_cap (rtw8814a.c, between agc + rf loads): two 6-bit xtal_k fields
     # into REG_AFE_CTRL3. Trims the reference clock — omitting it shifts the
@@ -161,7 +161,7 @@ def load_init_tables(transport: RTL8814AUTransport, efuse: EfuseDefaults) -> Non
     xcap = efuse.crystal_cap & 0x3F
     xcap |= xcap << 6
     transport.write32_mask(C.REG_AFE_CTRL3, C.AFE_CTRL3_XCAP_MASK, xcap)
-    logger.info("crystal_cap: xtal_k=0x%02x -> AFE_CTRL3 field 0x%03x",
+    logger.debug("crystal_cap: xtal_k=0x%02x -> AFE_CTRL3 field 0x%03x",
                 efuse.crystal_cap & 0x3F, xcap)
 
     for path, table in enumerate(_RF_TABLES):
@@ -169,7 +169,7 @@ def load_init_tables(transport: RTL8814AUTransport, efuse: EfuseDefaults) -> Non
             table, dev,
             lambda a, d, p=path: _do_cfg_rf(transport, a, d, path=p),
             chip_id=_CHIP_ID)
-        logger.info("loaded RF_%s table: %d writes (incl delays)",
+        logger.debug("loaded RF_%s table: %d writes (incl delays)",
                     "ABCD"[path], n)
 
 
@@ -218,7 +218,7 @@ def phy_set_param(transport: RTL8814AUTransport,
     rck = rf.read_rf(transport, 0, C.RF_RCK1_V1, rf.RFREG_MASK)
     for path in (1, 2, 3):
         rf.write_rf(transport, path, C.RF_RCK1_V1, rf.RFREG_MASK, rck)
-    logger.info("RCK path-A=0x%05x copied to paths B/C/D", rck)
+    logger.debug("RCK path-A=0x%05x copied to paths B/C/D", rck)
 
     # RX-PSEL reset (post-table)
     transport.write32_set(C.REG_RXPSEL, C.BIT_RX_PSEL_RST)

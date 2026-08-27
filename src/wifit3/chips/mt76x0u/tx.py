@@ -190,7 +190,7 @@ def inject_80211_frame(
     Raises TXError on USB failure.
     """
     pkt = build_inject_packet(frame, request_ack=request_ack, wcid=wcid)
-    logger.debug("inject_80211_frame: %d-byte 802.11 frame → %d-byte bulk-OUT",
+    logger.trace("inject_80211_frame: %d-byte 802.11 frame -> %d-byte bulk-OUT",
                  len(frame), len(pkt))
     try:
         transport.bulk_out(EP_OUT_AC_VO, pkt, timeout_ms=timeout_ms)

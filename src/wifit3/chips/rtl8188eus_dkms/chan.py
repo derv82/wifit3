@@ -30,7 +30,7 @@ from .constants import (
     RFREGOFFSETMASK,
 )
 
-CHANNELS_2G = list(range(1, 14))   # 2.4 GHz channels 1-13 (20 MHz)
+CHANNELS_2G = list(range(1, 15))   # 2.4 GHz channels 1-14 (20 MHz)
 
 
 def set_channel(t, tx_pwr, rf_chnl_val: int, channel: int) -> int:

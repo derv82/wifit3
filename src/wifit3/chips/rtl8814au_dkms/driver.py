@@ -197,7 +197,7 @@ class Rtl8814auDkmsDriver(Driver):
         # Detected per-card config — an odd card (rfe_type != 1, other antenna/rf_path, unusual
         # fuse) is diagnosable from this one line. rfe_type != 1 and rf_path != RF_2T4R run
         # ported-but-hardware-untested branches (see RTL8814AU_DKMS.md "Untested variants").
-        logger.info(
+        logger.debug(
             "RTL8814AU config: rfe_type=%d rf_path=%s antenna=0x%02x max_tx=%d link=%s "
             "crystal_cap=0x%02x mac=%s bb_swing=%s%s",
             params.rfe_type, _RF_PATH_NAMES.get(params.rf_path, f"0x{params.rf_path:x}"),

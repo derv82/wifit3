@@ -431,7 +431,7 @@ def phy_set_txpower(transport: MT76x2UTransport, rate_power: dict,
 
     # Diagnostic — log the computed values so we can spot bad EEPROM /
     # bad math in the field. INFO level so it shows up in the standard log.
-    logger.info(
+    logger.debug(
         "MT7612U: TX power: target_in=%d chain0(tp=%d,d=%d) chain1(tp=%d,d=%d) "
         "base=%d txp_0=0x%02x txp_1=0x%02x sample(cck0=%d ofdm0=%d ht0=%d)",
         target_power_in,
@@ -454,7 +454,7 @@ def init_agc_gain(transport: MT76x2UTransport) -> tuple[int, int]:
     val9 = transport.read32(MT_BBP_AGC_R9)
     g0 = (val8 & MT_BBP_AGC_GAIN_MASK) >> MT_BBP_AGC_GAIN_SHIFT
     g1 = (val9 & MT_BBP_AGC_GAIN_MASK) >> MT_BBP_AGC_GAIN_SHIFT
-    logger.info(
+    logger.debug(
         "MT7612U: init_agc_gain: AGC_R8=0x%08x → g0=0x%02x, AGC_R9=0x%08x → g1=0x%02x",
         val8, g0, val9, g1,
     )

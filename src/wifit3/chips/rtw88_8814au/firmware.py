@@ -515,7 +515,7 @@ def download_firmware(
     done = 0
     for name, file_off, dst, size in sections:
         body = fw_blob[file_off: file_off + size]
-        logger.info("uploading %s: %d bytes -> 0x%08x", name, len(body), dst)
+        logger.debug("uploading %s: %d bytes -> 0x%08x", name, len(body), dst)
         _section_upload(dev, transport, body, dst,
                         rsvd_pg_head=rsvd_pg_head,
                         progress_cb=progress_cb,

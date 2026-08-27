@@ -25,7 +25,7 @@ class _FakeTransport:
 def test_supported_ids_and_channels():
     ids = SUPPORTED_IDS
     assert (ids[0].vid, ids[0].pid) == (VID, PID)
-    assert Rtl8188eusDkmsDriver.SUPPORTED_CHANNELS == list(range(1, 14))
+    assert Rtl8188eusDkmsDriver.SUPPORTED_CHANNELS == list(range(1, 15))
 
 
 async def test_set_channel_threads_rfregchnlval(monkeypatch):

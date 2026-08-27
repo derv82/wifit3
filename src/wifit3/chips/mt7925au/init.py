@@ -34,7 +34,7 @@ async def post_boot_init(transport: MT7925AUTransport) -> InitState:
     # carries the card MAC), then fw_log_2_host. load_clc emits no MCU here.
     resp = await transport.send_mcu_command(*mcu.get_nic_capability())
     caps = mcu.parse_nic_capability(resp or b"")
-    logger.info("MT7925AU NIC caps: MAC=%s antenna_mask=0x%x bands 2.4=%d 5=%d 6=%d",
+    logger.debug("MT7925AU NIC caps: MAC=%s antenna_mask=0x%x bands 2.4=%d 5=%d 6=%d",
                 caps.mac, caps.antenna_mask, caps.has_2ghz, caps.has_5ghz, caps.has_6ghz)
     await transport.send_mcu_command(*mcu.fw_log_2_host(1))
 

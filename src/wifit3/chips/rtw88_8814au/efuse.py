@@ -230,14 +230,14 @@ def _resolve_rfe_option(raw: int) -> int:
 
 def read_efuse(transport: RTL8814AUTransport) -> EfuseRead:
     """Grant + physical dump (1024 B) + de-map (512 B) + parse 8814a fields."""
-    logger.info("EFUSE: granting access + dumping %d physical bytes...",
+    logger.debug("EFUSE: granting access + dumping %d physical bytes...",
                 EFUSE_PHYSICAL_SIZE)
     _efuse_grant(transport, on=True)
     try:
         _switch_efuse_bank_wifi(transport)
         t0 = time.monotonic()
         phy_map = dump_physical_efuse_map(transport)
-        logger.info("EFUSE: physical dump done in %.0f ms",
+        logger.debug("EFUSE: physical dump done in %.0f ms",
                     (time.monotonic() - t0) * 1000)
     finally:
         _efuse_grant(transport, on=False)

@@ -607,7 +607,7 @@ def apply_monitor_rx_filter(transport: RTL8821AUTransport) -> None:
     # the airmon targets — confirms the write landed. If RCR reads back with AAP
     # set but ToDS frames still don't arrive, the gate is NOT the RX filter.
     rcr = transport.read32(REG_RCR)
-    logger.info(
+    logger.debug(
         "RX filter readback: RCR=0x%08x (AAP=%d CBSSID_DATA=%d) "
         "RXFLTMAP0=0x%04x RXFLTMAP1=0x%04x RXFLTMAP2=0x%04x TCR=0x%08x CR=0x%08x",
         rcr, 1 if rcr & BIT_AAP else 0, 1 if rcr & BIT_CBSSID_DATA else 0,

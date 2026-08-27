@@ -79,10 +79,10 @@ class RTL8821AUDriver(Driver):
     TX injection is not yet implemented (M7).
     """
 
-    # 2.4 GHz channels 1..13 + non-DFS 5 GHz UNII-1 (36..48) + UNII-3
+    # 2.4 GHz channels 1..14 + non-DFS 5 GHz UNII-1 (36..48) + UNII-3
     # (149..165). DFS channels are excluded by default to avoid the
     # regulator-required clearance dance.
-    SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
+    SUPPORTED_CHANNELS = list(range(1, 15)) + list(CHANNELS_5G_NON_DFS)
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
@@ -132,7 +132,7 @@ class RTL8821AUDriver(Driver):
             raise IOError(f"set_configuration failed: {e}") from e
         usb.util.claim_interface(self.dev, 0)
         self._claimed = True
-        logger.info("claimed USB interface 0")
+        logger.debug("claimed USB interface 0")
 
     def _reset_bulk_pipes(self) -> None:
         """Clear halts on bulk-IN + bulk-OUT pipes so warm restarts resume RX.
@@ -199,10 +199,10 @@ class RTL8821AUDriver(Driver):
             _progress(0.05, "Probing chip state")
             warm = await loop.run_in_executor(None, is_chip_warm, self.transport)
             if warm:
-                logger.info("RTL8821AU is WARM — reattaching to running session")
+                logger.info("RTL8821AU is WARM - reattaching to running session")
                 return await self._warm_reattach(_progress)
 
-            logger.info("RTL8821AU is COLD — running full bring-up")
+            logger.info("RTL8821AU is COLD - running full bring-up")
             return await self._cold_bring_up(_progress)
 
         except (IOError, usb.core.USBError, NotImplementedError) as e:
@@ -322,7 +322,7 @@ class RTL8821AUDriver(Driver):
         for _ in range(attempts):
             data = await loop.run_in_executor(None, _try_read)
             if data:
-                logger.info("RX smoke test: got %d bytes — pipe is alive", len(data))
+                logger.debug("RX smoke test: got %d bytes - pipe is alive", len(data))
                 return True
         return False
 

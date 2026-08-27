@@ -246,7 +246,7 @@ def read_rate_power(transport: MT76x2UTransport, band_2g: bool) -> dict:
         val >>= 8
     vht[0] = vht[1] = _rate_power_val(val >> 8)
 
-    logger.info(
+    logger.debug(
         "MT7612U: rate_power band_2g=%s → cck=%s ofdm=%s ht=%s vht=%s",
         band_2g, cck, ofdm[:4], ht[:4], vht,
     )
@@ -345,7 +345,7 @@ def read_power_info(transport: MT76x2UTransport, channel: int,
         "delta_bw40": _rate_power_val(bw40),
         "delta_bw80": _rate_power_val(bw80),
     }
-    logger.info(
+    logger.debug(
         "MT7612U: power_info ch=%d band_2g=%s tssi=%s → target=%d "
         "chain0(tp=%d, d=%d, tssi_slope=%d, tssi_offset=%d) "
         "chain1(tp=%d, d=%d) bw40_delta=%d",

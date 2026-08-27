@@ -86,7 +86,7 @@ def configure_rx_aggregation(transport: RTL8814AUTransport) -> None:
     transport.write8_clr(C.REG_RXDMA_AGG_PG_TH + 3, 1 << 7)
     val16 = (C.RXDMA_AGG_SIZE & 0xFF) | ((C.RXDMA_AGG_TIMEOUT & 0xFF) << 8)
     transport.write16(C.REG_RXDMA_AGG_PG_TH, val16)
-    logger.info("RX aggregation: kernel monitor config (off, size=0x%02x "
+    logger.debug("RX aggregation: kernel monitor config (off, size=0x%02x "
                 "timeout=0x%02x, immediate flush)",
                 C.RXDMA_AGG_SIZE, C.RXDMA_AGG_TIMEOUT)
 
@@ -95,7 +95,7 @@ def apply_monitor_rcr(transport: RTL8814AUTransport) -> None:
     """Force the promiscuous monitor RCR (also re-applied on warm reattach)."""
     transport.write32(C.REG_RCR, C.RCR_MONITOR)
     rcr = transport.read32(C.REG_RCR)
-    logger.info("RX filter: RCR=0x%08x (AAP=%d)", rcr, 1 if rcr & 0x1 else 0)
+    logger.debug("RX filter: RCR=0x%08x (AAP=%d)", rcr, 1 if rcr & 0x1 else 0)
 
 
 # ACK is control subtype 13; bit N of RXFLTMAP1 gates control subtype N. mac_init_for_rx
@@ -134,7 +134,7 @@ def tune_monitor_cck_sensitivity(transport: RTL8814AUTransport) -> None:
     transport.write32_set(C.REG_CCKTX, C.BIT_CMB_CCA_2R)        # 2R CCA only
     # Most-sensitive CCK packet-detect threshold (LV0).
     transport.write8(C.REG_CCK_PD_TH, C.CCK_PD_TH_MAX_SENS)
-    logger.info("CCK RX sensitivity: 2R-CCA+MRC on, CCK_PD_TH=0x%02x (LV0/max)",
+    logger.debug("CCK RX sensitivity: 2R-CCA+MRC on, CCK_PD_TH=0x%02x (LV0/max)",
                 C.CCK_PD_TH_MAX_SENS)
 
 
@@ -189,7 +189,7 @@ def rf_receiving_frames(transport: RTL8814AUTransport,
             break
     cca_ofdm = (transport.read32(C.REG_CCA_OFDM) >> 16) & 0xFFFF
     demod_ok = cck_ok + ofdm_ok + ht_ok
-    logger.info("RF probe: CRC-ok=%d (cck=%d ofdm=%d ht=%d) cca=%d -> %s",
+    logger.debug("RF probe: CRC-ok=%d (cck=%d ofdm=%d ht=%d) cca=%d -> %s",
                 demod_ok, cck_ok, ofdm_ok, ht_ok, cca_ofdm,
                 "RECEIVING" if demod_ok else ("demod-fail" if cca_ofdm else "RF-deaf"))
     return demod_ok > 0

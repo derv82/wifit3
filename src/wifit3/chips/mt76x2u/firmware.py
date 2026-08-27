@@ -199,7 +199,7 @@ async def _send_fw_chunks(
         chunk_idx += 1
         pos += clen
 
-    logger.info("%s: uploaded %d chunks, %d bytes", label, chunk_idx, total)
+    logger.debug("%s: uploaded %d chunks, %d bytes", label, chunk_idx, total)
     return True
 
 

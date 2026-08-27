@@ -129,7 +129,7 @@ class McuChannel:
                 rxfce = struct.unpack("<I", bytes(data[:4]))[0]
                 got_seq = (rxfce >> _RX_FCE_INFO_CMD_SEQ_SHIFT) & _RX_FCE_INFO_CMD_SEQ_MASK
                 got_evt = (rxfce >> _RX_FCE_INFO_EVT_TYPE_SHIFT) & _RX_FCE_INFO_EVT_TYPE_MASK
-                logger.info(
+                logger.debug(
                     "MCU drained stale response: seq=%d evt=%d (%d bytes)",
                     got_seq, got_evt, len(data),
                 )
@@ -178,7 +178,7 @@ class McuChannel:
             logger.error("MCU CMD cmd=%d short write %d/%d",
                          cmd, written, len(frame))
             return False
-        logger.debug("MCU CMD cmd=%d seq=%d sent %d bytes", cmd, seq, len(frame))
+        logger.trace("MCU CMD cmd=%d seq=%d sent %d bytes", cmd, seq, len(frame))
 
         if not wait_resp:
             return True

@@ -43,7 +43,7 @@ _DEFAULT_CHANNEL = 1          # connect-time tune target (matches the cold-boot 
 _FALLBACK_CRYSTAL_CAP = 0x20  # EEPROM default if the efuse xtal byte reads blank
 # 20 MHz primary, both bands (M4 = 2.4 GHz, M7 = 5 GHz). The 5 GHz set matches the
 # channels the cold-boot capture tuned (UNII-1/2/2e/3). # TODO(8812au): path-B radio.
-CHANNELS_2G = list(range(1, 14))
+CHANNELS_2G = list(range(1, 15))
 CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
 # Scan set excludes the DFS band (52-144): passive-scan-only, radar-shared, home APs avoid it.

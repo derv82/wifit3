@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 class RT5572Driver(Driver):
     """Driver for the Panda PAU09 N600 (silicon RT5592 / RF5592), 2.4 + 5 GHz 2T2R."""
 
-    SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
+    SUPPORTED_CHANNELS = list(range(1, 15)) + list(CHANNELS_5G_NON_DFS)
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
@@ -204,7 +204,7 @@ class RT5572Driver(Driver):
                 )
 
             if self._rf_cal is not None:
-                logger.info(
+                logger.debug(
                     "RF filter cal: bw20=0x%02x bw40=0x%02x bbp25=0x%02x bbp26=0x%02x",
                     self._rf_cal.calibration_bw20, self._rf_cal.calibration_bw40,
                     self._rf_cal.bbp25, self._rf_cal.bbp26,
@@ -495,7 +495,7 @@ class RT5572Driver(Driver):
         except usb.core.USBError as e:
             logger.error("rt5572 inject_frame USBError: %s", e)
             return False
-        logger.debug("inject_frame: ch=%d len=%d txwi=%dB phymode=%d bulk-OUT accepted %d bytes",
+        logger.trace("inject_frame: ch=%d len=%d txwi=%dB phymode=%d bulk-OUT accepted %d bytes",
                      self.current_channel, len(frame_bytes), txwi_sz, phymode, sent)
         if logger.isEnabledFor(logging.DEBUG):
             await loop.run_in_executor(None, self._dump_tx_counters, "post-inject")
@@ -616,4 +616,4 @@ class RT5572Driver(Driver):
             await self._rx_reader.stop()
             self._rx_reader = None
         self._release()
-        logger.info("rt2800usb driver closed")
+        logger.debug("rt2800usb driver closed")
