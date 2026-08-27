@@ -116,12 +116,13 @@ jobs:
           set -euo pipefail
           app_dir="$(cd "$(dirname "$0")/.." && pwd)"
           bin="$app_dir/Resources/wifit3"
-          osascript <<APPLESCRIPT
-          tell application "Terminal"
-            activate
-            do script quoted form of "$bin"
-          end tell
-          APPLESCRIPT
+          cmd="$(mktemp "${TMPDIR:-/tmp}/wifit3.XXXXXX.command")"
+          cat > "$cmd" <<RUN
+          #!/bin/bash
+          exec "$bin"
+          RUN
+          chmod +x "$cmd"
+          open "$cmd"
           EOF
           chmod +x "$app/Contents/MacOS/Wifit3"
 
