@@ -52,7 +52,7 @@ _LABELS = {
     "pau0b":     "Panda PAU0B",
 
     # TP-Link
-    "tpwn722nv23":     "TP-Link TL-WN722N V2/V3",
+    "tpwn722nv23":     "TP-Link TL-WN722N",
     "archert2u":       "TP-Link Archer T2U",
     "archert2uplus":   "TP-Link Archer T2U Plus",
     "archert2unano":   "TP-Link Archer T2U Nano",
@@ -64,6 +64,7 @@ _LABELS = {
 
     "asusbe93":        "ASUS USB-BE93",
     "auscomer600":     "Auscoumer 600",
+    "dlinkdwa126":     "D-Link DWA-126",
     "buffalonintendo": "Buffalo Nintendo Wi-Fi",
     "lotekoo150":      "LOTEKOO 150",
     "netgeara9000":    "Netgear A9000",
@@ -71,6 +72,7 @@ _LABELS = {
 
 
 _STACKS = {
+    "stack-ar9271":    ["card-awus036nha", "card-tpwn722nv23", "card-dlinkdwa126"],
     "stack-mt7921au":  ["card-awus036axml", "card-pau0f"],
     "stack-rtl8821au": ["card-awus036acs", "card-archert2uplus", "card-archert2u"],
 }

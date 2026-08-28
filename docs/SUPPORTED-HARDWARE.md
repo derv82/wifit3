@@ -38,9 +38,9 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 ## Atheros Chipset
 ### AR9271
-<img align="right" width="75" height="165" src="../assets/cardart/card-awus036nha.png" alt="ALFA AWUS036NHA">
+<img align="right" width="140" src="../assets/cardart/stack-ar9271.png" alt="ALFA AWUS036NHA / TP-Link TL-WN722N / D-Link DWA-126">
 
-*ALFA AWUS036NHA · 2.4 GHz*
+*ALFA AWUS036NHA / TP-Link TL-WN722N / D-Link DWA-126 · 2.4 GHz*
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
