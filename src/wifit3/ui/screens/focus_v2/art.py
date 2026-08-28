@@ -17,7 +17,7 @@ from rich.style import Style
 from rich.text import Span, Text
 from textual.widgets import Static
 
-from wifit3.chips.products import AMBIGUOUS_AR9271, AMBIGUOUS_MT7921AU, ALFA, ASUS, Netgear, Panda, TPLink
+from wifit3.chips.products import AMBIGUOUS_AR9271, AMBIGUOUS_MT7921AU, ALFA, ASUS, DLink, Netgear, Panda, TPLink
 from ...ansi_art import make_black_transparent
 
 _ASSETS = Path(__file__).parent.parent.parent / "assets"
@@ -174,6 +174,7 @@ _ART_BY_PRODUCT: dict[str, str] = {
     AMBIGUOUS_AR9271: "cards/card-awus036nha.ans",   # OUI unresolved -> default ALFA
     AMBIGUOUS_MT7921AU: "cards/card-pau0f.ans",   # OUI unresolved -> default PAU0F
     ASUS.USB_BE93: "cards/card-asusbe93.ans",
+    DLink.DWA_126: "cards/card-dlinkdwa126.ans",
     Netgear.A9000: "cards/card-netgeara9000.ans",
     Panda.PAU05_06: "cards/card-pau06.ans",
     Panda.PAU09_N600: "cards/card-pau09n600.ans",
