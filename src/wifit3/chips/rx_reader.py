@@ -1,29 +1,4 @@
-"""Shared RX reader thread for USB bulk-IN drivers.
-
-Why this exists: reading + parsing RX on the asyncio event loop lets the TUI
-starve RX — while the UI is busy, no `dev.read` is posted and the dongle's RX
-FIFO overflows, dropping frames (~30% beacon loss / flaky handshakes; first
-diagnosed + fixed per-chip on rtl8821au, commit 2e3a7a7). This class moves the
-bulk reads onto a dedicated thread that keeps a read posted at all times,
-independent of loop/UI load.
-
-Composition, NOT a base class. Driver classes already have their own shape;
-they differ only in *how they read* and *how they decode*, so each supplies
-two callables:
-
-  * ``read_once() -> bytes | None`` — one blocking bulk read; returns the raw
-    buffer, or None on a benign timeout (no traffic). Runs ON THE READER
-    THREAD. May raise on a real USB error (the reader counts consecutive
-    errors and gives up after ``max_errors``).
-  * ``dispatch(buf) -> None`` — decode the raw buffer into 802.11 frames and
-    fan them to the driver's rx callback. Runs ON THE EVENT LOOP THREAD (via
-    ``call_soon_threadsafe``), so it never races the UI's reads of the AP
-    registry. The driver owns per-frame error handling.
-
-The thread, the loop hand-off, a soft backpressure cap, and start/stop
-lifecycle live here — once — so a fix or tweak (cap size, metrics, …) happens
-in one place instead of N copy-pasted driver loops.
-"""
+"""Shared RX reader thread for USB bulk-IN drivers."""
 from __future__ import annotations
 
 import asyncio
@@ -36,12 +11,8 @@ from wifit3.errors import is_device_gone
 
 logger = logging.getLogger(__name__)
 
-# Rate-limit for the "pending cap hit -> RX dropped" ERROR: log the first drop
-# immediately, then at most one summary line per this many seconds.
-_DROP_LOG_PERIOD = 2.0
-
-# While paused (pause()), the reader idles in this poll instead of issuing bulk-IN reads.
-_PAUSE_POLL_S = 0.003
+_DROP_LOG_PERIOD = 2.0  # Log drop errors once every (seconds)
+_PAUSE_POLL = 0.003   # wait while paused (seconds)
 
 
 class RxReaderThread:
@@ -63,50 +34,29 @@ class RxReaderThread:
         self._name = name
         self._cap = pending_cap
         self._max_errors = max_errors
+        self._stats = stats  # log stats about BULK-in bytes
+        self._on_fatal = on_fatal  # fires on unplug, wedged errors
+    
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        # Opt-in pause: a driver that runs a control sequence a concurrent bulk-IN would corrupt
-        # (the 8821cu RF18 read-modify-write) calls pause()/resume() around it. _pause_req asks the
-        # reader to idle; _paused acks that no read is in flight.
         self._pause_req = threading.Event()
         self._paused = threading.Event()
-        # Fired (once, on the loop thread) when the reader gives up: an unplug (device-gone
-        # USBError) or a wedged consecutive-error streak. The owner surfaces it as a hard
-        # failure. Latched via _fatal_fired so a give-up can't fire it twice.
-        self._on_fatal = on_fatal
         self._fatal_fired = False
-        # Buffers handed to the loop but not yet dispatched. Advisory soft cap
-        # so a momentarily-swamped loop drops here rather than ballooning
-        # memory; the ±1 race between the two threads is harmless for a cap.
-        self._pending = 0
-        # Opt-in throughput log (caller passes stats=True) for diagnosing RX-DMA
-        # delivery stalls — the single signal that matters is "are bulk-IN bytes
-        # still arriving?". Off (and free) unless the caller enables it.
-        self._stats = stats
-        self._n_produced = 0
+        self._pending = 0  # buffers not yet dispatched
         self._n_bytes = 0
-        # Dropped-RX visibility: a buffer read off USB but discarded because the loop
-        # hadn't drained the pending queue (cap hit) == lost RX. Counted always; logged
-        # at ERROR, rate-limited. Touched only on the reader thread, so no lock needed.
-        self._dropped = 0
-        self._dropped_logged = 0
+        self._dropped = 0  # Lost buffers, discarded due to cap limit
         self._next_drop_log = 0.0
 
     def start(self) -> None:
-        """Spawn the reader thread. Idempotent."""
         if self._running:
             return
         self._running = True
-        self._thread = threading.Thread(
-            target=self._run, name=self._name, daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, name=self._name, daemon=True)
         self._thread.start()
-        logger.info("[%s] RX reader thread started", self._name)
+        logger.info(f"[{self._name}] RX reader thread started")
 
     async def stop(self, join_timeout: float = 1.5) -> None:
-        """Signal the thread to exit and join it off the loop. The thread
-        leaves within one ``read_once`` timeout once ``_running`` clears.
-        Call this BEFORE releasing the USB handle it reads from."""
+        """waits up to one ``read_once`` timeout once ``_running`` clears."""
         self._running = False
         t, self._thread = self._thread, None
         if t is not None:
@@ -117,19 +67,14 @@ class RxReaderThread:
         return self._running
 
     def pause(self, wait_timeout: float = 0.25) -> bool:
-        """Stop issuing bulk-IN reads and block until the reader is idle (no read in flight), so a
-        caller can run a control sequence a concurrent bulk-IN would corrupt — the 8821cu RF18
-        read-modify-write, which a live reader reverts. Returns True once idle (False if the
-        in-flight read didn't drain within wait_timeout; the caller proceeds regardless). Pair with
-        resume(). Opt-in; runs on any thread. No RX is lost when the caller has TRX stopped for the
-        write."""
+        """Stop issuing bulk-IN reads and block until the reader is idle."""
         self._pause_req.set()
         if not self._running:
             return True
         return self._paused.wait(wait_timeout)
 
     def resume(self) -> None:
-        """Release a pause(); the reader resumes bulk-IN reads on its next loop."""
+        """The reader resumes bulk-IN reads on its next loop."""
         self._paused.clear()
         self._pause_req.clear()
 
@@ -139,70 +84,63 @@ class RxReaderThread:
         consec_errors = 0
         next_report = time.monotonic() + 2.0 if self._stats else float("inf")
         while self._running:
-            if self._pause_req.is_set():
-                self._paused.set()          # ack: no read in flight, a pause() caller may proceed
-                time.sleep(_PAUSE_POLL_S)
+            if self._sleep_if_paused():
                 continue
             try:
                 buf = self._read_once()
-            except Exception as e:  # noqa: BLE001 — count + bail, don't crash the thread
+            except Exception as e:
                 consec_errors += 1
-                logger.warning("[%s] read failed (%d/%d): %s",
-                               self._name, consec_errors, self._max_errors, e)
-                if is_device_gone(e):
-                    # Unambiguous unplug — don't wait out the strike count.
-                    logger.error("[%s] device gone: %s", self._name, e)
-                    self._fire_fatal(e)
-                    break
-                if consec_errors >= self._max_errors:
-                    logger.error("[%s] giving up after %d consecutive errors",
-                                 self._name, consec_errors)
-                    self._fire_fatal(e)  # a wedged streak is also a hard failure
+                if self._is_fatal(e, consec_errors):
                     break
                 time.sleep(0.01)
                 continue
             consec_errors = 0
-            if buf:
-                # Loop swamped and not draining — drop rather than balloon memory.
-                if self._pending < self._cap:
-                    self._pending += 1
-                    self._n_produced += 1
-                    self._n_bytes += len(buf)
-                    self._loop.call_soon_threadsafe(self._on_buffer, buf)
-                else:
-                    self._note_drop()
+            self._emit_buffer(buf)
             if self._stats and time.monotonic() >= next_report:
-                logger.info("[%s] RX 2s: produced=%d bytes=%d",
-                            self._name, self._n_produced, self._n_bytes)
-                self._n_produced = self._n_bytes = 0
+                logger.info(f"[{self._name}] RX 2s: produced {self._n_bytes} bytes")
+                self._n_bytes = 0
                 next_report = time.monotonic() + 2.0
         if self._dropped:
-            logger.error("[%s] RX reader stopped: %d bulk-IN buffers dropped total "
-                         "(loop never drained; RX frames lost)", self._name, self._dropped)
-        logger.info("[%s] RX reader thread stopped", self._name)
+            logger.error(f"[{self._name}] RX reader stopped: {self._dropped} buffers dropped total")
+        logger.info(f"[{self._name}] RX reader thread stopped")
+
+    def _sleep_if_paused(self) -> bool:
+        if not self._pause_req.is_set():
+            return False
+        self._paused.set()
+        time.sleep(_PAUSE_POLL)
+        return True
+
+    def _is_fatal(self, e: Exception, consec_errors: int) -> bool:
+        logger.warning(f"[{self._name}] read failed ({consec_errors}/{self._max_errors}): {e}")
+        if is_device_gone(e):
+            logger.error(f"[{self._name}] device gone: {e}")
+            self._fire_fatal(e)  # unplugged
+            return True
+        if consec_errors >= self._max_errors:
+            logger.error(f"[{self._name}] giving up after {consec_errors} consecutive errors")
+            self._fire_fatal(e)  # error streak
+            return True
+        return False
 
     def _fire_fatal(self, exc: Exception) -> None:
-        """Hand a terminal reader failure back to the loop thread, exactly once. Runs on the
-        reader thread; the owner's callback runs on the loop (so it may touch the UI)."""
         if self._fatal_fired or self._on_fatal is None:
             return
         self._fatal_fired = True
         self._loop.call_soon_threadsafe(self._on_fatal, exc)
 
-    def _note_drop(self) -> None:
-        """A read buffer was discarded because the pending queue is at cap — the loop
-        isn't draining dispatch fast enough, so we just lost received RX. Almost always
-        host-load / event-loop starvation. Logged at ERROR, first drop immediately then
-        one summary line per _DROP_LOG_PERIOD so a sustained stall can't flood the log."""
+    def _emit_buffer(self, buf: bytes) -> None:
+        if not buf:
+            return
+        if self._pending < self._cap:
+            self._pending += 1
+            self._n_bytes += len(buf)
+            self._loop.call_soon_threadsafe(self._on_buffer, buf)
+            return
         self._dropped += 1
         now = time.monotonic()
         if now >= self._next_drop_log:
-            since = self._dropped - self._dropped_logged
-            logger.error(
-                "[%s] RX DROPPED: pending cap (%d) hit, loop not draining; "
-                "%d lost total (+%d since last report)",
-                self._name, self._cap, self._dropped, since)
-            self._dropped_logged = self._dropped
+            logger.error(f"[{self._name}] RX DROPPED: cap ({self._cap}), total {self._dropped} dropped")
             self._next_drop_log = now + _DROP_LOG_PERIOD
 
     # -- loop side -----------------------------------------------------------
@@ -212,4 +150,4 @@ class RxReaderThread:
         try:
             self._dispatch(buf)
         except Exception:
-            logger.exception("[%s] dispatch raised", self._name)
+            logger.exception(f"[{self._name}] dispatch raised")
