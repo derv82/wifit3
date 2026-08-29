@@ -13,7 +13,7 @@ from wifit3.setup.windows import (
     _LIBUSB_SERVICES,
     _PNPUTIL_OK,
     InstallResult,
-    RestoreResult,
+    UninstallResult,
     _build_args,
     _restore_command,
     _signed32,
@@ -112,5 +112,5 @@ def test_pnputil_reboot_required_counts_as_success():
 
 
 def test_restore_result_defaults():
-    r = RestoreResult(ok=True, message="done")
+    r = UninstallResult(ok=True, message="done")
     assert r.ok and not r.cancelled and r.detail is None
