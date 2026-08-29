@@ -203,9 +203,8 @@ class AR9271V2Driver(Driver):
                 await self._teardown_cold_attempt()
                 raise BringUpError(
                     "post-boot handshake",
-                    "AR9271 did not come up cleanly after firmware download (its control pipe "
-                    "returned unexpected data twice). Unplug it, wait a few seconds, replug, and "
-                    "try again.") from e2
+                    "failed after firmware download; please replug and try again."
+                ) from e2
 
     async def _bring_up_with_loop(self, loop, fw: bytes, _p) -> bool:
         """One full bring-up attempt under the app loop: warm-reattach if firmware is already
@@ -232,8 +231,8 @@ class AR9271V2Driver(Driver):
                     self._reader = None
                 raise BringUpError(
                     "warm reattach",
-                    "AR9271 is warm and couldn't be re-attached to. Please unplug the card, wait a "
-                    "few seconds, replug, and try again.") from e
+                    "failed on warm re-attach; please replug and try again."
+                ) from e
 
         cold_dev = self.transport.dev
         cold_ports = self._get_port_numbers(cold_dev)
@@ -248,9 +247,7 @@ class AR9271V2Driver(Driver):
             logger.warning("ar9271_v2: firmware download wedged (%s); falling back to replug", e)
             raise BringUpError(
                 "firmware download",
-                "AR9271 stopped responding mid-firmware-upload (USB timeout). Its bootloader "
-                "state can't be reset in software once wedged this way -- please unplug the "
-                "card, wait a few seconds, replug, and try again.",
+                "USB timeout; please replug and try again."
             ) from e
         try:
             usb.util.dispose_resources(cold_dev)        # release the cold handle as it reboots
@@ -280,8 +277,7 @@ class AR9271V2Driver(Driver):
             await self._teardown_cold_attempt()
             raise BringUpError(
                 "HTC/WMI init",
-                "AR9271 stopped responding during firmware init (USB timeout) -- please unplug "
-                "the card, wait a few seconds, replug, and try again.",
+                "USB timeout; please replug and try again."
             ) from e
         self._adopt(res)
         _p(1.0, f"AR9271 monitor up (ch 1, {self.mac_address})")

@@ -1,12 +1,4 @@
-"""A wedged chip mid-cold-bringup (firmware download or the HTC/WMI init that follows) must
-surface a clean, actionable BringUpError -- not a raw usb.core.USBError traceback -- matching the
-replug-message pattern already used elsewhere in this driver (warm reattach, re-enumeration
-timeout, unsupported firmware version).
-
-Also covers every ``raise BringUpError(...)`` site in this file rendering correctly through
-``DeviceManager._fault_message`` (``f"{chip}: {stage} failed: {detail}"``): three sites used to
-pass their whole sentence as the single ``stage`` argument with no ``detail``, which rendered
-with "failed" nonsensically appended to the end of a complete sentence."""
+"""A wedged chip mid-cold-bringup must surface a clean, actionable BringUpError."""
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
