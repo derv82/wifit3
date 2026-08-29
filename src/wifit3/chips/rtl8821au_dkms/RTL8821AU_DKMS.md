@@ -1,7 +1,7 @@
 # RTL8821AU (8821au_dkms)
 
-Cleanroom re-port of the RTL8821AU / RTL8811AU (ALFA AWUS036ACS, `0bda:0811`) from the Lucid-Duck
-`8821au-20210708` 5.12.5.2 vendor source — the DKMS out-of-tree `rtl88xxau` driver (Realtek
+Cleanroom re-port of the RTL8821AU / RTL8811AU (ALFA AWUS036ACS, `0bda:0811`) from Lucid-Duck's [PR #194](https://github.com/morrownr/8821au-20210708/pull/194) to the
+`morrownr/8821au-20210708` 5.12.5.2 vendor source; the DKMS out-of-tree `rtl88xxau` driver (Realtek
 PHYDM/ODM stack), not mainline `rtw88`. The two are different codebases; flow comes from the vendor
 tree cross-checked against the cold-boot pcap, never from the mainline-derived `chips/rtl8821au/`.
 
@@ -16,7 +16,6 @@ tree cross-checked against the cold-boot pcap, never from the mainline-derived `
   branches (ext-LNA RFE pinmux, phy_cond board_type) are runtime-detected (see
   [EFUSE variants](#efuse-variants--any-card-support)); non-reference branches are ported-from-C,
   hardware-untested.
-- Open polish: ch153 spur notch (minor RX), 40/80 MHz width (out of scope).
 
 ## Gotchas
 
