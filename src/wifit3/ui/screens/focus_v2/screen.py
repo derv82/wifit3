@@ -180,6 +180,10 @@ class FocusViewV2(Screen):
     .bcast-btn { width: 100%%; height: 1; min-width: 0; border: none; margin: 0 0 1 0;
                  background: $error; color: $text; content-align: center middle; }
     .client-row { height: 1; width: 100%%; }
+    .cl-fp { width: 2; }
+    /* A known fingerprint is clickable (pops up the detail popup): underline + accent color
+       marks it, same as any other actionable text, so it doesn't look identical to a plain label. */
+    .cl-fp.fp-known, .cl-bssid.fp-known { text-style: underline; color: $accent; }
     .cl-bssid { width: 17; }
     .cl-pwr { width: 5; text-align: right; }
     .cl-pkts { width: 6; text-align: right; }
