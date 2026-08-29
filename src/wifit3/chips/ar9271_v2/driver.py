@@ -202,6 +202,7 @@ class AR9271V2Driver(Driver):
             except Exception as e2:  # noqa: BLE001
                 await self._teardown_cold_attempt()
                 raise BringUpError(
+                    "post-boot handshake",
                     "AR9271 did not come up cleanly after firmware download (its control pipe "
                     "returned unexpected data twice). Unplug it, wait a few seconds, replug, and "
                     "try again.") from e2
@@ -230,6 +231,7 @@ class AR9271V2Driver(Driver):
                     await self._reader.stop()
                     self._reader = None
                 raise BringUpError(
+                    "warm reattach",
                     "AR9271 is warm and couldn't be re-attached to. Please unplug the card, wait a "
                     "few seconds, replug, and try again.") from e
 
@@ -240,7 +242,16 @@ class AR9271V2Driver(Driver):
             unique_vidpid = len(self._find_matching_ar9271_devices(cold_dev)) == 1
 
         _p(0.10, "Downloading AR9271 firmware...")
-        await loop.run_in_executor(None, firmware.download, self.transport, fw)
+        try:
+            await loop.run_in_executor(None, firmware.download, self.transport, fw)
+        except usb.core.USBError as e:
+            logger.warning("ar9271_v2: firmware download wedged (%s); falling back to replug", e)
+            raise BringUpError(
+                "firmware download",
+                "AR9271 stopped responding mid-firmware-upload (USB timeout). Its bootloader "
+                "state can't be reset in software once wedged this way -- please unplug the "
+                "card, wait a few seconds, replug, and try again.",
+            ) from e
         try:
             usb.util.dispose_resources(cold_dev)        # release the cold handle as it reboots
         except Exception:
@@ -262,7 +273,16 @@ class AR9271V2Driver(Driver):
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="ar9271v2-rx",
                                       on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
-        res = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
+        try:
+            res = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
+        except usb.core.USBError as e:
+            logger.warning("ar9271_v2: HTC/WMI init wedged (%s); falling back to replug", e)
+            await self._teardown_cold_attempt()
+            raise BringUpError(
+                "HTC/WMI init",
+                "AR9271 stopped responding during firmware init (USB timeout) -- please unplug "
+                "the card, wait a few seconds, replug, and try again.",
+            ) from e
         self._adopt(res)
         _p(1.0, f"AR9271 monitor up (ch 1, {self.mac_address})")
         return True
@@ -371,7 +391,7 @@ class AR9271V2Driver(Driver):
             except (usb.core.USBError, NotImplementedError) as e:
                 last = e
                 time.sleep(0.15)
-        raise BringUpError(f"AR9271 interface not claimable after re-enumeration: {last}")
+        raise BringUpError("claim", f"interface not claimable after re-enumeration: {last}")
 
     # ---- channel ----------------------------------------------------------
     async def set_channel(self, channel: int, scan: bool = False, *, _fastcc: bool = False) -> bool:
