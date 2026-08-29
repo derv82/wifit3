@@ -2,10 +2,12 @@
 hand-off (read_once on the thread -> dispatch on the loop) and the
 consecutive-error give-up. Driver-specific decode is tested per driver."""
 import asyncio
+import time
 
 import pytest
 import usb.core
 
+from wifit3.chips import rx_reader
 from wifit3.chips.rx_reader import RxReaderThread
 
 
@@ -141,6 +143,57 @@ def test_pause_on_stopped_reader_returns_immediately():
     r = RxReaderThread(asyncio.new_event_loop(), lambda: None, lambda b: None, name="stopped")
     assert r.pause() is True
     r.resume()
+
+
+@pytest.mark.asyncio
+async def test_reader_batches_by_size_and_preserves_order(monkeypatch):
+    monkeypatch.setattr(rx_reader, "MAX_BATCH_SIZE", 3)
+    monkeypatch.setattr(rx_reader, "MAX_BATCH_WAIT", 999)  # size triggers, not time
+    loop = asyncio.get_running_loop()
+    seq = [b"A", b"B", b"C"]
+
+    def read_once():
+        return seq.pop(0) if seq else None
+
+    batches = []
+    dispatched = []
+    r = RxReaderThread(loop, read_once, dispatched.append, name="batch")
+    orig = r._dispatch_batch
+
+    def spy(batch):
+        batches.append(list(batch))
+        orig(batch)
+
+    r._dispatch_batch = spy
+    r.start()
+    try:
+        for _ in range(50):
+            if dispatched:
+                break
+            await asyncio.sleep(0.02)
+        assert batches == [[b"A", b"B", b"C"]]   # 3 buffers coalesced into one hand-off
+        assert dispatched == [b"A", b"B", b"C"]  # order preserved
+    finally:
+        await r.stop()
+
+
+@pytest.mark.asyncio
+async def test_reader_drops_when_loop_backlogged(monkeypatch):
+    monkeypatch.setattr(rx_reader, "MAX_BATCH_SIZE", 1)
+    monkeypatch.setattr(rx_reader, "MAX_BACKLOG", 2)
+    loop = asyncio.get_running_loop()
+
+    def read_once():
+        time.sleep(0.001)
+        return b"x"
+
+    r = RxReaderThread(loop, read_once, lambda b: None, name="drop")
+    r.start()
+    try:
+        time.sleep(0.15)          # block the loop: _dispatched can't advance, backlog fills
+        assert r._dropped > 0
+    finally:
+        await r.stop()
 
 
 @pytest.mark.asyncio

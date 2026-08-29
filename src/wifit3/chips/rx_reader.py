@@ -11,8 +11,11 @@ from wifit3.errors import is_device_gone
 
 logger = logging.getLogger(__name__)
 
-_DROP_LOG_PERIOD = 2.0  # Log drop errors once every (seconds)
-_PAUSE_POLL = 0.003   # wait while paused (seconds)
+DROP_LOG_PERIOD = 2.0  # Log drop errors once every (seconds)
+PAUSE_POLL = 0.003     # wait while paused (seconds)
+MAX_BATCH_SIZE = 64    # frame buffers per batch
+MAX_BATCH_WAIT = 0.1   # wait time per batch
+MAX_BACKLOG = 256      # backlog = produced - consumed
 
 
 class RxReaderThread:
@@ -23,28 +26,24 @@ class RxReaderThread:
         dispatch: Callable[[bytes], None],
         *,
         name: str = "rx",
-        pending_cap: int = 256,
         max_errors: int = 5,
-        stats: bool = False,
         on_fatal: Optional[Callable[[Exception], None]] = None,
     ) -> None:
         self._loop = loop
         self._read_once = read_once
         self._dispatch = dispatch
         self._name = name
-        self._cap = pending_cap
         self._max_errors = max_errors
-        self._stats = stats  # log stats about BULK-in bytes
         self._on_fatal = on_fatal  # fires on unplug, wedged errors
-    
+
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._pause_req = threading.Event()
         self._paused = threading.Event()
         self._fatal_fired = False
-        self._pending = 0  # buffers not yet dispatched
-        self._n_bytes = 0
-        self._dropped = 0  # Lost buffers, discarded due to cap limit
+        self._bufs_produced = 0  # total buffers sent to be dispatched
+        self._bufs_consumed = 0  # total buffers dispatched
+        self._dropped = 0
         self._next_drop_log = 0.0
 
     def start(self) -> None:
@@ -81,10 +80,14 @@ class RxReaderThread:
     # -- thread side ---------------------------------------------------------
 
     def _run(self) -> None:
+        """Loops over blocking reads, batches & submits buffers."""
         consec_errors = 0
-        next_report = time.monotonic() + 2.0 if self._stats else float("inf")
+        batch: list[bytes] = []
+        next_drain = time.monotonic() + MAX_BATCH_WAIT
         while self._running:
-            if self._sleep_if_paused():
+            if self._pause_req.is_set():
+                self._paused.set()
+                time.sleep(PAUSE_POLL)
                 continue
             try:
                 buf = self._read_once()
@@ -95,21 +98,34 @@ class RxReaderThread:
                 time.sleep(0.01)
                 continue
             consec_errors = 0
-            self._emit_buffer(buf)
-            if self._stats and time.monotonic() >= next_report:
-                logger.info(f"[{self._name}] RX 2s: produced {self._n_bytes} bytes")
-                self._n_bytes = 0
-                next_report = time.monotonic() + 2.0
+            if buf:
+                batch.append(buf)
+            elif not batch:
+                continue  # discard "falsy" buffers
+            now = time.monotonic()
+            if len(batch) < MAX_BATCH_SIZE and now < next_drain:
+                continue  # batch not full, still have time
+
+            next_drain = now + MAX_BATCH_WAIT
+
+            # Check for backlogged consumer
+            if self._bufs_produced - self._bufs_consumed >= MAX_BACKLOG:
+                # Backlog full, report & drop
+                self._dropped += len(batch)
+                if now >= self._next_drop_log:
+                    self._next_drop_log = now + DROP_LOG_PERIOD
+                    logger.error(f"[{self._name}] RX dropped, {self._dropped} total (backlog full)")
+                batch = []
+                continue
+
+            # Submit the batch
+            self._bufs_produced += len(batch)
+            logger.info(f"[{self._name}] dispatching batch of size {len(batch)}")
+            self._loop.call_soon_threadsafe(self._dispatch_batch, batch)
+            batch = []
         if self._dropped:
             logger.error(f"[{self._name}] RX reader stopped: {self._dropped} buffers dropped total")
         logger.info(f"[{self._name}] RX reader thread stopped")
-
-    def _sleep_if_paused(self) -> bool:
-        if not self._pause_req.is_set():
-            return False
-        self._paused.set()
-        time.sleep(_PAUSE_POLL)
-        return True
 
     def _is_fatal(self, e: Exception, consec_errors: int) -> bool:
         logger.warning(f"[{self._name}] read failed ({consec_errors}/{self._max_errors}): {e}")
@@ -129,25 +145,12 @@ class RxReaderThread:
         self._fatal_fired = True
         self._loop.call_soon_threadsafe(self._on_fatal, exc)
 
-    def _emit_buffer(self, buf: bytes) -> None:
-        if not buf:
-            return
-        if self._pending < self._cap:
-            self._pending += 1
-            self._n_bytes += len(buf)
-            self._loop.call_soon_threadsafe(self._on_buffer, buf)
-            return
-        self._dropped += 1
-        now = time.monotonic()
-        if now >= self._next_drop_log:
-            logger.error(f"[{self._name}] RX DROPPED: cap ({self._cap}), total {self._dropped} dropped")
-            self._next_drop_log = now + _DROP_LOG_PERIOD
-
     # -- loop side -----------------------------------------------------------
 
-    def _on_buffer(self, buf: bytes) -> None:
-        self._pending -= 1
-        try:
-            self._dispatch(buf)
-        except Exception:
-            logger.exception(f"[{self._name}] dispatch raised")
+    def _dispatch_batch(self, batch: list[bytes]) -> None:
+        self._bufs_consumed += len(batch)
+        for buf in batch:
+            try:
+                self._dispatch(buf)
+            except Exception:
+                logger.exception(f"[{self._name}] dispatch raised")
