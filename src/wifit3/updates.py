@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform as platform_module
 import re
+import shlex
 import stat
 import sys
 from urllib.error import HTTPError, URLError
@@ -72,7 +73,6 @@ def print_update_result(current_version: str, *, force: bool = False) -> int:
         return 2
     print(result.message)
     if result.plan is not None:
-        print(f"current: {result.plan.update.current_version}")
         print(f"latest: {result.plan.update.latest_version}  {result.plan.update.release_url}")
         if result.plan.asset_name:
             print(f"asset: {result.plan.asset_name}")
@@ -158,11 +158,13 @@ def update_current_binary(current_version: str, *, force: bool = False, timeout:
         return BinaryUpdateResult(False, "no matching binary asset found for this platform", plan)
 
     tmp = exe.with_name(f".{exe.name}.download")
-    _download_file(plan.asset_url, tmp, timeout)
     try:
+        _download_file(plan.asset_url, tmp, timeout)
         mode = stat.S_IMODE(exe.stat().st_mode) if exe.exists() else 0o755
         tmp.chmod(mode | stat.S_IXUSR)
         os.replace(tmp, exe)
+    except PermissionError:
+        return BinaryUpdateResult(False, _sudo_update_message(exe, force), plan)
     finally:
         try:
             tmp.unlink()
@@ -173,6 +175,13 @@ def update_current_binary(current_version: str, *, force: bool = False, timeout:
 
 def _ran_from_source() -> bool:
     return not getattr(sys, "frozen", False)
+
+
+def _sudo_update_message(executable: Path, force: bool) -> str:
+    args = ["sudo", str(executable), "--update"]
+    if force:
+        args.append("--force")
+    return "permission denied replacing binary; rerun with: " + " ".join(shlex.quote(arg) for arg in args)
 
 
 def _fetch_releases(timeout: float) -> tuple[ReleaseInfo, ...]:
@@ -205,6 +214,8 @@ def _download_file(url: str, path: Path, timeout: float) -> None:
     try:
         with urlopen(req, timeout=timeout) as res:
             path.write_bytes(res.read())
+    except PermissionError:
+        raise
     except (HTTPError, URLError, TimeoutError, OSError) as e:
         raise UpdateCheckError(f"failed to download update: {e}") from e
 

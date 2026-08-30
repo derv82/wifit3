@@ -20,7 +20,7 @@ Wi-Fi *module* maker, not the device: disambiguation needs IE fingerprinting any
 ### About page / Check-for-updates
 
 If the user has internet connection, it's trivial to query
-[the releases page](https://github.com/derv82/wifit3/releases) to fectch the latest version,
+[the releases page](https://github.com/derv82/wifit3/releases) to fetch the latest version,
 compare with the current version, and show a Toast notification about the newest version,
 clicking Toast notification -> opens releases page.
 

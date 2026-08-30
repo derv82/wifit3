@@ -139,6 +139,20 @@ def test_update_current_binary_replaces_executable(tmp_path, monkeypatch):
     assert exe.read_bytes() == b"new"
 
 
+def test_update_current_binary_permission_denied_suggests_sudo(tmp_path, monkeypatch):
+    exe = tmp_path / "wifit3"
+    exe.write_bytes(b"old")
+    monkeypatch.setattr(updates, "plan_update", lambda *_args, **_kwargs: updates.UpdatePlan(
+        UpdateInfo("0.1.3", "0.1.4", True, "https://example/release", True),
+        "wifit3-linux-x64", "https://example/download"))
+    monkeypatch.setattr(updates, "_download_file", lambda _url, _path, _timeout: (_ for _ in ()).throw(PermissionError()))
+
+    result = updates.update_current_binary("0.1.3", force=True, executable_path=exe)
+
+    assert result.updated is False
+    assert result.message == f"permission denied replacing binary; rerun with: sudo {exe} --update --force"
+
+
 def test_cli_check_updates_prints_available(monkeypatch, capsys):
     from wifit3 import __main__
 
