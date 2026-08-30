@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
+from pathlib import Path
 import platform as platform_module
 import re
+import stat
+import sys
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -36,6 +40,7 @@ class UpdateInfo:
     update_available: bool
     release_url: str
     current_version_known: bool = True
+    ran_from_source: bool = False
 
 
 @dataclass(frozen=True)
@@ -47,8 +52,31 @@ class UpdatePlan:
     auto_update_enabled: bool = AUTO_UPDATE_DEFAULT
 
 
+@dataclass(frozen=True)
+class BinaryUpdateResult:
+    updated: bool
+    message: str
+    plan: UpdatePlan | None = None
+
+
 class UpdateCheckError(Exception):
     """Raised when GitHub release data cannot be fetched or parsed."""
+
+
+def print_update_result(current_version: str, *, force: bool = False) -> int:
+    """Print update progress/result for the CLI; return a process exit code."""
+    try:
+        result = update_current_binary(current_version, force=force)
+    except UpdateCheckError as e:
+        print(e)
+        return 2
+    print(result.message)
+    if result.plan is not None:
+        print(f"current: {result.plan.update.current_version}")
+        print(f"latest: {result.plan.update.latest_version}  {result.plan.update.release_url}")
+        if result.plan.asset_name:
+            print(f"asset: {result.plan.asset_name}")
+    return 0
 
 
 def print_update_check(current_version: str) -> int:
@@ -58,10 +86,14 @@ def print_update_check(current_version: str) -> int:
     except UpdateCheckError as e:
         print(e)
         return 2
+
+    # simple output for automation purposes, dont have to open the whole app to go trough update
     print(f"current: {update.current_version}")
     print(f"latest: {update.latest_version}  {update.release_url}")
+    if update.ran_from_source:
+        print("warning: running from source; --update only works from a bundled binary")
     if not update.current_version_known:
-        print("warning: current version is not one of the published GitHub Releases")
+        print("warning: current version is not one of the published GitHub Releases, for updating, please use --force")
     if update.update_available:
         print(f"wifit3 {update.latest_version} is available: {update.release_url}")
     return 0
@@ -80,25 +112,67 @@ def check_for_updates(current_version: str, timeout: float = 2.0) -> UpdateInfo:
         update_available=_version_key(latest.version) > current_key,
         release_url=latest.release_url,
         current_version_known=current in known_versions,
+        ran_from_source=_ran_from_source(),
     )
 
 
 def plan_update(current_version: str, timeout: float = 2.0, *, package_format: str = "binary",
-                system: str | None = None, machine: str | None = None) -> UpdatePlan:
+                system: str | None = None, machine: str | None = None,
+                force: bool = False) -> UpdatePlan:
     """Return the release asset a future updater should use; never downloads or installs."""
     releases = _fetch_releases(timeout)
     latest = _latest_stable_release(releases)
+    current = current_version.removeprefix("v")
     update = UpdateInfo(
-        current_version=current_version.removeprefix("v"),
+        current_version=current,
         latest_version=latest.version,
-        update_available=_version_key(latest.version) > _version_key(current_version),
+        update_available=_version_key(latest.version) > _version_key(current),
         release_url=latest.release_url,
-        current_version_known=current_version.removeprefix("v") in {r.version for r in releases},
+        current_version_known=current in {r.version for r in releases},
+        ran_from_source=_ran_from_source(),
     )
-    if not update.update_available:
+    should_select_asset = update.update_available or (force and not update.current_version_known)
+    if not should_select_asset:
         return UpdatePlan(update)
     asset = _select_asset(latest, package_format=package_format, system=system, machine=machine)
     return UpdatePlan(update, asset.name if asset else None, asset.download_url if asset else None)
+
+
+def update_current_binary(current_version: str, *, force: bool = False, timeout: float = 10.0,
+                          executable_path: str | os.PathLike[str] | None = None) -> BinaryUpdateResult:
+    """Replace the current frozen binary with the latest release binary when possible."""
+    exe = Path(executable_path) if executable_path is not None else Path(sys.executable)
+    if executable_path is None and not getattr(sys, "frozen", False):
+        return BinaryUpdateResult(False, "not running from a bundled binary; nothing to update")
+
+    plan = plan_update(current_version, timeout=timeout, package_format="binary", force=force)
+    if not plan.update.current_version_known and not force:
+        return BinaryUpdateResult(
+            False,
+            "current version is not one of the published GitHub Releases; rerun with --force",
+            plan,
+        )
+    if not plan.update.update_available and plan.update.current_version_known:
+        return BinaryUpdateResult(False, f"wifit3 {plan.update.current_version} is current", plan)
+    if not plan.asset_url:
+        return BinaryUpdateResult(False, "no matching binary asset found for this platform", plan)
+
+    tmp = exe.with_name(f".{exe.name}.download")
+    _download_file(plan.asset_url, tmp, timeout)
+    try:
+        mode = stat.S_IMODE(exe.stat().st_mode) if exe.exists() else 0o755
+        tmp.chmod(mode | stat.S_IXUSR)
+        os.replace(tmp, exe)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+    return BinaryUpdateResult(True, f"updated wifit3 to {plan.update.latest_version}", plan)
+
+
+def _ran_from_source() -> bool:
+    return not getattr(sys, "frozen", False)
 
 
 def _fetch_releases(timeout: float) -> tuple[ReleaseInfo, ...]:
@@ -124,6 +198,15 @@ def _fetch_json(url: str, timeout: float) -> object:
             return json.loads(res.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
         raise UpdateCheckError(f"failed to check for updates: {e}") from e
+
+
+def _download_file(url: str, path: Path, timeout: float) -> None:
+    req = Request(url, headers={"User-Agent": "wifit3-update"})
+    try:
+        with urlopen(req, timeout=timeout) as res:
+            path.write_bytes(res.read())
+    except (HTTPError, URLError, TimeoutError, OSError) as e:
+        raise UpdateCheckError(f"failed to download update: {e}") from e
 
 
 def _parse_release(data: dict) -> ReleaseInfo:

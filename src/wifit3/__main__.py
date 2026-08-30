@@ -56,7 +56,18 @@ def main() -> None:
     parser.add_argument(
         "--check-updates", action="store_true",
         help="Check GitHub Releases for a newer Wifit3 version, then exit.")
+    parser.add_argument(
+        "--update", action="store_true",
+        help="Replace this bundled binary with the latest GitHub Release binary, then exit.")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Force an action to happen anyways. Used for skipping warnings.")
     args = parser.parse_args()
+
+    if args.update:
+        from wifit3.updates import print_update_result
+
+        raise SystemExit(print_update_result(__version__, force=args.force))
 
     if args.check_updates:
         from wifit3.updates import print_update_check
