@@ -53,7 +53,15 @@ def main() -> None:
     parser.add_argument(
         "--smoke", action="store_true",
         help="Boot the TUI headless, render one frame, and exit 0 (CI bundling self-test).")
+    parser.add_argument(
+        "--check-updates", action="store_true",
+        help="Check GitHub Releases for a newer Wifit3 version, then exit.")
     args = parser.parse_args()
+
+    if args.check_updates:
+        from wifit3.updates import print_update_check
+
+        raise SystemExit(print_update_check(__version__))
 
     if args.smoke:
         import asyncio
