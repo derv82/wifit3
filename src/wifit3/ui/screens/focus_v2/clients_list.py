@@ -14,6 +14,8 @@ widget removal). Each ``✕`` carries the client's BSSID so the screen's button
 handler knows whom to deauth."""
 from __future__ import annotations
 
+from typing import Optional
+
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -81,9 +83,7 @@ class ClientsList(Vertical):
         yield Button("Deauth all", id="deauth-all", classes="bcast-btn",
                      tooltip="Deauthenticate all clients (Broadcast)")
         yield VerticalScroll(
-            *(self._make_row(c.bssid, c.power, c.packets, c.fingerprint_emoji,
-                             c.fingerprint_label, c.fingerprint_confidence)
-              for c in self._clients),
+            *(self._make_row(c.bssid, c.power, c.packets, c.fingerprint) for c in self._clients),
             id="client-rows",
         )
 
@@ -116,9 +116,7 @@ class ClientsList(Vertical):
                 # next tick once the removal lands, rather than duplicating the id.
                 if self.query(f"#{_row_id(c.bssid)}"):
                     continue
-                self._rows_host().mount(self._make_row(
-                    c.bssid, c.power, c.packets, c.fingerprint_emoji,
-                    c.fingerprint_label, c.fingerprint_confidence))
+                self._rows_host().mount(self._make_row(c.bssid, c.power, c.packets, c.fingerprint))
             else:
                 pwr, pkts = refs
                 pwr.update(str(c.power))
@@ -163,18 +161,17 @@ class ClientsList(Vertical):
 
     # ----- helpers -----------------------------------------------------------
 
-    def _make_row(self, mac: str, power: int, packets: int, fingerprint_emoji: str = "",
-                  fingerprint_label: str = "", fingerprint_confidence: str = "high") -> Horizontal:
+    def _make_row(self, mac: str, power: int, packets: int,
+                  fp: Optional[Fingerprint] = None) -> Horizontal:
         pwr = Label(str(power), classes="cl-pwr")
         pkts = Label(str(packets), classes="cl-pkts")
         self._known[mac] = (pwr, pkts)
         btn_id = f"{_row_id(mac)}-deauth"
         self._by_button[btn_id] = mac
-        fp_label = Label(fingerprint_emoji, classes="cl-fp")
+        fp_label = Label(fp.emoji if fp else "", classes="cl-fp")
         mac_label = Label(mac, classes="cl-bssid")
-        if fingerprint_label:
-            fp = Fingerprint(fingerprint_emoji, fingerprint_label, fingerprint_confidence)
-            fp_label.tooltip = fingerprint_label
+        if fp is not None:
+            fp_label.tooltip = fp.label
             fp_label.add_class("fp-known")
             mac_label.add_class("fp-known")
             self._detail_targets[fp_label] = (mac, fp)

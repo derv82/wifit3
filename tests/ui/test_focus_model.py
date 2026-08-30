@@ -464,7 +464,8 @@ def test_client_rows_attaches_a_known_fingerprint():
     array = _fake_array({ring_mac: types.SimpleNamespace(bssid=ap.bssid, signal=-50, packets=3)})
     rows = fm.client_rows(ap, array)
     assert len(rows) == 1
-    assert rows[0].fingerprint_emoji == "🔔" and "Ring" in rows[0].fingerprint_label
+    assert rows[0].fingerprint is not None
+    assert rows[0].fingerprint.emoji == "🔔" and "Ring" in rows[0].fingerprint.label
 
 
 def test_client_rows_blank_fingerprint_for_unrecognized_mac():
@@ -472,7 +473,7 @@ def test_client_rows_blank_fingerprint_for_unrecognized_mac():
     array = _fake_array({"02:00:00:00:00:01": types.SimpleNamespace(
         bssid=ap.bssid, signal=-50, packets=3)})
     rows = fm.client_rows(ap, array)
-    assert rows[0].fingerprint_emoji == "" and rows[0].fingerprint_label == ""
+    assert rows[0].fingerprint is None
 
 
 def test_client_rows_skips_other_aps_clients_and_forged_macs():

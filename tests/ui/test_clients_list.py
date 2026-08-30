@@ -36,9 +36,12 @@ def _labels(row):
     return [w for w in row._pending_children if isinstance(w, Label)]
 
 
+_RING = Fingerprint("🔔", "Ring device", "high")
+
+
 def test_row_with_fingerprint_has_its_own_column_and_tooltip():
     cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, "🔔", "Ring device")
+    row = cl._make_row(_MAC, -50, 3, _RING)
     fp_label, mac_label = _labels(row)[0], _labels(row)[1]
     assert fp_label.has_class("cl-fp") and str(fp_label.content) == "🔔"
     assert fp_label.tooltip == "Ring device"
@@ -47,7 +50,7 @@ def test_row_with_fingerprint_has_its_own_column_and_tooltip():
 
 def test_row_without_fingerprint_shows_a_blank_fp_column_no_tooltip():
     cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, "", "")
+    row = cl._make_row(_MAC, -50, 3, None)
     fp_label, mac_label = _labels(row)[0], _labels(row)[1]
     assert str(fp_label.content) == "" and fp_label.tooltip is None
     assert str(mac_label.content) == _MAC
@@ -57,21 +60,20 @@ def test_fingerprinted_labels_get_the_clickable_visual_marker():
     """A known fingerprint must look different from a plain label -- otherwise nothing signals
     that clicking it does anything."""
     cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, "🔔", "Ring device")
+    row = cl._make_row(_MAC, -50, 3, _RING)
     fp_label, mac_label = _labels(row)[0], _labels(row)[1]
     assert fp_label.has_class("fp-known") and mac_label.has_class("fp-known")
 
 
 def test_unfingerprinted_labels_get_no_clickable_marker():
     cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, "", "")
+    row = cl._make_row(_MAC, -50, 3, None)
     fp_label, mac_label = _labels(row)[0], _labels(row)[1]
     assert not fp_label.has_class("fp-known") and not mac_label.has_class("fp-known")
 
 
 def test_compose_and_sync_thread_the_fingerprint_through():
-    client = SimpleNamespace(bssid=_MAC, power=-50, packets=1, fingerprint_emoji="🔔",
-                             fingerprint_label="Ring device", fingerprint_confidence="high")
+    client = SimpleNamespace(bssid=_MAC, power=-50, packets=1, fingerprint=_RING)
     cl = ClientsList([client])
     rows = list(cl.compose())
     row_container = rows[1]                              # [0] is the "Deauth all" button
@@ -84,15 +86,15 @@ def test_compose_and_sync_thread_the_fingerprint_through():
 
 def test_fingerprinted_row_registers_both_labels_as_click_targets():
     cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, "🔔", "Ring device", "high")
+    row = cl._make_row(_MAC, -50, 3, _RING)
     fp_label, mac_label = _labels(row)[0], _labels(row)[1]
-    assert cl._detail_targets[fp_label] == (_MAC, Fingerprint("🔔", "Ring device", "high"))
-    assert cl._detail_targets[mac_label] == (_MAC, Fingerprint("🔔", "Ring device", "high"))
+    assert cl._detail_targets[fp_label] == (_MAC, _RING)
+    assert cl._detail_targets[mac_label] == (_MAC, _RING)
 
 
 def test_unfingerprinted_row_registers_no_click_targets():
     cl = ClientsList([])
-    cl._make_row(_MAC, -50, 3, "", "")
+    cl._make_row(_MAC, -50, 3, None)
     assert cl._detail_targets == {}
 
 
@@ -101,7 +103,7 @@ async def test_clicking_a_registered_label_pushes_the_detail_popup():
     app = _DemoApp([])
     async with app.run_test() as pilot:
         cl = app.query_one("#clients", ClientsList)
-        row = cl._make_row(_MAC, -50, 3, "🔔", "Ring device", "high")
+        row = cl._make_row(_MAC, -50, 3, _RING)
         fp_label = _labels(row)[0]
         await cl._rows_host().mount(row)
         app.push_screen = Mock()
@@ -120,7 +122,7 @@ async def test_clicking_an_unregistered_widget_is_a_noop():
     app = _DemoApp([])
     async with app.run_test():
         cl = app.query_one("#clients", ClientsList)
-        cl._make_row(_MAC, -50, 3, "🔔", "Ring device", "high")
+        cl._make_row(_MAC, -50, 3, _RING)
         app.push_screen = Mock()
 
         cl.on_click(_click(Label("unrelated")))
@@ -130,7 +132,7 @@ async def test_clicking_an_unregistered_widget_is_a_noop():
 
 def test_removing_a_row_drops_its_click_targets():
     cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, "🔔", "Ring device", "high")
+    row = cl._make_row(_MAC, -50, 3, _RING)
     cl._rows_host = Mock(return_value=SimpleNamespace(mount=Mock()))
     # _remove_row queries the live DOM for the row; stand in a no-op query since nothing's mounted.
     cl.query_one = Mock(return_value=row)
