@@ -7,12 +7,13 @@ Two confidence tiers:
 - **high**: a small hand-curated table (real IEEE OUI assignments, maclookup.app, 2026-08) for
   vendors whose product line is a single device class end to end (Ring is always a
   doorbell/camera, PlayStation is always a console), so the OUI alone names the actual thing.
-- **low**: ``fingerprint_vendors.py``, GENERATED from the full IEEE OUI registry (every
-  registered vendor, ~40k entries -- see scripts/generators/gen_fingerprint_vendors.py), since a
-  vendor whose OUI blocks span multiple device classes (Apple/Google/Samsung/Microsoft/... all
-  sell phones, laptops, and smart-home hardware off the same blocks) can only ever be named, not
-  classified. A handful of well-known giants get a recognizable icon by name match; everyone else
-  gets a generic tag. Disambiguating a low-confidence vendor into an actual device class needs IE
+- **low**: ``fingerprint_vendors.py``, GENERATED from Wireshark's weekly-updated ``manuf`` feed
+  (every registered vendor, ~58k entries, including IEEE's finer-grained 28-/36-bit
+  sub-allocations -- see scripts/generators/gen_fingerprint_vendors.py), since a vendor whose OUI
+  blocks span multiple device classes (Apple/Google/Samsung/Microsoft/... all sell phones,
+  laptops, and smart-home hardware off the same blocks) can only ever be named, not classified. A
+  handful of well-known giants get a recognizable icon by name match; everyone else gets a
+  generic tag. Disambiguating a low-confidence vendor into an actual device class needs IE
   fingerprinting (probe/assoc request tag sequences), not attempted here; see
   docs/planning/FEATURES.md.
 """
@@ -35,7 +36,9 @@ class Fingerprint:
 
 
 def _ouis(text: str) -> frozenset:
-    return frozenset(entry.replace(":", "").replace("-", "").lower()[:6] for entry in text.split())
+    """Each entry's own hex length is kept (not forced to 6): a longer one names an IEEE
+    28-/36-bit sub-allocation precisely, not a plain 24-bit OUI -- see _TESLA below."""
+    return frozenset(entry.replace(":", "").replace("-", "").lower() for entry in text.split())
 
 
 # ----- high confidence: single device class end to end -----------------------
@@ -90,13 +93,10 @@ _NEST = _ouis("18:B4:30 64:16:66")
 
 _IROBOT = _ouis("4C:B9:EA 50:14:79 AC:F4:73")
 
-# DC:44:27 is imprecise: IEEE lists that OUI-24 block itself as "IEEE Registration Authority"
-# (not a real vendor -- see gen_fingerprint_vendors.py's _NOT_A_VENDOR), because it's further
-# subdivided into per-organization OUI-28 blocks; Tesla only owns DC:44:27:1x, so a real device
-# in DC:44:27:0x/2x/etc. would still misreport as Tesla here. Left in rather than dropped (losing
-# a real, commonly-seen device class outweighs this edge) or chasing general OUI-28/36 support
-# (a much bigger undertaking for one entry).
-_TESLA = _ouis("0C:29:8F 4C:FC:AA 54:F8:F0 90:E6:43 98:ED:5C D4:4F:14 DC:44:27")
+# DC:44:27:1 is a 28-bit (OUI-28) entry, not a full 24-bit OUI: that 24-bit block is actually
+# split between 16 organizations, Tesla owning only the :1x nibble (fingerprint_vendors.py's
+# generator resolves this precisely from Wireshark's manuf feed; see its module docstring).
+_TESLA = _ouis("0C:29:8F 4C:FC:AA 54:F8:F0 90:E6:43 98:ED:5C D4:4F:14 DC:44:27:1")
 
 _HIGH_CONFIDENCE: tuple[tuple[frozenset, Fingerprint], ...] = (
     (_RING, Fingerprint("🔔", "Ring device")),
@@ -123,8 +123,15 @@ _ICON_OVERRIDES: tuple[tuple[str, str], ...] = (
 _GENERIC_VENDOR_ICON = "🏷️"
 
 
-def _low_confidence(oui: str) -> Optional[Fingerprint]:
-    vendor = VENDOR_BY_OUI.get(oui.upper())
+# IEEE only ever allocates at these three widths (MA-L/MA-M/MA-S); both tables key by hex
+# nibbles (bits // 4), longest first, so a 28-/36-bit entry always wins over its containing
+# 24-bit block. Add a width here (nowhere else) if IEEE ever introduces one.
+_PREFIX_LENGTHS = (9, 7, 6)
+
+
+def _low_confidence(hex_mac: str) -> Optional[Fingerprint]:
+    vendor = next((v for length in _PREFIX_LENGTHS
+                   if (v := VENDOR_BY_OUI.get(hex_mac[:length].upper())) is not None), None)
     if vendor is None:
         return None
     low = vendor.lower()
@@ -139,8 +146,10 @@ def _low_confidence(oui: str) -> Optional[Fingerprint]:
 def fingerprint(mac: str) -> Optional[Fingerprint]:
     """The device-class fingerprint for ``mac``'s OUI: hand-curated high-confidence table first,
     then the generated full vendor registry at low confidence. None if the OUI isn't registered."""
-    oui = mac.replace(":", "").replace("-", "").lower()[:6]
-    for ouis, fp in _HIGH_CONFIDENCE:
-        if oui in ouis:
-            return fp
-    return _low_confidence(oui)
+    hex_mac = mac.replace(":", "").replace("-", "").lower()
+    for length in _PREFIX_LENGTHS:
+        prefix = hex_mac[:length]
+        for ouis, fp in _HIGH_CONFIDENCE:
+            if prefix in ouis:
+                return fp
+    return _low_confidence(hex_mac)

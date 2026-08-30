@@ -47,6 +47,17 @@ def test_tesla_oui_recognized():
     assert fp is not None and "Tesla" in fp.label and fp.confidence == "high"
 
 
+def test_tesla_28_bit_sub_block_recognized_precisely():
+    """DC:44:27 is a 24-bit block IEEE further split into 16 organizations; only the :1x nibble
+    is Tesla's. A device in a neighboring sub-range must resolve to its real owner, not Tesla."""
+    fp = fingerprint("dc:44:27:15:22:33")            # Tesla's actual :1x sub-range
+    assert fp is not None and "Tesla" in fp.label and fp.confidence == "high"
+
+    neighbor = fingerprint("dc:44:27:05:22:33")       # :0x -- a different, unrelated vendor
+    assert neighbor is not None and neighbor.confidence == "low"
+    assert neighbor.label == "Suritel device"
+
+
 def test_nintendo_and_playstation_have_different_icons():
     """Regression: both used to render the same generic controller emoji, making them
     indistinguishable at a glance."""
@@ -74,6 +85,15 @@ def test_samsung_matched_via_the_generated_table():
     fp = fingerprint("00:00:f0:aa:bb:cc")
     assert fp is not None and fp.emoji == "🔵" and fp.confidence == "low"
     assert fp.label == "SAMSUNG Electronics device"     # brand casing preserved, not title-cased
+
+
+def test_low_confidence_resolves_a_36_bit_sub_block_too():
+    """Not just Tesla's 28-bit case -- a 36-bit (finer still) sub-allocation must also resolve
+    to its actual owner, distinct from its immediate neighbor in the same 24-bit block."""
+    a = fingerprint("00:1b:c5:00:0a:bb")
+    b = fingerprint("00:1b:c5:00:1a:bb")
+    assert a is not None and a.label == "Converging device"
+    assert b is not None and b.label == "OpenRB.com, Direct SIA device"
 
 
 def test_generated_table_never_names_an_ieee_registration_authority_block():

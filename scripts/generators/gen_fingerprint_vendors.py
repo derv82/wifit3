@@ -1,31 +1,42 @@
 #!/usr/bin/env python3
-"""Regenerate ``src/wifit3/wlan/fingerprint_vendors.py`` from the IEEE OUI registry.
+"""Regenerate ``src/wifit3/wlan/fingerprint_vendors.py`` from Wireshark's ``manuf`` feed.
 
 Client fingerprinting's low-confidence tier (wlan/fingerprint.py) names a client's vendor
 without claiming a specific device class -- unlike gen_router_ouis.py (which filters the ~40k-row
-registry down to ~300 router-brand prefixes for a narrow purpose), this keeps every MA-L
-organization: broad "who made this" coverage is the entire point of the low-confidence tier, so
-there's no vendor allowlist to filter against. Organization names are cleaned up (corporate
-suffixes stripped, ALL-CAPS title-cased) so the popup shows "Samsung Electronics", not
-"SAMSUNG ELECTRONICS CO.,LTD".
+IEEE registry down to ~300 router-brand prefixes for a narrow purpose), this keeps every entry:
+broad "who made this" coverage is the entire point of the low-confidence tier, so there's no
+vendor allowlist to filter against.
+
+Sourced from Wireshark's own ``manuf`` feed rather than the raw IEEE registry: Wireshark
+regenerates it weekly straight from IEEE, and -- unlike the flat IEEE MA-L table -- it already
+resolves IEEE's finer-grained MA-M (28-bit) / MA-S (36-bit) sub-allocations, so a 24-bit block
+IEEE splits between several organizations (e.g. Tesla owns only a nibble of one such block, not
+the whole thing) maps to the *actual* owner of each piece instead of one misleading name for the
+whole block. Vendor names are still cleaned up here (corporate suffixes stripped, ALL-CAPS
+title-cased) the same way as before -- Wireshark's own "long name" column keeps raw suffixes
+("Samsung Electronics Co.,Ltd"), its heavily-truncated "short name" column (built for their
+packet-list UI, e.g. "SamsungElect") isn't fit for a human-facing tooltip either.
 
 Usage:
-    uv run python scripts/generators/gen_fingerprint_vendors.py            # download a fresh registry
-    uv run python scripts/generators/gen_fingerprint_vendors.py oui.csv    # use a local IEEE csv
+    uv run python scripts/generators/gen_fingerprint_vendors.py           # download the current feed
+    uv run python scripts/generators/gen_fingerprint_vendors.py manuf     # use a local copy of the file
 """
 from __future__ import annotations
 
-import csv
-import io
 import re
 import sys
 import urllib.request
 from pathlib import Path
+from typing import Optional
 
-_IEEE_CSV = "https://standards-oui.ieee.org/oui/oui.csv"
+_MANUF_URL = "https://www.wireshark.org/download/automated/data/manuf"
 
 _OUT = (Path(__file__).resolve().parents[2]
         / "src" / "wifit3" / "wlan" / "fingerprint_vendors.py")
+
+# IEEE only ever allocates at these three widths (MA-L/MA-M/MA-S); manuf's optional "/N" suffix
+# names bit-width, but we key by hex nibbles (bits // 4) since every allocation is nibble-aligned.
+_ALLOCATION_BITS = (24, 28, 36)
 
 # Stripped iteratively (some names stack two, e.g. "X Technology Co., Ltd."), so each pattern
 # only needs to match one trailing suffix at a time. The second line's extras (JSC/OAO/ZAO/OOO
@@ -46,7 +57,8 @@ _SUFFIX_RE = re.compile(
 # shouting, and a name mixing scripts (Chinese + a parenthetical English translation) isn't
 # something _SUFFIX_RE's Latin-only patterns touch at all. "Advanced Micro Devices" -> "AMD"
 # and the Chinese entry are ported from Wireshark's make-manuf.py special_case dict (GPLv2);
-# the AT&T/Samsung casing fixes are ours, same underlying problem as the AMD one.
+# the AT&T/Samsung casing fixes are ours, same underlying problem as the AMD one -- confirmed
+# Wireshark's own feed doesn't fix AT&T's casing either, so this isn't a duplicated effort.
 _SPECIAL_CASE = {
     "At&T": "AT&T",
     "Samsung Electronics": "SAMSUNG Electronics",
@@ -54,10 +66,8 @@ _SPECIAL_CASE = {
     "杭州德澜科技有限公司（HangZhou Delan Technology Co.,Ltd）": "DelanTech",
 }
 
-# IEEE further subdivides some MA-L (OUI-24) blocks into per-organization OUI-28/OUI-36
-# allocations; the MA-L record itself just says this, naming no real vendor. Not useful to
-# fingerprinting (it would mislabel every device in the block with whichever nibble it doesn't
-# actually belong to), so these are dropped rather than mapped to a name.
+# Belt-and-suspenders: not known to occur in Wireshark's feed (unlike the raw IEEE registry,
+# which labels an unresolved MA-M/MA-S parent block this way), but cheap to guard regardless.
 _NOT_A_VENDOR = {"IEEE Registration Authority"}
 
 # Chinese registrants often lead with the city/province, which _SUFFIX_RE (trailing-only) can't
@@ -71,9 +81,9 @@ _SKIP_START = {
 
 def _clean_name(org: str) -> str:
     name = org.strip().strip('"').strip()
-    # The IEEE registry is free text: a handful of orgs registered trademark glyphs or an
-    # em-dash into their own name (e.g. "Planet Bingo® — 3rd Rock Gaming®"), which the
-    # project's own em-dash ban would otherwise trip on generated output.
+    # Free text: a handful of orgs registered trademark glyphs or an em-dash into their own name
+    # (e.g. "Planet Bingo® — 3rd Rock Gaming®"), which the project's own em-dash ban would
+    # otherwise trip on generated output.
     name = name.replace("—", "-").replace("–", "-")
     name = name.replace("®", "").replace("™", "")
     words = name.split()
@@ -89,33 +99,60 @@ def _clean_name(org: str) -> str:
     return _SPECIAL_CASE.get(cleaned, cleaned)
 
 
+def _parse_line(line: str) -> Optional[tuple[str, str]]:
+    """One ``<prefix>[/bits]\\t<short name>\\t<long name>`` line -> (hex-nibble prefix, raw long
+    name), or ``None`` for a comment/blank/unrecognized-width line; ``bits`` defaults to 24."""
+    line = line.rstrip("\n")
+    if not line or line.startswith("#"):
+        return None
+    fields = [f for f in line.split("\t") if f.strip()]
+    if len(fields) < 2:
+        return None
+    prefix_field = fields[0].strip()
+    long_name = fields[2].strip() if len(fields) >= 3 else fields[1].strip()
+    mac_part, _, bits_str = prefix_field.partition("/")
+    bits = int(bits_str) if bits_str else 24
+    if bits not in _ALLOCATION_BITS:
+        return None
+    nibbles = bits // 4
+    hex_digits = mac_part.replace(":", "").replace("-", "").upper()
+    prefix = hex_digits[:nibbles]
+    if len(prefix) != nibbles or not all(c in "0123456789ABCDEF" for c in prefix):
+        return None
+    return prefix, long_name
+
+
 def _load(source: str | None) -> str:
     if source:
         return Path(source).read_text(encoding="utf-8", errors="replace")
-    print(f"Downloading {_IEEE_CSV} ...")
-    with urllib.request.urlopen(_IEEE_CSV, timeout=120) as r:  # noqa: S310 (fixed IEEE https host)
+    print(f"Downloading {_MANUF_URL} ...")
+    req = urllib.request.Request(_MANUF_URL, headers={"User-Agent": "wifit3-fingerprint-vendor-gen"})
+    with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310 (fixed wireshark.org https host)
         return r.read().decode("utf-8", "replace")
 
 
 def main(source: str | None = None) -> None:
     mapping: dict[str, str] = {}
-    for row in csv.reader(io.StringIO(_load(source))):
-        if len(row) < 3 or row[0] != "MA-L":          # header + MA-M/MA-S rows skipped
+    for line in _load(source).splitlines():
+        parsed = _parse_line(line)
+        if parsed is None:
             continue
-        oui = row[1].strip().upper()
-        if len(oui) != 6 or not all(c in "0123456789ABCDEF" for c in oui):
-            continue
-        name = _clean_name(row[2])
+        prefix, raw_name = parsed
+        name = _clean_name(raw_name)
         if name in _NOT_A_VENDOR:
             continue
-        mapping[oui] = name
+        mapping[prefix] = name
 
     header = (
         '"""OUI -> cleaned vendor name, for client fingerprinting\'s low-confidence tier\n'
         "(wlan/fingerprint.py): every registered vendor, since naming who made a device --\n"
         "without claiming which kind -- is the entire point of that tier.\n\n"
-        "GENERATED by scripts/generators/gen_fingerprint_vendors.py from the IEEE OUI registry\n"
-        '(standards-oui.ieee.org). Do NOT edit by hand; rerun the script to refresh.\n"""\n\n'
+        "Keys vary in length: most are 6 hex chars (a plain 24-bit OUI), some are 7 or 9 (IEEE's\n"
+        "finer-grained 28-/36-bit sub-allocations, where a single 24-bit block is actually split\n"
+        "between several organizations). fingerprint.py tries the longest prefix first.\n\n"
+        "GENERATED by scripts/generators/gen_fingerprint_vendors.py from Wireshark's weekly\n"
+        "manuf feed (wireshark.org/download/automated/data/manuf, GPLv2). Do NOT edit by hand;\n"
+        'rerun the script to refresh.\n"""\n\n'
     )
     body = "VENDOR_BY_OUI = {\n"
     body += "".join(f'    "{o}": {mapping[o]!r},\n' for o in sorted(mapping))
