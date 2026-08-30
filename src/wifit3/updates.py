@@ -7,8 +7,9 @@ import os
 from pathlib import Path
 import platform as platform_module
 import re
-import shlex
+import shutil
 import stat
+import subprocess
 import sys
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -64,10 +65,10 @@ class UpdateCheckError(Exception):
     """Raised when GitHub release data cannot be fetched or parsed."""
 
 
-def print_update_result(current_version: str, *, force: bool = False) -> int:
+def print_update_result(current_version: str, *, force: bool = False, allow_elevation: bool = True) -> int:
     """Print update progress/result for the CLI; return a process exit code."""
     try:
-        result = update_current_binary(current_version, force=force)
+        result = update_current_binary(current_version, force=force, allow_elevation=allow_elevation)
     except UpdateCheckError as e:
         print(e)
         return 2
@@ -139,7 +140,8 @@ def plan_update(current_version: str, timeout: float = 2.0, *, package_format: s
 
 
 def update_current_binary(current_version: str, *, force: bool = False, timeout: float = 10.0,
-                          executable_path: str | os.PathLike[str] | None = None) -> BinaryUpdateResult:
+                          executable_path: str | os.PathLike[str] | None = None,
+                          allow_elevation: bool = True) -> BinaryUpdateResult:
     """Replace the current frozen binary with the latest release binary when possible."""
     exe = Path(executable_path) if executable_path is not None else Path(sys.executable)
     if executable_path is None and not getattr(sys, "frozen", False):
@@ -164,7 +166,11 @@ def update_current_binary(current_version: str, *, force: bool = False, timeout:
         tmp.chmod(mode | stat.S_IXUSR)
         os.replace(tmp, exe)
     except PermissionError:
-        return BinaryUpdateResult(False, _sudo_update_message(exe, force), plan)
+        if allow_elevation:
+            elevated = _try_polkit_update(exe, force, plan)
+            if elevated.updated:
+                return elevated
+        return BinaryUpdateResult(False, "permission denied replacing binary", plan)
     finally:
         try:
             tmp.unlink()
@@ -177,11 +183,22 @@ def _ran_from_source() -> bool:
     return not getattr(sys, "frozen", False)
 
 
-def _sudo_update_message(executable: Path, force: bool) -> str:
-    args = ["sudo", str(executable), "--update"]
+def _try_polkit_update(executable: Path, force: bool, plan: UpdatePlan) -> BinaryUpdateResult:
+    if sys.platform != "linux" or os.geteuid() == 0:
+        return BinaryUpdateResult(False, "permission denied replacing binary", plan)
+    pkexec = shutil.which("pkexec")
+    if pkexec is None:
+        return BinaryUpdateResult(False, "permission denied replacing binary", plan)
+    args = [pkexec, str(executable), "--update", "--no-polkit"]
     if force:
         args.append("--force")
-    return "permission denied replacing binary; rerun with: " + " ".join(shlex.quote(arg) for arg in args)
+    try:
+        completed = subprocess.run(args, timeout=120, check=False, capture_output=True, text=True)
+    except (OSError, subprocess.TimeoutExpired):
+        return BinaryUpdateResult(False, "permission denied replacing binary", plan)
+    if completed.returncode != 0:
+        return BinaryUpdateResult(False, "permission denied replacing binary", plan)
+    return BinaryUpdateResult(True, f"updated wifit3 to {plan.update.latest_version} with elevated privileges", plan)
 
 
 def _fetch_releases(timeout: float) -> tuple[ReleaseInfo, ...]:

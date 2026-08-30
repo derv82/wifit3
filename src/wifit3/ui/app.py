@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sys
@@ -13,6 +14,9 @@ from wifit3.device.manager import DeviceManager, Status
 from wifit3.device.watch import DeviceWatch
 from wifit3.wlan.array import WlanArray
 from wifit3.models import AccessPoint
+from wifit3.updates import (
+    AUTO_CHECK_UPDATES_DEFAULT, UpdateCheckError, UpdateInfo, check_for_updates, update_current_binary,
+)
 
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView
@@ -120,6 +124,21 @@ class WifiteApp(App):
         margin-right: 1;
         min-width: 12;
     }
+    #update-toast {
+        layer: overlay;
+        dock: bottom;
+        align-horizontal: right;
+        align: center middle;
+        width: auto;
+        height: auto;
+        display: none;
+        margin: 0 1 1 0;
+        padding: 0 1;
+        border: tall $primary;
+        background: $surface;
+    }
+    #update-toast-label { width: 28; content-align: center middle; margin-right: 1; }
+    #update-toast-btn { min-width: 8; }
     /* App CSS outranks a widget's DEFAULT_CSS, so lower the global min-width for the
        EvilTwin modal's compact BSSID buttons from here, not the modal. */
     EvilTwinInputModal #bssid-btns Button { min-width: 4; }
@@ -134,6 +153,7 @@ class WifiteApp(App):
                                         on_change=self._on_devices_changed,
                                         on_fatal=self._on_usb_fatal)
         self.target_ap: Optional[AccessPoint] = None
+        self._pending_update: UpdateInfo | None = None
         self._config_error: Optional[str] = None
         try:
             Config.load()
@@ -167,6 +187,50 @@ class WifiteApp(App):
         self.push_screen("splash")
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
         self.call_after_refresh(self.device_watch.poll)
+        if AUTO_CHECK_UPDATES_DEFAULT:
+            self.call_after_refresh(self._start_update_check)
+
+    def _start_update_check(self) -> None:
+        self._check_updates_on_start()
+
+    @work(exclusive=True)
+    async def _check_updates_on_start(self) -> None:
+        try:
+            update = await asyncio.to_thread(check_for_updates, __version__)
+        except UpdateCheckError:
+            logger.debug("Startup update check failed", exc_info=True)
+            return
+        if update.update_available:
+            self._notify_update_available(update)
+
+    def _notify_update_available(self, update: UpdateInfo) -> None:
+        self._pending_update = update
+        self._show_pending_update_on_splash()
+        self.set_timer(0.1, self._show_pending_update_on_splash)
+
+    def _show_pending_update_on_splash(self) -> None:
+        if self._pending_update is not None and isinstance(self.screen, SplashView):
+            self.screen.show_update_available(self._pending_update)
+
+    def perform_update_and_restart(self, *, force: bool = False) -> None:
+        self._update_and_restart(force)
+
+    @work(exclusive=True)
+    async def _update_and_restart(self, force: bool = False) -> None:
+        try:
+            result = await asyncio.to_thread(update_current_binary, __version__, force=force)
+        except UpdateCheckError as e:
+            self.notify(str(e), title="Update failed", severity="error")
+            return
+        if not result.updated:
+            self.notify(result.message, title="Update", severity="warning")
+            return
+        self._restart_after_update(result.message)
+
+    def _restart_after_update(self, message: str) -> None:
+        self.persist_config()
+        logger.info("%s; restarting", message)
+        os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
 
     def _on_devices_changed(self, current, arrived, departed) -> None:
         """DeviceWatch fired. On Splash, refresh the card list; mid-session, prompt to bring up

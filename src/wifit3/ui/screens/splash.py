@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING
 
 from wifit3.ui.ansi_art import make_black_transparent, recolor_logo
 from wifit3.ui.screens.setup_error import SetupErrorDialog
+from wifit3.ui.screens.update_prompt import UpdatePromptDialog
 from wifit3.device.manager import Status
+from wifit3.updates import UpdateInfo
 
 if TYPE_CHECKING:
     from wifit3.ui.app import WifiteApp
@@ -97,6 +99,7 @@ class SplashView(Screen):
     def __init__(self):
         super().__init__()
         self._is_initializing = False
+        self._update: UpdateInfo | None = None
         # DeviceIDs from the last render (the app's DeviceWatch feeds them), indexed to the rows.
         self._devices = []
 
@@ -121,7 +124,38 @@ class SplashView(Screen):
                         yield Button("START", id="start-btn", variant="success")
                         # Reverses wifit3's driver/access changes for the highlighted card.
                         yield Button("Uninstall", id="uninstall-btn", variant="error")
+        with Horizontal(id="update-toast"):
+            yield Label("", id="update-toast-label")
+            yield Button("Update", id="update-toast-btn", variant="primary")
         yield Footer()
+
+    def show_update_available(self, update: UpdateInfo) -> None:
+        self._update = update
+        toast = self.query_one("#update-toast")
+        toast.display = True
+        self.query_one("#update-toast-label", Label).update(f"update {update.latest_version} available")
+
+    async def _confirm_update(self) -> None:
+        if self._update is None:
+            return
+        if not await self.app.push_screen_wait(UpdatePromptDialog(self._update.latest_version)):
+            return
+        force = False
+        if not self._update.current_version_known:
+            body = (
+                f"Warning: current version [bold]{self._update.current_version}[/] is not one of the published "
+                f"GitHub Releases. Updating will replace it with release [bold]{self._update.latest_version}[/].\n\n"
+                "Are you really sure?"
+            )
+            force = await self.app.push_screen_wait(UpdatePromptDialog(
+                self._update.latest_version,
+                title="Nonstandard version detected",
+                body=body,
+                yes_label="Update anyway",
+                no_label="Cancel",
+            ))
+        if force or self._update.current_version_known:
+            self.app.perform_update_and_restart(force=force)
 
     def _both_lists(self):
         """The (single_list, multi_list) pair: the ListView shown for one card, the SelectionList
@@ -163,6 +197,8 @@ class SplashView(Screen):
             uninstall.tooltip = f"Uninstall {hint} for the highlighted card"
         self.app.theme_changed_signal.subscribe(self, lambda _theme: self.refresh_theme_art())
         self._enter_scanning_mode()
+        if self.app._pending_update is not None:
+            self.show_update_available(self.app._pending_update)
 
     def reset_for_reentry(self) -> None:
         """Returning to splash (adapter lost): the installed screen only resumes (on_mount doesn't
@@ -296,6 +332,8 @@ class SplashView(Screen):
             dev = self._highlighted_device()
             if dev is not None:
                 self.perform_uninstall(dev)
+        elif event.button.id == "update-toast-btn":
+            self.run_worker(self._confirm_update(), exclusive=True)
 
     def _enter_busy(self) -> None:
         self._is_initializing = True

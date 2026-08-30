@@ -139,18 +139,59 @@ def test_update_current_binary_replaces_executable(tmp_path, monkeypatch):
     assert exe.read_bytes() == b"new"
 
 
-def test_update_current_binary_permission_denied_suggests_sudo(tmp_path, monkeypatch):
+def test_update_current_binary_permission_denied_without_polkit(tmp_path, monkeypatch):
     exe = tmp_path / "wifit3"
     exe.write_bytes(b"old")
     monkeypatch.setattr(updates, "plan_update", lambda *_args, **_kwargs: updates.UpdatePlan(
         UpdateInfo("0.1.3", "0.1.4", True, "https://example/release", True),
         "wifit3-linux-x64", "https://example/download"))
     monkeypatch.setattr(updates, "_download_file", lambda _url, _path, _timeout: (_ for _ in ()).throw(PermissionError()))
+    monkeypatch.setattr(updates.sys, "platform", "linux")
+    monkeypatch.setattr(updates.shutil, "which", lambda _cmd: None)
 
     result = updates.update_current_binary("0.1.3", force=True, executable_path=exe)
 
     assert result.updated is False
-    assert result.message == f"permission denied replacing binary; rerun with: sudo {exe} --update --force"
+    assert result.message == "permission denied replacing binary"
+
+
+def test_update_current_binary_uses_polkit_on_permission_denied(tmp_path, monkeypatch):
+    exe = tmp_path / "wifit3"
+    exe.write_bytes(b"old")
+    calls = []
+    monkeypatch.setattr(updates, "plan_update", lambda *_args, **_kwargs: updates.UpdatePlan(
+        UpdateInfo("0.1.3", "0.1.4", True, "https://example/release", True),
+        "wifit3-linux-x64", "https://example/download"))
+    monkeypatch.setattr(updates, "_download_file", lambda _url, _path, _timeout: (_ for _ in ()).throw(PermissionError()))
+    monkeypatch.setattr(updates.sys, "platform", "linux")
+    monkeypatch.setattr(updates.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(updates.shutil, "which", lambda _cmd: "/usr/bin/pkexec")
+    monkeypatch.setattr(updates.subprocess, "run", lambda args, **_kwargs: calls.append(args) or type(
+        "Result", (), {"returncode": 0})())
+
+    result = updates.update_current_binary("0.1.3", force=True, executable_path=exe)
+
+    assert result.updated is True
+    assert "elevated privileges" in result.message
+    assert calls == [["/usr/bin/pkexec", str(exe), "--update", "--no-polkit", "--force"]]
+
+
+def test_update_current_binary_reports_permission_denied_when_polkit_fails(tmp_path, monkeypatch):
+    exe = tmp_path / "wifit3"
+    exe.write_bytes(b"old")
+    monkeypatch.setattr(updates, "plan_update", lambda *_args, **_kwargs: updates.UpdatePlan(
+        UpdateInfo("0.1.3", "0.1.4", True, "https://example/release", True),
+        "wifit3-linux-x64", "https://example/download"))
+    monkeypatch.setattr(updates, "_download_file", lambda _url, _path, _timeout: (_ for _ in ()).throw(PermissionError()))
+    monkeypatch.setattr(updates.sys, "platform", "linux")
+    monkeypatch.setattr(updates.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(updates.shutil, "which", lambda _cmd: "/usr/bin/pkexec")
+    monkeypatch.setattr(updates.subprocess, "run", lambda *_args, **_kwargs: type("Result", (), {"returncode": 127})())
+
+    result = updates.update_current_binary("0.1.3", executable_path=exe)
+
+    assert result.updated is False
+    assert result.message == "permission denied replacing binary"
 
 
 def test_cli_check_updates_prints_available(monkeypatch, capsys):
@@ -185,17 +226,18 @@ def test_cli_check_updates_warns_when_running_from_source(monkeypatch, capsys):
 
 
 def test_cli_update_delegates_to_update_result(monkeypatch):
-    from wifit3 import __main__
+    from wifit3 import __main__, __version__
 
     calls = []
     monkeypatch.setattr("sys.argv", ["wifit3", "--update", "--force"])
-    monkeypatch.setattr(updates, "print_update_result", lambda version, force=False: calls.append((version, force)) or 7)
+    monkeypatch.setattr(updates, "print_update_result", lambda version, force=False, allow_elevation=True: calls.append(
+        (version, force, allow_elevation)) or 7)
 
     with pytest.raises(SystemExit) as e:
         __main__.main()
 
     assert e.value.code == 7
-    assert calls == [("0.1.3", True)]
+    assert calls == [(__version__, True, True)]
 
 
 def test_cli_check_updates_prints_latest_when_current(monkeypatch, capsys):

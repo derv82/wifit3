@@ -62,12 +62,13 @@ def main() -> None:
     parser.add_argument(
         "--force", action="store_true",
         help="Force an action to happen anyways. Used for skipping warnings.")
+    parser.add_argument("--no-polkit", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     if args.update:
         from wifit3.updates import print_update_result
 
-        raise SystemExit(print_update_result(__version__, force=args.force))
+        raise SystemExit(print_update_result(__version__, force=args.force, allow_elevation=not args.no_polkit))
 
     if args.check_updates:
         from wifit3.updates import print_update_check

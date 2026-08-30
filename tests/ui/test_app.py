@@ -1,10 +1,11 @@
 import pytest
 
 from wifit3.persist.config import Config
+from wifit3.updates import UpdateInfo
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
-from textual.widgets import RichLog, DataTable
+from textual.widgets import RichLog, DataTable, Label
 
 
 
@@ -40,6 +41,76 @@ async def test_app_layout_and_boot():
         
         # Check that FocusViewV2 is registered (but requires target_ap to mount properly without escaping immediately, so we won't push it here)
         assert "focus" in pilot.app._installed_screens
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_app_toasts_update_available_on_splash(monkeypatch):
+    calls = []
+    monkeypatch.setattr("wifit3.ui.app.check_for_updates", lambda _version: calls.append(_version) or UpdateInfo(
+        "0.1.3", "0.1.4", True, "https://example/release", True, False))
+    app = WifiteApp()
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.5)
+        assert isinstance(pilot.app.screen, SplashView)
+        toast = pilot.app.screen.query_one("#update-toast")
+        label = pilot.app.screen.query_one("#update-toast-label", Label)
+        assert calls
+        assert app._pending_update is not None
+        assert app._pending_update.latest_version == "0.1.4"
+        assert toast.display is True
+        assert str(label.content) == "update 0.1.4 available"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_update_confirm_uses_force_for_dev_version(monkeypatch):
+    app = WifiteApp()
+    update = UpdateInfo("0.1.3-dev", "0.1.4", True, "https://example/release", False, False)
+    prompts = []
+    updates = []
+
+    async def confirm(prompt):
+        prompts.append(prompt)
+        return True
+
+    monkeypatch.setattr(app, "push_screen_wait", confirm)
+    monkeypatch.setattr(app, "perform_update_and_restart", lambda *, force=False: updates.append(force))
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        assert isinstance(pilot.app.screen, SplashView)
+        pilot.app.screen.show_update_available(update)
+        await pilot.app.screen._confirm_update()
+
+    assert len(prompts) == 2
+    assert updates == [True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_update_confirm_does_not_force_known_version(monkeypatch):
+    app = WifiteApp()
+    update = UpdateInfo("0.1.3", "0.1.4", True, "https://example/release", True, False)
+    prompts = []
+    updates = []
+
+    async def confirm(prompt):
+        prompts.append(prompt)
+        return True
+
+    monkeypatch.setattr(app, "push_screen_wait", confirm)
+    monkeypatch.setattr(app, "perform_update_and_restart", lambda *, force=False: updates.append(force))
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        assert isinstance(pilot.app.screen, SplashView)
+        pilot.app.screen.show_update_available(update)
+        await pilot.app.screen._confirm_update()
+
+    assert len(prompts) == 1
+    assert updates == [False]
 
 
 @pytest.mark.usefixtures("no_usb_devices")
