@@ -235,20 +235,53 @@ def _stage_windows_update(executable: Path, plan: UpdatePlan, timeout: float, *,
 
 def _windows_update_script(executable: Path, staged_binary: Path, pid: int) -> str:
     restart_cmd = subprocess.list2cmdline([str(executable), *_restart_args()])
+    log = staged_binary.with_name(f"wifit3-update-{pid}.log")
     return f"""@echo off
-setlocal
+setlocal enableextensions
+rem PyInstaller onefile sets these so a re-exec reuses its extraction dir. The relaunched
+rem exe must NOT inherit them, or it loads Python from the old, now-deleted _MEIxxxx dir
+rem and crashes with "Failed to load Python DLL".
+set "_MEIPASS2="
+set "_PYI_ARCHIVE_FILE="
+set "_PYI_APPLICATION_HOME_DIR="
+set "_PYI_PARENT_PROCESS_LEVEL="
 set "OLD_EXE={executable}"
 set "NEW_EXE={staged_binary}"
 set "WIFIT3_PID={pid}"
+set "LOG={log}"
+for %%I in ("%OLD_EXE%") do set "EXE_NAME=%%~nxI"
 :wait
  tasklist /FI "PID eq %WIFIT3_PID%" /NH | findstr /R /C:"^[^ ]* *%WIFIT3_PID% " >nul
  if not errorlevel 1 (
-  timeout /T 1 /NOBREAK >nul
+  ping -n 2 127.0.0.1 >nul
   goto wait
  )
-move /Y "%NEW_EXE%" "%OLD_EXE%" >nul
-if errorlevel 1 exit /b 1
+rem Real-time antivirus may still hold the just-downloaded binary; retry the swap
+rem until the lock clears instead of aborting on the first sharing violation.
+set /a moves=0
+:move_retry
+move /Y "%NEW_EXE%" "%OLD_EXE%" >nul 2>>"%LOG%"
+if not errorlevel 1 goto moved
+set /a moves+=1
+if %moves% GEQ 30 (echo [wifit3] swap failed after %moves% attempts>>"%LOG%" & exit /b 1)
+ping -n 2 127.0.0.1 >nul
+goto move_retry
+:moved
+rem Relaunch and confirm the process actually came up, retrying if it does not.
+set /a starts=0
+:start_retry
 start "" {restart_cmd}
+set /a checks=0
+:check_running
+ping -n 2 127.0.0.1 >nul
+tasklist /FI "IMAGENAME eq %EXE_NAME%" /NH | findstr /I "%EXE_NAME%" >nul
+if not errorlevel 1 goto started
+set /a checks+=1
+if %checks% LSS 3 goto check_running
+set /a starts+=1
+if %starts% GEQ 5 (echo [wifit3] relaunch failed after %starts% attempts>>"%LOG%" & exit /b 2)
+goto start_retry
+:started
 del "%~f0"
 """
 
@@ -262,7 +295,9 @@ def _launch_windows_update_script(script: Path, *, elevated: bool) -> bool:
         result = ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f'/c "{script}"', None, 0)
         return result > 32
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess.Popen(["cmd.exe", "/c", str(script)], creationflags=creationflags)
+    env = {k: v for k, v in os.environ.items()
+           if k != "_MEIPASS2" and not k.startswith("_PYI_")}
+    subprocess.Popen(["cmd.exe", "/c", str(script)], creationflags=creationflags, env=env)
     return True
 
 
