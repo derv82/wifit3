@@ -139,7 +139,69 @@ def test_update_current_binary_replaces_executable(tmp_path, monkeypatch):
     assert exe.read_bytes() == b"new"
 
 
-def test_update_current_binary_permission_denied_without_polkit(tmp_path, monkeypatch):
+def test_update_current_binary_stages_windows_helper(tmp_path, monkeypatch):
+    exe = tmp_path / "wifit3.exe"
+    exe.write_bytes(b"old")
+    launched = []
+    monkeypatch.setattr(updates, "plan_update", lambda *_args, **_kwargs: updates.UpdatePlan(
+        UpdateInfo("0.1.3", "0.1.4", True, "https://example/release", True),
+        "wifit3-windows-x64.exe", "https://example/download"))
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    monkeypatch.setattr(updates.sys, "argv", [str(exe), "--update"])
+    monkeypatch.setattr(updates.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(updates.os, "access", lambda *_args: True)
+    monkeypatch.setattr(updates.subprocess, "Popen", lambda args, **_kwargs: launched.append(args))
+    monkeypatch.setattr(updates, "_download_file", lambda _url, path, _timeout: path.write_bytes(b"new"))
+
+    result = updates.update_current_binary("0.1.3", executable_path=exe)
+
+    assert result.updated is True
+    assert result.restart_handled is True
+    assert exe.read_bytes() == b"old"
+    assert (tmp_path / "wifit3-updates" / "wifit3.exe.download").read_bytes() == b"new"
+    assert launched == [["cmd.exe", "/c", str(tmp_path / "wifit3-updates" / f"wifit3-update-{updates.os.getpid()}.cmd")]]
+
+
+def test_update_current_binary_uses_uac_for_protected_windows_path(tmp_path, monkeypatch):
+    exe = tmp_path / "wifit3.exe"
+    exe.write_bytes(b"old")
+    shell_calls = []
+    shell32 = type("Shell32", (), {"ShellExecuteW": lambda self, *args: shell_calls.append(args) or 33})()
+    windll = type("Windll", (), {"shell32": shell32})()
+    monkeypatch.setattr(updates, "plan_update", lambda *_args, **_kwargs: updates.UpdatePlan(
+        UpdateInfo("0.1.3", "0.1.4", True, "https://example/release", True),
+        "wifit3-windows-x64.exe", "https://example/download"))
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    monkeypatch.setattr(updates.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(updates.os, "access", lambda *_args: False)
+    monkeypatch.setattr(updates.ctypes, "windll", windll, raising=False)
+    monkeypatch.setattr(updates, "_download_file", lambda _url, path, _timeout: path.write_bytes(b"new"))
+
+    result = updates.update_current_binary("0.1.3", executable_path=exe)
+
+    assert result.updated is True
+    assert result.restart_handled is True
+    assert shell_calls
+    assert shell_calls[0][1:3] == ("runas", "cmd.exe")
+
+
+def test_update_current_binary_reports_permission_denied_when_uac_is_disabled(tmp_path, monkeypatch):
+    exe = tmp_path / "wifit3.exe"
+    exe.write_bytes(b"old")
+    monkeypatch.setattr(updates, "plan_update", lambda *_args, **_kwargs: updates.UpdatePlan(
+        UpdateInfo("0.1.3", "0.1.4", True, "https://example/release", True),
+        "wifit3-windows-x64.exe", "https://example/download"))
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    monkeypatch.setattr(updates.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(updates.os, "access", lambda *_args: False)
+    monkeypatch.setattr(updates, "_download_file", lambda _url, path, _timeout: path.write_bytes(b"new"))
+
+    result = updates.update_current_binary("0.1.3", executable_path=exe, allow_elevation=False)
+
+    assert result.updated is False
+    assert result.message == "permission denied replacing binary"
+
+
     exe = tmp_path / "wifit3"
     exe.write_bytes(b"old")
     monkeypatch.setattr(updates, "plan_update", lambda *_args, **_kwargs: updates.UpdatePlan(

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -59,6 +61,7 @@ class BinaryUpdateResult:
     updated: bool
     message: str
     plan: UpdatePlan | None = None
+    restart_handled: bool = False
 
 
 class UpdateCheckError(Exception):
@@ -159,6 +162,9 @@ def update_current_binary(current_version: str, *, force: bool = False, timeout:
     if not plan.asset_url:
         return BinaryUpdateResult(False, "no matching binary asset found for this platform", plan)
 
+    if sys.platform == "win32":
+        return _stage_windows_update(exe, plan, timeout, allow_elevation=allow_elevation)
+
     tmp = exe.with_name(f".{exe.name}.download")
     try:
         _download_file(plan.asset_url, tmp, timeout)
@@ -199,6 +205,65 @@ def _try_polkit_update(executable: Path, force: bool, plan: UpdatePlan) -> Binar
     if completed.returncode != 0:
         return BinaryUpdateResult(False, "permission denied replacing binary", plan)
     return BinaryUpdateResult(True, f"updated wifit3 to {plan.update.latest_version} with elevated privileges", plan)
+
+
+def _stage_windows_update(executable: Path, plan: UpdatePlan, timeout: float, *,
+                          allow_elevation: bool) -> BinaryUpdateResult:
+    update_dir = Path(tempfile.gettempdir()) / "wifit3-updates"
+    update_dir.mkdir(parents=True, exist_ok=True)
+    tmp = update_dir / f"{executable.name}.download"
+    script = update_dir / f"wifit3-update-{os.getpid()}.cmd"
+    try:
+        _download_file(plan.asset_url or "", tmp, timeout)
+        script.write_text(_windows_update_script(executable, tmp, os.getpid()), encoding="utf-8")
+        elevated = not os.access(executable.parent, os.W_OK)
+        if elevated and not allow_elevation:
+            return BinaryUpdateResult(False, "permission denied replacing binary", plan)
+        if not _launch_windows_update_script(script, elevated=elevated):
+            return BinaryUpdateResult(False, "permission denied replacing binary", plan)
+    except PermissionError:
+        return BinaryUpdateResult(False, "permission denied replacing binary", plan)
+    except OSError as e:
+        raise UpdateCheckError(f"failed to stage Windows update: {e}") from e
+    return BinaryUpdateResult(
+        True,
+        f"staged wifit3 {plan.update.latest_version}; restarting after exit",
+        plan,
+        restart_handled=True,
+    )
+
+
+def _windows_update_script(executable: Path, staged_binary: Path, pid: int) -> str:
+    restart_cmd = subprocess.list2cmdline([str(executable), *_restart_args()])
+    return f"""@echo off
+setlocal
+set "OLD_EXE={executable}"
+set "NEW_EXE={staged_binary}"
+set "WIFIT3_PID={pid}"
+:wait
+ tasklist /FI "PID eq %WIFIT3_PID%" /NH | findstr /R /C:"^[^ ]* *%WIFIT3_PID% " >nul
+ if not errorlevel 1 (
+  timeout /T 1 /NOBREAK >nul
+  goto wait
+ )
+move /Y "%NEW_EXE%" "%OLD_EXE%" >nul
+if errorlevel 1 exit /b 1
+start "" {restart_cmd}
+del "%~f0"
+"""
+
+
+def _restart_args() -> list[str]:
+    return [arg for arg in sys.argv[1:] if arg not in {"--update", "--force", "--no-polkit"}]
+
+
+def _launch_windows_update_script(script: Path, *, elevated: bool) -> bool:
+    if elevated:
+        result = ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f'/c "{script}"', None, 0)
+        return result > 32
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(["cmd.exe", "/c", str(script)], creationflags=creationflags)
+    return True
 
 
 def _fetch_releases(timeout: float) -> tuple[ReleaseInfo, ...]:

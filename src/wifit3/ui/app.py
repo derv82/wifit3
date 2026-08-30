@@ -225,6 +225,11 @@ class WifiteApp(App):
         if not result.updated:
             self.notify(result.message, title="Update", severity="warning")
             return
+        if result.restart_handled:
+            self.persist_config()
+            logger.info("%s; exiting for updater", result.message)
+            self.exit()
+            return
         self._restart_after_update(result.message)
 
     def _restart_after_update(self, message: str) -> None:
