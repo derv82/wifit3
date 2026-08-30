@@ -47,6 +47,7 @@ async def test_app_layout_and_boot():
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_app_toasts_update_available_on_splash(monkeypatch):
     calls = []
+    monkeypatch.setattr("wifit3.ui.app.AUTO_CHECK_UPDATES_DEFAULT", True)
     monkeypatch.setattr("wifit3.ui.app.check_for_updates", lambda _version: calls.append(_version) or UpdateInfo(
         "0.1.3", "0.1.4", True, "https://example/release", True, False))
     app = WifiteApp()

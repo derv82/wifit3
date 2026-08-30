@@ -2,7 +2,6 @@ import pytest
 from unittest.mock import patch
 
 from wifit3.persist.config import Config
-from wifit3.updates import UpdateCheckError
 
 
 @pytest.fixture(autouse=True)
@@ -18,9 +17,8 @@ def _isolate_config(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _disable_startup_update_network():
-    with patch("wifit3.ui.app.check_for_updates", side_effect=UpdateCheckError("offline")):
-        yield
+def _disable_startup_update_check(monkeypatch):
+    monkeypatch.setattr("wifit3.ui.app.AUTO_CHECK_UPDATES_DEFAULT", False)
 
 
 @pytest.fixture
