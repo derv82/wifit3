@@ -3,6 +3,7 @@ single-purpose vendors (the OUI names the actual device class), low confidence f
 in the generated full IEEE registry (the OUI only names the vendor, not which of their many
 device types this is)."""
 from wifit3.wlan.fingerprint import fingerprint
+from wifit3.wlan.fingerprint_vendors import VENDOR_BY_OUI
 
 
 def test_ring_oui_recognized_high_confidence():
@@ -71,7 +72,24 @@ def test_apple_matched_via_the_generated_table_at_low_confidence():
 
 def test_samsung_matched_via_the_generated_table():
     fp = fingerprint("00:00:f0:aa:bb:cc")
-    assert fp is not None and fp.emoji == "🔵" and "Samsung" in fp.label and fp.confidence == "low"
+    assert fp is not None and fp.emoji == "🔵" and fp.confidence == "low"
+    assert fp.label == "SAMSUNG Electronics device"     # brand casing preserved, not title-cased
+
+
+def test_generated_table_never_names_an_ieee_registration_authority_block():
+    """IEEE further subdivides some OUI-24 blocks into per-organization OUI-28/36 allocations;
+    the OUI-24 record itself just says so, naming no real vendor -- misleading if surfaced."""
+    assert "IEEE Registration Authority" not in VENDOR_BY_OUI.values()
+
+
+def test_amazon_icon_override_matches_the_brand_not_a_substring():
+    """A plain substring check also matched unrelated "...Amazonia" companies; a real
+    mid-string match ("Blink by Amazon") must still work, ruling out .startswith() too."""
+    real_amazon = fingerprint("3c:a0:70:aa:bb:cc")      # Blink by Amazon
+    assert real_amazon is not None and real_amazon.emoji == "🛒"
+
+    unrelated = fingerprint("60:c7:27:aa:bb:cc")        # Digiboard Eletronica da Amazonia Ltda
+    assert unrelated is not None and unrelated.emoji == "🏷️"
 
 
 def test_unknown_vendor_gets_the_generic_low_confidence_icon():

@@ -18,6 +18,7 @@ Two confidence tiers:
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -89,6 +90,12 @@ _NEST = _ouis("18:B4:30 64:16:66")
 
 _IROBOT = _ouis("4C:B9:EA 50:14:79 AC:F4:73")
 
+# DC:44:27 is imprecise: IEEE lists that OUI-24 block itself as "IEEE Registration Authority"
+# (not a real vendor -- see gen_fingerprint_vendors.py's _NOT_A_VENDOR), because it's further
+# subdivided into per-organization OUI-28 blocks; Tesla only owns DC:44:27:1x, so a real device
+# in DC:44:27:0x/2x/etc. would still misreport as Tesla here. Left in rather than dropped (losing
+# a real, commonly-seen device class outweighs this edge) or chasing general OUI-28/36 support
+# (a much bigger undertaking for one entry).
 _TESLA = _ouis("0C:29:8F 4C:FC:AA 54:F8:F0 90:E6:43 98:ED:5C D4:4F:14 DC:44:27")
 
 _HIGH_CONFIDENCE: tuple[tuple[frozenset, Fingerprint], ...] = (
@@ -121,7 +128,11 @@ def _low_confidence(oui: str) -> Optional[Fingerprint]:
     if vendor is None:
         return None
     low = vendor.lower()
-    emoji = next((icon for needle, icon in _ICON_OVERRIDES if needle in low), _GENERIC_VENDOR_ICON)
+    # Word-boundary, not substring: "amazon" as a plain `in` check also matched "...da Amazonia
+    # Ltda" (unrelated Brazilian companies). A plain .startswith() would fix that but break
+    # "Blink by Amazon" (a real Amazon brand with the needle mid-string, not at the start).
+    emoji = next((icon for needle, icon in _ICON_OVERRIDES
+                 if re.search(rf"\b{needle}\b", low)), _GENERIC_VENDOR_ICON)
     return Fingerprint(emoji, f"{vendor} device", "low")
 
 
