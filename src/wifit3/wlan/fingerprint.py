@@ -12,8 +12,10 @@ Two confidence tiers:
   sub-allocations -- see scripts/generators/gen_fingerprint_vendors.py), since a vendor whose OUI
   blocks span multiple device classes (Apple/Google/Samsung/Microsoft/... all sell phones,
   laptops, and smart-home hardware off the same blocks) can only ever be named, not classified. A
-  handful of well-known giants get a recognizable icon by name match; everyone else gets a
-  generic tag. Disambiguating a low-confidence vendor into an actual device class needs IE
+  handful of well-known giants get a recognizable icon by name match; failing that,
+  ``fingerprint_categories.py`` (a third-party dataset classifying ~1-in-6 OUIs into a broad
+  category -- see its generator) gets a category icon from ``device_categories.py``; everyone
+  else gets a fully generic tag. Disambiguating further into an exact device class needs IE
   fingerprinting (probe/assoc request tag sequences), not attempted here; see
   docs/planning/FEATURES.md.
 """
@@ -23,6 +25,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+from .device_categories import CATEGORY_EMOJI
+from .fingerprint_categories import OUI_CATEGORY
 from .fingerprint_vendors import VENDOR_BY_OUI
 
 Confidence = Literal["high", "low"]
@@ -123,15 +127,20 @@ _ICON_OVERRIDES: tuple[tuple[str, str], ...] = (
 _GENERIC_VENDOR_ICON = "🏷️"
 
 
-# IEEE only ever allocates at these three widths (MA-L/MA-M/MA-S); both tables key by hex
-# nibbles (bits // 4), longest first, so a 28-/36-bit entry always wins over its containing
-# 24-bit block. Add a width here (nowhere else) if IEEE ever introduces one.
+# IEEE only ever allocates at these three widths (MA-L/MA-M/MA-S); every table here (high
+# confidence, vendors, categories) keys by hex nibbles (bits // 4), longest first, so a 28-/
+# 36-bit entry always wins over its containing 24-bit block. Add a width here (nowhere else) if
+# IEEE ever introduces one.
 _PREFIX_LENGTHS = (9, 7, 6)
 
 
+def _longest_prefix_match(hex_mac: str, table: dict[str, str]) -> Optional[str]:
+    return next((v for length in _PREFIX_LENGTHS
+                 if (v := table.get(hex_mac[:length].upper())) is not None), None)
+
+
 def _low_confidence(hex_mac: str) -> Optional[Fingerprint]:
-    vendor = next((v for length in _PREFIX_LENGTHS
-                   if (v := VENDOR_BY_OUI.get(hex_mac[:length].upper())) is not None), None)
+    vendor = _longest_prefix_match(hex_mac, VENDOR_BY_OUI)
     if vendor is None:
         return None
     low = vendor.lower()
@@ -139,7 +148,13 @@ def _low_confidence(hex_mac: str) -> Optional[Fingerprint]:
     # Ltda" (unrelated Brazilian companies). A plain .startswith() would fix that but break
     # "Blink by Amazon" (a real Amazon brand with the needle mid-string, not at the start).
     emoji = next((icon for needle, icon in _ICON_OVERRIDES
-                 if re.search(rf"\b{needle}\b", low)), _GENERIC_VENDOR_ICON)
+                 if re.search(rf"\b{needle}\b", low)), None)
+    if emoji is None:
+        # No specific-vendor icon: a broad category (Camera, Gaming, ...) beats the fully
+        # generic tag when the OUI happens to be one of the ~1-in-6 a third-party dataset
+        # classifies -- see device_categories.py and its generator for where this comes from.
+        category = _longest_prefix_match(hex_mac, OUI_CATEGORY)
+        emoji = CATEGORY_EMOJI.get(category, _GENERIC_VENDOR_ICON)
     return Fingerprint(emoji, f"{vendor} device", "low")
 
 

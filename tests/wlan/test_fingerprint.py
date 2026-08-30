@@ -112,12 +112,27 @@ def test_amazon_icon_override_matches_the_brand_not_a_substring():
     assert unrelated is not None and unrelated.emoji == "🏷️"
 
 
-def test_unknown_vendor_gets_the_generic_low_confidence_icon():
-    """A registered-but-unfamiliar vendor (not one of the hand-picked icon overrides) still gets
-    named, just with a generic tag instead of a bespoke icon."""
-    fp = fingerprint("74:3a:f4:aa:bb:cc")     # Intel Corporate, per the generated registry
+def test_uncategorized_vendor_gets_the_generic_low_confidence_icon():
+    """A registered vendor with neither an icon override nor a known device category still gets
+    named, just with a fully generic tag."""
+    fp = fingerprint("00:00:0b:aa:bb:cc")     # Matrix Corporation -- no override, no category
     assert fp is not None and fp.confidence == "low" and fp.emoji == "🏷️"
+    assert "Matrix" in fp.label
+
+
+def test_categorized_vendor_gets_the_category_icon_not_the_generic_tag():
+    """No specific-vendor icon override for Intel, but it's a real, verified entry in the
+    device-category dataset (Computer) -- that should beat the fully generic tag."""
+    fp = fingerprint("74:3a:f4:aa:bb:cc")     # Intel Corporate
+    assert fp is not None and fp.confidence == "low" and fp.emoji == "💻"
     assert "Intel" in fp.label
+
+
+def test_icon_override_still_wins_over_a_device_category():
+    """A specific-vendor icon (Amazon's shopping cart) must not be shadowed by a broader
+    category match (Blink is also classified "Camera") -- the more specific tier wins."""
+    fp = fingerprint("70:ad:43:aa:bb:cc")     # Blink by Amazon
+    assert fp is not None and fp.emoji == "🛒"
 
 
 def test_oui_not_in_the_ieee_registry_returns_none():
