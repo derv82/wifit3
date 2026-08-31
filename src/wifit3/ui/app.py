@@ -3,7 +3,7 @@ import logging
 import os
 import sys
 from textual import work
-from textual.app import App
+from textual.app import App, SystemCommand
 from typing import Optional
 
 from wifit3 import __version__
@@ -191,17 +191,33 @@ class WifiteApp(App):
             self.call_after_refresh(self._start_update_check)
 
     def _start_update_check(self) -> None:
-        self._check_updates_on_start()
+        self._check_updates()
+
+    def get_system_commands(self, screen):
+        yield from super().get_system_commands(screen)
+        yield SystemCommand(
+            "Check for updates",
+            "Check GitHub Releases for a newer Wifit3 version",
+            self.action_check_for_updates,
+        )
+
+    def action_check_for_updates(self) -> None:
+        self._check_updates(notify_current=True)
 
     @work(exclusive=True)
-    async def _check_updates_on_start(self) -> None:
+    async def _check_updates(self, notify_current: bool = False) -> None:
         try:
             update = await asyncio.to_thread(check_for_updates, __version__)
-        except UpdateCheckError:
-            logger.debug("Startup update check failed", exc_info=True)
+        except UpdateCheckError as e:
+            if notify_current:
+                self.notify(str(e), title="Update check failed", severity="error")
+            else:
+                logger.debug("Startup update check failed", exc_info=True)
             return
         if update.update_available:
             self._notify_update_available(update)
+        elif notify_current:
+            self.notify(f"wifit3 {update.current_version} is current", title="Update")
 
     def _notify_update_available(self, update: UpdateInfo) -> None:
         self._pending_update = update
@@ -314,4 +330,3 @@ class WifiteApp(App):
         if self.array:
             await self.array.close()
         self.exit()
-

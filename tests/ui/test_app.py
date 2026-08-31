@@ -45,6 +45,20 @@ async def test_app_layout_and_boot():
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
+async def test_app_exposes_check_updates_palette_command(monkeypatch):
+    app = WifiteApp()
+    calls = []
+    monkeypatch.setattr(app, "action_check_for_updates", lambda: calls.append(True))
+
+    async with app.run_test() as pilot:
+        commands = {command.title: command for command in app.get_system_commands(pilot.app.screen)}
+        commands["Update: check for updates"].callback()
+
+    assert calls == [True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
 async def test_app_toasts_update_available_on_splash(monkeypatch):
     calls = []
     monkeypatch.setattr("wifit3.ui.app.AUTO_CHECK_UPDATES_DEFAULT", True)
