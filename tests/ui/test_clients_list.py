@@ -150,3 +150,21 @@ def test_detail_popup_dismisses_on_backdrop_click_not_inner_content():
     popup.dismiss.reset_mock()
     popup.on_click(_click(Label("inside the box")))    # some other widget (the box/labels)
     popup.dismiss.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_detail_popup_clamps_to_stay_fully_on_screen():
+    """A click near the screen edge used to position the box so its offset put part of it past
+    the visible area -- offset is absolute from the box's own top-left, not screen-clamped."""
+    app = _DemoApp([])
+    async with app.run_test() as pilot:
+        screen_w, screen_h = app.size
+        popup = FingerprintDetail(_MAC, Fingerprint("🔔", "Ring device", "high"),
+                                  offset=(screen_w - 1, screen_h - 1))
+        await app.push_screen(popup)
+        await pilot.pause()
+
+        box = popup.query_one("#fp-box")
+        x, y = box.styles.offset.x.value, box.styles.offset.y.value
+        assert x + box.outer_size.width <= screen_w
+        assert y + box.outer_size.height <= screen_h

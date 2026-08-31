@@ -60,6 +60,19 @@ class FingerprintDetail(ModalScreen[None]):
         box.styles.offset = self._offset
         yield box
 
+    def on_mount(self) -> None:
+        # The box's real size isn't known until after layout, so an offset clamped up front
+        # (in compose) can't account for it; a click near the screen edge would otherwise
+        # position the box partly or fully off-screen instead of clamping to stay visible.
+        self.call_after_refresh(self._keep_on_screen)
+
+    def _keep_on_screen(self) -> None:
+        box = self.query_one("#fp-box")
+        max_x = max(0, self.size.width - box.outer_size.width)
+        max_y = max(0, self.size.height - box.outer_size.height)
+        x, y = self._offset
+        box.styles.offset = (max(0, min(x, max_x)), max(0, min(y, max_y)))
+
     def on_click(self, event: events.Click) -> None:
         if event.widget is self:            # the transparent backdrop, not the box or its labels
             self.dismiss()
