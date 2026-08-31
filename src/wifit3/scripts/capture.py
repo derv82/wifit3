@@ -769,7 +769,7 @@ class Capture:
             self.fixed_channel_segment(channel=1, duration=15)
 
         # 2.4 GHz hops, one per channel.
-        for ch in range(1, 13):
+        for ch in range(1, 15):
             self.run_cmd(["sudo", "iw", "dev", self.mon_iface, "set", "channel", str(ch)], timeout=10)
 
         # 5 GHz hops (if supported).
