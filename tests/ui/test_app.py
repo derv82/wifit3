@@ -2,7 +2,7 @@ import pytest
 
 from wifit3.persist.config import Config
 from wifit3.updates import UpdateInfo
-from wifit3.ui.app import WifiteApp
+from wifit3.ui.app import WifiteApp, _PROJECT_URL
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
 from textual.widgets import RichLog, DataTable, Label
@@ -45,16 +45,39 @@ async def test_app_layout_and_boot():
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_app_exposes_check_updates_palette_command(monkeypatch):
+async def test_app_exposes_palette_commands(monkeypatch):
     app = WifiteApp()
     calls = []
-    monkeypatch.setattr(app, "action_check_for_updates", lambda: calls.append(True))
+    monkeypatch.setattr(app, "action_check_for_updates", lambda: calls.append("updates"))
+    monkeypatch.setattr(app, "action_about", lambda: calls.append("about"))
 
     async with app.run_test() as pilot:
         commands = {command.title: command for command in app.get_system_commands(pilot.app.screen)}
+        commands["About"].callback()
         commands["Check for updates"].callback()
 
-    assert calls == [True]
+    assert calls == ["about", "updates"]
+
+
+def test_about_opens_project_url(monkeypatch):
+    app = WifiteApp()
+    calls = []
+    monkeypatch.setattr("wifit3.ui.app.webbrowser.open", lambda url: calls.append(url) or True)
+
+    app.action_about()
+
+    assert calls == [_PROJECT_URL]
+
+
+def test_about_shows_link_when_browser_is_unavailable(monkeypatch):
+    app = WifiteApp()
+    notifications = []
+    monkeypatch.setattr("wifit3.ui.app.webbrowser.open", lambda _url: False)
+    monkeypatch.setattr(app, "notify", lambda *args, **kwargs: notifications.append((args, kwargs)))
+
+    app.action_about()
+
+    assert notifications == [((_PROJECT_URL,), {"title": "Wifit3"})]
 
 
 @pytest.mark.asyncio

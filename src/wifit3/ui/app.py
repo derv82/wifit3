@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import sys
+import webbrowser
 from textual import work
 from textual.app import App, SystemCommand
 from typing import Optional
@@ -26,6 +27,7 @@ from .screens.new_device import NewDeviceDialog
 from .themes import register_app_themes
 
 logger = logging.getLogger(__name__)
+_PROJECT_URL = "https://github.com/derv82/wifit3"
 
 # Set once so repeated WifiteApp() instances (the test suite makes many) don't
 # stack duplicate handlers or re-truncate the log.
@@ -196,10 +198,19 @@ class WifiteApp(App):
     def get_system_commands(self, screen):
         yield from super().get_system_commands(screen)
         yield SystemCommand(
+            "About",
+            "Open the Wifit3 project page",
+            self.action_about,
+        )
+        yield SystemCommand(
             "Check for updates",
             "Check GitHub Releases for a newer Wifit3 version",
             self.action_check_for_updates,
         )
+
+    def action_about(self) -> None:
+        if not webbrowser.open(_PROJECT_URL):
+            self.notify(_PROJECT_URL, title="Wifit3")
 
     def action_check_for_updates(self) -> None:
         self._check_updates(notify_current=True)
