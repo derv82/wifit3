@@ -117,7 +117,20 @@ def test_headline_cracking_names_the_concurrent_tx_action():
     assert "Chopping a packet" in chopping[0] and "Cracking" in chopping[0]
 
 
-def test_headline_recovered_wps_psk_outranks_listening():
+def test_wps_status_shows_fail_reason():
+    camp = types.SimpleNamespace(
+        state=types.SimpleNamespace(found_pin=None, tested=0, phase="common", first_half=None),
+        status="failed",
+        fail_reason="WPS stayed locked for 5 cycles without PIN progress",
+        eta_seconds=None,
+    )
+
+    line = fm.wps_status_markup(camp)
+
+    assert "failed" in line
+    assert "stayed locked" in line
+
+
     """A recovered WPS PSK (PBC or PIN, after the campaign is torn down) shows a
     terminal banner instead of decaying back to 'Listening'."""
     h = fm.derive_headline(_wpa_ap(known_psk="hunter2"), None, fm.Campaigns())

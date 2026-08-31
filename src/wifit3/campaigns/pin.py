@@ -91,6 +91,7 @@ class WpsCampaign(Campaign):
     _SAVE_EVERY = 16          # checkpoint the .run file every N attempts
     _MAX_TIMEOUT_RETRIES = 8  # retries of a silent (lost-reply) attempt before conceding
     _REFUSAL_BAIL = 3         # consecutive refusals (disassoc / identity-stall) before giving up
+    _MAX_LOCKS_NO_PROGRESS = 5
 
     button_id = "btn-wps-pin"
     key = "wps"
@@ -423,8 +424,16 @@ class WpsCampaign(Campaign):
                     await self._handle_lock(beacon_locked, wait=not skip_wait)
                     if self.stopped:
                         break  # Short circuit before next phase
-                    self._rotate_mac()
                     self._consecutive_locks_no_progress += 1
+                    if self._consecutive_locks_no_progress >= self._MAX_LOCKS_NO_PROGRESS:
+                        self.status = "failed"
+                        self.fail_reason = (
+                            f"WPS stayed locked for {self._consecutive_locks_no_progress} "
+                            "cycles without PIN progress"
+                        )
+                        self._save_state()
+                        break
+                    self._rotate_mac()
                     continue
 
                 pin = self._next_pin()

@@ -403,6 +403,35 @@ async def test_active_refusal_bails_not_churns(tmp_path):
     assert c.state.attempts == c._REFUSAL_BAIL       # bailed promptly, didn't churn the sweep
 
 
+async def test_permanent_wps_lock_bails_after_zero_progress_cycles(tmp_path):
+    logs = []
+
+    class PermanentLock(WpsCampaign):
+        async def _handle_lock(self, beacon_locked: bool, wait: bool = True) -> None:
+            self.lock.end_lock()
+
+    target = _target()
+    target.wps_locked = True
+    iface = _iface()
+    iface.access_points[target.bssid.lower()] = target
+    c = PermanentLock(iface, target, state_dir=str(tmp_path), log=logs.append)
+    await c._loop()
+
+    assert c.status == "failed"
+    assert c.state.tested == 0
+    assert c._consecutive_locks_no_progress == c._MAX_LOCKS_NO_PROGRESS
+    assert c.fail_reason == "WPS stayed locked for 5 cycles without PIN progress"
+
+
+def test_lock_counter_resets_after_pin_progress(tmp_path):
+    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c._consecutive_locks_no_progress = 4
+
+    c._apply_outcome("12345670", AttemptOutcome(PinResult.FIRST_HALF_WRONG, "12345670"))
+
+    assert c._consecutive_locks_no_progress == 0
+
+
 async def test_silence_does_not_bail(tmp_path):
     # A pure-silence TIMEOUT (refused=False) must NOT bail: infinite patience (could be a far AP).
     hits = {"n": 0}
