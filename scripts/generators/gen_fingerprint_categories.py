@@ -9,10 +9,12 @@ aggregated from IEEE + Wireshark + Nmap + a Metasploit-adjacent MAC tracker. Unc
 
 This is a genuinely crowd-sourced, occasionally-wrong dataset (spot-checked against our own
 hand-verified high-confidence vendors and agreed every time, but it isn't perfect -- see
-_CATEGORY_CORRECTIONS below for a real example found during review). Treat a wrong category as
-a two-line fix: add the OUI to _CATEGORY_CORRECTIONS here and rerun this script, no need to touch
-the upstream project. The category -> emoji mapping is a separate, hand-maintained file
-(wlan/device_categories.py) precisely so fixing *that* never requires touching this generator.
+_CATEGORY_CORRECTIONS below for a real example found during review). _CATEGORY_CORRECTIONS is a
+same-day stopgap, not the fix: it only patches wifit3's own copy, so every other consumer of that
+dataset keeps seeing the wrong answer. The durable fix is a PR to OUI-Master-Database itself --
+see CONTRIBUTING.md's "Third-party data corrections" section for why and how. The category ->
+emoji mapping is a separate, hand-maintained file (wlan/device_categories.py) precisely so fixing
+*that* never requires touching this generator.
 
 Usage:
     uv run python scripts/generators/gen_fingerprint_categories.py                # download fresh

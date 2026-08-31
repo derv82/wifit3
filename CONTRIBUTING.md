@@ -53,6 +53,16 @@ verification), and credits for the upstream driver's authors in docs/CREDITS.md.
 - Keep real network identifiers out of commits, PR bodies, committed logs, and fixtures (SSIDs,
   BSSIDs, MACs, hostnames): generalize ("the WPA2 AP under test") or redact to `aa:bb:cc:**:**:**`.
 
+## Third-party data corrections
+
+`wlan/fingerprint_vendors.py` and `wlan/fingerprint_categories.py` are generated from external
+projects (Wireshark's `manuf` feed; OUI-Master-Database), not hand-maintained here. If you find
+a wrong entry, the local generator scripts have their own correction/override dicts for an
+immediate fix -- but that only patches wifit3's own copy. The durable fix is a PR to whichever
+upstream project actually owns the data (OUI-Master-Database especially: small and explicitly
+welcomes contributions -- see its README). File the correction there first, then mirror it
+locally if you need it sooner than their release cycle.
+
 ## Licensing
 
 By submitting a PR you agree your contribution is licensed under **GPL-2.0-only** (wifit3 is a
