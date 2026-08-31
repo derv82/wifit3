@@ -52,7 +52,7 @@ async def test_app_exposes_check_updates_palette_command(monkeypatch):
 
     async with app.run_test() as pilot:
         commands = {command.title: command for command in app.get_system_commands(pilot.app.screen)}
-        commands["Update: check for updates"].callback()
+        commands["Check for updates"].callback()
 
     assert calls == [True]
 
