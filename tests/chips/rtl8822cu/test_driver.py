@@ -6,7 +6,15 @@ import pytest
 import usb.core
 
 import wifit3.chips.rtl8822cu.driver as drv
+from wifit3.chips.rtl8822cu.chipid import ChipInfo
+from wifit3.chips.rtl8822cu.constants import (
+    DIS_DPD_RATE_ALL,
+    HALMAC_RF_1T1R,
+    HALMAC_RF_2T2R,
+)
 from wifit3.chips.rtl8822cu.driver import RTL8822CUDriver
+from wifit3.chips.rtl8822cu.efuse import EfuseInfo
+from wifit3.chips.rtl8822cu.firmware import MacHiddenRpt
 from wifit3.chips.rtl8822cu.mac import set_mac_addr
 from wifit3.chips.driver import FakeMacSupport
 from wifit3.wlan.interface import WlanInterface
@@ -168,42 +176,102 @@ def test_tap_off_by_default():
     assert d.acks_seen(ra) == 0
 
 
-async def test_set_channel_scan_takes_the_fast_path(monkeypatch):
-    from types import SimpleNamespace
-
+async def test_set_channel_tunes_via_switch_channel(monkeypatch):
     d = _driver()
-    d.chip_info = SimpleNamespace(cut=5)
-    d.efuse = SimpleNamespace(rfe_type=3)
-    fast: list[int] = []
-    full: list[int] = []
-    monkeypatch.setattr(drv, "set_channel_fast", lambda transport, ch: fast.append(ch))
-    monkeypatch.setattr(drv, "initialize_phy", lambda *a, **k: full.append(a))
+    tuned: list[int] = []
+    monkeypatch.setattr(drv, "switch_channel", lambda transport, ch, txpwr: tuned.append(ch))
     assert await d.set_channel(6, scan=True) is True
-    assert fast == [6]
-    assert full == []
+    assert tuned == [6]
     assert d._current_channel == 6 and d.current_band_is_2g is True
 
 
-async def test_set_channel_lock_replays_the_phy_tables(monkeypatch):
-    from types import SimpleNamespace
-
+async def test_set_channel_tracks_the_5ghz_band(monkeypatch):
     d = _driver()
-    d.chip_info = SimpleNamespace(cut=5)
-    d.efuse = SimpleNamespace(rfe_type=3)
-    fast: list[int] = []
-    full: list[int] = []
-    monkeypatch.setattr(drv, "set_channel_20mhz", lambda transport, ch: fast.append(ch))
-    monkeypatch.setattr(drv, "initialize_phy", lambda *a, **k: full.append(a))
+    tuned: list[int] = []
+    monkeypatch.setattr(drv, "switch_channel", lambda transport, ch, txpwr: tuned.append(ch))
     assert await d.set_channel(149, scan=False) is True
-    assert full and fast == [149]
+    assert tuned == [149]
     assert d._current_channel == 149 and d.current_band_is_2g is False
 
 
-async def test_set_channel_scan_reports_failure(monkeypatch):
+async def test_set_channel_reports_failure(monkeypatch):
     d = _driver()
 
-    def _boom(transport, ch):
+    def _boom(transport, ch, txpwr):
         raise ValueError("bad channel")
 
-    monkeypatch.setattr(drv, "set_channel_fast", _boom)
+    monkeypatch.setattr(drv, "switch_channel", _boom)
     assert await d.set_channel(200, scan=True) is False
+
+
+# --- bring up wiring: the EFUSE and the MAC hidden report, not literals --------
+
+# Every bring up callee that touches hardware; the test replaces each with a recorder so only
+# the driver's own wiring runs.
+_BRINGUP_CALLEES = (
+    "download_firmware", "load_firmware", "init_mac_cfg", "init_mac_flow_tail",
+    "send_general_info", "mac_power_on", "mac_power_off", "config_rx_info", "enable_bb_rf",
+    "config_bb_rf", "init_usb_cfg", "sync_rcr", "config_trx_path", "odm_dm_init", "phy_bf_init",
+    "btcoex_wifionly_hw_config", "init_misc", "txpwr_idx_state",
+)
+
+
+def _efuse(antenna_opt: int, board_option: int = 0x01) -> EfuseInfo:
+    logical = bytearray(b"\xff" * 768)
+    logical[0x00:0x02] = b"\x29\x81"          # RTL_EEPROM_ID
+    logical[0xB9] = 0x71                       # crystal cap
+    logical[0xC1] = board_option
+    logical[0xC8] = 0x00                       # tpt_mode 0 -> PWR_IDX
+    logical[0xC9] = antenna_opt
+    logical[0xCA] = 0x01                       # rfe_type
+    return EfuseInfo(True, True, bytes(logical), b"\xff" * 512)
+
+
+def _run_bringup(monkeypatch, efuse: EfuseInfo, *, ant_num: int = 2, hw_stype: int = 0x00,
+                 rf_2t2r: bool = True) -> tuple[RTL8822CUDriver, dict[str, list[dict]]]:
+    calls: dict[str, list[dict]] = {}
+    for name in _BRINGUP_CALLEES:
+        def _record(*args, _name=name, **kwargs):
+            calls.setdefault(_name, []).append(kwargs)
+        monkeypatch.setattr(drv, name, _record)
+    monkeypatch.setattr(drv, "read_efuse", lambda t: efuse)
+    monkeypatch.setattr(drv, "read_chip_info", lambda t: ChipInfo(
+        chip_id=drv.CHIP_ID_RTL8822CU, cut=5, rf_2t2r=rf_2t2r, rom_version=0,
+        raw_cfg1=0, raw_cfg2=0, raw_status1=0, chip_ver=5, raw_multifunc=0))
+    monkeypatch.setattr(drv, "read_mac_hidden_rpt", lambda t: MacHiddenRpt(
+        package_type=1, hw_stype=hw_stype, ant_num=ant_num))
+    d = _driver()
+    d._bringup(d.transport)
+    return d, calls
+
+
+def test_bringup_feeds_config_trx_path_the_computed_rf_path(monkeypatch):
+    """The 2T2R values that used to be literals (BB_PATH_AB / BB_PATH_AB / 2)."""
+    d, calls = _run_bringup(monkeypatch, _efuse(0x33))
+
+    assert (d.rfpath.trx_path_bmp, d.rfpath.max_tx_cnt) == (0x33, 2)
+    assert calls["config_trx_path"] == [dict(tx_path=0x3, rx_path=0x3, max_tx_cnt=2, rfe_type=0x01)]
+
+
+def test_a_1t1r_efuse_narrows_every_wired_field(monkeypatch):
+    d, calls = _run_bringup(monkeypatch, _efuse(0x11))
+
+    assert (d.rfpath.trx_path_bmp, d.rfpath.max_tx_cnt) == (0x11, 1)
+    assert calls["config_trx_path"] == [dict(tx_path=0x1, rx_path=0x1, max_tx_cnt=1, rfe_type=0x01)]
+    assert calls["send_general_info"][-1] == dict(
+        rf_type=HALMAC_RF_1T1R, tx_ant=0x1, rx_ant=0x1, package=1)
+
+
+def test_cycle_two_general_info_follows_the_rf_path(monkeypatch):
+    _d, calls = _run_bringup(monkeypatch, _efuse(0x33))
+
+    first, second = calls["send_general_info"]
+    assert first == dict(rf_type=HALMAC_RF_1T1R, tx_ant=0x1, rx_ant=0x1, package=0)
+    assert second == dict(rf_type=HALMAC_RF_2T2R, tx_ant=0x3, rx_ant=0x3, package=1)
+
+
+def test_bringup_feeds_config_bb_rf_the_efuse_derived_values(monkeypatch):
+    _d, calls = _run_bringup(monkeypatch, _efuse(0x33))
+
+    assert calls["config_bb_rf"] == [dict(cut=5, rfe_type=0x01, crystal_cap=0x71,
+                                          dis_dpd_rate=DIS_DPD_RATE_ALL)]

@@ -12,6 +12,7 @@ import pytest
 
 from wifit3.chips.rtl8822cu.tx import (
     TX_DESC_QSEL_MGMT,
+    build_tx_desc_inject,
     build_tx_desc_mgmt,
     pick_bulk_out_ep,
     write_bulk,
@@ -87,6 +88,68 @@ def test_tx_desc_retry_limit_fields():
 def test_short_mpdu_rejected():
     with pytest.raises(ValueError):
         build_tx_desc_mgmt(b"\xc0\x00" * 4)
+
+
+# The first injected bulk-OUT frame in capture-1 (op #25502): a 42-byte broadcast probe request.
+_CAPTURE_INJECT_FRAME = bytes.fromhex(
+    "40000000ffffffffffff00b13eaed09bffffffffffff00000000"
+    "010402040b1632080c1218243048606c"
+)
+
+
+def test_inject_desc_deterministic_fields_match_capture():
+    desc = build_tx_desc_inject(_CAPTURE_INJECT_FRAME, band_is_2g=True)
+    assert len(desc) == 48
+    assert _field(desc, 0, 0, 16) == 42             # TXPKTSIZE = frame length
+    assert _field(desc, 0, 16, 8) == 48             # OFFSET
+    assert _field(desc, 0, 24, 1) == 1              # BMC (broadcast addr1)
+    assert _field(desc, 0, 26, 1) == 1              # LS
+    assert _field(desc, 0, 31, 1) == 0              # DISQSELSEQ/OWN clear for inject
+    assert _field(desc, 1, 0, 7) == 1               # MACID (RTW_DEFAULT_MGMT_MACID)
+    assert _field(desc, 1, 8, 5) == TX_DESC_QSEL_MGMT   # QSEL 0x12
+    assert _field(desc, 1, 16, 5) == 9              # RATE_ID (RATEID_IDX_VHT_2SS)
+    assert _field(desc, 3, 8, 1) == 1               # USE_RATE
+    assert _field(desc, 3, 9, 1) == 1               # DISRTSFB
+    assert _field(desc, 3, 10, 1) == 1              # DISDATAFB
+    assert _field(desc, 4, 0, 7) == DESC_RATE1M     # 1 Mbps CCK basic rate on 2.4 GHz
+    assert _field(desc, 4, 17, 1) == 1              # RTY_LMT_EN
+    assert _field(desc, 8, 15, 1) == 0              # EN_HWSEQ clear (chip keeps frame seq)
+
+
+def test_inject_desc_checksum_spans_full_48_bytes():
+    desc = build_tx_desc_inject(_CAPTURE_INJECT_FRAME)
+    stored = struct.unpack_from("<H", desc, 28)[0]
+    body = bytearray(desc)
+    body[28:30] = b"\x00\x00"
+    chksum = 0
+    for i in range(24):                             # 24 u16 words = the whole 48-byte descriptor
+        chksum ^= struct.unpack_from("<H", body, i * 2)[0]
+    assert chksum & 0xFFFF == stored
+
+
+def test_inject_desc_takes_seq_from_frame_not_hwseq():
+    frame = bytearray(_CAPTURE_INJECT_FRAME)
+    struct.pack_into("<H", frame, 22, 0x0A70)       # seqnum 0xA7, frag 0
+    desc = build_tx_desc_inject(bytes(frame))
+    assert _field(desc, 9, 12, 12) == 0xA7          # SW_SEQ copied from the frame's seq_ctl
+    assert _field(desc, 8, 15, 1) == 0              # EN_HWSEQ stays clear
+
+
+def test_inject_desc_uses_raw_monitor_1m_rate():
+    # The raw monitor inject path mirrors rtw_monitor_xmit_entry, whose fixed_rate default
+    # is MGN_1M -> DESC_RATE1M on both bands (no radiotap rate is parsed). This differs from
+    # build_tx_desc_mgmt, which is band aware (6M OFDM on 5 GHz). Whether the inject path
+    # should also be band aware for 5 GHz is an open decision: NEEDS-DERV INJ-1.
+    for band_2g in (True, False):
+        desc = build_tx_desc_inject(_CAPTURE_INJECT_FRAME, band_is_2g=band_2g)
+        assert _field(desc, 4, 0, 7) == DESC_RATE1M
+
+
+def test_inject_desc_differs_from_mgmt_on_seq_and_own():
+    inject = build_tx_desc_inject(_CAPTURE_INJECT_FRAME)
+    mgmt = build_tx_desc_mgmt(_CAPTURE_INJECT_FRAME)
+    assert _field(inject, 0, 31, 1) == 0 and _field(mgmt, 0, 31, 1) == 1   # DISQSELSEQ
+    assert _field(inject, 8, 15, 1) == 0 and _field(mgmt, 8, 15, 1) == 1   # EN_HWSEQ
 
 
 def test_pick_bulk_out_ep_maps_high_queues_to_first_pipe():

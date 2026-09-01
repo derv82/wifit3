@@ -16,7 +16,7 @@ import pkgutil
 import sys
 from dataclasses import dataclass, replace
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable, List, NoReturn, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, List, NamedTuple, NoReturn, Optional, Tuple
 
 import libusb_package
 import usb.core
@@ -58,125 +58,127 @@ class BringupResult:
         return cls(Status.FAILED, message)
 
 
+VidPid = tuple[int, int]
+
+
+class Claim(NamedTuple):
+    """``(entry, key, import_driver)`` for one supported vid:pid."""
+    entry: DeviceID
+    key: str
+    import_driver: Callable[[], type["Driver"]]
+
+
 @dataclass(frozen=True)
-class Family:
-    """A chip family whose setup key differs from its package dir, or that ships two packages on the
-    same VID:PID. ``default`` is the always-chosen package; ``mainline`` (with its ``env`` var) is the
-    opt-in alternative, picked when ``$env`` == "mainline" (case-insensitive)."""
+class DkmsFamily:
+    """Env var picks the DKMS ``default`` or the ``mainline`` package."""
     key: str
     default: str
     mainline: Optional[str] = None
     env: Optional[str] = None
 
 
-_FAMILIES: List[Family] = [
-    Family(key="ar9271",     default="ar9271_v2"),
-    Family(key="rtl8821cu",  default="rtl8821cu_dkms"),
-    Family(key="rtl8188eus", default="rtl8188eus_dkms", mainline="rtl8188eus",   env="WIFIT3_RTL8188"),
-    Family(key="rtl8812au",  default="rtl8812au_dkms",  mainline="rtl8812au",    env="WIFIT3_RTL8812"),
-    Family(key="rtl8821au",  default="rtl8821au_dkms",  mainline="rtl8821au",    env="WIFIT3_RTL8821"),
-    Family(key="rtl8814au",  default="rtl8814au_dkms",  mainline="rtw88_8814au", env="WIFIT3_RTL8814"),
-    Family(key="rtl8822bu",  default="rtl8822bu_dkms",  mainline="rtl8822bu",    env="WIFIT3_RTL8822"),
-]
+@dataclass(frozen=True)
+class VidPidFamily:
+    """Distinct chips on one vid:pid; ``resolve(dev)`` routes by live device."""
+    default: str
+    resolve: Callable[[usb.core.Device], str]
 
 
-def _resolve_23570137(dev: usb.core.Device) -> str:
-    """Pick the package for a live 2357:0137 (mt76x2u owns bulk-IN 0x85; the 8822CU lacks it)."""
+def _resolve_2357_0137(dev: usb.core.Device) -> str:
     try:
         cfg = dev.get_active_configuration()
     except Exception:
-        return "mt76x2u"                       # can't inspect -> mainline default
+        return "mt76x2u"  # default
     for intf in cfg:
         if any(ep.bEndpointAddress == 0x85 for ep in intf):
-            return "mt76x2u"
+            return "mt76x2u"  # bulk-IN 0x85 = Mediatek
     return "rtl8822cu"
 
 
-# VID:PIDs reused across chipsets. ``default`` is the package that wins when a live device can't be
-# classified (keeps mainline compatibility); ``resolver`` inspects the live USB descriptors and may
-# swap to a sibling package at scan time.
-_AMBIGUOUS_SLOTS: dict[tuple[int, int], tuple[str, Callable[[usb.core.Device], str]]] = {
-    (0x2357, 0x0137): ("mt76x2u", _resolve_23570137),
+# One chip, two driver packages; an env var picks the winner. Keyed by every dir a family owns.
+_DKMS_BY_DIR: dict[str, DkmsFamily] = {
+    d: fam
+    for fam in (
+        DkmsFamily(key="ar9271",     default="ar9271_v2"),
+        DkmsFamily(key="rtl8821cu",  default="rtl8821cu_dkms"),
+        DkmsFamily(key="rtl8188eus", default="rtl8188eus_dkms", mainline="rtl8188eus",   env="WIFIT3_RTL8188"),
+        DkmsFamily(key="rtl8812au",  default="rtl8812au_dkms",  mainline="rtl8812au",    env="WIFIT3_RTL8812"),
+        DkmsFamily(key="rtl8821au",  default="rtl8821au_dkms",  mainline="rtl8821au",    env="WIFIT3_RTL8821"),
+        DkmsFamily(key="rtl8814au",  default="rtl8814au_dkms",  mainline="rtw88_8814au", env="WIFIT3_RTL8814"),
+        DkmsFamily(key="rtl8822bu",  default="rtl8822bu_dkms",  mainline="rtl8822bu",    env="WIFIT3_RTL8822"),
+    )
+    for d in (fam.default, fam.mainline) if d
+}
+
+# Distinct chips behind one vid:pid, keyed by (vid, pid).
+_VIDPID_FAMILIES: dict[VidPid, VidPidFamily] = {
+    (0x2357, 0x0137): VidPidFamily(default="mt76x2u", resolve=_resolve_2357_0137),
 }
 
 
-def _winner_dir(fam: Family) -> str:
-    """The package dir the family resolves to: ``mainline`` when its env var opts in, else ``default``."""
+def _winner_dir(fam: DkmsFamily) -> str:
+    """Driver dir: env var opts into ``mainline``, else ``default``."""
     if fam.mainline and os.environ.get(fam.env or "", "").strip().lower() == "mainline":
         return fam.mainline
     return fam.default
 
 
 @functools.cache
-def supported_ids() -> dict:
-    """``{(vid, pid): [(DeviceID, key, import_driver), ...]}`` for every supported card, built by
-    importing each ``chips/*`` package's light ``__init__`` (no driver). Family members resolve to
-    one winner package per family ``key``; a non-package or a package without ``SUPPORTED_IDS`` (the
-    ``*_base`` helpers) is skipped. An ``_AMBIGUOUS_SLOTS`` VID:PID keeps every sibling claim (the
-    mainline-compatible one first). Cached; ``supported_ids.cache_clear()`` rebuilds (e.g. after an
-    env change)."""
+def supported_ids() -> dict[VidPid, Claim]:
+    """``{(vid, pid): Claim}`` for every supported vid:pid."""
     from wifit3 import chips as chips_pkg
 
-    fam_by_dir: dict = {}
-    for fam in _FAMILIES:
-        fam_by_dir[fam.default] = fam
-        if fam.mainline:
-            fam_by_dir[fam.mainline] = fam
-    winners = {fam.key: _winner_dir(fam) for fam in _FAMILIES}
-
-    mapping: dict = {}
-    for _finder, name, ispkg in pkgutil.iter_modules(chips_pkg.__path__, chips_pkg.__name__ + "."):
-        if not ispkg:
-            continue                                   # loose module (driver, log_trace, rx_reader)
-        dir_name = name.rsplit(".", 1)[-1]
-        fam = fam_by_dir.get(dir_name)
-        if fam is not None:
-            if dir_name != winners[fam.key]:
-                continue                               # the family's losing package
-            key = fam.key
-        else:
-            key = dir_name
-        mod = importlib.import_module(name)
-        ids = getattr(mod, "SUPPORTED_IDS", None)
-        if not ids:
-            continue                                   # a *_base helper package
-        import_driver = mod.import_driver
-        for entry in ids:
+    winners = {fam.key: _winner_dir(fam) for fam in set(_DKMS_BY_DIR.values())}
+    mapping: dict[VidPid, Claim] = {}
+    for mod_info in pkgutil.iter_modules(chips_pkg.__path__, chips_pkg.__name__ + "."):
+        if not mod_info.ispkg:
+            continue
+        dir_name = mod_info.name.rsplit(".", 1)[-1]
+        fam = _DKMS_BY_DIR.get(dir_name)
+        if fam is not None and dir_name != winners[fam.key]:
+            continue  # a DKMS family's losing package
+        key = fam.key if fam is not None else dir_name
+        mod = importlib.import_module(mod_info.name)
+        for entry in getattr(mod, "SUPPORTED_IDS", None) or ():
             slot = (entry.vid, entry.pid)
-            if fam is None and slot not in _AMBIGUOUS_SLOTS:
-                assert slot not in mapping, (
-                    f"VID:PID {slot[0]:#06x}:{slot[1]:#06x} claimed by two packages; "
-                    f"add a family-table row or an _AMBIGUOUS_SLOTS entry to disambiguate")
-            mapping.setdefault(slot, []).append((entry, key, import_driver))
-    for slot, (default_dir, _resolver) in _AMBIGUOUS_SLOTS.items():
-        claims = mapping.get(slot)
-        if claims:
-            # Mainline-compatible claim first, so ``driver_for`` (catalog-only, no live device)
-            # keeps mainline behavior; live scans re-resolve per device.
-            claims.sort(key=lambda claim: claim[1] != default_dir)
+            shared = _VIDPID_FAMILIES.get(slot)
+            if shared is not None and dir_name != shared.default:
+                continue  # a shared vid:pid's non-default chip
+            assert slot not in mapping, (
+                f"VID:PID {slot[0]:#06x}:{slot[1]:#06x} claimed by two packages; "
+                f"add a DkmsFamily or VidPidFamily to disambiguate")
+            mapping[slot] = Claim(entry, key, mod.import_driver)
     return mapping
 
 
 def driver_for(vid: int, pid: int) -> Optional[Tuple[type["Driver"], str]]:
-    """``(driver class, setup key)`` for the default driver that claims ``vid:pid`` (the
-    mainline-compatible member of an ambiguous VID:PID), or None. HEAVY: calls ``import_driver()``."""
-    claims = supported_ids().get((vid, pid))
-    if not claims:
+    """``(driver class, setup key)`` claiming ``vid:pid``, or None."""
+    claim = supported_ids().get((vid, pid))
+    if claim is None:
         return None
-    _entry, key, import_driver = claims[0]
-    return import_driver(), key
+    return claim.import_driver(), claim.key
 
 
-def _resolve_claim(dev: usb.core.Device, claims: list):
-    """The claim that wins for the live ``dev`` among several sharing one VID:PID."""
-    if len(claims) == 1:
-        return claims[0]
-    _default_dir, resolver = _AMBIGUOUS_SLOTS[(dev.idVendor, dev.idProduct)]
-    winner = resolver(dev)
-    for claim in claims:
-        if claim[1] == winner:
-            return claim
-    return claims[0]
+def _package_claim(dir_name: str, slot: VidPid) -> Optional[Claim]:
+    """The ``Claim`` a package dir contributes for ``slot``, or None."""
+    try:
+        mod = importlib.import_module(f"wifit3.chips.{dir_name}")
+    except ImportError:
+        return None
+    for entry in getattr(mod, "SUPPORTED_IDS", ()) or ():
+        if (entry.vid, entry.pid) == slot:
+            return Claim(entry, dir_name, mod.import_driver)
+    return None
+
+
+def resolve_driver(vid: int, pid: int, dev: usb.core.Device) -> Optional[Tuple[type["Driver"], str]]:
+    """``(driver class, setup key)`` for the live ``dev``."""
+    shared = _VIDPID_FAMILIES.get((vid, pid))
+    if shared is not None:
+        claim = _package_claim(shared.resolve(dev), (vid, pid))
+        if claim is not None:
+            return claim.import_driver(), claim.key
+    return driver_for(vid, pid)
 
 
 def _raise_usblib_fatal(cause: Exception) -> NoReturn:
@@ -209,16 +211,22 @@ def _bus_devices(backend) -> List[usb.core.Device]:
 
 
 def devices() -> List[DeviceID]:
-    """Every supported card present on the USB bus right now, one DeviceID per physical match, tagged
-    with its (bus, address) so two identical cards on different ports are distinguishable."""
+    """Every supported device present on the USB bus right now."""
     backend = libusb_package.get_libusb1_backend()
     smap = supported_ids()
     out: List[DeviceID] = []
     for dev in _bus_devices(backend):
-        claims = smap.get((dev.idVendor, dev.idProduct))
-        if claims:
-            entry, _key, _drv = _resolve_claim(dev, claims)
-            out.append(replace(entry, bus=dev.bus, address=dev.address))
+        slot = (dev.idVendor, dev.idProduct)
+        claim = smap.get(slot)
+        if claim is None:
+            continue
+        entry = claim.entry
+        shared = _VIDPID_FAMILIES.get(slot)
+        if shared is not None:
+            resolved = _package_claim(shared.resolve(dev), slot)
+            if resolved is not None:
+                entry = resolved.entry
+        out.append(replace(entry, bus=dev.bus, address=dev.address))
     return out
 
 
@@ -259,27 +267,17 @@ def wlan_iface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanInterfa
     ``devices()`` tags them) the exact physical card is opened via a targeted ``usb.core.find``; a
     bare catalog DeviceID (bus/address None) falls back to the first VID:PID match. ``connect()``
     opens it, not this."""
-    claims = supported_ids().get((device_id.vid, device_id.pid))
-    if not claims:
+    if supported_ids().get((device_id.vid, device_id.pid)) is None:
         return None
     dev = _live_dev(device_id)
     if dev is None:
         logger.debug("wlan_iface: no live %04x:%04x instance (bus=%s addr=%s)",
                      device_id.vid, device_id.pid, device_id.bus, device_id.address)
         return None
-    if len(claims) > 1:
-        _entry, _key, import_driver = _resolve_claim(dev, claims)
-        try:
-            driver_cls = import_driver()
-        except Exception as e:
-            logger.debug("wlan_iface: %04x:%04x (ambiguous): %s",
-                         device_id.vid, device_id.pid, e)
-            return None
-    else:
-        got = driver_for(device_id.vid, device_id.pid)
-        if got is None:
-            return None
-        driver_cls, _key = got
+    got = resolve_driver(device_id.vid, device_id.pid, dev)
+    if got is None:
+        return None
+    driver_cls, _key = got
     try:
         driver = driver_cls.from_usb_device(dev, device_id)
     except Exception as e:

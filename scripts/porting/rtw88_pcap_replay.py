@@ -23,10 +23,19 @@ engine instead of re-deriving the tshark extraction.
 from __future__ import annotations
 
 import subprocess
+from array import array
 from collections import Counter
 from pathlib import Path
 
+import usb.core
+
 RTW_VENDOR_REQ = "5"  # bRequest 0x05 — rtw88-family vendor register access
+
+# Errno the replay read() raises when the bulk-IN FIFO is drained. read_rx_burst
+# (rtw88_base/rx_common.py) treats 110/10060 as "pipe idle" and returns None, the same as a
+# real timeout, so the RX pump loop terminates instead of hanging. 110 (Linux ETIMEDOUT) is
+# used verbatim rather than errno.ETIMEDOUT, which is 138 on Windows and would not match.
+_BULK_IN_TIMEOUT_ERRNO = 110
 
 
 def _hex(s: str) -> bytes:
@@ -398,6 +407,40 @@ def extract_bulk_out_ops(pcap: Path, dev: int, window=None):
     return ops
 
 
+def extract_bulk_in_ops(pcap: Path, dev: int, window=None) -> list[bytes]:
+    """Ordered device->host bulk-IN completion payloads for ``dev`` (the recorded RX stream).
+
+    Each entry is the raw bytes of one bulk-IN completion on the RX endpoint (0x84): a 24-byte
+    rtw88 ``rx_pkt_desc`` followed by the received 802.11 frame, OR an in-band C2H firmware
+    event (rtw88 flags C2H via a bit in the same ``rx_pkt_desc``, so C2H rides this endpoint,
+    not a separate one). This is chip->host INPUT the port consumes through ``dev.read`` in
+    ``read_rx_burst``, not host output verified against the wire, so it is returned as a plain
+    ordered list -- the rtw88 mirror of the mt76 engines' ``responses``. ``ReplayDevice.read``
+    serves it as a FIFO in capture order, decoupled from the OUT/ctrl positional cursor (the RX
+    stream is asynchronous, never lockstep with the host ops). ``window`` = inclusive
+    (first_frame, last_frame).
+
+    Completions carry their payload on ``usb.capdata``; IN submits carry none, so filtering to
+    a nonempty ``usb.capdata`` keeps exactly the completions.
+    """
+    fields = ["usb.capdata"]
+    flt = (f"usb.device_address=={dev} && usb.transfer_type==0x03 "
+           f"&& usb.endpoint_address.direction==1")
+    if window is not None:
+        flt += f" && frame.number>={window[0]} && frame.number<={window[1]}"
+    cmd = ["tshark", "-r", str(pcap), "-Y", flt, "-T", "fields"]
+    for f in fields:
+        cmd += ["-e", f]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+
+    responses: list[bytes] = []
+    for line in out.splitlines():
+        data = _hex(line.split("\t")[0])
+        if data:                                   # completions carry capdata; IN submits don't
+            responses.append(data)
+    return responses
+
+
 def merge_ops_by_frame(*op_lists):
     """Stable-merge control and bulk op lists into one frame-ordered stream. The driver is
     synchronous (one transfer per frame), so frame order is wire order; a stable sort keeps
@@ -413,15 +456,31 @@ class ReplayDevice:
 
     ``write`` consumes a bulk-OUT op so a merged ctrl+bulk stream (FW download) replays:
     register writes go through ``ctrl_transfer``, FW packets through ``write``, both popping
-    the same cursor in frame order."""
+    the same cursor in frame order.
 
-    def __init__(self, ops):
+    ``responses`` (optional) is the recorded bulk-IN RX stream from ``extract_bulk_in_ops``.
+    ``read`` serves it as a separate FIFO so a port that drives ``read_rx_burst`` past the
+    OUT frontier receives the captured RX descriptors + frames (and in-band C2H events). It is
+    decoupled from the OUT/ctrl cursor and never advances ``self.i``; leaving it None keeps the
+    prior behavior exactly (a capture with no extracted RX ops replays as before)."""
+
+    def __init__(self, ops, responses=None):
         self.ops = ops
         self.i = 0
+        self.responses = list(responses) if responses else []
+        self.resp_i = 0        # bulk-IN FIFO cursor, independent of the OUT cursor self.i
+        self._diverged = None   # first Divergence, re-raised on later calls (finally-blocks
+        #                         in the port would otherwise cascade and mask the real op)
+
+    def _diverge(self, msg: str):
+        self._diverged = Divergence(msg)
+        raise self._diverged
 
     def _next(self) -> dict:
+        if self._diverged is not None:
+            raise self._diverged
         if self.i >= len(self.ops):
-            raise Divergence("port issued a transfer past the end of the capture")
+            self._diverge("port issued a transfer past the end of the capture")
         op = self.ops[self.i]
         self.i += 1
         return op
@@ -440,23 +499,40 @@ class ReplayDevice:
         """Bulk-OUT (the transport's ``bulk_out``): byte-check the FW/TX packet."""
         op = self._next()
         if op.get("dir") != "BULK":
-            raise Divergence(
+            self._diverge(
                 f"op#{self.i - 1}: port sent bulk[{len(data)}B], capture has {self._fmt(op)}")
         payload = bytes(data)
         if op["data"] != payload:
             n = min(len(payload), len(op["data"]))
             diff = next((j for j in range(n) if payload[j] != op["data"][j]), n)
-            raise Divergence(
+            self._diverge(
                 f"op#{self.i - 1} bulk payload differs at byte {diff} "
                 f"(len port={len(payload)} cap={len(op['data'])}) @f{op['frame']}")
         return len(payload)
+
+    def read(self, endpoint, size_or_buffer, timeout=None):
+        """Bulk-IN (the driver's ``dev.read`` inside ``read_rx_burst``): pop the next recorded
+        device->host completion for the RX endpoint as a FIFO in capture order -- a 24-byte
+        rx_pkt_desc + frame, or an in-band C2H event. Matches pyusb's ``Device.read`` signature
+        and returns an ``array('B')`` the way pyusb does; the driver does ``bytes(data)`` on it.
+
+        Decoupled from the OUT/ctrl cursor (RX is asynchronous, not lockstep with the host ops),
+        like the mt76 engines' response FIFO. When the FIFO is drained, raise a timeout
+        ``USBError`` so ``read_rx_burst`` returns None the same way a real idle pipe does -- the
+        RX pump loop then terminates cleanly instead of hanging or crashing on empty."""
+        if self.resp_i >= len(self.responses):
+            raise usb.core.USBError("replay bulk-IN FIFO drained (timeout)",
+                                    errno=_BULK_IN_TIMEOUT_ERRNO)
+        payload = self.responses[self.resp_i]
+        self.resp_i += 1
+        return array("B", payload)
 
     def ctrl_transfer(self, bmRequestType, bRequest, wValue, wIndex,
                       data_or_wLength, timeout=None):
         op = self._next()
         if op.get("dir") == "BULK":
             exp = "IN" if (bmRequestType & 0x80) else "OUT"
-            raise Divergence(
+            self._diverge(
                 f"op#{self.i - 1}: port issued ctrl {exp} 0x{wValue:04x}, "
                 f"capture has {self._fmt(op)}")
         is_in = bool(bmRequestType & 0x80)
@@ -464,17 +540,17 @@ class ReplayDevice:
         if (op["dir"] != exp or op["breq"] != bRequest
                 or op["wval"] != wValue or op["widx"] != wIndex):
             want = f"{exp} req{bRequest} 0x{wValue:04x}/pg{wIndex:04x}"
-            raise Divergence(
+            self._diverge(
                 f"op#{self.i - 1}: port issued {want}, capture has {self._fmt(op)}")
         if is_in:
             if op["width"] != data_or_wLength:
-                raise Divergence(
+                self._diverge(
                     f"op#{self.i - 1} read 0x{wValue:04x}: port wants {data_or_wLength}B, "
                     f"capture has {op['width']}B @f{op['frame']}")
             return op["data"]                      # bytes; transport does bytes(data)[...]
         payload = bytes(data_or_wLength) if data_or_wLength else b""
         if op["data"] != payload:
-            raise Divergence(
+            self._diverge(
                 f"op#{self.i - 1} write 0x{wValue:04x}/pg{wIndex:04x}: port "
                 f"{payload.hex() or '(no data)'} != capture {op['data'].hex() or '(no data)'} "
                 f"@f{op['frame']}")

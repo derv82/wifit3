@@ -1,14 +1,26 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from wifit3.chips.rtl8822cu.constants import CHIP_ID_RTL8822CU
+import pytest
+
+import wifit3.chips.rtl8822cu.phy as phy_mod
+from wifit3.chips.rtl8822cu.constants import (
+    CHIP_ID_RTL8822CU,
+    DIS_DPD_RATE_ALL,
+    DIS_DPD_RATE_NONE,
+)
 from wifit3.chips.rtl8822cu.chipid import read_chip_info
 from wifit3.chips.rtl8822cu.efuse import decode_logical_map
 from wifit3.chips.rtl8822cu.efuse import EfuseInfo
 from wifit3.chips.rtl8822cu.firmware import load_firmware
 from wifit3.chips.rtl8822cu.firmware import _fw_tx_desc, _upload_section
 from wifit3.chips.rtl8822cu.power_seq import card_enable_flow_8822c
-from wifit3.chips.rtl8822cu.mac import RCR_MONITOR, enable_bb_rf, enter_monitor_mode, init_rx_mac
+from wifit3.chips.rtl8822cu.mac import (
+    enable_bb_rf,
+    enter_monitor_mode,
+    init_mac_cfg,
+    init_mac_flow_tail,
+)
 from wifit3.chips.rtl8822cu.rx import iter_bulk_frames
 from wifit3.chips.rtl8822cu.phy import _write_rf, initialize_phy, load_table, selected_writes
 from wifit3.chips.rtl8822cu.driver import RTL8822CUDriver
@@ -34,19 +46,6 @@ def test_driver_can_be_constructed_from_usb_device():
     assert driver.FAKE_MAC.value == "spoofable"
 
 
-def test_runtime_retune_replays_phy_tables_before_channel_write(mocker):
-    driver = RTL8822CUDriver.from_usb_device(MagicMock(), DeviceID(0x2357, 0x0137, "RTL8822CU"))
-    driver.chip_info = SimpleNamespace(cut=5)
-    driver.efuse = SimpleNamespace(rfe_type=3)
-    init = mocker.patch("wifit3.chips.rtl8822cu.driver.initialize_phy")
-    tune = mocker.patch("wifit3.chips.rtl8822cu.driver.set_channel_20mhz")
-
-    driver._retune_channel(36)
-
-    init.assert_called_once_with(driver.transport, cut=5, rfe_type=3)
-    tune.assert_called_once_with(driver.transport, 36)
-
-
 def test_transport_discovers_the_real_vendor_bulk_layout():
     class Interface(list):
         bInterfaceClass = 0xFF
@@ -69,7 +68,10 @@ def test_transport_discovers_the_real_vendor_bulk_layout():
 
 def test_chip_info_decodes_the_hardware_probe_values():
     transport = MagicMock()
-    transport.read32.side_effect = (0x0C495D35, 0xC0000013, 0x500014C9)
+    # Vendor order: read8(0xFC) chip-id, read8(0xF1) chip-ver<<4, then read32 of
+    # SYS_CFG1 (0xF0), SYS_STATUS1 (0xF4), WL_BT_PWR_CTRL (0x68).
+    transport.read8.side_effect = (0x13, 0x5D)
+    transport.read32.side_effect = (0x0C495D37, 0x500015C9, 0x8041D804)
 
     info = read_chip_info(transport)
 
@@ -77,6 +79,7 @@ def test_chip_info_decodes_the_hardware_probe_values():
     assert info.cut == 5
     assert info.rf_2t2r is True
     assert info.rom_version == 5
+    assert info.chip_ver == 5
 
 
 def test_efuse_decoder_places_enabled_words_in_the_logical_map():
@@ -125,7 +128,8 @@ def test_8822c_power_flow_uses_its_usb_specific_registers():
 def test_fw_section_zlp_padding_does_not_change_iddma_length():
     transport = MagicMock()
     transport.read32.return_value = 0
-    transport.read8.return_value = 0
+    # 0x205 bit7 = the BCN_VALID latch the reserved-page poll waits for.
+    transport.read8.side_effect = lambda addr: 0x80 if addr == 0x0205 else 0
     transport.read16.return_value = 0x8000
     dev = MagicMock()
     dev.write.side_effect = lambda ep, data, timeout: len(data)
@@ -137,13 +141,26 @@ def test_fw_section_zlp_padding_does_not_change_iddma_length():
     assert transport.write32.call_args_list[-1].args[1] & 0x3FFFF == 464
 
 
-def test_rx_mac_initialization_uses_8822c_monitor_rcr_and_fifo_boundary():
+def test_init_mac_cfg_uses_managed_rcr_and_vendor_fifo_boundary():
     transport = MagicMock()
     transport.read8.return_value = 0
-    init_rx_mac(transport)
+    transport.read16.return_value = 0
+    transport.read32.return_value = 0
+    init_mac_cfg(transport)
 
-    assert (0x0608, RCR_MONITOR) in [call.args for call in transport.write32.call_args_list]
-    assert (0x0204, 1996) in [call.args for call in transport.write16.call_args_list]
+    w16 = [call.args for call in transport.write16.call_args_list]
+    # Managed RCR (0xE410220E), not the monitor RCR; monitor is a later runtime switch.
+    assert (0x0608, 0xE410220E) in [call.args for call in transport.write32.call_args_list]
+    assert (0x0204, 0x0792) in w16   # rsvd-page boundary = 1946
+    assert (0x0240, 0x06D1) in w16   # public queue = 1745
+
+
+def test_init_mac_flow_tail_enables_usb_rx_aggregation():
+    transport = MagicMock()
+    transport.read8.return_value = 0
+    transport.read32.return_value = 0
+    init_mac_flow_tail(transport)
+
     assert (0x0280, 0x2005) in [call.args for call in transport.write16.call_args_list]
 
 
@@ -157,17 +174,26 @@ def test_enable_bb_rf_reverses_the_pre_init_rf_disable():
 
 def test_monitor_mode_uses_8822c_sniffer_drvinfo_and_promiscuous_filters():
     transport = MagicMock()
+    transport.read8.return_value = 0
+    transport.read16.return_value = 0
+    transport.read32.return_value = 0
 
     enter_monitor_mode(transport)
 
-    assert (0x0102, 0) in [call.args for call in transport.write8.call_args_list]
-    assert (0x060F, 5) in [call.args for call in transport.write8.call_args_list]
-    assert transport.write8_set.call_args.args == (0x060F, 0x80)
-    assert transport.write32_set.call_args.args == (0x07D4, 1 << 9)
-    assert (0x0608, RCR_MONITOR) in [call.args for call in transport.write32.call_args_list]
+    write8 = [call.args for call in transport.write8.call_args_list]
+    write32 = [call.args for call in transport.write32.call_args_list]
+    # Opmode transition STATION (0x02) then MONITOR/NOLINK (0x00) on the media-status register.
+    assert (0x0102, 0x02) in write8
+    assert (0x0102, 0x00) in write8
+    # Promiscuous monitor RCR (AAP | APP_PHYSTS | APP_FCS) and accept-all RX filter maps.
+    assert (0x0608, 0x90000001) in write32
     assert {(0x06A0, 0xFFFF), (0x06A2, 0xFFFF), (0x06A4, 0xFFFF)} <= {
         call.args for call in transport.write16.call_args_list
     }
+    # PHY_SNIFFER drv-info: size 5 then the raw-report bit; sniffer_en (bit 9) in the WMAC option.
+    assert (0x060F, 5) in write8
+    assert transport.write8_set.call_args.args == (0x060F, 0x80)
+    assert (0x07D4, 0x200) in write32
 
 
 def test_rx_descriptor_yields_80211_body_without_fcs():
@@ -239,3 +265,18 @@ def test_2g_channel_switch_enables_cck_rx_and_20mhz_rf_filter():
     mask_writes = [call.args for call in transport.write32.call_args_list]
     assert (0x1D70, 0x7E) in mask_writes
     assert (0x1D70, 0x7E00) in mask_writes
+
+
+@pytest.mark.parametrize("dis_dpd_rate", [DIS_DPD_RATE_ALL, DIS_DPD_RATE_NONE])
+def test_config_bb_rf_writes_the_efuse_dis_dpd_rate(monkeypatch, dis_dpd_rate):
+    """0x0A70[9:0] is phydm_set_dis_dpd_by_rate_8822c's only write [SRC phydm_hal_api8822c.c:1616],
+    once in each config_phydm_parameter_init pass."""
+    transport = MagicMock()
+    transport.read32.return_value = 0
+    monkeypatch.setattr(phy_mod, "_fw_offload_phy_tables", lambda *a, **kw: None)
+
+    phy_mod.config_bb_rf(transport, MagicMock(), 0x05, 0x84, cut=5, rfe_type=1,
+                         crystal_cap=0x71, dis_dpd_rate=dis_dpd_rate)
+
+    dpd_writes = [c.args for c in transport.write32.call_args_list if c.args[0] == 0x0A70]
+    assert dpd_writes == [(0x0A70, dis_dpd_rate)] * 2

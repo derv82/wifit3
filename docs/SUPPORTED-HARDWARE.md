@@ -35,6 +35,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ⚠️ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
+| [RTL8822CU](#rtl8822cu) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ## Atheros Chipset
 ### AR9271
@@ -212,6 +213,25 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Stress | ✅ | 2026-07-30 | 30-min 22-ch soak, flat (trend 0.94, no death-detect). |
 
 → [RTL8822BU_DKMS.md](../src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](../src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
+
+### RTL8822CU
+
+*D-Link AC13U (rev A1) · 2.4 / 5 GHz*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | ⬜ |  |  |
+| RX | ⬜ |  |  |
+| Port | ⬜ |  | verify_pcap byte identical to the TX inject frontier on capture-1 (op 25502) and capture-2 (op 25784). |
+| TX | ⬜ |  |  |
+| Handshake | ⬜ |  |  |
+| PMKID | ⬜ |  |  |
+| WEP | ⬜ |  |  |
+| WPS | ⬜ |  |  |
+| ACKs | ⬜ |  |  |
+| Stress | ⬜ |  |  |
+
+→ [RTL8822CU.md](../src/wifit3/chips/rtl8822cu/RTL8822CU.md)
 
 ### RTL8922AU
 <img align="right" width="140" height="154" src="../assets/cardart/card-asusbe93.png" alt="ASUS USB-BE93">

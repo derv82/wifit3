@@ -133,6 +133,18 @@ def test_wlan_iface_23570137_with_ep85_dispatches_mt76x2u(monkeypatch):
     assert type(iface.driver).__name__ == "MT76x2UDriver"
 
 
+@pytest.mark.parametrize("pid", [0xC82C, 0xC82E, 0xC812, 0xD820, 0xD82B])
+def test_realtek_default_ids_claim_the_8822cu(pid):
+    # The vendor's RTL8822C demoboard defaults [SRC os_dep/linux/usb_intf.c:296-300].
+    assert _driver_for(0x0BDA, pid) == "RTL8822CUDriver"
+
+
+def test_the_alpha_id_stays_with_the_8822bu(monkeypatch):
+    # 13b1:0043 is in the vendor 8822C table but commented out of ours: 88x2bu already claims it.
+    monkeypatch.delenv("WIFIT3_RTL8822", raising=False)
+    assert _driver_for(0x13B1, 0x0043) == "Rtl8822buDkmsDriver"
+
+
 def test_key_is_the_family_key_not_the_package_dir():
     # The setup key must stay the family key (ar9271, not ar9271_v2), so a prior install's files resolve.
     _cls, key = manager.driver_for(0x0CF3, 0x9271)
