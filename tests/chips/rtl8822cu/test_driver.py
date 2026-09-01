@@ -233,6 +233,8 @@ def _run_bringup(monkeypatch, efuse: EfuseInfo, *, ant_num: int = 2, hw_stype: i
     for name in _BRINGUP_CALLEES:
         def _record(*args, _name=name, **kwargs):
             calls.setdefault(_name, []).append(kwargs)
+            if _name == "config_bb_rf":
+                return (0, 0)            # (cck_gi_l_bnd, cck_gi_u_bnd) the driver unpacks
         monkeypatch.setattr(drv, name, _record)
     monkeypatch.setattr(drv, "read_efuse", lambda t: efuse)
     monkeypatch.setattr(drv, "read_chip_info", lambda t: ChipInfo(

@@ -182,17 +182,21 @@ def initialize_phy(transport: RTL8822CUTransport, *, cut: int, rfe_type: int) ->
 
 
 def _phy_param_init_block(transport: RTL8822CUTransport, *, post: bool,
-                          dis_dpd_rate: int) -> None:
+                          dis_dpd_rate: int) -> tuple[int, int]:
     """config_phydm_parameter_init_8822c one pass [SRC phydm_hal_api8822c.c:2206-2253]: the
     cck_gi_bound reads, the dis_dpd 0x0A70 write, the 3 wire enable, the CCK/OFDM block enable
-    (0x1C3C = 0 PRE / 3 POST), then phydm_bb_reset. The IGI toggle is a runtime step, not here."""
+    (0x1C3C = 0 PRE / 3 POST), then phydm_bb_reset. The IGI toggle is a runtime step, not here.
+    Returns (cck_gi_l_bnd, cck_gi_u_bnd); the POST-pass values (read after the AGC table
+    FW-offload) are the operational bounds the monitor CCK RSSI decode uses."""
     # phydm_cck_gi_bound_8822c [SRC phydm_hal_api8822c.c:2156-2173]: four odm_get_bb_reg reads.
-    # The C stores cck_gi_u_bnd / cck_gi_l_bnd into physts software state that the monitor RX
-    # path never consults, so only the register reads are reproduced.
-    transport.read32(0x1A98)
-    transport.read32(0x1AA8)
-    transport.read32(0x1A98)
-    transport.read32(0x1A70)
+    # The bounds gain-correct each CCK per-path pwdb in rx._phy_rssi (phydm_get_physts_0_jgr3);
+    # without them weak CCK beacons floor to -120 dBm.
+    a98_u = transport.read32(0x1A98)                     # R_0x1a98[0xc000]  -> u_bnd msb
+    aa8 = transport.read32(0x1AA8)                       # R_0x1aa8[0xf0000] -> u_bnd lsb
+    a98_l = transport.read32(0x1A98)                     # R_0x1a98[0xc0]    -> l_bnd msb
+    a70 = transport.read32(0x1A70)                       # R_0x1a70[0xf000000] -> l_bnd lsb
+    cck_gi_u_bnd = (((a98_u >> 14) & 0x3) << 4) | ((aa8 >> 16) & 0xF)
+    cck_gi_l_bnd = (((a98_l >> 6) & 0x3) << 4) | ((a70 >> 24) & 0xF)
     # Disable low rate DPD: the two en_dis_dpd arms [SRC phydm_hal_api8822c.c:2222-2225] write
     # 0x3ff or 0x0 through phydm_set_dis_dpd_by_rate_8822c [SRC phydm_hal_api8822c.c:1616], which
     # is exactly what EfuseInfo.dis_dpd_rate resolves the EFUSE's txpwr_pg_mode to
@@ -206,18 +210,20 @@ def _phy_param_init_block(transport: RTL8822CUTransport, *, post: bool,
     # PRE disables, POST enables the OFDM and CCK block [SRC phydm_hal_api8822c.c:2234-2245].
     set_bb_reg(transport, 0x1C3C, 0x3, 3 if post else 0)
     _bb_reset(transport)
+    return (cck_gi_l_bnd, cck_gi_u_bnd)
 
 
 def config_bb_rf(transport: RTL8822CUTransport, dev, bulk_out: int, bulk_in: int, *, cut: int,
-                 rfe_type: int, crystal_cap: int, dis_dpd_rate: int) -> None:
+                 rfe_type: int, crystal_cap: int, dis_dpd_rate: int) -> tuple[int, int]:
     """Cycle-2 BB/RF config: config_phydm_parameter_init PRE, the FW-offload of the
     BB/AGC/cal_init/RF-A/RF-B parameter tables, then POST. Runs once at cold boot (the vendor
     path, not the MMIO ``initialize_phy``). ``bulk_in`` is the RX endpoint the per-batch
-    CFG_PARAM_ACK interlock reads (see ``_wait_cfg_param_ack``)."""
+    CFG_PARAM_ACK interlock reads (see ``_wait_cfg_param_ack``). Returns the POST-pass
+    (cck_gi_l_bnd, cck_gi_u_bnd) for the monitor CCK RSSI decode."""
     _phy_param_init_block(transport, post=False, dis_dpd_rate=dis_dpd_rate)
     _fw_offload_phy_tables(transport, dev, bulk_out, bulk_in, cut=cut, rfe_type=rfe_type,
                            crystal_cap=crystal_cap)
-    _phy_param_init_block(transport, post=True, dis_dpd_rate=dis_dpd_rate)
+    return _phy_param_init_block(transport, post=True, dis_dpd_rate=dis_dpd_rate)
 
 
 # CFG_PARAM_ACK C2H interlock: the FW acknowledges every BB/RF FW-offload batch with an in-band

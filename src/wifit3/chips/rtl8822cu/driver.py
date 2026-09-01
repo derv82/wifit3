@@ -193,9 +193,10 @@ class RTL8822CUDriver(Driver):
         progress(0.85, "Loading RTL8822C BB/RF tables")
         # The BB/RF FW-offload blocks per batch on its CFG_PARAM_ACK C2H, read synchronously off
         # the RX bulk-IN. Safe here: the async RX reader is not started until after monitor entry.
-        config_bb_rf(t, t.dev, bulk_out, self._bulk_in_ep, cut=self.chip_info.cut,
-                     rfe_type=self.efuse.rfe_type, crystal_cap=self.efuse.crystal_cap,
-                     dis_dpd_rate=self.efuse.dis_dpd_rate)
+        self.phydm.cck_gi_l_bnd, self.phydm.cck_gi_u_bnd = config_bb_rf(
+            t, t.dev, bulk_out, self._bulk_in_ep, cut=self.chip_info.cut,
+            rfe_type=self.efuse.rfe_type, crystal_cap=self.efuse.crystal_cap,
+            dis_dpd_rate=self.efuse.dis_dpd_rate)
         init_usb_cfg(t)
         sync_rcr(t)
 
@@ -413,7 +414,8 @@ class RTL8822CUDriver(Driver):
         callback = self._rx_callback
         if callback is None and not self._ack_detect_on:
             return
-        for _stat, mpdu, rssi in iter_bulk_frames(buf):
+        for _stat, mpdu, rssi in iter_bulk_frames(
+                buf, cck_gi_l_bnd=self.phydm.cck_gi_l_bnd, cck_gi_u_bnd=self.phydm.cck_gi_u_bnd):
             if len(mpdu) == 10 and mpdu[0] == 0xD4:
                 self.record_ack(mpdu)
                 continue

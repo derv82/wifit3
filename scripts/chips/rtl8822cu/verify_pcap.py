@@ -143,7 +143,25 @@ def _pump_rx(w: Walk) -> tuple[int, int, int]:
         reads += 1
         w.driver._rx_dispatch(buf)
     beacons = sum(1 for p in parsed if getattr(p, "type", None) == "beacon")
-    return reads, len(parsed), beacons
+    rssis = [p.rssi for p in parsed if getattr(p, "rssi", None) is not None]
+    return reads, len(parsed), beacons, rssis
+
+
+def _rssi_histogram(rssis: list[int]) -> str:
+    """Compact RSSI distribution for the pumped RX frames: explicit 0 dBm and -100 tallies
+    (the pre-fix saturation pile and the undecoded-phy-type pile) plus 10 dBm buckets."""
+    if not rssis:
+        return "  RX RSSI: no frames carried a decoded RSSI"
+    at_zero = sum(1 for r in rssis if r == 0)
+    at_unknown = sum(1 for r in rssis if r == -100)
+    at_floor = sum(1 for r in rssis if r == -120)
+    buckets: dict[int, int] = {}
+    for r in rssis:
+        b = (r // 10) * 10
+        buckets[b] = buckets.get(b, 0) + 1
+    bars = "  ".join(f"[{b}..{b + 9}]={buckets[b]}" for b in sorted(buckets, reverse=True))
+    return (f"  RX RSSI over {len(rssis)} frames: min={min(rssis)} max={max(rssis)} dBm; "
+            f"=0dBm:{at_zero}  =-100(no phy status):{at_unknown}  =-120(floor):{at_floor}\n    {bars}")
 
 
 def _phase_at(pcap: Path, cap_name: str, frame: int):
@@ -236,9 +254,10 @@ def run(cap: str | None = None) -> int:
     hops, ticks, injects, frontier = _walk_operational(w)
     print(f"  operational: {hops} channel tunes + {ticks} watchdog ticks + {injects} injects")
 
-    reads, rx_parsed, beacons = _pump_rx(w)
+    reads, rx_parsed, beacons, rssis = _pump_rx(w)
     print(f"  RX stream (past frontier): pumped {reads}/{len(bulk_in)} captured bulk-IN "
           f"completions -> {rx_parsed} 802.11 frames parsed, {beacons} beacons decoded")
+    print(_rssi_histogram(rssis))
 
     if frontier is not None:
         print(f"\nFRONTIER -> op #{w.i} (frame {frontier['frame']}): {_fmt(frontier)}")

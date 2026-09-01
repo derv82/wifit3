@@ -98,8 +98,6 @@
 - TX inject is the verify_pcap frontier on both usable captures, so no inject descriptor byte is checked against recorded traffic.
 - The only recorded inject is on 2.4 GHz. INJ-1 is open: keep the vendor's unconditional DESC_RATE1M on a 5 GHz inject [rtl8822cu_xmit.c:139, core/rtw_xmit.c:4876], or emit DESC_RATE6M because wifit3 cannot supply a radiotap rate. `band_is_2g` is already threaded into `build_tx_desc_inject`.
 - `Index5G_BW80_Base` is untestable against a BW20 only capture, so BW80 TX power is left alone.
-- `rx._phy_rssi` clamps with `min(0, pwdb - 110)`, so any PWDB byte of 110 or more reports exactly 0 dBm.
-- `rx._phy_rssi` decodes PHY status pages 0 and 1 only and returns `None` for any other page; the module docstring states it follows the 2T rtw88 layout used by the 8822B receiver, while the 8822C is a Jaguar3 part in the vendor phydm.
 - `scripts/porting/rtw88_pcap_replay.py` has no waiver or skip mechanism: `ReplayDevice._next` raises the stored `Divergence` again on every later call, so a diverged device stays unusable.
 - The registered known divergences list (libusb versus mac80211) is empty, so nothing has needed a waiver yet (INFRA-1).
 - Verification rests on two captures from a single device (D-Link AC13U, 2001:3329), so the absence of a problem from this document is not evidence that none exists.
@@ -118,7 +116,7 @@
 - Cold boot calibrations: `cal.py` (`odm_dm_init` / `halrf_init`: DAC cal/DACK, RX DCK, X2K, thermal), then the phydm sub inits in `dm.py` (DIG, CCK-PD, env monitor, adaptivity, RA).
 - Per board RF trim: `kfree.py` (thermal, power, PA bias, TSSI trims); TSSI DC offset calibration `tssi.py`; TX gap K `txgapk.py`.
 - Watchdog tick: `watchdog.py`, the phydm 2 s JGR3 dynamic check (env monitor result/set, false alarm stats, DIG, CCK-PD, thermal).
-- RX decode: `rx.iter_bulk_frames` (`rtw88_base.parse_rx_pkt_desc` plus the 8822C page 0/1 PHY status `_phy_rssi`).
+- RX decode: `rx.iter_bulk_frames` (`rtw88_base.parse_rx_pkt_desc` plus the 8822C JGR3 `_phy_rssi`: CCK type 0 and OFDM types 1..5, signed pwdb, floor -120 with no upper clamp, and per-path CCK gain correction from the `cck_gi` bounds `phy.config_bb_rf` returns).
 - TX inject: `tx.build_tx_desc_inject` (vendor `dump_mgntframe` inject branch, `pattrib->inject == 0xa5`).
 
 ## Scripts

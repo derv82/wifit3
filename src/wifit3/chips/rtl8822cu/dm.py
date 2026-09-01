@@ -48,6 +48,8 @@ class PhydmState:
     ofdm_swing: int = 0
     eeprom_thermal: tuple = (0xFF, 0xFF)    # tssi->thermal[A/B], EFUSE 0xd0/0xd1
     power_track_type: int = 0               # rf->power_track_type, EFUSE 0xc8[7:4]
+    cck_gi_l_bnd: int | None = None         # phydm_cck_gi_bound_8822c; CCK RSSI gain correction
+    cck_gi_u_bnd: int | None = None
 
 
 def _shift(mask: int) -> int:
