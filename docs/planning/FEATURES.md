@@ -4,19 +4,6 @@ Known bugs live in `BUGS.md`.
 
 ---
 
-### Client fingerprinting
-
-**Problem.** Clients show bare MACs; a device class (phone / laptop / PS5 / IoT) speeds target
-selection. IoT (Ring/Nest/Roku/FireTV) is highest-value for scoping.
-
-**Approach.** Emoji left of the BSSID, one `fingerprint.py`, no DB: ~50 hardcoded OUI prefixes
-+ IE fingerprinting for ambiguous OUIs (Murata/Intel modules); returns `(emoji, class,
-confidence)`, blank if low; full breakdown in the Focus detail panel.
-
-**Complexity.** Moderate: display is the hard part, not the resolver. (Killed a full
-OUI→vendor DB in the Scanner table: cells too cramped for vendor strings, and an OUI names the
-Wi-Fi *module* maker, not the device: disambiguation needs IE fingerprinting anyway.)
-
 ### About page / Check-for-updates
 
 If the user has internet connection, it's trivial to query

@@ -452,3 +452,35 @@ def test_headline_silenced_outranks_listening(monkeypatch):
     ap = _wpa_ap(known_psk=None)
     monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
     assert "Silenced" in fm.derive_headline(ap, None, fm.Campaigns())[0]
+
+
+def _fake_array(clients: dict, forged: set = frozenset()) -> types.SimpleNamespace:
+    return types.SimpleNamespace(clients=clients, forged_macs=set(forged))
+
+
+def test_client_rows_attaches_a_known_fingerprint():
+    ap = types.SimpleNamespace(bssid="aa:bb:cc:dd:ee:ff")
+    ring_mac = "18:7f:88:aa:bb:cc"          # a real Ring OUI
+    array = _fake_array({ring_mac: types.SimpleNamespace(bssid=ap.bssid, signal=-50, packets=3)})
+    rows = fm.client_rows(ap, array)
+    assert len(rows) == 1
+    assert rows[0].fingerprint is not None
+    assert rows[0].fingerprint.emoji == "🔔" and "Ring" in rows[0].fingerprint.label
+
+
+def test_client_rows_blank_fingerprint_for_unrecognized_mac():
+    ap = types.SimpleNamespace(bssid="aa:bb:cc:dd:ee:ff")
+    array = _fake_array({"02:00:00:00:00:01": types.SimpleNamespace(
+        bssid=ap.bssid, signal=-50, packets=3)})
+    rows = fm.client_rows(ap, array)
+    assert rows[0].fingerprint is None
+
+
+def test_client_rows_skips_other_aps_clients_and_forged_macs():
+    ap = types.SimpleNamespace(bssid="aa:bb:cc:dd:ee:ff")
+    ring_mac = "18:7f:88:aa:bb:cc"
+    array = _fake_array({
+        "other-ap-client": types.SimpleNamespace(bssid="11:22:33:44:55:66", signal=-50, packets=1),
+        ring_mac: types.SimpleNamespace(bssid=ap.bssid, signal=-50, packets=1),
+    }, forged={ring_mac})
+    assert fm.client_rows(ap, array) == []

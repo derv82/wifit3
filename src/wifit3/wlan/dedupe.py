@@ -65,6 +65,7 @@ class StreamMerger:
         return raw
 
     def submit(self, src: str, raw: bytes, now: float) -> bool:
+        self._evict(now)
         self.rx[src] = self.rx.get(src, 0) + 1
         k = self.key(raw)
         ent = self._seen.get(k)
@@ -80,7 +81,7 @@ class StreamMerger:
         self.first[src] = self.first.get(src, 0) + 1
         return True
 
-    def evict(self, now: float) -> None:
+    def _evict(self, now: float) -> None:
         """Retire keys older than the window, tallying the ones only a single source ever heard.
         Rate-limited to once per window so a busy channel does not rescan the dict every frame."""
         if now - self._last_evict < self.window:

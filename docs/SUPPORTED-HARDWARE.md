@@ -27,6 +27,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8822CU](#rtl8822cu) | ✅ | ✅ | ✅ | ✅ | ⬜ | A |
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | B |
@@ -212,6 +213,25 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Stress | ✅ | 2026-07-30 | 30-min 22-ch soak, flat (trend 0.94, no death-detect). |
 
 → [RTL8822BU_DKMS.md](../src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](../src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
+
+### RTL8822CU
+
+*D-Link AC13U (rev A1) · 2.4 / 5 GHz*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **A** | 2026-09-02 | Dual-band kernel-parity RX + full attack suite; spoofable ACKs. |
+| RX | ✅ | 2026-09-02 | 2G: 6.1 vs 6.8/s (90%), 5G: 9.6/9.6 (match); breadth 35/26 (≥ kernel); RSSI +0.3 dB. |
+| Port | ✅ | 2026-09-02 | Matches linux-DKMS (rtl88x2cu) both bands; verify_pcap byte-identical up to TX. |
+| TX | ✅ | 2026-09-02 | Deauth + PMKID + WEP inject, 2.4 + 5 GHz. |
+| Handshake | ✅ | 2026-09-02 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-09-02 | Passive + active, 2.4 + 5 GHz. |
+| WEP | ✅ | 2026-09-02 | ChopChop + ARP replay ~220 IVs/s. |
+| WPS | ✅ | 2026-09-02 | PIN works. |
+| ACKs | ✅ | 2026-09-02 | Auto-ACKs spoofed mac in AM; TX stops-on-ACK AM both on & off (retry 6). |
+| Stress | ⬜ |  | 30-min soak deferred this pass. |
+
+→ [RTL8822CU.md](../src/wifit3/chips/rtl8822cu/RTL8822CU.md)
 
 ### RTL8922AU
 <img align="right" width="140" height="154" src="../assets/cardart/card-asusbe93.png" alt="ASUS USB-BE93">
