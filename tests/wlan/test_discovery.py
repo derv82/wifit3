@@ -94,6 +94,19 @@ def test_both_8822_drivers_claim_0138():
     assert (0x2357, 0x0138) in {(e.vid, e.pid) for e in SUPPORTED_IDS}
 
 
+def test_rtl8822_t4u_v3_plus_uses_dkms_label(monkeypatch):
+    from wifit3.chips.products import TPLink
+    from wifit3.device import manager
+    monkeypatch.delenv("WIFIT3_RTL8822", raising=False)
+    manager.supported_ids.cache_clear()
+
+    cls, _key = manager.driver_for(0x2357, 0x0115)
+    entry, _key, _import_driver = manager.supported_ids()[(0x2357, 0x0115)]
+
+    assert cls.__name__ == "Rtl8822buDkmsDriver"
+    assert entry.product_name == TPLink.ARCHER_T4U_V3_PLUS
+
+
 def test_23570137_catalog_default_is_mt76x2u():
     # The catalog (no live device) keeps the mainline claim for the reused VID:PID.
     assert _driver_for(0x2357, 0x0137) == "MT76x2UDriver"
