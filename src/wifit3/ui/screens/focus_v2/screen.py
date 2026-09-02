@@ -57,7 +57,7 @@ from ... import pmkid_log
 from ...encryption_format import wep_key_ascii
 from .card_endpoint import CardEndpoint
 from .tx_picker import TxDevicePicker
-from .clients_list import ClientsList
+from .clients_list import ClientsList, ClientWidget, FingerprintModal
 from .packet_dashboard import PacketDashboard
 from .log_band import LogBand
 from .router_endpoint import RouterEndpoint
@@ -180,6 +180,11 @@ class FocusViewV2(Screen):
     .bcast-btn { width: 100%%; height: 1; min-width: 0; border: none; margin: 0 0 1 0;
                  background: $error; color: $text; content-align: center middle; }
     .client-row { height: 1; width: 100%%; }
+    .cl-fp { width: 2; }
+    /* A known fingerprint is clickable (pops up the detail popup): underline + accent color on
+       the MAC marks it, same as any other actionable text. Not on the emoji itself -- the
+       underline renders through the glyph rather than under it, which reads as broken/ugly. */
+    .cl-bssid.fp-known { text-style: underline; color: $accent; }
     .cl-bssid { width: 17; }
     .cl-pwr { width: 5; text-align: right; }
     .cl-pkts { width: 6; text-align: right; }
@@ -628,12 +633,8 @@ class FocusViewV2(Screen):
             await self.action_go_back()
         elif bid == "deauth-all":
             self.run_worker(self._run_deauth_broadcast(), exclusive=True)
-        elif bid == "btn-deauth":                       # before the inline-client ✕ (also ends "-deauth")
+        elif bid == "btn-deauth":
             self._toggle_deauth()
-        elif bid.endswith("-deauth"):
-            mac = self.query_one("#clients", ClientsList).client_mac(bid)
-            if mac:
-                self.run_worker(self._run_deauth_selected(mac), exclusive=True)
         elif bid == "btn-pmkid":
             self._toggle_pmkid()
         elif bid == "btn-wps-pin":
@@ -646,6 +647,12 @@ class FocusViewV2(Screen):
             self._toggle_chop()
         elif bid == "btn-stop-pbc":
             self._user_stop_pbc()
+
+    def on_client_widget_deauth_requested(self, event: ClientWidget.DeauthRequested) -> None:
+        self.run_worker(self._run_deauth_selected(event.mac), exclusive=True)
+
+    def on_client_widget_fingerprint_clicked(self, event: ClientWidget.FingerprintClicked) -> None:
+        self.app.push_screen(FingerprintModal(event.mac, event.fingerprint, offset=event.offset))
 
     # ----- command-bar (footer hotkeys) --------------------------------------
 

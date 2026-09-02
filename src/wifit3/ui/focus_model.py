@@ -14,6 +14,7 @@ from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.crack.handshake import pmkid_crackable
 from wifit3.persist.config import Config
+from wifit3.wlan.fingerprint import Fingerprint, fingerprint
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
@@ -58,6 +59,7 @@ class ClientRow:
     bssid: str
     power: int
     packets: int
+    fingerprint: Optional[Fingerprint] = None
 
 
 @dataclass
@@ -314,7 +316,8 @@ def client_rows(ap, array) -> list[ClientRow]:
             continue
         if mac in forged:
             continue
-        rows.append(ClientRow(bssid=mac, power=client.signal, packets=client.packets))
+        rows.append(ClientRow(bssid=mac, power=client.signal, packets=client.packets,
+                              fingerprint=fingerprint(mac)))
     return rows
 
 
