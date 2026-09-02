@@ -12,7 +12,7 @@ from textual.widgets import Button, RichLog, Static
 from wifit3.models import PersistedCapture
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.focus_v2 import FocusViewV2
-from wifit3.ui.screens.focus_v2.clients_list import ClientsList
+from wifit3.ui.screens.focus_v2.clients_list import ClientsList, ClientWidget
 from wifit3.ui.screens.focus_v2.packet_dashboard import PacketDashboard
 from wifit3.ui.screens.focus_v2.log_band import LogBand
 from wifit3.wlan.interface import WlanInterface, DeauthResult
@@ -190,7 +190,7 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         # Headline flips to a captured state; the client row is synced in.
         assert "Captured" in str(status.render()), str(status.render())
         clients = focus.query_one("#clients", ClientsList)
-        assert client in clients._known, clients._known
+        assert client in clients._rows, clients._rows
 
         # Auto-save fires inline with the capture-event log (no keystroke).
         saved = {p.name for p in (tmp_path / "captures").iterdir()}
@@ -398,7 +398,7 @@ async def test_v2_reenter_same_target_no_duplicate_client_ids(focus_host):
     focus._tick()
     await pilot.pause(0)
     assert len(focus.query(f"#{rid}")) == 1                 # still one, no dup/crash
-    assert client in focus.query_one("#clients", ClientsList)._known
+    assert client in focus.query_one("#clients", ClientsList)._rows
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -460,12 +460,11 @@ async def test_v2_button_wiring(focus_host):
     for bid in ("#btn-gen-ivs", "#btn-chop", "#btn-wps-pin"):
         assert focus.query_one(bid, Button).display is False, bid
 
-    # The inline ✕ resolves to its client, and the handler reaches deauth.
+    # The inline ✕ posts DeauthRequested(client).
     clients = focus.query_one("#clients", ClientsList)
     focus._tick()
     await pilot.pause(0)
-    btn_id = next(b for b, m in clients._by_button.items() if m == client)
-    assert clients.client_mac(btn_id) == client
+    assert isinstance(clients._rows[client], ClientWidget)
     await focus._run_deauth_selected(client)
     assert deauthed == [(bssid, client, 10)], deauthed
 

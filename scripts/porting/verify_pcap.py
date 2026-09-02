@@ -79,6 +79,8 @@ REGISTRY: dict[str, Chip] = {
                            "Realtek rtw88 1T1R DKMS (vendor 0x05)"),
     "rtl8822bu_dkms": Chip("rtl8822bu_dkms", "chips/rtl8822bu_dkms/verify_pcap.py",
                            "Realtek rtl88x2bu 2T2R DKMS (vendor 0x05) — SCAFFOLD, WIP"),
+    "rtl8822cu": Chip("rtl8822cu", "chips/rtl8822cu/verify_pcap.py",
+                      "Realtek rtl88x2cu 2T2R (vendor 0x05, 0x4e0 ON-section echo)"),
     "rtl8821cu_dkms": Chip("rtl8821cu_dkms", "chips/rtl8821cu_dkms/verify_pcap.py",
                            "Realtek RTL8821CU 1T1R 11ac DKMS (vendor 0x05) — SCAFFOLD, M1 power-on"),
     "rtl8922au": Chip("rtl8922au", "chips/rtl8922au/verify_pcap.py",

@@ -73,7 +73,7 @@ def test_evict_tallies_single_source_only():
     m.submit(A, _frame(a2=b"\xaa" * 6), 0.0)          # only A hears this one
     m.submit(A, _frame(a2=b"\xbb" * 6), 0.0)          # both hear this one
     m.submit(B, _frame(a2=b"\xbb" * 6), 0.05)
-    m.evict(1.0)                                       # both keys now older than the window
+    m._evict(1.0)                                      # both keys now older than the window
     assert m.only == {A: 1, B: 0}                      # the A-only frame counts; the shared one does not
 
 
@@ -103,7 +103,7 @@ def test_add_and_remove_source():
     m.remove_source(B)
     assert B not in m.rx and B not in m.first and B not in m.only
     # The departed card is gone from the in-window key, so eviction sees a single-source frame.
-    m.evict(1.0)
+    m._evict(1.0)
     assert m.only == {A: 1}
 
 

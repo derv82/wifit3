@@ -1,0 +1,49 @@
+# Manual refresh of the generated vendor-name table (wlan/fingerprint_vendors.py) from Wireshark's
+# manuf feed. No schedule: run it by hand, review the diff, merge the PR it opens.
+
+name: Refresh vendor table
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync env (runtime + dev deps)
+        run: uv sync --group dev
+
+      - name: Refresh the generated vendor table
+        run: uv run python scripts/generators/gen_fingerprint_vendors.py
+
+      - name: Lint (ruff check)
+        run: uv run ruff check src/ tests/
+
+      - name: Unit tests
+        run: uv run pytest
+
+      - name: Open a PR if the table changed
+        uses: peter-evans/create-pull-request@v8
+        with:
+          commit-message: "chore(wlan): refresh generated vendor table"
+          title: "chore(wlan): refresh generated vendor table"
+          body: >
+            Manual refresh of `fingerprint_vendors.py` from
+            [Wireshark's manuf feed](https://www.wireshark.org/download/automated/data/manuf).
+            Lint and the full test suite passed in this run. Data-only diff; skim before merging.
+          branch: auto/refresh-vendor-table
+          delete-branch: true
+          add-paths: |
+            src/wifit3/wlan/fingerprint_vendors.py
+          labels: automated
