@@ -1,7 +1,3 @@
-"""ClientsList._make_row: the device-class emoji gets its own fixed-width column left of the
-MAC (never concatenated into it -- .cl-bssid is a fixed width: 17, exactly one MAC's worth of
-columns, so an emoji+space prefix would overflow/truncate it), and the full label lands as a
-tooltip rather than crowding the row. Clicking either label pops up FingerprintDetail."""
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -10,10 +6,22 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.widgets import Label
 
-from wifit3.ui.screens.focus_v2.clients_list import ClientsList, FingerprintDetail
+from wifit3.ui.screens.focus_v2.clients_list import ClientsList, ClientWidget, FingerprintModal
 from wifit3.wlan.fingerprint import Fingerprint
 
 _MAC = "18:7f:88:aa:bb:cc"
+_RING = Fingerprint("🔔", "Ring device")
+
+
+def _client(mac=_MAC, power=-50, packets=3, fingerprint=None):
+    return SimpleNamespace(bssid=mac, power=power, packets=packets, fingerprint=fingerprint)
+
+
+def _composed(client) -> ClientWidget:
+    """A ClientWidget with compose run so its label refs exist (no mount needed)."""
+    w = ClientWidget(client)
+    list(w.compose())
+    return w
 
 
 def _click(widget, x=5, y=3) -> events.Click:
@@ -30,141 +38,115 @@ class _DemoApp(App):
         yield ClientsList(self._clients, id="clients")
 
 
-def _labels(row):
-    """Widgets are unmounted here, so ``.children`` is empty; ``_pending_children`` holds what
-    was passed to the constructor."""
-    return [w for w in row._pending_children if isinstance(w, Label)]
+# ----- badge column + clickable marker --------------------------------------
+
+def test_fingerprinted_row_has_own_badge_column_marker_and_tooltip():
+    w = _composed(_client(fingerprint=_RING))
+    assert w._fp_label.has_class("cl-fp") and str(w._fp_label.content) == "🔔"
+    assert w._fp_label.tooltip == "Ring device"
+    assert w._mac_label.has_class("cl-bssid") and str(w._mac_label.content) == _MAC
+    assert w._fp_label.has_class("fp-known") and w._mac_label.has_class("fp-known")
 
 
-_RING = Fingerprint("🔔", "Ring device", "high")
+def test_unfingerprinted_row_blank_badge_no_marker():
+    w = _composed(_client(fingerprint=None))
+    assert str(w._fp_label.content) == "" and w._fp_label.tooltip is None
+    assert str(w._mac_label.content) == _MAC
+    assert not w._fp_label.has_class("fp-known") and not w._mac_label.has_class("fp-known")
 
 
-def test_row_with_fingerprint_has_its_own_column_and_tooltip():
-    cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, _RING)
-    fp_label, mac_label = _labels(row)[0], _labels(row)[1]
-    assert fp_label.has_class("cl-fp") and str(fp_label.content) == "🔔"
-    assert fp_label.tooltip == "Ring device"
-    assert mac_label.has_class("cl-bssid") and str(mac_label.content) == _MAC
+# ----- messages -------------------------------------------------------------
+
+def test_deauth_button_posts_deauth_requested_with_mac():
+    w = _composed(_client(fingerprint=_RING))
+    w.post_message = Mock()
+    event = Mock()
+    w.on_button_pressed(event)
+    event.stop.assert_called_once()
+    msg = w.post_message.call_args.args[0]
+    assert isinstance(msg, ClientWidget.DeauthRequested) and msg.mac == _MAC
 
 
-def test_row_without_fingerprint_shows_a_blank_fp_column_no_tooltip():
-    cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, None)
-    fp_label, mac_label = _labels(row)[0], _labels(row)[1]
-    assert str(fp_label.content) == "" and fp_label.tooltip is None
-    assert str(mac_label.content) == _MAC
+def test_clicking_fingerprinted_badge_posts_fingerprint_clicked():
+    w = _composed(_client(fingerprint=_RING))
+    w.post_message = Mock()
+    w.on_click(_click(w._fp_label))
+    msg = w.post_message.call_args.args[0]
+    assert isinstance(msg, ClientWidget.FingerprintClicked)
+    assert msg.mac == _MAC and msg.fingerprint is _RING and msg.offset == (5, 3)
 
 
-def test_fingerprinted_labels_get_the_clickable_visual_marker():
-    """A known fingerprint must look different from a plain label -- otherwise nothing signals
-    that clicking it does anything."""
-    cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, _RING)
-    fp_label, mac_label = _labels(row)[0], _labels(row)[1]
-    assert fp_label.has_class("fp-known") and mac_label.has_class("fp-known")
+def test_clicking_the_mac_of_a_fingerprinted_row_also_posts():
+    w = _composed(_client(fingerprint=_RING))
+    w.post_message = Mock()
+    w.on_click(_click(w._mac_label))
+    assert isinstance(w.post_message.call_args.args[0], ClientWidget.FingerprintClicked)
 
 
-def test_unfingerprinted_labels_get_no_clickable_marker():
-    cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, None)
-    fp_label, mac_label = _labels(row)[0], _labels(row)[1]
-    assert not fp_label.has_class("fp-known") and not mac_label.has_class("fp-known")
+def test_clicking_an_unfingerprinted_row_is_a_noop():
+    w = _composed(_client(fingerprint=None))
+    w.post_message = Mock()
+    w.on_click(_click(w._fp_label))
+    w.post_message.assert_not_called()
 
 
-def test_compose_and_sync_thread_the_fingerprint_through():
-    client = SimpleNamespace(bssid=_MAC, power=-50, packets=1, fingerprint=_RING)
-    cl = ClientsList([client])
-    rows = list(cl.compose())
-    row_container = rows[1]                              # [0] is the "Deauth all" button
-    first_row = row_container._pending_children[0]
-    fp_label = _labels(first_row)[0]
-    assert str(fp_label.content) == "🔔" and fp_label.tooltip == "Ring device"
+def test_clicking_a_non_target_child_is_a_noop():
+    w = _composed(_client(fingerprint=_RING))
+    w.post_message = Mock()
+    w.on_click(_click(w._pwr_label))   # power/packets are not fingerprint click targets
+    w.post_message.assert_not_called()
 
 
-# ----- fingerprint detail popup ---------------------------------------------
-
-def test_fingerprinted_row_registers_both_labels_as_click_targets():
-    cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, _RING)
-    fp_label, mac_label = _labels(row)[0], _labels(row)[1]
-    assert cl._detail_targets[fp_label] == (_MAC, _RING)
-    assert cl._detail_targets[mac_label] == (_MAC, _RING)
-
-
-def test_unfingerprinted_row_registers_no_click_targets():
-    cl = ClientsList([])
-    cl._make_row(_MAC, -50, 3, None)
-    assert cl._detail_targets == {}
-
+# ----- live sync ------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_clicking_a_registered_label_pushes_the_detail_popup():
-    app = _DemoApp([])
+async def test_sync_adds_updates_in_place_and_drops_by_mac():
+    a_mac, b_mac = "aa:aa:aa:00:00:01", "bb:bb:bb:00:00:02"
+    app = _DemoApp([_client(a_mac, power=-40, packets=1)])
     async with app.run_test() as pilot:
         cl = app.query_one("#clients", ClientsList)
-        row = cl._make_row(_MAC, -50, 3, _RING)
-        fp_label = _labels(row)[0]
-        await cl._rows_host().mount(row)
-        app.push_screen = Mock()
+        assert set(cl._rows) == {a_mac}
 
-        cl.on_click(_click(fp_label))
-        await pilot.pause(0)
+        cl.sync([_client(a_mac, power=-55, packets=9), _client(b_mac, power=-60, packets=2)])
+        await pilot.pause()
+        assert set(cl._rows) == {a_mac, b_mac}
+        row_a = cl._rows[a_mac]
+        assert str(row_a._pwr_label.content) == "-55" and str(row_a._pkts_label.content) == "9"
 
-        app.push_screen.assert_called_once()
-        pushed = app.push_screen.call_args.args[0]
-        assert isinstance(pushed, FingerprintDetail)
-        assert pushed._mac == _MAC and pushed._fp.label == "Ring device"
-
-
-@pytest.mark.asyncio
-async def test_clicking_an_unregistered_widget_is_a_noop():
-    app = _DemoApp([])
-    async with app.run_test():
-        cl = app.query_one("#clients", ClientsList)
-        cl._make_row(_MAC, -50, 3, _RING)
-        app.push_screen = Mock()
-
-        cl.on_click(_click(Label("unrelated")))
-
-        app.push_screen.assert_not_called()
+        cl.sync([_client(b_mac, power=-60, packets=2)])
+        await pilot.pause()
+        assert set(cl._rows) == {b_mac}
 
 
-def test_removing_a_row_drops_its_click_targets():
-    cl = ClientsList([])
-    row = cl._make_row(_MAC, -50, 3, _RING)
-    cl._rows_host = Mock(return_value=SimpleNamespace(mount=Mock()))
-    # _remove_row queries the live DOM for the row; stand in a no-op query since nothing's mounted.
-    cl.query_one = Mock(return_value=row)
-    cl._remove_row(_MAC)
-    assert cl._detail_targets == {}
-
+# ----- detail popup ---------------------------------------------------------
 
 def test_detail_popup_dismisses_on_backdrop_click_not_inner_content():
-    popup = FingerprintDetail(_MAC, Fingerprint("🔔", "Ring device", "high"), offset=(1, 1))
+    popup = FingerprintModal(_MAC, _RING, offset=(1, 1))
     popup.dismiss = Mock()
-
-    popup.on_click(_click(popup))              # the transparent backdrop itself
+    popup.on_click(_click(popup))                  # the transparent backdrop itself
     popup.dismiss.assert_called_once()
-
     popup.dismiss.reset_mock()
-    popup.on_click(_click(Label("inside the box")))    # some other widget (the box/labels)
+    popup.on_click(_click(Label("inside the box")))  # some inner widget
     popup.dismiss.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_detail_popup_clamps_to_stay_fully_on_screen():
-    """A click near the screen edge used to position the box so its offset put part of it past
-    the visible area -- offset is absolute from the box's own top-left, not screen-clamped."""
+async def test_detail_popup_clamps_fully_on_screen():
+    """The deferred clamp settles a frame after mount; a click at the edge must not leave the box
+    hanging off-screen."""
     app = _DemoApp([])
     async with app.run_test() as pilot:
-        screen_w, screen_h = app.size
-        popup = FingerprintDetail(_MAC, Fingerprint("🔔", "Ring device", "high"),
-                                  offset=(screen_w - 1, screen_h - 1))
+        w, h = app.size
+        popup = FingerprintModal(_MAC, _RING, offset=(w - 1, h - 1))
         await app.push_screen(popup)
-        await pilot.pause()
-
         box = popup.query_one("#fp-box")
+        prev = None
+        for _ in range(6):                          # settle until the offset stops moving
+            await pilot.pause()
+            cur = (box.styles.offset.x.value, box.styles.offset.y.value)
+            if cur == prev:
+                break
+            prev = cur
         x, y = box.styles.offset.x.value, box.styles.offset.y.value
-        assert x + box.outer_size.width <= screen_w
-        assert y + box.outer_size.height <= screen_h
+        assert x + box.outer_size.width <= w
+        assert y + box.outer_size.height <= h
