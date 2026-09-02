@@ -46,7 +46,7 @@ def test_fake_mac_is_spoofable():
     assert _driver().FAKE_MAC is FakeMacSupport.SPOOFABLE
 
 
-async def test_inject_frame_sends_desc_and_frame_unchanged(monkeypatch):
+async def test_inject_frame_sends_desc_and_stamped_frame(monkeypatch):
     d = _driver()
     d._bulk_out_eps = [0x05, 0x06, 0x08]
     sent: list[bytes] = []
@@ -61,7 +61,9 @@ async def test_inject_frame_sends_desc_and_frame_unchanged(monkeypatch):
     assert len(sent) == 1
     assert len(sent[0]) == 48 + len(frame)
     assert sent[0][:2] == (len(frame) & 0xFFFF).to_bytes(2, "little")   # TXPKTSIZE
-    assert sent[0][48:] == frame                                        # HW stamps seq
+    assert sent[0][48:48 + 22] == frame[:22]        # header up to seq_ctl unchanged
+    assert sent[0][48 + 22:48 + 24] == b"\x10\x00"  # seq_ctl stamped to seq 1 (first inject)
+    assert sent[0][48 + 24:] == frame[24:]          # remainder unchanged
 
 
 async def test_inject_frame_returns_false_without_bulk_out():
@@ -92,10 +94,19 @@ async def test_inject_frame_returns_false_on_usb_error(monkeypatch):
     assert await d.inject_frame(_deauth()) is False
 
 
-def test_stamp_tx_seq_is_identity():
+def test_stamp_tx_seq_increments():
     d = _driver()
     frame = _deauth()
-    assert d._stamp_tx_seq(frame) is frame      # Realtek HW-stamps via EN_HWSEQ
+    a = d._stamp_tx_seq(frame)
+    b = d._stamp_tx_seq(frame)
+    seq_a = struct.unpack_from("<H", a, 22)[0] >> 4
+    seq_b = struct.unpack_from("<H", b, 22)[0] >> 4
+    assert seq_b == (seq_a + 1) & 0xFFF          # each inject gets the next seq (EN_HWSEQ=0)
+    assert a[:22] == frame[:22] and a[24:] == frame[24:]   # only seq_ctl changes
+
+
+def test_stamp_tx_seq_passes_short_control_frames():
+    assert _driver()._stamp_tx_seq(b"\xd4\x00" + b"\x11" * 8) == b"\xd4\x00" + b"\x11" * 8
 
 
 def test_set_mac_addr_programs_reg_macid():

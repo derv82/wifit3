@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import struct
 from typing import Callable, ClassVar, Optional
 
 import usb.core
@@ -99,6 +100,7 @@ class RTL8822CUDriver(Driver):
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
         self.current_band_is_2g = True
+        self._tx_seq = 0
         self._current_channel = 1
         self._rx_regs_after_tune_logged = False
 
@@ -395,7 +397,15 @@ class RTL8822CUDriver(Driver):
             return False
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
-        return frame_bytes
+        """Supply the incrementing SW sequence number the injected TxDesc copies: the 8822c
+        keeps EN_HWSEQ=0 for injects [SRC rtl8822cu_xmit.c:118-120], so nothing else advances
+        the seq. HW retransmits reuse the descriptor (same seq); each new inject gets the next."""
+        if len(frame_bytes) < 24:
+            return frame_bytes
+        self._tx_seq = (self._tx_seq + 1) & 0xFFF
+        buf = bytearray(frame_bytes)
+        struct.pack_into("<H", buf, 22, (self._tx_seq << 4) | (buf[22] & 0x0F))
+        return bytes(buf)
 
     async def _enable_rx_acks(self) -> None:
         loop = asyncio.get_running_loop()
