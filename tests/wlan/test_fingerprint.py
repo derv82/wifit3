@@ -3,7 +3,7 @@ from rich.cells import cell_len
 from wifit3.wlan.fingerprint import _GENERIC_EMOJI, _RULES, fingerprint
 from wifit3.wlan.fingerprint_vendors import VENDOR_BY_OUI
 
-_GENERIC = "❓"
+_GENERIC = "🔖"
 
 
 def test_ring_oui_recognized():
