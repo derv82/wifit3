@@ -1,32 +1,17 @@
-# Keeps both generated wlan/fingerprint_*.py tables from going stale without a person
-# remembering to re-run the generators. One combined workflow, one PR if anything changed --
-# the vendor table (Wireshark, weekly) and the category table (OUI-Master-Database, ~10-day
-# cadence) both refresh cheaply enough to just run every week regardless of their own schedules;
-# create-pull-request no-ops if a given run finds nothing new.
-#
-# Lint + the full suite run here, before a PR is opened: a PR opened by the default GITHUB_TOKEN
-# does not trigger other workflows (ci.yml would never see it), so this is the only check that
-# refreshed data doesn't break anything, and a failure here means no PR gets opened at all.
+# Manual refresh of the generated vendor-name table (wlan/fingerprint_vendors.py) from Wireshark's
+# manuf feed. No schedule: run it by hand, review the diff, merge the PR it opens.
 
-name: Update fingerprint data
+name: Refresh vendor table
 
 on:
-  schedule:
-    - cron: "0 6 * * 2"  # Tuesday 06:00 UTC -- a day after Wireshark's own weekly refresh
   workflow_dispatch:
-
-# A manual run overlapping the weekly schedule would otherwise race on the same fixed
-# refresh branch (create-pull-request always uses the same name, no per-run suffix).
-concurrency:
-  group: update-fingerprint-data
-  cancel-in-progress: false
 
 jobs:
   update:
     runs-on: ubuntu-latest
     permissions:
-      contents: write       # create-pull-request pushes the refresh branch
-      pull-requests: write  # ...and opens the PR
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
 
@@ -42,31 +27,23 @@ jobs:
       - name: Refresh the generated vendor table
         run: uv run python scripts/generators/gen_fingerprint_vendors.py
 
-      - name: Refresh the generated device-category table
-        run: uv run python scripts/generators/gen_fingerprint_categories.py
-
       - name: Lint (ruff check)
         run: uv run ruff check src/ tests/
 
       - name: Unit tests
         run: uv run pytest
 
-      - name: Open a PR if either table changed
+      - name: Open a PR if the table changed
         uses: peter-evans/create-pull-request@v8
         with:
-          commit-message: "chore(wlan): refresh generated fingerprint data"
-          title: "chore(wlan): refresh generated fingerprint data"
+          commit-message: "chore(wlan): refresh generated vendor table"
+          title: "chore(wlan): refresh generated vendor table"
           body: >
-            Automated weekly refresh of `fingerprint_vendors.py` (from
-            [Wireshark's manuf feed](https://www.wireshark.org/download/automated/data/manuf))
-            and `fingerprint_categories.py` (from
-            [OUI-Master-Database](https://github.com/Ringmast4r/OUI-Master-Database)).
-            Lint and the full test suite already passed in this run. The diff is data-only --
-            worth a skim for anything that looks like a cleanup regression before merging, but
-            nothing here changes app behavior.
-          branch: auto/refresh-fingerprint-data
+            Manual refresh of `fingerprint_vendors.py` from
+            [Wireshark's manuf feed](https://www.wireshark.org/download/automated/data/manuf).
+            Lint and the full test suite passed in this run. Data-only diff; skim before merging.
+          branch: auto/refresh-vendor-table
           delete-branch: true
           add-paths: |
             src/wifit3/wlan/fingerprint_vendors.py
-            src/wifit3/wlan/fingerprint_categories.py
           labels: automated

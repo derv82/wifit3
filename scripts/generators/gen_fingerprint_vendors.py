@@ -68,7 +68,7 @@ _SPECIAL_CASE = {
 
 # Belt-and-suspenders: not known to occur in Wireshark's feed (unlike the raw IEEE registry,
 # which labels an unresolved MA-M/MA-S parent block this way), but cheap to guard regardless.
-_NOT_A_VENDOR = {"IEEE Registration Authority"}
+_NOT_A_VENDOR = {"IEEE Registration Authority", "Private"}
 
 # Chinese registrants often lead with the city/province, which _SUFFIX_RE (trailing-only) can't
 # touch. Ported from Wireshark's make-manuf.py (GPLv2), non-exhaustive by their own admission;
