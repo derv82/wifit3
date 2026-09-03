@@ -93,6 +93,7 @@ class SplashView(Screen):
 
     BINDINGS = [
         ("q", "app.quit", "Quit"),
+        Binding("c", "app.check_for_updates", "Check Updates", show=True),
         Binding("enter", "enter", "Start", priority=True),
     ]
 

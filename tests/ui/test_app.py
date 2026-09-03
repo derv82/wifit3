@@ -59,6 +59,20 @@ async def test_app_exposes_palette_commands(monkeypatch):
     assert calls == ["about", "updates"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_splash_c_checks_for_updates(monkeypatch):
+    app = WifiteApp()
+    calls = []
+    monkeypatch.setattr(app, "action_check_for_updates", lambda: calls.append("updates"))
+
+    async with app.run_test() as pilot:
+        assert isinstance(pilot.app.screen, SplashView)
+        await pilot.press("c")
+
+    assert calls == ["updates"]
+
+
 def test_about_opens_project_url(monkeypatch):
     app = WifiteApp()
     calls = []
