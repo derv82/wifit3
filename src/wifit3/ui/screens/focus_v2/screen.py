@@ -194,7 +194,6 @@ class FocusViewV2(Screen):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._snap = fm.fake_snapshot()
         self._target_ap = None
         self._last_status: list[str] | None = None   # last-pushed headline; skip no-op repaints
         self._beacon_samples: deque = deque()
@@ -222,7 +221,6 @@ class FocusViewV2(Screen):
     # ----- compose -----------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        self._snap = self._snapshot()
         yield Header()
         with Horizontal(id="topbar"):
             with Horizontal(id="actions"):
@@ -232,16 +230,18 @@ class FocusViewV2(Screen):
                     btn = Button(label, id=bid, classes="attack-btn")
                     btn.display = False
                     yield btn
-            yield Static(self._render_status(self._snap.status), id="status")
+            status = self._status()
+            self._last_status = status
+            yield Static(self._render_status(status), id="status")
             # Right spacer to accurately align status to sparklines.
             yield Static("", id="rspacer")
         with Horizontal(id="mid"):
-            yield CardEndpoint(self._snap, id="card")
-            yield PacketDashboard(self._snap.dashboard, id="dashboard")
-            yield RouterEndpoint(self._snap, id="router")
+            yield CardEndpoint(**self._card_values(), id="card")
+            yield PacketDashboard(self._dashboard_rows(), id="dashboard")
+            yield RouterEndpoint(**self._router_values(), id="router")
         with Horizontal(id="bottom"):
-            yield LogBand(self._snap.log_lines, id="log")
-            yield ClientsList(self._snap.clients, id="clients")
+            yield LogBand([], id="log")
+            yield ClientsList(self._client_list(), id="clients")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -277,13 +277,45 @@ class FocusViewV2(Screen):
             pbc_busy=self._pbc_busy(),
         )
 
-    def _snapshot(self) -> fm.FocusSnapshot:
-        ap = getattr(self.app, "target_ap", None)
+    def _router_values(self) -> dict:
+        """The AP identity + power primitives the router endpoint renders, read live from
+        the target (blanks when there's no target). ``beacon_rate`` mutates the beacon
+        deque, so this is its single caller per tick."""
+        ap = self.app.target_ap
         if ap is None:
-            return fm.fake_snapshot()
+            return dict(essid="", bssid="", channel=0, power_dbm=-100, signal=None)
+        essid = fm.truncate_ssid(ap.ssid) if ap.ssid else "‹hidden›"
+        rate, _ = fm.beacon_rate(ap, self._beacon_samples, time.time())
+        return dict(essid=essid, bssid=ap.bssid, channel=ap.channel,
+                    power_dbm=ap.signal, signal=rate)
+
+    def _card_values(self) -> dict:
+        """The card endpoint's compose seed: chipset + own MAC from the live pool, plus the
+        current dynamic line. Identity then tracks the pool live via ``_sync_card``."""
+        chipset, bssid = fm.card_identity(self.app.array)
+        return dict(chipset=chipset, bssid=bssid, dynamic=fm.card_dynamic(self._campaigns()))
+
+    def _status(self) -> list[str]:
+        """The headline lines for the live target (empty when there's no target)."""
+        ap = self.app.target_ap
+        if ap is None:
+            return []
+        return fm.derive_headline(ap, self.app.array, self._campaigns())
+
+    def _dashboard_rows(self) -> list:
+        """The packet-dashboard row set for the live target's encryption family (empty when
+        there's no target). The widget samples the live counters itself."""
+        ap = self.app.target_ap
+        return fm.dashboard_rows(ap) if ap is not None else []
+
+    def _client_list(self) -> list:
+        """The live target's clients. Forged/own MACs are already excluded by the sink;
+        other APs' clients are filtered here by BSSID. Empty when there's no target."""
+        ap = self.app.target_ap
         array = self.app.array
-        return fm.build_snapshot(
-            ap, array, self._campaigns(), self._beacon_samples, time.time())
+        if ap is None or array is None:
+            return []
+        return [c for c in array.clients.values() if c.bssid == ap.bssid]
 
     @staticmethod
     def _render_status(status) -> Text:
@@ -364,14 +396,14 @@ class FocusViewV2(Screen):
         self._prev_stats = None        # drop the old target's counters
         self.query_one("#log", LogBand).clear()
 
-        snap = self._snapshot()
-        self._snap = snap
-        self.query_one("#dashboard", PacketDashboard).reconfigure(snap.dashboard, array, ap.bssid)
-        self.query_one("#card", CardEndpoint).update_dynamic(snap)
+        status = self._status()
+        self._last_status = status
+        self.query_one("#status", Static).update(self._render_status(status))
+        self.query_one("#dashboard", PacketDashboard).reconfigure(self._dashboard_rows(), array, ap.bssid)
+        self.query_one("#card", CardEndpoint).update(dynamic=fm.card_dynamic(self._campaigns()))
         self._sync_card()
-        self.query_one("#router", RouterEndpoint).update_dynamic(snap)
-        self.query_one("#status", Static).update(self._render_status(snap.status))
-        self.query_one("#clients", ClientsList).sync(snap.clients)
+        self.query_one("#router", RouterEndpoint).update(**self._router_values())
+        self.query_one("#clients", ClientsList).sync(self._client_list())
         self._refresh_buttons()
         self._balance_status()
         self._refresh_status_footer()  # dashboard footer (cleared by reconfigure)
@@ -487,16 +519,15 @@ class FocusViewV2(Screen):
         if self._should_auto_invade_pbc(ap):
             self._start_pbc_capture(ap)
 
-        snap = self._snapshot()
-        self._snap = snap
-        if snap.status != self._last_status:
-            self._last_status = snap.status
-            self.query_one("#status", Static).update(self._render_status(snap.status))
-        self.query_one("#card", CardEndpoint).update_dynamic(snap)
+        status = self._status()
+        if status != self._last_status:
+            self._last_status = status
+            self.query_one("#status", Static).update(self._render_status(status))
+        self.query_one("#card", CardEndpoint).update(dynamic=fm.card_dynamic(self._campaigns()))
         self._sync_card()
-        self.query_one("#router", RouterEndpoint).update_dynamic(snap)
+        self.query_one("#router", RouterEndpoint).update(**self._router_values())
         clients = self.query_one("#clients", ClientsList)
-        clients.sync(snap.clients)
+        clients.sync(self._client_list())
         clients.set_deauth_enabled(not fm.deauth_blocked(ap))
         self._refresh_buttons()
         self._balance_status()
@@ -536,7 +567,7 @@ class FocusViewV2(Screen):
         topbar_w = self.query_one("#topbar").content_size.width
         actions_w = self.query_one("#actions").outer_size.width
         widest = max((Text.from_markup(s, emoji=False).cell_len
-                      for s in self._snap.status), default=0)
+                      for s in (self._last_status or [])), default=0)
         spacer = min(actions_w, max(0, topbar_w - actions_w - widest))
         if spacer != self._rspacer_w:
             self._rspacer_w = spacer

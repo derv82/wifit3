@@ -32,10 +32,10 @@ class ClientWidget(Horizontal):
             self.offset = offset
 
     def __init__(self, client, **kwargs) -> None:
-        super().__init__(id=_widget_id(client.bssid), classes="client-row", **kwargs)
-        self._mac = client.bssid
+        super().__init__(id=_widget_id(client.mac), classes="client-row", **kwargs)
+        self._mac = client.mac
         self._fp = client.fingerprint
-        self._power = client.power
+        self._power = client.signal
         self._packets = client.packets
 
     def compose(self) -> ComposeResult:
@@ -150,7 +150,7 @@ class ClientsList(Vertical):
         rows = []
         for c in self._clients:
             widget = ClientWidget(c)
-            self._rows[c.bssid] = widget
+            self._rows[c.mac] = widget
             rows.append(widget)
         yield VerticalScroll(*rows, id="client-rows")
 
@@ -163,20 +163,20 @@ class ClientsList(Vertical):
 
     def sync(self, clients) -> None:
         """Reconcile client row information to match ``clients``."""
-        current = {c.bssid for c in clients}
+        current = {c.mac for c in clients}
         for mac in list(self._rows):
             if mac not in current:
                 self._remove_row(mac)
         for c in clients:
-            row = self._rows.get(c.bssid)
+            row = self._rows.get(c.mac)
             if row is None:
-                if self.query(f"#{_widget_id(c.bssid)}"):
+                if self.query(f"#{_widget_id(c.mac)}"):
                     continue
                 widget = ClientWidget(c)
-                self._rows[c.bssid] = widget
+                self._rows[c.mac] = widget
                 self._rows_host().mount(widget)
             else:
-                row.update_stats(c.power, c.packets)
+                row.update_stats(c.signal, c.packets)
         self._update_title()
 
     def _remove_row(self, mac: str) -> None:

@@ -135,6 +135,7 @@ async def test_sync_card_updates_mounted_endpoint():
                              mac_address="00:11:22:33:44:55")
 
     class _Host(App):
+        target_ap = None
         def on_mount(self) -> None:
             self.array = SimpleNamespace(members=[member])
             self.push_screen(FocusViewV2())

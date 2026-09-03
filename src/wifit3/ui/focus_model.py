@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from rich.markup import escape
@@ -14,14 +14,12 @@ from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.crack.handshake import pmkid_crackable
 from wifit3.persist.config import Config
-from wifit3.wlan.fingerprint import Fingerprint, fingerprint
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
 
 # Attack-button campaigns in button-row order.
 BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign, EvilTwinCampaign]
-_BUTTON_ORDER = ["btn-gen-ivs", "btn-chop", "btn-deauth", "btn-pmkid", "btn-wps-pin", "btn-eviltwin"]
 
 
 @dataclass
@@ -52,32 +50,6 @@ class DashboardRow:
     color: str                     # Rich colour name
     peak: int                      # nominal scale (drives the fake generator)
     as_rate: bool = True           # True -> "N/s", False -> a recent count
-
-
-@dataclass
-class ClientRow:
-    bssid: str
-    power: int
-    packets: int
-    fingerprint: Optional[Fingerprint] = None
-
-
-@dataclass
-class FocusSnapshot:
-    status: list[str]              # up to 3 headline lines (the focal point); markup
-    power_dbm: int
-    signal: Optional[float]        # windowed beacons/s; None=warming, ~0=dead (signal bar)
-    card_chipset: str
-    card_bssid: str | None         # the card's own MAC, when the driver exposes it
-    card_dynamic: str              # "● replaying" etc; "" when idle
-    buttons: list[str]             # encryption-conditional attack-button labels
-    ap_essid: str
-    ap_bssid: str
-    ap_channel: int
-    ap_encryption: str             # short markup, e.g. "WPA2"
-    dashboard: list[DashboardRow]
-    clients: list[ClientRow]
-    log_lines: list[str] = field(default_factory=list)
 
 
 # Dashboard rows by family: WEP shows the wep-iv row, WPA/WPA2/WPA3 the eapol row.
@@ -307,20 +279,6 @@ def deauth_blocked(ap) -> bool:
     return other_long_running_tx() or ap.pmf_required
 
 
-def client_rows(ap, array) -> list[ClientRow]:
-    """The target's real clients."""
-    rows: list[ClientRow] = []
-    forged = array.forged_macs
-    for mac, client in array.clients.items():
-        if client.bssid != ap.bssid:
-            continue
-        if mac in forged:
-            continue
-        rows.append(ClientRow(bssid=mac, power=client.signal, packets=client.packets,
-                              fingerprint=fingerprint(mac)))
-    return rows
-
-
 def card_dynamic(campaigns: Campaigns) -> str:
     """What the card is doing right now, shown under the card art."""
     if campaigns.wep is not None:
@@ -474,82 +432,3 @@ def card_identity(source) -> tuple[str, str | None]:
     return str(label), (str(mac) if mac else None)
 
 
-# ---------------------------------------------------------------------------
-# Snapshot factory (v2) + the demo snapshot (no-target fallback / screenshots).
-# ---------------------------------------------------------------------------
-
-
-def build_snapshot(ap, array, campaigns: Campaigns, samples: deque,
-                   now: float) -> FocusSnapshot:
-    """Compose a :class:`FocusSnapshot` from the derivations for the v2 layout."""
-    rate, _count = beacon_rate(ap, samples, now)
-    chipset, card_bssid = card_identity(array)
-    btns = derive_buttons(ap)
-    button_labels = [btns[bid].label for bid in _BUTTON_ORDER if btns[bid].visible]
-    clients = client_rows(ap, array) if array else []
-    essid = truncate_ssid(ap.ssid) if ap.ssid else "‹hidden›"
-    return FocusSnapshot(
-        status=derive_headline(ap, array, campaigns),
-        power_dbm=ap.signal,
-        signal=rate,
-        card_chipset=chipset,
-        card_bssid=card_bssid,
-        card_dynamic=card_dynamic(campaigns),
-        buttons=button_labels,
-        ap_essid=essid,
-        ap_bssid=ap.bssid,
-        ap_channel=ap.channel,
-        ap_encryption=format_encryption_markup(ap, detailed=True),
-        dashboard=dashboard_rows(ap),
-        clients=clients,
-        log_lines=[],
-    )
-
-
-def fake_snapshot() -> FocusSnapshot:
-    """The EvilTwin scenario from the redesign mockup."""
-    return FocusSnapshot(
-        status=[
-            "● EvilTwin active",
-            "WPA2 twin up · waiting for M1·M2",
-            "handshake:  M1 ✓   M2 -",
-        ],
-        power_dbm=-71,
-        signal=6.0,
-        card_chipset="rtl8187l",
-        card_bssid="00:c0:ca:11:22:33",
-        card_dynamic="● EvilTwin",
-        buttons=["Extract PMKID", "EvilTwin", "WPS Brute Force"],
-        ap_essid="HomeNetwork",
-        ap_bssid="a2:b3:c4:d5:e6:f0",
-        ap_channel=6,
-        ap_encryption="WPA2/CCMP",
-        dashboard=[
-            DashboardRow("beacon", "beacon", "cyan", 10),
-            DashboardRow("data", "data", "blue", 240),
-            DashboardRow("eapol", "eapol", "green", 4, as_rate=False),
-            DashboardRow("inject", "inject", "orange1", 30),
-            DashboardRow("deauth", "deauth", "red", 12),
-        ],
-        clients=[
-            ClientRow("fa:11:22:33:44:aa", -79, 10),
-            ClientRow("b2:c3:d4:e5:f6:07", -80, 134),
-            ClientRow("9c:b6:d0:1a:2b:3c", -67, 512),
-            ClientRow("3a:f1:08:77:aa:01", -83, 22),
-            ClientRow("de:ad:be:ef:00:42", -75, 88),
-        ],
-        log_lines=[
-            "19:41:58  Listening on ch 6",
-            "19:42:00  Beacon ◂ target AP",
-            "19:42:01  Target locked.",
-            "19:42:02  2 clients seen",
-            "19:42:03  Deauth ▸ ff:ff:ff…",
-            "19:42:03  Deauth ▸ fa:11:…:aa",
-            "19:42:04  M1 captured (ANonce)",
-            "19:42:05  Waiting for M2…",
-            "19:42:06  Deauth ▸ b2:c3:…:07",
-            "19:42:07  Client reassoc",
-            "19:42:08  M1 captured (ANonce)",
-            "19:42:09  Waiting for M2…",
-        ],
-    )
