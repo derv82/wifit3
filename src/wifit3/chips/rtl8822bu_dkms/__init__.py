@@ -8,7 +8,7 @@ from wifit3.chips.products import ASUS, Buffalo, CCandC, DLink, Edimax, Elecom, 
 _IDS = (
     (0x2357, 0x0138, "RTL8822BU", None, TPLink.ARCHER_T3U_PLUS),
     (0x2357, 0x012D, "RTL8822BU", None, TPLink.ARCHER_T3U),
-    # 2357:0115 is shared by Archer T4U v3/v3.2 and Archer T4U+.
+    # 2357:0115 is shared by Archer T4U v3/v3.2 and Archer T4U+. https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U_v3
     (0x2357, 0x0115, "RTL8822BU", None, TPLink.ARCHER_T4U_V3_PLUS),
     (0x2357, 0x012E, "RTL8822BU", None, TPLink.ARCHER_T3U_NANO),
     (0x2357, 0x0116, "RTL8822BU", None, None),  # (TP-Link) Wireless USB Adapter https://linux-hardware.org/?id=usb:2357-0116
