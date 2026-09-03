@@ -8,7 +8,7 @@ from wifit3.ui.app import WifiteApp, _PROJECT_URL
 from wifit3.ui.screens.confirm_scanner_exit import ConfirmScannerExitDialog
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
-from textual.widgets import RichLog, DataTable, Label
+from textual.widgets import RichLog, DataTable, Label, Button
 
 
 
@@ -94,6 +94,11 @@ async def test_scanner_escape_confirms_before_returning_to_splash():
         await pilot.press("escape")
         await pilot.pause(0)
         assert isinstance(app.screen, ConfirmScannerExitDialog)
+        assert app.screen.query_one("#btn-no", Button).has_focus
+        await pilot.press("left")
+        assert app.screen.query_one("#btn-yes", Button).has_focus
+        await pilot.press("right")
+        assert app.screen.query_one("#btn-no", Button).has_focus
 
         app.screen.dismiss(True)
         for _ in range(20):

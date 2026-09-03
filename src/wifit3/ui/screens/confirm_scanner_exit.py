@@ -8,10 +8,14 @@ from textual.widgets import Button, Label
 
 
 class ConfirmScannerExitDialog(ModalScreen[bool]):
+    AUTO_FOCUS = "#btn-no"
+
     BINDINGS = [
         Binding("y", "yes", "Leave", show=True),
         Binding("n", "no", "Stay", show=True),
         Binding("escape", "no", "Stay", show=True),
+        Binding("left", "focus_leave", "Leave", show=False),
+        Binding("right", "focus_stay", "Stay", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -48,3 +52,9 @@ class ConfirmScannerExitDialog(ModalScreen[bool]):
 
     def action_no(self) -> None:
         self.dismiss(False)
+
+    def action_focus_leave(self) -> None:
+        self.query_one("#btn-yes", Button).focus()
+
+    def action_focus_stay(self) -> None:
+        self.query_one("#btn-no", Button).focus()
