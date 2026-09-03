@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -85,7 +86,17 @@ async def test_scanner_escape_confirms_before_returning_to_splash():
     async def close_array():
         events.append("closed")
 
-    app.array = SimpleNamespace(close=close_array)
+    app.array = SimpleNamespace(
+        close=close_array,
+        supported_channels=[1, 6, 11],
+        members=[],
+        clients={},
+        forged_macs=set(),
+        access_points={},
+        get_access_points=lambda include_eviltwin=True: [],
+        start_hopping=AsyncMock(),
+        stop_hopping=AsyncMock(),
+    )
     async with app.run_test() as pilot:
         app.switch_screen("scanner")
         await pilot.pause(0)
