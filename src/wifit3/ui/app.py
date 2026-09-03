@@ -177,6 +177,8 @@ class WifiteApp(App):
         # Ignore already-attached devices
         fresh = [d for d in arrived if not (self.array and self.array.contains(d))]
         if fresh:
+            if isinstance(self.screen, RecoverableErrorModal):
+                self.screen.dismiss()
             self.device_watch.pause()     # pause synchronously so the next tick can't stack a prompt
             self._prompt_hotplug(fresh)
 
