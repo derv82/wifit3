@@ -142,4 +142,4 @@ async def test_reconnect_after_last_card_lost_dismisses_recovery_modal(monkeypat
             await pilot.pause(0)
             if isinstance(app.screen, NewDeviceDialog):
                 break
-        assert isinstance(app.screen, NewDeviceDialog)
+        assert not any(isinstance(s, RecoverableErrorModal) for s in app.screen_stack)
