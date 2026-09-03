@@ -60,6 +60,10 @@ def test_art_path_for_wn722n_v1_shares_v23_art():
     assert art.art_path_for(_iface(product_name="TL-WN722N v1")) == "cards/card-tpwn722nv23.ans"
 
 
+def test_art_path_for_t4u_v3_plus_uses_plus_art():
+    assert art.art_path_for(_iface(product_name=TPLink.ARCHER_T4U_V3_PLUS)) == "cards/card-archert4uplus.ans"
+
+
 def test_art_path_for_ar9271_combined_label_defaults_to_alfa():
     # Pre-connect / MAC-less: the unsplit label resolves to the ALFA art, not the generic fallback.
     assert art.art_path_for(_iface(product_name=AMBIGUOUS_AR9271)) == "cards/card-awus036nha.ans"
