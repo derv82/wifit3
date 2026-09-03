@@ -1,8 +1,11 @@
+from types import SimpleNamespace
+
 import pytest
 
 from wifit3.persist.config import Config
 from wifit3.updates import UpdateInfo
 from wifit3.ui.app import WifiteApp, _PROJECT_URL
+from wifit3.ui.screens.confirm_scanner_exit import ConfirmScannerExitDialog
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
 from textual.widgets import RichLog, DataTable, Label
@@ -71,6 +74,37 @@ async def test_splash_c_checks_for_updates(monkeypatch):
         await pilot.press("c")
 
     assert calls == ["updates"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_scanner_escape_confirms_before_returning_to_splash():
+    app = WifiteApp()
+    events = []
+
+    async def close_array():
+        events.append("closed")
+
+    app.array = SimpleNamespace(close=close_array)
+    async with app.run_test() as pilot:
+        app.switch_screen("scanner")
+        await pilot.pause(0)
+        assert isinstance(app.screen, ScannerView)
+
+        await pilot.press("escape")
+        await pilot.pause(0)
+        assert isinstance(app.screen, ConfirmScannerExitDialog)
+
+        app.screen.dismiss(True)
+        for _ in range(20):
+            await pilot.pause(0)
+            if isinstance(app.screen, SplashView):
+                events.append("splash")
+                break
+
+        assert isinstance(app.screen, SplashView)
+        assert events == ["closed", "splash"]
+        assert app.array is None
 
 
 def test_about_opens_project_url(monkeypatch):

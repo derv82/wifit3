@@ -31,6 +31,7 @@ from ..encryption_format import format_encryption_markup, wep_key_ascii
 from wifit3.wlan.channels import band_ranges
 
 from .channel_filter import ChannelFilterDialog
+from .confirm_scanner_exit import ConfirmScannerExitDialog
 from .filter import FilterBar, ScanFilter
 
 if TYPE_CHECKING:
@@ -210,6 +211,7 @@ class ScannerView(Screen):
 
     BINDINGS = [
         Binding("q", "app.quit", "Quit", show=True),
+        Binding("escape", "confirm_leave", "Splash", show=True),
         Binding("c", "change_channel", "Channel Filter", show=True),
         Binding("e", "focus_encryption", "Encryption", show=True),
         Binding("s", "cycle_sort", "Sort Col", show=True),
@@ -716,6 +718,13 @@ class ScannerView(Screen):
                 pass
 
     # ----- Actions -----------------------------------------------------------
+
+    def action_confirm_leave(self) -> None:
+        self.run_worker(self._confirm_leave(), exclusive=True)
+
+    async def _confirm_leave(self) -> None:
+        if await self.app.push_screen_wait(ConfirmScannerExitDialog()):
+            await self.app.leave_scanner_to_splash()
 
     def action_toggle_log(self) -> None:
         log_widget = self.query_one("#system-log")

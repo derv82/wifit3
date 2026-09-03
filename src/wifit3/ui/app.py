@@ -336,6 +336,17 @@ class WifiteApp(App):
         self.array = None
         self.target_ap = None
 
+    async def leave_scanner_to_splash(self) -> None:
+        array = self.array
+        if array is not None:
+            await array.close()
+        self.array = None
+        self.target_ap = None
+        while len(self.screen_stack) > 1:
+            await self.pop_screen()
+        await self.push_screen("splash")
+        self.get_screen("splash", SplashView).reset_for_reentry()
+
     async def action_quit(self):
         self.persist_config()
         if self.array:
