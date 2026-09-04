@@ -11,6 +11,7 @@ from typing import Optional
 
 from wifit3.crack.hc22000_format import eapol_hashlines, pmkid_hashline
 from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
 from wifit3.persist.pcap import write_pcap
 
 
@@ -96,17 +97,9 @@ def _read_hashline_field(path: Path, line_prefix: str, field_index: int) -> set[
     return out
 
 
-def save_handshake(
-    ap: AccessPoint, client_mac: str,
-    *, captures_dir: Path = Path("captures"),
-) -> Optional[SaveResult]:
-    """Persist a WPA 4-way handshake for ``ap.handshakes[client_mac]``.
-
-    Dedupes by (BSSID, ANonce). Writes ``_handshake.hc22000`` + companion
-    ``_handshake.pcap``. Returns a SaveResult (was_new=True on fresh write,
-    False with the existing file's path on dedupe), or None if the SSID is
-    hidden / no crackable pair has been captured.
-    """
+def save_handshake(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
+    """Save (unless deduped) 4-way handshake for ap.handshakes[client_mac]"""
+    captures_dir = Path(Config.captures_dir)
     if not ap.ssid:
         return None
     hs = ap.handshakes.get(client_mac)
@@ -123,23 +116,18 @@ def save_handshake(
             if new_anonces.issubset(_read_hashline_field(p, "WPA*02*", 6)):
                 return SaveResult(path=p, was_new=False)
 
-    captures_dir = Path(captures_dir)
     captures_dir.mkdir(parents=True, exist_ok=True)
     hc_path = _fresh_path(captures_dir, ap, "_handshake.hc22000")
-    pcap_path = hc_path.with_name(hc_path.name[:-len(".hc22000")] + ".pcap")
     hc_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    write_pcap(pcap_path, _pcap_records_for(ap, client_mac))
+    if Config.save_pcap:
+        pcap_path = hc_path.with_name(hc_path.name[:-len(".hc22000")] + ".pcap")
+        write_pcap(pcap_path, _pcap_records_for(ap, client_mac))
     return SaveResult(path=hc_path, was_new=True)
 
 
-def save_pmkid(
-    ap: AccessPoint, client_mac: str,
-    *, captures_dir: Path = Path("captures"),
-) -> Optional[SaveResult]:
-    """Persist the PMKID on ap.handshakes[client_mac]. Dedupes by (BSSID,
-    PMKID-value); writes _pmkid.hc22000 only: no pcap companion, since nothing
-    reads a PMKID out of a pcap (hcxpcapngtool produces hc22000, never consumes
-    it). Returns None on hidden SSID / missing PMKID."""
+def save_pmkid(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
+    """Save (unless deduped) _pmkid.hc22000 file for ap.handshakes[client_mac]"""
+    captures_dir = Path(Config.captures_dir)
     if not ap.ssid:
         return None
     hs = ap.handshakes.get(client_mac)
@@ -154,7 +142,6 @@ def save_pmkid(
         if pmkid_value in _read_hashline_field(p, "WPA*01*", 2):
             return SaveResult(path=p, was_new=False)
 
-    captures_dir = Path(captures_dir)
     captures_dir.mkdir(parents=True, exist_ok=True)
     hc_path = _fresh_path(captures_dir, ap, "_pmkid.hc22000")
     hc_path.write_text(line + "\n", encoding="utf-8")
@@ -166,11 +153,9 @@ def save_pmkid(
 _WEP_HEX_RE = re.compile(r"WEP key \(hex\):\s*([0-9a-fA-F]+)")
 
 
-def save_wep_key(
-    ap: AccessPoint, key: bytes,
-    *, captures_dir: Path = Path("captures"),
-) -> Optional[SaveResult]:
+def save_wep_key(ap: AccessPoint, key: bytes) -> Optional[SaveResult]:
     """Persist a recovered WEP key. Dedupes by exact key value for this BSSID."""
+    captures_dir = Path(Config.captures_dir)
     if not key:
         return None
     key_hex = key.hex()
@@ -183,7 +168,6 @@ def save_wep_key(
         if m and m.group(1).lower() == key_hex:
             return SaveResult(path=p, was_new=False)
 
-    captures_dir = Path(captures_dir)
     captures_dir.mkdir(parents=True, exist_ok=True)
     path = _fresh_path(captures_dir, ap, "_wep_key.txt")
     lines = [
@@ -203,11 +187,9 @@ _PSK_RE = re.compile(r"^PSK:\s*(.+)$", re.MULTILINE)
 _PIN_RE = re.compile(r"^PIN:\s*(.+)$", re.MULTILINE)
 
 
-def save_wps_pin(
-    ap: AccessPoint, pin: str, psk: str,
-    *, captures_dir: Path = Path("captures"),
-) -> Optional[SaveResult]:
+def save_wps_pin(ap: AccessPoint, pin: str, psk: str) -> Optional[SaveResult]:
     """Persist a WPS-PIN credential. Dedupes by (PIN, PSK) for this BSSID."""
+    captures_dir = Path(Config.captures_dir)
     if not pin or not psk:
         return None
     for p in _existing(captures_dir, ap.bssid, "_wps_pin.txt"):
@@ -221,7 +203,6 @@ def save_wps_pin(
                 and pin_match and pin_match.group(1).strip() == pin):
             return SaveResult(path=p, was_new=False)
 
-    captures_dir = Path(captures_dir)
     captures_dir.mkdir(parents=True, exist_ok=True)
     path = _fresh_path(captures_dir, ap, "_wps_pin.txt")
     body = (
@@ -234,11 +215,9 @@ def save_wps_pin(
     return SaveResult(path=path, was_new=True)
 
 
-def save_wps_pbc(
-    ap: AccessPoint, psk: str,
-    *, captures_dir: Path = Path("captures"),
-) -> Optional[SaveResult]:
+def save_wps_pbc(ap: AccessPoint, psk: str) -> Optional[SaveResult]:
     """Persist a WPS-PBC credential. Dedupes by PSK for this BSSID."""
+    captures_dir = Path(Config.captures_dir)
     if not psk:
         return None
     for p in _existing(captures_dir, ap.bssid, "_wps_pbc.txt"):
@@ -250,7 +229,6 @@ def save_wps_pbc(
         if m and m.group(1).strip() == psk:
             return SaveResult(path=p, was_new=False)
 
-    captures_dir = Path(captures_dir)
     captures_dir.mkdir(parents=True, exist_ok=True)
     path = _fresh_path(captures_dir, ap, "_wps_pbc.txt")
     body = (

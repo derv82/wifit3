@@ -78,7 +78,7 @@ async def test_campaign_finds_pin_via_full_sweep(tmp_path):
     known = pins.full_pin("1357", "246")
     assert pin_is_valid(known) and known not in pins.COMMON_PINS
 
-    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
+    c = ScriptedCampaign(_iface(), _target(),
                          log=lambda m: None, known_pin=known, psk="hunter2pw")
     await c._loop()
 
@@ -93,7 +93,7 @@ async def test_campaign_finds_pin_via_full_sweep(tmp_path):
 async def test_campaign_finds_common_pin_fast(tmp_path, monkeypatch):
     monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])   # isolate COMMON phase
     known = "12345670"                       # in COMMON_PINS
-    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
+    c = ScriptedCampaign(_iface(), _target(),
                          log=lambda m: None, known_pin=known, psk="pw")
     await c._loop()
     assert c.state.found_pin == known
@@ -115,7 +115,7 @@ async def test_resume_verifies_pin_psk_unchanged(tmp_path):
     # nothing is reset, found_psk stays put.
     known = pins.full_pin("1357", "246")
     _write_done_state(tmp_path, known, "originalpsk")
-    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
+    c = ScriptedCampaign(_iface(), _target(),
                          log=lambda m: None, known_pin=known, psk="originalpsk")
     await c._loop()
     assert c.state.phase == "done"
@@ -129,7 +129,7 @@ async def test_resume_catches_psk_rotation(tmp_path):
     # NEW PSK from the recovered exchange. The high-value scenario.
     known = pins.full_pin("1357", "246")
     _write_done_state(tmp_path, known, "oldpassword")
-    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
+    c = ScriptedCampaign(_iface(), _target(),
                          log=lambda m: None, known_pin=known, psk="rotatedpassword")
     await c._loop()
     assert c.state.phase == "done"
@@ -142,7 +142,7 @@ def test_resume_pin_changed_resets_sweep(tmp_path):
     # sees FIRST_HALF_WRONG and invalidates everything, restarting the sweep from "common".
     stored = pins.full_pin("1357", "246")
     _write_done_state(tmp_path, stored, "oldpassword")
-    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c = WpsCampaign(_iface(), _target(), log=lambda m: None)
     assert c.state.found_pin == stored
     c.state.phase = "verify"                     # _loop switches done→verify on resume
     c._apply_outcome(stored, AttemptOutcome(PinResult.FIRST_HALF_WRONG, stored))
@@ -161,7 +161,7 @@ async def test_second_half_sweep_skips_already_tested_dummy(tmp_path):
     # pin: its middle ("000") is provably wrong (SECOND_HALF_WRONG) and just
     # wastes an attempt right after the phase transition.
     known = pins.full_pin("1357", "246")
-    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
+    c = ScriptedCampaign(_iface(), _target(),
                          log=lambda m: None, known_pin=known, psk="pw")
     await c._loop()
     dummy = pins.full_pin("1357", "000")
@@ -170,7 +170,7 @@ async def test_second_half_sweep_skips_already_tested_dummy(tmp_path):
 
 async def test_first_half_confirmed_switches_phase(tmp_path):
     known = pins.full_pin("2468", "135")
-    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
+    c = ScriptedCampaign(_iface(), _target(),
                          log=lambda m: None, known_pin=known, psk="x")
     await c._loop()
     assert c.state.found_pin == known
@@ -180,7 +180,7 @@ async def test_first_half_confirmed_switches_phase(tmp_path):
 
 async def test_run_state_persisted_and_resumed(tmp_path):
     known = pins.full_pin("1357", "246")
-    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
+    c = ScriptedCampaign(_iface(), _target(),
                          log=lambda m: None, known_pin=known, psk="pw")
     await c._loop()
 
@@ -191,7 +191,7 @@ async def test_run_state_persisted_and_resumed(tmp_path):
     assert data["found_pin"] == known and data["phase"] == "done"
 
     # A fresh campaign loads the prior state.
-    c2 = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c2 = WpsCampaign(_iface(), _target(), log=lambda m: None)
     assert c2.state.found_pin == known
 
 
@@ -214,7 +214,7 @@ async def test_rate_limit_does_not_skip_untested_pin(tmp_path, monkeypatch):
                 return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="rate-limit")
             return await super()._try(pin)
 
-    c = RateLimited(_iface(), _target(), state_dir=str(tmp_path),
+    c = RateLimited(_iface(), _target(),
                     log=lambda m: None, known_pin=known, psk="pw")
     await c._loop()
 
@@ -239,7 +239,7 @@ async def test_teardown_releases_lease_and_saves_state(tmp_path):
     iface = _iface()
     iface.set_fake_mac = _armed
     iface.clear_fake_mac = _clear
-    c = WpsCampaign(iface, _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c = WpsCampaign(iface, _target(), log=lambda m: None)
     c.state.tested = 42
     c._lease = iface.lease(channel=c.channel, fake_mac=c.our_mac, ack_tally=c._tx_ack)
     await c._lease.acquire()
@@ -304,7 +304,7 @@ def test_dead_first_half_skips_shared_prefix_common(tmp_path, monkeypatch):
     monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])   # isolate COMMON phase
     # 12345670 and 12345678 share first half "1234". Once 12345670 is first-half-wrong,
     # 12345678 is a guaranteed first-half-wrong too. It must be skipped.
-    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c = WpsCampaign(_iface(), _target(), log=lambda m: None)
     assert "12345670" in pins.COMMON_PINS and "12345678" in pins.COMMON_PINS
 
     seen = []
@@ -323,7 +323,7 @@ def test_dead_first_half_skips_shared_prefix_common(tmp_path, monkeypatch):
 def test_dead_first_half_skips_common_prefix_in_sweep(tmp_path):
     # A COMMON prefix ruled out (e.g. "0000" via 00000000) is not re-tried when the
     # first-half sweep reaches p1_index 0.
-    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c = WpsCampaign(_iface(), _target(), log=lambda m: None)
     c.state.phase = "first_half"
     c.state.dead_first_halves = ["0000"]
     c.state.p1_index = 0
@@ -350,7 +350,7 @@ def test_campaign_seeds_oui_pins_ahead_of_common(tmp_path):
     oui_pins = known_pins_for("00:18:e7:aa:bb:cc")
     assert oui_pins                                       # generated from the BSSID
     c = WpsCampaign(_iface(), _target(bssid="00:18:e7:aa:bb:cc"),
-                    state_dir=str(tmp_path), log=lambda m: None)
+                    log=lambda m: None)
     assert c._oui_pin_count == len(oui_pins)
     assert c._common_pins[:len(oui_pins)] == oui_pins     # BSSID-derived pins first
     assert pins.COMMON_PINS[0] in c._common_pins          # then the generic list
@@ -362,7 +362,7 @@ def test_campaign_seeds_generated_pins_for_any_bssid(tmp_path):
     # No OUI is "unknown" now: the generators fire for every BSSID.
     bssid = "fe:dc:ba:98:76:54"
     c = WpsCampaign(_iface(), _target(bssid=bssid),
-                    state_dir=str(tmp_path), log=lambda m: None)
+                    log=lambda m: None)
     assert c._oui_pin_count > 0
     assert c._common_pins[:c._oui_pin_count] == known_pins_for(bssid)
     assert all(p in c._common_pins for p in pins.COMMON_PINS)  # generic list still follows
@@ -371,7 +371,7 @@ def test_campaign_seeds_generated_pins_for_any_bssid(tmp_path):
 # ---- lost-reply retry (timeout-as-NACK on a known-NACKing AP) ----------------
 
 def test_lost_reply_retries_for_nacking_ap(tmp_path):
-    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c = WpsCampaign(_iface(), _target(), log=lambda m: None)
     # An explicit NACK (config_error set) proves the AP answers wrong guesses.
     c._should_retry_lost_reply("00000000", AttemptOutcome(
         PinResult.FIRST_HALF_WRONG, "00000000", config_error=18))
@@ -383,7 +383,7 @@ def test_lost_reply_retries_for_nacking_ap(tmp_path):
 
 def test_lost_reply_no_retry_for_silent_ap(tmp_path):
     # No NACK ever seen → a silent timeout is genuine timeout-as-NACK; advance, don't retry.
-    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c = WpsCampaign(_iface(), _target(), log=lambda m: None)
     assert c._should_retry_lost_reply("01030006", AttemptOutcome(
         PinResult.FIRST_HALF_WRONG, "01030006", via_timeout=True)) is False
 
@@ -396,7 +396,7 @@ async def test_active_refusal_bails_not_churns(tmp_path):
             return AttemptOutcome(PinResult.TIMEOUT, pin, refused=True,
                                   detail="AP disassociated us (802.1X-auth-failed)")
 
-    c = Refusing(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c = Refusing(_iface(), _target(), log=lambda m: None)
     await c._loop()
     assert c.status == "failed"
     assert c.state.tested == 0
@@ -414,7 +414,7 @@ async def test_silence_does_not_bail(tmp_path):
                 self.request_stop()                  # stop the otherwise-infinite retry
             return AttemptOutcome(PinResult.TIMEOUT, pin, detail="AP didn't respond")
 
-    c = Silent(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c = Silent(_iface(), _target(), log=lambda m: None)
     await c._loop()
     assert hits["n"] >= 5                             # kept retrying (no bail), until we stopped it
 
@@ -422,7 +422,7 @@ async def test_silence_does_not_bail(tmp_path):
 def test_config_error_setup_locked_locks_immediately(tmp_path):
     # An explicit WPS Setup-Locked NACK (config_error 15) is a lock, not a wrong PIN: lock at
     # once and do not advance the keyspace.
-    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c = WpsCampaign(_iface(), _target(), log=lambda m: None)
     before = c.state.common_index
     c._apply_outcome("12345670", AttemptOutcome(PinResult.PROTO_ERROR, "12345670", config_error=15))
     assert c.lock.is_locked(beacon_locked=False)
@@ -430,7 +430,7 @@ def test_config_error_setup_locked_locks_immediately(tmp_path):
 
 
 def test_lost_reply_retry_is_bounded(tmp_path):
-    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c = WpsCampaign(_iface(), _target(), log=lambda m: None)
     c._ap_sends_nacks = True
     out = AttemptOutcome(PinResult.FIRST_HALF_WRONG, "01030006", via_timeout=True)
     trues = 0

@@ -14,6 +14,8 @@ class ConfigError(Exception):
 
 
 class Config:
+    captures_dir: str = "captures"
+    save_pcap: bool = True
     theme: str = "textual-dark"
     scanner_sort: str = "signal"
     scanner_sort_reverse: bool = True
@@ -31,6 +33,8 @@ class Config:
             return
         except (OSError, tomllib.TOMLDecodeError) as e:
             raise ConfigError(f"Failed to load config at {_PATH}: {e}") from e
+        cls.captures_dir = data.get("captures_dir", cls.captures_dir)
+        cls.save_pcap = data.get("save_pcap", cls.save_pcap)
         cls.theme = data.get("theme", cls.theme)
         cls.scanner_sort = data.get("scanner_sort", cls.scanner_sort)
         cls.scanner_sort_reverse = data.get("scanner_sort_reverse", cls.scanner_sort_reverse)
@@ -40,6 +44,8 @@ class Config:
     @classmethod
     def save(cls) -> None:
         text = (
+            f"captures_dir = {_fmt(cls.captures_dir)}\n"
+            f"save_pcap = {_fmt(cls.save_pcap)}\n"
             f"theme = {_fmt(cls.theme)}\n"
             f"scanner_sort = {_fmt(cls.scanner_sort)}\n"
             f"scanner_sort_reverse = {_fmt(cls.scanner_sort_reverse)}\n"

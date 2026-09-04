@@ -3,6 +3,7 @@ import os
 import sys
 from textual import work
 from textual.app import App
+from textual.binding import Binding
 from typing import Optional
 
 from wifit3 import __version__
@@ -19,6 +20,7 @@ from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
 from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
 from .screens.new_device import NewDeviceDialog
+from .pref import PreferencesModal
 from .themes import register_app_themes
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,9 @@ class WifiteApp(App):
     """wifit3 TUI Main App."""
 
     TITLE = f"wifit3 v{__version__} - derv82"
+
+    ENABLE_COMMAND_PALETTE = False
+    BINDINGS = [Binding("ctrl+p", "preferences", "Prefs")]
 
     CSS = """
     /* Force single-line header to avoid Textual's "click to expand" behavior */
@@ -152,11 +157,6 @@ class WifiteApp(App):
         except ConfigError as e:
             self.notify(str(e), severity="error", title="Config")
 
-    def watch_theme(self, theme: str) -> None:
-        if theme != Config.theme:
-            Config.theme = theme
-            self.persist_config()
-
     def on_mount(self) -> None:
         """Register screens, push the splash, and start the always-on device watch."""
         if self._config_error:
@@ -241,6 +241,9 @@ class WifiteApp(App):
                 logger.debug("Closing the lost pool failed (already gone)", exc_info=True)
         self.array = None
         self.target_ap = None
+
+    def action_preferences(self) -> None:
+        self.push_screen(PreferencesModal())
 
     async def action_quit(self):
         self.persist_config()

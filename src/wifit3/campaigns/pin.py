@@ -25,6 +25,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from wifit3.persist.config import Config
+
 from .campaign import Campaign
 from .wps import known_pins
 from .wps import pins as pinmod
@@ -111,15 +113,14 @@ class WpsCampaign(Campaign):
             return "hidden SSID: can't associate"
         return "WPS locked" if getattr(ap, "wps_locked", False) else None
 
-    def __init__(self, array, target, state_dir="captures", log=None,
-                 inter_attempt_delay: float = 0.0):
+    def __init__(self, array, target, log=None, attempt_delay: float = 0.0):
         super().__init__(ap=target, array=array)
         self.target = target
         self.bssid = target.bssid.lower()
         self.channel = target.channel
-        self.state_dir = state_dir
+        self.state_dir = Config.captures_dir
         self.log = log or logger.info
-        self.inter_attempt_delay = inter_attempt_delay
+        self.attempt_delay = attempt_delay
 
         self.our_mac = random_client_mac()
         self.assoc: Optional[Association] = None
@@ -481,8 +482,8 @@ class WpsCampaign(Campaign):
 
                 if self.state.attempts % self._SAVE_EVERY == 0:
                     self._save_state()
-                if self.inter_attempt_delay:
-                    await asyncio.sleep(self.inter_attempt_delay)
+                if self.attempt_delay:
+                    await asyncio.sleep(self.attempt_delay)
         except Exception as e:
             logger.exception("WPS campaign crashed")
             self.status = "error"

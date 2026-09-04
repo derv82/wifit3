@@ -41,6 +41,7 @@ from wifit3.campaigns.auth_assoc import (
 )
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from wifit3.campaigns.wps.registrar import WpsRegistrar
+from wifit3.persist.config import Config
 
 # Safety: the lab only targets the BSSID configured in driver_sources/wps_pin.txt (gitignored),
 # the user's own test router. No real BSSID is hardcoded here (it must not enter git).
@@ -333,7 +334,8 @@ async def mode_campaign(iface, array, tgt, args):
                              wps_locked=False)
     print(f"\n=== CAMPAIGN from seed (first_half={args.seed_first_half}, p2_index={args.seed_p2}), "
           f"up to {args.max_secs:.0f}s ===")
-    camp = WpsCampaign(array, target, state_dir=tmp, log=lambda m: print(f"    {m}"))
+    Config.captures_dir = str(tmp)
+    camp = WpsCampaign(array, target, log=lambda m: print(f"    {m}"))
     camp.run()
     end = time.monotonic() + args.max_secs
     while time.monotonic() < end and camp.status in ("idle", "running", "paused", "locked"):

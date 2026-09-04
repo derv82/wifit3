@@ -21,12 +21,6 @@ from wifit3.wlan.sink import WlanSink
 from tests.frames import pkt
 
 
-@pytest.fixture(autouse=True)
-def _isolate_captures_dir(monkeypatch, tmp_path):
-    """Auto-save writes to ``Path("captures")`` (cwd-relative); park in tmp."""
-    monkeypatch.chdir(tmp_path)
-
-
 class MockDriver:
     async def set_channel(self, ch, scan=False):
         return True
@@ -193,7 +187,7 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         assert client in clients._rows, clients._rows
 
         # Auto-save fires inline with the capture-event log (no keystroke).
-        saved = {p.name for p in (tmp_path / "captures").iterdir()}
+        saved = {p.name for p in tmp_path.iterdir()}
         assert any(n.endswith("_handshake.hc22000") for n in saved), saved
         assert any(n.endswith("_pmkid.hc22000") for n in saved), saved
 

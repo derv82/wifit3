@@ -454,7 +454,7 @@ class FocusViewV2(Screen):
 
     def _log_persisted_history(self, ap) -> None:
         """On focus init, print captures/ artifacts for this AP to the log."""
-        wps_state = load_run_state("captures", ap.bssid)
+        wps_state = load_run_state(Config.captures_dir, ap.bssid)
         wps_progress = run_progress_line(wps_state) if wps_state else None
         if not ap.persisted and not wps_progress:
             return
