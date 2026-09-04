@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 _ENDPOINT_W = 20  # the .ans art is exactly 20 cells wide
 _TOPBAR_H = 3
 _CHROME_H = 2  # Buffer for Textual's Header & Footer (1 row each)
-_BORDER = "ansi_cyan"  # Border/title color for  LOG / CLIENTS panels
+_BORDER = "$primary"  # Border/title color for  LOG / CLIENTS panels
 
 # Mid-band height
 _CENTER_MAX = 13
@@ -382,6 +382,7 @@ class FocusViewV2(Screen):
         self._stop_pbc_capture()
         self._stop_wps_pin()
         self._stop_pmkid()
+        self._stop_deauth()
 
         ap = getattr(self.app, "target_ap", None)
         self._target_ap = ap
@@ -899,6 +900,11 @@ class FocusViewV2(Screen):
         if self._deauth_campaign is not None:
             self._deauth_campaign.request_stop()
 
+    def _stop_deauth(self) -> None:
+        if self._deauth_campaign is not None:
+            self._deauth_campaign.request_stop()
+            self._deauth_campaign = None
+
     def _finish_deauth(self) -> None:
         """Reap a completed deauth run. A captured handshake is saved+toasted by the
         always-on capture path (CaptureKind.HANDSHAKE); we only log the campaign's end."""
@@ -1151,6 +1157,7 @@ class FocusViewV2(Screen):
         self._stop_pbc_capture()
         self._stop_wps_pin()
         self._stop_pmkid()
+        self._stop_deauth()
         ap = self._target_ap
         logger.info("[FOCUS] leave: ssid=%r bssid=%s",
                     getattr(ap, "ssid", None), getattr(ap, "bssid", None))
