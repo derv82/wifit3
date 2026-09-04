@@ -101,7 +101,7 @@ class FingerprintModal(ModalScreen[None]):
     DEFAULT_CSS = """
     FingerprintModal { background: $background 0%; }
     FingerprintModal > #fp-box {
-        width: auto; height: auto; border: round $accent; background: $panel; padding: 0 1;
+        width: auto; height: auto; border: round $primary; background: $panel; padding: 0 1;
     }
     """
 
