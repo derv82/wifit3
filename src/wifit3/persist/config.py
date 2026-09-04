@@ -14,9 +14,10 @@ class ConfigError(Exception):
 
 
 class Config:
+    theme: str = "textual-dark"
     captures_dir: str = "captures"
     save_pcap: bool = True
-    theme: str = "textual-dark"
+    log_level: str = "info"
     scanner_sort: str = "signal"
     scanner_sort_reverse: bool = True
     silenced_bssids: list[str] = []
@@ -36,6 +37,7 @@ class Config:
         cls.captures_dir = data.get("captures_dir", cls.captures_dir)
         cls.save_pcap = data.get("save_pcap", cls.save_pcap)
         cls.theme = data.get("theme", cls.theme)
+        cls.log_level = data.get("log_level", cls.log_level)
         cls.scanner_sort = data.get("scanner_sort", cls.scanner_sort)
         cls.scanner_sort_reverse = data.get("scanner_sort_reverse", cls.scanner_sort_reverse)
         raw = data.get("silenced_bssids", cls.silenced_bssids)
@@ -47,6 +49,7 @@ class Config:
             f"captures_dir = {_fmt(cls.captures_dir)}\n"
             f"save_pcap = {_fmt(cls.save_pcap)}\n"
             f"theme = {_fmt(cls.theme)}\n"
+            f"log_level = {_fmt(cls.log_level)}\n"
             f"scanner_sort = {_fmt(cls.scanner_sort)}\n"
             f"scanner_sort_reverse = {_fmt(cls.scanner_sort_reverse)}\n"
             f"silenced_bssids = {_fmt(cls.silenced_bssids)}\n"
@@ -65,4 +68,7 @@ def _fmt(v: object) -> str:
         return str(v)
     if isinstance(v, list):
         return "[" + ", ".join(_fmt(x) for x in v) + "]"
-    return "'" + str(v) + "'"
+    s = str(v)
+    if "'" not in s and "\n" not in s:
+        return "'" + s + "'"
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'

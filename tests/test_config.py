@@ -6,7 +6,9 @@ import wifit3.persist.config as cfg
 from wifit3.persist.config import Config, ConfigError
 
 _DEFAULTS = {n: getattr(Config, n)
-             for n in ("theme", "scanner_sort", "scanner_sort_reverse", "silenced_bssids")}
+             for n in (
+                 "theme", "scanner_sort", "scanner_sort_reverse", 
+                 "silenced_bssids", "log_level", "captures_dir", "save_pcap")}
 
 
 @pytest.fixture(autouse=True)
@@ -68,6 +70,14 @@ def test_save_load_preserves_windows_path_literally(config_path):
     Config.theme = "x"
     Config.load()
     assert Config.theme == r"C:\Users\Someone\theme"
+
+
+def test_save_load_round_trips_captures_dir_with_apostrophe(config_path):
+    Config.captures_dir = r"C:\Users\O'Brien\captures"
+    Config.save()
+    Config.captures_dir = "x"
+    Config.load()
+    assert Config.captures_dir == r"C:\Users\O'Brien\captures"
 
 
 def test_save_failure_raises(tmp_path, monkeypatch):

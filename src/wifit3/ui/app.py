@@ -25,44 +25,6 @@ from .themes import register_app_themes
 
 logger = logging.getLogger(__name__)
 
-# Set once so repeated WifiteApp() instances (the test suite makes many) don't
-# stack duplicate handlers or re-truncate the log.
-_FILE_LOGGING_CONFIGURED = False
-
-
-def _configure_file_logging(default: Optional[str] = None) -> None:
-    """File logging for hardware debugging → ``wifit3.log`` in the CWD.
-
-    The TUI owns the terminal, so stderr logging is invisible (and there's no
-    handler anyway): the interface's ``[NEW AP]`` / ``[M1]`` / ``[PMKID]`` frame
-    trace goes nowhere during a normal run. A file is the only place it lands.
-
-    The real launch (``__main__.main``) passes ``default="debug"`` so a released
-    build always leaves a DEBUG trace behind for bug reports; bare ``WifiteApp()``
-    construction (the test suite, the ``--smoke`` self-test) passes no default and
-    stays silent so runs don't litter ``wifit3.log`` or force the root logger to
-    DEBUG. ``WIFIT3_LOG`` overrides either way: ``off``/``0``/``none`` disables,
-    ``1`` is INFO, ``debug`` is DEBUG (incl. frame bytes), ``trace`` is the
-    per-USB-transfer firehose. Truncated per run so each session's trace stands alone.
-    """
-    global _FILE_LOGGING_CONFIGURED
-    if _FILE_LOGGING_CONFIGURED:
-        return
-    setting = os.environ.get("WIFIT3_LOG", "").strip().lower() or (default or "")
-    if setting in ("", "off", "0", "none"):
-        return
-    level = log_trace.level_from_env(setting)
-    handler = logging.FileHandler("wifit3.log", mode="w", encoding="utf-8")
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s.%(msecs)03d %(levelname)-5s %(name)s: %(message)s",
-        datefmt="%H:%M:%S"
-    ))
-    root = logging.getLogger()
-    root.setLevel(level)
-    root.addHandler(handler)
-    _FILE_LOGGING_CONFIGURED = True
-    logger.info("File logging enabled (level=%s) → wifit3.log",
-                logging.getLevelName(level))
 
 class WifiteApp(App):
     """wifit3 TUI Main App."""
@@ -130,23 +92,20 @@ class WifiteApp(App):
     EvilTwinInputModal #bssid-btns Button { min-width: 4; }
     """
 
-    def __init__(self, default_log_level: Optional[str] = None):
-        _configure_file_logging(default_log_level)
+    def __init__(self, cli_log_level=None):
         super().__init__()
+        self._config_error: Optional[str] = None
+        try:
+            Config.load()
+        except ConfigError as e:
+            self._config_error = str(e)
+        _configure_file_logging(cli_log_level)
         self.array: Optional[WlanArray] = None
         self.device_manager = DeviceManager(self)
         self.device_watch = DeviceWatch(device_manager=self.device_manager,
                                         on_change=self._on_devices_changed,
                                         on_fatal=self._on_usb_fatal)
         self.target_ap: Optional[AccessPoint] = None
-        self._config_error: Optional[str] = None
-        try:
-            Config.load()
-        except ConfigError as e:
-            self._config_error = str(e)
-        # WPS PBC auto-invade preference, shared across screens (Scanner + Focus
-        # both read/toggle it via 'w'). On by default: the one active-TX exception
-        # to passive-by-default (auto-captures a PSK when any AP's button is pressed).
         self.pbc_enabled: bool = True
         register_app_themes(self)
         self.theme = Config.theme
@@ -250,4 +209,43 @@ class WifiteApp(App):
         if self.array:
             await self.array.close()
         self.exit()
+
+
+_FILE_LOGGING_CONFIGURED = False  # Avoid duplicate loggers
+
+
+def _get_log_level(cli_log_level: Optional[str]) -> Optional[int]:
+    """Level from ``WIFIT3_LOG`` or ``Config.log_level``, trace/debug/info/quiet."""
+    env = os.environ.get("WIFIT3_LOG", cli_log_level)
+    if env is None:
+        env = Config.log_level
+    env = env.strip().lower()
+    if env == "trace":
+        return log_trace.TRACE
+    if env == "debug":
+        return logging.DEBUG
+    if env == "info":
+        return logging.INFO
+    return None  # any other value ("quiet") skips logging
+
+def _configure_file_logging(cli_log_level: Optional[str]) -> None:
+    """Files logged to ``wifit3.log`` in the CWD."""
+    global _FILE_LOGGING_CONFIGURED
+    if _FILE_LOGGING_CONFIGURED:
+        return
+
+    level = _get_log_level(cli_log_level)
+    if level is None:
+        return
+
+    handler = logging.FileHandler("wifit3.log", mode="w", encoding="utf-8")
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s.%(msecs)03d %(levelname)-5s %(name)s: %(message)s",
+        datefmt="%H:%M:%S"
+    ))
+    root = logging.getLogger()
+    root.setLevel(level)
+    root.addHandler(handler)
+    _FILE_LOGGING_CONFIGURED = True
+    logger.info(f"Logging enabled (level={logging.getLevelName(level)})")
 
