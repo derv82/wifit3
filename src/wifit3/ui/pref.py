@@ -104,7 +104,10 @@ class PreferencesModal(ModalScreen):
         Config.theme = self.app.theme
         Config.captures_dir = self.query_one("#captures_dir", Input).value
         Config.save_pcap = self.query_one("#save_pcap", Checkbox).value
-        Config.save()
+        try:
+            Config.save()
+        except Exception as e:
+            self.notify(str(e), title="Config Error")
         self.dismiss()
 
     @on(Button.Pressed, "#cancel")
