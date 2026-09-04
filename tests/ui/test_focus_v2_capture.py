@@ -10,6 +10,7 @@ from textual.app import App
 from textual.widgets import Button, RichLog, Static
 
 from wifit3.models import PersistedCapture
+from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList, ClientWidget
@@ -340,12 +341,12 @@ def test_save_line_elides_bssid_and_timestamp():
     new = types.SimpleNamespace(was_new=True, path=types.SimpleNamespace(
         name="NETGEAR2G_aa-bb-cc-dd-ee-01_1781842298_handshake.hc22000"))
     line = _save_line(new)
-    assert "saved: captures/NETGEAR2G_…_handshake.hc22000" in line
+    assert f"saved: {Config.captures_dir}/NETGEAR2G_…_handshake.hc22000" in line
     assert "aa-bb-cc" not in line and "1781842298" not in line
 
     old = types.SimpleNamespace(was_new=False, path=types.SimpleNamespace(
         name="net_aa-bb-cc-dd-ee-ff_123_pmkid.hc22000"))
-    assert "exists: captures/net_…_pmkid.hc22000" in _save_line(old)
+    assert f"exists: {Config.captures_dir}/net_…_pmkid.hc22000" in _save_line(old)
 
 
 @pytest.mark.asyncio

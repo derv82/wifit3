@@ -116,7 +116,7 @@ def _save_line(result) -> str:
     name = result.path.name
     m = _FILENAME_MIDDLE.search(name)
     short = f"{name[:m.start()]}_…_{name[m.end():]}" if m else name
-    return f"[dim]{verb}: captures/{escape(short)}[/dim]"
+    return f"[dim]{verb}: {Config.captures_dir}/{escape(short)}[/dim]"
 
 
 def _wep_key_chip(key_hex) -> str:

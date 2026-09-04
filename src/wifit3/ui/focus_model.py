@@ -350,7 +350,7 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
         camp = campaigns.eviltwin
         if camp.captured:
             return ["[black bold on green] ✓ Captured [/black bold on green] crackable M2",
-                    "[dim]saved to captures/[/dim]"]
+                    f"[dim]saved to {Config.captures_dir}/[/dim]"]
         stats = getattr(camp.fakeap, "stats", None)
         if stats is None:
             return [f"[bold cyan]EvilTwin arming…[/bold cyan] on CH {camp.twin_channel}"]
@@ -395,7 +395,7 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
         if n_pmkid:
             bits.append(f"PMKID ×{n_pmkid}")
         return ["[black bold on green] ✓ Captured [/black bold on green] " + " · ".join(bits),
-                "[dim]saved to captures/[/dim]"]
+                f"[dim]saved to {Config.captures_dir}[/dim]"]
     if n_partial:
         breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
         return ["[yellow]◌ Capturing handshake[/yellow]",

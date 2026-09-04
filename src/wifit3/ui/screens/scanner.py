@@ -333,7 +333,7 @@ class ScannerView(Screen):
             parts.append(f"{wps} WPS PSK{'s' * (wps != 1)}")
         if not parts:
             return None
-        return "Existing [bold]captures/[/bold]: " + ", ".join(parts)
+        return f"Existing [bold]{Config.captures_dir}/[/bold]: " + ", ".join(parts)
 
     async def on_screen_resume(self) -> None:
         # Restart channel hopper
