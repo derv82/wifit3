@@ -52,7 +52,7 @@ class RxReaderThread:
         self._running = True
         self._thread = threading.Thread(target=self._run, name=self._name, daemon=True)
         self._thread.start()
-        logger.info(f"[{self._name}] RX reader thread started")
+        logger.debug(f"[{self._name}] RX reader thread started")
 
     async def stop(self, join_timeout: float = 1.5) -> None:
         """waits up to one ``read_once`` timeout once ``_running`` clears."""
@@ -120,12 +120,11 @@ class RxReaderThread:
 
             # Submit the batch
             self._bufs_produced += len(batch)
-            logger.info(f"[{self._name}] dispatching batch of size {len(batch)}")
             self._loop.call_soon_threadsafe(self._dispatch_batch, batch)
             batch = []
         if self._dropped:
             logger.error(f"[{self._name}] RX reader stopped: {self._dropped} buffers dropped total")
-        logger.info(f"[{self._name}] RX reader thread stopped")
+        logger.debug(f"[{self._name}] RX reader thread stopped")
 
     def _is_fatal(self, e: Exception, consec_errors: int) -> bool:
         logger.warning(f"[{self._name}] read failed ({consec_errors}/{self._max_errors}): {e}")
