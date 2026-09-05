@@ -1,6 +1,8 @@
 """The Scanner applies its ScanFilter as a display-only predicate: a filtered-out
 AP loses its table row but keeps its registry entry, so widening the filter brings
 it straight back without having to rediscover it."""
+import time
+
 import pytest
 from textual.widgets import Button, DataTable
 
@@ -229,6 +231,22 @@ def test_scanner_shows_apple_hotspot_type():
     ap = AccessPoint(bssid="00:03:93:11:22:33", ssid="Alice’s iPhone")
     assert scanner._router_brand_cell(ap).plain == "Apple 91%"
     assert scanner._router_kind_cell(ap).plain == "Hotspot 91%"
+
+
+def test_scanner_freezes_all_row_ages_while_probing():
+    scanner = ScannerView()
+    start = time.time()
+    later = start + 20
+    probed = AccessPoint(bssid="aa:bb:cc:00:00:52", ssid="Router", channel=1)
+    other = AccessPoint(bssid="aa:bb:cc:00:00:53", ssid="Router", channel=1)
+    probed.last_seen = start - 5
+    other.last_seen = start - 10
+    scanner._router_info_probing = True
+    scanner._router_info_probe_started_at = start
+    scanner._router_info_probe_bssid = probed.bssid
+
+    assert scanner._ap_row_age(probed, later) == 5
+    assert scanner._ap_row_age(other, later) == 10
 
 
 @pytest.mark.asyncio

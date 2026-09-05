@@ -270,6 +270,8 @@ class ScannerView(Screen):
         self._pbc_watcher = PbcWatcher()
         self._pbc_capturing = False          # serialize: one invade at a time
         self._router_info_probing = False
+        self._router_info_probe_started_at: Optional[float] = None
+        self._router_info_probe_bssid: Optional[str] = None
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -407,7 +409,7 @@ class ScannerView(Screen):
                     self._forget_row(ap.bssid, drop_from_array=False)
                 continue
 
-            age = now - ap.last_seen
+            age = self._ap_row_age(ap, now)
             if age >= FADE_DURATION_S:
                 continue
 
@@ -473,10 +475,15 @@ class ScannerView(Screen):
         now = time.time()
         to_drop = [
             bssid for bssid, ap in self.ap_cache.items()
-            if (now - ap.last_seen) >= FADE_DURATION_S
+            if self._ap_row_age(ap, now) >= FADE_DURATION_S
         ]
         for bssid in to_drop:
             self._forget_row(bssid, drop_from_array=True)
+
+    def _ap_row_age(self, ap: AccessPoint, now: float) -> float:
+        freeze_at = self._router_info_probe_started_at if self._router_info_probing else None
+        age_at = freeze_at if freeze_at is not None else now
+        return max(0.0, age_at - ap.last_seen)
 
     def _forget_row(self, bssid: str, *, drop_from_array: bool) -> None:
         """Drop the AP's row and caches; drop_from_array also evicts it from the registry."""
@@ -780,6 +787,8 @@ class ScannerView(Screen):
         if not array:
             return
         self._router_info_probing = True
+        self._router_info_probe_started_at = time.time()
+        self._router_info_probe_bssid = ap.bssid
         label = escape(ap.ssid or ap.bssid)
         self._write_log(treelog.header(
             f"[bold]Identity probe[/bold] on [cyan]{label}[/cyan] [dim](CH {ap.channel})[/dim]"))
@@ -806,6 +815,8 @@ class ScannerView(Screen):
             self._write_log(treelog.leaf_fail(f"identity probe error: {escape(str(exc))}"))
         finally:
             self._router_info_probing = False
+            self._router_info_probe_started_at = None
+            self._router_info_probe_bssid = None
             if was_hopping and self.app.screen is self:
                 await iface.start_hopping(channels=self._channel_filter, interval=0.25)
 
