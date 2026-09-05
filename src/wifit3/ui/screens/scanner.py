@@ -798,8 +798,6 @@ class ScannerView(Screen):
                     self._apply_router_probe_claims(ap, result.claims)
                 fields = self._format_probe_result(result)
                 self._write_log(treelog.leaf_ok(fields or "identity probe matched"))
-                self.notify(f"{ap.ssid or ap.bssid}: {fields or 'identity probe matched'}",
-                            title="Identity probe", timeout=6)
                 self.refresh_table()
             else:
                 self._write_log(treelog.leaf_fail(

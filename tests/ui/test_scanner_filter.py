@@ -258,7 +258,8 @@ async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
         await pilot.pause(0)
         scanner = app.screen
         assert isinstance(scanner, ScannerView)
-        scanner.notify = lambda *args, **kwargs: None
+        toasts = []
+        scanner.notify = lambda *args, **kwargs: toasts.append((args, kwargs))
 
         scanner.refresh_table()
         array_stop_calls = app.array.stop_calls
@@ -269,6 +270,7 @@ async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
     assert app.array.start_calls == array_start_calls
     assert iface.stop_calls == 1
     assert iface.start_calls == 1
+    assert toasts == []
     assert ap.wps_manufacturer == "TP-Link"
     assert ap.wps_model_name == "Archer AX10"
     assert ap.wps_device_name == "Office"
@@ -308,11 +310,13 @@ async def test_scanner_info_probe_applies_active_claims(monkeypatch):
         await pilot.pause(0)
         scanner = app.screen
         assert isinstance(scanner, ScannerView)
-        scanner.notify = lambda *args, **kwargs: None
+        toasts = []
+        scanner.notify = lambda *args, **kwargs: toasts.append((args, kwargs))
 
         scanner.refresh_table()
         await scanner._probe_router_info(ap)
 
+    assert toasts == []
     assert ap.router_fingerprint is not None
     assert ap.router_fingerprint.vendor == "MikroTik"
     assert scanner._router_brand_cell(ap).plain == "MikroTik 99%"
