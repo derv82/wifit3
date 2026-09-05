@@ -187,6 +187,16 @@ def test_scanner_brand_cell_prefers_brand_over_hardware_vendor():
     assert scanner._router_brand_cell(ap).plain == "O2 95%"
 
 
+def test_scanner_brand_cell_shows_vodafone_ssid_clue():
+    scanner = ScannerView()
+    scanner._theme_fg = "white"
+    ap = AccessPoint(bssid="02:00:00:00:00:01", ssid="Vodafone-123456")
+    fp = ap.router_fingerprint
+    assert fp is not None
+    assert fp.brand == "Vodafone"
+    assert scanner._router_brand_cell(ap).plain == "Vodafone 30%"
+
+
 def test_scanner_brand_cell_shows_vodafone_over_celeno_manufacturer():
     scanner = ScannerView()
     scanner._theme_fg = "white"
@@ -200,6 +210,14 @@ def test_scanner_brand_cell_shows_vodafone_over_celeno_manufacturer():
     assert fp.brand == "Vodafone"
     assert fp.vendor == "Celeno"
     assert scanner._router_brand_cell(ap).plain == "Vodafone 70%"
+
+
+def test_scanner_shows_apple_hotspot_type():
+    scanner = ScannerView()
+    scanner._theme_fg = "white"
+    ap = AccessPoint(bssid="00:03:93:11:22:33", ssid="Alice’s iPhone")
+    assert scanner._router_brand_cell(ap).plain == "Apple 91%"
+    assert scanner._router_kind_cell(ap).plain == "hotspot 91%"
 
 
 @pytest.mark.asyncio

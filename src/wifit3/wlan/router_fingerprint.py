@@ -60,6 +60,7 @@ _CANONICAL_VENDOR_PATTERNS = (
     (re.compile(r"\bavm\b|audiovisuelles marketing", re.I), "AVM"),
     (re.compile(r"\bamv\b|amv audio", re.I), "AMV"),
     (re.compile(r"\bkaon\b", re.I), "Kaon"),
+    (re.compile(r"\bapple\b", re.I), "Apple"),
 )
 
 
@@ -141,6 +142,14 @@ def tplink_router_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     return (RouterClaim("kind", "router", 0.30, (evidence,)),)
 
 
+def ubiquiti_router_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+    vendor = _vendor_for(ap.bssid)
+    if vendor != "Ubiquiti":
+        return ()
+    evidence = RouterEvidence("oui.ubiquiti", "vendor", vendor, 0.30)
+    return (RouterClaim("kind", "router", 0.30, (evidence,)),)
+
+
 def passive_wps_identity_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     manufacturer = canonical_vendor(_text(getattr(ap, "wps_manufacturer", None)))
     if manufacturer is None:
@@ -182,6 +191,17 @@ def o2_smartbox_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     )
 
 
+def vodafone_ssid_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+    manufacturer = _text(getattr(ap, "wps_manufacturer", None))
+    ssid = _text(getattr(ap, "ssid", None))
+    if not ssid or "vodafone" not in ssid.lower():
+        return ()
+    if manufacturer and "celeno" in manufacturer.lower():
+        return ()
+    evidence = RouterEvidence("brand.vodafone_ssid", "ssid", ssid, 0.30)
+    return (RouterClaim("brand", "Vodafone", 0.30, (evidence,)),)
+
+
 def celeno_vodafone_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     manufacturer = _text(getattr(ap, "wps_manufacturer", None))
     ssid = _text(getattr(ap, "ssid", None))
@@ -193,14 +213,40 @@ def celeno_vodafone_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     return (RouterClaim("brand", "Vodafone", 0.70, (evidence,)),)
 
 
+def apple_ssid_hotspot_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+    ssid = _text(getattr(ap, "ssid", None))
+    if not ssid or not re.search(r"\b(?:iphone|ipad)\b", ssid, re.I):
+        return ()
+    evidence = RouterEvidence("brand.apple_ssid", "ssid", ssid, 0.40)
+    return (
+        RouterClaim("brand", "Apple", 0.40, (evidence,)),
+        RouterClaim("kind", "hotspot", 0.40, (evidence,)),
+    )
+
+
+def apple_vendor_hotspot_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+    vendor = canonical_vendor(_text(getattr(ap, "wps_manufacturer", None))) or _vendor_for(ap.bssid)
+    if vendor != "Apple":
+        return ()
+    evidence = RouterEvidence("vendor.apple", "vendor", vendor, 0.85)
+    return (
+        RouterClaim("brand", "Apple", 0.85, (evidence,)),
+        RouterClaim("kind", "hotspot", 0.85, (evidence,)),
+    )
+
+
 IDENTIFY_RULES: tuple[RouterRule, ...] = (
     oui_vendor_rule,
     router_oui_rule,
     tplink_router_rule,
+    ubiquiti_router_rule,
     passive_wps_identity_rule,
     # brand rules are only used for identification, not distinction
     o2_smartbox_brand_rule, # added czech isp's i know of / found
-    celeno_vodafone_brand_rule, 
+    vodafone_ssid_brand_rule,
+    celeno_vodafone_brand_rule,
+    apple_ssid_hotspot_rule,
+    apple_vendor_hotspot_rule,
 )
 DISTINGUISH_RULES: tuple[RouterRule, ...] = (
     passive_wps_model_rule,

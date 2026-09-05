@@ -101,6 +101,16 @@ def test_o2_smartbox_ssid_pattern_sets_brand():
     assert fp.label == "O2 router"
 
 
+def test_vodafone_ssid_clue_is_weak_because_ssids_are_renamable():
+    fp = AccessPoint(bssid="02:00:00:00:00:01", ssid="Vodafone-123456").router_fingerprint
+    assert fp is not None
+    assert fp.brand == "Vodafone"
+    assert round(fp.brand_confidence, 2) == 0.30
+    assert fp.vendor is None
+    assert fp.kind is None
+    assert fp.label == "Possible Vodafone"
+
+
 def test_celeno_manufacturer_with_vodafone_ssid_sets_brand():
     fp = AccessPoint(
         bssid="02:00:00:00:00:01",
@@ -161,6 +171,40 @@ def test_vendor_names_are_canonicalized():
     assert canonical_vendor("AMV Audio") == "AMV"
     assert canonical_vendor("Kaon Group") == "Kaon"
     assert canonical_vendor("Kaon") == "Kaon"
+    assert canonical_vendor("Apple, Inc.") == "Apple"
+
+
+def test_apple_ssid_clue_is_weak_because_ssids_are_renamable():
+    fp = AccessPoint(bssid="02:00:00:00:00:01", ssid="Alice’s iPhone").router_fingerprint
+    assert fp is not None
+    assert fp.brand == "Apple"
+    assert fp.brand_confidence == 0.40
+    assert fp.kind == "hotspot"
+    assert fp.kind_confidence == 0.40
+    assert fp.vendor is None
+    assert fp.label == "Possible Apple hotspot"
+
+
+def test_apple_oui_identifies_likely_hotspot():
+    fp = AccessPoint(bssid="00:03:93:11:22:33", ssid="Personal Hotspot").router_fingerprint
+    assert fp is not None
+    assert fp.vendor == "Apple"
+    assert round(fp.vendor_confidence, 2) == 0.30
+    assert fp.brand == "Apple"
+    assert fp.brand_confidence == 0.85
+    assert fp.kind == "hotspot"
+    assert fp.kind_confidence == 0.85
+    assert fp.label == "Likely Apple hotspot"
+
+
+def test_apple_oui_and_iphone_ssid_strengthen_hotspot_identity():
+    fp = AccessPoint(bssid="00:03:93:11:22:33", ssid="iPad").router_fingerprint
+    assert fp is not None
+    assert fp.brand == "Apple"
+    assert fp.brand_confidence == 0.91
+    assert fp.kind == "hotspot"
+    assert fp.kind_confidence == 0.91
+    assert fp.label == "Apple hotspot"
 
 
 def test_oui_vendor_rule_uses_canonical_vendor_name():
@@ -179,6 +223,17 @@ def test_tplink_oui_weakly_identifies_router_type():
     assert round(fp.kind_confidence, 2) == 0.30
     assert fp.model is None
     assert fp.label == "Possible TP-Link router"
+
+
+def test_ubiquiti_oui_weakly_identifies_router_type():
+    fp = AccessPoint(bssid="00:15:6d:11:22:33").router_fingerprint
+    assert fp is not None
+    assert fp.vendor == "Ubiquiti"
+    assert round(fp.vendor_confidence, 2) == 0.30
+    assert fp.kind == "router"
+    assert round(fp.kind_confidence, 2) == 0.30
+    assert fp.model is None
+    assert fp.label == "Possible Ubiquiti router"
 
 
 def test_wps_manufacturer_uses_canonical_vendor_name():
