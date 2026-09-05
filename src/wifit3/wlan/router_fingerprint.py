@@ -216,6 +216,8 @@ def fingerprint_router(
 ) -> RouterFingerprint | None:
     active_rules = tuple(rules) if rules is not None else tuple(identify_rules) + tuple(distinguish_rules)
     claims = tuple(claim for rule in active_rules for claim in rule(ap))
+    if rules is None:
+        claims += tuple(getattr(ap, "router_claims", ()))
     if not claims:
         return None
 

@@ -13,6 +13,7 @@ import threading
 import time
 from typing import Dict, List, Optional, Set
 
+from wifit3.campaigns.mikrotik_probe import is_mikrotik_plaintext_frame, mikrotik_claims
 from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
 from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage
 from wifit3.dot11.mac import mac_to_str
@@ -118,6 +119,7 @@ class WlanSink:
 
         self._on_beacon_frame(pkt, card_id, channel_hint)
         self._on_wepdata_frame(pkt)
+        self._on_mikrotik_frame(pkt)
         self._track_client(pkt, card_id)
         self._on_eapol_frame(pkt)
 
@@ -268,6 +270,16 @@ class WlanSink:
             stats = self.wep_store.observe(bssid, pkt)
             if stats is not None and ap.wep is None:
                 ap.wep = stats
+        return True
+
+    def _on_mikrotik_frame(self, pkt: Packet) -> bool:
+        if pkt.type != "data" or not is_mikrotik_plaintext_frame(pkt.raw):
+            return False
+        ap = self.access_points.get(pkt.bssid)
+        if ap is None:
+            return False
+        claims = mikrotik_claims("mikrotik.passive", passive=True)
+        ap.router_claims = tuple(dict.fromkeys((*ap.router_claims, *claims)))
         return True
 
     def _track_client(self, pkt: Packet, card_id: str) -> bool:

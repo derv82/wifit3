@@ -59,6 +59,25 @@ def test_rules_are_pluggable_for_router_specific_checks():
     assert fp.evidence[0].source == "mikrotik.winbox"
 
 
+def test_active_probe_claims_are_part_of_router_fingerprint():
+    evidence = RouterEvidence("mikrotik.winbox", "reachable", "true", 0.99, passive=False)
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        router_claims=(
+            RouterClaim("vendor", "MikroTik", 0.99, (evidence,)),
+            RouterClaim("kind", "router", 0.99, (evidence,)),
+        ),
+    )
+    fp = ap.router_fingerprint
+    assert fp is not None
+    assert fp.vendor == "MikroTik"
+    assert fp.vendor_confidence == 0.99
+    assert fp.kind == "router"
+    assert fp.kind_confidence == 0.99
+    assert fp.label == "MikroTik router"
+    assert fp.evidence[0].passive is False
+
+
 def test_o2_smartbox_pattern_sets_brand_without_replacing_vendor():
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",

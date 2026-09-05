@@ -3,7 +3,7 @@ previously-saved capture artifacts).
 """
 import time
 from dataclasses import dataclass, field
-from typing import Optional, List, Literal, Dict, TYPE_CHECKING
+from typing import Any, Optional, List, Literal, Dict, TYPE_CHECKING
 
 from .handshake import Handshake
 
@@ -95,6 +95,9 @@ class AccessPoint:
 
     # Read-only capture history loaded from captures/ at scan start.
     persisted: List[PersistedCapture] = field(default_factory=list)
+
+    # Active identity probe claims collected only after intentional user TX.
+    router_claims: tuple[Any, ...] = ()
 
     # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
     signal_by_card: Dict[str, int] = field(default_factory=dict)
