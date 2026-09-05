@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Optional
 
@@ -12,40 +13,14 @@ from wifit3.wlan.lease import SPOOFABLE
 
 
 @dataclass(frozen=True)
-class WpsM1Identity:
-    manufacturer: Optional[str] = None
-    model_name: Optional[str] = None
-    model_number: Optional[str] = None
-    device_name: Optional[str] = None
-
-
-@dataclass(frozen=True)
 class WpsM1ProbeResult:
     ok: bool
-    identity: WpsM1Identity = WpsM1Identity()
     detail: str = ""
     our_mac: Optional[str] = None
 
 
-def _text(attrs: dict[int, bytes], attr: int) -> Optional[str]:
-    raw = attrs.get(attr)
-    if not raw:
-        return None
-    value = raw.strip(b"\x00").decode("utf-8", "replace").strip()
-    return value or None
-
-
-def identity_from_m1_attrs(attrs: dict[int, bytes]) -> WpsM1Identity:
-    return WpsM1Identity(
-        manufacturer=_text(attrs, M.ATTR_MANUFACTURER),
-        model_name=_text(attrs, M.ATTR_MODEL_NAME),
-        model_number=_text(attrs, M.ATTR_MODEL_NUMBER),
-        device_name=_text(attrs, M.ATTR_DEV_NAME),
-    )
-
-
-async def _harvest_m1(transport: WlanTransport, bssid: bytes, our_mac: bytes,
-                      tries: int = 10, timeout: float = 3.0) -> dict[int, bytes] | None:
+async def _trigger_m1(transport: WlanTransport, bssid: bytes, our_mac: bytes,
+                      tries: int = 10, timeout: float = 3.0) -> bool:
     start = M.build_data_frame(bssid, our_mac, bssid, M.eapol_start())
     await transport.send_no_wait(start)
     last = start
@@ -61,8 +36,8 @@ async def _harvest_m1(transport: WlanTransport, bssid: bytes, our_mac: bytes,
             last = M.build_data_frame(bssid, our_mac, bssid, M.eap_identity_response(parsed.eap_id))
             await transport.send_no_wait(last)
         elif parsed.wsc_msg_type == M.WPS_M1:
-            return parsed.attrs
-    return None
+            return True
+    return False
 
 
 async def probe_wps_m1(array, ap: AccessPoint, iface=None) -> WpsM1ProbeResult:
@@ -90,7 +65,7 @@ async def probe_wps_m1(array, ap: AccessPoint, iface=None) -> WpsM1ProbeResult:
                     False, detail=assoc.fail_reason or "no association response", our_mac=lease.mac,
                 )
             transport.start()
-            attrs = await _harvest_m1(transport, bssid_bytes, our_mac)
+            got_m1 = await _trigger_m1(transport, bssid_bytes, our_mac)
         finally:
             transport.stop()
             assoc.stop()
@@ -99,9 +74,22 @@ async def probe_wps_m1(array, ap: AccessPoint, iface=None) -> WpsM1ProbeResult:
             except Exception:
                 pass
 
-    if attrs is None:
+    if not got_m1:
         return WpsM1ProbeResult(False, detail="no WPS M1 response", our_mac=lease.mac)
-    identity = identity_from_m1_attrs(attrs)
-    if not any((identity.manufacturer, identity.model_name, identity.model_number, identity.device_name)):
-        return WpsM1ProbeResult(False, identity=identity, detail="M1 had no identity fields", our_mac=lease.mac)
-    return WpsM1ProbeResult(True, identity=identity, our_mac=lease.mac)
+    await _wait_for_sink_identity(array, bssid)
+    return WpsM1ProbeResult(True, our_mac=lease.mac)
+
+
+async def _wait_for_sink_identity(array, bssid: str, timeout: float = 0.5) -> None:
+    def has_identity() -> bool:
+        ap = array.access_points.get(bssid)
+        return bool(ap and (ap.wps_manufacturer or ap.wps_model_name
+                            or ap.wps_model_number or ap.wps_device_name))
+
+    wait_until = getattr(array, "wait_until", None)
+    if wait_until is not None:
+        await wait_until(has_identity, timeout, poll=0.02)
+        return
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline and not has_identity():
+        await asyncio.sleep(0.02)

@@ -19,6 +19,8 @@ from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level 
 from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.parser import WlanFrameParser
+from wifit3.dot11.wsc import messages as WSC
+from wifit3.dot11.wsc.identity import identity_from_attrs
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
 )
@@ -338,6 +340,7 @@ class WlanSink:
         ap = self.access_points.get(bssid)
         if ap is None:
             return True
+        self._on_wps_m1_frame(pkt, ap)
         client_mac = pkt.client_mac
         raw_frame = pkt.raw
         replay = pkt.replay_counter
@@ -387,6 +390,20 @@ class WlanSink:
             hs.pmkid = pmkid
             hs.pmkid_akm = akm
             logger.info(f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}")
+        return True
+
+    def _on_wps_m1_frame(self, pkt: EapolPacket, ap: AccessPoint) -> bool:
+        parsed = WSC.parse_rx_frame(pkt.raw)
+        if parsed is None or parsed.wsc_msg_type != WSC.WPS_M1:
+            return False
+        identity = identity_from_attrs(parsed.attrs)
+        if not identity.present:
+            return False
+        ap.wps = True
+        ap.wps_manufacturer = identity.manufacturer or ap.wps_manufacturer
+        ap.wps_model_name = identity.model_name or ap.wps_model_name
+        ap.wps_model_number = identity.model_number or ap.wps_model_number
+        ap.wps_device_name = identity.device_name or ap.wps_device_name
         return True
 
     def _decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:

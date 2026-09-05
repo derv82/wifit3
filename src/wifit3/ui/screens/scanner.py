@@ -18,8 +18,8 @@ from rich.text import Span, Text
 from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
 from wifit3.campaigns.router_probe import probe_router_info
-from wifit3.campaigns.wps.m1_probe import WpsM1Identity
 from wifit3.campaigns.wps.registrar import PinResult
+from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.config import Config
 from wifit3.models import AccessPoint, PersistedCapture
@@ -794,8 +794,6 @@ class ScannerView(Screen):
                 await iface.stop_hopping()
             result = await probe_router_info(array, ap, iface=iface)
             if result.ok:
-                if result.wps_identity is not None:
-                    self._apply_wps_m1_identity(ap, result.wps_identity)
                 if result.claims:
                     self._apply_router_probe_claims(ap, result.claims)
                 fields = self._format_probe_result(result)
@@ -816,14 +814,6 @@ class ScannerView(Screen):
     @staticmethod
     def _apply_router_probe_claims(ap: AccessPoint, claims) -> None:
         ap.router_claims = tuple(dict.fromkeys((*ap.router_claims, *claims)))
-
-    @staticmethod
-    def _apply_wps_m1_identity(ap: AccessPoint, identity: WpsM1Identity) -> None:
-        ap.wps = True
-        ap.wps_manufacturer = identity.manufacturer or ap.wps_manufacturer
-        ap.wps_model_name = identity.model_name or ap.wps_model_name
-        ap.wps_model_number = identity.model_number or ap.wps_model_number
-        ap.wps_device_name = identity.device_name or ap.wps_device_name
 
     @staticmethod
     def _format_probe_result(result) -> str:

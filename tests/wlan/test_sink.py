@@ -9,6 +9,7 @@ import struct
 from wifit3.campaigns.mikrotik_probe import build_mikrotik_discovery_frames
 from wifit3.campaigns.ubiquiti_probe import build_ubnt_discovery_frame
 from wifit3.dot11.mac import str_to_mac
+from wifit3.dot11.wsc import messages as WSC
 from wifit3.wlan.sink import WlanSink
 from wifit3.wlan.packet_stats import PACKET_CLASSES
 
@@ -16,6 +17,7 @@ from tests.frames import pkt
 
 BSSID = "aa:bb:cc:dd:ee:ff"
 W0, W1 = "wlan0", "wlan1"
+_LLC_SNAP_EAPOL = b"\xaa\xaa\x03\x00\x00\x00\x88\x8e"
 
 
 def _beacon(overrides=None):
@@ -25,6 +27,25 @@ def _beacon(overrides=None):
     }
     base.update(overrides or {})
     return pkt(base)
+
+
+def _wps_m1_frame(bssid: bytes, client: bytes) -> bytes:
+    attrs = (
+        WSC.tlv_u8(WSC.ATTR_VERSION, 0x10)
+        + WSC.tlv_u8(WSC.ATTR_MSG_TYPE, WSC.WPS_M1)
+        + WSC.tlv(WSC.ATTR_MANUFACTURER, b"TP-Link")
+        + WSC.tlv(WSC.ATTR_MODEL_NAME, b"Archer AX10")
+        + WSC.tlv(WSC.ATTR_MODEL_NUMBER, b"AX10")
+        + WSC.tlv(WSC.ATTR_DEV_NAME, b"Office AP\x00")
+    )
+    expanded = (
+        bytes([WSC.EAP_TYPE_EXPANDED]) + WSC.WFA_VENDOR_ID
+        + WSC.WFA_VENDOR_TYPE_SIMPLECONFIG + bytes([WSC.WSC_MSG, 0x00]) + attrs
+    )
+    eap_len = 4 + len(expanded)
+    eap = struct.pack(">BBH", WSC.EAP_REQUEST, 1, eap_len) + expanded
+    eapol = struct.pack(">BBH", WSC.DOT1X_VERSION, WSC.DOT1X_TYPE_EAP_PACKET, len(eap)) + eap
+    return b"\x08\x02\x00\x00" + client + bssid + bssid + b"\x00\x00" + _LLC_SNAP_EAPOL + eapol
 
 
 # ----- registry + per-card signal --------------------------------------------
@@ -88,6 +109,24 @@ def test_wps_identity_fields_persist_on_ap():
     assert ap.wps_model_name == "RouterBOARD"
     assert ap.wps_device_name == "Office AP"
     assert ap.router_fingerprint.vendor == "MikroTik"
+
+
+def test_wps_m1_identity_fields_are_applied_by_sink():
+    s = WlanSink()
+    s.update(_beacon(), W0)
+    frame = _wps_m1_frame(str_to_mac(BSSID), str_to_mac("02:00:00:00:00:01"))
+    s.update(pkt({
+        "type": "eapol", "to_ds": False, "from_ds": True, "bssid": BSSID,
+        "source": BSSID, "dest": "02:00:00:00:00:01", "rssi": -45, "raw": frame,
+    }), W0)
+    ap = s.access_points[BSSID]
+    assert ap.wps is True
+    assert ap.wps_manufacturer == "TP-Link"
+    assert ap.wps_model_name == "Archer AX10"
+    assert ap.wps_model_number == "AX10"
+    assert ap.wps_device_name == "Office AP"
+    assert ap.router_fingerprint.vendor == "TP-Link"
+    assert ap.router_fingerprint.model == "Archer AX10"
 
 
 def test_plaintext_mikrotik_frame_passively_identifies_ap():

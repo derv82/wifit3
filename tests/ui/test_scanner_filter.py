@@ -5,7 +5,7 @@ import pytest
 from textual.widgets import Button, DataTable
 
 from wifit3.campaigns.router_probe import RouterProbeResult
-from wifit3.campaigns.wps.m1_probe import WpsM1Identity
+from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.wlan.router_fingerprint import RouterClaim, RouterEvidence
 from wifit3.models import AccessPoint, PersistedCapture
 from wifit3.persist.config import Config
@@ -235,16 +235,17 @@ def test_scanner_shows_apple_hotspot_type():
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
     ap = AccessPoint(bssid="aa:bb:cc:00:00:50", ssid="Router", channel=1, wps=True)
-    result = RouterProbeResult(
-        True,
-        source="wps.m1",
-        wps_identity=WpsM1Identity(manufacturer="TP-Link", model_name="Archer AX10", device_name="Office"),
-    )
-
     async def fake_probe(array, target, iface=None):
         assert target is ap
         assert iface is not None
-        return result
+        ap.wps_manufacturer = "TP-Link"
+        ap.wps_model_name = "Archer AX10"
+        ap.wps_device_name = "Office"
+        return RouterProbeResult(
+            True,
+            source="wps.m1",
+            wps_identity=WpsM1Identity(manufacturer="TP-Link", model_name="Archer AX10", device_name="Office"),
+        )
 
     import wifit3.ui.screens.scanner as scanner_module
 

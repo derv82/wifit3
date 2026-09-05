@@ -5,6 +5,7 @@ import struct
 from typing import Optional, List, Dict, Any
 
 from wifit3.dot11.mac import mac_to_str
+from wifit3.dot11.wsc.identity import wps_text
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
     AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
@@ -464,7 +465,7 @@ class WlanFrameParser:
 
     @staticmethod
     def _wps_text(value: bytes) -> str:
-        return value.rstrip(b"\x00").decode("utf-8", "replace").strip()
+        return wps_text(value)
 
     @classmethod
     def _parse_tags(cls, frame: bytes, subtype: int) -> Optional[Dict[str, Any]]:
