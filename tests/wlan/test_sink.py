@@ -7,6 +7,7 @@ registry. These are the picture assertions that used to live on WlanInterface, r
 import struct
 
 from wifit3.campaigns.mikrotik_probe import build_mikrotik_discovery_frames
+from wifit3.campaigns.ubiquiti_probe import build_ubnt_discovery_frame
 from wifit3.dot11.mac import str_to_mac
 from wifit3.wlan.sink import WlanSink
 from wifit3.wlan.packet_stats import PACKET_CLASSES
@@ -103,6 +104,23 @@ def test_plaintext_mikrotik_frame_passively_identifies_ap():
     assert fp.vendor_confidence == 0.99
     assert fp.kind == "router"
     assert fp.evidence[0].source == "mikrotik.passive"
+    assert fp.evidence[0].passive is True
+
+
+def test_plaintext_ubnt_frame_passively_identifies_ap():
+    s = WlanSink()
+    s.update(_beacon(), W0)
+    frame = build_ubnt_discovery_frame(str_to_mac(BSSID), str_to_mac("02:00:00:00:00:01"))
+    s.update(pkt({
+        "type": "data", "to_ds": True, "from_ds": False, "bssid": BSSID,
+        "source": "02:00:00:00:00:01", "dest": "ff:ff:ff:ff:ff:ff", "rssi": -45,
+        "raw": frame,
+    }), W0)
+    fp = s.access_points[BSSID].router_fingerprint
+    assert fp.vendor == "Ubiquiti"
+    assert fp.vendor_confidence == 0.99
+    assert fp.kind == "router"
+    assert fp.evidence[0].source == "ubnt.passive"
     assert fp.evidence[0].passive is True
 
 

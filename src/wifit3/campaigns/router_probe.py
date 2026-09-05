@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from wifit3.campaigns.mikrotik_probe import probe_mikrotik
+from wifit3.campaigns.ubiquiti_probe import probe_ubnt
 from wifit3.campaigns.wps.m1_probe import WpsM1Identity, probe_wps_m1
 from wifit3.models import AccessPoint
 from wifit3.wlan.router_fingerprint import RouterClaim
@@ -30,4 +31,9 @@ async def probe_router_info(array, ap: AccessPoint, iface=None) -> RouterProbeRe
     if result.ok:
         return RouterProbeResult(ok=True, source="mikrotik.winbox", claims=result.claims)
     failures.append(f"MikroTik WinBox: {result.detail}")
+
+    result = await probe_ubnt(array, ap, iface=iface)
+    if result.ok:
+        return RouterProbeResult(ok=True, source="ubnt.discovery", claims=result.claims)
+    failures.append(f"UBNT discovery: {result.detail}")
     return RouterProbeResult(False, detail="; ".join(failures))
