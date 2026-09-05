@@ -539,13 +539,19 @@ class ScannerView(Screen):
         confidence = fp.brand_confidence if fp.brand else fp.vendor_confidence
         if not name:
             return Text("", style=self._theme_fg)
-        return Text(f"{name} {round(confidence * 100)}%", style=self._theme_fg)
+        return self._confidence_cell(name, confidence)
 
     def _router_kind_cell(self, ap: AccessPoint) -> Text:
         fp = ap.router_fingerprint
         if fp is None or not fp.kind or fp.kind_confidence <= 0:
             return Text("", style=self._theme_fg)
-        return Text(f"{fp.kind} {round(fp.kind_confidence * 100)}%", style=self._theme_fg)
+        return self._confidence_cell(fp.kind[:1].upper() + fp.kind[1:], fp.kind_confidence)
+
+    def _confidence_cell(self, label: str, confidence: float) -> Text:
+        cell = Text(f"{label} ", style=self._theme_fg)
+        percent_style = f"{self._theme_fg} dim" if confidence < 0.60 else self._theme_fg
+        cell.append(f"{round(confidence * 100)}%", style=percent_style)
+        return cell
 
     # Cap the SSID+badges cell so the trailing capture badges never overflow.
     _SSID_CELL_MAX = 32

@@ -125,6 +125,8 @@ def test_celeno_manufacturer_with_vodafone_ssid_sets_brand():
     assert fp.kind == "router"
     assert fp.kind_confidence == 0.99
     assert fp.label == "Possible Vodafone router"
+    assert any(e.source == "brand.vodafone" and e.name == "ssid" and e.value == "Vodafone-123456"
+               for e in fp.evidence)
 
 
 def test_brand_and_hardware_vendor_are_separate_claims():
@@ -223,6 +225,8 @@ def test_tplink_oui_weakly_identifies_router_type():
     assert round(fp.kind_confidence, 2) == 0.30
     assert fp.model is None
     assert fp.label == "Possible TP-Link router"
+    assert any(e.source == "oui.tplink" and e.name == "kind" and e.value == "router"
+               for e in fp.evidence)
 
 
 def test_ubiquiti_oui_weakly_identifies_router_type():
@@ -234,6 +238,8 @@ def test_ubiquiti_oui_weakly_identifies_router_type():
     assert round(fp.kind_confidence, 2) == 0.30
     assert fp.model is None
     assert fp.label == "Possible Ubiquiti router"
+    assert any(e.source == "oui.ubiquiti" and e.name == "kind" and e.value == "router"
+               for e in fp.evidence)
 
 
 def test_wps_manufacturer_uses_canonical_vendor_name():

@@ -161,7 +161,7 @@ def test_scanner_router_fingerprint_cells_show_confidence():
     brand = scanner._router_brand_cell(ap)
     kind = scanner._router_kind_cell(ap)
     assert brand.plain == "MikroTik 99%"
-    assert kind.plain == "router 99%"
+    assert kind.plain == "Router 99%"
 
 
 def test_scanner_router_type_cell_blank_without_type_confidence():
@@ -170,6 +170,17 @@ def test_scanner_router_type_cell_blank_without_type_confidence():
     ap = AccessPoint(bssid="00:00:0b:aa:bb:cc")
     assert scanner._router_brand_cell(ap).plain == "Matrix 30%"
     assert scanner._router_kind_cell(ap).plain == ""
+
+
+def test_scanner_dims_low_confidence_percentages():
+    scanner = ScannerView()
+    scanner._theme_fg = "white"
+    low = scanner._router_brand_cell(AccessPoint(bssid="00:00:0b:aa:bb:cc"))
+    high = scanner._router_brand_cell(AccessPoint(bssid="00:03:93:11:22:33"))
+    assert low.plain == "Matrix 30%"
+    assert high.plain == "Apple 85%"
+    assert any(span.start == len("Matrix ") and "dim" in str(span.style) for span in low.spans)
+    assert not any(span.start == len("Apple ") and "dim" in str(span.style) for span in high.spans)
 
 
 def test_scanner_brand_cell_prefers_brand_over_hardware_vendor():
@@ -217,7 +228,7 @@ def test_scanner_shows_apple_hotspot_type():
     scanner._theme_fg = "white"
     ap = AccessPoint(bssid="00:03:93:11:22:33", ssid="Alice’s iPhone")
     assert scanner._router_brand_cell(ap).plain == "Apple 91%"
-    assert scanner._router_kind_cell(ap).plain == "hotspot 91%"
+    assert scanner._router_kind_cell(ap).plain == "Hotspot 91%"
 
 
 @pytest.mark.asyncio

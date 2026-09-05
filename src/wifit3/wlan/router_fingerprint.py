@@ -138,7 +138,7 @@ def tplink_router_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     vendor = _vendor_for(ap.bssid)
     if vendor != "TP-Link":
         return ()
-    evidence = RouterEvidence("oui.tplink", "vendor", vendor, 0.30)
+    evidence = RouterEvidence("oui.tplink", "kind", "router", 0.30)
     return (RouterClaim("kind", "router", 0.30, (evidence,)),)
 
 
@@ -146,7 +146,7 @@ def ubiquiti_router_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     vendor = _vendor_for(ap.bssid)
     if vendor != "Ubiquiti":
         return ()
-    evidence = RouterEvidence("oui.ubiquiti", "vendor", vendor, 0.30)
+    evidence = RouterEvidence("oui.ubiquiti", "kind", "router", 0.30)
     return (RouterClaim("kind", "router", 0.30, (evidence,)),)
 
 
@@ -209,7 +209,7 @@ def celeno_vodafone_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
         return ()
     if "celeno" not in manufacturer.lower() or "vodafone" not in ssid.lower():
         return ()
-    evidence = RouterEvidence("brand.celeno_vodafone", "ssid", ssid, 0.70)
+    evidence = RouterEvidence("brand.vodafone", "ssid", ssid, 0.70)
     return (RouterClaim("brand", "Vodafone", 0.70, (evidence,)),)
 
 
