@@ -144,7 +144,9 @@ def wps_status_markup(camp) -> str:
         return (f"WPS PIN: [cyan]{tested}[/cyan]/11k · "
                 f"[{color}]{kind} {countdown}[/{color}]")
     if camp.status in ("failed", "error"):
-        return f"WPS PIN: [red]{camp.status}[/red] [dim]({tested}/11k)[/dim]"
+        reason = getattr(camp, "fail_reason", None)
+        suffix = f" · [dim]{escape(reason)}[/dim]" if reason else f" [dim]({tested}/11k)[/dim]"
+        return f"WPS PIN: [red]{camp.status}[/red]{suffix}"
     eta = _fmt_eta(camp.eta_seconds)
     if st.phase == "second_half" and st.first_half:
         # First half locked in: the meaningful keyspace is the second half

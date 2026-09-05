@@ -9,7 +9,9 @@ from types import SimpleNamespace
 
 from wifit3.campaigns.wps import known_pins, pins
 from wifit3.campaigns.pin import WpsCampaign, _state_path
+from wifit3.campaigns.wps.pixie import PixieBundle
 from wifit3.campaigns.wps.registrar import AttemptOutcome, PinResult
+from wifit3.dot11.wsc import crypto as wc
 from wifit3.dot11.wsc.crypto import pin_is_valid
 
 
@@ -52,6 +54,21 @@ def _iface():
                      bssid=bssid, ack_tally=ack_tally)
     ns.lease = _lease
     return ns
+
+
+def _pixie_bundle(pin: str, e_s1: bytes, e_s2: bytes) -> PixieBundle:
+    authkey = bytes.fromhex("11" * wc.AUTHKEY_LEN)
+    pke = bytes.fromhex("22" * wc.PUBKEY_LEN)
+    pkr = bytes.fromhex("33" * wc.PUBKEY_LEN)
+    psk1, psk2 = wc.derive_psk(authkey, pin)
+    return PixieBundle(
+        pke=pke,
+        pkr=pkr,
+        e_hash1=wc.e_or_r_hash(authkey, e_s1, psk1, pke, pkr),
+        e_hash2=wc.e_or_r_hash(authkey, e_s2, psk2, pke, pkr),
+        e_nonce=bytes.fromhex("44" * wc.NONCE_LEN),
+        authkey=authkey,
+    )
 
 
 class ScriptedCampaign(WpsCampaign):
@@ -98,6 +115,52 @@ async def test_campaign_finds_common_pin_fast(tmp_path, monkeypatch):
     await c._loop()
     assert c.state.found_pin == known
     assert len(c.tried) == 1                 # found on the first common attempt
+
+
+async def test_campaign_tries_pixie_before_online_sweep(tmp_path, monkeypatch):
+    monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])
+    known = pins.full_pin("1357", "246")
+    zero = b"\x00" * wc.SECRET_NONCE_LEN
+
+    class PixieVulnerable(ScriptedCampaign):
+        async def _try(self, pin):
+            self.tried.append(pin)
+            if pin == known:
+                return AttemptOutcome(PinResult.SUCCESS, pin, psk=self.psk, ssid="Net")
+            return AttemptOutcome(PinResult.FIRST_HALF_WRONG, pin,
+                                  pixie=_pixie_bundle(known, zero, zero))
+
+    c = PixieVulnerable(_iface(), _target(), state_dir=str(tmp_path),
+                        log=lambda m: None, known_pin=known, psk="pw")
+    await c._loop()
+
+    assert c.status == "found"
+    assert c.state.found_pin == known
+    assert c.state.found_psk == "pw"
+    assert c.tried == [pins.COMMON_PINS[0], known]
+
+
+async def test_campaign_falls_back_when_pixie_has_no_match(tmp_path, monkeypatch):
+    monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])
+    known = pins.full_pin("0001", "000")
+    e_s1 = bytes.fromhex("12" * wc.SECRET_NONCE_LEN)
+    e_s2 = bytes.fromhex("34" * wc.SECRET_NONCE_LEN)
+
+    class PixieNotVulnerable(ScriptedCampaign):
+        async def _try(self, pin):
+            out = await super()._try(pin)
+            if len(self.tried) == 1:
+                out.pixie = _pixie_bundle(known, e_s1, e_s2)
+            return out
+
+    c = PixieNotVulnerable(_iface(), _target(), state_dir=str(tmp_path),
+                           log=lambda m: None, known_pin=known, psk="pw")
+    await c._loop()
+
+    assert c.status == "found"
+    assert c.state.found_pin == known
+    assert c.tried[:2] == [pins.COMMON_PINS[0], pins.COMMON_PINS[1]]
+    assert len(c.tried) > 2
 
 
 def _write_done_state(tmp_path, found_pin, found_psk, bssid="02:00:00:00:00:ff"):
@@ -401,6 +464,35 @@ async def test_active_refusal_bails_not_churns(tmp_path):
     assert c.status == "failed"
     assert c.state.tested == 0
     assert c.state.attempts == c._REFUSAL_BAIL       # bailed promptly, didn't churn the sweep
+
+
+async def test_permanent_wps_lock_bails_after_zero_progress_cycles(tmp_path):
+    logs = []
+
+    class PermanentLock(WpsCampaign):
+        async def _handle_lock(self, beacon_locked: bool, wait: bool = True) -> None:
+            self.lock.end_lock()
+
+    target = _target()
+    target.wps_locked = True
+    iface = _iface()
+    iface.access_points[target.bssid.lower()] = target
+    c = PermanentLock(iface, target, state_dir=str(tmp_path), log=logs.append)
+    await c._loop()
+
+    assert c.status == "failed"
+    assert c.state.tested == 0
+    assert c._consecutive_locks_no_progress == c._MAX_LOCKS_NO_PROGRESS
+    assert c.fail_reason == "WPS stayed locked for 5 cycles without PIN progress"
+
+
+def test_lock_counter_resets_after_pin_progress(tmp_path):
+    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c._consecutive_locks_no_progress = 4
+
+    c._apply_outcome("12345670", AttemptOutcome(PinResult.FIRST_HALF_WRONG, "12345670"))
+
+    assert c._consecutive_locks_no_progress == 0
 
 
 async def test_silence_does_not_bail(tmp_path):

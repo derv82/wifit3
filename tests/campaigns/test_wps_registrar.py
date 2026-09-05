@@ -18,6 +18,7 @@ import os
 
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc import crypto as wc
+from wifit3.campaigns.wps.pixie import PixieMode, recover_pin
 from wifit3.campaigns.wps.registrar import WpsRegistrar, PinResult
 
 BSSID = bytes.fromhex("3421090001ff")
@@ -188,9 +189,13 @@ class FakeEnrollee:
         await self.t.send(self._req_wsc(self._next_id(), body))
 
 
-async def _run(real_pin, guess, psk="supersecret123", ssid="TestNet"):
+async def _run(real_pin, guess, psk="supersecret123", ssid="TestNet", e_s1=None, e_s2=None):
     a, b = asyncio.Queue(), asyncio.Queue()
     enrollee = FakeEnrollee(_QueueTransport(b, a), real_pin, psk, ssid)
+    if e_s1 is not None:
+        enrollee.e_s1 = e_s1
+    if e_s2 is not None:
+        enrollee.e_s2 = e_s2
     reg = WpsRegistrar(_QueueTransport(a, b), BSSID, STA, msg_timeout=1.0, eapol_start_timeout=1.0)
     task = asyncio.create_task(enrollee.run())
     try:
@@ -220,6 +225,20 @@ async def test_correct_first_half_wrong_second():
     out = await _run("12345670", "12349999")
     assert out.result is PinResult.SECOND_HALF_WRONG
     assert out.first_half_ok        # the M5 reply says 1234 is right
+
+
+async def test_m3_outcome_carries_pixie_bundle():
+    zero = b"\x00" * wc.SECRET_NONCE_LEN
+    out = await _run("12345670", "99995670", e_s1=zero, e_s2=zero)
+
+    assert out.result is PinResult.FIRST_HALF_WRONG
+    assert out.pixie is not None
+    assert out.pixie.pke
+    assert out.pixie.pkr
+    assert out.pixie.e_nonce
+    assert out.pixie.authkey
+    assert out.pixie.enrollee_mac == MAC_E
+    assert recover_pin(out.pixie, modes=(PixieMode.NULL_SECRET,)).pin == "12345670"
 
 
 async def test_psk_only_revealed_on_full_match():
