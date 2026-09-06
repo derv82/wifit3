@@ -217,18 +217,6 @@ def test_oui_vendor_rule_uses_canonical_vendor_name():
     assert avm is not None and avm.vendor == "AVM"
 
 
-def test_router_oui_table_uses_weak_oui_confidence():
-    from wifit3.campaigns.wps.wps_router_ouis import OUI_VENDOR
-
-    oui, vendor = next(iter(OUI_VENDOR.items()))
-    fp = AccessPoint(bssid=f"{oui[:2]}:{oui[2:4]}:{oui[4:6]}:01:02:03").router_fingerprint
-    assert fp is not None
-    assert any(e.source == "oui.router" and e.name == "vendor" for e in fp.evidence)
-    assert any(claim.name == "vendor" and claim.value.lower() == vendor and claim.confidence == 0.30
-               for claim in fp.claims)
-    assert any(claim.name == "kind" and claim.value == "router" and claim.confidence == 0.30
-               for claim in fp.claims)
-
 
 def test_tplink_oui_weakly_identifies_router_type():
     fp = AccessPoint(bssid="00:0a:eb:11:22:33").router_fingerprint

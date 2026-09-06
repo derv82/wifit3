@@ -5,7 +5,7 @@ import re
 from typing import Iterable, TYPE_CHECKING
 
 from wifit3.wlan.fingerprinting.router_types import RouterClaim, RouterEvidence, RouterRule
-from wifit3.wlan.fingerprinting.router_helpers import canonical_vendor, clean_text, hex_mac, vendor_for_mac
+from wifit3.wlan.fingerprinting.router_helpers import canonical_vendor, clean_text, vendor_for_mac
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
@@ -36,19 +36,6 @@ def oui_vendor_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     evidence = RouterEvidence("oui.vendor", "vendor", vendor, 0.30)
     return (RouterClaim("vendor", vendor, 0.30, (evidence,)),)
 
-
-def router_oui_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
-    from wifit3.campaigns.wps.wps_router_ouis import OUI_VENDOR
-
-    vendor = OUI_VENDOR.get(hex_mac(ap.bssid)[:6])
-    if vendor is None:
-        return ()
-    label = canonical_vendor(_VENDOR_ALIASES.get(vendor, vendor.title()))
-    evidence = RouterEvidence("oui.router", "vendor", label, 0.30)
-    return (
-        RouterClaim("vendor", label, 0.30, (evidence,)),
-        RouterClaim("kind", "router", 0.30, (evidence,)),
-    )
 
 
 def tplink_router_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
@@ -162,7 +149,6 @@ def apple_vendor_hotspot_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 
 IDENTIFY_RULES: tuple[RouterRule, ...] = (
     oui_vendor_rule,
-    router_oui_rule,
     tplink_router_rule,
     epson_printer_rule,
     epson_direct_ssid_printer_rule,
