@@ -6,7 +6,8 @@ from __future__ import annotations
 import re
 import sys
 
-from wifit3.wlan.fingerprint import _GENERIC_EMOJI, _RULES, VENDOR_BY_OUI
+from wifit3.wlan.fingerprinting.client import _GENERIC_EMOJI, _RULES
+from wifit3.wlan.fingerprinting.vendors import VENDOR_BY_OUI
 
 _SAMPLE = 15
 

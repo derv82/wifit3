@@ -8,7 +8,7 @@ from textual.widgets import Button, DataTable
 
 from wifit3.campaigns.router_probe import RouterProbeResult
 from wifit3.dot11.wsc.identity import WpsM1Identity
-from wifit3.wlan.router_fingerprint import RouterClaim, RouterEvidence
+from wifit3.wlan.fingerprinting.router import RouterClaim, RouterEvidence
 from wifit3.models import AccessPoint, PersistedCapture
 from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp

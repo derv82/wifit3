@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from wifit3.campaigns.router_probe import probe_router_info
 from wifit3.models import AccessPoint
-from wifit3.wlan.router_fingerprint import RouterClaim, RouterEvidence
+from wifit3.wlan.fingerprinting.router import RouterClaim, RouterEvidence
 
 
 @dataclass(frozen=True)

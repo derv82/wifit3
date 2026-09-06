@@ -1,11 +1,7 @@
 from wifit3.models import AccessPoint
-from wifit3.wlan.router_fingerprint import (
-    RouterClaim,
-    RouterEvidence,
-    canonical_vendor,
-    fingerprint_router,
-    passive_wps_model_rule,
-)
+from wifit3.wlan.fingerprinting.router import RouterClaim, RouterEvidence, fingerprint_router
+from wifit3.wlan.fingerprinting.router_helpers import canonical_vendor
+from wifit3.wlan.fingerprinting.router_rules import passive_wps_model_rule
 
 
 def test_oui_only_is_possible_vendor_not_exact_router():

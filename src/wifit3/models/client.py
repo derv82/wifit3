@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Dict, Optional, Set
 
-from wifit3.wlan.fingerprint import Fingerprint, fingerprint as _fingerprint
+from wifit3.wlan.fingerprinting.client import Fingerprint, fingerprint as _fingerprint
 
 
 @dataclass

@@ -8,7 +8,7 @@ from typing import Any, Optional, List, Literal, Dict, TYPE_CHECKING
 from .handshake import Handshake
 
 if TYPE_CHECKING:
-    from wifit3.wlan.router_fingerprint import RouterFingerprint
+    from wifit3.wlan.fingerprinting.router import RouterFingerprint
 
 
 @dataclass
@@ -114,7 +114,7 @@ class AccessPoint:
     @property
     def router_fingerprint(self) -> Optional["RouterFingerprint"]:
         """Confidence-scored AP/router identity from OUI and observed WPS identity fields."""
-        from wifit3.wlan.router_fingerprint import fingerprint_router
+        from wifit3.wlan.fingerprinting.router import fingerprint_router
         return fingerprint_router(self)
 
     @property
