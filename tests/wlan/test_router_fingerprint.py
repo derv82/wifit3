@@ -42,7 +42,7 @@ def test_passive_wps_manufacturer_and_model_make_stronger_router_fingerprint():
 
 def test_rules_are_pluggable_for_router_specific_checks():
     def mikrotik_tool_rule(ap):
-        evidence = RouterEvidence("mikrotik.winbox", "mac_server", "reachable", 0.92)
+        evidence = RouterEvidence("mikrotik.mac_winbox", "mac_server", "reachable", 0.92)
         return (
             RouterClaim("vendor", "MikroTik", 0.92, (evidence,)),
             RouterClaim("kind", "router", 0.92, (evidence,)),
@@ -56,11 +56,11 @@ def test_rules_are_pluggable_for_router_specific_checks():
     assert fp.model_confidence == 0.0
     assert fp.confidence == 0.92
     assert fp.label == "MikroTik router"
-    assert fp.evidence[0].source == "mikrotik.winbox"
+    assert fp.evidence[0].source == "mikrotik.mac_winbox"
 
 
 def test_active_probe_claims_are_part_of_router_fingerprint():
-    evidence = RouterEvidence("mikrotik.winbox", "reachable", "true", 0.99, passive=False)
+    evidence = RouterEvidence("mikrotik.mac_winbox", "reachable", "true", 0.99, passive=False)
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
         router_claims=(
@@ -173,6 +173,7 @@ def test_vendor_names_are_canonicalized():
     assert canonical_vendor("AMV Audio") == "AMV"
     assert canonical_vendor("Kaon Group") == "Kaon"
     assert canonical_vendor("Kaon") == "Kaon"
+    assert canonical_vendor("Seiko Epson") == "Epson"
     assert canonical_vendor("Apple, Inc.") == "Apple"
 
 
@@ -240,6 +241,31 @@ def test_ubiquiti_oui_weakly_identifies_router_type():
     assert fp.label == "Possible Ubiquiti router"
     assert any(e.source == "oui.ubiquiti" and e.name == "kind" and e.value == "router"
                for e in fp.evidence)
+
+
+def test_epson_oui_identifies_likely_printer_type():
+    fp = AccessPoint(bssid="00:00:48:11:22:33").router_fingerprint
+    assert fp is not None
+    assert fp.vendor == "Epson"
+    assert round(fp.vendor_confidence, 2) == 0.30
+    assert fp.kind == "printer"
+    assert round(fp.kind_confidence, 2) == 0.90
+    assert fp.model is None
+    assert fp.label == "Possible Epson printer"
+    assert any(e.source == "oui.epson" and e.name == "kind" and e.value == "printer"
+               for e in fp.evidence)
+
+
+def test_epson_direct_ssid_identifies_likely_printer():
+    fp = AccessPoint(bssid="02:00:00:00:00:01", ssid="DIRECT-AB-EPSON-XP-4100").router_fingerprint
+    assert fp is not None
+    assert fp.vendor == "Epson"
+    assert round(fp.vendor_confidence, 2) == 0.30
+    assert fp.kind == "printer"
+    assert round(fp.kind_confidence, 2) == 0.30
+    assert fp.label == "Possible Epson printer"
+    assert any(e.source == "ssid.epson_direct" and e.name == "ssid"
+               and e.value == "DIRECT-AB-EPSON-XP-4100" for e in fp.evidence)
 
 
 def test_wps_manufacturer_uses_canonical_vendor_name():

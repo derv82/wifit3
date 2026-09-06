@@ -19,6 +19,7 @@ _WINBOX_DISCOVERY = b"M2"
 @dataclass(frozen=True)
 class MikrotikProbeResult:
     ok: bool
+    source: str = ""
     claims: tuple[RouterClaim, ...] = ()
     detail: str = ""
 
@@ -52,23 +53,27 @@ def build_mikrotik_discovery_frames(bssid: bytes, our_mac: bytes) -> tuple[bytes
     )
 
 
-def is_mikrotik_plaintext_frame(frame: bytes) -> bool:
+def _mikrotik_ports_in_frame(frame: bytes) -> frozenset[int]:
     if len(frame) < 24 + len(_LLC_SNAP_IPV4) + 28:
-        return False
+        return frozenset()
     fc0, fc1 = frame[0], frame[1]
     if ((fc0 >> 2) & 0x03) != 2 or fc1 & 0x40:
-        return False
+        return frozenset()
     body = frame[24:]
     if not body.startswith(_LLC_SNAP_IPV4):
-        return False
+        return frozenset()
     ip = body[len(_LLC_SNAP_IPV4):]
     if len(ip) < 28 or ip[0] >> 4 != 4 or ip[9] != 17:
-        return False
+        return frozenset()
     ihl = (ip[0] & 0x0F) * 4
     if len(ip) < ihl + 8:
-        return False
+        return frozenset()
     src_port, dst_port = struct.unpack(">HH", ip[ihl:ihl + 4])
-    return src_port in _MIKROTIK_PORTS or dst_port in _MIKROTIK_PORTS
+    return frozenset(port for port in (src_port, dst_port) if port in _MIKROTIK_PORTS)
+
+
+def is_mikrotik_plaintext_frame(frame: bytes) -> bool:
+    return bool(_mikrotik_ports_in_frame(frame))
 
 
 def is_mikrotik_response(frame: bytes) -> bool:
@@ -78,12 +83,21 @@ def is_mikrotik_response(frame: bytes) -> bool:
     return bool(fc1 & 0x02) and not (fc1 & 0x01) and is_mikrotik_plaintext_frame(frame)
 
 
-def mikrotik_claims(source: str, *, passive: bool) -> tuple[RouterClaim, ...]:
-    evidence = RouterEvidence(source, "reachable", "true", 0.99, passive=passive)
+def mikrotik_claims(source: str, *, passive: bool, confidence: float = 0.99) -> tuple[RouterClaim, ...]:
+    evidence = RouterEvidence(source, "reachable", "true", confidence, passive=passive)
     return (
-        RouterClaim("vendor", "MikroTik", 0.99, (evidence,)),
-        RouterClaim("kind", "router", 0.99, (evidence,)),
+        RouterClaim("vendor", "MikroTik", confidence, (evidence,)),
+        RouterClaim("kind", "router", confidence, (evidence,)),
     )
+
+
+def mikrotik_claims_from_frame(frame: bytes, *, passive: bool) -> tuple[RouterClaim, ...]:
+    ports = _mikrotik_ports_in_frame(frame)
+    if 20561 in ports:
+        return mikrotik_claims("mikrotik.mac_winbox", passive=passive, confidence=0.99)
+    if 5678 in ports:
+        return mikrotik_claims("mikrotik.neighbor", passive=passive, confidence=0.70)
+    return ()
 
 
 async def probe_mikrotik(array, ap, iface=None, timeout: float = 2.0) -> MikrotikProbeResult:
@@ -112,8 +126,8 @@ async def probe_mikrotik(array, ap, iface=None, timeout: float = 2.0) -> Mikroti
             while asyncio.get_running_loop().time() < deadline:
                 frame = await transport.recv(0.25)
                 if frame is not None and is_mikrotik_response(frame):
-                    return MikrotikProbeResult(
-                        True, claims=mikrotik_claims("mikrotik.winbox", passive=False))
+                    claims = mikrotik_claims_from_frame(frame, passive=False)
+                    return MikrotikProbeResult(True, source=claims[0].evidence[0].source, claims=claims)
         finally:
             transport.stop()
             assoc.stop()

@@ -132,7 +132,7 @@ def test_wps_m1_identity_fields_are_applied_by_sink():
 def test_plaintext_mikrotik_frame_passively_identifies_ap():
     s = WlanSink()
     s.update(_beacon(), W0)
-    frame = build_mikrotik_discovery_frames(str_to_mac(BSSID), str_to_mac("02:00:00:00:00:01"))[0]
+    frame = build_mikrotik_discovery_frames(str_to_mac(BSSID), str_to_mac("02:00:00:00:00:01"))[1]
     s.update(pkt({
         "type": "data", "to_ds": True, "from_ds": False, "bssid": BSSID,
         "source": "02:00:00:00:00:01", "dest": "ff:ff:ff:ff:ff:ff", "rssi": -45,
@@ -142,7 +142,7 @@ def test_plaintext_mikrotik_frame_passively_identifies_ap():
     assert fp.vendor == "MikroTik"
     assert fp.vendor_confidence == 0.99
     assert fp.kind == "router"
-    assert fp.evidence[0].source == "mikrotik.passive"
+    assert fp.evidence[0].source == "mikrotik.mac_winbox"
     assert fp.evidence[0].passive is True
 
 

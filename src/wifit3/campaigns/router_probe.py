@@ -30,7 +30,7 @@ async def probe_router_info(array, ap: AccessPoint, iface=None) -> RouterProbeRe
 
     result = await probe_mikrotik(array, ap, iface=iface)
     if result.ok:
-        return RouterProbeResult(ok=True, source="mikrotik.winbox", claims=result.claims)
+        return RouterProbeResult(ok=True, source=result.source, claims=result.claims)
     failures.append(f"MikroTik WinBox: {result.detail}")
 
     result = await probe_ubnt(array, ap, iface=iface)

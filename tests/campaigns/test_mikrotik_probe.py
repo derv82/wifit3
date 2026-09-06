@@ -2,6 +2,7 @@ import struct
 
 from wifit3.campaigns.mikrotik_probe import (
     build_mikrotik_discovery_frames, is_mikrotik_plaintext_frame, is_mikrotik_response,
+    mikrotik_claims_from_frame,
 )
 from wifit3.dot11.mac import str_to_mac
 
@@ -44,3 +45,14 @@ def test_mikrotik_plaintext_frame_can_match_tods_or_fromds():
     assert is_mikrotik_plaintext_frame(fromds)
     assert is_mikrotik_plaintext_frame(tods)
     assert not is_mikrotik_plaintext_frame(protected)
+
+
+def test_mikrotik_claims_split_mac_winbox_from_neighbor_discovery():
+    bssid = str_to_mac("aa:bb:cc:dd:ee:ff")
+    our_mac = str_to_mac("02:00:00:00:00:01")
+    winbox = mikrotik_claims_from_frame(_fromds_frame(bssid, our_mac, _udp_ipv4(20561, 49000)), passive=True)
+    neighbor = mikrotik_claims_from_frame(_fromds_frame(bssid, our_mac, _udp_ipv4(5678, 49000)), passive=True)
+    assert winbox[0].evidence[0].source == "mikrotik.mac_winbox"
+    assert winbox[0].confidence == 0.99
+    assert neighbor[0].evidence[0].source == "mikrotik.neighbor"
+    assert neighbor[0].confidence == 0.70

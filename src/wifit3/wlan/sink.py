@@ -13,7 +13,7 @@ import threading
 import time
 from typing import Dict, List, Optional, Set
 
-from wifit3.campaigns.mikrotik_probe import is_mikrotik_plaintext_frame, mikrotik_claims
+from wifit3.campaigns.mikrotik_probe import is_mikrotik_plaintext_frame, mikrotik_claims_from_frame
 from wifit3.campaigns.ubiquiti_probe import is_ubnt_plaintext_frame, ubnt_claims
 from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
 from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage
@@ -282,9 +282,9 @@ class WlanSink:
         ap = self.access_points.get(pkt.bssid)
         if ap is None:
             return False
-        claims = mikrotik_claims("mikrotik.passive", passive=True)
+        claims = mikrotik_claims_from_frame(pkt.raw, passive=True)
         ap.router_claims = tuple(dict.fromkeys((*ap.router_claims, *claims)))
-        return True
+        return bool(claims)
 
     def _on_ubnt_frame(self, pkt: Packet) -> bool:
         if pkt.type != "data" or not is_ubnt_plaintext_frame(pkt.raw):

@@ -60,6 +60,7 @@ _CANONICAL_VENDOR_PATTERNS = (
     (re.compile(r"\bavm\b|audiovisuelles marketing", re.I), "AVM"),
     (re.compile(r"\bamv\b|amv audio", re.I), "AMV"),
     (re.compile(r"\bkaon\b", re.I), "Kaon"),
+    (re.compile(r"\bepson\b", re.I), "Epson"),
     (re.compile(r"\bapple\b", re.I), "Apple"),
 )
 
@@ -148,6 +149,25 @@ def ubiquiti_router_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
         return ()
     evidence = RouterEvidence("oui.ubiquiti", "kind", "router", 0.30)
     return (RouterClaim("kind", "router", 0.30, (evidence,)),)
+
+
+def epson_printer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+    vendor = _vendor_for(ap.bssid)
+    if vendor != "Epson":
+        return ()
+    evidence = RouterEvidence("oui.epson", "kind", "printer", 0.90)
+    return (RouterClaim("kind", "printer", 0.90, (evidence,)),)
+
+
+def epson_direct_ssid_printer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+    ssid = _text(getattr(ap, "ssid", None))
+    if not ssid or not re.search(r"^direct-.+-epson\b", ssid, re.I):
+        return ()
+    evidence = RouterEvidence("ssid.epson_direct", "ssid", ssid, 0.30)
+    return (
+        RouterClaim("vendor", "Epson", 0.30, (evidence,)),
+        RouterClaim("kind", "printer", 0.30, (evidence,)),
+    )
 
 
 def passive_wps_identity_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
@@ -240,6 +260,8 @@ IDENTIFY_RULES: tuple[RouterRule, ...] = (
     router_oui_rule,
     tplink_router_rule,
     ubiquiti_router_rule,
+    epson_printer_rule,
+    epson_direct_ssid_printer_rule,
     passive_wps_identity_rule,
     # brand rules are only used for identification, not distinction
     o2_smartbox_brand_rule, # added czech isp's i know of / found
