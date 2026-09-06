@@ -362,7 +362,7 @@ def test_ssid_chips_zero_one_two(monkeypatch):
 
 def test_ssid_cell_clips_wide_ssid_to_cap(monkeypatch):
     """SSID width must be measured in display cells, not chars: a wide (2-cell)
-    SSID over the cap gets clipped, and its trailing chip survives the clip."""
+    SSID over the cap gets clipped, and its leading chip survives the clip."""
     scanner = ScannerView()
     scanner._theme_fg = "white"
     ap = AccessPoint(bssid="aa:bb:cc:00:00:41", ssid="ネ" * 40, channel=1)  # 80 cells
@@ -370,5 +370,6 @@ def test_ssid_cell_clips_wide_ssid_to_cap(monkeypatch):
 
     cell = scanner._ssid_cell(ap)
     assert cell.cell_len <= ScannerView._SSID_CELL_MAX
-    assert cell.plain.endswith("✗S")
+    assert cell.plain.startswith("✗S")
     assert "…" in cell.plain
+    assert cell.justify == "right"
