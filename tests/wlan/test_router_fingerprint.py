@@ -264,8 +264,26 @@ def test_epson_direct_ssid_identifies_likely_printer():
     assert fp.kind == "printer"
     assert round(fp.kind_confidence, 2) == 0.30
     assert fp.label == "Possible Epson printer"
-    assert any(e.source == "ssid.epson_direct" and e.name == "ssid"
+    assert any(e.source == "ssid.epson" and e.name == "ssid"
                and e.value == "DIRECT-AB-EPSON-XP-4100" for e in fp.evidence)
+
+
+def test_wps_m1_fields_use_m1_evidence_source():
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        wps_manufacturer="RalinkAPS",
+        wps_model_name="Generic AP",
+        wps_m1_manufacturer="Netgear",
+        wps_m1_model_name="RAX10",
+    )
+    fp = ap.router_fingerprint
+    assert fp is not None
+    assert fp.vendor == "Netgear"
+    assert fp.model == "RAX10"
+    assert any(e.source == "wps.m1" and e.name == "manufacturer" and e.value == "Netgear"
+               for e in fp.evidence)
+    assert any(e.source == "wps.m1" and e.name == "model" and e.value == "RAX10"
+               for e in fp.evidence)
 
 
 def test_wps_manufacturer_uses_canonical_vendor_name():

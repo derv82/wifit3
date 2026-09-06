@@ -42,8 +42,8 @@ async def probe_router_info(array, ap: AccessPoint, iface=None) -> RouterProbeRe
 
 def _ap_wps_identity(ap: AccessPoint) -> WpsM1Identity:
     return WpsM1Identity(
-        manufacturer=ap.wps_manufacturer,
-        model_name=ap.wps_model_name,
-        model_number=ap.wps_model_number,
-        device_name=ap.wps_device_name,
+        manufacturer=ap.wps_m1_manufacturer or ap.wps_manufacturer,
+        model_name=ap.wps_m1_model_name or ap.wps_model_name,
+        model_number=ap.wps_m1_model_number or ap.wps_model_number,
+        device_name=ap.wps_m1_device_name or ap.wps_device_name,
     )

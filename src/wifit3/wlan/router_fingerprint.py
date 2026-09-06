@@ -163,7 +163,7 @@ def epson_direct_ssid_printer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     ssid = _text(getattr(ap, "ssid", None))
     if not ssid or not re.search(r"^direct-.+-epson\b", ssid, re.I):
         return ()
-    evidence = RouterEvidence("ssid.epson_direct", "ssid", ssid, 0.30)
+    evidence = RouterEvidence("ssid.epson", "ssid", ssid, 0.30)
     return (
         RouterClaim("vendor", "Epson", 0.30, (evidence,)),
         RouterClaim("kind", "printer", 0.30, (evidence,)),
@@ -171,10 +171,11 @@ def epson_direct_ssid_printer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 
 
 def passive_wps_identity_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
-    manufacturer = canonical_vendor(_text(getattr(ap, "wps_manufacturer", None)))
+    manufacturer, source = _wps_value_source(ap, "manufacturer")
+    manufacturer = canonical_vendor(manufacturer)
     if manufacturer is None:
         return ()
-    evidence = RouterEvidence("wps.passive", "manufacturer", manufacturer, 0.99)
+    evidence = RouterEvidence(source, "manufacturer", manufacturer, 0.99)
     return (
         RouterClaim("vendor", manufacturer, 0.99, (evidence,)),
         RouterClaim("kind", "router", 0.99, (evidence,)),
@@ -183,15 +184,24 @@ def passive_wps_identity_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 
 def passive_wps_model_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     claims: list[RouterClaim] = []
-    model = _text(getattr(ap, "wps_model_name", None)) or _text(getattr(ap, "wps_model_number", None))
-    device_name = _text(getattr(ap, "wps_device_name", None))
+    model, model_source = _wps_value_source(ap, "model_name")
+    if model is None:
+        model, model_source = _wps_value_source(ap, "model_number")
+    device_name, device_source = _wps_value_source(ap, "device_name")
     if model is not None:
-        evidence = RouterEvidence("wps.passive", "model", model, 0.99)
+        evidence = RouterEvidence(model_source, "model", model, 0.99)
         claims.append(RouterClaim("model", model, 0.99, (evidence,)))
     if device_name is not None:
-        evidence = RouterEvidence("wps.passive", "device_name", device_name, 0.99)
+        evidence = RouterEvidence(device_source, "device_name", device_name, 0.99)
         claims.append(RouterClaim("device_name", device_name, 0.99, (evidence,)))
     return claims
+
+
+def _wps_value_source(ap: "AccessPoint", name: str) -> tuple[str | None, str]:
+    m1_value = _text(getattr(ap, f"wps_m1_{name}", None))
+    if m1_value is not None:
+        return m1_value, "wps.m1"
+    return _text(getattr(ap, f"wps_{name}", None)), "wps.passive"
 
 
 def o2_smartbox_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:

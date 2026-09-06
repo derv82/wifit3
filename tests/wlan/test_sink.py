@@ -121,12 +121,17 @@ def test_wps_m1_identity_fields_are_applied_by_sink():
     }), W0)
     ap = s.access_points[BSSID]
     assert ap.wps is True
+    assert ap.wps_m1_manufacturer == "TP-Link"
+    assert ap.wps_m1_model_name == "Archer AX10"
+    assert ap.wps_m1_model_number == "AX10"
+    assert ap.wps_m1_device_name == "Office AP"
     assert ap.wps_manufacturer == "TP-Link"
     assert ap.wps_model_name == "Archer AX10"
     assert ap.wps_model_number == "AX10"
     assert ap.wps_device_name == "Office AP"
     assert ap.router_fingerprint.vendor == "TP-Link"
     assert ap.router_fingerprint.model == "Archer AX10"
+    assert any(e.source == "wps.m1" for e in ap.router_fingerprint.evidence)
 
 
 def test_plaintext_mikrotik_frame_passively_identifies_ap():

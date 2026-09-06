@@ -400,6 +400,10 @@ class WlanSink:
         if not identity.present:
             return False
         ap.wps = True
+        ap.wps_m1_manufacturer = identity.manufacturer or ap.wps_m1_manufacturer
+        ap.wps_m1_model_name = identity.model_name or ap.wps_m1_model_name
+        ap.wps_m1_model_number = identity.model_number or ap.wps_m1_model_number
+        ap.wps_m1_device_name = identity.device_name or ap.wps_m1_device_name
         ap.wps_manufacturer = identity.manufacturer or ap.wps_manufacturer
         ap.wps_model_name = identity.model_name or ap.wps_model_name
         ap.wps_model_number = identity.model_number or ap.wps_model_number
