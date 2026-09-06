@@ -20,6 +20,14 @@ _VENDOR_ALIASES = {
     "upvel": "Upvel",
 }
 
+# Rules for rules:
+# - Rules should never pass 100% as there is always a chance of misidentification.
+# - SSID rules should be 30% as they can be changed by the user.
+# - OUI rules should be 30% as they depend on MAC address that can be randomized
+# - WPS rules should be 99% as the information is provided by the AP itself.
+# - Brand rules should depend on how reliable the information is, for example,
+#   if the brand is in the SSID it should be 30% as it can be changed by the user,
+#   if the brand is in the WPS information it should be 99% as it is provided by the router itself.
 
 def oui_vendor_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     vendor = vendor_for_mac(ap.bssid)
@@ -36,10 +44,10 @@ def router_oui_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     if vendor is None:
         return ()
     label = canonical_vendor(_VENDOR_ALIASES.get(vendor, vendor.title()))
-    evidence = RouterEvidence("oui.router", "vendor", label, 0.45)
+    evidence = RouterEvidence("oui.router", "vendor", label, 0.30)
     return (
-        RouterClaim("vendor", label, 0.45, (evidence,)),
-        RouterClaim("kind", "router", 0.45, (evidence,)),
+        RouterClaim("vendor", label, 0.30, (evidence,)),
+        RouterClaim("kind", "router", 0.30, (evidence,)),
     )
 
 
@@ -50,13 +58,6 @@ def tplink_router_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     evidence = RouterEvidence("oui.tplink", "kind", "router", 0.30)
     return (RouterClaim("kind", "router", 0.30, (evidence,)),)
 
-
-def ubiquiti_router_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
-    vendor = vendor_for_mac(ap.bssid)
-    if vendor != "Ubiquiti":
-        return ()
-    evidence = RouterEvidence("oui.ubiquiti", "kind", "router", 0.30)
-    return (RouterClaim("kind", "router", 0.30, (evidence,)),)
 
 
 def epson_printer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
@@ -78,19 +79,16 @@ def epson_direct_ssid_printer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     )
 
 
-def passive_wps_identity_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+def wps_manufacturer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     manufacturer, source = _wps_value_source(ap, "manufacturer")
     manufacturer = canonical_vendor(manufacturer)
     if manufacturer is None:
         return ()
     evidence = RouterEvidence(source, "manufacturer", manufacturer, 0.99)
-    return (
-        RouterClaim("vendor", manufacturer, 0.99, (evidence,)),
-        RouterClaim("kind", "router", 0.99, (evidence,)),
-    )
+    return (RouterClaim("vendor", manufacturer, 0.99, (evidence,)),)
 
 
-def passive_wps_model_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+def wps_model_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     claims: list[RouterClaim] = []
     model, model_source = _wps_value_source(ap, "model_name")
     if model is None:
@@ -113,49 +111,36 @@ def _wps_value_source(ap: "AccessPoint", name: str) -> tuple[str | None, str]:
 
 
 def o2_smartbox_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
-    values = (
-        clean_text(getattr(ap, "ssid", None)),
-        clean_text(getattr(ap, "wps_model_name", None)),
-        clean_text(getattr(ap, "wps_model_number", None)),
-        clean_text(getattr(ap, "wps_device_name", None)),
-    )
-    matched = next((value for value in values if value and "o2smartbox" in value.lower()), None)
-    if matched is None:
+    model, source = _wps_value_source(ap, "model_name")
+    if model is None:
+        model, source = _wps_value_source(ap, "model_number")
+    if not model or "o2smartbox" not in model.lower():
         return ()
-    evidence = RouterEvidence("brand.o2_smartbox", "identity", matched, 0.95)
+    evidence = RouterEvidence(source, "model", model, 0.99)
     return (
-        RouterClaim("brand", "O2", 0.95, (evidence,)),
-        RouterClaim("kind", "router", 0.95, (evidence,)),
+        RouterClaim("brand", "O2", 0.99, (evidence,)),
+        RouterClaim("kind", "router", 0.99, (evidence,)),
     )
 
 
-def vodafone_ssid_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
-    manufacturer = clean_text(getattr(ap, "wps_manufacturer", None))
+def vodafone_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+    manufacturer, manufacturer_source = _wps_value_source(ap, "manufacturer")
     ssid = clean_text(getattr(ap, "ssid", None))
     if not ssid or "vodafone" not in ssid.lower():
         return ()
+    ssid_evidence = RouterEvidence("ssid.vodafone", "ssid", ssid, 0.30)
     if manufacturer and "celeno" in manufacturer.lower():
-        return ()
-    evidence = RouterEvidence("brand.vodafone_ssid", "ssid", ssid, 0.30)
-    return (RouterClaim("brand", "Vodafone", 0.30, (evidence,)),)
-
-
-def celeno_vodafone_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
-    manufacturer = clean_text(getattr(ap, "wps_manufacturer", None))
-    ssid = clean_text(getattr(ap, "ssid", None))
-    if not manufacturer or not ssid:
-        return ()
-    if "celeno" not in manufacturer.lower() or "vodafone" not in ssid.lower():
-        return ()
-    evidence = RouterEvidence("brand.vodafone", "ssid", ssid, 0.70)
-    return (RouterClaim("brand", "Vodafone", 0.70, (evidence,)),)
+        manufacturer_evidence = RouterEvidence(manufacturer_source, "manufacturer", manufacturer, 0.70)
+        # TODO: find a reliable physical-device check for Celeno CL2400 Vodafone routers/extenders.
+        return (RouterClaim("brand", "Vodafone", 0.70, (ssid_evidence, manufacturer_evidence)),)
+    return (RouterClaim("brand", "Vodafone", 0.30, (ssid_evidence,)),)
 
 
 def apple_ssid_hotspot_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     ssid = clean_text(getattr(ap, "ssid", None))
     if not ssid or not re.search(r"\b(?:iphone|ipad)\b", ssid, re.I):
         return ()
-    evidence = RouterEvidence("brand.apple_ssid", "ssid", ssid, 0.40)
+    evidence = RouterEvidence("ssid.apple", "ssid", ssid, 0.40)
     return (
         RouterClaim("brand", "Apple", 0.40, (evidence,)),
         RouterClaim("kind", "hotspot", 0.40, (evidence,)),
@@ -163,10 +148,12 @@ def apple_ssid_hotspot_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 
 
 def apple_vendor_hotspot_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
-    vendor = canonical_vendor(clean_text(getattr(ap, "wps_manufacturer", None))) or vendor_for_mac(ap.bssid)
+    manufacturer, source = _wps_value_source(ap, "manufacturer")
+    vendor = canonical_vendor(manufacturer) or vendor_for_mac(ap.bssid)
     if vendor != "Apple":
         return ()
-    evidence = RouterEvidence("vendor.apple", "vendor", vendor, 0.85)
+    # TODO: split Apple OUI and WPS manufacturer confidence once this rule has real-world captures.
+    evidence = RouterEvidence(source if manufacturer else "vendor.apple", "vendor", vendor, 0.85)
     return (
         RouterClaim("brand", "Apple", 0.85, (evidence,)),
         RouterClaim("kind", "hotspot", 0.85, (evidence,)),
@@ -177,20 +164,16 @@ IDENTIFY_RULES: tuple[RouterRule, ...] = (
     oui_vendor_rule,
     router_oui_rule,
     tplink_router_rule,
-    ubiquiti_router_rule,
     epson_printer_rule,
     epson_direct_ssid_printer_rule,
-    passive_wps_identity_rule,
+    wps_manufacturer_rule,
     # brand rules are only used for identification, not distinction
-    o2_smartbox_brand_rule, # added czech isp's i know of / found
-    vodafone_ssid_brand_rule,
-    celeno_vodafone_brand_rule,
+    o2_smartbox_brand_rule,  # added czech isp's i know of / found
+    vodafone_brand_rule,
     apple_ssid_hotspot_rule,
     apple_vendor_hotspot_rule,
 )
 DISTINGUISH_RULES: tuple[RouterRule, ...] = (
-    passive_wps_model_rule,
+    wps_model_rule,
 )
 ROUTER_RULES: tuple[RouterRule, ...] = IDENTIFY_RULES + DISTINGUISH_RULES
-
-

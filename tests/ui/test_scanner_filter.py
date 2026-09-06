@@ -163,7 +163,7 @@ def test_scanner_router_fingerprint_cells_show_confidence():
     brand = scanner._router_brand_cell(ap)
     kind = scanner._router_kind_cell(ap)
     assert brand.plain == "MikroTik 99%"
-    assert kind.plain == "Router 99%"
+    assert kind.plain == ""
 
 
 def test_scanner_router_type_cell_blank_without_type_confidence():
@@ -190,14 +190,14 @@ def test_scanner_brand_cell_prefers_brand_over_hardware_vendor():
     scanner._theme_fg = "white"
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
-        ssid="O2SMARTBOX-123456",
         wps_manufacturer="Kaon Group",
+        wps_model_name="O2SMARTBOX",
     )
     fp = ap.router_fingerprint
     assert fp is not None
     assert fp.brand == "O2"
     assert fp.vendor == "Kaon"
-    assert scanner._router_brand_cell(ap).plain == "O2 95%"
+    assert scanner._router_brand_cell(ap).plain == "O2 99%"
 
 
 def test_scanner_brand_cell_shows_vodafone_ssid_clue():
@@ -296,7 +296,7 @@ async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
     assert fp is not None
     assert fp.vendor == "TP-Link"
     assert fp.model == "Archer AX10"
-    assert fp.kind == "router"
+    assert fp.kind is None
 
 
 @pytest.mark.asyncio

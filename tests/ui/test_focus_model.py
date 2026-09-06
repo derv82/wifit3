@@ -233,7 +233,7 @@ def test_router_identity_details_shows_per_field_confidence():
     details = fm.router_identity_details(ap)
     assert details is not None
     assert "[dim]Vendor:[/dim] MikroTik (99%)" in details
-    assert "[dim]Type:[/dim] router (99%)" in details
+    assert "[dim]Type:[/dim]" not in details
     assert "[dim]wps.passive:[/dim] manufacturer=MikroTik (99%)" in details
 
 

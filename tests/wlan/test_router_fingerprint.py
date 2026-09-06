@@ -1,7 +1,7 @@
 from wifit3.models import AccessPoint
 from wifit3.wlan.fingerprinting.router import RouterClaim, RouterEvidence, fingerprint_router
 from wifit3.wlan.fingerprinting.router_helpers import canonical_vendor
-from wifit3.wlan.fingerprinting.router_rules import passive_wps_model_rule
+from wifit3.wlan.fingerprinting.router_rules import wps_model_rule
 
 
 def test_oui_only_is_possible_vendor_not_exact_router():
@@ -30,9 +30,10 @@ def test_passive_wps_manufacturer_and_model_make_stronger_router_fingerprint():
     assert fp.model == "hAP ac²"
     assert fp.vendor_confidence == 0.99
     assert fp.model_confidence == 0.99
-    assert fp.kind_confidence == 0.99
+    assert fp.kind is None
+    assert fp.kind_confidence == 0.0
     assert fp.confidence == 0.99
-    assert fp.label == "MikroTik hAP ac² router"
+    assert fp.label == "MikroTik hAP ac²"
     assert {e.name for e in fp.evidence} >= {"manufacturer", "model", "device_name"}
 
 
@@ -78,23 +79,22 @@ def test_o2_smartbox_pattern_sets_brand_without_replacing_vendor():
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
         wps_manufacturer="Kaon Group",
-        wps_device_name="O2SMARTBOX",
+        wps_model_name="O2SMARTBOX",
     )
     fp = ap.router_fingerprint
     assert fp is not None
     assert fp.brand == "O2"
-    assert fp.brand_confidence == 0.95
+    assert fp.brand_confidence == 0.99
     assert fp.vendor == "Kaon"
     assert fp.vendor_confidence == 0.99
-    assert fp.label == "O2 router"
+    assert fp.label == "O2 O2SMARTBOX router"
+    assert any(e.source == "wps.passive" and e.name == "model" and e.value == "O2SMARTBOX"
+               for e in fp.evidence)
 
 
-def test_o2_smartbox_ssid_pattern_sets_brand():
+def test_o2_smartbox_ssid_pattern_does_not_set_brand():
     fp = AccessPoint(bssid="02:00:00:00:00:01", ssid="O2SMARTBOX-123456").router_fingerprint
-    assert fp is not None
-    assert fp.brand == "O2"
-    assert fp.vendor is None
-    assert fp.label == "O2 router"
+    assert fp is None
 
 
 def test_vodafone_ssid_clue_is_weak_because_ssids_are_renamable():
@@ -105,6 +105,8 @@ def test_vodafone_ssid_clue_is_weak_because_ssids_are_renamable():
     assert fp.vendor is None
     assert fp.kind is None
     assert fp.label == "Possible Vodafone"
+    assert any(e.source == "ssid.vodafone" and e.name == "ssid" and e.value == "Vodafone-123456"
+               for e in fp.evidence)
 
 
 def test_celeno_manufacturer_with_vodafone_ssid_sets_brand():
@@ -118,10 +120,10 @@ def test_celeno_manufacturer_with_vodafone_ssid_sets_brand():
     assert fp.brand_confidence == 0.70
     assert fp.vendor == "Celeno"
     assert fp.vendor_confidence == 0.99
-    assert fp.kind == "router"
-    assert fp.kind_confidence == 0.99
-    assert fp.label == "Possible Vodafone router"
-    assert any(e.source == "brand.vodafone" and e.name == "ssid" and e.value == "Vodafone-123456"
+    assert fp.kind is None
+    assert fp.kind_confidence == 0.0
+    assert fp.label == "Possible Vodafone"
+    assert any(e.source == "ssid.vodafone" and e.name == "ssid" and e.value == "Vodafone-123456"
                for e in fp.evidence)
 
 
@@ -182,6 +184,8 @@ def test_apple_ssid_clue_is_weak_because_ssids_are_renamable():
     assert fp.kind_confidence == 0.40
     assert fp.vendor is None
     assert fp.label == "Possible Apple hotspot"
+    assert any(e.source == "ssid.apple" and e.name == "ssid" and e.value == "Alice’s iPhone"
+               for e in fp.evidence)
 
 
 def test_apple_oui_identifies_likely_hotspot():
@@ -213,6 +217,19 @@ def test_oui_vendor_rule_uses_canonical_vendor_name():
     assert avm is not None and avm.vendor == "AVM"
 
 
+def test_router_oui_table_uses_weak_oui_confidence():
+    from wifit3.campaigns.wps.wps_router_ouis import OUI_VENDOR
+
+    oui, vendor = next(iter(OUI_VENDOR.items()))
+    fp = AccessPoint(bssid=f"{oui[:2]}:{oui[2:4]}:{oui[4:6]}:01:02:03").router_fingerprint
+    assert fp is not None
+    assert any(e.source == "oui.router" and e.name == "vendor" for e in fp.evidence)
+    assert any(claim.name == "vendor" and claim.value.lower() == vendor and claim.confidence == 0.30
+               for claim in fp.claims)
+    assert any(claim.name == "kind" and claim.value == "router" and claim.confidence == 0.30
+               for claim in fp.claims)
+
+
 def test_tplink_oui_weakly_identifies_router_type():
     fp = AccessPoint(bssid="00:0a:eb:11:22:33").router_fingerprint
     assert fp is not None
@@ -226,17 +243,15 @@ def test_tplink_oui_weakly_identifies_router_type():
                for e in fp.evidence)
 
 
-def test_ubiquiti_oui_weakly_identifies_router_type():
+def test_ubiquiti_oui_only_identifies_vendor():
     fp = AccessPoint(bssid="00:15:6d:11:22:33").router_fingerprint
     assert fp is not None
     assert fp.vendor == "Ubiquiti"
     assert round(fp.vendor_confidence, 2) == 0.30
-    assert fp.kind == "router"
-    assert round(fp.kind_confidence, 2) == 0.30
+    assert fp.kind is None
+    assert fp.kind_confidence == 0.0
     assert fp.model is None
-    assert fp.label == "Possible Ubiquiti router"
-    assert any(e.source == "oui.ubiquiti" and e.name == "kind" and e.value == "router"
-               for e in fp.evidence)
+    assert fp.label == "Possible Ubiquiti"
 
 
 def test_epson_oui_identifies_likely_printer_type():
@@ -289,7 +304,7 @@ def test_wps_manufacturer_uses_canonical_vendor_name():
     ).router_fingerprint
     assert fp is not None
     assert fp.vendor == "TP-Link"
-    assert fp.label == "TP-Link router"
+    assert fp.label == "TP-Link"
 
 
 def test_specific_model_claim_can_imply_vendor():
@@ -322,6 +337,6 @@ def test_identify_and_distinguish_rules_can_run_separately():
 
 def test_wps_model_number_is_model_fallback():
     ap = AccessPoint(bssid="02:00:00:00:00:01", wps_manufacturer="Acme", wps_model_number="R9000")
-    claims = list(passive_wps_model_rule(ap))
+    claims = list(wps_model_rule(ap))
     model_claim = next(claim for claim in claims if claim.name == "model")
     assert model_claim.value == "R9000"
