@@ -228,16 +228,16 @@ def test_router_identity_markup_prefers_confident_model():
     assert "99%" in fm.router_identity_markup(ap)
 
 
-def test_router_identity_tooltip_shows_per_field_confidence():
+def test_router_identity_details_shows_per_field_confidence():
     ap = AccessPoint(bssid="02:00:00:00:00:01", wps_manufacturer="MikroTik")
-    tip = fm.router_identity_tooltip(ap)
-    assert tip is not None
-    assert "Vendor: MikroTik (99%)" in tip
-    assert "Type: router (99%)" in tip
-    assert "wps.passive: manufacturer=MikroTik (99%)" in tip
+    details = fm.router_identity_details(ap)
+    assert details is not None
+    assert "[dim]Vendor:[/dim] MikroTik (99%)" in details
+    assert "[dim]Type:[/dim] router (99%)" in details
+    assert "[dim]wps.passive:[/dim] manufacturer=MikroTik (99%)" in details
 
 
-def test_router_identity_tooltip_can_show_brand_and_vendor_separately():
+def test_router_identity_details_can_show_brand_and_vendor_separately():
     class _AP:
         @property
         def router_fingerprint(self):
@@ -254,14 +254,14 @@ def test_router_identity_tooltip_can_show_brand_and_vendor_separately():
             )
 
     assert "O2" in fm.router_identity_markup(_AP())
-    tip = fm.router_identity_tooltip(_AP())
-    assert "Brand: O2 (82%)" in tip
-    assert "Vendor: Kaon (99%)" in tip
+    details = fm.router_identity_details(_AP())
+    assert "[dim]Brand:[/dim] O2 (82%)" in details
+    assert "[dim]Vendor:[/dim] Kaon (99%)" in details
 
 
 def test_router_identity_markup_is_blank_without_evidence():
     assert fm.router_identity_markup(AccessPoint(bssid="02:00:00:00:00:01")) == ""
-    assert fm.router_identity_tooltip(AccessPoint(bssid="02:00:00:00:00:01")) is None
+    assert fm.router_identity_details(AccessPoint(bssid="02:00:00:00:00:01")) is None
 
 
 def test_status_footer_open_is_encryption_only():

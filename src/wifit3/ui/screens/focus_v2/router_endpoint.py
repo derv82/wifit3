@@ -17,16 +17,22 @@ from rich.markup import escape
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Label
+from textual.message import Message
+from textual.widgets import Button, Label
 
 from ...signal_bar import render_signal_bar
 from .art import BreathingArt, art_size
 
 
 class RouterEndpoint(Vertical):
+    class IdentityRequested(Message):
+        def __init__(self, details: str) -> None:
+            super().__init__()
+            self.details = details
+
     def __init__(self, *, essid: str = "", bssid: str = "", channel: int = 0,
                  power_dbm: int = -100, signal: float | None = None,
-                 identity: str = "", identity_tip: str | None = None, **kwargs) -> None:
+                 identity: str = "", identity_details: str | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self._essid = essid
         self._bssid = bssid
@@ -34,7 +40,7 @@ class RouterEndpoint(Vertical):
         self._power_dbm = power_dbm
         self._signal = signal
         self._identity = identity
-        self._identity_tip = identity_tip
+        self._identity_details = identity_details
         self._width = art_size("focus-ap.ans")[0]      # endpoint column width
         self._last: dict[str, str] = {}                # last-pushed label value; skip no-op repaints
 
@@ -43,35 +49,48 @@ class RouterEndpoint(Vertical):
         yield BreathingArt("focus-ap.ans", classes="endpoint-art")
         yield Label(self._essid_markup(self._essid), classes="ap-essid", id="ap-essid")
         yield Label(self._bssid, classes="ap-static", id="ap-bssid")
-        chan = Label(self._channel_markup(), classes="ap-static", id="ap-chan")
-        chan.tooltip = self._identity_tip
+        chan = Button(self._channel_markup(), classes="ap-static", id="ap-chan")
+        chan.disabled = self._identity_details is None
+        if self._identity_details:
+            chan.add_class("identity-known")
         yield chan
 
     def update(self, *, essid: str, bssid: str, channel: int,
                power_dbm: int, signal: float | None, identity: str = "",
-               identity_tip: str | None = None) -> None:
+               identity_details: str | None = None) -> None:
         """Power meter repaints every tick (the live readout); the identity facts only
         change on a target switch, so they go through ``_push`` to skip the no-op repaint
         (a blind ``Label.update`` at 10 Hz burns CPU and wipes text selection)."""
         self._essid, self._bssid, self._channel = essid, bssid, channel
         self._power_dbm, self._signal = power_dbm, signal
-        self._identity, self._identity_tip = identity, identity_tip
+        self._identity, self._identity_details = identity, identity_details
         self.query_one("#ap-power", Label).update(self._power_line())
         self._push("#ap-essid", self._essid_markup(essid))
         self._push("#ap-bssid", bssid)
         self._push("#ap-chan", self._channel_markup())
-        self.query_one("#ap-chan", Label).tooltip = identity_tip
+        chan = self.query_one("#ap-chan", Button)
+        chan.disabled = identity_details is None
+        chan.set_class(bool(identity_details), "identity-known")
 
     def _push(self, sel: str, value: str) -> None:
         """Update the label only when its value changed: skip the no-op repaint."""
         if self._last.get(sel) == value:
             return
         self._last[sel] = value
-        self.query_one(sel, Label).update(value)
+        widget = self.query_one(sel)
+        if isinstance(widget, Button):
+            widget.label = value
+        else:
+            widget.update(value)
 
     def flicker(self) -> None:
         """Pulse the router LED. The screen calls this on RX from the target."""
         self.query_one(BreathingArt).pulse()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "ap-chan" and self._identity_details:
+            event.stop()
+            self.post_message(self.IdentityRequested(self._identity_details))
 
     def _channel_markup(self) -> str:
         if not self._identity:

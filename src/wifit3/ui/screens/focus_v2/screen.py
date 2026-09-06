@@ -167,6 +167,12 @@ class FocusViewV2(Screen):
     .card-dynamic { width: 100%%; height: 1; text-align: center; color: $accent; }
     .ap-essid { width: 100%%; height: 1; text-align: center; text-style: bold; }
     .ap-power { width: 100%%; height: 1; text-align: center; }
+    #ap-chan {
+        width: 100%%; height: 1; min-width: 0; border: none; margin: 0;
+        background: transparent; color: $text-muted; text-align: center;
+    }
+    #ap-chan.identity-known { text-style: underline; color: $secondary; }
+    #ap-chan:focus { text-style: bold reverse; }
 
     #bottom { height: 1fr; }
     #log { width: 1fr; height: 100%%; border: round %(border)s;
@@ -284,13 +290,13 @@ class FocusViewV2(Screen):
         ap = self.app.target_ap
         if ap is None:
             return dict(essid="", bssid="", channel=0, power_dbm=-100, signal=None,
-                        identity="", identity_tip=None)
+                        identity="", identity_details=None)
         essid = fm.truncate_ssid(ap.ssid) if ap.ssid else "‹hidden›"
         rate, _ = fm.beacon_rate(ap, self._beacon_samples, time.time())
         return dict(essid=essid, bssid=ap.bssid, channel=ap.channel,
                     power_dbm=ap.signal, signal=rate,
                     identity=fm.router_identity_markup(ap),
-                    identity_tip=fm.router_identity_tooltip(ap))
+                    identity_details=fm.router_identity_details(ap))
 
     def _card_values(self) -> dict:
         """The card endpoint's compose seed: chipset + own MAC from the live pool, plus the
@@ -688,6 +694,11 @@ class FocusViewV2(Screen):
 
     def on_client_widget_fingerprint_clicked(self, event: ClientWidget.FingerprintClicked) -> None:
         self.app.push_screen(FingerprintModal(event.mac, event.fingerprint, offset=event.offset))
+
+    def on_router_endpoint_identity_requested(self, event: RouterEndpoint.IdentityRequested) -> None:
+        self._log("[bold]Router identity[/bold]")
+        for line in event.details.splitlines():
+            self._log(treelog.leaf(line) if line else "")
 
     # ----- command-bar (footer hotkeys) --------------------------------------
 
