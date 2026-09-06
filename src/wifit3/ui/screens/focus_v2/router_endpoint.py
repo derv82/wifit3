@@ -16,7 +16,7 @@ import time
 from rich.markup import escape
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Label
 
@@ -49,11 +49,13 @@ class RouterEndpoint(Vertical):
         yield BreathingArt("focus-ap.ans", classes="endpoint-art")
         yield Label(self._essid_markup(self._essid), classes="ap-essid", id="ap-essid")
         yield Label(self._bssid, classes="ap-static", id="ap-bssid")
-        chan = Button(self._channel_markup(), classes="ap-static", id="ap-chan")
-        chan.disabled = self._identity_details is None
-        if self._identity_details:
-            chan.add_class("identity-known")
-        yield chan
+        with Horizontal(classes="ap-static", id="ap-identity-row"):
+            yield Label(self._channel_markup(), id="ap-chan")
+            identity = Button(self._identity_markup(), id="ap-identity")
+            identity.disabled = self._identity_details is None
+            if self._identity_details:
+                identity.add_class("identity-known")
+            yield identity
 
     def update(self, *, essid: str, bssid: str, channel: int,
                power_dbm: int, signal: float | None, identity: str = "",
@@ -68,9 +70,10 @@ class RouterEndpoint(Vertical):
         self._push("#ap-essid", self._essid_markup(essid))
         self._push("#ap-bssid", bssid)
         self._push("#ap-chan", self._channel_markup())
-        chan = self.query_one("#ap-chan", Button)
-        chan.disabled = identity_details is None
-        chan.set_class(bool(identity_details), "identity-known")
+        self._push("#ap-identity", self._identity_markup())
+        identity = self.query_one("#ap-identity", Button)
+        identity.disabled = identity_details is None
+        identity.set_class(bool(identity_details), "identity-known")
 
     def _push(self, sel: str, value: str) -> None:
         """Update the label only when its value changed: skip the no-op repaint."""
@@ -88,14 +91,15 @@ class RouterEndpoint(Vertical):
         self.query_one(BreathingArt).pulse()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "ap-chan" and self._identity_details:
+        if event.button.id == "ap-identity" and self._identity_details:
             event.stop()
             self.post_message(self.IdentityRequested(self._identity_details))
 
     def _channel_markup(self) -> str:
-        if not self._identity:
-            return f"channel {self._channel}"
-        return f"ch {self._channel} · {self._identity}"
+        return f"ch {self._channel} ·" if self._identity else f"channel {self._channel}"
+
+    def _identity_markup(self) -> str:
+        return self._identity or ""
 
     @staticmethod
     def _essid_markup(essid: str) -> str:

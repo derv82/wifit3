@@ -101,10 +101,12 @@ async def test_router_identity_button_logs_details_from_keyboard_without_tooltip
         await pilot.pause(0)
         logs = []
         app.screen._log = logs.append
-        chan = app.screen.query_one("#ap-chan", Button)
-        assert chan.tooltip is None
-        assert chan.disabled is False
-        chan.focus()
+        chan = app.screen.query_one("#ap-chan")
+        identity = app.screen.query_one("#ap-identity", Button)
+        assert "underline" not in str(chan.styles.text_style)
+        assert identity.tooltip is None
+        assert identity.disabled is False
+        identity.focus()
         await pilot.press("enter")
         await pilot.pause(0)
         assert logs[0] == "[bold]Router identity[/bold]"

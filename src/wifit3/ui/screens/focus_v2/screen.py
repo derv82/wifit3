@@ -167,12 +167,14 @@ class FocusViewV2(Screen):
     .card-dynamic { width: 100%%; height: 1; text-align: center; color: $accent; }
     .ap-essid { width: 100%%; height: 1; text-align: center; text-style: bold; }
     .ap-power { width: 100%%; height: 1; text-align: center; }
-    #ap-chan {
-        width: 100%%; height: 1; min-width: 0; border: none; margin: 0;
-        background: transparent; color: $text-muted; text-align: center;
+    #ap-identity-row { width: 100%%; height: 1; align-horizontal: center; }
+    #ap-chan { width: auto; height: 1; color: $text-muted; }
+    #ap-identity {
+        width: auto; height: 1; min-width: 0; border: none; margin: 0;
+        background: transparent; color: $text-muted;
     }
-    #ap-chan.identity-known { text-style: underline; color: $secondary; }
-    #ap-chan:focus { text-style: bold reverse; }
+    #ap-identity.identity-known { text-style: underline; color: $secondary; }
+    #ap-identity:focus { text-style: bold reverse; }
 
     #bottom { height: 1fr; }
     #log { width: 1fr; height: 100%%; border: round %(border)s;
