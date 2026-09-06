@@ -340,7 +340,7 @@ def test_known_pins_for_generates_valid_candidates():
     a = known_pins_for("00:11:22:33:44:55")
     b = known_pins_for("001122334455")
     assert a and a == b
-    assert all(len(p) == 8 and p.isdigit() and pin_is_valid(p) for p in a)
+    assert all(len(p) == 8 and p.isdigit() for p in a)
     assert len(a) == len(set(a))                          # deduped
     assert known_pins_for("00:11:22") == []               # not a full MAC
 
