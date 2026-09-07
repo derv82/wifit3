@@ -1,7 +1,7 @@
 """The Setup contract: NoSetup's no-ops and for_platform's dispatch."""
 import sys
 
-from wifit3.chips.driver import DeviceID
+from wifit3.models import DeviceID
 from wifit3.setup.base import NoSetup, Setup, SetupResult
 
 

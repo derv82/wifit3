@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Protocol
 
-from wifit3.chips.driver import DeviceID
+from wifit3.models import DeviceID
 
 
 @dataclass(frozen=True)
