@@ -1,9 +1,12 @@
 """The wireless-client scan model."""
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Dict, Optional, Set
+from typing import TYPE_CHECKING, Dict, Optional, Set
 
-from wifit3.wlan.fingerprinting.client import Fingerprint, fingerprint as _fingerprint
+if TYPE_CHECKING:
+    from wifit3.wlan.fingerprint import Fingerprint
 
 
 @dataclass
@@ -26,4 +29,5 @@ class Client:
     @cached_property
     def fingerprint(self) -> Optional[Fingerprint]:
         """OUI vendor for this client; looked up once, then cached on the instance."""
+        from wifit3.wlan.fingerprint import fingerprint as _fingerprint
         return _fingerprint(self.mac)

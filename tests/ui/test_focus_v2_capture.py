@@ -189,8 +189,10 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
 
         # Auto-save fires inline with the capture-event log (no keystroke).
         saved = {p.name for p in tmp_path.iterdir()}
-        assert any(n.endswith("_handshake.hc22000") for n in saved), saved
-        assert any(n.endswith("_pmkid.hc22000") for n in saved), saved
+        assert "TESTNET_aa-bb-cc-dd-ee-01.hc22000" in saved, saved
+        hc_text = (tmp_path / "TESTNET_aa-bb-cc-dd-ee-01.hc22000").read_text(encoding="utf-8")
+        assert "WPA*01*" in hc_text
+        assert "WPA*02*" in hc_text
 
 
 @pytest.mark.asyncio

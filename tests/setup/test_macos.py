@@ -1,6 +1,6 @@
 """SetupMacOS: no privileged step on macOS. install is a bare retry (returns the device and shows
 the no-op status); uninstall reports there is nothing to remove."""
-from wifit3.chips.driver import DeviceID
+from wifit3.models import DeviceID
 from wifit3.setup.base import SetupResult
 from wifit3.setup.macos import SetupMacOS
 

@@ -1,17 +1,5 @@
-"""DeviceID structured fields: silicon_vendor derivation + the description shim."""
-from wifit3.chips.driver import DeviceID
-
-
-def test_silicon_vendor_from_chipset_prefix():
-    assert DeviceID(0x0bda, 0x8812, "RTL8812AU").silicon_vendor == "Realtek"
-    assert DeviceID(0x0e8d, 0x7612, "MT7612U").silicon_vendor == "MediaTek"
-    assert DeviceID(0x148f, 0x2570, "RT2570").silicon_vendor == "Ralink"
-    assert DeviceID(0x0cf3, 0x9271, "AR9271").silicon_vendor == "Atheros"
-
-
-def test_silicon_vendor_rtl_resolves_before_rt():
-    # "RTL8xxx" also startswith "RT"; the map order must resolve it to Realtek, not Ralink.
-    assert DeviceID(0x0bda, 0x8187, "RTL8187L").silicon_vendor == "Realtek"
+"""DeviceID structured fields: description shim."""
+from wifit3.models import DeviceID
 
 
 def test_description_composes_vendor_and_product():

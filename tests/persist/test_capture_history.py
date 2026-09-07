@@ -105,6 +105,22 @@ class TestLoadCaptureIndex:
         caps = load_capture_index()[_BSSID_COLON]
         assert [c.timestamp for c in caps] == [1700009999, 1700000000]
 
+    def test_aggregated_hc22000_both_hs_and_pmkid(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}.hc22000", _HS_LINE + _PMKID_LINE)
+        caps = load_capture_index()[_BSSID_COLON]
+        types = {c.type for c in caps}
+        assert types == {"HS", "PMKID"}
+
+    def test_aggregated_hc22000_hs_only(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}.hc22000", _HS_LINE)
+        caps = load_capture_index()[_BSSID_COLON]
+        assert len(caps) == 1 and caps[0].type == "HS"
+
+    def test_aggregated_hc22000_pmkid_only(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}.hc22000", _PMKID_LINE)
+        caps = load_capture_index()[_BSSID_COLON]
+        assert len(caps) == 1 and caps[0].type == "PMKID"
+
 
 class TestSummarize:
     def test_totals(self, tmp_path):
@@ -120,3 +136,9 @@ class TestSummarize:
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000_handshake.hc22000", _HS_LINE)
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700009999_handshake.hc22000", _HS_LINE)
         assert summarize(load_capture_index()) == (1, 0, 0, 0)
+
+    def test_aggregated_hc22000_summarizes_both_hs_and_pmkid(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}.hc22000", _HS_LINE + _PMKID_LINE)
+        hs, pmkid, wep, wps = summarize(load_capture_index())
+        assert (hs, pmkid, wep, wps) == (1, 1, 0, 0)
+
