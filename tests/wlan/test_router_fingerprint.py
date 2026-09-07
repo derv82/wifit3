@@ -171,6 +171,8 @@ def test_vendor_names_are_canonicalized():
     assert canonical_vendor("AMV Audio") == "AMV"
     assert canonical_vendor("Kaon Group") == "Kaon"
     assert canonical_vendor("Kaon") == "Kaon"
+    assert canonical_vendor("Routerboard.com") == "MikroTik"
+    assert canonical_vendor("MikroTik") == "MikroTik"
     assert canonical_vendor("Seiko Epson") == "Epson"
     assert canonical_vendor("Apple, Inc.") == "Apple"
 
@@ -216,6 +218,19 @@ def test_oui_vendor_rule_uses_canonical_vendor_name():
     assert tplink is not None and tplink.vendor == "TP-Link"
     assert avm is not None and avm.vendor == "AVM"
 
+
+
+def test_mikrotik_routerboard_oui_weakly_identifies_router_type():
+    fp = AccessPoint(bssid="00:0c:42:11:22:33").router_fingerprint
+    assert fp is not None
+    assert fp.vendor == "MikroTik"
+    assert round(fp.vendor_confidence, 2) == 0.30
+    assert fp.kind == "router"
+    assert round(fp.kind_confidence, 2) == 0.30
+    assert fp.model is None
+    assert fp.label == "Possible MikroTik router"
+    assert any(e.source == "oui.mikrotik" and e.name == "kind" and e.value == "router"
+               for e in fp.evidence)
 
 
 def test_tplink_oui_weakly_identifies_router_type():

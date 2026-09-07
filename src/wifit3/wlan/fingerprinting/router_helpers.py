@@ -11,6 +11,7 @@ _CANONICAL_VENDOR_PATTERNS = (
     (re.compile(r"\bavm\b|audiovisuelles marketing", re.I), "AVM"),
     (re.compile(r"\bamv\b|amv audio", re.I), "AMV"),
     (re.compile(r"\bkaon\b", re.I), "Kaon"),
+    (re.compile(r"\b(?:mikrotik|routerboard(?:\.com)?)\b", re.I), "MikroTik"),
     (re.compile(r"\bepson\b", re.I), "Epson"),
     (re.compile(r"\bapple\b", re.I), "Apple"),
 )

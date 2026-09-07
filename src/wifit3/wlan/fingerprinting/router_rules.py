@@ -46,6 +46,13 @@ def tplink_router_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     return (RouterClaim("kind", "router", 0.30, (evidence,)),)
 
 
+def mikrotik_routerboard_oui_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+    vendor = vendor_for_mac(ap.bssid)
+    if vendor != "MikroTik":
+        return ()
+    evidence = RouterEvidence("oui.mikrotik", "kind", "router", 0.30)
+    return (RouterClaim("kind", "router", 0.30, (evidence,)),)
+
 
 def epson_printer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     vendor = vendor_for_mac(ap.bssid)
@@ -150,6 +157,7 @@ def apple_vendor_hotspot_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 IDENTIFY_RULES: tuple[RouterRule, ...] = (
     oui_vendor_rule,
     tplink_router_rule,
+    mikrotik_routerboard_oui_rule,
     epson_printer_rule,
     epson_direct_ssid_printer_rule,
     wps_manufacturer_rule,
