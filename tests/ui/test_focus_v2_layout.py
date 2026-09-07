@@ -4,11 +4,14 @@ plus that the green-LED breathe actually changes the art. Aesthetics ("does it
 look good") stay the human's call, fed by the exported SVGs.
 
 Sizes are pinned headless via ``run_test(size=...)``: no real terminal."""
+import types
+
 import pytest
 import pytest_asyncio
 from textual.app import App
 from textual.widgets import Button
 
+from wifit3.ui import focus_model as fm
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.art import art_size, breathe
 
@@ -19,6 +22,8 @@ _CENTER_MAX, _CENTER_MIN, _BOTTOM_MIN = 13, 7, 6
 
 class _Host(App):
     """Minimal host: push the v2 screen straight in (no device manager)."""
+    target_ap = None
+    array = None
     def on_mount(self) -> None:
         self.push_screen(FocusViewV2())
 
@@ -80,11 +85,11 @@ async def test_topbar_is_the_action_area_and_card_has_no_buttons(layout_host):
     assert len(scr.query("#card Button")) == 0
 
 
-@pytest.mark.asyncio(loop_scope="module")
-async def test_dashboard_rows_and_rate_vs_count(layout_host):
-    dash = layout_host.query_one("#dashboard")
-    assert len(dash._rows) == 5
-    as_rate = {r.key: r.as_rate for r in dash._rows}
+def test_dashboard_rows_and_rate_vs_count():
+    # WPA family: beacon + data + eapol + inject + deauth.
+    rows = fm.dashboard_rows(types.SimpleNamespace(encryption="WPA2"))
+    assert len(rows) == 5
+    as_rate = {r.key: r.as_rate for r in rows}
     # eapol reads as a recent count (a handshake is ~4 frames); the rest /s.
     assert as_rate["eapol"] is False
     assert all(as_rate[k] for k in ("beacon", "data", "inject", "deauth"))

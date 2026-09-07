@@ -4,6 +4,29 @@ Tracked defects and design debt. Each entry is a **problem statement**, not a pr
 solution. The fix is whatever's simplest, tackled one at a time. Where a simple direction is
 obvious it's noted in one line; the point is to *remove* leaky abstractions, never add layers.
 
+## (CANTFIX) RTL8822BU TP-Link Archer T4U v3 / T4U+ ambiguity
+
+**Problem.** TP-Link manufactured multiple different models that all share
+the same exact device metadata.  A USB device with VID:PID `2357:0115` could be
+Archer T4U v3, v3.2, or Archer T4U+. All other descriptors appear to be identical.
+
+Known T4U+ sample (identical to T4U "v3.6" sample):
+- `idVendor:idProduct`: `2357:0115`
+- `manufacturer`: `Realtek`
+- `product`: `802.11ac NIC`
+- `serial`: `123456`
+- `bcdDevice`: `0210`
+- `bcdUSB/version`: `2.10`
+- `speed`: `480`
+- `chipset`: `RTL8822BU` (could be RTL8812BU given online reports)
+
+Links:
+- [linux-hardware.org@`2357:0115`](https://linux-hardware.org/?id=usb:2357-0115) (RTL8822BU, RTL8812BU)
+- [Wi-Cat.ru@T4Uv3.2](https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U_v3.2) *("probably rtl8812bu")*
+  - [Wi-Cat.ru `2357:0115` disambiguation](https://shorturl.at/5iTC7)
+
+**Direction.** Keep dumping device info from other models; spot the diff.
+
 ## Expand EFUSE support
 
 Most drivers were ported against the single device they were tested on, so EFUSE derived values

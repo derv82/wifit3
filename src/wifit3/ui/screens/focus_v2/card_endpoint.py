@@ -14,9 +14,12 @@ from .tx_picker import TxDevicePicker
 
 
 class CardEndpoint(Vertical):
-    def __init__(self, snap, **kwargs) -> None:
+    def __init__(self, *, chipset: str = "no card", bssid: str | None = None,
+                 dynamic: str = "", **kwargs) -> None:
         super().__init__(**kwargs)
-        self._snap = snap
+        self._chipset = chipset
+        self._bssid = bssid
+        self._dynamic = dynamic
         self._last_dynamic: str | None = None      # last-pushed dynamic line; skip no-op repaints
         self._last: dict[str, str] = {}            # last-pushed identity label values; skip no-op repaints
 
@@ -24,29 +27,29 @@ class CardEndpoint(Vertical):
         yield BreathingArt("focus-card.ans", classes="endpoint-art")
         # The product-name slot is the TX-device picker: a plain label with one card, a dropdown
         # to pin the injection card with two or more. Driven by sync_picker from the screen tick.
-        yield TxDevicePicker(self._snap.card_chipset, id="tx-picker")
+        yield TxDevicePicker(self._chipset, id="tx-picker")
         # Always present (the card MAC is static per card) so a later tick can
         # show/hide it; hidden when the driver doesn't expose its own BSSID.
-        bssid = Label(self._snap.card_bssid or "", classes="card-static", id="card-bssid")
-        bssid.display = bool(self._snap.card_bssid)
+        bssid = Label(self._bssid or "", classes="card-static", id="card-bssid")
+        bssid.display = bool(self._bssid)
         yield bssid
-        # The dynamic line ("● replaying" etc) is always composed so update_dynamic
+        # The dynamic line ("● replaying" etc) is always composed so update()
         # can toggle it; hidden while the card is idle (passive capture).
-        dyn = Label(self._snap.card_dynamic, classes="card-dynamic", id="card-dynamic")
-        dyn.display = bool(self._snap.card_dynamic)
+        dyn = Label(self._dynamic, classes="card-dynamic", id="card-dynamic")
+        dyn.display = bool(self._dynamic)
         yield dyn
 
-    def update_dynamic(self, snap) -> None:
-        """Refresh the live 'what the card is doing' line, only when it changed.
-        Identity (chipset / BSSID) is static per card, set once at compose.
-        Textual's ``Label.update`` refreshes unconditionally, so guarding skips
-        the no-op repaint that otherwise fires every tick."""
-        if snap.card_dynamic == self._last_dynamic:
+    def update(self, *, dynamic: str) -> None:
+        """Refresh the live 'what the card is doing' line, only when it changed
+        (chipset / BSSID update on their own via ``sync_picker`` / ``update_bssid``).
+        Textual's ``Label.update`` refreshes unconditionally, so the change check
+        skips the no-op repaint that otherwise fires every tick."""
+        if dynamic == self._last_dynamic:
             return
-        self._last_dynamic = snap.card_dynamic
+        self._last_dynamic = dynamic
         dyn = self.query_one("#card-dynamic", Label)
-        dyn.update(snap.card_dynamic)
-        dyn.display = bool(snap.card_dynamic)
+        dyn.update(dynamic)
+        dyn.display = bool(dynamic)
 
     def sync_picker(self, members, channel, current, locked: bool) -> None:
         """Refresh the TX-device picker (trigger name + dropdown state) from the live pool."""

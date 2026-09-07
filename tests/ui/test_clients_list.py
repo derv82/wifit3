@@ -14,7 +14,7 @@ _RING = Fingerprint("🔔", "Ring device")
 
 
 def _client(mac=_MAC, power=-50, packets=3, fingerprint=None):
-    return SimpleNamespace(bssid=mac, power=power, packets=packets, fingerprint=fingerprint)
+    return SimpleNamespace(mac=mac, signal=power, packets=packets, fingerprint=fingerprint)
 
 
 def _composed(client) -> ClientWidget:

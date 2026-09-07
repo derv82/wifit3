@@ -194,8 +194,10 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 ### RTL8822BU
 <img align="right" width="90" height="165" src="../assets/cardart/card-archert3uplus.png" alt="TP-Link Archer T3U Plus">
+<img align="right" width="90" height="165" src="../assets/cardart/card-archert4uplus.png" alt="TP-Link Archer T4U Plus">
 
-*TP-Link Archer T3U Plus v1 · 2.4 / 5 GHz*
+
+*TP-Link Archer T3U Plus v1 / Archer T4U v3 / T4U+ · 2.4 / 5 GHz*
 
 > **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8822=mainline` opts back.
 

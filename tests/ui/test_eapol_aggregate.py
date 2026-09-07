@@ -45,7 +45,7 @@ def test_save_hint_folds_in_as_the_closing_leaf():
     # header + M1 + M2 + verdict(branch) + save(leaf) → the verdict is no longer
     # the terminal node; the save note closes the tree.
     assert len(lines) == 5
-    assert "saved: captures/" in lines[-1]
+    assert "saved: " in lines[-1]
     assert "Valid 4-Way Handshake" in "\n".join(lines)
 
 

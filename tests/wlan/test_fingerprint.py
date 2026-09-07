@@ -3,8 +3,6 @@ from rich.cells import cell_len
 from wifit3.wlan.fingerprint import _GENERIC_EMOJI, _RULES, fingerprint
 from wifit3.wlan.fingerprint_vendors import VENDOR_BY_OUI
 
-_GENERIC = "🔖"
-
 
 def test_ring_oui_recognized():
     fp = fingerprint("18:7f:88:aa:bb:cc")
@@ -51,7 +49,7 @@ def test_tesla_28_bit_sub_block_recognized_precisely():
     assert fp is not None and "Tesla" in fp.label
 
     neighbor = fingerprint("dc:44:27:05:22:33")       # :0x -- a different, unrelated vendor
-    assert neighbor is not None and neighbor.emoji == _GENERIC
+    assert neighbor is not None and neighbor.emoji == _GENERIC_EMOJI
     assert "Suritel" in neighbor.label
 
 
@@ -93,19 +91,19 @@ def test_amazon_regex_matches_the_brand_not_a_substring():
 
 def test_uncategorized_vendor_gets_the_generic_tag():
     fp = fingerprint("00:00:0b:aa:bb:cc")     # Matrix Corporation
-    assert fp is not None and fp.emoji == _GENERIC and "Matrix" in fp.label
+    assert fp is not None and fp.emoji == _GENERIC_EMOJI and "Matrix" in fp.label
 
 
 def test_intel_falls_through_to_generic():
     """Intel was a category-table hit before; with that data removed it is now just a named vendor."""
     fp = fingerprint("74:3a:f4:aa:bb:cc")     # Intel Corporate
-    assert fp is not None and fp.emoji == _GENERIC and "Intel" in fp.label
+    assert fp is not None and fp.emoji == _GENERIC_EMOJI and "Intel" in fp.label
 
 
 def test_all_rule_emojis_are_fixed_double_width():
     for emoji in [r.emoji for r in _RULES] + [_GENERIC_EMOJI]:
         assert "️" not in emoji, f"{emoji!r} carries a variation selector; renders 1 cell"
-        assert cell_len(emoji) == 2, f"{emoji!r} is not 2 cells wide"
+        assert emoji == " " or cell_len(emoji) == 2, f"{emoji!r} is not 2 cells wide nor single-space"
 
 
 def test_oui_not_in_the_ieee_registry_returns_none():

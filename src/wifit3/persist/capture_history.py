@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from wifit3.models import PersistedCapture
+from wifit3.persist.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -86,14 +87,10 @@ def _parse_file(path: Path) -> List[PersistedCapture]:
     return []
 
 
-def load_capture_index(captures_dir: Path | str = "captures") -> Dict[str, List[PersistedCapture]]:
-    """Scan ``captures_dir`` and return {bssid(colon-lower): [PersistedCapture]}.
-
-    Missing directory -> empty index (a fresh install has no history). Entries
-    for a BSSID are sorted newest-first.
-    """
+def load_capture_index() -> Dict[str, List[PersistedCapture]]:
+    """Scan ``captures_dir``, return bssid->captures sorted by newest-first."""
     index: Dict[str, List[PersistedCapture]] = defaultdict(list)
-    root = Path(captures_dir)
+    root = Path(Config.captures_dir)
     if not root.is_dir():
         return {}
     for path in root.iterdir():
