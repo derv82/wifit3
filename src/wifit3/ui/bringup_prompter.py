@@ -10,7 +10,7 @@ from wifit3.ui.screens.replug import ReplugModal
 from wifit3.ui.screens.setup_error import SetupErrorDialog
 
 if TYPE_CHECKING:
-    from wifit3.chips.driver import DeviceID
+    from wifit3.models import DeviceID
 
 
 class BringupPrompter:
