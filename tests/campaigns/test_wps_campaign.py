@@ -130,7 +130,7 @@ async def test_campaign_tries_pixie_before_online_sweep(tmp_path, monkeypatch):
             return AttemptOutcome(PinResult.FIRST_HALF_WRONG, pin,
                                   pixie=_pixie_bundle(known, zero, zero))
 
-    c = PixieVulnerable(_iface(), _target(), state_dir=str(tmp_path),
+    c = PixieVulnerable(_iface(), _target(),
                         log=lambda m: None, known_pin=known, psk="pw")
     await c._loop()
 
@@ -153,7 +153,7 @@ async def test_campaign_falls_back_when_pixie_has_no_match(tmp_path, monkeypatch
                 out.pixie = _pixie_bundle(known, e_s1, e_s2)
             return out
 
-    c = PixieNotVulnerable(_iface(), _target(), state_dir=str(tmp_path),
+    c = PixieNotVulnerable(_iface(), _target(),
                            log=lambda m: None, known_pin=known, psk="pw")
     await c._loop()
 
@@ -477,7 +477,7 @@ async def test_permanent_wps_lock_bails_after_zero_progress_cycles(tmp_path):
     target.wps_locked = True
     iface = _iface()
     iface.access_points[target.bssid.lower()] = target
-    c = PermanentLock(iface, target, state_dir=str(tmp_path), log=logs.append)
+    c = PermanentLock(iface, target, log=logs.append)
     await c._loop()
 
     assert c.status == "failed"
@@ -487,7 +487,7 @@ async def test_permanent_wps_lock_bails_after_zero_progress_cycles(tmp_path):
 
 
 def test_lock_counter_resets_after_pin_progress(tmp_path):
-    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c = WpsCampaign(_iface(), _target(), log=lambda m: None)
     c._consecutive_locks_no_progress = 4
 
     c._apply_outcome("12345670", AttemptOutcome(PinResult.FIRST_HALF_WRONG, "12345670"))
