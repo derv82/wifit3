@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from wifit3.models import AccessPoint, HandshakeMessage, Handshake
 from wifit3.persist.save import (
+    HcFiles,
+    consolidate_hc_files,
     save_handshake,
     save_pmkid,
     save_wep_key,
@@ -68,10 +70,10 @@ class TestSaveHandshake:
         ap = _ap_with_hs()
         result = save_handshake(ap, "11:22:33:44:55:66")
         assert result is not None and result.was_new is True
-        assert result.path.name.endswith("_handshake.hc22000")
+        assert result.path.name == "HomeNet_aa-bb-cc-dd-ee-ff.hc22000"
         assert result.path.exists()
-        pcap = result.path.with_suffix(".pcap")
-        assert pcap.exists() and pcap.stat().st_size > 0
+        pcaps = list(tmp_path.glob("*_handshake.pcap"))
+        assert len(pcaps) == 1 and pcaps[0].stat().st_size > 0
 
     def test_body_is_wpa02_only(self, tmp_path):
         # AP also has a PMKID, so save_handshake must NOT include the WPA*01 line.
@@ -96,11 +98,14 @@ class TestSaveHandshake:
     def test_different_anonce_writes_new(self, tmp_path):
         ap1 = _ap_with_hs(anonce=b"\xA0" + b"\x00" * 31)
         ap2 = _ap_with_hs(anonce=b"\xC0" + b"\x00" * 31)
-        save_handshake(ap1, "11:22:33:44:55:66")
+        first = save_handshake(ap1, "11:22:33:44:55:66")
         second = save_handshake(ap2, "11:22:33:44:55:66")
         assert second is not None and second.was_new is True
-        files = list(tmp_path.glob("*_handshake.hc22000"))
-        assert len(files) == 2
+        assert second.path == first.path
+        files = list(tmp_path.glob("*.hc22000"))
+        assert len(files) == 1
+        lines = second.path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 2
 
     def test_hidden_ssid_returns_none(self, tmp_path):
         ap = _ap_with_hs(ssid="")
@@ -137,10 +142,10 @@ class TestSavePmkid:
         ap = _ap_with_hs(pmkid=b"\x11" * 16, with_pair=False)
         result = save_pmkid(ap, "11:22:33:44:55:66")
         assert result is not None and result.was_new is True
-        assert result.path.name.endswith("_pmkid.hc22000")
+        assert result.path.name == "HomeNet_aa-bb-cc-dd-ee-ff.hc22000"
         # No pcap companion: nothing consumes a PMKID-in-pcap, and the
         # harvest M1 isn't kept anyway, so the file would be beacon-only.
-        assert not result.path.with_suffix(".pcap").exists()
+        assert not list(tmp_path.glob("*.pcap"))
 
     def test_body_is_wpa01_only(self, tmp_path):
         ap = _ap_with_hs(pmkid=b"\x22" * 16)  # also has m1/m2
@@ -165,6 +170,9 @@ class TestSavePmkid:
         save_pmkid(ap1, "11:22:33:44:55:66")
         second = save_pmkid(ap2, "11:22:33:44:55:66")
         assert second is not None and second.was_new is True
+        lines = second.path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 2
+        assert len(list(tmp_path.glob("*.hc22000"))) == 1
 
     def test_no_pmkid_returns_none(self, tmp_path):
         ap = _ap_with_hs(with_pair=False)
@@ -300,3 +308,146 @@ class TestSsidSanitization:
         # 32 cap on the ssid portion; the bssid+epoch+suffix follow.
         ssid_part = result.path.name.split("_aa-bb-cc-dd-ee-ff_")[0]
         assert len(ssid_part) == 32
+
+
+# ---- Legacy deduplication --------------------------------------------------
+
+class TestLegacyDedupe:
+    def test_legacy_split_file_dedupes_and_prevents_duplicate_captures(self, tmp_path):
+        legacy_file = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_handshake.hc22000"
+        anonce_hex = "a0" * 32
+        line = f"WPA*02*00000000000000000000000000000000*aabbccddeeff*112233445566*486f6d654e6574*{anonce_hex}*00*00\n"
+        legacy_file.write_text(line, encoding="utf-8")
+
+        ap = _ap_with_hs(anonce=b"\xA0" * 32)
+        res = save_handshake(ap, "11:22:33:44:55:66")
+        assert res is not None and res.was_new is False
+        assert res.path == legacy_file
+        assert not (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.hc22000").exists()
+
+
+
+# ---- Aggregated mode combined workflow -------------------------------------
+
+class TestSaveAggregatedCombined:
+    def test_handshake_and_pmkid_merge_into_same_file(self, tmp_path):
+        ap = _ap_with_hs(pmkid=b"\x11" * 16)
+        r_hs = save_handshake(ap, "11:22:33:44:55:66")
+        assert r_hs is not None and r_hs.was_new is True
+        r_pmk = save_pmkid(ap, "11:22:33:44:55:66")
+        assert r_pmk is not None and r_pmk.was_new is True
+        assert r_hs.path == r_pmk.path
+        assert r_hs.path.name == "HomeNet_aa-bb-cc-dd-ee-ff.hc22000"
+
+        lines = r_hs.path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 2
+        assert any(ln.startswith("WPA*02*") for ln in lines)
+        assert any(ln.startswith("WPA*01*") for ln in lines)
+
+        # Re-saving same handshake or PMKID should dedupe
+        assert save_handshake(ap, "11:22:33:44:55:66").was_new is False
+        assert save_pmkid(ap, "11:22:33:44:55:66").was_new is False
+        lines_after = r_hs.path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines_after) == 2
+
+
+# ---- Consolidate legacy captures -------------------------------------------
+
+class TestConsolidateHcFiles:
+    def test_consolidate_empty_and_nonexistent_dir(self, tmp_path):
+        assert consolidate_hc_files(tmp_path / "nonexistent") == (0, 0)
+        assert consolidate_hc_files(tmp_path) == (0, 0)
+
+    def test_consolidate_multiple_aps_and_deduplicates(self, tmp_path):
+        hs_line1 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*11111111111111111111111111111111**\n"
+        hs_line2 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*22222222222222222222222222222222**\n"
+        pmk_line1 = "WPA*01*33333333333333333333333333333333*aabbccddeeff*112233445566*5465737431***\n"
+        office_hs = "WPA*02*01*112233445566*aabbccddeeff*4f6666696365*44444444444444444444444444444444**\n"
+
+        # AP1 files: 2 handshakes (one duplicate), 1 pmkid
+        (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000").write_text(hs_line1, encoding="utf-8")
+        (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000002_handshake.hc22000").write_text(hs_line1, encoding="utf-8")  # dupe
+        (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000003_handshake.hc22000").write_text(hs_line2, encoding="utf-8")
+        (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000004_pmkid.hc22000").write_text(pmk_line1, encoding="utf-8")
+
+        # AP2 files: 1 handshake
+        (tmp_path / "Office_11-22-33-44-55-66_1700000005_handshake.hc22000").write_text(office_hs, encoding="utf-8")
+
+        # Non-legacy files: should stay untouched
+        pcap_file = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.pcap"
+        pcap_file.write_text("dummy pcap", encoding="utf-8")
+        wps_file = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000006_wps_pin.txt"
+        wps_file.write_text("PIN: 12345670", encoding="utf-8")
+        other_file = tmp_path / "notes.txt"
+        other_file.write_text("notes", encoding="utf-8")
+
+        migrated, deleted = consolidate_hc_files(tmp_path)
+        assert migrated == 2
+        assert deleted == 5
+
+        # Verify AP1 file has 3 unique lines (2 handshakes + 1 pmkid)
+        ap1_target = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.hc22000"
+        assert ap1_target.exists()
+        ap1_lines = ap1_target.read_text(encoding="utf-8").strip().splitlines()
+        assert len(ap1_lines) == 3
+
+        # Verify AP2 file has 1 line
+        ap2_target = tmp_path / "Office_11-22-33-44-55-66.hc22000"
+        assert ap2_target.exists()
+        ap2_lines = ap2_target.read_text(encoding="utf-8").strip().splitlines()
+        assert len(ap2_lines) == 1
+
+        # Verify non-legacy files are preserved
+        assert pcap_file.exists()
+        assert wps_file.exists()
+        assert other_file.exists()
+
+    def test_consolidate_appends_to_existing_target(self, tmp_path):
+        hs_line1 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*11111111111111111111111111111111**\n"
+        hs_line2 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*22222222222222222222222222222222**\n"
+
+        target = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.hc22000"
+        target.write_text(hs_line1, encoding="utf-8")
+
+        legacy = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000002_handshake.hc22000"
+        legacy.write_text(hs_line2, encoding="utf-8")
+
+        migrated, deleted = consolidate_hc_files(tmp_path)
+        assert migrated == 1
+        assert deleted == 1
+        assert not legacy.exists()
+
+        lines = target.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 2
+
+
+# ---- HcFiles class ---------------------------------------------------------
+
+class TestHcFiles:
+    def test_find_existing_anonce_in_aggregate_and_split(self, tmp_path):
+        hc = HcFiles(tmp_path, "HomeNet", "aa:bb:cc:dd:ee:ff")
+        assert hc.find_existing_anonce("1111") is None
+
+        # Write to aggregate file
+        hc.agg_path.write_text("WPA*02*01*aabbccddeeff*112233445566*5465737431*1111**\n", encoding="utf-8")
+        assert hc.find_existing_anonce("1111") == hc.agg_path
+
+        # Write to split file
+        split_p = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000"
+        split_p.write_text("WPA*02*01*aabbccddeeff*112233445566*5465737431*2222**\n", encoding="utf-8")
+        assert hc.find_existing_anonce("2222") == split_p
+
+    def test_find_existing_pmkid_in_aggregate_and_split(self, tmp_path):
+        hc = HcFiles(tmp_path, "HomeNet", "aa:bb:cc:dd:ee:ff")
+        assert hc.find_existing_pmkid("3333") is None
+
+        # Write to aggregate file
+        hc.agg_path.write_text("WPA*01*3333*aabbccddeeff*112233445566*5465737431***\n", encoding="utf-8")
+        assert hc.find_existing_pmkid("3333") == hc.agg_path
+
+        # Write to split file
+        split_p = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000002_pmkid.hc22000"
+        split_p.write_text("WPA*01*4444*aabbccddeeff*112233445566*5465737431***\n", encoding="utf-8")
+        assert hc.find_existing_pmkid("4444") == split_p
+
+
