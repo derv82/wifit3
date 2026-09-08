@@ -287,7 +287,10 @@ async def test_scanner_info_probe_updates_probe_identity(monkeypatch):
         scanner.notify = lambda *args, **kwargs: toasts.append((args, kwargs))
 
         scanner.refresh_table()
+        table = scanner.query_one("#ap-table", DataTable)
+        assert table.get_cell(ap.bssid, "identity").plain == ""
         await scanner._probe_router_info(ap)
+        assert table.get_cell(ap.bssid, "identity").plain == "MikroTik"
 
     assert toasts == []
     assert ap.identity.manufacturer == "MikroTik"

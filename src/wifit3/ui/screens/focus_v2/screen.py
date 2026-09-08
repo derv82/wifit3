@@ -700,8 +700,10 @@ class FocusViewV2(Screen):
 
     def on_router_endpoint_identity_requested(self, event: RouterEndpoint.IdentityRequested) -> None:
         self._log("[bold]Router identity[/bold]")
-        for line in event.details.splitlines():
-            self._log(treelog.leaf(line) if line else "")
+        lines = [line for line in event.details.splitlines() if line]
+        for i, line in enumerate(lines):
+            connector = treelog.leaf if i == len(lines) - 1 else treelog.branch
+            self._log(connector(line))
 
     # ----- command-bar (footer hotkeys) --------------------------------------
 

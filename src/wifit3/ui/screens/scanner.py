@@ -54,8 +54,13 @@ class _APRowState:
     clients: int
     is_stale: bool
     flash: bool = False
+    wps: bool = False
     wps_locked: bool = False
     ssid: Optional[str] = None
+    chips_markup: str = ""
+    identity: str = ""
+    channel: int = 0
+    encryption: str = ""
 
 
 def device_scan_summary(members) -> Optional[str]:
@@ -365,6 +370,9 @@ class ScannerView(Screen):
             flash_bacon = now < self._beacon_flash_until.get(ap.bssid, 0.0)
 
             shown_beacons = self._display_beacons(ap, now)
+            chips_markup = self._ssid_chips_markup(ap)
+            enc_markup = format_encryption_markup(ap, muted=self._theme_fg)
+            ident_summary = ap.identity.summary
 
             prev_state = self._row_states.get(ap.bssid)
             if prev_state is None:
@@ -375,8 +383,13 @@ class ScannerView(Screen):
                     clients=n_cli,
                     is_stale=is_stale,
                     flash=flash_bacon,
+                    wps=ap.wps,
                     wps_locked=ap.wps_locked,
                     ssid=ap.ssid,
+                    chips_markup=chips_markup,
+                    identity=ident_summary,
+                    channel=ap.channel,
+                    encryption=enc_markup,
                 )
                 row_cells = [
                     self._render_cell(
@@ -398,8 +411,6 @@ class ScannerView(Screen):
                             emoji=False,
                         )
                     )
-                    prev_state.ssid = ap.ssid
-                    table.update_cell(ap.bssid, "ssid", self._render_cell(ap, "ssid", is_stale))
 
                 if prev_state.is_stale != is_stale:
                     prev_state.is_stale = is_stale
@@ -407,7 +418,13 @@ class ScannerView(Screen):
                     prev_state.beacons = shown_beacons
                     prev_state.clients = n_cli
                     prev_state.flash = flash_bacon
+                    prev_state.wps = ap.wps
                     prev_state.wps_locked = ap.wps_locked
+                    prev_state.ssid = ap.ssid
+                    prev_state.chips_markup = chips_markup
+                    prev_state.identity = ident_summary
+                    prev_state.channel = ap.channel
+                    prev_state.encryption = enc_markup
                     for col_k, _ in self._COLUMNS:
                         cell = self._render_cell(
                             ap, col_k, is_stale, n_cli=n_cli,
@@ -415,6 +432,15 @@ class ScannerView(Screen):
                         )
                         table.update_cell(ap.bssid, col_k, cell)
                 else:
+                    if prev_state.ssid != ap.ssid or prev_state.chips_markup != chips_markup:
+                        prev_state.ssid = ap.ssid
+                        prev_state.chips_markup = chips_markup
+                        table.update_cell(ap.bssid, "ssid", self._render_cell(ap, "ssid", is_stale))
+
+                    if prev_state.channel != ap.channel:
+                        prev_state.channel = ap.channel
+                        table.update_cell(ap.bssid, "channel", self._render_cell(ap, "channel", is_stale))
+
                     if prev_state.signal != ap.signal:
                         prev_state.signal = ap.signal
                         table.update_cell(ap.bssid, "signal", self._render_cell(ap, "signal", is_stale))
@@ -434,9 +460,18 @@ class ScannerView(Screen):
                             self._render_cell(ap, "clients", is_stale, n_cli=n_cli),
                         )
 
-                    if prev_state.wps_locked != ap.wps_locked:
+                    if prev_state.encryption != enc_markup:
+                        prev_state.encryption = enc_markup
+                        table.update_cell(ap.bssid, "encryption", self._render_cell(ap, "encryption", is_stale))
+
+                    if prev_state.wps != ap.wps or prev_state.wps_locked != ap.wps_locked:
+                        prev_state.wps = ap.wps
                         prev_state.wps_locked = ap.wps_locked
                         table.update_cell(ap.bssid, "wps", self._render_cell(ap, "wps", is_stale))
+
+                    if prev_state.identity != ident_summary:
+                        prev_state.identity = ident_summary
+                        table.update_cell(ap.bssid, "identity", self._render_cell(ap, "identity", is_stale))
 
             self._drain_capture_events(ap, array.forged_macs)
 

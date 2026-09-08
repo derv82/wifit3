@@ -110,6 +110,8 @@ async def test_router_identity_button_logs_details_from_keyboard_without_tooltip
         await pilot.pause(0)
         assert logs[0] == "[bold]Router identity[/bold]"
         assert any("MikroTik" in line for line in logs)
+        assert any("├─►" in line for line in logs[:-1])
+        assert "└─►" in logs[-1]
 
 
 def test_dashboard_rows_and_rate_vs_count():
