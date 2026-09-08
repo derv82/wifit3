@@ -267,6 +267,36 @@ def test_router_identity_details_can_show_m1_and_oui_separately():
     assert "[dim]IEEE OUI:[/dim] Apple" in details
 
 
+def test_router_identity_details_asus_wsc_beacon():
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    ap.identity.set(IdSource.OUI, IdKey.MANUFACTURER, "ASUSTek COMPUTER")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "ASUSTeK Computer Inc.")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "Wi-Fi Protected Setup Router")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.DEVICE_NAME, "RT-AC66U")
+
+    assert fm.router_identity_details(ap) == "\n".join([
+        "[bold]ASUS RT-AC66U[/bold]",
+        "[dim]Model:[/dim] RT-AC66U [dim](WSC Beacon)[/dim]",
+        "[dim]Manufacturer:[/dim] ASUS [dim](WSC Beacon)[/dim]",
+        "[dim]IEEE OUI:[/dim] ASUS",
+    ])
+
+
+def test_router_identity_details_netgear_wsc_m1():
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    ap.identity.set(IdSource.OUI, IdKey.MANUFACTURER, "Netgear")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Netgear")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "Netgear")
+    ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_NAME, "C3700-100NAS")
+
+    assert fm.router_identity_details(ap) == "\n".join([
+        "[bold]Netgear C3700-100NAS[/bold]",
+        "[dim]Model:[/dim] C3700-100NAS [dim](WSC M1)[/dim]",
+        "[dim]Manufacturer:[/dim] Netgear [dim](WSC M1)[/dim]",
+        "[dim]IEEE OUI:[/dim] Netgear",
+    ])
+
+
 def test_router_identity_markup_is_blank_without_evidence():
     assert fm.router_identity_markup(AccessPoint(bssid="02:00:00:00:00:01")) == ""
     assert fm.router_identity_details(AccessPoint(bssid="02:00:00:00:00:01")) is None

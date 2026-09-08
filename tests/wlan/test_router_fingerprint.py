@@ -59,7 +59,10 @@ def test_historical_provenance_preserved():
 
 
 def test_clean_text_rejects_dummy_strings():
-    for dummy in ("12345", "00000000", "none", "NONE", "default", "n/a", "N/A", "unknown", "???", "   ", ""):
+    for dummy in (
+        "12345", "00000000", "none", "NONE", "default", "n/a", "N/A", "unknown", "???", "   ", "",
+        "Wi-Fi Protected Setup Router", "wifi protected setup router", "WPS Router",
+    ):
         assert clean_text(dummy) is None
 
     ident = ApIdentity()
@@ -71,6 +74,10 @@ def test_clean_text_rejects_dummy_strings():
 
 
 def test_vendor_names_are_canonicalized():
+    assert canonical_vendor("ASUSTeK Computer Inc.") == "ASUS"
+    assert canonical_vendor("ASUSTek COMPUTER") == "ASUS"
+    assert canonical_vendor("Netgear, Inc.") == "Netgear"
+    assert canonical_vendor("Cisco Systems, Inc.") == "Cisco"
     assert canonical_vendor("Tp-Link Technologies") == "TP-Link"
     assert canonical_vendor("TP-Link") == "TP-Link"
     assert canonical_vendor("AVM Audiovisuelles Marketing und Computersysteme") == "AVM"
@@ -91,6 +98,30 @@ def test_model_resolution_and_fallback():
 
     ident.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "Nighthawk X10")
     assert ident.model == "Nighthawk X10"
+
+
+def test_model_resolution_falls_back_to_device_name_when_model_is_none():
+    ident = ApIdentity()
+    ident.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "ASUSTeK Computer Inc.")
+    ident.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "Wi-Fi Protected Setup Router")
+    ident.set(IdSource.WSC_BEACON, IdKey.DEVICE_NAME, "RT-AC66U")
+    assert ident.manufacturer == "ASUS"
+    assert ident.model_name is None
+    assert ident.device_name == "RT-AC66U"
+    assert ident.model == "RT-AC66U"
+    assert ident.model_source == IdSource.WSC_BEACON
+    assert ident.summary == "ASUS RT-AC66U"
+
+
+def test_model_resolution_falls_back_to_device_name_when_model_equals_manufacturer():
+    ident = ApIdentity()
+    ident.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Netgear")
+    ident.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "Netgear")
+    ident.set(IdSource.WSC_M1, IdKey.DEVICE_NAME, "C3700-100NAS")
+    assert ident.manufacturer == "Netgear"
+    assert ident.model == "C3700-100NAS"
+    assert ident.model_source == IdSource.WSC_M1
+    assert ident.summary == "Netgear C3700-100NAS"
 
 
 def test_identity_summary_formatting():

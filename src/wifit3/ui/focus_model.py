@@ -232,14 +232,14 @@ def router_identity_details(ap) -> str | None:
         return None
     rows = [f"[bold]{escape(ident.summary)}[/bold]"]
     if ident.model:
-        model_src = ident.get(IdKey.MODEL_NAME)[1] or ident.get(IdKey.MODEL_NUMBER)[1]
+        model_src = getattr(ident, "model_source", None) or ident.get(IdKey.MODEL_NAME)[1] or ident.get(IdKey.MODEL_NUMBER)[1]
         src_label = model_src.label if model_src else ""
         rows.append(f"[dim]Model:[/dim] {escape(ident.model)} [dim]({src_label})[/dim]")
     if ident.manufacturer:
         mfr_src = ident.get(IdKey.MANUFACTURER)[1]
         src_label = mfr_src.label if mfr_src else ""
         rows.append(f"[dim]Manufacturer:[/dim] {escape(ident.manufacturer)} [dim]({src_label})[/dim]")
-    if ident.device_name:
+    if ident.device_name and ident.device_name != ident.model:
         dev_src = ident.get(IdKey.DEVICE_NAME)[1]
         src_label = dev_src.label if dev_src else ""
         rows.append(f"[dim]Device Name:[/dim] {escape(ident.device_name)} [dim]({src_label})[/dim]")
