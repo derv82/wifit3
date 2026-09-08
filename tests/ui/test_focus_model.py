@@ -9,7 +9,7 @@ import pytest
 
 from wifit3.campaigns.campaign import Campaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
-from wifit3.models import AccessPoint, ApIdentity, Handshake
+from wifit3.models import AccessPoint, ApIdentity, Handshake, IdKey, IdSource
 from wifit3.ui import focus_model as fm
 from wifit3.persist.config import Config
 
@@ -231,44 +231,40 @@ def test_status_footer_combines_pmf_and_wps():
     assert "PMF:" in lines[1] and "WPS:" in lines[1] and "1.0" in lines[1]
 
 
-def test_router_identity_markup_prefers_confident_model():
+def test_router_identity_markup_shows_summary_without_percentages():
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
         identity=ApIdentity(manufacturer="MikroTik", model_name="hAP ac²"),
     )
-    assert "hAP ac²" in fm.router_identity_markup(ap)
-    assert "99%" in fm.router_identity_markup(ap)
+    markup = fm.router_identity_markup(ap)
+    assert "hAP ac²" in markup
+    assert "MikroTik" in markup
+    assert "%" not in markup
 
 
-def test_router_identity_details_shows_per_field_confidence():
-    ap = AccessPoint(bssid="02:00:00:00:00:01", identity=ApIdentity(manufacturer="MikroTik"))
+def test_router_identity_details_shows_source_provenance():
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "MikroTik")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "hAP ac²")
     details = fm.router_identity_details(ap)
     assert details is not None
-    assert "[dim]Vendor:[/dim] MikroTik (99%)" in details
-    assert "[dim]Type:[/dim]" not in details
-    assert "[dim]wps.passive:[/dim] manufacturer=MikroTik (99%)" in details
+    assert "[bold]MikroTik hAP ac²[/bold]" in details
+    assert "[dim]Model:[/dim] hAP ac² [dim](WSC Beacon)[/dim]" in details
+    assert "[dim]Manufacturer:[/dim] MikroTik [dim](WSC Beacon)[/dim]" in details
 
 
-def test_router_identity_details_can_show_brand_and_vendor_separately():
-    class _AP:
-        @property
-        def router_fingerprint(self):
-            from wifit3.id import RouterFingerprint
-            return RouterFingerprint(
-                label="Likely O2 router",
-                confidence=0.82,
-                brand="O2",
-                brand_confidence=0.82,
-                vendor="Kaon",
-                vendor_confidence=0.99,
-                kind="router",
-                kind_confidence=0.99,
-            )
+def test_router_identity_details_can_show_m1_and_oui_separately():
+    ap = AccessPoint(bssid="00:03:93:11:22:33")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Cisco")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "AP-500")
 
-    assert "O2" in fm.router_identity_markup(_AP())
-    details = fm.router_identity_details(_AP())
-    assert "[dim]Brand:[/dim] O2 (82%)" in details
-    assert "[dim]Vendor:[/dim] Kaon (99%)" in details
+    assert "Cisco AP-500" in fm.router_identity_markup(ap)
+    details = fm.router_identity_details(ap)
+    assert details is not None
+    assert "[bold]Cisco AP-500[/bold]" in details
+    assert "[dim]Model:[/dim] AP-500 [dim](WSC M1)[/dim]" in details
+    assert "[dim]Manufacturer:[/dim] Cisco [dim](WSC M1)[/dim]" in details
+    assert "[dim]IEEE OUI:[/dim] Apple" in details
 
 
 def test_router_identity_markup_is_blank_without_evidence():

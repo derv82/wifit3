@@ -4,29 +4,39 @@ from enum import Enum, auto
 from typing import Any, Optional
 
 
+_DUMMY_STRINGS = frozenset({
+    "0", "00000000", "12345", "12345678", "1.0", "n/a", "na", "none",
+    "default", "unknown", "null", "undefined", "generic", "string",
+})
+
+
 def clean_text(value: str | None) -> str | None:
     if value is None:
         return None
     cleaned = value.strip().strip("\x00")
-    return cleaned or None
+    if not cleaned or cleaned.lower() in _DUMMY_STRINGS or set(cleaned) == {"?"}:
+        return None
+    return cleaned
 
 
 class IdSource(Enum):
     """Origin of identity evidence ordered by priority."""
-    WSC_M1 = 1       # Active M1 exchange (authenticated/cryptographic TLVs)
-    PROBE = 2        # Active Layer-3 UDP probe (WinBox, MNDP, UBNT)
-    WSC_BEACON = 3   # Passive Beacon/ProbeResp Tag 221 WSC element
-    SSID = 4         # Advertised SSID heuristics
-    OUI = 5          # IEEE MAC prefix registry
+    WSC_M1 = 1          # Active or passive M1 cryptographic TLVs
+    WINBOX_PROBE = 2    # MikroTik WinBox UDP (port 20561)
+    MNDP_PROBE = 3      # MikroTik MNDP UDP (port 5678)
+    UBNT_PROBE = 4      # Ubiquiti Discovery UDP (port 10001)
+    WSC_BEACON = 5      # Passive Beacon/ProbeResp Tag 221 WSC element
+    OUI = 6             # IEEE MAC prefix registry
 
     @property
     def label(self) -> str:
         return {
-            IdSource.WSC_M1: "wps.m1",
-            IdSource.PROBE: "probe",
-            IdSource.WSC_BEACON: "wps.passive",
-            IdSource.SSID: "ssid",
-            IdSource.OUI: "oui",
+            IdSource.WSC_M1: "WSC M1",
+            IdSource.WINBOX_PROBE: "WinBox Probe",
+            IdSource.MNDP_PROBE: "MNDP Probe",
+            IdSource.UBNT_PROBE: "Ubiquiti Probe",
+            IdSource.WSC_BEACON: "WSC Beacon",
+            IdSource.OUI: "IEEE OUI",
         }[self]
 
 
@@ -106,3 +116,17 @@ class ApIdentity:
     @property
     def serial_number(self) -> str | None:
         return self.get(IdKey.SERIAL_NUMBER)[0]
+
+    @property
+    def model(self) -> str | None:
+        return self.model_name or self.model_number
+
+    @property
+    def summary(self) -> str:
+        if not self.manufacturer:
+            return self.model or ""
+        if not self.model:
+            return self.manufacturer
+        if self.model.lower().startswith(self.manufacturer.lower()):
+            return self.model
+        return f"{self.manufacturer} {self.model}"

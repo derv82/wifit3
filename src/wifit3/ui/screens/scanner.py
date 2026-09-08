@@ -803,8 +803,6 @@ class ScannerView(Screen):
             async with array.claim(iface):
                 result = await probe_ap(iface, ap)
                 if result.ok:
-                    if result.claims:
-                        self._apply_router_probe_claims(ap, result.claims)
                     fields = self._format_probe_result(result)
                     self._write_log(treelog.leaf_ok(fields or "identity probe matched"))
                     self.refresh_table()
@@ -819,18 +817,12 @@ class ScannerView(Screen):
             self._router_info_probe_bssid = None
 
     @staticmethod
-    def _apply_router_probe_claims(ap: AccessPoint, claims) -> None:
-        ap.router_claims = tuple(dict.fromkeys((*ap.router_claims, *claims)))
-
-    @staticmethod
     def _format_probe_result(result) -> str:
         if result.wps_identity is not None:
             fields = ScannerView._format_wps_m1_identity(result.wps_identity)
-            return f"WPS M1: {fields}" if fields else "WPS M1 received"
-        if result.claims:
-            fields = ", ".join(f"{claim.name}={escape(claim.value)} {round(claim.confidence * 100)}%"
-                               for claim in result.claims)
-            return f"{result.source}: {fields}" if result.source else fields
+            return f"WSC M1: {fields}" if fields else "WSC M1 received"
+        if result.vendor:
+            return f"{result.source}: {result.vendor}"
         return result.source or "identity probe matched"
 
     @staticmethod

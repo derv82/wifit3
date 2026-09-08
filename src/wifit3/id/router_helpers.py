@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
 
 from .vendors import VENDOR_BY_OUI
+from wifit3.models.identity import clean_text
 
 _PREFIX_LENGTHS = (9, 7, 6)
 _CANONICAL_VENDOR_PATTERNS = (
@@ -21,13 +21,6 @@ def hex_mac(mac: str) -> str:
     return mac.replace(":", "").replace("-", "").upper()
 
 
-def clean_text(value: str | None) -> str | None:
-    if value is None:
-        return None
-    cleaned = value.strip().strip("\x00")
-    return cleaned or None
-
-
 def canonical_vendor(name: str | None) -> str | None:
     cleaned = clean_text(name)
     if cleaned is None:
@@ -42,10 +35,3 @@ def vendor_for_mac(mac: str) -> str | None:
     oui = hex_mac(mac)
     vendor = next((VENDOR_BY_OUI[oui[:n]] for n in _PREFIX_LENGTHS if oui[:n] in VENDOR_BY_OUI), None)
     return canonical_vendor(vendor)
-
-
-def combine_confidences(confidences: Iterable[float], cap: float = 0.99) -> float:
-    miss = 1.0
-    for confidence in confidences:
-        miss *= 1.0 - max(0.0, min(confidence, 1.0))
-    return min(cap, 1.0 - miss)

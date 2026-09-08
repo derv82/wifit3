@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from wifit3.campaigns.probe import BaseApProbe, ProbeResult, probe_ap
 from wifit3.campaigns.probe.mikrotik import MikrotikProbe
 from wifit3.campaigns.probe.ubiquiti import UbiquitiProbe
 from wifit3.campaigns.probe.wps_m1 import WpsM1Probe
-from wifit3.id import RouterClaim, RouterEvidence
-from wifit3.models import AccessPoint
+from wifit3.models import AccessPoint, IdKey, IdSource
 
 
 async def test_probe_ap_runs_applicable_probes():
@@ -18,8 +17,8 @@ async def test_probe_ap_runs_applicable_probes():
             return True
 
         async def probe(self, iface, ap: AccessPoint) -> ProbeResult:
-            evidence = RouterEvidence("dummy", "reachable", "true", 0.99, passive=False)
-            return ProbeResult(True, source="dummy", claims=(RouterClaim("vendor", "Dummy", 0.99, (evidence,)),))
+            ap.identity.set(IdSource.WINBOX_PROBE, IdKey.MANUFACTURER, "Dummy")
+            return ProbeResult(True, source="dummy", vendor="Dummy")
 
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", channel=6)
     iface = MagicMock()
@@ -27,7 +26,8 @@ async def test_probe_ap_runs_applicable_probes():
 
     assert result.ok is True
     assert result.source == "dummy"
-    assert result.claims[0].value == "Dummy"
+    assert result.vendor == "Dummy"
+    assert ap.identity.manufacturer == "Dummy"
 
 
 async def test_probe_ap_rejects_when_no_suitable_probes():

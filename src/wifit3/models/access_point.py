@@ -3,13 +3,10 @@ previously-saved capture artifacts).
 """
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional, List, Literal, Dict, TYPE_CHECKING
+from typing import Dict, List, Literal, Optional
 
 from .handshake import Handshake
-from .identity import ApIdentity
-
-if TYPE_CHECKING:
-    from wifit3.id import RouterFingerprint
+from .identity import ApIdentity, IdKey, IdSource
 
 
 @dataclass
@@ -94,13 +91,12 @@ class AccessPoint:
     # Read-only capture history loaded from captures/ at scan start.
     persisted: List[PersistedCapture] = field(default_factory=list)
 
-    @property
-    def router_claims(self) -> tuple[Any, ...]:
-        return self.identity.claims
-
-    @router_claims.setter
-    def router_claims(self, val: tuple[Any, ...]) -> None:
-        self.identity.claims = val
+    def __post_init__(self) -> None:
+        if self.bssid and not self.identity.get_source_value(IdKey.MANUFACTURER, IdSource.OUI):
+            from wifit3.id.router_helpers import vendor_for_mac
+            vendor = vendor_for_mac(self.bssid)
+            if vendor:
+                self.identity.set(IdSource.OUI, IdKey.MANUFACTURER, vendor)
 
     # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
     signal_by_card: Dict[str, int] = field(default_factory=dict)
@@ -109,12 +105,6 @@ class AccessPoint:
     def signal(self) -> int:
         """Strongest smoothed RSSI (dBm) across the cards that hear this AP; -100 if none yet."""
         return max(self.signal_by_card.values(), default=-100)
-
-    @property
-    def router_fingerprint(self) -> Optional["RouterFingerprint"]:
-        """Confidence-scored AP/router identity from OUI and observed WPS identity fields."""
-        from wifit3.id import fingerprint_router
-        return fingerprint_router(self)
 
     @property
     def wps_pbc_active(self) -> bool:

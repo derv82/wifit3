@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
 from wifit3.campaigns.probe.base import BaseApProbe, ProbeResult
 from wifit3.dot11 import str_to_mac
-from wifit3.id import RouterClaim, RouterEvidence
+from wifit3.models import IdKey, IdSource
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
@@ -79,23 +79,6 @@ def is_mikrotik_response(frame: bytes) -> bool:
     return bool(fc1 & 0x02) and not (fc1 & 0x01) and is_mikrotik_plaintext_frame(frame)
 
 
-def mikrotik_claims(source: str, *, passive: bool, confidence: float = 0.99) -> tuple[RouterClaim, ...]:
-    evidence = RouterEvidence(source, "reachable", "true", confidence, passive=passive)
-    return (
-        RouterClaim("vendor", "MikroTik", confidence, (evidence,)),
-        RouterClaim("kind", "router", confidence, (evidence,)),
-    )
-
-
-def mikrotik_claims_from_frame(frame: bytes, *, passive: bool) -> tuple[RouterClaim, ...]:
-    ports = _mikrotik_ports_in_frame(frame)
-    if 20561 in ports:
-        return mikrotik_claims("mikrotik.mac_winbox", passive=passive, confidence=0.99)
-    if 5678 in ports:
-        return mikrotik_claims("mikrotik.neighbor", passive=passive, confidence=0.70)
-    return ()
-
-
 class MikrotikProbe(BaseApProbe):
     """Probes an OPEN AP for MikroTik WinBox/MNDP discovery responses."""
     name = "mikrotik"
@@ -125,8 +108,10 @@ class MikrotikProbe(BaseApProbe):
             while asyncio.get_running_loop().time() < deadline:
                 frame = await transport.recv(0.25)
                 if frame is not None and is_mikrotik_response(frame):
-                    claims = mikrotik_claims_from_frame(frame, passive=False)
-                    return ProbeResult(True, source=claims[0].evidence[0].source, claims=claims)
+                    ports = _mikrotik_ports_in_frame(frame)
+                    src = IdSource.WINBOX_PROBE if 20561 in ports else IdSource.MNDP_PROBE
+                    ap.identity.set(src, IdKey.MANUFACTURER, "MikroTik")
+                    return ProbeResult(True, source=src.label, vendor="MikroTik")
         finally:
             transport.stop()
             assoc.stop()

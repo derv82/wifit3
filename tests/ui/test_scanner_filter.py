@@ -7,10 +7,9 @@ import time
 import pytest
 from textual.widgets import Button, DataTable
 
-from wifit3.campaigns.probe import RouterProbeResult
+from wifit3.campaigns.probe import ProbeResult
 from wifit3.dot11.wsc.identity import WpsM1Identity
-from wifit3.id import RouterClaim, RouterEvidence
-from wifit3.models import AccessPoint, ApIdentity, IdKey, IdSource, PersistedCapture
+from wifit3.models import AccessPoint, IdKey, IdSource, PersistedCapture
 from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.filter import EncryptionFilter, ScanFilter
@@ -143,15 +142,13 @@ async def test_channel_modal_returns_focus_to_table():
         assert app.focused is table
 
 
-def test_scanner_has_sortable_brand_and_type_columns_after_ssid():
+def test_scanner_has_identity_column():
     columns = [key for key, _label in ScannerView._COLUMNS]
     labels = dict(ScannerView._COLUMNS)
-    assert "brand" in columns
-    assert labels["brand"] == "BRAND"
-    assert "vendor" not in columns
-    assert "kind" in columns
-    assert "model" not in columns
-    assert columns.index("ssid") < columns.index("brand") < columns.index("kind")
+    assert "identity" in columns
+    assert labels["identity"] == "IDENTITY"
+    assert "brand" not in columns
+    assert "kind" not in columns
 
 
 def test_scanner_has_router_info_probe_keybind():
@@ -159,85 +156,43 @@ def test_scanner_has_router_info_probe_keybind():
                for binding in ScannerView.BINDINGS)
 
 
-def test_scanner_router_fingerprint_cells_show_confidence():
+def test_scanner_identity_cell_shows_manufacturer_and_model():
     scanner = ScannerView()
     scanner._theme_fg = "white"
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
         ssid="Lab",
         channel=1,
-        identity=ApIdentity(manufacturer="MikroTik", model_name="hAP ac²"),
     )
-    brand = scanner._router_brand_cell(ap)
-    kind = scanner._router_kind_cell(ap)
-    assert brand.plain == "MikroTik 99%"
-    assert kind.plain == ""
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "MikroTik")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "hAP ac²")
+    cell = scanner._identity_cell(ap)
+    assert cell.plain == "MikroTik hAP ac²"
 
 
-def test_scanner_router_type_cell_blank_without_type_confidence():
+def test_scanner_identity_cell_blank_when_unknown():
     scanner = ScannerView()
     scanner._theme_fg = "white"
-    ap = AccessPoint(bssid="00:00:0b:aa:bb:cc")
-    assert scanner._router_brand_cell(ap).plain == "Matrix 30%"
-    assert scanner._router_kind_cell(ap).plain == ""
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    assert scanner._identity_cell(ap).plain == ""
 
 
-def test_scanner_dims_low_confidence_percentages():
-    scanner = ScannerView()
-    scanner._theme_fg = "white"
-    low = scanner._router_brand_cell(AccessPoint(bssid="00:00:0b:aa:bb:cc"))
-    high = scanner._router_brand_cell(AccessPoint(bssid="00:03:93:11:22:33"))
-    assert low.plain == "Matrix 30%"
-    assert high.plain == "Apple 85%"
-    assert any(span.start == len("Matrix ") and "dim" in str(span.style) for span in low.spans)
-    assert not any(span.start == len("Apple ") and "dim" in str(span.style) for span in high.spans)
-
-
-def test_scanner_brand_cell_prefers_brand_over_hardware_vendor():
-    scanner = ScannerView()
-    scanner._theme_fg = "white"
-    ap = AccessPoint(
-        bssid="02:00:00:00:00:01",
-        identity=ApIdentity(manufacturer="Kaon Group", model_name="O2SMARTBOX"),
-    )
-    fp = ap.router_fingerprint
-    assert fp is not None
-    assert fp.brand == "O2"
-    assert fp.vendor == "Kaon"
-    assert scanner._router_brand_cell(ap).plain == "O2 99%"
-
-
-def test_scanner_brand_cell_shows_vodafone_ssid_clue():
-    scanner = ScannerView()
-    scanner._theme_fg = "white"
-    ap = AccessPoint(bssid="02:00:00:00:00:01", ssid="Vodafone-123456")
-    fp = ap.router_fingerprint
-    assert fp is not None
-    assert fp.brand == "Vodafone"
-    assert scanner._router_brand_cell(ap).plain == "Vodafone 30%"
-
-
-def test_scanner_brand_cell_shows_vodafone_over_celeno_manufacturer():
+def test_scanner_identity_cell_shows_summary():
     scanner = ScannerView()
     scanner._theme_fg = "white"
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
         ssid="Vodafone-123456",
-        identity=ApIdentity(manufacturer="Celeno"),
     )
-    fp = ap.router_fingerprint
-    assert fp is not None
-    assert fp.brand == "Vodafone"
-    assert fp.vendor == "Celeno"
-    assert scanner._router_brand_cell(ap).plain == "Vodafone 70%"
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "Celeno")
+    assert scanner._identity_cell(ap).plain == "Celeno"
 
 
-def test_scanner_shows_apple_hotspot_type():
+def test_scanner_identity_cell_oui_fallback():
     scanner = ScannerView()
     scanner._theme_fg = "white"
     ap = AccessPoint(bssid="00:03:93:11:22:33", ssid="Alice’s iPhone")
-    assert scanner._router_brand_cell(ap).plain == "Apple 91%"
-    assert scanner._router_kind_cell(ap).plain == "Hotspot 91%"
+    assert scanner._identity_cell(ap).plain == "Apple"
 
 
 def test_scanner_freezes_all_row_ages_while_probing():
@@ -266,7 +221,7 @@ async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
         ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "TP-Link")
         ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "Archer AX10")
         ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_NAME, "Office")
-        return RouterProbeResult(
+        return ProbeResult(
             True,
             source="wps.m1",
             wps_identity=WpsM1Identity(manufacturer="TP-Link", model_name="Archer AX10", device_name="Office"),
@@ -299,30 +254,23 @@ async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
     assert ap.identity.manufacturer == "TP-Link"
     assert ap.identity.model_name == "Archer AX10"
     assert ap.identity.device_name == "Office"
-    fp = ap.router_fingerprint
-    assert fp is not None
-    assert fp.vendor == "TP-Link"
-    assert fp.model == "Archer AX10"
-    assert fp.kind is None
+    assert ap.identity.summary == "TP-Link Archer AX10"
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_scanner_info_probe_applies_active_claims(monkeypatch):
+async def test_scanner_info_probe_updates_probe_identity(monkeypatch):
     ap = AccessPoint(bssid="aa:bb:cc:00:00:51", ssid="Router", channel=1)
-    evidence = RouterEvidence("mikrotik.mac_winbox", "reachable", "true", 0.99, passive=False)
-    result = RouterProbeResult(
+    result = ProbeResult(
         True,
-        source="mikrotik.mac_winbox",
-        claims=(
-            RouterClaim("vendor", "MikroTik", 0.99, (evidence,)),
-            RouterClaim("kind", "router", 0.99, (evidence,)),
-        ),
+        source="mikrotik",
+        vendor="MikroTik",
     )
 
     async def fake_probe(iface, target):
         assert target is ap
         assert iface is not None
+        ap.identity.set(IdSource.WINBOX_PROBE, IdKey.MANUFACTURER, "MikroTik")
         return result
 
     import wifit3.ui.screens.scanner as scanner_module
@@ -342,9 +290,8 @@ async def test_scanner_info_probe_applies_active_claims(monkeypatch):
         await scanner._probe_router_info(ap)
 
     assert toasts == []
-    assert ap.router_fingerprint is not None
-    assert ap.router_fingerprint.vendor == "MikroTik"
-    assert scanner._router_brand_cell(ap).plain == "MikroTik 99%"
+    assert ap.identity.manufacturer == "MikroTik"
+    assert scanner._identity_cell(ap).plain == "MikroTik"
 
 
 def test_ssid_chips_zero_one_two(monkeypatch):

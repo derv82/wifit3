@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from wifit3.dot11.wsc.identity import WpsM1Identity
-    from wifit3.id import RouterClaim
     from wifit3.models import AccessPoint
     from wifit3.wlan.interface import WlanInterface
 
@@ -17,7 +16,8 @@ class ProbeResult:
     ok: bool
     source: str = ""
     detail: str = ""
-    claims: tuple[RouterClaim, ...] = ()
+    vendor: Optional[str] = None
+    model: Optional[str] = None
     wps_identity: Optional[WpsM1Identity] = None
 
 

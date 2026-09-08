@@ -1,18 +1,16 @@
-"""Device and router identity resolution and fingerprinting."""
+"""Device and identity resolution and fingerprinting."""
 from __future__ import annotations
 
 from .client import Fingerprint, fingerprint, fingerprint_client
-from .router import fingerprint_router
-from .router_types import RouterClaim, RouterEvidence, RouterFingerprint
+from .router_helpers import canonical_vendor, hex_mac, vendor_for_mac
 from .vendors import VENDOR_BY_OUI
 
 __all__ = [
     "Fingerprint",
-    "RouterClaim",
-    "RouterEvidence",
-    "RouterFingerprint",
     "VENDOR_BY_OUI",
+    "canonical_vendor",
     "fingerprint",
     "fingerprint_client",
-    "fingerprint_router",
+    "hex_mac",
+    "vendor_for_mac",
 ]

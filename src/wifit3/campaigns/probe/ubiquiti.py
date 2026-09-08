@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
 from wifit3.campaigns.probe.base import BaseApProbe, ProbeResult
 from wifit3.dot11 import str_to_mac
-from wifit3.id import RouterClaim, RouterEvidence
+from wifit3.models import IdKey, IdSource
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
@@ -71,14 +71,6 @@ def is_ubnt_response(frame: bytes) -> bool:
     return bool(fc1 & 0x02) and not (fc1 & 0x01) and is_ubnt_plaintext_frame(frame)
 
 
-def ubnt_claims(source: str, *, passive: bool) -> tuple[RouterClaim, ...]:
-    evidence = RouterEvidence(source, "reachable", "true", 0.99, passive=passive)
-    return (
-        RouterClaim("vendor", "Ubiquiti", 0.99, (evidence,)),
-        RouterClaim("kind", "router", 0.99, (evidence,)),
-    )
-
-
 class UbiquitiProbe(BaseApProbe):
     """Probes an OPEN AP for Ubiquiti discovery responses on UDP port 10001."""
     name = "ubiquiti"
@@ -107,7 +99,8 @@ class UbiquitiProbe(BaseApProbe):
             while asyncio.get_running_loop().time() < deadline:
                 frame = await transport.recv(0.25)
                 if frame is not None and is_ubnt_response(frame):
-                    return ProbeResult(True, source="ubnt.discovery", claims=ubnt_claims("ubnt.discovery", passive=False))
+                    ap.identity.set(IdSource.UBNT_PROBE, IdKey.MANUFACTURER, "Ubiquiti")
+                    return ProbeResult(True, source=IdSource.UBNT_PROBE.label, vendor="Ubiquiti")
         finally:
             transport.stop()
             assoc.stop()

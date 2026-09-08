@@ -84,4 +84,10 @@ class WpsM1Probe(BaseApProbe):
         ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, identity.model_name)
         ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NUMBER, identity.model_number)
         ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_NAME, identity.device_name)
-        return ProbeResult(True, source="wps.m1", wps_identity=identity)
+        return ProbeResult(
+            True,
+            source=IdSource.WSC_M1.label,
+            vendor=identity.manufacturer,
+            model=identity.model_name or identity.model_number,
+            wps_identity=identity,
+        )

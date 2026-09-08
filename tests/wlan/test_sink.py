@@ -107,7 +107,7 @@ def test_wps_identity_fields_persist_on_ap():
     assert ap.identity.manufacturer == "MikroTik"
     assert ap.identity.model_name == "RouterBOARD"
     assert ap.identity.device_name == "Office AP"
-    assert ap.router_fingerprint.vendor == "MikroTik"
+    assert ap.identity.summary == "MikroTik RouterBOARD"
 
 
 def test_wps_m1_identity_fields_are_applied_by_sink():
@@ -128,9 +128,7 @@ def test_wps_m1_identity_fields_are_applied_by_sink():
     assert ap.identity.model_name == "Archer AX10"
     assert ap.identity.model_number == "AX10"
     assert ap.identity.device_name == "Office AP"
-    assert ap.router_fingerprint.vendor == "TP-Link"
-    assert ap.router_fingerprint.model == "Archer AX10"
-    assert any(e.source == "wps.m1" for e in ap.router_fingerprint.evidence)
+    assert ap.identity.summary == "TP-Link Archer AX10"
 
 
 

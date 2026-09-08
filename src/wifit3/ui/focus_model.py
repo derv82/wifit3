@@ -13,6 +13,7 @@ from ..campaigns.pmkid import PmkidHarvestAttack
 from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.crack.handshake import pmkid_crackable
+from wifit3.models import IdKey, IdSource
 from wifit3.persist.config import Config
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
@@ -219,36 +220,38 @@ def pmf_status_markup(ap) -> str:
 
 
 def router_identity_markup(ap) -> str:
-    fp = getattr(ap, "router_fingerprint", None)
-    if fp is None:
+    ident = getattr(ap, "identity", None)
+    if ident is None or not ident.summary:
         return ""
-    name = fp.model if fp.model and fp.model_confidence >= 0.75 else fp.brand or fp.vendor
-    if not name:
-        return ""
-    return f"[accent]{escape(name)}[/accent] [dim]{round(fp.confidence * 100)}%[/dim]"
+    return f"[accent]{escape(ident.summary)}[/accent]"
 
 
 def router_identity_details(ap) -> str | None:
-    fp = getattr(ap, "router_fingerprint", None)
-    if fp is None:
+    ident = getattr(ap, "identity", None)
+    if ident is None or not ident.summary:
         return None
-    rows = [f"[bold]{escape(fp.label)}[/bold]"]
-    if fp.brand:
-        rows.append(f"[dim]Brand:[/dim] {escape(fp.brand)} ({round(fp.brand_confidence * 100)}%)")
-    if fp.vendor:
-        rows.append(f"[dim]Vendor:[/dim] {escape(fp.vendor)} ({round(fp.vendor_confidence * 100)}%)")
-    if fp.model:
-        rows.append(f"[dim]Model:[/dim] {escape(fp.model)} ({round(fp.model_confidence * 100)}%)")
-    if fp.kind:
-        rows.append(f"[dim]Type:[/dim] {escape(fp.kind)} ({round(fp.kind_confidence * 100)}%)")
-    if fp.evidence:
-        rows.append("")
-        rows.append("[bold]Evidence[/bold]")
-        rows += [
-            f"[dim]{escape(e.source)}:[/dim] {escape(e.name)}={escape(e.value)} "
-            f"({round(e.confidence * 100)}%)"
-            for e in fp.evidence
-        ]
+    rows = [f"[bold]{escape(ident.summary)}[/bold]"]
+    if ident.model:
+        model_src = ident.get(IdKey.MODEL_NAME)[1] or ident.get(IdKey.MODEL_NUMBER)[1]
+        src_label = model_src.label if model_src else ""
+        rows.append(f"[dim]Model:[/dim] {escape(ident.model)} [dim]({src_label})[/dim]")
+    if ident.manufacturer:
+        mfr_src = ident.get(IdKey.MANUFACTURER)[1]
+        src_label = mfr_src.label if mfr_src else ""
+        rows.append(f"[dim]Manufacturer:[/dim] {escape(ident.manufacturer)} [dim]({src_label})[/dim]")
+    if ident.device_name:
+        dev_src = ident.get(IdKey.DEVICE_NAME)[1]
+        src_label = dev_src.label if dev_src else ""
+        rows.append(f"[dim]Device Name:[/dim] {escape(ident.device_name)} [dim]({src_label})[/dim]")
+    if ident.serial_number:
+        sn_src = ident.get(IdKey.SERIAL_NUMBER)[1]
+        src_label = sn_src.label if sn_src else ""
+        rows.append(f"[dim]Serial:[/dim] {escape(ident.serial_number)} [dim]({src_label})[/dim]")
+
+    oui_vendor = ident.get_source_value(IdKey.MANUFACTURER, IdSource.OUI)
+    if oui_vendor and (oui_vendor != ident.manufacturer or ident.get(IdKey.MANUFACTURER)[1] != IdSource.OUI):
+        rows.append(f"[dim]IEEE OUI:[/dim] {escape(oui_vendor)}")
+
     return "\n".join(rows)
 
 
