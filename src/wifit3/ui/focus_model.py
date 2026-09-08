@@ -249,6 +249,9 @@ def router_identity_details(ap) -> str | None:
         rows.append(f"[dim]Model:[/dim] {escape(fp.model)} ({round(fp.model_confidence * 100)}%)")
     if fp.kind:
         rows.append(f"[dim]Type:[/dim] {escape(fp.kind)} ({round(fp.kind_confidence * 100)}%)")
+    if fp.wifi_generation:
+        confidence = round(fp.wifi_generation_confidence * 100)
+        rows.append(f"[dim]Wi-Fi:[/dim] Wi-Fi {fp.wifi_generation} ({confidence}%)")
     if fp.evidence:
         rows.append("")
         rows.append("[bold]Evidence[/bold]")

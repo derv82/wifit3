@@ -37,6 +37,8 @@ class RouterFingerprint:
     model_confidence: float = 0.0
     kind: str | None = None
     kind_confidence: float = 0.0
+    wifi_generation: int | None = None
+    wifi_generation_confidence: float = 0.0
     claims: tuple[RouterClaim, ...] = ()
     evidence: tuple[RouterEvidence, ...] = ()
 

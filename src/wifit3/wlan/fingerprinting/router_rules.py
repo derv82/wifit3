@@ -82,6 +82,14 @@ def wps_manufacturer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     return (RouterClaim("vendor", manufacturer, 0.99, (evidence,)),)
 
 
+def wifi_generation_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+    generation = getattr(ap, "wifi_generation", None)
+    if generation is None:
+        return ()
+    evidence = RouterEvidence("wifi.generation", "generation", f"Wi-Fi {generation}", 0.99)
+    return (RouterClaim("wifi_generation", str(generation), 0.99, (evidence,)),)
+
+
 def wps_model_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     claims: list[RouterClaim] = []
     model, model_source = _wps_value_source(ap, "model_name")
@@ -175,6 +183,7 @@ IDENTIFY_RULES: tuple[RouterRule, ...] = (
     apple_vendor_hotspot_rule,
 )
 DISTINGUISH_RULES: tuple[RouterRule, ...] = (
+    wifi_generation_rule,
     wps_model_rule,
 )
 ROUTER_RULES: tuple[RouterRule, ...] = IDENTIFY_RULES + DISTINGUISH_RULES

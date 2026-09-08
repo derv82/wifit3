@@ -14,6 +14,7 @@ def _build_beacon(
     ssid: str = "TestNet",
     rsn_ie: bytes = b"",
     wpa_vendor_ie: bytes = b"",
+    extra_ies: bytes = b"",
     privacy_bit: bool = False,
 ) -> bytes:
     """Build a minimally valid 802.11 beacon. Tag 0 (SSID) is always first;
@@ -36,7 +37,7 @@ def _build_beacon(
     tag_ssid = bytes([0x00, len(ssid_bytes)]) + ssid_bytes
     tag_rates = b"\x01\x04\x82\x84\x8b\x96"  # 1, 2, 5.5, 11
 
-    return mac_hdr + fixed + tag_ssid + tag_rates + rsn_ie + wpa_vendor_ie
+    return mac_hdr + fixed + tag_ssid + tag_rates + rsn_ie + wpa_vendor_ie + extra_ies
 
 
 def _rsn_ie(
@@ -125,6 +126,35 @@ def test_no_wps_ie_absent():
     r = WlanFrameParser.parse_80211_frame(
         _build_beacon(rsn_ie=_rsn_ie()), -50)
     assert not r.wps
+
+
+def _ie(tag_id: int, data: bytes) -> bytes:
+    return bytes([tag_id, len(data)]) + data
+
+
+def test_wifi_generation_detected_from_ht_vht_he_and_eht_ies():
+    ht = WlanFrameParser.parse_80211_frame(_build_beacon(extra_ies=_ie(45, bytes(26))), -50)
+    vht = WlanFrameParser.parse_80211_frame(_build_beacon(extra_ies=_ie(191, bytes(12))), -50)
+    he = WlanFrameParser.parse_80211_frame(_build_beacon(extra_ies=_ie(255, bytes([35]) + bytes(20))), -50)
+    eht = WlanFrameParser.parse_80211_frame(_build_beacon(extra_ies=_ie(255, bytes([108]) + bytes(20))), -50)
+
+    assert ht.wifi_generation == 4
+    assert vht.wifi_generation == 5
+    assert he.wifi_generation == 6
+    assert eht.wifi_generation == 7
+
+
+def test_wifi_generation_prefers_newest_capability_seen_in_frame():
+    ies = _ie(45, bytes(26)) + _ie(191, bytes(12)) + _ie(255, bytes([36]) + bytes(10))
+    parsed = WlanFrameParser.parse_80211_frame(_build_beacon(extra_ies=ies), -50)
+    assert parsed.wifi_generation == 6
+
+
+def test_wifi_generation_prefers_eht_over_he():
+    ies = _ie(255, bytes([35]) + bytes(20)) + _ie(255, bytes([106]) + bytes(10))
+    parsed = WlanFrameParser.parse_80211_frame(_build_beacon(extra_ies=ies), -50)
+    assert parsed.wifi_generation == 7
+
 
 def test_wlan_frame_parser_validates():
     # A random bunch of bytes too small to be a frame

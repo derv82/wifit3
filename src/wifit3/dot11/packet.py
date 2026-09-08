@@ -71,6 +71,7 @@ class BeaconPacket(Packet):
     pmf_capable: bool = False
     pmf_required: bool = False
     beacon_protection: bool = False
+    wifi_generation: Optional[int] = None
     wps: bool = False
     wps_locked: bool = False
     wps_state: Optional[int] = None

@@ -1,7 +1,7 @@
 from wifit3.models import AccessPoint
 from wifit3.wlan.fingerprinting.router import RouterClaim, RouterEvidence, fingerprint_router
 from wifit3.wlan.fingerprinting.router_helpers import canonical_vendor
-from wifit3.wlan.fingerprinting.router_rules import wps_model_rule
+from wifit3.wlan.fingerprinting.router_rules import wifi_generation_rule, wps_model_rule
 
 
 def test_oui_only_is_possible_vendor_not_exact_router():
@@ -35,6 +35,28 @@ def test_passive_wps_manufacturer_and_model_make_stronger_router_fingerprint():
     assert fp.confidence == 0.99
     assert fp.label == "MikroTik hAP ac²"
     assert {e.name for e in fp.evidence} >= {"manufacturer", "model", "device_name"}
+
+
+def test_wifi_generation_alone_is_not_router_identity():
+    ap = AccessPoint(bssid="02:00:00:00:00:01", wifi_generation=7)
+    assert ap.router_fingerprint is None
+
+    claims = list(wifi_generation_rule(ap))
+    assert len(claims) == 1
+    assert claims[0].name == "wifi_generation"
+    assert claims[0].value == "7"
+    assert claims[0].evidence[0].source == "wifi.generation"
+    assert claims[0].evidence[0].value == "Wi-Fi 7"
+
+
+def test_wifi_generation_claim_is_kept_with_router_identity():
+    fp = AccessPoint(bssid="00:0a:eb:11:22:33", wifi_generation=5).router_fingerprint
+    assert fp is not None
+    assert fp.vendor == "TP-Link"
+    assert fp.wifi_generation == 5
+    assert fp.wifi_generation_confidence == 0.99
+    assert any(e.source == "wifi.generation" and e.name == "generation" and e.value == "Wi-Fi 5"
+               for e in fp.evidence)
 
 
 def test_rules_are_pluggable_for_router_specific_checks():

@@ -96,6 +96,18 @@ def test_channel_hint_used_only_when_beacon_lacks_channel():
     assert s.access_points[BSSID].channel == 11
 
 
+def test_wifi_generation_keeps_newest_capability_seen():
+    s = WlanSink()
+    s.update(_beacon({"wifi_generation": 4}), W0)
+    assert s.access_points[BSSID].wifi_generation == 4
+
+    s.update(_beacon({"type": "probe_resp", "wifi_generation": 6}), W0)
+    assert s.access_points[BSSID].wifi_generation == 6
+
+    s.update(_beacon({"wifi_generation": 5}), W0)
+    assert s.access_points[BSSID].wifi_generation == 6
+
+
 def test_wps_identity_fields_persist_on_ap():
     s = WlanSink()
     s.update(_beacon({

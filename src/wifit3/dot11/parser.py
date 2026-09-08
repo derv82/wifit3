@@ -99,6 +99,7 @@ class WlanFrameParser:
                 "pmf_capable": tags.get("pmf_capable", False),
                 "pmf_required": tags.get("pmf_required", False),
                 "beacon_protection": tags.get("beacon_protection", False),
+                "wifi_generation": tags.get("wifi_generation"),
                 "pairwise_cipher": tags.get("pairwise_cipher"),
                 "akms": tags.get("akms", []),
                 "akm_suites": tags.get("akm_suites", []),
@@ -504,6 +505,7 @@ class WlanFrameParser:
         channel_ds: Optional[int] = None
         channel_ht: Optional[int] = None
         channel_vht: Optional[int] = None
+        wifi_generation: Optional[int] = None
 
         # Per 802.11 the SSID IE is mandatory and FIRST. A later tag_id=0 is a malformed
         # frame or the walker straying into trailing bytes (unstripped metadata, padding),
@@ -533,12 +535,23 @@ class WlanFrameParser:
             elif tag_id == 3: # DS Parameter Set (Channel)
                 if tag_len == 1:
                     channel_ds = tag_data[0]
+            elif tag_id == 45: # HT Capabilities: 802.11n / Wi-Fi 4
+                wifi_generation = max(wifi_generation or 0, 4)
             elif tag_id == 61: # HT Operation: primary channel = first byte
+                wifi_generation = max(wifi_generation or 0, 4)
                 if tag_len >= 1:
                     channel_ht = tag_data[0]
+            elif tag_id == 191: # VHT Capabilities: 802.11ac / Wi-Fi 5
+                wifi_generation = max(wifi_generation or 0, 5)
             elif tag_id == 192: # VHT Operation: center freq seg 0 at byte 1
+                wifi_generation = max(wifi_generation or 0, 5)
                 if tag_len >= 2:
                     channel_vht = tag_data[1]
+            elif tag_id == 255 and tag_len >= 1: # Element ID Extension
+                if tag_data[0] in (35, 36): # HE Capabilities / Operation: 802.11ax / Wi-Fi 6
+                    wifi_generation = max(wifi_generation or 0, 6)
+                elif tag_data[0] in (106, 108): # EHT Operation / Capabilities: 802.11be / Wi-Fi 7
+                    wifi_generation = max(wifi_generation or 0, 7)
             elif tag_id == 127: # Extended Capabilities: bit 84 = Beacon Protection Enabled
                 if tag_len >= 11:
                     beacon_protection = bool(tag_data[10] & 0x10)   # bit 84 = octet 10, bit 4
@@ -590,6 +603,7 @@ class WlanFrameParser:
         parsed["pmf_capable"] = pmf_capable
         parsed["pmf_required"] = pmf_required
         parsed["beacon_protection"] = beacon_protection
+        parsed["wifi_generation"] = wifi_generation
         parsed["pairwise_cipher"] = pairwise_cipher
         parsed["akms"] = akms
         parsed["akm_suites"] = akm_suites

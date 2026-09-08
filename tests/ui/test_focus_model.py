@@ -264,12 +264,15 @@ def test_router_identity_details_can_show_brand_and_vendor_separately():
                 vendor_confidence=0.99,
                 kind="router",
                 kind_confidence=0.99,
+                wifi_generation=6,
+                wifi_generation_confidence=0.99,
             )
 
     assert "O2" in fm.router_identity_markup(_AP())
     details = fm.router_identity_details(_AP())
     assert "[dim]Brand:[/dim] O2 (82%)" in details
     assert "[dim]Vendor:[/dim] Kaon (99%)" in details
+    assert "[dim]Wi-Fi:[/dim] Wi-Fi 6 (99%)" in details
 
 
 def test_router_identity_markup_is_blank_without_evidence():
