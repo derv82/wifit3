@@ -46,4 +46,5 @@ def _ap_wps_identity(ap: AccessPoint) -> WpsM1Identity:
         model_name=ap.wps_m1_model_name or ap.wps_model_name,
         model_number=ap.wps_m1_model_number or ap.wps_model_number,
         device_name=ap.wps_m1_device_name or ap.wps_device_name,
+        primary_device_type=ap.wps_m1_primary_device_type or ap.wps_primary_device_type,
     )

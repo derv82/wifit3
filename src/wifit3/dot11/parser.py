@@ -5,7 +5,7 @@ import struct
 from typing import Optional, List, Dict, Any
 
 from wifit3.dot11.mac import mac_to_str
-from wifit3.dot11.wsc.identity import wps_text
+from wifit3.dot11.wsc.identity import primary_device_type, wps_text
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
     AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
@@ -109,7 +109,7 @@ class WlanFrameParser:
             for key in ("channel", "rsn_ie_raw", "wps", "wps_locked", "wps_version",
                         "wps_state", "wps_config_methods", "wps_device_password_id",
                         "wps_selected_registrar", "wps_manufacturer", "wps_model_name",
-                        "wps_model_number", "wps_device_name"):
+                        "wps_model_number", "wps_device_name", "wps_primary_device_type"):
                 if key in tags:
                     fields[key] = tags[key]
             return BeaconPacket(**base, **fields)
@@ -413,6 +413,7 @@ class WlanFrameParser:
         ATTR_DEVICE_PASSWORD_ID, ATTR_SELECTED_REGISTRAR = 0x1012, 0x1041
         ATTR_MANUFACTURER, ATTR_MODEL_NAME = 0x1021, 0x1023
         ATTR_MODEL_NUMBER, ATTR_DEVICE_NAME = 0x1024, 0x1011
+        ATTR_PRIMARY_DEVICE_TYPE = 0x1054
         ATTR_VERSION, ATTR_VENDOR_EXTENSION = 0x104A, 0x1049
         out: Dict[str, Any] = {"wps": True}
         version1 = False
@@ -452,6 +453,10 @@ class WlanFrameParser:
                 text = cls._wps_text(val)
                 if text:
                     out["wps_device_name"] = text
+            elif attr == ATTR_PRIMARY_DEVICE_TYPE:
+                device_type = primary_device_type(val)
+                if device_type:
+                    out["wps_primary_device_type"] = device_type
             elif attr == ATTR_VERSION and ln >= 1:
                 version1 = True
             elif attr == ATTR_VENDOR_EXTENSION:

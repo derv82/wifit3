@@ -37,6 +37,7 @@ def _wps_m1_frame(bssid: bytes, client: bytes) -> bytes:
         + WSC.tlv(WSC.ATTR_MODEL_NAME, b"Archer AX10")
         + WSC.tlv(WSC.ATTR_MODEL_NUMBER, b"AX10")
         + WSC.tlv(WSC.ATTR_DEV_NAME, b"Office AP\x00")
+        + WSC.tlv(WSC.ATTR_PRIMARY_DEV_TYPE, bytes.fromhex("00060050f2040001"))
     )
     expanded = (
         bytes([WSC.EAP_TYPE_EXPANDED]) + WSC.WFA_VENDOR_ID
@@ -115,12 +116,15 @@ def test_wps_identity_fields_persist_on_ap():
         "wps_manufacturer": "MikroTik",
         "wps_model_name": "RouterBOARD",
         "wps_device_name": "Office AP",
+        "wps_primary_device_type": "network_infrastructure",
     }), W0)
     ap = s.access_points[BSSID]
     assert ap.wps_manufacturer == "MikroTik"
     assert ap.wps_model_name == "RouterBOARD"
     assert ap.wps_device_name == "Office AP"
+    assert ap.wps_primary_device_type == "network_infrastructure"
     assert ap.router_fingerprint.vendor == "MikroTik"
+    assert ap.router_fingerprint.kind == "router"
 
 
 def test_wps_m1_identity_fields_are_applied_by_sink():
@@ -137,10 +141,12 @@ def test_wps_m1_identity_fields_are_applied_by_sink():
     assert ap.wps_m1_model_name == "Archer AX10"
     assert ap.wps_m1_model_number == "AX10"
     assert ap.wps_m1_device_name == "Office AP"
+    assert ap.wps_m1_primary_device_type == "network_infrastructure"
     assert ap.wps_manufacturer == "TP-Link"
     assert ap.wps_model_name == "Archer AX10"
     assert ap.wps_model_number == "AX10"
     assert ap.wps_device_name == "Office AP"
+    assert ap.wps_primary_device_type == "network_infrastructure"
     assert ap.router_fingerprint.vendor == "TP-Link"
     assert ap.router_fingerprint.model == "Archer AX10"
     assert any(e.source == "wps.m1" for e in ap.router_fingerprint.evidence)

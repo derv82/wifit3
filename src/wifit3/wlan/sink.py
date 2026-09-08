@@ -173,6 +173,7 @@ class WlanSink:
         wps_model_name = pkt.wps_model_name
         wps_model_number = pkt.wps_model_number
         wps_device_name = pkt.wps_device_name
+        wps_primary_device_type = pkt.wps_primary_device_type
 
         if bssid not in self.access_points:
             ap = AccessPoint(
@@ -200,6 +201,7 @@ class WlanSink:
                 wps_model_name=wps_model_name,
                 wps_model_number=wps_model_number,
                 wps_device_name=wps_device_name,
+                wps_primary_device_type=wps_primary_device_type,
             )
             self.access_points[bssid] = ap
             self._record_ap_signal(ap, card_id, rssi)
@@ -247,6 +249,7 @@ class WlanSink:
                 ap.wps_model_name = wps_model_name or ap.wps_model_name
                 ap.wps_model_number = wps_model_number or ap.wps_model_number
                 ap.wps_device_name = wps_device_name or ap.wps_device_name
+                ap.wps_primary_device_type = wps_primary_device_type or ap.wps_primary_device_type
 
         ap = self.access_points[bssid]
         ap.last_seen = time.time()
@@ -408,10 +411,12 @@ class WlanSink:
         ap.wps_m1_model_name = identity.model_name or ap.wps_m1_model_name
         ap.wps_m1_model_number = identity.model_number or ap.wps_m1_model_number
         ap.wps_m1_device_name = identity.device_name or ap.wps_m1_device_name
+        ap.wps_m1_primary_device_type = identity.primary_device_type or ap.wps_m1_primary_device_type
         ap.wps_manufacturer = identity.manufacturer or ap.wps_manufacturer
         ap.wps_model_name = identity.model_name or ap.wps_model_name
         ap.wps_model_number = identity.model_number or ap.wps_model_number
         ap.wps_device_name = identity.device_name or ap.wps_device_name
+        ap.wps_primary_device_type = identity.primary_device_type or ap.wps_primary_device_type
         return True
 
     def _decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:

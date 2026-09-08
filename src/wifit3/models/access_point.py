@@ -59,10 +59,12 @@ class AccessPoint:
     wps_model_name: Optional[str] = None
     wps_model_number: Optional[str] = None
     wps_device_name: Optional[str] = None
+    wps_primary_device_type: Optional[str] = None
     wps_m1_manufacturer: Optional[str] = None
     wps_m1_model_name: Optional[str] = None
     wps_m1_model_number: Optional[str] = None
     wps_m1_device_name: Optional[str] = None
+    wps_m1_primary_device_type: Optional[str] = None
     # Set while the AP is advertising an active Registrar (PIN or, with
     # DevPwId 0x0004, a Push-Button walk window). Drives wps_pbc_active.
     wps_selected_registrar: bool = False

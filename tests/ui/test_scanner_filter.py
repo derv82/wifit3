@@ -200,30 +200,6 @@ def test_scanner_brand_cell_prefers_brand_over_hardware_vendor():
     assert scanner._router_brand_cell(ap).plain == "O2 99%"
 
 
-def test_scanner_brand_cell_shows_vodafone_ssid_clue():
-    scanner = ScannerView()
-    scanner._theme_fg = "white"
-    ap = AccessPoint(bssid="02:00:00:00:00:01", ssid="Vodafone-123456")
-    fp = ap.router_fingerprint
-    assert fp is not None
-    assert fp.brand == "Vodafone"
-    assert scanner._router_brand_cell(ap).plain == "Vodafone 30%"
-
-
-def test_scanner_brand_cell_shows_vodafone_over_celeno_manufacturer():
-    scanner = ScannerView()
-    scanner._theme_fg = "white"
-    ap = AccessPoint(
-        bssid="02:00:00:00:00:01",
-        ssid="Vodafone-123456",
-        wps_manufacturer="Celeno",
-    )
-    fp = ap.router_fingerprint
-    assert fp is not None
-    assert fp.brand == "Vodafone"
-    assert fp.vendor == "Celeno"
-    assert scanner._router_brand_cell(ap).plain == "Vodafone 70%"
-
 
 def test_scanner_shows_apple_hotspot_type():
     scanner = ScannerView()

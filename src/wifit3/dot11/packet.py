@@ -83,6 +83,7 @@ class BeaconPacket(Packet):
     wps_model_name: Optional[str] = None
     wps_model_number: Optional[str] = None
     wps_device_name: Optional[str] = None
+    wps_primary_device_type: Optional[str] = None
     rsn_ie_raw: Optional[bytes] = None
 
 

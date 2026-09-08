@@ -842,6 +842,7 @@ class ScannerView(Screen):
             ("model", identity.model_name),
             ("model_no", identity.model_number),
             ("name", identity.device_name),
+            ("type", identity.primary_device_type),
         ]
         return ", ".join(f"{name}={escape(value)}" for name, value in parts if value)
 

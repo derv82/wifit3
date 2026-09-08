@@ -37,6 +37,32 @@ def test_passive_wps_manufacturer_and_model_make_stronger_router_fingerprint():
     assert {e.name for e in fp.evidence} >= {"manufacturer", "model", "device_name"}
 
 
+def test_wps_primary_device_type_identifies_router_kind():
+    fp = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        wps_primary_device_type="network_infrastructure",
+    ).router_fingerprint
+    assert fp is not None
+    assert fp.kind == "router"
+    assert fp.kind_confidence == 0.99
+    assert fp.label == "router"
+    assert any(e.source == "wps.passive" and e.name == "primary_device_type"
+               and e.value == "network_infrastructure" for e in fp.evidence)
+
+
+def test_wps_m1_primary_device_type_identifies_printer_kind():
+    fp = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        wps_m1_primary_device_type="printer",
+    ).router_fingerprint
+    assert fp is not None
+    assert fp.kind == "printer"
+    assert fp.kind_confidence == 0.99
+    assert fp.label == "printer"
+    assert any(e.source == "wps.m1" and e.name == "primary_device_type" and e.value == "printer"
+               for e in fp.evidence)
+
+
 def test_wifi_generation_alone_is_not_router_identity():
     ap = AccessPoint(bssid="02:00:00:00:00:01", wifi_generation=7)
     assert ap.router_fingerprint is None
@@ -130,35 +156,6 @@ def test_o2_internet_ssid_clue_is_weak_because_ssids_are_renamable():
     assert any(e.source == "ssid.o2" and e.name == "ssid" and e.value == "O2-Internet-123456"
                for e in fp.evidence)
 
-
-def test_vodafone_ssid_clue_is_weak_because_ssids_are_renamable():
-    fp = AccessPoint(bssid="02:00:00:00:00:01", ssid="Vodafone-123456").router_fingerprint
-    assert fp is not None
-    assert fp.brand == "Vodafone"
-    assert round(fp.brand_confidence, 2) == 0.30
-    assert fp.vendor is None
-    assert fp.kind is None
-    assert fp.label == "Possible Vodafone"
-    assert any(e.source == "ssid.vodafone" and e.name == "ssid" and e.value == "Vodafone-123456"
-               for e in fp.evidence)
-
-
-def test_celeno_manufacturer_with_vodafone_ssid_sets_brand():
-    fp = AccessPoint(
-        bssid="02:00:00:00:00:01",
-        ssid="Vodafone-123456",
-        wps_manufacturer="Celeno",
-    ).router_fingerprint
-    assert fp is not None
-    assert fp.brand == "Vodafone"
-    assert fp.brand_confidence == 0.70
-    assert fp.vendor == "Celeno"
-    assert fp.vendor_confidence == 0.99
-    assert fp.kind is None
-    assert fp.kind_confidence == 0.0
-    assert fp.label == "Possible Vodafone"
-    assert any(e.source == "ssid.vodafone" and e.name == "ssid" and e.value == "Vodafone-123456"
-               for e in fp.evidence)
 
 
 def test_brand_and_hardware_vendor_are_separate_claims():

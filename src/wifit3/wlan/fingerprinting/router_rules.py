@@ -29,6 +29,7 @@ _VENDOR_ALIASES = {
 #   if the brand is in the SSID it should be 30% as it can be changed by the user,
 #   if the brand is in the WPS information it should be 99% as it is provided by the router itself.
 
+# OUI identifies the registered hardware vendor weakly.
 def oui_vendor_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     vendor = vendor_for_mac(ap.bssid)
     if vendor is None:
@@ -38,6 +39,7 @@ def oui_vendor_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 
 
 
+# TP-Link OUI weakly suggests router/AP class hardware.
 def tplink_router_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     vendor = vendor_for_mac(ap.bssid)
     if vendor != "TP-Link":
@@ -46,6 +48,7 @@ def tplink_router_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     return (RouterClaim("kind", "router", 0.30, (evidence,)),)
 
 
+# MikroTik/Routerboard OUI weakly suggests router/AP class hardware.
 def mikrotik_routerboard_oui_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     vendor = vendor_for_mac(ap.bssid)
     if vendor != "MikroTik":
@@ -54,6 +57,7 @@ def mikrotik_routerboard_oui_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     return (RouterClaim("kind", "router", 0.30, (evidence,)),)
 
 
+# Epson OUI is a strong printer-kind hint, but still hardware-vendor based.
 def epson_printer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     vendor = vendor_for_mac(ap.bssid)
     if vendor != "Epson":
@@ -62,6 +66,7 @@ def epson_printer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     return (RouterClaim("kind", "printer", 0.90, (evidence,)),)
 
 
+# Epson Direct SSID weakly identifies an Epson Wi-Fi Direct printer/AP.
 def epson_direct_ssid_printer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     ssid = clean_text(getattr(ap, "ssid", None))
     if not ssid or not re.search(r"^direct-.+-epson\b", ssid, re.I):
@@ -73,6 +78,7 @@ def epson_direct_ssid_printer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     )
 
 
+# WPS manufacturer identifies AP-reported vendor strongly.
 def wps_manufacturer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     manufacturer, source = _wps_value_source(ap, "manufacturer")
     manufacturer = canonical_vendor(manufacturer)
@@ -82,6 +88,25 @@ def wps_manufacturer_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     return (RouterClaim("vendor", manufacturer, 0.99, (evidence,)),)
 
 
+# WPS primary device type identifies AP-reported device kind strongly.
+def wps_primary_device_type_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+    device_type, source = _wps_value_source(ap, "primary_device_type")
+    kind = {
+        "network_infrastructure": "router",
+        "printer": "printer",
+        "camera": "camera",
+        "display": "display",
+        "gaming": "gaming",
+        "telephone": "hotspot",
+        "audio": "audio",
+    }.get(device_type or "")
+    if kind is None:
+        return ()
+    evidence = RouterEvidence(source, "primary_device_type", device_type, 0.99)
+    return (RouterClaim("kind", kind, 0.99, (evidence,)),)
+
+
+# 802.11 capabilities expose Wi-Fi generation as distinguishing evidence.
 def wifi_generation_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     generation = getattr(ap, "wifi_generation", None)
     if generation is None:
@@ -90,6 +115,7 @@ def wifi_generation_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     return (RouterClaim("wifi_generation", str(generation), 0.99, (evidence,)),)
 
 
+# WPS model/device name distinguishes AP-reported model identity strongly.
 def wps_model_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     claims: list[RouterClaim] = []
     model, model_source = _wps_value_source(ap, "model_name")
@@ -111,6 +137,7 @@ def _wps_value_source(ap: "AccessPoint", name: str) -> tuple[str | None, str]:
         return m1_value, "wps.m1"
     return clean_text(getattr(ap, f"wps_{name}", None)), "wps.passive"
 
+# O2 Internet SSID weakly identifies O2 ISP branding.
 def o2_ssid_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     ssid = clean_text(getattr(ap, "ssid", None))
     if not ssid or not re.search(r"\bo2[-_ ]?internet\b", ssid, re.I):
@@ -118,6 +145,7 @@ def o2_ssid_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     evidence = RouterEvidence("ssid.o2", "ssid", ssid, 0.30)
     return (RouterClaim("brand", "O2", 0.30, (evidence,)),)
 
+# O2SMARTBOX in WPS model strongly identifies O2 branding and router kind.
 def o2_smartbox_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     model, source = _wps_value_source(ap, "model_name")
     if model is None:
@@ -171,6 +199,7 @@ def o2_smartbox_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 #def vodafone_brand_gigacube_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 #    pass
 
+# iPhone/iPad SSID weakly identifies Apple mobile hotspot branding/kind.
 def apple_ssid_hotspot_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     ssid = clean_text(getattr(ap, "ssid", None))
     if not ssid or not re.search(r"\b(?:iphone|ipad)\b", ssid, re.I):
@@ -182,6 +211,7 @@ def apple_ssid_hotspot_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     )
 
 
+# Apple vendor evidence identifies likely Apple mobile hotspot branding/kind.
 def apple_vendor_hotspot_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     manufacturer, source = _wps_value_source(ap, "manufacturer")
     vendor = canonical_vendor(manufacturer) or vendor_for_mac(ap.bssid)
@@ -209,6 +239,7 @@ IDENTIFY_RULES: tuple[RouterRule, ...] = (
     apple_vendor_hotspot_rule,
 )
 DISTINGUISH_RULES: tuple[RouterRule, ...] = (
+    wps_primary_device_type_rule,
     wifi_generation_rule,
     wps_model_rule,
 )
