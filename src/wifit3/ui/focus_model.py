@@ -236,7 +236,7 @@ def router_identity_details(ap) -> str | None:
         src_label = model_src.label if model_src else ""
         rows.append(f"[dim]Model:[/dim] {escape(ident.model)} [dim]({src_label})[/dim]")
     if ident.manufacturer:
-        mfr_src = ident.get(IdKey.MANUFACTURER)[1]
+        mfr_src = getattr(ident, "manufacturer_source", None) or ident.get(IdKey.MANUFACTURER)[1]
         src_label = mfr_src.label if mfr_src else ""
         rows.append(f"[dim]Manufacturer:[/dim] {escape(ident.manufacturer)} [dim]({src_label})[/dim]")
     if ident.device_name and ident.device_name != ident.model:
@@ -248,8 +248,12 @@ def router_identity_details(ap) -> str | None:
         src_label = sn_src.label if sn_src else ""
         rows.append(f"[dim]Serial:[/dim] {escape(ident.serial_number)} [dim]({src_label})[/dim]")
 
+    wsc_mfr = ident.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_M1) or ident.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_BEACON)
+    if wsc_mfr and wsc_mfr != ident.manufacturer:
+        rows.append(f"[dim]Chipset:[/dim] {escape(wsc_mfr)} [dim](WSC)[/dim]")
+
     oui_vendor = ident.get_source_value(IdKey.MANUFACTURER, IdSource.OUI)
-    if oui_vendor and (oui_vendor != ident.manufacturer or ident.get(IdKey.MANUFACTURER)[1] != IdSource.OUI):
+    if oui_vendor and (oui_vendor != ident.manufacturer or mfr_src != IdSource.OUI):
         rows.append(f"[dim]IEEE OUI:[/dim] {escape(oui_vendor)}")
 
     return "\n".join(rows)

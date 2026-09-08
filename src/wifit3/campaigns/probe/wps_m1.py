@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Optional
 
 from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
@@ -19,23 +20,43 @@ async def _trigger_m1(
     transport: WlanTransport,
     bssid: bytes,
     our_mac: bytes,
-    tries: int = 10,
-    timeout: float = 3.0,
+    resend_interval: float = 0.35,
+    max_resends: int = 8,
+    total_timeout: float = 3.5,
 ) -> Optional[WpsM1Identity]:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + total_timeout
     start = M.build_data_frame(bssid, our_mac, bssid, M.eapol_start())
     await transport.send_no_wait(start)
     last = start
-    for _ in range(tries):
-        frame = await transport.recv(timeout)
+    last_send = loop.time()
+    resends = 0
+
+    while loop.time() < deadline:
+        remaining = deadline - loop.time()
+        slice_timeout = min(resend_interval, remaining)
+        if slice_timeout <= 0:
+            break
+        frame = await transport.recv(slice_timeout)
+        now = loop.time()
         if frame is None:
-            await transport.send_no_wait(last)
+            if resends < max_resends:
+                await transport.send_no_wait(last)
+                last_send = now
+                resends += 1
             continue
         parsed = M.parse_rx_frame(frame)
         if parsed is None:
+            if now - last_send >= resend_interval and resends < max_resends:
+                await transport.send_no_wait(last)
+                last_send = now
+                resends += 1
             continue
         if parsed.is_identity_request:
             last = M.build_data_frame(bssid, our_mac, bssid, M.eap_identity_response(parsed.eap_id))
             await transport.send_no_wait(last)
+            last_send = now
+            resends = 0
         elif parsed.wsc_msg_type == M.WPS_M1:
             return identity_from_attrs(parsed.attrs)
     return None
@@ -60,11 +81,13 @@ class WpsM1Probe(BaseApProbe):
         assoc = Association(
             iface, ap.bssid.lower(), ap.ssid or "", ap.channel, our_mac=our_mac,
             assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR),
+            auth_timeout=0.6,
+            assoc_timeout=0.8,
         )
         transport = WlanTransport(iface, bssid_bytes, our_mac)
         assoc.start()
         try:
-            if not await assoc.associate():
+            if not await assoc.associate(attempts=2):
                 return ProbeResult(False, detail=assoc.fail_reason or "no association response")
             transport.start()
             identity = await _trigger_m1(transport, bssid_bytes, our_mac)

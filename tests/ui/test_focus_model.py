@@ -297,6 +297,21 @@ def test_router_identity_details_netgear_wsc_m1():
     ])
 
 
+def test_router_identity_details_odm_wsc_beacon_with_branded_oui():
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    ap.identity.set(IdSource.OUI, IdKey.MANUFACTURER, "Jensen Scandinavia AS")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "Ralink Technology, Corp.")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "Ralink Wireless Access Point")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.DEVICE_NAME, "Jensen of Scandinavia Air:Link 5000AC")
+
+    assert fm.router_identity_details(ap) == "\n".join([
+        "[bold]Jensen of Scandinavia Air:Link 5000AC[/bold]",
+        "[dim]Model:[/dim] Jensen of Scandinavia Air:Link 5000AC [dim](WSC Beacon)[/dim]",
+        "[dim]Manufacturer:[/dim] Jensen [dim](IEEE OUI)[/dim]",
+        "[dim]Chipset:[/dim] Ralink [dim](WSC)[/dim]",
+    ])
+
+
 def test_router_identity_markup_is_blank_without_evidence():
     assert fm.router_identity_markup(AccessPoint(bssid="02:00:00:00:00:01")) == ""
     assert fm.router_identity_details(AccessPoint(bssid="02:00:00:00:00:01")) is None

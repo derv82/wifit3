@@ -1,11 +1,10 @@
-from __future__ import annotations
-
+import asyncio
 from unittest.mock import MagicMock
 
 from wifit3.campaigns.probe import BaseApProbe, ProbeResult, probe_ap
 from wifit3.campaigns.probe.mikrotik import MikrotikProbe
 from wifit3.campaigns.probe.ubiquiti import UbiquitiProbe
-from wifit3.campaigns.probe.wps_m1 import WpsM1Probe
+from wifit3.campaigns.probe.wps_m1 import WpsM1Probe, _trigger_m1
 from wifit3.models import AccessPoint, IdKey, IdSource
 
 
@@ -52,3 +51,25 @@ def test_probe_gates():
 
     assert WpsM1Probe().can_probe(wps_ap) is True
     assert WpsM1Probe().can_probe(wpa_ap) is False
+
+
+async def test_trigger_m1_times_out_cleanly():
+    class SilentTransport:
+        def __init__(self):
+            self.sent = []
+
+        async def send_no_wait(self, frame):
+            self.sent.append(frame)
+            return True
+
+        async def recv(self, timeout):
+            await asyncio.sleep(0.01)
+            return None
+
+    transport = SilentTransport()
+    bssid = b"\x11\x22\x33\x44\x55\x66"
+    our_mac = b"\xaa\xbb\xcc\xdd\xee\xff"
+    res = await _trigger_m1(transport, bssid, our_mac, resend_interval=0.02, max_resends=2, total_timeout=0.08)
+    assert res is None
+    # Verify it attempted to resend when silent
+    assert len(transport.sent) >= 2

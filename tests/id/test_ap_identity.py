@@ -23,11 +23,11 @@ def test_priority_ladder_m1_beats_probe_beats_beacon_beats_oui():
     assert ap.identity.summary == "TP-Link"
 
     # WSC Beacon overrides OUI
-    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "Realtek")
-    ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "RTL8196")
-    assert ap.identity.manufacturer == "Realtek"
-    assert ap.identity.model == "RTL8196"
-    assert ap.identity.summary == "Realtek RTL8196"
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "D-Link")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "DIR-882")
+    assert ap.identity.manufacturer == "D-Link"
+    assert ap.identity.model == "DIR-882"
+    assert ap.identity.summary == "D-Link DIR-882"
 
     # Active Probe overrides Beacon
     ap.identity.set(IdSource.WINBOX_PROBE, IdKey.MANUFACTURER, "MikroTik")
@@ -58,7 +58,7 @@ def test_historical_provenance_preserved():
 
 def test_clean_text_rejects_dummy_strings():
     for dummy in (
-        "12345", "00000000", "none", "NONE", "default", "n/a", "N/A", "unknown", "???", "   ", "",
+        "12345", "123456", "00000000", "none", "NONE", "default", "n/a", "N/A", "unknown", "???", "   ", "",
         "Wi-Fi Protected Setup Router", "wifi protected setup router", "WPS Router",
         "Ralink Wireless Access Point", "ralink wireless ap", "RalinkAPS",
         "Realtek Wireless Access Point", "realtek wireless ap",
@@ -149,3 +149,36 @@ def test_identity_summary_formatting():
     ident3 = ApIdentity()
     ident3.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "Archer AX10")
     assert ident3.summary == "Archer AX10"
+
+
+def test_dummy_model_number_falls_back_to_device_name():
+    ident = ApIdentity()
+    ident.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "Netgear")
+    ident.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "123456")
+    ident.set(IdSource.WSC_BEACON, IdKey.DEVICE_NAME, "C6900")
+    assert ident.manufacturer == "Netgear"
+    assert ident.model == "C6900"
+    assert ident.model_source == IdSource.WSC_BEACON
+    assert ident.summary == "Netgear C6900"
+
+
+def test_silicon_odm_yields_to_branded_oui():
+    ident = ApIdentity()
+    ident.set(IdSource.OUI, IdKey.MANUFACTURER, "Jensen Scandinavia AS")
+    ident.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "Ralink Technology, Corp.")
+    ident.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "Ralink Wireless Access Point")
+    ident.set(IdSource.WSC_BEACON, IdKey.DEVICE_NAME, "Jensen of Scandinavia Air:Link 5000AC")
+
+    assert ident.manufacturer == "Jensen"
+    assert ident.manufacturer_source == IdSource.OUI
+    assert ident.model == "Jensen of Scandinavia Air:Link 5000AC"
+    assert ident.summary == "Jensen of Scandinavia Air:Link 5000AC"
+    assert ident.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_BEACON) == "Ralink"
+
+    # When OUI is not present or is also an ODM, keep the ODM
+    ident_odm = ApIdentity()
+    ident_odm.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "Realtek")
+    ident_odm.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "RTL8196")
+    assert ident_odm.manufacturer == "Realtek"
+    assert ident_odm.manufacturer_source == IdSource.WSC_BEACON
+    assert ident_odm.summary == "Realtek RTL8196"

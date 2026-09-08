@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from enum import Enum, auto
 import re
-from typing import Any, Optional
 
 
 _DUMMY_STRINGS = frozenset({
-    "0", "00000000", "12345", "12345678", "1.0", "n/a", "na", "none",
+    "0", "00000000", "12345", "123456", "12345678", "1.0", "n/a", "na", "none",
     "default", "unknown", "null", "undefined", "generic", "string",
     "wi-fi protected setup router", "wifi protected setup router", "wps router",
     "ralink wireless access point", "ralink wireless ap", "ralinkaps",
@@ -33,7 +32,12 @@ _CANONICAL_VENDOR_PATTERNS = (
     (re.compile(r"\bnokia\b", re.I), "Nokia"),
     (re.compile(r"\b(?:hewlett[-\s]?packard|hp)\b", re.I), "HP"),
     (re.compile(r"\bcommscope\b", re.I), "CommScope"),
+    (re.compile(r"\bjensen\b", re.I), "Jensen"),
 )
+
+_SILICON_ODMS = frozenset({
+    "Ralink", "Realtek", "Celeno", "Broadcom", "MediaTek", "Qualcomm Atheros",
+})
 
 
 def clean_text(value: str | None) -> str | None:
@@ -96,11 +100,8 @@ class ApIdentity:
         model_number: str | None = None,
         device_name: str | None = None,
         serial_number: str | None = None,
-        claims: tuple[Any, ...] = (),
     ) -> None:
         self._evidence: dict[IdKey, dict[IdSource, str]] = {}
-        self.claims: tuple[Any, ...] = claims
-        self.fingerprint: Optional[Any] = None
 
         if manufacturer:
             self.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, manufacturer)
@@ -137,7 +138,21 @@ class ApIdentity:
 
     @property
     def manufacturer(self) -> str | None:
-        return self.get(IdKey.MANUFACTURER)[0]
+        val, _ = self.get(IdKey.MANUFACTURER)
+        if val in _SILICON_ODMS:
+            oui_mfr = self.get_source_value(IdKey.MANUFACTURER, IdSource.OUI)
+            if oui_mfr and oui_mfr not in _SILICON_ODMS:
+                return oui_mfr
+        return val
+
+    @property
+    def manufacturer_source(self) -> IdSource | None:
+        val, src = self.get(IdKey.MANUFACTURER)
+        if val in _SILICON_ODMS:
+            oui_mfr = self.get_source_value(IdKey.MANUFACTURER, IdSource.OUI)
+            if oui_mfr and oui_mfr not in _SILICON_ODMS:
+                return IdSource.OUI
+        return src
 
     @property
     def model_name(self) -> str | None:
@@ -190,6 +205,8 @@ class ApIdentity:
             return self.model or ""
         if not self.model:
             return self.manufacturer
-        if self.model.lower().startswith(self.manufacturer.lower()):
+        mfr_lower = self.manufacturer.lower()
+        model_lower = self.model.lower()
+        if mfr_lower in model_lower or model_lower.startswith(mfr_lower.split()[0]):
             return self.model
         return f"{self.manufacturer} {self.model}"
