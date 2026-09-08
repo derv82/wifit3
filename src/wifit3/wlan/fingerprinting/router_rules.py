@@ -103,6 +103,12 @@ def _wps_value_source(ap: "AccessPoint", name: str) -> tuple[str | None, str]:
         return m1_value, "wps.m1"
     return clean_text(getattr(ap, f"wps_{name}", None)), "wps.passive"
 
+def o2_ssid_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+    ssid = clean_text(getattr(ap, "ssid", None))
+    if not ssid or not re.search(r"\bo2[-_ ]?internet\b", ssid, re.I):
+        return ()
+    evidence = RouterEvidence("ssid.o2", "ssid", ssid, 0.30)
+    return (RouterClaim("brand", "O2", 0.30, (evidence,)),)
 
 def o2_smartbox_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     model, source = _wps_value_source(ap, "model_name")
@@ -163,6 +169,7 @@ IDENTIFY_RULES: tuple[RouterRule, ...] = (
     wps_manufacturer_rule,
     # brand rules are only used for identification, not distinction
     o2_smartbox_brand_rule,  # added czech isp's i know of / found
+    o2_ssid_rule,
     vodafone_brand_rule,
     apple_ssid_hotspot_rule,
     apple_vendor_hotspot_rule,

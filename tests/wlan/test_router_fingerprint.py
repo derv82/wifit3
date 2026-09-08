@@ -97,6 +97,18 @@ def test_o2_smartbox_ssid_pattern_does_not_set_brand():
     assert fp is None
 
 
+def test_o2_internet_ssid_clue_is_weak_because_ssids_are_renamable():
+    fp = AccessPoint(bssid="02:00:00:00:00:01", ssid="O2-Internet-123456").router_fingerprint
+    assert fp is not None
+    assert fp.brand == "O2"
+    assert round(fp.brand_confidence, 2) == 0.30
+    assert fp.vendor is None
+    assert fp.kind is None
+    assert fp.label == "Possible O2"
+    assert any(e.source == "ssid.o2" and e.name == "ssid" and e.value == "O2-Internet-123456"
+               for e in fp.evidence)
+
+
 def test_vodafone_ssid_clue_is_weak_because_ssids_are_renamable():
     fp = AccessPoint(bssid="02:00:00:00:00:01", ssid="Vodafone-123456").router_fingerprint
     assert fp is not None
