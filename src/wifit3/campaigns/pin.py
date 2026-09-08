@@ -562,17 +562,16 @@ class WpsCampaign(Campaign):
         if self._pixie_tried or self.state.phase == "verify" or out.pixie is None:
             return False
         self._pixie_tried = True
-        self.log(f"{self._attempt_prefix(pin)} → [cyan]captured PixieWPS bundle[/cyan] "
-                 "[dim](trying offline)[/dim]")
+        self.log(f"{self._attempt_prefix(pin)} → trying [cyan]PixieDust[/] offline…")
         result = recover_pin(out.pixie)
         if not result.found or result.pin is None:
-            self.log(f"{self._cont_align()} → [dim]PixieWPS did not match known weak modes[/dim]")
+            self.log(f"{self._cont_align()} → [dim italic]no PixieDust matches found[/]")
             return False
         self.state.found_pin = result.pin
         self.state.phase = "verify"
-        mode = result.mode.value if result.mode is not None else "unknown"
-        self.log(f"{self._cont_align()} → [bold bright_green]PixieWPS found PIN[/bold bright_green] "
-                 f"[cyan]{result.pin}[/cyan] [dim]({mode}; verifying)[/dim]")
+        mode = result.mode.name if result.mode is not None else "UNKNOWN"
+        self.log(f"{self._cont_align()} → [bold bright_green]PixieDust found:[/] "
+                 f"[cyan bold]{result.pin}[/] [dim]({mode}; verifying)[/]")
         return True
 
     def _should_retry_lost_reply(self, pin: str, out: AttemptOutcome) -> bool:
