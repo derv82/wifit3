@@ -26,6 +26,12 @@ class RouterClaim:
 
 
 @dataclass(frozen=True)
+class RouterConflict:
+    name: str
+    claims: tuple[RouterClaim, ...]
+
+
+@dataclass(frozen=True)
 class RouterFingerprint:
     label: str
     confidence: float
@@ -39,6 +45,8 @@ class RouterFingerprint:
     kind_confidence: float = 0.0
     wifi_generation: int | None = None
     wifi_generation_confidence: float = 0.0
+    spoof_suspected: bool = False
+    conflicts: tuple[RouterConflict, ...] = ()
     claims: tuple[RouterClaim, ...] = ()
     evidence: tuple[RouterEvidence, ...] = ()
 

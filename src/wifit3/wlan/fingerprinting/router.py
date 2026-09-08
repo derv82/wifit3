@@ -7,6 +7,7 @@ from wifit3.wlan.fingerprinting.router_helpers import canonical_vendor, combine_
 from wifit3.wlan.fingerprinting.router_rules import DISTINGUISH_RULES, IDENTIFY_RULES
 from wifit3.wlan.fingerprinting.router_types import (
     RouterClaim,
+    RouterConflict,
     RouterEvidence as RouterEvidence,
     RouterFingerprint,
     RouterRule,
@@ -14,6 +15,10 @@ from wifit3.wlan.fingerprinting.router_types import (
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
+
+
+_STRONG_CONFLICT_THRESHOLD = 0.90
+_CONFLICT_FIELDS = ("vendor", "brand", "model", "kind")
 
 
 def _confidence_for(claims: Iterable[RouterClaim], name: str, value: str | None) -> float:
@@ -25,6 +30,18 @@ def _confidence_for(claims: Iterable[RouterClaim], name: str, value: str | None)
 def _best(claims: Iterable[RouterClaim], name: str) -> RouterClaim | None:
     matching = [claim for claim in claims if claim.name == name]
     return max(matching, key=lambda claim: claim.confidence, default=None)
+
+
+def _strong_conflicts(claims: Iterable[RouterClaim]) -> tuple[RouterConflict, ...]:
+    conflicts: list[RouterConflict] = []
+    for name in _CONFLICT_FIELDS:
+        strong = tuple(
+            claim for claim in claims
+            if claim.name == name and claim.confidence >= _STRONG_CONFLICT_THRESHOLD
+        )
+        if len({claim.value for claim in strong}) > 1:
+            conflicts.append(RouterConflict(name, strong))
+    return tuple(conflicts)
 
 
 def fingerprint_router(
@@ -40,7 +57,6 @@ def fingerprint_router(
     if not claims:
         return None
 
-    evidence = tuple(item for claim in claims for item in claim.evidence)
     vendor = _best(claims, "vendor")
     brand = _best(claims, "brand")
     model = _best(claims, "model")
@@ -72,6 +88,8 @@ def fingerprint_router(
     else:
         identity_confidence = kind_confidence
 
+    conflicts = _strong_conflicts(claims)
+    evidence = tuple(item for claim in claims for item in claim.evidence)
     if not any((brand_value, vendor_value, show_model, kind_value)):
         return None
 
@@ -99,6 +117,8 @@ def fingerprint_router(
         kind_confidence=kind_confidence,
         wifi_generation=wifi_generation_value,
         wifi_generation_confidence=wifi_generation_confidence,
+        spoof_suspected=bool(conflicts),
+        conflicts=conflicts,
         claims=claims,
         evidence=evidence,
     )

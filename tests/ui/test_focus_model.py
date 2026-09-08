@@ -11,6 +11,7 @@ from wifit3.campaigns.campaign import Campaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.models import AccessPoint, Handshake
 from wifit3.ui import focus_model as fm
+from wifit3.wlan.fingerprinting.router import RouterClaim, RouterEvidence
 from wifit3.persist.config import Config
 
 
@@ -273,6 +274,26 @@ def test_router_identity_details_can_show_brand_and_vendor_separately():
     assert "[dim]Brand:[/dim] O2 (82%)" in details
     assert "[dim]Vendor:[/dim] Kaon (99%)" in details
     assert "[dim]Wi-Fi:[/dim] Wi-Fi 6 (99%)" in details
+
+
+def test_router_identity_details_shows_conflict_warning():
+    mikrotik_evidence = RouterEvidence("mikrotik.mac_winbox", "reachable", "true", 0.99)
+    ubnt_evidence = RouterEvidence("ubnt.discovery", "reachable", "true", 0.99)
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        router_claims=(
+            RouterClaim("vendor", "MikroTik", 0.99, (mikrotik_evidence,)),
+            RouterClaim("vendor", "Ubiquiti", 0.99, (ubnt_evidence,)),
+        ),
+    )
+
+    details = fm.router_identity_details(ap)
+    assert details is not None
+    assert "Conflict! (possible spoofed device)" in details
+    assert "MikroTik (99%)" in details
+    assert "Ubiquiti (99%)" in details
+    assert "mikrotik.mac_winbox" in details
+    assert "ubnt.discovery" in details
 
 
 def test_router_identity_markup_is_blank_without_evidence():

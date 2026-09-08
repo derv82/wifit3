@@ -252,6 +252,17 @@ def router_identity_details(ap) -> str | None:
     if fp.wifi_generation:
         confidence = round(fp.wifi_generation_confidence * 100)
         rows.append(f"[dim]Wi-Fi:[/dim] Wi-Fi {fp.wifi_generation} ({confidence}%)")
+    if fp.conflicts:
+        rows.append("")
+        rows.append("[red bold]Conflict! (possible spoofed device)[/red bold]")
+        for conflict in fp.conflicts:
+            rows.append(f"[dim]{escape(conflict.name)}:[/dim]")
+            for claim in conflict.claims:
+                sources = ", ".join(e.source for e in claim.evidence)
+                rows.append(
+                    f"  {escape(claim.value)} ({round(claim.confidence * 100)}%) "
+                    f"[dim]{escape(sources)}[/dim]"
+                )
     if fp.evidence:
         rows.append("")
         rows.append("[bold]Evidence[/bold]")

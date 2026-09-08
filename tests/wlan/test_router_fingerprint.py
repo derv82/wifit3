@@ -104,6 +104,44 @@ def test_rules_are_pluggable_for_router_specific_checks():
     assert fp.evidence[0].source == "mikrotik.mac_winbox"
 
 
+def test_strong_conflicting_claims_flag_possible_spoof_without_dropping_evidence():
+    mikrotik_evidence = RouterEvidence("mikrotik.mac_winbox", "reachable", "true", 0.99, passive=False)
+    ubnt_evidence = RouterEvidence("ubnt.discovery", "reachable", "true", 0.99, passive=False)
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        router_claims=(
+            RouterClaim("vendor", "MikroTik", 0.99, (mikrotik_evidence,)),
+            RouterClaim("vendor", "Ubiquiti", 0.99, (ubnt_evidence,)),
+        ),
+    )
+
+    fp = ap.router_fingerprint
+    assert fp is not None
+    assert fp.spoof_suspected is True
+    assert len(fp.conflicts) == 1
+    assert fp.conflicts[0].name == "vendor"
+    assert {claim.value for claim in fp.conflicts[0].claims} == {"MikroTik", "Ubiquiti"}
+    assert {e.source for e in fp.evidence} >= {"mikrotik.mac_winbox", "ubnt.discovery"}
+    assert {claim.value for claim in fp.claims if claim.name == "vendor"} >= {"MikroTik", "Ubiquiti"}
+
+
+def test_weak_conflicting_claims_do_not_flag_possible_spoof():
+    weak = RouterEvidence("ssid.pattern", "ssid", "fake", 0.30)
+    strong = RouterEvidence("wps.m1", "manufacturer", "MikroTik", 0.99)
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        router_claims=(
+            RouterClaim("vendor", "Ubiquiti", 0.30, (weak,)),
+            RouterClaim("vendor", "MikroTik", 0.99, (strong,)),
+        ),
+    )
+
+    fp = ap.router_fingerprint
+    assert fp is not None
+    assert fp.spoof_suspected is False
+    assert fp.conflicts == ()
+
+
 def test_active_probe_claims_are_part_of_router_fingerprint():
     evidence = RouterEvidence("mikrotik.mac_winbox", "reachable", "true", 0.99, passive=False)
     ap = AccessPoint(
