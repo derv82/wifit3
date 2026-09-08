@@ -142,9 +142,12 @@ frames per PIN than the short handshake/PMKID exchanges. Both cards pass deauth,
 PMKID, and WEP, so association and injection work; only WPS is unreliable. Not yet
 root-caused.
 
-## Pixie-dust (planned)
+## PixieDust (native)
 
-Native PixieWPS (recovering the E-S1/E-S2 nonces from a weak PRNG so the half-PIN search
-runs offline against the captured E-Hash1/2) is designed but not built. The crypto core in
-`dot11/wsc/crypto.py` already exposes what it needs (`check_pin_half` and the pixie bundle
-after M3). Revisit the numpy dependency for the time-seed/eCos seed search before building.
+Native PixieDust offline recovery runs automatically after intercepting the M3
+bundle (PKE, PKR, E-Hash1/2, E-Nonce, AuthKey). Phase 1 (Null Secret) and Phase 2
+(Static Secrets) are implemented in `campaigns/wps/pixie.py` in pure Python with zero
+external dependencies (~12ms keyspace search).
+
+Heavier PRNG seed-search modes (Realtek RTL819x, eCos 2³¹–2³² seed sweep) remain
+deferred pending background worker offloading so the event loop never stalls.
