@@ -6,7 +6,7 @@ import time
 import pytest
 from textual.widgets import Button, DataTable
 
-from wifit3.campaigns.router_probe import RouterProbeResult
+from wifit3.campaigns.router_probe import RouterProbeResult, format_wps_m1_identity
 from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.wlan.fingerprinting.router import RouterClaim, RouterEvidence
 from wifit3.models import AccessPoint, PersistedCapture
@@ -233,16 +233,19 @@ def test_scanner_wps_m1_log_deduplicates_equal_model_number():
         device_name="Office",
     )
 
-    assert ScannerView._format_wps_m1_identity(identity) == "mfr=TP-Link, model=Archer AX10, name=Office"
+    assert format_wps_m1_identity(identity) == "mfr=TP-Link, model=Archer AX10, name=Office"
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
     ap = AccessPoint(bssid="aa:bb:cc:00:00:50", ssid="Router", channel=1, wps=True)
-    async def fake_probe(array, target, iface=None):
+    async def fake_probe(array, target, iface=None, log=None):
         assert target is ap
         assert iface is not None
+        assert log is not None
+        log("try", "WPS M1")
+        log("ok", "WPS M1")
         ap.wps_manufacturer = "TP-Link"
         ap.wps_model_name = "Archer AX10"
         ap.wps_device_name = "Office"
@@ -300,9 +303,12 @@ async def test_scanner_info_probe_applies_active_claims(monkeypatch):
         ),
     )
 
-    async def fake_probe(array, target, iface=None):
+    async def fake_probe(array, target, iface=None, log=None):
         assert target is ap
         assert iface is not None
+        assert log is not None
+        log("try", "MikroTik WinBox")
+        log("ok", "MikroTik WinBox")
         return result
 
     import wifit3.ui.screens.scanner as scanner_module

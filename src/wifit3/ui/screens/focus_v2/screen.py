@@ -33,7 +33,9 @@ from textual.widgets import Button, Footer, Header, Static
 
 from wifit3.campaigns import treelog
 from wifit3.campaigns.campaign import Campaign
-from wifit3.campaigns.router_probe import RouterProbeResult, probe_router_info
+from wifit3.campaigns.router_probe import (
+    RouterProbeResult, format_probe_evidence, format_probe_result, format_probe_step, probe_router_info,
+)
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
 from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput
@@ -120,27 +122,6 @@ def _save_line(result) -> str:
     short = f"{name[:m.start()]}_…_{name[m.end():]}" if m else name
     return f"[dim]{verb}: {Config.captures_dir}/{escape(short)}[/dim]"
 
-
-def _format_router_probe_result(result: RouterProbeResult) -> str:
-    if result.wps_identity is not None:
-        identity = result.wps_identity
-        model_number = identity.model_number
-        if model_number == identity.model_name:
-            model_number = None
-        parts = [
-            ("mfr", identity.manufacturer),
-            ("model", identity.model_name),
-            ("model_no", model_number),
-            ("name", identity.device_name),
-            ("type", identity.primary_device_type),
-        ]
-        fields = ", ".join(f"{name}={escape(value)}" for name, value in parts if value)
-        return f"WPS M1: {fields}" if fields else "WPS M1 received"
-    if result.claims:
-        fields = ", ".join(f"{claim.name}={escape(claim.value)} {round(claim.confidence * 100)}%"
-                           for claim in result.claims)
-        return f"{result.source}: {fields}" if result.source else fields
-    return result.source or "identity probe matched"
 
 
 def _wep_key_chip(key_hex) -> str:
@@ -821,11 +802,12 @@ class FocusViewV2(Screen):
         try:
             if was_hopping:
                 await iface.stop_hopping()
-            result = await probe_router_info(array, ap, iface=iface)
+            result = await probe_router_info(array, ap, iface=iface, log=self._log_router_probe_step)
             if result.ok:
                 if result.claims:
                     self._apply_router_probe_claims(ap, result.claims)
-                self._log(treelog.leaf_ok(_format_router_probe_result(result)))
+                self._log(treelog.leaf_ok(format_probe_result(result)))
+                self._log_router_probe_evidence(result)
                 self.query_one("#router", RouterEndpoint).update(**self._router_values())
             else:
                 detail = escape(result.detail or "no detail")
@@ -838,6 +820,17 @@ class FocusViewV2(Screen):
             self._sync_bindings()
             if was_hopping and self.app.screen is self:
                 await iface.start_hopping(interval=0.25)
+
+    def _log_router_probe_step(self, status: str, detail: str) -> None:
+        self._log(treelog.branch(format_probe_step(status, detail)))
+
+    def _log_router_probe_evidence(self, result: RouterProbeResult) -> None:
+        evidence = format_probe_evidence(result)
+        if not evidence:
+            return
+        self._log(treelog.branch("Evidence"))
+        for line in evidence:
+            self._log(treelog.leaf(line))
 
     @staticmethod
     def _apply_router_probe_claims(ap, claims) -> None:

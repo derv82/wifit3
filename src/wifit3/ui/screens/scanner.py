@@ -17,9 +17,10 @@ from rich.text import Span, Text
 
 from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
-from wifit3.campaigns.router_probe import probe_router_info
+from wifit3.campaigns.router_probe import (
+    format_probe_evidence, format_probe_result, format_probe_step, probe_router_info,
+)
 from wifit3.campaigns.wps.registrar import PinResult
-from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.config import Config
 from wifit3.models import AccessPoint, PersistedCapture
@@ -801,12 +802,13 @@ class ScannerView(Screen):
         try:
             if was_hopping:
                 await iface.stop_hopping()
-            result = await probe_router_info(array, ap, iface=iface)
+            result = await probe_router_info(array, ap, iface=iface, log=self._log_router_probe_step)
             if result.ok:
                 if result.claims:
                     self._apply_router_probe_claims(ap, result.claims)
-                fields = self._format_probe_result(result)
+                fields = format_probe_result(result)
                 self._write_log(treelog.leaf_ok(fields or "identity probe matched"))
+                self._log_router_probe_evidence(result)
                 self.refresh_table()
             else:
                 self._write_log(treelog.leaf_fail(
@@ -820,34 +822,20 @@ class ScannerView(Screen):
             if was_hopping and self.app.screen is self:
                 await iface.start_hopping(channels=self._channel_filter, interval=0.25)
 
+    def _log_router_probe_step(self, status: str, detail: str) -> None:
+        self._write_log(treelog.branch(format_probe_step(status, detail)))
+
+    def _log_router_probe_evidence(self, result) -> None:
+        evidence = format_probe_evidence(result)
+        if not evidence:
+            return
+        self._write_log(treelog.branch("Evidence"))
+        for line in evidence:
+            self._write_log(treelog.leaf(line))
+
     @staticmethod
     def _apply_router_probe_claims(ap: AccessPoint, claims) -> None:
         ap.router_claims = tuple(dict.fromkeys((*ap.router_claims, *claims)))
-
-    @staticmethod
-    def _format_probe_result(result) -> str:
-        if result.wps_identity is not None:
-            fields = ScannerView._format_wps_m1_identity(result.wps_identity)
-            return f"WPS M1: {fields}" if fields else "WPS M1 received"
-        if result.claims:
-            fields = ", ".join(f"{claim.name}={escape(claim.value)} {round(claim.confidence * 100)}%"
-                               for claim in result.claims)
-            return f"{result.source}: {fields}" if result.source else fields
-        return result.source or "identity probe matched"
-
-    @staticmethod
-    def _format_wps_m1_identity(identity: WpsM1Identity) -> str:
-        model_number = identity.model_number
-        if model_number == identity.model_name:
-            model_number = None
-        parts = [
-            ("mfr", identity.manufacturer),
-            ("model", identity.model_name),
-            ("model_no", model_number),
-            ("name", identity.device_name),
-            ("type", identity.primary_device_type),
-        ]
-        return ", ".join(f"{name}={escape(value)}" for name, value in parts if value)
 
     # ----- WPS PBC opportunistic capture -------------------------------------
 

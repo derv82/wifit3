@@ -333,10 +333,17 @@ async def test_f_fingerprints_focused_router(focus_host, monkeypatch):
     ap.wps = True
     focus = await _rebind(focus_host, array, ap)
 
-    async def fake_probe(probe_array, target, iface=None):
+    async def fake_probe(probe_array, target, iface=None, log=None):
         assert probe_array is array
         assert target is ap
         assert iface is not None
+        assert log is not None
+        log("try", "WPS M1")
+        log("fail", "WPS M1: timed out")
+        log("try", "MikroTik WinBox")
+        log("fail", "MikroTik WinBox: no reply")
+        log("try", "UBNT discovery")
+        log("ok", "UBNT discovery")
         ap.wps_m1_manufacturer = "TP-Link"
         ap.wps_m1_model_name = "Archer AX10"
         ap.wps_m1_model_number = "Archer AX10"
@@ -360,7 +367,15 @@ async def test_f_fingerprints_focused_router(focus_host, monkeypatch):
     assert ap.router_fingerprint.model == "Archer AX10"
     log = _log_text(focus)
     assert "Identity probe" in log
+    assert "trying WPS M1" in log
+    assert "WPS M1: timed out failed" in log
+    assert "trying MikroTik WinBox" in log
+    assert "MikroTik WinBox: no reply failed" in log
+    assert "trying UBNT discovery" in log
+    assert "UBNT discovery responded" in log
     assert "WPS M1: mfr=TP-Link, model=Archer AX10" in log
+    assert "wps.m1: manufacturer=TP-Link (99%)" in log
+    assert "wps.m1: model=Archer AX10 (99%)" in log
     assert "model_no" not in log
 
 
