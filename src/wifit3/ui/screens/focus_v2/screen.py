@@ -33,6 +33,7 @@ from textual.widgets import Button, Footer, Header, Static
 
 from wifit3.campaigns import treelog
 from wifit3.campaigns.campaign import Campaign
+from wifit3.campaigns.router_probe import RouterProbeResult, probe_router_info
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
 from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput
@@ -120,6 +121,28 @@ def _save_line(result) -> str:
     return f"[dim]{verb}: {Config.captures_dir}/{escape(short)}[/dim]"
 
 
+def _format_router_probe_result(result: RouterProbeResult) -> str:
+    if result.wps_identity is not None:
+        identity = result.wps_identity
+        model_number = identity.model_number
+        if model_number == identity.model_name:
+            model_number = None
+        parts = [
+            ("mfr", identity.manufacturer),
+            ("model", identity.model_name),
+            ("model_no", model_number),
+            ("name", identity.device_name),
+            ("type", identity.primary_device_type),
+        ]
+        fields = ", ".join(f"{name}={escape(value)}" for name, value in parts if value)
+        return f"WPS M1: {fields}" if fields else "WPS M1 received"
+    if result.claims:
+        fields = ", ".join(f"{claim.name}={escape(claim.value)} {round(claim.confidence * 100)}%"
+                           for claim in result.claims)
+        return f"{result.source}: {fields}" if result.source else fields
+    return result.source or "identity probe matched"
+
+
 def _wep_key_chip(key_hex) -> str:
     """Black-bold-on-cyan WEP key chip (bare hex for non-printable keys)."""
     if not key_hex:
@@ -140,6 +163,7 @@ class FocusViewV2(Screen):
           for cls in fm.BUTTON_CAMPAIGNS if cls.hotkey],
         Binding("c", "campaign('chop')", "ChopChop", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
+        Binding("f", "fingerprint_router", "Fingerprint", show=True),
         Binding("s", "silence", "Silence", show=True),
         Binding("s", "unsilence", "unSilence", show=True),
         Binding("q", "app.quit", "Quit", show=True),
@@ -218,6 +242,7 @@ class FocusViewV2(Screen):
         self._pbc_retry_after = 0.0   # monotonic time before which we won't re-arm a PBC retry
         self._pmkid_campaign: Optional[PmkidHarvestAttack] = None
         self._deauth_campaign: Optional[DeauthCampaign] = None
+        self._router_info_probing = False
         self._prev_stats = None
         self._campaign_toggles = {
             "wep": self._toggle_generate_ivs, "pmkid": self._toggle_pmkid,
@@ -720,6 +745,14 @@ class FocusViewV2(Screen):
             if ap is None:
                 return False
             return None if fm.deauth_blocked(ap) else True
+        if action == "fingerprint_router":
+            if ap is None:
+                return False
+            if self.app.array is None:
+                return None
+            if self._router_info_probing or Campaign.active is not None or self._pbc_busy():
+                return None
+            return True
         if action == "silence":
             return False if (ap is not None and Config.is_silenced(ap.bssid)) else True
         if action == "unsilence":
@@ -734,7 +767,7 @@ class FocusViewV2(Screen):
         else:
             btns = fm.derive_buttons(ap)
             sig = (tuple((bid, s.visible, s.disabled) for bid, s in btns.items()),
-                   fm.deauth_blocked(ap), Config.is_silenced(ap.bssid))
+                   fm.deauth_blocked(ap), Config.is_silenced(ap.bssid), self._router_info_probing)
         if sig != self._binding_sig:
             self._binding_sig = sig
             self.refresh_bindings()
@@ -754,6 +787,61 @@ class FocusViewV2(Screen):
         """'w': toggle the shared WPS PBC auto-invade."""
         self.app.pbc_enabled = not getattr(self.app, "pbc_enabled", True)
         self._log_pbc_status()
+
+    def action_fingerprint_router(self) -> None:
+        """'f': actively probe the focused AP for router identity evidence."""
+        ap = self._target_ap
+        if ap is None:
+            self._log(treelog.leaf_fail("no focused AP to fingerprint"))
+            return
+        if self.app.array is None:
+            self._log(treelog.leaf_fail("no active interface"))
+            return
+        if self._router_info_probing or Campaign.active is not None or self._pbc_busy():
+            self._log(treelog.leaf_fail("another campaign or probe is already running"))
+            return
+        self.run_worker(self._fingerprint_router(ap), exclusive=True)
+
+    async def _fingerprint_router(self, ap) -> None:
+        array = self.app.array
+        if array is None:
+            return
+        self._router_info_probing = True
+        self._sync_bindings()
+        label = escape(ap.ssid or ap.bssid)
+        self._log(treelog.header(
+            f"[bold]Identity probe[/bold] on [cyan]{label}[/cyan] [dim](CH {ap.channel})[/dim]"))
+        iface = array.select_iface(ap.channel)
+        if iface is None:
+            self._log(treelog.leaf_fail(f"no interface can probe CH {ap.channel}"))
+            self._router_info_probing = False
+            self._sync_bindings()
+            return
+        was_hopping = bool(getattr(iface, "_is_hopping", False))
+        try:
+            if was_hopping:
+                await iface.stop_hopping()
+            result = await probe_router_info(array, ap, iface=iface)
+            if result.ok:
+                if result.claims:
+                    self._apply_router_probe_claims(ap, result.claims)
+                self._log(treelog.leaf_ok(_format_router_probe_result(result)))
+                self.query_one("#router", RouterEndpoint).update(**self._router_values())
+            else:
+                detail = escape(result.detail or "no detail")
+                self._log(treelog.leaf_fail(f"identity probe failed [dim]({detail})[/dim]"))
+        except Exception as exc:
+            logger.exception("Focus router identity probe crashed")
+            self._log(treelog.leaf_fail(f"identity probe error: {escape(str(exc))}"))
+        finally:
+            self._router_info_probing = False
+            self._sync_bindings()
+            if was_hopping and self.app.screen is self:
+                await iface.start_hopping(interval=0.25)
+
+    @staticmethod
+    def _apply_router_probe_claims(ap, claims) -> None:
+        ap.router_claims = tuple(dict.fromkeys((*ap.router_claims, *claims)))
 
     def _log_pbc_status(self) -> None:
         if getattr(self.app, "pbc_enabled", True):

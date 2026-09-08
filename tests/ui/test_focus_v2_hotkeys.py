@@ -13,6 +13,8 @@ import pytest_asyncio
 from textual.app import App
 from textual.widgets._footer import FooterKey
 
+from wifit3.campaigns.router_probe import RouterProbeResult
+from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList
@@ -323,6 +325,43 @@ async def test_w_toggles_shared_pbc_flag(focus_host, tmp_path, monkeypatch):
     assert "disabled" in _log_text(focus)
     focus.action_wps_pbc_mode()
     assert app.pbc_enabled is True
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_f_fingerprints_focused_router(focus_host, monkeypatch):
+    iface, array, ap = _wpa2_target("aa:bb:cc:dd:ee:08")
+    ap.wps = True
+    focus = await _rebind(focus_host, array, ap)
+
+    async def fake_probe(probe_array, target, iface=None):
+        assert probe_array is array
+        assert target is ap
+        assert iface is not None
+        ap.wps_m1_manufacturer = "TP-Link"
+        ap.wps_m1_model_name = "Archer AX10"
+        ap.wps_m1_model_number = "Archer AX10"
+        return RouterProbeResult(
+            True,
+            source="wps.m1",
+            wps_identity=WpsM1Identity(
+                manufacturer="TP-Link",
+                model_name="Archer AX10",
+                model_number="Archer AX10",
+            ),
+        )
+
+    import wifit3.ui.screens.focus_v2.screen as screen_module
+
+    monkeypatch.setattr(screen_module, "probe_router_info", fake_probe)
+    assert focus.check_action("fingerprint_router", ()) is True
+
+    await focus._fingerprint_router(ap)
+
+    assert ap.router_fingerprint.model == "Archer AX10"
+    log = _log_text(focus)
+    assert "Identity probe" in log
+    assert "WPS M1: mfr=TP-Link, model=Archer AX10" in log
+    assert "model_no" not in log
 
 
 @pytest.mark.asyncio(loop_scope="module")
