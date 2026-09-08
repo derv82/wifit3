@@ -271,6 +271,7 @@ class ScannerView(Screen):
         self._pbc_watcher = PbcWatcher()
         self._pbc_capturing = False          # serialize: one invade at a time
         self._router_info_probing = False
+        self._router_info_probe_task: Optional[asyncio.Task] = None
         self._router_info_probe_started_at: Optional[float] = None
         self._router_info_probe_bssid: Optional[str] = None
 
@@ -771,6 +772,9 @@ class ScannerView(Screen):
         return self.ap_cache.get(row_key)
 
     def action_probe_router_info(self) -> None:
+        if self._router_info_probing:
+            self._cancel_router_info_probe()
+            return
         ap = self._selected_ap()
         if ap is None:
             self._write_log(treelog.leaf_fail("select an AP before probing identity"))
@@ -778,10 +782,14 @@ class ScannerView(Screen):
         if not self.app.array:
             self._write_log(treelog.leaf_fail("no active interface"))
             return
-        if self._router_info_probing or self._pbc_capturing:
+        if self._pbc_capturing:
             self._write_log(treelog.leaf_fail("another probe is already running"))
             return
-        asyncio.create_task(self._probe_router_info(ap))
+        self._router_info_probe_task = asyncio.create_task(self._probe_router_info(ap))
+
+    def _cancel_router_info_probe(self) -> None:
+        if self._router_info_probe_task is not None:
+            self._router_info_probe_task.cancel()
 
     async def _probe_router_info(self, ap: AccessPoint) -> None:
         array = self.app.array
@@ -817,10 +825,14 @@ class ScannerView(Screen):
             else:
                 self._write_log(treelog.leaf_fail(
                     f"identity probe failed [dim]({escape(result.detail or 'no detail')})[/dim]"))
+        except asyncio.CancelledError:
+            self._write_log(treelog.leaf_warn("identity probe cancelled"))
         except Exception as exc:
             self._write_log(treelog.leaf_fail(f"identity probe error: {escape(str(exc))}"))
         finally:
             self._router_info_probing = False
+            if self._router_info_probe_task is asyncio.current_task():
+                self._router_info_probe_task = None
             self._router_info_probe_started_at = None
             self._router_info_probe_bssid = None
             if was_hopping and self.app.screen is self:

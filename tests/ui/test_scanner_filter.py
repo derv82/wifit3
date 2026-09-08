@@ -1,6 +1,7 @@
 """The Scanner applies its ScanFilter as a display-only predicate: a filtered-out
 AP loses its table row but keeps its registry entry, so widening the filter brings
 it straight back without having to rediscover it."""
+import asyncio
 import time
 
 import pytest
@@ -287,6 +288,41 @@ async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
     assert fp.vendor == "TP-Link"
     assert fp.model == "Archer AX10"
     assert fp.kind is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_scanner_info_probe_cancelled_by_same_key(monkeypatch):
+    ap = AccessPoint(bssid="aa:bb:cc:00:00:54", ssid="Router", channel=1, wps=True)
+    started = asyncio.Event()
+
+    async def fake_probe(array, target, iface=None, log=None):
+        started.set()
+        await asyncio.Event().wait()
+
+    import wifit3.ui.screens.scanner as scanner_module
+
+    monkeypatch.setattr(scanner_module, "probe_router_info", fake_probe)
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        app.array = _FakeArray([ap], [1, 6, 11])
+        iface = app.array.members[0]
+        app.push_screen("scanner")
+        await pilot.pause(0)
+        scanner = app.screen
+        assert isinstance(scanner, ScannerView)
+
+        scanner.refresh_table()
+        scanner.action_probe_router_info()
+        await asyncio.wait_for(started.wait(), 1)
+        assert scanner._router_info_probing is True
+
+        scanner.action_probe_router_info()
+        await pilot.pause(0)
+
+    assert scanner._router_info_probing is False
+    assert scanner._router_info_probe_task is None
+    assert iface.start_calls == 1
 
 
 @pytest.mark.asyncio

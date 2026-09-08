@@ -6,6 +6,7 @@ active). Covers the deauth-clients screen, the campaign keys mirroring derive_bu
 per encryption family, the shared WPS-PBC toggle, and the PBC auto-capture guard.
 Driven by a real WlanInterface (mock driver), no hardware.
 """
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -377,6 +378,32 @@ async def test_f_fingerprints_focused_router(focus_host, monkeypatch):
     assert "wps.m1: manufacturer=TP-Link (99%)" in log
     assert "wps.m1: model=Archer AX10 (99%)" in log
     assert "model_no" not in log
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_f_cancels_running_router_fingerprint(focus_host, monkeypatch):
+    iface, array, ap = _wpa2_target("aa:bb:cc:dd:ee:09")
+    focus = await _rebind(focus_host, array, ap)
+    started = asyncio.Event()
+
+    async def fake_probe(probe_array, target, iface=None, log=None):
+        started.set()
+        await asyncio.Event().wait()
+
+    import wifit3.ui.screens.focus_v2.screen as screen_module
+
+    monkeypatch.setattr(screen_module, "probe_router_info", fake_probe)
+    focus.action_fingerprint_router()
+    await asyncio.wait_for(started.wait(), 1)
+    assert focus._router_info_probing is True
+    assert focus.check_action("fingerprint_router", ()) is True
+
+    focus.action_fingerprint_router()
+    await asyncio.sleep(0)
+
+    assert focus._router_info_probing is False
+    assert focus._router_info_probe_task is None
+    assert "identity probe cancelled" in _log_text(focus)
 
 
 @pytest.mark.asyncio(loop_scope="module")

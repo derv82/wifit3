@@ -16,6 +16,7 @@ the top bar. Portrait is deferred.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -224,6 +225,7 @@ class FocusViewV2(Screen):
         self._pmkid_campaign: Optional[PmkidHarvestAttack] = None
         self._deauth_campaign: Optional[DeauthCampaign] = None
         self._router_info_probing = False
+        self._router_info_probe_task: Optional[asyncio.Task] = None
         self._prev_stats = None
         self._campaign_toggles = {
             "wep": self._toggle_generate_ivs, "pmkid": self._toggle_pmkid,
@@ -396,6 +398,7 @@ class FocusViewV2(Screen):
 
     async def _enter_target(self) -> None:
         """Bind to ``app.target_ap``: stop campaigns, reset state, update panels/radio/log."""
+        self._cancel_router_info_probe()
         self._stop_eviltwin()
         self._stop_generate_ivs()
         self._stop_pbc_capture()
@@ -729,9 +732,11 @@ class FocusViewV2(Screen):
         if action == "fingerprint_router":
             if ap is None:
                 return False
+            if self._router_info_probing:
+                return True
             if self.app.array is None:
                 return None
-            if self._router_info_probing or Campaign.active is not None or self._pbc_busy():
+            if Campaign.active is not None or self._pbc_busy():
                 return None
             return True
         if action == "silence":
@@ -771,6 +776,9 @@ class FocusViewV2(Screen):
 
     def action_fingerprint_router(self) -> None:
         """'f': actively probe the focused AP for router identity evidence."""
+        if self._router_info_probing:
+            self._cancel_router_info_probe()
+            return
         ap = self._target_ap
         if ap is None:
             self._log(treelog.leaf_fail("no focused AP to fingerprint"))
@@ -778,10 +786,14 @@ class FocusViewV2(Screen):
         if self.app.array is None:
             self._log(treelog.leaf_fail("no active interface"))
             return
-        if self._router_info_probing or Campaign.active is not None or self._pbc_busy():
+        if Campaign.active is not None or self._pbc_busy():
             self._log(treelog.leaf_fail("another campaign or probe is already running"))
             return
-        self.run_worker(self._fingerprint_router(ap), exclusive=True)
+        self._router_info_probe_task = asyncio.create_task(self._fingerprint_router(ap))
+
+    def _cancel_router_info_probe(self) -> None:
+        if self._router_info_probe_task is not None:
+            self._router_info_probe_task.cancel()
 
     async def _fingerprint_router(self, ap) -> None:
         array = self.app.array
@@ -817,11 +829,15 @@ class FocusViewV2(Screen):
             else:
                 detail = escape(result.detail or "no detail")
                 self._log(treelog.leaf_fail(f"identity probe failed [dim]({detail})[/dim]"))
+        except asyncio.CancelledError:
+            self._log(treelog.leaf_warn("identity probe cancelled"))
         except Exception as exc:
             logger.exception("Focus router identity probe crashed")
             self._log(treelog.leaf_fail(f"identity probe error: {escape(str(exc))}"))
         finally:
             self._router_info_probing = False
+            if self._router_info_probe_task is asyncio.current_task():
+                self._router_info_probe_task = None
             self._sync_bindings()
             if was_hopping and self.app.screen is self:
                 await iface.start_hopping(interval=0.25)
@@ -1254,6 +1270,7 @@ class FocusViewV2(Screen):
 
     async def action_go_back(self) -> None:
         # Tear down any running attack: Scanner doesn't own the AP's channel, and a forged daemon would keep injecting.
+        self._cancel_router_info_probe()
         self._stop_eviltwin()
         self._stop_generate_ivs()
         self._stop_pbc_capture()
