@@ -99,8 +99,9 @@ _BUTTON_TIPS = {
     "Stop Replay": "Stop the entire WEP campaign.",
     "ChopChop": "Forge a replayable packet",
     "Stop Chop": "Interrupt chopping and return to ARP replay",
-    "PMKID": "Associate to extract PMKID (some APs not applicable)",
-    "WPS PIN": "Start a WPS PIN brute-force campaign",
+    "AutoDeauth": "De-authenticate clients 1-by-1, then de-authenticates broadcast. Loops.",
+    "PMKID": "Associate to extract PMKID\n(some APs not applicable)",
+    "WPS PIN": "PIN attacks: PixieDust, default vendor PINs, then brute-force",
     "EvilTwin": "Punt clients onto a WPA2 twin to capture a crackable handshake",
     "Stop EvilTwin": "Tear down the twin and return clients to the AP",
 }
