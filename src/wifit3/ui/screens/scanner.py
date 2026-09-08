@@ -17,7 +17,7 @@ from rich.text import Span, Text
 
 from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
-from wifit3.campaigns.router_probe import probe_router_info
+from wifit3.campaigns.probe import probe_ap
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.persist.capture_history import load_capture_index, summarize
@@ -799,7 +799,7 @@ class ScannerView(Screen):
             return
         try:
             async with array.claim(iface):
-                result = await probe_router_info(array, ap, iface=iface)
+                result = await probe_ap(iface, ap)
                 if result.ok:
                     if result.claims:
                         self._apply_router_probe_claims(ap, result.claims)

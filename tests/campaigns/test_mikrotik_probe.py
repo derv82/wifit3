@@ -1,6 +1,6 @@
 import struct
 
-from wifit3.campaigns.mikrotik_probe import (
+from wifit3.campaigns.probe.mikrotik import (
     build_mikrotik_discovery_frames, is_mikrotik_plaintext_frame, is_mikrotik_response,
     mikrotik_claims_from_frame,
 )

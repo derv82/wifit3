@@ -1,6 +1,6 @@
 import struct
 
-from wifit3.campaigns.ubiquiti_probe import (
+from wifit3.campaigns.probe.ubiquiti import (
     build_ubnt_discovery_frame,
     is_ubnt_plaintext_frame,
     is_ubnt_response,

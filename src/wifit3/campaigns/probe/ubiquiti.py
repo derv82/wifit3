@@ -2,24 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import struct
-from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
+from wifit3.campaigns.probe.base import BaseApProbe, ProbeResult
 from wifit3.dot11 import str_to_mac
-from wifit3.wlan.lease import SPOOFABLE
 from wifit3.id import RouterClaim, RouterEvidence
+
+if TYPE_CHECKING:
+    from wifit3.models import AccessPoint
+    from wifit3.wlan.interface import WlanInterface
 
 _LLC_SNAP_IPV4 = b"\xaa\xaa\x03\x00\x00\x00\x08\x00"
 _BROADCAST = b"\xff" * 6
 _UBNT_PORT = 10001
 _UBNT_DISCOVERY = b"\x01\x00\x00\x00"
-
-
-@dataclass(frozen=True)
-class UbiquitiProbeResult:
-    ok: bool
-    claims: tuple[RouterClaim, ...] = ()
-    detail: str = ""
 
 
 def _checksum(data: bytes) -> int:
@@ -82,32 +79,35 @@ def ubnt_claims(source: str, *, passive: bool) -> tuple[RouterClaim, ...]:
     )
 
 
-async def probe_ubnt(array, ap, iface=None, timeout: float = 2.0) -> UbiquitiProbeResult:
-    bssid = ap.bssid.lower()
-    bssid_bytes = str_to_mac(bssid)
-    try:
-        lease = array.lease(channel=ap.channel, fake_mac=SPOOFABLE, bssid=bssid_bytes,
-                            ack_tally=True, iface=iface)
-    except Exception as exc:
-        return UbiquitiProbeResult(False, detail=str(exc))
+class UbiquitiProbe(BaseApProbe):
+    """Probes an OPEN AP for Ubiquiti discovery responses on UDP port 10001."""
+    name = "ubiquiti"
 
-    async with lease as iface:
-        if lease.mac is None:
-            return UbiquitiProbeResult(False, detail="active monitor unavailable")
-        our_mac = str_to_mac(lease.mac)
-        assoc = Association(iface, bssid, ap.ssid or "", ap.channel, our_mac=our_mac)
+    def can_probe(self, ap: AccessPoint) -> bool:
+        return ap.encryption == "OPEN"
+
+    async def probe(self, iface: WlanInterface, ap: AccessPoint, timeout: float = 2.0) -> ProbeResult:
+        bssid_bytes = str_to_mac(ap.bssid.lower())
+        await iface.set_channel(ap.channel)
+        fake_mac = await iface.set_fake_mac(None, bssid_bytes)
+        our_mac_str = fake_mac or (iface.mac_address if isinstance(iface.mac_address, str) else None)
+        if our_mac_str is None:
+            return ProbeResult(False, detail="active monitor unavailable")
+        our_mac = str_to_mac(our_mac_str)
+
+        assoc = Association(iface, ap.bssid.lower(), ap.ssid or "", ap.channel, our_mac=our_mac)
         transport = WlanTransport(iface, bssid_bytes, our_mac)
         assoc.start()
         transport.start()
         try:
             if not await assoc.associate(attempts=2):
-                return UbiquitiProbeResult(False, detail=assoc.fail_reason or "no association response")
+                return ProbeResult(False, detail=assoc.fail_reason or "no association response")
             await iface.send_no_wait(build_ubnt_discovery_frame(bssid_bytes, our_mac))
             deadline = asyncio.get_running_loop().time() + timeout
             while asyncio.get_running_loop().time() < deadline:
                 frame = await transport.recv(0.25)
                 if frame is not None and is_ubnt_response(frame):
-                    return UbiquitiProbeResult(True, claims=ubnt_claims("ubnt.discovery", passive=False))
+                    return ProbeResult(True, source="ubnt.discovery", claims=ubnt_claims("ubnt.discovery", passive=False))
         finally:
             transport.stop()
             assoc.stop()
@@ -115,4 +115,6 @@ async def probe_ubnt(array, ap, iface=None, timeout: float = 2.0) -> UbiquitiPro
                 await iface.send_no_wait(build_client_leaving(bssid_bytes, our_mac))
             except Exception:
                 pass
-    return UbiquitiProbeResult(False, detail="no UBNT discovery response")
+            await iface.clear_fake_mac()
+
+        return ProbeResult(False, detail="no UBNT discovery response")

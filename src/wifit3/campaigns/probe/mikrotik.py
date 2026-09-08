@@ -2,26 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import struct
-from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
+from wifit3.campaigns.probe.base import BaseApProbe, ProbeResult
 from wifit3.dot11 import str_to_mac
 from wifit3.id import RouterClaim, RouterEvidence
-from wifit3.wlan.lease import SPOOFABLE
+
+if TYPE_CHECKING:
+    from wifit3.models import AccessPoint
+    from wifit3.wlan.interface import WlanInterface
 
 _LLC_SNAP_IPV4 = b"\xaa\xaa\x03\x00\x00\x00\x08\x00"
 _BROADCAST = b"\xff" * 6
 _MIKROTIK_PORTS = {5678, 20561}
 _MNDP_DISCOVERY = b"\x00\x00\x00\x00"
 _WINBOX_DISCOVERY = b"M2"
-
-
-@dataclass(frozen=True)
-class MikrotikProbeResult:
-    ok: bool
-    source: str = ""
-    claims: tuple[RouterClaim, ...] = ()
-    detail: str = ""
 
 
 def _checksum(data: bytes) -> int:
@@ -100,26 +96,29 @@ def mikrotik_claims_from_frame(frame: bytes, *, passive: bool) -> tuple[RouterCl
     return ()
 
 
-async def probe_mikrotik(array, ap, iface=None, timeout: float = 2.0) -> MikrotikProbeResult:
-    bssid = ap.bssid.lower()
-    bssid_bytes = str_to_mac(bssid)
-    try:
-        lease = array.lease(channel=ap.channel, fake_mac=SPOOFABLE, bssid=bssid_bytes,
-                            ack_tally=True, iface=iface)
-    except Exception as exc:
-        return MikrotikProbeResult(False, detail=str(exc))
+class MikrotikProbe(BaseApProbe):
+    """Probes an OPEN AP for MikroTik WinBox/MNDP discovery responses."""
+    name = "mikrotik"
 
-    async with lease as iface:
-        if lease.mac is None:
-            return MikrotikProbeResult(False, detail="active monitor unavailable")
-        our_mac = str_to_mac(lease.mac)
-        assoc = Association(iface, bssid, ap.ssid or "", ap.channel, our_mac=our_mac)
+    def can_probe(self, ap: AccessPoint) -> bool:
+        return ap.encryption == "OPEN"
+
+    async def probe(self, iface: WlanInterface, ap: AccessPoint, timeout: float = 2.0) -> ProbeResult:
+        bssid_bytes = str_to_mac(ap.bssid.lower())
+        await iface.set_channel(ap.channel)
+        fake_mac = await iface.set_fake_mac(None, bssid_bytes)
+        our_mac_str = fake_mac or (iface.mac_address if isinstance(iface.mac_address, str) else None)
+        if our_mac_str is None:
+            return ProbeResult(False, detail="active monitor unavailable")
+        our_mac = str_to_mac(our_mac_str)
+
+        assoc = Association(iface, ap.bssid.lower(), ap.ssid or "", ap.channel, our_mac=our_mac)
         transport = WlanTransport(iface, bssid_bytes, our_mac)
         assoc.start()
         transport.start()
         try:
             if not await assoc.associate(attempts=2):
-                return MikrotikProbeResult(False, detail=assoc.fail_reason or "no association response")
+                return ProbeResult(False, detail=assoc.fail_reason or "no association response")
             for frame in build_mikrotik_discovery_frames(bssid_bytes, our_mac):
                 await iface.send_no_wait(frame)
             deadline = asyncio.get_running_loop().time() + timeout
@@ -127,7 +126,7 @@ async def probe_mikrotik(array, ap, iface=None, timeout: float = 2.0) -> Mikroti
                 frame = await transport.recv(0.25)
                 if frame is not None and is_mikrotik_response(frame):
                     claims = mikrotik_claims_from_frame(frame, passive=False)
-                    return MikrotikProbeResult(True, source=claims[0].evidence[0].source, claims=claims)
+                    return ProbeResult(True, source=claims[0].evidence[0].source, claims=claims)
         finally:
             transport.stop()
             assoc.stop()
@@ -135,4 +134,6 @@ async def probe_mikrotik(array, ap, iface=None, timeout: float = 2.0) -> Mikroti
                 await iface.send_no_wait(build_client_leaving(bssid_bytes, our_mac))
             except Exception:
                 pass
-    return MikrotikProbeResult(False, detail="no WinBox response")
+            await iface.clear_fake_mac()
+
+        return ProbeResult(False, detail="no WinBox response")
