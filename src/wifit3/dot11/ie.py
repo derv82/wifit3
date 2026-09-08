@@ -9,6 +9,7 @@ from typing import Optional
 # Supported / Extended supported rate menus (APs only spot-check that they parse).
 SUPPORTED_RATES = bytes([0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24])
 EXT_SUPPORTED_RATES = bytes([0x30, 0x48, 0x60, 0x6C])
+SUPPORTED_RATES_5GHZ = bytes([0x8C, 0x12, 0x98, 0x24, 0xB0, 0x48, 0x60, 0x6C])
 
 # Generic WPA2-PSK-CCMP RSN IE (tag 48): version 1, CCMP group + pairwise, single
 # AKM = PSK, no PMF. The client-side fallback when the AP's own IE is unusable.
@@ -25,14 +26,22 @@ def ssid_ie(ssid: str) -> bytes:
     return bytes([0x00, len(s)]) + s
 
 
-def rates_ie() -> bytes:
-    """Supported Rates IE (tag 1)."""
-    return bytes([0x01, len(SUPPORTED_RATES)]) + SUPPORTED_RATES
+def rates_ie(channel: int = 1) -> bytes:
+    """Supported Rates IE (tag 1), band-aware (OFDM on 5 GHz, CCK+OFDM on 2.4 GHz)."""
+    rates = SUPPORTED_RATES_5GHZ if channel > 14 else SUPPORTED_RATES
+    return bytes([0x01, len(rates)]) + rates
 
 
-def ext_rates_ie() -> bytes:
-    """Extended Supported Rates IE (tag 50)."""
+def ext_rates_ie(channel: int = 1) -> bytes:
+    """Extended Supported Rates IE (tag 50), omitted on 5 GHz where all rates fit tag 1."""
+    if channel > 14:
+        return b""
     return bytes([0x32, len(EXT_SUPPORTED_RATES)]) + EXT_SUPPORTED_RATES
+
+
+def ht_cap_ie() -> bytes:
+    """HT Capabilities IE (tag 45): 20 MHz-only, 1-stream MCS 0-7, static SMPS."""
+    return bytes([0x2D, 0x1A]) + b"\x2d\x01\x1b" + b"\xff" + (b"\x00" * 15) + (b"\x00" * 7)
 
 
 def ds_param_ie(channel: int) -> bytes:
