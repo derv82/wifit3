@@ -29,7 +29,7 @@ from wifit3.dot11.wsc.messages import (
     ATTR_DEV_NAME, ATTR_MANUFACTURER, ATTR_MODEL_NAME, ATTR_MODEL_NUMBER,
     ATTR_PRIMARY_DEV_TYPE, ATTR_SERIAL_NUMBER, parse_tlvs,
 )
-from wifit3.wlan.fingerprinting.vendors import VENDOR_BY_OUI
+from wifit3.id import VENDOR_BY_OUI
 
 
 # ======================================================================================

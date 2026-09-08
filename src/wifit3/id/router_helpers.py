@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
-from wifit3.wlan.fingerprinting.vendors import VENDOR_BY_OUI
+from .vendors import VENDOR_BY_OUI
 
 _PREFIX_LENGTHS = (9, 7, 6)
 _CANONICAL_VENDOR_PATTERNS = (

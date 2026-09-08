@@ -32,7 +32,7 @@ from typing import Optional
 _MANUF_URL = "https://www.wireshark.org/download/automated/data/manuf"
 
 _OUT = (Path(__file__).resolve().parents[2]
-        / "src" / "wifit3" / "wlan" / "fingerprinting" / "vendors.py")
+        / "src" / "wifit3" / "id" / "vendors.py")
 
 # IEEE only ever allocates at these three widths (MA-L/MA-M/MA-S); manuf's optional "/N" suffix
 # names bit-width, but we key by hex nibbles (bits // 4) since every allocation is nibble-aligned.

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Iterable, TYPE_CHECKING
 
-from wifit3.wlan.fingerprinting.router_helpers import canonical_vendor, combine_confidences
-from wifit3.wlan.fingerprinting.router_rules import DISTINGUISH_RULES, IDENTIFY_RULES
-from wifit3.wlan.fingerprinting.router_types import (
+from .router_helpers import canonical_vendor, combine_confidences
+from .router_rules import DISTINGUISH_RULES, IDENTIFY_RULES
+from .router_types import (
     RouterClaim,
     RouterEvidence as RouterEvidence,
     RouterFingerprint,

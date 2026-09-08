@@ -8,7 +8,7 @@ from wifit3.campaigns.ubiquiti_probe import probe_ubnt
 from wifit3.campaigns.wps.m1_probe import probe_wps_m1
 from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.models import AccessPoint
-from wifit3.wlan.fingerprinting.router import RouterClaim
+from wifit3.id import RouterClaim
 
 
 @dataclass(frozen=True)

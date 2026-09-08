@@ -137,3 +137,6 @@ def fingerprint(mac: str) -> Optional[Fingerprint]:
     if vendor is None:
         return None
     return Fingerprint(_GENERIC_EMOJI, f"{vendor} device")
+
+
+fingerprint_client = fingerprint

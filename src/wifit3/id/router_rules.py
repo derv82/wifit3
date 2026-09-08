@@ -4,8 +4,8 @@ from __future__ import annotations
 import re
 from typing import Iterable, TYPE_CHECKING
 
-from wifit3.wlan.fingerprinting.router_types import RouterClaim, RouterEvidence, RouterRule
-from wifit3.wlan.fingerprinting.router_helpers import canonical_vendor, clean_text, vendor_for_mac
+from .router_types import RouterClaim, RouterEvidence, RouterRule
+from .router_helpers import canonical_vendor, clean_text, vendor_for_mac
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint

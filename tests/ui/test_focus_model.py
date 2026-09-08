@@ -254,7 +254,7 @@ def test_router_identity_details_can_show_brand_and_vendor_separately():
     class _AP:
         @property
         def router_fingerprint(self):
-            from wifit3.wlan.fingerprinting.router import RouterFingerprint
+            from wifit3.id import RouterFingerprint
             return RouterFingerprint(
                 label="Likely O2 router",
                 confidence=0.82,

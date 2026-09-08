@@ -1,4 +1,4 @@
-# Manual refresh of the generated vendor-name table (wlan/fingerprinting/vendors.py) from Wireshark's
+# Manual refresh of the generated vendor-name table (id/vendors.py) from Wireshark's
 # manuf feed. No schedule: run it by hand, review the diff, merge the PR it opens.
 
 name: Refresh vendor table
@@ -36,14 +36,14 @@ jobs:
       - name: Open a PR if the table changed
         uses: peter-evans/create-pull-request@v8
         with:
-          commit-message: "chore(wlan): refresh generated vendor table"
-          title: "chore(wlan): refresh generated vendor table"
+          commit-message: "chore(id): refresh generated vendor table"
+          title: "chore(id): refresh generated vendor table"
           body: >
-            Manual refresh of `fingerprinting/vendors.py` from
+            Manual refresh of `id/vendors.py` from
             [Wireshark's manuf feed](https://www.wireshark.org/download/automated/data/manuf).
             Lint and the full test suite passed in this run. Data-only diff; skim before merging.
           branch: auto/refresh-vendor-table
           delete-branch: true
           add-paths: |
-            src/wifit3/wlan/fingerprinting/vendors.py
+            src/wifit3/id/vendors.py
           labels: automated

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
 from wifit3.dot11 import str_to_mac
 from wifit3.wlan.lease import SPOOFABLE
-from wifit3.wlan.fingerprinting.router import RouterClaim, RouterEvidence
+from wifit3.id import RouterClaim, RouterEvidence
 
 _LLC_SNAP_IPV4 = b"\xaa\xaa\x03\x00\x00\x00\x08\x00"
 _BROADCAST = b"\xff" * 6
