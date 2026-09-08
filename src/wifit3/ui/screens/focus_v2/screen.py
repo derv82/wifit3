@@ -34,7 +34,7 @@ from textual.widgets import Button, Footer, Header, Static
 from wifit3.campaigns import treelog
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.router_probe import (
-    RouterProbeResult, format_probe_evidence, format_probe_result, format_probe_step, probe_router_info,
+    format_probe_evidence, format_probe_result, format_probe_step, probe_router_info,
 )
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
@@ -806,8 +806,13 @@ class FocusViewV2(Screen):
             if result.ok:
                 if result.claims:
                     self._apply_router_probe_claims(ap, result.claims)
-                self._log(treelog.leaf_ok(format_probe_result(result)))
-                self._log_router_probe_evidence(result)
+                fields = format_probe_result(result)
+                evidence = format_probe_evidence(result)
+                if evidence:
+                    self._log(treelog.branch_ok(fields))
+                    self._log_router_probe_evidence(evidence)
+                else:
+                    self._log(treelog.leaf_ok(fields))
                 self.query_one("#router", RouterEndpoint).update(**self._router_values())
             else:
                 detail = escape(result.detail or "no detail")
@@ -824,13 +829,11 @@ class FocusViewV2(Screen):
     def _log_router_probe_step(self, status: str, detail: str) -> None:
         self._log(treelog.branch(format_probe_step(status, detail)))
 
-    def _log_router_probe_evidence(self, result: RouterProbeResult) -> None:
-        evidence = format_probe_evidence(result)
-        if not evidence:
-            return
+    def _log_router_probe_evidence(self, evidence: tuple[str, ...]) -> None:
         self._log(treelog.branch("Evidence"))
-        for line in evidence:
-            self._log(treelog.leaf(line))
+        for line in evidence[:-1]:
+            self._log(treelog.branch(line))
+        self._log(treelog.leaf(evidence[-1]))
 
     @staticmethod
     def _apply_router_probe_claims(ap, claims) -> None:

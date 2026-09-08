@@ -807,8 +807,12 @@ class ScannerView(Screen):
                 if result.claims:
                     self._apply_router_probe_claims(ap, result.claims)
                 fields = format_probe_result(result)
-                self._write_log(treelog.leaf_ok(fields or "identity probe matched"))
-                self._log_router_probe_evidence(result)
+                evidence = format_probe_evidence(result)
+                if evidence:
+                    self._write_log(treelog.branch_ok(fields or "identity probe matched"))
+                    self._log_router_probe_evidence(evidence)
+                else:
+                    self._write_log(treelog.leaf_ok(fields or "identity probe matched"))
                 self.refresh_table()
             else:
                 self._write_log(treelog.leaf_fail(
@@ -825,13 +829,11 @@ class ScannerView(Screen):
     def _log_router_probe_step(self, status: str, detail: str) -> None:
         self._write_log(treelog.branch(format_probe_step(status, detail)))
 
-    def _log_router_probe_evidence(self, result) -> None:
-        evidence = format_probe_evidence(result)
-        if not evidence:
-            return
+    def _log_router_probe_evidence(self, evidence: tuple[str, ...]) -> None:
         self._write_log(treelog.branch("Evidence"))
-        for line in evidence:
-            self._write_log(treelog.leaf(line))
+        for line in evidence[:-1]:
+            self._write_log(treelog.branch(line))
+        self._write_log(treelog.leaf(evidence[-1]))
 
     @staticmethod
     def _apply_router_probe_claims(ap: AccessPoint, claims) -> None:
