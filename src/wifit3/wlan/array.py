@@ -8,7 +8,8 @@ A single card is an array of one: dedupe is a no-op and every read passes straig
 import asyncio
 import logging
 import time
-from typing import Callable, Dict, List, Optional, Set
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Callable, Dict, List, Optional, Set
 
 from wifit3.chips.driver import FakeMacSupport
 from wifit3.dot11.packet import BeaconPacket, Packet
@@ -310,16 +311,17 @@ class WlanArray:
                 logger.exception("%s failed to tune to channel %d", m.name, channel)
         return tuned_any
 
-    def _partition(self, channels: List[int]) -> dict:
+    def _partition(self, channels: List[int], members: Optional[List[WlanInterface]] = None) -> dict:
         """SPREAD: give each channel to one capable card, balancing counts, so N cards cover N-way
         more air per hop. Iterate channels high-first (5 GHz before 2.4 GHz) so a dual-band card
         absorbs the scarce 5 GHz work before the all-band 2.4 GHz channels spread. That keeps cards
         on-band and avoids costly band switches. Any card the spread leaves empty (more cards than
         channels) then hops every filter channel it supports, doubling up for redundant RX rather
         than stranding on its last channel. A channel no card supports is dropped."""
-        assignment = {m: [] for m in self._members}
+        pool = members if members is not None else self._members
+        assignment = {m: [] for m in pool}
         for ch in sorted(channels, reverse=True):
-            capable = [m for m in self._members if ch in m.supported_channels]
+            capable = [m for m in pool if ch in m.supported_channels]
             if not capable:
                 continue
             m = min(capable, key=lambda mm: len(assignment[mm]))
@@ -328,6 +330,28 @@ class WlanArray:
             if not assignment[m]:
                 assignment[m] = [ch for ch in channels if ch in m.supported_channels]
         return {m: sorted(chs) for m, chs in assignment.items()}
+
+    @asynccontextmanager
+    async def claim(self, iface: WlanInterface) -> AsyncIterator[WlanInterface]:
+        """Claim one device from hopping; re-partitions remaining devices."""
+        was_hopping = self._hopping
+        hop_channels = self._hop_channels
+        hop_interval = self._hop_interval
+        await iface.stop_hopping()
+        if was_hopping:
+            remaining = [m for m in self._members if m is not iface]
+            if remaining:
+                chans = hop_channels or self.supported_channels
+                assignment = self._partition(chans, members=remaining)
+                await asyncio.gather(*(
+                    m.start_hopping(channels=subset, interval=hop_interval)
+                    for m, subset in assignment.items() if subset
+                ))
+        try:
+            yield iface
+        finally:
+            if was_hopping and self._hopping:
+                await self.start_hopping(channels=hop_channels, interval=hop_interval)
 
     async def start_hopping(self, channels: Optional[List[int]] = None,
                             interval: float = 0.5) -> None:

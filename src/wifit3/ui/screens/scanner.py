@@ -797,28 +797,24 @@ class ScannerView(Screen):
             self._write_log(treelog.leaf_fail(f"no interface can probe CH {ap.channel}"))
             self._router_info_probing = False
             return
-        was_hopping = bool(getattr(iface, "_is_hopping", False))
         try:
-            if was_hopping:
-                await iface.stop_hopping()
-            result = await probe_router_info(array, ap, iface=iface)
-            if result.ok:
-                if result.claims:
-                    self._apply_router_probe_claims(ap, result.claims)
-                fields = self._format_probe_result(result)
-                self._write_log(treelog.leaf_ok(fields or "identity probe matched"))
-                self.refresh_table()
-            else:
-                self._write_log(treelog.leaf_fail(
-                    f"identity probe failed [dim]({escape(result.detail or 'no detail')})[/dim]"))
+            async with array.claim(iface):
+                result = await probe_router_info(array, ap, iface=iface)
+                if result.ok:
+                    if result.claims:
+                        self._apply_router_probe_claims(ap, result.claims)
+                    fields = self._format_probe_result(result)
+                    self._write_log(treelog.leaf_ok(fields or "identity probe matched"))
+                    self.refresh_table()
+                else:
+                    self._write_log(treelog.leaf_fail(
+                        f"identity probe failed [dim]({escape(result.detail or 'no detail')})[/dim]"))
         except Exception as exc:
             self._write_log(treelog.leaf_fail(f"identity probe error: {escape(str(exc))}"))
         finally:
             self._router_info_probing = False
             self._router_info_probe_started_at = None
             self._router_info_probe_bssid = None
-            if was_hopping and self.app.screen is self:
-                await iface.start_hopping(channels=self._channel_filter, interval=0.25)
 
     @staticmethod
     def _apply_router_probe_claims(ap: AccessPoint, claims) -> None:

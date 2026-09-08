@@ -349,3 +349,48 @@ async def test_set_channel_logs_a_failing_card_and_tunes_the_rest():
     a = _pool(good, bad)
     ok = await a.set_channel(6)
     assert ok is True and good.tuned == [6]        # one card failing doesn't abort the others
+
+
+async def test_claim_single_card_suspends_and_restores_hopping():
+    a = WlanArray()
+    m1 = FakeIface("wlan0", [1, 6, 11])
+    a.attach(m1)
+    await a.start_hopping(interval=0.25)
+    assert len(m1.hop_calls) == 1
+    assert m1.stopped == 0
+
+    async with a.claim(m1) as claimed:
+        assert claimed is m1
+        assert m1.stopped == 1
+
+    assert len(m1.hop_calls) == 2, "hopping resumed on context exit"
+
+
+async def test_claim_multicard_repartitions_remaining_card_and_restores():
+    a = WlanArray()
+    m1 = FakeIface("wlan0", [1, 6, 11])
+    m2 = FakeIface("wlan1", [1, 6, 11])
+    a.attach(m1)
+    a.attach(m2)
+    await a.start_hopping([1, 6, 11], interval=0.25)
+    before_m1 = len(m1.hop_calls)
+    before_m2 = len(m2.hop_calls)
+
+    async with a.claim(m1):
+        assert m1.stopped == 1
+        # m2 should have been given all channels while m1 is claimed
+        assert len(m2.hop_calls) > before_m2
+        assert m2.hop_calls[-1] == [1, 6, 11]
+
+    # After exit, both resume hopping with full partition
+    assert len(m1.hop_calls) > before_m1
+    assert len(m2.hop_calls) > before_m2
+
+
+async def test_claim_when_not_hopping_is_inert():
+    a = WlanArray()
+    m1 = FakeIface("wlan0", [1, 6, 11])
+    a.attach(m1)
+    async with a.claim(m1) as claimed:
+        assert claimed is m1
+    assert m1.hop_calls == []

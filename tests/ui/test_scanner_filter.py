@@ -1,6 +1,7 @@
 """The Scanner applies its ScanFilter as a display-only predicate: a filtered-out
 AP loses its table row but keeps its registry entry, so widening the filter brings
 it straight back without having to rediscover it."""
+from contextlib import asynccontextmanager
 import time
 
 import pytest
@@ -55,6 +56,14 @@ class _FakeArray:
 
     async def stop_hopping(self):
         self.stop_calls += 1
+
+    @asynccontextmanager
+    async def claim(self, iface):
+        await iface.stop_hopping()
+        try:
+            yield iface
+        finally:
+            await iface.start_hopping()
 
 
 @pytest.mark.asyncio
