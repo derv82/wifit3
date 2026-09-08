@@ -131,18 +131,40 @@ def o2_smartbox_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     )
 
 
-def vodafone_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
-    manufacturer, manufacturer_source = _wps_value_source(ap, "manufacturer")
-    ssid = clean_text(getattr(ap, "ssid", None))
-    if not ssid or "vodafone" not in ssid.lower():
-        return ()
-    ssid_evidence = RouterEvidence("ssid.vodafone", "ssid", ssid, 0.30)
-    if manufacturer and "celeno" in manufacturer.lower():
-        manufacturer_evidence = RouterEvidence(manufacturer_source, "manufacturer", manufacturer, 0.70)
-        # TODO: find a reliable physical-device check for Celeno CL2400 Vodafone routers/extenders.
-        return (RouterClaim("brand", "Vodafone", 0.70, (ssid_evidence, manufacturer_evidence)),)
-    return (RouterClaim("brand", "Vodafone", 0.30, (ssid_evidence,)),)
+# Cant exacly identify if this vodafone model isnt used by any other celeno device.
+# Vodafone reccomends its either tplink extender (oui doesnt fit) or their older UPC routers.
+# oui.vendor vendor=celeno
+# wps.passive manufacturer: Celeno
+# wps.passive model=CL2400
+# wifi.generation Wifi 4
+# wps.passive: device_name: Wireless AP CL2400
+# Sighted ssid: Vodafone-XXXX (randomized numbers and letters)
+#
+#def vodafone_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+#    manufacturer, manufacturer_source = _wps_value_source(ap, "manufacturer")
+#    ssid = clean_text(getattr(ap, "ssid", None))
+#    if not ssid or "vodafone" not in ssid.lower():
+#        return ()
+#    ssid_evidence = RouterEvidence("ssid.vodafone", "ssid", ssid, 0.30)
+#    if manufacturer and "celeno" in manufacturer.lower():
+#        manufacturer_evidence = RouterEvidence(manufacturer_source, "manufacturer", manufacturer, 0.70)
+#        # TODO: find a reliable physical-device check for Celeno CL2400 Vodafone routers/extenders.
+#        return (RouterClaim("brand", "Vodafone", 0.70, (ssid_evidence, manufacturer_evidence)),)
+#    return (RouterClaim("brand", "Vodafone", 0.30, (ssid_evidence,)),)
 
+# Router info:
+# oui.vendor vendor=zte
+# wps.passive manufacturer: ZTE
+# wps.passive model=SoftAP / WAP (possibly gen 2/3 splitting)
+# wps.passive device_name: AP
+# sighted ssid: Vodafone-Gigacube / gigacube-s39
+# wifi.generation: Wifi 6
+#
+# Gen 3: https://www.vodafone.cz/eshop/vodafone-gigacube-5g-gen-3-zteg5b2/
+# Gen 2: https://www.vodafone.cz/eshop/vodafone-gigacube-5g-gen-2-zmc888ultra/
+# Gen 1: unknown / cant find on official site, but user docs exist: https://www.vodafone.cz/pece/internet-data/datova-zarizeni/gigacube-5g/
+#def vodafone_brand_gigacube_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
+#    pass
 
 def apple_ssid_hotspot_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
     ssid = clean_text(getattr(ap, "ssid", None))
@@ -178,7 +200,6 @@ IDENTIFY_RULES: tuple[RouterRule, ...] = (
     # brand rules are only used for identification, not distinction
     o2_smartbox_brand_rule,  # added czech isp's i know of / found
     o2_ssid_rule,
-    vodafone_brand_rule,
     apple_ssid_hotspot_rule,
     apple_vendor_hotspot_rule,
 )
