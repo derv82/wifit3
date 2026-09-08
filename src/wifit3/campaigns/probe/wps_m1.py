@@ -8,6 +8,7 @@ from wifit3.dot11 import str_to_mac
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from wifit3.dot11.wsc.identity import WpsM1Identity, identity_from_attrs
+from wifit3.models import IdKey, IdSource
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
@@ -79,8 +80,8 @@ class WpsM1Probe(BaseApProbe):
         if identity is None or not identity.present:
             return ProbeResult(False, detail="no WPS M1 response")
 
-        ap.wps_m1_manufacturer = identity.manufacturer
-        ap.wps_m1_model_name = identity.model_name
-        ap.wps_m1_model_number = identity.model_number
-        ap.wps_m1_device_name = identity.device_name
+        ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, identity.manufacturer)
+        ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, identity.model_name)
+        ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NUMBER, identity.model_number)
+        ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_NAME, identity.device_name)
         return ProbeResult(True, source="wps.m1", wps_identity=identity)

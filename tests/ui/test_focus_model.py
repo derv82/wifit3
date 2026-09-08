@@ -9,7 +9,7 @@ import pytest
 
 from wifit3.campaigns.campaign import Campaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
-from wifit3.models import AccessPoint, Handshake
+from wifit3.models import AccessPoint, ApIdentity, Handshake
 from wifit3.ui import focus_model as fm
 from wifit3.persist.config import Config
 
@@ -234,15 +234,14 @@ def test_status_footer_combines_pmf_and_wps():
 def test_router_identity_markup_prefers_confident_model():
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
-        wps_manufacturer="MikroTik",
-        wps_model_name="hAP ac²",
+        identity=ApIdentity(manufacturer="MikroTik", model_name="hAP ac²"),
     )
     assert "hAP ac²" in fm.router_identity_markup(ap)
     assert "99%" in fm.router_identity_markup(ap)
 
 
 def test_router_identity_details_shows_per_field_confidence():
-    ap = AccessPoint(bssid="02:00:00:00:00:01", wps_manufacturer="MikroTik")
+    ap = AccessPoint(bssid="02:00:00:00:00:01", identity=ApIdentity(manufacturer="MikroTik"))
     details = fm.router_identity_details(ap)
     assert details is not None
     assert "[dim]Vendor:[/dim] MikroTik (99%)" in details

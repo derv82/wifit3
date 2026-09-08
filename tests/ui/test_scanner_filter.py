@@ -10,7 +10,7 @@ from textual.widgets import Button, DataTable
 from wifit3.campaigns.probe import RouterProbeResult
 from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.id import RouterClaim, RouterEvidence
-from wifit3.models import AccessPoint, PersistedCapture
+from wifit3.models import AccessPoint, ApIdentity, IdKey, IdSource, PersistedCapture
 from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.filter import EncryptionFilter, ScanFilter
@@ -166,8 +166,7 @@ def test_scanner_router_fingerprint_cells_show_confidence():
         bssid="02:00:00:00:00:01",
         ssid="Lab",
         channel=1,
-        wps_manufacturer="MikroTik",
-        wps_model_name="hAP ac²",
+        identity=ApIdentity(manufacturer="MikroTik", model_name="hAP ac²"),
     )
     brand = scanner._router_brand_cell(ap)
     kind = scanner._router_kind_cell(ap)
@@ -199,8 +198,7 @@ def test_scanner_brand_cell_prefers_brand_over_hardware_vendor():
     scanner._theme_fg = "white"
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
-        wps_manufacturer="Kaon Group",
-        wps_model_name="O2SMARTBOX",
+        identity=ApIdentity(manufacturer="Kaon Group", model_name="O2SMARTBOX"),
     )
     fp = ap.router_fingerprint
     assert fp is not None
@@ -225,7 +223,7 @@ def test_scanner_brand_cell_shows_vodafone_over_celeno_manufacturer():
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
         ssid="Vodafone-123456",
-        wps_manufacturer="Celeno",
+        identity=ApIdentity(manufacturer="Celeno"),
     )
     fp = ap.router_fingerprint
     assert fp is not None
@@ -265,9 +263,9 @@ async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
     async def fake_probe(iface, target):
         assert target is ap
         assert iface is not None
-        ap.wps_manufacturer = "TP-Link"
-        ap.wps_model_name = "Archer AX10"
-        ap.wps_device_name = "Office"
+        ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "TP-Link")
+        ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "Archer AX10")
+        ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_NAME, "Office")
         return RouterProbeResult(
             True,
             source="wps.m1",
@@ -298,9 +296,9 @@ async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
     assert iface.stop_calls == 1
     assert iface.start_calls == 1
     assert toasts == []
-    assert ap.wps_manufacturer == "TP-Link"
-    assert ap.wps_model_name == "Archer AX10"
-    assert ap.wps_device_name == "Office"
+    assert ap.identity.manufacturer == "TP-Link"
+    assert ap.identity.model_name == "Archer AX10"
+    assert ap.identity.device_name == "Office"
     fp = ap.router_fingerprint
     assert fp is not None
     assert fp.vendor == "TP-Link"

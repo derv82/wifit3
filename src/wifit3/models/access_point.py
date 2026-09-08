@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, List, Literal, Dict, TYPE_CHECKING
 
 from .handshake import Handshake
+from .identity import ApIdentity
 
 if TYPE_CHECKING:
     from wifit3.id import RouterFingerprint
@@ -54,14 +55,7 @@ class AccessPoint:
     wps_version: Optional[str] = None  # "1.0" / "2.0"
     wps_config_methods: int = 0  # 0x1008 bitmask
     wps_device_password_id: Optional[int] = None  # 0x0004 = PBC
-    wps_manufacturer: Optional[str] = None
-    wps_model_name: Optional[str] = None
-    wps_model_number: Optional[str] = None
-    wps_device_name: Optional[str] = None
-    wps_m1_manufacturer: Optional[str] = None
-    wps_m1_model_name: Optional[str] = None
-    wps_m1_model_number: Optional[str] = None
-    wps_m1_device_name: Optional[str] = None
+    identity: ApIdentity = field(default_factory=ApIdentity)
     # Set while the AP is advertising an active Registrar (PIN or, with
     # DevPwId 0x0004, a Push-Button walk window). Drives wps_pbc_active.
     wps_selected_registrar: bool = False
@@ -100,8 +94,13 @@ class AccessPoint:
     # Read-only capture history loaded from captures/ at scan start.
     persisted: List[PersistedCapture] = field(default_factory=list)
 
-    # Active identity probe claims collected only after intentional user TX.
-    router_claims: tuple[Any, ...] = ()
+    @property
+    def router_claims(self) -> tuple[Any, ...]:
+        return self.identity.claims
+
+    @router_claims.setter
+    def router_claims(self, val: tuple[Any, ...]) -> None:
+        self.identity.claims = val
 
     # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
     signal_by_card: Dict[str, int] = field(default_factory=dict)

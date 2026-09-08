@@ -8,6 +8,7 @@ import struct
 
 from wifit3.dot11.mac import str_to_mac
 from wifit3.dot11.wsc import messages as WSC
+from wifit3.models import IdKey, IdSource
 from wifit3.wlan.sink import WlanSink
 from wifit3.wlan.packet_stats import PACKET_CLASSES
 
@@ -103,9 +104,9 @@ def test_wps_identity_fields_persist_on_ap():
         "wps_device_name": "Office AP",
     }), W0)
     ap = s.access_points[BSSID]
-    assert ap.wps_manufacturer == "MikroTik"
-    assert ap.wps_model_name == "RouterBOARD"
-    assert ap.wps_device_name == "Office AP"
+    assert ap.identity.manufacturer == "MikroTik"
+    assert ap.identity.model_name == "RouterBOARD"
+    assert ap.identity.device_name == "Office AP"
     assert ap.router_fingerprint.vendor == "MikroTik"
 
 
@@ -119,14 +120,14 @@ def test_wps_m1_identity_fields_are_applied_by_sink():
     }), W0)
     ap = s.access_points[BSSID]
     assert ap.wps is True
-    assert ap.wps_m1_manufacturer == "TP-Link"
-    assert ap.wps_m1_model_name == "Archer AX10"
-    assert ap.wps_m1_model_number == "AX10"
-    assert ap.wps_m1_device_name == "Office AP"
-    assert ap.wps_manufacturer == "TP-Link"
-    assert ap.wps_model_name == "Archer AX10"
-    assert ap.wps_model_number == "AX10"
-    assert ap.wps_device_name == "Office AP"
+    assert ap.identity.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_M1) == "TP-Link"
+    assert ap.identity.get_source_value(IdKey.MODEL_NAME, IdSource.WSC_M1) == "Archer AX10"
+    assert ap.identity.get_source_value(IdKey.MODEL_NUMBER, IdSource.WSC_M1) == "AX10"
+    assert ap.identity.get_source_value(IdKey.DEVICE_NAME, IdSource.WSC_M1) == "Office AP"
+    assert ap.identity.manufacturer == "TP-Link"
+    assert ap.identity.model_name == "Archer AX10"
+    assert ap.identity.model_number == "AX10"
+    assert ap.identity.device_name == "Office AP"
     assert ap.router_fingerprint.vendor == "TP-Link"
     assert ap.router_fingerprint.model == "Archer AX10"
     assert any(e.source == "wps.m1" for e in ap.router_fingerprint.evidence)

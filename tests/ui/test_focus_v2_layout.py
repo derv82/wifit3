@@ -11,7 +11,7 @@ import pytest_asyncio
 from textual.app import App
 from textual.widgets import Button
 
-from wifit3.models import AccessPoint
+from wifit3.models import AccessPoint, ApIdentity
 from wifit3.ui import focus_model as fm
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.art import art_size, breathe
@@ -92,8 +92,7 @@ async def test_router_identity_button_logs_details_from_keyboard_without_tooltip
             bssid="02:00:00:00:00:01",
             ssid="Router",
             channel=1,
-            wps_manufacturer="MikroTik",
-            wps_model_name="hAP ac²",
+            identity=ApIdentity(manufacturer="MikroTik", model_name="hAP ac²"),
         )
 
     app = _IdentityHost()

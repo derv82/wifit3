@@ -1,4 +1,4 @@
-from wifit3.models import AccessPoint
+from wifit3.models import AccessPoint, ApIdentity, IdKey, IdSource
 from wifit3.id import RouterClaim, RouterEvidence, fingerprint_router
 from wifit3.id.router_helpers import canonical_vendor
 from wifit3.id.router_rules import wps_model_rule
@@ -20,9 +20,11 @@ def test_oui_only_is_possible_vendor_not_exact_router():
 def test_passive_wps_manufacturer_and_model_make_stronger_router_fingerprint():
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
-        wps_manufacturer="MikroTik",
-        wps_model_name="hAP ac²",
-        wps_device_name="Office AP",
+        identity=ApIdentity(
+            manufacturer="MikroTik",
+            model_name="hAP ac²",
+            device_name="Office AP",
+        ),
     )
     fp = ap.router_fingerprint
     assert fp is not None
@@ -60,9 +62,11 @@ def test_active_probe_claims_are_part_of_router_fingerprint():
     evidence = RouterEvidence("mikrotik.mac_winbox", "reachable", "true", 0.99, passive=False)
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
-        router_claims=(
-            RouterClaim("vendor", "MikroTik", 0.99, (evidence,)),
-            RouterClaim("kind", "router", 0.99, (evidence,)),
+        identity=ApIdentity(
+            claims=(
+                RouterClaim("vendor", "MikroTik", 0.99, (evidence,)),
+                RouterClaim("kind", "router", 0.99, (evidence,)),
+            ),
         ),
     )
     fp = ap.router_fingerprint
@@ -78,8 +82,10 @@ def test_active_probe_claims_are_part_of_router_fingerprint():
 def test_o2_smartbox_pattern_sets_brand_without_replacing_vendor():
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
-        wps_manufacturer="Kaon Group",
-        wps_model_name="O2SMARTBOX",
+        identity=ApIdentity(
+            manufacturer="Kaon Group",
+            model_name="O2SMARTBOX",
+        ),
     )
     fp = ap.router_fingerprint
     assert fp is not None
@@ -113,7 +119,7 @@ def test_celeno_manufacturer_with_vodafone_ssid_sets_brand():
     fp = AccessPoint(
         bssid="02:00:00:00:00:01",
         ssid="Vodafone-123456",
-        wps_manufacturer="Celeno",
+        identity=ApIdentity(manufacturer="Celeno"),
     ).router_fingerprint
     assert fp is not None
     assert fp.brand == "Vodafone"
@@ -285,11 +291,13 @@ def test_epson_direct_ssid_identifies_likely_printer():
 def test_wps_m1_fields_use_m1_evidence_source():
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
-        wps_manufacturer="RalinkAPS",
-        wps_model_name="Generic AP",
-        wps_m1_manufacturer="Netgear",
-        wps_m1_model_name="RAX10",
+        identity=ApIdentity(
+            manufacturer="RalinkAPS",
+            model_name="Generic AP",
+        ),
     )
+    ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Netgear")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "RAX10")
     fp = ap.router_fingerprint
     assert fp is not None
     assert fp.vendor == "Netgear"
@@ -303,7 +311,7 @@ def test_wps_m1_fields_use_m1_evidence_source():
 def test_wps_manufacturer_uses_canonical_vendor_name():
     fp = AccessPoint(
         bssid="02:00:00:00:00:01",
-        wps_manufacturer="Tp-Link Technologies",
+        identity=ApIdentity(manufacturer="Tp-Link Technologies"),
     ).router_fingerprint
     assert fp is not None
     assert fp.vendor == "TP-Link"
@@ -328,8 +336,10 @@ def test_specific_model_claim_can_imply_vendor():
 def test_identify_and_distinguish_rules_can_run_separately():
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
-        wps_manufacturer="MikroTik",
-        wps_model_name="hAP ac²",
+        identity=ApIdentity(
+            manufacturer="MikroTik",
+            model_name="hAP ac²",
+        ),
     )
     identify_only = fingerprint_router(ap, distinguish_rules=())
     full = fingerprint_router(ap)
@@ -339,7 +349,7 @@ def test_identify_and_distinguish_rules_can_run_separately():
 
 
 def test_wps_model_number_is_model_fallback():
-    ap = AccessPoint(bssid="02:00:00:00:00:01", wps_manufacturer="Acme", wps_model_number="R9000")
+    ap = AccessPoint(bssid="02:00:00:00:00:01", identity=ApIdentity(manufacturer="Acme", model_number="R9000"))
     claims = list(wps_model_rule(ap))
     model_claim = next(claim for claim in claims if claim.name == "model")
     assert model_claim.value == "R9000"

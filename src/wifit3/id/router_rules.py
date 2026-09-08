@@ -6,6 +6,7 @@ from typing import Iterable, TYPE_CHECKING
 
 from .router_types import RouterClaim, RouterEvidence, RouterRule
 from .router_helpers import canonical_vendor, clean_text, vendor_for_mac
+from wifit3.models.identity import IdKey
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
@@ -98,10 +99,17 @@ def wps_model_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 
 
 def _wps_value_source(ap: "AccessPoint", name: str) -> tuple[str | None, str]:
-    m1_value = clean_text(getattr(ap, f"wps_m1_{name}", None))
-    if m1_value is not None:
-        return m1_value, "wps.m1"
-    return clean_text(getattr(ap, f"wps_{name}", None)), "wps.passive"
+    key_map = {
+        "manufacturer": IdKey.MANUFACTURER,
+        "model_name": IdKey.MODEL_NAME,
+        "model_number": IdKey.MODEL_NUMBER,
+        "device_name": IdKey.DEVICE_NAME,
+    }
+    key = key_map.get(name)
+    if key is None:
+        return None, ""
+    val, src = ap.identity.get(key)
+    return val, src.label if src else ""
 
 
 def o2_smartbox_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:

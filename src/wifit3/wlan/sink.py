@@ -14,7 +14,7 @@ import time
 from typing import Dict, List, Optional, Set
 
 from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
-from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage
+from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage, IdKey, IdSource
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.wsc import messages as WSC
@@ -190,11 +190,12 @@ class WlanSink:
                 wps_config_methods=wps_config_methods,
                 wps_device_password_id=wps_device_password_id,
                 wps_selected_registrar=wps_selected_registrar,
-                wps_manufacturer=wps_manufacturer,
-                wps_model_name=wps_model_name,
-                wps_model_number=wps_model_number,
-                wps_device_name=wps_device_name,
             )
+            if wps:
+                ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, wps_manufacturer)
+                ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, wps_model_name)
+                ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NUMBER, wps_model_number)
+                ap.identity.set(IdSource.WSC_BEACON, IdKey.DEVICE_NAME, wps_device_name)
             self.access_points[bssid] = ap
             self._record_ap_signal(ap, card_id, rssi)
             self._recompute_siblings_for(bssid)
@@ -235,10 +236,10 @@ class WlanSink:
                 ap.wps_config_methods = wps_config_methods
                 ap.wps_device_password_id = wps_device_password_id
                 ap.wps_selected_registrar = wps_selected_registrar
-                ap.wps_manufacturer = wps_manufacturer or ap.wps_manufacturer
-                ap.wps_model_name = wps_model_name or ap.wps_model_name
-                ap.wps_model_number = wps_model_number or ap.wps_model_number
-                ap.wps_device_name = wps_device_name or ap.wps_device_name
+                ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, wps_manufacturer)
+                ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, wps_model_name)
+                ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NUMBER, wps_model_number)
+                ap.identity.set(IdSource.WSC_BEACON, IdKey.DEVICE_NAME, wps_device_name)
 
         ap = self.access_points[bssid]
         ap.last_seen = time.time()
@@ -376,14 +377,10 @@ class WlanSink:
         if not identity.present:
             return False
         ap.wps = True
-        ap.wps_m1_manufacturer = identity.manufacturer or ap.wps_m1_manufacturer
-        ap.wps_m1_model_name = identity.model_name or ap.wps_m1_model_name
-        ap.wps_m1_model_number = identity.model_number or ap.wps_m1_model_number
-        ap.wps_m1_device_name = identity.device_name or ap.wps_m1_device_name
-        ap.wps_manufacturer = identity.manufacturer or ap.wps_manufacturer
-        ap.wps_model_name = identity.model_name or ap.wps_model_name
-        ap.wps_model_number = identity.model_number or ap.wps_model_number
-        ap.wps_device_name = identity.device_name or ap.wps_device_name
+        ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, identity.manufacturer)
+        ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, identity.model_name)
+        ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NUMBER, identity.model_number)
+        ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_NAME, identity.device_name)
         return True
 
     def _decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:
