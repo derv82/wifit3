@@ -837,10 +837,13 @@ class ScannerView(Screen):
 
     @staticmethod
     def _format_wps_m1_identity(identity: WpsM1Identity) -> str:
+        model_number = identity.model_number
+        if model_number == identity.model_name:
+            model_number = None
         parts = [
             ("mfr", identity.manufacturer),
             ("model", identity.model_name),
-            ("model_no", identity.model_number),
+            ("model_no", model_number),
             ("name", identity.device_name),
             ("type", identity.primary_device_type),
         ]

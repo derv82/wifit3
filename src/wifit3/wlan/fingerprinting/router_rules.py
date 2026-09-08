@@ -135,7 +135,7 @@ def _wps_value_source(ap: "AccessPoint", name: str) -> tuple[str | None, str]:
     m1_value = clean_text(getattr(ap, f"wps_m1_{name}", None))
     if m1_value is not None:
         return m1_value, "wps.m1"
-    return clean_text(getattr(ap, f"wps_{name}", None)), "wps.passive"
+    return clean_text(getattr(ap, f"wps_{name}", None)), "wps.ie"
 
 # O2 Internet SSID weakly identifies O2 ISP branding.
 def o2_ssid_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
@@ -162,10 +162,10 @@ def o2_smartbox_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 # Cant exacly identify if this vodafone model isnt used by any other celeno device.
 # Vodafone reccomends its either tplink extender (oui doesnt fit) or their older UPC routers.
 # oui.vendor vendor=celeno
-# wps.passive manufacturer: Celeno
-# wps.passive model=CL2400
+# wps.ie manufacturer: Celeno
+# wps.ie model=CL2400
 # wifi.generation Wifi 4
-# wps.passive: device_name: Wireless AP CL2400
+# wps.ie: device_name: Wireless AP CL2400
 # Sighted ssid: Vodafone-XXXX (randomized numbers and letters)
 #
 #def vodafone_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
@@ -182,9 +182,9 @@ def o2_smartbox_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 
 # Router info:
 # oui.vendor vendor=zte
-# wps.passive manufacturer: ZTE
-# wps.passive model=SoftAP / WAP (possibly gen 2/3 splitting)
-# wps.passive device_name: AP
+# wps.ie manufacturer: ZTE
+# wps.ie model=SoftAP / WAP (possibly gen 2/3 splitting)
+# wps.ie device_name: AP
 # sighted ssid: Vodafone-Gigacube / gigacube-s39
 # wifi.generation: Wifi 6
 #

@@ -46,7 +46,7 @@ def test_wps_primary_device_type_identifies_router_kind():
     assert fp.kind == "router"
     assert fp.kind_confidence == 0.99
     assert fp.label == "router"
-    assert any(e.source == "wps.passive" and e.name == "primary_device_type"
+    assert any(e.source == "wps.ie" and e.name == "primary_device_type"
                and e.value == "network_infrastructure" for e in fp.evidence)
 
 
@@ -174,8 +174,40 @@ def test_o2_smartbox_pattern_sets_brand_without_replacing_vendor():
     assert fp.vendor == "Kaon"
     assert fp.vendor_confidence == 0.99
     assert fp.label == "O2 O2SMARTBOX router"
-    assert any(e.source == "wps.passive" and e.name == "model" and e.value == "O2SMARTBOX"
+    assert any(e.source == "wps.ie" and e.name == "model" and e.value == "O2SMARTBOX"
                for e in fp.evidence)
+
+
+def test_shared_rule_evidence_is_listed_once():
+    fp = AccessPoint(
+        bssid="24:e4:ce:62:c6:f1",
+        wps_m1_manufacturer="Kaon",
+        wps_m1_model_name="O2SMARTBOX2",
+        wps_m1_model_number="O2SMARTBOX2",
+        wps_m1_device_name="Kaon DG2300CR",
+        wps_m1_primary_device_type="network_infrastructure",
+    ).router_fingerprint
+
+    assert fp is not None
+    model_evidence = [e for e in fp.evidence if e.source == "wps.m1" and e.name == "model"]
+    assert model_evidence == [RouterEvidence("wps.m1", "model", "O2SMARTBOX2", 0.99)]
+
+
+def test_evidence_dedupe_keeps_different_confidence_values():
+    weak = RouterEvidence("wps.ie", "model", "O2SMARTBOX2", 0.70)
+    strong = RouterEvidence("wps.ie", "model", "O2SMARTBOX2", 0.90)
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        router_claims=(
+            RouterClaim("model", "O2SMARTBOX2", 0.70, (weak,)),
+            RouterClaim("brand", "O2", 0.90, (strong,)),
+        ),
+    )
+
+    fp = ap.router_fingerprint
+
+    assert fp is not None
+    assert [e for e in fp.evidence if e.source == "wps.ie" and e.name == "model"] == [weak, strong]
 
 
 def test_o2_smartbox_ssid_pattern_does_not_set_brand():

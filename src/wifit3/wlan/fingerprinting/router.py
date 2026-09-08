@@ -44,6 +44,18 @@ def _strong_conflicts(claims: Iterable[RouterClaim]) -> tuple[RouterConflict, ..
     return tuple(conflicts)
 
 
+def _evidence_for(claims: Iterable[RouterClaim]) -> tuple[RouterEvidence, ...]:
+    seen: set[RouterEvidence] = set()
+    evidence: list[RouterEvidence] = []
+    for claim in claims:
+        for item in claim.evidence:
+            if item in seen:
+                continue
+            seen.add(item)
+            evidence.append(item)
+    return tuple(evidence)
+
+
 def fingerprint_router(
     ap: "AccessPoint",
     rules: Iterable[RouterRule] | None = None,
@@ -89,7 +101,7 @@ def fingerprint_router(
         identity_confidence = kind_confidence
 
     conflicts = _strong_conflicts(claims)
-    evidence = tuple(item for claim in claims for item in claim.evidence)
+    evidence = _evidence_for(claims)
     if not any((brand_value, vendor_value, show_model, kind_value)):
         return None
 

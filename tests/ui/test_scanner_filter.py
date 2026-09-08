@@ -225,6 +225,17 @@ def test_scanner_freezes_all_row_ages_while_probing():
     assert scanner._ap_row_age(other, later) == 10
 
 
+def test_scanner_wps_m1_log_deduplicates_equal_model_number():
+    identity = WpsM1Identity(
+        manufacturer="TP-Link",
+        model_name="Archer AX10",
+        model_number="Archer AX10",
+        device_name="Office",
+    )
+
+    assert ScannerView._format_wps_m1_identity(identity) == "mfr=TP-Link, model=Archer AX10, name=Office"
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
