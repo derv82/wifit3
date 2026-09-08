@@ -160,9 +160,14 @@ def o2_smartbox_brand_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 # sighted ssid: Vodafone-Gigacube / gigacube-s39
 # wifi.generation: Wifi 6
 #
+#
 # Gen 3: https://www.vodafone.cz/eshop/vodafone-gigacube-5g-gen-3-zteg5b2/
+# Note: Gen 3 is actually this rebranded: https://www.ztedevices.com/en/products/mobile-internet/5g-fwa/g5b2.html
 # Gen 2: https://www.vodafone.cz/eshop/vodafone-gigacube-5g-gen-2-zmc888ultra/
+# Note: Gen 2 is actually this rebranded: https://www.ztedevices.com/cz/products/mobile-internet/5g-fwa/mc888-ultra.html
 # Gen 1: unknown / cant find on official site, but user docs exist: https://www.vodafone.cz/pece/internet-data/datova-zarizeni/gigacube-5g/
+#
+# TODO: Find a way to distinguish rebrand from original, if not possible leave out gen2/3
 #def vodafone_brand_gigacube_rule(ap: "AccessPoint") -> Iterable[RouterClaim]:
 #    pass
 
