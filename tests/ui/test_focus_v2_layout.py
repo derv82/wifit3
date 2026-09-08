@@ -14,7 +14,7 @@ from textual.widgets import Button
 from wifit3.models import AccessPoint
 from wifit3.ui import focus_model as fm
 from wifit3.ui.screens.focus_v2 import FocusViewV2
-from wifit3.ui.screens.focus_v2.art import art_size, breathe
+from wifit3.ui.screens.focus_v2.art import BreathingArt, art_size, breathe
 
 _TOPBAR_H = 3
 _CHROME_H = 2          # Header (1 row) + Footer (1 row)
@@ -113,6 +113,28 @@ async def test_router_identity_button_logs_details_from_keyboard_without_tooltip
         assert any("MikroTik" in line for line in logs)
 
 
+async def test_router_art_follows_fingerprint_kind():
+    class _ArtHost(_Host):
+        target_ap = AccessPoint(bssid="02:00:00:00:00:01", ssid="Router", channel=1)
+
+    app = _ArtHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0)
+        router = app.screen.query_one("#router")
+        art_widget = router.query_one(BreathingArt)
+        assert art_widget._name == "devices/ap.ans"
+
+        app.target_ap.ssid = "DIRECT-AB-EPSON-XP-4100"
+        app.screen._tick()
+        await pilot.pause(0)
+        assert art_widget._name == "devices/printer.ans"
+
+        app.target_ap.ssid = "Alice’s iPhone"
+        app.screen._tick()
+        await pilot.pause(0)
+        assert art_widget._name == "devices/hotspot.ans"
+
+
 def test_dashboard_rows_and_rate_vs_count():
     # WPA family: beacon + data + eapol + inject + deauth.
     rows = fm.dashboard_rows(types.SimpleNamespace(encryption="WPA2"))
@@ -149,7 +171,7 @@ def test_art_pure_black_is_transparent():
     from wifit3.ui.ansi_art import is_black
     from wifit3.ui.screens.focus_v2.art import _transparent
 
-    for name in ("focus-card.ans", "focus-ap.ans"):
+    for name in ("focus-card.ans", "devices/ap.ans", "devices/printer.ans", "devices/hotspot.ans"):
         for span in _transparent(name).spans:
             assert not is_black(span.style.color)
             assert not is_black(span.style.bgcolor)

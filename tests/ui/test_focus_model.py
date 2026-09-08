@@ -277,6 +277,16 @@ def test_router_identity_markup_is_blank_without_evidence():
     assert fm.router_identity_details(AccessPoint(bssid="02:00:00:00:00:01")) is None
 
 
+def test_router_art_name_tracks_known_kind():
+    assert fm.router_art_name(AccessPoint(bssid="02:00:00:00:00:01")) == "devices/ap.ans"
+    assert fm.router_art_name(
+        AccessPoint(bssid="02:00:00:00:00:01", ssid="DIRECT-AB-EPSON-XP-4100")
+    ) == "devices/printer.ans"
+    assert fm.router_art_name(
+        AccessPoint(bssid="02:00:00:00:00:01", ssid="Alice’s iPhone")
+    ) == "devices/hotspot.ans"
+
+
 def test_status_footer_open_is_encryption_only():
     ap = types.SimpleNamespace(
         encryption="OPEN", akms=[], pairwise_cipher=None, wpa3=False,

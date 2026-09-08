@@ -32,7 +32,8 @@ class RouterEndpoint(Vertical):
 
     def __init__(self, *, essid: str = "", bssid: str = "", channel: int = 0,
                  power_dbm: int = -100, signal: float | None = None,
-                 identity: str = "", identity_details: str | None = None, **kwargs) -> None:
+                 identity: str = "", identity_details: str | None = None,
+                 art_name: str = "devices/ap.ans", **kwargs) -> None:
         super().__init__(**kwargs)
         self._essid = essid
         self._bssid = bssid
@@ -41,12 +42,13 @@ class RouterEndpoint(Vertical):
         self._signal = signal
         self._identity = identity
         self._identity_details = identity_details
-        self._width = art_size("focus-ap.ans")[0]      # endpoint column width
+        self._art_name = art_name
+        self._width = art_size(art_name)[0]      # endpoint column width
         self._last: dict[str, str] = {}                # last-pushed label value; skip no-op repaints
 
     def compose(self) -> ComposeResult:
         yield Label(self._power_line(), classes="ap-power", id="ap-power")
-        yield BreathingArt("focus-ap.ans", classes="endpoint-art")
+        yield BreathingArt(self._art_name, classes="endpoint-art")
         yield Label(self._essid_markup(self._essid), classes="ap-essid", id="ap-essid")
         yield Label(self._bssid, classes="ap-static", id="ap-bssid")
         with Horizontal(classes="ap-static", id="ap-identity-row"):
@@ -59,13 +61,17 @@ class RouterEndpoint(Vertical):
 
     def update(self, *, essid: str, bssid: str, channel: int,
                power_dbm: int, signal: float | None, identity: str = "",
-               identity_details: str | None = None) -> None:
+               identity_details: str | None = None,
+               art_name: str = "devices/ap.ans") -> None:
         """Power meter repaints every tick (the live readout); the identity facts only
         change on a target switch, so they go through ``_push`` to skip the no-op repaint
         (a blind ``Label.update`` at 10 Hz burns CPU and wipes text selection)."""
         self._essid, self._bssid, self._channel = essid, bssid, channel
         self._power_dbm, self._signal = power_dbm, signal
         self._identity, self._identity_details = identity, identity_details
+        if art_name != self._art_name:
+            self._art_name = art_name
+            self.query_one(BreathingArt).set_art(art_name)
         self.query_one("#ap-power", Label).update(self._power_line())
         self._push("#ap-essid", self._essid_markup(essid))
         self._push("#ap-bssid", bssid)

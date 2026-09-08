@@ -228,6 +228,14 @@ def router_identity_markup(ap) -> str:
     return f"[accent]{escape(name)}[/accent] [dim]{round(fp.confidence * 100)}%[/dim]"
 
 
+def router_art_name(ap) -> str:
+    fp = getattr(ap, "router_fingerprint", None)
+    kind = getattr(fp, "kind", None) if fp is not None else None
+    if kind in ("hotspot", "printer"):
+        return f"devices/{kind}.ans"
+    return "devices/ap.ans"
+
+
 def router_identity_details(ap) -> str | None:
     fp = getattr(ap, "router_fingerprint", None)
     if fp is None:

@@ -6,7 +6,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Dict, Optional, Set
 
 if TYPE_CHECKING:
-    from wifit3.wlan.fingerprint import Fingerprint
+    from wifit3.wlan.fingerprinting.client import Fingerprint
 
 
 @dataclass
@@ -29,5 +29,5 @@ class Client:
     @cached_property
     def fingerprint(self) -> Optional[Fingerprint]:
         """OUI vendor for this client; looked up once, then cached on the instance."""
-        from wifit3.wlan.fingerprint import fingerprint as _fingerprint
+        from wifit3.wlan.fingerprinting.client import fingerprint as _fingerprint
         return _fingerprint(self.mac)

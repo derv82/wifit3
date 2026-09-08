@@ -293,13 +293,14 @@ class FocusViewV2(Screen):
         ap = self.app.target_ap
         if ap is None:
             return dict(essid="", bssid="", channel=0, power_dbm=-100, signal=None,
-                        identity="", identity_details=None)
+                        identity="", identity_details=None, art_name="devices/ap.ans")
         essid = fm.truncate_ssid(ap.ssid) if ap.ssid else "‹hidden›"
         rate, _ = fm.beacon_rate(ap, self._beacon_samples, time.time())
         return dict(essid=essid, bssid=ap.bssid, channel=ap.channel,
                     power_dbm=ap.signal, signal=rate,
                     identity=fm.router_identity_markup(ap),
-                    identity_details=fm.router_identity_details(ap))
+                    identity_details=fm.router_identity_details(ap),
+                    art_name=fm.router_art_name(ap))
 
     def _card_values(self) -> dict:
         """The card endpoint's compose seed: chipset + own MAC from the live pool, plus the
