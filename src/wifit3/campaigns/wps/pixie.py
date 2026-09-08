@@ -1,9 +1,9 @@
-"""Native PixieWPS offline PIN recovery helpers."""
+"""Native PixieDust offline PIN recovery helpers."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, auto
 from typing import Iterable
 
 from wifit3.campaigns.wps import pins
@@ -11,8 +11,8 @@ from wifit3.dot11.wsc import crypto as wc
 
 
 class PixieMode(Enum):
-    NULL_SECRET = "null-secret"
-    STATIC_SECRET = "static-secret"
+    NULL_SECRET = auto()
+    STATIC_SECRET = auto()
 
 
 @dataclass(frozen=True)
@@ -41,10 +41,10 @@ NULL_SECRET_PAIR: SecretPair = (b"\x00" * wc.SECRET_NONCE_LEN, b"\x00" * wc.SECR
 
 def recover_pin(
     bundle: PixieBundle,
-    modes: Iterable[PixieMode | str] = (PixieMode.NULL_SECRET, PixieMode.STATIC_SECRET),
+    modes: Iterable[PixieMode] = (PixieMode.NULL_SECRET, PixieMode.STATIC_SECRET),
     static_secrets: Iterable[SecretPair] = (),
 ) -> PixieResult:
-    for mode in _normalize_modes(modes):
+    for mode in modes:
         if mode is PixieMode.NULL_SECRET:
             pin = _recover_with_secret_pair(bundle, NULL_SECRET_PAIR)
             if pin is not None:
@@ -55,10 +55,6 @@ def recover_pin(
                 if pin is not None:
                     return PixieResult(pin=pin, mode=mode, found=True)
     return PixieResult()
-
-
-def _normalize_modes(modes: Iterable[PixieMode | str]) -> tuple[PixieMode, ...]:
-    return tuple(mode if isinstance(mode, PixieMode) else PixieMode(mode) for mode in modes)
 
 
 def _recover_with_secret_pair(bundle: PixieBundle, secret_pair: SecretPair) -> str | None:

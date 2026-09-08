@@ -66,7 +66,7 @@ def test_second_half_recovery_uses_checksum_digit():
     pin = pins.full_pin(first4, "567")
     bundle = _bundle(pin, b"\x00" * wc.SECRET_NONCE_LEN, b"\x00" * wc.SECRET_NONCE_LEN)
 
-    result = recover_pin(bundle, modes=("null-secret",))
+    result = recover_pin(bundle, modes=(PixieMode.NULL_SECRET,))
 
     assert result.pin == pin
     assert result.pin[4:] == "5670"
