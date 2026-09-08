@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import struct
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
@@ -154,18 +155,21 @@ def tlv_u16(attr_id: int, value: int) -> bytes:
     return tlv(attr_id, struct.pack(">H", value & 0xFFFF))
 
 
-def parse_tlvs(data: bytes) -> Dict[int, bytes]:
-    """Walk WSC TLVs into {attr_id: value}. Repeated attrs keep the last."""
-    out: Dict[int, bytes] = {}
-    i, n = 0, len(data)
+def iter_wsc_tlvs(data: bytes, start: int = 0) -> Iterator[tuple[int, bytes]]:
+    """Walk WSC Big-Endian TLVs (2B attr, 2B len), yielding (attr_id, value)."""
+    i, n = start, len(data)
     while i + 4 <= n:
-        attr, ln = struct.unpack(">HH", data[i : i + 4])
+        attr, ln = struct.unpack_from(">HH", data, i)
         i += 4
         if i + ln > n:
             break
-        out[attr] = data[i : i + ln]
+        yield attr, data[i : i + ln]
         i += ln
-    return out
+
+
+def parse_tlvs(data: bytes) -> Dict[int, bytes]:
+    """Walk WSC TLVs into {attr_id: value}. Repeated attrs keep the last."""
+    return dict(iter_wsc_tlvs(data))
 
 
 def _device_attrs() -> bytes:

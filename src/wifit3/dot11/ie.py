@@ -4,7 +4,23 @@ Consolidates the SSID / rates / RSN / DS-param IE assembly that the auth, assoc,
 probe frame builders each used to hand-roll, plus the client-side RSN rewrite the PMKID
 attack uses.
 """
+from __future__ import annotations
+
+from collections.abc import Iterator
 from typing import Optional
+
+
+def iter_information_elements(data: bytes, start: int = 0) -> Iterator[tuple[int, bytes, bytes]]:
+    """Walk 802.11 Information Elements (1B tag, 1B len), yielding (tag_id, body, raw)."""
+    i, n = start, len(data)
+    while i + 2 <= n:
+        tag_id = data[i]
+        length = data[i + 1]
+        end = i + 2 + length
+        if end > n:
+            break
+        yield tag_id, data[i + 2 : end], data[i : end]
+        i = end
 
 # Supported / Extended supported rate menus (APs only spot-check that they parse).
 SUPPORTED_RATES = bytes([0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24])
