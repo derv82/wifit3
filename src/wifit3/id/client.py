@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
-
-from .vendors import VENDOR_BY_OUI
+from .common import _PREFIX_LENGTHS, hex_mac, lookup_oui
 
 
 @dataclass(frozen=True)
@@ -17,18 +15,14 @@ class Fingerprint:
 @dataclass(frozen=True)
 class Rule:
     emoji: str
-    pattern: Optional[str] = None
-    ouis: Optional[frozenset] = None
-    label: Optional[str] = None
+    pattern: str | None = None
+    ouis: frozenset | None = None
+    label: str | None = None
 
 
 def _ouis(macs_text: str) -> frozenset:
-    """Convert space (or line) -delimited OUIs to a set of hexdigits.
-    ```
-    _ouis("aa:bb:cc 01:23:45 aa:bb:cc") -> frozenset(["aabbcc", "01:23:45"])
-    ```
-    """
-    return frozenset(entry.replace(":", "").replace("-", "").lower() for entry in macs_text.split())
+    """Convert space (or line) -delimited OUIs to a set of hexdigits."""
+    return frozenset(hex_mac(entry).lower() for entry in macs_text.split())
 
 
 _RING_OUIS = _ouis("""
@@ -111,28 +105,19 @@ _RULES: tuple[Rule, ...] = (
     Rule("🌄", pattern=r"\baura home\b", label="Aura photo frame"),
 )
 
-# IEEE OUIs: MA-L (36b), MA-M (32b), MA-S (28b); ordered by decreasing granularity.
-_PREFIX_LENGTHS = (9, 7, 6)
-
-
-def _longest_prefix_match(hex_mac: str, table: dict[str, str]) -> Optional[str]:
-    return next((v for length in _PREFIX_LENGTHS
-                 if (v := table.get(hex_mac[:length].upper())) is not None), None)
-
-
-def _rule_matches(rule: Rule, hex_mac: str, vendor: Optional[str]) -> bool:
-    if rule.ouis is not None and any(hex_mac[:n] in rule.ouis for n in _PREFIX_LENGTHS):
+def _rule_matches(rule: Rule, raw_mac: str, vendor: str | None) -> bool:
+    if rule.ouis is not None and any(raw_mac[:n] in rule.ouis for n in _PREFIX_LENGTHS):
         return True
     return (rule.pattern is not None and vendor is not None
             and re.search(rule.pattern, vendor, re.I) is not None)
 
 
-def fingerprint(mac: str) -> Optional[Fingerprint]:
+def fingerprint(mac: str) -> Fingerprint | None:
     """The device vendor for the ``mac``'s OUI, or None if missing from ``VENDOR_BY_OUI``."""
-    hex_mac = mac.replace(":", "").replace("-", "").lower()
-    vendor = _longest_prefix_match(hex_mac, VENDOR_BY_OUI)
+    raw_mac = hex_mac(mac).lower()
+    vendor = lookup_oui(mac)
     for rule in _RULES:
-        if _rule_matches(rule, hex_mac, vendor):
+        if _rule_matches(rule, raw_mac, vendor):
             return Fingerprint(rule.emoji, rule.label or f"{vendor} device")
     if vendor is None:
         return None

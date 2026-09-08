@@ -9,6 +9,8 @@ _DUMMY_STRINGS = frozenset({
     "0", "00000000", "12345", "12345678", "1.0", "n/a", "na", "none",
     "default", "unknown", "null", "undefined", "generic", "string",
     "wi-fi protected setup router", "wifi protected setup router", "wps router",
+    "ralink wireless access point", "ralink wireless ap", "ralinkaps",
+    "realtek wireless access point", "realtek wireless ap",
 })
 
 _CANONICAL_VENDOR_PATTERNS = (
@@ -27,6 +29,10 @@ _CANONICAL_VENDOR_PATTERNS = (
     (re.compile(r"\bamv\b|amv audio", re.I), "AMV"),
     (re.compile(r"\bepson\b", re.I), "Epson"),
     (re.compile(r"\bapple\b", re.I), "Apple"),
+    (re.compile(r"\bralink\b", re.I), "Ralink"),
+    (re.compile(r"\bnokia\b", re.I), "Nokia"),
+    (re.compile(r"\b(?:hewlett[-\s]?packard|hp)\b", re.I), "HP"),
+    (re.compile(r"\bcommscope\b", re.I), "CommScope"),
 )
 
 

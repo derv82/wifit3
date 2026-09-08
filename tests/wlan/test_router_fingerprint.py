@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from wifit3.id.router_helpers import canonical_vendor
+from wifit3.id.common import canonical_vendor
 from wifit3.models import AccessPoint, ApIdentity, IdKey, IdSource
 from wifit3.models.identity import clean_text
 
@@ -62,6 +60,8 @@ def test_clean_text_rejects_dummy_strings():
     for dummy in (
         "12345", "00000000", "none", "NONE", "default", "n/a", "N/A", "unknown", "???", "   ", "",
         "Wi-Fi Protected Setup Router", "wifi protected setup router", "WPS Router",
+        "Ralink Wireless Access Point", "ralink wireless ap", "RalinkAPS",
+        "Realtek Wireless Access Point", "realtek wireless ap",
     ):
         assert clean_text(dummy) is None
 
@@ -88,6 +88,11 @@ def test_vendor_names_are_canonicalized():
     assert canonical_vendor("MikroTik") == "MikroTik"
     assert canonical_vendor("Seiko Epson") == "Epson"
     assert canonical_vendor("Apple, Inc.") == "Apple"
+    assert canonical_vendor("Ralink Technology, Corp.") == "Ralink"
+    assert canonical_vendor("Nokia Solutions and Networks GmbH & Co. KG") == "Nokia"
+    assert canonical_vendor("Hewlett-Packard Company") == "HP"
+    assert canonical_vendor("HP Inc.") == "HP"
+    assert canonical_vendor("CommScope, Inc.") == "CommScope"
     assert canonical_vendor("Custom Vendor LLC") == "Custom Vendor LLC"
 
 

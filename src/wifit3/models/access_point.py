@@ -93,7 +93,7 @@ class AccessPoint:
 
     def __post_init__(self) -> None:
         if self.bssid and not self.identity.get_source_value(IdKey.MANUFACTURER, IdSource.OUI):
-            from wifit3.id.router_helpers import vendor_for_mac
+            from wifit3.id.common import vendor_for_mac
             vendor = vendor_for_mac(self.bssid)
             if vendor:
                 self.identity.set(IdSource.OUI, IdKey.MANUFACTURER, vendor)
