@@ -234,7 +234,7 @@ def test_status_footer_combines_pmf_and_wps():
 def test_router_identity_markup_shows_summary_without_percentages():
     ap = AccessPoint(
         bssid="02:00:00:00:00:01",
-        identity=ApIdentity(manufacturer="MikroTik", model_name="hAP ac²"),
+        identity=ApIdentity(IdSource.WSC_BEACON, manufacturer="MikroTik", model_name="hAP ac²"),
     )
     markup = fm.router_identity_markup(ap)
     assert "hAP ac²" in markup

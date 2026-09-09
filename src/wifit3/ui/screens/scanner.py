@@ -19,7 +19,6 @@ from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
 from wifit3.campaigns.probe import probe_ap, ProbeResult
 from wifit3.campaigns.wps.registrar import PinResult
-from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.config import Config
 from wifit3.models import AccessPoint, PersistedCapture
@@ -853,23 +852,10 @@ class ScannerView(Screen):
 
     @staticmethod
     def _format_probe_result(result: ProbeResult) -> str:
-        if result.wps_identity is not None:
-            fields = ScannerView._format_wps_m1_identity(result.wps_identity)
-            return f"WSC M1: {fields}" if fields else "WSC M1 received"
-        if result.vendor:
-            return f"{result.source}: {result.vendor}"
+        desc = " ".join(p for p in (result.vendor, result.model) if p)
+        if desc:
+            return f"{result.source}: {desc}" if result.source else desc
         return result.source or "identity probe matched"
-
-    @staticmethod
-    def _format_wps_m1_identity(identity: WpsM1Identity) -> str:
-        parts = [
-            ("mfr", identity.manufacturer),
-            ("model", identity.model_name),
-            ("model_no", identity.model_number),
-            ("name", identity.device_name),
-            ("dev_type", identity.device_type),
-        ]
-        return ", ".join(f"{name}={escape(value)}" for name, value in parts if value)
 
     # ----- WPS PBC opportunistic capture -------------------------------------
 

@@ -89,6 +89,7 @@ class ApIdentity:
 
     def __init__(
         self,
+        source: IdSource | None = None,
         *,
         manufacturer: str | None = None,
         model_name: str | None = None,
@@ -98,19 +99,22 @@ class ApIdentity:
         device_type: str | None = None,
     ) -> None:
         self._evidence: dict[IdKey, dict[IdSource, str]] = {}
-
-        if manufacturer:
-            self.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, manufacturer)
-        if model_name:
-            self.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, model_name)
-        if model_number:
-            self.set(IdSource.WSC_BEACON, IdKey.MODEL_NUMBER, model_number)
-        if device_name:
-            self.set(IdSource.WSC_BEACON, IdKey.DEVICE_NAME, device_name)
-        if serial_number:
-            self.set(IdSource.WSC_BEACON, IdKey.SERIAL_NUMBER, serial_number)
-        if device_type:
-            self.set(IdSource.WSC_BEACON, IdKey.DEVICE_TYPE, device_type)
+        has_attrs = any(
+            v is not None
+            for v in (manufacturer, model_name, model_number, device_name, serial_number, device_type)
+        )
+        if has_attrs:
+            if source is None:
+                raise ValueError("IdSource must be specified when initializing ApIdentity with attributes")
+            self.update(
+                source,
+                manufacturer=manufacturer,
+                model_name=model_name,
+                model_number=model_number,
+                device_name=device_name,
+                serial_number=serial_number,
+                device_type=device_type,
+            )
 
     def set(self, source: IdSource, key: IdKey, value: str | None) -> None:
         """Store cleaned evidence for a given source and key."""
@@ -119,6 +123,30 @@ class ApIdentity:
             if key is IdKey.MANUFACTURER:
                 cleaned = canonical_vendor(cleaned) or cleaned
             self._evidence.setdefault(key, {})[source] = cleaned
+
+    def update(
+        self,
+        source: IdSource,
+        *,
+        manufacturer: str | None = None,
+        model_name: str | None = None,
+        model_number: str | None = None,
+        device_name: str | None = None,
+        serial_number: str | None = None,
+        device_type: str | None = None,
+    ) -> None:
+        """Store multiple cleaned identity attributes for a given source."""
+        attrs = (
+            (IdKey.MANUFACTURER, manufacturer),
+            (IdKey.MODEL_NAME, model_name),
+            (IdKey.MODEL_NUMBER, model_number),
+            (IdKey.DEVICE_NAME, device_name),
+            (IdKey.SERIAL_NUMBER, serial_number),
+            (IdKey.DEVICE_TYPE, device_type),
+        )
+        for key, val in attrs:
+            if val is not None:
+                self.set(source, key, val)
 
     def get(self, key: IdKey) -> tuple[str | None, IdSource | None]:
         """Resolve highest priority value and its source for a key."""

@@ -1,3 +1,5 @@
+import pytest
+
 from wifit3.id.common import canonical_vendor
 from wifit3.models import AccessPoint, ApIdentity, IdKey, IdSource
 from wifit3.models.identity import clean_text
@@ -181,12 +183,47 @@ def test_silicon_odm_yields_to_branded_oui():
 
 
 def test_device_type_formatting_in_summary():
-    ident = ApIdentity(manufacturer="HP", model_name="LaserJet Pro", device_type="printer")
+    ident = ApIdentity(IdSource.WSC_BEACON, manufacturer="HP", model_name="LaserJet Pro", device_type="printer")
     assert ident.summary == "HP LaserJet Pro (printer)"
 
-    camera_ident = ApIdentity(manufacturer="Nest", model_name="Cam", device_type="camera")
+    camera_ident = ApIdentity(IdSource.WSC_BEACON, manufacturer="Nest", model_name="Cam", device_type="camera")
     assert camera_ident.summary == "Nest Cam (camera)"
 
     # Router/network infrastructure is None from parser, so no parenthetical tag
-    router_ident = ApIdentity(manufacturer="Netgear", model_name="RAX10", device_type=None)
+    router_ident = ApIdentity(IdSource.WSC_BEACON, manufacturer="Netgear", model_name="RAX10", device_type=None)
     assert router_ident.summary == "Netgear RAX10"
+
+
+def test_init_with_attributes_requires_explicit_source():
+    with pytest.raises(ValueError, match="IdSource must be specified"):
+        ApIdentity(manufacturer="TP-Link")
+
+    with pytest.raises(ValueError, match="IdSource must be specified"):
+        ApIdentity(model_name="Archer AX10")
+
+
+def test_init_with_explicit_m1_source():
+    ident = ApIdentity(IdSource.WSC_M1, manufacturer="Netgear", model_name="RAX10")
+    assert ident.manufacturer == "Netgear"
+    assert ident.manufacturer_source == IdSource.WSC_M1
+    assert ident.model == "RAX10"
+    assert ident.model_source == IdSource.WSC_M1
+
+
+def test_update_batches_multiple_attributes_for_source():
+    ident = ApIdentity()
+    ident.update(
+        IdSource.WSC_BEACON,
+        manufacturer="ASUSTeK Computer Inc.",
+        model_name="RT-AC68U",
+        model_number="AC1900",
+        device_name="ASUS Router",
+        device_type=None,
+    )
+    assert ident.manufacturer == "ASUS"
+    assert ident.manufacturer_source == IdSource.WSC_BEACON
+    assert ident.model_name == "RT-AC68U"
+    assert ident.model_number == "AC1900"
+    assert ident.device_name == "ASUS Router"
+    assert ident.device_type is None
+    assert ident.summary == "ASUS RT-AC68U"

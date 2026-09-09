@@ -8,8 +8,8 @@ from wifit3.campaigns.probe.base import BaseApProbe, ProbeResult
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
-from wifit3.dot11.wsc.identity import WpsM1Identity, identity_from_attrs
-from wifit3.models import IdKey, IdSource
+from wifit3.dot11.wsc.identity import apply_wsc_identity
+from wifit3.models import IdSource
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
@@ -23,7 +23,7 @@ async def _trigger_m1(
     resend_interval: float = 0.35,
     max_resends: int = 8,
     total_timeout: float = 3.5,
-) -> Optional[WpsM1Identity]:
+) -> Optional[dict[int, bytes]]:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + total_timeout
     start = M.build_data_frame(bssid, our_mac, bssid, M.eapol_start())
@@ -58,7 +58,7 @@ async def _trigger_m1(
             last_send = now
             resends = 0
         elif parsed.wsc_msg_type == M.WPS_M1:
-            return identity_from_attrs(parsed.attrs)
+            return parsed.attrs
     return None
 
 
@@ -91,7 +91,7 @@ class WpsM1Probe(BaseApProbe):
             if not await assoc.associate(attempts=2):
                 return ProbeResult(False, detail=assoc.fail_reason or "no association response")
             transport.start()
-            identity = await _trigger_m1(transport, bssid_bytes, our_mac)
+            attrs = await _trigger_m1(transport, bssid_bytes, our_mac)
         finally:
             transport.stop()
             assoc.stop()
@@ -101,18 +101,12 @@ class WpsM1Probe(BaseApProbe):
                 pass
             await iface.clear_fake_mac()
 
-        if identity is None or not identity.present:
+        if not attrs or not apply_wsc_identity(ap.identity, IdSource.WSC_M1, attrs):
             return ProbeResult(False, detail="no WPS M1 response")
 
-        ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, identity.manufacturer)
-        ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, identity.model_name)
-        ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NUMBER, identity.model_number)
-        ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_NAME, identity.device_name)
-        ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_TYPE, identity.device_type)
         return ProbeResult(
             True,
             source=IdSource.WSC_M1.label,
-            vendor=identity.manufacturer,
-            model=identity.model_name or identity.model_number,
-            wps_identity=identity,
+            vendor=ap.identity.manufacturer,
+            model=ap.identity.model,
         )

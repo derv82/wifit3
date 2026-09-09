@@ -8,7 +8,6 @@ import pytest
 from textual.widgets import Button, DataTable
 
 from wifit3.campaigns.probe import ProbeResult
-from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.models import AccessPoint, IdKey, IdSource, PersistedCapture
 from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
@@ -218,7 +217,8 @@ async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
         return ProbeResult(
             True,
             source="wps.m1",
-            wps_identity=WpsM1Identity(manufacturer="TP-Link", model_name="Archer AX10", device_name="Office"),
+            vendor="TP-Link",
+            model="Archer AX10",
         )
 
     import wifit3.ui.screens.scanner as scanner_module

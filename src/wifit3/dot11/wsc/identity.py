@@ -1,22 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from wifit3.dot11.wsc import messages as M
 
-
-@dataclass(frozen=True)
-class WpsM1Identity:
-    manufacturer: Optional[str] = None
-    model_name: Optional[str] = None
-    model_number: Optional[str] = None
-    device_name: Optional[str] = None
-    device_type: Optional[str] = None
-
-    @property
-    def present(self) -> bool:
-        return any((self.manufacturer, self.model_name, self.model_number, self.device_name))
+if TYPE_CHECKING:
+    from wifit3.models import ApIdentity, IdSource
 
 
 _WPS_DEVICE_CATEGORIES = {
@@ -38,14 +27,28 @@ def wps_text(value: bytes) -> str:
     return value.rstrip(b"\x00").decode("utf-8", "replace").strip()
 
 
-def identity_from_attrs(attrs: dict[int, bytes]) -> WpsM1Identity:
-    return WpsM1Identity(
-        manufacturer=_text(attrs, M.ATTR_MANUFACTURER),
-        model_name=_text(attrs, M.ATTR_MODEL_NAME),
-        model_number=_text(attrs, M.ATTR_MODEL_NUMBER),
-        device_name=_text(attrs, M.ATTR_DEV_NAME),
-        device_type=device_type_label(attrs.get(M.ATTR_PRIMARY_DEV_TYPE)),
+def apply_wsc_identity(
+    identity: ApIdentity,
+    source: IdSource,
+    attrs: dict[int, bytes],
+) -> bool:
+    """Extract WSC identity TLVs and apply to ApIdentity. Returns True if any identity was found."""
+    mfr = _text(attrs, M.ATTR_MANUFACTURER)
+    model_name = _text(attrs, M.ATTR_MODEL_NAME)
+    model_number = _text(attrs, M.ATTR_MODEL_NUMBER)
+    device_name = _text(attrs, M.ATTR_DEV_NAME)
+    if not any((mfr, model_name, model_number, device_name)):
+        return False
+    device_type = device_type_label(attrs.get(M.ATTR_PRIMARY_DEV_TYPE))
+    identity.update(
+        source,
+        manufacturer=mfr,
+        model_name=model_name,
+        model_number=model_number,
+        device_name=device_name,
+        device_type=device_type,
     )
+    return True
 
 
 def device_type_label(value: bytes | None) -> Optional[str]:
