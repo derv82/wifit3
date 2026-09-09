@@ -2,12 +2,10 @@
 AP loses its table row but keeps its registry entry, so widening the filter brings
 it straight back without having to rediscover it."""
 from contextlib import asynccontextmanager
-import time
 
 import pytest
 from textual.widgets import Button, DataTable
 
-from wifit3.campaigns.probe import ProbeResult
 from wifit3.models import AccessPoint, IdKey, IdSource, PersistedCapture
 from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
@@ -144,11 +142,6 @@ async def test_channel_modal_returns_focus_to_table():
 
 
 
-def test_scanner_has_router_info_probe_keybind():
-    assert any(binding.key == "p" and binding.action == "probe_router_info"
-               for binding in ScannerView.BINDINGS)
-
-
 def test_scanner_identity_cell_shows_manufacturer_and_model():
     scanner = ScannerView()
     scanner._theme_fg = "white"
@@ -188,107 +181,6 @@ def test_scanner_identity_cell_oui_fallback():
     assert scanner._identity_cell(ap).plain == "Apple"
 
 
-def test_scanner_freezes_all_row_ages_while_probing():
-    scanner = ScannerView()
-    start = time.time()
-    later = start + 20
-    probed = AccessPoint(bssid="aa:bb:cc:00:00:52", ssid="Router", channel=1)
-    other = AccessPoint(bssid="aa:bb:cc:00:00:53", ssid="Router", channel=1)
-    probed.last_seen = start - 5
-    other.last_seen = start - 10
-    scanner._router_info_probing = True
-    scanner._router_info_probe_started_at = start
-    scanner._router_info_probe_bssid = probed.bssid
-
-    assert scanner._ap_row_age(probed, later) == 5
-    assert scanner._ap_row_age(other, later) == 10
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
-async def test_scanner_info_probe_updates_ap_identity(monkeypatch):
-    ap = AccessPoint(bssid="aa:bb:cc:00:00:50", ssid="Router", channel=1, wps=True)
-    async def fake_probe(iface, target):
-        assert target is ap
-        assert iface is not None
-        ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "TP-Link")
-        ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "Archer AX10")
-        ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_NAME, "Office")
-        return ProbeResult(
-            True,
-            source="wps.m1",
-            vendor="TP-Link",
-            model="Archer AX10",
-        )
-
-    import wifit3.ui.screens.scanner as scanner_module
-
-    monkeypatch.setattr(scanner_module, "probe_ap", fake_probe)
-    app = WifiteApp()
-    async with app.run_test() as pilot:
-        app.array = _FakeArray([ap], [1, 6, 11])
-        iface = app.array.members[0]
-        app.push_screen("scanner")
-        await pilot.pause(0)
-        scanner = app.screen
-        assert isinstance(scanner, ScannerView)
-        toasts = []
-        scanner.notify = lambda *args, **kwargs: toasts.append((args, kwargs))
-
-        scanner.refresh_table()
-        array_stop_calls = app.array.stop_calls
-        array_start_calls = app.array.start_calls
-        await scanner._probe_router_info(ap)
-
-    assert app.array.stop_calls == array_stop_calls
-    assert app.array.start_calls == array_start_calls
-    assert iface.stop_calls == 1
-    assert iface.start_calls == 1
-    assert toasts == []
-    assert ap.identity.manufacturer == "TP-Link"
-    assert ap.identity.model_name == "Archer AX10"
-    assert ap.identity.device_name == "Office"
-    assert ap.identity.summary == "TP-Link Archer AX10"
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
-async def test_scanner_info_probe_updates_probe_identity(monkeypatch):
-    ap = AccessPoint(bssid="aa:bb:cc:00:00:51", ssid="Router", channel=1)
-    result = ProbeResult(
-        True,
-        source="wps_m1",
-        vendor="Netgear",
-    )
-
-    async def fake_probe(iface, target):
-        assert target is ap
-        assert iface is not None
-        ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Netgear")
-        return result
-
-    import wifit3.ui.screens.scanner as scanner_module
-
-    monkeypatch.setattr(scanner_module, "probe_ap", fake_probe)
-    app = WifiteApp()
-    async with app.run_test() as pilot:
-        app.array = _FakeArray([ap], [1, 6, 11])
-        app.push_screen("scanner")
-        await pilot.pause(0)
-        scanner = app.screen
-        assert isinstance(scanner, ScannerView)
-        toasts = []
-        scanner.notify = lambda *args, **kwargs: toasts.append((args, kwargs))
-
-        scanner.refresh_table()
-        table = scanner.query_one("#ap-table", DataTable)
-        assert table.get_cell(ap.bssid, "identity").plain == ""
-        await scanner._probe_router_info(ap)
-        assert table.get_cell(ap.bssid, "identity").plain == "Netgear"
-
-    assert toasts == []
-    assert ap.identity.manufacturer == "Netgear"
-    assert scanner._identity_cell(ap).plain == "Netgear"
 
 
 def test_ssid_chips_zero_one_two(monkeypatch):

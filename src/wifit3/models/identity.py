@@ -162,6 +162,10 @@ class ApIdentity:
         """Retrieve the value for a specific key and source."""
         return self._evidence.get(key, {}).get(source)
 
+    def has_source(self, source: IdSource) -> bool:
+        """Check if any attribute has evidence from the given source."""
+        return any(source in sources for sources in self._evidence.values())
+
     @property
     def manufacturer(self) -> str | None:
         val, _ = self.get(IdKey.MANUFACTURER)

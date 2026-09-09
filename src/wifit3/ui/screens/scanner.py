@@ -17,7 +17,6 @@ from rich.text import Text
 
 from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
-from wifit3.campaigns.probe import probe_ap, ProbeResult
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.config import Config
@@ -155,7 +154,6 @@ class ScannerView(Screen):
         Binding("f", "focus_filter", "Filter", show=True),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
-        Binding("p", "probe_router_info", "Probe Info", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
     ]
@@ -211,9 +209,6 @@ class ScannerView(Screen):
         # (app.pbc_enabled). Watcher + capturing serialization stay Scanner-local.
         self._pbc_watcher = PbcWatcher()
         self._pbc_capturing = False          # serialize: one invade at a time
-        self._router_info_probing = False
-        self._router_info_probe_started_at: Optional[float] = None
-        self._router_info_probe_bssid: Optional[str] = None
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -491,9 +486,7 @@ class ScannerView(Screen):
             self._forget_row(bssid, drop_from_array=True)
 
     def _ap_row_age(self, ap: AccessPoint, now: float) -> float:
-        freeze_at = self._router_info_probe_started_at if self._router_info_probing else None
-        age_at = freeze_at if freeze_at is not None else now
-        return max(0.0, age_at - ap.last_seen)
+        return max(0.0, now - ap.last_seen)
 
     def _forget_row(self, bssid: str, *, drop_from_array: bool) -> None:
         """Drop the AP's row and caches; drop_from_array also evicts it from the registry."""
@@ -804,58 +797,6 @@ class ScannerView(Screen):
         except Exception:
             return None
         return self.ap_cache.get(row_key)
-
-    def action_probe_router_info(self) -> None:
-        ap = self._selected_ap()
-        if ap is None:
-            self._write_log(treelog.leaf_fail("select an AP before probing identity"))
-            return
-        if not self.app.array:
-            self._write_log(treelog.leaf_fail("no active interface"))
-            return
-        if self._router_info_probing or self._pbc_capturing:
-            self._write_log(treelog.leaf_fail("another probe is already running"))
-            return
-        asyncio.create_task(self._probe_router_info(ap))
-
-    async def _probe_router_info(self, ap: AccessPoint) -> None:
-        array = self.app.array
-        if not array:
-            return
-        self._router_info_probing = True
-        self._router_info_probe_started_at = time.time()
-        self._router_info_probe_bssid = ap.bssid
-        label = escape(ap.ssid or ap.bssid)
-        self._write_log(treelog.header(
-            f"[bold]Identity probe[/bold] on [cyan]{label}[/cyan] [dim](CH {ap.channel})[/dim]"))
-        iface = array.select_iface(ap.channel)
-        if iface is None:
-            self._write_log(treelog.leaf_fail(f"no interface can probe CH {ap.channel}"))
-            self._router_info_probing = False
-            return
-        try:
-            async with array.claim(iface):
-                result = await probe_ap(iface, ap)
-                if result.ok:
-                    fields = self._format_probe_result(result)
-                    self._write_log(treelog.leaf_ok(fields or "identity probe matched"))
-                    self.refresh_table()
-                else:
-                    self._write_log(treelog.leaf_fail(
-                        f"identity probe failed [dim]({escape(result.detail or 'no detail')})[/dim]"))
-        except Exception as exc:
-            self._write_log(treelog.leaf_fail(f"identity probe error: {escape(str(exc))}"))
-        finally:
-            self._router_info_probing = False
-            self._router_info_probe_started_at = None
-            self._router_info_probe_bssid = None
-
-    @staticmethod
-    def _format_probe_result(result: ProbeResult) -> str:
-        desc = " ".join(p for p in (result.vendor, result.model) if p)
-        if desc:
-            return f"{result.source}: {desc}" if result.source else desc
-        return result.source or "identity probe matched"
 
     # ----- WPS PBC opportunistic capture -------------------------------------
 
