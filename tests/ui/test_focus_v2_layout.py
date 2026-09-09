@@ -11,10 +11,10 @@ import pytest_asyncio
 from textual.app import App
 from textual.widgets import Button
 
-from wifit3.models import AccessPoint, ApIdentity
+from wifit3.models import AccessPoint, ApIdentity, IdSource
 from wifit3.ui import focus_model as fm
 from wifit3.ui.screens.focus_v2 import FocusViewV2
-from wifit3.ui.screens.focus_v2.art import art_size, breathe
+from wifit3.ui.screens.focus_v2.art import BreathingArt, art_size, breathe
 
 _TOPBAR_H = 3
 _CHROME_H = 2          # Header (1 row) + Footer (1 row)
@@ -92,7 +92,7 @@ async def test_router_identity_button_logs_details_from_keyboard_without_tooltip
             bssid="02:00:00:00:00:01",
             ssid="Router",
             channel=1,
-            identity=ApIdentity(manufacturer="MikroTik", model_name="hAP ac²"),
+            identity=ApIdentity(IdSource.WSC_BEACON, manufacturer="MikroTik", model_name="hAP ac²"),
         )
 
     app = _IdentityHost()
@@ -104,6 +104,10 @@ async def test_router_identity_button_logs_details_from_keyboard_without_tooltip
         identity = app.screen.query_one("#ap-identity", Button)
         assert "underline" not in str(chan.styles.text_style)
         assert identity.tooltip is None
+        art = app.screen.query_one("#router-art", BreathingArt)
+        assert art.tooltip is not None
+        assert "MikroTik" in str(art.tooltip)
+        assert "hAP ac²" in str(art.tooltip)
         assert identity.disabled is False
         identity.focus()
         await pilot.press("enter")

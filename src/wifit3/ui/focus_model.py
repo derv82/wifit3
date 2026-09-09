@@ -267,9 +267,6 @@ def router_identity_details(ap: AccessPoint) -> str | None:
     return "\n".join(rows)
 
 
-def router_identity_tooltip(ap) -> str | None:
-    return router_identity_details(ap)
-
 
 def status_footer_lines(ap, array, campaign, now: float) -> list[str]:
     """The dashboard footer lines for this target."""

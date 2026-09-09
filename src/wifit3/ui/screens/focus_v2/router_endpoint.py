@@ -46,7 +46,9 @@ class RouterEndpoint(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Label(self._power_line(), classes="ap-power", id="ap-power")
-        yield BreathingArt("focus-ap.ans", classes="endpoint-art")
+        art = BreathingArt("focus-ap.ans", classes="endpoint-art", id="router-art")
+        art.tooltip = self._identity_details
+        yield art
         yield Label(self._essid_markup(self._essid), classes="ap-essid", id="ap-essid")
         yield Label(self._bssid, classes="ap-static", id="ap-bssid")
         with Horizontal(classes="ap-static", id="ap-identity-row"):
@@ -67,6 +69,7 @@ class RouterEndpoint(Vertical):
         self._power_dbm, self._signal = power_dbm, signal
         self._identity, self._identity_details = identity, identity_details
         self.query_one("#ap-power", Label).update(self._power_line())
+        self.query_one("#router-art", BreathingArt).tooltip = identity_details
         self._push("#ap-essid", self._essid_markup(essid))
         self._push("#ap-bssid", bssid)
         self._push("#ap-chan", self._channel_markup())
