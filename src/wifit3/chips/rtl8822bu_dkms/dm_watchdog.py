@@ -199,7 +199,7 @@ def adaptivity(t, st: DigState) -> None:
     sipi.set_bb_reg(t, 0x08A4, 0x0000FF00, th_h2l)   # MASKBYTE1 = H2L
 
 
-def phydm_watchdog(t, st: DigState) -> None:
+def phydm_watchdog(t, st: DigState) -> FaCnt:
     """The runtime PHYDM loop wifit3 runs every ~2 s + after each hop: read the FA/CCA counters, adapt
     the RX IGI from them, then reset the counters for the next window. This is the functional core of
     `phydm_watchdog` (phydm.c:2384) — the part that keeps RX gain tracking the channel. Other watchdog
@@ -213,3 +213,4 @@ def phydm_watchdog(t, st: DigState) -> None:
     adaptivity(t, st)                                # EDCCA thresholds (0x8A4) from the new IGI
     st.first_disconnect = False
     st.first_connect = False
+    return fa
