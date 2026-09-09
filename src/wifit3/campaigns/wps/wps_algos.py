@@ -148,7 +148,7 @@ def pins_for(
         b = bssid
 
     from .wps_pindb import MODEL_PINS, OUI_ALGOS, OUI_PINS
-    from wifit3.wlan.fingerprint_vendors import VENDOR_BY_OUI
+    from wifit3.wlan.fingerprinting.vendors import VENDOR_BY_OUI
 
     oui = b[:3].hex().upper()
     out: List[str] = []

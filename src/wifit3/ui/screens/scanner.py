@@ -17,7 +17,9 @@ from rich.text import Span, Text
 
 from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
+from wifit3.campaigns.router_probe import probe_router_info
 from wifit3.campaigns.wps.registrar import PinResult
+from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.config import Config
 from wifit3.models import AccessPoint, PersistedCapture
@@ -217,6 +219,7 @@ class ScannerView(Screen):
         Binding("f", "focus_filter", "Filter", show=True),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
+        Binding("p", "probe_router_info", "Probe Info", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
     ]
@@ -231,6 +234,8 @@ class ScannerView(Screen):
         ("encryption", "ENCRYPT"),
         ("wps", "WPS"),
         ("ssid", "SSID"),
+        ("brand", "BRAND"),
+        ("kind", "TYPE"),
     ]
 
     # Columns whose values are right-aligned numerics.
@@ -264,6 +269,9 @@ class ScannerView(Screen):
         # (app.pbc_enabled). Watcher + capturing serialization stay Scanner-local.
         self._pbc_watcher = PbcWatcher()
         self._pbc_capturing = False          # serialize: one invade at a time
+        self._router_info_probing = False
+        self._router_info_probe_started_at: Optional[float] = None
+        self._router_info_probe_bssid: Optional[str] = None
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -283,8 +291,9 @@ class ScannerView(Screen):
 
     async def on_mount(self) -> None:
         log = self.query_one("#system-log", RichLog)
+        scanner_sort = "brand" if Config.scanner_sort == "vendor" else Config.scanner_sort
         self._sort_idx = next(
-            (i for i, (key, _label) in enumerate(self._COLUMNS) if key == Config.scanner_sort), 2)
+            (i for i, (key, _label) in enumerate(self._COLUMNS) if key == scanner_sort), 2)
         self._sort_reverse = Config.scanner_sort_reverse
         self._update_column_headers()
         self.query_one("#ap-table", DataTable).focus()
@@ -400,7 +409,7 @@ class ScannerView(Screen):
                     self._forget_row(ap.bssid, drop_from_array=False)
                 continue
 
-            age = now - ap.last_seen
+            age = self._ap_row_age(ap, now)
             if age >= FADE_DURATION_S:
                 continue
 
@@ -466,10 +475,15 @@ class ScannerView(Screen):
         now = time.time()
         to_drop = [
             bssid for bssid, ap in self.ap_cache.items()
-            if (now - ap.last_seen) >= FADE_DURATION_S
+            if self._ap_row_age(ap, now) >= FADE_DURATION_S
         ]
         for bssid in to_drop:
             self._forget_row(bssid, drop_from_array=True)
+
+    def _ap_row_age(self, ap: AccessPoint, now: float) -> float:
+        freeze_at = self._router_info_probe_started_at if self._router_info_probing else None
+        age_at = freeze_at if freeze_at is not None else now
+        return max(0.0, age_at - ap.last_seen)
 
     def _forget_row(self, bssid: str, *, drop_from_array: bool) -> None:
         """Drop the AP's row and caches; drop_from_array also evicts it from the registry."""
@@ -520,7 +534,31 @@ class ScannerView(Screen):
             Text.from_markup(format_encryption_markup(ap, muted=fg), emoji=False, style=fg),
             wps_cell,
             self._ssid_cell(ap),
+            self._router_brand_cell(ap),
+            self._router_kind_cell(ap),
         ]
+
+    def _router_brand_cell(self, ap: AccessPoint) -> Text:
+        fp = ap.router_fingerprint
+        if fp is None:
+            return Text("", style=self._theme_fg)
+        name = fp.brand or fp.vendor
+        confidence = fp.brand_confidence if fp.brand else fp.vendor_confidence
+        if not name:
+            return Text("", style=self._theme_fg)
+        return self._confidence_cell(name, confidence)
+
+    def _router_kind_cell(self, ap: AccessPoint) -> Text:
+        fp = ap.router_fingerprint
+        if fp is None or not fp.kind or fp.kind_confidence <= 0:
+            return Text("", style=self._theme_fg)
+        return self._confidence_cell(fp.kind[:1].upper() + fp.kind[1:], fp.kind_confidence)
+
+    def _confidence_cell(self, label: str, confidence: float) -> Text:
+        cell = Text(f"{label} ", style=self._theme_fg)
+        percent_style = f"{self._theme_fg} dim" if confidence < 0.60 else self._theme_fg
+        cell.append(f"{round(confidence * 100)}%", style=percent_style)
+        return cell
 
     # Cap the SSID+badges cell so the trailing capture badges never overflow.
     _SSID_CELL_MAX = 32
@@ -720,6 +758,92 @@ class ScannerView(Screen):
     def action_toggle_log(self) -> None:
         log_widget = self.query_one("#system-log")
         log_widget.display = not log_widget.display
+
+    def _selected_ap(self) -> Optional[AccessPoint]:
+        table = self.query_one("#ap-table", DataTable)
+        if table.row_count == 0:
+            return None
+        try:
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        except Exception:
+            return None
+        return self.ap_cache.get(row_key)
+
+    def action_probe_router_info(self) -> None:
+        ap = self._selected_ap()
+        if ap is None:
+            self._write_log(treelog.leaf_fail("select an AP before probing identity"))
+            return
+        if not self.app.array:
+            self._write_log(treelog.leaf_fail("no active interface"))
+            return
+        if self._router_info_probing or self._pbc_capturing:
+            self._write_log(treelog.leaf_fail("another probe is already running"))
+            return
+        asyncio.create_task(self._probe_router_info(ap))
+
+    async def _probe_router_info(self, ap: AccessPoint) -> None:
+        array = self.app.array
+        if not array:
+            return
+        self._router_info_probing = True
+        self._router_info_probe_started_at = time.time()
+        self._router_info_probe_bssid = ap.bssid
+        label = escape(ap.ssid or ap.bssid)
+        self._write_log(treelog.header(
+            f"[bold]Identity probe[/bold] on [cyan]{label}[/cyan] [dim](CH {ap.channel})[/dim]"))
+        iface = array.select_iface(ap.channel)
+        if iface is None:
+            self._write_log(treelog.leaf_fail(f"no interface can probe CH {ap.channel}"))
+            self._router_info_probing = False
+            return
+        was_hopping = bool(getattr(iface, "_is_hopping", False))
+        try:
+            if was_hopping:
+                await iface.stop_hopping()
+            result = await probe_router_info(array, ap, iface=iface)
+            if result.ok:
+                if result.claims:
+                    self._apply_router_probe_claims(ap, result.claims)
+                fields = self._format_probe_result(result)
+                self._write_log(treelog.leaf_ok(fields or "identity probe matched"))
+                self.refresh_table()
+            else:
+                self._write_log(treelog.leaf_fail(
+                    f"identity probe failed [dim]({escape(result.detail or 'no detail')})[/dim]"))
+        except Exception as exc:
+            self._write_log(treelog.leaf_fail(f"identity probe error: {escape(str(exc))}"))
+        finally:
+            self._router_info_probing = False
+            self._router_info_probe_started_at = None
+            self._router_info_probe_bssid = None
+            if was_hopping and self.app.screen is self:
+                await iface.start_hopping(channels=self._channel_filter, interval=0.25)
+
+    @staticmethod
+    def _apply_router_probe_claims(ap: AccessPoint, claims) -> None:
+        ap.router_claims = tuple(dict.fromkeys((*ap.router_claims, *claims)))
+
+    @staticmethod
+    def _format_probe_result(result) -> str:
+        if result.wps_identity is not None:
+            fields = ScannerView._format_wps_m1_identity(result.wps_identity)
+            return f"WPS M1: {fields}" if fields else "WPS M1 received"
+        if result.claims:
+            fields = ", ".join(f"{claim.name}={escape(claim.value)} {round(claim.confidence * 100)}%"
+                               for claim in result.claims)
+            return f"{result.source}: {fields}" if result.source else fields
+        return result.source or "identity probe matched"
+
+    @staticmethod
+    def _format_wps_m1_identity(identity: WpsM1Identity) -> str:
+        parts = [
+            ("mfr", identity.manufacturer),
+            ("model", identity.model_name),
+            ("model_no", identity.model_number),
+            ("name", identity.device_name),
+        ]
+        return ", ".join(f"{name}={escape(value)}" for name, value in parts if value)
 
     # ----- WPS PBC opportunistic capture -------------------------------------
 

@@ -60,7 +60,9 @@ def _rsn_ie(
 
 
 def _wps_ie(*, locked: bool = False, version2: bool = False,
-            configured: bool = True) -> bytes:
+            configured: bool = True, manufacturer: bytes = b"",
+            model_name: bytes = b"", model_number: bytes = b"",
+            device_name: bytes = b"") -> bytes:
     """Build a WPS vendor IE (tag 221, OUI 00:50:F2, OUI-type 4) with the
     nested big-endian TLVs. AP Setup Locked is always emitted (as real APs
     do) so both the locked and unlocked decode paths are exercised."""
@@ -72,6 +74,14 @@ def _wps_ie(*, locked: bool = False, version2: bool = False,
     body += tlv(0x1057, b"\x01" if locked else b"\x00")          # AP Setup Locked
     body += tlv(0x1008, b"\x00\x84")                             # Config Methods
     body += tlv(0x1012, b"\x00\x00")                             # Device Password ID (PIN)
+    if manufacturer:
+        body += tlv(0x1021, manufacturer)
+    if model_name:
+        body += tlv(0x1023, model_name)
+    if model_number:
+        body += tlv(0x1024, model_number)
+    if device_name:
+        body += tlv(0x1011, device_name)
     if version2:
         body += tlv(0x1049, b"\x00\x37\x2a" + b"\x00\x01\x20")  # Vendor Ext → Version2
     payload = b"\x00\x50\xf2\x04" + body
@@ -98,6 +108,17 @@ def test_wps_version2_beacon():
         _build_beacon(wpa_vendor_ie=_wps_ie(version2=True)), -50)
     assert r.wps is True
     assert r.wps_version == "2.0"
+
+
+def test_wps_identity_fields_beacon():
+    r = WlanFrameParser.parse_80211_frame(_build_beacon(wpa_vendor_ie=_wps_ie(
+        manufacturer=b"MikroTik", model_name=b"RouterBOARD", model_number=b"RB951",
+        device_name=b"Office AP\x00",
+    )), -50)
+    assert r.wps_manufacturer == "MikroTik"
+    assert r.wps_model_name == "RouterBOARD"
+    assert r.wps_model_number == "RB951"
+    assert r.wps_device_name == "Office AP"
 
 
 def test_no_wps_ie_absent():

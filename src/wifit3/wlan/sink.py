@@ -13,10 +13,14 @@ import threading
 import time
 from typing import Dict, List, Optional, Set
 
+from wifit3.campaigns.mikrotik_probe import is_mikrotik_plaintext_frame, mikrotik_claims_from_frame
+from wifit3.campaigns.ubiquiti_probe import is_ubnt_plaintext_frame, ubnt_claims
 from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
 from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.parser import WlanFrameParser
+from wifit3.dot11.wsc import messages as WSC
+from wifit3.dot11.wsc.identity import identity_from_attrs
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
 )
@@ -118,6 +122,8 @@ class WlanSink:
 
         self._on_beacon_frame(pkt, card_id, channel_hint)
         self._on_wepdata_frame(pkt)
+        self._on_mikrotik_frame(pkt)
+        self._on_ubnt_frame(pkt)
         self._track_client(pkt, card_id)
         self._on_eapol_frame(pkt)
 
@@ -162,6 +168,10 @@ class WlanSink:
         wps_config_methods = pkt.wps_config_methods
         wps_device_password_id = pkt.wps_device_password_id
         wps_selected_registrar = pkt.wps_selected_registrar
+        wps_manufacturer = pkt.wps_manufacturer
+        wps_model_name = pkt.wps_model_name
+        wps_model_number = pkt.wps_model_number
+        wps_device_name = pkt.wps_device_name
 
         if bssid not in self.access_points:
             ap = AccessPoint(
@@ -184,6 +194,10 @@ class WlanSink:
                 wps_config_methods=wps_config_methods,
                 wps_device_password_id=wps_device_password_id,
                 wps_selected_registrar=wps_selected_registrar,
+                wps_manufacturer=wps_manufacturer,
+                wps_model_name=wps_model_name,
+                wps_model_number=wps_model_number,
+                wps_device_name=wps_device_name,
             )
             self.access_points[bssid] = ap
             self._record_ap_signal(ap, card_id, rssi)
@@ -225,6 +239,10 @@ class WlanSink:
                 ap.wps_config_methods = wps_config_methods
                 ap.wps_device_password_id = wps_device_password_id
                 ap.wps_selected_registrar = wps_selected_registrar
+                ap.wps_manufacturer = wps_manufacturer or ap.wps_manufacturer
+                ap.wps_model_name = wps_model_name or ap.wps_model_name
+                ap.wps_model_number = wps_model_number or ap.wps_model_number
+                ap.wps_device_name = wps_device_name or ap.wps_device_name
 
         ap = self.access_points[bssid]
         ap.last_seen = time.time()
@@ -256,6 +274,26 @@ class WlanSink:
             stats = self.wep_store.observe(bssid, pkt)
             if stats is not None and ap.wep is None:
                 ap.wep = stats
+        return True
+
+    def _on_mikrotik_frame(self, pkt: Packet) -> bool:
+        if pkt.type != "data" or not is_mikrotik_plaintext_frame(pkt.raw):
+            return False
+        ap = self.access_points.get(pkt.bssid)
+        if ap is None:
+            return False
+        claims = mikrotik_claims_from_frame(pkt.raw, passive=True)
+        ap.router_claims = tuple(dict.fromkeys((*ap.router_claims, *claims)))
+        return bool(claims)
+
+    def _on_ubnt_frame(self, pkt: Packet) -> bool:
+        if pkt.type != "data" or not is_ubnt_plaintext_frame(pkt.raw):
+            return False
+        ap = self.access_points.get(pkt.bssid)
+        if ap is None:
+            return False
+        claims = ubnt_claims("ubnt.passive", passive=True)
+        ap.router_claims = tuple(dict.fromkeys((*ap.router_claims, *claims)))
         return True
 
     def _track_client(self, pkt: Packet, card_id: str) -> bool:
@@ -302,6 +340,7 @@ class WlanSink:
         ap = self.access_points.get(bssid)
         if ap is None:
             return True
+        self._on_wps_m1_frame(pkt, ap)
         client_mac = pkt.client_mac
         raw_frame = pkt.raw
         replay = pkt.replay_counter
@@ -351,6 +390,24 @@ class WlanSink:
             hs.pmkid = pmkid
             hs.pmkid_akm = akm
             logger.info(f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}")
+        return True
+
+    def _on_wps_m1_frame(self, pkt: EapolPacket, ap: AccessPoint) -> bool:
+        parsed = WSC.parse_rx_frame(pkt.raw)
+        if parsed is None or parsed.wsc_msg_type != WSC.WPS_M1:
+            return False
+        identity = identity_from_attrs(parsed.attrs)
+        if not identity.present:
+            return False
+        ap.wps = True
+        ap.wps_m1_manufacturer = identity.manufacturer or ap.wps_m1_manufacturer
+        ap.wps_m1_model_name = identity.model_name or ap.wps_m1_model_name
+        ap.wps_m1_model_number = identity.model_number or ap.wps_m1_model_number
+        ap.wps_m1_device_name = identity.device_name or ap.wps_m1_device_name
+        ap.wps_manufacturer = identity.manufacturer or ap.wps_manufacturer
+        ap.wps_model_name = identity.model_name or ap.wps_model_name
+        ap.wps_model_number = identity.model_number or ap.wps_model_number
+        ap.wps_device_name = identity.device_name or ap.wps_device_name
         return True
 
     def _decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:

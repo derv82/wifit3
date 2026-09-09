@@ -3,9 +3,12 @@ previously-saved capture artifacts).
 """
 import time
 from dataclasses import dataclass, field
-from typing import Optional, List, Literal, Dict
+from typing import Any, Optional, List, Literal, Dict, TYPE_CHECKING
 
 from .handshake import Handshake
+
+if TYPE_CHECKING:
+    from wifit3.wlan.fingerprinting.router import RouterFingerprint
 
 
 @dataclass
@@ -51,6 +54,14 @@ class AccessPoint:
     wps_version: Optional[str] = None  # "1.0" / "2.0"
     wps_config_methods: int = 0  # 0x1008 bitmask
     wps_device_password_id: Optional[int] = None  # 0x0004 = PBC
+    wps_manufacturer: Optional[str] = None
+    wps_model_name: Optional[str] = None
+    wps_model_number: Optional[str] = None
+    wps_device_name: Optional[str] = None
+    wps_m1_manufacturer: Optional[str] = None
+    wps_m1_model_name: Optional[str] = None
+    wps_m1_model_number: Optional[str] = None
+    wps_m1_device_name: Optional[str] = None
     # Set while the AP is advertising an active Registrar (PIN or, with
     # DevPwId 0x0004, a Push-Button walk window). Drives wps_pbc_active.
     wps_selected_registrar: bool = False
@@ -89,6 +100,9 @@ class AccessPoint:
     # Read-only capture history loaded from captures/ at scan start.
     persisted: List[PersistedCapture] = field(default_factory=list)
 
+    # Active identity probe claims collected only after intentional user TX.
+    router_claims: tuple[Any, ...] = ()
+
     # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
     signal_by_card: Dict[str, int] = field(default_factory=dict)
 
@@ -96,6 +110,12 @@ class AccessPoint:
     def signal(self) -> int:
         """Strongest smoothed RSSI (dBm) across the cards that hear this AP; -100 if none yet."""
         return max(self.signal_by_card.values(), default=-100)
+
+    @property
+    def router_fingerprint(self) -> Optional["RouterFingerprint"]:
+        """Confidence-scored AP/router identity from OUI and observed WPS identity fields."""
+        from wifit3.wlan.fingerprinting.router import fingerprint_router
+        return fingerprint_router(self)
 
     @property
     def wps_pbc_active(self) -> bool:

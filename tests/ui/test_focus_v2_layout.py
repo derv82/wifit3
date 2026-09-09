@@ -11,6 +11,7 @@ import pytest_asyncio
 from textual.app import App
 from textual.widgets import Button
 
+from wifit3.models import AccessPoint
 from wifit3.ui import focus_model as fm
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.art import art_size, breathe
@@ -83,6 +84,33 @@ async def test_topbar_is_the_action_area_and_card_has_no_buttons(layout_host):
                 "btn-eviltwin", "btn-stop-pbc"):
         assert scr.query_one(f"#topbar #{bid}", Button) is not None
     assert len(scr.query("#card Button")) == 0
+
+
+async def test_router_identity_button_logs_details_from_keyboard_without_tooltip():
+    class _IdentityHost(_Host):
+        target_ap = AccessPoint(
+            bssid="02:00:00:00:00:01",
+            ssid="Router",
+            channel=1,
+            wps_manufacturer="MikroTik",
+            wps_model_name="hAP ac²",
+        )
+
+    app = _IdentityHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0)
+        logs = []
+        app.screen._log = logs.append
+        chan = app.screen.query_one("#ap-chan")
+        identity = app.screen.query_one("#ap-identity", Button)
+        assert "underline" not in str(chan.styles.text_style)
+        assert identity.tooltip is None
+        assert identity.disabled is False
+        identity.focus()
+        await pilot.press("enter")
+        await pilot.pause(0)
+        assert logs[0] == "[bold]Router identity[/bold]"
+        assert any("MikroTik" in line for line in logs)
 
 
 def test_dashboard_rows_and_rate_vs_count():

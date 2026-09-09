@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from .fingerprint_vendors import VENDOR_BY_OUI
+from .vendors import VENDOR_BY_OUI
 
 
 @dataclass(frozen=True)

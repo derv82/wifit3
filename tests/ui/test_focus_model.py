@@ -9,7 +9,7 @@ import pytest
 
 from wifit3.campaigns.campaign import Campaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
-from wifit3.models import Handshake
+from wifit3.models import AccessPoint, Handshake
 from wifit3.ui import focus_model as fm
 from wifit3.persist.config import Config
 
@@ -229,6 +229,52 @@ def test_status_footer_combines_pmf_and_wps():
     lines = fm.status_footer_lines(_rsn_ap(wps=True, wps_version="1.0"), None, None, 0)
     assert len(lines) == 2
     assert "PMF:" in lines[1] and "WPS:" in lines[1] and "1.0" in lines[1]
+
+
+def test_router_identity_markup_prefers_confident_model():
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        wps_manufacturer="MikroTik",
+        wps_model_name="hAP ac²",
+    )
+    assert "hAP ac²" in fm.router_identity_markup(ap)
+    assert "99%" in fm.router_identity_markup(ap)
+
+
+def test_router_identity_details_shows_per_field_confidence():
+    ap = AccessPoint(bssid="02:00:00:00:00:01", wps_manufacturer="MikroTik")
+    details = fm.router_identity_details(ap)
+    assert details is not None
+    assert "[dim]Vendor:[/dim] MikroTik (99%)" in details
+    assert "[dim]Type:[/dim]" not in details
+    assert "[dim]wps.passive:[/dim] manufacturer=MikroTik (99%)" in details
+
+
+def test_router_identity_details_can_show_brand_and_vendor_separately():
+    class _AP:
+        @property
+        def router_fingerprint(self):
+            from wifit3.wlan.fingerprinting.router import RouterFingerprint
+            return RouterFingerprint(
+                label="Likely O2 router",
+                confidence=0.82,
+                brand="O2",
+                brand_confidence=0.82,
+                vendor="Kaon",
+                vendor_confidence=0.99,
+                kind="router",
+                kind_confidence=0.99,
+            )
+
+    assert "O2" in fm.router_identity_markup(_AP())
+    details = fm.router_identity_details(_AP())
+    assert "[dim]Brand:[/dim] O2 (82%)" in details
+    assert "[dim]Vendor:[/dim] Kaon (99%)" in details
+
+
+def test_router_identity_markup_is_blank_without_evidence():
+    assert fm.router_identity_markup(AccessPoint(bssid="02:00:00:00:00:01")) == ""
+    assert fm.router_identity_details(AccessPoint(bssid="02:00:00:00:00:01")) is None
 
 
 def test_status_footer_open_is_encryption_only():

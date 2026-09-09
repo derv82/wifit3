@@ -78,6 +78,10 @@ class BeaconPacket(Packet):
     wps_config_methods: int = 0
     wps_device_password_id: Optional[int] = None
     wps_selected_registrar: bool = False
+    wps_manufacturer: Optional[str] = None
+    wps_model_name: Optional[str] = None
+    wps_model_number: Optional[str] = None
+    wps_device_name: Optional[str] = None
     rsn_ie_raw: Optional[bytes] = None
 
 
