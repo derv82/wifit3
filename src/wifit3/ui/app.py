@@ -1,7 +1,7 @@
 import logging
 import os
 import sys
-from textual import work
+from textual import events, work
 from textual.app import App
 from textual.binding import Binding
 from typing import Optional
@@ -79,7 +79,7 @@ class WifiteApp(App):
         width: 100%;
         height: 1fr;
     }
-    RichLog {
+    RichLog, SelectableRichLog {
         height: 10;
         border-top: solid $primary;
     }
@@ -109,6 +109,15 @@ class WifiteApp(App):
         self.pbc_enabled: bool = True
         register_app_themes(self)
         self.theme = Config.theme
+
+    def on_text_selected(self, event: events.TextSelected) -> None:
+        selected = self.screen.get_selected_text()
+        if not selected:
+            return
+        self.copy_to_clipboard(selected)
+        chars = len(selected)
+        noun = "char" if chars == 1 else "chars"
+        self.notify(f"Copied {chars} {noun} to clipboard")
 
     def persist_config(self) -> None:
         try:

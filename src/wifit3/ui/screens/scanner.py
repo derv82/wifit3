@@ -15,6 +15,8 @@ from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
 from rich.markup import escape
 from rich.text import Text
 
+from ..selectable_rich_log import SelectableRichLog
+
 from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
 from wifit3.campaigns.wps.registrar import PinResult
@@ -223,7 +225,7 @@ class ScannerView(Screen):
                 # Reserve 2 chars in every header to account for sort indicator
                 table.add_column(label + "  ", key=key)
             yield table
-            yield RichLog(id="system-log", markup=True, highlight=True)
+            yield SelectableRichLog(id="system-log", markup=True, highlight=True)
         yield Footer()
 
     async def on_mount(self) -> None:
