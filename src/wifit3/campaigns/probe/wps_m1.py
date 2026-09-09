@@ -72,6 +72,7 @@ class WpsM1Probe(BaseApProbe):
     async def probe(self, iface: WlanInterface, ap: AccessPoint) -> ProbeResult:
         bssid_bytes = str_to_mac(ap.bssid.lower())
         await iface.set_channel(ap.channel)
+        await asyncio.sleep(0.1)
         fake_mac = await iface.set_fake_mac(None, bssid_bytes)
         our_mac_str = fake_mac or (iface.mac_address if isinstance(iface.mac_address, str) else None)
         if our_mac_str is None:

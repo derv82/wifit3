@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from wifit3.campaigns.probe.base import BaseApProbe, ProbeResult
-from wifit3.campaigns.probe.mikrotik import MikrotikProbe
-from wifit3.campaigns.probe.ubiquiti import UbiquitiProbe
 from wifit3.campaigns.probe.wps_m1 import WpsM1Probe
 
 if TYPE_CHECKING:
@@ -13,8 +11,6 @@ if TYPE_CHECKING:
 
 DEFAULT_PROBES: tuple[BaseApProbe, ...] = (
     WpsM1Probe(),
-    MikrotikProbe(),
-    UbiquitiProbe(),
 )
 
 

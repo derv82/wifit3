@@ -62,19 +62,13 @@ def canonical_vendor(name: str | None) -> str | None:
 class IdSource(Enum):
     """Origin of identity evidence ordered by priority."""
     WSC_M1 = 1          # Active or passive M1 cryptographic TLVs
-    WINBOX_PROBE = 2    # MikroTik WinBox UDP (port 20561)
-    MNDP_PROBE = 3      # MikroTik MNDP UDP (port 5678)
-    UBNT_PROBE = 4      # Ubiquiti Discovery UDP (port 10001)
-    WSC_BEACON = 5      # Passive Beacon/ProbeResp Tag 221 WSC element
-    OUI = 6             # IEEE MAC prefix registry
+    WSC_BEACON = 2      # Passive Beacon/ProbeResp Tag 221 WSC element
+    OUI = 3             # IEEE MAC prefix registry
 
     @property
     def label(self) -> str:
         return {
             IdSource.WSC_M1: "WSC M1",
-            IdSource.WINBOX_PROBE: "WinBox Probe",
-            IdSource.MNDP_PROBE: "MNDP Probe",
-            IdSource.UBNT_PROBE: "Ubiquiti Probe",
             IdSource.WSC_BEACON: "WSC Beacon",
             IdSource.OUI: "IEEE OUI",
         }[self]

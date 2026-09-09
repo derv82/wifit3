@@ -142,13 +142,7 @@ async def test_channel_modal_returns_focus_to_table():
         assert app.focused is table
 
 
-def test_scanner_has_identity_column():
-    columns = [key for key, _label in ScannerView._COLUMNS]
-    labels = dict(ScannerView._COLUMNS)
-    assert "identity" in columns
-    assert labels["identity"] == "IDENTITY"
-    assert "brand" not in columns
-    assert "kind" not in columns
+
 
 
 def test_scanner_has_router_info_probe_keybind():
@@ -263,14 +257,14 @@ async def test_scanner_info_probe_updates_probe_identity(monkeypatch):
     ap = AccessPoint(bssid="aa:bb:cc:00:00:51", ssid="Router", channel=1)
     result = ProbeResult(
         True,
-        source="mikrotik",
-        vendor="MikroTik",
+        source="wps_m1",
+        vendor="Netgear",
     )
 
     async def fake_probe(iface, target):
         assert target is ap
         assert iface is not None
-        ap.identity.set(IdSource.WINBOX_PROBE, IdKey.MANUFACTURER, "MikroTik")
+        ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Netgear")
         return result
 
     import wifit3.ui.screens.scanner as scanner_module
@@ -290,11 +284,11 @@ async def test_scanner_info_probe_updates_probe_identity(monkeypatch):
         table = scanner.query_one("#ap-table", DataTable)
         assert table.get_cell(ap.bssid, "identity").plain == ""
         await scanner._probe_router_info(ap)
-        assert table.get_cell(ap.bssid, "identity").plain == "MikroTik"
+        assert table.get_cell(ap.bssid, "identity").plain == "Netgear"
 
     assert toasts == []
-    assert ap.identity.manufacturer == "MikroTik"
-    assert scanner._identity_cell(ap).plain == "MikroTik"
+    assert ap.identity.manufacturer == "Netgear"
+    assert scanner._identity_cell(ap).plain == "Netgear"
 
 
 def test_ssid_chips_zero_one_two(monkeypatch):

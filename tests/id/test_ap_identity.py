@@ -17,7 +17,7 @@ def test_oui_seeded_on_access_point_creation():
     assert local_ap.identity.summary == ""
 
 
-def test_priority_ladder_m1_beats_probe_beats_beacon_beats_oui():
+def test_priority_ladder_m1_beats_beacon_beats_oui():
     ap = AccessPoint(bssid="00:0a:eb:11:22:33")  # TP-Link OUI
     assert ap.identity.manufacturer == "TP-Link"
     assert ap.identity.summary == "TP-Link"
@@ -29,11 +29,7 @@ def test_priority_ladder_m1_beats_probe_beats_beacon_beats_oui():
     assert ap.identity.model == "DIR-882"
     assert ap.identity.summary == "D-Link DIR-882"
 
-    # Active Probe overrides Beacon
-    ap.identity.set(IdSource.WINBOX_PROBE, IdKey.MANUFACTURER, "MikroTik")
-    assert ap.identity.manufacturer == "MikroTik"
-
-    # WSC M1 overrides Active Probe
+    # WSC M1 overrides Beacon
     ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Netgear")
     ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "RAX10")
     assert ap.identity.manufacturer == "Netgear"
