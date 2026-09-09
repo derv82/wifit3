@@ -312,6 +312,21 @@ def test_router_identity_details_odm_wsc_beacon_with_branded_oui():
     ])
 
 
+def test_router_identity_details_includes_device_type():
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "HP")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "OfficeJet Pro")
+    ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_TYPE, "printer")
+
+    details = fm.router_identity_details(ap)
+    assert details == "\n".join([
+        "[bold]HP OfficeJet Pro (printer)[/bold]",
+        "[dim]Model:[/dim] OfficeJet Pro [dim](WSC M1)[/dim]",
+        "[dim]Manufacturer:[/dim] HP [dim](WSC M1)[/dim]",
+        "[dim]Device Type:[/dim] printer [dim](WSC M1)[/dim]",
+    ])
+
+
 def test_router_identity_markup_is_blank_without_evidence():
     assert fm.router_identity_markup(AccessPoint(bssid="02:00:00:00:00:01")) == ""
     assert fm.router_identity_details(AccessPoint(bssid="02:00:00:00:00:01")) is None

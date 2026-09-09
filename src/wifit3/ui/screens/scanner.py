@@ -170,7 +170,7 @@ class ScannerView(Screen):
         ("clients", "💻"),
         ("encryption", "ENCRYPT"),
         ("wps", "WPS"),
-        ("identity", "IDENTITY"),
+        ("identity", "VENDOR/ID"),
     ]
 
     # Columns whose values are right-aligned in display.

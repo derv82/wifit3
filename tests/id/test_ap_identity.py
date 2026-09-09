@@ -178,3 +178,15 @@ def test_silicon_odm_yields_to_branded_oui():
     assert ident_odm.manufacturer == "Realtek"
     assert ident_odm.manufacturer_source == IdSource.WSC_BEACON
     assert ident_odm.summary == "Realtek RTL8196"
+
+
+def test_device_type_formatting_in_summary():
+    ident = ApIdentity(manufacturer="HP", model_name="LaserJet Pro", device_type="printer")
+    assert ident.summary == "HP LaserJet Pro (printer)"
+
+    camera_ident = ApIdentity(manufacturer="Nest", model_name="Cam", device_type="camera")
+    assert camera_ident.summary == "Nest Cam (camera)"
+
+    # Router/network infrastructure is None from parser, so no parenthetical tag
+    router_ident = ApIdentity(manufacturer="Netgear", model_name="RAX10", device_type=None)
+    assert router_ident.summary == "Netgear RAX10"
