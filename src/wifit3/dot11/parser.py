@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Any
 
 from wifit3.dot11.ie import iter_information_elements
 from wifit3.dot11.mac import mac_to_str
-from wifit3.dot11.wsc.identity import wps_text
+from wifit3.dot11.wsc.identity import device_type_label, wps_text
 from wifit3.dot11.wsc.messages import iter_wsc_tlvs
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
@@ -109,8 +109,8 @@ class WlanFrameParser:
             # value keeps the field default.
             for key in ("channel", "rsn_ie_raw", "wps", "wps_locked", "wps_version",
                         "wps_state", "wps_config_methods", "wps_device_password_id",
-                        "wps_selected_registrar", "wps_manufacturer", "wps_model_name",
-                        "wps_model_number", "wps_device_name"):
+                        "wps_selected_registrar", "wsc_manufacturer", "wsc_model_name",
+                        "wsc_model_number", "wsc_device_name", "wsc_device_type"):
                 if key in tags:
                     fields[key] = tags[key]
             return BeaconPacket(**base, **fields)
@@ -397,6 +397,7 @@ class WlanFrameParser:
         ATTR_MANUFACTURER, ATTR_MODEL_NAME = 0x1021, 0x1023
         ATTR_MODEL_NUMBER, ATTR_DEVICE_NAME = 0x1024, 0x1011
         ATTR_VERSION, ATTR_VENDOR_EXTENSION = 0x104A, 0x1049
+        ATTR_PRIMARY_DEV_TYPE = 0x1054
         out: Dict[str, Any] = {"wps": True}
         version1 = False
         version2 = 0
@@ -415,19 +416,23 @@ class WlanFrameParser:
             elif attr == ATTR_MANUFACTURER:
                 text = cls._wps_text(val)
                 if text:
-                    out["wps_manufacturer"] = text
+                    out["wsc_manufacturer"] = text
             elif attr == ATTR_MODEL_NAME:
                 text = cls._wps_text(val)
                 if text:
-                    out["wps_model_name"] = text
+                    out["wsc_model_name"] = text
             elif attr == ATTR_MODEL_NUMBER:
                 text = cls._wps_text(val)
                 if text:
-                    out["wps_model_number"] = text
+                    out["wsc_model_number"] = text
             elif attr == ATTR_DEVICE_NAME:
                 text = cls._wps_text(val)
                 if text:
-                    out["wps_device_name"] = text
+                    out["wsc_device_name"] = text
+            elif attr == ATTR_PRIMARY_DEV_TYPE:
+                label = device_type_label(val)
+                if label:
+                    out["wsc_device_type"] = label
             elif attr == ATTR_VERSION and ln >= 1:
                 version1 = True
             elif attr == ATTR_VENDOR_EXTENSION:

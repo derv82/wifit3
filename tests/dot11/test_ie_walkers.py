@@ -94,4 +94,4 @@ def test_multi_ie_wsc_fragmentation_reassembles_split_tlv():
     pkt = WlanFrameParser.parse_80211_frame(beacon, -60)
     assert pkt is not None
     assert pkt.wps is True
-    assert pkt.wps_model_name == "LongModelX"
+    assert pkt.wsc_model_name == "LongModelX"

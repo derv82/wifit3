@@ -86,6 +86,7 @@ class IdKey(Enum):
     MODEL_NAME = auto()
     MODEL_NUMBER = auto()
     DEVICE_NAME = auto()
+    DEVICE_TYPE = auto()
     SERIAL_NUMBER = auto()
 
 
@@ -100,6 +101,7 @@ class ApIdentity:
         model_number: str | None = None,
         device_name: str | None = None,
         serial_number: str | None = None,
+        device_type: str | None = None,
     ) -> None:
         self._evidence: dict[IdKey, dict[IdSource, str]] = {}
 
@@ -113,6 +115,8 @@ class ApIdentity:
             self.set(IdSource.WSC_BEACON, IdKey.DEVICE_NAME, device_name)
         if serial_number:
             self.set(IdSource.WSC_BEACON, IdKey.SERIAL_NUMBER, serial_number)
+        if device_type:
+            self.set(IdSource.WSC_BEACON, IdKey.DEVICE_TYPE, device_type)
 
     def set(self, source: IdSource, key: IdKey, value: str | None) -> None:
         """Store cleaned evidence for a given source and key."""
@@ -170,6 +174,10 @@ class ApIdentity:
     def serial_number(self) -> str | None:
         return self.get(IdKey.SERIAL_NUMBER)[0]
 
+    @property
+    def device_type(self) -> str | None:
+        return self.get(IdKey.DEVICE_TYPE)[0]
+
     def _is_valid_model(self, val: str | None) -> bool:
         if not val:
             return False
@@ -201,6 +209,13 @@ class ApIdentity:
 
     @property
     def summary(self) -> str:
+        base = self._name_summary()
+        device_type = self.device_type
+        if device_type:
+            return f"{base} ({device_type})".strip()
+        return base
+
+    def _name_summary(self) -> str:
         if not self.manufacturer:
             return self.model or ""
         if not self.model:

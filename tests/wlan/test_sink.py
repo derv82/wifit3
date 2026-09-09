@@ -99,9 +99,9 @@ def test_wps_identity_fields_persist_on_ap():
     s = WlanSink()
     s.update(_beacon({
         "wps": True,
-        "wps_manufacturer": "MikroTik",
-        "wps_model_name": "RouterBOARD",
-        "wps_device_name": "Office AP",
+        "wsc_manufacturer": "MikroTik",
+        "wsc_model_name": "RouterBOARD",
+        "wsc_device_name": "Office AP",
     }), W0)
     ap = s.access_points[BSSID]
     assert ap.identity.manufacturer == "MikroTik"

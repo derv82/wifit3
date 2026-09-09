@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import Counter, deque
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from rich.markup import escape
 
@@ -18,6 +18,9 @@ from wifit3.persist.config import Config
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
+
+if TYPE_CHECKING:
+    from wifit3.models.access_point import AccessPoint
 
 # Attack-button campaigns in button-row order.
 BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign, EvilTwinCampaign]
@@ -226,11 +229,12 @@ def router_identity_markup(ap) -> str:
     return f"[accent]{escape(ident.summary)}[/accent]"
 
 
-def router_identity_details(ap) -> str | None:
-    ident = getattr(ap, "identity", None)
+def router_identity_details(ap: AccessPoint) -> str | None:
+    ident = ap.identity
     if ident is None or not ident.summary:
         return None
     rows = [f"[bold]{escape(ident.summary)}[/bold]"]
+    mfr_src: IdSource | None = None
     if ident.model:
         model_src = getattr(ident, "model_source", None) or ident.get(IdKey.MODEL_NAME)[1] or ident.get(IdKey.MODEL_NUMBER)[1]
         src_label = model_src.label if model_src else ""
@@ -247,6 +251,10 @@ def router_identity_details(ap) -> str | None:
         sn_src = ident.get(IdKey.SERIAL_NUMBER)[1]
         src_label = sn_src.label if sn_src else ""
         rows.append(f"[dim]Serial:[/dim] {escape(ident.serial_number)} [dim]({src_label})[/dim]")
+    if ident.device_type:
+        dt_src = ident.get(IdKey.DEVICE_TYPE)[1]
+        src_label = dt_src.label if dt_src else ""
+        rows.append(f"[dim]Device Type:[/dim] {escape(ident.device_type)} [dim]({src_label})[/dim]")
 
     wsc_mfr = ident.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_M1) or ident.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_BEACON)
     if wsc_mfr and wsc_mfr != ident.manufacturer:

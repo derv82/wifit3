@@ -115,10 +115,10 @@ def test_wps_identity_fields_beacon():
         manufacturer=b"MikroTik", model_name=b"RouterBOARD", model_number=b"RB951",
         device_name=b"Office AP\x00",
     )), -50)
-    assert r.wps_manufacturer == "MikroTik"
-    assert r.wps_model_name == "RouterBOARD"
-    assert r.wps_model_number == "RB951"
-    assert r.wps_device_name == "Office AP"
+    assert r.wsc_manufacturer == "MikroTik"
+    assert r.wsc_model_name == "RouterBOARD"
+    assert r.wsc_model_number == "RB951"
+    assert r.wsc_device_name == "Office AP"
 
 
 def test_no_wps_ie_absent():

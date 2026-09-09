@@ -94,6 +94,8 @@ WSC_NACK = 0x03
 WSC_MSG = 0x04
 WSC_DONE = 0x05
 WSC_FRAG_ACK = 0x06
+WSC_FLAG_MORE_FRAGMENTS = 0x01
+WSC_FLAG_LENGTH_FIELD = 0x02
 
 # Device Password ID
 DEV_PW_DEFAULT = 0x0000
@@ -475,14 +477,17 @@ def parse_rx_frame(frame: bytes) -> Optional[ParsedEap]:
         return ParsedEap(eap_code=code, eap_id=eap_id, eap_type=eap_type)
     # Expanded: type(1) vendor-id(3) vendor-type(4) opcode(1) flags(1) attrs…
     exp = e + 5
-    if exp + 8 > len(frame):
+    if exp + 9 > len(frame):
         return None
     vendor_id = frame[exp : exp + 3]
     vendor_type = frame[exp + 3 : exp + 7]
     opcode = frame[exp + 7]
+    flags = frame[exp + 8]
     if vendor_id != WFA_VENDOR_ID or vendor_type != WFA_VENDOR_TYPE_SIMPLECONFIG:
         return None
     attrs_start = exp + 9                              # skip opcode + flags
+    if flags & WSC_FLAG_LENGTH_FIELD:
+        attrs_start += 2
     # Bound the WSC message by the EAP length field, NOT the end of the frame.
     # The EAP length is authoritative for what the AP signed into the next
     # Authenticator HMAC (HMAC(authkey, M_prev ‖ M_curr) covers the raw WSC

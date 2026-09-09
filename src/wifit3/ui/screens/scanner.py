@@ -17,7 +17,7 @@ from rich.text import Text
 
 from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
-from wifit3.campaigns.probe import probe_ap
+from wifit3.campaigns.probe import probe_ap, ProbeResult
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.dot11.wsc.identity import WpsM1Identity
 from wifit3.persist.capture_history import load_capture_index, summarize
@@ -852,7 +852,7 @@ class ScannerView(Screen):
             self._router_info_probe_bssid = None
 
     @staticmethod
-    def _format_probe_result(result) -> str:
+    def _format_probe_result(result: ProbeResult) -> str:
         if result.wps_identity is not None:
             fields = ScannerView._format_wps_m1_identity(result.wps_identity)
             return f"WSC M1: {fields}" if fields else "WSC M1 received"
@@ -867,6 +867,7 @@ class ScannerView(Screen):
             ("model", identity.model_name),
             ("model_no", identity.model_number),
             ("name", identity.device_name),
+            ("dev_type", identity.device_type),
         ]
         return ", ".join(f"{name}={escape(value)}" for name, value in parts if value)
 
