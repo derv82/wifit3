@@ -9,7 +9,7 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Tooltip
 
-from wifit3.wlan.fingerprint import Fingerprint
+from wifit3.id import Fingerprint
 
 
 def _widget_id(mac: str) -> str:

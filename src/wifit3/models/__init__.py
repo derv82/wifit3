@@ -5,10 +5,14 @@ from .handshake import HandshakeMessage, Handshake
 from .access_point import WepStats, PersistedCapture, AccessPoint
 from .client import Client
 from .device_id import DeviceID
+from .identity import ApIdentity, IdKey, IdSource
 
 __all__ = [
+    "ApIdentity",
     "HandshakeMessage",
     "Handshake",
+    "IdKey",
+    "IdSource",
     "WepStats",
     "PersistedCapture",
     "AccessPoint",

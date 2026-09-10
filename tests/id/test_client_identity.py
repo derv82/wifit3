@@ -1,7 +1,7 @@
 from rich.cells import cell_len
 
-from wifit3.wlan.fingerprint import _GENERIC_EMOJI, _RULES, fingerprint
-from wifit3.wlan.fingerprint_vendors import VENDOR_BY_OUI
+from wifit3.id import VENDOR_BY_OUI, fingerprint
+from wifit3.id.client import _GENERIC_EMOJI, _RULES
 
 
 def test_ring_oui_recognized():

@@ -26,6 +26,7 @@ from enum import Enum
 from typing import Callable, Optional, Protocol
 
 from wifit3.campaigns.wps.pixie import PixieBundle
+from wifit3.dot11.deauth import reason_description
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc import crypto as wc
 
@@ -90,20 +91,13 @@ def config_error_name(code: Optional[int]) -> str:
 # After this many EAP-Req/Identity with no M1, the AP is "stuck at identity".
 _IDENTITY_STALL = 8
 
-# 802.11 reason codes (disassoc/deauth): the AP's stated reason for kicking us.
-_DISASSOC_REASONS = {
-    1: "unspecified", 2: "prev-auth-invalid", 3: "deauth-leaving", 4: "inactivity",
-    5: "AP-overloaded", 6: "class2-from-nonauth", 7: "class3-from-nonassoc", 8: "disassoc-leaving",
-    9: "not-authenticated", 15: "4way-timeout", 16: "group-key-timeout", 23: "802.1X-auth-failed",
-}
-
 
 def disassoc_reason(frame: bytes) -> str:
     """Reason code (name) from a disassoc/deauth frame body, or '?' if too short."""
     if len(frame) < 26:
         return "?"
     code = int.from_bytes(frame[24:26], "little")
-    return _DISASSOC_REASONS.get(code, str(code))
+    return reason_description(code)
 
 # 802.11 management subtypes, so the WPS trace can name a frame the AP sends us but that
 # isn't WSC (a DISASSOC/DEAUTH = the AP kicking us; the rest are the assoc handshake).

@@ -4,12 +4,41 @@ The frame bytes only; the stateful auth+assoc exchange (retries, RX matching) li
 the campaign that drives these, ``campaigns.auth_assoc``.
 """
 import struct
+from typing import Optional
 
-from wifit3.dot11.ie import ssid_ie, rates_ie, ext_rates_ie
+from wifit3.dot11.ie import ssid_ie, rates_ie, ext_rates_ie, ht_cap_ie
 
-# Assoc-request capability: ESS + Privacy. Distinct from the probe-response capability
-# (see dot11.probe._CAPABILITY_INFO). Do not conflate.
-_CAP_ESS_PRIVACY = 0x0011
+# Standard 802.11 Authentication / Association response status codes.
+STATUS_CODES = {
+    0: "success",
+    1: "unspecified-failure",
+    10: "caps-unsupported",
+    12: "assoc-denied-outside-standard",
+    13: "rates-unsupported",
+    14: "short-slot-unsupported",
+    15: "dsss-ofdm-unsupported",
+    17: "assoc-denied-ap-busy",
+    18: "basic-rates-unsupported",
+    19: "short-preamble-unsupported",
+    27: "ht-caps-required",
+    30: "pmf-required",
+    34: "ht-caps-unsupported",
+    40: "invalid-ie",
+    41: "group-cipher-invalid",
+    42: "pairwise-cipher-invalid",
+    43: "akm-invalid",
+    44: "rsne-version-unsupported",
+    45: "rsne-caps-invalid",
+    46: "cipher-suite-rejected",
+    72: "vht-caps-unsupported",
+}
+
+
+def status_description(code: Optional[int]) -> str:
+    """Human name for an 802.11 auth/assoc status code."""
+    if code is None:
+        return "none"
+    return STATUS_CODES.get(code, f"unknown(0x{code:02x})")
 
 
 def _hdr(fc: bytes, bssid: bytes, our_mac: bytes) -> bytes:
@@ -23,11 +52,18 @@ def auth_req(bssid: bytes, our_mac: bytes) -> bytes:
     return _hdr(b"\xb0\x00", bssid, our_mac) + b"\x00\x00\x01\x00\x00\x00"
 
 
-def assoc_req(bssid: bytes, our_mac: bytes, ssid: str, trailer_ies: bytes = b"") -> bytes:
-    """Association Request: ESS+Privacy capabilities, listen interval, SSID + rates, then
-    any ``trailer_ies`` the caller appends (a forced-PSK RSN IE for PMKID, a WPS vendor IE
-    for the WPS exchange, or nothing for plain/WEP association)."""
-    cap = struct.pack("<H", _CAP_ESS_PRIVACY)
+def assoc_req(bssid: bytes, our_mac: bytes, ssid: str, trailer_ies: bytes = b"",
+              channel: int = 1, privacy: Optional[bool] = None,
+              ht_capable: bool = True) -> bytes:
+    """Association Request: band-aware rates, 20MHz HT caps, ESS+(auto)Privacy."""
+    if privacy is None:
+        has_rsn = b"\x30" in trailer_ies or b"\x00\x50\xf2\x01" in trailer_ies
+        has_wps = b"\x00\x50\xf2\x04" in trailer_ies
+        privacy = not (has_wps and not has_rsn)
+
+    cap_val = 0x0011 if privacy else 0x0001
+    cap = struct.pack("<H", cap_val)
     listen = struct.pack("<H", 0x0001)
-    ies = ssid_ie(ssid) + rates_ie() + ext_rates_ie() + trailer_ies
+    ht = ht_cap_ie() if ht_capable else b""
+    ies = ssid_ie(ssid) + rates_ie(channel) + ext_rates_ie(channel) + ht + trailer_ies
     return _hdr(b"\x00\x00", bssid, our_mac) + cap + listen + ies

