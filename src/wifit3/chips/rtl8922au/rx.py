@@ -56,6 +56,9 @@ def iter_bulk_frames(buf: bytes):
         if pkt_size == 0 or pos + total > n:              # padding / truncated tail
             break
         if pkt_type == RX_TYPE_WIFI:
+            if (w0 >> 30) & 1:                            # BB_SEL 1: uncalibrated secondary path [SRC] core.c:3057
+                pos += (total + 15) & ~15
+                continue
             rssi = None
             if phy_rpt_len == 8:                          # phy report present iff sizeof(rxd_rpt_v2)
                 rpt = struct.unpack_from("<I", buf, pos + rxd_len)[0]  # BE_RXD_PHY_RSSI = GENMASK(11,0)

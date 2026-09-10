@@ -39,6 +39,14 @@ def test_same_source_repeat_counts_as_dup_but_not_both():
     assert m.dup == 1 and m.both == 0              # 'both' needs two DISTINCT sources
 
 
+def test_submit_detailed_distinguishes_cross_card_and_intra_card_dups():
+    m = StreamMerger([A, B], window=0.3)
+    assert m.submit_detailed(A, _frame(), 0.0) == (True, True)    # novel globally, first for A
+    assert m.submit_detailed(B, _frame(), 0.05) == (False, True)  # dup globally, first for B (cross-card)
+    assert m.submit_detailed(A, _frame(), 0.10) == (False, False) # dup globally, already seen by A (intra-card)
+    assert m.submit_detailed(B, _frame(), 0.15) == (False, False) # dup globally, already seen by B (intra-card)
+
+
 def test_duration_field_is_ignored_by_key():
     m = StreamMerger([A, B], window=0.3)
     m.submit(A, _frame(dur=b"\x00\x00"), 0.0)

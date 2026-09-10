@@ -202,7 +202,10 @@ class WlanArray:
             return
         if self._is_stray_beacon(pkt):
             return
-        if self._dedupe.submit(card_id, pkt.raw, time.monotonic()):
+        novel_globally, is_first_for_card = self._dedupe.submit_detailed(
+            card_id, pkt.raw, time.monotonic()
+        )
+        if novel_globally:
             self._sink.update(pkt, card_id, channel_hint=iface.current_channel)
             self._sink.dispatch_rx(pkt)
             for cb in self._rx_callbacks:
@@ -210,7 +213,7 @@ class WlanArray:
                     cb(pkt)
                 except Exception:
                     logger.exception("Deduped RX callback failed")
-        else:
+        elif is_first_for_card:
             self._sink.record_signal(card_id, pkt.bssid, pkt.rssi)
 
     def ignore_stray_beacons(self, bssid: str, channel: int) -> None:

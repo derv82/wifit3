@@ -64,22 +64,27 @@ class StreamMerger:
             return raw[0:2] + raw[4:24]
         return raw
 
-    def submit(self, src: str, raw: bytes, now: float) -> bool:
+    def submit_detailed(self, src: str, raw: bytes, now: float) -> tuple[bool, bool]:
+        """Submit a frame. Returns (novel_globally, is_first_for_src)."""
         self._evict(now)
         self.rx[src] = self.rx.get(src, 0) + 1
         k = self.key(raw)
         ent = self._seen.get(k)
         if ent is not None and now - ent[0] <= self.window:
             self.dup += 1
-            if src not in ent[1]:
+            is_first_for_src = src not in ent[1]
+            if is_first_for_src:
                 ent[1].add(src)
                 if len(ent[1]) == 2:
                     self.both += 1
-            return False
+            return False, is_first_for_src
         self._seen[k] = [now, {src}]
         self.novel += 1
         self.first[src] = self.first.get(src, 0) + 1
-        return True
+        return True, True
+
+    def submit(self, src: str, raw: bytes, now: float) -> bool:
+        return self.submit_detailed(src, raw, now)[0]
 
     def _evict(self, now: float) -> None:
         """Retire keys older than the window, tallying the ones only a single source ever heard.

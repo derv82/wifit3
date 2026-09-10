@@ -95,8 +95,9 @@ class WlanSink:
         if history is None:
             history = deque(maxlen=cls.SIGNAL_WINDOW_SIZE)
             history_map[card_id] = history
-        history.append(rssi)
-        return round(sum(history) / len(history))
+        if rssi is not None and (rssi > -100 or not history):
+            history.append(rssi)
+        return round(sum(history) / len(history)) if history else -100
 
     def _record_ap_signal(self, ap: AccessPoint, card_id: str, rssi: int) -> None:
         ap.signal_by_card[card_id] = self._smooth(ap.signal_history, card_id, rssi)

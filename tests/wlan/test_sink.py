@@ -78,6 +78,16 @@ def test_signal_sliding_window_absorbs_spikes_and_evicts_old_samples():
     assert len(ap.signal_history[W0]) == 8
 
 
+def test_signal_sliding_window_ignores_dummy_minus_100():
+    s = WlanSink()
+    s.update(_beacon({"rssi": -65}), W0)
+    # A driver emitting -100 for a frame with missing RSSI report must not drag down signal
+    s.update(_beacon({"rssi": -100}), W0)
+    ap = s.get_access_points()[0]
+    assert ap.signal == -65
+    assert len(ap.signal_history[W0]) == 1
+
+
 def test_signal_is_strongest_across_cards():
     s = WlanSink()
     s.update(_beacon({"rssi": -70}), W0)
