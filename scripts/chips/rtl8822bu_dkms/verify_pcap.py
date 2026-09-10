@@ -22,8 +22,9 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
-from wifit3.chips.rtl8822bu_dkms import bringup, mac
+from wifit3.chips.rtl8822bu_dkms import bringup, mac, rx
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport
+from wifit3.dot11.parser import WlanFrameParser
 
 DEFAULT_CAP = REPO / "driver_captures" / "captures_rtl88x2bu" / "capture-1.pcap"
 
@@ -81,6 +82,24 @@ def _verify_monitor(ops) -> None:
           f"-> RX frames land next")
 
 
+def _pump_rx(t: Rtl8822buTransport) -> tuple[int, int, int]:
+    """Drive the driver's RX path over the captured bulk-IN FIFO."""
+    reads = 0
+    frames_count = 0
+    beacons = 0
+    while True:
+        buf = t.bulk_in()
+        if buf is None:
+            break
+        reads += 1
+        for frame, rssi in rx.iter_frames(buf):
+            frames_count += 1
+            parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
+            if parsed is not None and parsed.type == "beacon":
+                beacons += 1
+    return reads, frames_count, beacons
+
+
 def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None       # replay needs no settle delays
 
@@ -94,16 +113,18 @@ def run(cap: str | None = None) -> int:
     # Merge control + bulk-OUT into one frame-ordered stream so the FW download (vendor
     # register writes interleaved with bulk FW packets) replays against one ReplayDevice.
     ctrl = rp.extract_ctrl_ops(pcap, dev_addr)
-    bulk = rp.extract_bulk_out_ops(pcap, dev_addr)
-    ops = rp.merge_ops_by_frame(ctrl, bulk)
-    print(f"{pcap.name}: card=dev{dev_addr}, {len(ctrl)} control + {len(bulk)} bulk-OUT ops")
+    bulk_out = rp.extract_bulk_out_ops(pcap, dev_addr)
+    bulk_in = rp.extract_bulk_in_ops(pcap, dev_addr)
+    ops = rp.merge_ops_by_frame(ctrl, bulk_out)
+    print(f"{pcap.name}: card=dev{dev_addr}, {len(ctrl)} control + {len(bulk_out)} bulk-OUT + {len(bulk_in)} bulk-IN ops")
     print("  first 40 control ops (* = 0x4E0 page-switch mirror):")
     for k, o in enumerate(ops[:40]):
         tag = " *" if o["wval"] == 0x04E0 else ""
         print(f"    [{k:3}] f{o['frame']:<7} {_fmt(o)}{tag}")
 
-    dev = rp.ReplayDevice(ops)
+    dev = rp.ReplayDevice(ops, responses=bulk_in)
     t = Rtl8822buTransport(dev)
+    t._in_ep = 0x84
     try:
         _bringup(t)
     except rp.Divergence as e:
@@ -116,14 +137,11 @@ def run(cap: str | None = None) -> int:
         nxt = ops[consumed]
         print(f"FRONTIER -> op #{consumed} (frame {nxt['frame']}): {_fmt(nxt)}")
         if consumed >= CAL_SCAN_START:
-            # The deterministic cold init is fully reproduced. Everything past here is the
-            # vendor's all-channel RF cal scan (IQK/DPK/TSSI over every 2.4G+5G channel, twice);
-            # per the Lead's decision we cal per-channel on-demand in set_channel, not by replaying
-            # this scan. See RTL8822BU_DKMS.md "RF calibration".
-            print("  PASS: the full vendor chip init (rtl8822b_init) is reproduced byte-for-byte.")
-            print("  Remaining: OS interface-up/opmode (driver connect()), then the per-channel cal")
-            print("  scan (verify_channels), then aireplay-ng TX injection at op 28910 (the stop).")
+            print("  Cold bring-up (rtl8822b_init) is reproduced byte-for-byte to CAL_SCAN_START.")
+            print("  Remaining ops: OS interface-up / opmode state machine, per-channel calibration, and operational traffic.")
             _verify_monitor(ops)   # the driver's runtime monitor RX-enable (sliced-window check)
+            reads, nframes, nbcn = _pump_rx(t)
+            print(f"  bulk-IN RX replay: {reads} buffers popped, {nframes} frames decoded, {nbcn} beacons parsed cleanly.")
         else:
             print("  (this is the next op to port; not yet a full PASS)")
         return 0

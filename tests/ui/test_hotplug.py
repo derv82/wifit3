@@ -6,7 +6,9 @@ import pytest
 
 import wifit3.device.manager as manager
 from wifit3.chips.driver import DeviceID
+from wifit3.errors import WifiteDeviceLostError
 from wifit3.ui.app import WifiteApp
+from wifit3.ui.screens.error_modals import RecoverableErrorModal
 from wifit3.ui.screens.new_device import NewDeviceDialog
 from wifit3.ui.screens.scanner import ScannerView
 from wifit3.ui.screens.splash import SplashView
@@ -118,3 +120,26 @@ async def test_arrival_on_splash_updates_the_list_not_a_prompt():
         assert isinstance(app.screen, SplashView)     # no prompt on Splash
         labels = [str(i.query_one("Label").render()) for i in app.screen.query("ListView > ListItem")]
         assert any("RT5370 (test)" in text for text in labels)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_reconnect_after_last_card_lost_dismisses_recovery_modal(monkeypatch):
+    dev = DeviceID(0x0BDA, 0x8812, "RTL8812AU (test)")
+    iface = _FakeIface(dev)
+    monkeypatch.setattr(manager, "wlan_iface", lambda device_id, name="wlan0": iface)
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        app.switch_screen("scanner")
+        await pilot.pause(0)
+        app.push_screen(RecoverableErrorModal(WifiteDeviceLostError("the wireless adapter")))
+        await pilot.pause(0)
+        assert isinstance(app.screen, RecoverableErrorModal)
+
+        app._on_devices_changed([dev], [dev], [])
+        for _ in range(20):
+            await pilot.pause(0)
+            if isinstance(app.screen, NewDeviceDialog):
+                break
+        assert not any(isinstance(s, RecoverableErrorModal) for s in app.screen_stack)

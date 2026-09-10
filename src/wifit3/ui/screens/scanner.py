@@ -1,8 +1,10 @@
 import asyncio
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
+from textual._two_way_dict import TwoWayDict
 from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -10,10 +12,10 @@ from textual.reactive import Reactive
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, RichLog
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
-from rich.color import Color
 from rich.markup import escape
-from rich.style import Style
-from rich.text import Span, Text
+from rich.text import Text
+
+from ..selectable_rich_log import SelectableRichLog
 
 from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
@@ -37,104 +39,28 @@ if TYPE_CHECKING:
     from wifit3.ui.app import WifiteApp
 
 
-FADE_DURATION_S = 30.0  # Seconds to fade a row after the AP does not see a beacon.
-GRACE_DURATION_S = 7.0  # Time to wait after the last beacon before we begin fading a row.
-MAX_FADE_FACTOR = 0.7
-_FADE_STEPS = 10
+STALE_DURATION_S = 10.0  # Seconds without a beacon before an AP row is dimmed.
+EVICT_DURATION_S = 30.0  # Seconds without a beacon before an AP is dropped from the table.
+FADE_DURATION_S = EVICT_DURATION_S
 
 SORT_INTERVAL_S = 2.0  # Table sort delay
-
-# The 🥓 beacon counter increments ~10x/s per live AP. Stepping the *displayed*
-# value that fast rewrote every row every frame and pinned the compositor (the
-# dominant scanner CPU cost). Stepping it at most this often lets a steadily-
-# beaconing row hold still between steps, so its table line stops re-rendering.
-# The beacon-arrival flash still fires on the real count, so liveness is intact.
 BEACON_DISPLAY_INTERVAL_S = 0.5
 
 
-_ANSI_RGB = {
-    "ansi_black": (0, 0, 0),
-    "ansi_red": (128, 0, 0),
-    "ansi_green": (0, 128, 0),
-    "ansi_yellow": (128, 128, 0),
-    "ansi_blue": (0, 0, 128),
-    "ansi_magenta": (128, 0, 128),
-    "ansi_cyan": (0, 128, 128),
-    "ansi_white": (192, 192, 192),
-    "ansi_bright_black": (128, 128, 128),
-    "ansi_bright_red": (255, 0, 0),
-    "ansi_bright_green": (0, 255, 0),
-    "ansi_bright_yellow": (255, 255, 0),
-    "ansi_bright_blue": (0, 0, 255),
-    "ansi_bright_magenta": (255, 0, 255),
-    "ansi_bright_cyan": (0, 255, 255),
-    "ansi_bright_white": (255, 255, 255),
-}
-_ANSI_STYLE = {
-    name: name.removeprefix("ansi_")
-    for name in _ANSI_RGB
-}
-_ANSI_STYLE["ansi_default"] = ""
-_ANSI_STYLE["transparent"] = ""
-
-
-def _theme_rgb(value: str | None, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
-    if not value or value in ("transparent", "ansi_default"):
-        return fallback
-    if value in _ANSI_RGB:
-        return _ANSI_RGB[value]
-    h = value.lstrip("#")
-    if len(h) == 6:
-        try:
-            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-        except ValueError:
-            pass
-    return fallback
-
-
-def _parse_style(style) -> Style:
-    if isinstance(style, Style):
-        return style
-    if not style:
-        return Style()
-    tokens = [_ANSI_STYLE.get(tok, tok) for tok in str(style).split()]
-    cleaned = " ".join(tok for tok in tokens if tok)
-    try:
-        return Style.parse(cleaned) if cleaned else Style()
-    except Exception:
-        return Style()
-
-
-def _fade_text(text: Text, factor: float, bg: tuple[int, int, int]) -> Text:
-    """Blend every span's foreground toward `bg` by `factor` (0..1)."""
-    if factor <= 0:
-        return text
-
-    def _fade(style):
-        parsed = _parse_style(style)
-        if parsed.color is None:
-            return parsed
-        t = parsed.color.get_truecolor()
-        s = 1.0 - factor
-        return parsed + Style(color=Color.from_rgb(
-            t.red * s + bg[0] * factor,
-            t.green * s + bg[1] * factor,
-            t.blue * s + bg[2] * factor,
-        ))
-
-    out = text.copy()
-    out.style = _fade(out.style)
-    out.spans = [Span(sp.start, sp.end, _fade(sp.style)) for sp in out.spans]
-    return out
-
-
-def _cells_key(cells: List[Text]) -> tuple:
-    """A cheap, comparable fingerprint of a row's pre-fade cells: plain text plus
-    styles (base + spans)."""
-    return tuple(
-        (c.plain, str(c.style), tuple((s.start, s.end, str(s.style)) for s in c.spans))
-        for c in cells
-    )
+@dataclass(slots=True)
+class _APRowState:
+    signal: int
+    beacons: int
+    clients: int
+    is_stale: bool
+    flash: bool = False
+    wps: bool = False
+    wps_locked: bool = False
+    ssid: Optional[str] = None
+    chips_markup: str = ""
+    identity: str = ""
+    channel: int = 0
+    encryption: str = ""
 
 
 def device_scan_summary(members) -> Optional[str]:
@@ -202,6 +128,19 @@ class _APScanTable(DataTable):
     def _release_scroll(self) -> None:
         self._suppress_scroll = False
 
+    def sort_aps(self, sort_key: str, key_func: Callable[[str, Any], Any], reverse: bool) -> None:
+        """Sort rows by key_func(row_key, cell_value)."""
+        ordered_rows = sorted(
+            self._data.items(),
+            key=lambda r: key_func(r[0].value, r[1].get(sort_key)),
+            reverse=reverse,
+        )
+        self._row_locations = TwoWayDict(
+            {row_key: idx for idx, (row_key, _) in enumerate(ordered_rows)}
+        )
+        self._update_count += 1
+        self.refresh()
+
 
 class ScannerView(Screen):
     """The main AP scanning list screen."""
@@ -223,21 +162,27 @@ class ScannerView(Screen):
 
     # (column_key, display_label). Order here = on-screen order.
     _COLUMNS = [
-        ("bssid", "BSSID"),
+        ("ssid", "SSID"),
         ("channel", "CH"),
         ("signal", "POWER"),
         ("beacons", "🥓"),
         ("clients", "💻"),
         ("encryption", "ENCRYPT"),
         ("wps", "WPS"),
-        ("ssid", "SSID"),
+        ("identity", "VENDOR/ID"),
     ]
 
-    # Columns whose values are right-aligned numerics.
-    _RIGHT_ALIGNED = {"channel", "signal", "beacons", "clients"}
+    # Columns whose values are right-aligned in display.
+    _RIGHT_ALIGNED = {"ssid", "channel", "signal", "beacons", "clients"}
+
+    # Columns whose values are numeric for sorting.
+    _NUMERIC_COLS = {"channel", "signal", "beacons", "clients"}
 
     # How long to flash the 🥓 cell when a beacon arrives.
     BEACON_FLASH_S = 0.2
+
+    # Power deadband threshold (dBm) to prevent row flapping on RSSI noise.
+    SORT_POWER_DEADBAND_DB = 3
 
     def __init__(self):
         super().__init__()
@@ -255,8 +200,10 @@ class ScannerView(Screen):
         self._beacon_flash_until: Dict[str, float] = {}
         # Throttled 🥓 count actually shown, per BSSID: (value, last-stepped-at).
         self._beacon_shown: Dict[str, tuple[int, float]] = {}
-        # Per-BSSID last render key (fade bucket + cell content).
-        self._render_key: Dict[str, tuple] = {}
+        # Per-BSSID dynamic row state and sort power.
+        self._row_states: Dict[str, _APRowState] = {}
+        self._sort_power: Dict[str, int] = {}
+        self._last_user_nav: float = 0.0
         # captures/ history, loaded once at mount and hydrated onto APs by
         # BSSID so previously-saved handshakes/PMKIDs/WEP keys re-badge.
         self._capture_index: Dict[str, List[PersistedCapture]] = {}
@@ -278,13 +225,14 @@ class ScannerView(Screen):
                 # Reserve 2 chars in every header to account for sort indicator
                 table.add_column(label + "  ", key=key)
             yield table
-            yield RichLog(id="system-log", markup=True, highlight=True)
+            yield SelectableRichLog(id="system-log", markup=True, highlight=True)
         yield Footer()
 
     async def on_mount(self) -> None:
         log = self.query_one("#system-log", RichLog)
+        scanner_sort = "identity" if Config.scanner_sort in ("vendor", "brand") else Config.scanner_sort
         self._sort_idx = next(
-            (i for i, (key, _label) in enumerate(self._COLUMNS) if key == Config.scanner_sort), 2)
+            (i for i, (key, _label) in enumerate(self._COLUMNS) if key == scanner_sort), 2)
         self._sort_reverse = Config.scanner_sort_reverse
         self._update_column_headers()
         self.query_one("#ap-table", DataTable).focus()
@@ -333,7 +281,7 @@ class ScannerView(Screen):
             parts.append(f"{wps} WPS PSK{'s' * (wps != 1)}")
         if not parts:
             return None
-        return "Existing [bold]captures/[/bold]: " + ", ".join(parts)
+        return f"Existing [bold]{Config.captures_dir}/[/bold]: " + ", ".join(parts)
 
     async def on_screen_resume(self) -> None:
         # Restart channel hopper
@@ -380,14 +328,7 @@ class ScannerView(Screen):
                 client_counts[c.bssid] = client_counts.get(c.bssid, 0) + 1
 
         now = time.time()
-        tv = self.app.theme_variables
-        # Fade toward $surface (actual bg), not $background (the screen bg). Some Textual
-        # themes use symbolic tokens (``transparent`` / ``ansi_default``), so fall back safely.
-        bg_fallback = _theme_rgb(tv.get("background"), (0, 0, 0))
-        bg = _theme_rgb(tv.get("surface"), bg_fallback)
-        self._theme_fg = tv.get("foreground", "#ffffff")
-
-        fade_span = max(0.001, FADE_DURATION_S - GRACE_DURATION_S)
+        self._theme_fg = self.app.theme_variables.get("foreground", "#ffffff")
 
         for ap in array.get_access_points(include_eviltwin=False):
             guessed_ssid = (
@@ -400,8 +341,8 @@ class ScannerView(Screen):
                     self._forget_row(ap.bssid, drop_from_array=False)
                 continue
 
-            age = now - ap.last_seen
-            if age >= FADE_DURATION_S:
+            age = self._ap_row_age(ap, now)
+            if age >= EVICT_DURATION_S:
                 continue
 
             if not ap.persisted:
@@ -409,12 +350,13 @@ class ScannerView(Screen):
                 if hist:
                     ap.persisted = hist
 
+            is_stale = age > STALE_DURATION_S
             n_cli = client_counts.get(ap.bssid, 0)
-            if age <= GRACE_DURATION_S:
-                factor = 0.0
-            else:
-                prog = min(1.0, (age - GRACE_DURATION_S) / fade_span)
-                factor = round(prog * _FADE_STEPS) / _FADE_STEPS * MAX_FADE_FACTOR
+
+            # Update sort deadband
+            sp = self._sort_power.get(ap.bssid)
+            if sp is None or abs(ap.signal - sp) >= self.SORT_POWER_DEADBAND_DB:
+                self._sort_power[ap.bssid] = ap.signal
 
             # Beacon-arrival flash: bump the deadline when beacon count changes.
             prev = self._prev_beacons.get(ap.bssid)
@@ -424,20 +366,40 @@ class ScannerView(Screen):
             flash_bacon = now < self._beacon_flash_until.get(ap.bssid, 0.0)
 
             shown_beacons = self._display_beacons(ap, now)
-            raw = self._build_cells(
-                ap, n_cli, flash_bacon=flash_bacon, beacons_display=shown_beacons
-            )
-            # Render key = fade bucket + bg + pre-fade cell content.
-            render_key = (factor, bg, _cells_key(raw))
+            chips_markup = self._ssid_chips_markup(ap)
+            enc_markup = format_encryption_markup(ap, muted=self._theme_fg)
+            ident_summary = ap.identity.summary
 
-            if ap.bssid not in self.ap_cache:
+            prev_state = self._row_states.get(ap.bssid)
+            if prev_state is None:
                 self.ap_cache[ap.bssid] = ap
-                self._render_key[ap.bssid] = render_key
-                table.add_row(*(_fade_text(c, factor, bg) for c in raw), key=ap.bssid)
+                self._row_states[ap.bssid] = _APRowState(
+                    signal=ap.signal,
+                    beacons=shown_beacons,
+                    clients=n_cli,
+                    is_stale=is_stale,
+                    flash=flash_bacon,
+                    wps=ap.wps,
+                    wps_locked=ap.wps_locked,
+                    ssid=ap.ssid,
+                    chips_markup=chips_markup,
+                    identity=ident_summary,
+                    channel=ap.channel,
+                    encryption=enc_markup,
+                )
+                row_cells = [
+                    self._render_cell(
+                        ap, col_k, is_stale, n_cli=n_cli,
+                        flash_bacon=flash_bacon, shown_beacons=shown_beacons,
+                    )
+                    for col_k, _ in self._COLUMNS
+                ]
+                table.add_row(*row_cells, key=ap.bssid)
             else:
+                self.ap_cache[ap.bssid] = ap
+
                 # Decloak event: already logged here.
-                old_ssid = self.ap_cache[ap.bssid].ssid
-                if not old_ssid and ap.ssid:
+                if not prev_state.ssid and ap.ssid:
                     self._write_log(
                         Text.from_markup(
                             f"[bold yellow][*] Decloaked Hidden Network: "
@@ -446,19 +408,73 @@ class ScannerView(Screen):
                         )
                     )
 
-                self.ap_cache[ap.bssid] = ap
-                if self._render_key.get(ap.bssid) != render_key:
-                    self._render_key[ap.bssid] = render_key
-                    cells = [_fade_text(c, factor, bg) for c in raw]
-                    for (col_key, _), cell in zip(self._COLUMNS, cells):
-                        table.update_cell(ap.bssid, col_key, cell)
+                if prev_state.is_stale != is_stale:
+                    prev_state.is_stale = is_stale
+                    prev_state.signal = ap.signal
+                    prev_state.beacons = shown_beacons
+                    prev_state.clients = n_cli
+                    prev_state.flash = flash_bacon
+                    prev_state.wps = ap.wps
+                    prev_state.wps_locked = ap.wps_locked
+                    prev_state.ssid = ap.ssid
+                    prev_state.chips_markup = chips_markup
+                    prev_state.identity = ident_summary
+                    prev_state.channel = ap.channel
+                    prev_state.encryption = enc_markup
+                    for col_k, _ in self._COLUMNS:
+                        cell = self._render_cell(
+                            ap, col_k, is_stale, n_cli=n_cli,
+                            flash_bacon=flash_bacon, shown_beacons=shown_beacons,
+                        )
+                        table.update_cell(ap.bssid, col_k, cell)
+                else:
+                    if prev_state.ssid != ap.ssid or prev_state.chips_markup != chips_markup:
+                        prev_state.ssid = ap.ssid
+                        prev_state.chips_markup = chips_markup
+                        table.update_cell(ap.bssid, "ssid", self._render_cell(ap, "ssid", is_stale))
+
+                    if prev_state.channel != ap.channel:
+                        prev_state.channel = ap.channel
+                        table.update_cell(ap.bssid, "channel", self._render_cell(ap, "channel", is_stale))
+
+                    if prev_state.signal != ap.signal:
+                        prev_state.signal = ap.signal
+                        table.update_cell(ap.bssid, "signal", self._render_cell(ap, "signal", is_stale))
+
+                    if prev_state.beacons != shown_beacons or prev_state.flash != flash_bacon:
+                        prev_state.beacons = shown_beacons
+                        prev_state.flash = flash_bacon
+                        table.update_cell(
+                            ap.bssid, "beacons",
+                            self._render_cell(ap, "beacons", is_stale, flash_bacon=flash_bacon, shown_beacons=shown_beacons),
+                        )
+
+                    if prev_state.clients != n_cli:
+                        prev_state.clients = n_cli
+                        table.update_cell(
+                            ap.bssid, "clients",
+                            self._render_cell(ap, "clients", is_stale, n_cli=n_cli),
+                        )
+
+                    if prev_state.encryption != enc_markup:
+                        prev_state.encryption = enc_markup
+                        table.update_cell(ap.bssid, "encryption", self._render_cell(ap, "encryption", is_stale))
+
+                    if prev_state.wps != ap.wps or prev_state.wps_locked != ap.wps_locked:
+                        prev_state.wps = ap.wps
+                        prev_state.wps_locked = ap.wps_locked
+                        table.update_cell(ap.bssid, "wps", self._render_cell(ap, "wps", is_stale))
+
+                    if prev_state.identity != ident_summary:
+                        prev_state.identity = ident_summary
+                        table.update_cell(ap.bssid, "identity", self._render_cell(ap, "identity", is_stale))
 
             self._drain_capture_events(ap, array.forged_macs)
 
     def _apply_sort_and_evict(self) -> None:
         """Re-sort the table and drop fully-faded APs. Runs every 2 s."""
         self._evict_expired_aps()
-        self._apply_sort(scroll_to_cursor=False)
+        self._apply_sort(scroll_to_cursor=False, force=False)
 
     def _evict_expired_aps(self) -> None:
         if not self.app.array:
@@ -466,10 +482,13 @@ class ScannerView(Screen):
         now = time.time()
         to_drop = [
             bssid for bssid, ap in self.ap_cache.items()
-            if (now - ap.last_seen) >= FADE_DURATION_S
+            if self._ap_row_age(ap, now) >= EVICT_DURATION_S
         ]
         for bssid in to_drop:
             self._forget_row(bssid, drop_from_array=True)
+
+    def _ap_row_age(self, ap: AccessPoint, now: float) -> float:
+        return max(0.0, now - ap.last_seen)
 
     def _forget_row(self, bssid: str, *, drop_from_array: bool) -> None:
         """Drop the AP's row and caches; drop_from_array also evicts it from the registry."""
@@ -479,7 +498,8 @@ class ScannerView(Screen):
         self._prev_beacons.pop(bssid, None)
         self._beacon_flash_until.pop(bssid, None)
         self._beacon_shown.pop(bssid, None)
-        self._render_key.pop(bssid, None)
+        self._row_states.pop(bssid, None)
+        self._sort_power.pop(bssid, None)
         try:
             self.query_one("#ap-table", DataTable).remove_row(bssid)
         except Exception:
@@ -498,49 +518,85 @@ class ScannerView(Screen):
             return ap.beacons
         return shown[0]
 
+    def _render_cell(
+        self, ap: AccessPoint, col_key: str, is_stale: bool,
+        n_cli: int = 0, flash_bacon: bool = False, shown_beacons: int = 0,
+    ) -> Text:
+        """Build the Text renderable for a single column cell."""
+        fg = self._theme_fg
+        dim = "dim " if is_stale else ""
+        if col_key == "ssid":
+            cell = self._ssid_cell(ap)
+            if is_stale:
+                cell.stylize("dim")
+            return cell
+        if col_key == "channel":
+            return Text(str(ap.channel), justify="right", style=f"{dim}{fg}")
+        if col_key == "signal":
+            return Text(f"{ap.signal} dBm", justify="right", style=f"{dim}{fg}")
+        if col_key == "beacons":
+            style = f"{dim}{fg} bold" if flash_bacon else f"{dim}{fg}"
+            return Text(str(shown_beacons), justify="right", style=style)
+        if col_key == "clients":
+            return Text(str(n_cli) if n_cli else "", justify="right", style=f"{dim}{fg}")
+        if col_key == "encryption":
+            cell = Text.from_markup(format_encryption_markup(ap, muted=fg), emoji=False, style=fg)
+            if is_stale:
+                cell.stylize("dim")
+            return cell
+        if col_key == "wps":
+            if ap.wps:
+                label = "WPS 🔒" if ap.wps_locked else "WPS"
+                return Text(label, style=f"{dim}{fg}")
+            return Text("", style=f"{dim}{fg}")
+        if col_key == "identity":
+            return self._identity_cell(ap, is_stale)
+        return Text("")
+
+    def _identity_cell(self, ap: AccessPoint, is_stale: bool = False) -> Text:
+        fg = self._theme_fg
+        dim = "dim " if is_stale else ""
+        text = ap.identity.summary
+        return Text(text, style=f"{dim}{fg}")
+
     def _build_cells(
         self, ap: AccessPoint, n_clients: int, flash_bacon: bool = False,
-        beacons_display: Optional[int] = None,
+        beacons_display: Optional[int] = None, is_stale: bool = False,
     ) -> List[Text]:
-        """Build the per-column full-color Text cells for one AP row."""
-        fg = self._theme_fg
-        bacon_style = f"{fg} bold" if flash_bacon else fg
-        beacons = ap.beacons if beacons_display is None else beacons_display
-        if ap.wps:
-            wps_cell = Text("WPS 🔒" if ap.wps_locked else "WPS", style=fg)
-        else:
-            wps_cell = Text("", style=fg)
+        """Build all column cells for one AP row (order matches _COLUMNS)."""
+        shown = ap.beacons if beacons_display is None else beacons_display
         return [
-            Text(ap.bssid, style=fg),
-            Text(str(ap.channel), justify="right", style=fg),
-            Text(f"{ap.signal} dBm", justify="right", style=fg),
-            Text(str(beacons), justify="right", style=bacon_style),
-            Text(str(n_clients) if n_clients else "", justify="right", style=fg),
-            # style=fg gives the bare '→' between WPA3/WPA2 a fadeable base color.
-            Text.from_markup(format_encryption_markup(ap, muted=fg), emoji=False, style=fg),
-            wps_cell,
-            self._ssid_cell(ap),
+            self._render_cell(
+                ap, col_k, is_stale, n_cli=n_clients,
+                flash_bacon=flash_bacon, shown_beacons=shown,
+            )
+            for col_k, _ in self._COLUMNS
         ]
 
-    # Cap the SSID+badges cell so the trailing capture badges never overflow.
+    # Cap the SSID+badges cell so the capture badges never overflow.
     _SSID_CELL_MAX = 32
 
     def _ssid_cell(self, ap: AccessPoint) -> Text:
-        """name (bold=named, italic=hidden, +'?'=sibling guess) + chips."""
+        """badges (left) + name (bold=named, italic=hidden, +'?'=sibling guess), right-aligned."""
         if ap.ssid:
             name = Text(ap.ssid, style=f"{self._theme_fg} bold")
         else:
             sib = self._best_named_sibling_ssid(ap)
             name = Text(f"{sib}?" if sib else "<Hidden>", style=f"{self._theme_fg} italic")
 
-        chips_markup = self._ssid_chips_markup(ap)  # Silenced, HS, PMK, WEP, PSK
+        chips_markup = self._ssid_chips_markup(ap)  # ✗S, ✓HS, ✓PMK, ✓WEP, ✓WPS
         chips_text = Text.from_markup(chips_markup, emoji=False) if chips_markup else None
         reserved = 1 + chips_text.cell_len if chips_text else 0   # 1 = separator space
         name.truncate(max(1, self._SSID_CELL_MAX - reserved), overflow="ellipsis")
         if chips_text:
-            name.append(" ")
-            name.append_text(chips_text)
-        return name
+            out = Text(justify="right")
+            out.append_text(chips_text)
+            out.append(" ")
+            out.append_text(name)
+        else:
+            out = name
+            out.justify = "right"
+        return out
 
     def _best_named_sibling_ssid(self, ap: AccessPoint) -> Optional[str]:
         """Guess the sibling SSID to display for a hidden AP."""
@@ -558,7 +614,7 @@ class ScannerView(Screen):
 
     @staticmethod
     def _ssid_chips_markup(ap: AccessPoint) -> str:
-        """Badges next to SSID for HS, PMK, WEP, WPS."""
+        """Badges to the left of SSID for HS, PMK, WEP, WPS, silenced."""
         types = {p.type for p in ap.persisted}
         has_hs  = "HS"    in types or any(hs.is_complete for hs in ap.handshakes.values())
         has_pmk = "PMKID" in types or any(hs.pmkid and pmkid_crackable(hs) for hs in ap.handshakes.values())
@@ -656,9 +712,19 @@ class ScannerView(Screen):
 
     # ----- Sort --------------------------------------------------------------
 
-    def _apply_sort(self, *, scroll_to_cursor: bool = True) -> None:
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        table = self.query_one("#ap-table", _APScanTable)
+        if not table._suppress_scroll:
+            self._last_user_nav = time.time()
+
+    def _apply_sort(self, *, scroll_to_cursor: bool = True, force: bool = False) -> None:
         """Re-sort the table, maintains selected item.
-        ``scroll_to_cursor`` controls whether the viewport follows the cursor."""
+        ``scroll_to_cursor`` controls whether the viewport follows the cursor.
+        ``force`` bypasses the user navigation pause."""
+        now = time.time()
+        if not force and (now - self._last_user_nav) < 3.0:
+            return
+
         table = self.query_one("#ap-table", _APScanTable)
         if table.row_count == 0:
             return
@@ -671,21 +737,27 @@ class ScannerView(Screen):
             current_key = None
 
         sort_key, _ = self._COLUMNS[self._sort_idx]
-
         reverse = self._sort_reverse
-        # Only numeric columns try the int/float fast path.
-        is_numeric_col = sort_key in self._RIGHT_ALIGNED
+        is_numeric_col = sort_key in self._NUMERIC_COLS
 
-        def _key(val):
+        def _key(bssid: str, val: Any) -> tuple:
+            if sort_key == "signal":
+                primary = self._sort_power.get(bssid, -100)
+                return (0, primary)
+            if sort_key == "ssid":
+                ap = self.ap_cache.get(bssid)
+                name = (ap.ssid or "") if ap else ""
+                sentinel = int(not name != reverse)
+                return (sentinel, name.lower())
+
             if isinstance(val, Text):
                 val = val.plain
-            s = str(val).strip()
+            s = str(val).strip() if val is not None else ""
             is_empty = not s
 
             if is_empty:
                 primary: object = 0 if is_numeric_col else ""
             elif is_numeric_col:
-                # Strip non-numeric suffix (e.g. " dBm")
                 head = s.split()[0]
                 try:
                     primary = int(head)
@@ -693,16 +765,14 @@ class ScannerView(Screen):
                     try:
                         primary = float(head)
                     except ValueError:
-                        # Numeric column with garbage content - sort last.
                         primary = float("inf") if not reverse else float("-inf")
             else:
                 primary = s.lower()
 
-            # Force empties to the bottom in BOTH sort directions.
             sentinel = int(is_empty != reverse)
             return (sentinel, primary)
 
-        table.sort(sort_key, key=_key, reverse=reverse)
+        table.sort_aps(sort_key, key_func=_key, reverse=reverse)
 
         if current_key:
             try:
@@ -710,7 +780,6 @@ class ScannerView(Screen):
                 if scroll_to_cursor:
                     table.move_cursor(row=new_idx, animate=False)
                 else:
-                    # Keep the highlight on the same AP across the reorder.
                     table.pin_cursor_row(new_idx)
             except Exception:
                 pass
@@ -720,6 +789,16 @@ class ScannerView(Screen):
     def action_toggle_log(self) -> None:
         log_widget = self.query_one("#system-log")
         log_widget.display = not log_widget.display
+
+    def _selected_ap(self) -> Optional[AccessPoint]:
+        table = self.query_one("#ap-table", DataTable)
+        if table.row_count == 0:
+            return None
+        try:
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        except Exception:
+            return None
+        return self.ap_cache.get(row_key)
 
     # ----- WPS PBC opportunistic capture -------------------------------------
 
@@ -843,14 +922,14 @@ class ScannerView(Screen):
         Config.scanner_sort = self._COLUMNS[self._sort_idx][0]
         self.app.persist_config()
         self._update_column_headers()
-        self._apply_sort()
+        self._apply_sort(force=True)
 
     def action_toggle_sort_dir(self) -> None:
         self._sort_reverse = not self._sort_reverse
         Config.scanner_sort_reverse = self._sort_reverse
         self.app.persist_config()
         self._update_column_headers()
-        self._apply_sort()
+        self._apply_sort(force=True)
 
     def action_scroll_home(self) -> None:
         table = self.query_one("#ap-table", DataTable)
@@ -967,5 +1046,5 @@ class ScannerView(Screen):
             Config.scanner_sort_reverse = self._sort_reverse
             self.app.persist_config()
             self._update_column_headers()
-            self._apply_sort()
+            self._apply_sort(force=True)
             return

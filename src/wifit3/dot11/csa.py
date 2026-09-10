@@ -1,6 +1,6 @@
 """CSA/ECSA beacon rewrite: splice channel-switch announcement elements into a captured beacon."""
 from wifit3.dot11.chan import channel_operating_class, same_band
-from wifit3.dot11.ie import csa_ie, ecsa_ie, secondary_channel_offset_ie
+from wifit3.dot11.ie import csa_ie, ecsa_ie, iter_information_elements, secondary_channel_offset_ie
 
 _ELEMID_CSA = 0x25
 _ELEMID_ECSA = 0x3C
@@ -17,14 +17,9 @@ def build_csa_beacon(beacon: bytes, new_channel: int, *, from_channel: int, coun
     header[22:24] = b"\x00\x00"           # seq/frag control: HW-stamped per frame, like the deauth builder
     tags = beacon[_BEACON_BODY_LEN:]
     kept = bytearray()
-    ptr = 0
-    while ptr + 2 <= len(tags):
-        end = ptr + 2 + tags[ptr + 1]
-        if end > len(tags):
-            break
-        if tags[ptr] not in (_ELEMID_CSA, _ELEMID_ECSA):
-            kept += tags[ptr:end]
-        ptr = end
+    for tag_id, _body, raw in iter_information_elements(tags):
+        if tag_id not in (_ELEMID_CSA, _ELEMID_ECSA):
+            kept += raw
     switch = bytearray()
     if same_band(from_channel, new_channel):
         switch += csa_ie(new_channel, count=count)

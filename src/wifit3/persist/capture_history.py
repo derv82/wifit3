@@ -5,33 +5,21 @@ on the next scan. Classification is by filename; the .pcap companion is skipped
 from __future__ import annotations
 
 import logging
-import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
 
 from wifit3.models import PersistedCapture
+from wifit3.persist.common import (
+    AGGREGATED_HC22000_RE,
+    LEGACY_CAPTURE_RE,
+    WEP_KEY_HEX_RE,
+    WPS_PSK_RE,
+    bssid_to_colon,
+)
+from wifit3.persist.config import Config
 
 logger = logging.getLogger(__name__)
-
-# <ssid>_<bssid>_<epoch>_<kind>.<ext>. SSID may itself contain underscores
-# ("Basketball_2_4"), so anchor on the dash-separated 6-octet BSSID + epoch +
-# kind + extension from the right; the SSID is whatever's left.
-_NAME_RE = re.compile(
-    r"^(?P<ssid>.+)_"
-    r"(?P<bssid>[0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5})_"
-    r"(?P<epoch>\d+)_"
-    r"(?P<kind>handshake|pmkid|wep_key|wps_pin|wps_pbc)"
-    r"\.(?P<ext>pcap|hc22000|txt)$"
-)
-
-_WEPKEY_RE = re.compile(r"WEP key \(hex\):\s*([0-9a-fA-F]+)")
-_WPSPSK_RE = re.compile(r"^PSK:\s*(.+)$", re.MULTILINE)
-
-
-def _bssid_to_colon(dashed: str) -> str:
-    """``aa-bb-cc-dd-ee-ff`` -> ``aa:bb:cc:dd:ee:ff`` (matches AccessPoint.bssid)."""
-    return dashed.replace("-", ":").lower()
 
 
 def _read_text(path: Path) -> str | None:
@@ -47,7 +35,7 @@ def _read_wep_key(path: Path) -> str | None:
     text = _read_text(path)
     if text is None:
         return None
-    m = _WEPKEY_RE.search(text)
+    m = WEP_KEY_HEX_RE.search(text)
     return m.group(1).lower() if m else None
 
 
@@ -56,13 +44,40 @@ def _read_wps_psk(path: Path) -> str | None:
     text = _read_text(path)
     if text is None:
         return None
-    m = _WPSPSK_RE.search(text)
+    m = WPS_PSK_RE.search(text)
     return m.group(1).strip() if m else None
+
+
+def _parse_aggregate_hc(path: Path) -> List[PersistedCapture]:
+    text = _read_text(path)
+    if text is None:
+        return []
+    try:
+        mtime = int(path.stat().st_mtime)
+    except OSError:
+        mtime = 0
+    has_pmkid = False
+    has_hs = False
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("WPA*01*"):
+            has_pmkid = True
+        elif line.startswith("WPA*02*"):
+            has_hs = True
+    out: List[PersistedCapture] = []
+    if has_pmkid:
+        out.append(PersistedCapture(type="PMKID", timestamp=mtime, path=str(path)))
+    if has_hs:
+        out.append(PersistedCapture(type="HS", timestamp=mtime, path=str(path)))
+    return out
 
 
 def _parse_file(path: Path) -> List[PersistedCapture]:
     """Parse one captures/ file into zero or more PersistedCapture entries."""
-    m = _NAME_RE.match(path.name)
+    if AGGREGATED_HC22000_RE.match(path.name):
+        return _parse_aggregate_hc(path)
+
+    m = LEGACY_CAPTURE_RE.match(path.name)
     if not m:
         return []
     epoch = int(m.group("epoch"))
@@ -86,24 +101,24 @@ def _parse_file(path: Path) -> List[PersistedCapture]:
     return []
 
 
-def load_capture_index(captures_dir: Path | str = "captures") -> Dict[str, List[PersistedCapture]]:
-    """Scan ``captures_dir`` and return {bssid(colon-lower): [PersistedCapture]}.
-
-    Missing directory -> empty index (a fresh install has no history). Entries
-    for a BSSID are sorted newest-first.
-    """
+def load_capture_index() -> Dict[str, List[PersistedCapture]]:
+    """Scan ``captures_dir``, return bssid->captures sorted by newest-first."""
     index: Dict[str, List[PersistedCapture]] = defaultdict(list)
-    root = Path(captures_dir)
+    root = Path(Config.captures_dir)
     if not root.is_dir():
         return {}
     for path in root.iterdir():
         if not path.is_file():
             continue
-        m = _NAME_RE.match(path.name)
-        if not m:
+        m = LEGACY_CAPTURE_RE.match(path.name)
+        if m:
+            bssid = bssid_to_colon(m.group("bssid"))
+            index[bssid].extend(_parse_file(path))
             continue
-        bssid = _bssid_to_colon(m.group("bssid"))
-        index[bssid].extend(_parse_file(path))
+        m_agg = AGGREGATED_HC22000_RE.match(path.name)
+        if m_agg:
+            bssid = bssid_to_colon(m_agg.group("bssid"))
+            index[bssid].extend(_parse_file(path))
     for caps in index.values():
         caps.sort(key=lambda c: c.timestamp, reverse=True)
     return {b: c for b, c in index.items() if c}

@@ -162,7 +162,7 @@ class Rtl8822buDkmsDriver(Driver):
 
             def _initial_tune(t):
                 chan.set_channel_bw(t, _DEFAULT_CHANNEL, txpwr_pg=self._txpwr_pg,
-                                    rfe_type=self._rfe_type, cut=self._cut)
+                                    rfe_type=self._rfe_type, cut=self._cut, is_scan=True)
 
             await loop.run_in_executor(None, _initial_tune, self.transport)
             self._channel = _DEFAULT_CHANNEL
@@ -182,9 +182,11 @@ class Rtl8822buDkmsDriver(Driver):
             # Seed the DIG state from the chip and start the runtime PHYDM watchdog (~2 s cadence): the
             # dig_init IGI is only a seed, so without this loop the RX gain never tracks the channel's
             # false-alarm rate. Reads FA counters, adapts IGI (0xC50/0xE50), resets the counters.
+            # In monitor mode we clamp dig_max_of_min to DIG_MIN_COVERAGE (0x1C) to maintain max sensitivity.
             def _seed_dig(tr):
                 return dm_watchdog.DigState(
                     cur_ig_value=sipi.get_bb_reg(tr, 0x0C50, 0x7F),
+                    dig_max_of_min=dm_watchdog.DIG_MIN_COVERAGE,
                     cck_new_agc=bool(sipi.get_bb_reg(tr, 0x0A9C, 1 << 17)))
 
             self._dig_st = await loop.run_in_executor(None, _seed_dig, self.transport)
@@ -219,6 +221,8 @@ class Rtl8822buDkmsDriver(Driver):
         loop = asyncio.get_running_loop()
         while True:
             await asyncio.sleep(2.0)
+            if self._io_lock.locked():
+                continue
             try:
                 async with self._io_lock:
                     await loop.run_in_executor(
@@ -308,7 +312,7 @@ class Rtl8822buDkmsDriver(Driver):
 
         def _tune(t):
             chan.set_channel_bw(t, channel, prev_ch=prev, txpwr_pg=self._txpwr_pg,
-                                rfe_type=self._rfe_type, cut=self._cut)
+                                rfe_type=self._rfe_type, cut=self._cut, is_scan=True)
 
         async with self._io_lock:
             await loop.run_in_executor(None, _tune, self.transport)

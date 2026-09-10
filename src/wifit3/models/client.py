@@ -1,6 +1,12 @@
 """The wireless-client scan model."""
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Set
+from functools import cached_property
+from typing import TYPE_CHECKING, Dict, Optional, Set
+
+if TYPE_CHECKING:
+    from wifit3.id import Fingerprint
 
 
 @dataclass
@@ -19,3 +25,9 @@ class Client:
     def signal(self) -> int:
         """Strongest smoothed RSSI (dBm) across the cards that hear this client; -100 if none yet."""
         return max(self.signal_by_card.values(), default=-100)
+
+    @cached_property
+    def fingerprint(self) -> Optional[Fingerprint]:
+        """OUI vendor for this client; looked up once, then cached on the instance."""
+        from wifit3.id import fingerprint_client
+        return fingerprint_client(self.mac)

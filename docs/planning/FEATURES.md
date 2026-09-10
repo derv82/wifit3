@@ -4,19 +4,6 @@ Known bugs live in `BUGS.md`.
 
 ---
 
-### Client fingerprinting
-
-**Problem.** Clients show bare MACs; a device class (phone / laptop / PS5 / IoT) speeds target
-selection. IoT (Ring/Nest/Roku/FireTV) is highest-value for scoping.
-
-**Approach.** Emoji left of the BSSID, one `fingerprint.py`, no DB: ~50 hardcoded OUI prefixes
-+ IE fingerprinting for ambiguous OUIs (Murata/Intel modules); returns `(emoji, class,
-confidence)`, blank if low; full breakdown in the Focus detail panel.
-
-**Complexity.** Moderate: display is the hard part, not the resolver. (Killed a full
-OUI→vendor DB in the Scanner table: cells too cramped for vendor strings, and an OUI names the
-Wi-Fi *module* maker, not the device: disambiguation needs IE fingerprinting anyway.)
-
 ### About page / Check-for-updates
 
 If the user has internet connection, it's trivial to query
@@ -74,10 +61,7 @@ When a second hashcat mode lands (`-m 4800`/`5500`), the save layer needs a per-
 
 The WPS engine is built, offline-proven, and HW-validated (full PIN crack on AirLink). Gaps:
 - **Lock-cycle matrix** — only AirLink soft-lock tested; exercise no-lock, long cooldowns, hard-lock.
-- **Terminal hard-lock escape** — `lock.py` learns a measured backoff but loops forever on a
-  perma-locked AP; bail after N zero-progress cycles and tell the user.
-- **Focus WPS panel** (passive-by-default, behind a button).
-- **PixieWPS** — designed in `campaigns/wps/README.md` (native, all 5 modes, no binary).
-  Deferred on effort + one real dep call: **numpy**, wanted to keep the Realtek RTL819x/eCos
-  2³¹–2³² seed sweep interactive (Ralink/MediaTek instant). The old glibc-dep worry is a
-  non-issue (`random()` is ~30 reimplementable lines). Tractable, not a wall.
+- **PixieDust (PRNG seed recovery)** — Phase 1 (Null Secret) and Phase 2 (Static Secrets)
+  landed natively in `campaigns/wps/pixie.py`. Advanced PRNG seed-search modes (Broadcom
+  timestamp search, Realtek/MediaTek LCG) remain deferred due to the CPU cost of
+  evaluating 32-bit seed spaces in pure Python.

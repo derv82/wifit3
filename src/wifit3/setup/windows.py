@@ -13,7 +13,7 @@ import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from wifit3.chips.driver import DeviceID
+from wifit3.models import DeviceID
 from wifit3.device.manager import device as find_device
 from wifit3.setup.base import Prompter, Setup, SetupResult
 

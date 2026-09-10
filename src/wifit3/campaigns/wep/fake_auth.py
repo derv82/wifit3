@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from wifit3.models import AccessPoint
 from wifit3.dot11 import mac_to_str, str_to_mac
-from wifit3.dot11.auth_assoc import auth_req, assoc_req
+from wifit3.dot11.auth_assoc import auth_req, assoc_req, status_description
+from wifit3.dot11.deauth import reason_description
 from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
 
 if TYPE_CHECKING:
@@ -190,7 +191,8 @@ class WepFakeAuth:
         await self.iface.send_no_wait(auth_req(self.bssid_bytes, self.source_mac))
         await asyncio.sleep(0.1)  # let the AP process Auth before Assoc lands
         await self.iface.send_no_wait(assoc_req(self.bssid_bytes, self.source_mac,
-                                                self.target.ssid or ""))
+                                                self.target.ssid or "",
+                                                channel=self.target.channel))
 
         deadline = time.time() + self.assoc_timeout
         while time.time() < deadline and self._active and not self._assoc_ok:
@@ -204,15 +206,20 @@ class WepFakeAuth:
         if not self._active or pkt.raw[4:10] != self.source_mac:   # Addr1 (dest) must be us
             return
         if isinstance(pkt, AssocRespPacket):
+            desc = status_description(pkt.status)
             if pkt.status == 0:
                 self._assoc_ok = True
             elif pkt.status is not None:
-                self.fail_reason = f"Assoc rejected (status {pkt.status})"
+                self.fail_reason = f"Assoc rejected (status {pkt.status}: {desc})"
         elif isinstance(pkt, AuthPacket):
+            desc = status_description(pkt.status)
             if pkt.status not in (0, None):
-                self.fail_reason = f"Auth rejected (status {pkt.status})"
+                self.fail_reason = f"Auth rejected (status {pkt.status}: {desc})"
         elif isinstance(pkt, DeauthPacket):
             # We got kicked
+            kind = "disassoc" if getattr(pkt, "type", "") == "mgmt_10" else "deauth"
+            desc = reason_description(pkt.reason)
+            self.fail_reason = f"{kind} (reason {pkt.reason}: {desc})"
             if self.state == "associated":
                 self.stats.reactive_reauths += 1
             self.state = "ready"

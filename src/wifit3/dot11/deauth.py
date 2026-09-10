@@ -1,5 +1,41 @@
 """802.11 Deauthentication / Disassociation frame builder (pure spec)."""
+from typing import Optional
 from wifit3.dot11.packet import is_group_mac
+
+# Standard 802.11 Deauthentication / Disassociation reason codes.
+REASON_CODES = {
+    1: "unspecified",
+    2: "prev-auth-invalid",
+    3: "deauth-leaving",
+    4: "disassoc-inactivity",
+    5: "ap-overloaded",
+    6: "class2-from-nonauth",
+    7: "class3-from-nonassoc",
+    8: "disassoc-leaving",
+    9: "not-authenticated",
+    10: "power-cap-unacceptable",
+    11: "supported-channels-unacceptable",
+    13: "invalid-ie",
+    14: "mic-failure",
+    15: "4way-timeout",
+    16: "group-key-timeout",
+    17: "handshake-ie-mismatch",
+    18: "group-cipher-invalid",
+    19: "pairwise-cipher-invalid",
+    20: "akm-invalid",
+    21: "unsupported-rsne-version",
+    22: "invalid-rsne-caps",
+    23: "802.1X-auth-failed",
+    24: "cipher-suite-rejected",
+    31: "pmf-policy-violation",
+}
+
+
+def reason_description(code: Optional[int]) -> str:
+    """Human name for an 802.11 deauth/disassoc reason code."""
+    if code is None:
+        return "none"
+    return REASON_CODES.get(code, f"unknown(0x{code:02x})")
 
 
 # SIFS + a 1 Mbps long-preamble ACK (µs): the unicast-ACK NAV. Matches aireplay-ng's

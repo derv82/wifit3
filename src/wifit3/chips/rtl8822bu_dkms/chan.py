@@ -132,13 +132,19 @@ def _ccapar_by_rfe(t, ch: int, bw20: bool, rfe_type: int = _REF_RFE_TYPE,
         sipi.set_bb_reg(t, 0x0838, 0xF0, 0x5)
 
 
-def _spur_reset(t, ch: int, bw20: bool, rf_2t2r: bool = True, rfe_type: int = 3) -> None:
-    """[SRC] phydm_spur_calibration_8822b (normal mode, not scan-in-process): drop the spur-elim
-    enables, then run phydm_dynamic_spur_det_eliminate (NBI/CSI reset + the PSD spur sweep)."""
+def _spur_reset(t, ch: int, bw20: bool, rf_2t2r: bool = True, rfe_type: int = 3,
+                is_scan: bool = False) -> None:
+    """[SRC] phydm_spur_calibration_8822b:
+    In Linux C (phydm_hal_api8822b.c:1542): if *dm->is_scan_in_process: return.
+    When scanning/hopping, clear NBI/CSI notch masks (0x880-0x89C, 0x874[0], 0x87C, 0xC20/E20).
+    Never run dynamic notch elimination during channel scanning/hopping."""
     sipi.set_bb_reg(t, 0x087C, 1 << 13, 0x0)
     sipi.set_bb_reg(t, 0x0C20, 1 << 28, 0x0)
     sipi.set_bb_reg(t, 0x0E20, 1 << 28, 0x0)
-    _dynamic_spur_det_eliminate(t, ch, bw20, rf_2t2r, rfe_type)
+    if is_scan:
+        _dsde_init(t)
+    else:
+        _dynamic_spur_det_eliminate(t, ch, bw20, rf_2t2r, rfe_type)
 
 
 def _dsde_init(t) -> None:
@@ -293,7 +299,7 @@ def _dsde_ch_idx(ch: int, bw20: bool) -> int:
 
 
 def switch_channel(t, ch: int, rf_2t2r: bool = True, bw20: bool = True,
-                   rfe_type: int = _REF_RFE_TYPE, cut: int = 3) -> None:
+                   rfe_type: int = _REF_RFE_TYPE, cut: int = 3, is_scan: bool = False) -> None:
     """[SRC] config_phydm_switch_channel_8822b — set RF channel + per-channel BB, both paths."""
     rf18 = sipi.read_rf_reg(t, sipi.RF_PATH_A, RF_0x18)
     if logger.isEnabledFor(logging.DEBUG):
@@ -349,7 +355,7 @@ def switch_channel(t, ch: int, rf_2t2r: bool = True, bw20: bool = True,
 
     _igi_toggle(t)
     _ccapar_by_rfe(t, ch, bw20, rfe_type, cut, rf_2t2r)
-    _spur_reset(t, ch, bw20, rf_2t2r, rfe_type)
+    _spur_reset(t, ch, bw20, rf_2t2r, rfe_type, is_scan=is_scan)
 
 
 def _rfe_pinmux(t, ch: int, rfe_type: int, ant_2r: bool, cut: int) -> None:
@@ -483,7 +489,7 @@ def _switch_band_rxhp(t, ch: int, soml_on: bool, rfe_type: int) -> None:
 
 
 def switch_band(t, ch: int, rf_2t2r: bool, rx_ant: int, rfe_type: int = _REF_RFE_TYPE,
-                cut: int = 3) -> None:
+                cut: int = 3, is_scan: bool = False) -> None:
     """[SRC] config_phydm_switch_band_8822b — 2.4<->5 band swap (only on a crossing).
 
     The SoML branch reads 0x19a8[31] (the replay feeds it), then the RxHP seed + RFE pinmux both
@@ -515,7 +521,7 @@ def switch_band(t, ch: int, rf_2t2r: bool, rx_ant: int, rfe_type: int = _REF_RFE
     if rf_2t2r:
         sipi.set_rf_reg(t, sipi.RF_PATH_B, RF_0x18, sipi.RFREGOFFSETMASK, rf18)
     _rfe_pinmux(t, ch, rfe_type, rx_ant == BB_PATH_AB, cut)   # phydm_rfe_8822b dispatch
-    _spur_reset(t, ch, True, rf_2t2r, rfe_type)
+    _spur_reset(t, ch, True, rf_2t2r, rfe_type, is_scan=is_scan)
 
 
 def _wifi_only_switch_antenna(t, ch: int) -> None:
@@ -544,7 +550,7 @@ def _mac_switch_bandwidth(t, ch: int, pri_idx: int = 0) -> None:
 
 
 def _switch_bandwidth_20(t, ch: int, rf_2t2r: bool, rx_ant: int, rfe_type: int = _REF_RFE_TYPE,
-                         cut: int = 3) -> None:
+                         cut: int = 3, is_scan: bool = False) -> None:
     """[SRC] config_phydm_switch_bandwidth_8822b (CHANNEL_WIDTH_20) + its tail helpers."""
     rf18 = sipi.read_rf_reg(t, sipi.RF_PATH_A, RF_0x18)
     val32 = (t.read32(0x08AC) & 0xFFCFFC00)            # | CHANNEL_WIDTH_20 (== 0)
@@ -560,7 +566,7 @@ def _switch_bandwidth_20(t, ch: int, rf_2t2r: bool, rx_ant: int, rfe_type: int =
     sipi.set_bb_reg(t, 0x0C20, 1 << 31, 0x1)
     sipi.set_bb_reg(t, 0x0E20, 1 << 31, 0x1)
     _ccapar_by_rfe(t, ch, True, rfe_type, cut, rx_ant == BB_PATH_AB)
-    _spur_reset(t, ch, True, rf_2t2r, rfe_type)
+    _spur_reset(t, ch, True, rf_2t2r, rfe_type, is_scan=is_scan)
     # phydm_bw_fixed_setting (BW20) + phydm_bw_fixed_enable
     sipi.set_bb_reg(t, 0x0840, 0xF, 0x0)
     sipi.set_bb_reg(t, 0x0840, 1 << 4, 0x1)
@@ -572,7 +578,7 @@ def _switch_bandwidth_20(t, ch: int, rf_2t2r: bool, rx_ant: int, rfe_type: int =
 
 def set_channel_bw(t, ch: int, rf_2t2r: bool = True, prev_ch: int | None = None,
                    txpwr_pg: "txpower.TxpwrPG | None" = None, rfe_type: int = _REF_RFE_TYPE,
-                   cut: int = 3) -> None:
+                   cut: int = 3, is_scan: bool = False) -> None:
     """Runtime hop (20 MHz): band switch (when the band changes) + channel + bandwidth + TX power.
 
     [SRC] switch_chnl_and_set_bw_by_drv steps 1-3, then rtl8822b_set_tx_power_level.
@@ -591,10 +597,10 @@ def set_channel_bw(t, ch: int, rf_2t2r: bool = True, prev_ch: int | None = None,
     prev_band_5g = True if prev_ch is None else prev_ch > 14   # cold-init default band = 5 GHz
     band_changed = prev_band_5g != (ch > 14)
     if band_changed:
-        switch_band(t, ch, rf_2t2r, rx_ant, rfe_type, cut)
-    switch_channel(t, ch, rf_2t2r=rf_2t2r, rfe_type=rfe_type, cut=cut)
+        switch_band(t, ch, rf_2t2r, rx_ant, rfe_type, cut, is_scan=is_scan)
+    switch_channel(t, ch, rf_2t2r=rf_2t2r, rfe_type=rfe_type, cut=cut, is_scan=is_scan)
     _mac_switch_bandwidth(t, ch)
-    _switch_bandwidth_20(t, ch, rf_2t2r, rx_ant, rfe_type, cut)
+    _switch_bandwidth_20(t, ch, rf_2t2r, rx_ant, rfe_type, cut, is_scan=is_scan)
     if band_changed:                                 # wifi-only coex band-notify (after the channel
         _wifi_only_switch_antenna(t, ch)             # set, matching the wire) — routes RX to the
     if txpwr_pg is not None:                          # band's antenna (0xCBC[9:8]); without it the

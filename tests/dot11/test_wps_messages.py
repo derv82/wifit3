@@ -76,12 +76,18 @@ def test_eapol_framing_lengths():
     assert ident.endswith(M.REGISTRAR_IDENTITY)
 
 
-def _enrollee_request_frame(opcode, wsc_attrs, eap_id=0x10, bssid=b"\x34" * 6, sta=b"\x02" * 6):
+def _enrollee_request_frame(opcode, wsc_attrs, eap_id=0x10, bssid=b"\x34" * 6, sta=b"\x02" * 6,
+                            flags=0x00, total_len=None):
     """Frame a WSC message as the AP (enrollee=authenticator) would: EAP-Request,
-    FromDS data frame. Mirror of messages.build_data_frame but EAP_REQUEST."""
+    FromDS data frame. Mirror of messages.build_data_frame but EAP_REQUEST.
+
+    ``flags`` is the EAP-WSC flags byte; when the Length-Field bit (0x02) is set a
+    2-byte total length is inserted between the flags and the WSC attributes.
+    """
+    lf = struct.pack(">H", len(wsc_attrs) if total_len is None else total_len) if flags & 0x02 else b""
     expanded = (
         bytes([M.EAP_TYPE_EXPANDED]) + M.WFA_VENDOR_ID + M.WFA_VENDOR_TYPE_SIMPLECONFIG
-        + bytes([opcode, 0x00]) + wsc_attrs
+        + bytes([opcode, flags]) + lf + wsc_attrs
     )
     eap = struct.pack(">BBH", M.EAP_REQUEST, eap_id, 4 + len(expanded)) + expanded
     x = struct.pack(">BBH", 1, 0, len(eap)) + eap
@@ -116,6 +122,35 @@ def test_parse_rx_strips_trailing_fcs():
     assert p is not None and p.wsc_msg_type == M.WPS_M1
     assert p.raw_wsc_attrs == m1_attrs          # FCS excluded
     assert b"\xde\xad\xbe\xef" not in p.raw_wsc_attrs
+
+
+def test_parse_rx_honors_length_field_flag():
+    # EAP-WSC flags bit 0x02 (Length Field) inserts a 2-byte total length between
+    # the flags byte and the WSC attributes. The parser must skip it; otherwise the
+    # length bytes are misread as the first TLV and the whole message parses wrong.
+    m1_attrs = (
+        M.tlv_u8(M.ATTR_VERSION, 0x10) + M.tlv_u8(M.ATTR_MSG_TYPE, M.WPS_M1)
+        + M.tlv(M.ATTR_ENROLLEE_NONCE, b"\xEE" * 16)
+    )
+    frame = _enrollee_request_frame(M.WSC_MSG, m1_attrs, flags=0x02)
+    p = M.parse_rx_frame(frame)
+    assert p is not None
+    assert p.wsc_msg_type == M.WPS_M1
+    assert p.attrs[M.ATTR_ENROLLEE_NONCE] == b"\xEE" * 16
+    assert p.raw_wsc_attrs == m1_attrs
+
+
+def test_parse_rx_length_field_with_trailing_fcs():
+    # Length Field set AND a card-appended FCS: attrs start after the 2-byte length,
+    # and raw_wsc_attrs must still exclude the trailing FCS (bounded by EAP length).
+    m1_attrs = (
+        M.tlv_u8(M.ATTR_VERSION, 0x10) + M.tlv_u8(M.ATTR_MSG_TYPE, M.WPS_M1)
+        + M.tlv(M.ATTR_ENROLLEE_NONCE, b"\xEE" * 16)
+    )
+    frame = _enrollee_request_frame(M.WSC_MSG, m1_attrs, flags=0x02) + b"\xde\xad\xbe\xef"
+    p = M.parse_rx_frame(frame)
+    assert p is not None and p.wsc_msg_type == M.WPS_M1
+    assert p.raw_wsc_attrs == m1_attrs
 
 
 def test_parse_rx_identity_request():

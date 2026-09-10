@@ -9,7 +9,7 @@ import pytest
 
 from wifit3.campaigns.campaign import Campaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
-from wifit3.models import Handshake
+from wifit3.models import AccessPoint, ApIdentity, Handshake, IdKey, IdSource
 from wifit3.ui import focus_model as fm
 from wifit3.persist.config import Config
 
@@ -117,7 +117,20 @@ def test_headline_cracking_names_the_concurrent_tx_action():
     assert "Chopping a packet" in chopping[0] and "Cracking" in chopping[0]
 
 
-def test_headline_recovered_wps_psk_outranks_listening():
+def test_wps_status_shows_fail_reason():
+    camp = types.SimpleNamespace(
+        state=types.SimpleNamespace(found_pin=None, tested=0, phase="common", first_half=None),
+        status="failed",
+        fail_reason="WPS stayed locked for 5 cycles without PIN progress",
+        eta_seconds=None,
+    )
+
+    line = fm.wps_status_markup(camp)
+
+    assert "failed" in line
+    assert "stayed locked" in line
+
+
     """A recovered WPS PSK (PBC or PIN, after the campaign is torn down) shows a
     terminal banner instead of decaying back to 'Listening'."""
     h = fm.derive_headline(_wpa_ap(known_psk="hunter2"), None, fm.Campaigns())
@@ -216,6 +229,107 @@ def test_status_footer_combines_pmf_and_wps():
     lines = fm.status_footer_lines(_rsn_ap(wps=True, wps_version="1.0"), None, None, 0)
     assert len(lines) == 2
     assert "PMF:" in lines[1] and "WPS:" in lines[1] and "1.0" in lines[1]
+
+
+def test_router_identity_markup_shows_summary_without_percentages():
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        identity=ApIdentity(IdSource.WSC_BEACON, manufacturer="MikroTik", model_name="hAP ac²"),
+    )
+    markup = fm.router_identity_markup(ap)
+    assert "hAP ac²" in markup
+    assert "MikroTik" in markup
+    assert "%" not in markup
+
+
+def test_router_identity_details_shows_source_provenance():
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "MikroTik")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "hAP ac²")
+    details = fm.router_identity_details(ap)
+    assert details is not None
+    assert "[bold]MikroTik hAP ac²[/bold]" in details
+    assert "[dim]Model:[/dim] hAP ac² [dim](WSC Beacon)[/dim]" in details
+    assert "[dim]Manufacturer:[/dim] MikroTik [dim](WSC Beacon)[/dim]" in details
+
+
+def test_router_identity_details_can_show_m1_and_oui_separately():
+    ap = AccessPoint(bssid="00:03:93:11:22:33")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Cisco")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "AP-500")
+
+    assert "Cisco AP-500" in fm.router_identity_markup(ap)
+    details = fm.router_identity_details(ap)
+    assert details is not None
+    assert "[bold]Cisco AP-500[/bold]" in details
+    assert "[dim]Model:[/dim] AP-500 [dim](WSC M1)[/dim]" in details
+    assert "[dim]Manufacturer:[/dim] Cisco [dim](WSC M1)[/dim]" in details
+    assert "[dim]IEEE OUI:[/dim] Apple" in details
+
+
+def test_router_identity_details_asus_wsc_beacon():
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    ap.identity.set(IdSource.OUI, IdKey.MANUFACTURER, "ASUSTek COMPUTER")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "ASUSTeK Computer Inc.")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "Wi-Fi Protected Setup Router")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.DEVICE_NAME, "RT-AC66U")
+
+    assert fm.router_identity_details(ap) == "\n".join([
+        "[bold]ASUS RT-AC66U[/bold]",
+        "[dim]Model:[/dim] RT-AC66U [dim](WSC Beacon)[/dim]",
+        "[dim]Manufacturer:[/dim] ASUS [dim](WSC Beacon)[/dim]",
+        "[dim]IEEE OUI:[/dim] ASUS",
+    ])
+
+
+def test_router_identity_details_netgear_wsc_m1():
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    ap.identity.set(IdSource.OUI, IdKey.MANUFACTURER, "Netgear")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Netgear")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "Netgear")
+    ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_NAME, "C3700-100NAS")
+
+    assert fm.router_identity_details(ap) == "\n".join([
+        "[bold]Netgear C3700-100NAS[/bold]",
+        "[dim]Model:[/dim] C3700-100NAS [dim](WSC M1)[/dim]",
+        "[dim]Manufacturer:[/dim] Netgear [dim](WSC M1)[/dim]",
+        "[dim]IEEE OUI:[/dim] Netgear",
+    ])
+
+
+def test_router_identity_details_odm_wsc_beacon_with_branded_oui():
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    ap.identity.set(IdSource.OUI, IdKey.MANUFACTURER, "Jensen Scandinavia AS")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "Ralink Technology, Corp.")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "Ralink Wireless Access Point")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.DEVICE_NAME, "Jensen of Scandinavia Air:Link 5000AC")
+
+    assert fm.router_identity_details(ap) == "\n".join([
+        "[bold]Jensen of Scandinavia Air:Link 5000AC[/bold]",
+        "[dim]Model:[/dim] Jensen of Scandinavia Air:Link 5000AC [dim](WSC Beacon)[/dim]",
+        "[dim]Manufacturer:[/dim] Jensen [dim](IEEE OUI)[/dim]",
+        "[dim]Chipset:[/dim] Ralink [dim](WSC)[/dim]",
+    ])
+
+
+def test_router_identity_details_includes_device_type():
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "HP")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "OfficeJet Pro")
+    ap.identity.set(IdSource.WSC_M1, IdKey.DEVICE_TYPE, "printer")
+
+    details = fm.router_identity_details(ap)
+    assert details == "\n".join([
+        "[bold]HP OfficeJet Pro (printer)[/bold]",
+        "[dim]Model:[/dim] OfficeJet Pro [dim](WSC M1)[/dim]",
+        "[dim]Manufacturer:[/dim] HP [dim](WSC M1)[/dim]",
+        "[dim]Device Type:[/dim] printer [dim](WSC M1)[/dim]",
+    ])
+
+
+def test_router_identity_markup_is_blank_without_evidence():
+    assert fm.router_identity_markup(AccessPoint(bssid="02:00:00:00:00:01")) == ""
+    assert fm.router_identity_details(AccessPoint(bssid="02:00:00:00:00:01")) is None
 
 
 def test_status_footer_open_is_encryption_only():

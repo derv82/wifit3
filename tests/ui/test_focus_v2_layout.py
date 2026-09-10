@@ -4,13 +4,17 @@ plus that the green-LED breathe actually changes the art. Aesthetics ("does it
 look good") stay the human's call, fed by the exported SVGs.
 
 Sizes are pinned headless via ``run_test(size=...)``: no real terminal."""
+import types
+
 import pytest
 import pytest_asyncio
 from textual.app import App
 from textual.widgets import Button
 
+from wifit3.models import AccessPoint, ApIdentity, IdKey, IdSource
+from wifit3.ui import focus_model as fm
 from wifit3.ui.screens.focus_v2 import FocusViewV2
-from wifit3.ui.screens.focus_v2.art import art_size, breathe
+from wifit3.ui.screens.focus_v2.art import BreathingArt, art_size, breathe
 
 _TOPBAR_H = 3
 _CHROME_H = 2          # Header (1 row) + Footer (1 row)
@@ -19,6 +23,8 @@ _CENTER_MAX, _CENTER_MIN, _BOTTOM_MIN = 13, 7, 6
 
 class _Host(App):
     """Minimal host: push the v2 screen straight in (no device manager)."""
+    target_ap = None
+    array = None
     def on_mount(self) -> None:
         self.push_screen(FocusViewV2())
 
@@ -80,11 +86,252 @@ async def test_topbar_is_the_action_area_and_card_has_no_buttons(layout_host):
     assert len(scr.query("#card Button")) == 0
 
 
-@pytest.mark.asyncio(loop_scope="module")
-async def test_dashboard_rows_and_rate_vs_count(layout_host):
-    dash = layout_host.query_one("#dashboard")
-    assert len(dash._rows) == 5
-    as_rate = {r.key: r.as_rate for r in dash._rows}
+async def test_router_identity_button_logs_details_from_keyboard_without_tooltip():
+    class _IdentityHost(_Host):
+        target_ap = AccessPoint(
+            bssid="02:00:00:00:00:01",
+            ssid="Router",
+            channel=1,
+            wps=True,
+            identity=ApIdentity(IdSource.WSC_BEACON, manufacturer="MikroTik", model_name="hAP ac²"),
+        )
+
+    app = _IdentityHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0)
+        logs = []
+        app.screen._log = logs.append
+        identity = app.screen.query_one("#ap-identity", Button)
+        assert identity.styles.line_pad == 0
+        assert identity.tooltip is None
+        art = app.screen.query_one("#router-art", BreathingArt)
+        assert art.tooltip is not None
+        assert "MikroTik" in str(art.tooltip)
+        assert "hAP ac²" in str(art.tooltip)
+        assert identity.disabled is False
+        identity.focus()
+        await pilot.press("enter")
+        await pilot.pause(0)
+        assert logs[0] == "[bold]Router identity[/bold]"
+        assert any("MikroTik" in line for line in logs)
+        assert any("├─►" in line for line in logs[:-1])
+        assert "└─►" in logs[-1]
+
+
+async def test_router_endpoint_non_wps_layout():
+    class _NonWpsHost(_Host):
+        target_ap = AccessPoint(
+            bssid="02:00:00:00:00:01",
+            ssid="OpenAir",
+            channel=6,
+            wps=False,
+        )
+
+    app = _NonWpsHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0)
+        identity = app.screen.query_one("#ap-identity", Button)
+        probe = app.screen.query_one("#ap-probe", Button)
+        assert identity.label.plain == "channel 6"
+        assert identity.disabled is True
+        assert probe.display is False
+
+
+async def test_router_endpoint_wps_with_prior_m1_layout():
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        ssid="Office",
+        channel=11,
+        wps=True,
+    )
+    ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Netgear")
+    ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "Nighthawk X6 R8000")
+
+    class _M1Host(_Host):
+        target_ap = ap
+
+    app = _M1Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0)
+        identity = app.screen.query_one("#ap-identity", Button)
+        probe = app.screen.query_one("#ap-probe", Button)
+        assert identity.label.plain == "Netgear Nighthawk X…"  # truncated to 20 chars
+        assert identity.disabled is False
+        assert probe.display is False
+
+
+async def test_router_endpoint_wps_without_m1_fallback_channel():
+    class _WpsNoIdentHost(_Host):
+        target_ap = AccessPoint(
+            bssid="02:00:00:00:00:01",
+            ssid="EmptyWPS",
+            channel=11,
+            wps=True,
+        )
+
+    app = _WpsNoIdentHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0)
+        identity = app.screen.query_one("#ap-identity", Button)
+        probe = app.screen.query_one("#ap-probe", Button)
+        assert identity.label.plain == "ch 11"
+        assert identity.disabled is True
+        assert probe.display is True
+        assert probe.label.plain == "🔍"
+        assert probe.tooltip == "Probe AP for WPS/WSC attributes"
+
+
+async def test_router_endpoint_probe_click_and_cancel(monkeypatch):
+    import asyncio
+    from wifit3.campaigns.probe import ProbeResult
+
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        ssid="ProbeMe",
+        channel=6,
+        wps=True,
+    )
+
+    probe_started = asyncio.Event()
+    probe_cancelled = asyncio.Event()
+
+    async def fake_probe(iface, target):
+        probe_started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            probe_cancelled.set()
+            raise
+        return ProbeResult(ok=True)
+
+    import wifit3.ui.screens.focus_v2.screen as screen_mod
+    monkeypatch.setattr(screen_mod, "probe_ap", fake_probe)
+
+    from contextlib import asynccontextmanager
+    from wifit3.wlan.sink import WlanSink
+
+    class _FakeProbeArray:
+        def __init__(self):
+            self.members = [types.SimpleNamespace(chipset="rtl8821au", mac_address="00:11:22:33:44:55", current_channel=6)]
+            self._sink = WlanSink()
+
+        def select_iface(self, channel):
+            return self.members[0]
+
+        async def set_channel(self, ch, scan=False):
+            return True
+
+        @asynccontextmanager
+        async def claim(self, iface):
+            yield iface
+
+        def __getattr__(self, name):
+            return getattr(self._sink, name)
+
+    class _ProbeHost(_Host):
+        def __init__(self, target_ap):
+            super().__init__()
+            self.target_ap = target_ap
+            self.array = _FakeProbeArray()
+
+    app = _ProbeHost(ap)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0)
+        probe = app.screen.query_one("#ap-probe", Button)
+        assert probe.label.plain == "🔍"
+
+        # Click probe button to start probe
+        probe.press()
+        await pilot.pause(0.05)
+        assert probe_started.is_set()
+        assert probe.label.plain == "❌"
+        assert probe.tooltip == "Cancel WPS/WSC probe"
+
+        # Verify attack buttons disabled during probing
+        wps_btn = app.screen.query_one("#btn-wps-pin", Button)
+        assert wps_btn.disabled is True
+
+        # Click probe button again (now '❌') to cancel
+        probe.press()
+        await pilot.pause(0.05)
+        assert probe_cancelled.is_set()
+        assert probe.label.plain == "🔍"
+        assert probe.tooltip == "Probe AP for WPS/WSC attributes"
+
+
+async def test_router_endpoint_probe_success_updates_layout_and_logs(monkeypatch):
+    from contextlib import asynccontextmanager
+    from wifit3.campaigns.probe import ProbeResult
+    from wifit3.wlan.sink import WlanSink
+
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        ssid="ProbeSuccess",
+        channel=6,
+        wps=True,
+    )
+
+    async def fake_probe(iface, target):
+        target.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "ASUS")
+        target.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "RT-AX88U")
+        return ProbeResult(ok=True, source="WSC M1", vendor="ASUS", model="RT-AX88U")
+
+    import wifit3.ui.screens.focus_v2.screen as screen_mod
+    monkeypatch.setattr(screen_mod, "probe_ap", fake_probe)
+
+    class _FakeProbeArray:
+        def __init__(self):
+            self.members = [types.SimpleNamespace(chipset="rtl8821au", mac_address="00:11:22:33:44:55", current_channel=6)]
+            self._sink = WlanSink()
+
+        def select_iface(self, channel):
+            return self.members[0]
+
+        async def set_channel(self, ch, scan=False):
+            return True
+
+        @asynccontextmanager
+        async def claim(self, iface):
+            yield iface
+
+        def __getattr__(self, name):
+            return getattr(self._sink, name)
+
+    class _ProbeHost(_Host):
+        def __init__(self, target_ap):
+            super().__init__()
+            self.target_ap = target_ap
+            self.array = _FakeProbeArray()
+
+    app = _ProbeHost(ap)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0)
+        logs = []
+        app.screen._log = logs.append
+        probe = app.screen.query_one("#ap-probe", Button)
+        identity = app.screen.query_one("#ap-identity", Button)
+        assert probe.display is True
+
+        # Click probe
+        probe.press()
+        await pilot.pause(0.05)
+
+        # On success: probe button hidden, identity label expands to 20 chars
+        assert probe.display is False
+        assert identity.label.plain == "ASUS RT-AX88U"
+        assert identity.disabled is False
+
+        # Identity tree logged to RichLog
+        assert any("probe matched" in log for log in logs)
+        assert any("Router identity" in log for log in logs)
+        assert any("ASUS" in log for log in logs)
+
+
+def test_dashboard_rows_and_rate_vs_count():
+    # WPA family: beacon + data + eapol + inject + deauth.
+    rows = fm.dashboard_rows(types.SimpleNamespace(encryption="WPA2"))
+    assert len(rows) == 5
+    as_rate = {r.key: r.as_rate for r in rows}
     # eapol reads as a recent count (a handshake is ~4 frames); the rest /s.
     assert as_rate["eapol"] is False
     assert all(as_rate[k] for k in ("beacon", "data", "inject", "deauth"))

@@ -4,7 +4,7 @@ reports there is nothing to remove.
 """
 from __future__ import annotations
 
-from wifit3.chips.driver import DeviceID
+from wifit3.models import DeviceID
 from wifit3.setup.base import Prompter, Setup, SetupResult
 
 _NOOP_MSG = "macOS needs no driver setup. Retrying the connection…"

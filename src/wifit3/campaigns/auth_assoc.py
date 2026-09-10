@@ -20,7 +20,8 @@ import time
 from typing import Callable, Optional
 
 from wifit3.dot11 import build_deauth, str_to_mac
-from wifit3.dot11.auth_assoc import auth_req, assoc_req
+from wifit3.dot11.auth_assoc import auth_req, assoc_req, status_description
+from wifit3.dot11.deauth import reason_description
 from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
 
 logger = logging.getLogger(__name__)
@@ -147,11 +148,14 @@ class Association:
                 return False
             self._auth_ok = False
             self._assoc_ok = False
+            logger.info("-> Auth Req to %s", self.bssid)
             await self._send_until(auth_req(self.bssid_bytes, self.our_mac),
                                    lambda: self._auth_ok, self.auth_timeout)
             # Send Assoc whether or not the Auth Resp surfaced
+            logger.info("-> Assoc Req to %s", self.bssid)
             await self._send_until(assoc_req(self.bssid_bytes, self.our_mac, self.ssid,
-                                             self.assoc_trailer_ies),
+                                             self.assoc_trailer_ies,
+                                             channel=self.channel),
                                    lambda: self._assoc_ok, self.assoc_timeout)
             if self._assoc_ok:
                 self.associated = True
@@ -177,15 +181,25 @@ class Association:
         if not self._active or pkt.raw[4:10] != self.our_mac:   # addressed to us
             return
         if isinstance(pkt, AssocRespPacket):
+            desc = status_description(pkt.status)
             if pkt.status == 0:
                 self._assoc_ok = True
+                logger.info("<- Assoc Resp (status 0: %s) from %s", desc, self.bssid)
             elif pkt.status is not None:
-                self.fail_reason = f"Assoc rejected (status {pkt.status})"
+                self.fail_reason = f"Assoc rejected (status {pkt.status}: {desc})"
+                logger.info("<- Assoc Resp rejected (status %s: %s) from %s", pkt.status, desc, self.bssid)
         elif isinstance(pkt, AuthPacket):
+            desc = status_description(pkt.status)
             if pkt.status == 0:
                 self._auth_ok = True
+                logger.info("<- Auth Resp (status 0: %s) from %s", desc, self.bssid)
             elif pkt.status is not None:
-                self.fail_reason = f"Auth rejected (status {pkt.status})"
+                self.fail_reason = f"Auth rejected (status {pkt.status}: {desc})"
+                logger.info("<- Auth Resp rejected (status %s: %s) from %s", pkt.status, desc, self.bssid)
         elif isinstance(pkt, DeauthPacket):
+            kind = "disassoc" if getattr(pkt, "type", "") == "mgmt_10" else "deauth"
+            desc = reason_description(pkt.reason)
+            self.fail_reason = f"{kind} (reason {pkt.reason}: {desc})"
+            logger.info("<- %s (reason %s: %s) from %s", kind.upper(), pkt.reason, desc, self.bssid)
             self.associated = False
             self._assoc_ok = False

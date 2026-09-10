@@ -32,6 +32,7 @@ kali/
 scripts/baseline/*.json
 scripts/baseline/history/
 scratch/
+scratchpad/
 *.log
 # Probe captures (WEP frag/chopchop, WPS, …) — real on-air frames from the
 # user's environment; never commit (see no-SSIDs/BSSIDs-in-commits rule).

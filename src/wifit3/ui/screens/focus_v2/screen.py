@@ -16,6 +16,7 @@ the top bar. Portrait is deferred.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -40,8 +41,10 @@ from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal
 from wifit3.campaigns.pin import WpsCampaign, load_run_state, run_progress_line
 from wifit3.campaigns.deauth import DeauthCampaign
 from wifit3.campaigns.pbc import WpsPbcCapture
+from wifit3.campaigns.probe import probe_ap
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
+from wifit3.models import AccessPoint, IdSource
 from wifit3.persist.save import (
     save_handshake, save_pmkid, save_wep_key, save_wps_pbc, save_wps_pin,
 )
@@ -57,7 +60,7 @@ from ... import pmkid_log
 from ...encryption_format import wep_key_ascii
 from .card_endpoint import CardEndpoint
 from .tx_picker import TxDevicePicker
-from .clients_list import ClientsList
+from .clients_list import ClientsList, ClientWidget, FingerprintModal
 from .packet_dashboard import PacketDashboard
 from .log_band import LogBand
 from .router_endpoint import RouterEndpoint
@@ -71,7 +74,7 @@ logger = logging.getLogger(__name__)
 _ENDPOINT_W = 20  # the .ans art is exactly 20 cells wide
 _TOPBAR_H = 3
 _CHROME_H = 2  # Buffer for Textual's Header & Footer (1 row each)
-_BORDER = "ansi_cyan"  # Border/title color for  LOG / CLIENTS panels
+_BORDER = "$primary"  # Border/title color for  LOG / CLIENTS panels
 
 # Mid-band height
 _CENTER_MAX = 13
@@ -99,8 +102,9 @@ _BUTTON_TIPS = {
     "Stop Replay": "Stop the entire WEP campaign.",
     "ChopChop": "Forge a replayable packet",
     "Stop Chop": "Interrupt chopping and return to ARP replay",
-    "PMKID": "Associate to extract PMKID (some APs not applicable)",
-    "WPS PIN": "Start a WPS PIN brute-force campaign",
+    "AutoDeauth": "De-authenticate clients 1-by-1, then de-authenticates broadcast. Loops.",
+    "PMKID": "Associate to extract PMKID\n(some APs not applicable)",
+    "WPS PIN": "PIN attacks: PixieDust, default vendor PINs, then brute-force",
     "EvilTwin": "Punt clients onto a WPA2 twin to capture a crackable handshake",
     "Stop EvilTwin": "Tear down the twin and return clients to the AP",
 }
@@ -116,7 +120,7 @@ def _save_line(result) -> str:
     name = result.path.name
     m = _FILENAME_MIDDLE.search(name)
     short = f"{name[:m.start()]}_…_{name[m.end():]}" if m else name
-    return f"[dim]{verb}: captures/{escape(short)}[/dim]"
+    return f"[dim]{verb}: {Config.captures_dir}/{escape(short)}[/dim]"
 
 
 def _wep_key_chip(key_hex) -> str:
@@ -167,6 +171,19 @@ class FocusViewV2(Screen):
     .card-dynamic { width: 100%%; height: 1; text-align: center; color: $accent; }
     .ap-essid { width: 100%%; height: 1; text-align: center; text-style: bold; }
     .ap-power { width: 100%%; height: 1; text-align: center; }
+    #ap-identity-row { width: 100%%; height: 1; align-horizontal: center; }
+    #ap-identity {
+        width: 1fr; height: 1; min-width: 0; border: none; margin: 0; padding: 0;
+        background: transparent; color: $text-muted; content-align: center middle;
+    }
+    #ap-identity.identity-known { text-style: underline; color: $secondary; }
+    #ap-identity:focus { text-style: bold reverse; }
+    #ap-probe {
+        width: 4; height: 1; min-width: 0; border: none; margin: 0; padding: 0;
+        background: transparent;
+    }
+    #ap-probe:hover { background: $surface-lighten-1; }
+    #ap-probe:focus { text-style: bold reverse; }
 
     #bottom { height: 1fr; }
     #log { width: 1fr; height: 100%%; border: round %(border)s;
@@ -180,6 +197,11 @@ class FocusViewV2(Screen):
     .bcast-btn { width: 100%%; height: 1; min-width: 0; border: none; margin: 0 0 1 0;
                  background: $error; color: $text; content-align: center middle; }
     .client-row { height: 1; width: 100%%; }
+    .cl-fp { width: 2; }
+    /* A known fingerprint is clickable (pops up the detail popup): underline + accent color on
+       the MAC marks it, same as any other actionable text. Not on the emoji itself -- the
+       underline renders through the glyph rather than under it, which reads as broken/ugly. */
+    .cl-bssid.fp-known { text-style: underline; color: $secondary; }
     .cl-bssid { width: 17; }
     .cl-pwr { width: 5; text-align: right; }
     .cl-pkts { width: 6; text-align: right; }
@@ -189,7 +211,6 @@ class FocusViewV2(Screen):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._snap = fm.fake_snapshot()
         self._target_ap = None
         self._last_status: list[str] | None = None   # last-pushed headline; skip no-op repaints
         self._beacon_samples: deque = deque()
@@ -205,6 +226,7 @@ class FocusViewV2(Screen):
         self._pbc_retry_after = 0.0   # monotonic time before which we won't re-arm a PBC retry
         self._pmkid_campaign: Optional[PmkidHarvestAttack] = None
         self._deauth_campaign: Optional[DeauthCampaign] = None
+        self._probe_task: Optional[asyncio.Task] = None
         self._prev_stats = None
         self._campaign_toggles = {
             "wep": self._toggle_generate_ivs, "pmkid": self._toggle_pmkid,
@@ -217,7 +239,6 @@ class FocusViewV2(Screen):
     # ----- compose -----------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        self._snap = self._snapshot()
         yield Header()
         with Horizontal(id="topbar"):
             with Horizontal(id="actions"):
@@ -227,16 +248,18 @@ class FocusViewV2(Screen):
                     btn = Button(label, id=bid, classes="attack-btn")
                     btn.display = False
                     yield btn
-            yield Static(self._render_status(self._snap.status), id="status")
+            status = self._status()
+            self._last_status = status
+            yield Static(self._render_status(status), id="status")
             # Right spacer to accurately align status to sparklines.
             yield Static("", id="rspacer")
         with Horizontal(id="mid"):
-            yield CardEndpoint(self._snap, id="card")
-            yield PacketDashboard(self._snap.dashboard, id="dashboard")
-            yield RouterEndpoint(self._snap, id="router")
+            yield CardEndpoint(**self._card_values(), id="card")
+            yield PacketDashboard(self._dashboard_rows(), id="dashboard")
+            yield RouterEndpoint(**self._router_values(), id="router")
         with Horizontal(id="bottom"):
-            yield LogBand(self._snap.log_lines, id="log")
-            yield ClientsList(self._snap.clients, id="clients")
+            yield LogBand([], id="log")
+            yield ClientsList(self._client_list(), id="clients")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -265,6 +288,25 @@ class FocusViewV2(Screen):
     def _pbc_busy(self) -> bool:
         return self._pbc_campaign is not None and not self._pbc_campaign.done
 
+    def _is_probing(self) -> bool:
+        return self._probe_task is not None and not self._probe_task.done()
+
+    def _any_campaign_active(self) -> bool:
+        return bool(
+            Campaign.active is not None
+            or self._pmkid_campaign is not None
+            or self._wep_campaign is not None
+            or self._wps_campaign is not None
+            or self._deauth_campaign is not None
+            or self._eviltwin_attack is not None
+            or self._pbc_busy()
+        )
+
+    def _stop_probe(self) -> None:
+        if self._probe_task is not None and not self._probe_task.done():
+            self._probe_task.cancel()
+        self._probe_task = None
+
     def _campaigns(self) -> fm.Campaigns:
         return fm.Campaigns(
             wep=self._wep_campaign, wps=self._wps_campaign,
@@ -272,13 +314,53 @@ class FocusViewV2(Screen):
             pbc_busy=self._pbc_busy(),
         )
 
-    def _snapshot(self) -> fm.FocusSnapshot:
-        ap = getattr(self.app, "target_ap", None)
+    def _router_values(self) -> dict:
+        """The AP identity + power primitives the router endpoint renders, read live from
+        the target (blanks when there's no target). ``beacon_rate`` mutates the beacon
+        deque, so this is its single caller per tick."""
+        ap = self.app.target_ap
         if ap is None:
-            return fm.fake_snapshot()
+            return dict(essid="", bssid="", channel=0, power_dbm=-100, signal=None,
+                        wps=False, has_m1=False, probing=False, probe_disabled=False,
+                        identity="", identity_details=None)
+        essid = fm.truncate_ssid(ap.ssid) if ap.ssid else "‹hidden›"
+        rate, _ = fm.beacon_rate(ap, self._beacon_samples, time.time())
+        return dict(essid=essid, bssid=ap.bssid, channel=ap.channel,
+                    power_dbm=ap.signal, signal=rate,
+                    wps=bool(ap.wps),
+                    has_m1=ap.identity.has_source(IdSource.WSC_M1),
+                    probing=self._is_probing(),
+                    probe_disabled=self._any_campaign_active(),
+                    identity=ap.identity.summary,
+                    identity_details=fm.router_identity_details(ap))
+
+    def _card_values(self) -> dict:
+        """The card endpoint's compose seed: chipset + own MAC from the live pool, plus the
+        current dynamic line. Identity then tracks the pool live via ``_sync_card``."""
+        chipset, bssid = fm.card_identity(self.app.array)
+        return dict(chipset=chipset, bssid=bssid, dynamic=fm.card_dynamic(self._campaigns()))
+
+    def _status(self) -> list[str]:
+        """The headline lines for the live target (empty when there's no target)."""
+        ap = self.app.target_ap
+        if ap is None:
+            return []
+        return fm.derive_headline(ap, self.app.array, self._campaigns())
+
+    def _dashboard_rows(self) -> list:
+        """The packet-dashboard row set for the live target's encryption family (empty when
+        there's no target). The widget samples the live counters itself."""
+        ap = self.app.target_ap
+        return fm.dashboard_rows(ap) if ap is not None else []
+
+    def _client_list(self) -> list:
+        """The live target's clients. Forged/own MACs are already excluded by the sink;
+        other APs' clients are filtered here by BSSID. Empty when there's no target."""
+        ap = self.app.target_ap
         array = self.app.array
-        return fm.build_snapshot(
-            ap, array, self._campaigns(), self._beacon_samples, time.time())
+        if ap is None or array is None:
+            return []
+        return [c for c in array.clients.values() if c.bssid == ap.bssid]
 
     @staticmethod
     def _render_status(status) -> Text:
@@ -324,13 +406,22 @@ class FocusViewV2(Screen):
         ap = getattr(self.app, "target_ap", None)
         if ap is None:
             return
+        probing = self._is_probing()
         for bid, state in fm.derive_buttons(ap).items():
+            if probing:
+                state = fm.ButtonState(
+                    visible=state.visible,
+                    disabled=True,
+                    label=state.label,
+                    variant=state.variant,
+                    reason="Disabled while probing",
+                )
             self._apply_button(f"#{bid}", state)
         stop_pbc = self.query_one("#btn-stop-pbc", Button)
         if self._pbc_busy():
             stopping = getattr(self._pbc_campaign, "stopped", False)
             stop_pbc.display = True
-            stop_pbc.disabled = stopping         # already draining → no double-stop
+            stop_pbc.disabled = stopping or probing         # already draining → no double-stop
             stop_pbc.variant = "error"
             stop_pbc.label = "Stopping…" if stopping else "Stop PBC"
         else:
@@ -345,6 +436,8 @@ class FocusViewV2(Screen):
         self._stop_pbc_capture()
         self._stop_wps_pin()
         self._stop_pmkid()
+        self._stop_deauth()
+        self._stop_probe()
 
         ap = getattr(self.app, "target_ap", None)
         self._target_ap = ap
@@ -359,14 +452,14 @@ class FocusViewV2(Screen):
         self._prev_stats = None        # drop the old target's counters
         self.query_one("#log", LogBand).clear()
 
-        snap = self._snapshot()
-        self._snap = snap
-        self.query_one("#dashboard", PacketDashboard).reconfigure(snap.dashboard, array, ap.bssid)
-        self.query_one("#card", CardEndpoint).update_dynamic(snap)
+        status = self._status()
+        self._last_status = status
+        self.query_one("#status", Static).update(self._render_status(status))
+        self.query_one("#dashboard", PacketDashboard).reconfigure(self._dashboard_rows(), array, ap.bssid)
+        self.query_one("#card", CardEndpoint).update(dynamic=fm.card_dynamic(self._campaigns()))
         self._sync_card()
-        self.query_one("#router", RouterEndpoint).update_dynamic(snap)
-        self.query_one("#status", Static).update(self._render_status(snap.status))
-        self.query_one("#clients", ClientsList).sync(snap.clients)
+        self.query_one("#router", RouterEndpoint).update(**self._router_values())
+        self.query_one("#clients", ClientsList).sync(self._client_list())
         self._refresh_buttons()
         self._balance_status()
         self._refresh_status_footer()  # dashboard footer (cleared by reconfigure)
@@ -417,7 +510,7 @@ class FocusViewV2(Screen):
 
     def _log_persisted_history(self, ap) -> None:
         """On focus init, print captures/ artifacts for this AP to the log."""
-        wps_state = load_run_state("captures", ap.bssid)
+        wps_state = load_run_state(Config.captures_dir, ap.bssid)
         wps_progress = run_progress_line(wps_state) if wps_state else None
         if not ap.persisted and not wps_progress:
             return
@@ -482,16 +575,15 @@ class FocusViewV2(Screen):
         if self._should_auto_invade_pbc(ap):
             self._start_pbc_capture(ap)
 
-        snap = self._snapshot()
-        self._snap = snap
-        if snap.status != self._last_status:
-            self._last_status = snap.status
-            self.query_one("#status", Static).update(self._render_status(snap.status))
-        self.query_one("#card", CardEndpoint).update_dynamic(snap)
+        status = self._status()
+        if status != self._last_status:
+            self._last_status = status
+            self.query_one("#status", Static).update(self._render_status(status))
+        self.query_one("#card", CardEndpoint).update(dynamic=fm.card_dynamic(self._campaigns()))
         self._sync_card()
-        self.query_one("#router", RouterEndpoint).update_dynamic(snap)
+        self.query_one("#router", RouterEndpoint).update(**self._router_values())
         clients = self.query_one("#clients", ClientsList)
-        clients.sync(snap.clients)
+        clients.sync(self._client_list())
         clients.set_deauth_enabled(not fm.deauth_blocked(ap))
         self._refresh_buttons()
         self._balance_status()
@@ -531,7 +623,7 @@ class FocusViewV2(Screen):
         topbar_w = self.query_one("#topbar").content_size.width
         actions_w = self.query_one("#actions").outer_size.width
         widest = max((Text.from_markup(s, emoji=False).cell_len
-                      for s in self._snap.status), default=0)
+                      for s in (self._last_status or [])), default=0)
         spacer = min(actions_w, max(0, topbar_w - actions_w - widest))
         if spacer != self._rspacer_w:
             self._rspacer_w = spacer
@@ -628,12 +720,8 @@ class FocusViewV2(Screen):
             await self.action_go_back()
         elif bid == "deauth-all":
             self.run_worker(self._run_deauth_broadcast(), exclusive=True)
-        elif bid == "btn-deauth":                       # before the inline-client ✕ (also ends "-deauth")
+        elif bid == "btn-deauth":
             self._toggle_deauth()
-        elif bid.endswith("-deauth"):
-            mac = self.query_one("#clients", ClientsList).client_mac(bid)
-            if mac:
-                self.run_worker(self._run_deauth_selected(mac), exclusive=True)
         elif bid == "btn-pmkid":
             self._toggle_pmkid()
         elif bid == "btn-wps-pin":
@@ -647,10 +735,89 @@ class FocusViewV2(Screen):
         elif bid == "btn-stop-pbc":
             self._user_stop_pbc()
 
+    def on_client_widget_deauth_requested(self, event: ClientWidget.DeauthRequested) -> None:
+        self.run_worker(self._run_deauth_selected(event.mac), exclusive=True)
+
+    def on_client_widget_fingerprint_clicked(self, event: ClientWidget.FingerprintClicked) -> None:
+        self.app.push_screen(FingerprintModal(event.mac, event.fingerprint, offset=event.offset))
+
+    def on_router_endpoint_identity_requested(self, event: RouterEndpoint.IdentityRequested) -> None:
+        self._log_identity_details_text(event.details)
+
+    def on_router_endpoint_probe_requested(self, event: RouterEndpoint.ProbeRequested) -> None:
+        ap = self._target_ap
+        if ap is None or not ap.wps:
+            return
+        if self._is_probing():
+            return
+        if self._any_campaign_active():
+            self._log(treelog.leaf_fail("cannot probe while attacks are active"))
+            return
+        self._probe_task = asyncio.create_task(self._run_probe(ap))
+        self._refresh_buttons()
+        self._sync_bindings()
+        self.query_one("#router", RouterEndpoint).update(**self._router_values())
+
+    def on_router_endpoint_probe_cancel_requested(self, event: RouterEndpoint.ProbeCancelRequested) -> None:
+        self._stop_probe()
+
+    async def _run_probe(self, ap: AccessPoint) -> None:
+        array = self.app.array
+        if not array:
+            self._log(treelog.leaf_fail("no active interface"))
+            return
+        iface = array.select_iface(ap.channel)
+        if iface is None:
+            self._log(treelog.leaf_fail(f"no interface can probe CH {ap.channel}"))
+            return
+        label = escape(ap.ssid or ap.bssid)
+        self._log(treelog.header(
+            f"[bold]Identity probe[/bold] on [cyan]{label}[/cyan] [dim](CH {ap.channel})[/dim]"
+        ))
+        try:
+            async with array.claim(iface):
+                result = await probe_ap(iface, ap)
+                if result.ok:
+                    self._log(treelog.leaf_ok(f"probe matched: [bold]{escape(ap.identity.summary)}[/bold]"))
+                    self._log_identity_details(ap)
+                else:
+                    self._log(treelog.leaf_fail(
+                        f"identity probe failed [dim]({escape(result.detail or 'no detail')})[/dim]"
+                    ))
+        except asyncio.CancelledError:
+            self._log(treelog.leaf_fail("identity probe cancelled"))
+            raise
+        except Exception as exc:
+            logger.exception("Active probe failed")
+            self._log(treelog.leaf_fail(f"identity probe error: {escape(str(exc))}"))
+        finally:
+            self._probe_task = None
+            try:
+                self._refresh_buttons()
+                self._sync_bindings()
+                self.query_one("#router", RouterEndpoint).update(**self._router_values())
+            except Exception:
+                pass
+
+    def _log_identity_details(self, ap: AccessPoint) -> None:
+        details = fm.router_identity_details(ap)
+        if details:
+            self._log_identity_details_text(details)
+
+    def _log_identity_details_text(self, details: str) -> None:
+        self._log("[bold]Router identity[/bold]")
+        lines = [line for line in details.splitlines() if line]
+        for i, line in enumerate(lines):
+            connector = treelog.leaf if i == len(lines) - 1 else treelog.branch
+            self._log(connector(line))
+
     # ----- command-bar (footer hotkeys) --------------------------------------
 
     def check_action(self, action: str, parameters: tuple) -> Optional[bool]:
         """Drive the footer keys off the same state as the buttons."""
+        if self._is_probing():
+            if action in ("campaign", "deauth_all", "wps_pbc_mode"):
+                return False
         ap = self._target_ap
         if action == "campaign":
             if ap is None:
@@ -676,8 +843,11 @@ class FocusViewV2(Screen):
             sig: Optional[tuple] = None
         else:
             btns = fm.derive_buttons(ap)
-            sig = (tuple((bid, s.visible, s.disabled) for bid, s in btns.items()),
-                   fm.deauth_blocked(ap), Config.is_silenced(ap.bssid))
+            probing = self._is_probing()
+            sig = (tuple((bid, s.visible, True if probing else s.disabled) for bid, s in btns.items()),
+                   True if probing else fm.deauth_blocked(ap),
+                   Config.is_silenced(ap.bssid),
+                   probing)
         if sig != self._binding_sig:
             self._binding_sig = sig
             self.refresh_bindings()
@@ -860,6 +1030,11 @@ class FocusViewV2(Screen):
         """The 'Stop Deauth' button."""
         if self._deauth_campaign is not None:
             self._deauth_campaign.request_stop()
+
+    def _stop_deauth(self) -> None:
+        if self._deauth_campaign is not None:
+            self._deauth_campaign.request_stop()
+            self._deauth_campaign = None
 
     def _finish_deauth(self) -> None:
         """Reap a completed deauth run. A captured handshake is saved+toasted by the
@@ -1113,6 +1288,8 @@ class FocusViewV2(Screen):
         self._stop_pbc_capture()
         self._stop_wps_pin()
         self._stop_pmkid()
+        self._stop_deauth()
+        self._stop_probe()
         ap = self._target_ap
         logger.info("[FOCUS] leave: ssid=%r bssid=%s",
                     getattr(ap, "ssid", None), getattr(ap, "bssid", None))

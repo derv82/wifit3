@@ -29,7 +29,7 @@ async def _smoke() -> None:
 
     from wifit3.ui.app import WifiteApp
 
-    app = WifiteApp()
+    app = WifiteApp(cli_log_level="unset")
     async with app.run_test() as pilot:
         await pilot.pause()
 
@@ -48,11 +48,12 @@ def main() -> None:
 
     from wifit3 import __version__
 
-    parser = argparse.ArgumentParser(prog="wifit3", description="Userland 802.11 wireless auditor.")
+    parser = argparse.ArgumentParser(prog="wifit3", description="USB Wireless Auditor")
     parser.add_argument("--version", action="version", version=f"wifit3 {__version__}")
-    parser.add_argument(
-        "--smoke", action="store_true",
-        help="Boot the TUI headless, render one frame, and exit 0 (CI bundling self-test).")
+    parser.add_argument("--smoke", action="store_true", help="TEST ONLY: Run headless, render, exit 0")
+    parser.add_argument("--quiet", action="store_true", help="Do not emit any logs")
+    parser.add_argument("--debug", action="store_true", help="Emit verbose debug logs")
+    parser.add_argument("--trace", action="store_true", help="Emit very verbose trace logs")
     args = parser.parse_args()
 
     if args.smoke:
@@ -62,13 +63,18 @@ def main() -> None:
         asyncio.run(asyncio.wait_for(_smoke(), timeout=60))
         return
 
-    # Import inside main(), not at module top: the WEP cracker's
-    # ProcessPoolExecutor re-imports this module to spawn workers, which must
-    # not drag in Textual + the whole UI just to run RC4 math.
+    # Lazy import for WEP cracker ProcessPoolExecutor case
     from wifit3.ui.app import WifiteApp
 
-    # WIFIT3_LOG=off opts out, =debug and =trace bumps to the firehose.
-    WifiteApp(default_log_level="info").run()
+    cli_log_level = None
+    if args.debug:
+        cli_log_level = "debug"
+    if args.trace:
+        cli_log_level = "trace"
+    if args.quiet:
+        cli_log_level = "quiet"
+
+    WifiteApp(cli_log_level=cli_log_level).run()
 
 
 if __name__ == "__main__":

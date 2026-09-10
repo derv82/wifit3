@@ -374,9 +374,10 @@ class TPLink(ProductName):
     ARCHER_T4UH_V2   = "Archer T4UH v2"  # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4UH
     ARCHER_T4UHP     = "Archer T4UHP"    # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4UHP
     ARCHER_T4UHP_V2  = "Archer T4UHP v2" # https://linux-hardware.org/?id=usb:2357-0122
-    ARCHER_T4U_PLUS  = "Archer T4U Plus" # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U_Plus
+    ARCHER_T4U_PLUS  = "Archer T4U+"     # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U_Plus
     ARCHER_T4U_V2    = "Archer T4U v2"   # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U_v2
-    ARCHER_T4U_V3    = "Archer T4U V3"   # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U_v3
+    ARCHER_T4U_V3    = "Archer T4U v3"   # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T4U_v3
+    ARCHER_T4U_V3_PLUS = "Archer T4U v3 / T4U+" # shared 2357:0115 label
     ARCHER_T9UH      = "Archer T9UH"     # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T9UH
     ARCHER_TX20U_PLUS = "Archer TX20U+"  # https://wikidevi.wi-cat.ru/TP-LINK_Archer_TX35U_Plus (diff page) says: TP-LINK Archer TX20U Plus (AX1800) • RTL8832AU [2357:013f]
     TL_WDN6200       = "TL-WDN6200"      # https://github.com/aircrack-ng/rtl8812au/issues/1262

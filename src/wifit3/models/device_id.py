@@ -4,9 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-_SILICON = {"RTL": "Realtek", "MT": "MediaTek", "RT": "Ralink", "AR": "Atheros"}  # RTL before RT
-
-
 @dataclass(frozen=True)
 class DeviceID:
     """One VID:PID a driver claims. ``chipset`` is the bare silicon (e.g. ``"RTL8812AU"``);
@@ -28,11 +25,6 @@ class DeviceID:
         models on different host controllers can share it; ``bus`` and ``address`` together are unique.
         vid/pid ride along so a catalog entry (bus/address None) never collides with a live instance."""
         return (self.vid, self.pid, self.bus, self.address)
-
-    @property
-    def silicon_vendor(self) -> str:
-        """The chip maker, derived from the chipset prefix (Realtek/MediaTek/Ralink/Atheros)."""
-        return next(v for p, v in _SILICON.items() if self.chipset.startswith(p))
 
     @property
     def description(self) -> str:

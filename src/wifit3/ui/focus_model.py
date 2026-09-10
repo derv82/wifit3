@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from collections import Counter, deque
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, TYPE_CHECKING
 
 from rich.markup import escape
 
@@ -13,14 +13,17 @@ from ..campaigns.pmkid import PmkidHarvestAttack
 from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.crack.handshake import pmkid_crackable
+from wifit3.models import IdKey, IdSource
 from wifit3.persist.config import Config
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
 
+if TYPE_CHECKING:
+    from wifit3.models.access_point import AccessPoint
+
 # Attack-button campaigns in button-row order.
 BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign, EvilTwinCampaign]
-_BUTTON_ORDER = ["btn-gen-ivs", "btn-chop", "btn-deauth", "btn-pmkid", "btn-wps-pin", "btn-eviltwin"]
 
 
 @dataclass
@@ -51,31 +54,6 @@ class DashboardRow:
     color: str                     # Rich colour name
     peak: int                      # nominal scale (drives the fake generator)
     as_rate: bool = True           # True -> "N/s", False -> a recent count
-
-
-@dataclass
-class ClientRow:
-    bssid: str
-    power: int
-    packets: int
-
-
-@dataclass
-class FocusSnapshot:
-    status: list[str]              # up to 3 headline lines (the focal point); markup
-    power_dbm: int
-    signal: Optional[float]        # windowed beacons/s; None=warming, ~0=dead (signal bar)
-    card_chipset: str
-    card_bssid: str | None         # the card's own MAC, when the driver exposes it
-    card_dynamic: str              # "● replaying" etc; "" when idle
-    buttons: list[str]             # encryption-conditional attack-button labels
-    ap_essid: str
-    ap_bssid: str
-    ap_channel: int
-    ap_encryption: str             # short markup, e.g. "WPA2"
-    dashboard: list[DashboardRow]
-    clients: list[ClientRow]
-    log_lines: list[str] = field(default_factory=list)
 
 
 # Dashboard rows by family: WEP shows the wep-iv row, WPA/WPA2/WPA3 the eapol row.
@@ -170,7 +148,9 @@ def wps_status_markup(camp) -> str:
         return (f"WPS PIN: [cyan]{tested}[/cyan]/11k · "
                 f"[{color}]{kind} {countdown}[/{color}]")
     if camp.status in ("failed", "error"):
-        return f"WPS PIN: [red]{camp.status}[/red] [dim]({tested}/11k)[/dim]"
+        reason = getattr(camp, "fail_reason", None)
+        suffix = f" · [dim]{escape(reason)}[/dim]" if reason else f" [dim]({tested}/11k)[/dim]"
+        return f"WPS PIN: [red]{camp.status}[/red]{suffix}"
     eta = _fmt_eta(camp.eta_seconds)
     if st.phase == "second_half" and st.first_half:
         # First half locked in: the meaningful keyspace is the second half
@@ -242,6 +222,52 @@ def pmf_status_markup(ap) -> str:
     return "[dim]Disabled[/dim]"
 
 
+def router_identity_markup(ap) -> str:
+    ident = getattr(ap, "identity", None)
+    if ident is None or not ident.summary:
+        return ""
+    return f"[accent]{escape(ident.summary)}[/accent]"
+
+
+def router_identity_details(ap: AccessPoint) -> str | None:
+    ident = ap.identity
+    if ident is None or not ident.summary:
+        return None
+    rows = [f"[bold]{escape(ident.summary)}[/bold]"]
+    mfr_src: IdSource | None = None
+    if ident.model:
+        model_src = getattr(ident, "model_source", None) or ident.get(IdKey.MODEL_NAME)[1] or ident.get(IdKey.MODEL_NUMBER)[1]
+        src_label = model_src.label if model_src else ""
+        rows.append(f"[dim]Model:[/dim] {escape(ident.model)} [dim]({src_label})[/dim]")
+    if ident.manufacturer:
+        mfr_src = getattr(ident, "manufacturer_source", None) or ident.get(IdKey.MANUFACTURER)[1]
+        src_label = mfr_src.label if mfr_src else ""
+        rows.append(f"[dim]Manufacturer:[/dim] {escape(ident.manufacturer)} [dim]({src_label})[/dim]")
+    if ident.device_name and ident.device_name != ident.model:
+        dev_src = ident.get(IdKey.DEVICE_NAME)[1]
+        src_label = dev_src.label if dev_src else ""
+        rows.append(f"[dim]Device Name:[/dim] {escape(ident.device_name)} [dim]({src_label})[/dim]")
+    if ident.serial_number:
+        sn_src = ident.get(IdKey.SERIAL_NUMBER)[1]
+        src_label = sn_src.label if sn_src else ""
+        rows.append(f"[dim]Serial:[/dim] {escape(ident.serial_number)} [dim]({src_label})[/dim]")
+    if ident.device_type:
+        dt_src = ident.get(IdKey.DEVICE_TYPE)[1]
+        src_label = dt_src.label if dt_src else ""
+        rows.append(f"[dim]Device Type:[/dim] {escape(ident.device_type)} [dim]({src_label})[/dim]")
+
+    wsc_mfr = ident.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_M1) or ident.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_BEACON)
+    if wsc_mfr and wsc_mfr != ident.manufacturer:
+        rows.append(f"[dim]Chipset:[/dim] {escape(wsc_mfr)} [dim](WSC)[/dim]")
+
+    oui_vendor = ident.get_source_value(IdKey.MANUFACTURER, IdSource.OUI)
+    if oui_vendor and (oui_vendor != ident.manufacturer or mfr_src != IdSource.OUI):
+        rows.append(f"[dim]IEEE OUI:[/dim] {escape(oui_vendor)}")
+
+    return "\n".join(rows)
+
+
+
 def status_footer_lines(ap, array, campaign, now: float) -> list[str]:
     """The dashboard footer lines for this target."""
     if is_wep(ap):
@@ -303,19 +329,6 @@ def derive_buttons(ap) -> dict[str, ButtonState]:
 def deauth_blocked(ap) -> bool:
     """Deauth bursts are dead when a campaign owns the radio OR the AP requires PMF."""
     return other_long_running_tx() or ap.pmf_required
-
-
-def client_rows(ap, array) -> list[ClientRow]:
-    """The target's real clients."""
-    rows: list[ClientRow] = []
-    forged = array.forged_macs
-    for mac, client in array.clients.items():
-        if client.bssid != ap.bssid:
-            continue
-        if mac in forged:
-            continue
-        rows.append(ClientRow(bssid=mac, power=client.signal, packets=client.packets))
-    return rows
 
 
 def card_dynamic(campaigns: Campaigns) -> str:
@@ -389,7 +402,7 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
         camp = campaigns.eviltwin
         if camp.captured:
             return ["[black bold on green] ✓ Captured [/black bold on green] crackable M2",
-                    "[dim]saved to captures/[/dim]"]
+                    f"[dim]saved to {Config.captures_dir}/[/dim]"]
         stats = getattr(camp.fakeap, "stats", None)
         if stats is None:
             return [f"[bold cyan]EvilTwin arming…[/bold cyan] on CH {camp.twin_channel}"]
@@ -434,7 +447,7 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
         if n_pmkid:
             bits.append(f"PMKID ×{n_pmkid}")
         return ["[black bold on green] ✓ Captured [/black bold on green] " + " · ".join(bits),
-                "[dim]saved to captures/[/dim]"]
+                f"[dim]saved to {Config.captures_dir}[/dim]"]
     if n_partial:
         breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
         return ["[yellow]◌ Capturing handshake[/yellow]",
@@ -471,82 +484,3 @@ def card_identity(source) -> tuple[str, str | None]:
     return str(label), (str(mac) if mac else None)
 
 
-# ---------------------------------------------------------------------------
-# Snapshot factory (v2) + the demo snapshot (no-target fallback / screenshots).
-# ---------------------------------------------------------------------------
-
-
-def build_snapshot(ap, array, campaigns: Campaigns, samples: deque,
-                   now: float) -> FocusSnapshot:
-    """Compose a :class:`FocusSnapshot` from the derivations for the v2 layout."""
-    rate, _count = beacon_rate(ap, samples, now)
-    chipset, card_bssid = card_identity(array)
-    btns = derive_buttons(ap)
-    button_labels = [btns[bid].label for bid in _BUTTON_ORDER if btns[bid].visible]
-    clients = client_rows(ap, array) if array else []
-    essid = truncate_ssid(ap.ssid) if ap.ssid else "‹hidden›"
-    return FocusSnapshot(
-        status=derive_headline(ap, array, campaigns),
-        power_dbm=ap.signal,
-        signal=rate,
-        card_chipset=chipset,
-        card_bssid=card_bssid,
-        card_dynamic=card_dynamic(campaigns),
-        buttons=button_labels,
-        ap_essid=essid,
-        ap_bssid=ap.bssid,
-        ap_channel=ap.channel,
-        ap_encryption=format_encryption_markup(ap, detailed=True),
-        dashboard=dashboard_rows(ap),
-        clients=clients,
-        log_lines=[],
-    )
-
-
-def fake_snapshot() -> FocusSnapshot:
-    """The EvilTwin scenario from the redesign mockup."""
-    return FocusSnapshot(
-        status=[
-            "● EvilTwin active",
-            "WPA2 twin up · waiting for M1·M2",
-            "handshake:  M1 ✓   M2 -",
-        ],
-        power_dbm=-71,
-        signal=6.0,
-        card_chipset="rtl8187l",
-        card_bssid="00:c0:ca:11:22:33",
-        card_dynamic="● EvilTwin",
-        buttons=["Extract PMKID", "EvilTwin", "WPS Brute Force"],
-        ap_essid="HomeNetwork",
-        ap_bssid="a2:b3:c4:d5:e6:f0",
-        ap_channel=6,
-        ap_encryption="WPA2/CCMP",
-        dashboard=[
-            DashboardRow("beacon", "beacon", "cyan", 10),
-            DashboardRow("data", "data", "blue", 240),
-            DashboardRow("eapol", "eapol", "green", 4, as_rate=False),
-            DashboardRow("inject", "inject", "orange1", 30),
-            DashboardRow("deauth", "deauth", "red", 12),
-        ],
-        clients=[
-            ClientRow("fa:11:22:33:44:aa", -79, 10),
-            ClientRow("b2:c3:d4:e5:f6:07", -80, 134),
-            ClientRow("9c:b6:d0:1a:2b:3c", -67, 512),
-            ClientRow("3a:f1:08:77:aa:01", -83, 22),
-            ClientRow("de:ad:be:ef:00:42", -75, 88),
-        ],
-        log_lines=[
-            "19:41:58  Listening on ch 6",
-            "19:42:00  Beacon ◂ target AP",
-            "19:42:01  Target locked.",
-            "19:42:02  2 clients seen",
-            "19:42:03  Deauth ▸ ff:ff:ff…",
-            "19:42:03  Deauth ▸ fa:11:…:aa",
-            "19:42:04  M1 captured (ANonce)",
-            "19:42:05  Waiting for M2…",
-            "19:42:06  Deauth ▸ b2:c3:…:07",
-            "19:42:07  Client reassoc",
-            "19:42:08  M1 captured (ANonce)",
-            "19:42:09  Waiting for M2…",
-        ],
-    )

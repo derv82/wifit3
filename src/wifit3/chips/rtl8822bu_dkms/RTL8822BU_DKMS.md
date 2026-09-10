@@ -227,3 +227,14 @@ can't use, so the garbage landed in the per-AP mean. `rx._path_rssi` now drops a
 >0 dBm (OFDM keeps the strongest valid path; saturated CCK / all-paths-bad falls to the floor), while
 keeping the s8 0xFF no-measurement wrap. HW A/B: worst-case RSSI delta +47 → −9 dB, median at parity
 (−0.5 dB / 88 APs), 0 impossible over ~14k live frames. Fix + `test_rx.py` regression in `712ec0b`.
+
+### 2026-09-09 — Comprehensive Audit & 5-Gap Remediation
+
+Empirical baselines (`rtl8822budkms_20260909-185305.md` & `rtl8822budkms_20260909-190710.md`, 57.9k frames total) and a C source audit (`hal/rtl8822b/rtl8822b_ops.c`) revealed 5 major architectural gaps in the original port, remediated and validated as follows:
+
+1. **TASK-1 (Verification Harness)**: Added Bulk-IN FIFO feed to `ReplayDevice` in `verify_pcap.py` (9,292 buffers), decoding 9,413 frames and 2,636 beacons cleanly through `rx.iter_frames` + `WlanFrameParser`.
+2. **TASK-2 (Crystal Cap CFO)**: Verified EFUSE `0xB9` (`0x2F`) is programmed into MAC `0x24[30:25]` and `0x28[6:1]` via `bb.set_crystal_cap()` in `cold_bringup()`, and `cal.cfo_tracking_init()` enables `0x0010[6]`. Soak test on 5 GHz alone demonstrated 99.0% beacon channel match rate (884 match vs 9 mismatch; 20% on 2.4 GHz reflects standard adjacent-channel bleed).
+3. **TASK-3 (Spur Notch Defused on Hopping)**: In Linux C (`phydm_hal_api8822b.c:1542`), `phydm_spur_calibration_8822b` checks `if (*dm->is_scan_in_process) return;`. Added `is_scan=True` across `chan.py` and `driver.py` during scanning and channel hopping to clear residual notch masks and skip `_dynamic_spur_det_eliminate`. Restored CH 153 yield from ~2 fps up to 17.8 fps (89 frames / 5s).
+4. **TASK-4 (PA Bias & RF 0x18 Synth Lock)**: Physical EFUSE `0x3D7`/`0x3D8` (PA bias = 0xF0, 0xF0) was verified wired through `cal.tx_current_calibration()` in `bringup.py:78`. The RF18 bit 15 synth-unlock fault was caused by `_dynamic_spur_det_eliminate` toggling Path A off in `0x0808` ("Cannot shut down path-A, because synthesizer will be shut down"); bypassing it via `is_scan=True` prevents Path A shutdown, stabilizing synthesizer lock on cold boot.
+5. **TASK-5 (Watchdog Lock & DIG Clamping)**: `_watchdog_loop` now checks `self._io_lock.locked()` to skip watchdog ticks during active channel tuning. In `driver._seed_dig()`, `dig_max_of_min` is clamped to `DIG_MIN_COVERAGE` (`0x1C`), maintaining peak RX sensitivity in unassociated monitor mode.
+
