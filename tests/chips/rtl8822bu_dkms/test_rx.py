@@ -7,6 +7,7 @@ saturated pwdb bytes (HW-observed pwdb 111-145 -> impossible >0 dBm) instead of
 letting them poison the per-AP mean.
 """
 from wifit3.chips.rtl8822bu_dkms import rx
+from wifit3.chips.rtl8822bu_dkms.driver import _rx_desc_stats
 from wifit3.chips.rtl8822bu_dkms.rx import RSSI_FLOOR, RSSI_UNKNOWN, _decode_rssi, _path_rssi
 
 
@@ -47,6 +48,22 @@ def test_c2h_and_error_frames_skipped_walk_continues():
     icv = _pkt(b"BAD!" + b"\x00\x00\x00\x00", icv=1)
     good = _pkt(b"KEEP" + b"\x00\x00\x00\x00")
     assert _frames(c2h + crc + icv + good) == [b"KEEP"]
+
+
+def test_rx_desc_stats_classifies_dwell_debug_counts():
+    c2h = _pkt(b"\x01\x02\x03\x04\x05\x06\x07\x08", c2h=1)
+    crc = _pkt(b"BAD!" + b"\x00\x00\x00\x00", crc=1)
+    icv = _pkt(b"BAD!" + b"\x00\x00\x00\x00", icv=1)
+    runt = _pkt(b"\x00\x00\x00\x00")
+    good = _pkt(b"KEEP" + b"\x00\x00\x00\x00")
+    st = _rx_desc_stats(c2h + crc + icv + runt + good)
+    assert st.bufs == 1
+    assert st.desc == 5
+    assert st.good == 1
+    assert st.crc_err == 1
+    assert st.icv_err == 1
+    assert st.c2h == 1
+    assert st.runt == 1
 
 
 def test_no_physt_reports_unknown_rssi():

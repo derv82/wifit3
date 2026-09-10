@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import Callable, ClassVar, List, Optional
 
 import usb.core
@@ -29,8 +30,8 @@ from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bringup, chan, dm_watchdog, mac, sipi, tx, txpower
-from .rx import iter_frames
+from . import bringup, chan, dm_watchdog, led, mac, sipi, tx, txpower
+from .rx import FCS_LEN, RXDESC_SIZE, _rnd8, iter_frames
 from .transport import Rtl8822buTransport
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,53 @@ _REF_CUT = 3
 # rfe types whose per-channel RFE PINMUX is NOT ported (OEM-only phydm_8822b_type15/18_rfe); the
 # dispatch runs the iFEM pinmux as a give-it-a-shot fallback, and connect() escalates the warning.
 _RFE_PINMUX_UNPORTED = frozenset({15, 18})
+
+
+@dataclass
+class _RxDebugStats:
+    bufs: int = 0
+    bytes: int = 0
+    desc: int = 0
+    good: int = 0
+    crc_err: int = 0
+    icv_err: int = 0
+    c2h: int = 0
+    runt: int = 0
+    zero_len: int = 0
+    truncated: int = 0
+
+
+def _rx_desc_stats(buf: bytes) -> _RxDebugStats:
+    st = _RxDebugStats(bufs=1, bytes=len(buf))
+    off, n = 0, len(buf)
+    while off + RXDESC_SIZE <= n:
+        w0 = int.from_bytes(buf[off:off + 4], "little")
+        pkt_len = w0 & 0x3FFF
+        crc_err = (w0 >> 14) & 1
+        icv_err = (w0 >> 15) & 1
+        drvinfo_sz = ((w0 >> 16) & 0xF) << 3
+        shift_sz = (w0 >> 24) & 0x3
+        c2h = (int.from_bytes(buf[off + 8:off + 12], "little") >> 28) & 1
+        if pkt_len <= 0:
+            st.zero_len += 1
+            break
+        pkt_offset = RXDESC_SIZE + drvinfo_sz + shift_sz + pkt_len
+        if pkt_offset > n - off:
+            st.truncated += 1
+            break
+        st.desc += 1
+        if c2h:
+            st.c2h += 1
+        elif crc_err:
+            st.crc_err += 1
+        elif icv_err:
+            st.icv_err += 1
+        elif pkt_len <= FCS_LEN:
+            st.runt += 1
+        else:
+            st.good += 1
+        off += _rnd8(pkt_offset)
+    return st
 
 
 def _rx_state_line(t) -> str:
@@ -113,6 +161,7 @@ class Rtl8822buDkmsDriver(Driver):
         # intermittent cold-boot "2.4 GHz silent until the first 5 GHz hop" wedge hits.
         self._dbg_frames = 0
         self._dbg_beacons = 0
+        self._dbg_rx = _RxDebugStats()
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Rtl8822buDkmsDriver":
@@ -176,17 +225,17 @@ class Rtl8822buDkmsDriver(Driver):
             # The airmon monitor RX-enable (gate-verified vs the capture's monitor switch):
             # MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode, RXFLTMAP0/1/2=0xFFFF.
             await loop.run_in_executor(None, mac.enable_monitor, self.transport)
+            await loop.run_in_executor(None, led.enable_tx_blink, self.transport)
             await loop.run_in_executor(None, self._heal_cold_synth, self.transport)
             await self._dbg_rx_state(f"post-enable-monitor ch{_DEFAULT_CHANNEL}")
 
             # Seed the DIG state from the chip and start the runtime PHYDM watchdog (~2 s cadence): the
             # dig_init IGI is only a seed, so without this loop the RX gain never tracks the channel's
             # false-alarm rate. Reads FA counters, adapts IGI (0xC50/0xE50), resets the counters.
-            # In monitor mode we clamp dig_max_of_min to DIG_MIN_COVERAGE (0x1C) to maintain max sensitivity.
             def _seed_dig(tr):
                 return dm_watchdog.DigState(
                     cur_ig_value=sipi.get_bb_reg(tr, 0x0C50, 0x7F),
-                    dig_max_of_min=dm_watchdog.DIG_MIN_COVERAGE,
+                    big_jump_step1=sipi.get_bb_reg(tr, 0x08C8, 0xE),
                     cck_new_agc=bool(sipi.get_bb_reg(tr, 0x0A9C, 1 << 17)))
 
             self._dig_st = await loop.run_in_executor(None, _seed_dig, self.transport)
@@ -225,8 +274,15 @@ class Rtl8822buDkmsDriver(Driver):
                 continue
             try:
                 async with self._io_lock:
-                    await loop.run_in_executor(
+                    fa = await loop.run_in_executor(
                         None, dm_watchdog.phydm_watchdog, self.transport, self._dig_st)
+                if logger.isEnabledFor(logging.DEBUG) and self._dig_st is not None:
+                    logger.debug(
+                        "[WATCHDOG] fa=%d cca=%d cck=%d ofdm=%d igi=0x%02x cckpd=%d cck_ma=%s",
+                        fa.cnt_all, fa.cnt_cca_all, fa.cck_fail, fa.ofdm_fail,
+                        self._dig_st.cur_ig_value, self._dig_st.cck_pd_lv,
+                        "reset" if self._dig_st.cck_fa_ma == dm_watchdog.CCK_FA_MA_RESET
+                        else self._dig_st.cck_fa_ma)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -237,6 +293,8 @@ class Rtl8822buDkmsDriver(Driver):
         return self.transport.bulk_in()
 
     def _dispatch(self, buf: bytes) -> None:
+        if logger.isEnabledFor(logging.DEBUG):
+            self._add_rx_debug_stats(_rx_desc_stats(buf))
         cb = self._rx_cb
         if cb is None and not self._ack_detect_on:
             return
@@ -254,6 +312,31 @@ class Rtl8822buDkmsDriver(Driver):
                 if parsed.type == "beacon":
                     self._dbg_beacons += 1
                 cb(parsed)
+
+    def _add_rx_debug_stats(self, st: _RxDebugStats) -> None:
+        self._dbg_rx.bufs += st.bufs
+        self._dbg_rx.bytes += st.bytes
+        self._dbg_rx.desc += st.desc
+        self._dbg_rx.good += st.good
+        self._dbg_rx.crc_err += st.crc_err
+        self._dbg_rx.icv_err += st.icv_err
+        self._dbg_rx.c2h += st.c2h
+        self._dbg_rx.runt += st.runt
+        self._dbg_rx.zero_len += st.zero_len
+        self._dbg_rx.truncated += st.truncated
+
+    def _rx_debug_line(self) -> str:
+        st = self._dbg_rx
+        return (
+            f"rxbuf={st.bufs}/{st.bytes}B desc={st.desc} good={st.good} "
+            f"crc={st.crc_err} icv={st.icv_err} c2h={st.c2h} runt={st.runt} "
+            f"zero={st.zero_len} trunc={st.truncated}"
+        )
+
+    def _reset_rx_debug_stats(self) -> None:
+        self._dbg_frames = 0
+        self._dbg_beacons = 0
+        self._dbg_rx = _RxDebugStats()
 
     async def _enable_rx_acks(self) -> None:
         """No-op: enable_monitor already accept-alls RXFLTMAP1 (all ctrl subtypes incl. ACK are
@@ -306,9 +389,11 @@ class Rtl8822buDkmsDriver(Driver):
         prev_5g = prev is not None and prev > 14
         band_change = prev is None or prev_5g != (channel > 14)
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("[HOP] ch%s->%d band_change=%s | ch%s dwell: frames=%d beacons=%d",
-                         prev, channel, band_change, prev, self._dbg_frames, self._dbg_beacons)
-        self._dbg_frames = self._dbg_beacons = 0
+            logger.debug(
+                "[HOP] ch%s->%d band_change=%s | ch%s dwell: frames=%d beacons=%d | %s",
+                prev, channel, band_change, prev, self._dbg_frames, self._dbg_beacons,
+                self._rx_debug_line())
+        self._reset_rx_debug_stats()
 
         def _tune(t):
             chan.set_channel_bw(t, channel, prev_ch=prev, txpwr_pg=self._txpwr_pg,

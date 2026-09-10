@@ -47,3 +47,4 @@ def test_unported_rfe_pinmux_warns(caplog):
     with caplog.at_level(logging.WARNING, logger="wifit3.chips.rtl8822bu_dkms.driver"):
         _log(info, e, caplog)
     assert "not ported" in caplog.text and "iFEM fallback" in caplog.text
+
