@@ -9,8 +9,11 @@ silently drift either" fix.
 import pytest
 import pytest_asyncio
 from textual.app import App, ComposeResult
+from textual.widgets.data_table import ColumnKey
 
-from wifit3.ui.screens.scanner import _APScanTable
+from wifit3.models import AccessPoint
+from wifit3.ui.app import WifiteApp
+from wifit3.ui.screens.scanner import ScannerView, _APScanTable
 
 
 class _TableApp(App):
@@ -75,3 +78,93 @@ async def test_pin_releases_suppress_flag_after_refresh(table_host):
     table.pin_cursor_row(40)
     await pilot.pause()   # _release_scroll runs after a render (call_after_refresh); pause() waits for it
     assert table._suppress_scroll is False
+
+
+class _SsidTableApp(App):
+    def compose(self) -> ComposeResult:
+        table = _APScanTable(id="ssid_table")
+        table.add_column("SSID  ", key="ssid")
+        table.add_column("CH  ", key="channel")
+        yield table
+
+
+@pytest.mark.asyncio
+async def test_ap_scan_table_ssid_column_clamps_to_min_width():
+    app = _SsidTableApp()
+    async with app.run_test() as pilot:
+        table = app.query_one("#ssid_table", _APScanTable)
+        col = table.columns[ColumnKey("ssid")]
+        assert col.content_width == _APScanTable.SSID_MIN_WIDTH
+
+        table.add_row("Net1", "1", key="r1")
+        await pilot.pause()
+        assert col.content_width == _APScanTable.SSID_MIN_WIDTH
+
+        table.update_cell("r1", "ssid", "A", update_width=True)
+        await pilot.pause()
+        assert col.content_width == _APScanTable.SSID_MIN_WIDTH
+
+
+@pytest.mark.asyncio
+async def test_ap_scan_table_ssid_column_expands_to_long_ssid():
+    app = _SsidTableApp()
+    async with app.run_test() as pilot:
+        table = app.query_one("#ssid_table", _APScanTable)
+        col = table.columns[ColumnKey("ssid")]
+
+        long_ssid = "Super Long Test Access Point 30"
+        table.add_row(long_ssid, "6", key="r2")
+        await pilot.pause()
+        assert col.content_width == len(long_ssid)
+
+
+class _FakeDeviceManager:
+    def __init__(self, aps):
+        self.access_points = {ap.bssid: ap for ap in aps}
+        self.clients = {}
+        self.forged_macs = set()
+        self.supported_channels = [1, 6, 11]
+        self.members = []
+
+    def get_access_points(self, include_eviltwin: bool = True):
+        return list(self.access_points.values())
+
+    async def start_hopping(self, *a, **k):
+        pass
+
+    async def stop_hopping(self):
+        pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_scanner_view_ssid_width_decloaks_and_caps():
+    ap_hidden = AccessPoint(bssid="00:11:22:33:44:01", ssid=None)
+    ap_hidden.signal_by_card = {"card0": -50}
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        fake_mgr = _FakeDeviceManager([ap_hidden])
+        app.array = fake_mgr
+        app.push_screen("scanner")
+        await pilot.pause(0)
+        scanner = app.screen
+        assert isinstance(scanner, ScannerView)
+        table = scanner.query_one("#ap-table", _APScanTable)
+        col = table.columns[ColumnKey("ssid")]
+
+        scanner.refresh_table()
+        await pilot.pause()
+        assert col.content_width == _APScanTable.SSID_MIN_WIDTH
+
+        ap_hidden.ssid = "Super Long Test Access Point 30"
+        scanner.refresh_table()
+        await pilot.pause()
+        assert col.content_width == len(ap_hidden.ssid)
+
+        ap_huge = AccessPoint(bssid="00:11:22:33:44:02", ssid="A" * 50)
+        ap_huge.signal_by_card = {"card0": -40}
+        fake_mgr.access_points[ap_huge.bssid] = ap_huge
+        scanner.refresh_table()
+        await pilot.pause()
+        assert col.content_width == ScannerView._SSID_CELL_MAX

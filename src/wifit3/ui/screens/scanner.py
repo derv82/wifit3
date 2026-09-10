@@ -2,7 +2,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Set
 
 from textual._two_way_dict import TwoWayDict
 from textual.app import ComposeResult, RenderResult
@@ -12,6 +12,7 @@ from textual.reactive import Reactive
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, RichLog
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
+from textual.widgets.data_table import CellKey, ColumnKey, RowKey
 from rich.markup import escape
 from rich.text import Text
 
@@ -110,7 +111,37 @@ class _ScannerHeader(Header):
 class _APScanTable(DataTable):
     """AP list table that can re-pin its row cursor without moving the viewport."""
 
+    SSID_MIN_WIDTH: int = 20
     _suppress_scroll: bool = False
+
+    def add_column(
+        self,
+        label: Any,
+        *,
+        width: Optional[int] = None,
+        key: Optional[str] = None,
+        default: Any = None,
+    ) -> ColumnKey:
+        col_key = super().add_column(label, width=width, key=key, default=default)
+        if (key == "ssid" or col_key.value == "ssid") and width is None:
+            col = self.columns.get(col_key)
+            if col and col.content_width < self.SSID_MIN_WIDTH:
+                col.content_width = self.SSID_MIN_WIDTH
+        return col_key
+
+    def _update_dimensions(self, new_rows: Iterable[RowKey]) -> None:
+        col = self.columns.get(ColumnKey("ssid"))
+        if col and col.content_width < self.SSID_MIN_WIDTH:
+            col.content_width = self.SSID_MIN_WIDTH
+        super()._update_dimensions(new_rows)
+        if col and col.content_width < self.SSID_MIN_WIDTH:
+            col.content_width = self.SSID_MIN_WIDTH
+
+    def _update_column_widths(self, updated_cells: Set[CellKey]) -> None:
+        super()._update_column_widths(updated_cells)
+        col = self.columns.get(ColumnKey("ssid"))
+        if col and col.content_width < self.SSID_MIN_WIDTH:
+            col.content_width = self.SSID_MIN_WIDTH
 
     def _scroll_cursor_into_view(self, animate: bool = False) -> None:
         if self._suppress_scroll:
@@ -418,7 +449,9 @@ class ScannerView(Screen):
                     if prev_state.ssid != ap.ssid or prev_state.chips_markup != chips_markup:
                         prev_state.ssid = ap.ssid
                         prev_state.chips_markup = chips_markup
-                        table.update_cell(ap.bssid, "ssid", self._render_cell(ap, "ssid", is_stale))
+                        table.update_cell(
+                            ap.bssid, "ssid", self._render_cell(ap, "ssid", is_stale), update_width=True,
+                        )
 
                     if prev_state.channel != ap.channel:
                         prev_state.channel = ap.channel
