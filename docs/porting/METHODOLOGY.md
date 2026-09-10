@@ -136,10 +136,12 @@ RF re-roll was a port gap, not hardware).
 
 The target is a clean run with zero waived ops, end to end: including the STA→monitor setup, the
 background timer writes the kernel interleaves (watchdog, sreset poll, hop timer: port the
-mechanism and register it as an async handler), and TX. The injection and deauth frames in the
+mechanism and register it as an async handler), TX, and RX. The injection and deauth frames in the
 pcap are built by the driver's xmit path; reproduce them through `inject_frame()` and byte-match
-them. "Don't port every line" is true only of pure-logic lines that touch no register and so have
-no wire op to match. It isn't a licence to waive wire ops.
+them. Pcap verification must also feed captured bulk-IN buffers into `ReplayDevice` and assert that
+the driver's real RX path (`iter_frames` + `WlanFrameParser`) decodes frames and beacons cleanly
+offline (see GOTCHAS.md). "Don't port every line" is true only of pure-logic lines that touch no
+register and so have no wire op to match. It isn't a licence to waive wire ops.
 
 Prove one channel tune before fighting airodump's hop. A manual `iw set channel N` sweep
 delineates each tune cleanly; get that byte-for-byte first. airodump calls the same `iw set

@@ -156,3 +156,35 @@ real driver code; find its opener. Carry per-producer state (DIG IGI, CCK-PD lev
 HMEBOX index, NHM/CLM period) so first-tick-vs-steady writes suppress correctly. A single genuinely
 traffic-driven cosmetic bit (the LED at `0x4e[3]`) may be value-bypassed, but only with lead
 approval and scoped to that one bit.
+
+## Always verify Bulk-IN endpoints in verify_pcap (assert offline frame decode)
+
+A `verify_pcap` that only replays control transfers checks what the driver sends to the chip, but
+leaves the entire RX path untested. A driver can match 10,000 register writes byte-for-byte yet
+produce zero frames on live hardware if RX descriptor parsing, alignment math, or byte offsets are
+wrong.
+
+**Why:** The 8822cu port brought up cleanly against control-only replay, but produced zero beacons on
+live hardware. Debugging was blind because the offline verification harness never fed incoming bytes
+back into the driver to verify they could actually be decoded.
+
+**How to apply:** In `verify_pcap.py`:
+1. Extract bulk-IN buffers from the capture: `bulk_in = rp.extract_bulk_in_ops(pcap, dev_addr)`.
+2. Supply them to the replay device: `dev = rp.ReplayDevice(ops, responses=bulk_in)`.
+3. Pump the replay transport through the driver's real RX path (`rx.iter_frames`) and assert that
+   frames and beacons parse cleanly via `WlanFrameParser.parse_80211_frame(frame, rssi)`.
+4. If zero beacons parse offline from a reference capture known to contain on-air traffic, the RX
+   parser/descriptor decode is broken before ever touching hardware.
+
+## Diagnostic tooling: pcap_slicer and soak
+
+Two universal scripts accelerate porting and hardware verification across all chipsets:
+
+- **`scripts/porting/pcap_slicer.py`** — Maps capture timeline events (`<cap>_logs/main.log`) to exact
+  pcap frame ranges using `tshark` and `bisect`. When a verify replay halts at op N, running the slicer
+  shows exactly which high-level command was active at that frame (e.g. `airmon-ng start`, native
+  `airodump-ng` hopping, specific `iw set channel` dwell, or `aireplay-ng` injection).
+- **`scripts/rx/soak.py`** — The standard multi-channel empirical RX test for connected cards. Dwells
+  across channels, tallies frame/beacon rates, measures RSSI, checks BSSID OUI validity, and reports
+  DS IE channel match consistency. Output: structured markdown + CSV under `scripts/rx/reports/`.
+  Flags: `--card <substr>`, `--channels <list>`, `--dwell-sec <N>`, `--skip-longrun`.
