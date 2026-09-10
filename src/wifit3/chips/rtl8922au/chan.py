@@ -73,3 +73,37 @@ def set_channel(t, channel: int, ep: int = None, mlo_1_1: bool = False) -> dict:
     _set_channel_one(t, ep, chan, phy_idx=0, mac_idx=0)
     _set_channel_one(t, ep, chan, phy_idx=1, mac_idx=1)
     return chan
+
+
+def set_channel_fast(t, channel: int, ep: int = None) -> dict:
+    """Fast single-pass channel tune for scanning hops in MLO_1_PLUS_1_1RF.
+    Skips intra-band RFK (TXGAPK/IQK/TSSI/DPK/RXDCK), dropping hop latency to ~75ms."""
+    chan = make_chan(channel)
+    band = chan["band_type"]
+    t.mlo_1_1 = True
+
+    tx_en0 = phy.set_channel_help(t, t.cv, band, enter=True, phy_idx=0, mac_idx=0)
+    mac.set_channel_mac(t, chan, 0)
+    phy.set_channel_bb(t, chan, 0)
+    phy.set_channel_rf(t, chan, 0)
+    txpwr.set_txpwr(t, chan, 0)
+    phy.set_channel_help(t, t.cv, band, enter=False, phy_idx=0, mac_idx=0, tx_en=tx_en0)
+
+    band_changed0 = t.last_band[0] is not None and t.last_band[0] != band
+    if not t.entity_active[0] or band_changed0:
+        coex.ntfy_switch_band(t, ep)
+        rfk.rfk_band_changed(t, ep, chan, 0)
+        rfk.rfk_channel(t, ep, chan, 0)
+    t.entity_active[0] = True
+    t.last_band[0] = band
+
+    tx_en1 = phy.set_channel_help(t, t.cv, band, enter=True, phy_idx=1, mac_idx=1)
+    mac.set_channel_mac(t, chan, 1)
+    phy.set_channel_bb(t, chan, 1)
+    phy.set_channel_rf(t, chan, 1)
+    txpwr.set_txpwr(t, chan, 1)
+    phy.set_channel_help(t, t.cv, band, enter=False, phy_idx=1, mac_idx=1, tx_en=tx_en1)
+    t.entity_active[1] = True
+    t.last_band[1] = band
+
+    return chan

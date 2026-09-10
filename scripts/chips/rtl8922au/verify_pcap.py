@@ -21,9 +21,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 
+from wifit3.chips.rtl8922au import SUPPORTED_IDS
 from wifit3.chips.rtl8922au.driver import RTL8922AUDriver
 from wifit3.chips.rtl8922au import chan as chanmod
+from wifit3.chips.rtl8922au import rx as rxmod
 from wifit3.chips.rtl8922au.rx import iter_bulk_frames
+from wifit3.dot11.parser import WlanFrameParser
 
 DEFAULT_CAP = "driver_captures/captures_rtw89_8922au_git/capture-1.pcap"
 RTW89_USB_VENQT = 0x05
@@ -178,8 +181,10 @@ class ReplayDev:
     """Stand-in for usb.core.Device over the op stream. `_next` skips and logs waived ops;
     the port's ctrl_transfer must match the next non-waived op or it raises Divergence."""
 
-    def __init__(self, ops: list[dict]):
+    def __init__(self, ops: list[dict], responses: list[bytes] | None = None):
         self.ops = ops
+        self.responses = list(responses) if responses else []
+        self.resp_idx = 0
         self.i = 0
         self.matched = 0
         self.waived_reg = 0   # register/bulk ops intentionally waived (e.g. mac80211 filter transient)
@@ -244,6 +249,13 @@ class ReplayDev:
                 f"{payload[:16].hex()}… vs wire {_fmt(op)}", self.i - 1)
         self.matched += 1
         return len(payload)
+
+    def read(self, endpoint: int, size: int, timeout: int | None = None) -> bytes:
+        if self.resp_idx < len(self.responses):
+            data = self.responses[self.resp_idx]
+            self.resp_idx += 1
+            return data[:size]
+        return bytes()
 
     def dispose_resources(self, *a):
         pass
@@ -464,6 +476,30 @@ def validate_c2h(bufs: list[bytes], driver: RTL8922AUDriver, verbose: bool) -> t
     return n_c2h, len(reports)
 
 
+def validate_rx(bufs: list[bytes], verbose: bool) -> tuple[int, int, int, int]:
+    """Replay captured bulk-IN buffers through rx.iter_bulk_frames and WlanFrameParser.
+    Returns (buf_count, wifi_frames, parsed_frames, beacons)."""
+    n_wifi = 0
+    n_parsed = 0
+    n_bcn = 0
+    bssids = set()
+    for buf in bufs:
+        for pkt_type, payload, rssi in iter_bulk_frames(buf):
+            if pkt_type == rxmod.RX_TYPE_WIFI:
+                n_wifi += 1
+                parsed = WlanFrameParser.parse_80211_frame(payload, rssi if rssi is not None else 0)
+                if parsed is not None:
+                    n_parsed += 1
+                    if parsed.type == "beacon":
+                        n_bcn += 1
+                        if parsed.bssid:
+                            bssids.add(parsed.bssid)
+    if verbose:
+        print(f"RX decode: {len(bufs)} buffers -> {n_wifi} WIFI frames, "
+              f"{n_parsed} parsed, {n_bcn} beacons across {len(bssids)} unique BSSIDs")
+    return len(bufs), n_wifi, n_parsed, n_bcn
+
+
 def run(cap: str | None = None, verbose: bool = False) -> int:
     logging.getLogger("wifit3").setLevel(logging.CRITICAL)
     path = cap or DEFAULT_CAP
@@ -481,9 +517,10 @@ def run(cap: str | None = None, verbose: bool = False) -> int:
     n_driver = n_reg + n_bulk         # every op the driver must emit to byte-match the kernel
     print(f"verify_pcap rtl8922au {Path(path).name} (dev {dev})")
     cen = urb_census(pkts, dev, verbose)
+    bulk_in_bufs = _bulk_in_buffers(pkts, dev)
 
-    replay = ReplayDev(ops)
-    driver = RTL8922AUDriver.from_usb_device(replay, RTL8922AUDriver.SUPPORTED_IDS[0])
+    replay = ReplayDev(ops, responses=bulk_in_bufs)
+    driver = RTL8922AUDriver.from_usb_device(replay, SUPPORTED_IDS[0])
     # verify drives _bringup() (not connect()), so the PyUSB interface claim is never called.
     driver._h2c_ep = next((o["ep"] for o in ops if o["kind"] == "bulk"), None)
     replay.driver = driver            # the real handlers the async-injector calls
@@ -504,7 +541,8 @@ def run(cap: str | None = None, verbose: bool = False) -> int:
     except Exception as e:  # noqa: BLE001
         print(f"harness error {type(e).__name__}: {e} (matched {replay.matched})")
         return 2
-    n_c2h, n_rfk = validate_c2h(_bulk_in_buffers(pkts, dev), driver, verbose)
+    n_c2h, n_rfk = validate_c2h(bulk_in_bufs, driver, verbose)
+    n_bufs, n_wifi, n_parsed, n_bcn = validate_rx(bulk_in_bufs, verbose)
 
     # Percentage is matched-only over every driver op. Waived ops count AGAINST it, so it reads
     # 100% only when the driver reproduced every byte with nothing waived.
@@ -515,7 +553,7 @@ def run(cap: str | None = None, verbose: bool = False) -> int:
             print(f"  {len(b.frames)} not matched (waived): {name} "
                   f"[f{min(b.frames)}-{max(b.frames)}] {b.why}")
     print(f"not driver ops (usbcore issues them): {cen['enum']} enum")
-    print(f"inbound, not byte-matched: {cen['rx']} RX (vary per capture), "
+    print(f"inbound, not byte-matched: {cen['rx']} RX ({n_wifi} WIFI, {n_parsed} parsed, {n_bcn} beacons), "
           f"{n_c2h} C2H ({n_rfk} RFK reports parsed)")
     if replay.injected:
         inj = ", ".join(f"{k}×{v}" for k, v in sorted(replay.injected.items()))

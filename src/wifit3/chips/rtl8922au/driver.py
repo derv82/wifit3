@@ -339,21 +339,19 @@ class RTL8922AUDriver(Driver):
                            "card did not re-appear after the USB mode switch; please replug")
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """One monitor hop = rtw89_chip_rfk_channel's prehdl double-tune. First a forced-PHY_0 pass
-        (MLO_2_PLUS_0_1RF) so the per-channel RFK calibrates the active path, then a pass with the
-        force cleared (MLO_1_PLUS_1_1RF), which is the operating state: both BB/RF chains up. Ending
-        in 1+1 keeps PHY_1's RX chain on (the ~2x beacon yield). The prehdl double-tune is active
-        because airmon-ng removes the station vif, nulling pure_monitor_mode_vif (mon=false). The
-        driver derives both modes from the modelled entity force; it is not handed them. Runs off the
-        event loop (each pass blocks on firmware RFK completions). [SRC] core.c:489-513."""
+        """Tune channel. scan=True takes the fast-tune path (~75ms) for hopper scans;
+        scan=False runs the full calibrated prehdl double-tune."""
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._tune_hop, channel)
+        await loop.run_in_executor(None, self._tune_hop, channel, scan)
         self._band_is_2g = channel <= 14                  # picks the mgmt TX basic rate (CCK1 vs OFDM6)
         return True
 
-    def _tune_hop(self, channel: int) -> None:
-        """The two set_channel passes of one hop, off the event loop: reset the entity force to PHY_0,
-        then two passes -> 2+0 then 1+1 (ends 1+1, both chains). [SRC] core.c:501-512."""
+    def _tune_hop(self, channel: int, scan: bool = False) -> None:
+        """Tune channel off the event loop. scan=True takes the single-pass fast path;
+        scan=False runs the two set_channel passes of the prehdl double-tune."""
+        if scan:
+            chan.set_channel_fast(self.transport, channel, self._h2c_ep)
+            return
         self._prehdl_force_phy0 = True
         self._tune_pass(channel)          # forced PHY_0 -> 2+0 (+ RFK calibrates the active path)
         self._tune_pass(channel)          # force cleared -> 1+1 (operating state)
