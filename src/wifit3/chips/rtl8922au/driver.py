@@ -68,6 +68,7 @@ class RTL8922AUDriver(Driver):
         self._prehdl_force_phy0: bool = True
         self._active_mac: Optional[bytes] = None
         self.mac_address: Optional[str] = None
+        self.switch_usb_mode: bool = False
         self._vid: Optional[int] = None      # for re-finding the card after the mode-switch re-enum
         self._pid: Optional[int] = None
 
@@ -283,8 +284,16 @@ class RTL8922AUDriver(Driver):
 
     def _switch_usb_mode(self) -> None:
         """rtw89_usb_switch_mode: SuperSpeed (USB 3 / USB-C) needs no switch; USB 2 runs the
-        BE mode switch. [SRC] usb.c:1172-1189."""
+        BE mode switch when enabled. By default switch_usb_mode is False (stay in USB 2.0 High Speed),
+        which avoids a 2-4s disconnect/re-enumeration cycle and prevents USB 3.0 5 Gbps clock EMI
+        from desensitizing the 2.4 GHz band. [SRC] usb.c:1172-1189."""
         if getattr(self.dev, "speed", None) == _LIBUSB_SPEED_SUPER:
+            logger.warning(
+                "RTL8922AU: Connected at SuperSpeed (USB 3.0). 2.4 GHz reception may be degraded "
+                "by USB 3.0 EMI; use a USB 2.0 port or extension cable for best 2.4 GHz sensitivity."
+            )
+            return
+        if not self.switch_usb_mode:
             return
         self._switch_mode_be()
 

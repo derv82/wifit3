@@ -145,10 +145,11 @@ and the pcap opens with that read. Verify against all three per the methodology'
 One forward cursor over the device's VENQT control ops, driving the real `connect()`. Ops the
 driver never emits (USB enumeration) are waived by name and logged, never dropped. It cannot
 report PASS until every register op reproduces; on a mismatch it prints the frontier with a
-10-before/after trace. `ReplayDev.speed = 3` (USB-2) so the mode-switch runs; a USB-C
-(SuperSpeed) capture would set speed 4 and skip the `PAD_CTRL2` read. `build_ops` walks both VENQT
-control ops and bulk-OUT ops (firmware chunks + H2C); `_drive` runs `connect()` then dispatches each
-per-hop `set_channel` (peeking the target channel from the upcoming `R_FC0` write).
+10-before/after trace. `ReplayDev.speed = 3` (USB-2) and `driver.switch_usb_mode = True` so the
+kernel mode-switch sequence reproduces against the pcap (runtime default is `switch_usb_mode = False`
+to keep the card in High Speed and prevent USB 3.0 EMI from desensitizing 2.4 GHz). `build_ops`
+walks both VENQT control ops and bulk-OUT ops (firmware chunks + H2C); `_drive` runs `connect()`
+then dispatches each per-hop `set_channel` (peeking the target channel from the upcoming `R_FC0` write).
 
 ## Register access
 
