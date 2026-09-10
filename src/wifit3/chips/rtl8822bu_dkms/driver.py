@@ -30,8 +30,8 @@ from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bringup, chan, dm_watchdog, mac, sipi, tx, txpower
-from .rx import FCS_LEN, RXDESC_SIZE, _rnd8, iter_frames
+from . import bringup, chan, dm_watchdog, led, mac, sipi, tx, txpower
+from .rx import iter_frames
 from .transport import Rtl8822buTransport
 
 logger = logging.getLogger(__name__)
@@ -225,6 +225,7 @@ class Rtl8822buDkmsDriver(Driver):
             # The airmon monitor RX-enable (gate-verified vs the capture's monitor switch):
             # MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode, RXFLTMAP0/1/2=0xFFFF.
             await loop.run_in_executor(None, mac.enable_monitor, self.transport)
+            await loop.run_in_executor(None, led.enable_tx_blink, self.transport)
             await loop.run_in_executor(None, self._heal_cold_synth, self.transport)
             await self._dbg_rx_state(f"post-enable-monitor ch{_DEFAULT_CHANNEL}")
 
