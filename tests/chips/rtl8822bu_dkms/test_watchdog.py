@@ -52,6 +52,12 @@ def test_high_fa_steps_up_2():
     assert bb.regs[0x0C50] & 0x7F == 0x26
 
 
+def test_default_dig_max_of_min_allows_watchdog_to_raise_igi():
+    st = DigState(cur_ig_value=0x1C, first_disconnect=False)
+    _run(st, cnt_all=6000)
+    assert st.cur_ig_value == 0x1E
+
+
 def test_mid_fa_steps_up_1():
     st = DigState(cur_ig_value=0x24, dig_max_of_min=0x30, first_disconnect=False)
     _run(st, cnt_all=4500)                       # > fa_th[1]=4000 -> +1
@@ -87,6 +93,12 @@ def test_cck_new_agc_writes_a0c_mirror():
     st = DigState(cur_ig_value=0x24, dig_max_of_min=0x30, cck_new_agc=True, first_disconnect=False)
     bb = _run(st, cnt_all=6000)                    # -> 0x26; 0xA0C[13:8] = 0x26>>1 = 0x13
     assert (bb.regs[0x0A0C] & 0x3F00) >> 8 == 0x13
+
+
+def test_runtime_dig_updates_8822b_big_jump_step():
+    st = DigState(cur_ig_value=0x24, dig_max_of_min=0x30, big_jump_step1=3, first_disconnect=False)
+    bb = _run(st, cnt_all=6000)
+    assert (bb.regs[0x08C8] & 0xE) >> 1 == 3
 
 
 # ---- CCK packet-detection (phydm_cckpd_type1, unlinked) -----------------------------------------

@@ -94,13 +94,13 @@ def false_alarm_counter_reg_reset(t) -> None:
 
 @dataclass
 class DigState:
-    """[SRC] phydm_dig_struct — the carried DIG state. Only `cur_ig_value` (the IGI accumulator) and
-    `dig_max_of_min` (the upper clamp) survive across ticks; the rest is recomputed each tick. wifit3
-    never associates, so `is_linked` is always False and only the unlinked/monitor path runs."""
+    """[SRC] phydm_dig_struct — the carried DIG state. Only `cur_ig_value` (the IGI accumulator),
+    `dig_max_of_min`, and the 8822B big-jump seed survive across ticks. wifit3 never associates."""
     cur_ig_value: int = 0x20                        # seeded from 0xC50 at dig_init
     dig_max_of_min: int = DIG_MAX_OF_MIN_COVERAGE   # unlinked abs-boundary leaves this at its default
     rx_gain_range_max: int = DIG_MAX_OF_MIN_COVERAGE
     rx_gain_range_min: int = DIG_MIN_COVERAGE
+    big_jump_step1: int = 0                         # 0x8C8[3:1], latched before runtime DIG mutates it
     cck_new_agc: bool = False                       # read once at dig_init (0xA9C[17])
     first_connect: bool = False
     first_disconnect: bool = True                   # the first post-init tick sees a disconnect
@@ -150,14 +150,27 @@ def phydm_dig(t, st: DigState, fa: FaCnt) -> None:
     _odm_write_dig(t, st, igi)
 
 
+def _set_big_jump_step(t, st: DigState, curr_igi: int) -> None:
+    """[SRC] phydm_set_big_jump_step (8822b) — runtime DIG mirror of the cold-init helper."""
+    step1 = (24, 30, 40, 50, 60, 70, 80, 90)
+    big_jump_lmt = 0x64
+    i = 0
+    while i <= st.big_jump_step1:
+        if (curr_igi + step1[i]) > big_jump_lmt:
+            if i != 0:
+                i -= 1
+            break
+        if i == st.big_jump_step1:
+            break
+        i += 1
+    sipi.set_bb_reg(t, 0x08C8, 0xE, i)
+
+
 def _odm_write_dig(t, st: DigState, new_igi: int) -> None:
-    """[SRC] odm_write_dig + phydm_write_dig_reg_c50 (phydm_dig.c:528/461) — write the new IGI to the
-    path-A/B IGI regs (0xC50/0xE50[6:0]) only when it changed, with the CCK new-AGC mirror (0xA0C[13:8]
-    = igi>>1) when `cck_new_agc`. The big-jump step (0x8C8) is gated by `enable_adjust_big_jump`, off by
-    default. (The EDCCA-adapt sub-branch — phydm_adaptivity on a falling IGI — only runs when the BB is
-    in EDCCA_ADAPT mode; wifit3's monitor seed leaves it in the normal mode, so it is not invoked.)"""
+    """[SRC] odm_write_dig + phydm_write_dig_reg_c50 — write new IGI and 8822B big-jump step."""
     if st.cur_ig_value == new_igi:
         return
+    _set_big_jump_step(t, st, new_igi)
     if st.cck_new_agc:
         sipi.set_bb_reg(t, 0x0A0C, 0x3F00, new_igi >> 1)
     sipi.set_bb_reg(t, 0x0C50, 0x7F, new_igi)
@@ -208,8 +221,8 @@ def phydm_watchdog(t, st: DigState) -> FaCnt:
     0x1c), then the steady FA-driven hunt takes over."""
     fa = fa_cnt_statistics_ac(t)
     false_alarm_counter_reg_reset(t)                 # latch counters after reading (per the vendor order)
-    cck_pd_th(t, st, fa)                             # CCK PD threshold (0xA0A) from CCK FA
     phydm_dig(t, st, fa)                             # RX IGI (0xC50/0xE50) from total FA
+    cck_pd_th(t, st, fa)                             # CCK PD threshold (0xA0A) from CCK FA
     adaptivity(t, st)                                # EDCCA thresholds (0x8A4) from the new IGI
     st.first_disconnect = False
     st.first_connect = False

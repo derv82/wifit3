@@ -56,6 +56,7 @@ _REF_CUT = 3
 # rfe types whose per-channel RFE PINMUX is NOT ported (OEM-only phydm_8822b_type15/18_rfe); the
 # dispatch runs the iFEM pinmux as a give-it-a-shot fallback, and connect() escalates the warning.
 _RFE_PINMUX_UNPORTED = frozenset({15, 18})
+_MONITOR_DIG_MAX_OF_MIN = 0x20
 
 
 @dataclass
@@ -232,11 +233,11 @@ class Rtl8822buDkmsDriver(Driver):
             # Seed the DIG state from the chip and start the runtime PHYDM watchdog (~2 s cadence): the
             # dig_init IGI is only a seed, so without this loop the RX gain never tracks the channel's
             # false-alarm rate. Reads FA counters, adapts IGI (0xC50/0xE50), resets the counters.
-            # In monitor mode we clamp dig_max_of_min to DIG_MIN_COVERAGE (0x1C) to maintain max sensitivity.
             def _seed_dig(tr):
                 return dm_watchdog.DigState(
                     cur_ig_value=sipi.get_bb_reg(tr, 0x0C50, 0x7F),
-                    dig_max_of_min=dm_watchdog.DIG_MIN_COVERAGE,
+                    dig_max_of_min=_MONITOR_DIG_MAX_OF_MIN,
+                    big_jump_step1=sipi.get_bb_reg(tr, 0x08C8, 0xE),
                     cck_new_agc=bool(sipi.get_bb_reg(tr, 0x0A9C, 1 << 17)))
 
             self._dig_st = await loop.run_in_executor(None, _seed_dig, self.transport)
