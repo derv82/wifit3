@@ -7,7 +7,7 @@ ported, iFEM fallback) gets an explicit warning.
 import logging
 from types import SimpleNamespace
 
-from wifit3.chips.rtl8822bu_dkms.driver import _MONITOR_DIG_MAX_OF_MIN, Rtl8822buDkmsDriver
+from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
 
 
 def _chip(rfe_type=3, chip_ver=3):
@@ -48,6 +48,3 @@ def test_unported_rfe_pinmux_warns(caplog):
         _log(info, e, caplog)
     assert "not ported" in caplog.text and "iFEM fallback" in caplog.text
 
-
-def test_monitor_dig_cap_keeps_sensitivity_headroom():
-    assert _MONITOR_DIG_MAX_OF_MIN == 0x20

@@ -56,7 +56,6 @@ _REF_CUT = 3
 # rfe types whose per-channel RFE PINMUX is NOT ported (OEM-only phydm_8822b_type15/18_rfe); the
 # dispatch runs the iFEM pinmux as a give-it-a-shot fallback, and connect() escalates the warning.
 _RFE_PINMUX_UNPORTED = frozenset({15, 18})
-_MONITOR_DIG_MAX_OF_MIN = 0x20
 
 
 @dataclass
@@ -236,7 +235,6 @@ class Rtl8822buDkmsDriver(Driver):
             def _seed_dig(tr):
                 return dm_watchdog.DigState(
                     cur_ig_value=sipi.get_bb_reg(tr, 0x0C50, 0x7F),
-                    dig_max_of_min=_MONITOR_DIG_MAX_OF_MIN,
                     big_jump_step1=sipi.get_bb_reg(tr, 0x08C8, 0xE),
                     cck_new_agc=bool(sipi.get_bb_reg(tr, 0x0A9C, 1 << 17)))
 
