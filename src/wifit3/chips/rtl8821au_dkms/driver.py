@@ -20,6 +20,7 @@ are complete. Registered in ``wlan/discovery.py`` for 0bda:0811 alongside the ma
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from importlib import resources
 from typing import Callable, ClassVar, List, Optional
@@ -31,7 +32,7 @@ from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bb, chan, dig, efuse, firmware, mac, monitor, phy_cond, rf, txpower
+from . import bb, chan, dig, efuse, firmware, led, mac, monitor, phy_cond, rf, txpower
 from .rx import iter_frames
 from .transport import RTL8821AUDkmsTransport
 from .tx import build_mgmt_txdesc
@@ -81,6 +82,7 @@ class Rtl8821auDkmsDriver(Driver):
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._dig_task: Optional[asyncio.Task] = None
+        self._tx_led_task: Optional[asyncio.Task] = None
         # Serializes control-transfer batches (DIG watchdog vs set_channel) so two
         # executor threads never drive EP0 at once; the RX reader uses bulk-IN.
         self._io_lock = asyncio.Lock()
@@ -273,7 +275,30 @@ class Rtl8821auDkmsDriver(Driver):
         payload = build_mgmt_txdesc(len(frame_bytes), bmc=bmc) + frame_bytes
         async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
+        self._start_tx_led_blink()
         return True
+
+    def _start_tx_led_blink(self) -> None:
+        if self._tx_led_task is not None and not self._tx_led_task.done():
+            return
+        self._tx_led_task = asyncio.create_task(self._blink_tx_led())
+
+    async def _blink_tx_led(self) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            async with self._io_lock:
+                await loop.run_in_executor(None, led.turn_on, self.transport)
+            await asyncio.sleep(led.TX_BLINK_INTERVAL_S)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — LED failure must not break packet injection
+            logger.debug("RTL8821AU TX LED blink failed", exc_info=True)
+        finally:
+            try:
+                async with self._io_lock:
+                    await loop.run_in_executor(None, led.turn_off, self.transport)
+            except Exception:  # noqa: BLE001 — closing/unplugged devices can reject LED-off
+                logger.debug("RTL8821AU TX LED off failed", exc_info=True)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Realtek HW assigns the 802.11 sequence number (the txdesc sets HWSEQ_EN), so the
@@ -306,6 +331,11 @@ class Rtl8821auDkmsDriver(Driver):
             except asyncio.CancelledError:
                 pass
             self._dig_task = None
+        if self._tx_led_task is not None:
+            self._tx_led_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._tx_led_task
+            self._tx_led_task = None
         if self._reader is not None:
             await self._reader.stop()
             self._reader = None
