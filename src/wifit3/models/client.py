@@ -1,6 +1,7 @@
 """The wireless-client scan model."""
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Dict, Optional, Set
@@ -20,6 +21,7 @@ class Client:
     akm_selected: Optional[int] = None
     # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
     signal_by_card: Dict[str, int] = field(default_factory=dict)
+    signal_history: Dict[str, deque[int]] = field(default_factory=dict, repr=False)
 
     @property
     def signal(self) -> int:

@@ -2,6 +2,7 @@
 previously-saved capture artifacts).
 """
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional
 
@@ -100,6 +101,7 @@ class AccessPoint:
 
     # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
     signal_by_card: Dict[str, int] = field(default_factory=dict)
+    signal_history: Dict[str, deque[int]] = field(default_factory=dict, repr=False)
 
     @property
     def signal(self) -> int:

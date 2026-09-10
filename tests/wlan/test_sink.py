@@ -60,8 +60,22 @@ def test_beacon_creates_ap_and_smooths_signal_per_card():
     s.update(_beacon({"rssi": -50}), W0)         # same card, second sample
     ap = s.get_access_points()[0]
     assert ap.beacons == 2
-    assert ap.signal == -45                       # (-40 + -50) // 2, per-card
+    assert ap.signal == -45                       # (-40 + -50) / 2, per-card
     assert ap.signal_by_card == {W0: -45}
+
+
+def test_signal_sliding_window_absorbs_spikes_and_evicts_old_samples():
+    s = WlanSink()
+    for _ in range(8):
+        s.update(_beacon({"rssi": -70}), W0)
+    ap = s.get_access_points()[0]
+    assert ap.signal == -70
+    assert len(ap.signal_history[W0]) == 8
+
+    # A 16 dBm noisy drop is dampened to only 2 dBm across the 8-sample window
+    s.update(_beacon({"rssi": -86}), W0)
+    assert ap.signal == -72
+    assert len(ap.signal_history[W0]) == 8
 
 
 def test_signal_is_strongest_across_cards():

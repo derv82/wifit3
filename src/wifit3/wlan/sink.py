@@ -8,6 +8,7 @@ addition for multicard is ``card_id``: RSSI is tracked per receiving card in ``s
 the Power reading can pick the strongest antenna, while every other field (beacons, IEs, clients,
 handshakes) is updated once, on the deduplicated (novel) copy only."""
 import asyncio
+from collections import deque
 import logging
 import threading
 import time
@@ -74,6 +75,7 @@ class WlanSink:
     """The deduplicated 802.11 picture across all cards in a session."""
 
     SIBLING_BIT_DIFF_MAX = 4
+    SIGNAL_WINDOW_SIZE = 8
 
     def __init__(self):
         self.access_points: Dict[str, AccessPoint] = {}
@@ -86,16 +88,21 @@ class WlanSink:
 
     # ----- signal (per-card) -------------------------------------------------
 
-    @staticmethod
-    def _smooth(prev: Optional[int], rssi: int) -> int:
-        """Running two-sample average; the first sample is taken as-is."""
-        return rssi if prev is None else (prev + rssi) // 2
+    @classmethod
+    def _smooth(cls, history_map: Dict[str, deque[int]], card_id: str, rssi: int) -> int:
+        """Sliding-window average across the last SIGNAL_WINDOW_SIZE samples per card."""
+        history = history_map.get(card_id)
+        if history is None:
+            history = deque(maxlen=cls.SIGNAL_WINDOW_SIZE)
+            history_map[card_id] = history
+        history.append(rssi)
+        return round(sum(history) / len(history))
 
     def _record_ap_signal(self, ap: AccessPoint, card_id: str, rssi: int) -> None:
-        ap.signal_by_card[card_id] = self._smooth(ap.signal_by_card.get(card_id), rssi)
+        ap.signal_by_card[card_id] = self._smooth(ap.signal_history, card_id, rssi)
 
     def _record_client_signal(self, client: Client, card_id: str, rssi: int) -> None:
-        client.signal_by_card[card_id] = self._smooth(client.signal_by_card.get(card_id), rssi)
+        client.signal_by_card[card_id] = self._smooth(client.signal_history, card_id, rssi)
 
     # ----- ingest ------------------------------------------------------------
 
