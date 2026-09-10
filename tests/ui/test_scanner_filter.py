@@ -1,33 +1,65 @@
 """The Scanner applies its ScanFilter as a display-only predicate: a filtered-out
 AP loses its table row but keeps its registry entry, so widening the filter brings
 it straight back without having to rediscover it."""
+from contextlib import asynccontextmanager
+
 import pytest
 from textual.widgets import Button, DataTable
 
-from wifit3.models import AccessPoint, PersistedCapture
+from wifit3.models import AccessPoint, IdKey, IdSource, PersistedCapture
 from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.filter import EncryptionFilter, ScanFilter
 from wifit3.ui.screens.scanner import ScannerView
 
 
-class _FakeArray:
-    members = []
+class _FakeIface:
+    def __init__(self, supported):
+        self.supported_channels = supported
+        self.current_channel = supported[0] if supported else 1
+        self.chipset = "test"
+        self._is_hopping = True
+        self.stop_calls = 0
+        self.start_calls = 0
 
+    async def stop_hopping(self):
+        self.stop_calls += 1
+        self._is_hopping = False
+
+    async def start_hopping(self, channels=None, interval=0.25):
+        self.start_calls += 1
+        self._is_hopping = True
+
+
+class _FakeArray:
     def __init__(self, aps, supported):
         self.access_points = {ap.bssid: ap for ap in aps}
         self.clients = {}
         self.forged_macs = set()
         self.supported_channels = supported
+        self.members = [_FakeIface(supported)] if supported else []
+        self.stop_calls = 0
+        self.start_calls = 0
 
     def get_access_points(self, include_eviltwin=True):
         return list(self.access_points.values())
 
+    def select_iface(self, channel):
+        return next((iface for iface in self.members if channel in iface.supported_channels), None)
+
     async def start_hopping(self, channels=None, interval=0.25):
-        pass
+        self.start_calls += 1
 
     async def stop_hopping(self):
-        pass
+        self.stop_calls += 1
+
+    @asynccontextmanager
+    async def claim(self, iface):
+        await iface.stop_hopping()
+        try:
+            yield iface
+        finally:
+            await iface.start_hopping()
 
 
 @pytest.mark.asyncio
@@ -107,6 +139,50 @@ async def test_channel_modal_returns_focus_to_table():
         assert app.focused is table
 
 
+
+
+
+def test_scanner_identity_cell_shows_manufacturer_and_model():
+    scanner = ScannerView()
+    scanner._theme_fg = "white"
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        ssid="Lab",
+        channel=1,
+    )
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "MikroTik")
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "hAP ac²")
+    cell = scanner._identity_cell(ap)
+    assert cell.plain == "MikroTik hAP ac²"
+
+
+def test_scanner_identity_cell_blank_when_unknown():
+    scanner = ScannerView()
+    scanner._theme_fg = "white"
+    ap = AccessPoint(bssid="02:00:00:00:00:01")
+    assert scanner._identity_cell(ap).plain == ""
+
+
+def test_scanner_identity_cell_shows_summary():
+    scanner = ScannerView()
+    scanner._theme_fg = "white"
+    ap = AccessPoint(
+        bssid="02:00:00:00:00:01",
+        ssid="Vodafone-123456",
+    )
+    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "Celeno")
+    assert scanner._identity_cell(ap).plain == "Celeno"
+
+
+def test_scanner_identity_cell_oui_fallback():
+    scanner = ScannerView()
+    scanner._theme_fg = "white"
+    ap = AccessPoint(bssid="00:03:93:11:22:33", ssid="Alice’s iPhone")
+    assert scanner._identity_cell(ap).plain == "Apple"
+
+
+
+
 def test_ssid_chips_zero_one_two(monkeypatch):
     ap = AccessPoint(bssid="aa:bb:cc:00:00:40", ssid="Net", channel=1)
 
@@ -122,7 +198,7 @@ def test_ssid_chips_zero_one_two(monkeypatch):
 
 def test_ssid_cell_clips_wide_ssid_to_cap(monkeypatch):
     """SSID width must be measured in display cells, not chars: a wide (2-cell)
-    SSID over the cap gets clipped, and its trailing chip survives the clip."""
+    SSID over the cap gets clipped, and its leading chip survives the clip."""
     scanner = ScannerView()
     scanner._theme_fg = "white"
     ap = AccessPoint(bssid="aa:bb:cc:00:00:41", ssid="ネ" * 40, channel=1)  # 80 cells
@@ -130,5 +206,6 @@ def test_ssid_cell_clips_wide_ssid_to_cap(monkeypatch):
 
     cell = scanner._ssid_cell(ap)
     assert cell.cell_len <= ScannerView._SSID_CELL_MAX
-    assert cell.plain.endswith("✗S")
+    assert cell.plain.startswith("✗S")
     assert "…" in cell.plain
+    assert cell.justify == "right"

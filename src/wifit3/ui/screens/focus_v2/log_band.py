@@ -8,6 +8,8 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import RichLog
 
+from ...selectable_rich_log import SelectableRichLog
+
 
 class LogBand(Vertical):
     def __init__(self, lines, **kwargs) -> None:
@@ -15,7 +17,7 @@ class LogBand(Vertical):
         self._initial = lines
 
     def compose(self) -> ComposeResult:
-        yield RichLog(id="log-rich", markup=True, highlight=False, wrap=True)
+        yield SelectableRichLog(id="log-rich", markup=True, highlight=False, wrap=True)
 
     def on_mount(self) -> None:
         self.border_title = "LOG"

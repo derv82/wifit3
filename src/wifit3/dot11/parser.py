@@ -4,7 +4,10 @@
 import struct
 from typing import Optional, List, Dict, Any
 
+from wifit3.dot11.ie import iter_information_elements
 from wifit3.dot11.mac import mac_to_str
+from wifit3.dot11.wsc.identity import device_type_label, wps_text
+from wifit3.dot11.wsc.messages import iter_wsc_tlvs
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
     AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
@@ -106,7 +109,8 @@ class WlanFrameParser:
             # value keeps the field default.
             for key in ("channel", "rsn_ie_raw", "wps", "wps_locked", "wps_version",
                         "wps_state", "wps_config_methods", "wps_device_password_id",
-                        "wps_selected_registrar"):
+                        "wps_selected_registrar", "wsc_manufacturer", "wsc_model_name",
+                        "wsc_model_number", "wsc_device_name", "wsc_device_type"):
                 if key in tags:
                     fields[key] = tags[key]
             return BeaconPacket(**base, **fields)
@@ -268,26 +272,17 @@ class WlanFrameParser:
             Type (1B) | Length (1B) | Value (Length B)
         For a PMKID KDE: Type=0xDD, Length>=20, Value=OUI(3)+DataType(1)+PMKID(16).
         """
-        i = 0
-        n = len(key_data)
-        while i + 2 <= n:
-            kde_type = key_data[i]
-            kde_len = key_data[i + 1]
-            value_start = i + 2
-            value_end = value_start + kde_len
-            if value_end > n:
-                return None
-            if kde_type == 0xDD and kde_len >= 4 + 16:
+        for kde_type, val, _raw in iter_information_elements(key_data):
+            if kde_type == 0xDD and len(val) >= 20:
                 if (
-                    key_data[value_start : value_start + 3] == b"\x00\x0f\xac"  # IEEE 802.11 OUI
-                    and key_data[value_start + 3] == 0x04  # PMKID KDE data type
+                    val[:3] == b"\x00\x0f\xac"  # IEEE 802.11 OUI
+                    and val[3] == 0x04  # PMKID KDE data type
                 ):
-                    pmkid = bytes(key_data[value_start + 4 : value_start + 4 + 16])
+                    pmkid = bytes(val[4:20])
                     # Some APs include a PMKID KDE with all-zero bytes as a
                     # placeholder. Treat as "no PMKID", uncrackable anyway.
                     if pmkid != b"\x00" * 16:
                         return pmkid
-            i = value_end
         return None
 
     @classmethod
@@ -295,21 +290,12 @@ class WlanFrameParser:
         """First AKM suite (00-0F-AC:N) in the RSN IE (tag 48) within the element/KDE
         list, walked from ``start``, or None (the single suite the supplicant selected).
         """
-        i = start
-        n = len(data)
-        while i + 2 <= n:
-            tag = data[i]
-            length = data[i + 1]
-            value_start = i + 2
-            value_end = value_start + length
-            if value_end > n:
-                return None
-            if tag == 48:  # RSN IE (element id 48)
-                rsn = cls._parse_rsn_ie(data[value_start:value_end])
+        for tag_id, val, _raw in iter_information_elements(data, start=start):
+            if tag_id == 48:  # RSN IE (element id 48)
+                rsn = cls._parse_rsn_ie(val)
                 if rsn and rsn["akm_suites"]:
                     return rsn["akm_suites"][0]
                 return None
-            i = value_end
         return None
 
     @classmethod
@@ -408,19 +394,15 @@ class WlanFrameParser:
         # WPS attribute IDs (big-endian), WSC spec §12.
         ATTR_AP_SETUP_LOCKED, ATTR_STATE, ATTR_CONFIG_METHODS = 0x1057, 0x1044, 0x1008
         ATTR_DEVICE_PASSWORD_ID, ATTR_SELECTED_REGISTRAR = 0x1012, 0x1041
+        ATTR_MANUFACTURER, ATTR_MODEL_NAME = 0x1021, 0x1023
+        ATTR_MODEL_NUMBER, ATTR_DEVICE_NAME = 0x1024, 0x1011
         ATTR_VERSION, ATTR_VENDOR_EXTENSION = 0x104A, 0x1049
+        ATTR_PRIMARY_DEV_TYPE = 0x1054
         out: Dict[str, Any] = {"wps": True}
         version1 = False
         version2 = 0
-        i, n = 0, len(data)
-        while i + 4 <= n:
-            attr = (data[i] << 8) | data[i + 1]
-            ln = (data[i + 2] << 8) | data[i + 3]
-            i += 4
-            if i + ln > n:
-                break
-            val = data[i:i + ln]
-            i += ln
+        for attr, val in iter_wsc_tlvs(data):
+            ln = len(val)
             if attr == ATTR_AP_SETUP_LOCKED and ln >= 1:
                 out["wps_locked"] = val[0] == 0x01
             elif attr == ATTR_STATE and ln >= 1:
@@ -431,6 +413,26 @@ class WlanFrameParser:
                 out["wps_device_password_id"] = (val[0] << 8) | val[1]
             elif attr == ATTR_SELECTED_REGISTRAR and ln >= 1:
                 out["wps_selected_registrar"] = val[0] == 0x01
+            elif attr == ATTR_MANUFACTURER:
+                text = cls._wps_text(val)
+                if text:
+                    out["wsc_manufacturer"] = text
+            elif attr == ATTR_MODEL_NAME:
+                text = cls._wps_text(val)
+                if text:
+                    out["wsc_model_name"] = text
+            elif attr == ATTR_MODEL_NUMBER:
+                text = cls._wps_text(val)
+                if text:
+                    out["wsc_model_number"] = text
+            elif attr == ATTR_DEVICE_NAME:
+                text = cls._wps_text(val)
+                if text:
+                    out["wsc_device_name"] = text
+            elif attr == ATTR_PRIMARY_DEV_TYPE:
+                label = device_type_label(val)
+                if label:
+                    out["wsc_device_type"] = label
             elif attr == ATTR_VERSION and ln >= 1:
                 version1 = True
             elif attr == ATTR_VENDOR_EXTENSION:
@@ -442,6 +444,10 @@ class WlanFrameParser:
         elif version1:
             out["wps_version"] = "1.0"
         return out
+
+    @staticmethod
+    def _wps_text(value: bytes) -> str:
+        return wps_text(value)
 
     @classmethod
     def _parse_tags(cls, frame: bytes, subtype: int) -> Optional[Dict[str, Any]]:
@@ -485,44 +491,35 @@ class WlanFrameParser:
         # frame or the walker straying into trailing bytes (unstripped metadata, padding),
         # so honor only the first occurrence.
         seen_ssid = False
+        wps_payloads: List[bytes] = []
 
-        while ptr + 2 <= len(frame):
-            tag_id = frame[ptr]
-            tag_len = frame[ptr + 1]
-
-            tag_start = ptr + 2
-            tag_end = tag_start + tag_len
-            if tag_end > len(frame):
-                break
-
-            tag_data = frame[tag_start : tag_end]
-
+        for tag_id, tag_data, raw_elem in iter_information_elements(frame, start=ptr):
             if tag_id == 0 and not seen_ssid: # SSID (only the first)
                 seen_ssid = True
-                if tag_len == 0:
+                if len(tag_data) == 0:
                     parsed["ssid"] = "<hidden>"
-                elif tag_len <= 32:
+                elif len(tag_data) <= 32:
                     # Validate against completely corrupted text
                     if any(b < 0x20 and b not in (0x09, 0x0a, 0x0d) for b in tag_data):
                         return None # Corrupt frame masquerading as valid
                     parsed["ssid"] = tag_data.decode('utf-8', errors='ignore')
             elif tag_id == 3: # DS Parameter Set (Channel)
-                if tag_len == 1:
+                if len(tag_data) == 1:
                     channel_ds = tag_data[0]
             elif tag_id == 61: # HT Operation: primary channel = first byte
-                if tag_len >= 1:
+                if len(tag_data) >= 1:
                     channel_ht = tag_data[0]
             elif tag_id == 192: # VHT Operation: center freq seg 0 at byte 1
-                if tag_len >= 2:
+                if len(tag_data) >= 2:
                     channel_vht = tag_data[1]
             elif tag_id == 127: # Extended Capabilities: bit 84 = Beacon Protection Enabled
-                if tag_len >= 11:
+                if len(tag_data) >= 11:
                     beacon_protection = bool(tag_data[10] & 0x10)   # bit 84 = octet 10, bit 4
             elif tag_id == 48: # RSN (WPA2/WPA3)
                 has_rsn = True
                 # Preserve the raw IE bytes (with tag header) so the PMKID
                 # harvester can echo the AP's exact RSN config in Assoc Req.
-                parsed["rsn_ie_raw"] = bytes(frame[ptr : tag_end])
+                parsed["rsn_ie_raw"] = bytes(raw_elem)
                 rsn = cls._parse_rsn_ie(tag_data)
                 if rsn is not None:
                     pairwise_cipher = rsn["pairwise"]
@@ -537,7 +534,7 @@ class WlanFrameParser:
                         cls._PSK_SUITES.intersection(akm_suites)
                     )
             elif tag_id == 221: # Vendor Specific
-                if tag_len >= 4:
+                if len(tag_data) >= 4:
                     oui = tag_data[:3]
                     oui_type = tag_data[3]
                     if oui == b'\x00\x50\xf2':
@@ -545,11 +542,10 @@ class WlanFrameParser:
                             has_wpa = True
                         elif oui_type == 4: # WPS
                             # tag_data = OUI(3) + type(1) + WPS TLVs.
-                            parsed.update(
-                                cls._parse_wps_ie(tag_data[4:])
-                            )
+                            wps_payloads.append(tag_data[4:])
 
-            ptr = tag_end
+        if wps_payloads:
+            parsed.update(cls._parse_wps_ie(b"".join(wps_payloads)))
 
         # Channel preference: DS Param (tag 3, 2.4 GHz authoritative) → HT Op (tag 61, the
         # only cross-band source; 5 GHz often omits DS per 802.11-2020 9.4.2.3) → VHT Op

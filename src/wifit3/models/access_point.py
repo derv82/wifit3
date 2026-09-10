@@ -3,9 +3,10 @@ previously-saved capture artifacts).
 """
 import time
 from dataclasses import dataclass, field
-from typing import Optional, List, Literal, Dict
+from typing import Dict, List, Literal, Optional
 
 from .handshake import Handshake
+from .identity import ApIdentity, IdKey, IdSource
 
 
 @dataclass
@@ -51,6 +52,7 @@ class AccessPoint:
     wps_version: Optional[str] = None  # "1.0" / "2.0"
     wps_config_methods: int = 0  # 0x1008 bitmask
     wps_device_password_id: Optional[int] = None  # 0x0004 = PBC
+    identity: ApIdentity = field(default_factory=ApIdentity)
     # Set while the AP is advertising an active Registrar (PIN or, with
     # DevPwId 0x0004, a Push-Button walk window). Drives wps_pbc_active.
     wps_selected_registrar: bool = False
@@ -88,6 +90,13 @@ class AccessPoint:
 
     # Read-only capture history loaded from captures/ at scan start.
     persisted: List[PersistedCapture] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.bssid and not self.identity.get_source_value(IdKey.MANUFACTURER, IdSource.OUI):
+            from wifit3.id.common import vendor_for_mac
+            vendor = vendor_for_mac(self.bssid)
+            if vendor:
+                self.identity.set(IdSource.OUI, IdKey.MANUFACTURER, vendor)
 
     # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
     signal_by_card: Dict[str, int] = field(default_factory=dict)

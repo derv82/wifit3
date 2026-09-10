@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import Counter, deque
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from rich.markup import escape
 
@@ -13,10 +13,14 @@ from ..campaigns.pmkid import PmkidHarvestAttack
 from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.crack.handshake import pmkid_crackable
+from wifit3.models import IdKey, IdSource
 from wifit3.persist.config import Config
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
+
+if TYPE_CHECKING:
+    from wifit3.models.access_point import AccessPoint
 
 # Attack-button campaigns in button-row order.
 BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign, EvilTwinCampaign]
@@ -216,6 +220,52 @@ def pmf_status_markup(ap) -> str:
     if ap.pmf_capable:
         return "[dark_orange]Optional[/dark_orange]"
     return "[dim]Disabled[/dim]"
+
+
+def router_identity_markup(ap) -> str:
+    ident = getattr(ap, "identity", None)
+    if ident is None or not ident.summary:
+        return ""
+    return f"[accent]{escape(ident.summary)}[/accent]"
+
+
+def router_identity_details(ap: AccessPoint) -> str | None:
+    ident = ap.identity
+    if ident is None or not ident.summary:
+        return None
+    rows = [f"[bold]{escape(ident.summary)}[/bold]"]
+    mfr_src: IdSource | None = None
+    if ident.model:
+        model_src = getattr(ident, "model_source", None) or ident.get(IdKey.MODEL_NAME)[1] or ident.get(IdKey.MODEL_NUMBER)[1]
+        src_label = model_src.label if model_src else ""
+        rows.append(f"[dim]Model:[/dim] {escape(ident.model)} [dim]({src_label})[/dim]")
+    if ident.manufacturer:
+        mfr_src = getattr(ident, "manufacturer_source", None) or ident.get(IdKey.MANUFACTURER)[1]
+        src_label = mfr_src.label if mfr_src else ""
+        rows.append(f"[dim]Manufacturer:[/dim] {escape(ident.manufacturer)} [dim]({src_label})[/dim]")
+    if ident.device_name and ident.device_name != ident.model:
+        dev_src = ident.get(IdKey.DEVICE_NAME)[1]
+        src_label = dev_src.label if dev_src else ""
+        rows.append(f"[dim]Device Name:[/dim] {escape(ident.device_name)} [dim]({src_label})[/dim]")
+    if ident.serial_number:
+        sn_src = ident.get(IdKey.SERIAL_NUMBER)[1]
+        src_label = sn_src.label if sn_src else ""
+        rows.append(f"[dim]Serial:[/dim] {escape(ident.serial_number)} [dim]({src_label})[/dim]")
+    if ident.device_type:
+        dt_src = ident.get(IdKey.DEVICE_TYPE)[1]
+        src_label = dt_src.label if dt_src else ""
+        rows.append(f"[dim]Device Type:[/dim] {escape(ident.device_type)} [dim]({src_label})[/dim]")
+
+    wsc_mfr = ident.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_M1) or ident.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_BEACON)
+    if wsc_mfr and wsc_mfr != ident.manufacturer:
+        rows.append(f"[dim]Chipset:[/dim] {escape(wsc_mfr)} [dim](WSC)[/dim]")
+
+    oui_vendor = ident.get_source_value(IdKey.MANUFACTURER, IdSource.OUI)
+    if oui_vendor and (oui_vendor != ident.manufacturer or mfr_src != IdSource.OUI):
+        rows.append(f"[dim]IEEE OUI:[/dim] {escape(oui_vendor)}")
+
+    return "\n".join(rows)
+
 
 
 def status_footer_lines(ap, array, campaign, now: float) -> list[str]:
