@@ -1,5 +1,5 @@
 from wifit3.models.device_id import DeviceID
-from wifit3.chips.products import ASUS, AVM, Acer, Buffalo, EDUP, Elecom
+from wifit3.chips.products import ASUS, AVM, Acer, Buffalo, EDUP, Elecom, TPLink
 
 SUPPORTED_IDS = [
     DeviceID(vid=0x0411, pid=0x03ef, chipset="RTL8922AU", product_name=Buffalo._03EF),
@@ -14,6 +14,7 @@ SUPPORTED_IDS = [
     DeviceID(vid=0x0db0, pid=0xda0e, chipset="RTL8922AU"),
     DeviceID(vid=0x2001, pid=0x332b, chipset="RTL8922AU"),
     DeviceID(vid=0x2c4e, pid=0x0125, chipset="RTL8922AU"),
+    DeviceID(vid=0x2357, pid=0x0152, chipset="RTL8922AU", product_name=TPLink.TL_7DN9200),
     DeviceID(vid=0x3625, pid=0x010a, chipset="RTL8922AU"),
     DeviceID(vid=0x37ad, pid=0x0100, chipset="RTL8922AU"),
     DeviceID(vid=0x37ad, pid=0x0101, chipset="RTL8922AU"),

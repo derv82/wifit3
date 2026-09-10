@@ -380,6 +380,7 @@ class TPLink(ProductName):
     ARCHER_T4U_V3_PLUS = "Archer T4U v3 / T4U+" # shared 2357:0115 label
     ARCHER_T9UH      = "Archer T9UH"     # https://wikidevi.wi-cat.ru/TP-LINK_Archer_T9UH
     ARCHER_TX20U_PLUS = "Archer TX20U+"  # https://wikidevi.wi-cat.ru/TP-LINK_Archer_TX35U_Plus (diff page) says: TP-LINK Archer TX20U Plus (AX1800) • RTL8832AU [2357:013f]
+    TL_7DN9200       = "TL-7DN9200"      # ???
     TL_WDN6200       = "TL-WDN6200"      # https://github.com/aircrack-ng/rtl8812au/issues/1262
     TL_WN322G_V2_V3  = "TL-WN322G v2/v3" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN322G_v3
     TL_WN722N_V1     = "TL-WN722N v1"    # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v1.x
