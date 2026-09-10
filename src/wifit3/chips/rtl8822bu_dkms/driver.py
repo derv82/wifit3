@@ -31,7 +31,7 @@ from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
 from . import bringup, chan, dm_watchdog, led, mac, sipi, tx, txpower
-from .rx import iter_frames
+from .rx import FCS_LEN, RXDESC_SIZE, _rnd8, iter_frames
 from .transport import Rtl8822buTransport
 
 logger = logging.getLogger(__name__)
