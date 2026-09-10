@@ -43,8 +43,6 @@ STALE_DURATION_S = 10.0  # Seconds without a beacon before an AP row is dimmed.
 EVICT_DURATION_S = 30.0  # Seconds without a beacon before an AP is dropped from the table.
 FADE_DURATION_S = EVICT_DURATION_S
 
-SORT_INTERVAL_S = 2.0  # Table sort delay
-BEACON_DISPLAY_INTERVAL_S = 0.5
 
 
 @dataclass(slots=True)
@@ -128,18 +126,22 @@ class _APScanTable(DataTable):
     def _release_scroll(self) -> None:
         self._suppress_scroll = False
 
-    def sort_aps(self, sort_key: str, key_func: Callable[[str, Any], Any], reverse: bool) -> None:
-        """Sort rows by key_func(row_key, cell_value)."""
+    def sort_aps(self, sort_key: str, key_func: Callable[[str, Any], Any], reverse: bool) -> bool:
+        """Sort rows by key_func(row_key, cell_value). Returns True if row order changed."""
         ordered_rows = sorted(
             self._data.items(),
             key=lambda r: key_func(r[0].value, r[1].get(sort_key)),
             reverse=reverse,
         )
+        ordered_keys = [row_key for row_key, _ in ordered_rows]
+        if ordered_keys == list(self._row_locations):
+            return False
         self._row_locations = TwoWayDict(
-            {row_key: idx for idx, (row_key, _) in enumerate(ordered_rows)}
+            {row_key: idx for idx, row_key in enumerate(ordered_keys)}
         )
         self._update_count += 1
         self.refresh()
+        return True
 
 
 class ScannerView(Screen):
@@ -181,14 +183,10 @@ class ScannerView(Screen):
     # How long to flash the 🥓 cell when a beacon arrives.
     BEACON_FLASH_S = 0.2
 
-    # Power deadband threshold (dBm) to prevent row flapping on RSSI noise.
-    SORT_POWER_DEADBAND_DB = 3
-
     def __init__(self):
         super().__init__()
         self.ap_cache: Dict[str, AccessPoint] = {}
         self._refresh_timer = None
-        self._sort_timer = None
         self._sort_idx = 2         # Default to POWER
         self._sort_reverse = True  # Descending
         self._channel_filter: Optional[List[int]] = None
@@ -198,12 +196,8 @@ class ScannerView(Screen):
         # cell highlight.
         self._prev_beacons: Dict[str, int] = {}
         self._beacon_flash_until: Dict[str, float] = {}
-        # Throttled 🥓 count actually shown, per BSSID: (value, last-stepped-at).
-        self._beacon_shown: Dict[str, tuple[int, float]] = {}
-        # Per-BSSID dynamic row state and sort power.
+        # Per-BSSID dynamic row state.
         self._row_states: Dict[str, _APRowState] = {}
-        self._sort_power: Dict[str, int] = {}
-        self._last_user_nav: float = 0.0
         # captures/ history, loaded once at mount and hydrated onto APs by
         # BSSID so previously-saved handshakes/PMKIDs/WEP keys re-badge.
         self._capture_index: Dict[str, List[PersistedCapture]] = {}
@@ -253,12 +247,8 @@ class ScannerView(Screen):
             log.write(treelog.leaf(row) if i == len(rows) - 1 else treelog.branch(row))
 
         if array:
-            # 15 FPS in-place value updates. Beacons arrive ~10 Hz per AP at best.
+            # 15 FPS in-place value updates and sort refreshes.
             self._refresh_timer = self.set_interval(1 / 15, self.refresh_table)
-            # Lazy re-sort + evict expired APs.
-            self._sort_timer = self.set_interval(
-                SORT_INTERVAL_S, self._apply_sort_and_evict
-            )
             self._pbc_timer = self.set_interval(1.0, self._poll_pbc)
             self._log_pbc_status()  # Auto-invade is ON by default
 
@@ -321,6 +311,8 @@ class ScannerView(Screen):
         array = self.app.array
         table = self.query_one("#ap-table", DataTable)
 
+        self._evict_expired_aps()
+
         # Pre-compute per-AP client counts to avoid O(N×M) inside the AP loop below.
         client_counts: Dict[str, int] = {}
         for c in array.clients.values():
@@ -353,11 +345,6 @@ class ScannerView(Screen):
             is_stale = age > STALE_DURATION_S
             n_cli = client_counts.get(ap.bssid, 0)
 
-            # Update sort deadband
-            sp = self._sort_power.get(ap.bssid)
-            if sp is None or abs(ap.signal - sp) >= self.SORT_POWER_DEADBAND_DB:
-                self._sort_power[ap.bssid] = ap.signal
-
             # Beacon-arrival flash: bump the deadline when beacon count changes.
             prev = self._prev_beacons.get(ap.bssid)
             if prev is not None and ap.beacons > prev:
@@ -365,7 +352,7 @@ class ScannerView(Screen):
             self._prev_beacons[ap.bssid] = ap.beacons
             flash_bacon = now < self._beacon_flash_until.get(ap.bssid, 0.0)
 
-            shown_beacons = self._display_beacons(ap, now)
+            shown_beacons = ap.beacons
             chips_markup = self._ssid_chips_markup(ap)
             enc_markup = format_encryption_markup(ap, muted=self._theme_fg)
             ident_summary = ap.identity.summary
@@ -471,10 +458,7 @@ class ScannerView(Screen):
 
             self._drain_capture_events(ap, array.forged_macs)
 
-    def _apply_sort_and_evict(self) -> None:
-        """Re-sort the table and drop fully-faded APs. Runs every 2 s."""
-        self._evict_expired_aps()
-        self._apply_sort(scroll_to_cursor=False, force=False)
+        self._apply_sort(scroll_to_cursor=False, force=True)
 
     def _evict_expired_aps(self) -> None:
         if not self.app.array:
@@ -491,15 +475,19 @@ class ScannerView(Screen):
         return max(0.0, now - ap.last_seen)
 
     def _forget_row(self, bssid: str, *, drop_from_array: bool) -> None:
-        """Drop the AP's row and caches; drop_from_array also evicts it from the registry."""
+        """Drop the AP's row and caches; drop_from_array also evicts it and its clients from the registry."""
         if drop_from_array and self.app.array:
             self.app.array.access_points.pop(bssid, None)
+            orphans = [
+                mac for mac, c in self.app.array.clients.items()
+                if c.bssid == bssid
+            ]
+            for mac in orphans:
+                self.app.array.clients.pop(mac, None)
         self.ap_cache.pop(bssid, None)
         self._prev_beacons.pop(bssid, None)
         self._beacon_flash_until.pop(bssid, None)
-        self._beacon_shown.pop(bssid, None)
         self._row_states.pop(bssid, None)
-        self._sort_power.pop(bssid, None)
         try:
             self.query_one("#ap-table", DataTable).remove_row(bssid)
         except Exception:
@@ -507,20 +495,9 @@ class ScannerView(Screen):
 
     # ----- Cell construction -------------------------------------------------
 
-    def _display_beacons(self, ap: AccessPoint, now: float) -> int:
-        """The 🥓 count to show: the real count, but stepped at most every
-        BEACON_DISPLAY_INTERVAL_S so a steadily-beaconing row holds still between
-        steps. Steps immediately if the count dropped (counter reset / new AP)."""
-        shown = self._beacon_shown.get(ap.bssid)
-        if (shown is None or (now - shown[1]) >= BEACON_DISPLAY_INTERVAL_S
-                or ap.beacons < shown[0]):
-            self._beacon_shown[ap.bssid] = (ap.beacons, now)
-            return ap.beacons
-        return shown[0]
-
     def _render_cell(
         self, ap: AccessPoint, col_key: str, is_stale: bool,
-        n_cli: int = 0, flash_bacon: bool = False, shown_beacons: int = 0,
+        n_cli: int = 0, flash_bacon: bool = False, shown_beacons: Optional[int] = None,
     ) -> Text:
         """Build the Text renderable for a single column cell."""
         fg = self._theme_fg
@@ -535,8 +512,9 @@ class ScannerView(Screen):
         if col_key == "signal":
             return Text(f"{ap.signal} dBm", justify="right", style=f"{dim}{fg}")
         if col_key == "beacons":
+            count = ap.beacons if shown_beacons is None else shown_beacons
             style = f"{dim}{fg} bold" if flash_bacon else f"{dim}{fg}"
-            return Text(str(shown_beacons), justify="right", style=style)
+            return Text(str(count), justify="right", style=style)
         if col_key == "clients":
             return Text(str(n_cli) if n_cli else "", justify="right", style=f"{dim}{fg}")
         if col_key == "encryption":
@@ -712,19 +690,9 @@ class ScannerView(Screen):
 
     # ----- Sort --------------------------------------------------------------
 
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        table = self.query_one("#ap-table", _APScanTable)
-        if not table._suppress_scroll:
-            self._last_user_nav = time.time()
-
     def _apply_sort(self, *, scroll_to_cursor: bool = True, force: bool = False) -> None:
-        """Re-sort the table, maintains selected item.
-        ``scroll_to_cursor`` controls whether the viewport follows the cursor.
-        ``force`` bypasses the user navigation pause."""
-        now = time.time()
-        if not force and (now - self._last_user_nav) < 3.0:
-            return
-
+        """Re-sort the table, maintaining selected item.
+        ``scroll_to_cursor`` controls whether the viewport follows the cursor."""
         table = self.query_one("#ap-table", _APScanTable)
         if table.row_count == 0:
             return
@@ -738,48 +706,77 @@ class ScannerView(Screen):
 
         sort_key, _ = self._COLUMNS[self._sort_idx]
         reverse = self._sort_reverse
-        is_numeric_col = sort_key in self._NUMERIC_COLS
 
         def _key(bssid: str, val: Any) -> tuple:
+            ap = self.ap_cache.get(bssid)
+            sig = ap.signal if ap else -100
+            sec_sig = sig if reverse else -sig
+
             if sort_key == "signal":
-                primary = self._sort_power.get(bssid, -100)
-                return (0, primary)
+                state = self._row_states.get(bssid)
+                cli = state.clients if state else 0
+                sec_cli = cli if reverse else -cli
+                sentinel = 1 if reverse else 0
+                return (sentinel, sig, sec_cli, bssid)
+
+            if sort_key == "wps":
+                wps_rank = 0
+                if ap and ap.wps:
+                    wps_rank = 1 if ap.wps_locked else 2
+                is_empty = (wps_rank == 0)
+                sentinel = int(is_empty != reverse)
+                return (sentinel, wps_rank, sec_sig, bssid)
+
             if sort_key == "ssid":
-                ap = self.ap_cache.get(bssid)
                 name = (ap.ssid or "") if ap else ""
-                sentinel = int(not name != reverse)
-                return (sentinel, name.lower())
+                is_empty = not name
+                sentinel = int(is_empty != reverse)
+                return (sentinel, name.lower(), sec_sig, bssid)
+
+            if sort_key == "channel":
+                ch = ap.channel if ap else 0
+                sentinel = 1 if reverse else 0
+                return (sentinel, ch, sec_sig, bssid)
+
+            if sort_key == "beacons":
+                bc = ap.beacons if ap else 0
+                sentinel = 1 if reverse else 0
+                return (sentinel, bc, sec_sig, bssid)
+
+            if sort_key == "clients":
+                state = self._row_states.get(bssid)
+                cli = state.clients if state else 0
+                is_empty = (cli == 0)
+                sentinel = int(is_empty != reverse)
+                return (sentinel, cli, sec_sig, bssid)
+
+            if sort_key == "encryption":
+                enc = (ap.encryption or "") if ap else ""
+                is_empty = not enc or enc.lower() == "unknown"
+                sentinel = int(is_empty != reverse)
+                return (sentinel, enc.lower(), sec_sig, bssid)
+
+            if sort_key == "identity":
+                ident = (ap.identity.summary or "") if ap else ""
+                is_empty = not ident
+                sentinel = int(is_empty != reverse)
+                return (sentinel, ident.lower(), sec_sig, bssid)
 
             if isinstance(val, Text):
                 val = val.plain
             s = str(val).strip() if val is not None else ""
             is_empty = not s
-
-            if is_empty:
-                primary: object = 0 if is_numeric_col else ""
-            elif is_numeric_col:
-                head = s.split()[0]
-                try:
-                    primary = int(head)
-                except ValueError:
-                    try:
-                        primary = float(head)
-                    except ValueError:
-                        primary = float("inf") if not reverse else float("-inf")
-            else:
-                primary = s.lower()
-
             sentinel = int(is_empty != reverse)
-            return (sentinel, primary)
+            return (sentinel, s.lower(), sec_sig, bssid)
 
-        table.sort_aps(sort_key, key_func=_key, reverse=reverse)
+        order_changed = table.sort_aps(sort_key, key_func=_key, reverse=reverse)
 
-        if current_key:
+        if current_key and (order_changed or scroll_to_cursor):
             try:
                 new_idx = table.get_row_index(current_key)
                 if scroll_to_cursor:
                     table.move_cursor(row=new_idx, animate=False)
-                else:
+                elif order_changed:
                     table.pin_cursor_row(new_idx)
             except Exception:
                 pass
