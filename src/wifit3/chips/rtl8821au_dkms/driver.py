@@ -339,4 +339,5 @@ class Rtl8821auDkmsDriver(Driver):
         if self._reader is not None:
             await self._reader.stop()
             self._reader = None
-        self.transport.close()
+        async with self._io_lock:
+            self.transport.close()

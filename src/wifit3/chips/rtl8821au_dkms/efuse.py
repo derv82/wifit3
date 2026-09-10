@@ -106,7 +106,7 @@ def _read_logical_map(t) -> bytes:
             if (ext & 0x0F) == 0x0F:              # ALL_WORDS_DISABLED
                 header = _efuse_one_byte_read(t, addr)
                 addr += 1
-                break
+                continue
             offset = ((ext & 0xF0) >> 1) | offset_2_0
             wden = ext & 0x0F
         else:
@@ -129,7 +129,7 @@ def _read_logical_map(t) -> bytes:
                     break
         else:                                     # invalid offset — skip its words
             for i in range(C.EFUSE_MAX_WORD_UNIT):
-                if wden & 0x01:
+                if wden & (1 << i):
                     continue
                 addr += 1
                 if addr >= C.EFUSE_REAL_CONTENT_LEN_JAGUAR:

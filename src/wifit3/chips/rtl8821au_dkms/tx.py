@@ -77,7 +77,12 @@ def build_mgmt_txdesc(pkt_len: int, *, hw_rate: int = DESC_RATE1M,
     inject path leaves it None, so the field stays clear (the fake-txdesc's historical
     default, so the HW global retry register applies).
     """
-    dw0 = (pkt_len & 0xFFFF) | (TXDESC_SIZE << 16) | (1 << 26) | (1 << 27) | (1 << 31)
+    if not 0 <= pkt_len <= 0xFFFF:
+        raise ValueError("pkt_len must fit the 16-bit TX descriptor PKT_SIZE field")
+    if retry_limit is not None and not 0 <= retry_limit <= 0x3F:
+        raise ValueError("retry_limit must fit the 6-bit RTS_DATA_RTY_LMT field")
+
+    dw0 = pkt_len | (TXDESC_SIZE << 16) | (1 << 26) | (1 << 27) | (1 << 31)
     if bmc:
         dw0 |= 1 << 24                       # BMC (group-addressed frame)
     dw1 = (QSLT_MGNT << 8) | ((rate_id & 0x1F) << 16)
