@@ -9,6 +9,11 @@ across all rtl8xxxu chips.
 """
 from __future__ import annotations
 
+
+def BIT(n: int) -> int:
+    return 1 << n
+
+
 # ---- USB vendor-control wire protocol --------------------------------
 # `rtl8xxxu.h:34-36`
 USB_CMD_REQ = 0x05
@@ -173,12 +178,18 @@ REG_DARFRC = 0x0430                 # regs.h:566
 REG_RARFRC = 0x0438                 # regs.h:567
 REG_FWHW_TXQ_CTRL = 0x0420          # regs.h:543
 FWHW_TXQ_CTRL_AMPDU_RETRY = 1 << 7  # regs.h:544
+FWHW_TXQ_CTRL_XMIT_MGMT_ACK = 1 << 12  # regs.h:545
 REG_ACKTO = 0x0640                  # regs.h:801
 REG_BEACON_CTRL = 0x0550            # regs.h:677
+REG_BEACON_CTRL_1 = 0x0551          # regs.h:678
 BEACON_DISABLE_TSF_UPDATE = 1 << 4  # regs.h:683
+REG_TXPTCL_CTRL = 0x0520            # regs.h:669
+REG_TXPAUSE = 0x0522                # regs.h:670
 REG_TBTT_PROHIBIT = 0x0540          # regs.h:673
 REG_BEACON_DMA_TIME = 0x0559        # regs.h:699
 BEACON_DMA_ATIME_INT_TIME = 2       # regs.h:700
+REG_NAV_UPPER = 0x0652              # regs.h:808
+NAV_UPPER_UNIT = 128                # regs.h:809
 REG_BEACON_TCFG = 0x0510            # regs.h:661
 REG_RXDMA_PRO_8723B = 0x0290        # regs.h:515
 RXDMA_PRO_DMA_MODE = 1 << 1         # regs.h:516
@@ -214,6 +225,20 @@ REG_NHM_TH7_TO_TH4_8723B = 0x089C   # regs.h:980
 REG_FPGA0_IQK = 0x0E28              # regs.h:1145
 REG_OFDM0_FA_RSTC = 0x0C0C          # regs.h:1070
 GPIO_MUXCFG_IO_SEL_ENBT = 1 << 5    # regs.h:141
+CFO_TRACKING_ATC_STATUS = 1 << 11   # regs.h:1127
+
+# IQ calibration maximum tolerance (core.c:2854)
+IQK_MAX_TOLERANCE = 5
+
+# ---- HSSI 3-wire RF register access (regs.h:902-912) -----------------
+REG_FPGA0_XA_HSSI_PARM1 = 0x0820     # regs.h:902
+FPGA0_HSSI_PARM1_PI = 1 << 8         # regs.h:903
+REG_FPGA0_XB_HSSI_PARM1 = 0x0828     # regs.h:905
+FPGA0_HSSI_PARM2_ADDR_SHIFT = 23     # regs.h:909
+FPGA0_HSSI_PARM2_ADDR_MASK = 0x7f800000  # regs.h:910
+FPGA0_HSSI_PARM2_EDGE_READ = 1 << 31 # regs.h:912
+REG_FPGA0_XA_LSSI_READBACK = 0x08a0  # regs.h:982
+REG_HSPI_XA_READBACK = 0x08b8        # regs.h:985
 
 # ---- RFSW antenna select (regs.h:953-959) ---------------------------
 FPGA0_RF_TRSW = 1 << 5              # regs.h:953
@@ -235,9 +260,14 @@ REG_FPGA0_PSD_REPORT = 0x08B4       # regs.h:984
 REG_FPGA0_XA_HSSI_PARM2 = 0x0824     # regs.h:904
 FPGA0_HSSI_3WIRE_DATA_LEN = 0x800    # regs.h:907
 FPGA0_HSSI_3WIRE_ADDR_LEN = 0x400    # regs.h:908
+REG_FPGA0_XCD_SWITCH_CTRL = 0x085c  # regs.h:928
 REG_FPGA0_XA_RF_INT_OE = 0x0860     # regs.h:930
+REG_FPGA0_XB_RF_INT_OE = 0x0864     # regs.h:931
 REG_FPGA0_XA_RF_SW_CTRL = 0x0870    # regs.h:942 (16-bit)
 REG_FPGA0_XAB_RF_SW_CTRL = 0x0870   # regs.h:939 (32-bit alias)
+REG_FPGA0_XCD_RF_SW_CTRL = 0x0874   # regs.h:944
+REG_CONFIG_ANT_A = 0x0b68            # regs.h:1053
+REG_CONFIG_ANT_B = 0x0b6c            # regs.h:1054
 FPGA0_RF_RFENV = 1 << 4             # regs.h:952
 REG_FPGA0_XA_LSSI_PARM = 0x0840     # regs.h:919 (RFREG data reg, path A)
 REG_FPGA0_XB_LSSI_PARM = 0x0844     # regs.h:920 (RFREG data reg, path B)
@@ -255,10 +285,48 @@ OFDM_RF_PATH_RX_MASK = 0x0F
 OFDM_RF_PATH_RX_A = 1 << 0
 OFDM_RF_PATH_TX_MASK = 0xF0
 OFDM_RF_PATH_TX_A = 1 << 4
+
+# ---- EFUSE BB-gain trim (8188f.c:1579-1580) ---------------------------
+PPG_BB_GAIN_2G_TXA_OFFSET_8188F = 0xee
+PPG_BB_GAIN_2G_TX_OFFSET_MASK = 0x0f
+REG_OFDM0_TR_MUX_PAR = 0x0c08       # regs.h:1068
+REG_OFDM0_XA_RX_IQ_IMBALANCE = 0x0c14   # regs.h:1075
+REG_OFDM0_XB_RX_IQ_IMBALANCE = 0x0c1c   # regs.h:1076
+REG_OFDM0_ENERGY_CCA_THRES = 0x0c4c     # regs.h:1078
 REG_OFDM0_RX_D_SYNC_PATH = 0x0C40   # regs.h:1080
+REG_OFDM0_XA_AGC_CORE1 = 0x0c50     # regs.h:1083
+REG_OFDM0_AGC_RSSI_TABLE = 0x0c78   # regs.h:1095
+REG_OFDM0_XA_TX_IQ_IMBALANCE = 0x0c80    # regs.h:1097
+REG_OFDM0_XB_TX_IQ_IMBALANCE = 0x0c88    # regs.h:1098
+REG_OFDM0_XC_TX_AFE = 0x0c94        # regs.h:1102
+REG_OFDM0_XD_TX_AFE = 0x0c9c        # regs.h:1103
+REG_OFDM0_RX_IQ_EXT_ANTA = 0x0ca0    # regs.h:1105
+REG_OFDM1_LSTF = 0x0d00              # regs.h:1115
+OFDM_LSTF_MASK = 0x70000000          # regs.h:1123
 REG_OFDM1_CFO_TRACKING = 0x0D2C     # regs.h:1126
 REG_OFDM1_CSI_FIX_MASK1 = 0x0D40    # regs.h:1128
 REG_OFDM1_CSI_FIX_MASK2 = 0x0D44    # regs.h:1129
+
+# ---- IQK registers (regs.h:1145+) ------------------------------------
+REG_TX_IQK_TONE_A = 0x0e30           # regs.h:1147
+REG_RX_IQK_TONE_A = 0x0e34           # regs.h:1148
+REG_TX_IQK_PI_A = 0x0e38             # regs.h:1149
+REG_RX_IQK_PI_A = 0x0e3c             # regs.h:1150
+REG_TX_IQK = 0x0e40                  # regs.h:1152
+REG_RX_IQK = 0x0e44                  # regs.h:1153
+REG_IQK_AGC_PTS = 0x0e48             # regs.h:1154
+REG_IQK_AGC_RSP = 0x0e4c             # regs.h:1155
+REG_BLUETOOTH = 0x0e6c               # regs.h:1162
+REG_TX_POWER_BEFORE_IQK_A = 0x0e94   # regs.h:1172
+REG_TX_POWER_AFTER_IQK_A = 0x0e9c    # regs.h:1174
+REG_RX_POWER_BEFORE_IQK_A_2 = 0x0ea4 # regs.h:1177
+REG_RX_POWER_AFTER_IQK_A_2 = 0x0eac  # regs.h:1180
+REG_RX_OFDM = 0x0ed0                 # regs.h:1192
+REG_RX_WAIT_RIFS = 0x0ed4            # regs.h:1193
+REG_RX_TO_RX = 0x0ed8                # regs.h:1194
+REG_STANDBY = 0x0edc                 # regs.h:1195
+REG_SLEEP = 0x0ee0                   # regs.h:1196
+REG_PMPD_ANAEN = 0x0eec             # regs.h:1197
 
 # ---- TX power AGC (regs.h:1133+) ------------------------------------
 REG_TX_AGC_A_RATE18_06 = 0x0E00
@@ -287,6 +355,12 @@ RF6052_REG_RXG_MIX_SWBW = 0x87
 RF6052_REG_S0S1 = 0xB0
 RF6052_REG_T_METER_8723B = 0x42
 RF6052_REG_UNKNOWN_55 = 0x55
+RF6052_REG_TXM_IDAC = 0x08          # regs.h:1316
+RF6052_REG_RCK_OS = 0x30            # regs.h:1361
+RF6052_REG_TXPA_G1 = 0x31           # regs.h:1363
+RF6052_REG_TXPA_G2 = 0x32           # regs.h:1364
+RF6052_REG_PAD_TXG = 0x56           # regs.h:1374
+RF6052_REG_WE_LUT = 0xef            # regs.h:1380
 
 # ---- EFUSE (regs.h:120+, rtl8xxxu.h:87-91) ---------------------------
 REG_9346CR = 0x000A                 # regs.h:59 (EEPROM/EFUSE boot cfg)

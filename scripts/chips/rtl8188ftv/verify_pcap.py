@@ -17,6 +17,12 @@ Milestones gated here:
   RCR/SIFS/EDCA, burst, aggregation, statistics), anchored at the MAC
   table's first write (0x0024), driven against the recorded chip reads so
   every emitted write must match the wire.
+* **LC + IQ + RF tail** -- ``lc_calibrate`` (LSTF/TXPAUSE branch +
+  RF MODE_AG poll), ``iq_calibrate`` (phy path A inner/outer, simularity
+  compare, IQ matrix), ``enable_thermal_meter`` (RF 0x42 RMW),
+  ``init_device_phy_tail`` (NAV_UPPER + FWHW_TXQ ack + CCK/CFO reads) and
+  ``enable_rf`` (EFUSE BB-gain trim, RF_CTRL, path A), driven against
+  the recorded chip reads so every emitted write must match the wire.
 
 Run: uv run python scripts/chips/rtl8188ftv/verify_pcap.py [capture-1]
 """
@@ -114,11 +120,11 @@ def _report(miles: list[tuple[str, int]]) -> None:
 
 
 def _bringup_gate(ops, efuse_defaults: dict | None = None) -> bool:
-    """Replay ``init_mac`` + ``post_mac_init_phy`` against the capture, anchored at the MAC
-    init table (first write to 0x0024 after the FW upload region). The driver's bring-up
-    functions run unchanged against a ``ReplayTransport`` that serves the recorded chip
-    reads, so every write they emit must equal the wire or a ``Divergence`` is raised at the
-    first mismatch.
+    """Replay ``init_mac`` + ``post_mac_init_phy`` + ``init_device_post_phy`` + LC/IQ/RF
+    tail against the capture, anchored at the MAC init table (first write to 0x0024 after
+    the FW upload region). The driver's bring-up functions run unchanged against a
+    ``ReplayTransport`` that serves the recorded chip reads, so every write they emit must
+    equal the wire or a ``Divergence`` is raised at the first mismatch.
 
     ``set_crystal_cap`` needs the EFUSE crystal_cap and ``init_phy_rf`` the chip_cut.
     ``efuse_defaults`` is the EFUSE gate's parsed result -- its ``default_crystal_cap`` now
@@ -164,14 +170,24 @@ def _bringup_gate(ops, efuse_defaults: dict | None = None) -> bool:
         if efuse_defaults is not None:
             mac.init_device_post_phy(rt, efuse_defaults)
             miles.append(("init_device_post_phy (RFSW..CCK PD)", rt.i))
+        phy.lc_calibrate(rt)
+        miles.append(("lc_calibrate", rt.i))
+        phy.iq_calibrate(rt)
+        miles.append(("iq_calibrate", rt.i))
+        phy.enable_thermal_meter(rt)
+        miles.append(("enable_thermal_meter", rt.i))
+        phy.init_device_phy_tail(rt)
+        miles.append(("init_device_phy_tail", rt.i))
+        phy.enable_rf(rt)
+        miles.append(("enable_rf", rt.i))
     except rp.Divergence as e:
         last = miles[-1][0] if miles else "(none)"
         print(f"  FAIL (bring-up divergence after {last}):\n    {e}")
         _report(miles)
         return False
 
-    print(f"  PASS: {rt.i} ops byte-for-byte -- init_mac + post_mac_init_phy "
-          f"(chip_cut={chip_cut}, crystal_cap=0x{crystal_cap:02x} from {eff})")
+    print(f"  PASS: {rt.i} ops byte-for-byte -- init_mac + post_mac_init_phy + "
+          f"LC/IQ/RF tail (chip_cut={chip_cut}, crystal_cap=0x{crystal_cap:02x} from {eff})")
     _report(miles)
     return True
 
