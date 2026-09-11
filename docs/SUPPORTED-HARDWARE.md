@@ -193,9 +193,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 → [RTL8821CU_DKMS.md](../src/wifit3/chips/rtl8821cu_dkms/RTL8821CU_DKMS.md)
 
 ### RTL8822BU
-<img align="right" width="90" height="165" src="../assets/cardart/card-archert3uplus.png" alt="TP-Link Archer T3U Plus">
-<img align="right" width="90" height="165" src="../assets/cardart/card-archert4uplus.png" alt="TP-Link Archer T4U Plus">
-
+<img align="right" width="140" src="../assets/cardart/stack-rtl8822au.png" alt="TP-Link Archer T3U Plus (top) / TP-Link Archer T4U Plus (bottom)">
 
 *TP-Link Archer T3U Plus v1 / Archer T4U v3 / T4U+ · 2.4 / 5 GHz*
 
