@@ -241,7 +241,7 @@ class FocusViewV2(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="topbar"):
-            with Horizontal(id="actions") as actions:
+            with Horizontal(id="actions"):
                 yield Button("‹ Scanner", id="back")
                 # The full attack set is composed once (hidden); derive_buttons shows the ones that fit the target.
                 for bid, label in _ATTACK_BUTTONS:
