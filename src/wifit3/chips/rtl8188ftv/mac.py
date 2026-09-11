@@ -17,7 +17,111 @@ from __future__ import annotations
 
 import logging
 
-from .constants import REG_CR
+from . import phy
+from .constants import (
+    AUTO_LLT_INIT_LLT,
+    BEACON_DISABLE_TSF_UPDATE,
+    BEACON_DMA_ATIME_INT_TIME,
+    CAM_CMD_POLLING,
+    FPGA0_RF_ANTSW,
+    FPGA0_RF_ANTSWB,
+    FPGA0_RF_BD_CTRL_SHIFT,
+    FPGA0_RF_PAPE,
+    FPGA0_RF_TRSW,
+    FPGA0_RF_TRSWB,
+    GPIO_MUXCFG_IO_SEL_ENBT,
+    HT_SINGLE_AMPDU_ENABLE,
+    PBP_PAGE_SIZE_256,
+    PBP_PAGE_SIZE_RX_SHIFT,
+    PBP_PAGE_SIZE_TX_SHIFT,
+    RCR_ACCEPT_BCAST,
+    RCR_ACCEPT_MCAST,
+    RCR_ACCEPT_MGMT_FRAME,
+    RCR_ACCEPT_PHYS_MATCH,
+    RCR_APPEND_ICV,
+    RCR_APPEND_MIC,
+    RCR_APPEND_PHYSTAT,
+    RCR_HTC_LOC_CTRL,
+    REG_ACKTO,
+    REG_AGGLEN_LMT,
+    REG_AMPDU_MAX_TIME_8723B,
+    REG_AUTO_LLT,
+    REG_BAR_MODE_CTRL,
+    REG_BEACON_CTRL,
+    REG_BEACON_DMA_TIME,
+    REG_BEACON_TCFG,
+    REG_CAM_CMD,
+    REG_CCK_PD_THRESH,
+    REG_CR,
+    REG_DARFRC,
+    REG_DWBCN1_CTRL_8723B,
+    REG_EDCA_BE_PARAM,
+    REG_EDCA_BK_PARAM,
+    REG_EDCA_VI_PARAM,
+    REG_EDCA_VO_PARAM,
+    REG_FAST_EDCA_CTRL,
+    REG_FPGA0_IQK,
+    REG_FPGA0_RF_MODE,
+    REG_FPGA0_TX_INFO,
+    REG_FPGA0_XA_RF_INT_OE,
+    REG_FPGA0_XAB_RF_SW_CTRL,
+    REG_FWHW_TXQ_CTRL,
+    REG_GPIO_MUXCFG,
+    REG_HISR0,
+    REG_HISR1,
+    REG_HT_SINGLE_AMPDU_8723B,
+    REG_HWSEQ_CTRL,
+    REG_MAC_SPEC_SIFS,
+    REG_MAX_AGGR_NUM,
+    REG_NHM_TH3_TO_TH0_8723B,
+    REG_NHM_TH7_TO_TH4_8723B,
+    REG_NHM_TH9_TH10_8723B,
+    REG_NHM_TIMER_8723B,
+    REG_OFDM0_FA_RSTC,
+    REG_PBP,
+    REG_PIFS,
+    REG_PKT_BE_BK_LIFE_TIME,
+    REG_PKT_VO_VI_LIFE_TIME,
+    REG_RARFRC,
+    REG_RCR,
+    REG_RESPONSE_RATE_SET,
+    REG_RETRY_LIMIT,
+    REG_RSV_CTRL,
+    REG_RXFLTMAP0,
+    REG_RXFLTMAP1,
+    REG_RXFLTMAP2,
+    REG_RX_DRVINFO_SZ,
+    REG_RXDMA_AGG_PG_TH,
+    REG_RXDMA_PRO_8723B,
+    REG_RX_PKT_LIMIT,
+    REG_SIFS_CCK,
+    REG_SIFS_OFDM,
+    REG_SPEC_SIFS,
+    REG_TBTT_PROHIBIT,
+    REG_TDECTRL,
+    REG_TXDMA_OFFSET_CHK,
+    REG_TXPKTBUF_BCNQ_BDNY,
+    REG_TXPKTBUF_MGQ_BDNY,
+    REG_TXPKTBUF_WMAC_LBK_BF_HD,
+    REG_TX_REPORT_CTRL,
+    REG_TX_REPORT_TIME,
+    REG_TRXDMA_CTRL,
+    REG_TRXFF_BNDY,
+    REG_USTIME_EDCA,
+    REG_USTIME_TSF_8723B,
+    RESPONSE_RATE_BITMAP_ALL,
+    RESPONSE_RATE_RRSR_CCK_ONLY_1M,
+    RXDMA_PRO_DMA_BURST_CNT,
+    RXDMA_PRO_DMA_BURST_SIZE,
+    RXDMA_PRO_DMA_MODE,
+    RXDMA_USB_AGG_ENABLE,
+    RSV_CTRL_DIS_PRST,
+    RSV_CTRL_WLOCK_1C,
+    TRXDMA_CTRL_RXDMA_AGG_EN,
+    TXDMA_OFFSET_DROP_DATA_EN,
+    TX_REPORT_CTRL_TIMER_ENABLE,
+    TX_TOTAL_PAGE_NUM_8188F,
+)
 from .transport import RTL8188FTVTransport
 
 logger = logging.getLogger(__name__)
@@ -75,3 +179,207 @@ def apply_mac_init_table(t: RTL8188FTVTransport) -> None:
         if reg == 0xFFFF and val == 0xFF:
             break
         t.write8(reg, val & 0xFF)
+
+
+# ---- M3 composite gate ----------------------------------------------
+
+
+def init_device_post_phy(t: RTL8188FTVTransport, efuse) -> None:
+    """Mirror `rtl8xxxu_init_device` from the RFSW block to CCK PD.
+
+    Covers the second half of `core.c:4099-4373` (after `init_phy_rf`):
+    RFSW/antenna, TX boundary, PBP, LLT, USB quirks, TX report, RCR,
+    SIFS/EDCA/DARFRC, beacon, burst, aggregation, pkt-life-time,
+    CCK/OFDM enable, CAM invalidate, set_tx_power, statistics, GPIO.
+    """
+    t.write32(REG_FPGA0_TX_INFO, 0x00000003)
+
+    val32 = (FPGA0_RF_TRSW | FPGA0_RF_TRSWB | FPGA0_RF_ANTSW |
+             FPGA0_RF_ANTSWB |
+             ((FPGA0_RF_ANTSW | FPGA0_RF_ANTSWB) << FPGA0_RF_BD_CTRL_SHIFT) |
+             FPGA0_RF_PAPE | (FPGA0_RF_PAPE << FPGA0_RF_BD_CTRL_SHIFT))
+    t.write32(REG_FPGA0_XAB_RF_SW_CTRL, val32)
+
+    t.write32(REG_FPGA0_XA_RF_INT_OE, 0x66F60210)
+
+    tx_bnd = TX_TOTAL_PAGE_NUM_8188F + 1
+    t.write8(REG_TXPKTBUF_BCNQ_BDNY, tx_bnd)
+    t.write8(REG_TXPKTBUF_MGQ_BDNY, tx_bnd)
+    t.write8(REG_TXPKTBUF_WMAC_LBK_BF_HD, tx_bnd)
+    t.write8(REG_TRXFF_BNDY, tx_bnd)
+    t.write8(REG_TDECTRL + 1, tx_bnd)
+
+    val8 = (PBP_PAGE_SIZE_256 << PBP_PAGE_SIZE_TX_SHIFT) | \
+        (PBP_PAGE_SIZE_256 << PBP_PAGE_SIZE_RX_SHIFT)
+    t.write8(REG_PBP, val8)
+
+    val32 = t.read32(REG_AUTO_LLT)
+    val32 |= AUTO_LLT_INIT_LLT
+    t.write32(REG_AUTO_LLT, val32)
+    while t.read32(REG_AUTO_LLT) & AUTO_LLT_INIT_LLT:
+        pass
+
+    val16 = t.read16(REG_CR)
+    val16 |= (1 << 6) | (1 << 7)
+    t.write16(REG_CR, val16)
+
+    val32 = t.read32(REG_TXDMA_OFFSET_CHK)
+    val32 |= TXDMA_OFFSET_DROP_DATA_EN
+    t.write32(REG_TXDMA_OFFSET_CHK, val32)
+
+    val8 = t.read8(REG_TX_REPORT_CTRL)
+    val8 |= TX_REPORT_CTRL_TIMER_ENABLE
+    t.write8(REG_TX_REPORT_CTRL, val8)
+    t.write8(REG_TX_REPORT_CTRL + 1, 0x02)
+    t.write16(REG_TX_REPORT_TIME, 0xCDF0)
+
+    val8 = t.read8(0x00A3)
+    val8 &= 0xF8
+    t.write8(0x00A3, val8)
+
+    t.write8(REG_RX_DRVINFO_SZ, 4)
+
+    t.write32(REG_HISR0, 0xFFFFFFFF)
+    t.write32(REG_HISR1, 0xFFFFFFFF)
+
+    val32 = (RCR_ACCEPT_PHYS_MATCH | RCR_ACCEPT_MCAST | RCR_ACCEPT_BCAST |
+             RCR_ACCEPT_MGMT_FRAME | RCR_HTC_LOC_CTRL |
+             RCR_APPEND_PHYSTAT | RCR_APPEND_ICV | RCR_APPEND_MIC)
+    t.write32(REG_RCR, val32)
+
+    t.write16(REG_RXFLTMAP2, 0xFFFF)
+    t.write16(REG_RXFLTMAP1, 0x0400)
+    t.write16(REG_RXFLTMAP0, 0xFFFF)
+
+    val32 = t.read32(REG_RESPONSE_RATE_SET)
+    val32 &= ~RESPONSE_RATE_BITMAP_ALL
+    val32 |= RESPONSE_RATE_RRSR_CCK_ONLY_1M
+    t.write32(REG_RESPONSE_RATE_SET, val32)
+
+    t.write16(REG_SPEC_SIFS, (0x10 << 8) | 0x10)
+    t.write16(REG_RETRY_LIMIT, (0x30 << 8) | 0x30)
+    t.write16(REG_SPEC_SIFS, (0x10 << 8) | 0x0A)
+
+    t.write16(REG_MAC_SPEC_SIFS, 0x100A)
+    t.write16(REG_SIFS_CCK, 0x100A)
+    t.write16(REG_SIFS_OFDM, 0x100A)
+
+    t.write32(REG_EDCA_BE_PARAM, 0x005EA42B)
+    t.write32(REG_EDCA_BK_PARAM, 0x0000A44F)
+    t.write32(REG_EDCA_VI_PARAM, 0x005EA324)
+    t.write32(REG_EDCA_VO_PARAM, 0x002FA226)
+
+    t.write32(REG_DARFRC, 0x00000000)
+    t.write32(REG_DARFRC + 4, 0x10080404)
+    t.write32(REG_RARFRC, 0x04030201)
+    t.write32(REG_RARFRC + 4, 0x08070605)
+
+    val8 = t.read8(REG_FWHW_TXQ_CTRL)
+    val8 |= (1 << 7)
+    t.write8(REG_FWHW_TXQ_CTRL, val8)
+
+    t.write8(REG_ACKTO, 0x40)
+
+    val16 = BEACON_DISABLE_TSF_UPDATE | (BEACON_DISABLE_TSF_UPDATE << 8)
+    t.write16(REG_BEACON_CTRL, val16)
+    t.write16(REG_TBTT_PROHIBIT, 0x6404)
+    t.write8(REG_BEACON_DMA_TIME, BEACON_DMA_ATIME_INT_TIME)
+    t.write16(REG_BEACON_TCFG, 0x660F)
+
+    init_burst(t)
+    init_aggregation(t)
+
+    t.write16(REG_PKT_VO_VI_LIFE_TIME, 0x0400)
+    t.write16(REG_PKT_BE_BK_LIFE_TIME, 0x0400)
+
+    val32 = t.read32(REG_FPGA0_RF_MODE)
+    val32 |= (1 << 24) | (1 << 25)
+    t.write32(REG_FPGA0_RF_MODE, val32)
+
+    t.write32(REG_CAM_CMD, CAM_CMD_POLLING | (1 << 30))
+
+    phy.set_tx_power(t, 1, efuse)
+
+    t.write8(REG_HWSEQ_CTRL, 0xFF)
+    t.write32(REG_BAR_MODE_CTRL, 0x0201FFFF)
+
+    init_statistics(t)
+
+    val8 = t.read8(REG_GPIO_MUXCFG)
+    val8 &= ~GPIO_MUXCFG_IO_SEL_ENBT
+    t.write8(REG_GPIO_MUXCFG, val8)
+
+    t.write8(REG_CCK_PD_THRESH, 0x83)
+
+
+def init_burst(t: RTL8188FTVTransport) -> None:
+    """Mirror of `rtl8xxxu_init_burst` (`core.c:3950-3995`)."""
+    val8 = t.read8(REG_RXDMA_PRO_8723B)
+    val8 &= ~(RXDMA_PRO_DMA_BURST_SIZE | RXDMA_PRO_DMA_BURST_CNT)
+    val8 |= RXDMA_PRO_DMA_BURST_SIZE | RXDMA_PRO_DMA_BURST_CNT
+    val8 |= RXDMA_PRO_DMA_MODE
+    t.write8(REG_RXDMA_PRO_8723B, val8)
+
+    val8 = t.read8(REG_HT_SINGLE_AMPDU_8723B)
+    val8 |= HT_SINGLE_AMPDU_ENABLE
+    t.write8(REG_HT_SINGLE_AMPDU_8723B, val8)
+
+    t.write16(REG_MAX_AGGR_NUM, 0x0C14)
+    t.write8(REG_AMPDU_MAX_TIME_8723B, 0x70)
+    t.write32(REG_AGGLEN_LMT, 0xFFFFFFFF)
+    t.write8(REG_RX_PKT_LIMIT, 0x18)
+    t.write8(REG_PIFS, 0x00)
+    t.write8(REG_FWHW_TXQ_CTRL, 0x80)
+    t.write32(REG_FAST_EDCA_CTRL, 0x03086666)
+    t.write8(REG_USTIME_TSF_8723B, 0x28)
+    t.write8(REG_USTIME_EDCA, 0x28)
+
+    val8 = t.read8(REG_RSV_CTRL)
+    val8 |= RSV_CTRL_WLOCK_1C | RSV_CTRL_DIS_PRST
+    t.write8(REG_RSV_CTRL, val8)
+
+
+def init_aggregation(t: RTL8188FTVTransport) -> None:
+    """Mirror of `rtl8188fu_init_aggregation` (`8188f.c:645-686`)."""
+    usb_tx_agg_desc_num = 6
+
+    val32 = t.read32(REG_TDECTRL)
+    val32 &= ~(0xF << 4)
+    val32 |= usb_tx_agg_desc_num << 4
+    t.write32(REG_TDECTRL, val32)
+    t.write8(REG_DWBCN1_CTRL_8723B, usb_tx_agg_desc_num << 1)
+
+    agg_ctrl = t.read8(REG_TRXDMA_CTRL)
+    agg_ctrl &= ~TRXDMA_CTRL_RXDMA_AGG_EN
+
+    agg_rx = t.read32(REG_RXDMA_AGG_PG_TH)
+    agg_rx &= ~RXDMA_USB_AGG_ENABLE
+    agg_rx &= ~0xFF0F
+
+    rxdma_mode = t.read8(REG_RXDMA_PRO_8723B)
+    rxdma_mode &= ~(1 << 1)
+
+    t.write8(REG_TRXDMA_CTRL, agg_ctrl)
+    t.write32(REG_RXDMA_AGG_PG_TH, agg_rx)
+    t.write8(REG_RXDMA_PRO_8723B, rxdma_mode)
+
+
+def init_statistics(t: RTL8188FTVTransport) -> None:
+    """Mirror of `rtl8188fu_init_statistics` (`8188f.c:673-683`)."""
+    t.write16(REG_NHM_TIMER_8723B + 2, 0xC350)
+    t.write16(REG_NHM_TH9_TH10_8723B + 2, 0xFFFF)
+    t.write32(REG_NHM_TH3_TO_TH0_8723B, 0xFFFFFF50)
+    t.write32(REG_NHM_TH7_TO_TH4_8723B, 0xFFFFFFFF)
+
+    val32 = t.read32(REG_FPGA0_IQK)
+    val32 |= 0xFF
+    t.write32(REG_FPGA0_IQK, val32)
+
+    val32 = t.read32(REG_NHM_TH9_TH10_8723B)
+    val32 &= ~(0x700)
+    val32 |= (1 << 8)
+    t.write32(REG_NHM_TH9_TH10_8723B, val32)
+
+    val32 = t.read32(REG_OFDM0_FA_RSTC)
+    val32 |= (1 << 7)
+    t.write32(REG_OFDM0_FA_RSTC, val32)

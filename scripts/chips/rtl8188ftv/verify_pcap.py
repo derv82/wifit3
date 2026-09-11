@@ -13,8 +13,10 @@ Milestones gated here:
 * **MAC + PHY** -- ``init_mac`` (MAC table; MAX_AGGR is 8188f's
   ``default: break``) then ``post_mac_init_phy`` (BB + AGC tables +
   ``set_crystal_cap`` + RF path-A with the RFENV/INT_OE/HSSI preamble),
-  anchored at the MAC table's first write (0x0024), driven against the
-  recorded chip reads so every emitted write must match the wire.
+  then ``init_device_post_phy`` (RFSW, TX boundary, LLT, USB quirks,
+  RCR/SIFS/EDCA, burst, aggregation, statistics), anchored at the MAC
+  table's first write (0x0024), driven against the recorded chip reads so
+  every emitted write must match the wire.
 
 Run: uv run python scripts/chips/rtl8188ftv/verify_pcap.py [capture-1]
 """
@@ -159,6 +161,9 @@ def _bringup_gate(ops, efuse_defaults: dict | None = None) -> bool:
         miles.append(("init_mac (MAC table)", rt.i))
         phy.post_mac_init_phy(rt, chip_cut, crystal_cap)
         miles.append(("post_mac_init_phy (BB+AGC+xtal+RF)", rt.i))
+        if efuse_defaults is not None:
+            mac.init_device_post_phy(rt, efuse_defaults)
+            miles.append(("init_device_post_phy (RFSW..CCK PD)", rt.i))
     except rp.Divergence as e:
         last = miles[-1][0] if miles else "(none)"
         print(f"  FAIL (bring-up divergence after {last}):\n    {e}")
