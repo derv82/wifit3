@@ -21,6 +21,8 @@ constants [SRC] include/hal_com.h, include/ieee80211.h.
 """
 from __future__ import annotations
 
+import struct
+
 from .constants import TXDESC_SIZE
 
 # Queue-select: injected frames ride the MGMT queue [SRC] hal_com.h QSLT_MGNT.
@@ -34,17 +36,8 @@ DESC_RATE1M = 0x00
 DESC_RATE6M = 0x04
 
 
-def _set_bits(desc: bytearray, byte_off: int, bit_start: int, bit_len: int,
-              value: int) -> None:
-    """[SRC] SET_BITS_TO_LE_4BYTE — write ``value`` into [bit_start +: bit_len] of the
-    little-endian u32 at ``byte_off``."""
-    mask = ((1 << bit_len) - 1) << bit_start
-    word = int.from_bytes(desc[byte_off:byte_off + 4], "little")
-    word = (word & ~mask) | ((value << bit_start) & mask)
-    desc[byte_off:byte_off + 4] = (word & 0xFFFFFFFF).to_bytes(4, "little")
 
-
-def txdesc_checksum(desc: bytearray) -> int:
+def txdesc_checksum(desc: bytes | bytearray) -> int:
     """[SRC] rtl8812a_cal_txdesc_chksum — XOR of the first 16 LE u16 words (32 bytes).
 
     The checksum field (byte 28) must already be zero when this runs; the USB HW drops
@@ -52,8 +45,16 @@ def txdesc_checksum(desc: bytearray) -> int:
     error. The span is always the first 32 bytes regardless of descriptor length.
     """
     chk = 0
-    for i in range(0, 32, 2):
-        chk ^= int.from_bytes(desc[i:i + 2], "little")
+    for word in struct.unpack_from("<16H", desc, 0):
+        chk ^= word
+    return chk
+
+
+def _checksum_from_words(*words: int) -> int:
+    chk = 0
+    for word in words:
+        chk ^= word & 0xFFFF
+        chk ^= (word >> 16) & 0xFFFF
     return chk
 
 
@@ -76,21 +77,19 @@ def build_mgmt_txdesc(pkt_len: int, *, hw_rate: int = DESC_RATE1M,
     inject path leaves it None, so the field stays clear (the fake-txdesc's historical
     default, so the HW global retry register applies).
     """
-    d = bytearray(TXDESC_SIZE)
-    _set_bits(d, 0, 27, 1, 1)               # FIRST_SEG
-    _set_bits(d, 0, 26, 1, 1)               # LAST_SEG
-    _set_bits(d, 0, 16, 8, TXDESC_SIZE)     # OFFSET (descriptor bytes ahead of the MPDU)
-    _set_bits(d, 0, 0, 16, pkt_len)         # PKT_SIZE
+    if not 0 <= pkt_len <= 0xFFFF:
+        raise ValueError("pkt_len must fit the 16-bit TX descriptor PKT_SIZE field")
+    if retry_limit is not None and not 0 <= retry_limit <= 0x3F:
+        raise ValueError("retry_limit must fit the 6-bit RTS_DATA_RTY_LMT field")
+
+    dw0 = pkt_len | (TXDESC_SIZE << 16) | (1 << 26) | (1 << 27) | (1 << 31)
     if bmc:
-        _set_bits(d, 0, 24, 1, 1)           # BMC (group-addressed frame)
-    _set_bits(d, 0, 31, 1, 1)               # OWN
-    _set_bits(d, 4, 8, 5, QSLT_MGNT)        # QUEUE_SEL
-    _set_bits(d, 4, 16, 5, rate_id)         # RATE_ID
-    _set_bits(d, 32, 15, 1, 1)              # HWSEQ_EN
-    _set_bits(d, 12, 8, 1, 1)               # USE_RATE
-    _set_bits(d, 16, 0, 7, hw_rate)         # TX_RATE
+        dw0 |= 1 << 24                       # BMC (group-addressed frame)
+    dw1 = (QSLT_MGNT << 8) | ((rate_id & 0x1F) << 16)
+    dw3 = 1 << 8                             # USE_RATE
+    dw4 = hw_rate & 0x7F                     # TX_RATE
     if retry_limit is not None:
-        _set_bits(d, 16, 17, 1, 1)          # RTY_LMT_EN
-        _set_bits(d, 16, 18, 6, retry_limit)  # RTS_DATA_RTY_LMT (6-bit HW ACK-retry limit)
-    _set_bits(d, 28, 0, 16, txdesc_checksum(d))   # TX_DESC_CHECKSUM (field zeroed first)
-    return bytes(d)
+        dw4 |= 1 << 17                       # RTY_LMT_EN
+        dw4 |= (retry_limit & 0x3F) << 18    # RTS_DATA_RTY_LMT (6-bit HW ACK-retry limit)
+    chk = _checksum_from_words(dw0, dw1, 0, dw3, dw4, 0, 0, 0)
+    return struct.pack("<IIIIIIIIII", dw0, dw1, 0, dw3, dw4, 0, 0, chk, 1 << 15, 0)

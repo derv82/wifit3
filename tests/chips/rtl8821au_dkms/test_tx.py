@@ -9,6 +9,8 @@ import struct
 
 from functools import reduce
 
+import pytest
+
 from wifit3.chips.rtl8821au_dkms import tx
 
 
@@ -68,3 +70,15 @@ def test_checksum_invariant_xor_zero():
     for pkt_len, bmc in ((26, False), (100, True), (1500, False)):
         d = tx.build_mgmt_txdesc(pkt_len, bmc=bmc)
         assert reduce(lambda a, x: a ^ x, struct.unpack("<16H", d[:32]), 0) == 0
+
+
+@pytest.mark.parametrize("pkt_len", [-1, 0x10000])
+def test_rejects_pkt_len_outside_descriptor_field(pkt_len):
+    with pytest.raises(ValueError, match="pkt_len"):
+        tx.build_mgmt_txdesc(pkt_len)
+
+
+@pytest.mark.parametrize("retry_limit", [-1, 0x40])
+def test_rejects_retry_limit_outside_descriptor_field(retry_limit):
+    with pytest.raises(ValueError, match="retry_limit"):
+        tx.build_mgmt_txdesc(26, retry_limit=retry_limit)

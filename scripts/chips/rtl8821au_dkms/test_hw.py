@@ -38,7 +38,7 @@ import usb.util
 
 from _hwstop import interruptible_sleep
 
-from wifit3.chips.rtl8821au_dkms import constants as C
+from wifit3.chips.rtl8821au_dkms import SUPPORTED_IDS, constants as C
 from wifit3.chips.rtl8821au_dkms import bb, chan, firmware, mac, rf
 from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
 from wifit3.chips.rtl8821au_dkms.transport import RTL8821AUDkmsTransport
@@ -58,25 +58,29 @@ def _fail(msg: str) -> int:
 
 
 def _open_device():
-    """Find, detach, configure, and claim the AWUS036ACS. Returns the usb.core.Device."""
+    """Find, detach, configure, and claim any supported RTL8821AU/RTL8811AU adapter."""
     backend = libusb_package.get_libusb1_backend()
-    dev = usb.core.find(idVendor=C.USB_VID_REALTEK, idProduct=C.USB_PID_AWUS036ACS,
-                        backend=backend)
-    if dev is None:
-        print(f"[FAIL] AWUS036ACS not found ({C.USB_VID_REALTEK:04x}:{C.USB_PID_AWUS036ACS:04x}). "
-              "Plug it in, confirm Zadig bound it to WinUSB.")
-        return None
-    print(f"[*] Found AWUS036ACS at bus {dev.bus}, address {dev.address}")
-    try:
-        if dev.is_kernel_driver_active(0):
-            dev.detach_kernel_driver(0)
-    except (NotImplementedError, usb.core.USBError):
-        pass
-    try:
-        dev.set_configuration()
-    except usb.core.USBError as e:
-        logging.debug("set_configuration: %s", e)
-    return dev
+    for id_entry in SUPPORTED_IDS:
+        dev = usb.core.find(idVendor=id_entry.vid, idProduct=id_entry.pid, backend=backend)
+        if dev is None:
+            continue
+        print(f"[*] Found {id_entry.description} ({id_entry.vid:04x}:{id_entry.pid:04x}) "
+              f"at bus {dev.bus}, address {dev.address}")
+        try:
+            if dev.is_kernel_driver_active(0):
+                dev.detach_kernel_driver(0)
+        except (NotImplementedError, usb.core.USBError):
+            pass
+        try:
+            dev.set_configuration()
+        except usb.core.USBError as e:
+            logging.debug("set_configuration: %s", e)
+        return dev, id_entry
+    supported = ", ".join(f"{entry.vid:04x}:{entry.pid:04x}" for entry in SUPPORTED_IDS)
+    print("[FAIL] No supported RTL8821AU/RTL8811AU adapter found. "
+          "Plug it in, confirm Zadig bound it to WinUSB. "
+          f"Supported VID:PIDs: {supported}")
+    return None, None
 
 
 class BeaconTally:
@@ -107,15 +111,15 @@ class BeaconTally:
 
 
 async def _run_beacon(args) -> int:
-    dev = _open_device()
-    if dev is None:
+    dev, id_entry = _open_device()
+    if dev is None or id_entry is None:
         return 1
     try:
         usb.util.claim_interface(dev, 0)
     except usb.core.USBError as e:
         return _fail(f"claim_interface(0): {e}  (a running wifit3 may hold the card)")
 
-    driver = Rtl8821auDkmsDriver.from_usb_device(dev, Rtl8821auDkmsDriver.SUPPORTED_IDS[0])
+    driver = Rtl8821auDkmsDriver.from_usb_device(dev, id_entry)
     driver.enable_dig = not args.no_dig     # A/B: isolate the DIG watchdog's effect
     tally = BeaconTally()
     driver.register_rx_callback(tally)
@@ -200,8 +204,8 @@ def main() -> int:
         except KeyboardInterrupt:
             return 130
 
-    dev = _open_device()
-    if dev is None:
+    dev, _id_entry = _open_device()
+    if dev is None or _id_entry is None:
         return 1
     try:
         usb.util.claim_interface(dev, 0)

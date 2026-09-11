@@ -57,6 +57,28 @@ def test_board_type_bits():
     assert efuse._parse_board_type((False, True, False, False)) == efuse.ODM_BOARD_EXT_LNA_2G
 
 
+class _UnusedTransport:
+    pass
+
+
+def _read_logical_map_from(raw, monkeypatch):
+    data = dict(enumerate(raw))
+    monkeypatch.setattr(efuse, "_efuse_one_byte_read", lambda t, addr: data.get(addr, 0xFF))
+    return efuse._read_logical_map(_UnusedTransport())
+
+
+def test_logical_map_continues_after_disabled_extended_header(monkeypatch):
+    m = _read_logical_map_from([0x0F, 0x0F, 0x2E, 0x34, 0x12, 0xFF], monkeypatch)
+
+    assert m[0x10:0x12] == b"\x34\x12"
+
+
+def test_logical_map_invalid_extended_offset_skips_enabled_words(monkeypatch):
+    m = _read_logical_map_from([0x0F, 0x8E, 0xAA, 0xBB, 0x1E, 0x78, 0x56, 0xFF], monkeypatch)
+
+    assert m[0x08:0x0A] == b"\x78\x56"
+
+
 def test_build_jaguar_params_threads_board_type():
     jp = efuse.build_jaguar_params(SimpleNamespace(board_type=0x98))
     assert jp.board_type == 0x98

@@ -54,7 +54,7 @@ def set_rf_reg(t, path: int, addr: int, mask: int, val: int) -> None:
     """PHY_SetRFReg8812: masked write reads-modifies via SIPI; full mask writes direct."""
     if mask != RFREG_WRITE_MASK:
         orig = _rf_serial_read(t, path, addr)
-        val = (orig & ~mask) | (val << _shift(mask))
+        val = (orig & ~mask) | ((val << _shift(mask)) & mask)
     t.write32(_RF3WIRE[path], (((addr & 0xFF) << 20) | (val & 0xFFFFF)) & 0x0FFFFFFF)
 
 
