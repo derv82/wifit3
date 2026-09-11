@@ -31,6 +31,10 @@ import usb.core
 
 RTW_VENDOR_REQ = "5"  # bRequest 0x05 — rtw88-family vendor register access
 
+# REG_FPGA0_XA_LSSI_PARM (regs.h:919) — the rtl8xxxu RFREG data register. A write_rfreg
+# goes to a regular LSSI 32-bit register, not a control of its own.
+REG_FPGA0_XA_LSSI_PARM = 0x0840
+
 # Errno the replay read() raises when the bulk-IN FIFO is drained. read_rx_burst
 # (rtw88_base/rx_common.py) treats 110/10060 as "pipe idle" and returns None, the same as a
 # real timeout, so the RX pump loop terminates instead of hanging. 110 (Linux ETIMEDOUT) is
@@ -263,6 +267,14 @@ class ReplayTransport:
 
     def write32(self, a, v):
         self._write(a, 4, v & 0xFFFFFFFF)
+
+    def read_rfreg(self, path, reg):
+        # RFREG traffic is LSSI: a 32-bit access of the LSSI data register.
+        return self._read(REG_FPGA0_XA_LSSI_PARM + path * 4, 4)
+
+    def write_rfreg(self, path, reg, data):
+        data &= 0xFFFFF
+        self._write(REG_FPGA0_XA_LSSI_PARM + path * 4, 4, (reg << 20) | data)
 
     def writeN(self, addr, data):
         """Arbitrary-length control write (e.g. the 196/8-byte FW page chunks).
