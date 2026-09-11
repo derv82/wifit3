@@ -1,48 +1,41 @@
-# wifit3: USB Wireless Auditor
+# wifit3
+> A standalone USB Wi-Fi auditor for Linux, Windows, and macOS.
 
-> A wireless auditor that runs on Linux and Windows, comes with its own built-in drivers.
+<p align="center">
+  <img src="assets/wifit3-1-splash.png" alt="wifit3 splash / adapter picker" width="700">
+</p>
 
 > *At least* one of the [supported USB adapters](#supported-hardware) is **required**.
 
-<p align="center">
-  <img src="assets/wifit3-1-splash.png" alt="Wifit3 splash / adapter picker" width="700">
-</p>
+## Why?
+* **Cross-Platform:** Runs identically on Linux, macOS, and Windows.
+* **Wireless Driver Heaven:** Built-in wireless stack avoids kernel driver versioning hell and Windows' NDIS.
+* **Zero Runtime Dependencies:** No `aircrack-ng` or `reaver`, just pure Python with PyUSB & Textual libraries.
 
 <p align="center">
-  <img src="assets/wifit3-demo.gif" alt="Wifit3 in action: WPS PushButton PSK capture" width="700">
+  <img src="assets/wifit3-demo.gif" alt="wifit3 in action: WPS PushButton PSK capture" width="700">
 </p>
 
-wifit3 is fundamentally different from its predecessor, [wifite2](https://github.com/derv82/wifite2):
-
-* Only supports certain popular USB cards (see [Supported Hardware](#supported-hardware)).
-* Bundles its own driver stack (see [Mini-Drivers](#mini-drivers)), avoiding headaches with native wireless drivers (Windows NDIS, Linux driver conflicts).
-* Talks to wireless cards directly from userland *after* setup.
-   * `sudo` is required to set up permissions on Linux (udev/modprobe).
-   * Admin is required to install [WinUSB drivers](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/introduction-to-winusb-for-developers) on Windows (automated).
-   * After setup/install, wifit3 runs without privilege escalation.
-* *Far* fewer dependencies: PyUSB/libusb (USB) and Textual/Rich (TUI).
-  * No aircrack, airmon, reaver, bully, hcxdumptool, etc.
-
-## Status: Beta *("Works On My Machine")*
-
-[Thoroughly tested](docs/SUPPORTED-HARDWARE.md) only on my own machine, with the cards I physically own.
-
-Other wireless cards with a supported chipset may not behave as expected.
-
-Bug reports are genuinely welcome: [open an issue](https://github.com/derv82/wifit3/issues).
+---
 
 ## Features
 
-- **Multi-card**: listen on every plugged-in and supported device, improves capturing; TX device selection.
-- **Live scan**: lists Access Points (APs) with channel hopping, signal, encryption, WPS state, and WPA3/SAE detection.
-- **VAP Decloaking**: identifies and tags hidden Virtual APs (VAPs) with its physical AP.
-- **Live packet dashboard**: real-time traffic sparklines (beacons, data, injects, deauths) for the focused target.
-- **PMKID**: passive capture and active harvest, saves as HashCat `.hc22000` filetype.
-- **WPA/WPA2 handshakes**: passive 4-way capture and deauth-triggered capture, proper handshake validation, compact PCAP and `.hc22000` saves.
-- **WPS PushButton Extraction**: detects when an AP's WPS button is pressed, automatically extracts PSK.
-- **WPS PIN Brute-force**: resumable WPS PIN brute-force sessions.
-- **WEP suite**: ARP replay, ChopChop, fake auth, PTW key recovery. For anyone trapped in 2006.
-- **WiFFy**: helpful assistant that provides useful messages during the WinUSB installation process.
+### Reconnaissance & Analysis
+- **Multi-Card Aggregation:** Capture packets across multiple adapters simultaneously; pick a dedicated card to inject.
+- **Real-time Scanner:** 2.4GHz & 5GHz channel-hopping (split for multi-cards); tracks signal strength, encryption suites, WPA3/SAE transition modes.
+- **AP & Client Identification:** Fingerprints device vendors and categories; extracts router make and model from WPS beacons.
+- **VAP Decloaking:** Identifies hidden networks by correlating their BSSIDs with known visible siblings.
+- **Packet Dashboard:** Visualizes real-time beacon, data, injection, and deauthentication packet rates.
+
+### Attacks & Captures
+- **WPA/WPA2 Handshakes:** Passive sniffing and targeted deauthentication; validates crackable pairs; exports `.pcap` and `.hc22000` files.
+- **PMKID Harvesting:** Active association harvest and passive sniffing for WPA/WPA2 PMKID key material (`.hc22000`).
+- **EvilTwin WPA3 Downgrade:** Clones the AP and evicts clients (via CSA, BTM, and de-auths) to capture handshakes. Works on single and multiple cards.
+- **WPS Recovery Suite:**
+  - **PixieDust (2 Modes):** Instant offline PIN recovery exploiting *Null Secret* and *Static Secret* PRNG weaknesses.
+  - **PushButton (PBC):** Detects physical WPS button presses and immediately extracts the plaintext WPA PSK.
+  - **PIN Brute-Force:** Resumable WPS PIN cracking with known-PIN database and AP lock monitoring.
+- **WEP Suite:** Pure Python ARP replay, ChopChop, Fake Authentication, and PTW key recovery.
 
 ## Screenshots
 
@@ -50,11 +43,9 @@ Bug reports are genuinely welcome: [open an issue](https://github.com/derv82/wif
 |---|---|
 | ![Scanner](assets/wifit3-2-scanner.png) | ![Focus](assets/wifit3-3-focus-handshake.png) |
 
-## Supported hardware
+## Supported Hardware
 
-*If your USB device is not listed there, wifit3 will not work with it.*
-
-A matching chipset does not guarantee that your wireless card will work.
+> **Important:** *At least one supported USB wireless adapter is required.*
 
 | Chipset | Bands | Cards (Make + Model) |
 |---|---|---|
@@ -78,136 +69,79 @@ A matching chipset does not guarantee that your wireless card will work.
 | Ralink RT5372 | 2.4 GHz | Panda PAU05/PAU06 |
 | Ralink RT5572 | 2.4 / 5 GHz | Panda PAU09 N600 |
 
-See [Supported Hardware](docs/SUPPORTED-HARDWARE.md) for detailed information about each card's capabilities and performance.
+Breakdown of each device's capabilities and limitations: [Supported Hardware Doc](docs/SUPPORTED-HARDWARE.md).
 
-## Install
+## Installation & Running
 
-### Download (recommended)
+### Option 1: Download Prebuilt Binaries (Recommended)
+Download the latest standalone executable from [**Releases**](https://github.com/derv82/wifit3/releases/latest):
 
-Grab a prebuilt binary from the [**Releases**](https://github.com/derv82/wifit3/releases/latest)
+* **Windows:** Download and run `wifit3-windows-x64.exe`.
+* **Linux (non-sudo):** `chmod +x wifit3-linux-x64 && ./wifit3-linux-x64`
+* **macOS:** (bypass quarantine)
+  ```bash
+  xattr -d com.apple.quarantine wifit3-macos-universal2
+  chmod +x wifit3-macos-universal2
+  ./wifit3-macos-universal2
+  ```
 
-- **Windows** — download `wifit3-windows-x64.exe` and run it.
-- **Linux** — download `wifit3-linux-x64`, then `chmod +x wifit3-linux-x64 && ./wifit3-linux-x64`.
-- **macOS (Apple Silicon + Intel):**
-  1. Download `wifit3-macos-universal2`
-  2. Bypass quarantine: `xattr -d com.apple.quarantine wifit3-macos-universal2 && chmod +x wifit3-macos-universal2`
-  3. Run it: `./wifit3-macos-universal2`
-
-### Run from source
-
-Wifit3 uses [`uv`](https://docs.astral.sh/uv/) (requires internet access to pull dependencies for the first run):
-
-```
+### Option 2: Run from Source
+wifit3 uses Astral's [`uv`](https://docs.astral.sh/uv/). `sync` sets up dependencies:
+```bash
 uv sync
 uv run wifit3
 ```
 
-### Build
+### Option 3: Build your own binary
+```bash
+uv run pyinstaller wifit3.spec --noconfirm --clean
+```
+Binary executable is written to `dist/` subdirectory.
 
-Build using `uv run pyinstaller wifit3.spec --noconfirm --clean` (Windows: `dist/wifit3.exe`, Linux/OSX: `dist/wifit3`).
+## One-Time Driver Setup
 
-### First-run setup
+wifit3 automatically handles hardware configuration within the app, after clicking the `START` button:
 
-**Windows**: Wifit3 offers to install the **WinUSB** driver for your device. The bundled installer
-self-elevates for that one step (a single UAC prompt), after which no Administrator privileges are needed to run Wifit3.
+- **Linux:** Prompts once via `pkexec`/`sudo` to write udev permissions and blocklists in `/etc/modprobe.d/`.
+- **macOS:** No installation required; plug in the device and select *Allow* in the authorization dialog.
+- **Windows:** Prompts once via UAC to install WinUSB for the device.
 
-**Linux**: Wifit3 offers to create udev and modprobe rules which enable userland access. These rules blocklist 
-the card's kernel driver (so the kernel stops grabbing it). Afterward Wifit3 runs without `sudo`.
+## Uninstalling
+Return the previously-installed device to your operating system's Wi-Fi stack:
 
-**macOS**: No driver install is needed. macOS asks to allow the USB device on first plug-in: choose
-*Allow*, afterwards wifit3 can see & interact with the device.
+1. Select the card on the wifit3 splash screen.
+2. Click the `Uninstall` button and confirm.
+3. Accept the elevation prompt (UAC on Windows or `pkexec` on Linux).
+4. Unplug and re-plug the adapter.
 
-### Uninstall
+On Linux, this deletes wifit3's `udev` and `modprobe` rules.
+On Windows, this uninstalls the WinUSB binding, and triggers a PnP device rescan (old driver reattaches).
 
-Click the red `Uninstall` button on Wifit3's Splash screen to uninstall
-* **Windows:** Uninstalls WinUSB driver, relinquishing control to Windows' installed driver.
-* **Linux:** Deletes udev & modprobe rules, kernel assumes control of the driver after a replug.
+## *Thank you, Linux!*
 
-## Thanks
+wifit3 only exists because of the great people who reverse-engineered and maintained these Linux wireless
+drivers. It's usually a thankless job.
 
-Wifit3 only exists because of the people who reverse-engineered and maintained the Linux
-drivers we ported from.
+Special thanks to:
+- **Christian "kimo" B. ([@kimocoder](https://github.com/kimocoder))** who maintains **wifite2** and `aircrack-ng`'s RTL8188EUS DKMS driver.
+- [**Neur0sp1cy**](https://github.com/neur0sp1cy): Close friend and the master to my Linux & wireless-hacking apprenticeship.
+- **Nick Morrow** ([@morrownr](https://github.com/morrownr)), legend, maintains the out-of-tree Realtek USB
+  DKMS drivers.
 
-**Biggest thanks: Christian "kimo" B. ([@kimocoder](https://github.com/kimocoder))**, who
-took over **wifite2** when its original maintainer (me) stepped away and has kept it alive and
-evolving for years since (and maintains `aircrack-ng`'s RTL8188EUS DKMS driver, which we port here).
+The full list is in **[CREDITS.md](docs/CREDITS.md)**.
 
-**Special thanks: Sandman**, close friend and the master to my Linux & wireless-hacking apprenticeship.
+## How it Works: Mini-Drivers
 
-A few more of the driver authors we ported from:
+wifit3 bypasses the operating system's native Wi-Fi stack entirely. It ships with lightweight Python ports of Linux kernel drivers ([src/wifit3/chips/\*](https://github.com/derv82/wifit3/tree/master/src/wifit3/chips)) that directly control wireless devices over USB bulk and control transfers.
 
-- **Nick Morrow** ([@morrownr](https://github.com/morrownr)) — the out-of-tree Realtek USB
-  DKMS drivers (RTL8812AU / RTL8814AU / RTL8821AU / RTL8822BU) that keep these cards alive.
-- **Stanislaw Gruszka**, **Ivo van Doorn**, and the **rt2x00** team — the Ralink drivers.
-- **Lorenzo Bianconi** and **Felix Fietkau** — MediaTek `mt76`.
-- **Sujith Manoharan** and the **ath9k** team; **Bitterblue Smith** and the Realtek **rtw88** team.
+Because register-level frame injection and monitor mode are performed entirely in user space, Windows NDIS restrictions and Linux kernel driver locking do not apply.
 
-The full list (every substantive contributor to the drivers we ported, and the cards they
-enabled) is in **[CREDITS.md](docs/CREDITS.md)**.
+For architecture details, driver porting methodology, and USB trace replay tooling, see the [Porting Documentation](https://github.com/derv82/wifit3/blob/master/docs/porting/METHODOLOGY.md).
 
-## Mini-Drivers
+## License & Disclaimer
 
-wifit3 talks to the wireless cards directly over USB through
-[its built-in "Mini-Drivers"](https://github.com/derv82/wifit3/blob/master/src/wifit3/chips/):
-miniature userland ports of the Linux kernel drivers. These ports only include the bare minimum
-needed for RX and TX in Monitor Mode (no AP/STA modes).
+**Code:** Licensed under [**GNU General Public License v2.0**](LICENSE) (matching upstream Linux drivers).
 
-This sidesteps the operating system's wireless stack completely, including Windows' NDIS
-(Network Driver Interface Specification), which would otherwise block Monitor Mode and
-injection. The bytes sent to the card are the same on either OS, so a single codebase runs
-on both Linux and Windows.
+**Firmware:** Vendor firmware blobs loaded onto adapters are redistributed verbatim under their respective manufacturers' licenses (details in [FIRMWARE.md](docs/FIRMWARE.md)).
 
-Mini-Drivers also enables wifit3's multi-card feature: Plug in multiple (supported)
-wireless devices and wifit3 will "cross the streams", improving the chances of capturing
-packets and overall RX.
-
-### Ported from C to Python by a coding agent
-
-The Mini-Drivers were ported from their Linux C drivers by a coding agent. During development,
-the agent is guided by an offline test harness: it replays real USB traffic (recorded from the
-Linux wireless driver) against the Python port and halts at the first instruction where the port
-diverges from the recording. The agent ports that next sequence, replays, and repeats until the
-driver port reproduces the entire recording. Only then is it reasonably safe to try live hardware.
-
-The loop in brief:
-
-1. **Capture once on Linux.** With the Linux kernel driver loaded, record the card's USB traffic
-   while `airmon-ng`, `airodump-ng`, and `aireplay-ng` run.
-   [capture.py](https://github.com/derv82/wifit3/blob/master/src/wifit3/scripts/capture.py)
-   automates the capture (`usbmon` via `tshark`) and pulls the driver's C source.
-2. **Start the port:** `/port <chip>` (e.g. `/port rt5370`), a Claude-specific command. The agent
-   wires the capture into
-   [verify_pcap.py](https://github.com/derv82/wifit3/blob/master/scripts/porting/verify_pcap.py) so the
-   capture can be replayed & verified against the new driver without touching the hardware at all.
-3. **Port to the recording.** `verify_pcap.py` reports the next USB instruction where the port's
-   output diverges from the capture. The agent uses the C source to fix it, replays, and repeats
-   until the capture runs clean.
-4. **Go live.** With the port proven against the recording, the agent tests on real hardware and
-   iterates.
-
-[docs/porting/](docs/porting/) documents the full process.
-
-## License
-
-Wifit3 is licensed under the **GNU General Public License v2.0** (GPL-2.0-only): see
-[LICENSE](LICENSE). The userland drivers are ports of GPLv2 Linux kernel and vendor DKMS
-drivers, so GPLv2 is the natural fit; the upstream authors are credited in [CREDITS.md](docs/CREDITS.md).
-
-**Source for binary releases.** The prebuilt executables on the Releases page are built from
-this repository. The complete corresponding source for any released binary is this repository
-at its matching version tag. GPLv2 §3 is satisfied by offering source from the same place the
-binary is offered.
-
-**Firmware is not GPL.** The vendor firmware blobs that Wifit3 loads onto the cards are
-redistributed verbatim under their own manufacturers' licenses (Realtek / MediaTek / Ralink),
-*not* the GPL. Each ships with its license text alongside it; provenance and byte-verification
-are documented in [FIRMWARE.md](docs/FIRMWARE.md).
-
-## Disclaimer
-
-For use only on networks you own or are explicitly authorized to test.
-
-⚠️ **Hardware-damage risk.** Wifit3 talks to USB Wi-Fi hardware at the register level, with no
-kernel driver between it and the silicon. A bad register write, firmware page, or power sequence
-can damage or permanently disable ("brick") a device. **Use at your own risk: there is no
-liability for hardware damage.**
+**⚠️ Notice & Disclaimer:** For use only on networks and equipment you own or are explicitly authorized to audit. wifit3 operates directly on USB hardware registers without kernel guardrails; use at your own risk.

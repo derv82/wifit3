@@ -1,9 +1,7 @@
-# Credits — the shoulders we stand on
+# Linux Driver Credits
 
-wifit3's userland drivers are clean-room Python re-implementations of **GPLv2 Linux kernel
-and vendor DKMS drivers**. Every card wifit3 supports works because someone (often over
-fifteen-plus years) first reverse-engineered the silicon and wrote, debugged, and
-maintained the driver we ported from. This file credits them.
+wifit3's userland drivers are Python re-implementations of **GPLv2 Linux kernel and vendor DKMS drivers**. Every card wifit3 supports works because someone (often over
+fifteen-plus years) first reverse-engineered and wrote, debugged, and maintained the driver we ported from. This file credits them.
 
 **How this list was built.** We tallied commit authorship of each upstream driver (the
 mainline `torvalds/linux` driver paths and the vendor GitHub repos) and mapped every
