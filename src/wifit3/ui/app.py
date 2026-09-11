@@ -4,6 +4,8 @@ import sys
 from textual import events, work
 from textual.app import App
 from textual.binding import Binding
+from textual.widgets import Header
+from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
 from typing import Optional
 
 from wifit3 import __version__
@@ -24,6 +26,11 @@ from .pref import PreferencesModal
 from .themes import register_app_themes
 
 logger = logging.getLogger(__name__)
+
+Header.ALLOW_SELECT = False
+HeaderTitle.ALLOW_SELECT = False
+HeaderIcon.ALLOW_SELECT = False
+HeaderClock.ALLOW_SELECT = False
 
 
 class WifiteApp(App):

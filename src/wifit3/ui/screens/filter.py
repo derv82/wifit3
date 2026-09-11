@@ -66,6 +66,8 @@ class ScanFilter:
 class FilterBar(Horizontal):
     """One row above the AP table: text query, encryption select, channels button."""
 
+    ALLOW_SELECT = False
+
     DEFAULT_CSS = """
     FilterBar {
         height: auto;
@@ -97,7 +99,9 @@ class FilterBar(Horizontal):
         self.border_title = "FILTER"
 
     def compose(self) -> ComposeResult:
-        yield Label("[u]E[/u]ncryption")
+        enc = Label("[u]E[/u]ncryption")
+        enc.ALLOW_SELECT = False
+        yield enc
         yield Select(
             [(f.value, f) for f in EncryptionFilter], value=EncryptionFilter.ALL,
             allow_blank=False, id="filter-encryption", compact=True,

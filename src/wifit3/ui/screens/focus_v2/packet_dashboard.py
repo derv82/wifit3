@@ -31,6 +31,7 @@ _HISTORY = 256
 
 
 class PacketDashboard(Static):
+    ALLOW_SELECT = False
     SAMPLE_S = 0.4                        # fake-sample cadence; ~window for the rate
 
     def __init__(self, rows, **kwargs) -> None:

@@ -210,3 +210,27 @@ async def test_selectable_rich_log_identical_fg_bg_guard(monkeypatch):
         assert all(seg.style is None or seg.style.color != seg.style.bgcolor for seg in selected_segs)
         await pilot.mouse_up(log, offset=(5, 0))
 
+
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_selectable_rich_log_double_click_does_not_select_all():
+    app = WifiteApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0)
+        app.push_screen("scanner")
+        await pilot.pause(0.05)
+
+        log = app.screen.query_one("#system-log", SelectableRichLog)
+        log.clear()
+        log.write("Some long line in the log that should not be selected entirely")
+        await pilot.pause(0.05)
+
+        toasts = []
+        app.notify = lambda message, *args, **kwargs: toasts.append(message)
+
+        await pilot.double_click(log, offset=(5, 1))
+        await pilot.pause(0.05)
+
+        assert app.screen.get_selected_text() is None
+        assert len(toasts) == 0
+
+

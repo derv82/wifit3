@@ -98,6 +98,7 @@ class BreathingArt(Static):
     machine (~3.3 Hz cap at 10 FPS), so a beacon storm or 400 Hz WEP injection
     blinks at a calm rate instead of pinning the LED solid-on or strobing."""
 
+    ALLOW_SELECT = False
     CYCLE_S = 1.5
     FPS = 10
     _ON_FRAMES = 1            # flicker bright for ~0.1 s …

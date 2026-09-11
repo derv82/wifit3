@@ -10,6 +10,9 @@ from textual.widgets import RichLog
 class SelectableRichLog(RichLog):
     """RichLog supporting text selection and coordinate mapping."""
 
+    def text_select_all(self) -> None:
+        pass
+
     def render_line(self, y: int) -> Strip:
         scroll_x, scroll_y = self.scroll_offset
         virtual_y = scroll_y + y

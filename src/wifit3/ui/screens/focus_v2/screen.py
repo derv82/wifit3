@@ -241,7 +241,7 @@ class FocusViewV2(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="topbar"):
-            with Horizontal(id="actions"):
+            with Horizontal(id="actions") as actions:
                 yield Button("‹ Scanner", id="back")
                 # The full attack set is composed once (hidden); derive_buttons shows the ones that fit the target.
                 for bid, label in _ATTACK_BUTTONS:
@@ -253,7 +253,8 @@ class FocusViewV2(Screen):
             yield Static(self._render_status(status), id="status")
             # Right spacer to accurately align status to sparklines.
             yield Static("", id="rspacer")
-        with Horizontal(id="mid"):
+        with Horizontal(id="mid") as mid:
+            mid.ALLOW_SELECT = False
             yield CardEndpoint(**self._card_values(), id="card")
             yield PacketDashboard(self._dashboard_rows(), id="dashboard")
             yield RouterEndpoint(**self._router_values(), id="router")
