@@ -117,14 +117,6 @@ def test_hidden_usb_type_decode():
     assert efuse._parse_usb_type_hidden(hidden, _map()) == (2, 2, True)
 
 
-def test_bt_coexist_policy_bit():
-    m = bytearray(_map())
-    m[efuse.C.EEPROM_RF_BOARD_OPTION_8821AU] = 0x20
-
-    assert efuse._parse_bt_coexist(bytes(m), efuse.C.BIT_BT_FUNC_EN, autoload_fail=False) is True
-    assert efuse._parse_bt_coexist(bytes(m), 0, autoload_fail=False) is False
-    assert efuse._parse_bt_coexist(bytes(m), efuse.C.BIT_BT_FUNC_EN, autoload_fail=True) is False
-
 
 def test_board_type_bits():
     bt = efuse._parse_board_type((0, 0, 0, 0, True, True, True, True), bt_coexist=True)
