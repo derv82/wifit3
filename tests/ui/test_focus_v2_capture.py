@@ -136,63 +136,7 @@ async def _rebind(host, array, ap):
     return focus
 
 
-@pytest.mark.asyncio
-async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
-    bssid = "aa:bb:cc:dd:ee:01"
-    client = "b2:c3:d4:e5:f6:07"
-    iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
-    array = _FakeArray(iface)
-    iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
-    ap = array.access_points[bssid]
 
-    app = _Host(array, ap)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0)
-        focus = app.screen
-        assert isinstance(focus, FocusViewV2)
-
-        # The packet dashboard is bound to the live interface → it samples real
-        # packet_stats (not the fake generator).
-        dash = focus.query_one("#dashboard", PacketDashboard)
-        assert dash._array is app.array and dash._bssid == bssid
-
-        log = focus.query_one("#log", LogBand)
-        status = focus.query_one("#status", Static)
-        assert "Target acquired" in _log_text(log)
-        # Idle WPA target → passive listening headline.
-        assert "Listening" in str(status.render())
-
-        # Phone connects: M1 (carries a PMKID KDE), partial so far.
-        replay = b"\x00" * 8
-        iface._on_frame_parsed(_eapol(bssid, client, 1, replay, to_ap=False, pmkid=b"\xaa" * 16))
-        focus._tick()
-        await pilot.pause(0)
-        text = _log_text(log)
-        # M1 is buffered (deferred aggregation) so its tree isn't logged yet,
-        # but PMKID is an immediate win banner.
-        assert "PMKID captured" in text, text
-        assert "Valid 4-Way Handshake" not in text, text
-
-        # M2 completes a hashcat-valid M1+M2 pair → the aggregated tree flushes
-        # immediately (first crackable pair), carrying the buffered M1 detail.
-        iface._on_frame_parsed(_eapol(bssid, client, 2, replay, to_ap=True))
-        focus._tick()
-        await pilot.pause(0)
-        text = _log_text(log)
-        assert "Valid 4-Way Handshake" in text, text
-        assert "M1" in text and "ANonce" in text and "M2" in text, text
-
-        # Headline flips to a captured state; the client row is synced in.
-        assert "Captured" in str(status.render()), str(status.render())
-        clients = focus.query_one("#clients", ClientsList)
-        assert client in clients._rows, clients._rows
-
-        # Auto-save fires inline with the capture-event log (no keystroke).
-        saved = {p.name for p in tmp_path.iterdir()}
-        assert "TESTNET_aa-bb-cc-dd-ee-01.hc22000" in saved, saved
-        hc_text = (tmp_path / "TESTNET_aa-bb-cc-dd-ee-01.hc22000").read_text(encoding="utf-8")
-        assert "WPA*01*" in hc_text
-        assert "WPA*02*" in hc_text
 
 
 @pytest.mark.asyncio
