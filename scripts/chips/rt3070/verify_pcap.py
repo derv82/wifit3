@@ -112,7 +112,7 @@ def _walk_init(w: Walk, out: dict) -> None:
     out["eeprom"] = eeprom.parse_eeprom(buf)
     ev = out["eeprom"]
     w.run(lambda t: mac.probe_hw_gpio(t), "gpio-rfkill")             # GPIO_CTRL dir
-    fw = firmware.load_firmware_blob()
+    fw = firmware.load_firmware_blob(chip)
     w.run(lambda t: firmware.upload(t, fw), "firmware")              # FW load + boot
 
     # rt2x00lib_enable_radio -> set_device_state(RADIO_ON) -> rt2800usb_enable_radio
