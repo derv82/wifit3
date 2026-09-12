@@ -20,6 +20,7 @@ class Config:
     log_level: str = "info"
     scanner_sort: str = "signal"
     scanner_sort_reverse: bool = True
+    scanner_sort_delay: float = 2.0
     silenced_bssids: list[str] = []
 
     @classmethod
@@ -40,6 +41,11 @@ class Config:
         cls.log_level = data.get("log_level", cls.log_level)
         cls.scanner_sort = data.get("scanner_sort", cls.scanner_sort)
         cls.scanner_sort_reverse = data.get("scanner_sort_reverse", cls.scanner_sort_reverse)
+        raw_delay = data.get("scanner_sort_delay", cls.scanner_sort_delay)
+        try:
+            cls.scanner_sort_delay = float(raw_delay)
+        except (ValueError, TypeError):
+            pass
         raw = data.get("silenced_bssids", cls.silenced_bssids)
         cls.silenced_bssids = [str(x).lower() for x in raw] if isinstance(raw, list) else cls.silenced_bssids
 
@@ -52,6 +58,7 @@ class Config:
             f"log_level = {_fmt(cls.log_level)}\n"
             f"scanner_sort = {_fmt(cls.scanner_sort)}\n"
             f"scanner_sort_reverse = {_fmt(cls.scanner_sort_reverse)}\n"
+            f"scanner_sort_delay = {_fmt(cls.scanner_sort_delay)}\n"
             f"silenced_bssids = {_fmt(cls.silenced_bssids)}\n"
         )
         try:

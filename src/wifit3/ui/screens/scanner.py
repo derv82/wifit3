@@ -220,6 +220,7 @@ class ScannerView(Screen):
         self._refresh_timer = None
         self._sort_idx = 2         # Default to POWER
         self._sort_reverse = True  # Descending
+        self._last_sort_time: float = 0.0
         self._channel_filter: Optional[List[int]] = None
         self._scan_filter: ScanFilter = ScanFilter()
         self._events = CaptureEventDetector(granular_eapol=False)
@@ -491,7 +492,8 @@ class ScannerView(Screen):
 
             self._drain_capture_events(ap, array.forged_macs)
 
-        self._apply_sort(scroll_to_cursor=False, force=True)
+        if self._should_sort():
+            self._apply_sort(scroll_to_cursor=False)
 
     def _evict_expired_aps(self) -> None:
         if not self.app.array:
@@ -723,9 +725,16 @@ class ScannerView(Screen):
 
     # ----- Sort --------------------------------------------------------------
 
-    def _apply_sort(self, *, scroll_to_cursor: bool = True, force: bool = False) -> None:
+    def _should_sort(self) -> bool:
+        delay = Config.scanner_sort_delay
+        if delay < 0:
+            return False
+        return (time.time() - self._last_sort_time) >= delay
+
+    def _apply_sort(self, *, scroll_to_cursor: bool = True) -> None:
         """Re-sort the table, maintaining selected item.
         ``scroll_to_cursor`` controls whether the viewport follows the cursor."""
+        self._last_sort_time = time.time()
         table = self.query_one("#ap-table", _APScanTable)
         if table.row_count == 0:
             return
@@ -952,14 +961,14 @@ class ScannerView(Screen):
         Config.scanner_sort = self._COLUMNS[self._sort_idx][0]
         self.app.persist_config()
         self._update_column_headers()
-        self._apply_sort(force=True)
+        self._apply_sort()
 
     def action_toggle_sort_dir(self) -> None:
         self._sort_reverse = not self._sort_reverse
         Config.scanner_sort_reverse = self._sort_reverse
         self.app.persist_config()
         self._update_column_headers()
-        self._apply_sort(force=True)
+        self._apply_sort()
 
     def action_scroll_home(self) -> None:
         table = self.query_one("#ap-table", DataTable)
@@ -1076,5 +1085,5 @@ class ScannerView(Screen):
             Config.scanner_sort_reverse = self._sort_reverse
             self.app.persist_config()
             self._update_column_headers()
-            self._apply_sort(force=True)
+            self._apply_sort()
             return

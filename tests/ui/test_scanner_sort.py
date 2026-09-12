@@ -6,8 +6,14 @@ import pytest
 from textual.widgets import DataTable
 
 from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.scanner import ScannerView
+
+
+@pytest.fixture(autouse=True)
+def _zero_sort_delay(monkeypatch):
+    monkeypatch.setattr(Config, "scanner_sort_delay", 0.0)
 
 
 def _make_ap(

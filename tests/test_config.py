@@ -7,7 +7,7 @@ from wifit3.persist.config import Config, ConfigError
 
 _DEFAULTS = {n: getattr(Config, n)
              for n in (
-                 "theme", "scanner_sort", "scanner_sort_reverse", 
+                 "theme", "scanner_sort", "scanner_sort_reverse", "scanner_sort_delay",
                  "silenced_bssids", "log_level", "captures_dir", "save_pcap")}
 
 
@@ -129,3 +129,12 @@ def test_is_silenced_is_case_insensitive():
     assert Config.is_silenced("AA:BB:CC:DD:EE:FF") is True
     assert Config.is_silenced("aa:bb:cc:dd:ee:ff") is True
     assert Config.is_silenced("11:22:33:44:55:66") is False
+
+
+def test_scanner_sort_delay_save_load_roundtrip(config_path):
+    Config.scanner_sort_delay = 5.0
+    Config.save()
+    assert "scanner_sort_delay = 5.0" in config_path.read_text("utf-8")
+    Config.scanner_sort_delay = 1.0
+    Config.load()
+    assert Config.scanner_sort_delay == 5.0
