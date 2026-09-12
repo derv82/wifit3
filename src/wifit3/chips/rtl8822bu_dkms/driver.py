@@ -256,8 +256,14 @@ class Rtl8822buDkmsDriver(Driver):
         untested = e.rfe_type != _REF_RFE_TYPE or info.chip_ver != _REF_CUT
         logger.info(
             "RTL8822BU board: rfe_type=%d cut=%d rf=2T2R crystal_cap=0x%02x thermal=0x%02x "
-            "mac=%s%s", e.rfe_type, info.chip_ver, e.crystal_cap, e.thermal_meter,
-            e.mac_address or "<none>", "  [untested variant]" if untested else "")
+            "regulatory=%d interface=%d bt_raw=%d bt_coexist=%d bt_ant=%d bt_path=%s board_type=0x%02x "
+            "pa_lna=2g:%d/%d 5g:%d/%d type=gpa%d/apa%d/glna%d/alna%d mac=%s%s",
+            e.rfe_type, info.chip_ver, e.crystal_cap, e.thermal_meter, e.regulatory,
+            e.interface_sel, int(e.bt_coexist_raw), int(e.bt_coexist), 2 if e.bt_ant_num else 1,
+            "B" if e.bt_ant_path else "A", e.board_type, int(e.external_pa_2g),
+            int(e.external_lna_2g), int(e.external_pa_5g), int(e.external_lna_5g), e.type_gpa,
+            e.type_apa, e.type_glna, e.type_alna, e.mac_address or "<none>",
+            "  [untested variant]" if untested else "")
         if e.rfe_type in _RFE_PINMUX_UNPORTED:
             logger.warning("RTL8822BU: untested variant: rfe_type=%d RFE pinmux "
                            "(phydm_8822b_type%d_rfe) is not ported — running the iFEM fallback; "

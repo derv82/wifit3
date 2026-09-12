@@ -82,11 +82,12 @@ produces a hybrid. The shared gate engine `scripts/porting/rtw88_pcap_replay.py`
 ## Board variants (non-reference EFUSE burns)
 
 The pcap-gated card is **rfe_type 3 (iFEM), D-cut, 2T2R**. The driver runs on any card matching
-`SUPPORTED_IDS` regardless of burn: fuse VALUES (crystal / TX-power PG / MAC / PA-bias / thermal)
-are read at runtime, and the cut/rfe-conditional BB/AGC/RF tables are the FULL vendor tables resolved
-by the `phy_cond` walker on the RUNTIME `cut`/`rfe_type` (package is a table don't-care on 8822b —
-`Hal_EfuseParsePackageType` is empty; the walker output is identical for all package values). The
-few genuinely FEM-branched runtime functions are gated on the runtime `rfe_type`/`cut`:
+`SUPPORTED_IDS` regardless of burn: fuse values (crystal / TX-power PG / MAC / PA-bias / thermal /
+regulatory / channel-plan bytes / country / board option / BT setting / PA-LNA type bytes) are read at
+runtime. The cut/rfe-conditional BB/AGC/RF tables are the FULL vendor tables resolved by the `phy_cond`
+walker on the RUNTIME `cut`/`rfe_type` (package is a table don't-care on 8822b —
+`Hal_EfuseParsePackageType` is empty; the walker output is identical for all package values). The few
+genuinely FEM-branched runtime functions are gated on the runtime `rfe_type`/`cut`:
 
 - `chan._ccapar_by_rfe` — the CCA-param table (`phydm_ccapar_by_rfe_8822b`): iFEM-RFE (rfe
   3/5/12/15/16/17/19, the reference) / plain-iFEM / eFEM / 2G-iFEM+5G-eFEM hybrid (rfe 2/9), + the
@@ -97,8 +98,12 @@ few genuinely FEM-branched runtime functions are gated on the runtime `rfe_type`
 - `chan._switch_band_rxhp` — the switch_band SoML RxHP arm (`config_phydm_switch_band_8822b`): the
   rfe∈{3,5,8,17} vs eFEM∈{1,6,7,9} 0x8cc/0x8d8 seed + the rfe∈{12,19} RF-0xb3 write.
 
-`connect()` logs the detected burn once and tags a non-reference `rfe_type`/`cut` `[untested
-variant]` (ported from vendor C, only the reference is HW-verified).
+`connect()` logs the detected burn once, including raw/effective BT policy, external PA/LNA bits,
+PA/LNA type nibbles, and the derived ODM board-type bitmap; non-reference `rfe_type`/`cut` is tagged
+`[untested variant]` (ported from vendor C, only the reference is HW-verified). For USB, the vendor
+keeps the raw `EEPROMBluetoothCoexist` fuse but disables effective BT-coex by `hal_spec` before PHYDM
+board policy and `rtl8822b_init`, so `bt_raw=1` still yields wifi-only `bt_coexist=0` and no
+`ODM_BOARD_BT` bit. Runtime BT coexist is out of scope; wifi-only antenna/RFE notify is ported.
 
 **Untested-variant residuals** (ported-but-hardware-untested unless noted; only the rfe-3/D-cut
 reference is pcap-gated): the eFEM / hybrid / 4-11 CCA + pinmux paths, the eFEM B-cut PAPE arm, and
