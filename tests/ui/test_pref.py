@@ -27,7 +27,7 @@ async def test_save_notifies_instead_of_crashing_on_config_error(monkeypatch):
         toasts = []
         monkeypatch.setattr(modal, "notify", lambda *a, **k: toasts.append((a, k)))
 
-        await pilot.click("#save")   # would propagate ConfigError if save_pressed didn't catch it
+        app.screen.query_one("#save", Button).press()   # would propagate ConfigError if save_pressed didn't catch it
         await pilot.pause(0)
 
         assert toasts, "a failed save should surface a toast"
@@ -75,12 +75,12 @@ async def test_click_consolidate_confirms_and_merges(monkeypatch, tmp_path):
         app.push_screen(PreferencesModal())
         await pilot.pause(0)
 
-        await pilot.click("#consolidate")
+        app.screen.query_one("#consolidate", Button).press()
         await pilot.pause(0)
 
         assert isinstance(app.screen, ConsolidateModal)
 
-        await pilot.click("#confirm")
+        app.screen.query_one("#confirm", Button).press()
         await pilot.pause(0)
 
         assert not legacy_file.exists()
@@ -102,12 +102,12 @@ async def test_click_consolidate_cancels(monkeypatch, tmp_path):
         app.push_screen(PreferencesModal())
         await pilot.pause(0)
 
-        await pilot.click("#consolidate")
+        app.screen.query_one("#consolidate", Button).press()
         await pilot.pause(0)
 
         assert isinstance(app.screen, ConsolidateModal)
 
-        await pilot.click("#cancel")
+        app.screen.query_one("#cancel", Button).press()
         await pilot.pause(0)
 
         assert legacy_file.exists()

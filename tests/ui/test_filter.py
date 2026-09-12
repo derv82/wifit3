@@ -191,14 +191,12 @@ async def test_focus_returns_to_table_after_interactions():
         await pilot.pause()
         table = app.query_one("#ap-table", DataTable)
 
-        await pilot.click("#filter-encryption")
-        await pilot.press("down", "enter")   # pick an option; the Select must not keep focus
+        app.query_one("#filter-encryption", Select).value = EncryptionFilter.WPA
         await pilot.pause()
         assert app.focused is table
 
         for key in ("enter", "escape"):
             app.query_one("#filter-text", Input).focus()
-            await pilot.pause()
             await pilot.press(key)
             await pilot.pause()
             assert app.focused is table

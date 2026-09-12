@@ -4,11 +4,11 @@ it straight back without having to rediscover it."""
 from contextlib import asynccontextmanager
 
 import pytest
+from textual.app import App
 from textual.widgets import Button, DataTable
 
 from wifit3.models import AccessPoint, IdKey, IdSource, PersistedCapture
 from wifit3.persist.config import Config
-from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.filter import EncryptionFilter, ScanFilter
 from wifit3.ui.screens.scanner import ScannerView
 
@@ -62,16 +62,26 @@ class _FakeArray:
             await iface.start_hopping()
 
 
+class _ScannerHost(App):
+    def __init__(self, array):
+        super().__init__()
+        self.array = array
+        self.pbc_enabled = True
+
+    def persist_config(self) -> None:
+        pass
+
+    def on_mount(self) -> None:
+        self.push_screen(ScannerView())
+
+
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
 async def test_encryption_filter_hides_rows_but_keeps_registry():
     open_ap = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="OpenNet", channel=1, encryption="OPEN")
     wpa2_ap = AccessPoint(bssid="aa:bb:cc:00:00:02", ssid="SecureNet", channel=1, akms=["PSK"])
 
-    app = WifiteApp()
+    app = _ScannerHost(_FakeArray([open_ap, wpa2_ap], [1, 6, 11]))
     async with app.run_test() as pilot:
-        app.array = _FakeArray([open_ap, wpa2_ap], [1, 6, 11])
-        app.push_screen("scanner")
         await pilot.pause(0)
         scanner = app.screen
         assert isinstance(scanner, ScannerView)
@@ -95,7 +105,6 @@ async def test_encryption_filter_hides_rows_but_keeps_registry():
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
 async def test_text_filter_matches_hidden_ap_via_guessed_sibling():
     named = AccessPoint(bssid="aa:bb:cc:00:00:10", ssid="Castle Crasher", channel=6,
                         akms=["PSK"], beacons=50)
@@ -103,10 +112,8 @@ async def test_text_filter_matches_hidden_ap_via_guessed_sibling():
                          akms=["PSK"], siblings=[named.bssid])
     other = AccessPoint(bssid="aa:bb:cc:00:00:12", ssid="OpenNet", channel=6, encryption="OPEN")
 
-    app = WifiteApp()
+    app = _ScannerHost(_FakeArray([named, hidden, other], [1, 6, 11]))
     async with app.run_test() as pilot:
-        app.array = _FakeArray([named, hidden, other], [1, 6, 11])
-        app.push_screen("scanner")
         await pilot.pause(0)
         scanner = app.screen
         table = scanner.query_one("#ap-table", DataTable)
@@ -120,12 +127,9 @@ async def test_text_filter_matches_hidden_ap_via_guessed_sibling():
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
 async def test_channel_modal_returns_focus_to_table():
-    app = WifiteApp()
+    app = _ScannerHost(_FakeArray([], [1, 6, 11, 36, 40]))
     async with app.run_test() as pilot:
-        app.array = _FakeArray([], [1, 6, 11, 36, 40])
-        app.push_screen("scanner")
         await pilot.pause(0)
         scanner = app.screen
         table = scanner.query_one("#ap-table", DataTable)

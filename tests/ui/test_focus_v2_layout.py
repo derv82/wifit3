@@ -37,40 +37,41 @@ async def layout_host():
         yield app.screen
 
 
-@pytest.mark.parametrize("w,h", [(80, 24), (80, 30), (100, 35), (120, 40)])
-async def test_layout_geometry(w, h):
+async def test_layout_geometry():
     app = _Host()
-    async with app.run_test(size=(w, h)) as pilot:
-        await pilot.pause(0)
-        scr = app.screen
+    async with app.run_test(size=(80, 24)) as pilot:
+        for w, h in [(80, 24), (80, 30), (100, 35), (120, 40)]:
+            await pilot.resize_terminal(w, h)
+            await pilot.pause(0)
+            scr = app.screen
 
-        def reg(sel):
-            return scr.query_one(sel).region
+            def reg(sel):
+                return scr.query_one(sel).region
 
-        card, dash, router = reg("#card"), reg("#dashboard"), reg("#router")
-        # Endpoints pinned at the art width (20); dashboard fills the middle. On wide
-        # terminals the mid row gets symmetric side padding (none at 80 cols).
-        pad = max(0, round((w - 80) * 0.4))
-        assert card.width == 20 and router.width == 20
-        assert card.x == pad and card.right == dash.x
-        assert dash.right == router.x and router.right == w - pad
-        assert dash.width == w - 2 * pad - 40
+            card, dash, router = reg("#card"), reg("#dashboard"), reg("#router")
+            # Endpoints pinned at the art width (20); dashboard fills the middle. On wide
+            # terminals the mid row gets symmetric side padding (none at 80 cols).
+            pad = max(0, round((w - 80) * 0.4))
+            assert card.width == 20 and router.width == 20
+            assert card.x == pad and card.right == dash.x
+            assert dash.right == router.x and router.right == w - pad
+            assert dash.width == w - 2 * pad - 40
 
-        log, clients = reg("#log"), reg("#clients")
-        # Clients is a fixed exact-fit column; log takes the rest; no overlap.
-        assert clients.width == 40
-        assert log.x == 0 and log.right == clients.x and clients.right == w
+            log, clients = reg("#log"), reg("#clients")
+            # Clients is a fixed exact-fit column; log takes the rest; no overlap.
+            assert clients.width == 40
+            assert log.x == 0 and log.right == clients.x and clients.right == w
 
-        header, footer = reg("Header"), reg("Footer")
-        top, mid, bot = reg("#topbar"), reg("#mid"), reg("#bottom")
-        assert header.y == 0 and header.height == 1
-        assert footer.bottom == h and footer.height == 1
-        assert top.y == header.bottom and top.height == _TOPBAR_H
-        assert top.bottom == mid.y and mid.bottom == bot.y and bot.bottom == footer.y
-        avail = h - _TOPBAR_H - _CHROME_H
-        expected_center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
-        assert mid.height == expected_center
-        assert bot.height == avail - expected_center
+            header, footer = reg("Header"), reg("Footer")
+            top, mid, bot = reg("#topbar"), reg("#mid"), reg("#bottom")
+            assert header.y == 0 and header.height == 1
+            assert footer.bottom == h and footer.height == 1
+            assert top.y == header.bottom and top.height == _TOPBAR_H
+            assert top.bottom == mid.y and mid.bottom == bot.y and bot.bottom == footer.y
+            avail = h - _TOPBAR_H - _CHROME_H
+            expected_center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
+            assert mid.height == expected_center
+            assert bot.height == avail - expected_center
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -118,62 +119,31 @@ async def test_router_identity_button_logs_details_from_keyboard_without_tooltip
         assert "└─►" in logs[-1]
 
 
-async def test_router_endpoint_non_wps_layout():
-    class _NonWpsHost(_Host):
-        target_ap = AccessPoint(
-            bssid="02:00:00:00:00:01",
-            ssid="OpenAir",
-            channel=6,
-            wps=False,
-        )
-
-    app = _NonWpsHost()
+async def test_router_endpoint_layout_states():
+    app = _Host()
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0)
+        # Non-WPS target
+        app.target_ap = AccessPoint(bssid="02:00:00:00:00:01", ssid="OpenAir", channel=6, wps=False)
+        await app.screen._enter_target()
         identity = app.screen.query_one("#ap-identity", Button)
         probe = app.screen.query_one("#ap-probe", Button)
         assert identity.label.plain == "channel 6"
         assert identity.disabled is True
         assert probe.display is False
 
-
-async def test_router_endpoint_wps_with_prior_m1_layout():
-    ap = AccessPoint(
-        bssid="02:00:00:00:00:01",
-        ssid="Office",
-        channel=11,
-        wps=True,
-    )
-    ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Netgear")
-    ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "Nighthawk X6 R8000")
-
-    class _M1Host(_Host):
-        target_ap = ap
-
-    app = _M1Host()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0)
-        identity = app.screen.query_one("#ap-identity", Button)
-        probe = app.screen.query_one("#ap-probe", Button)
+        # WPS with prior M1 identity
+        ap_m1 = AccessPoint(bssid="02:00:00:00:00:01", ssid="Office", channel=11, wps=True)
+        ap_m1.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Netgear")
+        ap_m1.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "Nighthawk X6 R8000")
+        app.target_ap = ap_m1
+        await app.screen._enter_target()
         assert identity.label.plain == "Netgear Nighthawk X…"  # truncated to 20 chars
         assert identity.disabled is False
         assert probe.display is False
 
-
-async def test_router_endpoint_wps_without_m1_fallback_channel():
-    class _WpsNoIdentHost(_Host):
-        target_ap = AccessPoint(
-            bssid="02:00:00:00:00:01",
-            ssid="EmptyWPS",
-            channel=11,
-            wps=True,
-        )
-
-    app = _WpsNoIdentHost()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0)
-        identity = app.screen.query_one("#ap-identity", Button)
-        probe = app.screen.query_one("#ap-probe", Button)
+        # WPS without M1 (fallback to channel)
+        app.target_ap = AccessPoint(bssid="02:00:00:00:00:01", ssid="EmptyWPS", channel=11, wps=True)
+        await app.screen._enter_target()
         assert identity.label.plain == "ch 11"
         assert identity.disabled is True
         assert probe.display is True
@@ -242,7 +212,7 @@ async def test_router_endpoint_probe_click_and_cancel(monkeypatch):
 
         # Click probe button to start probe
         probe.press()
-        await pilot.pause(0.05)
+        await pilot.pause()
         assert probe_started.is_set()
         assert probe.label.plain == "❌"
         assert probe.tooltip == "Cancel WPS/WSC probe"
@@ -253,7 +223,7 @@ async def test_router_endpoint_probe_click_and_cancel(monkeypatch):
 
         # Click probe button again (now '❌') to cancel
         probe.press()
-        await pilot.pause(0.05)
+        await pilot.pause()
         assert probe_cancelled.is_set()
         assert probe.label.plain == "🔍"
         assert probe.tooltip == "Probe AP for WPS/WSC attributes"
@@ -314,7 +284,7 @@ async def test_router_endpoint_probe_success_updates_layout_and_logs(monkeypatch
 
         # Click probe
         probe.press()
-        await pilot.pause(0.05)
+        await pilot.pause()
 
         # On success: probe button hidden, identity label expands to 20 chars
         assert probe.display is False

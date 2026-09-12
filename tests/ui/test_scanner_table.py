@@ -12,7 +12,6 @@ from textual.app import App, ComposeResult
 from textual.widgets.data_table import ColumnKey
 
 from wifit3.models import AccessPoint
-from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.scanner import ScannerView, _APScanTable
 
 
@@ -136,17 +135,23 @@ class _FakeDeviceManager:
         pass
 
 
+class _ScannerHostApp(App):
+    def __init__(self, array):
+        super().__init__()
+        self.array = array
+        self.pbc_enabled = True
+    def on_mount(self):
+        self.push_screen(ScannerView())
+
+
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
 async def test_scanner_view_ssid_width_decloaks_and_caps():
     ap_hidden = AccessPoint(bssid="00:11:22:33:44:01", ssid=None)
     ap_hidden.signal_by_card = {"card0": -50}
 
-    app = WifiteApp()
+    fake_mgr = _FakeDeviceManager([ap_hidden])
+    app = _ScannerHostApp(fake_mgr)
     async with app.run_test() as pilot:
-        fake_mgr = _FakeDeviceManager([ap_hidden])
-        app.array = fake_mgr
-        app.push_screen("scanner")
         await pilot.pause(0)
         scanner = app.screen
         assert isinstance(scanner, ScannerView)
