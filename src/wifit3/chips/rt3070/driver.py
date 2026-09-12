@@ -130,7 +130,7 @@ class RT3070Driver(Driver):
 
         mac.probe_hw_gpio(t)                                     # rfkill GPIO dir
 
-        firmware.upload(t, firmware.load_firmware_blob())        # FW load + MCU boot
+        firmware.upload(t, firmware.load_firmware_blob(chip))    # FW load + MCU boot
 
         mac.set_radio_led(t, ev)                                 # radio LED on
         mac.wakeup(t)                                            # STATE_AWAKE
