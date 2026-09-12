@@ -386,6 +386,7 @@ class TPLink(ProductName):
     TL_WN722N_V1     = "TL-WN722N v1"    # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v1.x
     TL_WN722N_V2_V3  = "TL-WN722N v2/v3" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v2 & v3
     TL_WN723N_V2_3_4 = "TL-WN723N v2/3/4" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN723N_v3
+    TL_WN727N_V5_21  = "TL-WN727N v5.21" # 2357:0111, aircrack-ng/rtl8188eus os_dep/linux/usb_intf.c
 
 
 class TRENDnet(ProductName):

@@ -15,6 +15,7 @@ from wifit3.chips.products import AboCom, DLink, Edimax, Elecom, Realtek, Siteco
 
 _IDS = (
     (0x2357, 0x010C, "RTL8188EUS", None, TPLink.TL_WN722N_V2_V3),
+    (0x2357, 0x0111, "RTL8188EUS", None, TPLink.TL_WN727N_V5_21),
     (0x0BDA, 0x8179, "RTL8188EUS", None, TPLink.TL_WN723N_V2_3_4),
     (0x0BDA, 0x0179, "RTL8188EUS", None, Realtek._8818EUS),
     (0x07B8, 0x8179, "RTL8188EUS", None, AboCom.BGN_MINI),
