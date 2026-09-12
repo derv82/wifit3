@@ -1,6 +1,6 @@
 """Hardware-free regression for the connect() detected-config log.
 
-The reference EFUSE/chip-cut burn (rfe_type 3 iFEM, D-cut) is logged untagged; a burn that selects a
+Known hardware-verified EFUSE/chip-cut burns are logged untagged; a burn that selects a
 ported-but-HW-untested branch is tagged `[untested variant]`, and an rfe 15/18 board (RFE pinmux not
 ported, iFEM fallback) gets an explicit warning.
 """
@@ -35,7 +35,13 @@ def test_reference_burn_is_untagged(caplog):
     assert "untested variant" not in txt
 
 
-def test_non_reference_rfe_is_tagged(caplog):
+def test_live_verified_rfe2_cut3_is_untagged(caplog):
+    txt = _log(*_chip(rfe_type=2, chip_ver=3), caplog)
+    assert "rfe_type=2" in txt and "cut=3" in txt
+    assert "untested variant" not in txt
+
+
+def test_non_verified_rfe_is_tagged(caplog):
     info, e = _chip(rfe_type=1)                    # eFEM
     txt = _log(info, e, caplog)
     assert "[untested variant]" in txt

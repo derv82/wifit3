@@ -124,6 +124,15 @@ def test_rfe_pinmux_dispatch():
     assert cb0(18) == (0x745774, 0xA501)            # unported -> iFEM fallback
 
 
+def test_first_direct_5g_tune_applies_rfe2_pinmux():
+    bb = _BB()
+    chan.set_channel_bw(bb, 36, prev_ch=None, txpwr_pg=None, rfe_type=2, cut=3)
+    assert bb.regs[0x0CB0] & 0xFFFFFF == 0x177517
+    assert bb.regs[0x0EB0] & 0xFFFFFF == 0x177517
+    assert bb.regs[0x0CA0] & 0xFFFF == 0xA501
+    assert bb.regs[0x0EA0] & 0xFFFF == 0xA501
+
+
 # --- switch_band SoML RxHP arm + rfe 12/19 RF 0xb3 --------------------------
 
 def test_switch_band_rxhp_reference():

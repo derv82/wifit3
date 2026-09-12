@@ -126,7 +126,38 @@ def _expected_txagc(channel: int, pg) -> dict[int, int]:
     return cap.writes
 
 
-def _set_channel_verify_txagc(t, channel: int, prev_ch: int | None, txpwr_pg):
+def _expect_reg(name: str, got: int, expect: int, mask: int = 0xFFFFFFFF) -> None:
+    got_m = got & mask
+    expect_m = expect & mask
+    print(f"  {name} = 0x{got_m:08x}  expect 0x{expect_m:08x}")
+    if got_m != expect_m:
+        raise RuntimeError(f"{name}: got 0x{got_m:08x}, expected 0x{expect_m:08x}")
+
+
+def _verify_rfe_type2_registers(t, channel: int) -> None:
+    is_2g = channel <= 14
+    expect_cca = (
+        (0x75C97010, 0x79A0EAAC, 0x87746341, 0x705770, 0x57)
+        if is_2g else
+        (0x75B76010, 0x79A0EAAA, 0x87766431, 0x177517, 0x75)
+    )
+    reg82c, reg830, reg838, src, cb4 = expect_cca
+    _expect_reg("RFE2 CCA 0x082c", t.read32(0x082C), reg82c)
+    _expect_reg("RFE2 CCA 0x0830", t.read32(0x0830), reg830)
+    _expect_reg("RFE2 CCA 0x0838", t.read32(0x0838), reg838)
+    if not is_2g:
+        _expect_reg("RFE2 eFEM 0x083c", t.read32(0x083C), 0x9194B2B9)
+    _expect_reg("RFE2 src A 0x0cb0", t.read32(0x0CB0), src, 0x00FFFFFF)
+    _expect_reg("RFE2 src B 0x0eb0", t.read32(0x0EB0), src, 0x00FFFFFF)
+    _expect_reg("RFE2 cb4 A", t.read32(0x0CB4), cb4 << 8, 0x0000FF00)
+    _expect_reg("RFE2 cb4 B", t.read32(0x0EB4), cb4 << 8, 0x0000FF00)
+    _expect_reg("RFE2 ant A 0x0ca0", t.read32(0x0CA0), 0xA501, 0x0000FFFF)
+    _expect_reg("RFE2 ant B 0x0ea0", t.read32(0x0EA0), 0xA501, 0x0000FFFF)
+    _expect_reg("RFE2 RxHP 0x08cc", t.read32(0x08CC), 0x08108000)
+    _expect_reg("RFE2 RxHP 0x08d8[27]", t.read32(0x08D8), 0x00000000, 1 << 27)
+
+
+def _set_channel_verify_txagc(t, channel: int, prev_ch: int | None, txpwr_pg, rfe_type: int | None = None):
     expected = _expected_txagc(channel, txpwr_pg) if txpwr_pg is not None else {}
     actual = {}
     write32 = t.write32
@@ -138,10 +169,12 @@ def _set_channel_verify_txagc(t, channel: int, prev_ch: int | None, txpwr_pg):
 
     t.write32 = capture_write32
     try:
-        chan.set_channel_bw(t, channel, prev_ch=prev_ch, txpwr_pg=txpwr_pg)
+        chan.set_channel_bw(t, channel, prev_ch=prev_ch, txpwr_pg=txpwr_pg, rfe_type=rfe_type or 3)
     finally:
         t.write32 = write32
 
+    if rfe_type == 2:
+        _verify_rfe_type2_registers(t, channel)
     for addr, expect in sorted(expected.items()):
         got = actual.get(addr)
         got_s = f"0x{got:08x}" if got is not None else "<missing>"
@@ -150,13 +183,13 @@ def _set_channel_verify_txagc(t, channel: int, prev_ch: int | None, txpwr_pg):
             raise RuntimeError(f"TXAGC 0x{addr:04x}: wrote {got!r}, expected 0x{expect:08x}")
 
 
-def _rxstats(t, channel, dwell, rcr, txpwr_pg=None):
+def _rxstats(t, channel, dwell, rcr, txpwr_pg=None, rfe_type=None):
     """Diagnostic: monitor-enable (+optional RCR override) + tune, then a dwell tallying rx_pkt_desc
     categories instead of parsing frames. Reveals whether real RX bytes are crc_err vs a decode gap."""
     mac.enable_monitor(t)
     if rcr is not None:
         t.write32(0x0608, int(rcr, 0))
-    _set_channel_verify_txagc(t, channel, prev_ch=None, txpwr_pg=txpwr_pg)
+    _set_channel_verify_txagc(t, channel, prev_ch=None, txpwr_pg=txpwr_pg, rfe_type=rfe_type)
     # Read back RF reg 0x18 (the channel/BW reg) on both paths: confirm the retune actually moved the
     # synth to `channel`. RF_0x18[7:0] = channel number; [11:10] = BW (0b11 = 20 MHz).
     rf18_a = sipi.read_rf_reg(t, sipi.RF_PATH_A, 0x18)
@@ -221,7 +254,7 @@ def _dwell_count(t, dwell, rssi, total, wd=None):
 
 
 def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=False, cckpd=None,
-           txpwr_pg=None):
+           txpwr_pg=None, rfe_type=None):
     """Tune each channel, then a bulk-IN loop for `dwell` s; tally beacons. `igi` forces RX gain to a
     hex value or sweeps a range (DIG-watchdog hypothesis test); `rcr` overrides the monitor RCR;
     `watchdog` runs the runtime PHYDM watchdog (live IGI adaptation) every ~2 s. rx-dma bytes vs parsed
@@ -239,7 +272,7 @@ def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=Fals
         wd = dm_watchdog.DigState(cur_ig_value=sipi.get_bb_reg(t, 0x0C50, 0x7F),
                                   cck_new_agc=bool(sipi.get_bb_reg(t, 0x0A9C, 1 << 17)))
     for ch in channels:
-        _set_channel_verify_txagc(t, ch, prev_ch=prev_ch, txpwr_pg=txpwr_pg)
+        _set_channel_verify_txagc(t, ch, prev_ch=prev_ch, txpwr_pg=txpwr_pg, rfe_type=rfe_type)
         if cckpd is not None:
             t.write8(0x0A0A, int(cckpd, 0))        # force CCK PD threshold (0x40 sensitive .. 0x83 LV_1)
         prev_ch = ch
@@ -325,7 +358,7 @@ def main() -> int:
 
         txpwr_pg = txpower.parse_pg(e.log_map)
         if args.rxstats is not None:
-            _rxstats(t, args.rxstats, args.dwell, args.rcr, txpwr_pg=txpwr_pg)
+            _rxstats(t, args.rxstats, args.dwell, args.rcr, txpwr_pg=txpwr_pg, rfe_type=e.rfe_type)
             return 0
 
         channels = [args.channel] if args.channel else CHANNELS_2G
@@ -334,7 +367,8 @@ def main() -> int:
         print(f"[*] monitor RX: {'channel ' + str(args.channel) if args.channel else 'hop 1-13'}, "
               f"{dwell:g}s/ch{igi_note}...")
         per_ch, rssi, frames = _watch(t, channels, dwell, prev_ch=None, igi=args.igi, rcr=args.rcr,
-                                      watchdog=args.watchdog, cckpd=args.cckpd, txpwr_pg=txpwr_pg)
+                                      watchdog=args.watchdog, cckpd=args.cckpd, txpwr_pg=txpwr_pg,
+                                      rfe_type=e.rfe_type)
 
         allb: Counter = Counter()
         for c in per_ch.values():

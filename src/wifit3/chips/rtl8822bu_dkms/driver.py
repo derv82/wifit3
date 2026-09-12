@@ -48,11 +48,11 @@ CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124
 # set_channel + verify_channels still drive the full CHANNELS_5G above, byte-for-byte vs the capture.
 CHANNELS_5G_NON_DFS = [36, 40, 44, 48, 149, 153, 157, 161, 165]
 
-# The pcap-gated reference card's EFUSE/chip-cut burn (TP-Link Archer T3U+). A card whose burn
-# differs runs ported-but-hardware-untested branches (FEM CCA table / RFE pinmux / SoML RxHP arm),
-# so connect() tags it once. rfe_type 3 = iFEM, cut 3 = ODM_CUT_D.
+# The pcap-gated reference card is rfe_type 3 / cut 3; rfe_type 2 / cut 3 is live-hardware
+# verified on a TP-Link Archer T4U v3. Other burns run vendor-ported but hardware-untested RFE arms.
 _REF_RFE_TYPE = 3
 _REF_CUT = 3
+_HARDWARE_VERIFIED_RFE_CUTS = frozenset({(2, 3), (_REF_RFE_TYPE, _REF_CUT)})
 # rfe types whose per-channel RFE PINMUX is NOT ported (OEM-only phydm_8822b_type15/18_rfe); the
 # dispatch runs the iFEM pinmux as a give-it-a-shot fallback, and connect() escalates the warning.
 _RFE_PINMUX_UNPORTED = frozenset({15, 18})
@@ -248,12 +248,9 @@ class Rtl8822buDkmsDriver(Driver):
             raise BringUpError("bring-up", str(e)) from e
 
     def _log_detected_config(self, info, e) -> None:
-        """One-line log of the EFUSE/chip-cut burn at connect. The pcap-gated reference card is
-        rfe_type 3 (iFEM) / D-cut / 2T2R; the runtime FEM branches (chan._ccapar_by_rfe FEM CCA
-        table, chan._rfe_pinmux, the switch_band SoML RxHP arm) are ported from vendor C but only
-        this burn is hardware-verified, so a different burn is tagged. rfe 15/18 (OEM pinmux) is
-        not ported and runs the iFEM fallback — called out as a genuinely untested variant."""
-        untested = e.rfe_type != _REF_RFE_TYPE or info.chip_ver != _REF_CUT
+        """One-line log of the EFUSE/chip-cut burn at connect. rfe/cut burns not in the
+        hardware-verified set are tagged; rfe 15/18 also warns because their OEM pinmux is not ported."""
+        untested = (e.rfe_type, info.chip_ver) not in _HARDWARE_VERIFIED_RFE_CUTS
         logger.info(
             "RTL8822BU board: rfe_type=%d cut=%d rf=2T2R crystal_cap=0x%02x thermal=0x%02x "
             "regulatory=%d interface=%d bt_raw=%d bt_coexist=%d bt_ant=%d bt_path=%s board_type=0x%02x "
