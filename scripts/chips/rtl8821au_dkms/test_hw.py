@@ -145,10 +145,11 @@ async def _run_beacon(args) -> int:
           f"DIG watchdog: {'OFF' if args.no_dig else 'ON'}")
     start = time.monotonic()
     i = 0
+    transient_hop = len(channels) > 1
     try:
         while time.monotonic() - start < args.duration:
             cur = channels[i % len(channels)]
-            await driver.set_channel(cur)
+            await driver.set_channel(cur, scan=transient_hop)
             i += 1
             await interruptible_sleep(args.dwell)
             print(f"\r  {time.monotonic() - start:4.0f}s ch{cur:>3}  nAPs={len(tally.by_bssid)}  "
