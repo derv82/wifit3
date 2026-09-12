@@ -1,16 +1,12 @@
 """WEP key recovery from collected IVs.
 
-Two implementations behind one ``WepCracker`` protocol:
+``PtwCracker`` implements the ``WepCracker`` protocol: a native,
+self-contained PTW (Pyshkin-Tews-Weinmann 2007) key-recovery. No external
+aircrack. Fed a stream of ``(IV, keystream)`` samples; the per-IV votes are
+*additive*, so it ingests incrementally as IVs arrive and a cheap search
+re-runs on demand.
 
-- ``PlaceholderCracker``: the no-shell-out MVP. It just watches the
-  unique-IV count and reports "ready" at the crack threshold; ``recover()``
-  always returns None. Not wired into the campaign. ``PtwCracker`` (below) is.
-- ``PtwCracker``: a native, self-contained PTW (Pyshkin-Tews-Weinmann 2007)
-  key-recovery. No external aircrack. Fed a stream of ``(IV, keystream)``
-  samples; the per-IV votes are *additive*, so it ingests incrementally as
-  IVs arrive and a cheap search re-runs on demand.
-
-Both are pure Python and need no hardware: correctness is proven offline by
+Pure Python, needs no hardware: correctness is proven offline by
 ``tests/crack/test_wep_crack.py``, which generates WEP packets under a known
 key and asserts recovery.
 
@@ -91,31 +87,6 @@ class WepCracker(Protocol):
     def sample_count(self) -> int: ...
     @property
     def ready(self) -> bool: ...
-
-
-class PlaceholderCracker:
-    """No-shell-out MVP: counts samples, reports readiness, recovers nothing.
-
-    The streaming ``feed`` shape matches PtwCracker so swapping the native
-    cracker in later is drop-in for the campaign/UI."""
-
-    def __init__(self, threshold: int = CRACK_READY_THRESHOLD):
-        self.threshold = threshold
-        self._count = 0
-
-    def feed(self, iv: bytes, keystream: bytes) -> None:
-        self._count += 1
-
-    def recover(self) -> Optional[bytes]:
-        return None
-
-    @property
-    def sample_count(self) -> int:
-        return self._count
-
-    @property
-    def ready(self) -> bool:
-        return self._count >= self.threshold
 
 
 # ---- Native PTW -------------------------------------------------------------

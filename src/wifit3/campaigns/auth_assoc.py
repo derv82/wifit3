@@ -26,11 +26,6 @@ from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
 
 logger = logging.getLogger(__name__)
 
-_SUBTYPE_ASSOC_RESP = 0x01
-_SUBTYPE_AUTH = 0x0B
-_SUBTYPE_DEAUTH = 0x0C
-_SUBTYPE_DISASSOC = 0x0A
-
 
 def random_client_mac() -> bytes:
     """Locally-administered unicast MAC."""

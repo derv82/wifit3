@@ -48,7 +48,6 @@ class WlanArray:
         self._dedupe = StreamMerger(window=window)
         self._stray_beacon_channels: Dict[str, int] = {}  # bssid -> decoy channel; its beacons are ours
         self._evil_twin_bssids: Set[str] = set()          # our own twin APs; hidden from the scanner
-        self._rx_callbacks: List[Callable[[Packet], None]] = []      # deduped stream
         self._disconnect_callbacks: List[Callable[[Exception, int], None]] = []
         self._name_counter = 0
         # Hop state: the channel partition is computed only in start_hopping; every membership change
@@ -175,16 +174,6 @@ class WlanArray:
         return Lease(self, target, channel=channel, fake_mac=fake_mac,
                      bssid=bssid, ack_tally=ack_tally)
 
-    # ----- deduped RX subscription (no v1 consumer, kept for future) ----------
-
-    def register_rx_callback(self, cb: Callable[[Packet], None]) -> None:
-        if cb not in self._rx_callbacks:
-            self._rx_callbacks.append(cb)
-
-    def unregister_rx_callback(self, cb: Callable[[Packet], None]) -> None:
-        if cb in self._rx_callbacks:
-            self._rx_callbacks.remove(cb)
-
     def register_disconnect_callback(self, cb: Callable[[Exception, int], None]) -> None:
         """Subscribe to member loss: cb(exc, remaining_card_count)."""
         if cb not in self._disconnect_callbacks:
@@ -208,11 +197,6 @@ class WlanArray:
         if novel_globally:
             self._sink.update(pkt, card_id, channel_hint=iface.current_channel)
             self._sink.dispatch_rx(pkt)
-            for cb in self._rx_callbacks:
-                try:
-                    cb(pkt)
-                except Exception:
-                    logger.exception("Deduped RX callback failed")
         elif is_first_for_card:
             self._sink.record_signal(card_id, pkt.bssid, pkt.rssi)
 
@@ -272,12 +256,6 @@ class WlanArray:
 
     def record_injected_eapol(self, frame) -> None:
         self._sink.record_injected_eapol(frame)
-
-    def register_self_mac(self, mac, bssid: Optional[str] = None) -> str:
-        return self._sink.register_self_mac(mac, bssid)
-
-    def unregister_self_mac(self, mac) -> None:
-        self._sink.unregister_self_mac(mac)
 
     def mark_evil_twin(self, bssid: str) -> None:
         """Hide this BSSID's AP from get_access_points(include_eviltwin=False): it's our own twin."""

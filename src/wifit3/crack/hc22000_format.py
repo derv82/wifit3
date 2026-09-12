@@ -1,6 +1,6 @@
 """Hashcat ``-m 22000`` hashline FORMAT (WPA-PBKDF2-PMKID+EAPOL).
 
-The disk writer is ``persist.hc22000_write``.
+The disk writer is ``persist.save`` (``HcFiles``).
 
 The PMKID (``WPA*01``) line is built here; the EAPOL (``WPA*02``) lines and the
 crackability decision both live in ``crack.handshake``, the single source
@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from wifit3.models import AccessPoint, Handshake
+from wifit3.models import Handshake
 from wifit3.crack import handshake as wpa
 from wifit3.crack.handshake import mac_compact, ssid_hex
 
@@ -54,22 +54,3 @@ def eapol_hashlines(ssid: str, hs: Handshake) -> List[str]:
     if not ssid:
         return []
     return [wpa.hc22000_line(ssid, hs, pair) for pair in wpa.crackable_pairs(hs)]
-
-
-def eapol_hashline(ssid: str, hs: Handshake) -> Optional[str]:
-    """The single best ``WPA*02*…`` line for this handshake, or None."""
-    lines = eapol_hashlines(ssid, hs)
-    return lines[0] if lines else None
-
-
-def format_ap_hashlines(ap: AccessPoint) -> List[str]:
-    """Every hashline we can produce for this AP across all clients."""
-    if not ap.ssid:
-        return []  # hidden network → can't fill the ESSID field
-    lines: List[str] = []
-    for hs in ap.handshakes.values():
-        pmkid = pmkid_hashline(ap.ssid, hs)
-        if pmkid:
-            lines.append(pmkid)
-        lines.extend(eapol_hashlines(ap.ssid, hs))
-    return lines

@@ -95,14 +95,6 @@ def seed_keystream_from_data(
     return bytes(c ^ p for c, p in zip(cipher[:want], known[:want]))
 
 
-def seed_keystream_from_arp(arp_body: bytes, *, want: int = 8) -> bytes:
-    """Seed from a captured broadcast WEP ARP's full encrypted body (``IV(3) ++
-    KeyID(1) ++ RC4(plaintext ++ ICV)``), the ARP-specific convenience.
-    Delegates to :func:`seed_keystream_from_data` with the ARP ethertype.
-    Prefer the data variant for the daemon (works off any frame)."""
-    return seed_keystream_from_data(arp_body[4:], want=want, ethertype=0x0806)
-
-
 def build_fragments(
     keystream: bytes,
     iv: bytes,

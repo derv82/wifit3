@@ -86,11 +86,12 @@ async def main() -> int:
               f"beacons={b:>3}  frames={f:>4}")
 
     print(f"\n=== 2. WlanArray.set_channel() no-op repeat x{args.iters} per channel (the False) ===")
-    # attach() reroutes RX to the array's deduped stream, so count on the array from here on.
+    # attach() wires the array's dedup ingest onto the card's RX; count frames on the card's raw
+    # RX stream (WlanInterface fires per parsed frame) to confirm the card stays tuned.
     array = WlanArray()
     array.attach(iface)
     arr_counter = FrameCounter()
-    array.register_rx_callback(arr_counter)
+    iface.register_rx_callback(arr_counter)
 
     total_noop = total_false = 0
     for ch in channels:

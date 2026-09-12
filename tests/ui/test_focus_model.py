@@ -231,17 +231,6 @@ def test_status_footer_combines_pmf_and_wps():
     assert "PMF:" in lines[1] and "WPS:" in lines[1] and "1.0" in lines[1]
 
 
-def test_router_identity_markup_shows_summary_without_percentages():
-    ap = AccessPoint(
-        bssid="02:00:00:00:00:01",
-        identity=ApIdentity(IdSource.WSC_BEACON, manufacturer="MikroTik", model_name="hAP ac²"),
-    )
-    markup = fm.router_identity_markup(ap)
-    assert "hAP ac²" in markup
-    assert "MikroTik" in markup
-    assert "%" not in markup
-
-
 def test_router_identity_details_shows_source_provenance():
     ap = AccessPoint(bssid="02:00:00:00:00:01")
     ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "MikroTik")
@@ -258,7 +247,6 @@ def test_router_identity_details_can_show_m1_and_oui_separately():
     ap.identity.set(IdSource.WSC_M1, IdKey.MANUFACTURER, "Cisco")
     ap.identity.set(IdSource.WSC_M1, IdKey.MODEL_NAME, "AP-500")
 
-    assert "Cisco AP-500" in fm.router_identity_markup(ap)
     details = fm.router_identity_details(ap)
     assert details is not None
     assert "[bold]Cisco AP-500[/bold]" in details
@@ -327,8 +315,7 @@ def test_router_identity_details_includes_device_type():
     ])
 
 
-def test_router_identity_markup_is_blank_without_evidence():
-    assert fm.router_identity_markup(AccessPoint(bssid="02:00:00:00:00:01")) == ""
+def test_router_identity_details_is_blank_without_evidence():
     assert fm.router_identity_details(AccessPoint(bssid="02:00:00:00:00:01")) is None
 
 

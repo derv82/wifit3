@@ -14,7 +14,6 @@ from wifit3.dot11.wep.crypto import (
     chop_last_byte_and_fixup,
     forge_arp_request,
     icv,
-    seed_keystream_from_arp,
     wep_encrypt,
     _crc,
     _CRC_TABLE,
@@ -173,32 +172,6 @@ def test_chopchop_iterates_keeping_frames_valid():
 # an on-air WEP fragmentation probe can establish that.
 
 _SNAP_ARP_PREFIX = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06])
-
-
-def _arp_body(keystream: bytes, iv: bytes, plaintext: bytes) -> bytes:
-    """Build a captured-looking WEP ARP body: IV ++ KeyID(0) ++ RC4(pt++icv)."""
-    return iv + b"\x00" + wep_encrypt(keystream, plaintext)
-
-
-def test_seed_keystream_recovers_known_prga():
-    ks = bytes((i * 5 + 9) & 0xFF for i in range(40))
-    iv = bytes([0x11, 0x22, 0x33])
-    pt = arp_request_plaintext(
-        sender_mac=bytes.fromhex("020000000099"),
-        sender_ip=bytes([10, 0, 0, 5]),
-        target_ip=bytes([10, 0, 0, 1]),
-    )
-    body = _arp_body(ks, iv, pt)
-    # The 8-byte seed must equal the real first 8 keystream bytes...
-    assert seed_keystream_from_arp(body, want=8) == ks[:8]
-    # ...and shorter requests are honored (6 protocol-agnostic SNAP bytes).
-    assert seed_keystream_from_arp(body, want=6) == ks[:6]
-
-
-def test_seed_keystream_rejects_oversize_request():
-    body = _arp_body(bytes(range(40)), bytes(3), b"\x00" * 36)
-    with pytest.raises(ValueError):
-        seed_keystream_from_arp(body, want=9)   # >8 is not known plaintext
 
 
 def _reassemble(fragments: list, keystream: bytes) -> bytes:

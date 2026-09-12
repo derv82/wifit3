@@ -253,11 +253,10 @@ def test_register_and_unregister_own_mac():
     assert mac not in s.own_macs
 
 
-def test_self_and_forged_aliases_funnel_to_own_macs():
+def test_forged_alias_funnels_to_own_macs():
     s = WlanSink()
     s.register_forged_mac("aa:bb:cc:dd:ee:01")
-    s.register_self_mac("aa:bb:cc:dd:ee:02", bssid="12:22:33:44:55:66")
-    assert {"aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"} <= s.own_macs
+    assert "aa:bb:cc:dd:ee:01" in s.own_macs
     assert s.forged_macs == s.own_macs                  # back-compat alias
 
 

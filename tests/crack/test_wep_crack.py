@@ -11,9 +11,7 @@ import pytest
 
 from wifit3.crack.wep import (
     ARP_REQUEST_PLAINTEXT,
-    PlaceholderCracker,
     PtwCracker,
-    WepCracker,
     keystream_from_arp_cipher,
     rc4_keystream,
 )
@@ -32,20 +30,6 @@ def test_keystream_from_arp_cipher_roundtrips():
     ks = bytes(range(16))
     cipher = bytes(ks[i] ^ ARP_REQUEST_PLAINTEXT[i] for i in range(16))
     assert keystream_from_arp_cipher(cipher) == ks
-
-
-# ---- Placeholder ------------------------------------------------------------
-
-def test_placeholder_reports_ready_at_threshold():
-    c = PlaceholderCracker(threshold=100)
-    assert isinstance(c, WepCracker)
-    for _ in range(99):
-        c.feed(b"\x00\x00\x00", b"\x00" * 16)
-    assert not c.ready
-    c.feed(b"\x00\x00\x00", b"\x00" * 16)
-    assert c.ready
-    assert c.recover() is None
-    assert c.sample_count == 100
 
 
 # ---- Native PTW end-to-end --------------------------------------------------

@@ -77,23 +77,6 @@ def dashboard_rows(ap) -> list[DashboardRow]:
     return rows
 
 
-def format_duration(seconds: int) -> str:
-    """Human-readable duration for the 'Last Beacon' line (5s, 1m 12s, etc)."""
-    seconds = max(0, int(seconds))
-    if seconds < 60:
-        return f"{seconds}s"
-    if seconds < 3600:
-        m, s = divmod(seconds, 60)
-        return f"{m}m {s}s" if s else f"{m}m"
-    if seconds < 86400:
-        h, rem = divmod(seconds, 3600)
-        m = rem // 60
-        return f"{h}h {m}m" if m else f"{h}h"
-    d, rem = divmod(seconds, 86400)
-    h = rem // 3600
-    return f"{d}d {h}h" if h else f"{d}d"
-
-
 def truncate_ssid(ssid: str, maxlen: int = 24) -> str:
     """Ellipsize an SSID that overflows the endpoint width '  …'."""
     if len(ssid) <= maxlen:
@@ -220,13 +203,6 @@ def pmf_status_markup(ap) -> str:
     if ap.pmf_capable:
         return "[dark_orange]Optional[/dark_orange]"
     return "[dim]Disabled[/dim]"
-
-
-def router_identity_markup(ap) -> str:
-    ident = getattr(ap, "identity", None)
-    if ident is None or not ident.summary:
-        return ""
-    return f"[accent]{escape(ident.summary)}[/accent]"
 
 
 def router_identity_details(ap: AccessPoint) -> str | None:

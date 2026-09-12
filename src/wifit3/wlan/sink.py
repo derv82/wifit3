@@ -490,15 +490,9 @@ class WlanSink:
         mac_str = mac_to_str(mac) if isinstance(mac, (bytes, bytearray)) else str(mac).lower()
         self.own_macs.discard(mac_str)
 
-    # Back-compat names the campaigns still call; all funnel to the single own-MAC set.
+    # Back-compat alias the campaigns still call; funnels to the single own-MAC set.
     def register_forged_mac(self, mac) -> None:
         self.register_own_mac(mac)
-
-    def register_self_mac(self, mac, bssid=None) -> str:
-        return self.register_own_mac(mac)
-
-    def unregister_self_mac(self, mac) -> None:
-        self.unregister_own_mac(mac)
 
     @property
     def forged_macs(self):

@@ -29,12 +29,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 802.11 management subtypes we care about in the RX filter.
-_SUBTYPE_ASSOC_RESP = 0x01
-_SUBTYPE_AUTH = 0x0B
-_SUBTYPE_DEAUTH = 0x0C
-_SUBTYPE_DISASSOC = 0x0A
-
 
 def _random_client_mac() -> bytes:
     """Locally-administered, unicast MAC (LAA bit set, multicast clear)."""

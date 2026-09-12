@@ -572,20 +572,6 @@ class ScannerView(Screen):
         text = ap.identity.summary
         return Text(text, style=f"{dim}{fg}")
 
-    def _build_cells(
-        self, ap: AccessPoint, n_clients: int, flash_bacon: bool = False,
-        beacons_display: Optional[int] = None, is_stale: bool = False,
-    ) -> List[Text]:
-        """Build all column cells for one AP row (order matches _COLUMNS)."""
-        shown = ap.beacons if beacons_display is None else beacons_display
-        return [
-            self._render_cell(
-                ap, col_k, is_stale, n_cli=n_clients,
-                flash_bacon=flash_bacon, shown_beacons=shown,
-            )
-            for col_k, _ in self._COLUMNS
-        ]
-
     # Cap the SSID+badges cell so the capture badges never overflow.
     _SSID_CELL_MAX = 32
 

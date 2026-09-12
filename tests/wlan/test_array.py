@@ -152,16 +152,24 @@ def test_ingest_dedupes_same_air_across_cards():
     a_card = FakeIface("wlan0", [6])
     b_card = FakeIface("wlan1", [6])
     a = _pool(a_card, b_card)
-    seen = []
-    a.register_rx_callback(seen.append)
+    # Spy on the sink fold-in: only the novel copy is folded, so update() fires exactly once
+    # for a frame both cards hear, while the duplicate still contributes the second card's signal.
+    folds = {"n": 0}
+    real_update = a._sink.update
+
+    def counting_update(*args, **kwargs):
+        folds["n"] += 1
+        return real_update(*args, **kwargs)
+
+    a._sink.update = counting_update
     raw = _raw()
     a_card.emit(_beacon(raw, rssi=-70))     # novel: A folds it in
-    b_card.emit(_beacon(raw, rssi=-55))     # duplicate: only B's signal
+    b_card.emit(_beacon(raw, rssi=-55))     # duplicate: only B's signal (record_signal)
     ap = a.get_access_points()[0]
     assert ap.beacons == 1                   # counted once
     assert ap.signal_by_card == {"wlan0": -70, "wlan1": -55}
     assert ap.signal == -55                  # strongest antenna
-    assert len(seen) == 1                     # deduped stream fires on novel only
+    assert folds["n"] == 1                    # sink.update folds the novel copy only
 
 
 def test_ingest_drops_our_own_forged_frames():
@@ -189,7 +197,7 @@ def test_ingest_drops_our_own_self_mac_transmissions():
     (Addr2) is our own fake STA must be dropped so it doesn't inflate the IV rate."""
     card = FakeIface("wlan0", [6])
     a = _pool(card)
-    a.register_self_mac("aa:bb:cc:dd:ee:01", "11:22:33:44:55:66")
+    a.register_own_mac("aa:bb:cc:dd:ee:01")
     bssid, mac = b"\x11\x22\x33\x44\x55\x66", b"\xaa\xbb\xcc\xdd\xee\x01"
     raw = b"\x08\x01\x00\x00" + bssid + mac + bssid + b"\x00\x00" + b"\x00" * 12   # ToDS, Addr2 = us
     card.emit(pkt({"type": "data", "to_ds": True, "bssid": "11:22:33:44:55:66",
@@ -204,7 +212,7 @@ def test_ingest_counts_ap_echo_of_our_replay():
     is a registered self-MAC -- the regression that zeroed the WEP IV rate (keying on source, not TA)."""
     card = FakeIface("wlan0", [6])
     a = _pool(card)
-    a.register_self_mac("aa:bb:cc:dd:ee:01", "11:22:33:44:55:66")
+    a.register_own_mac("aa:bb:cc:dd:ee:01")
     bssid, mac = b"\x11\x22\x33\x44\x55\x66", b"\xaa\xbb\xcc\xdd\xee\x01"
     bcast = b"\xff\xff\xff\xff\xff\xff"
     raw = b"\x08\x42\x00\x00" + bcast + bssid + mac + b"\x00\x00" + b"\x00" * 12   # FromDS, Addr2=BSSID
