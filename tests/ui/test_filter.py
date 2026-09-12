@@ -188,15 +188,15 @@ class _FocusHost(App):
 async def test_focus_returns_to_table_after_interactions():
     app = _FocusHost()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         table = app.query_one("#ap-table", DataTable)
 
         app.query_one("#filter-encryption", Select).value = EncryptionFilter.WPA
-        await pilot.pause()
+        await pilot.pause(0)
         assert app.focused is table
 
         for key in ("enter", "escape"):
             app.query_one("#filter-text", Input).focus()
             await pilot.press(key)
-            await pilot.pause()
+            await pilot.pause(0)
             assert app.focused is table

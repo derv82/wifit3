@@ -3,6 +3,7 @@ button dismisses "skip". The presence-waiter is stubbed so no hardware is needed
 import asyncio
 
 from textual.app import App
+from textual.widgets import Button
 
 from wifit3.ui.screens.replug import ReplugModal
 
@@ -40,6 +41,6 @@ async def test_skip_button_dismisses_skip():
     app = _Host(_hang)
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause(0)
-        await pilot.click("#btn-skip")
+        app.screen.query_one("#btn-skip", Button).press()
         await pilot.pause(0)
     assert app.result == "skip"

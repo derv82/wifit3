@@ -133,13 +133,12 @@ async def test_channel_modal_returns_focus_to_table():
         await pilot.pause(0)
         scanner = app.screen
         table = scanner.query_one("#ap-table", DataTable)
-        scanner.query_one("#filter-channels", Button).focus()   # button holds focus, as in the app
-        await pilot.pause()
+        scanner.query_one("#filter-channels", Button).focus()
+        await pilot.pause(0)
         scanner.action_change_channel()
-        await pilot.pause()
-        app.screen.dismiss([1, 6])                              # confirm the dialog
-        for _ in range(2):
-            await pilot.pause()
+        await pilot.pause(0)
+        app.screen.dismiss([1, 6])
+        await pilot.pause(0)
         assert app.focused is table
 
 

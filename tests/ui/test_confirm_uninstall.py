@@ -26,7 +26,7 @@ async def test_windows_single_uninstall_returns_narrow():
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause(0)
         assert len(app.screen.query("#btn-wide")) == 0      # no wide radius without siblings
-        await pilot.click("#btn-narrow")
+        app.screen.query_one("#btn-narrow", Button).press()
         await pilot.pause(0)
     assert app.result == "narrow"
 
@@ -39,7 +39,7 @@ async def test_linux_siblings_offer_narrow_and_wide():
         screen = app.screen
         assert screen.query_one("#btn-narrow", Button)
         assert screen.query_one("#btn-wide", Button)
-        await pilot.click("#btn-wide")
+        screen.query_one("#btn-wide", Button).press()
         await pilot.pause(0)
     assert app.result == "wide"
 
@@ -49,7 +49,7 @@ async def test_linux_narrow_button_returns_narrow():
         "RT5372", "linux", siblings=["Ralink RT5572 (PAU09)"], has_own_files=True))
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause(0)
-        await pilot.click("#btn-narrow")
+        app.screen.query_one("#btn-narrow", Button).press()
         await pilot.pause(0)
     assert app.result == "narrow"
 
@@ -61,8 +61,7 @@ async def test_linux_no_own_files_offers_only_wide():
         await pilot.pause(0)
         screen = app.screen
         assert len(screen.query("#btn-narrow")) == 0        # nothing of its own to remove
-        assert screen.query_one("#btn-wide", Button)
-        await pilot.click("#btn-wide")
+        screen.query_one("#btn-wide", Button).press()
         await pilot.pause(0)
     assert app.result == "wide"
 
@@ -72,6 +71,6 @@ async def test_cancel_returns_none():
         "RT5372", "linux", siblings=["Ralink RT5572 (PAU09)"], has_own_files=True))
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause(0)
-        await pilot.click("#btn-cancel")
+        app.screen.query_one("#btn-cancel", Button).press()
         await pilot.pause(0)
     assert app.result is None

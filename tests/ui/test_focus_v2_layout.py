@@ -121,7 +121,7 @@ async def test_router_identity_button_logs_details_from_keyboard_without_tooltip
 
 async def test_router_endpoint_layout_states():
     app = _Host()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(120, 40)):
         # Non-WPS target
         app.target_ap = AccessPoint(bssid="02:00:00:00:00:01", ssid="OpenAir", channel=6, wps=False)
         await app.screen._enter_target()

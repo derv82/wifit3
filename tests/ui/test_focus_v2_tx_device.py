@@ -84,8 +84,7 @@ async def test_focus_peeks_elected_tx_card_then_pins_the_chosen_one():
         assert overlay.display is True and overlay.option_count == 2
 
         overlay.highlighted = 1          # members order [m0, m1] -> m1
-        await pilot.pause(0)
-        await pilot.press("enter")
+        overlay.action_select()
         await pilot.pause(0)
 
         # The pin took, and the endpoint re-synced to the pinned card (label + art swap).

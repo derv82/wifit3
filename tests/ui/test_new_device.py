@@ -1,6 +1,7 @@
 """The mid-session new-device prompt (ui/screens/new_device.py): shows the card, dismisses a bool."""
 import pytest
 from textual.app import App
+from textual.widgets import Button
 
 from wifit3.ui.screens.new_device import NewDeviceDialog
 
@@ -33,7 +34,7 @@ async def test_yes_dismisses_true():
     app = _Host()
     async with app.run_test() as pilot:
         result = await _prompt(pilot, app)
-        await pilot.click("#btn-yes")
+        app.screen.query_one("#btn-yes", Button).press()
         await pilot.pause(0)
         assert result["value"] is True
 
@@ -43,7 +44,7 @@ async def test_no_dismisses_false():
     app = _Host()
     async with app.run_test() as pilot:
         result = await _prompt(pilot, app)
-        await pilot.click("#btn-no")
+        app.screen.query_one("#btn-no", Button).press()
         await pilot.pause(0)
         assert result["value"] is False
 

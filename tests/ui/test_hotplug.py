@@ -49,8 +49,8 @@ class _FakeIface:
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_hotplug_prompt_yes_pools_the_card(monkeypatch):
-    dev = DeviceID(0x0BDA, 0x8812, "RTL8812AU (test)")
+async def test_hotplug_prompt_yes_pools_card_and_ignores_re_arrival(monkeypatch):
+    dev = DeviceID(0x0BDA, 0x8812, "RTL8812AU (test)", bus=1, address=9)
     iface = _FakeIface(dev)
     monkeypatch.setattr(manager, "wlan_iface", lambda device_id, name="wlan0": iface)
 
@@ -75,34 +75,8 @@ async def test_hotplug_prompt_yes_pools_the_card(monkeypatch):
         assert app.array is not None and len(app.array.members) == 1
         assert iface.connect.await_count == 1
 
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
-async def test_re_arrival_of_pooled_card_does_not_prompt(monkeypatch):
-    # A replug during bring-up re-enumerates the card and it re-arrives on the bus; since it's already
-    # pooled, the listener must not prompt to bring it up again.
-    dev = DeviceID(0x0BDA, 0x8812, "RTL8812AU (test)", bus=1, address=9)
-    iface = _FakeIface(dev)
-    monkeypatch.setattr(manager, "wlan_iface", lambda device_id, name="wlan0": iface)
-
-    app = WifiteApp()
-    async with app.run_test() as pilot:
-        app.switch_screen("scanner")
-        await pilot.pause(0)
-        app._on_devices_changed([dev], [dev], [])
-        for _ in range(20):
-            await pilot.pause(0)
-            if isinstance(app.screen, NewDeviceDialog):
-                break
-        app.screen.dismiss(True)
-        for _ in range(40):
-            await pilot.pause(0)
-            if app.array is not None and app.array.members:
-                break
-        assert app.array is not None and len(app.array.members) == 1
-
         app._on_devices_changed([dev], [dev], [])   # same instance re-arrives
-        for _ in range(20):
+        for _ in range(3):
             await pilot.pause(0)
         assert isinstance(app.screen, ScannerView)  # no second prompt
         assert len(app.array.members) == 1

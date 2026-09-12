@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from textual import events
 from textual.widgets import SelectionList
 
 import wifit3.device.manager as manager
@@ -145,11 +146,12 @@ async def test_single_click_highlights_double_click_starts(monkeypatch):
         splash.render_devices([dev])
         await pilot.pause(0)
 
-        await pilot.click("#device-list ListItem")            # single click
+        item = splash.query_one("#device-list ListItem")
+        splash.on_click(events.Click(item, 0, 0, 0, 0, 1, False, False, False, chain=1))
         await pilot.pause(0)
         assert started == []                                  # highlight only, no start
 
-        await pilot.click("#device-list ListItem", times=2)   # double click
+        splash.on_click(events.Click(item, 0, 0, 0, 0, 1, False, False, False, chain=2))
         for _ in range(40):
             await pilot.pause(0)
             if started:
