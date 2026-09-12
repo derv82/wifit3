@@ -374,7 +374,11 @@ EEPROM_SIZE_8822B = 768                # logical map produced by the PG-header p
 PRTCT_EFUSE_SIZE_8822B = 96            # protected tail (bounds the parser walk)
 HALMAC_EFUSE_BANK_WIFI = 0             # [SRC] halmac_type.h:1771
 
-# Logical-map field offsets (8822BU) [SRC] include/hal_pg.h:453-479
+# Logical-map field offsets (8822BU) [SRC] include/hal_pg.h:453-483
+RTL_EEPROM_ID = 0x8129                 # [SRC] include/drv_types.h / Hal_EfuseParseIDCode
+EEPROM_USB_MODE = 0x0006               # :483  Hal_ReadUsbModeSwitch bit7
+EEPROM_VID = 0x0100                    # :480  hal_read_usb_pid_vid
+EEPROM_PID = 0x0102                    # :481  hal_read_usb_pid_vid
 EEPROM_CHANNEL_PLAN = 0x00B8           # :453
 EEPROM_XTAL = 0x00B9                   # :454  crystal_cap
 EEPROM_THERMAL_METER = 0x00BA          # :455
@@ -393,6 +397,8 @@ EFUSE_PA_BIAS = 0x03D7                  # physical efuse PA-bias pair [SRC] rtl8
 EEPROM_DEFAULT_BOARD_OPTION = 0x00     # [SRC] hal_pg.h:824 EEPROM_DEFAULT_BOARD_OPTION
 EEPROM_DEFAULT_CRYSTAL_CAP = 0x00      # [SRC] hal_pg.h:841 EEPROM_Default_CrystalCap (8822b uses generic)
 EEPROM_DEFAULT_THERMAL_METER = 0x12    # [SRC] hal_pg.h:827 EEPROM_Default_ThermalMeter
+EEPROM_DEFAULT_PID = 0x1234            # [SRC] hal_pg.h:871 EEPROM_Default_PID
+EEPROM_DEFAULT_VID = 0x5678            # [SRC] hal_pg.h:872 EEPROM_Default_VID
 
 ODM_BOARD_BT = 1 << 2                  # [SRC] phydm_pre_define.h:865
 ODM_BOARD_EXT_PA = 1 << 3              # [SRC] phydm_pre_define.h:866

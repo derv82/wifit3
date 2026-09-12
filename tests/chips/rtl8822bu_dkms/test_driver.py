@@ -13,7 +13,9 @@ from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
 def _chip(rfe_type=3, chip_ver=3):
     info = SimpleNamespace(chip_ver=chip_ver)
     e = SimpleNamespace(rfe_type=rfe_type, crystal_cap=0x2E, thermal_meter=0x12,
-                        regulatory=1, interface_sel=0, bt_coexist_raw=False, bt_coexist=False,
+                        eeprom_id_valid=True, usb_mode_switch=False, eeprom_vid=0x2357,
+                        eeprom_pid=0x0115, regulatory=1, interface_sel=0,
+                        bt_coexist_raw=False, bt_coexist=False,
                         bt_ant_num=1, bt_ant_path=0, board_type=0, external_pa_2g=False,
                         external_lna_2g=False, external_pa_5g=False, external_lna_5g=False,
                         type_gpa=0, type_apa=0, type_glna=0, type_alna=0,
@@ -31,6 +33,7 @@ def _log(info, e, caplog):
 def test_reference_burn_is_untagged(caplog):
     txt = _log(*_chip(), caplog)
     assert "rfe_type=3" in txt and "cut=3" in txt
+    assert "id_valid=1" in txt and "eeprom_vidpid=2357:0115" in txt
     assert "bt_raw=0" in txt and "board_type=0x00" in txt
     assert "untested variant" not in txt
 

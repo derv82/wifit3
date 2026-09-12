@@ -28,7 +28,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .constants import (
-    BIT_AUTOLOAD_SUS,
     BIT_EERPOMSEL,
     BIT_EF_FLAG,
     BIT_MASK_EF_ADDR,
@@ -44,10 +43,15 @@ from .constants import (
     EEPROM_DEFAULT_BOARD_OPTION,
     EEPROM_DEFAULT_CRYSTAL_CAP,
     EEPROM_DEFAULT_THERMAL_METER,
+    EEPROM_DEFAULT_PID,
+    EEPROM_DEFAULT_VID,
     EEPROM_MAC_ADDR,
+    EEPROM_PID,
     EEPROM_RF_BOARD_OPTION,
     EEPROM_RF_BT_SETTING,
     EEPROM_RFE_OPTION,
+    EEPROM_USB_MODE,
+    EEPROM_VID,
     EEPROM_SIZE_8822B,
     EEPROM_THERMAL_METER,
     EEPROM_VERSION,
@@ -64,6 +68,7 @@ from .constants import (
     REG_EFUSE_CTRL,
     REG_LDO_EFUSE_CTRL,
     REG_SYS_EEPROM_CTRL,
+    RTL_EEPROM_ID,
 )
 
 
@@ -71,8 +76,9 @@ from .constants import (
 class Efuse8822b:
     phy_map: bytes          # the 1024-byte physical EFUSE (raw read order)
     log_map: bytes          # the 768-byte logical map (PG-header decoded)
-    autoload_fail: bool     # !BIT_AUTOLOAD_SUS — map is invalid / defaults must be used
+    autoload_fail: bool     # final vendor bautoload_fail_flag after Hal_EfuseParseIDCode
     eeprom_or_efuse: bool   # BIT_EERPOMSEL — true => external EEPROM, false => on-chip eFuse
+    eeprom_id_valid: bool   # Hal_EfuseParseIDCode: logical 0x00..0x01 == RTL_EEPROM_ID
     # Decoded scalar fields (BB/RF/calibration inputs). The PG tx-power block is decoded
     # at the tx-power milestone, where each value can be checked against the writes it drives.
     crystal_cap: int        # [SRC] rtl8822b_ops.c:322 Hal_EfuseParseXtal
@@ -84,6 +90,9 @@ class Efuse8822b:
     customer_id: int        # [SRC] rtl8822b_ops.c:387 Hal_EfuseParseCustomerID
     regulatory: int         # [SRC] rtl8822b_ops.c:249 Hal_EfuseParseTxPowerInfo
     interface_sel: int      # [SRC] rtl8822b_ops.c:262 Hal_EfuseParseBoardType
+    usb_mode_switch: bool   # [SRC] rtl8822b_ops.c:576 Hal_ReadUsbModeSwitch, 0x06[7]
+    eeprom_vid: int         # [SRC] rtl8822b_ops.c:589 hal_read_usb_pid_vid
+    eeprom_pid: int         # [SRC] rtl8822b_ops.c:589 hal_read_usb_pid_vid
     bt_coexist_raw: bool    # [SRC] rtl8822b_ops.c:275 Hal_EfuseParseBTCoexistInfo
     bt_coexist: bool        # USB hal_spec disables runtime BT-coex before PHYDM board policy
     bt_ant_num: int         # 0 -> Ant_x1, 1 -> Ant_x2
@@ -193,6 +202,10 @@ def _scalar(log_map: bytes, off: int, default: int, valid: bool) -> int:
     return v if (valid and v != 0xFF) else default
 
 
+def _u16le(log_map: bytes, off: int) -> int:
+    return log_map[off] | (log_map[off + 1] << 8)
+
+
 def _mac_address(log_map: bytes, valid: bool) -> Optional[str]:
     mac = log_map[EEPROM_MAC_ADDR:EEPROM_MAC_ADDR + 6]
     if not valid or all(b == 0xFF for b in mac) or all(b == 0 for b in mac):
@@ -280,11 +293,12 @@ def read_efuse(t) -> Efuse8822b:
     [SRC] rtl8822b_ops.c:616."""
     val8 = t.read8(REG_SYS_EEPROM_CTRL)              # R 0x0A
     eeprom_or_efuse = bool(val8 & BIT_EERPOMSEL)
-    autoload_fail = not (val8 & BIT_AUTOLOAD_SUS)
 
     _switch_efuse_bank_wifi(t)
     phy_map = _read_hw_efuse(t, 0, EFUSE_SIZE_8822B)
     log_map = _eeprom_parser(phy_map)
+    eeprom_id_valid = _u16le(log_map, 0) == RTL_EEPROM_ID
+    autoload_fail = not eeprom_id_valid
 
     # Hal_EfuseParsePABias reads physical efuse 0x3D7/0x3D8 via rtw_efuse_access. The physical
     # map is already cached (valid) from the dump, so HALMAC's read_physical_efuse_map serves it
@@ -293,7 +307,7 @@ def read_efuse(t) -> Efuse8822b:
     _switch_efuse_bank_wifi(t)
     pa_bias = (phy_map[EFUSE_PA_BIAS], phy_map[EFUSE_PA_BIAS + 1])
 
-    valid = not autoload_fail
+    valid = eeprom_id_valid
     board_option = _board_option(log_map, valid)
     bt_coexist_raw, bt_coexist, bt_ant_num, bt_ant_path = _bt_info(log_map, valid, board_option)
     amp = _amplifier(log_map, valid)
@@ -305,6 +319,7 @@ def read_efuse(t) -> Efuse8822b:
     return Efuse8822b(
         phy_map=phy_map, log_map=log_map,
         autoload_fail=autoload_fail, eeprom_or_efuse=eeprom_or_efuse,
+        eeprom_id_valid=eeprom_id_valid,
         crystal_cap=_scalar(log_map, EEPROM_XTAL, EEPROM_DEFAULT_CRYSTAL_CAP, valid),
         rfe_type=rfe_type,
         thermal_meter=_scalar(log_map, EEPROM_THERMAL_METER, EEPROM_DEFAULT_THERMAL_METER, valid),
@@ -314,6 +329,9 @@ def read_efuse(t) -> Efuse8822b:
         customer_id=log_map[EEPROM_CUSTOM_ID] if valid else 0,
         regulatory=board_option & 0x07,
         interface_sel=(board_option & 0xE0) >> 5,
+        usb_mode_switch=bool(log_map[EEPROM_USB_MODE] & 0x80) if valid else False,
+        eeprom_vid=_u16le(log_map, EEPROM_VID) if valid else EEPROM_DEFAULT_VID,
+        eeprom_pid=_u16le(log_map, EEPROM_PID) if valid else EEPROM_DEFAULT_PID,
         bt_coexist_raw=bt_coexist_raw,
         bt_coexist=bt_coexist,
         bt_ant_num=bt_ant_num,

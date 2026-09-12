@@ -11,11 +11,16 @@ from wifit3.chips.rtl8822bu_dkms.constants import (
     EEPROM_COUNTRY_CODE,
     EEPROM_CUSTOM_ID,
     EEPROM_DEFAULT_CRYSTAL_CAP,
+    EEPROM_DEFAULT_PID,
     EEPROM_DEFAULT_THERMAL_METER,
+    EEPROM_DEFAULT_VID,
     EEPROM_MAC_ADDR,
+    EEPROM_PID,
     EEPROM_RF_BOARD_OPTION,
     EEPROM_RF_BT_SETTING,
     EEPROM_RFE_OPTION,
+    EEPROM_USB_MODE,
+    EEPROM_VID,
     EEPROM_SIZE_8822B,
     EEPROM_THERMAL_METER,
     EEPROM_VERSION,
@@ -30,9 +35,9 @@ from wifit3.chips.rtl8822bu_dkms.constants import (
 )
 
 
-def _logical(fields: dict[int, int] | None = None) -> bytes:
+def _logical(fields: dict[int, int] | None = None, *, valid_id: bool = True) -> bytes:
     data = bytearray(b"\xff" * EEPROM_SIZE_8822B)
-    data[0:2] = b"\x29\x81"
+    data[0:2] = b"\x29\x81" if valid_id else b"\x00\x00"
     if fields:
         for off, val in fields.items():
             data[off] = val
@@ -62,6 +67,11 @@ def test_scalar_board_bt_and_identity_fields(monkeypatch):
         EEPROM_CUSTOM_ID: 0xAB,
         EEPROM_RF_BOARD_OPTION: 0xE5,
         EEPROM_RF_BT_SETTING: 0x41,
+        EEPROM_USB_MODE: 0x80,
+        EEPROM_VID: 0x57,
+        EEPROM_VID + 1: 0x23,
+        EEPROM_PID: 0x15,
+        EEPROM_PID + 1: 0x01,
     }))
     logical[EEPROM_MAC_ADDR:EEPROM_MAC_ADDR + 6] = bytes.fromhex("001122334455")
 
@@ -74,6 +84,10 @@ def test_scalar_board_bt_and_identity_fields(monkeypatch):
     assert e.country_code == b"US"
     assert e.eeprom_version == 0x22
     assert e.customer_id == 0xAB
+    assert e.eeprom_id_valid is True
+    assert e.usb_mode_switch is True
+    assert e.eeprom_vid == 0x2357
+    assert e.eeprom_pid == 0x0115
     assert e.regulatory == 0x05
     assert e.interface_sel == 0x07
     assert e.bt_coexist is False
@@ -96,7 +110,7 @@ def test_usb_keeps_raw_bt_fuse_but_disables_effective_coex_policy(monkeypatch):
 
 def test_blank_or_invalid_board_option_disables_bt(monkeypatch):
     blank = _read(_logical({EEPROM_RF_BOARD_OPTION: 0xFF}), monkeypatch)
-    invalid = _read(_logical({EEPROM_RF_BOARD_OPTION: 0x20}), monkeypatch, autoload_ok=False)
+    invalid = _read(_logical({EEPROM_RF_BOARD_OPTION: 0x20}, valid_id=False), monkeypatch)
 
     assert blank.bt_coexist_raw is False
     assert blank.bt_coexist is False
@@ -104,6 +118,24 @@ def test_blank_or_invalid_board_option_disables_bt(monkeypatch):
     assert invalid.bt_coexist_raw is False
     assert invalid.bt_coexist is False
     assert invalid.interface_sel == 0
+
+
+def test_invalid_id_code_forces_vendor_defaults(monkeypatch):
+    e = _read(_logical({
+        EEPROM_XTAL: 0x2A,
+        EEPROM_THERMAL_METER: 0x19,
+        EEPROM_RFE_OPTION: 0x03,
+        EEPROM_USB_MODE: 0x80,
+    }, valid_id=False), monkeypatch)
+
+    assert e.eeprom_id_valid is False
+    assert e.autoload_fail is True
+    assert e.crystal_cap == EEPROM_DEFAULT_CRYSTAL_CAP
+    assert e.thermal_meter == EEPROM_DEFAULT_THERMAL_METER
+    assert e.rfe_type == 0
+    assert e.usb_mode_switch is False
+    assert e.eeprom_vid == EEPROM_DEFAULT_VID
+    assert e.eeprom_pid == EEPROM_DEFAULT_PID
 
 
 def test_external_pa_lna_types_feed_the_odm_board_type(monkeypatch):
@@ -134,7 +166,7 @@ def test_blank_or_invalid_scalars_take_vendor_defaults(monkeypatch):
         EEPROM_RFE_OPTION: 0xFF,
         EEPROM_VERSION: 0x7A,
         EEPROM_CUSTOM_ID: 0x7B,
-    }), monkeypatch, autoload_ok=False)
+    }, valid_id=False), monkeypatch)
 
     assert e.crystal_cap == EEPROM_DEFAULT_CRYSTAL_CAP
     assert e.thermal_meter == EEPROM_DEFAULT_THERMAL_METER

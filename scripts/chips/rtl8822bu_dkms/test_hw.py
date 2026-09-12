@@ -337,7 +337,9 @@ def main() -> int:
         _, e = bringup.cold_bringup(t)
         print("  EFUSE: "
               f"autoload_fail={int(e.autoload_fail)} rfe_type={e.rfe_type} crystal_cap=0x{e.crystal_cap:02x} "
-              f"thermal=0x{e.thermal_meter:02x} regulatory={e.regulatory} interface={e.interface_sel} "
+              f"thermal=0x{e.thermal_meter:02x} id_valid={int(e.eeprom_id_valid)} "
+              f"usb_switch={int(e.usb_mode_switch)} eeprom_vidpid={e.eeprom_vid:04x}:{e.eeprom_pid:04x} "
+              f"regulatory={e.regulatory} interface={e.interface_sel} "
               f"bt_raw={int(e.bt_coexist_raw)} bt_coexist={int(e.bt_coexist)} "
               f"bt_ant={2 if e.bt_ant_num else 1} "
               f"bt_path={'B' if e.bt_ant_path else 'A'} board_type=0x{e.board_type:02x} "

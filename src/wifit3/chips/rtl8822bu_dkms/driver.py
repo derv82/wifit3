@@ -253,9 +253,11 @@ class Rtl8822buDkmsDriver(Driver):
         untested = (e.rfe_type, info.chip_ver) not in _HARDWARE_VERIFIED_RFE_CUTS
         logger.info(
             "RTL8822BU board: rfe_type=%d cut=%d rf=2T2R crystal_cap=0x%02x thermal=0x%02x "
-            "regulatory=%d interface=%d bt_raw=%d bt_coexist=%d bt_ant=%d bt_path=%s board_type=0x%02x "
+            "id_valid=%d usb_switch=%d eeprom_vidpid=%04x:%04x regulatory=%d interface=%d "
+            "bt_raw=%d bt_coexist=%d bt_ant=%d bt_path=%s board_type=0x%02x "
             "pa_lna=2g:%d/%d 5g:%d/%d type=gpa%d/apa%d/glna%d/alna%d mac=%s%s",
-            e.rfe_type, info.chip_ver, e.crystal_cap, e.thermal_meter, e.regulatory,
+            e.rfe_type, info.chip_ver, e.crystal_cap, e.thermal_meter, int(e.eeprom_id_valid),
+            int(e.usb_mode_switch), e.eeprom_vid, e.eeprom_pid, e.regulatory,
             e.interface_sel, int(e.bt_coexist_raw), int(e.bt_coexist), 2 if e.bt_ant_num else 1,
             "B" if e.bt_ant_path else "A", e.board_type, int(e.external_pa_2g),
             int(e.external_lna_2g), int(e.external_pa_5g), int(e.external_lna_5g), e.type_gpa,
