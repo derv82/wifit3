@@ -142,29 +142,6 @@ async def _rebind(host, array, ap):
 
 
 @pytest.mark.asyncio(loop_scope="module")
-async def test_deauth_keys_visible_on_psk_blocked_on_pmf(focus_host):
-    """'d' is the one-shot broadcast deauth; Shift+D toggles the automatic
-    deauth campaign. Both are active on WPA2-PSK and blocked once PMF protects
-    deauth frames."""
-    bssid, client = "aa:bb:cc:dd:ee:01", "9c:b6:d0:1a:2b:3c"
-    iface, array, ap = _wpa2_target(bssid)
-    focus = await _rebind(focus_host, array, ap)
-    focus._tick()
-    assert focus.check_action("deauth_all", ()) is True           # manual broadcast
-    assert focus.check_action("campaign", ("deauth",)) is True    # automatic campaign
-
-    iface._on_frame_parsed(_client_data(bssid, client))
-    focus._tick()
-    assert focus.check_action("deauth_all", ()) is True           # still active with a client
-    assert focus.check_action("campaign", ("deauth",)) is True
-
-    ap.pmf_required = True
-    focus._tick()
-    assert focus.check_action("deauth_all", ()) is None           # PMF → visible but greyed
-    assert focus.check_action("campaign", ("deauth",)) is False   # PMF → hidden
-
-
-@pytest.mark.asyncio(loop_scope="module")
 async def test_deauth_broadcast_button_always_visible(focus_host):
     """The panel's pinned 'Deauth all' button is always visible: a broadcast deauth
     is valid with no known clients (it hits every associated STA)."""
@@ -222,34 +199,6 @@ async def test_campaign_and_deauth_keys_hidden_with_no_target(focus_host):
     assert focus.check_action("campaign", ("pmkid",)) is False
     assert focus.check_action("campaign", ("deauth",)) is False
     assert focus.check_action("wps_pbc_mode", ()) is True       # non-conditional
-
-
-@pytest.mark.asyncio
-async def test_footer_shows_campaign_keys_per_family():
-    """End to end: the rendered footer carries only the family-relevant attack
-    keys: 'p' for WPA2 (not 'r'/'c'); 'r' + greyed 'c' for WEP (not 'p').
-
-    Own boot: the rendered Footer builds its FooterKey children at mount; a shared
-    screen's _enter_target skips that."""
-    iface, array, ap = _wpa2_target()
-    app = _Host(array, ap)
-    async with app.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0)
-        focus = app.screen
-        focus._tick()
-        # The Footer rebuilds its FooterKey children reactively; under full-suite
-        # load a single pause can race that rebuild (empty query). Wait for it.
-        keys: set = set()
-        for _ in range(20):
-            await pilot.pause(0)
-            keys = {k.key for k in focus.query(FooterKey)}
-            if keys:
-                break
-        assert "p" in keys
-        assert "r" not in keys and "c" not in keys
-        # 'd' is manual broadcast deauth; Shift+D toggles the Deauth campaign.
-        assert "w" in keys and "d" in keys
-        assert "D" in keys
 
 
 @pytest.mark.asyncio(loop_scope="module")

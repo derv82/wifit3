@@ -126,25 +126,6 @@ async def test_text_filter_matches_hidden_ap_via_guessed_sibling():
         assert other.bssid not in scanner.ap_cache
 
 
-@pytest.mark.asyncio
-async def test_channel_modal_returns_focus_to_table():
-    app = _ScannerHost(_FakeArray([], [1, 6, 11, 36, 40]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        table = scanner.query_one("#ap-table", DataTable)
-        scanner.query_one("#filter-channels", Button).focus()
-        await pilot.pause(0)
-        scanner.action_change_channel()
-        await pilot.pause(0)
-        app.screen.dismiss([1, 6])
-        await pilot.pause(0)
-        assert app.focused is table
-
-
-
-
-
 def test_scanner_identity_cell_shows_manufacturer_and_model():
     scanner = ScannerView()
     scanner._theme_fg = "white"

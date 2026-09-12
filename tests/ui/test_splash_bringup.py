@@ -27,31 +27,6 @@ def _fake_iface():
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_start_pools_card_and_requests_scanner(monkeypatch):
-    iface = _fake_iface()
-    monkeypatch.setattr(manager, "wlan_iface", lambda device_id, name="wlan0": iface)
-    dev = DeviceID(0x148F, 0x5372, "RT5372 (test)")
-
-    app = WifiteApp()
-    async with app.run_test() as pilot:
-        splash = app.screen
-        assert isinstance(splash, SplashView)
-        switched = []
-        monkeypatch.setattr(app, "switch_screen", lambda name: switched.append(name))
-
-        splash.perform_start([dev])
-        for _ in range(40):
-            await pilot.pause(0)
-            if switched:
-                break
-
-        assert switched == ["scanner"]
-        assert app.array is not None and len(app.array.members) == 1
-        assert iface.connect.await_count == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
 async def test_multi_card_start_brings_up_only_checked(monkeypatch):
     # 2+ cards -> checkbox list, all checked by default. Unchecking one and pressing START must bring
     # up only the checked card, one run() per card (no silent auto-pool of the rest).

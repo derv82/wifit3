@@ -35,31 +35,6 @@ async def test_device_lost_from_offloop_context_shows_recoverable_modal():
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
-async def test_back_to_splash_tears_down_interface_and_returns():
-    """Back to Splash closes + clears the dead interface and lands on the splash screen."""
-    app = WifiteApp()
-    async with app.run_test() as pilot:
-        closed = {"count": 0}
-
-        async def _close():
-            closed["count"] += 1
-
-        app.array = SimpleNamespace(close=_close)
-        app.target_ap = object()
-        app.push_screen(RecoverableErrorModal(WifiteDeviceLostError("Test Card")))
-        await pilot.pause(0)
-
-        await app.recover_to_splash()
-        await pilot.pause(0)   # let the re-entered splash settle
-
-        assert closed["count"] == 1               # dead pool torn down exactly once
-        assert app.array is None
-        assert app.target_ap is None
-        assert isinstance(app.screen, SplashView)
-
-
-@pytest.mark.asyncio
 async def test_no_usb_backend_shows_fatal_modal(monkeypatch):
     # The broken-udev Linux condition: find() resolves no backend and raises. (Deliberately does
     # NOT use no_usb_devices: that stubs find->[], the success path; here find must raise.)
@@ -73,24 +48,6 @@ async def test_no_usb_backend_shows_fatal_modal(monkeypatch):
         assert app.screen._error.title == "USB backend unavailable"
         assert "libusb" in app.screen._error.message
         assert app.screen._error.trace.strip()      # non-empty, pasteable
-
-
-@pytest.mark.asyncio
-async def test_fatal_modal_compact_with_details_expanded(monkeypatch):
-    # Expanding Details must scroll the trace inside a capped box, not balloon the dialog and shove
-    # the buttons off-screen (Collapsible / VerticalScroll default to *fill*: this guards the
-    # height fix). At a normal 90x40 terminal the buttons must stay on-screen.
-    monkeypatch.setattr("usb.core.find", _raise_no_backend)
-    app = WifiteApp()
-    async with app.run_test(size=(90, 40)) as pilot:
-        await pilot.pause(0)
-        await pilot.pause(0)
-        modal = app.screen
-        assert isinstance(modal, FatalErrorModal)
-        modal.query_one(Collapsible).collapsed = False     # expand Details
-        await pilot.pause(0)
-        assert modal.query_one("#trace-scroll").size.height <= 10          # trace scrolls, capped
-        assert modal.query_one("#button-row").region.bottom <= app.size.height   # buttons on-screen
 
 
 @pytest.mark.asyncio

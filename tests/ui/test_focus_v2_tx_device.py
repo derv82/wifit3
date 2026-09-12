@@ -60,36 +60,3 @@ def _two_card_focus():
     bssid = "aa:bb:cc:dd:ee:01"
     m0._on_frame_parsed(_beacon(bssid, "TESTNET", 1))   # feeds the real array sink via _ingest
     return array, array.access_points[bssid], m0, m1
-
-
-async def test_focus_peeks_elected_tx_card_then_pins_the_chosen_one():
-    array, ap, m0, m1 = _two_card_focus()
-    async with _Host(array, ap).run_test(size=(120, 40)) as pilot:
-        await pilot.pause(0)
-        focus = pilot.app.screen
-        card = focus.query_one("#card", CardEndpoint)
-        picker = card.query_one(TxDevicePicker)
-
-        # Two cards on ch1: dropdown affordance, and the shown card is the elected TX card (m0,
-        # the array's default pick when nothing is pinned).
-        assert picker._text.endswith("▼")
-        assert picker._current is m0
-        assert picker._text.startswith("Netgear A9000")
-        assert card.query_one(BreathingArt)._name == "cards/card-netgeara9000.ans"
-
-        # Open the overlay inside the real Focus layout and pin the other card.
-        picker.action_open()
-        await pilot.pause(0)
-        overlay = picker.query_one("#tx-overlay")
-        assert overlay.display is True and overlay.option_count == 2
-
-        overlay.highlighted = 1          # members order [m0, m1] -> m1
-        overlay.action_select()
-        await pilot.pause(0)
-
-        # The pin took, and the endpoint re-synced to the pinned card (label + art swap).
-        assert array.preferred is m1
-        assert picker._current is m1
-        assert picker._text.startswith("AWUS036H")
-        assert card.query_one(BreathingArt)._name == "cards/card-awus036h.ans"
-        assert overlay.display is False

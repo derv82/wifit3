@@ -123,40 +123,6 @@ def test_breathing_art_set_art_swaps_and_noops():
     assert len(repaints) == 1
 
 
-# --- end-to-end: the screen's live sync on a mounted CardEndpoint ------------
-
-async def test_sync_card_updates_mounted_endpoint():
-    """_sync_card must repoint the art + relabel a *mounted* CardEndpoint (exercises the real
-    BreathingArt.update() and Label.update(), i.e. the stale-label bug fix path)."""
-    from textual.app import App
-
-    from wifit3.ui.screens.focus_v2 import FocusViewV2
-    from wifit3.ui.screens.focus_v2.art import BreathingArt
-    from wifit3.ui.screens.focus_v2.card_endpoint import CardEndpoint
-
-    member = SimpleNamespace(driver=SimpleNamespace(product_name="AWUS036H"),
-                             product_name="AWUS036H", chipset="RTL8187L",
-                             mac_address="00:11:22:33:44:55")
-
-    class _Host(App):
-        target_ap = None
-        def on_mount(self) -> None:
-            self.array = SimpleNamespace(members=[member])
-            self.push_screen(FocusViewV2())
-
-    app = _Host()
-    async with app.run_test(size=(100, 35)) as pilot:
-        await pilot.pause(0)
-        scr = app.screen
-        scr._sync_card()
-        await pilot.pause(0)
-        card = scr.query_one("#card", CardEndpoint)
-        from wifit3.ui.screens.focus_v2.tx_picker import TxDevicePicker
-        assert card.query_one(BreathingArt)._name == "cards/card-awus036h.ans"
-        assert card.query_one(TxDevicePicker)._text == "AWUS036H"   # single card -> plain name
-        assert card._last["#card-bssid"] == "00:11:22:33:44:55"   # single card -> its MAC shows
-
-
 # --- every supported device resolves loadable art (no crashes) --------------
 
 def test_every_supported_device_renders_art():

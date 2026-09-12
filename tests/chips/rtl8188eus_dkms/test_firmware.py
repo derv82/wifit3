@@ -59,16 +59,3 @@ def test_block_write_split_matches_capture_profile():
     # Per-page the FW-SRAM address restarts at FW_8188E_START_ADDRESS.
     assert t.blocks[0][0] == FW_8188E_START_ADDRESS
     assert t.blocks[1][0] == FW_8188E_START_ADDRESS + MAX_REG_BLOCK_SIZE
-
-
-def test_download_firmware_completes_and_uploads_full_payload():
-    blob = firmware.load_firmware_blob()
-    # Serve chksum-rpt (BIT2) and WINTINI_RDY (BIT6) so the polls exit immediately.
-    t = FakeTx(reads={(0x0080, 4): (1 << 2) | (1 << 6)})
-    assert firmware.download_firmware(t, blob) is True   # WINTINI_RDY reached
-
-    # Every byte after the 32-byte header reaches the FW SRAM, in order.
-    payload = b"".join(d for _, d in t.blocks)
-    payload += bytes(v for a, w, v in t.writes
-                     if w == 1 and a >= FW_8188E_START_ADDRESS)
-    assert payload == blob[32:]

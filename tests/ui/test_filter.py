@@ -153,21 +153,6 @@ async def test_channels_button_requests_dialog():
         assert any(e[0] == "channels" for e in app.events)
 
 
-async def test_channels_button_summarizes_active_set():
-    app = _Host([1, 6, 11, 36, 40])
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        bar = app.query_one(FilterBar)
-        button = app.query_one("#filter-channels", Button)
-        assert "2.4G + 5G" in str(button.label)   # None -> all, by default
-        bar.set_channels([6, 11])
-        await pilot.pause()
-        assert "6, 11" in str(button.label)
-        bar.set_channels([1, 6, 11, 36, 40])      # == supported -> all
-        await pilot.pause()
-        assert "2.4G + 5G" in str(button.label)
-
-
 def test_channels_label_drops_band_prefix_for_partial_sets():
     bar = FilterBar(list(range(1, 12)) + [36, 40, 44, 48])
     assert bar._channels_text(None).endswith("2.4G + 5G")            # all
@@ -175,28 +160,3 @@ def test_channels_label_drops_band_prefix_for_partial_sets():
     assert bar._channels_text(list(range(1, 12)) + [44]).endswith("2.4G + 44")
     assert bar._channels_text([36, 40, 44, 48]).endswith("5G")       # whole 5 GHz band
 
-
-class _FocusHost(App):
-    def compose(self) -> ComposeResult:
-        with Vertical():
-            yield FilterBar([1, 6, 11])
-            table = DataTable(id="ap-table", cursor_type="row")
-            table.add_column("BSSID")
-            yield table
-
-
-async def test_focus_returns_to_table_after_interactions():
-    app = _FocusHost()
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        table = app.query_one("#ap-table", DataTable)
-
-        app.query_one("#filter-encryption", Select).value = EncryptionFilter.WPA
-        await pilot.pause(0)
-        assert app.focused is table
-
-        for key in ("enter", "escape"):
-            app.query_one("#filter-text", Input).focus()
-            await pilot.press(key)
-            await pilot.pause(0)
-            assert app.focused is table

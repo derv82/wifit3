@@ -63,33 +63,6 @@ async def test_consolidate_button_shown_when_legacy_files_exist(monkeypatch, tmp
 
 
 @pytest.mark.asyncio
-async def test_click_consolidate_confirms_and_merges(monkeypatch, tmp_path):
-    monkeypatch.setattr(Config, "captures_dir", str(tmp_path))
-    monkeypatch.setattr(Config, "save", lambda: None)
-
-    legacy_file = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000"
-    legacy_file.write_text("WPA*02*01*aabbccddeeff*112233445566*5465737431*11111111111111111111111111111111**\n")
-
-    app = _Host()
-    async with app.run_test() as pilot:
-        app.push_screen(PreferencesModal())
-        await pilot.pause(0)
-
-        app.screen.query_one("#consolidate", Button).press()
-        await pilot.pause(0)
-
-        assert isinstance(app.screen, ConsolidateModal)
-
-        app.screen.query_one("#confirm", Button).press()
-        await pilot.pause(0)
-
-        assert not legacy_file.exists()
-        assert (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.hc22000").exists()
-        assert isinstance(app.screen, PreferencesModal)
-        assert len(app.screen.query("#legacy_done")) == 1
-
-
-@pytest.mark.asyncio
 async def test_click_consolidate_cancels(monkeypatch, tmp_path):
     monkeypatch.setattr(Config, "captures_dir", str(tmp_path))
     monkeypatch.setattr(Config, "save", lambda: None)

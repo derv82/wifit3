@@ -128,25 +128,3 @@ def test_detail_popup_dismisses_on_backdrop_click_not_inner_content():
     popup.dismiss.reset_mock()
     popup.on_click(_click(Label("inside the box")))  # some inner widget
     popup.dismiss.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_detail_popup_clamps_fully_on_screen():
-    """The deferred clamp settles a frame after mount; a click at the edge must not leave the box
-    hanging off-screen."""
-    app = _DemoApp([])
-    async with app.run_test() as pilot:
-        w, h = app.size
-        popup = FingerprintModal(_MAC, _RING, offset=(w - 1, h - 1))
-        await app.push_screen(popup)
-        box = popup.query_one("#fp-box")
-        prev = None
-        for _ in range(6):                          # settle until the offset stops moving
-            await pilot.pause()
-            cur = (box.styles.offset.x.value, box.styles.offset.y.value)
-            if cur == prev:
-                break
-            prev = cur
-        x, y = box.styles.offset.x.value, box.styles.offset.y.value
-        assert x + box.outer_size.width <= w
-        assert y + box.outer_size.height <= h

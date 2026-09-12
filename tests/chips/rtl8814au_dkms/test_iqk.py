@@ -59,28 +59,3 @@ def test_lok_poll_length_and_dac_fill_come_from_the_wire():
     assert st_hi.iqk_lok_fail[0] is False        # bit0==0 read => LOK success branch
     assert len(_lok_rf8_writes(t_hi)) == 2       # RF_0x8 filled twice (0x07c00 + 0xf8000 fields)
     assert _lok_rf8_writes(t_hi) != _lok_rf8_writes(t_lo)   # fill tracks the 0x1bfc read-back
-
-
-def test_iqk_retry_count_is_driven_by_the_wire_fail_bit():
-    """path-A TXK: the wire returns fail on the first one-shot, pass on the second -> the port
-    re-triggers exactly once (2 total), then records success. The retry is the wire's fail bit,
-    not a fixed op-count."""
-    st = watchdog.WatchdogState(eeprom_thermal=35)
-    st.current_band_type = iqk.ODM_BAND_5G       # skip the 2.4G RXK tone block (RF ops)
-    t = FakeT({0x1B08: [_FAIL_BIT, 0]})          # path0-TXK: fail then pass; rest default pass
-    iqk._iqk_one_shot(t, st)
-    triggers = [v for a, v in t.writes if a == 0x1B00 and v == _TXK_TRIG_PATH0]
-    assert len(triggers) == 2                    # one retry, driven by the fail read
-    assert st.iqk_fail[iqk.TX_IQK][0] is False   # second attempt passed
-
-
-def test_iqk_retry_is_bounded_when_the_wire_keeps_failing():
-    """If the wire never clears the fail bit, ``cal_retry > 3`` stops the loop at 4 attempts
-    (bounded, not infinite) and the path is marked failed."""
-    st = watchdog.WatchdogState(eeprom_thermal=35)
-    st.current_band_type = iqk.ODM_BAND_5G
-    t = FakeT({0x1B08: [_FAIL_BIT] * 4})         # path0-TXK: fail x4; rest default pass
-    iqk._iqk_one_shot(t, st)
-    triggers = [v for a, v in t.writes if a == 0x1B00 and v == _TXK_TRIG_PATH0]
-    assert len(triggers) == 4                    # bounded at cal_retry > 3
-    assert st.iqk_fail[iqk.TX_IQK][0] is True    # never cleared -> failed

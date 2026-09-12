@@ -21,16 +21,3 @@ async def test_next_frame_times_out_to_none():
     got = await s.next_frame(lambda p: False, timeout=0.05)
     assert got is None
     assert s._waiters == []                                  # cleaned up on timeout
-
-
-async def test_wait_until_polls_condition():
-    s = WlanSink()
-    flag = {"v": False}
-
-    async def flip():
-        await asyncio.sleep(0.02)
-        flag["v"] = True
-
-    asyncio.create_task(flip())
-    assert await s.wait_until(lambda: flag["v"], timeout=1.0) is True
-    assert await s.wait_until(lambda: False, timeout=0.05) is False

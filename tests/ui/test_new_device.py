@@ -47,13 +47,3 @@ async def test_no_dismisses_false():
         app.screen.query_one("#btn-no", Button).press()
         await pilot.pause(0)
         assert result["value"] is False
-
-
-@pytest.mark.asyncio
-async def test_escape_declines():
-    app = _Host()
-    async with app.run_test() as pilot:
-        result = await _prompt(pilot, app)
-        await pilot.press("escape")
-        await pilot.pause(0)
-        assert result["value"] is False

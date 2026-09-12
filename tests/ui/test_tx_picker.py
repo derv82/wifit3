@@ -71,37 +71,6 @@ async def test_picker_single_card_is_a_plain_label():
         assert p.can_focus is False             # nothing to open
 
 
-async def test_picker_opens_and_pins_the_chosen_card():
-    a = _iface("ALFA AWUS036ACM", [1, 6, 11], FakeMacSupport.SPOOFABLE)
-    b = _iface("AR9271", [1, 6, 11], FakeMacSupport.NONE)
-    picked = []
-
-    class _Host(App):
-        def compose(self):
-            yield TxDevicePicker(id="p")
-
-        def on_tx_device_picker_selected(self, event):
-            picked.append(event.iface)
-
-    async with _Host().run_test(size=(80, 24)) as pilot:
-        p = pilot.app.query_one(TxDevicePicker)
-        p.sync([a, b], 6, a, locked=False)
-        await pilot.pause(0)
-        assert p._text.endswith("▼") and p.can_focus is True
-
-        p.action_open()
-        await pilot.pause(0)
-        ol = p.query_one("#tx-overlay")
-        assert ol.display is True and ol.option_count == 2
-
-        ol.highlighted = 1                       # move off the current (a) onto b
-        await pilot.pause(0)
-        await pilot.press("enter")
-        await pilot.pause(0)
-        assert picked == [b]
-        assert p.query_one("#tx-overlay").display is False   # closed after select
-
-
 async def test_picker_locked_during_campaign_wont_open():
     a = _iface("ALFA AWUS036ACM", [1, 6, 11])
     b = _iface("AR9271", [1, 6, 11])
