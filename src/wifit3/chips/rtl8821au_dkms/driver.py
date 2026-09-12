@@ -116,14 +116,24 @@ class Rtl8821auDkmsDriver(Driver):
         self._bb_swing_5g = params.bb_swing_5g
         self._ext_lna_2g = params.ext_lna_2g
         self._jaguar_params = efuse.build_jaguar_params(params)
-        logger.info("RTL8821AU efuse: crystal_cap=0x%02x mac=%s cck_base[0]=0x%02x "
-                    "bb_swing 2g=0x%03x 5g=0x%03x", params.crystal_cap,
-                    params.mac_address or "<blank>", params.tx_power.cck_base[0],
-                    params.bb_swing_2g, params.bb_swing_5g)
-        # Detected board config — the runtime-fuse branches that make this driver card-
-        # agnostic (ext-LNA RFE pinmux + phy_cond board_type). Reference reads 0/0x00.
-        logger.info("RTL8821AU config: ext_lna_2g=%d bt_coexist=%d board_type=0x%02x%s",
-                    params.ext_lna_2g, params.bt_coexist, params.board_type,
+        logger.info("RTL8821AU efuse: valid_id=%d autoload_fail=%d ver=0x%02x crystal=0x%02x "
+                    "thermal=0x%02x mac=%s cck_base[0]=0x%02x bb_swing 2g=0x%03x 5g=0x%03x",
+                    params.eeprom_id_valid, params.autoload_fail, params.eeprom_version,
+                    params.crystal_cap, params.thermal_meter, params.mac_address or "<blank>",
+                    params.tx_power.cck_base[0], params.bb_swing_2g, params.bb_swing_5g)
+        logger.info("RTL8821AU ids: vid=0x%04x pid=0x%04x customer=0x%02x/0x%02x resolved=%d "
+                    "regulatory=%d iface=%d chplan=0x%02x country=%s remote_wakeup=%d usb_switch=%d",
+                    params.eeprom_vid, params.eeprom_pid, params.eeprom_customer_id,
+                    params.eeprom_subcustomer_id, params.customer_id, params.regulatory,
+                    params.interface_sel, params.channel_plan, params.country_code or "--",
+                    params.remote_wakeup, params.usb_mode_switch)
+        logger.info("RTL8821AU board: pa/lna types 2g=0x%02x/0x%02x 5g=0x%02x/0x%02x "
+                    "ext_pa_lna 2g=%d/%d 5g=%d/%d bt=%d ant=%d board_type=0x%02x "
+                    "hidden_usb antenna=%d wmode=%d disable_11ac=%d%s",
+                    params.pa_type_2g, params.lna_type_2g, params.pa_type_5g, params.lna_type_5g,
+                    params.external_pa_2g, params.external_lna_2g, params.external_pa_5g,
+                    params.external_lna_5g, params.bt_coexist, params.bt_ant_num, params.board_type,
+                    params.usb_type_antenna, params.usb_type_wmode, params.usb_type_disable_11ac,
                     "" if params.board_type == 0 else " (untested variant: external PA/LNA/BT board)")
 
         if progress_cb:
