@@ -230,7 +230,8 @@ def main() -> int:
             params = efuse.read_chip_params(t)
             print(f"  crystal_cap=0x{params.crystal_cap:02x} mac={params.mac_address or '<blank>'} "
                   f"bb_swing=0x{params.bb_swing_2g:03x}/0x{params.bb_swing_5g:03x} "
-                  f"ext_lna_2g={int(params.ext_lna_2g)} board_type=0x{params.board_type:02x}")
+                  f"ext_lna_2g={int(params.ext_lna_2g)} bt_coexist={int(params.bt_coexist)} "
+                  f"board_type=0x{params.board_type:02x}")
 
         fw = firmware.load_firmware_blob()
         print(f"[*] FW blob {len(fw)} bytes; running bring_up()...")

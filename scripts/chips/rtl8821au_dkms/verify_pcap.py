@@ -107,7 +107,8 @@ def run(cap: str | None = None) -> int:
     print(f"FW blob: {len(fw)} bytes (body {len(fw) - 32})")
 
     p = _read_efuse_params(pcap, dev)
-    print(f"Efuse: crystal_cap=0x{p.crystal_cap:02x} (TX-power base cck[0]=0x{p.tx_power.cck_base[0]:02x} "
+    print(f"Efuse: crystal_cap=0x{p.crystal_cap:02x} bt_coexist={int(p.bt_coexist)} "
+          f"(TX-power base cck[0]=0x{p.tx_power.cck_base[0]:02x} "
           f"bw40[0]=0x{p.tx_power.bw40_base[0]:02x})")
 
     ops = rp.extract_ops(pcap, dev, WINDOW, start_addr=START_ADDR)

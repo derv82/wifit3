@@ -122,9 +122,9 @@ class Rtl8821auDkmsDriver(Driver):
                     params.bb_swing_2g, params.bb_swing_5g)
         # Detected board config — the runtime-fuse branches that make this driver card-
         # agnostic (ext-LNA RFE pinmux + phy_cond board_type). Reference reads 0/0x00.
-        logger.info("RTL8821AU config: ext_lna_2g=%d board_type=0x%02x%s",
-                    params.ext_lna_2g, params.board_type,
-                    "" if params.board_type == 0 else " (untested variant: external PA/LNA board)")
+        logger.info("RTL8821AU config: ext_lna_2g=%d bt_coexist=%d board_type=0x%02x%s",
+                    params.ext_lna_2g, params.bt_coexist, params.board_type,
+                    "" if params.board_type == 0 else " (untested variant: external PA/LNA/BT board)")
 
         if progress_cb:
             progress_cb(0.2, "Uploading firmware")

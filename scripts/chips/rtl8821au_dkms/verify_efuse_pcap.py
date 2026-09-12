@@ -43,7 +43,7 @@ def main() -> int:
     print(f"\nPASS: reproduced {t.i} probe ops byte-for-byte ({len(ops) - t.i} remain).")
     print(f"  crystal_cap = 0x{p.crystal_cap:02x}  (expect 0x27)")
     print(f"  mac_address = {p.mac_address or '<blank>'}")
-    print(f"  chip_version = 0x{p.chip_version:08x}  autoload_fail={p.autoload_fail}")
+    print(f"  chip_version = 0x{p.chip_version:08x}  autoload_fail={p.autoload_fail}  bt_coexist={p.bt_coexist}")
     tp = p.tx_power
     print(f"  2.4G CCK base  = {[hex(x) for x in tp.cck_base]}")
     print(f"  2.4G BW40 base = {[hex(x) for x in tp.bw40_base]}")

@@ -50,9 +50,18 @@ def test_ext_flags_full_decode():
     assert flags == (True, True, True, True)   # pa&0x10, lna2g&0x08, pa&0x01, lna5g&0x08
 
 
+def test_bt_coexist_policy_bit():
+    m = bytearray(_map())
+    m[efuse.C.EEPROM_RF_BOARD_OPTION_8821AU] = 0x20
+
+    assert efuse._parse_bt_coexist(bytes(m), efuse.C.BIT_BT_FUNC_EN, autoload_fail=False) is True
+    assert efuse._parse_bt_coexist(bytes(m), 0, autoload_fail=False) is False
+    assert efuse._parse_bt_coexist(bytes(m), efuse.C.BIT_BT_FUNC_EN, autoload_fail=True) is False
+
+
 def test_board_type_bits():
-    bt = efuse._parse_board_type((True, True, True, True))
-    assert bt == (efuse.ODM_BOARD_EXT_PA_2G | efuse.ODM_BOARD_EXT_LNA_2G
+    bt = efuse._parse_board_type((True, True, True, True), bt_coexist=True)
+    assert bt == (efuse.ODM_BOARD_BT | efuse.ODM_BOARD_EXT_PA_2G | efuse.ODM_BOARD_EXT_LNA_2G
                   | efuse.ODM_BOARD_EXT_PA_5G | efuse.ODM_BOARD_EXT_LNA_5G)
     assert efuse._parse_board_type((False, True, False, False)) == efuse.ODM_BOARD_EXT_LNA_2G
 
