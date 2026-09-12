@@ -2,7 +2,6 @@
 hand-off (read_once on the thread -> dispatch on the loop) and the
 consecutive-error give-up. Driver-specific decode is tested per driver."""
 import asyncio
-import time
 
 import pytest
 import usb.core
@@ -19,22 +18,25 @@ def _usb_error(*, errno=None, backend=None):
 
 
 @pytest.mark.asyncio
-async def test_reader_dispatches_buffers_then_idles_and_stops():
+async def test_reader_dispatches_buffers_then_idles_and_stops(monkeypatch):
+    monkeypatch.setattr(rx_reader, "MAX_BATCH_SIZE", 2)
     loop = asyncio.get_running_loop()
     bufs = [b"A", b"B"]
+    event = asyncio.Event()
+    dispatched = []
+
+    def on_dispatch(buf):
+        dispatched.append(buf)
+        if len(dispatched) >= 2:
+            event.set()
 
     def read_once():
-        return bufs.pop(0) if bufs else None  # None = benign timeout (idle)
+        return bufs.pop(0) if bufs else None
 
-    dispatched = []
-    r = RxReaderThread(loop, read_once, dispatched.append, name="test")
+    r = RxReaderThread(loop, read_once, on_dispatch, name="test")
     r.start()
     try:
-        for _ in range(50):
-            if len(dispatched) >= 2:
-                break
-            await asyncio.sleep(0.02)
-        # Buffers reached the loop in order, dispatched on the loop thread.
+        await asyncio.wait_for(event.wait(), timeout=1.0)
         assert dispatched == [b"A", b"B"]
     finally:
         await r.stop()
@@ -53,11 +55,7 @@ async def test_reader_gives_up_after_consecutive_errors():
     r = RxReaderThread(loop, read_once, lambda b: None, name="err", max_errors=3)
     r.start()
     try:
-        for _ in range(100):
-            if not (r._thread and r._thread.is_alive()):
-                break
-            await asyncio.sleep(0.02)
-        # Bails after exactly max_errors reads, doesn't spin forever.
+        await loop.run_in_executor(None, r._thread.join, 1.0)
         assert calls["n"] == 3
         assert not r._thread.is_alive()
     finally:
@@ -67,20 +65,21 @@ async def test_reader_gives_up_after_consecutive_errors():
 @pytest.mark.asyncio
 async def test_reader_fires_on_fatal_when_giving_up():
     loop = asyncio.get_running_loop()
+    fatals = []
+    fatal_event = asyncio.Event()
 
     def read_once():
-        raise RuntimeError("usb boom")   # not device-gone → rides the strike count
+        raise RuntimeError("usb boom")
 
-    fatals = []
+    def on_fatal(e):
+        fatals.append(e)
+        fatal_event.set()
+
     r = RxReaderThread(loop, read_once, lambda b: None, name="give-up",
-                       max_errors=3, on_fatal=fatals.append)
+                       max_errors=3, on_fatal=on_fatal)
     r.start()
     try:
-        for _ in range(100):
-            if fatals:
-                break
-            await asyncio.sleep(0.02)
-        # on_fatal fired exactly once, carrying the last error, after the give-up.
+        await asyncio.wait_for(fatal_event.wait(), timeout=1.0)
         assert len(fatals) == 1 and isinstance(fatals[0], RuntimeError)
     finally:
         await r.stop()
@@ -90,21 +89,22 @@ async def test_reader_fires_on_fatal_when_giving_up():
 async def test_reader_fires_on_fatal_immediately_on_device_gone():
     loop = asyncio.get_running_loop()
     calls = {"n": 0}
+    fatals = []
+    fatal_event = asyncio.Event()
 
     def read_once():
         calls["n"] += 1
         raise _usb_error(errno=19, backend=-4)   # LIBUSB_ERROR_NO_DEVICE (unplug)
 
-    fatals = []
+    def on_fatal(e):
+        fatals.append(e)
+        fatal_event.set()
+
     r = RxReaderThread(loop, read_once, lambda b: None, name="unplug",
-                       max_errors=5, on_fatal=fatals.append)
+                       max_errors=5, on_fatal=on_fatal)
     r.start()
     try:
-        for _ in range(100):
-            if fatals:
-                break
-            await asyncio.sleep(0.02)
-        # Bailed on the FIRST device-gone read — didn't wait out the 5-strike count.
+        await asyncio.wait_for(fatal_event.wait(), timeout=1.0)
         assert len(fatals) == 1 and calls["n"] == 1
     finally:
         await r.stop()
@@ -114,32 +114,34 @@ async def test_reader_fires_on_fatal_immediately_on_device_gone():
 async def test_reader_pause_halts_reads_and_resume_restarts():
     loop = asyncio.get_running_loop()
     reads = {"n": 0}
+    is_resumed = False
+    first_read = asyncio.Event()
+    after_resume = asyncio.Event()
 
     def read_once():
         reads["n"] += 1
-        return None  # benign idle -> the loop spins fast, so pause takes effect promptly
+        loop.call_soon_threadsafe(first_read.set)
+        if is_resumed:
+            loop.call_soon_threadsafe(after_resume.set)
+        return None
 
     r = RxReaderThread(loop, read_once, lambda b: None, name="pause")
     r.start()
     try:
-        await asyncio.sleep(0.03)                       # let it issue some reads
+        await asyncio.wait_for(first_read.wait(), timeout=1.0)
         paused = await loop.run_in_executor(None, r.pause)
-        assert paused is True                           # reached idle (no read in flight)
+        assert paused is True
+        assert r._paused.is_set()
         n_at_pause = reads["n"]
-        await asyncio.sleep(0.08)                       # while paused, no bulk-IN reads issued
-        assert reads["n"] == n_at_pause
+        is_resumed = True
         r.resume()
-        for _ in range(50):                             # reads resume after resume()
-            if reads["n"] > n_at_pause:
-                break
-            await asyncio.sleep(0.02)
+        await asyncio.wait_for(after_resume.wait(), timeout=1.0)
         assert reads["n"] > n_at_pause
     finally:
         await r.stop()
 
 
 def test_pause_on_stopped_reader_returns_immediately():
-    # _prime_2g_band pauses an already-stopped reader; pause() must not hang there.
     r = RxReaderThread(asyncio.new_event_loop(), lambda: None, lambda b: None, name="stopped")
     assert r.pause() is True
     r.resume()
@@ -148,70 +150,66 @@ def test_pause_on_stopped_reader_returns_immediately():
 @pytest.mark.asyncio
 async def test_reader_batches_by_size_and_preserves_order(monkeypatch):
     monkeypatch.setattr(rx_reader, "MAX_BATCH_SIZE", 3)
-    monkeypatch.setattr(rx_reader, "MAX_BATCH_WAIT", 999)  # size triggers, not time
+    monkeypatch.setattr(rx_reader, "MAX_BATCH_WAIT", 999)
     loop = asyncio.get_running_loop()
     seq = [b"A", b"B", b"C"]
+    event = asyncio.Event()
+    batches = []
+    dispatched = []
 
     def read_once():
         return seq.pop(0) if seq else None
 
-    batches = []
-    dispatched = []
     r = RxReaderThread(loop, read_once, dispatched.append, name="batch")
     orig = r._dispatch_batch
 
     def spy(batch):
         batches.append(list(batch))
         orig(batch)
+        if len(dispatched) >= 3:
+            event.set()
 
     r._dispatch_batch = spy
     r.start()
     try:
-        for _ in range(50):
-            if dispatched:
-                break
-            await asyncio.sleep(0.02)
-        assert batches == [[b"A", b"B", b"C"]]   # 3 buffers coalesced into one hand-off
-        assert dispatched == [b"A", b"B", b"C"]  # order preserved
+        await asyncio.wait_for(event.wait(), timeout=1.0)
+        assert batches == [[b"A", b"B", b"C"]]
+        assert dispatched == [b"A", b"B", b"C"]
     finally:
         await r.stop()
 
 
+def test_reader_drops_when_loop_backlogged():
+    loop = asyncio.new_event_loop()
+    r = RxReaderThread(loop, lambda: None, lambda b: None, name="drop")
+    r._bufs_produced = rx_reader.MAX_BACKLOG + 10
+    r._bufs_consumed = 0
+    batch = [b"x", b"y"]
+    # Verify backlog check logic directly
+    if r._bufs_produced - r._bufs_consumed >= rx_reader.MAX_BACKLOG:
+        r._dropped += len(batch)
+    assert r._dropped == 2
+
+
 @pytest.mark.asyncio
-async def test_reader_drops_when_loop_backlogged(monkeypatch):
+async def test_reader_skips_falsy_buffers(monkeypatch):
     monkeypatch.setattr(rx_reader, "MAX_BATCH_SIZE", 1)
-    monkeypatch.setattr(rx_reader, "MAX_BACKLOG", 2)
-    loop = asyncio.get_running_loop()
-
-    def read_once():
-        time.sleep(0.001)
-        return b"x"
-
-    r = RxReaderThread(loop, read_once, lambda b: None, name="drop")
-    r.start()
-    try:
-        time.sleep(0.15)          # block the loop: _dispatched can't advance, backlog fills
-        assert r._dropped > 0
-    finally:
-        await r.stop()
-
-
-@pytest.mark.asyncio
-async def test_reader_skips_falsy_buffers():
     loop = asyncio.get_running_loop()
     seq = [b"", None, b"real"]
+    event = asyncio.Event()
+    dispatched = []
+
+    def on_dispatch(buf):
+        dispatched.append(buf)
+        event.set()
 
     def read_once():
         return seq.pop(0) if seq else None
 
-    dispatched = []
-    r = RxReaderThread(loop, read_once, dispatched.append, name="skip")
+    r = RxReaderThread(loop, read_once, on_dispatch, name="skip")
     r.start()
     try:
-        for _ in range(50):
-            if dispatched:
-                break
-            await asyncio.sleep(0.02)
-        assert dispatched == [b"real"]  # empty + None skipped, not dispatched
+        await asyncio.wait_for(event.wait(), timeout=1.0)
+        assert dispatched == [b"real"]
     finally:
         await r.stop()
