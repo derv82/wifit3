@@ -356,9 +356,11 @@ live in each chip's `<CHIP>.md` (linked under its table).
 → [RT2500USB.md](../src/wifit3/chips/rt2500usb/RT2500USB.md)
 
 ### RT3070
-<img align="right" width="75" height="165" src="../assets/cardart/card-awus036nh.png" alt="ALFA AWUS036NH">
+<img align="right" width="70" height="330" src="../assets/cardart/stack-rt3070.png" alt="ALFA AWUS036NH / D-Link DWA-140">
 
 *ALFA AWUS036NH · 2.4 GHz · 1T1R*
+
+*D-Link DWA-140 · 2.4 GHz · 2T2R (RT3072)*
 
 Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 

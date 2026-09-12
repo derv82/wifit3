@@ -131,6 +131,7 @@ class DLink(ProductName):
     DWA_125_REV_D1  = "DWA-125 rev.D1"
     DWA_126         = "D-Link DWA-126"
     DWA_137         = "D-Link DWA-137"
+    DWA_140_REV_B2  = "DWA-140 rev.B2"
     DWA_140_REV_B3  = "DWA-140 rev.B3"
     DWA_171C        = "D-Link DWA-171C"
     DWA_171_REV_A1  = "DWA-171 rev.A1"

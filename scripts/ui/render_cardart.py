@@ -76,6 +76,7 @@ _STACKS = {
     "stack-mt7921au":  ["card-awus036axml", "card-pau0f"],
     "stack-rtl8821au": ["card-awus036acs", "card-archert2uplus", "card-archert2u"],
     "stack-rtl8822au": ["card-archert3uplus", "card-archert4uplus"],
+    "stack-rt3070":    ["card-awus036nh", "card-dlinkdwa140"],
 }
 
 

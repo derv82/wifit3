@@ -1,11 +1,14 @@
-"""Firmware load for the RT3070.
+"""Firmware load for the RT3070 / RT3072.
 
-The blob in ``assets/rt3070_fw.bin`` is the **first** 4 KB of linux-firmware's
-``rt2870.bin`` (md5 ``d94f0280cf9980999dbc2b999b281edb``), byte-verified equal to
-the 4 KB the kernel uploads on this card's cold-boot capture. ``rt2800usb_write_firmware``
-selects offset 0 / length 4096 for RT2860/RT2872/**RT3070** (and offset 4096 for
-everyone else — that 2nd half is rt5572.bin, a different card); we pre-extract the
-RT3070 section so ``upload`` is a straight multiwrite.
+``rt2800usb_write_firmware`` picks the ``rt2870.bin`` section by silicon [SRC
+rt2800usb.c:221-229]: offset 0 / length 4096 for RT2860/RT2872/**RT3070**, offset 4096
+for all other chipsets (RT3071/**RT3072** 2T2R siblings included). Both firmware blobs
+are standalone 4 KB assets. Chip=based selection in ``load_firmware_blob``:
+
+* ``assets/rt3070_fw.bin`` — offset-0 section (md5 ``d94f0280cf9980999dbc2b999b281edb``),
+  same 4 KB as RT3070's cold-boot capture.
+* ``assets/rt3072_fw.bin`` — offset-4096 section (md5 ``8d98ca9f932bde2fa1fdfdb8bdd82543``),
+  the 4 KB section for RT3071/RT3072.
 
 ``upload`` reproduces ``rt2800_load_firmware`` [SRC rt2800lib.c:714-792] driving
 ``rt2800usb_write_firmware`` [SRC rt2800usb.c:210-265].
@@ -17,11 +20,17 @@ from pathlib import Path
 from . import constants as C
 from .transport import RT3070Transport
 
-_FW_PATH = Path(__file__).parent / "assets" / "rt3070_fw.bin"
+_FW_FIRST_SECTION = Path(__file__).parent / "assets" / "rt3070_fw.bin"    # RT2860/RT2872/RT3070
+_FW_SECOND_SECTION = Path(__file__).parent / "assets" / "rt3072_fw.bin"   # RT3071/RT3072 (2T2R)
+
+_FIRST_SECTION_CHIPS = (C.RT2860, C.RT2872, C.RT3070)  # [SRC rt2800usb.c:221-229]
 
 
-def load_firmware_blob() -> bytes:
-    return _FW_PATH.read_bytes()
+def load_firmware_blob(chip: C.ChipInfo) -> bytes:
+    """Chip-specific section of rt2870.bin."""
+    if chip.rt in _FIRST_SECTION_CHIPS:
+        return _FW_FIRST_SECTION.read_bytes()
+    return _FW_SECOND_SECTION.read_bytes()
 
 
 def _write_firmware(t: RT3070Transport, blob: bytes) -> None:
@@ -31,7 +40,6 @@ def _write_firmware(t: RT3070Transport, blob: bytes) -> None:
         # Not this card — its autorun_detect returns 0 — but the branch is real.
         pass
     else:
-        # RT3070 ⇒ offset 0, length 4096; the asset is already that section.
         t.register_multiwrite(C.FIRMWARE_IMAGE_BASE, blob)
 
     t.register_write(C.H2M_MAILBOX_CID, 0xFFFFFFFF)
