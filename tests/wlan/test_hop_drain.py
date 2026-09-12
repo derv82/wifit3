@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 
 from wifit3.wlan.interface import WlanInterface
 
@@ -27,6 +26,8 @@ class _OrphanProneDriver:
         self.current = None
         self.events: list[tuple[str, int]] = []
         self._lk = threading.Lock()
+        self.in_flight = threading.Event()
+        self.release_tune = threading.Event()
 
     def register_rx_callback(self, cb):
         pass
@@ -40,7 +41,8 @@ class _OrphanProneDriver:
         def _sync():
             with self._lk:
                 self.events.append(("start", channel))
-            time.sleep(0.05)              # the executor work cancellation can't stop
+            self.in_flight.set()
+            self.release_tune.wait()
             self.current = channel
             with self._lk:
                 self.events.append(("end", channel))
@@ -54,11 +56,12 @@ async def test_stop_hopping_drains_inflight_tune():
     iface = WlanInterface(driver_instance=drv, name="wlan0", description="t")
 
     await iface.start_hopping([1, 6, 11], interval=0.001)
-    await asyncio.sleep(0.02)             # a tune is now in flight (each takes 0.05s)
-    await iface.stop_hopping()
+    await asyncio.get_running_loop().run_in_executor(None, drv.in_flight.wait)
+    stop_task = asyncio.create_task(iface.stop_hopping())
+    await asyncio.sleep(0)
+    drv.release_tune.set()
+    await stop_task
 
-    # Every tune that started must have ended by the time stop_hopping returned:
-    # i.e. the orphan was drained, not left running to move the chip afterward.
     starts = [c for (e, c) in drv.events if e == "start"]
     ends = [c for (e, c) in drv.events if e == "end"]
     assert starts == ends, f"in-flight tune not drained before stop_hopping returned: {drv.events}"
@@ -71,9 +74,11 @@ async def test_focus_pin_lands_after_stop_hopping():
     iface = WlanInterface(driver_instance=drv, name="wlan0", description="t")
 
     await iface.start_hopping([1, 6, 11], interval=0.001)
-    await asyncio.sleep(0.02)
-    await iface.stop_hopping()
+    await asyncio.get_running_loop().run_in_executor(None, drv.in_flight.wait)
+    stop_task = asyncio.create_task(iface.stop_hopping())
+    await asyncio.sleep(0)
+    drv.release_tune.set()
+    await stop_task
 
     await iface.set_channel(99, scan=False)   # Focus pins its target
-    await asyncio.sleep(0.1)                   # give any stray orphan time to surface
     assert drv.current == 99, f"chip moved off the Focus channel after the pin: current={drv.current}"

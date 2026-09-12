@@ -9,10 +9,10 @@ timeout). The foreground gate must use screen-stack identity (app.screen is self
 
 import pytest
 from unittest.mock import Mock
+from textual.app import App
 from textual.screen import Screen
 from textual.widgets import Label
 
-from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.scanner import ScannerView
 from wifit3.models import AccessPoint
 
@@ -20,6 +20,16 @@ from wifit3.models import AccessPoint
 class _Overlay(Screen):
     def compose(self):
         yield Label("overlay")
+
+
+class _Host(App):
+    def __init__(self):
+        super().__init__()
+        self.array = None
+        self.pbc_enabled = True
+
+    def on_mount(self):
+        self.push_screen(ScannerView())
 
 
 class _FakeIface:
@@ -46,11 +56,9 @@ def _pbc_window_ap():
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
 async def test_pbc_poll_bails_while_suspended_then_acts_when_foreground():
-    app = WifiteApp()
+    app = _Host()
     async with app.run_test() as pilot:
-        app.push_screen("scanner")
         await pilot.pause(0)
         scanner = app.screen
         assert isinstance(scanner, ScannerView)

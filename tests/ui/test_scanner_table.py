@@ -96,11 +96,11 @@ async def test_ap_scan_table_ssid_column_clamps_to_min_width():
         assert col.content_width == _APScanTable.SSID_MIN_WIDTH
 
         table.add_row("Net1", "1", key="r1")
-        await pilot.pause()
+        await pilot.pause(0)
         assert col.content_width == _APScanTable.SSID_MIN_WIDTH
 
         table.update_cell("r1", "ssid", "A", update_width=True)
-        await pilot.pause()
+        await pilot.pause(0)
         assert col.content_width == _APScanTable.SSID_MIN_WIDTH
 
 
@@ -113,7 +113,7 @@ async def test_ap_scan_table_ssid_column_expands_to_long_ssid():
 
         long_ssid = "Super Long Test Access Point 30"
         table.add_row(long_ssid, "6", key="r2")
-        await pilot.pause()
+        await pilot.pause(0)
         assert col.content_width == len(long_ssid)
 
 
@@ -159,17 +159,17 @@ async def test_scanner_view_ssid_width_decloaks_and_caps():
         col = table.columns[ColumnKey("ssid")]
 
         scanner.refresh_table()
-        await pilot.pause()
+        await pilot.pause(0)
         assert col.content_width == _APScanTable.SSID_MIN_WIDTH
 
         ap_hidden.ssid = "Super Long Test Access Point 30"
         scanner.refresh_table()
-        await pilot.pause()
+        await pilot.pause(0)
         assert col.content_width == len(ap_hidden.ssid)
 
         ap_huge = AccessPoint(bssid="00:11:22:33:44:02", ssid="A" * 50)
         ap_huge.signal_by_card = {"card0": -40}
         fake_mgr.access_points[ap_huge.bssid] = ap_huge
         scanner.refresh_table()
-        await pilot.pause()
+        await pilot.pause(0)
         assert col.content_width == ScannerView._SSID_CELL_MAX
