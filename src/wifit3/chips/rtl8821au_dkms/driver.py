@@ -264,9 +264,7 @@ class Rtl8821auDkmsDriver(Driver):
         Serialized with set_channel / the DIG watchdog via ``_io_lock`` so the frame is never
         emitted mid-retune.
 
-        TX power is the BB-default (the per-rate EFUSE TX-power level is a separate deferred
-        milestone), adequate for a nearby target.
-        # TODO(txpower): per-rate EFUSE TX-power level for distant targets.
+        Per-rate EFUSE TX power is applied by connect() and every non-scan channel settle.
         """
         if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read BMC
             return False
