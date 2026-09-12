@@ -1,8 +1,7 @@
 """ScanFilter predicate (text + encryption) and FilterBar message wiring."""
 import pytest
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
-from textual.widgets import Button, DataTable, Input, Select
+from textual.widgets import Button, Input, Select
 
 from wifit3.models import AccessPoint
 from wifit3.ui.encryption_format import EncryptionType

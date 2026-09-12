@@ -6,12 +6,9 @@ look good") stay the human's call, fed by the exported SVGs.
 Sizes are pinned headless via ``run_test(size=...)``: no real terminal."""
 import types
 
-import pytest
 import pytest_asyncio
 from textual.app import App
-from textual.widgets import Button
 
-from wifit3.models import AccessPoint, ApIdentity, IdKey, IdSource
 from wifit3.ui import focus_model as fm
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.art import BreathingArt, art_size, breathe
@@ -131,7 +128,6 @@ def test_flicker_state_machine_caps_rate_then_decays():
     """pulse() lights ON for one frame, then a refractory forces it dim; a pulse
     arriving mid-refractory only arms the *next* blink (no strobe). With no more
     pulses the LED settles back to idle (breathe only)."""
-    from wifit3.ui.screens.focus_v2.art import BreathingArt
 
     art = BreathingArt("focus-card.ans")          # not mounted, drive it by hand
     assert art._blink == "idle"

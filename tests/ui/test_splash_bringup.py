@@ -8,7 +8,6 @@ import pytest
 from textual import events
 from textual.widgets import SelectionList
 
-import wifit3.device.manager as manager
 from wifit3.chips.driver import DeviceID
 from wifit3.device.manager import BringupResult
 from wifit3.setup.base import SetupResult

@@ -9,12 +9,10 @@ import pytest_asyncio
 from textual.app import App
 from textual.widgets import Button, RichLog, Static
 
-from wifit3.models import PersistedCapture
 from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList, ClientWidget
-from wifit3.ui.screens.focus_v2.packet_dashboard import PacketDashboard
 from wifit3.ui.screens.focus_v2.log_band import LogBand
 from wifit3.wlan.interface import WlanInterface, DeauthResult
 from wifit3.wlan.sink import WlanSink

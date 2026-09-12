@@ -1,13 +1,11 @@
 """Tests for the blocking-error modals."""
 import asyncio
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 import usb.core
-from textual.widgets import Button, Collapsible, Label, ListItem, ListView
+from textual.widgets import Button, Label, ListItem, ListView
 
-from wifit3.errors import WifiteDeviceLostError
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.error_modals import FatalErrorModal, RecoverableErrorModal
 from wifit3.ui.screens.splash import SplashView

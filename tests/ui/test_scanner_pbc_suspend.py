@@ -7,8 +7,6 @@ raced Focus's own PBC capture over the single radio (assoc rejected + EAPOL
 timeout). The foreground gate must use screen-stack identity (app.screen is self).
 """
 
-import pytest
-from unittest.mock import Mock
 from textual.app import App
 from textual.screen import Screen
 from textual.widgets import Label

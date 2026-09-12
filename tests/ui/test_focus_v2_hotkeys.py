@@ -11,7 +11,6 @@ from types import SimpleNamespace
 import pytest
 import pytest_asyncio
 from textual.app import App
-from textual.widgets._footer import FooterKey
 
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.focus_v2 import FocusViewV2

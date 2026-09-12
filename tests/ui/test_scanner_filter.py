@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, DataTable
+from textual.widgets import DataTable
 
 from wifit3.models import AccessPoint, IdKey, IdSource, PersistedCapture
 from wifit3.persist.config import Config

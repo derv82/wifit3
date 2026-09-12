@@ -6,9 +6,6 @@ from textual.app import App
 
 from wifit3.chips.driver import FakeMacSupport
 from wifit3.ui.screens.focus_v2 import FocusViewV2
-from wifit3.ui.screens.focus_v2.art import BreathingArt
-from wifit3.ui.screens.focus_v2.card_endpoint import CardEndpoint
-from wifit3.ui.screens.focus_v2.tx_picker import TxDevicePicker
 from wifit3.wlan.array import WlanArray
 from wifit3.wlan.interface import WlanInterface
 
