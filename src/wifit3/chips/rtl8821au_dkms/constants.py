@@ -29,6 +29,7 @@ REG_SYS_FUNC_EN = 0x0002        # :40  (+1 = 0x0003, bit2 = 8051 core gate)
 REG_APS_FSMCO = 0x0004          # :41  (pwr-seq touches 0x04/0x05/0x06 byte-wise)
 REG_SYS_CLKR = 0x0008           # :42
 REG_RSV_CTRL = 0x001C           # :52  (8051 reset wrapper)
+REG_MULTI_FUNC_CTRL = 0x0068     # :78  (BT_FUNC_EN probe in EFUSE parse)
 REG_MCUFWDL = 0x0080            # :88  (FW download ctrl; +2 = page idx / 8051 rst hold)
 REG_SYS_CFG = 0x00F0            # :102 (no REG_SYS_CFG1/CFG2 in this tree)
 REG_CR = 0x0100                 # :117 (MAC DMA / WMAC / SCHEDULE / SEC enable)
@@ -123,6 +124,8 @@ EEPROM_MAC_ADDR_8821AU = 0x107
 PG_TXPWR_SADDR = 0x10          # hal_spec->pg_txpwr_saddr — TX-power PG block start
 EEPROM_TX_BBSWING_2G = 0xC6    # per-path TxScale index (2.4 GHz)
 EEPROM_TX_BBSWING_5G = 0xC7    # per-path TxScale index (5 GHz)
+EEPROM_RF_BOARD_OPTION_8821AU = 0xC1
+BIT_BT_FUNC_EN = BIT(18)
 # Amplifier-type PG bytes [SRC] hal_pg.h:144-146 (8812AU/8821AU shared offsets),
 # decoded by Hal_ReadPAType_8821A (rtl8812a_hal_init.c:1230). PAType 2G+5G packed at
 # 0xBC; per-band LNAType at 0xBD (2G) / 0xBF (5G).

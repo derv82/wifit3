@@ -86,9 +86,10 @@ proves it). The card reads `ext_lna_2g=0`, `board_type=0x00` (blank amplifier by
   runs it unconditionally to match. (This card's `rf_board_opt` BIT3=1, so an antdiv-enabled build
   WOULD gate it — a latent build-time dependency, not a runtime fuse gap.)
 
-**Residual not ported:** the BT `board_type` bit (`ODM_BOARD_BT`) — needs the
-`REG_MULTI_FUNC_CTRL` `BT_FUNC_EN` probe + the BTCoexist stack; a BT-combo module is out of scope
-(same call as the 8812/8814 siblings). `type_glna/gpa/alna/apa` stay 0 (`Hal_ReadPAType_8821A`
+**BT policy acknowledged, runtime coexist out of scope:** `efuse.read_chip_params` now probes
+`REG_MULTI_FUNC_CTRL` `BT_FUNC_EN`; a combo burn sets `bt_coexist` and ORs `ODM_BOARD_BT` into
+`board_type`, so the phy-cond policy sees the BT board bit. The BTCoexist runtime decision machine
+is still out of scope, same as RTL8822CU. `type_glna/gpa/alna/apa` stay 0 (`Hal_ReadPAType_8821A`
 never sets them — those are 8812-only), so a board_type-set card matches only the type-0 rows.
 
 ## Orientation
@@ -136,5 +137,5 @@ inputs). Both default to the reference values, so `verify_pcap` (2532 ops throug
 through M5) and `verify_channels` (36/36 hops) stay byte-exact through the generalized code. The
 other candidate branches (cut/package, phy_FixSpur, RF-read CCA, MP-chip AGC select, antenna-div
 DPDT) are card-independent on this build (documented with the vendor reason). Added `test_efuse.py`
-+ `test_chan.py` for the variant (non-reference) values. BT board_type bit + `type_*` remain
-unported residuals (BT-combo module out of scope).
++ `test_chan.py` for the variant (non-reference) values. BT board_type policy is now acknowledged;
+`type_*` remain 8812-only and stay 0.

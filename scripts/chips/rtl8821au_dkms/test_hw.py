@@ -39,7 +39,7 @@ import usb.util
 from _hwstop import interruptible_sleep
 
 from wifit3.chips.rtl8821au_dkms import SUPPORTED_IDS, constants as C
-from wifit3.chips.rtl8821au_dkms import bb, chan, firmware, mac, rf
+from wifit3.chips.rtl8821au_dkms import bb, chan, efuse, firmware, mac, rf, txpower
 from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
 from wifit3.chips.rtl8821au_dkms.transport import RTL8821AUDkmsTransport
 
@@ -145,10 +145,11 @@ async def _run_beacon(args) -> int:
           f"DIG watchdog: {'OFF' if args.no_dig else 'ON'}")
     start = time.monotonic()
     i = 0
+    transient_hop = len(channels) > 1
     try:
         while time.monotonic() - start < args.duration:
             cur = channels[i % len(channels)]
-            await driver.set_channel(cur)
+            await driver.set_channel(cur, scan=transient_hop)
             i += 1
             await interruptible_sleep(args.dwell)
             print(f"\r  {time.monotonic() - start:4.0f}s ch{cur:>3}  nAPs={len(tally.by_bssid)}  "
@@ -183,7 +184,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--phase", choices=("open", "fw", "mac", "phy", "chan", "beacon"),
                     default="chan")
-    ap.add_argument("--channel", type=int, default=1, help="fixed beacon-phase channel")
+    ap.add_argument("--channel", type=int, default=1, help="fixed chan/beacon-phase channel")
     ap.add_argument("--band", choices=("2g", "5g", "all"), default=None,
                     help="hop this band's channels instead of a fixed --channel")
     ap.add_argument("--dwell", type=float, default=2.0, help="per-channel dwell when hopping (s)")
@@ -224,6 +225,15 @@ def main() -> int:
             print("[PASS] control-transfer plumbing works.")
             return 0
 
+        params = None
+        if args.phase in ("phy", "chan"):
+            print("[*] reading EFUSE / chip parameters...")
+            params = efuse.read_chip_params(t)
+            print(f"  crystal_cap=0x{params.crystal_cap:02x} mac={params.mac_address or '<blank>'} "
+                  f"bb_swing=0x{params.bb_swing_2g:03x}/0x{params.bb_swing_5g:03x} "
+                  f"ext_lna_2g={int(params.ext_lna_2g)} bt_coexist={int(params.bt_coexist)} "
+                  f"board_type=0x{params.board_type:02x}")
+
         fw = firmware.load_firmware_blob()
         print(f"[*] FW blob {len(fw)} bytes; running bring_up()...")
         ready = firmware.bring_up(t, fw)
@@ -249,18 +259,48 @@ def main() -> int:
 
         if args.phase in ("phy", "chan"):
             print("[*] running PHY init (M3: BB PHY_REG/AGC + crystal_cap + RadioA)...")
-            bb.phy_bb_config(t, crystal_cap=0x27)   # TODO(efuse): read crystal_cap from EFUSE
-            rf.phy_rf_config(t)
+            jaguar_params = efuse.build_jaguar_params(params)
+            bb.phy_bb_config(t, crystal_cap=params.crystal_cap, params=jaguar_params)
+            rf.phy_rf_config(t, jaguar_params)
             xtal = t.read32(0x002C)
+            xcap = params.crystal_cap & 0x3F
+            expect = xcap | (xcap << 6)
             print(f"  REG 0x2C = 0x{xtal:08x}  (xtal field [23:12] = 0x{(xtal >> 12) & 0xFFF:03x}, "
-                  f"expect 0x9e7 for crystal_cap 0x27)")
+                  f"expect 0x{expect:03x} for crystal_cap 0x{params.crystal_cap:02x})")
+            if ((xtal >> 12) & 0xFFF) != expect:
+                return _fail("REG 0x2C crystal-cap field did not match EFUSE-derived value.")
             print("[PASS] PHY (BB + RF) init complete — no bus errors.")
 
         if args.phase == "chan":
-            print("[*] running channel tune (M4: 2.4 GHz band + ch1 + 20 MHz BW)...")
-            chan.set_chnl_bw(t, ch=1)
+            channel = args.channel
+            print(f"[*] running channel tune (M4/M7: ch{channel} + 20 MHz BW + TX power)...")
+            if channel <= 14:
+                chan.set_chnl_bw(t, ch=channel, bb_swing_2g=params.bb_swing_2g,
+                                 ext_lna_2g=params.ext_lna_2g)
+                txpower.set_tx_power(t, channel, params.tx_power)
+                group, cck_group = txpower._ch_group_2g(channel)
+                cck = txpower._pg_idx(params.tx_power, "cck", group, cck_group)
+                ofdm = txpower._pg_idx(params.tx_power, "ofdm", group, cck_group)
+                bw20 = txpower._pg_idx(params.tx_power, "bw20", group, cck_group)
+                checks = ((0x0C20, cck), (0x0C24, ofdm), (0x0C2C, bw20))
+            else:
+                chan.set_chnl_bw(t, ch=1, bb_swing_2g=params.bb_swing_2g,
+                                 ext_lna_2g=params.ext_lna_2g)
+                chan.set_channel_bw(t, channel, params.bb_swing_2g, params.bb_swing_5g,
+                                    params.ext_lna_2g)
+                txpower.set_tx_power_5g(t, channel, params.tx_power_5g)
+                group = txpower._ch_group_5g(channel)
+                ofdm = txpower._pg_idx(params.tx_power_5g, "ofdm", group, 0)
+                bw20 = txpower._pg_idx(params.tx_power_5g, "bw20", group, 0)
+                checks = ((0x0C24, ofdm), (0x0C2C, bw20))
             rf18 = rf._rf_serial_read(t, rf.RF_PATH_A, rf.RF_CHNLBW)
-            print(f"  RF[0x18] = 0x{rf18:05x}  (channel/BW reg — ch1 @ 20 MHz)")
+            print(f"  RF[0x18] = 0x{rf18:05x}  (channel/BW reg — ch{channel} @ 20 MHz)")
+            for reg, index in checks:
+                got = t.read32(reg)
+                expect = int.from_bytes(bytes([index]) * 4, "little")
+                print(f"  TXAGC[0x{reg:04x}] = 0x{got:08x}  expect 0x{expect:08x}")
+                if got != expect:
+                    return _fail("TXAGC register did not match EFUSE-derived power index.")
             print("[PASS] channel tune complete — no bus errors.")
     finally:
         try:
