@@ -28,28 +28,47 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .constants import (
-    BIT_AUTOLOAD_SUS,
     BIT_EERPOMSEL,
     BIT_EF_FLAG,
     BIT_MASK_EF_ADDR,
     BIT_MASK_EF_DATA,
     BIT_SHIFT_EF_ADDR,
     BITS_EF_ADDR,
+    EEPROM_2G_5G_PA_TYPE,
+    EEPROM_2G_LNA_TYPE_GAIN_SEL_AB,
+    EEPROM_5G_LNA_TYPE_GAIN_SEL_AB,
     EEPROM_CHANNEL_PLAN,
+    EEPROM_COUNTRY_CODE,
+    EEPROM_CUSTOM_ID,
+    EEPROM_DEFAULT_BOARD_OPTION,
     EEPROM_DEFAULT_CRYSTAL_CAP,
     EEPROM_DEFAULT_THERMAL_METER,
+    EEPROM_DEFAULT_PID,
+    EEPROM_DEFAULT_VID,
     EEPROM_MAC_ADDR,
+    EEPROM_PID,
+    EEPROM_RF_BOARD_OPTION,
+    EEPROM_RF_BT_SETTING,
     EEPROM_RFE_OPTION,
+    EEPROM_USB_MODE,
+    EEPROM_VID,
     EEPROM_SIZE_8822B,
     EEPROM_THERMAL_METER,
+    EEPROM_VERSION,
     EEPROM_XTAL,
     EFUSE_PA_BIAS,
     EFUSE_SIZE_8822B,
     HALMAC_EFUSE_BANK_WIFI,
+    ODM_BOARD_BT,
+    ODM_BOARD_EXT_LNA,
+    ODM_BOARD_EXT_LNA_5G,
+    ODM_BOARD_EXT_PA,
+    ODM_BOARD_EXT_PA_5G,
     PRTCT_EFUSE_SIZE_8822B,
     REG_EFUSE_CTRL,
     REG_LDO_EFUSE_CTRL,
     REG_SYS_EEPROM_CTRL,
+    RTL_EEPROM_ID,
 )
 
 
@@ -57,14 +76,36 @@ from .constants import (
 class Efuse8822b:
     phy_map: bytes          # the 1024-byte physical EFUSE (raw read order)
     log_map: bytes          # the 768-byte logical map (PG-header decoded)
-    autoload_fail: bool     # !BIT_AUTOLOAD_SUS — map is invalid / defaults must be used
+    autoload_fail: bool     # final vendor bautoload_fail_flag after Hal_EfuseParseIDCode
     eeprom_or_efuse: bool   # BIT_EERPOMSEL — true => external EEPROM, false => on-chip eFuse
+    eeprom_id_valid: bool   # Hal_EfuseParseIDCode: logical 0x00..0x01 == RTL_EEPROM_ID
     # Decoded scalar fields (BB/RF/calibration inputs). The PG tx-power block is decoded
     # at the tx-power milestone, where each value can be checked against the writes it drives.
     crystal_cap: int        # [SRC] rtl8822b_ops.c:322 Hal_EfuseParseXtal
     rfe_type: int           # [SRC] rtl8822b_ops.c:515 Hal_ReadRFEType (RF front-end variant)
     thermal_meter: int      # [SRC] rtl8822b_ops.c:335 Hal_EfuseParseThermalMeter
     channel_plan: int       # [SRC] rtl8822b_ops.c:310 (raw efuse byte; plan resolution is registry work)
+    country_code: bytes     # [SRC] rtl8822b_ops.c:310 Hal_EfuseParseChnlPlan
+    eeprom_version: int     # [SRC] rtl8822b_ops.c:236 Hal_EfuseParseEEPROMVer
+    customer_id: int        # [SRC] rtl8822b_ops.c:387 Hal_EfuseParseCustomerID
+    regulatory: int         # [SRC] rtl8822b_ops.c:249 Hal_EfuseParseTxPowerInfo
+    interface_sel: int      # [SRC] rtl8822b_ops.c:262 Hal_EfuseParseBoardType
+    usb_mode_switch: bool   # [SRC] rtl8822b_ops.c:576 Hal_ReadUsbModeSwitch, 0x06[7]
+    eeprom_vid: int         # [SRC] rtl8822b_ops.c:589 hal_read_usb_pid_vid
+    eeprom_pid: int         # [SRC] rtl8822b_ops.c:589 hal_read_usb_pid_vid
+    bt_coexist_raw: bool    # [SRC] rtl8822b_ops.c:275 Hal_EfuseParseBTCoexistInfo
+    bt_coexist: bool        # USB hal_spec disables runtime BT-coex before PHYDM board policy
+    bt_ant_num: int         # 0 -> Ant_x1, 1 -> Ant_x2
+    bt_ant_path: int        # 0 -> RF_PATH_A, 1 -> RF_PATH_B
+    external_pa_2g: bool
+    external_lna_2g: bool
+    external_pa_5g: bool
+    external_lna_5g: bool
+    type_gpa: int
+    type_apa: int
+    type_glna: int
+    type_alna: int
+    board_type: int         # ODM board type bitmap passed to PHYDM
     mac_address: Optional[str]
     pa_bias: tuple          # efuse[0x3D7], efuse[0x3D8] (PA bias) [SRC] rtl8822b_ops.c:553
 
@@ -161,11 +202,68 @@ def _scalar(log_map: bytes, off: int, default: int, valid: bool) -> int:
     return v if (valid and v != 0xFF) else default
 
 
+def _u16le(log_map: bytes, off: int) -> int:
+    return log_map[off] | (log_map[off + 1] << 8)
+
+
 def _mac_address(log_map: bytes, valid: bool) -> Optional[str]:
     mac = log_map[EEPROM_MAC_ADDR:EEPROM_MAC_ADDR + 6]
     if not valid or all(b == 0xFF for b in mac) or all(b == 0 for b in mac):
         return None
     return ":".join(f"{b:02x}" for b in mac)
+
+
+def _board_option(log_map: bytes, valid: bool) -> int:
+    v = log_map[EEPROM_RF_BOARD_OPTION]
+    return v if (valid and v != 0xFF) else EEPROM_DEFAULT_BOARD_OPTION
+
+
+def _bt_info(log_map: bytes, valid: bool, board_option: int) -> tuple[bool, bool, int, int]:
+    raw = valid and log_map[EEPROM_RF_BOARD_OPTION] != 0xFF and ((board_option & 0xE0) >> 5) == 0x01
+    bt_coexist = False
+    setting = log_map[EEPROM_RF_BT_SETTING]
+    if valid and setting != 0xFF:
+        return raw, bt_coexist, setting & 0x1, 1 if (setting & 0x40) else 0
+    return raw, bt_coexist, 1, 0
+
+
+def _amplifier(log_map: bytes, valid: bool) -> tuple[bool, bool, bool, bool, int, int, int, int]:
+    if valid:
+        pa_type = log_map[EEPROM_2G_5G_PA_TYPE]
+        lna_2g = log_map[EEPROM_2G_LNA_TYPE_GAIN_SEL_AB]
+        lna_5g = log_map[EEPROM_5G_LNA_TYPE_GAIN_SEL_AB]
+        pa_type = 0 if pa_type == 0xFF else pa_type
+        lna_2g = 0 if lna_2g == 0xFF else lna_2g
+        lna_5g = 0 if lna_5g == 0xFF else lna_5g
+    else:
+        pa_type = lna_2g = lna_5g = 0
+
+    external_pa_2g = bool(pa_type & 0x10)
+    external_lna_2g = bool(lna_2g & 0x08)
+    external_pa_5g = bool(pa_type & 0x01)
+    external_lna_5g = bool(lna_5g & 0x08)
+    type_gpa = (((lna_2g & 0x40) >> 6) << 2) | ((lna_2g & 0x04) >> 2) if (pa_type & 0x30) == 0x30 else 0
+    type_apa = (((lna_5g & 0x40) >> 6) << 2) | ((lna_5g & 0x04) >> 2) if (pa_type & 0x03) == 0x03 else 0
+    type_glna = (((lna_2g & 0x30) >> 4) << 2) | (lna_2g & 0x03) if (lna_2g & 0x88) == 0x88 else 0
+    type_alna = (((lna_5g & 0x30) >> 4) << 2) | (lna_5g & 0x03) if (lna_5g & 0x88) == 0x88 else 0
+    return (external_pa_2g, external_lna_2g, external_pa_5g, external_lna_5g,
+            type_gpa, type_apa, type_glna, type_alna)
+
+
+def _odm_board_type(external_pa_2g: bool, external_lna_2g: bool, external_pa_5g: bool,
+                    external_lna_5g: bool, bt_coexist: bool) -> int:
+    board_type = 0
+    if external_lna_2g:
+        board_type |= ODM_BOARD_EXT_LNA
+    if external_lna_5g:
+        board_type |= ODM_BOARD_EXT_LNA_5G
+    if external_pa_2g:
+        board_type |= ODM_BOARD_EXT_PA
+    if external_pa_5g:
+        board_type |= ODM_BOARD_EXT_PA_5G
+    if bt_coexist:
+        board_type |= ODM_BOARD_BT
+    return board_type
 
 
 def read_phydm_trim(t) -> None:
@@ -195,11 +293,12 @@ def read_efuse(t) -> Efuse8822b:
     [SRC] rtl8822b_ops.c:616."""
     val8 = t.read8(REG_SYS_EEPROM_CTRL)              # R 0x0A
     eeprom_or_efuse = bool(val8 & BIT_EERPOMSEL)
-    autoload_fail = not (val8 & BIT_AUTOLOAD_SUS)
 
     _switch_efuse_bank_wifi(t)
     phy_map = _read_hw_efuse(t, 0, EFUSE_SIZE_8822B)
     log_map = _eeprom_parser(phy_map)
+    eeprom_id_valid = _u16le(log_map, 0) == RTL_EEPROM_ID
+    autoload_fail = not eeprom_id_valid
 
     # Hal_EfuseParsePABias reads physical efuse 0x3D7/0x3D8 via rtw_efuse_access. The physical
     # map is already cached (valid) from the dump, so HALMAC's read_physical_efuse_map serves it
@@ -208,7 +307,11 @@ def read_efuse(t) -> Efuse8822b:
     _switch_efuse_bank_wifi(t)
     pa_bias = (phy_map[EFUSE_PA_BIAS], phy_map[EFUSE_PA_BIAS + 1])
 
-    valid = not autoload_fail
+    valid = eeprom_id_valid
+    board_option = _board_option(log_map, valid)
+    bt_coexist_raw, bt_coexist, bt_ant_num, bt_ant_path = _bt_info(log_map, valid, board_option)
+    amp = _amplifier(log_map, valid)
+    external_pa_2g, external_lna_2g, external_pa_5g, external_lna_5g, type_gpa, type_apa, type_glna, type_alna = amp
     # rfe_type: registry default is "use efuse" (CONFIG_RTW_RFE_TYPE sentinel), so the efuse
     # byte wins; a blank byte falls back to 0. [SRC] rtl8822b_ops.c:515 Hal_ReadRFEType.
     rfe = log_map[EEPROM_RFE_OPTION]
@@ -216,10 +319,33 @@ def read_efuse(t) -> Efuse8822b:
     return Efuse8822b(
         phy_map=phy_map, log_map=log_map,
         autoload_fail=autoload_fail, eeprom_or_efuse=eeprom_or_efuse,
+        eeprom_id_valid=eeprom_id_valid,
         crystal_cap=_scalar(log_map, EEPROM_XTAL, EEPROM_DEFAULT_CRYSTAL_CAP, valid),
         rfe_type=rfe_type,
         thermal_meter=_scalar(log_map, EEPROM_THERMAL_METER, EEPROM_DEFAULT_THERMAL_METER, valid),
-        channel_plan=log_map[EEPROM_CHANNEL_PLAN],
+        channel_plan=log_map[EEPROM_CHANNEL_PLAN] if valid else 0xFF,
+        country_code=bytes(log_map[EEPROM_COUNTRY_CODE:EEPROM_COUNTRY_CODE + 2]) if valid else b"\xff\xff",
+        eeprom_version=log_map[EEPROM_VERSION] if valid else 1,
+        customer_id=log_map[EEPROM_CUSTOM_ID] if valid else 0,
+        regulatory=board_option & 0x07,
+        interface_sel=(board_option & 0xE0) >> 5,
+        usb_mode_switch=bool(log_map[EEPROM_USB_MODE] & 0x80) if valid else False,
+        eeprom_vid=_u16le(log_map, EEPROM_VID) if valid else EEPROM_DEFAULT_VID,
+        eeprom_pid=_u16le(log_map, EEPROM_PID) if valid else EEPROM_DEFAULT_PID,
+        bt_coexist_raw=bt_coexist_raw,
+        bt_coexist=bt_coexist,
+        bt_ant_num=bt_ant_num,
+        bt_ant_path=bt_ant_path,
+        external_pa_2g=external_pa_2g,
+        external_lna_2g=external_lna_2g,
+        external_pa_5g=external_pa_5g,
+        external_lna_5g=external_lna_5g,
+        type_gpa=type_gpa,
+        type_apa=type_apa,
+        type_glna=type_glna,
+        type_alna=type_alna,
+        board_type=_odm_board_type(external_pa_2g, external_lna_2g, external_pa_5g, external_lna_5g,
+                                   bt_coexist),
         mac_address=_mac_address(log_map, valid),
         pa_bias=pa_bias,
     )

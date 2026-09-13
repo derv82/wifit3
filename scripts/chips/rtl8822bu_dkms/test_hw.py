@@ -28,11 +28,12 @@ import libusb_package
 import usb.core
 import usb.util
 
-from wifit3.chips.rtl8822bu_dkms import bringup, chan, chipid, dm_watchdog, mac, rx, sipi
+from wifit3.chips.rtl8822bu_dkms import (
+    SUPPORTED_IDS, bb, bringup, chan, chipid, dm_watchdog, mac, rx, sipi, txpower,
+)
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport
 from wifit3.dot11.parser import WlanFrameParser
 
-USB_VID, USB_PID = 0x2357, 0x0138
 CHANNELS_2G = list(range(1, 14))
 
 
@@ -43,12 +44,16 @@ def _fail(msg: str) -> int:
 
 def _open_device():
     backend = libusb_package.get_libusb1_backend()
-    dev = usb.core.find(idVendor=USB_VID, idProduct=USB_PID, backend=backend)
-    if dev is None:
-        print(f"[FAIL] RTL8822BU not found ({USB_VID:04x}:{USB_PID:04x}). "
-              "Plug it in, confirm Zadig bound it to WinUSB.")
+    for entry in SUPPORTED_IDS:
+        dev = usb.core.find(idVendor=entry.vid, idProduct=entry.pid, backend=backend)
+        if dev is None:
+            continue
+        print(f"[*] Found RTL8822BU {entry.vid:04x}:{entry.pid:04x} at bus {dev.bus}, address {dev.address}")
+        break
+    else:
+        ids = ", ".join(f"{entry.vid:04x}:{entry.pid:04x}" for entry in SUPPORTED_IDS)
+        print(f"[FAIL] RTL8822BU not found ({ids}). Plug it in, confirm it is userland-bound.")
         return None
-    print(f"[*] Found RTL8822BU at bus {dev.bus}, address {dev.address}")
     try:
         if dev.is_kernel_driver_active(0):
             dev.detach_kernel_driver(0)
@@ -107,13 +112,84 @@ def _rx_descriptor_stats(buf, acc):
         off += _rnd8(pkt_offset)
 
 
-def _rxstats(t, channel, dwell, rcr):
+class _TxagcCapture:
+    def __init__(self):
+        self.writes = {}
+
+    def write32(self, addr: int, value: int) -> None:
+        self.writes[addr] = value & 0xFFFFFFFF
+
+
+def _expected_txagc(channel: int, pg) -> dict[int, int]:
+    cap = _TxagcCapture()
+    txpower.set_tx_power_level(cap, channel, pg)
+    return cap.writes
+
+
+def _expect_reg(name: str, got: int, expect: int, mask: int = 0xFFFFFFFF) -> None:
+    got_m = got & mask
+    expect_m = expect & mask
+    print(f"  {name} = 0x{got_m:08x}  expect 0x{expect_m:08x}")
+    if got_m != expect_m:
+        raise RuntimeError(f"{name}: got 0x{got_m:08x}, expected 0x{expect_m:08x}")
+
+
+def _verify_rfe_type2_registers(t, channel: int) -> None:
+    is_2g = channel <= 14
+    expect_cca = (
+        (0x75C97010, 0x79A0EAAC, 0x87746341, 0x705770, 0x57)
+        if is_2g else
+        (0x75B76010, 0x79A0EAAA, 0x87766431, 0x177517, 0x75)
+    )
+    reg82c, reg830, reg838, src, cb4 = expect_cca
+    _expect_reg("RFE2 CCA 0x082c", t.read32(0x082C), reg82c)
+    _expect_reg("RFE2 CCA 0x0830", t.read32(0x0830), reg830)
+    _expect_reg("RFE2 CCA 0x0838", t.read32(0x0838), reg838)
+    if not is_2g:
+        _expect_reg("RFE2 eFEM 0x083c", t.read32(0x083C), 0x9194B2B9)
+    _expect_reg("RFE2 src A 0x0cb0", t.read32(0x0CB0), src, 0x00FFFFFF)
+    _expect_reg("RFE2 src B 0x0eb0", t.read32(0x0EB0), src, 0x00FFFFFF)
+    _expect_reg("RFE2 cb4 A", t.read32(0x0CB4), cb4 << 8, 0x0000FF00)
+    _expect_reg("RFE2 cb4 B", t.read32(0x0EB4), cb4 << 8, 0x0000FF00)
+    _expect_reg("RFE2 ant A 0x0ca0", t.read32(0x0CA0), 0xA501, 0x0000FFFF)
+    _expect_reg("RFE2 ant B 0x0ea0", t.read32(0x0EA0), 0xA501, 0x0000FFFF)
+    _expect_reg("RFE2 RxHP 0x08cc", t.read32(0x08CC), 0x08108000)
+    _expect_reg("RFE2 RxHP 0x08d8[27]", t.read32(0x08D8), 0x00000000, 1 << 27)
+
+
+def _set_channel_verify_txagc(t, channel: int, prev_ch: int | None, txpwr_pg, rfe_type: int | None = None):
+    expected = _expected_txagc(channel, txpwr_pg) if txpwr_pg is not None else {}
+    actual = {}
+    write32 = t.write32
+
+    def capture_write32(addr: int, value: int) -> None:
+        if addr in expected:
+            actual[addr] = value & 0xFFFFFFFF
+        write32(addr, value)
+
+    t.write32 = capture_write32
+    try:
+        chan.set_channel_bw(t, channel, prev_ch=prev_ch, txpwr_pg=txpwr_pg, rfe_type=rfe_type or 3)
+    finally:
+        t.write32 = write32
+
+    if rfe_type == 2:
+        _verify_rfe_type2_registers(t, channel)
+    for addr, expect in sorted(expected.items()):
+        got = actual.get(addr)
+        got_s = f"0x{got:08x}" if got is not None else "<missing>"
+        print(f"  TXAGC[0x{addr:04x}] write {got_s}  expect 0x{expect:08x}")
+        if got != expect:
+            raise RuntimeError(f"TXAGC 0x{addr:04x}: wrote {got!r}, expected 0x{expect:08x}")
+
+
+def _rxstats(t, channel, dwell, rcr, txpwr_pg=None, rfe_type=None):
     """Diagnostic: monitor-enable (+optional RCR override) + tune, then a dwell tallying rx_pkt_desc
     categories instead of parsing frames. Reveals whether real RX bytes are crc_err vs a decode gap."""
     mac.enable_monitor(t)
     if rcr is not None:
         t.write32(0x0608, int(rcr, 0))
-    chan.set_channel_bw(t, channel, prev_ch=None)
+    _set_channel_verify_txagc(t, channel, prev_ch=None, txpwr_pg=txpwr_pg, rfe_type=rfe_type)
     # Read back RF reg 0x18 (the channel/BW reg) on both paths: confirm the retune actually moved the
     # synth to `channel`. RF_0x18[7:0] = channel number; [11:10] = BW (0b11 = 20 MHz).
     rf18_a = sipi.read_rf_reg(t, sipi.RF_PATH_A, 0x18)
@@ -177,7 +253,8 @@ def _dwell_count(t, dwell, rssi, total, wd=None):
     return beacons, raw_bufs, raw_bytes, ch_frames, total
 
 
-def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=False, cckpd=None):
+def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=False, cckpd=None,
+           txpwr_pg=None, rfe_type=None):
     """Tune each channel, then a bulk-IN loop for `dwell` s; tally beacons. `igi` forces RX gain to a
     hex value or sweeps a range (DIG-watchdog hypothesis test); `rcr` overrides the monitor RCR;
     `watchdog` runs the runtime PHYDM watchdog (live IGI adaptation) every ~2 s. rx-dma bytes vs parsed
@@ -195,7 +272,7 @@ def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=Fals
         wd = dm_watchdog.DigState(cur_ig_value=sipi.get_bb_reg(t, 0x0C50, 0x7F),
                                   cck_new_agc=bool(sipi.get_bb_reg(t, 0x0A9C, 1 << 17)))
     for ch in channels:
-        chan.set_channel_bw(t, ch, prev_ch=prev_ch)
+        _set_channel_verify_txagc(t, ch, prev_ch=prev_ch, txpwr_pg=txpwr_pg, rfe_type=rfe_type)
         if cckpd is not None:
             t.write8(0x0A0A, int(cckpd, 0))        # force CCK PD threshold (0x40 sensitive .. 0x83 LV_1)
         prev_ch = ch
@@ -257,13 +334,33 @@ def main() -> int:
             return 0
 
         print("[*] running cold bring-up (two-cycle init: chip-ID/EFUSE/FW/MAC/BB/RF)...")
-        bringup.cold_bringup(t)
+        _, e = bringup.cold_bringup(t)
+        print("  EFUSE: "
+              f"autoload_fail={int(e.autoload_fail)} rfe_type={e.rfe_type} crystal_cap=0x{e.crystal_cap:02x} "
+              f"thermal=0x{e.thermal_meter:02x} id_valid={int(e.eeprom_id_valid)} "
+              f"usb_switch={int(e.usb_mode_switch)} eeprom_vidpid={e.eeprom_vid:04x}:{e.eeprom_pid:04x} "
+              f"regulatory={e.regulatory} interface={e.interface_sel} "
+              f"bt_raw={int(e.bt_coexist_raw)} bt_coexist={int(e.bt_coexist)} "
+              f"bt_ant={2 if e.bt_ant_num else 1} "
+              f"bt_path={'B' if e.bt_ant_path else 'A'} board_type=0x{e.board_type:02x} "
+              f"pa_lna=2g:{int(e.external_pa_2g)}/{int(e.external_lna_2g)} "
+              f"5g:{int(e.external_pa_5g)}/{int(e.external_lna_5g)} "
+              f"type=gpa{e.type_gpa}/apa{e.type_apa}/glna{e.type_glna}/alna{e.type_alna} "
+              f"mac={e.mac_address or '<none>'}")
+        afe1 = t.read32(bb.REG_AFE_CTRL1)
+        afe2 = t.read32(bb.REG_AFE_CTRL2)
+        cap1 = (afe1 & bb.XTAL_CAP_MASK_24) >> 25
+        cap2 = (afe2 & bb.XTAL_CAP_MASK_28) >> 1
+        print(f"  REG 0x24 xtal={cap1:#04x}, REG 0x28 xtal={cap2:#04x} (expect 0x{e.crystal_cap & 0x3f:02x})")
+        if cap1 != (e.crystal_cap & 0x3F) or cap2 != (e.crystal_cap & 0x3F):
+            return _fail("crystal-cap register fields do not match EFUSE")
         print("[PASS] cold init complete (no bus errors).")
         if args.phase == "init":
             return 0
 
+        txpwr_pg = txpower.parse_pg(e.log_map)
         if args.rxstats is not None:
-            _rxstats(t, args.rxstats, args.dwell, args.rcr)
+            _rxstats(t, args.rxstats, args.dwell, args.rcr, txpwr_pg=txpwr_pg, rfe_type=e.rfe_type)
             return 0
 
         channels = [args.channel] if args.channel else CHANNELS_2G
@@ -272,7 +369,8 @@ def main() -> int:
         print(f"[*] monitor RX: {'channel ' + str(args.channel) if args.channel else 'hop 1-13'}, "
               f"{dwell:g}s/ch{igi_note}...")
         per_ch, rssi, frames = _watch(t, channels, dwell, prev_ch=None, igi=args.igi, rcr=args.rcr,
-                                      watchdog=args.watchdog, cckpd=args.cckpd)
+                                      watchdog=args.watchdog, cckpd=args.cckpd, txpwr_pg=txpwr_pg,
+                                      rfe_type=e.rfe_type)
 
         allb: Counter = Counter()
         for c in per_ch.values():

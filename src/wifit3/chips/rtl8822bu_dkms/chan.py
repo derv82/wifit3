@@ -598,6 +598,8 @@ def set_channel_bw(t, ch: int, rf_2t2r: bool = True, prev_ch: int | None = None,
     band_changed = prev_band_5g != (ch > 14)
     if band_changed:
         switch_band(t, ch, rf_2t2r, rx_ant, rfe_type, cut, is_scan=is_scan)
+    elif prev_ch is None and ch > 35:
+        _rfe_pinmux(t, ch, rfe_type, rx_ant == BB_PATH_AB, cut)
     switch_channel(t, ch, rf_2t2r=rf_2t2r, rfe_type=rfe_type, cut=cut, is_scan=is_scan)
     _mac_switch_bandwidth(t, ch)
     _switch_bandwidth_20(t, ch, rf_2t2r, rx_ant, rfe_type, cut, is_scan=is_scan)
