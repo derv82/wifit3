@@ -36,7 +36,7 @@ class Campaign:
     # Focus footer command: (keycap, short label), or None for no hotkey
     hotkey: Optional[tuple[str, str]] = None
     stoppable: bool = True            # False = fire-once; button stays disabled, never flips to "Stop X"
-    # Button text/variant the registry-driven derive_buttons paints: idle_* when
+    # Button text/variant the Focus screen paints from the registry: idle_* when
     # this campaign is not running, run_* while it owns the radio (the "Stop X").
     idle_label: str = ""
     run_label: str = ""

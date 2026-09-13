@@ -18,6 +18,7 @@ from wifit3.persist.config import Config
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
+from ..campaigns.pbc import WpsPbcCapture
 
 if TYPE_CHECKING:
     from wifit3.models.access_point import AccessPoint
@@ -26,14 +27,19 @@ if TYPE_CHECKING:
 BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign, EvilTwinCampaign]
 
 
-@dataclass
-class Campaigns:
-    """The live attack-campaign handles a Focus screen owns."""
-    wep: Optional[WepCampaign] = None
-    wps: Optional[WpsCampaign] = None
-    deauth: Optional[DeauthCampaign] = None
-    eviltwin: Optional[EvilTwinCampaign] = None
-    pbc_busy: bool = False
+CAMPAIGN_BY_KEY = {cls.key: cls for cls in BUTTON_CAMPAIGNS}
+
+
+def campaign_blocked(cls, ap) -> Optional[str]:
+    """Why cls's attack button is disabled right now, or None if it can start:
+    the AP is silenced, another campaign owns the radio, or the campaign's own
+    ineligible_reason (hidden SSID, WPS locked, unconfirmed encryption, …)."""
+    if Config.is_silenced(ap.bssid):
+        return "AP silenced"
+    active = Campaign.active
+    if active is not None and active.key != cls.key:
+        return f"Blocked ({active.key} is active)"
+    return cls.ineligible_reason(ap)
 
 
 def other_long_running_tx(exclude: str = "") -> bool:
@@ -261,65 +267,23 @@ def status_footer_lines(ap, array, campaign, now: float) -> list[str]:
     return lines
 
 
-@dataclass
-class ButtonState:
-    """One attack button's derived state."""
-    visible: bool = False
-    disabled: bool = False
-    label: str = ""
-    variant: str = "primary"
-    reason: str = ""      # why it's disabled (shown as the button tooltip); "" when enabled
-
-
-def derive_buttons(ap) -> dict[str, ButtonState]:
-    """Per-button state, keyed by button id, registry-driven."""
-    active = Campaign.active
-    silenced = Config.is_silenced(ap.bssid)
-    states: dict[str, ButtonState] = {}
-    for cls in BUTTON_CAMPAIGNS:
-        vis = cls.visible(ap)
-        if active is not None and active.key == cls.key and cls.stoppable:
-            states[cls.button_id] = ButtonState(
-                visible=vis, disabled=False,
-                label=cls.run_label, variant=cls.run_variant)
-        else:
-            other = active is not None and active.key != cls.key
-            reason = "AP silenced" if silenced else cls.ineligible_reason(ap)
-            states[cls.button_id] = ButtonState(
-                visible=vis,
-                disabled=reason is not None or other,
-                label=cls.idle_label, variant=cls.idle_variant,
-                reason=reason or ("radio busy (another attack running)" if other else ""))
-    # ChopChop: a WEP sub-action, enabled only while the WEP campaign runs.
-    wep_running = active is not None and active.key == "wep"
-    chopping = wep_running and getattr(active, "chop_active", False)
-    states["btn-chop"] = ButtonState(
-        visible=WepCampaign.visible(ap),
-        disabled=not wep_running or silenced,
-        label="Stop Chop" if chopping else "ChopChop",
-        variant="warning" if chopping else "primary",
-    )
-    return states
-
-
 def deauth_blocked(ap) -> bool:
     """Deauth bursts are dead when a campaign owns the radio OR the AP requires PMF."""
     return other_long_running_tx() or ap.pmf_required
 
 
-def card_dynamic(campaigns: Campaigns) -> str:
-    """What the card is doing right now, shown under the card art."""
-    if campaigns.wep is not None:
-        if getattr(campaigns.wep, "chop_active", False):
-            return "● chopping"
-        return "● replaying"
-    if campaigns.wps is not None:
+def card_dynamic() -> str:
+    """What the card is doing right now, shown under the card art (reads the active campaign)."""
+    active = Campaign.active
+    if isinstance(active, WepCampaign):
+        return "● chopping" if getattr(active, "chop_active", False) else "● replaying"
+    if isinstance(active, WpsCampaign):
         return "● WPS PIN"
-    if campaigns.deauth is not None:
+    if isinstance(active, DeauthCampaign):
         return "● Deauth"
-    if campaigns.eviltwin is not None:
+    if isinstance(active, EvilTwinCampaign):
         return "● EvilTwin"
-    if campaigns.pbc_busy:
+    if isinstance(active, WpsPbcCapture):
         return "● WPS PBC"
     return ""
 
@@ -338,14 +302,15 @@ def wep_action_phrase(campaign) -> str:
     }.get(state, "Listening for a packet")
 
 
-def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
-    """The Campaign headline: up to 3 markup lines holding current activity."""
+def derive_headline(ap, array) -> list[str]:
+    """The Campaign headline: up to 3 markup lines of current activity (reads the active campaign)."""
     enc = (ap.encryption or "").upper()
     wep = enc == "WEP"
+    active = Campaign.active
 
     # 1. WEP active attack: cracking / replaying / chopping.
-    camp = campaigns.wep
-    if camp is not None:
+    if isinstance(active, WepCampaign):
+        camp = active
         n_ivs = ap.wep.unique_ivs if ap.wep else 0
         cracker_samples = getattr(getattr(camp, "cracker", None), "sample_count", 0)
         action = wep_action_phrase(camp)
@@ -363,10 +328,10 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
                 f"{CRACK_READY_THRESHOLD // 1000}k usable[/dim]"]
 
     # 2. Live WPS attack.
-    wps = campaigns.wps
-    if campaigns.pbc_busy:
+    if isinstance(active, WpsPbcCapture):
         return ["[bold green]● WPS PushButton[/bold green] window: capturing PSK"]
-    if wps is not None:
+    if isinstance(active, WpsCampaign):
+        wps = active
         if wps.state.found_pin:
             return ["[black bold on green] ✓ WPS PIN cracked [/black bold on green]",
                     f"[dim]PIN {escape(wps.state.found_pin)}[/dim]"]
@@ -374,8 +339,8 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
                 f"[dim]{wps_status_markup(wps)}[/dim]"]
 
     # 3. EvilTwin campaign running.
-    if campaigns.eviltwin is not None:
-        camp = campaigns.eviltwin
+    if isinstance(active, EvilTwinCampaign):
+        camp = active
         if camp.captured:
             return ["[black bold on green] ✓ Captured [/black bold on green] crackable M2",
                     f"[dim]saved to {Config.captures_dir}/[/dim]"]
@@ -388,8 +353,8 @@ def derive_headline(ap, array, campaigns: Campaigns) -> list[str]:
                 f"{stats.probes_wildcard} wildcard[/dim]"]
 
     # 3b. Deauth campaign running: provoking a re-handshake for the passive capture.
-    deauth = campaigns.deauth
-    if deauth is not None:
+    if isinstance(active, DeauthCampaign):
+        deauth = active
         return ["[bold cyan]● Deauth[/bold cyan] forcing a re-handshake",
                 f"[dim]client acks:{deauth.client_acks}/{deauth.client_sent} · "
                 f"bcast:{deauth.bcast_sent}[/dim]"]
