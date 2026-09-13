@@ -9,11 +9,10 @@ import platform
 
 import pytest
 
+from wifit3.setup.base import SetupResult
 from wifit3.setup.windows import (
     _LIBUSB_SERVICES,
     _PNPUTIL_OK,
-    InstallResult,
-    UninstallResult,
     _build_args,
     _restore_command,
     _signed32,
@@ -79,7 +78,7 @@ def test_wdi_message_unknown_code_is_descriptive():
 
 
 def test_install_result_defaults():
-    r = InstallResult(ok=True, message="WinUSB installed.")
+    r = SetupResult(ok=True, message="WinUSB installed.")
     assert r.ok and not r.cancelled and r.wdi_code is None
 
 
@@ -112,5 +111,5 @@ def test_pnputil_reboot_required_counts_as_success():
 
 
 def test_restore_result_defaults():
-    r = UninstallResult(ok=True, message="done")
+    r = SetupResult(ok=True, message="done")
     assert r.ok and not r.cancelled and r.detail is None

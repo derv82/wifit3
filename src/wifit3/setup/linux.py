@@ -95,14 +95,6 @@ def current_user() -> str:
     return pwd.getpwuid(os.getuid()).pw_name
 
 
-@dataclass(frozen=True)
-class LinuxSetupResult:
-    ok: bool
-    message: str
-    cancelled: bool = False
-    detail: str | None = None
-
-
 # --- live kernel-module discovery ---------------------------------------------------------------
 
 def _matching_usb_dirs(ids):
@@ -451,7 +443,7 @@ def _residual_blocked(own_modules: set[str], removed_keys: set[str]) -> dict[str
 
 # --- public install / remove --------------------------------------------------------------------
 
-def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupResult:
+def install_rule(target: SetupTarget, *, node: str | None = None) -> SetupResult:
     """Hand ``target``'s chipset to wifit3: write the per-chipset blacklist + udev access rule under
     one elevation prompt, reload udev, and best-effort unload the kernel module. The card needs a
     physical replug afterwards to reach a clean cold state (the caller asks for it)."""
@@ -462,7 +454,7 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupR
     is_root = os.geteuid() == 0
     group = None if is_root else _access_group()
     if not is_root and group is None:
-        return LinuxSetupResult(
+        return SetupResult(
             ok=False,
             detail="Add yourself: `sudo usermod -aG sudo $USER`, then log out and back in. "
                    "Or run `sudo .venv/bin/python3 -m wifit3`.",
@@ -476,7 +468,7 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupR
         tmp_rule = _stage(f"wifit3-{_safe(target.key)}.rules", rule_text)
         tmp_blacklist = _stage(f"wifit3-{_safe(target.key)}.conf", blacklist_text)
     except OSError as e:
-        return LinuxSetupResult(ok=False, message=f"Couldn't stage the setup files: {e}")
+        return SetupResult(ok=False, message=f"Couldn't stage the setup files: {e}")
 
     try:
         cmd = _install_cmd(tmp_rule=tmp_rule, key=target.key, tmp_blacklist=tmp_blacklist,
@@ -487,7 +479,7 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupR
         else:
             method = _choose_escalation_method()
             if method is None:
-                return LinuxSetupResult(
+                return SetupResult(
                     ok=False, detail=_manual_hint(target.key),
                     message="No graphical elevator (pkexec/sudo) found to install the udev rule + blocklist.")
             rc = run_privileged(cmd, method)
@@ -496,12 +488,12 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupR
             detail = blacklist_path(target.key) if modules else (
                 "Couldn't determine the kernel module to blacklist. The card may be re-grabbed on "
                 "replug. Tell us the chipset so we can add a fallback hint.")
-            return LinuxSetupResult(ok=True, detail=detail, message=_REPLUG_MSG)
+            return SetupResult(ok=True, detail=detail, message=_REPLUG_MSG)
         if rc == 126:
-            return LinuxSetupResult(
+            return SetupResult(
                 ok=False, cancelled=True,
                 message="Authorization dismissed. The udev rule + blocklist were not installed.")
-        return LinuxSetupResult(ok=False, detail=_manual_hint(target.key),
+        return SetupResult(ok=False, detail=_manual_hint(target.key),
                                 message=f"Couldn't install the udev rule + blocklist (exit {rc}).")
     finally:
         for tmp in (tmp_rule, tmp_blacklist):
@@ -513,7 +505,7 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupR
 
 
 def remove_rule(target: SetupTarget, *, node: str | None = None,
-                also_keys: tuple[str, ...] = ()) -> LinuxSetupResult:
+                also_keys: tuple[str, ...] = ()) -> SetupResult:
     """Return ``target``'s chipset (and any ``also_keys`` siblings) to the kernel: delete their
     per-chipset blacklist + access-rule pairs and reload udev. The normal Wi-Fi driver rebinds on the
     next replug.
@@ -528,7 +520,7 @@ def remove_rule(target: SetupTarget, *, node: str | None = None,
     keys = _dedupe([target.key, *also_keys])
     rpath, bpath = rule_path(target.key), blacklist_path(target.key)
     if not any(Path(rule_path(k)).exists() or Path(blacklist_path(k)).exists() for k in keys):
-        return LinuxSetupResult(
+        return SetupResult(
             ok=True, detail=rpath,
             message="No wifit3 rules installed for this chipset. Nothing to remove.")
 
@@ -537,29 +529,29 @@ def remove_rule(target: SetupTarget, *, node: str | None = None,
     own_modules = modules_in_conf(bpath) if Path(bpath).exists() else set()
     removed_keys = {_safe(k) for k in keys}
 
-    def _ok() -> LinuxSetupResult:
+    def _ok() -> SetupResult:
         residual = _residual_blocked(own_modules, removed_keys)
         if residual:
             mods = ", ".join(sorted(residual))
             blockers = ", ".join(sorted({k for who in residual.values() for k in who}))
-            return LinuxSetupResult(
+            return SetupResult(
                 ok=True, detail=rpath,
                 message=(f"Removed wifit3's rules for this card. Kernel module(s) {mods} stay "
                          f"blocked by chipset(s) {blockers} still handed to wifit3. Uninstall those "
                          f"too to fully restore this card. Replug to apply."))
-        return LinuxSetupResult(ok=True, detail=rpath, message=_REMOVED_MSG)
+        return SetupResult(ok=True, detail=rpath, message=_REMOVED_MSG)
 
     cmd = _remove_cmd(keys, node)
     if os.geteuid() == 0:
         rc = _run_as_root(cmd)
         return (_ok() if rc == 0
-                else LinuxSetupResult(ok=False, detail=rpath,
+                else SetupResult(ok=False, detail=rpath,
                                       message=f"Couldn't remove the udev rule + blocklist (exit {rc})."))
 
     method = _choose_escalation_method()
     if method is None:
         rmpaths = " ".join(shlex.quote(p) for k in keys for p in (rule_path(k), blacklist_path(k)))
-        return LinuxSetupResult(
+        return SetupResult(
             ok=False,
             detail=f"sudo rm -f {rmpaths} && sudo udevadm control --reload-rules",
             message="No graphical elevator (pkexec/sudo) found to remove the udev rule + blocklist.")
@@ -568,10 +560,10 @@ def remove_rule(target: SetupTarget, *, node: str | None = None,
     if rc == 0:
         return _ok()
     if rc == 126:
-        return LinuxSetupResult(
+        return SetupResult(
             ok=False, cancelled=True,
             message="Authorization dismissed. The udev rule + blocklist are still installed.")
-    return LinuxSetupResult(ok=False, detail=rpath,
+    return SetupResult(ok=False, detail=rpath,
                             message=f"Couldn't remove the udev rule + blocklist (exit {rc}).")
 
 
@@ -670,8 +662,7 @@ class SetupLinux(Setup):
         result = await asyncio.to_thread(
             remove_rule, target, node=usb_node_path(device_id), also_keys=also)
         if not result.ok:
-            return SetupResult(ok=False, message=result.message, cancelled=result.cancelled,
-                               detail=result.detail)
+            return result
 
         # remove_rule chowned the node back to root; wait for that revoke to land.
         ui.status("Revoking device access…")

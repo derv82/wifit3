@@ -105,24 +105,6 @@ class _SP_DEVINFO_DATA(ctypes.Structure):
 
 
 @dataclass(frozen=True)
-class InstallResult:
-    """Installation data."""
-    ok: bool
-    message: str
-    cancelled: bool = False
-    wdi_code: int | None = None
-    detail: str | None = None   # wdi-simple's own last output line
-
-
-@dataclass(frozen=True)
-class UninstallResult:
-    ok: bool
-    message: str
-    cancelled: bool = False
-    detail: str | None = None
-
-
-@dataclass(frozen=True)
 class _ElevatedRun:
     """See :func:`_launch_elevated`."""
     launched: bool        # did ShellExecuteExW start the process at all?
@@ -246,7 +228,7 @@ class _PendingInstall:
     """A WinUSB install staged and past the UAC prompt."""
     logpath: Path
     run: _ElevatedRun | None = None
-    error: InstallResult | None = None
+    error: SetupResult | None = None
 
     @property
     def launched(self) -> bool:
@@ -276,12 +258,12 @@ def _launch_winusb(vid: int, pid: int, iid: int | None = None,
         batpath.write_text(bat, encoding="mbcs")
     except OSError as e:
         return _PendingInstall(logpath=logpath,
-                               error=InstallResult(ok=False, message=f"Couldn't stage the installer: {e}"))
+                               error=SetupResult(ok=False, message=f"Couldn't stage the installer: {e}"))
     logger.info("WinUSB install (elevated): %s %s", exe.name, args_str)
     return _PendingInstall(logpath=logpath, run=_launch_elevated(str(batpath), ""))
 
 
-def _finish_winusb(pending: _PendingInstall) -> InstallResult:
+def _finish_winusb(pending: _PendingInstall) -> SetupResult:
     """Waits for install, then reads wdi's exit code & log."""
     if pending.error is not None:
         return pending.error
@@ -293,19 +275,19 @@ def _finish_winusb(pending: _PendingInstall) -> InstallResult:
     if not run.launched:
         if run.win_error == _ERROR_CANCELLED:
             logger.info("WinUSB install: user declined the UAC prompt")
-            return InstallResult(
+            return SetupResult(
                 ok=False, cancelled=True,
                 message="Elevation cancelled. WinUSB was not installed.")
         logger.warning("WinUSB install: ShellExecuteExW failed (WinError %d)", run.win_error)
-        return InstallResult(
+        return SetupResult(
             ok=False, message=f"Could not launch the installer (WinError {run.win_error}).")
     if run.exit_code is None:
-        return InstallResult(ok=False, detail=_last_line(output),
+        return SetupResult(ok=False, detail=_last_line(output),
                              message="The driver installer didn't finish within 3 minutes.")
 
     wdi = run.exit_code
     logger.info("WinUSB install: wdi-simple exit=%d (%s)", wdi, _wdi_message(wdi))
-    return InstallResult(ok=(wdi == 0), wdi_code=wdi, message=_wdi_message(wdi),
+    return SetupResult(ok=(wdi == 0), wdi_code=wdi, message=_wdi_message(wdi),
                          detail=_last_line(output) if wdi != 0 else None)
 
 
@@ -386,14 +368,14 @@ def _find_winusb_inf(vid: int, pid: int) -> str | None:
         setupapi.SetupDiDestroyDeviceInfoList(hdev)
 
 
-def restore_driver(vid: int, pid: int) -> UninstallResult:
+def restore_driver(vid: int, pid: int) -> SetupResult:
     """Remove the WinUSB/libusb binding on ``vid:pid`` so the native driver reclaims it."""
     if sys.platform != "win32":
         raise RuntimeError("restore_driver is Windows-only")
 
     inf = _find_winusb_inf(vid, pid)
     if inf is None:
-        return UninstallResult(
+        return SetupResult(
             ok=False,
             message="Couldn't find a WinUSB/libusb driver bound to this card to remove.")
 
@@ -405,14 +387,14 @@ def restore_driver(vid: int, pid: int) -> UninstallResult:
     if not run.launched:
         if run.win_error == _ERROR_CANCELLED:
             logger.info("Restore: user declined the UAC prompt")
-            return UninstallResult(
+            return SetupResult(
                 ok=False, cancelled=True,
                 message="Elevation cancelled. The WinUSB driver was not removed.")
         logger.warning("Restore: ShellExecuteExW failed (WinError %d)", run.win_error)
-        return UninstallResult(
+        return SetupResult(
             ok=False, message=f"Could not launch the uninstaller (WinError {run.win_error}).")
     if run.exit_code is None:
-        return UninstallResult(ok=False, detail=inf,
+        return SetupResult(ok=False, detail=inf,
                              message="The driver uninstall didn't finish in time.")
 
     code = run.exit_code
@@ -421,9 +403,9 @@ def restore_driver(vid: int, pid: int) -> UninstallResult:
         if code == 3010:
             msg += " (A reboot may be needed to finish.)"
         logger.info("Restore: removed %s (pnputil exit=%d)", inf, code)
-        return UninstallResult(ok=True, message=msg, detail=inf)
+        return SetupResult(ok=True, message=msg, detail=inf)
     logger.warning("Restore: pnputil failed for %s (exit=%d)", inf, code)
-    return UninstallResult(
+    return SetupResult(
         ok=False, detail=inf, message=f"pnputil couldn't remove the driver (exit {code}).")
 
 

@@ -92,16 +92,16 @@ class AccessPoint:
     # Read-only capture history loaded from captures/ at scan start.
     persisted: List[PersistedCapture] = field(default_factory=list)
 
+    # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
+    signal_by_card: Dict[str, int] = field(default_factory=dict)
+    signal_history: Dict[str, deque[int]] = field(default_factory=dict, repr=False)
+
     def __post_init__(self) -> None:
         if self.bssid and not self.identity.get_source_value(IdKey.MANUFACTURER, IdSource.OUI):
             from wifit3.id.common import vendor_for_mac
             vendor = vendor_for_mac(self.bssid)
             if vendor:
                 self.identity.set(IdSource.OUI, IdKey.MANUFACTURER, vendor)
-
-    # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
-    signal_by_card: Dict[str, int] = field(default_factory=dict)
-    signal_history: Dict[str, deque[int]] = field(default_factory=dict, repr=False)
 
     @property
     def signal(self) -> int:

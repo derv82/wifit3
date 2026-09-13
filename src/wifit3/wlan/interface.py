@@ -14,7 +14,7 @@ from wifit3.errors import (
 )
 from wifit3.wlan.channels import scan_hop_order
 from wifit3.dot11.packet import Packet
-from wifit3.dot11.deauth import build_deauth, _deauth_nav_bytes
+from wifit3.dot11.deauth import build_deauth, deauth_nav_bytes
 from wifit3.dot11.mac import str_to_mac, mac_to_str, random_client_mac
 
 logger = logging.getLogger(__name__)
@@ -230,7 +230,7 @@ class WlanInterface:
 
     def _deauth_frame(self, dest: bytes, src: bytes, ap_mac: bytes, dest_str: str) -> bytes:
         """One 802.11 deauth MPDU addressed dest←src, reason 7, destination-keyed ACK NAV."""
-        return build_deauth(dest, src, ap_mac, 7, duration=_deauth_nav_bytes(dest_str))
+        return build_deauth(dest, src, ap_mac, 7, duration=deauth_nav_bytes(dest_str))
 
     async def deauth_broadcast(self, ap_bssid: str, count: int = 20) -> int:
         """Spray AP→broadcast de-auth frames. The caller has this card tuned to the AP's channel."""

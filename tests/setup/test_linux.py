@@ -18,8 +18,8 @@ import pytest
 
 import wifit3.setup.linux as lin
 from wifit3.setup import SetupTarget
+from wifit3.setup.base import SetupResult
 from wifit3.setup.linux import (
-    LinuxSetupResult,
     _choose_escalation_method,
     blacklist_path,
     discover_kernel_modules,
@@ -469,5 +469,5 @@ def test_remove_rule_wide_clears_the_family(monkeypatch, tmp_path):
 
 
 def test_linux_setup_result_defaults():
-    r = LinuxSetupResult(ok=True, message="x")
+    r = SetupResult(ok=True, message="x")
     assert r.ok and not r.cancelled and r.detail is None

@@ -45,7 +45,7 @@ def reason_description(code: Optional[int]) -> str:
 _DEAUTH_ACK_NAV_US = 0x013A
 
 
-def _deauth_nav_bytes(dest_mac: str) -> bytes:
+def deauth_nav_bytes(dest_mac: str) -> bytes:
     """Little-endian duration/NAV for a deauth addressed to ``dest_mac`` (addr1).
 
     A group-addressed (broadcast/multicast) destination is never ACKed → NAV 0; a unicast

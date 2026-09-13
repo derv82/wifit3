@@ -39,7 +39,7 @@ class FakePrompter:
 
 
 class _Result:
-    """LinuxSetupResult stand-in for the install_rule / remove_rule stubs."""
+    """SetupResult stand-in for the install_rule / remove_rule stubs."""
     def __init__(self, ok=True, message="", cancelled=False, detail=None):
         self.ok, self.message, self.cancelled, self.detail = ok, message, cancelled, detail
 

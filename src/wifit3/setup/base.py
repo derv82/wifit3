@@ -25,6 +25,7 @@ class SetupResult:
     message: str
     cancelled: bool = False
     detail: str | None = None
+    wdi_code: int | None = None   # libwdi error code from a Windows WinUSB install; None elsewhere
 
 
 class Prompter(Protocol):

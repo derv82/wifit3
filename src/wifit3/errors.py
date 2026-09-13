@@ -13,6 +13,7 @@ import usb.core
 # we match only NO_DEVICE here and let the RX reader's consecutive-error give-up absorb the
 # messier IO streak. (backend_error_code is already read this way in mt76x0u/driver.py.)
 _LIBUSB_NO_DEVICE = -4
+_ERRNO_ENODEV = 19
 
 
 def is_device_gone(exc: BaseException) -> bool:
@@ -20,7 +21,7 @@ def is_device_gone(exc: BaseException) -> bool:
     if not isinstance(exc, usb.core.USBError):
         return False
     return (getattr(exc, "backend_error_code", None) == _LIBUSB_NO_DEVICE
-            or getattr(exc, "errno", None) == 19)
+            or getattr(exc, "errno", None) == _ERRNO_ENODEV)
 
 
 # libusb/errno codes that mean "the card is present but we can't open it for a FIXABLE access
@@ -78,13 +79,19 @@ class BringUpPermissionsError(BringUpError):
     one-time install."""
 
 
-class WifiteFatalError(Exception):
-    """An unrecoverable condition the user must fix before wifit3 can run (e.g. no USB backend)."""
+class WifiteError(Exception):
+    """Base for wifit3's user-facing errors: a ``.title`` / ``.message`` pair the TUI renders
+    instead of a bare traceback. (Bring-up faults use the separate ``BringUpError`` hierarchy,
+    which carries a stage/detail pair rather than title/message.)"""
 
     def __init__(self, title: str, message: str) -> None:
         self.title = title
         self.message = message
         super().__init__(f"{title}: {message}")
+
+
+class WifiteFatalError(WifiteError):
+    """An unrecoverable condition the user must fix before wifit3 can run (e.g. no USB backend)."""
 
     @property
     def trace(self) -> str:
@@ -92,13 +99,12 @@ class WifiteFatalError(Exception):
         return _scrub_paths(raw)
 
 
-class WifiteDeviceLostError(Exception):
+class WifiteDeviceLostError(WifiteError):
     """The active adapter vanished mid-run (unplug / USB pipe wedged past recovery)."""
 
     def __init__(self, name: str = "the wireless adapter") -> None:
-        self.title = "Adapter disconnected"
-        self.message = (
+        super().__init__(
+            "Adapter disconnected",
             f"Lost contact with {name}: it was unplugged or the USB link dropped.\n"
-            "Replug the card, then press Back to Splash to reconnect."
+            "Replug the card, then press Back to Splash to reconnect.",
         )
-        super().__init__(f"{self.title}: {self.message}")
