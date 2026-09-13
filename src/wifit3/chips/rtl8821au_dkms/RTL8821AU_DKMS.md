@@ -52,11 +52,24 @@ values. The replay-diff gate skips this window deliberately.
 
 ## EFUSE variants — any-card support
 
-Two kinds of fuse data. **Values** (crystal_cap, per-rate TX-power, bb_swing, MAC) are consumed
-by computation, so any burn already works. **Branches** select code paths — these are where a
-non-reference card diverges, and they are now gated on the runtime fuse (`efuse.read_chip_params`
-→ `driver`), so a value-less path stays the reference AWUS036ACS byte-for-byte (`verify_pcap`
-proves it). The card reads `ext_lna_2g=0`, `board_type=0x00` (blank amplifier bytes 0xBC/0xBD/0xBF).
+The DKMS USB EFUSE reader is `ReadAdapterInfo8812AU` → `Hal_ReadPROMContent_8812A` →
+`InitAdapterVariablesByPROM_8812AU`. The 8821U path now accounts for its full active parser list:
+`hal_InitPGData_8812A`, `Hal_EfuseParseIDCode8812A`, `Hal_ReadPROMVersion8812A`,
+`hal_ReadIDs_8812AU`, `hal_config_macaddr`, `Hal_ReadTxPowerInfo8812A`, `Hal_ReadBoardType8812A`,
+`Hal_EfuseParseBTCoexistInfo8812A`, `Hal_ReadChannelPlan8812A`, `Hal_EfuseParseXtal_8812A`,
+`Hal_ReadThermalMeter_8812A`, `Hal_ReadRemoteWakeup_8812A`, `Hal_ReadPAType_8821A`,
+`hal_ReadUsbModeSwitch_8812AU`, `ReadLEDSetting_8812AU`, `hal_ReadUsbType_8812AU`, and
+`rtw_btcoex_set_ant_info`. The 8812-only readers (`Hal_ReadAmplifierType_8812A`,
+`Hal_ReadRFEType_8812A`) are not called for `IS_HARDWARE_TYPE_8821U`; antenna diversity is compiled
+out in this vendor build; `CONFIG_RF_POWER_TRIM` is not enabled, so `Hal_EfuseParseKFreeData_8821A`
+is a no-op here.
+
+Two kinds of fuse data. **Values** (ID validity, crystal_cap, thermal, per-rate TX-power, bb_swing,
+MAC, VID/PID/customer/channel/USB policy) are decoded with vendor defaults. **Branches** select code
+paths — these are where a non-reference card diverges, and they are now gated on the runtime fuse
+(`efuse.read_chip_params` → `driver`), so a value-less path stays the reference AWUS036ACS
+byte-for-byte (`verify_pcap` proves it). The card reads `ext_lna_2g=0`, `board_type=0x00` (blank
+amplifier bytes 0xBC/0xBD/0xBF).
 
 **Runtime-gated branches (reference = default; non-reference ported-from-C, hardware-untested):**
 - **ExternalLNA_2G RFE pinmux** — `chan._set_rfe_2g` ports both arms of `phy_SetRFEReg8821`
@@ -86,11 +99,12 @@ proves it). The card reads `ext_lna_2g=0`, `board_type=0x00` (blank amplifier by
   runs it unconditionally to match. (This card's `rf_board_opt` BIT3=1, so an antdiv-enabled build
   WOULD gate it — a latent build-time dependency, not a runtime fuse gap.)
 
-**BT policy acknowledged, runtime coexist out of scope:** `efuse.read_chip_params` now probes
-`REG_MULTI_FUNC_CTRL` `BT_FUNC_EN`; a combo burn sets `bt_coexist` and ORs `ODM_BOARD_BT` into
-`board_type`, so the phy-cond policy sees the BT board bit. The BTCoexist runtime decision machine
-is still out of scope, same as RTL8822CU. `type_glna/gpa/alna/apa` stay 0 (`Hal_ReadPAType_8821A`
-never sets them — those are 8812-only), so a board_type-set card matches only the type-0 rows.
+**BT policy acknowledged, runtime coexist out of scope:** `efuse.read_chip_params` now follows the
+8821 branch exactly: `REG_MULTI_FUNC_CTRL` `BT_FUNC_EN` decides `bt_coexist`, and efuse 0xC3 bit0
+records `bt_ant_num`. A combo burn sets `bt_coexist` and ORs `ODM_BOARD_BT` into `board_type`, so the
+phy-cond policy sees the BT board bit. The BTCoexist runtime decision machine is still out of scope,
+same as RTL8822CU. `type_glna/gpa/alna/apa` stay 0 (`Hal_ReadPAType_8821A` never sets them — those
+are 8812-only), so a board_type-set card matches only the type-0 rows.
 
 ## Orientation
 

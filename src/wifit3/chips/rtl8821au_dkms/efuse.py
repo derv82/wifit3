@@ -51,12 +51,39 @@ class ChipParams(NamedTuple):
     mac_address: Optional[str]
     chip_version: int
     autoload_fail: bool
+    eeprom_id_valid: bool
+    eeprom_version: int
+    eeprom_vid: int
+    eeprom_pid: int
+    eeprom_customer_id: int
+    eeprom_subcustomer_id: int
+    customer_id: int
+    regulatory: int
+    interface_sel: int
+    channel_plan: int
+    country_code: str
+    thermal_meter: int
+    thermal_meter_ignore: bool
+    remote_wakeup: bool
+    usb_mode_switch: bool
+    usb_type_antenna: int
+    usb_type_wmode: int
+    usb_type_disable_11ac: bool
+    pa_type_2g: int
+    lna_type_2g: int
+    pa_type_5g: int
+    lna_type_5g: int
+    external_pa_2g: bool
+    external_lna_2g: bool
+    external_pa_5g: bool
+    external_lna_5g: bool
+    bt_coexist: bool         # EEPROMBluetoothCoexist — ODM_BOARD_BT policy bit
+    bt_ant_num: int
     tx_power: PathTxPwr      # path A, 2.4 GHz
     tx_power_5g: PathTxPwr   # path A, 5 GHz (bw40_base = 14 UNII groups; no CCK)
     bb_swing_2g: int         # path-A TxScale (0x0C1C[31:21]) for 2.4 GHz
     bb_swing_5g: int         # path-A TxScale for 5 GHz
     ext_lna_2g: bool         # ExternalLNA_2G — gates the phy_SetRFEReg8821 2.4 GHz pinmux
-    bt_coexist: bool         # EEPROMBluetoothCoexist — ODM_BOARD_BT policy bit
     board_type: int          # ODM ext-LNA/PA/BT bitfield — the phy_cond walker's board input
 
 
@@ -150,10 +177,133 @@ def _read_logical_map(t) -> bytes:
     return bytes(tbl)
 
 
-def _parse_crystal_cap(m: bytes) -> int:
+def _le16(m: bytes, off: int) -> int:
+    return m[off] | (m[off + 1] << 8)
+
+
+def _eeprom_id_valid(m: bytes) -> bool:
+    """[SRC] Hal_EfuseParseIDCode8812A — logical bytes 0..1 must be 0x8129."""
+    return _le16(m, 0) == C.RTL_EEPROM_ID
+
+
+def _parse_crystal_cap(m: bytes, autoload_fail: bool) -> int:
     """[SRC] Hal_EfuseParseXtal_8812A — efuse 0xB9, else default 0x20."""
+    if autoload_fail:
+        return C.EEPROM_DEFAULT_CRYSTAL_CAP
     v = m[C.EEPROM_XTAL]
     return C.EEPROM_DEFAULT_CRYSTAL_CAP if v == 0xFF else v
+
+
+def _parse_eeprom_version(m: bytes, autoload_fail: bool) -> int:
+    """[SRC] Hal_ReadPROMVersion8812A — 8821 version byte 0xC4."""
+    if autoload_fail:
+        return C.EEPROM_DEFAULT_VERSION
+    v = m[C.EEPROM_VERSION_8821]
+    return C.EEPROM_DEFAULT_VERSION if v == 0xFF else v
+
+
+def _customer_id_from_ids(vid: int, pid: int) -> int:
+    if (vid, pid) == (0x050D, 0x1106):
+        return C.RT_CID_819X_SERCOMM_BELKIN
+    if (vid, pid) == (0x0846, 0x9051):
+        return C.RT_CID_819X_SERCOMM_NETGEAR
+    if (vid, pid) == (0x2001, 0x330E):
+        return C.RT_CID_819X_ALPHA_DLINK
+    if (vid, pid) == (0x0B05, 0x17D2):
+        return C.RT_CID_819X_EDIMAX_ASUS
+    if (vid, pid) == (0x0846, 0x9052):
+        return C.RT_CID_NETGEAR
+    if vid == 0x0411 and pid in (0x0242, 0x025D):
+        return C.RT_CID_DNI_BUFFALO
+    if (vid, pid) in ((0x2001, 0x3314), (0x20F4, 0x804B), (0x20F4, 0x805B),
+                      (0x2001, 0x3315), (0x2001, 0x3316)):
+        return C.RT_CID_DLINK
+    return C.RT_CID_DEFAULT
+
+
+def _customized_customer_id(vid: int, pid: int, eeprom_customer_id: int, base_id: int) -> int:
+    """[SRC] hal_CustomizeByCustomerID_8812AU — resolved CustomerID for LED/customer policy."""
+    resolved = base_id
+    if (vid, pid) == (0x103C, 0x1629):
+        resolved = C.RT_CID_819X_HP
+    elif (vid, pid) == (0x9846, 0x9041):
+        resolved = C.RT_CID_NETGEAR
+    elif (vid, pid) == (0x2019, 0x1201):
+        resolved = C.RT_CID_PLANEX
+    elif (vid, pid) == (0x0BDA, 0x5088):
+        resolved = C.RT_CID_CC_C
+    elif vid == 0x0411 and pid in (0x0242, 0x025D):
+        resolved = C.RT_CID_DNI_BUFFALO
+    elif (vid, pid) in ((0x2001, 0x3314), (0x20F4, 0x804B), (0x20F4, 0x805B),
+                        (0x2001, 0x3315), (0x2001, 0x3316)):
+        resolved = C.RT_CID_DLINK
+
+    if eeprom_customer_id == C.EEPROM_CID_DEFAULT:
+        if vid == 0x2001 and pid in (0x3308, 0x3309, 0x330A):
+            return C.RT_CID_DLINK
+        if (vid, pid) == (0x0BFF, 0x8160):
+            return C.RT_CID_CHINA_MOBILE
+        if (vid, pid) == (0x0BDA, 0x5088):
+            return C.RT_CID_CC_C
+        if (vid, pid) == (0x0846, 0x9052):
+            return C.RT_CID_NETGEAR
+        if vid == 0x0411 and pid in (0x0242, 0x025D):
+            return C.RT_CID_DNI_BUFFALO
+        if (vid, pid) in ((0x2001, 0x3314), (0x20F4, 0x804B), (0x20F4, 0x805B),
+                          (0x2001, 0x3315), (0x2001, 0x3316)):
+            return C.RT_CID_DLINK
+        return resolved
+    if eeprom_customer_id == C.EEPROM_CID_WHQL:
+        return resolved
+    return C.RT_CID_DEFAULT
+
+
+def _parse_ids(m: bytes, autoload_fail: bool) -> tuple[int, int, int, int, int]:
+    """[SRC] hal_ReadIDs_8812AU + hal_CustomizeByCustomerID_8812AU."""
+    if autoload_fail:
+        return (C.EEPROM_DEFAULT_VID, C.EEPROM_DEFAULT_PID, C.EEPROM_DEFAULT_CUSTOMER_ID,
+                C.EEPROM_DEFAULT_SUBCUSTOMER_ID, C.RT_CID_DEFAULT)
+    vid = _le16(m, C.EEPROM_VID_8821AU)
+    pid = _le16(m, C.EEPROM_PID_8821AU)
+    customer = m[C.EEPROM_CUSTOM_ID_8812]
+    subcustomer = C.EEPROM_DEFAULT_SUBCUSTOMER_ID
+    return vid, pid, customer, subcustomer, _customized_customer_id(
+        vid, pid, customer, _customer_id_from_ids(vid, pid))
+
+
+def _parse_regulatory(m: bytes, autoload_fail: bool) -> int:
+    """[SRC] Hal_ReadTxPowerInfo8812A — board-option bits [2:0]."""
+    if autoload_fail:
+        return 0
+    board = m[C.EEPROM_RF_BOARD_OPTION_8821AU]
+    if board == 0xFF:
+        board = C.EEPROM_DEFAULT_BOARD_OPTION
+    return board & 0x7
+
+
+def _parse_interface_sel(m: bytes, autoload_fail: bool) -> int:
+    """[SRC] Hal_ReadBoardType8812A — board-option bits [7:5]."""
+    if autoload_fail:
+        return 0
+    board = m[C.EEPROM_RF_BOARD_OPTION_8821AU]
+    if board == 0xFF:
+        board = C.EEPROM_DEFAULT_BOARD_OPTION
+    return (board & 0xE0) >> 5
+
+
+def _parse_country_code(m: bytes) -> str:
+    raw = m[C.EEPROM_COUNTRY_CODE_8812:C.EEPROM_COUNTRY_CODE_8812 + 2]
+    if len(raw) != 2 or raw in (b"\xff\xff", b"\x00\x00"):
+        return ""
+    return raw.decode("ascii", errors="replace")
+
+
+def _parse_thermal_meter(m: bytes, autoload_fail: bool) -> tuple[int, bool]:
+    """[SRC] Hal_ReadThermalMeter_8812A — blank/fail means ignore and report 0xFF."""
+    v = C.EEPROM_DEFAULT_THERMAL_METER_8812 if autoload_fail else m[C.EEPROM_THERMAL_METER_8821]
+    if v == 0xFF or autoload_fail:
+        return 0xFF, True
+    return v, False
 
 
 def _s4(n: int) -> int:
@@ -217,18 +367,10 @@ def _parse_bb_swing(m: bytes, byte_off: int) -> int:
     return _BB_SWING[sw & 0x3]
 
 
-def _ext_amplifier_flags(m: bytes, autoload_fail: bool) -> tuple:
-    """[SRC] Hal_ReadPAType_8821A (rtl8812a_hal_init.c:1230) — the 4 external-PA/LNA flags.
-
-    Registry amplifier type is AUTO (userland has no registry override), so PAType/LNAType
-    come from efuse (0xFF -> 0). Unlike the 8812's dual-bit test, the 8821 keys each flag on
-    a SINGLE bit: ExternalPA_2G=PAType_2G[4], ExternalLNA_2G=LNAType_2G[3],
-    external_pa_5g=PAType_5G[0], external_lna_5g=LNAType_5G[3]. PAType_2G and PAType_5G both
-    read from EEPROM_PA_TYPE_8821AU (0xBC). An autoload-fail efuse -> all flags 0 (the
-    registry-AUTO else path). Returns (ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g).
-    """
+def _ext_amplifier_flags(m: bytes, autoload_fail: bool) -> tuple[int, int, int, int, bool, bool, bool, bool]:
+    """[SRC] Hal_ReadPAType_8821A — raw PA/LNA type bytes and the four external flags."""
     if autoload_fail:
-        return False, False, False, False
+        return 0, 0, 0, 0, False, False, False, False
     pa = m[C.EEPROM_PA_TYPE_8821AU]
     lna_2g = m[C.EEPROM_LNA_TYPE_2G_8821AU]
     lna_5g = m[C.EEPROM_LNA_TYPE_5G_8821AU]
@@ -238,26 +380,23 @@ def _ext_amplifier_flags(m: bytes, autoload_fail: bool) -> tuple:
         lna_2g = 0
     if lna_5g == 0xFF:
         lna_5g = 0
-    ext_pa_2g = bool(pa & (1 << 4))
-    ext_lna_2g = bool(lna_2g & (1 << 3))
-    ext_pa_5g = bool(pa & (1 << 0))
-    ext_lna_5g = bool(lna_5g & (1 << 3))
-    return ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g
+    ext_pa_2g = bool(pa & C.BIT(4))
+    ext_lna_2g = bool(lna_2g & C.BIT(3))
+    ext_pa_5g = bool(pa & C.BIT0)
+    ext_lna_5g = bool(lna_5g & C.BIT(3))
+    return pa, lna_2g, pa, lna_5g, ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g
 
 
-def _parse_bt_coexist(m: bytes, multi_func_ctrl: int, autoload_fail: bool) -> bool:
-    """[SRC] Hal_EfuseParseBTCoexistInfo — EEPROMBluetoothCoexist policy bit."""
+def _parse_bt_coexist(m: bytes, multi_func_ctrl: int, autoload_fail: bool) -> tuple[bool, int]:
+    """[SRC] Hal_EfuseParseBTCoexistInfo8812A — 8821U uses REG_MULTI_FUNC_CTRL only."""
     if autoload_fail:
-        return False
-    value = m[C.EEPROM_RF_BOARD_OPTION_8821AU]
-    if value == 0xFF:
-        return False
-    return ((value & 0xE0) >> 5) == 0x01 and bool(multi_func_ctrl & C.BIT_BT_FUNC_EN)
+        return False, 1
+    return bool(multi_func_ctrl & C.BIT_BT_FUNC_EN), m[C.EEPROM_RF_BT_SETTING_8821] & 0x1
 
 
 def _parse_board_type(ext: tuple, bt_coexist: bool = False) -> int:
     """[SRC] hal_dm.c:382-405 — assemble the ODM board_type from EFUSE policy flags."""
-    ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g = ext
+    ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g = ext[4:]
     board_type = ODM_BOARD_BT if bt_coexist else 0
     if ext_lna_2g:
         board_type |= ODM_BOARD_EXT_LNA_2G
@@ -270,8 +409,43 @@ def _parse_board_type(ext: tuple, bt_coexist: bool = False) -> int:
     return board_type
 
 
-def _parse_mac_address(m: bytes) -> Optional[str]:
-    """[SRC] Hal_GetEfuseDefinition / hal_config_macaddr — efuse 0x107..0x10C."""
+def _parse_remote_wakeup(m: bytes, autoload_fail: bool) -> bool:
+    """[SRC] Hal_ReadRemoteWakeup_8812A — 8821U optional function byte 0x104 bit1."""
+    return False if autoload_fail else bool(m[C.EEPROM_USB_OPTIONAL_FUNCTION0_8811AU] & C.BIT1)
+
+
+def _parse_usb_mode_switch(m: bytes, autoload_fail: bool) -> bool:
+    """[SRC] hal_ReadUsbModeSwitch_8812AU — EEPROM_USB_MODE_8812 bit1."""
+    return False if autoload_fail else bool((m[C.EEPROM_USB_MODE_8812] & C.BIT1) >> 1)
+
+
+def _parse_usb_type_hidden(phy: dict[int, int], m: bytes) -> tuple[int, int, bool]:
+    """[SRC] hal_ReadUsbType_8812AU — hidden physical EFUSE antenna/wmode selector."""
+    antenna = 0
+    for addr in (C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_0, C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_1):
+        v = phy.get(addr, 0xFF)
+        if ((v >> 5) & 0x7) != 0:
+            antenna = (v >> 5) & 0x7
+            break
+        if ((v >> 1) & 0x7) != 0:
+            antenna = (v >> 1) & 0x7
+            break
+    wmode = 0
+    for addr in (C.EFUSE_HIDDEN_USB_TYPE_WMODE_0, C.EFUSE_HIDDEN_USB_TYPE_WMODE_1):
+        v = phy.get(addr, 0xFF)
+        if ((v >> 2) & 0x3) != 0:
+            wmode = (v >> 2) & 0x3
+            break
+    disable_11ac = antenna == 2 and wmode == 2
+    if antenna == 2 and wmode == 3 and m[C.EEPROM_USB_MODE_8812] == 0x2:
+        disable_11ac = False
+    return antenna, wmode, disable_11ac
+
+
+def _parse_mac_address(m: bytes, autoload_fail: bool) -> Optional[str]:
+    """[SRC] hal_config_macaddr — ignore hardware PG MAC when autoload/ID validation fails."""
+    if autoload_fail:
+        return None
     mac = m[C.EEPROM_MAC_ADDR_8821AU:C.EEPROM_MAC_ADDR_8821AU + 6]
     if len(mac) != 6 or all(b == 0xFF for b in mac) or all(b == 0 for b in mac):
         return None
@@ -294,21 +468,59 @@ def read_chip_params(t) -> ChipParams:
     t.read16(0x0002)
     t.read16(0x0008)
     m = _read_logical_map(t)
+    hidden_phy = {
+        addr: _efuse_one_byte_read(t, addr)
+        for addr in (C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_0, C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_1,
+                     C.EFUSE_HIDDEN_USB_TYPE_WMODE_0, C.EFUSE_HIDDEN_USB_TYPE_WMODE_1)
+    }
     t.write8(C.REG_EFUSE_ACCESS, C.EFUSE_ACCESS_OFF)
 
+    eeprom_id_valid = _eeprom_id_valid(m)           # Hal_EfuseParseIDCode8812A
+    autoload_fail = not eeprom_id_valid
     ext = _ext_amplifier_flags(m, autoload_fail)   # Hal_ReadPAType_8821A
-    bt_coexist = _parse_bt_coexist(m, multi_func_ctrl, autoload_fail)
+    bt_coexist, bt_ant_num = _parse_bt_coexist(m, multi_func_ctrl, autoload_fail)
+    eeprom_vid, eeprom_pid, eeprom_customer_id, eeprom_subcustomer_id, customer_id = _parse_ids(
+        m, autoload_fail)
+    thermal_meter, thermal_meter_ignore = _parse_thermal_meter(m, autoload_fail)
+    usb_type_antenna, usb_type_wmode, usb_type_disable_11ac = _parse_usb_type_hidden(hidden_phy, m)
     return ChipParams(
-        crystal_cap=_parse_crystal_cap(m),
-        mac_address=_parse_mac_address(m),
+        crystal_cap=_parse_crystal_cap(m, autoload_fail),
+        mac_address=_parse_mac_address(m, autoload_fail),
         chip_version=chip_version,
         autoload_fail=autoload_fail,
+        eeprom_id_valid=eeprom_id_valid,
+        eeprom_version=_parse_eeprom_version(m, autoload_fail),
+        eeprom_vid=eeprom_vid,
+        eeprom_pid=eeprom_pid,
+        eeprom_customer_id=eeprom_customer_id,
+        eeprom_subcustomer_id=eeprom_subcustomer_id,
+        customer_id=customer_id,
+        regulatory=_parse_regulatory(m, autoload_fail),
+        interface_sel=_parse_interface_sel(m, autoload_fail),
+        channel_plan=m[C.EEPROM_CHANNEL_PLAN_8821],
+        country_code=_parse_country_code(m),
+        thermal_meter=thermal_meter,
+        thermal_meter_ignore=thermal_meter_ignore,
+        remote_wakeup=_parse_remote_wakeup(m, autoload_fail),
+        usb_mode_switch=_parse_usb_mode_switch(m, autoload_fail),
+        usb_type_antenna=usb_type_antenna,
+        usb_type_wmode=usb_type_wmode,
+        usb_type_disable_11ac=usb_type_disable_11ac,
+        pa_type_2g=ext[0],
+        lna_type_2g=ext[1],
+        pa_type_5g=ext[2],
+        lna_type_5g=ext[3],
+        external_pa_2g=ext[4],
+        external_lna_2g=ext[5],
+        external_pa_5g=ext[6],
+        external_lna_5g=ext[7],
+        bt_coexist=bt_coexist,
+        bt_ant_num=bt_ant_num,
         tx_power=_parse_tx_power(m),
         tx_power_5g=_parse_tx_power_5g(m),
         bb_swing_2g=_parse_bb_swing(m, C.EEPROM_TX_BBSWING_2G),
         bb_swing_5g=_parse_bb_swing(m, C.EEPROM_TX_BBSWING_5G),
-        ext_lna_2g=ext[1],
-        bt_coexist=bt_coexist,
+        ext_lna_2g=ext[5],
         board_type=_parse_board_type(ext, bt_coexist),
     )
 
