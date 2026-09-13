@@ -256,7 +256,7 @@ class WpsRegistrar:
                 # us off; an unparsable EAPOL is a possibly-malformed M-message; a data flood is
                 # the AP treating us as an associated client (IPv6/ARP/etc., not WPS).
                 kind = describe_frame(frame)
-                is_eapol = M._LLC_SNAP_EAPOL in frame
+                is_eapol = M.LLC_SNAP_EAPOL in frame
                 if is_eapol or kind not in nonwsc_seen:
                     nonwsc_seen.add(kind)
                     tag = f"UNPARSED EAPOL/{kind}" if is_eapol else kind

@@ -4,10 +4,25 @@
 import struct
 from typing import Optional, List, Dict, Any
 
+from wifit3.dot11.eapol import LLC_SNAP_EAPOL
 from wifit3.dot11.ie import iter_information_elements
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.wsc.identity import device_type_label, wps_text
-from wifit3.dot11.wsc.messages import iter_wsc_tlvs
+from wifit3.dot11.wsc.messages import (
+    iter_wsc_tlvs,
+    ATTR_AP_SETUP_LOCKED,
+    ATTR_CONFIG_METHODS,
+    ATTR_MANUFACTURER,
+    ATTR_MODEL_NAME,
+    ATTR_MODEL_NUMBER,
+    ATTR_PRIMARY_DEV_TYPE,
+    ATTR_SELECTED_REGISTRAR,
+    ATTR_VENDOR_EXTENSION,
+    ATTR_VERSION,
+    ATTR_WPS_STATE as ATTR_STATE,
+    ATTR_DEV_PASSWORD_ID as ATTR_DEVICE_PASSWORD_ID,
+    ATTR_DEV_NAME as ATTR_DEVICE_NAME,
+)
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
     AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
@@ -194,8 +209,7 @@ class WlanFrameParser:
             return None
         # DMA pads the 802.11 header for 4-byte alignment, so slide a window to find the
         # LLC/SNAP + EAPOL ethertype signature regardless of padding.
-        llc_snap_sig = b'\xaa\xaa\x03\x00\x00\x00\x88\x8e'
-        sig_idx = frame[header_len : header_len + 16].find(llc_snap_sig)
+        sig_idx = frame[header_len : header_len + 16].find(LLC_SNAP_EAPOL)
         if sig_idx == -1:
             return None
 
@@ -299,6 +313,20 @@ class WlanFrameParser:
         return None
 
     @classmethod
+    def _ie_offset(cls, subtype: int) -> Optional[int]:
+        """Byte offset where a mgmt frame's Information Elements begin (past the header +
+        fixed params), or None for subtypes that carry no IE region."""
+        if subtype in (cls.SUBTYPE_BEACON, cls.SUBTYPE_PROBE_RESP):
+            return 36  # 24-byte HDR + 12-byte Fixed Params
+        if subtype == cls.SUBTYPE_PROBE_REQ:
+            return 24  # 24-byte HDR + 0-byte Fixed Params
+        if subtype == cls.SUBTYPE_ASSOC_REQ:
+            return 28  # 24-byte HDR + Capability(2) + Listen Interval(2)
+        if subtype == cls.SUBTYPE_REASSOC_REQ:
+            return 34  # assoc offset + Current AP Address(6)
+        return None
+
+    @classmethod
     def _is_valid_frame(cls, frame: bytes) -> bool:
         """Cheap structural gate before parsing: length, protocol version, mgmt IE
         ordering (tag 0 SSID first, tag 1 rates), and a data-frame address noise filter.
@@ -317,13 +345,14 @@ class WlanFrameParser:
 
         if ftype == cls.TYPE_MGMT:
             # Enforce Strict Tag Ordering for Mgmt Frames
-            if subtype in (cls.SUBTYPE_BEACON, cls.SUBTYPE_PROBE_RESP):
-                ptr = 36
-            elif subtype == cls.SUBTYPE_PROBE_REQ:
-                ptr = 24
-            elif subtype == cls.SUBTYPE_DEAUTH:
+            if subtype == cls.SUBTYPE_DEAUTH:
                 return len(frame) >= 26
-            else:
+            # (Re)Assoc Req carry IEs but are not offset-gated here; only
+            # Beacon / Probe Resp / Probe Req get the SSID-first check.
+            if subtype in (cls.SUBTYPE_ASSOC_REQ, cls.SUBTYPE_REASSOC_REQ):
+                return True
+            ptr = cls._ie_offset(subtype)
+            if ptr is None:
                 return True
 
             if len(frame) <= ptr + 2:
@@ -391,13 +420,6 @@ class WlanFrameParser:
         Each TLV is a 2-byte attribute id, 2-byte length, then value.
         Missing attributes leave their fields at the model defaults.
         """
-        # WPS attribute IDs (big-endian), WSC spec §12.
-        ATTR_AP_SETUP_LOCKED, ATTR_STATE, ATTR_CONFIG_METHODS = 0x1057, 0x1044, 0x1008
-        ATTR_DEVICE_PASSWORD_ID, ATTR_SELECTED_REGISTRAR = 0x1012, 0x1041
-        ATTR_MANUFACTURER, ATTR_MODEL_NAME = 0x1021, 0x1023
-        ATTR_MODEL_NUMBER, ATTR_DEVICE_NAME = 0x1024, 0x1011
-        ATTR_VERSION, ATTR_VENDOR_EXTENSION = 0x104A, 0x1049
-        ATTR_PRIMARY_DEV_TYPE = 0x1054
         out: Dict[str, Any] = {"wps": True}
         version1 = False
         version2 = 0
@@ -455,15 +477,8 @@ class WlanFrameParser:
         encryption, …), or None if the frame is corrupt.
         """
         parsed = {}
-        if subtype in (cls.SUBTYPE_BEACON, cls.SUBTYPE_PROBE_RESP):
-            ptr = 36 # Skip 24-byte HDR + 12-byte Fixed Params
-        elif subtype == cls.SUBTYPE_PROBE_REQ:
-            ptr = 24 # 24-byte HDR + 0-byte Fixed Params
-        elif subtype == cls.SUBTYPE_ASSOC_REQ:
-            ptr = 28 # 24-byte HDR + Capability(2) + Listen Interval(2)
-        elif subtype == cls.SUBTYPE_REASSOC_REQ:
-            ptr = 34 # assoc offset + Current AP Address(6)
-        else:
+        ptr = cls._ie_offset(subtype)
+        if ptr is None:
             return parsed
 
         if len(frame) < ptr + 2:

@@ -15,21 +15,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Callable, Optional
 
-from wifit3.dot11 import build_deauth, str_to_mac
+from wifit3.dot11 import build_deauth, random_client_mac, str_to_mac
 from wifit3.dot11.auth_assoc import auth_req, assoc_req, status_description
 from wifit3.dot11.deauth import reason_description
 from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
 
 logger = logging.getLogger(__name__)
-
-
-def random_client_mac() -> bytes:
-    """Locally-administered unicast MAC."""
-    return bytes([0x02]) + os.urandom(5)
 
 
 def build_client_leaving(bssid: bytes, our_mac: bytes, deauth: bool = True) -> bytes:

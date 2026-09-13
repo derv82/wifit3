@@ -1,5 +1,6 @@
 """802.11 Deauthentication / Disassociation frame builder (pure spec)."""
 from typing import Optional
+from wifit3.dot11.mac import mac_header
 from wifit3.dot11.packet import is_group_mac
 
 # Standard 802.11 Deauthentication / Disassociation reason codes.
@@ -62,5 +63,5 @@ def build_deauth(a1: bytes, a2: bytes, a3: bytes, reason: int, *,
     group-addressed / un-ACKed frame). Shared by the interface deauth path, PMKID's leaving
     deauth, and WPS's client-leaving frame."""
     subtype = 0x0A if disassoc else 0x0C          # Disassoc / Deauth (mgmt subtypes)
-    return (bytes([subtype << 4, 0x00]) + duration + a1 + a2 + a3
-            + b"\x00\x00" + reason.to_bytes(2, "little"))
+    return (mac_header(bytes([subtype << 4, 0x00]), a1, a2, a3, duration=duration)
+            + reason.to_bytes(2, "little"))

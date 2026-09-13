@@ -3,7 +3,6 @@ chipset driver. The 802.11 state (AP/client registry, WEP capture, packet stats)
 ``WlanSink``, owned by the ``WlanArray`` this interface is pooled into."""
 import asyncio
 import logging
-import os
 from dataclasses import dataclass
 from typing import List, Optional, Callable, Any
 
@@ -16,7 +15,7 @@ from wifit3.errors import (
 from wifit3.wlan.channels import scan_hop_order
 from wifit3.dot11.packet import Packet
 from wifit3.dot11.deauth import build_deauth, _deauth_nav_bytes
-from wifit3.dot11.mac import str_to_mac, mac_to_str
+from wifit3.dot11.mac import str_to_mac, mac_to_str, random_client_mac
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +116,7 @@ class WlanInterface:
             return None
         if mac is None:
             if support is FakeMacSupport.SPOOFABLE:
-                mac = bytes([0x02]) + os.urandom(5)
+                mac = random_client_mac()
             elif self.mac_address:                 # FIXED_MAC: only its own address is ACKable
                 mac = self.mac_address
             else:

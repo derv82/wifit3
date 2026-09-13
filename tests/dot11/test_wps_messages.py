@@ -93,7 +93,7 @@ def _enrollee_request_frame(opcode, wsc_attrs, eap_id=0x10, bssid=b"\x34" * 6, s
     x = struct.pack(">BBH", 1, 0, len(eap)) + eap
     fc = b"\x08\x02"                                  # data, FromDS
     hdr = fc + b"\x00\x00" + sta + bssid + bssid + b"\x00\x00"
-    return hdr + M._LLC_SNAP_EAPOL + x
+    return hdr + M.LLC_SNAP_EAPOL + x
 
 
 def test_parse_rx_m1_request():
@@ -157,7 +157,7 @@ def test_parse_rx_identity_request():
     fc = b"\x08\x02"
     eap = struct.pack(">BBH", M.EAP_REQUEST, 1, 4 + 1) + bytes([M.EAP_TYPE_IDENTITY])
     x = struct.pack(">BBH", 1, 0, len(eap)) + eap
-    frame = fc + b"\x00\x00" + b"\x02" * 6 + b"\x34" * 6 + b"\x34" * 6 + b"\x00\x00" + M._LLC_SNAP_EAPOL + x
+    frame = fc + b"\x00\x00" + b"\x02" * 6 + b"\x34" * 6 + b"\x34" * 6 + b"\x00\x00" + M.LLC_SNAP_EAPOL + x
     p = M.parse_rx_frame(frame)
     assert p is not None and p.is_identity_request and p.eap_id == 1
 

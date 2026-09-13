@@ -13,13 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Optional
 
 from wifit3.models import AccessPoint
-from wifit3.dot11 import mac_to_str, str_to_mac
+from wifit3.dot11 import mac_to_str, random_client_mac, str_to_mac
 from wifit3.dot11.auth_assoc import auth_req, assoc_req, status_description
 from wifit3.dot11.deauth import reason_description
 from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
@@ -28,11 +27,6 @@ if TYPE_CHECKING:
     from wifit3.wlan.interface import WlanInterface
 
 logger = logging.getLogger(__name__)
-
-
-def _random_client_mac() -> bytes:
-    """Locally-administered, unicast MAC (LAA bit set, multicast clear)."""
-    return bytes([0x02]) + os.urandom(5)
 
 
 @dataclass
@@ -60,7 +54,7 @@ class WepFakeAuth:
         self.iface = iface
         self.target = target
         self.bssid_bytes = str_to_mac(target.bssid)
-        self.source_mac = source_mac or _random_client_mac()
+        self.source_mac = source_mac or random_client_mac()
         self.assoc_timeout = assoc_timeout
         self._log = log_callback or (lambda _msg: None)
 

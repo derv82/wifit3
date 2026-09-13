@@ -4,6 +4,8 @@ EAPOL-Key multi-byte fields are network order.
 """
 import struct
 
+from wifit3.dot11.mac import mac_header
+
 LLC_SNAP_EAPOL = bytes.fromhex("aaaa03000000888e")   # SNAP header + EtherType 0x888E (EAPOL)
 
 MIC_LEN = 16
@@ -22,8 +24,8 @@ def data_header(*, to_ds: bool, bssid: bytes, client: bytes) -> bytes:
     """24-byte Data header. to_ds (client->AP): addr1=bssid addr2=client addr3=bssid;
     else (AP->client): addr1=client addr2=bssid addr3=bssid. Duration + sequence zeroed."""
     if to_ds:
-        return b"\x08\x01" + b"\x00\x00" + bssid + client + bssid + b"\x00\x00"
-    return b"\x08\x02" + b"\x00\x00" + client + bssid + bssid + b"\x00\x00"
+        return mac_header(b"\x08\x01", bssid, client, bssid)
+    return mac_header(b"\x08\x02", client, bssid, bssid)
 
 
 def eapol_key(*, key_info: int, key_len: int, replay: int, nonce: bytes,

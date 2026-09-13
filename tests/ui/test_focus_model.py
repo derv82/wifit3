@@ -9,7 +9,7 @@ import pytest
 
 from wifit3.campaigns.campaign import Campaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
-from wifit3.models import AccessPoint, ApIdentity, Handshake, IdKey, IdSource
+from wifit3.models import AccessPoint, Handshake, IdKey, IdSource
 from wifit3.ui import focus_model as fm
 from wifit3.persist.config import Config
 

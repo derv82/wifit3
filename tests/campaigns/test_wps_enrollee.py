@@ -75,12 +75,12 @@ class FakeRegistrar:
                + M.WFA_VENDOR_TYPE_SIMPLECONFIG + bytes([opcode, 0x00]) + attrs)
         eap = struct.pack(">BBH", M.EAP_REQUEST, eap_id, 4 + len(exp)) + exp
         x = struct.pack(">BBH", 1, 0, len(eap)) + eap
-        return b"\x08\x02\x00\x00" + STA + BSSID + BSSID + b"\x00\x00" + M._LLC_SNAP_EAPOL + x
+        return b"\x08\x02\x00\x00" + STA + BSSID + BSSID + b"\x00\x00" + M.LLC_SNAP_EAPOL + x
 
     def _req_identity(self, eap_id):
         eap = struct.pack(">BBH", M.EAP_REQUEST, eap_id, 5) + bytes([M.EAP_TYPE_IDENTITY])
         x = struct.pack(">BBH", 1, 0, len(eap)) + eap
-        return b"\x08\x02\x00\x00" + STA + BSSID + BSSID + b"\x00\x00" + M._LLC_SNAP_EAPOL + x
+        return b"\x08\x02\x00\x00" + STA + BSSID + BSSID + b"\x00\x00" + M.LLC_SNAP_EAPOL + x
 
     @staticmethod
     def _is_eapol_start(frame):

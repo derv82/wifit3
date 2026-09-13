@@ -27,12 +27,11 @@ from __future__ import annotations
 import asyncio
 import enum
 import logging
-import os
 import time
 from typing import Optional
 
 from wifit3.models import AccessPoint
-from wifit3.dot11 import build_deauth, mac_to_str, str_to_mac
+from wifit3.dot11 import build_deauth, mac_to_str, random_client_mac, str_to_mac
 from wifit3.dot11.ie import force_psk_akm, GENERIC_RSN_IE
 
 from .campaign import Campaign
@@ -51,12 +50,6 @@ class PmkidFail(enum.Enum):
 
 _AKM_PSK = 0x02                  # 00-0F-AC:2 (PSK).
 _HARVESTABLE_AKMS = (_AKM_PSK,)  # AKMs whose PMK we can harvest *and* crack offline.
-
-
-def _random_client_mac() -> bytes:
-    """Locally-administered, unicast MAC (LAA bit set, multicast bit clear)."""
-    rnd = os.urandom(5)
-    return bytes([0x02]) + rnd
 
 
 class PmkidHarvestAttack(Campaign):
@@ -103,7 +96,7 @@ class PmkidHarvestAttack(Campaign):
         super().__init__(ap=target, array=array)
         self.target = target
         self.bssid_bytes = str_to_mac(target.bssid)
-        self.source_mac = source_mac or _random_client_mac()
+        self.source_mac = source_mac or random_client_mac()
         self.attempts = attempts
         self.m1_timeout = m1_timeout
         self.log = log or (lambda m: None)
@@ -118,7 +111,7 @@ class PmkidHarvestAttack(Campaign):
         return mac_to_str(self.source_mac)
 
     def _rotate_mac(self) -> None:
-        self.source_mac = _random_client_mac()
+        self.source_mac = random_client_mac()
 
     # ---- Frame builders -----------------------------------------------------
 

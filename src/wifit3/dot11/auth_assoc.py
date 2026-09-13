@@ -7,6 +7,7 @@ import struct
 from typing import Optional
 
 from wifit3.dot11.ie import ssid_ie, rates_ie, ext_rates_ie, ht_cap_ie
+from wifit3.dot11.mac import mac_header
 
 # Standard 802.11 Authentication / Association response status codes.
 STATUS_CODES = {
@@ -44,7 +45,7 @@ def status_description(code: Optional[int]) -> str:
 def _hdr(fc: bytes, bssid: bytes, our_mac: bytes) -> bytes:
     """24-byte management header for a client->AP frame: addr1 = addr3 = bssid, addr2 =
     our forged STA. Duration and sequence are 0 (the chip fills the sequence)."""
-    return fc + b"\x00\x00" + bssid + our_mac + bssid + b"\x00\x00"
+    return mac_header(fc, bssid, our_mac, bssid)
 
 
 def auth_req(bssid: bytes, our_mac: bytes) -> bytes:

@@ -21,14 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from concurrent.futures import ProcessPoolExecutor
 from typing import Callable, Optional
 
 from rich.markup import escape
 
 from wifit3.models import AccessPoint
-from wifit3.dot11 import str_to_mac
+from wifit3.dot11 import random_client_mac, str_to_mac
 from wifit3.wlan.lease import SPOOFABLE
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.wep.fake_auth import WepFakeAuth
@@ -130,7 +129,7 @@ class WepCampaign(Campaign):
         else:
             # A card that can't active-monitor: the lease armed/registered nothing, so pick a random
             # STA and register it ourselves to keep the own-TX (fixed-IV) drop for the whole replay.
-            source_mac = bytes([0x02]) + os.urandom(5)
+            source_mac = random_client_mac()
             self._own_fallback = self.array.register_own_mac(source_mac)
         self.fake_auth.source_mac = source_mac
         self.replay.source_mac = source_mac

@@ -25,6 +25,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+from ..eapol import LLC_SNAP_EAPOL
+from ..mac import mac_header
 from . import crypto as wc
 
 # ---- WSC attribute IDs (hostapd enum wps_attribute) -----------------------
@@ -71,6 +73,9 @@ ATTR_OS_VERSION = 0x102D
 ATTR_UUID_E = 0x1047
 ATTR_WPS_STATE = 0x1044
 ATTR_CRED = 0x100E              # Credential (nested TLV blob, carried in M8)
+ATTR_AP_SETUP_LOCKED = 0x1057
+ATTR_SELECTED_REGISTRAR = 0x1041
+ATTR_VENDOR_EXTENSION = 0x1049
 
 # ---- WSC message types (ATTR_MSG_TYPE values) -----------------------------
 WPS_M1 = 0x04
@@ -114,7 +119,6 @@ DOT1X_TYPE_EAPOL_START = 0x01
 
 WFA_VENDOR_ID = b"\x00\x37\x2a"
 WFA_VENDOR_TYPE_SIMPLECONFIG = b"\x00\x00\x00\x01"
-_LLC_SNAP_EAPOL = b"\xaa\xaa\x03\x00\x00\x00\x88\x8e"
 
 WPS_VERSION = 0x10
 REGISTRAR_IDENTITY = b"WFA-SimpleConfig-Registrar-1-0"
@@ -381,9 +385,8 @@ def eap_wsc_response(eap_id: int, opcode: int, wsc_attrs: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 def build_data_frame(bssid: bytes, src: bytes, dst: bytes, payload_1x: bytes) -> bytes:
     """A non-QoS data frame (ToDS) carrying an 802.1X payload to the AP."""
-    fc = b"\x08\x01"  # data, ToDS=1
-    hdr = fc + b"\x00\x00" + bssid + src + dst + b"\x00\x00"   # Addr1=BSSID, Addr2=SA, Addr3=DA, seq
-    return hdr + _LLC_SNAP_EAPOL + payload_1x
+    hdr = mac_header(b"\x08\x01", bssid, src, dst)   # Addr1=BSSID, Addr2=SA, Addr3=DA
+    return hdr + LLC_SNAP_EAPOL + payload_1x
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +408,7 @@ class ParsedEap:
 def _find_eapol(frame: bytes) -> Optional[int]:
     """Offset of the 802.1X header after the 802.11 hdr + LLC/SNAP, or None."""
     # MAC header is 24 (or 26 w/ QoS); SNAP may sit at +24 or +26. Slide a window.
-    sig = _LLC_SNAP_EAPOL
+    sig = LLC_SNAP_EAPOL
     idx = frame.find(sig, 22, 40)
     if idx < 0:
         return None

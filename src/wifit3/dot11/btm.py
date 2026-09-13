@@ -6,6 +6,7 @@ BSS: unicast, robust (unforgeable) once PMF is negotiated.
 from typing import Optional
 
 from wifit3.dot11.chan import channel_operating_class
+from wifit3.dot11.mac import mac_header
 
 _SUBTYPE_ACTION = 0x0D            # mgmt subtype 13 → FC first byte 0xD0
 _CAT_WNM = 0x0A                   # Action category 10 (WNM)
@@ -56,7 +57,7 @@ def build_btm_request(a1: bytes, a2: bytes, a3: bytes, *,
         mode |= BTM_DISASSOC_IMMINENT
     candidate = neighbor_report_ie(candidate_bssid, oc, candidate_channel,
                                    phy_type=phy_type, preference=preference)
-    header = bytes([_SUBTYPE_ACTION << 4, 0x00]) + duration + a1 + a2 + a3 + b"\x00\x00"
+    header = mac_header(bytes([_SUBTYPE_ACTION << 4, 0x00]), a1, a2, a3, duration=duration)
     body = (bytes([_CAT_WNM, _WNM_BTM_REQUEST, dialog_token & 0xFF, mode])
             + disassoc_timer.to_bytes(2, "little") + bytes([validity_interval & 0xFF]) + candidate)
     return header + body

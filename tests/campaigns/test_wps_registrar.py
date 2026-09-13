@@ -80,13 +80,13 @@ class FakeEnrollee:
         import struct
         eap = struct.pack(">BBH", M.EAP_REQUEST, eap_id, 4 + len(exp)) + exp
         x = struct.pack(">BBH", 1, 0, len(eap)) + eap
-        return b"\x08\x02\x00\x00" + STA + BSSID + BSSID + b"\x00\x00" + M._LLC_SNAP_EAPOL + x
+        return b"\x08\x02\x00\x00" + STA + BSSID + BSSID + b"\x00\x00" + M.LLC_SNAP_EAPOL + x
 
     def _req_identity(self, eap_id: int) -> bytes:
         import struct
         eap = struct.pack(">BBH", M.EAP_REQUEST, eap_id, 4 + 1) + bytes([M.EAP_TYPE_IDENTITY])
         x = struct.pack(">BBH", 1, 0, len(eap)) + eap
-        return b"\x08\x02\x00\x00" + STA + BSSID + BSSID + b"\x00\x00" + M._LLC_SNAP_EAPOL + x
+        return b"\x08\x02\x00\x00" + STA + BSSID + BSSID + b"\x00\x00" + M.LLC_SNAP_EAPOL + x
 
     def _enc(self, inner: bytes) -> bytes:
         kwa = wc.key_wrap_authenticator(self.authkey, inner)

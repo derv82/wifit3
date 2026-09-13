@@ -19,8 +19,8 @@ import pytest
 from wifit3.campaigns.wep.chopchop import (
     WepChopChop,
     _SENTINEL,
-    _hdr_len,
 )
+from wifit3.dot11.mac import header_len
 from wifit3.dot11.wep.crypto import (
     CRC32_RESIDUE,
     arp_request_plaintext,
@@ -119,7 +119,7 @@ def _daemon(probe=None):
 def _assert_valid_forged_arp(forged: bytes):
     """The forged frame decrypts (key abcde) to a well-formed broadcast ARP
     from us with a valid ICV, i.e. one the AP will relay."""
-    body = forged[_hdr_len(forged[0], forged[1]):]
+    body = forged[header_len(forged[0], forged[1]):]
     assert forged[16:22] == b"\xff" * 6          # broadcast DA (a real ARP req)
     assert body[:3] == IV                        # reused the target's IV
     plain = bytes(c ^ k for c, k in zip(body[4:], _rc4(IV + KEY, len(body) - 4)))

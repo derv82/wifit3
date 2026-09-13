@@ -12,6 +12,7 @@ from wifit3.dot11.ie import (
     iter_information_elements, rates_ie,
 )
 from wifit3.dot11.eapol import data_header, eapol_key, LLC_SNAP_EAPOL
+from wifit3.dot11.mac import mac_header
 
 _CAP_ESS_PRIVACY = 0x0011
 _BEACON_HEAD = 36               # 24B MAC header + 12B fixed (timestamp, interval, capability)
@@ -25,7 +26,7 @@ _CCMP_KEY_LEN = 16
 
 
 def _resp_header(fc: bytes, bssid: bytes, client: bytes) -> bytes:
-    return fc + b"\x00\x00" + client + bssid + bssid + b"\x00\x00"
+    return mac_header(fc, client, bssid, bssid)
 
 
 def auth_resp(bssid: bytes, client: bytes) -> bytes:

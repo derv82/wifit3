@@ -54,6 +54,7 @@ from typing import Awaitable, Callable, Optional
 
 from wifit3.models import AccessPoint
 from wifit3.dot11 import str_to_mac
+from wifit3.dot11.mac import header_len
 from wifit3.campaigns import treelog
 from wifit3.dot11.wep.crypto import (
     CRC32_RESIDUE,
@@ -95,17 +96,6 @@ _SENTINEL = 256
 
 async def _always_associated() -> bool:
     return True
-
-
-def _hdr_len(fc0: int, fc1: int) -> int:
-    n = 24
-    if (fc1 & 0x01) and (fc1 & 0x02):
-        n += 6
-    if ((fc0 & 0xF0) >> 4) & 0x08:
-        n += 2
-    if fc1 & 0x80:
-        n += 4
-    return n
 
 
 class WepChopChop:
@@ -202,7 +192,7 @@ class WepChopChop:
         """(iv, keyid, cipher) from a captured broadcast WEP frame, or None."""
         if len(captured) < 28:
             return None
-        body = captured[_hdr_len(captured[0], captured[1]):]
+        body = captured[header_len(captured[0], captured[1]):]
         if len(body) < 44:                 # need IV+KeyID + >=40B cipher (ARP)
             return None
         return body[:3], body[3], body[4:]

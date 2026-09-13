@@ -34,13 +34,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, List, Optional
 
 from wifit3.models import AccessPoint
-from wifit3.dot11 import str_to_mac
+from wifit3.dot11 import random_client_mac, str_to_mac
+from wifit3.dot11.mac import header_len
 from wifit3.campaigns import treelog
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ class WepArpReplay:
         self.target = target
         self.bssid = target.bssid
         self.bssid_bytes = str_to_mac(target.bssid)
-        self.source_mac = source_mac or (bytes([0x02]) + os.urandom(5))
+        self.source_mac = source_mac or random_client_mac()
         self.collector = collector
         self._ensure_associated = ensure_associated or _always_associated
         self._request_reauth = request_reauth or (lambda: None)
@@ -247,13 +247,7 @@ class WepArpReplay:
         if len(captured) < 28:
             return None
         fc0, fc1 = captured[0], captured[1]
-        hdr = 24
-        if (fc1 & 0x01) and (fc1 & 0x02):    # ToDS+FromDS → 4-addr (WDS)
-            hdr += 6
-        if ((fc0 & 0xF0) >> 4) & 0x08:       # QoS data subtype
-            hdr += 2
-        if fc1 & 0x80:                       # HT Control (Order bit)
-            hdr += 4
+        hdr = header_len(fc0, fc1)
         body = captured[hdr:]                # IV(3)+KeyID(1)+ciphertext+ICV
         if len(body) < 8:
             return None
