@@ -6,7 +6,6 @@ Mirror of:
 * `rtl8188f_set_crystal_cap` — `8188f.c:1650-1674` (XTAL0/XTAL1 field write)
 * `rtl8188f_set_tx_power` — `8188f.c:358-397` (per-channel-group power)
 * `rtl8188f_enable_rf` — `8188f.c:1582-1619` (RF enable + OFDM path-A)
-* `rtl8188fu_config_channel` — `8188f.c:514-643` (20 MHz channel tune)
 """
 from __future__ import annotations
 
@@ -22,11 +21,8 @@ from .constants import (
     FPGA0_HSSI_PARM2_ADDR_SHIFT,
     FPGA0_HSSI_PARM2_EDGE_READ,
     FPGA0_RF_RFENV,
-    FPGA_RF_MODE,
     FWHW_TXQ_CTRL_XMIT_MGMT_ACK,
     IQK_MAX_TOLERANCE,
-    MODE_AG_BW_20MHZ_8723B,
-    MODE_AG_CHANNEL_MASK,
     NAV_UPPER_UNIT,
     OFDM_LSTF_MASK,
     OFDM_RF_PATH_RX_A,
@@ -37,21 +33,18 @@ from .constants import (
     PPG_BB_GAIN_2G_TX_OFFSET_MASK,
     REG_AFE_XTAL_CTRL,
     REG_FPGA0_IQK,
-    REG_FPGA0_RF_MODE,
     REG_FPGA0_XA_HSSI_PARM1,
     REG_FPGA0_XA_HSSI_PARM2,
     REG_FPGA0_XA_LSSI_PARM,
     REG_FPGA0_XA_RF_INT_OE,
     REG_FPGA0_XA_RF_SW_CTRL,
     REG_FPGA0_XCD_RF_SW_CTRL,
-    REG_FPGA1_RF_MODE,
     REG_FWHW_TXQ_CTRL,
     REG_HSPI_XA_READBACK,
     REG_IQK_AGC_PTS,
     REG_IQK_AGC_RSP,
     REG_NAV_UPPER,
     REG_OFDM0_ENERGY_CCA_THRES,
-    REG_OFDM0_RX_D_SYNC_PATH,
     REG_OFDM0_RX_IQ_EXT_ANTA,
     REG_OFDM0_TR_MUX_PAR,
     REG_OFDM0_TRX_PATH_ENABLE,
@@ -91,9 +84,6 @@ from .constants import (
     RF6052_REG_MODE_AG,
     RF6052_REG_PAD_TXG,
     RF6052_REG_RCK_OS,
-    RF6052_REG_RX_BB2,
-    RF6052_REG_RX_G2,
-    RF6052_REG_RXG_MIX_SWBW,
     RF6052_REG_S0S1,
     RF6052_REG_T_METER_8723B,
     RF6052_REG_TXM_IDAC,
@@ -913,55 +903,4 @@ def enable_rf(t: RTL8188FTVTransport) -> None:
     t.write8(REG_TXPAUSE, 0x00)
 
 
-# ---- channel tune 2.4 GHz 20 MHz (8188f.c:514-643) ------------------
-
-
-def set_channel_2g_20mhz(t: RTL8188FTVTransport, channel: int) -> None:
-    """Mirror of `rtl8188fu_config_channel` for 20 MHz bandwidth."""
-    val32 = t.read_rfreg(0, RF6052_REG_MODE_AG)
-    val32 &= ~MODE_AG_CHANNEL_MASK
-    val32 |= channel
-    t.write_rfreg(0, RF6052_REG_MODE_AG, val32)
-
-    val32 = t.read32(REG_FPGA0_RF_MODE)
-    val32 &= ~FPGA_RF_MODE
-    t.write32(REG_FPGA0_RF_MODE, val32)
-
-    val32 = t.read32(REG_FPGA1_RF_MODE)
-    val32 &= ~FPGA_RF_MODE
-    t.write32(REG_FPGA1_RF_MODE, val32)
-
-    val32 = t.read32(REG_FPGA0_RF_MODE)
-    val32 |= (7 << 8)
-    t.write32(REG_FPGA0_RF_MODE, val32)
-
-    val32 = t.read32(REG_FPGA0_RF_MODE)
-    val32 |= (1 << 14) | (1 << 12)
-    val32 &= ~(1 << 13)
-    t.write32(REG_FPGA0_RF_MODE, val32)
-
-    val32 = t.read32(REG_OFDM0_RX_D_SYNC_PATH)
-    val32 &= ~((3 << 30))
-    t.write32(REG_OFDM0_RX_D_SYNC_PATH, val32)
-
-    val32 = t.read32(REG_OFDM0_RX_D_SYNC_PATH)
-    val32 &= ~(1 << 29)
-    val32 |= (1 << 28)
-    t.write32(REG_OFDM0_RX_D_SYNC_PATH, val32)
-
-    val32 = t.read32(REG_OFDM0_RX_D_SYNC_PATH)
-    val32 &= ~(1 << 19)
-    t.write32(REG_OFDM0_RX_D_SYNC_PATH, val32)
-
-    val32 = t.read32(REG_OFDM0_RX_D_SYNC_PATH)
-    val32 &= ~((0xF << 20))
-    val32 |= (1 << 21) | (1 << 20)
-    t.write32(REG_OFDM0_RX_D_SYNC_PATH, val32)
-
-    val32 = channel | MODE_AG_BW_20MHZ_8723B
-    t.write_rfreg(0, RF6052_REG_MODE_AG, val32)
-
-    t.write_rfreg(0, RF6052_REG_RXG_MIX_SWBW, 0x00065)
-    t.write_rfreg(0, RF6052_REG_RX_BB2, 0x00000)
-    t.write_rfreg(0, RF6052_REG_GAIN_CCA, 0x00140)
-    t.write_rfreg(0, RF6052_REG_RX_G2, 0x01c6c)
+# ---- RF enable + OFDM path-A (8188f.c:1582-1619) ---------------------

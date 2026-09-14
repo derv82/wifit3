@@ -23,6 +23,11 @@ Milestones gated here:
   ``init_device_phy_tail`` (NAV_UPPER + FWHW_TXQ ack + CCK/CFO reads) and
   ``enable_rf`` (EFUSE BB-gain trim, RF_CTRL, path A), driven against
   the recorded chip reads so every emitted write must match the wire.
+* **RX path + channel 1 tune** -- ``enable_rx_path`` (filt maps + AGC
+  IGI 0x1e), monitor ``configure_filter`` x3, ``set_tx_power(1)`` and
+  ``set_channel_2g_20mhz(1)`` (spur calibration, 20 MHz BB, RF
+  TRX_BW/filters), driven against the recorded chip reads so every
+  emitted write must match the wire (ops 2295-2347).
 
 Run: uv run python scripts/chips/rtl8188ftv/verify_pcap.py [capture-1]
 """
@@ -37,7 +42,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
-from wifit3.chips.rtl8188ftv import efuse, firmware, mac, phy
+from wifit3.chips.rtl8188ftv import chan, efuse, firmware, mac, phy
 from wifit3.chips.rtl8188ftv.constants import (
     FW_HEADER_SIZE,
     REG_AFE_XTAL_CTRL,
@@ -180,6 +185,16 @@ def _bringup_gate(ops, efuse_defaults: dict | None = None) -> bool:
         miles.append(("init_device_phy_tail", rt.i))
         phy.enable_rf(rt)
         miles.append(("enable_rf", rt.i))
+        mac.enable_rx_path(rt)
+        miles.append(("enable_rx_path (start tail)", rt.i))
+        for _ in range(3):
+            mac.configure_filter(rt)
+        miles.append(("configure_filter x3 (monitor RCR)", rt.i))
+        if efuse_defaults is not None:
+            phy.set_tx_power(rt, 1, efuse_defaults)
+        miles.append(("set_tx_power(1)", rt.i))
+        chan.set_channel_2g_20mhz(rt, 1)
+        miles.append(("set_channel_2g_20mhz(1)", rt.i))
     except rp.Divergence as e:
         last = miles[-1][0] if miles else "(none)"
         print(f"  FAIL (bring-up divergence after {last}):\n    {e}")
@@ -187,7 +202,8 @@ def _bringup_gate(ops, efuse_defaults: dict | None = None) -> bool:
         return False
 
     print(f"  PASS: {rt.i} ops byte-for-byte -- init_mac + post_mac_init_phy + "
-          f"LC/IQ/RF tail (chip_cut={chip_cut}, crystal_cap=0x{crystal_cap:02x} from {eff})")
+          f"LC/IQ/RF tail + RX path/channel-1 tune "
+          f"(chip_cut={chip_cut}, crystal_cap=0x{crystal_cap:02x} from {eff})")
     _report(miles)
     return True
 

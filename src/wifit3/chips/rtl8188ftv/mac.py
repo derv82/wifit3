@@ -1,9 +1,11 @@
-"""RTL8188FTV MAC init + warm-detect.
+"""RTL8188FTV MAC init + monitor entry.
 
 Mirror of:
 * `rtl8xxxu_init_mac` — `core.c:2166-2206` (the MAC table loop + MAX_AGGR)
 * `rtl8xxxu_init_queue_reserved_page` / `init_queue_priority` (queue init)
 * 8188F `enable_rf` / `disable_rf` — `8188f.c:1582-1631`
+* `rtl8xxxu_start` tail — `core.c:7494-7501` (RX filt map + AGC IGI)
+* `rtl8xxxu_configure_filter` — `core.c:6920-7971` (RCR filter, monitor mode)
 
 The MAC init table writes 8-bit values; the MAX_AGGR section is
 chip-specific — for 8188F it falls through to `default: break`
@@ -31,16 +33,22 @@ from .constants import (
     FPGA0_RF_TRSWB,
     GPIO_MUXCFG_IO_SEL_ENBT,
     HT_SINGLE_AMPDU_ENABLE,
+    OFDM0_X_AGC_CORE1_IGI_MASK,
     PBP_PAGE_SIZE_256,
     PBP_PAGE_SIZE_RX_SHIFT,
     PBP_PAGE_SIZE_TX_SHIFT,
+    RCR_ACCEPT_AP,
     RCR_ACCEPT_BCAST,
+    RCR_ACCEPT_CTRL_FRAME,
     RCR_ACCEPT_MCAST,
     RCR_ACCEPT_MGMT_FRAME,
     RCR_ACCEPT_PHYS_MATCH,
+    RCR_ACCEPT_PM,
     RCR_APPEND_ICV,
     RCR_APPEND_MIC,
     RCR_APPEND_PHYSTAT,
+    RCR_CHECK_BSSID_BEACON,
+    RCR_CHECK_BSSID_MATCH,
     RCR_HTC_LOC_CTRL,
     REG_ACKTO,
     REG_AGGLEN_LMT,
@@ -78,6 +86,7 @@ from .constants import (
     REG_NHM_TH9_TH10_8723B,
     REG_NHM_TIMER_8723B,
     REG_OFDM0_FA_RSTC,
+    REG_OFDM0_XA_AGC_CORE1,
     REG_PBP,
     REG_PIFS,
     REG_PKT_BE_BK_LIFE_TIME,
@@ -383,3 +392,53 @@ def init_statistics(t: RTL8188FTVTransport) -> None:
     val32 = t.read32(REG_OFDM0_FA_RSTC)
     val32 |= (1 << 7)
     t.write32(REG_OFDM0_FA_RSTC, val32)
+
+
+# ---- RX acceptance + monitor filter (core.c:7494-7971) ----------------
+
+
+def enable_rx_path(t: RTL8188FTVTransport) -> None:
+    """Accept all data and mgmt frames; force IGI to 0x1e.
+
+    Mirror of the `rtl8xxxu_start` tail (core.c:7494-7501).
+    Produces 4 ops against the cold-boot capture: two 16-bit filt-map
+    writes followed by a masked AGC write.
+    """
+    t.write16(REG_RXFLTMAP2, 0xFFFF)
+    t.write16(REG_RXFLTMAP0, 0xFFFF)
+
+    val32 = t.read32(REG_OFDM0_XA_AGC_CORE1)
+    val32 = (val32 & ~OFDM0_X_AGC_CORE1_IGI_MASK) | 0x1e
+    t.write32(REG_OFDM0_XA_AGC_CORE1, val32)
+
+
+_BASE_RCR = (RCR_ACCEPT_PHYS_MATCH | RCR_ACCEPT_MCAST | RCR_ACCEPT_BCAST |
+             RCR_ACCEPT_MGMT_FRAME | RCR_HTC_LOC_CTRL |
+             RCR_APPEND_PHYSTAT | RCR_APPEND_ICV | RCR_APPEND_MIC)
+
+# FIF_BCN_PRBRESP_PROMISC | FIF_CONTROL | FIF_OTHER_BSS | FIF_PSPOLL
+MONITOR_FIF_FLAGS = 0x08 | 0x10 | 0x20 | 0x40
+
+
+def configure_filter(t: RTL8188FTVTransport,
+                     fif_flags: int = MONITOR_FIF_FLAGS) -> None:
+    """Mirror of `rtl8xxxu_configure_filter` (core.c:6920-7971).
+
+    8188F is a monitor-only device, so only FIF_BCN_PRBRESP_PROMISC,
+    FIF_CONTROL, FIF_OTHER_BSS (accept AP frames) and FIF_PSPOLL matter.
+    RCR state lives in software (priv->regrcr), so this is a single
+    register write with no read; the capture replays 3 identical calls.
+    """
+    rcr = _BASE_RCR
+
+    if not (fif_flags & 0x08):  # FIF_BCN_PRBRESP_PROMISC
+        rcr |= RCR_CHECK_BSSID_BEACON | RCR_CHECK_BSSID_MATCH
+
+    if fif_flags & 0x10:  # FIF_CONTROL
+        rcr |= RCR_ACCEPT_CTRL_FRAME
+    if fif_flags & 0x20:  # FIF_OTHER_BSS
+        rcr |= RCR_ACCEPT_AP
+    if fif_flags & 0x40:  # FIF_PSPOLL
+        rcr |= RCR_ACCEPT_PM
+
+    t.write32(REG_RCR, rcr)

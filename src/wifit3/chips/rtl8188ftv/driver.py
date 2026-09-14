@@ -15,11 +15,12 @@ M1-M7 scope (complete bring-up):
       │   ├─ EFUSE read + parse (M2)
       │   ├─ post-FW MAC init: init_mac + queue/LLE/usb_quirks (M3)
       │   ├─ post_mac_init_phy: BB + AGC + crystal cap + RF (M3)
-      │   ├─ enable_rx_data_path (RCR + DRVINFO_SZ + interrupts)
-      │   ├─ set_channel(1) + set_tx_power (M4)
+      │   ├─ enable_rx_data_path (RCR + DRVINFO_SZ + interrupts, M5)
+      │   ├─ set_tx_power (M5, efuse-derived ch1)
       │   ├─ LC calibration (M4)
       │   ├─ IQ calibration (M4)
-      │   └─ enable_rf (M4)
+      │   ├─ enable_rf (M4)
+      │   └─ set_channel(1) (M5: RX filt maps + AGC IGI + monitor RCR + tune)
       └─ WARM path: skip everything above (chip already running)
 
       then (both paths) → _finish_attach:
@@ -27,7 +28,8 @@ M1-M7 scope (complete bring-up):
         ├─ reset bulk pipes
         └─ spawn _rx_loop asyncio task
 
-No IQK/LC calibration gate yet; those land as polish milestones.
+Milestones M1-M4 gate against the cold-boot capture (verify_pcap.py);
+M5 adds the RX acceptance + channel-1 tune region.
 """
 from __future__ import annotations
 
