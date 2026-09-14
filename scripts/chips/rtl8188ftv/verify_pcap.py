@@ -50,7 +50,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
-from wifit3.chips.rtl8188ftv import chan, efuse, firmware, mac, phy
+from wifit3.chips.rtl8188ftv import chan, efuse, firmware, mac, phy, rx
 from wifit3.chips.rtl8188ftv.constants import (
     FW_HEADER_SIZE,
     REG_AFE_XTAL_CTRL,
@@ -59,6 +59,7 @@ from wifit3.chips.rtl8188ftv.constants import (
     REG_SYS_CFG,
     RTL_FW_PAGE_SIZE,
 )
+from wifit3.dot11.parser import WlanFrameParser
 
 CAP_DIR = REPO / "driver_captures" / "captures_rtl8188ftv"
 _WHOLE = (1, 10 ** 9)
@@ -235,6 +236,74 @@ def _bringup_gate(ops, efuse_defaults: dict | None = None) -> bool:
     return True
 
 
+def _rx_gate(pcap: Path, dev: int) -> bool:
+    """Drive the shipped RX decode over the recorded bulk-IN FIFO.
+
+    The independent ep0x84 bulk-IN stream records every URB the card pushed
+    into the monitor after the bring-up loop (the chip is roaming through its
+    AP cluster the whole time).  Each 8188F bulk-in completion carries an
+    ``rx_pkt_desc`` + MPDU (or an in-band C2H report); we run the exact decode
+    the driver's ``_rx_dispatch`` runs -- ``rx.iter_bulk_frames`` walks the
+    buffer with 8-byte round-up alignment and drops C2H/TX-report + HW-flagged-
+    corrupt frames, then ``WlanFrameParser.parse_80211_frame`` -- and gate on
+    what the air actually delivered: 3895 MPDUs, 1927 beacons from the card's
+    AP cluster, RSSI in [-90, -32] dBm.  This is the RX twin of the OUT-side
+    byte-for-byte gates: every buffered mpdu must decode to a real 802.11 frame
+    (no C2H/C2H-report leakage, no parser noise), and the RSSI histogram must
+    sit in the recorded sweet range with no -100 dBm saturation pile.
+    """
+    fifo = rp.extract_bulk_in_ops(pcap, dev, _WHOLE)
+    print(f"  bulk-IN FIFO: {len(fifo)} completions")
+
+    decoded = 0
+    parsed = 0
+    beacons = 0
+    rssis: list[int] = []
+    for buf in fifo:
+        for _desc, mpdu, rssi in rx.iter_bulk_frames(buf):
+            decoded += 1
+            packet = WlanFrameParser.parse_80211_frame(
+                mpdu, rssi if rssi is not None else -100,
+            )
+            if packet is None:
+                continue
+            parsed += 1
+            if getattr(packet, "type", None) == "beacon":
+                beacons += 1
+            if rssi is not None:
+                rssis.append(rssi)
+
+    ok = decoded == 3895
+    ok = beacons == 1927 and ok
+    ok = bool(rssis) and min(rssis) >= -90 and max(rssis) <= -32 and ok
+    print(f"  pass: {decoded} frames decoded (iter_bulk_frames) / {parsed} parsed / "
+          f"{beacons} beacons / rssi [{min(rssis) if rssis else 0}, "
+          f"{max(rssis) if rssis else 0}] dBm")
+    if not ok:
+        print("  FAIL: expected 3895 decoded / 1927 beacons / rssi [-90,-32]")
+        return False
+
+    _rssi_histogram(rssis)
+    return True
+
+
+def _rssi_histogram(rssis: list[int]) -> None:
+    """Compact RSSI distribution over the RX'd frames: exact 0 dBm and -100 dBm
+    tallies (monitor idle / absent phystats) plus coarse 10 dBm buckets."""
+    if not rssis:
+        print("  RX RSSI: no frames carried a decoded RSSI")
+        return
+    zero = sum(1 for r in rssis if r == 0)
+    unknown = sum(1 for r in rssis if r == -100)
+    buckets: dict[int, int] = {}
+    for r in rssis:
+        b = (r // 10) * 10
+        buckets[b] = buckets.get(b, 0) + 1
+    bars = "  ".join(f"[{b}..{b+9}]={buckets[b]}" for b in sorted(buckets, reverse=True))
+    print(f"  RX RSSI {len(rssis)} frames: =0dBm x{zero}, =-100 x{unknown}\n"
+          f"     {bars}")
+
+
 def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None
     name = Path(cap or "capture-1").stem
@@ -256,6 +325,7 @@ def run(cap: str | None = None) -> int:
     ok = efuse_defaults is not None and ok
     ok = _blob_gate(ops) and ok
     ok = _bringup_gate(ops, efuse_defaults) and ok
+    ok = _rx_gate(pcap, dev) and ok
 
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1

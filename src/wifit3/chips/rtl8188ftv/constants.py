@@ -389,3 +389,47 @@ EFUSE_RTL_ID = 0x8129               # 8188f.c:710 (cpu_to_le16)
 TX_POWER_INDEX_MAX = 0x3F
 TX_POWER_INDEX_DEFAULT_CCK = 0x22
 TX_POWER_INDEX_DEFAULT_HT40 = 0x27
+
+# ---- RX descriptor (rxdesc24, rtl8xxxu.h:275-390) --------------------
+# FTV uses the 24-byte descriptor; fops.tx_desc_size = sizeof(struct
+# rtl8xxxu_txdesc24) (8188f.c:1739). Frame stepping is `roundup(..., 8)`
+# (core.c:6494), NOT the 128-byte alignment the rxdesc16 chips use.
+RX_PKT_DESC_SZ_8188F = 24               # 6 × u32 (incl. trailing `tsfl`)
+RX_FRAME_ALIGN_8188F = 8                # roundup(..., 8) (core.c:6494)
+PHY_STATS_SZ_8188F = 32                 # REG_RX_DRVINFO_SZ=4 → 4 * 8 bytes
+PHY_STATS_PWDB_OFFSET = 4               # cck_sig_qual_ofdm_pwdb_all
+PHY_STATS_CCK_AGC_RPT_OFFSET = 5        # cck_agc_rpt_ofdm_cfosho_a
+DESC_RATE_LAST_CCK = 0x03               # rtl8xxxu.h:432 (rates 0-3 = CCK)
+DESC_RATE_6M = 0x04                     # rtl8xxxu.h:437 (OFDM floor)
+
+# ACK tap: ACKs are control-frame subtype 13 → RXFLTMAP1 bit 13 (regs.h:859).
+# The kernel's monitor filter leaves RXFLTMAP1 = 0x0400 (PS-Poll only,
+# core.c:4247), so _enable_rx_acks raises bit 13 and _disable_rx_acks drops it.
+RXFLTMAP1_ACK_BIT13 = 1 << 13
+
+# ---- TX descriptor (txdesc40, rtl8xxxu.h:414-430) --------------------
+# FTV uses the 40-byte descriptor; fops.tx_desc_size = sizeof(struct
+# rtl8xxxu_txdesc40) (8188f.c:1740). Fill is `rtl8xxxu_fill_txdesc_v2`
+# (8188f.c:1735, core.c:5340-5406). Unlike kiss v3 (8188eus), the v2
+# MGMT branch sets NO antenna-select bits.
+TX_DESC_SZ_8188F = 40                   # sizeof(struct rtl8xxxu_txdesc40)
+TXDESC_OWN = 1 << 7                     # txdw0: chip owns descriptor (rtl8xxxu.h:481)
+TXDESC_FIRST_SEGMENT = 1 << 3           # rtl8xxxu.h:477
+TXDESC_LAST_SEGMENT = 1 << 2            # rtl8xxxu.h:476
+TXDESC_BROADMULTICAST = 1 << 0          # rtl8xxxu.h:474
+TXDESC_QUEUE_SHIFT = 8                  # rtl8xxxu.h:494
+TXDESC_QUEUE_MGNT = 0x12                # rtl8xxxu.h:502 — the MGMT queue id
+TXDESC40_MACID_SHIFT = 0                # rtl8xxxu.h:492
+TXDESC40_AGG_BREAK = 1 << 16            # rtl8xxxu.h:526
+TXDESC40_USE_DRIVER_RATE = 1 << 8       # rtl8xxxu.h:538 (txdw3)
+TXDESC40_RETRY_LIMIT_ENABLE = 1 << 17   # rtl8xxxu.h:565 (txdw4)
+TXDESC40_RETRY_LIMIT_SHIFT = 18         # rtl8xxxu.h:566 (txdw4)
+TXDESC40_RETRY_LIMIT_MGNT = 6           # fill_txdesc_v2 MGMT (core.c:5383)
+TXDESC40_SEQ_SHIFT = 12                 # rtl8xxxu.h:590 (txdw9)
+TXDESC40_SEQ_MASK = 0x00fff000          # rtl8xxxu.h:591
+TXDESC40_HW_SEQ_ENABLE = 1 << 15        # rtl8xxxu.h:587 (txdw8)
+
+# ---- 802.11 frame control bytes (tx.py) -----------------------------
+FC0_TYPE_MGMT = 0x00
+FC0_SUBTYPE_DEAUTH = 0xC0                # subtype 0xC, shifted into bits[7:4]
+REASON_CODE_CLASS3_FRAME = 0x07          # "class-3 frame from non-associated STA"

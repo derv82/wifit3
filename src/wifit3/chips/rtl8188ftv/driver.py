@@ -24,18 +24,23 @@ M1-M7 scope (complete bring-up):
       └─ WARM path: skip everything above (chip already running)
 
       then (both paths) → _finish_attach:
-        ├─ probe USB endpoints
-        ├─ reset bulk pipes
-        └─ spawn _rx_loop asyncio task
+        ├─ probe USB endpoints, reset bulk pipes
+        ├─ arm monitor RX filter
+        └─ start RxReaderThread (bulk-IN pump)
 
 Milestones M1-M4 gate against the cold-boot capture (verify_pcap.py);
 M5 adds the RX acceptance + channel-1 tune region; M6 the full 53-hop
-channel-scan loop, so the capture is replayed end to end.
+channel-scan loop, so the capture is replayed end to end.  M7 wires
+``connect()`` to run the whole thing: EFUSE read (M2) + MAC/PHY init
+(M3) + LC/IQ/RF tail (M4) + RX path/monitor filter/channel-1 (M5) on
+the cold path, then ``_finish_attach`` on both paths to start the RX
+reader and arm the monitor filter.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import struct
 import time
 from typing import Callable, Optional
 
@@ -43,6 +48,8 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
+from wifit3.chips.rx_reader import RxReaderThread
+from wifit3.dot11.parser import WlanFrameParser
 from wifit3.errors import BringUpError
 
 from .constants import (
@@ -98,6 +105,7 @@ class RTL8188FTVDriver(Driver):
         self._mgmt_bulk_out: Optional[int] = None
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
+        self._tx_seq: int = 0
         self._rx_reader = None
         self._claimed: bool = False
         self.current_channel: int = 1
@@ -167,7 +175,51 @@ class RTL8188FTVDriver(Driver):
         return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
-        return frame_bytes
+        """Supply the incrementing SW sequence number the injected txdesc40 copies:
+        the driver keeps HW_SEQ_ENABLE cleared for MACd for injects (core.c:5387),
+        so nothing else advances the seq. HW retransmits reuse the descriptor
+        (same seq); each new inject gets the next."""
+        if len(frame_bytes) < 24:
+            return frame_bytes
+        self._tx_seq = (self._tx_seq + 1) & 0xFFF
+        buf = bytearray(frame_bytes)
+        struct.pack_into("<H", buf, 22, (self._tx_seq << 4) | (buf[22] & 0x0F))
+        return bytes(buf)
+
+    # ---- RX-ACK detection (Driver._enable_rx_acks) ------------------
+
+    async def _enable_rx_acks(self) -> None:
+        from .rx import admit_ack_frames
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, admit_ack_frames, self.transport)
+
+    async def _disable_rx_acks(self) -> None:
+        from .rx import drop_ack_frames
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, drop_ack_frames, self.transport)
+
+    # ---- RX read loop (RxReaderThread driver) ------------------------
+
+    def _rx_read_once(self) -> Optional[bytes]:
+        from .rx import read_rx_burst
+        if self._bulk_in_ep is None:
+            return None
+        return read_rx_burst(self.dev, self._bulk_in_ep, max_size=16384, timeout_ms=100)
+
+    def _rx_dispatch(self, buf: bytes) -> None:
+        from .rx import iter_bulk_frames
+        callback = self._rx_callback
+        if callback is None and not self._ack_detect_on:
+            return
+        for _desc, mpdu, rssi in iter_bulk_frames(buf):
+            if len(mpdu) == 10 and mpdu[0] == 0xD4:
+                self.record_ack(mpdu)
+                continue
+            if callback is None:
+                continue
+            parsed = WlanFrameParser.parse_80211_frame(mpdu, rssi if rssi is not None else -100)
+            if parsed:
+                callback(parsed)
 
     async def close(self) -> None:
         if self._rx_reader is not None:
@@ -178,10 +230,11 @@ class RTL8188FTVDriver(Driver):
     # ---- bring-up paths ---------------------------------------------
 
     async def _cold_bring_up(self, _update) -> bool:
+        t = self.transport
         loop = asyncio.get_running_loop()
 
         _update(0.10, "Reading chip ID...")
-        sys_cfg = await loop.run_in_executor(None, self.transport.read32, REG_SYS_CFG)
+        sys_cfg = await loop.run_in_executor(None, t.read32, REG_SYS_CFG)
         self.chip_cut = (sys_cfg & SYS_CFG_CHIP_VERSION_MASK) >> 12
         logger.debug("REG_SYS_CFG = 0x%08x  chip_cut=%d", sys_cfg, self.chip_cut)
         if sys_cfg & SYS_CFG_TRP_VAUX_EN:
@@ -194,17 +247,155 @@ class RTL8188FTVDriver(Driver):
         fw_blob = load_firmware_blob()
 
         _update(0.35, f"Uploading firmware ({len(fw_blob)} B)...")
-        await loop.run_in_executor(None, download_firmware, self.transport, fw_blob)
+        await loop.run_in_executor(None, download_firmware, t, fw_blob)
 
         _update(0.50, "Polling for MCU_WINT_INIT_READY...")
-        await loop.run_in_executor(None, start_firmware, self.transport)
+        await loop.run_in_executor(None, start_firmware, t)
 
+        from .efuse import read_and_parse
+        _update(0.55, "Reading EFUSE...")
+        efuse = await loop.run_in_executor(None, read_and_parse, t)
+        if efuse.mac_address:
+            self.mac_address = efuse.mac_address.hex(":")
+        logger.debug("EFUSE MAC = %s", self.mac_address)
+
+        from .mac import apply_mac_init_table, init_device_post_phy
+        _update(0.60, "MAC init (init_mac + queue + usb_quirks)...")
+        await loop.run_in_executor(None, apply_mac_init_table, t)
+
+        from .phy import post_mac_init_phy
+        _update(0.65, "PHY init (BB + AGC + crystal cap + RF)...")
+        await loop.run_in_executor(
+            None, post_mac_init_phy, t, self.chip_cut, efuse.default_crystal_cap)
+
+        _update(0.70, "Device post-PHY config (RFSW..CCK PD)...")
+        await loop.run_in_executor(None, init_device_post_phy, t, efuse)
+
+        from .phy import lc_calibrate, iq_calibrate, enable_thermal_meter, \
+            init_device_phy_tail, enable_rf
+        _update(0.74, "LC calibration...")
+        await loop.run_in_executor(None, lc_calibrate, t)
+        _update(0.78, "IQ calibration...")
+        await loop.run_in_executor(None, iq_calibrate, t)
+        _update(0.80, "Thermal meter + PHY tail...")
+        await loop.run_in_executor(None, enable_thermal_meter, t)
+        await loop.run_in_executor(None, init_device_phy_tail, t)
+        _update(0.84, "Reading TX power from EFUSE...")
+        await loop.run_in_executor(None, enable_rf, t)
+
+        from .mac import enable_rx_path
+        _update(0.86, "RX data path + channel-1 tune...")
+        await loop.run_in_executor(None, enable_rx_path, t)
+
+        from .phy import set_tx_power
+        _update(0.90, "TX power regs (ch1, EFUSE)...")
+        await loop.run_in_executor(None, set_tx_power, t, 1, efuse)
+
+        from .chan import set_channel_2g_20mhz
+        _update(0.94, "Tuning to channel 1...")
+        await loop.run_in_executor(None, set_channel_2g_20mhz, t, 1)
+        self.current_channel = 1
+
+        return await self._finish_attach(_update, from_warm=False)
+
+    async def _warm_reattach(self, _update) -> bool:
+        """Reattach to a running chip: the chip has the bring-up state from a
+        previous session; skip everything and just resume RX polling."""
+        _update(0.50, "Warm chip — skipping FW + init")
+        return await self._finish_attach(_update, from_warm=True)
+
+    async def _finish_attach(self, _update, *, from_warm: bool) -> bool:
+        """Common tail (both paths): probe endpoints, reset pipes, start RX.
+
+        The warm path skips the post-FW reset of the monitor RCR, so the
+        filter is armed here on BOTH paths — a chip left by the kernel has
+        a non-monitor RCR that drops client→AP (ToDS) frames.
+        """
+        t = self.transport
+        loop = asyncio.get_running_loop()
+
+        from .rx import probe_endpoints
+        from .tx import pick_bulk_out_mgmt
+        _update(0.60, "Probing USB endpoints...")
+        eps = await loop.run_in_executor(None, probe_endpoints, self.dev)
+        if not eps.bulk_in:
+            logger.error("no bulk-IN endpoint discovered")
+            return False
+        self._bulk_in_ep = eps.primary_bulk_in
+        self._bulk_out_eps = list(eps.bulk_out)
+        self._mgmt_bulk_out = pick_bulk_out_mgmt(self._bulk_out_eps)
+
+        _update(0.70, "Clearing stale bulk-pipe state...")
+        await loop.run_in_executor(None, self._reset_bulk_pipes)
+
+        if from_warm and not await self._rx_smoke_test():
+            logger.error(
+                "RTL8188FTV: warm reattach succeeded but bulk-IN is wedged "
+                "(no frames in 1500ms). Please unplug + replug the dongle "
+                "and try again."
+            )
+            return False
+
+        from .mac import configure_filter
+        _update(0.85, "Arming monitor RX filter...")
+        await loop.run_in_executor(None, configure_filter, t)
+
+        self._rx_reader = RxReaderThread(
+            loop, self._rx_read_once, self._rx_dispatch, name="rtl8188ftv-rx",
+            on_fatal=lambda e: self._on_lost and self._on_lost(e),
+        )
+        self._rx_reader.start()
+        self.is_warm = True
         _update(1.00, "RTL8188FTV online.")
         return True
 
-    async def _warm_reattach(self, _update) -> bool:
-        _update(0.50, "Warm chip — skipping FW upload")
-        return True
+    async def _rx_smoke_test(self, attempts: int = 15, timeout_ms: int = 100) -> bool:
+        """Single bulk-IN read with a generous timeout; return True if any
+        byte arrived. Channel 1 on a busy 2.4 GHz environment delivers a
+        beacon every ~100 ms so 1.5 s is plenty of margin."""
+        loop = asyncio.get_running_loop()
+
+        def _try_read():
+            try:
+                return bytes(self.dev.read(self._bulk_in_ep, 16384, timeout_ms))
+            except usb.core.USBError:
+                return b""
+
+        for _ in range(attempts):
+            data = await loop.run_in_executor(None, _try_read)
+            if data:
+                logger.debug("RX smoke test: got %d bytes - pipe is alive", len(data))
+                return True
+        return False
+
+    def _reset_bulk_pipes(self) -> None:
+        """Clear halts on bulk-IN + bulk-OUT pipes so warm restarts resume RX.
+
+        After a warm reattach the chip's MAC state is intact but the USB
+        host controller may still consider the pipes halted from the
+        previous session, AND the chip's internal RX FIFO can be wedged
+        from frames that arrived after the prior session stopped polling.
+        Failures here are non-fatal.
+        """
+        eps = [self._bulk_in_ep] if self._bulk_in_ep is not None else []
+        eps += list(self._bulk_out_eps)
+        for ep in eps:
+            try:
+                self.dev.clear_halt(ep)
+                logger.debug("cleared halt on endpoint 0x%02x", ep)
+            except (usb.core.USBError, NotImplementedError) as e:
+                logger.debug("clear_halt(0x%02x) skipped: %s", ep, e)
+
+        if self._bulk_in_ep is not None:
+            drained = 0
+            for _ in range(8):
+                try:
+                    data = self.dev.read(self._bulk_in_ep, 16384, 20)
+                    drained += len(data)
+                except usb.core.USBError:
+                    break
+            if drained:
+                logger.debug("drained %d stale bytes from bulk-IN", drained)
 
     # ---- power-on internals (8188f.c:1318-1537) ---------------------
 
