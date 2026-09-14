@@ -134,10 +134,10 @@ def _spur_calibration(t: RTL8188FTVTransport, channel: int) -> None:
             t.write32(REG_OFDM0_XA_AGC_CORE1, initial_gain)
 
             if do_notch:
-                t.write32(REG_OFDM1_CSI_FIX_MASK1, _SPUR_REG_D40[channel])
-                t.write32(REG_OFDM1_CSI_FIX_MASK2, _SPUR_REG_D44[channel])
+                t.write32(REG_OFDM1_CSI_FIX_MASK1, _SPUR_REG_D40.get(channel, 0))
+                t.write32(REG_OFDM1_CSI_FIX_MASK2, _SPUR_REG_D44.get(channel, 0))
                 t.write32(0x0D48, 0x0)
-                t.write32(0x0D4C, _SPUR_REG_D4C[channel])
+                t.write32(0x0D4C, _SPUR_REG_D4C.get(channel, 0))
 
                 # Enable CSI mask
                 val32 = t.read32(REG_OFDM1_CFO_TRACKING)

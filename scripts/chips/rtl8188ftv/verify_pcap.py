@@ -28,6 +28,14 @@ Milestones gated here:
   ``set_channel_2g_20mhz(1)`` (spur calibration, 20 MHz BB, RF
   TRX_BW/filters), driven against the recorded chip reads so every
   emitted write must match the wire (ops 2295-2347).
+* **Channel-hop scan loop** -- 53 channel hops (7→1→13→1→2→1→...→14),
+  each ``set_tx_power(ch)`` + ``set_channel_2g_20mhz(ch)``, covering
+  both spur-calibrated channels (5-8, 11, 13, 14; the notch path fires
+  when the PSD report crosses threshold) and non-spur channels (1-4, 9,
+  10, 12).  One monitor ``configure_filter`` (RCR re-apply) lands between
+  hops 24 and 25 as the scan's FIF flags flip.  Driven against the
+  recorded chip reads so every emitted write must match the wire
+  (ops 2348-4994; the gate now consumes the whole capture).
 
 Run: uv run python scripts/chips/rtl8188ftv/verify_pcap.py [capture-1]
 """
@@ -56,6 +64,18 @@ CAP_DIR = REPO / "driver_captures" / "captures_rtl8188ftv"
 _WHOLE = (1, 10 ** 9)
 _FW_REGION_END = REG_FW_START_ADDRESS + RTL_FW_PAGE_SIZE  # 0x2000
 _MAC_INIT_FIRST_REG = 0x0024    # rtl8188f_mac_init_table[0] (8188f.c:18)
+
+# Ops 2348-4994: OS channel-hop scan loop (53 hops, each set_tx_power+set_channel).
+# One interleaved monitor configure_filter (REG_RCR write) sits between hop 24
+# (ch=12) and hop 25 (ch=1) -- the scan's FIF flags flip mid-loop, so the driver
+# re-applies the RCR: emit it at the matching hop boundary.
+_HOP_CHANNELS = [
+    7, 1, 13, 1, 2, 1, 8, 1, 3, 1, 14, 1, 9, 1, 4, 1,
+    10, 1, 5, 1, 11, 1, 6, 1, 12, 1, 1, 1,
+    2, 1, 3, 1, 4, 1, 5, 1, 6, 1, 7, 1,
+    8, 1, 9, 1, 10, 1, 11, 1, 12, 1, 13, 1, 14,
+]
+_HOP_FILTER_AT = 24  # hop index (0-based) after which configure_filter fires
 
 
 def _efuse_gate(ops) -> dict | None:
@@ -195,6 +215,13 @@ def _bringup_gate(ops, efuse_defaults: dict | None = None) -> bool:
         miles.append(("set_tx_power(1)", rt.i))
         chan.set_channel_2g_20mhz(rt, 1)
         miles.append(("set_channel_2g_20mhz(1)", rt.i))
+        for hop_i, hop_ch in enumerate(_HOP_CHANNELS):
+            if efuse_defaults is not None:
+                phy.set_tx_power(rt, hop_ch, efuse_defaults)
+            chan.set_channel_2g_20mhz(rt, hop_ch)
+            if hop_i == _HOP_FILTER_AT:
+                mac.configure_filter(rt)
+        miles.append((f"channel-hop scan ({len(_HOP_CHANNELS)} hops)", rt.i))
     except rp.Divergence as e:
         last = miles[-1][0] if miles else "(none)"
         print(f"  FAIL (bring-up divergence after {last}):\n    {e}")
@@ -202,7 +229,7 @@ def _bringup_gate(ops, efuse_defaults: dict | None = None) -> bool:
         return False
 
     print(f"  PASS: {rt.i} ops byte-for-byte -- init_mac + post_mac_init_phy + "
-          f"LC/IQ/RF tail + RX path/channel-1 tune "
+          f"LC/IQ/RF tail + RX path/channel-1 tune + channel-hop scan "
           f"(chip_cut={chip_cut}, crystal_cap=0x{crystal_cap:02x} from {eff})")
     _report(miles)
     return True

@@ -29,7 +29,8 @@ M1-M7 scope (complete bring-up):
         └─ spawn _rx_loop asyncio task
 
 Milestones M1-M4 gate against the cold-boot capture (verify_pcap.py);
-M5 adds the RX acceptance + channel-1 tune region.
+M5 adds the RX acceptance + channel-1 tune region; M6 the full 53-hop
+channel-scan loop, so the capture is replayed end to end.
 """
 from __future__ import annotations
 

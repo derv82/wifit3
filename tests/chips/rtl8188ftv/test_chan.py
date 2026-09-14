@@ -1,9 +1,10 @@
-"""rtl8188ftv M5 channel-1 tune + RX acceptance.
+"""rtl8188ftv M5/M6 channel tune + RX acceptance.
 
 Covers the values computed from kernel C (8188f.c:400-643, core.c:7494-7971)
-independent of the capture: spur calibration registers, 20 MHz BB RMW
-arithmetic, RF TRX_BW writes, monitor RCR value.  Wire-order replay is gated
-live in scripts/chips/rtl8188ftv/verify_pcap.py.
+independent of the capture: spur calibration registers (including the PSD
+notch path for channels 5-8, 11, 13, 14), 20 MHz BB RMW arithmetic, RF TRX_BW
+writes, monitor RCR value.  Wire-order replay is gated live in
+scripts/chips/rtl8188ftv/verify_pcap.py.
 """
 from wifit3.chips.rtl8188ftv.chan import set_channel_2g_20mhz
 from wifit3.chips.rtl8188ftv.mac import configure_filter, enable_rx_path
@@ -97,6 +98,70 @@ def test_set_channel_2g_20mhz_ch1_wire_values():
 
     dfir = [v for a, v in t.writes if a == 0x0954]
     assert dfir == [0x4A800000, 0x4A300000]
+
+
+def test_set_channel_2g_20mhz_ch6_spur_notch_values():
+    """ch6 hits do_notch (PSD_REPORT >= 0x16): the notch block writes CSI_FIX
+    masks.  reg_d44/reg_d4c have no ch6 entry in the kernel arrays, so the port
+    must emit 0 for them (zero-initialised C arrays), not KeyError."""
+    t = _Fake()
+    t.reads.update({
+        0x0824: 0x80390204,
+        0x0820: 0x01000100,
+        0x08b8: 0x00107C07,   # MODE_AG = 0x7c07
+        0x0c40: 0x1F78403F,
+        0x0948: 0x99000000,   # S0S1: BIT(6)=0 → sw_ctrl, BIT(9)=0 → S1 active
+        0x0c50: 0x6955341E,   # initial gain
+        0x0800: 0x83045700,
+        0x08b4: 0x0000002D,   # PSD_REPORT >= 0x16 → do_notch
+        0x0900: 0x00000000,
+        0x0ce4: 0x10000000,
+        0x0c10: 0x18800000,
+        0x0d2c: 0xCB979975,
+        0x0954: 0x4A880000,
+    })
+    set_channel_2g_20mhz(t, 6)
+
+    psd = [v for a, v in t.writes if a == 0x0808]
+    assert psd == [0x00FC4D, 0x40FC4D, 0x00FC4D]  # frequencies[6]
+
+    # Notch masks: d40[6]=0x600; d44[6] and d4c[6] are absent → 0.
+    assert [v for a, v in t.writes if a == 0x0d40] == [0x00000600]
+    assert [v for a, v in t.writes if a == 0x0d44] == [0x00000000]
+    assert [v for a, v in t.writes if a == 0x0d48] == [0x00000000]
+    assert [v for a, v in t.writes if a == 0x0d4c] == [0x00000000]
+
+    cfo = [v for a, v in t.writes if a == 0x0d2c]
+    assert cfo == [0xDB979975]  # do_notch: BIT(28) enabled
+
+    agc = [v for a, v in t.writes if a == 0x0c50]
+    assert agc == [0x69553430, 0x6955341E]  # IGI 0x30 then restore
+
+
+def test_set_channel_2g_20mhz_ch7_spur_no_notch_values():
+    """ch7 is a spur channel whose PSD report stays below threshold: the notch
+    block runs (PSD machinery) but falls through to disable the CSI mask."""
+    t = _Fake()
+    t.reads.update({
+        0x0824: 0x80390204,
+        0x0820: 0x01000100,
+        0x08b8: 0x00107C07,
+        0x0c40: 0x1F78403F,
+        0x0948: 0x99000000,
+        0x0c50: 0x6955341E,
+        0x0800: 0x83045700,
+        0x08b4: 0x0000000A,   # < 0x16 → no notch
+        0x0900: 0x00000000,
+        0x0ce4: 0x10000000,
+        0x0c10: 0x18800000,
+        0x0d2c: 0xCB979975,
+        0x0954: 0x4A880000,
+    })
+    set_channel_2g_20mhz(t, 7)
+
+    assert not [a for a, _ in t.writes if a in (0x0d40, 0x0d44, 0x0d48, 0x0d4c)]
+    cfo = [v for a, v in t.writes if a == 0x0d2c]
+    assert cfo == [0xCB979975]  # no notch: BIT(28) stays clear
 
 
 def test_enable_rx_path_writes_filtermaps_and_igi():
