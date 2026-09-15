@@ -40,6 +40,8 @@ _EEPROM_RF_BT_SETTING = 0xC3       # [SRC] include/hal_pg.h:511 EEPROM_RF_BT_SET
 _EEPROM_RFE_OPTION = 0xCA          # [SRC] include/hal_pg.h:518 EEPROM_RFE_OPTION_8821C
 _EEPROM_XTAL = 0xB9                # [SRC] include/hal_pg.h:496 EEPROM_XTAL_8821C
 _EEPROM_THERMAL_METER = 0xBA       # [SRC] include/hal_pg.h:497 EEPROM_THERMAL_METER_8821C
+_EEPROM_TX_BBSWING_2G = 0xC6       # [SRC] include/hal_pg.h:514 EEPROM_TX_BBSWING_2G_8821C
+_EEPROM_TX_BBSWING_5G = 0xC7       # [SRC] include/hal_pg.h:515 EEPROM_TX_BBSWING_5G_8821C
 _DEFAULT_THERMAL_METER = 0x12      # [SRC] include/hal_pg.h:827 EEPROM_Default_ThermalMeter
 _BIT_BT_FUNC_EN = 1 << 18          # [SRC] halmac_bit_8821c.h:1395 BIT_BT_FUNC_EN_8821C
 
@@ -148,9 +150,12 @@ class EfuseInfo:
     package_type: int = 0   # hal->PackageType from the MAC-hidden report; 0 until that read
     phydm_rfe_type: int = 0     # dm->rfe_type = rfe_type_expand >> 3 (PHYDM table discriminator)
     phydm_package_type: int = 0  # dm->package_type (phydm override; differs from hal->PackageType)
-    default_rf_set: int = 1     # dm->default_rf_set_8821c (SWITCH_TO_BTG=0 / WLG=1) — picks AGC diff
+    default_rf_set: int = 0     # dm->default_rf_set_8821c zero-inits to SWITCH_TO_BTG=0 (WLG=1);
+    #                             only a defined rfe arm overwrites it [SRC] phydm.h:1053 zero-init
     crystal_cap: int = 0        # hal->crystal_cap from EEPROM_XTAL (0xB9); BB crystal-cap trim
     eeprom_thermal: int = _DEFAULT_THERMAL_METER  # rf->eeprom_thermal (0xBA); halrf thermal-track base
+    tx_bbswing_2g: int = 0      # hal->tx_bbswing_24G (0xC6); BB tx-swing per band (0 when unfused)
+    tx_bbswing_5g: int = 0      # hal->tx_bbswing_5G (0xC7); default 0 [SRC] Hal_EfuseTxBBSwing
 
 
 def _parse_board_info(t, log_map: bytes, map_valid: bool) -> tuple[bool, int, int, int]:
@@ -204,8 +209,15 @@ def read_efuse(t) -> EfuseInfo:
     # (0xBA), default 0x12 when unfused; the halrf thermal-tracking delta base.
     therm = log_map[_EEPROM_THERMAL_METER]
     eeprom_thermal = therm if (map_valid and therm != 0xFF) else _DEFAULT_THERMAL_METER
+    # hal->tx_bbswing_24G/5G [SRC] Hal_EfuseTxBBSwing rtl8821c_ops.c:241 — EEPROM_TX_BBSWING
+    # (0xC6/0xC7) when the map is valid, default 0 on an unfused (0xFF) byte or an invalid map.
+    sw2g = log_map[_EEPROM_TX_BBSWING_2G]
+    sw5g = log_map[_EEPROM_TX_BBSWING_5G]
+    tx_bbswing_2g = sw2g if (map_valid and sw2g != 0xFF) else 0
+    tx_bbswing_5g = sw5g if (map_valid and sw5g != 0xFF) else 0
     return EfuseInfo(autoload_ok, log_map, bt_coexist, rfe_type, single_ant_path, ant_num,
-                     phys_map=phys_map, crystal_cap=crystal_cap, eeprom_thermal=eeprom_thermal)
+                     phys_map=phys_map, crystal_cap=crystal_cap, eeprom_thermal=eeprom_thermal,
+                     tx_bbswing_2g=tx_bbswing_2g, tx_bbswing_5g=tx_bbswing_5g)
 
 
 def thermal_offset(info: EfuseInfo) -> int:

@@ -99,6 +99,8 @@ class ExceptingReplayDevice(rp.ReplayDevice):
                     self.excepted = block
                     self.i = j
                     self._used = True
+                    self._diverged = None  # clear ReplayDevice's sticky first-Divergence so the
+                    #                        resynced retry reads ops[j] instead of re-raising it
                     return super().ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
                                                  data_or_wLength, timeout)
             raise
@@ -220,13 +222,6 @@ def run(cap: str | None = None) -> int:
     print(f"{pcap.name}: card=dev{dev_addr}, {total} ctrl+bulk ops")
 
     w = Walk(ops)
-    # The vendor cold-boot capture injects its MGNT deauths with RTS_DATA_RTY_LMT=0 (raw aireplay
-    # inject: RTY_LMT_EN set, retry 0); runtime injects retry_ctrl=True (RETRY_COUNT=6). Build the
-    # verify's inject at the captured retry so the TX descriptor matches the wire byte-for-byte; this
-    # verifies the port's byte fidelity, not the retry config value.
-    import wifit3.chips.rtl8821cu_dkms.tx as _cu_tx
-    _cu_build = _cu_tx.build_mgnt_txdesc
-    _cu_tx.build_mgnt_txdesc = lambda *a, **k: _cu_build(*a, **{**k, "retry_ctrl": False})
     try:
         _run(w.driver.connect())
     except rp.Divergence as e:
@@ -247,7 +242,19 @@ def run(cap: str | None = None) -> int:
         print(f"    {addrs}")
 
     init_end = w.i
-    hops, leds, ticks, peris, injects, frontier = _walk_operational(w, info)
+    # The vendor cold-boot capture injects its MGNT deauths with RTS_DATA_RTY_LMT=0 (raw aireplay
+    # inject: RTY_LMT_EN set, retry 0); runtime injects retry_ctrl=True (RETRY_COUNT=6). Build the
+    # operational-phase inject at the captured retry so its TX descriptor matches the wire byte-for-
+    # byte; this verifies the port's byte fidelity, not the retry config value. Scope the patch to the
+    # operational walk ONLY: connect()'s FW reserved-page download shares tx.build_mgnt_txdesc and
+    # must keep the shipped retry_ctrl=True default, so install it after connect() returns.
+    import wifit3.chips.rtl8821cu_dkms.tx as _cu_tx
+    _cu_build = _cu_tx.build_mgnt_txdesc
+    _cu_tx.build_mgnt_txdesc = lambda *a, **k: _cu_build(*a, **{**k, "retry_ctrl": False})
+    try:
+        hops, leds, ticks, peris, injects, frontier = _walk_operational(w, info)
+    finally:
+        _cu_tx.build_mgnt_txdesc = _cu_build
     print(f"  operational: {hops} channel hops + {injects} injects + {leds} LED blinks + "
           f"{ticks} watchdog ticks + {peris} BT-coex periodicals reproduced ({w.i - init_end} ops)")
 

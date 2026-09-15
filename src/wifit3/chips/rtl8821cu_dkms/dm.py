@@ -23,6 +23,7 @@ from .bb import set_bb_reg
 from .rf import write_rf, write_rf_masked
 
 _MASKDWORD = 0xFFFFFFFF
+_SWITCH_TO_BTG = 0                 # [SRC] phydm_hal_api8821c.h rf_set enum
 
 # --- phydm_common_info_self_init register I/O [SRC] phydm.c:238 -------------
 R_0xa9c = 0x0A9C                   # CCK new-AGC check [SRC] phydm.c phydm_cck_new_agc_chk
@@ -123,6 +124,10 @@ def _common_info_self_init(t, info, st: DmState) -> None:
     ``phydm_init_soft_ml_setting`` (0x19a8). ``phydm_trx_antenna_setting_init`` is a 1SS no-op."""
     st.cck_new_agc = bool(get_bb_reg(t, R_0xa9c, _BIT_CCK_NEW_AGC))
     t.cck_new_agc = st.cck_new_agc          # surface to the RX RSSI decode (rx.decode_rssi)
+    # phydm_cck_lna_bit_num_chk [SRC] phydm.c:178-185 — old-AGC CCK LNA-gain table selector:
+    # report_type 1 (16-entry BTG table) iff default_rf_set==BTG, else 0 (8-entry). Wire-silent
+    # for 8821C; surfaced to the RX RSSI decode alongside cck_new_agc.
+    t.cck_agc_report_type = 1 if info.default_rf_set == _SWITCH_TO_BTG else 0
     st.is_cck_high_power = bool(get_bb_reg(t, R_0x804, _BIT_CCK_RPT_FORMAT))
     st.rf_path_rx_enable = get_bb_reg(t, R_0x808, _MASK_BB_RX_PATH)
     set_bb_reg(t, R_0x19a8, _SOML_MASK, _SOML_VAL)

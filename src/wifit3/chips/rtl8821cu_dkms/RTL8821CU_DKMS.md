@@ -18,6 +18,10 @@ Three hardware bugs, all invisible to the byte-gate, were found and fixed (see G
 - runtime focus RX-dead + transient 5 GHz TX — the same reader-vs-RF18 race at runtime: a reader
   pause across deliberate (`scan=False`) tunes + `inject` under `_io_lock`.
 
+The no-BT (`bt_coexist=FALSE`) WiFi-only coex front-end is ported (`btcwifionly.py`, issue #53) but
+HARDWARE-UNVERIFIED — no no-BT card is available here. It is dead code on the combo reference
+(byte-gate unchanged), so it is regression-safe.
+
 Not done: ZeroCD discovery (the card enumerates as a CD-ROM — see Gotchas) and warm reattach.
 
 ## Gotchas
@@ -82,12 +86,29 @@ byte-identical):
   never touches RF 0xb8.
 - **rfe_type-2 "1212 module" 5G-RX fix** — `mac.hal_init_misc` writes PAD_CTRL1+3 = 0x36 only for a
   raw rfe of 2 [SRC] rtl8821c_halinit.c:257. The reference (rfe 0x22) skips it.
+- **phydm derivation defaults** — `phy.init_hw_info_by_rfe` leaves `phydm_package_type` 0 unless the
+  rfe is a 0x2x combo arm (H4) [SRC] phydm_hal_api8821c.c:349/356; `EfuseInfo.default_rf_set`
+  zero-inits to BTG(0) not WLG(1) (M2) [SRC] phydm.h:1053. Reference (rfe 0x22) sets both explicitly.
+- **CCK RSSI LNA-gain table** — `rx.decode_rssi` picks the 16-entry table_1 (BTG) or 8-entry table_0
+  (WLG/WLA) on `default_rf_set`, surfaced to RX via `transport.cck_agc_report_type` at dm init (H3)
+  [SRC] phydm_cck_rssi_8821c :42-60 / phydm_cck_lna_bit_num_chk :178-185. Reference (BTG) → table_1.
+- **BB tx-swing per band** — `chan._set_bb_swing_by_band_2g/5g` write 0xc1c[31:21] from EEPROM
+  tx_bbswing (0xC6/0xC7, default 0 when unfused), not a hardcoded 0x200 (H2) [SRC] Hal_EfuseTxBBSwing
+  / phy_get_tx_bbswing_8821c :610-668. Reference tx_bbswing = 0x00 → 0x200 (byte-identical).
+- **TXAGC PG base fallback + clamp** — `txpower.parse_pg` substitutes the IC-default PG base
+  (2.4G 0x2D / 5G 0x28) for any invalid (> txgi_max) EFUSE base and `set_tx_power_level` clamps the
+  final index to [0,63] (H1) [SRC] hal_load_pg_txpwr_info :1004 / clamp :6126. Reference PG is fully
+  fused and ≤ 63, so both are no-ops.
 
 Residual gaps (vendor-ported but HW-untested; only the reference burn is pcap+HW gated):
 
 - Every non-reference branch above is vendor-ported but hardware-untested — hence the connect tag.
 - **2-antenna board** (`ant_num == 2`): only the 1-antenna BT-coex module (`halbtc8821c1ant`) is
   ported, not `halbtc8821c2ant`. connect() warns; the card "gives it a shot" on the 1-antenna path.
+- **No-BT card** (`bt_coexist == FALSE`): the WiFi-only coex front-end (`halbtc8821cwifionly.c`) is
+  ported in `btcwifionly.py` and gated in on the `else` of every `bt_coexist` branch (hal-init,
+  set_channel band-switch). Its rfe decode diverges from `btc._decode_rfe` for module types 10-15
+  (the wifi-only variant only recognizes types 1-7, rest default to WLG/main). HW-unverified.
 - **IQK / TX-power tracking** (`config_phydm_set_ant_path`, `default_ant_num_8821c`) is unported for
   ALL cards (monitor mode never sets `bNeedIQK`), so its antenna-number branch is moot here.
 - The A-cut `phydm_ccapar*` tables are `#if 0` in the vendor build (compiled out — not a gap).
@@ -108,6 +129,41 @@ match the vendor C, so grep the bundle's `driver-source/` to cross-reference.
 - `dc_ab.py` / `dc_steps.py` — the A/B harnesses that pinned the dc_cancellation ck320 bug; kept for re-validation.
 
 ## Debug log
+
+### 2026-09-14 — five per-card generalization fixes (H1-H4, M2)
+
+Five values hardcoded to the pcap reference were generalized to their vendor derivation; each is
+runtime-gated so the reference stays byte-identical (verify_pcap 21318/21409). See the "Generalization
+gaps closed" bullets. Non-obvious findings pinned by replaying the reference EFUSE:
+
+- **tx-swing branch (H2):** the reference's `bautoload_fail_flag` is FALSE — `rtl8821c_read_efuse`
+  overwrites it from the EEPROM-ID (map-valid), NOT the AUTOLOAD_SUS bit [SRC] rtl8821c_ops.c:475/492.
+  So it takes the autoload-OK branch and reads EEPROM tx_bbswing (0xC6/0xC7 = 0x00 → 0x200), not the
+  registry-swing branch the old comment claimed. `info.autoload_ok` (the sus bit) is a different flag.
+- **PG diffs need no fallback (H1):** an unfused 0xFF diff nibble parses to -1, which is a valid diff
+  (`IS_PG_TXPWR_DIFF_INVALID` is `>7 || <-8`), so the vendor keeps it — only PG *bases* fall back.
+  Reference path-B 5G bases are 0xFF but the BTG card reads 5G from path A, so the fallback is unseen.
+
+### 2026-09-14 — no-BT WiFi-only coex front-end (issue #53, HW-unverified)
+
+A no-BT RTL8821CU (MercuSYS MU6H, `bt_coexist=FALSE`) crashed on the first channel tune:
+`btc.switchband_notify_2g` dereferences `t.btc`, which only `btc.hal_init` (combo path) creates, so
+the no-BT card AttributeError'd; even gated out, its WiFi front-end (GNT owner, coex tables, antenna
+switch) was never routed. The vendor handles no-BT combo silicon via a separate wifi-only coex
+module our port never had. `btcwifionly.py` ports `ex_hal8821c_wifi_only_hw_config` +
+`hal8821c_wifi_only_switch_antenna` + the wifi-only rfe decode; bring-up and set_channel now take it
+on the `else` of `bt_coexist` [SRC] rtl8821c_halinit.c:294 / rtl8821c_phy.c:719. Unverified on
+hardware (no no-BT card here). The combo reference is `bt_coexist=TRUE`, so these branches never run
+there — byte-gate unchanged at 21318/21409, so it is regression-safe.
+
+### 2026-09-14 — verify_pcap harness regressions (port was byte-correct)
+
+Two stacked *harness* bugs turned the gate red; the shipped driver stayed byte-faithful.
+321fe35f installed the operational-inject `retry_ctrl=False` monkeypatch before `connect()`,
+so it leaked into the connect-phase FW reserved-page download and diverged at op#3578
+(desc byte18 0x1a→0x00) — fixed by scoping the patch to `_walk_operational`. 9d9f026d's sticky
+`ReplayDevice._diverged` then re-raised on the dc_cancellation except's resync retry (a fake
+op#7535 frontier) — fixed by clearing it on resync. Gate PASSES 21318/21409 again.
 
 ### 2026-07-08 — runtime RF18-vs-reader race: focus RX-dead + transient 5 GHz TX
 

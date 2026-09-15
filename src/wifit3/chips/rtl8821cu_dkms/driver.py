@@ -221,7 +221,8 @@ class Rtl8821cuDkmsDriver(Driver):
         cb = self._rx_cb
         if cb is None and not self._ack_detect_on:
             return
-        for frame, rssi in iter_frames(buf, self.transport.cck_new_agc):
+        for frame, rssi in iter_frames(buf, self.transport.cck_new_agc,
+                                       self.transport.cck_agc_report_type):
             # A 10-byte 0xD4 frame is an ACK (the parser drops control frames); the base tallies it
             # iff the ACK tap is armed and RA=frame[4:10] is a MAC we inject as.
             if len(frame) == 10 and frame[0] == 0xD4:

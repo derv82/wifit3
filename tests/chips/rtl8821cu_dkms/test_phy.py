@@ -51,6 +51,14 @@ def test_variant_rfe4_btg_uses_0x20000077_dpdt():
     assert ("W32", _DPDT, 0x20000077) in rec.ops   # rfe==4 arm
 
 
+def test_variant_non_combo_package_type_forced_zero():
+    # A non-0x2x card whose hal PackageType report was 1 still gets phydm_package_type 0: only the
+    # 0x2x arms call odm_cmn_info_init(PACKAGE_TYPE, 1) [SRC] phydm_hal_api8821c.c:349/356.
+    rec, info = Rec(), _info(0, package=1)
+    phy.init_hw_info_by_rfe(rec, info)
+    assert info.phydm_package_type == 0
+
+
 def test_variant_package1_high_range_uses_0x73_dpdt():
     rec, info = Rec(), _info(0x28)
     phy.init_hw_info_by_rfe(rec, info)

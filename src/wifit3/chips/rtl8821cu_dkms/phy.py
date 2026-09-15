@@ -34,7 +34,10 @@ def init_hw_info_by_rfe(t, info) -> None:
     rfe_type = info.rfe_type        # rfe_type_expand (raw EFUSE board option)
     pkg1 = rfe_type in _PKG_TYPE1_RFE
     info.phydm_rfe_type = rfe_type >> 3
-    info.phydm_package_type = 1 if pkg1 else info.package_type
+    # Only the 0x2x combo arms call odm_cmn_info_init(PACKAGE_TYPE, 1) [SRC] :349/356; for every
+    # other rfe dm->package_type stays at its zero-init 0 (the hal report update is blocked once
+    # is_init_hw_info_by_rfe latches [SRC] phydm.c:2597-2599). Not the hal PackageType report.
+    info.phydm_package_type = 1 if pkg1 else 0
     if rfe_type in _RF_SET_BTG:
         info.default_rf_set = SWITCH_TO_BTG
     elif rfe_type in _RF_SET_WLG:

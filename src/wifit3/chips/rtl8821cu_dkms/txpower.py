@@ -33,6 +33,19 @@ _SWITCH_TO_BTG = 0
 _BYTES_2G = 18                     # PG_TXPWR_1PATH_BYTE_NUM_2G (5G block starts after this)
 _GRP_5G = 14                       # MAX_CHNL_GROUP_5G (BW40-1S base groups)
 
+_TXGI_MAX = 63                     # hal_spec->txgi_max [SRC] rtl8821c_halinit.c:48; clamp / base-valid
+# IC-default PG bases [SRC] rtl8821c_pg_txpwr_def_info hal_com_phycfg.c:356-363 — the multi-source
+# fallback substitutes these for any invalid (> txgi_max) EFUSE base byte (:1004-1071). Diffs need no
+# fallback: an unfused 0xFF nibble parses to -1, which the vendor treats as a valid diff.
+_IC_DEF_BASE_2G = 0x2D
+_IC_DEF_BASE_5G = 0x28
+
+
+def _base_or_def(raw: int, ic_def: int) -> int:
+    """hal_load_pg_txpwr_info base fallback [SRC] hal_com_phycfg.c:742 — IS_PG_TXPWR_BASE_INVALID is
+    `base > txgi_max`; an invalid (e.g. unfused 0xFF) EFUSE base drops to the IC-default PG base."""
+    return raw if raw <= _TXGI_MAX else ic_def
+
 
 @dataclass
 class TxpwrPG:
@@ -61,13 +74,14 @@ def parse_pg(log_map: bytes, npaths: int = 2) -> TxpwrPG:
     bw40_5g, ofdm_5g, bw20_5g = [], [], []
     for p in range(npaths):
         base = _PG_SADDR + p * _PG_1PATH
-        cck.append([log_map[base + g] for g in range(_GRP_2G)])
-        bw40.append([log_map[base + _GRP_2G + g] for g in range(_GRP_2G - 1)])
+        cck.append([_base_or_def(log_map[base + g], _IC_DEF_BASE_2G) for g in range(_GRP_2G)])
+        bw40.append([_base_or_def(log_map[base + _GRP_2G + g], _IC_DEF_BASE_2G)
+                     for g in range(_GRP_2G - 1)])
         d0 = log_map[base + _GRP_2G + (_GRP_2G - 1)]     # first 2.4G diff byte
         ofdm_1t.append(_s4(d0 & 0xF))
         bw20_1t.append(_s4(d0 >> 4))
         base5 = base + _BYTES_2G
-        bw40_5g.append([log_map[base5 + g] for g in range(_GRP_5G)])
+        bw40_5g.append([_base_or_def(log_map[base5 + g], _IC_DEF_BASE_5G) for g in range(_GRP_5G)])
         d5 = log_map[base5 + _GRP_5G]                    # first 5G diff byte
         ofdm_5g.append(_s4(d5 & 0xF))
         bw20_5g.append(_s4(d5 >> 4))
@@ -132,7 +146,8 @@ def set_tx_power_level(t, info, channel: int) -> None:
     path = 1 if (channel <= 14 and btg) else 0          # RF_PATH_B for a BTG 2.4 GHz card
     buf = 0
     for section, hw_rates in (_SECTIONS_5G if is_5g else _SECTIONS):
-        val = _pg_base(pg, path, channel, section, is_5g) & 0xFF
+        # Clamp the final TXAGC index to [0, txgi_max] [SRC] hal_com_phycfg.c:6126-6129.
+        val = min(_TXGI_MAX, max(0, _pg_base(pg, path, channel, section, is_5g)))
         for hw in hw_rates:
             shift = hw & 0x3
             buf |= val << (shift * 8)

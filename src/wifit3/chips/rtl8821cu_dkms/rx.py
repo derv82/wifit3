@@ -55,19 +55,24 @@ def query_rx_desc(desc: bytes) -> RxDesc:
     )
 
 
-# CCK old-AGC LNA gain by 4-bit LNA index. [SRC] phydm_cck_rssi_8821c phydm_hal_api8821c.c
-# (cck_agc_report_type 1 = the 4-bit table; this rfe-0x22 card defaults to the BTG RF set, which
-# forces report_type 1 — [SRC] phydm_cck_lna_bit_num_chk phydm.c).
-_CCK_LNA_GAIN = (10, 6, 2, -2, -6, -10, -14, -17, -20, -24, -28, -31, -34, -37, -40, -44)
+# CCK old-AGC LNA gain by 4-bit LNA index. [SRC] phydm_cck_rssi_8821c phydm_hal_api8821c.c:47-55.
+# The card's default_rf_set picks the table: BTG (report_type 1) -> the 16-entry table_1; WLG/WLA
+# (report_type 0) -> the 8-entry table_0 [SRC] phydm_cck_lna_bit_num_chk phydm.c:178-185. The rfe-
+# 0x22 reference is BTG -> table_1 (RSSI unchanged). The LNA index is 4-bit for both; table_0 has
+# only 8 entries (the vendor uses lna2/3/5/7) so a >7 index is clamped rather than read OOB as C does.
+_CCK_LNA_GAIN_TABLE_1 = (10, 6, 2, -2, -6, -10, -14, -17, -20, -24, -28, -31, -34, -37, -40, -44)
+_CCK_LNA_GAIN_TABLE_0 = (22, 8, -6, -22, -31, -40, -46, -52)
 
 
-def _cck_rssi(lna_idx: int, vga_idx: int) -> int:
-    """CCK signal power (dBm) for the old-AGC path: 4-bit LNA gain minus the 5-bit VGA back-off.
-    [SRC] phydm_cck_rssi_8821c phydm_hal_api8821c.c."""
-    return _CCK_LNA_GAIN[lna_idx] - 2 * vga_idx
+def _cck_rssi(lna_idx: int, vga_idx: int, report_type: int) -> int:
+    """CCK signal power (dBm) for the old-AGC path: LNA gain minus the 5-bit VGA back-off. The
+    LNA-gain table is selected by cck_agc_report_type (1 -> BTG table_1, 0 -> table_0).
+    [SRC] phydm_cck_rssi_8821c phydm_hal_api8821c.c:42-60."""
+    table = _CCK_LNA_GAIN_TABLE_1 if report_type else _CCK_LNA_GAIN_TABLE_0
+    return table[min(lna_idx, len(table) - 1)] - 2 * vga_idx
 
 
-def decode_rssi(phy_status: bytes, cck_new_agc: bool) -> int:
+def decode_rssi(phy_status: bytes, cck_new_agc: bool, cck_report_type: int = 1) -> int:
     """Per-frame RSSI (dBm) from the PHYDM Jaguar-2 PHY-status report. The page nibble (byte 0)
     picks the struct: page 0 = CCK (``phy_sts_rpt_jgr2_type0``), page 1/2 = OFDM/HT/VHT
     (``phy_sts_rpt_jgr2_type1``). [SRC] phydm_get_phy_sts_type0 / phydm_get_phy_sts_type1
@@ -88,7 +93,7 @@ def decode_rssi(phy_status: bytes, cck_new_agc: bool) -> int:
         b13, b14 = phy_status[13], phy_status[14]
         vga_idx = b13 & 0x1F
         lna_idx = ((b14 >> 7) << 3) | (b13 >> 5)        # 4-bit LNA = lna_h<<3 | lna_l
-        return _cck_rssi(lna_idx, vga_idx)
+        return _cck_rssi(lna_idx, vga_idx, cck_report_type)
     return phy_status[1] - 110
 
 
@@ -96,7 +101,8 @@ def _rnd8(x: int) -> int:
     return (x + 7) & ~7
 
 
-def iter_frames(buf: bytes, cck_new_agc: bool = False) -> Iterator[Tuple[bytes, int]]:
+def iter_frames(buf: bytes, cck_new_agc: bool = False,
+                cck_report_type: int = 1) -> Iterator[Tuple[bytes, int]]:
     """recvbuf2recvframe — walk the aggregated bulk-IN buffer, yielding (frame, rssi_dbm) for each
     good NORMAL_RX MPDU, FCS stripped. C2H reports and crc/icv-error frames are skipped but still
     advance the walk; only a malformed length ends it. The PHY-status passed to ``decode_rssi`` is
@@ -114,8 +120,8 @@ def iter_frames(buf: bytes, cck_new_agc: bool = False) -> Iterator[Tuple[bytes, 
             start = phystart + d.drvinfo_sz + d.shift_sz
             frame = buf[start:start + d.pkt_len]
             if len(frame) > FCS_LEN:
-                rssi = (decode_rssi(buf[phystart:phystart + d.drvinfo_sz], cck_new_agc)
-                        if d.physt else _RSSI_UNKNOWN)
+                rssi = (decode_rssi(buf[phystart:phystart + d.drvinfo_sz], cck_new_agc,
+                                    cck_report_type) if d.physt else _RSSI_UNKNOWN)
                 yield frame[:-FCS_LEN], rssi
         pkt_offset = _rnd8(pkt_offset)
         off += pkt_offset

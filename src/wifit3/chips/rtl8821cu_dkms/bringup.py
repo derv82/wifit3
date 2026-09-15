@@ -12,7 +12,8 @@ entry) extend ``cold_bringup`` past the report readback.
 """
 from __future__ import annotations
 
-from . import bb, btc, chan, chipid, dm, efuse, firmware, init, led, mac, phy, phy_cond, pwrseq, rf
+from . import (bb, btc, btcwifionly, chan, chipid, dm, efuse, firmware, init, led, mac, phy,
+               phy_cond, pwrseq, rf)
 
 REG_C2HEVT_MSG_NORMAL = 0x01A0      # [SRC] include/hal_com_reg.h:149
 _C2H_DEFEATURE_RSVD = 0xFD          # [SRC] hal/hal_com_c2h.h:79 — "FW: report MAC-hidden via reg"
@@ -105,9 +106,12 @@ def hal_init(t, info) -> None:
     dm.phy_init_haldm(t, info)
     # rtl8821c_hal_init tail after phy_init_haldm: beamforming MU-MIMO/TXBF defaults.
     mac.phy_bf_init(t)
-    # rtl8821c_hal_init tail: BT-coex HAL init (combo card -> rtw_btcoex_HAL_Initialize).
+    # rtl8821c_hal_init tail: BT-coex HAL init (combo card -> rtw_btcoex_HAL_Initialize); a no-BT
+    # card runs the WiFi-only front-end config instead [SRC] rtl8821c_halinit.c:285-294.
     if info.bt_coexist:
         btc.hal_init(t, info)
+    else:
+        btcwifionly.hw_config(t, info)
     # rtl8821cu_hal_init (USB wrapper) tail: hal_init_misc enables the cosmetic WL activity LED.
     led.cfg_wl_led(t)
 
@@ -139,6 +143,8 @@ def set_monitor_mode(t, info) -> None:
     mac.set_opmode_monitor(t)
     if info.bt_coexist:
         btc.media_status_notify_connect_2g(t)
+    # No-BT card: the wifi-only connect notify is just switch_antenna, already done by the first
+    # set_channel band-switch (btcwifionly.switch_antenna) — nothing further to route here.
 
 
 # Cold bring-up split into coarse phases so connect() can report progress between them: connect()

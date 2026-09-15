@@ -65,6 +65,10 @@ class Rtl8821cuTransport:
         # dm->cck_new_agc: the CCK-AGC report-format latch (0xa9c[17]) phydm reads once at
         # odm_dm_init; the RX RSSI decode picks the CCK formula on it. Set by dm.py at init.
         self.cck_new_agc = False
+        # dm->cck_agc_report_type: old-AGC CCK LNA-gain table selector (1 = 16-entry BTG table,
+        # 0 = 8-entry table); phydm_cck_lna_bit_num_chk sets 1 iff default_rf_set==BTG. Set by
+        # dm.py at init; defaults to 1 (the reference/BTG table). [SRC] phydm.c:180
+        self.cck_agc_report_type = 1
 
     # --- vendor control transfers (with the ON-section page-switch mirror) ---
     def _mirror(self, low_byte: int) -> None:

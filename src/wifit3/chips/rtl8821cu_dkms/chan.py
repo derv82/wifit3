@@ -8,7 +8,7 @@ not transcribed.
 """
 from __future__ import annotations
 
-from . import btc, dm, efuse, txpower
+from . import btc, btcwifionly, dm, efuse, txpower
 from .bb import set_bb_reg
 from .rf import read_rf, write_rf, write_rf_masked
 
@@ -91,12 +91,23 @@ def _switch_band_5g(t, central_ch: int) -> None:
     dm.stop_ic_trx(t, False, ts)
 
 
-def _set_bb_swing_by_band_5g(t) -> None:
-    """phy_set_bb_swing_by_band_8821c [SRC] rtl8821c_phy.c (5G band) — 0xc1c[31:21] = tx BB swing.
-    The 0 dB registry swing yields 0x200 (same as 2.4 GHz on this card). (The companion
+# onePathSwing (swing & 0x3) -> 0xc1c[31:21] word [SRC] phy_get_tx_bbswing_8821c rtl8821c_phy.c:644.
+_BB_SWING_WORD = {0x0: 0x200, 0x1: 0x16A, 0x2: 0x101, 0x3: 0x0B6}  # 0/-3/-6/-9 dB
+
+
+def _tx_bbswing_word(swing_byte: int) -> int:
+    """phy_get_tx_bbswing_8821c [SRC] rtl8821c_phy.c:610-668 (autoload-OK, registry AUTO) — RF_PATH_A
+    onePathSwing = tx_bbswing & 0x3, mapped to the 0xc1c[31:21] word. The registry TxBBSwing default
+    is AUTO in this build, so the EEPROM tx_bbswing drives it; an unfused card reads 0 -> 0x200."""
+    return _BB_SWING_WORD[swing_byte & 0x3]
+
+
+def _set_bb_swing_by_band_5g(t, info) -> None:
+    """phy_set_bb_swing_by_band_8821c [SRC] rtl8821c_phy.c:676 (5G band) — 0xc1c[31:21] = tx BB swing
+    from the per-card EEPROM tx_bbswing_5G. The reference reads 0 -> 0x200. (The companion
     `odm_clear_txpowertracking_state` is software — its thermal-baseline reset is applied to the
     watchdog state by the gate's band-switch handler, see RTL8821CU_DKMS.md.)"""
-    set_bb_reg(t, 0x0C1C, 0xFFE00000, 0x200)
+    set_bb_reg(t, 0x0C1C, 0xFFE00000, _tx_bbswing_word(info.tx_bbswing_5g))
 
 
 def _switch_channel_5g(t, central_ch: int, cut: int) -> None:
@@ -194,10 +205,10 @@ def _csi_mask_setting_5760(t, central_ch: int) -> None:
     _csi_mask_enable(t, True)
 
 
-def _set_bb_swing_by_band_2g(t) -> None:
-    """phy_set_bb_swing_by_band_8821c [SRC] rtl8821c_phy.c — 0xc1c[31:21] = tx BB swing. The
-    autoload-fail 2.4 GHz path with 0 dB registry swing yields 0x200 (no change)."""
-    set_bb_reg(t, 0x0C1C, 0xFFE00000, 0x200)
+def _set_bb_swing_by_band_2g(t, info) -> None:
+    """phy_set_bb_swing_by_band_8821c [SRC] rtl8821c_phy.c:676 (2.4 GHz band) — 0xc1c[31:21] = tx BB
+    swing from the per-card EEPROM tx_bbswing_2G. The reference reads 0 -> 0x200 (no change)."""
+    set_bb_reg(t, 0x0C1C, 0xFFE00000, _tx_bbswing_word(info.tx_bbswing_2g))
 
 
 def _switch_channel(t, central_ch: int, cut: int) -> None:
@@ -317,14 +328,22 @@ def set_channel(t, info, channel: int) -> None:
     # phy_switch_wireless_band_8821c [SRC] rtl8821c_phy.c:700 — band-switch sub-step, gated.
     if _need_switch_band(t, channel):
         t.thermal_reset_pending = True          # phy_set_bb_swing -> odm_clear_txpowertracking_state
+        # A no-BT card notifies the WiFi-only coex (antenna switch) instead of the btc switchband
+        # notify, which needs a t.btc it never has [SRC] rtl8821c_phy.c:707-722.
         if is_5g:
-            btc.switchband_notify_5g(t)
+            if info.bt_coexist:
+                btc.switchband_notify_5g(t)
+            else:
+                btcwifionly.switch_antenna(t, info, is_5g=True)
             _switch_band_5g(t, central_ch)
-            _set_bb_swing_by_band_5g(t)
+            _set_bb_swing_by_band_5g(t, info)
         else:
-            btc.switchband_notify_2g(t)
+            if info.bt_coexist:
+                btc.switchband_notify_2g(t)
+            else:
+                btcwifionly.switch_antenna(t, info, is_5g=False)
             _switch_band(t, info, central_ch)
-            _set_bb_swing_by_band_2g(t)
+            _set_bb_swing_by_band_2g(t, info)
     if is_5g:
         _switch_channel_5g(t, central_ch, info.chip_ver)
     else:
