@@ -816,10 +816,11 @@ class FocusViewV2(Screen):
             if ap is None:
                 return False
             key = parameters[0]
-            if key == "chop":                      # WEP sub-action: enabled only while WEP runs
+            if key == "chop":                      # WEP sub-action: enabled only while WEP runs (and not silenced)
                 if not WepCampaign.visible(ap):
                     return False
-                return True if isinstance(self._controls.current, WepCampaign) else None
+                running = isinstance(self._controls.current, WepCampaign)
+                return None if (not running or Config.is_silenced(ap.bssid)) else True
             cls = fm.CAMPAIGN_BY_KEY.get(key)
             if cls is None or not cls.visible(ap):
                 return False
