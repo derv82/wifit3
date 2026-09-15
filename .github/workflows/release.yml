@@ -40,6 +40,9 @@ jobs:
           - os: ubuntu-22.04          # build on older glibc so the binary runs on more distros
             artifact_name: wifit3-linux-x64
             build_path: dist/wifit3
+          - os: ubuntu-22.04-arm      # GitHub-hosted arm64 Linux runner (free for public repos); native arm64 build
+            artifact_name: wifit3-linux-arm64
+            build_path: dist/wifit3
           # macOS: see build-macos
 
     steps:
