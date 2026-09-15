@@ -11,9 +11,11 @@ The MAC init table writes 8-bit values; the MAX_AGGR section is
 chip-specific — for 8188F it falls through to `default: break`
 (core.c:2202) with no register write.
 
-Warm-detect: check REG_CR is non-zero (the chip keeps CR powered from
-a previous session).  `REG_CR = 0` means the chip is dead-cold (power_on
-hasn't run yet) or freshly powered off.
+Warm-detect: probe REG_MCU_FW_DL's MCU_WINT_INIT_READY bit first — it's
+readable in both states, while REG_CR only answers once power_on has run
+(the kernel never reads CR before power-on, rtl8xxxu core vs 8188f).
+Only when FW-running prompts a REG_CR probe (to confirm MAC enabled),
+matching how EUS-style warm-detect works without a cold REG_CR read.
 """
 from __future__ import annotations
 
@@ -25,6 +27,8 @@ from .constants import (
     BEACON_DISABLE_TSF_UPDATE,
     BEACON_DMA_ATIME_INT_TIME,
     CAM_CMD_POLLING,
+    CR_MAC_RX_ENABLE,
+    CR_MAC_TX_ENABLE,
     FPGA0_RF_ANTSW,
     FPGA0_RF_ANTSWB,
     FPGA0_RF_BD_CTRL_SHIFT,
@@ -33,6 +37,7 @@ from .constants import (
     FPGA0_RF_TRSWB,
     GPIO_MUXCFG_IO_SEL_ENBT,
     HT_SINGLE_AMPDU_ENABLE,
+    MCU_WINT_INIT_READY,
     OFDM0_X_AGC_CORE1_IGI_MASK,
     PBP_PAGE_SIZE_256,
     PBP_PAGE_SIZE_RX_SHIFT,
@@ -81,6 +86,7 @@ from .constants import (
     REG_HWSEQ_CTRL,
     REG_MAC_SPEC_SIFS,
     REG_MAX_AGGR_NUM,
+    REG_MCU_FW_DL,
     REG_NHM_TH3_TO_TH0_8723B,
     REG_NHM_TH7_TO_TH4_8723B,
     REG_NHM_TH9_TH10_8723B,
@@ -171,8 +177,27 @@ _MAC_INIT_TABLE: list[tuple[int, int]] = [
 
 
 def is_chip_warm(t: RTL8188FTVTransport) -> bool:
-    """If CR is non-zero the chip is alive from a previous session."""
-    return t.read32(REG_CR) != 0
+    """True if a previous wifit3 session left the chip FW-running + MAC-enabled.
+
+    8188F's REG_CR only answers after power_on, so probe the FW state first
+    via REG_MCU_FW_DL (readable cold); only touch REG_CR once MCU_WINT_INIT_READY
+    says the 8051 booted an image. Returns False on any USB read error — safer
+    to run a full cold boot than to skip init the chip still needs.
+    """
+    try:
+        mcu_fw = t.read32(REG_MCU_FW_DL)
+    except (IOError, OSError):
+        return False
+    if not mcu_fw & MCU_WINT_INIT_READY:
+        return False
+    try:
+        cr = t.read32(REG_CR)
+    except (IOError, OSError):
+        return False
+    mac_enabled = (cr & (CR_MAC_TX_ENABLE | CR_MAC_RX_ENABLE)) == (
+        CR_MAC_TX_ENABLE | CR_MAC_RX_ENABLE
+    )
+    return bool(mcu_fw & MCU_WINT_INIT_READY) and mac_enabled
 
 
 # ---- MAC table replay -----------------------------------------------

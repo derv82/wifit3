@@ -6,16 +6,21 @@ burst/aggregation RMW arithmetic.  Wire-order replay is gated live in
 scripts/chips/rtl8188ftv/verify_pcap.py.
 """
 from wifit3.chips.rtl8188ftv.constants import (
+    CR_MAC_RX_ENABLE,
+    CR_MAC_TX_ENABLE,
     FPGA0_RF_ANTSW,
     FPGA0_RF_ANTSWB,
     FPGA0_RF_BD_CTRL_SHIFT,
     FPGA0_RF_PAPE,
     FPGA0_RF_TRSW,
     FPGA0_RF_TRSWB,
+    MCU_WINT_INIT_READY,
     REG_CCK_PD_THRESH,
+    REG_CR,
     REG_FPGA0_XAB_RF_SW_CTRL,
     REG_FPGA0_XA_RF_INT_OE,
     REG_FPGA0_TX_INFO,
+    REG_MCU_FW_DL,
     REG_RXDMA_AGG_PG_TH,
     REG_RXDMA_PRO_8723B,
     REG_TRXDMA_CTRL,
@@ -26,6 +31,7 @@ from wifit3.chips.rtl8188ftv.mac import (
     init_burst,
     init_device_post_phy,
     init_statistics,
+    is_chip_warm,
 )
 
 
@@ -138,3 +144,44 @@ def test_init_statistics_writes():
     assert w[0x0E28] == 0xFF         # FPGA0_IQK |= 0xff
     assert w[0x0890] == 0xFFFF0900   # ~(BIT8|9|10) then BIT8
     assert w[0x0C0C] == 0x6C6C6CEC   # OFDM0_FA_RSTC |= BIT7
+
+
+class _Raising:
+    """Fake transport whose REG_CR reads raise (cold 8188F: CR unreadable)."""
+
+    def read32(self, addr):
+        if addr == REG_CR:
+            raise OSError("Operation timed out")
+        return 0x00000105  # REG_MCU_FW_DL: MCU_WINT_INIT_READY set
+
+
+def test_is_chip_warm_cold_chip_returns_false_without_reading_cr():
+    t = _Fake()
+    t.reads = {REG_MCU_FW_DL: 0x00000105}  # FW bits but no MCU ready
+    assert is_chip_warm(t) is False
+
+
+def test_is_chip_warm_fw_not_running_returns_false_without_reading_cr():
+    t = _Raising()  # REG_CR would raise; must not be touched
+    t_basic = _Fake()
+    t_basic.reads = {REG_MCU_FW_DL: 0x00000005 & ~(MCU_WINT_INIT_READY)}
+    assert is_chip_warm(t_basic) is False
+    assert is_chip_warm(t) is False  # MCU not ready -> short-circuits before CR
+
+
+def test_is_chip_warm_cr_read_error_returns_false():
+    t = _Fake()
+    t.reads = {REG_MCU_FW_DL: MCU_WINT_INIT_READY | 0x5}
+    t.read32 = lambda addr: (_ for _ in ()).throw(OSError("Operation timed out"))
+    assert is_chip_warm(t) is False
+
+
+def test_is_chip_warm_requires_mac_enable_bits():
+    t = _Fake()
+    t.reads = {
+        REG_MCU_FW_DL: MCU_WINT_INIT_READY | 0x5,
+        REG_CR: CR_MAC_TX_ENABLE,  # only TX
+    }
+    assert is_chip_warm(t) is False
+    t.reads[REG_CR] = CR_MAC_TX_ENABLE | CR_MAC_RX_ENABLE
+    assert is_chip_warm(t) is True
