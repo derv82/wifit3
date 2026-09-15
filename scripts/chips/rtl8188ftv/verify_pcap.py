@@ -10,6 +10,12 @@ Milestones gated here:
 * **FW blob** -- the rtl8188fufw.bin payload as it lands on
   ``REG_FW_START_ADDRESS`` (0x1000) in 128-byte chunks, laddered across
   4096-byte pages.  Concatenated upload bytes == the bundled blob.
+* **FW download + start dance** -- ``download_firmware`` (pre-flight
+  SYS_FUNC/MCU_FW_DL control writes + page-select RMWs + upload disable)
+  then ``start_firmware`` (checksum poll, FW_DL_READY, reset_8051 RSV_CTRL
+  + SYS_FUNC dance, MCU_WINT_INIT_READY poll, REG_HMTFR=0x0f), replayed
+  from the pre-flight read through the REG_HMTFR write so every control
+  write must equal the wire.
 * **MAC + PHY** -- ``init_mac`` (MAC table; MAX_AGGR is 8188f's
   ``default: break``) then ``post_mac_init_phy`` (BB + AGC tables +
   ``set_crystal_cap`` + RF path-A with the RFENV/INT_OE/HSSI preamble),
@@ -57,6 +63,7 @@ from wifit3.chips.rtl8188ftv.constants import (
     REG_EFUSE_ACCESS,
     REG_FW_START_ADDRESS,
     REG_SYS_CFG,
+    REG_SYS_FUNC,
     RTL_FW_PAGE_SIZE,
 )
 from wifit3.dot11.parser import WlanFrameParser
@@ -135,6 +142,72 @@ def _blob_gate(ops) -> bool:
         print(f"        (upload[0x{j:x}]=0x{uploaded[j]:02x} vs blob[0x{j:x}]=0x{payload[j]:02x})")
         return False
     print("  PASS: firmware upload byte-for-byte == bundled rtl8188fufw.bin")
+    return True
+
+
+def _firmware_gate(ops) -> bool:
+    """Replay `download_firmware` + `start_firmware` against the FW window.
+
+    The blob gate only diffs the uploaded *payload* bytes.  The rest of the
+    dance — download pre-flight control writes (SYS_FUNC+1 |= 4, SYS_FUNC
+    CPU_ENABLE, MCU_FW_DL enable/page-select/csum/disable) and the full
+    start: checksum poll, FW_DL_READY, reset_8051 (RSV_CTRL + SYS_FUNC),
+    MCU_WINT_INIT_READY poll, REG_HMTFR=0x0f — is anchored here at the
+    pre-flight read (REG_SYS_FUNC+1 before the first REG_FW_START_ADDRESS
+    write) and must equal the wire byte-for-byte.
+
+    The kernel then runs the 8723BU antenna-selection init (0x0064/0x0040/
+    0x004c/0x0944/0x0930/0x0038 RMWs, 8188f.c:1719 -> core.c:4082) before the
+    MAC table; the port reproduces it via `phy.init_antenna_selection`, and
+    this gate replays it so the whole PAD_CTRL1..PWR_DATA run is covered.
+    """
+    fw_writes = [i for i, o in enumerate(ops)
+                 if o["kind"] == "W" and o.get("addr") == REG_FW_START_ADDRESS]
+    if not fw_writes:
+        print("  firmware: no FW upload region in capture -- skipped")
+        return True
+    first_fw = fw_writes[0]
+
+    anchor = None
+    for i in range(first_fw - 1, max(0, first_fw - 40), -1):
+        o = ops[i]
+        if (o["kind"] == "R" and o.get("addr") == REG_SYS_FUNC + 1
+                and o.get("width") == 1
+                and ops[i + 1]["kind"] == "W"
+                and ops[i + 1].get("addr") == REG_SYS_FUNC + 1):
+            anchor = i
+            break
+    if anchor is None:
+        print("  FAIL: firmware download pre-flight (R 0x0003/1) not found pre-FW")
+        return False
+
+    end = next((i for i in range(fw_writes[-1], len(ops))
+                if ops[i]["kind"] == "W" and ops[i].get("addr") == _MAC_INIT_FIRST_REG), None)
+    if end is None:
+        print("  FAIL: MAC init table anchor not found post-FW")
+        return False
+
+    rt = rp.ReplayTransport(ops[anchor:end])
+    try:
+        firmware.download_firmware(rt, firmware.load_firmware_blob())
+        firmware.start_firmware(rt)
+        phy.init_antenna_selection(rt)
+    except rp.Divergence as e:
+        print(f"  FAIL (firmware dance divergence):\n    {e}")
+        return False
+    except TimeoutError as e:
+        print(f"  FAIL (firmware dance timeout):\n    {e}")
+        return False
+
+    leftover = rt.ops[rt.i:]
+    if leftover:
+        stray = [(o["kind"], o.get("addr")) for o in leftover]
+        print(f"  FAIL: {len(leftover)} ops unconsumed between REG_HMTFR "
+              f"and the MAC table: {stray}")
+        return False
+    print(f"  PASS: firmware download+start+antenna-selection -- "
+          f"{rt.i} ops byte-for-byte "
+          f"(pre-flight through PAD_CTRL1/GPIO_MUXCFG/LEDCFG0/RFE/PWR_DATA)")
     return True
 
 
@@ -324,6 +397,7 @@ def run(cap: str | None = None) -> int:
         ok = False
     ok = efuse_defaults is not None and ok
     ok = _blob_gate(ops) and ok
+    ok = _firmware_gate(ops) and ok
     ok = _bringup_gate(ops, efuse_defaults) and ok
     ok = _rx_gate(pcap, dev) and ok
 

@@ -233,6 +233,14 @@ REG_OFDM0_FA_RSTC = 0x0C0C          # regs.h:1070
 GPIO_MUXCFG_IO_SEL_ENBT = 1 << 5    # regs.h:141
 CFO_TRACKING_ATC_STATUS = 1 << 11   # regs.h:1127
 
+# ---- antenna selection (8723bu_phy_init_antenna_selection, 8723b.c) --
+REG_PWR_DATA = 0x0038               # regs.h:135
+PWR_DATA_EEPRPAD_RFE_CTRL_EN = 1 << 11  # regs.h:136
+REG_LEDCFG0 = 0x004C                # regs.h:148
+REG_PAD_CTRL1 = 0x0064              # regs.h:188
+REG_RFE_CTRL_ANTA_SRC = 0x0930      # regs.h:1003 (8723BU)
+REG_RFE_BUFFER = 0x0944             # regs.h:1008 (8723BU)
+
 # IQ calibration maximum tolerance (core.c:2854)
 IQK_MAX_TOLERANCE = 5
 

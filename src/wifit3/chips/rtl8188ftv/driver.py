@@ -252,6 +252,10 @@ class RTL8188FTVDriver(Driver):
         _update(0.50, "Polling for MCU_WINT_INIT_READY...")
         await loop.run_in_executor(None, start_firmware, t)
 
+        from .phy import init_antenna_selection
+        _update(0.52, "Antenna-selection RFE/LED/GPIO init...")
+        await loop.run_in_executor(None, init_antenna_selection, t)
+
         from .efuse import read_and_parse
         _update(0.55, "Reading EFUSE...")
         efuse = await loop.run_in_executor(None, read_and_parse, t)

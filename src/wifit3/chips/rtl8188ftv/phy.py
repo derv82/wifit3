@@ -40,9 +40,11 @@ from .constants import (
     REG_FPGA0_XA_RF_SW_CTRL,
     REG_FPGA0_XCD_RF_SW_CTRL,
     REG_FWHW_TXQ_CTRL,
+    REG_GPIO_MUXCFG,
     REG_HSPI_XA_READBACK,
     REG_IQK_AGC_PTS,
     REG_IQK_AGC_RSP,
+    REG_LEDCFG0,
     REG_NAV_UPPER,
     REG_OFDM0_ENERGY_CCA_THRES,
     REG_OFDM0_RX_IQ_EXT_ANTA,
@@ -56,6 +58,11 @@ from .constants import (
     REG_OFDM1_LSTF,
     REG_FPGA0_XA_LSSI_READBACK,
     REG_FPGA0_XB_HSSI_PARM1,
+    REG_PAD_CTRL1,
+    REG_PWR_DATA,
+    PWR_DATA_EEPRPAD_RFE_CTRL_EN,
+    REG_RFE_BUFFER,
+    REG_RFE_CTRL_ANTA_SRC,
     REG_RF_CTRL,
     REG_RX_IQK,
     REG_RX_IQK_PI_A,
@@ -864,6 +871,51 @@ def set_tx_power(t: RTL8188FTVTransport, channel: int, efuse=None) -> None:
     t.write32(REG_TX_AGC_A_MCS07_MCS04, mcs)
     t.write32(REG_TX_AGC_A_MCS11_MCS08, mcs)
     t.write32(REG_TX_AGC_A_MCS15_MCS12, mcs)
+
+
+# ---- RF enable (8188f.c:1582-1619) -----------------------------------
+
+
+def init_antenna_selection(t: RTL8188FTVTransport) -> None:
+    """Mirror of `rtl8723bu_phy_init_antenna_selection` (`8723b.c`).
+
+    The 8188F fops entry (`8188f.c:1719`) points straight at the 8723BU
+    routine; core.c calls it between `start_firmware` and `rtl8xxxu_init_mac`.
+    Configures the GPIO/LED/RFE pins that select the active antenna and
+    enables the RFE control in PWR_DATA.  Produces 16 ops (8 RMW pairs).
+    """
+    val32 = t.read32(REG_PAD_CTRL1)
+    val32 &= ~(1 << 20 | 1 << 24)
+    t.write32(REG_PAD_CTRL1, val32)
+
+    val32 = t.read32(REG_GPIO_MUXCFG)
+    val32 &= ~(1 << 4)
+    t.write32(REG_GPIO_MUXCFG, val32)
+
+    val32 = t.read32(REG_GPIO_MUXCFG)
+    val32 |= 1 << 3
+    t.write32(REG_GPIO_MUXCFG, val32)
+
+    val32 = t.read32(REG_LEDCFG0)
+    val32 |= 1 << 24
+    t.write32(REG_LEDCFG0, val32)
+
+    val32 = t.read32(REG_LEDCFG0)
+    val32 &= ~(1 << 23)
+    t.write32(REG_LEDCFG0, val32)
+
+    val32 = t.read32(REG_RFE_BUFFER)
+    val32 |= 1 << 0 | 1 << 1
+    t.write32(REG_RFE_BUFFER, val32)
+
+    val32 = t.read32(REG_RFE_CTRL_ANTA_SRC)
+    val32 &= 0xffffff00
+    val32 |= 0x77
+    t.write32(REG_RFE_CTRL_ANTA_SRC, val32)
+
+    val32 = t.read32(REG_PWR_DATA)
+    val32 |= PWR_DATA_EEPRPAD_RFE_CTRL_EN
+    t.write32(REG_PWR_DATA, val32)
 
 
 # ---- RF enable (8188f.c:1582-1619) -----------------------------------
