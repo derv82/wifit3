@@ -15,23 +15,34 @@ from wifit3.chips.rtl8188ftv.constants import (
     FPGA0_RF_TRSW,
     FPGA0_RF_TRSWB,
     MCU_WINT_INIT_READY,
+    PAGE_NUM_HI_PQ_8188F,
+    PAGE_NUM_NORM_PQ_8188F,
     REG_CCK_PD_THRESH,
     REG_CR,
     REG_FPGA0_XAB_RF_SW_CTRL,
     REG_FPGA0_XA_RF_INT_OE,
     REG_FPGA0_TX_INFO,
     REG_MCU_FW_DL,
+    REG_RQPN,
+    REG_RQPN_NPQ,
     REG_RXDMA_AGG_PG_TH,
     REG_RXDMA_PRO_8723B,
     REG_TRXDMA_CTRL,
+    REG_TRXFF_BNDY,
+    RQPN_LOAD,
+    TRXFF_BOUNDARY_8188F,
+    TX_TOTAL_PAGE_NUM_8188F,
 )
 from wifit3.chips.rtl8188ftv.efuse import EfuseDefaults
 from wifit3.chips.rtl8188ftv.mac import (
     init_aggregation,
     init_burst,
     init_device_post_phy,
+    init_queue_priority_2ep,
+    init_queue_reserved_page,
     init_statistics,
     is_chip_warm,
+    set_trxff_rx_page_boundary,
 )
 
 
@@ -144,6 +155,50 @@ def test_init_statistics_writes():
     assert w[0x0E28] == 0xFF         # FPGA0_IQK |= 0xff
     assert w[0x0890] == 0xFFFF0900   # ~(BIT8|9|10) then BIT8
     assert w[0x0C0C] == 0x6C6C6CEC   # OFDM0_FA_RSTC |= BIT7
+
+
+def test_init_queue_reserved_page_matches_capture():
+    t = _Fake()
+    init_queue_reserved_page(t)
+
+    w = t.written
+    # nq at shift 0; pubq = total - hq - nq - 1 = 0xf7 - 0x0c - 0x02 - 1
+    assert w[REG_RQPN_NPQ] == PAGE_NUM_NORM_PQ_8188F
+    assert w[REG_RQPN] == (
+        RQPN_LOAD
+        | PAGE_NUM_HI_PQ_8188F
+        | ((TX_TOTAL_PAGE_NUM_8188F - PAGE_NUM_HI_PQ_8188F -
+            PAGE_NUM_NORM_PQ_8188F - 1) << 16)
+    )
+    # capture-1 ops 945-946 ground truth
+    assert w[REG_RQPN_NPQ] == 0x00000002
+    assert w[REG_RQPN] == 0x80E8000C
+
+
+def test_init_queue_priority_2ep_rmw():
+    t = _Fake()
+    t.reads = {REG_TRXDMA_CTRL: 0x0007}   # low 3 bits must survive the RMW
+    init_queue_priority_2ep(t)
+
+    w = t.written
+    assert w[REG_TRXDMA_CTRL] == 0xFAF7   # routing OR'd over preserved bits
+
+
+def test_init_queue_priority_2ep_matches_capture():
+    t = _Fake()
+    t.reads = {REG_TRXDMA_CTRL: 0x0000}   # capture-1 op 947 read
+    init_queue_priority_2ep(t)
+
+    assert t.written[REG_TRXDMA_CTRL] == 0xFAF0   # capture-1 op 948 ground truth
+
+
+def test_set_trxff_rx_page_boundary_writes_capture_value():
+    t = _Fake()
+    set_trxff_rx_page_boundary(t)
+
+    w = t.written
+    assert w[REG_TRXFF_BNDY + 2] == TRXFF_BOUNDARY_8188F
+    assert w[REG_TRXFF_BNDY + 2] == 0x3F7F   # capture-1 op 949
 
 
 class _Raising:

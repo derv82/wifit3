@@ -243,6 +243,16 @@ class RTL8188FTVDriver(Driver):
         _update(0.15, "Power on...")
         await loop.run_in_executor(None, self._power_on)
 
+        from .mac import (
+            init_queue_priority_2ep,
+            init_queue_reserved_page,
+            set_trxff_rx_page_boundary,
+        )
+        _update(0.18, "TX queue page alloc + priority routing...")
+        await loop.run_in_executor(None, init_queue_reserved_page, t)
+        await loop.run_in_executor(None, init_queue_priority_2ep, t)
+        await loop.run_in_executor(None, set_trxff_rx_page_boundary, t)
+
         _update(0.25, "Loading firmware blob...")
         fw_blob = load_firmware_blob()
 

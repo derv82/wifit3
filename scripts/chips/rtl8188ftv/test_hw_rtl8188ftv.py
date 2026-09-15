@@ -161,6 +161,12 @@ def phase_open(transport: RTL8188FTVTransport) -> None:
 
 def phase_power(transport: RTL8188FTVTransport) -> None:
     from wifit3.chips.rtl8188ftv.driver import CR_INIT_POWER_ON, RTL8188FTVDriver
+    from wifit3.chips.rtl8188ftv.mac import (
+        init_queue_priority_2ep,
+        init_queue_reserved_page,
+        set_trxff_rx_page_boundary,
+    )
+    from wifit3.chips.rtl8188ftv.constants import REG_TRXDMA_CTRL
     step("rtl8188ftv power-on (disabled->emu->active + REG_CR init)")
     drv = RTL8188FTVDriver.__new__(RTL8188FTVDriver)
     drv.transport = transport
@@ -177,6 +183,19 @@ def phase_power(transport: RTL8188FTVTransport) -> None:
     if (cr & CR_INIT_POWER_ON) != CR_INIT_POWER_ON:
         fail(f"REG_CR=0x{cr:04x} missing some CR_INIT_POWER_ON bits (expected 0x{CR_INIT_POWER_ON:04x})")
     ok("REG_CR has CR_INIT_POWER_ON bits set (DMA + protocol + sched + sec + caltimer)")
+
+    step("TX queue init (reserved page + priority routing; pre-FW)")
+    try:
+        init_queue_reserved_page(transport)
+        init_queue_priority_2ep(transport)
+        set_trxff_rx_page_boundary(transport)
+    except (IOError, OSError) as e:
+        fail(f"queue init raised: {type(e).__name__}: {e}")
+    qp = transport.read16(REG_TRXDMA_CTRL)
+    print(f"  REG_TRXDMA_CTRL = 0x{qp:04x}")
+    if (qp & 0xFFF0) != 0xFAF0:
+        fail(f"REG_TRXDMA_CTRL=0x{qp:04x} — expected high nibbles 0xFAF0 (VO/VI/MGNT/HIQ->HIGH, BE/BK->NORM)")
+    ok(f"queue routing set: VOQ/VIQ/MGQ/HIQ=HIGH, BEQ/BKQ=NORMAL (0x{qp:04x})")
 
 
 def phase_fw(transport: RTL8188FTVTransport) -> None:
@@ -551,6 +570,8 @@ def _drv_chain(dev, transport, args, names: tuple) -> None:
         phase_channel(transport, args.channel)
     if "beacon" in names:
         phase_beacon(dev, transport, args.beacon_secs, args.channel)
+    if "tx" in names:
+        phase_tx(dev, transport, args.bssid, args.client, args.count)
 
 
 def main() -> int:

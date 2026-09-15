@@ -39,6 +39,8 @@ from .constants import (
     HT_SINGLE_AMPDU_ENABLE,
     MCU_WINT_INIT_READY,
     OFDM0_X_AGC_CORE1_IGI_MASK,
+    PAGE_NUM_HI_PQ_8188F,
+    PAGE_NUM_NORM_PQ_8188F,
     PBP_PAGE_SIZE_256,
     PBP_PAGE_SIZE_RX_SHIFT,
     PBP_PAGE_SIZE_TX_SHIFT,
@@ -101,6 +103,8 @@ from .constants import (
     REG_RCR,
     REG_RESPONSE_RATE_SET,
     REG_RETRY_LIMIT,
+    REG_RQPN,
+    REG_RQPN_NPQ,
     REG_RSV_CTRL,
     REG_RXFLTMAP0,
     REG_RXFLTMAP1,
@@ -132,7 +136,20 @@ from .constants import (
     RXDMA_USB_AGG_ENABLE,
     RSV_CTRL_DIS_PRST,
     RSV_CTRL_WLOCK_1C,
+    RQPN_HI_PQ_SHIFT,
+    RQPN_LOAD,
+    RQPN_NPQ_SHIFT,
+    RQPN_PUB_PQ_SHIFT,
+    TRXDMA_CTRL_BEQ_SHIFT,
+    TRXDMA_CTRL_BKQ_SHIFT,
+    TRXDMA_CTRL_HIQ_SHIFT,
+    TRXDMA_CTRL_MGQ_SHIFT,
     TRXDMA_CTRL_RXDMA_AGG_EN,
+    TRXDMA_CTRL_VIQ_SHIFT,
+    TRXDMA_CTRL_VOQ_SHIFT,
+    TRXDMA_QUEUE_HIGH,
+    TRXDMA_QUEUE_NORMAL,
+    TRXFF_BOUNDARY_8188F,
     TXDMA_OFFSET_DROP_DATA_EN,
     TX_REPORT_CTRL_TIMER_ENABLE,
     TX_TOTAL_PAGE_NUM_8188F,
@@ -213,6 +230,53 @@ def apply_mac_init_table(t: RTL8188FTVTransport) -> None:
         if reg == 0xFFFF and val == 0xFF:
             break
         t.write8(reg, val & 0xFF)
+
+
+# ---- M2 pre-FW TX queue setup --------------------------------------
+# Kernel runs these inside `rtl8xxxu_init_device` right after power-on,
+# BEFORE firmware upload (core.c:4055-4058): they route the TX queues to
+# DMA channels and partition the TX page FIFO. With them unset the chip
+# NAKs bulk-OUT frames (the live errno-110 symptom pre-fix).
+
+
+def init_queue_reserved_page(t: RTL8188FTVTransport) -> None:
+    """Port of `rtl8xxxu_init_queue_reserved_page` (core.c:3918-3941).
+
+    8188F tags HI=0x0c + NORM=0x02 pages; PUB gets the remainder. Matches
+    capture-1 ops 945-946 (REG_RQPN_NPQ=0x02, REG_RQPN=0x80e8000c).
+    """
+    hq = PAGE_NUM_HI_PQ_8188F
+    nq = PAGE_NUM_NORM_PQ_8188F
+    t.write32(REG_RQPN_NPQ, nq << RQPN_NPQ_SHIFT)
+    pubq = TX_TOTAL_PAGE_NUM_8188F - hq - nq - 1
+    val32 = RQPN_LOAD | (hq << RQPN_HI_PQ_SHIFT) | (pubq << RQPN_PUB_PQ_SHIFT)
+    t.write32(REG_RQPN, val32)
+
+
+def init_queue_priority_2ep(t: RTL8188FTVTransport) -> None:
+    """Port of the 2-bulk-OUT case from `rtl8xxxu_init_queue_priority`.
+
+    Routes VO/VI/MGNT/HIGH to the HIGH lane (EP 0x02 = our MGMT pipe) and
+    BE/BK to NORMAL (EP 0x03). Writes REG_TRXDMA_CTRL=0xfaf0, capture-1
+    op 948 (RMW preserves the low 3 bits, as init_aggregation uses bit 2).
+    """
+    hi = TRXDMA_QUEUE_HIGH
+    lo = TRXDMA_QUEUE_NORMAL
+    val16 = t.read16(REG_TRXDMA_CTRL) & 0x7
+    val16 |= (
+        (hi << TRXDMA_CTRL_VOQ_SHIFT)
+        | (hi << TRXDMA_CTRL_VIQ_SHIFT)
+        | (lo << TRXDMA_CTRL_BEQ_SHIFT)
+        | (lo << TRXDMA_CTRL_BKQ_SHIFT)
+        | (hi << TRXDMA_CTRL_MGQ_SHIFT)
+        | (hi << TRXDMA_CTRL_HIQ_SHIFT)
+    )
+    t.write16(REG_TRXDMA_CTRL, val16)
+
+
+def set_trxff_rx_page_boundary(t: RTL8188FTVTransport) -> None:
+    """Write the pre-FW RX page boundary (REG_TRXFF_BNDY+2 = 0x3f7f)."""
+    t.write16(REG_TRXFF_BNDY + 2, TRXFF_BOUNDARY_8188F)
 
 
 # ---- M3 composite gate ----------------------------------------------
