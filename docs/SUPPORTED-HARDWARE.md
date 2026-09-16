@@ -101,6 +101,29 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 → [RTL8188EUS_DKMS.md](../src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](../src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
 
+### RTL8188FTV
+*No-name 0bda:f179 dongle · 2.4 GHz only · 1T1R (firmware-based hard-MAC)*
+
+> Firmware-based hard-MAC: no HW auto-ACK for forged MACs (rx_autoack 8/150, controls 0/150),
+> so the stop-on-ACK play (WPS/PMKID replay shortcut) is unavailable. Passive RX + software TX of
+> both MGMT and DATA frames (deauth, ARP replay, EAPOL) are at kernel parity.
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **Provisional** | 2026-09-16 | RX + TX at kernel parity but hard-MAC limits the attack suite; capability labs pending. |
+| RX | ✅ | 2026-09-16 | ref AP 7.0/s == Linux; breadth 24 vs 29; RSSI +0.7 dB; 4/4 channels tuned, 0 silent, 0 cross-channel. |
+| Port | ✅ | 2026-09-16 | Matches rtl8xxxu mainline (the ported driver): beacon rate parity + RSSI +0.7 dB. |
+| TX | ✅ | 2026-09-16 | MGMT: 611 retry-copies (unicast) + 53/60 unique-src broadcast. DATA: 60/60 accepted, 55/60 broadcast + 60/60 unicast on air (BE lane, EP 0x03). |
+| Deauth | ✅ | 2026-09-16 | Broadcast + unicast deauths delivered on air (same inject path). |
+| Handshake | ⬜ | — | Not run (needs a live WPA2 target + suite; deauth 4-way flow is unblocked now). |
+| PMKID | ⬜ | — | Not run. |
+| WEP | ⬜ | — | Not run (ARP replay unblocked by DATA TX). |
+| WPS | ⬜ | — | Not run (EAPOL unblocked by DATA TX). |
+| ACKs | ❌ | 2026-09-16 | No auto-ACK (8/150 spoofed, 0/150 control) → FAKE_MAC UNIMPLEMENTED, active monitor ports REG_MACID only. |
+| Stress | ✅ | 2026-09-16 | 30-min ch6 dwell: 506,302 bursts, 0 dropped, wedged=False (hop-soak follow-up pending). |
+
+→ [RTL8188FTV.md](../src/wifit3/chips/rtl8188ftv/RTL8188FTV.md)
+
 ### RTL8812AU
 <img align="right" width="109" height="165" src="../assets/cardart/card-awus036ach.png" alt="ALFA AWUS036ACH">
 

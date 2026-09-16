@@ -1,14 +1,14 @@
-"""RTL8188FTV TX path — MGMT-frame inject (deauth).
+"""RTL8188FTV TX path — MGMT- and DATA-frame inject.
 
 Cleanroom port of:
 
 * `struct rtl8xxxu_txdesc40`     — `rtl8xxxu.h:414-430` (40-byte descriptor)
 * `rtl8xxxu_tx` setup tail       — `core.c:5530-5565` (txdw0, pkt_offset, queue)
-* `rtl8xxxu_fill_txdesc_v2` MGMT — `core.c:5340-5406` (8188f's fill, 8188f.c:1735)
+* `rtl8xxxu_fill_txdesc_v2`      — `core.c:5340-5406` (8188f's fill, 8188f.c:1735)
 * `rtl8xxxu_calc_tx_desc_csum`   — `core.c:5128-5141` (XOR-16 over the desc)
 
-Scope: management-frame injection (deauth in particular). Data frames,
-aggregation, and TX-report consumption are out of scope.  Unlike the 8188eus
+Scopes both MGMT (deauth in particular) and DATA (WEP/ARP/EAPOL attack flows).
+Aggregation and TX-report consumption are out of scope.  Unlike the 8188eus
 v3 fill, the v2 fill sets NO antenna-select bits.
 
 Wire layout of a sent URB:
@@ -31,6 +31,7 @@ from .constants import (
     REASON_CODE_CLASS3_FRAME,
     TX_DESC_SZ_8188F,
     TXDESC40_AGG_BREAK,
+    TXDESC40_DATA_RATE_FB_SHIFT,
     TXDESC40_RETRY_LIMIT_ENABLE,
     TXDESC40_RETRY_LIMIT_MGNT,
     TXDESC40_RETRY_LIMIT_SHIFT,
@@ -40,6 +41,7 @@ from .constants import (
     TXDESC_FIRST_SEGMENT,
     TXDESC_LAST_SEGMENT,
     TXDESC_OWN,
+    TXDESC_QUEUE_BE,
     TXDESC_QUEUE_MGNT,
     TXDESC_QUEUE_SHIFT,
 )
@@ -57,6 +59,20 @@ def pick_bulk_out_mgmt(bulk_out_eps: Sequence[int]) -> int:
     if not bulk_out_eps:
         raise RuntimeError("no bulk-OUT endpoints found on this device")
     return min(bulk_out_eps)
+
+
+def pick_bulk_out_data(bulk_out_eps: Sequence[int]) -> int:
+    """Pick the bulk-OUT endpoint that the BE data queue routes to.
+
+    Mirrors the kernel's `priv->pipe_out[TXDESC_QUEUE_BE] =
+    priv->out_ep[bep=1]` (core.c:2679-2680, case 2): data rides the SECOND
+    bulk-OUT endpoint (the LOW lane).  On a single-EP device everything
+    shares out_ep[0] (case 1, core.c:2588-2590).
+    """
+    eps = sorted(bulk_out_eps)
+    if not eps:
+        raise RuntimeError("no bulk-OUT endpoints found on this device")
+    return eps[1] if len(eps) > 1 else eps[0]
 
 
 # ---- frame builders -------------------------------------------------
@@ -142,19 +158,66 @@ def build_tx_desc_mgmt(pkt_len: int, is_broadcast: bool, *,
     )
     struct.pack_into("<I", desc, 16, txdw4)
 
-    # txdw5, txdw6: 0 (unused for MGMT; short preamble / aggregation off)
-
-    # csum at bytes 28-29 — left 0 here, filled by calc_tx_desc_csum.
-
-    # txdw7 (bytes 30-31): 0 — no antenna-select for v2.
-
-    # txdw8: HW_SEQ_ENABLE cleared — SW prints the sequence number into the
-    # MPDU, txdw9 mirrors it (core.c:5372-5374, 5387-5389).
-    # txdw9 (bytes 36-39): SN mirrored from the frame (core.c:5370).
-    txdw9 = (seq & 0xFFF) << TXDESC40_SEQ_SHIFT
-    struct.pack_into("<I", desc, 36, txdw9)
+    stamp_seq(desc, seq)
 
     return desc
+
+
+def build_tx_desc_data(pkt_len: int, is_broadcast: bool, *,
+                       seq: int = 0,
+                       retry_limit: int | None = None) -> bytearray:
+    """Construct a 40-byte tx descriptor for a DATA frame.
+
+    Mirrors `rtl8xxxu_tx` (core.c:5530-5565) for the common header +
+    `rtl8xxxu_fill_txdesc_v2` DATA branch (core.c:5340-5406): data rides the
+    BE queue (queue id 0x0, rtl8xxxu.h:497).  The DATA branch sets NO
+    USE_DRIVER_RATE (MGMT-only, core.c:5381) and instead fills the
+    rate-fallback mask `0x1f << DATA_RATE_FB_SHIFT` in txdw4 (core.c:5362-
+    5364) with rate=0 (1 Mbps CCK).  No retry-limit bits unless `retry_limit`
+    is given.  Checksum computed by the caller.
+    """
+    desc = bytearray(TX_DESC_SZ_8188F)
+
+    # Common header (identical to the MGMT builder):
+    struct.pack_into("<H", desc, 0, pkt_len)
+    desc[2] = TX_DESC_SZ_8188F
+    txdw0 = TXDESC_OWN | TXDESC_FIRST_SEGMENT | TXDESC_LAST_SEGMENT
+    if is_broadcast:
+        txdw0 |= TXDESC_BROADMULTICAST
+    desc[3] = txdw0
+
+    # txdw1: queue = BE (0x0) shifted into bits[12:8].  macid (bits 0-6) is 0
+    # — monitor inject has no station entry.
+    txdw1 = TXDESC_QUEUE_BE << TXDESC_QUEUE_SHIFT
+    struct.pack_into("<I", desc, 4, txdw1)
+
+    # txdw2: AGG_BREAK (we're not aggregating).
+    struct.pack_into("<I", desc, 8, TXDESC40_AGG_BREAK)
+
+    # txdw3: 0 — data never sets USE_DRIVER_RATE.
+    # txdw4: rate=0, data rate-fallback mask; optional retry-limit bits.
+    txdw4 = 0
+    if retry_limit is not None:
+        txdw4 |= (
+            ((retry_limit & 0x3F) << TXDESC40_RETRY_LIMIT_SHIFT)
+            | TXDESC40_RETRY_LIMIT_ENABLE
+        )
+    txdw4 |= 0x1F << TXDESC40_DATA_RATE_FB_SHIFT
+    struct.pack_into("<I", desc, 16, txdw4)
+
+    stamp_seq(desc, seq)
+
+    return desc
+
+
+def stamp_seq(desc: bytearray, seq: int) -> None:
+    """Mirror the frame's SN into txdw9 (core.c:5370).
+
+    HW_SEQ_ENABLE stays cleared — SW prints the sequence number into the
+    MPDU, txdw9 mirrors it (core.c:5372-5374, 5387-5389).
+    """
+    txdw9 = (seq & 0xFFF) << TXDESC40_SEQ_SHIFT
+    struct.pack_into("<I", desc, 36, txdw9)
 
 
 def calc_tx_desc_csum(desc: bytearray) -> None:
@@ -194,9 +257,49 @@ def send_mgmt_frame(
     MPDU).  Raises `usb.core.USBError` on USB-level failure (e.g. timeout,
     pipe stall, no device).
     """
-    frame_seq = ((mpdu[22] | (mpdu[23] << 8)) >> 4) & 0xFFF if len(mpdu) >= 24 else 0
+    frame_seq = _frame_seq(mpdu)
     desc = build_tx_desc_mgmt(len(mpdu), is_broadcast, seq=frame_seq,
                               retry_limit=retry_limit)
+    return _send_mpdu(dev, ep_out, desc, mpdu, timeout_ms)
+
+
+def send_data_frame(
+    dev: usb.core.Device,
+    ep_out: int,
+    mpdu: bytes,
+    *,
+    is_broadcast: bool = False,
+    retry_limit: int | None = None,
+    timeout_ms: int = 200,
+) -> int:
+    """Send a single DATA frame: build descriptor, checksum, bulk-OUT write.
+
+    `retry_limit` (if given) enables the TX descriptor's retry-limit field
+    (data rides the BE queue, so the faithful branch leaves it unset — the
+    kernel retries in-kernel).  Returns bytes written; raises
+    `usb.core.USBError` on USB-level failure.
+    """
+    frame_seq = _frame_seq(mpdu)
+    desc = build_tx_desc_data(len(mpdu), is_broadcast, seq=frame_seq,
+                              retry_limit=retry_limit)
+    return _send_mpdu(dev, ep_out, desc, mpdu, timeout_ms)
+
+
+def _frame_seq(mpdu: bytes) -> int:
+    """Extract the frame's SW sequence number (SN) from seq_ctrl bits 15-4."""
+    if len(mpdu) < 24:
+        return 0
+    return ((mpdu[22] | (mpdu[23] << 8)) >> 4) & 0xFFF
+
+
+def _send_mpdu(
+    dev: usb.core.Device,
+    ep_out: int,
+    desc: bytearray,
+    mpdu: bytes,
+    timeout_ms: int,
+) -> int:
+    """Checksum a descriptor, append the MPDU, and bulk-OUT it."""
     calc_tx_desc_csum(desc)
     urb = bytes(desc) + mpdu
     written = dev.write(ep_out, urb, timeout_ms)

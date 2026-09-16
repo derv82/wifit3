@@ -445,6 +445,7 @@ TXDESC_FIRST_SEGMENT = 1 << 3           # rtl8xxxu.h:477
 TXDESC_LAST_SEGMENT = 1 << 2            # rtl8xxxu.h:476
 TXDESC_BROADMULTICAST = 1 << 0          # rtl8xxxu.h:474
 TXDESC_QUEUE_SHIFT = 8                  # rtl8xxxu.h:494
+TXDESC_QUEUE_BE = 0x00                  # rtl8xxxu.h:497 — data default queue id
 TXDESC_QUEUE_MGNT = 0x12                # rtl8xxxu.h:502 — the MGMT queue id
 TXDESC40_MACID_SHIFT = 0                # rtl8xxxu.h:492
 TXDESC40_AGG_BREAK = 1 << 16            # rtl8xxxu.h:526
@@ -452,11 +453,13 @@ TXDESC40_USE_DRIVER_RATE = 1 << 8       # rtl8xxxu.h:538 (txdw3)
 TXDESC40_RETRY_LIMIT_ENABLE = 1 << 17   # rtl8xxxu.h:565 (txdw4)
 TXDESC40_RETRY_LIMIT_SHIFT = 18         # rtl8xxxu.h:566 (txdw4)
 TXDESC40_RETRY_LIMIT_MGNT = 6           # fill_txdesc_v2 MGMT (core.c:5383)
+TXDESC40_DATA_RATE_FB_SHIFT = 8         # rtl8xxxu.h:563 (txdw4)
 TXDESC40_SEQ_SHIFT = 12                 # rtl8xxxu.h:590 (txdw9)
 TXDESC40_SEQ_MASK = 0x00fff000          # rtl8xxxu.h:591
 TXDESC40_HW_SEQ_ENABLE = 1 << 15        # rtl8xxxu.h:587 (txdw8)
 
 # ---- 802.11 frame control bytes (tx.py) -----------------------------
 FC0_TYPE_MGMT = 0x00
+FC0_TYPE_DATA = 0x08
 FC0_SUBTYPE_DEAUTH = 0xC0                # subtype 0xC, shifted into bits[7:4]
 REASON_CODE_CLASS3_FRAME = 0x07          # "class-3 frame from non-associated STA"

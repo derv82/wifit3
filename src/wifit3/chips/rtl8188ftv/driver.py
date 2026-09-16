@@ -42,6 +42,7 @@ import asyncio
 import logging
 import struct
 import time
+from functools import partial
 from typing import Callable, Optional
 
 import usb.core
@@ -64,6 +65,7 @@ from .constants import (
     CR_SCHEDULE_ENABLE,
     CR_SECURITY_ENABLE,
     CR_CALTIMER_ENABLE,
+    FC0_TYPE_DATA,
     REG_APS_FSMCO,
     REG_CR,
     REG_SYS_CFG,
@@ -105,6 +107,7 @@ class RTL8188FTVDriver(Driver):
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._mgmt_bulk_out: Optional[int] = None
+        self._data_bulk_out: Optional[int] = None
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
         self._tx_seq: int = 0
@@ -161,19 +164,29 @@ class RTL8188FTVDriver(Driver):
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         loop = asyncio.get_running_loop()
-        if self._mgmt_bulk_out is None:
+        if self._mgmt_bulk_out is None or self._data_bulk_out is None:
             from .rx import probe_endpoints
+            from .tx import pick_bulk_out_data, pick_bulk_out_mgmt
             eps = await loop.run_in_executor(None, probe_endpoints, self.dev)
-            self._mgmt_bulk_out = eps.bulk_out[0] if eps.bulk_out else None
-        if self._mgmt_bulk_out is None:
+            if eps.bulk_out:
+                self._mgmt_bulk_out = pick_bulk_out_mgmt(eps.bulk_out)
+                self._data_bulk_out = pick_bulk_out_data(eps.bulk_out)
+                self._bulk_out_eps = list(eps.bulk_out)
+        is_data = len(frame_bytes) >= 2 and (frame_bytes[0] & 0x0C) == FC0_TYPE_DATA
+        ep_out = self._data_bulk_out if is_data else self._mgmt_bulk_out
+        if ep_out is None:
             return False
-        from .tx import send_mgmt_frame
         is_bcast = (frame_bytes[4:10][0] & 0x01) != 0 if len(frame_bytes) >= 10 else False
+        if is_data:
+            from .tx import send_data_frame
+            send = partial(send_data_frame, self.dev, ep_out,
+                           frame_bytes, is_broadcast=is_bcast)
+        else:
+            from .tx import send_mgmt_frame
+            send = partial(send_mgmt_frame, self.dev, ep_out,
+                           frame_bytes, is_broadcast=is_bcast)
         try:
-            await loop.run_in_executor(
-                None, lambda: send_mgmt_frame(
-                    self.dev, self._mgmt_bulk_out, frame_bytes, is_broadcast=is_bcast),
-            )
+            await loop.run_in_executor(None, send)
         except (IOError, usb.core.USBError):
             logger.exception("inject_frame failed")
             return False
@@ -356,7 +369,7 @@ class RTL8188FTVDriver(Driver):
         loop = asyncio.get_running_loop()
 
         from .rx import probe_endpoints
-        from .tx import pick_bulk_out_mgmt
+        from .tx import pick_bulk_out_data, pick_bulk_out_mgmt
         _update(0.60, "Probing USB endpoints...")
         eps = await loop.run_in_executor(None, probe_endpoints, self.dev)
         if not eps.bulk_in:
@@ -365,6 +378,7 @@ class RTL8188FTVDriver(Driver):
         self._bulk_in_ep = eps.primary_bulk_in
         self._bulk_out_eps = list(eps.bulk_out)
         self._mgmt_bulk_out = pick_bulk_out_mgmt(self._bulk_out_eps)
+        self._data_bulk_out = pick_bulk_out_data(self._bulk_out_eps)
 
         _update(0.70, "Clearing stale bulk-pipe state...")
         await loop.run_in_executor(None, self._reset_bulk_pipes)
