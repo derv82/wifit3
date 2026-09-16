@@ -12,11 +12,7 @@ from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import Button, Checkbox, Input, Label, Select
 
-from pathlib import Path
-
-from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid
 from wifit3.persist.config import Config
-from wifit3.persist.save import consolidate_hc_files
 
 
 class ThemeSetting(VerticalGroup):
@@ -162,41 +158,29 @@ class LegacyCapturesSetting(VerticalGroup):
     """
 
     def compose(self) -> ComposeResult:
-        captures_path = Path(Config.captures_dir)
-        legacy_files = [
-            p for p in captures_path.iterdir()
-            if p.is_file() and (m := LEGACY_CAPTURE_RE.match(p.name)) and m.group("ext") == "hc22000"
-        ] if captures_path.is_dir() else []
-        if legacy_files:
-            yield Label(f"[dim]{len(legacy_files)} legacy split file(s) found[/dim]", id="legacy_label")
+        count = self.app.vault.legacy_hc_file_count()
+        if count:
+            yield Label(f"[dim]{count} legacy split file(s) found[/dim]", id="legacy_label")
             btn = Button(Text("Consolidate Captures"), "warning", id="consolidate")
             btn.tooltip = "Merge separate timestamped .hc22000 files into 1 file per AP"
             yield btn
 
     @on(Button.Pressed, "#consolidate")
     def consolidate_pressed(self, event: Event) -> None:
-        captures_path = Path(Config.captures_dir)
-        legacy_files = [
-            p for p in captures_path.iterdir()
-            if p.is_file() and (m := LEGACY_CAPTURE_RE.match(p.name)) and m.group("ext") == "hc22000"
-        ] if captures_path.is_dir() else []
-        if not legacy_files:
+        vault = self.app.vault
+        file_count = vault.legacy_hc_file_count()
+        if not file_count:
             return
-
-        targets = {
-            f"{safe_ssid(m.group('ssid'))}_{bssid_to_dashed(m.group('bssid'))}"
-            for p in legacy_files if (m := LEGACY_CAPTURE_RE.match(p.name))
-        }
+        unique_count = vault.legacy_hc_unique_count()
 
         def after_confirm(confirmed: bool | None) -> None:
             if confirmed:
-                migrated, deleted = consolidate_hc_files(captures_path)
-                self.app.vault.refresh()
+                migrated, deleted = vault.consolidate_legacy_hc_files()
                 self.notify(f"Consolidated {deleted} files into {migrated} AP files.", title="Captures Consolidated")
                 self.remove_children()
                 self.mount(Label("[bold green]Captures consolidated[/]", id="legacy_done"))
 
-        self.app.push_screen(ConsolidateModal(len(legacy_files), len(targets)), after_confirm)
+        self.app.push_screen(ConsolidateModal(file_count, unique_count), after_confirm)
 
 
 class PreferencesModal(ModalScreen):

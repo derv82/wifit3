@@ -4,11 +4,14 @@ re-scan the directory. Wraps persist.save + persist.capture_history."""
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from wifit3.models import PersistedCapture
 from wifit3.persist import save
 from wifit3.persist.capture_history import load_capture_index, summarize
+from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid
+from wifit3.persist.config import Config
 from wifit3.persist.save import SaveResult
 
 if TYPE_CHECKING:
@@ -102,3 +105,32 @@ class Vault:
                 0, PersistedCapture(type="WPS", timestamp=int(time.time()),
                                     path=str(result.path), value=psk))
         return result
+
+    # ----- legacy .hc22000 consolidation (temporary: pre-aggregate installs) ---
+
+    def _legacy_hc_files(self) -> List[Path]:
+        """Pre-aggregate per-capture .hc22000 files still on disk (one file per
+        capture, vs today's one aggregate file per AP)."""
+        root = Path(Config.captures_dir)
+        if not root.is_dir():
+            return []
+        return [p for p in root.iterdir()
+                if p.is_file() and (m := LEGACY_CAPTURE_RE.match(p.name))
+                and m.group("ext") == "hc22000"]
+
+    def legacy_hc_file_count(self) -> int:
+        """Number of legacy per-capture .hc22000 files that could be consolidated."""
+        return len(self._legacy_hc_files())
+
+    def legacy_hc_unique_count(self) -> int:
+        """Distinct SSID+BSSID the legacy files would collapse into (one file each)."""
+        return len({f"{safe_ssid(m.group('ssid'))}_{bssid_to_dashed(m.group('bssid'))}"
+                    for p in self._legacy_hc_files()
+                    if (m := LEGACY_CAPTURE_RE.match(p.name))})
+
+    def consolidate_legacy_hc_files(self) -> tuple[int, int]:
+        """Merge legacy per-capture .hc22000 files into one per AP, then refresh the
+        cache. Returns (migrated_ap_count, deleted_file_count)."""
+        migrated, deleted = save.consolidate_hc_files(Path(Config.captures_dir))
+        self.refresh()
+        return migrated, deleted
