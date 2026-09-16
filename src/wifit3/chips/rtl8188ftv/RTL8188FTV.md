@@ -13,7 +13,7 @@
 
 ## Python Port Details
 - VID/PID: `0bda:f179`; the default (and only) driver for it. Not to be confused with the vendor-DKMS `rtl8188fu` wire (planned `chips/rtl8188ftv_dkms`).
-- Status: **port-complete through M7, cold-boot verified, TX hardware-verified on-air; host RX still delivers 0 bytes to userspace in the tested states.** The verify gate replays the whole capture byte-for-byte and gates the RX FIFO decode; live TX is confirmed via `tx_retries` (611 copies of unicast, 0 ACKs) and a unique-src broadcast probe (53/60 on ch11).
+- Status: **port-complete through M7, cold-boot verified, TX and RX both hardware-verified on-air.** The verify gate replays the whole capture byte-for-byte and gates the RX FIFO decode; live TX is confirmed via `tx_retries` (611 copies of unicast, 0 ACKs) and a unique-src broadcast probe (53/60 on ch11); live host RX is confirmed via the RX triage (99 beacons/3 s + 27/30 injected deauths + 25/30 data frames through the normal Scanner reader path).
 - Related port: `chips/rtl8188eus/` (same mainline `rtl8xxxu` family, 8188e vector). The 8188E and 8188F diverge in the CCK RSSI table, the FW RSV_CTRL reset dance, and `MAX_AGGR`.
 - Non-obvious in the port (would cost a maintainer time):
   - Wire is a **USB vendor-control** interface (bRequest `0x05`, wValue=register, wIndex=0), not ep0-default. Reads/writes: 8/16/32-bit + `write_block` for FW chunks.
@@ -30,10 +30,9 @@
 - TX is XOR-16 checksummed over the **first 32 bytes only** (core.c:5128-5141); txdw8/txdw9 (where our SW seq lives at bytes 36-39) sit outside the window — folding them into the csum silently dropped descriptors.
 
 ## Known Problems
-- Host RX is dead in the tested states: the FTV delivers **0 bulk-IN bytes** to userspace in plain monitor while its MAC-level HW ACK responder is demonstrably alive (8/100 ACKs on a spoofed MAC). The RX-reader/descriptor path likely needs a second check; a live RX soak has not run.
-- The hardware does **not auto-ACK spoofed MACs** (`rx_autoack` 8/100, controls 0) → `FAKE_MAC = UNIMPLEMENTED`; `enter_active_monitor` ports REG_MACID but the bench verdict stays negative until a clean positive run.
+- The hardware does **not auto-ACK spoofed MACs** (`rx_autoack` — run on a verified-working RX path — 8/150 on a spoofed MAC, 0/150 controls and bogus) → `FAKE_MAC = UNIMPLEMENTED`; `enter_active_monitor` ports REG_MACID, but the bench verdict stays negative and flipping `FAKE_MAC` awaits a positive run.
+- The ack-tap/RSSI/`record_ack` path is ported; ACK delivery works (control frames + RXFLTMAP1 bit 13) but the chip does not reliably answer — the auto-ACK verdict is negative.
 - Single capture only: channel-hop scan covers 53 hops; no second capture for cross-validation.
-- The ack-tap/RSSI/`record_ack` path is ported but its live 802.11 evidence is pending (host RX zero upstream of it).
 
 ## Driver Entry Points
 - Bring-up: `driver.connect` → `_cold_bring_up` (EFUSE → FW → MAC/BB/RF → LC/IQ → RX path → tune ch1) or `_warm_reattach`; both funnel to `_finish_attach` (endpoint probe, pipe reset, monitor RCR, RX reader).
@@ -51,5 +50,5 @@
 
 ## Debug log
 
-### 2026-09-16 — TX hardware-verified on-air
-The "0 on-air" reports were probe-side artifacts (`.source` vs `.src` keying, bytes-vs-str counters), not chip faults. With the cold/warm/wedged confounders cleared by a replug + 8051 reset: `tx_retries` (ch11, cold chip) caught **611 copies** of FTV-injected unicast with the fixed csum and per-channel TX power; a broadcast deauth with a unique src reached the AR9271 **53/60**. Verdict: FTV does NOT auto-ACK (8/100, controls 0) → `FAKE_MAC` stays `UNIMPLEMENTED`. Host RX (bulk-IN) remains 0 in all tested states — unresolved, open item. Committed `f2abe0a4`.
+### 2026-09-16 — TX and RX hardware-verified on-air
+The "0 on-air" and "0 host RX" reports were both probe-side artifacts, not chip faults: `.source` vs `.src` keying + bytes-vs-str counter keys (TX), and shadowing `_rx_read_once` after the reader thread had already captured the original bound method (RX). With the confounders cleared: `tx_retries` (ch11, cold chip) caught **611 copies** of FTV-injected unicast; a broadcast deauth with a unique src reached the AR9271 **53/60**; and the FTV's own Scanner-path reader delivered **99 beacons/3 s + 27/30 injected deauths + 25 data frames** (RCR/FLTMAP0/2 exactly the replay-verified config). Verdict: FTV does NOT auto-ACK (8/150, controls 0, bogus 0) → `FAKE_MAC` stays `UNIMPLEMENTED`. Committed `f2abe0a4`.
