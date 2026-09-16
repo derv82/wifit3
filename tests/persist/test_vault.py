@@ -168,3 +168,19 @@ def test_kind_predicates(tmp_path):
     assert v.has_wps_psk(wps_ap)
     cap = v.wps_capture(wps_ap)
     assert cap is not None and cap.value == "hunter2"
+
+
+def test_detailed_summary(tmp_path):
+    v = Vault()
+    ap = _ap_with_hs(pmkid=b"\x11" * 16)
+    assert v.detailed_summary(ap) == {}
+    v.save_handshake(ap, "11:22:33:44:55:66")
+    v.save_pmkid(ap, "11:22:33:44:55:66")
+    v.save_wep_key(ap, b"abcde")
+    v.save_wps_pbc(ap, "hunter2")
+    summary = v.detailed_summary(ap)
+    assert list(summary) == ["Handshake", "PMKID", "WEP Key", "WPS PSK"]  # kind order
+    assert summary["Handshake"][0] is None and summary["PMKID"][0] is None
+    assert summary["WEP Key"][0] == b"abcde".hex()
+    key, count, ts = summary["WPS PSK"]
+    assert key == "hunter2" and count == 1 and isinstance(ts, int)

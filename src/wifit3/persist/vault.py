@@ -22,6 +22,9 @@ class Vault:
     """Caches the on-disk capture index (from Config.captures_dir) and is the
     sole read/write path for handshake, PMKID, WEP, and WPS artifacts."""
 
+    # Capture-kind -> human label, in display order. The one place these map.
+    _KIND_LABELS = {"HS": "Handshake", "PMKID": "PMKID", "WEP": "WEP Key", "WPS": "WPS PSK"}
+
     def __init__(self) -> None:
         self._index: Dict[str, List[PersistedCapture]] = {}
         self.refresh()
@@ -50,6 +53,19 @@ class Vault:
         if wps:
             parts.append(f"{wps} WPS PSK{'s' * (wps != 1)}")
         return ", ".join(parts) or None
+
+    def detailed_summary(self, ap: "AccessPoint") -> dict[str, tuple[str | None, int, int]]:
+        """Per-kind rollup for the Focus 'Existing captures' panel:
+        ``{human label: (key_or_None, count, newest_timestamp)}``, absent kinds
+        omitted, ordered by kind."""
+        caps = self.persisted(ap.bssid)
+        result: dict[str, tuple[str | None, int, int]] = {}
+        for kind, label in self._KIND_LABELS.items():
+            matching = [c for c in caps if c.type == kind]
+            if matching:
+                newest = max(matching, key=lambda c: c.timestamp)
+                result[label] = (newest.value, len(matching), newest.timestamp)
+        return result
 
     def known_psk(self, ap: "AccessPoint") -> Optional[str]:
         """The passphrase held for this AP: recovered this session (PBC/PIN) or

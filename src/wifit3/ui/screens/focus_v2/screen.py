@@ -496,35 +496,28 @@ class FocusViewV2(Screen):
         """On focus init, print captures/ artifacts for this AP to the log."""
         wps_state = load_run_state(Config.captures_dir, ap.bssid)
         wps_progress = run_progress_line(wps_state) if wps_state else None
-        persisted = self.app.vault.persisted(ap.bssid)
-        if not persisted and not wps_progress:
+        rows = list(self.app.vault.detailed_summary(ap).items())
+        if not rows and not wps_progress:
             return
-        by_type: dict[str, list] = {}
-        for cap in sorted(persisted, key=lambda c: c.timestamp, reverse=True):
-            by_type.setdefault(cap.type, []).append(cap)
-
-        nouns = {"HS": "Handshake", "PMKID": "PMKID", "WEP": "WEP Key", "WPS": "WPS PSK"}
-        # Newest of each kind, newest kind first; the label column is padded so the dates line up.
-        rows = sorted(((k, caps[0], len(caps)) for k, caps in by_type.items()),
-                      key=lambda r: r[1].timestamp, reverse=True)
         if rows:
             self._log("[bold]Existing captures[/bold] in [cyan]captures/[/cyan]:")
-        label_w = max((len(f"{nouns[k]} ({n})") for k, _cap, n in rows), default=0)
-        for i, (kind, cap, n) in enumerate(rows):
+        # Pad the label column so the dates line up.
+        label_w = max((len(f"{label} ({n})") for label, (_key, n, _ts) in rows), default=0)
+        for i, (label, (key, n, ts)) in enumerate(rows):
             # The WPS progress leaf, if present, takes the └, so a saved row is the last leaf only when nothing follows.
             last = i == len(rows) - 1 and wps_progress is None
             line = treelog.leaf if last else treelog.branch
-            pad = " " * (label_w - len(f"{nouns[kind]} ({n})"))
-            label = f"[bold cyan]{nouns[kind]}[/bold cyan] [dim]({n})[/dim]{pad}"
-            dt = datetime.fromtimestamp(cap.timestamp)
-            if kind == "WEP":
-                self._log(line(f"{label}  {_wep_key_chip(cap.value)} "
+            pad = " " * (label_w - len(f"{label} ({n})"))
+            head = f"[bold cyan]{label}[/bold cyan] [dim]({n})[/dim]{pad}"
+            dt = datetime.fromtimestamp(ts)
+            if label == "WEP Key":
+                self._log(line(f"{head}  {_wep_key_chip(key)} "
                                f"[dim]{dt:%Y-%m-%d %H:%M}[/dim]"))
-            elif kind == "WPS":
-                self._log(line(f"{label}  [black bold on cyan] {escape(cap.value or '?')} "
+            elif label == "WPS PSK":
+                self._log(line(f"{head}  [black bold on cyan] {escape(key or '?')} "
                                f"[/black bold on cyan] [dim]{dt:%Y-%m-%d %H:%M}[/dim]"))
             else:
-                self._log(line(f"{label}  {dt:%Y-%m-%d} "
+                self._log(line(f"{head}  {dt:%Y-%m-%d} "
                                f"[dim]{dt:%H:%M}[/dim]"))
         if wps_progress is not None:
             self._log(treelog.leaf(wps_progress) if rows else wps_progress)
