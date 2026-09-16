@@ -13,7 +13,7 @@
 
 ## Python Port Details
 - VID/PID: `0bda:f179`; the default (and only) driver for it. Not to be confused with the vendor-DKMS `rtl8188fu` wire (planned `chips/rtl8188ftv_dkms`).
-- Status: **port-complete through M7, cold-boot verified, NOT hardware-tested yet** (no `test_hw.py`, no `SUPPORTED-HARDWARE.md` row, no grade). The verify gate replays the whole capture byte-for-byte and gates the RX FIFO decode; TX deauth is wire-tested by unit tests but no live TX has been fired.
+- Status: **port-complete through M7, cold-boot verified, TX hardware-verified on-air; host RX still delivers 0 bytes to userspace in the tested states.** The verify gate replays the whole capture byte-for-byte and gates the RX FIFO decode; live TX is confirmed via `tx_retries` (611 copies of unicast, 0 ACKs) and a unique-src broadcast probe (53/60 on ch11).
 - Related port: `chips/rtl8188eus/` (same mainline `rtl8xxxu` family, 8188e vector). The 8188E and 8188F diverge in the CCK RSSI table, the FW RSV_CTRL reset dance, and `MAX_AGGR`.
 - Non-obvious in the port (would cost a maintainer time):
   - Wire is a **USB vendor-control** interface (bRequest `0x05`, wValue=register, wIndex=0), not ep0-default. Reads/writes: 8/16/32-bit + `write_block` for FW chunks.
@@ -27,11 +27,13 @@
   - The monitor RCR is re-asserted on **both** cold and warm attach (`_finish_attach`) — a kernel-left warm chip has a non-monitor RCR that drops ToDS frames.
   - EFUSE parse enforces the `0x8129` rtl_id and memcpy's 5 ht40 bytes into a 6-slot array (slot 5 = 0 on our side, then sanitised).
 
+- TX is XOR-16 checksummed over the **first 32 bytes only** (core.c:5128-5141); txdw8/txdw9 (where our SW seq lives at bytes 36-39) sit outside the window — folding them into the csum silently dropped descriptors.
+
 ## Known Problems
-- Not hardware-tested (awaiting the human gate); the only truth today is the cold-boot pcap replay. No live RX/TX soak has run.
+- Host RX is dead in the tested states: the FTV delivers **0 bulk-IN bytes** to userspace in plain monitor while its MAC-level HW ACK responder is demonstrably alive (8/100 ACKs on a spoofed MAC). The RX-reader/descriptor path likely needs a second check; a live RX soak has not run.
+- The hardware does **not auto-ACK spoofed MACs** (`rx_autoack` 8/100, controls 0) → `FAKE_MAC = UNIMPLEMENTED`; `enter_active_monitor` ports REG_MACID but the bench verdict stays negative until a clean positive run.
 - Single capture only: channel-hop scan covers 53 hops; no second capture for cross-validation.
-- TX is unit-verified wire-shape only — `build_deauth`/`send_mgmt_frame` have never fired on real silicon.
-- The ack-tap/RSSI/`record_ack` path is ported but its live 802.11 evidence is pending.
+- The ack-tap/RSSI/`record_ack` path is ported but its live 802.11 evidence is pending (host RX zero upstream of it).
 
 ## Driver Entry Points
 - Bring-up: `driver.connect` → `_cold_bring_up` (EFUSE → FW → MAC/BB/RF → LC/IQ → RX path → tune ch1) or `_warm_reattach`; both funnel to `_finish_attach` (endpoint probe, pipe reset, monitor RCR, RX reader).
@@ -49,5 +51,5 @@
 
 ## Debug log
 
-### 2026-09-14 — hardware validation pending
-Nothing open beyond "not hardware-tested yet". Once `test_hw.py` + a live beacon_watch run exist, harden resolved items here into Known Problems or delete the entry.
+### 2026-09-16 — TX hardware-verified on-air
+The "0 on-air" reports were probe-side artifacts (`.source` vs `.src` keying, bytes-vs-str counters), not chip faults. With the cold/warm/wedged confounders cleared by a replug + 8051 reset: `tx_retries` (ch11, cold chip) caught **611 copies** of FTV-injected unicast with the fixed csum and per-channel TX power; a broadcast deauth with a unique src reached the AR9271 **53/60**. Verdict: FTV does NOT auto-ACK (8/100, controls 0) → `FAKE_MAC` stays `UNIMPLEMENTED`. Host RX (bulk-IN) remains 0 in all tested states — unresolved, open item. Committed `f2abe0a4`.
