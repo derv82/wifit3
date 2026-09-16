@@ -120,7 +120,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | WEP | ⬜ | — | Not run (ARP replay unblocked by DATA TX). |
 | WPS | ⬜ | — | Not run (EAPOL unblocked by DATA TX). |
 | ACKs | ❌ | 2026-09-16 | No auto-ACK (8/150 spoofed, 0/150 control) → FAKE_MAC UNIMPLEMENTED, active monitor ports REG_MACID only. |
-| Stress | ✅ | 2026-09-16 | 30-min ch6 dwell: 506,302 bursts, 0 dropped, wedged=False (hop-soak follow-up pending). |
+| Stress | ✅ | 2026-09-16 | 20-min 14-ch hop soak: 600 hops, 0 tune failures, 0 dropped, wedged=False (plus a 30-min ch6 dwell). |
 
 → [RTL8188FTV.md](../src/wifit3/chips/rtl8188ftv/RTL8188FTV.md)
 

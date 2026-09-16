@@ -58,3 +58,6 @@ The "0 on-air" and "0 host RX" reports were both probe-side artifacts, not chip 
 
 ### 2026-09-16 — DATA-frame TX live-verified
 The mgmt-only TX scope (tx.py) was the last cap on the attack suite (WEP/ARP-replay, WPS EAPOL, EvilTwin handshakes are data frames). Ported the `fill_txdesc_v2` DATA branch: BE queue (0x0), NO `USE_DRIVER_RATE`, `0x1f<<8` rate-fallback mask, same AGG_BREAK/SW-seq/csum; `driver._inject_frame` now dispatches on FC type to the MGMT lane (EP 0x02) or DATA lane (EP 0x03, kernel `out_ep[1]` case 2). Live bench (ch11, AR9271 sniff): broadcast DATA **60/60 accepted → 55 on air**, unicast DATA **60/60 accepted → 60 on air**, 0 in baseline. Tests: `pick_bulk_out_data`/`build_tx_desc_data`/`send_data_frame` + lane-routing unit tests (58 FTV tests, full suite 2869 passed, ruff clean). This unblocks WEP percentage, WPS M1-M7, and the EvilTwin handshake. Soak: 30-min ch6 dwell, 506,302 bursts, 0 dropped, `wedged=False`.
+
+### 2026-09-16 — 20-min channel-hop soak: flat
+14-channel loop (1-14), 2 s dwell, 20 min: **600 hops, 0 tune failures**, 66,728 RX bursts, 32,388 beacons, **0 dropped**, `wedged=False`. Second soak in the same session (ch6 dwell + hop) — no reader stall or channel-tune wear.
