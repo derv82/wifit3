@@ -14,6 +14,7 @@ from textual.app import App
 
 from wifit3.campaigns.wep import WepCampaign
 from wifit3.persist.config import Config
+from wifit3.persist.vault import Vault
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList
@@ -97,6 +98,7 @@ class _Host(App):
         self.array = array
         self.target_ap = ap
         self.pbc_enabled = True
+        self.vault = Vault()
 
     def on_mount(self) -> None:
         self.push_screen(FocusViewV2())
@@ -300,7 +302,7 @@ async def test_focus_pbc_autocapture_gated_on_flag(focus_host, tmp_path, monkeyp
     # during the rebind (which would leave a real capture busy and mask the guard).
     ap.wps_selected_registrar = True
     ap.wps_device_password_id = 0x0004
-    assert ap.wps_pbc_active and not ap.has_psk
+    assert ap.wps_pbc_active and not app.vault.has_psk(ap)
 
     app.pbc_enabled = False
     focus._tick()

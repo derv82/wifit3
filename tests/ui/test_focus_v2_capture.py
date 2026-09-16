@@ -10,6 +10,7 @@ from textual.app import App
 from textual.widgets import Button, RichLog, Static
 
 from wifit3.persist.config import Config
+from wifit3.persist.vault import Vault
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList, ClientWidget
@@ -104,6 +105,7 @@ class _Host(App):
         self.array = array
         self.target_ap = ap
         self.pbc_enabled = True
+        self.vault = Vault()
 
     def on_mount(self) -> None:
         self.push_screen(FocusViewV2())

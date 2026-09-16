@@ -46,9 +46,6 @@ from .campaign_controls import CampaignControls
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
 from wifit3.models import AccessPoint, IdSource
-from wifit3.persist.save import (
-    save_handshake, save_pmkid, save_wep_key, save_wps_pbc, save_wps_pin,
-)
 from wifit3.persist.config import Config
 
 from ... import focus_model as fm
@@ -324,7 +321,7 @@ class FocusViewV2(Screen):
         ap = self.app.target_ap
         if ap is None:
             return []
-        return fm.derive_headline(ap, self.app.array)
+        return fm.derive_headline(ap, self.app.array, self.app.vault)
 
     def _dashboard_rows(self) -> list:
         """The packet-dashboard row set for the live target's encryption family (empty when
@@ -499,10 +496,11 @@ class FocusViewV2(Screen):
         """On focus init, print captures/ artifacts for this AP to the log."""
         wps_state = load_run_state(Config.captures_dir, ap.bssid)
         wps_progress = run_progress_line(wps_state) if wps_state else None
-        if not ap.persisted and not wps_progress:
+        persisted = self.app.vault.persisted(ap.bssid)
+        if not persisted and not wps_progress:
             return
         by_type: dict[str, list] = {}
-        for cap in sorted(ap.persisted, key=lambda c: c.timestamp, reverse=True):
+        for cap in sorted(persisted, key=lambda c: c.timestamp, reverse=True):
             by_type.setdefault(cap.type, []).append(cap)
 
         nouns = {"HS": "Handshake", "PMKID": "PMKID", "WEP": "WEP Key", "WPS": "WPS PSK"}
@@ -542,7 +540,7 @@ class FocusViewV2(Screen):
         # task drains. Ask them to stop so they reap (below) on a following tick.
         cur = self._controls.current
         if isinstance(cur, WepCampaign) and cur.recovered_key is not None:
-            result = save_wep_key(ap, cur.recovered_key)
+            result = self.app.vault.save_wep_key(ap, cur.recovered_key)
             if result is not None:
                 self._log(treelog.leaf(_save_line(result)))
             self._controls.request_stop()
@@ -591,7 +589,7 @@ class FocusViewV2(Screen):
             return False
         if Config.is_silenced(ap.bssid) or ap.is_hidden:
             return False
-        if ap.has_psk or self._pbc_user_stopped:
+        if self.app.vault.has_psk(ap) or self._pbc_user_stopped:
             return False
         if time.monotonic() < self._pbc_retry_after or self._pbc_busy():
             return False
@@ -662,7 +660,7 @@ class FocusViewV2(Screen):
                 self._eapol_agg.on_eapol(ev, now)
             elif ev.kind == CaptureKind.HANDSHAKE:
                 # Save instantly
-                result = save_handshake(ap, ev.client_mac)
+                result = self.app.vault.save_handshake(ap, ev.client_mac)
                 hint = _save_line(result) if result is not None else None
                 self._emit_lines(self._eapol_agg.on_handshake(ev, now, save_hint=hint))
             else:
@@ -686,7 +684,7 @@ class FocusViewV2(Screen):
                 f"[black bold on green] ✓ PMKID captured [/black bold on green] "
                 f"from [bold]{short_sta(ev.client_mac)}[/bold]"
             )
-            result = save_pmkid(ap, ev.client_mac)
+            result = self.app.vault.save_pmkid(ap, ev.client_mac)
             if result is not None:
                 self._log(treelog.leaf(_save_line(result)))
         elif ev.kind == CaptureKind.DECLOAK:
@@ -984,7 +982,7 @@ class FocusViewV2(Screen):
     def _finish_pmkid(self, camp) -> None:
         """Handle a completed harvest."""
         if camp.pmkid:
-            result = save_pmkid(camp.target, camp.client_mac)
+            result = self.app.vault.save_pmkid(camp.target, camp.client_mac)
             hint = _save_line(result) if result is not None else None
             self._emit_lines(pmkid_log.verdict_success(hint))
             # Detector skips forged MACs, so toast the active-harvest win here too.
@@ -1156,7 +1154,7 @@ class FocusViewV2(Screen):
                 f"[black bold on green] Password for {ssid}: "
                 f"\"{escape(camp.state.found_psk or '')}\" [/black bold on green]"))
             try:
-                result = save_wps_pin(
+                result = self.app.vault.save_wps_pin(
                     camp.target, camp.state.found_pin, camp.state.found_psk or "")
                 if result is None:
                     self._log(treelog.leaf("[dim](save failed)[/dim]"))
@@ -1203,7 +1201,7 @@ class FocusViewV2(Screen):
                 f"[black bold on green] Password for {name}: "
                 f"\"{escape(outcome.psk)}\" [/black bold on green]"))
             try:
-                result = save_wps_pbc(ap, outcome.psk)
+                result = self.app.vault.save_wps_pbc(ap, outcome.psk)
                 if result is None:
                     self._log(treelog.leaf("[dim](save failed)[/dim]"))
                 else:

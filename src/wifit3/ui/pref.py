@@ -191,6 +191,7 @@ class LegacyCapturesSetting(VerticalGroup):
         def after_confirm(confirmed: bool | None) -> None:
             if confirmed:
                 migrated, deleted = consolidate_hc_files(captures_path)
+                self.app.vault.refresh()
                 self.notify(f"Consolidated {deleted} files into {migrated} AP files.", title="Captures Consolidated")
                 self.remove_children()
                 self.mount(Label("[bold green]Captures consolidated[/]", id="legacy_done"))
@@ -233,6 +234,7 @@ class PreferencesModal(ModalScreen):
     def save_pressed(self, event: Event):
         Config.theme = self.app.theme
         Config.captures_dir = self.query_one("#captures_dir", Input).value
+        self.app.vault.refresh()
         Config.save_pcap = self.query_one("#save_pcap", Checkbox).value
         Config.scanner_sort_delay = float(self.query_one("#sort_delay", Select).value)
         self._save_and_dismiss()

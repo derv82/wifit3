@@ -5,11 +5,15 @@ from textual.app import App
 from textual.widgets import Button, Label
 
 from wifit3.persist.config import Config, ConfigError
+from wifit3.persist.vault import Vault
 from wifit3.ui.pref import ConsolidateModal, PreferencesModal
 
 
 class _Host(App):
     """A bare app to host the modal (no USB, no splash)."""
+    def __init__(self):
+        super().__init__()
+        self.vault = Vault()
 
 
 def _raise_config_error() -> None:

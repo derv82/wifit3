@@ -21,10 +21,8 @@ from ..selectable_rich_log import SelectableRichLog
 from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
 from wifit3.campaigns.wps.registrar import PinResult
-from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.config import Config
-from wifit3.models import AccessPoint, PersistedCapture
-from wifit3.persist.save import save_handshake, save_pmkid, save_wps_pbc
+from wifit3.models import AccessPoint
 from wifit3.crack.handshake import pmkid_crackable
 
 from ..capture_events import (
@@ -230,9 +228,6 @@ class ScannerView(Screen):
         self._beacon_flash_until: Dict[str, float] = {}
         # Per-BSSID dynamic row state.
         self._row_states: Dict[str, _APRowState] = {}
-        # captures/ history, loaded once at mount and hydrated onto APs by
-        # BSSID so previously-saved handshakes/PMKIDs/WEP keys re-badge.
-        self._capture_index: Dict[str, List[PersistedCapture]] = {}
         # WPS PBC auto-invade. ON by default. The enabled flag lives on the app
         # (app.pbc_enabled). Watcher + capturing serialization stay Scanner-local.
         self._pbc_watcher = PbcWatcher()
@@ -266,9 +261,9 @@ class ScannerView(Screen):
 
         log.write(treelog.header("Scanner initialized"))
         rows: List[str] = []
-        summary = self._load_capture_history()
+        summary = self.app.vault.summary()
         if summary:
-            rows.append(summary)
+            rows.append(f"Existing [bold]{Config.captures_dir}/[/bold]: {summary}")
         if array:
             device_line = device_scan_summary(array.members)
             if device_line:
@@ -283,27 +278,6 @@ class ScannerView(Screen):
             self._refresh_timer = self.set_interval(1 / 15, self.refresh_table)
             self._pbc_timer = self.set_interval(1.0, self._poll_pbc)
             self._log_pbc_status()  # Auto-invade is ON by default
-
-    def _load_capture_history(self) -> Optional[str]:
-        """Load captures/ once; return the one-line summary (None if empty)."""
-        self._capture_index = load_capture_index()
-        return self._format_history_summary(*summarize(self._capture_index))
-
-    @staticmethod
-    def _format_history_summary(hs: int, pmkid: int, wep: int, wps: int) -> Optional[str]:
-        """`Existing captures/: N handshakes, N PMKIDs, N WEP keys, N WPS PSKs`."""
-        parts = []
-        if hs:
-            parts.append(f"{hs} handshake{'s' * (hs != 1)}")
-        if pmkid:
-            parts.append(f"{pmkid} PMKID{'s' * (pmkid != 1)}")
-        if wep:
-            parts.append(f"{wep} WEP key{'s' * (wep != 1)}")
-        if wps:
-            parts.append(f"{wps} WPS PSK{'s' * (wps != 1)}")
-        if not parts:
-            return None
-        return f"Existing [bold]{Config.captures_dir}/[/bold]: " + ", ".join(parts)
 
     async def on_screen_resume(self) -> None:
         # Restart channel hopper
@@ -368,11 +342,6 @@ class ScannerView(Screen):
             age = self._ap_row_age(ap, now)
             if age >= EVICT_DURATION_S:
                 continue
-
-            if not ap.persisted:
-                hist = self._capture_index.get(ap.bssid)
-                if hist:
-                    ap.persisted = hist
 
             is_stale = age > STALE_DURATION_S
             n_cli = client_counts.get(ap.bssid, 0)
@@ -611,10 +580,9 @@ class ScannerView(Screen):
                 best_beacons = sib_ap.beacons
         return best_ssid
 
-    @staticmethod
-    def _ssid_chips_markup(ap: AccessPoint) -> str:
+    def _ssid_chips_markup(self, ap: AccessPoint) -> str:
         """Badges to the left of SSID for HS, PMK, WEP, WPS, silenced."""
-        types = {p.type for p in ap.persisted}
+        types = {p.type for p in self.app.vault.persisted(ap.bssid)}
         has_hs  = "HS"    in types or any(hs.is_complete for hs in ap.handshakes.values())
         has_pmk = "PMKID" in types or any(hs.pmkid and pmkid_crackable(hs) for hs in ap.handshakes.values())
         has_wep = "WEP"   in types or ap.wep_key is not None
@@ -647,7 +615,7 @@ class ScannerView(Screen):
                 f"[bold green]✓ HANDSHAKE[/bold green] ({pair}) on "
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{client}[/bold]"
             )
-            save_result = save_handshake(ap, ev.client_mac)
+            save_result = self.app.vault.save_handshake(ap, ev.client_mac)
         elif ev.kind == CaptureKind.UNCRACKABLE_HANDSHAKE:
             msg = (
                 f"[bold yellow]● {escape(ev.value or '?')} 4-way[/bold yellow] on "
@@ -658,7 +626,7 @@ class ScannerView(Screen):
                 f"[bold green]✓ PMKID[/bold green] on "
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{client}[/bold]"
             )
-            save_result = save_pmkid(ap, ev.client_mac)
+            save_result = self.app.vault.save_pmkid(ap, ev.client_mac)
         elif ev.kind == CaptureKind.DECLOAK:
             # A ● header (not a ✓ win): a hidden SSID became visible, not a credential.
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
@@ -843,9 +811,9 @@ class ScannerView(Screen):
         for ap in array.get_access_points():
             if not ap.wps_pbc_active:
                 continue
-            if ap.has_psk:
+            if self.app.vault.has_psk(ap):
                 ssid = escape(ap.ssid or ap.bssid)
-                self._write_log(f"  [dim]({ssid} already captured, PSK: [bold]{escape(ap.known_psk or '?')}[/bold])[/dim]")
+                self._write_log(f"  [dim]({ssid} already captured, PSK: [bold]{escape(self.app.vault.known_psk(ap) or '?')}[/bold])[/dim]")
             elif not launched:
                 launched = True
                 self._on_pbc_window(ap)
@@ -885,8 +853,8 @@ class ScannerView(Screen):
         if not self.app.pbc_enabled:
             self._write_log(treelog.leaf("[dim]auto-invade off: press [bold]w[/bold] to enable[/dim]"))
             return
-        if ap.has_psk:
-            wps = next((p for p in ap.persisted if p.type == "WPS" and p.value), None)
+        if self.app.vault.has_psk(ap):
+            wps = next((p for p in self.app.vault.persisted(ap.bssid) if p.type == "WPS" and p.value), None)
             where = f" [dim]({escape(Path(wps.path).name)})[/dim]" if wps else ""
             self._write_log(treelog.leaf(f"[italic]already captured[/italic]{where}"))
             return
@@ -916,7 +884,7 @@ class ScannerView(Screen):
                 self._write_log(treelog.branch_ok(
                     f"[black bold on cyan] PSK for {name}: \"{escape(outcome.psk)}\" [/black bold on cyan]"))
                 try:
-                    result = save_wps_pbc(ap, outcome.psk)
+                    result = self.app.vault.save_wps_pbc(ap, outcome.psk)
                     if result is None:
                         self._write_log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
                     else:

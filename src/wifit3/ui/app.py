@@ -11,6 +11,7 @@ from typing import Optional
 from wifit3 import __version__
 from wifit3.chips import log_trace
 from wifit3.persist.config import Config, ConfigError
+from wifit3.persist.vault import Vault
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
 from wifit3.device.manager import DeviceManager, Status
 from wifit3.device.watch import DeviceWatch
@@ -113,6 +114,7 @@ class WifiteApp(App):
                                         on_change=self._on_devices_changed,
                                         on_fatal=self._on_usb_fatal)
         self.target_ap: Optional[AccessPoint] = None
+        self.vault = Vault()
         self.pbc_enabled: bool = True
         register_app_themes(self)
         self.theme = Config.theme

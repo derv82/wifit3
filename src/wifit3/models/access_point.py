@@ -89,9 +89,6 @@ class AccessPoint:
     wps_pin: Optional[str] = None
     wps_pin_psk: Optional[str] = None
 
-    # Read-only capture history loaded from captures/ at scan start.
-    persisted: List[PersistedCapture] = field(default_factory=list)
-
     # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
     signal_by_card: Dict[str, int] = field(default_factory=dict)
     signal_history: Dict[str, deque[int]] = field(default_factory=dict, repr=False)
@@ -117,22 +114,6 @@ class AccessPoint:
             and self.wps_selected_registrar
             and self.wps_device_password_id == 0x0004
         )
-
-    @property
-    def known_psk(self) -> Optional[str]:
-        """The passphrase we hold for this AP from any source, recovered this session
-        (PBC/PIN) or loaded from a prior session's captures/ WPS file, else None. A WPS PIN
-        alone (no PSK) does not count."""
-        return (
-            self.wps_pbc_psk
-            or self.wps_pin_psk
-            or next((p.value for p in self.persisted if p.type == "WPS" and p.value), None)
-        )
-
-    @property
-    def has_psk(self) -> bool:
-        """True once we hold this AP's passphrase (see known_psk)."""
-        return self.known_psk is not None
 
     @property
     def is_hidden(self) -> bool:

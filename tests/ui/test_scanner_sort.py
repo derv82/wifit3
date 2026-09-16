@@ -8,6 +8,7 @@ from textual.widgets import DataTable
 
 from wifit3.models import AccessPoint
 from wifit3.persist.config import Config
+from wifit3.persist.vault import Vault
 from wifit3.ui.screens.scanner import ScannerView
 
 
@@ -72,6 +73,7 @@ class _ScannerHost(App):
         super().__init__()
         self.array = array
         self.pbc_enabled = True
+        self.vault = Vault()
 
     def persist_config(self) -> None:
         pass

@@ -24,6 +24,7 @@ from wifit3.models import AccessPoint, Handshake, IdKey, IdSource
 from wifit3.ui import focus_model as fm
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.persist.config import Config
+from wifit3.persist.vault import Vault
 
 
 @pytest.fixture(autouse=True)
@@ -78,28 +79,36 @@ class _FakePbc(WpsPbcCapture):
         pass
 
 
-def _wep_ap(*, wep_key=None, persisted_wep=False, unique_ivs=0):
-    persisted = []
-    if persisted_wep:
-        persisted = [types.SimpleNamespace(type="WEP", value="6162636465", timestamp=0)]
+def _headline(ap):
+    """Real Vault (over the tmp captures dir) fed to derive_headline."""
+    return fm.derive_headline(ap, None, Vault())
+
+
+def _seed_wep(d, bssid_dashed, ssid="Net", epoch=1700000000, key_hex="6162636465"):
+    (d / f"{ssid}_{bssid_dashed}_{epoch}_wep_key.txt").write_text(
+        f"SSID: {ssid}\nBSSID: x\nWEP key (hex):   {key_hex}\n", encoding="utf-8")
+
+
+def _wep_ap(*, wep_key=None, unique_ivs=0):
     return types.SimpleNamespace(
-        encryption="WEP", wep_key=wep_key, persisted=persisted,
+        encryption="WEP", wep_key=wep_key,
         wep=types.SimpleNamespace(unique_ivs=unique_ivs),
         handshakes={}, wpa3=False, transition_mode=False, bssid="aa:bb:cc:dd:ee:ff",
     )
 
 
-def _wpa_ap(*, known_psk=None):
+def _wpa_ap(*, wps_pbc_psk=None):
     return types.SimpleNamespace(
-        encryption="WPA2", wep_key=None, persisted=[], wep=None,
-        handshakes={}, wpa3=False, transition_mode=False, known_psk=known_psk,
-        bssid="aa:bb:cc:dd:ee:ff",
+        encryption="WPA2", wep_key=None, wep=None, handshakes={},
+        wpa3=False, transition_mode=False, bssid="aa:bb:cc:dd:ee:ff",
+        wps_pbc_psk=wps_pbc_psk, wps_pin_psk=None,
     )
 
 
-def test_headline_persisted_wep_idle_shows_recovered():
-    """An already-cracked AP, no campaign → the recovered-key banner."""
-    h = fm.derive_headline(_wep_ap(persisted_wep=True), None)
+def test_headline_persisted_wep_idle_shows_recovered(tmp_path):
+    """A prior-session WEP key on disk, no campaign → the recovered-key banner."""
+    _seed_wep(tmp_path, "aa-bb-cc-dd-ee-ff")
+    h = _headline(_wep_ap())
     assert "WEP key recovered" in h[0]
 
 
@@ -107,9 +116,9 @@ def test_headline_active_campaign_outranks_recovered_key():
     """Re-running Replay on an already-cracked AP must show LIVE progress (with
     the IV count), not the frozen 'recovered' banner: an active attack is the
     dominant activity."""
-    ap = _wep_ap(persisted_wep=True, unique_ivs=1234)
+    ap = _wep_ap(unique_ivs=1234)
     Campaign.active = _FakeWep(replay_state="replaying")
-    h = fm.derive_headline(ap, None)
+    h = _headline(ap)
     joined = " ".join(h)
     assert "Replaying" in h[0]
     assert "recovered" not in joined.lower()
@@ -119,46 +128,47 @@ def test_headline_active_campaign_outranks_recovered_key():
 def _pmkid_ap(pmkid_akm):
     hs = Handshake(bssid="aa:bb:cc:dd:ee:01", client_mac="11:22:33:44:55:66",
                    pmkid=bytes(16), pmkid_akm=pmkid_akm, beacon_frame=b"x")
-    return types.SimpleNamespace(encryption="WPA2", wep_key=None, persisted=[], wep=None,
-                                 known_psk=None, handshakes={"11:22:33:44:55:66": hs}, bssid="aa:bb:cc:dd:ee:ff")
+    return types.SimpleNamespace(encryption="WPA2", wep_key=None, wep=None,
+                                 wps_pbc_psk=None, wps_pin_psk=None,
+                                 handshakes={"11:22:33:44:55:66": hs}, bssid="aa:bb:cc:dd:ee:ff")
 
 
 def test_headline_sae_pmkid_is_not_a_captured_win():
     """A WPA3/SAE PMKID lands on the handshake but save_pmkid withholds it, so the
     headline must NOT claim 'Captured … saved' (the false-save bug)."""
-    joined = " ".join(fm.derive_headline(_pmkid_ap(pmkid_akm=8), None))
+    joined = " ".join(_headline(_pmkid_ap(pmkid_akm=8)))
     assert "Captured" not in joined and "PMKID ×" not in joined
     assert "saved to captures/" not in joined
 
 
 def test_headline_psk_pmkid_is_a_captured_win():
-    joined = " ".join(fm.derive_headline(_pmkid_ap(pmkid_akm=2), None))
+    joined = " ".join(_headline(_pmkid_ap(pmkid_akm=2)))
     assert "Captured" in joined and "PMKID ×1" in joined
 
 
 def test_headline_chop_and_crack_states():
-    ap = _wep_ap(persisted_wep=True)
+    ap = _wep_ap()
     Campaign.active = _FakeWep(chop=True)
-    chop = fm.derive_headline(ap, None)
+    chop = _headline(ap)
     assert "ChopChop" in chop[0]
     Campaign.active = _FakeWep(cracker_samples=CRACK_READY_THRESHOLD)
-    cracking = fm.derive_headline(ap, None)
+    cracking = _headline(ap)
     assert "Cracking" in cracking[0]
 
 
 def test_headline_cracking_names_the_concurrent_tx_action():
     """While cracking, the headline names BOTH the live TX action and the crack
     (replay/chop run concurrently and the action can change mid-crack)."""
-    ap = _wep_ap(persisted_wep=True)
+    ap = _wep_ap()
     crk = CRACK_READY_THRESHOLD
     Campaign.active = _FakeWep(cracker_samples=crk, replay_state="replaying")
-    replaying = fm.derive_headline(ap, None)
+    replaying = _headline(ap)
     assert "Replaying ARP" in replaying[0] and "Cracking" in replaying[0]
     Campaign.active = _FakeWep(cracker_samples=crk, replay_state="waiting-arp")
-    waiting = fm.derive_headline(ap, None)
+    waiting = _headline(ap)
     assert "Waiting for a packet" in waiting[0] and "Cracking" in waiting[0]
     Campaign.active = _FakeWep(chop=True, cracker_samples=crk)
-    chopping = fm.derive_headline(ap, None)
+    chopping = _headline(ap)
     assert "Chopping a packet" in chopping[0] and "Cracking" in chopping[0]
 
 
@@ -179,29 +189,29 @@ def test_wps_status_shows_fail_reason():
 def test_headline_recovered_wps_psk_shows_banner():
     """A recovered WPS PSK (PBC or PIN, after the campaign is torn down) shows a
     terminal banner instead of decaying back to 'Listening'."""
-    h = fm.derive_headline(_wpa_ap(known_psk="hunter2"), None)
+    h = _headline(_wpa_ap(wps_pbc_psk="hunter2"))
     assert "WPS PSK recovered" in h[0]
 
 
 def test_headline_listening_when_no_psk():
-    h = fm.derive_headline(_wpa_ap(known_psk=None), None)
+    h = _headline(_wpa_ap())
     assert "Listening for handshake" in h[0]
 
 
 def test_headline_live_pbc_outranks_listening():
     Campaign.active = _FakePbc()
-    h = fm.derive_headline(_wpa_ap(known_psk=None), None)
+    h = _headline(_wpa_ap())
     assert "PushButton" in h[0] and "capturing" in h[0].lower()
 
 
 def test_headline_wps_pin_found_while_held_then_psk_after_teardown():
     # Campaign still held with a found PIN → cracked banner.
     Campaign.active = _FakeWps(found_pin="12345670")
-    held = fm.derive_headline(_wpa_ap(known_psk=None), None)
+    held = _headline(_wpa_ap())
     assert "WPS PIN cracked" in held[0]
     # After teardown the PSK lives on the AP → recovered banner (not Listening).
     Campaign.active = None
-    after = fm.derive_headline(_wpa_ap(known_psk="hunter2"), None)
+    after = _headline(_wpa_ap(wps_pbc_psk="hunter2"))
     assert "WPS PSK recovered" in after[0]
 
 
@@ -631,12 +641,12 @@ def test_headline_eviltwin_active_and_captured():
     camp = _FakeEvilTwin(captured=False, twin_channel=1,
                          fakeap=types.SimpleNamespace(stats=stats))
     Campaign.active = camp
-    active = fm.derive_headline(_rsn_ap(), None)
+    active = _headline(_rsn_ap())
     assert "EvilTwin active" in active[0] and "CH 1" in active[0]
     assert "auth:2" in active[1] and "assoc:1" in active[1]
     assert "3 direct" in active[2] and "5 wildcard" in active[2]
     camp.captured = True
-    assert "Captured" in fm.derive_headline(_rsn_ap(), None)[0]
+    assert "Captured" in _headline(_rsn_ap())[0]
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -652,6 +662,6 @@ async def test_derive_buttons_all_disabled_when_silenced(buttons_screen, monkeyp
 
 
 def test_headline_silenced_outranks_listening(monkeypatch):
-    ap = _wpa_ap(known_psk=None)
+    ap = _wpa_ap()
     monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
-    assert "Silenced" in fm.derive_headline(ap, None)[0]
+    assert "Silenced" in _headline(ap)[0]

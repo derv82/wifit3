@@ -357,13 +357,15 @@ class WpsCampaign(Campaign):
             # PIN verified as working
             new_psk = out.psk or ""
             old_psk = st.found_psk or ""
-            if new_psk != old_psk:
+            if new_psk == old_psk:
+                self.log(f"[bold green]verified[/bold green] PIN [cyan]{pin}[/cyan] "
+                         f"[dim](PSK unchanged)[/dim]")
+            elif old_psk != "":
                 self.log(f"[bold green]verified[/bold green] PIN [cyan]{pin}[/cyan]: "
                          f"[bold yellow]PSK CHANGED[/bold yellow] "
                          f"[dim](updated below)[/dim]")
             else:
-                self.log(f"[bold green]verified[/bold green] PIN [cyan]{pin}[/cyan] "
-                         f"[dim](PSK unchanged)[/dim]")
+                self.log(f"[bold green]verified[/bold green] PIN [cyan]{pin}[/cyan]")
             st.found_psk = new_psk
             st.phase = "done"
             return

@@ -7,8 +7,8 @@ import pytest
 from textual.app import App
 from textual.widgets import DataTable
 
-from wifit3.models import AccessPoint, IdKey, IdSource, PersistedCapture
-from wifit3.persist.config import Config
+from wifit3.models import AccessPoint, IdKey, IdSource
+from wifit3.persist.vault import Vault
 from wifit3.ui.screens.filter import EncryptionFilter, ScanFilter
 from wifit3.ui.screens.scanner import ScannerView
 
@@ -67,6 +67,7 @@ class _ScannerHost(App):
         super().__init__()
         self.array = array
         self.pbc_enabled = True
+        self.vault = Vault()
 
     def persist_config(self) -> None:
         pass
@@ -163,33 +164,3 @@ def test_scanner_identity_cell_oui_fallback():
     scanner._theme_fg = "white"
     ap = AccessPoint(bssid="00:03:93:11:22:33", ssid="Alice’s iPhone")
     assert scanner._identity_cell(ap).plain == "Apple"
-
-
-
-
-def test_ssid_chips_zero_one_two(monkeypatch):
-    ap = AccessPoint(bssid="aa:bb:cc:00:00:40", ssid="Net", channel=1)
-
-    monkeypatch.setattr(Config, "silenced_bssids", [])
-    assert ScannerView._ssid_chips_markup(ap) == ""
-
-    monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
-    assert ScannerView._ssid_chips_markup(ap) == "[red]✗S[/red]"
-
-    ap.persisted = [PersistedCapture(type="HS", timestamp=0, path="x")]
-    assert ScannerView._ssid_chips_markup(ap) == "[red]✗S[/red] [green]✓HS[/green]"
-
-
-def test_ssid_cell_clips_wide_ssid_to_cap(monkeypatch):
-    """SSID width must be measured in display cells, not chars: a wide (2-cell)
-    SSID over the cap gets clipped, and its leading chip survives the clip."""
-    scanner = ScannerView()
-    scanner._theme_fg = "white"
-    ap = AccessPoint(bssid="aa:bb:cc:00:00:41", ssid="ネ" * 40, channel=1)  # 80 cells
-    monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
-
-    cell = scanner._ssid_cell(ap)
-    assert cell.cell_len <= ScannerView._SSID_CELL_MAX
-    assert cell.plain.startswith("✗S")
-    assert "…" in cell.plain
-    assert cell.justify == "right"

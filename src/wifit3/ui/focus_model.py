@@ -302,7 +302,7 @@ def wep_action_phrase(campaign) -> str:
     }.get(state, "Listening for a packet")
 
 
-def derive_headline(ap, array) -> list[str]:
+def derive_headline(ap, array, vault) -> list[str]:
     """The Campaign headline: up to 3 markup lines of current activity (reads the active campaign)."""
     enc = (ap.encryption or "").upper()
     wep = enc == "WEP"
@@ -360,10 +360,10 @@ def derive_headline(ap, array) -> list[str]:
                 f"bcast:{deauth.bcast_sent}[/dim]"]
 
     # 4. Recovered credentials, when idle: WEP key / WPS PSK.
-    if ap.wep_key is not None or any(p.type == "WEP" for p in ap.persisted):
+    if ap.wep_key is not None or any(p.type == "WEP" for p in vault.persisted(ap.bssid)):
         return ["[black bold on green] ✓ WEP key recovered [/black bold on green]",
                 "[dim]see the event log for the key[/dim]"]
-    if ap.known_psk:
+    if vault.known_psk(ap):
         return ["[black bold on green] ✓ WPS PSK recovered [/black bold on green]",
                 "[dim]see the event log for the passphrase[/dim]"]
 

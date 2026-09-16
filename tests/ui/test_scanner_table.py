@@ -12,6 +12,7 @@ from textual.app import App, ComposeResult
 from textual.widgets.data_table import ColumnKey
 
 from wifit3.models import AccessPoint
+from wifit3.persist.vault import Vault
 from wifit3.ui.screens.scanner import ScannerView, _APScanTable
 
 
@@ -140,6 +141,7 @@ class _ScannerHostApp(App):
         super().__init__()
         self.array = array
         self.pbc_enabled = True
+        self.vault = Vault()
     def on_mount(self):
         self.push_screen(ScannerView())
 
