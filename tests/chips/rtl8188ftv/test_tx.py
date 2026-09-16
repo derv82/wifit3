@@ -80,11 +80,26 @@ def test_build_tx_desc_mgmt_seq_mirrors_into_txdw9():
 def test_calc_tx_desc_csum_xor16():
     desc = build_tx_desc_mgmt(pkt_len=26, is_broadcast=False)
     calc_tx_desc_csum(desc)
-    # XOR-16 over the whole descriptor with csum cleared must be zero.
+    # XOR-16 over the first 32 bytes with csum cleared must be zero
+    # (core.c:5140: sizeof(struct rtl8xxxu_txdesc32) / sizeof(u16)).
     replayed = 0
-    for i in range(0, TX_DESC_SZ_8188F, 2):
+    for i in range(0, 32, 2):
         replayed ^= struct.unpack_from("<H", desc, i)[0]
     assert replayed == 0
+
+
+def test_calc_tx_desc_csum_excludes_txdw9():
+    # A nonzero SW-stamped seq lives in txdw9 (bytes 36-39), which the kernel's
+    # csum window (first 32 bytes) does NOT cover; the chip would drop the frame
+    # if txdw9 leaked into the checksum. Verify the csum stays unchanged when
+    # only txdw9 varies.
+    lo = build_tx_desc_mgmt(pkt_len=26, is_broadcast=False, seq=0)
+    hi = build_tx_desc_mgmt(pkt_len=26, is_broadcast=False, seq=0xFFF)
+    calc_tx_desc_csum(lo)
+    calc_tx_desc_csum(hi)
+    assert bytes(lo[:32]) == bytes(hi[:32])          # csum covers only the first 32 bytes
+    assert lo[32:36] == b"\x00\x00\x00\x00"          # txdw8 stays zero in both
+    assert hi[36:39] != lo[36:39]                    # txdw9 differs (carries the seq)
 
 
 def test_build_deauth_wire_layout():

@@ -87,6 +87,7 @@ from .constants import (
     REG_HT_SINGLE_AMPDU_8723B,
     REG_HWSEQ_CTRL,
     REG_MAC_SPEC_SIFS,
+    REG_MACID,
     REG_MAX_AGGR_NUM,
     REG_MCU_FW_DL,
     REG_NHM_TH3_TO_TH0_8723B,
@@ -215,6 +216,18 @@ def is_chip_warm(t: RTL8188FTVTransport) -> bool:
         CR_MAC_TX_ENABLE | CR_MAC_RX_ENABLE
     )
     return bool(mcu_fw & MCU_WINT_INIT_READY) and mac_enabled
+
+
+def set_macid(t: RTL8188FTVTransport, mac: bytes) -> None:
+    """``HW_VAR_MAC_ADDR`` [SRC] rtl8188e_hal_init.c — program the own-address into
+    REG_MACID (0x610-0x615), then read it back. In monitor (RCR_AAP) address-match
+    is bypassed, but airmon programs it and we mirror that so the chip state matches
+    the wire; enter_active_monitor repoints it at a forged MAC to make the hardware
+    HW-ACK frames addressed to that MAC."""
+    for i, b in enumerate(mac[:6]):
+        t.write8(REG_MACID + i, b)
+    for i in range(6):
+        t.read8(REG_MACID + i)
 
 
 # ---- MAC table replay -----------------------------------------------

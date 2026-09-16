@@ -65,6 +65,7 @@ REG_TXPKTBUF_WMAC_LBK_BF_HD = 0x045D  # regs.h:609
 REG_MAX_AGGR_NUM = 0x04CA           # regs.h:632
 REG_BT_COEX_TABLE = 0x0500          # regs.h:734
 REG_BT_COEX_CTRL = 0x0520           # regs.h:754
+REG_MACID = 0x0610                  # regs.h:834 (own-address, 6 bytes 0x610..0x615)
 REG_FW_START_ADDRESS = 0x1000       # regs.h:1199
 
 # ---- REG_SYS_ISO_CTRL bits (regs.h:10-15) ----------------------------
@@ -143,6 +144,7 @@ RF_SDMRSTB = 1 << 2
 # ---- M3: init_device post-PHY config (regs.h) -----------------------
 REG_FPGA0_TX_INFO = 0x0804          # regs.h:889
 REG_TXDMA_OFFSET_CHK = 0x020C       # regs.h:488
+REG_TXDMA_STATUS = 0x0210            # regs.h:490
 TXDMA_OFFSET_DROP_DATA_EN = 1 << 9  # regs.h:489
 TX_TOTAL_PAGE_NUM_8188F = 0xF7      # rtl8xxxu.h:40 (write +1)
 PAGE_NUM_HI_PQ_8188F = 0x0c         # rtl8xxxu.h:41

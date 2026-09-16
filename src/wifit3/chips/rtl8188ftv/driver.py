@@ -99,6 +99,8 @@ class RTL8188FTVDriver(Driver):
         self.dev = dev
         self.transport = RTL8188FTVTransport(dev)
         self.mac_address: Optional[str] = None
+        self._mac_bytes: Optional[bytes] = None   # raw 6 bytes for REG_MACID writes
+        self._efuse = None
         self.is_warm: bool = False
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
@@ -145,8 +147,11 @@ class RTL8188FTVDriver(Driver):
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         from .chan import set_channel_2g_20mhz
+        from .phy import set_tx_power
         loop = asyncio.get_running_loop()
         try:
+            if self._efuse is not None:
+                await loop.run_in_executor(None, set_tx_power, self.transport, channel, self._efuse)
             await loop.run_in_executor(None, set_channel_2g_20mhz, self.transport, channel)
             self.current_channel = channel
             return True
@@ -185,6 +190,26 @@ class RTL8188FTVDriver(Driver):
         buf = bytearray(frame_bytes)
         struct.pack_into("<H", buf, 22, (self._tx_seq << 4) | (buf[22] & 0x0F))
         return bytes(buf)
+
+    # ---- active monitor (HW-ACK a chosen MAC) -----------------------------
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Point REG_MACID at ``mac`` so the hardware HW-ACKs frames addressed to
+        it while staying in monitor mode — the prerequisite for ACKed conversations
+        (WPS/EAP/PMKID). Reversed by exit_active_monitor."""
+        await self._set_self_mac(bytes(mac))
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the card's real EFUSE MAC in REG_MACID (stop ACKing the forged
+        MAC); no-op when the real MAC was never cached (warm reattach)."""
+        if self._mac_bytes:
+            await self._set_self_mac(self._mac_bytes)
+
+    async def _set_self_mac(self, mac_bytes: bytes) -> None:
+        from .mac import set_macid
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, set_macid, self.transport, mac_bytes)
 
     # ---- RX-ACK detection (Driver._enable_rx_acks) ------------------
 
@@ -269,8 +294,10 @@ class RTL8188FTVDriver(Driver):
         from .efuse import read_and_parse
         _update(0.55, "Reading EFUSE...")
         efuse = await loop.run_in_executor(None, read_and_parse, t)
+        self._efuse = efuse
         if efuse.mac_address:
             self.mac_address = efuse.mac_address.hex(":")
+            self._mac_bytes = bytes(efuse.mac_address)
         logger.debug("EFUSE MAC = %s", self.mac_address)
 
         from .mac import apply_mac_init_table, init_device_post_phy

@@ -160,13 +160,15 @@ def build_tx_desc_mgmt(pkt_len: int, is_broadcast: bool, *,
 def calc_tx_desc_csum(desc: bytearray) -> None:
     """Port of `rtl8xxxu_calc_tx_desc_csum` (core.c:5128-5141).
 
-    XOR-16 over the 40-byte descriptor with the `csum` field (bytes
-    28-29) cleared first, result stored back into csum bytes.
+    XOR-16 over the FIRST 32 bytes of the descriptor (``sizeof(struct
+    rtl8xxxu_txdesc32)`` — the csum field, bytes 28-29, is in that window;
+    txdw8/txdw9 at bytes 32-39 are NOT checksummed) with the csum field
+    cleared first, result stored back into csum bytes.
     """
     desc[28] = 0
     desc[29] = 0
     csum = 0
-    for i in range(0, TX_DESC_SZ_8188F, 2):
+    for i in range(0, 32, 2):
         csum ^= int.from_bytes(desc[i : i + 2], "little")
     csum &= 0xFFFF
     desc[28] = csum & 0xFF

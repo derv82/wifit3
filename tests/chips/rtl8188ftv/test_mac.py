@@ -42,6 +42,7 @@ from wifit3.chips.rtl8188ftv.mac import (
     init_queue_reserved_page,
     init_statistics,
     is_chip_warm,
+    set_macid,
     set_trxff_rx_page_boundary,
 )
 
@@ -240,3 +241,13 @@ def test_is_chip_warm_requires_mac_enable_bits():
     assert is_chip_warm(t) is False
     t.reads[REG_CR] = CR_MAC_TX_ENABLE | CR_MAC_RX_ENABLE
     assert is_chip_warm(t) is True
+
+
+def test_set_macid_writes_macid_bytes_then_reads_back():
+    t = _Fake()
+    set_macid(t, bytes.fromhex("d46e0e0dadbf"))
+    mac = dict(w for w in t.writes if 0x0610 <= w[0] <= 0x0615)
+    assert mac == {
+        0x0610: 0xD4, 0x0611: 0x6E, 0x0612: 0x0E,
+        0x0613: 0x0D, 0x0614: 0xAD, 0x0615: 0xBF,
+    }
