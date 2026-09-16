@@ -143,6 +143,7 @@ A row with only a 2G figure is a 2.4 GHz-only radio.
 |------|----------------------------|------------------|-----------------|---------------------------|
 | RTL8812AU  | yes, keyed on Addr2 | 2G 1, 5G 3 | 2G 1, 5G 1 | 2G ~41, 5G ~49 |
 | RTL8822BU  | yes, keyed on Addr2 | 2G 1, 5G 2 | 2G 1, 5G 1 | 2G ~11, 5G ~13 |
+| RTL8822CU  | yes, keyed on Addr2 | 2G 1, 5G 1 | 2G 1, 5G 1 | 2G ~7, 5G ~7 |
 | RTL8821AU  | yes, keyed on Addr2 | 2G 1, 5G 1 | 2G 1, 5G 1 | 2G ~42, 5G ~49 |
 | RTL8821CU  | yes, keyed on Addr2 | 2G 1, 5G 1 | 2G 1, 5G 1 | 2G ~7, 5G ~7 |
 | RTL8188EUS | yes, keyed on Addr2 | 2G 1 | 2G 1 | 2G ~13 |
@@ -184,6 +185,7 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
 |------|--------------------|---------------------|-----------------|-----------------|
 | RTL8812AU  | yes (2G 104, 5G 100)   | 0   | yes (2G 107, 5G 100) | 0 |
 | RTL8822BU  | yes (2G 108, 5G 100)   | 0   | yes (2G 111, 5G 100) | 0 |
+| RTL8822CU  | yes (2G 101, 5G 99)    | 0   | yes (2G 102, 5G 100) | 0 |
 | RTL8821AU  | yes (2G 100, 5G 100)   | 0   | yes (2G 101, 5G 100) | 0 |
 | RTL8821CU  | yes (2G 101, 5G 100)   | 0   | n/r (warm boot)      | 0 |
 | RTL8188EUS | yes (2G 100)           | 0   | yes (2G 100)         | 0 |

@@ -129,4 +129,6 @@ All three need a local copy of the vendor driver source or a capture, neither of
 
 ## Debug log
 
-(empty)
+- 2026-09-16: ACK bench vs the 8822BU (rx_autoack / tx_retries, both bands). Auto-ACKs a spoofed
+  MAC (active monitor) and its own silicon MAC (~100/100); TX stops on the target's ACK keyed on
+  Addr2 (real AP median 1 copy, dead target ~7 both bands). SPOOFABLE confirmed. See docs/ACKS.md.
