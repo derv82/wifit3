@@ -151,6 +151,7 @@ A row with only a 2G figure is a 2.4 GHz-only radio.
 | MT7612U    | yes, needs active monitor | 2G 11, 5G 16 | 2G 1, 5G 1 | 2G ~13, 5G ~16 |
 | MT7610U    | yes, needs active monitor | 2G 12, 5G 16 | 2G 1, 5G 1 | 2G ~16, 5G ~16 |
 | MT7921AU   | yes, needs active monitor | 2G 13, 5G 15 | 2G 1, 5G 1 | 2G ~13, 5G ~15 |
+| MT7925AU   | yes, needs active monitor | 2G 12, 5G 15 | 2G 1, 5G 1 | 2G ~11, 5G ~15 |
 | RT3070     | yes, needs active monitor | 2G 7 | 2G 1 | 2G ~8 |
 | RT5370     | yes, needs active monitor | 2G 7 | 2G ~2 | 2G ~8 |
 | RT5372     | yes, needs active monitor | 2G 7 | 2G 1 | 2G ~8 |
@@ -191,6 +192,7 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
 | MT7612U    | yes (2G 97, 5G 80)     | 0   | yes (2G 104, 5G 100) | 0 |
 | MT7610U    | yes (2G 100, 5G 100)   | 0   | yes (2G 100, 5G 100) | 0 |
 | MT7921AU   | yes (2G 102, 5G 100)   | 0   | no (2G 0)            | 0 |
+| MT7925AU   | yes (2G 100, 5G 99)    | 0   | no (2G 0, 5G 0)      | 0 |
 | RT3070     | yes (2G 100)           | 0   | yes (2G 101)         | 0 |
 | RT5370     | yes (2G 102)           | 0   | yes (2G 100)         | 0 |
 | RT5372     | yes (2G 100)           | 0   | yes (2G 101)         | 0 |
