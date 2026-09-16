@@ -146,3 +146,25 @@ def test_non_wps_persisted_is_not_a_psk(tmp_path):
     v.save_handshake(ap, "11:22:33:44:55:66")
     v.save_wep_key(ap, b"abcde")
     assert v.has_psk(ap) is False and v.known_psk(ap) is None
+
+
+def test_kind_predicates(tmp_path):
+    v = Vault()
+    ap = _ap_with_hs(pmkid=b"\x11" * 16)
+    assert not v.has_handshake(ap) and not v.has_pmkid(ap)
+    v.save_handshake(ap, "11:22:33:44:55:66")
+    v.save_pmkid(ap, "11:22:33:44:55:66")
+    assert v.has_handshake(ap) and v.has_pmkid(ap)
+    assert not v.has_wep_key(ap) and not v.has_wps_psk(ap)
+
+    wep_ap = AccessPoint(bssid="00:11:22:33:44:aa", ssid="W")
+    assert not v.has_wep_key(wep_ap)
+    v.save_wep_key(wep_ap, b"abcde")
+    assert v.has_wep_key(wep_ap)
+
+    wps_ap = AccessPoint(bssid="00:11:22:33:44:bb", ssid="P")
+    assert v.wps_capture(wps_ap) is None and not v.has_wps_psk(wps_ap)
+    v.save_wps_pbc(wps_ap, "hunter2")
+    assert v.has_wps_psk(wps_ap)
+    cap = v.wps_capture(wps_ap)
+    assert cap is not None and cap.value == "hunter2"

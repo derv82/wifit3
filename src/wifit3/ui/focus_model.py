@@ -360,7 +360,7 @@ def derive_headline(ap, array, vault) -> list[str]:
                 f"bcast:{deauth.bcast_sent}[/dim]"]
 
     # 4. Recovered credentials, when idle: WEP key / WPS PSK.
-    if ap.wep_key is not None or any(p.type == "WEP" for p in vault.persisted(ap.bssid)):
+    if ap.wep_key is not None or vault.has_wep_key(ap):
         return ["[black bold on green] ✓ WEP key recovered [/black bold on green]",
                 "[dim]see the event log for the key[/dim]"]
     if vault.known_psk(ap):

@@ -582,11 +582,11 @@ class ScannerView(Screen):
 
     def _ssid_chips_markup(self, ap: AccessPoint) -> str:
         """Badges to the left of SSID for HS, PMK, WEP, WPS, silenced."""
-        types = {p.type for p in self.app.vault.persisted(ap.bssid)}
-        has_hs  = "HS"    in types or any(hs.is_complete for hs in ap.handshakes.values())
-        has_pmk = "PMKID" in types or any(hs.pmkid and pmkid_crackable(hs) for hs in ap.handshakes.values())
-        has_wep = "WEP"   in types or ap.wep_key is not None
-        has_wps = "WPS"   in types or ap.wps_pbc_psk is not None
+        vault = self.app.vault
+        has_hs  = vault.has_handshake(ap) or any(hs.is_complete for hs in ap.handshakes.values())
+        has_pmk = vault.has_pmkid(ap) or any(hs.pmkid and pmkid_crackable(hs) for hs in ap.handshakes.values())
+        has_wep = vault.has_wep_key(ap) or ap.wep_key is not None
+        has_wps = vault.has_wps_psk(ap) or ap.wps_pbc_psk is not None
         silent = Config.is_silenced(ap.bssid)
         badges = [
             (silent, "[red]✗S[/red]"),
@@ -854,7 +854,7 @@ class ScannerView(Screen):
             self._write_log(treelog.leaf("[dim]auto-invade off: press [bold]w[/bold] to enable[/dim]"))
             return
         if self.app.vault.has_psk(ap):
-            wps = next((p for p in self.app.vault.persisted(ap.bssid) if p.type == "WPS" and p.value), None)
+            wps = self.app.vault.wps_capture(ap)
             where = f" [dim]({escape(Path(wps.path).name)})[/dim]" if wps else ""
             self._write_log(treelog.leaf(f"[italic]already captured[/italic]{where}"))
             return

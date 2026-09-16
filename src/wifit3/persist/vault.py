@@ -66,6 +66,25 @@ class Vault:
         """True once we hold this AP's passphrase (see known_psk)."""
         return self.known_psk(ap) is not None
 
+    def has_handshake(self, ap: "AccessPoint") -> bool:
+        return self._has(ap.bssid, "HS")
+
+    def has_pmkid(self, ap: "AccessPoint") -> bool:
+        return self._has(ap.bssid, "PMKID")
+
+    def has_wep_key(self, ap: "AccessPoint") -> bool:
+        return self._has(ap.bssid, "WEP")
+
+    def has_wps_psk(self, ap: "AccessPoint") -> bool:
+        return self._has(ap.bssid, "WPS")
+
+    def wps_capture(self, ap: "AccessPoint") -> Optional[PersistedCapture]:
+        """Newest saved WPS credential for this AP (PIN- or PBC-derived), or None."""
+        return next((c for c in self.persisted(ap.bssid) if c.type == "WPS" and c.value), None)
+
+    def _has(self, bssid: str, kind: str) -> bool:
+        return any(c.type == kind for c in self.persisted(bssid))
+
     # ----- writes (persist to disk, then fold into the cache) -----
 
     def save_handshake(self, ap: "AccessPoint", client_mac: str) -> Optional[SaveResult]:
