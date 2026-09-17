@@ -85,11 +85,11 @@ class TestLoadCaptureIndex:
 
     def test_ssid_recovered_from_filename(self, tmp_path):
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000_handshake.hc22000", _HS_LINE)
-        assert load_capture_index(tmp_path)[_BSSID_COLON][0].ssid == "TestNet"
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "TestNet"
 
     def test_ssid_with_underscores_recovered_whole(self, tmp_path):
         _write(tmp_path, f"Beach_2_4_{_BSSID_DASH}_1700000008_handshake.hc22000", _HS_LINE)
-        assert load_capture_index(tmp_path)[_BSSID_COLON][0].ssid == "Beach_2_4"
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Beach_2_4"
 
     def test_unrecognized_name_ignored(self, tmp_path):
         _write(tmp_path, "cracks.txt", "somekey\n")

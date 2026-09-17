@@ -80,21 +80,23 @@ def test_export_zip_never_reexports_a_previous_export(tmp_path):
 def test_open_in_file_manager_uses_xdg_open_on_linux(mocker):
     mocker.patch.object(sys, "platform", "linux")
     popen = mocker.patch("wifit3.ui.screens.vault.subprocess.Popen")
-    open_in_file_manager(Path("/tmp/captures"))
-    popen.assert_called_once_with(["xdg-open", "/tmp/captures"])
+    target = Path("/tmp/captures")
+    open_in_file_manager(target)
+    popen.assert_called_once_with(["xdg-open", str(target)])
 
 
 def test_open_in_file_manager_uses_open_on_macos(mocker):
     mocker.patch.object(sys, "platform", "darwin")
     popen = mocker.patch("wifit3.ui.screens.vault.subprocess.Popen")
-    open_in_file_manager(Path("/tmp/captures"))
-    popen.assert_called_once_with(["open", "/tmp/captures"])
+    target = Path("/tmp/captures")
+    open_in_file_manager(target)
+    popen.assert_called_once_with(["open", str(target)])
 
 
 # ----- the screen, end to end -------------------------------------------------
 
-async def _mounted_vault(app, captures_dir: Path) -> VaultView:
-    view = VaultView(captures_dir=captures_dir)
+async def _mounted_vault(app) -> VaultView:
+    view = VaultView()
     app.install_screen(view, name="vault-under-test")
     await app.push_screen("vault-under-test")
     return view
@@ -103,14 +105,13 @@ async def _mounted_vault(app, captures_dir: Path) -> VaultView:
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_reload_populates_rows_newest_first(tmp_path):
-    captures = tmp_path / "captures"
-    captures.mkdir()
-    _write(captures, "Old_aa-bb-cc-dd-ee-ff_1000_handshake.hc22000", _HS_LINE)
-    _write(captures, "New_aa-bb-cc-dd-ee-ff_2000_pmkid.hc22000", _HS_LINE)
+    # _captures_to_tmp (autouse) points Config.captures_dir at tmp_path.
+    _write(tmp_path, "Old_aa-bb-cc-dd-ee-ff_1000_handshake.hc22000", _HS_LINE)
+    _write(tmp_path, "New_aa-bb-cc-dd-ee-ff_2000_pmkid.hc22000", _HS_LINE)
 
     app = WifiteApp()
     async with app.run_test() as pilot:
-        view = await _mounted_vault(app, captures)
+        view = await _mounted_vault(app)
         await pilot.pause(0)
         table = view.query_one("#vault-table")
         assert table.row_count == 2
@@ -121,15 +122,13 @@ async def test_reload_populates_rows_newest_first(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_remove_selected_deletes_the_file_and_reloads(tmp_path):
-    captures = tmp_path / "captures"
-    captures.mkdir()
-    _write(captures, "Net_aa-bb-cc-dd-ee-ff_1000_handshake.hc22000", _HS_LINE)
+    _write(tmp_path, "Net_aa-bb-cc-dd-ee-ff_1000_handshake.hc22000", _HS_LINE)
 
     app = WifiteApp()
     async with app.run_test() as pilot:
-        view = await _mounted_vault(app, captures)
+        view = await _mounted_vault(app)
         await pilot.pause(0)
-        target = captures / "Net_aa-bb-cc-dd-ee-ff_1000_handshake.hc22000"
+        target = tmp_path / "Net_aa-bb-cc-dd-ee-ff_1000_handshake.hc22000"
         assert target.exists()
 
         view.action_remove_selected()
@@ -142,14 +141,12 @@ async def test_remove_selected_deletes_the_file_and_reloads(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_copy_selected_copies_the_wep_key_to_the_clipboard(tmp_path, mocker):
-    captures = tmp_path / "captures"
-    captures.mkdir()
-    _write(captures, "Net_aa-bb-cc-dd-ee-ff_1000_wep_key.txt",
+    _write(tmp_path, "Net_aa-bb-cc-dd-ee-ff_1000_wep_key.txt",
           "SSID:  Net\nBSSID: aa:bb:cc:dd:ee:ff\nWEP key (hex):   6162636465\n")
 
     app = WifiteApp()
     async with app.run_test() as pilot:
-        view = await _mounted_vault(app, captures)
+        view = await _mounted_vault(app)
         await pilot.pause(0)
         copy = mocker.patch.object(app, "copy_to_clipboard")
         view.action_copy_selected()
@@ -158,12 +155,10 @@ async def test_copy_selected_copies_the_wep_key_to_the_clipboard(tmp_path, mocke
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_no_selection_actions_are_a_safe_noop(tmp_path, mocker):
-    captures = tmp_path / "captures"
-    captures.mkdir()
+async def test_no_selection_actions_are_a_safe_noop(mocker):
     app = WifiteApp()
     async with app.run_test() as pilot:
-        view = await _mounted_vault(app, captures)
+        view = await _mounted_vault(app)
         await pilot.pause(0)
         copy = mocker.patch.object(app, "copy_to_clipboard")
         view.action_remove_selected()      # must not raise on an empty table

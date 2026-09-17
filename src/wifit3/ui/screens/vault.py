@@ -25,6 +25,7 @@ from textual.widgets import DataTable, Footer, Header
 
 from wifit3.models import PersistedCapture
 from wifit3.persist.capture_history import load_capture_index
+from wifit3.persist.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +83,14 @@ class VaultView(Screen):
                           border-title-color: ansi_cyan; border-title-style: bold; }
     """
 
-    def __init__(self, captures_dir: Path = Path("captures")) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.captures_dir = Path(captures_dir)
         self._by_path: Dict[str, PersistedCapture] = {}
+
+    @property
+    def captures_dir(self) -> Path:
+        """The configured captures/ dir; Config is the single source of truth."""
+        return Path(Config.captures_dir)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -110,7 +115,7 @@ class VaultView(Screen):
         table = self.query_one("#vault-table", DataTable)
         table.clear()
         self._by_path.clear()
-        index = load_capture_index(self.captures_dir)
+        index = load_capture_index()
         rows: List[tuple] = [(bssid, cap) for bssid, caps in index.items() for cap in caps]
         rows.sort(key=lambda r: r[1].timestamp, reverse=True)
         for bssid, cap in rows:
