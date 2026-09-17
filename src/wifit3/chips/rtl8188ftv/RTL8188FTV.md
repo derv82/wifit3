@@ -3,7 +3,7 @@
 ## Captured Wireless Card
 - No-name `0bda:f179` 802.11b/g/n dongle — 1T1R, 2.4 GHz only, firmware-based.
 - Enumerates at USB2 speed only (Bus 001). The monitor capture carries a single bulk-IN completion pipe (RA pipe, URB `0x81`); no bulk-OUT URBs appear in the bring-up/scan phase, so the TX lane count is only visible via `probe_endpoints` on live hardware.
-- Capture: `driver_captures/captures_rtl8188ftv/capture-1.pcap` (one cold-boot session, 4995 driver-side ops).
+- Capture: `driver_captures/captures_rtl8188ftv/capture-1.pcap` (a cold-boot session, 4995 driver-side ops, incl. the 53-hop scan) + `capture-2.pcap` (a second cold boot, bring-up cross-validation — see Known Problems).
 
 ## Linux Driver Source
 - Link: mainline `torvalds/linux`, `drivers/net/wireless/realtek/rtl8xxxu/` — the 8188F fileops vector (`8188f.c`) + shared `core.c`/`rtl8xxxu.h`/`regs.h`.
@@ -32,7 +32,8 @@
 ## Known Problems
 - The hardware does **not auto-ACK spoofed MACs** (`rx_autoack` — run on a verified-working RX path — 8/150 on a spoofed MAC, 0/150 controls and bogus) → `FAKE_MAC = UNIMPLEMENTED`; `enter_active_monitor` ports REG_MACID, but the bench verdict stays negative and flipping `FAKE_MAC` awaits a positive run.
 - The ack-tap/RSSI/`record_ack` path is ported; ACK delivery works (control frames + RXFLTMAP1 bit 13) but the chip does not reliably answer — the auto-ACK verdict is negative.
-- Single capture only: channel-hop scan covers 53 hops; no second capture for cross-validation.
+- Two cold-boot captures, cross-validated: `capture-2` reproduces the whole bring-up **byte-for-byte through the RX-path start tail** (chip ID/EFUSE, FW upload, MAC/BB/RF init, LC/IQ calibration, RF tail — every emitted write on the wire equal), then the gate — authored to `capture-1` — rejects the sibling session because the kernel interleaves an extra PAD-status read (`0x0422`) in the RX-tail window and the hop-scan phase exists only in `capture-1` (the 53-hop scan ran under a scanning tool; `capture-2` is an idle bring-up: 340 RX frames, no hops). No missing port op: the port's write sequence is identical in both; only a capture-2-only kernel read differs.
+- Untested-on-this-hardware, marked `# TODO: verify, untested here`: the queue-priority `ep_tx_count` cases 1/3 (kernel core.c:2567-2630) need a 1- or 3-bulk-OUT 8188f dongle; the foreign-rtl_id EFUSE fail-path needs a mismatched board (8188f.c:707-710).
 
 ## Driver Entry Points
 - Bring-up: `driver.connect` → `_cold_bring_up` (EFUSE → FW → MAC/BB/RF → LC/IQ → RX path → tune ch1) or `_warm_reattach`; both funnel to `_finish_attach` (endpoint probe, pipe reset, monitor RCR, RX reader).
@@ -46,27 +47,9 @@
 - ACK detection: `driver._enable_rx_acks` / `_disable_rx_acks` → `rx.admit_ack_frames` / `drop_ack_frames`.
 
 ## Scripts
-- **Gate:** `scripts/chips/rtl8188ftv/verify_pcap.py` — byte-diffs the whole cold-boot capture (EFUSE · FW blob · MAC+PHY · LC/IQ · RX path · 53-hop scan) and gates the bulk-IN RX decode (3895 frames / 1927 beacons / RSSI [-90,-32]).
+- **Gate:** `scripts/chips/rtl8188ftv/verify_pcap.py` — byte-diffs the whole cold-boot capture (EFUSE · FW blob · MAC+PHY · LC/IQ · RX path · 53-hop scan) and gates the bulk-IN RX decode (3895 frames / 1927 beacons / RSSI [-90,-32]). Authored to `capture-1` (see the cross-validation note above).
 
 ## Debug log
 
-### 2026-09-16 — Linux A/B baseline: parity
-`baseline_diff` on the fresh pair of JSONs: **beacon rate 7.0/s on the pinned ref AP — matches Linux**, **RSSI median +0.7 dB vs Linux over 22 common APs** (worst single-AP +20 dB at the low-RSSI edge), breadth 24 vs Linux's 29 (5 fewer, weak-AP bounded), channel tune 4/4 with 0 silent / 0 cross-channel. Note: the airmon-created `wlan0mon` wdev refuses `iw set channel` (EBUSY even with the iface down on a fresh driver); tuning works on the primary iface (`wlx…`) with the down/set/up dance once the monitor wdev isn't involved.
-
-### 2026-09-16 — TX and RX hardware-verified on-air
-The "0 on-air" and "0 host RX" reports were both probe-side artifacts, not chip faults: `.source` vs `.src` keying + bytes-vs-str counter keys (TX), and shadowing `_rx_read_once` after the reader thread had already captured the original bound method (RX). With the confounders cleared: `tx_retries` (ch11, cold chip) caught **611 copies** of FTV-injected unicast; a broadcast deauth with a unique src reached the AR9271 **53/60**; and the FTV's own Scanner-path reader delivered **99 beacons/3 s + 27/30 injected deauths + 25 data frames** (RCR/FLTMAP0/2 exactly the replay-verified config). Verdict: FTV does NOT auto-ACK (8/150, controls 0, bogus 0) → `FAKE_MAC` stays `UNIMPLEMENTED`. Committed `f2abe0a4`.
-
-### 2026-09-16 — DATA-frame TX live-verified
-The mgmt-only TX scope (tx.py) was the last cap on the attack suite (WEP/ARP-replay, WPS EAPOL, EvilTwin handshakes are data frames). Ported the `fill_txdesc_v2` DATA branch: BE queue (0x0), NO `USE_DRIVER_RATE`, `0x1f<<8` rate-fallback mask, same AGG_BREAK/SW-seq/csum; `driver._inject_frame` now dispatches on FC type to the MGMT lane (EP 0x02) or DATA lane (EP 0x03, kernel `out_ep[1]` case 2). Live bench (ch11, AR9271 sniff): broadcast DATA **60/60 accepted → 55 on air**, unicast DATA **60/60 accepted → 60 on air**, 0 in baseline. Tests: `pick_bulk_out_data`/`build_tx_desc_data`/`send_data_frame` + lane-routing unit tests (58 FTV tests, full suite 2869 passed, ruff clean). This unblocks WEP percentage, WPS M1-M7, and the EvilTwin handshake. Soak: 30-min ch6 dwell, 506,302 bursts, 0 dropped, `wedged=False`.
-
-### 2026-09-16 — 20-min channel-hop soak: flat
-14-channel loop (1-14), 2 s dwell, 20 min: **600 hops, 0 tune failures**, 66,728 RX bursts, 32,388 beacons, **0 dropped**, `wedged=False`. Second soak in the same session (ch6 dwell + hop) — no reader stall or channel-tune wear.
-
-### 2026-09-17 — PMKID stub live-verified; deauth lane live on the test AP
-Against the lab's own WPA2-PSK test AP: the PMKID harvest ran the full forged Auth+Assoc (single PSK AKM) and the AP answered with **M1 — carrying no PMKID KDE**, so the campaign dispatched `NO_KDE` (this AP is PMKID-immune; the stub interaction itself is proven on-air). Round-robin+broadcast AutoDeauth delivered 300 broadcast deauth frames with no wedge, but the AP had **0 associated clients**, so no re-association → no 4-way to capture yet (needs one device on the WPA2 AP). WPS is not advertised by this AP; WEP needs a WEP AP.
-
-### 2026-09-17 — PMKID actively extracted
-A second WPA2-PSK test AP does expose a PMKID: one forged Auth+Assoc round drew an **M1 carrying the PMKID KDE**, and the campaign returned the 16-byte PMKID on the first attempt. So the harvest path is fully live on this port: the earlier `NO_KDE` verdict was that AP's policy, not a stub gap.
-
-### 2026-09-17 — WPA2 4-way + WPS PIN labs: pass
-With a device joined to the WPA2 test AP's SSID, a single broadcast-deauth pass re-kicked the STA and the parser sink recorded a **crackable 4-way pair** → Deauth → 4-way row done. On the WPS-capable 2.4 GHz test AP (WPS v1.0, unlocked), a full **PIN → M7 → PSK reveal ran 5/5** with the correct PIN (median 1.6 s, 1.5-1.7 s range) while the wrong-PIN path produced a **real NACK** (2nd-half-wrong), not a timeout. A transient AP-side lockout caused 3 silent timeouts on a back-to-back burst, recovering after cooldown — not a TX fault. Note: the WPS PIN had already been recovered in an earlier session (on-disk resume state); this run re-verified it against the live AP and re-revealed the same PSK.
+- **WPS bursts hit a transient lockout on the lab AP:** back-to-back website_PIN runs produced 3 silent M-* timeouts, all recovering after a cooldown — the AP (WPS v1.0) rate-limits, not an FTV TX fault. Open; expected on congested WPS withdrawals.
+- **Live-lab tooling caveat (env, still true):** the airmon-created `wlan0mon` wdev refuses `iw set channel` (EBUSY even with the iface down on a fresh driver); tuning works on the primary iface (`wlx…`) with the down/set/up dance once the monitor wdev isn't involved.
