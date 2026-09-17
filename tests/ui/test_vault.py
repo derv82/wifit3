@@ -11,6 +11,7 @@ from wifit3.ui.screens.vault import VaultView, _count_captures, _count_keys
 from wifit3.ui.screens.vault_item import ConfirmModal, VaultItemView, _CapturePanel, _hex_to_ascii
 
 _HS_LINE = "WPA*02*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***2\n"
+_PMKID_LINE = "WPA*01*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***\n"
 _WEP_TXT = "SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nWEP key (hex):   6162636465\n"
 
 
@@ -18,8 +19,9 @@ def _write(d, name, content):
     (d / name).write_text(content, encoding="utf-8")
 
 
-def _cap(kind, path, bssid="aa:bb:cc:dd:ee:ff", value=None):
-    return PersistedCapture(type=kind, timestamp=1, path=path, bssid=bssid, value=value)
+def _cap(kind, path, bssid="aa:bb:cc:dd:ee:ff", value=None, record_count=1):
+    return PersistedCapture(type=kind, timestamp=1, path=path, bssid=bssid, value=value,
+                            record_count=record_count)
 
 
 # ----- pure helpers ----------------------------------------------------------
@@ -36,13 +38,13 @@ def test_hex_to_ascii_invalid_is_blank():
     assert _hex_to_ascii("nothex") == ""
 
 
-def test_count_captures_dedupes_hc_and_pcap():
+def test_count_captures_sums_hashline_records():
     caps = [
-        _cap(CaptureType.HS, "A_1_handshake.hc22000"),
-        _cap(CaptureType.HS, "A_1_handshake.pcap"),   # same stem -> one capture
-        _cap(CaptureType.PMKID, "A_2_pmkid.hc22000"),
+        _cap(CaptureType.HS, "agg.hc22000", record_count=1),
+        _cap(CaptureType.PMKID, "agg.hc22000", record_count=2),   # aggregate: 1 HS + 2 PMKID
+        _cap(CaptureType.HS, "hs.pcap", record_count=0),           # raw .pcap companion
     ]
-    assert _count_captures(caps) == 2
+    assert _count_captures(caps) == 3
 
 
 def test_count_keys_counts_creds_with_value():
@@ -220,3 +222,17 @@ async def test_copy_pin_copies_the_pin(tmp_path, mocker):
         view.query_one(_CapturePanel).query_one(".copy-pin", Button).press()
         await pilot.pause()
         copy.assert_called_once_with("01030365")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_aggregate_file_appears_once_and_counts_records(tmp_path):
+    _write(tmp_path, "Agg_11-22-33-44-55-66.hc22000", _HS_LINE + _PMKID_LINE + _PMKID_LINE)
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        panel = view.query_one(_CapturePanel)               # HANDSHAKE / PMKID
+        assert panel.border_title.endswith("(1)")            # one file, not two entries
+        assert view.query_one("#vault-aps", DataTable).get_row_at(0)[1] == "3"  # 1 HS + 2 PMKID

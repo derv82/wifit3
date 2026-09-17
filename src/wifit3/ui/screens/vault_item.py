@@ -172,14 +172,16 @@ class _CapturePanel(VerticalGroup):
                  show_consolidate: bool = False) -> None:
         super().__init__()
         self._title = title
-        self._captures = sorted(captures, key=lambda c: c.timestamp, reverse=True)
-        self._by_path: Dict[str, PersistedCapture] = {c.path: c for c in self._captures}
+        self._by_path: Dict[str, PersistedCapture] = {}
+        for cap in sorted(captures, key=lambda c: c.timestamp, reverse=True):
+            self._by_path.setdefault(cap.path, cap)   # unique files, newest first
+        self._files = list(self._by_path.values())
         self._show_consolidate = show_consolidate
 
     def compose(self) -> ComposeResult:
-        self.border_title = f"{self._title} ({len(self._captures)})"
-        newest = self._captures[0]
-        yield Select([(Path(c.path).name, c.path) for c in self._captures],
+        self.border_title = f"{self._title} ({len(self._files)})"
+        newest = self._files[0]
+        yield Select([(Path(c.path).name, c.path) for c in self._files],
                      value=newest.path, allow_blank=False, classes="file")
         fields = _FIELDS.get(newest.type, [])
         if fields:

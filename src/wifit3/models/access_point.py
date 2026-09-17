@@ -38,6 +38,7 @@ class PersistedCapture:
     value: Optional[str] = None     # WEP key (hex) / WPS PSK; None for HS/PMKID
     ssid: Optional[str] = None      # parsed from the filename, for display (VAULT)
     pin: Optional[str] = None       # WPS PIN (WPS_PIN captures only)
+    record_count: int = 1           # hashcat-22000 records in the file; 0 for raw .pcap
 
 
 @dataclass

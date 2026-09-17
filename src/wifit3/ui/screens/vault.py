@@ -5,7 +5,6 @@ works with no card plugged in.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from textual import on
@@ -24,9 +23,9 @@ _KEY_TYPES = (CaptureType.WEP, CaptureType.WPS_PIN, CaptureType.WPS_PBC)
 
 
 def _count_captures(caps: List[PersistedCapture]) -> int:
-    """HS/PMKID loot for an AP, deduped so an .hc22000 + .pcap of one capture counts
-    once (they share a filename stem)."""
-    return len({Path(c.path).stem for c in caps if c.type in _CAPTURE_TYPES})
+    """Total handshake/PMKID capture records for an AP (hashcat-22000 hashlines; raw
+    .pcap companions carry 0, so an .hc22000 + .pcap of one capture counts once)."""
+    return sum(c.record_count for c in caps if c.type in _CAPTURE_TYPES)
 
 
 def _count_keys(caps: List[PersistedCapture]) -> int:
