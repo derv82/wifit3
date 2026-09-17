@@ -4,7 +4,8 @@ previously-saved capture artifacts).
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional
+from enum import StrEnum
+from typing import Dict, List, Optional
 
 from .handshake import Handshake
 from .identity import ApIdentity, IdKey, IdSource
@@ -17,14 +18,26 @@ class WepStats:
     total_frames: int = 0
 
 
+class CaptureType(StrEnum):
+    """Kind of a saved capture artifact, one member per on-disk file kind. Distinct
+    from ui.capture_events.CaptureKind, which enumerates live detector events."""
+    HS = "HS"
+    PMKID = "PMKID"
+    WEP = "WEP"
+    WPS_PIN = "WPS_PIN"
+    WPS_PBC = "WPS_PBC"
+
+
 @dataclass
 class PersistedCapture:
     """One previously-saved capture artifact found under captures/."""
-    type: Literal["HS", "PMKID", "WEP", "WPS"]
+    type: CaptureType
     timestamp: int                  # epoch seconds, parsed from the filename
     path: str                       # source file under captures/
+    bssid: str                      # AP this capture belongs to (colon form)
     value: Optional[str] = None     # WEP key (hex) / WPS PSK; None for HS/PMKID
     ssid: Optional[str] = None      # parsed from the filename, for display (VAULT)
+    pin: Optional[str] = None       # WPS PIN (WPS_PIN captures only)
 
 
 @dataclass

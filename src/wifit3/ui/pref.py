@@ -100,89 +100,6 @@ class SaveFooter(Horizontal):
         self.app.pop_screen()
 
 
-class ConsolidateModal(ModalScreen[bool]):
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    DEFAULT_CSS = """
-    ConsolidateModal { align: center middle; }
-    ConsolidateModal #dialog {
-        width: 54; height: auto;
-        border: thick $primary; background: $surface; padding: 1 2;
-    }
-    ConsolidateModal #prompt { margin-bottom: 1; }
-    ConsolidateModal Horizontal { align: right middle; height: auto; }
-    ConsolidateModal Button { margin-left: 1; }
-    """
-
-    def __init__(self, legacy_count: int, target_count: int) -> None:
-        super().__init__()
-        self.legacy_count = legacy_count
-        self.target_count = target_count
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
-            yield Label("[bold]Consolidate .hc22000 Captures[/]", id="title")
-            dupes = self.legacy_count - self.target_count
-            msg = Text.from_markup(
-                f"\nYou have [bold orange1]{self.legacy_count}[/] separate .hc22000 files from [bold green]{self.target_count}[/] APs.\n\n"
-                f"Do you want to condense these into single files per AP?\n\n"
-                f"    [bold green]{self.target_count} files will be created/updated[/]\n"
-                f"    [bold red]{dupes} duplicate files will be removed[/]"
-            )
-            yield Label(msg, id="prompt")
-            with Horizontal():
-                yield Button(Text("Yes"), "primary", id="confirm")
-                yield Button(Text("No"), "default", id="cancel")
-
-    @on(Button.Pressed, "#confirm")
-    def on_confirm(self, event: Event) -> None:
-        self.dismiss(True)
-
-    @on(Button.Pressed, "#cancel")
-    def on_cancel(self, event: Event) -> None:
-        self.dismiss(False)
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
-
-
-class LegacyCapturesSetting(VerticalGroup):
-    DEFAULT_CSS = """
-    LegacyCapturesSetting {
-        height: auto; margin-top: 0; margin-bottom: 0;
-        align: center middle;
-    }
-    LegacyCapturesSetting Button {
-        margin-top: 0; width: 100%;
-    }
-    """
-
-    def compose(self) -> ComposeResult:
-        count = self.app.vault.legacy_hc_file_count()
-        if count:
-            yield Label(f"[dim]{count} legacy split file(s) found[/dim]", id="legacy_label")
-            btn = Button(Text("Consolidate Captures"), "warning", id="consolidate")
-            btn.tooltip = "Merge separate timestamped .hc22000 files into 1 file per AP"
-            yield btn
-
-    @on(Button.Pressed, "#consolidate")
-    def consolidate_pressed(self, event: Event) -> None:
-        vault = self.app.vault
-        file_count = vault.legacy_hc_file_count()
-        if not file_count:
-            return
-        unique_count = vault.legacy_hc_unique_count()
-
-        def after_confirm(confirmed: bool | None) -> None:
-            if confirmed:
-                migrated, deleted = vault.consolidate_legacy_hc_files()
-                self.notify(f"Consolidated {deleted} files into {migrated} AP files.", title="Captures Consolidated")
-                self.remove_children()
-                self.mount(Label("[bold green]Captures consolidated[/]", id="legacy_done"))
-
-        self.app.push_screen(ConsolidateModal(file_count, unique_count), after_confirm)
-
-
 class PreferencesModal(ModalScreen):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
@@ -207,7 +124,6 @@ class PreferencesModal(ModalScreen):
             yield SortDelaySetting()
             yield CapturesDirSetting()
             yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap")
-            yield LegacyCapturesSetting()
             yield SaveFooter()
 
     def on_mount(self) -> None:

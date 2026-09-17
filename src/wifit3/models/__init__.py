@@ -2,7 +2,7 @@
 across the parser, attacks, persistence, and UI.
 """
 from .handshake import HandshakeMessage, Handshake
-from .access_point import WepStats, PersistedCapture, AccessPoint
+from .access_point import WepStats, CaptureType, PersistedCapture, AccessPoint
 from .client import Client
 from .device_id import DeviceID
 from .identity import ApIdentity, IdKey, IdSource
@@ -14,6 +14,7 @@ __all__ = [
     "IdKey",
     "IdSource",
     "WepStats",
+    "CaptureType",
     "PersistedCapture",
     "AccessPoint",
     "Client",

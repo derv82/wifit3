@@ -1,6 +1,7 @@
 """Tests for the captures/ history loader (synthetic files, no real IDs)."""
 from __future__ import annotations
 
+from wifit3.models import CaptureType
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.config import Config
 
@@ -65,19 +66,30 @@ class TestLoadCaptureIndex:
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000005_wps_pbc.txt", _WPS_PBC_TXT)
         caps = load_capture_index()[_BSSID_COLON]
         assert len(caps) == 1
-        assert caps[0].type == "WPS" and caps[0].value == "yxws3tik"
+        assert caps[0].type == CaptureType.WPS_PBC and caps[0].value == "yxws3tik"
 
     def test_wps_pin_txt(self, tmp_path):
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000006_wps_pin.txt", _WPS_PIN_TXT)
         caps = load_capture_index()[_BSSID_COLON]
         assert len(caps) == 1
-        assert caps[0].type == "WPS" and caps[0].value == "abcdefgh"
+        assert caps[0].type == CaptureType.WPS_PIN and caps[0].value == "abcdefgh"
+        assert caps[0].pin == "12345670"
 
-    def test_pcap_companion_is_ignored(self, tmp_path):
-        # A handshake.pcap on its own contributes no PersistedCapture. Its
-        # hashline sibling carries the verdict.
+    def test_handshake_pcap_is_indexed(self, tmp_path):
+        # .pcap files are first-class now (a handshake may exist only as a .pcap).
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000007_handshake.pcap", "binary-ish")
-        assert load_capture_index() == {}
+        caps = load_capture_index()[_BSSID_COLON]
+        assert len(caps) == 1 and caps[0].type == CaptureType.HS
+
+    def test_handshake_hc22000_and_pcap_both_indexed(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000021_handshake.hc22000", _HS_LINE)
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000021_handshake.pcap", "binary-ish")
+        caps = load_capture_index()[_BSSID_COLON]
+        assert len(caps) == 2 and {c.type for c in caps} == {CaptureType.HS}
+
+    def test_bssid_populated_on_captures(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000_handshake.hc22000", _HS_LINE)
+        assert load_capture_index()[_BSSID_COLON][0].bssid == _BSSID_COLON
 
     def test_ssid_with_underscores_parses(self, tmp_path):
         _write(tmp_path, f"Beach_2_4_{_BSSID_DASH}_1700000008_handshake.hc22000", _HS_LINE)

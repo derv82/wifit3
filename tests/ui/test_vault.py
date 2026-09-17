@@ -1,166 +1,222 @@
-"""VaultView: the loot-manager screen over captures/. Pure helpers (export_zip, _copy_payload,
-open_in_file_manager) tested directly; the screen itself driven through a real WifiteApp so
-row selection / remove / copy / reload are exercised end to end against a tmp captures dir.
+"""VaultView (ui/screens/vault.py) + VaultItemView (vault_item.py): the AP table and the
+per-AP detail pane, driven through a real WifiteApp. The autouse _captures_to_tmp fixture
+points Config.captures_dir at tmp_path, and WifiteApp builds its Vault from there.
 """
-import sys
-import zipfile
-from pathlib import Path
-
 import pytest
+from textual.widgets import Button, DataTable
 
-from wifit3.models import PersistedCapture
+from wifit3.models import CaptureType, PersistedCapture
 from wifit3.ui.app import WifiteApp
-from wifit3.ui.screens.vault import VaultView, _copy_payload, export_zip, open_in_file_manager
+from wifit3.ui.screens.vault import VaultView, _count_captures, _count_keys
+from wifit3.ui.screens.vault_item import ConfirmModal, VaultItemView, _CapturePanel, _hex_to_ascii
 
 _HS_LINE = "WPA*02*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***2\n"
+_WEP_TXT = "SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nWEP key (hex):   6162636465\n"
 
 
-def _write(d: Path, name: str, content: str) -> None:
+def _write(d, name, content):
     (d / name).write_text(content, encoding="utf-8")
+
+
+def _cap(kind, path, bssid="aa:bb:cc:dd:ee:ff", value=None):
+    return PersistedCapture(type=kind, timestamp=1, path=path, bssid=bssid, value=value)
 
 
 # ----- pure helpers ----------------------------------------------------------
 
-def test_copy_payload_prefers_the_stored_value():
-    cap = PersistedCapture(type="WEP", timestamp=0, path="x", value="6162636465")
-    assert _copy_payload(cap) == "6162636465"
+def test_hex_to_ascii_printable():
+    assert _hex_to_ascii("6162636465") == "abcde"
 
 
-def test_copy_payload_falls_back_to_file_content_for_handshakes(tmp_path):
-    p = tmp_path / "hs.hc22000"
-    p.write_text(_HS_LINE, encoding="utf-8")
-    cap = PersistedCapture(type="HS", timestamp=0, path=str(p))
-    assert _copy_payload(cap) == _HS_LINE.strip()
+def test_hex_to_ascii_nonprintable_is_blank():
+    assert _hex_to_ascii("00ff") == ""
 
 
-def test_copy_payload_blank_for_unreadable_file():
-    cap = PersistedCapture(type="HS", timestamp=0, path="/nonexistent/nope.hc22000")
-    assert _copy_payload(cap) == ""
+def test_hex_to_ascii_invalid_is_blank():
+    assert _hex_to_ascii("nothex") == ""
 
 
-def test_export_zip_bundles_every_file_and_lands_beside_captures_dir(tmp_path):
-    captures = tmp_path / "captures"
-    captures.mkdir()
-    _write(captures, "a_aa-bb-cc-dd-ee-ff_1_handshake.hc22000", _HS_LINE)
-    _write(captures, "b_aa-bb-cc-dd-ee-ff_2_pmkid.hc22000", _HS_LINE)
-
-    out = export_zip(captures)
-
-    assert out is not None
-    assert out.parent == tmp_path                      # sibling of captures/, never inside it
-    with zipfile.ZipFile(out) as zf:
-        assert set(zf.namelist()) == {
-            "a_aa-bb-cc-dd-ee-ff_1_handshake.hc22000",
-            "b_aa-bb-cc-dd-ee-ff_2_pmkid.hc22000",
-        }
+def test_count_captures_dedupes_hc_and_pcap():
+    caps = [
+        _cap(CaptureType.HS, "A_1_handshake.hc22000"),
+        _cap(CaptureType.HS, "A_1_handshake.pcap"),   # same stem -> one capture
+        _cap(CaptureType.PMKID, "A_2_pmkid.hc22000"),
+    ]
+    assert _count_captures(caps) == 2
 
 
-def test_export_zip_none_when_empty(tmp_path):
-    captures = tmp_path / "captures"
-    captures.mkdir()
-    assert export_zip(captures) is None
+def test_count_keys_counts_creds_with_value():
+    caps = [
+        _cap(CaptureType.WEP, "w", value="deadbeef"),
+        _cap(CaptureType.WPS_PBC, "p", value="psk"),
+        _cap(CaptureType.HS, "h"),                    # not a key
+        _cap(CaptureType.WPS_PIN, "n", value=None),   # no value -> not counted
+    ]
+    assert _count_keys(caps) == 2
 
 
-def test_export_zip_none_when_dir_missing(tmp_path):
-    assert export_zip(tmp_path / "nope") is None
+# ----- the screen + widget, end to end ---------------------------------------
 
-
-def test_export_zip_never_reexports_a_previous_export(tmp_path):
-    """A re-export must not bundle a prior export.zip into the new one: exports always land
-    beside captures/, so they were never candidates for inclusion in the first place."""
-    captures = tmp_path / "captures"
-    captures.mkdir()
-    _write(captures, "a_aa-bb-cc-dd-ee-ff_1_handshake.hc22000", _HS_LINE)
-    first = export_zip(captures)
-    second = export_zip(captures)
-    with zipfile.ZipFile(second) as zf:
-        assert first.name not in zf.namelist()
-
-
-def test_open_in_file_manager_uses_xdg_open_on_linux(mocker):
-    mocker.patch.object(sys, "platform", "linux")
-    popen = mocker.patch("wifit3.ui.screens.vault.subprocess.Popen")
-    target = Path("/tmp/captures")
-    open_in_file_manager(target)
-    popen.assert_called_once_with(["xdg-open", str(target)])
-
-
-def test_open_in_file_manager_uses_open_on_macos(mocker):
-    mocker.patch.object(sys, "platform", "darwin")
-    popen = mocker.patch("wifit3.ui.screens.vault.subprocess.Popen")
-    target = Path("/tmp/captures")
-    open_in_file_manager(target)
-    popen.assert_called_once_with(["open", str(target)])
-
-
-# ----- the screen, end to end -------------------------------------------------
-
-async def _mounted_vault(app) -> VaultView:
-    view = VaultView()
-    app.install_screen(view, name="vault-under-test")
-    await app.push_screen("vault-under-test")
-    return view
+async def _open_vault(app) -> VaultView:
+    app.push_screen("vault")
+    return app.screen
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_reload_populates_rows_newest_first(tmp_path):
-    # _captures_to_tmp (autouse) points Config.captures_dir at tmp_path.
-    _write(tmp_path, "Old_aa-bb-cc-dd-ee-ff_1000_handshake.hc22000", _HS_LINE)
-    _write(tmp_path, "New_aa-bb-cc-dd-ee-ff_2000_pmkid.hc22000", _HS_LINE)
+async def test_ap_table_lists_aps_with_counts(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_handshake.hc22000", _HS_LINE)
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_handshake.pcap", "x")
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1001_wep_key.txt", _WEP_TXT)
 
     app = WifiteApp()
     async with app.run_test() as pilot:
-        view = await _mounted_vault(app)
-        await pilot.pause(0)
-        table = view.query_one("#vault-table")
-        assert table.row_count == 2
-        assert table.get_row_at(0)[0] == "New"           # newest first
-        assert table.get_row_at(1)[0] == "Old"
+        view = await _open_vault(app)
+        await pilot.pause()
+        assert isinstance(view, VaultView)
+        table = view.query_one("#vault-aps", DataTable)
+        assert table.row_count == 1
+        row = table.get_row_at(0)
+        assert row[0] == "HomeNet"
+        assert row[1] == "1"   # captures: the hc22000 + pcap handshake dedupe to one
+        assert row[2] == "1"   # keys: one WEP key
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_remove_selected_deletes_the_file_and_reloads(tmp_path):
-    _write(tmp_path, "Net_aa-bb-cc-dd-ee-ff_1000_handshake.hc22000", _HS_LINE)
+async def test_empty_vault_shows_placeholder(tmp_path):
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        assert view.query_one("#vault-aps", DataTable).row_count == 0
+        assert view.query_one("#vault-item-empty")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_duplicate_essid_disambiguated_by_bssid(tmp_path):
+    _write(tmp_path, "Net_aa-bb-cc-dd-ee-01_1000_handshake.hc22000", _HS_LINE)
+    _write(tmp_path, "Net_aa-bb-cc-dd-ee-02_1000_handshake.hc22000", _HS_LINE)
 
     app = WifiteApp()
     async with app.run_test() as pilot:
-        view = await _mounted_vault(app)
-        await pilot.pause(0)
-        target = tmp_path / "Net_aa-bb-cc-dd-ee-ff_1000_handshake.hc22000"
-        assert target.exists()
+        view = await _open_vault(app)
+        await pilot.pause()
+        table = view.query_one("#vault-aps", DataTable)
+        names = [table.get_row_at(i)[0] for i in range(table.row_count)]
+        assert len(names) == 2 and all(n.startswith("Net (") for n in names)
 
-        view.action_remove_selected()
-        await pilot.pause(0)
 
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_selecting_ap_populates_detail_widget(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_handshake.hc22000", _HS_LINE)
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_handshake.pcap", "x")
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        widget = view.query_one("#vault-item", VaultItemView)
+        assert widget.query_one("#vault-item-title")          # AP title chip present
+        panels = widget.query(_CapturePanel)
+        assert len(panels) == 1                                # only HANDSHAKE / PMKID
+        assert panels.first().border_title.endswith("(2)")    # both file variants listed
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_delete_in_panel_confirms_and_removes(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
+    target = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt"
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        view.query_one(_CapturePanel).query_one(".delete", Button).press()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmModal)
+        app.screen.query_one("#yes", Button).press()
+        await pilot.pause()
         assert not target.exists()
-        assert view.query_one("#vault-table").row_count == 0
+        assert view.query_one("#vault-aps", DataTable).row_count == 0
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_copy_selected_copies_the_wep_key_to_the_clipboard(tmp_path, mocker):
-    _write(tmp_path, "Net_aa-bb-cc-dd-ee-ff_1000_wep_key.txt",
-          "SSID:  Net\nBSSID: aa:bb:cc:dd:ee:ff\nWEP key (hex):   6162636465\n")
+async def test_delete_cancelled_keeps_file(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
+    target = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt"
 
     app = WifiteApp()
     async with app.run_test() as pilot:
-        view = await _mounted_vault(app)
-        await pilot.pause(0)
+        view = await _open_vault(app)
+        await pilot.pause()
+        view.query_one(_CapturePanel).query_one(".delete", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#no", Button).press()
+        await pilot.pause()
+        assert target.exists()
+        assert view.query_one("#vault-aps", DataTable).row_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_copy_hex_in_wep_panel(tmp_path, mocker):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
         copy = mocker.patch.object(app, "copy_to_clipboard")
-        view.action_copy_selected()
+        view.query_one(_CapturePanel).query_one(".copy-hex", Button).press()
+        await pilot.pause()
         copy.assert_called_once_with("6162636465")
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_no_selection_actions_are_a_safe_noop(mocker):
+async def test_consolidate_button_in_hs_panel_when_legacy(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000", _HS_LINE)
+
     app = WifiteApp()
     async with app.run_test() as pilot:
-        view = await _mounted_vault(app)
-        await pilot.pause(0)
+        view = await _open_vault(app)
+        await pilot.pause()
+        panel = view.query_one(_CapturePanel)   # HANDSHAKE / PMKID
+        assert len(panel.query(".consolidate")) == 1
+
+
+_WPS_PIN_TXT = "SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: hunter2\nPIN: 01030365\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_wps_pin_panel_shows_psk_and_pin_rows(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wps_pin.txt", _WPS_PIN_TXT)
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        panel = view.query_one(_CapturePanel)   # WPS PIN
+        assert len(panel.query(".copy-psk")) == 1
+        assert len(panel.query(".copy-pin")) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_copy_pin_copies_the_pin(tmp_path, mocker):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wps_pin.txt", _WPS_PIN_TXT)
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
         copy = mocker.patch.object(app, "copy_to_clipboard")
-        view.action_remove_selected()      # must not raise on an empty table
-        view.action_copy_selected()
-        copy.assert_not_called()
+        view.query_one(_CapturePanel).query_one(".copy-pin", Button).press()
+        await pilot.pause()
+        copy.assert_called_once_with("01030365")

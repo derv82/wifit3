@@ -1,7 +1,7 @@
 """Load previously-saved captures from captures/ back into per-AP history, so a
 recovered key or captured handshake/PMKID re-surfaces as a badge + Focus summary
-on the next scan. Classification is by filename; the .pcap companion is skipped
-(its hashline sibling carries the verdict). Counterpart: persist.save."""
+on the next scan. Classification is by filename; both .hc22000 and .pcap files are
+indexed (a handshake may have either or both). Counterpart: persist.save."""
 from __future__ import annotations
 
 import logging
@@ -9,11 +9,12 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
 
-from wifit3.models import PersistedCapture
+from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.common import (
     AGGREGATED_HC22000_RE,
     LEGACY_CAPTURE_RE,
     WEP_KEY_HEX_RE,
+    WPS_PIN_RE,
     WPS_PSK_RE,
     bssid_to_colon,
 )
@@ -48,7 +49,16 @@ def _read_wps_psk(path: Path) -> str | None:
     return m.group(1).strip() if m else None
 
 
-def _parse_aggregate_hc(path: Path) -> List[PersistedCapture]:
+def _read_wps_pin(path: Path) -> str | None:
+    """Extract the PIN from a ``_wps_pin.txt`` file, or None."""
+    text = _read_text(path)
+    if text is None:
+        return None
+    m = WPS_PIN_RE.search(text)
+    return m.group(1).strip() if m else None
+
+
+def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
     text = _read_text(path)
     if text is None:
         return []
@@ -56,6 +66,8 @@ def _parse_aggregate_hc(path: Path) -> List[PersistedCapture]:
         mtime = int(path.stat().st_mtime)
     except OSError:
         mtime = 0
+    m = AGGREGATED_HC22000_RE.match(path.name)
+    ssid = m.group("ssid") if m else None
     has_pmkid = False
     has_hs = False
     for line in text.splitlines():
@@ -66,16 +78,18 @@ def _parse_aggregate_hc(path: Path) -> List[PersistedCapture]:
             has_hs = True
     out: List[PersistedCapture] = []
     if has_pmkid:
-        out.append(PersistedCapture(type="PMKID", timestamp=mtime, path=str(path)))
+        out.append(PersistedCapture(type=CaptureType.PMKID, timestamp=mtime,
+                                    path=str(path), bssid=bssid, ssid=ssid))
     if has_hs:
-        out.append(PersistedCapture(type="HS", timestamp=mtime, path=str(path)))
+        out.append(PersistedCapture(type=CaptureType.HS, timestamp=mtime,
+                                    path=str(path), bssid=bssid, ssid=ssid))
     return out
 
 
-def _parse_file(path: Path) -> List[PersistedCapture]:
+def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
     """Parse one captures/ file into zero or more PersistedCapture entries."""
     if AGGREGATED_HC22000_RE.match(path.name):
-        return _parse_aggregate_hc(path)
+        return _parse_aggregate_hc(path, bssid)
 
     m = LEGACY_CAPTURE_RE.match(path.name)
     if not m:
@@ -89,16 +103,21 @@ def _parse_file(path: Path) -> List[PersistedCapture]:
         key = _read_wep_key(path)
         if key is None:
             return []
-        return [PersistedCapture(type="WEP", timestamp=epoch,
-                                 value=key, path=str(path), ssid=ssid)]
-    if kind in ("wps_pin", "wps_pbc") and ext == "txt":
-        return [PersistedCapture(type="WPS", timestamp=epoch,
-                                 value=_read_wps_psk(path), path=str(path), ssid=ssid)]
-    if kind == "handshake" and ext == "hc22000":
-        return [PersistedCapture(type="HS", timestamp=epoch, path=str(path), ssid=ssid)]
-    if kind == "pmkid" and ext == "hc22000":
-        return [PersistedCapture(type="PMKID", timestamp=epoch, path=str(path), ssid=ssid)]
-    # .pcap companion + any other shape: the hashline/text sibling has the verdict.
+        return [PersistedCapture(type=CaptureType.WEP, timestamp=epoch, path=str(path),
+                                 bssid=bssid, value=key, ssid=ssid)]
+    if kind == "wps_pin" and ext == "txt":
+        return [PersistedCapture(type=CaptureType.WPS_PIN, timestamp=epoch, path=str(path),
+                                 bssid=bssid, value=_read_wps_psk(path), ssid=ssid,
+                                 pin=_read_wps_pin(path))]
+    if kind == "wps_pbc" and ext == "txt":
+        return [PersistedCapture(type=CaptureType.WPS_PBC, timestamp=epoch, path=str(path),
+                                 bssid=bssid, value=_read_wps_psk(path), ssid=ssid)]
+    if kind == "handshake" and ext in ("hc22000", "pcap"):
+        return [PersistedCapture(type=CaptureType.HS, timestamp=epoch, path=str(path),
+                                 bssid=bssid, ssid=ssid)]
+    if kind == "pmkid" and ext in ("hc22000", "pcap"):
+        return [PersistedCapture(type=CaptureType.PMKID, timestamp=epoch, path=str(path),
+                                 bssid=bssid, ssid=ssid)]
     return []
 
 
@@ -114,12 +133,12 @@ def load_capture_index() -> Dict[str, List[PersistedCapture]]:
         m = LEGACY_CAPTURE_RE.match(path.name)
         if m:
             bssid = bssid_to_colon(m.group("bssid"))
-            index[bssid].extend(_parse_file(path))
+            index[bssid].extend(_parse_file(path, bssid))
             continue
         m_agg = AGGREGATED_HC22000_RE.match(path.name)
         if m_agg:
             bssid = bssid_to_colon(m_agg.group("bssid"))
-            index[bssid].extend(_parse_file(path))
+            index[bssid].extend(_parse_file(path, bssid))
     for caps in index.values():
         caps.sort(key=lambda c: c.timestamp, reverse=True)
     return {b: c for b, c in index.items() if c}
@@ -132,8 +151,8 @@ def summarize(index: Dict[str, List[PersistedCapture]]) -> tuple[int, int, int, 
     hs = pmkid = wep = wps = 0
     for caps in index.values():
         types = {c.type for c in caps}
-        hs += "HS" in types
-        pmkid += "PMKID" in types
-        wep += "WEP" in types
-        wps += "WPS" in types
+        hs += CaptureType.HS in types
+        pmkid += CaptureType.PMKID in types
+        wep += CaptureType.WEP in types
+        wps += bool(types & {CaptureType.WPS_PIN, CaptureType.WPS_PBC})
     return hs, pmkid, wep, wps

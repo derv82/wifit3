@@ -502,20 +502,25 @@ class FocusViewV2(Screen):
         if rows:
             self._log("[bold]Existing captures[/bold] in [cyan]captures/[/cyan]:")
         # Pad the label column so the dates line up.
-        label_w = max((len(f"{label} ({n})") for label, (_key, n, _ts) in rows), default=0)
-        for i, (label, (key, n, ts)) in enumerate(rows):
+        label_w = max((len(f"{label} ({n})") for label, (_cap, n) in rows), default=0)
+        for i, (label, (cap, n)) in enumerate(rows):
             # The WPS progress leaf, if present, takes the └, so a saved row is the last leaf only when nothing follows.
             last = i == len(rows) - 1 and wps_progress is None
             line = treelog.leaf if last else treelog.branch
             pad = " " * (label_w - len(f"{label} ({n})"))
             head = f"[bold cyan]{label}[/bold cyan] [dim]({n})[/dim]{pad}"
-            dt = datetime.fromtimestamp(ts)
+            dt = datetime.fromtimestamp(cap.timestamp)
             if label == "WEP Key":
-                self._log(line(f"{head}  {_wep_key_chip(key)} "
+                self._log(line(f"{head}  {_wep_key_chip(cap.value)} "
                                f"[dim]{dt:%Y-%m-%d %H:%M}[/dim]"))
-            elif label == "WPS PSK":
-                self._log(line(f"{head}  [black bold on cyan] {escape(key or '?')} "
-                               f"[/black bold on cyan] [dim]{dt:%Y-%m-%d %H:%M}[/dim]"))
+            elif label in ("WPS PIN", "WPS PBC"):
+                creds = []
+                if cap.value:
+                    creds.append(f"[black bold on cyan] {escape(cap.value)} [/black bold on cyan]")
+                if cap.pin:
+                    creds.append(f"[dim]PIN[/dim] {escape(cap.pin)}")
+                joined = ("  ".join(creds) + "  ") if creds else ""
+                self._log(line(f"{head}  {joined}[dim]{dt:%Y-%m-%d %H:%M}[/dim]"))
             else:
                 self._log(line(f"{head}  {dt:%Y-%m-%d} "
                                f"[dim]{dt:%H:%M}[/dim]"))
