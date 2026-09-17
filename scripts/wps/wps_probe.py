@@ -209,9 +209,10 @@ async def main_async(args) -> int:
                                                  channel=channel, wps_locked=False)
             step(f"Run full WpsCampaign (up to {args.max_secs:.0f}s)")
             camp = WpsCampaign(array, target, log=lambda m: print(f"    {m}"))
-            camp.start()
-            end = time.time() + args.max_secs
-            while time.time() < end and camp.status in ("idle", "running", "paused", "locked"):
+            if not camp.run():
+                fail("another campaign already owns the radio")
+            end = time.monotonic() + args.max_secs
+            while time.monotonic() < end and not camp.done:
                 await asyncio.sleep(0.5)
             await camp.stop()
             step("Results")
