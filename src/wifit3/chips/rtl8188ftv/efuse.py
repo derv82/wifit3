@@ -229,6 +229,8 @@ def parse_efuse_8188fu(raw: bytes) -> EfuseDefaults:
         raise ValueError(f"EFUSE map too short: {len(raw)} bytes")
 
     rtl_id = raw[0] | (raw[1] << 8)
+    # TODO: verify, untested here, needs an 8188f map with a foreign rtl_id
+    # (8188f.c:707-710 returns -EINVAL on rtl_id mismatch)
     if rtl_id != EFUSE_RTL_ID:
         raise ValueError(f"EFUSE rtl_id 0x{rtl_id:04x} != 0x{EFUSE_RTL_ID:04x}")
 

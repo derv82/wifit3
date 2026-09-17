@@ -272,6 +272,9 @@ def init_queue_priority_2ep(t: RTL8188FTVTransport) -> None:
     Routes VO/VI/MGNT/HIGH to the HIGH lane (EP 0x02 = our MGMT pipe) and
     BE/BK to NORMAL (EP 0x03). Writes REG_TRXDMA_CTRL=0xfaf0, capture-1
     op 948 (RMW preserves the low 3 bits, as init_aggregation uses bit 2).
+
+    # TODO: verify, untested here, needs a 1- or 3-bulk-OUT 8188f dongle:
+    # kernel `ep_tx_count` cases 1 and 3 (core.c:2567-2630) are not ported.
     """
     hi = TRXDMA_QUEUE_HIGH
     lo = TRXDMA_QUEUE_NORMAL
