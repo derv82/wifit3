@@ -24,6 +24,7 @@ the verification detail, frame ranges, and hashes; this file is the licensing su
 | `rtw8812a_fw.bin` | RTL8812AU (mainline) | `linux-firmware` `rtw88/rtw8812a_fw.bin` | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ SHA-256 + pcap body diff |
 | `rtw8814a_fw-linux_firmware.bin` | RTL8814AU (rtw88 mainline) | `linux-firmware` `rtw88/rtw8814a_fw.bin` | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ pcap-reassembled == `rtw8814a_fw.bin[64:]` |
 | `rtl8188eufw.bin` | RTL8188EUS (mainline) | `linux-firmware` `rtlwifi/rtl8188eufw.bin` | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ SHA-256 match (pcap-extracted) |
+| `rtl8188fufw.bin` | RTL8188FTV (mainline) | `linux-firmware` `rtlwifi/rtl8188fufw.bin` | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ pcap-extracted; FW blob gate in `verify_pcap` byte-diffs the whole upload |
 | `rtl8812au_fw.bin` | RTL8812AU (vendor DKMS) | morrownr `8812au` DKMS `hal/rtl8812a` (`array_mp_8812a_fw_nic`) | Realtek redistributable (same Realtek FW terms) | ✅ golden-hash vs vendor C array (27030 B) |
 | `rtl8814au_fw.bin` | RTL8814AU (vendor DKMS) | morrownr `8814au` DKMS `hal8814a_fw.c` (`array_mp_8814a_fw_nic`) | Realtek redistributable (same Realtek FW terms) | ✅ vendor C array == pcap bulk payload (68320 B) |
 | `rtl8821au_fw.bin` | RTL8821AU (vendor DKMS) | [Lucid-Duck PR #194](https://github.com/morrownr/8821au-20210708/pull/194) `morrownr/8821au-20210708` DKMS `hal/rtl8821a` (vendor FW array) | Realtek redistributable (same Realtek FW terms) | ✅ FW page-write byte-exact in `verify_pcap` (30880 B) |
@@ -80,7 +81,7 @@ the PyInstaller bundle. The governing-license wording quoted below is from that 
 
 ### Realtek — `LICENCE.rtlwifi_firmware.txt`
 
-Covers the `rtw88/rtw88xx` and `rtlwifi/rtl8188eufw` blobs, and (by the same Realtek terms)
+Covers the `rtw88/rtw88xx` and `rtlwifi/rtl8188eufw` / `rtlwifi/rtl8188fufw` blobs, and (by the same Realtek terms)
 the vendor-DKMS Realtek blobs. `WHENCE` marks every one:
 
 > Licence: Redistributable. See LICENCE.rtlwifi_firmware.txt for details.
