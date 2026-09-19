@@ -18,7 +18,6 @@ from wifit3.persist.config import Config
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
-from ..campaigns.pbc import WpsPbcCapture
 
 if TYPE_CHECKING:
     from wifit3.models.access_point import AccessPoint
@@ -202,10 +201,16 @@ def router_identity_details(ap: AccessPoint) -> str | None:
 
 
 
-def status_footer_lines(ap, array, campaign, now: float) -> list[str]:
+def status_under_dash(ap, array, now: float) -> list[str]:
     """The dashboard footer lines for this target."""
+    active = Campaign.active
+    if active:
+        dash = active.status_under_dash(array, now)
+        if dash is not None:
+            return dash
+
     if is_wep(ap):
-        return wep_status_lines(ap, array, campaign, now)
+        return wep_status_lines(ap, array, None, now)
     lines = [f"[dim]Encryption:[/dim] {format_encryption_markup(ap, detailed=True)}"]
     parts = []
     if ap.akms or ap.wpa3:              # RSN (WPA2/3): PMF is meaningful
@@ -224,19 +229,23 @@ def deauth_blocked(ap) -> bool:
     return other_long_running_tx() or ap.pmf_required
 
 
-def card_dynamic() -> str:
+def status_under_card() -> str:
     """What the card is doing right now, shown under the card art (reads the active campaign)."""
     active = Campaign.active
     if active:
-        return active.dynamic_card_text()
+        status = active.status_under_card()
+        if status is not None:
+            return status
     return ""
 
 
-def derive_headline(ap, array, vault) -> list[str]:
+def status_headlines(ap, array, vault) -> list[str]:
     """The Campaign headline: up to 3 markup lines of current activity (reads the active campaign)."""
     active = Campaign.active
     if active:
-        return active.status_headline(vault)
+        headlines = active.status_headlines(vault)
+        if headlines is not None:
+            return headlines
 
     # Passive capture state (no active campaign on this AP)
     enc = (ap.encryption or "").upper()

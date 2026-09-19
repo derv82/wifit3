@@ -134,10 +134,14 @@ class Campaign:
     def ineligible_reason(cls, ap) -> Optional[str]:
         return None
 
-    def status_headline(self, vault) -> list[str]:
-        """Up to 3 markup lines of current activity for this campaign."""
-        return ["[bold cyan]● Running[/bold cyan]"]
+    def status_headlines(self, vault) -> Optional[list[str]]:
+        """Up to 3 markup lines of current activity. Return None to render default passive status."""
+        return None
 
-    def dynamic_card_text(self) -> str:
-        """What the card is doing right now, shown under the card art."""
-        return ""
+    def status_under_card(self) -> Optional[str]:
+        """What the card is doing right now. Return None for default/blank."""
+        return None
+
+    def status_under_dash(self, array, now: float) -> Optional[list[str]]:
+        """Footer lines under the dashboard. Return None to render default encryption/WPS info."""
+        return None

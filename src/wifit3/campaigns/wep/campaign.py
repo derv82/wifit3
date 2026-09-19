@@ -241,10 +241,14 @@ class WepCampaign(Campaign):
     def is_active(self) -> bool:
         return self._active
 
-    def dynamic_card_text(self) -> str:
+    def status_under_card(self) -> str:
         return "● chopping" if self.chop_active else "● replaying"
 
-    def status_headline(self, vault) -> list[str]:
+    def status_under_dash(self, array, now: float) -> list[str]:
+        from wifit3.ui.focus_model import wep_status_lines
+        return wep_status_lines(self.target, array, self, now)
+
+    def status_headlines(self, vault) -> list[str]:
         from wifit3.crack.wep import CRACK_READY_THRESHOLD
         n_ivs = self.target.wep.unique_ivs if getattr(self.target, "wep", None) else 0
         cracker_samples = getattr(self.cracker, "sample_count", 0)

@@ -82,7 +82,7 @@ class _FakePbc(WpsPbcCapture):
 
 def _headline(ap):
     """Real Vault (over the tmp captures dir) fed to derive_headline."""
-    return fm.derive_headline(ap, None, Vault())
+    return fm.status_headlines(ap, None, Vault())
 
 
 def _seed_wep(d, bssid_dashed, ssid="Net", epoch=1700000000, key_hex="6162636465"):
@@ -265,7 +265,7 @@ def test_pmf_status_markup_gradient():
 
 
 def test_status_footer_wpa_shows_encryption_and_pmf():
-    lines = fm.status_footer_lines(_rsn_ap(pmf_required=True, pmf_capable=True), None, None, 0)
+    lines = fm.status_under_dash(_rsn_ap(pmf_required=True, pmf_capable=True), None, 0)
     assert len(lines) == 2
     assert "Encryption:" in lines[0] and "WPA2" in lines[0]
     assert "PMF:" in lines[1] and "Required" in lines[1]
@@ -274,7 +274,7 @@ def test_status_footer_wpa_shows_encryption_and_pmf():
 
 def test_status_footer_combines_pmf_and_wps():
     """WPS rejoins the footer (it was dropped in v2) on the same row as PMF."""
-    lines = fm.status_footer_lines(_rsn_ap(wps=True, wps_version="1.0"), None, None, 0)
+    lines = fm.status_under_dash(_rsn_ap(wps=True, wps_version="1.0"), None, 0)
     assert len(lines) == 2
     assert "PMF:" in lines[1] and "WPS:" in lines[1] and "1.0" in lines[1]
 
@@ -371,7 +371,7 @@ def test_status_footer_open_is_encryption_only():
     ap = types.SimpleNamespace(
         encryption="OPEN", akms=[], pairwise_cipher=None, wpa3=False,
         transition_mode=False, wep=None, pmf_required=False, pmf_capable=False, bssid="x")
-    lines = fm.status_footer_lines(ap, None, None, 0)
+    lines = fm.status_under_dash(ap, None, 0)
     assert len(lines) == 1 and "Encryption:" in lines[0]
 
 
@@ -379,7 +379,7 @@ def test_status_footer_wep_is_fakeauth_and_usable_ivs():
     ap = types.SimpleNamespace(
         encryption="WEP", akms=[], pairwise_cipher=None, wpa3=False,
         transition_mode=False, wep=types.SimpleNamespace(unique_ivs=0), bssid="x")
-    lines = fm.status_footer_lines(ap, _iface_with_usable(5), None, 0)
+    lines = fm.status_under_dash(ap, _iface_with_usable(5), 0)
     assert any("Usable IVs" in ln for ln in lines)
     assert not any("Encryption:" in ln for ln in lines)
 
@@ -604,19 +604,19 @@ async def test_buttons_enterprise_hides_pmkid(buttons_screen):
 
 
 def test_card_dynamic_each_state():
-    assert fm.card_dynamic() == ""
+    assert fm.status_under_card() == ""
     Campaign.active = _FakeWep()
-    assert fm.card_dynamic() == "● replaying"
+    assert fm.status_under_card() == "● replaying"
     Campaign.active = _FakeWep(chop=True)
-    assert fm.card_dynamic() == "● chopping"
+    assert fm.status_under_card() == "● chopping"
     Campaign.active = _FakeWps()
-    assert fm.card_dynamic() == "● WPS PIN"
+    assert fm.status_under_card() == "● WPS PIN"
     Campaign.active = _FakeDeauth()
-    assert fm.card_dynamic() == "● Deauth"
+    assert fm.status_under_card() == "● Deauth"
     Campaign.active = _FakeEvilTwin()
-    assert fm.card_dynamic() == "● EvilTwin"
+    assert fm.status_under_card() == "● EvilTwin"
     Campaign.active = _FakePbc()
-    assert fm.card_dynamic() == "● WPS PBC"
+    assert fm.status_under_card() == "● WPS PBC"
 
 
 @pytest.mark.asyncio(loop_scope="module")

@@ -84,10 +84,10 @@ class PmkidHarvestAttack(Campaign):
             return None
         return "encryption not confirmed yet (no beacon RSN)"
 
-    def dynamic_card_text(self) -> str:
+    def status_under_card(self) -> str:
         return "● PMKID"
 
-    def status_headline(self, vault) -> list[str]:
+    def status_headlines(self, vault) -> list[str]:
         if self.pmkid:
             return ["[black bold on green] ✓ PMKID harvested [/black bold on green]",
                     "[dim]saved to captures/[/dim]"]

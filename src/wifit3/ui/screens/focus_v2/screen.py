@@ -314,14 +314,14 @@ class FocusViewV2(Screen):
         """The card endpoint's compose seed: chipset + own MAC from the live pool, plus the
         current dynamic line. Identity then tracks the pool live via ``_sync_card``."""
         chipset, bssid = fm.card_identity(self.app.array)
-        return dict(chipset=chipset, bssid=bssid, dynamic=fm.card_dynamic())
+        return dict(chipset=chipset, bssid=bssid, dynamic=fm.status_under_card())
 
     def _status(self) -> list[str]:
         """The headline lines for the live target (empty when there's no target)."""
         ap = self.app.target_ap
         if ap is None:
             return []
-        return fm.derive_headline(ap, self.app.array, self.app.vault)
+        return fm.status_headlines(ap, self.app.array, self.app.vault)
 
     def _dashboard_rows(self) -> list:
         """The packet-dashboard row set for the live target's encryption family (empty when
@@ -440,7 +440,7 @@ class FocusViewV2(Screen):
         self._last_status = status
         self.query_one("#status", Static).update(self._render_status(status))
         self.query_one("#dashboard", PacketDashboard).reconfigure(self._dashboard_rows(), array, ap.bssid)
-        self.query_one("#card", CardEndpoint).update(dynamic=fm.card_dynamic())
+        self.query_one("#card", CardEndpoint).update(dynamic=fm.status_under_card())
         self._sync_card()
         self.query_one("#router", RouterEndpoint).update(**self._router_values())
         self.query_one("#clients", ClientsList).sync(self._client_list())
@@ -556,7 +556,7 @@ class FocusViewV2(Screen):
         if status != self._last_status:
             self._last_status = status
             self.query_one("#status", Static).update(self._render_status(status))
-        self.query_one("#card", CardEndpoint).update(dynamic=fm.card_dynamic())
+        self.query_one("#card", CardEndpoint).update(dynamic=fm.status_under_card())
         self._sync_card()
         self.query_one("#router", RouterEndpoint).update(**self._router_values())
         clients = self.query_one("#clients", ClientsList)
@@ -610,10 +610,8 @@ class FocusViewV2(Screen):
         if ap is None:
             return
         array = self.app.array
-        cur = self._controls.current
-        wep = cur if cur is not None and cur.key == "wep" else None
         lines = [Text.from_markup(m, emoji=False)
-                 for m in fm.status_footer_lines(ap, array, wep, time.time())]
+                 for m in fm.status_under_dash(ap, array, time.time())]
         self.query_one("#dashboard", PacketDashboard).set_footer(lines)
 
     # ----- endpoint LED flicker (instrumentation) ----------------------------

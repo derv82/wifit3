@@ -70,10 +70,10 @@ class EvilTwinCampaign(Campaign):
             return "no beacon captured yet"
         return None
 
-    def dynamic_card_text(self) -> str:
+    def status_under_card(self) -> str:
         return "● EvilTwin"
 
-    def status_headline(self, vault) -> list[str]:
+    def status_headlines(self, vault) -> list[str]:
         from wifit3.persist.config import Config
         if self.captured:
             return ["[black bold on green] ✓ Captured [/black bold on green] crackable M2",

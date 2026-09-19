@@ -43,10 +43,10 @@ class DeauthCampaign(Campaign):
             return False
         return bool(set(_PSK_AKMS) & set(getattr(ap, "akm_suites", None) or ()))
 
-    def dynamic_card_text(self) -> str:
+    def status_under_card(self) -> str:
         return "● Deauth"
 
-    def status_headline(self, vault) -> list[str]:
+    def status_headlines(self, vault) -> list[str]:
         return ["[bold cyan]● Deauth[/bold cyan] forcing a re-handshake",
                 f"[dim]client acks:{self.client_acks}/{self.client_sent} · "
                 f"bcast:{self.bcast_sent}[/dim]"]

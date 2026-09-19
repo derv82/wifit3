@@ -164,10 +164,10 @@ class WpsCampaign(Campaign):
     def check_auto_stop(self) -> bool:
         return self.state.phase == "done" or self.status in ("failed", "error")
 
-    def dynamic_card_text(self) -> str:
+    def status_under_card(self) -> str:
         return "● WPS PIN"
 
-    def status_headline(self, vault) -> list[str]:
+    def status_headlines(self, vault) -> list[str]:
         from rich.markup import escape
         if self.state.found_pin:
             return ["[black bold on green] ✓ WPS PIN cracked [/black bold on green]",
