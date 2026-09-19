@@ -22,6 +22,7 @@ from wifit3.campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.models import AccessPoint, Handshake, IdKey, IdSource
 from wifit3.ui import focus_model as fm
+from tests.wlan.mocks import build_ap
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
@@ -129,9 +130,10 @@ def test_headline_active_campaign_outranks_recovered_key():
 def _pmkid_ap(pmkid_akm):
     hs = Handshake(bssid="aa:bb:cc:dd:ee:01", client_mac="11:22:33:44:55:66",
                    pmkid=bytes(16), pmkid_akm=pmkid_akm, beacon_frame=b"x")
-    return types.SimpleNamespace(encryption="WPA2", wep_key=None, wep=None,
-                                 wps_pbc_psk=None, wps_pin_psk=None,
-                                 handshakes={"11:22:33:44:55:66": hs}, bssid="aa:bb:cc:dd:ee:ff")
+    ap = build_ap(encryption="WPA2", bssid="aa:bb:cc:dd:ee:ff", wpa3=False)
+    ap.transition_mode = False
+    ap.handshakes={"11:22:33:44:55:66": hs}
+    return ap
 
 
 def test_headline_sae_pmkid_is_not_a_captured_win():

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
 from rich.markup import escape
+from wifit3.wlan.array import WlanArray
 
 from .encryption_format import format_encryption_markup
 from ..campaigns.campaign import Campaign
@@ -285,39 +286,32 @@ def status_headlines(ap, array, vault) -> list[str]:
         breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
         return ["[yellow]◌ Capturing handshake[/yellow]",
                 f"[dim]{breakdown}: deauth a client to force a re-handshake[/dim]"]
-                
-    if getattr(ap, "wpa3", False) and not getattr(ap, "transition_mode", False):
+
+    if ap.wpa3 and not ap.transition_mode:
         return ["[dim]● WPA3/SAE: passive capture not applicable[/dim]"]
-        
+
     if enc in ("OPEN", ""):
         return ["[dim]● Open network: no handshake to capture[/dim]"]
     return ["[green]● Listening for handshake + PMKID[/green]",
             "[dim]passive: deauth a client to force a handshake[/dim]"]
 
 
-def card_identity(source) -> tuple[str, str | None]:
-    """``(chipset/label, own_bssid_or_None)`` for the card endpoint. ``source`` is the WlanArray
-    (or a bare interface): a one-card pool shows that card's chipset + MAC, a multi-card pool the
-    count."""
-    if source is None:
+def card_identity(array: WlanArray) -> tuple[str, str | None]:
+    """``(chipset/label, own_bssid_or_None)`` for the card endpoint."""
+    if array is None:
         return "no card", None
-    members = getattr(source, "members", None)
-    if members is not None:                 # a WlanArray
-        if not members:
-            return "no card", None
-        if len(members) > 1:
-            return f"{len(members)} cards", None
-        source = members[0]                 # a pool of one: describe that single card
-    driver = getattr(source, "driver", None)
-    label = getattr(source, "chipset", None)
+    if array.members is None or len(array.members) == 0:
+        return "no card", None
+    if len(array.members) > 1:
+        return f"{len(array.members)} cards", None
+    iface = array.preferred or array.members[0]
+    label = iface.chipset
     if not label:
         # legacy fallback: strip the "(Make Model)" suffix off a description/name
-        label = str(getattr(source, "description", None)
-                    or getattr(source, "name", None) or "card").split("(")[0].strip()
+        label = str(iface.description or iface.name or "card").split("(")[0].strip()
     label = label or "card"
-    mac = getattr(driver, "mac_address", None)
+    mac = iface.driver.mac_address
     if isinstance(mac, (bytes, bytearray)) and len(mac) == 6:
         mac = ":".join(f"{b:02x}" for b in mac)
     return str(label), (str(mac) if mac else None)
-
 
