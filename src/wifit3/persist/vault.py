@@ -141,7 +141,7 @@ class Vault:
         if result and result.was_new:
             self._index.setdefault(ap.bssid, []).insert(
                 0, PersistedCapture(type=CaptureType.HS, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid))
+                                    path=str(result.path), bssid=ap.bssid, ssid=ap.ssid))
         return result
 
     def save_pmkid(self, ap: "AccessPoint", client_mac: str) -> Optional[SaveResult]:
@@ -149,7 +149,7 @@ class Vault:
         if result and result.was_new:
             self._index.setdefault(ap.bssid, []).insert(
                 0, PersistedCapture(type=CaptureType.PMKID, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid))
+                                    path=str(result.path), bssid=ap.bssid, ssid=ap.ssid))
         return result
 
     def save_wep_key(self, ap: "AccessPoint", key: bytes) -> Optional[SaveResult]:
@@ -157,7 +157,7 @@ class Vault:
         if result and result.was_new:
             self._index.setdefault(ap.bssid, []).insert(
                 0, PersistedCapture(type=CaptureType.WEP, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid, value=key.hex()))
+                                    path=str(result.path), bssid=ap.bssid, value=key.hex(), ssid=ap.ssid))
         return result
 
     def save_wps_pin(self, ap: "AccessPoint", pin: str, psk: str) -> Optional[SaveResult]:
@@ -165,7 +165,7 @@ class Vault:
         if result and result.was_new:
             self._index.setdefault(ap.bssid, []).insert(
                 0, PersistedCapture(type=CaptureType.WPS_PIN, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid, value=psk, pin=pin))
+                                    path=str(result.path), bssid=ap.bssid, value=psk, pin=pin, ssid=ap.ssid))
         return result
 
     def save_wps_pbc(self, ap: "AccessPoint", psk: str) -> Optional[SaveResult]:
@@ -173,7 +173,7 @@ class Vault:
         if result and result.was_new:
             self._index.setdefault(ap.bssid, []).insert(
                 0, PersistedCapture(type=CaptureType.WPS_PBC, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid, value=psk))
+                                    path=str(result.path), bssid=ap.bssid, value=psk, ssid=ap.ssid))
         return result
 
     # ----- filesystem ops (the screen goes through these, never touches disk) -----
