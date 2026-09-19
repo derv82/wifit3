@@ -109,6 +109,11 @@ class _ScannerHeader(Header):
 class _APScanTable(DataTable):
     """AP list table that can re-pin its row cursor without moving the viewport."""
 
+    BINDINGS = [
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+    ]
+
     SSID_MIN_WIDTH: int = 20
     _suppress_scroll: bool = False
 
@@ -185,11 +190,14 @@ class ScannerView(Screen):
         Binding("s", "cycle_sort", "Sort Col", show=True),
         Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
         Binding("f", "focus_filter", "Filter", show=True),
+        Binding("/", "focus_filter", "Filter", show=False),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
         Binding("v", "open_vault", "Vault", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
+        Binding("g", "scroll_home", "Top", show=False, priority=True),
+        Binding("G", "scroll_end", "Bottom", show=False, priority=True),
     ]
 
     # (column_key, display_label). Order here = on-screen order.

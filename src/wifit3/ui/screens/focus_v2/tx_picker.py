@@ -85,7 +85,7 @@ class TxDevicePicker(Widget):
     TxDevicePicker #tx-overlay {
         display: none; width: 30; max-height: 8;
         overlay: screen; constrain: none inside;
-        background: $surface; border: round ansi_cyan; padding: 0;
+        background: $surface; border: round $primary; padding: 0;
     }
     TxDevicePicker.-expanded #tx-overlay { display: block; }
     """

@@ -44,8 +44,8 @@ class VaultView(Screen):
 
     CSS = """
     VaultView #vault-body { height: 1fr; }
-    VaultView #vault-aps { width: 45%; height: 1fr; border: round ansi_cyan;
-                           border-title-color: ansi_cyan; border-title-style: bold; }
+    VaultView #vault-aps { width: 45%; height: 1fr; border: round $primary;
+                           border-title-color: $primary; border-title-style: bold; }
     VaultView VaultItemView { width: 55%; }
     """
 
