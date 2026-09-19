@@ -41,6 +41,12 @@ class WpsPbcCapture(Campaign):
     key = "pbc"
     stoppable = False
 
+    def dynamic_card_text(self) -> str:
+        return "● WPS PBC"
+
+    def status_headline(self, vault) -> list[str]:
+        return ["[bold green]● WPS PushButton[/bold green] window: capturing PSK"]
+
     def __init__(self, array, target, our_mac: Optional[bytes] = None, log=None,
                  tx_observer=None):
         super().__init__(ap=target, array=array)

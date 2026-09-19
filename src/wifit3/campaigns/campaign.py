@@ -129,3 +129,11 @@ class Campaign:
     @classmethod
     def ineligible_reason(cls, ap) -> Optional[str]:
         return None
+
+    def status_headline(self, vault) -> list[str]:
+        """Up to 3 markup lines of current activity for this campaign."""
+        return ["[bold cyan]● Running[/bold cyan]"]
+
+    def dynamic_card_text(self) -> str:
+        """What the card is doing right now, shown under the card art."""
+        return ""

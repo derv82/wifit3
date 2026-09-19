@@ -95,12 +95,6 @@ def beacon_rate(ap, samples: deque, now: float, window_s: float = 5.0):
     samples.append((now, ap.beacons))
     while len(samples) > 1 and now - samples[0][0] > window_s:
         samples.popleft()
-    oldest_t, oldest_n = samples[0]
-    span = now - oldest_t
-    rate = (ap.beacons - oldest_n) / span if span >= 1.0 else None
-    return rate, ap.beacons
-
-
 def _fmt_eta(secs: Optional[float]) -> str:
     if secs is None:
         return "?"
@@ -111,13 +105,6 @@ def _fmt_eta(secs: Optional[float]) -> str:
     return f"{secs / 3600:.1f}h"
 
 
-def _compact_count(n: int) -> str:
-    """Width-bounded counter: 0..999 verbatim, then 1.5k / 15k."""
-    if n < 1000:
-        return str(n)
-    if n < 10000:
-        return f"{n / 1000:.1f}k"            # 1500 -> "1.5k"
-    return f"{n // 1000}k"                    # 15000 -> "15k"
 
 
 def wps_status_markup(camp) -> str:
@@ -275,89 +262,20 @@ def deauth_blocked(ap) -> bool:
 def card_dynamic() -> str:
     """What the card is doing right now, shown under the card art (reads the active campaign)."""
     active = Campaign.active
-    if isinstance(active, WepCampaign):
-        return "● chopping" if getattr(active, "chop_active", False) else "● replaying"
-    if isinstance(active, WpsCampaign):
-        return "● WPS PIN"
-    if isinstance(active, DeauthCampaign):
-        return "● Deauth"
-    if isinstance(active, EvilTwinCampaign):
-        return "● EvilTwin"
-    if isinstance(active, WpsPbcCapture):
-        return "● WPS PBC"
+    if active:
+        return active.dynamic_card_text()
     return ""
-
-
-def wep_action_phrase(campaign) -> str:
-    """What the WEP campaign's TX side is doing right now."""
-    if getattr(campaign, "chop_active", False):
-        return "Chopping a packet"
-    state = getattr(getattr(campaign, "replay", None), "state", None)
-    return {
-        "replaying": "Replaying ARP",
-        "testing": "Testing a packet",
-        "waiting-arp": "Waiting for a packet",
-        "waiting-auth": "Associating",
-        "paused": "Paused",
-    }.get(state, "Listening for a packet")
 
 
 def derive_headline(ap, array, vault) -> list[str]:
     """The Campaign headline: up to 3 markup lines of current activity (reads the active campaign)."""
+    active = Campaign.active
+    if active:
+        return active.status_headline(vault)
+
+    # Passive capture state (no active campaign on this AP)
     enc = (ap.encryption or "").upper()
     wep = enc == "WEP"
-    active = Campaign.active
-
-    # 1. WEP active attack: cracking / replaying / chopping.
-    if isinstance(active, WepCampaign):
-        camp = active
-        n_ivs = ap.wep.unique_ivs if ap.wep else 0
-        cracker_samples = getattr(getattr(camp, "cracker", None), "sample_count", 0)
-        action = wep_action_phrase(camp)
-        if cracker_samples >= CRACK_READY_THRESHOLD:
-            # Replay/chop and cracking run concurrently.
-            return [f"[bold cyan]● {action}[/bold cyan] & "
-                    f"[bold cyan]Cracking[/bold cyan] WEP key",
-                    f"[dim]{cracker_samples:,} usable IVs[/dim]"]
-        if camp.chop_active:
-            return ["[bold cyan]● ChopChop[/bold cyan] forging an ARP seed",
-                    f"[dim]{n_ivs:,} IVs captured[/dim]"]
-        suffix = " [dim]for IVs[/dim]" if action == "Replaying ARP" else ""
-        return [f"[bold green]● {action}[/bold green]{suffix}",
-                f"[dim]{n_ivs:,} IVs · cracks at "
-                f"{CRACK_READY_THRESHOLD // 1000}k usable[/dim]"]
-
-    # 2. Live WPS attack.
-    if isinstance(active, WpsPbcCapture):
-        return ["[bold green]● WPS PushButton[/bold green] window: capturing PSK"]
-    if isinstance(active, WpsCampaign):
-        wps = active
-        if wps.state.found_pin:
-            return ["[black bold on green] ✓ WPS PIN cracked [/black bold on green]",
-                    f"[dim]PIN {escape(wps.state.found_pin)}[/dim]"]
-        return ["[bold cyan]● WPS PIN brute-force[/bold cyan]",
-                f"[dim]{wps_status_markup(wps)}[/dim]"]
-
-    # 3. EvilTwin campaign running.
-    if isinstance(active, EvilTwinCampaign):
-        camp = active
-        if camp.captured:
-            return ["[black bold on green] ✓ Captured [/black bold on green] crackable M2",
-                    f"[dim]saved to {Config.captures_dir}/[/dim]"]
-        stats = getattr(camp.fakeap, "stats", None)
-        if stats is None:
-            return [f"[bold cyan]EvilTwin arming…[/bold cyan] on CH {camp.twin_channel}"]
-        return [f"[bold cyan]EvilTwin active[/bold cyan] on CH {camp.twin_channel}",
-                f"[dim]auth:{stats.auth} · assoc:{stats.assoc} · M2:{stats.m2}[/dim]",
-                f"[dim]probes: {stats.probes_direct} direct · "
-                f"{stats.probes_wildcard} wildcard[/dim]"]
-
-    # 3b. Deauth campaign running: provoking a re-handshake for the passive capture.
-    if isinstance(active, DeauthCampaign):
-        deauth = active
-        return ["[bold cyan]● Deauth[/bold cyan] forcing a re-handshake",
-                f"[dim]client acks:{deauth.client_acks}/{deauth.client_sent} · "
-                f"bcast:{deauth.bcast_sent}[/dim]"]
 
     # 4. Recovered credentials, when idle: WEP key / WPS PSK.
     if ap.wep_key is not None or vault.has_wep_key(ap):
@@ -393,6 +311,10 @@ def derive_headline(ap, array, vault) -> list[str]:
         breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
         return ["[yellow]◌ Capturing handshake[/yellow]",
                 f"[dim]{breakdown}: deauth a client to force a re-handshake[/dim]"]
+                
+    if getattr(ap, "wpa3", False) and not getattr(ap, "transition_mode", False):
+        return ["[dim]● WPA3/SAE: passive capture not applicable[/dim]"]
+        
     if enc in ("OPEN", ""):
         return ["[dim]● Open network: no handshake to capture[/dim]"]
     return ["[green]● Listening for handshake + PMKID[/green]",

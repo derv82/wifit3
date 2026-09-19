@@ -70,6 +70,22 @@ class EvilTwinCampaign(Campaign):
             return "no beacon captured yet"
         return None
 
+    def dynamic_card_text(self) -> str:
+        return "● EvilTwin"
+
+    def status_headline(self, vault) -> list[str]:
+        from wifit3.persist.config import Config
+        if self.captured:
+            return ["[black bold on green] ✓ Captured [/black bold on green] crackable M2",
+                    f"[dim]saved to {Config.captures_dir}/[/dim]"]
+        stats = getattr(self.fakeap, "stats", None)
+        if stats is None:
+            return [f"[bold cyan]EvilTwin arming…[/bold cyan] on CH {self.twin_channel}"]
+        return [f"[bold cyan]EvilTwin active[/bold cyan] on CH {self.twin_channel}",
+                f"[dim]auth:{stats.auth} · assoc:{stats.assoc} · M2:{stats.m2}[/dim]",
+                f"[dim]probes: {stats.probes_direct} direct · "
+                f"{stats.probes_wildcard} wildcard[/dim]"]
+
     def __init__(self, array, target, evil_input: EvilTwinInput):
         if not target.last_beacon_frame:
             raise ValueError("EvilTwin needs a captured beacon to clone; none seen yet.")

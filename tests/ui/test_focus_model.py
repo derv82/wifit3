@@ -45,38 +45,39 @@ def _running(key, **extra):
 
 
 class _FakeWep(WepCampaign):
-    def __init__(self, *, chop=False, cracker_samples=0, replay_state=None, recovered_key=None):
-        self.chop = types.SimpleNamespace(is_active=chop)   # chop_active is a property reading this
+    def __init__(self, *, chop=False, cracker_samples=0, replay_state=None, recovered_key=None, target=None):
+        self.chop = types.SimpleNamespace(is_active=chop)
         self.cracker = types.SimpleNamespace(sample_count=cracker_samples)
         self.replay = types.SimpleNamespace(state=replay_state)
         self.recovered_key = recovered_key
-
+        self.target = target or _wep_ap()
 
 class _FakeWps(WpsCampaign):
-    def __init__(self, *, found_pin=None):
+    def __init__(self, *, found_pin=None, target=None):
         self.state = types.SimpleNamespace(found_pin=found_pin)
-
+        self.target = target or _wpa_ap()
 
 class _FakeDeauth(DeauthCampaign):
-    def __init__(self):
-        pass
-
+    def __init__(self, *, target=None):
+        self.target = target or _wpa_ap()
 
 class _FakeEvilTwin(EvilTwinCampaign):
-    def __init__(self, *, captured=False, twin_channel=1, fakeap=None):
+    def __init__(self, *, captured=False, twin_channel=1, fakeap=None, target=None):
         self.captured = captured
         self.twin_channel = twin_channel
         self.fakeap = fakeap
-
+        self.target = target or _rsn_ap()
 
 class _FakePmkid(PmkidHarvestAttack):
-    def __init__(self):
-        pass
-
+    def __init__(self, *, target=None):
+        self.target = target or _wpa_ap()
+        self.source_mac = b"\x00\x11\x22\x33\x44\x55"
+        self.fail_reason = None
+        self.pmkid = None
 
 class _FakePbc(WpsPbcCapture):
-    def __init__(self):
-        pass
+    def __init__(self, *, target=None):
+        self.target = target or _wpa_ap()
 
 
 def _headline(ap):
@@ -117,7 +118,7 @@ def test_headline_active_campaign_outranks_recovered_key():
     the IV count), not the frozen 'recovered' banner: an active attack is the
     dominant activity."""
     ap = _wep_ap(unique_ivs=1234)
-    Campaign.active = _FakeWep(replay_state="replaying")
+    Campaign.active = _FakeWep(replay_state="replaying", target=ap)
     h = _headline(ap)
     joined = " ".join(h)
     assert "Replaying" in h[0]
@@ -172,18 +173,7 @@ def test_headline_cracking_names_the_concurrent_tx_action():
     assert "Chopping a packet" in chopping[0] and "Cracking" in chopping[0]
 
 
-def test_wps_status_shows_fail_reason():
-    camp = types.SimpleNamespace(
-        state=types.SimpleNamespace(found_pin=None, tested=0, phase="common", first_half=None),
-        status="failed",
-        fail_reason="WPS stayed locked for 5 cycles without PIN progress",
-        eta_seconds=None,
-    )
 
-    line = fm.wps_status_markup(camp)
-
-    assert "failed" in line
-    assert "stayed locked" in line
 
 
 def test_headline_recovered_wps_psk_shows_banner():

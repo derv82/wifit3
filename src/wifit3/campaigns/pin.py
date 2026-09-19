@@ -90,6 +90,52 @@ def run_progress_line(state: CampaignState) -> Optional[str]:
             f"[dim](auto-resumes)[/dim]")
 
 
+def _fmt_eta(secs: Optional[float]) -> str:
+    if secs is None:
+        return "?"
+    if secs < 60:
+        return f"{int(secs)}s"
+    if secs < 3600:
+        return f"{int(secs / 60)}m"
+    return f"{secs / 3600:.1f}h"
+
+def _compact_count(n: int) -> str:
+    """Width-bounded counter: 0..999 verbatim, then 1.5k / 15k."""
+    if n < 1000:
+        return str(n)
+    if n < 10000:
+        return f"{n / 1000:.1f}k"            # 1500 -> "1.5k"
+    return f"{n // 1000}k"                    # 15000 -> "15k"
+
+def wps_status_markup(camp) -> str:
+    """Compact WPS-PIN campaign status: PIN progress + soft/hard lock state."""
+    from rich.markup import escape
+    st = camp.state
+    if st.found_pin:
+        return (f"[black bold on cyan] PIN CRACKED: ✓ "
+                f"{escape(st.found_pin)} [/black bold on cyan]")
+    tested = _compact_count(st.tested)
+    if camp.status == "locked":
+        # Countdown updates each tick
+        remaining = int(camp.lock_remaining_seconds)
+        m, s = divmod(remaining, 60)
+        countdown = f"{m}:{s:02d}"
+        kind = camp.lock_kind or "soft"
+        color = "red" if kind == "hard" else "dark_orange"
+        return (f"WPS PIN: [cyan]{tested}[/cyan]/11k · "
+                f"[{color}]{kind} {countdown}[/{color}]")
+    if camp.status in ("failed", "error"):
+        reason = getattr(camp, "fail_reason", None)
+        suffix = f" · [dim]{escape(reason)}[/dim]" if reason else f" [dim]({tested}/11k)[/dim]"
+        return f"WPS PIN: [red]{camp.status}[/red]{suffix}"
+    eta = _fmt_eta(camp.eta_seconds)
+    if st.phase == "second_half" and st.first_half:
+        # First half locked in: the meaningful keyspace is the second half
+        return (f"WPS PIN: [cyan]{st.p2_index}[/cyan]/1k · "
+                f"[green]p1={escape(st.first_half)}[/green] [dim]{eta}[/dim]")
+    return f"WPS PIN: [cyan]{tested}[/cyan]/11k · [dim]ETA {eta}[/dim]"
+
+
 class WpsCampaign(Campaign):
     _SAVE_EVERY = 16          # checkpoint the .run file every N attempts
     _MAX_TIMEOUT_RETRIES = 8  # retries of a silent (lost-reply) attempt before conceding
@@ -114,6 +160,17 @@ class WpsCampaign(Campaign):
         if ap.is_hidden:
             return "hidden SSID: can't associate"
         return "WPS locked" if getattr(ap, "wps_locked", False) else None
+
+    def dynamic_card_text(self) -> str:
+        return "● WPS PIN"
+
+    def status_headline(self, vault) -> list[str]:
+        from rich.markup import escape
+        if self.state.found_pin:
+            return ["[black bold on green] ✓ WPS PIN cracked [/black bold on green]",
+                    f"[dim]PIN {escape(self.state.found_pin)}[/dim]"]
+        return ["[bold cyan]● WPS PIN brute-force[/bold cyan]",
+                f"[dim]{wps_status_markup(self)}[/dim]"]
 
     def __init__(self, array, target, log=None, attempt_delay: float = 0.0):
         super().__init__(ap=target, array=array)

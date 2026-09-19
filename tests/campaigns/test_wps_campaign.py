@@ -532,3 +532,20 @@ def test_lost_reply_retry_is_bounded(tmp_path):
         else:
             break
     assert trues == c._MAX_TIMEOUT_RETRIES   # concedes after the cap, doesn't wedge
+
+
+def test_wps_status_shows_fail_reason():
+    import types
+    from wifit3.campaigns.pin import wps_status_markup
+    camp = types.SimpleNamespace(
+        state=types.SimpleNamespace(found_pin=None, tested=0, phase="common", first_half=None),
+        status="failed",
+        fail_reason="WPS stayed locked for 5 cycles without PIN progress",
+        eta_seconds=None,
+        lock_kind=None,
+    )
+
+    line = wps_status_markup(camp)
+
+    assert "failed" in line
+    assert "stayed locked" in line
