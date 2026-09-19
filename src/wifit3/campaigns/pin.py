@@ -161,6 +161,9 @@ class WpsCampaign(Campaign):
             return "hidden SSID: can't associate"
         return "WPS locked" if getattr(ap, "wps_locked", False) else None
 
+    def check_auto_stop(self) -> bool:
+        return self.state.phase == "done" or self.status in ("failed", "error")
+
     def dynamic_card_text(self) -> str:
         return "● WPS PIN"
 
@@ -198,6 +201,7 @@ class WpsCampaign(Campaign):
 
         # Suppress consecutive duplicate per-attempt log lines (same pin + same result)
         self._last_attempt_sig: Optional[tuple] = None
+
 
         # Live lock state for the SECURITY status row's countdown / kind display.
         # "hard" = beacon AP-Setup-Locked (the AP itself says it's not doing WPS);

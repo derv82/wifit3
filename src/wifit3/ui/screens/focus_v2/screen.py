@@ -396,7 +396,7 @@ class FocusViewV2(Screen):
     def _refresh_chop_button(self, ap, active, probing: bool) -> None:
         """ChopChop: a WEP sub-action, enabled only while the WEP campaign runs."""
         btn = self.query_one("#btn-chop", Button)
-        wep_running = isinstance(active, WepCampaign)
+        wep_running = active is not None and active.key == "wep"
         chopping = wep_running and getattr(active, "chop_active", False)
         btn.display = WepCampaign.visible(ap)
         btn.disabled = not wep_running or Config.is_silenced(ap.bssid) or probing
@@ -537,27 +537,15 @@ class FocusViewV2(Screen):
         # WEP recovers its key while still running; WPS reaches a terminal phase while its
         # task drains. Ask them to stop so they reap (below) on a following tick.
         cur = self._controls.current
-        if isinstance(cur, WepCampaign) and cur.recovered_key is not None:
-            result = self.app.vault.save_wep_key(ap, cur.recovered_key)
-            if result is not None:
-                self._log(treelog.leaf(_save_line(result)))
-            self._controls.request_stop()
-        elif isinstance(cur, WpsCampaign) and (
-                cur.state.phase == "done" or cur.status in ("failed", "error")):
+        if cur is not None and cur.check_auto_stop():
             self._controls.request_stop()
 
         # Reap a finished campaign: log/save its result, free the slot.
         finished = self._controls.reap()
-        if isinstance(finished, PmkidHarvestAttack):
-            self._finish_pmkid(finished)
-        elif isinstance(finished, DeauthCampaign):
-            self._finish_deauth(finished)
-        elif isinstance(finished, EvilTwinCampaign):
-            self._finish_eviltwin(finished)
-        elif isinstance(finished, WpsCampaign):
-            self._finish_wps_pin(finished)
-        elif isinstance(finished, WpsPbcCapture):
-            self._finish_pbc_capture(finished, ap)
+        if finished is not None:
+            handler = getattr(self, f"_finish_{finished.key}", None)
+            if handler:
+                handler(finished)
         # Clear the manual-stop suppression when the window closes; a fresh one re-arms.
         if not ap.wps_pbc_active:
             self._pbc_user_stopped = False
@@ -623,7 +611,7 @@ class FocusViewV2(Screen):
             return
         array = self.app.array
         cur = self._controls.current
-        wep = cur if isinstance(cur, WepCampaign) else None
+        wep = cur if cur is not None and cur.key == "wep" else None
         lines = [Text.from_markup(m, emoji=False)
                  for m in fm.status_footer_lines(ap, array, wep, time.time())]
         self.query_one("#dashboard", PacketDashboard).set_footer(lines)
@@ -815,7 +803,8 @@ class FocusViewV2(Screen):
             if key == "chop":                      # WEP sub-action: enabled only while WEP runs (and not silenced)
                 if not WepCampaign.visible(ap):
                     return False
-                running = isinstance(self._controls.current, WepCampaign)
+                cur = self._controls.current
+                running = cur is not None and cur.key == "wep"
                 return None if (not running or Config.is_silenced(ap.bssid)) else True
             cls = fm.CAMPAIGN_BY_KEY.get(key)
             if cls is None or not cls.visible(ap):
@@ -961,7 +950,8 @@ class FocusViewV2(Screen):
     # ----- PMKID -------------------------------------------------------------
 
     def _toggle_pmkid(self) -> None:
-        if isinstance(self._controls.current, PmkidHarvestAttack):
+        cur = self._controls.current
+        if cur is not None and cur.key == "pmkid":
             self._controls.request_stop()
         else:
             self._start_pmkid()
@@ -996,7 +986,8 @@ class FocusViewV2(Screen):
     # ----- Deauth ------------------------------------------------------------
 
     def _toggle_deauth(self) -> None:
-        if isinstance(self._controls.current, DeauthCampaign):
+        cur = self._controls.current
+        if cur is not None and cur.key == "deauth":
             self._controls.request_stop()
         else:
             self._start_deauth()
@@ -1023,7 +1014,8 @@ class FocusViewV2(Screen):
     # ----- EvilTwin ----------------------------------------------------------
 
     def _toggle_eviltwin(self) -> None:
-        if isinstance(self._controls.current, EvilTwinCampaign):
+        cur = self._controls.current
+        if cur is not None and cur.key == "eviltwin":
             self._controls.request_stop()
         else:
             self._start_eviltwin()
@@ -1071,7 +1063,7 @@ class FocusViewV2(Screen):
 
     def _toggle_generate_ivs(self) -> None:
         cur = self._controls.current
-        if isinstance(cur, WepCampaign):
+        if cur is not None and cur.key == "wep":
             if cur.recovered_key is None:
                 self._controls.request_stop()
             else:
@@ -1093,9 +1085,15 @@ class FocusViewV2(Screen):
             logger.exception("Generate IVs start failed")
             self._log(f"[bold red]✗ Generate IVs failed to start:[/bold red] {escape(str(exc))}")
 
+    def _finish_wep(self, camp) -> None:
+        if camp.recovered_key is not None:
+            result = self.app.vault.save_wep_key(camp.target, camp.recovered_key)
+            if result is not None:
+                self._log(treelog.leaf(_save_line(result)))
+
     def _toggle_chop(self) -> None:
         camp = self._controls.current
-        if not isinstance(camp, WepCampaign):
+        if camp is None or camp.key != "wep":
             self._log("[yellow]Start Replay first[/yellow] [dim](ChopChop "
                       "manufactures an ARP seed for the replay engine)[/dim]")
             return
@@ -1109,7 +1107,8 @@ class FocusViewV2(Screen):
     # ----- WPS PIN -----------------------------------------------------------
 
     def _toggle_wps_pin(self) -> None:
-        if isinstance(self._controls.current, WpsCampaign):
+        cur = self._controls.current
+        if cur is not None and cur.key == "wps":
             self._controls.request_stop()
         else:
             self._start_wps_pin()
@@ -1139,7 +1138,7 @@ class FocusViewV2(Screen):
             logger.exception("WPS PIN start failed")
             self._log(f"[bold red]✗ WPS PIN failed to start:[/bold red] {escape(str(exc))}")
 
-    def _finish_wps_pin(self, camp) -> None:
+    def _finish_wps(self, camp) -> None:
         """Reap a finished WPS PIN sweep: log/save the found PIN, else the give-up reason."""
         ssid = escape(camp.target.ssid or camp.bssid)
         if camp.state.found_pin:
@@ -1179,8 +1178,9 @@ class FocusViewV2(Screen):
         self._controls.start(WpsPbcCapture, array, ap,
                              log=lambda m: self._log(treelog.branch(m)))
 
-    def _finish_pbc_capture(self, camp, ap) -> None:
+    def _finish_pbc(self, camp) -> None:
         """Handle a completed PBC attempt."""
+        ap = camp.target
         if getattr(camp, "stopped", False):
             self._log(treelog.leaf(
                 "[yellow]stopped[/yellow] [dim](radio freed; auto-invade resumes on "
@@ -1214,7 +1214,8 @@ class FocusViewV2(Screen):
 
     def _user_stop_pbc(self) -> None:
         """The transient 'Stop PBC' button."""
-        if not isinstance(self._controls.current, WpsPbcCapture):
+        cur = self._controls.current
+        if cur is None or cur.key != "pbc":
             return
         self._pbc_user_stopped = True
         self._controls.request_stop()

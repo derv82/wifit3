@@ -230,6 +230,9 @@ class WepCampaign(Campaign):
         self.array.wep_store.record_broadcast_frame(self.target.bssid, forged_frame)
         self.replay.resume()
 
+    def check_auto_stop(self) -> bool:
+        return self.recovered_key is not None
+
     @property
     def chop_active(self) -> bool:
         return self.chop is not None and self.chop.is_active

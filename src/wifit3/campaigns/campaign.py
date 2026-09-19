@@ -111,6 +111,10 @@ class Campaign:
         """True once ``_loop()`` + ``teardown()`` have finished."""
         return self._task is not None and self._task.done()
 
+    def check_auto_stop(self) -> bool:
+        """Called every tick. Return True if the campaign has organically finished its work and should be stopped."""
+        return False
+
     # ---- behaviour (subclass fills these) -----------------------------------
     async def _loop(self) -> None:
         """The campaign's work."""

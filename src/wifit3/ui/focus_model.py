@@ -95,45 +95,10 @@ def beacon_rate(ap, samples: deque, now: float, window_s: float = 5.0):
     samples.append((now, ap.beacons))
     while len(samples) > 1 and now - samples[0][0] > window_s:
         samples.popleft()
-def _fmt_eta(secs: Optional[float]) -> str:
-    if secs is None:
-        return "?"
-    if secs < 60:
-        return f"{int(secs)}s"
-    if secs < 3600:
-        return f"{int(secs / 60)}m"
-    return f"{secs / 3600:.1f}h"
-
-
-
-
-def wps_status_markup(camp) -> str:
-    """Compact WPS-PIN campaign status: PIN progress + soft/hard lock state."""
-    st = camp.state
-    if st.found_pin:
-        return (f"[black bold on cyan] PIN CRACKED: ✓ "
-                f"{escape(st.found_pin)} [/black bold on cyan]")
-    tested = _compact_count(st.tested)
-    if camp.status == "locked":
-        # Countdown updates each tick
-        remaining = int(camp.lock_remaining_seconds)
-        m, s = divmod(remaining, 60)
-        countdown = f"{m}:{s:02d}"
-        kind = camp.lock_kind or "soft"
-        color = "red" if kind == "hard" else "dark_orange"
-        return (f"WPS PIN: [cyan]{tested}[/cyan]/11k · "
-                f"[{color}]{kind} {countdown}[/{color}]")
-    if camp.status in ("failed", "error"):
-        reason = getattr(camp, "fail_reason", None)
-        suffix = f" · [dim]{escape(reason)}[/dim]" if reason else f" [dim]({tested}/11k)[/dim]"
-        return f"WPS PIN: [red]{camp.status}[/red]{suffix}"
-    eta = _fmt_eta(camp.eta_seconds)
-    if st.phase == "second_half" and st.first_half:
-        # First half locked in: the meaningful keyspace is the second half
-        return (f"WPS PIN: [cyan]{st.p2_index}[/cyan]/1k · "
-                f"[green]p1={escape(st.first_half)}[/green] [dim]{eta}[/dim]")
-    return f"WPS PIN: [cyan]{tested}[/cyan]/11k · [dim]ETA {eta}[/dim]"
-
+    oldest_t, oldest_n = samples[0]
+    span = now - oldest_t
+    rate = (ap.beacons - oldest_n) / span if span >= 1.0 else None
+    return rate, ap.beacons
 
 def count_handshakes(ap):
     """``(complete, partial, msg_counts)`` across this AP's handshakes."""
