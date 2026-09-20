@@ -65,7 +65,13 @@ class JobManager:
                     # Tool died while we were closed. Try to parse its log for success/error.
                     tool = self.tools.get(job.tool_name)
                     if tool and job.log_path:
-                        tracking = {'pid': job.pid, 'log_path': job.log_path, 'api_id': job.api_id}
+                        tracking = {
+                            'pid': job.pid,
+                            'log_path': job.log_path,
+                            'api_id': job.api_id,
+                            'capture_path': job.capture_path,
+                            'config': job.config or {}
+                        }
                         res = tool.poll_status(tracking)
                         job.status = res.status
                         job.progress_msg = res.value or "Process died unexpectedly."
@@ -132,7 +138,13 @@ class JobManager:
                     changed = True
 
             elif job.status == ToolStatus.RUNNING:
-                tracking = {'pid': job.pid, 'log_path': job.log_path, 'api_id': job.api_id}
+                tracking = {
+                    'pid': job.pid,
+                    'log_path': job.log_path,
+                    'api_id': job.api_id,
+                    'capture_path': job.capture_path,
+                    'config': job.config or {}
+                }
                 try:
                     res = tool.poll_status(tracking)
                     if res.status != job.status or res.value != job.progress_msg:

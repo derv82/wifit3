@@ -5,6 +5,12 @@ from textual.widgets import Label, Button
 
 from wifit3.models.jobs import JobState, ToolStatus
 
+class JobKillButton(Button):
+    def __init__(self, job_id: str):
+        super().__init__("Kill", variant="error", classes="job-kill-btn")
+        self.job_id = job_id
+
+
 class JobTrackerPane(Widget):
     """Detailed pane inside the Vault drawer listing active jobs."""
 
@@ -56,7 +62,7 @@ class JobTrackerPane(Widget):
         container.remove_children()
         
         for job in jobs:
-            kill_btn = Button("Kill", id=f"kill-{job.job_id}", variant="error", classes="job-kill-btn")
+            kill_btn = JobKillButton(job.job_id)
             
             row = Horizontal(
                 Label(f"[bold]{job.tool_name}[/bold] - {job.progress_msg}", classes="job-name"),
@@ -67,8 +73,8 @@ class JobTrackerPane(Widget):
             container.mount(row)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.has_class("job-kill-btn"):
-            job_id = event.button.id.replace("kill-", "")
+        if isinstance(event.button, JobKillButton):
+            job_id = event.button.job_id
             job = self.app.vault.manager.jobs.get(job_id)
             if job and job.status == ToolStatus.RUNNING:
                 tool = self.app.vault.manager.tools.get(job.tool_name)
