@@ -47,6 +47,7 @@ from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
 from wifit3.models import AccessPoint, IdSource
 from wifit3.persist.config import Config
+from wifit3.ui.vault.global_tracker import GlobalJobTracker
 
 from ... import focus_model as fm
 from ...capture_events import (
@@ -250,6 +251,7 @@ class FocusViewV2(Screen):
         with Horizontal(id="bottom"):
             yield LogBand([], id="log")
             yield ClientsList(self._client_list(), id="clients")
+        yield GlobalJobTracker()
         yield Footer()
 
     async def on_mount(self) -> None:

@@ -7,6 +7,7 @@ from typing import Dict, List
 from wifit3.models import PersistedCapture
 from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.vault.tools.base import VaultTool
+from wifit3.vault.tools.hashcat import HashcatTool
 from wifit3.persist.config import Config
 
 
@@ -15,6 +16,7 @@ class JobManager:
         self.vault = vault
         self.jobs: Dict[str, JobState] = {}
         self.tools: Dict[str, VaultTool] = {}
+        self.register_tool(HashcatTool())
         self._load()
 
     def register_tool(self, tool: VaultTool) -> None:

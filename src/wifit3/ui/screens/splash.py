@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from wifit3.ui.ansi_art import make_black_transparent, recolor_logo
 from wifit3.ui.screens.setup_error import SetupErrorDialog
+from wifit3.ui.vault.global_tracker import GlobalJobTracker
 from wifit3.device.manager import Status
 
 if TYPE_CHECKING:
@@ -121,6 +122,7 @@ class SplashView(Screen):
                         yield Button("START", id="start-btn", variant="success")
                         # Reverses wifit3's driver/access changes for the highlighted card.
                         yield Button("Uninstall", id="uninstall-btn", variant="error")
+        yield GlobalJobTracker()
         yield Footer()
 
     def _both_lists(self):

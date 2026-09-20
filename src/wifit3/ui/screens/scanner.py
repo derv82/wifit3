@@ -24,6 +24,7 @@ from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.persist.config import Config
 from wifit3.models import AccessPoint
 from wifit3.crack.handshake import pmkid_crackable
+from wifit3.ui.vault.global_tracker import GlobalJobTracker
 
 from ..capture_events import (
     CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
@@ -256,6 +257,7 @@ class ScannerView(Screen):
                 table.add_column(label + "  ", key=key)
             yield table
             yield SelectableRichLog(id="system-log", markup=True, highlight=True)
+        yield GlobalJobTracker()
         yield Footer()
 
     async def on_mount(self) -> None:

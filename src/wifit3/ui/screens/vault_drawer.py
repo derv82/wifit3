@@ -7,6 +7,7 @@ from textual.binding import Binding
 
 from .vault_table import VaultTable
 from .vault_item import VaultItemView
+from wifit3.ui.vault.job_pane import JobTrackerPane
 
 class VaultDrawer(ModalScreen):
     """The Vault drawer overlay."""
@@ -41,6 +42,7 @@ class VaultDrawer(ModalScreen):
             with Horizontal():
                 yield VaultTable(id="vault-table")
                 yield VaultItemView(id="vault-item")
+            yield JobTrackerPane()
             yield Footer()
 
     def on_mount(self) -> None:

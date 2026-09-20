@@ -108,9 +108,12 @@ class WifiteApp(App):
     EvilTwinInputModal #bssid-btns Button { min-width: 4; }
     """
 
+    active_jobs: reactive[List[JobState]] = reactive([], always_update=True)
+    vault_open: reactive[bool] = reactive(False)
+
+
     def __init__(self, cli_log_level=None):
         super().__init__()
-        self.active_jobs: reactive[List[JobState]] = reactive([], always_update=True)
         self._config_error: Optional[str] = None
         try:
             Config.load()
@@ -247,7 +250,12 @@ class WifiteApp(App):
     def action_toggle_vault(self) -> None:
         """Open the vault drawer."""
         if not isinstance(self.screen, VaultDrawer):
-            self.push_screen(VaultDrawer())
+            self.vault_open = True
+            
+            def _on_dismiss(_=None):
+                self.vault_open = False
+                
+            self.push_screen(VaultDrawer(), callback=_on_dismiss)
 
 _FILE_LOGGING_CONFIGURED = False  # Avoid duplicate loggers
 

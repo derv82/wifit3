@@ -20,6 +20,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Select
 
 from wifit3.models import CaptureType, PersistedCapture
+from wifit3.ui.vault.tools_ui import UI_TOOLS
 
 
 def _hex_to_ascii(hex_key: Optional[str]) -> str:
@@ -132,12 +133,21 @@ class _CapturePanel(VerticalGroup):
 
         kg = self.query_one(".key-group")
         kg.remove_children()
+        
+        actions = self.query_one(".actions")
+        for btn in actions.query(".tool-btn"):
+            btn.remove()
+            
+        for tool in self.app.vault.manager.tools.values():
+            if tool.can_crack(cap):
+                btn = Button(f"Launch {tool.name}", classes=f"tool-btn launch-tool-{tool.name}")
+                actions.mount(btn, before=".spacer")
 
         def _row(label: str, val: str, btn_id: str):
             return Horizontal(
                 Label(f"[bold dim]{label}:[/bold dim] [black bold on lightgreen] {escape(val)} [/]", classes="key-display"),
                 Button("Copy", id=btn_id, classes="copy-btn"),
-                Button("Verify", disabled=True, classes="verify-btn"),
+                Button("Verify", disabled=True, classes="verify-btn", tooltip="TODO: Connect to a live AP and validate credentials"),
                 classes="key-row"
             )
 
@@ -206,6 +216,27 @@ class _CapturePanel(VerticalGroup):
 
         self.app.push_screen(ConfirmModal(f"Delete [bold]{escape(Path(cap.path).name)}[/]?"), after)
         
+    @on(Button.Pressed, ".tool-btn")
+    def _launch_tool(self, event: Button.Pressed) -> None:
+        event.stop()
+        cap = self._by_path.get(self.query_one(Select).value)
+        if not cap: return
+        
+        tool_name = next((c.replace("launch-tool-", "") for c in event.button.classes if c.startswith("launch-tool-")), None)
+        if not tool_name: return
+        
+        modal_cls = UI_TOOLS.get(tool_name)
+        if not modal_cls:
+            self.notify(f"No UI configured for tool: {tool_name}", severity="error")
+            return
+            
+        def _on_config(config: dict | None) -> None:
+            if not config: return
+            job_id = self.app.vault.manager.submit_job(tool_name, cap, config)
+            self.notify(f"Queued job: {job_id}")
+            
+        self.app.push_screen(modal_cls(), _on_config)
+
     @on(Button.Pressed, ".open-dir")
     def _open_dir(self, event: Button.Pressed) -> None:
         event.stop()
