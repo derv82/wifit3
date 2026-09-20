@@ -27,6 +27,7 @@ class JobState:
     pid: Optional[int] = None
     log_path: Optional[str] = None
     api_id: Optional[str] = None
+    config: Optional[dict] = None
 
 @dataclass
 class ToolResult:

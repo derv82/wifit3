@@ -10,6 +10,9 @@ from typing import Optional
 
 from wifit3 import __version__
 from wifit3.chips import log_trace
+from textual.reactive import reactive
+from typing import List
+from wifit3.models.jobs import JobState
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
@@ -107,6 +110,7 @@ class WifiteApp(App):
 
     def __init__(self, cli_log_level=None):
         super().__init__()
+        self.active_jobs: reactive[List[JobState]] = reactive([], always_update=True)
         self._config_error: Optional[str] = None
         try:
             Config.load()
@@ -149,7 +153,13 @@ class WifiteApp(App):
         
         self.push_screen("splash")
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
+        self.set_interval(2.0, self._poll_jobs)
         self.call_after_refresh(self.device_watch.poll)
+        self.call_after_refresh(self._poll_jobs)
+
+    def _poll_jobs(self) -> None:
+        self.vault.manager.poll_jobs()
+        self.active_jobs = self.vault.manager.get_active_jobs()
 
     def _on_devices_changed(self, current, arrived, departed) -> None:
         """DeviceWatch fired. On Splash, refresh the card list; mid-session, prompt to bring up

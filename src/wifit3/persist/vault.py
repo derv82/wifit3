@@ -16,6 +16,7 @@ from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid
 from wifit3.persist.config import Config
 from wifit3.persist.save import SaveResult
+from wifit3.vault.manager import JobManager
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
@@ -33,7 +34,8 @@ def _open_in_file_manager(path: Path) -> None:
 
 class Vault:
     """Caches the on-disk capture index (from Config.captures_dir) and is the
-    sole read/write path for handshake, PMKID, WEP, and WPS artifacts."""
+    backend interface for querying/deleting capture files.
+    """
 
     # Capture-kind -> human label, in display order. The one place these map.
     _KIND_LABELS = {
@@ -47,6 +49,8 @@ class Vault:
     def __init__(self) -> None:
         self._index: Dict[str, List[PersistedCapture]] = {}
         self.refresh()
+        self.manager = JobManager(self)
+        self.manager.reconcile_on_startup()
 
     def refresh(self) -> None:
         """Re-scan Config.captures_dir into the cache."""
