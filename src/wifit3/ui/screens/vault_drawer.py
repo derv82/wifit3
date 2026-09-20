@@ -1,6 +1,6 @@
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
-from textual.widgets import Label, Footer, DataTable
+from textual.widgets import Footer, DataTable
 from textual.screen import ModalScreen
 from textual import events, on
 from textual.binding import Binding

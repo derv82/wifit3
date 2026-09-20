@@ -12,7 +12,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalGroup, Container
+from textual.containers import Horizontal, Vertical, VerticalGroup
 from textual.events import Event
 from textual.message import Message
 from textual.reactive import reactive
@@ -20,7 +20,6 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Select
 
 from wifit3.models import CaptureType, PersistedCapture
-from wifit3.persist.config import Config
 
 
 def _hex_to_ascii(hex_key: Optional[str]) -> str:

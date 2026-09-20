@@ -1,8 +1,7 @@
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Vertical
 from textual.widgets import DataTable, Tabs, Tab
 from textual.widget import Widget
 
