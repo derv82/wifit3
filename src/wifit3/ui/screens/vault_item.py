@@ -1,10 +1,3 @@
-"""VaultItemView: the detail pane for one AP's saved captures. Given an AP's
-PersistedCapture list it renders a per-kind panel (Handshake/PMKID, WEP, WPS PIN,
-WPS PBC). Credential panels show one row per field (hex/ASCII, PSK/PIN) each with its
-own Copy; capture panels show a summary + a Copy of the hashcat hashline. Delete and
-(for legacy split .hc22000 files) Consolidate live in the panel too. All filesystem
-work goes through app.vault.
-"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -16,7 +9,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalGroup
+from textual.containers import Horizontal, Vertical, VerticalGroup, Container
 from textual.events import Event
 from textual.message import Message
 from textual.reactive import reactive
@@ -25,26 +18,9 @@ from textual.widgets import Button, Label, Select
 
 from wifit3.models import CaptureType, PersistedCapture
 
-# (title, kinds) per panel, in display order. HS and PMKID share one panel.
-_PANELS: list[tuple[str, tuple[CaptureType, ...]]] = [
-    ("HANDSHAKE / PMKID", (CaptureType.HS, CaptureType.PMKID)),
-    ("WEP KEY", (CaptureType.WEP,)),
-    ("WPS PIN", (CaptureType.WPS_PIN,)),
-    ("WPS PBC", (CaptureType.WPS_PBC,)),
-]
-
-# Per credential kind: the (row label, field key) rows to show, each with its own Copy.
-_FIELDS: dict[CaptureType, list[tuple[str, str]]] = {
-    CaptureType.WEP: [("WEP Key (hex)", "hex"), ("WEP Key (ASCII)", "ascii")],
-    CaptureType.WPS_PIN: [("PSK", "psk"), ("PIN", "pin")],
-    CaptureType.WPS_PBC: [("PSK", "psk")],
-}
-
 
 def _hex_to_ascii(hex_key: Optional[str]) -> str:
-    """Printable ASCII rendering of a hex WEP key, or "" if non-printable/invalid."""
-    if not hex_key:
-        return ""
+    if not hex_key: return ""
     try:
         raw = bytes.fromhex(hex_key)
     except ValueError:
@@ -52,35 +28,23 @@ def _hex_to_ascii(hex_key: Optional[str]) -> str:
     return raw.decode("ascii") if all(32 <= b < 127 for b in raw) else ""
 
 
-def _field_value(cap: PersistedCapture, key: str) -> str:
-    """The copyable text for one field of a capture (empty string if absent)."""
-    if key == "hex":
-        return cap.value or ""
-    if key == "ascii":
-        return _hex_to_ascii(cap.value)
-    if key == "psk":
-        return cap.value or ""
-    if key == "pin":
-        return cap.pin or ""
-    return ""
+def relative_time(timestamp: int) -> str:
+    diff = int(datetime.now().timestamp() - timestamp)
+    if diff < 60: return f"{diff} seconds ago"
+    if diff < 3600: return f"{diff // 60} minutes ago"
+    if diff < 86400: return f"{diff // 3600} hours ago"
+    return f"{diff // 86400} days ago"
 
 
 class ConfirmModal(ModalScreen[bool]):
-    """Yes/No confirmation; focus defaults to No."""
-
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
     DEFAULT_CSS = """
     ConfirmModal { align: center middle; }
-    ConfirmModal #dialog {
-        width: 54; height: auto;
-        border: thick $primary; background: $surface; padding: 1 2;
-    }
+    ConfirmModal #dialog { width: 54; height: auto; border: thick $primary; background: $surface; padding: 1 2; }
     ConfirmModal #prompt { margin-bottom: 1; }
     ConfirmModal Horizontal { align: right middle; height: auto; }
     ConfirmModal Button { margin-left: 1; }
     """
-
     def __init__(self, prompt: str) -> None:
         super().__init__()
         self._prompt = prompt
@@ -93,174 +57,113 @@ class ConfirmModal(ModalScreen[bool]):
                 yield Button(Text("Yes"), "error", id="yes")
 
     @on(Button.Pressed, "#yes")
-    def _yes(self, event: Event) -> None:
-        self.dismiss(True)
-
+    def _yes(self, event: Event) -> None: self.dismiss(True)
     @on(Button.Pressed, "#no")
-    def _no(self, event: Event) -> None:
-        self.dismiss(False)
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
-
-
-class ConsolidateModal(ModalScreen[bool]):
-    """Confirm merging legacy per-capture .hc22000 files into one file per AP."""
-
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    DEFAULT_CSS = """
-    ConsolidateModal { align: center middle; }
-    ConsolidateModal #dialog {
-        width: 54; height: auto;
-        border: thick $primary; background: $surface; padding: 1 2;
-    }
-    ConsolidateModal #prompt { margin-bottom: 1; }
-    ConsolidateModal Horizontal { align: right middle; height: auto; }
-    ConsolidateModal Button { margin-left: 1; }
-    """
-
-    def __init__(self, legacy_count: int, target_count: int) -> None:
-        super().__init__()
-        self.legacy_count = legacy_count
-        self.target_count = target_count
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
-            yield Label("[bold]Consolidate .hc22000 Captures[/]", id="title")
-            dupes = self.legacy_count - self.target_count
-            msg = Text.from_markup(
-                f"\nYou have [bold orange1]{self.legacy_count}[/] separate .hc22000 files from "
-                f"[bold green]{self.target_count}[/] APs.\n\n"
-                f"Do you want to condense these into single files per AP?\n\n"
-                f"    [bold green]{self.target_count} files will be created/updated[/]\n"
-                f"    [bold red]{dupes} duplicate files will be removed[/]"
-            )
-            yield Label(msg, id="prompt")
-            with Horizontal():
-                yield Button(Text("Yes"), "primary", id="confirm")
-                yield Button(Text("No"), "default", id="cancel")
-
-    @on(Button.Pressed, "#confirm")
-    def _confirm(self, event: Event) -> None:
-        self.dismiss(True)
-
-    @on(Button.Pressed, "#cancel")
-    def _cancel(self, event: Event) -> None:
-        self.dismiss(False)
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
+    def _no(self, event: Event) -> None: self.dismiss(False)
+    def action_cancel(self) -> None: self.dismiss(False)
 
 
 class _CapturePanel(VerticalGroup):
-    """One kind-group of an AP's captures: file dropdown, per-field rows (or a
-    capture summary), Copy/Delete, and Consolidate for legacy files."""
-
     DEFAULT_CSS = """
-    _CapturePanel { height: auto; border: round $primary; padding: 0 1; margin-bottom: 1; }
-    _CapturePanel .detail { height: auto; margin: 0 0 1 0; }
-    _CapturePanel .modified { height: 1; margin-bottom: 1; }
-    _CapturePanel .field { height: 1; align: left middle; }
-    _CapturePanel .fval { width: 1fr; height: 1; }
-    _CapturePanel .field .copy { height: 1; min-width: 8; border: none; }
+    _CapturePanel {
+        width: auto;
+        border: round $primary; padding: 0 1;
+        margin-bottom: 1;
+    }
+    _CapturePanel .file { margin-bottom: 1; }
+    _CapturePanel .date { height: 1; margin-bottom: 1; }
+    _CapturePanel .key-row { height: 1; align: left middle; margin-bottom: 1; }
+    _CapturePanel .key-display { height: 1; }
+    _CapturePanel .copy-btn { width: 4; height: 1; border: none; background: $success; color: black; margin-right: 1; }
+    _CapturePanel .verify-btn { width: 10; height: 1; border: none; }
     _CapturePanel .actions { height: auto; align: left middle; }
-    _CapturePanel .actions Button { margin-right: 1; }
+    _CapturePanel .spacer { width: 1fr; }
     """
 
-    def __init__(self, title: str, captures: List[PersistedCapture],
-                 show_consolidate: bool = False) -> None:
+    def __init__(self, title: str, captures: List[PersistedCapture]) -> None:
         super().__init__()
         self._title = title
         self._by_path: Dict[str, PersistedCapture] = {}
         for cap in sorted(captures, key=lambda c: c.timestamp, reverse=True):
-            self._by_path.setdefault(cap.path, cap)   # unique files, newest first
+            self._by_path.setdefault(cap.path, cap)
         self._files = list(self._by_path.values())
-        self._show_consolidate = show_consolidate
 
     def compose(self) -> ComposeResult:
         self.border_title = f"{self._title} ({len(self._files)})"
         newest = self._files[0]
-        yield Select([(Path(c.path).name, c.path) for c in self._files],
-                     value=newest.path, allow_blank=False, classes="file")
-        fields = _FIELDS.get(newest.type, [])
-        if fields:
-            yield Label(self._modified_text(newest), classes="modified")
-            for flabel, fkey in fields:
-                with Horizontal(classes="field"):
-                    yield Label(self._field_text(newest, flabel, fkey), classes=f"fval fval-{fkey}")
-                    yield Button("Copy", classes=f"copy copy-{fkey}")
-        else:
-            yield Label(Text.from_markup(self._detail_markup(newest)), classes="detail")
+        yield Select([(Path(c.path).name, c.path) for c in self._files], value=newest.path, allow_blank=False, classes="file")
+        yield Label(self._date_markup(newest), classes="date")
+        
+        # Display Key or Summary
+        with VerticalGroup(classes="key-group"):
+            pass # populated on file_changed
+
         with Horizontal(classes="actions"):
-            if not fields:
-                yield Button("Copy", classes="copy copy-payload")
+            yield Button("Open Directory", classes="open-dir")
+            yield Label("", classes="spacer")
             yield Button("Delete", "error", classes="delete")
-            if self._show_consolidate and self.app.vault.legacy_hc_file_count():
-                yield Button("Consolidate", "warning", classes="consolidate")
 
-    # ----- rendering -----
+    def on_mount(self) -> None:
+        self._update_display(self._files[0])
 
-    def _selected(self) -> Optional[PersistedCapture]:
-        return self._by_path.get(self.query_one(Select).value)
+    def _date_markup(self, cap: PersistedCapture) -> str:
+        dt = datetime.fromtimestamp(cap.timestamp).strftime("%Y-%m-%d %H:%M")
+        return f"[dim]Modified Date:[/dim] {dt} [dim]({relative_time(cap.timestamp)})[/dim]"
 
-    @staticmethod
-    def _modified_text(cap: PersistedCapture) -> Text:
-        when = datetime.fromtimestamp(cap.timestamp).strftime("%Y-%m-%d %H:%M")
-        return Text.from_markup(f"[dim]Modified:[/dim] {when}")
+    def _update_display(self, cap: PersistedCapture) -> None:
+        self.query_one(".date", Label).update(self._date_markup(cap))
+        
+        kg = self.query_one(".key-group")
+        kg.remove_children()
 
-    @staticmethod
-    def _field_text(cap: PersistedCapture, flabel: str, fkey: str) -> Text:
-        val = _field_value(cap, fkey)
-        shown = escape(val) if val else "[dim](none)[/dim]"
-        return Text.from_markup(f"[dim]{escape(flabel)}:[/dim] {shown}")
+        def _row(val: str, btn_id: str):
+            return Horizontal(
+                Label(f"[black bold on green] {escape(val)} [/]", classes="key-display"),
+                Button("Copy", id=btn_id, classes="copy-btn"),
+                Button("Verify", disabled=True, classes="verify-btn"),
+                classes="key-row"
+            )
 
-    def _detail_markup(self, cap: PersistedCapture) -> str:
-        when = datetime.fromtimestamp(cap.timestamp).strftime("%Y-%m-%d %H:%M")
-        if cap.path.endswith(".pcap"):
-            detail = "[dim]raw .pcap capture[/dim]"
-        else:
-            detail = self._hc_summary(cap)
-        return f"[dim]Modified:[/dim] {when}\n{detail}"
+        if self._title == "WPS PSKs":
+            kg.mount(_row(cap.value or "", "copy-psk"))
+        elif self._title == "WPS PINs":
+            kg.mount(_row(cap.pin or "", "copy-pin"))
+        elif self._title == "WEP KEYs":
+            kg.mount(_row(cap.value or "", "copy-hex"))
+            ascii_val = _hex_to_ascii(cap.value)
+            if ascii_val:
+                kg.mount(_row(ascii_val, "copy-ascii"))
+        else: # HANDSHAKES / PMKIDs
+            text = self.app.vault.capture_payload(cap)
+            hs = sum(1 for ln in text.splitlines() if ln.startswith("WPA*02*"))
+            pmkid = sum(1 for ln in text.splitlines() if ln.startswith("WPA*01*"))
+            parts = []
+            if hs: parts.append(f"{hs} handshake{'s' if hs != 1 else ''}")
+            if pmkid: parts.append(f"{pmkid} PMKID{'s' if pmkid != 1 else ''}")
+            summary = "[dim]" + (", ".join(parts) or "hashcat 22000 file") + "[/dim]"
+            kg.mount(Label(summary, classes="key-display"))
 
-    def _hc_summary(self, cap: PersistedCapture) -> str:
-        text = self.app.vault.capture_payload(cap)
-        hs = sum(1 for ln in text.splitlines() if ln.startswith("WPA*02*"))
-        pmkid = sum(1 for ln in text.splitlines() if ln.startswith("WPA*01*"))
-        parts = []
-        if hs:
-            parts.append(f"{hs} handshake" + ("s" if hs != 1 else ""))
-        if pmkid:
-            parts.append(f"{pmkid} PMKID" + ("s" if pmkid != 1 else ""))
-        return "[dim]" + (", ".join(parts) or "hashcat 22000 file") + "[/dim]"
-
-    # ----- events -----
 
     @on(Select.Changed)
     def _file_changed(self, event: Select.Changed) -> None:
         cap = self._by_path.get(event.value)
-        if cap is None:
-            return
-        fields = _FIELDS.get(cap.type, [])
-        if fields:
-            self.query_one(".modified", Label).update(self._modified_text(cap))
-            for flabel, fkey in fields:
-                self.query_one(f".fval-{fkey}", Label).update(self._field_text(cap, flabel, fkey))
-        else:
-            self.query_one(".detail", Label).update(Text.from_markup(self._detail_markup(cap)))
+        if cap:
+            self._update_display(cap)
 
-    @on(Button.Pressed, ".copy")
+    @on(Button.Pressed, ".copy-btn")
     def _copy(self, event: Button.Pressed) -> None:
         event.stop()
-        cap = self._selected()
-        if cap is None:
-            return
-        classes = event.button.classes
-        if "copy-payload" in classes:
-            text = self.app.vault.capture_payload(cap)
-        else:
-            key = next((c[len("copy-"):] for c in classes if c.startswith("copy-")), "")
-            text = _field_value(cap, key)
+        cap = self._by_path.get(self.query_one(Select).value)
+        if not cap: return
+        
+        btn_id = event.button.id
+        text = ""
+        if btn_id == "copy-psk": text = cap.value or ""
+        elif btn_id == "copy-pin": text = cap.pin or ""
+        elif btn_id == "copy-hex": text = cap.value or ""
+        elif btn_id == "copy-ascii": text = _hex_to_ascii(cap.value)
+        elif btn_id == "copy-payload": text = self.app.vault.capture_payload(cap)
+        
         if not text:
             self.notify("Nothing to copy for this entry", severity="warning")
             return
@@ -270,13 +173,11 @@ class _CapturePanel(VerticalGroup):
     @on(Button.Pressed, ".delete")
     def _delete(self, event: Button.Pressed) -> None:
         event.stop()
-        cap = self._selected()
-        if cap is None:
-            return
+        cap = self._by_path.get(self.query_one(Select).value)
+        if not cap: return
 
         def after(confirmed: bool | None) -> None:
-            if not confirmed:
-                return
+            if not confirmed: return
             try:
                 self.app.vault.delete_capture(cap)
             except OSError as exc:
@@ -286,57 +187,60 @@ class _CapturePanel(VerticalGroup):
             self.post_message(VaultItemView.CapturesChanged())
 
         self.app.push_screen(ConfirmModal(f"Delete [bold]{escape(Path(cap.path).name)}[/]?"), after)
-
-    @on(Button.Pressed, ".consolidate")
-    def _consolidate(self, event: Button.Pressed) -> None:
+        
+    @on(Button.Pressed, ".open-dir")
+    def _open_dir(self, event: Button.Pressed) -> None:
         event.stop()
-        vault = self.app.vault
-        count = vault.legacy_hc_file_count()
-        if not count:
-            return
-        unique = vault.legacy_hc_unique_count()
-
-        def after(confirmed: bool | None) -> None:
-            if not confirmed:
-                return
-            migrated, deleted = vault.consolidate_legacy_hc_files()
-            self.notify(f"Consolidated {deleted} files into {migrated} AP files.",
-                        title="Captures Consolidated")
-            self.post_message(VaultItemView.CapturesChanged())
-
-        self.app.push_screen(ConsolidateModal(count, unique), after)
+        cap = self._by_path.get(self.query_one(Select).value)
+        if not cap: return
+        try:
+            import subprocess, os
+            path = str(Path(self.app.vault.directory) / cap.path)
+            if os.name == 'nt':
+                subprocess.Popen(['explorer.exe', '/select,', path])
+            else:
+                subprocess.Popen(['xdg-open', str(Path(path).parent)])
+        except Exception as exc:
+            self.notify(f"Failed to open directory: {exc}", severity="error")
 
 
 class VaultItemView(Vertical):
-    """Detail pane for one AP: a title chip and a panel per capture kind present."""
-
     class CapturesChanged(Message):
-        """A capture was deleted or consolidated; the parent should refresh."""
+        """A capture was deleted; the parent should refresh."""
 
     DEFAULT_CSS = """
-    VaultItemView { height: 1fr; padding: 0 1; }
-    VaultItemView #vault-item-title { height: auto; margin-bottom: 1; }
+    VaultItemView {
+        width: 1fr;
+        height: 1fr;
+        border: round $primary;
+        border-title-color: $primary; border-title-style: bold;
+        padding: 0 1;
+    }
     VaultItemView #vault-item-empty { color: $text-muted; }
     """
 
-    # (bssid, ssid, captures); setting it rebuilds the panels for the new AP.
     _state: reactive[tuple] = reactive(("", None, ()), recompose=True)
 
     def load(self, bssid: str, ssid: Optional[str], captures: List[PersistedCapture]) -> None:
-        """Show one AP's captures (empty bssid clears the pane)."""
         self._state = (bssid, ssid, tuple(captures))
 
     def compose(self) -> ComposeResult:
         bssid, ssid, captures = self._state
         if not bssid:
+            self.border_title = "Vault Detail"
             yield Label("Select an AP to view its captures", id="vault-item-empty")
             return
-        yield Label(Text.from_markup(self._title_markup(bssid, ssid)), id="vault-item-title")
-        for title, kinds in _PANELS:
-            group = [c for c in captures if c.type in kinds]
-            if group:
-                yield _CapturePanel(title, list(group), show_consolidate=CaptureType.HS in kinds)
-
-    def _title_markup(self, bssid: str, ssid: Optional[str]) -> str:
+            
         name = ssid or "‹hidden›"
-        return f"[black bold on cyan] {escape(name)} [/]\n[dim]{escape(bssid)}[/dim]"
+        self.border_title = f"[black bold on cyan] {escape(name)} ({escape(bssid)}) [/]"
+        
+        groups = {
+            "HANDSHAKES": [c for c in captures if c.type == CaptureType.HS],
+            "PMKIDs": [c for c in captures if c.type == CaptureType.PMKID],
+            "WPS PSKs": [c for c in captures if c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC) and c.value],
+            "WPS PINs": [c for c in captures if c.type == CaptureType.WPS_PIN and c.pin],
+            "WEP KEYs": [c for c in captures if c.type == CaptureType.WEP],
+        }
+        for title, group in groups.items():
+            if group:
+                yield _CapturePanel(title, group)

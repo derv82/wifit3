@@ -21,9 +21,9 @@ from wifit3.models import AccessPoint
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
-from .screens.vault import VaultView
 from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
 from .screens.new_device import NewDeviceDialog
+from .screens.vault_drawer import VaultDrawer
 from .pref import PreferencesModal
 from .themes import register_app_themes
 
@@ -41,11 +41,15 @@ class WifiteApp(App):
     TITLE = f"wifit3 v{__version__} - derv82"
 
     ENABLE_COMMAND_PALETTE = False
-    BINDINGS = [Binding("ctrl+p", "preferences", "Prefs")]
+    BINDINGS = [
+        Binding("ctrl+p", "preferences", "Prefs"),
+        Binding("v", "toggle_vault", "Vault")
+    ]
 
     CSS = """
     /* Force single-line header to avoid Textual's "click to expand" behavior */
     Header { height: 1 !important; }
+
     #ascii-art {
         content-align: center middle;
         margin-bottom: 2;
@@ -142,7 +146,7 @@ class WifiteApp(App):
         self.install_screen(SplashView(), name="splash")
         self.install_screen(ScannerView(), name="scanner")
         self.install_screen(FocusViewV2(), name="focus")
-        self.install_screen(VaultView(), name="vault")
+        
         self.push_screen("splash")
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
         self.call_after_refresh(self.device_watch.poll)
@@ -230,6 +234,10 @@ class WifiteApp(App):
             await self.array.close()
         self.exit()
 
+    def action_toggle_vault(self) -> None:
+        """Open the vault drawer."""
+        if not isinstance(self.screen, VaultDrawer):
+            self.push_screen(VaultDrawer())
 
 _FILE_LOGGING_CONFIGURED = False  # Avoid duplicate loggers
 

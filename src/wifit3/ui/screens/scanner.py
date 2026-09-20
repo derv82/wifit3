@@ -914,7 +914,7 @@ class ScannerView(Screen):
                 await array.start_hopping(channels=self._channel_filter, interval=0.25)
 
     def action_open_vault(self) -> None:
-        self.app.push_screen("vault")
+        self.app.action_toggle_vault()
 
     def action_focus_filter(self) -> None:
         self.query_one(FilterBar).focus_text()
