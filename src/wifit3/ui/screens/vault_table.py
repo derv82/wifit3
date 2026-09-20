@@ -7,15 +7,19 @@ from textual.widgets import DataTable, Tabs, Tab
 from textual.widget import Widget
 
 from wifit3.models import CaptureType, PersistedCapture
+from textual.message import Message
 
 class VaultTable(Widget):
     """The ESSID Table for the Vault drawer."""
+
+    class TableReloaded(Message):
+        """Emitted when the table finishes reloading its rows."""
 
     DEFAULT_CSS = """
     VaultTable {
         width: 48;
         height: 1fr;
-        border: round $primary;
+        border: heavy $primary;
         border-title-color: $primary;
         border-title-style: bold;
     }
@@ -141,6 +145,7 @@ class VaultTable(Widget):
                 table.add_row(markup, key=bssid)
 
             self.border_title = f"VAULT ({len(self._aps)} APs)"
+            self.post_message(self.TableReloaded())
         finally:
             self._is_reloading = False
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import subprocess
+import os
+
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -17,6 +20,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Select
 
 from wifit3.models import CaptureType, PersistedCapture
+from wifit3.persist.config import Config
 
 
 def _hex_to_ascii(hex_key: Optional[str]) -> str:
@@ -66,16 +70,17 @@ class ConfirmModal(ModalScreen[bool]):
 class _CapturePanel(VerticalGroup):
     DEFAULT_CSS = """
     _CapturePanel {
-        width: auto;
+        background: $surface;
+        max-width: 81;
         border: round $primary; padding: 0 1;
-        margin-bottom: 1;
+        margin-top: 1;
     }
     _CapturePanel .file { margin-bottom: 1; }
     _CapturePanel .date { height: 1; margin-bottom: 1; }
     _CapturePanel .key-row { height: 1; align: left middle; margin-bottom: 1; }
-    _CapturePanel .key-display { height: 1; }
-    _CapturePanel .copy-btn { width: 4; height: 1; border: none; background: $success; color: black; margin-right: 1; }
-    _CapturePanel .verify-btn { width: 10; height: 1; border: none; }
+    _CapturePanel .key-display { height: 1; margin-right: 3; margin-bottom: 1; }
+    _CapturePanel .copy-btn { max-width: 6; height: 1; border: none; background: $background; color: $foreground; margin-right: 3 }
+    _CapturePanel .verify-btn { max-width: 8; height: 1; border: none }
     _CapturePanel .actions { height: auto; align: left middle; }
     _CapturePanel .spacer { width: 1fr; }
     """
@@ -89,14 +94,27 @@ class _CapturePanel(VerticalGroup):
         self._files = list(self._by_path.values())
 
     def compose(self) -> ComposeResult:
-        self.border_title = f"{self._title} ({len(self._files)})"
+        if self._title == "WPS PSKs":
+            self.border_title = f"WPS ({len(self._files)} PSKs)"
+        elif self._title == "WPS PINs":
+            self.border_title = f"WPS ({len(self._files)} PINs)"
+        elif self._title == "WEP KEYs":
+            self.border_title = f"WEP ({len(self._files)} Keys)"
+        elif self._title == "HASHCAT":
+            self.border_title = f"HASHCAT ({len(self._files)} .hc22000 files)"
+        elif self._title == "HANDSHAKE":
+            self.border_title = f"HANDSHAKE ({len(self._files)} .pcap files)"
+        else:
+            self.border_title = f"{self._title} ({len(self._files)})"
+
         newest = self._files[0]
         yield Select([(Path(c.path).name, c.path) for c in self._files], value=newest.path, allow_blank=False, classes="file")
-        yield Label(self._date_markup(newest), classes="date")
-        
+
         # Display Key or Summary
         with VerticalGroup(classes="key-group"):
             pass # populated on file_changed
+
+        yield Label(self._date_markup(newest), classes="date")
 
         with Horizontal(classes="actions"):
             yield Button("Open Directory", classes="open-dir")
@@ -108,41 +126,42 @@ class _CapturePanel(VerticalGroup):
 
     def _date_markup(self, cap: PersistedCapture) -> str:
         dt = datetime.fromtimestamp(cap.timestamp).strftime("%Y-%m-%d %H:%M")
-        return f"[dim]Modified Date:[/dim] {dt} [dim]({relative_time(cap.timestamp)})[/dim]"
+        return f"[dim]Modified:[/] {dt} [dim]({relative_time(cap.timestamp)})[/dim]"
 
     def _update_display(self, cap: PersistedCapture) -> None:
         self.query_one(".date", Label).update(self._date_markup(cap))
-        
+
         kg = self.query_one(".key-group")
         kg.remove_children()
 
-        def _row(val: str, btn_id: str):
+        def _row(label: str, val: str, btn_id: str):
             return Horizontal(
-                Label(f"[black bold on green] {escape(val)} [/]", classes="key-display"),
+                Label(f"[bold dim]{label}:[/bold dim] [black bold on lightgreen] {escape(val)} [/]", classes="key-display"),
                 Button("Copy", id=btn_id, classes="copy-btn"),
                 Button("Verify", disabled=True, classes="verify-btn"),
                 classes="key-row"
             )
 
         if self._title == "WPS PSKs":
-            kg.mount(_row(cap.value or "", "copy-psk"))
+            kg.mount(_row("PSK", cap.value or "", "copy-psk"))
         elif self._title == "WPS PINs":
-            kg.mount(_row(cap.pin or "", "copy-pin"))
+            kg.mount(_row("WPS PIN", cap.pin or "", "copy-pin"))
         elif self._title == "WEP KEYs":
-            kg.mount(_row(cap.value or "", "copy-hex"))
+            kg.mount(_row("WEP Hex Key", cap.value or "", "copy-hex"))
             ascii_val = _hex_to_ascii(cap.value)
             if ascii_val:
-                kg.mount(_row(ascii_val, "copy-ascii"))
-        else: # HANDSHAKES / PMKIDs
+                kg.mount(_row("ASCII Key", ascii_val, "copy-ascii"))
+        elif self._title == "HASHCAT":
             text = self.app.vault.capture_payload(cap)
             hs = sum(1 for ln in text.splitlines() if ln.startswith("WPA*02*"))
             pmkid = sum(1 for ln in text.splitlines() if ln.startswith("WPA*01*"))
             parts = []
             if hs: parts.append(f"{hs} handshake{'s' if hs != 1 else ''}")
             if pmkid: parts.append(f"{pmkid} PMKID{'s' if pmkid != 1 else ''}")
-            summary = "[dim]" + (", ".join(parts) or "hashcat 22000 file") + "[/dim]"
+            summary = "[italic]" + (", ".join(parts) or "hashcat 22000 file") + "[/italic]"
             kg.mount(Label(summary, classes="key-display"))
-
+        elif self._title == "HANDSHAKE":
+            kg.mount(Label("[italic]raw .pcap capture[/italic]", classes="key-display"))
 
     @on(Select.Changed)
     def _file_changed(self, event: Select.Changed) -> None:
@@ -194,8 +213,7 @@ class _CapturePanel(VerticalGroup):
         cap = self._by_path.get(self.query_one(Select).value)
         if not cap: return
         try:
-            import subprocess, os
-            path = str(Path(self.app.vault.directory) / cap.path)
+            path = os.path.normpath(Path(cap.path).resolve())
             if os.name == 'nt':
                 subprocess.Popen(['explorer.exe', '/select,', path])
             else:
@@ -212,8 +230,12 @@ class VaultItemView(Vertical):
     VaultItemView {
         width: 1fr;
         height: 1fr;
-        border: round $primary;
-        border-title-color: $primary; border-title-style: bold;
+        align-horizontal: center;
+        background: $background;
+        border: heavy $primary;
+        border-title-align: center;
+        border-title-color: $primary;
+        border-title-style: bold;
         padding: 0 1;
     }
     VaultItemView #vault-item-empty { color: $text-muted; }
@@ -232,11 +254,11 @@ class VaultItemView(Vertical):
             return
             
         name = ssid or "‹hidden›"
-        self.border_title = f"[black bold on cyan] {escape(name)} ({escape(bssid)}) [/]"
+        self.border_title = f"[$background bold on $primary] {escape(name)} ({escape(bssid)}) [/]"
         
         groups = {
-            "HANDSHAKES": [c for c in captures if c.type == CaptureType.HS],
-            "PMKIDs": [c for c in captures if c.type == CaptureType.PMKID],
+            "HANDSHAKE": [c for c in captures if c.path.endswith(".pcap")],
+            "HASHCAT": [c for c in captures if c.path.endswith(".hc22000")],
             "WPS PSKs": [c for c in captures if c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC) and c.value],
             "WPS PINs": [c for c in captures if c.type == CaptureType.WPS_PIN and c.pin],
             "WEP KEYs": [c for c in captures if c.type == CaptureType.WEP],

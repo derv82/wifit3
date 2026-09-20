@@ -28,7 +28,6 @@ class VaultDrawer(ModalScreen):
         width: 100%;
         max-height: 75%;
         background: $surface;
-        border-top: solid $primary;
         offset-y: 100%;
         transition: offset 200ms in_out_cubic;
     }
@@ -69,6 +68,20 @@ class VaultDrawer(ModalScreen):
             widget.load(bssid, entry[0], entry[1])
         else:
             widget.load("", None, [])
+
+    @on(VaultTable.TableReloaded)
+    def _table_reloaded(self, event: VaultTable.TableReloaded) -> None:
+        table = self.query_one("#vault-aps", DataTable)
+        if table.row_count > 0:
+            try:
+                key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+                self._load_widget(key)
+            except Exception:
+                from textual.coordinate import Coordinate
+                key = table.coordinate_to_cell_key(Coordinate(0, 0)).row_key.value
+                self._load_widget(key)
+        else:
+            self._load_widget("")
 
     @on(DataTable.RowHighlighted, "#vault-aps")
     def _ap_highlighted(self, event: DataTable.RowHighlighted) -> None:
