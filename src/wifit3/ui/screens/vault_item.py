@@ -40,7 +40,7 @@ def _hex_to_ascii(hex_key: Optional[str]) -> str:
 def relative_time(timestamp: int) -> str:
     diff = int(datetime.now().timestamp() - timestamp)
     if diff < 60: return    f"{diff} second{'' if diff == 1 else 's'} ago"
-    if diff < 3600: return  f"{diff // 60} minutes{'' if diff // 60 == 1 else 's'} ago"
+    if diff < 3600: return  f"{diff // 60} minute{'' if diff // 60 == 1 else 's'} ago"
     if diff < 86400: return f"{diff // 3600} hour{'' if diff // 3600 == 1 else 's'} ago"
     return                  f"{diff // 86400} day{'' if diff // 86400 == 1 else 's'} ago"
 

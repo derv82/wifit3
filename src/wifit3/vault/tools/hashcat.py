@@ -3,7 +3,7 @@ import os
 import subprocess
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from wifit3.models import PersistedCapture, ToolCapability, ToolResult, ToolStatus
 from wifit3.vault.tools.base import VaultTool
@@ -11,11 +11,16 @@ from wifit3.vault.tools.base import VaultTool
 
 logger = logging.getLogger(__name__)
 
+_STILL_ACTIVE = 259                             # GetExitCodeProcess: process has not exited
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
 
 class HashcatTool(VaultTool):
     name = "hashcat"
     description = "Advanced password recovery (WPA/WPA2/PMKID)"
-    capabilities = ToolCapability.KILLABLE
+    # ADOPTABLE: hashcat is left running when wifit3 exits and re-attached on the next launch, so a
+    # long crack survives closing the app. KILLABLE is the user's explicit Kill, not shutdown.
+    capabilities = ToolCapability.KILLABLE | ToolCapability.SINGLETON | ToolCapability.ADOPTABLE
 
     def __init__(self) -> None:
         self._procs: Dict[int, subprocess.Popen] = {}
@@ -26,9 +31,13 @@ class HashcatTool(VaultTool):
     def launch(self, capture: PersistedCapture, config: Dict[str, Any]) -> Dict[str, Any]:
         hashcat_exe = config.get("hashcat_exe")
         wordlist = config.get("wordlist")
-        if not hashcat_exe:
-            logger.error(f"Missing hashcat {hashcat_exe} or wordlist {wordlist} in config")
+        if not hashcat_exe or not wordlist:
+            logger.error(f"Missing hashcat_exe {hashcat_exe!r} or wordlist {wordlist!r} in config")
             raise ValueError("Missing hashcat_exe or wordlist in config")
+        if not Path(hashcat_exe).is_file():
+            raise ValueError(f"hashcat executable not found: {hashcat_exe}")
+        if not Path(wordlist).is_file():
+            raise ValueError(f"Wordlist not found: {wordlist}")
 
         hashcat_dir = str(Path(hashcat_exe).parent)
         abs_capture = str(Path(capture.path).resolve())
@@ -69,7 +78,10 @@ class HashcatTool(VaultTool):
                 stdin=subprocess.DEVNULL,
                 stdout=f,
                 stderr=subprocess.STDOUT,
-                creationflags=creationflags
+                creationflags=creationflags,
+                # setsid on POSIX so hashcat leaves wifit3's session and survives SIGHUP when the
+                # terminal closes; no effect on Windows.
+                start_new_session=True,
             )
         self._procs[proc.pid] = proc
 
@@ -100,12 +112,11 @@ class HashcatTool(VaultTool):
             self._terminate(pid)
             return ToolResult(status=ToolStatus.SUCCESS, value=f"Cracked! Key: {key}", result_data={"key": key})
 
-        # Liveness via our own Popen handle, never os.kill(pid, 0): on Windows the latter fires a
-        # console Ctrl+C that can wedge both hashcat and this app's terminal.
-        if not assume_dead and self._is_running(pid):
+        exe = (tracking_data.get("config") or {}).get("hashcat_exe")
+        if not assume_dead and self._is_running(pid, exe):
             return ToolResult(status=ToolStatus.RUNNING, value=progress_msg)
 
-        # Exited without a key: exhausted is a clean miss; anything else surfaces hashcat's message.
+        self._terminate(pid)
         if "Exhausted" in progress_msg:
             wordlist = (tracking_data.get("config") or {}).get("wordlist")
             return ToolResult(status=ToolStatus.FAILURE, value=Path(wordlist).name if wordlist else "wordlist")
@@ -127,9 +138,72 @@ class HashcatTool(VaultTool):
                 return line.split(":", 1)[1]
         return None
 
-    def _is_running(self, pid) -> bool:
+    def _is_running(self, pid, exe: Optional[str] = None) -> bool:
+        """Whether the job's process is alive: via our Popen handle if we launched it, else via the
+        OS, and (when ``exe`` is given) only if the live PID is still that program."""
         proc = self._procs.get(pid)
-        return proc is not None and proc.poll() is None
+        if proc is not None:
+            return proc.poll() is None
+        if not self._pid_alive(pid):
+            return False
+        if exe:
+            running_exe = self._pid_exe_path(pid)
+            # stem-in-name (not exact) so a symlinked/versioned hashcat -> hashcat.bin still matches
+            stem = Path(exe).stem.lower()
+            if running_exe and stem and stem not in Path(running_exe).name.lower():
+                return False
+        return True
+
+    def _pid_alive(self, pid) -> bool:
+        """True if a process with this PID currently exists. Avoids os.kill(pid, 0) on Windows,
+        where signal 0 routes to TerminateProcess."""
+        if not pid:
+            return False
+        if os.name != "nt":
+            try:
+                os.kill(int(pid), 0)
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                return True                       # exists, owned by another user
+            return True
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        handle = k32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return False
+        try:
+            code = wintypes.DWORD()
+            if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == _STILL_ACTIVE
+        finally:
+            k32.CloseHandle(handle)
+
+    def _pid_exe_path(self, pid) -> Optional[str]:
+        """Path to a running PID's executable (Windows API / Linux /proc), or None if unreadable."""
+        if not pid:
+            return None
+        if os.name != "nt":
+            try:
+                return os.readlink(f"/proc/{int(pid)}/exe")   # Linux; OSError elsewhere/gone
+            except OSError:
+                return None
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        handle = k32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return None
+        try:
+            size = wintypes.DWORD(32768)
+            buf = ctypes.create_unicode_buffer(size.value)
+            if k32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return buf.value
+            return None
+        finally:
+            k32.CloseHandle(handle)
 
     def _terminate(self, pid) -> None:
         proc = self._procs.pop(pid, None)
@@ -201,8 +275,11 @@ class HashcatTool(VaultTool):
             except Exception:
                 logger.exception(f"Failed to kill hashcat pid {pid}")
             return
-        # No handle we own (e.g. a job from a previous session). os.kill with SIGTERM maps to
-        # TerminateProcess on Windows (safe: not a console Ctrl+C event).
+        # A job adopted from a previous session (no handle we own). Only signal it if still alive
+        # and still hashcat, so a reused PID is left alone. SIGTERM -> TerminateProcess on Windows.
+        exe = (tracking_data.get("config") or {}).get("hashcat_exe")
+        if not self._is_running(pid, exe):
+            return
         try:
             import signal
             os.kill(pid, signal.SIGTERM)

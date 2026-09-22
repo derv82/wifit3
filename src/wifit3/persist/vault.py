@@ -3,6 +3,7 @@ artifacts. Loaded once at startup and refreshed on each save, so reads never
 re-scan the directory. Wraps persist.save + persist.capture_history."""
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 import time
@@ -20,6 +21,8 @@ from wifit3.vault.manager import JobManager
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
+
+logger = logging.getLogger(__name__)
 
 
 def _open_in_file_manager(path: Path) -> None:
@@ -44,13 +47,26 @@ class Vault:
         CaptureType.WEP: "WEP Key",
         CaptureType.WPS_PIN: "WPS PIN",
         CaptureType.WPS_PBC: "WPS PBC",
+        CaptureType.WPA_PSK: "WPA PSK",
     }
+
+    _PSK_TYPES = (CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK)
 
     def __init__(self) -> None:
         self._index: Dict[str, List[PersistedCapture]] = {}
-        self.refresh()
+        self.errors: list[str] = []                       # surfaced as toasts by the app on mount
+        try:
+            self.refresh()
+        except Exception as exc:
+            logger.exception("Vault: failed to load the capture index")
+            self._index = {}
+            self.errors.append(f"Failed to load captures: {exc}")
         self.manager = JobManager(self)
-        self.manager.reconcile_on_startup()
+        try:
+            self.manager.reconcile_on_startup()
+        except Exception as exc:
+            logger.exception("Vault: job reconciliation failed on startup")
+            self.errors.append(f"Failed to reconcile jobs: {exc}")
 
     def refresh(self) -> None:
         """Re-scan Config.captures_dir into the cache."""
@@ -79,7 +95,7 @@ class Vault:
     def summary(self) -> Optional[str]:
         """One-line count of every saved capture, e.g. '3 handshakes, 1 WEP key',
         or None when nothing is saved."""
-        hs, pmkid, wep, wps = summarize(self._index)
+        hs, pmkid, wep, psk = summarize(self._index)
         parts = []
         if hs:
             parts.append(f"{hs} handshake{'s' * (hs != 1)}")
@@ -87,8 +103,8 @@ class Vault:
             parts.append(f"{pmkid} PMKID{'s' * (pmkid != 1)}")
         if wep:
             parts.append(f"{wep} WEP key{'s' * (wep != 1)}")
-        if wps:
-            parts.append(f"{wps} WPS PSK{'s' * (wps != 1)}")
+        if psk:
+            parts.append(f"{psk} PSK{'s' * (psk != 1)}")
         return ", ".join(parts) or None
 
     def detailed_summary(self, ap: "AccessPoint") -> dict[str, tuple[PersistedCapture, int]]:
@@ -110,7 +126,7 @@ class Vault:
             ap.wps_pbc_psk
             or ap.wps_pin_psk
             or next((p.value for p in self.persisted(ap.bssid)
-                     if p.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC) and p.value), None)
+                     if p.type in self._PSK_TYPES and p.value), None)
         )
 
     def has_psk(self, ap: "AccessPoint") -> bool:

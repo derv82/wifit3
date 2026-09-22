@@ -1,11 +1,12 @@
 import logging
 import json
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from wifit3.models import PersistedCapture
-from wifit3.models.jobs import JobState, ToolStatus, ToolResult
+from wifit3.models.jobs import JobState, ToolCapability, ToolStatus, ToolResult
 from wifit3.vault.tools.base import VaultTool
 from wifit3.vault.tools.hashcat import HashcatTool
 from wifit3.persist.common import parse_hc22000
@@ -35,13 +36,17 @@ class JobManager:
             return
         try:
             data = json.loads(jobs_file.read_text(encoding="utf-8"))
-            for k, v in data.items():
+        except Exception:
+            logger.exception(f"Error while loading {jobs_file}")
+            self.jobs = {}  # Corrupt file: reset
+            return
+        for k, v in data.items():
+            try:
                 if 'status' in v:
                     v['status'] = ToolStatus(v['status'])
                 self.jobs[k] = JobState(**v)
-        except Exception:
-            logger.exception(f"Error while loading {jobs_file}")
-            self.jobs = {}  # If corrupted, reset
+            except Exception:
+                logger.exception(f"Skipping unreadable job entry {k!r} in {jobs_file}")
 
     def _save(self) -> None:
         jobs_file = self.get_jobs_file()
@@ -54,15 +59,18 @@ class JobManager:
         jobs_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def reconcile_on_startup(self) -> None:
-        """Resolve jobs left RUNNING by a previous session. Their process is no longer ours
-        to track (it may have died, and its PID may since have been reused), so derive the
-        final status from the tool's own log/output rather than from liveness."""
+        """Resolve jobs left in a ``RUNNING`` state by a previous session."""
         changed = False
         for job_id, job in self.jobs.items():
             if job.status != ToolStatus.RUNNING:
                 continue
-            tool = self.tools.get(job.tool_name)
-            if tool and job.log_path:
+            try:
+                tool = self.tools.get(job.tool_name)
+                if not (tool and job.log_path):
+                    job.status = ToolStatus.ERROR
+                    job.progress_msg = "Process ended while wifit3 was closed."
+                    changed = True
+                    continue
                 tracking = {
                     'pid': job.pid,
                     'log_path': job.log_path,
@@ -70,15 +78,24 @@ class JobManager:
                     'capture_path': job.capture_path,
                     'config': job.config or {},
                 }
-                logger.info(f"Reconciling {job.tool_name} job {job_id} from its log")
-                res = tool.poll_status(tracking, assume_dead=True)
-                job.status = res.status
-                job.progress_msg = res.value or "Process ended while wifit3 was closed."
-                self._persist_cracked_key(job, res)
-            else:
+                res = tool.poll_status(tracking)
+                if res.status == ToolStatus.RUNNING:
+                    logger.info(f"Adopted still-running {job.tool_name} job {job_id}")
+                else:
+                    logger.info(f"Reconciled {job.tool_name} job {job_id}: {res.status.value}")
+                if res.status != job.status or (res.value and res.value != job.progress_msg):
+                    job.status = res.status
+                    if res.status == ToolStatus.RUNNING:
+                        job.progress_msg = res.value or job.progress_msg
+                    else:
+                        job.progress_msg = res.value or "Process ended while wifit3 was closed."
+                    self._persist_cracked_key(job, res)
+                    changed = True
+            except Exception as exc:
+                logger.exception(f"Failed to reconcile job {job_id}")
                 job.status = ToolStatus.ERROR
-                job.progress_msg = "Process ended while wifit3 was closed."
-            changed = True
+                job.progress_msg = f"Reconcile failed: {exc}"
+                changed = True
 
         if changed:
             self._save()
@@ -106,9 +123,10 @@ class JobManager:
     def poll_jobs(self) -> None:
         """Called periodically by a UI timer."""
         changed = False
-        
-        running_hashcat = sum(1 for j in self.jobs.values() if j.status == ToolStatus.RUNNING and j.tool_name == "hashcat")
-        
+
+        running_by_tool: Counter = Counter(
+            j.tool_name for j in self.jobs.values() if j.status == ToolStatus.RUNNING)
+
         for job_id, job in list(self.jobs.items()):
             tool = self.tools.get(job.tool_name)
             if not tool:
@@ -116,10 +134,11 @@ class JobManager:
                 continue
 
             if job.status == ToolStatus.QUEUED:
-                if job.tool_name == "hashcat" and running_hashcat >= 1:
-                    logger.warning(f"Hashcat is already running; job ID {job_id} remains queued")
+                if (ToolCapability.SINGLETON in tool.capabilities
+                        and running_by_tool[job.tool_name] >= 1):
+                    logger.warning(f"{job.tool_name} is already running; job ID {job_id} remains queued")
                     continue # Wait for slot
-                    
+
                 # Slot available, launch it
                 try:
                     # Retrieve the actual capture object from the vault
@@ -138,8 +157,7 @@ class JobManager:
                     job.log_path = tracking.get('log_path')
                     job.api_id = tracking.get('api_id')
                     changed = True
-                    if job.tool_name == "hashcat":
-                        running_hashcat += 1
+                    running_by_tool[job.tool_name] += 1
                 except Exception as exc:
                     logger.exception(f"Failed to launch '{job.tool_name}' for job ID {job_id}")
                     job.status = ToolStatus.ERROR
@@ -185,7 +203,13 @@ class JobManager:
         bssid_safe = cap.bssid.replace(":", "-").lower() if cap.bssid else "00-00-00-00-00-00"
         out_name = f"{ssid_safe}_{bssid_safe}_{int(time.time())}_wpa_psk.txt"
         out_path = Path(Config.captures_dir) / out_name
-        out_path.write_text(f"SSID: {ssid}\nBSSID: {cap.bssid}\nPSK: {res.result_data['key']}\n")
+        try:
+            out_path.write_text(
+                f"SSID: {ssid}\nBSSID: {cap.bssid}\nPSK: {res.result_data['key']}\n",
+                encoding="utf-8")
+        except OSError:
+            logger.exception(f"Failed to write recovered key to {out_path}")
+            return
         self.vault.refresh()
 
     def _essid_from_capture(self, capture_path: str) -> Optional[str]:
@@ -210,13 +234,16 @@ class JobManager:
             self._save()
 
     def kill_all_running(self) -> None:
-        """Kill every RUNNING job's process. Called on shutdown so tools are not orphaned:
-        an orphaned hashcat holds its single-instance lock and blocks all future launches."""
+        """Shutdown: leave ADOPTABLE tools running (re-attached next launch), kill other KILLABLE
+        ones so they aren't orphaned."""
         for job in self.jobs.values():
             if job.status != ToolStatus.RUNNING:
                 continue
             tool = self.tools.get(job.tool_name)
             if tool is None:
+                continue
+            caps = tool.capabilities
+            if ToolCapability.ADOPTABLE in caps or ToolCapability.KILLABLE not in caps:
                 continue
             try:
                 tool.kill({'pid': job.pid, 'log_path': job.log_path, 'api_id': job.api_id})

@@ -7,6 +7,8 @@ class ToolCapability(IntFlag):
     KILLABLE = auto()
     PAUSABLE = auto()
     RESUMABLE = auto()
+    SINGLETON = auto()      # only one instance of this tool may run at a time
+    ADOPTABLE = auto()      # process outlives the app; adopt it on relaunch, don't kill on exit
 
 class ToolStatus(str, Enum):
     QUEUED = "QUEUED"

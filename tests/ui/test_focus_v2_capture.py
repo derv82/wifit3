@@ -20,7 +20,7 @@ def test_recovered_wps_psk_shows_in_status():
     # We pass None for vault as it's unused in this branch of status_headlines
     lines = fm.status_headlines(ap, array, vault=Vault())
     status_text = "".join(lines)
-    assert "WPS PSK recovered" in status_text
+    assert "PSK recovered" in status_text
 
 
 def test_pmf_required_disables_deauth():

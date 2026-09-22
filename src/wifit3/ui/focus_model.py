@@ -252,12 +252,12 @@ def status_headlines(ap, array, vault) -> list[str]:
     enc = (ap.encryption or "").upper()
     wep = enc == "WEP"
 
-    # 4. Recovered credentials, when idle: WEP key / WPS PSK.
+    # 4. Recovered credentials, when idle: WEP key / PSK (WPS- or handshake-derived).
     if ap.wep_key is not None or vault.has_wep_key(ap):
         return ["[black bold on green] ✓ WEP key recovered [/black bold on green]",
                 "[dim]see the event log for the key[/dim]"]
     if vault.known_psk(ap):
-        return ["[black bold on green] ✓ WPS PSK recovered [/black bold on green]",
+        return ["[black bold on green] ✓ PSK recovered [/black bold on green]",
                 "[dim]see the event log for the passphrase[/dim]"]
 
     if Config.is_silenced(ap.bssid):

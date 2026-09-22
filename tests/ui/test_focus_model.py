@@ -182,7 +182,7 @@ def test_headline_recovered_wps_psk_shows_banner():
     """A recovered WPS PSK (PBC or PIN, after the campaign is torn down) shows a
     terminal banner instead of decaying back to 'Listening'."""
     h = _headline(_wpa_ap(wps_pbc_psk="hunter2"))
-    assert "WPS PSK recovered" in h[0]
+    assert "PSK recovered" in h[0]
 
 
 def test_headline_listening_when_no_psk():
@@ -204,7 +204,7 @@ def test_headline_wps_pin_found_while_held_then_psk_after_teardown():
     # After teardown the PSK lives on the AP → recovered banner (not Listening).
     Campaign.active = None
     after = _headline(_wpa_ap(wps_pbc_psk="hunter2"))
-    assert "WPS PSK recovered" in after[0]
+    assert "PSK recovered" in after[0]
 
 
 def _iface_with_usable(n):

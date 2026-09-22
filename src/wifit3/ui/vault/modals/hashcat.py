@@ -3,6 +3,18 @@ from textual.containers import Vertical, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label
 import shutil
+import sys
+
+
+def _default_hashcat_path() -> str:
+    if found := shutil.which("hashcat"):
+        return found
+    if sys.platform == "win32":
+        return r"C:\hashcat\hashcat.exe"
+    if sys.platform == "darwin":
+        return "/opt/homebrew/bin/hashcat"
+    return "/usr/bin/hashcat"
+
 
 class HashcatConfigModal(ModalScreen[dict]):
     """Configuration modal for Hashcat jobs."""
@@ -34,8 +46,7 @@ class HashcatConfigModal(ModalScreen[dict]):
             yield Label("Launch Hashcat", classes="text-bold")
             
             yield Label("Hashcat Executable Path:", classes="hashcat-label")
-            exe_path = shutil.which("hashcat") or "C:\\hashcat\\hashcat.exe"
-            yield Input(value=exe_path, id="hashcat-exe")
+            yield Input(value=_default_hashcat_path(), id="hashcat-exe")
             
             yield Label("Wordlist Path:", classes="hashcat-label")
             yield Input(placeholder="e.g. D:\\wordlists\\Top29Million.txt", id="hashcat-wordlist")

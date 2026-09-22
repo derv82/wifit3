@@ -55,6 +55,11 @@ def _write_wps_pbc(d, bssid_dashed, ssid="Net", epoch=1700000000, psk="diskpsk")
         f"SSID: {ssid}\nBSSID: x\nPSK: {psk}\n", encoding="utf-8")
 
 
+def _write_wpa_psk(d, bssid_dashed, ssid="Net", epoch=1700000001, psk="crackedpw"):
+    (d / f"{ssid}_{bssid_dashed}_{epoch}_wpa_psk.txt").write_text(
+        f"SSID: {ssid}\nBSSID: x\nPSK: {psk}\n", encoding="utf-8")
+
+
 # ---- startup / refresh ------------------------------------------------------
 
 def test_startup_loads_existing_captures(tmp_path):
@@ -62,7 +67,7 @@ def test_startup_loads_existing_captures(tmp_path):
     v = Vault()
     caps = v.persisted("00:11:22:33:44:88")
     assert len(caps) == 1 and caps[0].type == CaptureType.WPS_PBC and caps[0].value == "hunter2"
-    assert v.summary() == "1 WPS PSK"
+    assert v.summary() == "1 PSK"
 
 
 def test_persisted_unknown_bssid_is_empty(tmp_path):
@@ -81,7 +86,7 @@ def test_refresh_rescans_the_current_config_dir(tmp_path, monkeypatch):
     _write_wps_pbc(other, "00-11-22-33-44-99")
     monkeypatch.setattr(Config, "captures_dir", str(other))
     v.refresh()
-    assert v.summary() == "1 WPS PSK"
+    assert v.summary() == "1 PSK"
 
 
 # ---- writes fold into the cache ---------------------------------------------
@@ -151,6 +156,29 @@ def test_non_wps_persisted_is_not_a_psk(tmp_path):
     v.save_handshake(ap, "11:22:33:44:55:66")
     v.save_wep_key(ap, b"abcde")
     assert v.has_psk(ap) is False and v.known_psk(ap) is None
+
+
+def test_known_psk_from_cracked_wpa_psk_file(tmp_path):
+    _write_wpa_psk(tmp_path, "00-11-22-33-44-aa", psk="crackedpw")
+    v = Vault()
+    ap = AccessPoint(bssid="00:11:22:33:44:aa")   # never had WPS, cracked from a handshake
+    assert v.has_psk(ap) is True and v.known_psk(ap) == "crackedpw"
+
+
+def test_wpa_psk_has_a_kind_label():
+    assert CaptureType.WPA_PSK in Vault._KIND_LABELS
+
+
+def test_vault_records_error_when_index_load_fails(tmp_path, monkeypatch):
+    import wifit3.persist.vault as vault_mod
+
+    def boom():
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(vault_mod, "load_capture_index", boom)
+    v = Vault()                       # must not raise despite the failing scan
+    assert v._index == {}
+    assert any("disk gone" in e for e in v.errors)
 
 
 def test_kind_predicates(tmp_path):

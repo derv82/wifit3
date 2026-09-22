@@ -12,7 +12,7 @@ from wifit3 import __version__
 from wifit3.chips import log_trace
 from textual.reactive import reactive
 from typing import List
-from wifit3.models.jobs import JobState, ToolStatus
+from wifit3.models.jobs import JobState, ToolCapability, ToolStatus
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
@@ -27,6 +27,7 @@ from .screens.focus_v2 import FocusViewV2
 from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
 from .screens.new_device import NewDeviceDialog
 from .screens.vault_drawer import VaultDrawer
+from .screens.vault_table import VaultTable
 from .pref import PreferencesModal
 from .themes import register_app_themes
 
@@ -151,6 +152,8 @@ class WifiteApp(App):
         """Register screens, push the splash, and start the always-on device watch."""
         if self._config_error:
             self.notify(self._config_error, severity="error", title="Config")
+        for msg in self.vault.errors:
+            self.notify(msg, severity="warning", title="Vault")
         self.install_screen(SplashView(), name="splash")
         self.install_screen(ScannerView(), name="scanner")
         self.install_screen(FocusViewV2(), name="focus")
@@ -170,13 +173,25 @@ class WifiteApp(App):
         """Toast each job the first time it finishes this session; jobs already terminal when
         the app started are recorded silently rather than re-announced."""
         terminal = (ToolStatus.SUCCESS, ToolStatus.FAILURE, ToolStatus.ERROR)
+        cracked = False
         for job in self.active_jobs:
             prev = self._job_status.get(job.job_id)
             if job.status in terminal and prev is not None and prev not in terminal:
                 self._toast_job(job)
+                cracked = cracked or job.status == ToolStatus.SUCCESS
             self._job_status[job.job_id] = job.status
         live = {job.job_id for job in self.active_jobs}
         self._job_status = {k: v for k, v in self._job_status.items() if k in live}
+        if cracked:
+            self._refresh_vault_table()
+
+    def _refresh_vault_table(self) -> None:
+        """Reload the vault table if its drawer is open."""
+        if isinstance(self.screen, VaultDrawer):
+            try:
+                self.screen.query_one("#vault-table", VaultTable).reload_table()
+            except Exception:
+                logger.debug("Vault table refresh skipped", exc_info=True)
 
     def _toast_job(self, job: JobState) -> None:
         if job.status == ToolStatus.SUCCESS:
@@ -194,7 +209,7 @@ class WifiteApp(App):
         if job is None:
             return
         tool = self.vault.manager.tools.get(job.tool_name)
-        if tool is not None:
+        if tool is not None and ToolCapability.KILLABLE in tool.capabilities:
             tool.kill({'pid': job.pid, 'log_path': job.log_path, 'api_id': job.api_id})
         self._poll_jobs()
 
