@@ -23,6 +23,7 @@ class JobState:
     capture_path: str
     status: ToolStatus
     progress_msg: str           # e.g., "12% (ETA: 1h)" or error reason
+    display_name: str = "Unknown Job"           # Human-readable name (e.g. "hashcat (ASUS)")
     # Tool-specific tracking data (only one of these usually populated)
     pid: Optional[int] = None
     log_path: Optional[str] = None
@@ -32,4 +33,5 @@ class JobState:
 @dataclass
 class ToolResult:
     status: ToolStatus
-    value: Optional[str] = None # The cracked key, the progress string, or error msg
+    value: Optional[str] = None # The progress string or error msg
+    result_data: Optional[dict] = None # Extra data (e.g. {"key": "0xdeadbeef"})

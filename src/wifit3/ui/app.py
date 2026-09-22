@@ -164,6 +164,21 @@ class WifiteApp(App):
         self.vault.manager.poll_jobs()
         self.active_jobs = self.vault.manager.get_active_jobs()
 
+    def kill_job(self, job_id: str) -> None:
+        """Kill a running job, then refresh the tracker immediately."""
+        job = self.vault.manager.jobs.get(job_id)
+        if job is None:
+            return
+        tool = self.vault.manager.tools.get(job.tool_name)
+        if tool is not None:
+            tool.kill({'pid': job.pid, 'log_path': job.log_path, 'api_id': job.api_id})
+        self._poll_jobs()
+
+    def clear_job(self, job_id: str) -> None:
+        """Remove a finished job, then refresh the tracker immediately."""
+        self.vault.manager.clear_job(job_id)
+        self.active_jobs = self.vault.manager.get_active_jobs()
+
     def _on_devices_changed(self, current, arrived, departed) -> None:
         """DeviceWatch fired. On Splash, refresh the card list; mid-session, prompt to bring up
         each newly-plugged card."""
@@ -243,6 +258,7 @@ class WifiteApp(App):
 
     async def action_quit(self):
         self.persist_config()
+        self.vault.manager.kill_all_running()
         if self.array:
             await self.array.close()
         self.exit()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 import os
 
@@ -23,8 +24,12 @@ from wifit3.models import CaptureType, PersistedCapture
 from wifit3.ui.vault.tools_ui import UI_TOOLS
 
 
+logger = logging.getLogger(__name__)
+
+
 def _hex_to_ascii(hex_key: Optional[str]) -> str:
-    if not hex_key: return ""
+    if not hex_key:
+        return ""
     try:
         raw = bytes.fromhex(hex_key)
     except ValueError:
@@ -34,10 +39,10 @@ def _hex_to_ascii(hex_key: Optional[str]) -> str:
 
 def relative_time(timestamp: int) -> str:
     diff = int(datetime.now().timestamp() - timestamp)
-    if diff < 60: return f"{diff} seconds ago"
-    if diff < 3600: return f"{diff // 60} minutes ago"
-    if diff < 86400: return f"{diff // 3600} hours ago"
-    return f"{diff // 86400} days ago"
+    if diff < 60: return    f"{diff} second{'' if diff == 1 else 's'} ago"
+    if diff < 3600: return  f"{diff // 60} minutes{'' if diff // 60 == 1 else 's'} ago"
+    if diff < 86400: return f"{diff // 3600} hour{'' if diff // 3600 == 1 else 's'} ago"
+    return                  f"{diff // 86400} day{'' if diff // 86400 == 1 else 's'} ago"
 
 
 class ConfirmModal(ModalScreen[bool]):
@@ -61,10 +66,15 @@ class ConfirmModal(ModalScreen[bool]):
                 yield Button(Text("Yes"), "error", id="yes")
 
     @on(Button.Pressed, "#yes")
-    def _yes(self, event: Event) -> None: self.dismiss(True)
+    def _yes(self, event: Event) -> None:
+        self.dismiss(True)
+
     @on(Button.Pressed, "#no")
-    def _no(self, event: Event) -> None: self.dismiss(False)
-    def action_cancel(self) -> None: self.dismiss(False)
+    def _no(self, event: Event) -> None:
+        self.dismiss(False)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
 
 class _CapturePanel(VerticalGroup):
@@ -140,7 +150,7 @@ class _CapturePanel(VerticalGroup):
             
         for tool in self.app.vault.manager.tools.values():
             if tool.can_crack(cap):
-                btn = Button(f"Launch {tool.name}", classes=f"tool-btn launch-tool-{tool.name}")
+                btn = Button(f"Launch {tool.name}", "primary", classes=f"tool-btn launch-tool-{tool.name}")
                 actions.mount(btn, before=".spacer")
 
         def _row(label: str, val: str, btn_id: str):
@@ -190,7 +200,6 @@ class _CapturePanel(VerticalGroup):
         elif btn_id == "copy-pin": text = cap.pin or ""
         elif btn_id == "copy-hex": text = cap.value or ""
         elif btn_id == "copy-ascii": text = _hex_to_ascii(cap.value)
-        elif btn_id == "copy-payload": text = self.app.vault.capture_payload(cap)
         
         if not text:
             self.notify("Nothing to copy for this entry", severity="warning")
@@ -202,13 +211,17 @@ class _CapturePanel(VerticalGroup):
     def _delete(self, event: Button.Pressed) -> None:
         event.stop()
         cap = self._by_path.get(self.query_one(Select).value)
-        if not cap: return
+        if not cap:
+            return
 
         def after(confirmed: bool | None) -> None:
-            if not confirmed: return
+            if not confirmed:
+                return
             try:
+                logger.info(f"Deleting {cap}")
                 self.app.vault.delete_capture(cap)
             except OSError as exc:
+                logger.error(f"Could not remove {Path(cap.path).name}: {exc}")
                 self.notify(f"Could not remove {Path(cap.path).name}: {exc}", severity="error")
                 return
             self.notify(f"Removed {Path(cap.path).name}")
@@ -219,19 +232,25 @@ class _CapturePanel(VerticalGroup):
     @on(Button.Pressed, ".tool-btn")
     def _launch_tool(self, event: Button.Pressed) -> None:
         event.stop()
-        cap = self._by_path.get(self.query_one(Select).value)
-        if not cap: return
+        selected_file = self.query_one(Select).value
+        cap = self._by_path.get(selected_file)
+        if not cap:
+            logger.warning(f"Unable to launch tool for {selected_file}: Not found in index")
+            return
         
         tool_name = next((c.replace("launch-tool-", "") for c in event.button.classes if c.startswith("launch-tool-")), None)
-        if not tool_name: return
+        if not tool_name:
+            return
         
         modal_cls = UI_TOOLS.get(tool_name)
         if not modal_cls:
+            logger.error(f"Unable to launch tool: No entry in UI_TOOLS for {tool_name}")
             self.notify(f"No UI configured for tool: {tool_name}", severity="error")
             return
             
         def _on_config(config: dict | None) -> None:
-            if not config: return
+            if not config:
+                return
             job_id = self.app.vault.manager.submit_job(tool_name, cap, config)
             self.notify(f"Queued job: {job_id}")
             
@@ -240,8 +259,11 @@ class _CapturePanel(VerticalGroup):
     @on(Button.Pressed, ".open-dir")
     def _open_dir(self, event: Button.Pressed) -> None:
         event.stop()
-        cap = self._by_path.get(self.query_one(Select).value)
-        if not cap: return
+        selected_file = self.query_one(Select).value
+        cap = self._by_path.get(selected_file)
+        if not cap:
+            logger.warning(f"Unable to open directory, {selected_file} not found in index")
+            return
         try:
             path = os.path.normpath(Path(cap.path).resolve())
             if os.name == 'nt':
@@ -249,6 +271,7 @@ class _CapturePanel(VerticalGroup):
             else:
                 subprocess.Popen(['xdg-open', str(Path(path).parent)])
         except Exception as exc:
+            logger.error(f"Failed to open directory for {cap}", exc)
             self.notify(f"Failed to open directory: {exc}", severity="error")
 
 

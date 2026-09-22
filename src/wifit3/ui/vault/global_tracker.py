@@ -42,13 +42,21 @@ class GlobalJobTracker(Widget):
             label.update("No active jobs.")
             return
 
-        self.display = True
         running = [j for j in jobs if j.status == ToolStatus.RUNNING]
         queued = [j for j in jobs if j.status == ToolStatus.QUEUED]
         
+        if not running and not queued:
+            self.display = False
+            return
+            
+        self.display = True
+        
         parts = []
         if running:
-            parts.append(f"Cracking {len(running)} capture{'s' if len(running) != 1 else ''}: {running[0].progress_msg}")
+            job = running[0]
+            parts.append(f"⏳ {job.display_name}: {job.progress_msg}")
+            if len(running) > 1:
+                parts.append(f"(+{len(running)-1} more)")
         if queued:
             parts.append(f"({len(queued)} queued)")
             

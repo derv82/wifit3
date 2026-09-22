@@ -21,8 +21,9 @@ class VaultTool(ABC):
         pass
 
     @abstractmethod
-    def poll_status(self, tracking_data: Dict[str, Any]) -> ToolResult:
-        """Tails the physical log file, or queries remote API (via urllib)."""
+    def poll_status(self, tracking_data: Dict[str, Any], assume_dead: bool = False) -> ToolResult:
+        """Tails the physical log file, or queries remote API (via urllib). When
+        ``assume_dead`` is set the process is known gone; resolve final status from output."""
         pass
 
     def kill(self, tracking_data: Dict[str, Any]) -> None:
