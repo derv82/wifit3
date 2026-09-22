@@ -19,9 +19,15 @@
   independent ground truth; hidden-report C2H handshake + probe power-off),
   M3 (power-on, verified three times across both captures), M4 (LLT +
   TX-report + FW download + ready, verified three times: probe + open on
-  capture-2, open on capture-1). `verify_pcap` PASS on both captures to the M5
-  frontier (`R32 0x64`). Next: M5 (MAC/BB/RF). Until the bring-up verifies end
-  to end, keep `WIFIT3_RTL8188FTV=mainline`.
+  capture-2, open on capture-1). `verify_pcap` PASS on both captures: M5a
+  (antenna selection + MAC table, 119 ops both captures), M5b (BB config +
+  crystal, 280 ops both captures), M5c (RFENV setup + RadioA table with
+  B6/B2 readback loops + TxPowerTrack load, 180 ops both captures), M5d
+  (MISC02 queues/pages/filters, 43 ops both captures), M5e (beacon/burst/USB
+  agg/drop-check/lifetime/turn-on, 41 ops both captures), M5f ch1 tune
+  (38 ops both captures), to the TX-power frontier (`R32 0xE08`). Next:
+  M5g TX power (`PHY_SetTxPowerIndex_8188F`). Until the
+  bring-up verifies end to end, keep `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -56,7 +62,7 @@
 
 ## Scripts
 - `scripts/chips/rtl8188ftv/capture_vendor_8188fu.sh` — reproducible vendor capture (pin + monitor-enabled DKMS build + `capture.py` + bundle self-check).
-- `scripts/chips/rtl8188ftv_dkms/verify_pcap.py` — cold-boot byte gate (stub until M1).
+- `scripts/chips/rtl8188ftv_dkms/verify_pcap.py` — cold-boot byte gate (M1-M5c).
 
 ## Debug log
 - 2026-09-22 — vendor capture triage: 30k packets / 57 s, ~6k control setups all `bRequest 0x05`, bulk-IN `0x81` with live RX sizes, zero bulk-OUT (aireplay `No such BSSID available` against `a8:5e:45:04:ce:e0`); `iw set channel` rc=0 on ch1–13, ch14 rejected (`channel is disabled`, regulatory). Monitor lives on the `wlx…` netdev itself.
