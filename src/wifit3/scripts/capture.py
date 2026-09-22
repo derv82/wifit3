@@ -432,6 +432,30 @@ class Capture:
             self.logger.log_main("[*] No on-disk driver source (mainline?): use "
                                  "driver.log vermagic/filename to fetch matching source.")
 
+    def _wait_for_dump(self, timeout=15.0):
+        """Block until tshark's child is actually dumping (the pcap exists and is
+        non-empty), then settle briefly so interface attach lag can't eat the
+        plug-time prefix. An idle bus writes no packets, but dumpcap still emits
+        the pcapng header block on open, so size > 0 proves the file is live.
+        Without this a fast plug can lose enumeration + probe before the first
+        frame lands (seen once: 10 silent seconds, pcap opened mid-power-flow)."""
+        pcap_path = self.temp_dir / "capture.pcap"
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                if pcap_path.exists() and pcap_path.stat().st_size > 0:
+                    break
+            except OSError:
+                pass
+            time.sleep(0.5)
+        else:
+            self.logger.log_main("[!] WARNING: capture file never grew; the "
+                                 "front of the capture may be lost")
+            return False
+        time.sleep(2)
+        self.logger.log_main(f"[*] Capture file live: {pcap_path}")
+        return True
+
     def run_cmd(self, cmd_list, fatal=False, timeout=60):
         """Run a command, logging exactly when it started/finished (main.log
         `Running: <cmd>` + the per-tool log), then pause 1 s before returning.
@@ -669,6 +693,7 @@ class Capture:
             ["sudo", "tshark", "-i", self.USBMON, "-w", str(pcap_path), "-q"],
             stdout=self.tshark_log, stderr=self.tshark_log
         )
+        self._wait_for_dump()
 
         # Baseline the USB tree (our card not plugged yet) so snapshot_usb can
         # report exactly what appears: chipset-agnostic device identification.
