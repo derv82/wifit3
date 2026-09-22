@@ -32,10 +32,13 @@
   swing, 22 ops both captures), LC standalone (TX-pause branch + RF 0x18
   backup/LCK/ready-poll/restore, 68 ops both captures), IQK standalone
   (path-detect + Path-A TX/RX x2 workers + similarity break + matrix fill
-  + BB recover + RF-path restore, 410 ops both captures, final=0) to the
-  cap1-op1279 / cap2-op2914 frontier. Next: post-IQK reload + tracking.
-  Until the bring-up verifies end to end, keep
-  `WIFIT3_RTL8188FTV=mainline`.
+  + BB recover + RF-path restore, 410 ops both captures, final=0),
+  thermal trigger (RF 0x42 BIT17|BIT16, 8 ops both captures), monitor
+  entry (MSR NOLINK + RCR all-accept + RXFLTMAP2, 4 ops both captures)
+  to the cap1-op1279 / cap2-op2914 frontier. Next: post-IQK reload +
+  channel-switch unit (SwChnl/SpurCal/PostBW/RF6052BW/SetTxPower) +
+  thermal tracking callback. Until the bring-up verifies end to end,
+  keep `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -61,6 +64,14 @@
   DMInit chain, zero-read antenna/path/beamforming/dynamic inits, no
   leading-zero/decimal/computed-address spellings, no function-pointer
   dispatch. LC verifies standalone from its `0xD03` anchor past it.
+- Mapped, unported: post-IQK open tail (`SwChnl` ch1 + `SpurCal` +
+  `PostSetBW` + `RF6052BW` + `SetTxPowerLevel` reuse + beacon block) and the
+  monitor-entry `SwChnl` to ch10 + `SetTxPowerLevel` ch10 + thermal tracking
+  callback. Open anomalies there: `E08` bytes 1-2 → `0x02,0x02` in one R/W
+  pair (no single-byte RMW source found), an RF `0x55` RMW + full write, and
+  an 8-op beacon block (`0x550`/`0x102` no-change + `StopTxBeacon`-shaped
+  `0x422`/`0x541`/`0x542` + `0x550=0x19`). The ch10 `SetTxPower` values
+  otherwise match `txpower.get_index(ch=10)` for 18/20 lanes.
 - Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
 
 ## Driver Entry Points
