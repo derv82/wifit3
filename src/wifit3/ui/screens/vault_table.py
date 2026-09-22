@@ -23,7 +23,7 @@ class VaultTable(Widget):
         border-title-style: bold;
     }
     VaultTable Tabs {
-        margin-bottom: 1;
+        margin-bottom: 0;
     }
     VaultTable DataTable {
         height: 1fr;
@@ -61,6 +61,7 @@ class VaultTable(Widget):
         try:
             self._aps = self._group_aps()
             table = self.query_one("#vault-aps", DataTable)
+            selected_bssid = self._current_row_key(table)
             table.clear()
             
             # Determine available tabs
@@ -71,7 +72,7 @@ class VaultTable(Widget):
             has_pmk = False
             
             for _, caps in self._aps.values():
-                if any(c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC) and c.value for c in caps):
+                if any(c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK) and c.value for c in caps):
                     has_psk = True
                 if any(c.type == CaptureType.WEP for c in caps):
                     has_wep = True
@@ -117,7 +118,7 @@ class VaultTable(Widget):
             # Populate current tab
             for bssid, (ssid, caps) in rows:
                 # Check filter
-                if self._current_tab == "tab-psk" and not any(c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC) and c.value for c in caps): continue
+                if self._current_tab == "tab-psk" and not any(c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK) and c.value for c in caps): continue
                 if self._current_tab == "tab-wep" and not any(c.type == CaptureType.WEP for c in caps): continue
                 if self._current_tab == "tab-pin" and not any(c.type == CaptureType.WPS_PIN and c.pin for c in caps): continue
                 if self._current_tab == "tab-hs" and not any(c.type == CaptureType.HS for c in caps): continue
@@ -128,7 +129,7 @@ class VaultTable(Widget):
                 bssid_suffix = f" [dim]{bssid}[/dim]" if ssid_counts.get(ssid or "", 0) > 1 else ""
                 
                 badges = []
-                if any(c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC) and c.value for c in caps):
+                if any(c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK) and c.value for c in caps):
                     badges.append("[bold green]✓PSK[/]")
                 if any(c.type == CaptureType.WPS_PIN and c.pin for c in caps):
                     badges.append("[bold green]✓PIN[/]")
@@ -143,10 +144,26 @@ class VaultTable(Widget):
                 markup = f"{name} {badges_str}{bssid_suffix}".strip()
                 table.add_row(markup, key=bssid)
 
+            # Restore the prior selection when that AP survived the reload.
+            if selected_bssid is not None:
+                try:
+                    table.move_cursor(row=table.get_row_index(selected_bssid))
+                except Exception:
+                    pass
+
             self.border_title = f"VAULT ({len(self._aps)} APs)"
             self.post_message(self.TableReloaded())
         finally:
             self._is_reloading = False
+
+    def _current_row_key(self, table: DataTable) -> Optional[str]:
+        """The bssid under the cursor, so a reload can restore the selection."""
+        if table.row_count == 0:
+            return None
+        try:
+            return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        except Exception:
+            return None
 
     @on(Tabs.TabActivated, "#vault-tabs")
     def _on_tab_activated(self, event: Tabs.TabActivated) -> None:

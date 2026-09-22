@@ -47,6 +47,14 @@ class VaultDrawer(ModalScreen):
 
     def on_mount(self) -> None:
         self.call_after_refresh(lambda: self.add_class("open"))
+        self.call_after_refresh(self._focus_list)
+
+    def _focus_list(self) -> None:
+        """Land focus on the AP list so up/down works without a Tab press."""
+        try:
+            self.query_one("#vault-aps", DataTable).focus()
+        except Exception:
+            pass
 
     def action_dismiss_drawer(self) -> None:
         if self.has_class("open"):

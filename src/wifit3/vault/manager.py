@@ -2,12 +2,13 @@ import logging
 import json
 import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from wifit3.models import PersistedCapture
 from wifit3.models.jobs import JobState, ToolStatus, ToolResult
 from wifit3.vault.tools.base import VaultTool
 from wifit3.vault.tools.hashcat import HashcatTool
+from wifit3.persist.common import parse_hc22000
 from wifit3.persist.config import Config
 
 
@@ -179,12 +180,29 @@ class JobManager:
         cap = next((c for c in self.vault.all_captures() if c.path == job.capture_path), None)
         if not cap:
             return
+        ssid = self._essid_from_capture(job.capture_path) or cap.ssid or "Unknown"
         ssid_safe = "".join(c if c.isalnum() else "_" for c in (cap.ssid or "Unknown"))
         bssid_safe = cap.bssid.replace(":", "-").lower() if cap.bssid else "00-00-00-00-00-00"
         out_name = f"{ssid_safe}_{bssid_safe}_{int(time.time())}_wpa_psk.txt"
         out_path = Path(Config.captures_dir) / out_name
-        out_path.write_text(f"SSID: {cap.ssid}\nBSSID: {cap.bssid}\nPSK: {res.result_data['key']}\n")
+        out_path.write_text(f"SSID: {ssid}\nBSSID: {cap.bssid}\nPSK: {res.result_data['key']}\n")
         self.vault.refresh()
+
+    def _essid_from_capture(self, capture_path: str) -> Optional[str]:
+        """The AP's real SSID decoded from the capture's hashline (lossless), unlike the
+        sanitized name recovered from the filename."""
+        try:
+            text = Path(capture_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        for line in text.splitlines():
+            parsed = parse_hc22000(line)
+            if parsed and parsed.essid:
+                try:
+                    return bytes.fromhex(parsed.essid).decode("utf-8", errors="replace")
+                except ValueError:
+                    return None
+        return None
 
     def clear_job(self, job_id: str) -> None:
         """Drop a finished job from the list and persist."""

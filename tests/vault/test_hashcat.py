@@ -47,12 +47,14 @@ def test_poll_status_surfaces_hashcat_error(tmp_path):
     assert "Already an instance" in res.value
 
 
-def test_poll_status_exhausted_is_failure(tmp_path):
+def test_poll_status_exhausted_reports_wordlist(tmp_path):
     log = tmp_path / "j.log"
     log.write_text('{ "session": "hashcat", "status": 5, "progress": [3, 3] }\n')
-    res = HashcatTool().poll_status({"log_path": str(log), "pid": None, "config": {}}, assume_dead=True)
+    res = HashcatTool().poll_status(
+        {"log_path": str(log), "pid": None, "config": {"wordlist": r"D:\lists\rockyou.txt"}},
+        assume_dead=True)
     assert res.status == ToolStatus.FAILURE
-    assert "xhaust" in res.value.lower()
+    assert res.value == "rockyou.txt"
 
 
 def test_parse_progress_computes_percent(tmp_path):

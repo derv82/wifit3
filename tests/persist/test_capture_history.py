@@ -75,6 +75,13 @@ class TestLoadCaptureIndex:
         assert caps[0].type == CaptureType.WPS_PIN and caps[0].value == "abcdefgh"
         assert caps[0].pin == "12345670"
 
+    def test_wpa_psk_txt(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000012_wpa_psk.txt",
+               f"SSID: TestNet\nBSSID: {_BSSID_COLON}\nPSK: crackedpass\n")
+        caps = load_capture_index()[_BSSID_COLON]
+        assert len(caps) == 1
+        assert caps[0].type == CaptureType.WPA_PSK and caps[0].value == "crackedpass"
+
     def test_handshake_pcap_is_indexed(self, tmp_path):
         # .pcap files are first-class now (a handshake may exist only as a .pcap).
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000007_handshake.pcap", "binary-ish")

@@ -95,9 +95,11 @@ class _CapturePanel(VerticalGroup):
     _CapturePanel .spacer { width: 1fr; }
     """
 
-    def __init__(self, title: str, captures: List[PersistedCapture]) -> None:
+    def __init__(self, title: str, captures: List[PersistedCapture],
+                 cracked_key: Optional[str] = None) -> None:
         super().__init__()
         self._title = title
+        self._cracked_key = cracked_key
         self._by_path: Dict[str, PersistedCapture] = {}
         for cap in sorted(captures, key=lambda c: c.timestamp, reverse=True):
             self._by_path.setdefault(cap.path, cap)
@@ -106,6 +108,8 @@ class _CapturePanel(VerticalGroup):
     def compose(self) -> ComposeResult:
         if self._title == "WPS PSKs":
             self.border_title = f"WPS ({len(self._files)} PSKs)"
+        elif self._title == "WPA PSKs":
+            self.border_title = f"WPA ({len(self._files)} PSKs)"
         elif self._title == "WPS PINs":
             self.border_title = f"WPS ({len(self._files)} PINs)"
         elif self._title == "WEP KEYs":
@@ -161,7 +165,7 @@ class _CapturePanel(VerticalGroup):
                 classes="key-row"
             )
 
-        if self._title == "WPS PSKs":
+        if self._title in ("WPS PSKs", "WPA PSKs"):
             kg.mount(_row("PSK", cap.value or "", "copy-psk"))
         elif self._title == "WPS PINs":
             kg.mount(_row("WPS PIN", cap.pin or "", "copy-pin"))
@@ -178,6 +182,9 @@ class _CapturePanel(VerticalGroup):
             if hs: parts.append(f"{hs} handshake{'s' if hs != 1 else ''}")
             if pmkid: parts.append(f"{pmkid} PMKID{'s' if pmkid != 1 else ''}")
             summary = "[italic]" + (", ".join(parts) or "hashcat 22000 file") + "[/italic]"
+            if self._cracked_key:
+                summary += (f"   [black bold on lightgreen] CRACKED [/] Key: "
+                            f"[black bold on cyan] {escape(self._cracked_key)} [/]")
             kg.mount(Label(summary, classes="key-display"))
         elif self._title == "HANDSHAKE":
             kg.mount(Label("[italic]raw .pcap capture[/italic]", classes="key-display"))
@@ -290,6 +297,8 @@ class VaultItemView(Vertical):
         border-title-color: $primary;
         border-title-style: bold;
         padding: 0 1;
+        overflow-y: auto;
+        scrollbar-size-vertical: 1;
     }
     VaultItemView #vault-item-empty { color: $text-muted; }
     """
@@ -312,10 +321,12 @@ class VaultItemView(Vertical):
         groups = {
             "HANDSHAKE": [c for c in captures if c.path.endswith(".pcap")],
             "HASHCAT": [c for c in captures if c.path.endswith(".hc22000")],
+            "WPA PSKs": [c for c in captures if c.type == CaptureType.WPA_PSK and c.value],
             "WPS PSKs": [c for c in captures if c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC) and c.value],
             "WPS PINs": [c for c in captures if c.type == CaptureType.WPS_PIN and c.pin],
             "WEP KEYs": [c for c in captures if c.type == CaptureType.WEP],
         }
+        cracked_key = next((c.value for c in captures if c.type == CaptureType.WPA_PSK and c.value), None)
         for title, group in groups.items():
             if group:
-                yield _CapturePanel(title, group)
+                yield _CapturePanel(title, group, cracked_key=cracked_key if title == "HASHCAT" else None)

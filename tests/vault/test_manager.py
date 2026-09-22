@@ -74,6 +74,30 @@ def test_crack_success_persists_key(manager, tmp_path, monkeypatch):
     assert "hunter2" in written[0].read_text()
 
 
+def test_crack_success_writes_real_essid(manager, tmp_path, monkeypatch):
+    from wifit3.models.access_point import CaptureType
+    from wifit3.persist.config import Config
+    monkeypatch.setattr(Config, "captures_dir", str(tmp_path))
+    # The hashline essid ("Cafe WiFi") is the lossless SSID, vs the sanitized filename name.
+    cap_file = tmp_path / "Cafe_WiFi_00-11-22-33-44-55.hc22000"
+    essid_hex = "Cafe WiFi".encode("utf-8").hex()
+    cap_file.write_text(f"WPA*01*{'0' * 32}*001122334455*aabbccddeeff*{essid_hex}***\n")
+    cap = PersistedCapture(type=CaptureType.PMKID, timestamp=0, path=str(cap_file),
+                           bssid="00:11:22:33:44:55", ssid="Cafe_WiFi")
+    manager.vault.all_captures.return_value = [cap]
+
+    job_id = manager.submit_job("dummy", cap, {})
+    manager.poll_jobs()
+    with patch.object(manager.tools["dummy"], "poll_status") as mock_poll:
+        mock_poll.return_value = ToolResult(status=ToolStatus.SUCCESS, value="Cracked!",
+                                            result_data={"key": "hunter2"})
+        manager.poll_jobs()
+
+    assert manager.jobs[job_id].status == ToolStatus.SUCCESS
+    written = list(tmp_path.glob("*_wpa_psk.txt"))[0].read_text()
+    assert "SSID: Cafe WiFi" in written
+
+
 def test_reconcile_resolves_stale_running_job(manager):
     from wifit3.models.access_point import CaptureType
     cap = PersistedCapture(type=CaptureType.HS, timestamp=0, path="test.pcap", bssid="00:11:22:33:44:55")

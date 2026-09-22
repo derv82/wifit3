@@ -12,7 +12,7 @@ from wifit3 import __version__
 from wifit3.chips import log_trace
 from textual.reactive import reactive
 from typing import List
-from wifit3.models.jobs import JobState
+from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
@@ -127,6 +127,7 @@ class WifiteApp(App):
                                         on_fatal=self._on_usb_fatal)
         self.target_ap: Optional[AccessPoint] = None
         self.vault = Vault()
+        self._job_status: dict[str, ToolStatus] = {}
         self.pbc_enabled: bool = True
         register_app_themes(self)
         self.theme = Config.theme
@@ -163,6 +164,29 @@ class WifiteApp(App):
     def _poll_jobs(self) -> None:
         self.vault.manager.poll_jobs()
         self.active_jobs = self.vault.manager.get_active_jobs()
+        self._notify_completions()
+
+    def _notify_completions(self) -> None:
+        """Toast each job the first time it finishes this session; jobs already terminal when
+        the app started are recorded silently rather than re-announced."""
+        terminal = (ToolStatus.SUCCESS, ToolStatus.FAILURE, ToolStatus.ERROR)
+        for job in self.active_jobs:
+            prev = self._job_status.get(job.job_id)
+            if job.status in terminal and prev is not None and prev not in terminal:
+                self._toast_job(job)
+            self._job_status[job.job_id] = job.status
+        live = {job.job_id for job in self.active_jobs}
+        self._job_status = {k: v for k, v in self._job_status.items() if k in live}
+
+    def _toast_job(self, job: JobState) -> None:
+        if job.status == ToolStatus.SUCCESS:
+            msg = job.progress_msg
+            key = msg.split("Key:", 1)[1].strip() if "Key:" in msg else msg
+            self.notify(f"SUCCESS  PSK: {key}", title=job.display_name, severity="information")
+        elif job.status == ToolStatus.FAILURE:
+            self.notify(f"NOT FOUND  {job.progress_msg}", title=job.display_name, severity="warning")
+        else:
+            self.notify(f"ERROR  {job.progress_msg}", title=job.display_name, severity="error")
 
     def kill_job(self, job_id: str) -> None:
         """Kill a running job, then refresh the tracker immediately."""

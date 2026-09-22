@@ -119,6 +119,12 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
     if kind == "wps_pbc" and ext == "txt":
         return [PersistedCapture(type=CaptureType.WPS_PBC, timestamp=epoch, path=str(path),
                                  bssid=bssid, value=_read_wps_psk(path), ssid=ssid)]
+    if kind == "wpa_psk" and ext == "txt":
+        psk = _read_wps_psk(path)
+        if psk is None:
+            return []
+        return [PersistedCapture(type=CaptureType.WPA_PSK, timestamp=epoch, path=str(path),
+                                 bssid=bssid, value=psk, ssid=ssid)]
     if kind == "handshake" and ext in ("hc22000", "pcap"):
         count = _count_hashlines(path, "WPA*02*") if ext == "hc22000" else 0
         return [PersistedCapture(type=CaptureType.HS, timestamp=epoch, path=str(path),

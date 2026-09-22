@@ -64,6 +64,9 @@ class HashcatTool(VaultTool):
             proc = subprocess.Popen(
                 cmd,
                 cwd=hashcat_dir,
+                # Detach stdin: with a real console on stdin hashcat runs interactively (its
+                # [s]/[p]/[q] prompt), reading the same keys Textual needs and freezing the UI.
+                stdin=subprocess.DEVNULL,
                 stdout=f,
                 stderr=subprocess.STDOUT,
                 creationflags=creationflags
@@ -104,7 +107,8 @@ class HashcatTool(VaultTool):
 
         # Exited without a key: exhausted is a clean miss; anything else surfaces hashcat's message.
         if "Exhausted" in progress_msg:
-            return ToolResult(status=ToolStatus.FAILURE, value="Exhausted: passphrase not in wordlist")
+            wordlist = (tracking_data.get("config") or {}).get("wordlist")
+            return ToolResult(status=ToolStatus.FAILURE, value=Path(wordlist).name if wordlist else "wordlist")
         reason = self._last_log_message(log_path)
         return ToolResult(status=ToolStatus.ERROR, value=reason or "hashcat exited without recovering the key")
 
