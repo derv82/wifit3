@@ -23,6 +23,9 @@ sys.path.insert(0, str(REPO / "scripts" / "porting"))
 import rtw88_pcap_replay as rp
 from wifit3.chips.rtl8188ftv_dkms import c2h, firmware, info, llt, mac, power, prom
 from wifit3.chips.rtl8188ftv_dkms import bb as bb_mod
+from wifit3.chips.rtl8188ftv_dkms import dm as dm_mod
+from wifit3.chips.rtl8188ftv_dkms import cal as cal_mod
+from wifit3.chips.rtl8188ftv_dkms import sec as sec_mod
 from wifit3.chips.rtl8188ftv_dkms import txpower as txpower_mod
 from wifit3.chips.rtl8188ftv_dkms import chan as chan_mod
 from wifit3.chips.rtl8188ftv_dkms import misc as misc_mod
@@ -147,6 +150,50 @@ def _walk_m5b(ops, start: int, crystal: int) -> int:
     return frontier
 
 
+def _find_anchor(ops, start: int, addr: int, width: int, kind: str) -> int:
+    for i in range(start, len(ops)):
+        o = ops[i]
+        if o["kind"] == kind and o.get("addr") == addr and o.get("width") == width:
+            return i
+    raise SystemExit(f"anchor {kind} 0x{addr:04x}/{width} not found past op#{start}")
+
+
+def _walk_lc_standalone(ops, start: int) -> int:
+    t = rp.ReplayTransport(ops[start:])
+    cal_mod.lc_calibrate(t)
+    frontier = start + t.i
+    print(f"  PASS LC standalone ({t.i} ops, frames "
+          f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
+    return frontier
+
+
+def _walk_dm_init(ops, start: int) -> int:
+    """DM-init prologue reads + NHM + adaptivity + CFO + swing."""
+    t = rp.ReplayTransport(ops[start:])
+    dm_mod.common_info_self_init(t)
+    dm_mod.dig_init_igi(t)
+    dm_mod.nhm_init(t)
+    dm_mod.adaptivity_init(t)
+    dm_mod.cfo_init_atc(t)
+    dm_mod.thermal_swing_index(t)
+    frontier = start + t.i
+    print(f"  PASS DM-init prologue ({t.i} ops, frames "
+          f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
+    return frontier
+
+
+def _walk_m5h_start(ops, start: int) -> int:
+    """CAM invalidate + MISC11 tail + GPIO."""
+    t = rp.ReplayTransport(ops[start:])
+    sec_mod.invalidate_cam_all(t)
+    misc_mod.misc11_tail(t)
+    misc_mod.init_gpio_setting(t)
+    frontier = start + t.i
+    print(f"  PASS M5h CAM + MISC11 + GPIO ({t.i} ops, frames "
+          f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
+    return frontier
+
+
 def _walk_m5f_tune(ops, start: int, params, by_rate) -> tuple[int, int]:
     """Initial ch1 tune + TX power."""
     t = rp.ReplayTransport(ops[start:])
@@ -239,6 +286,11 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
                              out_ep_number, out_ep_queue_sel)
         frontier = _walk_m5e(ops, frontier)
         frontier, _rf_chnl_val = _walk_m5f_tune(ops, frontier, params, by_rate)
+        frontier = _walk_m5h_start(ops, frontier)
+        frontier = _walk_dm_init(ops, frontier)
+        # Op1279 (2nd R32 0xC80) has no source after exhaustive elimination;
+        # LC verifies standalone from its 0xD03 anchor until it resolves.
+        _walk_lc_standalone(ops, _find_anchor(ops, frontier, 0xD03, 1, "R"))
         op = ops[frontier]
         print(f"  frontier: op#{frontier} opens the next milestone "
               f"({rp.ReplayTransport._fmt(op)})")

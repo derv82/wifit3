@@ -108,3 +108,13 @@ def mcast2uni_lifetime(t) -> None:
 def turn_on_block(t) -> None:
     bb.set_bb_reg(t, 0x800, 0x1000000, 0x1)
     bb.set_bb_reg(t, 0x800, 0x2000000, 0x1)
+
+
+def misc11_tail(t) -> None:
+    t.write8(0x0423, 0xFF)
+    t.write32(0x04CC, 0x0201FFFF)
+
+
+def init_gpio_setting(t) -> None:
+    value8 = t.read8(0x0040)
+    t.write8(0x0040, value8 & ~BIT(5))

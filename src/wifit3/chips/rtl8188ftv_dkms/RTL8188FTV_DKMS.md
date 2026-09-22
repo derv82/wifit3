@@ -25,9 +25,14 @@
   B6/B2 readback loops + TxPowerTrack load, 180 ops both captures), M5d
   (MISC02 queues/pages/filters, 43 ops both captures), M5e (beacon/burst/USB
   agg/drop-check/lifetime/turn-on, 41 ops both captures), M5f ch1 tune
-  (38 ops) + TX power (40 ops, 78 total, both captures), to the post-tune
-  frontier (`W32 0x670`). Next: M5h (security / CAM onward). Until the
-  bring-up verifies end to end, keep `WIFIT3_RTL8188FTV=mainline`.
+   (38 ops) + TX power (40 ops, 78 total, both captures), M5h start (CAM
+  invalidate `W32 0x670=0xC0000000` + MISC11 tail `0x423=0xFF` /
+  `0x4CC=0x0201FFFF` + GPIO `R/W 0x40`, 5 ops both captures), DM-init
+  prologue (CCK/RX-path + DIG IGI + NHM + adaptivity + CFO ATC + thermal
+  swing, 22 ops both captures), LC standalone (TX-pause branch + RF 0x18
+  backup/LCK/ready-poll/restore, 68 ops both captures) to the cap1-op1279 /
+  cap2-op2914 frontier. Next: IQK + tracking. Until the bring-up verifies
+  end to end, keep `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -47,6 +52,12 @@
 - Capture-1 and capture-2 have no TX: aireplay `--test` found no such BSSID
   (`No such BSSID available`), so the pcaps carry zero bulk-OUT. M8
   (TX/injection) needs a capture against a visible AP.
+- Open: the frontier op (2nd `R32 0xC80=0x390000E4`, back-to-back with the
+  thermal-swing read, identical in both captures) has no source after
+  exhaustive elimination — single `getSwingIndex` call site, single-execution
+  DMInit chain, zero-read antenna/path/beamforming/dynamic inits, no
+  leading-zero/decimal/computed-address spellings, no function-pointer
+  dispatch. LC verifies standalone from its `0xD03` anchor past it.
 - Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
 
 ## Driver Entry Points
