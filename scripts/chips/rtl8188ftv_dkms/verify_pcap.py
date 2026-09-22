@@ -25,6 +25,7 @@ from wifit3.chips.rtl8188ftv_dkms import c2h, firmware, info, llt, mac, power, p
 from wifit3.chips.rtl8188ftv_dkms import bb as bb_mod
 from wifit3.chips.rtl8188ftv_dkms import dm as dm_mod
 from wifit3.chips.rtl8188ftv_dkms import cal as cal_mod
+from wifit3.chips.rtl8188ftv_dkms import iqk as iqk_mod
 from wifit3.chips.rtl8188ftv_dkms import sec as sec_mod
 from wifit3.chips.rtl8188ftv_dkms import txpower as txpower_mod
 from wifit3.chips.rtl8188ftv_dkms import chan as chan_mod
@@ -167,6 +168,16 @@ def _walk_lc_standalone(ops, start: int) -> int:
     return frontier
 
 
+def _walk_iqk_standalone(ops, start: int) -> int:
+    t = rp.ReplayTransport(ops[start:])
+    st = iqk_mod.iq_calibrate(t)
+    frontier = start + t.i
+    print(f"  PASS IQK standalone ({t.i} ops, frames "
+          f"{ops[start]['frame']}-{ops[frontier - 1]['frame']}, "
+          f"final={st['final']})")
+    return frontier
+
+
 def _walk_dm_init(ops, start: int) -> int:
     """DM-init prologue reads + NHM + adaptivity + CFO + swing."""
     t = rp.ReplayTransport(ops[start:])
@@ -291,6 +302,7 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         # Op1279 (2nd R32 0xC80) has no source after exhaustive elimination;
         # LC verifies standalone from its 0xD03 anchor until it resolves.
         _walk_lc_standalone(ops, _find_anchor(ops, frontier, 0xD03, 1, "R"))
+        _walk_iqk_standalone(ops, _find_anchor(ops, frontier, 0x948, 4, "R"))
         op = ops[frontier]
         print(f"  frontier: op#{frontier} opens the next milestone "
               f"({rp.ReplayTransport._fmt(op)})")

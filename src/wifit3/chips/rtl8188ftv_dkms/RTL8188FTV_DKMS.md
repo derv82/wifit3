@@ -30,9 +30,12 @@
   `0x4CC=0x0201FFFF` + GPIO `R/W 0x40`, 5 ops both captures), DM-init
   prologue (CCK/RX-path + DIG IGI + NHM + adaptivity + CFO ATC + thermal
   swing, 22 ops both captures), LC standalone (TX-pause branch + RF 0x18
-  backup/LCK/ready-poll/restore, 68 ops both captures) to the cap1-op1279 /
-  cap2-op2914 frontier. Next: IQK + tracking. Until the bring-up verifies
-  end to end, keep `WIFIT3_RTL8188FTV=mainline`.
+  backup/LCK/ready-poll/restore, 68 ops both captures), IQK standalone
+  (path-detect + Path-A TX/RX x2 workers + similarity break + matrix fill
+  + BB recover + RF-path restore, 410 ops both captures, final=0) to the
+  cap1-op1279 / cap2-op2914 frontier. Next: post-IQK reload + tracking.
+  Until the bring-up verifies end to end, keep
+  `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
