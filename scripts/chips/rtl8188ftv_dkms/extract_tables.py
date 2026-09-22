@@ -40,7 +40,7 @@ def extract(path: Path, array: str) -> list[int]:
     text = (SRC / path).read_text()
     m = re.search(re.escape(array) + r"\[\] = \{(.*?)\};", text, re.S)
     assert m, f"{array} not found in {path}"
-    return [int(x, 16) for x in re.findall(r"0x[0-9A-Fa-f]+", m.group(1))]
+    return [int(x, 0) for x in re.findall(r"0x[0-9A-Fa-f]+|\b\d+\b", m.group(1))]
 
 
 def extract_swing(text: str, key: str) -> list:

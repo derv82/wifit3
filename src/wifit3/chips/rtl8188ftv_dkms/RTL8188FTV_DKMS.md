@@ -25,8 +25,8 @@
   B6/B2 readback loops + TxPowerTrack load, 180 ops both captures), M5d
   (MISC02 queues/pages/filters, 43 ops both captures), M5e (beacon/burst/USB
   agg/drop-check/lifetime/turn-on, 41 ops both captures), M5f ch1 tune
-  (38 ops both captures), to the TX-power frontier (`R32 0xE08`). Next:
-  M5g TX power (`PHY_SetTxPowerIndex_8188F`). Until the
+  (38 ops) + TX power (40 ops, 78 total, both captures), to the post-tune
+  frontier (`W32 0x670`). Next: M5h (security / CAM onward). Until the
   bring-up verifies end to end, keep `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:

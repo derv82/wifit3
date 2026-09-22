@@ -23,6 +23,7 @@ sys.path.insert(0, str(REPO / "scripts" / "porting"))
 import rtw88_pcap_replay as rp
 from wifit3.chips.rtl8188ftv_dkms import c2h, firmware, info, llt, mac, power, prom
 from wifit3.chips.rtl8188ftv_dkms import bb as bb_mod
+from wifit3.chips.rtl8188ftv_dkms import txpower as txpower_mod
 from wifit3.chips.rtl8188ftv_dkms import chan as chan_mod
 from wifit3.chips.rtl8188ftv_dkms import misc as misc_mod
 from wifit3.chips.rtl8188ftv_dkms import queues as queues_mod
@@ -88,8 +89,8 @@ def _walk_m5a(ops, start: int) -> int:
     return frontier
 
 
-def _walk_probe(ops, blob: bytes) -> tuple[int, object, bytes]:
-    """M1 + M2 wire + parses + M3 (probe power) + C2H + FW#1 from op 0."""
+def _walk_probe_params(ops, blob: bytes):
+    """M1 + M2 wire + parses on a fresh cursor; return (idx, params, table)."""
     t = rp.ReplayTransport(ops)
     version = info.read_chip_version(t)
     assert (version.test_chip, version.vendor, version.cut, version.rf_paths) == \
@@ -106,6 +107,12 @@ def _walk_probe(ops, blob: bytes) -> tuple[int, object, bytes]:
           f"VID:PID {params.vid:04x}:{params.pid:04x}, chplan 0x20, "
           f"thermal 0x{params.thermal:02x}, crystal 0x{params.crystal:02x}, "
           f"customer 0x{params.customer:02x}, kfree_flag 0x{params.kfree_flag:02x}")
+    return t, params, table
+
+
+def _walk_probe(ops, blob: bytes) -> tuple[int, object, bytes]:
+    """M1 + M2 wire + parses + M3 (probe power) + C2H + FW#1 from op 0."""
+    t, params, table = _walk_probe_params(ops, blob)
     assert power.power_on(t) is True
     print(f"  PASS M3 power_on #1 ({t.i} ops so far)")
     c2h.request_hidden_report(t)
@@ -140,12 +147,13 @@ def _walk_m5b(ops, start: int, crystal: int) -> int:
     return frontier
 
 
-def _walk_m5f_tune(ops, start: int) -> tuple[int, int]:
-    """Initial ch1 tune without TX power (ported next)."""
+def _walk_m5f_tune(ops, start: int, params, by_rate) -> tuple[int, int]:
+    """Initial ch1 tune + TX power."""
     t = rp.ReplayTransport(ops[start:])
     rf_chnl_val = chan_mod.tune_20(t, 1)
+    txpower_mod.set_level(t, 1, 0, params, by_rate)
     frontier = start + t.i
-    print(f"  PASS M5f tune ch1 ({t.i} ops, frames "
+    print(f"  PASS M5f tune ch1 + TX power ({t.i} ops, frames "
           f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
     return frontier, rf_chnl_val
 
@@ -203,10 +211,15 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
     dev = rp.find_card_device(pcap)
     ops = rp.extract_ops(pcap, dev)
     blob = FW_BLOB.read_bytes()
+    by_rate = txpower_mod.load_default_pg_tables()
     print(f"rtl8188ftv_dkms: {len(ops)} ops from {pcap.name} (dev {dev}), "
           f"fw {len(blob)}B")
     try:
         if pcap.name == "capture-1.pcap":
+            probe_ops = rp.extract_ops(CAP_DIR / "capture-2.pcap",
+                                       rp.find_card_device(CAP_DIR / "capture-2.pcap"))
+            _, params, _ = _walk_probe_params(probe_ops, blob)
+            assert params.mac == RECORDED_MAC
             frontier = _walk_m3(ops, 0)
             frontier = _walk_open_fw(ops, frontier, blob, "#2 (open)")
             crystal = RECORDED_CRYSTAL_CAP
@@ -225,7 +238,7 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         frontier = _walk_m5d(ops, frontier, mac_addr,
                              out_ep_number, out_ep_queue_sel)
         frontier = _walk_m5e(ops, frontier)
-        frontier, _rf_chnl_val = _walk_m5f_tune(ops, frontier)
+        frontier, _rf_chnl_val = _walk_m5f_tune(ops, frontier, params, by_rate)
         op = ops[frontier]
         print(f"  frontier: op#{frontier} opens the next milestone "
               f"({rp.ReplayTransport._fmt(op)})")
