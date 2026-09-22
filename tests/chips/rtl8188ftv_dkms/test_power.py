@@ -64,3 +64,30 @@ def test_power_on_cr_dance_order():
     t = FakeTransport(reads=list(M3_READS) + [0x0000])
     assert power.power_on(t) is True
     assert t.writes[-2:] == [(0x100, 1, 0x00), (0x100, 2, 0x063F)]
+
+
+def test_self_reset_skipped_for_non_81xxc_fw():
+    from wifit3.chips.rtl8188ftv_dkms import power
+    t = FakeTransport(reads=[])
+    power.firmware_self_reset(t, 0x88F1, 4, 0)
+    assert t.writes == []
+
+
+def test_self_reset_no_wait_when_bit_clear():
+    from wifit3.chips.rtl8188ftv_dkms import power
+    t = FakeTransport(reads=[0xF8])
+    power.firmware_self_reset(t, 0x88C0, 0x20, 0x00)
+    assert t.writes == [(0x1CF, 1, 0x20)]
+
+
+def test_card_disable_probe_path():
+    from wifit3.chips.rtl8188ftv_dkms import power
+    reads = [0x00, 0xC6, 0x01, 0x00, 0x00, 0x00, 0x00, 0x14, 0x14,
+             0x00, 0x06, 0x00, 0xFC, 0x00, 0x02, 0x35, 0x00, 0x00, 0x00, 0x4C]
+    t = FakeTransport(reads=reads)
+    assert power.card_disable(t, False) is True
+    assert t.writes[:3] == [(0x4EC, 1, 0x00), (0x100, 1, 0x00), (0x139, 1, 0x01)]
+    assert (0x522, 1, 0xFF) in t.writes
+    assert t.writes[-5:] == [(0x4E, 1, 0x02), (0x27, 1, 0x34), (0x05, 1, 0x02),
+                             (0x05, 1, 0x08), (0xC4, 1, 0x5C)]
+    assert not any(a == 0x86 for a, _, _ in t.writes)

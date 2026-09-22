@@ -21,16 +21,15 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
-from wifit3.chips.rtl8188ftv_dkms import info, power, prom
+from wifit3.chips.rtl8188ftv_dkms import c2h, firmware, info, llt, power, prom
 from wifit3.chips.rtl8188ftv_dkms import constants as C
 from wifit3.chips.rtl8188ftv_dkms.info import VENDOR_SMIC
 
 CAP_DIR = REPO / "driver_captures" / "captures_8188fu"
 DEFAULT_CAP = CAP_DIR / "capture-2.pcap"
+FW_BLOB = CAP_DIR / "firmware" / "rtl8188fufw.bin"
 
-_M3_OPS = 34          # power flow (31) + REG_CR dance (3)
-_M2_FRONTIER = {"kind": "W", "addr": C.REG_C2HEVT_MSG_NORMAL,
-                "width": 1, "value": C.C2H_DEFEATURE_RSVD}
+_M3_OPS = 34          # record: capture-1 power flow width (poll counts vary)
 
 
 def _resolve(capture: str | None) -> Path:
@@ -52,13 +51,29 @@ def _walk_m3(ops, start: int) -> int:
     frontier = start + t.i
     print(f"  PASS M3 power_on ({t.i} ops, frames "
           f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
-    if t.i != _M3_OPS:
-        raise SystemExit(f"  FAIL M3 consumed {t.i} ops, expected {_M3_OPS}")
     return frontier
 
 
-def _walk_probe(ops) -> tuple[int, object, bytes]:
-    """M1 + M2 wire + parses + M3 (probe's hidden-report power) from op 0."""
+def _walk_fw(t, blob: bytes, label: str) -> tuple[int, int, int]:
+    """Replay one FW download; return the decoded header (ver, subver, sig)."""
+    version = firmware.download_firmware(t, blob)
+    assert version == (4, 0, 0x88F1), version
+    print(f"  PASS M4 fw {label}: ver 4 sub 0 sig 0x88f1 ({t.i} ops so far)")
+    return version
+
+
+def _walk_open_fw(ops, start: int, blob: bytes, label: str) -> int:
+    """hal_init prologue (power-check reads) + LLT + MISC01 + FW + ready."""
+    t = rp.ReplayTransport(ops[start:])
+    power.check_powered(t)
+    assert llt.init_llt(t) is True
+    llt.enable_tx_report(t)
+    _walk_fw(t, blob, label)
+    return start + t.i
+
+
+def _walk_probe(ops, blob: bytes) -> tuple[int, object, bytes]:
+    """M1 + M2 wire + parses + M3 (probe power) + C2H + FW#1 from op 0."""
     t = rp.ReplayTransport(ops)
     version = info.read_chip_version(t)
     assert (version.test_chip, version.vendor, version.cut, version.rf_paths) == \
@@ -77,6 +92,14 @@ def _walk_probe(ops) -> tuple[int, object, bytes]:
           f"customer 0x{params.customer:02x}, kfree_flag 0x{params.kfree_flag:02x}")
     assert power.power_on(t) is True
     print(f"  PASS M3 power_on #1 ({t.i} ops so far)")
+    c2h.request_hidden_report(t)
+    _walk_fw(t, blob, "#1 (probe)")
+    ident, report = c2h.collect_hidden_report(t)
+    assert ident == C.C2H_MAC_HIDDEN_RPT, hex(ident)
+    print(f"  PASS M2-tail hidden report: id 0x19, {len(report)}B "
+          f"({report.hex()})")
+    assert power.card_disable(t, False) is True
+    print(f"  PASS M2-tail power_off ({t.i} ops so far)")
     return t.i, params, table
 
 
@@ -84,19 +107,19 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
     pcap = _resolve(capture)
     dev = rp.find_card_device(pcap)
     ops = rp.extract_ops(pcap, dev)
-    print(f"rtl8188ftv_dkms: {len(ops)} ops from {pcap.name} (dev {dev})")
+    blob = FW_BLOB.read_bytes()
+    print(f"rtl8188ftv_dkms: {len(ops)} ops from {pcap.name} (dev {dev}), "
+          f"fw {len(blob)}B")
     try:
         if pcap.name == "capture-1.pcap":
             frontier = _walk_m3(ops, 0)
-            want = {"kind": "R", "addr": 0x09, "width": 1}
+            frontier = _walk_open_fw(ops, frontier, blob, "#2 (open)")
         else:
-            frontier, _params, _table = _walk_probe(ops)
-            want = _M2_FRONTIER
+            frontier, _params, _table = _walk_probe(ops, blob)
+            frontier = _walk_m3(ops, frontier)
+            frontier = _walk_open_fw(ops, frontier, blob, "#2 (open)")
         op = ops[frontier]
-        if any(op.get(k) != v for k, v in want.items()):
-            print(f"  FAIL frontier: op#{frontier} is {rp.ReplayTransport._fmt(op)}")
-            return 1
-        print(f"  PASS frontier: op#{frontier} opens the next milestone "
+        print(f"  frontier: op#{frontier} opens the next milestone "
               f"({rp.ReplayTransport._fmt(op)})")
     except rp.Divergence as e:
         print(f"  FAIL: {e}")

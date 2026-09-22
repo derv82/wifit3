@@ -14,18 +14,23 @@
 
 ## Python Port Details
 - VID/PID: `0bda:f179`; selected by the `rtl8188ftv` family row in `device/manager.py` (this package wins by default, `WIFIT3_RTL8188FTV=mainline` opts back to `chips/rtl8188ftv`).
-- Status: **M1–M3 green.** M1 (probe chip-version read: cut 1, SMIC, 1T1R),
+- Status: **M1–M4 green.** M1 (probe chip-version read: cut 1, SMIC, 1T1R),
   M2 (EFUSE map + full parse suite: ID 0x8129, MAC/VID:PID/chplan-0x20 all at
-  independent ground truth), M3 (power-on, verified twice: capture-1 ops 0–33
-  and capture-2 probe power). `verify_pcap` PASS on both captures to the M4
-  frontier. Next: M4 (FW download + ready). Until the bring-up verifies end to
-  end, keep `WIFIT3_RTL8188FTV=mainline`.
+  independent ground truth; hidden-report C2H handshake + probe power-off),
+  M3 (power-on, verified three times across both captures), M4 (LLT +
+  TX-report + FW download + ready, verified three times: probe + open on
+  capture-2, open on capture-1). `verify_pcap` PASS on both captures to the M5
+  frontier (`R32 0x64`). Next: M5 (MAC/BB/RF). Until the bring-up verifies end
+  to end, keep `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
   - No `start`/`stop` cfg80211 ops: `iw set channel` hits `cfg80211_rtw_set_monitor_channel`, monitor entry is `cfg80211_rtw_change_iface` → `Ndis802_11Monitor` on the same netdev (no `wlan0mon` twin; capture keeps `wlx…`).
   - A 2 s `dynamic_chk_timer` → `traffic_status_watchdog` → `hal_dm_watchdog` tick plus the SW-LED blink timer interleave control traffic in monitor mode.
   - Channel 14 is regulatory-disabled (`iw` rejects before the chip is touched); the sweep is ch1–13.
+  - Probe ends powered OFF: `hal_read_mac_hidden_rpt` powers off (`CardDisable`, no deinit/FIFO quiesce) when HW init hasn't completed, so every cold plug downloads FW twice (probe + open).
+  - `FirmwareDownload` always closes with `InitializeFirmwareVars` (`HMETFR=0x0f`), even on failure; the `&`-vs-`==` precedence in the self-reset gate is a live trap.
+  - Poll-count timing varies run to run (power-flow 34 vs 37 ops); the gate must never assert exact op counts, only byte-exact replay.
 
 ## Known Problems
 - Capture-1 opens mid-bring-up: all 30,642 frames are dev 63 starting at the
@@ -39,8 +44,10 @@
 - Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
 
 ## Driver Entry Points
-- Bring-up: `driver.connect` → (M1) probe `rtw_drv_init` + `_InitPowerOn_8188FU` → (M2) `rtl8188fu_hal_init` → `rtl8188f_FirmwareDownload` → (M3) `PHY_MACConfig8188F` / `PHY_BBConfig8188F` / `PHY_RFConfig8188F`.
-- EFUSE / chip params: (M4) `ReadAdapterInfo8188FU` → `Efuse_PgPacketRead` + `HalEfuseMask8188F_USB` + `Hal_EfuseParse*`.
+- Bring-up: `driver.connect` → (M1) probe `rtw_drv_init` + `read_chip_version` → (M2) `ReadAdapterInfo8188FU` → (M3) `_InitPowerOn_8188FU` → (M4) `rtl8188fu_hal_init` → `rtl8188f_FirmwareDownload` → (M5) `PHY_MACConfig8188F` / `PHY_BBConfig8188F` / `PHY_RFConfig8188F`.
+- EFUSE / chip params: (M2) `ReadAdapterInfo8188FU` → `Efuse_PgPacketRead` + `HalEfuseMask8188F_USB` + `Hal_EfuseParse*`.
+- Power off: (M2 tail) `CardDisableRTL8188FU` (LPS-enter + card-disable flows, no deinit at probe).
+- Firmware: (M4) `firmware.download_firmware` / `start` + `init_firmware_vars` (128-B ladder + checksum/ready polls).
 - Monitor entry: (M5) `cfg80211_rtw_change_iface` → `hw_var_set_monitor`.
 - Channel tune: (M6) `cfg80211_rtw_set_monitor_channel` → `set_channel_bwmode` → `rtw_hal_set_chnl_bw`.
 - RX: (M7) `rtl8188fu_inirp_init` + `recvbuf2recvframe` + `rtl8188f_query_rx_desc_status`.

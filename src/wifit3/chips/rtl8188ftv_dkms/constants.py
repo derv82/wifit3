@@ -66,6 +66,34 @@ REG_MAC_PLL_CTRL_EXT_8188F = 0x002C
 # hal/hal_com_c2h.h:43 + include/hal_com_reg.h:150 (M2 tail / M4 frontier)
 REG_C2HEVT_MSG_NORMAL = 0x01A0
 C2H_DEFEATURE_RSVD = 0xFD
+C2H_DBG = 0x00
+C2H_MAC_HIDDEN_RPT = 0x19
+MAC_HIDDEN_RPT_LEN = 8
+MAC_HIDDEN_RPT_2_LEN = 5
+
+# M4 LLT + TX-report (include/hal_com_reg.h:178,320-321,1402)
+REG_AUTO_LLT = 0x0224
+BIT_AUTO_INIT_LLT = BIT(16)
+REG_TX_RPT_CTRL = 0x04EC
+REG_TX_RPT_TIME = 0x04F0
+
+# M4 FW download (hal_com_reg.h:90, hal8188freg.h:601-607, rtl8188f_hal.h:39-40,
+# hal_com.h:205, hal_init.c:76-79)
+REG_MCUFWDL = 0x0080
+MCUFWDL_EN = BIT(0)
+MCUFWDL_RDY = BIT(1)
+FWDL_ChkSum_rpt = BIT(2)
+WINTINI_RDY = BIT(6)
+RAM_DL_SEL = BIT(7)
+FW_8188F_SIZE = 0x8000
+FW_8188F_START_ADDRESS = 0x1000
+MAX_DLFW_PAGE_SIZE = 4096
+FW_BLOCK_P1 = 196
+FW_BLOCK_P2 = 8
+REG_RSV_CTRL = 0x001C
+
+# hal/phydm/rtl8188f/hal8188freg.h:124 (M4 FW exit: H2C init)
+REG_HMETFR = 0x01CC
 
 # M2 EFUSE (hal_com_reg.h, rtl8188f_hal.h:146-155, hal8188freg.h:589-595)
 REG_9346CR = 0x000A

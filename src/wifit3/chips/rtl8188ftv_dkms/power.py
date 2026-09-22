@@ -1,10 +1,14 @@
-"""RTL8188FTV DKMS power-on (M3).
+"""RTL8188FTV DKMS power on/off.
 
-Ported from ``_InitPowerOn_8188FU`` (hal/rtl8188f/usb/usb_halinit.c:136-186):
-optional PLL-refclk override, the card-enable power sequence, then the MAC
-DMA/WMAC/schedule/security/cal-timer enable in ``REG_CR``.
+``power_on`` ported from ``_InitPowerOn_8188FU``
+(hal/rtl8188f/usb/usb_halinit.c:136-186); ``card_disable`` from
+``CardDisableRTL8188FU`` (usb_halinit.c:1892-1952) with the LPS-enter and
+card-disable flows; ``firmware_self_reset`` from
+``rtl8188f_FirmwareSelfReset`` (hal/rtl8188f/rtl8188f_hal_init.c:374+).
 """
 from __future__ import annotations
+
+import time
 
 from . import constants as C
 from . import pwrseq
@@ -42,3 +46,42 @@ def power_on(t, pll_ref_clk_sel: int = C.RTW_PLL_REF_CLK_SEL_DEFAULT) -> bool:
     value16 = t.read16(C.REG_CR_8188F)
     t.write16(C.REG_CR_8188F, value16 | CR_INIT_POWER_ON)
     return True
+
+
+def check_powered(t) -> tuple[int, int]:
+    sys_clkr_1 = t.read8(C.REG_SYS_CLKR_8188F + 1)
+    cr = t.read8(C.REG_CR_8188F)
+    return sys_clkr_1, cr
+
+
+def firmware_self_reset(t, signature: int, version: int, subversion: int) -> None:
+    if (signature & 0xFFF0) == 0x88C0 and (
+            version < 0x21 or (version == 0x21 and subversion < 0x01)):
+        t.write8(C.REG_HMETFR + 3, 0x20)
+        delay = 100
+        value8 = t.read8(C.REG_SYS_FUNC_EN + 1)
+        while value8 & BIT(2):
+            delay -= 1
+            if delay == 0:
+                break
+            time.sleep(50e-6)
+            value8 = t.read8(C.REG_SYS_FUNC_EN + 1)
+        if delay == 0:
+            value8 = t.read8(C.REG_SYS_FUNC_EN + 1)
+            t.write8(C.REG_SYS_FUNC_EN + 1, value8 & ~BIT(2))
+
+
+def card_disable(t, fw_ready: bool, fw_sig: int = 0, fw_ver: int = 0,
+                 fw_sub: int = 0) -> bool:
+    value8 = t.read8(C.REG_TX_RPT_CTRL)
+    t.write8(C.REG_TX_RPT_CTRL, value8 & ~BIT(1))
+    t.write8(C.REG_CR_8188F, 0x00)
+    if t.read8(C.REG_MCUFWDL) & BIT(7) and fw_ready:
+        # TODO: verify, untested here, needs a card whose FW is 81xxC pre-v33.1
+        firmware_self_reset(t, fw_sig, fw_ver, fw_sub)
+    if not pwrseq.parse(t, pwrseq.ENTER_LPS_FLOW):
+        return False
+    value8 = t.read8(C.REG_SYS_FUNC_EN + 1)
+    t.write8(C.REG_SYS_FUNC_EN + 1, value8 & ~BIT(2))
+    t.write8(C.REG_MCUFWDL, 0x00)
+    return pwrseq.parse(t, pwrseq.CARD_DISABLE_FLOW)
