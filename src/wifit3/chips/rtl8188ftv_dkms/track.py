@@ -16,3 +16,7 @@ def BIT(n: int) -> int:
 
 def thermal_trigger(t) -> None:
     rf.set_rf_reg(t, rf.RF_PATH_A, 0x42, BIT(17) | BIT(16), 0x03)
+
+
+def thermal_read(t) -> int:
+    return rf.query_rf_reg(t, rf.RF_PATH_A, 0x42, 0xFC00)

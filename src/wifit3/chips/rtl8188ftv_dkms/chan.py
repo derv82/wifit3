@@ -27,11 +27,13 @@ SPUR_NOTCH = {5: (0x06000000, 0, 0, 0), 13: (0x06000000, 0, 0, 0),
               14: (0, 0, 0, 0x00180000)}
 
 
-def _write_dig(t, value: int) -> None:
-    bb.set_bb_reg(t, 0xC50, 0xFF, value)
+def _write_dig(t, value: int, hal: dict) -> None:
+    if hal["cur_ig"] != value:
+        bb.set_bb_reg(t, 0xC50, 0xFF, value)
+        hal["cur_ig"] = value
 
 
-def spur_calibration(t, channel: int, threshold: int = 0x16) -> None:
+def spur_calibration(t, channel: int, hal: dict, threshold: int = 0x16) -> None:
     bb.set_bb_reg(t, 0xC40, BIT(28) | BIT(27) | BIT(26) | BIT(25) | BIT(24), 0x1F)
     bb.set_bb_reg(t, 0xC40, BIT(9), 0x1)
     if threshold <= 0:
@@ -46,7 +48,7 @@ def spur_calibration(t, channel: int, threshold: int = 0x16) -> None:
     if (hw_s1 or sw_s1) and idx <= 6:
         gain = bb.query_bb_reg(t, 0xC50, 0xFF) & 0x7F
         bb.set_bb_reg(t, 0x800, BIT(24), 0)
-        _write_dig(t, 0x30)
+        _write_dig(t, 0x30, hal)
         t.write32(0x88C, 0xCCF000C0)
         t.write32(0x808, SPUR_FREQS[idx])
         t.write32(0x808, 0x400000 | SPUR_FREQS[idx])
@@ -55,7 +57,7 @@ def spur_calibration(t, channel: int, threshold: int = 0x16) -> None:
         t.write32(0x808, SPUR_FREQS[idx])
         t.write32(0x88C, 0xCCC000C0)
         bb.set_bb_reg(t, 0x800, BIT(24), 1)
-        _write_dig(t, gain)
+        _write_dig(t, gain, hal)
         if notch:
             current = rf.query_rf_reg(t, rf.RF_PATH_A, 0x18,
                                      rf.RF_REG_OFFSET_MASK) & 0x0F
@@ -69,10 +71,10 @@ def spur_calibration(t, channel: int, threshold: int = 0x16) -> None:
     bb.set_bb_reg(t, 0xD2C, BIT(28), 0x0)
 
 
-def sw_chnl(t, channel: int, rf_chnl_val: int) -> int:
+def sw_chnl(t, channel: int, rf_chnl_val: int, hal: dict) -> int:
     rf_chnl_val = (rf_chnl_val & 0xFFFFF00) | channel
     rf.set_rf_reg(t, rf.RF_PATH_A, 0x18, 0x3FF, rf_chnl_val)
-    spur_calibration(t, channel, 0x16)
+    spur_calibration(t, channel, hal, 0x16)
     return rf_chnl_val
 
 
@@ -99,13 +101,13 @@ def rf_bandwidth_20(t, rf_chnl_val: int) -> int:
     return rf_chnl_val
 
 
-def tune_20(t, channel: int, rf_chnl_val: int = 0) -> int:
-    rf_chnl_val = sw_chnl(t, channel, rf_chnl_val)
+def tune_20(t, channel: int, rf_chnl_val: int, hal: dict) -> int:
+    rf_chnl_val = sw_chnl(t, channel, rf_chnl_val, hal)
     return post_set_bw_mode_20(t, rf_chnl_val)
 
 
 def switch_channel(t, channel: int, hal: dict, params, by_rate,
                    rem_cck: int = 0, rem_ofdm: int = 0) -> None:
-    hal["rf_chnl_val"] = sw_chnl(t, channel, hal["rf_chnl_val"])
+    hal["rf_chnl_val"] = sw_chnl(t, channel, hal["rf_chnl_val"], hal)
     hal["rf_chnl_val"] = post_set_bw_mode_20(t, hal["rf_chnl_val"])
     txpower_mod.set_level(t, channel, 0, params, by_rate, rem_cck, rem_ofdm)

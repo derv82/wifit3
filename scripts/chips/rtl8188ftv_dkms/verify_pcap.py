@@ -216,6 +216,41 @@ def _walk_monitor_entry(ops, start: int) -> int:
     return frontier
 
 
+TICK_HEAD = [("R", 0x667, 1), ("W", 0x667, 1), ("R", 0x664, 2),
+             ("R", 0xC00, 4), ("W", 0xC00, 4), ("R", 0xD00, 4),
+             ("W", 0xD00, 4)]
+
+
+def _classify_tick(ops, head: int) -> str:
+    kind = "noop"
+    for j in range(head, min(head + 130, len(ops) - 7)):
+        o = ops[j]
+        if o["kind"] == "W" and o.get("addr") in (0x430, 0x434):
+            kind = "edca"
+        if _is_serial_rmw(ops, j) and ops[j + 6]["kind"] == "R" \
+                and ops[j + 6].get("addr") in (0x8A0, 0x8B8):
+            if kind == "edca":
+                return "edca"
+            nxt = ops[j + 7]
+            if nxt["kind"] == "W" and nxt.get("addr") == 0x840:
+                return "trigger"
+            if nxt["kind"] == "W" and nxt.get("addr") == 0xC80:
+                return "setpwr"
+            return "noop"
+    if kind != "noop":
+        return kind
+    raise SystemExit(f"no thermal read past tick op#{head}")
+
+
+def _walk_tick(ops, start: int, hal: dict, trigger: bool) -> int:
+    t = rp.ReplayTransport(ops[start:])
+    dm_mod.watchdog_tick(t, hal, trigger)
+    frontier = start + t.i
+    print(f"  PASS tick {'trigger' if trigger else 'noop'} ({t.i} ops, "
+          f"frames {ops[start]['frame']}-{ops[frontier - 1]['frame']})")
+    return frontier
+
+
 def _is_serial_rmw(ops, start: int) -> int:
     if start < 0:
         return 0
@@ -261,6 +296,19 @@ def _peek_remnants(ops, start: int, channel: int, params, by_rate) -> tuple[int,
     return ((e08 >> 8) & 0xFF) - base_cck, (e00 & 0xFF) - base_ofdm
 
 
+def _sync_gap(ops, hal: dict, start: int, end: int) -> None:
+    for k in range(start, min(end, len(ops))):
+        o = ops[k]
+        if o["kind"] == "W" and o.get("width") == 4 \
+                and o.get("addr") == 0xC50:
+            hal["cur_ig"] = (o.get("value", 0) or 0) & 0xFF
+            print(f"  SYNC race fragment op#{k} cur_ig={hal['cur_ig']:#x}")
+        if o["kind"] == "W" and o.get("width") == 1 \
+                and o.get("addr") == 0xA0A:
+            hal["cur_cck"] = o.get("value", 0) or 0
+            print(f"  SYNC race fragment op#{k} cur_cck={hal['cur_cck']:#x}")
+
+
 def _walk_switch(ops, start: int, channel: int, hal: dict, params,
                  by_rate, rem_cck: int = 0, rem_ofdm: int = 0) -> int:
     t = rp.ReplayTransport(ops[start:])
@@ -272,11 +320,11 @@ def _walk_switch(ops, start: int, channel: int, hal: dict, params,
     return frontier
 
 
-def _walk_dm_init(ops, start: int) -> int:
+def _walk_dm_init(ops, start: int, hal: dict) -> int:
     """DM-init prologue reads + NHM + adaptivity + CFO + swing."""
     t = rp.ReplayTransport(ops[start:])
     dm_mod.common_info_self_init(t)
-    dm_mod.dig_init_igi(t)
+    hal["cur_ig"] = dm_mod.dig_init_igi(t) & 0xFF
     dm_mod.nhm_init(t)
     dm_mod.adaptivity_init(t)
     dm_mod.cfo_init_atc(t)
@@ -299,10 +347,10 @@ def _walk_m5h_start(ops, start: int) -> int:
     return frontier
 
 
-def _walk_m5f_tune(ops, start: int, params, by_rate) -> tuple[int, int]:
+def _walk_m5f_tune(ops, start: int, params, by_rate, hal: dict) -> tuple[int, int]:
     """Initial ch1 tune + TX power."""
     t = rp.ReplayTransport(ops[start:])
-    rf_chnl_val = chan_mod.tune_20(t, 1)
+    rf_chnl_val = chan_mod.tune_20(t, 1, 0, hal)
     txpower_mod.set_level(t, 1, 0, params, by_rate)
     frontier = start + t.i
     print(f"  PASS M5f tune ch1 + TX power ({t.i} ops, frames "
@@ -382,7 +430,8 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
             mac_addr = params.mac
             frontier = _walk_m3(ops, frontier)
             frontier = _walk_open_fw(ops, frontier, blob, "#2 (open)")
-        hal: dict = {}
+        hal: dict = {"cur_cck": 0, "th_l2h_ini": 0xF5,
+                     "adaptivity_ability": False}
         out_ep_number = RECORDED_OUT_EP_NUMBER
         out_ep_queue_sel = RECORDED_OUT_EP_QUEUE_SEL
         frontier = _walk_m5a(ops, frontier)
@@ -391,9 +440,9 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         frontier = _walk_m5d(ops, frontier, mac_addr,
                              out_ep_number, out_ep_queue_sel)
         frontier = _walk_m5e(ops, frontier, hal)
-        frontier, hal["rf_chnl_val"] = _walk_m5f_tune(ops, frontier, params, by_rate)
+        frontier, hal["rf_chnl_val"] = _walk_m5f_tune(ops, frontier, params, by_rate, hal)
         frontier = _walk_m5h_start(ops, frontier)
-        frontier = _walk_dm_init(ops, frontier)
+        frontier = _walk_dm_init(ops, frontier, hal)
         # Op1279 (2nd R32 0xC80) has no source after exhaustive elimination;
         # LC verifies standalone from its 0xD03 anchor until it resolves.
         _walk_lc_standalone(ops, _find_anchor(ops, frontier, 0xD03, 1, "R"))
@@ -414,6 +463,20 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
                 print(f"  remnants ch{ch}: cck={rem[0]:+d} ofdm={rem[1]:+d}")
                 cursor = _walk_switch(ops, start, ch, hal, params, by_rate,
                                       *rem)
+        cursor = frontier
+        while True:
+            try:
+                head = _find_seq(ops, cursor, TICK_HEAD)
+            except SystemExit:
+                break
+            _sync_gap(ops, hal, cursor, head)
+            kind = _classify_tick(ops, head)
+            if kind in ("setpwr", "edca"):
+                print(f"  SKIP {kind} tick op#{head} "
+                      f"(frame {ops[head]['frame']})")
+                cursor = head + 1
+                continue
+            cursor = _walk_tick(ops, head, hal, kind == "trigger")
         op = ops[frontier]
         print(f"  frontier: op#{frontier} opens the next milestone "
               f"({rp.ReplayTransport._fmt(op)})")

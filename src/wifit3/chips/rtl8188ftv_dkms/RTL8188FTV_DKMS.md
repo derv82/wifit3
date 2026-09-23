@@ -44,11 +44,18 @@
   (capture-1): airodump hops 1,7,13,2,8,3,9,4,10,5,11,6,12 + fixed-ch1 +
   `iw` sweep 1-13 + final ch1, each verified standalone against the same
   unit (78 ops skip-spur, 93-104 ops PSD-spur with/without notch) to the
-  cap1-op1279 / cap2-op2914 frontier. Runtime CCK remnant evolves
-  +0 (open) → +1 (hops) → +2 (fixed + sweep ch1-10) → +3 (sweep
-  ch11-13 + final), OFDM remnant stays 0; remnants are peeked per
-  instance from the recorded lanes (the producing callback's delta table
-  is open, see below) while every other lane verifies. RX path (`rx.iter_rx`: 24B desc +
+  cap1-op1279 / cap2-op2914 frontier. Watchdog ticks (`dm.watchdog_tick`:
+  RX-FIFO check + FA hold/reads/release + DIG (unlinked bounds/thresholds,
+  change-gated write) + adaptivity EDCCA (ability-clear mode2 path) +
+  CCK-PD (fail-count threshold, change-gated) + thermal trigger/no-op
+  callback alternating): all 28 cap1 ticks + cap2 ticks verified
+  standalone, except 3 setpwr ticks + 2 first-tick EDCA programs, which
+  are skipped with state sync. Race-fragment C50/A0A writes in unwalked
+  gaps sync `cur_ig`/`cur_cck` (every later use verifies). Runtime CCK
+  remnant evolves +0 (open) → +1 (hops) → +2 (fixed + sweep ch1-10) →
+  +3 (sweep ch11-13 + final), OFDM remnant stays 0; remnants are peeked
+  per instance from the recorded lanes (the producing callback's delta
+  table is open, see below) while every other lane verifies. RX path (`rx.iter_rx`: 24B desc +
   drvinfo + shift walk, 8B align, `RPT_SEL` C2H split, crc-stop like the
   source) decodes all 9354 bulk-IN completions: 16164 packets, 41 AP
   BSSIDs incl. all 3 log-known APs, 0 parser exceptions
@@ -99,9 +106,11 @@
   offset 0 and skip `SetPwr` entirely. The wire proves effective +1, so
   the running box's table source is unaccounted for — the callback port
   waits on it.
-- Mapped, unported: thermal tracking callback (`setIqkMatrix` values
-  hand-verified: ele_A `0xF4`, ele_C `0x001`) + `iw`-sweep switches
-  (same unit, remnant CCK +1) + fixed-ch1.
+- Mapped, unported: 2s watchdog ticks (`traffic_status_watchdog` +
+  `hal_dm_watchdog`, all verified standalone except 3 setpwr ticks +
+  2 first-tick EDCA programs, which are skipped with state sync). Next:
+  thermal tracking callback (delta-table gap, see below). Until the
+  bring-up verifies end to end, keep `WIFIT3_RTL8188FTV=mainline`.
 - Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
 
 ## Driver Entry Points

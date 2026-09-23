@@ -118,3 +118,9 @@ def misc11_tail(t) -> None:
 def init_gpio_setting(t) -> None:
     value8 = t.read8(0x0040)
     t.write8(0x0040, value8 & ~BIT(5))
+
+
+def check_rxfifo_full(t) -> None:
+    value8 = t.read8(0x0667)
+    t.write8(0x0667, value8 | 0xA0)
+    t.read16(0x0664)
