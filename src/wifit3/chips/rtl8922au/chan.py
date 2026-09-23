@@ -4,8 +4,13 @@ Builds the rtw89_chan for a channel and runs the per-channel BB/RF/MAC tune plus
 airmon-ng drives once per hop. Only the head (pre_set_channel_bb) is ported so far; the rest are
 marked TODO. [SRC] core.c:531 __rtw89_set_channel, rtw8922a.c:2232 set_channel.
 """
+import logging
+import time
+
 from . import mac, phy, txpwr, coex, rfk
 from .constants import RTW89_BAND_2G, RTW89_BAND_5G, RTW89_BAND_6G, RTW89_CHANNEL_WIDTH_20
+
+logger = logging.getLogger(__name__)
 
 
 def band_of(channel: int) -> int:
@@ -82,12 +87,23 @@ def set_channel_fast(t, channel: int, ep: int = None) -> dict:
     band = chan["band_type"]
     t.mlo_1_1 = True
 
+    _t0 = time.perf_counter()
     tx_en0 = phy.set_channel_help(t, t.cv, band, enter=True, phy_idx=0, mac_idx=0)
+    _t1 = time.perf_counter()
     mac.set_channel_mac(t, chan, 0)
+    _t2 = time.perf_counter()
     phy.set_channel_bb(t, chan, 0)
+    _t3 = time.perf_counter()
     phy.set_channel_rf(t, chan, 0)
+    _t4 = time.perf_counter()
     txpwr.set_txpwr(t, chan, 0)
+    _t5 = time.perf_counter()
     phy.set_channel_help(t, t.cv, band, enter=False, phy_idx=0, mac_idx=0, tx_en=tx_en0)
+    if logger.isEnabledFor(logging.DEBUG):
+        _t6 = time.perf_counter()
+        logger.debug("set_channel_fast ch%d phy0: help=%.0f mac=%.0f bb=%.0f rf=%.0f txpwr=%.0f leave=%.0f",
+                     channel, (_t1 - _t0) * 1000, (_t2 - _t1) * 1000, (_t3 - _t2) * 1000,
+                     (_t4 - _t3) * 1000, (_t5 - _t4) * 1000, (_t6 - _t5) * 1000)
 
     band_changed0 = t.last_band[0] is not None and t.last_band[0] != band
     if not t.entity_active[0] or band_changed0:
@@ -97,12 +113,23 @@ def set_channel_fast(t, channel: int, ep: int = None) -> dict:
     t.entity_active[0] = True
     t.last_band[0] = band
 
+    _u0 = time.perf_counter()
     tx_en1 = phy.set_channel_help(t, t.cv, band, enter=True, phy_idx=1, mac_idx=1)
+    _u1 = time.perf_counter()
     mac.set_channel_mac(t, chan, 1)
+    _u2 = time.perf_counter()
     phy.set_channel_bb(t, chan, 1)
+    _u3 = time.perf_counter()
     phy.set_channel_rf(t, chan, 1)
+    _u4 = time.perf_counter()
     txpwr.set_txpwr(t, chan, 1)
+    _u5 = time.perf_counter()
     phy.set_channel_help(t, t.cv, band, enter=False, phy_idx=1, mac_idx=1, tx_en=tx_en1)
+    if logger.isEnabledFor(logging.DEBUG):
+        _u6 = time.perf_counter()
+        logger.debug("set_channel_fast ch%d phy1: help=%.0f mac=%.0f bb=%.0f rf=%.0f txpwr=%.0f leave=%.0f",
+                     channel, (_u1 - _u0) * 1000, (_u2 - _u1) * 1000, (_u3 - _u2) * 1000,
+                     (_u4 - _u3) * 1000, (_u5 - _u4) * 1000, (_u6 - _u5) * 1000)
     t.entity_active[1] = True
     t.last_band[1] = band
 
