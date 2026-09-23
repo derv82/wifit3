@@ -335,6 +335,17 @@ def _walk_dm_init(ops, start: int, hal: dict) -> int:
     return frontier
 
 
+def _walk_tracking_second(ops, start: int) -> int:
+    """Redundant 2nd odm_TXPowerTrackingInit: ODM_DMInit calls it directly
+    right after phydm_rf_init already did; only getSwingIndex re-reads."""
+    t = rp.ReplayTransport(ops[start:])
+    dm_mod.tracking_init_second(t)
+    frontier = start + t.i
+    print(f"  PASS 2nd tracking init ({t.i} ops, frames "
+          f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
+    return frontier
+
+
 def _walk_m5h_start(ops, start: int) -> int:
     """CAM invalidate + MISC11 tail + GPIO."""
     t = rp.ReplayTransport(ops[start:])
@@ -443,8 +454,7 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         frontier, hal["rf_chnl_val"] = _walk_m5f_tune(ops, frontier, params, by_rate, hal)
         frontier = _walk_m5h_start(ops, frontier)
         frontier = _walk_dm_init(ops, frontier, hal)
-        # Op1279 (2nd R32 0xC80) has no source after exhaustive elimination;
-        # LC verifies standalone from its 0xD03 anchor until it resolves.
+        frontier = _walk_tracking_second(ops, frontier)
         _walk_lc_standalone(ops, _find_anchor(ops, frontier, 0xD03, 1, "R"))
         iqk_end = _walk_iqk_standalone(ops, _find_anchor(ops, frontier, 0x948, 4, "R"))
         _walk_thermal_trigger(ops, iqk_end)

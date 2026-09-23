@@ -87,18 +87,14 @@
 - Capture-1 and capture-2 have no TX: aireplay `--test` found no such BSSID
   (`No such BSSID available`), so the pcaps carry zero bulk-OUT. M8
   (TX/injection) needs a capture against a visible AP.
-- Open: the frontier op (2nd `R32 0xC80=0x390000E4`, back-to-back with the
-  thermal-swing read, identical in both captures) has no source after
-  exhaustive elimination — single `getSwingIndex` call site, single-execution
-  DMInit chain, zero-read antenna/path/beamforming/dynamic inits AND the
-  `DynamicBBPowerSaving`/`DynamicTxPower` inits (all sw-only), full
-  `ThermalMeterInit` + LC wrapper re-reads (register-clean), `InitHalDm`
-  = GPIO + ComInfo (sw-only) + `ODM_DMInit` only, no `0xC80` in
-  `usb_halinit.c` between `InitHalDm` and LC, clean URB statuses (no
-  retry/stall). The three other back-to-back duplicate reads in the
-  captures are all check+result pairs (IQK `0xEAC`/`0xE94`, matrix-fill
-  `0xC80` Get+RMW), which is the remaining shape hypothesis here, with
-  no candidate second reader.
+- Solved: the frontier duplicate `R32 0xC80=0x390000E4` was the redundant
+  second `odm_TXPowerTrackingInit` — `ODM_DMInit` (`phydm.c`) calls it
+  directly right after `phydm_rf_init` already did; both funnel into
+  `ThermalMeterInit` → `getSwingIndex` (`PHY_QueryBBReg(0xC80,
+  0xFFC00000)`), everything else sw-only, so the two reads land
+  back-to-back with nothing between. Value is the BB-table default
+  (`halhwimg8188f_bb.c`: `0xC80, 0x390000E4`), never written before IQK
+  fill. `dm.tracking_init_second`, 1 op, both captures.
 - Open: RF `0x55` BIT19-clear (8 ops, both captures, right after the
   station opmode-set) with no caller found yet — no `SetRFReg(...,0x55)`
   literal or `0x5x` RF symbol exists in the tree; shape is a single

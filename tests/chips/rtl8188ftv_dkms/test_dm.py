@@ -49,6 +49,13 @@ def test_dm_init_reads_masked():
     assert dm.thermal_swing_index(t) == 0x3FF
 
 
+def test_tracking_init_second_rereads_swing():
+    from wifit3.chips.rtl8188ftv_dkms import dm
+    t = FakeT([0x390000E4])
+    assert dm.tracking_init_second(t) == 0xE4
+    assert t.writes == []
+
+
 def test_misc11_tail_gpio():
     from wifit3.chips.rtl8188ftv_dkms import misc
     t = FakeT([])

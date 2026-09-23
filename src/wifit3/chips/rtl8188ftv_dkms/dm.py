@@ -55,6 +55,10 @@ def thermal_swing_index(t) -> int:
     return bb.query_bb_reg(t, 0xC80, 0xFFC00000)
 
 
+def tracking_init_second(t) -> int:
+    return thermal_swing_index(t)
+
+
 def dm_init(t) -> None:
     common_info_self_init(t)
     dig_init_igi(t)
