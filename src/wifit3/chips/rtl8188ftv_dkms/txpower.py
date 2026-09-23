@@ -175,7 +175,8 @@ def index_base(params, path: int, rate: int, bw20: bool, channel: int) -> int:
 
 def get_index(params, tables: ByRateTables, path: int, rate: int,
               channel: int, reg_pwr_tbl_sel: int = 0,
-              track_control: bool = False) -> int:
+              track_control: bool = False, rem_cck: int = 0,
+              rem_ofdm: int = 0) -> int:
     power = _s8(index_base(params, path, rate, True, channel))
     by_rate = tables.get(BAND_2G, path, 0, rate)
     if reg_pwr_tbl_sel != 0:
@@ -185,6 +186,7 @@ def get_index(params, tables: ByRateTables, path: int, rate: int,
     if track_control:
         # TODO: verify, untested here, needs live thermal tracking
         raise ValueError("tracking offset untested here")
+    power += rem_cck if rate in CCK_RATES else rem_ofdm
     if power > MAX_POWER_INDEX:
         power = MAX_POWER_INDEX
     return power & 0xFF
@@ -195,6 +197,8 @@ def set_index(t, power: int, rate: int) -> None:
     bb.set_bb_reg(t, addr, mask, power)
 
 
-def set_level(t, channel: int, path: int, params, tables: ByRateTables) -> None:
+def set_level(t, channel: int, path: int, params, tables: ByRateTables,
+              rem_cck: int = 0, rem_ofdm: int = 0) -> None:
     for rate in CCK_RATES + OFDM_RATES + MCS07_RATES:
-        set_index(t, get_index(params, tables, path, rate, channel), rate)
+        set_index(t, get_index(params, tables, path, rate, channel,
+                               rem_cck=rem_cck, rem_ofdm=rem_ofdm), rate)

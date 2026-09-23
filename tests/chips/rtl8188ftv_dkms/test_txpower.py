@@ -81,6 +81,16 @@ def test_index_base_and_get_index():
         raise AssertionError("limit path accepted")
 
 
+def test_remnant_offsets():
+    from wifit3.chips.rtl8188ftv_dkms import txpower as T
+    params = _params()
+    tables = T.load_default_pg_tables()
+    assert T.get_index(params, tables, 0, T.MGN_1M, 7, rem_cck=1) == 0x1E
+    assert T.get_index(params, tables, 0, T.MGN_1M, 7) == 0x1D
+    assert T.get_index(params, tables, 0, T.MGN_6M, 7, rem_ofdm=1) == 0x2C
+    assert T.get_index(params, tables, 0, T.MGN_6M, 7) == 0x2B
+
+
 def test_set_level_writes_twenty_rates():
     from wifit3.chips.rtl8188ftv_dkms import txpower as T
     params = _params()

@@ -216,6 +216,42 @@ def _walk_monitor_entry(ops, start: int) -> int:
     return frontier
 
 
+def _is_serial_rmw(ops, start: int) -> int:
+    if start < 0:
+        return 0
+    seq = [("R", 0x824, 4), ("W", 0x824, 4), ("R", 0x824, 4),
+           ("W", 0x824, 4), ("W", 0x824, 4), ("R", 0x820, 4)]
+    return all(ops[start + k]["kind"] == k_ and ops[start + k].get("addr") == a
+               and ops[start + k].get("width") == w
+               for k, (k_, a, w) in enumerate(seq))
+
+
+def _find_switch(ops, start: int, channel: int) -> int:
+    want = (0x18 << 20) | (0xC00 | channel)
+    for i in range(start, len(ops) - 2):
+        o = ops[i]
+        if (o["kind"] == "W" and o.get("addr") == 0x840
+                and o.get("width") == 4 and o.get("value") == want
+                and _is_serial_rmw(ops, i - 7)
+                and ops[i + 1]["kind"] == "R"
+                and ops[i + 1].get("addr") == 0xC40
+                and ops[i + 2]["kind"] == "W"
+                and ops[i + 2].get("addr") == 0xC40):
+            return i - 7
+    raise SystemExit(f"switch to ch{channel} not found past op#{start}")
+
+
+def _walk_switch(ops, start: int, channel: int, hal: dict, params,
+                 by_rate, rem_cck: int = 0, rem_ofdm: int = 0) -> int:
+    t = rp.ReplayTransport(ops[start:])
+    chan_mod.switch_channel(t, channel, hal, params, by_rate, rem_cck,
+                            rem_ofdm)
+    frontier = start + t.i
+    print(f"  PASS switch ch{channel} ({t.i} ops, frames "
+          f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
+    return frontier
+
+
 def _walk_dm_init(ops, start: int) -> int:
     """DM-init prologue reads + NHM + adaptivity + CFO + swing."""
     t = rp.ReplayTransport(ops[start:])
@@ -335,7 +371,7 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         frontier = _walk_m5d(ops, frontier, mac_addr,
                              out_ep_number, out_ep_queue_sel)
         frontier = _walk_m5e(ops, frontier, hal)
-        frontier, _rf_chnl_val = _walk_m5f_tune(ops, frontier, params, by_rate)
+        frontier, hal["rf_chnl_val"] = _walk_m5f_tune(ops, frontier, params, by_rate)
         frontier = _walk_m5h_start(ops, frontier)
         frontier = _walk_dm_init(ops, frontier)
         # Op1279 (2nd R32 0xC80) has no source after exhaustive elimination;
@@ -345,6 +381,12 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         _walk_thermal_trigger(ops, iqk_end)
         _walk_station_opmode(ops, _find_seq(ops, frontier, [("R", 0x550, 1), ("W", 0x550, 1), ("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x422, 1), ("W", 0x541, 1), ("W", 0x542, 1), ("W", 0x550, 1)]), hal)
         _walk_monitor_entry(ops, _find_seq(ops, frontier, [("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x608, 4), ("W", 0x6A4, 2)]))
+        _walk_switch(ops, _find_switch(ops, frontier, 1), 1, hal, params,
+                     by_rate)
+        if pcap.name == "capture-1.pcap":
+            # Cap2's ch7 1M lane carries the parked 0x02 anomaly; see doc.
+            _walk_switch(ops, _find_switch(ops, frontier, 7), 7, hal,
+                         params, by_rate, rem_cck=1)
         op = ops[frontier]
         print(f"  frontier: op#{frontier} opens the next milestone "
               f"({rp.ReplayTransport._fmt(op)})")

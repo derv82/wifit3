@@ -21,15 +21,22 @@ def test_spur_cal_ch1_skips_psd():
                         (0xD2C, 4, 0x0)]
 
 
-def test_spur_cal_spur_channel_unverified():
+def test_spur_cal_psd_notch_ch7():
     from wifit3.chips.rtl8188ftv_dkms import chan
-    t = FakeT([0x0] * 3)
-    try:
-        chan.spur_calibration(t, 6)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("spur PSD path accepted")
+    t = FakeT([0x1F78423F, 0x1F78423F, 0x99000000, 0x69553424,
+               0x83045700, 0x69553424, 0x76, 0x82045700, 0x69553430,
+               0x0, 0x0C000000, 0x100, 0x100C07, 0xCB979975])
+    chan.spur_calibration(t, 7)
+    assert t.writes == [(0xC40, 4, 0x1F78423F), (0xC40, 4, 0x1F78423F),
+                        (0x800, 4, 0x82045700), (0xC50, 4, 0x69553430),
+                        (0x88C, 4, 0xCCF000C0), (0x808, 4, 0xFFCD),
+                        (0x808, 4, 0x40FFCD), (0x808, 4, 0xFFCD),
+                        (0x88C, 4, 0xCCC000C0), (0x800, 4, 0x83045700),
+                        (0xC50, 4, 0x69553424), (0x824, 4, 0x0C000000),
+                        (0x824, 4, 0x0C000000), (0x824, 4, 0x8C000000),
+                        (0xD40, 4, 0x0),
+                        (0xD44, 4, 0x0), (0xD48, 4, 0x0),
+                        (0xD4C, 4, 0x06000000), (0xD2C, 4, 0xDB979975)]
 
 
 def test_sw_chnl_threads_channel():

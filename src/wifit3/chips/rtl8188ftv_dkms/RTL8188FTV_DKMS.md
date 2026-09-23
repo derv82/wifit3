@@ -37,11 +37,14 @@
   entry (MSR NOLINK + RCR all-accept + RXFLTMAP2, 4 ops both captures),
   station opmode (`hw_var_set_opmode` STATION via `rtw_hal_init_opmode`:
   BCN_CTRL TSF-UDT + MSR + `StopTxBeacon` + BCN_CTRL `0x19`, 8 ops both
-  captures, `RegFwHwTxQCtrl`/`RegReg542` threaded as hal state from M5e)
-  to the cap1-op1279 / cap2-op2914 frontier. Next: post-IQK reload +
-  channel-switch unit (SwChnl/SpurCal/PostBW/RF6052BW/SetTxPower) +
-  thermal tracking callback. Until the bring-up verifies end to end,
-  keep `WIFIT3_RTL8188FTV=mainline`.
+  captures,   `RegFwHwTxQCtrl`/`RegReg542` threaded as hal state from M5e),
+  channel-switch unit (`SwChnl` + `SpurCal` incl. PSD/notch branch +
+  `PostSetBW` + `RF6052BW` + `SetTxPowerLevel` with CCK/OFDM remnants):
+  ch1 open-restore (78 ops, both captures) and ch7 airodump-hop with PSD
+  notch + remnant CCK +1 (104 ops, capture-1) to the cap1-op1279 /
+  cap2-op2914 frontier. Next: thermal tracking callback + `iw`-sweep
+  switches + fixed-ch1. Until the bring-up verifies end to end, keep
+  `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -67,13 +70,19 @@
   DMInit chain, zero-read antenna/path/beamforming/dynamic inits, no
   leading-zero/decimal/computed-address spellings, no function-pointer
   dispatch. LC verifies standalone from its `0xD03` anchor past it.
-- Mapped, unported: post-IQK open tail (`SwChnl` ch1 + `SpurCal` +
-  `PostSetBW` + `RF6052BW` + `SetTxPowerLevel` reuse) and the
-  monitor-entry `SwChnl` to ch10 + `SetTxPowerLevel` ch10 + thermal tracking
-  callback. Open anomalies there: `E08` bytes 1-2 → `0x02,0x02` in one R/W
-  pair (no single-byte RMW source found) and an RF `0x55` BIT19-clear with
-  no caller found yet. The ch10 `SetTxPower` values otherwise match
-  `txpower.get_index(ch=10)` for 18/20 lanes.
+- Open: RF `0x55` BIT19-clear (8 ops, both captures, right after the
+  station opmode-set) with no caller found yet — no `SetRFReg(...,0x55)`
+  literal or `0x5x` RF symbol exists in the tree; shape is a single
+  partial-mask RMW (`rf.set_rf_reg` handles it once attributed).
+- Open: pre-tracking 1M lane writes `0x02` instead of base (ch10 cap1,
+  ch7 cap2) while 2M/5.5M/11M in the same section write base and the
+  ch1-open instance keeps base — limits are section-wide, remnants are
+  section-uniform, byRate tables have no per-channel 1M hole, so no known
+  term produces a 1M-only -30. Post-callback instances write base+1
+  (remnant CCK +1, OFDM +0), which the port threads as state.
+- Mapped, unported: thermal tracking callback (`setIqkMatrix` values
+  hand-verified: ele_A `0xF4`, ele_C `0x001`) + `iw`-sweep switches
+  (same unit, remnant CCK +1) + fixed-ch1.
 - Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
 
 ## Driver Entry Points
