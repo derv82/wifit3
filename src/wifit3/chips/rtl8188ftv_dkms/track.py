@@ -20,3 +20,8 @@ def thermal_trigger(t) -> None:
 
 def thermal_read(t) -> int:
     return rf.query_rf_reg(t, rf.RF_PATH_A, 0x42, 0xFC00)
+
+
+def kfree_gain_offset(t, offset: int = 0) -> None:
+    write_value = abs(offset) | (BIT(5) if offset > 0 else 0)
+    rf.set_rf_reg(t, rf.RF_PATH_A, 0x55, 0x0FC000, write_value)

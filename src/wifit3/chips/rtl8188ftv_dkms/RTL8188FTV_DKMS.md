@@ -95,10 +95,14 @@
   back-to-back with nothing between. Value is the BB-table default
   (`halhwimg8188f_bb.c`: `0xC80, 0x390000E4`), never written before IQK
   fill. `dm.tracking_init_second`, 1 op, both captures.
-- Open: RF `0x55` BIT19-clear (8 ops, both captures, right after the
-  station opmode-set) with no caller found yet — no `SetRFReg(...,0x55)`
-  literal or `0x5x` RF symbol exists in the tree; shape is a single
-  partial-mask RMW (`rf.set_rf_reg` handles it once attributed).
+- Solved: RF `0x55` BIT19-clear was `rtw_rf_set_tx_gain_offset` (core/rtw_rf.c,
+  8188F case): `rtw_bb_rf_gain_offset` runs after the opmode enqueue
+  (`CONFIG_RF_POWER_TRIM` set, efuse kfree flag `0x01` = `KFREE_FLAG_ON`,
+  zero bb_gain → offset 0 → `RF_TX_GAIN_OFFSET_8188F(0)` = 0); the masked
+  `write_rfreg(0x55, 0x0FC000, 0)` is one 7-op LSSI read + 1 write, no
+  `0x55` literal exists because the offset travels as `write_rfreg` arg
+  (the `DBG_871X` readbacks compile out). Readback `0x82060` → write
+  `0x2060`. `track.kfree_gain_offset`, 8 ops, both captures.
 - Open: pre-tracking 1M lane writes `0x02` instead of base (ch10 cap1,
   ch7 cap2) while 2M/5.5M/11M in the same section write base and the
   ch1-open instance keeps base — limits are section-wide, remnants are

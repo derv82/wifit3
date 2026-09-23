@@ -32,6 +32,13 @@ def test_thermal_trigger():
     assert t.writes[-1] == (0x840, 4, 0x4230000)
 
 
+def test_kfree_gain_offset_clears_tx_gain_bits():
+    from wifit3.chips.rtl8188ftv_dkms import track
+    t = FakeT([0x8C390204, 0x2AB90204, 0x1000100, 0x182060])
+    track.kfree_gain_offset(t)
+    assert t.writes[-1] == (0x840, 4, 0x5502060)
+
+
 def test_enter_monitor():
     from wifit3.chips.rtl8188ftv_dkms import mode
     t = FakeT([0x02])

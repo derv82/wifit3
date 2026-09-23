@@ -346,6 +346,17 @@ def _walk_tracking_second(ops, start: int) -> int:
     return frontier
 
 
+def _walk_kfree_gain(ops, start: int) -> int:
+    """Kfree TX gain offset: rtw_bb_rf_gain_offset runs after the opmode
+    enqueue (kfree flag 0x01 set, bb_gain zero); masked RF 0x55 write."""
+    t = rp.ReplayTransport(ops[start:])
+    track_mod.kfree_gain_offset(t)
+    frontier = start + t.i
+    print(f"  PASS kfree gain offset ({t.i} ops, frames "
+          f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
+    return frontier
+
+
 def _walk_m5h_start(ops, start: int) -> int:
     """CAM invalidate + MISC11 tail + GPIO."""
     t = rp.ReplayTransport(ops[start:])
@@ -458,7 +469,8 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         _walk_lc_standalone(ops, _find_anchor(ops, frontier, 0xD03, 1, "R"))
         iqk_end = _walk_iqk_standalone(ops, _find_anchor(ops, frontier, 0x948, 4, "R"))
         _walk_thermal_trigger(ops, iqk_end)
-        _walk_station_opmode(ops, _find_seq(ops, frontier, [("R", 0x550, 1), ("W", 0x550, 1), ("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x422, 1), ("W", 0x541, 1), ("W", 0x542, 1), ("W", 0x550, 1)]), hal)
+        opmode_end = _walk_station_opmode(ops, _find_seq(ops, frontier, [("R", 0x550, 1), ("W", 0x550, 1), ("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x422, 1), ("W", 0x541, 1), ("W", 0x542, 1), ("W", 0x550, 1)]), hal)
+        frontier = _walk_kfree_gain(ops, opmode_end)
         _walk_monitor_entry(ops, _find_seq(ops, frontier, [("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x608, 4), ("W", 0x6A4, 2)]))
         cursor = _walk_switch(ops, _find_switch(ops, frontier, 1), 1, hal,
                               params, by_rate)
