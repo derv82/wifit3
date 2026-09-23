@@ -114,7 +114,13 @@
 - Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
 
 ## Driver Entry Points
-- Bring-up: `driver.connect` → (M1) probe `rtw_drv_init` + `read_chip_version` → (M2) `ReadAdapterInfo8188FU` → (M3) `_InitPowerOn_8188FU` → (M4) `rtl8188fu_hal_init` → `rtl8188f_FirmwareDownload` → (M5) `PHY_MACConfig8188F` / `PHY_BBConfig8188F` / `PHY_RFConfig8188F`.
+- Bring-up: `driver.connect` → M1 probe + M2 EFUSE → M3 power →
+  M4 FW#2 (open, `assets/rtl8188fufw.bin`) → M5a-f → M5h + DM-init +
+  LC + IQK + thermal trigger → station opmode + monitor entry, then
+  `RxReaderThread` (bulk-IN `0x81` → `rx.iter_rx` → `WlanFrameParser`).
+  Cold-only (replug resets); `set_channel` reuses the switch unit with
+  hal remnants (post-bring-up +0/+0 until tracking lands);
+  TX/injection raises (no bulk-OUT reference).
 - EFUSE / chip params: (M2) `ReadAdapterInfo8188FU` → `Efuse_PgPacketRead` + `HalEfuseMask8188F_USB` + `Hal_EfuseParse*`.
 - Power off: (M2 tail) `CardDisableRTL8188FU` (LPS-enter + card-disable flows, no deinit at probe).
 - Firmware: (M4) `firmware.download_firmware` / `start` + `init_firmware_vars` (128-B ladder + checksum/ready polls).

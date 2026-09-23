@@ -123,6 +123,20 @@ def init_firmware_vars(t) -> None:
     t.write8(C.REG_HMETFR, 0x0F)
 
 
+_FIRMWARE_ASSET = "rtl8188fufw.bin"
+
+
+def load_firmware_blob() -> bytes:
+    from importlib.resources import files
+    data = files(__package__).joinpath("assets").joinpath(_FIRMWARE_ASSET).read_bytes()
+    if len(data) <= 32:
+        raise ValueError(f"firmware blob too small: {len(data)} bytes")
+    version, subversion, signature, _ = parse_header(data)
+    if (version, subversion, signature) != (4, 0, 0x88F1):
+        raise ValueError(f"unexpected firmware header: {(version, subversion, hex(signature))}")
+    return data
+
+
 def parse_header(blob: bytes) -> tuple[int, int, int, bytes]:
     signature = int.from_bytes(blob[0:2], "little")
     version = int.from_bytes(blob[4:6], "little")
