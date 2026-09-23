@@ -358,12 +358,18 @@ class RTL8922AUDriver(Driver):
     def _tune_hop(self, channel: int, scan: bool = False) -> None:
         """Tune channel off the event loop. scan=True takes the single-pass fast path;
         scan=False runs the two set_channel passes of the prehdl double-tune."""
-        if scan:
-            chan.set_channel_fast(self.transport, channel, self._h2c_ep)
-            return
-        self._prehdl_force_phy0 = True
-        self._tune_pass(channel)          # forced PHY_0 -> 2+0 (+ RFK calibrates the active path)
-        self._tune_pass(channel)          # force cleared -> 1+1 (operating state)
+        t0 = time.perf_counter()
+        try:
+            if scan:
+                chan.set_channel_fast(self.transport, channel, self._h2c_ep)
+                return
+            self._prehdl_force_phy0 = True
+            self._tune_pass(channel)          # forced PHY_0 -> 2+0 (+ RFK calibrates the active path)
+            self._tune_pass(channel)          # force cleared -> 1+1 (operating state)
+        finally:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("tune ch%d %s: %.0f ms", channel, "fast" if scan else "full",
+                             (time.perf_counter() - t0) * 1000)
 
     def _tune_pass(self, channel: int) -> None:
         """One rtw89_set_channel pass. Derives the MLO mode from the modelled entity force

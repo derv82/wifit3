@@ -148,8 +148,14 @@ class RxReaderThread:
 
     def _dispatch_batch(self, batch: list[bytes]) -> None:
         self._bufs_consumed += len(batch)
+        t0 = time.perf_counter()
         for buf in batch:
             try:
                 self._dispatch(buf)
             except Exception:
                 logger.exception(f"[{self._name}] dispatch raised")
+        if logger.isEnabledFor(logging.DEBUG):
+            dt = (time.perf_counter() - t0) * 1000
+            backlog = self._bufs_produced - self._bufs_consumed
+            logger.debug("[%s] rx batch %d bufs in %.0f ms (%.2f ms/buf, backlog %d)",
+                         self._name, len(batch), dt, dt / max(len(batch), 1), backlog)
