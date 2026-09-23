@@ -115,6 +115,14 @@ def misc11_tail(t) -> None:
     t.write32(0x04CC, 0x0201FFFF)
 
 
+def hal_init_tail(t) -> None:
+    t.write8(0x0652, (30000 + 128 - 1) // 128)
+    value32 = t.read32(0x0420)
+    t.write32(0x0420, value32 | BIT(12))
+    value8 = t.read8(0x0100)
+    t.write8(0x0100, value8 | BIT(6) | BIT(7))
+
+
 def init_gpio_setting(t) -> None:
     value8 = t.read8(0x0040)
     t.write8(0x0040, value8 & ~BIT(5))

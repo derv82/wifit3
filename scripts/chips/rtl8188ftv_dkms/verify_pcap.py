@@ -357,6 +357,26 @@ def _walk_kfree_gain(ops, start: int) -> int:
     return frontier
 
 
+def _walk_hal_init_tail(ops, start: int) -> int:
+    """usb_halinit tail: NAV_UPPER + FWHW_TXQ_CTRL BIT12 + MACTXEN/MACRXEN."""
+    t = rp.ReplayTransport(ops[start:])
+    misc_mod.hal_init_tail(t)
+    frontier = start + t.i
+    print(f"  PASS hal_init tail ({t.i} ops, frames "
+          f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
+    return frontier
+
+
+def _walk_mlme_ext(ops, start: int, hal: dict, params, by_rate) -> int:
+    """init_hw_mlme_ext: set_channel_bwmode(ch1, BW20), zero remnants."""
+    t = rp.ReplayTransport(ops[start:])
+    chan_mod.switch_channel(t, 1, hal, params, by_rate, 0, 0)
+    frontier = start + t.i
+    print(f"  PASS mlme_ext ch1 set ({t.i} ops, frames "
+          f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
+    return frontier
+
+
 def _walk_m5h_start(ops, start: int) -> int:
     """CAM invalidate + MISC11 tail + GPIO."""
     t = rp.ReplayTransport(ops[start:])
@@ -468,8 +488,10 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         frontier = _walk_tracking_second(ops, frontier)
         _walk_lc_standalone(ops, _find_anchor(ops, frontier, 0xD03, 1, "R"))
         iqk_end = _walk_iqk_standalone(ops, _find_anchor(ops, frontier, 0x948, 4, "R"))
-        _walk_thermal_trigger(ops, iqk_end)
-        opmode_end = _walk_station_opmode(ops, _find_seq(ops, frontier, [("R", 0x550, 1), ("W", 0x550, 1), ("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x422, 1), ("W", 0x541, 1), ("W", 0x542, 1), ("W", 0x550, 1)]), hal)
+        trig_end = _walk_thermal_trigger(ops, iqk_end)
+        tail_end = _walk_hal_init_tail(ops, trig_end)
+        mlme_end = _walk_mlme_ext(ops, tail_end, hal, params, by_rate)
+        opmode_end = _walk_station_opmode(ops, mlme_end, hal)
         frontier = _walk_kfree_gain(ops, opmode_end)
         _walk_monitor_entry(ops, _find_seq(ops, frontier, [("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x608, 4), ("W", 0x6A4, 2)]))
         cursor = _walk_switch(ops, _find_switch(ops, frontier, 1), 1, hal,

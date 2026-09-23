@@ -103,6 +103,15 @@
   `0x55` literal exists because the offset travels as `write_rfreg` arg
   (the `DBG_871X` readbacks compile out). Readback `0x82060` → write
   `0x2060`. `track.kfree_gain_offset`, 8 ops, both captures.
+- Solved: the 78 ops between thermal trigger and opmode are
+  `init_hw_mlme_ext` → `set_channel_bwmode(ch1, BW20)` → the already-ported
+  `chan.switch_channel(ch1, rem 0, 0)` (RF18 masked RMW + ch1 spur skip +
+  PostSetBW + BW20 RF + TXAGC sections, all no-change on first call), with
+  the usb_halinit tail just before it (`misc.hal_init_tail`: NAV_UPPER
+  `ceil(30000/128)=0xEB`, FWHW_TXQ_CTRL BIT12, MACTXEN|MACRXEN). The whole
+  bring-up is now one contiguous verified flow from probe through monitor
+  entry; LED init is register-clean (SW strategy, `misc.init_hw_led`
+  early-returns).
 - Open: pre-tracking 1M lane writes `0x02` instead of base (ch10 cap1,
   ch7 cap2) while 2M/5.5M/11M in the same section write base and the
   ch1-open instance keeps base — limits are section-wide, remnants are

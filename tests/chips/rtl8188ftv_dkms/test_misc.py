@@ -25,6 +25,14 @@ class FakeT:
         self.writes.append((addr, 4, value & 0xFFFFFFFF))
 
 
+def test_hal_init_tail():
+    from wifit3.chips.rtl8188ftv_dkms import misc
+    t = FakeT([0xFF710F80, 0x3F])
+    misc.hal_init_tail(t)
+    assert t.writes == [(0x652, 1, 0xEB), (0x420, 4, 0xFF711F80),
+                        (0x100, 1, 0xFF)]
+
+
 def test_beacon_params():
     from wifit3.chips.rtl8188ftv_dkms import misc
     t = FakeT([0x0] * 5)
