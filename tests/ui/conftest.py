@@ -24,5 +24,7 @@ def no_usb_devices():
     libusb-backend-failure tests need the real usb.core.find path intact, so a global stub
     would make those untestable. Tests request it with @pytest.mark.usefixtures("no_usb_devices").
     """
-    with patch('usb.core.find', return_value=[]):
+    # usb.core.find covers libusb; present_usb_ids covers the Windows PnP merge in devices().
+    with patch('usb.core.find', return_value=[]), \
+         patch('wifit3.device.windows_pnp.present_usb_ids', return_value=set()):
         yield

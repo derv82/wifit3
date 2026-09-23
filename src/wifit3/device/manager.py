@@ -238,6 +238,7 @@ def devices() -> List[DeviceID]:
     backend = libusb_package.get_libusb1_backend()
     smap = supported_ids()
     out: List[DeviceID] = []
+    seen: set[VidPid] = set()
     for dev in _bus_devices(backend):
         slot = (dev.idVendor, dev.idProduct)
         claim = smap.get(slot)
@@ -250,6 +251,26 @@ def devices() -> List[DeviceID]:
             if resolved is not None:
                 entry = resolved.entry
         out.append(replace(entry, bus=dev.bus, address=dev.address))
+        seen.add(slot)
+    out.extend(_pnp_only_devices(smap, seen))
+    return out
+
+
+def _pnp_only_devices(smap: dict[VidPid, Claim], seen: set[VidPid]) -> List[DeviceID]:
+    """Present supported cards libusb can't see because no WinUSB/libusb driver is bound yet (Windows
+    only). Tagged bus/address None: present but not openable until WinUSB is installed. Empty
+    elsewhere, where libusb enumerates a driverless device on its own."""
+    if sys.platform != "win32":
+        return []
+    from wifit3.device.windows_pnp import present_usb_ids
+    out: List[DeviceID] = []
+    for slot in present_usb_ids():
+        if slot in seen:
+            continue
+        claim = smap.get(slot)
+        if claim is not None:
+            out.append(replace(claim.entry))
+            seen.add(slot)
     return out
 
 

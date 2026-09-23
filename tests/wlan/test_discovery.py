@@ -211,6 +211,8 @@ class _FakeDriver:
 def _stub_bus(monkeypatch, devs):
     monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
     monkeypatch.setattr(usb.core, "find", lambda **kw: list(devs))
+    # Isolate from the host's real PnP tree on Windows (devices() merges it in).
+    monkeypatch.setattr("wifit3.device.windows_pnp.present_usb_ids", lambda: set())
 
 
 def test_devices_tags_each_match_with_its_bus_address(monkeypatch):
@@ -310,3 +312,35 @@ def test_linux_node_path_first_match_for_catalog_entry(monkeypatch):
     entry = DeviceID(0x148F, 0x5370, "RT5370")   # no (bus, address)
     _stub_bus(monkeypatch, [_FakeDev(0x148F, 0x5370, bus=1, address=5)])
     assert manager.linux_node_path(entry) == "/dev/bus/usb/001/005"
+
+
+def test_vidpid_regex_parses_windows_instance_id():
+    from wifit3.device.windows_pnp import _VIDPID
+    m = _VIDPID.search(r"USB\VID_0BDA&PID_1A2B\5&3207d635&0&6")
+    assert (int(m.group(1), 16), int(m.group(2), 16)) == (0x0BDA, 0x1A2B)
+
+
+def _claim(vid, pid):
+    return manager.Claim(DeviceID(vid, pid, "RTL8922AU"), "rtl8922au", lambda: None)
+
+
+def test_pnp_only_devices_surfaces_present_driverless_card(monkeypatch):
+    monkeypatch.setattr(manager.sys, "platform", "win32")
+    monkeypatch.setattr("wifit3.device.windows_pnp.present_usb_ids",
+                        lambda: {(0x0B05, 0x1D84), (0x1234, 0x5678)})   # second is unsupported
+    smap = {(0x0B05, 0x1D84): _claim(0x0B05, 0x1D84)}
+    out = manager._pnp_only_devices(smap, set())
+    assert [(d.vid, d.pid) for d in out] == [(0x0B05, 0x1D84)]
+    assert out[0].bus is None and out[0].address is None   # present, but not libusb-openable yet
+
+
+def test_pnp_only_devices_skips_ids_libusb_already_saw(monkeypatch):
+    monkeypatch.setattr(manager.sys, "platform", "win32")
+    monkeypatch.setattr("wifit3.device.windows_pnp.present_usb_ids", lambda: {(0x0B05, 0x1D84)})
+    smap = {(0x0B05, 0x1D84): _claim(0x0B05, 0x1D84)}
+    assert manager._pnp_only_devices(smap, {(0x0B05, 0x1D84)}) == []
+
+
+def test_pnp_only_devices_noop_off_windows(monkeypatch):
+    monkeypatch.setattr(manager.sys, "platform", "linux")
+    assert manager._pnp_only_devices({(0x0B05, 0x1D84): _claim(0x0B05, 0x1D84)}, set()) == []
