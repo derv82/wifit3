@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Callable, List, NamedTuple, NoReturn, Optional
 import libusb_package
 import usb.core
 
+from wifit3.device.zerocd import ZeroCdEjector
 from wifit3.errors import BringUpError, BringUpPermissionsError, WifiteFatalError, is_device_gone
 from wifit3.models.device_id import DeviceID
 from wifit3.setup.base import Setup, SetupResult
@@ -151,6 +152,23 @@ def supported_ids() -> dict[VidPid, Claim]:
     return mapping
 
 
+@functools.cache
+def zerocd_ids() -> frozenset[VidPid]:
+    """Every ZeroCD (mass-storage stub) VID:PID any driver opts into, merged across all packages.
+    Unlike ``supported_ids`` this keeps both members of a DKMS pair: the stub needs ejecting whichever
+    driver ultimately wins."""
+    from wifit3 import chips as chips_pkg
+
+    ids: set[VidPid] = set()
+    for mod_info in pkgutil.iter_modules(chips_pkg.__path__, chips_pkg.__name__ + "."):
+        if not mod_info.ispkg:
+            continue
+        mod = importlib.import_module(mod_info.name)
+        for entry in getattr(mod, "ZEROCD_IDS", None) or ():
+            ids.add((entry[0], entry[1]))
+    return frozenset(ids)
+
+
 def driver_for(vid: int, pid: int) -> Optional[Tuple[type["Driver"], str]]:
     """``(driver class, setup key)`` claiming ``vid:pid``, or None."""
     claim = supported_ids().get((vid, pid))
@@ -208,6 +226,11 @@ def _bus_devices(backend) -> List[usb.core.Device]:
         return list(usb.core.find(find_all=True, backend=backend))
     except usb.core.NoBackendError as exc:
         _raise_usblib_fatal(exc)
+
+
+def raw_devices() -> List[usb.core.Device]:
+    """Every ``usb.core.Device`` on the bus right now, unfiltered (the ZeroCD ejector's view)."""
+    return _bus_devices(libusb_package.get_libusb1_backend())
 
 
 def devices() -> List[DeviceID]:
@@ -325,9 +348,14 @@ class DeviceManager:
             prompter = BringupPrompter(app)
         self.prompter = prompter
         self._name_counter = 0
+        self._ejector = ZeroCdEjector(zerocd_ids, raw_devices)
 
     def devices(self) -> List[DeviceID]:
         return devices()
+
+    def eject_zerocd_devices(self) -> None:
+        """Eject any present ZeroCD stub so it re-enumerates as its Wi-Fi device (rate-limited)."""
+        self._ejector.eject_present()
 
     def device(self, device_id: DeviceID) -> Optional[DeviceID]:
         return device(device_id)

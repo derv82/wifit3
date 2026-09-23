@@ -24,6 +24,9 @@ SUPPORTED_IDS = [
 ]
 
 
+ZEROCD_IDS = [(0x0BDA, 0x1A2B)]   # Realtek "DISK" mass-storage stub; ejects to the Wi-Fi PID above.
+
+
 def import_driver():
     from .driver import RTL8922AUDriver
     return RTL8922AUDriver

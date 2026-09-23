@@ -16,6 +16,9 @@ class _DM:
     def devices(self):
         return self._seq.pop(0) if len(self._seq) > 1 else self._seq[0]
 
+    def eject_zerocd_devices(self):
+        pass
+
 
 def _watch(frames):
     return DeviceWatch(_DM(frames), on_change=lambda *a: None)

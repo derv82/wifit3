@@ -9,6 +9,9 @@ SUPPORTED_IDS = [
 ]
 
 
+ZEROCD_IDS = [(0x0BDA, 0x1A2B)]   # ZeroCD knockoff front-end that mode-switches to 0e8d:7612.
+
+
 def import_driver():
     from .driver import MT76x2UDriver
     return MT76x2UDriver

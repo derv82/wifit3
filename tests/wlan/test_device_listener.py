@@ -20,6 +20,9 @@ class _DM:
             raise self._devs
         return self._devs
 
+    def eject_zerocd_devices(self):
+        pass
+
 
 def test_diff_arrival():
     assert _diff([A, B], [A]) == ([B], [])
@@ -51,6 +54,22 @@ async def test_poll_fires_on_change_then_stays_quiet():
     assert events == [([A], [A], [])] and watch.present() == [A]
     await watch.poll()                             # unchanged -> no second event
     assert len(events) == 1
+
+
+async def test_poll_ejects_zerocd_before_scanning():
+    order = []
+
+    class _EjectingDM(_DM):
+        def eject_zerocd_devices(self):
+            order.append("eject")
+
+        def devices(self):
+            order.append("scan")
+            return super().devices()
+
+    watch = DeviceWatch(_EjectingDM([A]), on_change=lambda *a: None)
+    await watch.poll()
+    assert order == ["eject", "scan"]
 
 
 async def test_poll_paused_is_noop():
