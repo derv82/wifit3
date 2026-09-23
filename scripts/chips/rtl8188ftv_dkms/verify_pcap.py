@@ -198,6 +198,15 @@ def _walk_thermal_trigger(ops, start: int) -> int:
     return frontier
 
 
+def _walk_station_opmode(ops, start: int, hal: dict) -> int:
+    t = rp.ReplayTransport(ops[start:])
+    mode_mod.set_station_opmode(t, hal)
+    frontier = start + t.i
+    print(f"  PASS station opmode ({t.i} ops, frames "
+          f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
+    return frontier
+
+
 def _walk_monitor_entry(ops, start: int) -> int:
     t = rp.ReplayTransport(ops[start:])
     mode_mod.enter_monitor(t)
@@ -245,10 +254,10 @@ def _walk_m5f_tune(ops, start: int, params, by_rate) -> tuple[int, int]:
     return frontier, rf_chnl_val
 
 
-def _walk_m5e(ops, start: int) -> int:
+def _walk_m5e(ops, start: int, hal: dict) -> int:
     """Beacon params + burst + USB agg + turn-on block."""
     t = rp.ReplayTransport(ops[start:])
-    misc_mod.init_beacon_params(t)
+    misc_mod.init_beacon_params(t, hal)
     misc_mod.init_burst(t)
     misc_mod.agg_tx_update(t)
     misc_mod.agg_rx_update(t)
@@ -317,6 +326,7 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
             mac_addr = params.mac
             frontier = _walk_m3(ops, frontier)
             frontier = _walk_open_fw(ops, frontier, blob, "#2 (open)")
+        hal: dict = {}
         out_ep_number = RECORDED_OUT_EP_NUMBER
         out_ep_queue_sel = RECORDED_OUT_EP_QUEUE_SEL
         frontier = _walk_m5a(ops, frontier)
@@ -324,7 +334,7 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         frontier = _walk_m5c(ops, frontier)
         frontier = _walk_m5d(ops, frontier, mac_addr,
                              out_ep_number, out_ep_queue_sel)
-        frontier = _walk_m5e(ops, frontier)
+        frontier = _walk_m5e(ops, frontier, hal)
         frontier, _rf_chnl_val = _walk_m5f_tune(ops, frontier, params, by_rate)
         frontier = _walk_m5h_start(ops, frontier)
         frontier = _walk_dm_init(ops, frontier)
@@ -333,6 +343,7 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         _walk_lc_standalone(ops, _find_anchor(ops, frontier, 0xD03, 1, "R"))
         iqk_end = _walk_iqk_standalone(ops, _find_anchor(ops, frontier, 0x948, 4, "R"))
         _walk_thermal_trigger(ops, iqk_end)
+        _walk_station_opmode(ops, _find_seq(ops, frontier, [("R", 0x550, 1), ("W", 0x550, 1), ("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x422, 1), ("W", 0x541, 1), ("W", 0x542, 1), ("W", 0x550, 1)]), hal)
         _walk_monitor_entry(ops, _find_seq(ops, frontier, [("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x608, 4), ("W", 0x6A4, 2)]))
         op = ops[frontier]
         print(f"  frontier: op#{frontier} opens the next milestone "

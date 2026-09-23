@@ -18,7 +18,7 @@ def BIT(n: int) -> int:
     return 1 << n
 
 
-def init_beacon_params(t, station: bool = True) -> None:
+def init_beacon_params(t, st: dict, station: bool = True) -> None:
     # mlme fw_state inits to WIFI_STATION_STATE (rtw_mlme.c:44), so the
     # DRVERLYINT write is skipped on a fresh bring-up.
     val16 = 0x10 | (0x10 << 8)
@@ -28,11 +28,11 @@ def init_beacon_params(t, station: bool = True) -> None:
         t.write8(0x0558, 0x05)
     t.write8(0x0559, 0x02)
     t.write16(0x0510, 0x660F)
-    t.read8(0x0550)
-    t.read8(0x0522)
-    t.read8(0x0422)
-    t.read8(0x0542)
-    t.read8(0x0101)
+    st["bcn_ctrl"] = t.read8(0x0550)
+    st["tx_pause"] = t.read8(0x0522)
+    st["fw_hw_tx_q_ctrl"] = t.read8(0x0422)
+    st["reg542"] = t.read8(0x0542)
+    st["cr1"] = t.read8(0x0101)
 
 
 def init_burst(t, bulk_out_size: int = 512, ampdu_burst_mode: bool = False) -> None:

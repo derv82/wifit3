@@ -28,11 +28,14 @@ class FakeT:
 def test_beacon_params():
     from wifit3.chips.rtl8188ftv_dkms import misc
     t = FakeT([0x0] * 5)
-    misc.init_beacon_params(t)
+    st: dict = {}
+    misc.init_beacon_params(t, st)
     assert t.writes == [(0x550, 2, 0x1010), (0x540, 2, 0x6404),
                         (0x559, 1, 0x02), (0x510, 2, 0x660F)]
+    assert st == {"bcn_ctrl": 0x0, "tx_pause": 0x0, "fw_hw_tx_q_ctrl": 0x0,
+                  "reg542": 0x0, "cr1": 0x0}
     t = FakeT([0x0] * 5)
-    misc.init_beacon_params(t, station=False)
+    misc.init_beacon_params(t, {}, station=False)
     assert (0x558, 1, 0x05) in t.writes
 
 

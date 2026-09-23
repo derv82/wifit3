@@ -34,7 +34,10 @@
   (path-detect + Path-A TX/RX x2 workers + similarity break + matrix fill
   + BB recover + RF-path restore, 410 ops both captures, final=0),
   thermal trigger (RF 0x42 BIT17|BIT16, 8 ops both captures), monitor
-  entry (MSR NOLINK + RCR all-accept + RXFLTMAP2, 4 ops both captures)
+  entry (MSR NOLINK + RCR all-accept + RXFLTMAP2, 4 ops both captures),
+  station opmode (`hw_var_set_opmode` STATION via `rtw_hal_init_opmode`:
+  BCN_CTRL TSF-UDT + MSR + `StopTxBeacon` + BCN_CTRL `0x19`, 8 ops both
+  captures, `RegFwHwTxQCtrl`/`RegReg542` threaded as hal state from M5e)
   to the cap1-op1279 / cap2-op2914 frontier. Next: post-IQK reload +
   channel-switch unit (SwChnl/SpurCal/PostBW/RF6052BW/SetTxPower) +
   thermal tracking callback. Until the bring-up verifies end to end,
@@ -65,13 +68,12 @@
   leading-zero/decimal/computed-address spellings, no function-pointer
   dispatch. LC verifies standalone from its `0xD03` anchor past it.
 - Mapped, unported: post-IQK open tail (`SwChnl` ch1 + `SpurCal` +
-  `PostSetBW` + `RF6052BW` + `SetTxPowerLevel` reuse + beacon block) and the
+  `PostSetBW` + `RF6052BW` + `SetTxPowerLevel` reuse) and the
   monitor-entry `SwChnl` to ch10 + `SetTxPowerLevel` ch10 + thermal tracking
   callback. Open anomalies there: `E08` bytes 1-2 → `0x02,0x02` in one R/W
-  pair (no single-byte RMW source found), an RF `0x55` RMW + full write, and
-  an 8-op beacon block (`0x550`/`0x102` no-change + `StopTxBeacon`-shaped
-  `0x422`/`0x541`/`0x542` + `0x550=0x19`). The ch10 `SetTxPower` values
-  otherwise match `txpower.get_index(ch=10)` for 18/20 lanes.
+  pair (no single-byte RMW source found) and an RF `0x55` BIT19-clear with
+  no caller found yet. The ch10 `SetTxPower` values otherwise match
+  `txpower.get_index(ch=10)` for 18/20 lanes.
 - Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
 
 ## Driver Entry Points
