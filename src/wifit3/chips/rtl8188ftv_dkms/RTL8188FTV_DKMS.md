@@ -65,9 +65,13 @@
   `ODM_PhyStatusQuery_92CSeries`; `None` when `physt=0`, dispatch maps
   to −100) cross-checks against airodump PWR logs: BEWAVE_AP median
   −52 exact, Dzial −62 vs −57, dlink −46 vs −49 (air variance +
-  averaging). Next:
-  thermal tracking callback + 2s watchdog ticks. Until the bring-up
-  verifies end to end, keep `WIFIT3_RTL8188FTV=mainline`.
+  averaging). Bring-up is one contiguous verified flow from probe through
+  monitor entry (28 session switches + 25 watchdog ticks verify downstream
+  via anchors; 3 setpwr + 2 first-tick EDCA ticks skipped with state sync).
+  Tick-loop hal must rewind through the IQK DIG restore, so its scan starts
+  at the IQK anchor (a frontier-based start skips it and the first tick's
+  DIG gate diverges). Next: thermal tracking callback delta tables. Until
+  the bring-up verifies end to end, keep `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -115,8 +119,12 @@
 - Open: pre-tracking 1M lane writes `0x02` instead of base (ch10 cap1,
   ch7 cap2) while 2M/5.5M/11M in the same section write base and the
   ch1-open instance keeps base — limits are section-wide, remnants are
-  section-uniform, byRate tables have no per-channel 1M hole, so no known
-  term produces a 1M-only -30. Post-callback instances write base+1
+  section-uniform, byRate tables have no per-channel 1M hole, and the
+  tracking offset is section-uniform too (`Remnant_CCKSwingIdx` for all
+  four CCK rates), so no known term produces a 1M-only -30. The port also
+  skips the `min(byRate, limit)` clamp and the limit call's
+  `CurrentChannel`-vs-`Channel` quirk — candidates for when remnants get
+  modeled from first principles. Post-callback instances write base+1
   (remnant CCK +1, OFDM +0), which the port threads as state.
 - Open: the first tracking callback (thermal read `0x1070E0` = 28, delta 2
   vs EFUSE `0x1A`, MIX_MODE with `setIqkMatrix` hand-verified to ele_A

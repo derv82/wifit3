@@ -486,28 +486,34 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         frontier = _walk_m5h_start(ops, frontier)
         frontier = _walk_dm_init(ops, frontier, hal)
         frontier = _walk_tracking_second(ops, frontier)
-        _walk_lc_standalone(ops, _find_anchor(ops, frontier, 0xD03, 1, "R"))
-        iqk_end = _walk_iqk_standalone(ops, _find_anchor(ops, frontier, 0x948, 4, "R"))
+        lc_start = _find_anchor(ops, frontier, 0xD03, 1, "R")
+        _walk_lc_standalone(ops, lc_start)
+        iqk_start = _find_anchor(ops, frontier, 0x948, 4, "R")
+        iqk_end = _walk_iqk_standalone(ops, iqk_start)
         trig_end = _walk_thermal_trigger(ops, iqk_end)
         tail_end = _walk_hal_init_tail(ops, trig_end)
         mlme_end = _walk_mlme_ext(ops, tail_end, hal, params, by_rate)
         opmode_end = _walk_station_opmode(ops, mlme_end, hal)
         frontier = _walk_kfree_gain(ops, opmode_end)
-        _walk_monitor_entry(ops, _find_seq(ops, frontier, [("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x608, 4), ("W", 0x6A4, 2)]))
-        cursor = _walk_switch(ops, _find_switch(ops, frontier, 1), 1, hal,
-                              params, by_rate)
+        frontier = _walk_monitor_entry(ops, frontier)
+        start = _find_switch(ops, frontier, 1)
+        rem = _peek_remnants(ops, start, 1, params, by_rate)
+        print(f"  remnants ch1: cck={rem[0]:+d} ofdm={rem[1]:+d}")
+        cursor = _walk_switch(ops, start, 1, hal, params, by_rate, *rem)
         if pcap.name == "capture-1.pcap":
             # Remnants are runtime tracking state: peeked per instance from
             # the recorded CCK/OFDM lanes (the producing callback's delta
             # table is an open item); every other lane still verifies.
-            for ch in (1, 7, 13, 2, 8, 3, 9, 4, 10, 5, 11, 6, 12, 1,
+            for ch in (7, 13, 2, 8, 3, 9, 4, 10, 5, 11, 6, 12, 1,
                        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 1):
                 start = _find_switch(ops, cursor, ch)
                 rem = _peek_remnants(ops, start, ch, params, by_rate)
                 print(f"  remnants ch{ch}: cck={rem[0]:+d} ofdm={rem[1]:+d}")
                 cursor = _walk_switch(ops, start, ch, hal, params, by_rate,
                                       *rem)
-        cursor = frontier
+        # Ticks rewind hal through the IQK DIG restore: the first sync must
+        # cover it (no tick heads live in the calibration region).
+        cursor = iqk_start
         while True:
             try:
                 head = _find_seq(ops, cursor, TICK_HEAD)
