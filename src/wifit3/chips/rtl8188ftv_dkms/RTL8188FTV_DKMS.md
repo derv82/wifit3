@@ -48,9 +48,13 @@
   +0 (open) → +1 (hops) → +2 (fixed + sweep ch1-10) → +3 (sweep
   ch11-13 + final), OFDM remnant stays 0; remnants are peeked per
   instance from the recorded lanes (the producing callback's delta table
-  is open, see below) while every other lane verifies. Next: thermal
-  tracking callback + 2s watchdog ticks. Until the bring-up verifies end
-  to end, keep `WIFIT3_RTL8188FTV=mainline`.
+  is open, see below) while every other lane verifies. RX path (`rx.iter_rx`: 24B desc +
+  drvinfo + shift walk, 8B align, `RPT_SEL` C2H split, crc-stop like the
+  source) decodes all 9354 bulk-IN completions: 16164 packets, 41 AP
+  BSSIDs incl. all 3 log-known APs, 0 parser exceptions
+  (`scripts/chips/rtl8188ftv_dkms/verify_rx.py`, on demand). Next:
+  thermal tracking callback + 2s watchdog ticks. Until the bring-up
+  verifies end to end, keep `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
