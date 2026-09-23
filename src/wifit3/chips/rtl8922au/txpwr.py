@@ -4,6 +4,9 @@ Parses the firmware TXPWR_BYRATE element into the by-rate table, then writes the
 by-rate and rate-offset registers. tx-shape, limit, limit_ru, and the 8922a diff/ref/sar steps
 are still TODO. [SRC] rtw8922a.c:2545, phy_be.c:1222-1305.
 """
+import logging
+import time
+
 from . import firmware, mac, phy
 from .constants import (
     RTW89_FW_ELEMENT_ID_TXPWR_BYRATE, RTW89_BAND_2G, RTW89_BAND_NUM, RTW89_BYR_BW_NUM,
@@ -31,6 +34,8 @@ from .constants import (
     R_TXAGC_REF_DBM_RF1_P0, B_TXAGC_OFDM_REF_DBM_RF1_P0, B_TXAGC_CCK_REF_DBM_RF1_P0,
     R_TSSI_K_RF1_P0, B_TSSI_K_OFDM_RF1_P0,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _s8(v: int) -> int:
@@ -414,11 +419,18 @@ def _set_txpwr_sar_diff(t, chan: dict, phy_idx: int) -> None:
 def set_txpwr(t, chan: dict, phy_idx: int = 0) -> None:
     """rtw8922a_set_txpwr: byrate, offset, tx_shape, limit, limit_ru, then the 8922a per-path
     diff/ref/sar steps. [SRC] rtw8922a.c:2545."""
+    _t0 = time.perf_counter()
     _set_txpwr_byrate(t, chan, phy_idx)
     _set_txpwr_offset(t, chan, phy_idx)
     _set_tx_shape(t, chan, phy_idx)
+    _t_hoistable = time.perf_counter()
     _set_txpwr_limit(t, chan, phy_idx)
     _set_txpwr_limit_ru(t, chan, phy_idx)
     _set_txpwr_diff(t, chan, phy_idx)
     _set_txpwr_ref(t, phy_idx)
     _set_txpwr_sar_diff(t, chan, phy_idx)
+    if logger.isEnabledFor(logging.DEBUG):
+        _end = time.perf_counter()
+        logger.debug("set_txpwr phy%d: %.0f ms (byrate+offset+shape %.0f ms | limit+ru+rest %.0f ms)",
+                     phy_idx, (_end - _t0) * 1000, (_t_hoistable - _t0) * 1000,
+                     (_end - _t_hoistable) * 1000)
