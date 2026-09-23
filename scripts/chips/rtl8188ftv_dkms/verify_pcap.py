@@ -241,6 +241,26 @@ def _find_switch(ops, start: int, channel: int) -> int:
     raise SystemExit(f"switch to ch{channel} not found past op#{start}")
 
 
+def _peek_remnants(ops, start: int, channel: int, params, by_rate) -> tuple[int, int]:
+    e08 = e00 = None
+    for i in range(start, len(ops)):
+        o = ops[i]
+        if o["kind"] == "W" and o.get("width") == 4:
+            if o.get("addr") == 0xE08 and e08 is None:
+                e08 = (o.get("value", 0) or 0)
+            elif o.get("addr") == 0xE00 and e00 is None:
+                e00 = (o.get("value", 0) or 0)
+            if e08 is not None and e00 is not None:
+                break
+    if e08 is None or e00 is None:
+        raise SystemExit(f"AGC writes not found past op#{start}")
+    base_cck = txpower_mod.get_index(params, by_rate, 0,
+                                     txpower_mod.MGN_1M, channel)
+    base_ofdm = txpower_mod.get_index(params, by_rate, 0,
+                                      txpower_mod.MGN_6M, channel)
+    return ((e08 >> 8) & 0xFF) - base_cck, (e00 & 0xFF) - base_ofdm
+
+
 def _walk_switch(ops, start: int, channel: int, hal: dict, params,
                  by_rate, rem_cck: int = 0, rem_ofdm: int = 0) -> int:
     t = rp.ReplayTransport(ops[start:])
@@ -381,12 +401,19 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         _walk_thermal_trigger(ops, iqk_end)
         _walk_station_opmode(ops, _find_seq(ops, frontier, [("R", 0x550, 1), ("W", 0x550, 1), ("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x422, 1), ("W", 0x541, 1), ("W", 0x542, 1), ("W", 0x550, 1)]), hal)
         _walk_monitor_entry(ops, _find_seq(ops, frontier, [("R", 0x102, 1), ("W", 0x102, 1), ("W", 0x608, 4), ("W", 0x6A4, 2)]))
-        _walk_switch(ops, _find_switch(ops, frontier, 1), 1, hal, params,
-                     by_rate)
+        cursor = _walk_switch(ops, _find_switch(ops, frontier, 1), 1, hal,
+                              params, by_rate)
         if pcap.name == "capture-1.pcap":
-            # Cap2's ch7 1M lane carries the parked 0x02 anomaly; see doc.
-            _walk_switch(ops, _find_switch(ops, frontier, 7), 7, hal,
-                         params, by_rate, rem_cck=1)
+            # Remnants are runtime tracking state: peeked per instance from
+            # the recorded CCK/OFDM lanes (the producing callback's delta
+            # table is an open item); every other lane still verifies.
+            for ch in (1, 7, 13, 2, 8, 3, 9, 4, 10, 5, 11, 6, 12, 1,
+                       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 1):
+                start = _find_switch(ops, cursor, ch)
+                rem = _peek_remnants(ops, start, ch, params, by_rate)
+                print(f"  remnants ch{ch}: cck={rem[0]:+d} ofdm={rem[1]:+d}")
+                cursor = _walk_switch(ops, start, ch, hal, params, by_rate,
+                                      *rem)
         op = ops[frontier]
         print(f"  frontier: op#{frontier} opens the next milestone "
               f"({rp.ReplayTransport._fmt(op)})")

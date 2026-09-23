@@ -40,11 +40,17 @@
   captures,   `RegFwHwTxQCtrl`/`RegReg542` threaded as hal state from M5e),
   channel-switch unit (`SwChnl` + `SpurCal` incl. PSD/notch branch +
   `PostSetBW` + `RF6052BW` + `SetTxPowerLevel` with CCK/OFDM remnants):
-  ch1 open-restore (78 ops, both captures) and ch7 airodump-hop with PSD
-  notch + remnant CCK +1 (104 ops, capture-1) to the cap1-op1279 /
-  cap2-op2914 frontier. Next: thermal tracking callback + `iw`-sweep
-  switches + fixed-ch1. Until the bring-up verifies end to end, keep
-  `WIFIT3_RTL8188FTV=mainline`.
+  ch1 open-restore (78 ops, both captures) and the full session after it
+  (capture-1): airodump hops 1,7,13,2,8,3,9,4,10,5,11,6,12 + fixed-ch1 +
+  `iw` sweep 1-13 + final ch1, each verified standalone against the same
+  unit (78 ops skip-spur, 93-104 ops PSD-spur with/without notch) to the
+  cap1-op1279 / cap2-op2914 frontier. Runtime CCK remnant evolves
+  +0 (open) → +1 (hops) → +2 (fixed + sweep ch1-10) → +3 (sweep
+  ch11-13 + final), OFDM remnant stays 0; remnants are peeked per
+  instance from the recorded lanes (the producing callback's delta table
+  is open, see below) while every other lane verifies. Next: thermal
+  tracking callback + 2s watchdog ticks. Until the bring-up verifies end
+  to end, keep `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -80,6 +86,15 @@
   section-uniform, byRate tables have no per-channel 1M hole, so no known
   term produces a 1M-only -30. Post-callback instances write base+1
   (remnant CCK +1, OFDM +0), which the port threads as state.
+- Open: the first tracking callback (thermal read `0x1070E0` = 28, delta 2
+  vs EFUSE `0x1A`, MIX_MODE with `setIqkMatrix` hand-verified to ele_A
+  `0xF4`/ele_C `0x001` + CCK swing tables at the LIMIT row 20 + CCK
+  TxAGC re-apply) runs, yet every delta-swing table in the tree reads 0
+  at index 2 (static DEFAULT/`_8188E`, runtime arrays with no para file
+  since `BIT5` is clear in `rtw_load_phy_file`), which would force swing
+  offset 0 and skip `SetPwr` entirely. The wire proves effective +1, so
+  the running box's table source is unaccounted for — the callback port
+  waits on it.
 - Mapped, unported: thermal tracking callback (`setIqkMatrix` values
   hand-verified: ele_A `0xF4`, ele_C `0x001`) + `iw`-sweep switches
   (same unit, remnant CCK +1) + fixed-ch1.
