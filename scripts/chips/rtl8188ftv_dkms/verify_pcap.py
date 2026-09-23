@@ -170,14 +170,14 @@ def _walk_lc_standalone(ops, start: int) -> int:
     return frontier
 
 
-def _walk_iqk_standalone(ops, start: int) -> int:
+def _walk_iqk_standalone(ops, start: int) -> tuple[int, dict]:
     t = rp.ReplayTransport(ops[start:])
     st = iqk_mod.iq_calibrate(t)
     frontier = start + t.i
     print(f"  PASS IQK standalone ({t.i} ops, frames "
           f"{ops[start]['frame']}-{ops[frontier - 1]['frame']}, "
           f"final={st['final']})")
-    return frontier
+    return frontier, st
 
 
 def _find_seq(ops, start: int, seq: list[tuple]) -> int:
@@ -221,34 +221,121 @@ TICK_HEAD = [("R", 0x667, 1), ("W", 0x667, 1), ("R", 0x664, 2),
              ("W", 0xD00, 4)]
 
 
-def _classify_tick(ops, head: int) -> str:
-    kind = "noop"
-    for j in range(head, min(head + 130, len(ops) - 7)):
-        o = ops[j]
-        if o["kind"] == "W" and o.get("addr") in (0x430, 0x434):
-            kind = "edca"
-        if _is_serial_rmw(ops, j) and ops[j + 6]["kind"] == "R" \
-                and ops[j + 6].get("addr") in (0x8A0, 0x8B8):
-            if kind == "edca":
-                return "edca"
-            nxt = ops[j + 7]
-            if nxt["kind"] == "W" and nxt.get("addr") == 0x840:
-                return "trigger"
-            if nxt["kind"] == "W" and nxt.get("addr") == 0xC80:
-                return "setpwr"
-            return "noop"
-    if kind != "noop":
-        return kind
-    raise SystemExit(f"no thermal read past tick op#{head}")
-
-
-def _walk_tick(ops, start: int, hal: dict, trigger: bool) -> int:
+def _walk_tick(ops, start: int, hal: dict) -> int:
+    was_tm = hal["tm_trigger"]
     t = rp.ReplayTransport(ops[start:])
-    dm_mod.watchdog_tick(t, hal, trigger)
+    dm_mod.watchdog_tick(t, hal)
     frontier = start + t.i
-    print(f"  PASS tick {'trigger' if trigger else 'noop'} ({t.i} ops, "
+    print(f"  PASS tick {'cb' if was_tm else 'trig'} "
+          f"rem=({hal['rem_cck']:+d},{hal['rem_ofdm']:+d}) ({t.i} ops, "
           f"frames {ops[start]['frame']}-{ops[frontier - 1]['frame']})")
     return frontier
+
+
+class _ScanTransport:
+    """Forward-scanning replay for one thread of a raced region.
+
+    Same read/write surface as ReplayTransport, but each port op consumes
+    the first still-unconsumed recorded op with matching kind/addr/width
+    (and value, for writes). The watchdog timer and an ioctl channel
+    switch race on USB control transfers, so their ops weave op-by-op;
+    the switch script scans first, then the tick script replays the
+    leftovers strictly. Every region op is consumed exactly once; any
+    port op without a match, or any leftover after both scripts, raises
+    Divergence.
+    """
+
+    def __init__(self, ops, base: int):
+        self.ops = ops
+        self.base = base
+        self.used = [False] * len(ops)
+
+    def _take(self, want: str, kind: str, addr: int, width: int,
+              value: int | None = None):
+        for i, op in enumerate(self.ops):
+            if self.used[i] or op["kind"] != kind \
+                    or op.get("addr") != addr or op.get("width") != width:
+                continue
+            if value is not None and op.get("value") != value:
+                continue
+            self.used[i] = True
+            return op.get("value")
+        opno = self.base + len(self.ops)
+        raise rp.Divergence(
+            f"op#{opno}: race scan found no {want}")
+
+    def _read(self, addr: int, width: int):
+        return self._take(f"read 0x{addr:04x}/{width}", "R", addr, width)
+
+    def _write(self, addr: int, width: int, value: int):
+        self._take(f"write 0x{addr:04x}/{width}=0x{value:0{width * 2}x}",
+                   "W", addr, width, value)
+
+    def read8(self, a):
+        return self._read(a, 1)
+
+    def read16(self, a):
+        return self._read(a, 2)
+
+    def read32(self, a):
+        return self._read(a, 4)
+
+    def write8(self, a, v):
+        self._write(a, 1, v)
+
+    def write16(self, a, v):
+        self._write(a, 2, v)
+
+    def write32(self, a, v):
+        self._write(a, 4, v)
+
+    def remainder(self):
+        return [op for i, op in enumerate(self.ops) if not self.used[i]]
+
+
+def _walk_race(ops, start: int, end: int, hal: dict, params,
+               by_rate) -> int:
+    """Merge-walk one switch x watchdog-tick race (both scripts, every op once)."""
+    markers = []
+    cands = []
+    for i in range(start, end):
+        o = ops[i]
+        if o["kind"] == "W" and o.get("addr") == 0x840 \
+                and o.get("width") == 4:
+            v = o.get("value", 0)
+            if (v >> 20) & 0xFF == 0x18 and 1 <= (v & 0xFF) <= 13 \
+                    and (v & 0xFFFFF00) == 0x1800C00:
+                cands.append((i, v & 0xFF))
+    # A real marker opens spur calibration (R/W 0xC40 pair); the postBW
+    # full-mask 0x18 write reuses the value but has no C40 after it.
+    for n, (i, ch) in enumerate(cands):
+        bound = cands[n + 1][0] if n + 1 < len(cands) else end
+        k1 = next((k for k in range(i + 1, bound)
+                   if ops[k]["kind"] == "R"
+                   and ops[k].get("addr") == 0xC40), None)
+        k2 = next((k for k in range((k1 or i) + 1, bound)
+                   if ops[k]["kind"] == "W"
+                   and ops[k].get("addr") == 0xC40), None)
+        if k1 is not None and k2 is not None:
+            markers.append((i, ch))
+    if len(markers) != 1:
+        raise rp.Divergence(
+            f"op#{start}: race region holds {len(markers)} switch markers")
+    channel = markers[0][1]
+    scan = _ScanTransport(ops[start:end], start)
+    chan_mod.switch_channel(scan, channel, hal, params, by_rate,
+                            hal["rem_cck"], hal["rem_ofdm"])
+    rest = scan.remainder()
+    t = rp.ReplayTransport(rest)
+    dm_mod.watchdog_tick(t, hal)
+    if t.i != len(rest):
+        raise rp.Divergence(
+            f"op#{start}: race region leaves {len(rest) - t.i} ops unverified")
+    print(f"  PASS race switch ch{channel} x tick "
+          f"rem=({hal['rem_cck']:+d},{hal['rem_ofdm']:+d}) "
+          f"({end - start} ops, frames "
+          f"{ops[start]['frame']}-{ops[end - 1]['frame']})")
+    return end
 
 
 def _is_serial_rmw(ops, start: int) -> int:
@@ -261,39 +348,24 @@ def _is_serial_rmw(ops, start: int) -> int:
                for k, (k_, a, w) in enumerate(seq))
 
 
-def _find_switch(ops, start: int, channel: int) -> int:
-    want = (0x18 << 20) | (0xC00 | channel)
-    for i in range(start, len(ops) - 2):
-        o = ops[i]
-        if (o["kind"] == "W" and o.get("addr") == 0x840
-                and o.get("width") == 4 and o.get("value") == want
-                and _is_serial_rmw(ops, i - 7)
-                and ops[i + 1]["kind"] == "R"
-                and ops[i + 1].get("addr") == 0xC40
-                and ops[i + 2]["kind"] == "W"
-                and ops[i + 2].get("addr") == 0xC40):
-            return i - 7
-    raise SystemExit(f"switch to ch{channel} not found past op#{start}")
-
-
-def _peek_remnants(ops, start: int, channel: int, params, by_rate) -> tuple[int, int]:
-    e08 = e00 = None
-    for i in range(start, len(ops)):
-        o = ops[i]
-        if o["kind"] == "W" and o.get("width") == 4:
-            if o.get("addr") == 0xE08 and e08 is None:
-                e08 = (o.get("value", 0) or 0)
-            elif o.get("addr") == 0xE00 and e00 is None:
-                e00 = (o.get("value", 0) or 0)
-            if e08 is not None and e00 is not None:
+def _find_next_switch(ops, start: int) -> tuple[int, int] | None:
+    best: tuple[int, int] | None = None
+    for channel in range(1, 14):
+        want = (0x18 << 20) | (0xC00 | channel)
+        for i in range(start, len(ops) - 2):
+            o = ops[i]
+            if (o["kind"] == "W" and o.get("addr") == 0x840
+                    and o.get("width") == 4 and o.get("value") == want
+                    and _is_serial_rmw(ops, i - 7)
+                    and ops[i + 1]["kind"] == "R"
+                    and ops[i + 1].get("addr") == 0xC40
+                    and ops[i + 2]["kind"] == "W"
+                    and ops[i + 2].get("addr") == 0xC40):
+                cand = (i - 7, channel)
+                if best is None or cand[0] < best[0]:
+                    best = cand
                 break
-    if e08 is None or e00 is None:
-        raise SystemExit(f"AGC writes not found past op#{start}")
-    base_cck = txpower_mod.get_index(params, by_rate, 0,
-                                     txpower_mod.MGN_1M, channel)
-    base_ofdm = txpower_mod.get_index(params, by_rate, 0,
-                                      txpower_mod.MGN_6M, channel)
-    return ((e08 >> 8) & 0xFF) - base_cck, (e00 & 0xFF) - base_ofdm
+    return best
 
 
 def _sync_gap(ops, hal: dict, start: int, end: int) -> None:
@@ -310,12 +382,13 @@ def _sync_gap(ops, hal: dict, start: int, end: int) -> None:
 
 
 def _walk_switch(ops, start: int, channel: int, hal: dict, params,
-                 by_rate, rem_cck: int = 0, rem_ofdm: int = 0) -> int:
+                 by_rate) -> int:
     t = rp.ReplayTransport(ops[start:])
-    chan_mod.switch_channel(t, channel, hal, params, by_rate, rem_cck,
-                            rem_ofdm)
+    chan_mod.switch_channel(t, channel, hal, params, by_rate,
+                            hal["rem_cck"], hal["rem_ofdm"])
     frontier = start + t.i
-    print(f"  PASS switch ch{channel} ({t.i} ops, frames "
+    print(f"  PASS switch ch{channel} rem=({hal['rem_cck']:+d},"
+          f"{hal['rem_ofdm']:+d}) ({t.i} ops, frames "
           f"{ops[start]['frame']}-{ops[frontier - 1]['frame']})")
     return frontier
 
@@ -489,54 +562,62 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         lc_start = _find_anchor(ops, frontier, 0xD03, 1, "R")
         _walk_lc_standalone(ops, lc_start)
         iqk_start = _find_anchor(ops, frontier, 0x948, 4, "R")
-        iqk_end = _walk_iqk_standalone(ops, iqk_start)
+        iqk_end, iqk_st = _walk_iqk_standalone(ops, iqk_start)
+        assert iqk_st["final"] != 0xFF
+        hal["iqk_x"], hal["iqk_y"] = iqk_st["result"][iqk_st["final"]][:2]
         trig_end = _walk_thermal_trigger(ops, iqk_end)
         tail_end = _walk_hal_init_tail(ops, trig_end)
         mlme_end = _walk_mlme_ext(ops, tail_end, hal, params, by_rate)
         opmode_end = _walk_station_opmode(ops, mlme_end, hal)
         frontier = _walk_kfree_gain(ops, opmode_end)
         frontier = _walk_monitor_entry(ops, frontier)
-        start = _find_switch(ops, frontier, 1)
-        rem = _peek_remnants(ops, start, 1, params, by_rate)
-        print(f"  remnants ch1: cck={rem[0]:+d} ofdm={rem[1]:+d}")
-        cursor = _walk_switch(ops, start, 1, hal, params, by_rate, *rem)
-        if pcap.name == "capture-1.pcap":
-            # Remnants are runtime tracking state: peeked per instance from
-            # the recorded CCK/OFDM lanes (the producing callback's delta
-            # table is an open item); every other lane still verifies.
-            for ch in (7, 13, 2, 8, 3, 9, 4, 10, 5, 11, 6, 12, 1,
-                       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 1):
-                start = _find_switch(ops, cursor, ch)
-                rem = _peek_remnants(ops, start, ch, params, by_rate)
-                print(f"  remnants ch{ch}: cck={rem[0]:+d} ofdm={rem[1]:+d}")
-                cursor = _walk_switch(ops, start, ch, hal, params, by_rate,
-                                      *rem)
-        # Ticks rewind hal through the IQK DIG restore: the first sync must
-        # cover it (no tick heads live in the calibration region).
-        cursor = iqk_start
+        hal.update(track_mod.tracking_init_state(params.thermal))
+        hal["tm_trigger"] = True
+        hal["params"], hal["by_rate"] = params, by_rate
+        cursor = frontier
+        n_switches = n_ticks = n_races = 0
         while True:
+            sw = _find_next_switch(ops, cursor)
             try:
                 head = _find_seq(ops, cursor, TICK_HEAD)
             except SystemExit:
+                head = None
+            if sw is None and head is None:
                 break
-            _sync_gap(ops, hal, cursor, head)
-            kind = _classify_tick(ops, head)
-            if kind in ("setpwr", "edca"):
-                print(f"  SKIP {kind} tick op#{head} "
-                      f"(frame {ops[head]['frame']})")
-                cursor = head + 1
+            nearest = min([v for v in (sw[0] if sw else None, head)
+                           if v is not None])
+            if nearest > cursor:
+                cursor = _walk_race(ops, cursor, nearest, hal, params,
+                                    by_rate)
+                n_races += 1
                 continue
-            cursor = _walk_tick(ops, head, hal, kind == "trigger")
-        op = ops[frontier]
-        print(f"  frontier: op#{frontier} opens the next milestone "
-              f"({rp.ReplayTransport._fmt(op)})")
+            if head is not None and (sw is None or head < sw[0]):
+                _sync_gap(ops, hal, cursor, head)
+                cursor = _walk_tick(ops, head, hal)
+                n_ticks += 1
+            else:
+                assert sw is not None
+                _sync_gap(ops, hal, cursor, sw[0])
+                cursor = _walk_switch(ops, sw[0], sw[1], hal, params,
+                                      by_rate)
+                n_switches += 1
+        print(f"  events: {n_switches} switches + {n_ticks} ticks + "
+              f"{n_races} races, rem=({hal['rem_cck']:+d},"
+              f"{hal['rem_ofdm']:+d})")
+        if cursor >= len(ops):
+            print(f"  end: op#{cursor} (end of capture)")
+            op = None
+        else:
+            op = ops[cursor]
+            print(f"  end: op#{cursor} ({rp.ReplayTransport._fmt(op)}), "
+                  f"{len(ops) - cursor} ops unclaimed")
     except rp.Divergence as e:
         print(f"  FAIL: {e}")
         return 1
     except AssertionError as e:
         print(f"  FAIL assert: {e}")
         return 1
-    print("rtl8188ftv_dkms: green to the frontier")
+    print("rtl8188ftv_dkms: green")
     return 0
 
 

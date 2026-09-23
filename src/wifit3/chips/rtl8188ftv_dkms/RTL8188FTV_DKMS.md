@@ -44,18 +44,25 @@
   (capture-1): airodump hops 1,7,13,2,8,3,9,4,10,5,11,6,12 + fixed-ch1 +
   `iw` sweep 1-13 + final ch1, each verified standalone against the same
   unit (78 ops skip-spur, 93-104 ops PSD-spur with/without notch) to the
-  cap1-op1279 / cap2-op2914 frontier. Watchdog ticks (`dm.watchdog_tick`:
-  RX-FIFO check + FA hold/reads/release + DIG (unlinked bounds/thresholds,
-  change-gated write) + adaptivity EDCCA (ability-clear mode2 path) +
-  CCK-PD (fail-count threshold, change-gated) + thermal trigger/no-op
-  callback alternating): all 28 cap1 ticks + cap2 ticks verified
-  standalone, except 3 setpwr ticks + 2 first-tick EDCA programs, which
-  are skipped with state sync. Race-fragment C50/A0A writes in unwalked
-  gaps sync `cur_ig`/`cur_cck` (every later use verifies). Runtime CCK
-  remnant evolves +0 (open) → +1 (hops) → +2 (fixed + sweep ch1-10) →
-  +3 (sweep ch11-13 + final), OFDM remnant stays 0; remnants are peeked
-  per instance from the recorded lanes (the producing callback's delta
-  table is open, see below) while every other lane verifies. RX path (`rx.iter_rx`: 24B desc +
+   cap1-op1279 / cap2-op2914 frontier. Watchdog ticks (`dm.watchdog_tick`:
+   RX-FIFO check + FA hold/reads/release + DIG (unlinked bounds/thresholds,
+   change-gated write) + adaptivity EDCCA (ability-clear mode2 path) +
+   CCK-PD (fail-count threshold, change-gated) + RA retry count
+   (`phydm_ra_dynamic_retry_count` noisy-flip `0x430`/`0x434`, first tick
+   only) + thermal trigger/callback alternating on `TM_Trigger`: all 28
+   cap1 ticks + 27 cap2 ticks verified, zero skips. Thermal tracking
+   callback (`track.tracking_callback`: 4-average thermal vs EFUSE `0x1A`,
+   MP USB `2GCCKA` delta pair since `TxRate` stays MGN_1M, MIX_MODE
+   `setIqkMatrix` + limit-row CCK swing + TxAGC sections): 3 setpwr
+   callbacks cap1 (eff 28/29/31 → Absolute +1/+2/+3, C80 idx 29/30/31) +
+   2 cap2 (eff 28/29 → +1/+2); every other query fires with offset 0 and
+   no wire. Runtime CCK remnant evolves +0 (open) → +1 (hops) → +2
+   (fixed + sweep ch1-10) → +3 (sweep ch11-13 + final), OFDM remnant stays
+   0; remnants are first-principles callback state, every switch lane
+   verifies with no peeking. One cap2 region (ch9 switch x callback tick,
+   127 ops) is a USB control-transfer race between the watchdog and ioctl
+   threads and is merge-walked (both scripts, every op consumed exactly
+   once). RX path (`rx.iter_rx`: 24B desc +
   drvinfo + shift walk, 8B align, `RPT_SEL` C2H split, crc-stop like the
   source) decodes all 9354 bulk-IN completions: 16164 packets, 41 AP
   BSSIDs incl. all 3 log-known APs, 0 parser exceptions
@@ -65,13 +72,12 @@
   `ODM_PhyStatusQuery_92CSeries`; `None` when `physt=0`, dispatch maps
   to −100) cross-checks against airodump PWR logs: BEWAVE_AP median
   −52 exact, Dzial −62 vs −57, dlink −46 vs −49 (air variance +
-  averaging). Bring-up is one contiguous verified flow from probe through
-  monitor entry (28 session switches + 25 watchdog ticks verify downstream
-  via anchors; 3 setpwr + 2 first-tick EDCA ticks skipped with state sync).
-  Tick-loop hal must rewind through the IQK DIG restore, so its scan starts
-  at the IQK anchor (a frontier-based start skips it and the first tick's
-  DIG gate diverges). Next: thermal tracking callback delta tables. Until
-  the bring-up verifies end to end, keep `WIFIT3_RTL8188FTV=mainline`.
+   averaging). Bring-up is one contiguous verified flow from probe through
+   monitor entry, then a unified event walk (switches + ticks + one race)
+   to the last op of both captures (cap1: 29 switches + 28 ticks,
+   rem +3/+0; cap2: 28 switches + 27 ticks + 1 race, rem +2/+0), all
+   first-principles. Next: M8 TX/injection capture. Until TX lands, keep
+   `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -116,30 +122,35 @@
   bring-up is now one contiguous verified flow from probe through monitor
   entry; LED init is register-clean (SW strategy, `misc.init_hw_led`
   early-returns).
-- Open: pre-tracking 1M lane writes `0x02` instead of base (ch10 cap1,
-  ch7 cap2) while 2M/5.5M/11M in the same section write base and the
-  ch1-open instance keeps base — limits are section-wide, remnants are
-  section-uniform, byRate tables have no per-channel 1M hole, and the
-  tracking offset is section-uniform too (`Remnant_CCKSwingIdx` for all
-  four CCK rates), so no known term produces a 1M-only -30. The port also
-  skips the `min(byRate, limit)` clamp and the limit call's
-  `CurrentChannel`-vs-`Channel` quirk — candidates for when remnants get
-  modeled from first principles. Post-callback instances write base+1
-  (remnant CCK +1, OFDM +0), which the port threads as state.
-- Open: the first tracking callback (thermal read `0x1070E0` = 28, delta 2
-  vs EFUSE `0x1A`, MIX_MODE with `setIqkMatrix` hand-verified to ele_A
-  `0xF4`/ele_C `0x001` + CCK swing tables at the LIMIT row 20 + CCK
-  TxAGC re-apply) runs, yet every delta-swing table in the tree reads 0
-  at index 2 (static DEFAULT/`_8188E`, runtime arrays with no para file
-  since `BIT5` is clear in `rtw_load_phy_file`), which would force swing
-  offset 0 and skip `SetPwr` entirely. The wire proves effective +1, so
-  the running box's table source is unaccounted for — the callback port
-  waits on it.
-- Mapped, unported: 2s watchdog ticks (`traffic_status_watchdog` +
-  `hal_dm_watchdog`, all verified standalone except 3 setpwr ticks +
-  2 first-tick EDCA programs, which are skipped with state sync). Next:
-  thermal tracking callback (delta-table gap, see below). Until the
-  bring-up verifies end to end, keep `WIFIT3_RTL8188FTV=mainline`.
+- Solved: the 1M-lane question dissolved with first-principles remnants —
+   the cited `0xE08` value (`0x0390202D`, final-ch1 switch) is base `0x1D`
+   + remnant +3, and every CCK lane in both captures equals base + the
+   callback's section-uniform `Remnant_CCKSwingIdx`. The two skipped port
+   terms are provable no-ops in this build: `RegEnableTxPowerLimit` is 0
+   (Makefile `CONFIG_CALIBRATE_TX_POWER_TO_MAX=y`), so
+   `PHY_GetTxPowerLimit` returns `MAX_POWER_INDEX` before its table lookup
+   and the `min(byRate, limit)` clamp never bites; the limit call's
+   `CurrentChannel` already equals the new channel because
+   `PHY_HandleSwChnlAndSetBW8188F` stores it before
+   `phy_SwChnlAndSetBwMode8188F` runs the level.
+- Solved: the tracking-callback delta-table gap. The live pair is the MP
+   USB `2GCCKA_P/N` (`ODM_ConfigRFWithTxPwrTrackHeaderFile` ←
+   `phy_RF6052_Config_ParaFile`, USB branch; header path always runs since
+   `CONFIG_LOAD_PHY_PARA_FROM_FILE` is off): index [2,3,4,5] reads
+   [1,2,2,3], the unique match in the tree for the recorded
+   Absolute +1/+2/+3. `TxRate` stays MGN_1M (`pDM_Odm->TxRate` is 0 with no
+   TX in monitor; `HwRateToMRate(0)` defaults to MGN_1M), so
+   `GetDeltaSwingTable_8188F` picks the CCK pair. The 4-average explains
+   the firing points (cap1 eff 28/29/31, cap2 eff 28/29); all other
+   queries land on offset 0 with no wire.
+- Solved: the first-tick `0x430`/`0x434` writes are
+   `phydm_ra_dynamic_retry_count` (`phydm_rainfo.c`): `phydm_NoisyDetection`
+   scores the FA/CCA counters (smooth init 0, `pre_b_noisy` init false),
+   the first tick of each capture decides noisy and programs
+   `0x430=0`/`0x434=0x04030201` once; later ticks never flip back.
+- Mapped, unported: M8 TX/injection (both captures carry zero bulk-OUT;
+   needs a capture against a visible AP). Until TX lands, keep
+   `WIFIT3_RTL8188FTV=mainline`.
 - Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
 
 ## Driver Entry Points
@@ -161,7 +172,8 @@
 
 ## Scripts
 - `scripts/chips/rtl8188ftv/capture_vendor_8188fu.sh` — reproducible vendor capture (pin + monitor-enabled DKMS build + `capture.py` + bundle self-check).
-- `scripts/chips/rtl8188ftv_dkms/verify_pcap.py` — cold-boot byte gate (M1-M5c).
+- `scripts/chips/rtl8188ftv_dkms/verify_pcap.py` — cold-boot byte gate,
+  probe through the last op of both captures (switches + ticks + race).
 
 ## Debug log
 - 2026-09-22 — vendor capture triage: 30k packets / 57 s, ~6k control setups all `bRequest 0x05`, bulk-IN `0x81` with live RX sizes, zero bulk-OUT (aireplay `No such BSSID available` against `a8:5e:45:04:ce:e0`); `iw set channel` rc=0 on ch1–13, ch14 rejected (`channel is disabled`, regulatory). Monitor lives on the `wlx…` netdev itself.

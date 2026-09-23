@@ -133,8 +133,10 @@ class Rtl8188ftvDkmsDriver(Driver):
         self.params = params
         self.mac_address = params.mac.hex(":")
         hal.update({"cur_cck": 0, "th_l2h_ini": 0xF5,
-                    "adaptivity_ability": False, "rem_cck": 0,
-                    "rem_ofdm": 0, "tm_trigger": False})
+                    "adaptivity_ability": False, "tm_trigger": False,
+                    "channel": 1})
+        hal.update(track_mod.tracking_init_state(params.thermal))
+        hal["params"] = params
 
         _update(0.10, "Power on...")
         if not await loop.run_in_executor(None, power_mod.power_on, t):
@@ -151,6 +153,7 @@ class Rtl8188ftvDkmsDriver(Driver):
         if ver != (4, 0, 0x88F1):
             raise BringUpError("fw", f"unexpected version {ver}")
         self.by_rate = txpower_mod.load_default_pg_tables()
+        hal["by_rate"] = self.by_rate
 
         _update(0.30, "MAC/BB/RF init...")
         await loop.run_in_executor(None, mac_mod.init_antenna_selection, t)
@@ -200,6 +203,11 @@ class Rtl8188ftvDkmsDriver(Driver):
         await loop.run_in_executor(None, dm_mod.thermal_swing_index, t)
         await loop.run_in_executor(None, cal_mod.lc_calibrate, t)
         hal["iqk"] = await loop.run_in_executor(None, iqk_mod.iq_calibrate, t)
+        final = hal["iqk"]["final"]
+        if final != 0xFF:
+            hal["iqk_x"], hal["iqk_y"] = hal["iqk"]["result"][final][:2]
+        else:
+            hal["iqk_x"], hal["iqk_y"] = 0, 0
         await loop.run_in_executor(None, track_mod.thermal_trigger, t)
         hal["tm_trigger"] = True
 
@@ -207,6 +215,7 @@ class Rtl8188ftvDkmsDriver(Driver):
         await loop.run_in_executor(None, mode_mod.set_station_opmode, t, hal)
         await loop.run_in_executor(None, mode_mod.enter_monitor, t)
         self.current_channel = 1
+        hal["channel"] = 1
         return True
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:

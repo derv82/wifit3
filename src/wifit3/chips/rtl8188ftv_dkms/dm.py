@@ -1,13 +1,17 @@
-"""RTL8188FTV DKMS DM-init prologue (M5h).
+"""RTL8188FTV DKMS DM watchdog tick.
 
-Ported from ``odm_CommonInfoSelfInit`` (hal/phydm/phydm.c:228-245: CCK report
-+ RX-path reads), ``odm_DIGInit`` IGI read (hal/phydm/phydm_dig.c:691+),
-``Phydm_NHMCounterStatisticsInit`` 11N branch
-(hal/phydm/phydm_adaptivity.c:138-155), ``Phydm_AdaptivityInit`` wire part
-(phydm_adaptivity.c:654-667: MACEDCCA + DBG_RPT + EDCCA_DCNF),
-``ODM_CfoTrackingInit`` ATC read (phydm_cfotracking.c) and
-``odm_TXPowerTrackingThermalMeterInit`` swing read
-(phydm_powertracking_ce.c:439+). Everything else in these inits is sw state.
+Ported from ``ODM_DMWatchdog`` (hal/phydm/phydm.c: FA stats +
+``phydm_NoisyDetection`` + DIG + adaptivity EDCCA + CCK-PD +
+``phydm_ra_dynamic_retry_count`` + ``phydm_rf_watchdog``) with the
+inits from ``odm_CommonInfoSelfInit`` / ``odm_DIGInit`` /
+``Phydm_NHMCounterStatisticsInit`` / ``Phydm_AdaptivityInit`` /
+``ODM_CfoTrackingInit`` / ``odm_TXPowerTrackingThermalMeterInit``.
+Watchdog neighbors (rate-mask refreshes, BB power saving, EDCA turbo,
+path diversity, CFO tracking, dynamic TX power, antenna diversity,
+beamforming, retry-limit table) are sw-only or no-ops in monitor mode:
+no wire in any capture tick. ``st`` carries the DIG/adaptivity/CCK-PD
+keys plus the ``track.tracking_init_state`` keys, ``tm_trigger``,
+``channel``, ``params``, ``by_rate``, ``iqk_x`` and ``iqk_y``.
 """
 from __future__ import annotations
 
@@ -146,14 +150,18 @@ def cck_pd(t, st: dict, fa: dict) -> None:
         st["cur_cck"] = thres
 
 
-def watchdog_tick(t, st: dict, trigger: bool) -> dict:
+def watchdog_tick(t, st: dict) -> dict:
     misc_mod.check_rxfifo_full(t)
     fa = false_alarm_stats(t)
     dig_step(t, st, fa)
     adaptivity_edcca(t, st)
     cck_pd(t, st, fa)
-    if trigger:
+    track_mod.ra_dynamic_retry_count(t, st, fa)
+    if not st["tm_trigger"]:
         track_mod.thermal_trigger(t)
+        st["tm_trigger"] = True
     else:
-        track_mod.thermal_read(t)
+        track_mod.tracking_callback(t, st, st["channel"], st["params"],
+                                    st["by_rate"])
+        st["tm_trigger"] = False
     return fa

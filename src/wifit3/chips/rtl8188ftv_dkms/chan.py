@@ -108,6 +108,7 @@ def tune_20(t, channel: int, rf_chnl_val: int, hal: dict) -> int:
 
 def switch_channel(t, channel: int, hal: dict, params, by_rate,
                    rem_cck: int = 0, rem_ofdm: int = 0) -> None:
+    hal["channel"] = channel
     hal["rf_chnl_val"] = sw_chnl(t, channel, hal["rf_chnl_val"], hal)
     hal["rf_chnl_val"] = post_set_bw_mode_20(t, hal["rf_chnl_val"])
     txpower_mod.set_level(t, channel, 0, params, by_rate, rem_cck, rem_ofdm)

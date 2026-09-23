@@ -8,8 +8,15 @@ hal/hal_com_phycfg.c:1114-,1231-,2240-,2288-) plus the by-rate load chain
 ``PHY_StoreTxPowerByRateNew`` / ``phy_ConvertTxPowerByRateInDbmToRelativeValues``
 / ``_PHY_GetTxPowerByRate`` / ``PHY_GetTxPowerIndex`` PG walk
 (hal_com_phycfg.c:769-,1000-,1540-,1577-).
-``RegEnableTxPowerLimit`` defaults to 0 (limit bypassed) and tracking is off
-at bring-up; non-default tunables raise TODO. u8/s8 wrap matches the C.
+``RegEnableTxPowerLimit`` is 0 in this build (Makefile
+CONFIG_CALIBRATE_TX_POWER_TO_MAX=y → os_intfs.c), so
+``PHY_GetTxPowerLimit`` (hal_com_phycfg.c) returns MAX_POWER_INDEX before
+its table lookup and the ``min(byRate, limit)`` clamp in
+``PHY_GetTxPowerIndex_8188F`` is a no-op; the limit call's
+``CurrentChannel`` quirk is likewise moot because
+``PHY_HandleSwChnlAndSetBW8188F`` stores ``CurrentChannel = ChannelNum``
+before ``phy_SwChnlAndSetBwMode8188F`` runs the level. u8/s8 wrap matches
+the C.
 """
 from __future__ import annotations
 
@@ -197,8 +204,18 @@ def set_index(t, power: int, rate: int) -> None:
     bb.set_bb_reg(t, addr, mask, power)
 
 
-def set_level(t, channel: int, path: int, params, tables: ByRateTables,
-              rem_cck: int = 0, rem_ofdm: int = 0) -> None:
-    for rate in CCK_RATES + OFDM_RATES + MCS07_RATES:
+def set_section(t, channel: int, path: int, params, tables: ByRateTables,
+                rates, rem_cck: int = 0, rem_ofdm: int = 0) -> None:
+    for rate in rates:
         set_index(t, get_index(params, tables, path, rate, channel,
                                rem_cck=rem_cck, rem_ofdm=rem_ofdm), rate)
+
+
+def set_level(t, channel: int, path: int, params, tables: ByRateTables,
+              rem_cck: int = 0, rem_ofdm: int = 0) -> None:
+    set_section(t, channel, path, params, tables, CCK_RATES, rem_cck,
+                rem_ofdm)
+    set_section(t, channel, path, params, tables, OFDM_RATES, rem_cck,
+                rem_ofdm)
+    set_section(t, channel, path, params, tables, MCS07_RATES, rem_cck,
+                rem_ofdm)
