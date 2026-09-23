@@ -234,7 +234,9 @@ class Rtl8188ftvDkmsDriver(Driver):
             if callback is None:
                 continue
             try:
-                parsed = WlanFrameParser.parse_80211_frame(payload, -100)
+                parsed = WlanFrameParser.parse_80211_frame(
+                    payload, attrib["rssi"]
+                    if attrib["rssi"] is not None else -100)
             except Exception:  # noqa: BLE001
                 continue
             if parsed is not None:

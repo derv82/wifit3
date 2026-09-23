@@ -16,6 +16,27 @@ RXDESC_SIZE = 24
 RX_DRV_INFO_UNIT = 8
 
 
+def cck_rssi_dbm(agc: int) -> int:
+    lna, vga = (agc >> 5) & 0x7, agc & 0x1F
+    if lna == 7:
+        return -100 + 2 * (27 - vga) if vga <= 27 else -100
+    if lna == 5:
+        return -74 + 2 * (21 - vga)
+    if lna == 3:
+        return -60 + 2 * (20 - vga)
+    if lna == 1:
+        return -44 + 2 * (19 - vga)
+    return 0
+
+
+def signal_dbm(drvinfo: bytes, rate: int) -> int | None:
+    if len(drvinfo) < 6:
+        return None
+    if rate <= 0x03:
+        return cck_rssi_dbm(drvinfo[5])
+    return ((drvinfo[4] >> 1) & 0x7F) - 110
+
+
 def _bits(word: int, shift: int, width: int) -> int:
     return (word >> shift) & ((1 << width) - 1)
 
@@ -47,5 +68,9 @@ def iter_rx(buf: bytes):
         start = off + RXDESC_SIZE + a["drvinfo_sz"] + a["shift_sz"]
         if a["pkt_len"] <= 0 or start + a["pkt_len"] > len(buf):
             return
+        if a["physt"]:
+            a["rssi"] = signal_dbm(buf[off + RXDESC_SIZE:start], a["rate"])
+        else:
+            a["rssi"] = None
         yield a, bytes(buf[start:start + a["pkt_len"]])
         off = (start + a["pkt_len"] + 7) & ~7

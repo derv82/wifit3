@@ -59,7 +59,13 @@
   drvinfo + shift walk, 8B align, `RPT_SEL` C2H split, crc-stop like the
   source) decodes all 9354 bulk-IN completions: 16164 packets, 41 AP
   BSSIDs incl. all 3 log-known APs, 0 parser exceptions
-  (`scripts/chips/rtl8188ftv_dkms/verify_rx.py`, on demand). Next:
+  (`scripts/chips/rtl8188ftv_dkms/verify_rx.py`, on demand). Per-packet
+  RSSI (`rx.signal_dbm`: CCK `odm_CCKRSSI_8188F` LNA/VGA table on
+  drvinfo[5] for desc rates ≤ 3, OFDM `((drvinfo[4]>>1)&0x7F)-110` like
+  `ODM_PhyStatusQuery_92CSeries`; `None` when `physt=0`, dispatch maps
+  to −100) cross-checks against airodump PWR logs: BEWAVE_AP median
+  −52 exact, Dzial −62 vs −57, dlink −46 vs −49 (air variance +
+  averaging). Next:
   thermal tracking callback + 2s watchdog ticks. Until the bring-up
   verifies end to end, keep `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
@@ -84,9 +90,15 @@
 - Open: the frontier op (2nd `R32 0xC80=0x390000E4`, back-to-back with the
   thermal-swing read, identical in both captures) has no source after
   exhaustive elimination — single `getSwingIndex` call site, single-execution
-  DMInit chain, zero-read antenna/path/beamforming/dynamic inits, no
-  leading-zero/decimal/computed-address spellings, no function-pointer
-  dispatch. LC verifies standalone from its `0xD03` anchor past it.
+  DMInit chain, zero-read antenna/path/beamforming/dynamic inits AND the
+  `DynamicBBPowerSaving`/`DynamicTxPower` inits (all sw-only), full
+  `ThermalMeterInit` + LC wrapper re-reads (register-clean), `InitHalDm`
+  = GPIO + ComInfo (sw-only) + `ODM_DMInit` only, no `0xC80` in
+  `usb_halinit.c` between `InitHalDm` and LC, clean URB statuses (no
+  retry/stall). The three other back-to-back duplicate reads in the
+  captures are all check+result pairs (IQK `0xEAC`/`0xE94`, matrix-fill
+  `0xC80` Get+RMW), which is the remaining shape hypothesis here, with
+  no candidate second reader.
 - Open: RF `0x55` BIT19-clear (8 ops, both captures, right after the
   station opmode-set) with no caller found yet — no `SetRFReg(...,0x55)`
   literal or `0x5x` RF symbol exists in the tree; shape is a single

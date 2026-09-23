@@ -36,3 +36,17 @@ def test_iter_rx_stops_on_crc():
     assert list(rx.iter_rx(CAPDESC + bytes(32) + bytes(20) + bad)) != []
     got = list(rx.iter_rx(bad + CAPDESC + bytes(32) + bytes(20)))
     assert got == []
+
+
+def test_cck_rssi_table():
+    from wifit3.chips.rtl8188ftv_dkms import rx
+    assert rx.cck_rssi_dbm(0x72) == -56
+    assert rx.cck_rssi_dbm((7 << 5) | 27) == -100
+    assert rx.cck_rssi_dbm((1 << 5) | 19) == -44
+    assert rx.cck_rssi_dbm(0x00) == 0
+
+
+def test_signal_dbm_ofdm():
+    from wifit3.chips.rtl8188ftv_dkms import rx
+    assert rx.signal_dbm(bytes([0, 0, 0, 0, 0x78, 0]), 0x04) == -50
+    assert rx.signal_dbm(bytes([0]), 0x04) is None
