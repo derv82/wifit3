@@ -104,6 +104,12 @@ live in each chip's `<CHIP>.md` (linked under its table).
 ### RTL8188FTV
 *No-name 0bda:f179 dongle · 2.4 GHz only · 1T1R (firmware-based hard-MAC)*
 
+> **Default = vendor/DKMS port** (`chips/rtl8188ftv_dkms`); `WIFIT3_RTL8188FTV=mainline` opts back.
+> The matrix below is the **mainline** variant. The DKMS variant measured at parity on 2026-09-24
+> (breadth 4=4, RSSI ±0 dB, 9.7 bcn/s, 11/11 tuned, on-air TX-ACK 100/100, auto-ACK NONE, 20-min soak
+> flat) → default non-regressive; graded Provisional pending its own handshake/PMKID/WPS run (primitives
+> proven, see the DKMS doc).
+>
 > Firmware-based hard-MAC: no HW auto-ACK at all in monitor mode (rx_autoack vs an AR9271 witness —
 > spoofed MAC 8/100, own MAC 0/100, controls 0/100), so the stop-on-ACK play (WPS/PMKID replay
 > shortcut) is unavailable; WPS/PMKID run on software ACK-retry instead. Passive RX + software TX of
@@ -124,7 +130,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | ACKs | ❌ | 2026-09-24 | No monitor auto-ACK (AR9271 witness: spoofed 8/100, own MAC 0/100, controls 0/100; AR9271 control 100/100) → FAKE_MAC NONE (definitive). RX-ACK tap + HW retry work; live AP ACKs our TX 98/100. |
 | Stress | ✅ | 2026-09-16 | 20-min 14-ch hop soak: 600 hops, 0 tune failures, 0 dropped, wedged=False (plus a 30-min ch6 dwell). |
 
-→ [RTL8188FTV.md](../src/wifit3/chips/rtl8188ftv/RTL8188FTV.md)
+→ [RTL8188FTV_DKMS.md](../src/wifit3/chips/rtl8188ftv_dkms/RTL8188FTV_DKMS.md) (default) · [RTL8188FTV.md](../src/wifit3/chips/rtl8188ftv/RTL8188FTV.md) (mainline)
 
 ### RTL8812AU
 <img align="right" width="109" height="165" src="../assets/cardart/card-awus036ach.png" alt="ALFA AWUS036ACH">

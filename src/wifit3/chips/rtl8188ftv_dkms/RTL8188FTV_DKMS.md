@@ -14,7 +14,7 @@
 
 ## Python Port Details
 - VID/PID: `0bda:f179`; selected by the `rtl8188ftv` family row in `device/manager.py` (this package wins by default, `WIFIT3_RTL8188FTV=mainline` opts back to `chips/rtl8188ftv`).
-- Status: **M1–M4 green.** M1 (probe chip-version read: cut 1, SMIC, 1T1R),
+- Status: **M1–M8 green; cold bring-up + live RX/TX verified.** M1 (probe chip-version read: cut 1, SMIC, 1T1R),
   M2 (EFUSE map + full parse suite: ID 0x8129, MAC/VID:PID/chplan-0x20 all at
   independent ground truth; hidden-report C2H handshake + probe power-off),
   M3 (power-on, verified three times across both captures), M4 (LLT +
@@ -88,11 +88,14 @@
    seq 0-39, all checksums valid). The C2H hidden report never posts
    live (0xFD echo; descriptive caps only, no functional impact). DKMS
    is the default (`DkmsFamily`), `WIFIT3_RTL8188FTV=mainline` opts out.
+- Live verification 2026-09-24 (AR9271 witness, ch1): RX at the known-good bar (9.7 bcn/s, 11/11 channels tuned); breadth ties the mainline sibling (4 = 4 APs, RSSI ±0 dB — both hit the local strong-AP ceiling; the AR9271 hears 19, a 1T1R sensitivity gap, not a driver one), so the DKMS default is non-regressive. On-air TX-ACK 100/100 (copies collapse to 1; a dead target piles to the retry limit at 0 ACKs). Auto-ACK re-proven NONE (spoofed 8/100, silicon 8/100, controls 0). 20-min 13-ch hop soak flat (trend 4→4, ratio 1.00). Handshake/PMKID/WPS not run on DKMS here (no lab-AP/harness this session) — primitives are all proven (inject + AP-ACKs-our-forged-src + ACK tap), so they are expected-equivalent to the mainline sibling pending a hands-on pass.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
   - No `start`/`stop` cfg80211 ops: `iw set channel` hits `cfg80211_rtw_set_monitor_channel`, monitor entry is `cfg80211_rtw_change_iface` → `Ndis802_11Monitor` on the same netdev (no `wlan0mon` twin; capture keeps `wlx…`).
   - A 2 s `dynamic_chk_timer` → `traffic_status_watchdog` → `hal_dm_watchdog` tick plus the SW-LED blink timer interleave control traffic in monitor mode.
+  - Monitor RCR appends FCS (`mode._RCR_MONITOR` BIT31), so every RX frame carries a trailing 4-byte FCS. The parser ignores it, but an ACK arrives as 14 bytes, not 10 — the ACK tap must match `len in (10, 14)`.
+  - ACK RX-tap: `rx.admit_ack_frames`/`drop_ack_frames` toggle RXFLTMAP1 bit 13 (monitor entry leaves it at 0x0400, PS-Poll only); `_rx_dispatch` feeds 0xD4 ACKs to `record_ack`, enabling `inject_frame_slow_retry` software ACK-retry. Live-verified: the FTV tallies 100/100 ACKs as an `rx_autoack` prober.
   - Channel 14 is regulatory-disabled (`iw` rejects before the chip is touched); the sweep is ch1–13.
   - Probe ends powered OFF: `hal_read_mac_hidden_rpt` powers off (`CardDisable`, no deinit/FIFO quiesce) when HW init hasn't completed, so every cold plug downloads FW twice (probe + open).
   - `FirmwareDownload` always closes with `InitializeFirmwareVars` (`HMETFR=0x0f`), even on failure; the `&`-vs-`==` precedence in the self-reset gate is a live trap.
@@ -185,7 +188,7 @@
    bring-up over it (proven same day); replug only if the scanner stays
    empty. A skip-redundant-work warm-reattach could use a warm-plug
    vendor reference (`capture --iface`).
-- Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
+- Firmware-based hard-MAC: no auto-ACK for forged MACs — `FAKE_MAC = NONE`, re-proven on hardware 2026-09-24 (AR9271 prober: spoofed 8/100, own silicon MAC 8/100, controls 0/100; `enter_active_monitor` not overridden, so `rx_autoack` skips the spoofed pass). The vendor stack does not change this silicon limit. WPS/PMKID instead rely on the now-wired software ACK-retry (`_enable_rx_acks` + `inject_frame_slow_retry`), not HW auto-ACK.
 
 ## Driver Entry Points
 - Bring-up: `driver.connect` → M1 probe + M2 EFUSE → M3 power →
@@ -231,4 +234,11 @@
   frames: the monitor path (`update_monitor_frame_attrib` + plain dump)
   puts DATA through the shared MGMT template (mac_id 1, MGNT queue,
   raid 8, retry FALSE), so `tx.inject_frame` now covers MGMT and DATA;
-  per-link station DATA rules stay unported. Live deauth proof pending.
+  per-link station DATA rules stay unported.
+- 2026-09-24 — AR9271-witnessed verification + ACK-tap wiring. RX breadth
+  ties mainline, on-air TX-ACK 100/100, auto-ACK re-proven NONE, 20-min
+  soak flat (see Status). Wired the RX-ACK tap (`admit_ack_frames` +
+  `record_ack`); a first cut missed every ACK because the monitor RCR
+  appends FCS (ACK is 14 B, not 10) — fixed, then the FTV tallied 100/100
+  as a prober. Open: handshake/PMKID/WPS campaign runs on DKMS await a
+  lab-AP hands-on pass (no `wps_pin.txt`/harness/connected client here).
