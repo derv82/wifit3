@@ -1,4 +1,15 @@
 """rtl8188ftv_dkms RX: descriptor decode + aggregation walk."""
+import shutil
+from pathlib import Path
+
+import pytest
+
+# Replays the gitignored vendor capture via tshark; porting-host only.
+requires_capture = pytest.mark.skipif(
+    not Path("driver_captures/captures_8188fu/capture-1.pcap").exists()
+    or shutil.which("tshark") is None,
+    reason="vendor capture (gitignored) + tshark required; porting-host only",
+)
 
 CAPDESC = bytes.fromhex("1400048400000f1074e140000030000000000000"
                         "006d350800")
@@ -14,6 +25,7 @@ def test_decode_desc():
     assert a["agg_pktnum"] == 0x00
 
 
+@requires_capture
 def test_iter_rx_two_packets():
     import subprocess
     from wifit3.chips.rtl8188ftv_dkms import rx
@@ -50,3 +62,27 @@ def test_signal_dbm_ofdm():
     from wifit3.chips.rtl8188ftv_dkms import rx
     assert rx.signal_dbm(bytes([0, 0, 0, 0, 0x78, 0]), 0x04) == -50
     assert rx.signal_dbm(bytes([0]), 0x04) is None
+
+
+class _FltT:
+    """RXFLTMAP1 read-modify-write fake: one 16-bit register at 0x06A2."""
+    def __init__(self, val):
+        self.val = val
+        self.writes = []
+
+    def read16(self, addr):
+        assert addr == 0x06A2
+        return self.val
+
+    def write16(self, addr, value):
+        self.writes.append((addr, value))
+        self.val = value
+
+
+def test_admit_and_drop_ack_frames():
+    from wifit3.chips.rtl8188ftv_dkms import rx
+    t = _FltT(0x0400)                       # post-monitor-entry default (PS-Poll only)
+    rx.admit_ack_frames(t)
+    assert t.writes[-1] == (0x06A2, 0x0400 | (1 << 13))   # ACK bit set, PS-Poll kept
+    rx.drop_ack_frames(t)
+    assert t.writes[-1] == (0x06A2, 0x0400)               # ACK bit cleared, PS-Poll kept

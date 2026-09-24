@@ -1,5 +1,17 @@
 """rtl8188ftv_dkms driver assembly: FW asset, RX dispatch, channel plumbing."""
+import shutil
+from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
+
+# The vendor captures live under the gitignored driver_captures/; these tests
+# replay them via tshark and only run on the porting host that has both.
+requires_capture = pytest.mark.skipif(
+    not Path("driver_captures/captures_8188fu/capture-1.pcap").exists()
+    or shutil.which("tshark") is None,
+    reason="vendor capture (gitignored) + tshark required; porting-host only",
+)
 
 
 def _driver():
@@ -15,6 +27,7 @@ def test_firmware_asset_loads():
     assert fw.parse_header(blob)[:3] == (4, 0, 0x88F1)
 
 
+@requires_capture
 def test_rx_dispatch_control_frames_parse_to_none():
     import subprocess
     from wifit3.chips.rtl8188ftv_dkms import rx as rx_mod
@@ -32,6 +45,7 @@ def test_rx_dispatch_control_frames_parse_to_none():
                for _, p in pkts)
 
 
+@requires_capture
 def test_rx_dispatch_beacon_bssid():
     import subprocess
     from wifit3.chips.rtl8188ftv_dkms import rx as rx_mod
@@ -140,3 +154,27 @@ def test_inject_frame_sends_data_without_consuming_seq_on_reject():
     assert asyncio.run(d._inject_frame(b"\xc0" * 10)) is False
     assert d.transport.bulk_out.call_count == 1
     assert d.hal["mgnt_seq"] == 6
+
+
+def test_rx_dispatch_records_ack_with_and_without_fcs():
+    """The monitor RCR appends FCS (BIT31), so an ACK arrives as 14 bytes; the
+    tap must record both the bare 10-byte ACK and the FCS-appended 14-byte one."""
+    import struct
+    ra = bytes.fromhex("02b0b0000001")
+
+    def buf_for(ack):                              # 24-byte desc (pkt_len only) + ack
+        return struct.pack("<I", len(ack)) + bytes(20) + ack
+
+    ack10 = bytes([0xD4, 0, 0, 0]) + ra           # FC=ACK, dur, RA
+    ack14 = ack10 + bytes(4)                       # + appended FCS
+    for ack in (ack10, ack14):
+        d = _driver()
+        d._ack_detect_on = True
+        d._our_tx_macs.add(ra)
+        d._rx_dispatch(buf_for(ack))
+        assert d.acks_seen(ra) == 1
+
+    d = _driver()                                  # tap disarmed -> no tally
+    d._our_tx_macs.add(ra)
+    d._rx_dispatch(buf_for(ack14))
+    assert d.acks_seen(ra) == 0
