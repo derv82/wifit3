@@ -20,6 +20,9 @@
 #                      ping + disconnect): DATA + deauth MGMT TX reference for
 #                      drivers whose monitor TX never reaches USB.
 #   --sta-pings N      gateway ping count in the station phase (default 20).
+#   --iface NAME       use this existing netdev, skip the plug wait (warm
+#                      reference: card already plugged from a previous run,
+#                      no replug).
 #   --src-dir DIR      vendor source checkout (default /usr/src/rtl8188fu-1.0).
 #   --skip-build       skip the DKMS build/install (source already installed).
 #   --skip-capture     stop after driver install + verification, no capture.
@@ -36,6 +39,7 @@ CLIENT2G=""
 CHANNEL2G="1"
 STASSID=""
 STAPINGS="20"
+IFACE=""
 
 usage() {
     sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'
@@ -48,6 +52,7 @@ while [[ $# -gt 0 ]]; do
         --channel2g) CHANNEL2G="${2:-}"; shift 2 ;;
         --sta-ssid)  STASSID="${2:-}"; shift 2 ;;
         --sta-pings) STAPINGS="${2:-}"; shift 2 ;;
+        --iface)     IFACE="${2:-}"; shift 2 ;;
         --src-dir)   SRC_DIR="${2:-}"; shift 2 ;;
         --skip-build) SKIP_BUILD=1; shift ;;
         --skip-capture) SKIP_CAPTURE=1; shift ;;
@@ -132,7 +137,11 @@ if [[ "$SKIP_CAPTURE" -eq 1 ]]; then
     exit 0
 fi
 
-echo "=== 6. cold-boot capture (card must be UNPLUGGED now) ==="
+if [[ -n "$IFACE" ]]; then
+    echo "=== 6. warm-reference capture (card stays PLUGGED on $IFACE) ==="
+else
+    echo "=== 6. cold-boot capture (card must be UNPLUGGED now) ==="
+fi
 if [[ -z "$BSSID2G" ]]; then
     echo "[!] no --bssid2g: capture will have NO injection/TX tail (byte-match gap)."
 fi
@@ -140,6 +149,7 @@ CAP_ARGS=()
 [[ -n "$BSSID2G" ]] && CAP_ARGS+=(--bssid2g "$BSSID2G" --channel2g "$CHANNEL2G")
 [[ -n "$CLIENT2G" ]] && CAP_ARGS+=(--client2g "$CLIENT2G")
 [[ -n "$STASSID" ]] && CAP_ARGS+=(--station-ssid "$STASSID" --station-pings "$STAPINGS")
+[[ -n "$IFACE" ]] && CAP_ARGS+=(--iface "$IFACE")
 # Raw injector, not aireplay: rtw_monitor_xmit_entry drops any injected frame
 # whose radiotap header is not exactly 12 bytes (silently), so aireplay's
 # probes never reach USB (0 bulk-OUT in captures 1-4). The raw path emits

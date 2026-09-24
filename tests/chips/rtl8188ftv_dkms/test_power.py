@@ -91,3 +91,30 @@ def test_card_disable_probe_path():
     assert t.writes[-5:] == [(0x4E, 1, 0x02), (0x27, 1, 0x34), (0x05, 1, 0x02),
                              (0x05, 1, 0x08), (0xC4, 1, 0x5C)]
     assert not any(a == 0x86 for a, _, _ in t.writes)
+
+
+def test_is_chip_warm_cold_prefix_values():
+    from wifit3.chips.rtl8188ftv_dkms import power
+    assert power.is_chip_warm(FakeTransport(reads=[0x05, 0x0000])) is False
+
+
+def test_is_chip_warm_fw_residue_or_powered():
+    from wifit3.chips.rtl8188ftv_dkms import power
+    assert power.is_chip_warm(FakeTransport(reads=[0xC7])) is True
+    assert power.is_chip_warm(FakeTransport(reads=[0x05, 0x00C0])) is True
+
+
+def test_is_chip_warm_ioerror_means_cold():
+    from wifit3.chips.rtl8188ftv_dkms import power
+
+    class DeadT(FakeTransport):
+        def read8(self, addr):
+            raise IOError("usb gone")
+
+    assert power.is_chip_warm(DeadT(reads=[])) is False
+
+
+def test_warm_state_snapshot():
+    from wifit3.chips.rtl8188ftv_dkms import power
+    assert power.warm_state(FakeTransport(reads=[0xC7, 0x00C0])) == \
+        (0xC7, 0x00C0)

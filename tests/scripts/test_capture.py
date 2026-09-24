@@ -450,6 +450,14 @@ def test_station_defaults_off(tmp_path):
     cap = _capture(tmp_path)
     assert cap.station_ssid is None
     assert cap.station_pings == 20
+    assert cap.iface is None
+
+
+def test_iface_stored_for_warm_reference(tmp_path):
+    with patch('wifit3.scripts.capture.tempfile.TemporaryDirectory') as mock_tempdir:
+        from wifit3.scripts.capture import Capture
+        mock_tempdir.return_value.name = str(tmp_path)
+        assert Capture(iface="wlan9").iface == "wlan9"
 
 
 def test_station_tx_segment_runs_assoc_dhcp_ping_disconnect(tmp_path):

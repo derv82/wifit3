@@ -79,12 +79,15 @@
    first-principles. TX is a standalone bulk-OUT gate (`verify_tx.py`):
    87 station-capture URBs rebuild byte-exact (48 MGMT incl. the
    disconnect deauth, 39 BE DATA). `driver._inject_frame` sends MGMT
-   and DATA on the monitor template; warm path deferred. Live RX proven
+   and DATA on the monitor template; warm state (`is_chip_warm`: MCUFWDL
+   != 0x05 or CR != 0) logs a warning and runs the cold bring-up over
+   it, proven live 2026-09-24 (MCUFWDL=0xc6/CR=0x06ff warm, full RX mix
+   after). Replug only if the scanner stays empty. Live RX proven
    2026-09-24 (hal tail was the gate); live deauth proven same day
-   (client drop; 40 broadcast deauths on the wire, AP-spoofed TA, seq
-   0-39, all checksums valid). The C2H hidden report never posts live
-   (0xFD echo; descriptive caps only, no functional impact). DKMS is the
-   default (`DkmsFamily`), `WIFIT3_RTL8188FTV=mainline` opts out.
+   (client drop; 40 broadcast deauths on the wire, AP-spoofed TA,
+   seq 0-39, all checksums valid). The C2H hidden report never posts
+   live (0xFD echo; descriptive caps only, no functional impact). DKMS
+   is the default (`DkmsFamily`), `WIFIT3_RTL8188FTV=mainline` opts out.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -175,10 +178,13 @@
   0x02; `verify_tx.py` replays all 87 station-capture URBs byte-exact
   (44 probes + auth + 2 assoc + deauth, mgnt_seq 0-47, plus 39 BE DATA
   with their own seq 1-39 and the EAP/ARP/DHCP 1M rule, EP 0x03).
-  `driver._inject_frame` sends MGMT and DATA on the monitor template
-  (frame-seq == desc-seq, `mgnt_seq` state; per-link station DATA rules
-  stay unported — wifit3 injects in monitor mode only). Live deauth
-  proven 2026-09-24 (client drop). Warm path deferred.
+   `driver._inject_frame` sends MGMT and DATA on the monitor template
+   (frame-seq == desc-seq, `mgnt_seq` state; per-link station DATA rules
+   stay unported — wifit3 injects in monitor mode only). Live deauth
+   proven 2026-09-24 (client drop). Warm state warns and runs the cold
+   bring-up over it (proven same day); replug only if the scanner stays
+   empty. A skip-redundant-work warm-reattach could use a warm-plug
+   vendor reference (`capture --iface`).
 - Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
 
 ## Driver Entry Points

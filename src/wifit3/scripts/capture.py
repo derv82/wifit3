@@ -33,6 +33,8 @@ Options:
                     the gateway + disconnect: DATA + deauth MGMT TX reference
                     for drivers whose monitor TX never reaches USB.
   --station-pings N number of gateway pings in the station phase (default 20).
+  --iface NAME      use this existing netdev, skip the plug wait (warm
+                    reference: card already plugged, no replug).
   --tx-injector {aireplay,raw}
                     injection backend (default aireplay). raw emits deauth +
                     directed probes with a 12-byte radiotap over AF_PACKET;
@@ -168,7 +170,7 @@ class Capture:
                  bssid2g=None, channel2g=1, client2g=None,
                  bssid5g=None, channel5g=36, client5g=None,
                  tx_injector="aireplay", station_ssid=None,
-                 station_pings=20):
+                 station_pings=20, iface=None):
         self.target_bssid = target
         self.client_bssid = client
         # Per-band injection targets. The 5 GHz pass is gated on supports_5g at
@@ -184,6 +186,9 @@ class Capture:
         # never reaches USB (e.g. rtl8188fu: frozen queues at NO-CARRIER).
         self.station_ssid = station_ssid
         self.station_pings = station_pings
+        # Existing netdev for warm-reference runs (card already plugged,
+        # no replug, no plug wait, no baseline diff).
+        self.iface = iface
         # The two airodump segments (native-hop reference + fixed-channel
         # over-air pcap) run by default. They're the runtime data a bring-up
         # needs. fast_hop is the pathological 0.25 s stress probe, opt-in.
@@ -886,23 +891,30 @@ class Capture:
             subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout)
 
         # Give the operator time to plug the card in and let it enumerate before
-        # bringing up monitor mode.
-        self.logger.log_main(f"[{time.time():.3f}] --> INSERT THE USB CARD NOW <--")
-        time.sleep(self.PLUG_IN_WAIT)
+        # bringing up monitor mode. With --iface the card is already plugged
+        # (warm reference: no replug, no plug wait, no baseline diff).
+        if self.iface:
+            self.base_iface = self.iface
+            self.logger.log_main(
+                f"[*] Using existing netdev (warm reference): {self.base_iface}")
+        else:
+            self.logger.log_main(f"[{time.time():.3f}] --> INSERT THE USB CARD NOW <--")
+            time.sleep(self.PLUG_IN_WAIT)
 
         # What appeared on the bus is the card.
         self.snapshot_usb("post-plug")
 
         # The card's netdev is the wlan interface that appeared since the pre-plug
         # baseline, same "whatever showed up IS the card" logic as the lsusb diff.
-        appeared = sorted(self.parse_wifi_ifaces(
-            subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout)
-            - self.iface_baseline)
-        if appeared:
-            self.base_iface = appeared[-1]
-            self.logger.log_main(f"[*] Card enumerated as: {self.base_iface}")
-        else:
-            self.logger.log_main(f"[!] No new wlan interface appeared; using {self.base_iface}.")
+        if not self.iface:
+            appeared = sorted(self.parse_wifi_ifaces(
+                subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout)
+                - self.iface_baseline)
+            if appeared:
+                self.base_iface = appeared[-1]
+                self.logger.log_main(f"[*] Card enumerated as: {self.base_iface}")
+            else:
+                self.logger.log_main(f"[!] No new wlan interface appeared; using {self.base_iface}.")
 
         # Monitor-mode bring-up: the one step that must succeed.
         self.run_cmd(["sudo", "airmon-ng", "start", self.base_iface], fatal=True, timeout=30)
@@ -1039,6 +1051,9 @@ def main():
                              "disconnect for a station-mode TX reference")
     parser.add_argument("--station-pings", type=int, default=20,
                         help="gateway pings in the station phase (default 20)")
+    parser.add_argument("--iface",
+                        help="use this existing netdev, skip the plug wait "
+                             "(warm reference: card already plugged, no replug)")
     args = parser.parse_args()
 
     if hasattr(os, "geteuid") and os.geteuid() != 0:
@@ -1054,7 +1069,8 @@ def main():
                       bssid5g=args.bssid5g, channel5g=args.channel5g, client5g=args.client5g,
                       tx_injector=args.tx_injector,
                       station_ssid=args.station_ssid,
-                      station_pings=args.station_pings)
+                      station_pings=args.station_pings,
+                      iface=args.iface)
         app.run()
     except KeyboardInterrupt:
         # Use stdout.write to ensure clean newline even in raw mode

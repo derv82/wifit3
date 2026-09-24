@@ -125,6 +125,14 @@ class Rtl8188ftvDkmsDriver(Driver):
         loop = asyncio.get_running_loop()
         hal = self.hal
 
+        if await loop.run_in_executor(None, power_mod.is_chip_warm, t):
+            mcufwdl, cr = await loop.run_in_executor(
+                None, power_mod.warm_state, t)
+            logger.warning(
+                "chip already initialized (warm state: MCUFWDL=0x%02x, "
+                "CR=0x%04x); attempting cold bring-up over it, replug "
+                "if the scanner stays empty", mcufwdl, cr)
+
         _update(0.05, "Probing chip version + EFUSE...")
         version = await loop.run_in_executor(None, info_mod.read_chip_version, t)
         smic = info_mod.is_smic(version)

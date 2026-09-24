@@ -23,6 +23,34 @@ CR_INIT_POWER_ON = (
     | C.PROTOCOL_EN | C.SCHEDULE_EN | C.ENSEC | C.CALTMR_EN
 )
 
+COLD_MCUFWDL = 0x05
+COLD_CR = 0x0000
+
+
+def is_chip_warm(t) -> bool:
+    """Return True if the chip looks already initialized.
+
+    Cold power-on reset reads MCUFWDL 0x05 with CR 0x0000 (intact
+    enumeration prefix); any other value means a previous session left
+    FW/power state behind. The bring-up attempts recovery over it (the
+    FW download resets the 8051 when RAM_DL_SEL is set, and the power
+    flows converge); replug if the scanner stays empty.
+    """
+    try:
+        if t.read8(C.REG_MCUFWDL) != COLD_MCUFWDL:
+            return True
+        return t.read16(C.REG_CR_8188F) != COLD_CR
+    except IOError:
+        return False
+
+
+def warm_state(t) -> tuple[int, int]:
+    """Best-effort (mcufwdl, cr) snapshot for warm-prompt diagnostics."""
+    try:
+        return t.read8(C.REG_MCUFWDL), t.read16(C.REG_CR_8188F)
+    except IOError:
+        return -1, -1
+
 
 def set_pll_ref_clk_sel(t, sel: int) -> None:
     value8 = t.read8(C.REG_MAC_PLL_CTRL_EXT_8188F)
