@@ -127,12 +127,16 @@ def test_inject_frame_sends_mgnt_urb_and_advances_seq():
     assert d.hal["mgnt_seq"] == 6
 
 
-def test_inject_frame_rejects_data_without_consuming_seq():
+def test_inject_frame_sends_data_without_consuming_seq_on_reject():
     import asyncio
     d = _driver()
     d.transport = MagicMock()
     d.hal = {"mgnt_seq": 5}
-    assert asyncio.run(d._inject_frame(b"\x08" + bytes(40))) is False
+    qos = (bytes((0x88, 0x01, 0x00, 0x00)) + bytes(18) + bytes((0x50, 0x00))
+           + bytes(36))
+    assert asyncio.run(d._inject_frame(qos)) is True
+    assert d.hal["mgnt_seq"] == 6
+    assert asyncio.run(d._inject_frame(b"\xD4" + bytes(30))) is False
     assert asyncio.run(d._inject_frame(b"\xc0" * 10)) is False
-    assert d.transport.bulk_out.call_count == 0
-    assert d.hal["mgnt_seq"] == 5
+    assert d.transport.bulk_out.call_count == 1
+    assert d.hal["mgnt_seq"] == 6

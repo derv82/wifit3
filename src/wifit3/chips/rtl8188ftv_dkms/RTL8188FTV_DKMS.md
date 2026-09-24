@@ -78,9 +78,13 @@
    rem +3/+0; cap2: 28 switches + 27 ticks + 1 race, rem +2/+0), all
    first-principles. TX is a standalone bulk-OUT gate (`verify_tx.py`):
    87 station-capture URBs rebuild byte-exact (48 MGMT incl. the
-   disconnect deauth, 39 BE DATA). `driver._inject_frame` sends MGMT;
-   live DATA injection and the warm path are open. Until live injection
-   is proven on hardware, keep `WIFIT3_RTL8188FTV=mainline`.
+   disconnect deauth, 39 BE DATA). `driver._inject_frame` sends MGMT
+   and DATA on the monitor template; warm path deferred. Live RX proven
+   2026-09-24 (hal tail was the gate); live deauth proven same day
+   (client drop; 40 broadcast deauths on the wire, AP-spoofed TA, seq
+   0-39, all checksums valid). The C2H hidden report never posts live
+   (0xFD echo; descriptive caps only, no functional impact). DKMS is the
+   default (`DkmsFamily`), `WIFIT3_RTL8188FTV=mainline` opts out.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -171,11 +175,10 @@
   0x02; `verify_tx.py` replays all 87 station-capture URBs byte-exact
   (44 probes + auth + 2 assoc + deauth, mgnt_seq 0-47, plus 39 BE DATA
   with their own seq 1-39 and the EAP/ARP/DHCP 1M rule, EP 0x03).
-  `driver._inject_frame` sends MGMT (frame-seq == desc-seq, `mgnt_seq`
-  state); live DATA injection needs per-link rules still unported
-  (recorded DATA: mac_id 0, raid 6, agg 1). Warm path deferred. Until
-  live injection is proven on hardware, keep
-  `WIFIT3_RTL8188FTV=mainline`.
+  `driver._inject_frame` sends MGMT and DATA on the monitor template
+  (frame-seq == desc-seq, `mgnt_seq` state; per-link station DATA rules
+  stay unported — wifit3 injects in monitor mode only). Live deauth
+  proven 2026-09-24 (client drop). Warm path deferred.
 - Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
 
 ## Driver Entry Points
@@ -207,3 +210,19 @@
 
 ## Debug log
 - 2026-09-22 — vendor capture triage: 30k packets / 57 s, ~6k control setups all `bRequest 0x05`, bulk-IN `0x81` with live RX sizes, zero bulk-OUT (aireplay `No such BSSID available` against `a8:5e:45:04:ce:e0`); `iw set channel` rc=0 on ch1–13, ch14 rejected (`channel is disabled`, regulatory). Monitor lives on the `wlx…` netdev itself.
+- 2026-09-24 — live run deaf on RX (bring-up 100%, hopping, zero
+  bulk-IN payloads, zero errors) while captures stream RX from identical
+  bytes. Two driver-vs-walk gaps found by diffing `_cold_bring_up` against
+  the walk order: (1) M2-tail FW#1 ran before power_on#1 (vendor order is
+  power_on#1 → C2H-req → FW#1 → C2H-collect → off; FW#1 went into an
+  unpowered chip, C2H read back our own 0xFD) — fixed; (2) the driver
+  skipped `misc.hal_init_tail` (MACTXEN/MACRXEN!), the mlme ch1 switch,
+  `tracking_init_second` and `kfree_gain_offset` — added in walk order.
+  Cross-check: neither capture has any RX payload before monitor entry,
+  which follows the hal tail in both. Pending live proof on a fresh plug.
+- 2026-09-24 — live RX proven (rich 70-505B frame mix after the hal-tail
+  fix; APs in the scanner). Same session showed `inject failed` on DATA
+  frames: the monitor path (`update_monitor_frame_attrib` + plain dump)
+  puts DATA through the shared MGMT template (mac_id 1, MGNT queue,
+  raid 8, retry FALSE), so `tx.inject_frame` now covers MGMT and DATA;
+  per-link station DATA rules stay unported. Live deauth proof pending.

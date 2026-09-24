@@ -15,8 +15,8 @@ path yet). Milestone map and open items in ``RTL8188FTV_DKMS.md``;
       └─ start RxReaderThread (bulk-IN pump)
 
 ``set_channel`` reuses the verified switch unit with hal remnants.
-Injection sends MGMT frames (``tx.inject_mgnt_frame``) over bulk-OUT;
-DATA injection needs per-link rules still unported.
+Injection sends MGMT/DATA frames (``tx.inject_frame``, monitor template)
+over bulk-OUT; control frames raise.
 """
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ from wifit3.errors import BringUpError
 from wifit3.models.device_id import DeviceID
 
 from . import bb as bb_mod
+from . import c2h as c2h_mod
 from . import cal as cal_mod
 from . import chan as chan_mod
 from . import dm as dm_mod
@@ -139,12 +140,30 @@ class Rtl8188ftvDkmsDriver(Driver):
         hal.update(track_mod.tracking_init_state(params.thermal))
         hal["params"] = params
 
+        _update(0.07, "Probe power on...")
+        if not await loop.run_in_executor(None, power_mod.power_on, t):
+            raise BringUpError("power", "probe power_on failed")
+
+        _update(0.08, "Probe firmware + hidden report...")
+        blob = firmware_mod.load_firmware_blob()
+        ver = await loop.run_in_executor(
+            None, firmware_mod.download_firmware, t, blob)
+        if ver != (4, 0, 0x88F1):
+            raise BringUpError("fw", f"unexpected probe version {ver}")
+        await loop.run_in_executor(None, c2h_mod.request_hidden_report, t)
+        ident, report = await loop.run_in_executor(
+            None, c2h_mod.collect_hidden_report, t)
+        logger.info("Probe hidden report: id 0x%02x, %dB (%s)",
+                    ident, len(report), report.hex())
+        if not await loop.run_in_executor(None, power_mod.card_disable,
+                                          t, False):
+            raise BringUpError("power", "probe power_off failed")
+
         _update(0.10, "Power on...")
         if not await loop.run_in_executor(None, power_mod.power_on, t):
             raise BringUpError("power", "power_on failed")
 
         _update(0.15, "Downloading firmware...")
-        blob = firmware_mod.load_firmware_blob()
         await loop.run_in_executor(None, power_mod.check_powered, t)
         if not await loop.run_in_executor(None, llt_mod.init_llt, t):
             raise BringUpError("llt", "init_llt failed")
@@ -202,6 +221,7 @@ class Rtl8188ftvDkmsDriver(Driver):
         await loop.run_in_executor(None, dm_mod.adaptivity_init, t)
         await loop.run_in_executor(None, dm_mod.cfo_init_atc, t)
         await loop.run_in_executor(None, dm_mod.thermal_swing_index, t)
+        await loop.run_in_executor(None, dm_mod.tracking_init_second, t)
         await loop.run_in_executor(None, cal_mod.lc_calibrate, t)
         hal["iqk"] = await loop.run_in_executor(None, iqk_mod.iq_calibrate, t)
         final = hal["iqk"]["final"]
@@ -212,8 +232,15 @@ class Rtl8188ftvDkmsDriver(Driver):
         await loop.run_in_executor(None, track_mod.thermal_trigger, t)
         hal["tm_trigger"] = True
 
+        _update(0.75, "hal_init tail + mlme ch1...")
+        await loop.run_in_executor(None, misc_mod.hal_init_tail, t)
+        await loop.run_in_executor(
+            None, chan_mod.switch_channel, t, 1, hal, params,
+            self.by_rate, 0, 0)
+
         _update(0.85, "Station opmode + monitor entry...")
         await loop.run_in_executor(None, mode_mod.set_station_opmode, t, hal)
+        await loop.run_in_executor(None, track_mod.kfree_gain_offset, t)
         await loop.run_in_executor(None, mode_mod.enter_monitor, t)
         self.current_channel = 1
         hal["channel"] = 1
@@ -259,13 +286,13 @@ class Rtl8188ftvDkmsDriver(Driver):
         self._release_usb()
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Send one pre-stamped MGMT frame via ``tx.inject_mgnt_frame``
-        (descriptor sequence follows the frame; ``mgnt_seq`` advances).
-        MGMT only; DATA injection needs per-link rules still unported."""
+        """Send one pre-stamped MGMT/DATA frame via ``tx.inject_frame``
+        (monitor template, descriptor sequence follows the frame;
+        ``mgnt_seq`` advances). Control frames raise."""
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
-                None, tx_mod.inject_mgnt_frame,
+                None, tx_mod.inject_frame,
                 self.transport, self.hal, bytes(frame_bytes))
         except (ValueError, IOError):
             logger.exception("inject failed")

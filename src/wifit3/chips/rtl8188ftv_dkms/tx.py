@@ -96,6 +96,9 @@ def build_tx_desc(*, size: int, seq: int, macid: int, qsel: int,
 def build_mgnt_desc(*, size: int, seq: int, bmc: bool,
                     retry_limit: int = MGMT_RETRY_LIMIT_INJECT,
                     spe_rpt: bool = False) -> bytes:
+    """The monitor-path template: MGMT frames and monitor-injected DATA
+    share it (`update_mgntframe_attrib` / `update_monitor_frame_attrib`
+    + plain `dump_mgntframe`; per-link station DATA rules are separate)."""
     return build_tx_desc(size=size, seq=seq, macid=MGMT_MACID,
                          qsel=QSLT_MGNT, rateid=MGMT_RAID, use_rate=True,
                          tx_rate=MGMT_TX_RATE, retry_en=True,
@@ -129,14 +132,15 @@ def stamp_seqnum(frame: bytes, seq: int) -> bytes:
     return frame[:22] + struct.pack("<H", (seq << 4) & 0xFFF0) + frame[24:]
 
 
-def inject_mgnt_frame(t, st: dict, frame: bytes,
-                      retry_limit: int = MGMT_RETRY_LIMIT_INJECT) -> bool:
-    """Send one pre-stamped MGMT frame: descriptor sequence follows the
-    frame's own sequence number (recorded invariant), then ``mgnt_seq``
-    advances. ``t`` needs ``bulk_out(data)`` on the MGMT pipe (EP 0x02).
-    Non-MGMT injection is unported (per-link DATA rules)."""
-    if len(frame) < 24 or (frame[0] & 0x0C) != 0x00:
-        raise ValueError("live DATA injection untested here")
+def inject_frame(t, st: dict, frame: bytes,
+                 retry_limit: int = MGMT_RETRY_LIMIT_INJECT) -> bool:
+    """Send one pre-stamped MGMT or DATA frame on the monitor path: the
+    descriptor follows the shared monitor template with the frame's own
+    sequence number (recorded invariant), then ``mgnt_seq`` advances.
+    ``t`` needs ``bulk_out(data)`` on the MGMT pipe (EP 0x02). Control
+    frames are unported."""
+    if len(frame) < 24 or (frame[0] & 0x0C) not in (0x00, 0x08):
+        raise ValueError("live control-frame injection untested here")
     seq = frame_seqnum(frame)
     desc = build_mgnt_desc(size=len(frame), seq=seq,
                            bmc=_is_mcast(frame[4:10]),

@@ -113,12 +113,12 @@ def test_seq_helpers_round_trip():
     assert stamped[:22] == frame[:22] and stamped[24:] == frame[24:]
 
 
-def test_inject_mgnt_frame_sends_urb_and_advances_seq():
+def test_inject_frame_sends_urb_and_advances_seq():
     from wifit3.chips.rtl8188ftv_dkms import tx
     t = FakeT()
     st = {"mgnt_seq": 0}
     frame = tx.stamp_seqnum(tx.build_deauth_frame(AP, CARD, AP, 0), 5)
-    assert tx.inject_mgnt_frame(t, st, frame) is True
+    assert tx.inject_frame(t, st, frame) is True
     assert st["mgnt_seq"] == 6
     assert len(t.bulk) == 1
     desc, sent = t.bulk[0][:40], t.bulk[0][40:]
@@ -126,17 +126,30 @@ def test_inject_mgnt_frame_sends_urb_and_advances_seq():
     assert desc == tx.build_mgnt_desc(size=len(frame), seq=5, bmc=False)
 
 
-def test_inject_mgnt_frame_rejects_data_and_short():
+def test_inject_frame_sends_qos_data_with_monitor_template():
+    from wifit3.chips.rtl8188ftv_dkms import tx
+    t = FakeT()
+    st = {"mgnt_seq": 7}
+    qos = (bytes((0x88, 0x01, 0x00, 0x00)) + AP + CARD + AP
+           + bytes((0x70, 0x00, 0x00, 0x00)) + bytes(36))
+    assert tx.inject_frame(t, st, qos) is True
+    assert st["mgnt_seq"] == 8
+    desc, sent = t.bulk[0][:40], t.bulk[0][40:]
+    assert sent == qos
+    assert desc == tx.build_mgnt_desc(size=len(qos), seq=7, bmc=False)
+
+
+def test_inject_frame_rejects_control_and_short():
     from wifit3.chips.rtl8188ftv_dkms import tx
     t = FakeT()
     try:
-        tx.inject_mgnt_frame(t, {}, b"\x08" + bytes(30))
+        tx.inject_frame(t, {}, b"\xD4" + bytes(30))
     except ValueError:
         pass
     else:
-        raise AssertionError("DATA accepted")
+        raise AssertionError("CTRL accepted")
     try:
-        tx.inject_mgnt_frame(t, {}, b"\xc0" * 10)
+        tx.inject_frame(t, {}, b"\xc0" * 10)
     except ValueError:
         pass
     else:
