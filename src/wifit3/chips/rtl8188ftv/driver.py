@@ -90,7 +90,7 @@ class RTL8188FTVDriver(Driver):
     """Driver for the Realtek RTL8188FTV (no-name 0bda:f179 dongles)."""
 
     SUPPORTED_CHANNELS = list(range(1, 15))   # 2.4 GHz only
-    FAKE_MAC = FakeMacSupport.UNIMPLEMENTED
+    FAKE_MAC = FakeMacSupport.NONE   # measured vs AR9271: no monitor auto-ACK (spoofed 8/100, own MAC 0/100)
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8188FTVDriver":
