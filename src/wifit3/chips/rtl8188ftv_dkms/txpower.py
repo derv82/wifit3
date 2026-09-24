@@ -182,17 +182,13 @@ def index_base(params, path: int, rate: int, bw20: bool, channel: int) -> int:
 
 def get_index(params, tables: ByRateTables, path: int, rate: int,
               channel: int, reg_pwr_tbl_sel: int = 0,
-              track_control: bool = False, rem_cck: int = 0,
-              rem_ofdm: int = 0) -> int:
+              rem_cck: int = 0, rem_ofdm: int = 0) -> int:
     power = _s8(index_base(params, path, rate, True, channel))
     by_rate = tables.get(BAND_2G, path, 0, rate)
     if reg_pwr_tbl_sel != 0:
         # TODO: verify, untested here, needs RegPwrTblSel != 0
         raise ValueError("TX power limit path untested here")
     power += by_rate
-    if track_control:
-        # TODO: verify, untested here, needs live thermal tracking
-        raise ValueError("tracking offset untested here")
     power += rem_cck if rate in CCK_RATES else rem_ofdm
     if power > MAX_POWER_INDEX:
         power = MAX_POWER_INDEX

@@ -14,9 +14,9 @@ path yet). Milestone map and open items in ``RTL8188FTV_DKMS.md``;
       ├─ station opmode + monitor entry
       └─ start RxReaderThread (bulk-IN pump)
 
-``set_channel`` reuses the verified switch unit (remnants stay at the
-post-bring-up +0/+0 until the tracking callback lands). Injection is
-not ported (both captures carry zero bulk-OUT).
+``set_channel`` reuses the verified switch unit with hal remnants.
+Injection sends MGMT frames (``tx.inject_mgnt_frame``) over bulk-OUT;
+DATA injection needs per-link rules still unported.
 """
 from __future__ import annotations
 
@@ -51,6 +51,7 @@ from . import rf as rf_mod
 from . import rx as rx_mod
 from . import sec as sec_mod
 from . import track as track_mod
+from . import tx as tx_mod
 from . import txpower as txpower_mod
 from .transport import Rtl8188ftvDkmsTransport
 
@@ -134,7 +135,7 @@ class Rtl8188ftvDkmsDriver(Driver):
         self.mac_address = params.mac.hex(":")
         hal.update({"cur_cck": 0, "th_l2h_ini": 0xF5,
                     "adaptivity_ability": False, "tm_trigger": False,
-                    "channel": 1})
+                    "channel": 1, "mgnt_seq": 0})
         hal.update(track_mod.tracking_init_state(params.thermal))
         hal["params"] = params
 
@@ -258,10 +259,24 @@ class Rtl8188ftvDkmsDriver(Driver):
         self._release_usb()
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        raise BringUpError("inject", "TX/injection not ported (no bulk-OUT reference)")
+        """Send one pre-stamped MGMT frame via ``tx.inject_mgnt_frame``
+        (descriptor sequence follows the frame; ``mgnt_seq`` advances).
+        MGMT only; DATA injection needs per-link rules still unported."""
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                None, tx_mod.inject_mgnt_frame,
+                self.transport, self.hal, bytes(frame_bytes))
+        except (ValueError, IOError):
+            logger.exception("inject failed")
+            return False
+        return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
-        return frame_bytes
+        if len(frame_bytes) >= 24:
+            return tx_mod.stamp_seqnum(bytes(frame_bytes),
+                                       self.hal.get("mgnt_seq", 0))
+        return bytes(frame_bytes)
 
     async def _enable_rx_acks(self) -> None:
         return None

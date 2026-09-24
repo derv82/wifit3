@@ -16,6 +16,9 @@ from .constants import (
     RTW_USB_CONTROL_MSG_TIMEOUT_MS,
 )
 
+_BULK_OUT_EP = 0x02
+_BULK_TIMEOUT_MS = 2000
+
 
 class Rtl8188ftvDkmsTransport:
     """Vendor control-transfer transport for the RTL8188FTV DKMS port."""
@@ -66,3 +69,6 @@ class Rtl8188ftvDkmsTransport:
             if err in (110, 10060) or "timeout" in str(e).lower():
                 return None
             raise
+
+    def bulk_out(self, data: bytes) -> None:
+        self.dev.write(_BULK_OUT_EP, bytes(data), _BULK_TIMEOUT_MS)

@@ -12,10 +12,14 @@
 #     --bssid2g <AP_BSSID_CH1> [--client2g <CLIENT>] [--channel2g 1]
 #
 # Flags:
-#   --bssid2g BSSID    2.4 GHz AP for the aireplay injection test (recommended:
+#   --bssid2g BSSID    2.4 GHz AP for the raw injection test (recommended:
 #                      without it the capture has no TX tail to byte-match).
 #   --channel2g N      channel for the --bssid2g pass (default 1).
 #   --client2g BSSID   client for the --bssid2g deauth.
+#   --sta-ssid SSID    OPEN AP for the station TX phase (associate + DHCP +
+#                      ping + disconnect): DATA + deauth MGMT TX reference for
+#                      drivers whose monitor TX never reaches USB.
+#   --sta-pings N      gateway ping count in the station phase (default 20).
 #   --src-dir DIR      vendor source checkout (default /usr/src/rtl8188fu-1.0).
 #   --skip-build       skip the DKMS build/install (source already installed).
 #   --skip-capture     stop after driver install + verification, no capture.
@@ -30,6 +34,8 @@ SKIP_CAPTURE=0
 BSSID2G=""
 CLIENT2G=""
 CHANNEL2G="1"
+STASSID=""
+STAPINGS="20"
 
 usage() {
     sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'
@@ -40,6 +46,8 @@ while [[ $# -gt 0 ]]; do
         --bssid2g)   BSSID2G="${2:-}"; shift 2 ;;
         --client2g)  CLIENT2G="${2:-}"; shift 2 ;;
         --channel2g) CHANNEL2G="${2:-}"; shift 2 ;;
+        --sta-ssid)  STASSID="${2:-}"; shift 2 ;;
+        --sta-pings) STAPINGS="${2:-}"; shift 2 ;;
         --src-dir)   SRC_DIR="${2:-}"; shift 2 ;;
         --skip-build) SKIP_BUILD=1; shift ;;
         --skip-capture) SKIP_CAPTURE=1; shift ;;
@@ -131,6 +139,12 @@ fi
 CAP_ARGS=()
 [[ -n "$BSSID2G" ]] && CAP_ARGS+=(--bssid2g "$BSSID2G" --channel2g "$CHANNEL2G")
 [[ -n "$CLIENT2G" ]] && CAP_ARGS+=(--client2g "$CLIENT2G")
+[[ -n "$STASSID" ]] && CAP_ARGS+=(--station-ssid "$STASSID" --station-pings "$STAPINGS")
+# Raw injector, not aireplay: rtw_monitor_xmit_entry drops any injected frame
+# whose radiotap header is not exactly 12 bytes (silently), so aireplay's
+# probes never reach USB (0 bulk-OUT in captures 1-4). The raw path emits
+# deauth + directed probes with a 12-byte radiotap over AF_PACKET.
+CAP_ARGS+=(--tx-injector raw)
 if [[ "${#CAP_ARGS[@]}" -gt 0 ]]; then
     python3 "$CAPTURE_PY" "${CAP_ARGS[@]}"
 else

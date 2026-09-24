@@ -76,8 +76,11 @@
    monitor entry, then a unified event walk (switches + ticks + one race)
    to the last op of both captures (cap1: 29 switches + 28 ticks,
    rem +3/+0; cap2: 28 switches + 27 ticks + 1 race, rem +2/+0), all
-   first-principles. Next: M8 TX/injection capture. Until TX lands, keep
-   `WIFIT3_RTL8188FTV=mainline`.
+   first-principles. TX is a standalone bulk-OUT gate (`verify_tx.py`):
+   87 station-capture URBs rebuild byte-exact (48 MGMT incl. the
+   disconnect deauth, 39 BE DATA). `driver._inject_frame` sends MGMT;
+   live DATA injection and the warm path are open. Until live injection
+   is proven on hardware, keep `WIFIT3_RTL8188FTV=mainline`.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -94,9 +97,20 @@
   (chip version) + M2 (EFUSE) verify only against capture-2. Fixed going
   forward (`capture.py` `_wait_for_dump` + the enumeration check in
   `capture_vendor_8188fu.sh`).
-- Capture-1 and capture-2 have no TX: aireplay `--test` found no such BSSID
-  (`No such BSSID available`), so the pcaps carry zero bulk-OUT. M8
-  (TX/injection) needs a capture against a visible AP.
+- Capture-1 and capture-2 have no TX: aireplay never got a frame past
+  the driver (see the monitor-TX notes below), so those pcaps carry zero
+  bulk-OUT. M8 landed against capture-6 (station phase: associate +
+  DHCP + ping + disconnect, 87 bulk-OUT URBs on EP 0x02 MGMT / 0x03 BE).
+- Monitor-mode TX is unusable with this vendor build, twice over:
+  `rtw_monitor_xmit_entry` drops any injected frame whose radiotap header
+  is not exactly 12 bytes (silently: frees the skb, reports success, so
+  aireplay counts them sent), and with carrier permanently OFF in monitor
+  mode the qdiscs sit deactivated/frozen (`tx_dropped++`, zero URBs, even
+  over AF_PACKET with PACKET_QDISC_BYPASS → ENOBUFS). Station mode is the
+  working path (carrier ON at MLME connect). wifit3 injects via PyUSB
+  bulk-OUT, so none of these kernel gates apply to the port; the station
+  MGMT reference (44 probes + auth + 2 assoc + disconnect deauth, seq
+  0-47) covers the deauth descriptor byte-for-byte.
 - Solved: the frontier duplicate `R32 0xC80=0x390000E4` was the redundant
   second `odm_TXPowerTrackingInit` — `ODM_DMInit` (`phydm.c`) calls it
   directly right after `phydm_rf_init` already did; both funnel into
@@ -148,9 +162,20 @@
    scores the FA/CCA counters (smooth init 0, `pre_b_noisy` init false),
    the first tick of each capture decides noisy and programs
    `0x430=0`/`0x434=0x04030201` once; later ticks never flip back.
-- Mapped, unported: M8 TX/injection (both captures carry zero bulk-OUT;
-   needs a capture against a visible AP). Until TX lands, keep
-   `WIFIT3_RTL8188FTV=mainline`.
+- M8 landed (MGMT): `tx.py` builds the 40B descriptor
+  (`rtl8188f_fill_default_txdesc`: bcmc mac_id 1, QSLT_MGNT, 11B raid 8,
+  CCK-1M rate, HWSEQ_EN, retry 6 assoc-flow / 12 disconnect-inject,
+  SPE_RPT only on the wait-ack disconnect deauth, XOR checksum over the
+  first 32 bytes with the checksum field zeroed, 8B pad only when
+  `(size + 40) % 512 == 0`) and sends `[desc | frame]` on bulk-OUT EP
+  0x02; `verify_tx.py` replays all 87 station-capture URBs byte-exact
+  (44 probes + auth + 2 assoc + deauth, mgnt_seq 0-47, plus 39 BE DATA
+  with their own seq 1-39 and the EAP/ARP/DHCP 1M rule, EP 0x03).
+  `driver._inject_frame` sends MGMT (frame-seq == desc-seq, `mgnt_seq`
+  state); live DATA injection needs per-link rules still unported
+  (recorded DATA: mac_id 0, raid 6, agg 1). Warm path deferred. Until
+  live injection is proven on hardware, keep
+  `WIFIT3_RTL8188FTV=mainline`.
 - Firmware-based hard-MAC (from the mainline bring-up: no auto-ACK for forged MACs); the vendor stack is not expected to change that silicon limit — `FAKE_MAC = NONE`, to be re-proven on hardware.
 
 ## Driver Entry Points
@@ -167,13 +192,18 @@
 - Monitor entry: (M5) `cfg80211_rtw_change_iface` → `hw_var_set_monitor`.
 - Channel tune: (M6) `cfg80211_rtw_set_monitor_channel` → `set_channel_bwmode` → `rtw_hal_set_chnl_bw`.
 - RX: (M7) `rtl8188fu_inirp_init` + `recvbuf2recvframe` + `rtl8188f_query_rx_desc_status`.
-- TX / inject: (M8) `rtl8188fu_hal_xmit` / `mgnt_xmit` + `rtl8188f_update_txdesc` + `rtw_get_ff_hwaddr`.
+- TX / inject: (M8) `tx.build_mgnt_desc` + `tx.inject_mgnt_frame`
+  (`rtl8188fu_hal_xmit` / `mgnt_xmit` + `rtl8188f_update_txdesc` +
+  `rtw_get_ff_hwaddr`); `verify_tx.py` replays the station-capture
+  bulk-OUT byte-exact.
 - ACK detection: RX-tap admit/drop (M7 tail); auto-ACK verdict deferred to hardware.
 
 ## Scripts
 - `scripts/chips/rtl8188ftv/capture_vendor_8188fu.sh` — reproducible vendor capture (pin + monitor-enabled DKMS build + `capture.py` + bundle self-check).
 - `scripts/chips/rtl8188ftv_dkms/verify_pcap.py` — cold-boot byte gate,
   probe through the last op of both captures (switches + ticks + race).
+- `scripts/chips/rtl8188ftv_dkms/verify_tx.py` — standalone bulk-OUT
+  byte gate against the station TX reference (capture-6.pcap).
 
 ## Debug log
 - 2026-09-22 — vendor capture triage: 30k packets / 57 s, ~6k control setups all `bRequest 0x05`, bulk-IN `0x81` with live RX sizes, zero bulk-OUT (aireplay `No such BSSID available` against `a8:5e:45:04:ce:e0`); `iw set channel` rc=0 on ch1–13, ch14 rejected (`channel is disabled`, regulatory). Monitor lives on the `wlx…` netdev itself.

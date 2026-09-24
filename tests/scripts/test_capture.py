@@ -365,3 +365,133 @@ def test_parse_wifi_ifaces_excludes_p2p():
 def test_appeared_iface_picks_the_new_one():
     after = Capture.parse_wifi_ifaces("\tInterface wlan0\n\tInterface wlan1\n")
     assert sorted(after - {"wlan0"})[-1] == "wlan1"
+
+
+# --- raw injector: 12-byte radiotap builders + backend selection --------------
+
+def test_raw_radiotap_is_12_bytes():
+    from wifit3.scripts.capture import RAW_RTAP_12B
+    assert len(RAW_RTAP_12B) == 12
+    assert RAW_RTAP_12B[0] == 0x00 and int.from_bytes(RAW_RTAP_12B[2:4], "little") == 12
+    assert int.from_bytes(RAW_RTAP_12B[4:8], "little") & 0x66 == 0x66
+
+
+def test_mac_bytes_round_trip():
+    from wifit3.scripts.capture import mac_bytes
+    assert mac_bytes("A8:5E:45:04:CE:E0") == bytes.fromhex("A85E4504CEE0")
+    with pytest.raises(ValueError):
+        mac_bytes("A8:5E:45:04:CE")
+
+
+def test_build_raw_deauth_layout():
+    from wifit3.scripts.capture import build_raw_deauth
+    frame = build_raw_deauth("FF:FF:FF:FF:FF:FF", "A8:5E:45:04:CE:E0",
+                             "A8:5E:45:04:CE:E0")
+    assert len(frame) == 12 + 26
+    assert frame[12:14] == b"\xC0\x00"
+    assert frame[16:22] == bytes.fromhex("FFFFFFFFFFFF")
+    assert frame[22:28] == bytes.fromhex("A85E4504CEE0")
+    assert frame[28:34] == bytes.fromhex("A85E4504CEE0")
+    assert frame[36:38] == b"\x07\x00"
+
+
+def test_build_raw_probe_layout():
+    from wifit3.scripts.capture import build_raw_probe
+    frame = build_raw_probe("44:EF:BF:1F:9D:FB", "1C:63:49:79:C1:04")
+    assert frame[12:14] == b"\x40\x00"
+    assert frame[16:22] == bytes.fromhex("1C634979C104")
+    assert frame[22:28] == bytes.fromhex("44EFBF1F9DFB")
+    assert frame[36:38] == b"\x00\x00"
+    assert frame[38:40] == b"\x01\x08"
+
+
+def test_tx_injector_defaults_to_aireplay(tmp_path):
+    assert _capture(tmp_path).tx_injector == "aireplay"
+
+
+def test_raw_inject_sends_all_frames(tmp_path):
+    import socket
+    cap = _capture(tmp_path)
+    frames = [b"\x00" * 38, b"\x01" * 40]
+    with patch("socket.socket") as mock_sock_cls, patch("time.sleep"):
+        mock_sock_cls.return_value.send.side_effect = [38, 40]
+        sent = cap.raw_inject("mon0", frames)
+    assert sent == 2
+    sock = mock_sock_cls.return_value
+    assert sock.send.call_count == 2
+    sock.bind.assert_called_once_with(("mon0", 0))
+    sol, kind, one = sock.setsockopt.call_args[0]
+    assert (sol, kind, one) == (getattr(socket, "SOL_PACKET", 263),
+                                getattr(socket, "PACKET_QDISC_BYPASS", 20), 1)
+
+
+# --- station TX phase: gateway parse + assoc/dhcp/ping/disconnect order -----
+
+def test_parse_gateway_picks_iface_default():
+    from wifit3.scripts.capture import parse_gateway
+    text = ("default via 10.10.10.1 dev wlxABC proto dhcp metric 600\n"
+            "10.10.10.0/24 dev wlxABC proto kernel scope link src 10.10.10.2\n"
+            "default via 192.168.0.1 dev eth0 proto dhcp metric 100\n")
+    assert parse_gateway(text, "wlxABC") == "10.10.10.1"
+    assert parse_gateway(text, "eth9") is None
+    assert parse_gateway("", "wlxABC") is None
+    assert parse_gateway("default dev wlxABC scope link\n", "wlxABC") is None
+
+
+def test_parse_gateway_device_scoped_accepts_missing_dev():
+    from wifit3.scripts.capture import parse_gateway
+    text = ("default via 10.10.10.1\n"
+            "10.10.10.0/24 proto kernel scope link src 10.10.10.2\n")
+    assert parse_gateway(text, "wlxABC", device_scoped=True) == "10.10.10.1"
+    assert parse_gateway(text, "wlxABC") is None
+
+
+def test_station_defaults_off(tmp_path):
+    cap = _capture(tmp_path)
+    assert cap.station_ssid is None
+    assert cap.station_pings == 20
+
+
+def test_station_tx_segment_runs_assoc_dhcp_ping_disconnect(tmp_path):
+    cap = _capture(tmp_path)
+    cap.mon_iface = "lo"
+    cap.base_iface = "lo"
+    cap.station_ssid = "BEWAVE"
+    cap.station_pings = 3
+    outs = ["", "", "", "",
+            "default via 10.0.0.1 dev lo proto dhcp metric 600\n", "", "",
+            ""]
+    with patch.object(cap, "run_cmd", side_effect=outs) as mock_run, \
+         patch.object(cap, "_carrier_up", return_value=True), \
+         patch("time.sleep"):
+        cap._station_tx_segment()
+    cmds = [" ".join(c.args[0]) for c in mock_run.call_args_list]
+    assert cmds[0].startswith("sudo airmon-ng stop lo")
+    assert "iw dev lo connect BEWAVE" in cmds[1]
+    assert "dhclient -r lo" in cmds[2]
+    assert cmds[3].startswith("sudo dhclient lo")
+    assert cmds[4].startswith("ip route show dev lo")
+    assert cmds[5].startswith("ping -c 3 -W 2 10.0.0.1")
+    assert "iw dev lo disconnect" in cmds[6]
+    assert "dhclient -r lo" in cmds[7]
+
+
+def test_station_tx_segment_skips_without_carrier(tmp_path):
+    cap = _capture(tmp_path)
+    cap.mon_iface = "lo"
+    cap.base_iface = "lo"
+    cap.station_ssid = "BEWAVE"
+    with patch.object(cap, "run_cmd", return_value="") as mock_run, \
+         patch.object(cap, "_carrier_up", return_value=False), \
+         patch("time.sleep"):
+        cap._station_tx_segment()
+    assert mock_run.call_count == 2
+
+
+def test_station_tx_segment_skips_without_mon_iface(tmp_path):
+    cap = _capture(tmp_path)
+    cap.mon_iface = None
+    cap.station_ssid = "BEWAVE"
+    with patch.object(cap, "run_cmd", return_value="") as mock_run:
+        cap._station_tx_segment()
+    assert mock_run.call_count == 0

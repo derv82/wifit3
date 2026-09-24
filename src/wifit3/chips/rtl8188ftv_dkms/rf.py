@@ -62,8 +62,8 @@ def serial_read(t, path: int, offset: int) -> int:
     time.sleep(10e-6)
     pi_enable = bb.query_bb_reg(t, RF_HSSI_PARAM1_A, 0x100)
     if pi_enable:
-        # TODO: verify, untested here, needs a card with RF PI readback
         return bb.query_bb_reg(t, RF_HSPI_READBACK_A, LSSI_READBACK_DATA)
+    # TODO: verify, untested here, needs a card with RF LSSI readback
     return bb.query_bb_reg(t, RF_LSSI_READBACK_A, LSSI_READBACK_DATA)
 
 

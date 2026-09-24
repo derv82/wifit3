@@ -97,3 +97,42 @@ def test_set_channel_failure_returns_false():
         assert asyncio.run(d.set_channel(7)) is False
     finally:
         chan_mod.switch_channel = orig
+
+
+def test_stamp_tx_seq_uses_mgnt_seq_without_advancing():
+    import struct
+    d = _driver()
+    d.hal = {"mgnt_seq": 41}
+    frame = bytes.fromhex("c0000000") + bytes(20)
+    out = d._stamp_tx_seq(frame)
+    assert out[22:24] == struct.pack("<H", (41 << 4) & 0xFFF0)
+    assert out[:22] == frame[:22] and out[24:] == frame[24:]
+    assert d.hal["mgnt_seq"] == 41
+
+
+def test_inject_frame_sends_mgnt_urb_and_advances_seq():
+    import asyncio
+    from wifit3.chips.rtl8188ftv_dkms import tx as tx_mod
+    d = _driver()
+    d.transport = MagicMock()
+    d.hal = {"mgnt_seq": 5}
+    ap = bytes.fromhex("1c634979c104")
+    card = bytes.fromhex("44efbf1f9dfb")
+    frame = tx_mod.stamp_seqnum(tx_mod.build_deauth_frame(ap, card, ap, 0), 5)
+    assert asyncio.run(d._inject_frame(frame)) is True
+    data = d.transport.bulk_out.call_args[0][0]
+    assert data[40:] == frame
+    assert data[:40] == tx_mod.build_mgnt_desc(size=len(frame), seq=5,
+                                               bmc=False)
+    assert d.hal["mgnt_seq"] == 6
+
+
+def test_inject_frame_rejects_data_without_consuming_seq():
+    import asyncio
+    d = _driver()
+    d.transport = MagicMock()
+    d.hal = {"mgnt_seq": 5}
+    assert asyncio.run(d._inject_frame(b"\x08" + bytes(40))) is False
+    assert asyncio.run(d._inject_frame(b"\xc0" * 10)) is False
+    assert d.transport.bulk_out.call_count == 0
+    assert d.hal["mgnt_seq"] == 5
