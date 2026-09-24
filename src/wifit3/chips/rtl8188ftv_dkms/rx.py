@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import struct
 
+from . import constants as C
+
 RXDESC_SIZE = 24
 RX_DRV_INFO_UNIT = 8
+RXFLTMAP1_ACK = 1 << 13   # control subtype 13 = ACK; monitor entry leaves RXFLTMAP1 at 0x0400
 
 
 def cck_rssi_dbm(agc: int) -> int:
@@ -74,3 +77,14 @@ def iter_rx(buf: bytes):
             a["rssi"] = None
         yield a, bytes(buf[start:start + a["pkt_len"]])
         off = (start + a["pkt_len"] + 7) & ~7
+
+
+def admit_ack_frames(t) -> None:
+    """Open RXFLTMAP1 bit 13 so ACK control frames reach the RX tap; monitor
+    entry (mode.enter_monitor) otherwise leaves the map at 0x0400 (PS-Poll only)."""
+    t.write16(C.REG_RXFLTMAP1, t.read16(C.REG_RXFLTMAP1) | RXFLTMAP1_ACK)
+
+
+def drop_ack_frames(t) -> None:
+    """Clear RXFLTMAP1 bit 13, restoring the post-monitor-entry filter."""
+    t.write16(C.REG_RXFLTMAP1, t.read16(C.REG_RXFLTMAP1) & ~RXFLTMAP1_ACK)

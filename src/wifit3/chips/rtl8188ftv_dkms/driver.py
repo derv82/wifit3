@@ -276,6 +276,9 @@ class Rtl8188ftvDkmsDriver(Driver):
             if attrib["c2h"]:
                 self._c2h_count += 1
                 continue
+            if payload[0] == 0xD4 and len(payload) in (10, 14):
+                self.record_ack(payload)   # 14 = 10-byte ACK + appended FCS (monitor RCR BIT31)
+                continue
             if callback is None:
                 continue
             try:
@@ -314,10 +317,12 @@ class Rtl8188ftvDkmsDriver(Driver):
         return bytes(frame_bytes)
 
     async def _enable_rx_acks(self) -> None:
-        return None
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, rx_mod.admit_ack_frames, self.transport)
 
     async def _disable_rx_acks(self) -> None:
-        return None
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, rx_mod.drop_ack_frames, self.transport)
 
     def _claim_usb(self) -> None:
         if self._claimed:
