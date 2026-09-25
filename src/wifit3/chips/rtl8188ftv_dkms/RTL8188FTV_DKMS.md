@@ -88,7 +88,7 @@
    seq 0-39, all checksums valid). The C2H hidden report never posts
    live (0xFD echo; descriptive caps only, no functional impact). DKMS
    is the default (`DkmsFamily`), `WIFIT3_RTL8188FTV=mainline` opts out.
-- Live verification 2026-09-24 (AR9271 witness, ch1): RX at the known-good bar (9.7 bcn/s, 11/11 channels tuned); breadth ties the mainline sibling (4 = 4 APs, RSSI ±0 dB — both hit the local strong-AP ceiling; the AR9271 hears 19, a 1T1R sensitivity gap, not a driver one), so the DKMS default is non-regressive. On-air TX-ACK 100/100 (copies collapse to 1; a dead target piles to the retry limit at 0 ACKs). Auto-ACK re-proven NONE (spoofed 8/100, silicon 8/100, controls 0). 20-min 13-ch hop soak flat (trend 4→4, ratio 1.00). Handshake + PMKID passed on DKMS in a hands-on lab pass 2026-09-25; WPS only lightly tested there, still open for a full run.
+- Live verification 2026-09-24 (AR9271 witness, ch1): RX at the known-good bar (9.7 bcn/s, 11/11 channels tuned); breadth ties the mainline sibling (4 = 4 APs, RSSI ±0 dB — both hit the local strong-AP ceiling; the AR9271 hears 19, a 1T1R sensitivity gap, not a driver one), so the DKMS default is non-regressive. On-air TX-ACK 100/100 (copies collapse to 1; a dead target piles to the retry limit at 0 ACKs). Auto-ACK re-proven NONE (spoofed 8/100, silicon 8/100, controls 0). 20-min 13-ch hop soak flat pre-watchdog (trend 4→4, ratio 1.00); watchdog-era 20-min soak 2026-09-25 flat (trend 35→37, ratio 1.06, active 30–38, no wedge). Handshake + PMKID passed on DKMS in a hands-on lab pass 2026-09-25; WPS only lightly tested there, still open for a full run.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -240,7 +240,8 @@
   puts DATA through the shared MGMT template (mac_id 1, MGNT queue,
   raid 8, retry FALSE), so `tx.inject_frame` now covers MGMT and DATA;
   per-link station DATA rules stay unported.
-- 2026-09-25 - runtime DM watchdog thread wired in (`_watchdog_loop`, hal seeds carry bring-up state, no re-reads) with hermetic lifecycle/tick/skip tests. Live-proven 2026-09-25: 3 ticks in 7.5 s on real hardware (tm_trigger toggled, cur_ig 32->34 under FA load 2250/4666/3654, cur_cck 0->0x40, th_l2h_ini 245->20, rem_ofdm +0->-1->+0 via a real thermal offset); clean close.
+- 2026-09-25 - runtime DM watchdog thread wired in (`_watchdog_loop`, hal seeds carry bring-up state, no re-reads) with hermetic lifecycle/tick/skip tests.
+- 2026-09-25 - watchdog-era 20-min soak flat (trend 35→37, ratio 1.06; warm skip exercised live: FW#1 probe tail skipped on 0xc6/0x06ff, full session after). Live-proven 2026-09-25: 3 ticks in 7.5 s on real hardware (tm_trigger toggled, cur_ig 32->34 under FA load 2250/4666/3654, cur_cck 0->0x40, th_l2h_ini 245->20, rem_ofdm +0->-1->+0 via a real thermal offset); clean close.
 - 2026-09-24 - AR9271-witnessed verification + ACK-tap wiring. RX breadth
   ties mainline, on-air TX-ACK 100/100, auto-ACK re-proven NONE, 20-min
   soak flat (see Status). Wired the RX-ACK tap (`admit_ack_frames` +
