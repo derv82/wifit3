@@ -1,8 +1,8 @@
 """rtl8188ftv_dkms M8: TX descriptor builder + bulk-OUT send.
 
-Recorded vectors are verbatim bulk-OUT descriptor/payload bytes from the
-station-mode TX reference (capture-6.pcap, dev 8, EP 0x02 MGMT / 0x03
-DATA); the builder must reproduce them byte-exact from decoded fields.
+Vectors below are inline recorded descriptor/payload bytes (kept in-file
+so the suite runs anywhere with no capture files); the builder must
+reproduce them byte-exact from decoded fields.
 """
 
 

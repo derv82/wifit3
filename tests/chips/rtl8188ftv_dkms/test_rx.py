@@ -1,15 +1,4 @@
 """rtl8188ftv_dkms RX: descriptor decode + aggregation walk."""
-import shutil
-from pathlib import Path
-
-import pytest
-
-# Replays the gitignored vendor capture via tshark; porting-host only.
-requires_capture = pytest.mark.skipif(
-    not Path("driver_captures/captures_8188fu/capture-1.pcap").exists()
-    or shutil.which("tshark") is None,
-    reason="vendor capture (gitignored) + tshark required; porting-host only",
-)
 
 CAPDESC = bytes.fromhex("1400048400000f1074e140000030000000000000"
                         "006d350800")
@@ -25,17 +14,17 @@ def test_decode_desc():
     assert a["agg_pktnum"] == 0x00
 
 
-@requires_capture
 def test_iter_rx_two_packets():
-    import subprocess
+    import struct
     from wifit3.chips.rtl8188ftv_dkms import rx
-    out = subprocess.run(
-        ["tshark", "-r",
-         "driver_captures/captures_8188fu/capture-1.pcap",
-         "-T", "fields", "-e", "usb.capdata",
-         "-Y", "frame.number==3747"],
-        capture_output=True, text=True, check=True).stdout.strip()
-    pkts = list(rx.iter_rx(bytes.fromhex(out)))
+
+    def desc(n):
+        return struct.pack("<IIIIII", n, 0, 0, 0, 0, 0)
+
+    p1 = b"\xb4\x00" + bytes(18)
+    p2 = b"\xc4\x00" + bytes(12)
+    buf = desc(20) + p1 + bytes(4) + desc(14) + p2 + bytes(2)
+    pkts = list(rx.iter_rx(buf))
     assert [a["pkt_len"] for a, _ in pkts] == [20, 14]
     assert pkts[0][1][:2] == b"\xb4\x00"
     assert pkts[1][1][:2] == b"\xc4\x00"

@@ -1,17 +1,5 @@
 """rtl8188ftv_dkms driver assembly: FW asset, RX dispatch, channel plumbing."""
-import shutil
-from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
-
-# The vendor captures live under the gitignored driver_captures/; these tests
-# replay them via tshark and only run on the porting host that has both.
-requires_capture = pytest.mark.skipif(
-    not Path("driver_captures/captures_8188fu/capture-1.pcap").exists()
-    or shutil.which("tshark") is None,
-    reason="vendor capture (gitignored) + tshark required; porting-host only",
-)
 
 
 def _driver():
@@ -27,52 +15,45 @@ def test_firmware_asset_loads():
     assert fw.parse_header(blob)[:3] == (4, 0, 0x88F1)
 
 
-@requires_capture
+def _rx_desc(n: int) -> bytes:
+    import struct
+    return struct.pack("<IIIIII", n, 0, 0, 0, 0, 0)
+
+
 def test_rx_dispatch_control_frames_parse_to_none():
-    import subprocess
     from wifit3.chips.rtl8188ftv_dkms import rx as rx_mod
     from wifit3.dot11.parser import WlanFrameParser
-    out = subprocess.run(
-        ["tshark", "-r",
-         "driver_captures/captures_8188fu/capture-1.pcap",
-         "-T", "fields", "-e", "usb.capdata",
-         "-Y", "frame.number==3747"],
-        capture_output=True, text=True, check=True).stdout.strip()
-    pkts = list(rx_mod.iter_rx(bytes.fromhex(out)))
+    # Synthetic bulk-IN buffer: two control frames, 8-byte aligned entries
+    # (recorded frame 3747 held the same b4/c4 pair at lengths 20/14).
+    p1 = b"\xb4\x00" + bytes(18)
+    p2 = b"\xc4\x00" + bytes(12)
+    buf = _rx_desc(20) + p1 + bytes(4) + _rx_desc(14) + p2 + bytes(2)
+    pkts = list(rx_mod.iter_rx(buf))
     assert [len(p) for _, p in pkts] == [20, 14]
     assert [p[:2] for _, p in pkts] == [b"\xb4\x00", b"\xc4\x00"]
     assert all(WlanFrameParser.parse_80211_frame(p, -100) is None
                for _, p in pkts)
 
 
-@requires_capture
 def test_rx_dispatch_beacon_bssid():
-    import subprocess
     from wifit3.chips.rtl8188ftv_dkms import rx as rx_mod
     from wifit3.dot11.parser import WlanFrameParser
-    out = subprocess.run(
-        ["tshark", "-r",
-         "driver_captures/captures_8188fu/capture-1.pcap",
-         "-T", "fields", "-e", "frame.number", "-e", "usb.capdata",
-         "-Y", "usb.endpoint_address==0x81 && usb.urb_type==67 && frame.len>300"],
-        capture_output=True, text=True, check=True).stdout
+    # Synthetic beacon for the log-known AP: 24B header + 12B fixed params
+    # + SSID IE, wrapped in one RX descriptor entry.
+    bssid = bytes.fromhex("1c634979c104")
+    hdr = (b"\x80\x00\x00\x00" + b"\xff" * 6 + bssid + bssid + b"\x00\x00")
+    beacon = hdr + bytes(12) + b"\x00\x04TEST"
+    buf = _rx_desc(len(beacon)) + beacon
     bssids = set()
-    for line in out.splitlines():
-        _, _, capdata = line.partition("\t")
-        capdata = capdata.strip()
-        if not capdata:
+    for attrib, payload in rx_mod.iter_rx(buf):
+        if attrib["c2h"] or len(payload) < 24:
             continue
-        for attrib, payload in rx_mod.iter_rx(bytes.fromhex(capdata)):
-            if attrib["c2h"] or len(payload) < 24:
-                continue
-            try:
-                pkt = WlanFrameParser.parse_80211_frame(payload, -100)
-            except Exception:  # noqa: BLE001
-                continue
-            if pkt is not None and pkt.bssid:
-                bssids.add(pkt.bssid.lower())
-        if "1c:63:49:79:c1:04" in bssids:
-            break
+        try:
+            pkt = WlanFrameParser.parse_80211_frame(payload, -100)
+        except Exception:  # noqa: BLE001
+            continue
+        if pkt is not None and pkt.bssid:
+            bssids.add(pkt.bssid.lower())
     assert "1c:63:49:79:c1:04" in bssids
 
 

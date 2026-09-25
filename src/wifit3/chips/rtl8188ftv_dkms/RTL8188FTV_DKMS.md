@@ -197,14 +197,14 @@
   `RxReaderThread` (bulk-IN `0x81` → `rx.iter_rx` → `WlanFrameParser`).
   Cold-only (replug resets); `set_channel` reuses the switch unit with
   hal remnants (post-bring-up +0/+0 until tracking lands);
-  TX/injection raises (no bulk-OUT reference).
+  `driver._inject_frame` sends MGMT and DATA on the monitor template over bulk-OUT (see M8).
 - EFUSE / chip params: (M2) `ReadAdapterInfo8188FU` → `Efuse_PgPacketRead` + `HalEfuseMask8188F_USB` + `Hal_EfuseParse*`.
 - Power off: (M2 tail) `CardDisableRTL8188FU` (LPS-enter + card-disable flows, no deinit at probe).
 - Firmware: (M4) `firmware.download_firmware` / `start` + `init_firmware_vars` (128-B ladder + checksum/ready polls).
 - Monitor entry: (M5) `cfg80211_rtw_change_iface` → `hw_var_set_monitor`.
 - Channel tune: (M6) `cfg80211_rtw_set_monitor_channel` → `set_channel_bwmode` → `rtw_hal_set_chnl_bw`.
 - RX: (M7) `rtl8188fu_inirp_init` + `recvbuf2recvframe` + `rtl8188f_query_rx_desc_status`.
-- TX / inject: (M8) `tx.build_mgnt_desc` + `tx.inject_mgnt_frame`
+- TX / inject: (M8) `tx.build_mgnt_desc` + `tx.inject_frame`
   (`rtl8188fu_hal_xmit` / `mgnt_xmit` + `rtl8188f_update_txdesc` +
   `rtw_get_ff_hwaddr`); `verify_tx.py` replays the station-capture
   bulk-OUT byte-exact.
