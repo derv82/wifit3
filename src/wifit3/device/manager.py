@@ -103,6 +103,7 @@ _DKMS_BY_DIR: dict[str, DkmsFamily] = {
         DkmsFamily(key="ar9271",     default="ar9271_v2"),
         DkmsFamily(key="rtl8821cu",  default="rtl8821cu_dkms"),
         DkmsFamily(key="rtl8188eus", default="rtl8188eus_dkms", mainline="rtl8188eus",   env="WIFIT3_RTL8188"),
+        DkmsFamily(key="rtl8188ftv", default="rtl8188ftv_dkms", mainline="rtl8188ftv",   env="WIFIT3_RTL8188FTV"),
         DkmsFamily(key="rtl8812au",  default="rtl8812au_dkms",  mainline="rtl8812au",    env="WIFIT3_RTL8812"),
         DkmsFamily(key="rtl8821au",  default="rtl8821au_dkms",  mainline="rtl8821au",    env="WIFIT3_RTL8821"),
         DkmsFamily(key="rtl8814au",  default="rtl8814au_dkms",  mainline="rtw88_8814au", env="WIFIT3_RTL8814"),

@@ -28,9 +28,23 @@ Options:
   --no-air          skip the airodump segments (native-hop reference + the
                     fixed-channel over-air pcap that feeds beacon_watch.py).
   --fast-hop        also run the pathological 0.25 s fast-hop stress segment.
+  --station-ssid SSID
+                    after the monitor flow, associate (OPEN) + DHCP + ping
+                    the gateway + disconnect: DATA + deauth MGMT TX reference
+                    for drivers whose monitor TX never reaches USB.
+  --station-pings N number of gateway pings in the station phase (default 20).
+  --iface NAME      use this existing netdev, skip the plug wait (warm
+                    reference: card already plugged, no replug).
+  --tx-injector {aireplay,raw}
+                    injection backend (default aireplay). raw emits deauth +
+                    directed probes with a 12-byte radiotap over AF_PACKET;
+                    required for drivers whose monitor-TX path drops any
+                    other radiotap length (e.g. rtl8188fu).
 """
 
 import argparse
+import socket
+import struct
 import subprocess
 import time
 import sys
@@ -43,6 +57,68 @@ from pathlib import Path
 # A 5 GHz channel renders as "5.NNN GHz" (iwlist) or "5NNN[.N] MHz" (iw phy info); a
 # 2.4 GHz frequency matches neither. Used by detect_5g against whichever tool answered.
 _FIVE_GHZ_RE = re.compile(r"5\.\d+\s*GHz|\b5\d{3}(?:\.\d+)?\s*MHz")
+
+# Monitor-TX radiotap the rtl8188fu vendor build demands: rtw_monitor_xmit_entry
+# drops any injected frame whose radiotap header is not exactly 12 bytes long
+# (silently: it frees the skb and reports success, so aireplay counts them
+# sent). present = FLAGS | RATE | DBM_ANTSIGNAL | DBM_ANTNOISE; the content
+# is ignored, only the length gates.
+RAW_RTAP_12B = bytes((0x00, 0x00, 0x0C, 0x00,
+                      0x66, 0x00, 0x00, 0x00,
+                      0x00, 0x02, 0xCE, 0xBA))
+RAW_DEAUTH_COUNT = 32
+RAW_PROBE_COUNT = 8
+
+
+def mac_bytes(mac: str) -> bytes:
+    parts = mac.split(":")
+    if len(parts) != 6:
+        raise ValueError(f"bad MAC {mac!r}")
+    return bytes(int(p, 16) for p in parts)
+
+
+def build_raw_deauth(dst: str, src: str, bssid: str, seq: int = 0,
+                     reason: int = 7) -> bytes:
+    """One 802.11 deauthentication with a 12-byte radiotap prepended."""
+    return (RAW_RTAP_12B
+            + struct.pack("<HH6s6s6sH", 0x00C0, 0x013A, mac_bytes(dst),
+                          mac_bytes(src), mac_bytes(bssid),
+                          (seq << 4) & 0xFFF0)
+            + struct.pack("<H", reason))
+
+
+def build_raw_probe(src: str, bssid: str, ssid: bytes = b"") -> bytes:
+    """One wildcard-SSID directed probe request, 12-byte radiotap prepended."""
+    hdr = struct.pack("<HH6s6s6sH", 0x0040, 0x013A, mac_bytes(bssid),
+                      mac_bytes(src), mac_bytes(bssid), 0)
+    return (RAW_RTAP_12B + hdr
+            + bytes((0x00, len(ssid))) + ssid
+            + bytes((0x01, 0x08, 0x82, 0x84, 0x8B, 0x96,
+                      0x0C, 0x12, 0x18, 0x24)))
+
+
+def parse_gateway(ip_route_text: str, iface: str,
+                  device_scoped: bool = False) -> str | None:
+    """Default-route gateway for `iface` out of `ip route show` output.
+
+    With device_scoped (the text came from `ip route show dev <iface>`), a
+    `default via` line without a dev token still belongs to the iface.
+    """
+    for line in ip_route_text.splitlines():
+        parts = line.split()
+        if not parts or parts[0] != "default" or "via" not in parts:
+            continue
+        via_at = parts.index("via")
+        if via_at + 1 >= len(parts):
+            continue
+        if "dev" in parts:
+            dev_at = parts.index("dev")
+            if dev_at + 1 < len(parts) and parts[dev_at + 1] != iface:
+                continue
+        elif not device_scoped:
+            continue
+        return parts[via_at + 1]
+    return None
 
 
 class LogHelper:
@@ -92,13 +168,27 @@ class Capture:
 
     def __init__(self, target=None, client=None, run_air=True, fast_hop=False,
                  bssid2g=None, channel2g=1, client2g=None,
-                 bssid5g=None, channel5g=36, client5g=None):
+                 bssid5g=None, channel5g=36, client5g=None,
+                 tx_injector="aireplay", station_ssid=None,
+                 station_pings=20, iface=None):
         self.target_bssid = target
         self.client_bssid = client
         # Per-band injection targets. The 5 GHz pass is gated on supports_5g at
         # run time (see _injection_plan), so --bssid5g is safe to always pass.
         self.bssid2g, self.channel2g, self.client2g = bssid2g, channel2g, client2g
         self.bssid5g, self.channel5g, self.client5g = bssid5g, channel5g, client5g
+        # Injection backend: aireplay (default) or raw (AF_PACKET frames with
+        # a 12-byte radiotap; see RAW_RTAP_12B).
+        self.tx_injector = tx_injector
+        # Station TX phase (post-injection): associate to this OPEN SSID via
+        # iw+dhclient, ping the gateway, then disconnect (deauth MGMT TX).
+        # This is the over-air TX reference for drivers whose monitor-mode TX
+        # never reaches USB (e.g. rtl8188fu: frozen queues at NO-CARRIER).
+        self.station_ssid = station_ssid
+        self.station_pings = station_pings
+        # Existing netdev for warm-reference runs (card already plugged,
+        # no replug, no plug wait, no baseline diff).
+        self.iface = iface
         # The two airodump segments (native-hop reference + fixed-channel
         # over-air pcap) run by default. They're the runtime data a bring-up
         # needs. fast_hop is the pathological 0.25 s stress probe, opt-in.
@@ -432,6 +522,30 @@ class Capture:
             self.logger.log_main("[*] No on-disk driver source (mainline?): use "
                                  "driver.log vermagic/filename to fetch matching source.")
 
+    def _wait_for_dump(self, timeout=15.0):
+        """Block until tshark's child is actually dumping (the pcap exists and is
+        non-empty), then settle briefly so interface attach lag can't eat the
+        plug-time prefix. An idle bus writes no packets, but dumpcap still emits
+        the pcapng header block on open, so size > 0 proves the file is live.
+        Without this a fast plug can lose enumeration + probe before the first
+        frame lands (seen once: 10 silent seconds, pcap opened mid-power-flow)."""
+        pcap_path = self.temp_dir / "capture.pcap"
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                if pcap_path.exists() and pcap_path.stat().st_size > 0:
+                    break
+            except OSError:
+                pass
+            time.sleep(0.5)
+        else:
+            self.logger.log_main("[!] WARNING: capture file never grew; the "
+                                 "front of the capture may be lost")
+            return False
+        time.sleep(2)
+        self.logger.log_main(f"[*] Capture file live: {pcap_path}")
+        return True
+
     def run_cmd(self, cmd_list, fatal=False, timeout=60):
         """Run a command, logging exactly when it started/finished (main.log
         `Running: <cmd>` + the per-tool log), then pause 1 s before returning.
@@ -567,6 +681,9 @@ class Capture:
             f"[{time.time():.3f}] [INJECT-{label}] ch{channel} bssid={bssid}")
         self.run_cmd(["sudo", "iw", "dev", self.mon_iface, "set", "channel",
                       str(channel)], timeout=10)
+        if self.tx_injector == "raw":
+            self._raw_injection_segment(channel, bssid, client, label)
+            return
         self.run_cmd(["sudo", "aireplay-ng", "-a", bssid, "--test",
                       "--ignore-negative-one", self.mon_iface], timeout=60)
         if client:
@@ -575,6 +692,102 @@ class Capture:
         else:
             self.logger.log_main(
                 f"[*] No client for the {label} pass; skipping its deauth.")
+
+    @staticmethod
+    def raw_inject(iface, frames, gap=0.02) -> int:
+        """Blast `frames` (radiotap + 802.11) out `iface` over AF_PACKET.
+
+        PACKET_QDISC_BYPASS skips the egress qdisc: monitor interfaces whose
+        driver never reports carrier (e.g. rtl8188fu) sit at NO-CARRIER with
+        deactivated qdiscs, where every injected frame dies before
+        ndo_start_xmit (netdev tx_dropped++, zero URBs)."""
+        sol_packet = getattr(socket, "SOL_PACKET", 263)
+        qdisc_bypass = getattr(socket, "PACKET_QDISC_BYPASS", 20)
+        sent = 0
+        sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW,
+                             socket.htons(0x0003))
+        try:
+            sock.setsockopt(sol_packet, qdisc_bypass, 1)
+            sock.bind((iface, 0))
+            for frame in frames:
+                if sock.send(frame) != len(frame):
+                    raise OSError("short write on AF_PACKET socket")
+                sent += 1
+                time.sleep(gap)
+        finally:
+            sock.close()
+        return sent
+
+    def _raw_injection_segment(self, channel, bssid, client, label):
+        """AF_PACKET deauth burst + directed probes with a 12-byte radiotap.
+
+        For drivers whose monitor-TX path drops any other radiotap length
+        (rtl8188fu: rtw_monitor_xmit_entry). Non-fatal like the aireplay
+        path; the pcap is never at risk."""
+        try:
+            src = Path(f"/sys/class/net/{self.mon_iface}/address").read_text().strip()
+            mac_bytes(src)
+        except (OSError, ValueError):
+            src = "02:00:00:00:00:00"
+        target = client or "ff:ff:ff:ff:ff:ff"
+        frames = ([build_raw_deauth(target, bssid, bssid)
+                   for _ in range(RAW_DEAUTH_COUNT)]
+                  + [build_raw_probe(src, bssid)
+                     for _ in range(RAW_PROBE_COUNT)])
+        try:
+            sent = self.raw_inject(self.mon_iface, frames)
+        except OSError as e:
+            self.logger.log_main(
+                f"[!] [RAW-INJECT-{label}] socket failed ({e}); continuing.")
+            return
+        self.logger.log_main(
+            f"[*] [RAW-INJECT-{label}] sent {sent}/{len(frames)} frames "
+            f"src={src} dst={target}")
+
+    def _carrier_up(self, iface: str) -> bool:
+        try:
+            return Path(f"/sys/class/net/{iface}/carrier").read_text().strip() == "1"
+        except OSError:
+            return False
+
+    def _station_tx_segment(self):
+        """Associate (OPEN ssid), DHCP, ping burst, disconnect.
+
+        Station mode is the driver happy path (carrier ON activates
+        qdiscs/queues), so this yields DATA TX (DHCP broadcast plus unicast
+        ping) plus a deauth MGMT TX on disconnect, the TX reference for
+        drivers whose monitor TX never reaches USB. Non-fatal throughout."""
+        ssid = self.station_ssid or ""
+        self.logger.log_main(f"[{time.time():.3f}] [STATION-TX] ssid={ssid}")
+        if not self.mon_iface:
+            self.logger.log_main("[!] [STATION-TX] no monitor iface; skipping.")
+            return
+        self.run_cmd(["sudo", "airmon-ng", "stop", self.mon_iface], timeout=30)
+        time.sleep(3)
+        iface = self.base_iface
+        if not Path(f"/sys/class/net/{iface}").is_dir():
+            self.logger.log_main(
+                f"[!] [STATION-TX] {iface} gone after airmon stop; skipping.")
+            return
+        self.run_cmd(["sudo", "iw", "dev", iface, "connect", ssid], timeout=20)
+        for _ in range(20):
+            if self._carrier_up(iface):
+                break
+            time.sleep(1)
+        if not self._carrier_up(iface):
+            self.logger.log_main("[!] [STATION-TX] no carrier; skipping.")
+            return
+        self.run_cmd(["sudo", "dhclient", "-r", iface], timeout=15)
+        self.run_cmd(["sudo", "dhclient", iface], timeout=30)
+        route = self.run_cmd(["ip", "route", "show", "dev", iface], timeout=10)
+        gateway = parse_gateway(route or "", iface, device_scoped=True)
+        if not gateway:
+            self.logger.log_main("[!] [STATION-TX] no gateway; skipping ping.")
+        else:
+            self.run_cmd(["ping", "-c", str(self.station_pings), "-W", "2",
+                          gateway], timeout=20 + 3 * self.station_pings)
+        self.run_cmd(["sudo", "iw", "dev", iface, "disconnect"], timeout=10)
+        self.run_cmd(["sudo", "dhclient", "-r", iface], timeout=15)
 
     def _save_artifacts(self, dest_dir):
         """Move the pcap and copy the per-tool logs into dest_dir (next free
@@ -669,6 +882,7 @@ class Capture:
             ["sudo", "tshark", "-i", self.USBMON, "-w", str(pcap_path), "-q"],
             stdout=self.tshark_log, stderr=self.tshark_log
         )
+        self._wait_for_dump()
 
         # Baseline the USB tree (our card not plugged yet) so snapshot_usb can
         # report exactly what appears: chipset-agnostic device identification.
@@ -677,23 +891,30 @@ class Capture:
             subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout)
 
         # Give the operator time to plug the card in and let it enumerate before
-        # bringing up monitor mode.
-        self.logger.log_main(f"[{time.time():.3f}] --> INSERT THE USB CARD NOW <--")
-        time.sleep(self.PLUG_IN_WAIT)
+        # bringing up monitor mode. With --iface the card is already plugged
+        # (warm reference: no replug, no plug wait, no baseline diff).
+        if self.iface:
+            self.base_iface = self.iface
+            self.logger.log_main(
+                f"[*] Using existing netdev (warm reference): {self.base_iface}")
+        else:
+            self.logger.log_main(f"[{time.time():.3f}] --> INSERT THE USB CARD NOW <--")
+            time.sleep(self.PLUG_IN_WAIT)
 
         # What appeared on the bus is the card.
         self.snapshot_usb("post-plug")
 
         # The card's netdev is the wlan interface that appeared since the pre-plug
         # baseline, same "whatever showed up IS the card" logic as the lsusb diff.
-        appeared = sorted(self.parse_wifi_ifaces(
-            subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout)
-            - self.iface_baseline)
-        if appeared:
-            self.base_iface = appeared[-1]
-            self.logger.log_main(f"[*] Card enumerated as: {self.base_iface}")
-        else:
-            self.logger.log_main(f"[!] No new wlan interface appeared; using {self.base_iface}.")
+        if not self.iface:
+            appeared = sorted(self.parse_wifi_ifaces(
+                subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout)
+                - self.iface_baseline)
+            if appeared:
+                self.base_iface = appeared[-1]
+                self.logger.log_main(f"[*] Card enumerated as: {self.base_iface}")
+            else:
+                self.logger.log_main(f"[!] No new wlan interface appeared; using {self.base_iface}.")
 
         # Monitor-mode bring-up: the one step that must succeed.
         self.run_cmd(["sudo", "airmon-ng", "start", self.base_iface], fatal=True, timeout=30)
@@ -793,6 +1014,11 @@ class Capture:
         for channel, bssid, client, label in plan:
             self._injection_segment(channel, bssid, client, label)
 
+        # Station TX phase (opt-in): station associate + DHCP + ping burst +
+        # disconnect, for drivers whose monitor TX never reaches USB.
+        if self.station_ssid:
+            self._station_tx_segment()
+
         # Opt-in (--fast-hop): 0.25 s fast-hop stress (does the kernel survive
         # the TUI's hop cadence?). Last, so it can't disturb the clean per-hop
         # reference above.
@@ -817,6 +1043,17 @@ def main():
                         help="skip the airodump segments (native-hop + fixed-channel pcap)")
     parser.add_argument("--fast-hop", action="store_true",
                         help="also run the pathological 0.25 s fast-hop stress segment")
+    parser.add_argument("--tx-injector", choices=("aireplay", "raw"), default="aireplay",
+                        help="injection backend (default aireplay); raw uses AF_PACKET "
+                             "with a 12-byte radiotap for drivers that drop aireplay frames")
+    parser.add_argument("--station-ssid",
+                        help="after the monitor flow, associate (OPEN) + DHCP + ping + "
+                             "disconnect for a station-mode TX reference")
+    parser.add_argument("--station-pings", type=int, default=20,
+                        help="gateway pings in the station phase (default 20)")
+    parser.add_argument("--iface",
+                        help="use this existing netdev, skip the plug wait "
+                             "(warm reference: card already plugged, no replug)")
     args = parser.parse_args()
 
     if hasattr(os, "geteuid") and os.geteuid() != 0:
@@ -829,7 +1066,11 @@ def main():
         app = Capture(target=args.target, client=args.client,
                       run_air=not args.no_air, fast_hop=args.fast_hop,
                       bssid2g=args.bssid2g, channel2g=args.channel2g, client2g=args.client2g,
-                      bssid5g=args.bssid5g, channel5g=args.channel5g, client5g=args.client5g)
+                      bssid5g=args.bssid5g, channel5g=args.channel5g, client5g=args.client5g,
+                      tx_injector=args.tx_injector,
+                      station_ssid=args.station_ssid,
+                      station_pings=args.station_pings,
+                      iface=args.iface)
         app.run()
     except KeyboardInterrupt:
         # Use stdout.write to ensure clean newline even in raw mode
