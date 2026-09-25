@@ -101,6 +101,31 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 → [RTL8188EUS_DKMS.md](../src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](../src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
 
+### RTL8188FTV
+*No-name 0bda:f179 dongle · 2.4 GHz only · 1T1R (firmware-based hard-MAC)*
+
+> Firmware-based hard-MAC: no HW auto-ACK at all in monitor mode (rx_autoack vs an AR9271 witness —
+> spoofed MAC 8/100, own MAC 0/100, controls 0/100), so the stop-on-ACK play (WPS/PMKID replay
+> shortcut) is unavailable; WPS/PMKID run on software ACK-retry instead. Passive RX + software TX of
+> both MGMT and DATA frames (deauth, ARP replay, EAPOL) are at kernel parity, and a live AP ACKs the
+> FTV's injected unicast (98/100).
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **Provisional** | 2026-09-24 | RX + TX at kernel parity; Handshake/WPS/PMKID live (active extract, 4-way, PIN→M7); auto-ACK now definitively NONE (hard-MAC — ACKs already ❌, no grade change); provisional pending WEP (no WEP test AP). |
+| RX | ✅ | 2026-09-16 | ref AP 7.0/s == Linux; breadth 24 vs 29; RSSI +0.7 dB; 4/4 channels tuned, 0 silent, 0 cross-channel. |
+| Port | ✅ | 2026-09-16 | Matches rtl8xxxu mainline (the ported driver): beacon rate parity + RSSI +0.7 dB. |
+| TX | ✅ | 2026-09-16 | MGMT: 611 retry-copies (unicast) + 53/60 unique-src broadcast. DATA: 60/60 accepted, 55/60 broadcast + 60/60 unicast on air (BE lane, EP 0x03). |
+| Deauth | ✅ | 2026-09-24 | Broadcast + unicast deauths delivered on air (same inject path); unicast ACKed by a live AP 98/100 (AR9271 witness). |
+| Handshake | ✅ | 2026-09-17 | Live WPA2 test AP: broadcast deauth re-kicked the connected STA → crackable 4-way pair recorded in the parser sink. |
+| PMKID | ✅ | 2026-09-17 | Active extract: forged Auth+Assoc → M1 with PMKID KDE → 16-byte PMKID harvested first attempt (one test AP is KDE-immune, a second exposes it). |
+| WEP | ⬜ | — | Not run: no WEP test AP available (only WPA2; ARP replay unblocked by DATA TX). |
+| WPS | ✅ | 2026-09-17 | Live (WPS v1.0, unlocked): correct PIN → M7 → PSK revealed 5/5, median 1.6 s; wrong-PIN → real NACK (2nd-half-wrong). |
+| ACKs | ❌ | 2026-09-24 | No monitor auto-ACK (AR9271 witness: spoofed 8/100, own MAC 0/100, controls 0/100; AR9271 control 100/100) → FAKE_MAC NONE (definitive). RX-ACK tap + HW retry work; live AP ACKs our TX 98/100. |
+| Stress | ✅ | 2026-09-16 | 20-min 14-ch hop soak: 600 hops, 0 tune failures, 0 dropped, wedged=False (plus a 30-min ch6 dwell). |
+
+→ [RTL8188FTV.md](../src/wifit3/chips/rtl8188ftv/RTL8188FTV.md)
+
 ### RTL8812AU
 <img align="right" width="109" height="165" src="../assets/cardart/card-awus036ach.png" alt="ALFA AWUS036ACH">
 

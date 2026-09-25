@@ -324,6 +324,7 @@ class Ralink(ProductName):
 
 class Realtek(ProductName):
     _8818EUS = "Realtek 8818EUS"
+    _8188FTV = "Realtek 8188FTV"
 
 
 class Sagem(ProductName):
