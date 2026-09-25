@@ -88,7 +88,7 @@
    seq 0-39, all checksums valid). The C2H hidden report never posts
    live (0xFD echo; descriptive caps only, no functional impact). DKMS
    is the default (`DkmsFamily`), `WIFIT3_RTL8188FTV=mainline` opts out.
-- Live verification 2026-09-24 (AR9271 witness, ch1): RX at the known-good bar (9.7 bcn/s, 11/11 channels tuned); breadth ties the mainline sibling (4 = 4 APs, RSSI ±0 dB — both hit the local strong-AP ceiling; the AR9271 hears 19, a 1T1R sensitivity gap, not a driver one), so the DKMS default is non-regressive. On-air TX-ACK 100/100 (copies collapse to 1; a dead target piles to the retry limit at 0 ACKs). Auto-ACK re-proven NONE (spoofed 8/100, silicon 8/100, controls 0). 20-min 13-ch hop soak flat (trend 4→4, ratio 1.00). Handshake/PMKID/WPS not run on DKMS here (no lab-AP/harness this session) — primitives are all proven (inject + AP-ACKs-our-forged-src + ACK tap), so they are expected-equivalent to the mainline sibling pending a hands-on pass.
+- Live verification 2026-09-24 (AR9271 witness, ch1): RX at the known-good bar (9.7 bcn/s, 11/11 channels tuned); breadth ties the mainline sibling (4 = 4 APs, RSSI ±0 dB — both hit the local strong-AP ceiling; the AR9271 hears 19, a 1T1R sensitivity gap, not a driver one), so the DKMS default is non-regressive. On-air TX-ACK 100/100 (copies collapse to 1; a dead target piles to the retry limit at 0 ACKs). Auto-ACK re-proven NONE (spoofed 8/100, silicon 8/100, controls 0). 20-min 13-ch hop soak flat (trend 4→4, ratio 1.00). Handshake + PMKID passed on DKMS in a hands-on lab pass 2026-09-25; WPS only lightly tested there, still open for a full run.
 - Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
@@ -186,8 +186,8 @@
    stay unported — wifit3 injects in monitor mode only). Live deauth
    proven 2026-09-24 (client drop). Warm state warns and runs the cold
    bring-up over it (proven same day); replug only if the scanner stays
-   empty. A skip-redundant-work warm-reattach could use a warm-plug
-   vendor reference (`capture --iface`).
+   empty. Warm attach skips the FW#1 probe tail (single FW download,
+   like the vendor on warm silicon — see below).
 - Firmware-based hard-MAC: no auto-ACK for forged MACs — `FAKE_MAC = NONE`, re-proven on hardware 2026-09-24 (AR9271 prober: spoofed 8/100, own silicon MAC 8/100, controls 0/100; `enter_active_monitor` not overridden, so `rx_autoack` skips the spoofed pass). The vendor stack does not change this silicon limit. WPS/PMKID instead rely on the now-wired software ACK-retry (`_enable_rx_acks` + `inject_frame_slow_retry`), not HW auto-ACK.
 
 ## Driver Entry Points
@@ -218,6 +218,9 @@
   probe through the last op of both captures (switches + ticks + race).
 - `scripts/chips/rtl8188ftv_dkms/verify_tx.py` — standalone bulk-OUT
   byte gate against the station TX reference (capture-6.pcap).
+- `scripts/chips/rtl8188ftv_dkms/verify_warm.py` — warm-prefix gate:
+  power-on + single FW replayed against a warm reference (no probe
+  FW#1 / hidden report / power-off sandwich).
 
 ## Debug log
 - 2026-09-22 — vendor capture triage: 30k packets / 57 s, ~6k control setups all `bRequest 0x05`, bulk-IN `0x81` with live RX sizes, zero bulk-OUT (aireplay `No such BSSID available` against `a8:5e:45:04:ce:e0`); `iw set channel` rc=0 on ch1–13, ch14 rejected (`channel is disabled`, regulatory). Monitor lives on the `wlx…` netdev itself.
@@ -243,5 +246,12 @@
   soak flat (see Status). Wired the RX-ACK tap (`admit_ack_frames` +
   `record_ack`); a first cut missed every ACK because the monitor RCR
   appends FCS (ACK is 14 B, not 10) — fixed, then the FTV tallied 100/100
-  as a prober. Open: handshake/PMKID/WPS campaign runs on DKMS await a
-  lab-AP hands-on pass (no `wps_pin.txt`/harness/connected client here).
+  as a prober. Update 2026-09-25: handshake + PMKID passed in the lab pass; WPS lightly tested, full run still open.
+- 2026-09-25 - warm-attach optimization from the `--iface` warm
+  reference: on warm silicon the vendor runs power-on + exactly one FW
+  download at init (102 ops / 19992 B, no C2H/hidden traffic, no EFUSE
+  re-read in-capture; the modprobe-time probe predates tshark). The
+  probe-time power cycle is gated on the fresh adapter instance, so it
+  still runs at modprobe — our skip covers only our own M2 tail.
+  `verify_warm.py` replays power-on through the FW download (op #516)
+  green; branch tests pin warm=1 FW / cold=2 FWs.

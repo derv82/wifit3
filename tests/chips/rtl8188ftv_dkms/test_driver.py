@@ -235,3 +235,102 @@ def test_watchdog_loop_skips_faulty_tick():
     finally:
         dm_mod.watchdog_tick = orig_tick
         drv_mod.WATCHDOG_PERIOD_S = orig_period
+
+
+def _stubbed_bring_up_modules(monkeypatch, calls):
+    """Stub every module function `_bring_up` touches; record FW#C2H/off."""
+    import types
+    from wifit3.chips.rtl8188ftv_dkms import driver as drv_mod
+    params = types.SimpleNamespace(
+        vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("44efbf1f9dfb"),
+        thermal=0x1A, crystal=0x1D)
+
+    def noop(*a, **k):
+        return None
+
+    stubs = {
+        "info_mod": {"read_chip_version": lambda t: object(),
+                     "is_smic": lambda v: True},
+        "prom_mod": {"read_adapter_info": lambda t, s: (params, b"")},
+        "power_mod": {"power_on": lambda *a, **k: True,
+                      "card_disable": lambda *a, **k: True,
+                      "check_powered": lambda t: (0, 0)},
+        "firmware_mod": {"load_firmware_blob": lambda: b"blob",
+                         "download_firmware": lambda t, b: calls.append("fw") or (4, 0, 0x88F1)},
+        "c2h_mod": {"request_hidden_report": lambda t: calls.append("c2h-req"),
+                    "collect_hidden_report": lambda t: calls.append("c2h-get") or (0x19, b"")},
+        "llt_mod": {"init_llt": lambda t: True, "enable_tx_report": noop},
+        "txpower_mod": {"load_default_pg_tables": lambda: object(),
+                        "set_level": noop},
+        "mac_mod": {"init_antenna_selection": noop, "mac_config": noop},
+        "bb_mod": {"bb_config": noop},
+        "rf_mod": {"rf_config": noop},
+        "chan_mod": {"tune_20": lambda t, ch, v, hal: 0xC01,
+                     "switch_channel": noop},
+        "sec_mod": {"invalidate_cam_all": noop},
+        "dm_mod": {"common_info_self_init": noop, "dig_init_igi": lambda t: 0x20,
+                   "nhm_init": noop, "adaptivity_init": noop,
+                   "cfo_init_atc": noop, "thermal_swing_index": noop,
+                   "tracking_init_second": noop},
+        "cal_mod": {"lc_calibrate": noop},
+        "iqk_mod": {"iq_calibrate": lambda t: {"final": 0xFF}},
+        "track_mod": {"thermal_trigger": noop, "kfree_gain_offset": noop,
+                      "tracking_init_state": lambda e: {}},
+        "queues_mod": {"init_queue_reserved_page": noop,
+                       "init_tx_buffer_boundary": noop,
+                       "init_queue_priority": noop,
+                       "init_page_boundary": noop,
+                       "init_transfer_page_size": noop,
+                       "init_driver_info_size": noop,
+                       "init_macaddr": noop,
+                       "init_network_type": noop,
+                       "init_wmac_setting": noop,
+                       "init_adaptive_ctrl": noop,
+                       "init_edca": noop,
+                       "init_rate_fallback": noop,
+                       "init_retry_function": noop},
+        "misc_mod": {"init_beacon_params": noop,
+                     "init_burst": noop,
+                     "agg_tx_update": noop,
+                     "agg_rx_update": noop,
+                     "init_hw_led": noop,
+                     "drop_incorrect_bulk_out": noop,
+                     "mcast2uni_lifetime": noop,
+                     "turn_on_block": noop,
+                     "misc11_tail": noop,
+                     "init_gpio_setting": noop,
+                     "hal_init_tail": noop},
+        "mode_mod": {"set_station_opmode": noop, "enter_monitor": noop},
+    }
+    for mod_name, fns in stubs.items():
+        mod = getattr(drv_mod, mod_name)
+        for fn_name, fn in fns.items():
+            monkeypatch.setattr(mod, fn_name, fn)
+
+
+def test_bring_up_warm_skips_fw1_probe_tail(monkeypatch):
+    import asyncio
+    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
+    calls = []
+    _stubbed_bring_up_modules(monkeypatch, calls)
+    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: True)
+    monkeypatch.setattr(power_mod, "warm_state", lambda t: (0xC6, 0x06FF))
+    d = _driver()
+    d.transport = MagicMock()
+    assert asyncio.run(d._bring_up(lambda p, m: None)) is True
+    assert calls.count("fw") == 1
+    assert "c2h-req" not in calls and "c2h-get" not in calls
+    assert d.current_channel == 1 and d.hal["channel"] == 1
+
+
+def test_bring_up_cold_runs_fw1_probe_tail(monkeypatch):
+    import asyncio
+    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
+    calls = []
+    _stubbed_bring_up_modules(monkeypatch, calls)
+    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: False)
+    d = _driver()
+    d.transport = MagicMock()
+    assert asyncio.run(d._bring_up(lambda p, m: None)) is True
+    assert calls.count("fw") == 2
+    assert calls.index("c2h-req") < calls.index("c2h-get")

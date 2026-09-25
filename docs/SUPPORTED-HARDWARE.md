@@ -107,8 +107,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 > **Default = vendor/DKMS port** (`chips/rtl8188ftv_dkms`); `WIFIT3_RTL8188FTV=mainline` opts back.
 > The matrix below is the **mainline** variant. The DKMS variant measured at parity on 2026-09-24
 > (breadth 4=4, RSSI ±0 dB, 9.7 bcn/s, 11/11 tuned, on-air TX-ACK 100/100, auto-ACK NONE, 20-min soak
-> flat) → default non-regressive; graded Provisional pending its own handshake/PMKID/WPS run (primitives
-> proven, see the DKMS doc).
+> flat) → default non-regressive; handshake + PMKID passed on DKMS in lab 2026-09-25, WPS lightly tested (see the DKMS doc).
 >
 > Firmware-based hard-MAC: no HW auto-ACK at all in monitor mode (rx_autoack vs an AR9271 witness —
 > spoofed MAC 8/100, own MAC 0/100, controls 0/100), so the stop-on-ACK play (WPS/PMKID replay

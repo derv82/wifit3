@@ -1,13 +1,17 @@
 """RTL8188FTV DKMS (vendor) driver — no-name 0bda:f179 dongles.
 
 Cleanroom port of ``kelebek333/rtl8188fu`` (``v4.3.23.6_20964.20170110``,
-RTL871X stack). Cold bring-up only (a replug resets the chip; no warm
-path yet). Milestone map and open items in ``RTL8188FTV_DKMS.md``;
-``verify_pcap.py`` replays the control flow byte-for-byte.
+RTL871X stack). Warm-aware bring-up: on a warm chip the M2-tail probe
+(FW#1 + hidden report + power-off) is skipped — the vendor runs a single
+FW download at init on warm silicon (warm-reference capture), and the
+hidden report is descriptive-only. Milestone map and open items in
+``RTL8188FTV_DKMS.md``; ``verify_pcap.py`` replays the control flow
+byte-for-byte.
 
     connect()
       ├─ claim USB interface
       ├─ M1 probe (chip version) + M2 EFUSE parse
+      ├─ M3 power on (+ M2-tail FW#1 probe unless warm)
       ├─ M3 power on + M4 FW download (#2, open)
       ├─ M5a-f (MAC/BB/RF/queues/misc/ch1 tune + TX power)
       ├─ M5h (CAM/MISC11/GPIO) + DM-init + LC + IQK + thermal trigger
@@ -112,8 +116,8 @@ class Rtl8188ftvDkmsDriver(Driver):
         try:
             _update(0.02, "Claiming USB interface...")
             await loop.run_in_executor(None, self._claim_usb)
-            logger.info("RTL8188FTV DKMS cold bring-up")
-            ok = await self._cold_bring_up(_update)
+            logger.info("RTL8188FTV DKMS bring-up")
+            ok = await self._bring_up(_update)
             if not ok:
                 return False
             self._rx_reader = RxReaderThread(
@@ -133,17 +137,18 @@ class Rtl8188ftvDkmsDriver(Driver):
         except Exception as e:
             raise BringUpError("bring-up", str(e)) from e
 
-    async def _cold_bring_up(self, _update) -> bool:
+    async def _bring_up(self, _update) -> bool:
         t = self.transport
         loop = asyncio.get_running_loop()
         hal = self.hal
 
-        if await loop.run_in_executor(None, power_mod.is_chip_warm, t):
+        warm = await loop.run_in_executor(None, power_mod.is_chip_warm, t)
+        if warm:
             mcufwdl, cr = await loop.run_in_executor(
                 None, power_mod.warm_state, t)
             logger.warning(
                 "chip already initialized (warm state: MCUFWDL=0x%02x, "
-                "CR=0x%04x); attempting cold bring-up over it, replug "
+                "CR=0x%04x); skipping the FW#1 probe tail, replug "
                 "if the scanner stays empty", mcufwdl, cr)
 
         _update(0.05, "Probing chip version + EFUSE...")
@@ -165,20 +170,21 @@ class Rtl8188ftvDkmsDriver(Driver):
         if not await loop.run_in_executor(None, power_mod.power_on, t):
             raise BringUpError("power", "probe power_on failed")
 
-        _update(0.08, "Probe firmware + hidden report...")
         blob = firmware_mod.load_firmware_blob()
-        ver = await loop.run_in_executor(
-            None, firmware_mod.download_firmware, t, blob)
-        if ver != (4, 0, 0x88F1):
-            raise BringUpError("fw", f"unexpected probe version {ver}")
-        await loop.run_in_executor(None, c2h_mod.request_hidden_report, t)
-        ident, report = await loop.run_in_executor(
-            None, c2h_mod.collect_hidden_report, t)
-        logger.info("Probe hidden report: id 0x%02x, %dB (%s)",
-                    ident, len(report), report.hex())
-        if not await loop.run_in_executor(None, power_mod.card_disable,
-                                          t, False):
-            raise BringUpError("power", "probe power_off failed")
+        if not warm:
+            _update(0.08, "Probe firmware + hidden report...")
+            ver = await loop.run_in_executor(
+                None, firmware_mod.download_firmware, t, blob)
+            if ver != (4, 0, 0x88F1):
+                raise BringUpError("fw", f"unexpected probe version {ver}")
+            await loop.run_in_executor(None, c2h_mod.request_hidden_report, t)
+            ident, report = await loop.run_in_executor(
+                None, c2h_mod.collect_hidden_report, t)
+            logger.info("Probe hidden report: id 0x%02x, %dB (%s)",
+                        ident, len(report), report.hex())
+            if not await loop.run_in_executor(None, power_mod.card_disable,
+                                              t, False):
+                raise BringUpError("power", "probe power_off failed")
 
         _update(0.10, "Power on...")
         if not await loop.run_in_executor(None, power_mod.power_on, t):
