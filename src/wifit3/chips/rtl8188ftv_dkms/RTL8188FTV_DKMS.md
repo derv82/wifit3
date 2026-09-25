@@ -237,7 +237,7 @@
   puts DATA through the shared MGMT template (mac_id 1, MGNT queue,
   raid 8, retry FALSE), so `tx.inject_frame` now covers MGMT and DATA;
   per-link station DATA rules stay unported.
-- 2026-09-25 - runtime DM watchdog thread wired in (`_watchdog_loop`, hal seeds carry bring-up state, no re-reads) with hermetic lifecycle/tick/skip tests.
+- 2026-09-25 - runtime DM watchdog thread wired in (`_watchdog_loop`, hal seeds carry bring-up state, no re-reads) with hermetic lifecycle/tick/skip tests. Live-proven 2026-09-25: 3 ticks in 7.5 s on real hardware (tm_trigger toggled, cur_ig 32->34 under FA load 2250/4666/3654, cur_cck 0->0x40, th_l2h_ini 245->20, rem_ofdm +0->-1->+0 via a real thermal offset); clean close.
 - 2026-09-24 - AR9271-witnessed verification + ACK-tap wiring. RX breadth
   ties mainline, on-air TX-ACK 100/100, auto-ACK re-proven NONE, 20-min
   soak flat (see Status). Wired the RX-ACK tap (`admit_ack_frames` +
