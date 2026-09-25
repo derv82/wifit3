@@ -12,16 +12,21 @@ path yet). Milestone map and open items in ``RTL8188FTV_DKMS.md``;
       ├─ M5a-f (MAC/BB/RF/queues/misc/ch1 tune + TX power)
       ├─ M5h (CAM/MISC11/GPIO) + DM-init + LC + IQK + thermal trigger
       ├─ station opmode + monitor entry
-      └─ start RxReaderThread (bulk-IN pump)
+      ├─ start RxReaderThread (bulk-IN pump)
+      └─ start DM watchdog thread (2 s tick, lock-serialized)
 
 ``set_channel`` reuses the verified switch unit with hal remnants.
 Injection sends MGMT/DATA frames (``tx.inject_frame``, monitor template)
-over bulk-OUT; control frames raise.
+over bulk-OUT; control frames raise. A 2 s watchdog thread
+(``dm.watchdog_tick``: FA + DIG + adaptivity + CCK-PD + RA retry +
+thermal, lock-serialized with channel/inject) keeps gain and TX power
+tracking live; ``WIFIT3_RTL8188FTV_WATCHDOG=off`` disables it.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Callable, ClassVar, List, Optional
 
 import usb.core
@@ -61,6 +66,7 @@ logger = logging.getLogger(__name__)
 BULK_IN_EP = 0x81
 OUT_EP_NUMBER = 2
 OUT_EP_QUEUE_SEL = 0x05
+WATCHDOG_PERIOD_S = 2.0
 
 
 class Rtl8188ftvDkmsDriver(Driver):
@@ -86,6 +92,8 @@ class Rtl8188ftvDkmsDriver(Driver):
         self._rx_reader = None
         self._claimed: bool = False
         self._c2h_count: int = 0
+        self._io_lock = asyncio.Lock()
+        self._watchdog_task = None
 
     def register_rx_callback(self, cb: Callable) -> None:
         self._rx_callback = cb
@@ -115,6 +123,11 @@ class Rtl8188ftvDkmsDriver(Driver):
             )
             self._rx_reader.start()
             self.is_warm = True
+            if os.environ.get("WIFIT3_RTL8188FTV_WATCHDOG") != "off":
+                self._watchdog_task = loop.create_task(self._watchdog_loop())
+            else:
+                logger.info("RTL8188FTV DKMS watchdog disabled "
+                            "(gain/tracking frozen at bring-up values)")
             _update(1.00, "RTL8188FTV DKMS online.")
             return True
         except Exception as e:
@@ -257,15 +270,44 @@ class Rtl8188ftvDkmsDriver(Driver):
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(
-                None, chan_mod.switch_channel, self.transport, channel,
-                self.hal, self.params, self.by_rate, self.hal.get("rem_cck", 0),
-                self.hal.get("rem_ofdm", 0))
+            async with self._io_lock:
+                await loop.run_in_executor(
+                    None, chan_mod.switch_channel, self.transport, channel,
+                    self.hal, self.params, self.by_rate, self.hal.get("rem_cck", 0),
+                    self.hal.get("rem_ofdm", 0))
             self.current_channel = channel
             return True
         except (ValueError, IOError):
             logger.exception("set_channel(%d) failed", channel)
             return False
+
+    async def _watchdog_loop(self) -> None:
+        """Periodic DM watchdog: FA + DIG + adaptivity + CCK-PD + RA retry +
+        thermal trigger/callback, every ``WATCHDOG_PERIOD_S``. Serialized
+        with set_channel/_inject_frame via ``_io_lock`` (shared hal: cur_ig,
+        cur_cck, remnants, tm_trigger). The hal seeds carry bring-up state
+        (no re-reads: the vendor does not re-read at tick start either). A
+        per-tick fault skips the tick, never the loop."""
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                await asyncio.sleep(WATCHDOG_PERIOD_S)
+                try:
+                    async with self._io_lock:
+                        fa = await loop.run_in_executor(
+                            None, dm_mod.watchdog_tick,
+                            self.transport, self.hal)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    logger.debug("RTL8188FTV DKMS watchdog: tick skipped",
+                                 exc_info=True)
+                    continue
+                logger.debug("RTL8188FTV DKMS watchdog: fa=%d rem=(%+d,%+d)",
+                             fa["all"], self.hal.get("rem_cck", 0),
+                             self.hal.get("rem_ofdm", 0))
+        except asyncio.CancelledError:
+            pass
 
     def _rx_read_once(self) -> bytes | None:
         return self.transport.bulk_in(BULK_IN_EP)
@@ -291,6 +333,13 @@ class Rtl8188ftvDkmsDriver(Driver):
                 callback(parsed)
 
     async def close(self) -> None:
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+            self._watchdog_task = None
         if self._rx_reader is not None:
             await self._rx_reader.stop()
             self._rx_reader = None
@@ -302,9 +351,10 @@ class Rtl8188ftvDkmsDriver(Driver):
         ``mgnt_seq`` advances). Control frames raise."""
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(
-                None, tx_mod.inject_frame,
-                self.transport, self.hal, bytes(frame_bytes))
+            async with self._io_lock:
+                await loop.run_in_executor(
+                    None, tx_mod.inject_frame,
+                    self.transport, self.hal, bytes(frame_bytes))
         except (ValueError, IOError):
             logger.exception("inject failed")
             return False

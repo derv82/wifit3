@@ -159,3 +159,79 @@ def test_rx_dispatch_records_ack_with_and_without_fcs():
     d._our_tx_macs.add(ra)
     d._rx_dispatch(buf_for(ack14))
     assert d.acks_seen(ra) == 0
+
+
+def test_watchdog_close_with_no_task_started():
+    import asyncio
+    d = _driver()
+    assert d._watchdog_task is None
+    assert asyncio.run(d.close()) is None
+
+
+def test_watchdog_loop_ticks_shared_hal_then_stops():
+    import asyncio
+    from wifit3.chips.rtl8188ftv_dkms import dm as dm_mod
+    from wifit3.chips.rtl8188ftv_dkms import driver as drv_mod
+    calls = []
+    orig_tick, orig_period = dm_mod.watchdog_tick, drv_mod.WATCHDOG_PERIOD_S
+    try:
+        dm_mod.watchdog_tick = lambda t, st: calls.append(st) or {"all": 12}
+        drv_mod.WATCHDOG_PERIOD_S = 0.01
+
+        async def run():
+            d = _driver()
+            d.transport = MagicMock()
+            d.hal = {"rem_cck": 1, "rem_ofdm": 0}
+            task = asyncio.create_task(d._watchdog_loop())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            return d
+
+        d = asyncio.run(run())
+        assert len(calls) >= 1
+        assert all(st is d.hal for st in calls)
+    finally:
+        dm_mod.watchdog_tick = orig_tick
+        drv_mod.WATCHDOG_PERIOD_S = orig_period
+
+
+def test_watchdog_loop_skips_faulty_tick():
+    import asyncio
+    from wifit3.chips.rtl8188ftv_dkms import dm as dm_mod
+    from wifit3.chips.rtl8188ftv_dkms import driver as drv_mod
+    calls = []
+    results = [IOError("usb gone"), {"all": 3}]
+
+    def flaky(t, st):
+        calls.append(st)
+        res = results.pop(0) if results else {"all": 3}
+        if isinstance(res, Exception):
+            raise res
+        return res
+
+    orig_tick, orig_period = dm_mod.watchdog_tick, drv_mod.WATCHDOG_PERIOD_S
+    try:
+        dm_mod.watchdog_tick = flaky
+        drv_mod.WATCHDOG_PERIOD_S = 0.01
+
+        async def run():
+            d = _driver()
+            d.transport = MagicMock()
+            d.hal = {"rem_cck": 0, "rem_ofdm": 0}
+            task = asyncio.create_task(d._watchdog_loop())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(run())
+        assert len(calls) >= 2  # loop survived the faulty tick
+    finally:
+        dm_mod.watchdog_tick = orig_tick
+        drv_mod.WATCHDOG_PERIOD_S = orig_period

@@ -195,6 +195,8 @@
   M4 FW#2 (open, `assets/rtl8188fufw.bin`) → M5a-f → M5h + DM-init +
   LC + IQK + thermal trigger → station opmode + monitor entry, then
   `RxReaderThread` (bulk-IN `0x81` → `rx.iter_rx` → `WlanFrameParser`).
+  Runtime DM watchdog thread (2 s, `_io_lock`-serialized, per-tick fault skip,
+  `WIFIT3_RTL8188FTV_WATCHDOG=off` disables).
   Cold-only (replug resets); `set_channel` reuses the switch unit with
   hal remnants (post-bring-up +0/+0 until tracking lands);
   `driver._inject_frame` sends MGMT and DATA on the monitor template over bulk-OUT (see M8).
@@ -235,7 +237,8 @@
   puts DATA through the shared MGMT template (mac_id 1, MGNT queue,
   raid 8, retry FALSE), so `tx.inject_frame` now covers MGMT and DATA;
   per-link station DATA rules stay unported.
-- 2026-09-24 — AR9271-witnessed verification + ACK-tap wiring. RX breadth
+- 2026-09-25 - runtime DM watchdog thread wired in (`_watchdog_loop`, hal seeds carry bring-up state, no re-reads) with hermetic lifecycle/tick/skip tests.
+- 2026-09-24 - AR9271-witnessed verification + ACK-tap wiring. RX breadth
   ties mainline, on-air TX-ACK 100/100, auto-ACK re-proven NONE, 20-min
   soak flat (see Status). Wired the RX-ACK tap (`admit_ack_frames` +
   `record_ack`); a first cut missed every ACK because the monitor RCR
