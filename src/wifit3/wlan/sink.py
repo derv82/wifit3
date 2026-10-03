@@ -43,29 +43,6 @@ def _enc_rank(label: str) -> int:
     return 2  # any IE-derived label
 
 
-def _bssid_bit_diff(a: str, b: str) -> int:
-    """Hamming distance between two ``aa:bb:…``-formatted BSSIDs."""
-    pa = a.lower().split(":")
-    pb = b.lower().split(":")
-    if len(pa) != 6 or len(pb) != 6:
-        return 48
-    try:
-        return sum(
-            bin(int(x, 16) ^ int(y, 16)).count("1") for x, y in zip(pa, pb)
-        )
-    except ValueError:
-        return 48
-
-
-def _bssid_byte_diff(a: str, b: str) -> int:
-    """Count differing bytes between two ``aa:bb:…``-formatted BSSIDs."""
-    pa = a.lower().split(":")
-    pb = b.lower().split(":")
-    if len(pa) != 6 or len(pb) != 6:
-        return 6
-    return sum(1 for x, y in zip(pa, pb) if x != y)
-
-
 def _fmt_frame(tag: str, ftype: str, src, dest, bssid) -> str:
     """One consistent line for a captured 802.11 frame."""
     return f"[{tag}] {ftype:<9} {src} → {dest}  (bssid {bssid})"
@@ -406,31 +383,51 @@ class WlanSink:
         """True for a usable SSID (not hidden)."""
         return bool(ssid) and ssid != "<hidden>"
 
+    @staticmethod
+    def _mac_octets(mac: str) -> Optional[bytes]:
+        """The six octets of an ``aa:bb:..``-form MAC, or None if malformed."""
+        parts = mac.split(":")
+        if len(parts) != 6:
+            return None
+        try:
+            return bytes(int(p, 16) for p in parts)
+        except ValueError:
+            return None
+
+    @classmethod
+    def _is_sibling(cls, a: bytes, b: bytes) -> bool:
+        """Same-radio heuristic: MACs differ within SIBLING_BIT_DIFF_MAX bits, or one octet."""
+        bit_diff = byte_diff = 0
+        for x, y in zip(a, b):
+            delta = x ^ y
+            if delta:
+                byte_diff += 1
+                bit_diff += bin(delta).count("1")
+        return bit_diff > 0 and (bit_diff <= cls.SIBLING_BIT_DIFF_MAX or byte_diff == 1)
+
     def _recompute_siblings_for(self, bssid: str) -> None:
-        """Refresh sibling links for ``bssid`` against the whole registry."""
+        """Refresh ``bssid``'s sibling links on its channel. Links are symmetric, so only its own
+        list points back at it: tear that down first (covers a roam), then rebuild same-channel."""
         ap = self.access_points.get(bssid)
-        if not ap:
+        if ap is None:
             return
+        for stale in ap.siblings:
+            other = self.access_points.get(stale)
+            if other is not None and bssid in other.siblings:
+                other.siblings.remove(bssid)
+
+        octets = self._mac_octets(bssid)
         new_siblings: List[str] = []
-        for other_bssid, other_ap in self.access_points.items():
-            if other_bssid == bssid:
-                continue
-            same_channel = other_ap.channel == ap.channel
-            bit_d = _bssid_bit_diff(bssid, other_bssid)
-            byte_d = _bssid_byte_diff(bssid, other_bssid)
-            is_sibling = (
-                same_channel
-                and bit_d > 0
-                and (bit_d <= self.SIBLING_BIT_DIFF_MAX or byte_d == 1)
-            )
-            if is_sibling:
-                new_siblings.append(other_bssid)
-                if bssid not in other_ap.siblings:
-                    other_ap.siblings.append(bssid)
-            else:
-                # Channel mismatch or too divergent: drop any stale link.
-                if bssid in other_ap.siblings:
-                    other_ap.siblings.remove(bssid)
+        if octets is not None:
+            channel = ap.channel
+            for other_bssid, other_ap in self.access_points.items():
+                if other_bssid == bssid or other_ap.channel != channel:
+                    continue
+                other_octets = self._mac_octets(other_bssid)
+                if other_octets is not None and self._is_sibling(octets, other_octets):
+                    new_siblings.append(other_bssid)
+                    if bssid not in other_ap.siblings:
+                        other_ap.siblings.append(bssid)
         ap.siblings = new_siblings
 
     # ----- reads / forged-MAC bookkeeping / TX stats -------------------------
