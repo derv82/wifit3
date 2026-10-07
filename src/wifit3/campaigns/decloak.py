@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 SSID_MAX_OCTETS = 32
 PROBE_REPLY_WINDOW_S = 0.3
+MIN_CANDIDATE_INTERVAL_S = 0.3
 ASSOCIATION_CANDIDATE_LIMIT = 32
 
 # Curated suffix list, kept short on purpose so a full run is ~5 seconds. In-house: keep
@@ -47,7 +48,7 @@ def candidates_from_sibling(sibling_ssid: str) -> list[str]:
         return []
     candidates: list[str] = []
     for suffix in SIBLING_SUFFIXES:
-        candidate = (sibling_ssid + suffix).rstrip()
+        candidate = sibling_ssid + suffix
         if (candidate and candidate not in candidates
                 and len(candidate.encode("utf-8")) <= SSID_MAX_OCTETS):
             candidates.append(candidate)
@@ -79,20 +80,20 @@ class DecloakCampaign(Campaign):
     def visible(cls, ap: AccessPoint) -> bool:
         return ap.is_hidden
 
-    @classmethod
-    def ineligible_reason(cls, ap: AccessPoint) -> Optional[str]:
-        return None if ap.siblings else "No named sibling to guess from"
-
     def __init__(self, array: WlanArray, target: AccessPoint, *,
                  candidates: Optional[list[str]] = None,
+                 candidate_interval: float = MIN_CANDIDATE_INTERVAL_S,
                  log: Optional[Callable[[str], None]] = None) -> None:
         super().__init__(ap=target, array=array)
         self.sibling_ssid = named_sibling_ssid(array, target)
-        self.candidates = candidates or candidates_from_sibling(self.sibling_ssid)
+        self.candidates = (list(candidates) if candidates is not None
+                           else candidates_from_sibling(self.sibling_ssid))
         self.bssid_bytes = str_to_mac(target.bssid)
         self.source_mac = random_client_mac()
         self.revealed: Optional[str] = None
         self.sent = 0
+        self._candidate_interval = candidate_interval
+        self._last_candidate_at: Optional[float] = None
         self._log = log or (lambda _message: None)
 
     def status_under_card(self) -> str:
@@ -104,12 +105,15 @@ class DecloakCampaign(Campaign):
 
     async def _loop(self) -> None:
         if not self.candidates:
-            self._log("no named sibling to guess from")
+            self._log("no candidate SSIDs to try")
             return
         if self.iface is None:
             self._log(f"no card can reach channel {self.ap.channel}")
             return
-        self._log(f"guessing from '{self.sibling_ssid}'")
+        if self.sibling_ssid:
+            self._log(f"guessing from '{self.sibling_ssid}'")
+        else:
+            self._log(f"trying {len(self.candidates)} candidate SSIDs")
         self.array.register_forged_mac(self.source_mac)
         if self.iface.current_channel != self.ap.channel:
             await self.iface.set_channel(self.ap.channel)
@@ -132,6 +136,8 @@ class DecloakCampaign(Campaign):
                     len(self.candidates), mac_to_str(self.source_mac))
         for candidate in self.candidates:
             if self.stopped:
+                return None
+            if not await self._wait_for_candidate_slot():
                 return None
             await self.iface.send_no_wait(
                 probe_req(self.bssid_bytes, self.source_mac, candidate,
@@ -178,6 +184,8 @@ class DecloakCampaign(Campaign):
                     logger.info("[DECLOAK] %s will not authenticate us", self.ap.bssid)
                     return None
                 invented = f"wifit3-control-{os.urandom(8).hex()}"
+                if not await self._wait_for_candidate_slot():
+                    return None
                 if await association.associate_as(invented) == 0:
                     logger.info("[DECLOAK] %s accepts any SSID; association proves nothing",
                                 self.ap.bssid)
@@ -199,12 +207,27 @@ class DecloakCampaign(Campaign):
                 if not await association.authenticate():
                     logger.info("[DECLOAK] %s deauthenticated us mid-sweep", self.ap.bssid)
                     return None
+            if not await self._wait_for_candidate_slot():
+                return None
             self.sent += 1
             if await association.associate_as(candidate) == 0:
                 self.array.decloak(self.ap, candidate, "assoc")
                 logger.info("[DECLOAK] %s accepted %r", self.ap.bssid, candidate)
                 return candidate
         return None
+
+    async def _wait_for_candidate_slot(self) -> bool:
+        if self._last_candidate_at is not None:
+            remaining = self._candidate_interval - (time.monotonic() - self._last_candidate_at)
+            while remaining > 0 and not self.stopped:
+                await asyncio.sleep(min(remaining, 0.05))
+                remaining = self._candidate_interval - (
+                    time.monotonic() - self._last_candidate_at
+                )
+        if self.stopped:
+            return False
+        self._last_candidate_at = time.monotonic()
+        return True
 
     async def _announce_leaving(self, our_mac: bytes) -> None:
         try:

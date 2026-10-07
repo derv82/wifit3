@@ -169,7 +169,7 @@ class PathPickerModal(ModalScreen[Optional[Path]]):
         self._accept(Path(event.value).expanduser())
 
     def on_mount(self) -> None:
-        self._sync_root()
+        self.call_after_refresh(self._sync_root)
 
     @on(Button.Pressed, ".picker-root")
     def _jump_to_root(self, event: Button.Pressed) -> None:
@@ -181,6 +181,8 @@ class PathPickerModal(ModalScreen[Optional[Path]]):
 
     def _sync_root(self) -> None:
         """Point the box and the root node at the tree's root, and disable ".." once at the top."""
+        if not self.is_active:
+            return
         root = Path(self.query_one("#picker-tree", DirectoryTree).path)
         self.query_one("#picker-path", Input).value = str(root)
         self.query_one("#picker-parent", Button).disabled = root.parent == root

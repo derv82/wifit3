@@ -39,6 +39,7 @@ from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
 from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput
 from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal, _can_host
+from wifit3.ui.screens.decloak_modal import DecloakCandidateModal, decloak_candidate_defaults
 from wifit3.campaigns.pin import (EMPTY_PIN_LABEL, WpsCampaign, load_run_state,
                                   run_progress_line)
 from wifit3.campaigns.deauth import DeauthCampaign
@@ -225,7 +226,7 @@ class FocusViewV2(Screen):
         self._campaign_toggles = {
             "wep": self._toggle_generate_ivs, "pmkid": self._toggle_pmkid,
             "wps": self._toggle_wps_pin, "chop": self._toggle_chop,
-            "deauth": self._toggle_deauth,
+            "deauth": self._toggle_deauth, "decloak": self._toggle_decloak,
         }
         self._binding_sig: Optional[tuple] = None
         self._rspacer_w = -1                          # last-set spacer width; skip no-op relayouts
@@ -953,7 +954,7 @@ class FocusViewV2(Screen):
             self._log(treelog.leaf(
                 f"[bold][red]0[/red]/{res.total_sent} de-auths ACK'd[/bold] [dim](silent AP & client)[/dim]"))
 
-    # ----- PMKID -------------------------------------------------------------
+    # ----- Decloak -----------------------------------------------------------
 
     def _toggle_decloak(self) -> None:
         cur = self._controls.current
@@ -969,9 +970,30 @@ class FocusViewV2(Screen):
         if not ap or not array:
             self._log("[red]✗ No target / interface. Aborting decloak.[/red]")
             return
+        base, candidates = decloak_candidate_defaults(array, ap)
+        self.app.push_screen(
+            DecloakCandidateModal(ap.bssid, base, candidates),
+            self._on_decloak_candidates,
+        )
+
+    def _on_decloak_candidates(self, candidates: Optional[list[str]]) -> None:
+        if not candidates:
+            return
+        ap, array = self._target_ap, self.app.array
+        if not ap or not array:
+            return
+        if not ap.is_hidden:
+            self._log(treelog.leaf("SSID was revealed while the candidate list was open"))
+            return
         self._log(treelog.header(f"Decloaking {escape(ap.bssid)}"))
-        self._controls.start(DecloakCampaign, array, ap,
-                             log=lambda m: self._log(treelog.branch(m)))
+        self._log(treelog.branch(f"{len(candidates)} candidate SSIDs"))
+        started = self._controls.start(DecloakCampaign, array, ap, candidates=candidates,
+                                       log=lambda m: self._log(treelog.branch(m)))
+        if started is None:
+            self._log(treelog.leaf_fail("another campaign owns the radio"))
+        self.refresh_buttons()
+
+    # ----- PMKID -------------------------------------------------------------
 
     def _toggle_pmkid(self) -> None:
         cur = self._controls.current

@@ -3,6 +3,7 @@ sweep's adherence to the 802.11 state machine."""
 from __future__ import annotations
 
 import types
+import time
 from unittest.mock import MagicMock
 
 from wifit3.campaigns.decloak import (
@@ -19,11 +20,11 @@ from wifit3.dot11.probe import probe_req
 _BSSID = "aa:bb:cc:dd:ee:ff"
 
 
-def _campaign(candidates, *, target=None):
+def _campaign(candidates, *, target=None, candidate_interval=0):
     array = MagicMock()
     array.access_points = {}
     return DecloakCampaign(array, target or AccessPoint(bssid=_BSSID, channel=6),
-                           candidates=candidates)
+                           candidates=candidates, candidate_interval=candidate_interval)
 
 
 # ----- candidate generation ----------------------------------------------------
@@ -41,10 +42,18 @@ def test_candidates_dedup_and_keep_suffix_order():
     assert len(out) <= len(SIBLING_SUFFIXES)
 
 
-def test_candidates_strip_trailing_whitespace():
-    out = candidates_from_sibling("TestSSID 2.4")
-    assert "TestSSID 2.4 Guest" in out
-    assert "TestSSID 2.4-Guest" in out
+def test_candidates_preserve_sibling_whitespace():
+    out = candidates_from_sibling(" TestSSID ")
+    assert out[0] == " TestSSID "
+    assert " TestSSID  Guest" in out
+    assert " TestSSID -Guest" in out
+
+
+def test_candidates_apply_octet_limit_without_trimming():
+    valid = " " + "X" * 30 + " "
+    invalid = " " + "X" * 31 + " "
+    assert candidates_from_sibling(valid)[0] == valid
+    assert candidates_from_sibling(invalid) == []
 
 
 def test_candidates_drop_names_over_32_octets():
@@ -52,6 +61,22 @@ def test_candidates_drop_names_over_32_octets():
     assert "X" * 31 in out                      # the bare sibling still fits
     assert all(len(c.encode("utf-8")) <= 32 for c in out)
     assert ("X" * 31) + "-Guest" not in out
+
+
+def test_any_hidden_ap_is_eligible_even_without_a_sibling():
+    hidden = AccessPoint(bssid=_BSSID, channel=6)
+    assert hidden.is_hidden and not hidden.siblings
+    assert DecloakCampaign.visible(hidden) is True
+    assert DecloakCampaign.ineligible_reason(hidden) is None
+
+
+def test_explicit_empty_candidates_do_not_fall_back_to_sibling_guesses():
+    sibling = AccessPoint(bssid="11:22:33:44:55:66", ssid="Home", channel=6)
+    hidden = AccessPoint(bssid=_BSSID, channel=6, siblings=[sibling.bssid])
+    array = MagicMock()
+    array.access_points = {sibling.bssid: sibling}
+    campaign = DecloakCampaign(array, hidden, candidates=[])
+    assert campaign.candidates == []
 
 
 def test_named_sibling_prefers_the_most_beaconed():
@@ -113,6 +138,7 @@ class _FakeAssociation:
         self._deauth_after = deauth_after
         self.state = AssocState.AUTHENTICATED   # _claim_each's caller authenticates first
         self.calls: list[str] = []
+        self.called_at: list[float] = []
 
     def start(self) -> None:
         pass
@@ -127,6 +153,7 @@ class _FakeAssociation:
 
     async def associate_as(self, ssid: str):
         self.calls.append(f"assoc:{ssid}")
+        self.called_at.append(time.monotonic())
         status = self._verdicts.get(ssid)
         if status == 0:
             self.state = AssocState.ASSOCIATED
@@ -160,3 +187,17 @@ async def test_sweep_stops_when_asked():
     association = _FakeAssociation({"B": 0})
     assert await campaign._claim_each(association, ["A", "B"]) is None
     assert association.calls == []
+
+
+async def test_sweep_spaces_fast_rejections_at_the_configured_interval():
+    interval = 0.02
+    campaign = _campaign(["A", "B", "C"], candidate_interval=interval)
+    association = _FakeAssociation({})
+
+    await campaign._claim_each(association, ["A", "B", "C"])
+
+    gaps = [later - earlier for earlier, later in zip(
+        association.called_at, association.called_at[1:]
+    )]
+    assert len(gaps) == 2
+    assert all(gap >= interval * 0.8 for gap in gaps)
