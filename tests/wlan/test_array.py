@@ -172,6 +172,54 @@ def test_ingest_dedupes_same_air_across_cards():
     assert folds["n"] == 1                    # sink.update folds the novel copy only
 
 
+def test_ingest_emits_complete_eapol_after_clipped_cross_card_copy():
+    first = FakeIface("wlan0", [6])
+    second = FakeIface("wlan1", [6])
+    array = _pool(first, second)
+    first.emit(_beacon(_raw(seq=b"\x10\x00")))
+    bssid = "aa:bb:cc:dd:ee:ff"
+    client = "02:00:00:00:00:01"
+    header = (
+        b"\x08\x02\x00\x00" + bytes.fromhex(client.replace(":", ""))
+        + bytes.fromhex(bssid.replace(":", "")) * 2 + b"\x20\x00"
+    )
+    common = {
+        "type": "eapol", "from_ds": True, "bssid": bssid, "source": bssid,
+        "dest": client, "eapol_msg_num": 2, "eapol_replay_counter": b"\x00" * 7 + b"\x01",
+        "eapol_nonce": b"\x11" * 32, "eapol_mic": b"\x22" * 16,
+        "eapol_key_data_len": 20,
+    }
+    first.emit(pkt({**common, "raw": header + b"clipped", "eapol_payload": b""}))
+    second.emit(pkt({**common, "raw": header + b"complete", "eapol_payload": b"\x00" * 119}))
+    messages = array.access_points[bssid].handshakes[client].messages
+    assert len(messages) == 2
+    assert messages[0].eapol_payload == b""
+    assert len(messages[1].eapol_payload) == 119
+
+
+def test_ingest_emits_partial_eapol_copy_with_recovered_pmkid():
+    first = FakeIface("wlan0", [6])
+    second = FakeIface("wlan1", [6])
+    array = _pool(first, second)
+    first.emit(_beacon(_raw(seq=b"\x10\x00")))
+    bssid = "aa:bb:cc:dd:ee:ff"
+    client = "02:00:00:00:00:01"
+    header = (
+        b"\x08\x02\x00\x00" + bytes.fromhex(client.replace(":", ""))
+        + bytes.fromhex(bssid.replace(":", "")) * 2 + b"\x30\x00"
+    )
+    common = {
+        "type": "eapol", "from_ds": True, "bssid": bssid, "source": bssid,
+        "dest": client, "eapol_msg_num": 1, "eapol_replay_counter": b"\x00" * 7 + b"\x01",
+        "eapol_nonce": b"\x11" * 32, "eapol_mic": b"\x00" * 16,
+        "eapol_key_data_len": 40, "eapol_payload": b"",
+    }
+    first.emit(pkt({**common, "raw": header + b"clipped"}))
+    pmkid = bytes(range(16))
+    second.emit(pkt({**common, "raw": header + b"partial-with-pmkid", "eapol_pmkid": pmkid}))
+    assert array.access_points[bssid].handshakes[client].pmkid == pmkid
+
+
 def test_ingest_drops_our_own_forged_frames():
     card = FakeIface("wlan0", [6])
     a = _pool(card)
@@ -402,3 +450,64 @@ async def test_claim_when_not_hopping_is_inert():
     async with a.claim(m1) as claimed:
         assert claimed is m1
     assert m1.hop_calls == []
+
+
+async def test_claims_for_the_same_card_are_serialized():
+    card = FakeIface("wlan0", [1, 6, 11])
+    array = _pool(card)
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    entered = []
+
+    async def hold(name, wait=False):
+        async with array.claim(card):
+            entered.append(name)
+            if wait:
+                first_entered.set()
+                await release_first.wait()
+
+    first = asyncio.create_task(hold("first", wait=True))
+    await first_entered.wait()
+    second = asyncio.create_task(hold("second"))
+    await asyncio.sleep(0)
+    assert entered == ["first"]
+    release_first.set()
+    await asyncio.gather(first, second)
+    assert entered == ["first", "second"]
+
+
+async def test_claimed_card_is_excluded_from_selection_and_stack_tuning():
+    first = FakeIface("wlan0", [1, 6, 11])
+    second = FakeIface("wlan1", [1, 6, 11])
+    array = _pool(first, second)
+
+    async with array.claim(first):
+        assert array.select_iface(6) is second
+        await array.set_channel(6)
+        assert first.tuned == []
+        assert second.tuned == [6]
+
+
+async def test_hotplug_repartition_does_not_restart_a_claimed_card():
+    first = FakeIface("wlan0", [1, 6, 11])
+    second = FakeIface("wlan1", [1, 6, 11])
+    array = _pool(first, second)
+    await array.start_hopping([1, 6, 11])
+
+    async with array.claim(first):
+        claimed_hops = len(first.hop_calls)
+        joined = FakeIface("wlan2", [1, 6, 11])
+        array.attach(joined)
+        await asyncio.sleep(0.05)
+        assert len(first.hop_calls) == claimed_hops
+        assert joined.hop_calls
+
+
+async def test_array_lease_claims_its_card_until_cleanup_finishes():
+    first = FakeIface("wlan0", [1, 6, 11])
+    second = FakeIface("wlan1", [1, 6, 11])
+    array = _pool(first, second)
+
+    async with array.lease(channel=6, iface=first):
+        assert array.select_iface(6) is second
+    assert array.select_iface(6) is first

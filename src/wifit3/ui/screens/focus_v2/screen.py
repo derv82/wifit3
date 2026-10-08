@@ -426,7 +426,7 @@ class FocusViewV2(Screen):
 
     async def _enter_target(self) -> None:
         """Bind to ``app.target_ap``: stop campaigns, reset state, update panels/radio/log."""
-        self._controls.stop()
+        await self._controls.stop()
         self._stop_probe()
 
         ap = getattr(self.app, "target_ap", None)
@@ -1104,8 +1104,9 @@ class FocusViewV2(Screen):
             if cur.recovered_key is None:
                 self._controls.request_stop()
             else:
-                self._controls.stop()          # finished campaign lingering; clear then restart
-                self._start_generate_ivs()
+                finished = self._controls.reap()
+                if finished is not None:
+                    self._start_generate_ivs()
         else:
             self._start_generate_ivs()
         self.refresh_buttons()
@@ -1263,7 +1264,7 @@ class FocusViewV2(Screen):
 
     async def action_go_back(self) -> None:
         # Tear down any running attack: Scanner doesn't own the AP's channel, and a forged daemon would keep injecting.
-        self._controls.stop()
+        await self._controls.stop()
         self._stop_probe()
         ap = self._target_ap
         logger.info("[FOCUS] leave: ssid=%r bssid=%s",

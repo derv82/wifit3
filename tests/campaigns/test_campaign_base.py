@@ -119,27 +119,49 @@ async def test_crash_in_teardown_still_releases_radio(caplog):
     assert "crashed in teardown()" in caplog.text
 
 
-async def test_request_stop_frees_slot_synchronously_and_drains():
-    c = _Looper()
+async def test_request_stop_keeps_slot_until_teardown_finishes():
+    teardown_started = asyncio.Event()
+    finish_teardown = asyncio.Event()
+
+    class SlowTeardown(_Looper):
+        async def teardown(self):
+            teardown_started.set()
+            await finish_teardown.wait()
+            await super().teardown()
+
+    c = SlowTeardown()
     c.run()
     await asyncio.sleep(0.003)
     c.request_stop()
-    assert Campaign.active is None           # freed immediately, no await
     assert c.stopped is True
-    await c._task                            # the task drains + tears down on its own
+    await teardown_started.wait()
+    assert Campaign.active is c
+    finish_teardown.set()
+    await c._task
     assert c.tore_down
+    assert Campaign.active is None
 
 
-async def test_draining_teardown_does_not_clobber_a_new_campaign():
-    a = _Looper()
+async def test_new_campaign_waits_for_previous_teardown():
+    teardown_started = asyncio.Event()
+    finish_teardown = asyncio.Event()
+
+    class SlowTeardown(_Looper):
+        async def teardown(self):
+            teardown_started.set()
+            await finish_teardown.wait()
+
+    a = SlowTeardown()
     a.run()
     await asyncio.sleep(0.003)
-    a.request_stop()                         # frees the slot; a is still draining
+    a.request_stop()
+    await teardown_started.wait()
     b = _Looper()
-    assert b.run() is True                   # b claims the freed slot
-    assert Campaign.active is b
-    await a._task                            # a's teardown finally must NOT null b's slot
-    assert Campaign.active is b
+    assert b.run() is False
+    assert Campaign.active is a
+    finish_teardown.set()
+    await a._task
+    assert b.run() is True
     await b.stop()
 
 

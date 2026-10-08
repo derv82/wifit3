@@ -103,8 +103,6 @@ class Campaign:
     def request_stop(self) -> None:
         """Synchronous fire-and-forget stop for sync callers (the screen)."""
         self.stopped = True
-        if Campaign.active is self:
-            Campaign.active = None
 
     @property
     def done(self) -> bool:

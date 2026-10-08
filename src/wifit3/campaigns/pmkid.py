@@ -180,7 +180,7 @@ class PmkidHarvestAttack(Campaign):
                 if self.stopped:
                     return
                 arm = self.array.lease(fake_mac=self.source_mac, bssid=self.bssid_bytes,
-                                       iface=iface)
+                                       iface=iface, exclusive=False)
                 async with arm:
                     if arm.mac:
                         self.source_mac = str_to_mac(arm.mac)

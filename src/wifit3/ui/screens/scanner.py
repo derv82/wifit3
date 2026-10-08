@@ -17,6 +17,7 @@ from ..ap_table import APTable, APRow, COLUMN_KEYS
 from ..selectable_rich_log import SelectableRichLog
 
 from wifit3.campaigns import treelog
+from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.campaigns.wps.registrar import PinResult
@@ -131,10 +132,10 @@ class ScannerView(Screen):
         self._prev_ssids: Dict[str, Optional[str]] = {}
         # Per-BSSID (signature, row): an unchanged AP reuses its row object.
         self._row_cache: Dict[str, tuple] = {}
-        # WPS PBC auto-invade. ON by default. The enabled flag lives on the app
-        # (app.pbc_enabled). Watcher + capturing serialization stay Scanner-local.
+        # WPS PBC auto-invade. ON by default. The enabled flag lives on the app.
         self._pbc_watcher = PbcWatcher()
-        self._pbc_capturing = False          # serialize: one invade at a time
+        self._pbc_campaign: Optional[WpsPbcCapture] = None
+        self._pbc_task: Optional[asyncio.Task] = None
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -458,16 +459,17 @@ class ScannerView(Screen):
         array = self.app.array
         if not array:
             return
-        launched = self._pbc_capturing
         for ap in array.get_access_points():
             if not ap.wps_pbc_active:
                 continue
             if self.app.vault.has_psk(ap):
                 ssid = escape(ap.ssid or ap.bssid)
                 self._write_log(f"  [dim]({ssid} already captured, PSK: [bold]{escape(self.app.vault.known_psk(ap) or '?')}[/bold])[/dim]")
-            elif not launched:
-                launched = True
+            elif not self._pbc_busy():
                 self._on_pbc_window(ap)
+
+    def _pbc_busy(self) -> bool:
+        return self._pbc_campaign is not None and not self._pbc_campaign.done
 
     def _log_pbc_status(self) -> None:
         """WPS PBC auto-invade state as a ● header + detail leaf. Shared by
@@ -509,26 +511,35 @@ class ScannerView(Screen):
             where = f" [dim]({escape(Path(wps.path).name)})[/dim]" if wps else ""
             self._write_log(treelog.leaf(f"[italic]already captured[/italic]{where}"))
             return
-        if self._pbc_capturing:
+        if self._pbc_busy():
             return
-        asyncio.create_task(self._invade_pbc(ap))
+        campaign = WpsPbcCapture(
+            self.app.array, ap, log=lambda m: self._write_log(treelog.branch(m))
+        )
+        if not campaign.run():
+            active = getattr(Campaign.active, "key", "radio")
+            self._write_log(treelog.leaf(f"[dim]{escape(active)} campaign already active[/dim]"))
+            return
+        self._pbc_campaign = campaign
+        self._pbc_task = asyncio.create_task(self._watch_pbc(campaign))
 
-    async def _invade_pbc(self, ap: AccessPoint) -> None:
-        """Pause hop → tune to the target → run the PBC enrollment → resume."""
-        array = self.app.array
-        if not array:
-            return
-        self._pbc_capturing = True
+    async def _watch_pbc(self, campaign: WpsPbcCapture) -> None:
+        """Wait for the Scanner-owned PBC campaign and report its result."""
+        ap = campaign.target
         label = escape(ap.ssid or ap.bssid)
         self._write_log(treelog.branch(
-            f"[cyan]invading[/cyan] [bold]{label}[/bold]: pausing hop, "
+            f"[cyan]invading[/cyan] [bold]{label}[/bold]: claiming a radio, "
             f"tuning [cyan]CH {ap.channel}[/cyan]…"))
         try:
-            await array.stop_hopping()
-            await array.set_channel(ap.channel)
-            outcome = await WpsPbcCapture(
-                array, ap, log=lambda m: self._write_log(treelog.branch(m))
-            ).capture()
+            if campaign._task is not None:
+                await campaign._task
+            if campaign.error is not None:
+                self._write_log(treelog.leaf_fail(
+                    f"capture error: {escape(str(campaign.error))}"))
+                return
+            outcome = campaign.outcome
+            if outcome is None:
+                return
             if outcome.result is PinResult.SUCCESS:
                 ap.wps_pbc_psk = outcome.psk
                 name = escape(outcome.ssid or ap.ssid or ap.bssid)
@@ -550,10 +561,18 @@ class ScannerView(Screen):
         except Exception as exc:                       # never let an invade kill the scanner
             self._write_log(treelog.leaf_fail(f"capture error: {escape(str(exc))}"))
         finally:
-            self._pbc_capturing = False
-            if self.app.screen is self:
-                # Resume hopping only if we're still the foreground screen (not Focus).
-                await array.start_hopping(channels=self._channel_filter, interval=0.25)
+            if self._pbc_campaign is campaign:
+                self._pbc_campaign = None
+                self._pbc_task = None
+
+    async def _stop_pbc(self) -> None:
+        campaign = self._pbc_campaign
+        if campaign is None:
+            return
+        campaign.request_stop()
+        task = self._pbc_task
+        if task is not None and task is not asyncio.current_task():
+            await task
 
     def action_open_vault(self) -> None:
         self.app.action_toggle_vault()
@@ -672,6 +691,7 @@ class ScannerView(Screen):
     async def on_ap_table_row_selected(self, event: APTable.RowSelected) -> None:
         target_ap = self.ap_cache.get(event.bssid)
         if target_ap:
+            await self._stop_pbc()
             if self.app.array:
                 await self.app.array.stop_hopping()
             self.app.target_ap = target_ap

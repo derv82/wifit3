@@ -52,7 +52,8 @@ class _FakeIface:
     def unregister_own_mac(self, mac):
         pass
 
-    def lease(self, channel=None, fake_mac=None, bssid=None, ack_tally=False, iface=None):
+    def lease(self, channel=None, fake_mac=None, bssid=None, ack_tally=False, iface=None,
+              exclusive=True):
         from wifit3.wlan.lease import Lease
         return Lease(self, iface or self, channel=channel, fake_mac=fake_mac,
                      bssid=bssid, ack_tally=ack_tally)

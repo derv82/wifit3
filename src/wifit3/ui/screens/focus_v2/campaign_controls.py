@@ -45,10 +45,13 @@ class CampaignControls:
         if self._campaign is not None:
             self._campaign.request_stop()
 
-    def stop(self) -> None:
-        """Stop and forget immediately (leaving the screen); no result is reaped."""
-        if self._campaign is not None:
-            self._campaign.request_stop()
+    async def stop(self) -> None:
+        """Stop, await teardown, and forget the current campaign."""
+        campaign = self._campaign
+        if campaign is None:
+            return
+        await campaign.stop()
+        if self._campaign is campaign:
             self._campaign = None
 
     def reap(self) -> Optional[Campaign]:
