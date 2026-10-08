@@ -74,6 +74,19 @@ class _HostWithInput(_Host):
 
 
 @pytest.mark.asyncio
+async def test_deferred_sync_is_safe_after_picker_is_dismissed(tree_fixture):
+    app = _HostWithInput(tree_fixture / "wordlists")
+    async with app.run_test() as pilot:
+        app.query_one("#browse", Button).press()
+        await pilot.pause()
+        picker = app.screen
+        picker.call_after_refresh(picker._sync_root)
+        picker.dismiss(None)
+        await pilot.pause()
+        assert app.screen is not picker
+
+
+@pytest.mark.asyncio
 async def test_directory_journey_from_preferences(tree_fixture, monkeypatch):
     """Preferences is itself a ModalScreen, so this also settles the stacking question: the
     picker pushes on top of it, owns escape, and hands a value back on the way out."""
@@ -147,6 +160,8 @@ async def test_file_journey(tree_fixture):
         toasts = []
         picker.notify = lambda *a, **k: toasts.append(a)
 
+        await tree.reload()
+        await pilot.pause()
         assert "rockyou.txt" in {n.data.path.name for n in tree.root.children}, "files are shown"
 
         wordlist = next(n for n in tree.root.children if n.data.path.name == "rockyou.txt")
@@ -157,8 +172,7 @@ async def test_file_journey(tree_fixture):
         # The tree load is a threaded worker; its root highlight must not wipe out typing.
         typed = str(tree_fixture / "wordlists" / "rockyou.txt")
         box.value = typed
-        tree.reload()
-        await pilot.pause()
+        await tree.reload()
         await pilot.pause()
         assert box.value == typed
 

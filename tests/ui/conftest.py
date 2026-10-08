@@ -13,6 +13,7 @@ def _isolate_config(tmp_path, monkeypatch):
     Config.scanner_sort = "signal"
     Config.scanner_sort_reverse = True
     Config.silenced_bssids = []
+    Config.decloaked_ssids = {}
     Config.hide_silenced = False
     yield
 
