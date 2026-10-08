@@ -472,7 +472,7 @@ class DeviceManager:
 
     def _ensure_array(self) -> WlanArray:
         if self.app.array is None:
-            array = WlanArray()
+            array = WlanArray(on_decloak=getattr(self.app, "remember_decloak", None))
             array.register_disconnect_callback(self.app.notify_device_lost)
             self.app.array = array
         return self.app.array

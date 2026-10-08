@@ -174,6 +174,18 @@ def test_decloak_via_probe_resp():
     assert ap.ssid == "Now_Visible" and ap.decloak_method == "probe_resp"
 
 
+def test_decloak_callback_receives_the_first_confirmed_transition_once():
+    learned = []
+    s = WlanSink(on_decloak=learned.append)
+    s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid": "<hidden>"}), W0)
+    s.update(pkt({"type": "probe_resp", "bssid": BSSID, "rssi": -60,
+                  "ssid": "Now_Visible"}), W0)
+    s.update(pkt({"type": "probe_resp", "bssid": BSSID, "rssi": -60,
+                  "ssid": "Now_Visible"}), W0)
+
+    assert learned == [s.access_points[BSSID]]
+
+
 def test_assoc_req_stamps_client_akm():
     s = WlanSink()
     client = "12:22:33:44:55:66"

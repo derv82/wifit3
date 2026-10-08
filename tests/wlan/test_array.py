@@ -8,6 +8,7 @@ import asyncio
 from types import SimpleNamespace
 
 from wifit3.chips.driver import FakeMacSupport
+from wifit3.models import AccessPoint
 from wifit3.wlan.array import WlanArray
 
 from tests.frames import pkt
@@ -79,6 +80,16 @@ def _pool(*ifaces):
     for i in ifaces:
         a.attach(i)
     return a
+
+
+def test_decloak_callback_is_forwarded_to_the_shared_sink():
+    learned = []
+    array = WlanArray(on_decloak=learned.append)
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", channel=6)
+
+    array.decloak(ap, "Recovered", "probe_resp")
+
+    assert learned == [ap]
 
 
 # ----- card selection --------------------------------------------------------

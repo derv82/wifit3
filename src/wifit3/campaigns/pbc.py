@@ -35,6 +35,15 @@ class PbcWatcher:
         self._active = current
         return [ap for ap in aps if ap.bssid in opened]
 
+    def rearm(self, bssid: str) -> None:
+        """Allow an open window to be emitted again on the next poll."""
+        self._active.discard(bssid)
+
+    def defer_new_windows(self, aps) -> None:
+        """Track closures without consuming windows that open while capture is busy."""
+        current = {ap.bssid for ap in aps if getattr(ap, "wps_pbc_active", False)}
+        self._active.intersection_update(current)
+
 
 class WpsPbcCapture(Campaign):
     button_id = None   # no button, auto-triggered when a PBC window opens

@@ -12,7 +12,7 @@ from collections import deque
 import logging
 import threading
 import time
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 
 from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
 from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage, IdSource
@@ -54,7 +54,7 @@ class WlanSink:
     SIBLING_BIT_DIFF_MAX = 4
     SIGNAL_WINDOW_SIZE = 8
 
-    def __init__(self):
+    def __init__(self, on_decloak: Optional[Callable[[AccessPoint], None]] = None):
         self.access_points: Dict[str, AccessPoint] = {}
         self.clients: Dict[str, Client] = {}
         self.wep_store = WepCaptureStore()  # WEP IV tallying
@@ -62,6 +62,7 @@ class WlanSink:
         self.own_macs: Set[str] = set()     # MACs we transmit as; dropped at ingest, never a client
         self._waiters: list = []            # (match, future, loop) for the next_frame await-API
         self._waiters_lock = threading.Lock()
+        self._on_decloak = on_decloak
 
     # ----- signal (per-card) -------------------------------------------------
 
@@ -377,9 +378,15 @@ class WlanSink:
         first source to name a hidden AP is the one recorded."""
         if not self._is_real_ssid(ssid):
             return
-        if not self._is_real_ssid(ap.ssid):
+        was_hidden = not self._is_real_ssid(ap.ssid)
+        if was_hidden:
             ap.decloak_method = method
         ap.ssid = ssid
+        if was_hidden and self._on_decloak is not None:
+            try:
+                self._on_decloak(ap)
+            except Exception:
+                logger.exception("decloak callback failed for %s", ap.bssid)
 
     @staticmethod
     def _is_real_ssid(ssid: Optional[str]) -> bool:

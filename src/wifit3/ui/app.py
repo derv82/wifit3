@@ -1,9 +1,10 @@
 import logging
 import os
 import sys
-from textual import events, work
+from textual import events, on, work
 from textual.app import App
 from textual.binding import Binding
+from textual.message import Message
 from textual.widgets import Header
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
 from typing import Optional
@@ -43,6 +44,12 @@ class WifiteApp(App):
     """wifit3 TUI Main App."""
 
     TITLE = f"wifit3 v{__version__} - derv82"
+
+    class DecloakLearned(Message):
+        def __init__(self, bssid: str, ssid: str) -> None:
+            super().__init__()
+            self.bssid = bssid
+            self.ssid = ssid
 
     ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
@@ -150,6 +157,15 @@ class WifiteApp(App):
             Config.save()
         except ConfigError as e:
             self.notify(str(e), severity="error", title="Config")
+
+    def remember_decloak(self, ap: AccessPoint) -> None:
+        """Queue a confirmed hidden-to-named transition from the RX or UI thread."""
+        self.post_message(self.DecloakLearned(ap.bssid, ap.ssid or ""))
+
+    @on(DecloakLearned)
+    def _persist_decloak(self, event: DecloakLearned) -> None:
+        if Config.remember_decloak(event.bssid, event.ssid):
+            self.persist_config()
 
     def on_mount(self) -> None:
         """Register screens, push the splash, and start the always-on device watch."""
@@ -352,4 +368,3 @@ def _configure_file_logging(cli_log_level: Optional[str]) -> None:
     root.addHandler(handler)
     _FILE_LOGGING_CONFIGURED = True
     logger.info(f"Logging enabled (level={logging.getLevelName(level)})")
-

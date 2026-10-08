@@ -8,7 +8,8 @@ from wifit3.persist.config import Config, ConfigError
 _DEFAULTS = {n: getattr(Config, n)
              for n in (
                  "theme", "scanner_sort", "scanner_sort_reverse", "scanner_sort_delay",
-                 "silenced_bssids", "hide_silenced", "log_level", "captures_dir", "save_pcap",
+                 "silenced_bssids", "decloaked_ssids", "hide_silenced", "log_level",
+                 "captures_dir", "save_pcap",
                  "hashcat_path", "wordlist_path")}
 
 
@@ -123,6 +124,51 @@ def test_silenced_bssids_bad_type_keeps_default(config_path):
     config_path.write_text('silenced_bssids = "not-a-list"\n')
     Config.load()
     assert Config.silenced_bssids == []
+
+
+def test_decloaked_ssids_save_load_roundtrip(config_path):
+    Config.decloaked_ssids = {
+        "aa:bb:cc:dd:ee:ff": "Cafe Guest",
+        "11:22:33:44:55:66": "O'Brien WiFi",
+    }
+    Config.save()
+    text = config_path.read_text("utf-8")
+    assert "[decloak]" in text
+    assert "'aa:bb:cc:dd:ee:ff' = 'Cafe Guest'" in text
+    Config.decloaked_ssids = {}
+    Config.load()
+    assert Config.decloaked_ssids == {
+        "aa:bb:cc:dd:ee:ff": "Cafe Guest",
+        "11:22:33:44:55:66": "O'Brien WiFi",
+    }
+
+
+def test_decloaked_ssids_load_normalizes_bssid_and_ignores_invalid_values(config_path):
+    config_path.write_text(
+        "[decloak]\n"
+        "'AA:BB:CC:DD:EE:FF' = 'Home'\n"
+        "'11:22:33:44:55:66' = ''\n"
+        f"'22:33:44:55:66:77' = '{'X' * 33}'\n"
+        "'33:44:55:66:77:88' = 7\n"
+    )
+    Config.load()
+    assert Config.decloaked_ssids == {"aa:bb:cc:dd:ee:ff": "Home"}
+
+
+def test_decloaked_ssids_bad_table_keeps_default(config_path):
+    Config.decloaked_ssids = {"aa:bb:cc:dd:ee:ff": "Home"}
+    config_path.write_text("decloak = 'not-a-table'\n")
+    Config.load()
+    assert Config.decloaked_ssids == {"aa:bb:cc:dd:ee:ff": "Home"}
+
+
+def test_remember_decloak_only_changes_new_confirmed_names():
+    Config.decloaked_ssids = {}
+    assert Config.remember_decloak("AA:BB:CC:DD:EE:FF", "Home") is True
+    assert Config.remember_decloak("aa:bb:cc:dd:ee:ff", "Home") is False
+    assert Config.remember_decloak("aa:bb:cc:dd:ee:ff", "Renamed") is True
+    assert Config.remember_decloak("11:22:33:44:55:66", "") is False
+    assert Config.decloaked_ssids == {"aa:bb:cc:dd:ee:ff": "Renamed"}
 
 
 def test_hide_silenced_save_load_roundtrip(config_path):

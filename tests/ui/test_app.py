@@ -5,6 +5,8 @@ from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
 from textual.widgets import RichLog
 
+from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
 from wifit3.ui.ap_table import APTable
 
 
@@ -42,3 +44,17 @@ async def test_app_layout_and_boot():
         # Check that FocusViewV2 is registered (but requires target_ap to mount properly without escaping immediately, so we won't push it here)
         assert "focus" in pilot.app._installed_screens
 
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_decloak_message_persists_the_confirmed_mapping():
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="Recovered", channel=6,
+                         decloak_method="probe_resp")
+        app.remember_decloak(ap)
+        await pilot.pause(0)
+        assert Config.decloaked_ssid(ap.bssid) == "Recovered"
+        Config.decloaked_ssids = {}
+        Config.load()
+        assert Config.decloaked_ssid(ap.bssid) == "Recovered"

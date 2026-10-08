@@ -42,6 +42,19 @@ def test_watcher_reopen_retriggers():
     assert [x.bssid for x in w.new_windows([a])] == ["aa"]   # re-opened → fires again
 
 
+def test_watcher_defers_openings_but_tracks_closures():
+    w = PbcWatcher()
+    a = _ap("aa", True)
+    assert w.new_windows([a]) == [a]
+
+    a.wps_pbc_active = False
+    w.defer_new_windows([a])
+    a.wps_pbc_active = True
+    w.defer_new_windows([a])
+
+    assert w.new_windows([a]) == [a]
+
+
 
 
 # ----- capture() arms/restores through the lease (migration guard) -----------

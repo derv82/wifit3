@@ -17,6 +17,8 @@ from ..ap_table import APTable, APRow, COLUMN_KEYS
 from ..selectable_rich_log import SelectableRichLog
 
 from wifit3.campaigns import treelog
+from wifit3.campaigns.campaign import Campaign
+from wifit3.campaigns.decloak import DecloakCampaign
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.campaigns.wps.registrar import PinResult
@@ -24,6 +26,7 @@ from wifit3.persist.config import Config
 from wifit3.models import AccessPoint
 from wifit3.crack.handshake import pmkid_crackable
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
+from wifit3.ui.screens.decloak_modal import DecloakCandidateModal, decloak_candidate_defaults
 
 from ..capture_events import (
     CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
@@ -105,6 +108,7 @@ class ScannerView(Screen):
         Binding("/", "focus_filter", "Filter", show=False),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
+        Binding("h", "decloak", "Decloak", show=True),
         Binding("v", "open_vault", "Vault", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
@@ -135,6 +139,8 @@ class ScannerView(Screen):
         # (app.pbc_enabled). Watcher + capturing serialization stay Scanner-local.
         self._pbc_watcher = PbcWatcher()
         self._pbc_capturing = False          # serialize: one invade at a time
+        self._decloak_campaign: Optional[DecloakCampaign] = None
+        self._decloak_task: Optional[asyncio.Task] = None
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -444,6 +450,88 @@ class ScannerView(Screen):
         bssid = self.query_one("#ap-table", APTable).cursor_bssid
         return self.ap_cache.get(bssid) if bssid else None
 
+    def action_decloak(self) -> None:
+        if self._decloak_task is not None:
+            if self._decloak_campaign is not None:
+                self._decloak_campaign.request_stop()
+                self._write_log(treelog.leaf("[yellow]stopping decloak[/yellow]"))
+            return
+        if self._pbc_capturing or Campaign.active is not None:
+            self._write_log(treelog.leaf_fail("another campaign owns the radio"))
+            return
+        ap = self._selected_ap()
+        array = self.app.array
+        if ap is None or array is None:
+            return
+        if not ap.is_hidden:
+            self._write_log(treelog.leaf(f"[yellow]{escape(ap.ssid or ap.bssid)} is not hidden[/yellow]"))
+            return
+        if Config.is_silenced(ap.bssid):
+            self._write_log(treelog.leaf("[yellow]campaigns are disabled for this AP[/yellow]"))
+            return
+        base, candidates = decloak_candidate_defaults(array, ap)
+        self.app.push_screen(
+            DecloakCandidateModal(ap.bssid, base, candidates),
+            lambda result: self._on_decloak_candidates(ap, result),
+        )
+
+    def _on_decloak_candidates(self, ap: AccessPoint,
+                               candidates: Optional[list[str]]) -> None:
+        if not candidates:
+            return
+        if self._pbc_capturing or Campaign.active is not None:
+            self._write_log(treelog.leaf_fail("another campaign owns the radio"))
+            return
+        if not ap.is_hidden:
+            self._write_log(treelog.leaf("SSID was revealed while the candidate list was open"))
+            return
+        remembered = Config.decloaked_ssid(ap.bssid)
+        if remembered and candidates[0] == remembered:
+            title = f'Decloaking {escape(ap.bssid)} ("{escape(remembered)}")...'
+        else:
+            title = f"Decloaking {escape(ap.bssid)}"
+        self._write_log(treelog.header(title))
+        self._write_log(treelog.branch(f"{len(candidates)} candidate SSIDs"))
+        self._decloak_task = asyncio.create_task(self._run_decloak(ap, candidates))
+
+    async def _run_decloak(self, ap: AccessPoint, candidates: list[str]) -> None:
+        array = self.app.array
+        if array is None:
+            self._decloak_task = None
+            return
+        try:
+            await array.stop_hopping()
+            campaign = DecloakCampaign(
+                array, ap, candidates=candidates,
+                log=lambda message: self._write_log(treelog.branch(message)),
+            )
+            if not campaign.run():
+                self._write_log(treelog.leaf_fail("another campaign owns the radio"))
+                return
+            self._decloak_campaign = campaign
+            while not campaign.done:
+                await asyncio.sleep(0.05)
+            if campaign.revealed:
+                self._write_log(treelog.leaf_ok(
+                    f"revealed [bold]{escape(campaign.revealed)}[/bold]"
+                ))
+            else:
+                self._write_log(treelog.leaf_fail(
+                    f"no match in {campaign.sent} guesses"
+                ))
+        except Exception as exc:
+            self._write_log(treelog.leaf_fail(f"decloak error: {escape(str(exc))}"))
+        finally:
+            self._decloak_campaign = None
+            if self.is_current:
+                try:
+                    await array.start_hopping(channels=self._channel_filter, interval=0.25)
+                except Exception as exc:
+                    self._write_log(treelog.leaf_fail(
+                        f"could not resume channel hopping: {escape(str(exc))}"
+                    ))
+            self._decloak_task = None
+
     # ----- WPS PBC opportunistic capture -------------------------------------
 
     def action_wps_pbc_mode(self) -> None:
@@ -490,7 +578,11 @@ class ScannerView(Screen):
         array = self.app.array
         if not array or self.app.screen is not self:
             return
-        for ap in self._pbc_watcher.new_windows(array.get_access_points()):
+        aps = array.get_access_points()
+        if self._decloak_task is not None:
+            self._pbc_watcher.defer_new_windows(aps)
+            return
+        for ap in self._pbc_watcher.new_windows(aps):
             self._on_pbc_window(ap)
 
     def _on_pbc_window(self, ap: AccessPoint) -> None:
@@ -508,6 +600,12 @@ class ScannerView(Screen):
             wps = self.app.vault.wps_capture(ap)
             where = f" [dim]({escape(Path(wps.path).name)})[/dim]" if wps else ""
             self._write_log(treelog.leaf(f"[italic]already captured[/italic]{where}"))
+            return
+        if self._decloak_task is not None:
+            self._pbc_watcher.rearm(ap.bssid)
+            self._write_log(treelog.leaf(
+                "[yellow]decloak in progress: deferring this PBC window[/yellow]"
+            ))
             return
         if self._pbc_capturing:
             return

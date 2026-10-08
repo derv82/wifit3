@@ -41,10 +41,11 @@ def fake_mac_rank(iface) -> int:
 class WlanArray:
     """A pool of WlanInterfaces feeding one shared WlanSink, plus card selection for attacks."""
 
-    def __init__(self, sink: Optional[WlanSink] = None, window: float = 0.3):
+    def __init__(self, sink: Optional[WlanSink] = None, window: float = 0.3,
+                 on_decloak: Optional[Callable[[AccessPoint], None]] = None):
         self._members: List[WlanInterface] = []
         self._preferred: Optional[WlanInterface] = None   # user's session TX pick; see select_iface
-        self._sink = sink or WlanSink()
+        self._sink = sink or WlanSink(on_decloak=on_decloak)
         self._dedupe = StreamMerger(window=window)
         self._stray_beacon_channels: Dict[str, int] = {}  # bssid -> decoy channel; its beacons are ours
         self._evil_twin_bssids: Set[str] = set()          # our own twin APs; hidden from the scanner
