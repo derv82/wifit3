@@ -64,6 +64,7 @@ _LABELS = {
 
     "asusbe93":        "ASUS USB-BE93",
     "auscomer600":     "Auscoumer 600",
+    "dlinkdwa125":     "D-Link DWA-125",
     "dlinkdwa126":     "D-Link DWA-126",
     "dlinkdwa140":     "D-Link DWA-140",
     "buffalonintendo": "Buffalo Nintendo Wi-Fi",
@@ -77,7 +78,7 @@ _STACKS = {
     "stack-mt7921au":  ["card-awus036axml", "card-pau0f"],
     "stack-rtl8821au": ["card-awus036acs", "card-archert2uplus", "card-archert2u"],
     "stack-rtl8822au": ["card-archert3uplus", "card-archert4uplus"],
-    "stack-rt3070":    ["card-awus036nh", "card-dlinkdwa140"],
+    "stack-rt3070":    ["card-awus036nh", "card-dlinkdwa125", "card-dlinkdwa140"],
 }
 
 

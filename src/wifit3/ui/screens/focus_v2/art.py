@@ -175,6 +175,7 @@ _ART_BY_PRODUCT: dict[str, str] = {
     AMBIGUOUS_AR9271: "cards/card-awus036nha.ans",   # OUI unresolved -> default ALFA
     AMBIGUOUS_MT7921AU: "cards/card-pau0f.ans",   # OUI unresolved -> default PAU0F
     ASUS.USB_BE93: "cards/card-asusbe93.ans",
+    DLink.DWA_125_REV_A2: "cards/card-dlinkdwa125.ans",
     DLink.DWA_126: "cards/card-dlinkdwa126.ans",
     DLink.DWA_140_REV_B2: "cards/card-dlinkdwa140.ans",
     Netgear.A9000: "cards/card-netgeara9000.ans",

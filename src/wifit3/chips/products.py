@@ -128,6 +128,7 @@ class DLink(ProductName):
     AC1200          = "D-Link AC1200"
     DWA_121B1       = "D-Link DWA-121B1"  # https://linux-hardware.org/?id=usb:2001-331b
     DWA_123_REV_D1  = "DWA-123 rev.D1"
+    DWA_125_REV_A2  = "DWA-125 rev.A2"
     DWA_125_REV_D1  = "DWA-125 rev.D1"
     DWA_126         = "D-Link DWA-126"
     DWA_137         = "D-Link DWA-137"
