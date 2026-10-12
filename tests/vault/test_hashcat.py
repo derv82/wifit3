@@ -9,6 +9,13 @@ from wifit3.models.access_point import CaptureType
 from wifit3.models.jobs import ToolStatus
 
 
+def test_hashcat_tool_uses_default_action_and_modal():
+    """Hashcat keeps the generic action button and its config modal."""
+    tool = HashcatTool()
+    assert tool.action_label is None
+    assert tool.requires_config_modal is True
+
+
 def test_poll_status_reports_key_from_potfile(tmp_path):
     """A recovered key is read straight from the potfile (no `--show` subprocess), even for an
     unknown/hung pid, so a hashcat that hangs after cracking still resolves to SUCCESS."""

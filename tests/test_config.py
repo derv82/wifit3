@@ -9,7 +9,9 @@ _DEFAULTS = {n: getattr(Config, n)
              for n in (
                  "theme", "scanner_sort", "scanner_sort_reverse", "scanner_sort_delay",
                  "silenced_bssids", "hide_silenced", "log_level", "captures_dir", "save_pcap",
-                 "hashcat_path", "wordlist_path", "decloaked_ssids")}
+                 "hashcat_path", "wordlist_path", "decloaked_ssids",
+                 "hashtopolis_url", "hashtopolis_token", "hashtopolis_access_group_id",
+                 "hashtopolis_auto_submit", "hashtopolis_trusted_agents_only")}
 
 
 @pytest.fixture(autouse=True)
@@ -190,6 +192,87 @@ def test_load_without_tool_paths_keeps_whatever_is_set(config_path):
     Config.load()
     assert Config.hashcat_path == "/usr/bin/hashcat"
 
+
+# ---- Hashtopolis config -----------------------------------------------------
+
+def test_hashtopolis_defaults(config_path):
+    assert Config.hashtopolis_url is None
+    assert Config.hashtopolis_token is None
+    assert Config.hashtopolis_access_group_id is None
+    assert Config.hashtopolis_auto_submit is False
+    assert Config.hashtopolis_trusted_agents_only is True
+
+
+def test_hashtopolis_scalars_always_written(config_path):
+    Config.save()
+    text = config_path.read_text()
+    assert "hashtopolis_auto_submit = false" in text
+    assert "hashtopolis_trusted_agents_only = true" in text
+
+
+def test_hashtopolis_secrets_omitted_when_unset(config_path):
+    Config.save()
+    text = config_path.read_text()
+    for key in ("hashtopolis_url", "hashtopolis_token", "hashtopolis_access_group_id"):
+        assert key not in text
+
+
+def test_hashtopolis_round_trip(config_path):
+    Config.hashtopolis_url = "http://192.0.2.1:8080"
+    Config.hashtopolis_token = "api-token"
+    Config.hashtopolis_access_group_id = 3
+    Config.hashtopolis_auto_submit = True
+    Config.hashtopolis_trusted_agents_only = False
+    Config.save()
+    for n in ("hashtopolis_url", "hashtopolis_token", "hashtopolis_access_group_id",
+              "hashtopolis_auto_submit",
+              "hashtopolis_trusted_agents_only"):
+        setattr(Config, n, None)
+    Config.load()
+    assert Config.hashtopolis_url == "http://192.0.2.1:8080"
+    assert Config.hashtopolis_token == "api-token"
+    assert Config.hashtopolis_access_group_id == 3
+    assert Config.hashtopolis_auto_submit is True
+    assert Config.hashtopolis_trusted_agents_only is False
+
+
+def test_legacy_password_config_is_ignored_and_removed_on_save(config_path):
+    config_path.write_text(
+        "hashtopolis_url = 'http://ht.local'\n"
+        "hashtopolis_auth_mode = 'password'\n"
+        "hashtopolis_username = 'bob'\n"
+        "hashtopolis_password = 'secret'\n")
+    Config.load()
+    assert Config.hashtopolis_url == "http://ht.local"
+    assert Config.hashtopolis_token is None
+    Config.save()
+    text = config_path.read_text()
+    assert "hashtopolis_auth_mode" not in text
+    assert "hashtopolis_username" not in text
+    assert "hashtopolis_password" not in text
+
+
+def test_hashtopolis_empty_secret_loads_as_unset(config_path):
+    config_path.write_text("hashtopolis_token = ''\n")
+    Config.load()
+    assert Config.hashtopolis_token is None
+
+
+def test_hashtopolis_bad_access_group_id_keeps_default(config_path):
+    config_path.write_text('hashtopolis_access_group_id = "not-an-int"\n')
+    Config.load()
+    assert Config.hashtopolis_access_group_id is None
+
+
+def test_save_sets_owner_only_perms_on_posix(config_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cfg.os, "name", "posix")
+    monkeypatch.setattr(cfg.os, "chmod", lambda p, mode: calls.append(mode))
+    Config.save()
+    assert calls == [0o600]
+
+
+# ---- Decloak persistence ----------------------------------------------------
 
 def test_decloaked_ssids_save_load_roundtrip(config_path):
     assert Config.remember_decloak("AA:BB:CC:DD:EE:FF", "Net-Guest")

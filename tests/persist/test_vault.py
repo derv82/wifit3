@@ -123,6 +123,25 @@ def test_save_handshake_and_pmkid_cached_and_summarized(tmp_path):
     assert v.summary() == "1 handshake, 1 PMKID"
 
 
+def test_save_wpa_psk_caches_and_dedupes(tmp_path):
+    v = Vault()
+    r = v.save_wpa_psk(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet", psk="hunter2")
+    assert r is not None and r.was_new
+    caps = v.persisted("aa:bb:cc:dd:ee:ff")
+    assert len(caps) == 1 and caps[0].type == CaptureType.WPA_PSK and caps[0].value == "hunter2"
+    again = v.save_wpa_psk(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet", psk="hunter2")
+    assert again is not None and not again.was_new
+    assert len(v.persisted("aa:bb:cc:dd:ee:ff")) == 1
+
+
+def test_save_wpa_psk_distinct_keys_kept(tmp_path):
+    v = Vault()
+    v.save_wpa_psk(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet", psk="k1")
+    v.save_wpa_psk(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet", psk="k2")
+    values = {c.value for c in v.persisted("aa:bb:cc:dd:ee:ff") if c.type == CaptureType.WPA_PSK}
+    assert values == {"k1", "k2"}
+
+
 # ---- known_psk / has_psk: session fields OR a prior-session WPS file ---------
 
 def test_known_psk_from_session_fields(tmp_path):

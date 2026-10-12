@@ -12,7 +12,7 @@ from wifit3 import __version__
 from wifit3.chips import log_trace
 from textual.reactive import reactive
 from typing import List
-from wifit3.models.jobs import JobState, ToolCapability, ToolStatus
+from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
@@ -131,7 +131,10 @@ class WifiteApp(App):
                                         on_fatal=self._on_usb_fatal)
         self.target_ap: Optional[AccessPoint] = None
         self.vault = Vault()
-        self._job_status: dict[str, ToolStatus] = {}
+        self._job_status: dict[str, ToolStatus] = {
+            job.job_id: job.status for job in self.vault.manager.get_active_jobs()
+        }
+        self._job_poll_busy: bool = False
         self.pbc_enabled: bool = True
         register_app_themes(self)
         self.theme = Config.theme
@@ -168,7 +171,23 @@ class WifiteApp(App):
         self.call_after_refresh(self._poll_jobs)
 
     def _poll_jobs(self) -> None:
-        self.vault.manager.poll_jobs()
+        if self._job_poll_busy:
+            return
+        self._job_poll_busy = True
+        self._run_job_poll()
+
+    @work(thread=True, group="vault-jobs")
+    def _run_job_poll(self) -> None:
+        try:
+            self.vault.manager.poll_jobs()
+        finally:
+            try:
+                self.call_from_thread(self._after_job_poll)
+            except Exception:
+                self._job_poll_busy = False
+
+    def _after_job_poll(self) -> None:
+        self._job_poll_busy = False
         self.active_jobs = self.vault.manager.get_active_jobs()
         self._notify_completions()
 
@@ -177,12 +196,19 @@ class WifiteApp(App):
         the app started are recorded silently rather than re-announced."""
         terminal = (ToolStatus.SUCCESS, ToolStatus.FAILURE, ToolStatus.ERROR)
         cracked = False
+        drop: list[str] = []
         for job in self.active_jobs:
             prev = self._job_status.get(job.job_id)
-            if job.status in terminal and prev is not None and prev not in terminal:
+            if job.status in terminal and prev not in terminal:
                 self._toast_job(job)
                 cracked = cracked or job.status == ToolStatus.SUCCESS
+                if job.status == ToolStatus.SUCCESS and (job.config or {}).get("auto_clear"):
+                    drop.append(job.job_id)
             self._job_status[job.job_id] = job.status
+        for job_id in drop:
+            self.vault.manager.clear_job(job_id)
+        if drop:
+            self.active_jobs = self.vault.manager.get_active_jobs()
         live = {job.job_id for job in self.active_jobs}
         self._job_status = {k: v for k, v in self._job_status.items() if k in live}
         if cracked:
@@ -199,8 +225,11 @@ class WifiteApp(App):
     def _toast_job(self, job: JobState) -> None:
         if job.status == ToolStatus.SUCCESS:
             msg = job.progress_msg
-            key = msg.split("Key:", 1)[1].strip() if "Key:" in msg else msg
-            self.notify(f"SUCCESS  PSK: {key}", title=job.display_name, severity="information")
+            if "Key:" in msg:
+                self.notify(f"SUCCESS  PSK: {msg.split('Key:', 1)[1].strip()}",
+                            title=job.display_name, severity="information")
+            else:
+                self.notify(f"SUCCESS  {msg}", title=job.display_name, severity="information")
         elif job.status == ToolStatus.FAILURE:
             self.notify(f"NOT FOUND  {job.progress_msg}", title=job.display_name, severity="warning")
         else:
@@ -208,12 +237,7 @@ class WifiteApp(App):
 
     def kill_job(self, job_id: str) -> None:
         """Kill a running job, then refresh the tracker immediately."""
-        job = self.vault.manager.jobs.get(job_id)
-        if job is None:
-            return
-        tool = self.vault.manager.tools.get(job.tool_name)
-        if tool is not None and ToolCapability.KILLABLE in tool.capabilities:
-            tool.kill({'pid': job.pid, 'log_path': job.log_path, 'api_id': job.api_id})
+        self.vault.manager.kill_job(job_id)
         self._poll_jobs()
 
     def clear_job(self, job_id: str) -> None:

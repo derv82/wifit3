@@ -238,8 +238,9 @@ class ScannerView(Screen):
         vault = self.app.vault
         is_stale = self._ap_row_age(ap, now) > STALE_DURATION_S
         beacon_flash = now < self._beacon_flash_until.get(ap.bssid, 0.0)
+        encryption = EncryptionSummary.from_ap(ap)
         signature = self._row_signature(
-            ap, vault, clients, is_stale, beacon_flash, sibling_ssid)
+            ap, vault, clients, is_stale, beacon_flash, sibling_ssid, encryption)
         # EAPOL rewrites ap.handshakes off the beacon path, so APs holding one are
         # never cached. There are only ever a handful of them.
         cacheable = not ap.handshakes
@@ -256,7 +257,7 @@ class ScannerView(Screen):
             signal=ap.signal,
             beacons=ap.beacons,
             clients=clients,
-            encryption=EncryptionSummary.from_ap(ap),
+            encryption=encryption,
             wps=ap.wps,
             wps_locked=ap.wps_locked,
             identity=ap.identity.summary,
@@ -276,21 +277,22 @@ class ScannerView(Screen):
 
     def _row_signature(
         self, ap: AccessPoint, vault, clients: int, is_stale: bool,
-        beacon_flash: bool, sibling_ssid: Optional[str],
+        beacon_flash: bool, sibling_ssid: Optional[str], encryption: EncryptionSummary,
     ) -> tuple:
         """Every input to the row, reduced to values that are cheap to read.
 
-        ``last_seen`` stands in for the whole beacon/probe-response path: wlan/sink.py
-        rewrites it after every IE-derived field, so encryption, AKMs, channel and the
-        rest cannot move without it. Listed explicitly alongside it are the fields a
-        frame can change WITHOUT touching last_seen -- cross-card RSSI, a decloak from a
-        client's probe, a WPS M1's identity, WEP IV counting -- plus the vault and
-        config state the badges read. tests/ui/test_scanner_row_cache.py holds the
-        cached row against a freshly built one, so a missing input here fails loudly.
+        ``last_seen`` tracks the beacon/probe-response path, but its clock resolution is
+        coarse enough that two IE updates can share a tick, so the encryption summary --
+        the one IE-derived field the row renders -- is carried explicitly rather than
+        trusted to move it. Listed alongside are the fields a frame can change WITHOUT
+        touching last_seen -- cross-card RSSI, a decloak from a client's probe, a WPS
+        M1's identity, WEP IV counting -- plus the vault and config state the badges
+        read. tests/ui/test_scanner_row_cache.py holds the cached row against a freshly
+        built one, so a missing input here fails loudly.
         """
         wep = ap.wep
         return (
-            ap.last_seen, ap.beacons, ap.signal, ap.channel, ap.ssid,
+            ap.last_seen, ap.beacons, ap.signal, ap.channel, ap.ssid, encryption,
             ap.wps, ap.wps_locked, ap.identity.summary,
             wep.unique_ivs if wep else 0, ap.wep_key, ap.wps_pbc_psk,
             clients, is_stale, beacon_flash, sibling_ssid,

@@ -31,6 +31,7 @@ class JobState:
     log_path: Optional[str] = None
     api_id: Optional[str] = None
     config: Optional[dict] = None
+    tracking: Optional[dict] = None
 
 @dataclass
 class ToolResult:

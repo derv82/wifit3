@@ -30,6 +30,7 @@ class SaveResult:
     """Outcome of a save_*; was_new is False when a dedupe hit returned an existing path."""
     path: Path
     was_new: bool
+    new_hashlines: tuple[str, ...] = ()
 
 
 def _fresh_path(captures_dir: Path, ssid: str | None, bssid: str, suffix: str) -> Path:
@@ -134,36 +135,40 @@ class HcFiles:
                 return p
         return None
 
-    def write_handshake(self, lines: list[str]) -> Path:
+    def write_handshake(self, lines: list[str]) -> tuple[Path, list[str]]:
         """Persist handshake lines to the AP's .hc22000 file."""
         self.captures_dir.mkdir(parents=True, exist_ok=True)
+        appended: list[str] = []
         if self.agg_path.exists():
             existing_anonces = _read_anonces(self.agg_path)
-            new_lines = []
             for ln in lines:
                 entry = parse_hc22000(ln)
                 if entry and entry.anonce and entry.anonce not in existing_anonces:
-                    new_lines.append(ln)
+                    appended.append(ln)
                     existing_anonces.add(entry.anonce)
-            if new_lines:
+            if appended:
                 with self.agg_path.open("a", encoding="utf-8") as f:
-                    f.write("\n".join(new_lines) + "\n")
+                    f.write("\n".join(appended) + "\n")
         else:
+            appended = list(lines)
             self.agg_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        return self.agg_path
+        return self.agg_path, appended
 
-    def write_pmkid(self, line: str) -> Path:
+    def write_pmkid(self, line: str) -> tuple[Path, list[str]]:
         """Persist PMKID line to the AP's .hc22000 file."""
         self.captures_dir.mkdir(parents=True, exist_ok=True)
+        appended: list[str] = []
         if self.agg_path.exists():
             existing_pmkids = _read_pmkids(self.agg_path)
             entry = parse_hc22000(line)
             if entry and entry.pmkid_or_mic and entry.pmkid_or_mic not in existing_pmkids:
+                appended.append(line)
                 with self.agg_path.open("a", encoding="utf-8") as f:
                     f.write(line + "\n")
         else:
+            appended = [line]
             self.agg_path.write_text(line + "\n", encoding="utf-8")
-        return self.agg_path
+        return self.agg_path, appended
 
     def consolidate(self, legacy_paths: list[Path]) -> tuple[int, int]:
         """Merge legacy paths into self.agg_path and unlink legacy files."""
@@ -260,13 +265,13 @@ def save_handshake(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
     if all_seen and existing_path:
         return SaveResult(path=existing_path, was_new=False)
 
-    target_path = hc.write_handshake(lines)
+    target_path, appended = hc.write_handshake(lines)
 
     if Config.save_pcap:
         pcap_path = _fresh_path(hc.captures_dir, ap.ssid, ap.bssid, "_handshake.pcap")
         write_pcap(pcap_path, _pcap_records_for(ap, client_mac))
 
-    return SaveResult(path=target_path, was_new=True)
+    return SaveResult(path=target_path, was_new=True, new_hashlines=tuple(appended))
 
 
 def save_pmkid(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
@@ -289,8 +294,8 @@ def save_pmkid(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
     if existing_path:
         return SaveResult(path=existing_path, was_new=False)
 
-    target_path = hc.write_pmkid(line)
-    return SaveResult(path=target_path, was_new=True)
+    target_path, appended = hc.write_pmkid(line)
+    return SaveResult(path=target_path, was_new=True, new_hashlines=tuple(appended))
 
 
 def consolidate_hc_files(captures_dir: Path) -> tuple[int, int]:
@@ -398,6 +403,32 @@ def save_wps_pbc(ap: AccessPoint, psk: str) -> Optional[SaveResult]:
     body = (
         f"SSID: {ap.ssid or ''}\n"
         f"BSSID: {ap.bssid}\n"
+        f"PSK: {psk}\n"
+    )
+    path.write_text(body, encoding="utf-8")
+    return SaveResult(path=path, was_new=True)
+
+
+# ----- WPA PSK --------------------------------------------------------------
+
+def save_wpa_psk(ssid: str | None, bssid: str, psk: str) -> Optional[SaveResult]:
+    captures_dir = Path(Config.captures_dir)
+    if not psk:
+        return None
+    for p in _existing(captures_dir, bssid, "_wpa_psk.txt"):
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        m = WPS_PSK_RE.search(text)
+        if m and m.group(1).strip() == psk:
+            return SaveResult(path=p, was_new=False)
+
+    captures_dir.mkdir(parents=True, exist_ok=True)
+    path = _fresh_path(captures_dir, ssid, bssid, "_wpa_psk.txt")
+    body = (
+        f"SSID: {ssid or ''}\n"
+        f"BSSID: {bssid}\n"
         f"PSK: {psk}\n"
     )
     path.write_text(body, encoding="utf-8")

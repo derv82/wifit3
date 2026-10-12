@@ -72,13 +72,81 @@ async def test_toast_on_job_completion(tmp_path):
             assert "PSK: 0xdeadbeef" in args[0]
             assert kwargs["title"] == "hashcat (ASUS)"
 
-        # A job already terminal when first seen is not announced.
+        # A job already terminal when the app started is not announced.
         app.active_jobs = [JobState(job_id="j2", tool_name="hashcat", capture_path="y",
                                     status=ToolStatus.SUCCESS, progress_msg="Cracked! Key: k",
                                     display_name="hashcat (X)")]
+        app._job_status["j2"] = ToolStatus.SUCCESS
         with patch.object(app, "notify") as notify2:
             app._notify_completions()
             notify2.assert_not_called()
+
+        # A newly submitted job which fails on its first poll is announced.
+        app.active_jobs = [JobState(job_id="j3", tool_name="hashtopolis", capture_path="z",
+                                    status=ToolStatus.ERROR, progress_msg="Authentication failed",
+                                    display_name="hashtopolis (X)")]
+        with patch.object(app, "notify") as notify3:
+            app._notify_completions()
+            assert notify3.call_count == 1
+            assert "Authentication failed" in notify3.call_args.args[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_auto_submit_success_job_is_cleared_after_toast(tmp_path):
+    from unittest.mock import patch
+    from wifit3.models.jobs import JobState, ToolStatus
+    app = WifiteApp()
+    async with app.run_test():
+        job = JobState(job_id="ht_auto_1", tool_name="hashtopolis", capture_path="x",
+                       status=ToolStatus.SUCCESS, display_name="hashtopolis (AP)",
+                       progress_msg="Uploaded 1 hash(es) to Hashtopolis hashlist 'AP'",
+                       config={"auto_clear": True})
+        app.vault.manager.jobs[job.job_id] = job
+        app.active_jobs = [job]
+        with patch.object(app, "notify") as notify:
+            app._notify_completions()
+            assert notify.call_count == 1
+        assert job.job_id not in app.vault.manager.jobs
+        assert all(j.job_id != job.job_id for j in app.active_jobs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_manual_success_job_is_retained(tmp_path):
+    from unittest.mock import patch
+    from wifit3.models.jobs import JobState, ToolStatus
+    app = WifiteApp()
+    async with app.run_test():
+        job = JobState(job_id="ht_manual_1", tool_name="hashtopolis", capture_path="x",
+                       status=ToolStatus.SUCCESS, display_name="hashtopolis (AP)",
+                       progress_msg="Uploaded 1 hash(es) to Hashtopolis hashlist 'AP'")
+        app.vault.manager.jobs[job.job_id] = job
+        app.active_jobs = [job]
+        with patch.object(app, "notify"):
+            app._notify_completions()
+        assert job.job_id in app.vault.manager.jobs
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_remote_success_toast_shows_progress_not_key(tmp_path):
+    from unittest.mock import patch
+    from wifit3.models.jobs import JobState, ToolStatus
+    app = WifiteApp()
+    async with app.run_test():
+        job = JobState(job_id="h1", tool_name="hashtopolis", capture_path="x",
+                       status=ToolStatus.RUNNING, progress_msg="Starting...",
+                       display_name="hashtopolis (AP)")
+        app.active_jobs = [job]
+        with patch.object(app, "notify") as notify:
+            app._notify_completions()
+            job.status = ToolStatus.SUCCESS
+            job.progress_msg = "Uploaded 1 hash(es) to Hashtopolis hashlist 'AP'"
+            app._notify_completions()
+            assert notify.call_count == 1
+            args, _ = notify.call_args
+            assert "Uploaded 1 hash(es)" in args[0] and "PSK:" not in args[0]
 
 
 @pytest.mark.asyncio

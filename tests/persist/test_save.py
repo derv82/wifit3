@@ -8,6 +8,7 @@ from wifit3.persist.save import (
     save_handshake,
     save_pmkid,
     save_wep_key,
+    save_wpa_psk,
     save_wps_pbc,
     save_wps_pin,
 )
@@ -134,6 +135,18 @@ class TestSaveHandshake:
         assert r1.was_new and r2.was_new
         assert r1.path != r2.path
 
+    def test_new_hashlines_reports_only_appended(self, tmp_path):
+        r1 = save_handshake(_ap_with_hs(anonce=b"\xA0" + b"\x00" * 31), "11:22:33:44:55:66")
+        assert len(r1.new_hashlines) == 1
+        r2 = save_handshake(_ap_with_hs(anonce=b"\xC0" + b"\x00" * 31), "11:22:33:44:55:66")
+        assert len(r2.new_hashlines) == 1
+        assert r2.new_hashlines[0] not in r1.new_hashlines
+
+    def test_dedupe_hit_has_no_new_hashlines(self, tmp_path):
+        save_handshake(_ap_with_hs(anonce=b"\xA0" + b"\x00" * 31), "11:22:33:44:55:66")
+        again = save_handshake(_ap_with_hs(anonce=b"\xA0" + b"\x00" * 31), "11:22:33:44:55:66")
+        assert again.was_new is False and again.new_hashlines == ()
+
 
 # ---- save_pmkid ------------------------------------------------------------
 
@@ -177,6 +190,11 @@ class TestSavePmkid:
     def test_no_pmkid_returns_none(self, tmp_path):
         ap = _ap_with_hs(with_pair=False)
         assert save_pmkid(ap, "11:22:33:44:55:66") is None
+
+    def test_new_hashlines_for_pmkid(self, tmp_path):
+        ap = _ap_with_hs(pmkid=b"\x33" * 16, with_pair=False)
+        r = save_pmkid(ap, "11:22:33:44:55:66")
+        assert len(r.new_hashlines) == 1 and r.new_hashlines[0].startswith("WPA*01*")
 
     def test_hidden_ssid_returns_none(self, tmp_path):
         ap = _ap_with_hs(pmkid=b"\x66" * 16, with_pair=False)
@@ -311,6 +329,36 @@ class TestSaveWpsPbc:
         save_wps_pbc(ap, "psk1")
         second = save_wps_pbc(ap, "psk2")
         assert second is not None and second.was_new is True
+
+
+class TestSaveWpaPsk:
+    def test_writes_ssid_bssid_psk(self, tmp_path):
+        r = save_wpa_psk("HomeNet", "aa:bb:cc:dd:ee:ff", "hunter2")
+        assert r is not None and r.was_new is True
+        assert r.path.name.endswith("_wpa_psk.txt")
+        body = r.path.read_text(encoding="utf-8")
+        assert "SSID: HomeNet" in body
+        assert "BSSID: aa:bb:cc:dd:ee:ff" in body
+        assert "PSK: hunter2" in body
+
+    def test_dedupes_same_bssid_and_psk(self, tmp_path):
+        first = save_wpa_psk("HomeNet", "aa:bb:cc:dd:ee:ff", "hunter2")
+        again = save_wpa_psk("HomeNet", "aa:bb:cc:dd:ee:ff", "hunter2")
+        assert again is not None and again.was_new is False
+        assert again.path == first.path
+
+    def test_different_key_for_same_ap_writes_new(self, tmp_path):
+        save_wpa_psk("HomeNet", "aa:bb:cc:dd:ee:ff", "k1")
+        second = save_wpa_psk("HomeNet", "aa:bb:cc:dd:ee:ff", "k2")
+        assert second is not None and second.was_new is True
+        assert len(list(tmp_path.glob("*_wpa_psk.txt"))) == 2
+
+    def test_empty_psk_returns_none(self, tmp_path):
+        assert save_wpa_psk("HomeNet", "aa:bb:cc:dd:ee:ff", "") is None
+
+    def test_hidden_ssid_uses_fallback_filename(self, tmp_path):
+        r = save_wpa_psk(None, "aa:bb:cc:dd:ee:ff", "k")
+        assert r is not None and r.path.name.startswith("hidden_")
 
 
 # ---- SSID sanitization (path traversal) ------------------------------------

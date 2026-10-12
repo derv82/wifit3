@@ -6,7 +6,7 @@ from textual.containers import Vertical, Horizontal
 from textual.widget import Widget
 from textual.widgets import Label, Button, ProgressBar
 
-from wifit3.models.jobs import JobState, ToolStatus
+from wifit3.models.jobs import JobState, ToolCapability, ToolStatus
 
 _PERCENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
@@ -32,10 +32,20 @@ class JobActionButton(Button):
         self.sync(job)
 
     def sync(self, job: JobState) -> None:
-        """Match the button's label + colour to the job's current state."""
+        """Match the button to the job: Kill for a killable in-flight job, else Clear (so a stuck
+        non-killable queued upload can still be dropped rather than stranded behind a hidden button)."""
         self.is_active = job.status in (ToolStatus.RUNNING, ToolStatus.QUEUED)
-        self.label = "Kill" if self.is_active else "Clear"
-        self.variant = "error" if self.is_active else "default"
+        self.can_kill = self.is_active and self._tool_killable(job.tool_name)
+        self.display = True
+        self.label = "Kill" if self.can_kill else "Clear"
+        self.variant = "error" if self.can_kill else "default"
+
+    def _tool_killable(self, tool_name: str) -> bool:
+        try:
+            tool = self.app.vault.manager.tools.get(tool_name)
+        except Exception:
+            return True
+        return tool is None or ToolCapability.KILLABLE in tool.capabilities
 
 
 class JobRow(Horizontal):
@@ -78,8 +88,10 @@ class JobRow(Horizontal):
     def _detail_markup(self, job: JobState) -> str:
         if job.status == ToolStatus.SUCCESS:
             key = self._cracked_key(job.progress_msg)
-            return f"PSK: [black bold on lightgreen] {escape(key)} [/]" if key else ""
-        if job.status in (ToolStatus.FAILURE, ToolStatus.ERROR):
+            if key:
+                return f"PSK: [black bold on lightgreen] {escape(key)} [/]"
+            return f"[dim]{escape(job.progress_msg)}[/dim]"
+        if job.status in (ToolStatus.FAILURE, ToolStatus.ERROR, ToolStatus.QUEUED):
             return f"[dim]{escape(job.progress_msg)}[/dim]"
         return ""
 
@@ -150,7 +162,7 @@ class JobTrackerPane(Widget):
         button = event.button
         if not isinstance(button, JobActionButton):
             return
-        if button.is_active:
+        if getattr(button, "can_kill", False):
             self.app.kill_job(button.job_id)
             self.notify("Killing job.")
         else:

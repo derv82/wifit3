@@ -165,7 +165,8 @@ class _CapturePanel(VerticalGroup):
             
         for tool in self.app.vault.manager.tools.values():
             if tool.can_crack(cap):
-                btn = Button(f"Launch {tool.name}", "primary", classes=f"tool-btn launch-tool-{tool.name}")
+                label = getattr(tool, "action_label", None) or f"Launch {tool.name}"
+                btn = Button(label, "primary", classes=f"tool-btn launch-tool-{tool.name}")
                 actions.mount(btn, before=".spacer")
 
         def _row(label: str, val: str, btn_id: str, target_type: Optional[CaptureType] = None):
@@ -297,19 +298,25 @@ class _CapturePanel(VerticalGroup):
         tool_name = next((c.replace("launch-tool-", "") for c in event.button.classes if c.startswith("launch-tool-")), None)
         if not tool_name:
             return
-        
+
+        tool = self.app.vault.manager.tools.get(tool_name)
+        if tool is not None and not getattr(tool, "requires_config_modal", True):
+            self.app.vault.manager.submit_job(tool_name, cap, {})
+            self.notify(f"{getattr(tool, 'action_label', None) or tool_name}: {Path(cap.path).name}")
+            return
+
         modal_cls = UI_TOOLS.get(tool_name)
         if not modal_cls:
             logger.error(f"Unable to launch tool: No entry in UI_TOOLS for {tool_name}")
             self.notify(f"No UI configured for tool: {tool_name}", severity="error")
             return
-            
+
         def _on_config(config: dict | None) -> None:
             if not config:
                 return
             job_id = self.app.vault.manager.submit_job(tool_name, cap, config)
             self.notify(f"Queued job: {job_id}")
-            
+
         self.app.push_screen(modal_cls(), _on_config)
 
     @on(Button.Pressed, ".open-dir")

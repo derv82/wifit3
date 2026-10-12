@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -18,6 +19,7 @@ from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid
 from wifit3.persist.config import Config
 from wifit3.persist.save import SaveResult
 from wifit3.vault.manager import JobManager
+from wifit3.vault.tools.hashtopolis import line_digest
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
@@ -53,6 +55,7 @@ class Vault:
     _PSK_TYPES = (CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK)
 
     def __init__(self) -> None:
+        self._index_lock = threading.RLock()
         self._index: Dict[str, List[PersistedCapture]] = {}
         self.revision = 0   # bumped on every index change; a cache key for readers
         self.errors: list[str] = []                       # surfaced as toasts by the app on mount
@@ -72,18 +75,21 @@ class Vault:
 
     def refresh(self) -> None:
         """Re-scan Config.captures_dir into the cache."""
-        self._index = load_capture_index()
-        self.revision += 1
+        with self._index_lock:
+            self._index = load_capture_index()
+            self.revision += 1
 
     # ----- reads -----
 
     def persisted(self, bssid: str) -> List[PersistedCapture]:
         """This AP's saved captures, newest-first (empty if none)."""
-        return self._index.get(bssid, [])
+        with self._index_lock:
+            return list(self._index.get(bssid, []))
 
     def all_captures(self) -> List[PersistedCapture]:
         """Every saved capture across all APs, unordered (callers sort as needed)."""
-        return [c for caps in self._index.values() for c in caps]
+        with self._index_lock:
+            return [c for caps in self._index.values() for c in caps]
 
     def capture_payload(self, capture: PersistedCapture) -> str:
         """Copyable text for a capture: its stored value (WEP/WPS), else the file's
@@ -98,7 +104,8 @@ class Vault:
     def summary(self) -> Optional[str]:
         """One-line count of every saved capture, e.g. '3 handshakes, 1 WEP key',
         or None when nothing is saved."""
-        hs, pmkid, wep, psk = summarize(self._index)
+        with self._index_lock:
+            hs, pmkid, wep, psk = summarize(self._index)
         parts = []
         if hs:
             parts.append(f"{hs} handshake{'s' * (hs != 1)}")
@@ -162,46 +169,81 @@ class Vault:
     def save_handshake(self, ap: "AccessPoint", client_mac: str) -> Optional[SaveResult]:
         result = save.save_handshake(ap, client_mac)
         if result and result.was_new:
-            self.revision += 1
-            self._index.setdefault(ap.bssid, []).insert(
-                0, PersistedCapture(type=CaptureType.HS, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid, ssid=ap.ssid))
+            with self._index_lock:
+                self.revision += 1
+                self._index.setdefault(ap.bssid, []).insert(
+                    0, PersistedCapture(type=CaptureType.HS, timestamp=int(time.time()),
+                                        path=str(result.path), bssid=ap.bssid, ssid=ap.ssid))
+            self._maybe_auto_submit(ap, result, CaptureType.HS)
         return result
 
     def save_pmkid(self, ap: "AccessPoint", client_mac: str) -> Optional[SaveResult]:
         result = save.save_pmkid(ap, client_mac)
         if result and result.was_new:
-            self.revision += 1
-            self._index.setdefault(ap.bssid, []).insert(
-                0, PersistedCapture(type=CaptureType.PMKID, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid, ssid=ap.ssid))
+            with self._index_lock:
+                self.revision += 1
+                self._index.setdefault(ap.bssid, []).insert(
+                    0, PersistedCapture(type=CaptureType.PMKID, timestamp=int(time.time()),
+                                        path=str(result.path), bssid=ap.bssid, ssid=ap.ssid))
+            self._maybe_auto_submit(ap, result, CaptureType.PMKID)
         return result
+
+    def _maybe_auto_submit(self, ap: "AccessPoint", result: SaveResult,
+                           capture_type: CaptureType) -> None:
+        if not Config.hashtopolis_auto_submit or not result.new_hashlines:
+            return
+        tool = self.manager.tools.get("hashtopolis")
+        cap = PersistedCapture(type=capture_type, timestamp=int(time.time()),
+                               path=str(result.path), bssid=ap.bssid, ssid=ap.ssid)
+        if tool is None or not tool.can_crack(cap):
+            return
+        digests = [line_digest(line) for line in result.new_hashlines]
+        try:
+            # auto_clear: an unattended upload drops itself from the tracker once it succeeds, so
+            # jobs.json and the job pane do not grow without bound as captures accumulate.
+            self.manager.submit_job("hashtopolis", cap,
+                                    {"line_digests": digests, "auto_clear": True})
+        except Exception:
+            logger.exception("Auto-submit to Hashtopolis failed to enqueue")
 
     def save_wep_key(self, ap: "AccessPoint", key: bytes) -> Optional[SaveResult]:
         result = save.save_wep_key(ap, key)
         if result and result.was_new:
-            self.revision += 1
-            self._index.setdefault(ap.bssid, []).insert(
-                0, PersistedCapture(type=CaptureType.WEP, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid, value=key.hex(), ssid=ap.ssid))
+            with self._index_lock:
+                self.revision += 1
+                self._index.setdefault(ap.bssid, []).insert(
+                    0, PersistedCapture(type=CaptureType.WEP, timestamp=int(time.time()),
+                                        path=str(result.path), bssid=ap.bssid, value=key.hex(), ssid=ap.ssid))
         return result
 
     def save_wps_pin(self, ap: "AccessPoint", pin: str, psk: str) -> Optional[SaveResult]:
         result = save.save_wps_pin(ap, pin, psk)
         if result and result.was_new:
-            self.revision += 1
-            self._index.setdefault(ap.bssid, []).insert(
-                0, PersistedCapture(type=CaptureType.WPS_PIN, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid, value=psk, pin=pin, ssid=ap.ssid))
+            with self._index_lock:
+                self.revision += 1
+                self._index.setdefault(ap.bssid, []).insert(
+                    0, PersistedCapture(type=CaptureType.WPS_PIN, timestamp=int(time.time()),
+                                        path=str(result.path), bssid=ap.bssid, value=psk, pin=pin, ssid=ap.ssid))
         return result
 
     def save_wps_pbc(self, ap: "AccessPoint", psk: str) -> Optional[SaveResult]:
         result = save.save_wps_pbc(ap, psk)
         if result and result.was_new:
-            self.revision += 1
-            self._index.setdefault(ap.bssid, []).insert(
-                0, PersistedCapture(type=CaptureType.WPS_PBC, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid, value=psk, ssid=ap.ssid))
+            with self._index_lock:
+                self.revision += 1
+                self._index.setdefault(ap.bssid, []).insert(
+                    0, PersistedCapture(type=CaptureType.WPS_PBC, timestamp=int(time.time()),
+                                        path=str(result.path), bssid=ap.bssid, value=psk, ssid=ap.ssid))
+        return result
+
+    def save_wpa_psk(self, bssid: str, ssid: Optional[str], psk: str) -> Optional[SaveResult]:
+        result = save.save_wpa_psk(ssid, bssid, psk)
+        if result and result.was_new:
+            with self._index_lock:
+                self.revision += 1
+                self._index.setdefault(bssid, []).insert(
+                    0, PersistedCapture(type=CaptureType.WPA_PSK, timestamp=int(time.time()),
+                                        path=str(result.path), bssid=bssid, value=psk, ssid=ssid))
         return result
 
     # ----- filesystem ops (the screen goes through these, never touches disk) -----
@@ -210,13 +252,14 @@ class Vault:
         """Delete a capture's file and drop every cache entry backed by it (an
         aggregate .hc22000 backs both an HS and a PMKID entry)."""
         Path(capture.path).unlink(missing_ok=True)
-        for bssid in list(self._index):
-            self.revision += 1
-            remaining = [c for c in self._index[bssid] if c.path != capture.path]
-            if remaining:
-                self._index[bssid] = remaining
-            else:
-                del self._index[bssid]
+        with self._index_lock:
+            for bssid in list(self._index):
+                self.revision += 1
+                remaining = [c for c in self._index[bssid] if c.path != capture.path]
+                if remaining:
+                    self._index[bssid] = remaining
+                else:
+                    del self._index[bssid]
 
     def zip_captures(self, captures: List[PersistedCapture],
                      save_as: Optional[Path] = None) -> Optional[Path]:

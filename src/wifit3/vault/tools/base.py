@@ -3,9 +3,24 @@ from typing import Dict, Any
 
 from wifit3.models import PersistedCapture, ToolCapability, ToolResult
 
+
+class ToolTransientError(Exception):
+    pass
+
+
+class ToolAlreadySubmitted(Exception):
+    pass
+
+
 class VaultTool(ABC):
     name: str
     capabilities: ToolCapability
+    action_label: str | None = None
+    requires_config_modal: bool = True
+
+    def prepare_submit_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Hook to enrich a job's config at submit time (e.g. pin a remote target). Default: as-is."""
+        return config
 
     @abstractmethod
     def can_crack(self, capture: PersistedCapture) -> bool:

@@ -1,6 +1,7 @@
 """Persistent user preferences: a flat TOML file in the OS config dir."""
 from __future__ import annotations
 
+import os
 import tomllib
 from pathlib import Path
 
@@ -28,6 +29,11 @@ class Config:
     hide_silenced: bool = False
     hashcat_path: str | None = None
     wordlist_path: str | None = None
+    hashtopolis_url: str | None = None
+    hashtopolis_token: str | None = None
+    hashtopolis_access_group_id: int | None = None
+    hashtopolis_auto_submit: bool = False
+    hashtopolis_trusted_agents_only: bool = True
 
     @classmethod
     def is_silenced(cls, bssid: str) -> bool:
@@ -78,6 +84,17 @@ class Config:
         cls.hide_silenced = bool(data.get("hide_silenced", cls.hide_silenced))
         cls.hashcat_path = _optional_str(data.get("hashcat_path"), cls.hashcat_path)
         cls.wordlist_path = _optional_str(data.get("wordlist_path"), cls.wordlist_path)
+        cls.hashtopolis_url = _optional_str(data.get("hashtopolis_url"), cls.hashtopolis_url)
+        cls.hashtopolis_token = _optional_str(data.get("hashtopolis_token"), cls.hashtopolis_token)
+        cls.hashtopolis_auto_submit = bool(data.get("hashtopolis_auto_submit", cls.hashtopolis_auto_submit))
+        cls.hashtopolis_trusted_agents_only = bool(
+            data.get("hashtopolis_trusted_agents_only", cls.hashtopolis_trusted_agents_only))
+        raw_group = data.get("hashtopolis_access_group_id")
+        if raw_group is not None:
+            try:
+                cls.hashtopolis_access_group_id = int(raw_group)
+            except (ValueError, TypeError):
+                pass
 
     @classmethod
     def save(cls) -> None:
@@ -91,12 +108,17 @@ class Config:
             f"scanner_sort_delay = {_fmt(cls.scanner_sort_delay)}\n"
             f"silenced_bssids = {_fmt(cls.silenced_bssids)}\n"
             f"hide_silenced = {_fmt(cls.hide_silenced)}\n"
+            f"hashtopolis_auto_submit = {_fmt(cls.hashtopolis_auto_submit)}\n"
+            f"hashtopolis_trusted_agents_only = {_fmt(cls.hashtopolis_trusted_agents_only)}\n"
         )
         # TOML has no null: an unset path is an absent key, not an empty string.
-        for key in ("hashcat_path", "wordlist_path"):
+        for key in ("hashcat_path", "wordlist_path", "hashtopolis_url",
+                    "hashtopolis_token"):
             value = getattr(cls, key)
             if value:
                 text += f"{key} = {_fmt(value)}\n"
+        if cls.hashtopolis_access_group_id is not None:
+            text += f"hashtopolis_access_group_id = {_fmt(cls.hashtopolis_access_group_id)}\n"
         if cls.decloaked_ssids:
             text += "\n[decloak]\n"
             for bssid, ssid in sorted(cls.decloaked_ssids.items()):
@@ -104,6 +126,11 @@ class Config:
         try:
             _PATH.parent.mkdir(parents=True, exist_ok=True)
             _PATH.write_text(text, encoding="utf-8")
+            if os.name == "posix":
+                try:
+                    os.chmod(_PATH, 0o600)
+                except OSError:
+                    pass
         except OSError as e:
             raise ConfigError(f"Failed to save config at {_PATH}: {e}") from e
 

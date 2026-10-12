@@ -1,4 +1,6 @@
 """Ctrl+P preferences modal."""
+import logging
+
 from rich.padding import Padding
 from rich.style import Style
 from rich.text import Text
@@ -12,8 +14,22 @@ from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import Button, Checkbox, Input, Label, Select
 
+from wifit3.hashtopolis.client import HashtopolisClient, HashtopolisError, normalize_url
 from wifit3.persist.config import Config
 from wifit3.ui.path_picker import PathInput
+
+logger = logging.getLogger(__name__)
+
+
+def _sanitized_url(raw: str) -> str | None:
+    """A valid URL stored without embedded credentials or query; a non-empty invalid entry is
+    kept verbatim so the user can see and correct it."""
+    if not raw:
+        return None
+    try:
+        return normalize_url(raw)
+    except HashtopolisError:
+        return raw
 
 
 class ThemeSetting(VerticalGroup):
@@ -85,6 +101,78 @@ class CapturesDirSetting(VerticalGroup):
                         title="Save directory", id="captures_dir")
 
 
+class HashtopolisSetting(VerticalGroup):
+    DEFAULT_CSS = """
+    HashtopolisSetting { border: round $primary; height: auto; }
+    HashtopolisSetting Label { margin-top: 1; }
+    HashtopolisSetting #ht_test { margin-top: 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        self.border_title = "Hashtopolis"
+        yield Label("Server URL")
+        yield Input(Config.hashtopolis_url or "", placeholder="http://host:8080", id="ht_url")
+        yield Label("API token")
+        yield Input(Config.hashtopolis_token or "", password=True, id="ht_token")
+        yield Label("Access group id (optional)")
+        yield Input("" if Config.hashtopolis_access_group_id is None
+                    else str(Config.hashtopolis_access_group_id),
+                    placeholder="auto when only one", id="ht_access_group")
+        yield Checkbox("Auto-submit new WPA captures",
+                       value=Config.hashtopolis_auto_submit, id="ht_auto_submit")
+        yield Checkbox("Only trusted agents (secret hashlists)",
+                       value=Config.hashtopolis_trusted_agents_only, id="ht_trusted")
+        yield Button("Test connection", id="ht_test")
+
+    @on(Button.Pressed, "#ht_test")
+    def _test(self, event: Event) -> None:
+        event.stop()
+        try:
+            client = self._build_client()
+        except HashtopolisError as exc:
+            self.notify(f"Hashtopolis: {exc}", title="Hashtopolis", severity="error")
+            return
+        self.app.run_worker(lambda: self._run_test(client), thread=True,
+                            exclusive=True, group="ht-test")
+
+    def _run_test(self, client: HashtopolisClient) -> None:
+        try:
+            info = client.test_connection()
+            msg = f"OK: connected, access group {info['access_group_id']}"
+            severity = "information"
+        except HashtopolisError as exc:
+            msg = str(exc)
+            severity = "error"
+            try:
+                groups = client.list_access_groups()
+                if len(groups) > 1:
+                    msg += " | groups: " + ", ".join(f"{g.id}={g.name}" for g in groups)
+            except HashtopolisError:
+                pass
+        except Exception:
+            logger.exception("Hashtopolis connection test failed unexpectedly")
+            msg = "Unexpected error during connection test (see logs)"
+            severity = "error"
+        self.app.call_from_thread(self.app.notify, msg, title="Hashtopolis", severity=severity)
+
+    def _build_client(self) -> HashtopolisClient:
+        group_raw = self.query_one("#ht_access_group", Input).value.strip()
+        return HashtopolisClient(
+            self.query_one("#ht_url", Input).value.strip(),
+            token=self.query_one("#ht_token", Input).value.strip(),
+            access_group_id=int(group_raw) if group_raw.isdigit() else None,
+            is_secret=self.query_one("#ht_trusted", Checkbox).value,
+        )
+
+    def apply_to_config(self) -> None:
+        group_raw = self.query_one("#ht_access_group", Input).value.strip()
+        Config.hashtopolis_url = _sanitized_url(self.query_one("#ht_url", Input).value.strip())
+        Config.hashtopolis_token = self.query_one("#ht_token", Input).value.strip() or None
+        Config.hashtopolis_access_group_id = int(group_raw) if group_raw.isdigit() else None
+        Config.hashtopolis_auto_submit = self.query_one("#ht_auto_submit", Checkbox).value
+        Config.hashtopolis_trusted_agents_only = self.query_one("#ht_trusted", Checkbox).value
+
+
 class SaveFooter(Horizontal):
     DEFAULT_CSS = """
     SaveFooter {
@@ -110,6 +198,7 @@ class PreferencesModal(ModalScreen):
     PreferencesModal #dialog {
         width: 44; height: auto;
         max-height: 100%;
+        overflow-y: auto;
         border: thick $primary; background: $surface; padding: 0 2;
     }
     PreferencesModal #dialog > * { width: 100% }
@@ -126,6 +215,7 @@ class PreferencesModal(ModalScreen):
             yield SortDelaySetting()
             yield CapturesDirSetting()
             yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap")
+            yield HashtopolisSetting()
             yield SaveFooter()
 
     def on_mount(self) -> None:
@@ -139,6 +229,7 @@ class PreferencesModal(ModalScreen):
         self.app.vault.refresh()
         Config.save_pcap = self.query_one("#save_pcap", Checkbox).value
         Config.scanner_sort_delay = float(self.query_one("#sort_delay", Select).value)
+        self.query_one(HashtopolisSetting).apply_to_config()
         self._save_and_dismiss()
 
     def _save_and_dismiss(self) -> None:
