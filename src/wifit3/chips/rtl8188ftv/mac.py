@@ -20,6 +20,7 @@ matching how EUS-style warm-detect works without a cold REG_CR read.
 from __future__ import annotations
 
 import logging
+import time
 
 from . import phy
 from .constants import (
@@ -330,8 +331,12 @@ def init_device_post_phy(t: RTL8188FTVTransport, efuse) -> None:
     val32 = t.read32(REG_AUTO_LLT)
     val32 |= AUTO_LLT_INIT_LLT
     t.write32(REG_AUTO_LLT, val32)
-    while t.read32(REG_AUTO_LLT) & AUTO_LLT_INIT_LLT:
-        pass
+    for _ in range(500):  # core.c:2570-2576 — bound the poll, fail clean
+        if not (t.read32(REG_AUTO_LLT) & AUTO_LLT_INIT_LLT):
+            break
+        time.sleep(0.000003)  # usleep_range(2, 4)
+    else:
+        raise IOError("LLT table init failed")
 
     val16 = t.read16(REG_CR)
     val16 |= (1 << 6) | (1 << 7)

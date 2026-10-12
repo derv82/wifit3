@@ -247,6 +247,8 @@ def _iqk_path_a(t: RTL8188FTVTransport, lok_result: list[int]) -> int:
     t.write32(REG_IQK_AGC_PTS, 0xf9000000)
     t.write32(REG_IQK_AGC_PTS, 0xf8000000)
 
+    time.sleep(0.025)  # 8188f.c:879 mdelay(25) — IQK engine settle
+
     val32 = t.read32(REG_FPGA0_IQK)
     val32 &= 0x000000ff
     t.write32(REG_FPGA0_IQK, val32)
@@ -306,6 +308,8 @@ def _rx_iqk_path_a(t: RTL8188FTVTransport, lok_result: int) -> int:
     t.write32(REG_IQK_AGC_PTS, 0xf9000000)
     t.write32(REG_IQK_AGC_PTS, 0xf8000000)
 
+    time.sleep(0.025)  # 8188f.c:960 mdelay(25) — IQK engine settle
+
     val32 = t.read32(REG_FPGA0_IQK)
     val32 &= 0x000000ff
     t.write32(REG_FPGA0_IQK, val32)
@@ -359,6 +363,8 @@ def _rx_iqk_path_a(t: RTL8188FTVTransport, lok_result: int) -> int:
 
     t.write32(REG_IQK_AGC_PTS, 0xf9000000)
     t.write32(REG_IQK_AGC_PTS, 0xf8000000)
+
+    time.sleep(0.025)  # 8188f.c:1034 mdelay(25) — IQK engine settle
 
     val32 = t.read32(REG_FPGA0_IQK)
     val32 &= 0x000000ff
@@ -425,12 +431,15 @@ def _gen2_simularity_compare(result: list[list[int]], c1: int, c2: int) -> bool:
         return True
     else:
         if not (simubitmap & 0x03):
+            # path A TX OK (core.c:3018-3021) — copy from c1, not candidate
             for i in range(2):
-                if candidate[i] >= 0:
-                    for j in range(i * 4, (i + 1) * 4 - 2):
-                        result[3][j] = result[candidate[i]][j]
-            return False
-        return True
+                result[3][i] = result[c1][i]
+        if not (simubitmap & 0x0c):
+            # path A RX OK (core.c:3023-3027)
+            for i in range(2, 4):
+                result[3][i] = result[c1][i]
+        # 0x30/0xc0 blocks are tx_paths > 1 only; absent for 1T1R.
+        return False
 
 
 def _fill_iqk_matrix_a(
@@ -508,7 +517,7 @@ def iq_calibrate(t: RTL8188FTVTransport) -> None:
     path_sel_bb = t.read32(REG_S0S1_PATH_SWITCH)
     path_sel_rf = read_rfreg(t, 0, RF6052_REG_S0S1)
 
-    result = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
+    result = [[0] * 8 for _ in range(4)]
     candidate = -1
     pi_enabled = False
     adda_backup = [0] * 16
@@ -860,12 +869,12 @@ def set_tx_power(t: RTL8188FTVTransport, channel: int, efuse=None) -> None:
     val32 |= (cck << 8) | (cck << 16) | (cck << 24)
     t.write32(REG_TX_AGC_B_CCK11_A_CCK2_11, val32)
 
-    ofdmbase = efuse.ht40_1s_tx_power_index_A[group] + efuse.ofdm_tx_power_diff_a
+    ofdmbase = (efuse.ht40_1s_tx_power_index_A[group] + efuse.ofdm_tx_power_diff_a) & 0xFF
     ofdm = ofdmbase | (ofdmbase << 8) | (ofdmbase << 16) | (ofdmbase << 24)
     t.write32(REG_TX_AGC_A_RATE18_06, ofdm)
     t.write32(REG_TX_AGC_A_RATE54_24, ofdm)
 
-    mcsbase = efuse.ht40_1s_tx_power_index_A[group] + efuse.ht20_tx_power_diff_a
+    mcsbase = (efuse.ht40_1s_tx_power_index_A[group] + efuse.ht20_tx_power_diff_a) & 0xFF
     mcs = mcsbase | (mcsbase << 8) | (mcsbase << 16) | (mcsbase << 24)
     t.write32(REG_TX_AGC_A_MCS03_MCS00, mcs)
     t.write32(REG_TX_AGC_A_MCS07_MCS04, mcs)

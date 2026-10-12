@@ -90,7 +90,7 @@ class RTL8188FTVDriver(Driver):
     """Driver for the Realtek RTL8188FTV (no-name 0bda:f179 dongles)."""
 
     SUPPORTED_CHANNELS = list(range(1, 15))   # 2.4 GHz only
-    FAKE_MAC = FakeMacSupport.NONE   # measured vs AR9271: no monitor auto-ACK (spoofed 8/100, own MAC 0/100)
+    FAKE_MAC = FakeMacSupport.UNIMPLEMENTED  # auto-ACK not yet re-benched with REG_MACID programmed at bring-up (core.c:3558-3578)
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8188FTVDriver":
@@ -215,7 +215,7 @@ class RTL8188FTVDriver(Driver):
 
     async def exit_active_monitor(self) -> None:
         """Restore the card's real EFUSE MAC in REG_MACID (stop ACKing the forged
-        MAC); no-op when the real MAC was never cached (warm reattach)."""
+        MAC); no-op when the real MAC was never cached."""
         if self._mac_bytes:
             await self._set_self_mac(self._mac_bytes)
 
@@ -353,9 +353,18 @@ class RTL8188FTVDriver(Driver):
         return await self._finish_attach(_update, from_warm=False)
 
     async def _warm_reattach(self, _update) -> bool:
-        """Reattach to a running chip: the chip has the bring-up state from a
-        previous session; skip everything and just resume RX polling."""
-        _update(0.50, "Warm chip — skipping FW + init")
+        """Reattach to a running chip: skip FW/MAC/PHY init, but re-read the
+        EFUSE so later ``set_channel`` hops reprogram per-channel TX power
+        (the kernel calls set_tx_power unconditionally on every channel
+        change, core.c:6779-6781)."""
+        from .efuse import read_and_parse
+        loop = asyncio.get_running_loop()
+        _update(0.50, "Warm chip — skipping FW + init (re-reading EFUSE)...")
+        efuse = await loop.run_in_executor(None, read_and_parse, self.transport)
+        self._efuse = efuse
+        if efuse.mac_address:
+            self.mac_address = efuse.mac_address.hex(":")
+            self._mac_bytes = bytes(efuse.mac_address)
         return await self._finish_attach(_update, from_warm=True)
 
     async def _finish_attach(self, _update, *, from_warm: bool) -> bool:
