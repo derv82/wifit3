@@ -161,7 +161,9 @@ def watchdog_tick(t, st: dict) -> dict:
         track_mod.thermal_trigger(t)
         st["tm_trigger"] = True
     else:
-        track_mod.tracking_callback(t, st, st["channel"], st["params"],
-                                    st["by_rate"])
-        st["tm_trigger"] = False
+        try:
+            track_mod.tracking_callback(t, st, st["channel"], st["params"],
+                                        st["by_rate"])
+        finally:
+            st["tm_trigger"] = False
     return fa

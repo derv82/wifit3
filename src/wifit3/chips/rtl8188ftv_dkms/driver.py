@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from functools import partial
 from typing import Callable, ClassVar, List, Optional
 
 import usb.core
@@ -74,7 +75,7 @@ WATCHDOG_PERIOD_S = 2.0
 
 
 class Rtl8188ftvDkmsDriver(Driver):
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 14))
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.NONE
 
     @classmethod
@@ -157,7 +158,10 @@ class Rtl8188ftvDkmsDriver(Driver):
         params, _table = await loop.run_in_executor(
             None, prom_mod.read_adapter_info, t, smic)
         if (params.vid, params.pid) != (0x0BDA, 0xF179):
-            raise BringUpError("probe", f"unexpected VID:PID {params.vid:04x}:{params.pid:04x}")
+            logger.warning(
+                "EFUSE VID:PID %04x:%04x is not 0bda:f179; continuing "
+                "(EFUSE map bytes, not the matched USB descriptors)",
+                params.vid, params.pid)
         self.params = params
         self.mac_address = params.mac.hex(":")
         hal.update({"cur_cck": 0, "th_l2h_ini": 0xF5,
@@ -224,6 +228,8 @@ class Rtl8188ftvDkmsDriver(Driver):
         await loop.run_in_executor(None, queues_mod.init_wmac_setting, t)
         await loop.run_in_executor(None, queues_mod.init_adaptive_ctrl, t)
         await loop.run_in_executor(None, queues_mod.init_edca, t)
+        await loop.run_in_executor(None, queues_mod.init_rate_fallback, t)
+        await loop.run_in_executor(None, queues_mod.init_retry_function, t)
         await loop.run_in_executor(None, misc_mod.init_beacon_params, t, hal)
         await loop.run_in_executor(None, misc_mod.init_burst, t)
         await loop.run_in_executor(None, misc_mod.agg_tx_update, t)
@@ -267,7 +273,10 @@ class Rtl8188ftvDkmsDriver(Driver):
 
         _update(0.85, "Station opmode + monitor entry...")
         await loop.run_in_executor(None, mode_mod.set_station_opmode, t, hal)
-        await loop.run_in_executor(None, track_mod.kfree_gain_offset, t)
+        trim = params.kfree_bb_gain \
+            if params.kfree_flag & prom_mod.KFREE_FLAG_ON else 0
+        await loop.run_in_executor(None, track_mod.kfree_gain_offset, t,
+                                   trim)
         await loop.run_in_executor(None, mode_mod.enter_monitor, t)
         self.current_channel = 1
         hal["channel"] = 1
@@ -357,9 +366,12 @@ class Rtl8188ftvDkmsDriver(Driver):
         ``mgnt_seq`` advances). Control frames raise."""
         loop = asyncio.get_running_loop()
         try:
+            bulk_size = tx_mod.bulk_out_size(self.dev)
+            inject = partial(tx_mod.inject_frame,
+                             bulk_out_size=bulk_size)
             async with self._io_lock:
                 await loop.run_in_executor(
-                    None, tx_mod.inject_frame,
+                    None, inject,
                     self.transport, self.hal, bytes(frame_bytes))
         except (ValueError, IOError):
             logger.exception("inject failed")

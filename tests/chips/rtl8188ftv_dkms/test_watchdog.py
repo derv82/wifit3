@@ -85,3 +85,27 @@ def test_rxfifo_check():
     t = FakeT([0xA0, 0x0000])
     misc.check_rxfifo_full(t)
     assert t.writes == [(0x667, 1, 0xA0)]
+
+
+def test_watchdog_tick_resets_trigger_on_callback_raise(monkeypatch):
+    import pytest
+    from wifit3.chips.rtl8188ftv_dkms import dm
+    from wifit3.chips.rtl8188ftv_dkms import track as track_mod
+    monkeypatch.setattr(dm.misc_mod, "check_rxfifo_full", lambda t: None)
+    monkeypatch.setattr(dm, "false_alarm_stats",
+                        lambda t: {"all": 0, "cca": 1, "cck_fail": 0})
+    monkeypatch.setattr(dm, "dig_step", lambda t, st, fa: None)
+    monkeypatch.setattr(dm, "adaptivity_edcca", lambda t, st: None)
+    monkeypatch.setattr(dm, "cck_pd", lambda t, st, fa: None)
+    monkeypatch.setattr(track_mod, "ra_dynamic_retry_count",
+                        lambda t, st, fa: None)
+
+    def boom(t, st, ch, params, by_rate):
+        raise ValueError("thermal DoIQK path untested here")
+    monkeypatch.setattr(track_mod, "tracking_callback", boom)
+
+    st = {"tm_trigger": True, "channel": 1, "params": object(),
+          "by_rate": object()}
+    with pytest.raises(ValueError):
+        dm.watchdog_tick(object(), st)
+    assert st["tm_trigger"] is False

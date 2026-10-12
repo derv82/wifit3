@@ -45,3 +45,15 @@ def test_validity():
     assert chplan.is_valid(0x20) is True
     assert chplan.is_valid(0xFF) is False
     assert chplan.is_valid(chplan.RTW_CHPLAN_MAX) is False
+
+
+def test_realtek_define_is_not_empty():
+    # rtw_mlme_ext.c:303-318 maps 0x7F to {WORLD, FCC1} and runs the
+    # same null test, so it is valid, not empty.
+    from wifit3.chips.rtl8188ftv_dkms import chplan
+    assert chplan.is_empty(0x7F) is False
+    assert chplan.is_valid(0x7F) is True
+    plan, disable_sw, _ = chplan.config_channel_plan(
+        b"\xff\xff", 0x7F, b"\xff\xff", chplan.RTW_CHPLAN_MAX,
+        chplan.RTW_CHPLAN_WORLD_NULL, False)
+    assert (plan, disable_sw) == (0x7F, False)

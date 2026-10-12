@@ -22,6 +22,13 @@ EEPROM_CHANNEL_PLAN_BY_HW_MASK = 0x80
 
 RTW_RD_2G_NULL = 0
 RTW_RD_5G_NULL = 0
+RTW_RD_2G_WORLD = 1  # rtw_mlme_ext.h:172
+RTW_RD_5G_FCC1 = 4  # rtw_mlme_ext.h:190
+TXPWR_LMT_FCC = 0  # hal_com_phycfg.h:40
+
+# rtw_mlme_ext.c:303-310 — the C maps REALTEK_DEFINE to the
+# {WORLD, FCC1} row and runs the same null test (returns FALSE).
+_REALTEK_DEFINE_ROW = (RTW_RD_2G_WORLD, RTW_RD_5G_FCC1, TXPWR_LMT_FCC)
 
 
 def _alpha2_specified(alpha2: bytes) -> bool:
@@ -38,8 +45,9 @@ def get_chplan_from_country(code: bytes) -> int | None:
 
 def is_empty(plan: int) -> bool:
     if plan == RTW_CHPLAN_REALTEK_DEFINE:
-        return True
-    rd2g, rd5g, _lmt = regdomain.CHANNEL_PLAN_MAP[plan]
+        rd2g, rd5g, _lmt = _REALTEK_DEFINE_ROW
+    else:
+        rd2g, rd5g, _lmt = regdomain.CHANNEL_PLAN_MAP[plan]
     return rd2g == RTW_RD_2G_NULL and rd5g == RTW_RD_5G_NULL
 
 

@@ -189,6 +189,14 @@ def _find_seq(ops, start: int, seq: list[tuple]) -> int:
     raise SystemExit(f"sequence {seq} not found past op#{start}")
 
 
+def _at_seq(ops, start: int, seq: list[tuple]) -> bool:
+    return (start + len(seq) <= len(ops)
+            and all(ops[start + k]["kind"] == k_
+                    and ops[start + k].get("addr") == a
+                    and ops[start + k].get("width") == w
+                    for k, (k_, a, w) in enumerate(seq)))
+
+
 def _walk_thermal_trigger(ops, start: int) -> int:
     t = rp.ReplayTransport(ops[start:])
     track_mod.thermal_trigger(t)
@@ -570,10 +578,20 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
         mlme_end = _walk_mlme_ext(ops, tail_end, hal, params, by_rate)
         opmode_end = _walk_station_opmode(ops, mlme_end, hal)
         frontier = _walk_kfree_gain(ops, opmode_end)
-        frontier = _walk_monitor_entry(ops, frontier)
         hal.update(track_mod.tracking_init_state(params.thermal))
         hal["tm_trigger"] = True
         hal["params"], hal["by_rate"] = params, by_rate
+        hal["channel"] = 1  # mlme ch1 set + opmode done (switches overwrite)
+        # The kernel watchdog (2 s period) can fire between kfree and
+        # monitor entry. Walk whole ticks so the entry anchor lines up;
+        # state carries into the event loop (one long-lived hal).
+        n_pre = 0
+        while _at_seq(ops, frontier, TICK_HEAD):
+            frontier = _walk_tick(ops, frontier, hal)
+            n_pre += 1
+        if n_pre:
+            print(f"  note: {n_pre} pre-entry tick(s) walked")
+        frontier = _walk_monitor_entry(ops, frontier)
         cursor = frontier
         n_switches = n_ticks = n_races = 0
         while True:
@@ -622,4 +640,4 @@ def run(capture: str | None = None, verbose: bool = False) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    raise SystemExit(run(sys.argv[1] if len(sys.argv) > 1 else None))

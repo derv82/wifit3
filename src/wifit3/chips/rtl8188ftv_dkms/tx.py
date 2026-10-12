@@ -12,8 +12,11 @@ the USB framing from ``update_txdesc`` /
 ``ffaddr2pipehdl``
 (hal/rtl8188f/usb/rtl8188fu_xmit.c, os_dep/linux/usb_ops_linux.c):
 40B descriptor, checksum over the first 32 bytes with the checksum
-field zeroed, bulk-OUT EP 0x02 for MGMT and BE, 8B pad prepended only
-when ``(size + 40) % 512 == 0``. MGMT sequence numbers run the
+field zeroed, bulk-OUT EP 0x02 for MGMT and BE. When
+``(size + 40) % bulk_out_size == 0`` the URB carries 8 pad bytes
+*between* descriptor and frame with PKT_OFFSET=1 flagged in
+txdw1[28:24] (``urb_zero_packet_chk`` returns the flag; the descriptor
+stays at offset 0). MGMT sequence numbers run the
 ``mgnt_seq`` counter (caller-owned ``st["mgnt_seq"]``, init 0);
 retry_ctrl FALSE (limit 12) matches the monitor path and the recorded
 disconnect deauth, while the assoc flow default TRUE (limit 6) is kept
@@ -24,6 +27,8 @@ modeled, so live DATA injection stays unported.
 from __future__ import annotations
 
 import struct
+
+import usb.util
 
 TXDESC_SIZE = 40
 TXDESC_OFFSET = 40
@@ -41,6 +46,26 @@ MGMT_RETRY_LIMIT_INJECT = 12
 MGMT_MBSSID = 0
 
 BROADCAST = bytes((0xFF,) * 6)
+
+
+def bulk_out_size(dev) -> int:
+    """Enumerated bulk-OUT max packet size (C: ``pHalData->UsbBulkOutSize``).
+
+    512 on high-speed links, 64 on full-speed. Falls back to
+    ``USB_BULK_SIZE`` when the descriptors cannot be walked (fakes).
+    """
+    try:
+        for cfg in dev:
+            for intf in cfg:
+                for ep in intf:
+                    if (usb.util.endpoint_direction(ep.bEndpointAddress)
+                            == usb.util.ENDPOINT_OUT
+                            and usb.util.endpoint_type(ep.bmAttributes)
+                            == usb.util.ENDPOINT_TYPE_BULK):
+                        return int(ep.wMaxPacketSize)
+    except (AttributeError, NotImplementedError, ValueError):
+        pass
+    return USB_BULK_SIZE
 
 
 def _is_mcast(addr: bytes) -> bool:
@@ -69,7 +94,7 @@ def build_tx_desc(*, size: int, seq: int, macid: int, qsel: int,
                   bmc: bool = False, hwseq_en: bool = True,
                   agg_num: int = 0, spe_rpt: bool = False,
                   agg_break: bool = False, data_short: bool = False,
-                  fb_limit: int = 0) -> bytes:
+                  fb_limit: int = 0, pkt_offset: int = 0) -> bytes:
     desc = bytearray(TXDESC_SIZE)
     _set(desc, 0, 0, 16, size)
     _set(desc, 0, 16, 8, TXDESC_OFFSET)
@@ -77,6 +102,7 @@ def build_tx_desc(*, size: int, seq: int, macid: int, qsel: int,
     _set(desc, 1, 0, 7, macid)
     _set(desc, 1, 8, 5, qsel)
     _set(desc, 1, 16, 5, rateid)
+    _set(desc, 1, 24, 5, pkt_offset)  # urb_zero_packet_chk flag; dw0 OFFSET stays 40
     _set(desc, 2, 16, 1, 1 if agg_break else 0)
     _set(desc, 2, 19, 1, 1 if spe_rpt else 0)
     _set(desc, 3, 8, 1, 1 if use_rate else 0)
@@ -95,7 +121,7 @@ def build_tx_desc(*, size: int, seq: int, macid: int, qsel: int,
 
 def build_mgnt_desc(*, size: int, seq: int, bmc: bool,
                     retry_limit: int = MGMT_RETRY_LIMIT_INJECT,
-                    spe_rpt: bool = False) -> bytes:
+                    spe_rpt: bool = False, pkt_offset: int = 0) -> bytes:
     """The monitor-path template: MGMT frames and monitor-injected DATA
     share it (`update_mgntframe_attrib` / `update_monitor_frame_attrib`
     + plain `dump_mgntframe`; per-link station DATA rules are separate)."""
@@ -104,16 +130,33 @@ def build_mgnt_desc(*, size: int, seq: int, bmc: bool,
                          tx_rate=MGMT_TX_RATE, retry_en=True,
                          retry_limit=retry_limit, mbssid=MGMT_MBSSID,
                          bmc=bmc, hwseq_en=True, agg_num=0,
-                         spe_rpt=spe_rpt)
+                         spe_rpt=spe_rpt, pkt_offset=pkt_offset)
 
 
-def needs_zero_pad(size: int) -> bool:
-    return (size + TXDESC_SIZE) % USB_BULK_SIZE == 0
+def needs_zero_pad(size: int, bulk_out_size: int = USB_BULK_SIZE) -> bool:
+    return (size + TXDESC_SIZE) % bulk_out_size == 0
 
 
-def build_tx_urb(frame: bytes, desc: bytes) -> bytes:
-    if needs_zero_pad(len(frame)):
-        return bytes(PACKET_OFFSET_SZ) + desc + frame
+def desc_pkt_offset(desc: bytes) -> int:
+    """Read back the PKT_OFFSET flag (txdw1[28:24]) from a built descriptor."""
+    return (struct.unpack("<I", desc[4:8])[0] >> 24) & 0x1F
+
+
+def build_tx_urb(frame: bytes, desc: bytes,
+                 bulk_out_size: int = USB_BULK_SIZE) -> bytes:
+    """Concatenate ``desc + [pad] + frame``.
+
+    ``desc`` must already carry the matching PKT_OFFSET flag (set at build
+    time, before the checksum stamp, as in ``rtl8188f_update_txdesc``);
+    mismatch raises instead of emitting wire the chip misparses.
+    """
+    pad = needs_zero_pad(len(frame), bulk_out_size)
+    if desc_pkt_offset(desc) != (1 if pad else 0):
+        raise ValueError(
+            f"descriptor PKT_OFFSET={desc_pkt_offset(desc)} disagrees with "
+            f"pad decision {pad} for frame size {len(frame)}")
+    if pad:
+        return desc + bytes(PACKET_OFFSET_SZ) + frame
     return desc + frame
 
 
@@ -133,7 +176,8 @@ def stamp_seqnum(frame: bytes, seq: int) -> bytes:
 
 
 def inject_frame(t, st: dict, frame: bytes,
-                 retry_limit: int = MGMT_RETRY_LIMIT_INJECT) -> bool:
+                 retry_limit: int = MGMT_RETRY_LIMIT_INJECT,
+                 bulk_out_size: int = USB_BULK_SIZE) -> bool:
     """Send one pre-stamped MGMT or DATA frame on the monitor path: the
     descriptor follows the shared monitor template with the frame's own
     sequence number (recorded invariant), then ``mgnt_seq`` advances.
@@ -142,9 +186,11 @@ def inject_frame(t, st: dict, frame: bytes,
     if len(frame) < 24 or (frame[0] & 0x0C) not in (0x00, 0x08):
         raise ValueError("live control-frame injection untested here")
     seq = frame_seqnum(frame)
+    pad = needs_zero_pad(len(frame), bulk_out_size)
     desc = build_mgnt_desc(size=len(frame), seq=seq,
                            bmc=_is_mcast(frame[4:10]),
-                           retry_limit=retry_limit)
-    t.bulk_out(build_tx_urb(frame, desc))
+                           retry_limit=retry_limit,
+                           pkt_offset=1 if pad else 0)
+    t.bulk_out(build_tx_urb(frame, desc, bulk_out_size))
     st["mgnt_seq"] = (seq + 1) & 0xFFF
     return True

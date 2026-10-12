@@ -64,6 +64,18 @@ def test_fill_path_a_matrix():
     assert st["rxiqc_ca0"] == 0xF0000000
 
 
+def test_fill_path_a_matrix_sign_extends_xy():
+    # halphyrf_8188f.c:1206-1221 — X/Y sign-extend from 10 bits before
+    # the multiply. X=0x3F0, old=0x2C0 must land 0x3D4, not 0x2D4.
+    from wifit3.chips.rtl8188ftv_dkms import iqk
+    t = FakeT([0x2C0 << 22] + [0] * 10)
+    st: dict = {}
+    iqk.fill_path_a_matrix(t, st, [0x3F0, 0x200, 0, 0], tx_only=True)
+    assert (0xC80, 4, 0x3D4) in t.writes
+    assert (0xC94, 4, 0xA0000000) in t.writes
+    assert st["rxiqc_ca0"] == 0 and st["rxiqc_c14"] == 0
+
+
 def test_similarity():
     from wifit3.chips.rtl8188ftv_dkms import iqk
     result = [[0x103, 0x2, 0x101, 0x3F5, 0, 0, 0, 0],

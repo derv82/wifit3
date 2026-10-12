@@ -176,9 +176,11 @@
   (`rtl8188f_fill_default_txdesc`: bcmc mac_id 1, QSLT_MGNT, 11B raid 8,
   CCK-1M rate, HWSEQ_EN, retry 6 assoc-flow / 12 disconnect-inject,
   SPE_RPT only on the wait-ack disconnect deauth, XOR checksum over the
-  first 32 bytes with the checksum field zeroed, 8B pad only when
-  `(size + 40) % 512 == 0`) and sends `[desc | frame]` on bulk-OUT EP
-  0x02; `verify_tx.py` replays all 87 station-capture URBs byte-exact
+  first 32 bytes with the checksum field zeroed; when
+  `(size + 40) % bulk_out_size == 0` (enumerated `UsbBulkOutSize`:
+  512 high-speed, 64 full-speed) the URB is `[desc | 8B pad | frame]`
+  with PKT_OFFSET=1 in txdw1[28:24], descriptor at offset 0) and sends
+  `[desc | frame]` on bulk-OUT EP 0x02; `verify_tx.py` replays all 87 station-capture URBs byte-exact
   (44 probes + auth + 2 assoc + deauth, mgnt_seq 0-47, plus 39 BE DATA
   with their own seq 1-39 and the EAP/ARP/DHCP 1M rule, EP 0x03).
    `driver._inject_frame` sends MGMT and DATA on the monitor template

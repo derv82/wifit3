@@ -93,15 +93,39 @@ def test_zero_pad_rule():
     from wifit3.chips.rtl8188ftv_dkms import tx
     assert tx.needs_zero_pad(472) is True
     assert tx.needs_zero_pad(64) is False
-    desc = tx.build_mgnt_desc(size=472, seq=0, bmc=False)
+    # enumerated bulk size drives the decision, not the 512 default:
+    # 24+40 = 64 wants no pad at 512 but a pad at full-speed 64.
+    assert tx.needs_zero_pad(24) is False
+    assert tx.needs_zero_pad(24, 64) is True
+    desc = tx.build_mgnt_desc(size=472, seq=0, bmc=False, pkt_offset=1)
+    assert tx.desc_pkt_offset(desc) == 1
     frame = b"\xc0" + bytes(471)
     urb = tx.build_tx_urb(frame, desc)
-    assert len(urb) == 520
-    assert urb[:8] == bytes(8)
-    assert urb[8:48] == desc
+    assert len(urb) == 40 + 8 + 472
+    assert urb[:40] == desc
+    assert urb[40:48] == bytes(8)
     assert urb[48:] == frame
-    urb2 = tx.build_tx_urb(b"\xc0" + bytes(63), desc)
-    assert urb2 == desc + b"\xc0" + bytes(63)
+    # checksum still stamps over the flagged descriptor
+    import struct
+    assert tx.txdesc_checksum(desc[:28] + b"\x00\x00" + desc[30:32]
+                              + desc[32:]) == \
+        struct.unpack("<H", desc[28:30])[0]
+    urb2 = tx.build_tx_urb(b"\xc0" + bytes(63),
+                           tx.build_mgnt_desc(size=64, seq=0, bmc=False))
+    assert urb2 == tx.build_mgnt_desc(size=64, seq=0, bmc=False) \
+        + b"\xc0" + bytes(63)
+
+
+def test_tx_urb_rejects_flag_mismatch():
+    from wifit3.chips.rtl8188ftv_dkms import tx
+    import pytest
+    frame = b"\xc0" + bytes(471)  # 472 B: pad required
+    plain = tx.build_mgnt_desc(size=472, seq=0, bmc=False)
+    with pytest.raises(ValueError):
+        tx.build_tx_urb(frame, plain)
+    flagged = tx.build_mgnt_desc(size=472, seq=0, bmc=False, pkt_offset=1)
+    with pytest.raises(ValueError):
+        tx.build_tx_urb(b"\xc0" + bytes(63), flagged)
 
 
 def test_seq_helpers_round_trip():

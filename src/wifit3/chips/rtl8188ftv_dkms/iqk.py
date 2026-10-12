@@ -148,13 +148,23 @@ def _tx_part_ok(eac: int, e94: int, e9c: int) -> bool:
             and ((e9c & 0x03FF0000) >> 16) != 0x42)
 
 
-def fill_path_a_matrix(t, st: dict, row: list[int]) -> None:
+def fill_path_a_matrix(t, st: dict, row: list[int],
+                       tx_only: bool = False) -> None:
+    """Fill the path-A IQK matrix (halphyrf_8188f.c:1204-1263).
+
+    The TX IQC block always runs; ``tx_only`` (RegEA4 == 0) returns
+    before the RX IQC writes after saving the RxIQC readbacks.
+    """
     old = (bb.query_bb_reg(t, 0xC80, 0xFFFFFFFF) >> 22) & 0x3FF
     x = row[0]
+    if x & 0x200:
+        x |= 0xFFFFFC00
     tx0_a = (x * old) >> 8
     bb.set_bb_reg(t, 0xC80, 0x3FF, tx0_a)
     bb.set_bb_reg(t, 0xC4C, 0x80000000, (x * old >> 7) & 0x1)
     y = row[1]
+    if y & 0x200:
+        y |= 0xFFFFFC00
     tx0_c = (y * old) >> 8
     bb.set_bb_reg(t, 0xC94, 0xF0000000, (tx0_c & 0x3C0) >> 6)
     st["txiqc_c94"] = t.read32(0xC94)
@@ -162,6 +172,11 @@ def fill_path_a_matrix(t, st: dict, row: list[int]) -> None:
     st["txiqc_c80"] = t.read32(0xC80)
     bb.set_bb_reg(t, 0xC4C, 0x20000000, (y * old >> 7) & 0x1)
     st["txiqc_c4c"] = t.read32(0xC4C)
+    if tx_only:
+        # halphyrf_8188f.c:1234-1243 — save RxIQC readbacks, else uninit.
+        st["rxiqc_ca0"] = t.read32(0xCA0)
+        st["rxiqc_c14"] = t.read32(0xC14)
+        return
     reg = row[2]
     bb.set_bb_reg(t, 0xC14, 0x3FF, reg)
     reg = row[3] & 0x3F
@@ -170,11 +185,6 @@ def fill_path_a_matrix(t, st: dict, row: list[int]) -> None:
     reg = (row[3] >> 6) & 0xF
     bb.set_bb_reg(t, 0xCA0, 0xF0000000, reg)
     st["rxiqc_ca0"] = t.read32(0xCA0)
-
-
-def fill_path_a_matrix_txonly(t, st: dict) -> None:
-    st["rxiqc_ca0"] = t.read32(0xCA0)
-    st["rxiqc_c14"] = t.read32(0xC14)
 
 
 def _signed(v: int) -> int:
@@ -289,7 +299,7 @@ def iq_calibrate(t) -> dict:
                 final = 3
     if final != 0xFF and result[final][0] != 0:
         if result[final][2] == 0:
-            fill_path_a_matrix_txonly(t, st)
+            fill_path_a_matrix(t, st, result[final], tx_only=True)
         else:
             fill_path_a_matrix(t, st, result[final])
     st["bb_recover"] = [t.read32(a) for a in IQK_BB_RECOVER]

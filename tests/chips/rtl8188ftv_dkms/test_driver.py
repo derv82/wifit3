@@ -243,7 +243,7 @@ def _stubbed_bring_up_modules(monkeypatch, calls):
     from wifit3.chips.rtl8188ftv_dkms import driver as drv_mod
     params = types.SimpleNamespace(
         vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("44efbf1f9dfb"),
-        thermal=0x1A, crystal=0x1D)
+        thermal=0x1A, crystal=0x1D, kfree_flag=0, kfree_bb_gain=0)
 
     def noop(*a, **k):
         return None
@@ -334,3 +334,28 @@ def test_bring_up_cold_runs_fw1_probe_tail(monkeypatch):
     assert asyncio.run(d._bring_up(lambda p, m: None)) is True
     assert calls.count("fw") == 2
     assert calls.index("c2h-req") < calls.index("c2h-get")
+
+
+def test_bring_up_applies_kfree_trim_when_flag_on(monkeypatch):
+    import asyncio
+    import types
+    from unittest.mock import MagicMock
+    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
+    from wifit3.chips.rtl8188ftv_dkms import prom as prom_mod
+    from wifit3.chips.rtl8188ftv_dkms import track as track_mod
+    calls = []
+    _stubbed_bring_up_modules(monkeypatch, calls)
+    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: False)
+    monkeypatch.setattr(
+        prom_mod, "read_adapter_info",
+        lambda t, s: (types.SimpleNamespace(
+            vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("44efbf1f9dfb"),
+            thermal=0x1A, crystal=0x1D,
+            kfree_flag=prom_mod.KFREE_FLAG_ON, kfree_bb_gain=-3), b""))
+    seen = []
+    monkeypatch.setattr(track_mod, "kfree_gain_offset",
+                        lambda t, off: seen.append(off))
+    d = _driver()
+    d.transport = MagicMock()
+    assert asyncio.run(d._bring_up(lambda p, m: None)) is True
+    assert seen == [-3]
