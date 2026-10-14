@@ -12,7 +12,7 @@ from wifit3 import __version__
 from wifit3.chips import log_trace
 from textual.reactive import reactive
 from typing import List
-from wifit3.models.jobs import JobState, ToolCapability, ToolStatus
+from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
@@ -175,7 +175,7 @@ class WifiteApp(App):
     def _notify_completions(self) -> None:
         """Toast each job the first time it finishes this session; jobs already terminal when
         the app started are recorded silently rather than re-announced."""
-        terminal = (ToolStatus.SUCCESS, ToolStatus.FAILURE, ToolStatus.ERROR)
+        terminal = (ToolStatus.SUCCESS, ToolStatus.FAILURE, ToolStatus.ERROR, ToolStatus.QUIT)
         cracked = False
         for job in self.active_jobs:
             prev = self._job_status.get(job.job_id)
@@ -203,18 +203,19 @@ class WifiteApp(App):
             self.notify(f"SUCCESS  PSK: {key}", title=job.display_name, severity="information")
         elif job.status == ToolStatus.FAILURE:
             self.notify(f"NOT FOUND  {job.progress_msg}", title=job.display_name, severity="warning")
+        elif job.status == ToolStatus.QUIT:
+            self.notify("QUIT  Stopped by user", title=job.display_name, severity="information")
         else:
             self.notify(f"ERROR  {job.progress_msg}", title=job.display_name, severity="error")
 
     def kill_job(self, job_id: str) -> None:
         """Kill a running job, then refresh the tracker immediately."""
-        job = self.vault.manager.jobs.get(job_id)
-        if job is None:
-            return
-        tool = self.vault.manager.tools.get(job.tool_name)
-        if tool is not None and ToolCapability.KILLABLE in tool.capabilities:
-            tool.kill({'pid': job.pid, 'log_path': job.log_path, 'api_id': job.api_id})
-        self._poll_jobs()
+        if self.vault.manager.kill_job(job_id):
+            self._poll_jobs()
+
+    def force_kill_job(self, job_id: str) -> bool:
+        """Force-kill a Hashcat job after its graceful-quit window expires."""
+        return self.vault.manager.force_kill_job(job_id)
 
     def skip_job_wordlist(self, job_id: str) -> bool:
         """Ask a running Hashcat process to bypass its current dictionary."""

@@ -1,4 +1,5 @@
 import re
+import time
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -17,6 +18,7 @@ _STATUS_STYLE = {
     ToolStatus.SUCCESS: "black bold on lightgreen",
     ToolStatus.FAILURE: "black bold on orange",
     ToolStatus.ERROR: "black bold on red",
+    ToolStatus.QUIT: "black bold on bright_white",
 }
 
 # Badge text override; a wordlist miss (FAILURE) reads better as "NOT FOUND".
@@ -33,7 +35,21 @@ class JobActionButton(Button):
 
     def sync(self, job: JobState) -> None:
         """Match the button's label + colour to the job's current state."""
+        config = job.config or {}
         self.is_active = job.status in (ToolStatus.RUNNING, ToolStatus.QUEUED)
+        self.is_force = False
+        self.disabled = False
+        if job.status == ToolStatus.RUNNING and config.get("quit_requested"):
+            elapsed = time.time() - float(config.get("quit_requested_at", 0))
+            if elapsed < 5.0:
+                self.label = "Quitting…"
+                self.variant = "default"
+                self.disabled = True
+            else:
+                self.label = "Force"
+                self.variant = "error"
+                self.is_force = True
+            return
         self.label = "Kill" if self.is_active else "Clear"
         self.variant = "error" if self.is_active else "default"
 
@@ -47,7 +63,11 @@ class JobSkipButton(Button):
     def sync(self, job: JobState) -> None:
         config = job.config or {}
         wordlists = config.get("resolved_wordlists") or []
-        self.display = job.status == ToolStatus.RUNNING and len(wordlists) > 1
+        self.display = (
+            job.status == ToolStatus.RUNNING
+            and not config.get("quit_requested")
+            and len(wordlists) > 1
+        )
 
 
 class JobRow(Horizontal):
@@ -93,7 +113,7 @@ class JobRow(Horizontal):
         if job.status == ToolStatus.SUCCESS:
             key = self._cracked_key(job.progress_msg)
             return f"PSK: [black bold on lightgreen] {escape(key)} [/]" if key else ""
-        if job.status in (ToolStatus.FAILURE, ToolStatus.ERROR):
+        if job.status in (ToolStatus.FAILURE, ToolStatus.ERROR, ToolStatus.QUIT):
             return f"[dim]{escape(job.progress_msg)}[/dim]"
         if job.status == ToolStatus.RUNNING and " · " in job.progress_msg:
             wordlist = job.progress_msg.rsplit(" · ", 1)[1]
@@ -172,8 +192,11 @@ class JobTrackerPane(Widget):
             return
         if not isinstance(button, JobActionButton):
             return
-        if button.is_active:
+        if button.is_force:
+            if self.app.force_kill_job(button.job_id):
+                self.notify("Force-killing job.", severity="warning")
+        elif button.is_active:
             self.app.kill_job(button.job_id)
-            self.notify("Killing job.")
+            self.notify("Requesting graceful quit.")
         else:
             self.app.clear_job(button.job_id)

@@ -137,6 +137,8 @@ class HashcatTool(VaultTool):
             return ToolResult(status=ToolStatus.RUNNING, value=progress_msg)
 
         self._terminate(pid)
+        if (tracking_data.get("config") or {}).get("quit_requested") and self._has_stopped(log_path):
+            return ToolResult(status=ToolStatus.QUIT, value="Quit by user")
         if "Exhausted" in progress_msg:
             wordlist = (tracking_data.get("config") or {}).get("wordlist")
             return ToolResult(status=ToolStatus.FAILURE, value=Path(wordlist).name if wordlist else "wordlist")
@@ -232,6 +234,16 @@ class HashcatTool(VaultTool):
                 proc.terminate()
             except Exception:
                 logger.exception(f"Failed to terminate hashcat pid {pid}")
+
+    @staticmethod
+    def _has_stopped(log_path) -> bool:
+        if not log_path or not os.path.exists(log_path):
+            return False
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                return any(line.strip().startswith("Stopped:") for line in f)
+        except OSError:
+            return False
 
     def _last_log_message(self, log_path):
         """hashcat's last human-readable line (skips JSON status, prompts, banners), so a
@@ -336,16 +348,29 @@ class HashcatTool(VaultTool):
         except (BrokenPipeError, OSError):
             return False
 
+    def request_quit(self, tracking_data: Dict[str, Any]) -> bool:
+        proc = self._procs.get(tracking_data.get("pid"))
+        if proc is None or proc.poll() is not None or proc.stdin is None:
+            return False
+        try:
+            proc.stdin.write(b"q")
+            proc.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError):
+            return False
+
     def kill(self, tracking_data: Dict[str, Any]) -> None:
         pid = tracking_data.get("pid")
         if not pid:
             return
         proc = self._procs.pop(pid, None)
         if proc is not None:
+            if proc.poll() is not None:
+                return
             try:
                 proc.kill()
             except Exception:
-                logger.exception(f"Failed to kill hashcat pid {pid}")
+                logger.exception(f"Failed to force-kill hashcat pid {pid}")
             return
         # A job adopted from a previous session (no handle we own). Only signal it if still alive
         # and still hashcat, so a reused PID is left alone. SIGTERM -> TerminateProcess on Windows.

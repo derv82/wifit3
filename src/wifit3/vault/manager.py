@@ -231,6 +231,36 @@ class JobManager:
                     return None
         return None
 
+    def kill_job(self, job_id: str) -> bool:
+        job = self.jobs.get(job_id)
+        if job is None or job.status != ToolStatus.RUNNING:
+            return False
+        tool = self.tools.get(job.tool_name)
+        if tool is None or ToolCapability.KILLABLE not in tool.capabilities:
+            return False
+        if not hasattr(tool, "request_quit") or not tool.request_quit({'pid': job.pid}):
+            return False
+        config = job.config or {}
+        config["quit_requested"] = True
+        config["quit_requested_at"] = time.time()
+        job.config = config
+        self._save()
+        return True
+
+    def force_kill_job(self, job_id: str) -> bool:
+        job = self.jobs.get(job_id)
+        if job is None or job.status != ToolStatus.RUNNING:
+            return False
+        config = job.config or {}
+        requested_at = float(config.get("quit_requested_at", 0))
+        if not config.get("quit_requested") or time.time() - requested_at < 5.0:
+            return False
+        tool = self.tools.get(job.tool_name)
+        if tool is None or ToolCapability.KILLABLE not in tool.capabilities:
+            return False
+        tool.kill({'pid': job.pid, 'log_path': job.log_path, 'api_id': job.api_id})
+        return True
+
     def skip_wordlist(self, job_id: str) -> bool:
         job = self.jobs.get(job_id)
         if job is None or job.status != ToolStatus.RUNNING:

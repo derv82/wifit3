@@ -53,6 +53,31 @@ def test_poll_status_surfaces_hashcat_error(tmp_path):
     assert "Already an instance" in res.value
 
 
+def test_poll_status_reports_user_quit_when_hashcat_stopped(tmp_path):
+    log = tmp_path / "j.log"
+    log.write_text("Started: Sun Sep 20\nStopped: Sun Sep 20\n")
+
+    res = HashcatTool().poll_status({
+        "log_path": str(log),
+        "pid": None,
+        "config": {"quit_requested": True},
+    }, assume_dead=True)
+
+    assert res.status == ToolStatus.QUIT
+    assert res.value == "Quit by user"
+
+
+def test_stopped_without_user_quit_remains_error(tmp_path):
+    log = tmp_path / "j.log"
+    log.write_text("Started: Sun Sep 20\nStopped: Sun Sep 20\n")
+
+    res = HashcatTool().poll_status({
+        "log_path": str(log), "pid": None, "config": {},
+    }, assume_dead=True)
+
+    assert res.status == ToolStatus.ERROR
+
+
 def test_poll_status_exhausted_reports_wordlist(tmp_path):
     log = tmp_path / "j.log"
     log.write_text('{ "session": "hashcat", "status": 5, "progress": [3, 3] }\n')
@@ -199,6 +224,32 @@ def test_skip_wordlist_sends_hashcat_bypass_command(mocker):
 
 def test_skip_wordlist_is_unavailable_for_adopted_process():
     assert HashcatTool().skip_wordlist({"pid": 123}) is False
+
+
+def test_request_quit_sends_hashcat_graceful_command(mocker):
+    proc = mocker.Mock()
+    proc.poll.return_value = None
+    tool = HashcatTool()
+    tool._procs[123] = proc
+
+    assert tool.request_quit({"pid": 123}) is True
+
+    proc.stdin.write.assert_called_once_with(b"q")
+    proc.stdin.flush.assert_called_once_with()
+    proc.kill.assert_not_called()
+    assert 123 in tool._procs
+
+
+def test_kill_force_terminates_owned_hashcat(mocker):
+    proc = mocker.Mock()
+    proc.poll.return_value = None
+    tool = HashcatTool()
+    tool._procs[123] = proc
+
+    tool.kill({"pid": 123})
+
+    proc.kill.assert_called_once_with()
+    assert 123 not in tool._procs
 
 
 def test_poll_status_reaps_procs_on_exhausted(tmp_path):

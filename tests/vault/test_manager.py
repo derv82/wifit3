@@ -10,6 +10,7 @@ class DummyTool:
         self.capabilities = capabilities
         self.killed = []
         self.skipped = []
+        self.quit_requested = []
 
     def can_crack(self, capture):
         return True
@@ -22,6 +23,10 @@ class DummyTool:
 
     def kill(self, tracking_data):
         self.killed.append(tracking_data.get("pid"))
+
+    def request_quit(self, tracking_data):
+        self.quit_requested.append(tracking_data.get("pid"))
+        return True
 
     def skip_wordlist(self, tracking_data):
         self.skipped.append(tracking_data.get("pid"))
@@ -60,6 +65,45 @@ def test_job_lifecycle(manager):
         
     assert job.status == ToolStatus.SUCCESS
     assert job.progress_msg == "Cracked! Key: 1234"
+
+
+def test_kill_job_marks_user_quit_before_stopping_tool(manager):
+    from wifit3.models.access_point import CaptureType
+    cap = PersistedCapture(type=CaptureType.HS, timestamp=0, path="test.pcap",
+                           bssid="00:11:22:33:44:55")
+    tool = manager.tools["dummy"]
+    tool.capabilities = ToolCapability.KILLABLE
+    job_id = manager.submit_job("dummy", cap, {})
+    job = manager.jobs[job_id]
+    job.status = ToolStatus.RUNNING
+    job.pid = 1234
+
+    assert manager.kill_job(job_id) is True
+    assert job.config["quit_requested"] is True
+    assert job.config["quit_requested_at"] > 0
+    assert tool.quit_requested == [1234]
+    assert tool.killed == []
+
+
+def test_force_kill_requires_five_second_grace_period(manager, monkeypatch):
+    from wifit3.models.access_point import CaptureType
+    cap = PersistedCapture(type=CaptureType.HS, timestamp=0, path="test.pcap",
+                           bssid="00:11:22:33:44:55")
+    tool = manager.tools["dummy"]
+    tool.capabilities = ToolCapability.KILLABLE
+    job_id = manager.submit_job("dummy", cap, {})
+    job = manager.jobs[job_id]
+    job.status = ToolStatus.RUNNING
+    job.pid = 1234
+    job.config = {"quit_requested": True, "quit_requested_at": 100.0}
+
+    monkeypatch.setattr("wifit3.vault.manager.time.time", lambda: 104.9)
+    assert manager.force_kill_job(job_id) is False
+    assert tool.killed == []
+
+    monkeypatch.setattr("wifit3.vault.manager.time.time", lambda: 105.0)
+    assert manager.force_kill_job(job_id) is True
+    assert tool.killed == [1234]
 
 
 def test_skip_wordlist_requires_multiple_resolved_wordlists(manager):
