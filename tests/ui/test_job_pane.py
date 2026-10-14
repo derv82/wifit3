@@ -20,6 +20,34 @@ def test_running_job_shows_active_wordlist_in_detail_column():
     assert JobRow(job)._detail_markup(job) == "[dim]two.txt[/dim]"
 
 
+def test_running_job_without_hashcat_status_shows_starting_badge():
+    job = _job(wordlists=["one.txt", "two.txt"])
+    row = JobRow(job)
+
+    assert "STARTING" in row._status_markup(job)
+    assert JobSkipButton(job).display is False
+
+
+def test_running_job_with_progress_shows_running_badge():
+    job = _job()
+    job.progress_msg = "Running (0.00%)"
+
+    badge = JobRow(job)._status_markup(job)
+
+    assert "RUNNING" in badge
+    assert "STARTING" not in badge
+
+
+def test_running_job_with_quit_requested_shows_quitting_badge():
+    job = _job()
+    job.config["quit_requested"] = True
+
+    badge = JobRow(job)._status_markup(job)
+
+    assert "QUITTING" in badge
+    assert "RUNNING" not in badge
+
+
 def test_quit_job_has_terminal_badge_and_detail():
     job = _job(status=ToolStatus.QUIT)
     job.progress_msg = "Quit by user"
@@ -40,11 +68,17 @@ def test_force_killed_job_has_red_terminal_badge():
 
 
 def test_skip_button_shows_only_for_running_multiple_wordlists():
-    button = JobSkipButton(_job(wordlists=["one.txt", "two.txt"]))
+    running = _job(wordlists=["one.txt", "two.txt"])
+    running.progress_msg = "Running (1.00%) · one.txt (1/2)"
+    button = JobSkipButton(running)
     assert button.display is True
 
-    button.sync(_job(wordlists=["one.txt"]))
+    one_wordlist = _job(wordlists=["one.txt"])
+    one_wordlist.progress_msg = "Running (1.00%) · one.txt"
+    button.sync(one_wordlist)
     assert button.display is False
 
-    button.sync(_job(status=ToolStatus.QUEUED, wordlists=["one.txt", "two.txt"]))
+    queued = _job(status=ToolStatus.QUEUED, wordlists=["one.txt", "two.txt"])
+    queued.progress_msg = "Running (1.00%) · one.txt (1/2)"
+    button.sync(queued)
     assert button.display is False

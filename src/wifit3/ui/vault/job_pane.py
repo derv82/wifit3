@@ -11,6 +11,11 @@ from wifit3.models.jobs import JobState, ToolStatus
 
 _PERCENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
+
+def _has_runtime_status(job: JobState) -> bool:
+    message = job.progress_msg or ""
+    return bool(_PERCENT_RE.search(message) or " · " in message)
+
 # One colour per status; black text on a solid fill reads as a badge.
 _STATUS_STYLE = {
     ToolStatus.QUEUED: "black bold on white",
@@ -66,6 +71,7 @@ class JobSkipButton(Button):
         wordlists = config.get("resolved_wordlists") or []
         self.display = (
             job.status == ToolStatus.RUNNING
+            and _has_runtime_status(job)
             and not config.get("quit_requested")
             and len(wordlists) > 1
         )
@@ -107,7 +113,15 @@ class JobRow(Horizontal):
 
     def _status_markup(self, job: JobState) -> str:
         style = _STATUS_STYLE.get(job.status, "black bold on white")
-        label = _STATUS_LABEL.get(job.status, job.status.value)
+        if job.status == ToolStatus.RUNNING:
+            if (job.config or {}).get("quit_requested"):
+                label = "QUITTING"
+            elif not _has_runtime_status(job):
+                label = "STARTING"
+            else:
+                label = job.status.value
+        else:
+            label = _STATUS_LABEL.get(job.status, job.status.value)
         return f"[{style}] {label} [/]"
 
     def _detail_markup(self, job: JobState) -> str:
