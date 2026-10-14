@@ -1,3 +1,4 @@
+import glob
 import logging
 import os
 import shlex
@@ -42,13 +43,19 @@ class HashcatTool(VaultTool):
             raise ValueError("Missing hashcat_exe or wordlist in config")
         if not Path(hashcat_exe).is_file():
             raise ValueError(f"hashcat executable not found: {hashcat_exe}")
-        if not Path(wordlist).is_file():
+        wordlist_path = Path(wordlist).expanduser()
+        if wordlist_path.is_file() or wordlist_path.is_dir():
+            wordlist_paths = [wordlist_path]
+        else:
+            wordlist_paths = [Path(path) for path in sorted(glob.glob(str(wordlist_path)))
+                              if Path(path).is_file() or Path(path).is_dir()]
+        if not wordlist_paths:
             raise ValueError(f"Wordlist not found: {wordlist}")
 
         hashcat_args = str(config.get("hashcat_args") or "")
         hashcat_dir = str(Path(hashcat_exe).parent)
         abs_capture = str(Path(capture.path).resolve())
-        abs_wordlist = str(Path(wordlist).resolve())
+        abs_wordlists = [str(path.resolve()) for path in wordlist_paths]
         potfile = str(Path(capture.path).with_suffix('.potfile').resolve())
         log_path = str(Path(capture.path).with_suffix('.hashcat.log').resolve())
         
@@ -69,7 +76,7 @@ class HashcatTool(VaultTool):
             "--status-timer", "1",
             *_split_args(hashcat_args),
             abs_capture,
-            abs_wordlist,
+            *abs_wordlists,
         ]
         
         creationflags = 0

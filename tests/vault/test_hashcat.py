@@ -89,6 +89,53 @@ def test_launch_wordlist_must_exist(tmp_path):
                              {"hashcat_exe": str(exe), "wordlist": str(tmp_path / "missing.txt")})
 
 
+@pytest.mark.parametrize("use_glob", [False, True])
+def test_launch_accepts_dictionary_directory_and_glob(tmp_path, mocker, use_glob):
+    directory = tmp_path / "dictionary folder"
+    directory.mkdir()
+    first = directory / "first.txt"
+    second = directory / "second.txt"
+    first.write_text("password1\n")
+    second.write_text("password2\n")
+    popen = mocker.patch("wifit3.vault.tools.hashcat.subprocess.Popen")
+    wordlist = str(directory / "*.txt") if use_glob else str(directory)
+
+    HashcatTool().launch(_cap(tmp_path), {"hashcat_exe": sys.executable, "wordlist": wordlist})
+
+    command = popen.call_args.args[0]
+    expected = [str(first.resolve()), str(second.resolve())] if use_glob else [str(directory.resolve())]
+    assert command[-len(expected):] == expected
+    assert "shell" not in popen.call_args.kwargs
+
+
+@pytest.mark.parametrize("pattern, names", [
+    ("dict*.txt", ["dict1.txt", "dict2.txt", "dicta.txt"]),
+    ("dict?.txt", ["dict1.txt", "dict2.txt", "dicta.txt"]),
+    ("dict[12].txt", ["dict1.txt", "dict2.txt"]),
+    ("dict[0-9].txt", ["dict1.txt", "dict2.txt"]),
+    ("dict[!0-9].txt", ["dicta.txt"]),
+])
+def test_launch_expands_shell_dictionary_patterns(tmp_path, mocker, pattern, names):
+    for name in ("dict1.txt", "dict2.txt", "dicta.txt", "other.txt"):
+        (tmp_path / name).write_text("password\n")
+    popen = mocker.patch("wifit3.vault.tools.hashcat.subprocess.Popen")
+
+    HashcatTool().launch(_cap(tmp_path), {
+        "hashcat_exe": sys.executable, "wordlist": str(tmp_path / pattern),
+    })
+
+    command = popen.call_args.args[0]
+    capture_index = command.index(str((tmp_path / "a.hc22000").resolve()))
+    assert command[capture_index + 1:] == [str((tmp_path / name).resolve()) for name in names]
+
+
+def test_launch_rejects_unmatched_dictionary_glob(tmp_path):
+    with pytest.raises(ValueError, match="Wordlist not found"):
+        HashcatTool().launch(_cap(tmp_path), {
+            "hashcat_exe": sys.executable, "wordlist": str(tmp_path / "*.txt"),
+        })
+
+
 def test_poll_status_reaps_procs_on_exhausted(tmp_path):
     """A finished-but-not-cracked job drops its process-tracking entry (no leak)."""
     tool = HashcatTool()
