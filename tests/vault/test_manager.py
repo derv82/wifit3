@@ -9,6 +9,7 @@ class DummyTool:
         self.name = name
         self.capabilities = capabilities
         self.killed = []
+        self.skipped = []
 
     def can_crack(self, capture):
         return True
@@ -21,6 +22,10 @@ class DummyTool:
 
     def kill(self, tracking_data):
         self.killed.append(tracking_data.get("pid"))
+
+    def skip_wordlist(self, tracking_data):
+        self.skipped.append(tracking_data.get("pid"))
+        return True
 
 @pytest.fixture
 def manager(mocker):
@@ -55,6 +60,24 @@ def test_job_lifecycle(manager):
         
     assert job.status == ToolStatus.SUCCESS
     assert job.progress_msg == "Cracked! Key: 1234"
+
+
+def test_skip_wordlist_requires_multiple_resolved_wordlists(manager):
+    from wifit3.models.access_point import CaptureType
+    cap = PersistedCapture(type=CaptureType.HS, timestamp=0, path="test.pcap",
+                           bssid="00:11:22:33:44:55")
+    job_id = manager.submit_job("dummy", cap, {
+        "resolved_wordlists": ["one.txt", "two.txt"],
+    })
+    job = manager.jobs[job_id]
+    job.status = ToolStatus.RUNNING
+    job.pid = 1234
+
+    assert manager.skip_wordlist(job_id) is True
+    assert manager.tools["dummy"].skipped == [1234]
+
+    job.config["resolved_wordlists"] = ["one.txt"]
+    assert manager.skip_wordlist(job_id) is False
 
 
 def test_crack_success_persists_key(manager, tmp_path, monkeypatch):

@@ -1,10 +1,11 @@
 import glob
 import logging
 import os
+import re
 import shlex
 import subprocess
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Dict, Any, Optional
 
 from wifit3.models import PersistedCapture, ToolCapability, ToolResult, ToolStatus
@@ -20,6 +21,14 @@ _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 def _split_args(raw: str) -> list[str]:
     # posix=False to retain Windows backslashes. Strip unnecessary quotes.
     return [token.strip('"') for token in shlex.split(raw, posix=False)]
+
+
+def resolve_wordlists(wordlist: str) -> list[Path]:
+    path = Path(wordlist).expanduser()
+    if path.is_file() or path.is_dir():
+        return [path.resolve()]
+    return [Path(match).resolve() for match in sorted(glob.glob(str(path)))
+            if Path(match).is_file() or Path(match).is_dir()]
 
 
 class HashcatTool(VaultTool):
@@ -43,19 +52,14 @@ class HashcatTool(VaultTool):
             raise ValueError("Missing hashcat_exe or wordlist in config")
         if not Path(hashcat_exe).is_file():
             raise ValueError(f"hashcat executable not found: {hashcat_exe}")
-        wordlist_path = Path(wordlist).expanduser()
-        if wordlist_path.is_file() or wordlist_path.is_dir():
-            wordlist_paths = [wordlist_path]
-        else:
-            wordlist_paths = [Path(path) for path in sorted(glob.glob(str(wordlist_path)))
-                              if Path(path).is_file() or Path(path).is_dir()]
+        wordlist_paths = resolve_wordlists(wordlist)
         if not wordlist_paths:
             raise ValueError(f"Wordlist not found: {wordlist}")
 
         hashcat_args = str(config.get("hashcat_args") or "")
         hashcat_dir = str(Path(hashcat_exe).parent)
         abs_capture = str(Path(capture.path).resolve())
-        abs_wordlists = [str(path.resolve()) for path in wordlist_paths]
+        abs_wordlists = [str(path) for path in wordlist_paths]
         potfile = str(Path(capture.path).with_suffix('.potfile').resolve())
         log_path = str(Path(capture.path).with_suffix('.hashcat.log').resolve())
         
@@ -88,9 +92,9 @@ class HashcatTool(VaultTool):
             proc = subprocess.Popen(
                 cmd,
                 cwd=hashcat_dir,
-                # Detach stdin: with a real console on stdin hashcat runs interactively (its
-                # [s]/[p]/[q] prompt), reading the same keys Textual needs and freezing the UI.
-                stdin=subprocess.DEVNULL,
+                # Isolate hashcat from Textual's terminal while retaining a private pipe for
+                # interactive controls such as `b` (bypass the current dictionary).
+                stdin=subprocess.PIPE,
                 stdout=f,
                 stderr=subprocess.STDOUT,
                 creationflags=creationflags,
@@ -106,7 +110,8 @@ class HashcatTool(VaultTool):
             "potfile": potfile,
             "hashcat_exe": hashcat_exe,
             "hashcat_dir": hashcat_dir,
-            "capture_path": abs_capture
+            "capture_path": abs_capture,
+            "wordlists": abs_wordlists,
         }
 
     def poll_status(self, tracking_data: Dict[str, Any], assume_dead: bool = False) -> ToolResult:
@@ -247,11 +252,49 @@ class HashcatTool(VaultTool):
             candidate = candidate[:197] + "..."
         return candidate
 
+    @staticmethod
+    def _wordlist_name(base: object) -> str | None:
+        if not isinstance(base, str):
+            return None
+        value = base.strip()
+        match = re.search(r"\bFile \((.+)\)$", value)
+        path = match.group(1) if match else value
+        if not path or path.startswith("Mask ("):
+            return None
+        return PureWindowsPath(path).name if "\\" in path else Path(path).name
+
+    @classmethod
+    def _wordlist_from_status(cls, status_data: dict) -> str | None:
+        guess = status_data.get("guess") or {}
+        name = cls._wordlist_name(guess.get("guess-base") or guess.get("guess_base"))
+        count = guess.get("guess-base-count", guess.get("guess_base_count"))
+        offset = guess.get("guess-base-offset", guess.get("guess_base_offset"))
+        if name and isinstance(count, int) and isinstance(offset, int) and count > 1:
+            return f"{name} ({offset}/{count})"
+        return name
+
+    @classmethod
+    def _wordlist_from_human_status(cls, lines: list[str]) -> str | None:
+        name = None
+        queue = None
+        for raw in reversed(lines):
+            line = raw.strip()
+            if queue is None and line.startswith("Guess.Queue"):
+                match = re.search(r":\s*(\d+/\d+)", line)
+                queue = match.group(1) if match else None
+            if line.startswith("Guess.Base"):
+                name = cls._wordlist_name(line.split(":", 1)[1] if ":" in line else "")
+                break
+        if name and queue:
+            return f"{name} ({queue})"
+        return name
+
     def parse_progress(self, log_path):
         progress_msg = None
         try:
             with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
                 lines = f.readlines()
+                human_wordlist = self._wordlist_from_human_status(lines)
                 for line in reversed(lines):
                     line = line.strip()
                     if line.startswith('{') and line.endswith('}'):
@@ -260,6 +303,7 @@ class HashcatTool(VaultTool):
                             progress = status_data.get('progress', [0, 1])
                             percent = (progress[0] / max(progress[1], 1)) * 100
                             status_code = status_data.get('status', 0)
+                            wordlist = self._wordlist_from_status(status_data) or human_wordlist
                             if status_code == 2:
                                 progress_msg = "Autotuning (%.2f%%)" % percent
                             elif status_code == 3:
@@ -272,12 +316,25 @@ class HashcatTool(VaultTool):
                                 progress_msg = "Cracked! (100%)"
                             else:
                                 progress_msg = f"Status {status_code} (%.2f%%)" % percent
+                            if wordlist and status_code in (2, 3, 4):
+                                progress_msg += f" · {wordlist}"
                             break
                         except json.JSONDecodeError:
                             logger.warning(f"Could not parse hashcat status JSON: {line}", exc_info=True)
         except Exception:
             logger.exception(f"Error while parsing progress from {log_path}")
         return progress_msg
+
+    def skip_wordlist(self, tracking_data: Dict[str, Any]) -> bool:
+        proc = self._procs.get(tracking_data.get("pid"))
+        if proc is None or proc.poll() is not None or proc.stdin is None:
+            return False
+        try:
+            proc.stdin.write(b"b")
+            proc.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError):
+            return False
 
     def kill(self, tracking_data: Dict[str, Any]) -> None:
         pid = tracking_data.get("pid")

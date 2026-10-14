@@ -38,6 +38,18 @@ class JobActionButton(Button):
         self.variant = "error" if self.is_active else "default"
 
 
+class JobSkipButton(Button):
+    def __init__(self, job: JobState):
+        super().__init__("Skip", classes="job-skip-btn", compact=True, variant="warning")
+        self.job_id = job.job_id
+        self.sync(job)
+
+    def sync(self, job: JobState) -> None:
+        config = job.config or {}
+        wordlists = config.get("resolved_wordlists") or []
+        self.display = job.status == ToolStatus.RUNNING and len(wordlists) > 1
+
+
 class JobRow(Horizontal):
     """One job on a single line: name, status badge, detail, progress bar, action button."""
 
@@ -51,6 +63,7 @@ class JobRow(Horizontal):
         yield ProgressBar(total=100, show_eta=False, classes="job-bar")
         yield Label(self._status_markup(self._job), classes="job-status")
         yield Label(self._detail_markup(self._job), classes="job-detail")
+        yield JobSkipButton(self._job)
         yield JobActionButton(self._job)
 
     def on_mount(self) -> None:
@@ -62,6 +75,7 @@ class JobRow(Horizontal):
         self.query_one(".job-status", Label).update(self._status_markup(job))
         self.query_one(".job-detail", Label).update(self._detail_markup(job))
         self.query_one(ProgressBar).update(total=100, progress=self._percent(job))
+        self.query_one(JobSkipButton).sync(job)
         self.query_one(JobActionButton).sync(job)
 
     def _name_markup(self, job: JobState) -> str:
@@ -81,6 +95,9 @@ class JobRow(Horizontal):
             return f"PSK: [black bold on lightgreen] {escape(key)} [/]" if key else ""
         if job.status in (ToolStatus.FAILURE, ToolStatus.ERROR):
             return f"[dim]{escape(job.progress_msg)}[/dim]"
+        if job.status == ToolStatus.RUNNING and " · " in job.progress_msg:
+            wordlist = job.progress_msg.rsplit(" · ", 1)[1]
+            return f"[dim]{escape(wordlist)}[/dim]"
         return ""
 
     def _cracked_key(self, msg: str) -> str:
@@ -111,6 +128,7 @@ class JobTrackerPane(Widget):
     JobTrackerPane .job-bar { width: 18; height: 1; margin: 0 1; }
     JobTrackerPane .job-status { width: 11; margin-right: 1; }
     JobTrackerPane .job-detail { width: 1fr; }
+    JobTrackerPane .job-skip-btn { min-width: 8; margin-right: 1; }
     JobTrackerPane .job-action-btn { min-width: 8; }
     """
 
@@ -148,6 +166,10 @@ class JobTrackerPane(Widget):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button = event.button
+        if isinstance(button, JobSkipButton):
+            if self.app.skip_job_wordlist(button.job_id):
+                self.notify("Skipping to next wordlist.")
+            return
         if not isinstance(button, JobActionButton):
             return
         if button.is_active:

@@ -156,6 +156,8 @@ class JobManager:
                     job.pid = tracking.get('pid')
                     job.log_path = tracking.get('log_path')
                     job.api_id = tracking.get('api_id')
+                    if tracking.get("wordlists"):
+                        job.config["resolved_wordlists"] = tracking["wordlists"]
                     changed = True
                     running_by_tool[job.tool_name] += 1
                 except Exception as exc:
@@ -174,6 +176,7 @@ class JobManager:
                 }
                 try:
                     res = tool.poll_status(tracking)
+
                     if res.status != job.status or res.value != job.progress_msg:
                         logger.info(f"Changed status for job ID {job_id}: {res}")
                         job.status = res.status
@@ -227,6 +230,16 @@ class JobManager:
                 except ValueError:
                     return None
         return None
+
+    def skip_wordlist(self, job_id: str) -> bool:
+        job = self.jobs.get(job_id)
+        if job is None or job.status != ToolStatus.RUNNING:
+            return False
+        wordlists = (job.config or {}).get("resolved_wordlists") or []
+        tool = self.tools.get(job.tool_name)
+        if len(wordlists) < 2 or tool is None or not hasattr(tool, "skip_wordlist"):
+            return False
+        return tool.skip_wordlist({'pid': job.pid})
 
     def clear_job(self, job_id: str) -> None:
         """Drop a finished job from the list and persist."""

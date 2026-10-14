@@ -1,3 +1,4 @@
+import json
 import logging
 import subprocess
 import sys
@@ -69,6 +70,54 @@ def test_parse_progress_computes_percent(tmp_path):
     assert "25.00%" in HashcatTool().parse_progress(str(log))
 
 
+def test_parse_progress_reports_wordlist_and_queue_from_json(tmp_path):
+    log = tmp_path / "j.log"
+    log.write_text(json.dumps({
+        "session": "hashcat",
+        "status": 3,
+        "progress": [10, 100],
+        "guess": {
+            "guess_base": "/usr/share/dict/999-hashmob.net_2025.large.found.dict",
+            "guess_base_count": 16,
+            "guess_base_offset": 1,
+            "guess_base_percent": 6.25,
+        },
+    }) + "\n")
+
+    assert HashcatTool().parse_progress(str(log)) == (
+        "Running (10.00%) · 999-hashmob.net_2025.large.found.dict (1/16)"
+    )
+
+
+def test_parse_progress_reports_wordlist_from_human_status(tmp_path):
+    log = tmp_path / "j.log"
+    log.write_text(
+        "Guess.Base.......: File (/usr/share/dict/999-hashmob.net_2025.large.found.dict)\n"
+        "Guess.Queue......: 1/16 (6.25%)\n"
+        '{"session":"hashcat","status":3,"progress":[10,100]}\n'
+    )
+
+    assert HashcatTool().parse_progress(str(log)) == (
+        "Running (10.00%) · 999-hashmob.net_2025.large.found.dict (1/16)"
+    )
+
+
+@pytest.mark.parametrize("key,path,name", [
+    ("guess-base", "/opt/wordlists/rockyou.txt", "rockyou.txt"),
+    ("guess_base", r"C:\\dicts\\selected.txt", "selected.txt"),
+])
+def test_parse_progress_reports_active_wordlist(tmp_path, key, path, name):
+    log = tmp_path / "j.log"
+    log.write_text(json.dumps({
+        "session": "hashcat",
+        "status": 3,
+        "progress": [1, 4],
+        "guess": {key: f"File ({path})"},
+    }) + "\n")
+
+    assert HashcatTool().parse_progress(str(log)) == f"Running (25.00%) · {name}"
+
+
 def _cap(tmp_path):
     return PersistedCapture(type=CaptureType.HS, timestamp=0,
                             path=str(tmp_path / "a.hc22000"), bssid="00:11:22:33:44:55")
@@ -134,6 +183,22 @@ def test_launch_rejects_unmatched_dictionary_glob(tmp_path):
         HashcatTool().launch(_cap(tmp_path), {
             "hashcat_exe": sys.executable, "wordlist": str(tmp_path / "*.txt"),
         })
+
+
+def test_skip_wordlist_sends_hashcat_bypass_command(mocker):
+    proc = mocker.Mock()
+    proc.poll.return_value = None
+    tool = HashcatTool()
+    tool._procs[123] = proc
+
+    assert tool.skip_wordlist({"pid": 123}) is True
+
+    proc.stdin.write.assert_called_once_with(b"b")
+    proc.stdin.flush.assert_called_once_with()
+
+
+def test_skip_wordlist_is_unavailable_for_adopted_process():
+    assert HashcatTool().skip_wordlist({"pid": 123}) is False
 
 
 def test_poll_status_reaps_procs_on_exhausted(tmp_path):

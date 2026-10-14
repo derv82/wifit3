@@ -216,6 +216,10 @@ class WifiteApp(App):
             tool.kill({'pid': job.pid, 'log_path': job.log_path, 'api_id': job.api_id})
         self._poll_jobs()
 
+    def skip_job_wordlist(self, job_id: str) -> bool:
+        """Ask a running Hashcat process to bypass its current dictionary."""
+        return self.vault.manager.skip_wordlist(job_id)
+
     def clear_job(self, job_id: str) -> None:
         """Remove a finished job, then refresh the tracker immediately."""
         self.vault.manager.clear_job(job_id)
