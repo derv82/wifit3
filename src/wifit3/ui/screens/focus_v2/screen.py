@@ -152,7 +152,7 @@ class FocusViewV2(Screen):
     _DEAUTH_BCAST_COUNT = 20
 
     CSS = """
-    FocusViewV2 { layout: vertical; background: $surface; }
+    FocusViewV2 { layout: vertical; background: $surface; overflow: hidden; }
 
     #topbar { height: %(top)d; }
     #actions { width: auto; height: 100%%; }
@@ -261,8 +261,15 @@ class FocusViewV2(Screen):
 
     async def on_mount(self) -> None:
         self._tick_timer = self.set_interval(1 / 10, self._tick)
+        if hasattr(self.app, "active_jobs"):
+            self.watch(self.app, "active_jobs", self._redistribute_after_tracker_update)
+        if hasattr(self.app, "vault_open"):
+            self.watch(self.app, "vault_open", self._redistribute_after_tracker_update)
         self._distribute()
         await self._enter_target()
+
+    def _redistribute_after_tracker_update(self, *_args) -> None:
+        self.call_after_refresh(self._distribute)
 
     async def on_screen_resume(self) -> None:
         # Full re-acquire only on a target change; a same-target return keeps the live view.
@@ -590,7 +597,9 @@ class FocusViewV2(Screen):
 
     def _distribute(self) -> None:
         """Fill the mid band to full 2-row sparklines."""
-        avail = max(1, self.size.height - _TOPBAR_H - _CHROME_H)
+        tracker = self.query_one(GlobalJobTracker)
+        chrome = _CHROME_H + int(bool(tracker.display))
+        avail = max(1, self.size.height - _TOPBAR_H - chrome)
         center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
         center = max(1, min(center, avail - 1))
         mid = self.query_one("#mid")

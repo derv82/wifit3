@@ -8,9 +8,12 @@ import types
 
 import pytest_asyncio
 from textual.app import App
+from textual.reactive import reactive
 
+from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.ui import focus_model as fm
 from wifit3.ui.screens.focus_v2 import FocusViewV2
+from wifit3.ui.vault.global_tracker import GlobalJobTracker
 from wifit3.ui.screens.focus_v2.art import BreathingArt, art_size, breathe
 
 _TOPBAR_H = 3
@@ -24,6 +27,11 @@ class _Host(App):
     array = None
     def on_mount(self) -> None:
         self.push_screen(FocusViewV2())
+
+
+class _JobHost(_Host):
+    active_jobs = reactive([], always_update=True)
+    vault_open = reactive(False)
 
 
 @pytest_asyncio.fixture(loop_scope="module", scope="module")
@@ -69,6 +77,25 @@ async def test_layout_geometry():
             expected_center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
             assert mid.height == expected_center
             assert bot.height == avail - expected_center
+
+
+async def test_visible_job_tracker_does_not_make_focus_scrollable():
+    app = _JobHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        screen = app.screen
+        tracker = screen.query_one(GlobalJobTracker)
+        app.active_jobs = [JobState(
+            job_id="hashcat-test", tool_name="hashcat", capture_path="test.hc22000",
+            status=ToolStatus.RUNNING, progress_msg="Running (1%)",
+        )]
+        await pilot.pause(0)
+
+        bottom = screen.query_one("#bottom").region
+        footer = screen.query_one("Footer").region
+        assert bottom.bottom == tracker.region.y
+        assert tracker.region.bottom == footer.y
+        assert screen.max_scroll_y == 0
 
 
 def test_dashboard_rows_and_rate_vs_count():
