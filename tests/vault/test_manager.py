@@ -103,6 +103,7 @@ def test_force_kill_requires_five_second_grace_period(manager, monkeypatch):
 
     monkeypatch.setattr("wifit3.vault.manager.time.time", lambda: 105.0)
     assert manager.force_kill_job(job_id) is True
+    assert job.config["force_killed"] is True
     assert tool.killed == [1234]
 
 

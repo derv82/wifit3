@@ -29,6 +29,16 @@ def test_quit_job_has_terminal_badge_and_detail():
     assert row._detail_markup(job) == "[dim]Quit by user[/dim]"
 
 
+def test_force_killed_job_has_red_terminal_badge():
+    job = _job(status=ToolStatus.KILLED)
+    job.progress_msg = "Force-killed by user"
+    row = JobRow(job)
+
+    assert "KILLED" in row._status_markup(job)
+    assert "on red" in row._status_markup(job)
+    assert row._detail_markup(job) == "[dim]Force-killed by user[/dim]"
+
+
 def test_skip_button_shows_only_for_running_multiple_wordlists():
     button = JobSkipButton(_job(wordlists=["one.txt", "two.txt"]))
     assert button.display is True

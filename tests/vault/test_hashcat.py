@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from wifit3.vault.tools.hashcat import HashcatTool, _split_args
+from wifit3.vault.tools.hashcat import HashcatTool, _read_log_tail, _split_args
 from wifit3.models import PersistedCapture
 from wifit3.models.access_point import CaptureType
 from wifit3.models.jobs import ToolStatus
@@ -53,6 +53,21 @@ def test_poll_status_surfaces_hashcat_error(tmp_path):
     assert "Already an instance" in res.value
 
 
+def test_poll_status_reports_force_killed_even_if_potfile_exists(tmp_path):
+    capture = tmp_path / "test.hc22000"
+    capture.write_text("WPA*01*deadbeef\n")
+    capture.with_suffix(".potfile").write_text("hash:recovered-key\n")
+
+    res = HashcatTool().poll_status({
+        "capture_path": str(capture),
+        "pid": None,
+        "config": {"force_killed": True},
+    }, assume_dead=True)
+
+    assert res.status == ToolStatus.KILLED
+    assert res.value == "Force-killed by user"
+
+
 def test_poll_status_reports_user_quit_when_hashcat_stopped(tmp_path):
     log = tmp_path / "j.log"
     log.write_text("Started: Sun Sep 20\nStopped: Sun Sep 20\n")
@@ -87,6 +102,43 @@ def test_poll_status_exhausted_reports_wordlist(tmp_path):
         assume_dead=True)
     assert res.status == ToolStatus.FAILURE
     assert res.value == "rockyou.txt"
+
+
+def test_read_log_tail_returns_all_lines_from_small_file(tmp_path):
+    log = tmp_path / "j.log"
+    log.write_text("first\nsecond\n")
+
+    assert _read_log_tail(log, limit=1024) == ["first", "second"]
+
+
+def test_read_log_tail_discards_only_partial_first_line(tmp_path):
+    log = tmp_path / "j.log"
+    log.write_text("discarded line\nkept one\nkept two\n")
+
+    assert _read_log_tail(log, limit=18) == ["kept one", "kept two"]
+    assert _read_log_tail(log, limit=17) == ["kept two"]
+
+
+def test_parse_progress_uses_latest_json_status_in_log_tail(tmp_path):
+    log = tmp_path / "j.log"
+    log.write_text(
+        '{"status":3,"progress":[1,4]}\n'
+        + ("padding\n" * 40)
+        + '{"status":3,"progress":[3,4]}\n'
+    )
+
+    assert HashcatTool().parse_progress(str(log)) == "Running (75.00%)"
+
+
+def test_has_stopped_only_checks_log_tail(tmp_path):
+    log = tmp_path / "j.log"
+    log.write_text("Stopped: old run\n" + ("padding\n" * 40_000))
+
+    assert HashcatTool()._has_stopped(str(log)) is False
+
+    with log.open("a") as stream:
+        stream.write("Stopped: current run\n")
+    assert HashcatTool()._has_stopped(str(log)) is True
 
 
 def test_parse_progress_computes_percent(tmp_path):

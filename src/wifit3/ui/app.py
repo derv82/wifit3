@@ -175,7 +175,10 @@ class WifiteApp(App):
     def _notify_completions(self) -> None:
         """Toast each job the first time it finishes this session; jobs already terminal when
         the app started are recorded silently rather than re-announced."""
-        terminal = (ToolStatus.SUCCESS, ToolStatus.FAILURE, ToolStatus.ERROR, ToolStatus.QUIT)
+        terminal = (
+            ToolStatus.SUCCESS, ToolStatus.FAILURE, ToolStatus.ERROR,
+            ToolStatus.QUIT, ToolStatus.KILLED,
+        )
         cracked = False
         for job in self.active_jobs:
             prev = self._job_status.get(job.job_id)
@@ -205,6 +208,8 @@ class WifiteApp(App):
             self.notify(f"NOT FOUND  {job.progress_msg}", title=job.display_name, severity="warning")
         elif job.status == ToolStatus.QUIT:
             self.notify("QUIT  Stopped by user", title=job.display_name, severity="information")
+        elif job.status == ToolStatus.KILLED:
+            self.notify("KILLED  Force-terminated by user", title=job.display_name, severity="warning")
         else:
             self.notify(f"ERROR  {job.progress_msg}", title=job.display_name, severity="error")
 
@@ -215,7 +220,10 @@ class WifiteApp(App):
 
     def force_kill_job(self, job_id: str) -> bool:
         """Force-kill a Hashcat job after its graceful-quit window expires."""
-        return self.vault.manager.force_kill_job(job_id)
+        killed = self.vault.manager.force_kill_job(job_id)
+        if killed:
+            self._poll_jobs()
+        return killed
 
     def skip_job_wordlist(self, job_id: str) -> bool:
         """Ask a running Hashcat process to bypass its current dictionary."""

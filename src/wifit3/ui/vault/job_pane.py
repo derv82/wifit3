@@ -19,6 +19,7 @@ _STATUS_STYLE = {
     ToolStatus.FAILURE: "black bold on orange",
     ToolStatus.ERROR: "black bold on red",
     ToolStatus.QUIT: "black bold on bright_white",
+    ToolStatus.KILLED: "white bold on red",
 }
 
 # Badge text override; a wordlist miss (FAILURE) reads better as "NOT FOUND".
@@ -113,7 +114,9 @@ class JobRow(Horizontal):
         if job.status == ToolStatus.SUCCESS:
             key = self._cracked_key(job.progress_msg)
             return f"PSK: [black bold on lightgreen] {escape(key)} [/]" if key else ""
-        if job.status in (ToolStatus.FAILURE, ToolStatus.ERROR, ToolStatus.QUIT):
+        if job.status in (
+            ToolStatus.FAILURE, ToolStatus.ERROR, ToolStatus.QUIT, ToolStatus.KILLED,
+        ):
             return f"[dim]{escape(job.progress_msg)}[/dim]"
         if job.status == ToolStatus.RUNNING and " · " in job.progress_msg:
             wordlist = job.progress_msg.rsplit(" · ", 1)[1]
@@ -146,8 +149,9 @@ class JobTrackerPane(Widget):
     JobTrackerPane .job-row { height: 1; }
     JobTrackerPane .job-name { width: 25; }
     JobTrackerPane .job-bar { width: 18; height: 1; margin: 0 1; }
+    JobTrackerPane .job-bar Bar > .bar--bar { background: $panel; }
     JobTrackerPane .job-status { width: 11; margin-right: 1; }
-    JobTrackerPane .job-detail { width: 1fr; }
+    JobTrackerPane .job-detail { width: 1fr; min-width: 0; overflow-x: hidden; }
     JobTrackerPane .job-skip-btn { min-width: 8; margin-right: 1; }
     JobTrackerPane .job-action-btn { min-width: 8; }
     """

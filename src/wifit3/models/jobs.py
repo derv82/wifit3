@@ -17,6 +17,7 @@ class ToolStatus(str, Enum):
     FAILURE = "FAILURE"
     ERROR = "ERROR"
     QUIT = "QUIT"
+    KILLED = "KILLED"
 
 @dataclass
 class JobState:

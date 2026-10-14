@@ -16,6 +16,31 @@ logger = logging.getLogger(__name__)
 
 _STILL_ACTIVE = 259                             # GetExitCodeProcess: process has not exited
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_LOG_TAIL_BYTES = 256 * 1024
+
+
+def _read_log_tail(path, limit: int = _LOG_TAIL_BYTES) -> list[str]:
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            start = max(0, size - limit)
+            if start:
+                f.seek(start - 1)
+                starts_midline = f.read(1) != b"\n"
+            else:
+                starts_midline = False
+            f.seek(start)
+            data = f.read()
+    except OSError:
+        return []
+    text = data.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    if starts_midline and lines:
+        lines = lines[1:]
+    return lines
 
 
 def _split_args(raw: str) -> list[str]:
@@ -121,6 +146,13 @@ class HashcatTool(VaultTool):
             progress_msg = self.parse_progress(log_path) or progress_msg
 
         pid = tracking_data.get("pid")
+        config = tracking_data.get("config") or {}
+        if config.get("force_killed"):
+            if not assume_dead and self._is_running(pid, config.get("hashcat_exe")):
+                return ToolResult(status=ToolStatus.RUNNING, value=progress_msg)
+            self._terminate(pid)
+            return ToolResult(status=ToolStatus.KILLED, value="Force-killed by user")
+
         capture_path = tracking_data.get("capture_path")
         potfile = str(Path(capture_path).resolve().with_suffix('.potfile')) if capture_path else None
 
@@ -132,15 +164,15 @@ class HashcatTool(VaultTool):
             self._terminate(pid)
             return ToolResult(status=ToolStatus.SUCCESS, value=f"Cracked! Key: {key}", result_data={"key": key})
 
-        exe = (tracking_data.get("config") or {}).get("hashcat_exe")
+        exe = config.get("hashcat_exe")
         if not assume_dead and self._is_running(pid, exe):
             return ToolResult(status=ToolStatus.RUNNING, value=progress_msg)
 
         self._terminate(pid)
-        if (tracking_data.get("config") or {}).get("quit_requested") and self._has_stopped(log_path):
+        if config.get("quit_requested") and self._has_stopped(log_path):
             return ToolResult(status=ToolStatus.QUIT, value="Quit by user")
         if "Exhausted" in progress_msg:
-            wordlist = (tracking_data.get("config") or {}).get("wordlist")
+            wordlist = config.get("wordlist")
             return ToolResult(status=ToolStatus.FAILURE, value=Path(wordlist).name if wordlist else "wordlist")
         reason = self._last_log_message(log_path)
         return ToolResult(status=ToolStatus.ERROR, value=reason or "hashcat exited without recovering the key")
@@ -237,29 +269,17 @@ class HashcatTool(VaultTool):
 
     @staticmethod
     def _has_stopped(log_path) -> bool:
-        if not log_path or not os.path.exists(log_path):
-            return False
-        try:
-            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-                return any(line.strip().startswith("Stopped:") for line in f)
-        except OSError:
-            return False
+        return any(line.strip().startswith("Stopped:") for line in _read_log_tail(log_path))
 
     def _last_log_message(self, log_path):
         """hashcat's last human-readable line (skips JSON status, prompts, banners), so a
         failed job reports hashcat's own error rather than a generic message."""
-        if not log_path or not os.path.exists(log_path):
-            return None
         skip = ("{", "[s]tatus", "Started:", "Stopped:", "hashcat (")
         candidate = None
-        try:
-            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-                for raw in f:
-                    line = raw.strip()
-                    if line and not line.startswith(skip):
-                        candidate = line
-        except OSError:
-            return None
+        for raw in _read_log_tail(log_path):
+            line = raw.strip()
+            if line and not line.startswith(skip):
+                candidate = line
         if candidate and len(candidate) > 200:
             candidate = candidate[:197] + "..."
         return candidate
@@ -303,38 +323,34 @@ class HashcatTool(VaultTool):
 
     def parse_progress(self, log_path):
         progress_msg = None
-        try:
-            with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
-                lines = f.readlines()
-                human_wordlist = self._wordlist_from_human_status(lines)
-                for line in reversed(lines):
-                    line = line.strip()
-                    if line.startswith('{') and line.endswith('}'):
-                        try:
-                            status_data = json.loads(line)
-                            progress = status_data.get('progress', [0, 1])
-                            percent = (progress[0] / max(progress[1], 1)) * 100
-                            status_code = status_data.get('status', 0)
-                            wordlist = self._wordlist_from_status(status_data) or human_wordlist
-                            if status_code == 2:
-                                progress_msg = "Autotuning (%.2f%%)" % percent
-                            elif status_code == 3:
-                                progress_msg = "Running (%.2f%%)" % percent
-                            elif status_code == 4:
-                                progress_msg = "Paused (%.2f%%)" % percent
-                            elif status_code == 5:
-                                progress_msg = "Exhausted"
-                            elif status_code == 6:
-                                progress_msg = "Cracked! (100%)"
-                            else:
-                                progress_msg = f"Status {status_code} (%.2f%%)" % percent
-                            if wordlist and status_code in (2, 3, 4):
-                                progress_msg += f" · {wordlist}"
-                            break
-                        except json.JSONDecodeError:
-                            logger.warning(f"Could not parse hashcat status JSON: {line}", exc_info=True)
-        except Exception:
-            logger.exception(f"Error while parsing progress from {log_path}")
+        lines = _read_log_tail(log_path)
+        human_wordlist = self._wordlist_from_human_status(lines)
+        for line in reversed(lines):
+            line = line.strip()
+            if line.startswith('{') and line.endswith('}'):
+                try:
+                    status_data = json.loads(line)
+                    progress = status_data.get('progress', [0, 1])
+                    percent = (progress[0] / max(progress[1], 1)) * 100
+                    status_code = status_data.get('status', 0)
+                    wordlist = self._wordlist_from_status(status_data) or human_wordlist
+                    if status_code == 2:
+                        progress_msg = "Autotuning (%.2f%%)" % percent
+                    elif status_code == 3:
+                        progress_msg = "Running (%.2f%%)" % percent
+                    elif status_code == 4:
+                        progress_msg = "Paused (%.2f%%)" % percent
+                    elif status_code == 5:
+                        progress_msg = "Exhausted"
+                    elif status_code == 6:
+                        progress_msg = "Cracked! (100%)"
+                    else:
+                        progress_msg = f"Status {status_code} (%.2f%%)" % percent
+                    if wordlist and status_code in (2, 3, 4):
+                        progress_msg += f" · {wordlist}"
+                    break
+                except json.JSONDecodeError:
+                    logger.warning(f"Could not parse hashcat status JSON: {line}", exc_info=True)
         return progress_msg
 
     def skip_wordlist(self, tracking_data: Dict[str, Any]) -> bool:

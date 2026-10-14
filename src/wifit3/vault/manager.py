@@ -258,6 +258,9 @@ class JobManager:
         tool = self.tools.get(job.tool_name)
         if tool is None or ToolCapability.KILLABLE not in tool.capabilities:
             return False
+        config["force_killed"] = True
+        job.config = config
+        self._save()
         tool.kill({'pid': job.pid, 'log_path': job.log_path, 'api_id': job.api_id})
         return True
 
