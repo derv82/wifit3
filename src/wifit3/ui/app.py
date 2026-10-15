@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import os
+import signal
 import sys
 from textual import events, work
 from textual.app import App
@@ -166,6 +168,30 @@ class WifiteApp(App):
         self.set_interval(2.0, self._poll_jobs)
         self.call_after_refresh(self.device_watch.poll)
         self.call_after_refresh(self._poll_jobs)
+        self._quit_on_termination_signals()
+
+    def _quit_on_termination_signals(self) -> None:
+        if sys.platform == "win32":
+            return
+        loop = asyncio.get_running_loop()
+        signals = (signal.SIGTERM, signal.SIGHUP)
+
+        def quit_on_signal(signum: int, _frame) -> None:
+            # Not loop.add_signal_handler: a dead terminal blocks Textual's loop, which would then
+            # swallow every signal. Restoring the defaults here lets the next one kill.
+            for s in signals:
+                signal.signal(s, signal.SIG_DFL)
+            loop.call_soon_threadsafe(self._quit_after_signal, signal.Signals(signum))
+
+        self._handlers_before_mount = {sig: signal.signal(sig, quit_on_signal) for sig in signals}
+
+    def on_unmount(self) -> None:
+        for sig, handler in getattr(self, "_handlers_before_mount", {}).items():
+            signal.signal(sig, handler)
+
+    def _quit_after_signal(self, sig: signal.Signals) -> None:
+        logger.info("Received %s, closing the cards before exit", sig.name)
+        self.call_later(self.action_quit)
 
     def _poll_jobs(self) -> None:
         self.vault.manager.poll_jobs()
