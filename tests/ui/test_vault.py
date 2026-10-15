@@ -83,6 +83,24 @@ async def test_toast_on_job_completion(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
+async def test_vault_keeps_emoji_named_mac_octets_literal(tmp_path):
+    _write(tmp_path, "HomeNet_aa-cd-11-22-33-44_1000_wep_key.txt", _WEP_TXT)
+    _write(tmp_path, "HomeNet_bb-cc-11-22-33-44_1000_wep_key.txt", _WEP_TXT)
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        cell = view.query_one("#vault-aps", DataTable).get_row("aa:cd:11:22:33:44")[0]
+
+        assert cell.plain == "HomeNet ✓WEP aa:cd:11:22:33:44"
+        assert "💿" not in cell.plain
+        title = view.query_one("VaultItemView")._border_title
+        assert title.plain == " HomeNet (aa:cd:11:22:33:44) "
+        assert all(span.end <= title.plain.index("aa:cd") for span in title.spans)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
 async def test_open_vault_focuses_ap_list(tmp_path):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
     app = WifiteApp()

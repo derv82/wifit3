@@ -15,6 +15,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalGroup
+from textual.content import Content
 from textual.events import Event
 from textual.message import Message
 from textual.reactive import reactive
@@ -62,7 +63,7 @@ class ConfirmModal(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label(Text.from_markup(self._prompt), id="prompt")
+            yield Label(Text.from_markup(self._prompt, emoji=False), id="prompt")
             with Horizontal():
                 yield Button(Text("No"), "default", id="no")
                 yield Button(Text("Yes"), "error", id="yes")
@@ -371,7 +372,8 @@ class VaultItemView(Vertical):
             return
             
         name = ssid or "‹hidden›"
-        self.border_title = f"[$background bold on $primary] {escape(name)} ({escape(bssid)}) [/]"
+        title = Content.from_markup(f"[$background bold on $primary] {escape(name)}[/]")
+        self.border_title = title.append(Content.from_text(f" ({bssid}) "))
         
         groups = {
             "HANDSHAKE": [c for c in captures if c.path.endswith(".pcap")],
