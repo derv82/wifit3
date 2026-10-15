@@ -9,7 +9,8 @@ _DEFAULTS = {n: getattr(Config, n)
              for n in (
                  "theme", "scanner_sort", "scanner_sort_reverse", "scanner_sort_delay",
                  "silenced_bssids", "hide_silenced", "log_level", "captures_dir", "save_pcap",
-                 "hashcat_path", "wordlist_path", "hashcat_args", "decloaked_ssids")}
+                 "hashcat_path", "wordlist_path", "hashcat_args", "decloaked_ssids",
+                 "wps_auto_pbc")}
 
 
 @pytest.fixture(autouse=True)
@@ -132,6 +133,21 @@ def test_hide_silenced_save_load_roundtrip(config_path):
     Config.hide_silenced = False
     Config.load()
     assert Config.hide_silenced is True
+
+
+def test_wps_auto_pbc_save_load_roundtrip(config_path):
+    assert Config.wps_auto_pbc is True
+    Config.wps_auto_pbc = False
+    Config.save()
+    Config.wps_auto_pbc = True
+    Config.load()
+    assert Config.wps_auto_pbc is False
+
+
+def test_wps_auto_pbc_absent_key_keeps_default(config_path):
+    config_path.write_text('theme = "nord"\n')
+    Config.load()
+    assert Config.wps_auto_pbc is True
 
 
 def test_hide_silenced_absent_key_keeps_default(config_path):

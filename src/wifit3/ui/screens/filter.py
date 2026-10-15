@@ -84,7 +84,7 @@ class FilterBar(Horizontal):
         border-title-style: bold;
     }
     FilterBar > Label { margin-right: 1; color: $text-muted; }
-    FilterBar > #filter-encryption { width: 12; margin-right: 2; }
+    FilterBar > #filter-encryption { width: 9; margin-right: 2; }
     FilterBar > #filter-channels { margin-right: 2; }
     FilterBar > Input { width: 1fr; min-width: 16; max-width: 32; }
     FilterBar > #filter-hide-silenced { margin-left: 2; border: none; }

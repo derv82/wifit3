@@ -1,3 +1,5 @@
+from typing import Optional
+
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.widgets import Footer, DataTable
@@ -36,6 +38,10 @@ class VaultDrawer(ModalScreen):
         offset-y: 0%;
     }
     """
+
+    def __init__(self, preselected_bssid: Optional[str] = None) -> None:
+        super().__init__()
+        self._preselected_bssid = preselected_bssid
 
     def compose(self) -> ComposeResult:
         with Container(id="vault-content"):
@@ -87,6 +93,9 @@ class VaultDrawer(ModalScreen):
     def _table_reloaded(self, event: VaultTable.TableReloaded) -> None:
         table = self.query_one("#vault-aps", DataTable)
         if table.row_count > 0:
+            if self._preselected_bssid in table.rows:
+                table.move_cursor(row=table.get_row_index(self._preselected_bssid))
+            self._preselected_bssid = None   # the opening screen's AP, honored once
             try:
                 key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
                 self._load_widget(key)

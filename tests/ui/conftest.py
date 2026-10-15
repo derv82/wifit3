@@ -14,6 +14,7 @@ def _isolate_config(tmp_path, monkeypatch):
     Config.scanner_sort_reverse = True
     Config.silenced_bssids = []
     Config.hide_silenced = False
+    Config.wps_auto_pbc = True
     yield
 
 
