@@ -434,7 +434,7 @@ class ScannerView(Screen):
         log_widget = self.query_one("#system-log")
         log_widget.display = not log_widget.display
 
-    def _selected_ap(self) -> Optional[AccessPoint]:
+    def selected_ap(self) -> Optional[AccessPoint]:
         bssid = self.query_one("#ap-table", APTable).cursor_bssid
         return self.ap_cache.get(bssid) if bssid else None
 
@@ -443,6 +443,8 @@ class ScannerView(Screen):
     def action_wps_pbc_mode(self) -> None:
         """Toggle WPS PBC auto-invade on/off (ON by default)."""
         self.app.pbc_enabled = not self.app.pbc_enabled
+        Config.wps_auto_pbc = self.app.pbc_enabled
+        self.app.persist_config()
         self._log_pbc_status()
         if self.app.pbc_enabled:
             self._arm_open_windows()

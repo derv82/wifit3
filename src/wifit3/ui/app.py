@@ -133,7 +133,7 @@ class WifiteApp(App):
         self.vault = Vault()
         self.vault.subscribe(self._refresh_vault_table)
         self._job_status: dict[str, ToolStatus] = {}
-        self.pbc_enabled: bool = True
+        self.pbc_enabled: bool = Config.wps_auto_pbc
         register_app_themes(self)
         self.theme = Config.theme
 
@@ -308,14 +308,21 @@ class WifiteApp(App):
         self.exit()
 
     def action_toggle_vault(self) -> None:
-        """Open the vault drawer."""
-        if not isinstance(self.screen, VaultDrawer):
-            self.vault_open = True
-            
-            def _on_dismiss(_=None):
-                self.vault_open = False
-                
-            self.push_screen(VaultDrawer(), callback=_on_dismiss)
+        """Open the vault drawer on the AP the current screen has selected."""
+        if isinstance(self.screen, VaultDrawer):
+            return
+        self.vault_open = True
+
+        def _on_dismiss(_=None):
+            self.vault_open = False
+
+        ap: Optional[AccessPoint] = None
+        if isinstance(self.screen, ScannerView):
+            ap = self.screen.selected_ap()
+        elif isinstance(self.screen, FocusViewV2):
+            ap = self.target_ap
+        self.push_screen(VaultDrawer(ap.bssid if ap is not None else None),
+                         callback=_on_dismiss)
 
 _FILE_LOGGING_CONFIGURED = False  # Avoid duplicate loggers
 

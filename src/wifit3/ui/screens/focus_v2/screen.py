@@ -869,11 +869,13 @@ class FocusViewV2(Screen):
 
     def action_wps_pbc_mode(self) -> None:
         """'w': toggle the shared WPS PBC auto-invade."""
-        self.app.pbc_enabled = not getattr(self.app, "pbc_enabled", True)
+        self.app.pbc_enabled = not self.app.pbc_enabled
+        Config.wps_auto_pbc = self.app.pbc_enabled
+        self.app.persist_config()
         self._log_pbc_status()
 
     def _log_pbc_status(self) -> None:
-        if getattr(self.app, "pbc_enabled", True):
+        if self.app.pbc_enabled:
             self._log("[bold]WPS PushButton Extraction[/bold] "
                       "[bold green]enabled[/bold green] [dim](press w to toggle)[/dim]")
         else:

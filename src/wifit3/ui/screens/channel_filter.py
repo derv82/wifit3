@@ -33,17 +33,22 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         padding: 1 2;
     }
     ChannelFilterDialog #title {
-        content-align: center middle;
-        margin-bottom: 1;
+        width: 1fr;
+        text-align: center;
         text-style: bold;
-    }
-    ChannelFilterDialog #hotkeys {
-        content-align: center middle;
-    }
-    ChannelFilterDialog #hint {
-        color: $text-muted;
-        content-align: center middle;
+        color: $accent;
         margin-bottom: 1;
+    }
+    ChannelFilterDialog #band-row {
+        layout: grid;
+        grid-size: 4;
+        grid-gutter: 0 1;
+        height: 1;
+        margin-bottom: 1;
+    }
+    ChannelFilterDialog #band-row Button {
+        width: 100%;
+        min-width: 0;
     }
     ChannelFilterDialog SelectionList {
         height: 1fr;
@@ -81,22 +86,18 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
 
         with Vertical(id="dialog"):
             yield Label("Channel Filter", id="title")
-            yield Label(
-                r"\[[bold bright_green]a[/]]ll  \[[bold cyan]2[/]]G  \[[bold cyan]5[/]]G  "
-                r"\[[bold red]n[/]]one",
-                id="hotkeys",
-            )
-            yield Label(
-                "[cyan]Space:[/cyan]toggle · [cyan]Enter:[/cyan]confirm · [cyan]Esc:[/cyan]cancel",
-                id="hint",
-            )
+            with Horizontal(id="band-row"):
+                yield Button("[u]a[/]ll", variant="success", id="btn-all", compact=True)
+                yield Button("[u]2[/].4 GHz", variant="primary", id="btn-24ghz", compact=True)
+                yield Button("[u]5[/] GHz", variant="primary", id="btn-5ghz", compact=True)
+                yield Button("[u]n[/]one", variant="error", id="btn-none", compact=True)
             yield SelectionList[int](*selections, id="channel-list")
             with Horizontal(id="button-row"):
                 yield Button("OK", variant="primary", id="btn-ok")
                 yield Button("Cancel", variant="default", id="btn-cancel")
 
     # Rows the dialog spends on everything *except* the channel list's own box.
-    _CHROME_ROWS = 13
+    _CHROME_ROWS = 12
 
     def on_mount(self) -> None:
         self._resize_dialog()
@@ -152,7 +153,11 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         self.dismiss(selected if selected else None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-ok":
-            self.action_confirm()
-        else:
-            self.action_cancel()
+        {
+            "btn-all": self.action_select_all,
+            "btn-24ghz": self.action_select_24ghz,
+            "btn-5ghz": self.action_select_5ghz,
+            "btn-none": self.action_select_none,
+            "btn-ok": self.action_confirm,
+            "btn-cancel": self.action_cancel,
+        }[event.button.id]()

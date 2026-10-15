@@ -33,13 +33,11 @@ async def test_delete_in_panel_confirms_and_removes(tmp_path):
         view = await _open_vault(app)
         await pilot.pause()
         
-        # Force load the first AP
-        table = view.query_one("#vault-table")._aps
-        if table:
-            bssid, (ssid, caps) = next(iter(table.items()))
-            view.query_one("VaultItemView").load(bssid, ssid, caps)
-            await pilot.pause()
-            
+        aps = view.query_one("#vault-table")._aps
+        bssid, (ssid, caps) = next(iter(aps.items()))
+        view.query_one("VaultItemView").load(bssid, ssid, caps)
+        await pilot.pause()
+
         view.query_one(_CapturePanel).query_one(".delete", Button).press()
         await pilot.pause()
         assert isinstance(app.screen, ConfirmModal)
@@ -128,17 +126,21 @@ async def test_selection_restored_after_reload(tmp_path):
            "SSID: Bravo\nBSSID: 11:22:33:44:55:66\nWEP key (hex): 6364\n")
     app = WifiteApp()
     async with app.run_test() as pilot:
-        view = await _open_vault(app)
+        app.push_screen(VaultDrawer("11:22:33:44:55:66"))
         await pilot.pause()
-        table = view.query_one("#vault-aps", DataTable)
+        table = app.screen.query_one("#vault-aps", DataTable)
         assert table.row_count == 2
-        table.move_cursor(row=1)
+
+        def cursor_bssid() -> str:
+            return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+
+        assert cursor_bssid() == "11:22:33:44:55:66"
+
+        table.move_cursor(row=0)
         await pilot.pause()
-        before = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
-        view.query_one("#vault-table").reload_table()
+        app.screen.query_one("#vault-table").reload_table()
         await pilot.pause()
-        after = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
-        assert after == before
+        assert cursor_bssid() == "aa:bb:cc:dd:ee:ff"
 
 
 @pytest.mark.asyncio
@@ -152,13 +154,11 @@ async def test_delete_cancelled_keeps_file(tmp_path):
         view = await _open_vault(app)
         await pilot.pause()
         
-        # Force load the first AP
-        table = view.query_one("#vault-table")._aps
-        if table:
-            bssid, (ssid, caps) = next(iter(table.items()))
-            view.query_one("VaultItemView").load(bssid, ssid, caps)
-            await pilot.pause()
-            
+        aps = view.query_one("#vault-table")._aps
+        bssid, (ssid, caps) = next(iter(aps.items()))
+        view.query_one("VaultItemView").load(bssid, ssid, caps)
+        await pilot.pause()
+
         view.query_one(_CapturePanel).query_one(".delete", Button).press()
         await pilot.pause()
         app.screen.query_one("#no", Button).press()
