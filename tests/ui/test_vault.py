@@ -4,6 +4,8 @@ The autouse _captures_to_tmp fixture points Config.captures_dir at tmp_path, and
 import pytest
 from textual.widgets import Button, DataTable
 
+from wifit3.models import AccessPoint
+from wifit3.persist.save import SaveResult
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.vault_drawer import VaultDrawer
 from wifit3.ui.screens.vault_item import ConfirmModal, _CapturePanel
@@ -90,6 +92,31 @@ async def test_open_vault_focuses_ap_list(tmp_path):
         view = await _open_vault(app)
         await pilot.pause()
         assert app.focused is view.query_one("#vault-aps", DataTable)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_open_vault_updates_when_handshake_is_saved(tmp_path, mocker):
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        table = view.query_one("#vault-aps", DataTable)
+        assert table.row_count == 0
+
+        capture_path = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.hc22000"
+        mocker.patch(
+            "wifit3.persist.vault.save.save_handshake",
+            return_value=SaveResult(capture_path, was_new=True),
+        )
+        app.vault.save_handshake(
+            AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet"),
+            "11:22:33:44:55:66",
+        )
+
+        await pilot.pause()
+        assert table.row_count == 1
+        assert "✓HS" in str(table.get_row_at(0)[0])
 
 
 @pytest.mark.asyncio

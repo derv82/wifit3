@@ -131,6 +131,7 @@ class WifiteApp(App):
                                         on_fatal=self._on_usb_fatal)
         self.target_ap: Optional[AccessPoint] = None
         self.vault = Vault()
+        self.vault.subscribe(self._refresh_vault_table)
         self._job_status: dict[str, ToolStatus] = {}
         self.pbc_enabled: bool = True
         register_app_themes(self)
@@ -187,6 +188,7 @@ class WifiteApp(App):
         self._job_status = {k: v for k, v in self._job_status.items() if k in live}
         if cracked:
             self._refresh_vault_table()
+
 
     def _refresh_vault_table(self) -> None:
         """Reload the vault table if its drawer is open."""

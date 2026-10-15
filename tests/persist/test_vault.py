@@ -91,6 +91,18 @@ def test_refresh_rescans_the_current_config_dir(tmp_path, monkeypatch):
 
 # ---- writes fold into the cache ---------------------------------------------
 
+def test_vault_notifies_subscribers_only_when_capture_index_changes(tmp_path):
+    vault = Vault()
+    changes = []
+    vault.subscribe(lambda: changes.append(vault.revision))
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+
+    vault.save_wep_key(ap, b"abcde")
+    vault.save_wep_key(ap, b"abcde")
+
+    assert changes == [2]
+
+
 def test_save_wep_caches_key_and_dedupes(tmp_path):
     v = Vault()
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
