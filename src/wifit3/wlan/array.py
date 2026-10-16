@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, Callable, Dict, List, Optional, Set
 
 from wifit3.chips.driver import FakeMacSupport
-from wifit3.dot11.packet import BeaconPacket, Packet
+from wifit3.dot11.packet import BeaconPacket, EapolPacket, Packet
 from wifit3.models import AccessPoint, Client
 from wifit3.wlan.dedupe import StreamMerger
 from wifit3.wlan.interface import WlanInterface
@@ -58,6 +58,8 @@ class WlanArray:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._rehop_tasks: Set[asyncio.Task] = set()
         self._close_tasks: Set[asyncio.Task] = set()   # closing vanished cards; never cancelled
+        self._claimed: Set[WlanInterface] = set()
+        self._claim_locks: Dict[WlanInterface, asyncio.Lock] = {}
 
     # ----- membership --------------------------------------------------------
 
@@ -125,6 +127,7 @@ class WlanArray:
             self._members.remove(iface)
         if iface is self._preferred:
             self._preferred = None      # pinned card unplugged: fall back to auto until re-picked
+        self._claimed.discard(iface)
         self._dedupe.remove_source(iface.name)
         remaining = len(self._members)
         logger.info("lost %s; %d card(s) remain", iface.name, remaining)
@@ -154,25 +157,29 @@ class WlanArray:
         """The card to TX on for ``channel``: the user's pinned card when it can reach the band,
         else the most attack-capable card that can. None when no live card can reach the band at
         all (e.g. a 5 GHz target with only 2.4 GHz cards left)."""
-        cands = [m for m in self._members if channel in m.supported_channels]
+        capable = [m for m in self._members if channel in m.supported_channels]
+        cands = [m for m in capable if m not in self._claimed] or capable
         if not cands:
             return None
         if self._preferred in cands:
             return self._preferred
         return min(cands, key=fake_mac_rank)
 
-    def lease(self, channel=None, fake_mac=None, bssid=None, ack_tally=False, iface=None) -> Lease:
+    def lease(self, channel=None, fake_mac=None, bssid=None, ack_tally=False, iface=None,
+              exclusive=True) -> Lease:
         """Scoped hold on one interface (selected by ``channel`` unless ``iface`` is given).
         Restores channel, fake MAC and ACK tally on exit; raises when no interface can serve."""
         target = iface
         if target is None and channel is not None:
             target = self.select_iface(channel)
-        if target is None:
-            target = self._members[0] if self._members else None
+        if target is None and channel is None:
+            available = [member for member in self._members if member not in self._claimed]
+            candidates = available or self._members
+            target = candidates[0] if candidates else None
         if target is None:
             raise RuntimeError("no interface available to lease")
         return Lease(self, target, channel=channel, fake_mac=fake_mac,
-                     bssid=bssid, ack_tally=ack_tally)
+                     bssid=bssid, ack_tally=ack_tally, exclusive=exclusive)
 
     def register_disconnect_callback(self, cb: Callable[[Exception, int], None]) -> None:
         """Subscribe to member loss: cb(exc, remaining_card_count)."""
@@ -191,14 +198,25 @@ class WlanArray:
             return
         if self._is_stray_beacon(pkt):
             return
-        novel_globally, is_first_for_card = self._dedupe.submit_detailed(
-            card_id, pkt.raw, time.monotonic()
+        should_emit, is_first_for_card = self._dedupe.submit_detailed(
+            card_id, pkt.raw, time.monotonic(), self._capture_quality(pkt)
         )
-        if novel_globally:
+        if should_emit:
             self._sink.update(pkt, card_id, channel_hint=iface.current_channel)
             self._sink.dispatch_rx(pkt)
         elif is_first_for_card:
             self._sink.record_signal(card_id, pkt.bssid, pkt.rssi)
+
+    @staticmethod
+    def _capture_quality(pkt: Packet) -> tuple[int, ...]:
+        if not isinstance(pkt, EapolPacket):
+            return (0,)
+        return (
+            int(bool(pkt.payload)),
+            int(pkt.pmkid is not None or pkt.akm is not None),
+            int(pkt.replay_counter is not None),
+            len(pkt.raw),
+        )
 
     def ignore_stray_beacons(self, bssid: str, channel: int) -> None:
         """Drop this BSSID's beacons/probe-resps on ``channel``."""
@@ -285,6 +303,8 @@ class WlanArray:
         tuned_any = False
         tasks = []
         for m in self._members:
+            if m in self._claimed:
+                continue
             if channel not in m.supported_channels:
                 continue
             if m.current_channel == channel:
@@ -321,25 +341,21 @@ class WlanArray:
 
     @asynccontextmanager
     async def claim(self, iface: WlanInterface) -> AsyncIterator[WlanInterface]:
-        """Claim one device from hopping; re-partitions remaining devices."""
-        was_hopping = self._hopping
-        hop_channels = self._hop_channels
-        hop_interval = self._hop_interval
-        await iface.stop_hopping()
-        if was_hopping:
-            remaining = [m for m in self._members if m is not iface]
-            if remaining:
-                chans = hop_channels or self.supported_channels
-                assignment = self._partition(chans, members=remaining)
-                await asyncio.gather(*(
-                    m.start_hopping(channels=subset, interval=hop_interval)
-                    for m, subset in assignment.items() if subset
-                ))
-        try:
-            yield iface
-        finally:
-            if was_hopping and self._hopping:
-                await self.start_hopping(channels=hop_channels, interval=hop_interval)
+        """Exclusively claim one device and keep the hopper on unclaimed devices."""
+        lock = self._claim_locks.setdefault(iface, asyncio.Lock())
+        async with lock:
+            if iface not in self._members:
+                raise RuntimeError("cannot claim a detached interface")
+            self._claimed.add(iface)
+            try:
+                await iface.stop_hopping()
+                if self._hopping:
+                    await self._start_hopping_members()
+                yield iface
+            finally:
+                self._claimed.discard(iface)
+                if self._hopping:
+                    await self._start_hopping_members()
 
     async def start_hopping(self, channels: Optional[List[int]] = None,
                             interval: float = 0.5) -> None:
@@ -349,10 +365,14 @@ class WlanArray:
         self._hop_channels = channels
         self._hop_interval = interval
         self._loop = asyncio.get_running_loop()
-        chans = channels or self.supported_channels
-        assignment = self._partition(chans)
+        await self._start_hopping_members()
+
+    async def _start_hopping_members(self) -> None:
+        members = [member for member in self._members if member not in self._claimed]
+        chans = self._hop_channels or self.supported_channels
+        assignment = self._partition(chans, members=members)
         await asyncio.gather(*(
-            m.start_hopping(channels=subset, interval=interval)
+            m.start_hopping(channels=subset, interval=self._hop_interval)
             for m, subset in assignment.items() if subset
         ))
 

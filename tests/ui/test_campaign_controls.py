@@ -27,6 +27,12 @@ class _StubCampaign(Campaign):
     def done(self) -> bool:
         return self.finished
 
+    async def stop(self) -> None:
+        self.stopped = True
+        self.finished = True
+        if Campaign.active is self:
+            Campaign.active = None
+
 
 @pytest.fixture(autouse=True)
 def _reset_active():
@@ -70,12 +76,13 @@ def test_request_stop_keeps_campaign_for_reaping():
     assert controls.current is None         # slot freed
 
 
-def test_stop_forgets_immediately_without_reaping():
+async def test_stop_waits_then_forgets_without_reaping():
     controls = CampaignControls()
     camp = controls.start(_StubCampaign, None, None)
-    controls.stop()
+    await controls.stop()
     assert camp.stopped is True
-    assert controls.current is None         # forgotten at once
+    assert controls.current is None
+    assert Campaign.active is None
     assert controls.reap() is None          # nothing left to reap
 
 

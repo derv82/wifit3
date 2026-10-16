@@ -1,6 +1,7 @@
 """A campaign's scoped hold on one interface: arm config on enter, restore it on exit."""
 from __future__ import annotations
 
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Optional
 
 # Sentinel for ``fake_mac``: let the driver pick a random locally-administered MAC
@@ -13,16 +14,20 @@ class Lease:
     The armed MAC is registered as own so ingest drops our echo; exit clears everything."""
 
     def __init__(self, array, iface, *, channel: Optional[int] = None,
-                 fake_mac: Any = None, bssid: Any = None, ack_tally: bool = False) -> None:
+                 fake_mac: Any = None, bssid: Any = None, ack_tally: bool = False,
+                 exclusive: bool = False) -> None:
         self._array = array
         self.iface = iface
         self._channel = channel
         self._fake_mac = fake_mac
         self._bssid = bssid
         self._ack_tally = ack_tally
+        self._exclusive = exclusive
         self._orig_channel: Optional[int] = None
         self._own_mac: Optional[str] = None
         self._armed = False
+        self._acks_enabled = False
+        self._claim: Optional[AbstractAsyncContextManager] = None
 
     async def _arm(self, fake_mac) -> None:
         requested = None if fake_mac is SPOOFABLE else fake_mac
@@ -42,21 +47,39 @@ class Lease:
         self._own_mac = None
 
     async def __aenter__(self):
-        self._orig_channel = self.iface.current_channel
-        if self._channel is not None:
-            await self.iface.set_channel(self._channel)
-        if self._fake_mac is not None:
-            await self._arm(self._fake_mac)
-        if self._ack_tally:
-            await self.iface.enable_rx_acks()
-        return self.iface
+        if self._exclusive:
+            self._claim = self._array.claim(self.iface)
+            await self._claim.__aenter__()
+        try:
+            self._orig_channel = self.iface.current_channel
+            if self._channel is not None:
+                await self.iface.set_channel(self._channel)
+            if self._fake_mac is not None:
+                await self._arm(self._fake_mac)
+            if self._ack_tally:
+                await self.iface.enable_rx_acks()
+                self._acks_enabled = True
+            return self.iface
+        except BaseException as error:
+            await self.__aexit__(type(error), error, error.__traceback__)
+            raise
 
     async def __aexit__(self, *exc) -> bool:
-        if self._ack_tally:
-            await self.iface.disable_rx_acks()
-        await self._disarm()
-        if self._channel is not None and self._orig_channel is not None:
-            await self.iface.set_channel(self._orig_channel)
+        try:
+            try:
+                if self._acks_enabled:
+                    await self.iface.disable_rx_acks()
+            finally:
+                self._acks_enabled = False
+                try:
+                    await self._disarm()
+                finally:
+                    if self._channel is not None and self._orig_channel is not None:
+                        await self.iface.set_channel(self._orig_channel)
+        finally:
+            if self._claim is not None:
+                await self._claim.__aexit__(*exc)
+                self._claim = None
         return False
 
     async def rearm(self, fake_mac, bssid=None):
