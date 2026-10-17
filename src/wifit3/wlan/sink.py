@@ -351,7 +351,7 @@ class WlanSink:
                 akm=akm,
                 timestamp=time.time(),
             )
-            hs.messages.append(eapol)
+            hs.add_message(eapol)
             msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"
             logger.info(f"[{msg_label}] {bssid} <-> {client_mac} (replay {eapol.replay_hex})")
 
