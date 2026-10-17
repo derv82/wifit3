@@ -139,6 +139,22 @@ class _RxSource:
         self.registered -= 1
 
 
+def test_client_progress_is_bounded_and_evicts_completed_clients_first():
+    fap = _fakeap()
+    completed = "02:00:00:00:00:00"
+    fap._advance(completed, ClientPhase.GOT_M2)
+    fap.stats.clients[completed].last_advance = float("inf")
+    for index in range(1, FakeAP.MAX_CLIENTS):
+        fap._advance(f"02:00:00:00:{index // 256:02x}:{index % 256:02x}", ClientPhase.AUTHED)
+
+    newcomer = "02:ff:ff:ff:ff:ff"
+    fap._advance(newcomer, ClientPhase.AUTHED)
+
+    assert len(fap.stats.clients) == FakeAP.MAX_CLIENTS
+    assert completed not in fap.stats.clients
+    assert newcomer in fap.stats.clients
+
+
 async def test_response_flood_uses_one_bounded_sender_task():
     fap = _fakeap()
     blocker = asyncio.Event()

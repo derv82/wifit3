@@ -117,6 +117,13 @@ class JobManager:
     def poll_jobs(self) -> None:
         """Called periodically by a UI timer."""
         changed = False
+        captures_by_path = None
+
+        def capture_for(path):
+            nonlocal captures_by_path
+            if captures_by_path is None:
+                captures_by_path = {capture.path: capture for capture in self.vault.all_captures()}
+            return captures_by_path.get(path)
 
         running_by_tool: Counter = Counter(
             j.tool_name for j in self.jobs.values() if j.status == ToolStatus.RUNNING)
@@ -136,8 +143,7 @@ class JobManager:
 
                 # Slot available, launch it
                 try:
-                    # Retrieve the actual capture object from the vault
-                    cap = next((c for c in self.vault.all_captures() if c.path == job.capture_path), None)
+                    cap = capture_for(job.capture_path)
                     if not cap:
                         logger.error(f"Unable to find capture for job ID {job_id}, path {job.capture_path} not found")
                         job.status = ToolStatus.ERROR
@@ -166,7 +172,7 @@ class JobManager:
                         job.status = res.status
                         if res.value is not None:
                             job.progress_msg = res.value
-                        self._persist_cracked_key(job, res)
+                        self._persist_cracked_key(job, res, capture_for)
                         changed = True
                     elif job.to_dict() != tracked:
                         changed = True      # the tool moved the job on (its next wordlist)
@@ -180,12 +186,13 @@ class JobManager:
         if changed:
             self._save()
 
-    def _persist_cracked_key(self, job: JobState, res: ToolResult) -> None:
+    def _persist_cracked_key(self, job: JobState, res: ToolResult, capture_for=None) -> None:
         """A SUCCESS result carrying a recovered key is written beside its capture as a
         vault artifact, then folded into the in-memory index."""
         if res.status != ToolStatus.SUCCESS or not res.result_data or "key" not in res.result_data:
             return
-        cap = next((c for c in self.vault.all_captures() if c.path == job.capture_path), None)
+        cap = (capture_for(job.capture_path) if capture_for is not None else
+               next((c for c in self.vault.all_captures() if c.path == job.capture_path), None))
         if not cap:
             return
         ssid = self._essid_from_capture(job.capture_path) or cap.ssid or "Unknown"

@@ -50,6 +50,7 @@ class FakeApStats:
 
 class FakeAP:
     TX_QUEUE_SIZE = 128
+    MAX_CLIENTS = 256
 
     def __init__(self, twin_iface, bssid: bytes, ssid: str, channel: int, twin_beacon: bytes,
                  rx_source=None, record_m1: Optional[Callable[[bytes], None]] = None):
@@ -193,6 +194,15 @@ class FakeAP:
         rec = self.stats.clients.get(client)
         now = time.time()
         if rec is None:
+            if len(self.stats.clients) >= self.MAX_CLIENTS:
+                evicted = min(
+                    self.stats.clients,
+                    key=lambda mac: (
+                        self.stats.clients[mac].phase != ClientPhase.GOT_M2,
+                        self.stats.clients[mac].last_advance,
+                    ),
+                )
+                self.stats.clients.pop(evicted)
             self.stats.clients[client] = ClientProgress(phase=phase, first_seen=now, last_advance=now)
         elif phase > rec.phase:
             rec.phase = phase
