@@ -8,7 +8,7 @@ falling back to sending it anyway if no matchable Auth Resp arrives.
 import struct
 from wifit3.dot11.parser import WlanFrameParser
 
-from wifit3.campaigns.auth_assoc import Association
+from wifit3.campaigns.auth_assoc import Association, WlanTransport
 
 _BSSID = "34:21:09:00:01:ff"
 _BSSID_B = bytes.fromhex("3421090001ff")
@@ -62,6 +62,16 @@ class _RespIface:
 
 def _subtypes(iface):
     return [(f[0] & 0xF0) >> 4 for f in iface.sent]
+
+
+async def test_transport_queue_keeps_only_recent_frames():
+    transport = WlanTransport(_RespIface(), _BSSID_B, _US)
+
+    for index in range(WlanTransport.RX_QUEUE_SIZE + 5):
+        transport._enqueue_frame(index.to_bytes(2, "big"))
+
+    assert transport._q.qsize() == WlanTransport.RX_QUEUE_SIZE
+    assert await transport.recv(0.01) == (5).to_bytes(2, "big")
 
 
 async def test_waits_for_auth_resp_then_sends_assoc():

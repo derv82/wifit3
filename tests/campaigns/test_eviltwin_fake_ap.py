@@ -139,6 +139,26 @@ class _RxSource:
         self.registered -= 1
 
 
+async def test_response_flood_uses_one_bounded_sender_task():
+    fap = _fakeap()
+    blocker = asyncio.Event()
+
+    async def slow_send(frame):
+        await blocker.wait()
+        return True
+
+    fap.iface.send_no_wait = slow_send
+    for index in range(FakeAP.TX_QUEUE_SIZE + 50):
+        fap._tx(index.to_bytes(2, "big"))
+        assert fap._tx_task is not None
+
+    assert fap._tx_queue.qsize() == FakeAP.TX_QUEUE_SIZE
+    task = fap._tx_task
+    await fap.stop()
+    assert task.done()
+    assert fap._tx_queue.empty()
+
+
 async def test_stop_is_idempotent_and_reaps_the_beacon_task():
     iface, rx = _LifecycleIface(), _RxSource()
     fap = FakeAP(iface, _BSSID, _SSID, 1, twin_beacon=bytes(60), rx_source=rx)

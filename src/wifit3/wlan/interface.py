@@ -190,7 +190,7 @@ class WlanInterface:
             self._rx_callbacks.remove(callback_func)
 
     def _fire_rx_callbacks(self, pkt: Packet):
-        for cb in self._rx_callbacks:
+        for cb in tuple(self._rx_callbacks):
             try:
                 cb(pkt)
             except Exception as e:
