@@ -455,6 +455,8 @@ class WlanSink:
         ]
         for mac in orphaned_clients:
             self.clients.pop(mac, None)
+        self.wep_store.remove(key)
+        self.packet_stats.remove(key)
         return ap
 
     def dispatch_rx(self, pkt) -> None:

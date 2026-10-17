@@ -203,11 +203,15 @@ def test_remove_access_point_clears_clients_and_sibling_backlinks():
     s.update(pkt({"type": "data", "to_ds": True, "from_ds": False,
                   "bssid": removed_bssid, "source": client,
                   "dest": "de:ad:be:ef:00:02", "rssi": -50}), W0)
+    s.wep_store.record(removed_bssid, b"\x01\x02\x03")
+    assert removed_bssid in s.packet_stats._counts
 
     removed = s.remove_access_point(removed_bssid)
 
     assert removed is not None and removed.bssid == removed_bssid
     assert client not in s.clients
+    assert s.wep_store.stats(removed_bssid) is None
+    assert removed_bssid not in s.packet_stats._counts
     assert s.access_points[remaining_bssid].siblings == []
 
     _seed_beacon(s, removed_bssid, 149)

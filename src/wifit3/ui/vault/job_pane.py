@@ -190,21 +190,21 @@ class JobTrackerPane(Widget):
             else:
                 row.sync(job)
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         button = event.button
         if isinstance(button, JobPauseButton):
             if button.resumes:
-                self.app.resume_job(button.job_id)
-            elif self.app.pause_job(button.job_id):
+                await self.app.resume_job(button.job_id)
+            elif await self.app.pause_job(button.job_id):
                 self.notify("Pausing job.")
             return
         if isinstance(button, JobSkipButton):
-            if self.app.skip_job_wordlist(button.job_id):
+            if await self.app.skip_job_wordlist(button.job_id):
                 self.notify("Skipping to the next wordlist.")
             return
         if not isinstance(button, JobActionButton):
             return
         if not button.stops:
-            self.app.clear_job(button.job_id)
-        elif self.app.stop_job(button.job_id):
+            await self.app.clear_job(button.job_id)
+        elif await self.app.stop_job(button.job_id):
             self.notify("Stopping job.")
