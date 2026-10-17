@@ -45,8 +45,8 @@ Realtek USB Wi-Fi working for the Linux community, year after year, outside the 
 ## Mainline (Linux kernel) authors & maintainers
 
 The people who wrote and maintained these drivers in `drivers/net/wireless/`, across the
-Ralink (`rt2x00`), MediaTek (`mt76`), Atheros (`ath9k`), and Realtek (`rtl818x`, `rtw88`)
-trees.
+Ralink (`rt2x00`), MediaTek (`mt76`), Atheros (`ath9k`), and Realtek (`rtl818x`, `rtw88`,
+`rtl8xxxu`) trees.
 
 - **Stanislaw Gruszka** ([@sgruszka](https://github.com/sgruszka)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, MT7610U, MT7612U, MT7921AU, MT7925AU, AR9271
 - **Lorenzo Bianconi** ([@LorenzoBianconi](https://github.com/LorenzoBianconi)) — MT7610U, MT7612U, MT7921AU, MT7925AU, AR9271
@@ -94,6 +94,7 @@ trees.
 - **Dmitry Antipov** ([@dmantipov](https://github.com/dmantipov)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Miaoqing Pan** ([@miaoqing-pan](https://github.com/miaoqing-pan)) — AR9271
 - **Ben Greear** ([@greearb](https://github.com/greearb)) — MT7921AU, MT7925AU, AR9271
+- **Jes Sørensen** — RTL8188EUS, RTL8188FTV (the `rtl8xxxu` driver both ports share)
 
 ### Foundational maintainers
 
