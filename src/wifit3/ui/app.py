@@ -144,7 +144,6 @@ class WifiteApp(App):
         self.vault.subscribe(self._refresh_vault_table)
         self.vault.set_probed_ssids_source(self._probed_ssids)
         self._job_status: dict[str, ToolStatus] = {}
-        self._job_lock = asyncio.Lock()
         self.pbc_enabled: bool = Config.wps_auto_pbc
         register_app_themes(self)
         self.theme = Config.theme
@@ -207,12 +206,9 @@ class WifiteApp(App):
         logger.info("Received %s, closing the cards before exit", sig.name)
         self.call_later(self.action_quit)
 
-    async def _poll_jobs(self) -> None:
-        if self._job_lock.locked():
-            return
-        async with self._job_lock:
-            await asyncio.to_thread(self.vault.manager.poll_jobs)
-            self.active_jobs = self.vault.manager.get_active_jobs()
+    def _poll_jobs(self) -> None:
+        self.vault.manager.poll_jobs()
+        self.active_jobs = self.vault.manager.get_active_jobs()
         self._notify_completions()
 
     def _notify_completions(self) -> None:
@@ -252,35 +248,36 @@ class WifiteApp(App):
         else:
             self.notify(f"ERROR  {job.progress_msg}", title=job.display_name, severity="error")
 
-    async def _run_job_action(self, job_id: str, action) -> bool:
-        async with self._job_lock:
-            applied = await asyncio.to_thread(action, job_id)
-            if applied:
-                await asyncio.to_thread(self.vault.manager.poll_jobs)
-                self.active_jobs = self.vault.manager.get_active_jobs()
-        if applied:
-            self._notify_completions()
-        return applied
-
-    async def stop_job(self, job_id: str) -> bool:
+    def stop_job(self, job_id: str) -> bool:
         """Stop a running job, then refresh the tracker immediately."""
-        return await self._run_job_action(job_id, self.vault.manager.stop_job)
+        stopped = self.vault.manager.stop_job(job_id)
+        if stopped:
+            self._poll_jobs()
+        return stopped
 
-    async def skip_job_wordlist(self, job_id: str) -> bool:
-        """Abandon the current wordlist and continue with the next one."""
-        return await self._run_job_action(job_id, self.vault.manager.skip_wordlist)
+    def skip_job_wordlist(self, job_id: str) -> bool:
+        """Abandon the wordlist a running job is on and start it on the next one."""
+        skipped = self.vault.manager.skip_wordlist(job_id)
+        if skipped:
+            self._poll_jobs()
+        return skipped
 
-    async def pause_job(self, job_id: str) -> bool:
-        return await self._run_job_action(job_id, self.vault.manager.pause_job)
+    def pause_job(self, job_id: str) -> bool:
+        paused = self.vault.manager.pause_job(job_id)
+        if paused:
+            self._poll_jobs()
+        return paused
 
-    async def resume_job(self, job_id: str) -> bool:
-        return await self._run_job_action(job_id, self.vault.manager.resume_job)
+    def resume_job(self, job_id: str) -> bool:
+        resumed = self.vault.manager.resume_job(job_id)
+        if resumed:
+            self._poll_jobs()
+        return resumed
 
-    async def clear_job(self, job_id: str) -> None:
+    def clear_job(self, job_id: str) -> None:
         """Remove a finished job, then refresh the tracker immediately."""
-        async with self._job_lock:
-            await asyncio.to_thread(self.vault.manager.clear_job, job_id)
-            self.active_jobs = self.vault.manager.get_active_jobs()
+        self.vault.manager.clear_job(job_id)
+        self.active_jobs = self.vault.manager.get_active_jobs()
 
     def _on_devices_changed(self, current, arrived, departed) -> None:
         """DeviceWatch fired. On Splash, refresh the card list; mid-session, prompt to bring up
