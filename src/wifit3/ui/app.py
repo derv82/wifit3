@@ -6,6 +6,7 @@ import sys
 from textual import events, work
 from textual.app import App
 from textual.binding import Binding
+from textual.message import Message
 from textual.widgets import Header
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
 from typing import Optional
@@ -13,7 +14,7 @@ from typing import Optional
 from wifit3 import __version__
 from wifit3.chips import log_trace
 from textual.reactive import reactive
-from typing import List
+from typing import List, Set
 from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
@@ -114,6 +115,13 @@ class WifiteApp(App):
     PathPickerModal #picker-roots Button { min-width: 0; margin-right: 1; }
     """
 
+    class JobCracked(Message):
+        """An automatic job recovered a key; posted to every screen on the stack."""
+
+        def __init__(self, job: JobState) -> None:
+            super().__init__()
+            self.job = job
+
     active_jobs: reactive[List[JobState]] = reactive([], always_update=True)
     vault_open: reactive[bool] = reactive(False)
 
@@ -134,11 +142,15 @@ class WifiteApp(App):
         self.target_ap: Optional[AccessPoint] = None
         self.vault = Vault()
         self.vault.subscribe(self._refresh_vault_table)
+        self.vault.set_probed_ssids_source(self._probed_ssids)
         self._job_status: dict[str, ToolStatus] = {}
         self._job_lock = asyncio.Lock()
         self.pbc_enabled: bool = Config.wps_auto_pbc
         register_app_themes(self)
         self.theme = Config.theme
+
+    def _probed_ssids(self) -> Set[str]:
+        return self.array.probed_ssids if self.array is not None else set()
 
     def on_text_selected(self, event: events.TextSelected) -> None:
         selected = self.screen.get_selected_text()
@@ -204,23 +216,23 @@ class WifiteApp(App):
         self._notify_completions()
 
     def _notify_completions(self) -> None:
-        """Toast each job the first time it finishes this session; jobs already terminal when
-        the app started are recorded silently rather than re-announced."""
+        """Toast each job the first time it finishes this session (automatic jobs only on SUCCESS);
+        jobs already terminal when the app started are recorded silently."""
         terminal = (
             ToolStatus.SUCCESS, ToolStatus.FAILURE, ToolStatus.ERROR, ToolStatus.STOPPED,
         )
-        cracked = False
         for job in self.active_jobs:
             prev = self._job_status.get(job.job_id)
             if job.status in terminal and prev is not None and prev not in terminal:
-                self._toast_job(job)
-                cracked = cracked or job.status == ToolStatus.SUCCESS
+                succeeded = job.status == ToolStatus.SUCCESS
+                if succeeded or not job.automatic:
+                    self._toast_job(job)
+                if succeeded and job.automatic:
+                    for screen in self.screen_stack:
+                        screen.post_message(self.JobCracked(job))
             self._job_status[job.job_id] = job.status
         live = {job.job_id for job in self.active_jobs}
         self._job_status = {k: v for k, v in self._job_status.items() if k in live}
-        if cracked:
-            self._refresh_vault_table()
-
 
     def _refresh_vault_table(self) -> None:
         """Reload the vault table if its drawer is open."""
@@ -232,9 +244,7 @@ class WifiteApp(App):
 
     def _toast_job(self, job: JobState) -> None:
         if job.status == ToolStatus.SUCCESS:
-            msg = job.progress_msg
-            key = msg.split("Key:", 1)[1].strip() if "Key:" in msg else msg
-            self.notify(f"SUCCESS  PSK: {key}", title=job.display_name, severity="information")
+            self.notify(f"SUCCESS  PSK: {job.key}", title=job.display_name, severity="information")
         elif job.status == ToolStatus.FAILURE:
             self.notify(f"NOT FOUND  {job.progress_msg}", title=job.display_name, severity="warning")
         elif job.status == ToolStatus.STOPPED:

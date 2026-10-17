@@ -28,7 +28,7 @@ def _load_crack():
 
 def _client_m2(bssid, client, ssid, psk, anonce, snonce, replay):
     zeroed = eapol_key(key_info=0x010A, key_len=0, replay=replay, nonce=snonce, key_data=GENERIC_RSN_IE)
-    mic = wpa_psk.mic_for(psk, ssid, bssid, client, anonce, snonce, zeroed)
+    mic = wpa_psk.mic_for(psk, ssid.encode(), bssid, client, anonce, snonce, zeroed)
     payload = set_mic(zeroed, mic)
     return data_header(to_ds=True, bssid=bssid, client=client) + LLC_SNAP_EAPOL + payload
 

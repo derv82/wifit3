@@ -106,7 +106,7 @@ class FourWayClient:
         replay = int.from_bytes(m1.replay_counter or b"\x00" * 8, "big")
         zeroed = eapol_key(key_info=_M2_KEY_INFO, key_len=0, replay=replay, nonce=snonce,
                            key_data=self.rsn_ie)
-        mic = wpa_psk.mic_for(self.psk, self.ssid, self.bssid, self.our_mac, anonce, snonce, zeroed)
+        mic = wpa_psk.mic_for(self.psk, self.ssid.encode(), self.bssid, self.our_mac, anonce, snonce, zeroed)
         payload = set_mic(zeroed, mic)
         return data_header(to_ds=True, bssid=self.bssid, client=self.our_mac) + LLC_SNAP_EAPOL + payload
 

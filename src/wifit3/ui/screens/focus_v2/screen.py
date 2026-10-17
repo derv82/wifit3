@@ -697,6 +697,13 @@ class FocusViewV2(Screen):
                 f"[dim]via {method_label}[/dim]"
             )
 
+    def on_wifite_app_job_cracked(self, message: "WifiteApp.JobCracked") -> None:
+        job = message.job
+        self._log(
+            f'[black bold on green] ✓ PSK cracked [/black bold on green] '
+            f'"{escape(job.key or "")}" [dim](via {escape(job.display_name)})[/dim]'
+        )
+
     def _log(self, markup: str) -> None:
         ts = time.strftime("%H:%M:%S")
         try:

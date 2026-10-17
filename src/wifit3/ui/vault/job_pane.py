@@ -1,5 +1,3 @@
-import re
-
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
@@ -7,14 +5,6 @@ from textual.widget import Widget
 from textual.widgets import Label, Button, ProgressBar
 
 from wifit3.models.jobs import JobAction, JobState, ToolStatus
-
-_PERCENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
-
-
-def _has_runtime_status(job: JobState) -> bool:
-    """Whether the tool has reported progress for this job yet."""
-    message = job.progress_msg or ""
-    return bool(_PERCENT_RE.search(message) or " · " in message)
 
 # One colour per status; black text on a solid fill reads as a badge.
 _STATUS_STYLE = {
@@ -78,7 +68,8 @@ class JobRow(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Label(self._name_markup(self._job), classes="job-name")
-        yield ProgressBar(total=100, show_eta=False, classes="job-bar")
+        yield ProgressBar(total=100, show_eta=False, show_percentage=False, classes="job-bar")
+        yield Label(self._percent_text(self._job), classes="job-percent")
         yield Label(self._status_markup(self._job), classes="job-status")
         yield Label(self._detail_markup(self._job), classes="job-detail")
         yield JobPauseButton(self._job)
@@ -93,7 +84,8 @@ class JobRow(Horizontal):
         self.query_one(".job-name", Label).update(self._name_markup(job))
         self.query_one(".job-status", Label).update(self._status_markup(job))
         self.query_one(".job-detail", Label).update(self._detail_markup(job))
-        self.query_one(ProgressBar).update(total=100, progress=self._percent(job))
+        self.query_one(ProgressBar).update(total=100, progress=job.percent or 0.0)
+        self.query_one(".job-percent", Label).update(self._percent_text(job))
         self.query_one(JobPauseButton).sync(job)
         self.query_one(JobSkipButton).sync(job)
         self.query_one(JobActionButton).sync(job)
@@ -104,33 +96,27 @@ class JobRow(Horizontal):
             name = name[:24] + "…"
         return f"[bold]{escape(name)}[/bold]"
 
+    def _percent_text(self, job: JobState) -> str:
+        return f"{job.percent or 0.0:.2f}%"
+
     def _status_markup(self, job: JobState) -> str:
         style = _STATUS_STYLE.get(job.status, "black bold on white")
-        if job.status == ToolStatus.RUNNING and not _has_runtime_status(job):
+        if job.status == ToolStatus.RUNNING and JobAction.RESUME in job.actions:
+            label = "PAUSED"
+        elif job.status == ToolStatus.RUNNING and job.percent is None:
             label = "STARTING"
         else:
             label = _STATUS_LABEL.get(job.status, job.status.value)
         return f"[{style}] {label} [/]"
 
     def _detail_markup(self, job: JobState) -> str:
-        if job.status == ToolStatus.SUCCESS:
-            key = self._cracked_key(job.progress_msg)
-            return f"PSK: [black bold on lightgreen] {escape(key)} [/]" if key else ""
-        if job.status in (ToolStatus.FAILURE, ToolStatus.ERROR, ToolStatus.STOPPED):
-            return f"[dim]{escape(job.progress_msg)}[/dim]"
-        if job.status == ToolStatus.RUNNING and " · " in job.progress_msg:
-            wordlist = job.progress_msg.rsplit(" · ", 1)[1]
-            return f"[dim]{escape(wordlist)}[/dim]"
-        return ""
-
-    def _cracked_key(self, msg: str) -> str:
-        return msg.split("Key:", 1)[1].strip() if msg and "Key:" in msg else ""
-
-    def _percent(self, job: JobState) -> float:
-        if job.status == ToolStatus.SUCCESS:
-            return 100.0
-        m = _PERCENT_RE.search(job.progress_msg or "")
-        return float(m.group(1)) if m else 0.0
+        if job.status == ToolStatus.SUCCESS and job.key is not None:
+            return f"PSK: [black bold on lightgreen] {escape(job.key)} [/]"
+        if job.status == ToolStatus.RUNNING:
+            return f"[dim]{escape(job.detail)}[/dim]" if job.detail else ""
+        if job.status == ToolStatus.QUEUED:
+            return ""
+        return f"[dim]{escape(job.progress_msg)}[/dim]"
 
 
 class JobTrackerPane(Widget):
@@ -148,9 +134,10 @@ class JobTrackerPane(Widget):
     JobTrackerPane #job-list { height: auto; }
     JobTrackerPane .job-row { height: 1; }
     JobTrackerPane .job-name { width: 25; text-align: right; }
-    JobTrackerPane .job-bar { width: 18; height: 1; margin: 0 1; }
+    JobTrackerPane .job-bar { width: 11; height: 1; margin-left: 1; }
     JobTrackerPane .job-bar Bar { width: 1fr; }
     JobTrackerPane .job-bar Bar > .bar--bar { background: $panel; }
+    JobTrackerPane .job-percent { width: 7; margin-right: 1; text-align: right; }
     JobTrackerPane .job-status { width: 11; margin-right: 1; }
     JobTrackerPane .job-detail { width: 1fr; min-width: 0; overflow-x: hidden; }
     JobTrackerPane .job-pause-btn { min-width: 10; margin-right: 1; }

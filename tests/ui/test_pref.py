@@ -2,8 +2,9 @@
 and Consolidate has moved out of Prefs into the Vault screen."""
 import pytest
 from textual.app import App
-from textual.widgets import Button
+from textual.widgets import Button, Checkbox
 
+from wifit3.persist import config
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
 from wifit3.ui.pref import PreferencesModal
@@ -48,3 +49,19 @@ async def test_prefs_no_longer_hosts_consolidate(tmp_path):
         app.push_screen(PreferencesModal())
         await pilot.pause(0)
         assert len(app.screen.query("#consolidate")) == 0
+
+
+@pytest.mark.asyncio
+async def test_auto_crack_checkbox_is_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "_PATH", tmp_path / "config.toml")
+    monkeypatch.setattr(Config, "auto_crack", True)
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(PreferencesModal())
+        await pilot.pause(0)
+        app.screen.query_one("#auto_crack", Checkbox).value = False
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause(0)
+
+    assert Config.auto_crack is False
+    assert "auto_crack = false" in (tmp_path / "config.toml").read_text("utf-8")

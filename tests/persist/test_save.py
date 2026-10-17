@@ -8,6 +8,7 @@ from wifit3.persist.save import (
     save_handshake,
     save_pmkid,
     save_wep_key,
+    save_wpa_psk,
     save_wps_pbc,
     save_wps_pin,
 )
@@ -311,6 +312,35 @@ class TestSaveWpsPbc:
         save_wps_pbc(ap, "psk1")
         second = save_wps_pbc(ap, "psk2")
         assert second is not None and second.was_new is True
+
+
+# ---- save_wpa_psk -----------------------------------------------------------
+
+class TestSaveWpaPsk:
+    def test_writes_ssid_bssid_and_psk(self, tmp_path):
+        result = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        assert result is not None and result.was_new is True
+        assert result.path.name.endswith("_wpa_psk.txt")
+        assert result.path.read_text(encoding="utf-8") == (
+            "SSID: Cafe WiFi\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: hashcat!\n")
+
+    def test_dedupes_same_bssid_and_psk_returns_existing_path(self, tmp_path):
+        first = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        again = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        assert again is not None and again.was_new is False
+        assert first is not None and again.path == first.path
+
+    def test_different_psk_or_bssid_writes_new(self, tmp_path):
+        save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        other_psk = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat?")
+        other_bssid = save_wpa_psk("Cafe WiFi", "11:22:33:44:55:66", "hashcat!")
+        assert other_psk is not None and other_psk.was_new is True
+        assert other_bssid is not None and other_bssid.was_new is True
+
+    def test_does_not_dedupe_against_a_wps_file(self, tmp_path):
+        save_wps_pbc(AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="Cafe WiFi"), "hashcat!")
+        result = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        assert result is not None and result.was_new is True
 
 
 # ---- SSID sanitization (path traversal) ------------------------------------

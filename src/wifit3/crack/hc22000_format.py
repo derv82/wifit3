@@ -23,6 +23,7 @@ References:
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import List, Optional
 
 from wifit3.models import Handshake
@@ -54,3 +55,33 @@ def eapol_hashlines(ssid: str, hs: Handshake) -> List[str]:
     if not ssid:
         return []
     return [wpa.hc22000_line(ssid, hs, pair) for pair in wpa.crackable_pairs(hs)]
+
+
+@dataclass(frozen=True, slots=True)
+class Hc22000Line:
+    """Parsed Hashcat mode 22000 record (PMKID or EAPOL handshake)."""
+    kind: str           # "01" (PMKID) or "02" (EAPOL)
+    pmkid_or_mic: str   # field 2: PMKID hex (if 01) or MIC (if 02)
+    mac_ap: str         # field 3
+    mac_sta: str        # field 4
+    essid: str          # field 5
+    anonce: str = ""    # field 6 (EAPOL only)
+    eapol: str = ""     # field 7 (EAPOL only)
+    message_pair: str = ""  # field 8 (EAPOL only)
+
+
+def parse_hc22000(line: str) -> Optional[Hc22000Line]:
+    """Parse one ``WPA*01*…`` or ``WPA*02*…`` line into an Hc22000Line."""
+    parts = line.strip().split("*")
+    if len(parts) < 6 or parts[0] != "WPA":
+        return None
+    return Hc22000Line(
+        kind=parts[1],
+        pmkid_or_mic=parts[2].lower(),
+        mac_ap=parts[3].lower(),
+        mac_sta=parts[4].lower(),
+        essid=parts[5],
+        anonce=parts[6].lower() if len(parts) > 6 else "",
+        eapol=parts[7] if len(parts) > 7 else "",
+        message_pair=parts[8] if len(parts) > 8 else "",
+    )

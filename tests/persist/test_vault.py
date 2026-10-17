@@ -9,9 +9,11 @@ import sys
 import zipfile
 from pathlib import Path
 
+from wifit3.crack.hc22000_format import Hc22000Line
+from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH
 from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage
 from wifit3.persist.config import Config
-from wifit3.persist.vault import Vault
+from wifit3.persist.vault import Vault, crosses_auto_crack_threshold
 
 
 # ---- handshake fixtures (mirror tests/persist/test_save.py) -----------------
@@ -305,3 +307,105 @@ def test_capture_payload_value_then_file(tmp_path):
     v.save_wep_key(ap, b"abcde")
     wep_cap = next(c for c in v.persisted(ap.bssid) if c.type == CaptureType.WEP)
     assert v.capture_payload(wep_cap) == b"abcde".hex()
+
+
+# ---- auto-crack threshold ----------------------------------------------------
+
+def _line(kind: str, message_pair: str = "") -> Hc22000Line:
+    return Hc22000Line(kind=kind, pmkid_or_mic="00", mac_ap="aabbccddeeff",
+                       mac_sta="112233445566", essid="4e6574", message_pair=message_pair)
+
+
+_M1M2 = _line("02", "00")
+_M1M2_FLAGGED = _line("02", "80")
+_M2M3 = _line("02", "02")
+_M3M4 = _line("02", "05")
+_PMKID = _line("01")
+
+
+def test_threshold_first_line_for_an_ap():
+    assert crosses_auto_crack_threshold([], [_M1M2])
+    assert crosses_auto_crack_threshold([], [_PMKID])
+    assert not crosses_auto_crack_threshold([], [])
+
+
+def test_threshold_first_authorized_eapol_after_m1m2():
+    assert crosses_auto_crack_threshold([_M1M2], [_M1M2, _M2M3])
+    assert crosses_auto_crack_threshold([_M1M2_FLAGGED], [_M1M2_FLAGGED, _M3M4])
+
+
+def test_threshold_first_pmkid_after_m1m2():
+    assert crosses_auto_crack_threshold([_M1M2], [_M1M2, _PMKID])
+
+
+def test_threshold_repeated_handshakes_do_not_cross():
+    assert not crosses_auto_crack_threshold([_M1M2], [_M1M2, _M1M2_FLAGGED])
+    assert not crosses_auto_crack_threshold([_M1M2, _M2M3], [_M1M2, _M2M3, _M3M4])
+
+
+def test_threshold_prior_authorized_line_never_crosses():
+    assert not crosses_auto_crack_threshold([_M2M3], [_M2M3, _PMKID])
+    assert not crosses_auto_crack_threshold([_PMKID], [_PMKID, _M2M3])
+
+
+# ---- auto-crack trigger on save ------------------------------------------------
+
+_CLIENT = "11:22:33:44:55:66"
+
+
+def _auto_crack_call(capture, extra_passwords: list[str] | None = None) -> tuple:
+    return (("cpu_crack", capture, {"wordlists": [str(DEFAULT_PASSWORDS_PATH)],
+                                    "extra_passwords": extra_passwords or []}),
+            {"automatic": True})
+
+
+def test_save_submits_cpu_crack_once_per_threshold(tmp_path, mocker):
+    v = Vault()
+    v.manager = mocker.Mock()
+    ap = _ap_with_hs(pmkid=b"\x11" * 16)
+
+    v.save_handshake(ap, _CLIENT)
+    assert v.manager.submit_job.call_args_list == [_auto_crack_call(v.persisted(ap.bssid)[0])]
+
+    ap.handshakes[_CLIENT].messages[0] = _ef(1, nonce=b"\xA1" + b"\x00" * 31,
+                                             payload_mic=b"\x00" * 16)
+    assert v.save_handshake(ap, _CLIENT).was_new
+    assert v.manager.submit_job.call_count == 1
+
+    v.save_pmkid(ap, _CLIENT)
+    assert v.manager.submit_job.call_count == 2
+    assert v.manager.submit_job.call_args == _auto_crack_call(v.persisted(ap.bssid)[0])
+
+
+def test_auto_crack_snapshots_probed_ssids_sorted(tmp_path, mocker):
+    v = Vault()
+    v.manager = mocker.Mock()
+    probed_ssids = {"Zeta_SSID", "Alpha_SSID"}
+    v.set_probed_ssids_source(lambda: probed_ssids)
+
+    v.save_handshake(_ap_with_hs(), _CLIENT)
+    probed_ssids.add("Later_SSID")
+
+    capture = v.persisted(_ap_with_hs().bssid)[0]
+    assert v.manager.submit_job.call_args == _auto_crack_call(capture, ["Alpha_SSID", "Zeta_SSID"])
+
+
+def test_save_does_not_submit_when_auto_crack_is_off(tmp_path, mocker, monkeypatch):
+    monkeypatch.setattr(Config, "auto_crack", False)
+    v = Vault()
+    v.manager = mocker.Mock()
+
+    v.save_handshake(_ap_with_hs(), _CLIENT)
+
+    v.manager.submit_job.assert_not_called()
+
+
+def test_save_does_not_submit_when_the_psk_is_known(tmp_path, mocker):
+    v = Vault()
+    v.manager = mocker.Mock()
+    ap = _ap_with_hs()
+    ap.wps_pbc_psk = "knownpsk"
+
+    v.save_handshake(ap, _CLIENT)
+
+    v.manager.submit_job.assert_not_called()

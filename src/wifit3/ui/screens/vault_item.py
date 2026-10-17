@@ -17,7 +17,6 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalGroup
 from textual.content import Content
 from textual.events import Event
-from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Select
@@ -88,12 +87,13 @@ class _CapturePanel(VerticalGroup):
         border: round $primary; padding: 0 1;
         margin-top: 1;
     }
-    _CapturePanel .file { margin-bottom: 1; }
-    _CapturePanel .date { height: 1; margin-bottom: 1; }
-    _CapturePanel .key-row { height: 1; align: left middle; margin-bottom: 1; }
-    _CapturePanel .key-display { height: 1; margin-right: 3; margin-bottom: 1; }
+    _CapturePanel .key-group { padding-left: 1; }
+    _CapturePanel .date { height: 1; padding-left: 1; margin-bottom: 1; }
+    _CapturePanel .key-row { height: 1; align: left middle; }
+    _CapturePanel .key-display { height: 1; margin-right: 3; }
     _CapturePanel .copy-btn { min-width: 0; margin-right: 3; }
     _CapturePanel .verify-btn { min-width: 14; }
+    _CapturePanel .tools { height: auto; margin-bottom: 1; }
     _CapturePanel .actions { height: auto; align: left middle; }
     _CapturePanel .spacer { width: 1fr; }
     """
@@ -142,6 +142,7 @@ class _CapturePanel(VerticalGroup):
 
         yield Label(self._date_markup(newest), classes="date")
 
+        yield Horizontal(classes="tools")
         with Horizontal(classes="actions"):
             yield Button("Open Directory", classes="open-dir")
             yield Label("", classes="spacer")
@@ -160,14 +161,12 @@ class _CapturePanel(VerticalGroup):
         kg = self.query_one(".key-group")
         kg.remove_children()
         
-        actions = self.query_one(".actions")
-        for btn in actions.query(".tool-btn"):
-            btn.remove()
-            
-        for tool in self.app.vault.manager.tools.values():
-            if tool.can_crack(cap):
-                btn = Button(f"Launch {tool.name}", "primary", classes=f"tool-btn launch-tool-{tool.name}")
-                actions.mount(btn, before=".spacer")
+        tools = self.query_one(".tools")
+        tools.remove_children()
+        crackers = [t for t in self.app.vault.manager.tools.values() if t.can_crack(cap)]
+        tools.mount_all(Button(t.label, "primary", classes=f"tool-btn launch-tool-{t.name}")
+                        for t in crackers)
+        tools.display = bool(crackers)
 
         def _row(label: str, val: str, btn_id: str, target_type: Optional[CaptureType] = None):
             verify_btn = Button("Verify", id=f"verify-{btn_id}", variant="primary", classes="verify-btn",
@@ -282,7 +281,6 @@ class _CapturePanel(VerticalGroup):
                 self.notify(f"Could not remove {Path(cap.path).name}: {exc}", severity="error")
                 return
             self.notify(f"Removed {Path(cap.path).name}")
-            self.post_message(VaultItemView.CapturesChanged())
 
         self.app.push_screen(ConfirmModal(f"Delete [bold]{escape(Path(cap.path).name)}[/]?"), after)
         
@@ -333,9 +331,6 @@ class _CapturePanel(VerticalGroup):
 
 
 class VaultItemView(Vertical):
-    class CapturesChanged(Message):
-        """A capture was deleted; the parent should refresh."""
-
     DEFAULT_CSS = """
     VaultItemView {
         width: 1fr;

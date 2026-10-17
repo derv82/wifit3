@@ -15,6 +15,7 @@ def _isolate_config(tmp_path, monkeypatch):
     Config.silenced_bssids = []
     Config.hide_silenced = False
     Config.wps_auto_pbc = True
+    Config.auto_crack = True
     yield
 
 

@@ -14,7 +14,9 @@ This file provides guidance to coding agents when working with code in this repo
 - **Porting code style**: When porting or working within `src/wifit3/chips/**/*`: `docs/porting/CODE-STYLE.md`.
 - **Porting / bringing up a chip?** Playbook: `docs/porting/METHODOLOGY.md` (or run `/port <chip>` in `.claude/skills/port`).
 - **Per-chipset port-reference docs**: each chip dir has a `<CHIP>.md`. Template + rules in `docs/porting/CHIP-DOC.md`.
-- **Within `chips/`, don't re-use code from another driver.** *Why:* a shared core meant a fix for one device forced re-testing every device and risked regressing the others.
+- **Within `chips/`, don't re-use code from another driver**, even when the tables or sequences look identical. Don't import another chip's module, and don't extract "shared" code into a base. Duplicated code across drivers is expected and fine.
+  *Why:* each port follows its own kernel/DKMS source, and those diverge, sometimes subtly, sometimes on a later upstream update to one driver only. Shared code turns into `if chip X: ... elif chip Y:` and makes every edit a re-test of every device that uses it (a 30-minute soak per device). A port is a standalone, confined unit.
+  `rtw88_base` is the one deliberate shared base; don't add to it or create new ones.
 - **Register READs can mutate device state: never assume two reads commute, never reorder them vs the capture.**
 - **Device gets borked? User replugs.** That resets cold-boot state.
 
@@ -52,18 +54,34 @@ The TUI is built on **Textual**.
 
 ### Where things live
 
-Not a clean top-to-bottom stack (the real flow is more tangled), but the points of interest:
+Not a clean top-to-bottom stack (the real flow is more tangled), but the points of interest.
+
+**Core engine**: generic and wifit3-agnostic, meant to be split out into a separate `wifit3-drivers`
+package. Not off-limits, but changes here stay generic: no imports from the app layer (`ui/`, `id/`,
+`vault/`, `persist/`, `campaigns/`), no wifit3 UI or product concepts.
+
+```
+dot11/   pure 802.11 / WSC spec: frame parsing and building, no device or asyncio
+device/  DeviceManager + the VID:PID map (USB scan, VID:PID → driver, read WITHOUT importing the
+         driver), DeviceWatch (plug-in / un-plug callbacks)
+wlan/    WlanInterface (802.11 abstraction: channel hopping, AP/Client registry)
+chips/   driver.py is the Driver ABC; one dir per chip subclasses it
+```
+
+**App layer**: wifit3 itself, built on the core engine.
 
 ```
 ui/      Textual screens (Splash → Scanner → Focus); WifiteApp holds the DeviceManager + active interface
-device/  DeviceManager + the VID:PID map (USB scan, VID:PID → driver, read WITHOUT importing the
-         driver), DeviceWatch (plug-in / un-plug callbacks)
-wlan/    WlanInterface (802.11 abstraction: channel hopping, AP/Client registry),
-         WlanFrameParser (the Python 802.11 frame parser)
-models/  project-wide dataclasses: AccessPoint, Client, DeviceID
+models/  project-wide dataclasses: AccessPoint, Client, DeviceID (DeviceID is also used by the core engine)
 campaigns/ AutoDeauth, PMKID harvest, WPS PIN, WEP/Replay, EvilTwin
-chips/   driver.py is the Driver ABC; one dir per chip subclasses it
+vault/   cracking-tool jobs: VaultManager + tools/ (hashcat)
+persist/ Config (TOML), capture history, pcap / vault storage
+id/      OUI → vendor lookup, device and client fingerprinting
+crack/   offline crypto: WPA PSK, WEP, handshake checks, hc22000 format
+setup/   per-OS privileged device setup (udev/modprobe, WinUSB) behind the splash's Install button
+```
 
+```
 A chip dir (chips/<chipset>/) is typically shaped:
   __init__.py       SUPPORTED_IDS + import_driver (the VID:PID list, read without importing driver.py)
   driver.py         subclasses the Driver ABC; declares SUPPORTED_CHANNELS
@@ -99,3 +117,6 @@ The cold-vs-warm distinction is a per-driver concern: if a previous session left
 - **SplashView** — USB device discovery, driver progress, interface selection
 - **ScannerView** — Live AP table; triggers channel hopping; leads to FocusViewV2
 - **FocusViewV2** — Single-AP focus view
+
+`app.py`'s global `Button { min-width: 12; margin-right: 1 }` outranks every widget's `DEFAULT_CSS`.
+Override it from the screen's `CSS` attribute (it competes on specificity), not by adding rules to `app.py`.

@@ -5,14 +5,14 @@ import signal
 import subprocess
 import json
 import time
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
 from wifit3.models import PersistedCapture, ToolCapability, ToolResult, ToolStatus
 from wifit3.models.jobs import JobAction, JobState
 from wifit3.vault.tools import hashcat_keypress
-from wifit3.vault.tools.base import VaultTool
+from wifit3.vault.tools.cracker import CrackerTool, WordlistQueue, expand_wordlists
 
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ _LOG_TAIL_BYTES = 256 * 1024
 _EXIT_WAIT_SECONDS = 5.0
 _TERMINATE_WAIT_SECONDS = 0.5                   # no SIGTERM handler in hashcat: it exits at once
 _QUIT_GRACE_SECONDS = 10.0                      # how long 'q' has to work before we kill instead
+_STATUS_NAMES = {2: "Autotuning", 3: "Running", 4: "Paused"}   # hashcat --status-json codes
 
 
 def _read_log_tail(path, limit: int = _LOG_TAIL_BYTES, start: int = 0) -> list[str]:
@@ -55,65 +56,24 @@ def _split_args(raw: str) -> list[str]:
     return [token.strip('"') for token in shlex.split(raw, posix=False)]
 
 
-def expand_wordlists(wordlist_paths: list[str]) -> list[str]:
-    """The existing files among ``wordlist_paths``; a directory contributes the files inside it."""
-    expanded: list[str] = []
-    for raw in wordlist_paths:
-        path = Path(raw).expanduser()
-        if path.is_dir():
-            children = sorted(child.resolve() for child in path.iterdir() if child.is_file())
-            expanded.extend(str(child) for child in children)
-        elif path.is_file():
-            expanded.append(str(path.resolve()))
-    return expanded
-
-
 @dataclass
-class WordlistQueue:
-    wordlists: list[str] = field(default_factory=list)
-    index: int = 0
+class HashcatQueue(WordlistQueue):
     log_offset: int = 0         # bytes already in the job's log when the current process started
-    stopped: bool = False
-    skipping_wordlist: bool = False
     stdin_path: str = ""            # hashcat's stdin; see hashcat_keypress.send
     quit_sent_at: float = 0.0       # time.time() of the 'q' keypress
 
-    @classmethod
-    def from_job(cls, job: JobState) -> "WordlistQueue":
-        known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in job.tool_state.items() if k in known})
 
-    def write_to(self, job: JobState) -> None:
-        job.tool_state.update(asdict(self))
-
-    @property
-    def current(self) -> Optional[str]:
-        return self.wordlists[self.index] if 0 <= self.index < len(self.wordlists) else None
-
-    @property
-    def has_next(self) -> bool:
-        return self.index + 1 < len(self.wordlists)
-
-    @property
-    def label(self) -> str:
-        """Current file (``rockyou.txt``), with its position when there are several:
-        ``rockyou.txt (3/16)``."""
-        name = Path(self.current).name if self.current else ""
-        return f"{name} ({self.index + 1}/{len(self.wordlists)})" if len(self.wordlists) > 1 else name
-
-
-class HashcatTool(VaultTool):
+class HashcatTool(CrackerTool[HashcatQueue]):
     name = "hashcat"
+    label = "Hashcat"
     description = "Advanced password recovery (WPA/WPA2/PMKID)"
     # ADOPTABLE: hashcat is left running when wifit3 exits and re-attached on the next launch, so a
     # long crack survives closing the app. KILLABLE is the user's explicit Stop, not shutdown.
     capabilities = ToolCapability.KILLABLE | ToolCapability.SINGLETON | ToolCapability.ADOPTABLE
+    queue_type = HashcatQueue
 
     def __init__(self) -> None:
         self._procs: Dict[int, subprocess.Popen] = {}
-
-    def can_crack(self, capture: PersistedCapture) -> bool:
-        return capture.path.endswith(".hc22000")
 
     def launch(self, job: JobState, capture: PersistedCapture) -> None:
         hashcat_exe = job.config.get("hashcat_exe")
@@ -137,9 +97,9 @@ class HashcatTool(VaultTool):
 
         job.log_path = str(Path(job.capture_path).with_suffix('.hashcat.log').resolve())
         Path(job.log_path).write_bytes(b"")      # one log per job, every wordlist appended to it
-        self._start(job, WordlistQueue(wordlists=wordlists))
+        self._start_wordlist(job, HashcatQueue(wordlists=wordlists))
 
-    def _start(self, job: JobState, queue: WordlistQueue) -> None:
+    def _start_wordlist(self, job: JobState, queue: HashcatQueue) -> None:
         """Run hashcat against the queue's current wordlist, appending to the job's log."""
         hashcat_exe = str(job.config.get("hashcat_exe"))
         self._drop_dead_pidfile(hashcat_exe)
@@ -192,9 +152,9 @@ class HashcatTool(VaultTool):
 
     def poll_status(self, job: JobState, assume_dead: bool = False) -> ToolResult:
         self._remove_exited_processes()
-        queue = WordlistQueue.from_job(job)
+        queue = HashcatQueue.from_job(job)
         lines = _read_log_tail(job.log_path, start=queue.log_offset)
-        progress_msg = self._parse_progress(lines) or "Running..."
+        progress_msg, percent = self._parse_progress(lines) or ("Running...", None)
 
         # The potfile is the source of truth for a recovered key. Check it FIRST, regardless of
         # liveness: hashcat sometimes hangs after printing its result, and blocking the poll until
@@ -202,60 +162,26 @@ class HashcatTool(VaultTool):
         key = self._key_from_potfile(self._potfile(job.capture_path))
         if key is not None:
             self._terminate(job.pid)
-            return ToolResult(status=ToolStatus.SUCCESS, value=f"Cracked! Key: {key}", result_data={"key": key})
+            return self._cracked(key)
 
         if not assume_dead and self._is_running(job.pid, job.config.get("hashcat_exe")):
             self._kill_if_quit_timed_out(job, queue)
-            return ToolResult(status=ToolStatus.RUNNING,
-                              value=self._running_msg(progress_msg, queue),
-                              actions=self._running_actions(queue, progress_msg))
+            return self._running(progress_msg, percent, queue)
 
         self._terminate(job.pid)
-        if queue.stopped:
-            return ToolResult(status=ToolStatus.STOPPED, value="Stopped by user")
-        if queue.skipping_wordlist and queue.has_next:
-            queue.skipping_wordlist = False
-            queue.index += 1
-            self._start(job, queue)
-            return ToolResult(status=ToolStatus.RUNNING,
-                              value=self._running_msg("Starting...", queue),
-                              actions=self._running_actions(queue))
-        if "Exhausted" in progress_msg and queue.has_next:
-            queue.index += 1
-            self._start(job, queue)
-            return ToolResult(status=ToolStatus.RUNNING,
-                              value=self._running_msg("Starting...", queue),
-                              actions=self._running_actions(queue))
-        if "Exhausted" in progress_msg:
-            return ToolResult(status=ToolStatus.FAILURE, value=self._exhausted_msg(queue))
+        ended = self._wordlist_ended(job, queue, exhausted="Exhausted" in progress_msg)
+        if ended is not None:
+            return ended
         reason = self._last_log_message(lines)
         return ToolResult(status=ToolStatus.ERROR, value=reason or "hashcat exited without recovering the key")
 
-    def apply(self, action: JobAction, job: JobState) -> bool:
-        queue = WordlistQueue.from_job(job)
-        if action is JobAction.SKIP:
-            if not queue.has_next:
-                return False
-            if self._send_quit_keypress(job, queue):
-                queue.skipping_wordlist = True
-                queue.write_to(job)
-                return True
-            queue.index += 1
-            self._kill(job)
-            self._start(job, queue)
-            return True
-        if action is JobAction.STOP:
-            queue.stopped = True
-            queue.write_to(job)
-            if not self._send_quit_keypress(job, queue):
-                self._kill(job)
-            return True
-        if action in (JobAction.PAUSE, JobAction.RESUME):
-            key = "p" if action is JobAction.PAUSE else "r"
-            return hashcat_keypress.send(key, pid=job.pid, stdin_path=queue.stdin_path)
-        return False
+    def _request_pause(self, job: JobState, queue: HashcatQueue) -> bool:
+        return hashcat_keypress.send("p", pid=job.pid, stdin_path=queue.stdin_path)
 
-    def _send_quit_keypress(self, job: JobState, queue: WordlistQueue) -> bool:
+    def _request_resume(self, job: JobState, queue: HashcatQueue) -> bool:
+        return hashcat_keypress.send("r", pid=job.pid, stdin_path=queue.stdin_path)
+
+    def _request_stop(self, job: JobState, queue: HashcatQueue) -> bool:
         if not hashcat_keypress.send("q", pid=job.pid, stdin_path=queue.stdin_path):
             return False
         queue.quit_sent_at = time.time()
@@ -263,7 +189,7 @@ class HashcatTool(VaultTool):
         logger.info(f"Sent 'q' to hashcat pid {job.pid}")
         return True
 
-    def _kill_if_quit_timed_out(self, job: JobState, queue: WordlistQueue) -> None:
+    def _kill_if_quit_timed_out(self, job: JobState, queue: HashcatQueue) -> None:
         if not queue.quit_sent_at or time.time() - queue.quit_sent_at < _QUIT_GRACE_SECONDS:
             return
         logger.warning(f"hashcat pid {job.pid} is still running {_QUIT_GRACE_SECONDS:.0f}s "
@@ -272,25 +198,13 @@ class HashcatTool(VaultTool):
         queue.quit_sent_at = 0.0
         queue.write_to(job)
 
-    @staticmethod
-    def _running_actions(queue: WordlistQueue, progress_msg: str = "") -> JobAction:
+    def _running_actions(self, queue: HashcatQueue, progress_msg: str) -> JobAction:
         if queue.quit_sent_at:
             return JobAction.STOP
-        actions = (JobAction.STOP | JobAction.SKIP) if queue.has_next else JobAction.STOP
+        actions = self._queue_actions(queue)
         if queue.stdin_path:
-            actions |= JobAction.RESUME if progress_msg.startswith("Paused") else JobAction.PAUSE
+            actions |= self._pause_action(progress_msg)
         return actions
-
-    @staticmethod
-    def _running_msg(progress_msg: str, queue: WordlistQueue) -> str:
-        return f"{progress_msg} · {queue.label}" if queue.label else progress_msg
-
-    @staticmethod
-    def _exhausted_msg(queue: WordlistQueue) -> str:
-        """What the NOT FOUND badge reports: the one wordlist by name, or how many were tried."""
-        if len(queue.wordlists) == 1:
-            return Path(queue.wordlists[0]).name
-        return f"{len(queue.wordlists)} wordlists"
 
     @staticmethod
     def _potfile(capture_path: str) -> Optional[str]:
@@ -439,9 +353,8 @@ class HashcatTool(VaultTool):
             candidate = candidate[:197] + "..."
         return candidate
 
-    def _parse_progress(self, lines: list[str]) -> Optional[str]:
-        """hashcat's status from the newest ``--status-json`` line in the log."""
-        progress_msg = None
+    def _parse_progress(self, lines: list[str]) -> Optional[tuple[str, float]]:
+        """hashcat's status and percent done from the newest ``--status-json`` line in the log."""
         for line in reversed(lines):
             line = line.strip()
             if line.startswith('{') and line.endswith('}'):
@@ -450,19 +363,14 @@ class HashcatTool(VaultTool):
                     progress = status_data.get('progress', [0, 1])
                     percent = (progress[0] / max(progress[1], 1)) * 100
                     status_code = status_data.get('status', 0)
-                    if status_code == 2:
-                        progress_msg = "Autotuning (%.2f%%)" % percent
-                    elif status_code == 3:
-                        progress_msg = "Running (%.2f%%)" % percent
-                    elif status_code == 4:
-                        progress_msg = "Paused (%.2f%%)" % percent
-                    elif status_code == 5:
+                    if status_code == 5:
                         progress_msg = "Exhausted"
                     elif status_code == 6:
                         progress_msg = "Cracked! (100%)"
                     else:
-                        progress_msg = f"Status {status_code} (%.2f%%)" % percent
-                    break
+                        state = _STATUS_NAMES.get(status_code, f"Status {status_code}")
+                        progress_msg = self._progress_msg(state, percent)
+                    return progress_msg, percent
                 except json.JSONDecodeError:
                     logger.warning(f"Could not parse hashcat status JSON: {line}", exc_info=True)
-        return progress_msg
+        return None

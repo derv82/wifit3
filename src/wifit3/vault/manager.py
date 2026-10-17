@@ -8,8 +8,9 @@ from typing import Dict, List, Optional
 from wifit3.models import PersistedCapture
 from wifit3.models.jobs import JobAction, JobState, ToolCapability, ToolStatus, ToolResult
 from wifit3.vault.tools.base import VaultTool
+from wifit3.vault.tools.cpu_crack import CpuCrackTool
 from wifit3.vault.tools.hashcat import HashcatTool
-from wifit3.persist.common import parse_hc22000
+from wifit3.crack.hc22000_format import parse_hc22000
 from wifit3.persist.config import Config
 
 
@@ -21,12 +22,19 @@ def _set_actions(job: JobState, offered: JobAction) -> None:
     job.actions = offered | clearable
 
 
+def _copy_progress(job: JobState, res: ToolResult) -> None:
+    job.percent = res.percent
+    job.detail = res.detail
+    job.key = res.key
+
+
 class JobManager:
     def __init__(self, vault):
         self.vault = vault
         self.jobs: Dict[str, JobState] = {}
         self.tools: Dict[str, VaultTool] = {}
         self.register_tool(HashcatTool())
+        self.register_tool(CpuCrackTool())
         self._load()
 
     def register_tool(self, tool: VaultTool) -> None:
@@ -66,6 +74,11 @@ class JobManager:
                 continue
             try:
                 tool = self.tools.get(job.tool_name)
+                if tool and ToolCapability.ADOPTABLE not in tool.capabilities:
+                    job.status = ToolStatus.STOPPED
+                    job.progress_msg = "Stopped when wifit3 closed."
+                    changed = True
+                    continue
                 if not (tool and job.log_path):
                     job.status = ToolStatus.ERROR
                     job.progress_msg = "Process ended while wifit3 was closed."
@@ -82,6 +95,7 @@ class JobManager:
                         job.progress_msg = res.value or job.progress_msg
                     else:
                         job.progress_msg = res.value or "Process ended while wifit3 was closed."
+                    _copy_progress(job, res)
                     self._persist_cracked_key(job, res)
                     changed = True
                 _set_actions(job, res.actions)
@@ -94,11 +108,12 @@ class JobManager:
         if changed:
             self._save()
 
-    def submit_job(self, tool_name: str, capture: PersistedCapture, config: dict) -> str:
+    def submit_job(self, tool_name: str, capture: PersistedCapture, config: dict,
+                   automatic: bool = False) -> str:
         """Submit a job. It will be marked QUEUED and launched on the next poll if slots are free."""
         job_id = f"{tool_name}_{Path(capture.path).name}_{int(time.time())}"
         
-        display_name = f"{tool_name} ({capture.ssid or Path(capture.path).stem})"
+        display_name = f"{self.tools[tool_name].label} ({capture.ssid or Path(capture.path).stem})"
         
         job = JobState(
             job_id=job_id,
@@ -107,7 +122,8 @@ class JobManager:
             capture_path=capture.path,
             status=ToolStatus.QUEUED,
             progress_msg="Waiting in queue...",
-            config=config
+            config=config,
+            automatic=automatic,
         )
         self.jobs[job_id] = job
         logger.info(f"Submitted job {job}")
@@ -172,7 +188,8 @@ class JobManager:
                         job.status = res.status
                         if res.value is not None:
                             job.progress_msg = res.value
-                        self._persist_cracked_key(job, res, capture_for)
+                        _copy_progress(job, res)
+                        self._persist_cracked_key(job, res)
                         changed = True
                     elif job.to_dict() != tracked:
                         changed = True      # the tool moved the job on (its next wordlist)
@@ -189,25 +206,17 @@ class JobManager:
     def _persist_cracked_key(self, job: JobState, res: ToolResult, capture_for=None) -> None:
         """A SUCCESS result carrying a recovered key is written beside its capture as a
         vault artifact, then folded into the in-memory index."""
-        if res.status != ToolStatus.SUCCESS or not res.result_data or "key" not in res.result_data:
+        if res.status != ToolStatus.SUCCESS or res.key is None:
             return
         cap = (capture_for(job.capture_path) if capture_for is not None else
                next((c for c in self.vault.all_captures() if c.path == job.capture_path), None))
         if not cap:
             return
-        ssid = self._essid_from_capture(job.capture_path) or cap.ssid or "Unknown"
-        ssid_safe = "".join(c if c.isalnum() else "_" for c in (cap.ssid or "Unknown"))
-        bssid_safe = cap.bssid.replace(":", "-").lower() if cap.bssid else "00-00-00-00-00-00"
-        out_name = f"{ssid_safe}_{bssid_safe}_{int(time.time())}_wpa_psk.txt"
-        out_path = Path(Config.captures_dir) / out_name
+        ssid = self._essid_from_capture(job.capture_path) or cap.ssid
         try:
-            out_path.write_text(
-                f"SSID: {ssid}\nBSSID: {cap.bssid}\nPSK: {res.result_data['key']}\n",
-                encoding="utf-8")
+            self.vault.save_wpa_psk(ssid, cap.bssid, res.key)
         except OSError:
-            logger.exception(f"Failed to write recovered key to {out_path}")
-            return
-        self.vault.refresh()
+            logger.exception(f"Failed to save the recovered key for {job.capture_path}")
 
     def _essid_from_capture(self, capture_path: str) -> Optional[str]:
         """The AP's real SSID decoded from the capture's hashline (lossless), unlike the

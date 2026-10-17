@@ -20,29 +20,35 @@ from wifit3.dot11.eapol import (
 # Bit 3: Key Type = 1 (Pairwise)
 # Bit 8: MIC bit set (1)
 _M2_KEY_INFO = 0x010A
+KCK_LEN = 16
 
 
-def derive_pmk(psk: str, ssid: str) -> bytes:
-    """Derive 32-byte Pairwise Master Key (PMK) via PBKDF2-HMAC-SHA1."""
-    return hashlib.pbkdf2_hmac("sha1", psk.encode("utf-8"), ssid.encode("utf-8"), 4096, 32)
+def derive_pmk(passphrase: str, ssid: bytes) -> bytes:
+    """802.11i PSK passphrase to PMK: PBKDF2-HMAC-SHA1(passphrase, ssid, 4096, 32)."""
+    return hashlib.pbkdf2_hmac("sha1", passphrase.encode(), ssid, 4096, 32)
 
 
-def prf_512(key: bytes, prefix: bytes, data: bytes) -> bytes:
-    """802.11i PRF-512 pseudo-random function using HMAC-SHA1."""
+def prf(key: bytes, label: bytes, data: bytes, nbytes: int) -> bytes:
+    """802.11i PRF-n (HMAC-SHA1), truncated to nbytes."""
     out = b""
     i = 0
-    while len(out) < 64:
-        msg = prefix + b"\x00" + data + bytes([i])
-        out += hmac.new(key, msg, hashlib.sha1).digest()
+    while len(out) < nbytes:
+        out += hmac.new(key, label + b"\x00" + data + bytes([i]), hashlib.sha1).digest()
         i += 1
-    return out[:64]
+    return out[:nbytes]
 
 
-def derive_ptk(pmk: bytes, ap_mac: bytes, sta_mac: bytes, anonce: bytes, snonce: bytes) -> bytes:
-    """Derive 512-bit Pairwise Transient Key (PTK) from PMK, MACs, and nonces."""
+def derive_ptk(pmk: bytes, ap_mac: bytes, sta_mac: bytes, anonce: bytes, snonce: bytes,
+               nbytes: int) -> bytes:
+    """First nbytes of the PTK; MAC and nonce pairs enter sorted. KCK is PTK[:KCK_LEN]."""
     mac_block = min(ap_mac, sta_mac) + max(ap_mac, sta_mac)
     nonce_block = min(anonce, snonce) + max(anonce, snonce)
-    return prf_512(pmk, b"Pairwise key expansion", mac_block + nonce_block)
+    return prf(pmk, b"Pairwise key expansion", mac_block + nonce_block, nbytes)
+
+
+def eapol_mic(kck: bytes, eapol_payload_mic_zeroed: bytes) -> bytes:
+    """Key descriptor version 2 MIC: HMAC-SHA1-128 over the EAPOL payload with its MIC zeroed."""
+    return hmac.new(kck, eapol_payload_mic_zeroed, hashlib.sha1).digest()[:16]
 
 
 def build_eapol_m2(
@@ -63,8 +69,7 @@ def build_eapol_m2(
         key_data=rsn_ie,
         mic=bytes(16),
     )
-    mic = hmac.new(kck, raw_payload, hashlib.sha1).digest()[:16]
-    return hdr + LLC_SNAP_EAPOL + set_mic(raw_payload, mic)
+    return hdr + LLC_SNAP_EAPOL + set_mic(raw_payload, eapol_mic(kck, raw_payload))
 
 
 def random_nonce() -> bytes:

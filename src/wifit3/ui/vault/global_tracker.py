@@ -1,3 +1,4 @@
+from textual import events
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Label
@@ -27,6 +28,9 @@ class GlobalJobTracker(Widget):
         if hasattr(self.app, "vault_open"):
             self.watch(self.app, "vault_open", self._update_tracker)
         self._update_tracker()
+
+    def on_click(self, event: events.Click) -> None:
+        self.app.action_toggle_vault()
 
     def _update_tracker(self, *args) -> None:
         """Called automatically when self.app.active_jobs or vault_open is updated."""

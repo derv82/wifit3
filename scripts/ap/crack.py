@@ -39,12 +39,13 @@ def _verify_line(line: str, words: list[str]) -> tuple[str, str] | None:
     if len(parts) < 9 or parts[0] != "WPA" or parts[1] != "02":
         return None
     mic_target, mac_ap, mac_sta, essid_hex, anonce_hex, eapol_hex = parts[2:8]
-    ssid = bytes.fromhex(essid_hex).decode("utf-8", "replace")
+    ssid_bytes = bytes.fromhex(essid_hex)
+    ssid = ssid_bytes.decode("utf-8", "replace")
     aa, spa = bytes.fromhex(mac_ap), bytes.fromhex(mac_sta)
     anonce, eapol = bytes.fromhex(anonce_hex), bytes.fromhex(eapol_hex)
     snonce = eapol[17:49]
     for psk in words:
-        if wpa_psk.mic_for(psk, ssid, aa, spa, anonce, snonce, eapol).hex() == mic_target.lower():
+        if wpa_psk.mic_for(psk, ssid_bytes, aa, spa, anonce, snonce, eapol).hex() == mic_target.lower():
             return ssid, psk
     return None
 

@@ -7,8 +7,7 @@ from pathlib import Path
 import pytest
 
 from wifit3.vault.tools.hashcat import (
-    WordlistQueue, HashcatTool, _TERMINATE_WAIT_SECONDS, _read_log_tail, _split_args,
-    expand_wordlists,
+    HashcatTool, _TERMINATE_WAIT_SECONDS, _read_log_tail, _split_args,
 )
 from wifit3.models import PersistedCapture
 from wifit3.models.access_point import CaptureType
@@ -79,7 +78,7 @@ def test_poll_status_reports_key_from_potfile(tmp_path):
     )
     res = HashcatTool().poll_status(_job(capture_path=str(cap), pid=999999))
     assert res.status == ToolStatus.SUCCESS
-    assert res.result_data == {"key": "0xdeadbeef"}
+    assert res.key == "0xdeadbeef"
 
 
 def test_poll_status_prefers_a_recovered_key_over_a_stop_request(tmp_path):
@@ -92,7 +91,7 @@ def test_poll_status_prefers_a_recovered_key_over_a_stop_request(tmp_path):
         _job(capture_path=str(cap), tool_state={"stopped": True}), assume_dead=True)
 
     assert res.status == ToolStatus.SUCCESS
-    assert res.result_data == {"key": "recovered-key"}
+    assert res.key == "recovered-key"
 
 
 def test_poll_status_running_uses_popen_handle(tmp_path):
@@ -470,7 +469,9 @@ def test_a_running_job_offers_pause_and_a_paused_one_offers_resume(tmp_path, moc
     tool, job, _spawn, _keys = _reachable_job(tmp_path, mocker, [wordlist])
 
     _append(job.log_path, '{ "status": 3, "progress": [1, 4] }\n')
-    assert tool.poll_status(job).actions == JobAction.STOP | JobAction.PAUSE
+    running = tool.poll_status(job)
+    assert running.actions == JobAction.STOP | JobAction.PAUSE
+    assert (running.percent, running.detail) == (25.0, "a.txt")
 
     _append(job.log_path, '{ "status": 4, "progress": [1, 4] }\n')
     assert tool.poll_status(job).actions == JobAction.STOP | JobAction.RESUME
@@ -541,32 +542,6 @@ def test_launch_truncates_the_log_so_one_job_owns_one_log(tmp_path, mocker):
     assert "previous job" not in Path(job.log_path).read_text(encoding="utf-8")
 
 
-# ----- wordlist expansion ---------------------------------------------------
-
-def test_expand_wordlists_lists_the_files_inside_a_directory(tmp_path):
-    directory = tmp_path / "dictionary folder"
-    directory.mkdir()
-    (directory / "second.txt").write_text("two\n")
-    (directory / "first.txt").write_text("one\n")
-    (directory / "nested").mkdir()
-
-    assert expand_wordlists([str(directory)]) == [
-        str((directory / "first.txt").resolve()), str((directory / "second.txt").resolve())]
-
-
-def test_expand_wordlists_keeps_the_requested_order_of_files(tmp_path):
-    second, first = tmp_path / "z.txt", tmp_path / "a.txt"
-    second.write_text("two\n")
-    first.write_text("one\n")
-
-    assert expand_wordlists([str(second), str(first)]) == [str(second.resolve()),
-                                                           str(first.resolve())]
-
-
-def test_expand_wordlists_drops_what_does_not_exist(tmp_path):
-    assert expand_wordlists([str(tmp_path / "missing.txt")]) == []
-
-
 def test_launch_requires_wordlists(tmp_path):
     exe = tmp_path / "hashcat.exe"
     exe.write_text("")
@@ -624,20 +599,16 @@ def test_read_log_tail_never_reads_before_the_start_offset(tmp_path):
 
 def test_parse_progress_computes_percent(tmp_path):
     lines = ['{ "session": "hashcat", "status": 3, "progress": [1, 4] }']
-    assert HashcatTool()._parse_progress(lines) == "Running (25.00%)"
+    assert HashcatTool()._parse_progress(lines) == ("Running (25.00%)", 25.0)
 
 
 def test_parse_progress_uses_the_newest_status_line(tmp_path):
     lines = ['{"status":3,"progress":[1,4]}', "padding", '{"status":3,"progress":[3,4]}']
-    assert HashcatTool()._parse_progress(lines) == "Running (75.00%)"
+    assert HashcatTool()._parse_progress(lines) == ("Running (75.00%)", 75.0)
 
 
 def test_parse_progress_is_none_without_a_status_line():
     assert HashcatTool()._parse_progress(["hashcat (v7.1.2) starting"]) is None
-
-
-def test_queue_label_is_empty_without_wordlists():
-    assert WordlistQueue().label == ""
 
 
 # ----- process identity -----------------------------------------------------

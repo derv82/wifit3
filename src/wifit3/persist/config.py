@@ -27,6 +27,7 @@ class Config:
     decloaked_ssids: dict[str, str] = {}
     hide_silenced: bool = False
     wps_auto_pbc: bool = True
+    auto_crack: bool = True
     hashcat_path: str | None = None
     wordlist_paths: list[str] = []
     hashcat_args: str | None = None
@@ -79,6 +80,7 @@ class Config:
                                    and len(ssid.encode("utf-8")) <= SSID_MAX_OCTETS}
         cls.hide_silenced = bool(data.get("hide_silenced", cls.hide_silenced))
         cls.wps_auto_pbc = bool(data.get("wps_auto_pbc", cls.wps_auto_pbc))
+        cls.auto_crack = bool(data.get("auto_crack", cls.auto_crack))
         cls.hashcat_path = _optional_str(data.get("hashcat_path"), cls.hashcat_path)
         cls.wordlist_paths = _wordlist_paths(data.get("wordlist_paths"),
                                             data.get("wordlist_path"), cls.wordlist_paths)
@@ -97,6 +99,7 @@ class Config:
             f"silenced_bssids = {_fmt(cls.silenced_bssids)}\n"
             f"hide_silenced = {_fmt(cls.hide_silenced)}\n"
             f"wps_auto_pbc = {_fmt(cls.wps_auto_pbc)}\n"
+            f"auto_crack = {_fmt(cls.auto_crack)}\n"
         )
         # TOML has no null: an unset path is an absent key, not an empty string.
         for key in ("hashcat_path", "wordlist_paths", "hashcat_args"):

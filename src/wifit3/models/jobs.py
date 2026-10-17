@@ -33,7 +33,11 @@ class JobState:
     capture_path: str
     status: ToolStatus
     progress_msg: str           # e.g., "12% (ETA: 1h)" or error reason
-    display_name: str = "Unknown Job"           # Human-readable name (e.g. "hashcat (ASUS)")
+    display_name: str = "Unknown Job"           # Human-readable name (e.g. "Hashcat (ASUS)")
+    percent: Optional[float] = None             # how far through the current work, once known
+    detail: str = ""                            # what the work is on, e.g. "rockyou.txt (2/3)"
+    key: Optional[str] = None                   # recovered PSK; None for tools that recover none
+    automatic: bool = False                     # submitted by wifit3 on capture, not by the user
     # Tool-specific tracking data (only one of these usually populated)
     pid: Optional[int] = None
     log_path: Optional[str] = None
@@ -63,9 +67,11 @@ class JobState:
 class ToolResult:
     status: ToolStatus
     value: Optional[str] = None # The progress string or error msg
-    result_data: Optional[dict] = None # Extra data (e.g. {"key": "0xdeadbeef"})
+    percent: Optional[float] = None
+    detail: str = ""
+    key: Optional[str] = None                   # recovered PSK; None for tools that recover none
     actions: JobAction = JobAction.NONE
 
     def __str__(self) -> str:
-        return (f"status={self.status.value}, value={self.value}, "
-                f"result_data={self.result_data}, actions={self.actions.name}")
+        return (f"status={self.status.value}, value={self.value}, percent={self.percent}, "
+                f"detail={self.detail}, key={self.key}, actions={self.actions.name}")

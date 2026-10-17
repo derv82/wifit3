@@ -20,7 +20,8 @@ import wifit3.setup.linux as lin
 from wifit3.setup import SetupTarget
 from wifit3.setup.base import SetupResult
 from wifit3.setup.linux import (
-    _choose_escalation_method,
+    Escalation,
+    _choose_escalation,
     blacklist_path,
     discover_kernel_modules,
     emit_blacklist_text,
@@ -33,6 +34,12 @@ from wifit3.setup.linux import (
 )
 
 AR9271 = (0x0cf3, 0x9271)
+PKEXEC = Escalation(argv=("/usr/bin/pkexec",), needs_terminal=False)
+SUDO_TERMINAL = Escalation(argv=("/usr/bin/sudo",), needs_terminal=True)
+
+
+def _no_terminal(run):
+    raise AssertionError("the terminal must not be handed over")
 
 
 def _target(key="ar9271", ids=(AR9271,), hints=("ath9k_htc",)):
@@ -227,29 +234,63 @@ def test_install_cmd_shell_quotes_staged_path_with_spaces():
     assert "'/tmp/a b/x.conf'" in cmd
 
 
-# --- run_privileged / _choose_escalation_method ------------------------------------------------
+# --- run_privileged / _choose_escalation ---------------------------------------------------------
 
 def test_run_privileged_builds_pkexec_argv(monkeypatch):
     monkeypatch.setattr(lin.shutil, "which", lambda n: f"/usr/bin/{n}")
     captured = {}
     monkeypatch.setattr(lin.subprocess, "run",
                         lambda argv, **kw: captured.update(argv=argv) or lin.subprocess.CompletedProcess(argv, 0))
-    assert run_privileged("echo hi", "pkexec") == 0
+    assert run_privileged("echo hi", PKEXEC) == 0
     assert captured["argv"] == ["/usr/bin/pkexec", "/usr/bin/sh", "-c", "echo hi"]
 
 
 def test_run_privileged_missing_runner_returns_127(monkeypatch):
-    monkeypatch.setattr(lin.shutil, "which", lambda n: None)
-    assert run_privileged("x", "pkexec") == 127
+    def _missing(argv, **kw):
+        raise FileNotFoundError(argv[0])
+    monkeypatch.setattr(lin.subprocess, "run", _missing)
+    assert run_privileged("x", PKEXEC) == 127
 
 
-def test_choose_escalation_method_prefers_pkexec_then_sudo_then_none(monkeypatch):
-    monkeypatch.setattr(lin.shutil, "which", lambda n: "/x" if n in ("pkexec", "sudo") else None)
-    assert _choose_escalation_method() == "pkexec"
-    monkeypatch.setattr(lin.shutil, "which", lambda n: "/x" if n == "sudo" else None)
-    assert _choose_escalation_method() == "sudo"
-    monkeypatch.setattr(lin.shutil, "which", lambda n: None)
-    assert _choose_escalation_method() is None
+def _escalation_host(monkeypatch, *, which, sudo_n_rc=1, env=None):
+    monkeypatch.setattr(lin.shutil, "which", lambda n: f"/usr/bin/{n}" if n in which else None)
+    monkeypatch.setattr(lin.subprocess, "run",
+                        lambda argv, **kw: lin.subprocess.CompletedProcess(argv, sudo_n_rc))
+    for name in ("DISPLAY", "WAYLAND_DISPLAY"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in (env or {}).items():
+        monkeypatch.setenv(name, value)
+
+
+def test_choose_escalation_sudo_n_first(monkeypatch):
+    _escalation_host(monkeypatch, which=("pkexec", "sudo"), sudo_n_rc=0, env={"DISPLAY": ":0"})
+    assert _choose_escalation() == Escalation(argv=("/usr/bin/sudo", "-n"), needs_terminal=False)
+
+
+def test_choose_escalation_headless_prefers_terminal_sudo(monkeypatch):
+    _escalation_host(monkeypatch, which=("pkexec", "sudo"))
+    assert _choose_escalation() == Escalation(argv=("/usr/bin/sudo",), needs_terminal=True)
+
+
+def test_choose_escalation_headless_without_sudo_uses_terminal_pkexec(monkeypatch):
+    _escalation_host(monkeypatch, which=("pkexec",))
+    assert _choose_escalation() == Escalation(argv=("/usr/bin/pkexec",), needs_terminal=True)
+
+
+@pytest.mark.parametrize("display", ["DISPLAY", "WAYLAND_DISPLAY"])
+def test_choose_escalation_graphical_uses_pkexec(monkeypatch, display):
+    _escalation_host(monkeypatch, which=("pkexec", "sudo"), env={display: ":0"})
+    assert _choose_escalation() == PKEXEC
+
+
+def test_choose_escalation_graphical_without_pkexec_uses_terminal_sudo(monkeypatch):
+    _escalation_host(monkeypatch, which=("sudo",), env={"DISPLAY": ":0"})
+    assert _choose_escalation() == Escalation(argv=("/usr/bin/sudo",), needs_terminal=True)
+
+
+def test_choose_escalation_none(monkeypatch):
+    _escalation_host(monkeypatch, which=())
+    assert _choose_escalation() is None
 
 
 # --- install_rule classification ---------------------------------------------------------------
@@ -264,7 +305,7 @@ def _force_linux_nonroot(monkeypatch, tmp_path):
 
 def test_install_rule_success_stages_pair_and_elevates(monkeypatch, tmp_path):
     _force_linux_nonroot(monkeypatch, tmp_path)
-    monkeypatch.setattr(lin, "_choose_escalation_method", lambda: "pkexec")
+    monkeypatch.setattr(lin, "_choose_escalation", lambda: PKEXEC)
     seen = {}
     def _run(cmd, method):                                # staged files still exist until the finally
         seen["cmd"] = cmd
@@ -272,7 +313,7 @@ def test_install_rule_success_stages_pair_and_elevates(monkeypatch, tmp_path):
         seen["conf"] = next(tmp_path.glob("*wifit3-ar9271.conf")).read_text()
         return 0
     monkeypatch.setattr(lin, "run_privileged", _run)
-    r = install_rule(_target(), node="/dev/bus/usb/003/053")
+    r = install_rule(_target(), run_with_terminal=_no_terminal, node="/dev/bus/usb/003/053")
     assert r.ok and not r.cancelled
     assert "replug" in r.message.lower()
     assert r.detail == blacklist_path("ar9271")
@@ -292,7 +333,7 @@ def test_install_rule_root_writes_blacklist_without_elevation(monkeypatch, tmp_p
     monkeypatch.setattr(lin, "_run_as_root", lambda cmd: seen.update(cmd=cmd) or 0)
     elevated = []
     monkeypatch.setattr(lin, "run_privileged", lambda c, m: elevated.append(c) or 0)
-    r = install_rule(_target())
+    r = install_rule(_target(), run_with_terminal=_no_terminal)
     assert r.ok and not elevated                          # root never elevates
     assert "wifit3-ar9271.conf" in seen["cmd"]            # blacklist still written as root
     assert ".rules" not in seen["cmd"]                    # but no access rule (root opens directly)
@@ -304,31 +345,90 @@ def test_install_rule_fails_when_in_no_admin_group(monkeypatch, tmp_path):
     monkeypatch.setattr(lin, "_access_group", lambda: None)
     called = []
     monkeypatch.setattr(lin, "run_privileged", lambda cmd, method: called.append(cmd) or 0)
-    r = install_rule(_target())
+    r = install_rule(_target(), run_with_terminal=_no_terminal)
     assert not r.ok and not r.cancelled and not called
     assert "sudo or wheel" in r.message.lower()
 
 
 def test_install_rule_declined_is_cancelled(monkeypatch, tmp_path):
     _force_linux_nonroot(monkeypatch, tmp_path)
-    monkeypatch.setattr(lin, "_choose_escalation_method", lambda: "pkexec")
+    monkeypatch.setattr(lin, "_choose_escalation", lambda: PKEXEC)
     monkeypatch.setattr(lin, "run_privileged", lambda cmd, method: 126)
-    r = install_rule(_target())
+    r = install_rule(_target(), run_with_terminal=_no_terminal)
     assert not r.ok and r.cancelled
 
 
 def test_install_rule_no_elevator_offers_manual_path(monkeypatch, tmp_path):
     _force_linux_nonroot(monkeypatch, tmp_path)
-    monkeypatch.setattr(lin, "_choose_escalation_method", lambda: None)
-    r = install_rule(_target())
+    monkeypatch.setattr(lin, "_choose_escalation", lambda: None)
+    r = install_rule(_target(), run_with_terminal=_no_terminal)
     assert not r.ok and not r.cancelled
     assert "manually" in r.detail
+
+
+def _headless_sudo_host(monkeypatch, *, sudo_n_rc, elevated_rc=0):
+    """sudo on PATH, no graphical session; ``sudo -n true`` exits ``sudo_n_rc``."""
+    monkeypatch.setattr(lin.shutil, "which", lambda n: f"/usr/bin/{n}" if n in ("sudo", "sh") else None)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    elevated = []
+
+    def _run(argv, **kw):
+        if argv[1:] == ["-n", "true"]:
+            return lin.subprocess.CompletedProcess(argv, sudo_n_rc)
+        elevated.append(argv)
+        return lin.subprocess.CompletedProcess(argv, elevated_rc)
+
+    monkeypatch.setattr(lin.subprocess, "run", _run)
+    return elevated
+
+
+def test_install_rule_sudo_n_success_never_hands_over_terminal(monkeypatch, tmp_path):
+    _force_linux_nonroot(monkeypatch, tmp_path)
+    elevated = _headless_sudo_host(monkeypatch, sudo_n_rc=0)
+    r = install_rule(_target(), run_with_terminal=_no_terminal)
+    assert r.ok
+    assert elevated[0][:3] == ["/usr/bin/sudo", "-n", "/usr/bin/sh"]
+
+
+def test_install_rule_headless_password_sudo_runs_with_terminal(monkeypatch, tmp_path, capsys):
+    _force_linux_nonroot(monkeypatch, tmp_path)
+    elevated = _headless_sudo_host(monkeypatch, sudo_n_rc=1)
+    handed_over = []
+    r = install_rule(_target(), run_with_terminal=lambda run: handed_over.append(1) or run())
+    assert r.ok and handed_over
+    assert elevated[0][:2] == ["/usr/bin/sudo", "/usr/bin/sh"]
+    out = capsys.readouterr().out
+    assert "Atheros AR9271" in out and "sudo is asking for your password" in out
+
+
+def test_install_rule_terminal_unavailable_offers_manual_path(monkeypatch, tmp_path):
+    _force_linux_nonroot(monkeypatch, tmp_path)
+    elevated = _headless_sudo_host(monkeypatch, sudo_n_rc=1)
+    r = install_rule(_target(), run_with_terminal=lambda run: None)
+    assert not r.ok and not r.cancelled and not elevated
+    assert "manually" in r.detail
+
+
+def test_install_rule_wrong_password_is_failure(monkeypatch, tmp_path):
+    _force_linux_nonroot(monkeypatch, tmp_path)
+    _headless_sudo_host(monkeypatch, sudo_n_rc=1, elevated_rc=1)
+    r = install_rule(_target(), run_with_terminal=lambda run: run())
+    assert not r.ok and not r.cancelled and "exit 1" in r.message
+
+
+def test_install_rule_ctrl_c_is_cancelled(monkeypatch, tmp_path):
+    _force_linux_nonroot(monkeypatch, tmp_path)
+    monkeypatch.setattr(lin, "_choose_escalation", lambda: SUDO_TERMINAL)
+    monkeypatch.setattr(lin, "run_privileged", lambda cmd, escalation: 130)
+    r = install_rule(_target(), run_with_terminal=lambda run: run())
+    assert not r.ok and r.cancelled
 
 
 def test_install_rule_non_linux_raises(monkeypatch):
     monkeypatch.setattr(lin.sys, "platform", "win32")
     with pytest.raises(RuntimeError):
-        install_rule(_target())
+        install_rule(_target(), run_with_terminal=_no_terminal)
 
 
 # --- remove_rule classification ----------------------------------------------------------------
@@ -345,7 +445,7 @@ def _point_paths_at_tmp(monkeypatch, tmp_path):
 def test_remove_rule_absent_is_benign_noop(monkeypatch, tmp_path):
     monkeypatch.setattr(lin.sys, "platform", "linux")
     _point_paths_at_tmp(monkeypatch, tmp_path)
-    r = remove_rule(_target())
+    r = remove_rule(_target(), run_with_terminal=_no_terminal)
     assert r.ok and "nothing to remove" in r.message.lower()
 
 
@@ -354,10 +454,10 @@ def test_remove_rule_success_tells_user_to_replug(monkeypatch, tmp_path):
     monkeypatch.setattr(lin.os, "geteuid", lambda: 1000, raising=False)
     _point_paths_at_tmp(monkeypatch, tmp_path)
     Path(rule_path("ar9271")).write_text("x")             # one of the pair present is enough
-    monkeypatch.setattr(lin, "_choose_escalation_method", lambda: "pkexec")
+    monkeypatch.setattr(lin, "_choose_escalation", lambda: PKEXEC)
     seen = {}
     monkeypatch.setattr(lin, "run_privileged", lambda cmd, method: seen.update(cmd=cmd) or 0)
-    r = remove_rule(_target(), node="/dev/bus/usb/003/053")
+    r = remove_rule(_target(), run_with_terminal=_no_terminal, node="/dev/bus/usb/003/053")
     assert r.ok and "replug" in r.message.lower()
     assert "60-wifit3-ar9271.rules" in seen["cmd"] and "wifit3-ar9271.conf" in seen["cmd"]
     assert "chown root:root /dev/bus/usb/003/053" in seen["cmd"]
@@ -368,16 +468,48 @@ def test_remove_rule_declined_is_cancelled(monkeypatch, tmp_path):
     monkeypatch.setattr(lin.os, "geteuid", lambda: 1000, raising=False)
     _point_paths_at_tmp(monkeypatch, tmp_path)
     Path(blacklist_path("ar9271")).write_text("x")
-    monkeypatch.setattr(lin, "_choose_escalation_method", lambda: "pkexec")
+    monkeypatch.setattr(lin, "_choose_escalation", lambda: PKEXEC)
     monkeypatch.setattr(lin, "run_privileged", lambda cmd, method: 126)
-    r = remove_rule(_target())
+    r = remove_rule(_target(), run_with_terminal=_no_terminal)
     assert not r.ok and r.cancelled
+
+
+def test_remove_rule_headless_password_sudo_runs_with_terminal(monkeypatch, tmp_path):
+    monkeypatch.setattr(lin.sys, "platform", "linux")
+    monkeypatch.setattr(lin.os, "geteuid", lambda: 1000, raising=False)
+    _point_paths_at_tmp(monkeypatch, tmp_path)
+    Path(blacklist_path("ar9271")).write_text("x")
+    elevated = _headless_sudo_host(monkeypatch, sudo_n_rc=1)
+    handed_over = []
+    r = remove_rule(_target(), run_with_terminal=lambda run: handed_over.append(1) or run())
+    assert r.ok and handed_over
+    assert elevated[0][:2] == ["/usr/bin/sudo", "/usr/bin/sh"]
+
+
+def test_remove_rule_sudo_n_success_never_hands_over_terminal(monkeypatch, tmp_path):
+    monkeypatch.setattr(lin.sys, "platform", "linux")
+    monkeypatch.setattr(lin.os, "geteuid", lambda: 1000, raising=False)
+    _point_paths_at_tmp(monkeypatch, tmp_path)
+    Path(blacklist_path("ar9271")).write_text("x")
+    elevated = _headless_sudo_host(monkeypatch, sudo_n_rc=0)
+    r = remove_rule(_target(), run_with_terminal=_no_terminal)
+    assert r.ok and elevated[0][:2] == ["/usr/bin/sudo", "-n"]
+
+
+def test_remove_rule_terminal_unavailable_is_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(lin.sys, "platform", "linux")
+    monkeypatch.setattr(lin.os, "geteuid", lambda: 1000, raising=False)
+    _point_paths_at_tmp(monkeypatch, tmp_path)
+    Path(blacklist_path("ar9271")).write_text("x")
+    elevated = _headless_sudo_host(monkeypatch, sudo_n_rc=1)
+    r = remove_rule(_target(), run_with_terminal=lambda run: None)
+    assert not r.ok and not r.cancelled and not elevated
 
 
 def test_remove_rule_non_linux_raises(monkeypatch):
     monkeypatch.setattr(lin.sys, "platform", "win32")
     with pytest.raises(RuntimeError):
-        remove_rule(_target())
+        remove_rule(_target(), run_with_terminal=_no_terminal)
 
 
 # --- shared-module reference counting (plan_uninstall + narrow/wide remove) ---------------------
@@ -438,7 +570,7 @@ def test_plan_uninstall_false_negative_card_with_no_conf_of_its_own(monkeypatch,
 
 def _stub_elevation(monkeypatch):
     monkeypatch.setattr(lin.os, "geteuid", lambda: 1000, raising=False)
-    monkeypatch.setattr(lin, "_choose_escalation_method", lambda: "pkexec")
+    monkeypatch.setattr(lin, "_choose_escalation", lambda: PKEXEC)
     seen = {}
     monkeypatch.setattr(lin, "run_privileged", lambda cmd, method: seen.update(cmd=cmd) or 0)
     return seen
@@ -450,7 +582,8 @@ def test_remove_rule_narrow_leaves_sibling_blocked(monkeypatch, tmp_path):
     _write_blacklist("rt5372", "Ralink RT5372", "rt2800usb")
     _write_blacklist("rt2800usb", "Ralink RT5572", "rt2800usb")
     seen = _stub_elevation(monkeypatch)
-    r = remove_rule(_target(key="rt5372"), node="/dev/bus/usb/003/053")
+    r = remove_rule(_target(key="rt5372"), run_with_terminal=_no_terminal,
+                    node="/dev/bus/usb/003/053")
     assert r.ok
     assert "rt2800usb" in r.message and "blocked" in r.message.lower()   # names the residual module
     assert "60-wifit3-rt5372.rules" in seen["cmd"] and "wifit3-rt2800usb.conf" not in seen["cmd"]
@@ -462,7 +595,7 @@ def test_remove_rule_wide_clears_the_family(monkeypatch, tmp_path):
     _write_blacklist("rt5372", "Ralink RT5372", "rt2800usb")
     _write_blacklist("rt2800usb", "Ralink RT5572", "rt2800usb")
     seen = _stub_elevation(monkeypatch)
-    r = remove_rule(_target(key="rt5372"), node="/dev/bus/usb/003/053",
+    r = remove_rule(_target(key="rt5372"), run_with_terminal=_no_terminal, node="/dev/bus/usb/003/053",
                     also_keys=("rt2800usb",))
     assert r.ok and "replug" in r.message.lower() and "blocked" not in r.message.lower()
     assert "wifit3-rt5372.conf" in seen["cmd"] and "wifit3-rt2800usb.conf" in seen["cmd"]

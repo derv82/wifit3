@@ -143,3 +143,12 @@ returns True on a dead handle.
 **Direction.** Deeper dive needed. Establish first whether the failure is contention between two
 cards' bring-up sequences or a per-device cold-boot race, by bringing the same card up alone
 repeatedly versus alongside a second card.
+
+## CPU Crack has no nonce error correction
+
+**Problem.** hashcat applies nonce error correction (+/-8 on the ANonce) to EAPOL hashlines; CPU
+Crack (`vault/tools/cpu_crack.py`) does not. A rare handshake with a drifted nonce cracks in
+hashcat and is missed by CPU Crack.
+
+Measured: correction costs 1.09x (one byte order) to 1.19x (both) CPU per password; 70 of 71 local
+EAPOL lines have the NC bit set. Not implemented: no real-world miss observed yet.

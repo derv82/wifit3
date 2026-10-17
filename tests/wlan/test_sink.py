@@ -335,6 +335,26 @@ def test_a_probe_request_registers_its_client():
     assert "Some_SSID" in s.clients[_STA_MAC].probed_ssids
 
 
+def _broadcast_probe(ssid: str):
+    return pkt({"type": "probe_req", "bssid": "ff:ff:ff:ff:ff:ff", "source": _STA_MAC,
+                "dest": "ff:ff:ff:ff:ff:ff", "ssid": ssid, "rssi": -60})
+
+
+def test_a_broadcast_probe_request_records_its_ssid():
+    s = WlanSink()
+    s.update(_broadcast_probe("Home_SSID"), W0)
+    s.update(_broadcast_probe("Cafe_SSID"), W0)
+    assert s.probed_ssids == {"Home_SSID", "Cafe_SSID"}
+
+
+def test_probed_ssids_ignore_empty_and_hidden():
+    s = WlanSink()
+    s.update(_broadcast_probe(""), W0)
+    s.update(_broadcast_probe("<hidden>"), W0)
+    s.update(_beacon(), W0)
+    assert s.probed_ssids == set()
+
+
 def test_an_assoc_request_binds_to_an_ap_we_have_not_beaconed():
     s = WlanSink()
     s.update(pkt({"type": "assoc_req", "bssid": _OTHER_BSSID, "source": _STA_MAC,

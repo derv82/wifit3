@@ -135,6 +135,7 @@ class ScannerView(Screen):
         # (app.pbc_enabled). Watcher + capturing serialization stay Scanner-local.
         self._pbc_watcher = PbcWatcher()
         self._pbc_capturing = False          # serialize: one invade at a time
+        self._logged_auto_crack: Optional[bool] = None
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -177,12 +178,14 @@ class ScannerView(Screen):
             self._refresh_timer = self.set_interval(1 / 15, self.refresh_table)
             self._pbc_timer = self.set_interval(1.0, self._poll_pbc)
             self._log_pbc_status()  # Auto-invade is ON by default
+            self._log_auto_crack_status_when_changed()
 
     async def on_screen_resume(self) -> None:
         # Restart channel hopper
         array = self.app.array
         if not array:
             return
+        self._log_auto_crack_status_when_changed()
         await array.start_hopping(
             channels=self._channel_filter, interval=0.25
         )
@@ -481,6 +484,27 @@ class ScannerView(Screen):
                 "[bold]WPS PushButton Extraction[/bold] is "
                 "[orange1]disabled[/orange1] [dim](detect only, press [bold]w[/bold] to toggle)[/dim]",
                 color="orange1"))
+
+    def _log_auto_crack_status_when_changed(self) -> None:
+        if Config.auto_crack == self._logged_auto_crack:
+            return
+        self._logged_auto_crack = Config.auto_crack
+        if Config.auto_crack:
+            self._write_log(treelog.header(
+                "[bold]Auto-crack[/bold] is [bold green]enabled[/bold green] "
+                "[dim](change in Preferences, [bold]ctrl+p[/bold])[/dim]", color="green"))
+            self._write_log(treelog.leaf(
+                "[dim](tries default passwords on new captures with CPU Crack)[/dim]"))
+        else:
+            self._write_log(treelog.header(
+                "[bold]Auto-crack[/bold] is [orange1]disabled[/orange1] "
+                "[dim](change in Preferences, [bold]ctrl+p[/bold])[/dim]", color="orange1"))
+
+    def on_wifite_app_job_cracked(self, message: "WifiteApp.JobCracked") -> None:
+        job = message.job
+        self._write_log(Text.from_markup(
+            f' [bold green]✓ WPA PSK[/bold green] [dim](via {escape(job.display_name)})[/dim] '
+            f'= "{escape(job.key or "")}"', emoji=False))
 
     def _poll_pbc(self) -> None:
         array = self.app.array

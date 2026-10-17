@@ -21,7 +21,7 @@ from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.wsc import messages as WSC
 from wifit3.dot11.wsc.identity import apply_wsc_identity
 from wifit3.dot11.packet import (
-    Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
+    Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket, ProbeReqPacket,
 )
 from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.wep_store import WepCaptureStore
@@ -60,6 +60,7 @@ class WlanSink:
         self.wep_store = WepCaptureStore()  # WEP IV tallying
         self.packet_stats = PacketStats()   # Packet dashboard source
         self.own_macs: Set[str] = set()     # MACs we transmit as; dropped at ingest, never a client
+        self.probed_ssids: Set[str] = set()  # every SSID probed for this session, by any client
         self._waiters: list = []            # (match, future, loop) for the next_frame await-API
         self._waiters_lock = threading.Lock()
 
@@ -97,6 +98,9 @@ class WlanSink:
             or frame_type.startswith("mgmt_")
         ) and logger.isEnabledFor(TRACE):
             logger.trace("%s", _fmt_frame("RXFRAME", frame_type, pkt.source, pkt.dest, bssid))
+
+        if isinstance(pkt, ProbeReqPacket) and self._is_real_ssid(pkt.ssid):
+            self.probed_ssids.add(pkt.ssid)
 
         if not bssid or bssid == "Unknown" or bssid == "ff:ff:ff:ff:ff:ff":
             return

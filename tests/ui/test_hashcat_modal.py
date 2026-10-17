@@ -6,7 +6,9 @@ from textual.widgets import Button, Checkbox, Input, Label
 
 import wifit3.ui.vault.modals.hashcat as mod
 from wifit3.persist.config import Config, ConfigError
+from wifit3.ui.vault.modals.cpu_crack import CpuCrackConfigModal
 from wifit3.ui.vault.modals.hashcat import HashcatConfigModal, _default_hashcat_path
+from wifit3.ui.vault.modals.wordlists import _RemoveButton
 
 
 @pytest.fixture(autouse=True)
@@ -46,8 +48,9 @@ def test_saved_path_outranks_a_hashcat_found_on_path(monkeypatch):
 
 def test_launching_remembers_the_launch_settings():
     """Straight through the real Config.save(): tests/ui/conftest.py points it at a tmp file."""
-    HashcatConfigModal()._remember(r"D:\hashcat.exe", [r"D:\rockyou.txt", r"D:\top29m.txt"],
-                                   "-w 3")
+    HashcatConfigModal()._remember({"hashcat_exe": r"D:\hashcat.exe",
+                                    "wordlists": [r"D:\rockyou.txt", r"D:\top29m.txt"],
+                                    "hashcat_args": "-w 3"})
     Config.hashcat_path = Config.hashcat_args = None
     Config.wordlist_paths = []
     Config.load()
@@ -65,7 +68,8 @@ def test_an_unwritable_config_warns_but_keeps_the_paths(monkeypatch):
     modal = HashcatConfigModal()
     warnings = []
     monkeypatch.setattr(modal, "notify", lambda *a, **k: warnings.append((a, k)))
-    modal._remember(r"D:\hashcat.exe", [r"D:\rockyou.txt"], "")
+    modal._remember({"hashcat_exe": r"D:\hashcat.exe", "wordlists": [r"D:\rockyou.txt"],
+                     "hashcat_args": ""})
 
     assert Config.hashcat_path == r"D:\hashcat.exe"
     assert warnings and warnings[0][1].get("title") == "Config Error"
@@ -99,7 +103,7 @@ async def test_saved_args_prefill_the_modal_and_come_back_on_launch():
         assert app.screen.query_one("#hashcat-self-test-disable", Checkbox).value
         app.screen.query_one("#hashcat-exe", Input).value = r"D:\hashcat.exe"
         await app.screen._wordlists_chosen([Path(r"D:\rockyou.txt")])
-        app.screen.query_one("#hashcat-launch", Button).press()
+        app.screen.query_one("#wordlist-launch", Button).press()
         await pilot.pause(0)
 
     assert dismissed == [{"hashcat_exe": r"D:\hashcat.exe", "wordlists": [r"D:\rockyou.txt"],
@@ -128,7 +132,7 @@ async def test_the_modal_reads_back_the_wordlists_it_was_given():
     async with app.run_test() as pilot:
         app.push_screen(HashcatConfigModal())
         await pilot.pause(0)
-        shown = [str(label.content) for label in app.screen.query(".hashcat-wordlist-name")]
+        shown = [str(label.content) for label in app.screen.query(".wordlist-name")]
         assert len(shown) == 2
         assert "1:" in shown[0] and "a.txt" in shown[0]
         assert "2:" in shown[1] and "b.txt" in shown[1]
@@ -147,7 +151,7 @@ async def test_launch_is_refused_without_a_wordlist():
         refusals = []
         app.screen.notify = lambda *a, **k: refusals.append(a)
         app.screen.query_one("#hashcat-exe", Input).value = r"D:\hashcat.exe"
-        app.screen.query_one("#hashcat-launch", Button).press()
+        app.screen.query_one("#wordlist-launch", Button).press()
         await pilot.pause(0)
 
         assert refusals and not dismissed
@@ -162,13 +166,13 @@ async def test_x_removes_one_wordlist_and_clear_removes_them_all(tmp_path):
         app.push_screen(HashcatConfigModal(), dismissed.append)
         await pilot.pause()
         modal = app.screen
-        rows = modal.query_one("#hashcat-wordlists")
-        clear = modal.query_one("#hashcat-clear", Button)
+        rows = modal.query_one("#wordlists")
+        clear = modal.query_one("#wordlist-clear", Button)
         assert clear.display
 
-        next(b for b in modal.query(mod._RemoveButton) if b.path.endswith("b.txt")).press()
+        next(b for b in modal.query(_RemoveButton) if b.path.endswith("b.txt")).press()
         await pilot.pause()
-        names = [str(label.content) for label in rows.query(".hashcat-wordlist-name")]
+        names = [str(label.content) for label in rows.query(".wordlist-name")]
         assert len(names) == 2
         assert names[0].startswith("[bold]1:[/bold] a.txt") and names[1].startswith("[bold]2:[/bold] c.txt")
         assert str(tmp_path) in names[0], "the parent directory tells same-named files apart"
@@ -191,9 +195,9 @@ async def test_launch_saves_what_is_left_after_a_removal(tmp_path):
         await pilot.pause()
         modal = app.screen
         modal.query_one("#hashcat-exe", Input).value = str(tmp_path / "hashcat")
-        modal.query(mod._RemoveButton).first().press()
+        modal.query(_RemoveButton).first().press()
         await pilot.pause()
-        modal.query_one("#hashcat-launch", Button).press()
+        modal.query_one("#wordlist-launch", Button).press()
         await pilot.pause()
 
     assert dismissed[0]["wordlists"] == [str(tmp_path / "b.txt")]
@@ -205,4 +209,67 @@ async def test_clear_is_hidden_when_no_wordlist_is_chosen():
     async with app.run_test() as pilot:
         app.push_screen(HashcatConfigModal())
         await pilot.pause(0)
-        assert not app.screen.query_one("#hashcat-clear", Button).display
+        assert not app.screen.query_one("#wordlist-clear", Button).display
+
+
+async def test_launch_is_refused_without_the_executable():
+    Config.wordlist_paths = [r"D:\rockyou.txt"]
+    app = _Host()
+    async with app.run_test() as pilot:
+        dismissed = []
+        app.push_screen(HashcatConfigModal(), dismissed.append)
+        await pilot.pause(0)
+        refusals = []
+        app.screen.notify = lambda *a, **k: refusals.append(a)
+        app.screen.query_one("#hashcat-exe", Input).value = ""
+        app.screen.query_one("#wordlist-launch", Button).press()
+        await pilot.pause(0)
+
+        assert refusals and not dismissed
+
+
+async def test_cpu_crack_launches_with_only_the_wordlists_and_remembers_them():
+    Config.wordlist_paths = [r"D:\a.txt"]
+    app = _Host()
+    async with app.run_test() as pilot:
+        dismissed = []
+        app.push_screen(CpuCrackConfigModal(), dismissed.append)
+        await pilot.pause()
+        assert str(app.screen.query_one("#wordlist-title", Label).content) == "Launch CPU Crack"
+        assert not app.screen.query("#hashcat-exe")
+        await app.screen._wordlists_chosen([Path(r"D:\a.txt"), Path(r"D:\b.txt")])
+        app.screen.query_one("#wordlist-launch", Button).press()
+        await pilot.pause()
+
+    assert dismissed == [{"wordlists": [r"D:\a.txt", r"D:\b.txt"]}]
+    assert Config.wordlist_paths == [r"D:\a.txt", r"D:\b.txt"]
+    assert Config.hashcat_path is None
+
+
+async def test_cpu_crack_refuses_to_launch_without_a_wordlist():
+    app = _Host()
+    async with app.run_test() as pilot:
+        dismissed = []
+        app.push_screen(CpuCrackConfigModal(), dismissed.append)
+        await pilot.pause(0)
+        refusals = []
+        app.screen.notify = lambda *a, **k: refusals.append(a)
+        app.screen.query_one("#wordlist-launch", Button).press()
+        await pilot.pause(0)
+
+        assert refusals and not dismissed
+
+
+class _HostWithGlobalButtonWidth(App):
+    CSS = "Button { min-width: 12; }"
+
+
+async def test_remove_and_clear_shrink_below_the_global_button_width_in_both_modals():
+    Config.wordlist_paths = [r"D:\a.txt"]
+    for modal_type in (HashcatConfigModal, CpuCrackConfigModal):
+        app = _HostWithGlobalButtonWidth()
+        async with app.run_test() as pilot:
+            app.push_screen(modal_type())
+            await pilot.pause()
+            assert app.screen.query_one(_RemoveButton).size.width == 3
+            assert app.screen.query_one("#wordlist-clear", Button).size.width == 7

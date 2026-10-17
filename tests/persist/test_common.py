@@ -1,4 +1,4 @@
-"""Tests for persist.common: naming, filename parsing, and Hc22000 parsing."""
+"""Tests for persist.common: naming and filename parsing."""
 from wifit3.persist.common import (
     AGGREGATED_HC22000_RE,
     LEGACY_CAPTURE_RE,
@@ -7,7 +7,6 @@ from wifit3.persist.common import (
     WPS_PSK_RE,
     bssid_to_colon,
     bssid_to_dashed,
-    parse_hc22000,
     parse_wps_pin,
     safe_ssid,
 )
@@ -62,35 +61,3 @@ def test_payload_regexes():
     empty_pin = WPS_PIN_RE.search("PSK: secretpass123\nPIN: \n")
     assert empty_pin is not None and empty_pin.group(1) == ""
     assert parse_wps_pin("PIN: <empty>\n") == ""
-
-
-def test_parse_hc22000_pmkid():
-    line = "WPA*01*4e0828e60a163e469f49e6b77e669086*001122334455*aabbccddeeff*486f6d65***"
-    parsed = parse_hc22000(line)
-    assert parsed is not None
-    assert parsed.kind == "01"
-    assert parsed.pmkid_or_mic == "4e0828e60a163e469f49e6b77e669086"
-    assert parsed.mac_ap == "001122334455"
-    assert parsed.mac_sta == "aabbccddeeff"
-    assert parsed.essid == "486f6d65"
-    assert parsed.anonce == ""
-
-
-def test_parse_hc22000_eapol():
-    line = "WPA*02*aabbccddeeff00112233445566778899*001122334455*aabbccddeeff*486f6d65*1122334455667788990011223344556677889900112233445566778899001122*01020304*02"
-    parsed = parse_hc22000(line)
-    assert parsed is not None
-    assert parsed.kind == "02"
-    assert parsed.pmkid_or_mic == "aabbccddeeff00112233445566778899"
-    assert parsed.mac_ap == "001122334455"
-    assert parsed.mac_sta == "aabbccddeeff"
-    assert parsed.essid == "486f6d65"
-    assert parsed.anonce == "1122334455667788990011223344556677889900112233445566778899001122"
-    assert parsed.eapol == "01020304"
-    assert parsed.message_pair == "02"
-
-
-def test_parse_hc22000_malformed():
-    assert parse_hc22000("") is None
-    assert parse_hc22000("NOTWPA*01*abc*def") is None
-    assert parse_hc22000("WPA*01*short") is None

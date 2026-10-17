@@ -1,7 +1,8 @@
-"""Hashcat ``-m 22000`` hashline formatter tests."""
+"""Hashcat ``-m 22000`` hashline format and parser tests."""
 
 from wifit3.crack.hc22000_format import (
     eapol_hashlines,
+    parse_hc22000,
     pmkid_hashline,
 )
 from wifit3.models import HandshakeMessage, Handshake
@@ -112,3 +113,35 @@ def test_eapol_hashlines_one_line_per_instance():
     for ln in lines:
         fields = ln.split("*")
         assert fields[0] == "WPA" and fields[1] == "02" and len(fields) == 9
+
+
+def test_parse_hc22000_pmkid():
+    line = "WPA*01*4e0828e60a163e469f49e6b77e669086*001122334455*aabbccddeeff*486f6d65***"
+    parsed = parse_hc22000(line)
+    assert parsed is not None
+    assert parsed.kind == "01"
+    assert parsed.pmkid_or_mic == "4e0828e60a163e469f49e6b77e669086"
+    assert parsed.mac_ap == "001122334455"
+    assert parsed.mac_sta == "aabbccddeeff"
+    assert parsed.essid == "486f6d65"
+    assert parsed.anonce == ""
+
+
+def test_parse_hc22000_eapol():
+    line = "WPA*02*aabbccddeeff00112233445566778899*001122334455*aabbccddeeff*486f6d65*1122334455667788990011223344556677889900112233445566778899001122*01020304*02"
+    parsed = parse_hc22000(line)
+    assert parsed is not None
+    assert parsed.kind == "02"
+    assert parsed.pmkid_or_mic == "aabbccddeeff00112233445566778899"
+    assert parsed.mac_ap == "001122334455"
+    assert parsed.mac_sta == "aabbccddeeff"
+    assert parsed.essid == "486f6d65"
+    assert parsed.anonce == "1122334455667788990011223344556677889900112233445566778899001122"
+    assert parsed.eapol == "01020304"
+    assert parsed.message_pair == "02"
+
+
+def test_parse_hc22000_malformed():
+    assert parse_hc22000("") is None
+    assert parse_hc22000("NOTWPA*01*abc*def") is None
+    assert parse_hc22000("WPA*01*short") is None

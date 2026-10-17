@@ -5,6 +5,7 @@ from wifit3.models.jobs import JobAction, JobState
 
 class VaultTool(ABC):
     name: str
+    label: str                  # what the UI calls the tool, e.g. "Hashcat"
     capabilities: ToolCapability
 
     @abstractmethod

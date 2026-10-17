@@ -45,10 +45,27 @@ Same `VaultTool` shape as WPA-Sec (submit + poll a remote API), but self-hosted 
 Needs a server URL + voucher/API key in Preferences, and a mapping from our capture types onto
 Hashtopolis task creation.
 
-### Vault: "add" and "Check" features
+### Vault: "Enter PSK/PIN" feature
 
-- **"Add"**: User enters credential (PSK/WPS) for a known AP (with an option to `Check` the PSK/PIN).
-- **"Check"**: Authenticate against the live AP to confirm a stored PSK/PIN/WEP key still works.
+- **"Enter"**: User enters credential (PSK/WPS) for a known AP (with an option to `Check` the PSK/PIN).
+
+### Improve Default Passwords
+
+Auto-crack runs CPU Crack (`vault/tools/cpu_crack.py`) on a new AP's first capture, and again on its
+first PMKID / authorized handshake if earlier captures were M1+M2 only. Passwords, in order: the
+capture's SSID variants, probed-SSID passwords, then `crack/assets/default_passwords.txt`.
+Document all of it so users can see exactly what runs on every capture:
+- **SSID variants** (`crack/passwords.py:ssid_variants`): the SSID as-is, lower, upper, each plus
+  `123`, `1234`, `12345678`, `!`, kept only if a valid 8-63 byte PSK. A short SSID like `X` only
+  yields its `12345678` variants.
+- **Probed SSIDs** (`ssid_passwords`): every SSID probed this session as-is, then their variants
+  (up to 15 passwords per SSID), capped at `_MAX_SSID_PASSWORDS = 1500`.
+- **Default list**: rockyou.txt in its original frequency order; only the trailing `\r\n` stripped;
+  kept if 8-63 bytes as UTF-8; deduplicated keeping order; first 2,300 (~5s of PBKDF2 on one
+  Raspberry Pi 500 core at ~463 PMK/s). No comment/HTML/control-char/padded lines; lengths 8-17.
+
+Idea: a hashcat-rule-style suffix set, ~1k common suffixes per SSID, ordered shortest-first so
+short SSIDs reach 8+ chars. Still capped.
 
 ------------
 
@@ -134,9 +151,29 @@ covers the same ground from the plugin-system angle.
 **Where this stands:** still leaning **no**, mostly on the scope/maintenance argument, not on the
 demand one. Issue #55 is intentionally left open to keep gauging demand.
 
+### Remember Exhausted Wordlists
+
+Track which wordlists were tried (and exhausted) per capture; warn when re-running one.
+Nice-to-have.
+
+Blocked on design:
+- Persistence: another file per capture is not acceptable; one giant JSON mapping is ugly.
+- UI: unclear how to render it, e.g. 100 wordlists tried.
+
+Can't start until a clean design exists.
+
 ------------
 
 ## Deferred / Chopping Block
+
+### Multi-threaded CPU Crack
+
+CPU Crack runs on one CPU thread. Not doing it now:
+- The default list is small (~5s on one core).
+- Pegging every core on mobile/embedded devices is a real UX/battery risk.
+- Can't ship without testing on old, slow mobile/embedded devices with all cores busy.
+
+Revisit only if users report the one-thread limit is their bottleneck.
 
 ### WPS improvements - Low priority (who even has a vulnerable WPS router?)
 

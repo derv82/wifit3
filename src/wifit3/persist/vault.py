@@ -9,8 +9,10 @@ import sys
 import time
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Optional
 
+from wifit3.crack.hc22000_format import Hc22000Line
+from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist import save
 from wifit3.persist.capture_history import load_capture_index, summarize
@@ -18,6 +20,7 @@ from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid
 from wifit3.persist.config import Config
 from wifit3.persist.save import SaveResult
 from wifit3.vault.manager import JobManager
+from wifit3.vault.tools.cpu_crack import CpuCrackTool
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
@@ -33,6 +36,19 @@ def _open_in_file_manager(path: Path) -> None:
         subprocess.Popen(["open", str(path)])
     else:
         subprocess.Popen(["xdg-open", str(path)])
+
+
+def _is_m1m2_eapol(line: Hc22000Line) -> bool:
+    return line.kind == "02" and int(line.message_pair or "0", 16) & 0x07 == 0
+
+
+def crosses_auto_crack_threshold(before: List[Hc22000Line], after: List[Hc22000Line]) -> bool:
+    """True when a save gives an AP its first line, or its first PMKID / authorized EAPOL
+    line after only M1+M2 lines; at most twice per AP."""
+    if not before:
+        return bool(after)
+    return (all(_is_m1m2_eapol(line) for line in before)
+            and any(not _is_m1m2_eapol(line) for line in after))
 
 
 class Vault:
@@ -55,6 +71,7 @@ class Vault:
     def __init__(self) -> None:
         self._index: Dict[str, List[PersistedCapture]] = {}
         self._change_listeners: list[Callable[[], None]] = []
+        self._probed_ssids_source: Callable[[], Iterable[str]] = lambda: ()
         self.revision = 0   # bumped on every index change; a cache key for readers
         self.errors: list[str] = []                       # surfaced as toasts by the app on mount
         try:
@@ -78,6 +95,10 @@ class Vault:
 
     def subscribe(self, listener: Callable[[], None]) -> None:
         self._change_listeners.append(listener)
+
+    def set_probed_ssids_source(self, source: Callable[[], Iterable[str]]) -> None:
+        """Where auto-crack reads this session's probed SSIDs, tried as passwords before the wordlist."""
+        self._probed_ssids_source = source
 
     def _notify_changed(self) -> None:
         self.revision += 1
@@ -176,20 +197,39 @@ class Vault:
     # ----- writes (persist to disk, then fold into the cache) -----
 
     def save_handshake(self, ap: "AccessPoint", client_mac: str) -> Optional[SaveResult]:
+        before = self._hc_lines(ap)
         result = save.save_handshake(ap, client_mac)
         if result and result.was_new:
-            self._insert_capture(PersistedCapture(
+            capture = PersistedCapture(
                 type=CaptureType.HS, timestamp=int(time.time()), path=str(result.path),
-                bssid=ap.bssid, ssid=ap.ssid))
+                bssid=ap.bssid, ssid=ap.ssid)
+            self._insert_capture(capture)
+            self._auto_crack(ap, capture, before)
         return result
 
     def save_pmkid(self, ap: "AccessPoint", client_mac: str) -> Optional[SaveResult]:
+        before = self._hc_lines(ap)
         result = save.save_pmkid(ap, client_mac)
         if result and result.was_new:
-            self._insert_capture(PersistedCapture(
+            capture = PersistedCapture(
                 type=CaptureType.PMKID, timestamp=int(time.time()), path=str(result.path),
-                bssid=ap.bssid, ssid=ap.ssid))
+                bssid=ap.bssid, ssid=ap.ssid)
+            self._insert_capture(capture)
+            self._auto_crack(ap, capture, before)
         return result
+
+    def _hc_lines(self, ap: "AccessPoint") -> List[Hc22000Line]:
+        return save.HcFiles(Path(Config.captures_dir), ap.ssid, ap.bssid).lines()
+
+    def _auto_crack(self, ap: "AccessPoint", capture: PersistedCapture,
+                    before: List[Hc22000Line]) -> None:
+        if not Config.auto_crack or self.has_psk(ap):
+            return
+        if crosses_auto_crack_threshold(before, self._hc_lines(ap)):
+            self.manager.submit_job(CpuCrackTool.name, capture,
+                                    {"wordlists": [str(DEFAULT_PASSWORDS_PATH)],
+                                     "extra_passwords": sorted(self._probed_ssids_source())},
+                                    automatic=True)
 
     def save_wep_key(self, ap: "AccessPoint", key: bytes) -> Optional[SaveResult]:
         result = save.save_wep_key(ap, key)
@@ -213,6 +253,14 @@ class Vault:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PBC, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=psk, ssid=ap.ssid))
+        return result
+
+    def save_wpa_psk(self, ssid: Optional[str], bssid: str, psk: str) -> Optional[SaveResult]:
+        result = save.save_wpa_psk(ssid, bssid, psk)
+        if result and result.was_new:
+            self._insert_capture(PersistedCapture(
+                type=CaptureType.WPA_PSK, timestamp=int(time.time()), path=str(result.path),
+                bssid=bssid, value=psk, ssid=ssid))
         return result
 
     # ----- filesystem ops (the screen goes through these, never touches disk) -----

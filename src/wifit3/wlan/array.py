@@ -226,6 +226,10 @@ class WlanArray:
         return self._sink.forged_macs
 
     @property
+    def probed_ssids(self) -> Set[str]:
+        return self._sink.probed_ssids
+
+    @property
     def wep_store(self) -> WepCaptureStore:
         return self._sink.wep_store
 

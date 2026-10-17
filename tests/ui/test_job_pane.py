@@ -8,21 +8,49 @@ from wifit3.ui.vault.job_pane import (
 )
 
 
-def _job(status=ToolStatus.RUNNING, actions=JobAction.NONE, progress_msg="Running..."):
+def _job(status=ToolStatus.RUNNING, actions=JobAction.NONE, progress_msg="Running...",
+         percent=None, detail="", key=None):
     return JobState(
         job_id="hashcat-test",
         tool_name="hashcat",
         capture_path="test.hc22000",
         status=status,
         progress_msg=progress_msg,
+        percent=percent,
+        detail=detail,
+        key=key,
         actions=actions,
     )
 
 
 def test_running_job_shows_active_wordlist_in_detail_column():
-    job = _job(progress_msg="Running (42.00%) · two.txt (2/2)")
+    job = _job(progress_msg="Running (42.00%) · two.txt (2/2)", percent=42.0,
+               detail="two.txt (2/2)")
 
     assert JobRow(job)._detail_markup(job) == "[dim]two.txt (2/2)[/dim]"
+
+
+def test_a_paused_job_reads_as_paused():
+    job = _job(actions=JobAction.STOP | JobAction.RESUME, progress_msg="Paused (12.00%)",
+               percent=12.0)
+
+    assert "PAUSED" in JobRow(job)._status_markup(job)
+
+
+def test_a_cracked_job_shows_its_key():
+    job = _job(status=ToolStatus.SUCCESS, actions=JobAction.CLEAR,
+               progress_msg="Cracked! Key: hunter2", percent=100.0, key="hunter2")
+    row = JobRow(job)
+
+    assert "SUCCESS" in row._status_markup(job)
+    assert "hunter2" in row._detail_markup(job)
+
+
+def test_a_cracked_job_saved_without_its_key_shows_the_status_line():
+    job = _job(status=ToolStatus.SUCCESS, actions=JobAction.CLEAR,
+               progress_msg="Cracked! Key: hunter2")
+
+    assert JobRow(job)._detail_markup(job) == "[dim]Cracked! Key: hunter2[/dim]"
 
 
 def test_running_job_without_tool_status_shows_starting_badge():
@@ -33,7 +61,7 @@ def test_running_job_without_tool_status_shows_starting_badge():
 
 
 def test_running_job_with_progress_shows_running_badge():
-    job = _job(progress_msg="Running (0.00%)")
+    job = _job(progress_msg="Running (0.00%)", percent=0.0)
 
     badge = JobRow(job)._status_markup(job)
 
@@ -92,15 +120,16 @@ class JobPaneApp(App):
         yield JobTrackerPane()
 
 
-async def test_the_bar_fills_its_box_and_leaves_room_for_the_percentage():
+async def test_the_bar_fills_its_box_and_the_percentage_has_two_decimals():
     app = JobPaneApp()
     async with app.run_test(size=(120, 24)) as pilot:
         app.active_jobs = [_job(actions=JobAction.STOP,
-                                progress_msg="Running (30.00%) \u00b7 rockyou.txt")]
+                                progress_msg="Running (0.29%) \u00b7 rockyou.txt",
+                                percent=0.29, detail="rockyou.txt")]
         await pilot.pause()
 
-        assert app.query_one("#bar").size.width == 13        # the 18-cell box, less the percentage
-        assert str(app.query_one("#percentage").render()) == "30%"
+        assert app.query_one("#bar").size.width == 11
+        assert str(app.query_one(".job-percent", Label).render()) == "0.29%"
         assert app.query_one(".job-name", Label).styles.text_align == "right"
 
 

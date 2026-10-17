@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from wifit3.crack.hc22000_format import eapol_hashlines, pmkid_hashline
+from wifit3.crack.hc22000_format import Hc22000Line, eapol_hashlines, parse_hc22000, pmkid_hashline
 from wifit3.models import AccessPoint
 from wifit3.persist.common import (
     LEGACY_CAPTURE_RE,
@@ -17,7 +17,6 @@ from wifit3.persist.common import (
     WPS_PSK_RE,
     bssid_to_colon,
     bssid_to_dashed,
-    parse_hc22000,
     parse_wps_pin,
     safe_ssid,
 )
@@ -115,6 +114,14 @@ class HcFiles:
         self.ssid = ssid or ""
         self.bssid = bssid
         self.agg_path = captures_dir / f"{safe_ssid(self.ssid)}_{bssid_to_dashed(bssid)}.hc22000"
+
+    def lines(self) -> list[Hc22000Line]:
+        """Every parseable line of the AP's aggregate .hc22000 file (empty if none)."""
+        try:
+            text = self.agg_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return []
+        return [entry for ln in text.splitlines() if (entry := parse_hc22000(ln))]
 
     def find_existing_anonce(self, anonce: str) -> Path | None:
         """Find if ANonce already exists in either the aggregate file or any split file."""
@@ -381,10 +388,21 @@ def save_wps_pin(ap: AccessPoint, pin: str, psk: str) -> Optional[SaveResult]:
 
 def save_wps_pbc(ap: AccessPoint, psk: str) -> Optional[SaveResult]:
     """Persist a WPS-PBC credential. Dedupes by PSK for this BSSID."""
+    return _save_psk(ap.ssid, ap.bssid, psk, "_wps_pbc.txt")
+
+
+# ----- WPA PSK --------------------------------------------------------------
+
+def save_wpa_psk(ssid: str | None, bssid: str, psk: str) -> Optional[SaveResult]:
+    """Persist a passphrase recovered from a handshake/PMKID. Dedupes by PSK for this BSSID."""
+    return _save_psk(ssid, bssid, psk, "_wpa_psk.txt")
+
+
+def _save_psk(ssid: str | None, bssid: str, psk: str, suffix: str) -> Optional[SaveResult]:
     captures_dir = Path(Config.captures_dir)
     if not psk:
         return None
-    for p in _existing(captures_dir, ap.bssid, "_wps_pbc.txt"):
+    for p in _existing(captures_dir, bssid, suffix):
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -394,10 +412,10 @@ def save_wps_pbc(ap: AccessPoint, psk: str) -> Optional[SaveResult]:
             return SaveResult(path=p, was_new=False)
 
     captures_dir.mkdir(parents=True, exist_ok=True)
-    path = _fresh_path(captures_dir, ap.ssid, ap.bssid, "_wps_pbc.txt")
+    path = _fresh_path(captures_dir, ssid, bssid, suffix)
     body = (
-        f"SSID: {ap.ssid or ''}\n"
-        f"BSSID: {ap.bssid}\n"
+        f"SSID: {ssid or ''}\n"
+        f"BSSID: {bssid}\n"
         f"PSK: {psk}\n"
     )
     path.write_text(body, encoding="utf-8")
