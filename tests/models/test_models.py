@@ -60,6 +60,45 @@ def _eapol(msg_num: int, replay: int) -> HandshakeMessage:
     )
 
 
+def test_handshake_add_deduplicates_and_bounds_history():
+    hs = Handshake(
+        bssid="00:11:22:33:44:55",
+        client_mac="AA:BB:CC:DD:EE:FF",
+        beacon_frame=b"beacon",
+    )
+    donor = _eapol(1, replay=5)
+    keystone = _eapol(2, replay=5)
+    assert hs.add_message(donor) is True
+    assert hs.add_message(donor) is False
+    assert hs.add_message(keystone) is True
+
+    for index in range(Handshake.MAX_MESSAGES + 50):
+        hs.add_message(HandshakeMessage(
+            raw=b"junk" + index.to_bytes(4, "big"),
+            msg_num=0,
+            replay_hex=index.to_bytes(8, "big").hex(),
+            nonce=b"",
+            mic=b"",
+            key_data_len=0,
+        ))
+
+    assert Handshake.RETAINED_MESSAGES <= len(hs.messages) <= Handshake.MAX_MESSAGES
+    assert donor in hs.messages
+    assert keystone in hs.messages
+    assert hs.is_complete
+    assert hs.has_message(b"junk" + (Handshake.MAX_MESSAGES + 49).to_bytes(4, "big"))
+    assert not hs.has_message(b"junk" + (0).to_bytes(4, "big"))
+
+
+def test_handshake_index_tracks_direct_fixture_mutations():
+    hs = Handshake(bssid="00:11:22:33:44:55", client_mac="AA:BB:CC:DD:EE:FF")
+    message = _eapol(1, replay=5)
+    hs.messages.append(message)
+
+    assert hs.has_message(message.raw)
+    assert hs.add_message(message) is False
+
+
 def test_handshake_is_complete():
     hs = Handshake(bssid="00:11:22:33:44:55", client_mac="AA:BB:CC:DD:EE:FF")
     assert not hs.is_complete

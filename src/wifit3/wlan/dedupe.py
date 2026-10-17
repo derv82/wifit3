@@ -17,6 +17,8 @@ dynamic set of string-keyed sources (a card id per source), so cards can be adde
 runtime (hotplug / unplug). ``scripts/cross_streams.py`` keeps its own two-source copy.
 """
 
+from collections import deque
+
 
 class StreamMerger:
     """Joins per-card parsed-frame sources into one deduplicated stream.
@@ -30,7 +32,7 @@ class StreamMerger:
     def __init__(self, sources: list[str] | None = None, window: float = 0.3):
         self.window = window
         self._seen: dict[bytes, list] = {}          # key -> [first_ts, {src}]
-        self._last_evict = 0.0
+        self._expiry = deque()                      # insertion-ordered (first_ts, key)
         self.novel = 0                              # unique on-air transmissions emitted
         self.dup = 0                                # cross-card copies suppressed
         self.both = 0                               # unique frames heard by >= 2 sources
@@ -59,7 +61,8 @@ class StreamMerger:
     def key(raw: bytes) -> bytes:
         """FC + addr1/2/3 + seq_ctrl. A control frame short of a full header (should not reach here,
         the parser drops them) falls back to its whole buffer so it still dedups sanely."""
-        raw = bytes(raw)
+        if not isinstance(raw, bytes):
+            raw = bytes(raw)
         if len(raw) >= 24:
             return raw[0:2] + raw[4:24]
         return raw
@@ -79,6 +82,7 @@ class StreamMerger:
                     self.both += 1
             return False, is_first_for_src
         self._seen[k] = [now, {src}]
+        self._expiry.append((now, k))
         self.novel += 1
         self.first[src] = self.first.get(src, 0) + 1
         return True, True
@@ -87,14 +91,13 @@ class StreamMerger:
         return self.submit_detailed(src, raw, now)[0]
 
     def _evict(self, now: float) -> None:
-        """Retire keys older than the window, tallying the ones only a single source ever heard.
-        Rate-limited to once per window so a busy channel does not rescan the dict every frame."""
-        if now - self._last_evict < self.window:
-            return
-        self._last_evict = now
-        dead = [k for k, ent in self._seen.items() if now - ent[0] > self.window]
-        for k in dead:
-            _, srcs = self._seen.pop(k)
+        """Retire expired keys in insertion order, tallying single-source frames."""
+        while self._expiry and now - self._expiry[0][0] > self.window:
+            timestamp, key = self._expiry.popleft()
+            entry = self._seen.get(key)
+            if entry is None or entry[0] != timestamp:
+                continue
+            _, srcs = self._seen.pop(key)
             if len(srcs) == 1:
                 only = next(iter(srcs))
                 self.only[only] = self.only.get(only, 0) + 1
@@ -106,3 +109,4 @@ class StreamMerger:
                 only = next(iter(srcs))
                 self.only[only] = self.only.get(only, 0) + 1
         self._seen.clear()
+        self._expiry.clear()

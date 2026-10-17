@@ -8,6 +8,22 @@ import usb.core
 from wifit3.wlan.interface import WlanInterface
 
 
+def test_rx_callback_can_unregister_without_skipping_next_subscriber(mocker):
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
+    seen = []
+
+    def remove_self(pkt):
+        seen.append(("first", pkt))
+        iface.unregister_rx_callback(remove_self)
+
+    iface.register_rx_callback(remove_self)
+    iface.register_rx_callback(lambda pkt: seen.append(("second", pkt)))
+
+    iface._fire_rx_callbacks("packet")
+
+    assert seen == [("first", "packet"), ("second", "packet")]
+
+
 def test_on_device_lost_latches_and_fans_once(mocker):
     """The disconnect sink fires subscribers exactly once (latched) and trips the hop flag."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")

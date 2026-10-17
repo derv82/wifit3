@@ -42,6 +42,7 @@ class DeviceWatch:
         self._seen: List[DeviceID] = []
         self._paused = False
         self._stopped = False            # latched after a fatal so it isn't re-reported every tick
+        self._polling = False
 
     def pause(self) -> None:
         self._paused = True
@@ -61,19 +62,25 @@ class DeviceWatch:
         """One bus scan (off the event loop). When the present set changed, fire ``on_change(current,
         arrived, departed)``. A no-op while paused (during a bring-up, so the list can't churn and no
         second prompt stacks) or after a fatal backend error."""
-        if self._paused or self._stopped:
+        if self._paused or self._stopped or self._polling:
             return
+        self._polling = True
         try:
-            current = await asyncio.to_thread(self._scan)
-        except WifiteFatalError as err:
-            self._stopped = True
-            if self._on_fatal is not None:
-                self._on_fatal(err)
-            return
-        arrived, departed = _diff(current, self._seen)
-        if arrived or departed:
-            self._seen = current
-            self._on_change(current, arrived, departed)
+            try:
+                current = await asyncio.to_thread(self._scan)
+            except WifiteFatalError as err:
+                self._stopped = True
+                if self._on_fatal is not None:
+                    self._on_fatal(err)
+                return
+            if self._paused or self._stopped:
+                return
+            arrived, departed = _diff(current, self._seen)
+            if arrived or departed:
+                self._seen = current
+                self._on_change(current, arrived, departed)
+        finally:
+            self._polling = False
 
     async def wait_departure(self, device_id: DeviceID, *, timeout: float = 120.0,
                              interval: float = 0.3) -> bool:

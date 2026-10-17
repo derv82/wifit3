@@ -355,7 +355,7 @@ class WlanSink:
                 akm=akm,
                 timestamp=time.time(),
             )
-            hs.messages.append(eapol)
+            hs.add_message(eapol)
             msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"
             logger.info(f"[{msg_label}] {bssid} <-> {client_mac} (replay {eapol.replay_hex})")
 
@@ -459,6 +459,8 @@ class WlanSink:
         ]
         for mac in orphaned_clients:
             self.clients.pop(mac, None)
+        self.wep_store.remove(key)
+        self.packet_stats.remove(key)
         return ap
 
     def dispatch_rx(self, pkt) -> None:

@@ -293,6 +293,20 @@ def test_member_lost_reemits_with_remaining_count():
     assert events == [1, 0] and a.members == []
 
 
+async def test_close_stops_hopping_and_releases_loop_state():
+    x = FakeIface("wlan0", [6])
+    a = _pool(x)
+    await a.start_hopping([6])
+
+    await a.close()
+
+    assert x.stopped == 1
+    assert x.closed is True
+    assert a.members == []
+    assert a._hopping is False
+    assert a._loop is None
+
+
 async def test_hot_unplug_closes_and_drops():
     x = FakeIface("wlan0", [6])
     a = _pool(x)

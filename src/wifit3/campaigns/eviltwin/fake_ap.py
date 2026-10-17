@@ -49,6 +49,9 @@ class FakeApStats:
 
 
 class FakeAP:
+    TX_QUEUE_SIZE = 128
+    MAX_CLIENTS = 256
+
     def __init__(self, twin_iface, bssid: bytes, ssid: str, channel: int, twin_beacon: bytes,
                  rx_source=None, record_m1: Optional[Callable[[bytes], None]] = None):
         self.iface = twin_iface
@@ -64,6 +67,8 @@ class FakeAP:
         self._fake_mac_armed = False
         self._rx_registered = False
         self._beacon_task: Optional[asyncio.Task] = None
+        self._tx_task: Optional[asyncio.Task] = None
+        self._tx_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=self.TX_QUEUE_SIZE)
 
     # ----- lifecycle ---------------------------------------------------------
 
@@ -91,6 +96,17 @@ class FakeAP:
                 pass
             except Exception as exc:
                 error = exc
+        tx_task, self._tx_task = self._tx_task, None
+        if tx_task is not None:
+            tx_task.cancel()
+            try:
+                await tx_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                error = error or exc
+        while not self._tx_queue.empty():
+            self._tx_queue.get_nowait()
         if self._rx_registered:
             self._rx_registered = False
             try:
@@ -178,10 +194,33 @@ class FakeAP:
         rec = self.stats.clients.get(client)
         now = time.time()
         if rec is None:
+            if len(self.stats.clients) >= self.MAX_CLIENTS:
+                evicted = min(
+                    self.stats.clients,
+                    key=lambda mac: (
+                        self.stats.clients[mac].phase != ClientPhase.GOT_M2,
+                        self.stats.clients[mac].last_advance,
+                    ),
+                )
+                self.stats.clients.pop(evicted)
             self.stats.clients[client] = ClientProgress(phase=phase, first_seen=now, last_advance=now)
         elif phase > rec.phase:
             rec.phase = phase
             rec.last_advance = now
 
     def _tx(self, frame: bytes) -> None:
-        asyncio.create_task(self.iface.send_no_wait(frame))
+        if self._tx_queue.full():
+            try:
+                self._tx_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+        self._tx_queue.put_nowait(frame)
+        if self._tx_task is None or self._tx_task.done():
+            self._tx_task = asyncio.create_task(self._drain_tx())
+
+    async def _drain_tx(self) -> None:
+        try:
+            while not self._tx_queue.empty():
+                await self.iface.send_no_wait(self._tx_queue.get_nowait())
+        finally:
+            self._tx_task = None

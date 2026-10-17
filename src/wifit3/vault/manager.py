@@ -133,6 +133,13 @@ class JobManager:
     def poll_jobs(self) -> None:
         """Called periodically by a UI timer."""
         changed = False
+        captures_by_path = None
+
+        def capture_for(path):
+            nonlocal captures_by_path
+            if captures_by_path is None:
+                captures_by_path = {capture.path: capture for capture in self.vault.all_captures()}
+            return captures_by_path.get(path)
 
         running_by_tool: Counter = Counter(
             j.tool_name for j in self.jobs.values() if j.status == ToolStatus.RUNNING)
@@ -152,8 +159,7 @@ class JobManager:
 
                 # Slot available, launch it
                 try:
-                    # Retrieve the actual capture object from the vault
-                    cap = next((c for c in self.vault.all_captures() if c.path == job.capture_path), None)
+                    cap = capture_for(job.capture_path)
                     if not cap:
                         logger.error(f"Unable to find capture for job ID {job_id}, path {job.capture_path} not found")
                         job.status = ToolStatus.ERROR
@@ -197,12 +203,13 @@ class JobManager:
         if changed:
             self._save()
 
-    def _persist_cracked_key(self, job: JobState, res: ToolResult) -> None:
+    def _persist_cracked_key(self, job: JobState, res: ToolResult, capture_for=None) -> None:
         """A SUCCESS result carrying a recovered key is written beside its capture as a
         vault artifact, then folded into the in-memory index."""
         if res.status != ToolStatus.SUCCESS or res.key is None:
             return
-        cap = next((c for c in self.vault.all_captures() if c.path == job.capture_path), None)
+        cap = (capture_for(job.capture_path) if capture_for is not None else
+               next((c for c in self.vault.all_captures() if c.path == job.capture_path), None))
         if not cap:
             return
         ssid = self._essid_from_capture(job.capture_path) or cap.ssid

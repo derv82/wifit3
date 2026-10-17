@@ -138,6 +138,22 @@ class WepCaptureStore:
         self._seed_samples: Dict[str, Deque[tuple]] = {}
         self._seed_ivs: Dict[str, Set[bytes]] = {}
 
+    def remove(self, bssid: str) -> None:
+        for registry in (
+            self._unique_ivs,
+            self._stats,
+            self._rates,
+            self._arp_candidates,
+            self._chop_candidates,
+            self._broadcast_seen,
+            self._crack_samples,
+            self._crack_ivs,
+            self._sample_rates,
+            self._seed_samples,
+            self._seed_ivs,
+        ):
+            registry.pop(bssid, None)
+
     def observe(self, bssid: str, pkt: "WepDataPacket") -> Optional[WepStats]:
         """Route one parsed WEP Data frame into every relevant bucket.
 

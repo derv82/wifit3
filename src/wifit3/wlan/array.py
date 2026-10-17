@@ -415,5 +415,15 @@ class WlanArray:
         self._run_on_loop(_spawn)
 
     async def close(self) -> None:
-        await asyncio.gather(*(m.close() for m in self._members), return_exceptions=True)
+        await self.stop_hopping()
+        rehop_tasks = list(self._rehop_tasks)
+        if rehop_tasks:
+            await asyncio.gather(*rehop_tasks, return_exceptions=True)
+        members = list(self._members)
         self._members.clear()
+        await asyncio.gather(*(member.close() for member in members), return_exceptions=True)
+        close_tasks = list(self._close_tasks)
+        if close_tasks:
+            await asyncio.gather(*close_tasks, return_exceptions=True)
+        self._preferred = None
+        self._loop = None

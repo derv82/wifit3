@@ -56,6 +56,9 @@ class PacketStats:
         deauths we hear); every other inject spikes INJECT."""
         self._counts[bssid][CLASS_DEAUTH if is_deauth else CLASS_INJECT] += 1
 
+    def remove(self, bssid: str) -> None:
+        self._counts.pop(bssid, None)
+
     def snapshot(self, bssid: str) -> Dict[str, int]:
         """Current cumulative counts for ``bssid`` (zero-filled, all classes).
         Returns a copy so a caller can diff it against a later snapshot, and

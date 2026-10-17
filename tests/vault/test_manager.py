@@ -40,6 +40,24 @@ def manager(mocker):
     mgr.tools["dummy"] = DummyTool()
     return mgr
 
+def test_queued_jobs_share_one_capture_lookup_per_poll(manager):
+    from wifit3.models.access_point import CaptureType
+    captures = [
+        PersistedCapture(type=CaptureType.HS, timestamp=0, path=f"capture-{index}.pcap",
+                         bssid=f"00:11:22:33:44:{index:02x}")
+        for index in range(3)
+    ]
+    manager.vault.all_captures.return_value = captures
+    for capture in captures:
+        manager.submit_job("dummy", capture, {})
+    manager.vault.all_captures.reset_mock()
+
+    manager.poll_jobs()
+
+    manager.vault.all_captures.assert_called_once_with()
+    assert all(job.status == ToolStatus.RUNNING for job in manager.jobs.values())
+
+
 def test_job_lifecycle(manager):
     from wifit3.models.access_point import CaptureType
     cap = PersistedCapture(type=CaptureType.HS, timestamp=0, path="test.pcap", bssid="00:11:22:33:44:55")
