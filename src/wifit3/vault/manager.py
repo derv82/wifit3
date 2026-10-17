@@ -189,7 +189,7 @@ class JobManager:
                         if res.value is not None:
                             job.progress_msg = res.value
                         _copy_progress(job, res)
-                        self._persist_cracked_key(job, res)
+                        self._persist_cracked_key(job, res, capture_for)
                         changed = True
                     elif job.to_dict() != tracked:
                         changed = True      # the tool moved the job on (its next wordlist)

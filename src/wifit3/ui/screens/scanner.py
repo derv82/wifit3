@@ -194,7 +194,7 @@ class ScannerView(Screen):
 
     def refresh_table(self) -> None:
         array = self.app.array
-        if not array or self.app.screen is not self:
+        if not array:
             return
         self._evict_expired_aps()
 
