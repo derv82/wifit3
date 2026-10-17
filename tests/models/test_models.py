@@ -90,6 +90,32 @@ def test_handshake_add_deduplicates_and_bounds_history():
     assert not hs.has_message(b"junk" + (0).to_bytes(4, "big"))
 
 
+def test_handshake_prune_keeps_the_best_pair_over_newer_ones():
+    def frame(msg_num: int, replay: int, nonce: int) -> HandshakeMessage:
+        return HandshakeMessage(
+            raw=bytes([msg_num]) + replay.to_bytes(8, "big"),
+            msg_num=msg_num,
+            replay_hex=replay.to_bytes(8, "big").hex(),
+            nonce=nonce.to_bytes(32, "big"),
+            mic=b"\x11" * 16,
+            key_data_len=0,
+            eapol_payload=bytes(120),
+        )
+
+    hs = Handshake(bssid="00:11:22:33:44:55", client_mac="AA:BB:CC:DD:EE:FF", beacon_frame=b"beacon")
+    hs.add_message(frame(1, replay=1000, nonce=1))
+    hs.add_message(frame(2, replay=1000, nonce=2))
+    best = hs.find_valid_pair()
+    for instance in range(2, Handshake.MAX_COMPLETE_INSTANCES + 10):
+        hs.add_message(frame(1, replay=instance * 1000, nonce=instance * 2 + 1))
+        hs.add_message(frame(2, replay=instance * 1000 + 1, nonce=instance * 2 + 2))
+    for index in range(Handshake.MAX_MESSAGES):
+        hs.add_message(frame(0, replay=10**9 + index, nonce=0))
+
+    assert len(hs.messages) <= Handshake.MAX_MESSAGES
+    assert hs.find_valid_pair() == best
+
+
 def test_handshake_index_tracks_direct_fixture_mutations():
     hs = Handshake(bssid="00:11:22:33:44:55", client_mac="AA:BB:CC:DD:EE:FF")
     message = _eapol(1, replay=5)

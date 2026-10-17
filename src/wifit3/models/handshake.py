@@ -42,9 +42,8 @@ class Handshake:
     client_mac: str
     beacon_frame: Optional[bytes] = None
 
-    # All EAPOL-Key messages we've seen for this client, in arrival order.
-    # We never wipe (only append-with-dedup), so once a valid pair is
-    # captured nothing can clobber it.
+    # EAPOL-Key messages seen for this client, in arrival order, deduplicated.
+    # Past MAX_MESSAGES, pruning keeps the best MAX_COMPLETE_INSTANCES pairs plus the newest messages.
     messages: List[HandshakeMessage] = field(default_factory=list)
     _raw_messages: Set[bytes] = field(default_factory=set, init=False, repr=False, compare=False)
     _indexed_messages: int = field(default=0, init=False, repr=False, compare=False)
@@ -125,16 +124,9 @@ class Handshake:
         return True
 
     def _prune_messages(self) -> None:
-        pairs = self._crackable_pairs()
-        positions = {id(message): index for index, message in enumerate(self.messages)}
-        newest_pairs = sorted(
-            pairs,
-            key=lambda pair: max(positions[id(pair.anonce_frame)], positions[id(pair.mic_frame)]),
-            reverse=True,
-        )
         keep_ids: Set[int] = set()
         instances: Set[bytes] = set()
-        for pair in newest_pairs:
+        for pair in self._crackable_pairs():
             if pair.instance_key in instances:
                 continue
             instances.add(pair.instance_key)
