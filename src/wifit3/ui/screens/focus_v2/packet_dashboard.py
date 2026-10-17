@@ -75,7 +75,10 @@ class PacketDashboard(Static):
     def set_footer(self, lines) -> None:
         """Set (or clear, with None/[]) the centered footer lines below the
         sparklines. ``lines`` is a list of rich Texts the caller has rendered."""
-        self._footer = lines or None
+        footer = lines or None
+        if footer == self._footer:
+            return
+        self._footer = footer
         self._repaint()
 
     # ---- sampling -----------------------------------------------------------

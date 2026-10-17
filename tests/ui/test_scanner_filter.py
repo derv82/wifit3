@@ -7,6 +7,7 @@ import time
 import pytest
 import pytest_asyncio
 from textual.app import App
+from textual.screen import Screen
 from textual.widgets import Checkbox, Input
 
 from wifit3.models import AccessPoint, IdKey, IdSource
@@ -111,6 +112,22 @@ async def test_encryption_filter_hides_rows_but_keeps_registry():
         scanner.refresh_table()
         assert table.row_count == 2
         assert open_ap.bssid in scanner.ap_cache
+
+
+@pytest.mark.asyncio
+async def test_hidden_scanner_skips_table_refresh_work():
+    ap = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="OpenNet", channel=1, encryption="OPEN")
+    app = _ScannerHost(_FakeArray([], [1, 6, 11]))
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        scanner = app.screen
+        await app.push_screen(Screen())
+        app.array.access_points[ap.bssid] = ap
+
+        scanner.refresh_table()
+
+        assert ap.bssid not in scanner.ap_cache
 
 
 @pytest.mark.asyncio
