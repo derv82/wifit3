@@ -2,6 +2,7 @@
 AP loses its table row but keeps its registry entry, so widening the filter brings
 it straight back without having to rediscover it."""
 from contextlib import asynccontextmanager
+import time
 
 import pytest
 import pytest_asyncio
@@ -46,6 +47,9 @@ class _FakeArray:
 
     def get_access_points(self, include_eviltwin=True):
         return list(self.access_points.values())
+
+    def remove_access_point(self, bssid):
+        return self.access_points.pop(bssid, None)
 
     def select_iface(self, channel):
         return next((iface for iface in self.members if channel in iface.supported_channels), None)
@@ -107,6 +111,23 @@ async def test_encryption_filter_hides_rows_but_keeps_registry():
         scanner.refresh_table()
         assert table.row_count == 2
         assert open_ap.bssid in scanner.ap_cache
+
+
+@pytest.mark.asyncio
+async def test_filtered_ap_is_evicted_after_it_expires():
+    open_ap = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="OpenNet", channel=1, encryption="OPEN")
+    app = _ScannerHost(_FakeArray([open_ap], [1, 6, 11]))
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        scanner = app.screen
+        scanner._scan_filter = ScanFilter(encryption=EncryptionFilter.WPA)
+        open_ap.last_seen = time.time() - 31
+
+        scanner.refresh_table()
+
+        assert open_ap.bssid not in app.array.access_points
+        assert open_ap.bssid not in scanner.ap_cache
 
 
 @pytest.mark.asyncio

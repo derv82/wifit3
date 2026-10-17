@@ -305,7 +305,7 @@ class ScannerView(Screen):
             return
         now = time.time()
         to_drop = [
-            bssid for bssid, ap in self.ap_cache.items()
+            ap.bssid for ap in self.app.array.get_access_points(include_eviltwin=False)
             if self._ap_row_age(ap, now) >= EVICT_DURATION_S
         ]
         for bssid in to_drop:

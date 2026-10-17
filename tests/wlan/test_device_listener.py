@@ -1,4 +1,6 @@
 """DeviceWatch: the multiset diff and poll's change / pause / fatal behaviour."""
+import asyncio
+import threading
 from wifit3.chips.driver import DeviceID
 from wifit3.device.watch import DeviceWatch, _diff
 from wifit3.errors import WifiteFatalError
@@ -81,6 +83,34 @@ async def test_poll_paused_is_noop():
     watch.resume()
     await watch.poll()
     assert events == [1]
+
+
+async def test_overlapping_polls_share_one_bus_scan():
+    started = threading.Event()
+    release = threading.Event()
+
+    class _SlowDM(_DM):
+        def __init__(self):
+            super().__init__([A])
+            self.scan_count = 0
+
+        def devices(self):
+            self.scan_count += 1
+            started.set()
+            release.wait(timeout=1)
+            return super().devices()
+
+    dm = _SlowDM()
+    watch = DeviceWatch(dm, on_change=lambda *a: None)
+    first = asyncio.create_task(watch.poll())
+    while not started.is_set():
+        await asyncio.sleep(0)
+
+    await watch.poll()
+    assert dm.scan_count == 1
+
+    release.set()
+    await first
 
 
 async def test_poll_fatal_reports_once_then_stops():
