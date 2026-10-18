@@ -56,6 +56,29 @@ async def test_vault_shortcut_adds_manual_psk_and_leaves_crack_all_disabled(tmp_
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
+async def test_manual_psk_that_fails_saved_hash_verification_is_not_saved(tmp_path, mocker):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        mocker.patch.object(app.vault, "verify_wpa_psk", return_value=False)
+        save = mocker.patch.object(app.vault, "save_wpa_psk")
+        notify = mocker.patch.object(view, "notify")
+
+        view.action_add_credential()
+        await pilot.pause()
+        app.screen.query_one("#value", Input).value = "incorrect-password"
+        app.screen.query_one("#add", Button).press()
+        await pilot.pause()
+
+        save.assert_not_called()
+        assert notify.call_args.kwargs["severity"] == "error"
+        assert "does not match" in notify.call_args.args[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
 async def test_delete_in_panel_confirms_and_removes(tmp_path):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
     target = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt"

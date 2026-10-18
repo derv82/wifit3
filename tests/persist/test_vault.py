@@ -10,8 +10,10 @@ import sys
 import zipfile
 from pathlib import Path
 
+from wifit3.crack import wpa_psk
 from wifit3.crack.hc22000_format import Hc22000Line
 from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH
+from wifit3.dot11 import wpa
 from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage
 from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault, crosses_auto_crack_threshold
@@ -89,6 +91,25 @@ def test_reload_uses_embedded_network_metadata(tmp_path):
     assert len(captures) == 1
     assert captures[0].ssid == "Café WiFi / upstairs"
     assert captures[0].bssid == "11:22:33:44:55:66"
+
+
+def test_manual_psk_verifies_against_saved_pmkid(tmp_path):
+    ssid = b"HomeNet"
+    bssid = "aa:bb:cc:dd:ee:ff"
+    station = bytes.fromhex("112233445566")
+    pmk = wpa.derive_pmk("correct-password", ssid)
+    pmkid = wpa_psk.pmkid(pmk, bytes.fromhex("aabbccddeeff"), station)
+    line = f"WPA*01*{pmkid.hex()}*aabbccddeeff*{station.hex()}*{ssid.hex()}***\n"
+    (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.hc22000").write_text(line, encoding="utf-8")
+    vault = Vault()
+
+    assert vault.verify_wpa_psk(bssid, "correct-password") is True
+    assert vault.verify_wpa_psk(bssid, "incorrect-password") is False
+    assert vault.verify_wpa_psk(bssid, pmk.hex()) is True
+
+
+def test_manual_psk_is_unverified_without_a_saved_hash(tmp_path):
+    assert Vault().verify_wpa_psk("aa:bb:cc:dd:ee:ff", "trusted-password") is None
 
 
 def test_persisted_unknown_bssid_is_empty(tmp_path):

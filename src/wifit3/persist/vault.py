@@ -11,7 +11,9 @@ import zipfile
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional
 
-from wifit3.crack.hc22000_format import Hc22000Line
+from wifit3.crack import wpa_psk
+from wifit3.crack.hc22000_format import Hc22000Line, parse_hc22000
+from wifit3.dot11 import wpa
 from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH
 from wifit3.models import AccessPoint, CaptureType, PersistedCapture
 from wifit3.persist import save
@@ -174,6 +176,37 @@ class Vault:
     def has_psk(self, ap: "AccessPoint") -> bool:
         """True once we hold this AP's passphrase (see known_psk)."""
         return self.known_psk(ap) is not None
+
+    def verify_wpa_psk(self, bssid: str, psk: str) -> Optional[bool]:
+        """Check a PSK against saved HC22000 data, or return None when none is usable."""
+        lines_by_essid: dict[bytes, list[Hc22000Line]] = {}
+        paths = {
+            capture.path for capture in self.persisted(bssid)
+            if capture.type in (CaptureType.HS, CaptureType.PMKID)
+        }
+        compact_bssid = bssid.replace(":", "").lower()
+        for path in paths:
+            try:
+                raw_lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for raw_line in raw_lines:
+                line = parse_hc22000(raw_line)
+                if line is None or line.mac_ap != compact_bssid or not wpa_psk.line_is_verifiable(line):
+                    continue
+                try:
+                    essid = bytes.fromhex(line.essid)
+                except ValueError:
+                    continue
+                lines_by_essid.setdefault(essid, []).append(line)
+        if not lines_by_essid:
+            return None
+        raw_pmk = len(psk) == 64 and all(character in "0123456789abcdefABCDEF" for character in psk)
+        for essid, lines in lines_by_essid.items():
+            pmk = bytes.fromhex(psk) if raw_pmk else wpa.derive_pmk(psk, essid)
+            if any(wpa_psk.psk_matches(pmk, line) for line in lines):
+                return True
+        return False
 
     def has_handshake(self, ap: "AccessPoint") -> bool:
         return self._has(ap.bssid, CaptureType.HS)

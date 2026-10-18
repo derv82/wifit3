@@ -26,6 +26,21 @@ def pmkid(pmk: bytes, aa: bytes, spa: bytes) -> bytes:
     return hmac.new(pmk, b"PMK Name" + aa + spa, hashlib.sha1).digest()[:16]
 
 
+def line_is_verifiable(line: Hc22000Line) -> bool:
+    if line.kind == "01":
+        return True
+    if line.kind != "02":
+        return False
+    try:
+        eapol = bytes.fromhex(line.eapol)
+    except ValueError:
+        return False
+    if len(eapol) < _KEY_INFO_OFFSET + 2:
+        return False
+    key_info = int.from_bytes(eapol[_KEY_INFO_OFFSET:_KEY_INFO_OFFSET + 2], "big")
+    return key_info & 7 == _KEY_DESCRIPTOR_VERSION_HMAC_SHA1
+
+
 def psk_matches(pmk: bytes, line: Hc22000Line) -> bool:
     """True if this PMK cracks the hashline. EAPOL lines: key descriptor version 2 only, no nonce
     error correction."""
@@ -33,12 +48,9 @@ def psk_matches(pmk: bytes, line: Hc22000Line) -> bool:
     expected = bytes.fromhex(line.pmkid_or_mic)
     if line.kind == "01":
         return hmac.compare_digest(pmkid(pmk, mac_ap, mac_sta), expected)
-    if line.kind != "02":
+    if not line_is_verifiable(line):
         return False
     eapol = bytes.fromhex(line.eapol)
-    key_info = int.from_bytes(eapol[_KEY_INFO_OFFSET:_KEY_INFO_OFFSET + 2], "big")
-    if key_info & 7 != _KEY_DESCRIPTOR_VERSION_HMAC_SHA1:
-        return False
     snonce = eapol[_SNONCE_OFFSET:_SNONCE_OFFSET + _NONCE_LEN]
     kck = derive_ptk(pmk, mac_ap, mac_sta, bytes.fromhex(line.anonce), snonce, KCK_LEN)
     return hmac.compare_digest(eapol_mic(kck, eapol), expected)
