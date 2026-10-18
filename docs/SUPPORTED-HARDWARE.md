@@ -115,7 +115,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 |---|:--:|---|---|
 | **Grade** | **⬜** | — | RX + TX verified on silicon; ACKs, Linux parity and the soak are still open. |
 | RX | ✅ | 2026-10-17 | 13 BSSIDs / 92 beacons over 1–13 @ 0.5 s; ref AP `TP-Link_FA80` (ch 4) at −27 dBm. |
-| TX | ✅ | 2026-10-17 | 48/50 injected MGMT frames ACKed by a real AP, bogus-MAC control 1/50 (`--phase inject`). |
+| TX | ✅ | 2026-10-17 | 45/50 MGMT + 55/50 DATA frames ACKed by a real AP, bogus-MAC control 2/50 (`--phase inject`). Both descriptor branches and two bulk-OUT lanes. |
 | ACKs | ⬜ | — | Not measured: needs a second radio (`scripts/ack/rx_autoack.py`). One card cannot hear the ACK it triggers. |
 | Port | ⬜ | — | No Linux-parity RX comparison run yet. |
 | Handshake | ⬜ | — | Not run. |

@@ -125,6 +125,12 @@ from .constants import (
     TX_PAGE_NUM_LO_PQ_8192E,
     TX_PAGE_NUM_NORM_PQ_8192E,
     TX_TOTAL_PAGE_NUM_8192E,
+    TXDESC_QUEUE_BE,
+    TXDESC_QUEUE_BEACON,
+    TXDESC_QUEUE_BK,
+    TXDESC_QUEUE_MGNT,
+    TXDESC_QUEUE_VI,
+    TXDESC_QUEUE_VO,
 )
 from .phy import usb_quirks
 from .phy_tables import MAC_INIT_TABLE_8192E
@@ -154,6 +160,38 @@ class TxQueues(NamedTuple):
     @property
     def count(self) -> int:
         return int(self.high) + int(self.normal) + int(self.low)
+
+
+class TxQueueLanes(NamedTuple):
+    """The DMA lane `rtl8xxxu_init_queue_priority` gives each TX queue.
+
+    `hiq`/`mgq` are always equal on this part, so one field covers the HIGH lane
+    (`core.c:2583-2682`).
+    """
+
+    vo: int
+    vi: int
+    be: int
+    bk: int
+    mg: int
+    hi: int
+
+
+class TxLaneEndpoints(NamedTuple):
+    """Bulk-OUT endpoint *index* per TX queue — `priv->pipe_out[...]` (`core.c:2695-2710`).
+
+    MGNT and BEACON always share `out_ep[0]`; an AC queue uses the endpoint its lane
+    was routed to. The index is that lane's rank among the *enabled* lanes ordered
+    HIGH > NORMAL > LOW, which is the value both the kernel's hard-coded `0`/`1`
+    (`core.c:2645-2649`) and its `lane ^ 3` (`core.c:2609-2611`) work out to.
+    """
+
+    mgnt: int
+    beacon: int
+    be: int
+    bk: int
+    vi: int
+    vo: int
 
 
 def apply_mac_init_table(t: RTL8192EUTransport) -> int:
@@ -219,13 +257,8 @@ def init_queue_reserved_page(t: RTL8192EUTransport, queues: TxQueues) -> None:
     t.write32(REG_RQPN, val32)
 
 
-def init_queue_priority(t: RTL8192EUTransport, queues: TxQueues) -> None:
-    """Port of `rtl8xxxu_init_queue_priority` (core.c:2583-2714).
-
-    Maps the four AC queues onto the `REG_TRXDMA_CTRL` DMA lanes by
-    `ep_tx_count`. The kernel's `priv->pipe_out[...]` array is replaced by
-    `tx.pick_bulk_out_mgmt`, which routes MGMT to the first bulk-OUT lane.
-    """
+def queue_lanes(queues: TxQueues) -> TxQueueLanes:
+    """The queue → DMA-lane switch of `rtl8xxxu_init_queue_priority` (`core.c:2596-2682`)."""
     if queues.count == 1:
         if queues.high:
             hi = TRXDMA_QUEUE_HIGH
@@ -235,8 +268,8 @@ def init_queue_priority(t: RTL8192EUTransport, queues: TxQueues) -> None:
             hi = TRXDMA_QUEUE_NORMAL
         else:
             raise ValueError("RTL8192EU: TX queue flags disagree with the count")
-        hiq = mgq = bkq = beq = viq = voq = hi
-    elif queues.count == 2:
+        return TxQueueLanes(vo=hi, vi=hi, be=hi, bk=hi, mg=hi, hi=hi)
+    if queues.count == 2:
         if queues.high and queues.low:
             hi, lo = TRXDMA_QUEUE_HIGH, TRXDMA_QUEUE_LOW
         elif queues.normal and queues.low:
@@ -245,38 +278,90 @@ def init_queue_priority(t: RTL8192EUTransport, queues: TxQueues) -> None:
             hi, lo = TRXDMA_QUEUE_HIGH, TRXDMA_QUEUE_NORMAL
         else:
             raise ValueError("RTL8192EU: TX queue flags disagree with the count")
-        hiq = mgq = viq = voq = hi
-        bkq = beq = lo
-    elif queues.count == 3:
-        beq = bkq = TRXDMA_QUEUE_LOW
-        viq = TRXDMA_QUEUE_NORMAL
-        voq = mgq = hiq = TRXDMA_QUEUE_HIGH
-    else:
-        raise ValueError(f"RTL8192EU: unsupported TX queue count {queues.count}")
+        return TxQueueLanes(vo=hi, vi=hi, be=lo, bk=lo, mg=hi, hi=hi)
+    if queues.count == 3:
+        return TxQueueLanes(
+            vo=TRXDMA_QUEUE_HIGH,
+            vi=TRXDMA_QUEUE_NORMAL,
+            be=TRXDMA_QUEUE_LOW,
+            bk=TRXDMA_QUEUE_LOW,
+            mg=TRXDMA_QUEUE_HIGH,
+            hi=TRXDMA_QUEUE_HIGH,
+        )
+    raise ValueError(f"RTL8192EU: unsupported TX queue count {queues.count}")
+
+
+def tx_lane_endpoints(queues: TxQueues) -> TxLaneEndpoints:
+    """The bulk-OUT endpoint index each TX queue writes to (`core.c:2688-2710`)."""
+    lanes = queue_lanes(queues)
+    enabled = [
+        lane
+        for lane, is_enabled in (
+            (TRXDMA_QUEUE_HIGH, queues.high),
+            (TRXDMA_QUEUE_NORMAL, queues.normal),
+            (TRXDMA_QUEUE_LOW, queues.low),
+        )
+        if is_enabled
+    ]
+    rank = {lane: index for index, lane in enumerate(enabled)}
+    return TxLaneEndpoints(
+        mgnt=0,
+        beacon=0,
+        be=rank[lanes.be],
+        bk=rank[lanes.bk],
+        vi=rank[lanes.vi],
+        vo=rank[lanes.vo],
+    )
+
+
+def endpoint_index_for_queue(queue: int, lanes: TxLaneEndpoints) -> int:
+    """Index into the enumerated bulk-OUT endpoints for `queue` (`core.c:2695-2710`)."""
+    index = {
+        TXDESC_QUEUE_BEACON: lanes.beacon,
+        TXDESC_QUEUE_MGNT: lanes.mgnt,
+        TXDESC_QUEUE_BE: lanes.be,
+        TXDESC_QUEUE_BK: lanes.bk,
+        TXDESC_QUEUE_VI: lanes.vi,
+        TXDESC_QUEUE_VO: lanes.vo,
+    }
+    if queue not in index:
+        raise ValueError(f"RTL8192EU: no bulk-OUT lane for TX queue 0x{queue:02x}")
+    return index[queue]
+
+
+def init_queue_priority(t: RTL8192EUTransport, queues: TxQueues) -> None:
+    """Port of `rtl8xxxu_init_queue_priority` (`core.c:2583-2714`).
+
+    Maps the four AC queues onto the `REG_TRXDMA_CTRL` DMA lanes by `ep_tx_count`.
+    The kernel's `priv->pipe_out[...]` table is not a register; the same routing is
+    reproduced by `tx_lane_endpoints`.
+    """
+    lanes = queue_lanes(queues)
 
     val16 = t.read16(REG_TRXDMA_CTRL) & 0x7
     val16 |= (
-        (voq << TRXDMA_CTRL_VOQ_SHIFT)
-        | (viq << TRXDMA_CTRL_VIQ_SHIFT)
-        | (beq << TRXDMA_CTRL_BEQ_SHIFT)
-        | (bkq << TRXDMA_CTRL_BKQ_SHIFT)
-        | (mgq << TRXDMA_CTRL_MGQ_SHIFT)
-        | (hiq << TRXDMA_CTRL_HIQ_SHIFT)
+        (lanes.vo << TRXDMA_CTRL_VOQ_SHIFT)
+        | (lanes.vi << TRXDMA_CTRL_VIQ_SHIFT)
+        | (lanes.be << TRXDMA_CTRL_BEQ_SHIFT)
+        | (lanes.bk << TRXDMA_CTRL_BKQ_SHIFT)
+        | (lanes.mg << TRXDMA_CTRL_MGQ_SHIFT)
+        | (lanes.hi << TRXDMA_CTRL_HIQ_SHIFT)
     )
     t.write16(REG_TRXDMA_CTRL, val16 & 0xFFFF)
 
 
-def pre_fw_queue_init(t: RTL8192EUTransport, queues: TxQueues) -> None:
+def pre_fw_queue_init(t: RTL8192EUTransport, queues: TxQueues) -> TxLaneEndpoints:
     """Queue page partition + DMA lanes + RX page boundary, before the FW upload.
 
     Kernel order: `init_queue_reserved_page` (`core.c:3952`),
     `init_queue_priority` (`core.c:3954`), then `REG_TRXFF_BNDY + 2 =
     trxff_boundary` (`core.c:3962`) — all ahead of `download_firmware`
-    (`core.c:3965`).
+    (`core.c:3965`). Returns the queue → bulk-OUT endpoint table for the TX path.
     """
     init_queue_reserved_page(t, queues)
     init_queue_priority(t, queues)
     set_trxff_rx_page_boundary(t)
+    return tx_lane_endpoints(queues)
 
 
 def set_trxff_rx_page_boundary(t: RTL8192EUTransport) -> None:

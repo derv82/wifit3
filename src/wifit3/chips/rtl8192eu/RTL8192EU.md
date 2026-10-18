@@ -42,16 +42,17 @@ Cleanroom port of the mainline `rtl8xxxu` driver's 8192e fileops vector (`8192e.
 - Status: **ported, byte-verified against `capture-1`, and run on hardware** (cold bring-up + 2.4 GHz
   monitor scan, 2026-10-17). The cold bring-up (power-on → queue pages → FW → EFUSE → MAC →
   BB/AGC/RF → TX boundary/LLT → RX path → adaptive + beacon → TX power → LC/IQK →
-  `enable_rf`), 2.4 GHz / 20 MHz monitor RX, MGMT inject (deauth) and hardware active monitor
-  (`FAKE_MAC = SPOOFABLE`, `REG_MACID` re-pointed) are implemented and unit-tested against a mocked
-  USB transport (`tests/chips/rtl8192eu/`, 145 tests).
+  `enable_rf`), 2.4 GHz / 20 MHz monitor RX, raw-frame inject (MGMT, beacon and data — one queue +
+  bulk-OUT lane per frame type) and hardware active monitor (`FAKE_MAC = SPOOFABLE`, `REG_MACID`
+  re-pointed) are implemented and unit-tested against a mocked USB transport
+  (`tests/chips/rtl8192eu/`, 179 tests).
   `scripts/chips/rtl8192eu/verify_pcap.py` replays the cold boot against `capture-1` and PASSes all
   seven gates (FW blob, MAC+PHY, queue-pre-FW, post-PHY, beacon, LCK, IQK — 2538 replayed ops
   across seven disjoint regions; see [Scripts](#scripts)). `scripts/chips/rtl8192eu/test_hw_rtl8192eu.py
   --phase scan` brings the card up for real and sees 13 BSSIDs over 1–13 (see
-  [Debug log](#debug-log)). **Injection is proven on the air** (`--phase inject`, 2026-10-17: a real AP
-  ACKed 48/50 frames, bogus-MAC control 1/50); the hardware auto-ACK of a forged MAC is not yet
-  bench-verified — that needs a second radio.
+  [Debug log](#debug-log)). **Both TX paths are proven on the air** (`--phase inject`, 2026-10-17: a
+  real AP ACKed 45/50 MGMT frames and 55/50 DATA frames, bogus-MAC control 2/50); the hardware
+  auto-ACK of a forged MAC is not yet bench-verified — that needs a second radio.
 - Related port: `rtl8188eus` (same `rtl8xxxu` core; 1T1R sibling).
 - Non-obvious in the port (would cost a maintainer time):
   - **`txdesc40` (40 B) + `rxdesc24` (24 B) + `fill_txdesc_v2`** — *not* the 8188e's `txdesc32` /
@@ -84,6 +85,15 @@ Cleanroom port of the mainline `rtl8xxxu` driver's 8192e fileops vector (`8192e.
     (`core.c:1717-1744`, `8192e.c:500-507`). The TL-WN823N exposes three, which yields
     high + normal + low; `REG_RQPN = 0x80de0c08` (low queue included) is the wire value — the
     earlier hard-coded two-queue split produced `0x80ea0c08` and was wrong.
+  - **A frame's TX queue also picks its bulk-OUT pipe.** The kernel keeps a
+    `priv->pipe_out[TXDESC_QUEUE_*]` table built from the queue→DMA-lane assignment plus
+    `out_ep[]` (`core.c:2583-2714`, `7635`): MGNT/beacon always the first enumerated bulk-OUT
+    endpoint, and each AC queue the endpoint its lane rank maps to (HIGH > NORMAL > LOW, so a
+    3-endpoint card is `out_ep[0]`/`[1]`/`[2]` for HIGH/NORMAL/LOW). This port models it as
+    `mac.tx_lane_endpoints` (pure) + `mac.endpoint_index_for_queue`; sending a data frame down
+    the MGMT pipe would be a silent protocol violation, so the lane is derived, never assumed.
+    The AC comes from the QoS TID when the frame has a QoS control field (WMM / 802.11-2020
+    Table 10-1), else BE — the kernel's `default:` case (`core.c:5011-5013`).
   - **2T2R everywhere** (`rf_paths = 2`, `8192e.c:490`): both RF paths are tuned, calibrated and
     TX-powered. Path B has its own XB HSSI/LSSI register set; `write_rfreg` brackets every SIPI
     write with `REG_FPGA0_POWER_SAVE` BIT(17), or the write silently fails.
@@ -97,14 +107,16 @@ Cleanroom port of the mainline `rtl8xxxu` driver's 8192e fileops vector (`8192e.
 
 ## Known Problems
 
-- **Injection is proven on the air, but narrow.** `--phase inject --count 50` (2026-10-17) fired unicast
-  MGMT at a real AP on ch 4 and got **48/50 of that AP's ACKs back** (bogus-MAC control 1/50): injection
-  reaches the air, the frames are well-formed, and the RX ACK tap admits the AP's replies. Not covered:
-  data frames, aggregation, per-rate/TX-power behaviour, and any BSSID other than the one tested.
-- **TX is MGMT-inject only.** `tx.build_tx_desc_mgmt` / `send_mgmt_frame` cover deauth (and any
-  MGMT frame). Data frames, aggregation and TX-report consumption are out of scope (`tx.py`).
+- **Injection is proven on the air on both a MGMT and a data queue.** `--phase inject --count 50`
+  (2026-10-17) fired unicast MGMT at a real AP on ch 4 and got **45/50 of that AP's ACKs back**, then
+  unicast ToDS DATA on the BE queue and got **55/50** (the AP ACKs the hardware's own retransmissions
+  too), with a bogus-MAC control at 2/50. So both descriptor branches and two different bulk-OUT
+  lanes reach the air. Not covered: aggregation, per-rate/TX-power behaviour, RTS/CTS, and any BSSID
+  other than the one tested.
+- **No TX-report consumption, by design.** `rtl8192eu_fops` sets no `.has_tx_report` (`8192e.c:1749`),
+  so the descriptor's TX-report byte always reads 0 and there is nothing to consume.
 - **40/80 MHz unported.** Only 2.4 GHz / 20 MHz (`chan.set_channel_2g_20mhz`); the chandef fields
-  the 40/80 branches need are never set on this monitor path.
+  the 40/80 branches need are never set on this monitor path. See [Not Ported](#not-ported).
 - **Active monitor is implemented but not bench-proven.** `enter_active_monitor` writes the forged
   MAC to `REG_MACID` (6 byte writes, `rtl8xxxu_set_mac`, `core.c:3558-3582`) and caches the previous
   six bytes on the first call so `exit_active_monitor` restores them; `FAKE_MAC = SPOOFABLE` unblocks
@@ -121,6 +133,29 @@ Cleanroom port of the mainline `rtl8xxxu` driver's 8192e fileops vector (`8192e.
   every tune (`core.c:6791`), and the `0x22` defaults would otherwise clobber the calibration the
   previous session programmed. A chip that cannot be read needs a replug, not silent
   under-powered TX.
+
+## Not Ported
+
+Deliberate gaps, with the reason each one is out of scope for a monitor/inject port. Everything
+listed is a kernel path that wifit3's `Driver` surface (`connect` / `set_channel` / `inject_frame` /
+`enter_active_monitor` / `close`) cannot reach: there is no caller, no `STA`/`AP` role, and no key
+material. Porting them would add code that can never be exercised or wire-verified, which the
+project's evidence rule treats as worse than an honest gap.
+
+| Kernel symbol | Does | Why it stays unported |
+| --- | --- | --- |
+| `rtl8xxxu_set_key` (`core.c:6927`) | Writes a CAM (hardware key) entry | wifit3 never encrypts/decrypts; the AP is the authenticator. No key material ever reaches a chip driver. |
+| `rtl8xxxu_set_bssid` (`core.c:3581`) | Programs `REG_BSSID` for the joined BSS | Monitor-only: `apply_monitor_rx_filter` accepts every BSSID; there is no `vif` to join. `REG_MACID` (active monitor) is the only address register this port writes. |
+| `rtl8xxxu_update_beacon` + `..._work_callback` (`core.c:5599`) | Rewrites the AP's beacon template | No AP mode. `init_beacon_params` programs the TSF/BEACON registers only because the kernel's init does. |
+| `rtl8192eu_power_off` (`8192e.c:1595`) | FIFO flush + LDO/RF off | `close()` releases the USB interface instead. A teardown capture was never taken, so an unverified power-down would violate the wire-gate rule; it would also kill the warm reattach. |
+| `rtl8xxxu_gen2_disable_rf` (`core.c:3806`) | RF disable (stop-path counterpart of `enable_rf`) | Same reason as `power_off`: `close()` is an interface release, not `rtl8xxxu_stop`. |
+| `rtl8192eu_led_brightness_set` (`8192e.c:1698`) | Drives the activity LED | No LED concept in wifit3; cosmetic only. |
+| `rtl8xxxu_gen2_report_connect` (`core.c:4564`), `..._report_rssi` (`core.c:4601`) | H2C firmware messages carrying the station's connect/RSSI state | Firmware-side station bookkeeping for mac80211. No station, no consumer: this port never associates. |
+| `rtl8xxxu_gen2_update_rate_mask` (`core.c:4515`) | H2C message carrying mac80211's rate mask + rate-id + SGI + width | There is **no rate-adaptation algorithm in `rtl8xxxu`** to port — the function is a transport for mac80211's rate control (minstrel) decision, and its inputs (`ramask`, `rateid`, `sgi`, `txbw_40mhz`) have no source in a raw injector. Data descriptors therefore leave the rate to the descriptor's data branch, and the on-air run above (55/50) is the evidence that the hardware rate table serves injected data frames. |
+| TX aggregation (AMPDU) and RTS/CTS/self-CTS | Multi-MPDU TX with block-ack / protection | A raw inject has no `sta`/`vif`, so `ampdu_enable`/`use_rts`/`use_cts_prot` are false in `rtl8xxxu_fill_txdesc_v2` (`core.c:5291`, `5310-5324`); those descriptor bits are inert by construction. |
+| 40 MHz / 80 MHz, 5 GHz | Wider channels, other band | This part is 2.4 GHz-only with no 5 GHz radio. 40 MHz would need a channel-width argument in the `Driver` ABC (`set_channel(channel)` has none) — an app-wide API change, not a driver gap. |
+
+
 
 ## Driver Entry Points
 
@@ -155,8 +190,9 @@ Feature → where to start reading. Names match the mainline C; grep the vendore
 - RF enable: `phy.enable_rf` (`rtl8192e_enable_rf`, `8192e.c:1629-1673`), after init.
 - RX: `rx.parse_rxdesc24` / `rx.iter_bulk_frames` / `rx.parse_phystats_rssi` +
   `rx._rtl8192e_cck_rssi`; the reader is the shared `chips/rx_reader.py` `RxReaderThread`.
-- TX / inject: `tx.build_tx_desc_mgmt` + `tx.calc_tx_desc_csum` + `tx.send_mgmt_frame`;
-  `driver._inject_frame` (bcast inferred from addr1's I/G bit; MGMT bulk-OUT is the lowest EP).
+- TX / inject: `tx.queue_for_frame` + `tx.build_tx_desc` + `tx.calc_tx_desc_csum` + `tx.send_frame`;
+  `driver._inject_frame` (bcast inferred from addr1's I/G bit; the queue picks the bulk-OUT lane via
+  `mac.endpoint_index_for_queue`).
 - Warm path: `mac.is_chip_warm` + `driver._warm_reattach` (bulk-IN smoke test surfaces "please
   replug" when the pipe is wedged).
 
@@ -179,9 +215,10 @@ Feature → where to start reading. Names match the mainline C; grep the vendore
 - `scripts/chips/rtl8192eu/test_hw_rtl8192eu.py` — on-hardware smoke test (card bound to WinUSB,
   no VM holding it). `--phase scan` (default) runs the real `driver.connect()` cold bring-up then
   hops 1–13 collecting beacons; `--phase open|bringup|warm` isolate one step each; `--phase inject`
-  fires unicast MGMT frames at a real AP and counts that AP's ACKs (the single-card proof that TX
-  reaches the air), with a nobody-owns-this-MAC control. Needs the card physically replugged for a
-  true cold state (a software detach from a VM does not power-cycle).
+  fires unicast MGMT **and** unicast ToDS DATA at a real AP and counts that AP's ACKs for each (the
+  single-card proof that TX reaches the air on both descriptor branches and two bulk-OUT lanes), with
+  a nobody-owns-this-MAC control. Needs the card physically replugged for a true cold state (a
+  software detach from a VM does not power-cycle).
   Run: `uv run python scripts/chips/rtl8192eu/test_hw_rtl8192eu.py --phase scan`
   or `... --phase inject --count 50`.
 - `scripts/chips/rtl8192eu/test_hw_active_monitor.py` — single-card probe for the forged-MAC
@@ -255,3 +292,18 @@ Feature → where to start reading. Names match the mainline C; grep the vendore
   **and** the bogus-MAC control. A single radio cannot receive the ACK it just triggered, so this
   proves nothing about the HW auto-ACK; `scripts/ack/rx_autoack.py` with a second card is the verdict
   instrument. `--phase inject` was added in the same pass to prove TX on the air against a real AP.
+- 2026-10-17: **data + beacon TX ported; both TX paths proven on the air.** `tx.py` grew from a MGMT-only
+  descriptor to the kernel's full queue selection: `queue_for_frame` mirrors `rtl8xxxu_queue_select`
+  (`core.c:5018-5030`) — beacon → `0x10`, MGMT → `0x12`, DATA → the AC for its QoS TID
+  (802.11-2020 Table 10-1; no QoS control → BE, the kernel's `default:`), and `build_tx_desc` now takes
+  the data branch of `fill_txdesc_v2` (`txdw3` clear, `txdw4 = 0x1f << 8`) alongside the MGMT branch
+  (`USE_DRIVER_RATE` + retry 6), copying the frame's own `seq_ctrl` into txdw9 (`core.c:5281,5289`) —
+  previously a non-zero-seq inject left txdw9 at 0. The bigger correction: **a queue also selects a
+  bulk-OUT pipe.** The kernel's `priv->pipe_out[...]` (`core.c:2583-2714`) puts MGNT/beacon on
+  `out_ep[0]` and each AC on its lane's rank; `mac.tx_lane_endpoints` + `endpoint_index_for_queue`
+  model that (replacing `pick_bulk_out_mgmt`'s "lowest EP" heuristic, which was right by accident on
+  this card), and `driver._inject_frame` derives the pipe from the frame type. Unit tests: 145 → 179.
+  Hardware proof (`--phase inject --count 50`, ch 4, `c0:06:c3:c9:ec:0b`): MGMT deauth **45/50 ACKed**
+  (HIGH lane, queue `0x12`), ToDS DATA **55/50 ACKed** (>50 because the AP ACKs the hardware's own
+  retransmissions too — BE queue `0x0`, LOW lane `0x08`), bogus-MAC control 2/50. The seven pcap gates
+  still PASS unchanged (the cold path was not touched).

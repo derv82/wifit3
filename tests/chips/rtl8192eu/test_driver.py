@@ -10,16 +10,63 @@ from unittest.mock import MagicMock
 import pytest
 
 import wifit3.chips.rtl8192eu.driver as drv
+import wifit3.chips.rtl8192eu.mac as mac
 from wifit3.chips.driver import FakeMacSupport
-from wifit3.chips.rtl8192eu.constants import REG_FPGA0_XA_HSSI_PARM2, REG_MACID
+from wifit3.chips.rtl8192eu.constants import (
+    REG_FPGA0_XA_HSSI_PARM2,
+    REG_MACID,
+    TXDESC_QUEUE_BE,
+    TXDESC_QUEUE_BEACON,
+    TXDESC_QUEUE_BK,
+    TXDESC_QUEUE_MGNT,
+    TXDESC_QUEUE_VO,
+)
 from wifit3.chips.rtl8192eu.driver import RTL8192EUDriver
 from wifit3.chips.rtl8192eu.efuse import EfuseDefaults
+from wifit3.chips.rtl8192eu.mac import TxQueues
 from wifit3.errors import BringUpError
 
 from tests.chips.rtl8192eu._mock import MockTransport
 
 OUR_MAC = bytes.fromhex("020000000001")
 REAL_MAC = bytes.fromhex("aabbccddeeff")
+BSSID = bytes.fromhex("c006c3c9ec0b")
+CLIENT = bytes.fromhex("d03f27223eef")
+
+
+def deauth() -> bytes:
+    frame = bytearray(26)
+    frame[0] = 0xC0
+    frame[4:10] = CLIENT
+    frame[10:16] = BSSID
+    frame[16:22] = BSSID
+    return bytes(frame)
+
+
+def plain_data() -> bytes:
+    frame = bytearray(24)
+    frame[0] = 0x08
+    frame[1] = 0x01                      # ToDS
+    frame[4:10] = BSSID
+    frame[10:16] = CLIENT
+    frame[16:22] = BSSID
+    return bytes(frame)
+
+
+def qos_data(tid: int) -> bytes:
+    frame = bytearray(plain_data() + b"\x00\x00")
+    frame[0] = 0x88                      # QoS Data
+    frame[24] = tid
+    return bytes(frame)
+
+
+def beacon() -> bytes:
+    frame = bytearray(80)
+    frame[0] = 0x80
+    frame[4:10] = b"\xff" * 6
+    frame[10:16] = BSSID
+    frame[16:22] = BSSID
+    return bytes(frame)
 
 
 def make_driver() -> RTL8192EUDriver:
@@ -59,6 +106,84 @@ def test_cck_agc_report_type_reads_hssi_parm2_bit9(hssi_parm2, expected):
     driver._read_cck_agc_report_type()
 
     assert driver._cck_agc_report_type == expected
+
+
+# ---- TX endpoint selection (queue -> bulk-OUT pipe) ---------------------
+
+
+def _endpoints() -> drv.Endpoints:
+    return drv.Endpoints(bulk_in=[0x84], bulk_out=[0x05, 0x06, 0x08], interrupt=[])
+
+
+def _wire_driver(monkeypatch, driver) -> list:
+    """Point the driver at the 3-endpoint bench card and record every send."""
+    sent: list = []
+    driver._bulk_out_eps = [0x05, 0x06, 0x08]
+    driver._tx_lanes = mac.tx_lane_endpoints(TxQueues(high=True, normal=True, low=True))
+    monkeypatch.setattr(drv, "send_frame", lambda dev, ep, frame, **kw: sent.append((ep, kw["queue"])))
+    return sent
+
+
+async def test_inject_frame_sends_mgmt_on_the_high_lane(monkeypatch):
+    driver = make_driver()
+    sent = _wire_driver(monkeypatch, driver)
+
+    assert await driver._inject_frame(deauth()) is True
+
+    # `priv->pipe_out[TXDESC_QUEUE_MGNT] = out_ep[mgp=0]` (`core.c:2705`).
+    assert sent == [(0x05, TXDESC_QUEUE_MGNT)]
+
+
+async def test_inject_frame_sends_data_on_the_per_ac_lane(monkeypatch):
+    driver = make_driver()
+    sent = _wire_driver(monkeypatch, driver)
+
+    assert await driver._inject_frame(qos_data(tid=6)) is True     # VO -> HIGH lane
+    assert await driver._inject_frame(qos_data(tid=1)) is True     # BK -> LOW lane
+    assert await driver._inject_frame(plain_data()) is True        # BE -> LOW lane
+
+    # `voq`/`viq` = HIGH/NORMAL, `beq`/`bkq` = LOW on a 3-endpoint card
+    # (`core.c:2609-2611`); the HIGH/NORMAL/LOW lanes are out_ep[0]/[1]/[2]
+    # (`core.c:2688-2710`).
+    assert sent == [
+        (0x05, TXDESC_QUEUE_VO),
+        (0x08, TXDESC_QUEUE_BK),
+        (0x08, TXDESC_QUEUE_BE),
+    ]
+
+
+async def test_inject_frame_sends_a_beacon_on_the_first_pipe(monkeypatch):
+    driver = make_driver()
+    sent = _wire_driver(monkeypatch, driver)
+
+    assert await driver._inject_frame(beacon()) is True
+
+    assert sent == [(0x05, TXDESC_QUEUE_BEACON)]
+
+
+async def test_inject_frame_probes_when_no_endpoints_are_cached(monkeypatch):
+    driver = make_driver()
+    sent = _wire_driver(monkeypatch, driver)
+    driver._bulk_out_eps = []
+    driver._tx_lanes = None
+    monkeypatch.setattr(drv, "probe_endpoints", lambda dev, **kw: _endpoints())
+    monkeypatch.setattr(drv, "config_endpoints", lambda t, n: TxQueues(True, True, True))
+
+    assert await driver._inject_frame(deauth()) is True
+
+    assert driver._bulk_out_eps == [0x05, 0x06, 0x08]
+    assert sent == [(0x05, TXDESC_QUEUE_MGNT)]
+
+
+async def test_inject_frame_fails_without_a_bulk_out_endpoint(monkeypatch):
+    driver = make_driver()
+    driver._bulk_out_eps = []
+    monkeypatch.setattr(
+        drv, "probe_endpoints",
+        lambda dev, **kw: drv.Endpoints(bulk_in=[0x84], bulk_out=[], interrupt=[]),
+    )
+
+    assert await driver._inject_frame(deauth()) is False
 
 
 # ---- set_channel (power-then-channel kernel order) ----------------------

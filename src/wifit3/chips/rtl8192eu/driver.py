@@ -85,6 +85,7 @@ from .efuse import EfuseDefaults, read_and_parse
 from .firmware import download_firmware, load_firmware_blob, start_firmware
 from .iqk import phy_iq_calibrate, phy_lc_calibrate
 from .mac import (
+    TxLaneEndpoints,
     admit_ack_frames,
     apply_monitor_rx_filter,
     config_endpoints,
@@ -92,6 +93,7 @@ from .mac import (
     drop_ack_frames,
     enable_mgmt_ack,
     enable_rx_data_path,
+    endpoint_index_for_queue,
     init_adaptive_controls,
     init_beacon_params,
     init_hw_sequencer,
@@ -103,6 +105,7 @@ from .mac import (
     pre_fw_queue_init,
     set_mac_addr,
     set_nav_upper,
+    tx_lane_endpoints,
 )
 from .phy import (
     enable_cck_ofdm_block,
@@ -117,7 +120,7 @@ from .phy import (
 from .rx import Endpoints, iter_bulk_frames, probe_endpoints
 from ..rx_reader import RxReaderThread
 from .transport import RTL8192EUTransport
-from .tx import pick_bulk_out_mgmt, send_mgmt_frame
+from .tx import queue_for_frame, send_frame
 
 logger = logging.getLogger(__name__)
 
@@ -156,9 +159,9 @@ class RTL8192EUDriver(Driver):
         self._real_mac: Optional[bytes] = None
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
-        self._mgmt_bulk_out: Optional[int] = None
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
+        self._tx_lanes: Optional[TxLaneEndpoints] = None
         self._endpoints: Optional[Endpoints] = None
         self._rx_reader: Optional[RxReaderThread] = None
         self._claimed: bool = False
@@ -222,13 +225,32 @@ class RTL8192EUDriver(Driver):
             return False
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the 40-byte txdesc40 MGMT TX descriptor (HW ACK-retry limit 6, the
-        `rtl8xxxu_fill_txdesc_v2` value — `core.c:5298-5301`) and send ``[desc | frame]``
-        once on the bulk-OUT pipe. BMC is derived from addr1's group bit."""
+        """Build the 40-byte txdesc40 for ``frame_bytes`` and send ``[desc | frame]`` once
+        on the bulk-OUT pipe its TX queue routes to.
+
+        The queue comes from `rtl8xxxu_queue_select` (BEACON / MGNT / per-AC) and the
+        pipe from `priv->pipe_out[queue]`; both are mirrored by `tx.queue_for_frame` and
+        `mac.endpoint_index_for_queue`. MGMT frames carry the v2 retry limit 6
+        (`core.c:5298-5301`). BMC is derived from addr1's group bit.
+        """
         loop = asyncio.get_running_loop()
-        if self._mgmt_bulk_out is None:
+        if not self._bulk_out_eps:
             eps = await loop.run_in_executor(None, probe_endpoints, self.dev)
-            self._mgmt_bulk_out = pick_bulk_out_mgmt(eps.bulk_out)
+            self._bulk_out_eps = list(eps.bulk_out)
+            self._endpoints = eps
+        if not self._bulk_out_eps:
+            logger.error("inject_frame: no bulk-OUT endpoint on this device")
+            return False
+        if self._tx_lanes is None:
+            # Only reachable if `_finish_attach` never ran (e.g. a caller that skipped
+            # connect); derive the same lanes `config_endpoints` would.
+            queues = await loop.run_in_executor(
+                None, config_endpoints, self.transport, len(self._bulk_out_eps)
+            )
+            self._tx_lanes = tx_lane_endpoints(queues)
+
+        queue = queue_for_frame(frame_bytes)
+        ep_out = self._bulk_out_eps[endpoint_index_for_queue(queue, self._tx_lanes)]
 
         # Determine bcast/mcast from addr1 (frame_bytes[4:10]).
         is_bcast = False
@@ -239,8 +261,9 @@ class RTL8192EUDriver(Driver):
         try:
             await loop.run_in_executor(
                 None,
-                lambda: send_mgmt_frame(
-                    self.dev, self._mgmt_bulk_out, frame_bytes,
+                lambda: send_frame(
+                    self.dev, ep_out, frame_bytes,
+                    queue=queue,
                     is_broadcast=is_bcast,
                 ),
             )
@@ -320,7 +343,9 @@ class RTL8192EUDriver(Driver):
         # M1b: queue page partition + DMA lanes + RX page boundary, pre-FW
         # (`core.c:3952-3962`, ahead of `download_firmware` at `core.c:3965`).
         _update(0.20, "Queue pages + DMA lanes + RX page boundary (pre-FW)...")
-        await loop.run_in_executor(None, pre_fw_queue_init, self.transport, queues)
+        self._tx_lanes = await loop.run_in_executor(
+            None, pre_fw_queue_init, self.transport, queues
+        )
 
         _update(0.25, "Loading firmware blob...")
         fw_blob = load_firmware_blob()
@@ -463,8 +488,14 @@ class RTL8192EUDriver(Driver):
             return False
         self._bulk_in_ep = eps.primary_bulk_in
         self._bulk_out_eps = list(eps.bulk_out)
-        if eps.bulk_out:
-            self._mgmt_bulk_out = pick_bulk_out_mgmt(eps.bulk_out)
+        if from_warm and self._tx_lanes is None and self._bulk_out_eps:
+            # The cold path cached these in `_cold_bring_up`; a warm attach never ran it,
+            # so derive the same table from the same inputs (SIE read + endpoint-count
+            # fallback). `config_endpoints` only reads the chip.
+            queues = await loop.run_in_executor(
+                None, config_endpoints, self.transport, len(self._bulk_out_eps)
+            )
+            self._tx_lanes = tx_lane_endpoints(queues)
 
         await loop.run_in_executor(None, self._reset_bulk_pipes)
 

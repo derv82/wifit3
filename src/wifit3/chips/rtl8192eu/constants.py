@@ -265,7 +265,15 @@ TXDESC_OWN = 1 << 7                      # chip owns this descriptor (hand off)
 
 # txdw1 — TX queue routing (rtl8xxxu.h:494-502)
 TXDESC_QUEUE_SHIFT = 8                   # rtl8xxxu.h:494
+TXDESC_QUEUE_BK = 0x2                    # rtl8xxxu.h:496
+TXDESC_QUEUE_BE = 0x0                    # rtl8xxxu.h:497
+TXDESC_QUEUE_VI = 0x5                    # rtl8xxxu.h:498
+TXDESC_QUEUE_VO = 0x7                    # rtl8xxxu.h:499
+TXDESC_QUEUE_BEACON = 0x10               # rtl8xxxu.h:500
 TXDESC_QUEUE_MGNT = 0x12                 # rtl8xxxu.h:502 — the MGMT queue id
+
+# txdw4 — data-rate fallback (rtl8xxxu.h:563), set for DATA frames only
+TXDESC40_DATA_RATE_FB_MASK = 0x1F        # `0x1f << TXDESC40_DATA_RATE_FB_SHIFT`
 
 # txdw2 / txdw4 / txdw5 flags used by fill_txdesc_v3 (rtl8xxxu.h:526-584)
 TXDESC40_AGG_BREAK = 1 << 16             # rtl8xxxu.h:526 (used by v3 too)
@@ -293,6 +301,19 @@ TRXDMA_QUEUE_HIGH = 3
 FC0_TYPE_MGMT = 0x00
 FC0_SUBTYPE_DEAUTH = 0xC0                # subtype 0xC, shifted into bits[7:4]
 REASON_CODE_CLASS3_FRAME = 0x07          # "class-3 frame from non-associated STA"
+
+# 802.11 frame type/subtype decode for `tx.queue_for_frame`.
+FC0_TYPE_MASK = 0x0C                     # fc[0] bits[3:2] = type
+FC0_TYPE_DATA = 0x08                     # 802.11-2020 9.2.4.1.2
+FC0_SUBTYPE_SHIFT = 4                    # fc[0] bits[7:4] = subtype
+FC0_SUBTYPE_BEACON = 0x8                 # MGMT/Beacon (802.11-2020 9.3.3.3)
+FC0_SUBTYPE_QOS_DATA = 0x8               # DATA/QoS-Data (802.11-2020 9.3.2.1)
+IEEE80211_QOS_TID_MASK = 0x0F            # 802.11-2020 9.2.4.5.4 (QoS control byte 0)
+FC1_TO_DS = 0x01                         # fc[1] bit 0 (9.2.4.1.3)
+FC1_FROM_DS = 0x02                       # fc[1] bit 1 (9.2.4.1.4)
+SEQ_CTRL_OFFSET = 22                     # seq_ctrl closes every 24-B header (9.2.4.4)
+SEQ_CTRL_FRAG_MASK = 0x000F              # 802.11-2020 9.2.4.4.2
+IEEE80211_SEQ_SEQ_SHIFT = 4              # IEEE80211_SEQ_TO_SN (include/linux/ieee80211.h)
 
 # ---- M8 EFUSE registers + magic values (regs.h, rtl8xxxu.h) ---------
 REG_9346CR = 0x000A                      # regs.h:60 (EEPROM/EFUSE config)

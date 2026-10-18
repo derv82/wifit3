@@ -39,6 +39,12 @@ from wifit3.chips.rtl8192eu.constants import (
     REG_TXPKTBUF_MGQ_BDNY,
     REG_TXPKTBUF_WMAC_LBK_BF_HD,
     REG_TRXDMA_CTRL,
+    TXDESC_QUEUE_BE,
+    TXDESC_QUEUE_BEACON,
+    TXDESC_QUEUE_BK,
+    TXDESC_QUEUE_MGNT,
+    TXDESC_QUEUE_VI,
+    TXDESC_QUEUE_VO,
     TXDMA_OFFSET_DROP_DATA_EN,
     TX_TOTAL_PAGE_NUM_8192E,
 )
@@ -55,6 +61,7 @@ from wifit3.chips.rtl8192eu.mac import (
     config_endpoints,
     drop_ack_frames,
     enable_rx_data_path,
+    endpoint_index_for_queue,
     init_beacon_params,
     init_queue_priority,
     init_queue_reserved_page,
@@ -66,6 +73,7 @@ from wifit3.chips.rtl8192eu.mac import (
     set_mac_addr,
     set_trxff_rx_page_boundary,
     set_tx_buffer_boundary,
+    tx_lane_endpoints,
 )
 from wifit3.chips.rtl8192eu.phy_tables import MAC_INIT_TABLE_8192E
 
@@ -173,6 +181,53 @@ def test_queue_priority_two_endpoints_routes_high_and_normal():
 def test_queue_priority_rejects_an_empty_queue_set():
     with pytest.raises(ValueError):
         init_queue_priority(MockTransport(), TxQueues(high=False, normal=False, low=False))
+
+
+def test_tx_lane_endpoints_three_lanes_rank_high_normal_low():
+    lanes = tx_lane_endpoints(ALL_QUEUES)
+
+    # MGNT/BEACON share out_ep[0]; the AC queues take their lane's rank (`core.c:2688-2710`).
+    assert lanes.mgnt == 0
+    assert lanes.beacon == 0
+    assert lanes.be == 2      # LOW
+    assert lanes.bk == 2      # LOW
+    assert lanes.vi == 1      # NORMAL
+    assert lanes.vo == 0      # HIGH
+
+
+@pytest.mark.parametrize(
+    ("queues", "expected"),
+    [
+        # `core.c:2663-2668`: indices are hard-coded 0/1 by lane pair.
+        (TxQueues(high=True, normal=True, low=False), (0, 0, 1, 1, 0, 0)),
+        (TxQueues(high=True, normal=False, low=True), (0, 0, 1, 1, 0, 0)),
+        (TxQueues(high=False, normal=True, low=True), (0, 0, 1, 1, 0, 0)),
+        # A single lane routes everything to out_ep[0] (`core.c:2645-2649`).
+        (TxQueues(high=True, normal=False, low=False), (0, 0, 0, 0, 0, 0)),
+        (TxQueues(high=False, normal=True, low=False), (0, 0, 0, 0, 0, 0)),
+        (TxQueues(high=False, normal=False, low=True), (0, 0, 0, 0, 0, 0)),
+    ],
+)
+def test_tx_lane_endpoints_one_and_two_lane_cards(queues, expected):
+    lanes = tx_lane_endpoints(queues)
+    assert (lanes.mgnt, lanes.beacon, lanes.be, lanes.bk, lanes.vi, lanes.vo) == expected
+
+
+def test_endpoint_index_for_queue_maps_every_queue():
+    lanes = tx_lane_endpoints(ALL_QUEUES)
+
+    assert endpoint_index_for_queue(TXDESC_QUEUE_MGNT, lanes) == 0
+    assert endpoint_index_for_queue(TXDESC_QUEUE_BEACON, lanes) == 0
+    assert endpoint_index_for_queue(TXDESC_QUEUE_BE, lanes) == 2
+    assert endpoint_index_for_queue(TXDESC_QUEUE_BK, lanes) == 2
+    assert endpoint_index_for_queue(TXDESC_QUEUE_VI, lanes) == 1
+    assert endpoint_index_for_queue(TXDESC_QUEUE_VO, lanes) == 0
+    with pytest.raises(ValueError, match="no bulk-OUT lane"):
+        endpoint_index_for_queue(0x13, lanes)      # TXDESC_QUEUE_CMD has no data path
+
+
+def test_pre_fw_queue_init_returns_the_lane_table():
+    assert pre_fw_queue_init(MockTransport(), ALL_QUEUES) == tx_lane_endpoints(ALL_QUEUES)
 
 
 def test_pre_fw_queue_init_emits_pages_priority_then_boundary():

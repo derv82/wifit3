@@ -12,14 +12,17 @@ Phases (each builds on the previous):
                     BSSID / SSID / RSSI / channel. Default.
   --phase warm    : read is_chip_warm() without a full connect (run right after a
                     bringup, with the chip still powered, to see the warm verdict).
-  --phase inject  : bringup + fire --count unicast MGMT frames at a real AP and count the
-                    AP's link-layer ACKs with the driver's ACK tap. The only single-card
-                    proof that injection reaches the air (the AP is the prober). Control:
-                    the same frames sent to a MAC nobody owns.
+  --phase inject  : bringup + fire --count unicast MGMT frames AND --count unicast ToDS
+                    DATA frames at a real AP, counting the AP's link-layer ACKs with the
+                    driver's ACK tap. The only single-card proof that injection reaches the
+                    air on both TX paths (the AP is the prober). Control: the same frames
+                    sent to a MAC nobody owns.
 
---phase inject fires real TX at --bssid (default: the designated injection target). The
+--phase inject fires real TX at --bssid (default: the designated injection target). The MGMT
 frame is a unicast deauth whose source is a locally-administered MAC that is associated
-nowhere, so the AP ACKs it at the MAC layer and no client is affected.
+nowhere, so the AP ACKs it at the MAC layer and no client is affected. The DATA frame is a
+bare ToDS frame to the same AP, which it ACKs before deciding what to do with an
+unassociated source.
 
 Usage:
     uv run python scripts/chips/rtl8192eu/test_hw_rtl8192eu.py
@@ -221,10 +224,31 @@ def _mac_bytes(s: str) -> bytes:
     return bytes(int(x, 16) for x in s.split(":"))
 
 
+def _build_data_frame(dst: bytes, src: bytes) -> bytes:
+    """A ToDS DATA frame to `dst`: a1=dst (RA), a2=src, a3=dst, LLC/SNAP + 8-byte payload.
+
+    ToDS routes it through the distribution system to a1, so the AP link-layer ACKs it
+    back to a2 exactly like a MGMT frame. The TID is 0 (no QoS control) → BE queue.
+    """
+    header = bytearray(24 + 8 + 8)
+    header[0] = 0x08                       # DATA, subtype 0 (plain Data)
+    header[1] = 0x01                       # ToDS
+    header[4:10] = dst
+    header[10:16] = src
+    header[16:22] = dst
+    header[24:32] = b"\xaa\xaa\x03\x00\x00\x00\x08\x00"   # LLC/SNAP, ethertype IP
+    return bytes(header)
+
+
 async def phase_inject(
     driver: RTL8192EUDriver, bssid: str, channel: int, count: int, interval: float
 ) -> None:
-    """Fire `count` unicast MGMT frames at a real AP and count that AP's ACKs."""
+    """Fire `count` unicast frames at a real AP and count that AP's ACKs.
+
+    Two frames per run: a MGMT deauth and a ToDS DATA frame — the two descriptor
+    branches and two different TX queues (MGNT `0x12`, BE `0x0`) on two different
+    bulk-OUT lanes. Control: the same frames to a MAC nobody owns.
+    """
     target = _mac_bytes(bssid)
     src = _mac_bytes("02:b0:b0:00:00:01")
     bogus = _mac_bytes("02:00:00:00:00:99")
@@ -234,32 +258,39 @@ async def phase_inject(
     await driver.set_channel(channel)
     print(f"  tuned to ch {channel}; target AP {bssid}")
 
-    async def fire(dst: bytes) -> int:
-        frame = build_deauth(dst, src, dst, reason=7)   # a1=dst, a2=src, a3=dst
+    async def fire(build) -> int:
         before = driver.acks_seen(src)
         sent = 0
         for _ in range(count):
-            if await driver.inject_frame(frame):
+            if await driver.inject_frame(build()):
                 sent += 1
             await asyncio.sleep(interval)
         return driver.acks_seen(src) - before if sent else 0
 
-    step(f"Fire {count} frames at the AP (expect the AP's ACKs back to our source)")
-    acked = await fire(target)
-    print(f"    a1={bssid}  ->  {acked}/{count} ACK(s) seen for 02:b0:b0:00:00:01")
+    legs = (
+        ("MGMT (deauth, queue 0x12, HIGH lane)", lambda: build_deauth(target, src, target, reason=7)),
+        ("DATA (ToDS, queue 0x0, LOW lane)", lambda: _build_data_frame(target, src)),
+    )
+    results: list[tuple[str, int]] = []
+    for label, build in legs:
+        step(f"Fire {count} {label.split()[0]} frames at the AP")
+        acked = await fire(build)
+        results.append((label, acked))
+        print(f"    {label}: {acked}/{count} ACK(s) seen for 02:b0:b0:00:00:01")
 
-    step("Control: same frames to a MAC nobody owns (expect ~0)")
-    nowhere = await fire(bogus)
+    step("Control: a MGMT frame to a MAC nobody owns (expect ~0)")
+    nowhere = await fire(lambda: build_deauth(bogus, src, bogus, reason=7))
     print(f"    a1=02:00:00:00:00:99  ->  {nowhere}/{count} ACK(s)")
 
     margin = max(count // 4, 5)
-    if acked > max(nowhere, margin):
-        ok(f"injection reaches the air: the AP ACKed {acked}/{count} of our frames")
-    else:
-        fail(
-            f"no AP ACKs ({acked}/{count}, control {nowhere}) — either the frames never "
-            "left the radio or the AP is out of range/moved off this channel."
-        )
+    for label, acked in results:
+        if acked <= max(nowhere, margin):
+            fail(
+                f"{label}: no AP ACKs ({acked}/{count}, control {nowhere}) — either the "
+                "frames never left the radio or the AP is out of range/moved off this channel."
+            )
+        ok(f"{label}: the AP ACKed {acked}/{count} of our frames")
+    ok("injection reaches the air on both the MGMT and the data TX paths")
 
 
 def phase_warm(dev) -> None:
