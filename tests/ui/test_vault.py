@@ -155,8 +155,16 @@ async def test_an_automatic_job_success_toasts_and_posts_job_cracked_to_the_scre
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_vault_keeps_emoji_named_mac_octets_literal(tmp_path):
-    _write(tmp_path, "HomeNet_aa-cd-11-22-33-44_1000_wep_key.txt", _WEP_TXT)
-    _write(tmp_path, "HomeNet_bb-cc-11-22-33-44_1000_wep_key.txt", _WEP_TXT)
+    _write(
+        tmp_path,
+        "HomeNet_aa-cd-11-22-33-44_1000_wep_key.txt",
+        _WEP_TXT.replace("aa:bb:cc:dd:ee:ff", "aa:cd:11:22:33:44"),
+    )
+    _write(
+        tmp_path,
+        "HomeNet_bb-cc-11-22-33-44_1000_wep_key.txt",
+        _WEP_TXT.replace("aa:bb:cc:dd:ee:ff", "bb:cc:11:22:33:44"),
+    )
     app = WifiteApp()
     async with app.run_test() as pilot:
         view = await _open_vault(app)

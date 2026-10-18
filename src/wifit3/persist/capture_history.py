@@ -5,6 +5,7 @@ indexed (a handshake may have either or both). Counterpart: persist.save."""
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
@@ -19,8 +20,15 @@ from wifit3.persist.common import (
     parse_wps_pin,
 )
 from wifit3.persist.config import Config
+from wifit3.persist.metadata import load_metadata
 
 logger = logging.getLogger(__name__)
+
+_SSID_RE = re.compile(r"^SSID:[ \t]*(.*)$", re.MULTILINE)
+_BSSID_RE = re.compile(
+    r"^BSSID:[ \t]*([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})[ \t]*$",
+    re.MULTILINE,
+)
 
 
 def _read_text(path: Path) -> str | None:
@@ -31,30 +39,12 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
-def _read_wep_key(path: Path) -> str | None:
-    """Extract the hex WEP key from a ``_wep_key.txt`` file, or None."""
-    text = _read_text(path)
-    if text is None:
-        return None
-    m = WEP_KEY_HEX_RE.search(text)
-    return m.group(1).lower() if m else None
-
-
-def _read_wps_psk(path: Path) -> str | None:
-    """Extract the PSK from a ``_wps_pin.txt`` or ``_wps_pbc.txt`` file, or None."""
-    text = _read_text(path)
-    if text is None:
-        return None
-    m = WPS_PSK_RE.search(text)
-    return m.group(1).strip() if m else None
-
-
-def _read_wps_pin(path: Path) -> str | None:
-    """Extract the PIN from a ``_wps_pin.txt`` file, or None."""
-    text = _read_text(path)
-    if text is None:
-        return None
-    return parse_wps_pin(text)
+def _network_metadata(text: str, ssid: str, bssid: str) -> tuple[str, str]:
+    ssid_match = _SSID_RE.search(text)
+    bssid_match = _BSSID_RE.search(text)
+    stored_ssid = ssid_match.group(1) if ssid_match else ssid
+    stored_bssid = bssid_match.group(1).lower() if bssid_match else bssid
+    return stored_ssid, stored_bssid
 
 
 def _count_hashlines(path: Path, prefix: str) -> int:
@@ -105,25 +95,31 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
     ext = m.group("ext")
     ssid = m.group("ssid")
 
-    if kind == "wep_key" and ext == "txt":
-        key = _read_wep_key(path)
-        if key is None:
+    if ext == "txt":
+        text = _read_text(path)
+        if text is None:
             return []
-        return [PersistedCapture(type=CaptureType.WEP, timestamp=epoch, path=str(path),
-                                 bssid=bssid, value=key, ssid=ssid)]
-    if kind == "wps_pin" and ext == "txt":
-        return [PersistedCapture(type=CaptureType.WPS_PIN, timestamp=epoch, path=str(path),
-                                 bssid=bssid, value=_read_wps_psk(path), ssid=ssid,
-                                 pin=_read_wps_pin(path))]
-    if kind == "wps_pbc" and ext == "txt":
-        return [PersistedCapture(type=CaptureType.WPS_PBC, timestamp=epoch, path=str(path),
-                                 bssid=bssid, value=_read_wps_psk(path), ssid=ssid)]
-    if kind == "wpa_psk" and ext == "txt":
-        psk = _read_wps_psk(path)
-        if psk is None:
-            return []
-        return [PersistedCapture(type=CaptureType.WPA_PSK, timestamp=epoch, path=str(path),
-                                 bssid=bssid, value=psk, ssid=ssid)]
+        ssid, bssid = _network_metadata(text, ssid, bssid)
+        psk_match = WPS_PSK_RE.search(text)
+        psk = psk_match.group(1).strip() if psk_match else None
+        if kind == "wep_key":
+            key_match = WEP_KEY_HEX_RE.search(text)
+            if key_match is None:
+                return []
+            return [PersistedCapture(type=CaptureType.WEP, timestamp=epoch, path=str(path),
+                                     bssid=bssid, value=key_match.group(1).lower(), ssid=ssid)]
+        if kind == "wps_pin":
+            return [PersistedCapture(type=CaptureType.WPS_PIN, timestamp=epoch, path=str(path),
+                                     bssid=bssid, value=psk, ssid=ssid,
+                                     pin=parse_wps_pin(text))]
+        if kind == "wps_pbc":
+            return [PersistedCapture(type=CaptureType.WPS_PBC, timestamp=epoch, path=str(path),
+                                     bssid=bssid, value=psk, ssid=ssid)]
+        if kind == "wpa_psk":
+            if psk is None:
+                return []
+            return [PersistedCapture(type=CaptureType.WPA_PSK, timestamp=epoch, path=str(path),
+                                     bssid=bssid, value=psk, ssid=ssid)]
     if kind == "handshake" and ext in ("hc22000", "pcap"):
         count = _count_hashlines(path, "WPA*02*") if ext == "hc22000" else 0
         return [PersistedCapture(type=CaptureType.HS, timestamp=epoch, path=str(path),
@@ -141,19 +137,31 @@ def load_capture_index() -> Dict[str, List[PersistedCapture]]:
     root = Path(Config.captures_dir)
     if not root.is_dir():
         return {}
+    metadata_by_bssid: dict[str, dict] = {}
+    for metadata_path in root.glob("*.meta"):
+        metadata = load_metadata(metadata_path)
+        bssid = metadata.get("bssid")
+        if isinstance(bssid, str):
+            metadata_by_bssid[bssid.lower()] = metadata
     for path in root.iterdir():
         if not path.is_file():
             continue
         m = LEGACY_CAPTURE_RE.match(path.name)
         if m:
             bssid = bssid_to_colon(m.group("bssid"))
-            index[bssid].extend(_parse_file(path, bssid))
+            for capture in _parse_file(path, bssid):
+                index[capture.bssid].append(capture)
             continue
         m_agg = AGGREGATED_HC22000_RE.match(path.name)
         if m_agg:
             bssid = bssid_to_colon(m_agg.group("bssid"))
-            index[bssid].extend(_parse_file(path, bssid))
-    for caps in index.values():
+            for capture in _parse_file(path, bssid):
+                index[capture.bssid].append(capture)
+    for bssid, caps in index.items():
+        metadata = metadata_by_bssid.get(bssid)
+        if metadata is not None and isinstance(metadata.get("ssid"), str):
+            for capture in caps:
+                capture.ssid = metadata["ssid"]
         caps.sort(key=lambda c: c.timestamp, reverse=True)
     return {b: c for b, c in index.items() if c}
 
@@ -166,5 +174,6 @@ def summarize(index: Dict[str, List[PersistedCapture]]) -> tuple[int, int, int, 
         hs += CaptureType.HS in types
         pmkid += CaptureType.PMKID in types
         wep += CaptureType.WEP in types
-        psk += bool(types & {CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK})
+        psk += any(c.type in {CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK}
+                   and c.value for c in caps)
     return hs, pmkid, wep, psk

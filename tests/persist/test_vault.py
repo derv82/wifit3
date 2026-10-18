@@ -5,6 +5,7 @@ Config.captures_dir is pointed at tmp_path by the autouse fixture in
 tests/conftest.py, so Vault() and the save_* functions both land there."""
 from __future__ import annotations
 
+import json
 import sys
 import zipfile
 from pathlib import Path
@@ -72,6 +73,24 @@ def test_startup_loads_existing_captures(tmp_path):
     assert v.summary() == "1 PSK"
 
 
+def test_reload_uses_embedded_network_metadata(tmp_path):
+    path = tmp_path / "Cafe_WiFi_aa-bb-cc-dd-ee-ff_1700000000_wpa_psk.txt"
+    path.write_text(
+        "SSID: Café WiFi / upstairs\n"
+        "BSSID: 11:22:33:44:55:66\n"
+        "PSK: password1\n",
+        encoding="utf-8",
+    )
+
+    vault = Vault()
+    captures = vault.persisted("11:22:33:44:55:66")
+
+    assert vault.persisted("aa:bb:cc:dd:ee:ff") == []
+    assert len(captures) == 1
+    assert captures[0].ssid == "Café WiFi / upstairs"
+    assert captures[0].bssid == "11:22:33:44:55:66"
+
+
 def test_persisted_unknown_bssid_is_empty(tmp_path):
     assert Vault().persisted("aa:bb:cc:dd:ee:ff") == []
 
@@ -130,6 +149,8 @@ def test_pin_without_psk_is_persisted_and_reloaded(tmp_path):
     assert reloaded[0].type == CaptureType.WPS_PIN
     assert reloaded[0].pin == "12345670"
     assert reloaded[0].value is None
+    assert vault.has_wps_psk(ap) is False
+    assert Vault().summary() is None
 
 
 def test_save_wps_pbc_and_pin_cache_their_psks(tmp_path):
@@ -140,6 +161,30 @@ def test_save_wps_pbc_and_pin_cache_their_psks(tmp_path):
     values = {c.value for c in v.persisted(ap.bssid)
               if c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC)}
     assert values == {"pbcpsk", "pinpsk"}
+
+
+def test_saved_ap_metadata_preserves_utf8_ssid_and_known_data(tmp_path):
+    ap = _ap_with_hs(ssid="Café WiFi / upstairs")
+    ap.channel = 11
+    ap.encryption = "WPA2"
+    ap.akms = ["PSK"]
+    ap.pmf_capable = True
+    vault = Vault()
+
+    vault.save_handshake(ap, "11:22:33:44:55:66")
+    vault.save_wpa_psk(ap.ssid, ap.bssid, "password1")
+
+    metadata_path = tmp_path / "aa-bb-cc-dd-ee-ff.meta"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    reloaded = Vault().persisted(ap.bssid)
+
+    assert metadata["ssid"] == "Café WiFi / upstairs"
+    assert metadata["channel"] == 11
+    assert metadata["encryption"] == "WPA2"
+    assert metadata["akms"] == ["PSK"]
+    assert metadata["pmf_capable"] is True
+    assert metadata["credentials"]["psk"] == "password1"
+    assert {capture.ssid for capture in reloaded} == {"Café WiFi / upstairs"}
 
 
 def test_save_handshake_and_pmkid_cached_and_summarized(tmp_path):
@@ -265,8 +310,11 @@ def test_delete_capture_removes_file_and_cache_entry(tmp_path):
     ap = AccessPoint(bssid="00:11:22:33:44:01", ssid="A")
     r = v.save_wep_key(ap, b"abcde")
     assert Path(r.path).exists()
+    metadata = tmp_path / "00-11-22-33-44-01.meta"
+    assert metadata.exists()
     v.delete_capture(v.persisted(ap.bssid)[0])
     assert not Path(r.path).exists()
+    assert not metadata.exists()
     assert v.persisted(ap.bssid) == []
 
 
@@ -285,10 +333,14 @@ def test_delete_capture_drops_all_entries_sharing_a_path(tmp_path):
 def test_zip_captures_bundles_beside_dir(tmp_path):
     v = Vault()
     v.save_wep_key(AccessPoint(bssid="00:11:22:33:44:01", ssid="A"), b"abcde")
-    out = v.zip_captures(v.all_captures())
+    captures = v.all_captures()
+    out = v.zip_captures(captures)
     assert out is not None and out.parent == tmp_path.parent
     with zipfile.ZipFile(out) as zf:
-        assert len(zf.namelist()) == 1
+        assert set(zf.namelist()) == {
+            Path(captures[0].path).name,
+            "00-11-22-33-44-01.meta",
+        }
 
 
 def test_zip_captures_none_when_empty(tmp_path):
