@@ -53,6 +53,22 @@ async def test_prefs_no_longer_hosts_consolidate(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_preferences_offers_v1_conversion_when_metadata_is_missing(tmp_path):
+    (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_wpa_psk.txt").write_text(
+        "SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: password1\n",
+        encoding="utf-8",
+    )
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(PreferencesModal())
+        await pilot.pause()
+
+        assert isinstance(app.screen, ConfirmModal)
+        prompt = str(app.screen.query_one("#prompt").render())
+        assert "Found 1 saved APs with missing v2 metadata" in prompt
+
+
+@pytest.mark.asyncio
 async def test_vault_repair_requires_destructive_change_confirmation(tmp_path):
     app = _Host()
     async with app.run_test() as pilot:
@@ -64,7 +80,7 @@ async def test_vault_repair_requires_destructive_change_confirmation(tmp_path):
 
         assert isinstance(app.screen, ConfirmModal)
         prompt = str(app.screen.query_one("#prompt").render())
-        assert "overwrites derived capture data" in prompt
+        assert "Original HC22000 and pcap sources will be preserved" in prompt
         assert "Saved passwords" in prompt
 
 

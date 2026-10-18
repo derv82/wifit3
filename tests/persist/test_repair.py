@@ -31,6 +31,8 @@ def test_repair_recovers_utf8_ssid_and_preserves_credentials(tmp_path):
     repaired_metadata = json.loads(metadata.read_text(encoding="utf-8"))
     assert result.aps == 1
     assert result.hash_lines == 1
+    assert result.backup_dir is not None
+    assert (result.backup_dir / old_hash.name).read_text(encoding="utf-8") == line + "\n"
     assert repaired_hash.read_text(encoding="utf-8") == line + "\n"
     assert not old_hash.exists()
     assert credential.read_text(encoding="utf-8").endswith("PSK: password1\n")

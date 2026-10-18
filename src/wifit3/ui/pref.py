@@ -95,7 +95,7 @@ class VaultMaintenanceSetting(VerticalGroup):
 
     def compose(self) -> ComposeResult:
         self.border_title = "Vault maintenance"
-        yield Button("Repair metadata and HC22000", id="repair-vault")
+        yield Button("Repair Vault data", id="repair-vault")
 
 
 class SaveFooter(Horizontal):
@@ -147,22 +147,46 @@ class PreferencesModal(ModalScreen):
     def on_mount(self) -> None:
         self._original_theme = self.app.theme
         self._original_sort_delay = Config.scanner_sort_delay
+        self._conversion_offered = False
+        self.call_after_refresh(self._offer_legacy_conversion)
+
+    def _offer_legacy_conversion(self) -> None:
+        missing = self.app.vault.missing_metadata_count()
+        if missing == 0 or self._conversion_offered:
+            return
+        self._conversion_offered = True
+        self.app.push_screen(
+            ConfirmModal(self._conversion_warning(missing)),
+            self._repair_confirmed,
+        )
+
+    @staticmethod
+    def _conversion_warning(missing: int | None = None) -> str:
+        prefix = (
+            f"Found [bold]{missing}[/] saved APs with missing v2 metadata. "
+            if missing is not None else "Repair existing Vault data? "
+        )
+        return (
+            prefix
+            + "Generate v2 metadata and rebuild derived HC22000 and safe SSID filenames from "
+            "existing HC22000 and pcap data?\n\n[bold]Original HC22000 and pcap sources will "
+            "be preserved in a v1 backup directory. Saved passwords, WPS PINs, WEP keys, and "
+            "credential files will not be changed.[/]"
+        )
 
     @on(Button.Pressed, "#repair-vault")
     def repair_vault_pressed(self, event: Event) -> None:
         event.stop()
-        warning = (
-            "Rebuild Vault metadata, HC22000 files, and safe SSID filenames from existing "
-            "HC22000 and pcap data?\n\n[bold]This overwrites derived capture data and may rename "
-            "files. Saved passwords, WPS PINs, and WEP keys will not be changed.[/]"
+        self.app.push_screen(
+            ConfirmModal(self._conversion_warning()),
+            self._repair_confirmed,
         )
-        self.app.push_screen(ConfirmModal(warning), self._repair_confirmed)
 
     def _repair_confirmed(self, confirmed: bool | None) -> None:
         if not confirmed:
             return
         self.query_one("#repair-vault", Button).disabled = True
-        self.notify("Repairing Vault…")
+        self.notify("Repairing Vault data…")
         self._run_vault_repair()
 
     @work(thread=True, exclusive=True)
@@ -177,6 +201,8 @@ class PreferencesModal(ModalScreen):
             f"Repaired {result.aps} APs, {result.hash_lines} hash lines; "
             f"read {result.pcaps_read} pcaps and renamed {result.files_renamed} files"
         )
+        if result.backup_dir is not None:
+            message += f". Originals: {result.backup_dir.name}"
         if result.errors:
             self.notify(message, severity="warning", title=f"{len(result.errors)} repair errors")
         else:

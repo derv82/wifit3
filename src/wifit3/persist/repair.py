@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
+import time
 
 from wifit3.crack.hc22000_format import eapol_hashlines, parse_hc22000, pmkid_hashline
 from wifit3.dot11.parser import WlanFrameParser
@@ -20,6 +22,7 @@ class RepairResult:
     pcaps_read: int
     files_renamed: int
     errors: tuple[str, ...]
+    backup_dir: Path | None
 
 
 def _colon_mac(compact: str) -> str:
@@ -42,6 +45,22 @@ def repair_vault() -> RepairResult:
     errors: list[str] = []
     pcaps_read = 0
     renamed = 0
+    source_paths = [*root.glob("*.hc22000"), *root.glob("*.pcap")]
+    backup_dir: Path | None = None
+    if source_paths:
+        backup_dir = root / f"v1-backup-{int(time.time())}"
+        counter = 1
+        while backup_dir.exists():
+            backup_dir = root / f"v1-backup-{int(time.time())}-{counter}"
+            counter += 1
+        backup_dir.mkdir(parents=True)
+        for source in source_paths:
+            try:
+                shutil.copy2(source, backup_dir / source.name)
+            except OSError as exc:
+                errors.append(f"Could not preserve {source.name}: {exc}")
+        if errors:
+            return RepairResult(0, 0, 0, 0, tuple(errors), backup_dir)
 
     for path in root.glob("*.hc22000"):
         try:
@@ -124,4 +143,5 @@ def repair_vault() -> RepairResult:
         pcaps_read=pcaps_read,
         files_renamed=renamed,
         errors=tuple(errors),
+        backup_dir=backup_dir,
     )

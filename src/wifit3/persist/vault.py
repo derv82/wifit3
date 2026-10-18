@@ -120,6 +120,10 @@ class Vault:
         """Every saved capture across all APs, unordered (callers sort as needed)."""
         return [c for caps in self._index.values() for c in caps]
 
+    def missing_metadata_count(self) -> int:
+        """Number of saved APs that have no v2 metadata sidecar."""
+        return sum(not metadata_path(bssid).is_file() for bssid in self._index)
+
     def capture_payload(self, capture: PersistedCapture) -> str:
         """Copyable text for a capture: its stored value (WEP/WPS), else the file's
         own contents (HS/PMKID hashlines). Empty string if unreadable."""
