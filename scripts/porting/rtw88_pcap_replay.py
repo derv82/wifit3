@@ -168,7 +168,8 @@ def extract_ops(pcap: Path, dev: int, window=None, start_addr=None):
         if r["utype"] == "S":
             if r["ttype"] == 3:  # bulk OUT
                 ops.append({"kind": "B", "data": r["cap"] or r["dfrag"], "frame": r["frame"]})
-            elif r["ttype"] == 2 and r["breq"] == RTW_VENDOR_REQ:
+            elif (r["ttype"] == 2 and r["breq"] == RTW_VENDOR_REQ
+                  and r["brt"] in ("0x40", "0xc0")):
                 addr, width, brt = int(r["wval"], 0), int(r["wlen"], 0), int(r["brt"], 0)
                 if brt == 0x40:  # write — value on the submit
                     ops.append({"kind": "W", "addr": addr, "width": width,

@@ -94,6 +94,7 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
 | RTL8822BU  | yes (2G 108, 5G 100)   | 0   | yes (2G 111, 5G 100) | 0 |
 | RTL8822CU  | yes (2G 101, 5G 99)    | 0   | yes (2G 102, 5G 100) | 0 |
 | RTL8188EUS | yes (2G 100)           | 0   | yes (2G 100)         | 0 |
+| RTL8192EU  | n/m (needs 2nd radio)  | n/m | n/m                  | 0 |
 | AR9271     | yes (2G 100)           | 0   | yes (2G 100)         | 0 |
 | MT7612U    | yes (2G 97, 5G 80)     | 0   | yes (2G 104, 5G 100) | 0 |
 | MT7610U    | yes (2G 100, 5G 100)   | 0   | yes (2G 100, 5G 100) | 0 |
@@ -106,6 +107,11 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
 | RT3572     | yes (2G 103)           | 0   | yes (2G 102)         | 0 |
 | RTL8187L   | n/a (no active monitor) | n/a | yes (2G 111)        | 0 |
 | RT2500USB  | n/a (no active monitor) | n/a | no (2G 0)           | 0 |
+
+`n/m` = not measured. **RTL8192EU** has no bench row yet: a single card cannot hear the ACK it
+triggers, so its on-card probe reads 0 for the spoofed MAC, the active-monitor-OFF case and the bogus
+control alike — inconclusive, not negative. Run `scripts/ack/rx_autoack.py --test-card 8192` with a
+second radio to fill this row in.
 
 `FAKE_MAC` flags reconciled against this bench:
 - **MT7921AU** was flagged `UNIMPLEMENTED`; it auto-ACKs a spoofed MAC on both bands (not its own
@@ -134,9 +140,16 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
   Its ACK emission is coupled to the RX address filter (TXRX_CSR2 `DROP_NOT_TO_ME`), which monitor mode
   must clear to receive foreign frames, so the responder never fires.
 
+- **RTL8192EU** (mainline `rtl8xxxu` port) is newly flagged `SPOOFABLE` with **no bench row yet**: it
+  writes a forged MAC into `REG_MACID` (`rtl8xxxu_set_mac`, `core.c:3558-3582`), the same active-monitor
+  mechanism the bench confirms on every other Realtek part, but the auto-ACK itself is unmeasured
+  (the bench needs two radios). Provisional until `rx_autoack.py` runs.
+
 Scope: the mainline (non-DKMS) Realtek variants (rtl8188eus, rtl8812au, rtl8821au, rtl8822bu) and
 rtw88_8814au stay `UNIMPLEMENTED` by choice: active monitor was never ported for them, so they are out
-of scope for this sweep, not regressions. The bench targets the DKMS drivers we ship.
+of scope for this sweep, not regressions. (Mainline **rtl8192eu** is the exception — active monitor was
+ported for it, hence the provisional `SPOOFABLE` above; its two-radio bench run is still owed.)
+The bench targets the DKMS drivers we ship.
 
 `enter_active_monitor`'s `bssid` is read only by rtl8922au, mt7921au and mt7925au. On all three,
 injected unicast is auto-ACKed identically with and without it (2026-10-07, ACKs counted on a second

@@ -131,6 +131,8 @@ class DLink(ProductName):
     DWA_125_REV_A2  = "DWA-125 rev.A2"
     DWA_125_REV_D1  = "DWA-125 rev.D1"
     DWA_126         = "D-Link DWA-126"
+    DWA_131_REV_C1  = "DWA-131 rev.C1"  # 2001:3312, rtl8xxxu core.c:8213
+    DWA_131_REV_E1  = "DWA-131 rev.E1"  # 2001:3319, rtl8xxxu core.c:7954
     DWA_137         = "D-Link DWA-137"
     DWA_140_REV_B2  = "DWA-140 rev.B2"
     DWA_140_REV_B3  = "DWA-140 rev.B3"
@@ -259,6 +261,8 @@ class Mercusys(ProductName):
     MA30H = "Mercusys MA30H"
     MA30N = "Mercusys MA30N"
     MW150US = "Mercusys MW150US"  # 2c4e:0102, rtl8xxxu core.c:7984
+    MW300UM = "Mercusys MW300UM"  # 2c4e:0100, rtl8xxxu core.c:8219
+    MW300UH = "Mercusys MW300UH"  # 2c4e:0104, rtl8xxxu core.c:8222
 
 
 class Microsoft(ProductName):
@@ -314,6 +318,7 @@ class Planex(ProductName):
     GW_450D = "Planex GW-450D"
     GW_450S = "Planex GW-450S"
     GW_900D = "GW-900D"
+    _AB33   = "Planex 0xab33"  # 2019:ab33, rtl8xxxu core.c:8208
 
 
 class Qcom(ProductName):
@@ -325,6 +330,8 @@ class Ralink(ProductName):
 
 
 class Realtek(ProductName):
+    _818B    = "Realtek 818B"  # 0bda:818b, rtl8xxxu core.c:7948
+    _818C    = "Realtek 818C"  # 0bda:818c, rtl8xxxu core.c:8210
     _8818EUS = "Realtek 8818EUS"
 
 
@@ -390,6 +397,10 @@ class TPLink(ProductName):
     TL_WN722N_V2_V3  = "TL-WN722N v2/v3" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v2 & v3
     TL_WN723N_V2_3_4 = "TL-WN723N v2/3/4" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN723N_v3
     TL_WN727N_V5_21  = "TL-WN727N v5.21" # 2357:0111, aircrack-ng/rtl8188eus os_dep/linux/usb_intf.c
+    TL_WN8200ND_V2   = "TL-WN8200ND v2"  # 2357:0126, rtl8xxxu core.c:8216
+    TL_WN822N_V4     = "TL-WN822N v4"    # 2357:0108, rtl8xxxu core.c:7951
+    TL_WN823N_V2_V3  = "TL-WN823N v2/v3" # 2357:0109, rtl8xxxu core.c:7957
+    _0107            = "TP-Link 0x0107"  # 2357:0107, "found in rtl8192eu vendor driver" core.c:8206
 
 
 class TRENDnet(ProductName):
