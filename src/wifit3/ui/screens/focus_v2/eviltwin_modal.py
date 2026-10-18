@@ -40,8 +40,9 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
     DEFAULT_CSS = """
     EvilTwinInputModal { align: center middle; }
     EvilTwinInputModal #dialog {
-        width: 60; height: auto; max-height: 90%;
+        width: 65; height: auto; max-height: 95%;
         border: thick $primary; background: $surface; padding: 1 2;
+        overflow-y: auto;
     }
     EvilTwinInputModal #title { width: 1fr; content-align: center middle; margin-bottom: 1; text-style: bold; }
     EvilTwinInputModal .row { height: auto; margin-bottom: 0; }
@@ -56,7 +57,7 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
     EvilTwinInputModal #punt-methods { height: auto; margin: 0; }
     EvilTwinInputModal #punt-methods Checkbox { border: none; height: 1; padding: 0 1; background: transparent; }
     EvilTwinInputModal #warn { color: $text-warning; content-align: center middle; height: auto; display: none; }
-    EvilTwinInputModal #button-row { height: auto; align: center middle; margin-top: 0; }
+    EvilTwinInputModal #button-row { height: auto; align: center middle; margin-top: 1; }
     EvilTwinInputModal #button-row Button { margin: 0 1; }
     """
 
