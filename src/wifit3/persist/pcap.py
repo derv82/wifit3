@@ -10,12 +10,45 @@ from __future__ import annotations
 import struct
 import time
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Iterator
 
 LINKTYPE_IEEE802_11 = 105
 PCAP_MAGIC = 0xA1B2C3D4
 PCAP_VERSION = (2, 4)
 SNAPLEN = 65535
+
+
+def read_pcap(path: Path) -> Iterator[tuple[bytes, float]]:
+    """Yield raw 802.11 frames and timestamps from a classic pcap file."""
+    data = path.read_bytes()
+    if len(data) < 24:
+        return
+    magic = data[:4]
+    formats = {
+        b"\xd4\xc3\xb2\xa1": ("<", 1_000_000),
+        b"\xa1\xb2\xc3\xd4": (">", 1_000_000),
+        b"\x4d\x3c\xb2\xa1": ("<", 1_000_000_000),
+        b"\xa1\xb2\x3c\x4d": (">", 1_000_000_000),
+    }
+    format_info = formats.get(magic)
+    if format_info is None:
+        return
+    endian, fraction_scale = format_info
+    if struct.unpack_from(f"{endian}I", data, 20)[0] != LINKTYPE_IEEE802_11:
+        return
+    offset = 24
+    while offset + 16 <= len(data):
+        seconds, fraction, included, _original = struct.unpack_from(
+            f"{endian}IIII", data, offset
+        )
+        offset += 16
+        end = offset + included
+        if end > len(data):
+            return
+        frame = data[offset:end]
+        offset = end
+        if frame:
+            yield frame, seconds + fraction / fraction_scale
 
 
 def write_pcap(path: Path, records: Iterable[tuple[bytes, float]]) -> int:

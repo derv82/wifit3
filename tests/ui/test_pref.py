@@ -8,6 +8,7 @@ from wifit3.persist import config
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
 from wifit3.ui.pref import PreferencesModal
+from wifit3.ui.screens.vault_item import ConfirmModal
 
 
 class _Host(App):
@@ -49,6 +50,22 @@ async def test_prefs_no_longer_hosts_consolidate(tmp_path):
         app.push_screen(PreferencesModal())
         await pilot.pause(0)
         assert len(app.screen.query("#consolidate")) == 0
+
+
+@pytest.mark.asyncio
+async def test_vault_repair_requires_destructive_change_confirmation(tmp_path):
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(PreferencesModal())
+        await pilot.pause(0)
+
+        app.screen.query_one("#repair-vault", Button).press()
+        await pilot.pause()
+
+        assert isinstance(app.screen, ConfirmModal)
+        prompt = str(app.screen.query_one("#prompt").render())
+        assert "overwrites derived capture data" in prompt
+        assert "Saved passwords" in prompt
 
 
 @pytest.mark.asyncio

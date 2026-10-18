@@ -2,7 +2,7 @@
 FCS-less MPDU bodies (every chip driver strips at RX ingress), so the writer
 no longer second-guesses the frame tail."""
 
-from wifit3.persist.pcap import write_pcap
+from wifit3.persist.pcap import read_pcap, write_pcap
 
 
 def _first_packet(path) -> bytes:
@@ -41,6 +41,14 @@ def test_write_pcap_writes_frame_verbatim(tmp_path):
     path = tmp_path / "a.pcap"
     assert write_pcap(path, [(body, 0.0)]) == 1
     assert _first_packet(path) == body
+
+
+def test_read_pcap_round_trips_frames_and_timestamps(tmp_path):
+    path = tmp_path / "roundtrip.pcap"
+    records = [(_beacon_body(), 1000.5), (b"second frame", 1002.25)]
+    write_pcap(path, records)
+
+    assert list(read_pcap(path)) == records
 
 
 def test_write_pcap_preserves_per_frame_timestamps(tmp_path):

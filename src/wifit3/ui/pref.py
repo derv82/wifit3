@@ -2,7 +2,7 @@
 from rich.padding import Padding
 from rich.style import Style
 from rich.text import Text
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.color import Color
@@ -13,7 +13,9 @@ from textual.theme import Theme
 from textual.widgets import Button, Checkbox, Input, Label, Select
 
 from wifit3.persist.config import Config
+from wifit3.persist.repair import RepairResult, repair_vault
 from wifit3.ui.path_picker import PathInput
+from wifit3.ui.screens.vault_item import ConfirmModal
 
 
 class ThemeSetting(VerticalGroup):
@@ -85,6 +87,17 @@ class CapturesDirSetting(VerticalGroup):
                         title="Save directory", id="captures_dir")
 
 
+class VaultMaintenanceSetting(VerticalGroup):
+    DEFAULT_CSS = """
+    VaultMaintenanceSetting { border: round $primary; height: auto; padding: 0 1; }
+    VaultMaintenanceSetting Button { width: 100%; }
+    """
+
+    def compose(self) -> ComposeResult:
+        self.border_title = "Vault maintenance"
+        yield Button("Repair metadata and HC22000", id="repair-vault")
+
+
 class SaveFooter(Horizontal):
     DEFAULT_CSS = """
     SaveFooter {
@@ -128,11 +141,46 @@ class PreferencesModal(ModalScreen):
             yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap")
             yield Checkbox("Auto-crack captures using CPU", value=Config.auto_crack,
                            id="auto_crack")
+            yield VaultMaintenanceSetting()
             yield SaveFooter()
 
     def on_mount(self) -> None:
         self._original_theme = self.app.theme
         self._original_sort_delay = Config.scanner_sort_delay
+
+    @on(Button.Pressed, "#repair-vault")
+    def repair_vault_pressed(self, event: Event) -> None:
+        event.stop()
+        warning = (
+            "Rebuild Vault metadata, HC22000 files, and safe SSID filenames from existing "
+            "HC22000 and pcap data?\n\n[bold]This overwrites derived capture data and may rename "
+            "files. Saved passwords, WPS PINs, and WEP keys will not be changed.[/]"
+        )
+        self.app.push_screen(ConfirmModal(warning), self._repair_confirmed)
+
+    def _repair_confirmed(self, confirmed: bool | None) -> None:
+        if not confirmed:
+            return
+        self.query_one("#repair-vault", Button).disabled = True
+        self.notify("Repairing Vault…")
+        self._run_vault_repair()
+
+    @work(thread=True, exclusive=True)
+    def _run_vault_repair(self) -> None:
+        result = repair_vault()
+        self.app.call_from_thread(self._repair_finished, result)
+
+    def _repair_finished(self, result: RepairResult) -> None:
+        self.query_one("#repair-vault", Button).disabled = False
+        self.app.vault.refresh()
+        message = (
+            f"Repaired {result.aps} APs, {result.hash_lines} hash lines; "
+            f"read {result.pcaps_read} pcaps and renamed {result.files_renamed} files"
+        )
+        if result.errors:
+            self.notify(message, severity="warning", title=f"{len(result.errors)} repair errors")
+        else:
+            self.notify(message, title="Vault repair complete")
 
     @on(Button.Pressed, "#save")
     def save_pressed(self, event: Event):
