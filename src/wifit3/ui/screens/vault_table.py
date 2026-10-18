@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+import unicodedata
 
 from rich.text import Text
 from textual import on
@@ -10,6 +11,17 @@ from textual.widget import Widget
 
 from wifit3.models import CaptureType, PersistedCapture
 from textual.message import Message
+
+
+def _search_forms(value: str) -> tuple[str, str]:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    ascii_form = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", normalized)
+        if not unicodedata.combining(character) and character.isascii()
+    )
+    return normalized, ascii_form
+
 
 class VaultTable(Widget):
     """The ESSID Table for the Vault drawer."""
@@ -189,7 +201,12 @@ class VaultTable(Widget):
     ) -> bool:
         fields = [ssid or "", bssid]
         fields.extend(Path(capture.path).name for capture in captures)
-        return any(self._search_query in field.casefold() for field in fields)
+        query, ascii_query = _search_forms(self._search_query)
+        for field in fields:
+            normalized, ascii_form = _search_forms(field)
+            if query in normalized or ascii_query and ascii_query in ascii_form:
+                return True
+        return False
 
     def _current_row_key(self, table: DataTable) -> Optional[str]:
         """The bssid under the cursor, so a reload can restore the selection."""

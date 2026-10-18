@@ -220,6 +220,28 @@ async def test_vault_searches_identity_and_filename_but_not_passwords(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
+async def test_vault_search_normalizes_styled_unicode_to_ascii(tmp_path):
+    _write(
+        tmp_path,
+        "Styled_aa-bb-cc-dd-ee-ff_1700000001_wpa_psk.txt",
+        "SSID: 𝓒𝓪𝓯é ＷｉＦｉ\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: secret-alpha\n",
+    )
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        search = view.query_one("#vault-search", Input)
+        table = view.query_one("#vault-aps", DataTable)
+
+        search.value = "cafe wifi"
+        await pilot.pause()
+
+        assert table.row_count == 1
+        assert table.get_row("aa:bb:cc:dd:ee:ff")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
 async def test_open_vault_focuses_ap_list(tmp_path):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
     app = WifiteApp()
