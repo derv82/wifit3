@@ -60,12 +60,14 @@ async def test_preferences_offers_v1_conversion_when_metadata_is_missing(tmp_pat
     )
     app = _Host()
     async with app.run_test() as pilot:
-        app.push_screen(PreferencesModal())
+        modal = PreferencesModal()
+        notices = []
+        modal.notify = lambda *args, **kwargs: notices.append((args, kwargs))
+        app.push_screen(modal)
         await pilot.pause()
 
-        assert isinstance(app.screen, ConfirmModal)
-        prompt = str(app.screen.query_one("#prompt").render())
-        assert "Found 1 saved APs with missing v2 metadata" in prompt
+        assert app.screen is modal
+        assert "1 saved AP is missing v2 metadata" in notices[0][0][0]
 
 
 @pytest.mark.asyncio

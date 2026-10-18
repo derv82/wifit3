@@ -108,11 +108,9 @@ class CrackerTool(VaultTool, Generic[QueueT]):
         if not wordlists:
             raise ValueError(f"Wordlist not found: {', '.join(requested)}")
         identifiers = capture_record_ids(capture.path)
-        if not identifiers:
-            raise ValueError(f"No hashlines in {capture.path}")
         identities = [wordlist_identity(path) for path in wordlists]
         rerun = bool(job.config.get("rerun_exhausted"))
-        if not rerun:
+        if identifiers and not rerun:
             exhausted = exhausted_wordlists(capture.bssid, identifiers)
             pending = [(path, identity) for path, identity in zip(wordlists, identities)
                        if identity not in exhausted]
@@ -122,7 +120,7 @@ class CrackerTool(VaultTool, Generic[QueueT]):
             raise ValueError("All selected wordlists were already exhausted for this capture")
         return self.queue_type(wordlists=wordlists, wordlist_identities=identities,
                                record_ids=sorted(identifiers), bssid=capture.bssid,
-                               record_history=not rerun)
+                               record_history=bool(identifiers) and not rerun)
 
     def has_runnable_wordlists(self, capture: PersistedCapture, config: dict) -> bool:
         probe = JobState(job_id="", tool_name=self.name, capture_path=capture.path,

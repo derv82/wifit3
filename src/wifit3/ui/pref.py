@@ -155,9 +155,11 @@ class PreferencesModal(ModalScreen):
         if missing == 0 or self._conversion_offered:
             return
         self._conversion_offered = True
-        self.app.push_screen(
-            ConfirmModal(self._conversion_warning(missing)),
-            self._repair_confirmed,
+        noun = "AP is" if missing == 1 else "APs are"
+        self.notify(
+            f"{missing} saved {noun} missing v2 metadata. Use Repair Vault data to generate it.",
+            title="Vault metadata",
+            severity="warning",
         )
 
     @staticmethod
