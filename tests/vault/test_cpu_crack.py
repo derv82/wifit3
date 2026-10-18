@@ -9,6 +9,7 @@ from wifit3.dot11 import wpa
 from wifit3.models import PersistedCapture, ToolResult, ToolStatus
 from wifit3.models.access_point import CaptureType
 from wifit3.models.jobs import JobAction, JobState
+from wifit3.vault.exhaustion import capture_record_ids, exhausted_wordlists, wordlist_identity
 from wifit3.vault.tools.cpu_crack import CpuCrackTool
 
 # hashcat wiki example_hashes, mode 22000 (password "hashcat!", essid "hashcat-essid").
@@ -33,10 +34,11 @@ def _write(path: Path, lines: list[str]) -> str:
 
 def _launch(tool: CpuCrackTool, tmp_path: Path, hashlines: list[str],
             wordlists: list[list[str]], job_id: str = "job",
-            extra_passwords: list[str] | None = None) -> JobState:
+            extra_passwords: list[str] | None = None,
+            rerun_exhausted: bool = False) -> JobState:
     capture_path = _write(tmp_path / f"{job_id}.hc22000", hashlines)
     paths = [_write(tmp_path / f"{job_id}_words{i}.txt", words) for i, words in enumerate(wordlists)]
-    config: dict = {"wordlists": paths}
+    config: dict = {"wordlists": paths, "rerun_exhausted": rerun_exhausted}
     if extra_passwords is not None:
         config["extra_passwords"] = extra_passwords
     job = JobState(job_id=job_id, tool_name="cpu_crack", capture_path=capture_path,
@@ -96,6 +98,35 @@ def test_cpu_crack_reports_not_found_once_the_wordlist_is_exhausted(tool, tmp_pa
     assert result.status == ToolStatus.FAILURE
     assert result.value == "job_words0.txt"
     assert result.percent == 100.0
+
+
+def test_natural_exhaustion_is_recorded_and_filtered_on_the_next_launch(tool, tmp_path):
+    job = _launch(tool, tmp_path, [_UNCRACKABLE_PMKID_LINE], [["wrongpass1"]])
+    wordlist = job.tool_state["wordlists"][0]
+    assert _poll_finished(tool, job).status == ToolStatus.FAILURE
+
+    identifiers = capture_record_ids(job.capture_path)
+    assert exhausted_wordlists("fc:69:0c:15:82:64", identifiers) == {wordlist_identity(wordlist)}
+    with pytest.raises(ValueError, match="already exhausted"):
+        tool.launch(job, PersistedCapture(type=CaptureType.PMKID, timestamp=0,
+                                          path=job.capture_path, bssid="fc:69:0c:15:82:64"))
+
+
+def test_rerun_exhausted_runs_without_writing_history(tool, tmp_path):
+    job = _launch(tool, tmp_path, [_UNCRACKABLE_PMKID_LINE], [["wrongpass1"]],
+                  rerun_exhausted=True)
+
+    assert _poll_finished(tool, job).status == ToolStatus.FAILURE
+    assert exhausted_wordlists("fc:69:0c:15:82:64",
+                               capture_record_ids(job.capture_path)) == set()
+
+
+def test_success_before_wordlist_end_does_not_record_exhaustion(tool, tmp_path):
+    job = _launch(tool, tmp_path, [_HASHCAT_PMKID_LINE], [["hashcat!", "wrongpass1"]])
+
+    assert _poll_finished(tool, job).status == ToolStatus.SUCCESS
+    assert exhausted_wordlists("fc:69:0c:15:82:64",
+                               capture_record_ids(job.capture_path)) == set()
 
 
 def test_cpu_crack_moves_on_to_the_next_wordlist(tool, tmp_path):

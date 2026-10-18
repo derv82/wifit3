@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Any, ClassVar, Optional
 
@@ -7,10 +8,12 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label
+from textual.widgets import Button, Checkbox, Label
 
+from wifit3.models import PersistedCapture
 from wifit3.persist.config import Config, ConfigError
 from wifit3.ui.path_picker import BROWSE_GLYPH, PathPickerModal
+from wifit3.vault.exhaustion import capture_record_ids, exhausted_wordlists, wordlist_identity
 
 
 class _RemoveButton(Button):
@@ -18,6 +21,20 @@ class _RemoveButton(Button):
 
     def __init__(self, path: str) -> None:
         super().__init__("X", variant="error", compact=True, classes="wordlist-remove")
+        self.path = path
+
+
+class _WordlistRow(Horizontal):
+    def __init__(self, path: str, number: int) -> None:
+        super().__init__(
+            _RemoveButton(path),
+            Label(
+                f"[bold]{number}:[/bold] {escape(Path(path).name)}  "
+                f"[dim]{escape(str(Path(path).parent))}[/dim]",
+                classes="wordlist-name",
+            ),
+            classes="wordlist-row",
+        )
         self.path = path
 
 
@@ -29,8 +46,9 @@ class WordlistConfigModal(ModalScreen[dict]):
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self) -> None:
+    def __init__(self, capture: PersistedCapture | None = None) -> None:
         super().__init__()
+        self._capture = capture
         self._wordlists: list[str] = list(Config.wordlist_paths)
 
     # CSS, not DEFAULT_CSS: the app's `Button { min-width: 12 }` outranks any DEFAULT_CSS rule.
@@ -76,6 +94,9 @@ class WordlistConfigModal(ModalScreen[dict]):
     .wordlist-row {
         height: 1;
     }
+    .wordlist-row.exhausted {
+        background: darkred;
+    }
     .wordlist-name {
         width: 1fr;
         margin-left: 1;
@@ -105,6 +126,7 @@ class WordlistConfigModal(ModalScreen[dict]):
             yield Button(f"{BROWSE_GLYPH} Choose wordlists", "primary", id="wordlist-choose")
             yield Button("Clear", variant="error", id="wordlist-clear")
         yield VerticalScroll(id="wordlists")
+        yield Checkbox("Rerun previously exhausted wordlists", id="rerun-exhausted")
 
     async def on_mount(self) -> None:
         await self._show_wordlists()
@@ -117,12 +139,32 @@ class WordlistConfigModal(ModalScreen[dict]):
             await rows.mount(Label("[dim]none chosen[/dim]"))
             return
         await rows.mount_all(
-            Horizontal(_RemoveButton(path),
-                       Label(f"[bold]{number}:[/bold] {escape(Path(path).name)}  "
-                             f"[dim]{escape(str(Path(path).parent))}[/dim]",
-                             classes="wordlist-name"),
-                       classes="wordlist-row")
-            for number, path in enumerate(self._wordlists, 1))
+            _WordlistRow(path, number)
+            for number, path in enumerate(self._wordlists, 1)
+        )
+        self.run_worker(
+            self._mark_exhausted_wordlists(),
+            group="exhaustion-markers",
+            exclusive=True,
+        )
+
+    async def _mark_exhausted_wordlists(self) -> None:
+        if self._capture is None:
+            return
+        paths = [row.path for row in self.query(_WordlistRow) if Path(row.path).is_file()]
+        if not paths:
+            return
+
+        def exhausted_paths() -> set[str]:
+            record_ids = capture_record_ids(self._capture.path)
+            exhausted = exhausted_wordlists(self._capture.bssid, record_ids)
+            return {path for path in paths if wordlist_identity(path) in exhausted}
+
+        exhausted = await asyncio.to_thread(exhausted_paths)
+        for row in self.query(_WordlistRow):
+            if row.path in exhausted:
+                row.add_class("exhausted")
+                row.tooltip = "Already exhausted for every hash in this capture"
 
     @on(Button.Pressed, ".wordlist-remove")
     async def _remove_wordlist(self, event: Button.Pressed) -> None:
@@ -174,7 +216,8 @@ class WordlistConfigModal(ModalScreen[dict]):
         if not self._wordlists:
             self.notify("Please choose at least one wordlist", severity="error")
             return None
-        return {"wordlists": list(self._wordlists)}
+        return {"wordlists": list(self._wordlists),
+                "rerun_exhausted": self.query_one("#rerun-exhausted", Checkbox).value}
 
     def _remember(self, config: dict[str, Any]) -> None:
         """Persist the launch settings so the next job starts pre-filled."""

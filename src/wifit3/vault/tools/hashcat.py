@@ -12,7 +12,7 @@ from typing import Dict, Optional
 from wifit3.models import PersistedCapture, ToolCapability, ToolResult, ToolStatus
 from wifit3.models.jobs import JobAction, JobState
 from wifit3.vault.tools import hashcat_keypress
-from wifit3.vault.tools.cracker import CrackerTool, WordlistQueue, expand_wordlists
+from wifit3.vault.tools.cracker import CrackerTool, WordlistQueue
 
 
 logger = logging.getLogger(__name__)
@@ -83,9 +83,7 @@ class HashcatTool(CrackerTool[HashcatQueue]):
             raise ValueError("Missing hashcat_exe or wordlists in config")
         if not Path(hashcat_exe).is_file():
             raise ValueError(f"hashcat executable not found: {hashcat_exe}")
-        wordlists = expand_wordlists(requested)
-        if not wordlists:
-            raise ValueError(f"Wordlist not found: {', '.join(requested)}")
+        queue = self.prepare_queue(job, capture)
 
         potfile = self._potfile(job.capture_path)
         if potfile and os.path.exists(potfile):
@@ -97,7 +95,7 @@ class HashcatTool(CrackerTool[HashcatQueue]):
 
         job.log_path = str(Path(job.capture_path).with_suffix('.hashcat.log').resolve())
         Path(job.log_path).write_bytes(b"")      # one log per job, every wordlist appended to it
-        self._start_wordlist(job, HashcatQueue(wordlists=wordlists))
+        self._start_wordlist(job, queue)
 
     def _start_wordlist(self, job: JobState, queue: HashcatQueue) -> None:
         """Run hashcat against the queue's current wordlist, appending to the job's log."""

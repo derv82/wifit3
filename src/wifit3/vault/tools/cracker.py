@@ -5,6 +5,12 @@ from typing import Generic, Optional, Self, TypeVar
 
 from wifit3.models import PersistedCapture, ToolResult, ToolStatus
 from wifit3.models.jobs import JobAction, JobState
+from wifit3.vault.exhaustion import (
+    capture_record_ids,
+    exhausted_wordlists,
+    record_exhaustion,
+    wordlist_identity,
+)
 from wifit3.vault.tools.base import VaultTool
 
 
@@ -27,6 +33,10 @@ class WordlistQueue:
     index: int = 0
     stopped: bool = False
     skipping_wordlist: bool = False
+    wordlist_identities: list[str] = field(default_factory=list)
+    record_ids: list[str] = field(default_factory=list)
+    bssid: str = ""
+    record_history: bool = True
 
     @classmethod
     def from_job(cls, job: JobState) -> Self:
@@ -86,6 +96,44 @@ class CrackerTool(VaultTool, Generic[QueueT]):
     def can_crack(self, capture: PersistedCapture) -> bool:
         return capture.path.endswith(".hc22000")
 
+    def prepare_queue(self, job: JobState, capture: PersistedCapture) -> QueueT:
+        prepared = job.config.pop("_prepared_queue", None)
+        if isinstance(prepared, dict):
+            known = {field.name for field in fields(self.queue_type)}
+            return self.queue_type(**{key: value for key, value in prepared.items() if key in known})
+        requested = job.config.get("wordlists") or []
+        if not requested:
+            raise ValueError("Missing wordlists in config")
+        wordlists = expand_wordlists(requested)
+        if not wordlists:
+            raise ValueError(f"Wordlist not found: {', '.join(requested)}")
+        identifiers = capture_record_ids(capture.path)
+        if not identifiers:
+            raise ValueError(f"No hashlines in {capture.path}")
+        identities = [wordlist_identity(path) for path in wordlists]
+        rerun = bool(job.config.get("rerun_exhausted"))
+        if not rerun:
+            exhausted = exhausted_wordlists(capture.bssid, identifiers)
+            pending = [(path, identity) for path, identity in zip(wordlists, identities)
+                       if identity not in exhausted]
+            wordlists = [path for path, _ in pending]
+            identities = [identity for _, identity in pending]
+        if not wordlists:
+            raise ValueError("All selected wordlists were already exhausted for this capture")
+        return self.queue_type(wordlists=wordlists, wordlist_identities=identities,
+                               record_ids=sorted(identifiers), bssid=capture.bssid,
+                               record_history=not rerun)
+
+    def has_runnable_wordlists(self, capture: PersistedCapture, config: dict) -> bool:
+        probe = JobState(job_id="", tool_name=self.name, capture_path=capture.path,
+                         status=ToolStatus.QUEUED, progress_msg="", config=config)
+        try:
+            queue = self.prepare_queue(probe, capture)
+        except (OSError, ValueError):
+            return False
+        config["_prepared_queue"] = asdict(queue)
+        return True
+
     def apply(self, action: JobAction, job: JobState) -> bool:
         queue = self.queue_type.from_job(job)
         if action is JobAction.PAUSE:
@@ -115,6 +163,11 @@ class CrackerTool(VaultTool, Generic[QueueT]):
         when it ended without a stop, a skip or exhausting the wordlist."""
         if queue.stopped:
             return ToolResult(status=ToolStatus.STOPPED, value="Stopped by user")
+        can_record = (queue.record_history and queue.bssid and queue.record_ids
+                      and queue.index < len(queue.wordlist_identities))
+        if exhausted and not queue.skipping_wordlist and can_record:
+            record_exhaustion(queue.bssid, set(queue.record_ids),
+                              queue.wordlist_identities[queue.index])
         if queue.skipping_wordlist and queue.has_next:
             queue.skipping_wordlist = False
             self._start_next_wordlist(job, queue)

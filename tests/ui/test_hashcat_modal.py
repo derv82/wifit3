@@ -5,10 +5,12 @@ from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Label
 
 import wifit3.ui.vault.modals.hashcat as mod
+from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.config import Config, ConfigError
 from wifit3.ui.vault.modals.cpu_crack import CpuCrackConfigModal
 from wifit3.ui.vault.modals.hashcat import HashcatConfigModal, _default_hashcat_path
-from wifit3.ui.vault.modals.wordlists import _RemoveButton
+from wifit3.ui.vault.modals.wordlists import _RemoveButton, _WordlistRow
+from wifit3.vault.exhaustion import capture_record_ids, record_exhaustion, wordlist_identity
 
 
 @pytest.fixture(autouse=True)
@@ -107,7 +109,26 @@ async def test_saved_args_prefill_the_modal_and_come_back_on_launch():
         await pilot.pause(0)
 
     assert dismissed == [{"hashcat_exe": r"D:\hashcat.exe", "wordlists": [r"D:\rockyou.txt"],
+                          "rerun_exhausted": False,
                           "hashcat_args": "-w 3 --self-test-disable"}]
+
+
+async def test_rerun_exhausted_is_shared_and_returned_without_being_remembered():
+    for modal_type in (HashcatConfigModal, CpuCrackConfigModal):
+        app = _Host()
+        async with app.run_test() as pilot:
+            dismissed = []
+            app.push_screen(modal_type(), dismissed.append)
+            await pilot.pause()
+            checkbox = app.screen.query_one("#rerun-exhausted", Checkbox)
+            assert checkbox.value is False
+            checkbox.value = True
+            await app.screen._wordlists_chosen([Path(r"D:\words.txt")])
+            if modal_type is HashcatConfigModal:
+                app.screen.query_one("#hashcat-exe", Input).value = r"D:\hashcat.exe"
+            app.screen.query_one("#wordlist-launch", Button).press()
+            await pilot.pause()
+        assert dismissed[0]["rerun_exhausted"] is True
 
 
 async def test_escape_dismisses_without_saving():
@@ -126,6 +147,41 @@ async def test_escape_dismisses_without_saving():
     assert Config.hashcat_args is None
 
 
+async def test_exhausted_wordlist_rows_are_marked(tmp_path):
+    capture_path = tmp_path / "capture.hc22000"
+    capture_path.write_text(
+        "WPA*01*" + "11" * 16 + "*aabbccddeeff*112233445566*74657374***\n",
+        encoding="utf-8",
+    )
+    exhausted = tmp_path / "exhausted.txt"
+    exhausted.write_text("password1\n", encoding="utf-8")
+    untried = tmp_path / "untried.txt"
+    untried.write_text("password2\n", encoding="utf-8")
+    Config.wordlist_paths = [str(exhausted), str(untried)]
+    capture = PersistedCapture(
+        type=CaptureType.PMKID,
+        timestamp=0,
+        path=str(capture_path),
+        bssid="aa:bb:cc:dd:ee:ff",
+    )
+    record_exhaustion(
+        capture.bssid,
+        capture_record_ids(capture.path),
+        wordlist_identity(exhausted),
+    )
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(CpuCrackConfigModal(capture))
+        await pilot.pause()
+        rows = list(app.screen.query(_WordlistRow))
+
+        assert rows[0].has_class("exhausted")
+        assert not rows[1].has_class("exhausted")
+        assert rows[0].tooltip == "Already exhausted for every hash in this capture"
+
+
+@pytest.mark.asyncio
 async def test_the_modal_reads_back_the_wordlists_it_was_given():
     Config.wordlist_paths = [r"D:\a.txt", r"D:\b.txt"]
     app = _Host()
@@ -241,7 +297,8 @@ async def test_cpu_crack_launches_with_only_the_wordlists_and_remembers_them():
         app.screen.query_one("#wordlist-launch", Button).press()
         await pilot.pause()
 
-    assert dismissed == [{"wordlists": [r"D:\a.txt", r"D:\b.txt"]}]
+    assert dismissed == [{"wordlists": [r"D:\a.txt", r"D:\b.txt"],
+                          "rerun_exhausted": False}]
     assert Config.wordlist_paths == [r"D:\a.txt", r"D:\b.txt"]
     assert Config.hashcat_path is None
 

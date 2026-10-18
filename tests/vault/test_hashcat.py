@@ -28,7 +28,8 @@ def _cap(tmp_path):
 
 def _queued_job(tmp_path, wordlists, args=None):
     """A job ready for launch: a real capture file and a hashcat_exe that exists."""
-    (tmp_path / "a.hc22000").write_text("WPA*01*deadbeef\n")
+    (tmp_path / "a.hc22000").write_text(
+        "WPA*01*deadbeef*001122334455*66778899aabb*74657374***\n")
     config = {"hashcat_exe": sys.executable, "wordlists": [str(w) for w in wordlists]}
     if args is not None:
         config["hashcat_args"] = args
@@ -286,7 +287,8 @@ def test_apply_skip_abandons_the_running_wordlist_for_the_next(tmp_path, mocker)
 
 
 def _pidfile_job(tmp_path, exe: Path, wordlist: Path) -> JobState:
-    (tmp_path / "a.hc22000").write_text("WPA*01*deadbeef\n")
+    (tmp_path / "a.hc22000").write_text(
+        "WPA*01*deadbeef*001122334455*66778899aabb*74657374***\n")
     exe.write_text("")
     wordlist.write_text("one\n")
     return _job(capture_path=str(tmp_path / "a.hc22000"),

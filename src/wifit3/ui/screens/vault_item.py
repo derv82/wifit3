@@ -304,12 +304,26 @@ class _CapturePanel(VerticalGroup):
             return
             
         def _on_config(config: dict | None) -> None:
-            if not config:
+            if config:
+                self.run_worker(self._submit_tool(tool_name, cap, config))
+
+        self.app.push_screen(modal_cls(cap), _on_config)
+
+    async def _submit_tool(
+        self,
+        tool_name: str,
+        capture: PersistedCapture,
+        config: dict,
+    ) -> None:
+        tool = self.app.vault.manager.tools[tool_name]
+        if hasattr(tool, "has_runnable_wordlists"):
+            runnable = await asyncio.to_thread(tool.has_runnable_wordlists, capture, config)
+            if not runnable:
+                self.notify("All selected wordlists were already exhausted for this capture",
+                            severity="warning")
                 return
-            job_id = self.app.vault.manager.submit_job(tool_name, cap, config)
-            self.notify(f"Queued job: {job_id}")
-            
-        self.app.push_screen(modal_cls(), _on_config)
+        job_id = self.app.vault.manager.submit_job(tool_name, capture, config)
+        self.notify(f"Queued job: {job_id}")
 
     @on(Button.Pressed, ".open-dir")
     def _open_dir(self, event: Button.Pressed) -> None:
