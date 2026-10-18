@@ -1,6 +1,23 @@
 import ctypes
+import subprocess
 import sys
 import time
+
+
+def copy_macos_text(text: str) -> bool:
+    """Copy UTF-8 text with the clipboard tool included in macOS."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        subprocess.run(
+            ["/usr/bin/pbcopy"],
+            input=text.encode("utf-8"),
+            check=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
 
 
 def copy_windows_text(text: str) -> bool:
