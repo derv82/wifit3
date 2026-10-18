@@ -2,14 +2,16 @@ from typing import Optional
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
-from textual.widgets import Footer, DataTable
+from textual.widgets import DataTable, Footer
 from textual.screen import ModalScreen
 from textual import events, on
 from textual.binding import Binding
 
 from .vault_table import VaultTable
 from .vault_item import VaultItemView
+from wifit3.models import AccessPoint
 from wifit3.ui.vault.job_pane import JobTrackerPane
+from wifit3.ui.vault.modals.add_credential import AddCredentialModal, ManualCredential
 
 class VaultDrawer(ModalScreen):
     """The Vault drawer overlay."""
@@ -19,6 +21,8 @@ class VaultDrawer(ModalScreen):
     BINDINGS = [
         Binding("v", "dismiss_drawer", "Close", show=False),
         Binding("escape", "dismiss_drawer", "Close", show=True),
+        Binding("a", "add_credential", "Add", show=True),
+        Binding("c", "crack_all", "Crack All", show=True),
         Binding("z", "export_zip", "Export Zip", show=True),
         Binding("o", "show_directory", "Show Dir", show=True),
         Binding("q", "app.quit", "Quit", show=True),
@@ -36,6 +40,11 @@ class VaultDrawer(ModalScreen):
         offset-y: 100%;
         transition: offset 200ms in_out_cubic;
     }
+
+    #vault-panes {
+        height: 1fr;
+    }
+
     VaultDrawer.-narrow _CapturePanel .tools, VaultDrawer.-narrow _CapturePanel .actions {
         layout: vertical;
     }
@@ -51,7 +60,7 @@ class VaultDrawer(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Container(id="vault-content"):
-            with Horizontal():
+            with Horizontal(id="vault-panes"):
                 yield VaultTable(id="vault-table")
                 yield VaultItemView(id="vault-item")
             yield JobTrackerPane()
@@ -116,6 +125,48 @@ class VaultDrawer(ModalScreen):
     def _ap_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.row_key is not None and event.row_key.value is not None:
             self._load_widget(event.row_key.value)
+
+    def action_add_credential(self) -> None:
+        ssid, bssid = self._selected_network()
+        self.app.push_screen(AddCredentialModal(ssid, bssid), self._credential_added)
+
+    def action_crack_all(self) -> None:
+        self.notify("Crack All is coming later")
+
+    def check_action(self, action: str, parameters: tuple) -> Optional[bool]:
+        if action == "crack_all":
+            return False
+        return True
+
+    def _selected_network(self) -> tuple[str, str]:
+        table = self.query_one("#vault-aps", DataTable)
+        if table.row_count == 0:
+            return "", ""
+        try:
+            bssid = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        except Exception:
+            return "", ""
+        entry = self.query_one("#vault-table", VaultTable)._aps.get(bssid)
+        return ((entry[0] or "") if entry else "", bssid)
+
+    def _credential_added(self, credential: ManualCredential | None) -> None:
+        if credential is None:
+            return
+        ap = AccessPoint(bssid=credential.bssid, ssid=credential.ssid)
+        if credential.kind == "wpa_psk":
+            result = self.app.vault.save_wpa_psk(ap.ssid, ap.bssid, credential.value)
+        elif credential.kind == "wps_pin":
+            result = self.app.vault.save_wps_pin(ap, credential.value, None)
+        else:
+            value = credential.value
+            key = bytes.fromhex(value) if len(value) in (10, 26) else value.encode("ascii")
+            result = self.app.vault.save_wep_key(ap, key)
+        if result is None:
+            self.notify("Credential could not be saved", severity="error")
+        elif result.was_new:
+            self.notify("Credential added to Vault")
+        else:
+            self.notify("Credential is already in Vault", severity="warning")
 
     def action_export_zip(self) -> None:
         try:

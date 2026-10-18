@@ -118,6 +118,20 @@ def test_save_wep_caches_key_and_dedupes(tmp_path):
     assert len(v.persisted(ap.bssid)) == 1
 
 
+def test_pin_without_psk_is_persisted_and_reloaded(tmp_path):
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+    vault = Vault()
+
+    result = vault.save_wps_pin(ap, "12345670", None)
+    reloaded = Vault().persisted(ap.bssid)
+
+    assert result is not None and result.was_new
+    assert len(reloaded) == 1
+    assert reloaded[0].type == CaptureType.WPS_PIN
+    assert reloaded[0].pin == "12345670"
+    assert reloaded[0].value is None
+
+
 def test_save_wps_pbc_and_pin_cache_their_psks(tmp_path):
     v = Vault()
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")

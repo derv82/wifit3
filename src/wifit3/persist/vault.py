@@ -239,7 +239,7 @@ class Vault:
                 bssid=ap.bssid, value=key.hex(), ssid=ap.ssid))
         return result
 
-    def save_wps_pin(self, ap: "AccessPoint", pin: str, psk: str) -> Optional[SaveResult]:
+    def save_wps_pin(self, ap: "AccessPoint", pin: str, psk: Optional[str]) -> Optional[SaveResult]:
         result = save.save_wps_pin(ap, pin, psk)
         if result and result.was_new:
             self._insert_capture(PersistedCapture(

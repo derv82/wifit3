@@ -2,7 +2,7 @@
 The autouse _captures_to_tmp fixture points Config.captures_dir at tmp_path, and WifiteApp builds its Vault from there.
 """
 import pytest
-from textual.widgets import Button, DataTable
+from textual.widgets import Button, DataTable, Input
 
 from wifit3.models import AccessPoint
 from wifit3.models.jobs import JobState, ToolStatus
@@ -10,6 +10,7 @@ from wifit3.persist.save import SaveResult
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.vault_drawer import VaultDrawer
 from wifit3.ui.screens.vault_item import ConfirmModal, _CapturePanel
+from wifit3.ui.vault.modals.add_credential import AddCredentialModal
 
 _HS_LINE = "WPA*02*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***2\n"
 _PMKID_LINE = "WPA*01*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***\n"
@@ -21,6 +22,35 @@ def _write(d, name, content):
 async def _open_vault(app) -> VaultDrawer:
     app.action_toggle_vault()
     return app.screen
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_vault_shortcut_adds_manual_psk_and_leaves_crack_all_disabled(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        vault_content = view.query_one("#vault-content")
+        vault_table = view.query_one("#vault-table")
+        assert view.query_one("#vault-panes").parent is vault_content
+        assert str(vault_table.border_title) == "VAULT (1 APs)"
+        assert view.check_action("crack_all", ()) is False
+
+        await pilot.press("a")
+        await pilot.pause()
+        assert isinstance(app.screen, AddCredentialModal)
+        assert app.screen.query_one("#ssid", Input).value == "HomeNet"
+        assert app.screen.query_one("#bssid", Input).value == "aa:bb:cc:dd:ee:ff"
+
+        app.screen.query_one("#value", Input).value = "correct horse battery staple"
+        app.screen.query_one("#add", Button).press()
+        await pilot.pause()
+
+        caps = app.vault.persisted("aa:bb:cc:dd:ee:ff")
+        assert any(cap.type == "WPA_PSK" and cap.value == "correct horse battery staple"
+                   for cap in caps)
 
 
 @pytest.mark.asyncio
