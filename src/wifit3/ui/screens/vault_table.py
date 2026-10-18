@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
+from textual.containers import Horizontal
 from textual.widgets import DataTable, Input, Tab, Tabs
 from textual.widget import Widget
 
@@ -24,11 +25,17 @@ class VaultTable(Widget):
         border-title-color: $primary;
         border-title-style: bold;
     }
+    VaultTable #vault-search-bar {
+        height: auto;
+        padding: 0 1;
+        border: round $primary;
+        border-title-color: $primary;
+        border-title-style: bold;
+    }
     VaultTable #vault-search {
         width: 1fr;
         min-width: 16;
         max-width: 32;
-        margin: 0 1;
     }
     VaultTable Tabs {
         margin-bottom: 0;
@@ -46,11 +53,13 @@ class VaultTable(Widget):
         self._is_reloading = False
 
     def compose(self) -> ComposeResult:
-        yield Input(
-            placeholder="Search SSID, BSSID, or filename",
-            id="vault-search",
-            compact=True,
-        )
+        with Horizontal(id="vault-search-bar") as search_bar:
+            search_bar.border_title = "SEARCH"
+            yield Input(
+                placeholder="SSID, BSSID, or filename",
+                id="vault-search",
+                compact=True,
+            )
         yield Tabs(id="vault-tabs")
         yield DataTable(id="vault-aps", show_header=False, cursor_type="row")
 
