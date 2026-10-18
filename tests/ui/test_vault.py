@@ -180,6 +180,46 @@ async def test_vault_keeps_emoji_named_mac_octets_literal(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
+async def test_vault_searches_identity_and_filename_but_not_passwords(tmp_path):
+    _write(
+        tmp_path,
+        "Alpha_aa-bb-cc-dd-ee-ff_1700000001_wpa_psk.txt",
+        "SSID: Alpha Network\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: secret-alpha\n",
+    )
+    _write(
+        tmp_path,
+        "Bravo_11-22-33-44-55-66_1700000002_wpa_psk.txt",
+        "SSID: Bravo Network\nBSSID: 11:22:33:44:55:66\nPSK: secret-bravo\n",
+    )
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        search = view.query_one("#vault-search", Input)
+        table = view.query_one("#vault-aps", DataTable)
+
+        search.value = "alpha network"
+        await pilot.pause()
+        assert table.row_count == 1
+        assert table.get_row("aa:bb:cc:dd:ee:ff")
+
+        search.value = "11:22:33"
+        await pilot.pause()
+        assert table.row_count == 1
+        assert table.get_row("11:22:33:44:55:66")
+
+        search.value = "1700000002_wpa_psk.txt"
+        await pilot.pause()
+        assert table.row_count == 1
+        assert table.get_row("11:22:33:44:55:66")
+
+        search.value = "secret-bravo"
+        await pilot.pause()
+        assert table.row_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
 async def test_open_vault_focuses_ap_list(tmp_path):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
     app = WifiteApp()

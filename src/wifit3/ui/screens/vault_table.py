@@ -1,9 +1,10 @@
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
-from textual.widgets import DataTable, Tab, Tabs
+from textual.widgets import DataTable, Input, Tab, Tabs
 from textual.widget import Widget
 
 from wifit3.models import CaptureType, PersistedCapture
@@ -23,6 +24,12 @@ class VaultTable(Widget):
         border-title-color: $primary;
         border-title-style: bold;
     }
+    VaultTable #vault-search {
+        width: 1fr;
+        min-width: 16;
+        max-width: 32;
+        margin: 0 1;
+    }
     VaultTable Tabs {
         margin-bottom: 0;
     }
@@ -35,9 +42,15 @@ class VaultTable(Widget):
         super().__init__(id=id)
         self._aps: Dict[str, Tuple[Optional[str], List[PersistedCapture]]] = {}
         self._current_tab = "tab-all"
+        self._search_query = ""
         self._is_reloading = False
 
     def compose(self) -> ComposeResult:
+        yield Input(
+            placeholder="Search SSID, BSSID, or filename",
+            id="vault-search",
+            compact=True,
+        )
         yield Tabs(id="vault-tabs")
         yield DataTable(id="vault-aps", show_header=False, cursor_type="row")
 
@@ -118,6 +131,8 @@ class VaultTable(Widget):
             
             # Populate current tab
             for bssid, (ssid, caps) in rows:
+                if self._search_query and not self._matches_search(bssid, ssid, caps):
+                    continue
                 # Check filter
                 if self._current_tab == "tab-psk" and not any(c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK) and c.value for c in caps): continue
                 if self._current_tab == "tab-wep" and not any(c.type == CaptureType.WEP for c in caps): continue
@@ -157,6 +172,16 @@ class VaultTable(Widget):
         finally:
             self._is_reloading = False
 
+    def _matches_search(
+        self,
+        bssid: str,
+        ssid: Optional[str],
+        captures: List[PersistedCapture],
+    ) -> bool:
+        fields = [ssid or "", bssid]
+        fields.extend(Path(capture.path).name for capture in captures)
+        return any(self._search_query in field.casefold() for field in fields)
+
     def _current_row_key(self, table: DataTable) -> Optional[str]:
         """The bssid under the cursor, so a reload can restore the selection."""
         if table.row_count == 0:
@@ -165,6 +190,13 @@ class VaultTable(Widget):
             return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
         except Exception:
             return None
+
+    @on(Input.Changed, "#vault-search")
+    def _on_search_changed(self, event: Input.Changed) -> None:
+        query = event.value.strip().casefold()
+        if query != self._search_query:
+            self._search_query = query
+            self.reload_table()
 
     @on(Tabs.TabActivated, "#vault-tabs")
     def _on_tab_activated(self, event: Tabs.TabActivated) -> None:
