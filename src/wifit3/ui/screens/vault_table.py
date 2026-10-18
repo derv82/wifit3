@@ -46,8 +46,6 @@ class VaultTable(Widget):
     }
     VaultTable #vault-search {
         width: 1fr;
-        min-width: 16;
-        max-width: 32;
     }
     VaultTable Tabs {
         margin-bottom: 0;
