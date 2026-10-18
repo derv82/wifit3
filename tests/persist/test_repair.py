@@ -3,6 +3,22 @@ import json
 from wifit3.persist.repair import repair_vault
 
 
+def test_repair_creates_metadata_for_credential_only_aps(tmp_path):
+    credential = tmp_path / "Cafe_WiFi_aa-bb-cc-dd-ee-ff_1700000001_wpa_psk.txt"
+    credential.write_text(
+        "SSID: Café WiFi\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: password1\n",
+        encoding="utf-8",
+    )
+
+    result = repair_vault()
+    metadata = json.loads((tmp_path / "aa-bb-cc-dd-ee-ff.meta").read_text(encoding="utf-8"))
+
+    assert result.errors == ()
+    assert result.aps == 1
+    assert metadata["ssid"] == "Café WiFi"
+    assert metadata["credentials"]["psk"] == "password1"
+
+
 def test_repair_recovers_utf8_ssid_and_preserves_credentials(tmp_path):
     old_hash = tmp_path / "sanitized_aa-bb-cc-dd-ee-ff_1700000000_handshake.hc22000"
     line = (

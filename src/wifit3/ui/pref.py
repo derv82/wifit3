@@ -204,6 +204,7 @@ class PreferencesModal(ModalScreen):
         if result.backup_dir is not None:
             message += f". Originals: {result.backup_dir.name}"
         if result.errors:
+            message += f". First error: {result.errors[0]}"
             self.notify(message, severity="warning", title=f"{len(result.errors)} repair errors")
         else:
             self.notify(message, title="Vault repair complete")

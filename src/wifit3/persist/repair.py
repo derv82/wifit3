@@ -7,7 +7,8 @@ import time
 
 from wifit3.crack.hc22000_format import eapol_hashlines, parse_hc22000, pmkid_hashline
 from wifit3.dot11.parser import WlanFrameParser
-from wifit3.models import AccessPoint
+from wifit3.models import AccessPoint, CaptureType
+from wifit3.persist.capture_history import load_capture_index
 from wifit3.persist.common import bssid_to_dashed, safe_ssid
 from wifit3.persist.config import Config
 from wifit3.persist.metadata import save_ap_metadata
@@ -121,6 +122,12 @@ def repair_vault() -> RepairResult:
                     path.replace(destination)
                     renamed += 1
 
+    capture_index = load_capture_index()
+    for bssid, captures in capture_index.items():
+        if bssid not in groups:
+            ssid = next((capture.ssid for capture in captures if capture.ssid), None)
+            groups[bssid] = (ssid or "", set(), None)
+
     targets: set[Path] = set()
     for bssid, (ssid, lines, observed) in groups.items():
         ap = observed or AccessPoint(bssid=bssid, ssid=ssid)
@@ -130,6 +137,24 @@ def repair_vault() -> RepairResult:
         target = root / f"{safe_ssid(ssid)}_{bssid_to_dashed(bssid)}.hc22000"
         target.write_text("\n".join(sorted(lines)) + "\n", encoding="utf-8")
         targets.add(target)
+
+    for bssid, captures in capture_index.items():
+        ssid = next((capture.ssid for capture in captures if capture.ssid), None)
+        ap = AccessPoint(bssid=bssid, ssid=ssid)
+        for capture in captures:
+            psk = capture.value if capture.type in (
+                CaptureType.WPA_PSK, CaptureType.WPS_PIN, CaptureType.WPS_PBC
+            ) else None
+            pin = capture.pin if capture.type == CaptureType.WPS_PIN else None
+            wep_key = capture.value if capture.type == CaptureType.WEP else None
+            if psk or pin or wep_key:
+                save_ap_metadata(
+                    ap,
+                    psk=psk,
+                    wps_pin=pin,
+                    wep_key=wep_key,
+                    include_observed_data=False,
+                )
 
     for path in parsed_hc_paths - targets:
         try:
