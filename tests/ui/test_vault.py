@@ -38,7 +38,6 @@ async def test_vault_shortcut_adds_manual_psk_and_leaves_crack_all_disabled(tmp_
         assert str(vault_table.border_title) == "VAULT (1 APs)"
         assert view.check_action("crack_all", ()) is False
 
-        view.query_one("#vault-aps", DataTable).focus()
         await pilot.press("a")
         await pilot.pause()
         assert isinstance(app.screen, AddCredentialModal)
@@ -266,13 +265,13 @@ async def test_vault_search_normalizes_styled_unicode_to_ascii(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_open_vault_focuses_search(tmp_path):
+async def test_open_vault_focuses_ap_list(tmp_path):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
     app = WifiteApp()
     async with app.run_test() as pilot:
         view = await _open_vault(app)
         await pilot.pause()
-        assert app.focused is view.query_one("#vault-search", Input)
+        assert app.focused is view.query_one("#vault-aps", DataTable)
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@ from typing import Optional
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
-from textual.widgets import DataTable, Footer, Input
+from textual.widgets import DataTable, Footer
 from textual.screen import ModalScreen
 from textual import events, on
 from textual.binding import Binding
@@ -68,12 +68,12 @@ class VaultDrawer(ModalScreen):
 
     def on_mount(self) -> None:
         self.call_after_refresh(lambda: self.add_class("open"))
-        self.call_after_refresh(self._focus_search)
+        self.call_after_refresh(self._focus_list)
 
-    def _focus_search(self) -> None:
-        """Land focus on Vault search so typing filters immediately."""
+    def _focus_list(self) -> None:
+        """Land focus on the AP list so navigation and shortcuts work immediately."""
         try:
-            self.query_one("#vault-search", Input).focus()
+            self.query_one("#vault-aps", DataTable).focus()
         except Exception:
             pass
 
