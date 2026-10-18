@@ -37,6 +37,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ⚠️ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
+| [RTL8192EU](#rtl8192eu) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ## Atheros Chipset
 ### AR9271
@@ -101,6 +102,29 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Stress | ✅ | 2026-07-30 | 30-min soak, flat (trend 0.97); mainline degrades/collapses. |
 
 → [RTL8188EUS_DKMS.md](../src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](../src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
+
+### RTL8192EU
+
+*TP-Link TL-WN823N v2/v3 · 2.4 GHz*
+
+> Ported from the mainline kernel v6.19 `rtl8xxxu` driver (`8192e.c` fileops + shared `core.c`/`regs.h`).
+> The cold bring-up is byte-verified against a cold-plug USB capture from that same driver
+> (`scripts/chips/rtl8192eu/verify_pcap.py`, 7 anchored gates / 2538 ops). Bound to WinUSB.
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **⬜** | — | RX + TX verified on silicon; ACKs, Linux parity and the soak are still open. |
+| RX | ✅ | 2026-10-17 | 13 BSSIDs / 92 beacons over 1–13 @ 0.5 s; ref AP `TP-Link_FA80` (ch 4) at −27 dBm. |
+| TX | ✅ | 2026-10-17 | 45/50 MGMT + 55/50 DATA frames ACKed by a real AP, bogus-MAC control 2/50 (`--phase inject`). Both descriptor branches and two bulk-OUT lanes. |
+| ACKs | ⬜ | — | Not measured: needs a second radio (`scripts/ack/rx_autoack.py`). One card cannot hear the ACK it triggers. |
+| Port | ⬜ | — | No Linux-parity RX comparison run yet. |
+| Handshake | ⬜ | — | Not run. |
+| PMKID | ⬜ | — | Not run. |
+| WEP | ⬜ | — | Not run. |
+| WPS | ⬜ | — | Not run. |
+| Stress | ⬜ | — | 30-min soak not run. |
+
+→ [RTL8192EU.md](../src/wifit3/chips/rtl8192eu/RTL8192EU.md)
 
 ### RTL8812AU
 <img align="right" width="109" height="165" src="../assets/cardart/card-awus036ach.png" alt="ALFA AWUS036ACH">
@@ -488,4 +512,5 @@ Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_
 
 - *Generic/no-name brand*: RTL8188FTV [PR#62](https://github.com/derv82/wifit3/pull/62) (verify port in PR)
 - **TP-Link TL-WN823N**:  RTL8192CU [Issue#71](https://github.com/derv82/wifit3/issues/71) (new port)
+  — note: this is the **v1** (RTL8192CU). The **v2/v3** is the RTL8192EU (`2357:0109`) and is now supported.
 - **Asus USB-AC68**: RTL8814AU [Issue#86](https://github.com/derv82/wifit3/issues/86) ("for the art")
