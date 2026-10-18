@@ -217,6 +217,10 @@ class VaultTable(Widget):
         except Exception:
             return None
 
+    @on(Input.Submitted, "#vault-search")
+    def _on_search_submitted(self) -> None:
+        self.query_one("#vault-aps", DataTable).focus()
+
     @on(Input.Changed, "#vault-search")
     def _on_search_changed(self, event: Input.Changed) -> None:
         query = event.value.strip().casefold()
