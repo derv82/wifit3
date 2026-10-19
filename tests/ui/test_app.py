@@ -87,6 +87,27 @@ async def test_splash_54x24_keeps_buttons_above_footer_with_many_cards():
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
+async def test_wide_24_row_splash_uses_button_column_space_for_more_devices():
+    app = WifiteApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        splash = app.screen
+        splash.render_devices([
+            DeviceID(0x148F, 0x3000 + index, f"RT{3000 + index}")
+            for index in range(20)
+        ])
+        await pilot.pause(0)
+
+        device_select = splash.query_one("#device-select")
+        start = splash.query_one("#start-btn", Button)
+        footer = splash.query_one("Footer")
+        assert 4 < device_select.region.height <= 8
+        assert start.region.y == device_select.region.y
+        assert device_select.max_scroll_y > 0
+        assert device_select.region.bottom <= footer.region.y
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
 async def test_short_splash_hides_logo_through_32_rows():
     app = WifiteApp()
     async with app.run_test(size=(80, 32)) as pilot:

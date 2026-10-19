@@ -115,6 +115,8 @@ class SplashView(Screen):
     SplashView.-short #device-row { margin-top: 0; }
     SplashView.-tiny #device-list,
     SplashView.-tiny #device-select { max-height: 4; }
+    SplashView.-tiny.-wide #device-list,
+    SplashView.-tiny.-wide #device-select { max-height: 8; }
     SplashView.-short #device-list,
     SplashView.-short #device-select { max-height: 8; }
     SplashView.-narrow #button-col {
