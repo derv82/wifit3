@@ -76,6 +76,7 @@ logger = logging.getLogger(__name__)
 
 _ENDPOINT_W = 20  # the .ans art is exactly 20 cells wide
 _TOPBAR_H = 3
+_STACKED_TOPBAR_H = 6
 _CHROME_H = 2  # Buffer for Textual's Header & Footer (1 row each)
 _BORDER = "$primary"  # Border/title color for  LOG / CLIENTS panels
 
@@ -207,7 +208,11 @@ class FocusViewV2(Screen):
     .cl-pkts { width: 6; text-align: right; }
     .cl-deauth { width: 3; min-width: 3; height: 1; border: none; margin: 0 0 0 1;
                  background: red; color: white; content-align: center middle; }
-    """ % {"ew": _ENDPOINT_W, "top": _TOPBAR_H, "border": _BORDER}
+    """ % {
+        "ew": _ENDPOINT_W,
+        "top": _TOPBAR_H,
+        "border": _BORDER,
+    }
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -230,6 +235,7 @@ class FocusViewV2(Screen):
         }
         self._binding_sig: Optional[tuple] = None
         self._rspacer_w = -1                          # last-set spacer width; skip no-op relayouts
+        self._status_below_actions = False
 
     # ----- compose -----------------------------------------------------------
 
@@ -602,8 +608,10 @@ class FocusViewV2(Screen):
     def _distribute(self) -> None:
         """Fill the mid band to full 2-row sparklines."""
         tracker = self.query_one(GlobalJobTracker)
+        self._balance_status()
+        topbar_height = _STACKED_TOPBAR_H if self._status_below_actions else _TOPBAR_H
         chrome = _CHROME_H + int(bool(tracker.display))
-        avail = max(1, self.size.height - _TOPBAR_H - chrome)
+        avail = max(1, self.size.height - topbar_height - chrome)
         center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
         center = max(1, min(center, avail - 1))
         mid = self.query_one("#mid")
@@ -611,15 +619,32 @@ class FocusViewV2(Screen):
         self.query_one("#bottom").styles.height = avail - center
         pad = max(0, round((self.size.width - _PAD_START) * _PAD_RATE))
         mid.styles.padding = (0, pad, 0, pad)
-        self._balance_status()
 
     def _balance_status(self) -> None:
-        """Center the status label over the sparklines despite the button row on its left."""
-        topbar_w = self.query_one("#topbar").content_size.width
-        actions_w = self.query_one("#actions").outer_size.width
+        """Center status beside actions, or place it below when symmetry no longer fits."""
+        topbar = self.query_one("#topbar")
+        topbar_w = self.size.width
+        actions = self.query_one("#actions")
+        visible_buttons = [button for button in actions.query(Button) if button.display]
+        actions_w = sum(
+            button.get_content_width(self.size, self.size) + button.styles.margin.width
+            for button in visible_buttons
+        )
         widest = max((Text.from_markup(s, emoji=False).cell_len
                       for s in (self._last_status or [])), default=0)
-        spacer = min(actions_w, max(0, topbar_w - actions_w - widest))
+        status_below = 2 * actions_w + widest > topbar_w
+        layout_changed = self._status_below_actions != status_below
+        self._status_below_actions = status_below
+        topbar.styles.layout = "vertical" if status_below else "horizontal"
+        topbar.styles.height = _STACKED_TOPBAR_H if status_below else _TOPBAR_H
+        actions.styles.width = "100%" if status_below else "auto"
+        actions.styles.height = _TOPBAR_H if status_below else "100%"
+        status = self.query_one("#status", Static)
+        status.styles.width = "100%" if status_below else "1fr"
+        self.query_one("#rspacer", Static).display = not status_below
+        if layout_changed:
+            self.call_after_refresh(self._distribute)
+        spacer = 0 if status_below else actions_w
         if spacer != self._rspacer_w:
             self._rspacer_w = spacer
             self.query_one("#rspacer", Static).styles.width = spacer

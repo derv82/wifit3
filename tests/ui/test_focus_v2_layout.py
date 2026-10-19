@@ -79,6 +79,29 @@ async def test_layout_geometry():
             assert bot.height == avail - expected_center
 
 
+async def test_status_moves_below_buttons_when_centering_no_longer_fits():
+    app = _Host()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        screen = app.screen
+        screen._tick_timer.pause()
+        for button in screen.query(".attack-btn"):
+            button.display = True
+        screen._last_status = ["Target status"]
+        await pilot.pause(0)
+        screen._distribute()
+        await pilot.pause(0)
+
+        topbar = screen.query_one("#topbar")
+        actions = screen.query_one("#actions")
+        status = screen.query_one("#status")
+        assert screen._status_below_actions is True
+        assert topbar.region.height == 6
+        assert status.region.y == actions.region.bottom
+        assert status.region.bottom == topbar.region.bottom
+        assert screen.query_one("#mid").region.y == topbar.region.bottom
+
+
 async def test_visible_job_tracker_does_not_make_focus_scrollable():
     app = _JobHost()
     async with app.run_test(size=(80, 24)) as pilot:
