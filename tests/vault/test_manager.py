@@ -193,6 +193,9 @@ def test_crack_success_persists_key(manager, tmp_path, monkeypatch):
 
     assert manager.jobs[job_id].status == ToolStatus.SUCCESS
     manager.vault.save_wpa_psk.assert_called_once_with("TestNet", "00:11:22:33:44:55", "hunter2")
+    manager.vault.propagate_verified_psk.assert_called_once_with(
+        "00:11:22:33:44:55", "TestNet", "hunter2"
+    )
 
 
 def test_crack_success_writes_real_essid(manager, tmp_path, monkeypatch):
@@ -216,6 +219,9 @@ def test_crack_success_writes_real_essid(manager, tmp_path, monkeypatch):
 
     assert manager.jobs[job_id].status == ToolStatus.SUCCESS
     manager.vault.save_wpa_psk.assert_called_once_with("Cafe WiFi", "00:11:22:33:44:55", "hunter2")
+    manager.vault.propagate_verified_psk.assert_called_once_with(
+        "00:11:22:33:44:55", "Cafe WiFi", "hunter2"
+    )
 
 
 def test_reconcile_resolves_dead_running_job(manager):

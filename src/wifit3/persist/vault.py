@@ -4,9 +4,11 @@ re-scan the directory. Wraps persist.save + persist.capture_history."""
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import sys
 import time
+import unicodedata
 import zipfile
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional
@@ -26,6 +28,31 @@ from wifit3.vault.manager import JobManager
 from wifit3.vault.tools.cpu_crack import CpuCrackTool
 
 logger = logging.getLogger(__name__)
+
+_BAND_SUFFIX_RE = re.compile(r"(?:[\s_-]+(?:2[._]?4|5|6)g(?:hz)?)$", re.IGNORECASE)
+
+
+def _ssid_family(ssid: str) -> str:
+    normalized = unicodedata.normalize("NFKC", ssid).casefold().strip()
+    return _BAND_SUFFIX_RE.sub("", normalized).rstrip(" _-")
+
+
+def _related_ssids(left: str, right: str) -> bool:
+    left_family = _ssid_family(left)
+    right_family = _ssid_family(right)
+    if not left_family or not right_family:
+        return False
+    if left_family == right_family:
+        return True
+    shorter, longer = sorted((left_family, right_family), key=len)
+    prefixes = tuple(f"{shorter}{separator}" for separator in ("_", "-", " "))
+    return len(shorter) >= 4 and longer.startswith(prefixes)
+
+
+def _related_bssids(left: str, right: str) -> bool:
+    left_octets = left.replace("-", ":").lower().split(":")
+    right_octets = right.replace("-", ":").lower().split(":")
+    return len(left_octets) == 6 and len(right_octets) == 6 and left_octets[:5] == right_octets[:5]
 
 
 def _open_in_file_manager(path: Path) -> None:
@@ -215,6 +242,25 @@ class Vault:
             if any(wpa_psk.psk_matches(pmk, line) for line in lines):
                 return True
         return False
+
+    def propagate_verified_psk(self, source_bssid: str, source_ssid: str | None,
+                               psk: str) -> list[str]:
+        """Verify a recovered PSK against related saved APs and persist matching ones."""
+        matched: list[str] = []
+        for bssid, captures in list(self._index.items()):
+            if bssid == source_bssid:
+                continue
+            ssid = next((capture.ssid for capture in captures if capture.ssid), None)
+            if not ((_related_ssids(source_ssid, ssid) if source_ssid and ssid else False)
+                    or _related_bssids(source_bssid, bssid)):
+                continue
+            if any(capture.type in self._PSK_TYPES and capture.value for capture in captures):
+                continue
+            if self.verify_wpa_psk(bssid, psk) is not True:
+                continue
+            self.save_wpa_psk(ssid, bssid, psk)
+            matched.append(bssid)
+        return matched
 
     def has_handshake(self, ap: "AccessPoint") -> bool:
         return self._has(ap.bssid, CaptureType.HS)

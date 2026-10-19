@@ -215,6 +215,12 @@ class JobManager:
         ssid = self._essid_from_capture(job.capture_path) or cap.ssid
         try:
             self.vault.save_wpa_psk(ssid, cap.bssid, res.key)
+            matched = self.vault.propagate_verified_psk(cap.bssid, ssid, res.key)
+            if matched:
+                logger.info(
+                    f"Recovered key also verified for {len(matched)} related APs: "
+                    f"{', '.join(matched)}"
+                )
         except OSError:
             logger.exception(f"Failed to save the recovered key for {job.capture_path}")
 
