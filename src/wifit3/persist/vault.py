@@ -72,6 +72,7 @@ class Vault:
         self._index: Dict[str, List[PersistedCapture]] = {}
         self._change_listeners: list[Callable[[], None]] = []
         self._probed_ssids_source: Callable[[], Iterable[str]] = lambda: ()
+        self._metadata_prompted_bssids: set[str] = set()
         self.revision = 0   # bumped on every index change; a cache key for readers
         self.errors: list[str] = []                       # surfaced as toasts by the app on mount
         try:
@@ -125,6 +126,13 @@ class Vault:
     def missing_metadata_count(self) -> int:
         """Number of saved APs that have no v2 metadata sidecar."""
         return sum(not metadata_path(bssid).is_file() for bssid in self._index)
+
+    def claim_new_missing_metadata(self) -> set[str]:
+        """Return metadata-less APs not offered this session, marking them offered."""
+        missing = {bssid for bssid in self._index if not metadata_path(bssid).is_file()}
+        new_missing = missing - self._metadata_prompted_bssids
+        self._metadata_prompted_bssids.update(new_missing)
+        return new_missing
 
     def capture_payload(self, capture: PersistedCapture) -> str:
         """Copyable text for a capture: its stored value (WEP/WPS), else the file's

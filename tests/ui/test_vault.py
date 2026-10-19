@@ -22,8 +22,24 @@ def _write(d, name, content):
     (d / name).write_text(content, encoding="utf-8")
 
 async def _open_vault(app) -> VaultDrawer:
+    app.vault.claim_new_missing_metadata()
     app.action_toggle_vault()
     return app.screen
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_open_vault_prompts_to_generate_missing_metadata(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        app.action_toggle_vault()
+        await pilot.pause()
+
+        assert isinstance(app.screen, ConfirmModal)
+        prompt = str(app.screen.query_one("#prompt").render())
+        assert "1 new saved AP without Vault metadata" in prompt
+        assert "Original HC22000 and pcap sources will be preserved" in prompt
 
 
 @pytest.mark.asyncio
@@ -361,6 +377,7 @@ async def test_selection_restored_after_reload(tmp_path):
     _write(tmp_path, "Bravo_11-22-33-44-55-66_1000_wep_key.txt",
            "SSID: Bravo\nBSSID: 11:22:33:44:55:66\nWEP key (hex): 6364\n")
     app = WifiteApp()
+    app.vault.claim_new_missing_metadata()
     async with app.run_test() as pilot:
         app.push_screen(VaultDrawer("11:22:33:44:55:66"))
         await pilot.pause()

@@ -4,13 +4,14 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.widgets import DataTable, Footer
 from textual.screen import ModalScreen
-from textual import events, on
+from textual import events, on, work
 from textual.binding import Binding
 
 from .vault_table import VaultTable
-from .vault_item import VaultItemView
+from .vault_item import ConfirmModal, VaultItemView
 from wifit3.models import AccessPoint
 from wifit3.persist.metadata import load_metadata, metadata_path, save_ap_nickname
+from wifit3.persist.repair import RepairResult, repair_vault
 from wifit3.ui.vault.job_pane import JobTrackerPane
 from wifit3.ui.vault.modals.add_credential import AddCredentialModal, ManualCredential
 from wifit3.ui.vault.modals.nickname import NicknameModal
@@ -70,8 +71,47 @@ class VaultDrawer(ModalScreen):
             yield Footer()
 
     def on_mount(self) -> None:
+        self.app.vault.refresh()
+        self.query_one("#vault-table", VaultTable).reload_table()
         self.call_after_refresh(lambda: self.add_class("open"))
         self.call_after_refresh(self._focus_list)
+        self.call_after_refresh(self._offer_metadata_generation)
+
+    def _offer_metadata_generation(self) -> None:
+        missing = self.app.vault.claim_new_missing_metadata()
+        if not missing:
+            return
+        noun = "AP" if len(missing) == 1 else "APs"
+        prompt = (
+            f"Found [bold]{len(missing)}[/] new saved {noun} without Vault metadata. "
+            "Generate metadata and repair derived HC22000 and safe SSID filenames now?\n\n"
+            "[bold]Original HC22000 and pcap sources will be preserved in a v1 backup "
+            "directory. Saved passwords and credentials will not be changed.[/]"
+        )
+        self.app.push_screen(ConfirmModal(prompt), self._metadata_generation_confirmed)
+
+    def _metadata_generation_confirmed(self, confirmed: bool | None) -> None:
+        if not confirmed:
+            return
+        self.notify("Repairing Vault data…")
+        self._generate_missing_metadata()
+
+    @work(thread=True, exclusive=True)
+    def _generate_missing_metadata(self) -> None:
+        result = repair_vault()
+        self.app.call_from_thread(self._metadata_generation_finished, result)
+
+    def _metadata_generation_finished(self, result: RepairResult) -> None:
+        self.app.vault.refresh()
+        self.query_one("#vault-table", VaultTable).reload_table()
+        message = f"Generated metadata for {result.aps} APs"
+        if result.backup_dir is not None:
+            message += f". Originals: {result.backup_dir.name}"
+        if result.errors:
+            message += f". First error: {result.errors[0]}"
+            self.notify(message, severity="warning", title=f"{len(result.errors)} repair errors")
+        else:
+            self.notify(message, title="Vault repair complete")
 
     def _focus_list(self) -> None:
         """Land focus on the AP list so navigation and shortcuts work immediately."""

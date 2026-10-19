@@ -75,6 +75,21 @@ def test_startup_loads_existing_captures(tmp_path):
     assert v.summary() == "1 PSK"
 
 
+def test_new_missing_metadata_is_claimed_once_and_detected_after_refresh(tmp_path):
+    first = tmp_path / "One_aa-bb-cc-dd-ee-ff_1700000001_wpa_psk.txt"
+    first.write_text("SSID: One\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: password1\n", encoding="utf-8")
+    vault = Vault()
+
+    assert vault.claim_new_missing_metadata() == {"aa:bb:cc:dd:ee:ff"}
+    assert vault.claim_new_missing_metadata() == set()
+
+    second = tmp_path / "Two_11-22-33-44-55-66_1700000002_wpa_psk.txt"
+    second.write_text("SSID: Two\nBSSID: 11:22:33:44:55:66\nPSK: password2\n", encoding="utf-8")
+    vault.refresh()
+
+    assert vault.claim_new_missing_metadata() == {"11:22:33:44:55:66"}
+
+
 def test_reload_uses_embedded_network_metadata(tmp_path):
     path = tmp_path / "Cafe_WiFi_aa-bb-cc-dd-ee-ff_1700000000_wpa_psk.txt"
     path.write_text(
