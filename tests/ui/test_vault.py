@@ -25,7 +25,7 @@ async def _open_vault(app) -> VaultDrawer:
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-@pytest.mark.parametrize(("height", "full_screen"), [(34, True), (35, False)])
+@pytest.mark.parametrize(("height", "full_screen"), [(35, True), (36, False)])
 async def test_short_vault_uses_full_screen(height, full_screen):
     app = WifiteApp()
     async with app.run_test(size=(100, height)) as pilot:

@@ -63,6 +63,9 @@ class VaultDrawer(ModalScreen):
             yield Footer()
 
     def on_mount(self) -> None:
+        short = self.size.height < 36
+        self.set_class(short, "-short")
+        self.set_class(not short, "-tall")
         self.call_after_refresh(lambda: self.add_class("open"))
         self.call_after_refresh(self._focus_list)
 
