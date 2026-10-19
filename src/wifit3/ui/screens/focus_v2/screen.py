@@ -665,6 +665,8 @@ class FocusViewV2(Screen):
             elif ev.kind == CaptureKind.HANDSHAKE:
                 # Save instantly
                 result = self.app.vault.save_handshake(ap, ev.client_mac)
+                name = ev.ssid or ev.bssid
+                self.app.desktop_notify("Handshake captured", f"{name} ({ev.bssid})")
                 hint = _save_line(result) if result is not None else None
                 self._emit_lines(self._eapol_agg.on_handshake(ev, now, save_hint=hint))
             else:
@@ -689,6 +691,8 @@ class FocusViewV2(Screen):
                 f"from [bold]{short_sta(ev.client_mac)}[/bold]"
             )
             result = self.app.vault.save_pmkid(ap, ev.client_mac)
+            name = ev.ssid or ev.bssid
+            self.app.desktop_notify("PMKID captured", f"{name} ({ev.bssid})")
             if result is not None:
                 self._log(treelog.leaf(_save_line(result)))
         elif ev.kind == CaptureKind.DECLOAK:
@@ -1054,7 +1058,12 @@ class FocusViewV2(Screen):
             name = camp.target.ssid or camp.target.bssid
             body = (f"[bold]{escape(name)}[/bold] on channel [bold]{camp.target.channel}[/bold] "
                     f"[dim bold](BSSID: {escape(camp.target.bssid)})[/dim bold]")
-            self.notify(body, title=f"{CAPTURE_TOAST_TITLES[CaptureKind.PMKID]} (M1)", timeout=6)
+            title = f"{CAPTURE_TOAST_TITLES[CaptureKind.PMKID]} (M1)"
+            self.notify(body, title=title, timeout=6)
+            notification = (
+                f"{name} on channel {camp.target.channel} (BSSID: {camp.target.bssid})"
+            )
+            self.app.desktop_notify(title, notification)
         elif getattr(camp, "stopped", False):
             self._log(treelog.leaf_fail("[bright_red bold]Stopped harvest[/]"))
         else:

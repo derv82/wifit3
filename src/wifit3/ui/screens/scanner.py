@@ -411,13 +411,17 @@ class ScannerView(Screen):
         if title:
             name = ev.ssid or ev.bssid
             if ev.kind == CaptureKind.WEP_KEY:
-                self.notify(f"{name}: {wep_key_ascii(ev.value or '')}", title=title, timeout=6)
+                notification = f"{name}: {wep_key_ascii(ev.value or '')}"
+                self.notify(notification, title=title, timeout=6)
+                self.app.desktop_notify(title, notification)
             else:
                 pair = ev.pair_label or ("M1" if ev.kind == CaptureKind.PMKID else None)
                 full_title = f"{title} ({pair})" if pair else title
                 body = (f"[bold]{escape(name)}[/bold] on channel [bold]{ap.channel}[/bold] "
                         f"[dim bold](BSSID: {escape(ap.bssid)})[/dim bold]")
                 self.notify(body, title=full_title, timeout=6)
+                notification = f"{name} on channel {ap.channel} (BSSID: {ap.bssid})"
+                self.app.desktop_notify(full_title, notification)
 
     def _write_log(self, text) -> None:
         try:

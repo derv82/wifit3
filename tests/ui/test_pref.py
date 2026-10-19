@@ -52,6 +52,22 @@ async def test_prefs_no_longer_hosts_consolidate(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_desktop_notifications_checkbox_is_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "_PATH", tmp_path / "config.toml")
+    monkeypatch.setattr(Config, "desktop_notifications", True)
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(PreferencesModal())
+        await pilot.pause(0)
+        app.screen.query_one("#desktop_notifications", Checkbox).value = False
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause(0)
+
+    assert Config.desktop_notifications is False
+    assert "desktop_notifications = false" in (tmp_path / "config.toml").read_text("utf-8")
+
+
+@pytest.mark.asyncio
 async def test_auto_crack_checkbox_is_saved(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "_PATH", tmp_path / "config.toml")
     monkeypatch.setattr(Config, "auto_crack", True)

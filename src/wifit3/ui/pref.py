@@ -128,6 +128,8 @@ class PreferencesModal(ModalScreen):
             yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap")
             yield Checkbox("Auto-crack captures using CPU", value=Config.auto_crack,
                            id="auto_crack")
+            yield Checkbox("Desktop notifications when unfocused",
+                           value=Config.desktop_notifications, id="desktop_notifications")
             yield SaveFooter()
 
     def on_mount(self) -> None:
@@ -141,6 +143,7 @@ class PreferencesModal(ModalScreen):
         self.app.vault.refresh()
         Config.save_pcap = self.query_one("#save_pcap", Checkbox).value
         Config.auto_crack = self.query_one("#auto_crack", Checkbox).value
+        Config.desktop_notifications = self.query_one("#desktop_notifications", Checkbox).value
         Config.scanner_sort_delay = float(self.query_one("#sort_delay", Select).value)
         self._save_and_dismiss()
 

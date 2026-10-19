@@ -1,5 +1,6 @@
 import pytest
 
+from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
@@ -7,6 +8,19 @@ from textual.widgets import RichLog
 
 from wifit3.ui.ap_table import APTable
 
+
+def test_desktop_notification_requires_blurred_enabled_app(mocker):
+    app = WifiteApp()
+    send = mocker.patch("wifit3.ui.app.send_system_notification", return_value=True)
+    Config.desktop_notifications = True
+
+    assert app.desktop_notify("Title", "Body") is False
+    app._app_focused = False
+    assert app.desktop_notify("Title", "Body") is True
+    send.assert_called_once_with("Title", "Body")
+
+    Config.desktop_notifications = False
+    assert app.desktop_notify("Disabled", "Body") is False
 
 
 @pytest.mark.asyncio

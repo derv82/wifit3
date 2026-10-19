@@ -34,6 +34,7 @@ from .screens.vault_table import VaultTable
 from .clipboard import copy_macos_text, copy_windows_text
 from .pref import PreferencesModal
 from .themes import register_app_themes
+from .system_notifications import send_system_notification
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,7 @@ class WifiteApp(App):
         self.vault.subscribe(self._refresh_vault_table)
         self.vault.set_probed_ssids_source(self._probed_ssids)
         self._job_status: dict[str, ToolStatus] = {}
+        self._app_focused = True
         self.pbc_enabled: bool = Config.wps_auto_pbc
         register_app_themes(self)
         self.theme = Config.theme
@@ -156,6 +158,18 @@ class WifiteApp(App):
         """Copy through Win32 or pbcopy, falling back to terminal OSC 52."""
         if not copy_windows_text(text) and not copy_macos_text(text):
             super().copy_to_clipboard(text)
+
+    def on_app_focus(self, _event: events.AppFocus) -> None:
+        self._app_focused = True
+
+    def on_app_blur(self, _event: events.AppBlur) -> None:
+        self._app_focused = False
+
+    def desktop_notify(self, title: str, message: str) -> bool:
+        """Send a system notification only while the app is unfocused and enabled."""
+        if self._app_focused or not Config.desktop_notifications:
+            return False
+        return send_system_notification(title, message)
 
     def on_text_selected(self, event: events.TextSelected) -> None:
         selected = self.screen.get_selected_text()
@@ -247,12 +261,14 @@ class WifiteApp(App):
     def _toast_job(self, job: JobState) -> None:
         if job.status == ToolStatus.SUCCESS:
             self.notify(f"SUCCESS  PSK: {job.key}", title=job.display_name, severity="information")
+            self.desktop_notify(job.display_name, f"SUCCESS  PSK: {job.key}")
         elif job.status == ToolStatus.FAILURE:
             self.notify(f"NOT FOUND  {job.progress_msg}", title=job.display_name, severity="warning")
         elif job.status == ToolStatus.STOPPED:
             self.notify("STOPPED  by user", title=job.display_name, severity="information")
         else:
             self.notify(f"ERROR  {job.progress_msg}", title=job.display_name, severity="error")
+            self.desktop_notify(job.display_name, "Cracking job failed")
 
     def stop_job(self, job_id: str) -> bool:
         """Stop a running job, then refresh the tracker immediately."""
@@ -334,10 +350,12 @@ class WifiteApp(App):
         if remaining > 0:
             self.notify(f"A wireless card was lost. {remaining} still active.",
                         title="Card unplugged", severity="warning")
+            self.desktop_notify("Card unplugged", f"{remaining} wireless cards still active")
             return
         # Last card gone: fall back to the recoverable modal → splash.
         if isinstance(self.screen, (FatalErrorModal, RecoverableErrorModal)):
             return
+        self.desktop_notify("Wireless card lost", "No active wireless cards remain")
         self.push_screen(RecoverableErrorModal(WifiteDeviceLostError("the wireless adapter")))
 
     async def recover_to_splash(self) -> None:
