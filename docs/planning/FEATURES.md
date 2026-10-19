@@ -45,10 +45,6 @@ Same `VaultTool` shape as WPA-Sec (submit + poll a remote API), but self-hosted 
 Needs a server URL + voucher/API key in Preferences, and a mapping from our capture types onto
 Hashtopolis task creation.
 
-### Vault: "Enter PSK/PIN" feature
-
-- **"Enter"**: User enters credential (PSK/WPS) for a known AP (with an option to `Check` the PSK/PIN).
-
 ### Improve Default Passwords
 
 Auto-crack runs CPU Crack (`vault/tools/cpu_crack.py`) on a new AP's first capture, and again on its
@@ -150,17 +146,6 @@ covers the same ground from the plugin-system angle.
 
 **Where this stands:** still leaning **no**, mostly on the scope/maintenance argument, not on the
 demand one. Issue #55 is intentionally left open to keep gauging demand.
-
-### Remember Exhausted Wordlists
-
-Track which wordlists were tried (and exhausted) per capture; warn when re-running one.
-Nice-to-have.
-
-Blocked on design:
-- Persistence: another file per capture is not acceptable; one giant JSON mapping is ugly.
-- UI: unclear how to render it, e.g. 100 wordlists tried.
-
-Can't start until a clean design exists.
 
 ------------
 
