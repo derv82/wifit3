@@ -22,6 +22,27 @@ def load_metadata(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def save_ap_nickname(ap: AccessPoint, nickname: str) -> Path:
+    """Set or clear the user-facing nickname without changing the AP's canonical SSID."""
+    path = metadata_path(ap.bssid)
+    data = load_metadata(path)
+    data.update({"version": 1, "bssid": ap.bssid.lower(), "updated_at": int(time.time())})
+    if ap.ssid and ap.ssid != "<hidden>":
+        data["ssid"] = ap.ssid
+    if nickname:
+        data["nickname"] = nickname
+    else:
+        data.pop("nickname", None)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".meta.tmp")
+    temporary.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    return path
+
+
 def save_ap_metadata(
     ap: AccessPoint,
     *,

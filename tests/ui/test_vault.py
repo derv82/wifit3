@@ -6,11 +6,13 @@ from textual.widgets import Button, DataTable, Input
 
 from wifit3.models import AccessPoint
 from wifit3.models.jobs import JobState, ToolStatus
+from wifit3.persist.metadata import load_metadata, metadata_path
 from wifit3.persist.save import SaveResult
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.vault_drawer import VaultDrawer
 from wifit3.ui.screens.vault_item import ConfirmModal, _CapturePanel
 from wifit3.ui.vault.modals.add_credential import AddCredentialModal
+from wifit3.ui.vault.modals.nickname import NicknameModal
 
 _HS_LINE = "WPA*02*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***2\n"
 _PMKID_LINE = "WPA*01*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***\n"
@@ -51,6 +53,48 @@ async def test_vault_shortcut_adds_manual_psk_and_leaves_crack_all_disabled(tmp_
         caps = app.vault.persisted("aa:bb:cc:dd:ee:ff")
         assert any(cap.type == "WPA_PSK" and cap.value == "correct horse battery staple"
                    for cap in caps)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_vault_nickname_shortcut_sets_searches_and_clears_alias(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+
+        await pilot.press("n")
+        await pilot.pause()
+        assert isinstance(app.screen, NicknameModal)
+        nickname = app.screen.query_one("#nickname", Input)
+        nickname.value = "Living Room"
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause()
+
+        table = view.query_one("#vault-aps", DataTable)
+        assert table.get_row("aa:bb:cc:dd:ee:ff")[0].plain.startswith(
+            "Living Room (HomeNet)")
+        assert view.query_one("VaultItemView")._border_title.plain == (
+            " Living Room (HomeNet) (aa:bb:cc:dd:ee:ff) ")
+        assert load_metadata(metadata_path("aa:bb:cc:dd:ee:ff"))["nickname"] == "Living Room"
+
+        search = view.query_one("#vault-search", Input)
+        search.value = "living room"
+        await pilot.pause()
+        assert table.row_count == 1
+
+        search.value = ""
+        await pilot.pause()
+        table.focus()
+        await pilot.press("n")
+        await pilot.pause()
+        app.screen.query_one("#nickname", Input).value = ""
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause()
+
+        assert "nickname" not in load_metadata(metadata_path("aa:bb:cc:dd:ee:ff"))
+        assert table.get_row("aa:bb:cc:dd:ee:ff")[0].plain.startswith("HomeNet")
 
 
 @pytest.mark.asyncio
@@ -214,6 +258,10 @@ async def test_vault_searches_identity_and_filename_but_not_passwords(tmp_path):
         "Bravo_11-22-33-44-55-66_1700000002_wpa_psk.txt",
         "SSID: Bravo Network\nBSSID: 11:22:33:44:55:66\nPSK: secret-bravo\n",
     )
+    metadata_path("11:22:33:44:55:66").write_text(
+        '{"bssid": "11:22:33:44:55:66", "notes": "Mounted in the attic"}\n',
+        encoding="utf-8",
+    )
     app = WifiteApp()
     async with app.run_test() as pilot:
         view = await _open_vault(app)
@@ -235,6 +283,12 @@ async def test_vault_searches_identity_and_filename_but_not_passwords(tmp_path):
         await pilot.pause()
         assert table.row_count == 1
         assert table.get_row("11:22:33:44:55:66")
+
+        search.value = "mounted in the attic"
+        await pilot.pause()
+        assert table.row_count == 1
+        assert table.get_row("11:22:33:44:55:66")
+        assert search.placeholder == "SSID, BSSID, or filename"
 
         search.value = "secret-bravo"
         await pilot.pause()

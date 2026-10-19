@@ -10,8 +10,10 @@ from textual.binding import Binding
 from .vault_table import VaultTable
 from .vault_item import VaultItemView
 from wifit3.models import AccessPoint
+from wifit3.persist.metadata import load_metadata, metadata_path, save_ap_nickname
 from wifit3.ui.vault.job_pane import JobTrackerPane
 from wifit3.ui.vault.modals.add_credential import AddCredentialModal, ManualCredential
+from wifit3.ui.vault.modals.nickname import NicknameModal
 
 class VaultDrawer(ModalScreen):
     """The Vault drawer overlay."""
@@ -22,6 +24,7 @@ class VaultDrawer(ModalScreen):
         Binding("v", "dismiss_drawer", "Close", show=False),
         Binding("escape", "dismiss_drawer", "Close", show=True),
         Binding("a", "add_credential", "Add", show=True),
+        Binding("n", "set_nickname", "Nickname", show=True),
         Binding("c", "crack_all", "Crack All", show=True),
         Binding("z", "export_zip", "Export Zip", show=True),
         Binding("o", "show_directory", "Show Dir", show=True),
@@ -100,7 +103,7 @@ class VaultDrawer(ModalScreen):
         table = self.query_one("#vault-table", VaultTable)
         entry = table._aps.get(bssid)
         if entry is not None:
-            widget.load(bssid, entry[0], entry[1])
+            widget.load(bssid, table.display_name(bssid, entry[0]), entry[1])
         else:
             widget.load("", None, [])
 
@@ -129,6 +132,31 @@ class VaultDrawer(ModalScreen):
     def action_add_credential(self) -> None:
         ssid, bssid = self._selected_network()
         self.app.push_screen(AddCredentialModal(ssid, bssid), self._credential_added)
+
+    def action_set_nickname(self) -> None:
+        ssid, bssid = self._selected_network()
+        if not bssid:
+            self.notify("Select a router first", severity="warning")
+            return
+        nickname = load_metadata(metadata_path(bssid)).get("nickname")
+        current = nickname if isinstance(nickname, str) else ""
+        self.app.push_screen(NicknameModal(ssid, current), self._nickname_saved)
+
+    def _nickname_saved(self, nickname: str | None) -> None:
+        if nickname is None:
+            return
+        ssid, bssid = self._selected_network()
+        if not bssid:
+            return
+        try:
+            save_ap_nickname(AccessPoint(bssid=bssid, ssid=ssid), nickname)
+        except OSError as exc:
+            self.notify(f"Could not save nickname: {exc}", severity="error")
+            return
+        table = self.query_one("#vault-table", VaultTable)
+        table.set_nickname(bssid, nickname)
+        table.reload_table()
+        self.notify("Nickname saved" if nickname else "Nickname cleared")
 
     def action_crack_all(self) -> None:
         self.notify("Crack All is coming later")

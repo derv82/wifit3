@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import unicodedata
 
+from rich.markup import escape
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -10,6 +11,7 @@ from textual.widgets import DataTable, Input, Tab, Tabs
 from textual.widget import Widget
 
 from wifit3.models import CaptureType, PersistedCapture
+from wifit3.persist.metadata import load_metadata, metadata_path
 from textual.message import Message
 
 
@@ -58,6 +60,9 @@ class VaultTable(Widget):
     def __init__(self, id: Optional[str] = None) -> None:
         super().__init__(id=id)
         self._aps: Dict[str, Tuple[Optional[str], List[PersistedCapture]]] = {}
+        self._nicknames: dict[str, str] = {}
+        self._notes: dict[str, str] = {}
+        self._nickname_revision = -1
         self._current_tab = "tab-all"
         self._search_query = ""
         self._is_reloading = False
@@ -93,6 +98,18 @@ class VaultTable(Widget):
         self._is_reloading = True
         try:
             self._aps = self._group_aps()
+            if self._nickname_revision != self.app.vault.revision:
+                self._nicknames = {}
+                self._notes = {}
+                for bssid in self._aps:
+                    metadata = load_metadata(metadata_path(bssid))
+                    nickname = metadata.get("nickname")
+                    notes = metadata.get("notes")
+                    if isinstance(nickname, str) and nickname:
+                        self._nicknames[bssid] = nickname
+                    if isinstance(notes, str) and notes:
+                        self._notes[bssid] = notes
+                self._nickname_revision = self.app.vault.revision
             table = self.query_one("#vault-aps", DataTable)
             selected_bssid = self._current_row_key(table)
             table.clear()
@@ -150,7 +167,8 @@ class VaultTable(Widget):
             
             # Populate current tab
             for bssid, (ssid, caps) in rows:
-                if self._search_query and not self._matches_search(bssid, ssid, caps):
+                if self._search_query and not self._matches_search(
+                        bssid, ssid, self._nicknames.get(bssid), self._notes.get(bssid), caps):
                     continue
                 # Check filter
                 if self._current_tab == "tab-psk" and not any(c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK) and c.value for c in caps): continue
@@ -160,7 +178,7 @@ class VaultTable(Widget):
                 if self._current_tab == "tab-pmk" and not any(c.type == CaptureType.PMKID for c in caps): continue
                 
                 # Build Row Markup
-                name = ssid or "‹hidden›"
+                name = escape(self.display_name(bssid, ssid))
                 bssid_suffix = f" [dim]{bssid}[/dim]" if ssid_counts.get(ssid or "", 0) > 1 else ""
                 
                 badges = []
@@ -195,9 +213,11 @@ class VaultTable(Widget):
         self,
         bssid: str,
         ssid: Optional[str],
+        nickname: Optional[str],
+        notes: Optional[str],
         captures: List[PersistedCapture],
     ) -> bool:
-        fields = [ssid or "", bssid]
+        fields = [ssid or "", nickname or "", notes or "", bssid]
         fields.extend(Path(capture.path).name for capture in captures)
         query, ascii_query = _search_forms(self._search_query)
         for field in fields:
@@ -205,6 +225,17 @@ class VaultTable(Widget):
             if query in normalized or ascii_query and ascii_query in ascii_form:
                 return True
         return False
+
+    def display_name(self, bssid: str, ssid: Optional[str]) -> str:
+        name = ssid or "‹hidden›"
+        nickname = self._nicknames.get(bssid)
+        return f"{nickname} ({name})" if nickname else name
+
+    def set_nickname(self, bssid: str, nickname: str) -> None:
+        if nickname:
+            self._nicknames[bssid] = nickname
+        else:
+            self._nicknames.pop(bssid, None)
 
     def _current_row_key(self, table: DataTable) -> Optional[str]:
         """The bssid under the cursor, so a reload can restore the selection."""
