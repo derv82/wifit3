@@ -17,16 +17,39 @@ def test_is_valid_psk_counts_utf8_bytes():
     assert is_valid_psk("é" * 31)
 
 
-def test_ssid_variants_order_dedupe_and_filter():
-    assert ssid_variants("HomeNet") == [
+def test_ssid_variants_preserve_primary_order():
+    assert ssid_variants("HomeNet")[:12] == [
         "HomeNet123", "HomeNet1234", "HomeNet12345678", "HomeNet!",
         "homenet123", "homenet1234", "homenet12345678", "homenet!",
         "HOMENET123", "HOMENET1234", "HOMENET12345678", "HOMENET!",
     ]
-    assert ssid_variants("lowercase") == [
+    assert ssid_variants("lowercase")[:10] == [
         "lowercase", "LOWERCASE", "lowercase123", "lowercase1234", "lowercase12345678",
         "lowercase!", "LOWERCASE123", "LOWERCASE1234", "LOWERCASE12345678", "LOWERCASE!",
     ]
+
+
+def test_ssid_variants_include_broader_mutations_without_duplicates():
+    variants = ssid_variants("HomeNet")
+
+    assert "HomeNetpassword" in variants
+    assert "HomeNet2026" in variants
+    assert "HomeNet09" in variants
+    assert len(variants) == len(set(variants))
+
+
+def test_ssid_variants_filter_short_and_oversized_passwords():
+    short_variants = ssid_variants("X")
+    assert "X1234567" in short_variants
+    assert all(is_valid_psk(candidate) for candidate in short_variants)
+
+    assert ssid_variants("a" * 63) == ["a" * 63, "A" * 63]
+
+
+def test_ssid_variants_stop_at_configured_limit(monkeypatch):
+    monkeypatch.setattr(passwords, "_SSID_VARIANT_LIMIT", 20)
+
+    assert len(ssid_variants("HomeNet")) == 20
 
 
 def test_read_passwords_strips_newlines_and_skips_invalid(tmp_path: Path):
