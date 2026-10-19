@@ -38,6 +38,26 @@ async def test_short_vault_uses_full_screen(height, full_screen):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
+@pytest.mark.parametrize(("width", "stacked"), [(104, True), (105, False)])
+async def test_narrow_vault_stacks_ap_list_above_details(width, stacked):
+    app = WifiteApp()
+    async with app.run_test(size=(width, 40)) as pilot:
+        view = await _open_vault(app)
+        await pilot.pause(0)
+        table = view.query_one("#vault-table").region
+        item = view.query_one("#vault-item").region
+
+        if stacked:
+            assert table.x == item.x
+            assert table.width == item.width == width
+            assert table.bottom == item.y
+        else:
+            assert table.y == item.y
+            assert table.right == item.x
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
 async def test_delete_in_panel_confirms_and_removes(tmp_path):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
     target = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt"

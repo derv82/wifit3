@@ -14,7 +14,7 @@ from wifit3.ui.vault.job_pane import JobTrackerPane
 class VaultDrawer(ModalScreen):
     """The Vault drawer overlay."""
 
-    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (90, "-wide")]
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (90, "-compact"), (105, "-wide")]
     VERTICAL_BREAKPOINTS = [(0, "-short"), (36, "-tall")]
 
     BINDINGS = [
@@ -41,6 +41,14 @@ class VaultDrawer(ModalScreen):
         layout: vertical;
     }
     VaultDrawer.-narrow _CapturePanel .spacer { display: none; }
+    VaultDrawer.-narrow #vault-main, VaultDrawer.-compact #vault-main {
+        layout: vertical;
+    }
+    VaultDrawer.-narrow #vault-table, VaultDrawer.-compact #vault-table,
+    VaultDrawer.-narrow #vault-item, VaultDrawer.-compact #vault-item {
+        width: 100%;
+        height: 1fr;
+    }
     VaultDrawer.-short #vault-content {
         height: 100%;
         max-height: 100%;
@@ -56,13 +64,18 @@ class VaultDrawer(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Container(id="vault-content"):
-            with Horizontal():
+            with Horizontal(id="vault-main"):
                 yield VaultTable(id="vault-table")
                 yield VaultItemView(id="vault-item")
             yield JobTrackerPane()
             yield Footer()
 
     def on_mount(self) -> None:
+        narrow = self.size.width < 90
+        compact = 90 <= self.size.width < 105
+        self.set_class(narrow, "-narrow")
+        self.set_class(compact, "-compact")
+        self.set_class(not narrow and not compact, "-wide")
         short = self.size.height < 36
         self.set_class(short, "-short")
         self.set_class(not short, "-tall")
