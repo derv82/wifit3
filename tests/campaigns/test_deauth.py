@@ -29,6 +29,9 @@ class _FakeRadio:
         self.bcast_calls: list = []
         self.on_client = None       # test hook: fired after each deauth_client
         self.on_bcast = None        # test hook: fired after each deauth_broadcast
+        self.on_csa = None          # test hook: fired after each send_no_wait
+        self.events: list = []      # "client" / "bcast" / "csa", in call order
+        self.sent: list = []
 
     async def set_channel(self, ch, scan=False):
         self.current_channel = ch
@@ -36,6 +39,7 @@ class _FakeRadio:
 
     async def deauth_client(self, ap_bssid, client_bssid, rounds=10):
         self.client_calls.append((ap_bssid, client_bssid, rounds))
+        self.events.append("client")
         if self.on_client:
             self.on_client()
         return DeauthResult(client_sent=rounds, client_acks=rounds,
@@ -43,9 +47,17 @@ class _FakeRadio:
 
     async def deauth_broadcast(self, ap_bssid, count=20):
         self.bcast_calls.append((ap_bssid, count))
+        self.events.append("bcast")
         if self.on_bcast:
             self.on_bcast()
         return count
+
+    async def send_no_wait(self, frame):
+        self.sent.append(frame)
+        self.events.append("csa")
+        if self.on_csa:
+            self.on_csa()
+        return True
 
 
 class _FakeArray:
@@ -68,9 +80,13 @@ class _FakeArray:
         return bool(condition())   # no real waiting: evaluate the predicate once
 
 
-def _target():
+_BEACON = bytes.fromhex("80000000" + "ff" * 6 + "aabbccddee01" * 2 + "0000"
+                        + "00" * 8 + "64001104" + "0007" + b"TESTNET".hex() + "030106")
+
+
+def _target(pmf_required=False, beacon=_BEACON):
     return SimpleNamespace(bssid=_BSSID, channel=6, ssid="TESTNET",
-                           pmf_required=False, akm_suites=[2])
+                           pmf_required=pmf_required, akm_suites=[2], last_beacon_frame=beacon)
 
 
 def _client(bssid=_BSSID):
@@ -127,8 +143,41 @@ async def test_no_clients_broadcasts_each_round():
     assert camp.captured is True
 
 
-def test_visible_requires_psk_and_no_pmf():
+def test_visible_requires_psk():
     assert DeauthCampaign.visible(SimpleNamespace(pmf_required=False, akm_suites=[2])) is True
     assert DeauthCampaign.visible(SimpleNamespace(pmf_required=False, akm_suites=[8])) is False   # SAE
     assert DeauthCampaign.visible(SimpleNamespace(pmf_required=False, akm_suites=[])) is False    # WEP/open
-    assert DeauthCampaign.visible(SimpleNamespace(pmf_required=True, akm_suites=[2])) is False    # PMF
+    assert DeauthCampaign.visible(SimpleNamespace(pmf_required=True, akm_suites=[2])) is True     # PMF: CSA
+
+
+def test_pmf_required_without_a_beacon_is_ineligible():
+    assert DeauthCampaign.ineligible_reason(_target(pmf_required=True, beacon=None))
+    assert DeauthCampaign.ineligible_reason(_target(pmf_required=True)) is None
+    assert DeauthCampaign.ineligible_reason(_target(beacon=None)) is None
+
+
+async def test_csa_burst_follows_the_deauths():
+    ap = SimpleNamespace(bssid=_BSSID, handshakes={})
+    radio = _FakeRadio()
+    array = _FakeArray(radio, ap, {"c1": _client()})
+    camp = DeauthCampaign(array, _target())
+    radio.on_csa = lambda: ap.handshakes.__setitem__("c1", _pmkid_hs("c1"))
+
+    await camp._loop()
+
+    assert radio.events[:3] == ["client", "bcast", "csa"]
+    assert camp.captured is True
+    assert radio.sent[0][:2] == bytes.fromhex("8000") and bytes.fromhex("2503") in radio.sent[0]
+
+
+async def test_pmf_required_sends_csa_only():
+    ap = SimpleNamespace(bssid=_BSSID, handshakes={})
+    radio = _FakeRadio()
+    array = _FakeArray(radio, ap, {"c1": _client()})
+    camp = DeauthCampaign(array, _target(pmf_required=True))
+    radio.on_csa = lambda: setattr(camp, "stopped", True) if len(radio.sent) == 3 else None
+
+    await camp._loop()
+
+    assert radio.client_calls == [] and radio.bcast_calls == []
+    assert camp.csa_sent == 3 and set(radio.events) == {"csa"}

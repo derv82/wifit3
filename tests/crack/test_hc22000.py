@@ -76,6 +76,16 @@ def test_pmkid_hashline_basic():
     assert line == expected
 
 
+def test_pmkid_hashline_marks_psk_sha256_pmkid():
+    """AKM 6 PMKID is HMAC-SHA256: hashcat reads that from MESSAGEPAIR bit 0x02, written "03"."""
+    pmkid = bytes.fromhex("ad2fad48da558cdfeb19cea25e2ce5af")
+    hs = _hs(pmkid=pmkid)
+    hs.pmkid_akm = 6
+    line = pmkid_hashline("MyWiFi", hs)
+    assert line == f"WPA*01*{pmkid.hex()}*aabbccddeeff*112233445566*{b'MyWiFi'.hex()}***03"
+    assert parse_hc22000(line).message_pair == "03"
+
+
 def test_pmkid_hashline_none_when_no_pmkid():
     hs = _hs()
     assert pmkid_hashline("X", hs) is None

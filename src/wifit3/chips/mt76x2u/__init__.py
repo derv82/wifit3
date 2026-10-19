@@ -9,7 +9,10 @@ SUPPORTED_IDS = [
 ]
 
 
-ZEROCD_IDS = [(0x0BDA, 0x1A2B)]   # ZeroCD knockoff front-end that mode-switches to 0e8d:7612.
+ZEROCD_IDS = [
+    (0x0BDA, 0x1A2B),   # ZeroCD knockoff front-end that mode-switches to 0e8d:7612.
+    (0x0E8D, 0x2870),   # MediaTek ZeroCD front-end; seen switching to 0e8d:7612 in issue #104's dmesg.
+]
 
 
 def import_driver():

@@ -461,15 +461,14 @@ async def test_buttons_wpa2_psk_no_wps_pmkid_and_deauth_visible(buttons_screen):
 
 
 @pytest.mark.asyncio(loop_scope="module")
-async def test_buttons_deauth_hidden_for_sae_open_wep_and_pmf(buttons_screen):
-    """Deauth shows only for a confirmed PSK-family AKM with PMF off: SAE-only,
-    open, WEP and PMF-Required all hide it (deauth can't provoke a crackable PSK
-    handshake, or PMF protects the frame)."""
+async def test_buttons_deauth_shown_for_psk_hidden_for_sae_open_wep(buttons_screen):
+    """Deauth shows for a confirmed PSK-family AKM, PMF-Required included (CSA only there):
+    SAE-only, open and WEP hide it (no crackable PSK handshake to provoke)."""
     assert _buttons(buttons_screen, _rsn_ap(akms=("PSK",)))["btn-deauth"].display is True
     assert _buttons(buttons_screen, _rsn_ap(akms=("SAE",)))["btn-deauth"].display is False
     assert _buttons(buttons_screen, _rsn_ap(encryption="OPEN", akms=()))["btn-deauth"].display is False
     assert _buttons(buttons_screen, _wep_btn_ap())["btn-deauth"].display is False
-    assert _buttons(buttons_screen, _rsn_ap(akms=("PSK",), pmf_required=True))["btn-deauth"].display is False
+    assert _buttons(buttons_screen, _rsn_ap(akms=("PSK",), pmf_required=True))["btn-deauth"].display is True
 
 
 @pytest.mark.asyncio(loop_scope="module")

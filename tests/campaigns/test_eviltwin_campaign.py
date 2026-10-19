@@ -9,12 +9,13 @@ from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.eviltwin import (
     EvilTwinCampaign, EvilTwinInput, PuntMode, default_punt_modes, csa_target_channel,
 )
-from wifit3.dot11.ap import eapol_m1
+from wifit3.dot11.ap import beacon_clone, eapol_m1
 from wifit3.dot11.eapol import eapol_key, data_header, LLC_SNAP_EAPOL
 from wifit3.dot11.ie import ssid_ie, rates_ie, ds_param_ie, GENERIC_RSN_IE
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.crack.handshake import crackable_pairs
 from wifit3.models import Handshake, HandshakeMessage
+from wifit3.persist.save import save_handshake
 from wifit3.wlan.sink import WlanSink
 
 _BSSID = "94:83:c4:8c:3f:78"
@@ -29,6 +30,8 @@ _BEACON = (b"\x80\x00\x00\x00" + _BROADCAST + _BSSID_B + _BSSID_B + b"\x00\x00"
 
 
 class _FakeIface:
+    name = "card0"
+
     def __init__(self, channel: int = 1):
         self.sent: list[bytes] = []
         self.current_channel = channel
@@ -62,6 +65,7 @@ class _FakeArray:
         self.access_points: dict = {}
         self.clients: dict = {}
         self.seeded_m1: list[bytes] = []
+        self.injected_beacons: list[bytes] = []
         self.stray_beacons: dict = {}
         self.evil_twins: set = set()
 
@@ -70,6 +74,9 @@ class _FakeArray:
 
     def record_injected_eapol(self, frame) -> None:
         self.seeded_m1.append(bytes(frame))
+
+    def record_injected_beacon(self, frame, card_id, channel_hint) -> None:
+        self.injected_beacons.append(bytes(frame))
 
     def ignore_stray_beacons(self, bssid, channel) -> None:
         self.stray_beacons[bssid] = channel
@@ -108,10 +115,17 @@ def _pmkid_hs():
     return hs
 
 
-def _client_m2(snonce: bytes) -> bytes:
+def _client_m2(snonce: bytes, bssid: bytes = _BSSID_B) -> bytes:
     payload = eapol_key(key_info=0x010A, key_len=0, replay=1, nonce=snonce, key_data=GENERIC_RSN_IE,
                         mic=bytes(range(16)))
-    return data_header(to_ds=True, bssid=_BSSID_B, client=_CLIENT_B) + LLC_SNAP_EAPOL + payload
+    return data_header(to_ds=True, bssid=bssid, client=_CLIENT_B) + LLC_SNAP_EAPOL + payload
+
+
+async def _capture_after_start(camp, ap_entry, hs) -> None:
+    task = asyncio.create_task(camp._loop())
+    await asyncio.sleep(0.05)
+    ap_entry.handshakes[_CLIENT] = hs
+    await asyncio.wait_for(task, timeout=1.0)
 
 
 def test_visible_and_ineligible():
@@ -142,13 +156,14 @@ async def test_own_bssid_marks_twin_and_keys_capture_on_it():
     array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
     own_b = bytes.fromhex("9483c48c3f79")            # target BSSID + 1 nibble: an own-BSSID twin
     own_s = "94:83:c4:8c:3f:79"
-    array.access_points[own_s] = SimpleNamespace(handshakes={_CLIENT: _crackable_hs()})
+    array.access_points[own_s] = SimpleNamespace(handshakes={})
     camp = EvilTwinCampaign(array, _target(), _input(twin, punt, modes=(PuntMode.CSA,), bssid=own_s))
     assert camp.same_bssid is False
     assert camp.twin_bssid == own_s
     assert camp.twin_beacon[10:16] == own_b and camp.twin_beacon[16:22] == own_b  # Addr2/Addr3 rewritten
-    await asyncio.wait_for(camp._loop(), timeout=1.0)   # exits at once: capture is on the twin entry
+    await _capture_after_start(camp, array.access_points[own_s], _crackable_hs())  # on the twin entry
     assert own_s in array.evil_twins                    # hidden from the scanner
+    assert array.injected_beacons == [camp.twin_beacon]  # the twin's AP record is seeded
     await camp.teardown()
     assert own_s in array.evil_twins                    # stays hidden after teardown (no re-attack)
     assert camp.captured
@@ -168,37 +183,51 @@ async def test_arms_punts_and_tears_down():
     assert twin.sent                                  # twin beaconed
     assert punt.current_channel == 11 and punt.sent   # punt ran on the target channel
     assert twin.fake_mac_clears == 1                  # torn down once
+    assert array.injected_beacons == []               # same BSSID: the target's record is used
     assert not camp.captured
 
 
-async def test_stops_when_sink_has_crackable_handshake():
+async def test_stops_on_crackable_handshake_captured_after_start():
+    array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
+    array.access_points[_BSSID] = SimpleNamespace(handshakes={})
+    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, modes=(PuntMode.DEAUTH, PuntMode.CSA)))
+    await _capture_after_start(camp, array.access_points[_BSSID], _crackable_hs())
+    await camp.teardown()
+    assert camp.captured
+
+
+async def test_handshake_captured_before_start_does_not_stop_it():
     array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
     array.access_points[_BSSID] = SimpleNamespace(handshakes={_CLIENT: _crackable_hs()})
     camp = EvilTwinCampaign(array, _target(), _input(twin, punt, modes=(PuntMode.DEAUTH, PuntMode.CSA)))
-    await asyncio.wait_for(camp._loop(), timeout=1.0)   # exits at once: already captured
+    task = asyncio.create_task(camp._loop())
+    for _ in range(50):
+        await asyncio.sleep(0)
+    assert punt.sent                                   # got past the capture check and punted
+    assert not task.done() and not camp.captured
+    camp.stopped = True
+    await task
     await camp.teardown()
-    assert camp.captured
-    assert twin.fake_mac_arms >= 1                     # twin still stood up
-    assert punt.sent == []                             # never punted: capture was already there
+    assert not camp.captured
 
 
 async def test_stops_on_real_ap_handshake_with_distinct_twin():
     # Single-card/distinct twin: a 4-way sniffed on the REAL AP (target BSSID) after a punt kicks a
     # client back onto it also completes, not just a forged M2 on the twin's own BSSID.
     array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
-    array.access_points[_BSSID] = SimpleNamespace(handshakes={_CLIENT: _crackable_hs()})
+    array.access_points[_BSSID] = SimpleNamespace(handshakes={})
     camp = EvilTwinCampaign(array, _target(),
                             _input(twin, punt, modes=(PuntMode.DEAUTH,), bssid="94:83:c4:8c:3f:79"))
     assert camp.same_bssid is False
-    await asyncio.wait_for(camp._loop(), timeout=1.0)
+    await _capture_after_start(camp, array.access_points[_BSSID], _crackable_hs())
     assert camp.captured
 
 
 async def test_stops_on_crackable_pmkid():
     array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
-    array.access_points[_BSSID] = SimpleNamespace(handshakes={_CLIENT: _pmkid_hs()})
+    array.access_points[_BSSID] = SimpleNamespace(handshakes={})
     camp = EvilTwinCampaign(array, _target(), _input(twin, punt, modes=(PuntMode.DEAUTH,)))
-    await asyncio.wait_for(camp._loop(), timeout=1.0)
+    await _capture_after_start(camp, array.access_points[_BSSID], _pmkid_hs())
     assert camp.captured
 
 
@@ -216,6 +245,52 @@ def test_record_injected_m1_pairs_with_real_m2():
     assert crackable_pairs(hs)
 
 
+class _SinkArray(_FakeArray):
+    def __init__(self, sink: WlanSink):
+        super().__init__()
+        self.sink = sink
+        self.access_points = sink.access_points
+
+    def record_injected_eapol(self, frame) -> None:
+        self.sink.record_injected_eapol(frame)
+
+    def record_injected_beacon(self, frame, card_id, channel_hint) -> None:
+        self.sink.record_injected_beacon(frame, card_id, channel_hint)
+
+
+async def test_own_bssid_twin_m1_and_client_m2_make_a_capture_under_the_twin():
+    twin_s, twin_b = "02:00:00:00:00:02", bytes.fromhex("020000000002")
+    sink = WlanSink()
+    sink.update(WlanFrameParser.parse_80211_frame(_BEACON, -40), "card0", 11)
+    array, twin, punt = _SinkArray(sink), _FakeIface(), _FakeIface(11)
+    camp = EvilTwinCampaign(array, _target(), _input(twin, punt, modes=(PuntMode.CSA,), bssid=twin_s))
+    task = asyncio.create_task(camp._loop())
+    await asyncio.sleep(0.05)
+    twin_ap = sink.access_points[twin_s]
+    assert twin_ap.ssid == _SSID and twin_ap.last_beacon_frame == camp.twin_beacon
+    assert twin_s in array.evil_twins
+
+    array.record_injected_eapol(eapol_m1(twin_b, _CLIENT_B, bytes.fromhex("aa" * 32), replay=1))
+    sink.update(WlanFrameParser.parse_80211_frame(_client_m2(bytes.fromhex("02" * 32), twin_b), -40), "card0", 1)
+    await asyncio.wait_for(task, timeout=1.0)
+    await camp.teardown()
+
+    assert camp.captured
+    assert crackable_pairs(twin_ap.handshakes[_CLIENT])
+    assert not sink.access_points[_BSSID].handshakes
+    result = save_handshake(twin_ap, _CLIENT)
+    assert result is not None and result.was_new
+    assert result.path.read_text().split("*")[3] == "020000000002"   # hashline AP MAC is the twin
+
+
+def test_record_injected_beacon_reuses_the_beacon_handler():
+    twin_b = bytes.fromhex("020000000002")
+    sink = WlanSink()
+    sink.record_injected_beacon(beacon_clone(_BEACON, 1, twin_b), "card0", 1)
+    ap = sink.access_points["02:00:00:00:00:02"]
+    assert ap.ssid == _SSID and ap.channel == 1 and ap.akm_suites == [2] and ap.beacons == 1
+
+
 async def test_run_drives_loop_and_restores_channel():
     array, twin, punt = _FakeArray(), _FakeIface(), _FakeIface(11)
     array.select_iface = lambda channel: punt        # the base _drive liveness election
@@ -230,3 +305,17 @@ async def test_run_drives_loop_and_restores_channel():
     assert twin.fake_mac_arms >= 1                    # _loop actually ran (not skipped)
     assert twin.current_channel == 11                # teardown restored the twin channel
     assert punt.sent                                 # the CSA punt went out the TX card
+
+
+def test_m2_pairs_with_the_resent_m1_whose_replay_counter_it_echoes():
+    sink = WlanSink()
+    sink.update(WlanFrameParser.parse_80211_frame(_BEACON, -40), "card0", 11)
+    anonce = bytes.fromhex("aa" * 32)
+    for replay in (1, 2, 3, 4):
+        sink.record_injected_eapol(eapol_m1(_BSSID_B, _CLIENT_B, anonce, replay=replay))
+    m2_payload = eapol_key(key_info=0x010A, key_len=0, replay=3, nonce=bytes.fromhex("02" * 32),
+                           key_data=GENERIC_RSN_IE, mic=bytes(range(16)))
+    m2 = data_header(to_ds=True, bssid=_BSSID_B, client=_CLIENT_B) + LLC_SNAP_EAPOL + m2_payload
+    sink.update(WlanFrameParser.parse_80211_frame(m2, -40), "card0", 11)
+    pairs = crackable_pairs(sink.access_points[_BSSID].handshakes[_CLIENT])
+    assert len(pairs) == 1 and pairs[0].anonce_frame.replay_hex == "0000000000000003"

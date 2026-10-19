@@ -31,6 +31,7 @@ from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
 from .screens.new_device import NewDeviceDialog
 from .screens.vault_drawer import VaultDrawer
 from .screens.vault_table import VaultTable
+from .clipboard import copy_macos_text, copy_windows_text
 from .pref import PreferencesModal
 from .themes import register_app_themes
 
@@ -150,6 +151,11 @@ class WifiteApp(App):
 
     def _probed_ssids(self) -> Set[str]:
         return self.array.probed_ssids if self.array is not None else set()
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Copy through Win32 or pbcopy, falling back to terminal OSC 52."""
+        if not copy_windows_text(text) and not copy_macos_text(text):
+            super().copy_to_clipboard(text)
 
     def on_text_selected(self, event: events.TextSelected) -> None:
         selected = self.screen.get_selected_text()

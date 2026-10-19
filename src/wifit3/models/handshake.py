@@ -52,6 +52,8 @@ class Handshake:
     pmkid: Optional[bytes] = None
     # AKM (00-0F-AC:N) in effect when the PMKID was captured; gates pmkid_crackable.
     pmkid_akm: Optional[int] = None
+    # Key descriptor version of the M1 that carried the PMKID (3 = PSK-SHA256, 2 = PSK).
+    pmkid_key_descriptor_version: Optional[int] = None
 
     # The AP's offered AKM suites (00-0F-AC:N) from its beacon RSN IE, the fallback
     # when a frame's own AKM is unknown. See crack.handshake.

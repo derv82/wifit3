@@ -16,8 +16,8 @@ References:
   - The cracker, module_22000.c, derives the EAPOL MIC algorithm from the Key
     Descriptor Version carried in the embedded EAPOL bytes (keyver 2 = HMAC-SHA1 /
     AKM PSK, keyver 3 = AES-CMAC / AKM PSK-SHA256), so the negotiated AKM needs no
-    field of its own. The PMKID (WPA*01) path is single-algorithm (HMAC-SHA1) and
-    carries no AKM at all:
+    field of its own. A PMKID (WPA*01) is HMAC-SHA1 unless bit 0x02 of its MESSAGEPAIR
+    is set (written ``03``, as hcxpcapngtool does): then HMAC-SHA256 (AKM PSK-SHA256):
     https://github.com/hashcat/hashcat/blob/master/src/modules/module_22000.c
   - hashcat WPA/WPA2 wiki: https://hashcat.net/wiki/doku.php?id=cracking_wpawpa2
 """
@@ -30,21 +30,26 @@ from wifit3.models import Handshake
 from wifit3.crack import handshake as wpa
 from wifit3.crack.handshake import mac_compact, ssid_hex
 
+PMKID_SHA256_MESSAGE_PAIR_BIT = 0x02
+_PMKID_SHA256_MESSAGE_PAIR = "03"
+
 
 def pmkid_hashline(ssid: str, hs: Handshake) -> Optional[str]:
     """Return a ``WPA*01*…`` line for the PMKID, or None if not available or not
     crackable."""
     if not ssid or not hs.pmkid or len(hs.pmkid) != 16:
         return None
-    if not wpa.pmkid_crackable(hs):
+    akm = wpa.crackable_pmkid_akm(hs)
+    if akm is None:
         return None
+    message_pair = _PMKID_SHA256_MESSAGE_PAIR if akm == wpa.PMKID_PSK_SHA256_AKM else ""
     return (
         "WPA*01"
         f"*{hs.pmkid.hex()}"
         f"*{mac_compact(hs.bssid)}"
         f"*{mac_compact(hs.client_mac)}"
         f"*{ssid_hex(ssid)}"
-        "***"
+        f"***{message_pair}"
     )
 
 
@@ -67,7 +72,7 @@ class Hc22000Line:
     essid: str          # field 5
     anonce: str = ""    # field 6 (EAPOL only)
     eapol: str = ""     # field 7 (EAPOL only)
-    message_pair: str = ""  # field 8 (EAPOL only)
+    message_pair: str = ""  # field 8 (EAPOL; on a PMKID, bit 0x02 marks HMAC-SHA256)
 
 
 def parse_hc22000(line: str) -> Optional[Hc22000Line]:

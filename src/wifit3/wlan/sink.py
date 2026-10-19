@@ -127,6 +127,13 @@ class WlanSink:
         if isinstance(pkt, EapolPacket):
             self._on_eapol_frame(pkt)
 
+    def record_injected_beacon(self, frame: bytes, card_id: str, channel_hint: int) -> None:
+        """Fold EvilTwin's own beacon into the sink, bypassing the array's own-frame RX filter, so a
+        twin on its own BSSID has the AP record its 4-way is tracked under."""
+        pkt = WlanFrameParser.parse_80211_frame(frame, -100)
+        if isinstance(pkt, BeaconPacket):
+            self._on_beacon_frame(pkt, card_id, channel_hint)
+
     # ----- typed handlers ----------------------------------------------------
 
     def _on_beacon_frame(self, pkt: Packet, card_id: str, channel_hint: int) -> bool:
@@ -363,6 +370,8 @@ class WlanSink:
         if pmkid and not hs.pmkid:
             hs.pmkid = pmkid
             hs.pmkid_akm = akm
+            if pkt.key_info is not None:
+                hs.pmkid_key_descriptor_version = pkt.key_info & 3
             logger.info(f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}")
         return True
 

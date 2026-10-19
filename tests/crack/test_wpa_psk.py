@@ -1,8 +1,18 @@
 """WPA-PSK key derivation tests: IEEE 802.11i Annex J PMK vectors + MIC self-consistency."""
+import hashlib
+import hmac
+
 from wifit3.crack import wpa_psk
-from wifit3.crack.hc22000_format import parse_hc22000
+from wifit3.crack.hc22000_format import Hc22000Line, parse_hc22000
 from wifit3.dot11.eapol import eapol_key, set_mic, MIC_OFFSET, MIC_LEN
-from wifit3.dot11.wpa import KCK_LEN, derive_pmk, derive_ptk
+from wifit3.dot11.wpa import (
+    KCK_LEN,
+    derive_pmk,
+    derive_ptk,
+    derive_ptk_sha256,
+    eapol_mic_aes_cmac,
+    eapol_mic_hmac_md5,
+)
 
 
 def test_pmk_ieee_annex_j_vectors():
@@ -63,9 +73,54 @@ def test_psk_matches_hashcat_eapol_example():
     assert not _matches("hashcat?", _HASHCAT_EAPOL_LINE)
 
 
-def test_psk_matches_rejects_key_descriptor_version_3():
-    fields = _HASHCAT_EAPOL_LINE.split("*")
-    eapol = bytearray.fromhex(fields[7])
-    eapol[6] = (eapol[6] & ~7) | 3
-    fields[7] = eapol.hex()
-    assert not _matches("hashcat!", "*".join(fields))
+_SSID = bytes.fromhex("5468697349734153534944")
+_PMK = derive_pmk("ThisIsAPassword", _SSID)
+_WRONG_PMK = derive_pmk("ThisIsAPassword!", _SSID)
+_AA = bytes.fromhex("112233445566")
+_SPA = bytes.fromhex("aabbccddeeff")
+_ANONCE = bytes.fromhex("a0" * 32)
+_SNONCE = bytes.fromhex("5b" * 32)
+_RSN_IE = bytes.fromhex("30140100000fac040100000fac040100000fac060000")
+
+
+def _eapol_line(mic: bytes, eapol: bytes) -> Hc22000Line:
+    return Hc22000Line(kind="02", pmkid_or_mic=mic.hex(), mac_ap=_AA.hex(), mac_sta=_SPA.hex(),
+                       essid=_SSID.hex(), anonce=_ANONCE.hex(), eapol=eapol.hex(), message_pair="00")
+
+
+def test_psk_matches_key_descriptor_version_1():
+    eapol = eapol_key(key_info=0x0109, key_len=0, replay=1, nonce=_SNONCE, key_data=_RSN_IE)
+    kck = derive_ptk(_PMK, _AA, _SPA, _ANONCE, _SNONCE, KCK_LEN)
+    line = _eapol_line(eapol_mic_hmac_md5(kck, eapol), eapol)
+    assert wpa_psk.psk_matches(_PMK, line)
+    assert not wpa_psk.psk_matches(_WRONG_PMK, line)
+
+
+def test_psk_matches_key_descriptor_version_3():
+    eapol = eapol_key(key_info=0x010B, key_len=0, replay=1, nonce=_SNONCE, key_data=_RSN_IE)
+    kck = derive_ptk_sha256(_PMK, _AA, _SPA, _ANONCE, _SNONCE, KCK_LEN)
+    line = _eapol_line(eapol_mic_aes_cmac(kck, eapol), eapol)
+    assert wpa_psk.psk_matches(_PMK, line)
+    assert not wpa_psk.psk_matches(_WRONG_PMK, line)
+
+
+def test_ptk_sha256_kdf_layout():
+    """IEEE 802.11 KDF-SHA256: HMAC-SHA256(PMK, i LE16 | label | sorted MACs | sorted nonces | 384 LE16)."""
+    context = _AA + _SPA + _SNONCE + _ANONCE
+    block1 = hmac.new(_PMK, bytes.fromhex("0100") + b"Pairwise key expansion" + context
+                      + bytes.fromhex("8001"), hashlib.sha256).digest()
+    block2 = hmac.new(_PMK, bytes.fromhex("0200") + b"Pairwise key expansion" + context
+                      + bytes.fromhex("8001"), hashlib.sha256).digest()
+    assert derive_ptk_sha256(_PMK, _AA, _SPA, _ANONCE, _SNONCE, 48) == (block1 + block2)[:48]
+    assert derive_ptk_sha256(_PMK, _SPA, _AA, _SNONCE, _ANONCE, KCK_LEN) == block1[:KCK_LEN]
+
+
+def test_psk_matches_sha256_pmkid_when_message_pair_bit_set():
+    pmkid = hmac.new(_PMK, b"PMK Name" + _AA + _SPA, hashlib.sha256).digest()[:16]
+    line = Hc22000Line(kind="01", pmkid_or_mic=pmkid.hex(), mac_ap=_AA.hex(), mac_sta=_SPA.hex(),
+                       essid=_SSID.hex(), message_pair="03")
+    assert wpa_psk.psk_matches(_PMK, line)
+    assert not wpa_psk.psk_matches(_WRONG_PMK, line)
+    unflagged = Hc22000Line(kind="01", pmkid_or_mic=pmkid.hex(), mac_ap=_AA.hex(),
+                            mac_sta=_SPA.hex(), essid=_SSID.hex())
+    assert not wpa_psk.psk_matches(_PMK, unflagged)

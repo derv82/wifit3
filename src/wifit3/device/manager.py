@@ -429,6 +429,7 @@ class DeviceManager:
         except BringUpError as e:
             return BringupResult.failed(self._fault_message(device_id, e))
         except OSError as e:
+            logger.exception("%s: USB error during bring-up", device_id.chipset)
             return BringupResult.failed(self._usb_fault_message(device_id, e))
 
         device_id = await self.setup.install(device_id, self.prompter)
@@ -441,6 +442,7 @@ class DeviceManager:
         except BringUpError as e:
             return BringupResult.failed(self._fault_message(device_id, e))
         except OSError as e:
+            logger.exception("%s: USB error during bring-up", device_id.chipset)
             return BringupResult.failed(self._usb_fault_message(device_id, e))
 
     async def uninstall(self, device_id) -> SetupResult:

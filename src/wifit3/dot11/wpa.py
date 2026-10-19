@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import os
 
+from wifit3.dot11.aes_cmac import aes_cmac
 from wifit3.dot11.eapol import (
     LLC_SNAP_EAPOL,
     data_header,
@@ -21,6 +22,7 @@ from wifit3.dot11.eapol import (
 # Bit 8: MIC bit set (1)
 _M2_KEY_INFO = 0x010A
 KCK_LEN = 16
+_PTK_SHA256_BITS = 384
 
 
 def derive_pmk(passphrase: str, ssid: bytes) -> bytes:
@@ -46,9 +48,34 @@ def derive_ptk(pmk: bytes, ap_mac: bytes, sta_mac: bytes, anonce: bytes, snonce:
     return prf(pmk, b"Pairwise key expansion", mac_block + nonce_block, nbytes)
 
 
+def derive_ptk_sha256(pmk: bytes, ap_mac: bytes, sta_mac: bytes, anonce: bytes, snonce: bytes,
+                      nbytes: int) -> bytes:
+    """First nbytes of the 384-bit KDF-SHA256 PTK (AKM 6, PSK-SHA256); pairs enter sorted."""
+    context = (min(ap_mac, sta_mac) + max(ap_mac, sta_mac)
+               + min(anonce, snonce) + max(anonce, snonce))
+    length = _PTK_SHA256_BITS.to_bytes(2, "little")
+    out = b""
+    i = 1
+    while len(out) < nbytes:
+        block = i.to_bytes(2, "little") + b"Pairwise key expansion" + context + length
+        out += hmac.new(pmk, block, hashlib.sha256).digest()
+        i += 1
+    return out[:nbytes]
+
+
 def eapol_mic(kck: bytes, eapol_payload_mic_zeroed: bytes) -> bytes:
     """Key descriptor version 2 MIC: HMAC-SHA1-128 over the EAPOL payload with its MIC zeroed."""
     return hmac.new(kck, eapol_payload_mic_zeroed, hashlib.sha1).digest()[:16]
+
+
+def eapol_mic_hmac_md5(kck: bytes, eapol_payload_mic_zeroed: bytes) -> bytes:
+    """Key descriptor version 1 MIC: HMAC-MD5 over the EAPOL payload with its MIC zeroed."""
+    return hmac.new(kck, eapol_payload_mic_zeroed, hashlib.md5).digest()
+
+
+def eapol_mic_aes_cmac(kck: bytes, eapol_payload_mic_zeroed: bytes) -> bytes:
+    """Key descriptor version 3 MIC: AES-128-CMAC over the EAPOL payload with its MIC zeroed."""
+    return aes_cmac(kck, eapol_payload_mic_zeroed)
 
 
 def build_eapol_m2(

@@ -105,6 +105,23 @@ def test_transition_pmkid_only_classified_via_assoc():
         assert wpa.pmkid_crackable(hs) is expect_crackable
 
 
+def test_pmkid_records_m1_key_descriptor_version():
+    from wifit3.crack import handshake as wpa
+    s = WlanSink()
+    b, client = "aa:bb:cc:dd:ee:ff", "12:22:33:44:55:66"
+    s.update(pkt({"type": "beacon", "bssid": b, "source": b, "dest": "ff:ff:ff:ff:ff:ff",
+                  "rssi": -40, "ssid": "T", "channel": 1, "encryption": "WPA2",
+                  "akm_suites": [0x02, 0x06], "raw": bytes(36)}), W0)
+    s.update(pkt({"type": "eapol", "bssid": b, "source": b, "dest": client, "rssi": -45,
+                  "raw": bytes(100), "eapol_msg_num": 1, "eapol_replay_counter": bytes(8),
+                  "eapol_nonce": bytes.fromhex("01" * 32), "eapol_mic": bytes(16),
+                  "eapol_key_data_len": 0, "eapol_payload": bytes(99), "eapol_key_info": 0x008B,
+                  "eapol_pmkid": bytes.fromhex("07" * 16)}), W0)
+    hs = s.access_points[b].handshakes[client]
+    assert hs.pmkid_key_descriptor_version == 3
+    assert wpa.crackable_pmkid_akm(hs) == 6
+
+
 def test_wpa3_and_pmf_flags_propagate_and_refresh():
     s = WlanSink()
     b = "aa:bb:cc:dd:ee:ff"

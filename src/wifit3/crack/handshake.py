@@ -82,27 +82,29 @@ _NC_BIT = 0x80
 # artifact*: the PMK must be passphrase-derived (PBKDF2) AND hashcat must support
 # the resulting hashline. SAE (ephemeral PMK), EAP (PMK from the 802.1X MSK, no
 # passphrase), OWE (no password) fail the first test. FT-PSK (PMK-R0→PMK-R1
-# hierarchy, no -m 22000 mode) and the SHA256 PMKID (HMAC-SHA256, while -m 22000's
-# PMKID path is HMAC-SHA1) pass it but fail the second, so the two artifacts gate
-# differently:
+# hierarchy, no -m 22000 mode) passes it but fails the second, so the two artifacts
+# gate differently:
 #
 #   EAPOL (WPA*02): hashcat reads the Key Descriptor Version from the embedded
 #     frame, so plain PSK (keyver 2) AND PSK-SHA256 (keyver 3 / AES-CMAC) both
 #     crack; FT has no mode; EAP/Enterprise has no passphrase; OWE (Enhanced Open)
 #     derives its PMK from an ECDH exchange, no password either.
 #     → uncrackable AKMs = SAE | FT-PSK | EAP | OWE.
-#   PMKID (WPA*01): single-algorithm HMAC-SHA1 → only plain PSK (AKM 2). FT and
-#     the SHA256-PSK AKMs (6 / 20) yield a hash -m 22000 can't take.
+#   PMKID (WPA*01): plain PSK (AKM 2, HMAC-SHA1) and PSK-SHA256 (AKM 6, HMAC-SHA256,
+#     flagged by MESSAGEPAIR "03"). FT and the other AKMs yield a hash -m 22000 can't take.
 #
 # SAE, FT, EAP, and OWE are *strict* (withhold on an unconfirmed transition AP).
-# The SHA256 PMKID is *soft*: AKM 6 is rare, so a PMKID of unknown AKM is assumed
-# to be the common HMAC-SHA1 one unless the AP offers no plain PSK at all.
+# A PMKID of unknown AKM takes the algorithm from its M1's key descriptor version
+# (3 = SHA256, 2 = SHA1); failing that, SHA1 unless the AP offers no plain PSK.
 _SAE_AKMS = frozenset({8, 9, 24, 25})       # SAE / FT-SAE / SAE-EXT-KEY / FT-SAE-EXT-KEY
 _FT_PSK_AKMS = frozenset({4, 19})           # FT-PSK / FT-PSK-SHA384
 _EAP_AKMS = frozenset({1, 3, 5, 11, 12, 13})  # EAP/FT-EAP/EAP-SHA256/EAP-Suite-B[-192]/FT-EAP-SHA384 (Enterprise)
 _OWE_AKMS = frozenset({18})                 # OWE / Enhanced Open: PMK from ECDH, no passphrase
 _EAPOL_BAD_AKMS = _SAE_AKMS | _FT_PSK_AKMS | _EAP_AKMS | _OWE_AKMS  # never -m 22000-crackable as EAPOL
-_PMKID_PSK_AKM = 2                          # the only HMAC-SHA1 (crackable) PMKID
+_PMKID_PSK_AKM = 2                          # HMAC-SHA1 PMKID
+PMKID_PSK_SHA256_AKM = 6                    # HMAC-SHA256 PMKID
+_PMKID_PSK_AKMS = frozenset({_PMKID_PSK_AKM, PMKID_PSK_SHA256_AKM})
+_PMKID_AKM_BY_KEY_DESCRIPTOR_VERSION = {2: _PMKID_PSK_AKM, 3: PMKID_PSK_SHA256_AKM}
 _EAP_LABEL = "EAP/Enterprise"               # badge for a captured-but-worthless EAP 4-way
 _OWE_LABEL = "OWE"                          # badge for a captured-but-worthless OWE (open) 4-way
 
@@ -121,17 +123,26 @@ def eapol_verdict(akm: Optional[int], offered: List[int]) -> str:
     return "uncrackable"              # only SAE/FT/EAP/OWE offered
 
 
-def pmkid_crackable(hs: Handshake) -> bool:
-    """True only for a plain-PSK (AKM 2) PMKID, the lone HMAC-SHA1 PMKID hashcat
-    ``-m 22000`` cracks."""
+def crackable_pmkid_akm(hs: Handshake) -> Optional[int]:
+    """The AKM the PMKID was derived under when hashcat ``-m 22000`` cracks it: 2 (PSK,
+    HMAC-SHA1) or 6 (PSK-SHA256, HMAC-SHA256). None when uncrackable."""
     if hs.pmkid_akm is not None:
-        return hs.pmkid_akm == _PMKID_PSK_AKM
+        return hs.pmkid_akm if hs.pmkid_akm in _PMKID_PSK_AKMS else None
     offered = set(hs.akm_offered)
     if offered & (_SAE_AKMS | _FT_PSK_AKMS):
-        return False                  # SAE/FT could be the negotiated AKM → withhold
-    if not offered:
-        return True                   # no AKM info (fixtures / pre-RSN) → legacy
-    return _PMKID_PSK_AKM in offered  # plain PSK offered → assume the SHA1 PMKID
+        return None                   # SAE/FT could be the negotiated AKM → withhold
+    psk_offered = offered & _PMKID_PSK_AKMS if offered else _PMKID_PSK_AKMS  # none: fixtures / pre-RSN
+    if not psk_offered:
+        return None
+    m1_akm = _PMKID_AKM_BY_KEY_DESCRIPTOR_VERSION.get(hs.pmkid_key_descriptor_version)
+    if m1_akm in psk_offered:
+        return m1_akm                 # the M1's key descriptor version, as hcxpcapngtool reads it
+    return _PMKID_PSK_AKM if _PMKID_PSK_AKM in psk_offered else PMKID_PSK_SHA256_AKM
+
+
+def pmkid_crackable(hs: Handshake) -> bool:
+    """True for a PSK (AKM 2) or PSK-SHA256 (AKM 6) PMKID, the two hashcat ``-m 22000`` cracks."""
+    return crackable_pmkid_akm(hs) is not None
 
 
 def uncrackable_label(akm: Optional[int], offered: List[int]) -> Optional[str]:

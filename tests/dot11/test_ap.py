@@ -30,8 +30,25 @@ def test_assoc_resp_success_with_privacy_and_rates():
     assert f[0:2] == b"\x10\x00"
     assert f[24:26] == b"\x11\x00"                    # ESS + Privacy
     assert f[26:28] == b"\x00\x00"                    # status success
-    assert f[28:30] == b"\x01\x00"                    # AID 1
+    assert f[28:30] == b"\x01\xc0"                    # AID 1, two MSBs set
     assert rates_ie() in f
+
+
+def test_reassoc_resp_frame_type():
+    assert assoc_resp(_BSSID, _CLIENT, reassoc=True)[0:2] == b"\x30\x00"
+
+
+def test_assoc_resp_copies_beacon_elements_in_hostapd_order():
+    wmm = bytes.fromhex("dd07" "0050f202" "0101" "00")
+    wps = bytes.fromhex("dd05" "0050f204" "00")
+    ext_cap = bytes.fromhex("7f03" "040000")
+    ht_op = bytes.fromhex("3d03" "010000")
+    ht_cap = bytes.fromhex("2d02" "6e01")             # cap info 0x016e: 40 MHz bit set
+    he_cap = bytes.fromhex("ff03" "230102")
+    beacon = bytes(36) + ssid_ie("x") + wmm + wps + ext_cap + he_cap + ht_op + ht_cap
+    f = assoc_resp(_BSSID, _CLIENT, twin_beacon=beacon)
+    tail = f[30 + len(rates_ie() + ext_rates_ie()):]
+    assert tail == bytes.fromhex("2d02" "6c01") + ht_op + he_cap + ext_cap + wmm
 
 
 def test_assoc_resp_rates_follow_the_operating_channel():
