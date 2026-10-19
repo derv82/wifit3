@@ -6,10 +6,11 @@ from typing import Dict, Iterator, Optional
 
 from wifit3.crack import wpa_psk
 from wifit3.crack.hc22000_format import Hc22000Line, parse_hc22000
-from wifit3.crack.passwords import read_passwords, ssid_passwords, ssid_variants
+from wifit3.crack.passwords import read_passwords, ssid_passwords
 from wifit3.dot11 import wpa
 from wifit3.models import PersistedCapture, ToolCapability, ToolResult, ToolStatus
 from wifit3.models.jobs import JobAction, JobState
+
 from wifit3.vault.tools.cracker import CrackerTool, WordlistQueue
 
 
@@ -55,17 +56,22 @@ class CpuCrackTool(CrackerTool[WordlistQueue]):
         self._runs: Dict[str, _WordlistRun] = {}
 
     def launch(self, job: JobState, capture: PersistedCapture) -> None:
-        self._start_wordlist(job, self.prepare_queue(job, capture))
+        queue = self.prepare_queue(job, capture)
+        self._prepend_generated_wordlist(job, queue)
+        try:
+            self._start_wordlist(job, queue)
+        except Exception:
+            self._remove_generated_wordlist(queue)
+            raise
 
     def _start_wordlist(self, job: JobState, queue: WordlistQueue) -> None:
         lines_by_essid = _lines_by_essid(job.capture_path)
         if not lines_by_essid:
             raise ValueError(f"No hashlines in {job.capture_path}")
-        essid_passwords = [psk for essid in lines_by_essid
-                           for psk in ssid_variants(essid.decode("utf-8", errors="replace"))]
-        first_passwords = [] if queue.index else list(dict.fromkeys(
-            essid_passwords + ssid_passwords(job.config.get("extra_passwords", []))))
-        run = _WordlistRun(wordlist=Path(str(queue.current)), ssid_passwords=first_passwords,
+        first_user_index = 1 if queue.generated_wordlist else 0
+        extra_passwords = (ssid_passwords(job.config.get("extra_passwords", []))
+                           if queue.index == first_user_index else [])
+        run = _WordlistRun(wordlist=Path(str(queue.current)), ssid_passwords=extra_passwords,
                            lines_by_essid=lines_by_essid)
         run.unpaused.set()
         run.thread = threading.Thread(target=self._crack, args=(run,), daemon=True,
@@ -110,6 +116,7 @@ class CpuCrackTool(CrackerTool[WordlistQueue]):
         run = self._runs.get(job.job_id)
         if run is not None and run.key is not None:
             del self._runs[job.job_id]
+            self._remove_generated_wordlist(queue)
             return self._cracked(run.key)
         if run is not None and not assume_dead and run.thread.is_alive():
             percent = run.passwords_tried / max(run.passwords_total, 1) * 100
@@ -119,7 +126,10 @@ class CpuCrackTool(CrackerTool[WordlistQueue]):
         self._runs.pop(job.job_id, None)
         ended = self._wordlist_ended(job, queue, exhausted=run is not None and run.exhausted)
         if ended is not None:
+            if ended.status is not ToolStatus.RUNNING:
+                self._remove_generated_wordlist(queue)
             return ended
+        self._remove_generated_wordlist(queue)
         reason = run.error if run is not None else None
         return ToolResult(status=ToolStatus.ERROR, value=reason or "cpu_crack ended without recovering the key")
 

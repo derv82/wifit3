@@ -5,11 +5,16 @@ from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Label
 
 import wifit3.ui.vault.modals.hashcat as mod
+from wifit3.crack.passwords import SSID_PASSWORDS_IDENTITY
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.config import Config, ConfigError
 from wifit3.ui.vault.modals.cpu_crack import CpuCrackConfigModal
 from wifit3.ui.vault.modals.hashcat import HashcatConfigModal, _default_hashcat_path
-from wifit3.ui.vault.modals.wordlists import _RemoveButton, _WordlistRow
+from wifit3.ui.vault.modals.wordlists import (
+    _GeneratedWordlistRow,
+    _RemoveButton,
+    _WordlistRow,
+)
 from wifit3.vault.exhaustion import capture_record_ids, record_exhaustion, wordlist_identity
 
 
@@ -164,18 +169,19 @@ async def test_exhausted_wordlist_rows_are_marked(tmp_path):
         path=str(capture_path),
         bssid="aa:bb:cc:dd:ee:ff",
     )
-    record_exhaustion(
-        capture.bssid,
-        capture_record_ids(capture.path),
-        wordlist_identity(exhausted),
-    )
+    identifiers = capture_record_ids(capture.path)
+    record_exhaustion(capture.bssid, identifiers, wordlist_identity(exhausted))
+    record_exhaustion(capture.bssid, identifiers, SSID_PASSWORDS_IDENTITY)
 
     app = _Host()
     async with app.run_test() as pilot:
         app.push_screen(CpuCrackConfigModal(capture))
         await pilot.pause()
         rows = list(app.screen.query(_WordlistRow))
+        generated = app.screen.query_one(_GeneratedWordlistRow)
 
+        assert generated.has_class("exhausted")
+        assert "already exhausted" in str(generated.tooltip)
         assert rows[0].has_class("exhausted")
         assert not rows[1].has_class("exhausted")
         assert rows[0].tooltip == "Already exhausted for every hash in this capture"
@@ -189,9 +195,10 @@ async def test_the_modal_reads_back_the_wordlists_it_was_given():
         app.push_screen(HashcatConfigModal())
         await pilot.pause(0)
         shown = [str(label.content) for label in app.screen.query(".wordlist-name")]
-        assert len(shown) == 2
-        assert "1:" in shown[0] and "a.txt" in shown[0]
-        assert "2:" in shown[1] and "b.txt" in shown[1]
+        assert len(shown) == 3
+        assert "0:" in shown[0] and "Built-in SSID passwords" in shown[0]
+        assert "1:" in shown[1] and "a.txt" in shown[1]
+        assert "2:" in shown[2] and "b.txt" in shown[2]
 
         await app.screen._wordlists_chosen(None)        # a cancelled picker keeps the selection
         await pilot.pause(0)
@@ -229,15 +236,19 @@ async def test_x_removes_one_wordlist_and_clear_removes_them_all(tmp_path):
         next(b for b in modal.query(_RemoveButton) if b.path.endswith("b.txt")).press()
         await pilot.pause()
         names = [str(label.content) for label in rows.query(".wordlist-name")]
-        assert len(names) == 2
-        assert names[0].startswith("[bold]1:[/bold] a.txt") and names[1].startswith("[bold]2:[/bold] c.txt")
-        assert str(tmp_path) in names[0], "the parent directory tells same-named files apart"
+        assert len(names) == 3
+        assert names[0].startswith("[bold]0:[/bold] Built-in SSID passwords")
+        assert names[1].startswith("[bold]1:[/bold] a.txt")
+        assert names[2].startswith("[bold]2:[/bold] c.txt")
+        assert str(tmp_path) in names[1], "the parent directory tells same-named files apart"
 
         clear.press()
         await pilot.pause()
         assert modal._wordlists == []
         assert not clear.display
-        assert "none chosen" in str(rows.query_one(Label).content)
+        labels = [str(label.content) for label in rows.query(Label)]
+        assert any("no additional wordlists chosen" in label for label in labels)
+        assert rows.query_one(_GeneratedWordlistRow)
         assert Config.wordlist_paths == [str(tmp_path / "a.txt"), str(tmp_path / "b.txt"),
                                          str(tmp_path / "c.txt")], "nothing is saved before Launch"
 

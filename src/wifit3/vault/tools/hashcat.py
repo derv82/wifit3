@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import os
 import shlex
@@ -10,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
-from wifit3.crack.hc22000_format import parse_hc22000
-from wifit3.crack.passwords import ssid_passwords, ssid_variants
+
 from wifit3.models import PersistedCapture, ToolCapability, ToolResult, ToolStatus
 from wifit3.models.jobs import JobAction, JobState
+
 from wifit3.vault.tools import hashcat_keypress
 from wifit3.vault.tools.cracker import CrackerTool, WordlistQueue
 
@@ -64,7 +63,6 @@ class HashcatQueue(WordlistQueue):
     log_offset: int = 0         # bytes already in the job's log when the current process started
     stdin_path: str = ""            # hashcat's stdin; see hashcat_keypress.send
     quit_sent_at: float = 0.0       # time.time() of the 'q' keypress
-    generated_wordlist: str = ""
 
 
 class HashcatTool(CrackerTool[HashcatQueue]):
@@ -106,29 +104,6 @@ class HashcatTool(CrackerTool[HashcatQueue]):
             self._remove_generated_wordlist(queue)
             raise
 
-    @staticmethod
-    def _prepend_generated_wordlist(job: JobState, queue: HashcatQueue) -> None:
-        essids: dict[str, None] = {}
-        for raw in Path(job.capture_path).read_text(encoding="utf-8", errors="replace").splitlines():
-            line = parse_hc22000(raw)
-            if line is not None:
-                essids[bytes.fromhex(line.essid).decode("utf-8", errors="replace")] = None
-        candidates = dict.fromkeys(psk for essid in essids for psk in ssid_variants(essid))
-        candidates.update(dict.fromkeys(ssid_passwords(job.config.get("extra_passwords", []))))
-        if not candidates:
-            return
-        token = hashlib.sha256(job.job_id.encode()).hexdigest()[:12]
-        capture_path = Path(job.capture_path)
-        path = capture_path.with_name(f".{capture_path.name}.{token}.ssid-passwords")
-        path.write_text("".join(f"{candidate}\n" for candidate in candidates), encoding="utf-8")
-        queue.wordlists.insert(0, str(path.resolve()))
-        queue.wordlist_identities.insert(0, "")
-        queue.generated_wordlist = str(path.resolve())
-
-    @staticmethod
-    def _remove_generated_wordlist(queue: HashcatQueue) -> None:
-        if queue.generated_wordlist:
-            Path(queue.generated_wordlist).unlink(missing_ok=True)
 
     def _start_wordlist(self, job: JobState, queue: HashcatQueue) -> None:
         """Run hashcat against the queue's current wordlist, appending to the job's log."""

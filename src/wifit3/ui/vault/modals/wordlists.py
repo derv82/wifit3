@@ -10,6 +10,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Label
 
+from wifit3.crack.passwords import SSID_PASSWORDS_IDENTITY, SSID_PASSWORDS_VERSION
 from wifit3.models import PersistedCapture
 from wifit3.persist.config import Config, ConfigError
 from wifit3.ui.path_picker import BROWSE_GLYPH, PathPickerModal
@@ -22,6 +23,19 @@ class _RemoveButton(Button):
     def __init__(self, path: str) -> None:
         super().__init__("X", variant="error", compact=True, classes="wordlist-remove")
         self.path = path
+
+
+class _GeneratedWordlistRow(Horizontal):
+    def __init__(self) -> None:
+        super().__init__(
+            Label("", classes="wordlist-fixed-marker"),
+            Label(
+                f"[bold]0:[/bold] Built-in SSID passwords  "
+                f"[dim](v{SSID_PASSWORDS_VERSION}, always first)[/dim]",
+                classes="wordlist-name",
+            ),
+            classes="wordlist-row generated-wordlist-row",
+        )
 
 
 class _WordlistRow(Horizontal):
@@ -84,7 +98,7 @@ class WordlistConfigModal(ModalScreen[dict]):
     #wordlist-clear {
         width: 7;
     }
-    .wordlist-remove {
+    .wordlist-remove, .wordlist-fixed-marker {
         width: 3;
     }
     #wordlists {
@@ -135,13 +149,14 @@ class WordlistConfigModal(ModalScreen[dict]):
         self.query_one("#wordlist-clear", Button).display = bool(self._wordlists)
         rows = self.query_one("#wordlists", VerticalScroll)
         await rows.remove_children()
+        await rows.mount(_GeneratedWordlistRow())
         if not self._wordlists:
-            await rows.mount(Label("[dim]none chosen[/dim]"))
-            return
-        await rows.mount_all(
-            _WordlistRow(path, number)
-            for number, path in enumerate(self._wordlists, 1)
-        )
+            await rows.mount(Label("[dim]no additional wordlists chosen[/dim]"))
+        else:
+            await rows.mount_all(
+                _WordlistRow(path, number)
+                for number, path in enumerate(self._wordlists, 1)
+            )
         self.run_worker(
             self._mark_exhausted_wordlists(),
             group="exhaustion-markers",
@@ -152,15 +167,18 @@ class WordlistConfigModal(ModalScreen[dict]):
         if self._capture is None:
             return
         paths = [row.path for row in self.query(_WordlistRow) if Path(row.path).is_file()]
-        if not paths:
-            return
 
-        def exhausted_paths() -> set[str]:
+        def exhaustion_status() -> tuple[bool, set[str]]:
             record_ids = capture_record_ids(self._capture.path)
             exhausted = exhausted_wordlists(self._capture.bssid, record_ids)
-            return {path for path in paths if wordlist_identity(path) in exhausted}
+            marked = {path for path in paths if wordlist_identity(path) in exhausted}
+            return SSID_PASSWORDS_IDENTITY in exhausted, marked
 
-        exhausted = await asyncio.to_thread(exhausted_paths)
+        generated_exhausted, exhausted = await asyncio.to_thread(exhaustion_status)
+        generated = self.query_one(_GeneratedWordlistRow)
+        if generated_exhausted:
+            generated.add_class("exhausted")
+            generated.tooltip = "This SSID-password version was already exhausted for every hash"
         for row in self.query(_WordlistRow):
             if row.path in exhausted:
                 row.add_class("exhausted")

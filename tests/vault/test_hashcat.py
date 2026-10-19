@@ -9,6 +9,7 @@ import pytest
 from wifit3.vault.tools.hashcat import (
     HashcatTool, _TERMINATE_WAIT_SECONDS, _read_log_tail, _split_args,
 )
+from wifit3.crack.passwords import SSID_PASSWORDS_IDENTITY
 from wifit3.models import PersistedCapture
 from wifit3.models.access_point import CaptureType
 from wifit3.models.jobs import JobAction, JobState, ToolStatus
@@ -213,7 +214,7 @@ def test_launch_prepends_generated_ssid_passwords(tmp_path, mocker):
     assert spawn.call_args.args[0][-1] == str(generated)
     assert "HomeNet123" in generated.read_text().splitlines()
     assert job.tool_state["wordlists"] == [str(generated), str(wordlist.resolve())]
-    assert job.tool_state["wordlist_identities"][0] == ""
+    assert job.tool_state["wordlist_identities"][0] == SSID_PASSWORDS_IDENTITY
 
     _append(job.log_path, '{ "status": 5, "progress": [3, 3] }\n')
     spawn.proc.poll.return_value = 1

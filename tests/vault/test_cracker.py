@@ -29,3 +29,12 @@ def test_expand_wordlists_drops_what_does_not_exist(tmp_path):
 
 def test_queue_label_is_empty_without_wordlists():
     assert WordlistQueue().label == ""
+
+
+def test_generated_wordlist_is_numbered_zero():
+    queue = WordlistQueue(wordlists=["generated.txt", "first.txt", "second.txt"],
+                          generated_wordlist="generated.txt")
+
+    assert queue.label == "SSID passwords (0/2)"
+    queue.index = 1
+    assert queue.label == "first.txt (1/2)"

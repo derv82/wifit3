@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from wifit3.crack import wpa_psk
-from wifit3.crack.passwords import ssid_variants
+from wifit3.crack.passwords import SSID_PASSWORDS_IDENTITY, ssid_variants
 from wifit3.dot11 import wpa
 from wifit3.models import PersistedCapture, ToolResult, ToolStatus
 from wifit3.models.access_point import CaptureType
@@ -54,9 +54,16 @@ def _join(tool: CpuCrackTool, job: JobState) -> None:
     assert not thread.is_alive()
 
 
-def _poll_finished(tool: CpuCrackTool, job: JobState) -> ToolResult:
+def _poll_wordlist(tool: CpuCrackTool, job: JobState) -> ToolResult:
     _join(tool, job)
     return tool.poll_status(job)
+
+
+def _poll_finished(tool: CpuCrackTool, job: JobState) -> ToolResult:
+    result = _poll_wordlist(tool, job)
+    while result.status is ToolStatus.RUNNING:
+        result = _poll_wordlist(tool, job)
+    return result
 
 
 def _gate_pmk(mocker) -> tuple[threading.Event, threading.Event]:
@@ -102,11 +109,13 @@ def test_cpu_crack_reports_not_found_once_the_wordlist_is_exhausted(tool, tmp_pa
 
 def test_natural_exhaustion_is_recorded_and_filtered_on_the_next_launch(tool, tmp_path):
     job = _launch(tool, tmp_path, [_UNCRACKABLE_PMKID_LINE], [["wrongpass1"]])
-    wordlist = job.tool_state["wordlists"][0]
+    wordlist = job.tool_state["wordlists"][1]
     assert _poll_finished(tool, job).status == ToolStatus.FAILURE
 
     identifiers = capture_record_ids(job.capture_path)
-    assert exhausted_wordlists("fc:69:0c:15:82:64", identifiers) == {wordlist_identity(wordlist)}
+    assert exhausted_wordlists("fc:69:0c:15:82:64", identifiers) == {
+        SSID_PASSWORDS_IDENTITY, wordlist_identity(wordlist),
+    }
     with pytest.raises(ValueError, match="already exhausted"):
         tool.launch(job, PersistedCapture(type=CaptureType.PMKID, timestamp=0,
                                           path=job.capture_path, bssid="fc:69:0c:15:82:64"))
@@ -126,13 +135,31 @@ def test_success_before_wordlist_end_does_not_record_exhaustion(tool, tmp_path):
 
     assert _poll_finished(tool, job).status == ToolStatus.SUCCESS
     assert exhausted_wordlists("fc:69:0c:15:82:64",
-                               capture_record_ids(job.capture_path)) == set()
+                               capture_record_ids(job.capture_path)) == {
+                                   SSID_PASSWORDS_IDENTITY,
+                               }
+
+
+def test_cpu_crack_skips_an_exhausted_ssid_password_version(tool, tmp_path, mocker):
+    crack = mocker.patch.object(tool, "_psk_cracks", return_value=False)
+    first = _launch(tool, tmp_path, [_UNCRACKABLE_PMKID_LINE], [["wrongpass1"]], job_id="first")
+    assert _poll_finished(tool, first).status == ToolStatus.FAILURE
+    crack.reset_mock()
+
+    second = _launch(tool, tmp_path, [_UNCRACKABLE_PMKID_LINE], [["wrongpass2"]], job_id="second")
+    assert _poll_finished(tool, second).status == ToolStatus.FAILURE
+
+    assert [call.args[0] for call in crack.call_args_list] == ["wrongpass2"]
 
 
 def test_cpu_crack_moves_on_to_the_next_wordlist(tool, tmp_path):
     job = _launch(tool, tmp_path, [_HASHCAT_PMKID_LINE], [["wrongpass1"], ["hashcat!"]])
 
-    moved_on = _poll_finished(tool, job)
+    first_wordlist = _poll_wordlist(tool, job)
+    assert first_wordlist.status == ToolStatus.RUNNING
+    assert first_wordlist.value.endswith(" · job_words0.txt (1/2)")
+
+    moved_on = _poll_wordlist(tool, job)
     assert moved_on.status == ToolStatus.RUNNING
     assert moved_on.value.endswith(" · job_words1.txt (2/2)")
     assert (moved_on.percent, moved_on.detail) == (None, "job_words1.txt (2/2)")
@@ -173,6 +200,7 @@ def test_cpu_crack_tries_probed_ssid_variants_before_the_wordlist(tool, tmp_path
 
 
 def test_cpu_crack_counts_and_dedupes_extra_passwords_in_the_total(tool, tmp_path, mocker):
+    mocker.patch.object(tool, "_prepend_generated_wordlist")
     entered, release = _gate_pmk(mocker)
     job = _launch(tool, tmp_path, [_UNCRACKABLE_PMKID_LINE], [["CafeGuest", "wrongpass1"]],
                   extra_passwords=["CafeGuest", "hashcat-essid"])
@@ -213,15 +241,15 @@ def test_cpu_crack_pause_holds_the_worker_until_resumed(tool, tmp_path, mocker):
     job = _launch(tool, tmp_path, [_HASHCAT_PMKID_LINE], [["wrongpass1", "hashcat!"]])
     assert entered.wait(_JOIN_SECONDS)
     running = tool.poll_status(job)
-    assert running.actions == JobAction.STOP | JobAction.PAUSE
-    assert (running.percent, running.detail) == (0.0, "job_words0.txt")
+    assert running.actions == JobAction.STOP | JobAction.SKIP | JobAction.PAUSE
+    assert (running.percent, running.detail) == (0.0, "SSID passwords (0/1)")
 
     assert tool.apply(JobAction.PAUSE, job) is True
     release.set()
     paused = tool.poll_status(job)
     assert paused.value.startswith("Paused (")
     assert paused.percent is not None
-    assert paused.actions == JobAction.STOP | JobAction.RESUME
+    assert paused.actions == JobAction.STOP | JobAction.SKIP | JobAction.RESUME
     thread = tool._runs[job.job_id].thread
     thread.join(timeout=0.05)
     assert thread.is_alive()

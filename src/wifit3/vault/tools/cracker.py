@@ -1,8 +1,11 @@
 from abc import abstractmethod
+import hashlib
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Generic, Optional, Self, TypeVar
 
+from wifit3.crack.hc22000_format import parse_hc22000
+from wifit3.crack.passwords import SSID_PASSWORDS_IDENTITY, ssid_variants
 from wifit3.models import PersistedCapture, ToolResult, ToolStatus
 from wifit3.models.jobs import JobAction, JobState
 from wifit3.vault.exhaustion import (
@@ -37,6 +40,7 @@ class WordlistQueue:
     record_ids: list[str] = field(default_factory=list)
     bssid: str = ""
     record_history: bool = True
+    generated_wordlist: str = ""
 
     @classmethod
     def from_job(cls, job: JobState) -> Self:
@@ -56,10 +60,13 @@ class WordlistQueue:
 
     @property
     def label(self) -> str:
-        """Current file (``rockyou.txt``), with its position when there are several:
-        ``rockyou.txt (3/16)``."""
+        """Current file and its position; generated SSID candidates are wordlist zero."""
+        if self.current == self.generated_wordlist:
+            return f"SSID passwords (0/{len(self.wordlists) - 1})"
         name = Path(self.current).name if self.current else ""
-        return f"{name} ({self.index + 1}/{len(self.wordlists)})" if len(self.wordlists) > 1 else name
+        position = self.index if self.generated_wordlist else self.index + 1
+        total = len(self.wordlists) - bool(self.generated_wordlist)
+        return f"{name} ({position}/{total})" if len(self.wordlists) > 1 else name
 
 
 QueueT = TypeVar("QueueT", bound=WordlistQueue)
@@ -95,6 +102,33 @@ class CrackerTool(VaultTool, Generic[QueueT]):
 
     def can_crack(self, capture: PersistedCapture) -> bool:
         return capture.path.endswith(".hc22000")
+
+    @staticmethod
+    def _prepend_generated_wordlist(job: JobState, queue: QueueT) -> None:
+        if (queue.record_history
+                and SSID_PASSWORDS_IDENTITY in exhausted_wordlists(
+                    queue.bssid, set(queue.record_ids))):
+            return
+        essids: dict[str, None] = {}
+        for raw in Path(job.capture_path).read_text(encoding="utf-8", errors="replace").splitlines():
+            line = parse_hc22000(raw)
+            if line is not None:
+                essids[bytes.fromhex(line.essid).decode("utf-8", errors="replace")] = None
+        candidates = dict.fromkeys(psk for essid in essids for psk in ssid_variants(essid))
+        if not candidates:
+            return
+        token = hashlib.sha256(job.job_id.encode()).hexdigest()[:12]
+        capture_path = Path(job.capture_path)
+        path = capture_path.with_name(f".{capture_path.name}.{token}.ssid-passwords")
+        path.write_text("".join(f"{candidate}\n" for candidate in candidates), encoding="utf-8")
+        queue.wordlists.insert(0, str(path.resolve()))
+        queue.wordlist_identities.insert(0, SSID_PASSWORDS_IDENTITY)
+        queue.generated_wordlist = str(path.resolve())
+
+    @staticmethod
+    def _remove_generated_wordlist(queue: WordlistQueue) -> None:
+        if queue.generated_wordlist:
+            Path(queue.generated_wordlist).unlink(missing_ok=True)
 
     def prepare_queue(self, job: JobState, capture: PersistedCapture) -> QueueT:
         prepared = job.config.pop("_prepared_queue", None)
@@ -214,7 +248,8 @@ class CrackerTool(VaultTool, Generic[QueueT]):
 
     @staticmethod
     def _exhausted_msg(queue: WordlistQueue) -> str:
-        """What the NOT FOUND badge reports: the one wordlist by name, or how many were tried."""
-        if len(queue.wordlists) == 1:
-            return Path(queue.wordlists[0]).name
-        return f"{len(queue.wordlists)} wordlists"
+        """What the NOT FOUND badge reports: the one user wordlist, or how many were tried."""
+        wordlists = [path for path in queue.wordlists if path != queue.generated_wordlist]
+        if len(wordlists) == 1:
+            return Path(wordlists[0]).name
+        return f"{len(wordlists)} wordlists"

@@ -34,7 +34,13 @@ def test_ssid_variants_include_broader_mutations_without_duplicates():
 
     assert "HomeNetpassword" in variants
     assert "HomeNet2026" in variants
-    assert "HomeNet09" in variants
+    assert "HomeNet_123" in variants
+    assert "HomeNet-1234" in variants
+    assert "HomeNet@2026" in variants
+    assert "H0meNet1" in variants
+    assert "Hom3Net1" in variants
+    assert "H0m3N3t1" in variants
+    assert all(f"HomeNet{'7':0>{width}}" in variants for width in range(1, 5))
     assert len(variants) == len(set(variants))
 
 
@@ -43,7 +49,9 @@ def test_ssid_variants_filter_short_and_oversized_passwords():
     assert "X1234567" in short_variants
     assert all(is_valid_psk(candidate) for candidate in short_variants)
 
-    assert ssid_variants("a" * 63) == ["a" * 63, "A" * 63]
+    longest = ssid_variants("a" * 63)
+    assert longest[:2] == ["a" * 63, "A" * 63]
+    assert all(len(candidate.encode()) <= 63 for candidate in longest)
 
 
 def test_ssid_variants_stop_at_configured_limit(monkeypatch):
