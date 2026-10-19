@@ -25,6 +25,19 @@ async def _open_vault(app) -> VaultDrawer:
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
+@pytest.mark.parametrize(("height", "full_screen"), [(34, True), (35, False)])
+async def test_short_vault_uses_full_screen(height, full_screen):
+    app = WifiteApp()
+    async with app.run_test(size=(100, height)) as pilot:
+        view = await _open_vault(app)
+        await pilot.pause(0)
+        content = view.query_one("#vault-content")
+
+        assert (content.region.height == view.size.height) is full_screen
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
 async def test_delete_in_panel_confirms_and_removes(tmp_path):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
     target = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt"

@@ -15,6 +15,7 @@ class VaultDrawer(ModalScreen):
     """The Vault drawer overlay."""
 
     HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (90, "-wide")]
+    VERTICAL_BREAKPOINTS = [(0, "-short"), (36, "-tall")]
 
     BINDINGS = [
         Binding("v", "dismiss_drawer", "Close", show=False),
@@ -40,6 +41,10 @@ class VaultDrawer(ModalScreen):
         layout: vertical;
     }
     VaultDrawer.-narrow _CapturePanel .spacer { display: none; }
+    VaultDrawer.-short #vault-content {
+        height: 100%;
+        max-height: 100%;
+    }
     VaultDrawer.open #vault-content {
         offset-y: 0%;
     }
