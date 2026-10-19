@@ -63,9 +63,15 @@ async def test_layout_geometry():
             assert dash.width == w - 2 * pad - 40
 
             log, clients = reg("#log"), reg("#clients")
-            # Clients is a fixed exact-fit column; log takes the rest; no overlap.
-            assert clients.width == 40
-            assert log.x == 0 and log.right == clients.x and clients.right == w
+            if w <= 80:
+                assert clients.x == 0 and clients.width == w
+                assert log.x == 0 and log.width == w
+                assert clients.y == reg("#bottom").y
+                assert clients.bottom == log.y
+                assert log.bottom == reg("#bottom").bottom
+            else:
+                assert clients.width == 40
+                assert log.x == 0 and log.right == clients.x and clients.right == w
 
             header, footer = reg("Header"), reg("Footer")
             top, mid, bot = reg("#topbar"), reg("#mid"), reg("#bottom")

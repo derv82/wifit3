@@ -134,7 +134,9 @@ def _wep_key_chip(key_hex) -> str:
 class FocusViewV2(Screen):
     app: "WifiteApp"
 
-    HORIZONTAL_BREAKPOINTS = [(0, "-compact"), (100, "-normal"), (140, "-wide")]
+    HORIZONTAL_BREAKPOINTS = [
+        (0, "-narrow"), (81, "-compact"), (100, "-normal"), (140, "-wide"),
+    ]
 
     # Attack hotkeys come from the campaign registry
     BINDINGS = [
@@ -190,8 +192,11 @@ class FocusViewV2(Screen):
     #log { width: 1fr; height: 100%%; border: round %(border)s;
            border-title-color: %(border)s; border-title-style: bold; padding: 0 1; }
     #log-rich { width: 100%%; height: 1fr; background: transparent; border: none; padding: 0; }
-    #clients { width: 40; height: 100%%; border: round %(border)s;
+    #clients { dock: right; width: 40; height: 100%%; border: round %(border)s;
                border-title-color: %(border)s; border-title-style: bold; padding: 0 1; }
+    FocusViewV2.-narrow #bottom { layout: vertical; }
+    FocusViewV2.-narrow #clients { dock: none; width: 100%%; height: 1fr; }
+    FocusViewV2.-narrow #log { width: 100%%; height: 1fr; }
     /* Rows scroll inside a fixed-height region; the broadcast button stays pinned. */
     #client-rows { width: 100%%; height: 1fr; }
 
@@ -260,8 +265,8 @@ class FocusViewV2(Screen):
             yield PacketDashboard(self._dashboard_rows(), id="dashboard")
             yield RouterEndpoint(**self._router_values(), id="router")
         with Horizontal(id="bottom"):
-            yield LogBand([], id="log")
             yield ClientsList(self._client_list(), id="clients")
+            yield LogBand([], id="log")
         yield GlobalJobTracker()
         yield Footer()
 
