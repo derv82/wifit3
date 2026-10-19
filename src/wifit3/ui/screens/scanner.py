@@ -143,6 +143,19 @@ class ScannerView(Screen):
 
     app: "WifiteApp"
 
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (84, "-wide")]
+
+    CSS = """
+    ScannerView.-narrow FilterBar > Label {
+        display: none;
+    }
+    ScannerView.-narrow FilterBar > Input {
+        width: 32;
+        min-width: 32;
+        max-width: 32;
+    }
+    """
+
     BINDINGS = [
         Binding("q", "app.quit", "Quit", show=True),
         Binding("c", "change_channel", "Channel Filter", show=True),

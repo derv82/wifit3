@@ -7,13 +7,13 @@ import time
 import pytest
 import pytest_asyncio
 from textual.app import App
-from textual.widgets import Checkbox, Input
+from textual.widgets import Button, Checkbox, Input, Label
 
 from wifit3.models import AccessPoint, IdKey, IdSource
 from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
 from wifit3.ui.ap_table import APTable
-from wifit3.ui.screens.filter import EncryptionFilter, ScanFilter
+from wifit3.ui.screens.filter import EncryptionFilter, FilterBar, ScanFilter
 from wifit3.ui.screens.scanner import ScannerView
 
 
@@ -82,6 +82,33 @@ class _ScannerHost(App):
 
     def on_mount(self) -> None:
         self.push_screen(ScannerView())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("width", "narrow"), [(83, True), (84, False)])
+async def test_filter_bar_hides_encryption_label_below_84_columns(width, narrow):
+    app = _ScannerHost(_FakeArray([], [1, 6, 11]))
+    async with app.run_test(size=(width, 24)) as pilot:
+        await pilot.pause(0)
+        scanner = app.screen
+        filter_bar = scanner.query_one(FilterBar)
+        encryption_label = filter_bar.query_one(Label)
+        encryption = scanner.query_one("#filter-encryption")
+        channels = scanner.query_one("#filter-channels", Button)
+        filter_input = scanner.query_one("#filter-text", Input)
+
+        assert filter_input.region.y == encryption.region.y
+        assert encryption_label.display is not narrow
+        assert "Channels:" not in channels.label.plain
+
+
+@pytest.mark.asyncio
+async def test_filter_bar_scrolls_when_future_controls_exceed_its_width():
+    app = _ScannerHost(_FakeArray([], [1, 6, 11]))
+    async with app.run_test(size=(54, 24)) as pilot:
+        await pilot.pause(0)
+        filter_bar = app.screen.query_one(FilterBar)
+        assert filter_bar.max_scroll_x > 0
 
 
 @pytest.mark.asyncio
