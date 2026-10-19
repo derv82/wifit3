@@ -61,6 +61,7 @@ class VaultDrawer(ModalScreen):
     def __init__(self, preselected_bssid: Optional[str] = None) -> None:
         super().__init__()
         self._preselected_bssid = preselected_bssid
+        self._metadata_generation_targets: set[str] = set()
 
     def compose(self) -> ComposeResult:
         with Container(id="vault-content"):
@@ -81,6 +82,7 @@ class VaultDrawer(ModalScreen):
         missing = self.app.vault.claim_new_missing_metadata()
         if not missing:
             return
+        self._metadata_generation_targets = missing
         noun = "AP" if len(missing) == 1 else "APs"
         prompt = (
             f"Found [bold]{len(missing)}[/] new saved {noun} without Vault metadata. "
@@ -104,7 +106,11 @@ class VaultDrawer(ModalScreen):
     def _metadata_generation_finished(self, result: RepairResult) -> None:
         self.app.vault.refresh()
         self.query_one("#vault-table", VaultTable).reload_table()
-        message = f"Generated metadata for {result.aps} APs"
+        generated = len(self._metadata_generation_targets)
+        noun = "AP" if generated == 1 else "APs"
+        message = f"Generated metadata for {generated} new {noun}"
+        if result.aps != generated:
+            message += f"; scanned {result.aps} saved APs"
         if result.backup_dir is not None:
             message += f". Originals: {result.backup_dir.name}"
         if result.errors:
