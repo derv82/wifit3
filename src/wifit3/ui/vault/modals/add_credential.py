@@ -79,6 +79,11 @@ class AddCredentialModal(ModalScreen[ManualCredential | None]):
     def _cancel_pressed(self) -> None:
         self.dismiss(None)
 
+    @on(Input.Submitted, "#value")
+    def _value_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._add_pressed()
+
     @on(Button.Pressed, "#add")
     def _add_pressed(self) -> None:
         ssid = self.query_one("#ssid", Input).value.strip()

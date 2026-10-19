@@ -63,8 +63,10 @@ async def test_vault_shortcut_adds_manual_psk_and_leaves_crack_all_disabled(tmp_
         assert app.screen.query_one("#ssid", Input).value == "HomeNet"
         assert app.screen.query_one("#bssid", Input).value == "aa:bb:cc:dd:ee:ff"
 
-        app.screen.query_one("#value", Input).value = "correct horse battery staple"
-        app.screen.query_one("#add", Button).press()
+        value_input = app.screen.query_one("#value", Input)
+        value_input.value = "correct horse battery staple"
+        value_input.focus()
+        await pilot.press("enter")
         await pilot.pause()
 
         caps = app.vault.persisted("aa:bb:cc:dd:ee:ff")
