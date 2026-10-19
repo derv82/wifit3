@@ -90,6 +90,55 @@ class SplashView(Screen):
 
     app: "WifiteApp"
 
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (70, "-wide")]
+    VERTICAL_BREAKPOINTS = [(0, "-tiny"), (25, "-short"), (33, "-tall")]
+
+    CSS = """
+    #compact-logo {
+        display: none;
+        width: 100%;
+        height: 8;
+        content-align: center middle;
+        color: $primary;
+        text-style: bold;
+        margin-top: 2;
+        margin-bottom: 1;
+    }
+
+    SplashView.-narrow #device-row {
+        layout: vertical;
+        width: 100%;
+        height: auto;
+        align: center middle;
+    }
+    SplashView.-tiny #device-row,
+    SplashView.-short #device-row { margin-top: 0; }
+    SplashView.-tiny #device-list,
+    SplashView.-tiny #device-select { max-height: 4; }
+    SplashView.-short #device-list,
+    SplashView.-short #device-select { max-height: 8; }
+    SplashView.-narrow #button-col {
+        layout: horizontal;
+        width: 100%;
+        max-width: 52;
+        height: 3;
+        margin-top: 1;
+        margin-left: 0;
+        align: center middle;
+    }
+    SplashView.-narrow #button-col Button {
+        width: 1fr;
+        min-width: 0;
+        height: 3;
+        margin: 0 1 0 0;
+    }
+    SplashView.-narrow #button-col #uninstall-btn { margin: 0; }
+    SplashView.-tiny #ascii-art,
+    SplashView.-short #ascii-art { display: none; }
+    SplashView.-tiny #compact-logo,
+    SplashView.-short #compact-logo { display: block; }
+    """
+
     BINDINGS = [
         ("q", "app.quit", "Quit"),
         Binding("enter", "enter", "Start", priority=True),
@@ -106,6 +155,7 @@ class SplashView(Screen):
         with Vertical(id="splash-container"):
             with Center():
                 yield Static(self._logo(), id="ascii-art")
+            yield Static(self._compact_logo(), id="compact-logo")
             with Center():
                 yield Label("Scanning for compatible hardware…", id="status-label")
             with Center():
@@ -135,9 +185,13 @@ class SplashView(Screen):
         theme = self.app.current_theme
         return recolor_logo(LOGO, theme.variables, dark=theme.dark)
 
+    def _compact_logo(self) -> Text:
+        lines = self._logo().split("\n")
+        return Text("\n").join(lines[-8:])
+
     def refresh_theme_art(self) -> None:
-        logo = self.query_one("#ascii-art", Static)
-        logo.update(self._logo())
+        self.query_one("#ascii-art", Static).update(self._logo())
+        self.query_one("#compact-logo", Static).update(self._compact_logo())
 
     def _enter_scanning_mode(self) -> None:
         """The 'pick a card' resting state."""
