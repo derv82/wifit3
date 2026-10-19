@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 import subprocess
 import sys
 import time
@@ -53,6 +54,14 @@ def _related_bssids(left: str, right: str) -> bool:
     left_octets = left.replace("-", ":").lower().split(":")
     right_octets = right.replace("-", ":").lower().split(":")
     return len(left_octets) == 6 and len(right_octets) == 6 and left_octets[:5] == right_octets[:5]
+
+
+@dataclass(frozen=True, slots=True)
+class PskPropagationResult:
+    saved_psks: int
+    candidate_checks: int
+    verified_aps: int
+    unverifiable_checks: int
 
 
 def _open_in_file_manager(path: Path) -> None:
@@ -243,10 +252,7 @@ class Vault:
                 return True
         return False
 
-    def propagate_verified_psk(self, source_bssid: str, source_ssid: str | None,
-                               psk: str) -> list[str]:
-        """Verify a recovered PSK against related saved APs and persist matching ones."""
-        matched: list[str] = []
+    def _related_psk_candidates(self, source_bssid: str, source_ssid: str | None):
         for bssid, captures in list(self._index.items()):
             if bssid == source_bssid:
                 continue
@@ -256,11 +262,41 @@ class Vault:
                 continue
             if any(capture.type in self._PSK_TYPES and capture.value for capture in captures):
                 continue
+            yield bssid, ssid
+
+    def propagate_verified_psk(self, source_bssid: str, source_ssid: str | None,
+                               psk: str) -> list[str]:
+        """Verify a recovered PSK against related saved APs and persist matching ones."""
+        matched: list[str] = []
+        for bssid, ssid in self._related_psk_candidates(source_bssid, source_ssid):
             if self.verify_wpa_psk(bssid, psk) is not True:
                 continue
             self.save_wpa_psk(ssid, bssid, psk)
             matched.append(bssid)
         return matched
+
+    def verify_saved_psks_for_related_aps(self) -> PskPropagationResult:
+        """Try every saved PSK against related AP captures and persist verified matches."""
+        sources: list[tuple[str, str | None, str]] = []
+        for bssid, captures in self._index.items():
+            ssid = next((capture.ssid for capture in captures if capture.ssid), None)
+            keys = {capture.value for capture in captures
+                    if capture.type in self._PSK_TYPES and capture.value}
+            sources.extend((bssid, ssid, key) for key in keys)
+
+        checks = 0
+        unverifiable = 0
+        verified: set[str] = set()
+        for source_bssid, source_ssid, psk in sources:
+            for bssid, ssid in self._related_psk_candidates(source_bssid, source_ssid):
+                checks += 1
+                verdict = self.verify_wpa_psk(bssid, psk)
+                if verdict is None:
+                    unverifiable += 1
+                elif verdict:
+                    self.save_wpa_psk(ssid, bssid, psk)
+                    verified.add(bssid)
+        return PskPropagationResult(len(sources), checks, len(verified), unverifiable)
 
     def has_handshake(self, ap: "AccessPoint") -> bool:
         return self._has(ap.bssid, CaptureType.HS)

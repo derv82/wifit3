@@ -161,6 +161,36 @@ def test_recovered_psk_propagates_only_after_related_capture_verifies(tmp_path):
     assert vault.known_psk(AccessPoint(bssid=wrong_bssid)) is None
 
 
+def test_maintenance_verifies_saved_psks_for_related_aps(tmp_path):
+    key = "correct-password"
+    source_bssid = "aa:bb:cc:dd:ee:01"
+    matching_bssid = "aa:bb:cc:dd:ee:02"
+    unverifiable_bssid = "aa:bb:cc:dd:ee:03"
+    (tmp_path / "HomeNet_aa-bb-cc-dd-ee-01_1700000001_wpa_psk.txt").write_text(
+        f"SSID: HomeNet\nBSSID: {source_bssid}\nPSK: {key}\n",
+        encoding="utf-8",
+    )
+    _write_pmkid_capture(
+        tmp_path / "HomeNet_5G_aa-bb-cc-dd-ee-02.hc22000",
+        matching_bssid,
+        "HomeNet_5G",
+        key,
+    )
+    (tmp_path / "HomeNet_6G_aa-bb-cc-dd-ee-03_1700000002_wep_key.txt").write_text(
+        f"SSID: HomeNet_6G\nBSSID: {unverifiable_bssid}\nWEP key (hex): 6162636465\n",
+        encoding="utf-8",
+    )
+    vault = Vault()
+
+    result = vault.verify_saved_psks_for_related_aps()
+
+    assert result.saved_psks == 1
+    assert result.candidate_checks == 2
+    assert result.verified_aps == 1
+    assert result.unverifiable_checks == 1
+    assert vault.known_psk(AccessPoint(bssid=matching_bssid)) == key
+
+
 def test_persisted_unknown_bssid_is_empty(tmp_path):
     assert Vault().persisted("aa:bb:cc:dd:ee:ff") == []
 

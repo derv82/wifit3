@@ -13,6 +13,7 @@ from textual.theme import Theme
 from textual.widgets import Button, Checkbox, Input, Label, Select
 
 from wifit3.persist.config import Config
+from wifit3.persist.vault import PskPropagationResult
 from wifit3.persist.repair import RepairResult, repair_vault
 from wifit3.ui.path_picker import PathInput
 from wifit3.ui.screens.vault_item import ConfirmModal
@@ -96,6 +97,7 @@ class VaultMaintenanceSetting(VerticalGroup):
     def compose(self) -> ComposeResult:
         self.border_title = "Vault maintenance"
         yield Button("Repair Vault data", id="repair-vault")
+        yield Button("Verify shared PSKs", id="verify-shared-psks")
 
 
 class SaveFooter(Horizontal):
@@ -175,6 +177,28 @@ class PreferencesModal(ModalScreen):
             "be preserved in a v1 backup directory. Saved passwords, WPS PINs, WEP keys, and "
             "credential files will not be changed.[/]"
         )
+
+    @on(Button.Pressed, "#verify-shared-psks")
+    def verify_shared_psks_pressed(self, event: Event) -> None:
+        event.stop()
+        self.query_one("#verify-shared-psks", Button).disabled = True
+        self.notify("Verifying saved PSKs against related APs…")
+        self._verify_shared_psks()
+
+    @work(thread=True, exclusive=True)
+    def _verify_shared_psks(self) -> None:
+        result = self.app.vault.verify_saved_psks_for_related_aps()
+        self.app.call_from_thread(self._shared_psks_finished, result)
+
+    def _shared_psks_finished(self, result: PskPropagationResult) -> None:
+        self.query_one("#verify-shared-psks", Button).disabled = False
+        message = (
+            f"Checked {result.saved_psks} saved PSKs in {result.candidate_checks} related "
+            f"AP matches; verified {result.verified_aps} additional APs"
+        )
+        if result.unverifiable_checks:
+            message += f"; {result.unverifiable_checks} matches had no usable capture"
+        self.notify(message, title="Shared PSK verification complete")
 
     @on(Button.Pressed, "#repair-vault")
     def repair_vault_pressed(self, event: Event) -> None:

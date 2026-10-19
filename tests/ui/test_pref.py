@@ -6,7 +6,7 @@ from textual.widgets import Button, Checkbox
 
 from wifit3.persist import config
 from wifit3.persist.config import Config, ConfigError
-from wifit3.persist.vault import Vault
+from wifit3.persist.vault import PskPropagationResult, Vault
 from wifit3.ui.pref import PreferencesModal
 from wifit3.ui.screens.vault_item import ConfirmModal
 
@@ -84,6 +84,29 @@ async def test_vault_repair_requires_destructive_change_confirmation(tmp_path):
         prompt = str(app.screen.query_one("#prompt").render())
         assert "Original HC22000 and pcap sources will be preserved" in prompt
         assert "Saved passwords" in prompt
+
+
+@pytest.mark.asyncio
+async def test_verify_shared_psks_runs_vault_maintenance(mocker):
+    app = _Host()
+    verify = mocker.patch.object(
+        app.vault,
+        "verify_saved_psks_for_related_aps",
+        return_value=PskPropagationResult(2, 3, 1, 1),
+    )
+    async with app.run_test() as pilot:
+        modal = PreferencesModal()
+        notices = []
+        modal.notify = lambda *args, **kwargs: notices.append((args, kwargs))
+        app.push_screen(modal)
+        await pilot.pause(0)
+
+        modal.query_one("#verify-shared-psks", Button).press()
+        await pilot.pause()
+
+        verify.assert_called_once_with()
+        assert any("verified 1 additional APs" in args[0] for args, _kwargs in notices)
+        assert modal.query_one("#verify-shared-psks", Button).disabled is False
 
 
 @pytest.mark.asyncio
