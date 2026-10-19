@@ -76,7 +76,6 @@ logger = logging.getLogger(__name__)
 
 _ENDPOINT_W = 20  # the .ans art is exactly 20 cells wide
 _TOPBAR_H = 3
-_STACKED_TOPBAR_H = 6
 _CHROME_H = 2  # Buffer for Textual's Header & Footer (1 row each)
 _BORDER = "$primary"  # Border/title color for  LOG / CLIENTS panels
 
@@ -137,6 +136,7 @@ class FocusViewV2(Screen):
     HORIZONTAL_BREAKPOINTS = [
         (0, "-narrow"), (81, "-compact"), (100, "-normal"), (140, "-wide"),
     ]
+    VERTICAL_BREAKPOINTS = [(0, "-short"), (36, "-tall")]
 
     # Attack hotkeys come from the campaign registry
     BINDINGS = [
@@ -160,6 +160,8 @@ class FocusViewV2(Screen):
     #topbar { height: %(top)d; }
     #actions { width: auto; height: 100%%; }
     #topbar Button { height: 3; width: auto; min-width: 0; margin: 0 1 0 0; }
+    FocusViewV2.-short #actions { align: left middle; }
+    FocusViewV2.-short #topbar Button { height: 1; border: none; }
     /* No background override on .attack-btn */
     #status { width: 1fr; height: 3; content-align: center middle; text-align: center; }
     #rspacer { width: 0; height: 1; }
@@ -614,7 +616,7 @@ class FocusViewV2(Screen):
         """Fill the mid band to full 2-row sparklines."""
         tracker = self.query_one(GlobalJobTracker)
         self._balance_status()
-        topbar_height = _STACKED_TOPBAR_H if self._status_below_actions else _TOPBAR_H
+        topbar_height = self._topbar_height()
         chrome = _CHROME_H + int(bool(tracker.display))
         avail = max(1, self.size.height - topbar_height - chrome)
         center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
@@ -624,6 +626,11 @@ class FocusViewV2(Screen):
         self.query_one("#bottom").styles.height = avail - center
         pad = max(0, round((self.size.width - _PAD_START) * _PAD_RATE))
         mid.styles.padding = (0, pad, 0, pad)
+
+    def _topbar_height(self) -> int:
+        if not self._status_below_actions:
+            return _TOPBAR_H
+        return (1 if self.has_class("-short") else _TOPBAR_H) + _TOPBAR_H
 
     def _balance_status(self) -> None:
         """Center status beside actions, or place it below when symmetry no longer fits."""
@@ -641,9 +648,10 @@ class FocusViewV2(Screen):
         layout_changed = self._status_below_actions != status_below
         self._status_below_actions = status_below
         topbar.styles.layout = "vertical" if status_below else "horizontal"
-        topbar.styles.height = _STACKED_TOPBAR_H if status_below else _TOPBAR_H
+        topbar.styles.height = self._topbar_height()
         actions.styles.width = "100%" if status_below else "auto"
-        actions.styles.height = _TOPBAR_H if status_below else "100%"
+        action_height = 1 if self.has_class("-short") else _TOPBAR_H
+        actions.styles.height = action_height if status_below else "100%"
         status = self.query_one("#status", Static)
         status.styles.width = "100%" if status_below else "1fr"
         self.query_one("#rspacer", Static).display = not status_below

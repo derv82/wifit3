@@ -85,6 +85,20 @@ async def test_layout_geometry():
             assert bot.height == avail - expected_center
 
 
+@pytest_asyncio.fixture(params=[(35, 1), (36, 3)])
+async def focus_button_height(request):
+    height, expected = request.param
+    app = _Host()
+    async with app.run_test(size=(120, height)) as pilot:
+        await pilot.pause(0)
+        yield app.screen.query_one("#back").region.height, expected
+
+
+async def test_short_focus_uses_compact_top_buttons(focus_button_height):
+    actual, expected = focus_button_height
+    assert actual == expected
+
+
 async def test_status_moves_below_buttons_when_centering_no_longer_fits():
     app = _Host()
     async with app.run_test(size=(80, 24)) as pilot:
@@ -102,7 +116,7 @@ async def test_status_moves_below_buttons_when_centering_no_longer_fits():
         actions = screen.query_one("#actions")
         status = screen.query_one("#status")
         assert screen._status_below_actions is True
-        assert topbar.region.height == 6
+        assert topbar.region.height == 4
         assert status.region.y == actions.region.bottom
         assert status.region.bottom == topbar.region.bottom
         assert screen.query_one("#mid").region.y == topbar.region.bottom
