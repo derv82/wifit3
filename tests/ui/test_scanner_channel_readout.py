@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 import pytest_asyncio
 from textual.app import App, ComposeResult
+from textual.widgets._header import HeaderTitle
 
 from wifit3.ui.screens.scanner import _ChannelReadout, _ScannerHeader
 
@@ -31,6 +32,18 @@ async def test_single_card_channel_is_visible_on_first_paint():
         readout = app.query_one(_ChannelReadout)
         assert readout.channels == "CH:  1"
         assert readout.region.width > 0
+
+
+@pytest.mark.asyncio
+async def test_title_is_centered_independently_of_channel_readout():
+    app = _Host(_array(1, 149, 165))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        title = app.query_one(HeaderTitle)
+        readout = app.query_one(_ChannelReadout)
+        assert title.region.x == 0
+        assert title.region.width == app.size.width
+        assert readout.region.right == app.size.width
 
 
 @pytest_asyncio.fixture(loop_scope="module", scope="module")

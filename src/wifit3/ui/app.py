@@ -57,7 +57,22 @@ class WifiteApp(App):
 
     CSS = """
     /* Force single-line header to avoid Textual's "click to expand" behavior */
-    Header { height: 1 !important; }
+    Header {
+        height: 1 !important;
+        layers: title controls;
+    }
+    Header HeaderTitle {
+        layer: title;
+        width: 100%;
+    }
+    Header HeaderIcon {
+        layer: controls;
+        dock: left;
+    }
+    Header HeaderClock {
+        layer: controls;
+        dock: right;
+    }
 
     #ascii-art {
         content-align: center middle;

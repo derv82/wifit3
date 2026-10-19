@@ -6,6 +6,7 @@ from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
 from textual.widgets import Button, RichLog
+from textual.widgets._header import HeaderTitle
 
 from wifit3.ui.ap_table import APTable
 
@@ -22,6 +23,17 @@ def test_desktop_notification_requires_blurred_enabled_app(mocker):
 
     Config.desktop_notifications = False
     assert app.desktop_notify("Disabled", "Body") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_header_title_is_centered_across_the_terminal():
+    app = WifiteApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        title = app.screen.query_one(HeaderTitle)
+        assert title.region.x == 0
+        assert title.region.width == app.size.width
 
 
 @pytest.mark.asyncio

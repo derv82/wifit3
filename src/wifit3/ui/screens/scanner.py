@@ -84,6 +84,25 @@ class _ChannelReadout(HeaderClock):
 
 class _ScannerHeader(Header):
     """Header whose right slot shows the hopped channel(s) in place of the clock."""
+
+    DEFAULT_CSS = """
+    _ScannerHeader {
+        layers: title channels;
+    }
+    _ScannerHeader HeaderTitle {
+        layer: title;
+        width: 100%;
+    }
+    _ScannerHeader HeaderIcon {
+        layer: channels;
+        dock: left;
+    }
+    _ScannerHeader _ChannelReadout {
+        layer: channels;
+        dock: right;
+    }
+    """
+
     def compose(self) -> ComposeResult:
         yield HeaderIcon().data_bind(Header.icon)
         yield HeaderTitle()
