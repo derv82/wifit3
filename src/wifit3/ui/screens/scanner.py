@@ -8,7 +8,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.reactive import Reactive
 from textual.screen import Screen
-from textual.widgets import Footer, Header, RichLog
+from textual.widgets import Footer, Header, RichLog, Static
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
 from rich.markup import escape
 from rich.text import Text
@@ -77,9 +77,25 @@ class _ChannelReadout(HeaderClock):
         array = getattr(self.app, "array", None)
         members = array.members if array else []
         self.channels = " | ".join(f"CH:{m.current_channel:>3}" for m in members)
+        self.parent.update_channel_layout(self.channels)
 
     def render(self) -> RenderResult:
         return Text(self.channels)
+
+
+class _ChannelBar(Static):
+    DEFAULT_CSS = """
+    _ChannelBar {
+        display: none;
+        width: 100%;
+        height: 1;
+        background: $panel;
+        tint: $foreground-darken-1 5%;
+        color: $foreground;
+        text-opacity: 85%;
+        content-align: right middle;
+    }
+    """
 
 
 class _ScannerHeader(Header):
@@ -107,6 +123,19 @@ class _ScannerHeader(Header):
         yield HeaderIcon().data_bind(Header.icon)
         yield HeaderTitle()
         yield _ChannelReadout()
+
+    def update_channel_layout(self, channels: str) -> None:
+        title_width = self.format_title().cell_length
+        title_right = (self.size.width + title_width + 1) // 2
+        channels_left = self.size.width - len(channels)
+        use_channel_bar = bool(channels) and channels_left - title_right < 3
+        self.query_one(_ChannelReadout).display = not use_channel_bar
+        for channel_bar in self.screen.query(_ChannelBar):
+            channel_bar.update(channels)
+            channel_bar.display = use_channel_bar
+
+    def on_resize(self) -> None:
+        self.update_channel_layout(self.query_one(_ChannelReadout).channels)
 
 
 class ScannerView(Screen):
@@ -160,6 +189,7 @@ class ScannerView(Screen):
 
     def compose(self) -> ComposeResult:
         yield _ScannerHeader()
+        yield _ChannelBar()
         array = self.app.array
         supported = list(array.supported_channels) if array else []
         with Vertical():

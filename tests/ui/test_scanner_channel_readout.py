@@ -7,7 +7,7 @@ import pytest_asyncio
 from textual.app import App, ComposeResult
 from textual.widgets._header import HeaderTitle
 
-from wifit3.ui.screens.scanner import _ChannelReadout, _ScannerHeader
+from wifit3.ui.screens.scanner import _ChannelBar, _ChannelReadout, _ScannerHeader
 
 
 def _array(*channels):
@@ -15,12 +15,15 @@ def _array(*channels):
 
 
 class _Host(App):
+    CSS = "Header { height: 1 !important; }"
+
     def __init__(self, array=None):
         super().__init__()
         self.array = array
 
     def compose(self) -> ComposeResult:
         yield _ScannerHeader()
+        yield _ChannelBar()
 
 
 @pytest.mark.asyncio
@@ -44,6 +47,41 @@ async def test_title_is_centered_independently_of_channel_readout():
         assert title.region.x == 0
         assert title.region.width == app.size.width
         assert readout.region.right == app.size.width
+        assert readout.display is True
+        assert app.query_one(_ScannerHeader).region.height == 1
+        assert app.query_one(_ChannelBar).display is False
+
+
+@pytest.mark.asyncio
+async def test_channels_move_when_three_spaces_no_longer_fit():
+    app = _Host(_array(1))
+    async with app.run_test(size=(21, 24)) as pilot:
+        await pilot.pause(0)
+        header = app.query_one(_ScannerHeader)
+        readout = app.query_one(_ChannelReadout)
+        channel_bar = app.query_one(_ChannelBar)
+        assert header.region.height == 1
+        assert readout.display is False
+        assert channel_bar.display is True
+        assert channel_bar.region.y == header.region.bottom
+        assert channel_bar.region.height == 1
+
+
+@pytest.mark.asyncio
+async def test_overlapping_channels_use_separate_bar():
+    app = _Host(_array(1, 149, 165))
+    async with app.run_test(size=(30, 24)) as pilot:
+        await pilot.pause(0)
+        header = app.query_one(_ScannerHeader)
+        title = app.query_one(HeaderTitle)
+        readout = app.query_one(_ChannelReadout)
+        channel_bar = app.query_one(_ChannelBar)
+        assert header.region.height == 1
+        assert title.region.y == 0
+        assert readout.display is False
+        assert channel_bar.display is True
+        assert channel_bar.region.y == header.region.bottom
+        assert channel_bar.region.right == app.size.width
 
 
 @pytest_asyncio.fixture(loop_scope="module", scope="module")
