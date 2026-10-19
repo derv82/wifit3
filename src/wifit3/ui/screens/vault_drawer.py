@@ -235,6 +235,8 @@ class VaultDrawer(ModalScreen):
                 return
             verified = verification is True
             result = self.app.vault.save_wpa_psk(ap.ssid, ap.bssid, credential.value)
+            if result is not None:
+                self._verify_related_aps(ap.bssid, ap.ssid, credential.value)
         elif credential.kind == "wps_pin":
             result = self.app.vault.save_wps_pin(ap, credential.value, None)
         else:
@@ -248,6 +250,23 @@ class VaultDrawer(ModalScreen):
             self.notify(message)
         else:
             self.notify("Credential is already in Vault", severity="warning")
+
+    @work(thread=True)
+    def _verify_related_aps(self, bssid: str, ssid: str, psk: str) -> None:
+        try:
+            matched = self.app.vault.propagate_verified_psk(bssid, ssid, psk)
+        except OSError as exc:
+            self.app.call_from_thread(self._related_psk_failed, str(exc))
+            return
+        self.app.call_from_thread(self._related_psk_finished, matched)
+
+    def _related_psk_finished(self, matched: list[str]) -> None:
+        if matched:
+            noun = "AP" if len(matched) == 1 else "APs"
+            self.notify(f"PSK also verified and saved for {len(matched)} related {noun}")
+
+    def _related_psk_failed(self, error: str) -> None:
+        self.notify(f"Could not save a related AP credential: {error}", severity="warning")
 
     def action_export_zip(self) -> None:
         try:

@@ -44,9 +44,10 @@ async def test_open_vault_prompts_to_generate_missing_metadata(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_vault_shortcut_adds_manual_psk_and_leaves_crack_all_disabled(tmp_path):
+async def test_vault_shortcut_adds_manual_psk_and_leaves_crack_all_disabled(tmp_path, mocker):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
     app = WifiteApp()
+    propagate = mocker.patch.object(app.vault, "propagate_verified_psk", return_value=[])
     async with app.run_test() as pilot:
         view = await _open_vault(app)
         await pilot.pause()
@@ -69,6 +70,9 @@ async def test_vault_shortcut_adds_manual_psk_and_leaves_crack_all_disabled(tmp_
         caps = app.vault.persisted("aa:bb:cc:dd:ee:ff")
         assert any(cap.type == "WPA_PSK" and cap.value == "correct horse battery staple"
                    for cap in caps)
+        propagate.assert_called_once_with(
+            "aa:bb:cc:dd:ee:ff", "HomeNet", "correct horse battery staple"
+        )
 
 
 @pytest.mark.asyncio
