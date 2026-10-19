@@ -45,25 +45,6 @@ Same `VaultTool` shape as WPA-Sec (submit + poll a remote API), but self-hosted 
 Needs a server URL + voucher/API key in Preferences, and a mapping from our capture types onto
 Hashtopolis task creation.
 
-### Improve Default Passwords
-
-Auto-crack runs CPU Crack (`vault/tools/cpu_crack.py`) on a new AP's first capture, and again on its
-first PMKID / authorized handshake if earlier captures were M1+M2 only. Passwords, in order: the
-capture's SSID variants, probed-SSID passwords, then `crack/assets/default_passwords.txt`.
-Document all of it so users can see exactly what runs on every capture:
-- **SSID variants** (`crack/passwords.py:ssid_variants`): the SSID as-is, lower, upper, each plus
-  `123`, `1234`, `12345678`, `!`, kept only if a valid 8-63 byte PSK. A short SSID like `X` only
-  yields its `12345678` variants.
-- **Probed SSIDs** (`ssid_passwords`): every SSID probed this session as-is, then their variants
-  (up to 15 passwords per SSID), capped at `_MAX_SSID_PASSWORDS = 1500`.
-- **Default list**: rockyou.txt in its original frequency order; only the trailing `\r\n` stripped;
-  kept if 8-63 bytes as UTF-8; deduplicated keeping order; first 2,300 (~5s of PBKDF2 on one
-  Raspberry Pi 500 core at ~463 PMK/s). No comment/HTML/control-char/padded lines; lengths 8-17.
-
-Idea: a hashcat-rule-style suffix set, ~1k common suffixes per SSID, ordered shortest-first so
-short SSIDs reach 8+ chars. Still capped.
-
-------------
 
 ### Auto-Decloak Known APs
 
