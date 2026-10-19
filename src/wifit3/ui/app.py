@@ -153,7 +153,7 @@ class WifiteApp(App):
         return self.array.probed_ssids if self.array is not None else set()
 
     def copy_to_clipboard(self, text: str) -> None:
-        """Copy through Win32 when available, otherwise use terminal OSC-52."""
+        """Copy through Win32 or pbcopy, falling back to terminal OSC 52."""
         if not copy_windows_text(text) and not copy_macos_text(text):
             super().copy_to_clipboard(text)
 
