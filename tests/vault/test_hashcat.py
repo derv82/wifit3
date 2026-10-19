@@ -28,8 +28,7 @@ def _cap(tmp_path):
 
 def _queued_job(tmp_path, wordlists, args=None):
     """A job ready for launch: a real capture file and a hashcat_exe that exists."""
-    (tmp_path / "a.hc22000").write_text(
-        "WPA*01*deadbeef*001122334455*66778899aabb*74657374***\n")
+    (tmp_path / "a.hc22000").write_text("not a hashline\n")
     config = {"hashcat_exe": sys.executable, "wordlists": [str(w) for w in wordlists]}
     if args is not None:
         config["hashcat_args"] = args
@@ -198,6 +197,34 @@ def test_poll_status_exhausted_counts_a_queue_of_wordlists(tmp_path):
 
 
 # ----- the wordlist queue ---------------------------------------------------
+
+def test_launch_prepends_generated_ssid_passwords(tmp_path, mocker):
+    wordlist = tmp_path / "a.txt"
+    wordlist.write_text("one\n")
+    job = _queued_job(tmp_path, [wordlist])
+    (tmp_path / "a.hc22000").write_text(
+        "WPA*01*4d4fe7aac3a2cecab195321ceb99a7d0*fc690c158264*f4747f87f9f4"
+        "*486f6d654e6574***\n")
+    spawn = _fake_spawn(mocker)
+
+    HashcatTool().launch(job, _cap(tmp_path))
+
+    generated = Path(job.tool_state["generated_wordlist"])
+    assert spawn.call_args.args[0][-1] == str(generated)
+    assert "HomeNet123" in generated.read_text().splitlines()
+    assert job.tool_state["wordlists"] == [str(generated), str(wordlist.resolve())]
+    assert job.tool_state["wordlist_identities"][0] == ""
+
+    _append(job.log_path, '{ "status": 5, "progress": [3, 3] }\n')
+    spawn.proc.poll.return_value = 1
+    assert HashcatTool().poll_status(job, assume_dead=True).status == ToolStatus.RUNNING
+    assert spawn.call_args.args[0][-1] == str(wordlist.resolve())
+    assert generated.exists()
+
+    _append(job.log_path, '{ "status": 5, "progress": [3, 3] }\n')
+    assert HashcatTool().poll_status(job, assume_dead=True).status == ToolStatus.FAILURE
+    assert not generated.exists()
+
 
 def test_launch_runs_hashcat_against_the_first_wordlist_only(tmp_path, mocker):
     first, second = tmp_path / "a.txt", tmp_path / "b.txt"

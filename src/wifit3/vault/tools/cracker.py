@@ -161,11 +161,11 @@ class CrackerTool(VaultTool, Generic[QueueT]):
         when it ended without a stop, a skip or exhausting the wordlist."""
         if queue.stopped:
             return ToolResult(status=ToolStatus.STOPPED, value="Stopped by user")
-        can_record = (queue.record_history and queue.bssid and queue.record_ids
-                      and queue.index < len(queue.wordlist_identities))
+        identity = (queue.wordlist_identities[queue.index]
+                    if queue.index < len(queue.wordlist_identities) else "")
+        can_record = queue.record_history and queue.bssid and queue.record_ids and identity
         if exhausted and not queue.skipping_wordlist and can_record:
-            record_exhaustion(queue.bssid, set(queue.record_ids),
-                              queue.wordlist_identities[queue.index])
+            record_exhaustion(queue.bssid, set(queue.record_ids), identity)
         if queue.skipping_wordlist and queue.has_next:
             queue.skipping_wordlist = False
             self._start_next_wordlist(job, queue)
