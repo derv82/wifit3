@@ -88,6 +88,26 @@ def _eapol_line(mic: bytes, eapol: bytes) -> Hc22000Line:
                        essid=_SSID.hex(), anonce=_ANONCE.hex(), eapol=eapol.hex(), message_pair="00")
 
 
+def test_line_is_verifiable_for_supported_local_formats():
+    assert wpa_psk.line_is_verifiable(
+        Hc22000Line(kind="01", pmkid_or_mic="00" * 16, mac_ap=_AA.hex(),
+                    mac_sta=_SPA.hex(), essid=_SSID.hex())
+    )
+    for key_descriptor_version in (1, 2, 3):
+        eapol = eapol_key(
+            key_info=0x0108 | key_descriptor_version,
+            key_len=0,
+            replay=1,
+            nonce=_SNONCE,
+            key_data=_RSN_IE,
+        )
+        assert wpa_psk.line_is_verifiable(_eapol_line(bytes(16), eapol))
+    assert not wpa_psk.line_is_verifiable(
+        Hc22000Line(kind="04", pmkid_or_mic="00" * 16, mac_ap=_AA.hex(),
+                    mac_sta=_SPA.hex(), essid=_SSID.hex())
+    )
+
+
 def test_psk_matches_key_descriptor_version_1():
     eapol = eapol_key(key_info=0x0109, key_len=0, replay=1, nonce=_SNONCE, key_data=_RSN_IE)
     kck = derive_ptk(_PMK, _AA, _SPA, _ANONCE, _SNONCE, KCK_LEN)

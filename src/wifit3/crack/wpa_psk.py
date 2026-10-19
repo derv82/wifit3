@@ -45,7 +45,9 @@ def line_is_verifiable(line: Hc22000Line) -> bool:
     if len(eapol) < _KEY_INFO_OFFSET + 2:
         return False
     key_info = int.from_bytes(eapol[_KEY_INFO_OFFSET:_KEY_INFO_OFFSET + 2], "big")
-    return key_info & 7 == _KEY_DESCRIPTOR_VERSION_HMAC_SHA1
+    return key_info & 7 in {1, 2, 3}
+
+
 def _message_pair_bits(line: Hc22000Line) -> int:
     try:
         return int(line.message_pair, 16) if len(line.message_pair) == 2 else 0
@@ -66,7 +68,7 @@ def psk_matches(pmk: bytes, line: Hc22000Line) -> bool:
         return False
     eapol = bytes.fromhex(line.eapol)
     key_info = int.from_bytes(eapol[_KEY_INFO_OFFSET:_KEY_INFO_OFFSET + 2], "big")
-    key_descriptor_version = key_info & 3
+    key_descriptor_version = key_info & 7
     snonce = eapol[_SNONCE_OFFSET:_SNONCE_OFFSET + _NONCE_LEN]
     anonce = bytes.fromhex(line.anonce)
     if key_descriptor_version == 1:
