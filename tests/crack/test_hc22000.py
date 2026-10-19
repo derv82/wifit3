@@ -76,6 +76,23 @@ def test_pmkid_hashline_basic():
     assert line == expected
 
 
+def test_pmkid_sha256_hashline_sets_sha256_message_pair_bit():
+    hs = _hs(pmkid=b"\x11" * 16)
+    hs.pmkid_akm = 6
+    assert pmkid_hashline("Net", hs).split("*")[8] == "02"
+
+
+def test_ft_pmkid_hashline_includes_ft_identifiers():
+    hs = _hs(pmkid=b"\x11" * 16)
+    hs.pmkid_akm = 4
+    hs.pmkid_mdid = b"\x12\x34"
+    hs.pmkid_r0khid = b"r0kh"
+    hs.pmkid_r1khid = b"r1kh"
+    fields = pmkid_hashline("Net", hs).split("*")
+    assert fields[1] == "03" and fields[8] == "20"
+    assert fields[9:] == ["1234", b"r0kh".hex(), b"r1kh".hex()]
+
+
 def test_pmkid_hashline_none_when_no_pmkid():
     hs = _hs()
     assert pmkid_hashline("X", hs) is None
@@ -139,6 +156,22 @@ def test_parse_hc22000_eapol():
     assert parsed.anonce == "1122334455667788990011223344556677889900112233445566778899001122"
     assert parsed.eapol == "01020304"
     assert parsed.message_pair == "02"
+
+
+def test_parse_hc22000_ft_records():
+    common = "11" * 16 + "*001122334455*aabbccddeeff*486f6d65"
+    ft_pmkid = parse_hc22000(f"WPA*03*{common}***20*1234*7230*7231")
+    assert ft_pmkid is not None and ft_pmkid.kind == "03"
+    assert (ft_pmkid.mdid, ft_pmkid.r0khid, ft_pmkid.r1khid) == ("1234", "7230", "7231")
+    ft_eapol = parse_hc22000(
+        f"WPA*04*{common}*{'22' * 32}*01020304*80*1234*7230*7231"
+    )
+    assert ft_eapol is not None and ft_eapol.kind == "04"
+
+
+def test_parse_hc22000_rejects_incomplete_ft_record():
+    line = f"WPA*04*{'11' * 16}*001122334455*aabbccddeeff*486f6d65*{'22' * 32}*0102*80"
+    assert parse_hc22000(line) is None
 
 
 def test_parse_hc22000_malformed():

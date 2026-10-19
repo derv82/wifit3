@@ -190,8 +190,8 @@ class _CapturePanel(VerticalGroup):
                 kg.mount(_row("ASCII Key", ascii_val, "copy-ascii", target_type=CaptureType.WEP))
         elif self._title == "HASHCAT":
             text = self.app.vault.capture_payload(cap)
-            hs = sum(1 for ln in text.splitlines() if ln.startswith("WPA*02*"))
-            pmkid = sum(1 for ln in text.splitlines() if ln.startswith("WPA*01*"))
+            hs = sum(1 for ln in text.splitlines() if ln.startswith(("WPA*02*", "WPA*04*")))
+            pmkid = sum(1 for ln in text.splitlines() if ln.startswith(("WPA*01*", "WPA*03*")))
             parts = []
             if hs: parts.append(f"{hs} handshake{'s' if hs != 1 else ''}")
             if pmkid: parts.append(f"{pmkid} PMKID{'s' if pmkid != 1 else ''}")

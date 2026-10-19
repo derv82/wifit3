@@ -22,8 +22,9 @@ def mic_for(psk: str, ssid: bytes, aa: bytes, spa: bytes, anonce: bytes, snonce:
     return eapol_mic(kck, eapol_payload_mic_zeroed)
 
 
-def pmkid(pmk: bytes, aa: bytes, spa: bytes) -> bytes:
-    return hmac.new(pmk, b"PMK Name" + aa + spa, hashlib.sha1).digest()[:16]
+def pmkid(pmk: bytes, aa: bytes, spa: bytes, *, sha256: bool = False) -> bytes:
+    digest = hashlib.sha256 if sha256 else hashlib.sha1
+    return hmac.new(pmk, b"PMK Name" + aa + spa, digest).digest()[:16]
 
 
 def psk_matches(pmk: bytes, line: Hc22000Line) -> bool:
@@ -32,7 +33,8 @@ def psk_matches(pmk: bytes, line: Hc22000Line) -> bool:
     mac_ap, mac_sta = bytes.fromhex(line.mac_ap), bytes.fromhex(line.mac_sta)
     expected = bytes.fromhex(line.pmkid_or_mic)
     if line.kind == "01":
-        return hmac.compare_digest(pmkid(pmk, mac_ap, mac_sta), expected)
+        sha256 = bool(int(line.message_pair or "0", 16) & 0x02)
+        return hmac.compare_digest(pmkid(pmk, mac_ap, mac_sta, sha256=sha256), expected)
     if line.kind != "02":
         return False
     eapol = bytes.fromhex(line.eapol)

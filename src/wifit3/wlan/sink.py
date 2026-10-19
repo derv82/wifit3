@@ -353,6 +353,10 @@ class WlanSink:
                 key_data_len=pkt.key_data_len,
                 eapol_payload=pkt.payload,
                 akm=akm,
+                key_descriptor_version=(pkt.key_info & 7) if pkt.key_info is not None else None,
+                mdid=pkt.mdid or b"",
+                r0khid=pkt.r0khid or b"",
+                r1khid=pkt.r1khid or b"",
                 timestamp=time.time(),
             )
             hs.add_message(eapol)
@@ -363,6 +367,12 @@ class WlanSink:
         if pmkid and not hs.pmkid:
             hs.pmkid = pmkid
             hs.pmkid_akm = akm
+            hs.pmkid_key_descriptor_version = (
+                pkt.key_info & 7 if pkt.key_info is not None else None
+            )
+            hs.pmkid_mdid = pkt.mdid or b""
+            hs.pmkid_r0khid = pkt.r0khid or b""
+            hs.pmkid_r1khid = pkt.r1khid or b""
             logger.info(f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}")
         return True
 

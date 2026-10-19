@@ -58,6 +58,18 @@ def test_psk_matches_hashcat_pmkid_example():
     assert not _matches("hashcat?", _HASHCAT_PMKID_LINE)
 
 
+def test_psk_matches_sha256_pmkid():
+    password = "hashcat!"
+    essid = b"sha256-net"
+    mac_ap = bytes.fromhex("001122334455")
+    mac_sta = bytes.fromhex("aabbccddeeff")
+    pmk = derive_pmk(password, essid)
+    digest = wpa_psk.pmkid(pmk, mac_ap, mac_sta, sha256=True)
+    line = f"WPA*01*{digest.hex()}*{mac_ap.hex()}*{mac_sta.hex()}*{essid.hex()}***02"
+    assert _matches(password, line)
+    assert not _matches("wrongpass", line)
+
+
 def test_psk_matches_hashcat_eapol_example():
     assert _matches("hashcat!", _HASHCAT_EAPOL_LINE)
     assert not _matches("hashcat?", _HASHCAT_EAPOL_LINE)

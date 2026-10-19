@@ -99,6 +99,9 @@ class EapolPacket(Packet):
     pmkid: Optional[bytes] = None
     akm: Optional[int] = None
     key_info: Optional[int] = None
+    mdid: Optional[bytes] = None
+    r0khid: Optional[bytes] = None
+    r1khid: Optional[bytes] = None
 
 
 @dataclass(slots=True, kw_only=True)

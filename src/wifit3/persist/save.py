@@ -88,7 +88,7 @@ def _read_anonces(path: Path) -> set[str]:
         return out
     for line in text.splitlines():
         entry = parse_hc22000(line)
-        if entry and entry.kind == "02" and entry.anonce:
+        if entry and entry.kind in {"02", "04"} and entry.anonce:
             out.add(entry.anonce)
     return out
 
@@ -101,7 +101,7 @@ def _read_pmkids(path: Path) -> set[str]:
         return out
     for line in text.splitlines():
         entry = parse_hc22000(line)
-        if entry and entry.kind == "01" and entry.pmkid_or_mic:
+        if entry and entry.kind in {"01", "03"} and entry.pmkid_or_mic:
             out.add(entry.pmkid_or_mic)
     return out
 
@@ -186,9 +186,9 @@ class HcFiles:
                         continue
                     e = parse_hc22000(ln)
                     if e:
-                        if e.kind == "01" and e.pmkid_or_mic:
+                        if e.kind in {"01", "03"} and e.pmkid_or_mic:
                             seen_pmkids.add(e.pmkid_or_mic)
-                        elif e.kind == "02" and e.anonce:
+                        elif e.kind in {"02", "04"} and e.anonce:
                             seen_anonces.add(e.anonce)
                     merged_lines.append(ln)
             except OSError:
@@ -207,11 +207,11 @@ class HcFiles:
                     continue
                 e = parse_hc22000(ln)
                 if e:
-                    if e.kind == "01" and e.pmkid_or_mic:
+                    if e.kind in {"01", "03"} and e.pmkid_or_mic:
                         if e.pmkid_or_mic in seen_pmkids:
                             continue
                         seen_pmkids.add(e.pmkid_or_mic)
-                    elif e.kind == "02" and e.anonce:
+                    elif e.kind in {"02", "04"} and e.anonce:
                         if e.anonce in seen_anonces:
                             continue
                         seen_anonces.add(e.anonce)

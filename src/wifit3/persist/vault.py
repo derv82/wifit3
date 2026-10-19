@@ -39,7 +39,7 @@ def _open_in_file_manager(path: Path) -> None:
 
 
 def _is_m1m2_eapol(line: Hc22000Line) -> bool:
-    return line.kind == "02" and int(line.message_pair or "0", 16) & 0x07 == 0
+    return line.kind in {"02", "04"} and int(line.message_pair or "0", 16) & 0x07 == 0
 
 
 def crosses_auto_crack_threshold(before: List[Hc22000Line], after: List[Hc22000Line]) -> bool:

@@ -248,6 +248,7 @@ class WlanFrameParser:
                         akm = cls._first_rsn_akm(key_data)
                         if akm is not None:
                             fields["akm"] = akm
+                        fields.update(cls._extract_ft_identifiers(key_data))
         return EapolPacket(**base, type="eapol", **fields)
 
     @staticmethod
@@ -298,6 +299,28 @@ class WlanFrameParser:
                     if pmkid != b"\x00" * 16:
                         return pmkid
         return None
+
+    @staticmethod
+    def _extract_ft_identifiers(key_data: bytes) -> Dict[str, bytes]:
+        identifiers: Dict[str, bytes] = {}
+        for tag_id, value, _raw in iter_information_elements(key_data):
+            if tag_id == 54 and len(value) == 3:
+                identifiers["mdid"] = bytes(value[:2])
+            elif tag_id == 55 and len(value) >= 82:
+                offset = 82
+                while offset + 2 <= len(value):
+                    subelement_id = value[offset]
+                    length = value[offset + 1]
+                    offset += 2
+                    end = offset + length
+                    if end > len(value):
+                        break
+                    if subelement_id == 1 and length:
+                        identifiers["r1khid"] = bytes(value[offset:end])
+                    elif subelement_id == 3 and length:
+                        identifiers["r0khid"] = bytes(value[offset:end])
+                    offset = end
+        return identifiers
 
     @classmethod
     def _first_rsn_akm(cls, data: bytes, start: int = 0) -> Optional[int]:

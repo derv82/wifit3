@@ -26,6 +26,10 @@ class HandshakeMessage:
     # AKM (00-0F-AC:N) this association negotiated, snapshotted at capture (the frame's
     # own RSN IE, else the client's assoc selection). Gates crackability per instance.
     akm: Optional[int] = None
+    key_descriptor_version: Optional[int] = None
+    mdid: bytes = b""
+    r0khid: bytes = b""
+    r1khid: bytes = b""
 
 
 @dataclass
@@ -52,6 +56,10 @@ class Handshake:
     pmkid: Optional[bytes] = None
     # AKM (00-0F-AC:N) in effect when the PMKID was captured; gates pmkid_crackable.
     pmkid_akm: Optional[int] = None
+    pmkid_key_descriptor_version: Optional[int] = None
+    pmkid_mdid: bytes = b""
+    pmkid_r0khid: bytes = b""
+    pmkid_r1khid: bytes = b""
 
     # The AP's offered AKM suites (00-0F-AC:N) from its beacon RSN IE, the fallback
     # when a frame's own AKM is unknown. See crack.handshake.

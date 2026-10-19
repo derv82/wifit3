@@ -8,6 +8,19 @@ from wifit3.dot11.packet import (
 )
 
 
+def test_extract_ft_identifiers_from_m2_key_data():
+    mdie = b"\x36\x03\x12\x34\x01"
+    fixed_ftie = b"\x00" * 82
+    subelements = b"\x01\x06R1KHID\x03\x04R0KH"
+    ftie_value = fixed_ftie + subelements
+    ftie = bytes((55, len(ftie_value))) + ftie_value
+    assert WlanFrameParser._extract_ft_identifiers(mdie + ftie) == {
+        "mdid": b"\x12\x34",
+        "r1khid": b"R1KHID",
+        "r0khid": b"R0KH",
+    }
+
+
 # ---- Beacon builder for RSN-IE tests ---------------------------------------
 
 def _build_beacon(
