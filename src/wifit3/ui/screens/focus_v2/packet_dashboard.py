@@ -3,7 +3,7 @@
 A multi-row sparkline meter: N labelled rows, per-row colour, a trailing ``/s`` rate (or a
 recent count), all scrolling **right->left** (newest sample at the right edge,
 history scrolling left: you read the attack's recent past L->R). Each metric
-uses one row below 30 terminal rows and two rows with 16 levels otherwise.
+uses one row below 32 terminal rows and two rows with 16 levels otherwise.
 
 Data-source agnostic: once :meth:`PacketDashboard.reconfigure` binds an interface +
 BSSID, ``_tick`` samples ``WlanInterface.packet_stats`` deltas (each row's key
@@ -114,7 +114,7 @@ class PacketDashboard(Static):
 
 
     def _two_row(self) -> bool:
-        return self.screen.size.height >= 30
+        return self.screen.size.height >= 32
 
     def _col(self, v: int, peak: int, levels: int) -> int:
         if v <= 0:

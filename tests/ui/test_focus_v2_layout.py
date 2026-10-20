@@ -18,7 +18,7 @@ from wifit3.ui.screens.focus_v2.art import BreathingArt, art_size, breathe
 
 _TOPBAR_H = 3
 _CHROME_H = 2          # Header (1 row) + Footer (1 row)
-_CENTER_MAX, _CENTER_MIN, _BOTTOM_MIN = 13, 7, 6
+_CENTER_MAX, _CENTER_MIN, _COMPACT_CENTER_H, _BOTTOM_MIN = 13, 7, 7, 6
 
 
 class _Host(App):
@@ -45,7 +45,7 @@ async def layout_host():
 async def test_layout_geometry():
     app = _Host()
     async with app.run_test(size=(80, 24)) as pilot:
-        for w, h in [(80, 24), (80, 30), (100, 35), (120, 40)]:
+        for w, h in [(80, 24), (80, 31), (80, 32), (100, 35), (120, 40)]:
             await pilot.resize_terminal(w, h)
             await pilot.pause(0)
             scr = app.screen
@@ -55,7 +55,7 @@ async def test_layout_geometry():
 
             card, dash, router = reg("#card"), reg("#dashboard"), reg("#router")
             endpoint_art = list(scr.query(".endpoint-art"))
-            assert all(widget.display is (h >= 30) for widget in endpoint_art)
+            assert all(widget.display is (h >= 32) for widget in endpoint_art)
             assert scr.query_one("#ap-power").display
             assert scr.query_one("#ap-essid").display
             assert scr.query_one("#ap-bssid").display
@@ -64,6 +64,10 @@ async def test_layout_geometry():
             # terminals the mid row gets symmetric side padding (none at 80 cols).
             pad = max(0, round((w - 80) * 0.4))
             assert card.width == 20 and router.width == 20
+            if h < 32:
+                assert router.height == 4 and card.height == 3
+                assert router.y == reg("#mid").y and card.bottom == reg("#mid").bottom
+                assert reg("#tx-picker").y == card.y
             assert card.x == pad and card.right == dash.x
             assert dash.right == router.x and router.right == w - pad
             assert dash.width == w - 2 * pad - 40
@@ -87,7 +91,7 @@ async def test_layout_geometry():
             assert top.bottom == mid.y and mid.bottom == bot.y and bot.bottom == footer.y
             avail = h - _TOPBAR_H - _CHROME_H
             expected_center = (
-                _CENTER_MIN if h < 30
+                _COMPACT_CENTER_H if h < 32
                 else min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
             )
             assert mid.height == expected_center
@@ -147,6 +151,7 @@ async def test_compact_tiny_focus_keeps_all_router_information_visible():
         assert dashboard.region.x == 0
         assert dashboard.region.right == card.region.x == router.region.x
         assert router.region.bottom == card.region.y
+        assert screen.query_one("#tx-picker").region.y == card.region.y
         assert not screen.query_one("#router-art").display
         for selector in ("#ap-power", "#ap-essid", "#ap-bssid", "#ap-identity-row"):
             info = screen.query_one(selector)
