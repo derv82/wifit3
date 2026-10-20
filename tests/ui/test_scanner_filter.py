@@ -108,6 +108,8 @@ async def test_filter_bar_scrolls_when_future_controls_exceed_its_width():
     async with app.run_test(size=(54, 24)) as pilot:
         await pilot.pause(0)
         filter_bar = app.screen.query_one(FilterBar)
+        filter_input = filter_bar.query_one("#filter-text", Input)
+        assert 16 <= filter_input.region.width <= 32
         assert filter_bar.max_scroll_x > 0
 
 

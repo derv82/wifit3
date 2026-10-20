@@ -149,11 +149,7 @@ class ScannerView(Screen):
     ScannerView.-narrow FilterBar > Label {
         display: none;
     }
-    ScannerView.-narrow FilterBar > Input {
-        width: 32;
-        min-width: 32;
-        max-width: 32;
-    }
+
     """
 
     BINDINGS = [
