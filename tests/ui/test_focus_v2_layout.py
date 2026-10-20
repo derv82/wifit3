@@ -99,6 +99,32 @@ async def test_short_focus_uses_compact_top_buttons(focus_button_height):
     assert actual == expected
 
 
+async def test_endpoint_art_is_hidden_below_60_columns():
+    app = _Host()
+    async with app.run_test(size=(59, 35)) as pilot:
+        await pilot.pause(0)
+        screen = app.screen
+        assert all(not widget.display for widget in screen.query(".endpoint-art"))
+        dashboard = screen.query_one("#dashboard").region
+        card = screen.query_one("#card").region
+        router = screen.query_one("#router").region
+        assert dashboard.x == 0
+        assert dashboard.right == router.x == card.x
+        assert router.y == dashboard.y
+        assert router.bottom == card.y
+        assert dashboard.bottom - card.bottom <= 1
+
+        await pilot.resize_terminal(60, 35)
+        await pilot.pause(0)
+        assert all(widget.display for widget in screen.query(".endpoint-art"))
+        card = screen.query_one("#card").region
+        dashboard = screen.query_one("#dashboard").region
+        router = screen.query_one("#router").region
+        assert card.x == 0
+        assert card.right == dashboard.x
+        assert dashboard.right == router.x
+
+
 async def test_status_moves_below_buttons_when_centering_no_longer_fits():
     app = _Host()
     async with app.run_test(size=(80, 24)) as pilot:

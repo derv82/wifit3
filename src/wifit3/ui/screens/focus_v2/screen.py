@@ -134,7 +134,8 @@ class FocusViewV2(Screen):
     app: "WifiteApp"
 
     HORIZONTAL_BREAKPOINTS = [
-        (0, "-narrow"), (81, "-compact"), (100, "-normal"), (140, "-wide"),
+        (0, "-tiny"), (60, "-narrow"), (81, "-compact"),
+        (100, "-normal"), (140, "-wide"),
     ]
     VERTICAL_BREAKPOINTS = [(0, "-short"), (36, "-tall")]
 
@@ -168,10 +169,29 @@ class FocusViewV2(Screen):
 
     #mid { height: 1fr; }
     #card, #router { width: %(ew)d; align: center middle; }
+    #card { dock: left; }
     /* Router art is a row shorter than the card's, so bottom-align it. */
-    #router { align: center bottom; }
+    #router { dock: right; align: center bottom; }
+    FocusViewV2.-tiny #mid { layers: graph router card; }
+    FocusViewV2.-tiny #dashboard {
+        layer: graph;
+        width: 1fr;
+        margin-right: %(ew)d;
+    }
+    FocusViewV2.-tiny #router {
+        layer: router;
+        dock: right;
+        height: 50%%;
+    }
+    FocusViewV2.-tiny #card {
+        layer: card;
+        dock: right;
+        height: 50%%;
+        offset-y: 50%%;
+    }
     #dashboard { width: 1fr; height: 100%%; padding: 0 1; }
     .endpoint-art { width: %(ew)d; background: transparent; }
+    FocusViewV2.-tiny .endpoint-art { display: none; }
     .card-static, .ap-static { width: 100%%; height: 1; text-align: center; color: $text-muted; }
     .card-dynamic { width: 100%%; height: 1; text-align: center; color: $accent; }
     .ap-essid { width: 100%%; height: 1; text-align: center; text-style: bold; }
@@ -196,9 +216,11 @@ class FocusViewV2(Screen):
     #log-rich { width: 100%%; height: 1fr; background: transparent; border: none; padding: 0; }
     #clients { dock: right; width: 40; height: 100%%; border: round %(border)s;
                border-title-color: %(border)s; border-title-style: bold; padding: 0 1; }
-    FocusViewV2.-narrow #bottom { layout: vertical; }
-    FocusViewV2.-narrow #clients { dock: none; width: 100%%; height: 1fr; }
-    FocusViewV2.-narrow #log { width: 100%%; height: 1fr; }
+    FocusViewV2.-tiny #bottom, FocusViewV2.-narrow #bottom { layout: vertical; }
+    FocusViewV2.-tiny #clients, FocusViewV2.-narrow #clients {
+        dock: none; width: 100%%; height: 1fr;
+    }
+    FocusViewV2.-tiny #log, FocusViewV2.-narrow #log { width: 100%%; height: 1fr; }
     /* Rows scroll inside a fixed-height region; the broadcast button stays pinned. */
     #client-rows { width: 100%%; height: 1fr; }
 
@@ -263,8 +285,8 @@ class FocusViewV2(Screen):
             yield Static("", id="rspacer")
         with Horizontal(id="mid") as mid:
             mid.ALLOW_SELECT = False
-            yield CardEndpoint(**self._card_values(), id="card")
             yield PacketDashboard(self._dashboard_rows(), id="dashboard")
+            yield CardEndpoint(**self._card_values(), id="card")
             yield RouterEndpoint(**self._router_values(), id="router")
         with Horizontal(id="bottom"):
             yield ClientsList(self._client_list(), id="clients")
