@@ -189,9 +189,22 @@ class FocusViewV2(Screen):
         height: 50%%;
         offset-y: 50%%;
     }
+    FocusViewV2.-tiny.-compact-height #router {
+        height: 4;
+        offset-y: 0;
+    }
+    FocusViewV2.-tiny.-compact-height #card {
+        display: block;
+        dock: right;
+        height: 3;
+        offset-y: 4;
+    }
     #dashboard { width: 1fr; height: 100%%; padding: 0 1; }
     .endpoint-art { width: %(ew)d; background: transparent; }
-    FocusViewV2.-tiny .endpoint-art { display: none; }
+    FocusViewV2.-tiny .endpoint-art,
+    FocusViewV2.-compact-height .endpoint-art { display: none; }
+    FocusViewV2.-compact-height #card { align: center bottom; }
+    FocusViewV2.-compact-height #router { align: center top; }
     .card-static, .ap-static { width: 100%%; height: 1; text-align: center; color: $text-muted; }
     .card-dynamic { width: 100%%; height: 1; text-align: center; color: $accent; }
     .ap-essid { width: 100%%; height: 1; text-align: center; text-style: bold; }
@@ -635,13 +648,18 @@ class FocusViewV2(Screen):
         return self._controls.current is None   # no other attack owns the radio
 
     def _distribute(self) -> None:
-        """Fill the mid band to full 2-row sparklines."""
+        """Compact the graph below 30 rows and give the reclaimed space to the bottom panels."""
         tracker = self.query_one(GlobalJobTracker)
         self._balance_status()
         topbar_height = self._topbar_height()
         chrome = _CHROME_H + int(bool(tracker.display))
         avail = max(1, self.size.height - topbar_height - chrome)
-        center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
+        compact_height = self.size.height < 30
+        self.set_class(compact_height, "-compact-height")
+        if compact_height:
+            center = _CENTER_MIN
+        else:
+            center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
         center = max(1, min(center, avail - 1))
         mid = self.query_one("#mid")
         mid.styles.height = center

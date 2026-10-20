@@ -54,6 +54,12 @@ async def test_layout_geometry():
                 return scr.query_one(sel).region
 
             card, dash, router = reg("#card"), reg("#dashboard"), reg("#router")
+            endpoint_art = list(scr.query(".endpoint-art"))
+            assert all(widget.display is (h >= 30) for widget in endpoint_art)
+            assert scr.query_one("#ap-power").display
+            assert scr.query_one("#ap-essid").display
+            assert scr.query_one("#ap-bssid").display
+            assert scr.query_one("#ap-identity-row").display
             # Endpoints pinned at the art width (20); dashboard fills the middle. On wide
             # terminals the mid row gets symmetric side padding (none at 80 cols).
             pad = max(0, round((w - 80) * 0.4))
@@ -80,7 +86,10 @@ async def test_layout_geometry():
             assert top.y == header.bottom and top.height == _TOPBAR_H
             assert top.bottom == mid.y and mid.bottom == bot.y and bot.bottom == footer.y
             avail = h - _TOPBAR_H - _CHROME_H
-            expected_center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
+            expected_center = (
+                _CENTER_MIN if h < 30
+                else min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
+            )
             assert mid.height == expected_center
             assert bot.height == avail - expected_center
 
@@ -123,6 +132,27 @@ async def test_endpoint_art_is_hidden_below_60_columns():
         assert card.x == 0
         assert card.right == dashboard.x
         assert dashboard.right == router.x
+
+
+async def test_compact_tiny_focus_keeps_all_router_information_visible():
+    app = _Host()
+    async with app.run_test(size=(59, 24)) as pilot:
+        await pilot.pause(0)
+        screen = app.screen
+        router = screen.query_one("#router")
+        card = screen.query_one("#card")
+        dashboard = screen.query_one("#dashboard")
+        assert router.region.height == 4
+        assert card.display and card.region.height == 3
+        assert dashboard.region.x == 0
+        assert dashboard.region.right == card.region.x == router.region.x
+        assert router.region.bottom == card.region.y
+        assert not screen.query_one("#router-art").display
+        for selector in ("#ap-power", "#ap-essid", "#ap-bssid", "#ap-identity-row"):
+            info = screen.query_one(selector)
+            assert info.display
+            assert info.region.height == 1
+            assert router.region.y <= info.region.y < info.region.bottom <= router.region.bottom
 
 
 async def test_status_moves_below_buttons_when_centering_no_longer_fits():

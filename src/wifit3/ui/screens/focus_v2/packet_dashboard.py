@@ -2,9 +2,8 @@
 
 A multi-row sparkline meter: N labelled rows, per-row colour, a trailing ``/s`` rate (or a
 recent count), all scrolling **right->left** (newest sample at the right edge,
-history scrolling left: you read the attack's recent past L->R). Height is
-**adaptive**: 2-row (16 levels) when there's vertical room, 1-row (8 levels)
-when cramped, the same "shrink gracefully" rule the bottom band rides.
+history scrolling left: you read the attack's recent past L->R). Each metric
+uses one row below 30 terminal rows and two rows with 16 levels otherwise.
 
 Data-source agnostic: once :meth:`PacketDashboard.reconfigure` binds an interface +
 BSSID, ``_tick`` samples ``WlanInterface.packet_stats`` deltas (each row's key
@@ -20,9 +19,8 @@ from collections import deque
 from rich.text import Text
 from textual.widgets import Static
 
-# " ▁▂▃▄▅▆▇█": index 0 is blank, used only for the upper row of a 2-row pair.
-# The lower row and the 1-row sparkline floor at ▁ (index 1), so a zero/quiet row
-# reads as a continuous flat line end-to-end rather than an empty gap.
+# Index 0 is blank for the upper row of a two-row graph. The lower row floors at
+# ▁ so a zero/quiet row reads as a continuous flat line rather than an empty gap.
 _BLOCKS = " ▁▂▃▄▅▆▇█"
 _LABEL_W = 6
 _NUM_W = 5
@@ -114,9 +112,9 @@ class PacketDashboard(Static):
     def _bar_width(self) -> int:
         return max(4, (self.content_size.width or 50) - _GUTTER)
 
+
     def _two_row(self) -> bool:
-        h = self.content_size.height or 12
-        return h // max(1, len(self._rows)) >= 2
+        return self.screen.size.height >= 30
 
     def _col(self, v: int, peak: int, levels: int) -> int:
         if v <= 0:
@@ -125,7 +123,7 @@ class PacketDashboard(Static):
 
     def _repaint(self) -> None:
         bw = self._bar_width()
-        two = self._two_row()
+        two_rows = self._two_row()
         lines: list[Text] = []
         for r in self._rows:
             window = list(self._hist[r.key])[-bw:]
@@ -138,7 +136,7 @@ class PacketDashboard(Static):
             # instead of competing for attention. Keeps the colour, drops the shout.
             color = r.color if any(window) else f"dim {r.color}"
 
-            if two:
+            if two_rows:
                 upper = "".join(_BLOCKS[max(0, self._col(v, peak, 16) - 8)] for v in window)
                 lower = "".join(_BLOCKS[max(1, min(8, self._col(v, peak, 16)))] for v in window)
                 lines.append(self._row("", color, upper, "", bw))
@@ -146,15 +144,16 @@ class PacketDashboard(Static):
             else:
                 cells = "".join(_BLOCKS[max(1, self._col(v, peak, 8))] for v in window)
                 lines.append(self._row(r.label, color, cells, num, bw))
-        # WEP status footer lines sit a blank line below the sparklines, each
-        # centered in the channel width. They live in the block's own vertical
-        # slack so they cost no row from the LOG/CLIENTS bands below.
+        # Status lines sit directly below the sparklines and use the dashboard's
+        # vertical slack so they cost no row from the LOG/CLIENTS bands.
         if self._footer is not None:
             w = self.content_size.width or 50
-            lines.append(Text(""))
-            for fl in self._footer:
-                lead = max(0, (w - fl.cell_len) // 2)
-                lines.append(Text(" " * lead) + fl)
+            for footer_line in self._footer:
+                line = footer_line.copy()
+                line.no_wrap = True
+                line.overflow = "ellipsis"
+                lead = max(0, (w - line.cell_len) // 2)
+                lines.append(Text(" " * lead) + line)
         # Vertically centre the block so it lines up with the vertically-centred
         # card/router columns as the band grows.
         h = self.content_size.height or len(lines)
@@ -162,9 +161,7 @@ class PacketDashboard(Static):
         self.update(Text("\n").join([Text("")] * pad + lines), layout=False)   # height: 100%
 
     def _row(self, label: str, color: str, cells: str, num: str, bw: int) -> Text:
-        """Right-aligned label · space · bars (right-aligned, newest at the right)
-        · space · left-aligned number: label and number sit flush against the
-        bars. Blank label/number on the upper row of a 2-row pair."""
+        """Right-aligned label · space · bars · space · left-aligned number."""
         t = Text()
         t.append(f"{label:>{_LABEL_W}} ", style=color if label else "")
         t.append(cells.rjust(bw), style=color)
