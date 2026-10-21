@@ -1,18 +1,50 @@
-"""Persistent user preferences: a flat TOML file in the OS config dir."""
+"""Persistent user preferences: a TOML file in the OS config dir, one table per cracking tool."""
 from __future__ import annotations
 
 import tomllib
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
+from types import UnionType
+from typing import Any, TypeVar, get_args, get_origin, get_type_hints
 
 from platformdirs import user_config_dir
 
 from wifit3.dot11 import SSID_MAX_OCTETS
+from wifit3.models.jobs import ToolName
 
 _PATH = Path(user_config_dir("wifit3", appauthor=False)) / "config.toml"
 
 
 class ConfigError(Exception):
     pass
+
+
+@dataclass
+class CpuCrackSettings:
+    wordlists: list[str] = field(default_factory=list)
+    default_passwords: bool = True
+    ap_ssid_passwords: bool = True
+    probed_ssid_passwords: bool = True
+
+
+@dataclass
+class HashcatSettings:
+    path: str | None = None
+    args: str | None = None
+    wordlists: list[str] = field(default_factory=list)
+
+
+@dataclass
+class HashtopolisSettings:
+    url: str | None = None
+    access_key: str | None = None
+    wordlist_id: int | None = None
+    wordlist_name: str | None = None
+    access_group_id: int | None = None
+    access_group_name: str | None = None
+
+
+SettingsT = TypeVar("SettingsT", CpuCrackSettings, HashcatSettings, HashtopolisSettings)
 
 
 class Config:
@@ -32,6 +64,10 @@ class Config:
     hashcat_path: str | None = None
     wordlist_paths: list[str] = []
     hashcat_args: str | None = None
+    auto_crack: ToolName | None = ToolName.CPU_CRACK
+    cpu_crack: CpuCrackSettings = CpuCrackSettings()
+    hashcat: HashcatSettings = HashcatSettings()
+    hashtopolis: HashtopolisSettings = HashtopolisSettings()
 
     @classmethod
     def is_silenced(cls, bssid: str) -> bool:
@@ -89,6 +125,16 @@ class Config:
         cls.wordlist_paths = _wordlist_paths(data.get("wordlist_paths"),
                                             data.get("wordlist_path"), cls.wordlist_paths)
         cls.hashcat_args = _optional_str(data.get("hashcat_args"), cls.hashcat_args)
+        cls.auto_crack = _auto_crack(data, cls.auto_crack)
+        legacy_wordlists = _legacy_wordlists(data)
+        cls.cpu_crack = _load_table(_table(data, "cpu_crack"), cls.cpu_crack)
+        cls.hashcat = _load_table(
+            {"path": data.get("hashcat_path"), "args": data.get("hashcat_args"),
+             "wordlists": legacy_wordlists, **_table(data, "hashcat")}, cls.hashcat)
+        legacy_hashtopolis = {name.removeprefix("hashtopolis_"): value
+                              for name, value in data.items() if name.startswith("hashtopolis_")}
+        cls.hashtopolis = _load_table({**legacy_hashtopolis, **_table(data, "hashtopolis")},
+                                      cls.hashtopolis)
 
     @classmethod
     def save(cls) -> None:
@@ -105,12 +151,11 @@ class Config:
             f"wps_auto_pbc = {_fmt(cls.wps_auto_pbc)}\n"
             f"auto_crack = {_fmt(cls.auto_crack)}\n"
             f"desktop_notifications = {_fmt(cls.desktop_notifications)}\n"
+            f"auto_crack = {_fmt(cls.auto_crack or '')}\n"
         )
-        # TOML has no null: an unset path is an absent key, not an empty string.
-        for key in ("hashcat_path", "wordlist_paths", "hashcat_args"):
-            value = getattr(cls, key)
-            if value:
-                text += f"{key} = {_fmt(value)}\n"
+        text += _table_text("cpu_crack", cls.cpu_crack)
+        text += _table_text("hashcat", cls.hashcat)
+        text += _table_text("hashtopolis", cls.hashtopolis)
         if cls.decloaked_ssids:
             text += "\n[decloak]\n"
             for bssid, ssid in sorted(cls.decloaked_ssids.items()):
@@ -122,19 +167,51 @@ class Config:
             raise ConfigError(f"Failed to save config at {_PATH}: {e}") from e
 
 
-def _wordlist_paths(raw: object, legacy: object, current: list[str]) -> list[str]:
-    if isinstance(raw, list):
-        return [str(path) for path in raw if str(path)]
-    if legacy:
-        return [str(legacy)]
-    return current
+def _auto_crack(data: dict, current: ToolName | None) -> ToolName | None:
+    """An empty or unknown tool name is None; a legacy ``auto_crack = true`` is CPU Crack."""
+    raw = data["auto_crack_tool"] if "auto_crack_tool" in data else data.get("auto_crack", current)
+    if raw is None or isinstance(raw, bool):
+        return ToolName.CPU_CRACK if raw else None
+    try:
+        return ToolName(raw)
+    except ValueError:
+        return None
 
 
-def _optional_str(raw: object, current: str | None) -> str | None:
-    """A non-empty string from the file, else whatever is already set."""
-    if raw is None:
-        return current
-    return str(raw) or None
+def _legacy_wordlists(data: dict) -> object:
+    if "wordlist_paths" in data:
+        return data["wordlist_paths"]
+    return [data["wordlist_path"]] if data.get("wordlist_path") else None
+
+
+def _table(data: dict, name: str) -> dict:
+    table = data.get(name)
+    return table if isinstance(table, dict) else {}
+
+
+def _load_table(raw: dict, current: SettingsT) -> SettingsT:
+    """``current`` with each value from ``raw`` of its field's type; the rest are dropped."""
+    hints = get_type_hints(type(current))
+    loaded = {f.name: raw[f.name] for f in fields(current)
+              if raw.get(f.name) not in (None, "") and _has_type(raw[f.name], hints[f.name])}
+    return replace(current, **loaded)
+
+
+def _has_type(value: Any, hint: Any) -> bool:
+    if isinstance(hint, UnionType):
+        return any(_has_type(value, arg) for arg in get_args(hint) if arg is not type(None))
+    if get_origin(hint) is list:
+        return isinstance(value, list) and all(_has_type(v, get_args(hint)[0]) for v in value)
+    if hint is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, hint)
+
+
+def _table_text(name: str, settings: SettingsT) -> str:
+    """The ``[name]`` table; TOML has no null, so an unset value is an absent key."""
+    lines = [f"{key} = {_fmt(value)}\n" for key, value in asdict(settings).items()
+             if value not in (None, "", [])]
+    return f"\n[{name}]\n" + "".join(lines) if lines else ""
 
 
 def _fmt(v: object) -> str:

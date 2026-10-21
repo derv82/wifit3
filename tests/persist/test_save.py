@@ -410,10 +410,10 @@ class TestConsolidateHcFiles:
         assert consolidate_hc_files(tmp_path) == (0, 0)
 
     def test_consolidate_multiple_aps_and_deduplicates(self, tmp_path):
-        hs_line1 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*11111111111111111111111111111111**\n"
-        hs_line2 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*22222222222222222222222222222222**\n"
-        pmk_line1 = "WPA*01*33333333333333333333333333333333*aabbccddeeff*112233445566*5465737431***\n"
-        office_hs = "WPA*02*01*112233445566*aabbccddeeff*4f6666696365*44444444444444444444444444444444**\n"
+        hs_line1 = f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{'11' * 32}**00\n"
+        hs_line2 = f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{'22' * 32}**00\n"
+        pmk_line1 = f"WPA*01*{'33' * 16}*aabbccddeeff*112233445566*5465737431***\n"
+        office_hs = f"WPA*02*{'01' * 16}*112233445566*aabbccddeeff*4f6666696365*{'44' * 32}**00\n"
 
         # AP1 files: 2 handshakes (one duplicate), 1 pmkid
         (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000").write_text(hs_line1, encoding="utf-8")
@@ -454,8 +454,8 @@ class TestConsolidateHcFiles:
         assert other_file.exists()
 
     def test_consolidate_appends_to_existing_target(self, tmp_path):
-        hs_line1 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*11111111111111111111111111111111**\n"
-        hs_line2 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*22222222222222222222222222222222**\n"
+        hs_line1 = f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{'11' * 32}**00\n"
+        hs_line2 = f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{'22' * 32}**00\n"
 
         target = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.hc22000"
         target.write_text(hs_line1, encoding="utf-8")
@@ -477,26 +477,30 @@ class TestConsolidateHcFiles:
 class TestHcFiles:
     def test_find_existing_anonce_in_aggregate_and_split(self, tmp_path):
         hc = HcFiles(tmp_path, "HomeNet", "aa:bb:cc:dd:ee:ff")
-        assert hc.find_existing_anonce("1111") is None
+        anonce1 = "11" * 32
+        anonce2 = "22" * 32
+        assert hc.find_existing_anonce(anonce1) is None
 
         # Write to aggregate file
-        hc.agg_path.write_text("WPA*02*01*aabbccddeeff*112233445566*5465737431*1111**\n", encoding="utf-8")
-        assert hc.find_existing_anonce("1111") == hc.agg_path
+        hc.agg_path.write_text(f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{anonce1}**00\n", encoding="utf-8")
+        assert hc.find_existing_anonce(anonce1) == hc.agg_path
 
         # Write to split file
         split_p = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000"
-        split_p.write_text("WPA*02*01*aabbccddeeff*112233445566*5465737431*2222**\n", encoding="utf-8")
-        assert hc.find_existing_anonce("2222") == split_p
+        split_p.write_text(f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{anonce2}**00\n", encoding="utf-8")
+        assert hc.find_existing_anonce(anonce2) == split_p
 
     def test_find_existing_pmkid_in_aggregate_and_split(self, tmp_path):
         hc = HcFiles(tmp_path, "HomeNet", "aa:bb:cc:dd:ee:ff")
-        assert hc.find_existing_pmkid("3333") is None
+        pmkid1 = "33" * 16
+        pmkid2 = "44" * 16
+        assert hc.find_existing_pmkid(pmkid1) is None
 
         # Write to aggregate file
-        hc.agg_path.write_text("WPA*01*3333*aabbccddeeff*112233445566*5465737431***\n", encoding="utf-8")
-        assert hc.find_existing_pmkid("3333") == hc.agg_path
+        hc.agg_path.write_text(f"WPA*01*{pmkid1}*aabbccddeeff*112233445566*5465737431***\n", encoding="utf-8")
+        assert hc.find_existing_pmkid(pmkid1) == hc.agg_path
 
         # Write to split file
         split_p = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000002_pmkid.hc22000"
-        split_p.write_text("WPA*01*4444*aabbccddeeff*112233445566*5465737431***\n", encoding="utf-8")
-        assert hc.find_existing_pmkid("4444") == split_p
+        split_p.write_text(f"WPA*01*{pmkid2}*aabbccddeeff*112233445566*5465737431***\n", encoding="utf-8")
+        assert hc.find_existing_pmkid(pmkid2) == split_p

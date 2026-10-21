@@ -2,7 +2,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Checkbox, Input, Label
 
-from wifit3.persist.config import Config
+from wifit3.persist.config import Config, HashcatSettings
 from wifit3.ui.path_picker import PathInput
 from wifit3.ui.vault.modals.wordlists import WordlistConfigModal
 import shutil
@@ -14,8 +14,8 @@ _SELF_TEST_DISABLE = "--self-test-disable"
 
 def _default_hashcat_path() -> str:
     """A saved path wins; otherwise find hashcat on PATH, then guess per platform."""
-    if Config.hashcat_path:
-        return Config.hashcat_path
+    if Config.hashcat.path:
+        return Config.hashcat.path
     if found := shutil.which("hashcat"):
         return found
     if sys.platform == "win32":
@@ -28,13 +28,16 @@ def _default_hashcat_path() -> str:
 class HashcatConfigModal(WordlistConfigModal):
     """Configuration modal for Hashcat jobs."""
 
-    dialog_title = "Launch Hashcat"
+    dialog_title = "Hashcat"
 
     DEFAULT_CSS = """
     .hashcat-label {
         margin-top: 1;
     }
     """
+
+    def _settings(self) -> HashcatSettings:
+        return Config.hashcat
 
     def _compose_fields(self) -> ComposeResult:
         yield Label("Hashcat Executable Path:", classes="hashcat-label")
@@ -43,7 +46,7 @@ class HashcatConfigModal(WordlistConfigModal):
 
         yield from self._compose_wordlists()
 
-        args = Config.hashcat_args or ""
+        args = Config.hashcat.args or ""
         yield Label("Hashcat Args:", classes="hashcat-label")
         yield Input(args, placeholder="custom hashcat args (e.g. -a 0 -w 3)",
                     id="hashcat-args")
@@ -72,5 +75,5 @@ class HashcatConfigModal(WordlistConfigModal):
 
     def _store_settings(self, config: dict[str, Any]) -> None:
         super()._store_settings(config)
-        Config.hashcat_path = config["hashcat_exe"]
-        Config.hashcat_args = config["hashcat_args"]
+        Config.hashcat.path = config["hashcat_exe"]
+        Config.hashcat.args = config["hashcat_args"]

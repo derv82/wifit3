@@ -36,23 +36,15 @@ Open items:
 - Opt-**in** only: This uploads the user's captured traffic to a third party.
 - Dedupe: Don't re-submit a capture already submitted, and survive a restart.
 
-### Vault tool: Hashtopolis submission / polling
-
-[D#52](https://github.com/derv82/wifit3/discussions/52): distribute one crack across several
-machines via a Hashtopolis server, instead of one local hashcat.
-
-Same `VaultTool` shape as WPA-Sec (submit + poll a remote API), but self-hosted so no permissions issues.
-Needs a server URL + voucher/API key in Preferences, and a mapping from our capture types onto
-Hashtopolis task creation.
-
 ### Vault: "Enter PSK/PIN" feature
 
 - **"Enter"**: User enters credential (PSK/WPS) for a known AP (with an option to `Check` the PSK/PIN).
 
 ### Improve Default Passwords
 
-Auto-crack runs CPU Crack (`vault/tools/cpu_crack.py`) on a new AP's first capture, and again on its
-first PMKID / authorized handshake if earlier captures were M1+M2 only. Passwords, in order: the
+Auto-crack runs the tool picked in Preferences (CPU Crack by default, `vault/tools/cpu_crack.py`)
+on a new AP's first capture, and again on its first PMKID / authorized handshake if earlier
+captures were M1+M2 only. Passwords, in order: the
 capture's SSID variants, probed-SSID passwords, then `crack/assets/default_passwords.txt`.
 Document all of it so users can see exactly what runs on every capture:
 - **SSID variants** (`crack/passwords.py:ssid_variants`): the SSID as-is, lower, upper, each plus

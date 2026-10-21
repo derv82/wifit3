@@ -7,10 +7,11 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from wifit3.models import PersistedCapture, ToolCapability, ToolResult, ToolStatus
-from wifit3.models.jobs import JobAction, JobState
+from wifit3.models.jobs import JobAction, JobState, ToolName
+from wifit3.persist.config import Config
 from wifit3.vault.tools import hashcat_keypress
 from wifit3.vault.tools.cracker import CrackerTool, WordlistQueue, expand_wordlists
 
@@ -64,7 +65,7 @@ class HashcatQueue(WordlistQueue):
 
 
 class HashcatTool(CrackerTool[HashcatQueue]):
-    name = "hashcat"
+    name = ToolName.HASHCAT
     label = "Hashcat"
     description = "Advanced password recovery (WPA/WPA2/PMKID)"
     # ADOPTABLE: hashcat is left running when wifit3 exits and re-attached on the next launch, so a
@@ -74,6 +75,12 @@ class HashcatTool(CrackerTool[HashcatQueue]):
 
     def __init__(self) -> None:
         self._procs: Dict[int, subprocess.Popen] = {}
+
+    def auto_crack_config(self) -> Optional[dict[str, Any]]:
+        if not (Config.hashcat.path and Config.hashcat.wordlists):
+            return None
+        return {"hashcat_exe": Config.hashcat.path, "wordlists": list(Config.hashcat.wordlists),
+                "hashcat_args": Config.hashcat.args or ""}
 
     def launch(self, job: JobState, capture: PersistedCapture) -> None:
         hashcat_exe = job.config.get("hashcat_exe")

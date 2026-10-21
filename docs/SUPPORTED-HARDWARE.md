@@ -67,10 +67,10 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **71% (C)** | 2026-07-25 | Matches Linux RX + TX, limited 802.11g, hard-MAC (no auto-ACKs), 100 ivs/s WEP. |
-| RX | ✅ | 2026-07-09 | ref AP 5.9 vs linux 6.7/s (88%); breadth 59 vs 54 (≥ linux); RSSI −0.9 dB. |
+| RX | ✅ | 2026-10-20 | ref AP 7.4 vs linux 7.9/s (94%); breadth 53 vs 63; RSSI −0.5 dB; 11/11 channels heard their own beacons. |
 | TX | ✅ | 2026-07-25 | Deauth + WEP inject; live-confirmed. |
 | ACKs | ⚠️ | 2026-07-25 | Hard-MAC = fixed-MAC (can't ACK spoofed MACs). |
-| Port | ✅ | 2026-07-09 | Matches linux breadth (59/54 APs), RSSI −0.9 dB, worse beacon rate (5.9 vs 6.7/s = 88%). |
+| Port | ✅ | 2026-10-20 | Matches rtl8187: beacon rate 94% (7.4 vs 7.9/s), RSSI −0.5 dB over 48 shared APs; breadth 53 vs 63 APs. |
 | Handshake | ✅ | 2026-07-25 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-07-25 | Passive + active. |
 | WEP | ✅ | 2026-07-25 | FakeAuth + ARP replay + ChopChop; ~100 IVs/s. |

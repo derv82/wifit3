@@ -85,9 +85,10 @@ class AVM(ProductName):
 
 
 class Belkin(ProductName):
-    F5D7050   = "F5D7050"
-    F9L1106V1 = "Belkin F9L1106v1"  # https://linux-hardware.org/?id=usb:050d-1106
-    F9L1109V1 = "Belkin F9L1109v1"  # https://linux-hardware.org/?id=usb:050d-1109
+    F5D7050       = "F5D7050"
+    F5D7050_V5    = "F5D7050 v5"    # https://wikidevi.wi-cat.ru/Belkin_F5D7050_v5
+    F9L1106V1     = "Belkin F9L1106v1"  # https://linux-hardware.org/?id=usb:050d-1106
+    F9L1109V1     = "Belkin F9L1109v1"  # https://linux-hardware.org/?id=usb:050d-1109
 
 
 class Buffalo(ProductName):
@@ -225,6 +226,7 @@ class Linksys(ProductName):
     AE6000      = "Linksys AE6000"
     HU200TS     = "Linksys HU200TS"
     WUSB54GP_V4 = "WUSB54GP v4"
+    WUSB54GC_V2 = "WUSB54GC v2"  # https://wikidevi.wi-cat.ru/Linksys_WUSB54GC_v2
     WUSB54G_V4  = "WUSB54G v4"
     WUSB6300    = "Linksys WUSB6300"
     WUSB6300_V2 = "WUSB6300 v2"
@@ -288,6 +290,7 @@ class Netgear(ProductName):
     N150        = "Netgear N150"
     RTL8187     = "Netgear RTL8187"
     WG111_V1_V2 = "WG111 v1/v2"
+    WG111V3     = "WG111v3"  # https://linux-hardware.org/?id=usb:0846-4260
     WNDA3100V3  = "WNDA3100v3"
 
 

@@ -99,6 +99,10 @@ class EapolPacket(Packet):
     pmkid: Optional[bytes] = None
     akm: Optional[int] = None
     key_info: Optional[int] = None
+    # 802.11r identifiers from an M2's MDE / FTE; empty when absent.
+    mdid: bytes = b""
+    r0khid: bytes = b""
+    r1khid: bytes = b""
 
 
 @dataclass(slots=True, kw_only=True)

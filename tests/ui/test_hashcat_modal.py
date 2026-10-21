@@ -14,9 +14,9 @@ from wifit3.ui.vault.modals.wordlists import _RemoveButton
 @pytest.fixture(autouse=True)
 def _unset_saved_paths(monkeypatch):
     """These live on Config as process-wide state; pin them so test order can't matter."""
-    monkeypatch.setattr(Config, "hashcat_path", None)
-    monkeypatch.setattr(Config, "wordlist_paths", [])
-    monkeypatch.setattr(Config, "hashcat_args", None)
+    monkeypatch.setattr(Config.hashcat, "path", None)
+    monkeypatch.setattr(Config.hashcat, "wordlists", [])
+    monkeypatch.setattr(Config.hashcat, "args", None)
 
 
 class _Host(App):
@@ -42,7 +42,7 @@ def test_saved_path_outranks_a_hashcat_found_on_path(monkeypatch):
     """Someone who points wifit3 at a specific build must not be silently overridden by
     whatever happens to be on $PATH."""
     monkeypatch.setattr(mod.shutil, "which", lambda _: "/somewhere/hashcat")
-    monkeypatch.setattr(Config, "hashcat_path", r"D:\tools\hashcat\hashcat.exe")
+    monkeypatch.setattr(Config.hashcat, "path", r"D:\tools\hashcat\hashcat.exe")
     assert _default_hashcat_path() == r"D:\tools\hashcat\hashcat.exe"
 
 
@@ -51,11 +51,11 @@ def test_launching_remembers_the_launch_settings():
     HashcatConfigModal()._remember({"hashcat_exe": r"D:\hashcat.exe",
                                     "wordlists": [r"D:\rockyou.txt", r"D:\top29m.txt"],
                                     "hashcat_args": "-w 3"})
-    Config.hashcat_path = Config.hashcat_args = None
-    Config.wordlist_paths = []
+    Config.hashcat.path = Config.hashcat.args = None
+    Config.hashcat.wordlists = []
     Config.load()
 
-    assert (Config.hashcat_path, Config.wordlist_paths, Config.hashcat_args) == (
+    assert (Config.hashcat.path, Config.hashcat.wordlists, Config.hashcat.args) == (
         r"D:\hashcat.exe", [r"D:\rockyou.txt", r"D:\top29m.txt"], "-w 3")
 
 
@@ -71,7 +71,7 @@ def test_an_unwritable_config_warns_but_keeps_the_paths(monkeypatch):
     modal._remember({"hashcat_exe": r"D:\hashcat.exe", "wordlists": [r"D:\rockyou.txt"],
                      "hashcat_args": ""})
 
-    assert Config.hashcat_path == r"D:\hashcat.exe"
+    assert Config.hashcat.path == r"D:\hashcat.exe"
     assert warnings and warnings[0][1].get("title") == "Config Error"
 
 
@@ -94,7 +94,7 @@ async def test_the_self_test_checkbox_edits_the_args_text():
 
 
 async def test_saved_args_prefill_the_modal_and_come_back_on_launch():
-    Config.hashcat_args = "-w 3 --self-test-disable"
+    Config.hashcat.args = "-w 3 --self-test-disable"
     app = _Host()
     async with app.run_test() as pilot:
         dismissed = []
@@ -123,11 +123,11 @@ async def test_escape_dismisses_without_saving():
         assert not isinstance(app.screen, HashcatConfigModal)
 
     assert dismissed == [None]
-    assert Config.hashcat_args is None
+    assert Config.hashcat.args is None
 
 
 async def test_the_modal_reads_back_the_wordlists_it_was_given():
-    Config.wordlist_paths = [r"D:\a.txt", r"D:\b.txt"]
+    Config.hashcat.wordlists = [r"D:\a.txt", r"D:\b.txt"]
     app = _Host()
     async with app.run_test() as pilot:
         app.push_screen(HashcatConfigModal())
@@ -159,7 +159,7 @@ async def test_launch_is_refused_without_a_wordlist():
 
 
 async def test_x_removes_one_wordlist_and_clear_removes_them_all(tmp_path):
-    Config.wordlist_paths = [str(tmp_path / "a.txt"), str(tmp_path / "b.txt"), str(tmp_path / "c.txt")]
+    Config.hashcat.wordlists = [str(tmp_path / "a.txt"), str(tmp_path / "b.txt"), str(tmp_path / "c.txt")]
     app = _Host()
     async with app.run_test() as pilot:
         dismissed = []
@@ -182,12 +182,12 @@ async def test_x_removes_one_wordlist_and_clear_removes_them_all(tmp_path):
         assert modal._wordlists == []
         assert not clear.display
         assert "none chosen" in str(rows.query_one(Label).content)
-        assert Config.wordlist_paths == [str(tmp_path / "a.txt"), str(tmp_path / "b.txt"),
+        assert Config.hashcat.wordlists == [str(tmp_path / "a.txt"), str(tmp_path / "b.txt"),
                                          str(tmp_path / "c.txt")], "nothing is saved before Launch"
 
 
 async def test_launch_saves_what_is_left_after_a_removal(tmp_path):
-    Config.wordlist_paths = [str(tmp_path / "a.txt"), str(tmp_path / "b.txt")]
+    Config.hashcat.wordlists = [str(tmp_path / "a.txt"), str(tmp_path / "b.txt")]
     app = _Host()
     async with app.run_test() as pilot:
         dismissed = []
@@ -201,7 +201,7 @@ async def test_launch_saves_what_is_left_after_a_removal(tmp_path):
         await pilot.pause()
 
     assert dismissed[0]["wordlists"] == [str(tmp_path / "b.txt")]
-    assert Config.wordlist_paths == [str(tmp_path / "b.txt")]
+    assert Config.hashcat.wordlists == [str(tmp_path / "b.txt")]
 
 
 async def test_clear_is_hidden_when_no_wordlist_is_chosen():
@@ -213,7 +213,7 @@ async def test_clear_is_hidden_when_no_wordlist_is_chosen():
 
 
 async def test_launch_is_refused_without_the_executable():
-    Config.wordlist_paths = [r"D:\rockyou.txt"]
+    Config.hashcat.wordlists = [r"D:\rockyou.txt"]
     app = _Host()
     async with app.run_test() as pilot:
         dismissed = []
@@ -229,24 +229,29 @@ async def test_launch_is_refused_without_the_executable():
 
 
 async def test_cpu_crack_launches_with_only_the_wordlists_and_remembers_them():
-    Config.wordlist_paths = [r"D:\a.txt"]
+    Config.cpu_crack.wordlists = [r"D:\a.txt"]
     app = _Host()
     async with app.run_test() as pilot:
         dismissed = []
         app.push_screen(CpuCrackConfigModal(), dismissed.append)
         await pilot.pause()
-        assert str(app.screen.query_one("#wordlist-title", Label).content) == "Launch CPU Crack"
+        assert str(app.screen.query_one("#wordlist-title", Label).content) == "CPU Crack"
         assert not app.screen.query("#hashcat-exe")
         await app.screen._wordlists_chosen([Path(r"D:\a.txt"), Path(r"D:\b.txt")])
         app.screen.query_one("#wordlist-launch", Button).press()
         await pilot.pause()
 
-    assert dismissed == [{"wordlists": [r"D:\a.txt", r"D:\b.txt"]}]
-    assert Config.wordlist_paths == [r"D:\a.txt", r"D:\b.txt"]
-    assert Config.hashcat_path is None
+    assert dismissed == [{"wordlists": [r"D:\a.txt", r"D:\b.txt"], "default_passwords": True,
+                          "ap_ssid_passwords": True, "probed_ssid_passwords": True}]
+    assert Config.cpu_crack.wordlists == [r"D:\a.txt", r"D:\b.txt"]
+    assert Config.hashcat.wordlists == []
 
 
-async def test_cpu_crack_refuses_to_launch_without_a_wordlist():
+async def test_cpu_crack_refuses_to_launch_without_a_wordlist_or_password_source():
+    Config.cpu_crack.wordlists = []
+    Config.cpu_crack.default_passwords = False
+    Config.cpu_crack.ap_ssid_passwords = False
+    Config.cpu_crack.probed_ssid_passwords = False
     app = _Host()
     async with app.run_test() as pilot:
         dismissed = []
@@ -265,7 +270,8 @@ class _HostWithGlobalButtonWidth(App):
 
 
 async def test_remove_and_clear_shrink_below_the_global_button_width_in_both_modals():
-    Config.wordlist_paths = [r"D:\a.txt"]
+    Config.hashcat.wordlists = [r"D:\a.txt"]
+    Config.cpu_crack.wordlists = [r"D:\a.txt"]
     for modal_type in (HashcatConfigModal, CpuCrackConfigModal):
         app = _HostWithGlobalButtonWidth()
         async with app.run_test() as pilot:

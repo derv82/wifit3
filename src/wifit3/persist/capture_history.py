@@ -57,12 +57,12 @@ def _read_wps_pin(path: Path) -> str | None:
     return parse_wps_pin(text)
 
 
-def _count_hashlines(path: Path, prefix: str) -> int:
-    """Number of ``WPA*01*`` / ``WPA*02*`` records in a .hc22000 file (0 if unreadable)."""
+def _count_hashlines(path: Path, prefixes: tuple[str, ...]) -> int:
+    """Number of records starting with one of ``prefixes`` in a .hc22000 file (0 if unreadable)."""
     text = _read_text(path)
     if text is None:
         return 0
-    return sum(1 for ln in text.splitlines() if ln.strip().startswith(prefix))
+    return sum(1 for ln in text.splitlines() if ln.strip().startswith(prefixes))
 
 
 def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
@@ -78,9 +78,9 @@ def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
     pmkid = hs = 0
     for line in text.splitlines():
         line = line.strip()
-        if line.startswith("WPA*01*"):
+        if line.startswith(("WPA*01*", "WPA*03*")):
             pmkid += 1
-        elif line.startswith("WPA*02*"):
+        elif line.startswith(("WPA*02*", "WPA*04*")):
             hs += 1
     out: List[PersistedCapture] = []
     if pmkid:
@@ -125,11 +125,11 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
         return [PersistedCapture(type=CaptureType.WPA_PSK, timestamp=epoch, path=str(path),
                                  bssid=bssid, value=psk, ssid=ssid)]
     if kind == "handshake" and ext in ("hc22000", "pcap"):
-        count = _count_hashlines(path, "WPA*02*") if ext == "hc22000" else 0
+        count = _count_hashlines(path, ("WPA*02*", "WPA*04*")) if ext == "hc22000" else 0
         return [PersistedCapture(type=CaptureType.HS, timestamp=epoch, path=str(path),
                                  bssid=bssid, ssid=ssid, record_count=count)]
     if kind == "pmkid" and ext in ("hc22000", "pcap"):
-        count = _count_hashlines(path, "WPA*01*") if ext == "hc22000" else 0
+        count = _count_hashlines(path, ("WPA*01*", "WPA*03*")) if ext == "hc22000" else 0
         return [PersistedCapture(type=CaptureType.PMKID, timestamp=epoch, path=str(path),
                                  bssid=bssid, ssid=ssid, record_count=count)]
     return []

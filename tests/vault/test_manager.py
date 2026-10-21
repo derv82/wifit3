@@ -396,18 +396,18 @@ def test_jobs_json_keeps_the_progress_fields(tmp_path, mocker):
     assert (loaded.percent, loaded.detail, loaded.key) == (100.0, "", "k")
 
 
-def test_submit_job_marks_an_automatic_job_and_jobs_json_keeps_it(tmp_path, mocker):
+def test_submit_job_marks_an_auto_crack_job_and_jobs_json_keeps_it(tmp_path, mocker):
     mocker.patch("wifit3.persist.config.Config.captures_dir", str(tmp_path))
     from wifit3.models.access_point import CaptureType
     cap = PersistedCapture(type=CaptureType.HS, timestamp=0, path="a.hc22000", bssid="00:11:22:33:44:55")
     manager = JobManager(MagicMock())
-    automatic_id = manager.submit_job("cpu_crack", cap, {"wordlists": ["w.txt"]}, automatic=True)
+    auto_crack_id = manager.submit_job("cpu_crack", cap, {"wordlists": ["w.txt"]}, auto_crack=True)
     manual_id = manager.submit_job("hashcat", cap, {})
 
     loaded = JobManager(MagicMock()).jobs
 
-    assert loaded[automatic_id].automatic is True
-    assert loaded[manual_id].automatic is False
+    assert loaded[auto_crack_id].auto_crack is True
+    assert loaded[manual_id].auto_crack is False
 
 
 def test_a_job_saved_before_the_progress_fields_existed_still_loads(tmp_path, mocker):
@@ -422,7 +422,18 @@ def test_a_job_saved_before_the_progress_fields_existed_still_loads(tmp_path, mo
     job = JobManager(MagicMock()).jobs["j1"]
 
     assert (job.status, job.percent, job.detail, job.key) == (ToolStatus.SUCCESS, None, "", None)
-    assert job.automatic is False
+    assert job.auto_crack is False
+
+
+def test_a_job_saved_with_the_older_automatic_key_loads_as_auto_crack(tmp_path, mocker):
+    mocker.patch("wifit3.vault.manager.JobManager._save")
+    mocker.patch("wifit3.persist.config.Config.captures_dir", str(tmp_path))
+    (tmp_path / "jobs.json").write_text(json.dumps({"j1": {
+        "job_id": "j1", "tool_name": "cpu_crack", "capture_path": "a.hc22000",
+        "status": "SUCCESS", "progress_msg": "Cracked! Key: k", "automatic": True,
+    }}), encoding="utf-8")
+
+    assert JobManager(MagicMock()).jobs["j1"].auto_crack is True
 
 
 def _wait_for_exit(tool, pid, seconds=10.0):
