@@ -4,8 +4,8 @@
 
 - D-Link AN3U rev. A1, `2001:3328`.
 - 2.4 GHz Wi-Fi 4, 2T2R, USB 2.0 high speed.
-- Cold-boot capture: `src/wifit3/scripts/captures_rtl8192fu/capture-1.pcap`.
-- Capture includes probe, monitor entry, RX, native hopping, and deterministic channel 1–14 tuning; it does not include injection.
+- Cold-boot captures: `src/wifit3/scripts/captures_rtl8192fu/capture-1.pcap` and `capture-2.pcap`.
+- `capture-1` covers probe, monitor entry, RX, native hopping, and deterministic channel 1–14 tuning; `capture-2` adds successful injection-test and directed-deauthentication TX segments.
 
 ## Linux Driver Source
 
@@ -18,7 +18,7 @@
 ## Python Port Details
 
 - `2001:3328` selects `RTL8192FUDriver` through `chips/rtl8192fu/__init__.py`.
-- Status: complete cold initialization, monitor filtering, runtime RX activation, and 20 MHz channel tuning across channels 1–14 are replay-verified; `connect()` starts bulk-IN RX and applies the initial channel tune.
+- Status: cold initialization, monitor filtering, runtime RX, 20 MHz channels 1–14, and management TX are replay-verified; `connect()` starts bulk-IN RX and applies the initial channel tune.
 - Firmware: `assets/rtl8192fufw.bin`, 32416 bytes, SHA-256 `cce2c368238b01ebf68e257d9788bfba1481f11b4d126abf2553da2bb474fa5f`.
 - Firmware was decompressed verbatim from Ubuntu's `linux-firmware` copy at `/lib/firmware/rtlwifi/rtl8192fufw.bin.zst` and byte-compared after decompression.
 - Firmware redistribution uses Realtek's `LICENCE.rtlwifi_firmware.txt`, shipped beside the blob.
@@ -35,8 +35,8 @@
 
 ## Known Problems
 
-- TX is not yet integrated because the capture has no injection segment.
-- The available capture has no explicit injection segment, so TX cannot be byte-verified or implemented from evidence.
+- Management TX is byte-verified but has not been fired from the Python driver on hardware.
+- The aireplay injection self-test includes non-management frame variants not yet implemented; auditing use currently needs management-frame injection only.
 - The capture has no teardown segment, so the source-ported power-off sequence is unit-tested but cannot be pcap byte-verified.
 
 ## Driver Entry Points
@@ -52,6 +52,7 @@
 - `scripts/chips/rtl8192fu/extract_tables.py` regenerates the chipset-local Python tables from pinned mainline `8192f.c`.
 - `scripts/chips/rtl8192fu/verify_pcap.py` replays 5130 cold-init/runtime/monitor operations plus every deterministic channel window and captured bulk-IN RX; RX verifies 372 frames, 303 parsed packets, and `-99..-47 dBm` RSSI.
 - `scripts/chips/rtl8192fu/test_hw.py` performs an RX-only cold-boot smoke test on an optional channel without transmitting.
+- `scripts/chips/rtl8192fu/verify_tx.py` byte-matches every directed-deauthentication TX payload in `capture-2` against the Python descriptor builder.
 - `src/wifit3/scripts/capture.py` records the generic cold-boot, RX, channel-tune, and optional TX reference bundle; run it with `--bssid2g`, `--channel2g`, and `--client2g` for an authorized RTL8192FU TX capture.
 
 ```bash
@@ -62,5 +63,3 @@ sudo uv run python -m wifit3.scripts.capture \
 ```
 
 ## Debug log
-
-- 2026-10-20: TX byte matching remains blocked on a capture containing an authorized injection target.

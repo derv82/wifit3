@@ -29,6 +29,7 @@ from .power import power_off
 from .runtime import configure_monitor_filter, disable_rf, enable_hardware_led, enable_rf, open_rx_filters
 from .rx import iter_frames, read_burst
 from .transport import RTL8192FUTransport
+from .tx import build_tx_packet, stamp_sequence
 
 
 class RTL8192FUDriver(Driver):
@@ -48,6 +49,8 @@ class RTL8192FUDriver(Driver):
         self._rx_reader: RxReaderThread | None = None
         self._efuse: EfuseData | None = None
         self._channel_lock = asyncio.Lock()
+        self._tx_lock = asyncio.Lock()
+        self._tx_sequence = 0
         self.current_channel = 1
         self._cck_new_agc = False
 
@@ -145,10 +148,21 @@ class RTL8192FUDriver(Driver):
         config_channel(self.transport, channel)
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        raise BringUpError("RTL8192FU TX", "TX descriptor construction is not ported yet")
+        endpoints = self.transport.endpoints
+        if endpoints is None:
+            raise BringUpError("RTL8192FU TX", "driver is not connected")
+        packet = build_tx_packet(frame_bytes)
+        loop = asyncio.get_running_loop()
+        async with self._tx_lock:
+            await loop.run_in_executor(
+                None, self.transport.bulk_write, endpoints.bulk_out[0], packet
+            )
+        return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
-        return frame_bytes
+        stamped = stamp_sequence(frame_bytes, self._tx_sequence)
+        self._tx_sequence = (self._tx_sequence + 1) & 0xFFF
+        return stamped
 
     async def _enable_rx_acks(self) -> None:
         raise BringUpError("RTL8192FU RX ACK", "RX filtering is not ported yet")
