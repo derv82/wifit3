@@ -30,6 +30,11 @@ def open_rx_filters(transport: RTL8192FUTransport) -> None:
     transport.write32(0x0C50, (value & ~0x7F) | 0x1E)
 
 
+def configure_monitor_filter(transport: RTL8192FUTransport) -> None:
+    rcr = 0x7000600E | C.RCR_ACCEPT_AP | C.RCR_ACCEPT_PM | C.RCR_ACCEPT_CTRL_FRAME
+    transport.write32(C.REG_RCR, rcr)
+
+
 def disable_rf(transport: RTL8192FUTransport) -> None:
     value = transport.read32(0x0C04)
     transport.write32(0x0C04, value & ~0x0F)

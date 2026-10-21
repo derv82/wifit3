@@ -26,7 +26,12 @@ from wifit3.chips.rtl8192fu.chip import identify_chip
 from wifit3.chips.rtl8192fu.efuse import parse_efuse, read_efuse
 from wifit3.chips.rtl8192fu.firmware import load_firmware_blob, parse_firmware
 from wifit3.chips.rtl8192fu.iqk import phy_iq_calibrate
-from wifit3.chips.rtl8192fu.runtime import enable_hardware_led, enable_rf, open_rx_filters
+from wifit3.chips.rtl8192fu.runtime import (
+    configure_monitor_filter,
+    enable_hardware_led,
+    enable_rf,
+    open_rx_filters,
+)
 from wifit3.chips.rtl8192fu.rx import iter_frames
 from wifit3.dot11.parser import WlanFrameParser
 
@@ -114,6 +119,10 @@ def run(cap: str | None = None) -> int:
         enable_hardware_led(replay)
         enable_rf(replay)
         open_rx_filters(replay)
+        for _ in range(3):
+            configure_monitor_filter(replay)
+        set_tx_power(replay, efuse, 1)
+        config_channel(replay, 1)
     except (rp.Divergence, ValueError, IOError) as error:
         print(f"FAIL at op {replay.i}: {error}")
         return 1
@@ -124,7 +133,7 @@ def run(cap: str | None = None) -> int:
         return 1
 
     print(
-        f"PASS: {replay.i} ops — identify + EFUSE + power + firmware + MAC/BB/RF + FIFO/RX/MAC policy; "
+        f"PASS: {replay.i} ops — identify + EFUSE + power + firmware + MAC/BB/RF + FIFO/RX/MAC policy + monitor; "
         f"cut={identity.chip_cut} vendor={identity.vendor} "
         f"MAC={efuse.mac_address.hex(':')} RFE={efuse.rfe_type} "
         f"max_bw={feature.max_bandwidth}MHz"

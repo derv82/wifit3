@@ -25,7 +25,7 @@ from .chip import ChipIdentity, identify_chip
 from .efuse import EfuseData, parse_efuse, read_efuse
 from .firmware import load_firmware_blob, parse_firmware
 from .iqk import phy_iq_calibrate
-from .runtime import disable_rf, enable_hardware_led, enable_rf, open_rx_filters
+from .runtime import configure_monitor_filter, disable_rf, enable_hardware_led, enable_rf, open_rx_filters
 from .rx import iter_frames, read_burst
 from .transport import RTL8192FUTransport
 
@@ -79,6 +79,9 @@ class RTL8192FUDriver(Driver):
             )
             self._rx_reader.start()
             await loop.run_in_executor(None, open_rx_filters, self.transport)
+            await loop.run_in_executor(None, configure_monitor_filter, self.transport)
+            await loop.run_in_executor(None, self._set_channel_sync, 1)
+            self.current_channel = 1
         except Exception as error:
             if self._rx_reader is not None:
                 await self._rx_reader.stop()
@@ -156,10 +159,16 @@ class RTL8192FUDriver(Driver):
         if self._rx_reader is not None:
             await self._rx_reader.stop()
             self._rx_reader = None
-        if self.transport.interface_number is not None:
-            self.transport.write8(0x0522, 0xFF)
-            self.transport.write16(0x06A0, 0)
-            self.transport.write16(0x06A4, 0)
-            self.transport.write8(0x0522, 0xFF)
-            disable_rf(self.transport)
-        self.transport.release()
+        try:
+            if self.transport.interface_number is not None:
+                self.transport.write8(0x0522, 0xFF)
+                self.transport.write16(0x06A0, 0)
+                self.transport.write16(0x06A4, 0)
+                self.transport.write8(0x0522, 0xFF)
+                disable_rf(self.transport)
+        finally:
+            try:
+                self.transport.release()
+            finally:
+                self._efuse = None
+                self.is_warm = False

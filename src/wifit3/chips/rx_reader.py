@@ -127,6 +127,7 @@ class RxReaderThread:
             self._bufs_produced += len(batch)
             self._loop.call_soon_threadsafe(self._dispatch_batch, batch)
             batch = []
+        self._running = False
         if self._dropped:
             logger.error(f"[{self._name}] RX reader stopped: {self._dropped} buffers dropped total")
         logger.debug(f"[{self._name}] RX reader thread stopped")

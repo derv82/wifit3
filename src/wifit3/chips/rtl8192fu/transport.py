@@ -37,8 +37,11 @@ class RTL8192FUTransport:
     def release(self) -> None:
         if self.interface_number is None:
             return
-        usb.util.release_interface(self.dev, self.interface_number)
-        self.interface_number = None
+        try:
+            usb.util.release_interface(self.dev, self.interface_number)
+        finally:
+            self.interface_number = None
+            self.endpoints = None
 
     @staticmethod
     def parse_usb(interface) -> USBEndpoints:

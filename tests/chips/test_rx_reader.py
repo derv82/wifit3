@@ -59,6 +59,7 @@ async def test_reader_gives_up_after_consecutive_errors():
         await loop.run_in_executor(None, r._thread.join, 1.0)
         assert calls["n"] == 3
         assert not r._thread.is_alive()
+        assert not r.running
     finally:
         await r.stop()
 
