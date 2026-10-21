@@ -20,6 +20,7 @@ from .bringup import (
     set_tx_power,
     table_bringup,
 )
+from .chan import config_channel
 from .chip import ChipIdentity, identify_chip
 from .efuse import EfuseData, parse_efuse, read_efuse
 from .firmware import load_firmware_blob, parse_firmware
@@ -45,6 +46,8 @@ class RTL8192FUDriver(Driver):
         self._disconnect_callback: Callable[[], None] | None = None
         self._rx_reader: RxReaderThread | None = None
         self._efuse: EfuseData | None = None
+        self._channel_lock = asyncio.Lock()
+        self.current_channel = 1
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8192FUDriver":
@@ -118,7 +121,23 @@ class RTL8192FUDriver(Driver):
                 self._rx_callback(packet)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        raise BringUpError("RTL8192FU channel", "channel configuration is not ported yet")
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise ValueError(f"unsupported RTL8192FU channel: {channel}")
+        if self._efuse is None:
+            raise BringUpError("RTL8192FU channel", "driver is not connected")
+        if channel == self.current_channel:
+            return True
+        loop = asyncio.get_running_loop()
+        async with self._channel_lock:
+            await loop.run_in_executor(None, self._set_channel_sync, channel)
+            self.current_channel = channel
+        return True
+
+    def _set_channel_sync(self, channel: int) -> None:
+        if self._efuse is None:
+            raise RuntimeError("RTL8192FU EFUSE is unavailable")
+        set_tx_power(self.transport, self._efuse, channel)
+        config_channel(self.transport, channel)
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         raise BringUpError("RTL8192FU TX", "TX descriptor construction is not ported yet")

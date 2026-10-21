@@ -128,28 +128,40 @@ def _write32_mask(transport: RTL8192FUTransport, register: int, mask: int, value
     transport.write32(register, (current & ~mask) | ((value << shift) & mask))
 
 
-def set_tx_power(transport: RTL8192FUTransport, efuse: EfuseData) -> None:
+def set_tx_power(transport: RTL8192FUTransport, efuse: EfuseData, channel: int = 1) -> None:
     def repeated(value: int) -> int:
         value &= 0xFF
         return value | value << 8 | value << 16 | value << 24
 
-    cck = efuse.path_a.cck_base[0]
+    if channel < 3:
+        group = 0
+    elif channel < 6:
+        group = 1
+    elif channel < 9:
+        group = 2
+    elif channel < 12:
+        group = 3
+    else:
+        group = 4
+    cck_group = 5 if channel == 14 else group
+
+    cck = efuse.path_a.cck_base[cck_group]
     _write32_mask(transport, 0x0E08, 0x00007F00, cck)
     _write32_mask(transport, 0x086C, 0x7F7F7F00, cck | cck << 8 | cck << 16)
-    ofdm = repeated(efuse.path_a.ht40_base[0] + efuse.path_a.ofdm_diff[0])
+    ofdm = repeated(efuse.path_a.ht40_base[group] + efuse.path_a.ofdm_diff[0])
     _write32_mask(transport, 0x0E00, 0x7F7F7F7F, ofdm)
     _write32_mask(transport, 0x0E04, 0x7F7F7F7F, ofdm)
-    mcs = repeated(efuse.path_a.ht40_base[0] + efuse.path_a.ht20_diff[0])
+    mcs = repeated(efuse.path_a.ht40_base[group] + efuse.path_a.ht20_diff[0])
     for register in (0x0E10, 0x0E14, 0x0E18, 0x0E1C):
         _write32_mask(transport, register, 0x7F7F7F7F, mcs)
 
-    cck = efuse.path_b.cck_base[0]
+    cck = efuse.path_b.cck_base[cck_group]
     _write32_mask(transport, 0x0838, 0x7F7F7F00, cck | cck << 8 | cck << 16)
     _write32_mask(transport, 0x086C, 0x0000007F, cck)
-    ofdm = repeated(efuse.path_b.ht40_base[0] + efuse.path_b.ofdm_diff[1])
+    ofdm = repeated(efuse.path_b.ht40_base[group] + efuse.path_b.ofdm_diff[1])
     _write32_mask(transport, 0x0830, 0x7F7F7F7F, ofdm)
     _write32_mask(transport, 0x0834, 0x7F7F7F7F, ofdm)
-    mcs = repeated(efuse.path_b.ht40_base[0] + efuse.path_b.ht20_diff[1])
+    mcs = repeated(efuse.path_b.ht40_base[group] + efuse.path_b.ht20_diff[1])
     for register in (0x083C, 0x0848, 0x084C, 0x0868):
         _write32_mask(transport, register, 0x7F7F7F7F, mcs)
 

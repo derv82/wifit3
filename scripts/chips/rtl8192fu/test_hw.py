@@ -14,7 +14,7 @@ from wifit3.chips.rtl8192fu import SUPPORTED_IDS
 from wifit3.chips.rtl8192fu.driver import RTL8192FUDriver
 
 
-async def run(duration: float) -> int:
+async def run(duration: float, channel: int) -> int:
     device = usb.core.find(idVendor=0x2001, idProduct=0x3328)
     if device is None:
         print("RTL8192FU 2001:3328 not found; unplug, replug, and retry")
@@ -31,7 +31,8 @@ async def run(duration: float) -> int:
     driver.register_disconnect_callback(lambda: print("device disconnected"))
     try:
         await driver.connect(lambda value, message: print(f"[{value:5.1%}] {message}"))
-        print(f"listening for {duration:.1f}s without transmitting...")
+        await driver.set_channel(channel)
+        print(f"listening on channel {channel} for {duration:.1f}s without transmitting...")
         await asyncio.sleep(duration)
         print(f"decoded packets: {packets}")
         return 0
@@ -42,8 +43,9 @@ async def run(duration: float) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="RX-only RTL8192FU cold-boot smoke test")
     parser.add_argument("--duration", type=float, default=10.0)
+    parser.add_argument("--channel", type=int, choices=range(1, 15), default=1)
     args = parser.parse_args()
-    return asyncio.run(run(args.duration))
+    return asyncio.run(run(args.duration, args.channel))
 
 
 if __name__ == "__main__":

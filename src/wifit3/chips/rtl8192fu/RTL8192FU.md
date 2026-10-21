@@ -18,7 +18,7 @@
 ## Python Port Details
 
 - `2001:3328` selects `RTL8192FUDriver` through `chips/rtl8192fu/__init__.py`.
-- Status: complete cold initialization and runtime RX activation are replay-verified through 4880 ordered USB operations; `connect()` runs the sequence and starts a bulk-IN reader.
+- Status: complete cold initialization, runtime RX activation, and 20 MHz channel tuning across channels 1–14 are replay-verified; `connect()` starts bulk-IN RX and `set_channel()` uses the source tune path.
 - Firmware: `assets/rtl8192fufw.bin`, 32416 bytes, SHA-256 `cce2c368238b01ebf68e257d9788bfba1481f11b4d126abf2553da2bb474fa5f`.
 - Firmware was decompressed verbatim from Ubuntu's `linux-firmware` copy at `/lib/firmware/rtlwifi/rtl8192fufw.bin.zst` and byte-compared after decompression.
 - Firmware redistribution uses Realtek's `LICENCE.rtlwifi_firmware.txt`, shipped beside the blob.
@@ -31,7 +31,7 @@
 
 ## Known Problems
 
-- Channel tuning and TX are not yet integrated.
+- TX is not yet integrated because the capture has no injection segment.
 - RX descriptor framing is ported, but Jaguar-2 PHY-status RSSI decoding is pending; received packets currently carry a placeholder `-50 dBm` RSSI.
 - The available capture has no explicit injection segment, so TX cannot yet be byte-verified.
 
@@ -46,8 +46,8 @@
 ## Scripts
 
 - `scripts/chips/rtl8192fu/extract_tables.py` regenerates the chipset-local Python tables from pinned mainline `8192f.c`.
-- `scripts/chips/rtl8192fu/verify_pcap.py` replays cold init and runtime start against the capture; the gate covers 4880 ordered USB operations with zero divergence.
-- `scripts/chips/rtl8192fu/test_hw.py` performs an RX-only cold-boot smoke test without transmitting.
+- `scripts/chips/rtl8192fu/verify_pcap.py` replays cold init/runtime start plus every deterministic channel window; cold/start covers 4880 operations and each channel 2–14 window covers 494 operations with zero divergence.
+- `scripts/chips/rtl8192fu/test_hw.py` performs an RX-only cold-boot smoke test on an optional channel without transmitting.
 
 ## Debug log
 

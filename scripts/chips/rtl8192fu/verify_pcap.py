@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import bisect
+import re
 import sys
 import time
 from pathlib import Path
@@ -19,6 +21,7 @@ from wifit3.chips.rtl8192fu.bringup import (
     set_tx_power,
     table_bringup,
 )
+from wifit3.chips.rtl8192fu.chan import config_channel
 from wifit3.chips.rtl8192fu.chip import identify_chip
 from wifit3.chips.rtl8192fu.efuse import parse_efuse, read_efuse
 from wifit3.chips.rtl8192fu.firmware import load_firmware_blob, parse_firmware
@@ -26,6 +29,37 @@ from wifit3.chips.rtl8192fu.iqk import phy_iq_calibrate
 from wifit3.chips.rtl8192fu.runtime import enable_hardware_led, enable_rf, open_rx_filters
 
 CAP_DIR = REPO / "src/wifit3/scripts/captures_rtl8192fu"
+
+
+def _verify_channels(pcap: Path, device: int, efuse) -> bool:
+    iw_log = pcap.with_name(f"{pcap.stem}_logs") / "iw.log"
+    text = iw_log.read_text()
+    starts = re.findall(r"\[([0-9.]+)\] Executing: .* set channel (\d+)", text)
+    ends = re.findall(r"\[([0-9.]+)\] Execution completed", text)
+    frame_numbers, epochs = rp.frame_epochs(pcap)
+    for (start, channel_text), end in zip(starts, ends, strict=True):
+        channel = int(channel_text)
+        first = frame_numbers[bisect.bisect_left(epochs, float(start))]
+        last_index = bisect.bisect_right(epochs, float(end)) - 1
+        last = frame_numbers[last_index]
+        ops = rp.extract_ops(pcap, device, (first, last))
+        if not ops:
+            print(f"  channel {channel:2}: no driver operations (unchanged channel)")
+            continue
+        replay = rp.ReplayTransport(ops)
+        try:
+            set_tx_power(replay, efuse, 1)
+            config_channel(replay, 1)
+            set_tx_power(replay, efuse, channel)
+            config_channel(replay, channel)
+        except rp.Divergence as error:
+            print(f"FAIL channel {channel} at op {replay.i}: {error}")
+            return False
+        if replay.i != len(ops):
+            print(f"FAIL channel {channel}: consumed {replay.i}/{len(ops)} ops")
+            return False
+        print(f"  channel {channel:2}: PASS ({replay.i} ops)")
+    return True
 
 
 def run(cap: str | None = None) -> int:
@@ -59,6 +93,9 @@ def run(cap: str | None = None) -> int:
         open_rx_filters(replay)
     except (rp.Divergence, ValueError, IOError) as error:
         print(f"FAIL at op {replay.i}: {error}")
+        return 1
+
+    if not _verify_channels(pcap, device, efuse):
         return 1
 
     print(
