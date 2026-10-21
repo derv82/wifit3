@@ -27,6 +27,8 @@ from wifit3.chips.rtl8192fu.efuse import parse_efuse, read_efuse
 from wifit3.chips.rtl8192fu.firmware import load_firmware_blob, parse_firmware
 from wifit3.chips.rtl8192fu.iqk import phy_iq_calibrate
 from wifit3.chips.rtl8192fu.runtime import enable_hardware_led, enable_rf, open_rx_filters
+from wifit3.chips.rtl8192fu.rx import iter_frames
+from wifit3.dot11.parser import WlanFrameParser
 
 CAP_DIR = REPO / "src/wifit3/scripts/captures_rtl8192fu"
 
@@ -59,6 +61,27 @@ def _verify_channels(pcap: Path, device: int, efuse) -> bool:
             print(f"FAIL channel {channel}: consumed {replay.i}/{len(ops)} ops")
             return False
         print(f"  channel {channel:2}: PASS ({replay.i} ops)")
+    return True
+
+
+def _verify_rx(pcap: Path, device: int) -> bool:
+    buffers = rp.extract_bulk_in_ops(pcap, device)
+    frames = 0
+    packets = 0
+    rssi_values: list[int] = []
+    for buffer in buffers:
+        for frame, rssi in iter_frames(buffer, cck_new_agc=True):
+            frames += 1
+            rssi_values.append(rssi)
+            if WlanFrameParser.parse_80211_frame(frame, rssi) is not None:
+                packets += 1
+    if not frames or not packets:
+        print(f"FAIL RX: {len(buffers)} buffers produced {frames} frames/{packets} packets")
+        return False
+    print(
+        f"  RX: PASS ({len(buffers)} buffers, {frames} frames, {packets} parsed packets, "
+        f"RSSI {min(rssi_values)}..{max(rssi_values)} dBm)"
+    )
     return True
 
 
@@ -96,6 +119,8 @@ def run(cap: str | None = None) -> int:
         return 1
 
     if not _verify_channels(pcap, device, efuse):
+        return 1
+    if not _verify_rx(pcap, device):
         return 1
 
     print(

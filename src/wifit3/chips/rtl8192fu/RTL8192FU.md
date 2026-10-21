@@ -32,7 +32,7 @@
 ## Known Problems
 
 - TX is not yet integrated because the capture has no injection segment.
-- RX descriptor framing is ported, but Jaguar-2 PHY-status RSSI decoding is pending; received packets currently carry a placeholder `-50 dBm` RSSI.
+- Jaguar-2 PHY-status pages 0/1/2 and both new/legacy CCK AGC RSSI paths are decoded; per-chain values are combined using mainline's stronger-path rule.
 - The available capture has no explicit injection segment, so TX cannot yet be byte-verified.
 
 ## Driver Entry Points
@@ -46,7 +46,7 @@
 ## Scripts
 
 - `scripts/chips/rtl8192fu/extract_tables.py` regenerates the chipset-local Python tables from pinned mainline `8192f.c`.
-- `scripts/chips/rtl8192fu/verify_pcap.py` replays cold init/runtime start plus every deterministic channel window; cold/start covers 4880 operations and each channel 2–14 window covers 494 operations with zero divergence.
+- `scripts/chips/rtl8192fu/verify_pcap.py` replays cold init/runtime start plus every deterministic channel window and captured bulk-IN RX; RX currently verifies 372 frames, 303 parsed packets, and `-99..-47 dBm` RSSI.
 - `scripts/chips/rtl8192fu/test_hw.py` performs an RX-only cold-boot smoke test on an optional channel without transmitting.
 
 ## Debug log

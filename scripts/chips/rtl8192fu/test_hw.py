@@ -21,10 +21,12 @@ async def run(duration: float, channel: int) -> int:
         return 1
 
     packets = 0
+    rssi_values: list[int] = []
 
-    def receive(_packet) -> None:
+    def receive(packet) -> None:
         nonlocal packets
         packets += 1
+        rssi_values.append(packet.rssi)
 
     driver = RTL8192FUDriver.from_usb_device(device, SUPPORTED_IDS[0])
     driver.register_rx_callback(receive)
@@ -35,6 +37,8 @@ async def run(duration: float, channel: int) -> int:
         print(f"listening on channel {channel} for {duration:.1f}s without transmitting...")
         await asyncio.sleep(duration)
         print(f"decoded packets: {packets}")
+        if rssi_values:
+            print(f"RSSI range: {min(rssi_values)}..{max(rssi_values)} dBm")
         return 0
     finally:
         await driver.close()

@@ -176,13 +176,14 @@ def calibrate_lc(transport: RTL8192FUTransport) -> None:
     lc_calibrate(transport)
 
 
-def finish_cold_init(transport: RTL8192FUTransport) -> None:
+def finish_cold_init(transport: RTL8192FUTransport) -> bool:
     write_rfreg(transport, 0, 0x42, 0x37CF8)
     transport.write8(0x0652, (30000 + 127) // 128)
     value = transport.read32(C.REG_FWHW_TXQ_CTRL)
     transport.write32(C.REG_FWHW_TXQ_CTRL, value | (1 << 12))
-    transport.read32(0x0A9C)
+    cck_new_agc = bool(transport.read32(0x0A9C) & (1 << 17))
     transport.read32(0x0D2C)
+    return cck_new_agc
 
 
 def mac_policy(transport: RTL8192FUTransport) -> None:

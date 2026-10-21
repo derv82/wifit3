@@ -48,6 +48,7 @@ class RTL8192FUDriver(Driver):
         self._efuse: EfuseData | None = None
         self._channel_lock = asyncio.Lock()
         self.current_channel = 1
+        self._cck_new_agc = False
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8192FUDriver":
@@ -101,7 +102,7 @@ class RTL8192FUDriver(Driver):
         set_tx_power(self.transport, self._efuse)
         calibrate_lc(self.transport)
         phy_iq_calibrate(self.transport, self._efuse.rfe_type)
-        finish_cold_init(self.transport)
+        self._cck_new_agc = finish_cold_init(self.transport)
         enable_hardware_led(self.transport)
 
     def _read_once(self) -> bytes | None:
@@ -113,7 +114,7 @@ class RTL8192FUDriver(Driver):
     def _dispatch(self, buffer: bytes) -> None:
         if self._rx_callback is None:
             return
-        for frame, rssi in iter_frames(buffer):
+        for frame, rssi in iter_frames(buffer, self._cck_new_agc):
             if len(frame) >= 10 and frame[0] == 0xD4:
                 self.record_ack(frame)
             packet = WlanFrameParser.parse_80211_frame(frame, rssi)

@@ -39,7 +39,25 @@ def parse_descriptor(buffer: bytes, offset: int = 0) -> RxDescriptor:
     )
 
 
-def iter_frames(buffer: bytes) -> Iterator[tuple[bytes, int]]:
+def parse_phystats_rssi(phy_stats: bytes, cck_new_agc: bool = True) -> int | None:
+    if len(phy_stats) < 3:
+        return None
+    page = phy_stats[0]
+    if page == 0:
+        if cck_new_agc:
+            return phy_stats[1] - 110
+        if len(phy_stats) < 15:
+            return None
+        vga = phy_stats[13] & 0x1F
+        lna = ((phy_stats[14] >> 7) << 3) | (phy_stats[13] >> 5)
+        lna_base = {7: -44, 5: -28, 3: -10, 0: 14}.get(lna)
+        return 0 if lna_base is None else lna_base - 2 * vga
+    if page in (1, 2):
+        return max(phy_stats[1], phy_stats[2]) - 110
+    return None
+
+
+def iter_frames(buffer: bytes, cck_new_agc: bool = True) -> Iterator[tuple[bytes, int]]:
     offset = 0
     while offset + 24 <= len(buffer):
         descriptor = parse_descriptor(buffer, offset)
@@ -51,7 +69,12 @@ def iter_frames(buffer: bytes) -> Iterator[tuple[bytes, int]]:
         if not descriptor.report and not descriptor.crc_error and not descriptor.icv_error:
             frame_start = offset + descriptor.frame_offset
             frame = bytes(buffer[frame_start:frame_start + descriptor.packet_length])
-            yield frame, -50
+            rssi = None
+            if descriptor.phy_stats and descriptor.driver_info_size:
+                stats_start = offset + 24
+                stats_end = stats_start + descriptor.driver_info_size
+                rssi = parse_phystats_rssi(buffer[stats_start:stats_end], cck_new_agc)
+            yield frame, rssi if rssi is not None else -110
         next_offset = offset + ((total + 7) & ~7)
         if next_offset <= offset:
             return
