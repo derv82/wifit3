@@ -73,3 +73,77 @@ def power_on(transport: RTL8192FUTransport) -> None:
 
     transport.write16(C.REG_CR, 0)
     _update16(transport, C.REG_CR, set_=0x063F)
+
+
+def _flush_fifo(transport: RTL8192FUTransport) -> None:
+    transport.write8(C.REG_TXPAUSE, 0xFF)
+    _update32(transport, C.REG_RXPKT_NUM, set_=C.RXPKT_NUM_RW_RELEASE_EN)
+    for _ in range(101):
+        if transport.read32(C.REG_RXPKT_NUM) & C.RXPKT_NUM_RXDMA_IDLE:
+            break
+    transport.write16(C.REG_RQPN_NPQ, 0)
+    transport.write32(C.REG_RQPN, 0x80000000)
+    time.sleep(0.002)
+
+
+def _active_to_lps(transport: RTL8192FUTransport) -> None:
+    transport.write8(C.REG_TXPAUSE, 0xFF)
+    for _ in range(101):
+        if transport.read32(C.REG_SCH_TX_CMD) == 0:
+            break
+        time.sleep(0.00001)
+    else:
+        return
+    _update8(transport, C.REG_SYS_FUNC, clear=C.SYS_FUNC_BBRSTB)
+    time.sleep(0.000002)
+    _update8(transport, C.REG_SYS_FUNC, clear=C.SYS_FUNC_BB_GLB_RSTN)
+    value = transport.read16(C.REG_CR)
+    value &= 0xFF00
+    value |= C.CR_HCI_RXDMA_ENABLE | C.CR_HCI_TXDMA_ENABLE
+    value &= ~C.CR_SECURITY_ENABLE
+    transport.write16(C.REG_CR, value)
+    _update8(transport, C.REG_DUAL_TSF_RST, set_=C.DUAL_TSF_TX_OK)
+
+
+def _firmware_self_reset(transport: RTL8192FUTransport) -> None:
+    transport.write8(C.REG_HMTFR + 3, 0x20)
+    for _ in range(100):
+        if not transport.read16(C.REG_SYS_FUNC) & C.SYS_FUNC_CPU_ENABLE:
+            return
+        time.sleep(0.00005)
+    _update16(transport, C.REG_SYS_FUNC, clear=C.SYS_FUNC_CPU_ENABLE)
+
+
+def _active_to_emu(transport: RTL8192FUTransport) -> None:
+    _update8(transport, C.REG_SYS_FUNC, clear=C.SYS_FUNC_BBRSTB)
+    _update16(transport, C.REG_GPIO_INTM, clear=1 << 9)
+    _update32(transport, C.REG_APS_FSMCO, set_=1 << 16)
+    _update16(transport, C.REG_APS_FSMCO, set_=1 << 9)
+    for _ in range(C.RTL8XXXU_MAX_REG_POLL):
+        if not transport.read32(C.REG_APS_FSMCO) & (1 << 9):
+            break
+        time.sleep(0.00001)
+    else:
+        return
+    _update8(transport, C.REG_SYS_ISO_CTRL, set_=1 << 5)
+    _update8(transport, C.REG_LDOA15_CTRL, clear=1)
+
+
+def _emu_to_disabled(transport: RTL8192FUTransport) -> None:
+    transport.write8(C.REG_APS_FSMCO + 3, 0x20)
+    value = transport.read16(C.REG_APS_FSMCO)
+    transport.write16(C.REG_APS_FSMCO, (value & ~(1 << 12)) | (1 << 11))
+    _update32(transport, C.REG_GPIO_INTM, set_=1 << 16)
+
+
+def power_off(transport: RTL8192FUTransport) -> None:
+    _flush_fifo(transport)
+    _update8(transport, C.REG_TX_REPORT_CTRL, clear=C.TX_REPORT_CTRL_TIMER_ENABLE)
+    transport.write8(C.REG_CR, 0)
+    _active_to_lps(transport)
+    if transport.read8(C.REG_MCU_FW_DL) & C.MCU_FW_RAM_SEL:
+        _firmware_self_reset(transport)
+    _update16(transport, C.REG_SYS_FUNC, clear=C.SYS_FUNC_CPU_ENABLE)
+    transport.write8(C.REG_MCU_FW_DL, 0)
+    _active_to_emu(transport)
+    _emu_to_disabled(transport)

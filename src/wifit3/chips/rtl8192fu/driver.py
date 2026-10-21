@@ -25,6 +25,7 @@ from .chip import ChipIdentity, identify_chip
 from .efuse import EfuseData, parse_efuse, read_efuse
 from .firmware import load_firmware_blob, parse_firmware
 from .iqk import phy_iq_calibrate
+from .power import power_off
 from .runtime import configure_monitor_filter, disable_rf, enable_hardware_led, enable_rf, open_rx_filters
 from .rx import iter_frames, read_burst
 from .transport import RTL8192FUTransport
@@ -166,6 +167,7 @@ class RTL8192FUDriver(Driver):
                 self.transport.write16(0x06A4, 0)
                 self.transport.write8(0x0522, 0xFF)
                 disable_rf(self.transport)
+                power_off(self.transport)
         finally:
             try:
                 self.transport.release()

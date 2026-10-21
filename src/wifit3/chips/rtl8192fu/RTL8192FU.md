@@ -30,13 +30,14 @@
 - Mainline sets `needs_full_init = 1`; this port must reproduce the complete cold path.
 - The 2-second rate/CFO watchdog is wire-silent in unassociated monitor mode: CFO samples require an associated matching BSSID, while the reset path retains the EFUSE crystal cap and initialized ATC state.
 - Beacon work is AP/TX-only; RTL8192FU C2H work only updates Bluetooth coexistence or TX rate reports; bulk-IN resubmission is represented by `RxReaderThread`.
+- Teardown follows mainline stop then `rtl8192fu_power_off`: stop RX/TX, disable RF, flush FIFO, enter LPS, reset firmware/MCU, then transition active → EMU → disabled.
 - Jaguar-2 PHY-status pages 0/1/2 and both new/legacy CCK AGC RSSI paths are decoded; per-chain values use mainline's stronger-path rule.
 
 ## Known Problems
 
 - TX is not yet integrated because the capture has no injection segment.
 - The available capture has no explicit injection segment, so TX cannot be byte-verified or implemented from evidence.
-- The capture has no teardown segment; close disables RX filters and RF but does not reproduce mainline's complete RTL8192FU power-off sequence.
+- The capture has no teardown segment, so the source-ported power-off sequence is unit-tested but cannot be pcap byte-verified.
 
 ## Driver Entry Points
 
