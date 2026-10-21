@@ -38,7 +38,16 @@ async def run(duration: float, channel: int) -> int:
         await asyncio.sleep(duration)
         print(f"decoded packets: {packets}")
         if rssi_values:
-            print(f"RSSI range: {min(rssi_values)}..{max(rssi_values)} dBm")
+            ordered = sorted(rssi_values)
+            def percentile(value: float) -> int:
+                return ordered[round((len(ordered) - 1) * value)]
+
+            positive = sum(value > 0 for value in ordered)
+            print(f"RSSI range: {ordered[0]}..{ordered[-1]} dBm")
+            print(
+                f"RSSI p05/median/p95: {percentile(0.05)}/"
+                f"{percentile(0.50)}/{percentile(0.95)} dBm; positive samples: {positive}"
+            )
         return 0
     finally:
         await driver.close()
