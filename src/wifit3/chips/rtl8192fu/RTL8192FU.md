@@ -19,6 +19,7 @@
 
 - `2001:3328` selects `RTL8192FUDriver` through `chips/rtl8192fu/__init__.py`.
 - Status: cold initialization, monitor filtering, runtime RX, 20 MHz channels 1–14, management/data TX, and arbitrary MAC/BSSID programming are ported; captured TX is replay-verified.
+- A 20-minute 14-channel RX soak completed without disconnect or RX-reader failure; snapshots showed 9–14 active channels and 206–420 frames per minute window.
 - Firmware: `assets/rtl8192fufw.bin`, 32416 bytes, SHA-256 `cce2c368238b01ebf68e257d9788bfba1481f11b4d126abf2553da2bb474fa5f`.
 - Firmware was decompressed verbatim from Ubuntu's `linux-firmware` copy at `/lib/firmware/rtlwifi/rtl8192fufw.bin.zst` and byte-compared after decompression.
 - Firmware redistribution uses Realtek's `LICENCE.rtlwifi_firmware.txt`, shipped beside the blob.
@@ -36,7 +37,7 @@
 
 ## Known Problems
 
-- Live directed deauthentication, PMKID, WPS PIN, and spoofed-station WPS identity probing work; responses can be slower than other cards even when USB TX submission is fast. WEP has not been tested because no suitable target is available, and AP-role spoofing remains untested.
+- Live directed deauthentication, PMKID, WPS PIN, and spoofed-station WPS identity probing work; a 100-frame timing run measured 0.6–2.3 ms USB TX submissions with no slowdown, while responses can be slower than other cards. WEP has not been tested because no suitable target is available, and AP-role spoofing remains untested.
 - Control-frame TX is not ported; current auditing campaigns do not require raw control-frame injection.
 - The capture has no teardown segment, so the source-ported power-off sequence is unit-tested but cannot be pcap byte-verified.
 
