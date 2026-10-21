@@ -122,8 +122,8 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Handshake | ✅ | 2026-10-21 | Verified deauth → complete four-way capture; all EAPOL frames M1–M4 can be collected. |
 | PMKID | ✅ | 2026-10-21 | Successfully associated and collected a PMKID. |
 | WEP | ⬜ |  | Not run; dont have target with WEP encryption. - cosita |
-| WPS | ⬜ |  | Not run. |
-| ACKs | ⬜ |  | Not run. |
+| WPS | ✅ | 2026-10-21 | WPS PIN and WPS identity probe work; PBC untested. |
+| ACKs | ✅ | 2026-10-21 | Directed deauth showed 10/10 ACKs in both directions; spoofed-station WPS identity probe and WPS PIN also succeeded. |
 | Stress | ⬜ |  | RX good, rate once tx implemented |
 
 → [RTL8192FU.md](../src/wifit3/chips/rtl8192fu/RTL8192FU.md)
