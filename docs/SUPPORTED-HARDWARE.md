@@ -24,6 +24,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [MT7925AU](#mt7925au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7601U](#mt7601u) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8192FU](#rtl8192fu) | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
@@ -101,6 +102,25 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Stress | ✅ | 2026-07-30 | 30-min soak, flat (trend 0.97); mainline degrades/collapses. |
 
 → [RTL8188EUS_DKMS.md](../src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](../src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
+
+### RTL8192FU
+
+*D-Link AN3U rev. A1 · 2.4 GHz*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **⬜** |  | RX-only verification so far. |
+| RX | ✅ | 2026-10-21 | Live RX works; cold initialization, monitor RX, RSSI decoding, and channels 1–14 are replay-verified. |
+| Port | ⬜ |  | Linux comparison not run. |
+| TX | ⬜ |  | Not run. |
+| Handshake | ⬜ |  | Not run. |
+| PMKID | ⬜ |  | Not run. |
+| WEP | ⬜ |  | Not run. |
+| WPS | ⬜ |  | Not run. |
+| ACKs | ⬜ |  | Not run. |
+| Stress | ⬜ |  | Not run. |
+
+→ [RTL8192FU.md](../src/wifit3/chips/rtl8192fu/RTL8192FU.md)
 
 ### RTL8812AU
 <img align="right" width="109" height="165" src="../assets/cardart/card-awus036ach.png" alt="ALFA AWUS036ACH">
