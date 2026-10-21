@@ -32,7 +32,7 @@
 - Beacon work is AP/TX-only; RTL8192FU C2H work only updates Bluetooth coexistence or TX rate reports; bulk-IN resubmission is represented by `RxReaderThread`.
 - Teardown follows mainline stop then `rtl8192fu_power_off`: stop RX/TX, disable RF, flush FIFO, enter LPS, reset firmware/MCU, then transition active → EMU → disabled.
 - Jaguar-2 PHY-status pages 0/1/2 and both new/legacy CCK AGC RSSI paths are decoded; per-chain values use mainline's stronger-path rule.
-- Active monitor ports mainline `rtl8xxxu_set_mac`/`rtl8xxxu_set_bssid` through port-0 `REG_MACID`/`REG_BSSID`, then restores the EFUSE MAC on exit.
+- Active monitor ports mainline port-0 link type plus `rtl8xxxu_set_mac`/`rtl8xxxu_set_bssid`: station role for client campaigns, AP role for EvilTwin, and EFUSE MAC/none role on exit.
 
 ## Known Problems
 
@@ -53,7 +53,7 @@
 - `scripts/chips/rtl8192fu/extract_tables.py` regenerates the chipset-local Python tables from pinned mainline `8192f.c`.
 - `scripts/chips/rtl8192fu/verify_pcap.py` replays 5130 cold-init/runtime/monitor operations plus every deterministic channel window and captured bulk-IN RX; RX verifies 372 frames, 303 parsed packets, and `-99..-47 dBm` RSSI.
 - `scripts/chips/rtl8192fu/test_hw.py` performs an RX-only cold-boot smoke test on an optional channel without transmitting.
-- `scripts/chips/rtl8192fu/verify_tx.py` byte-matches every directed-deauthentication TX payload in `capture-2` against the Python descriptor builder.
+- `scripts/chips/rtl8192fu/verify_tx.py` byte-matches every directed-deauthentication TX payload in `capture-2`; the same capture verifies management on endpoint `0x05` and BE data on endpoint `0x08`.
 - `src/wifit3/scripts/capture.py` records the generic cold-boot, RX, channel-tune, and optional TX reference bundle; run it with `--bssid2g`, `--channel2g`, and `--client2g` for an authorized RTL8192FU TX capture.
 
 ```bash

@@ -30,7 +30,7 @@ from .power import power_off
 from .runtime import configure_monitor_filter, disable_rf, enable_hardware_led, enable_rf, open_rx_filters
 from .rx import iter_frames, read_burst
 from .transport import RTL8192FUTransport
-from .tx import build_tx_packet, stamp_sequence
+from .tx import build_tx_packet, bulk_out_index, stamp_sequence
 
 
 class RTL8192FUDriver(Driver):
@@ -155,11 +155,10 @@ class RTL8192FUDriver(Driver):
         if endpoints is None:
             raise BringUpError("RTL8192FU TX", "driver is not connected")
         packet = build_tx_packet(frame_bytes)
+        endpoint = endpoints.bulk_out[bulk_out_index(frame_bytes, len(endpoints.bulk_out))]
         loop = asyncio.get_running_loop()
         async with self._tx_lock:
-            await loop.run_in_executor(
-                None, self.transport.bulk_write, endpoints.bulk_out[0], packet
-            )
+            await loop.run_in_executor(None, self.transport.bulk_write, endpoint, packet)
         return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
@@ -175,7 +174,9 @@ class RTL8192FUDriver(Driver):
         """No-op, matching `_enable_rx_acks`; the source-backed control filter stays active."""
         return
 
-    def _program_active_monitor(self, mac: bytes, bssid: bytes) -> None:
+    def _program_active_monitor(self, mac: bytes, bssid: bytes, link_type: int) -> None:
+        value = self.transport.read8(C.REG_MSR) & 0x0C
+        self.transport.write8(C.REG_MSR, value | link_type)
         for offset, value in enumerate(mac):
             self.transport.write8(C.REG_MACID + offset, value)
         for offset, value in enumerate(bssid):
@@ -184,10 +185,12 @@ class RTL8192FUDriver(Driver):
     async def enter_active_monitor(self, mac: bytes, bssid: bytes | None = None) -> bytes:
         if len(mac) != 6 or bssid is not None and len(bssid) != 6:
             raise ValueError("RTL8192FU active-monitor addresses must be six bytes")
+        requested_bssid = bytes(bssid or mac)
+        link_type = C.MSR_LINKTYPE_AP if bytes(mac) == requested_bssid else C.MSR_LINKTYPE_STATION
         loop = asyncio.get_running_loop()
         async with self._active_monitor_lock:
             await loop.run_in_executor(
-                None, self._program_active_monitor, bytes(mac), bytes(bssid or mac)
+                None, self._program_active_monitor, bytes(mac), requested_bssid, link_type
             )
         return bytes(mac)
 
@@ -197,7 +200,11 @@ class RTL8192FUDriver(Driver):
         loop = asyncio.get_running_loop()
         async with self._active_monitor_lock:
             await loop.run_in_executor(
-                None, self._program_active_monitor, self._efuse.mac_address, bytes(6)
+                None,
+                self._program_active_monitor,
+                self._efuse.mac_address,
+                bytes(6),
+                C.MSR_LINKTYPE_NONE,
             )
 
     async def close(self) -> None:

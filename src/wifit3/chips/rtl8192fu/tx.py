@@ -21,6 +21,15 @@ def _validate_frame(frame: bytes) -> None:
         raise ValueError("RTL8192FU control-frame TX is not ported")
 
 
+def bulk_out_index(frame: bytes, endpoint_count: int) -> int:
+    _validate_frame(frame)
+    if endpoint_count < 1:
+        raise ValueError("RTL8192FU has no bulk-OUT endpoint")
+    if frame[0] & 0x0C == 0:
+        return 0
+    return min(endpoint_count, 3) - 1
+
+
 def build_tx_packet(frame: bytes) -> bytes:
     _validate_frame(frame)
     descriptor = bytearray(TX_DESC_SIZE)
