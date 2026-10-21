@@ -81,8 +81,11 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 ### RTL8188EUS
 <img align="right" width="96" height="165" src="../assets/cardart/card-tpwn722nv23.png" alt="TP-Link TL-WN722N v2/v3">
+<img align="right" width="72" src="../assets/cardart/card-mercusys-mw150us.png" alt="Mercusys MW150US">
 
-*TP-Link TL-WN722N v2/v3 · 2.4 GHz*
+*TP-Link TL-WN722N v2/v3 / Mercusys MW150US · 2.4 GHz*
+
+> Mercusys MW150US (`2c4e:0102`) is stable in current use.
 
 > Ported from the [aircrack-ng/rtl8188eus](https://github.com/aircrack-ng/rtl8188eus) vendor/DKMS
 > port. There is a separate (weaker) port for the mainline kernel v6.18 driver (opt-in via
