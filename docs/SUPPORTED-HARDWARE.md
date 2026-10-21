@@ -104,6 +104,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 → [RTL8188EUS_DKMS.md](../src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](../src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
 
 ### RTL8192FU
+<img align="right" width="140" src="../assets/cardart/card-dlink-an3u-n300.png" alt="D-Link AN3U rev. A1">
 
 *D-Link AN3U rev. A1 · 2.4 GHz*
 
