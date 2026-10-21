@@ -79,3 +79,61 @@ async def test_connect_reports_each_cold_bringup_phase_in_source_order(mocker):
         "Enabling monitor mode",
         "RTL8192FU online",
     ]
+
+
+@pytest.mark.asyncio
+async def test_close_matches_source_stop_order_before_power_off(mocker):
+    driver = RTL8192FUDriver(Mock(), DeviceID(0x2001, 0x3328, "RTL8192FU"))
+    driver.transport = Mock(interface_number=0)
+    driver._efuse = Mock()
+    driver.is_warm = True
+    operations: list[tuple[str, int, int] | tuple[str]] = []
+    driver.transport.write8.side_effect = lambda register, value: operations.append(
+        ("write8", register, value)
+    )
+    driver.transport.write16.side_effect = lambda register, value: operations.append(
+        ("write16", register, value)
+    )
+    driver.transport.release.side_effect = lambda: operations.append(("release",))
+    mocker.patch(
+        "wifit3.chips.rtl8192fu.driver.disable_rf",
+        side_effect=lambda _: operations.append(("disable_rf",)),
+    )
+    mocker.patch(
+        "wifit3.chips.rtl8192fu.driver.power_off",
+        side_effect=lambda _: operations.append(("power_off",)),
+    )
+
+    await driver.close()
+
+    assert operations == [
+        ("write8", 0x0522, 0xFF),
+        ("write16", 0x06A0, 0),
+        ("write16", 0x06A4, 0),
+        ("write8", 0x0522, 0xFF),
+        ("disable_rf",),
+        ("power_off",),
+        ("release",),
+    ]
+    assert driver._efuse is None
+    assert not driver.is_warm
+
+
+@pytest.mark.asyncio
+async def test_physical_disconnect_forwards_error_and_releases_without_register_io(mocker):
+    driver = RTL8192FUDriver(Mock(), DeviceID(0x2001, 0x3328, "RTL8192FU"))
+    driver.transport = Mock(interface_number=0)
+    disconnect = Mock()
+    driver.register_disconnect_callback(disconnect)
+    error = OSError(19, "No such device")
+    mocker.patch("wifit3.chips.rtl8192fu.driver.is_device_gone", return_value=True)
+    power_off = mocker.patch("wifit3.chips.rtl8192fu.driver.power_off")
+
+    driver._on_rx_fatal(error)
+    await driver.close()
+
+    disconnect.assert_called_once_with(error)
+    driver.transport.write8.assert_not_called()
+    driver.transport.write16.assert_not_called()
+    power_off.assert_not_called()
+    driver.transport.release.assert_called_once_with()

@@ -8,7 +8,7 @@ import usb.core
 from wifit3.chips.driver import Driver, FakeMacSupport, ProgressCallback
 from wifit3.chips.rx_reader import RxReaderThread
 from wifit3.dot11.parser import WlanFrameParser
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, is_device_gone
 from wifit3.models.device_id import DeviceID
 
 from . import constants as C
@@ -47,7 +47,8 @@ class RTL8192FUDriver(Driver):
         self.mac_address: str | None = None
         self.is_warm = False
         self._rx_callback: Callable | None = None
-        self._disconnect_callback: Callable[[], None] | None = None
+        self._disconnect_callback: Callable[[Exception], None] | None = None
+        self._device_gone = False
         self._rx_reader: RxReaderThread | None = None
         self._efuse: EfuseData | None = None
         self._channel_lock = asyncio.Lock()
@@ -65,8 +66,13 @@ class RTL8192FUDriver(Driver):
     def register_rx_callback(self, cb: Callable) -> None:
         self._rx_callback = cb
 
-    def register_disconnect_callback(self, cb: Callable[[], None]) -> None:
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
         self._disconnect_callback = cb
+
+    def _on_rx_fatal(self, error: Exception) -> None:
+        self._device_gone = is_device_gone(error)
+        if self._disconnect_callback is not None:
+            self._disconnect_callback(error)
 
     async def connect(self, progress_cb: ProgressCallback | None = None) -> bool:
         loop = asyncio.get_running_loop()
@@ -97,7 +103,7 @@ class RTL8192FUDriver(Driver):
                 self._read_once,
                 self._dispatch,
                 name="rtl8192fu-rx",
-                on_fatal=lambda _error: self._disconnect_callback and self._disconnect_callback(),
+                on_fatal=self._on_rx_fatal,
             )
             self._rx_reader.start()
             await loop.run_in_executor(None, open_rx_filters, self.transport)
@@ -262,21 +268,26 @@ class RTL8192FUDriver(Driver):
                 C.MSR_LINKTYPE_NONE,
             )
 
+    def _stop_hardware(self) -> None:
+        self.transport.write8(C.REG_TXPAUSE, 0xFF)
+        self.transport.write16(C.REG_RXFLTMAP0, 0)
+        self.transport.write16(C.REG_RXFLTMAP2, 0)
+        self.transport.write8(C.REG_TXPAUSE, 0xFF)
+        disable_rf(self.transport)
+        power_off(self.transport)
+
     async def close(self) -> None:
         if self._rx_reader is not None:
             await self._rx_reader.stop()
             self._rx_reader = None
         try:
-            if self.transport.interface_number is not None:
-                self.transport.write8(0x0522, 0xFF)
-                self.transport.write16(0x06A0, 0)
-                self.transport.write16(0x06A4, 0)
-                self.transport.write8(0x0522, 0xFF)
-                disable_rf(self.transport)
-                power_off(self.transport)
+            if self.transport.interface_number is not None and not self._device_gone:
+                async with self._io_lock:
+                    await asyncio.get_running_loop().run_in_executor(None, self._stop_hardware)
         finally:
             try:
                 self.transport.release()
             finally:
                 self._efuse = None
                 self.is_warm = False
+                self._device_gone = False
