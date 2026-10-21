@@ -2,7 +2,7 @@
 and Consolidate has moved out of Prefs into the Vault screen."""
 import pytest
 from textual.app import App
-from textual.widgets import Button, Select
+from textual.widgets import Button, Checkbox, Select
 
 from wifit3.models import ToolName
 from wifit3.persist import config
@@ -76,7 +76,6 @@ async def test_desktop_notifications_checkbox_is_saved(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_auto_crack_checkbox_is_saved(tmp_path, monkeypatch):
 async def test_auto_crack_tool_is_saved(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "_PATH", tmp_path / "config.toml")
     monkeypatch.setattr(Config.hashcat, "path", "/usr/bin/hashcat")

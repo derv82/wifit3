@@ -59,7 +59,6 @@ class Config:
     decloaked_ssids: dict[str, str] = {}
     hide_silenced: bool = False
     wps_auto_pbc: bool = True
-    auto_crack: bool = True
     desktop_notifications: bool = True
     hashcat_path: str | None = None
     wordlist_paths: list[str] = []
@@ -117,7 +116,6 @@ class Config:
                                    and len(ssid.encode("utf-8")) <= SSID_MAX_OCTETS}
         cls.hide_silenced = bool(data.get("hide_silenced", cls.hide_silenced))
         cls.wps_auto_pbc = bool(data.get("wps_auto_pbc", cls.wps_auto_pbc))
-        cls.auto_crack = bool(data.get("auto_crack", cls.auto_crack))
         cls.desktop_notifications = bool(
             data.get("desktop_notifications", cls.desktop_notifications)
         )
@@ -149,7 +147,6 @@ class Config:
             f"silenced_bssids = {_fmt(cls.silenced_bssids)}\n"
             f"hide_silenced = {_fmt(cls.hide_silenced)}\n"
             f"wps_auto_pbc = {_fmt(cls.wps_auto_pbc)}\n"
-            f"auto_crack = {_fmt(cls.auto_crack)}\n"
             f"desktop_notifications = {_fmt(cls.desktop_notifications)}\n"
             f"auto_crack = {_fmt(cls.auto_crack or '')}\n"
         )
@@ -165,6 +162,22 @@ class Config:
             _PATH.write_text(text, encoding="utf-8")
         except OSError as e:
             raise ConfigError(f"Failed to save config at {_PATH}: {e}") from e
+
+
+def _table(data: dict, name: str) -> dict:
+    table = data.get(name)
+    return table if isinstance(table, dict) else {}
+
+
+def _optional_str(value: object, current: str | None) -> str | None:
+    return value if isinstance(value, str) else current
+
+
+def _wordlist_paths(value: object, legacy: object, current: list[str]) -> list[str]:
+    raw = value if value is not None else legacy
+    if not isinstance(raw, list) or not all(isinstance(path, str) for path in raw):
+        return current
+    return raw
 
 
 def _auto_crack(data: dict, current: ToolName | None) -> ToolName | None:
