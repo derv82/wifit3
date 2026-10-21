@@ -73,9 +73,23 @@ class RTL8192FUDriver(Driver):
         progress(0.02, "Claiming RTL8192FU USB interface")
         try:
             await loop.run_in_executor(None, self.transport.claim)
-            progress(0.08, "Reading RTL8192FU EFUSE")
-            await loop.run_in_executor(None, self._cold_bringup)
-            progress(0.96, "Starting RTL8192FU receiver")
+            progress(0.08, "Identifying RTL8192FU silicon")
+            await loop.run_in_executor(None, self._identify_chip)
+            progress(0.12, "Reading RTL8192FU EFUSE")
+            await loop.run_in_executor(None, self._read_efuse)
+            progress(0.18, "Powering RTL8192FU and uploading firmware")
+            await loop.run_in_executor(None, self._firmware_bringup)
+            progress(0.40, "Configuring RTL8192FU MAC, baseband, and RF")
+            await loop.run_in_executor(None, self._table_bringup)
+            progress(0.58, "Configuring RTL8192FU FIFO and receive policy")
+            await loop.run_in_executor(None, self._configure_fifo_and_mac)
+            progress(0.68, "Applying EFUSE TX power calibration")
+            await loop.run_in_executor(None, self._apply_tx_power)
+            progress(0.76, "Calibrating RTL8192FU radio")
+            await loop.run_in_executor(None, self._calibrate_radio)
+            progress(0.88, "Finishing RTL8192FU hardware initialization")
+            await loop.run_in_executor(None, self._finish_cold_init)
+            progress(0.94, "Starting RTL8192FU receiver")
             enable_rf(self.transport)
             self._rx_reader = RxReaderThread(
                 loop,
@@ -102,16 +116,46 @@ class RTL8192FUDriver(Driver):
         return True
 
     def _cold_bringup(self) -> None:
+        self._identify_chip()
+        self._read_efuse()
+        self._firmware_bringup()
+        self._table_bringup()
+        self._configure_fifo_and_mac()
+        self._apply_tx_power()
+        self._calibrate_radio()
+        self._finish_cold_init()
+
+    def _identify_chip(self) -> None:
         self.identity = identify_chip(self.transport)
+
+    def _read_efuse(self) -> None:
         self._efuse = parse_efuse(read_efuse(self.transport))
         self.mac_address = self._efuse.mac_address.hex(":")
+
+    def _firmware_bringup(self) -> None:
         firmware_bringup(self.transport, parse_firmware(load_firmware_blob()))
+
+    def _table_bringup(self) -> None:
+        if self._efuse is None:
+            raise RuntimeError("RTL8192FU EFUSE is unavailable")
         table_bringup(self.transport, self._efuse)
+
+    def _configure_fifo_and_mac(self) -> None:
         fifo_and_rx_policy(self.transport)
         mac_policy(self.transport)
+
+    def _apply_tx_power(self) -> None:
+        if self._efuse is None:
+            raise RuntimeError("RTL8192FU EFUSE is unavailable")
         set_tx_power(self.transport, self._efuse)
+
+    def _calibrate_radio(self) -> None:
+        if self._efuse is None:
+            raise RuntimeError("RTL8192FU EFUSE is unavailable")
         calibrate_lc(self.transport)
         phy_iq_calibrate(self.transport, self._efuse.rfe_type)
+
+    def _finish_cold_init(self) -> None:
         self._cck_new_agc = finish_cold_init(self.transport)
         enable_hardware_led(self.transport)
 

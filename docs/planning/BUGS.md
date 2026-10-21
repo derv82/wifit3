@@ -33,7 +33,8 @@ Most drivers were ported against the single device they were tested on, so EFUSE
 (antenna count, TX power tables) sit in the code as constants. A device whose EFUSE differs then
 gets wrong values with no error raised: little or no RX/TX, or wedging.
 
-Chipsets confirmed to honor EFUSE: RTL8821AU, RTL8822BU, RTL8822CU.
+Chipsets confirmed to honor EFUSE: RTL8821AU, RTL8822BU, RTL8822CU, RTL8192FU.
+RTL8192FU is verified only on its RFE type 5 reference card; RFE type 1 needs hardware validation.
 
 Direction: per driver, list the EFUSE fields the vendor driver reads, compare against the wifit3
 driver, port what is missing. The vendor's per field parsers are uniformly named, so the field list
