@@ -6,7 +6,7 @@ import pytest
 from wifit3.chips.driver import FakeMacSupport
 from wifit3.chips.rtl8192fu import constants as C
 from wifit3.chips.rtl8192fu.driver import RTL8192FUDriver
-from wifit3.chips.rtl8192fu.tx import build_tx_packet, stamp_sequence
+from wifit3.chips.rtl8192fu.tx import build_tx_packet, bulk_out_index, stamp_sequence
 
 
 DIRECTED_DEAUTH = bytes.fromhex(
@@ -84,7 +84,7 @@ async def test_rx_ack_hooks_use_existing_monitor_filter():
 
 async def test_active_monitor_programs_and_restores_source_mac(mocker):
     driver = object.__new__(RTL8192FUDriver)
-    driver.transport = SimpleNamespace(write8=mocker.Mock())
+    driver.transport = SimpleNamespace(read8=mocker.Mock(return_value=0x0C), write8=mocker.Mock())
     driver._active_monitor_lock = asyncio.Lock()
     driver._efuse = SimpleNamespace(mac_address=bytes.fromhex("001122334455"))
     mac = bytes.fromhex("aabbccddeeff")
@@ -93,6 +93,8 @@ async def test_active_monitor_programs_and_restores_source_mac(mocker):
     assert RTL8192FUDriver.FAKE_MAC is FakeMacSupport.SPOOFABLE
     assert await driver.enter_active_monitor(mac, bssid) == mac
     assert driver.transport.write8.call_args_list == [
+        mocker.call(C.REG_MSR, 0x0C | C.MSR_LINKTYPE_STATION)
+    ] + [
         mocker.call(C.REG_MACID + offset, value) for offset, value in enumerate(mac)
     ] + [
         mocker.call(C.REG_BSSID + offset, value) for offset, value in enumerate(bssid)
@@ -101,9 +103,33 @@ async def test_active_monitor_programs_and_restores_source_mac(mocker):
     driver.transport.write8.reset_mock()
     await driver.exit_active_monitor()
     assert driver.transport.write8.call_args_list == [
+        mocker.call(C.REG_MSR, 0x0C | C.MSR_LINKTYPE_NONE)
+    ] + [
         mocker.call(C.REG_MACID + offset, value)
         for offset, value in enumerate(driver._efuse.mac_address)
     ] + [mocker.call(C.REG_BSSID + offset, 0) for offset in range(6)]
+
+
+async def test_active_monitor_uses_ap_link_type_when_mac_is_bssid(mocker):
+    driver = object.__new__(RTL8192FUDriver)
+    driver.transport = SimpleNamespace(read8=mocker.Mock(return_value=0), write8=mocker.Mock())
+    driver._active_monitor_lock = asyncio.Lock()
+    mac = bytes.fromhex("aabbccddeeff")
+
+    await driver.enter_active_monitor(mac, mac)
+
+    driver.transport.write8.assert_any_call(C.REG_MSR, C.MSR_LINKTYPE_AP)
+
+
+@pytest.mark.parametrize(
+    ("endpoint_count", "management_index", "data_index"),
+    [(1, 0, 0), (2, 0, 1), (3, 0, 2), (6, 0, 2)],
+)
+def test_bulk_out_queue_mapping(endpoint_count, management_index, data_index):
+    data_frame = bytes.fromhex("48013a01122233445566aabbccddeeffaabbccddeeffe01b")
+
+    assert bulk_out_index(DIRECTED_DEAUTH, endpoint_count) == management_index
+    assert bulk_out_index(data_frame, endpoint_count) == data_index
 
 
 async def test_driver_writes_management_packet_to_first_bulk_endpoint(mocker):
@@ -119,6 +145,20 @@ async def test_driver_writes_management_packet_to_first_bulk_endpoint(mocker):
     driver.transport.bulk_write.assert_called_once_with(
         0x05, build_tx_packet(DIRECTED_DEAUTH)
     )
+
+
+async def test_driver_writes_data_packet_to_low_queue_endpoint(mocker):
+    frame = bytes.fromhex("48013a01122233445566aabbccddeeffaabbccddeeffe01b")
+    driver = object.__new__(RTL8192FUDriver)
+    driver.transport = SimpleNamespace(
+        endpoints=SimpleNamespace(bulk_out=(0x05, 0x06, 0x08, 0x09, 0x0C, 0x0D)),
+        bulk_write=mocker.Mock(),
+    )
+    driver._tx_lock = asyncio.Lock()
+
+    assert await driver._inject_frame(frame) is True
+
+    driver.transport.bulk_write.assert_called_once_with(0x08, build_tx_packet(frame))
 
 
 def test_build_tx_packet_matches_captured_data_layout():
