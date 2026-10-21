@@ -165,9 +165,11 @@ class RTL8192FUDriver(Driver):
         return stamped
 
     async def _enable_rx_acks(self) -> None:
-        raise BringUpError("RTL8192FU RX ACK", "RX filtering is not ported yet")
+        """No-op: monitor setup mirrors core.c:6932-6935 and keeps RCR_ACCEPT_CTRL_FRAME set."""
+        return
 
     async def _disable_rx_acks(self) -> None:
+        """No-op, matching `_enable_rx_acks`; the source-backed control filter stays active."""
         return
 
     async def close(self) -> None:

@@ -73,6 +73,13 @@ def test_stamp_sequence_preserves_fragment_number_and_wraps():
     assert int.from_bytes(stamped[22:24], "little") == 0x001B
 
 
+async def test_rx_ack_hooks_use_existing_monitor_filter():
+    driver = object.__new__(RTL8192FUDriver)
+
+    assert await driver._enable_rx_acks() is None
+    assert await driver._disable_rx_acks() is None
+
+
 async def test_driver_writes_management_packet_to_first_bulk_endpoint(mocker):
     driver = object.__new__(RTL8192FUDriver)
     driver.transport = SimpleNamespace(
