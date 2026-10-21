@@ -52,6 +52,7 @@ class RTL8192FUDriver(Driver):
         self._efuse: EfuseData | None = None
         self._channel_lock = asyncio.Lock()
         self._tx_lock = asyncio.Lock()
+        self._io_lock = asyncio.Lock()
         self._active_monitor_lock = asyncio.Lock()
         self._tx_sequence = 0
         self.current_channel = 1
@@ -183,9 +184,18 @@ class RTL8192FUDriver(Driver):
         if channel == self.current_channel:
             return True
         loop = asyncio.get_running_loop()
-        async with self._channel_lock:
-            await loop.run_in_executor(None, self._set_channel_sync, channel)
-            self.current_channel = channel
+        async with self._io_lock:
+            async with self._channel_lock:
+                reader = self._rx_reader
+                pause_reader = reader is not None and not scan
+                if pause_reader:
+                    await loop.run_in_executor(None, reader.pause)
+                try:
+                    await loop.run_in_executor(None, self._set_channel_sync, channel)
+                    self.current_channel = channel
+                finally:
+                    if pause_reader:
+                        reader.resume()
         return True
 
     def _set_channel_sync(self, channel: int) -> None:
@@ -201,8 +211,9 @@ class RTL8192FUDriver(Driver):
         packet = build_tx_packet(frame_bytes)
         endpoint = endpoints.bulk_out[bulk_out_index(frame_bytes, len(endpoints.bulk_out))]
         loop = asyncio.get_running_loop()
-        async with self._tx_lock:
-            await loop.run_in_executor(None, self.transport.bulk_write, endpoint, packet)
+        async with self._io_lock:
+            async with self._tx_lock:
+                await loop.run_in_executor(None, self.transport.bulk_write, endpoint, packet)
         return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:

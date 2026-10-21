@@ -139,6 +139,7 @@ async def test_driver_writes_management_packet_to_first_bulk_endpoint(mocker):
         bulk_write=mocker.Mock(),
     )
     driver._tx_lock = asyncio.Lock()
+    driver._io_lock = asyncio.Lock()
 
     assert await driver._inject_frame(DIRECTED_DEAUTH) is True
 
@@ -155,6 +156,7 @@ async def test_driver_writes_data_packet_to_low_queue_endpoint(mocker):
         bulk_write=mocker.Mock(),
     )
     driver._tx_lock = asyncio.Lock()
+    driver._io_lock = asyncio.Lock()
 
     assert await driver._inject_frame(frame) is True
 
