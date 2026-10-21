@@ -3,6 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from wifit3.chips.driver import FakeMacSupport
+from wifit3.chips.rtl8192fu import constants as C
 from wifit3.chips.rtl8192fu.driver import RTL8192FUDriver
 from wifit3.chips.rtl8192fu.tx import build_tx_packet, stamp_sequence
 
@@ -80,6 +82,30 @@ async def test_rx_ack_hooks_use_existing_monitor_filter():
     assert await driver._disable_rx_acks() is None
 
 
+async def test_active_monitor_programs_and_restores_source_mac(mocker):
+    driver = object.__new__(RTL8192FUDriver)
+    driver.transport = SimpleNamespace(write8=mocker.Mock())
+    driver._active_monitor_lock = asyncio.Lock()
+    driver._efuse = SimpleNamespace(mac_address=bytes.fromhex("001122334455"))
+    mac = bytes.fromhex("aabbccddeeff")
+    bssid = bytes.fromhex("123456789abc")
+
+    assert RTL8192FUDriver.FAKE_MAC is FakeMacSupport.SPOOFABLE
+    assert await driver.enter_active_monitor(mac, bssid) == mac
+    assert driver.transport.write8.call_args_list == [
+        mocker.call(C.REG_MACID + offset, value) for offset, value in enumerate(mac)
+    ] + [
+        mocker.call(C.REG_BSSID + offset, value) for offset, value in enumerate(bssid)
+    ]
+
+    driver.transport.write8.reset_mock()
+    await driver.exit_active_monitor()
+    assert driver.transport.write8.call_args_list == [
+        mocker.call(C.REG_MACID + offset, value)
+        for offset, value in enumerate(driver._efuse.mac_address)
+    ] + [mocker.call(C.REG_BSSID + offset, 0) for offset in range(6)]
+
+
 async def test_driver_writes_management_packet_to_first_bulk_endpoint(mocker):
     driver = object.__new__(RTL8192FUDriver)
     driver.transport = SimpleNamespace(
@@ -95,14 +121,24 @@ async def test_driver_writes_management_packet_to_first_bulk_endpoint(mocker):
     )
 
 
-def test_tx_rejects_non_management_frames():
-    data_frame = bytearray(DIRECTED_DEAUTH)
-    data_frame[0] = 0x08
+def test_build_tx_packet_matches_captured_data_layout():
+    frame = bytes.fromhex("48013a01122233445566aabbccddeeffaabbccddeeffe01b")
+    descriptor = bytes.fromhex(
+        "18002800000000000000010000000000001f00000000000000000000cee00000"
+        "0000000000e01b00"
+    )
 
-    with pytest.raises(ValueError, match="data/control TX is not ported"):
-        build_tx_packet(bytes(data_frame))
-    with pytest.raises(ValueError, match="data/control TX is not ported"):
-        stamp_sequence(bytes(data_frame), 0)
+    assert build_tx_packet(frame) == descriptor + frame
+
+
+def test_tx_rejects_control_frames():
+    control_frame = bytearray(DIRECTED_DEAUTH)
+    control_frame[0] = 0xD4
+
+    with pytest.raises(ValueError, match="control-frame TX is not ported"):
+        build_tx_packet(bytes(control_frame))
+    with pytest.raises(ValueError, match="control-frame TX is not ported"):
+        stamp_sequence(bytes(control_frame), 0)
 
 
 def test_tx_frame_size_includes_descriptor_in_usb_limit():

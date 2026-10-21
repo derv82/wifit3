@@ -5,12 +5,13 @@ from typing import Callable
 
 import usb.core
 
-from wifit3.chips.driver import Driver, ProgressCallback
+from wifit3.chips.driver import Driver, FakeMacSupport, ProgressCallback
 from wifit3.chips.rx_reader import RxReaderThread
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.errors import BringUpError
 from wifit3.models.device_id import DeviceID
 
+from . import constants as C
 from .bringup import (
     calibrate_lc,
     fifo_and_rx_policy,
@@ -35,6 +36,7 @@ from .tx import build_tx_packet, stamp_sequence
 class RTL8192FUDriver(Driver):
     SUPPORTED_CHANNELS = list(range(1, 15))
     CONFLICTING_LINUX_MODULES = ["rtl8xxxu"]
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, dev: usb.core.Device, id_entry: DeviceID) -> None:
         super().__init__()
@@ -50,6 +52,7 @@ class RTL8192FUDriver(Driver):
         self._efuse: EfuseData | None = None
         self._channel_lock = asyncio.Lock()
         self._tx_lock = asyncio.Lock()
+        self._active_monitor_lock = asyncio.Lock()
         self._tx_sequence = 0
         self.current_channel = 1
         self._cck_new_agc = False
@@ -171,6 +174,31 @@ class RTL8192FUDriver(Driver):
     async def _disable_rx_acks(self) -> None:
         """No-op, matching `_enable_rx_acks`; the source-backed control filter stays active."""
         return
+
+    def _program_active_monitor(self, mac: bytes, bssid: bytes) -> None:
+        for offset, value in enumerate(mac):
+            self.transport.write8(C.REG_MACID + offset, value)
+        for offset, value in enumerate(bssid):
+            self.transport.write8(C.REG_BSSID + offset, value)
+
+    async def enter_active_monitor(self, mac: bytes, bssid: bytes | None = None) -> bytes:
+        if len(mac) != 6 or bssid is not None and len(bssid) != 6:
+            raise ValueError("RTL8192FU active-monitor addresses must be six bytes")
+        loop = asyncio.get_running_loop()
+        async with self._active_monitor_lock:
+            await loop.run_in_executor(
+                None, self._program_active_monitor, bytes(mac), bytes(bssid or mac)
+            )
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        if self._efuse is None:
+            return
+        loop = asyncio.get_running_loop()
+        async with self._active_monitor_lock:
+            await loop.run_in_executor(
+                None, self._program_active_monitor, self._efuse.mac_address, bytes(6)
+            )
 
     async def close(self) -> None:
         if self._rx_reader is not None:

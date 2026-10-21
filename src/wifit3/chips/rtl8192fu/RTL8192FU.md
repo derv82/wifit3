@@ -18,7 +18,7 @@
 ## Python Port Details
 
 - `2001:3328` selects `RTL8192FUDriver` through `chips/rtl8192fu/__init__.py`.
-- Status: cold initialization, monitor filtering, runtime RX, 20 MHz channels 1–14, and management TX are replay-verified; `connect()` starts bulk-IN RX and applies the initial channel tune.
+- Status: cold initialization, monitor filtering, runtime RX, 20 MHz channels 1–14, management/data TX, and arbitrary MAC/BSSID programming are ported; captured TX is replay-verified.
 - Firmware: `assets/rtl8192fufw.bin`, 32416 bytes, SHA-256 `cce2c368238b01ebf68e257d9788bfba1481f11b4d126abf2553da2bb474fa5f`.
 - Firmware was decompressed verbatim from Ubuntu's `linux-firmware` copy at `/lib/firmware/rtlwifi/rtl8192fufw.bin.zst` and byte-compared after decompression.
 - Firmware redistribution uses Realtek's `LICENCE.rtlwifi_firmware.txt`, shipped beside the blob.
@@ -32,11 +32,12 @@
 - Beacon work is AP/TX-only; RTL8192FU C2H work only updates Bluetooth coexistence or TX rate reports; bulk-IN resubmission is represented by `RxReaderThread`.
 - Teardown follows mainline stop then `rtl8192fu_power_off`: stop RX/TX, disable RF, flush FIFO, enter LPS, reset firmware/MCU, then transition active → EMU → disabled.
 - Jaguar-2 PHY-status pages 0/1/2 and both new/legacy CCK AGC RSSI paths are decoded; per-chain values use mainline's stronger-path rule.
+- Active monitor ports mainline `rtl8xxxu_set_mac`/`rtl8xxxu_set_bssid` through port-0 `REG_MACID`/`REG_BSSID`, then restores the EFUSE MAC on exit.
 
 ## Known Problems
 
-- Management TX is byte-verified but has not been fired from the Python driver on hardware.
-- The aireplay injection self-test includes non-management frame variants not yet implemented; auditing use currently needs management-frame injection only.
+- Management/data TX and MAC spoofing are byte/source-verified but have not been fired from the Python driver on hardware.
+- Control-frame TX is not ported; current auditing campaigns do not require raw control-frame injection.
 - The capture has no teardown segment, so the source-ported power-off sequence is unit-tested but cannot be pcap byte-verified.
 
 ## Driver Entry Points
