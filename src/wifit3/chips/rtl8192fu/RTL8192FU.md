@@ -52,6 +52,14 @@
 - `scripts/chips/rtl8192fu/extract_tables.py` regenerates the chipset-local Python tables from pinned mainline `8192f.c`.
 - `scripts/chips/rtl8192fu/verify_pcap.py` replays 5130 cold-init/runtime/monitor operations plus every deterministic channel window and captured bulk-IN RX; RX verifies 372 frames, 303 parsed packets, and `-99..-47 dBm` RSSI.
 - `scripts/chips/rtl8192fu/test_hw.py` performs an RX-only cold-boot smoke test on an optional channel without transmitting.
+- `src/wifit3/scripts/capture.py` records the generic cold-boot, RX, channel-tune, and optional TX reference bundle; run it with `--bssid2g`, `--channel2g`, and `--client2g` for an authorized RTL8192FU TX capture.
+
+```bash
+sudo uv run python -m wifit3.scripts.capture \
+  --bssid2g aa:bb:cc:dd:ee:ff \
+  --channel2g 1 \
+  --client2g 11:22:33:44:55:66
+```
 
 ## Debug log
 

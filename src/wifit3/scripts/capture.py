@@ -118,6 +118,7 @@ class Capture:
         self.lsusb_baseline = ""
         self.driver_module = None
         self.firmware_files = []
+        self.nm_managed_state = None
 
         # /dev/shm is always tmpfs (RAM): writing the pcap there means no
         # persistent-USB writes during capture, so a usbmon0 capture on a
@@ -250,6 +251,39 @@ class Capture:
         self.logger.log_main(f"\n[ERROR] {msg}")
         self.cleanup()
         sys.exit(1)
+
+    def protect_capture_interface(self):
+        """Temporarily keep NetworkManager off the newly detected adapter."""
+        if shutil.which("nmcli") is None:
+            self.logger.log_main("[*] nmcli unavailable; NetworkManager protection skipped.")
+            return
+        result = subprocess.run(
+            ["nmcli", "-g", "GENERAL.NM-MANAGED", "device", "show", self.base_iface],
+            capture_output=True, text=True,
+        )
+        state = result.stdout.strip().lower()
+        if state not in {"yes", "no"}:
+            self.logger.log_main(
+                f"[*] Could not determine NetworkManager state for {self.base_iface}; protection skipped."
+            )
+            return
+        self.nm_managed_state = state
+        if state == "yes":
+            subprocess.run(
+                ["nmcli", "device", "set", self.base_iface, "managed", "no"],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            self.logger.log_main(f"[*] NetworkManager released {self.base_iface}.")
+
+    def restore_network_manager(self):
+        if self.nm_managed_state != "yes" or shutil.which("nmcli") is None:
+            return
+        subprocess.run(
+            ["nmcli", "device", "set", self.base_iface, "managed", "yes"],
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self.logger.log_main(f"[*] NetworkManager restored for {self.base_iface}.")
+        self.nm_managed_state = None
 
     @staticmethod
     def _lsusb():
@@ -617,6 +651,7 @@ class Capture:
         else:
             subprocess.run(["sudo", "airmon-ng", "stop", f"{self.base_iface}mon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run(["sudo", "airmon-ng", "stop", self.base_iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.restore_network_manager()
 
         self.logger.log_main("[+] Cleanup complete. Safe to unplug.")
 
@@ -651,8 +686,8 @@ class Capture:
 
         # 0. System Prep
         subprocess.run(["sudo", "modprobe", "usbmon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
+        # Do not run `airmon-ng check kill`: it stops NetworkManager globally and
+        # disconnects the separate control interface used for the test client.
         self.logger.log_main("\n[!] PREPARATION: Prepare to plug in the USB card.")
         self.logger.log_main("[!] IMPORTANT: DO NOT plug it in yet.")
         input("\nPress ENTER to start the capture sequence...")
@@ -694,6 +729,9 @@ class Capture:
             self.logger.log_main(f"[*] Card enumerated as: {self.base_iface}")
         else:
             self.logger.log_main(f"[!] No new wlan interface appeared; using {self.base_iface}.")
+
+        # Keep NetworkManager away from the capture adapter, not the control adapter.
+        self.protect_capture_interface()
 
         # Monitor-mode bring-up: the one step that must succeed.
         self.run_cmd(["sudo", "airmon-ng", "start", self.base_iface], fatal=True, timeout=30)
