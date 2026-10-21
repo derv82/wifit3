@@ -24,7 +24,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [MT7925AU](#mt7925au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7601U](#mt7601u) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8192FU](#rtl8192fu) | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| [RTL8192FU](#rtl8192fu) | ✅ | ⬜ | ⬜ | ✅ | ⬜ | ⬜ |
 | [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
@@ -111,8 +111,8 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **⬜** |  | RX-only verification so far. |
-| RX | ✅ | 2026-10-21 | Live RX works; cold initialization, monitor RX, RSSI decoding, and channels 1–14 are replay-verified. |
-| Port | ⬜ |  | Linux comparison not run. |
+| RX | ✅ | 2026-10-21 | Matches Linux; 85 APs on 2.4 GHz (best so far); 13/13 channels heard their own beacons, 0 silent, 0 cross-channel. |
+| Port | ✅ | 2026-10-21 | RX baseline matches Linux for breadth and channel tuning. |
 | TX | ⬜ |  | Not run. |
 | Handshake | ⬜ |  | Not run. |
 | PMKID | ⬜ |  | Not run. |
