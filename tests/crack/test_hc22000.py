@@ -86,6 +86,29 @@ def test_pmkid_hashline_marks_psk_sha256_pmkid():
     assert parse_hc22000(line).message_pair == "03"
 
 
+def _ft_m2() -> HandshakeMessage:
+    m2 = _ef(2, replay=5, key_data_len=22)
+    m2.akm = 4
+    m2.mdid, m2.r0khid, m2.r1khid = b"\x12\x34", b"r0kh", bytes.fromhex("020000000001")
+    return m2
+
+
+def test_ft_pmkid_hashline_has_empty_message_pair_and_ft_identifiers():
+    pmkid = b"\x11" * 16
+    hs = _hs("Net", _ft_m2(), pmkid=pmkid)
+    hs.pmkid_akm = 4
+    line = pmkid_hashline("Net", hs)
+    assert line == (f"WPA*03*{pmkid.hex()}*aabbccddeeff*112233445566*{b'Net'.hex()}***"
+                    f"*1234*{b'r0kh'.hex()}*020000000001")
+    assert parse_hc22000(line).kind == "03"
+
+
+def test_ft_pmkid_hashline_none_without_ft_identifiers():
+    hs = _hs("Net", pmkid=b"\x11" * 16)
+    hs.pmkid_akm = 4
+    assert pmkid_hashline("Net", hs) is None
+
+
 def test_pmkid_hashline_none_when_no_pmkid():
     hs = _hs()
     assert pmkid_hashline("X", hs) is None
@@ -149,6 +172,24 @@ def test_parse_hc22000_eapol():
     assert parsed.anonce == "1122334455667788990011223344556677889900112233445566778899001122"
     assert parsed.eapol == "01020304"
     assert parsed.message_pair == "02"
+
+
+_COMMON = "11" * 16 + "*020000000001*020000000002*486f6d65"
+
+
+def test_parse_hc22000_ft_records():
+    ft_pmkid = parse_hc22000(f"WPA*03*{_COMMON}****1234*7230*7231")
+    assert ft_pmkid is not None and ft_pmkid.kind == "03"
+    assert (ft_pmkid.mdid, ft_pmkid.r0khid, ft_pmkid.r1khid) == ("1234", "7230", "7231")
+    ft_eapol = parse_hc22000(f"WPA*04*{_COMMON}*{'22' * 32}*01020304*80*1234*7230*7231")
+    assert ft_eapol is not None and ft_eapol.kind == "04" and ft_eapol.message_pair == "80"
+
+
+def test_parse_hc22000_rejects_field_count_kind_mismatch():
+    assert parse_hc22000(f"WPA*04*{_COMMON}*{'22' * 32}*0102*80") is None          # FT without FT fields
+    assert parse_hc22000(f"WPA*02*{_COMMON}*{'22' * 32}*0102*80*1234*7230*7231") is None
+    assert parse_hc22000(f"WPA*03*{_COMMON}****1234**7231") is None                 # empty R0KH-ID
+    assert parse_hc22000(f"WPA*05*{_COMMON}***") is None
 
 
 def test_parse_hc22000_malformed():

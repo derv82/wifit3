@@ -3,9 +3,41 @@ import struct
 import pytest
 
 from wifit3.dot11.parser import WlanFrameParser
+from wifit3.dot11.eapol import LLC_SNAP_EAPOL, data_header, eapol_key
 from wifit3.dot11.packet import (
     WepDataPacket, BeaconPacket, AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
+    EapolPacket,
 )
+
+
+# ---- FT-PSK (802.11r) identifiers in an M2's Key Data ----------------------
+
+_FT_RSNE = bytes.fromhex("30140100000fac040100000fac040100000fac040000")   # AKM 00-0F-AC:4
+_FT_MDE = b"\x36\x03\x12\x34\x01"
+_FT_FTE_VALUE = bytes(82) + b"\x01\x06" + bytes.fromhex("020000000001") + b"\x03\x04r0kh"
+_FT_FTE = bytes((55, len(_FT_FTE_VALUE))) + _FT_FTE_VALUE
+
+
+def test_ft_identifiers_from_mde_and_fte():
+    assert WlanFrameParser._ft_identifiers(_FT_MDE + _FT_FTE) == (
+        b"\x12\x34", b"r0kh", bytes.fromhex("020000000001"))
+
+
+def test_ft_identifiers_absent_or_truncated_fte_subelement():
+    assert WlanFrameParser._ft_identifiers(_FT_RSNE) == (b"", b"", b"")
+    clipped = bytes(82) + b"\x03\x10r0kh"                      # length runs past the element
+    assert WlanFrameParser._ft_identifiers(bytes((55, len(clipped))) + clipped) == (b"", b"", b"")
+
+
+def test_ft_psk_m2_carries_akm_and_ft_identifiers():
+    ap, sta = bytes.fromhex("020000000001"), bytes.fromhex("020000000002")
+    payload = eapol_key(key_info=0x010B, key_len=0, replay=1, nonce=b"\x02" * 32,
+                        key_data=_FT_RSNE + _FT_MDE + _FT_FTE)
+    pkt = WlanFrameParser.parse_80211_frame(data_header(to_ds=True, bssid=ap, client=sta)
+                                            + LLC_SNAP_EAPOL + payload, -50)
+    assert isinstance(pkt, EapolPacket)
+    assert pkt.msg_num == 2 and pkt.akm == 4
+    assert (pkt.mdid, pkt.r0khid, pkt.r1khid) == (b"\x12\x34", b"r0kh", ap)
 
 
 # ---- Beacon builder for RSN-IE tests ---------------------------------------

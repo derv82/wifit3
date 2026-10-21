@@ -492,19 +492,18 @@ class ScannerView(Screen):
                 color="orange1"))
 
     def _log_auto_crack_status_when_changed(self) -> None:
-        if Config.auto_crack == self._logged_auto_crack:
+        enabled = Config.auto_crack is not None
+        if enabled == self._logged_auto_crack:
             return
-        self._logged_auto_crack = Config.auto_crack
-        if Config.auto_crack:
+        self._logged_auto_crack = enabled
+        if enabled:
             self._write_log(treelog.header(
                 "[bold]Auto-crack[/bold] is [bold green]enabled[/bold green] "
-                "[dim](change in Preferences, [bold]ctrl+p[/bold])[/dim]", color="green"))
-            self._write_log(treelog.leaf(
-                "[dim](tries default passwords on new captures with CPU Crack)[/dim]"))
+                f"[dim]({Config.auto_crack}, change in Prefs: [bold]ctrl+p[/bold])[/dim]", color="green"))
         else:
             self._write_log(treelog.header(
                 "[bold]Auto-crack[/bold] is [orange1]disabled[/orange1] "
-                "[dim](change in Preferences, [bold]ctrl+p[/bold])[/dim]", color="orange1"))
+                "[dim](change in Prefs: [bold]ctrl+p[/bold])[/dim]", color="orange1"))
 
     def on_wifite_app_job_cracked(self, message: "WifiteApp.JobCracked") -> None:
         job = message.job

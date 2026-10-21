@@ -6,7 +6,7 @@ from .access_point import WepStats, CaptureType, PersistedCapture, AccessPoint
 from .client import Client
 from .device_id import DeviceID
 from .identity import ApIdentity, IdKey, IdSource
-from .jobs import JobAction, ToolCapability, ToolStatus, JobState, ToolResult
+from .jobs import JobAction, ToolCapability, ToolName, ToolStatus, JobState, ToolResult
 
 __all__ = [
     "ApIdentity",
@@ -22,6 +22,7 @@ __all__ = [
     "DeviceID",
     "JobAction",
     "ToolCapability",
+    "ToolName",
     "ToolStatus",
     "JobState",
     "ToolResult",

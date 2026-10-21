@@ -11,9 +11,12 @@ def _rc(n: int) -> str:
     return n.to_bytes(8, "big").hex()
 
 
-def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0, akm=None):
+def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0, akm=None,
+           keyver=0, mdid=b"", r0khid=b"", r1khid=b""):
     """An HandshakeMessage with the fields crackability cares about. `complete=False`
     simulates a clipped 802.1X payload; `mic=False` an M1-style no-MIC frame."""
+    payload = bytearray(120 if complete else 50)
+    payload[5:7] = keyver.to_bytes(2, "big")
     return HandshakeMessage(
         raw=b"",
         msg_num=msg,
@@ -21,10 +24,17 @@ def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0, akm=None
         nonce=(nonce if nonce is not None else bytes([msg]) * 32),
         mic=(b"\x11" * 16 if mic else b"\x00" * 16),
         key_data_len=0,
-        eapol_payload=(bytes(120) if complete else bytes(50)),
+        eapol_payload=bytes(payload),
         timestamp=ts,
         akm=akm,
+        mdid=mdid,
+        r0khid=r0khid,
+        r1khid=r1khid,
     )
+
+
+_FT_IDENTIFIERS = {"mdid": b"\x12\x34", "r0khid": b"r0kh.example.test",
+                   "r1khid": bytes.fromhex("020000000001")}
 
 
 def _hs(*frames):
@@ -185,7 +195,7 @@ def _label(hs):
     return wpa.uncrackable_label(_keystone_akm(hs), hs.akm_offered)
 
 
-# --- EAPOL (WPA*02) gate: suppress SAE + FT-PSK ------------------------------
+# --- EAPOL gate: suppress SAE, FT-PSK only as a complete WPA*04 ----------------
 
 def test_sae_only_ap_suppresses_handshake():
     """The user's Beryl AX: beacon offers SAE only → every 4-way is uncrackable,
@@ -221,13 +231,51 @@ def test_transition_ap_unknown_client_not_emitted():
     assert wpa.crackable_pairs(hs) == []
 
 
-def test_ft_psk_handshake_suppressed():
-    """FT-PSK (4) is PSK-derived, but hashcat -m 22000 has no FT mode → the
-    handshake is NOT emitted, and the trace badges 'FT'."""
-    hs = _m1m2(offered=[4], client=4)
+def _ft_m1m2(*, keyver=3, **identifiers):
+    hs = _hs(_frame(1, 5, nonce=ANONCE, mic=False),
+             _frame(2, 5, nonce=SNONCE, akm=4, keyver=keyver, **identifiers))
+    hs.akm_offered = [4]
+    return hs
+
+
+def test_ft_psk_handshake_withheld_without_ft_identifiers():
+    """FT-PSK (4) cracks only as WPA*04, which needs MDID / R0KH-ID / R1KH-ID."""
+    hs = _ft_m1m2()
+    assert _verdict(hs) == "crackable"
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.withheld_capture_label(hs) == "FT"
+
+
+def test_ft_psk_handshake_withheld_unless_m2_keyver_3():
+    hs = _ft_m1m2(keyver=2, **_FT_IDENTIFIERS)
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.withheld_capture_label(hs) == "FT"
+
+
+def test_ft_psk_handshake_withheld_on_m4_keystone():
+    hs = _hs(_frame(3, 6, nonce=ANONCE), _frame(4, 6, nonce=SNONCE, akm=4, keyver=3, **_FT_IDENTIFIERS))
+    hs.akm_offered = [4]
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.withheld_capture_label(hs) == "FT"
+
+
+def test_ft_psk_handshake_emits_wpa04_with_ft_identifiers():
+    hs = _ft_m1m2(**_FT_IDENTIFIERS)
+    pairs = wpa.crackable_pairs(hs)
+    assert len(pairs) == 1
+    assert wpa.withheld_capture_label(hs) is None
+    fields = wpa.hc22000_line("FTNet", hs, pairs[0]).split("*")
+    assert fields[1] == "04" and fields[8] == "80"
+    assert fields[9:] == ["1234", b"r0kh.example.test".hex(), "020000000001"]
+
+
+def test_ft_psk_sha384_uncrackable_and_badged_ft():
+    """AKM 19 has a passphrase PMK, but -m 22000's FT path is SHA-256 only. Not Enterprise."""
+    hs = _m1m2(offered=[19], client=19)
     assert _verdict(hs) == "uncrackable"
     assert wpa.crackable_pairs(hs) == []
     assert _label(hs) == "FT"
+    assert wpa.withheld_capture_label(hs) == "FT"
 
 
 def test_ft_psk_only_ap_suppressed_without_client_akm():
@@ -411,8 +459,17 @@ def test_pmkid_sae_or_ft_unknown_withheld():
     assert not wpa.pmkid_crackable(_hs_pmkid(offered=[2, 4]))   # PSK + FT-PSK
 
 
-def test_ft_pmkid_suppressed():
-    assert not wpa.pmkid_crackable(_hs_pmkid(offered=[4], client=4))
+def test_ft_pmkid_needs_ft_identifiers_from_an_m2():
+    hs = _hs_pmkid(offered=[4], client=4)
+    assert wpa.crackable_pmkid_akm(hs) is None
+    hs.messages.append(_frame(2, 5, nonce=SNONCE, akm=4, keyver=3, **_FT_IDENTIFIERS))
+    assert wpa.crackable_pmkid_akm(hs) == 4
+
+
+def test_ft_psk_sha384_pmkid_suppressed():
+    hs = _hs_pmkid(offered=[19], client=19)
+    hs.messages.append(_frame(2, 5, nonce=SNONCE, akm=19, keyver=3, **_FT_IDENTIFIERS))
+    assert not wpa.pmkid_crackable(hs)
 
 
 def test_akm6_eapol_and_pmkid_both_crackable():

@@ -13,14 +13,9 @@ from __future__ import annotations
 from .constants import REG_GPIO0, REG_GPIO1
 from .transport import RTL8187Transport
 
-# [SRC] rtl8187.h:34 — RFKILL_MASK_8187_89_97 (the 0x8187/0x8189/0x8197 mask). The
-# 0x8198 variant (mask 0x4) is selected from EEPROM only for product_id 0x8197/0x8198,
-# which the AWUS036H (0x8187) is not.
-RFKILL_MASK_8187 = 0x2
 
-
-def is_radio_enabled(t: RTL8187Transport, mask: int = RFKILL_MASK_8187) -> bool:
-    """True iff the hardware RF switch is on. [SRC] rtl8187_is_radio_enabled."""
+def is_radio_enabled(t: RTL8187Transport, mask: int) -> bool:
+    """True iff the hardware RF switch is on; ``mask`` is priv->rfkill_mask, picked in probe."""
     gpio = t.read8(REG_GPIO0)
     t.write8(REG_GPIO0, gpio & ~mask & 0xFF)
     gpio = t.read8(REG_GPIO1)

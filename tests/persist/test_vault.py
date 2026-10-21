@@ -9,9 +9,10 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
+
 from wifit3.crack.hc22000_format import Hc22000Line
-from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH
-from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage
+from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage, ToolName
 from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault, crosses_auto_crack_threshold
 
@@ -354,14 +355,15 @@ _CLIENT = "11:22:33:44:55:66"
 
 
 def _auto_crack_call(capture, extra_passwords: list[str] | None = None) -> tuple:
-    return (("cpu_crack", capture, {"wordlists": [str(DEFAULT_PASSWORDS_PATH)],
+    return (("cpu_crack", capture, {"wordlists": [], "default_passwords": True,
+                                    "ap_ssid_passwords": True, "probed_ssid_passwords": True,
                                     "extra_passwords": extra_passwords or []}),
-            {"automatic": True})
+            {"auto_crack": True})
 
 
 def test_save_submits_cpu_crack_once_per_threshold(tmp_path, mocker):
     v = Vault()
-    v.manager = mocker.Mock()
+    mocker.patch.object(v.manager, "submit_job")
     ap = _ap_with_hs(pmkid=b"\x11" * 16)
 
     v.save_handshake(ap, _CLIENT)
@@ -379,7 +381,7 @@ def test_save_submits_cpu_crack_once_per_threshold(tmp_path, mocker):
 
 def test_auto_crack_snapshots_probed_ssids_sorted(tmp_path, mocker):
     v = Vault()
-    v.manager = mocker.Mock()
+    mocker.patch.object(v.manager, "submit_job")
     probed_ssids = {"Zeta_SSID", "Alpha_SSID"}
     v.set_probed_ssids_source(lambda: probed_ssids)
 
@@ -390,10 +392,19 @@ def test_auto_crack_snapshots_probed_ssids_sorted(tmp_path, mocker):
     assert v.manager.submit_job.call_args == _auto_crack_call(capture, ["Alpha_SSID", "Zeta_SSID"])
 
 
-def test_save_does_not_submit_when_auto_crack_is_off(tmp_path, mocker, monkeypatch):
-    monkeypatch.setattr(Config, "auto_crack", False)
+@pytest.mark.parametrize("ticked", [True, False])
+def test_add_probed_ssids_only_when_the_job_asks_for_them(tmp_path, ticked):
     v = Vault()
-    v.manager = mocker.Mock()
+    v.set_probed_ssids_source(lambda: {"Zeta_SSID", "Alpha_SSID"})
+    config = {"wordlists": [], "probed_ssid_passwords": ticked}
+    expected = {**config, "extra_passwords": ["Alpha_SSID", "Zeta_SSID"]} if ticked else config
+    assert v.add_probed_ssids(config) == expected
+
+
+def test_save_does_not_submit_when_auto_crack_is_off(tmp_path, mocker, monkeypatch):
+    monkeypatch.setattr(Config, "auto_crack", None)
+    v = Vault()
+    mocker.patch.object(v.manager, "submit_job")
 
     v.save_handshake(_ap_with_hs(), _CLIENT)
 
@@ -402,10 +413,48 @@ def test_save_does_not_submit_when_auto_crack_is_off(tmp_path, mocker, monkeypat
 
 def test_save_does_not_submit_when_the_psk_is_known(tmp_path, mocker):
     v = Vault()
-    v.manager = mocker.Mock()
+    mocker.patch.object(v.manager, "submit_job")
     ap = _ap_with_hs()
     ap.wps_pbc_psk = "knownpsk"
 
     v.save_handshake(ap, _CLIENT)
+
+    v.manager.submit_job.assert_not_called()
+
+
+def test_save_submits_to_the_chosen_tool_with_its_saved_settings(tmp_path, mocker, monkeypatch):
+    monkeypatch.setattr(Config, "auto_crack", ToolName.HASHCAT)
+    monkeypatch.setattr(Config.hashcat, "path", "/usr/bin/hashcat")
+    monkeypatch.setattr(Config.hashcat, "wordlists", ["/lists/a.txt"])
+    monkeypatch.setattr(Config.hashcat, "args", "-w 3")
+    v = Vault()
+    mocker.patch.object(v.manager, "submit_job")
+
+    v.save_handshake(_ap_with_hs(), _CLIENT)
+
+    capture = v.persisted(_ap_with_hs().bssid)[0]
+    assert v.manager.submit_job.call_args == (
+        ("hashcat", capture, {"hashcat_exe": "/usr/bin/hashcat", "wordlists": ["/lists/a.txt"],
+                              "hashcat_args": "-w 3"}),
+        {"auto_crack": True})
+
+
+def test_save_does_not_submit_to_an_unconfigured_tool(tmp_path, mocker, monkeypatch):
+    monkeypatch.setattr(Config, "auto_crack", ToolName.HASHCAT)
+    monkeypatch.setattr(Config.hashcat, "path", None)
+    v = Vault()
+    mocker.patch.object(v.manager, "submit_job")
+
+    v.save_handshake(_ap_with_hs(), _CLIENT)
+
+    v.manager.submit_job.assert_not_called()
+
+
+def test_save_does_not_submit_a_capture_the_tool_cannot_crack(tmp_path, mocker):
+    v = Vault()
+    mocker.patch.object(v.manager, "submit_job")
+    mocker.patch.object(v.manager.tools[ToolName.CPU_CRACK], "can_crack", return_value=False)
+
+    v.save_handshake(_ap_with_hs(), _CLIENT)
 
     v.manager.submit_job.assert_not_called()

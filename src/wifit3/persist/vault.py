@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Optional
 
 from wifit3.crack.hc22000_format import Hc22000Line
-from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist import save
 from wifit3.persist.capture_history import load_capture_index, summarize
@@ -20,7 +19,6 @@ from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid
 from wifit3.persist.config import Config
 from wifit3.persist.save import SaveResult
 from wifit3.vault.manager import JobManager
-from wifit3.vault.tools.cpu_crack import CpuCrackTool
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
@@ -39,7 +37,7 @@ def _open_in_file_manager(path: Path) -> None:
 
 
 def _is_m1m2_eapol(line: Hc22000Line) -> bool:
-    return line.kind == "02" and int(line.message_pair or "0", 16) & 0x07 == 0
+    return line.kind in {"02", "04"} and int(line.message_pair or "0", 16) & 0x07 == 0
 
 
 def crosses_auto_crack_threshold(before: List[Hc22000Line], after: List[Hc22000Line]) -> bool:
@@ -97,8 +95,14 @@ class Vault:
         self._change_listeners.append(listener)
 
     def set_probed_ssids_source(self, source: Callable[[], Iterable[str]]) -> None:
-        """Where auto-crack reads this session's probed SSIDs, tried as passwords before the wordlist."""
+        """Where CPU Crack jobs read this session's probed SSIDs, tried before the wordlist."""
         self._probed_ssids_source = source
+
+    def add_probed_ssids(self, config: dict) -> dict:
+        """``config`` plus this session's probed SSIDs as ``extra_passwords``, when it asks for them."""
+        if not config.get("probed_ssid_passwords"):
+            return config
+        return {**config, "extra_passwords": sorted(self._probed_ssids_source())}
 
     def _notify_changed(self) -> None:
         self.revision += 1
@@ -223,13 +227,15 @@ class Vault:
 
     def _auto_crack(self, ap: "AccessPoint", capture: PersistedCapture,
                     before: List[Hc22000Line]) -> None:
-        if not Config.auto_crack or self.has_psk(ap):
+        tool = self.manager.tools.get(Config.auto_crack) if Config.auto_crack else None
+        if tool is None or self.has_psk(ap) or not tool.can_crack(capture):
+            return
+        config = tool.auto_crack_config()
+        if config is None:
             return
         if crosses_auto_crack_threshold(before, self._hc_lines(ap)):
-            self.manager.submit_job(CpuCrackTool.name, capture,
-                                    {"wordlists": [str(DEFAULT_PASSWORDS_PATH)],
-                                     "extra_passwords": sorted(self._probed_ssids_source())},
-                                    automatic=True)
+            self.manager.submit_job(tool.name, capture, self.add_probed_ssids(config),
+                                    auto_crack=True)
 
     def save_wep_key(self, ap: "AccessPoint", key: bytes) -> Optional[SaveResult]:
         result = save.save_wep_key(ap, key)

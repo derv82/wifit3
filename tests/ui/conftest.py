@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch
 
+from wifit3.models import ToolName
 from wifit3.persist.config import Config
 
 
@@ -15,7 +16,7 @@ def _isolate_config(tmp_path, monkeypatch):
     Config.silenced_bssids = []
     Config.hide_silenced = False
     Config.wps_auto_pbc = True
-    Config.auto_crack = True
+    Config.auto_crack = ToolName.CPU_CRACK
     yield
 
 

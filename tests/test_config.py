@@ -3,14 +3,16 @@ import copy
 import pytest
 
 import wifit3.persist.config as cfg
-from wifit3.persist.config import Config, ConfigError
+from wifit3.models import ToolName
+from wifit3.persist.config import (Config, ConfigError, CpuCrackSettings, HashcatSettings,
+                                   HashtopolisSettings)
 
-_DEFAULTS = {n: getattr(Config, n)
+_DEFAULTS = {n: copy.deepcopy(getattr(Config, n))
              for n in (
                  "theme", "scanner_sort", "scanner_sort_reverse", "scanner_sort_delay",
                  "silenced_bssids", "hide_silenced", "log_level", "captures_dir", "save_pcap",
-                 "hashcat_path", "wordlist_paths", "hashcat_args", "decloaked_ssids",
-                 "wps_auto_pbc", "auto_crack")}
+                 "decloaked_ssids", "wps_auto_pbc", "auto_crack", "cpu_crack", "hashcat",
+                 "hashtopolis")}
 
 
 @pytest.fixture(autouse=True)
@@ -151,18 +153,40 @@ def test_wps_auto_pbc_absent_key_keeps_default(config_path):
 
 
 def test_auto_crack_save_load_roundtrip(config_path):
-    assert Config.auto_crack is True
-    Config.auto_crack = False
+    assert Config.auto_crack is ToolName.CPU_CRACK
+    Config.auto_crack = ToolName.HASHCAT
     Config.save()
-    Config.auto_crack = True
+    assert "auto_crack = 'hashcat'" in config_path.read_text()
+    Config.auto_crack = None
     Config.load()
-    assert Config.auto_crack is False
+    assert Config.auto_crack is ToolName.HASHCAT
+
+
+def test_auto_crack_off_roundtrip(config_path):
+    Config.auto_crack = None
+    Config.save()
+    Config.auto_crack = ToolName.CPU_CRACK
+    Config.load()
+    assert Config.auto_crack is None
 
 
 def test_auto_crack_absent_key_keeps_default(config_path):
     config_path.write_text('theme = "nord"\n')
     Config.load()
-    assert Config.auto_crack is True
+    assert Config.auto_crack is ToolName.CPU_CRACK
+
+
+@pytest.mark.parametrize(("line", "expected"), [
+    ("auto_crack = true", ToolName.CPU_CRACK),
+    ("auto_crack = false", None),
+    ("auto_crack = ''", None),
+    ("auto_crack = 'nonexistent'", None),
+    ("auto_crack_tool = 'hashtopolis'", ToolName.HASHTOPOLIS),
+])
+def test_auto_crack_load_maps_legacy_and_unknown_values(config_path, line, expected):
+    config_path.write_text(line + "\n")
+    Config.load()
+    assert Config.auto_crack is expected
 
 
 def test_hide_silenced_absent_key_keeps_default(config_path):
@@ -187,59 +211,110 @@ def test_scanner_sort_delay_save_load_roundtrip(config_path):
     assert Config.scanner_sort_delay == 5.0
 
 
-def test_tool_paths_default_to_unset(config_path):
-    assert Config.hashcat_path is None and Config.wordlist_paths == []
+def test_tool_settings_defaults(config_path):
+    assert Config.cpu_crack == CpuCrackSettings(wordlists=[], default_passwords=True,
+                                                ap_ssid_passwords=True, probed_ssid_passwords=True)
+    assert Config.hashcat == HashcatSettings()
+    assert Config.hashtopolis == HashtopolisSettings()
 
 
-def test_unset_tool_paths_are_omitted_from_the_file(config_path):
+def test_unset_tool_settings_are_omitted_from_the_file(config_path):
     """TOML has no null, so 'not configured' has to be an absent key -- never the string
     'None', which would then load back as a real (broken) path."""
     Config.save()
     text = config_path.read_text()
-    assert "hashcat_path" not in text and "wordlist_path" not in text
-    assert "hashcat_args" not in text
+    assert "[hashcat]" not in text and "[hashtopolis]" not in text
+    assert "None" not in text
 
 
-def test_tool_paths_round_trip_when_set(config_path):
-    Config.hashcat_path = r"D:\tools\hashcat\hashcat.exe"
-    Config.wordlist_paths = [r"D:\wordlists\Top29Million.txt", r"D:\wordlists\rockyou.txt"]
-    Config.hashcat_args = "-a 0 -w 3"
+def test_hashcat_settings_round_trip_in_their_table(config_path):
+    saved = HashcatSettings(path=r"D:\tools\hashcat\hashcat.exe", args="-a 0 -w 3",
+                            wordlists=[r"D:\wordlists\Top29Million.txt", r"D:\wordlists\rockyou.txt"])
+    Config.hashcat = copy.deepcopy(saved)
     Config.save()
-    Config.hashcat_path = Config.hashcat_args = None
-    Config.wordlist_paths = []
+    assert "\n[hashcat]\npath = " in config_path.read_text()
+    Config.hashcat = HashcatSettings()
     Config.load()
-    assert Config.hashcat_path == r"D:\tools\hashcat\hashcat.exe"
-    assert Config.wordlist_paths == [r"D:\wordlists\Top29Million.txt",
-                                     r"D:\wordlists\rockyou.txt"]
-    assert Config.hashcat_args == "-a 0 -w 3"
+    assert Config.hashcat == saved
+
+
+def test_cpu_crack_password_sources_round_trip(config_path):
+    Config.cpu_crack = CpuCrackSettings(wordlists=["/dicts/small.txt"], default_passwords=False,
+                                        ap_ssid_passwords=True, probed_ssid_passwords=False)
+    Config.save()
+    Config.cpu_crack = CpuCrackSettings()
+    Config.load()
+    assert Config.cpu_crack == CpuCrackSettings(wordlists=["/dicts/small.txt"],
+                                                default_passwords=False, ap_ssid_passwords=True,
+                                                probed_ssid_passwords=False)
+
+
+def test_cpu_crack_and_hashcat_wordlists_are_separate(config_path):
+    Config.cpu_crack = CpuCrackSettings(wordlists=["/dicts/small.txt"])
+    Config.hashcat = HashcatSettings(wordlists=["/dicts/rockyou.txt"])
+    Config.save()
+    Config.cpu_crack, Config.hashcat = CpuCrackSettings(), HashcatSettings()
+    Config.load()
+    assert Config.cpu_crack.wordlists == ["/dicts/small.txt"]
+    assert Config.hashcat.wordlists == ["/dicts/rockyou.txt"]
+
+
+def test_hashtopolis_settings_save_load_roundtrip(config_path):
+    saved = HashtopolisSettings(url="http://server:8080", access_key="key", wordlist_id=3,
+                                wordlist_name="rockyou.txt", access_group_id=1,
+                                access_group_name="Default Group")
+    Config.hashtopolis = copy.deepcopy(saved)
+    Config.save()
+    Config.hashtopolis = HashtopolisSettings()
+    Config.load()
+    assert Config.hashtopolis == saved
+
+
+def test_a_value_of_the_wrong_type_keeps_the_default(config_path):
+    config_path.write_text("[hashtopolis]\nurl = 5\nwordlist_id = 'three'\naccess_group_id = true\n"
+                           "[hashcat]\nwordlists = 'rockyou.txt'\npath = ''\n")
+    Config.load()
+    assert Config.hashtopolis == HashtopolisSettings()
+    assert Config.hashcat == HashcatSettings()
+
+
+def test_legacy_flat_keys_migrate_into_the_tables(config_path):
+    config_path.write_text(
+        "hashcat_path = '/usr/bin/hashcat'\nhashcat_args = '-w 3'\n"
+        "wordlist_paths = ['/dicts/rockyou.txt']\n"
+        "hashtopolis_url = 'http://server:8080'\nhashtopolis_access_key = 'key'\n"
+        "hashtopolis_wordlist_id = 3\nhashtopolis_wordlist_name = 'rockyou.txt'\n"
+        "hashtopolis_access_group_id = 1\n")
+    Config.load()
+    assert Config.hashcat == HashcatSettings(path="/usr/bin/hashcat", args="-w 3",
+                                             wordlists=["/dicts/rockyou.txt"])
+    assert Config.cpu_crack.wordlists == []
+    assert Config.hashtopolis == HashtopolisSettings(
+        url="http://server:8080", access_key="key", wordlist_id=3, wordlist_name="rockyou.txt",
+        access_group_id=1)
+    Config.save()
+    text = config_path.read_text()
+    assert "hashcat_path" not in text and "wordlist_paths" not in text
+    assert "hashtopolis_url" not in text
 
 
 def test_a_single_wordlist_path_from_an_older_config_still_loads(config_path):
     config_path.write_text(r"wordlist_path = 'D:\wordlists\rockyou.txt'" + "\n")
     Config.load()
-    assert Config.wordlist_paths == [r"D:\wordlists\rockyou.txt"]
+    assert Config.hashcat.wordlists == [r"D:\wordlists\rockyou.txt"]
 
 
-def test_the_older_wordlist_key_is_not_written_back(config_path):
-    config_path.write_text("wordlist_path = '/dicts/rockyou.txt'\n")
+def test_a_table_wins_over_the_legacy_keys(config_path):
+    config_path.write_text("hashcat_path = '/old/hashcat'\n[hashcat]\npath = '/new/hashcat'\n")
     Config.load()
-    Config.save()
-    text = config_path.read_text()
-    assert "wordlist_paths = " in text
-    assert "wordlist_path = " not in text
+    assert Config.hashcat.path == "/new/hashcat"
 
 
-def test_empty_tool_path_loads_as_unset(config_path):
-    config_path.write_text("hashcat_path = ''\n")
-    Config.load()
-    assert Config.hashcat_path is None
-
-
-def test_load_without_tool_paths_keeps_whatever_is_set(config_path):
+def test_load_without_tool_settings_keeps_whatever_is_set(config_path):
     config_path.write_text('theme = "gruvbox"\n')
-    Config.hashcat_path = "/usr/bin/hashcat"
+    Config.hashcat.path = "/usr/bin/hashcat"
     Config.load()
-    assert Config.hashcat_path == "/usr/bin/hashcat"
+    assert Config.hashcat.path == "/usr/bin/hashcat"
 
 
 def test_decloaked_ssids_save_load_roundtrip(config_path):
