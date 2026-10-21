@@ -167,11 +167,11 @@ class RTL8192FUDriver(Driver):
         return read_burst(self.dev, endpoints.bulk_in)
 
     def _dispatch(self, buffer: bytes) -> None:
-        if self._rx_callback is None:
-            return
         for frame, rssi in iter_frames(buffer, self._cck_new_agc):
             if len(frame) >= 10 and frame[0] == 0xD4:
                 self.record_ack(frame)
+            if self._rx_callback is None:
+                continue
             packet = WlanFrameParser.parse_80211_frame(frame, rssi)
             if packet is not None:
                 self._rx_callback(packet)
