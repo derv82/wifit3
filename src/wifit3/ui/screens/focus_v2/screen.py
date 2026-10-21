@@ -204,10 +204,13 @@ class FocusViewV2(Screen):
         align: center top;
     }
     FocusViewV2.-compact-height #router {
-        height: 4;
+        height: 5;
         offset-y: 0;
         align: center top;
     }
+    FocusViewV2.-compact-height #ap-power { margin-bottom: 1; }
+    FocusViewV2.-tiny.-compact-height #router { height: 4; }
+    FocusViewV2.-tiny.-compact-height #ap-power { margin-bottom: 0; }
 
     .card-static, .ap-static { width: 100%%; height: 1; text-align: center; color: $text-muted; }
     .card-dynamic { width: 100%%; height: 1; text-align: center; color: $accent; }

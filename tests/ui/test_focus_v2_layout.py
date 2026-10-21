@@ -65,8 +65,9 @@ async def test_layout_geometry():
             pad = max(0, round((w - 80) * 0.4))
             assert card.width == 20 and router.width == 20
             if h < 32:
-                assert router.height == 4 and card.height == 3
+                assert router.height == 5 and card.height == 3
                 assert router.y == reg("#mid").y and card.bottom == reg("#mid").bottom
+                assert reg("#ap-essid").y == reg("#ap-power").bottom + 1
                 assert reg("#tx-picker").y == card.y
             assert card.x == pad and card.right == dash.x
             assert dash.right == router.x and router.right == w - pad
