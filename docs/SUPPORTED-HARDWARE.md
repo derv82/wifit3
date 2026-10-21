@@ -108,18 +108,20 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 *D-Link AN3U rev. A1 · 2.4 GHz*
 
+> Ported from the mainline Linux `rtl8xxxu` driver (`8192f.c` / `core.c`), Linux v7.2.6.
+
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **⬜** |  | RX-only verification so far. |
 | RX | ✅ | 2026-10-21 | Matches Linux; 85 APs on 2.4 GHz (best so far); 13/13 channels heard their own beacons, 0 silent, 0 cross-channel. |
 | Port | ✅ | 2026-10-21 | RX baseline matches Linux for breadth and channel tuning. |
-| TX | ⬜ |  | Not run. |
-| Handshake | ⬜ |  | Not run. |
-| PMKID | ⬜ |  | Not run. |
+| TX | ⬜ |  | Not implemented. |
+| Handshake | ✅ | 2026-10-21 | TX untested; capable of catching all EAPOL frames M1–M4 |
+| PMKID | ⬜ |  | requires tx |
 | WEP | ⬜ |  | Not run. |
-| WPS | ⬜ |  | Not run. |
-| ACKs | ⬜ |  | Not run. |
-| Stress | ⬜ |  | Not run. |
+| WPS | ⬜ |  | requires tx |
+| ACKs | ⬜ |  | requires tx |
+| Stress | ⬜ |  | RX good, rate once tx implemented |
 
 → [RTL8192FU.md](../src/wifit3/chips/rtl8192fu/RTL8192FU.md)
 
