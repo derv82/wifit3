@@ -36,7 +36,7 @@
 
 ## Known Problems
 
-- Directed deauthentication TX works on hardware and complete four-way handshakes can be captured; broader management/data TX and MAC-spoofing behavior still needs live validation.
+- Live directed deauthentication, PMKID, WPS PIN, and spoofed-station WPS identity probing work; WEP has not been tested because no suitable target is available, and AP-role spoofing remains untested.
 - Control-frame TX is not ported; current auditing campaigns do not require raw control-frame injection.
 - The capture has no teardown segment, so the source-ported power-off sequence is unit-tested but cannot be pcap byte-verified.
 
