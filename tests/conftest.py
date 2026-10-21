@@ -2,7 +2,7 @@
 import pytest
 
 from wifit3.campaigns.campaign import Campaign
-from wifit3.persist.config import Config
+from wifit3.persist.config import Config, CpuCrackSettings, HashcatSettings, HashtopolisSettings
 
 
 @pytest.fixture(autouse=True)
@@ -16,3 +16,11 @@ def _reset_campaign_active():
 def _captures_to_tmp(tmp_path, monkeypatch):
     """Point Config.captures_dir at each test's tmp so nothing writes to ./captures."""
     monkeypatch.setattr(Config, "captures_dir", str(tmp_path))
+
+
+@pytest.fixture(autouse=True)
+def _fresh_tool_settings(monkeypatch):
+    """Each test starts from the default cracking-tool tables, so one test's edits can't leak."""
+    monkeypatch.setattr(Config, "cpu_crack", CpuCrackSettings())
+    monkeypatch.setattr(Config, "hashcat", HashcatSettings())
+    monkeypatch.setattr(Config, "hashtopolis", HashtopolisSettings())

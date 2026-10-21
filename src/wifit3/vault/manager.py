@@ -10,6 +10,7 @@ from wifit3.models.jobs import JobAction, JobState, ToolCapability, ToolStatus, 
 from wifit3.vault.tools.base import VaultTool
 from wifit3.vault.tools.cpu_crack import CpuCrackTool
 from wifit3.vault.tools.hashcat import HashcatTool
+from wifit3.vault.tools.hashtopolis import HashtopolisTool
 from wifit3.crack.hc22000_format import parse_hc22000
 from wifit3.persist.config import Config
 
@@ -35,6 +36,7 @@ class JobManager:
         self.tools: Dict[str, VaultTool] = {}
         self.register_tool(HashcatTool())
         self.register_tool(CpuCrackTool())
+        self.register_tool(HashtopolisTool())
         self._load()
 
     def register_tool(self, tool: VaultTool) -> None:
@@ -79,9 +81,9 @@ class JobManager:
                     job.progress_msg = "Stopped when wifit3 closed."
                     changed = True
                     continue
-                if not (tool and job.log_path):
+                if not (tool and (job.log_path or job.api_id)):
                     job.status = ToolStatus.ERROR
-                    job.progress_msg = "Process ended while wifit3 was closed."
+                    job.progress_msg = "Interrupted: wifit3 closed before the job started"
                     changed = True
                     continue
                 res = tool.poll_status(job)
@@ -109,7 +111,7 @@ class JobManager:
             self._save()
 
     def submit_job(self, tool_name: str, capture: PersistedCapture, config: dict,
-                   automatic: bool = False) -> str:
+                   auto_crack: bool = False) -> str:
         """Submit a job. It will be marked QUEUED and launched on the next poll if slots are free."""
         job_id = f"{tool_name}_{Path(capture.path).name}_{int(time.time())}"
         
@@ -123,7 +125,7 @@ class JobManager:
             status=ToolStatus.QUEUED,
             progress_msg="Waiting in queue...",
             config=config,
-            automatic=automatic,
+            auto_crack=auto_crack,
         )
         self.jobs[job_id] = job
         logger.info(f"Submitted job {job}")

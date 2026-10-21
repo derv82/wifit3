@@ -190,8 +190,8 @@ class _CapturePanel(VerticalGroup):
                 kg.mount(_row("ASCII Key", ascii_val, "copy-ascii", target_type=CaptureType.WEP))
         elif self._title == "HASHCAT":
             text = self.app.vault.capture_payload(cap)
-            hs = sum(1 for ln in text.splitlines() if ln.startswith("WPA*02*"))
-            pmkid = sum(1 for ln in text.splitlines() if ln.startswith("WPA*01*"))
+            hs = sum(1 for ln in text.splitlines() if ln.startswith(("WPA*02*", "WPA*04*")))
+            pmkid = sum(1 for ln in text.splitlines() if ln.startswith(("WPA*01*", "WPA*03*")))
             parts = []
             if hs: parts.append(f"{hs} handshake{'s' if hs != 1 else ''}")
             if pmkid: parts.append(f"{pmkid} PMKID{'s' if pmkid != 1 else ''}")
@@ -306,7 +306,8 @@ class _CapturePanel(VerticalGroup):
         def _on_config(config: dict | None) -> None:
             if not config:
                 return
-            job_id = self.app.vault.manager.submit_job(tool_name, cap, config)
+            job_id = self.app.vault.manager.submit_job(
+                tool_name, cap, self.app.vault.add_probed_ssids(config))
             self.notify(f"Queued job: {job_id}")
             
         self.app.push_screen(modal_cls(), _on_config)

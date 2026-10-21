@@ -2,7 +2,7 @@
 (see ``dot11.packet``) from raw MPDU bytes.
 """
 import struct
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 from wifit3.dot11.eapol import LLC_SNAP_EAPOL
 from wifit3.dot11.ie import iter_information_elements
@@ -248,6 +248,8 @@ class WlanFrameParser:
                         akm = cls._first_rsn_akm(key_data)
                         if akm is not None:
                             fields["akm"] = akm
+                        mdid, r0khid, r1khid = cls._ft_identifiers(key_data)
+                        fields.update(mdid=mdid, r0khid=r0khid, r1khid=r1khid)
         return EapolPacket(**base, type="eapol", **fields)
 
     @staticmethod
@@ -298,6 +300,28 @@ class WlanFrameParser:
                     if pmkid != b"\x00" * 16:
                         return pmkid
         return None
+
+    @staticmethod
+    def _ft_identifiers(key_data: bytes) -> Tuple[bytes, bytes, bytes]:
+        """(MDID, R0KH-ID, R1KH-ID) from the Mobility Domain element (54) and the FT element
+        (55: 82-byte fixed part, then subelements 1 = R1KH-ID, 3 = R0KH-ID); b"" when absent."""
+        mdid = r0khid = r1khid = b""
+        for tag_id, value, _raw in iter_information_elements(key_data):
+            if tag_id == 54 and len(value) == 3:
+                mdid = bytes(value[:2])
+            elif tag_id == 55 and len(value) >= 82:
+                offset = 82
+                while offset + 2 <= len(value):
+                    subelement_id = value[offset]
+                    end = offset + 2 + value[offset + 1]
+                    if end > len(value):
+                        break
+                    if subelement_id == 1:
+                        r1khid = bytes(value[offset + 2:end])
+                    elif subelement_id == 3:
+                        r0khid = bytes(value[offset + 2:end])
+                    offset = end
+        return mdid, r0khid, r1khid
 
     @classmethod
     def _first_rsn_akm(cls, data: bytes, start: int = 0) -> Optional[int]:

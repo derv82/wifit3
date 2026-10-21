@@ -17,15 +17,23 @@ helpers for the exact semantics.
 """
 from __future__ import annotations
 
+from enum import IntEnum
+
 # ----------------------------------------------------------------------
 # USB device identity
 # ----------------------------------------------------------------------
 USB_VID_REALTEK = 0x0BDA
 USB_PID_RTL8187 = 0x8187  # AWUS036H + many other 8187L dongles
 
+# rtl8187_table driver_info (rtl8187.h:89-92), carried as the DeviceID chipset.
+DEVICE_RTL8187 = "RTL8187L"
+DEVICE_RTL8187B = "RTL8187B"
+
 # Endpoints on the 8187L (verified against AWUS036H).
 USB_EP_BULK_IN = 0x81
+USB_EP_BULK_IN_8187B = 0x83       # usb_rcvbulkpipe(.., is_rtl8187b ? 3 : 1), dev.c:435
 USB_EP_BULK_OUT = 0x02
+USB_EP_TX_STATUS_8187B = 0x89     # usb_rcvbulkpipe(.., 9), dev.c:557
 
 # ----------------------------------------------------------------------
 # Vendor control transfer
@@ -202,6 +210,19 @@ RX_CONF_CSDM1 = 1 << 29
 RX_CONF_CSDM2 = 1 << 30
 RX_CONF_ONLYERLPKT = 1 << 31
 
+# CW_CONF / TX_AGC_CTL bits  [SRC] rtl818x.h:260-275
+CW_CONF_PERPACKET_CW = 1 << 0
+CW_CONF_PERPACKET_RETRY = 1 << 1
+TX_AGC_CTL_PERPACKET_GAIN = 1 << 0
+TX_AGC_CTL_PERPACKET_ANTSEL = 1 << 1
+TX_AGC_CTL_FEEDBACK_ANT = 1 << 2
+
+# mac80211 enum ieee80211_filter_flags  [SRC] include/net/mac80211.h
+FIF_ALLMULTI = 1 << 1
+FIF_FCSFAIL = 1 << 2
+FIF_CONTROL = 1 << 5
+FIF_OTHER_BSS = 1 << 6
+
 # ----------------------------------------------------------------------
 # TX_CONF bits  [SRC] rtl818x.h:136-152
 # ----------------------------------------------------------------------
@@ -235,6 +256,20 @@ HWVER_CHIP_NAMES = {
 }
 HWVER_DEFAULT_NAME = "RTL8187vB"
 
+
+
+class HwRev(IntEnum):
+    """priv->hw_rev  [SRC] rtl8187.h:129-133"""
+    RTL8187BvB = 0
+    RTL8187BvD = 1
+    RTL8187BvE = 2
+
+
+# RTL818X_R8187B_*: the 0xFFE1 hw_rev values  [SRC] rtl818x.h:289-292
+RTL818X_R8187B_B = 0
+RTL818X_R8187B_D = 1
+RTL818X_R8187B_E = 2
+
 # ----------------------------------------------------------------------
 # EEPROM byte offsets within the 93cx6  [SRC] rtl8187.h:20-25
 # ----------------------------------------------------------------------
@@ -244,6 +279,10 @@ EEPROM_TXPWR_CHAN_1 = 0x16        # 3 channels
 EEPROM_TXPWR_CHAN_6 = 0x1B        # 2 channels
 EEPROM_TXPWR_CHAN_4 = 0x3D        # 2 channels
 EEPROM_SELECT_GPIO = 0x3B
+
+# rfkill GPIO bit per model  [SRC] rtl8187.h:33-34
+RFKILL_MASK_8187_89_97 = 0x2
+RFKILL_MASK_8198 = 0x4
 
 # ----------------------------------------------------------------------
 # RX descriptor flags  [SRC] rtl818x.h:383-400
@@ -291,6 +330,7 @@ TX_DESC_FLAG_OWN = 1 << 31
 #   __le64 mac_time;
 # ----------------------------------------------------------------------
 RX_HDR_SIZE_8187L = 16
+RX_HDR_SIZE_8187B = 20            # struct rtl8187b_rx_hdr, rtl8187.h:53-63
 
 # ----------------------------------------------------------------------
 # ANAPARAM magic values  [SRC] rtl8225.h:15-18
@@ -303,7 +343,18 @@ ANAPARAM2_ON = 0x860C7312
 ANAPARAM_OFF = 0xA00BEB59
 ANAPARAM2_OFF = 0x840DEC11
 
+# [SRC] rtl8225.h:20-25
+RTL8187B_RTL8225_ANAPARAM_ON = 0x45090658
+RTL8187B_RTL8225_ANAPARAM2_ON = 0x727F3F52
+RTL8187B_RTL8225_ANAPARAM3_ON = 0x00
+RTL8187B_RTL8225_ANAPARAM_OFF = 0x55480658
+RTL8187B_RTL8225_ANAPARAM2_OFF = 0x72003F50
+RTL8187B_RTL8225_ANAPARAM3_OFF = 0x00
+
 # ----------------------------------------------------------------------
 # Retry count  [SRC] rtl8187.h:37
 # ----------------------------------------------------------------------
 RETRY_COUNT = 7
+
+# include/linux/ieee80211.h
+IEEE80211_FCTL_MOREFRAGS = 0x0400

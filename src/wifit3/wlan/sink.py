@@ -360,6 +360,9 @@ class WlanSink:
                 key_data_len=pkt.key_data_len,
                 eapol_payload=pkt.payload,
                 akm=akm,
+                mdid=pkt.mdid,
+                r0khid=pkt.r0khid,
+                r1khid=pkt.r1khid,
                 timestamp=time.time(),
             )
             hs.add_message(eapol)

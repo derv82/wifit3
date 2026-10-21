@@ -69,6 +69,7 @@ _LABELS = {
     "dlinkdwa126":     "D-Link DWA-126",
     "dlinkdwa140":     "D-Link DWA-140",
     "dlink-an3u-n300": "D-Link AN3U N300",
+    "mercusys-mw150us": "Mercusys MW150US",
     "buffalonintendo": "Buffalo Nintendo Wi-Fi",
     "lotekoo150":      "LOTEKOO 150",
     "netgeara9000":    "Netgear A9000",

@@ -124,3 +124,30 @@ def test_psk_matches_sha256_pmkid_when_message_pair_bit_set():
     unflagged = Hc22000Line(kind="01", pmkid_or_mic=pmkid.hex(), mac_ap=_AA.hex(),
                             mac_sta=_SPA.hex(), essid=_SSID.hex())
     assert not wpa_psk.psk_matches(_PMK, unflagged)
+
+
+# FT-PSK known answers, generated outside wifit3 from hostapd's sha256_prf_bits / wpa_derive_pmk_r0 /
+# wpa_derive_pmk_r1 / wpa_pmk_r1_to_ptk (stdlib hashlib + hmac) with the MIC from `openssl mac CMAC`.
+_FT_COMMON = "*020000000001*020000000002*66742d70736b2d74657374"
+_FT_IDENTIFIERS = "*a1b2*72306b682e6578616d706c652e74657374*020000000001"
+_FT_PMKID_LINE = f"WPA*03*a296df8e01721dbac1685bc39d5b78ad{_FT_COMMON}***{_FT_IDENTIFIERS}"
+_FT_EAPOL_LINE = (
+    f"WPA*04*9762f3d5bd2953bc2c670a4646b532e7{_FT_COMMON}"
+    "*101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
+    "*020300fb02010b00100000000000000001404142434445464748494a4b4c4d4e4f505152535455565758595a5b5"
+    "c5d5e5f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "00000000000009c30260100000fac040100000fac040100000fac0400000100a296df8e01721dbac1685bc39d5b7"
+    "8ad3603a1b201376d000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010"
+    "6020000000001031172306b682e6578616d706c652e74657374"
+    f"*80{_FT_IDENTIFIERS}")
+
+
+def test_psk_matches_ft_pmkid_known_answer():
+    assert _matches("correct horse battery", _FT_PMKID_LINE)
+    assert not _matches("correct horse battery!", _FT_PMKID_LINE)
+
+
+def test_psk_matches_ft_eapol_known_answer():
+    assert _matches("correct horse battery", _FT_EAPOL_LINE)
+    assert not _matches("correct horse battery!", _FT_EAPOL_LINE)

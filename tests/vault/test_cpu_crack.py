@@ -9,6 +9,7 @@ from wifit3.dot11 import wpa
 from wifit3.models import PersistedCapture, ToolResult, ToolStatus
 from wifit3.models.access_point import CaptureType
 from wifit3.models.jobs import JobAction, JobState
+from wifit3.persist.config import Config
 from wifit3.vault.tools.cpu_crack import CpuCrackTool
 
 # hashcat wiki example_hashes, mode 22000 (password "hashcat!", essid "hashcat-essid").
@@ -209,3 +210,70 @@ def test_cpu_crack_refuses_pause_once_the_worker_has_ended(tool, tmp_path):
 def test_cpu_crack_launch_rejects_a_capture_without_hashlines(tool, tmp_path):
     with pytest.raises(ValueError):
         _launch(tool, tmp_path, ["not a hashline"], [["wrongpass1"]])
+
+
+def test_auto_crack_config_uses_the_saved_cpu_crack_wordlists():
+    Config.cpu_crack.wordlists = ["/dicts/small.txt"]
+    Config.hashcat.wordlists = ["/dicts/rockyou.txt"]
+    Config.cpu_crack.default_passwords = False
+    assert CpuCrackTool().auto_crack_config() == {
+        "wordlists": ["/dicts/small.txt"], "default_passwords": False,
+        "ap_ssid_passwords": True, "probed_ssid_passwords": True}
+
+
+def test_auto_crack_config_is_none_without_a_wordlist_or_password_source():
+    Config.cpu_crack.wordlists = []
+    Config.cpu_crack.default_passwords = False
+    Config.cpu_crack.ap_ssid_passwords = False
+    Config.cpu_crack.probed_ssid_passwords = False
+    assert CpuCrackTool().auto_crack_config() is None
+
+
+def _launch_with(tool: CpuCrackTool, tmp_path: Path, hashlines: list[str], **config) -> JobState:
+    capture_path = _write(tmp_path / "sources.hc22000", hashlines)
+    job = JobState(job_id="sources", tool_name="cpu_crack", capture_path=capture_path,
+                   status=ToolStatus.RUNNING, progress_msg="", config={"wordlists": [], **config})
+    tool.launch(job, PersistedCapture(type=CaptureType.PMKID, timestamp=0, path=capture_path,
+                                      bssid="fc:69:0c:15:82:64"))
+    return job
+
+
+def test_a_job_without_wordlist_files_cracks_from_the_ssid_passwords(tool, tmp_path):
+    job = _launch_with(tool, tmp_path, [_HASHCAT_PMKID_LINE], extra_passwords=["hashcat!"])
+    result = _poll_finished(tool, job)
+    assert result.status == ToolStatus.SUCCESS and result.key == "hashcat!"
+
+
+def test_a_job_without_wordlist_files_ends_not_found_on_the_ssid_passwords(tool, tmp_path):
+    job = _launch_with(tool, tmp_path, [_UNCRACKABLE_PMKID_LINE], ap_ssid_passwords=True)
+    result = _poll_finished(tool, job)
+    assert result.status == ToolStatus.FAILURE and result.value == "SSID passwords"
+
+
+@pytest.mark.parametrize("ticked", [True, False])
+def test_ap_ssid_passwords_box_adds_the_ap_ssid_variants(tool, tmp_path, ticked):
+    wordlist = _write(tmp_path / "words.txt", ["unrelated"])
+    job = _launch_with(tool, tmp_path, [_UNCRACKABLE_PMKID_LINE], wordlists=[wordlist],
+                       ap_ssid_passwords=ticked)
+    _join(tool, job)
+    variants = set(ssid_variants("hashcat-essid"))
+    assert bool(variants & set(tool._runs[job.job_id].ssid_passwords)) is ticked
+
+
+@pytest.mark.parametrize("ticked", [True, False])
+def test_default_passwords_box_runs_the_default_list_before_the_wordlists(tool, tmp_path, mocker,
+                                                                         ticked):
+    default = tmp_path / "default_passwords.txt"
+    default.write_text("hashcat!\n", encoding="utf-8")
+    mocker.patch("wifit3.vault.tools.cpu_crack.DEFAULT_PASSWORDS_PATH", default)
+    wordlist = _write(tmp_path / "words.txt", ["unrelated"])
+    job = _launch_with(tool, tmp_path, [_HASHCAT_PMKID_LINE], wordlists=[wordlist],
+                       default_passwords=ticked, ap_ssid_passwords=False)
+    result = _poll_finished(tool, job)
+    assert (result.status == ToolStatus.SUCCESS) is ticked
+
+
+def test_a_job_with_no_password_source_refuses_to_launch(tool, tmp_path):
+    with pytest.raises(ValueError, match="No passwords to try"):
+        _launch_with(tool, tmp_path, [_HASHCAT_PMKID_LINE], default_passwords=False,
+                     ap_ssid_passwords=False)

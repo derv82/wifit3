@@ -92,7 +92,7 @@ async def test_an_automatic_job_that_finds_no_key_is_not_toasted(tmp_path, statu
     app = WifiteApp()
     async with app.run_test():
         job = JobState(job_id="j1", tool_name="cpu_crack", capture_path="x",
-                       status=ToolStatus.RUNNING, progress_msg="Running", automatic=True)
+                       status=ToolStatus.RUNNING, progress_msg="Running", auto_crack=True)
         app.active_jobs = [job]
         with patch.object(app, "notify") as notify:
             app._notify_completions()
@@ -109,7 +109,7 @@ async def test_an_automatic_job_success_toasts_and_posts_job_cracked_to_the_scre
     app = WifiteApp()
     async with app.run_test():
         job = JobState(job_id="j1", tool_name="cpu_crack", capture_path="x",
-                       status=ToolStatus.RUNNING, progress_msg="Running", automatic=True)
+                       status=ToolStatus.RUNNING, progress_msg="Running", auto_crack=True)
         app.active_jobs = [job]
         with patch.object(app, "notify") as notify, \
                 patch.object(app.screen, "post_message") as post_message:
