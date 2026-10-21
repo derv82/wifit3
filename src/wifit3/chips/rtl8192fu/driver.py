@@ -70,26 +70,26 @@ class RTL8192FUDriver(Driver):
     async def connect(self, progress_cb: ProgressCallback | None = None) -> bool:
         loop = asyncio.get_running_loop()
         progress = progress_cb or (lambda _value, _message: None)
-        progress(0.02, "Claiming RTL8192FU USB interface")
+        progress(0.02, "Claiming USB interface")
         try:
             await loop.run_in_executor(None, self.transport.claim)
-            progress(0.08, "Identifying RTL8192FU silicon")
+            progress(0.08, "Probing chip state")
             await loop.run_in_executor(None, self._identify_chip)
-            progress(0.12, "Reading RTL8192FU EFUSE")
+            progress(0.12, "Reading EFUSE")
             await loop.run_in_executor(None, self._read_efuse)
-            progress(0.18, "Powering RTL8192FU and uploading firmware")
+            progress(0.18, "Power-on + firmware download")
             await loop.run_in_executor(None, self._firmware_bringup)
-            progress(0.40, "Configuring RTL8192FU MAC, baseband, and RF")
+            progress(0.40, "PHY init (mac/bb/agc/rf tables)")
             await loop.run_in_executor(None, self._table_bringup)
-            progress(0.58, "Configuring RTL8192FU FIFO and receive policy")
+            progress(0.58, "FIFO + RX/MAC init")
             await loop.run_in_executor(None, self._configure_fifo_and_mac)
-            progress(0.68, "Applying EFUSE TX power calibration")
+            progress(0.68, "Applying TX power")
             await loop.run_in_executor(None, self._apply_tx_power)
-            progress(0.76, "Calibrating RTL8192FU radio")
+            progress(0.76, "Radio calibration")
             await loop.run_in_executor(None, self._calibrate_radio)
-            progress(0.88, "Finishing RTL8192FU hardware initialization")
+            progress(0.88, "Finishing hardware init")
             await loop.run_in_executor(None, self._finish_cold_init)
-            progress(0.94, "Starting RTL8192FU receiver")
+            progress(0.94, "Enabling monitor mode")
             enable_rf(self.transport)
             self._rx_reader = RxReaderThread(
                 loop,
@@ -112,7 +112,7 @@ class RTL8192FUDriver(Driver):
                 raise
             raise BringUpError("RTL8192FU bring-up", str(error)) from error
         self.is_warm = True
-        progress(1.0, f"RTL8192FU online ({self.mac_address})")
+        progress(1.0, "RTL8192FU online")
         return True
 
     def _cold_bringup(self) -> None:
