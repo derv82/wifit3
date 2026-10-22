@@ -24,7 +24,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [MT7925AU](#mt7925au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7601U](#mt7601u) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8192FU](#rtl8192fu) | ✅ | ⚠️ | ✅ | ✅ | ⬜ | ⬜ |
+| [RTL8192FU](#rtl8192fu) | ✅ | ✅ | ✅ | ✅ | ⬜ | ⬜ |
 | [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
@@ -118,7 +118,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | **Grade** | **⬜** |  | Waits for all tests. |
 | RX | ✅ | 2026-10-21 | Matches Linux; 85 APs on 2.4 GHz (best so far); 13/13 channels heard their own beacons, 0 silent, 0 cross-channel. |
 | Port | ✅ | 2026-10-21 | RX baseline matches Linux for breadth and channel tuning. |
-| TX | ⚠️ | 2026-10-21 | Live directed deauth, PMKID, and WPS PIN data injection verified. A 100-frame timing run had 0.6–2.3 ms USB submissions and no USB slowdown; responses can be slower than other cards. Repeated deauths produced consistent AP ACKs, while client ACKs became intermittent after the client was deauthenticated. |
+| TX | ✅ | 2026-10-22 | Independent RTL8821AU observer confirmed deauth and Evil Twin frames transmit over the air. Linux-capture descriptor replay is byte-exact; USB submit time was 0.6–2.3 ms. Client ACK asymmetry was recipient/state-dependent, not a card TX fault. |
 | Handshake | ✅ | 2026-10-21 | Verified deauth → complete four-way capture; all EAPOL frames M1–M4 can be collected. |
 | PMKID | ✅ | 2026-10-21 | Successfully associated and collected a PMKID. |
 | WEP | ⬜ |  | Not run; dont have target with WEP encryption. - cosita |
