@@ -64,11 +64,13 @@ async def capture(channel: int, seconds: float, output: Path) -> int:
     try:
         await driver.connect(lambda value, message: print(f"[{value:5.1%}] {message}"))
         connected = True
+        await driver.enable_rx_acks()
         await driver.set_channel(channel)
         print(f"capturing RTL8821AU monitor RX on channel {channel} for {seconds:.1f}s")
         await asyncio.sleep(seconds)
     finally:
         if connected:
+            await driver.disable_rx_acks()
             await driver.close()
         writer.close()
     print(f"saved {frames_written} frame(s) to {output}")
