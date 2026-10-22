@@ -32,6 +32,10 @@ def _poll32_set(transport: RTL8192FUTransport, register: int, mask: int) -> None
     raise IOError(f"register {register:#06x} did not set {mask:#x}")
 
 
+def is_firmware_running(transport: RTL8192FUTransport) -> bool:
+    return bool(transport.read8(C.REG_MCU_FW_DL) & C.MCU_FW_RAM_SEL)
+
+
 def power_on(transport: RTL8192FUTransport) -> None:
     transport.write8(C.REG_USB_ACCESS_TIMEOUT, 0x80)
     _update16(transport, C.REG_APS_FSMCO, clear=(1 << 15) | (1 << 11))

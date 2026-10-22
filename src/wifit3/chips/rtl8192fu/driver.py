@@ -26,7 +26,7 @@ from .chip import ChipIdentity, identify_chip
 from .efuse import EfuseData, parse_efuse, read_efuse
 from .firmware import load_firmware_blob, parse_firmware
 from .iqk import phy_iq_calibrate
-from .power import power_off
+from .power import is_firmware_running, power_off
 from .runtime import configure_monitor_filter, disable_rf, enable_rf, open_rx_filters, set_tx_led
 from .rx import iter_frames, read_burst
 from .transport import RTL8192FUTransport
@@ -88,6 +88,8 @@ class RTL8192FUDriver(Driver):
             await loop.run_in_executor(None, self.transport.claim)
             progress(0.05, "Probing chip state")
             await loop.run_in_executor(None, self._identify_chip)
+            if await loop.run_in_executor(None, is_firmware_running, self.transport):
+                await loop.run_in_executor(None, power_off, self.transport)
             progress(0.10, "MAC power-on (cold)")
             await loop.run_in_executor(None, self._read_efuse)
             progress(0.15, "Pre-FW init (LLT + DROP_DATA_EN)")

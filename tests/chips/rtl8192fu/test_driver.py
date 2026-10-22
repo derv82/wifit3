@@ -40,6 +40,7 @@ def test_dispatch_ignores_untracked_or_report_ack_payloads():
 async def test_connect_reports_each_cold_bringup_phase_in_source_order(mocker):
     driver = RTL8192FUDriver(Mock(), DeviceID(0x2001, 0x3328, "RTL8192FU"))
     driver.transport = Mock()
+    mocker.patch("wifit3.chips.rtl8192fu.driver.is_firmware_running", return_value=False)
     operations: list[str] = []
     for name in (
         "_identify_chip",
@@ -111,6 +112,38 @@ async def test_connect_reports_each_cold_bringup_phase_in_source_order(mocker):
         "Tuning to channel 1",
         "RTL8192FU online",
     ]
+
+
+@pytest.mark.asyncio
+async def test_connect_source_powers_off_firmware_left_running_before_cold_init(mocker):
+    driver = RTL8192FUDriver(Mock(), DeviceID(0x2001, 0x3328, "RTL8192FU"))
+    driver.transport = Mock()
+    operations: list[str] = []
+    mocker.patch("wifit3.chips.rtl8192fu.driver.is_firmware_running", return_value=True)
+    mocker.patch(
+        "wifit3.chips.rtl8192fu.driver.power_off", side_effect=lambda _transport: operations.append("power_off")
+    )
+    for name in (
+        "_identify_chip",
+        "_read_efuse",
+        "_firmware_bringup",
+        "_table_bringup",
+        "_configure_fifo_and_mac",
+        "_apply_tx_power",
+        "_calibrate_radio",
+        "_finish_cold_init",
+        "_set_channel_sync",
+    ):
+        mocker.patch.object(driver, name, side_effect=lambda *args, name=name: operations.append(name))
+    reader = Mock()
+    mocker.patch("wifit3.chips.rtl8192fu.driver.RxReaderThread", return_value=reader)
+    mocker.patch("wifit3.chips.rtl8192fu.driver.enable_rf")
+    mocker.patch("wifit3.chips.rtl8192fu.driver.open_rx_filters")
+    mocker.patch("wifit3.chips.rtl8192fu.driver.configure_monitor_filter")
+
+    assert await driver.connect()
+
+    assert operations[:3] == ["_identify_chip", "power_off", "_read_efuse"]
 
 
 @pytest.mark.asyncio
