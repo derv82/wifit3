@@ -3,14 +3,18 @@ from .phy import write_rfreg
 from .transport import RTL8192FUTransport
 
 
-def enable_hardware_led(transport: RTL8192FUTransport) -> None:
+def set_tx_led(transport: RTL8192FUTransport, on: bool) -> None:
+    """Set both source-defined LED pins through software control."""
     transport.write32(0x1038, 0x00020080)
     transport.write32(0x103C, 0x001B0000)
     value = transport.read32(0x004C)
     value |= 1 << 21
     value &= ~(1 << 7 | 1 << 15)
-    value = (value & ~0x00000707) | 0x00000303
-    value &= ~((1 << 3) | (1 << 11))
+    value &= ~0x00000707
+    if on:
+        value |= (1 << 3) | (1 << 11)
+    else:
+        value &= ~((1 << 3) | (1 << 11))
     transport.write32(0x004C, value)
 
 

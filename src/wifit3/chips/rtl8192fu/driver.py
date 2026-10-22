@@ -27,7 +27,7 @@ from .efuse import EfuseData, parse_efuse, read_efuse
 from .firmware import load_firmware_blob, parse_firmware
 from .iqk import phy_iq_calibrate
 from .power import power_off
-from .runtime import configure_monitor_filter, disable_rf, enable_hardware_led, enable_rf, open_rx_filters
+from .runtime import configure_monitor_filter, disable_rf, enable_rf, open_rx_filters, set_tx_led
 from .rx import iter_frames, read_burst
 from .transport import RTL8192FUTransport
 from .tx import build_tx_packet, bulk_out_index, stamp_sequence
@@ -38,6 +38,9 @@ class RTL8192FUDriver(Driver):
     CONFLICTING_LINUX_MODULES = ["rtl8xxxu"]
     FAKE_MAC = FakeMacSupport.SPOOFABLE
     MAX_ACK_DELAY = 0.05
+    TX_LED_ON_SECONDS = 0.100
+    TX_LED_OFF_SECONDS = 0.100
+    TX_LED_IDLE_SECONDS = 0.300
 
     def __init__(self, dev: usb.core.Device, id_entry: DeviceID) -> None:
         super().__init__()
@@ -57,6 +60,8 @@ class RTL8192FUDriver(Driver):
         self._io_lock = asyncio.Lock()
         self._active_monitor_lock = asyncio.Lock()
         self._tx_sequence = 0
+        self._tx_led_task: asyncio.Task[None] | None = None
+        self._tx_led_deadline = 0.0
         self.current_channel = 1
         self._cck_new_agc = False
 
@@ -165,7 +170,7 @@ class RTL8192FUDriver(Driver):
 
     def _finish_cold_init(self) -> None:
         self._cck_new_agc = finish_cold_init(self.transport)
-        enable_hardware_led(self.transport)
+        set_tx_led(self.transport, False)
 
     def _read_once(self) -> bytes | None:
         endpoints = self.transport.endpoints
@@ -222,11 +227,49 @@ class RTL8192FUDriver(Driver):
             async with self._io_lock:
                 async with self._tx_lock:
                     await loop.run_in_executor(None, self.transport.bulk_write, endpoint, packet)
+                    self._start_tx_led_pulse()
         except Exception as error:
             if is_device_gone(error):
                 self._on_rx_fatal(error)
             raise
         return True
+
+    def _start_tx_led_pulse(self) -> None:
+        loop = asyncio.get_running_loop()
+        self._tx_led_deadline = loop.time() + self.TX_LED_IDLE_SECONDS
+        if self._tx_led_task is None or self._tx_led_task.done():
+            self._tx_led_task = loop.create_task(self._run_tx_led_pulse())
+
+    async def _run_tx_led_pulse(self) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                async with self._io_lock:
+                    await loop.run_in_executor(None, set_tx_led, self.transport, True)
+                await asyncio.sleep(self.TX_LED_ON_SECONDS)
+                async with self._io_lock:
+                    await loop.run_in_executor(None, set_tx_led, self.transport, False)
+                remaining = self._tx_led_deadline - loop.time()
+                if remaining <= 0:
+                    return
+                await asyncio.sleep(min(self.TX_LED_OFF_SECONDS, remaining))
+                if loop.time() >= self._tx_led_deadline:
+                    return
+        finally:
+            async with self._io_lock:
+                await loop.run_in_executor(None, set_tx_led, self.transport, False)
+            self._tx_led_task = None
+
+    async def _stop_tx_led_pulse(self) -> None:
+        task = self._tx_led_task
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        self._tx_led_task = None
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         stamped = stamp_sequence(frame_bytes, self._tx_sequence)
@@ -283,6 +326,7 @@ class RTL8192FUDriver(Driver):
         power_off(self.transport)
 
     async def close(self) -> None:
+        await self._stop_tx_led_pulse()
         if self._rx_reader is not None:
             await self._rx_reader.stop()
             self._rx_reader = None

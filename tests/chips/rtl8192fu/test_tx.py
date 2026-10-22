@@ -140,12 +140,14 @@ async def test_driver_writes_management_packet_to_first_bulk_endpoint(mocker):
     )
     driver._tx_lock = asyncio.Lock()
     driver._io_lock = asyncio.Lock()
+    driver._start_tx_led_pulse = mocker.Mock()
 
     assert await driver._inject_frame(DIRECTED_DEAUTH) is True
 
     driver.transport.bulk_write.assert_called_once_with(
         0x05, build_tx_packet(DIRECTED_DEAUTH)
     )
+    driver._start_tx_led_pulse.assert_called_once_with()
 
 
 async def test_driver_writes_data_packet_to_low_queue_endpoint(mocker):
@@ -157,10 +159,12 @@ async def test_driver_writes_data_packet_to_low_queue_endpoint(mocker):
     )
     driver._tx_lock = asyncio.Lock()
     driver._io_lock = asyncio.Lock()
+    driver._start_tx_led_pulse = mocker.Mock()
 
     assert await driver._inject_frame(frame) is True
 
     driver.transport.bulk_write.assert_called_once_with(0x08, build_tx_packet(frame))
+    driver._start_tx_led_pulse.assert_called_once_with()
 
 
 async def test_tx_device_removal_notifies_the_disconnect_path(mocker):
