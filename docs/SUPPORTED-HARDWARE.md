@@ -123,7 +123,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | PMKID | ✅ | 2026-10-21 | Successfully associated and collected a PMKID. |
 | WEP | ⬜ |  | Not run; dont have target with WEP encryption. - cosita |
 | WPS | ✅ | 2026-10-21 | WPS PIN and WPS identity probe work; PBC untested. |
-| ACKs | ✅ | 2026-10-21 | Directed deauth showed 10/10 ACKs in both directions; spoofed-station WPS identity probe and WPS PIN also succeeded. |
+| ACKs | ✅ | 2026-10-22 | Independent RTL8821AU observer confirmed RTL8192FU auto-ACKed client authentication and association requests addressed to a forged Evil Twin BSSID. |
 | Stress | ✅ | 2026-10-21 | 20-minute, 14-channel RX hop completed without disconnect; 9–14 active channels per snapshot and 206–420 frames per minute window. |
 
 → [RTL8192FU.md](../src/wifit3/chips/rtl8192fu/RTL8192FU.md)

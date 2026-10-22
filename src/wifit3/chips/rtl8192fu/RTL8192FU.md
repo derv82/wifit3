@@ -33,11 +33,11 @@
 - Beacon work is AP/TX-only; RTL8192FU C2H work only updates Bluetooth coexistence or TX rate reports; bulk-IN resubmission is represented by `RxReaderThread`.
 - Teardown follows mainline stop then `rtl8192fu_power_off`: stop RX/TX, disable RF, flush FIFO, enter LPS, reset firmware/MCU, then transition active → EMU → disabled.
 - Jaguar-2 PHY-status pages 0/1/2 and both new/legacy CCK AGC RSSI paths are decoded; per-chain values use mainline's stronger-path rule.
-- Active monitor ports mainline port-0 link type plus `rtl8xxxu_set_mac`/`rtl8xxxu_set_bssid`: station role for client campaigns, AP role for EvilTwin, and EFUSE MAC/none role on exit.
+- Active monitor ports mainline port-0 link type plus `rtl8xxxu_set_mac`/`rtl8xxxu_set_bssid`: station role for client campaigns, AP role for EvilTwin, and EFUSE MAC/none role on exit. An independent RTL8821AU observer confirmed that a client authenticated and associated with the fake AP identity, with immediate ACKs observed for client-to-fake-AP authentication and association requests.
 
 ## Known Problems
 
-- Live directed deauthentication, PMKID, WPS PIN, and spoofed-station WPS identity probing work; a 100-frame timing run measured 0.6–2.3 ms USB TX submissions with no slowdown, while responses can be slower than other cards. WEP has not been tested because no suitable target is available, and AP-role spoofing remains untested.
+- Live directed deauthentication, PMKID, WPS PIN, spoofed-station WPS identity probing, and AP-role EvilTwin spoofing work; a 100-frame timing run measured 0.6–2.3 ms USB TX submissions with no slowdown, while responses can be slower than other cards. WEP has not been tested because no suitable target is available.
 - Control-frame TX is not ported; current auditing campaigns do not require raw control-frame injection.
 - The capture has no teardown segment, so the source-ported power-off sequence is unit-tested but cannot be pcap byte-verified.
 
