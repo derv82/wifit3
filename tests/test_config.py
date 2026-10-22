@@ -9,7 +9,7 @@ from wifit3.persist.config import (Config, ConfigError, CpuCrackSettings, Hashca
 
 _DEFAULTS = {n: copy.deepcopy(getattr(Config, n))
              for n in (
-                 "theme", "scanner_sort", "scanner_sort_reverse", "scanner_sort_delay",
+                 "theme", "system_dark_theme", "system_light_theme", "scanner_sort", "scanner_sort_reverse", "scanner_sort_delay",
                  "silenced_bssids", "hide_silenced", "log_level", "captures_dir", "save_pcap",
                  "decloaked_ssids", "wps_auto_pbc", "auto_crack", "cpu_crack", "hashcat",
                  "hashtopolis")}
@@ -65,6 +65,20 @@ def test_save_then_load_round_trips(config_path):
     Config.theme, Config.scanner_sort, Config.scanner_sort_reverse = "x", "y", True
     Config.load()
     assert (Config.theme, Config.scanner_sort, Config.scanner_sort_reverse) == ("nord", "channel", False)
+
+
+def test_system_theme_mapping_round_trips(config_path):
+    Config.theme = "system"
+    Config.system_dark_theme = "gruvbox"
+    Config.system_light_theme = "textual-light"
+
+    Config.save()
+    Config.theme = Config.system_dark_theme = Config.system_light_theme = "changed"
+    Config.load()
+
+    assert (Config.theme, Config.system_dark_theme, Config.system_light_theme) == (
+        "system", "gruvbox", "textual-light"
+    )
 
 
 def test_save_load_preserves_windows_path_literally(config_path):

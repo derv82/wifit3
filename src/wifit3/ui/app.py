@@ -33,6 +33,7 @@ from .screens.vault_drawer import VaultDrawer
 from .screens.vault_table import VaultTable
 from .clipboard import copy_macos_text, copy_windows_text
 from .pref import PreferencesModal
+from .system_theme import SYSTEM_THEME, preferred_theme
 from .themes import register_app_themes
 from .system_notifications import send_system_notification
 
@@ -164,7 +165,19 @@ class WifiteApp(App):
         self._app_focused = True
         self.pbc_enabled: bool = Config.wps_auto_pbc
         register_app_themes(self)
-        self.theme = Config.theme
+        self.theme_preference = Config.theme
+        self.set_theme_preference(Config.theme)
+
+    def set_theme_preference(self, preference: str) -> None:
+        self.theme_preference = preference
+        if preference == SYSTEM_THEME:
+            self.refresh_system_theme()
+        else:
+            self.theme = preference
+
+    def refresh_system_theme(self) -> None:
+        if self.theme_preference == SYSTEM_THEME:
+            self.theme = preferred_theme(Config.system_dark_theme, Config.system_light_theme)
 
     def _probed_ssids(self) -> Set[str]:
         return self.array.probed_ssids if self.array is not None else set()
@@ -176,6 +189,7 @@ class WifiteApp(App):
 
     def on_app_focus(self, _event: events.AppFocus) -> None:
         self._app_focused = True
+        self.refresh_system_theme()
 
     def on_app_blur(self, _event: events.AppBlur) -> None:
         self._app_focused = False
@@ -214,6 +228,7 @@ class WifiteApp(App):
         self.push_screen("splash")
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
         self.set_interval(2.0, self._poll_jobs)
+        self.set_interval(2.0, self.refresh_system_theme)
         self.call_after_refresh(self.device_watch.poll)
         self.call_after_refresh(self._poll_jobs)
         self._quit_on_termination_signals()

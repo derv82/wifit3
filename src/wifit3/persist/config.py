@@ -49,6 +49,8 @@ SettingsT = TypeVar("SettingsT", CpuCrackSettings, HashcatSettings, HashtopolisS
 
 class Config:
     theme: str = "textual-dark"
+    system_dark_theme: str = "wifit3-green-dark"
+    system_light_theme: str = "textual-light"
     captures_dir: str = "captures"
     save_pcap: bool = True
     log_level: str = "info"
@@ -99,6 +101,8 @@ class Config:
         cls.captures_dir = data.get("captures_dir", cls.captures_dir)
         cls.save_pcap = data.get("save_pcap", cls.save_pcap)
         cls.theme = data.get("theme", cls.theme)
+        cls.system_dark_theme = _optional_str(data.get("system_dark_theme"), cls.system_dark_theme)
+        cls.system_light_theme = _optional_str(data.get("system_light_theme"), cls.system_light_theme)
         cls.log_level = data.get("log_level", cls.log_level)
         cls.scanner_sort = data.get("scanner_sort", cls.scanner_sort)
         cls.scanner_sort_reverse = data.get("scanner_sort_reverse", cls.scanner_sort_reverse)
@@ -140,6 +144,8 @@ class Config:
             f"captures_dir = {_fmt(cls.captures_dir)}\n"
             f"save_pcap = {_fmt(cls.save_pcap)}\n"
             f"theme = {_fmt(cls.theme)}\n"
+            f"system_dark_theme = {_fmt(cls.system_dark_theme)}\n"
+            f"system_light_theme = {_fmt(cls.system_light_theme)}\n"
             f"log_level = {_fmt(cls.log_level)}\n"
             f"scanner_sort = {_fmt(cls.scanner_sort)}\n"
             f"scanner_sort_reverse = {_fmt(cls.scanner_sort_reverse)}\n"

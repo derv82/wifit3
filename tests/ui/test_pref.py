@@ -8,7 +8,9 @@ from wifit3.models import ToolName
 from wifit3.persist import config
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
+from wifit3.ui.app import WifiteApp
 from wifit3.ui.pref import PreferencesModal
+from wifit3.ui.system_theme import SYSTEM_THEME
 from wifit3.ui.vault.modals.cpu_crack import CpuCrackConfigModal
 from wifit3.ui.vault.modals.hashcat import HashcatConfigModal
 
@@ -41,6 +43,30 @@ async def test_save_notifies_instead_of_crashing_on_config_error(monkeypatch):
         assert toasts, "a failed save should surface a toast"
         assert toasts[0][1].get("title") == "Config Error"
         assert not isinstance(app.screen, PreferencesModal)   # dismissed anyway
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_system_theme_is_selectable_and_persisted(monkeypatch):
+    monkeypatch.setattr("wifit3.ui.system_theme.darkdetect.isDark", lambda: False)
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        app.push_screen(PreferencesModal())
+        await pilot.pause(0)
+        theme = app.screen.query_one("#theme", Select)
+        theme.value = SYSTEM_THEME
+        await pilot.pause(0)
+        assert app.screen.query_one("#system-theme-mapping").display
+        app.screen.query_one("#system-dark-theme", Select).value = "textual-light"
+        app.screen.query_one("#system-light-theme", Select).value = "textual-light"
+        await pilot.pause(0)
+        assert app.theme == "textual-light"
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause(0)
+
+    assert Config.theme == SYSTEM_THEME
+    assert Config.system_dark_theme == "textual-light"
+    assert Config.system_light_theme == "textual-light"
 
 
 @pytest.mark.asyncio

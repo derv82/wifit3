@@ -10,6 +10,7 @@ from wifit3.ui.ansi_art import (
     recolor_logo
 )
 from wifit3.ui.app import WifiteApp
+from wifit3.ui.system_theme import SYSTEM_THEME, preferred_theme
 from wifit3.ui.themes import custom_themes
 
 
@@ -21,8 +22,29 @@ def test_register_app_themes_keeps_textual_themes_available():
     assert "textual-light" in app.available_themes
 
 
-def test_custom_themes_defines_green_dark():
-    assert len(custom_themes()) > 0
+def test_custom_themes_define_green_dark():
+    assert {theme.name for theme in custom_themes()} == {"wifit3-green-dark"}
+
+
+def test_system_theme_follows_the_detected_preference(monkeypatch):
+    monkeypatch.setattr("wifit3.ui.system_theme.darkdetect.isDark", lambda: True)
+    assert preferred_theme() == "wifit3-green-dark"
+
+    monkeypatch.setattr("wifit3.ui.system_theme.darkdetect.isDark", lambda: False)
+    assert preferred_theme() == "textual-light"
+
+
+def test_app_applies_the_system_theme(monkeypatch):
+    monkeypatch.setattr("wifit3.ui.system_theme.darkdetect.isDark", lambda: False)
+    app = WifiteApp()
+
+    app.set_theme_preference(SYSTEM_THEME)
+    assert app.theme_preference == SYSTEM_THEME
+    assert app.theme == "textual-light"
+
+    monkeypatch.setattr("wifit3.ui.system_theme.darkdetect.isDark", lambda: True)
+    app.refresh_system_theme()
+    assert app.theme == "wifit3-green-dark"
 
 
 def test_all_custom_themes_apply_cleanly():

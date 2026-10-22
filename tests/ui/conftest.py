@@ -11,6 +11,8 @@ def _isolate_config(tmp_path, monkeypatch):
     config file and reset the class-level defaults so a theme edit can't leak between tests."""
     monkeypatch.setattr("wifit3.persist.config._PATH", tmp_path / "config.toml")
     Config.theme = "wifit3-green-dark"
+    Config.system_dark_theme = "wifit3-green-dark"
+    Config.system_light_theme = "textual-light"
     Config.scanner_sort = "signal"
     Config.scanner_sort_reverse = True
     Config.silenced_bssids = []
