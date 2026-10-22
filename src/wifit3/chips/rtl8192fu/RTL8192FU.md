@@ -18,6 +18,7 @@
 ## Python Port Details
 
 - `2001:3328` selects `RTL8192FUDriver` through `chips/rtl8192fu/__init__.py`.
+- Grade: **A** for 2.4 GHz auditing; WEP remains untested.
 - Status: cold initialization, monitor filtering, runtime RX, 20 MHz channels 1–14, management/data TX, and arbitrary MAC/BSSID programming are ported; captured TX is replay-verified.
 - A 20-minute 14-channel RX soak completed without disconnect or RX-reader failure; snapshots showed 9–14 active channels and 206–420 frames per minute window.
 - An independent RTL8821AU observer confirmed over-the-air directed-deauthentication and EvilTwin TX. Its client-specific ACK asymmetry matched the RTL8192FU tally, ruling out a general hardware or port TX fault.

@@ -64,6 +64,7 @@
 | Realtek RTL8822CU | 2.4 / 5 GHz | D-Link AC13U |
 | Realtek RTL8187L | 2.4 GHz | ALFA AWUS036**H** |
 | Realtek RTL8188EUS | 2.4 GHz | TP-Link TL-WN722N v2/v3, Mercusys MW150US |
+| Realtek RTL8192FU | 2.4 GHz | D-Link AN3U rev. A1 |
 | Ralink RT2570 | 2.4 GHz | Buffalo Nintendo Wi-Fi USB Controller |
 | Ralink RT3070 | 2.4 GHz | ALFA AWUS036**NH**, TP-Link TL-WN7200ND |
 | Ralink RT5370 | 2.4 GHz | LOTEKOO 150 Mbps |
