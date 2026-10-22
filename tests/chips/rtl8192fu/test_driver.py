@@ -1,9 +1,39 @@
+import struct
 from unittest.mock import Mock
 
 import pytest
 
 from wifit3.chips.rtl8192fu.driver import RTL8192FUDriver
 from wifit3.models import DeviceID
+
+
+def _rx_packet(frame: bytes, *, report: bool = False) -> bytes:
+    word2 = 1 << 28 if report else 0
+    return struct.pack("<6I", len(frame), 0, word2, 0, 0, 0) + frame
+
+
+def test_dispatch_records_a_tracked_raw_ack_without_packet_callback():
+    driver = RTL8192FUDriver(Mock(), DeviceID(0x2001, 0x3328, "RTL8192FU"))
+    transmitter = bytes.fromhex("001122334455")
+    driver._ack_detect_on = True
+    driver._our_tx_macs.add(transmitter)
+
+    driver._dispatch(_rx_packet(b"\xd4\x00\x00\x00" + transmitter))
+
+    assert driver.acks_seen(transmitter) == 1
+
+
+def test_dispatch_ignores_untracked_or_report_ack_payloads():
+    driver = RTL8192FUDriver(Mock(), DeviceID(0x2001, 0x3328, "RTL8192FU"))
+    tracked = bytes.fromhex("001122334455")
+    other = bytes.fromhex("aabbccddeeff")
+    driver._ack_detect_on = True
+    driver._our_tx_macs.add(tracked)
+
+    driver._dispatch(_rx_packet(b"\xd4\x00\x00\x00" + other))
+    driver._dispatch(_rx_packet(b"\xd4\x00\x00\x00" + tracked, report=True))
+
+    assert driver.acks_seen(tracked) == 0
 
 
 @pytest.mark.asyncio
