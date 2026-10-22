@@ -224,6 +224,36 @@ def test_vault_notifies_subscribers_only_when_capture_index_changes(tmp_path):
     assert changes == [2]
 
 
+def test_eap_credential_artifact_metadata_reload_and_dedupe(tmp_path):
+    vault = Vault()
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="Office WiFi")
+
+    result = vault.save_eap_credential(
+        ap,
+        "alice",
+        "pa:ssword",
+        {"method": "PEAP", "phase2": "MSCHAPv2", "anonymous_identity": "anonymous"},
+    )
+
+    assert result is not None and result.was_new
+    assert result.path.name.endswith("_eap_credential.txt")
+    assert result.path.read_text(encoding="utf-8") == "alice:pa:ssword\n"
+    metadata = json.loads((tmp_path / "aa-bb-cc-dd-ee-ff.meta").read_text(encoding="utf-8"))
+    assert metadata["credentials"]["eap"] == [{
+        "username": "alice", "password": "pa:ssword", "combo": "alice:pa:ssword"
+    }]
+    assert metadata["eap"] == {
+        "method": "PEAP", "phase2": "MSCHAPv2", "anonymous_identity": "anonymous"
+    }
+
+    duplicate = vault.save_eap_credential(ap, "alice", "pa:ssword", {})
+    assert duplicate is not None and not duplicate.was_new
+    reloaded = Vault().persisted(ap.bssid)
+    assert [(capture.type, capture.value) for capture in reloaded] == [
+        (CaptureType.EAP_CREDENTIAL, "alice:pa:ssword")
+    ]
+
+
 def test_save_wep_caches_key_and_dedupes(tmp_path):
     v = Vault()
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")

@@ -99,6 +99,13 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
         text = _read_text(path)
         if text is None:
             return []
+        if kind == "eap_credential":
+            combo = text.rstrip("\r\n")
+            username, separator, password = combo.partition(":")
+            if not separator or not username or not password or "\n" in combo or "\r" in combo:
+                return []
+            return [PersistedCapture(type=CaptureType.EAP_CREDENTIAL, timestamp=epoch, path=str(path),
+                                     bssid=bssid, value=combo, ssid=ssid)]
         ssid, bssid = _network_metadata(text, ssid, bssid)
         psk_match = WPS_PSK_RE.search(text)
         psk = psk_match.group(1).strip() if psk_match else None

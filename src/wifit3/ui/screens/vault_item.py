@@ -169,15 +169,16 @@ class _CapturePanel(VerticalGroup):
         tools.display = bool(crackers)
 
         def _row(label: str, val: str, btn_id: str, target_type: Optional[CaptureType] = None):
-            verify_btn = Button("Verify", id=f"verify-{btn_id}", variant="primary", classes="verify-btn",
-                                compact=True, tooltip="Connect to live AP and verify credentials")
-            setattr(verify_btn, "target_type", target_type)
-            return Horizontal(
+            children = [
                 Label(f"[bold dim]{label}:[/bold dim] [black bold on lightgreen] {escape(val)} [/]", classes="key-display"),
                 Button("Copy", id=btn_id, classes="copy-btn", compact=True),
-                verify_btn,
-                classes="key-row"
-            )
+            ]
+            if target_type is not None:
+                verify_btn = Button("Verify", id=f"verify-{btn_id}", variant="primary", classes="verify-btn",
+                                    compact=True, tooltip="Connect to live AP and verify credentials")
+                setattr(verify_btn, "target_type", target_type)
+                children.append(verify_btn)
+            return Horizontal(*children, classes="key-row")
 
         if self._title in ("WPS PSKs", "WPA PSKs"):
             kg.mount(_row("PSK", cap.value or "", "copy-psk", target_type=CaptureType.WPA_PSK))
@@ -188,6 +189,11 @@ class _CapturePanel(VerticalGroup):
             ascii_val = _hex_to_ascii(cap.value)
             if ascii_val:
                 kg.mount(_row("ASCII Key", ascii_val, "copy-ascii", target_type=CaptureType.WEP))
+        elif self._title == "EAP Credentials":
+            username, _, password = (cap.value or "").partition(":")
+            kg.mount(_row("Username", username, "copy-eap-username"))
+            kg.mount(_row("Password", password, "copy-eap-password"))
+            kg.mount(_row("Combo", cap.value or "", "copy-eap-combo"))
         elif self._title == "HASHCAT":
             text = self.app.vault.capture_payload(cap)
             hs = sum(1 for ln in text.splitlines() if ln.startswith("WPA*02*"))
@@ -222,6 +228,9 @@ class _CapturePanel(VerticalGroup):
         elif btn_id == "copy-pin": text = cap.pin or ""
         elif btn_id == "copy-hex": text = cap.value or ""
         elif btn_id == "copy-ascii": text = _hex_to_ascii(cap.value)
+        elif btn_id == "copy-eap-username": text = (cap.value or "").partition(":")[0]
+        elif btn_id == "copy-eap-password": text = (cap.value or "").partition(":")[2]
+        elif btn_id == "copy-eap-combo": text = cap.value or ""
         
         if not text:
             self.notify("Nothing to copy for this entry", severity="warning")
@@ -391,6 +400,7 @@ class VaultItemView(Vertical):
             "WPS PSKs": [c for c in captures if c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC) and c.value],
             "WPS PINs": [c for c in captures if c.type == CaptureType.WPS_PIN and c.pin is not None],
             "WEP KEYs": [c for c in captures if c.type == CaptureType.WEP],
+            "EAP Credentials": [c for c in captures if c.type == CaptureType.EAP_CREDENTIAL and c.value],
         }
         cracked_key = next((c.value for c in captures if c.type == CaptureType.WPA_PSK and c.value), None)
         for title, group in groups.items():

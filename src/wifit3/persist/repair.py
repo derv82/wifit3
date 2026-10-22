@@ -147,12 +147,18 @@ def repair_vault() -> RepairResult:
             ) else None
             pin = capture.pin if capture.type == CaptureType.WPS_PIN else None
             wep_key = capture.value if capture.type == CaptureType.WEP else None
-            if psk or pin or wep_key:
+            eap_credential = None
+            if capture.type == CaptureType.EAP_CREDENTIAL and capture.value:
+                username, separator, password = capture.value.partition(":")
+                if separator:
+                    eap_credential = (username, password)
+            if psk or pin or wep_key or eap_credential:
                 save_ap_metadata(
                     ap,
                     psk=psk,
                     wps_pin=pin,
                     wep_key=wep_key,
+                    eap_credential=eap_credential,
                     include_observed_data=False,
                 )
 

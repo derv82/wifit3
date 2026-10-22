@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select
 
@@ -20,7 +20,10 @@ class ManualCredential:
     kind: str
     ssid: str
     bssid: str
-    value: str
+    value: str = ""
+    username: str = ""
+    password: str = ""
+    eap_settings: dict[str, str] = field(default_factory=dict)
 
 
 class AddCredentialModal(ModalScreen[ManualCredential | None]):
@@ -29,11 +32,13 @@ class AddCredentialModal(ModalScreen[ManualCredential | None]):
     DEFAULT_CSS = """
     AddCredentialModal { align: center middle; }
     AddCredentialModal #dialog {
-        width: 58; height: auto; max-height: 90%;
+        width: 58; height: 90%;
         border: thick $primary; background: $surface; padding: 1 2;
+        overflow-y: auto;
     }
     AddCredentialModal #title { width: 100%; text-align: center; text-style: bold; }
     AddCredentialModal .field-label { margin-top: 1; color: $text-muted; }
+    AddCredentialModal #eap-fields { display: none; height: auto; }
     AddCredentialModal #status { height: auto; min-height: 1; color: $error; margin-top: 1; }
     AddCredentialModal #buttons { height: auto; align: right middle; }
     AddCredentialModal #buttons Button { margin-left: 1; }
@@ -45,7 +50,7 @@ class AddCredentialModal(ModalScreen[ManualCredential | None]):
         self._bssid = bssid
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
+        with VerticalScroll(id="dialog"):
             yield Label("Add Credential", id="title")
             yield Label("Network", classes="field-label")
             yield Input(self._ssid, placeholder="SSID", id="ssid")
@@ -53,13 +58,25 @@ class AddCredentialModal(ModalScreen[ManualCredential | None]):
             yield Input(self._bssid, placeholder="aa:bb:cc:dd:ee:ff", id="bssid")
             yield Label("Credential type", classes="field-label")
             yield Select(
-                [("WPA PSK", "wpa_psk"), ("WPS PIN", "wps_pin"), ("WEP key", "wep")],
+                [("WPA PSK", "wpa_psk"), ("WPS PIN", "wps_pin"), ("WEP key", "wep"),
+                 ("EAP credentials", "eap")],
                 value="wpa_psk",
                 allow_blank=False,
                 id="kind",
             )
             yield Label("Credential", classes="field-label", id="value-label")
             yield Input(placeholder="8–63 character passphrase or 64 hex digits", id="value")
+            with Vertical(id="eap-fields"):
+                yield Label("Username", classes="field-label")
+                yield Input(placeholder="identity", id="username")
+                yield Label("Password", classes="field-label")
+                yield Input(password=True, placeholder="password", id="password")
+                yield Label("EAP method", classes="field-label")
+                yield Input(placeholder="PEAP, TTLS, TLS…", id="eap-method")
+                yield Label("Phase 2", classes="field-label")
+                yield Input(placeholder="MSCHAPv2, PAP…", id="eap-phase2")
+                yield Label("Anonymous identity", classes="field-label")
+                yield Input(placeholder="optional", id="eap-anonymous-identity")
             yield Label("", id="status")
             with Horizontal(id="buttons"):
                 yield Button("Cancel", id="cancel")
@@ -67,10 +84,14 @@ class AddCredentialModal(ModalScreen[ManualCredential | None]):
 
     @on(Select.Changed, "#kind")
     def _kind_changed(self, event: Select.Changed) -> None:
+        kind = str(event.value)
         value = self.query_one("#value", Input)
-        if event.value == "wps_pin":
+        self.query_one("#value-label", Label).display = kind != "eap"
+        value.display = kind != "eap"
+        self.query_one("#eap-fields", Vertical).display = kind == "eap"
+        if kind == "wps_pin":
             value.placeholder = "4 or 8 digit PIN"
-        elif event.value == "wep":
+        elif kind == "wep":
             value.placeholder = "5/13 ASCII characters or 10/26 hex digits"
         else:
             value.placeholder = "8–63 character passphrase or 64 hex digits"
@@ -80,6 +101,7 @@ class AddCredentialModal(ModalScreen[ManualCredential | None]):
         self.dismiss(None)
 
     @on(Input.Submitted, "#value")
+    @on(Input.Submitted, "#password")
     def _value_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         self._add_pressed()
@@ -90,14 +112,26 @@ class AddCredentialModal(ModalScreen[ManualCredential | None]):
         bssid = self.query_one("#bssid", Input).value.strip().lower()
         kind = self.query_one("#kind", Select).value
         value = self.query_one("#value", Input).value
-        error = self._validate(ssid, bssid, kind, value)
+        username = self.query_one("#username", Input).value
+        password = self.query_one("#password", Input).value
+        eap_settings = {
+            "method": self.query_one("#eap-method", Input).value.strip(),
+            "phase2": self.query_one("#eap-phase2", Input).value.strip(),
+            "anonymous_identity": self.query_one("#eap-anonymous-identity", Input).value,
+        }
+        error = self._validate(ssid, bssid, kind, value, username, password)
         if error:
             self.query_one("#status", Label).update(error)
             return
-        self.dismiss(ManualCredential(str(kind), ssid, bssid, value))
+        self.dismiss(ManualCredential(
+            str(kind), ssid, bssid, value, username, password,
+            {name: setting for name, setting in eap_settings.items() if setting},
+        ))
 
     @staticmethod
-    def _validate(ssid: str, bssid: str, kind, value: str) -> str | None:
+    def _validate(
+        ssid: str, bssid: str, kind, value: str, username: str = "", password: str = ""
+    ) -> str | None:
         if not ssid or len(ssid.encode("utf-8")) > 32:
             return "SSID must be 1–32 bytes"
         if not _BSSID_RE.fullmatch(bssid):
@@ -114,6 +148,11 @@ class AddCredentialModal(ModalScreen[ManualCredential | None]):
             hex_key = len(value) in (10, 26) and _HEX_RE.fullmatch(value)
             if not (ascii_key or hex_key):
                 return "WEP key must be 5/13 ASCII characters or 10/26 hex digits"
+        elif kind == "eap":
+            if not username or not password:
+                return "EAP username and password are required"
+            if any(character in username for character in ":\r\n") or "\r" in password or "\n" in password:
+                return "EAP credentials must be one line; username cannot contain a colon"
         return None
 
     def action_cancel(self) -> None:

@@ -27,6 +27,7 @@ class CaptureType(StrEnum):
     WPS_PIN = "WPS_PIN"
     WPS_PBC = "WPS_PBC"
     WPA_PSK = "WPA_PSK"           # passphrase recovered from a handshake/PMKID (e.g. hashcat)
+    EAP_CREDENTIAL = "EAP_CREDENTIAL"
 
 
 @dataclass

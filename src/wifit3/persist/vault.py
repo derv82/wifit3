@@ -100,6 +100,7 @@ class Vault:
         CaptureType.WPS_PIN: "WPS PIN",
         CaptureType.WPS_PBC: "WPS PBC",
         CaptureType.WPA_PSK: "WPA PSK",
+        CaptureType.EAP_CREDENTIAL: "EAP Credential",
     }
 
     _PSK_TYPES = (CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK)
@@ -402,6 +403,18 @@ class Vault:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPA_PSK, timestamp=int(time.time()), path=str(result.path),
                 bssid=bssid, value=psk, ssid=ssid))
+        return result
+
+    def save_eap_credential(
+        self, ap: "AccessPoint", username: str, password: str, eap_settings: dict[str, str]
+    ) -> Optional[SaveResult]:
+        result = save.save_eap_credential(ap, username, password)
+        if result:
+            save_ap_metadata(ap, eap_credential=(username, password), eap_settings=eap_settings)
+        if result and result.was_new:
+            self._insert_capture(PersistedCapture(
+                type=CaptureType.EAP_CREDENTIAL, timestamp=int(time.time()), path=str(result.path),
+                bssid=ap.bssid, value=f"{username}:{password}", ssid=ap.ssid))
         return result
 
     # ----- filesystem ops (the screen goes through these, never touches disk) -----

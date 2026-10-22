@@ -2,7 +2,7 @@
 The autouse _captures_to_tmp fixture points Config.captures_dir at tmp_path, and WifiteApp builds its Vault from there.
 """
 import pytest
-from textual.widgets import Button, DataTable, Input
+from textual.widgets import Button, DataTable, Input, Select
 
 from wifit3.models import AccessPoint
 from wifit3.models.jobs import JobState, ToolStatus
@@ -75,6 +75,36 @@ async def test_vault_shortcut_adds_manual_psk_and_leaves_crack_all_disabled(tmp_
         propagate.assert_called_once_with(
             "aa:bb:cc:dd:ee:ff", "HomeNet", "correct horse battery staple"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_vault_adds_eap_credentials_separately_and_keeps_setup_in_metadata(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        view.action_add_credential()
+        await pilot.pause()
+
+        modal = app.screen
+        modal.query_one("#kind", Select).value = "eap"
+        await pilot.pause()
+        assert modal.query_one("#eap-fields").display
+        assert modal.query_one("#dialog").max_scroll_y > 0
+        modal.query_one("#username", Input).value = "alice"
+        modal.query_one("#password", Input).value = "pa:ssword"
+        modal.query_one("#eap-method", Input).value = "PEAP"
+        modal.query_one("#eap-phase2", Input).value = "MSCHAPv2"
+        modal.query_one("#add", Button).press()
+        await pilot.pause()
+
+        artifact = next(tmp_path.glob("*_eap_credential.txt"))
+        assert artifact.read_text(encoding="utf-8") == "alice:pa:ssword\n"
+        metadata = load_metadata(metadata_path("aa:bb:cc:dd:ee:ff"))
+        assert metadata["credentials"]["eap"][0]["combo"] == "alice:pa:ssword"
+        assert metadata["eap"] == {"method": "PEAP", "phase2": "MSCHAPv2"}
 
 
 @pytest.mark.asyncio

@@ -239,6 +239,10 @@ class VaultDrawer(ModalScreen):
                 self._verify_related_aps(ap.bssid, ap.ssid, credential.value)
         elif credential.kind == "wps_pin":
             result = self.app.vault.save_wps_pin(ap, credential.value, None)
+        elif credential.kind == "eap":
+            result = self.app.vault.save_eap_credential(
+                ap, credential.username, credential.password, credential.eap_settings
+            )
         else:
             value = credential.value
             key = bytes.fromhex(value) if len(value) in (10, 26) else value.encode("ascii")

@@ -11,7 +11,7 @@ LEGACY_CAPTURE_RE = re.compile(
     r"^(?P<ssid>.+)_"
     r"(?P<bssid>[0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5})_"
     r"(?P<epoch>\d+)_"
-    r"(?P<kind>handshake|pmkid|wep_key|wps_pin|wps_pbc|wpa_psk)"
+    r"(?P<kind>handshake|pmkid|wep_key|wps_pin|wps_pbc|wpa_psk|eap_credential)"
     r"\.(?P<ext>pcap|hc22000|txt)$"
 )
 

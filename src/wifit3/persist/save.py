@@ -398,6 +398,27 @@ def save_wpa_psk(ssid: str | None, bssid: str, psk: str) -> Optional[SaveResult]
     return _save_psk(ssid, bssid, psk, "_wpa_psk.txt")
 
 
+# ----- EAP credentials -------------------------------------------------------
+
+def save_eap_credential(ap: AccessPoint, username: str, password: str) -> Optional[SaveResult]:
+    """Persist an EAP identity and password as one ``username:password`` combo."""
+    if not username or not password or any(character in username for character in ":\r\n") or "\r" in password or "\n" in password:
+        return None
+    combo = f"{username}:{password}"
+    captures_dir = Path(Config.captures_dir)
+    for path in _existing(captures_dir, ap.bssid, "_eap_credential.txt"):
+        try:
+            if path.read_text(encoding="utf-8", errors="replace").rstrip("\r\n") == combo:
+                return SaveResult(path=path, was_new=False)
+        except OSError:
+            continue
+
+    captures_dir.mkdir(parents=True, exist_ok=True)
+    path = _fresh_path(captures_dir, ap.ssid, ap.bssid, "_eap_credential.txt")
+    path.write_text(combo + "\n", encoding="utf-8")
+    return SaveResult(path=path, was_new=True)
+
+
 def _save_psk(ssid: str | None, bssid: str, psk: str, suffix: str) -> Optional[SaveResult]:
     captures_dir = Path(Config.captures_dir)
     if not psk:

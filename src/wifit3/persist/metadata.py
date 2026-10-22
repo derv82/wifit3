@@ -49,6 +49,8 @@ def save_ap_metadata(
     psk: str | None = None,
     wps_pin: str | None = None,
     wep_key: str | None = None,
+    eap_credential: tuple[str, str] | None = None,
+    eap_settings: dict[str, str] | None = None,
     include_observed_data: bool = True,
 ) -> Path:
     """Merge known AP and credential data into its UTF-8 Vault sidecar."""
@@ -63,6 +65,15 @@ def save_ap_metadata(
         credentials["wps_pin"] = wps_pin
     if wep_key:
         credentials["wep_key"] = wep_key
+    if eap_credential:
+        username, password = eap_credential
+        eap_credentials = credentials.get("eap")
+        if not isinstance(eap_credentials, list):
+            eap_credentials = []
+        entry = {"username": username, "password": password, "combo": f"{username}:{password}"}
+        if entry not in eap_credentials:
+            eap_credentials.append(entry)
+        credentials["eap"] = eap_credentials
 
     data = {
         **existing,
@@ -98,6 +109,13 @@ def save_ap_metadata(
                 data[name] = value
     if credentials:
         data["credentials"] = credentials
+    if eap_settings:
+        eap = existing.get("eap")
+        if not isinstance(eap, dict):
+            eap = {}
+        eap.update({name: value for name, value in eap_settings.items() if value})
+        if eap:
+            data["eap"] = eap
 
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".meta.tmp")
