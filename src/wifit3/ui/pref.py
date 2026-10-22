@@ -8,7 +8,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.color import Color
-from textual.containers import Horizontal, Vertical, VerticalGroup
+from textual.containers import Horizontal, Vertical, VerticalGroup, VerticalScroll
 from textual.events import Event
 from textual.screen import ModalScreen
 from textual.theme import Theme
@@ -225,6 +225,7 @@ class PreferencesModal(ModalScreen):
         width: 44; height: auto;
         max-height: 100%;
         border: thick $primary; background: $surface; padding: 0 2;
+        overflow-y: auto;
     }
     PreferencesModal #dialog > * { width: 100% }
     PreferencesModal #title {
@@ -239,7 +240,7 @@ class PreferencesModal(ModalScreen):
     """
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
+        with VerticalScroll(id="dialog"):
             yield Label("Preferences", id="title")
             yield ThemeSetting()
             yield SortDelaySetting()

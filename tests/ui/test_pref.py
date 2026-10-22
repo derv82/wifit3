@@ -70,6 +70,16 @@ async def test_system_theme_is_selectable_and_persisted(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_preferences_scroll_when_the_window_is_too_short():
+    app = _Host()
+    async with app.run_test(size=(80, 18)) as pilot:
+        app.push_screen(PreferencesModal())
+        await pilot.pause(0)
+
+        assert app.screen.query_one("#dialog").max_scroll_y > 0
+
+
+@pytest.mark.asyncio
 async def test_prefs_no_longer_hosts_consolidate(tmp_path):
     """Consolidate moved to the Vault screen; Prefs must not show it, even with legacy files."""
     (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000").write_text("WPA*02*...\n")
