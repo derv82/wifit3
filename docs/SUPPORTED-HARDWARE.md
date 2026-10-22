@@ -118,7 +118,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | **Grade** | **⬜** |  | Waits for all tests. |
 | RX | ✅ | 2026-10-21 | Matches Linux; 85 APs on 2.4 GHz (best so far); 13/13 channels heard their own beacons, 0 silent, 0 cross-channel. |
 | Port | ✅ | 2026-10-21 | RX baseline matches Linux for breadth and channel tuning. |
-| TX | ⚠️ | 2026-10-21 | Live directed deauth, PMKID, and WPS PIN data injection verified. A 100-frame timing run had 0.6–2.3 ms USB submissions and no USB slowdown; responses can be slower than other cards. Repeated deauths produced consistent AP ACKs, while client ACKs became intermittent after the client was deauthenticated. WEP unavailable because no suitable target is available. |
+| TX | ⚠️ | 2026-10-21 | Live directed deauth, PMKID, and WPS PIN data injection verified. A 100-frame timing run had 0.6–2.3 ms USB submissions and no USB slowdown; responses can be slower than other cards. Repeated deauths produced consistent AP ACKs, while client ACKs became intermittent after the client was deauthenticated. |
 | Handshake | ✅ | 2026-10-21 | Verified deauth → complete four-way capture; all EAPOL frames M1–M4 can be collected. |
 | PMKID | ✅ | 2026-10-21 | Successfully associated and collected a PMKID. |
 | WEP | ⬜ |  | Not run; dont have target with WEP encryption. - cosita |

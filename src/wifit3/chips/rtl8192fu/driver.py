@@ -37,6 +37,7 @@ class RTL8192FUDriver(Driver):
     SUPPORTED_CHANNELS = list(range(1, 15))
     CONFLICTING_LINUX_MODULES = ["rtl8xxxu"]
     FAKE_MAC = FakeMacSupport.SPOOFABLE
+    MAX_ACK_DELAY = 0.05
 
     def __init__(self, dev: usb.core.Device, id_entry: DeviceID) -> None:
         super().__init__()
@@ -217,9 +218,14 @@ class RTL8192FUDriver(Driver):
         packet = build_tx_packet(frame_bytes)
         endpoint = endpoints.bulk_out[bulk_out_index(frame_bytes, len(endpoints.bulk_out))]
         loop = asyncio.get_running_loop()
-        async with self._io_lock:
-            async with self._tx_lock:
-                await loop.run_in_executor(None, self.transport.bulk_write, endpoint, packet)
+        try:
+            async with self._io_lock:
+                async with self._tx_lock:
+                    await loop.run_in_executor(None, self.transport.bulk_write, endpoint, packet)
+        except Exception as error:
+            if is_device_gone(error):
+                self._on_rx_fatal(error)
+            raise
         return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:

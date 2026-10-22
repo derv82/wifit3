@@ -163,6 +163,27 @@ async def test_driver_writes_data_packet_to_low_queue_endpoint(mocker):
     driver.transport.bulk_write.assert_called_once_with(0x08, build_tx_packet(frame))
 
 
+async def test_tx_device_removal_notifies_the_disconnect_path(mocker):
+    driver = object.__new__(RTL8192FUDriver)
+    error = OSError(19, "No such device")
+    disconnect = mocker.Mock()
+    driver.transport = SimpleNamespace(
+        endpoints=SimpleNamespace(bulk_out=(0x05,)),
+        bulk_write=mocker.Mock(side_effect=error),
+    )
+    driver._tx_lock = asyncio.Lock()
+    driver._io_lock = asyncio.Lock()
+    driver._device_gone = False
+    driver._disconnect_callback = disconnect
+    mocker.patch("wifit3.chips.rtl8192fu.driver.is_device_gone", return_value=True)
+
+    with pytest.raises(OSError, match="No such device"):
+        await driver._inject_frame(DIRECTED_DEAUTH)
+
+    disconnect.assert_called_once_with(error)
+    assert driver._device_gone
+
+
 def test_build_tx_packet_matches_captured_data_layout():
     frame = bytes.fromhex("48013a01122233445566aabbccddeeffaabbccddeeffe01b")
     descriptor = bytes.fromhex(

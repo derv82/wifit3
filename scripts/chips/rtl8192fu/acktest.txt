@@ -1,0 +1,115 @@
+[ 2.0%] Claiming USB interface
+[ 8.0%] Probing chip state
+[12.0%] Reading EFUSE
+[18.0%] Power-on + firmware download
+[40.0%] PHY init (mac/bb/agc/rf tables)
+[58.0%] FIFO + RX/MAC init
+[68.0%] Applying TX power
+[76.0%] Radio calibration
+[88.0%] Finishing hardware init
+[94.0%] Enabling monitor mode
+[100.0%] RTL8192FU online
+testing 50 directed deauth pair(s) on channel 1
+01 AP->client USB submit=    1.5 ms ACKs=0
+01 client->AP USB submit=    1.0 ms ACKs=1
+02 AP->client USB submit=    1.2 ms ACKs=2
+02 client->AP USB submit=    1.1 ms ACKs=1
+03 AP->client USB submit=    0.9 ms ACKs=0
+03 client->AP USB submit=    1.0 ms ACKs=1
+04 AP->client USB submit=    1.0 ms ACKs=0
+04 client->AP USB submit=    1.3 ms ACKs=1
+05 AP->client USB submit=    0.9 ms ACKs=0
+05 client->AP USB submit=    1.0 ms ACKs=1
+06 AP->client USB submit=    1.8 ms ACKs=0
+06 client->AP USB submit=    0.9 ms ACKs=1
+07 AP->client USB submit=    1.1 ms ACKs=0
+07 client->AP USB submit=    1.1 ms ACKs=1
+08 AP->client USB submit=    1.1 ms ACKs=0
+08 client->AP USB submit=    1.0 ms ACKs=1
+09 AP->client USB submit=    0.9 ms ACKs=0
+09 client->AP USB submit=    0.8 ms ACKs=1
+10 AP->client USB submit=    0.9 ms ACKs=0
+10 client->AP USB submit=    0.9 ms ACKs=1
+11 AP->client USB submit=    1.0 ms ACKs=0
+11 client->AP USB submit=    1.4 ms ACKs=1
+12 AP->client USB submit=    1.2 ms ACKs=0
+12 client->AP USB submit=    1.2 ms ACKs=1
+13 AP->client USB submit=    1.4 ms ACKs=0
+13 client->AP USB submit=    1.2 ms ACKs=1
+14 AP->client USB submit=    1.3 ms ACKs=0
+14 client->AP USB submit=    1.0 ms ACKs=1
+15 AP->client USB submit=    1.0 ms ACKs=0
+15 client->AP USB submit=    1.1 ms ACKs=2
+16 AP->client USB submit=    1.3 ms ACKs=0
+16 client->AP USB submit=    1.1 ms ACKs=1
+17 AP->client USB submit=    1.1 ms ACKs=0
+17 client->AP USB submit=    1.2 ms ACKs=1
+18 AP->client USB submit=    1.0 ms ACKs=0
+18 client->AP USB submit=    1.0 ms ACKs=1
+19 AP->client USB submit=    1.0 ms ACKs=0
+19 client->AP USB submit=    2.3 ms ACKs=1
+20 AP->client USB submit=    1.3 ms ACKs=0
+20 client->AP USB submit=    1.0 ms ACKs=1
+21 AP->client USB submit=    1.4 ms ACKs=0
+21 client->AP USB submit=    1.0 ms ACKs=1
+22 AP->client USB submit=    1.1 ms ACKs=0
+22 client->AP USB submit=    0.9 ms ACKs=1
+23 AP->client USB submit=    1.1 ms ACKs=0
+23 client->AP USB submit=    1.1 ms ACKs=1
+24 AP->client USB submit=    1.0 ms ACKs=0
+24 client->AP USB submit=    1.0 ms ACKs=1
+25 AP->client USB submit=    1.3 ms ACKs=0
+25 client->AP USB submit=    0.8 ms ACKs=1
+26 AP->client USB submit=    0.9 ms ACKs=0
+26 client->AP USB submit=    0.7 ms ACKs=1
+27 AP->client USB submit=    0.9 ms ACKs=0
+27 client->AP USB submit=    1.3 ms ACKs=1
+28 AP->client USB submit=    1.1 ms ACKs=0
+28 client->AP USB submit=    0.9 ms ACKs=1
+29 AP->client USB submit=    1.2 ms ACKs=1
+29 client->AP USB submit=    1.0 ms ACKs=1
+30 AP->client USB submit=    0.8 ms ACKs=1
+30 client->AP USB submit=    1.1 ms ACKs=3
+31 AP->client USB submit=    1.4 ms ACKs=1
+31 client->AP USB submit=    1.2 ms ACKs=2
+32 AP->client USB submit=    1.0 ms ACKs=0
+32 client->AP USB submit=    0.7 ms ACKs=1
+33 AP->client USB submit=    1.4 ms ACKs=0
+33 client->AP USB submit=    0.9 ms ACKs=1
+34 AP->client USB submit=    0.8 ms ACKs=0
+34 client->AP USB submit=    0.9 ms ACKs=1
+35 AP->client USB submit=    1.0 ms ACKs=0
+35 client->AP USB submit=    1.4 ms ACKs=1
+36 AP->client USB submit=    1.1 ms ACKs=0
+36 client->AP USB submit=    1.1 ms ACKs=1
+37 AP->client USB submit=    0.7 ms ACKs=0
+37 client->AP USB submit=    0.9 ms ACKs=1
+38 AP->client USB submit=    0.8 ms ACKs=0
+38 client->AP USB submit=    0.6 ms ACKs=1
+39 AP->client USB submit=    1.1 ms ACKs=0
+39 client->AP USB submit=    0.8 ms ACKs=1
+40 AP->client USB submit=    1.0 ms ACKs=0
+40 client->AP USB submit=    0.9 ms ACKs=1
+41 AP->client USB submit=    0.9 ms ACKs=0
+41 client->AP USB submit=    0.8 ms ACKs=1
+42 AP->client USB submit=    1.3 ms ACKs=0
+42 client->AP USB submit=    1.1 ms ACKs=1
+43 AP->client USB submit=    1.1 ms ACKs=0
+43 client->AP USB submit=    1.1 ms ACKs=1
+44 AP->client USB submit=    1.1 ms ACKs=0
+44 client->AP USB submit=    1.2 ms ACKs=1
+45 AP->client USB submit=    1.2 ms ACKs=0
+45 client->AP USB submit=    1.1 ms ACKs=1
+46 AP->client USB submit=    1.0 ms ACKs=0
+46 client->AP USB submit=    1.0 ms ACKs=1
+47 AP->client USB submit=    1.2 ms ACKs=0
+47 client->AP USB submit=    1.0 ms ACKs=1
+48 AP->client USB submit=    1.2 ms ACKs=0
+48 client->AP USB submit=    0.9 ms ACKs=1
+49 AP->client USB submit=    0.9 ms ACKs=0
+49 client->AP USB submit=    1.0 ms ACKs=1
+50 AP->client USB submit=    1.0 ms ACKs=0
+50 client->AP USB submit=    0.7 ms ACKs=1
+summary: 100 frames, 59 ACKs, 0 USB submissions >= 100 ms
+
+result -> incosistent ACKs, 59% ACKs, 0 USB submissions >= 100 ms... possibly hardware issue, maybe bug with acks...
