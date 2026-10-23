@@ -184,8 +184,11 @@ class WifiteApp(App):
             self.theme = preference
 
     def refresh_system_theme(self) -> None:
-        if self.theme_preference == SYSTEM_THEME:
-            self.theme = preferred_theme(Config.system_dark_theme, Config.system_light_theme)
+        if self.theme_preference != SYSTEM_THEME:
+            return
+        theme = preferred_theme(Config.system_dark_theme, Config.system_light_theme)
+        if theme != self.theme:
+            self.theme = theme
 
     def _probed_ssids(self) -> Set[str]:
         return self.array.probed_ssids if self.array is not None else set()

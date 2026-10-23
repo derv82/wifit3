@@ -26,12 +26,18 @@ class JobActionButton(Button):
     def __init__(self, job: JobState):
         super().__init__(classes="job-action-btn", compact=True)
         self.job_id = job.job_id
+        self.stops = False
+        self._state: tuple[bool, bool] | None = None
         self.sync(job)
 
     def sync(self, job: JobState) -> None:
         """Match the button's label + colour to the job's current state."""
-        self.stops = JobAction.STOP in job.actions
-        self.display = self.stops or JobAction.CLEAR in job.actions
+        state = (JobAction.STOP in job.actions, JobAction.CLEAR in job.actions)
+        if state == self._state:
+            return
+        self._state = state
+        self.stops, clears = state
+        self.display = self.stops or clears
         self.label = "Stop" if self.stops else "Clear"
         self.variant = "error" if self.stops else "default"
 
@@ -40,11 +46,17 @@ class JobPauseButton(Button):
     def __init__(self, job: JobState):
         super().__init__(classes="job-pause-btn", compact=True)
         self.job_id = job.job_id
+        self.resumes = False
+        self._state: tuple[bool, bool] | None = None
         self.sync(job)
 
     def sync(self, job: JobState) -> None:
-        self.resumes = JobAction.RESUME in job.actions
-        self.display = self.resumes or JobAction.PAUSE in job.actions
+        state = (JobAction.RESUME in job.actions, JobAction.PAUSE in job.actions)
+        if state == self._state:
+            return
+        self._state = state
+        self.resumes, pauses = state
+        self.display = self.resumes or pauses
         self.label = "Resume" if self.resumes else "Pause"
 
 
@@ -52,10 +64,15 @@ class JobSkipButton(Button):
     def __init__(self, job: JobState):
         super().__init__("Skip", classes="job-skip-btn", compact=True, variant="warning")
         self.job_id = job.job_id
+        self._visible: bool | None = None
         self.sync(job)
 
     def sync(self, job: JobState) -> None:
-        self.display = JobAction.SKIP in job.actions
+        visible = JobAction.SKIP in job.actions
+        if visible == self._visible:
+            return
+        self._visible = visible
+        self.display = visible
 
 
 class JobRow(Horizontal):
@@ -66,6 +83,8 @@ class JobRow(Horizontal):
         self.job_id = job.job_id
         self._job = job
         self._compact_name = compact_name
+        self._labels: dict[str, str] = {}
+        self._percent: float | None = None
 
     def compose(self) -> ComposeResult:
         yield Label(self._name_markup(self._job), classes="job-name")
@@ -82,11 +101,14 @@ class JobRow(Horizontal):
 
     def sync(self, job: JobState) -> None:
         self._job = job
-        self.query_one(".job-name", Label).update(self._name_markup(job))
-        self.query_one(".job-status", Label).update(self._status_markup(job))
-        self.query_one(".job-detail", Label).update(self._detail_markup(job))
-        self.query_one(ProgressBar).update(total=100, progress=job.percent or 0.0)
-        self.query_one(".job-percent", Label).update(self._percent_text(job))
+        self._update_label(".job-name", self._name_markup(job))
+        self._update_label(".job-status", self._status_markup(job))
+        self._update_label(".job-detail", self._detail_markup(job))
+        percent = job.percent or 0.0
+        if percent != self._percent:
+            self._percent = percent
+            self.query_one(ProgressBar).update(total=100, progress=percent)
+        self._update_label(".job-percent", self._percent_text(job))
         self.query_one(JobPauseButton).sync(job)
         self.query_one(JobSkipButton).sync(job)
         self.query_one(JobActionButton).sync(job)
@@ -96,7 +118,13 @@ class JobRow(Horizontal):
             return
         self._compact_name = compact_name
         if self.is_attached:
-            self.query_one(".job-name", Label).update(self._name_markup(self._job))
+            self._update_label(".job-name", self._name_markup(self._job))
+
+    def _update_label(self, selector: str, value: str) -> None:
+        if value == self._labels.get(selector):
+            return
+        self._labels[selector] = value
+        self.query_one(selector, Label).update(value)
 
     def _name_markup(self, job: JobState) -> str:
         name = job.display_name
@@ -164,6 +192,7 @@ class JobTrackerPane(Widget):
     def on_mount(self) -> None:
         self._rows: dict[str, JobRow] = {}
         self._jobs: list[JobState] = []
+        self._layout_signature: tuple | None = None
         if not hasattr(self.app, "active_jobs"):
             return
         self.watch(self.app, "active_jobs", self._sync)
@@ -197,6 +226,10 @@ class JobTrackerPane(Widget):
                 row.sync(job)
 
     def _sync_layout(self) -> None:
+        signature = (self.size.width, tuple((job.job_id, int(job.actions)) for job in self._jobs))
+        if signature == self._layout_signature:
+            return
+        self._layout_signature = signature
         normal_fixed_columns = 57
         no_bar_fixed_columns = 45
         normal_required = normal_fixed_columns + 16
