@@ -127,8 +127,10 @@ class WordlistConfigModal(ModalScreen[dict]):
     }
     #wordlist-dialog {
         width: 60;
+        max-width: 100%;
         height: auto;
-        padding: 1 2;
+        max-height: 100%;
+        padding: 1 2 0 2;
         background: $surface;
         border: solid $primary;
     }
@@ -138,6 +140,10 @@ class WordlistConfigModal(ModalScreen[dict]):
         text-style: bold;
         color: $accent;
         margin-bottom: 1;
+    }
+    #wordlist-body {
+        height: auto;
+        max-height: 1fr;
     }
     #wordlist-choose-row {
         height: auto;
@@ -173,11 +179,12 @@ class WordlistConfigModal(ModalScreen[dict]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="wordlist-dialog"):
-            yield Label(self.dialog_title, id="wordlist-title")
-            yield from self._compose_fields()
-            with Horizontal(id="wordlist-buttons"):
-                yield Button("Cancel", variant="error", id="wordlist-cancel")
-                yield Button(self._confirm_label, variant="success", id="wordlist-launch")
+            with VerticalScroll(id="wordlist-body"):
+                yield Label(self.dialog_title, id="wordlist-title")
+                yield from self._compose_fields()
+                with Horizontal(id="wordlist-buttons"):
+                    yield Button("Cancel", variant="error", id="wordlist-cancel")
+                    yield Button(self._confirm_label, variant="success", id="wordlist-launch")
 
     def _compose_fields(self) -> ComposeResult:
         yield from self._compose_wordlists()
@@ -204,6 +211,12 @@ class WordlistConfigModal(ModalScreen[dict]):
                        compact=True, id="probed-ssid-passwords")
 
     async def on_mount(self) -> None:
+        try:
+            await self._initialize_fields()
+        except NoMatches:
+            self.call_after_refresh(self._initialize_fields)
+
+    async def _initialize_fields(self) -> None:
         await self._show_wordlists()
         self._show_counts_and_exhaustion()
 

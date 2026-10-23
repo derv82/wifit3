@@ -2,6 +2,7 @@ import threading
 
 import pytest
 from textual.app import App
+from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Label, Select
 
 import wifit3.ui.vault.modals.hashtopolis as mod
@@ -12,6 +13,27 @@ from wifit3.vault.tools.hashtopolis_api import AccessGroup, HashtopolisError, Se
 
 class _Host(App):
     """A bare app to host the modal (no USB, no splash)."""
+
+
+@pytest.mark.asyncio
+async def test_modal_fits_viewport_and_scrolls_fields_inside():
+    app = _Host()
+    async with app.run_test(size=(40, 12)) as pilot:
+        app.push_screen(HashtopolisConfigModal())
+        await pilot.pause()
+
+        dialog = app.screen.query_one("#hashtopolis-dialog")
+        body = app.screen.query_one("#hashtopolis-body", VerticalScroll)
+        title = app.screen.query_one("#hashtopolis-title", Label)
+        buttons = app.screen.query_one("#hashtopolis-buttons")
+        assert dialog.region.x >= 0 and dialog.region.right <= app.size.width
+        assert dialog.region.y >= 0 and dialog.region.bottom <= app.size.height
+        assert body.virtual_size.height > body.size.height
+        assert body.parent is dialog
+        assert title.parent is body and buttons.parent is body
+        body.scroll_end(animate=False)
+        await pilot.pause()
+        assert buttons.region.bottom <= body.content_region.bottom
 
 
 class FakeApi:
