@@ -7,7 +7,7 @@ from wifit3.models.jobs import ToolStatus
 
 class GlobalJobTracker(Widget):
     """Sits above the footer and shows running jobs."""
-    
+
     DEFAULT_CSS = """
     GlobalJobTracker {
         height: 1;
@@ -22,6 +22,8 @@ class GlobalJobTracker(Widget):
         yield Label("No active jobs.", id="job-tracker-label")
 
     def on_mount(self) -> None:
+        self._last_display: bool | None = None
+        self._last_label = ""
         if not hasattr(self.app, "active_jobs"):
             return
         self.watch(self.app, "active_jobs", self._update_tracker)
@@ -42,19 +44,16 @@ class GlobalJobTracker(Widget):
             return
             
         if not jobs or vault_open:
-            self.display = False
-            label.update("No active jobs.")
+            self._set_tracker(False, "No active jobs.", label)
             return
 
         running = [j for j in jobs if j.status == ToolStatus.RUNNING]
         queued = [j for j in jobs if j.status == ToolStatus.QUEUED]
         
         if not running and not queued:
-            self.display = False
+            self._set_tracker(False, "", label)
             return
             
-        self.display = True
-        
         parts = []
         if running:
             job = running[0]
@@ -64,4 +63,12 @@ class GlobalJobTracker(Widget):
         if queued:
             parts.append(f"({len(queued)} queued)")
             
-        label.update(" ".join(parts))
+        self._set_tracker(True, " ".join(parts), label)
+
+    def _set_tracker(self, display: bool, text: str, label: Label) -> None:
+        if display != self._last_display:
+            self._last_display = display
+            self.display = display
+        if text != self._last_label:
+            self._last_label = text
+            label.update(text)

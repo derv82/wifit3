@@ -125,6 +125,7 @@ class _CapturePanel(VerticalGroup):
         self._verify_task: Optional[asyncio.Task] = None
         self._selected_capture = self._files[0]
         self._tool_layout: tuple[tuple[str, ...], int] | None = None
+        self._tool_update_scheduled = False
 
     def cancel_verification(self) -> None:
         """Cancel any running verification task on this panel."""
@@ -175,6 +176,12 @@ class _CapturePanel(VerticalGroup):
         self._update_display(self._files[0])
 
     def on_resize(self) -> None:
+        self._schedule_tool_rows()
+
+    def _schedule_tool_rows(self) -> None:
+        if self._tool_update_scheduled:
+            return
+        self._tool_update_scheduled = True
         self.call_after_refresh(self._update_tool_rows)
 
     def _date_markup(self, cap: PersistedCapture) -> str:
@@ -189,7 +196,7 @@ class _CapturePanel(VerticalGroup):
         kg.remove_children()
 
         self._tool_layout = None
-        self.call_after_refresh(self._update_tool_rows)
+        self._schedule_tool_rows()
 
         def _row(label: str, val: str, btn_id: str, target_type: Optional[CaptureType] = None):
             verify_btn = Button("Verify", id=f"verify-{btn_id}", variant="primary", classes="verify-btn",
@@ -229,6 +236,7 @@ class _CapturePanel(VerticalGroup):
             kg.mount(Label("[italic]raw .pcap capture[/italic]", classes="key-display"))
 
     def _update_tool_rows(self) -> None:
+        self._tool_update_scheduled = False
         if not self.is_attached:
             return
         try:
