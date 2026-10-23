@@ -14,7 +14,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalGroup
+from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalGroup
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.events import Event
@@ -88,6 +88,10 @@ class _CapturePanel(VerticalGroup):
         border: round $primary; padding: 0 1;
         margin-top: 1;
     }
+    _CapturePanel .file-scroll {
+        width: 100%; height: auto;
+        overflow-x: auto; overflow-y: hidden;
+    }
     _CapturePanel .key-group { padding-left: 1; }
     _CapturePanel .date { height: 1; padding-left: 1; margin-bottom: 1; }
     _CapturePanel .key-row { height: 1; align: left middle; }
@@ -138,7 +142,11 @@ class _CapturePanel(VerticalGroup):
             self.border_title = f"{self._title} ({n})"
 
         newest = self._files[0]
-        yield Select([(Path(c.path).name, c.path) for c in self._files], value=newest.path, allow_blank=False, classes="file")
+        filenames = [(Path(c.path).name, c.path) for c in self._files]
+        file_picker = Select(filenames, value=newest.path, allow_blank=False, classes="file")
+        file_picker.styles.width = max(Text(name).cell_len for name, _ in filenames) + 4
+        with HorizontalScroll(classes="file-scroll"):
+            yield file_picker
 
         # Display Key or Summary
         with VerticalGroup(classes="key-group"):
@@ -169,7 +177,7 @@ class _CapturePanel(VerticalGroup):
 
         kg = self.query_one(".key-group")
         kg.remove_children()
-        
+
         self._tool_layout = None
         self._update_tool_rows()
 
@@ -264,14 +272,14 @@ class _CapturePanel(VerticalGroup):
         event.stop()
         cap = self._by_path.get(self.query_one(Select).value)
         if not cap: return
-        
+
         btn_id = event.button.id
         text = ""
         if btn_id == "copy-psk": text = cap.value or ""
         elif btn_id == "copy-pin": text = cap.pin or ""
         elif btn_id == "copy-hex": text = cap.value or ""
         elif btn_id == "copy-ascii": text = _hex_to_ascii(cap.value)
-        
+
         if not text:
             self.notify("Nothing to copy for this entry", severity="warning")
             return
@@ -332,7 +340,7 @@ class _CapturePanel(VerticalGroup):
             self.notify(f"Removed {Path(cap.path).name}")
 
         self.app.push_screen(ConfirmModal(f"Delete [bold]{escape(Path(cap.path).name)}[/]?"), after)
-        
+
     @on(Button.Pressed, ".tool-btn")
     def _launch_tool(self, event: Button.Pressed) -> None:
         event.stop()
@@ -341,24 +349,24 @@ class _CapturePanel(VerticalGroup):
         if not cap:
             logger.warning(f"Unable to launch tool for {selected_file}: Not found in index")
             return
-        
+
         tool_name = next((c.replace("launch-tool-", "") for c in event.button.classes if c.startswith("launch-tool-")), None)
         if not tool_name:
             return
-        
+
         modal_cls = UI_TOOLS.get(tool_name)
         if not modal_cls:
             logger.error(f"Unable to launch tool: No entry in UI_TOOLS for {tool_name}")
             self.notify(f"No UI configured for tool: {tool_name}", severity="error")
             return
-            
+
         def _on_config(config: dict | None) -> None:
             if not config:
                 return
             job_id = self.app.vault.manager.submit_job(
                 tool_name, cap, self.app.vault.add_probed_ssids(config))
             self.notify(f"Queued job: {job_id}")
-            
+
         self.app.push_screen(modal_cls(capture=cap, probed_ssids=self.app.vault.probed_ssids()),
                              _on_config)
 
@@ -416,11 +424,12 @@ class VaultItemView(Vertical):
             self.border_title = "Vault Detail"
             yield Label("Select an AP to view its captures", id="vault-item-empty")
             return
-            
+
         name = ssid or "‹hidden›"
-        title = Content.from_markup(f"[$background bold on $primary] {escape(name)}[/]")
-        self.border_title = title.append(Content.from_text(f" ({bssid}) "))
-        
+        title = Content.from_markup(f"[$background bold on $primary] {escape(name)} [/]")
+        title = title.append(Content.from_text(f" ({bssid}) "))
+        self.border_title = title
+
         groups = {
             "HANDSHAKE": [c for c in captures if c.path.endswith(".pcap")],
             "HASHCAT": [c for c in captures if c.path.endswith(".hc22000")],

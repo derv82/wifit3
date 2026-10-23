@@ -2,7 +2,8 @@
 The autouse _captures_to_tmp fixture points Config.captures_dir at tmp_path, and WifiteApp builds its Vault from there.
 """
 import pytest
-from textual.widgets import Button, DataTable, Input
+from textual.containers import HorizontalScroll
+from textual.widgets import Button, DataTable, Input, Select
 
 from wifit3.models import AccessPoint, CaptureType
 from wifit3.models.jobs import JobState, ToolStatus
@@ -299,6 +300,21 @@ async def test_add_credential_prefills_the_row_and_rejects_a_psk_the_handshake_r
                                                 "02:00:00:00:00:20", "1234"))
         pin = app.vault.persisted("02:00:00:00:00:20")[0]
         assert pin.pin == "1234" and pin.value is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_capture_filename_scrolls_when_it_is_too_long(tmp_path):
+    ssid = "A-very-long-network-name-that-does-not-fit"
+    _write(tmp_path, f"{ssid}_aa-bb-cc-dd-ee-ff.hc22000", _HS_LINE)
+    app = WifiteApp()
+    async with app.run_test(size=(50, 24)) as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+
+        file_scroll = view.query_one(".file-scroll", HorizontalScroll)
+        assert file_scroll.max_scroll_x > 0
+        assert ssid in str(view.query_one(".file", Select).value)
 
 
 @pytest.mark.asyncio
