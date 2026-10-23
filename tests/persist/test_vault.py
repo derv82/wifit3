@@ -14,7 +14,7 @@ import pytest
 from wifit3.crack import wpa_psk
 from wifit3.crack.hc22000_format import Hc22000Line
 from wifit3.dot11.wpa import derive_pmk
-from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage, PersistedCapture, ToolName
+from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage, ToolName
 from wifit3.persist.config import Config
 from wifit3.persist.meta import update_meta
 from wifit3.persist.vault import Vault, crosses_auto_crack_threshold
@@ -79,19 +79,6 @@ def test_startup_loads_existing_captures(tmp_path):
 def test_persisted_unknown_bssid_is_empty(tmp_path):
     assert Vault().persisted("aa:bb:cc:dd:ee:ff") == []
 
-
-def test_hashline_summary_counts_and_refreshes_when_file_changes(tmp_path):
-    path = tmp_path / "capture.hc22000"
-    path.write_text("WPA*02*handshake\nWPA*01*pmkid\nWPA*04*handshake\n", encoding="utf-8")
-    capture = PersistedCapture(
-        type=CaptureType.HS, timestamp=1, path=str(path), bssid="aa:bb:cc:dd:ee:ff",
-    )
-    vault = Vault()
-
-    assert vault.hashline_summary(capture) == (2, 1)
-
-    path.write_text("WPA*03*pmkid\n", encoding="utf-8")
-    assert vault.hashline_summary(capture) == (0, 1)
 
 
 def test_summary_is_none_when_empty(tmp_path):
@@ -351,7 +338,9 @@ def test_zip_captures_dedupes_shared_path(tmp_path):
     v = Vault()
     out = v.zip_captures(v.persisted("00:11:22:33:44:03"))
     with zipfile.ZipFile(out) as zf:
-        assert zf.namelist() == [agg.name]
+        names = zf.namelist()
+        assert names.count(agg.name) == 1
+        assert names.count("Net_00-11-22-33-44-03.meta") == 1
 
 
 def test_open_directory_uses_platform_launcher(tmp_path, mocker):

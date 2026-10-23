@@ -112,8 +112,15 @@ class _CapturePanel(VerticalGroup):
         self._title = title
         self._cracked_key = cracked_key
         self._by_path: Dict[str, PersistedCapture] = {}
+        self._hashline_counts: dict[str, tuple[int, int]] = {}
         for cap in sorted(captures, key=lambda c: c.timestamp, reverse=True):
             self._by_path.setdefault(cap.path, cap)
+            handshakes, pmkids = self._hashline_counts.get(cap.path, (0, 0))
+            if cap.type == CaptureType.HS:
+                handshakes += cap.record_count
+            elif cap.type == CaptureType.PMKID:
+                pmkids += cap.record_count
+            self._hashline_counts[cap.path] = handshakes, pmkids
         self._files = list(self._by_path.values())
         self._verify_task: Optional[asyncio.Task] = None
         self._selected_capture = self._files[0]
@@ -209,7 +216,7 @@ class _CapturePanel(VerticalGroup):
             if ascii_val:
                 kg.mount(_row("ASCII Key", ascii_val, "copy-ascii", target_type=CaptureType.WEP))
         elif self._title == "HASHCAT":
-            hs, pmkid = self.app.vault.hashline_summary(cap)
+            hs, pmkid = self._hashline_counts.get(cap.path, (0, 0))
             parts = []
             if hs: parts.append(f"{hs} handshake{'s' if hs != 1 else ''}")
             if pmkid: parts.append(f"{pmkid} PMKID{'s' if pmkid != 1 else ''}")
