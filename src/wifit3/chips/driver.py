@@ -76,10 +76,6 @@ class Driver(ABC):
         self._our_tx_macs: set[bytes] = set()       # source MACs whose returning ACKs we count
         self._ack_counts: dict[bytes, int] = {}     # MAC -> ACKs seen since the last reset
 
-    @property
-    def supported_channels(self) -> List[int]:
-        """Channels available on this adapter instance; defaults to its physical capability."""
-        return self.SUPPORTED_CHANNELS
 
     @classmethod
     @abstractmethod

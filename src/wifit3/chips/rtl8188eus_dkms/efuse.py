@@ -117,7 +117,6 @@ class ChipParams(NamedTuple):
     autoload_failed: bool
     eeprom_id_valid: bool
     channel_plan: int
-    supported_channels: tuple[int, ...]
 
 
 def iol_mode_enable(t, enable: bool, fw_ready: bool = True) -> None:
@@ -402,7 +401,7 @@ def read_chip_params(t, autoload_failed: bool = False, bcnhead: int = 0) -> Chip
     mac = logical[EEPROM_MAC_ADDR_88EU:EEPROM_MAC_ADDR_88EU + 6]
     if autoload_failed or _invalid_mac(mac):
         mac = b"\x00\xe0\x4c" + secrets.token_bytes(3)
-    channel_plan, supported_channels = read_channel_plan(logical, autoload_failed)
+    channel_plan, _ = read_channel_plan(logical, autoload_failed)
     return ChipParams(crystal_cap, thermal_meter, mac, logical, _parse_tx_power(logical),
                       read_board_options(logical, autoload_failed), autoload_failed,
-                      eeprom_id_valid, channel_plan, supported_channels)
+                      eeprom_id_valid, channel_plan)

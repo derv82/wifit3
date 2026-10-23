@@ -46,11 +46,11 @@ comment as a hypothesis to falsify.
 
 **EFUSE is decoded with the vendor fallbacks, not treated as reference-card constants.** The port
 uses the real 512 B logical map for MAC, TX-power, crystal cap, thermal baseline, PA/LNA, GLNA,
-RFE classification, and channel policy. `REG_9346CR` autoload failure or an invalid logical-map
+RFE classification, and channel-plan metadata. `REG_9346CR` autoload failure or an invalid logical-map
 ID (`0x8129`) selects the source defaults; blank TX-power bases use the RTL8188E IC default table.
-The country code takes precedence over `0xB8`; otherwise `0xB8` sets the per-adapter 2.4 GHz list.
-The attached reference card resolved to plan `0x21` (ETSI1-null), exposing channels 1–13 during the
-2026-10-23 live bring-up.
+The country code takes precedence over `0xB8` when recording the vendor plan. Wifit3 does not
+restrict monitor tuning to that policy: the 2.4 GHz radio advertises its physical channels 1–14. The
+attached reference card resolved to plan `0x21` (ETSI1-null) during the 2026-10-23 live bring-up.
 
 **Compile-disabled EFUSE consumers remain inert in this vendor build.** Antenna diversity (`0xC9`) and
 RF-power trim are disabled in `include/autoconf.h`; rate/regulatory power limits from `0xC1` are
