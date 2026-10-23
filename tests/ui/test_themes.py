@@ -1,4 +1,6 @@
 import subprocess
+import sys
+import types
 
 import pytest
 from rich.style import Style
@@ -43,6 +45,60 @@ def test_system_theme_follows_the_detected_preference(monkeypatch):
     assert system_appearance_label() == "Unavailable"
 
 
+def test_xdg_portal_appearance_takes_precedence(monkeypatch):
+    monkeypatch.setattr(system_theme, "_xdg_appearance", lambda: "light")
+    monkeypatch.setattr(system_theme, "_gtk_appearance", lambda: "dark")
+    monkeypatch.setattr(system_theme, "_xsettings_appearance", lambda: "dark")
+    monkeypatch.setattr(system_theme, "_terminal_appearance", lambda: "dark")
+
+    assert system_theme._linux_appearance() == "light"
+
+
+def test_xdg_portal_parses_the_standard_preference_values(monkeypatch):
+    monkeypatch.setattr(
+        system_theme, "_command_output", lambda command: "(<uint32 1>,)"
+    )
+    assert system_theme._xdg_appearance() == "dark"
+
+    monkeypatch.setattr(
+        system_theme, "_command_output", lambda command: "(<uint32 2>,)"
+    )
+    assert system_theme._xdg_appearance() == "light"
+
+
+def test_xdg_portal_falls_back_from_gdbus_to_busctl(monkeypatch):
+    responses = iter((None, "v u 2"))
+    monkeypatch.setattr(system_theme, "_command_output", lambda command: next(responses))
+
+    assert system_theme._xdg_appearance() == "light"
+
+
+def test_gtk_theme_detection_uses_color_scheme_then_theme_name(monkeypatch):
+    monkeypatch.setattr(system_theme, "_command_output", lambda command: "'prefer-dark'")
+    assert system_theme._gtk_appearance() == "dark"
+
+    responses = iter(("'default'", "'Adwaita-dark'"))
+    monkeypatch.setattr(system_theme, "_command_output", lambda command: next(responses))
+    assert system_theme._gtk_appearance() == "dark"
+
+
+def test_xsettings_theme_detection(monkeypatch):
+    monkeypatch.setattr(system_theme, "_command_output", lambda command: "Arc-Dark")
+
+    assert system_theme._xsettings_appearance() == "dark"
+
+
+def test_terminal_theme_detection_from_colorfgbg(monkeypatch):
+    monkeypatch.setenv("COLORFGBG", "15;0")
+    assert system_theme._terminal_appearance() == "dark"
+
+    monkeypatch.setenv("COLORFGBG", "0;15")
+    assert system_theme._terminal_appearance() == "light"
+
+    monkeypatch.delenv("COLORFGBG")
+    assert system_theme._terminal_appearance() is None
+
+
 def test_linux_system_theme_reports_unavailable_without_gsettings(monkeypatch):
     monkeypatch.setattr(system_theme.sys, "platform", "linux")
     monkeypatch.setattr(system_theme.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(
@@ -62,6 +118,25 @@ def test_macos_absent_dark_appearance_means_light(monkeypatch):
     )
 
     assert system_theme.system_appearance() == "light"
+
+
+def test_windows_theme_detection_reads_the_personalization_registry(monkeypatch):
+    class RegistryKey:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    winreg = types.SimpleNamespace(
+        HKEY_CURRENT_USER=object(),
+        OpenKey=lambda hive, path: RegistryKey(),
+        QueryValueEx=lambda opened_key, name: (0, None),
+    )
+    monkeypatch.setattr(system_theme.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "winreg", winreg)
+
+    assert system_theme.system_appearance() == "dark"
 
 
 def test_app_applies_the_system_theme(monkeypatch):
