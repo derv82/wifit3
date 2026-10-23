@@ -128,9 +128,11 @@ class WifiteApp(App):
         margin-right: 1;
         min-width: 12;
     }
-    JobRow.-compact-actions .job-pause-btn,
-    JobRow.-compact-actions .job-skip-btn,
-    JobRow.-compact-actions .job-action-btn { min-width: 0; width: auto; }
+    JobTrackerPane.-compact-actions .job-pause-btn,
+    JobTrackerPane.-compact-actions .job-skip-btn,
+    JobTrackerPane.-compact-actions .job-action-btn { min-width: 0; width: auto; }
+    JobTrackerPane.-hide-progress .job-bar { display: none; }
+    JobTrackerPane.-compact-name .job-name { width: 13; }
     /* App CSS outranks a widget's DEFAULT_CSS, so lower the global min-width for the
        EvilTwin modal's compact BSSID buttons from here, not the modal. */
     EvilTwinInputModal #bssid-btns Button { min-width: 4; }

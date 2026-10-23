@@ -79,9 +79,6 @@ class JobRow(Horizontal):
     def on_mount(self) -> None:
         self.sync(self._job)
 
-    def on_resize(self) -> None:
-        self._sync_action_widths()
-
     def sync(self, job: JobState) -> None:
         self._job = job
         self.query_one(".job-name", Label).update(self._name_markup(job))
@@ -92,20 +89,6 @@ class JobRow(Horizontal):
         self.query_one(JobPauseButton).sync(job)
         self.query_one(JobSkipButton).sync(job)
         self.query_one(JobActionButton).sync(job)
-        self._sync_action_widths()
-
-    def _sync_action_widths(self) -> None:
-        fixed_columns = 57
-        action_columns = sum(
-            12 + button.styles.margin.width
-            for button in self.query(
-                ".job-pause-btn, .job-skip-btn, .job-action-btn").results(Button)
-            if button.display
-        )
-        self.set_class(
-            self.size.width - fixed_columns - action_columns < 16,
-            "-compact-actions",
-        )
 
     def _name_markup(self, job: JobState) -> str:
         name = job.display_name
@@ -168,9 +151,13 @@ class JobTrackerPane(Widget):
 
     def on_mount(self) -> None:
         self._rows: dict[str, JobRow] = {}
+        self._jobs: list[JobState] = []
         if not hasattr(self.app, "active_jobs"):
             return
         self.watch(self.app, "active_jobs", self._sync)
+
+    def on_resize(self) -> None:
+        self._sync_layout()
 
     def _sync(self, jobs: list[JobState]) -> None:
         try:
@@ -179,7 +166,9 @@ class JobTrackerPane(Widget):
             return
 
         jobs = jobs or []
+        self._jobs = jobs
         self.display = bool(jobs)
+        self._sync_layout()
 
         present = {job.job_id for job in jobs}
         for job_id in list(self._rows):
@@ -194,6 +183,35 @@ class JobTrackerPane(Widget):
                 container.mount(row)
             else:
                 row.sync(job)
+
+    def _sync_layout(self) -> None:
+        normal_fixed_columns = 57
+        no_bar_fixed_columns = 45
+        normal_required = normal_fixed_columns + 16
+        compact_required = normal_fixed_columns + 16
+        compact_name_required = no_bar_fixed_columns + 16
+        for job in self._jobs:
+            labels: list[tuple[str, int]] = []
+            if JobAction.PAUSE in job.actions or JobAction.RESUME in job.actions:
+                labels.append(("Resume" if JobAction.RESUME in job.actions else "Pause", 1))
+            if JobAction.SKIP in job.actions:
+                labels.append(("Skip", 1))
+            if JobAction.STOP in job.actions or JobAction.CLEAR in job.actions:
+                labels.append(("Stop" if JobAction.STOP in job.actions else "Clear", 0))
+            normal_required = max(
+                normal_required,
+                normal_fixed_columns + 16 + sum(12 + margin for _, margin in labels),
+            )
+            compact_action_columns = sum(len(label) + 4 + margin for label, margin in labels)
+            compact_required = max(
+                compact_required, normal_fixed_columns + 16 + compact_action_columns)
+            compact_name_required = max(
+                compact_name_required, no_bar_fixed_columns + 16 + compact_action_columns)
+        compact_actions = self.size.width < normal_required
+        hide_progress = compact_actions and self.size.width < compact_required
+        self.set_class(compact_actions, "-compact-actions")
+        self.set_class(hide_progress, "-hide-progress")
+        self.set_class(hide_progress and self.size.width < compact_name_required, "-compact-name")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button = event.button
