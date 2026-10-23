@@ -359,10 +359,11 @@ def save_wep_key(ap: AccessPoint, key: bytes) -> Optional[SaveResult]:
 
 # ----- WPS PIN / PBC --------------------------------------------------------
 
-def save_wps_pin(ap: AccessPoint, pin: str, psk: str) -> Optional[SaveResult]:
-    """Persist a WPS-PIN credential. Dedupes by (PIN, PSK) for this BSSID."""
+def save_wps_pin(ap: AccessPoint, pin: str, psk: Optional[str]) -> Optional[SaveResult]:
+    """Persist a WPS-PIN credential, with no PSK line when ``psk`` is None.
+    Dedupes by (PIN, PSK) for this BSSID."""
     captures_dir = Path(Config.captures_dir)
-    if not psk:
+    if psk == "":
         return None
     for p in _existing(captures_dir, ap.bssid, "_wps_pin.txt"):
         try:
@@ -370,8 +371,8 @@ def save_wps_pin(ap: AccessPoint, pin: str, psk: str) -> Optional[SaveResult]:
         except OSError:
             continue
         psk_match = WPS_PSK_RE.search(text)
-        if (psk_match and psk_match.group(1).strip() == psk
-                and parse_wps_pin(text) == pin):
+        existing_psk = psk_match.group(1).strip() if psk_match else None
+        if existing_psk == psk and parse_wps_pin(text) == pin:
             return SaveResult(path=p, was_new=False)
 
     captures_dir.mkdir(parents=True, exist_ok=True)
@@ -379,8 +380,8 @@ def save_wps_pin(ap: AccessPoint, pin: str, psk: str) -> Optional[SaveResult]:
     body = (
         f"SSID: {ap.ssid or ''}\n"
         f"BSSID: {ap.bssid}\n"
-        f"PSK: {psk}\n"
-        f"PIN: {pin}\n"
+        + (f"PSK: {psk}\n" if psk is not None else "")
+        + f"PIN: {pin}\n"
     )
     path.write_text(body, encoding="utf-8")
     return SaveResult(path=path, was_new=True)

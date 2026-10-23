@@ -310,7 +310,8 @@ class _CapturePanel(VerticalGroup):
                 tool_name, cap, self.app.vault.add_probed_ssids(config))
             self.notify(f"Queued job: {job_id}")
             
-        self.app.push_screen(modal_cls(), _on_config)
+        self.app.push_screen(modal_cls(capture=cap, probed_ssids=self.app.vault.probed_ssids()),
+                             _on_config)
 
     @on(Button.Pressed, ".open-dir")
     def _open_dir(self, event: Button.Pressed) -> None:

@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Optional
 
+from wifit3.dot11.rsn import AKM_PSK, CIPHER_AES_128_CMAC, RSN_OUI
+
 
 def iter_information_elements(data: bytes, start: int = 0) -> Iterator[tuple[int, bytes, bytes]]:
     """Walk 802.11 Information Elements (1B tag, 1B len), yielding (tag_id, body, raw)."""
@@ -31,9 +33,8 @@ SUPPORTED_RATES_5GHZ = bytes([0x8C, 0x12, 0x98, 0x24, 0xB0, 0x48, 0x60, 0x6C])
 # AKM = PSK, no PMF. The client-side fallback when the AP's own IE is unusable.
 GENERIC_RSN_IE = bytes.fromhex("30140100000fac040100000fac040100000fac020000")
 
-_AKM_PSK = 0x02
 _RSN_CAP_MFPC = 0x0080          # RSN caps MFPC bit (bit 7)
-_BIP_CMAC_128 = b"\x00\x0f\xac\x06"
+_BIP_CMAC_128 = RSN_OUI + bytes([CIPHER_AES_128_CMAC])
 
 
 SSID_MAX_OCTETS = 32
@@ -83,7 +84,7 @@ def secondary_channel_offset_ie(offset: int = 0) -> bytes:
     return bytes([0x3E, 0x01, offset & 0xFF])
 
 
-def force_psk_akm(rsn_ie: bytes, akm: int = _AKM_PSK, *, pmf_capable: bool = False) -> Optional[bytes]:
+def force_psk_akm(rsn_ie: bytes, akm: int = AKM_PSK, *, pmf_capable: bool = False) -> Optional[bytes]:
     """Rewrite an RSN IE to a single ``00-0F-AC:akm`` AKM (PSK by default) over the
     AP's ciphers, authoring a client RSN tail that mirrors the AP's PMF posture:
     ``pmf_capable`` → MFPC=1 (MFPR=0) + BIP group-mgmt (a transition AP often only
@@ -107,7 +108,7 @@ def force_psk_akm(rsn_ie: bytes, akm: int = _AKM_PSK, *, pmf_capable: bool = Fal
     akm_end = akm_off + 2 + 4 * akm_count
     if akm_end > len(body):
         return None
-    new_akm = b"\x01\x00\x00\x0f\xac" + bytes([akm])      # count=1 + 00-0F-AC:akm
+    new_akm = b"\x01\x00" + RSN_OUI + bytes([akm])        # count=1 + 00-0F-AC:akm
     if pmf_capable:                                       # MFPC=1, PMKID-count 0, BIP
         tail = _RSN_CAP_MFPC.to_bytes(2, "little") + b"\x00\x00" + _BIP_CMAC_128
     else:

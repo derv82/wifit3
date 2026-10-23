@@ -46,6 +46,16 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from wifit3.models import HandshakeMessage, Handshake
+from wifit3.dot11.rsn import (
+    AKM_FT_PSK,
+    AKM_FT_PSK_SHA384,
+    AKM_OWE,
+    AKM_PSK,
+    AKM_PSK_SHA256,
+    AKM_PSK_SHA384,
+    ENTERPRISE_AKM_SUITES,
+    SAE_AKM_SUITES,
+)
 
 # hashcat module_22000 MESSAGEPAIR bytes (EAPOL-source encoded in the low bits).
 _PAIR_M1M2_E2 = 0x00
@@ -91,63 +101,62 @@ _NC_BIT = 0x80
 #     PSK (keyver 2) AND PSK-SHA256 (keyver 3 / AES-CMAC) both crack as WPA*02.
 #     FT-PSK (AKM 4) cracks as WPA*04, which needs an M2 of keyver 3 carrying the
 #     MDID, R0KH-ID and R1KH-ID; any other FT-PSK pair is withheld as "FT".
-#     → uncrackable AKMs = SAE | FT-PSK-SHA384 | EAP | OWE.
+#     → uncrackable AKMs = SAE | FT-PSK-SHA384 | PSK-SHA384 | EAP | OWE.
 #   PMKID: plain PSK (AKM 2, HMAC-SHA1) and PSK-SHA256 (AKM 6, HMAC-SHA256, flagged
 #     by MESSAGEPAIR "03") as WPA*01; FT-PSK (AKM 4, PMKR1Name) as WPA*03, once an M2
 #     of the same client supplied the three FT identifiers.
 #
-# SAE, FT, EAP, and OWE are *strict* (withhold on an unconfirmed transition AP); an
+# SAE, FT, PSK-SHA384, EAP, and OWE are *strict* (withhold on an unconfirmed transition AP); an
 # FT-PSK capture also needs its AKM known, since that picks WPA*04 over WPA*02.
 # A PMKID of unknown AKM takes the algorithm from its M1's key descriptor version
 # (3 = SHA256, 2 = SHA1); failing that, SHA1 unless the AP offers no plain PSK.
-_SAE_AKMS = frozenset({8, 9, 24, 25})       # SAE / FT-SAE / SAE-EXT-KEY / FT-SAE-EXT-KEY
-FT_PSK_AKM = 4
-_FT_PSK_SHA384_AKM = 19
-_FT_PSK_AKMS = frozenset({FT_PSK_AKM, _FT_PSK_SHA384_AKM})
-_EAP_AKMS = frozenset({1, 3, 5, 11, 12, 13})  # EAP/FT-EAP/EAP-SHA256/EAP-Suite-B[-192]/FT-EAP-SHA384 (Enterprise)
-_OWE_AKMS = frozenset({18})                 # OWE / Enhanced Open: PMK from ECDH, no passphrase
-_EAPOL_BAD_AKMS = _SAE_AKMS | {_FT_PSK_SHA384_AKM} | _EAP_AKMS | _OWE_AKMS  # never -m 22000-crackable
+_FT_PSK_AKMS = frozenset({AKM_FT_PSK, AKM_FT_PSK_SHA384})
 _FT_KEY_DESCRIPTOR_VERSION = 3              # hashcat rejects a WPA*04 of any other keyver
 _FT_KEY_HOLDER_ID_MAX_LEN = 48
-_PMKID_PSK_AKM = 2                          # HMAC-SHA1 PMKID
-PMKID_PSK_SHA256_AKM = 6                    # HMAC-SHA256 PMKID
-_PMKID_PSK_AKMS = frozenset({_PMKID_PSK_AKM, PMKID_PSK_SHA256_AKM})
-_PMKID_AKM_BY_KEY_DESCRIPTOR_VERSION = {2: _PMKID_PSK_AKM, 3: PMKID_PSK_SHA256_AKM}
+# PSK (HMAC-SHA1 PMKID) and PSK-SHA256 (HMAC-SHA256 PMKID): plain WPA*01 / WPA*02.
+_WPA2_PSK_AKMS = frozenset({AKM_PSK, AKM_PSK_SHA256})
+_PMKID_AKM_BY_KEY_DESCRIPTOR_VERSION = {2: AKM_PSK, 3: AKM_PSK_SHA256}
+
+# Supported PSK capture AKMs: PSK, FT-PSK (additionally gated), PSK-SHA256.
+PSK_CAPTURE_AKMS = _WPA2_PSK_AKMS | {AKM_FT_PSK}
 _EAP_LABEL = "EAP/Enterprise"               # badge for a captured-but-worthless EAP 4-way
 _OWE_LABEL = "OWE"                          # badge for a captured-but-worthless OWE (open) 4-way
+_PSK_SHA384_LABEL = "PSK-SHA384"
+_UNSUPPORTED_LABEL = "Unsupported AKM"
 
 
-def eapol_verdict(akm: Optional[int], offered: List[int]) -> str:
-    """EAPOL crackability for a negotiated ``akm``, falling back to the AP's ``offered``
-    suites when the frame's own AKM is unknown (SAE/FT/EAP/OWE are uncrackable then)."""
-    off = set(offered)
+def eapol_verdict(akm: Optional[int], hs: Handshake) -> str:
+    """EAPOL crackability for a negotiated ``akm``, falling back to the AP's offered AKMs when
+    unknown: crackable only if no RSN IE was seen or plain PSK/PSK-SHA256 alone is offered."""
     if akm is not None:
-        return "uncrackable" if akm in _EAPOL_BAD_AKMS else "crackable"
-    bad = _EAPOL_BAD_AKMS | _FT_PSK_AKMS
-    if not (off & bad):
-        return "crackable"            # no SAE/FT/EAP/OWE offered, akm unknown → legacy emit
-    if off - bad:
-        return "unknown"              # bad + a non-bad AKM offered, akm unknown
-    return "uncrackable"              # only SAE/FT/EAP/OWE offered
+        return "crackable" if akm in PSK_CAPTURE_AKMS else "uncrackable"
+    off = set(hs.akm_offered)
+    if not off and not hs.vendor_akm_offered and not hs.rsn_ie_seen:
+        return "crackable"            # no RSN IE (WPA1 / pre-beacon)
+    if not off & _WPA2_PSK_AKMS:
+        return "uncrackable"          # no plain-PSK AKM offered (SAE/FT/EAP/OWE/vendor/reserved)
+    if off <= _WPA2_PSK_AKMS and not hs.vendor_akm_offered:
+        return "crackable"
+    return "unknown"                  # plain PSK mixed with others → can't tell, withhold
 
 
 def crackable_pmkid_akm(hs: Handshake) -> Optional[int]:
     """The AKM the PMKID was derived under when hashcat ``-m 22000`` cracks it: 2 (PSK,
     HMAC-SHA1), 6 (PSK-SHA256, HMAC-SHA256) or 4 (FT-PSK). None when uncrackable."""
-    if hs.pmkid_akm == FT_PSK_AKM:
-        return FT_PSK_AKM if ft_identifiers_frame(hs) is not None else None
+    if hs.pmkid_akm == AKM_FT_PSK:
+        return AKM_FT_PSK if ft_identifiers_frame(hs) is not None else None
     if hs.pmkid_akm is not None:
-        return hs.pmkid_akm if hs.pmkid_akm in _PMKID_PSK_AKMS else None
+        return hs.pmkid_akm if hs.pmkid_akm in _WPA2_PSK_AKMS else None
     offered = set(hs.akm_offered)
-    if offered & (_SAE_AKMS | _FT_PSK_AKMS):
-        return None                   # SAE/FT could be the negotiated AKM → withhold
-    psk_offered = offered & _PMKID_PSK_AKMS if offered else _PMKID_PSK_AKMS  # none: fixtures / pre-RSN
-    if not psk_offered:
-        return None
+    if hs.vendor_akm_offered or not offered <= _WPA2_PSK_AKMS:
+        return None                   # another AKM could be the negotiated one → withhold
+    if not offered and hs.rsn_ie_seen:
+        return None                   # RSN IE with no standard AKM, or malformed
+    psk_offered = offered or _WPA2_PSK_AKMS  # none: fixtures / pre-RSN
     m1_akm = _PMKID_AKM_BY_KEY_DESCRIPTOR_VERSION.get(hs.pmkid_key_descriptor_version)
     if m1_akm in psk_offered:
         return m1_akm                 # the M1's key descriptor version, as hcxpcapngtool reads it
-    return _PMKID_PSK_AKM if _PMKID_PSK_AKM in psk_offered else PMKID_PSK_SHA256_AKM
+    return AKM_PSK if AKM_PSK in psk_offered else AKM_PSK_SHA256
 
 
 def pmkid_crackable(hs: Handshake) -> bool:
@@ -155,27 +164,41 @@ def pmkid_crackable(hs: Handshake) -> bool:
     return crackable_pmkid_akm(hs) is not None
 
 
-def uncrackable_label(akm: Optional[int], offered: List[int]) -> Optional[str]:
-    """Short reason an EAPOL capture is uncrackable (``"EAP/Enterprise"`` / ``"OWE"``
-    / ``"FT"`` / ``"SAE"``), or None when it *is* crackable/unknown."""
-    if eapol_verdict(akm, offered) != "uncrackable":
+def uncrackable_label(akm: Optional[int], hs: Handshake) -> Optional[str]:
+    """Named AKM family or ``"Unsupported AKM"`` for an uncrackable EAPOL capture;
+    None when the capture is crackable or its selected AKM is unknown."""
+    if eapol_verdict(akm, hs) != "uncrackable":
         return None
     if akm is not None:
-        if akm in _EAP_AKMS:
+        if akm in ENTERPRISE_AKM_SUITES:
             return _EAP_LABEL
-        if akm in _OWE_AKMS:
+        if akm == AKM_OWE:
             return _OWE_LABEL
-        return "FT" if akm in _FT_PSK_AKMS else "SAE"
+        if akm == AKM_PSK_SHA384:
+            return _PSK_SHA384_LABEL
+        if akm in _FT_PSK_AKMS:
+            return "FT"
+        if akm in SAE_AKM_SUITES:
+            return "SAE"
+        return _UNSUPPORTED_LABEL
     # AKM unknown → reached only when every offered AKM is uncrackable, so
     # name it by the dominant family.
-    off = set(offered)
-    if off & _EAP_AKMS and not (off & (_SAE_AKMS | _FT_PSK_AKMS | _OWE_AKMS)):
+    off = set(hs.akm_offered)
+    has_eap = bool(off & ENTERPRISE_AKM_SUITES)
+    has_owe = AKM_OWE in off
+    has_ft = bool(off & _FT_PSK_AKMS)
+    has_sae = bool(off & SAE_AKM_SUITES)
+    if has_eap and not (has_sae or has_ft or has_owe):
         return _EAP_LABEL
-    if off & _OWE_AKMS and not (off & (_SAE_AKMS | _FT_PSK_AKMS | _EAP_AKMS)):
+    if has_owe and not (has_sae or has_ft or has_eap):
         return _OWE_LABEL
-    if off & _FT_PSK_AKMS and not (off & _SAE_AKMS):
+    if has_ft and not has_sae:
         return "FT"
-    return "SAE"
+    if AKM_PSK_SHA384 in off and not (has_sae or has_ft):
+        return _PSK_SHA384_LABEL
+    if has_sae:
+        return "SAE"
+    return _UNSUPPORTED_LABEL
 
 
 @dataclass(frozen=True)
@@ -263,7 +286,7 @@ def _ft_pair_incomplete(pair: CrackablePair) -> bool:
     """An FT-PSK pair WPA*04 can't carry: its keystone must be an M2 of keyver 3 with all
     three FT identifiers."""
     f = pair.mic_frame
-    if f.akm != FT_PSK_AKM:
+    if f.akm != AKM_FT_PSK:
         return False
     key_info = int.from_bytes(f.eapol_payload[_KEY_INFO_OFFSET:_KEY_INFO_OFFSET + 2], "big")
     return not (f.msg_num == 2 and key_info & 3 == _FT_KEY_DESCRIPTOR_VERSION
@@ -273,9 +296,9 @@ def _ft_pair_incomplete(pair: CrackablePair) -> bool:
 def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
     """Every hashcat-crackable handshake instance: the structural pairs of
     ``_pairs_ignoring_akm`` kept only when the keystone (M2/M4) frame's AKM cracks."""
-    offered = hs.akm_offered
     return [p for p in _pairs_ignoring_akm(hs)
-            if eapol_verdict(p.mic_frame.akm, offered) == "crackable"
+            if not p.mic_frame.akm_selection_rejected
+            and eapol_verdict(p.mic_frame.akm, hs) == "crackable"
             and not _ft_pair_incomplete(p)]
 
 
@@ -283,9 +306,11 @@ def withheld_capture_label(hs: Handshake) -> Optional[str]:
     """Badge (SAE/FT/EAP/OWE) for the first captured 4-way instance whose AKM has no
     ``-m 22000`` crack path, or None. Per instance (a mixed capture still names it)."""
     for p in _pairs_ignoring_akm(hs):
+        if p.mic_frame.akm_selection_rejected:
+            return _UNSUPPORTED_LABEL
         if _ft_pair_incomplete(p):
             return "FT"
-        label = uncrackable_label(p.mic_frame.akm, hs.akm_offered)
+        label = uncrackable_label(p.mic_frame.akm, hs)
         if label:
             return label
     return None
@@ -294,8 +319,13 @@ def withheld_capture_label(hs: Handshake) -> Optional[str]:
 def handshake_uncrackable_label(hs: Handshake) -> Optional[str]:
     """Badge (SAE/FT/EAP/OWE) for this handshake's negotiated AKM, from its frames (no
     complete pair required, unlike withheld_capture_label), or None if crackable/unknown."""
-    akm = next((f.akm for f in reversed(hs.messages) if f.akm is not None), None)
-    return uncrackable_label(akm, hs.akm_offered)
+    selection = next((f for f in reversed(hs.messages)
+                      if f.akm is not None or f.akm_selection_rejected), None)
+    if selection is None:
+        return uncrackable_label(None, hs)
+    if selection.akm_selection_rejected:
+        return _UNSUPPORTED_LABEL
+    return uncrackable_label(selection.akm, hs)
 
 
 def _pairs_ignoring_akm(hs: Handshake) -> List[CrackablePair]:
@@ -309,18 +339,18 @@ def _pairs_ignoring_akm(hs: Handshake) -> List[CrackablePair]:
     expected value (the nonce-error-correction tolerance) AND that sits on the
     correct side of it in arrival order: the 4-way runs M1→M2→M3→M4, so the
     lower-numbered message is captured first. Candidates are then taken best-first:
-    smallest replay gap, then AP-confirmed ("authorized": M2+M3 / M3+M4) over
-    "challenge" (M1+M2 / M1+M4), then the temporally nearest donor. Each keystone
-    AND each ANonce is emitted once, so spurious cross-association donors collapse
-    to the single best pair while a genuine re-handshake (fresh ANonce) adds
-    another."""
+    keystones whose AKM selection wasn't rejected, then smallest replay gap, then
+    AP-confirmed ("authorized": M2+M3 / M3+M4) over "challenge" (M1+M2 / M1+M4),
+    then the temporally nearest donor. Each keystone AND each ANonce is emitted once,
+    so spurious cross-association donors collapse to the single best pair while a
+    genuine re-handshake (fresh ANonce) adds another."""
     pos = {id(f): i for i, f in enumerate(hs.messages)}
     by_msg: dict[int, List[HandshakeMessage]] = {1: [], 2: [], 3: [], 4: []}
     for f in hs.messages:
         if f.msg_num in by_msg:
             by_msg[f.msg_num].append(f)
 
-    # (replay-gap, confidence, arrival-distance, donor, keystone, pair_byte).
+    # (selection-rejected, replay-gap, confidence, arrival-distance, donor, keystone, pair_byte).
     # confidence: 0/2 = AP-confirmed pairs, 1/3 = challenge, lower sorts first.
     cands: list = []
     for mic_f in by_msg[2] + by_msg[4]:
@@ -346,13 +376,14 @@ def _pairs_ignoring_akm(hs: Handshake) -> List[CrackablePair]:
                 if rcgap > _NC_MAX:
                     continue
                 dist = abs(pos[id(d)] - pos[id(mic_f)])
-                cands.append((rcgap, confidence, dist, d, mic_f, pair_byte))
+                cands.append((mic_f.akm_selection_rejected, rcgap, confidence, dist,
+                              d, mic_f, pair_byte))
 
-    cands.sort(key=lambda c: c[:3])
+    cands.sort(key=lambda c: c[:4])
     out: List[CrackablePair] = []
     used_keystones: set[int] = set()
     seen_anonce: set[bytes] = set()
-    for _rcgap, _conf, _dist, donor, mic_f, pair_byte in cands:
+    for _rejected, _rcgap, _conf, _dist, donor, mic_f, pair_byte in cands:
         if id(mic_f) in used_keystones or donor.nonce in seen_anonce:
             continue
         used_keystones.add(id(mic_f))
@@ -384,7 +415,7 @@ def hc22000_line(ssid: str, hs: Handshake, pair: CrackablePair) -> str:
     payload = bytearray(pair.mic_frame.eapol_payload)
     payload[_MIC_OFFSET: _MIC_OFFSET + _MIC_LEN] = _ZERO_MIC
     f = pair.mic_frame
-    is_ft = f.akm == FT_PSK_AKM
+    is_ft = f.akm == AKM_FT_PSK
     line = (
         f"WPA*{'04' if is_ft else '02'}"
         f"*{f.mic.hex()}"

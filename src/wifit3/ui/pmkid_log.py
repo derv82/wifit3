@@ -27,6 +27,8 @@ _FAIL_LEAF = {
     PmkidFail.NO_RESPONSE:  ("[bold bright_red]M1 not received[/bold bright_red]", "AP did not respond"),
     PmkidFail.PMF_REQUIRED: ("[bold orange1]PMF Required[/bold orange1]",
                              "AP only associates protected clients"),
+    PmkidFail.PMF_INVALID:  ("[bold orange1]PMF Invalid[/bold orange1]",
+                             "protection cannot be determined from contradictory bits"),
     PmkidFail.NO_PSK_AKM:   ("[bold orange1]No PSK AKM[/bold orange1]",
                              "nothing to harvest, e.g. SAE-only"),
 }

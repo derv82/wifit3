@@ -1,7 +1,25 @@
 import ctypes
+import shutil
 import subprocess
 import sys
 import time
+
+
+def copy_copyq_text(text: str) -> bool:
+    """Add UTF-8 text to CopyQ history when its command-line client is available."""
+    executable = shutil.which("copyq")
+    if executable is None:
+        return False
+    try:
+        subprocess.run(
+            [executable, "add", "-"],
+            input=text.encode("utf-8"),
+            check=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
 
 
 def copy_macos_text(text: str) -> bool:

@@ -52,6 +52,7 @@ def build_ap(bssid: str = "aa:bb:cc:dd:ee:01",
         elif encryption in ("WEP", "OPEN"):
             kwargs["akms"] = []
             kwargs["akm_suites"] = []
+    kwargs.setdefault("rsn_valid", bool(kwargs.get("akm_suites")))
 
     # Provide a dummy beacon frame so it doesn't crash code that parses it
     kwargs.setdefault("last_beacon_frame", b"\x80\x00beacon")

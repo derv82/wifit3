@@ -13,7 +13,8 @@ NONCE_LEN = 32
 MIC_OFFSET = 81                 # MIC start within the 802.1X payload (hashcat -m 22000 reads it here)
 
 _EAPOL_VERSION = 2
-_EAPOL_TYPE_KEY = 3
+EAPOL_TYPE_EAP = 0
+EAPOL_TYPE_KEY = 3
 _KEY_DESC_RSN = 2
 _KEY_IV = bytes(16)
 _KEY_RSC = bytes(8)
@@ -47,7 +48,7 @@ def eapol_key(*, key_info: int, key_len: int, replay: int, nonce: bytes,
         + struct.pack(">H", len(key_data))
         + key_data
     )
-    return bytes([_EAPOL_VERSION, _EAPOL_TYPE_KEY]) + struct.pack(">H", len(body)) + body
+    return bytes([_EAPOL_VERSION, EAPOL_TYPE_KEY]) + struct.pack(">H", len(body)) + body
 
 
 def set_mic(payload: bytes, mic: bytes) -> bytes:

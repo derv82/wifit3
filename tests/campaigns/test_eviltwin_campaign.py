@@ -14,7 +14,7 @@ from wifit3.dot11.eapol import eapol_key, data_header, LLC_SNAP_EAPOL
 from wifit3.dot11.ie import ssid_ie, rates_ie, ds_param_ie, GENERIC_RSN_IE
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.crack.handshake import crackable_pairs
-from wifit3.models import Handshake, HandshakeMessage
+from wifit3.models import AccessPoint, Handshake, HandshakeMessage
 from wifit3.persist.save import save_handshake
 from wifit3.wlan.sink import WlanSink
 
@@ -88,9 +88,10 @@ class _FakeArray:
         self.evil_twins.add(bssid)
 
 
-def _target():
-    return SimpleNamespace(bssid=_BSSID, ssid=_SSID, channel=11,
-                           last_beacon_frame=_BEACON, akm_suites=[2])
+def _target(ssid: str | None = _SSID, akm_suites: tuple[int, ...] = (2,),
+            beacon: bytes | None = _BEACON) -> AccessPoint:
+    return AccessPoint(bssid=_BSSID, ssid=ssid, channel=11,
+                       last_beacon_frame=beacon, akm_suites=list(akm_suites), rsn_valid=True)
 
 
 def _input(twin, punt, modes=(PuntMode.DEAUTH, PuntMode.CSA), period=0.5, bssid=_BSSID):
@@ -130,18 +131,31 @@ async def _capture_after_start(camp, ap_entry, hs) -> None:
 
 def test_visible_and_ineligible():
     assert EvilTwinCampaign.visible(_target())
-    assert EvilTwinCampaign.visible(SimpleNamespace(ssid=None, akm_suites=[2])) is False
-    assert EvilTwinCampaign.visible(SimpleNamespace(ssid="x", akm_suites=[])) is False
-    no_beacon = SimpleNamespace(bssid=_BSSID, ssid=_SSID, channel=11,
-                                last_beacon_frame=None, akm_suites=[2])
-    assert EvilTwinCampaign.ineligible_reason(no_beacon) == "no beacon captured yet"
-    assert EvilTwinCampaign.ineligible_reason(_target()) is None
+    assert EvilTwinCampaign.visible(_target(ssid=None)) is False
+    assert EvilTwinCampaign.visible(_target(akm_suites=())) is False
+    # EAP, FILS, 802.1X-SHA-384, FT-802.1X-SHA-384, OWE, unknown, PSK-SHA384: shown, disabled.
+    for akm_suites in ((1,), (1, 5, 12), (14,), (23,), (22,), (18,), (31,), (20,)):
+        ap = _target(akm_suites=akm_suites)
+        assert EvilTwinCampaign.visible(ap) is True
+        assert (EvilTwinCampaign.ineligible_reason(ap)
+                == "Needs a PSK or SAE network")
+    for akm_suites in ((1, 2), (8,), (24,)):
+        assert EvilTwinCampaign.ineligible_reason(_target(akm_suites=akm_suites)) is None
+    assert EvilTwinCampaign.ineligible_reason(_target(beacon=None)) == "no beacon captured yet"
+    assert (EvilTwinCampaign.ineligible_reason(_target(akm_suites=(1,), beacon=None))
+            == "Needs a PSK or SAE network")
 
 
 def test_default_punt_modes():
-    assert default_punt_modes(SimpleNamespace(pmf_required=True)) == (PuntMode.CSA,)
-    assert default_punt_modes(SimpleNamespace(pmf_required=False)) == (
-        PuntMode.DEAUTH, PuntMode.CSA, PuntMode.BTM)
+    all_modes = (PuntMode.DEAUTH, PuntMode.CSA, PuntMode.BTM)
+    for capable, required, modes in (
+        (False, False, all_modes),            # DISABLED
+        (True, False, all_modes),             # OPTIONAL
+        (True, True, (PuntMode.CSA,)),        # REQUIRED
+        (False, True, (PuntMode.CSA,)),       # INVALID
+    ):
+        ap = AccessPoint(bssid=_BSSID, pmf_capable=capable, pmf_required=required)
+        assert default_punt_modes(ap) == modes
 
 
 def test_csa_target_channel():

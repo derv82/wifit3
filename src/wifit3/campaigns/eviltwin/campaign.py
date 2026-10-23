@@ -13,7 +13,14 @@ from typing import Optional
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.ap import beacon_clone
 from wifit3.dot11.csa import build_csa_beacon
-from wifit3.crack.handshake import crackable_pairs, pmkid_crackable
+from wifit3.dot11.rsn import SAE_AKM_SUITES
+from wifit3.crack.handshake import (
+    PSK_CAPTURE_AKMS,
+    crackable_pairs,
+    pmkid_crackable,
+)
+from wifit3.dot11.pmf import PmfPosture
+from wifit3.models import AccessPoint
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.eviltwin.fake_ap import FakeAP
 from wifit3.campaigns.eviltwin.punter import Punter, PuntMode, BURST_SIZE, FRAME_GAP_SEC
@@ -33,10 +40,9 @@ def csa_target_channel(ap_channel: int, preferred: Optional[int] = None) -> int:
     return 6 if ap_channel == 1 else 1
 
 
-def default_punt_modes(ap) -> tuple[PuntMode, ...]:
-    """Techniques checked by default for the target's PMF posture: PMF-Required blocks the
-    robust-frame punts (deauth + BTM), leaving CSA; otherwise all three."""
-    if ap.pmf_required:
+def default_punt_modes(ap: AccessPoint) -> tuple[PuntMode, ...]:
+    """CSA alone when PMF is required or invalid (robust-frame punts blocked); otherwise all three."""
+    if ap.pmf_posture in (PmfPosture.REQUIRED, PmfPosture.INVALID):
         return (PuntMode.CSA,)
     return (PuntMode.DEAUTH, PuntMode.CSA, PuntMode.BTM)
 
@@ -63,11 +69,15 @@ class EvilTwinCampaign(Campaign):
     run_variant = "error"
 
     @classmethod
-    def visible(cls, ap) -> bool:
+    def visible(cls, ap: AccessPoint) -> bool:
         return bool(ap.ssid) and bool(ap.akm_suites)
 
     @classmethod
-    def ineligible_reason(cls, ap) -> Optional[str]:
+    def ineligible_reason(cls, ap: AccessPoint) -> Optional[str]:
+        if not (PSK_CAPTURE_AKMS | SAE_AKM_SUITES) & set(ap.akm_suites):
+            return "Needs a PSK or SAE network"
+        if not ap.rsn_valid:
+            return "Needs a WPA2/WPA3 network"
         if not ap.last_beacon_frame:
             return "no beacon captured yet"
         return None

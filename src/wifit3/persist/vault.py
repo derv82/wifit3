@@ -4,26 +4,59 @@ re-scan the directory. Wraps persist.save + persist.capture_history."""
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import sys
 import time
+import unicodedata
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Optional
 
-from wifit3.crack.hc22000_format import Hc22000Line
+from wifit3.crack import wpa_psk
+from wifit3.crack.hc22000_format import Hc22000Line, parse_hc22000
+from wifit3.dot11.wpa import derive_pmk
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist import save
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid
 from wifit3.persist.config import Config
+from wifit3.persist.meta import meta_path, update_meta
 from wifit3.persist.save import SaveResult
 from wifit3.vault.manager import JobManager
+from wifit3.wlan.sink import WlanSink
 
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
 
 logger = logging.getLogger(__name__)
+
+_BAND_SUFFIX_RE = re.compile(r"(?:[\s_-]+(?:2[._]?4|5|6)g(?:hz)?)$", re.IGNORECASE)
+_RAW_PMK_RE = re.compile(r"[0-9a-fA-F]{64}")
+
+
+def _ssid_family(ssid: str) -> str:
+    normalized = unicodedata.normalize("NFKC", ssid).casefold().strip()
+    return _BAND_SUFFIX_RE.sub("", normalized).rstrip(" _-")
+
+
+def _related_ssids(left: str, right: str) -> bool:
+    left_family = _ssid_family(left)
+    right_family = _ssid_family(right)
+    if not left_family or not right_family:
+        return False
+    if left_family == right_family:
+        return True
+    shorter, longer = sorted((left_family, right_family), key=len)
+    prefixes = tuple(f"{shorter}{separator}" for separator in ("_", "-", " "))
+    return len(shorter) >= 4 and longer.startswith(prefixes)
+
+
+def _sibling_bssids(left: str, right: str) -> bool:
+    left_octets = WlanSink.mac_octets(left)
+    right_octets = WlanSink.mac_octets(right)
+    return (left_octets is not None and right_octets is not None
+            and WlanSink.is_sibling(left_octets, right_octets))
 
 
 def _open_in_file_manager(path: Path) -> None:
@@ -95,14 +128,18 @@ class Vault:
         self._change_listeners.append(listener)
 
     def set_probed_ssids_source(self, source: Callable[[], Iterable[str]]) -> None:
-        """Where CPU Crack jobs read this session's probed SSIDs, tried before the wordlist."""
+        """Where cracking jobs read this session's probed SSIDs, tried before the wordlists."""
         self._probed_ssids_source = source
 
     def add_probed_ssids(self, config: dict) -> dict:
         """``config`` plus this session's probed SSIDs as ``extra_passwords``, when it asks for them."""
         if not config.get("probed_ssid_passwords"):
             return config
-        return {**config, "extra_passwords": sorted(self._probed_ssids_source())}
+        return {**config, "extra_passwords": self.probed_ssids()}
+
+    def probed_ssids(self) -> list[str]:
+        """This session's probed SSIDs, sorted."""
+        return sorted(self._probed_ssids_source())
 
     def _notify_changed(self) -> None:
         self.revision += 1
@@ -121,6 +158,12 @@ class Vault:
     def persisted(self, bssid: str) -> List[PersistedCapture]:
         """This AP's saved captures, newest-first (empty if none)."""
         return self._index.get(bssid, [])
+
+    def ssid(self, bssid: str) -> Optional[str]:
+        """The AP's SSID; a .pcap only knows the filename-safe form, so any other capture wins."""
+        captures = self.persisted(bssid)
+        return next((c.ssid for c in captures if c.ssid and not c.path.endswith(".pcap")),
+                    next((c.ssid for c in captures if c.ssid), None))
 
     def all_captures(self) -> List[PersistedCapture]:
         """Every saved capture across all APs, unordered (callers sort as needed)."""
@@ -177,6 +220,53 @@ class Vault:
         """True once we hold this AP's passphrase (see known_psk)."""
         return self.known_psk(ap) is not None
 
+    def verify_wpa_psk(self, bssid: str, psk: str) -> Optional[bool]:
+        """Check a PSK or 64-hex raw PMK against the AP's saved hashlines. False only if a
+        non-M1+M2 line rejects it (M1+M2 may hold a wrong passphrase); None if unverifiable."""
+        lines_by_essid: Dict[bytes, List[Hc22000Line]] = {}
+        paths = {c.path for c in self.persisted(bssid)
+                 if c.type in (CaptureType.HS, CaptureType.PMKID) and c.path.endswith(".hc22000")}
+        compact_bssid = bssid.replace(":", "").lower()
+        for path in paths:
+            try:
+                text = Path(path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for raw_line in text.splitlines():
+                line = parse_hc22000(raw_line)
+                if line is None or line.mac_ap != compact_bssid:
+                    continue
+                lines_by_essid.setdefault(bytes.fromhex(line.essid), []).append(line)
+        if not lines_by_essid:
+            return None
+        raw_pmk = bytes.fromhex(psk) if _RAW_PMK_RE.fullmatch(psk) else None
+        for essid, lines in lines_by_essid.items():
+            pmk = raw_pmk or derive_pmk(psk, essid)
+            if any(wpa_psk.psk_matches(pmk, line) for line in lines):
+                return True
+        if all(_is_m1m2_eapol(line) for lines in lines_by_essid.values() for line in lines):
+            return None
+        return False
+
+    def propagate_verified_psk(self, source_bssid: str, source_ssid: Optional[str],
+                               psk: str) -> List[str]:
+        """Save ``psk`` for every related AP (SSID family or sibling BSSID) with no PSK yet that
+        it verifies against; returns their BSSIDs."""
+        matched: List[str] = []
+        for bssid, captures in list(self._index.items()):
+            if bssid == source_bssid:
+                continue
+            if any(c.type in self._PSK_TYPES and c.value for c in captures):
+                continue
+            ssid = self.ssid(bssid)
+            if not ((source_ssid and ssid and _related_ssids(source_ssid, ssid))
+                    or _sibling_bssids(source_bssid, bssid)):
+                continue
+            if self.verify_wpa_psk(bssid, psk) is True:
+                self.save_wpa_psk(ssid, bssid, psk)
+                matched.append(bssid)
+        return matched
+
     def has_handshake(self, ap: "AccessPoint") -> bool:
         return self._has(ap.bssid, CaptureType.HS)
 
@@ -187,7 +277,7 @@ class Vault:
         return self._has(ap.bssid, CaptureType.WEP)
 
     def has_wps_psk(self, ap: "AccessPoint") -> bool:
-        return any(c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC)
+        return any(c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC) and c.value
                    for c in self.persisted(ap.bssid))
 
     def wps_capture(self, ap: "AccessPoint") -> Optional[PersistedCapture]:
@@ -203,6 +293,8 @@ class Vault:
     def save_handshake(self, ap: "AccessPoint", client_mac: str) -> Optional[SaveResult]:
         before = self._hc_lines(ap)
         result = save.save_handshake(ap, client_mac)
+        if result:
+            update_meta(ap.ssid, ap.bssid)
         if result and result.was_new:
             capture = PersistedCapture(
                 type=CaptureType.HS, timestamp=int(time.time()), path=str(result.path),
@@ -214,6 +306,8 @@ class Vault:
     def save_pmkid(self, ap: "AccessPoint", client_mac: str) -> Optional[SaveResult]:
         before = self._hc_lines(ap)
         result = save.save_pmkid(ap, client_mac)
+        if result:
+            update_meta(ap.ssid, ap.bssid)
         if result and result.was_new:
             capture = PersistedCapture(
                 type=CaptureType.PMKID, timestamp=int(time.time()), path=str(result.path),
@@ -239,14 +333,19 @@ class Vault:
 
     def save_wep_key(self, ap: "AccessPoint", key: bytes) -> Optional[SaveResult]:
         result = save.save_wep_key(ap, key)
+        if result:
+            update_meta(ap.ssid, ap.bssid)
         if result and result.was_new:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WEP, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=key.hex(), ssid=ap.ssid))
         return result
 
-    def save_wps_pin(self, ap: "AccessPoint", pin: str, psk: str) -> Optional[SaveResult]:
+    def save_wps_pin(self, ap: "AccessPoint", pin: str,
+                     psk: Optional[str]) -> Optional[SaveResult]:
         result = save.save_wps_pin(ap, pin, psk)
+        if result:
+            update_meta(ap.ssid, ap.bssid)
         if result and result.was_new:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PIN, timestamp=int(time.time()), path=str(result.path),
@@ -255,6 +354,8 @@ class Vault:
 
     def save_wps_pbc(self, ap: "AccessPoint", psk: str) -> Optional[SaveResult]:
         result = save.save_wps_pbc(ap, psk)
+        if result:
+            update_meta(ap.ssid, ap.bssid)
         if result and result.was_new:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PBC, timestamp=int(time.time()), path=str(result.path),
@@ -263,6 +364,8 @@ class Vault:
 
     def save_wpa_psk(self, ssid: Optional[str], bssid: str, psk: str) -> Optional[SaveResult]:
         result = save.save_wpa_psk(ssid, bssid, psk)
+        if result:
+            update_meta(ssid, bssid)
         if result and result.was_new:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPA_PSK, timestamp=int(time.time()), path=str(result.path),
@@ -285,6 +388,9 @@ class Vault:
                 self._index[bssid] = remaining
             else:
                 del self._index[bssid]
+        meta_name = safe_ssid(capture.ssid)
+        if not any(safe_ssid(c.ssid) == meta_name for c in self.persisted(capture.bssid)):
+            meta_path(capture.ssid, capture.bssid).unlink(missing_ok=True)
         if changed:
             self._notify_changed()
 
@@ -294,8 +400,7 @@ class Vault:
         timestamped archive beside captures/. None if none of the files exist."""
         paths: List[Path] = []
         seen: set[str] = set()
-        for c in captures:
-            p = Path(c.path)
+        for p in [Path(c.path) for c in captures] + [meta_path(c.ssid, c.bssid) for c in captures]:
             if p.is_file() and str(p) not in seen:
                 seen.add(str(p))
                 paths.append(p)
@@ -309,8 +414,11 @@ class Vault:
         return save_as
 
     def open_directory(self) -> None:
-        """Reveal captures/ in the OS file manager."""
-        _open_in_file_manager(Path(Config.captures_dir))
+        """Reveal captures/ in the OS file manager; FileNotFoundError before the first capture."""
+        captures_dir = Path(Config.captures_dir)
+        if not captures_dir.is_dir():
+            raise FileNotFoundError(f"No captures dir: {captures_dir}")
+        _open_in_file_manager(captures_dir)
 
     # ----- legacy .hc22000 consolidation (temporary: pre-aggregate installs) ---
 

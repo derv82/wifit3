@@ -8,7 +8,7 @@ counts, so the loop's stop condition fires without building a real 4-way.
 from types import SimpleNamespace
 
 from wifit3.campaigns.deauth import DeauthCampaign
-from wifit3.models import Handshake
+from wifit3.models import AccessPoint, Handshake
 from wifit3.wlan.interface import DeauthResult
 from wifit3.wlan.lease import Lease
 
@@ -18,6 +18,11 @@ _BSSID = "aa:bb:cc:dd:ee:01"
 def _pmkid_hs(client_mac: str) -> Handshake:
     """A crackable capture: plain-PSK PMKID (AKM 2)."""
     return Handshake(bssid=_BSSID, client_mac=client_mac, pmkid=b"\x11" * 16, pmkid_akm=2)
+
+
+def _mixed_offer_pmkid_hs(client_mac: str) -> Handshake:
+    return Handshake(bssid=_BSSID, client_mac=client_mac, pmkid=b"\x11" * 16,
+                     pmkid_akm=None, akm_offered=[1, 2])
 
 
 class _FakeRadio:
@@ -84,9 +89,11 @@ _BEACON = bytes.fromhex("80000000" + "ff" * 6 + "aabbccddee01" * 2 + "0000"
                         + "00" * 8 + "64001104" + "0007" + b"TESTNET".hex() + "030106")
 
 
-def _target(pmf_required=False, beacon=_BEACON):
-    return SimpleNamespace(bssid=_BSSID, channel=6, ssid="TESTNET",
-                           pmf_required=pmf_required, akm_suites=[2], last_beacon_frame=beacon)
+def _target(pmf_required: bool = False, pmf_capable: bool = False,
+            beacon: bytes | None = _BEACON) -> AccessPoint:
+    return AccessPoint(bssid=_BSSID, channel=6, ssid="TESTNET",
+                       pmf_required=pmf_required, pmf_capable=pmf_capable,
+                       akm_suites=[2], last_beacon_frame=beacon)
 
 
 def _client(bssid=_BSSID):
@@ -143,17 +150,37 @@ async def test_no_clients_broadcasts_each_round():
     assert camp.captured is True
 
 
+async def test_mixed_offer_pmkid_is_not_a_campaign_capture():
+    ap = SimpleNamespace(bssid=_BSSID, handshakes={"c1": _mixed_offer_pmkid_hs("c1")})
+    radio = _FakeRadio()
+    array = _FakeArray(radio, ap, {"c1": _client()})
+    camp = DeauthCampaign(array, _target())
+    assert camp._crackable_count() == 0
+    radio.on_client = lambda: setattr(camp, "stopped", True)
+    await camp._loop()
+    assert camp.captured is False
+
+
 def test_visible_requires_psk():
-    assert DeauthCampaign.visible(SimpleNamespace(pmf_required=False, akm_suites=[2])) is True
-    assert DeauthCampaign.visible(SimpleNamespace(pmf_required=False, akm_suites=[8])) is False   # SAE
-    assert DeauthCampaign.visible(SimpleNamespace(pmf_required=False, akm_suites=[])) is False    # WEP/open
-    assert DeauthCampaign.visible(SimpleNamespace(pmf_required=True, akm_suites=[2])) is True     # PMF: CSA
+    assert DeauthCampaign.visible(AccessPoint(bssid=_BSSID, pmf_required=False, akm_suites=[2])) is True
+    assert DeauthCampaign.visible(AccessPoint(bssid=_BSSID, pmf_required=False, akm_suites=[4])) is True    # FT-PSK (WPA*04)
+    assert DeauthCampaign.visible(AccessPoint(bssid=_BSSID, pmf_required=False, akm_suites=[0x13])) is False  # FT-PSK-SHA384: no mode
+    assert DeauthCampaign.visible(AccessPoint(bssid=_BSSID, pmf_required=False, akm_suites=[8])) is False   # SAE
+    assert DeauthCampaign.visible(AccessPoint(bssid=_BSSID, pmf_required=False, akm_suites=[])) is False    # WEP/open
+    assert DeauthCampaign.visible(AccessPoint(bssid=_BSSID, pmf_required=True, akm_suites=[2])) is True     # PMF: CSA
 
 
 def test_pmf_required_without_a_beacon_is_ineligible():
-    assert DeauthCampaign.ineligible_reason(_target(pmf_required=True, beacon=None))
-    assert DeauthCampaign.ineligible_reason(_target(pmf_required=True)) is None
+    assert DeauthCampaign.ineligible_reason(
+        _target(pmf_required=True, pmf_capable=True, beacon=None))
+    assert DeauthCampaign.ineligible_reason(
+        _target(pmf_required=True, pmf_capable=True)) is None
     assert DeauthCampaign.ineligible_reason(_target(beacon=None)) is None
+
+
+def test_invalid_pmf_without_mfpc_needs_a_beacon_for_csa():
+    assert DeauthCampaign.ineligible_reason(
+        _target(pmf_required=True, pmf_capable=False, beacon=None))
 
 
 async def test_csa_burst_follows_the_deauths():
@@ -174,10 +201,21 @@ async def test_pmf_required_sends_csa_only():
     ap = SimpleNamespace(bssid=_BSSID, handshakes={})
     radio = _FakeRadio()
     array = _FakeArray(radio, ap, {"c1": _client()})
-    camp = DeauthCampaign(array, _target(pmf_required=True))
+    camp = DeauthCampaign(array, _target(pmf_required=True, pmf_capable=True))
     radio.on_csa = lambda: setattr(camp, "stopped", True) if len(radio.sent) == 3 else None
 
     await camp._loop()
 
+    assert radio.client_calls == [] and radio.bcast_calls == []
+    assert camp.csa_sent == 3 and set(radio.events) == {"csa"}
+
+
+async def test_invalid_pmf_sends_csa_only():
+    ap = SimpleNamespace(bssid=_BSSID, handshakes={})
+    radio = _FakeRadio()
+    array = _FakeArray(radio, ap, {"c1": _client()})
+    camp = DeauthCampaign(array, _target(pmf_required=True, pmf_capable=False))
+    radio.on_csa = lambda: setattr(camp, "stopped", True) if len(radio.sent) == 3 else None
+    await camp._loop()
     assert radio.client_calls == [] and radio.bcast_calls == []
     assert camp.csa_sent == 3 and set(radio.events) == {"csa"}

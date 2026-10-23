@@ -32,6 +32,9 @@ class HashcatSettings:
     path: str | None = None
     args: str | None = None
     wordlists: list[str] = field(default_factory=list)
+    default_passwords: bool = True
+    ap_ssid_passwords: bool = True
+    probed_ssid_passwords: bool = True
 
 
 @dataclass

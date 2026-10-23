@@ -152,3 +152,26 @@ hashcat and is missed by CPU Crack.
 
 Measured: correction costs 1.09x (one byte order) to 1.19x (both) CPU per password; 70 of 71 local
 EAPOL lines have the NC bit set. Not implemented: no real-world miss observed yet.
+
+## Vault Verify from Focus leaves the card on the AP's channel
+
+**Problem.** In Focus, open the Vault, select a cracked AP on a different channel than the Focus
+target, press `Verify`: the card retunes to that AP's channel to verify, but doesn't return to the
+Focus channel. The Focus target's beacons stay at 0 until the Vault is closed, then come back.
+
+## PSK-SHA384 and FT-PSK-SHA384 handshakes are not yet supported
+
+**Problem.** AKM 20 (PSK-SHA384) and AKM 19 (FT-PSK-SHA384) derive the KCK and MIC with SHA-384
+(24-byte MIC). `-m 22000` has no SHA-384 path in released hashcat, so wifit3 withholds these
+captures as "not yet supported". Hashcat mainline added one ([hashcat#4931](https://github.com/hashcat/hashcat/issues/4931)).
+
+**Direction.** Once a hashcat release ships it, add the hashline format and drop the withhold.
+
+## WPA-Enterprise credentials are not yet supported
+
+**Problem.** An Enterprise 4-way is keyed by a per-session PMK from EAP and is never crackable.
+The crackable secret is the user's credential: an EAP-MD5 challenge/response (`-m 4800`) sent in
+the clear, or an MSCHAPv2 response (`-m 5500`) that PEAP/TTLS hide inside TLS, so it takes a rogue
+AP (an Enterprise EvilTwin). Vault, the cracker and capture storage all assume `.hc22000`.
+
+**Direction.** A new capture type through Vault and the cracker; scope it before starting.

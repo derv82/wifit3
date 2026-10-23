@@ -6,11 +6,14 @@ registry. These are the picture assertions that used to live on WlanInterface, r
 
 import struct
 
+import pytest
+
 from wifit3.dot11.mac import str_to_mac
 from wifit3.dot11.wsc import messages as WSC
 from wifit3.models import IdKey, IdSource
 from wifit3.wlan.sink import WlanSink
 from wifit3.wlan.packet_stats import PACKET_CLASSES
+from wifit3.dot11.parser import WlanFrameParser
 
 from tests.frames import pkt
 
@@ -155,6 +158,37 @@ def test_wps_m1_identity_fields_are_applied_by_sink():
     assert ap.identity.summary == "TP-Link Archer AX10"
 
 
+def _eap_identity_frame(bssid: bytes, client: bytes, username: bytes) -> bytes:
+    """Client->AP EAP-Response/Identity (802.1X Type 0), with a cleartext username."""
+    eap = struct.pack(">BBH", 2, 1, 4 + 1 + len(username)) + bytes([1]) + username
+    eapol = struct.pack(">BBH", 1, 0, len(eap)) + eap
+    return b"\x08\x01\x00\x00" + bssid + client + bssid + b"\x00\x00" + _LLC_SNAP_EAPOL + eapol
+
+
+def test_eap_method_recorded_on_ap_without_identity():
+    s = WlanSink()
+    s.update(_beacon(), W0)                                   # the AP must exist first
+    frame = _eap_identity_frame(str_to_mac(BSSID), str_to_mac("de:ad:be:ef:00:01"),
+                                b"alice@corp.example")
+    s.update(WlanFrameParser.parse_80211_frame(frame, -40), W0)
+
+    ap = s.access_points[BSSID]
+    assert ap.observed_eap_methods == {1}                     # EAP-Identity (Type 1)
+    # Privacy: no handshake is minted from EAP, and the username reaches no model.
+    assert ap.handshakes == {}
+    assert "alice" not in repr(ap) and "alice" not in repr(s.clients["de:ad:be:ef:00:01"])
+
+
+def test_wps_m1_via_parser_still_sets_wps_and_records_no_eap_method():
+    s = WlanSink()
+    s.update(_beacon(), W0)
+    frame = _wps_m1_frame(str_to_mac(BSSID), str_to_mac("02:00:00:00:00:01"))
+    s.update(WlanFrameParser.parse_80211_frame(frame, -45), W0)   # through the parser
+    ap = s.access_points[BSSID]
+    assert ap.wps is True                                     # WPS M1 path intact (EapolPacket)
+    assert ap.observed_eap_methods == set()                   # Expanded is not an EAP method
+
+
 
 # ----- encryption / decloak / clients ----------------------------------------
 
@@ -163,6 +197,32 @@ def test_encryption_keeps_strongest_evidence_not_latest():
     s.update(_beacon({"encryption": "WPA2-PSK-CCMP", "akms": ["PSK"]}), W0)
     s.update(_beacon({"encryption": "WEP", "akms": []}), W0)     # RSN-less flicker
     assert s.access_points[BSSID].encryption == "WPA2-PSK-CCMP"
+
+
+def test_invalid_rsn_followup_keeps_valid_security_profile():
+    s = WlanSink()
+    valid_rsn = b"\x30\x02\x01\x00"
+    s.update(_beacon({
+        "encryption": "WPA3-EAP-CCMP",
+        "akms": ["EAP-SHA256"],
+        "akm_suites": [5],
+        "rsn_valid": True,
+        "rsn_ie_raw": valid_rsn,
+        "pairwise_cipher": "CCMP",
+        "wpa3": True,
+        "pmf_capable": True,
+        "pmf_required": True,
+    }), W0)
+    s.update(pkt({
+        "type": "probe_resp", "bssid": BSSID, "source": BSSID,
+        "dest": "ff:ff:ff:ff:ff:ff", "rssi": -35, "ssid": "Test_SSID",
+        "channel": 6, "encryption": "WPA2", "rsn_valid": False,
+        "rsn_ie_raw": b"\x30\x02\x02\x00",
+    }), W0)
+    ap = s.access_points[BSSID]
+    assert ap.rsn_valid is True and ap.rsn_ie == valid_rsn
+    assert ap.akm_suites == [5]
+    assert ap.wpa3 is True and ap.pmf_capable is True and ap.pmf_required is True
 
 
 def test_decloak_via_probe_resp():
@@ -180,6 +240,242 @@ def test_assoc_req_stamps_client_akm():
     s.update(pkt({"type": "assoc_req", "bssid": BSSID, "source": client, "dest": BSSID,
                   "rssi": -45, "assoc_akm": 0x02}), W0)
     assert s.clients[client].akm_selected == 0x02
+    assert s.clients[client].bssid == BSSID
+
+
+def test_roam_without_new_akm_does_not_reuse_previous_selection():
+    s = WlanSink()
+    client = "12:22:33:44:55:66"
+    other_bssid = "aa:bb:cc:dd:ee:01"
+    s.update(_beacon({"akm_suites": [2]}), W0)
+    s.update(_beacon({
+        "bssid": other_bssid, "source": other_bssid, "ssid": "Enterprise",
+        "akm_suites": [1],
+    }), W0)
+    s.update(pkt({
+        "type": "assoc_req", "bssid": BSSID, "source": client, "dest": BSSID,
+        "rssi": -45, "assoc_akm": 2,
+    }), W0)
+    s.update(pkt({
+        "type": "eapol", "bssid": other_bssid, "source": other_bssid, "dest": client,
+        "rssi": -45, "raw": bytes(100), "eapol_msg_num": 2,
+        "eapol_replay_counter": bytes(8), "eapol_nonce": bytes.fromhex("01" * 32),
+        "eapol_mic": bytes.fromhex("02" * 16), "eapol_payload": bytes(99),
+    }), W0)
+    moved = s.clients[client]
+    hs = s.access_points[other_bssid].handshakes[client]
+    assert moved.bssid == other_bssid and moved.akm_selected is None
+    assert hs.messages[0].akm is None
+
+
+def test_disconnect_invalidates_same_bssid_akm_before_unproven_eapol():
+    from wifit3.crack import handshake as wpa
+
+    client = "12:22:33:44:55:66"
+    for disconnect_type, source, dest in (
+        ("deauth", BSSID, client), ("disassoc", BSSID, client),
+        ("deauth", client, BSSID), ("disassoc", client, BSSID),
+    ):
+        s = WlanSink()
+        s.update(_beacon({
+            "akms": ["EAP", "PSK"],
+            "akm_suites": [1, 2],
+            "rsn_valid": True,
+            "rsn_ie_raw": b"\x30\x02\x01\x00",
+            "raw": bytes(36),
+        }), W0)
+        s.update(pkt({
+            "type": "assoc_req", "bssid": BSSID, "source": client, "dest": BSSID,
+            "rssi": -45, "assoc_akm": 2,
+        }), W0)
+        s.update(pkt({
+            "type": disconnect_type, "bssid": BSSID, "source": source, "dest": dest,
+            "rssi": -45,
+        }), W0)
+
+        assert s.clients[client].akm_selected is None
+
+        for msg_num, source, dest, nonce, mic, raw in (
+            (3, BSSID, client, b"\xaa" * 32, b"\x11" * 16, b"m3" * 40),
+            (4, client, BSSID, b"\xbb" * 32, b"\x22" * 16, b"m4" * 40),
+        ):
+            s.update(pkt({
+                "type": "eapol", "bssid": BSSID, "source": source, "dest": dest,
+                "rssi": -45, "raw": raw, "eapol_msg_num": msg_num,
+                "eapol_replay_counter": bytes.fromhex("00" * 7 + "05"),
+                "eapol_nonce": nonce, "eapol_mic": mic, "eapol_payload": bytes(99),
+            }), W0)
+
+        hs = s.access_points[BSSID].handshakes[client]
+        assert all(message.akm is None for message in hs.messages)
+        assert wpa.crackable_pairs(hs) == []
+
+
+def test_failed_assoc_and_reassoc_responses_invalidate_selected_akm():
+    from wifit3.crack import handshake as wpa
+
+    for request_type, response_subtype, response_type in (
+        ("assoc_req", 1, "assoc_resp"),
+        ("reassoc_req", 3, "reassoc_resp"),
+    ):
+        s = WlanSink()
+        client = "12:22:33:44:55:66"
+        s.update(_beacon({
+            "akms": ["EAP", "PSK"],
+            "akm_suites": [1, 2],
+            "rsn_valid": True,
+            "rsn_ie_raw": b"\x30\x02\x01\x00",
+            "raw": bytes(36),
+        }), W0)
+        s.update(pkt({
+            "type": request_type, "bssid": BSSID, "source": client, "dest": BSSID,
+            "rssi": -45, "assoc_akm": 2,
+        }), W0)
+        raw_response = (
+            bytes([response_subtype << 4, 0]) + b"\x00\x00"
+            + str_to_mac(client) + str_to_mac(BSSID) * 2 + b"\x00\x00"
+            + b"\x11\x00\x01\x00\x01\xc0"
+        )
+        response = WlanFrameParser.parse_80211_frame(raw_response, -45)
+        assert response is not None and response.type == response_type
+        s.update(response, W0)
+
+        assert s.clients[client].akm_selected is None
+
+        s.update(pkt({
+            "type": "eapol", "bssid": BSSID, "source": BSSID, "dest": client,
+            "rssi": -45, "raw": b"m1-after-rejection", "eapol_msg_num": 1,
+            "eapol_replay_counter": bytes.fromhex("00" * 7 + "01"),
+            "eapol_nonce": b"\xaa" * 32, "eapol_mic": bytes(16),
+            "eapol_payload": bytes(99), "eapol_pmkid": b"\x07" * 16,
+            "eapol_key_info": 2,
+        }), W0)
+        hs = s.access_points[BSSID].handshakes[client]
+        assert hs.pmkid_akm is None
+        assert not wpa.pmkid_crackable(hs)
+
+
+def test_ap_group_disconnect_invalidates_all_clients_for_bssid():
+    for disconnect_type in ("deauth", "disassoc"):
+        s = WlanSink()
+        clients = ("12:22:33:44:55:66", "12:22:33:44:55:67")
+        for client in clients:
+            s.update(pkt({
+                "type": "assoc_req", "bssid": BSSID, "source": client, "dest": BSSID,
+                "rssi": -45, "assoc_akm": 2,
+            }), W0)
+
+        s.update(pkt({
+            "type": disconnect_type, "bssid": BSSID,
+            "source": BSSID, "dest": "ff:ff:ff:ff:ff:ff", "rssi": -45,
+        }), W0)
+
+        for client in clients:
+            assert s.clients[client].akm_selected is None
+
+
+def test_group_disconnect_not_from_ap_does_not_clear_other_clients():
+    s = WlanSink()
+    sender = "12:22:33:44:55:66"
+    other_client = "12:22:33:44:55:67"
+    for client in (sender, other_client):
+        s.update(pkt({
+            "type": "assoc_req", "bssid": BSSID, "source": client, "dest": BSSID,
+            "rssi": -45, "assoc_akm": 2,
+        }), W0)
+
+    s.update(pkt({
+        "type": "deauth", "bssid": BSSID,
+        "source": sender, "dest": "ff:ff:ff:ff:ff:ff", "rssi": -45,
+    }), W0)
+
+    assert s.clients[other_client].akm_selected == 2
+    assert s.clients[other_client].bssid == BSSID
+
+
+def _psk_eap_beacon():
+    return _beacon({
+        "akms": ["EAP", "PSK"],
+        "akm_suites": [1, 2],
+        "rsn_valid": True,
+        "rsn_ie_raw": b"\x30\x02\x01\x00",
+        "raw": bytes(36),
+    })
+
+
+def _four_way(client: str, replay: int) -> list:
+    frames = []
+    for msg_num in (1, 2, 3, 4):
+        from_ap = msg_num in (1, 3)
+        frames.append(pkt({
+            "type": "eapol", "bssid": BSSID,
+            "source": BSSID if from_ap else client, "dest": client if from_ap else BSSID,
+            "rssi": -45, "raw": f"m{msg_num}-replay{replay}".encode() * 8,
+            "eapol_msg_num": msg_num, "eapol_replay_counter": replay.to_bytes(8, "big"),
+            "eapol_nonce": bytes([msg_num]) * 32, "eapol_mic": bytes([msg_num]) * 16,
+            "eapol_payload": bytes(99),
+        }))
+    return frames
+
+
+def test_m1_after_ten_seconds_of_beacons_keeps_assoc_akm():
+    s = WlanSink()
+    client = "12:22:33:44:55:66"
+    s.update(_psk_eap_beacon(), W0)
+    s.update(pkt({
+        "type": "assoc_req", "bssid": BSSID, "source": client, "dest": BSSID,
+        "rssi": -45, "assoc_akm": 2,
+    }), W0)
+    for _ in range(100):                     # 100 beacon intervals of 102.4 ms = 10.24 s
+        s.update(_psk_eap_beacon(), W0)
+    s.update(pkt({
+        "type": "eapol", "bssid": BSSID, "source": BSSID, "dest": client,
+        "rssi": -45, "raw": b"late-m1", "eapol_msg_num": 1,
+        "eapol_replay_counter": bytes.fromhex("00" * 7 + "01"),
+        "eapol_nonce": b"\xaa" * 32, "eapol_mic": bytes(16),
+        "eapol_payload": bytes(99), "eapol_pmkid": b"\x07" * 16,
+        "eapol_key_info": 2,
+    }), W0)
+
+    hs = s.access_points[BSSID].handshakes[client]
+    assert s.clients[client].akm_selected == 2
+    assert hs.messages[0].akm == 2 and hs.pmkid_akm == 2
+
+
+def test_rekey_four_way_without_new_assoc_keeps_akm():
+    s = WlanSink()
+    client = "12:22:33:44:55:66"
+    s.update(_psk_eap_beacon(), W0)
+    s.update(pkt({
+        "type": "assoc_req", "bssid": BSSID, "source": client, "dest": BSSID,
+        "rssi": -45, "assoc_akm": 2,
+    }), W0)
+    for frame in _four_way(client, replay=1) + _four_way(client, replay=2):
+        s.update(frame, W0)
+
+    hs = s.access_points[BSSID].handshakes[client]
+    assert len(hs.messages) == 8
+    assert all(message.akm == 2 for message in hs.messages)
+
+
+def test_reassoc_with_different_akm_gives_newest():
+    s = WlanSink()
+    client = "12:22:33:44:55:66"
+    s.update(_beacon({"akm_suites": [2, 8], "rsn_valid": True}), W0)
+    s.update(pkt({
+        "type": "assoc_req", "bssid": BSSID, "source": client, "dest": BSSID,
+        "rssi": -45, "assoc_akm": 2,
+    }), W0)
+    s.update(pkt({
+        "type": "reassoc_req", "bssid": BSSID, "source": client, "dest": BSSID,
+        "rssi": -45, "assoc_akm": 8,
+    }), W0)
+    for frame in _four_way(client, replay=1):
+        s.update(frame, W0)
+
+    hs = s.access_points[BSSID].handshakes[client]
+    assert s.clients[client].akm_selected == 8
+    assert all(message.akm == 8 for message in hs.messages)
 
 
 def test_decloak_via_assoc_req():
@@ -360,3 +656,57 @@ def test_an_assoc_request_binds_to_an_ap_we_have_not_beaconed():
     s.update(pkt({"type": "assoc_req", "bssid": _OTHER_BSSID, "source": _STA_MAC,
                   "ssid": "Real_Net", "rssi": -55}), W0)
     assert s.clients[_STA_MAC].bssid == _OTHER_BSSID
+
+
+def test_vendor_akm_reaches_handshake_crack_gate():
+    from wifit3.crack import handshake as wpa
+
+    s = WlanSink()
+    client = "12:22:33:44:55:66"
+    s.update(_beacon({
+        "akms": ["Vendor"], "vendor_akm_offered": True,
+        "rsn_valid": True, "rsn_ie_raw": b"\x30\x02\x01\x00", "raw": bytes(36),
+    }), W0)
+    for msg_num, source, dest, nonce, mic, raw in (
+        (1, BSSID, client, bytes.fromhex("01" * 32), bytes(16), bytes(100)),
+        (2, client, BSSID, bytes.fromhex("02" * 32), bytes.fromhex("03" * 16), bytes([1]) * 100),
+    ):
+        s.update(pkt({
+            "type": "eapol", "bssid": BSSID, "source": source, "dest": dest,
+            "rssi": -45, "raw": raw, "eapol_msg_num": msg_num,
+            "eapol_replay_counter": bytes.fromhex("00" * 7 + "05"),
+            "eapol_nonce": nonce, "eapol_mic": mic, "eapol_payload": bytes(99),
+        }), W0)
+    hs = s.access_points[BSSID].handshakes[client]
+    assert hs.vendor_akm_offered is True and hs.rsn_ie_seen is True
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.withheld_capture_label(hs) == "Unsupported AKM"
+
+
+@pytest.mark.parametrize("encryption, akm_name, akm, verdict, label", [
+    ("WPA-EAP-TKIP", "EAP", 1, "uncrackable", "EAP/Enterprise"),
+    ("WPA-PSK-TKIP", "PSK", 2, "crackable", None),
+])
+def test_wpa1_akm_reaches_handshake_crack_gate(encryption, akm_name, akm, verdict, label):
+    from wifit3.crack import handshake as wpa
+
+    s = WlanSink()
+    client = "12:22:33:44:55:66"
+    s.update(_beacon({
+        "encryption": encryption, "akms": [akm_name], "akm_suites": [akm],
+        "rsn_valid": False, "raw": bytes(36),
+    }), W0)
+    for msg_num, source, dest, nonce, mic, raw in (
+        (1, BSSID, client, bytes.fromhex("01" * 32), bytes(16), bytes(100)),
+        (2, client, BSSID, bytes.fromhex("02" * 32), bytes.fromhex("03" * 16), bytes([1]) * 100),
+    ):
+        s.update(pkt({
+            "type": "eapol", "bssid": BSSID, "source": source, "dest": dest,
+            "rssi": -45, "raw": raw, "eapol_msg_num": msg_num,
+            "eapol_replay_counter": bytes.fromhex("00" * 7 + "05"),
+            "eapol_nonce": nonce, "eapol_mic": mic, "eapol_payload": bytes(99),
+        }), W0)
+    hs = s.access_points[BSSID].handshakes[client]
+    assert hs.akm_offered == [akm] and hs.rsn_ie_seen is False
+    assert wpa.eapol_verdict(None, hs) == verdict
+    assert wpa.uncrackable_label(None, hs) == label

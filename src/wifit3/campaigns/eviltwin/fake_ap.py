@@ -21,13 +21,14 @@ from wifit3.dot11 import build_deauth
 from wifit3.dot11.ap import auth_resp, assoc_resp, eapol_m1
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.ie import iter_information_elements
+from wifit3.dot11.packet import AssocRequestPacket, Packet
+from wifit3.dot11.rsn import SAE_AKM_SUITES
 
 logger = logging.getLogger(__name__)
 
 _BEACON_PERIOD_S = 100 * 1024 / 1_000_000       # 100 TU
 _BEACON_BODY = 36                               # 24B MAC header + timestamp, interval, capability
 _ELEMID_TIM = 5                                 # beacon-only: a probe response omits it
-_SAE_AKMS = frozenset({8, 9, 24, 25})           # SAE / FT-SAE / SAE-EXT-KEY / FT-SAE-EXT-KEY
 _STATUS_INVALID_PMKID = 53
 _STATUS_NOT_SUPPORTED_AUTH_ALG = 13
 _AUTH_ALG_SAE = 3
@@ -211,12 +212,12 @@ class FakeAP:
         self._advance(mac_to_str(client), ClientPhase.AUTHED)
         self._tx(auth_resp(self.bssid, client))
 
-    def _on_assoc(self, pkt, client: bytes) -> None:
+    def _on_assoc(self, pkt: Packet, client: bytes) -> None:
         self.stats.assoc += 1
         cs = mac_to_str(client)
         self._cancel_m1(cs)
         reassoc = pkt.subtype_id == 0x02
-        if getattr(pkt, "assoc_akm", None) in _SAE_AKMS:
+        if isinstance(pkt, AssocRequestPacket) and pkt.assoc_akm in SAE_AKM_SUITES:
             # SAE after our open auth means a cached SAE key we don't hold: refuse it, as hostapd does.
             self.stats.cached_key_rejects += 1
             self._tx(assoc_resp(self.bssid, client, channel=self.channel, status=_STATUS_INVALID_PMKID,

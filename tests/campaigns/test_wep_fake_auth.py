@@ -116,6 +116,16 @@ def test_rx_deauth_drops_association(mocker):
     assert fa.state == "ready"
     assert fa._assoc_ok is False
     assert fa.stats.reactive_reauths == 1
+    assert fa.fail_reason.startswith("deauth ")
+
+
+def test_rx_disassoc_reported_as_disassoc(mocker):
+    fa = _fa(mocker)
+    fa._active = True
+    fa.state = "associated"
+    fa._rx_cb(WlanFrameParser.parse_80211_frame(_mgmt(0x0A, SELF_MAC, b"\x08\x00"), -40))
+    assert fa.fail_reason.startswith("disassoc ")
+    assert fa.state == "ready"
 
 
 # ---- Lazy on-demand association --------------------------------------------

@@ -14,6 +14,7 @@ from wifit3.ui.screens.focus_v2.art import display_name
 from wifit3.campaigns.eviltwin import (
     EvilTwinInput, PuntMode, default_punt_modes, csa_target_channel,
 )
+from wifit3.dot11.pmf import PmfPosture
 
 _MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
 
@@ -73,7 +74,7 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
         twin = self._hosts[0] if self._hosts else None
         punter = next((m for m in self._punters if m is not twin), twin)
         d_modes = default_punt_modes(self.target)
-        pmf = self.target.pmf_required
+        robust_frames_blocked = self.target.pmf_posture in (PmfPosture.REQUIRED, PmfPosture.INVALID)
         with Vertical(id="dialog"):
             yield Label("Evil Twin", id="title")
 
@@ -105,11 +106,11 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
 
             with Vertical(id="punt-methods"):
                 yield Checkbox("De-authenticate", value=PuntMode.DEAUTH in d_modes,
-                               id="punt-deauth", disabled=pmf)
+                               id="punt-deauth", disabled=robust_frames_blocked)
                 yield Checkbox("Channel Switch Announcement", value=PuntMode.CSA in d_modes,
                                id="punt-csa")
                 yield Checkbox("BSS-Transition Mode (BTM)", value=PuntMode.BTM in d_modes,
-                               id="punt-btm", disabled=pmf)
+                               id="punt-btm", disabled=robust_frames_blocked)
 
             with Horizontal(classes="row"):
                 yield Label("Punt cycle", classes="row-label")
@@ -124,9 +125,9 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
     def on_mount(self) -> None:
         self._sync_bssid_field()
         self._sync_warning()
-        if self.target.pmf_required:                # robust-frame punts can't be forged under PMF
-            self.query_one("#punt-deauth", Checkbox).tooltip = "Can't send deauths: PMF active"
-            self.query_one("#punt-btm", Checkbox).tooltip = "Can't send BTMs: PMF active"
+        if self.target.pmf_posture in (PmfPosture.REQUIRED, PmfPosture.INVALID):
+            self.query_one("#punt-deauth", Checkbox).tooltip = "Can't send deauths: PMF required or invalid"
+            self.query_one("#punt-btm", Checkbox).tooltip = "Can't send BTMs: PMF required or invalid"
 
     # ----- interface / channel wiring ---------------------------------------
 

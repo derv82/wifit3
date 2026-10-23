@@ -1,4 +1,5 @@
 from wifit3.models import AccessPoint, HandshakeMessage, Handshake
+from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.models.jobs import JobAction, ToolResult, ToolStatus
 
 
@@ -139,3 +140,10 @@ def test_handshake_is_complete():
     # A matching M2 (same replay counter) completes the pair
     hs.messages.append(_eapol(2, replay=5))
     assert hs.is_complete
+
+
+def test_vendor_akm_disqualifies_eap_only_and_no_passphrase():
+    enterprise = AccessPoint(bssid="02:00:00:00:00:01", akm_suites=[1])
+    mixed = AccessPoint(bssid="02:00:00:00:00:02", akm_suites=[1], vendor_akm_offered=True)
+    assert eap_only(enterprise) and no_passphrase(enterprise)
+    assert not eap_only(mixed) and not no_passphrase(mixed)
