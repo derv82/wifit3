@@ -32,6 +32,26 @@ async def test_device_lost_from_offloop_context_shows_recoverable_modal():
         assert app.screen._error.title == "Adapter disconnected"
 
 
+@pytest.mark.parametrize("cancel_with", ["button", "escape"])
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_device_lost_modal_can_wait_for_reconnection(cancel_with):
+    from wifit3.errors import WifiteDeviceLostError
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        app.push_screen(RecoverableErrorModal(WifiteDeviceLostError("the wireless adapter")))
+        await pilot.pause()
+
+        if cancel_with == "button":
+            app.screen.query_one("#btn-cancel", Button).press()
+        else:
+            await pilot.press("escape")
+        await pilot.pause()
+
+        assert isinstance(app.screen, SplashView)
+
+
 @pytest.mark.asyncio
 async def test_no_usb_backend_shows_fatal_modal(monkeypatch):
     # The broken-udev Linux condition: find() resolves no backend and raises. (Deliberately does

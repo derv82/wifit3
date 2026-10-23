@@ -102,10 +102,9 @@ class FatalErrorModal(ModalScreen[None]):
 
 
 class RecoverableErrorModal(ModalScreen[None]):
-    """A recoverable failure (adapter lost mid-run): orange, offers Back to Splash."""
+    """An adapter was lost: wait for reconnection or return to Splash."""
 
-    # No bindings: force an explicit choice (Escape must not dismiss).
-    BINDINGS = []
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
     DEFAULT_CSS = """
     RecoverableErrorModal { align: center middle; }
@@ -130,7 +129,15 @@ class RecoverableErrorModal(ModalScreen[None]):
             yield Label(self._error.title, id="title")
             yield Static(self._error.message, id="message")
             with Horizontal(id="button-row"):
+                yield Button("Cancel", id="btn-cancel")
                 yield Button("Back to Splash", variant="warning", id="btn-splash")
+
+    def action_cancel(self) -> None:
+        self.dismiss()
+
+    @on(Button.Pressed, "#btn-cancel")
+    def _cancel(self) -> None:
+        self.dismiss()
 
     @on(Button.Pressed, "#btn-splash")
     def _back_to_splash(self) -> None:
