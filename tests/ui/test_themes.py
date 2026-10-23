@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 from rich.style import Style
 from rich.text import Text
@@ -9,8 +11,9 @@ from wifit3.ui.ansi_art import (
     THEME_TEXT_PRIMARY_KEY, THEME_TEXT_SECONDARY_KEY,
     recolor_logo
 )
+from wifit3.ui import system_theme
 from wifit3.ui.app import WifiteApp
-from wifit3.ui.system_theme import SYSTEM_THEME, preferred_theme
+from wifit3.ui.system_theme import SYSTEM_THEME, preferred_theme, system_appearance_label
 from wifit3.ui.themes import custom_themes
 
 
@@ -27,22 +30,49 @@ def test_custom_themes_define_green_dark():
 
 
 def test_system_theme_follows_the_detected_preference(monkeypatch):
-    monkeypatch.setattr("wifit3.ui.system_theme.darkdetect.isDark", lambda: True)
+    monkeypatch.setattr("wifit3.ui.system_theme.system_appearance", lambda: "dark")
     assert preferred_theme() == "wifit3-green-dark"
+    assert system_appearance_label() == "Dark"
 
-    monkeypatch.setattr("wifit3.ui.system_theme.darkdetect.isDark", lambda: False)
+    monkeypatch.setattr("wifit3.ui.system_theme.system_appearance", lambda: "light")
     assert preferred_theme() == "textual-light"
+    assert system_appearance_label() == "Light"
+
+    monkeypatch.setattr("wifit3.ui.system_theme.system_appearance", lambda: None)
+    assert preferred_theme() == "wifit3-green-dark"
+    assert system_appearance_label() == "Unavailable"
+
+
+def test_linux_system_theme_reports_unavailable_without_gsettings(monkeypatch):
+    monkeypatch.setattr(system_theme.sys, "platform", "linux")
+    monkeypatch.setattr(system_theme.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(
+        FileNotFoundError()
+    ))
+
+    assert system_theme.system_appearance() is None
+    assert system_theme.system_appearance_label() == "Unavailable"
+
+
+def test_macos_absent_dark_appearance_means_light(monkeypatch):
+    monkeypatch.setattr(system_theme.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        system_theme.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "missing preference"),
+    )
+
+    assert system_theme.system_appearance() == "light"
 
 
 def test_app_applies_the_system_theme(monkeypatch):
-    monkeypatch.setattr("wifit3.ui.system_theme.darkdetect.isDark", lambda: False)
+    monkeypatch.setattr("wifit3.ui.system_theme.system_appearance", lambda: "light")
     app = WifiteApp()
 
     app.set_theme_preference(SYSTEM_THEME)
     assert app.theme_preference == SYSTEM_THEME
     assert app.theme == "textual-light"
 
-    monkeypatch.setattr("wifit3.ui.system_theme.darkdetect.isDark", lambda: True)
+    monkeypatch.setattr("wifit3.ui.system_theme.system_appearance", lambda: "dark")
     app.refresh_system_theme()
     assert app.theme == "wifit3-green-dark"
 

@@ -48,7 +48,7 @@ async def test_save_notifies_instead_of_crashing_on_config_error(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_system_theme_is_selectable_and_persisted(monkeypatch):
-    monkeypatch.setattr("wifit3.ui.system_theme.darkdetect.isDark", lambda: False)
+    monkeypatch.setattr("wifit3.ui.system_theme.system_appearance", lambda: "light")
     app = WifiteApp()
     async with app.run_test() as pilot:
         app.push_screen(PreferencesModal())

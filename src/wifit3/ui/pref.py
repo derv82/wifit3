@@ -17,7 +17,7 @@ from textual.widgets import Button, Checkbox, Input, Label, Select
 from wifit3.models import ToolName
 from wifit3.persist.config import Config
 from wifit3.ui.path_picker import PathInput
-from wifit3.ui.system_theme import SYSTEM_THEME, preferred_theme
+from wifit3.ui.system_theme import SYSTEM_THEME, system_appearance_label
 from wifit3.ui.vault.tools_ui import UI_TOOLS
 from wifit3.vault.tools.base import VaultTool
 
@@ -76,8 +76,7 @@ class ThemeSetting(VerticalGroup):
             refresh()
 
     def _theme_options(self) -> list[tuple[Text, str]]:
-        current = preferred_theme(Config.system_dark_theme, Config.system_light_theme)
-        options = [(Text(f"System ({current})", style=Style(bold=True)), SYSTEM_THEME)]
+        options = [(Text(f"System ({system_appearance_label()})", style=Style(bold=True)), SYSTEM_THEME)]
         themes = sorted(self.app.available_themes.items(), key=self._sort_key)
         for name, theme in themes:
             fg = Color.parse(theme.primary).rich_color if theme.primary else None
