@@ -3,7 +3,7 @@ The autouse _captures_to_tmp fixture points Config.captures_dir at tmp_path, and
 """
 import pytest
 from textual.containers import HorizontalScroll
-from textual.widgets import Button, DataTable, Input, Select
+from textual.widgets import Button, DataTable, Input
 
 from wifit3.models import AccessPoint, CaptureType
 from wifit3.models.jobs import JobState, ToolStatus
@@ -18,6 +18,7 @@ from wifit3.ui.vault.modals.nickname import NicknameModal
 _HS_LINE = "WPA*02*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***2\n"
 _PMKID_LINE = "WPA*01*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***\n"
 _WEP_TXT = "SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nWEP key (hex):   6162636465\n"
+_LONG_WEP_TXT = "SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nWEP key (hex):   " + "61" * 26 + "\n"
 
 def _write(d, name, content):
     (d / name).write_text(content, encoding="utf-8")
@@ -302,19 +303,22 @@ async def test_add_credential_prefills_the_row_and_rejects_a_psk_the_handshake_r
         assert pin.pin == "1234" and pin.value is None
 
 
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_capture_filename_scrolls_when_it_is_too_long(tmp_path):
-    ssid = "A-very-long-network-name-that-does-not-fit"
-    _write(tmp_path, f"{ssid}_aa-bb-cc-dd-ee-ff.hc22000", _HS_LINE)
+async def test_capture_value_scrolls_under_filename(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _LONG_WEP_TXT)
     app = WifiteApp()
     async with app.run_test(size=(50, 24)) as pilot:
         view = await _open_vault(app)
         await pilot.pause()
-
-        file_scroll = view.query_one(".file-scroll", HorizontalScroll)
-        assert file_scroll.max_scroll_x > 0
-        assert ssid in str(view.query_one(".file", Select).value)
+        key_scroll = view.query_one(".key-scroll", HorizontalScroll)
+        assert key_scroll.max_scroll_x > 0
+        assert key_scroll.size.height >= 4
+        assert len(key_scroll.query(".key-row")) == 2
+        assert key_scroll.query_one(".date").region.bottom < key_scroll.region.bottom
+        assert key_scroll.query_one("#copy-hex", Button)
+        assert key_scroll.query_one("#copy-ascii", Button)
 
 
 @pytest.mark.asyncio

@@ -88,14 +88,16 @@ class _CapturePanel(VerticalGroup):
         border: round $primary; padding: 0 1;
         margin-top: 1;
     }
-    _CapturePanel .file-scroll {
-        width: 100%; height: auto;
+
+    _CapturePanel .info-group { width: auto; height: auto; }
+    _CapturePanel .key-group { width: auto; height: auto; padding-left: 1; }
+    _CapturePanel .date { height: 1; padding-left: 1; margin-bottom: 1; }
+    _CapturePanel .key-row { width: auto; height: 1; align: left middle; }
+    _CapturePanel .key-scroll {
+        width: 100%; min-width: 0; height: auto;
         overflow-x: auto; overflow-y: hidden;
     }
-    _CapturePanel .key-group { padding-left: 1; }
-    _CapturePanel .date { height: 1; padding-left: 1; margin-bottom: 1; }
-    _CapturePanel .key-row { height: 1; align: left middle; }
-    _CapturePanel .key-display { height: 1; margin-right: 3; }
+    _CapturePanel .key-display { width: auto; height: 1; margin-right: 3; }
     _CapturePanel .copy-btn { min-width: 0; margin-right: 3; }
     _CapturePanel .verify-btn { min-width: 14; }
     _CapturePanel .tools { height: auto; margin-bottom: 1; }
@@ -142,17 +144,19 @@ class _CapturePanel(VerticalGroup):
             self.border_title = f"{self._title} ({n})"
 
         newest = self._files[0]
-        filenames = [(Path(c.path).name, c.path) for c in self._files]
-        file_picker = Select(filenames, value=newest.path, allow_blank=False, classes="file")
-        file_picker.styles.width = max(Text(name).cell_len for name, _ in filenames) + 4
-        with HorizontalScroll(classes="file-scroll"):
-            yield file_picker
+        yield Select(
+            [(Path(c.path).name, c.path) for c in self._files],
+            value=newest.path,
+            allow_blank=False,
+            classes="file",
+        )
 
         # Display Key or Summary
-        with VerticalGroup(classes="key-group"):
-            pass # populated on file_changed
-
-        yield Label(self._date_markup(newest), classes="date")
+        with HorizontalScroll(classes="key-scroll"):
+            with VerticalGroup(classes="info-group"):
+                with VerticalGroup(classes="key-group"):
+                    pass # populated on file_changed
+                yield Label(self._date_markup(newest), classes="date")
 
         yield VerticalGroup(classes="tools")
         with Horizontal(classes="actions"):
@@ -185,11 +189,15 @@ class _CapturePanel(VerticalGroup):
             verify_btn = Button("Verify", id=f"verify-{btn_id}", variant="primary", classes="verify-btn",
                                 compact=True, tooltip="Connect to live AP and verify credentials")
             setattr(verify_btn, "target_type", target_type)
+            key_text = Label(
+                f"[bold dim]{label}:[/bold dim] [black bold on lightgreen] {escape(val)} [/]",
+                classes="key-display",
+            )
             return Horizontal(
-                Label(f"[bold dim]{label}:[/bold dim] [black bold on lightgreen] {escape(val)} [/]", classes="key-display"),
+                key_text,
                 Button("Copy", id=btn_id, classes="copy-btn", compact=True),
                 verify_btn,
-                classes="key-row"
+                classes="key-row",
             )
 
         if self._title in ("WPS PSKs", "WPA PSKs"):
