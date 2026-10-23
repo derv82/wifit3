@@ -101,6 +101,7 @@ class Vault:
 
     def __init__(self) -> None:
         self._index: Dict[str, List[PersistedCapture]] = {}
+        self._hashline_summaries: dict[tuple[str, int, int], tuple[int, int]] = {}
         self._change_listeners: list[Callable[[], None]] = []
         self._probed_ssids_source: Callable[[], Iterable[str]] = lambda: ()
         self.revision = 0   # bumped on every index change; a cache key for readers
@@ -122,6 +123,7 @@ class Vault:
     def refresh(self) -> None:
         """Re-scan Config.captures_dir into the cache."""
         self._index = load_capture_index()
+        self._hashline_summaries.clear()
         self._notify_changed()
 
     def subscribe(self, listener: Callable[[], None]) -> None:
@@ -178,6 +180,31 @@ class Vault:
             return Path(capture.path).read_text(encoding="utf-8", errors="replace").strip()
         except OSError:
             return ""
+
+    def hashline_summary(self, capture: PersistedCapture) -> tuple[int, int]:
+        """Return cached handshake and PMKID counts for a hashline capture."""
+        path = Path(capture.path)
+        try:
+            stat = path.stat()
+        except OSError:
+            return 0, 0
+        key = str(path), stat.st_mtime_ns, stat.st_size
+        cached = self._hashline_summaries.get(key)
+        if cached is not None:
+            return cached
+        handshakes = pmkids = 0
+        try:
+            with path.open(encoding="utf-8", errors="replace") as lines:
+                for line in lines:
+                    if line.startswith(("WPA*02*", "WPA*04*")):
+                        handshakes += 1
+                    elif line.startswith(("WPA*01*", "WPA*03*")):
+                        pmkids += 1
+        except OSError:
+            return 0, 0
+        summary = handshakes, pmkids
+        self._hashline_summaries[key] = summary
+        return summary
 
     def summary(self) -> Optional[str]:
         """One-line count of every saved capture, e.g. '3 handshakes, 1 WEP key',

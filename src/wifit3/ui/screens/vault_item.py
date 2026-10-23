@@ -166,7 +166,6 @@ class _CapturePanel(VerticalGroup):
 
     def on_mount(self) -> None:
         self._update_display(self._files[0])
-        self.call_after_refresh(self._update_tool_rows)
 
     def on_resize(self) -> None:
         self.call_after_refresh(self._update_tool_rows)
@@ -183,7 +182,7 @@ class _CapturePanel(VerticalGroup):
         kg.remove_children()
 
         self._tool_layout = None
-        self._update_tool_rows()
+        self.call_after_refresh(self._update_tool_rows)
 
         def _row(label: str, val: str, btn_id: str, target_type: Optional[CaptureType] = None):
             verify_btn = Button("Verify", id=f"verify-{btn_id}", variant="primary", classes="verify-btn",
@@ -210,9 +209,7 @@ class _CapturePanel(VerticalGroup):
             if ascii_val:
                 kg.mount(_row("ASCII Key", ascii_val, "copy-ascii", target_type=CaptureType.WEP))
         elif self._title == "HASHCAT":
-            text = self.app.vault.capture_payload(cap)
-            hs = sum(1 for ln in text.splitlines() if ln.startswith(("WPA*02*", "WPA*04*")))
-            pmkid = sum(1 for ln in text.splitlines() if ln.startswith(("WPA*01*", "WPA*03*")))
+            hs, pmkid = self.app.vault.hashline_summary(cap)
             parts = []
             if hs: parts.append(f"{hs} handshake{'s' if hs != 1 else ''}")
             if pmkid: parts.append(f"{pmkid} PMKID{'s' if pmkid != 1 else ''}")
