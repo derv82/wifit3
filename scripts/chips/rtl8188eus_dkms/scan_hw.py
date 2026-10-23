@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 import libusb_package
 import usb.core
 
+from wifit3.chips.rtl8188eus_dkms import SUPPORTED_IDS
 from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
 from wifit3.dot11.packet import Packet
 
@@ -57,11 +58,17 @@ class BeaconTally:
 
 
 async def run(args) -> int:
-    entry = Rtl8188eusDkmsDriver.SUPPORTED_IDS[0]
     backend = libusb_package.get_libusb1_backend()
-    dev = usb.core.find(idVendor=entry.vid, idProduct=entry.pid, backend=backend)
-    if dev is None:
-        print(f"[FAIL] no {entry.vid:04x}:{entry.pid:04x} on the USB bus "
+    entry = None
+    dev = None
+    for candidate in SUPPORTED_IDS:
+        dev = usb.core.find(idVendor=candidate.vid, idProduct=candidate.pid, backend=backend)
+        if dev is not None:
+            entry = candidate
+            break
+    if dev is None or entry is None:
+        ids = ", ".join(f"{item.vid:04x}:{item.pid:04x}" for item in SUPPORTED_IDS)
+        print(f"[FAIL] no supported RTL8188EUS ID ({ids}) on the USB bus "
               "(plug in + Zadig/WinUSB-bind the card)")
         return 1
     try:

@@ -74,6 +74,15 @@ def test_watchdog_tick_clamps_and_writes_igi(mocker):
     assert tick.igi == 0x2A                         # 0x29 + 2 = 0x2b -> clamped to 0x2a
 
 
+def test_watchdog_tick_continues_after_deferred_powertrack(mocker):
+    mocker.patch("wifit3.chips.rtl8188eus_dkms.powertrack.thermal_tick",
+                 side_effect=NotImplementedError)
+    nhm = mocker.patch.object(dig, "_nhm")
+    state = dig.WatchdogState(cur_ig_value=0x20, cur_cck_cca_thres=0x40)
+    dig.watchdog_tick(RegTx({0x0CF0: 3000}), state, None)
+    nhm.assert_called_once()
+
+
 def test_watchdog_tick_no_igi_write_when_unchanged(mocker):
     mocker.patch("wifit3.chips.rtl8188eus_dkms.powertrack.thermal_tick")
     st = dig.WatchdogState(cur_ig_value=0x20, cur_cck_cca_thres=0x40)
