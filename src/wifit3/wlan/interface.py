@@ -225,8 +225,8 @@ class WlanInterface:
 
     @property
     def supported_channels(self) -> List[int]:
-        """Channels the active driver can tune to (delegates to the driver)."""
-        return self.driver.SUPPORTED_CHANNELS
+        """Channels this adapter instance can tune to."""
+        return self.driver.supported_channels
 
     def _deauth_frame(self, dest: bytes, src: bytes, ap_mac: bytes, dest_str: str) -> bytes:
         """One 802.11 deauth MPDU addressed dest←src, reason 7, destination-keyed ACK NAV."""

@@ -82,6 +82,13 @@ def test_parse_tx_power_2g():
     assert (p.cck_diff, p.ofdm_diff, p.bw20_diff) == (0, 1, 0)
 
 
+def test_parse_tx_power_blank_bases_use_8188e_ic_defaults():
+    p = efuse._parse_tx_power(b"\xff" * 512)
+    assert p.cck_base == (0x2D,) * 6
+    assert p.bw40_base == (0x2D,) * 5
+    assert (p.cck_diff, p.ofdm_diff, p.bw20_diff) == (0, -1, -1)
+
+
 def test_parse_tx_power_signed_diff_nibbles():
     # diff byte 0xF8 -> MSB nibble 0xF = -1 (BW20), LSB nibble 0x8 = -8 (OFDM).
     m = bytearray(b"\x20" * 512)
@@ -118,6 +125,31 @@ def test_board_options_type_glna_gain_select():
     assert _board(0b0010_1000).type_glna == 0x2   # [6:4]=2
     assert _board(0b0001_1000).type_glna == 0x0   # [6:4]=1 (unsupported)
     assert _board(0xFF).type_glna == 0x0          # [6:4]=7 -> reference card
+
+
+def test_channel_plan_hardware_forced_fcc_limits_to_1_through_11():
+    m = bytearray(b"\xff" * 512)
+    m[0] = 0x29
+    m[1] = 0x81
+    m[0xB8] = 0xA2  # EEPROM_CHANNEL_PLAN_BY_HW_MASK | RTW_CHPLAN_FCC1_NULL
+    plan, channels = efuse.read_channel_plan(bytes(m), autoload_failed=False)
+    assert plan == 0x22
+    assert channels == tuple(range(1, 12))
+
+
+def test_channel_plan_autoload_failure_uses_world_default():
+    plan, channels = efuse.read_channel_plan(b"\xff" * 512, autoload_failed=True)
+    assert plan == 0x20
+    assert channels == tuple(range(1, 14))
+
+
+def test_channel_plan_country_code_overrides_hardware_plan():
+    m = bytearray(b"\xff" * 512)
+    m[0xB8] = 0xA2
+    m[0xCB:0xCD] = b"JP"
+    plan, channels = efuse.read_channel_plan(bytes(m), autoload_failed=False)
+    assert plan == 0xA2
+    assert channels == tuple(range(1, 15))
 
 
 def test_iol_efuse_patch_sequence():

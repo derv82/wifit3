@@ -1,10 +1,15 @@
 # RTL8188EUS — DKMS (vendor) port
 
-Sibling of `chips/rtl8188eus/` (mainline), ported from the Realtek vendor/DKMS driver
-(`realtek-rtl8188eus` 5.3.9, module `8188eu`, in the capture bundle). RTL8188EUS silicon: 1T1R,
-2.4 GHz only, phydm/ODM RX stack, firmware-based. The goal of the re-port is hotter, **stable**
-2.4 GHz monitor RX than mainline drives the 8188e at. VID:PID `2357:010c`; registered behind
-`WIFIT3_RTL8188` (mainline default, `=dkms` opts in).
+Sibling of `chips/rtl8188eus/` (mainline), ported from the Realtek vendor/DKMS driver. RTL8188EUS
+silicon: 1T1R, 2.4 GHz only, phydm/ODM RX stack, firmware-based. The goal of the re-port is hotter,
+**stable** 2.4 GHz monitor RX than mainline drives the 8188e at. VID:PID `2357:010c`; registered
+behind `WIFIT3_RTL8188` (mainline default, `=dkms` opts in).
+
+## Linux Driver Source
+
+- DKMS source: [aircrack-ng/rtl8188eus](https://github.com/aircrack-ng/rtl8188eus), branch `v5.3.9`.
+- Pinned source commit: [`af3bf004458f76b7aec33e9ba552cd382ed1f5c3`](https://github.com/aircrack-ng/rtl8188eus/tree/af3bf004458f76b7aec33e9ba552cd382ed1f5c3).
+- External audit checkout: `driver_captures/captures_8188eu/driver-source` (not vendored into the Python package).
 
 ## Status
 
@@ -39,21 +44,21 @@ chip state (extract the real efuse / chip-version from the pcap, never trust the
 claims), then diff our emitted bytes against it. Treat every `always / never runs / no-op / we skip`
 comment as a hypothesis to falsify.
 
-**efuse fields are read live, and the ONE wire-affecting board option is now runtime-gated.** MAC /
-TX-power / crystal / thermal all come from the *real* 512 B logical map, not hardcoded. Of the
-board-option bytes, most are inert **in this driver build**: the antenna option (`0xC9 = 0x03`) never
-reaches the wire (`CONFIG_ANTENNA_DIVERSITY` off, [SRC] autoconf.h:94 — `_InitAntenna_Selection` is a
-no-op), the regulatory bits of the board option (`0xC1[2:0]`) are dead code (`CONFIG_TXPWR_LIMIT_EN`
-off, Makefile), the channel plan (`0xB8 = 0xA2`) only picks the SW channel list (no register write),
-and `rfe_type` (`0xCA[1:0]`) never gates a table row nor changes `PHY_SetRFEReg`'s single case-0 arm.
-The *one* byte that changes what the chip is programmed with on another unit is the PA/LNA select
-`0xCA[3:2]` (+ its gain-select `0xCA[6:4]`): this card is blank `0xFF` → `iPA+iLNA`, so the reference
-walk + a no-op `PHY_SetRFEReg_8188E`. As of 2026-07-11 an **external-PA/LNA burn is ported and
-runtime-gated** (`efuse.read_board_options` → `phy_cond.build_driver_words` drives the board-gated
-MAC/PHY_REG/AGC/RADIO_A table rows, and `bb.phy_set_rfe_reg` emits the `0x40 / 0xEE8 / 0x87C` writes).
-The fail-loud `assert_board_options_ported` is gone. (Verified comment-blind 2026-07-07: all four
-captures are the same physical dev card — internal PA+LNA, identical MAC and board bytes; the external
-path is source-ported but **hardware-untested** — see the Debug log.)
+**EFUSE is decoded with the vendor fallbacks, not treated as reference-card constants.** The port
+uses the real 512 B logical map for MAC, TX-power, crystal cap, thermal baseline, PA/LNA, GLNA,
+RFE classification, and channel policy. `REG_9346CR` autoload failure or an invalid logical-map
+ID (`0x8129`) selects the source defaults; blank TX-power bases use the RTL8188E IC default table.
+The country code takes precedence over `0xB8`; otherwise `0xB8` sets the per-adapter 2.4 GHz list.
+The attached reference card resolved to plan `0x21` (ETSI1-null), exposing channels 1–13 during the
+2026-10-23 live bring-up.
+
+**Compile-disabled EFUSE consumers remain inert in this vendor build.** Antenna diversity (`0xC9`) and
+RF-power trim are disabled in `include/autoconf.h`; rate/regulatory power limits from `0xC1` are
+disabled by `CONFIG_TXPWR_LIMIT_EN=n`; VID/PID, customer ID, EEPROM version, power-save, and LED
+settings do not affect monitor-mode hardware initialization. `rfe_type` is retained for source
+parity but `PHY_SetRFEReg_8188E` has only its common case-0/default write sequence. The PA/LNA
+select `0xCA[3:2]` and GLNA select `0xCA[6:4]` do affect table walks: the reference card's blank
+`0xCA` selects internal PA+LNA; external variants are source-ported but hardware-untested.
 
 **Two more deferred items, non-default but real:** the receiver-blocking NBI notch arms only with
 `rtw_adaptivity_en=1` (e.g. ETSI), and powertrack IQK/LCK only fires on ≥8 °C thermal drift.

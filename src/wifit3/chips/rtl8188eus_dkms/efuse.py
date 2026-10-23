@@ -16,6 +16,7 @@ is a later milestone; this module ports the IOL core + patch first.
 """
 from __future__ import annotations
 
+import secrets
 from typing import NamedTuple
 
 from .constants import (
@@ -24,10 +25,15 @@ from .constants import (
     CMD_READ_EFUSE_MAP,
     DEFAULT_CRYSTAL_CAP,
     DISABLE_TRXPKT_BUF_ACCESS,
+    EEPROM_COUNTRY_CODE_88E,
+    EEPROM_ChannelPlan_88E,
+    EEPROM_EN,
     EEPROM_MAC_ADDR_88EU,
     EEPROM_RFE_OPTION_88E,
+    EEPROM_THERMAL_METER_88E,
     EEPROM_TX_PWR_INX_88E,
     EEPROM_XTAL_88E,
+    IC_DEFAULT_TXPWR_8188E,
     EFUSE_ACCESS_OFF,
     EFUSE_ACCESS_ON,
     EFUSE_MAP_LEN_88E,
@@ -48,13 +54,14 @@ from .constants import (
     REG_SYS_FUNC_EN,
     REG_TDECTRL,
     REG_TXPKTBUF_DBG,
+    RTL_EEPROM_ID,
     SW_OFFLOAD_EN,
     TXPKT_BUF_SELECT,
 )
 from .firmware import _8051_reset
 
 
-def read_adapter_info(t) -> None:
+def read_adapter_info(t) -> bool:
     """Probe-time chip-info read, before power-on [SRC] read_adapter_info_8188eu (USB).
 
     Three steps the kernel runs at USB probe, ahead of ``_InitPowerOn``:
@@ -69,7 +76,7 @@ def read_adapter_info(t) -> None:
     feed software state (version/autoload); nothing here gates on hardware we don't have."""
     t.read32(REG_SYS_CFG)                       # read_chip_version_8188e
     t.read16(REG_9346CR)                        # GetEEPROMSize8188E: BOOT_FROM_EEPROM?
-    t.read8(REG_9346CR)                         # _ReadPROMContent: boot-select + autoload flag
+    autoload_failed = not bool(t.read8(REG_9346CR) & EEPROM_EN)
     # hal_EfusePowerSwitch_RTL8188E(_FALSE, _TRUE)
     t.write8(REG_EFUSE_ACCESS, EFUSE_ACCESS_ON)
     fn = t.read16(REG_SYS_FUNC_EN)
@@ -78,6 +85,7 @@ def read_adapter_info(t) -> None:
     clk = t.read16(REG_SYS_CLKR)
     if (not (clk & LOADER_CLK_EN)) or (not (clk & ANA8M)):
         t.write16(REG_SYS_CLKR, clk | LOADER_CLK_EN | ANA8M)
+    return autoload_failed
 
 _IOL_POLL_CAP = 100000   # generous bound; the captured poll always converges
 
@@ -92,19 +100,24 @@ class TxPwr2G(NamedTuple):
 
 
 class BoardOptions(NamedTuple):
-    """RFE/amplifier board options decoded from efuse 0xCA (the AUTO / registry-default
-    path). [SRC] Hal_ReadPAType_8188E + Hal_ReadAmplifierType_8188E."""
+    """RFE/amplifier options from `Hal_Read{PA,Amplifier,RFE}Type_8188E`."""
     external_pa_2g: bool
     external_lna_2g: bool
-    type_glna: int      # ext-LNA gain-table select fed to phydm (0x0/0x1/0x2)
+    type_glna: int
+    rfe_type: int = 0xFF
 
 
 class ChipParams(NamedTuple):
     crystal_cap: int
+    thermal_meter: int
     mac_address: bytes
-    efuse_map: bytes   # the 512-byte logical map
-    tx_power: TxPwr2G  # path-A 2.4G TX-power PG decode
-    board: BoardOptions  # external PA/LNA board options (drive the phydm table walk + RFE)
+    efuse_map: bytes
+    tx_power: TxPwr2G
+    board: BoardOptions
+    autoload_failed: bool
+    eeprom_id_valid: bool
+    channel_plan: int
+    supported_channels: tuple[int, ...]
 
 
 def iol_mode_enable(t, enable: bool, fw_ready: bool = True) -> None:
@@ -261,7 +274,7 @@ _PA_LNA_2G = {0: (True, True), 1: (True, False), 2: (False, True), 3: (False, Fa
 _GLNA_TYPE = {0: 0x1, 2: 0x2}
 
 
-def read_board_options(m: bytes) -> BoardOptions:
+def read_board_options(m: bytes, autoload_failed: bool = False) -> BoardOptions:
     """Decode the external PA/LNA board options from the logical efuse map, AUTO path
     (the registry amplifier/GLNA-type overrides default to 0 / AUTO). [SRC]
     Hal_ReadPAType_8188E rtl8188e_hal_init.c:3044 + Hal_ReadAmplifierType_8188E:3122.
@@ -276,10 +289,12 @@ def read_board_options(m: bytes) -> BoardOptions:
     list, and rfe_type (0xCA[1:0]) never gates a table row nor changes PHY_SetRFEReg's
     single case-0 arm."""
     rfe = m[EEPROM_RFE_OPTION_88E]
-    ext_pa, ext_lna = _PA_LNA_2G[(rfe >> 2) & 0x3]         # 0xCA[3:2]
-    type_glna = _GLNA_TYPE.get((rfe >> 4) & 0x7, 0x0)      # 0xCA[6:4]
-    return BoardOptions(external_pa_2g=ext_pa, external_lna_2g=ext_lna,
-                        type_glna=type_glna)
+    if autoload_failed:
+        return BoardOptions(False, False, 0x1, 0xFF)
+    ext_pa, ext_lna = _PA_LNA_2G[(rfe >> 2) & 0x3]
+    type_glna = _GLNA_TYPE.get((rfe >> 4) & 0x7, 0x0)
+    rfe_type = 0xFF if rfe == 0xFF or not (ext_pa or ext_lna) else rfe & 0x1
+    return BoardOptions(ext_pa, ext_lna, type_glna, rfe_type)
 
 
 def _s4(n: int) -> int:
@@ -293,13 +308,78 @@ def _parse_tx_power(m: bytes) -> TxPwr2G:
     then the diff bytes. The 1TX diff byte packs MSB=BW20, LSB=OFDM; the CCK 1TX diff
     has no efuse byte (CCK base is the 1TX reference) so it stays 0."""
     base = EEPROM_TX_PWR_INX_88E
-    cck_base = tuple(m[base + i] for i in range(6))
-    bw40_base = tuple(m[base + 6 + i] for i in range(5))
+    # hal_load_pg_txpwr_info first reads PG data, then fills each invalid base
+    # from rtl8188e_pg_txpwr_def_info. Every signed 4-bit diff is valid.
+    cck_base = tuple(v if v <= 0x3F else IC_DEFAULT_TXPWR_8188E
+                     for v in m[base:base + 6])
+    bw40_base = tuple(v if v <= 0x3F else IC_DEFAULT_TXPWR_8188E
+                      for v in m[base + 6:base + 11])
     diff = m[base + 11]                              # tx_idx 0 diff byte
     return TxPwr2G(cck_base, bw40_base, 0, _s4(diff & 0x0F), _s4(diff >> 4))
 
 
-def read_chip_params(t, bcnhead: int = 0) -> ChipParams:
+_CHANNEL_PLAN_REGIONS = {
+    "FCC1": {0, 1, 11, 13, 14, 15, 17, 20, 25, 34, 37, 52, 57, 64, 67, 68, 70, 83, 85, 87, 96, 102, 103, 120},
+    "ETSI1": {2, 3, 4, 7, 12, 16, 18, 33, 58, 59, 60, 61, 66, 101, 106},
+    "MKK1": {5, 6, 8, 9, 23, 35, 39, 55, 56},
+    "WORLD": {10, 19, 21, 22, 32, 38, 40, 41, 45, 47, 48, 49, 50, 51, 53, 54, 69, 71, 72, 73, 80, 81, 82, 84, 86, 89, 99, 107, 108, 110, 115, 117, 119, 127},
+    "NULL": {24, 26, 27, 28, 29, 30, 31, 62, 63, 74, 75, 76, 77, 78, 79, 90, 91, 92, 93, 94, 95, 111, 112, 113, 114},
+    "ETSI2": {36},
+    "FCC2": {42, 97, 98, 104, 105, 109, 116, 118},
+    "IC1": {43},
+    "MKK2": {44, 88, 100, 121},
+    "WORLD1": {46},
+    "GLOBAL": {65},
+}
+
+_COUNTRY_REGIONS = {
+    "WORLD": "AD AE AG AI AL AM AN AO AQ AT AU AZ BA BD BE BF BG BH BI BJ BN BO BW BY CC CD CF CG CH CI CK CL CM CN CV CX CY CZ DE DJ DK DZ EE EG EH ER ES ET FI FK FO FR GA GB GE GF GG GH GI GL GM GN GP GQ GR GS GW HK HM HN HR HU IE IL IM IN IQ IR IS IT JE JM JO KE KG KH KI KR KW KZ LA LB LI LK LR LS LT LU LV LY MA MC MD ME MG MK ML MM MN MO MQ MR MS MT MU MV MW MY MZ NA NC NE NF NG NL NO NP NR NU NZ OM PF PG PH PK PL PM PT QA RE RO RS RU RW SA SB SE SG SH SI SJ SK SL SM SN SO SV SZ TC TD TF TG TH TJ TK TM TN TO TR TZ UA UG UY UZ VA VE VN VU WF YE YT ZA ZM ZW".split(),
+    "ETSI1": "AF ID TT".split(),
+    "FCC2": "AR AS AW BB BR BS BZ CO CR DM DO EC FJ FM GT GU HT KN KY LC MF MH MP MX NI PA PE PR PW PY SC SR ST SX TW US VC VI WS".split(),
+    "IC1": ["CA"],
+    "FCC1": ["GD", "GY"],
+    "MKK1": ["JP"],
+}
+
+
+def _channels_for_region(region: str) -> tuple[int, ...]:
+    if region == "FCC1":
+        return tuple(range(1, 12))
+    if region in ("WORLD", "ETSI1", "FCC2", "IC1", "MKK2"):
+        return tuple(range(1, 14))
+    if region == "MKK1" or region == "GLOBAL":
+        return tuple(range(1, 15))
+    if region == "ETSI2":
+        return (10, 11, 12, 13)
+    if region == "WORLD1":
+        return tuple(range(1, 12))
+    return ()
+
+
+def read_channel_plan(m: bytes, autoload_failed: bool) -> tuple[int, tuple[int, ...]]:
+    """`hal_com_config_channel_plan` for the 2.4 GHz-only 8188E build."""
+    plan = m[EEPROM_ChannelPlan_88E]
+    country = bytes(m[EEPROM_COUNTRY_CODE_88E:EEPROM_COUNTRY_CODE_88E + 2])
+    if not autoload_failed and country.isalpha() and country.isascii():
+        country_code = country.decode().upper()
+        for region, countries in _COUNTRY_REGIONS.items():
+            if country_code in countries:
+                return plan, _channels_for_region(region)
+    if autoload_failed or plan == 0xFF:
+        plan = 0x20  # RTW_CHPLAN_WORLD_NULL
+    else:
+        plan &= 0x7F  # EEPROM_CHANNEL_PLAN_BY_HW_MASK
+    for region, plans in _CHANNEL_PLAN_REGIONS.items():
+        if plan in plans:
+            return plan, _channels_for_region(region)
+    return 0x20, _channels_for_region("WORLD")
+
+
+def _invalid_mac(mac: bytes) -> bool:
+    return len(mac) != 6 or mac in (b"\x00" * 6, b"\xff" * 6) or bool(mac[0] & 0x03)
+
+
+def read_chip_params(t, autoload_failed: bool = False, bcnhead: int = 0) -> ChipParams:
     """Probe-phase efuse read [SRC] ReadEFuseByIC -> iol_read_efuse: power-on (done
     by the caller) then IOL READ_EFUSE_MAP, read the physical map out of the packet
     buffer, decode it, and extract crystal_cap + MAC. Returns the logical map too."""
@@ -313,10 +393,16 @@ def read_chip_params(t, bcnhead: int = 0) -> ChipParams:
     t.write8(REG_EFUSE_ACCESS, EFUSE_ACCESS_OFF)
 
     logical = _phymap_to_logical(phymap)
+    eeprom_id_valid = int.from_bytes(logical[:2], "little") == RTL_EEPROM_ID
+    autoload_failed = autoload_failed or not eeprom_id_valid
     cap = logical[EEPROM_XTAL_88E]
-    if cap == 0xFF:
-        cap = DEFAULT_CRYSTAL_CAP
+    crystal_cap = DEFAULT_CRYSTAL_CAP if autoload_failed or cap == 0xFF else cap
+    thermal = logical[EEPROM_THERMAL_METER_88E]
+    thermal_meter = 0x18 if autoload_failed or thermal == 0xFF else thermal
     mac = logical[EEPROM_MAC_ADDR_88EU:EEPROM_MAC_ADDR_88EU + 6]
-    return ChipParams(crystal_cap=cap, mac_address=mac, efuse_map=logical,
-                      tx_power=_parse_tx_power(logical),
-                      board=read_board_options(logical))
+    if autoload_failed or _invalid_mac(mac):
+        mac = b"\x00\xe0\x4c" + secrets.token_bytes(3)
+    channel_plan, supported_channels = read_channel_plan(logical, autoload_failed)
+    return ChipParams(crystal_cap, thermal_meter, mac, logical, _parse_tx_power(logical),
+                      read_board_options(logical, autoload_failed), autoload_failed,
+                      eeprom_id_valid, channel_plan, supported_channels)
