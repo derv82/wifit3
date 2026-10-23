@@ -27,7 +27,7 @@ from wifit3.models import AccessPoint
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
-from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
+from .screens.error_modals import FatalErrorModal, RecoverableErrorModal, ReturnToSplashModal
 from .screens.new_device import NewDeviceDialog
 from .screens.vault_drawer import VaultDrawer
 from .screens.vault_table import VaultTable
@@ -393,7 +393,7 @@ class WifiteApp(App):
         self.push_screen(RecoverableErrorModal(WifiteDeviceLostError("the wireless adapter")))
 
     async def recover_to_splash(self) -> None:
-        """Return to the splash screen after the last card was lost."""
+        """Return to Splash and release the active wireless device pool."""
         array = self.array
         # Unwind to the base default screen (kept by `> 1`), then re-push splash onto it.
         while len(self.screen_stack) > 1:
@@ -410,6 +410,17 @@ class WifiteApp(App):
                 logger.debug("Closing the lost pool failed (already gone)", exc_info=True)
         self.array = None
         self.target_ap = None
+
+    def action_return_to_splash(self) -> None:
+        if isinstance(self.screen, ReturnToSplashModal):
+            return
+
+        def _confirmed(confirmed: bool | None) -> None:
+            if confirmed:
+                self.run_worker(
+                    self.recover_to_splash(), exclusive=True, group="return-to-splash")
+
+        self.push_screen(ReturnToSplashModal(), _confirmed)
 
     def action_preferences(self) -> None:
         self.push_screen(PreferencesModal())

@@ -1,14 +1,53 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from wifit3.chips.driver import DeviceID
 from wifit3.persist.config import Config
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
+from wifit3.ui.screens.error_modals import ReturnToSplashModal
 from wifit3.ui.screens.scanner import ScannerView
 from textual.widgets import Button, RichLog
 from textual.widgets._header import HeaderTitle
 
 from wifit3.ui.ap_table import APTable
+
+
+def test_scanner_escape_is_bound_to_return_to_splash():
+    binding = next(binding for binding in ScannerView.BINDINGS if binding.key == "escape")
+    assert binding.action == "app.return_to_splash"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_return_to_splash_confirmation_closes_active_devices():
+    app = WifiteApp()
+    array = MagicMock(close=AsyncMock())
+    async with app.run_test() as pilot:
+        app.array = array
+        app.target_ap = MagicMock()
+
+        app.action_return_to_splash()
+        await pilot.pause()
+        assert isinstance(app.screen, ReturnToSplashModal)
+        app.screen.query_one("#btn-cancel", Button).press()
+        await pilot.pause()
+        assert isinstance(app.screen, SplashView)
+        array.close.assert_not_awaited()
+        assert app.array is array
+
+        app.action_return_to_splash()
+        await pilot.pause()
+        app.screen.query_one("#btn-confirm", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, SplashView)
+        array.close.assert_awaited_once()
+        assert app.array is None
+        assert app.target_ap is None
 
 
 def test_desktop_notification_requires_blurred_enabled_app(mocker):

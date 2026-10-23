@@ -153,6 +153,7 @@ class ScannerView(Screen):
     """
 
     BINDINGS = [
+        Binding("escape", "app.return_to_splash", "Splash", show=True),
         Binding("q", "app.quit", "Quit", show=True),
         Binding("c", "change_channel", "Channel Filter", show=True),
         Binding("e", "focus_encryption", "Encryption", show=True),

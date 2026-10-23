@@ -3,11 +3,52 @@ from __future__ import annotations
 
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Label, Static
 
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
+
+
+class ReturnToSplashModal(ModalScreen[bool]):
+    """Confirm leaving the active wireless session and releasing its devices."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    DEFAULT_CSS = """
+    ReturnToSplashModal { align: center middle; }
+    ReturnToSplashModal #dialog {
+        width: 58; max-width: 100%; height: auto; max-height: 100%;
+        border: thick $warning; background: $surface; padding: 1 2;
+    }
+    ReturnToSplashModal #title {
+        content-align: center middle; margin-bottom: 1; text-style: bold; color: $text-warning;
+    }
+    ReturnToSplashModal #message { height: auto; margin-bottom: 1; }
+    ReturnToSplashModal #button-row { height: auto; align: center middle; }
+    ReturnToSplashModal #button-row Button { margin: 0 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Label("Return to Splash?", id="title")
+            yield Static("This stops the active session and safely releases all wireless cards.",
+                         id="message")
+            with Horizontal(id="button-row"):
+                yield Button("Cancel", id="btn-cancel")
+                yield Button("Return to Splash", variant="warning", id="btn-confirm")
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+    @on(Button.Pressed, "#btn-cancel")
+    def _cancel(self) -> None:
+        self.dismiss(False)
+
+    @on(Button.Pressed, "#btn-confirm")
+    def _confirm(self) -> None:
+        self.dismiss(True)
 
 
 class FatalErrorModal(ModalScreen[None]):
