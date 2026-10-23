@@ -417,7 +417,7 @@ class Rtl8822buDkmsDriver(Driver):
         12) and bulk-OUT the frame once. Live TX is the user's explicit
         action — the agent never calls this; the descriptor build is unit-tested in test_tx.py (no
         TX in the passive capture to pcap-diff)."""
-        hw_rate, rate_id = ((DESC_RATE6M, RATEID_IDX_G) if self._channel > 14
+        hw_rate, rate_id = ((DESC_RATE6M, RATEID_IDX_G) if self._channel is not None and self._channel > 14
                             else (DESC_RATE1M, RATEID_IDX_B))
         payload = tx.build_inject_txdesc(bytes(frame_bytes), hw_rate=hw_rate, rate_id=rate_id)
         loop = asyncio.get_running_loop()
