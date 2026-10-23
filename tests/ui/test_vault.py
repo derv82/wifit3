@@ -70,7 +70,7 @@ async def test_delete_in_panel_confirms_and_removes(tmp_path):
     async with app.run_test() as pilot:
         view = await _open_vault(app)
         await pilot.pause()
-        
+
         aps = view.query_one("#vault-table")._aps
         bssid, (ssid, caps) = next(iter(aps.items()))
         view.query_one("VaultItemView").load(bssid, ssid, caps)
@@ -173,7 +173,7 @@ async def test_vault_keeps_emoji_named_mac_octets_literal(tmp_path):
         assert cell.plain == "HomeNet ✓WEP aa:cd:11:22:33:44"
         assert "💿" not in cell.plain
         title = view.query_one("VaultItemView")._border_title
-        assert title.plain == " HomeNet (aa:cd:11:22:33:44) "
+        assert title.plain == " HomeNet  (aa:cd:11:22:33:44) "
         assert all(span.end <= title.plain.index("aa:cd") for span in title.spans)
 
 
@@ -378,7 +378,7 @@ async def test_delete_cancelled_keeps_file(tmp_path):
     async with app.run_test() as pilot:
         view = await _open_vault(app)
         await pilot.pause()
-        
+
         aps = view.query_one("#vault-table")._aps
         bssid, (ssid, caps) = next(iter(aps.items()))
         view.query_one("VaultItemView").load(bssid, ssid, caps)
