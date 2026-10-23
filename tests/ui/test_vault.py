@@ -348,6 +348,31 @@ async def test_open_vault_updates_when_handshake_is_saved(tmp_path, mocker):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
+async def test_rapid_selection_only_loads_the_final_ap(tmp_path, mocker):
+    for index, name in enumerate(("Alpha", "Bravo", "Charlie")):
+        bssid = f"00-11-22-33-44-{index:02x}"
+        _write(tmp_path, f"{name}_{bssid}_1000_wep_key.txt",
+               f"SSID: {name}\nBSSID: {bssid.replace('-', ':')}\nWEP key (hex): 6162\n")
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        app.push_screen(VaultDrawer())
+        await pilot.pause()
+        drawer = app.screen
+        table = drawer.query_one("#vault-aps", DataTable)
+        load_widget = mocker.patch.object(drawer, "_load_widget")
+
+        table.move_cursor(row=0)
+        table.move_cursor(row=1)
+        table.move_cursor(row=2)
+        await pilot.pause(0.02)
+        load_widget.assert_not_called()
+
+        await pilot.pause(0.1)
+        load_widget.assert_called_once_with("00:11:22:33:44:02")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
 async def test_selection_restored_after_reload(tmp_path):
     _write(tmp_path, "Alpha_aa-bb-cc-dd-ee-ff_1000_wep_key.txt",
            "SSID: Alpha\nBSSID: aa:bb:cc:dd:ee:ff\nWEP key (hex): 6162\n")
