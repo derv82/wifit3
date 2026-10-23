@@ -31,6 +31,7 @@ from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
 from . import bringup, chan, dm_watchdog, led, mac, sipi, tx, txpower
+from .constants import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G
 from .rx import FCS_LEN, RXDESC_SIZE, _rnd8, iter_frames
 from .transport import Rtl8822buTransport
 
@@ -416,7 +417,9 @@ class Rtl8822buDkmsDriver(Driver):
         12) and bulk-OUT the frame once. Live TX is the user's explicit
         action — the agent never calls this; the descriptor build is unit-tested in test_tx.py (no
         TX in the passive capture to pcap-diff)."""
-        payload = tx.build_inject_txdesc(bytes(frame_bytes))
+        hw_rate, rate_id = ((DESC_RATE6M, RATEID_IDX_G) if self._channel > 14
+                            else (DESC_RATE1M, RATEID_IDX_B))
+        payload = tx.build_inject_txdesc(bytes(frame_bytes), hw_rate=hw_rate, rate_id=rate_id)
         loop = asyncio.get_running_loop()
         async with self._io_lock:
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
