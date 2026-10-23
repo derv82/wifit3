@@ -98,8 +98,11 @@ class WifiteApp(App):
         text-style: bold reverse;   /* clear cue when Tab lands on START / Uninstall */
     }
     #start-btn {
-        color: white;
+        color: black;
         text-style: bold;
+    }
+    #start-btn:hover {
+        color: white;
     }
     #uninstall-btn {
         margin-top: 1;              /* stacked under START */
