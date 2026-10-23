@@ -141,6 +141,16 @@ async def test_the_bar_fills_its_box_and_the_percentage_has_two_decimals():
         assert app.query_one(".job-name", Label).styles.text_align == "right"
 
 
+def test_compact_name_hides_the_cracking_tool_prefix():
+    job = _job()
+    job.display_name = "Hashcat (HomeNet)"
+    row = JobRow(job, compact_name=True)
+
+    assert row._name_markup(job) == "[bold]HomeNet[/bold]"
+    job.display_name = "Hashcat (VeryLongAccessPointName)"
+    assert row._name_markup(job) == "[bold]VeryLongAcce…[/bold]"
+
+
 async def test_job_buttons_shrink_when_detail_would_have_less_than_16_columns():
     job = _job(
         actions=JobAction.STOP | JobAction.PAUSE | JobAction.SKIP,
@@ -182,6 +192,7 @@ async def test_job_buttons_shrink_when_detail_would_have_less_than_16_columns():
         assert name_compact_pane.has_class("-hide-progress")
         assert name_compact_pane.has_class("-compact-name")
         assert name_compact_row.query_one(".job-name", Label).size.width == 13
+        assert "Hashcat" not in str(name_compact_row.query_one(".job-name", Label).render())
 
     wide_app = JobPaneApp()
     async with wide_app.run_test(size=(130, 24)) as pilot:

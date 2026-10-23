@@ -61,10 +61,11 @@ class JobSkipButton(Button):
 class JobRow(Horizontal):
     """One job on a single line: name, progress bar, status badge, detail, skip + action buttons."""
 
-    def __init__(self, job: JobState):
+    def __init__(self, job: JobState, compact_name: bool = False):
         super().__init__(classes="job-row")
         self.job_id = job.job_id
         self._job = job
+        self._compact_name = compact_name
 
     def compose(self) -> ComposeResult:
         yield Label(self._name_markup(self._job), classes="job-name")
@@ -90,9 +91,20 @@ class JobRow(Horizontal):
         self.query_one(JobSkipButton).sync(job)
         self.query_one(JobActionButton).sync(job)
 
+    def set_compact_name(self, compact_name: bool) -> None:
+        if self._compact_name == compact_name:
+            return
+        self._compact_name = compact_name
+        if self.is_attached:
+            self.query_one(".job-name", Label).update(self._name_markup(self._job))
+
     def _name_markup(self, job: JobState) -> str:
         name = job.display_name
-        if len(name) > 25:
+        if self._compact_name and " (" in name and name.endswith(")"):
+            name = name.rsplit(" (", 1)[1][:-1]
+            if len(name) > 13:
+                name = name[:12] + "…"
+        elif len(name) > 25:
             name = name[:24] + "…"
         return f"[bold]{escape(name)}[/bold]"
 
@@ -178,7 +190,7 @@ class JobTrackerPane(Widget):
         for job in jobs:
             row = self._rows.get(job.job_id)
             if row is None:
-                row = JobRow(job)
+                row = JobRow(job, compact_name=self.has_class("-compact-name"))
                 self._rows[job.job_id] = row
                 container.mount(row)
             else:
@@ -209,9 +221,12 @@ class JobTrackerPane(Widget):
                 compact_name_required, no_bar_fixed_columns + 16 + compact_action_columns)
         compact_actions = self.size.width < normal_required
         hide_progress = compact_actions and self.size.width < compact_required
+        compact_name = hide_progress and self.size.width < compact_name_required
         self.set_class(compact_actions, "-compact-actions")
         self.set_class(hide_progress, "-hide-progress")
-        self.set_class(hide_progress and self.size.width < compact_name_required, "-compact-name")
+        self.set_class(compact_name, "-compact-name")
+        for row in self._rows.values():
+            row.set_compact_name(compact_name)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button = event.button
