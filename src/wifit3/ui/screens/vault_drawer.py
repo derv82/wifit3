@@ -45,10 +45,7 @@ class VaultDrawer(ModalScreen):
         offset-y: 100%;
         transition: offset 200ms in_out_cubic;
     }
-    VaultDrawer.-narrow _CapturePanel .tools, VaultDrawer.-narrow _CapturePanel .actions {
-        layout: vertical;
-    }
-    VaultDrawer.-narrow _CapturePanel .spacer { display: none; }
+
     VaultDrawer.-narrow #vault-main, VaultDrawer.-compact #vault-main {
         layout: vertical;
     }

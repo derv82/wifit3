@@ -54,6 +54,7 @@ def test_xdg_portal_appearance_takes_precedence(monkeypatch):
     assert system_theme._linux_appearance() == "light"
 
 
+
 def test_xdg_portal_parses_the_standard_preference_values(monkeypatch):
     monkeypatch.setattr(
         system_theme, "_command_output", lambda command: "(<uint32 1>,)"

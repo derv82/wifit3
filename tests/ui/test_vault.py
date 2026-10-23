@@ -399,3 +399,26 @@ async def test_a_hashline_capture_offers_each_cracker_by_its_label(tmp_path, wid
         buttons[1].press()
         await pilot.pause(0)
         assert isinstance(app.screen, CpuCrackConfigModal)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_capture_tools_wrap_without_stacking_actions(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _HS_LINE)
+    app = WifiteApp()
+    async with app.run_test(size=(30, 40)) as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        bssid, (ssid, caps) = next(iter(view.query_one("#vault-table")._aps.items()))
+        view.query_one("VaultItemView").load(bssid, ssid, caps)
+        await pilot.pause(0)
+
+        panel = view.query_one(_CapturePanel)
+        buttons = list(panel.query(".tool-btn").results(Button))
+        assert [str(button.label) for button in buttons] == ["Hashcat", "CPU Crack"]
+        assert buttons[0].region.y != buttons[1].region.y
+
+        open_directory = panel.query_one(".open-dir", Button)
+        delete = panel.query_one(".delete", Button)
+        assert open_directory.region.y == delete.region.y
+        assert open_directory.region.x < delete.region.x
