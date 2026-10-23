@@ -70,6 +70,7 @@ class VaultDrawer(ModalScreen):
         self._preselected_bssid = preselected_bssid
         self._selection_timer = None
         self._pending_bssid: str | None = None
+        self._reveal_scheduled = False
 
     def compose(self) -> ComposeResult:
         with Container(id="vault-content"):
@@ -88,8 +89,21 @@ class VaultDrawer(ModalScreen):
         short = self.size.height < 36
         self.set_class(short, "-short")
         self.set_class(not short, "-tall")
-        self.call_after_refresh(lambda: self.add_class("open"))
         self.call_after_refresh(self._focus_list)
+
+    def _schedule_reveal(self) -> None:
+        if self.has_class("open") or self._reveal_scheduled:
+            return
+        self._reveal_scheduled = True
+        self.call_after_refresh(self._reveal_after_content_layout)
+
+    def _reveal_after_content_layout(self) -> None:
+        self.call_after_refresh(self._reveal)
+
+    def _reveal(self) -> None:
+        self._reveal_scheduled = False
+        if self.is_attached:
+            self.add_class("open")
 
     def _focus_list(self) -> None:
         """Land focus on the AP list so up/down works without a Tab press."""
@@ -171,6 +185,7 @@ class VaultDrawer(ModalScreen):
                 self._load_widget(key)
         else:
             self._load_widget("")
+        self._schedule_reveal()
 
     @on(DataTable.RowHighlighted, "#vault-aps")
     def _ap_highlighted(self, event: DataTable.RowHighlighted) -> None:
