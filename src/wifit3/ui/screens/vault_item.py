@@ -16,6 +16,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalGroup
 from textual.content import Content
+from textual.css.query import NoMatches
 from textual.events import Event
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -208,7 +209,12 @@ class _CapturePanel(VerticalGroup):
             kg.mount(Label("[italic]raw .pcap capture[/italic]", classes="key-display"))
 
     def _update_tool_rows(self) -> None:
-        tools = self.query_one(".tools", VerticalGroup)
+        if not self.is_attached:
+            return
+        try:
+            tools = self.query_one(".tools", VerticalGroup)
+        except NoMatches:
+            return
         crackers = [
             tool for tool in self.app.vault.manager.tools.values()
             if tool.can_crack(self._selected_capture)
