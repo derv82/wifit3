@@ -127,6 +127,60 @@ When a second hashcat mode lands (`-m 4800`/`5500`), the save layer needs a per-
 
 ------------
 
+### (Windows Performance) `timeBeginPeriod(1)` for timer granularity
+
+On Windows `asyncio.sleep` floors at the 15.6 ms timer tick (a 2 ms sleep takes 15.6 ms, 102.4 ms
+takes 109.1). Calling `timeBeginPeriod(1)` at startup measured 2.6 ms and 103.6 ms. It could cut
+latency in the loops that sleep short intervals, but it raises the system timer rate, which can
+cost CPU and battery.
+
+Untested in the app. To adopt: compare CPU with and without it on the Scanner and on Focus
+(about 5 minutes each), then on a slow device; keep it only if CPU doesn't change.
+
+------------
+
+### AutoDeauth settings modal
+
+AutoDeauth has no options today. Give its button a launch modal, like EvilTwin, with
+its settings persisted in `Config` (not in Preferences).
+
+- Checkboxes to select deauth methods (some disabled when PMF Required).
+- Option to deauth from every card at once, offered only when 2+ cards are plugged in.
+   - Idea proposed by xxcosita3czxx in #114
+
+------------
+
+### Focus: Deauth dropdown
+
+Replace the `Deauth all` button with a `Deauth` dropdown:
+- `Deauthenticate`
+- `Channel-Switch Announce (CSA)`
+- `BSS Transition Mode (BTM)`
+- `Deauth from all X cards`, only when 2+ cards are plugged in.
+
+------------
+
+### Remappable keybindings
+
+A modal with its own `keybinds` section in `Config`, opened from one `Edit Keybindings` 
+row in Preferences. Low priority.
+
+Grid with each row having the functionality, current keybinding, "Default" button.
+
+------------
+
+### Settings as a full-screen view
+
+Promote Preferences from a modal to a full-screen (or partial-screen, slide-up like the Vault) view,
+with room for categories.
+
+Not yet: Preferences is deliberately small (core settings users rarely change: color theme, 
+where and how to save captures, how to auto-crack).
+
+Do this only when absolutely necessary; prefer a per-feature modal over a new Preferences row.
+
+------------
+
 ## Undecided
 
 ### Captive Portal
