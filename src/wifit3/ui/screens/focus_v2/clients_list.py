@@ -143,6 +143,7 @@ class ClientsList(Vertical):
         self._clients = clients
         self._rows: dict[str, ClientWidget] = {}
         self._deauth_enabled: bool | None = None
+        self._last_snapshot: tuple | None = None
 
     def compose(self) -> ComposeResult:
         # Broadcast button pinned at the top; only the row list scrolls below it.
@@ -164,6 +165,11 @@ class ClientsList(Vertical):
 
     def sync(self, clients) -> None:
         """Reconcile client row information to match ``clients``."""
+        clients = list(clients)
+        snapshot = tuple((c.mac, c.signal, c.packets, c.fingerprint) for c in clients)
+        if snapshot == self._last_snapshot:
+            return
+        self._last_snapshot = snapshot
         current = {c.mac for c in clients}
         for mac in list(self._rows):
             if mac not in current:
