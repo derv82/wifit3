@@ -79,6 +79,9 @@ class JobRow(Horizontal):
     def on_mount(self) -> None:
         self.sync(self._job)
 
+    def on_resize(self) -> None:
+        self._sync_action_widths()
+
     def sync(self, job: JobState) -> None:
         self._job = job
         self.query_one(".job-name", Label).update(self._name_markup(job))
@@ -89,6 +92,20 @@ class JobRow(Horizontal):
         self.query_one(JobPauseButton).sync(job)
         self.query_one(JobSkipButton).sync(job)
         self.query_one(JobActionButton).sync(job)
+        self._sync_action_widths()
+
+    def _sync_action_widths(self) -> None:
+        fixed_columns = 57
+        action_columns = sum(
+            12 + button.styles.margin.width
+            for button in self.query(
+                ".job-pause-btn, .job-skip-btn, .job-action-btn").results(Button)
+            if button.display
+        )
+        self.set_class(
+            self.size.width - fixed_columns - action_columns < 16,
+            "-compact-actions",
+        )
 
     def _name_markup(self, job: JobState) -> str:
         name = job.display_name
@@ -122,6 +139,7 @@ class JobRow(Horizontal):
 class JobTrackerPane(Widget):
     """Active-job list inside the Vault drawer. Rows are updated in place so a progress
     tick never tears the list down and rebuilds it (which was the source of the flicker)."""
+
 
     DEFAULT_CSS = """
     JobTrackerPane {

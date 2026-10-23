@@ -112,8 +112,14 @@ def test_pause_button_offers_resume_to_a_paused_job_and_nothing_to_an_unreachabl
 
 
 class JobPaneApp(App):
-    """Just the tracker pane, for the measurements its CSS is responsible for."""
+    """Just the tracker pane, with the app-wide button minimum used by Wifit3."""
 
+    CSS = """
+    Button { min-width: 12; margin-right: 1; }
+    JobRow.-compact-actions .job-pause-btn,
+    JobRow.-compact-actions .job-skip-btn,
+    JobRow.-compact-actions .job-action-btn { min-width: 0; width: auto; }
+    """
     active_jobs: reactive[list[JobState]] = reactive([], always_update=True)
 
     def compose(self) -> ComposeResult:
@@ -131,6 +137,33 @@ async def test_the_bar_fills_its_box_and_the_percentage_has_two_decimals():
         assert app.query_one("#bar").size.width == 11
         assert str(app.query_one(".job-percent", Label).render()) == "0.29%"
         assert app.query_one(".job-name", Label).styles.text_align == "right"
+
+
+async def test_job_buttons_shrink_when_detail_would_have_less_than_16_columns():
+    job = _job(
+        actions=JobAction.STOP | JobAction.PAUSE | JobAction.SKIP,
+        percent=42.0,
+        detail="a-very-long-wordlist-name.txt",
+    )
+
+    narrow_app = JobPaneApp()
+    async with narrow_app.run_test(size=(110, 24)) as pilot:
+        narrow_app.active_jobs = [job]
+        await pilot.pause()
+        narrow_row = narrow_app.query_one(JobRow)
+        assert narrow_row.has_class("-compact-actions")
+        assert all(narrow_row.query_one(button_type).size.width < 12 for button_type in (
+            JobPauseButton, JobSkipButton, JobActionButton))
+
+    wide_app = JobPaneApp()
+    async with wide_app.run_test(size=(130, 24)) as pilot:
+        wide_app.active_jobs = [job]
+        await pilot.pause()
+        wide_row = wide_app.query_one(JobRow)
+        assert not wide_row.has_class("-compact-actions")
+        assert wide_row.query_one(".job-detail", Label).size.width >= 16
+        assert all(wide_row.query_one(button_type).size.width >= 12 for button_type in (
+            JobPauseButton, JobSkipButton, JobActionButton))
 
 
 def test_action_button_stops_a_running_job_and_clears_a_finished_one():
