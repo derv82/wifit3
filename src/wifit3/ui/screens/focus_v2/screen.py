@@ -288,6 +288,8 @@ class FocusViewV2(Screen):
         self._binding_sig: Optional[tuple] = None
         self._rspacer_w = -1                          # last-set spacer width; skip no-op relayouts
         self._status_below_actions = False
+        self._status_layout_signature: tuple | None = None
+        self._last_footer_markups: tuple[str, ...] | None = None
 
     # ----- compose -----------------------------------------------------------
 
@@ -510,6 +512,7 @@ class FocusViewV2(Screen):
         self._events.reset()
         self._eapol_agg.reset()
         self._prev_stats = None        # drop the old target's counters
+        self._last_footer_markups = None
         self.query_one("#log", LogBand).clear()
 
         status = self._status()
@@ -700,6 +703,15 @@ class FocusViewV2(Screen):
         topbar_w = self.size.width
         actions = self.query_one("#actions")
         visible_buttons = [button for button in actions.query(Button) if button.display]
+        signature = (
+            self.size.width,
+            self.has_class("-short"),
+            tuple((button.id, str(button.label)) for button in visible_buttons),
+            tuple(self._last_status or ()),
+        )
+        if signature == self._status_layout_signature:
+            return
+        self._status_layout_signature = signature
         actions_w = sum(
             button.get_content_width(self.size, self.size) + button.styles.margin.width
             for button in visible_buttons
@@ -730,8 +742,11 @@ class FocusViewV2(Screen):
         if ap is None:
             return
         array = self.app.array
-        lines = [Text.from_markup(m, emoji=False)
-                 for m in fm.status_under_dash(ap, array, time.time())]
+        markups = tuple(fm.status_under_dash(ap, array, time.time()))
+        if markups == self._last_footer_markups:
+            return
+        self._last_footer_markups = markups
+        lines = [Text.from_markup(markup, emoji=False) for markup in markups]
         self.query_one("#dashboard", PacketDashboard).set_footer(lines)
 
     # ----- endpoint LED flicker (instrumentation) ----------------------------

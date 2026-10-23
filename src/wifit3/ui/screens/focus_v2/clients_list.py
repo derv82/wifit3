@@ -142,6 +142,7 @@ class ClientsList(Vertical):
         super().__init__(**kwargs)
         self._clients = clients
         self._rows: dict[str, ClientWidget] = {}
+        self._deauth_enabled: bool | None = None
 
     def compose(self) -> ComposeResult:
         # Broadcast button pinned at the top; only the row list scrolls below it.
@@ -186,6 +187,9 @@ class ClientsList(Vertical):
 
     def set_deauth_enabled(self, enabled: bool) -> None:
         """Enable/disable every deauth control (✕)."""
+        if enabled == self._deauth_enabled:
+            return
+        self._deauth_enabled = enabled
         disabled = not enabled
         for btn in self.query(Button):
             btn.disabled = disabled

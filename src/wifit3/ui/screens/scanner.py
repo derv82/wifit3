@@ -76,8 +76,11 @@ class _ChannelReadout(HeaderClock):
     def _poll(self) -> None:
         array = getattr(self.app, "array", None)
         members = array.members if array else []
-        self.channels = " | ".join(f"CH:{m.current_channel:>3}" for m in members)
-        self.parent.update_channel_layout(self.channels)
+        channels = " | ".join(f"CH:{m.current_channel:>3}" for m in members)
+        if channels == self.channels:
+            return
+        self.channels = channels
+        self.parent.update_channel_layout(channels)
 
     def render(self) -> RenderResult:
         return Text(self.channels)

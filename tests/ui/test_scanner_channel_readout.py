@@ -1,6 +1,7 @@
 """The scanner header's right slot shows the live hopped channel(s), padded so hops
 don't resize it, instead of a wall clock, and it renders without needing a window resize."""
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
@@ -104,3 +105,21 @@ async def test_no_array_is_blank(channel_readout):
     channel_readout.app.array = None
     channel_readout._poll()
     assert channel_readout.channels == ""
+
+
+@pytest.mark.asyncio
+async def test_unchanged_channels_do_not_relayout_header():
+    app = _Host(_array(1, 6))
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        header = app.query_one(_ScannerHeader)
+        update_layout = Mock(wraps=header.update_channel_layout)
+        header.update_channel_layout = update_layout
+        readout = app.query_one(_ChannelReadout)
+
+        readout._poll()
+
+        update_layout.assert_not_called()
+        app.array.members[1].current_channel = 11
+        readout._poll()
+        update_layout.assert_called_once_with("CH:  1 | CH: 11")

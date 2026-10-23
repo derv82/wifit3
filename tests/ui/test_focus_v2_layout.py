@@ -5,6 +5,7 @@ look good") stay the human's call, fed by the exported SVGs.
 
 Sizes are pinned headless via ``run_test(size=...)``: no real terminal."""
 import types
+from unittest.mock import Mock
 
 import pytest_asyncio
 from textual.app import App
@@ -159,6 +160,50 @@ async def test_compact_tiny_focus_keeps_all_router_information_visible():
             assert info.display
             assert info.region.height == 1
             assert router.region.y <= info.region.y < info.region.bottom <= router.region.bottom
+
+
+async def test_status_layout_skips_unchanged_button_measurement(monkeypatch):
+    app = _Host()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        screen = app.screen
+        screen._tick_timer.pause()
+        calls = 0
+        original = type(screen.query_one("#back")).get_content_width
+
+        def count_measurement(button, *args):
+            nonlocal calls
+            calls += 1
+            return original(button, *args)
+
+        monkeypatch.setattr(type(screen.query_one("#back")), "get_content_width", count_measurement)
+        screen._status_layout_signature = None
+        screen._balance_status()
+        measured_once = calls
+        screen._balance_status()
+
+        assert measured_once > 0
+        assert calls == measured_once
+
+
+async def test_status_footer_skips_identical_markup(monkeypatch):
+    app = _Host()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        screen = app.screen
+        screen._tick_timer.pause()
+        screen._target_ap = types.SimpleNamespace(pmf_posture=None)
+        status_under_dash = Mock(return_value=["[cyan]Passive listening[/]"])
+        monkeypatch.setattr(fm, "status_under_dash", status_under_dash)
+        dashboard = screen.query_one("#dashboard")
+        dashboard.set_footer = Mock()
+
+        screen._refresh_status_footer()
+        screen._refresh_status_footer()
+
+        assert status_under_dash.call_count == 2
+        dashboard.set_footer.assert_called_once()
+        screen._target_ap = None
 
 
 async def test_status_moves_below_buttons_when_centering_no_longer_fits():
