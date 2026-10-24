@@ -188,10 +188,9 @@ test on each.
 
 ## Remaining DKMS drivers may still inject at 1M CCK on 5 GHz
 
-**Problem.** CCK does not exist on 5 GHz. rtl8812au_dkms and rtl8821au_dkms sent 1M CCK on every
-band until they were changed to 6M OFDM on 5 GHz, as the C source does. rtl8814au_dkms still
-defaults to `DESC_RATE1M` / `RATEID_IDX_B` in `build_mgmt_txdesc`; rtl8821cu_dkms, rtl8822bu_dkms
-and rtl8822cu are unchecked. Not necessarily a bug: it may be harmless on those chips.
+**Problem.** CCK does not exist on 5 GHz. rtl8814au_dkms still defaults to `DESC_RATE1M` /
+`RATEID_IDX_B` in `build_mgmt_txdesc`; rtl8821cu_dkms and rtl8822cu are unchecked. Not necessarily a
+bug: it may be harmless on those chips.
 
 **Direction.** Check each against its C source; measure frames heard on a 5 GHz channel in the TX lab.
 

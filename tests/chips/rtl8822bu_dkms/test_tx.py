@@ -3,7 +3,15 @@
 No pcap to diff against (the capture's only TX is aireplay-ng's), so these assert the HALMAC field
 offsets + the XOR-16 checksum invariant directly — the strongest available offline guarantee.
 """
-from wifit3.chips.rtl8822bu_dkms.constants import DESC_RATE6M, RATEID_IDX_B
+from unittest.mock import MagicMock
+
+from wifit3.chips.rtl8822bu_dkms.constants import (
+    DESC_RATE1M,
+    DESC_RATE6M,
+    RATEID_IDX_B,
+    RATEID_IDX_G,
+)
+from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
 from wifit3.chips.rtl8822bu_dkms.tx import build_inject_txdesc
 
 # A 26-byte deauth (FC=c0:00, dur, addr1=broadcast, addr2, addr3, seq) — addr1 multicast bit set.
@@ -69,6 +77,26 @@ def test_checksum_total_xor_is_zero():
 def test_bmc_bit_tracks_addr1_group_bit():
     assert (int.from_bytes(build_inject_txdesc(_DEAUTH_BCAST)[0:4], "little") >> 24) & 1 == 1
     assert (int.from_bytes(build_inject_txdesc(_DEAUTH_UNICAST)[0:4], "little") >> 24) & 1 == 0
+
+
+async def test_driver_inject_uses_1m_cck_on_2ghz():
+    driver = Rtl8822buDkmsDriver(MagicMock())
+    driver._channel = 1
+    sent = []
+    driver.transport.bulk_out = sent.append
+    assert await driver.inject_frame(_DEAUTH_UNICAST) is True
+    assert int.from_bytes(sent[0][0x10:0x14], "little") & 0x7F == DESC_RATE1M
+    assert (int.from_bytes(sent[0][4:8], "little") >> 16) & 0x1F == RATEID_IDX_B
+
+
+async def test_driver_inject_uses_6m_ofdm_on_5ghz():
+    driver = Rtl8822buDkmsDriver(MagicMock())
+    driver._channel = 149
+    sent = []
+    driver.transport.bulk_out = sent.append
+    assert await driver.inject_frame(_DEAUTH_UNICAST) is True
+    assert int.from_bytes(sent[0][0x10:0x14], "little") & 0x7F == DESC_RATE6M
+    assert (int.from_bytes(sent[0][4:8], "little") >> 16) & 0x1F == RATEID_IDX_G
 
 
 def test_g_id_tracks_addr1_group_bit():
