@@ -96,7 +96,7 @@
 - capture-3 is unusable as a verification target: its usbmon file is truncated at 9590 packets (1.35 MB against capture-1's 14.3 MB) while its main.log shows the full 52 phase script ran to teardown.
 - capture-3 holds 1 bulk IN completion against capture-1's 24628 and capture-2's 15175, so the CFG_PARAM C2H ACK the BB/RF offload interlock waits on is absent from the file.
 - TX inject is the verify_pcap frontier on both usable captures, so no inject descriptor byte is checked against recorded traffic.
-- The only recorded inject is on 2.4 GHz. INJ-1 is open: keep the vendor's unconditional DESC_RATE1M on a 5 GHz inject [rtl8822cu_xmit.c:139, core/rtw_xmit.c:4876], or emit DESC_RATE6M because wifit3 cannot supply a radiotap rate. `band_is_2g` is already threaded into `build_tx_desc_inject`.
+- The only recorded inject is on 2.4 GHz. A 5 GHz inject keeps the vendor's unconditional DESC_RATE1M [rtl8822cu_xmit.c:139, core/rtw_xmit.c:4876]: the TX lab on ch149 heard 100/100 broadcast frames, at 5033 frames/s against 1539/s on ch1 (OFDM-like airtime; the sniffer reports no rate). `band_is_2g` is threaded into `build_tx_desc_inject` and unused.
 - `Index5G_BW80_Base` is untestable against a BW20 only capture, so BW80 TX power is left alone.
 - `scripts/porting/rtw88_pcap_replay.py` has no waiver or skip mechanism: `ReplayDevice._next` raises the stored `Divergence` again on every later call, so a diverged device stays unusable.
 - The registered known divergences list (libusb versus mac80211) is empty, so nothing has needed a waiver yet (INFRA-1).
