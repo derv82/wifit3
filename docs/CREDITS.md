@@ -45,7 +45,7 @@ Realtek USB Wi-Fi working for the Linux community, year after year, outside the 
 ## Mainline (Linux kernel) authors & maintainers
 
 The people who wrote and maintained these drivers in `drivers/net/wireless/`, across the
-Ralink (`rt2x00`), MediaTek (`mt76`), Atheros (`ath9k`), and Realtek (`rtl818x`, `rtw88`)
+Ralink (`rt2x00`), MediaTek (`mt76`), Atheros (`ath9k`), and Realtek (`rtl818x`, `rtw88`, `rtl8xxxu`)
 trees.
 
 - **Stanislaw Gruszka** ([@sgruszka](https://github.com/sgruszka)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, MT7610U, MT7612U, MT7921AU, MT7925AU, AR9271
@@ -54,12 +54,14 @@ trees.
 - **Ivo van Doorn** — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Gertjan van Wingerde** — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Helmut Schaa** — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
+- **Jes Sorensen** — RTL8188EUS, RTL8192FU
 - **Sujith Manoharan** — AR9271
-- **Bitterblue Smith** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
+- **Bitterblue Smith** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU, RTL8188EUS, RTL8192FU
 - **Sean Wang** ([@moore-bros](https://github.com/moore-bros)) — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Ryder Lee** ([@ryderlee1110](https://github.com/ryderlee1110)) — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Yan-Hsuan Chuang** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
-- **Ping-Ke Shih** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
+- **Ping-Ke Shih** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU, RTL8188EUS, RTL8192FU
+- **Martin Kaistra** ([@djfun](https://github.com/djfun)) — RTL8188EUS, RTL8192FU
 - **Gabor Juhos** ([@juhosg](https://github.com/juhosg)) — RT2800USB, RT3070, RT5370, RT5372, RT5572, AR9271
 - **John W. Linville** ([@linvjw](https://github.com/linvjw)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, AR9271, RTL8187
 - **Luis R. Rodriguez** ([@mcgrof](https://github.com/mcgrof)) — AR9271
@@ -68,6 +70,7 @@ trees.
 - **Ching-Te Ku** ([@ku920601](https://github.com/ku920601)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Deren Wu** ([@deren](https://github.com/deren)) — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Larry Finger** ([@lwfinger](https://github.com/lwfinger)) — RTL8187, RTL8822BU
+- **Chris Chiu** ([@mschiu77](https://github.com/mschiu77)) — RTL8188EUS, RTL8192FU
 - **Michael Wu** — RTL8187
 - **Bartlomiej Zolnierkiewicz** — RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Ming Yen Hsieh** — MT7610U, MT7612U, MT7921AU, MT7925AU
@@ -92,6 +95,10 @@ trees.
 - **Hin-Tak Leung** — RTL8187
 - **Herton Ronaldo Krzesinski** — RTL8187
 - **Dmitry Antipov** ([@dmantipov](https://github.com/dmantipov)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
+- **Jakub Sitnicki** ([@jsitnicki](https://github.com/jsitnicki)) — RTL8188EUS, RTL8192FU
+- **Bruno Randolf** — RTL8188EUS, RTL8192FU
+- **Kim Wooseok** — RTL8188EUS, RTL8192FU
+- **Zenm Chen** ([@a5a5aa555oo](https://github.com/a5a5aa555oo)) — RTL8192FU
 - **Miaoqing Pan** ([@miaoqing-pan](https://github.com/miaoqing-pan)) — AR9271
 - **Ben Greear** ([@greearb](https://github.com/greearb)) — MT7921AU, MT7925AU, AR9271
 

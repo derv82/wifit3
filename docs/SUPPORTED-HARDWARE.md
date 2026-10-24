@@ -111,7 +111,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 *D-Link AN3U rev. A1 · 2.4 GHz*
 
-> Ported from the mainline Linux `rtl8xxxu` driver (`8192f.c` / `core.c`), Linux v7.2.6.
+> Ported from the mainline Linux `rtl8xxxu` driver (`8192f.c` / `core.c`), Linux v6.19.14.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
