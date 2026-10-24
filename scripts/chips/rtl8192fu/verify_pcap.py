@@ -1,7 +1,15 @@
+"""Acceptance gate: replay the rtl8192fu port against a mainline rtl8xxxu cold-boot capture.
+
+One cursor over every vendor op of the capture, fail-closed, no waivers. The probe runs the
+driver's real ``rtl8xxxu_probe``; after it, each burst is dispatched by its opening op to the
+real handler mac80211 would have called (start, configure_filter, config, sw_scan_start/complete,
+stop, tx). Every captured bulk-IN buffer is then decoded through the driver's RX path. The first op that opens no known handler stops the walk and is reported.
+
+    uv run python scripts/chips/rtl8192fu/verify_pcap.py [capture-N | path/to/capture.pcap]
+"""
 from __future__ import annotations
 
-import bisect
-import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -12,132 +20,159 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
-from wifit3.chips.rtl8192fu.bringup import (
-    calibrate_lc,
-    fifo_and_rx_policy,
-    finish_cold_init,
-    firmware_bringup,
-    mac_policy,
-    set_tx_power,
-    table_bringup,
+from wifit3.chips.rtl8192fu import constants as C
+from wifit3.chips.rtl8192fu.core import (
+    MONITOR_FILTER_FLAGS,
+    Rtl8xxxuPriv,
+    rtl8xxxu_config,
+    rtl8xxxu_configure_filter,
+    rtl8xxxu_probe,
+    rtl8xxxu_start,
+    rtl8xxxu_stop,
+    rtl8xxxu_sw_scan_complete,
+    rtl8xxxu_sw_scan_start,
 )
-from wifit3.chips.rtl8192fu.chan import config_channel
-from wifit3.chips.rtl8192fu.chip import identify_chip
-from wifit3.chips.rtl8192fu.efuse import parse_efuse, read_efuse
-from wifit3.chips.rtl8192fu.firmware import load_firmware_blob, parse_firmware
-from wifit3.chips.rtl8192fu.iqk import phy_iq_calibrate
-from wifit3.chips.rtl8192fu.runtime import (
-    configure_monitor_filter,
-    enable_hardware_led,
-    enable_rf,
-    open_rx_filters,
-)
-from wifit3.chips.rtl8192fu.rx import iter_frames
+from wifit3.chips.rtl8192fu.rtl8192f import rtl8192fu_fops
+from wifit3.chips.rtl8192fu.rx import rtl8xxxu_parse_rxdesc24
+from wifit3.chips.rtl8192fu.transport import RTL8192FUTransport
+from wifit3.chips.rtl8192fu.tx import RTL8XXXU_TXDESC40_SIZE, rtl8xxxu_tx
 from wifit3.dot11.parser import WlanFrameParser
 
-CAP_DIR = REPO / "src/wifit3/scripts/captures_rtl8192fu"
+CAP_DIR = REPO / "driver_captures" / "captures_rtl8xxxu_8192fu"
+FIRMWARE = REPO / "src/wifit3/chips/rtl8192fu/assets/rtl8192fufw.bin"
 
 
-def _verify_channels(pcap: Path, device: int, efuse) -> bool:
-    iw_log = pcap.with_name(f"{pcap.stem}_logs") / "iw.log"
-    text = iw_log.read_text()
-    starts = re.findall(r"\[([0-9.]+)\] Executing: .* set channel (\d+)", text)
-    ends = re.findall(r"\[([0-9.]+)\] Execution completed", text)
-    frame_numbers, epochs = rp.frame_epochs(pcap)
-    for (start, channel_text), end in zip(starts, ends, strict=True):
-        channel = int(channel_text)
-        first = frame_numbers[bisect.bisect_left(epochs, float(start))]
-        last_index = bisect.bisect_right(epochs, float(end)) - 1
-        last = frame_numbers[last_index]
-        ops = rp.extract_ops(pcap, device, (first, last))
-        if not ops:
-            print(f"  channel {channel:2}: no driver operations (unchanged channel)")
-            continue
-        replay = rp.ReplayTransport(ops)
-        try:
-            set_tx_power(replay, efuse, 1)
-            config_channel(replay, 1)
-            set_tx_power(replay, efuse, channel)
-            config_channel(replay, channel)
-        except rp.Divergence as error:
-            print(f"FAIL channel {channel} at op {replay.i}: {error}")
-            return False
-        if replay.i != len(ops):
-            print(f"FAIL channel {channel}: consumed {replay.i}/{len(ops)} ops")
-            return False
-        print(f"  channel {channel:2}: PASS ({replay.i} ops)")
-    return True
+class ReplayTransport(rp.ReplayTransport):
+    def __init__(self, ops: list[dict], bulk_out_endpoints: dict[int, int]) -> None:
+        super().__init__(ops)
+        self.bulk_out_endpoints = bulk_out_endpoints
+
+    def bulk_write(self, endpoint: int, data: bytes) -> None:
+        op = self.ops[self.i] if self.i < len(self.ops) else None
+        if op is not None and op["kind"] == "B" and self.bulk_out_endpoints[op["frame"]] != endpoint:
+            raise rp.Divergence(f"op#{self.i} frame {op['frame']}: port sent on ep 0x{endpoint:02x}, "
+                                f"capture has ep 0x{self.bulk_out_endpoints[op['frame']]:02x}")
+        self.bulk_out(data)
 
 
-def _verify_rx(pcap: Path, device: int) -> bool:
-    buffers = rp.extract_bulk_in_ops(pcap, device)
-    frames = 0
-    packets = 0
-    rssi_values: list[int] = []
-    for buffer in buffers:
-        for frame, rssi in iter_frames(buffer, cck_new_agc=True):
-            frames += 1
-            rssi_values.append(rssi)
-            if WlanFrameParser.parse_80211_frame(frame, rssi) is not None:
-                packets += 1
-    if not frames or not packets:
-        print(f"FAIL RX: {len(buffers)} buffers produced {frames} frames/{packets} packets")
-        return False
-    print(
-        f"  RX: PASS ({len(buffers)} buffers, {frames} frames, {packets} parsed packets, "
-        f"RSSI {min(rssi_values)}..{max(rssi_values)} dBm)"
-    )
-    return True
+def _bulk_out_endpoints(pcap: Path, device: int) -> dict[int, int]:
+    out = subprocess.run(
+        ["tshark", "-r", str(pcap), "-Y",
+         f"usb.device_address=={device} && usb.transfer_type==0x03 && usb.endpoint_address.direction==0",
+         "-T", "fields", "-e", "frame.number", "-e", "usb.endpoint_address"],
+        capture_output=True, text=True, check=True).stdout
+    return {int(frame): int(endpoint, 16) for frame, endpoint in (line.split("	") for line in out.splitlines())}
+
+
+def _endpoints(pcap: Path, device: int) -> list[SimpleNamespace]:
+    out = subprocess.run(
+        ["tshark", "-r", str(pcap), "-Y", f"usb.device_address=={device} && usb.bDescriptorType==5",
+         "-T", "fields", "-e", "usb.bEndpointAddress", "-e", "usb.bmAttributes"],
+        capture_output=True, text=True, check=True).stdout.splitlines()[0]
+    addresses, attributes = (column.split(",") for column in out.split("\t"))
+    return [SimpleNamespace(bEndpointAddress=int(a, 16), bmAttributes=int(b, 16))
+            for a, b in zip(addresses, attributes, strict=True)]
+
+
+def _channel_of_next_tune(ops: list[dict], i: int) -> int | None:
+    """The channel a config burst tunes to: the first RF 0x18 (RF6052_REG_MODE_AG) LSSI write."""
+    for op in ops[i:i + 400]:
+        if (op["kind"] == "W" and op["addr"] == C.REG_FPGA0_XA_LSSI_PARM
+                and op["value"] >> C.FPGA0_LSSI_PARM_ADDR_SHIFT == C.RF6052_REG_MODE_AG):
+            return op["value"] & 0xFF
+    return None
+
+
+def _handler(ops: list[dict], i: int):
+    """(label, callable(priv)) for the burst opening at ops[i], or None."""
+    op = ops[i]
+    following = ops[i + 1] if i + 1 < len(ops) else None
+    if op["kind"] == "B":
+        frame = op["data"][RTL8XXXU_TXDESC40_SIZE:]
+        return "tx", lambda priv: priv.transport.bulk_write(*rtl8xxxu_tx(priv, frame))
+    if op["kind"] == "W" and op["addr"] == C.REG_RF_CTRL and op["width"] == 1:
+        return "start", rtl8xxxu_start
+    if op["kind"] == "W" and op["addr"] == C.REG_RCR and op["width"] == 4:
+        return "configure_filter", lambda priv: rtl8xxxu_configure_filter(priv, MONITOR_FILTER_FLAGS)
+    if op["kind"] == "R" and op["addr"] == C.REG_TX_AGC_A_CCK1_MCS32:
+        channel = _channel_of_next_tune(ops, i)
+        if channel is not None:
+            return f"config ch{channel}", lambda priv: rtl8xxxu_config(priv, channel)
+    if op["kind"] == "R" and op["addr"] == C.REG_BEACON_CTRL and op["width"] == 1 and following is not None:
+        if following["value"] & C.BEACON_DISABLE_TSF_UPDATE:
+            return "sw_scan_start", rtl8xxxu_sw_scan_start
+        return "sw_scan_complete", rtl8xxxu_sw_scan_complete
+    if (op["kind"] == "W" and op["addr"] == C.REG_TXPAUSE and op["value"] == 0xFF
+            and following is not None and following["addr"] == C.REG_RXFLTMAP0):
+        return "stop", rtl8xxxu_stop
+    return None
+
+
+def _describe(op: dict) -> str:
+    if op["kind"] == "B":
+        return f"bulk-OUT {len(op['data'])}B (frame {op['frame']})"
+    return f"{op['kind']} 0x{op['addr']:04x}/{op['width']}=0x{op['value']:x} (frame {op['frame']})"
 
 
 def run(cap: str | None = None) -> int:
     time.sleep = lambda *_args, **_kwargs: None
-    name = Path(cap or "capture-1").stem
-    pcap = CAP_DIR / f"{name}.pcap"
+    pcap = Path(cap) if cap and cap.endswith(".pcap") else CAP_DIR / f"{cap or 'capture-1'}.pcap"
     if not pcap.exists():
         print(f"FAIL: no such capture {pcap}")
         return 1
 
     device = rp.find_card_device(pcap)
-    if not rp.audit_coverage(pcap, device):
-        return 1
     ops = rp.extract_ops(pcap, device)
-    replay = rp.ReplayTransport(ops)
-    replay.endpoints = SimpleNamespace(bulk_out=(0x05, 0x06, 0x08, 0x09, 0x0C, 0x0D))
+    transport = ReplayTransport(ops, _bulk_out_endpoints(pcap, device))
+    priv = Rtl8xxxuPriv(transport, rtl8192fu_fops)
+    RTL8192FUTransport.rtl8xxxu_parse_usb(SimpleNamespace(interface=_endpoints(pcap, device)), priv)
+    print(f"{pcap.name}: card=dev{device}, {len(ops)} vendor ops, out_ep={[hex(e) for e in priv.out_ep]}")
 
     try:
-        identity = identify_chip(replay)
-        efuse = parse_efuse(read_efuse(replay))
-        feature = firmware_bringup(replay, parse_firmware(load_firmware_blob()))
-        table_bringup(replay, efuse)
-        fifo_and_rx_policy(replay)
-        mac_policy(replay)
-        set_tx_power(replay, efuse)
-        calibrate_lc(replay)
-        phy_iq_calibrate(replay, efuse.rfe_type)
-        finish_cold_init(replay)
-        enable_hardware_led(replay)
-        enable_rf(replay)
-        open_rx_filters(replay)
-        for _ in range(3):
-            configure_monitor_filter(replay)
-        set_tx_power(replay, efuse, 1)
-        config_channel(replay, 1)
-    except (rp.Divergence, ValueError, IOError) as error:
-        print(f"FAIL at op {replay.i}: {error}")
+        rtl8xxxu_probe(priv, FIRMWARE.read_bytes())
+    except rp.Divergence as error:
+        print(f"FAIL probe at op {transport.i}: {error}")
         return 1
+    print(f"  probe: {transport.i} ops (cut={priv.chip_cut} vendor={priv.chip_vendor} "
+          f"rfe={priv.rfe_type} xtal={priv.default_crystal_cap:#x} cck_new_agc={priv.cck_new_agc})")
 
-    if not _verify_channels(pcap, device, efuse):
-        return 1
-    if not _verify_rx(pcap, device):
-        return 1
+    calls: dict[str, int] = {}
+    while transport.i < len(ops):
+        start = transport.i
+        handler = _handler(ops, start)
+        if handler is None:
+            print(f"\nFRONTIER at op {start}/{len(ops)}: {_describe(ops[start])}")
+            for op in ops[start:start + 12]:
+                print(f"    {_describe(op)}")
+            return 1
+        label, call = handler
+        try:
+            call(priv)
+        except rp.Divergence as error:
+            print(f"\nFAIL {label} (from op {start}, frame {ops[start]['frame']}): {error}")
+            return 1
+        kind = label.split()[0]
+        calls[kind] = calls.get(kind, 0) + 1
 
-    print(
-        f"PASS: {replay.i} ops — identify + EFUSE + power + firmware + MAC/BB/RF + FIFO/RX/MAC policy + monitor; "
-        f"cut={identity.chip_cut} vendor={identity.vendor} "
-        f"MAC={efuse.mac_address.hex(':')} RFE={efuse.rfe_type} "
-        f"max_bw={feature.max_bandwidth}MHz"
-    )
+    print("  handlers: " + ", ".join(f"{name}x{count}" for name, count in calls.items()))
+    print(f"  wire: {len(ops)} of {len(ops)} ops reproduced, zero waived")
+
+    buffers = rp.extract_bulk_in_ops(pcap, device)
+    frames = parsed = 0
+    signals: list[int] = []
+    for buffer in buffers:
+        for frame, signal in rtl8xxxu_parse_rxdesc24(priv, buffer):
+            frames += 1
+            if signal is not None:
+                signals.append(signal)
+            if WlanFrameParser.parse_80211_frame(frame, 0 if signal is None else signal) is not None:
+                parsed += 1
+    if not parsed:
+        print(f"FAIL RX: {len(buffers)} bulk-IN buffers gave {frames} frames, none parsed")
+        return 1
+    print(f"  rx: {len(buffers)} bulk-IN buffers -> {frames} frames, {parsed} parsed, "
+          f"signal {min(signals)}..{max(signals)} dBm, {len(priv.c2hcmd_queue)} C2H queued")
+    print("PASS")
     return 0
 
 

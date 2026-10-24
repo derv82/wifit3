@@ -15,9 +15,10 @@ from wifit3.chips.rtl8192fu.driver import RTL8192FUDriver
 
 
 async def run(duration: float, channel: int) -> int:
-    device = usb.core.find(idVendor=0x2001, idProduct=0x3328)
+    found = ((usb.core.find(idVendor=entry.vid, idProduct=entry.pid), entry) for entry in SUPPORTED_IDS)
+    device, id_entry = next(((device, entry) for device, entry in found if device is not None), (None, None))
     if device is None:
-        print("RTL8192FU 2001:3328 not found; unplug, replug, and retry")
+        print("no RTL8192FU found; unplug, replug, and retry")
         return 1
 
     packets = 0
@@ -28,7 +29,7 @@ async def run(duration: float, channel: int) -> int:
         packets += 1
         rssi_values.append(packet.rssi)
 
-    driver = RTL8192FUDriver.from_usb_device(device, SUPPORTED_IDS[0])
+    driver = RTL8192FUDriver.from_usb_device(device, id_entry)
     driver.register_rx_callback(receive)
     driver.register_disconnect_callback(lambda: print("device disconnected"))
     try:
