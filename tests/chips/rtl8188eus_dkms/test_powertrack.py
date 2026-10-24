@@ -49,6 +49,16 @@ def test_apply_mix_mode_writes_base_swing():
     assert (0x0A29, 0x02) in t.w                     # CCK row 17 [7]
 
 
+def test_apply_mix_mode_uses_ch14_cck_table_on_channel_14():
+    st = powertrack.PowerTrackState(eeprom_thermal=29, default_ofdm_index=28,
+                                    default_cck_index=20, channel=14)
+    t = RegTx({0x0C4C: 0x001C0324})
+    powertrack._apply_mix_mode(t, st, -3)
+    row = powertrack.T.CCK_SWING_TABLE_CH14[17]
+    assert [v for a, v in t.w if 0x0A22 <= a <= 0x0A29] == list(row)
+    assert row != powertrack.T.CCK_SWING_TABLE_CH1_CH13[17]
+
+
 def test_callback_cold_boot_drops_three_indices(mocker):
     # thermal read 25 < efuse base 29 -> ad=4 -> -CCK_A_N[4]=-3 -> idx 25/17.
     mocker.patch(f"{_RF}.phy_query_rf_reg", return_value=25)

@@ -185,6 +185,7 @@ class Rtl8188eusDkmsDriver(Driver):
                         # rtw_dynamic_chk_wk_hdl runs the silent-reset poll then the phydm
                         # watchdog in one 2 s tick (rtw_cmd.c:2737).
                         await loop.run_in_executor(None, sreset.status_check, self.transport)
+                        pt_state.channel = self._channel or 1
                         tick = await loop.run_in_executor(
                             None, dig.watchdog_tick, self.transport, state, pt_state)
                 except asyncio.CancelledError:
