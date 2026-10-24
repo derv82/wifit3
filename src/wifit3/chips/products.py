@@ -62,6 +62,7 @@ class ASUS(ProductName):
     USB_BE92      = "ASUS USB-BE92"
     USB_BE92_NANO = "USB-BE92 Nano"
     USB_BE93      = "ASUS USB-BE93"
+    USB_N13_C1    = "ASUS USB-N13 C1"
     USB_N14       = "ASUS USB-N14"
     USB_N53_B1    = "ASUS USB-N53 B1"
     WL_167G       = "ASUS WL-167g"
@@ -118,6 +119,7 @@ class Comcast(ProductName):
 
 
 class Comfast(ProductName):
+    CF_826F  = "CF-826F"
     CF_953AX = "CF-953AX"
 
 
@@ -155,6 +157,7 @@ class DLink(ProductName):
 class Edimax(ProductName):
     EW_7711MAC    = "EW-7711MAC"
     EW_7722UAC    = "EW-7722UAC"
+    EW_7722UTN_V3 = "EW-7722UTn V3"
     EW_7811UAC    = "EW-7811UAC"
     EW_7811UCB    = "EW-7811UCB"
     EW_7811UN_V2  = "EW-7811UN v2"
@@ -393,6 +396,7 @@ class TPLink(ProductName):
     TL_WN722N_V1     = "TL-WN722N v1"    # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v1.x
     TL_WN722N_V2_V3  = "TL-WN722N v2/v3" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v2 & v3
     TL_WN723N_V2_3_4 = "TL-WN723N v2/3/4" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN723N_v3
+    TL_WN823N_V2     = "TL-WN823N v2"
     TL_WN727N_V5_21  = "TL-WN727N v5.21" # 2357:0111, aircrack-ng/rtl8188eus os_dep/linux/usb_intf.c
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from importlib.resources import files
 from typing import Callable
 
 import usb.core
@@ -11,59 +12,51 @@ from wifit3.dot11.parser import WlanFrameParser
 from wifit3.errors import BringUpError, is_device_gone
 from wifit3.models.device_id import DeviceID
 
-from . import constants as C
-from .bringup import (
-    calibrate_lc,
-    fifo_and_rx_policy,
-    finish_cold_init,
-    firmware_bringup,
-    mac_policy,
-    set_tx_power,
-    table_bringup,
+from .core import (
+    Nl80211Iftype,
+    rtl8xxxu_config,
+    Rtl8xxxuPriv,
+    rtl8xxxu_deinit_led,
+    rtl8xxxu_set_bssid,
+    rtl8xxxu_set_linktype,
+    rtl8xxxu_set_mac,
+    rtl8xxxu_stop,
+    rtl8xxxu_probe,
+    rtl8xxxu_watchdog_callback,
+    start_monitor_interface,
 )
-from .chan import config_channel
-from .chip import ChipIdentity, identify_chip
-from .efuse import EfuseData, parse_efuse, read_efuse
-from .firmware import load_firmware_blob, parse_firmware
-from .iqk import phy_iq_calibrate
-from .power import is_firmware_running, power_off
-from .runtime import configure_monitor_filter, disable_rf, enable_rf, open_rx_filters, set_tx_led
-from .rx import iter_frames, read_burst
+from .rtl8192f import rtl8192fu_fops
+from .rx import read_burst, rtl8xxxu_c2hcmd_callback, rtl8xxxu_parse_rxdesc24
 from .transport import RTL8192FUTransport
-from .tx import build_tx_packet, bulk_out_index, stamp_sequence
+from .tx import rtl8xxxu_tx
+
+RSSI_UNKNOWN = 0  # RX_FLAG_NO_SIGNAL_VAL: the descriptor carried no PHY status
+WATCHDOG_SECONDS = 2.0  # core.c:7358 schedule_delayed_work(&priv->ra_watchdog, 2 * HZ)
 
 
 class RTL8192FUDriver(Driver):
     SUPPORTED_CHANNELS = list(range(1, 15))
     CONFLICTING_LINUX_MODULES = ["rtl8xxxu"]
     FAKE_MAC = FakeMacSupport.SPOOFABLE
-    MAX_ACK_DELAY = 0.05
-    TX_LED_ON_SECONDS = 0.100
-    TX_LED_OFF_SECONDS = 0.100
-    TX_LED_IDLE_SECONDS = 0.300
 
     def __init__(self, dev: usb.core.Device, id_entry: DeviceID) -> None:
         super().__init__()
         self.dev = dev
         self.id_entry = id_entry
         self.transport = RTL8192FUTransport(dev)
-        self.identity: ChipIdentity | None = None
+        self.priv = Rtl8xxxuPriv(self.transport, rtl8192fu_fops)
         self.mac_address: str | None = None
         self.is_warm = False
+        self.current_channel = 1
         self._rx_callback: Callable | None = None
         self._disconnect_callback: Callable[[Exception], None] | None = None
         self._device_gone = False
         self._rx_reader: RxReaderThread | None = None
-        self._efuse: EfuseData | None = None
-        self._channel_lock = asyncio.Lock()
-        self._tx_lock = asyncio.Lock()
+        self._watchdog_task: asyncio.Task[None] | None = None
+        self._c2hcmd_task: asyncio.Task[None] | None = None
         self._io_lock = asyncio.Lock()
-        self._active_monitor_lock = asyncio.Lock()
         self._tx_sequence = 0
-        self._tx_led_task: asyncio.Task[None] | None = None
-        self._tx_led_deadline = 0.0
-        self.current_channel = 1
-        self._cck_new_agc = False
+        self._started = False
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8192FUDriver":
@@ -80,49 +73,30 @@ class RTL8192FUDriver(Driver):
         if self._disconnect_callback is not None:
             self._disconnect_callback(error)
 
+    def _probe(self) -> None:
+        self.transport.rtl8xxxu_parse_usb(self.priv)
+        rtl8xxxu_probe(self.priv, files(__package__).joinpath("assets/rtl8192fufw.bin").read_bytes())
+        self.mac_address = self.priv.mac_addr.hex(":")
+
     async def connect(self, progress_cb: ProgressCallback | None = None) -> bool:
         loop = asyncio.get_running_loop()
         progress = progress_cb or (lambda _value, _message: None)
-        progress(0.00, "Claiming USB interface")
         try:
+            progress(0.00, "Claiming USB interface")
             await loop.run_in_executor(None, self.transport.claim)
-            progress(0.05, "Probing chip state")
-            await loop.run_in_executor(None, self._identify_chip)
-            if await loop.run_in_executor(None, is_firmware_running, self.transport):
-                await loop.run_in_executor(None, power_off, self.transport)
-            progress(0.10, "MAC power-on (cold)")
-            await loop.run_in_executor(None, self._read_efuse)
-            progress(0.15, "Pre-FW init (LLT + DROP_DATA_EN)")
-            progress(0.25, "Enable FW download")
-            progress(0.35, "Uploading firmware")
-            await loop.run_in_executor(None, self._firmware_bringup)
-            progress(0.55, "Disable FW download")
-            progress(0.60, "Validating FW (FW_READY_LEGACY)")
-            progress(0.70, "Post-FW MAC init")
-            await loop.run_in_executor(None, self._table_bringup)
-            progress(0.85, "PHY init (mac/bb/agc/rf tables)")
-            await loop.run_in_executor(None, self._configure_fifo_and_mac)
-            await loop.run_in_executor(None, self._apply_tx_power)
-            await loop.run_in_executor(None, self._calibrate_radio)
-            await loop.run_in_executor(None, self._finish_cold_init)
-            progress(0.95, "Tuning to channel 1")
-            enable_rf(self.transport)
+            progress(0.10, "Probe: identify, EFUSE, firmware, MAC/BB/RF init, calibration")
+            await loop.run_in_executor(None, self._probe)
+            progress(0.90, "Starting monitor interface")
             self._rx_reader = RxReaderThread(
-                loop,
-                self._read_once,
-                self._dispatch,
-                name="rtl8192fu-rx",
-                on_fatal=self._on_rx_fatal,
+                loop, self._read_once, self._dispatch, name="rtl8192fu-rx", on_fatal=self._on_rx_fatal,
             )
+            await loop.run_in_executor(None, start_monitor_interface, self.priv)
+            self._started = True
             self._rx_reader.start()
-            await loop.run_in_executor(None, open_rx_filters, self.transport)
-            await loop.run_in_executor(None, configure_monitor_filter, self.transport)
-            await loop.run_in_executor(None, self._set_channel_sync, 1)
+            self._watchdog_task = loop.create_task(self._watchdog())
             self.current_channel = 1
         except Exception as error:
-            if self._rx_reader is not None:
-                await self._rx_reader.stop()
-                self._rx_reader = None
+            await self._stop_tasks()
             self.transport.release()
             if isinstance(error, BringUpError):
                 raise
@@ -131,216 +105,132 @@ class RTL8192FUDriver(Driver):
         progress(1.0, "RTL8192FU online")
         return True
 
-    def _cold_bringup(self) -> None:
-        self._identify_chip()
-        self._read_efuse()
-        self._firmware_bringup()
-        self._table_bringup()
-        self._configure_fifo_and_mac()
-        self._apply_tx_power()
-        self._calibrate_radio()
-        self._finish_cold_init()
+    async def _watchdog(self) -> None:
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(WATCHDOG_SECONDS)
+            async with self._io_lock:
+                await loop.run_in_executor(None, rtl8xxxu_watchdog_callback, self.priv)
 
-    def _identify_chip(self) -> None:
-        self.identity = identify_chip(self.transport)
-
-    def _read_efuse(self) -> None:
-        self._efuse = parse_efuse(read_efuse(self.transport))
-        self.mac_address = self._efuse.mac_address.hex(":")
-
-    def _firmware_bringup(self) -> None:
-        firmware_bringup(self.transport, parse_firmware(load_firmware_blob()))
-
-    def _table_bringup(self) -> None:
-        if self._efuse is None:
-            raise RuntimeError("RTL8192FU EFUSE is unavailable")
-        table_bringup(self.transport, self._efuse)
-
-    def _configure_fifo_and_mac(self) -> None:
-        fifo_and_rx_policy(self.transport)
-        mac_policy(self.transport)
-
-    def _apply_tx_power(self) -> None:
-        if self._efuse is None:
-            raise RuntimeError("RTL8192FU EFUSE is unavailable")
-        set_tx_power(self.transport, self._efuse)
-
-    def _calibrate_radio(self) -> None:
-        if self._efuse is None:
-            raise RuntimeError("RTL8192FU EFUSE is unavailable")
-        calibrate_lc(self.transport)
-        phy_iq_calibrate(self.transport, self._efuse.rfe_type)
-
-    def _finish_cold_init(self) -> None:
-        self._cck_new_agc = finish_cold_init(self.transport)
-        set_tx_led(self.transport, False)
+    async def _stop_tasks(self) -> None:
+        for task in (self._watchdog_task, self._c2hcmd_task):
+            if task is None:
+                continue
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._watchdog_task = None
+        self._c2hcmd_task = None
+        if self._rx_reader is not None:
+            await self._rx_reader.stop()
+            self._rx_reader = None
 
     def _read_once(self) -> bytes | None:
-        endpoints = self.transport.endpoints
-        if endpoints is None:
+        if self.priv.pipe_in == 0:
             return None
-        return read_burst(self.dev, endpoints.bulk_in)
+        return read_burst(self.dev, self.priv.pipe_in)
 
     def _dispatch(self, buffer: bytes) -> None:
-        for frame, rssi in iter_frames(buffer, self._cck_new_agc):
+        for frame, signal in rtl8xxxu_parse_rxdesc24(self.priv, buffer):
             if len(frame) >= 10 and frame[0] == 0xD4:
                 self.record_ack(frame)
             if self._rx_callback is None:
                 continue
-            packet = WlanFrameParser.parse_80211_frame(frame, rssi)
+            packet = WlanFrameParser.parse_80211_frame(frame, RSSI_UNKNOWN if signal is None else signal)
             if packet is not None:
                 self._rx_callback(packet)
+        if self.priv.c2hcmd_queue and (self._c2hcmd_task is None or self._c2hcmd_task.done()):
+            self._c2hcmd_task = asyncio.get_running_loop().create_task(self._c2hcmd_work())
+
+    async def _c2hcmd_work(self) -> None:
+        """priv->c2hcmd_work (core.c:6162 schedule_work after queuing a C2H)."""
+        async with self._io_lock:
+            await asyncio.get_running_loop().run_in_executor(None, rtl8xxxu_c2hcmd_callback, self.priv)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         if channel not in self.SUPPORTED_CHANNELS:
             raise ValueError(f"unsupported RTL8192FU channel: {channel}")
-        if self._efuse is None:
+        if not self._started:
             raise BringUpError("RTL8192FU channel", "driver is not connected")
         if channel == self.current_channel:
             return True
-        loop = asyncio.get_running_loop()
         async with self._io_lock:
-            async with self._channel_lock:
-                reader = self._rx_reader
-                pause_reader = reader is not None and not scan
-                if pause_reader:
-                    await loop.run_in_executor(None, reader.pause)
-                try:
-                    await loop.run_in_executor(None, self._set_channel_sync, channel)
-                    self.current_channel = channel
-                finally:
-                    if pause_reader:
-                        reader.resume()
+            await asyncio.get_running_loop().run_in_executor(None, rtl8xxxu_config, self.priv, channel)
+            self.current_channel = channel
         return True
 
-    def _set_channel_sync(self, channel: int) -> None:
-        if self._efuse is None:
-            raise RuntimeError("RTL8192FU EFUSE is unavailable")
-        set_tx_power(self.transport, self._efuse, channel)
-        config_channel(self.transport, channel)
-
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        endpoints = self.transport.endpoints
-        if endpoints is None:
+        if not self._started:
             raise BringUpError("RTL8192FU TX", "driver is not connected")
-        packet = build_tx_packet(frame_bytes)
-        endpoint = endpoints.bulk_out[bulk_out_index(frame_bytes, len(endpoints.bulk_out))]
-        loop = asyncio.get_running_loop()
+        endpoint, urb = rtl8xxxu_tx(self.priv, frame_bytes)
         try:
-            async with self._io_lock:
-                async with self._tx_lock:
-                    await loop.run_in_executor(None, self.transport.bulk_write, endpoint, packet)
-                    self._start_tx_led_pulse()
+            await asyncio.get_running_loop().run_in_executor(None, self.transport.bulk_write, endpoint, urb)
         except Exception as error:
             if is_device_gone(error):
                 self._on_rx_fatal(error)
             raise
         return True
 
-    def _start_tx_led_pulse(self) -> None:
-        loop = asyncio.get_running_loop()
-        self._tx_led_deadline = loop.time() + self.TX_LED_IDLE_SECONDS
-        if self._tx_led_task is None or self._tx_led_task.done():
-            self._tx_led_task = loop.create_task(self._run_tx_led_pulse())
-
-    async def _run_tx_led_pulse(self) -> None:
-        loop = asyncio.get_running_loop()
-        try:
-            while True:
-                async with self._io_lock:
-                    await loop.run_in_executor(None, set_tx_led, self.transport, True)
-                await asyncio.sleep(self.TX_LED_ON_SECONDS)
-                async with self._io_lock:
-                    await loop.run_in_executor(None, set_tx_led, self.transport, False)
-                remaining = self._tx_led_deadline - loop.time()
-                if remaining <= 0:
-                    return
-                await asyncio.sleep(min(self.TX_LED_OFF_SECONDS, remaining))
-                if loop.time() >= self._tx_led_deadline:
-                    return
-        finally:
-            async with self._io_lock:
-                await loop.run_in_executor(None, set_tx_led, self.transport, False)
-            self._tx_led_task = None
-
-    async def _stop_tx_led_pulse(self) -> None:
-        task = self._tx_led_task
-        if task is None:
-            return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        self._tx_led_task = None
-
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
-        stamped = stamp_sequence(frame_bytes, self._tx_sequence)
+        if len(frame_bytes) < 24:
+            return frame_bytes
+        stamped = bytearray(frame_bytes)
+        stamped[22:24] = ((self._tx_sequence << 4) | (stamped[22] & 0x0F)).to_bytes(2, "little")
         self._tx_sequence = (self._tx_sequence + 1) & 0xFFF
-        return stamped
+        return bytes(stamped)
 
     async def _enable_rx_acks(self) -> None:
-        """No-op: monitor setup mirrors core.c:6932-6935 and keeps RCR_ACCEPT_CTRL_FRAME set."""
+        """No-op: MONITOR_FILTER_FLAGS carries FIF_CONTROL, so RCR_ACCEPT_CTRL_FRAME is already set."""
         return
 
     async def _disable_rx_acks(self) -> None:
-        """No-op, matching `_enable_rx_acks`; the source-backed control filter stays active."""
+        """No-op, matching ``_enable_rx_acks``."""
         return
 
-    def _program_active_monitor(self, mac: bytes, bssid: bytes, link_type: int) -> None:
-        value = self.transport.read8(C.REG_MSR) & 0x0C
-        self.transport.write8(C.REG_MSR, value | link_type)
-        for offset, value in enumerate(mac):
-            self.transport.write8(C.REG_MACID + offset, value)
-        for offset, value in enumerate(bssid):
-            self.transport.write8(C.REG_BSSID + offset, value)
+    def _program_port0(self, linktype: Nl80211Iftype, mac: bytes, bssid: bytes) -> None:
+        self.priv.vif_type = linktype
+        self.priv.vif_addr = mac
+        rtl8xxxu_set_linktype(self.priv, linktype, 0)
+        rtl8xxxu_set_mac(self.priv, 0)
+        rtl8xxxu_set_bssid(self.priv, bssid, 0)
 
     async def enter_active_monitor(self, mac: bytes, bssid: bytes | None = None) -> bytes:
-        if len(mac) != 6 or bssid is not None and len(bssid) != 6:
+        """Port 0 as STATION (or AP when ``bssid`` is ``mac``): set_linktype + set_mac + set_bssid."""
+        if len(mac) != 6 or (bssid is not None and len(bssid) != 6):
             raise ValueError("RTL8192FU active-monitor addresses must be six bytes")
-        requested_bssid = bytes(bssid or mac)
-        link_type = C.MSR_LINKTYPE_AP if bytes(mac) == requested_bssid else C.MSR_LINKTYPE_STATION
-        loop = asyncio.get_running_loop()
-        async with self._active_monitor_lock:
-            await loop.run_in_executor(
-                None, self._program_active_monitor, bytes(mac), requested_bssid, link_type
-            )
+        bssid = bytes(bssid or mac)
+        linktype = Nl80211Iftype.NL80211_IFTYPE_AP if bytes(mac) == bssid else Nl80211Iftype.NL80211_IFTYPE_STATION
+        async with self._io_lock:
+            await asyncio.get_running_loop().run_in_executor(None, self._program_port0, linktype, bytes(mac), bssid)
         return bytes(mac)
 
     async def exit_active_monitor(self) -> None:
-        if self._efuse is None:
+        if not self._started:
             return
-        loop = asyncio.get_running_loop()
-        async with self._active_monitor_lock:
-            await loop.run_in_executor(
-                None,
-                self._program_active_monitor,
-                self._efuse.mac_address,
-                bytes(6),
-                C.MSR_LINKTYPE_NONE,
+        async with self._io_lock:
+            await asyncio.get_running_loop().run_in_executor(
+                None, self._program_port0, Nl80211Iftype.NL80211_IFTYPE_UNSPECIFIED, self.priv.mac_addr, bytes(6),
             )
+        self.priv.vif_type = None
 
-    def _stop_hardware(self) -> None:
-        self.transport.write8(C.REG_TXPAUSE, 0xFF)
-        self.transport.write16(C.REG_RXFLTMAP0, 0)
-        self.transport.write16(C.REG_RXFLTMAP2, 0)
-        self.transport.write8(C.REG_TXPAUSE, 0xFF)
-        disable_rf(self.transport)
-        power_off(self.transport)
+    def _disconnect(self) -> None:
+        """rtl8xxxu_disconnect order (core.c:7918-7922): deinit_led, stop, power_off."""
+        rtl8xxxu_deinit_led(self.priv)
+        rtl8xxxu_stop(self.priv)
+        self.priv.fops.power_off(self.priv)
 
     async def close(self) -> None:
-        await self._stop_tx_led_pulse()
-        if self._rx_reader is not None:
-            await self._rx_reader.stop()
-            self._rx_reader = None
+        await self._stop_tasks()
         try:
-            if self.transport.interface_number is not None and not self._device_gone:
+            if self._started and self.transport.interface_number is not None and not self._device_gone:
                 async with self._io_lock:
-                    await asyncio.get_running_loop().run_in_executor(None, self._stop_hardware)
+                    await asyncio.get_running_loop().run_in_executor(None, self._disconnect)
         finally:
             try:
                 self.transport.release()
             finally:
-                self._efuse = None
+                self._started = False
                 self.is_warm = False
                 self._device_gone = False
