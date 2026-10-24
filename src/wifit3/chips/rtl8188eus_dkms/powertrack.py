@@ -65,6 +65,7 @@ class PowerTrackState:
     eeprom_thermal: int
     default_ofdm_index: int
     default_cck_index: int
+    channel: int = 1                    # dm->channel, picks the CCK swing table
     tm_trigger: int = 1                 # InitHalDm tail already armed the meter
     thermal_value: int = -1            # -> eeprom_thermal in __post_init__
     thermal_value_iqk: int = -1
@@ -124,10 +125,10 @@ def _set_iqk_matrix(t, ofdm_index: int) -> None:
     bb.set_bb_reg(t, _REG_OFDM_ECCA_TH, 1 << 24, 0x0)        # BIT24
 
 
-def _write_cck_fir(t, cck_index: int) -> None:
-    """Write the 8 CCK TX-FIR coefficients (0xa22..0xa29) for the channel-1..13 swing row
-    [SRC] halrf_8188e_ce.c:454 (this card is 2.4 GHz ch 1-13, never ch14)."""
-    row = T.CCK_SWING_TABLE_CH1_CH13[cck_index]
+def _write_cck_fir(t, cck_index: int, channel: int) -> None:
+    """Write the 8 CCK TX-FIR coefficients (0xa22..0xa29), ch14 row on channel 14
+    [SRC] halrf_8188e_ce.c:454."""
+    row = (T.CCK_SWING_TABLE_CH14 if channel == 14 else T.CCK_SWING_TABLE_CH1_CH13)[cck_index]
     for i in range(8):
         t.write8(_REG_CCK_FIR + i, row[i])
 
@@ -158,7 +159,7 @@ def _apply_mix_mode(t, state: PowerTrackState, absolute: int) -> None:
         raise NotImplementedError(
             f"8188e power-track CCK swing {final_cck} hit a limit "
             f"(0..{_PWR_LIMIT_CCK}); per-rate TX-AGC reset path is deferred")
-    _write_cck_fir(t, final_cck)
+    _write_cck_fir(t, final_cck, state.channel)
     # if modify_tx_agc_flag_path_a_cck: reset TX-AGC — flag is False until a limit is hit.
 
 

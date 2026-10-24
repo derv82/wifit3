@@ -76,6 +76,7 @@ class Rtl8188eusDkmsDriver(Driver):
         # Serializes EP0 control batches (DIG watchdog vs set_channel); RX uses bulk-IN.
         self._io_lock = asyncio.Lock()
 
+
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Rtl8188eusDkmsDriver":
         return cls(Rtl8188eusTransport(dev))
@@ -108,14 +109,11 @@ class Rtl8188eusDkmsDriver(Driver):
         self._mac_bytes = params.mac_address
         self.mac_address = params.mac_address.hex(":") if params.mac_address else None
         self._tx_power = params.tx_power
-        # Thermal base for the power-track watchdog (efuse EEPROM_THERMAL_METER_88E 0xBA;
-        # the 0xff/autoload-fail default is EEPROM_Default_ThermalMeter_88E 0x18).
-        raw_thermal = params.efuse_map[0xBA]
-        self._eeprom_thermal = 0x18 if raw_thermal == 0xFF else raw_thermal
+        self._eeprom_thermal = params.thermal_meter
         self._board = params.board
-        logger.debug("RTL8188EUS efuse: crystal_cap=0x%02x mac=%s",
-                    params.crystal_cap,
-                    params.mac_address.hex(":") if params.mac_address else "<none>")
+        logger.debug("RTL8188EUS efuse: autoload=%s crystal_cap=0x%02x mac=%s plan=0x%02x",
+                    "failed" if params.autoload_failed else "ok", params.crystal_cap,
+                    params.mac_address.hex(":"), params.channel_plan)
         # Board-option config log (efuse 0xCA). The reference card is internal PA+LNA;
         # an external-PA/LNA burn drives PHY_SetRFEReg_8188E + the board-gated init-table
         # rows and is untested on hardware (only the internal card is pcap-gated).
@@ -187,6 +185,7 @@ class Rtl8188eusDkmsDriver(Driver):
                         # rtw_dynamic_chk_wk_hdl runs the silent-reset poll then the phydm
                         # watchdog in one 2 s tick (rtw_cmd.c:2737).
                         await loop.run_in_executor(None, sreset.status_check, self.transport)
+                        pt_state.channel = self._channel or 1
                         tick = await loop.run_in_executor(
                             None, dig.watchdog_tick, self.transport, state, pt_state)
                 except asyncio.CancelledError:
@@ -211,9 +210,9 @@ class Rtl8188eusDkmsDriver(Driver):
         """Vendor probe order: power-on, then the IOL efuse read (crystal_cap / MAC /
         TX-power), then the MISC01 queue/page setup."""
         t = self.transport
-        efuse.read_adapter_info(t)          # probe: chip-version + autoload + efuse-access ON
+        autoload_failed = efuse.read_adapter_info(t)
         pwrseq.power_on(t)
-        params = efuse.read_chip_params(t)
+        params = efuse.read_chip_params(t, autoload_failed)
         mac.init_misc01(t)
         return params
 

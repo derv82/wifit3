@@ -389,11 +389,10 @@ class MT7601UDriver(Driver):
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Send one frame. False means the chip did not accept it.
 
-        Always requests the link-layer ACK, so the MAC retransmits until the peer ACKs --
-        that HW retry is the only retransmission injection gets. Matches `mt76x0u`:999 and
-        `mt76x2u`:684 on the identical txwi; NO_ACK is gutted fleet-wide as a footgun.
+        Requests the link-layer ACK only for a unicast addr1 (tx.c:158), so the MAC retransmits
+        until the peer ACKs; a group addr1 goes out once.
         """
-        return self._tx_queues[DEFAULT_TX_QUEUE].submit(frame_bytes, ack=True)
+        return self._tx_queues[DEFAULT_TX_QUEUE].submit(frame_bytes, ack=not frame_bytes[4] & 0x01)
 
     def tx_statuses(self) -> list[TxStatus]:
         """Per-frame transmit results the MAC has reported since the last reset.

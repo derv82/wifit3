@@ -299,8 +299,8 @@ def _tx_bytematch(capture, title: str) -> "bool | None":
             continue
         mpdu = _tx_mpdu(op.data)
         # build_tx_no_ack (not the production build_tx): the captured aireplay frames set
-        # MT_TXD3_NO_ACK, which wifit3's inject path never does. This replay-only builder
-        # adds that one bit so the byte-match reflects the exact captured frames.
+        # MT_TXD3_NO_ACK, which wifit3's inject path sets only for a group addr1. This
+        # replay-only builder adds that one bit so the byte-match reflects the exact captured frames.
         built = mt_tx.build_tx_no_ack(mpdu, wcid_idx=MT792x_WTBL_RESERVED)
         if built == op.data:
             match += 1

@@ -196,15 +196,10 @@ def test_pa_lna_and_glna_decode_independently():
 # read_board_options  --  UNREACHABLE C branches (no such Python parameter)   branches 8,9
 # =========================================================================================
 
-@pytest.mark.xfail(reason="read_board_options takes no autoload_fail flag; the C autoload-FAIL+AUTO "
-                          "path forces GLNA_type=0 -> TypeGLNA=0x1 (rtl8188e_hal_init.c:3138-3139,"
-                          ":3147-3148), unreachable from the pure-fn seam", strict=False)
-def test_autoload_fail_forces_type_glna_one_UNREACHABLE():
-    # On a blank (0xFF) map an autoload-FAIL board would yield TypeGLNA=0x1 in C;
-    # the AUTO-only Python decodes the 0xCA[6:4]==7 field to 0x0 instead -> divergence, but
-    # unreachable because there is no autoload_fail argument.
-    b = _board(0xFF)
-    assert b.type_glna == 0x1
+def test_autoload_fail_uses_default_board_options():
+    m = bytearray(b"\xff" * 512)
+    b = efuse.read_board_options(bytes(m), autoload_failed=True)
+    assert (b.external_pa_2g, b.external_lna_2g, b.type_glna, b.rfe_type) == (False, False, 0x1, 0xFF)
 
 
 @pytest.mark.xfail(reason="read_board_options models only the AUTO path (registry AmplifierType_2G==0); "

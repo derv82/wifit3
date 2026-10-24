@@ -467,8 +467,8 @@ class RT5572Driver(Driver):
         return bytes(buf)
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build TXINFO + TXWI (TXWI ACK bit ON so the chip retries up to the global
-        TX_RTY_CFG SHORT_RTY_LIMIT (mac80211 default 7), set at monitor entry)
+        """Build TXINFO + TXWI (TXWI ACK bit ON for a unicast addr1 so the chip retries up to the
+        global TX_RTY_CFG SHORT_RTY_LIMIT (mac80211 default 7), set at monitor entry)
         and bulk-OUT ``frame_bytes`` once. The seq is already stamped by the base."""
         if self.chip_id is None:
             logger.error("inject_frame: connect() must run first")
@@ -486,7 +486,8 @@ class RT5572Driver(Driver):
                 None,
                 lambda: _tx_inject_frame(
                     self.dev, frame_bytes,
-                    txwi_size=txwi_sz, use_no_ack=False, phymode=phymode,
+                    txwi_size=txwi_sz, use_no_ack=bool(frame_bytes[4] & 0x01),
+                    phymode=phymode,
                 ),
             )
         except ValueError as e:

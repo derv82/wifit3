@@ -185,8 +185,6 @@ def build_tx_dma(frame: bytes, *, ack: bool = False, wcid: int = TX_NO_STATION,
     hdr_len = _hdrlen_from_buf(frame)
     if not hdr_len:
         raise ValueError("frame control names a header longer than the frame")
-    # No group-addr veto: mt76x0u and mt76x2u request the ACK on every injected frame,
-    # broadcast included. ack=False is replay-only, for byte-matching the aireplay capture.
     pad = b"\x00" * header_pad_len(hdr_len)
     body = frame[:hdr_len] + pad + frame[hdr_len:]
 

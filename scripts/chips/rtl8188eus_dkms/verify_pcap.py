@@ -47,8 +47,6 @@ DEFAULT_CAP = REPO / "driver_captures" / "captures_8188eu" / "capture-1.pcap"
 REG_APS_FSMCO_B2 = 0x0006   # first power-seq op (CARDEMU_TO_ACT step-1 poll) — the init anchor
 REG_SYS_CFG = 0x00F0        # 32-bit SYS_CFG read; used to anchor the walk (see _is_syscfg_read)
 REG_FA_HOLD = 0x0C00        # phydm FA-counter hold — opens the watchdog slot of a tick
-EEPROM_THERMAL_METER_88E = 0xBA   # efuse offset of the thermal-meter base
-EEPROM_DEFAULT_THERMAL_88E = 0x18  # fallback when the efuse byte is 0xff (autoload fail)
 
 # Operational-dispatch opener signatures (each a unique first op of a vendor handler):
 _OP_RX_BAR = C.REG_RXFLTMAP1            # 0x06a2 R: init_hw_mlme_ext HW_VAR_ENABLE_RX_BAR
@@ -97,10 +95,8 @@ def _seed_dm_state(dm_seed, params):
     seeding handlers (dig.seed_state / powertrack.seed_state), the same ones the driver's
     _dig_watchdog uses. No modeling: the gate exercises the actual code path, and because the
     seed is carried (not re-read), the watchdog start emits no extra wire ops."""
-    raw = params.efuse_map[EEPROM_THERMAL_METER_88E]
-    eeprom_thermal = EEPROM_DEFAULT_THERMAL_88E if raw == 0xFF else raw
     state = dig.seed_state(dm_seed.igi, dm_seed.cck_cca)
-    pt = powertrack.seed_state(dm_seed.ofdm_swing_raw, dm_seed.cck_swing_raw, eeprom_thermal)
+    pt = powertrack.seed_state(dm_seed.ofdm_swing_raw, dm_seed.cck_swing_raw, params.thermal_meter)
     return state, pt
 
 
@@ -108,9 +104,9 @@ def _walk_init(w: Walk, out: dict) -> None:
     """The deterministic bring-up, in driver source order, threaded through one cursor.
     No re-anchoring: each call consumes the next span of the same wire. Mirrors
     driver.py connect() + _phy_config()."""
-    w.run(lambda t: efuse.read_adapter_info(t), "adapter-info")   # probe (pre power-on)
+    autoload_failed, _ = w.run(lambda t: efuse.read_adapter_info(t), "adapter-info")
     w.run(lambda t: pwrseq.power_on(t), "power-on")
-    params, _ = w.run(lambda t: efuse.read_chip_params(t), "efuse")
+    params, _ = w.run(lambda t: efuse.read_chip_params(t, autoload_failed), "efuse")
     out["params"] = params
     w.run(lambda t: mac.init_misc01(t), "misc01")
     w.run(lambda t: firmware.download_firmware(t, firmware.load_firmware_blob()), "firmware")

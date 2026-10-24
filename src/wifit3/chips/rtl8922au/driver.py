@@ -405,7 +405,8 @@ class RTL8922AUDriver(Driver):
         if self._mgmt_ep is None:
             logger.error("RTL8922AU inject_frame: no mgmt bulk-OUT endpoint (not connected?)")
             return False
-        desc = tx.build_tx_desc_mgmt(frame_bytes, band_is_2g=self._band_is_2g)
+        desc = tx.build_tx_desc_mgmt(frame_bytes, band_is_2g=self._band_is_2g,
+                                     ack=not frame_bytes[4] & 0x01)
         payload = desc + frame_bytes
         try:
             await asyncio.get_event_loop().run_in_executor(
