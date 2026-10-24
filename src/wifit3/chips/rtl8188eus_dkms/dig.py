@@ -344,6 +344,9 @@ def watchdog_tick(t, state: WatchdogState, pt_state) -> DigTick:
     _dig(t, state, fa.cnt_all)
     _cck_pd(t, state, fa.cck_fa)
     _adaptivity(t, state)
-    powertrack.thermal_tick(t, pt_state)
+    try:
+        powertrack.thermal_tick(t, pt_state)
+    except NotImplementedError:
+        logger.debug("power-track deferred; continuing the DM watchdog")
     _nhm(t, state)
     return DigTick(state.cur_ig_value, fa.cnt_all, fa.ofdm_fa, fa.cck_fa)

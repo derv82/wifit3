@@ -98,6 +98,7 @@ class RTL8188EUSDriver(Driver):
         self.transport = RTL8188EUSTransport(dev)
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
+        self._tx_sequence: int = 0
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._mgmt_bulk_out: Optional[int] = None
@@ -185,9 +186,12 @@ class RTL8188EUSDriver(Driver):
         return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
-        """Realtek HW assigns the 802.11 sequence number (fill_txdesc_v3's seq counter takes
-        over), so the frame goes out unchanged."""
-        return frame_bytes
+        if len(frame_bytes) < 24:
+            return frame_bytes
+        stamped = bytearray(frame_bytes)
+        stamped[22:24] = ((self._tx_sequence << 4) | (stamped[22] & 0x0F)).to_bytes(2, "little")
+        self._tx_sequence = (self._tx_sequence + 1) & 0xFFF
+        return bytes(stamped)
 
     async def close(self) -> None:
         """Stop the RX reader + release USB. Idempotent."""

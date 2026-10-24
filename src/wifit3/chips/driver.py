@@ -76,6 +76,7 @@ class Driver(ABC):
         self._our_tx_macs: set[bytes] = set()       # source MACs whose returning ACKs we count
         self._ack_counts: dict[bytes, int] = {}     # MAC -> ACKs seen since the last reset
 
+
     @classmethod
     @abstractmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Driver":

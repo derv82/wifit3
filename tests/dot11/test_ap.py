@@ -48,7 +48,62 @@ def test_assoc_resp_copies_beacon_elements_in_hostapd_order():
     beacon = bytes(36) + ssid_ie("x") + wmm + wps + ext_cap + he_cap + ht_op + ht_cap
     f = assoc_resp(_BSSID, _CLIENT, twin_beacon=beacon)
     tail = f[30 + len(rates_ie() + ext_rates_ie()):]
-    assert tail == bytes.fromhex("2d02" "6c01") + ht_op + he_cap + ext_cap + wmm
+    assert tail == ht_cap + ht_op + he_cap + ext_cap + wmm
+
+
+def _beacon(capability: int, *elements: bytes) -> bytes:
+    return bytes(24) + bytes(8) + struct.pack("<HH", 100, capability) + b"".join(elements)
+
+
+def test_assoc_resp_capability_is_the_twin_beacon_capability_with_privacy():
+    rm_enabled = bytes.fromhex("4605" "7100000000")
+    rm_beacon = _beacon(0x1411, rm_enabled)             # ESS + Privacy + Short Slot + RM
+    f = assoc_resp(_BSSID, _CLIENT, twin_beacon=rm_beacon)
+    assert f[24:26] == struct.pack("<H", 0x1411) and rm_enabled in f
+    open_beacon = _beacon(0x0401)                       # ESS + Short Slot, no Privacy
+    assert assoc_resp(_BSSID, _CLIENT, twin_beacon=open_beacon)[24:26] == struct.pack("<H", 0x0411)
+
+
+def test_assoc_resp_copies_the_twin_beacon_rates_in_hostapd_order():
+    supp = bytes.fromhex("0108" "828b0c1218243048")
+    ext = bytes.fromhex("3202" "606c")
+    rm_enabled = bytes.fromhex("4605" "7100000000")
+    beacon = _beacon(0x0011, ssid_ie("x"), rm_enabled, ext, supp)
+    f = assoc_resp(_BSSID, _CLIENT, channel=6, twin_beacon=beacon)
+    assert f[30:] == supp + ext + rm_enabled
+    assert rates_ie(6) not in f and ext_rates_ie(6) not in f
+
+
+def test_beacon_clone_and_assoc_resp_agree_on_a_20mhz_ht_cap():
+    ht_cap_40mhz = bytes.fromhex("2d02" "6e01")         # cap info 0x016e: 40 MHz bit set
+    ht_op_40mhz = bytes.fromhex("3d03" "0b0700")        # primary 11, secondary below, any width
+    clone = beacon_clone(_beacon(0x0011, ds_param_ie(11), ht_cap_40mhz, ht_op_40mhz), 1)
+    ht_cap_20mhz = bytes.fromhex("2d02" "6c01")
+    assert ht_cap_20mhz in clone and ht_cap_40mhz not in clone
+    assert bytes.fromhex("3d03" "010000") in clone
+    assert ht_cap_20mhz in assoc_resp(_BSSID, _CLIENT, twin_beacon=clone)
+
+
+def test_beacon_clone_strips_the_sae_h2e_only_selector():
+    supp = bytes.fromhex("0108" "828b0c1218243048")
+    ext_with_selector = bytes.fromhex("3203" "606cfb")
+    clone = beacon_clone(_beacon(0x0011, supp, ds_param_ie(6), ext_with_selector), 6)
+    assert clone[36:] == supp + ds_param_ie(6) + bytes.fromhex("3202" "606c")
+    supp_with_selector = bytes.fromhex("0105" "828b0c12fb")
+    ext_selector_only = bytes.fromhex("3201" "fb")
+    clone = beacon_clone(_beacon(0x0011, supp_with_selector, ext_selector_only), 6)
+    assert clone[36:] == bytes.fromhex("0104" "828b0c12")
+
+
+def test_beacon_clone_uses_generic_rates_for_a_decoy_on_the_other_band():
+    supp_5ghz = bytes.fromhex("0108" "8c129824b048606c")
+    ht_op_36 = bytes.fromhex("3d03" "240000")
+    to_2ghz = beacon_clone(_beacon(0x0011, ssid_ie("x"), supp_5ghz, ht_op_36), 6)
+    assert to_2ghz[36:] == ssid_ie("x") + rates_ie(6) + ext_rates_ie(6) + bytes.fromhex("3d03" "060000")
+    supp_2ghz = bytes.fromhex("0104" "828b0c12")
+    ext_2ghz = bytes.fromhex("3202" "606c")
+    to_5ghz = beacon_clone(_beacon(0x0011, supp_2ghz, ds_param_ie(11), ext_2ghz), 36)
+    assert to_5ghz[36:] == rates_ie(36) + ds_param_ie(36)
 
 
 def test_assoc_resp_rates_follow_the_operating_channel():

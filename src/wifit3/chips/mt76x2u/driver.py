@@ -676,12 +676,13 @@ class MT76x2UDriver(Driver):
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Build the mt76x02 TXINFO + TXWI for ``frame_bytes`` and bulk-OUT it once over EP 0x07
-        (AC_VO). The frame always requests ACK, so the chip's own HW retry (limit set globally in
-        TX_RTY_CFG at connect) retransmits an un-ACKed unicast. The tuned channel selects the TXWI
+        (AC_VO). A unicast addr1 requests ACK, so the chip's own HW retry (limit set globally in
+        TX_RTY_CFG at connect) retransmits it un-ACKed. The tuned channel selects the TXWI
         rate band (OFDM on 5 GHz, CCK on 2.4 GHz). The sequence number is already stamped by
         ``_stamp_tx_seq`` (the base calls it before this)."""
         return await tx_inject_frame(self.transport, frame_bytes,
-                                     ack=True, channel=self.current_channel)
+                                     ack=not frame_bytes[4] & 0x01,
+                                     channel=self.current_channel)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Software-stamp an incrementing 802.11 sequence number into seq_ctrl. The 20-byte txwi

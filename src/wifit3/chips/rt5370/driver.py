@@ -280,9 +280,10 @@ class RT5370Driver(Driver):
     def _do_inject(self, frame: bytes) -> None:
         # Executor thread; share _hw_lock with _tune so an inject can never collide with
         # an in-flight (or cancelled-but-draining) channel tune on the USB device. ACK bit ON
-        # (use_no_ack=False) so the chip requests the AP's ACK + retries un-ACKed frames.
+        # for a unicast addr1 so the chip requests the AP's ACK + retries un-ACKed frames.
         with self._hw_lock:
-            tx.send_frame(self.transport.dev, self._bulk_out_ep, frame, use_no_ack=False)
+            tx.send_frame(self.transport.dev, self._bulk_out_ep, frame,
+                          use_no_ack=bool(frame[4] & 0x01))
 
     def _stamp_tx_seq(self, frame: bytes) -> bytes:
         """Stamp the next running sequence number into the frame's seqctl (bytes 22-23,

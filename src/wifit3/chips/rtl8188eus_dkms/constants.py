@@ -33,6 +33,7 @@ REG_9346CR = 0x000A          # EEPROM/efuse ctrl: boot-from + autoload status
 REG_SYS_CLKR = 0x0008        # system clock enable (efuse loader clock)
 BOOT_FROM_EEPROM = BIT(4)    # REG_9346CR: 1=93C46 EEPROM, 0=E-Fuse
 EEPROM_EN = BIT(5)           # REG_9346CR: autoload OK
+RTL_EEPROM_ID = 0x8129        # logical EFUSE bytes 0x00..0x01 [SRC] include/hal_pg.h
 EFUSE_ACCESS_ON = 0x69       # REG_EFUSE_ACCESS enable [SRC] rtl8188e_spec.h
 FEN_ELDR = BIT(12)           # REG_SYS_FUNC_EN: efuse loader reset (EfusePowerSwitch)
 LOADER_CLK_EN = BIT(5)       # REG_SYS_CLKR: efuse loader clock
@@ -123,6 +124,7 @@ TXPWR_2M_EXTRA_BIAS = -9           # tx_power_extra_bias(MGN_2M) [SRC] rtl8188e_
 DEFAULT_INIT_CHANNEL = 6           # pHalData->current_channel default [SRC] usb_halinit.c:1344
 # efuse PG TX-power block start (pg_txpwr_saddr) [SRC] rtl8188e_hal_init.c:2547
 EEPROM_TX_PWR_INX_88E = 0x10
+IC_DEFAULT_TXPWR_8188E = 0x2D  # rtl8188e_pg_txpwr_def_info [SRC] hal_com_phycfg.c
 
 # --- MISC01 queue/page setup [SRC] hal_com_reg.h, usb_halinit.c -----------
 REG_RQPN = 0x0200
@@ -335,15 +337,16 @@ EFUSE_REAL_CONTENT_LEN_88E = 256
 EFUSE_MAX_SECTION_88E = 64
 EFUSE_MAX_WORD_UNIT = 4
 # logical-map offsets [SRC] include/hal_pg.h
+EEPROM_ChannelPlan_88E = 0xB8      # SW channel/regulatory plan
 EEPROM_XTAL_88E = 0xB9             # crystal cap (AFE trim)
-EEPROM_MAC_ADDR_88EU = 0xD7        # 6-byte MAC
-# Board-option bytes we decode but do not consume. In THIS driver build all but the
-# PA/LNA select are inert on the register wire: CONFIG_ANTENNA_DIVERSITY is off (0xC9
-# never writes, [SRC] autoconf.h:94) and CONFIG_TXPWR_LIMIT_EN is off (0xC1 regulatory
-# is dead code, [SRC] Makefile), and 0xB8 only picks the SW channel list. Only 0xCA[3:2]
-# (external PA/LNA) changes what the chip is programmed with -> guarded fail-loud in efuse.py.
-EEPROM_ChannelPlan_88E = 0xB8      # SW channel/regulatory plan (this card 0xA2; SW-only)
+EEPROM_THERMAL_METER_88E = 0xBA    # power-track thermal reference
 EEPROM_RF_BOARD_OPTION_88E = 0xC1  # regulatory[2:0] / antdiv[4:3] / interfaceSel[7:5]
-EEPROM_RF_ANTENNA_OPT_88E = 0xC9   # TRxAntDivType (inert: antenna-diversity compiled out)
+EEPROM_VERSION_88E = 0xC4          # EEPROM layout version
+EEPROM_CUSTOMER_ID_88E = 0xC5      # customer ID
 EEPROM_RFE_OPTION_88E = 0xCA       # [3:2] ePA/eLNA select, [1:0] rfe_type
+EEPROM_COUNTRY_CODE_88E = 0xCB     # two-byte alpha2 country code
+EEPROM_VID_88EU = 0xD0             # little-endian USB vendor ID
+EEPROM_PID_88EU = 0xD2             # little-endian USB product ID
+EEPROM_MAC_ADDR_88EU = 0xD7        # 6-byte MAC
+EEPROM_RF_ANTENNA_OPT_88E = 0xC9   # antenna-diversity option (compiled out)
 EEPROM_RFE_INTERNAL_PA_LNA = 0x3   # 0xCA[3:2]==3: iPA+iLNA (PHY_SetRFEReg early-returns)

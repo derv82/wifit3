@@ -622,8 +622,8 @@ def _sniffer_channel(f):
     return f[64]                                       # control_ch
 
 
-# Runtime injects with NO_ACK clear (request an ACK, retry until Addr2 ACKs); the captured
-# aireplay reference set NO_ACK. REM_TX_COUNT now matches (both 15), so NO_ACK is the one intended
+# Runtime injects a unicast addr1 with NO_ACK clear (request an ACK, retry until Addr2 ACKs); the
+# captured aireplay reference set NO_ACK. REM_TX_COUNT now matches (both 15), so NO_ACK is the one intended
 # divergence. The ACK-cfg field (NO_ACK + REM_TX_COUNT) is masked below so the byte compare ignores
 # it; every other descriptor byte must still match the wire exactly. TXD3 is at byte 16 (4-byte
 # SDIO/USB header + connac2 TXD word 3, see tx.build_tx).

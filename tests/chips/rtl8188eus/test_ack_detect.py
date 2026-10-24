@@ -51,7 +51,10 @@ def test_tap_off_by_default(monkeypatch):
     assert d.acks_seen(ra) == 0
 
 
-def test_stamp_tx_seq_is_identity():
+def test_stamp_tx_seq_increments_and_keeps_fragment():
     d = _driver()
-    frame = (b"\xc0\x00\x00\x00" + b"\xff" * 6 + bytes.fromhex("020000000001") + b"\x00" * 8)
-    assert d._stamp_tx_seq(frame) is frame   # Realtek HW-stamps; frame goes out unchanged
+    frame = (b"\xc0\x00\x00\x00" + b"\xff" * 6 + bytes.fromhex("020000000001") + b"\x00" * 6
+             + b"\x03\x00" + b"\x07\x00")
+    seqs = [int.from_bytes(d._stamp_tx_seq(frame)[22:24], "little") for _ in range(2)]
+    assert [s >> 4 for s in seqs] == [0, 1]
+    assert [s & 0x0F for s in seqs] == [3, 3]

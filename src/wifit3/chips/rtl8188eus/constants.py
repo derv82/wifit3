@@ -317,6 +317,7 @@ TXDESC_ANTENNA_SELECT_C = 1 << 29        # rtl8xxxu.h:584
 TXDESC32_USE_DRIVER_RATE = 1 << 8        # rtl8xxxu.h:550 (txdw4)
 TXDESC32_RETRY_LIMIT_ENABLE = 1 << 17    # rtl8xxxu.h:575 (txdw5)
 TXDESC32_RETRY_LIMIT_SHIFT = 18          # rtl8xxxu.h:576 (txdw5)
+TXDESC32_SEQ_SHIFT = 16                  # rtl8xxxu.h:542 (txdw3)
 TXDESC32_RETRY_LIMIT_MGNT = 6            # `rtl8xxxu_fill_txdesc_v3` (core.c:5360)
 
 # ---- REG_TRXDMA_CTRL — TX-queue → DMA-channel routing (regs.h:405-421)
