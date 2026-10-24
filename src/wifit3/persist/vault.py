@@ -179,6 +179,7 @@ class Vault:
         except OSError:
             return ""
 
+
     def summary(self) -> Optional[str]:
         """One-line count of every saved capture, e.g. '3 handshakes, 1 WEP key',
         or None when nothing is saved."""

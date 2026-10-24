@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import HorizontalScroll
 from textual.message import Message
 from textual.widgets import Button, Checkbox, Input, Label, Select
 
@@ -70,7 +70,7 @@ class ScanFilter:
         return not self.text or text_matches(self.text, ap.bssid, ssid or ap.ssid)
 
 
-class FilterBar(Horizontal):
+class FilterBar(HorizontalScroll):
     """One row above the AP table: text query, encryption select, channels button, hide-silenced."""
 
     ALLOW_SELECT = False
@@ -79,6 +79,8 @@ class FilterBar(Horizontal):
     FilterBar {
         height: auto;
         padding: 0 1;
+        overflow-x: auto;
+        overflow-y: hidden;
         border: round $primary;
         border-title-color: $primary;
         border-title-style: bold;
@@ -140,7 +142,7 @@ class FilterBar(Horizontal):
             picked = [c for c in band if c in chans]
             if picked:
                 parts.append(short if set(picked) == set(band) else band_ranges(picked)[0][1])
-        return "[u]C[/u]hannels: " + (" + ".join(parts) or "none")
+        return " + ".join(parts) or "none"
 
     def action_leave(self) -> None:
         self._focus_table()

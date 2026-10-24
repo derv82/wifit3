@@ -27,13 +27,15 @@ from wifit3.models import AccessPoint
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
-from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
+from .screens.error_modals import FatalErrorModal, RecoverableErrorModal, ReturnToSplashModal
 from .screens.new_device import NewDeviceDialog
 from .screens.vault_drawer import VaultDrawer
 from .screens.vault_table import VaultTable
 from .clipboard import copy_copyq_text, copy_macos_text, copy_windows_text
 from .pref import PreferencesModal
+from .system_theme import SYSTEM_THEME, preferred_theme
 from .themes import register_app_themes
+from .system_notifications import send_system_notification
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +58,22 @@ class WifiteApp(App):
 
     CSS = """
     /* Force single-line header to avoid Textual's "click to expand" behavior */
-    Header { height: 1 !important; }
+    Header {
+        height: 1 !important;
+        layers: title controls;
+    }
+    Header HeaderTitle {
+        layer: title;
+        width: 100%;
+    }
+    Header HeaderIcon {
+        layer: controls;
+        dock: left;
+    }
+    Header HeaderClock {
+        layer: controls;
+        dock: right;
+    }
 
     #ascii-art {
         content-align: center middle;
@@ -81,8 +98,11 @@ class WifiteApp(App):
         text-style: bold reverse;   /* clear cue when Tab lands on START / Uninstall */
     }
     #start-btn {
-        color: white;
+        color: black;
         text-style: bold;
+    }
+    #start-btn:hover {
+        color: white;
     }
     #uninstall-btn {
         margin-top: 1;              /* stacked under START */
@@ -108,6 +128,11 @@ class WifiteApp(App):
         margin-right: 1;
         min-width: 12;
     }
+    JobTrackerPane.-compact-actions .job-pause-btn,
+    JobTrackerPane.-compact-actions .job-skip-btn,
+    JobTrackerPane.-compact-actions .job-action-btn { min-width: 0; width: auto; }
+    JobTrackerPane.-hide-progress .job-bar { display: none; }
+    JobTrackerPane.-compact-name .job-name { width: 13; }
     /* App CSS outranks a widget's DEFAULT_CSS, so lower the global min-width for the
        EvilTwin modal's compact BSSID buttons from here, not the modal. */
     EvilTwinInputModal #bssid-btns Button { min-width: 4; }
@@ -145,9 +170,25 @@ class WifiteApp(App):
         self.vault.subscribe(lambda: self.call_later(self._refresh_vault_table))   # any thread
         self.vault.set_probed_ssids_source(self._probed_ssids)
         self._job_status: dict[str, ToolStatus] = {}
+        self._app_focused = True
         self.pbc_enabled: bool = Config.wps_auto_pbc
         register_app_themes(self)
-        self.theme = Config.theme
+        self.theme_preference = Config.theme
+        self.set_theme_preference(Config.theme)
+
+    def set_theme_preference(self, preference: str) -> None:
+        self.theme_preference = preference
+        if preference == SYSTEM_THEME:
+            self.refresh_system_theme()
+        else:
+            self.theme = preference
+
+    def refresh_system_theme(self) -> None:
+        if self.theme_preference != SYSTEM_THEME:
+            return
+        theme = preferred_theme(Config.system_dark_theme, Config.system_light_theme)
+        if theme != self.theme:
+            self.theme = theme
 
     def _probed_ssids(self) -> Set[str]:
         return self.array.probed_ssids if self.array is not None else set()
@@ -157,6 +198,19 @@ class WifiteApp(App):
         copy_copyq_text(text)
         if not copy_windows_text(text) and not copy_macos_text(text):
             super().copy_to_clipboard(text)
+
+    def on_app_focus(self, _event: events.AppFocus) -> None:
+        self._app_focused = True
+        self.refresh_system_theme()
+
+    def on_app_blur(self, _event: events.AppBlur) -> None:
+        self._app_focused = False
+
+    def desktop_notify(self, title: str, message: str) -> bool:
+        """Send a system notification only while the app is unfocused and enabled."""
+        if self._app_focused or not Config.desktop_notifications:
+            return False
+        return send_system_notification(title, message)
 
     def on_text_selected(self, event: events.TextSelected) -> None:
         selected = self.screen.get_selected_text()
@@ -186,6 +240,7 @@ class WifiteApp(App):
         self.push_screen("splash")
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
         self.set_interval(2.0, self._poll_jobs)
+        self.set_interval(2.0, self.refresh_system_theme)
         self.call_after_refresh(self.device_watch.poll)
         self.call_after_refresh(self._poll_jobs)
         self._quit_on_termination_signals()
@@ -248,12 +303,14 @@ class WifiteApp(App):
     def _toast_job(self, job: JobState) -> None:
         if job.status == ToolStatus.SUCCESS:
             self.notify(f"SUCCESS  PSK: {job.key}", title=job.display_name, severity="information")
+            self.desktop_notify(job.display_name, f"SUCCESS  PSK: {job.key}")
         elif job.status == ToolStatus.FAILURE:
             self.notify(f"NOT FOUND  {job.progress_msg}", title=job.display_name, severity="warning")
         elif job.status == ToolStatus.STOPPED:
             self.notify("STOPPED  by user", title=job.display_name, severity="information")
         else:
             self.notify(f"ERROR  {job.progress_msg}", title=job.display_name, severity="error")
+            self.desktop_notify(job.display_name, "Cracking job failed")
 
     def stop_job(self, job_id: str) -> bool:
         """Stop a running job, then refresh the tracker immediately."""
@@ -335,14 +392,16 @@ class WifiteApp(App):
         if remaining > 0:
             self.notify(f"A wireless card was lost. {remaining} still active.",
                         title="Card unplugged", severity="warning")
+            self.desktop_notify("Card unplugged", f"{remaining} wireless cards still active")
             return
         # Last card gone: fall back to the recoverable modal → splash.
         if isinstance(self.screen, (FatalErrorModal, RecoverableErrorModal)):
             return
+        self.desktop_notify("Wireless card lost", "No active wireless cards remain")
         self.push_screen(RecoverableErrorModal(WifiteDeviceLostError("the wireless adapter")))
 
     async def recover_to_splash(self) -> None:
-        """Return to the splash screen after the last card was lost."""
+        """Return to Splash and release the active wireless device pool."""
         array = self.array
         # Unwind to the base default screen (kept by `> 1`), then re-push splash onto it.
         while len(self.screen_stack) > 1:
@@ -359,6 +418,17 @@ class WifiteApp(App):
                 logger.debug("Closing the lost pool failed (already gone)", exc_info=True)
         self.array = None
         self.target_ap = None
+
+    def action_return_to_splash(self) -> None:
+        if isinstance(self.screen, ReturnToSplashModal):
+            return
+
+        def _confirmed(confirmed: bool | None) -> None:
+            if confirmed:
+                self.run_worker(
+                    self.recover_to_splash(), exclusive=True, group="return-to-splash")
+
+        self.push_screen(ReturnToSplashModal(), _confirmed)
 
     def action_preferences(self) -> None:
         self.push_screen(PreferencesModal())

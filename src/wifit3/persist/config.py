@@ -52,6 +52,8 @@ SettingsT = TypeVar("SettingsT", CpuCrackSettings, HashcatSettings, HashtopolisS
 
 class Config:
     theme: str = "textual-dark"
+    system_dark_theme: str = "wifit3-green-dark"
+    system_light_theme: str = "textual-light"
     captures_dir: str = "captures"
     save_pcap: bool = True
     log_level: str = "info"
@@ -62,6 +64,10 @@ class Config:
     decloaked_ssids: dict[str, str] = {}
     hide_silenced: bool = False
     wps_auto_pbc: bool = True
+    desktop_notifications: bool = True
+    hashcat_path: str | None = None
+    wordlist_paths: list[str] = []
+    hashcat_args: str | None = None
     auto_crack: ToolName | None = ToolName.CPU_CRACK
     cpu_crack: CpuCrackSettings = CpuCrackSettings()
     hashcat: HashcatSettings = HashcatSettings()
@@ -98,6 +104,8 @@ class Config:
         cls.captures_dir = data.get("captures_dir", cls.captures_dir)
         cls.save_pcap = data.get("save_pcap", cls.save_pcap)
         cls.theme = data.get("theme", cls.theme)
+        cls.system_dark_theme = _optional_str(data.get("system_dark_theme"), cls.system_dark_theme)
+        cls.system_light_theme = _optional_str(data.get("system_light_theme"), cls.system_light_theme)
         cls.log_level = data.get("log_level", cls.log_level)
         cls.scanner_sort = data.get("scanner_sort", cls.scanner_sort)
         cls.scanner_sort_reverse = data.get("scanner_sort_reverse", cls.scanner_sort_reverse)
@@ -115,6 +123,13 @@ class Config:
                                    and len(ssid.encode("utf-8")) <= SSID_MAX_OCTETS}
         cls.hide_silenced = bool(data.get("hide_silenced", cls.hide_silenced))
         cls.wps_auto_pbc = bool(data.get("wps_auto_pbc", cls.wps_auto_pbc))
+        cls.desktop_notifications = bool(
+            data.get("desktop_notifications", cls.desktop_notifications)
+        )
+        cls.hashcat_path = _optional_str(data.get("hashcat_path"), cls.hashcat_path)
+        cls.wordlist_paths = _wordlist_paths(data.get("wordlist_paths"),
+                                            data.get("wordlist_path"), cls.wordlist_paths)
+        cls.hashcat_args = _optional_str(data.get("hashcat_args"), cls.hashcat_args)
         cls.auto_crack = _auto_crack(data, cls.auto_crack)
         legacy_wordlists = _legacy_wordlists(data)
         cls.cpu_crack = _load_table(_table(data, "cpu_crack"), cls.cpu_crack)
@@ -132,6 +147,8 @@ class Config:
             f"captures_dir = {_fmt(cls.captures_dir)}\n"
             f"save_pcap = {_fmt(cls.save_pcap)}\n"
             f"theme = {_fmt(cls.theme)}\n"
+            f"system_dark_theme = {_fmt(cls.system_dark_theme)}\n"
+            f"system_light_theme = {_fmt(cls.system_light_theme)}\n"
             f"log_level = {_fmt(cls.log_level)}\n"
             f"scanner_sort = {_fmt(cls.scanner_sort)}\n"
             f"scanner_sort_reverse = {_fmt(cls.scanner_sort_reverse)}\n"
@@ -139,6 +156,7 @@ class Config:
             f"silenced_bssids = {_fmt(cls.silenced_bssids)}\n"
             f"hide_silenced = {_fmt(cls.hide_silenced)}\n"
             f"wps_auto_pbc = {_fmt(cls.wps_auto_pbc)}\n"
+            f"desktop_notifications = {_fmt(cls.desktop_notifications)}\n"
             f"auto_crack = {_fmt(cls.auto_crack or '')}\n"
         )
         text += _table_text("cpu_crack", cls.cpu_crack)
@@ -153,6 +171,22 @@ class Config:
             _PATH.write_text(text, encoding="utf-8")
         except OSError as e:
             raise ConfigError(f"Failed to save config at {_PATH}: {e}") from e
+
+
+def _table(data: dict, name: str) -> dict:
+    table = data.get(name)
+    return table if isinstance(table, dict) else {}
+
+
+def _optional_str(value: object, current: str | None) -> str | None:
+    return value if isinstance(value, str) else current
+
+
+def _wordlist_paths(value: object, legacy: object, current: list[str]) -> list[str]:
+    raw = value if value is not None else legacy
+    if not isinstance(raw, list) or not all(isinstance(path, str) for path in raw):
+        return current
+    return raw
 
 
 def _auto_crack(data: dict, current: ToolName | None) -> ToolName | None:

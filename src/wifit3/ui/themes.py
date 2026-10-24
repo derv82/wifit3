@@ -12,9 +12,7 @@ def register_app_themes(app) -> None:
 
 
 def custom_themes() -> list[Theme]:
-    return [
-        _wifit3_green_dark(),
-    ]
+    return [_wifit3_green_dark()]
 
 
 def _wifit3_green_dark() -> Theme:

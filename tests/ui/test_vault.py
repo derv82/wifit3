@@ -2,6 +2,7 @@
 The autouse _captures_to_tmp fixture points Config.captures_dir at tmp_path, and WifiteApp builds its Vault from there.
 """
 import pytest
+from textual.containers import HorizontalScroll
 from textual.widgets import Button, DataTable, Input
 
 from wifit3.models import AccessPoint, CaptureType
@@ -17,6 +18,7 @@ from wifit3.ui.vault.modals.nickname import NicknameModal
 _HS_LINE = "WPA*02*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***2\n"
 _PMKID_LINE = "WPA*01*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***\n"
 _WEP_TXT = "SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nWEP key (hex):   6162636465\n"
+_LONG_WEP_TXT = "SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nWEP key (hex):   " + "61" * 26 + "\n"
 
 def _write(d, name, content):
     (d / name).write_text(content, encoding="utf-8")
@@ -24,6 +26,39 @@ def _write(d, name, content):
 async def _open_vault(app) -> VaultDrawer:
     app.action_toggle_vault()
     return app.screen
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+@pytest.mark.parametrize(("height", "full_screen"), [(35, True), (36, False)])
+async def test_short_vault_uses_full_screen(height, full_screen):
+    app = WifiteApp()
+    async with app.run_test(size=(100, height)) as pilot:
+        view = await _open_vault(app)
+        await pilot.pause(0)
+        content = view.query_one("#vault-content")
+
+        assert (content.region.height == view.size.height) is full_screen
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+@pytest.mark.parametrize(("width", "stacked"), [(104, True), (105, False)])
+async def test_narrow_vault_stacks_ap_list_above_details(width, stacked):
+    app = WifiteApp()
+    async with app.run_test(size=(width, 40)) as pilot:
+        view = await _open_vault(app)
+        await pilot.pause(0)
+        table = view.query_one("#vault-table").region
+        item = view.query_one("#vault-item").region
+
+        if stacked:
+            assert table.x == item.x
+            assert table.width == item.width == width
+            assert table.bottom == item.y
+        else:
+            assert table.y == item.y
+            assert table.right == item.x
 
 
 @pytest.mark.asyncio
@@ -36,7 +71,7 @@ async def test_delete_in_panel_confirms_and_removes(tmp_path):
     async with app.run_test() as pilot:
         view = await _open_vault(app)
         await pilot.pause()
-        
+
         aps = view.query_one("#vault-table")._aps
         bssid, (ssid, caps) = next(iter(aps.items()))
         view.query_one("VaultItemView").load(bssid, ssid, caps)
@@ -139,7 +174,7 @@ async def test_vault_keeps_emoji_named_mac_octets_literal(tmp_path):
         assert cell.plain == "HomeNet ✓WEP aa:cd:11:22:33:44"
         assert "💿" not in cell.plain
         title = view.query_one("VaultItemView")._border_title
-        assert title.plain == " HomeNet (aa:cd:11:22:33:44) "
+        assert title.plain == " HomeNet  (aa:cd:11:22:33:44) "
         assert all(span.end <= title.plain.index("aa:cd") for span in title.spans)
 
 
@@ -268,6 +303,24 @@ async def test_add_credential_prefills_the_row_and_rejects_a_psk_the_handshake_r
         assert pin.pin == "1234" and pin.value is None
 
 
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_capture_value_scrolls_under_filename(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _LONG_WEP_TXT)
+    app = WifiteApp()
+    async with app.run_test(size=(50, 24)) as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        key_scroll = view.query_one(".key-scroll", HorizontalScroll)
+        assert key_scroll.max_scroll_x > 0
+        assert key_scroll.size.height >= 4
+        assert len(key_scroll.query(".key-row")) == 2
+        assert key_scroll.query_one(".date").region.bottom < key_scroll.region.bottom
+        assert key_scroll.query_one("#copy-hex", Button)
+        assert key_scroll.query_one("#copy-ascii", Button)
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
 async def test_open_vault_updates_when_handshake_is_saved(tmp_path, mocker):
@@ -291,6 +344,31 @@ async def test_open_vault_updates_when_handshake_is_saved(tmp_path, mocker):
         await pilot.pause()
         assert table.row_count == 1
         assert "✓HS" in str(table.get_row_at(0)[0])
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_rapid_selection_only_loads_the_final_ap(tmp_path, mocker):
+    for index, name in enumerate(("Alpha", "Bravo", "Charlie")):
+        bssid = f"00-11-22-33-44-{index:02x}"
+        _write(tmp_path, f"{name}_{bssid}_1000_wep_key.txt",
+               f"SSID: {name}\nBSSID: {bssid.replace('-', ':')}\nWEP key (hex): 6162\n")
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        app.push_screen(VaultDrawer())
+        await pilot.pause()
+        drawer = app.screen
+        table = drawer.query_one("#vault-aps", DataTable)
+        load_widget = mocker.patch.object(drawer, "_load_widget")
+
+        table.move_cursor(row=0)
+        table.move_cursor(row=1)
+        table.move_cursor(row=2)
+        await pilot.pause(0.02)
+        load_widget.assert_not_called()
+
+        await pilot.pause(0.1)
+        load_widget.assert_called_once_with("00:11:22:33:44:02")
 
 
 @pytest.mark.asyncio
@@ -329,7 +407,7 @@ async def test_delete_cancelled_keeps_file(tmp_path):
     async with app.run_test() as pilot:
         view = await _open_vault(app)
         await pilot.pause()
-        
+
         aps = view.query_one("#vault-table")._aps
         bssid, (ssid, caps) = next(iter(aps.items()))
         view.query_one("VaultItemView").load(bssid, ssid, caps)
@@ -366,3 +444,26 @@ async def test_a_hashline_capture_offers_each_cracker_by_its_label(tmp_path, wid
         buttons[1].press()
         await pilot.pause(0)
         assert isinstance(app.screen, CpuCrackConfigModal)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_capture_tools_wrap_without_stacking_actions(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _HS_LINE)
+    app = WifiteApp()
+    async with app.run_test(size=(30, 40)) as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        bssid, (ssid, caps) = next(iter(view.query_one("#vault-table")._aps.items()))
+        view.query_one("VaultItemView").load(bssid, ssid, caps)
+        await pilot.pause(0)
+
+        panel = view.query_one(_CapturePanel)
+        buttons = list(panel.query(".tool-btn").results(Button))
+        assert [str(button.label) for button in buttons] == ["Hashcat", "CPU Crack"]
+        assert buttons[0].region.y != buttons[1].region.y
+
+        open_directory = panel.query_one(".open-dir", Button)
+        delete = panel.query_one(".delete", Button)
+        assert open_directory.region.y == delete.region.y
+        assert open_directory.region.x < delete.region.x

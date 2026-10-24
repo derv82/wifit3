@@ -1,9 +1,12 @@
 """Tests for the captures/ history loader (synthetic files, no real IDs)."""
 from __future__ import annotations
 
+import json
+
 from wifit3.models import CaptureType
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.config import Config
+from wifit3.persist.meta import meta_path, read_meta
 
 _BSSID_DASH = "aa-bb-cc-dd-ee-ff"
 _BSSID_COLON = "aa:bb:cc:dd:ee:ff"
@@ -47,6 +50,24 @@ class TestLoadCaptureIndex:
         caps = idx[_BSSID_COLON]
         assert len(caps) == 1 and caps[0].type == "HS"
         assert caps[0].timestamp == 1700000000
+
+    def test_hashline_ssid_is_persisted_for_legacy_capture(self, tmp_path):
+        _write(tmp_path, f"LegacyName_{_BSSID_DASH}_1700000000_pmkid.hc22000",
+               _pmkid_line(b"LegacyName"))
+
+        capture = load_capture_index()[_BSSID_COLON][0]
+
+        assert capture.ssid == "LegacyName"
+        assert read_meta(meta_path("LegacyName", _BSSID_COLON))["ssid"] == "LegacyName"
+
+    def test_meta_ssid_is_authoritative(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000_handshake.hc22000", _HS_LINE)
+        meta_path("TestNet", _BSSID_COLON).write_text(
+            json.dumps({"bssid": _BSSID_COLON, "ssid": "Renamed Network"}), encoding="utf-8")
+
+        capture = load_capture_index()[_BSSID_COLON][0]
+
+        assert capture.ssid == "Renamed Network"
 
     def test_pmkid_hc22000(self, tmp_path):
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000001_pmkid.hc22000", _PMKID_LINE)

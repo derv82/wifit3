@@ -195,15 +195,17 @@ and rtl8822cu are unchecked. Not necessarily a bug: it may be harmless on those 
 
 **Direction.** Check each against its C source; measure frames heard on a 5 GHz channel in the TX lab.
 
-## Focus view CPU usage
+## Driver USB polling consumes excessive CPU during TX floods
 
-**Problem.** Focus is the most CPU-heavy screen. After the LED art and signal bar were changed to
-repaint only on change, 120 s of Focus costs 27.5-30.7 s of CPU on the Windows PC (was 44.8 s),
-against 24.8 s for the Scanner (1 run each). Remaining suspects are the per-tick snapshot rebuild
-and Textual compositing.
+**Problem.** Mass deauthentication can become a CPU hanger because the driver spends excessive CPU
+polling USB submissions and ACK results. The submission path may be fast, but busy polling can still
+starve the UI and other work. This is a software scheduling/transport problem to investigate, not a
+radio limitation to assume.
 
-**Direction.** Cache raw values and rebuild markup only when a value changes, instead of
-rebuilding the whole snapshot each tick.
+**Direction.** Profile a sustained TX flood per driver and measure USB submit, completion, ACK polling,
+frame construction, and logging separately. Replace busy polling with bounded waits or event-driven
+completion where the transport allows it. Keep ordering serialized within one device/interface;
+consider bounded TX workers, batching, and parallelism only between independent interfaces.
 
 ## Capture handling lives in the Scanner's table refresh
 

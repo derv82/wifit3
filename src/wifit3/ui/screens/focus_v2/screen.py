@@ -85,6 +85,7 @@ _BORDER = "$primary"  # Border/title color for  LOG / CLIENTS panels
 # Mid-band height
 _CENTER_MAX = 13
 _CENTER_MIN = 7
+_COMPACT_CENTER_H = 7
 _BOTTOM_MIN = 6
 # Horizontal padding on the mid row
 _PAD_START = 80
@@ -136,7 +137,11 @@ def _wep_key_chip(key_hex) -> str:
 class FocusViewV2(Screen):
     app: "WifiteApp"
 
-    HORIZONTAL_BREAKPOINTS = [(0, "-compact"), (100, "-normal"), (140, "-wide")]
+    HORIZONTAL_BREAKPOINTS = [
+        (0, "-tiny"), (60, "-narrow"), (81, "-compact"),
+        (100, "-normal"), (140, "-wide"),
+    ]
+    VERTICAL_BREAKPOINTS = [(0, "-short"), (36, "-tall")]
 
     # Attack hotkeys come from the campaign registry
     BINDINGS = [
@@ -160,16 +165,56 @@ class FocusViewV2(Screen):
     #topbar { height: %(top)d; }
     #actions { width: auto; height: 100%%; }
     #topbar Button { height: 3; width: auto; min-width: 0; margin: 0 1 0 0; }
+    FocusViewV2.-short #actions { align: left middle; }
+    FocusViewV2.-short #topbar Button { height: 1; border: none; }
     /* No background override on .attack-btn */
     #status { width: 1fr; height: 3; content-align: center middle; text-align: center; }
     #rspacer { width: 0; height: 1; }
 
     #mid { height: 1fr; }
     #card, #router { width: %(ew)d; align: center middle; }
+    #card { dock: left; }
     /* Router art is a row shorter than the card's, so bottom-align it. */
-    #router { align: center bottom; }
+    #router { dock: right; align: center bottom; }
+    FocusViewV2.-tiny #mid { layers: graph router card; }
+    FocusViewV2.-tiny #dashboard {
+        layer: graph;
+        width: 1fr;
+        margin-right: %(ew)d;
+    }
+    FocusViewV2.-tiny #router {
+        layer: router;
+        dock: right;
+        height: 50%%;
+    }
+    FocusViewV2.-tiny #card {
+        layer: card;
+        dock: right;
+        height: 50%%;
+        offset-y: 50%%;
+    }
+    FocusViewV2.-tiny.-compact-height #card {
+        display: block;
+        dock: right;
+    }
     #dashboard { width: 1fr; height: 100%%; padding: 0 1; }
     .endpoint-art { width: %(ew)d; background: transparent; }
+    FocusViewV2.-tiny .endpoint-art,
+    FocusViewV2.-compact-height .endpoint-art { display: none; }
+    FocusViewV2.-compact-height #card {
+        height: 3;
+        offset-y: 4;
+        align: center top;
+    }
+    FocusViewV2.-compact-height #router {
+        height: 5;
+        offset-y: 0;
+        align: center top;
+    }
+    FocusViewV2.-compact-height #ap-power { margin-bottom: 1; }
+    FocusViewV2.-tiny.-compact-height #router { height: 4; }
+    FocusViewV2.-tiny.-compact-height #ap-power { margin-bottom: 0; }
+
     .card-static, .ap-static { width: 100%%; height: 1; text-align: center; color: $text-muted; }
     .card-dynamic { width: 100%%; height: 1; text-align: center; color: $accent; }
     .ap-essid { width: 100%%; height: 1; text-align: center; text-style: bold; }
@@ -192,8 +237,13 @@ class FocusViewV2(Screen):
     #log { width: 1fr; height: 100%%; border: round %(border)s;
            border-title-color: %(border)s; border-title-style: bold; padding: 0 1; }
     #log-rich { width: 100%%; height: 1fr; background: transparent; border: none; padding: 0; }
-    #clients { width: 40; height: 100%%; border: round %(border)s;
+    #clients { dock: right; width: 40; height: 100%%; border: round %(border)s;
                border-title-color: %(border)s; border-title-style: bold; padding: 0 1; }
+    FocusViewV2.-tiny #bottom, FocusViewV2.-narrow #bottom { layout: vertical; }
+    FocusViewV2.-tiny #clients, FocusViewV2.-narrow #clients {
+        dock: none; width: 100%%; height: 1fr;
+    }
+    FocusViewV2.-tiny #log, FocusViewV2.-narrow #log { width: 100%%; height: 1fr; }
     /* Rows scroll inside a fixed-height region; the broadcast button stays pinned. */
     #client-rows { width: 100%%; height: 1fr; }
 
@@ -210,7 +260,11 @@ class FocusViewV2(Screen):
     .cl-pkts { width: 6; text-align: right; }
     .cl-deauth { width: 3; min-width: 3; height: 1; border: none; margin: 0 0 0 1;
                  background: red; color: white; content-align: center middle; }
-    """ % {"ew": _ENDPOINT_W, "top": _TOPBAR_H, "border": _BORDER}
+    """ % {
+        "ew": _ENDPOINT_W,
+        "top": _TOPBAR_H,
+        "border": _BORDER,
+    }
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -233,6 +287,9 @@ class FocusViewV2(Screen):
         }
         self._binding_sig: Optional[tuple] = None
         self._rspacer_w = -1                          # last-set spacer width; skip no-op relayouts
+        self._status_below_actions = False
+        self._status_layout_signature: tuple | None = None
+        self._last_footer_markups: tuple[str, ...] | None = None
 
     # ----- compose -----------------------------------------------------------
 
@@ -253,12 +310,12 @@ class FocusViewV2(Screen):
             yield Static("", id="rspacer")
         with Horizontal(id="mid") as mid:
             mid.ALLOW_SELECT = False
-            yield CardEndpoint(**self._card_values(), id="card")
             yield PacketDashboard(self._dashboard_rows(), id="dashboard")
+            yield CardEndpoint(**self._card_values(), id="card")
             yield RouterEndpoint(**self._router_values(), id="router")
         with Horizontal(id="bottom"):
-            yield LogBand([], id="log")
             yield ClientsList(self._client_list(), id="clients")
+            yield LogBand([], id="log")
         yield GlobalJobTracker()
         yield Footer()
 
@@ -455,6 +512,7 @@ class FocusViewV2(Screen):
         self._events.reset()
         self._eapol_agg.reset()
         self._prev_stats = None        # drop the old target's counters
+        self._last_footer_markups = None
         self.query_one("#log", LogBand).clear()
 
         status = self._status()
@@ -615,26 +673,65 @@ class FocusViewV2(Screen):
         return self._controls.current is None   # no other attack owns the radio
 
     def _distribute(self) -> None:
-        """Fill the mid band to full 2-row sparklines."""
+        """Compact the graph below 32 rows and give the reclaimed space to the bottom panels."""
         tracker = self.query_one(GlobalJobTracker)
+        self._balance_status()
+        topbar_height = self._topbar_height()
         chrome = _CHROME_H + int(bool(tracker.display))
-        avail = max(1, self.size.height - _TOPBAR_H - chrome)
-        center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
+        avail = max(1, self.size.height - topbar_height - chrome)
+        compact_height = self.size.height < 32
+        self.set_class(compact_height, "-compact-height")
+        if compact_height:
+            center = _COMPACT_CENTER_H
+        else:
+            center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
         center = max(1, min(center, avail - 1))
         mid = self.query_one("#mid")
         mid.styles.height = center
         self.query_one("#bottom").styles.height = avail - center
         pad = max(0, round((self.size.width - _PAD_START) * _PAD_RATE))
         mid.styles.padding = (0, pad, 0, pad)
-        self._balance_status()
+
+    def _topbar_height(self) -> int:
+        if not self._status_below_actions:
+            return _TOPBAR_H
+        return (1 if self.has_class("-short") else _TOPBAR_H) + _TOPBAR_H
 
     def _balance_status(self) -> None:
-        """Center the status label over the sparklines despite the button row on its left."""
-        topbar_w = self.query_one("#topbar").content_size.width
-        actions_w = self.query_one("#actions").outer_size.width
+        """Center status beside actions, or place it below when symmetry no longer fits."""
+        topbar = self.query_one("#topbar")
+        topbar_w = self.size.width
+        actions = self.query_one("#actions")
+        visible_buttons = [button for button in actions.query(Button) if button.display]
+        signature = (
+            self.size.width,
+            self.has_class("-short"),
+            tuple((button.id, str(button.label)) for button in visible_buttons),
+            tuple(self._last_status or ()),
+        )
+        if signature == self._status_layout_signature:
+            return
+        self._status_layout_signature = signature
+        actions_w = sum(
+            button.get_content_width(self.size, self.size) + button.styles.margin.width
+            for button in visible_buttons
+        )
         widest = max((Text.from_markup(s, emoji=False).cell_len
                       for s in (self._last_status or [])), default=0)
-        spacer = min(actions_w, max(0, topbar_w - actions_w - widest))
+        status_below = 2 * actions_w + widest > topbar_w
+        layout_changed = self._status_below_actions != status_below
+        self._status_below_actions = status_below
+        topbar.styles.layout = "vertical" if status_below else "horizontal"
+        topbar.styles.height = self._topbar_height()
+        actions.styles.width = "100%" if status_below else "auto"
+        action_height = 1 if self.has_class("-short") else _TOPBAR_H
+        actions.styles.height = action_height if status_below else "100%"
+        status = self.query_one("#status", Static)
+        status.styles.width = "100%" if status_below else "1fr"
+        self.query_one("#rspacer", Static).display = not status_below
+        if layout_changed:
+            self.call_after_refresh(self._distribute)
+        spacer = 0 if status_below else actions_w
         if spacer != self._rspacer_w:
             self._rspacer_w = spacer
             self.query_one("#rspacer", Static).styles.width = spacer
@@ -645,8 +742,11 @@ class FocusViewV2(Screen):
         if ap is None:
             return
         array = self.app.array
-        lines = [Text.from_markup(m, emoji=False)
-                 for m in fm.status_under_dash(ap, array, time.time())]
+        markups = tuple(fm.status_under_dash(ap, array, time.time()))
+        if markups == self._last_footer_markups:
+            return
+        self._last_footer_markups = markups
+        lines = [Text.from_markup(markup, emoji=False) for markup in markups]
         self.query_one("#dashboard", PacketDashboard).set_footer(lines)
 
     # ----- endpoint LED flicker (instrumentation) ----------------------------
@@ -680,6 +780,8 @@ class FocusViewV2(Screen):
             elif ev.kind == CaptureKind.HANDSHAKE:
                 # Save instantly
                 result = self.app.vault.save_handshake(ap, ev.client_mac)
+                name = ev.ssid or ev.bssid
+                self.app.desktop_notify("Handshake captured", f"{name} ({ev.bssid})")
                 hint = _save_line(result) if result is not None else None
                 self._emit_lines(self._eapol_agg.on_handshake(ev, now, save_hint=hint))
             else:
@@ -704,6 +806,8 @@ class FocusViewV2(Screen):
                 f"from [bold]{short_sta(ev.client_mac)}[/bold]"
             )
             result = self.app.vault.save_pmkid(ap, ev.client_mac)
+            name = ev.ssid or ev.bssid
+            self.app.desktop_notify("PMKID captured", f"{name} ({ev.bssid})")
             if result is not None:
                 self._log(treelog.leaf(_save_line(result)))
         elif ev.kind == CaptureKind.DECLOAK:
@@ -1069,7 +1173,12 @@ class FocusViewV2(Screen):
             name = camp.target.ssid or camp.target.bssid
             body = (f"[bold]{escape(name)}[/bold] on channel [bold]{camp.target.channel}[/bold] "
                     f"[dim bold](BSSID: {escape(camp.target.bssid)})[/dim bold]")
-            self.notify(body, title=f"{CAPTURE_TOAST_TITLES[CaptureKind.PMKID]} (M1)", timeout=6)
+            title = f"{CAPTURE_TOAST_TITLES[CaptureKind.PMKID]} (M1)"
+            self.notify(body, title=title, timeout=6)
+            notification = (
+                f"{name} on channel {camp.target.channel} (BSSID: {camp.target.bssid})"
+            )
+            self.app.desktop_notify(title, notification)
         elif getattr(camp, "stopped", False):
             self._log(treelog.leaf_fail("[bright_red bold]Stopped harvest[/]"))
         else:

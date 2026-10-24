@@ -80,6 +80,7 @@ def test_persisted_unknown_bssid_is_empty(tmp_path):
     assert Vault().persisted("aa:bb:cc:dd:ee:ff") == []
 
 
+
 def test_summary_is_none_when_empty(tmp_path):
     assert Vault().summary() is None
 
@@ -337,7 +338,9 @@ def test_zip_captures_dedupes_shared_path(tmp_path):
     v = Vault()
     out = v.zip_captures(v.persisted("00:11:22:33:44:03"))
     with zipfile.ZipFile(out) as zf:
-        assert zf.namelist() == [agg.name]
+        names = zf.namelist()
+        assert names.count(agg.name) == 1
+        assert names.count("Net_00-11-22-33-44-03.meta") == 1
 
 
 def test_open_directory_uses_platform_launcher(tmp_path, mocker):

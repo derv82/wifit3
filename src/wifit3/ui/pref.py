@@ -8,7 +8,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.color import Color
-from textual.containers import Horizontal, Vertical, VerticalGroup
+from textual.containers import Horizontal, Vertical, VerticalGroup, VerticalScroll
 from textual.events import Event
 from textual.screen import ModalScreen
 from textual.theme import Theme
@@ -17,6 +17,7 @@ from textual.widgets import Button, Checkbox, Input, Label, Select
 from wifit3.models import ToolName
 from wifit3.persist.config import Config
 from wifit3.ui.path_picker import PathInput
+from wifit3.ui.system_theme import SYSTEM_THEME, system_appearance_label
 from wifit3.ui.vault.tools_ui import UI_TOOLS
 from wifit3.vault.tools.base import VaultTool
 
@@ -24,18 +25,58 @@ from wifit3.vault.tools.base import VaultTool
 class ThemeSetting(VerticalGroup):
     DEFAULT_CSS = """
     ThemeSetting { border: round $primary }
+    ThemeSetting #system-theme-mapping { display: none; height: auto; }
+    ThemeSetting .system-theme-label { color: $text-muted; margin-top: 1; }
     """
     def compose(self) -> ComposeResult:
         self.border_title = "Theme"
         yield Select(self._theme_options(), id="theme",
-                     value=self.app.theme, allow_blank=False)
+                     value=getattr(self.app, "theme_preference", self.app.theme), allow_blank=False)
+        with Vertical(id="system-theme-mapping"):
+            yield Label("When system is dark", classes="system-theme-label")
+            yield Select(self._appearance_options(), id="system-dark-theme",
+                         value=self._selected_appearance(Config.system_dark_theme),
+                         allow_blank=False)
+            yield Label("When system is light", classes="system-theme-label")
+            yield Select(self._appearance_options(), id="system-light-theme",
+                         value=self._selected_appearance(Config.system_light_theme),
+                         allow_blank=False)
+
+    def on_mount(self) -> None:
+        self._set_system_mapping_visibility(
+            getattr(self.app, "theme_preference", self.app.theme) == SYSTEM_THEME
+        )
 
     @on(Select.Changed, "#theme")
     def select_theme(self, event: Select.Changed) -> None:
-        self.app.theme = event.value
+        preference = str(event.value)
+        setter = getattr(self.app, "set_theme_preference", None)
+        if setter is None:
+            self.app.theme = preference
+        else:
+            setter(preference)
+        self._set_system_mapping_visibility(preference == SYSTEM_THEME)
+
+    @on(Select.Changed, "#system-dark-theme")
+    def select_system_dark_theme(self, event: Select.Changed) -> None:
+        Config.system_dark_theme = str(event.value)
+        self._refresh_system_theme()
+
+    @on(Select.Changed, "#system-light-theme")
+    def select_system_light_theme(self, event: Select.Changed) -> None:
+        Config.system_light_theme = str(event.value)
+        self._refresh_system_theme()
+
+    def _set_system_mapping_visibility(self, visible: bool) -> None:
+        self.query_one("#system-theme-mapping", Vertical).display = visible
+
+    def _refresh_system_theme(self) -> None:
+        refresh = getattr(self.app, "refresh_system_theme", None)
+        if refresh is not None:
+            refresh()
 
     def _theme_options(self) -> list[tuple[Text, str]]:
-        options = []
+        options = [(Text(f"System ({system_appearance_label()})", style=Style(bold=True)), SYSTEM_THEME)]
         themes = sorted(self.app.available_themes.items(), key=self._sort_key)
         for name, theme in themes:
             fg = Color.parse(theme.primary).rich_color if theme.primary else None
@@ -44,6 +85,20 @@ class ThemeSetting(VerticalGroup):
             styled_option = Padding(styled_fg, 0, style=Style(bgcolor=bg))
             options.append((styled_option, name))
         return options
+
+    def _appearance_options(self) -> list[tuple[Text, str]]:
+        themes = sorted(self.app.available_themes.items(), key=self._sort_key)
+        return [self._styled_option(name, theme) for name, theme in themes]
+
+    def _selected_appearance(self, selected: str) -> str:
+        return selected if selected in self.app.available_themes else self._appearance_options()[0][1]
+
+    @staticmethod
+    def _styled_option(name: str, theme: Theme) -> tuple[Text, str]:
+        fg = Color.parse(theme.primary).rich_color if theme.primary else None
+        bg = Color.parse(theme.background).rich_color if theme.background else None
+        styled_fg = Text(name, style=Style(color=fg, bold=True))
+        return Padding(styled_fg, 0, style=Style(bgcolor=bg)), name
 
     def _sort_key(self, key_value: tuple[str, Theme]):
         name, theme = key_value
@@ -171,6 +226,7 @@ class PreferencesModal(ModalScreen):
         width: 44; height: auto;
         max-height: 100%;
         border: thick $primary; background: $surface; padding: 0 2;
+        overflow-y: auto;
     }
     PreferencesModal #dialog > * { width: 100% }
     PreferencesModal #title {
@@ -185,25 +241,31 @@ class PreferencesModal(ModalScreen):
     """
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
+        with VerticalScroll(id="dialog"):
             yield Label("Preferences", id="title")
             yield ThemeSetting()
             yield SortDelaySetting()
             yield CapturesDirSetting()
             yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap")
+
+            yield Checkbox("Desktop notifications when unfocused",
+                           value=Config.desktop_notifications, id="desktop_notifications")
             yield AutoCrackSetting()
             yield SaveFooter()
 
     def on_mount(self) -> None:
-        self._original_theme = self.app.theme
+        self._original_theme = getattr(self.app, "theme_preference", self.app.theme)
+        self._original_system_dark_theme = Config.system_dark_theme
+        self._original_system_light_theme = Config.system_light_theme
         self._original_sort_delay = Config.scanner_sort_delay
 
     @on(Button.Pressed, "#save")
     def save_pressed(self, event: Event):
-        Config.theme = self.app.theme
+        Config.theme = getattr(self.app, "theme_preference", self.app.theme)
         Config.captures_dir = self.query_one("#captures_dir", Input).value
         self.app.vault.refresh()
         Config.save_pcap = self.query_one("#save_pcap", Checkbox).value
+        Config.desktop_notifications = self.query_one("#desktop_notifications", Checkbox).value
         Config.auto_crack = self.query_one(AutoCrackSetting).tool
         Config.scanner_sort_delay = float(self.query_one("#sort_delay", Select).value)
         self._save_and_dismiss()
@@ -220,7 +282,13 @@ class PreferencesModal(ModalScreen):
         self.action_cancel()
 
     def action_cancel(self) -> None:
-        self.app.theme = self._original_theme
+        Config.system_dark_theme = self._original_system_dark_theme
+        Config.system_light_theme = self._original_system_light_theme
+        setter = getattr(self.app, "set_theme_preference", None)
+        if setter is None:
+            self.app.theme = self._original_theme
+        else:
+            setter(self._original_theme)
         Config.scanner_sort_delay = self._original_sort_delay
         self.dismiss()
 

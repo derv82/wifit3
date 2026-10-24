@@ -2,13 +2,15 @@
 and Consolidate has moved out of Prefs into the Vault screen."""
 import pytest
 from textual.app import App
-from textual.widgets import Button, Select
+from textual.widgets import Button, Checkbox, Select
 
 from wifit3.models import ToolName
 from wifit3.persist import config
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
+from wifit3.ui.app import WifiteApp
 from wifit3.ui.pref import PreferencesModal
+from wifit3.ui.system_theme import SYSTEM_THEME
 from wifit3.ui.vault.modals.cpu_crack import CpuCrackConfigModal
 from wifit3.ui.vault.modals.hashcat import HashcatConfigModal
 
@@ -44,6 +46,40 @@ async def test_save_notifies_instead_of_crashing_on_config_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_system_theme_is_selectable_and_persisted(monkeypatch):
+    monkeypatch.setattr("wifit3.ui.system_theme.system_appearance", lambda: "light")
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        app.push_screen(PreferencesModal())
+        await pilot.pause(0)
+        theme = app.screen.query_one("#theme", Select)
+        theme.value = SYSTEM_THEME
+        await pilot.pause(0)
+        assert app.screen.query_one("#system-theme-mapping").display
+        app.screen.query_one("#system-dark-theme", Select).value = "textual-light"
+        app.screen.query_one("#system-light-theme", Select).value = "textual-light"
+        await pilot.pause(0)
+        assert app.theme == "textual-light"
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause(0)
+
+    assert Config.theme == SYSTEM_THEME
+    assert Config.system_dark_theme == "textual-light"
+    assert Config.system_light_theme == "textual-light"
+
+
+@pytest.mark.asyncio
+async def test_preferences_scroll_when_the_window_is_too_short():
+    app = _Host()
+    async with app.run_test(size=(80, 18)) as pilot:
+        app.push_screen(PreferencesModal())
+        await pilot.pause(0)
+
+        assert app.screen.query_one("#dialog").max_scroll_y > 0
+
+
+@pytest.mark.asyncio
 async def test_prefs_no_longer_hosts_consolidate(tmp_path):
     """Consolidate moved to the Vault screen; Prefs must not show it, even with legacy files."""
     (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000").write_text("WPA*02*...\n")
@@ -57,6 +93,22 @@ async def test_prefs_no_longer_hosts_consolidate(tmp_path):
 async def _open_prefs(app, pilot) -> None:
     app.push_screen(PreferencesModal())
     await pilot.pause(0)
+
+
+@pytest.mark.asyncio
+async def test_desktop_notifications_checkbox_is_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "_PATH", tmp_path / "config.toml")
+    monkeypatch.setattr(Config, "desktop_notifications", True)
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(PreferencesModal())
+        await pilot.pause(0)
+        app.screen.query_one("#desktop_notifications", Checkbox).value = False
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause(0)
+
+    assert Config.desktop_notifications is False
+    assert "desktop_notifications = false" in (tmp_path / "config.toml").read_text("utf-8")
 
 
 @pytest.mark.asyncio

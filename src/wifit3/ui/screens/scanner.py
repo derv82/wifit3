@@ -8,7 +8,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.reactive import Reactive
 from textual.screen import Screen
-from textual.widgets import Footer, Header, RichLog
+from textual.widgets import Footer, Header, RichLog, Static
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
 from rich.markup import escape
 from rich.text import Text
@@ -76,18 +76,69 @@ class _ChannelReadout(HeaderClock):
     def _poll(self) -> None:
         array = getattr(self.app, "array", None)
         members = array.members if array else []
-        self.channels = " | ".join(f"CH:{m.current_channel:>3}" for m in members)
+        channels = " | ".join(f"CH:{m.current_channel:>3}" for m in members)
+        if channels == self.channels:
+            return
+        self.channels = channels
+        self.parent.update_channel_layout(channels)
 
     def render(self) -> RenderResult:
         return Text(self.channels)
 
 
+class _ChannelBar(Static):
+    DEFAULT_CSS = """
+    _ChannelBar {
+        display: none;
+        width: 100%;
+        height: 1;
+        background: $panel;
+        tint: $foreground-darken-1 5%;
+        color: $foreground;
+        text-opacity: 85%;
+        content-align: right middle;
+    }
+    """
+
+
 class _ScannerHeader(Header):
     """Header whose right slot shows the hopped channel(s) in place of the clock."""
+
+    DEFAULT_CSS = """
+    _ScannerHeader {
+        layers: title channels;
+    }
+    _ScannerHeader HeaderTitle {
+        layer: title;
+        width: 100%;
+    }
+    _ScannerHeader HeaderIcon {
+        layer: channels;
+        dock: left;
+    }
+    _ScannerHeader _ChannelReadout {
+        layer: channels;
+        dock: right;
+    }
+    """
+
     def compose(self) -> ComposeResult:
         yield HeaderIcon().data_bind(Header.icon)
         yield HeaderTitle()
         yield _ChannelReadout()
+
+    def update_channel_layout(self, channels: str) -> None:
+        title_width = self.format_title().cell_length
+        title_right = (self.size.width + title_width + 1) // 2
+        channels_left = self.size.width - len(channels)
+        use_channel_bar = bool(channels) and channels_left - title_right < 3
+        self.query_one(_ChannelReadout).display = not use_channel_bar
+        for channel_bar in self.screen.query(_ChannelBar):
+            channel_bar.update(channels)
+            channel_bar.display = use_channel_bar
+
+    def on_resize(self) -> None:
+        self.update_channel_layout(self.query_one(_ChannelReadout).channels)
 
 
 class ScannerView(Screen):
@@ -95,7 +146,17 @@ class ScannerView(Screen):
 
     app: "WifiteApp"
 
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (84, "-wide")]
+
+    CSS = """
+    ScannerView.-narrow FilterBar > Label {
+        display: none;
+    }
+
+    """
+
     BINDINGS = [
+        Binding("escape", "app.return_to_splash", "Splash", show=True),
         Binding("q", "app.quit", "Quit", show=True),
         Binding("c", "change_channel", "Channel Filter", show=True),
         Binding("e", "focus_encryption", "Encryption", show=True),
@@ -141,6 +202,7 @@ class ScannerView(Screen):
 
     def compose(self) -> ComposeResult:
         yield _ScannerHeader()
+        yield _ChannelBar()
         array = self.app.array
         supported = list(array.supported_channels) if array else []
         with Vertical():
@@ -411,13 +473,17 @@ class ScannerView(Screen):
         if title:
             name = ev.ssid or ev.bssid
             if ev.kind == CaptureKind.WEP_KEY:
-                self.notify(f"{name}: {wep_key_ascii(ev.value or '')}", title=title, timeout=6)
+                notification = f"{name}: {wep_key_ascii(ev.value or '')}"
+                self.notify(notification, title=title, timeout=6)
+                self.app.desktop_notify(title, notification)
             else:
                 pair = ev.pair_label or ("M1" if ev.kind == CaptureKind.PMKID else None)
                 full_title = f"{title} ({pair})" if pair else title
                 body = (f"[bold]{escape(name)}[/bold] on channel [bold]{ap.channel}[/bold] "
                         f"[dim bold](BSSID: {escape(ap.bssid)})[/dim bold]")
                 self.notify(body, title=full_title, timeout=6)
+                notification = f"{name} on channel {ap.channel} (BSSID: {ap.bssid})"
+                self.app.desktop_notify(full_title, notification)
 
     def _write_log(self, text) -> None:
         try:

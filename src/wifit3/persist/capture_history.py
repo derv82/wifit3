@@ -22,6 +22,7 @@ from wifit3.persist.common import (
     safe_ssid,
 )
 from wifit3.persist.config import Config
+from wifit3.persist.meta import meta_path, read_meta, update_meta
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,8 @@ def _essid(text: str, filename_ssid: str) -> str:
     return _ssid_naming_file(essid, filename_ssid)
 
 
-def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
+def _parse_aggregate_hc(path: Path, bssid: str,
+                        persisted_ssid: str | None = None) -> List[PersistedCapture]:
     text = _read_text(path)
     if text is None:
         return []
@@ -82,7 +84,7 @@ def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
     except OSError:
         mtime = 0
     m = AGGREGATED_HC22000_RE.match(path.name)
-    ssid = _essid(text, m.group("ssid")) if m else None
+    ssid = persisted_ssid or (_essid(text, m.group("ssid")) if m else None)
     pmkid = hs = 0
     for line in text.splitlines():
         line = line.strip()
@@ -100,10 +102,11 @@ def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
     return out
 
 
-def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
+def _parse_file(path: Path, bssid: str,
+                persisted_ssid: str | None = None) -> List[PersistedCapture]:
     """Parse one captures/ file into zero or more PersistedCapture entries."""
     if AGGREGATED_HC22000_RE.match(path.name):
-        return _parse_aggregate_hc(path, bssid)
+        return _parse_aggregate_hc(path, bssid, persisted_ssid)
 
     m = LEGACY_CAPTURE_RE.match(path.name)
     if not m:
@@ -112,7 +115,9 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
     kind = m.group("kind")
     ext = m.group("ext")
     text = "" if ext == "pcap" else _read_text(path) or ""
-    if ext == "hc22000":
+    if persisted_ssid:
+        ssid = persisted_ssid
+    elif ext == "hc22000":
         ssid = _essid(text, m.group("ssid"))
     elif ext == "txt":
         ssid = _body_ssid(text, m.group("ssid"))
@@ -152,6 +157,7 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
 def load_capture_index() -> Dict[str, List[PersistedCapture]]:
     """Scan ``captures_dir``, return bssid->captures sorted by newest-first."""
     index: Dict[str, List[PersistedCapture]] = defaultdict(list)
+    persisted_ssids: dict[str, str | None] = {}
     root = Path(Config.captures_dir)
     if not root.is_dir():
         return {}
@@ -161,14 +167,24 @@ def load_capture_index() -> Dict[str, List[PersistedCapture]]:
         m = LEGACY_CAPTURE_RE.match(path.name)
         if m:
             bssid = bssid_to_colon(m.group("bssid"))
-            index[bssid].extend(_parse_file(path, bssid))
+            if bssid not in persisted_ssids:
+                saved = read_meta(meta_path(m.group("ssid"), bssid)).get("ssid")
+                persisted_ssids[bssid] = saved if isinstance(saved, str) and saved else None
+            index[bssid].extend(_parse_file(path, bssid, persisted_ssids[bssid]))
             continue
         m_agg = AGGREGATED_HC22000_RE.match(path.name)
         if m_agg:
             bssid = bssid_to_colon(m_agg.group("bssid"))
-            index[bssid].extend(_parse_file(path, bssid))
-    for caps in index.values():
+            if bssid not in persisted_ssids:
+                saved = read_meta(meta_path(m_agg.group("ssid"), bssid)).get("ssid")
+                persisted_ssids[bssid] = saved if isinstance(saved, str) and saved else None
+            index[bssid].extend(_parse_file(path, bssid, persisted_ssids[bssid]))
+    for bssid, caps in index.items():
         caps.sort(key=lambda c: c.timestamp, reverse=True)
+        if persisted_ssids.get(bssid) is None:
+            ssid = next((cap.ssid for cap in caps if cap.ssid and not cap.path.endswith(".pcap")), None)
+            if ssid:
+                update_meta(ssid, bssid)
     return {b: c for b, c in index.items() if c}
 
 

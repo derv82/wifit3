@@ -18,7 +18,10 @@ from wifit3.ui.vault.modals.nickname import NicknameModal
 class VaultDrawer(ModalScreen):
     """The Vault drawer overlay."""
 
-    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (90, "-wide")]
+    _SELECTION_DELAY = 0.08
+
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (90, "-compact"), (105, "-wide")]
+    VERTICAL_BREAKPOINTS = [(0, "-short"), (36, "-tall")]
 
     BINDINGS = [
         Binding("v", "dismiss_drawer", "Close", show=False),
@@ -44,10 +47,19 @@ class VaultDrawer(ModalScreen):
         offset-y: 100%;
         transition: offset 200ms in_out_cubic;
     }
-    VaultDrawer.-narrow _CapturePanel .tools, VaultDrawer.-narrow _CapturePanel .actions {
+
+    VaultDrawer.-narrow #vault-main, VaultDrawer.-compact #vault-main {
         layout: vertical;
     }
-    VaultDrawer.-narrow _CapturePanel .spacer { display: none; }
+    VaultDrawer.-narrow #vault-table, VaultDrawer.-compact #vault-table,
+    VaultDrawer.-narrow #vault-item, VaultDrawer.-compact #vault-item {
+        width: 100%;
+        height: 1fr;
+    }
+    VaultDrawer.-short #vault-content {
+        height: 100%;
+        max-height: 100%;
+    }
     VaultDrawer.open #vault-content {
         offset-y: 0%;
     }
@@ -56,18 +68,42 @@ class VaultDrawer(ModalScreen):
     def __init__(self, preselected_bssid: Optional[str] = None) -> None:
         super().__init__()
         self._preselected_bssid = preselected_bssid
+        self._selection_timer = None
+        self._pending_bssid: str | None = None
+        self._reveal_scheduled = False
 
     def compose(self) -> ComposeResult:
         with Container(id="vault-content"):
-            with Horizontal():
+            with Horizontal(id="vault-main"):
                 yield VaultTable(id="vault-table")
                 yield VaultItemView(id="vault-item")
             yield JobTrackerPane()
             yield Footer()
 
     def on_mount(self) -> None:
-        self.call_after_refresh(lambda: self.add_class("open"))
+        narrow = self.size.width < 90
+        compact = 90 <= self.size.width < 105
+        self.set_class(narrow, "-narrow")
+        self.set_class(compact, "-compact")
+        self.set_class(not narrow and not compact, "-wide")
+        short = self.size.height < 36
+        self.set_class(short, "-short")
+        self.set_class(not short, "-tall")
         self.call_after_refresh(self._focus_list)
+
+    def _schedule_reveal(self) -> None:
+        if self.has_class("open") or self._reveal_scheduled:
+            return
+        self._reveal_scheduled = True
+        self.call_after_refresh(self._reveal_after_content_layout)
+
+    def _reveal_after_content_layout(self) -> None:
+        self.call_after_refresh(self._reveal)
+
+    def _reveal(self) -> None:
+        self._reveal_scheduled = False
+        if self.is_attached:
+            self.add_class("open")
 
     def _focus_list(self) -> None:
         """Land focus on the AP list so up/down works without a Tab press."""
@@ -80,6 +116,7 @@ class VaultDrawer(ModalScreen):
         self.query_one("#vault-search", Input).focus()
 
     def action_dismiss_drawer(self) -> None:
+        self._cancel_pending_selection()
         try:
             self.query_one("#vault-item", VaultItemView).cancel_verification()
         except Exception:
@@ -97,6 +134,31 @@ class VaultDrawer(ModalScreen):
         if event.control == self:
             self.action_dismiss_drawer()
 
+    def _cancel_pending_selection(self) -> None:
+        if self._selection_timer is not None:
+            self._selection_timer.stop()
+            self._selection_timer = None
+        self._pending_bssid = None
+
+    def _schedule_widget_load(self, bssid: str) -> None:
+        self._cancel_pending_selection()
+        self._pending_bssid = bssid
+        self._selection_timer = self.set_timer(self._SELECTION_DELAY, self._load_pending_widget)
+
+    def _load_pending_widget(self) -> None:
+        bssid = self._pending_bssid
+        self._selection_timer = None
+        self._pending_bssid = None
+        if bssid is None:
+            return
+        try:
+            table = self.query_one("#vault-aps", DataTable)
+            selected = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        except Exception:
+            return
+        if selected == bssid:
+            self._load_widget(bssid)
+
     def _load_widget(self, bssid: str) -> None:
         widget = self.query_one("#vault-item", VaultItemView)
         table = self.query_one("#vault-table", VaultTable)
@@ -108,6 +170,7 @@ class VaultDrawer(ModalScreen):
 
     @on(VaultTable.TableReloaded)
     def _table_reloaded(self, event: VaultTable.TableReloaded) -> None:
+        self._cancel_pending_selection()
         table = self.query_one("#vault-aps", DataTable)
         if table.row_count > 0:
             if self._preselected_bssid in table.rows:
@@ -122,11 +185,12 @@ class VaultDrawer(ModalScreen):
                 self._load_widget(key)
         else:
             self._load_widget("")
+        self._schedule_reveal()
 
     @on(DataTable.RowHighlighted, "#vault-aps")
     def _ap_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.row_key is not None and event.row_key.value is not None:
-            self._load_widget(event.row_key.value)
+            self._schedule_widget_load(event.row_key.value)
 
     def _selected_network(self) -> tuple[Optional[str], str]:
         """(SSID, BSSID) of the row under the cursor; BSSID is "" when there is none."""

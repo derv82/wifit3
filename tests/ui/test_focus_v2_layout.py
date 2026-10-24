@@ -5,6 +5,7 @@ look good") stay the human's call, fed by the exported SVGs.
 
 Sizes are pinned headless via ``run_test(size=...)``: no real terminal."""
 import types
+from unittest.mock import Mock
 
 import pytest_asyncio
 from textual.app import App
@@ -18,7 +19,7 @@ from wifit3.ui.screens.focus_v2.art import BreathingArt, art_size, breathe
 
 _TOPBAR_H = 3
 _CHROME_H = 2          # Header (1 row) + Footer (1 row)
-_CENTER_MAX, _CENTER_MIN, _BOTTOM_MIN = 13, 7, 6
+_CENTER_MAX, _CENTER_MIN, _COMPACT_CENTER_H, _BOTTOM_MIN = 13, 7, 7, 6
 
 
 class _Host(App):
@@ -45,7 +46,7 @@ async def layout_host():
 async def test_layout_geometry():
     app = _Host()
     async with app.run_test(size=(80, 24)) as pilot:
-        for w, h in [(80, 24), (80, 30), (100, 35), (120, 40)]:
+        for w, h in [(80, 24), (80, 31), (80, 32), (100, 35), (120, 40)]:
             await pilot.resize_terminal(w, h)
             await pilot.pause(0)
             scr = app.screen
@@ -54,18 +55,35 @@ async def test_layout_geometry():
                 return scr.query_one(sel).region
 
             card, dash, router = reg("#card"), reg("#dashboard"), reg("#router")
+            endpoint_art = list(scr.query(".endpoint-art"))
+            assert all(widget.display is (h >= 32) for widget in endpoint_art)
+            assert scr.query_one("#ap-power").display
+            assert scr.query_one("#ap-essid").display
+            assert scr.query_one("#ap-bssid").display
+            assert scr.query_one("#ap-identity-row").display
             # Endpoints pinned at the art width (20); dashboard fills the middle. On wide
             # terminals the mid row gets symmetric side padding (none at 80 cols).
             pad = max(0, round((w - 80) * 0.4))
             assert card.width == 20 and router.width == 20
+            if h < 32:
+                assert router.height == 5 and card.height == 3
+                assert router.y == reg("#mid").y and card.bottom == reg("#mid").bottom
+                assert reg("#ap-essid").y == reg("#ap-power").bottom + 1
+                assert reg("#tx-picker").y == card.y
             assert card.x == pad and card.right == dash.x
             assert dash.right == router.x and router.right == w - pad
             assert dash.width == w - 2 * pad - 40
 
             log, clients = reg("#log"), reg("#clients")
-            # Clients is a fixed exact-fit column; log takes the rest; no overlap.
-            assert clients.width == 40
-            assert log.x == 0 and log.right == clients.x and clients.right == w
+            if w <= 80:
+                assert clients.x == 0 and clients.width == w
+                assert log.x == 0 and log.width == w
+                assert clients.y == reg("#bottom").y
+                assert clients.bottom == log.y
+                assert log.bottom == reg("#bottom").bottom
+            else:
+                assert clients.width == 40
+                assert log.x == 0 and log.right == clients.x and clients.right == w
 
             header, footer = reg("Header"), reg("Footer")
             top, mid, bot = reg("#topbar"), reg("#mid"), reg("#bottom")
@@ -74,9 +92,141 @@ async def test_layout_geometry():
             assert top.y == header.bottom and top.height == _TOPBAR_H
             assert top.bottom == mid.y and mid.bottom == bot.y and bot.bottom == footer.y
             avail = h - _TOPBAR_H - _CHROME_H
-            expected_center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
+            expected_center = (
+                _COMPACT_CENTER_H if h < 32
+                else min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
+            )
             assert mid.height == expected_center
             assert bot.height == avail - expected_center
+
+
+@pytest_asyncio.fixture(params=[(35, 1), (36, 3)])
+async def focus_button_height(request):
+    height, expected = request.param
+    app = _Host()
+    async with app.run_test(size=(120, height)) as pilot:
+        await pilot.pause(0)
+        yield app.screen.query_one("#back").region.height, expected
+
+
+async def test_short_focus_uses_compact_top_buttons(focus_button_height):
+    actual, expected = focus_button_height
+    assert actual == expected
+
+
+async def test_endpoint_art_is_hidden_below_60_columns():
+    app = _Host()
+    async with app.run_test(size=(59, 35)) as pilot:
+        await pilot.pause(0)
+        screen = app.screen
+        assert all(not widget.display for widget in screen.query(".endpoint-art"))
+        dashboard = screen.query_one("#dashboard").region
+        card = screen.query_one("#card").region
+        router = screen.query_one("#router").region
+        assert dashboard.x == 0
+        assert dashboard.right == router.x == card.x
+        assert router.y == dashboard.y
+        assert router.bottom == card.y
+        assert dashboard.bottom - card.bottom <= 1
+
+        await pilot.resize_terminal(60, 35)
+        await pilot.pause(0)
+        assert all(widget.display for widget in screen.query(".endpoint-art"))
+        card = screen.query_one("#card").region
+        dashboard = screen.query_one("#dashboard").region
+        router = screen.query_one("#router").region
+        assert card.x == 0
+        assert card.right == dashboard.x
+        assert dashboard.right == router.x
+
+
+async def test_compact_tiny_focus_keeps_all_router_information_visible():
+    app = _Host()
+    async with app.run_test(size=(59, 24)) as pilot:
+        await pilot.pause(0)
+        screen = app.screen
+        router = screen.query_one("#router")
+        card = screen.query_one("#card")
+        dashboard = screen.query_one("#dashboard")
+        assert router.region.height == 4
+        assert card.display and card.region.height == 3
+        assert dashboard.region.x == 0
+        assert dashboard.region.right == card.region.x == router.region.x
+        assert router.region.bottom == card.region.y
+        assert screen.query_one("#tx-picker").region.y == card.region.y
+        assert not screen.query_one("#router-art").display
+        for selector in ("#ap-power", "#ap-essid", "#ap-bssid", "#ap-identity-row"):
+            info = screen.query_one(selector)
+            assert info.display
+            assert info.region.height == 1
+            assert router.region.y <= info.region.y < info.region.bottom <= router.region.bottom
+
+
+async def test_status_layout_skips_unchanged_button_measurement(monkeypatch):
+    app = _Host()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        screen = app.screen
+        screen._tick_timer.pause()
+        calls = 0
+        original = type(screen.query_one("#back")).get_content_width
+
+        def count_measurement(button, *args):
+            nonlocal calls
+            calls += 1
+            return original(button, *args)
+
+        monkeypatch.setattr(type(screen.query_one("#back")), "get_content_width", count_measurement)
+        screen._status_layout_signature = None
+        screen._balance_status()
+        measured_once = calls
+        screen._balance_status()
+
+        assert measured_once > 0
+        assert calls == measured_once
+
+
+async def test_status_footer_skips_identical_markup(monkeypatch):
+    app = _Host()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        screen = app.screen
+        screen._tick_timer.pause()
+        screen._target_ap = types.SimpleNamespace(pmf_posture=None)
+        status_under_dash = Mock(return_value=["[cyan]Passive listening[/]"])
+        monkeypatch.setattr(fm, "status_under_dash", status_under_dash)
+        dashboard = screen.query_one("#dashboard")
+        dashboard.set_footer = Mock()
+
+        screen._refresh_status_footer()
+        screen._refresh_status_footer()
+
+        assert status_under_dash.call_count == 2
+        dashboard.set_footer.assert_called_once()
+        screen._target_ap = None
+
+
+async def test_status_moves_below_buttons_when_centering_no_longer_fits():
+    app = _Host()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        screen = app.screen
+        screen._tick_timer.pause()
+        for button in screen.query(".attack-btn"):
+            button.display = True
+        screen._last_status = ["Target status"]
+        await pilot.pause(0)
+        screen._distribute()
+        await pilot.pause(0)
+
+        topbar = screen.query_one("#topbar")
+        actions = screen.query_one("#actions")
+        status = screen.query_one("#status")
+        assert screen._status_below_actions is True
+        assert topbar.region.height == 4
+        assert status.region.y == actions.region.bottom
+        assert status.region.bottom == topbar.region.bottom
+        assert screen.query_one("#mid").region.y == topbar.region.bottom
 
 
 async def test_visible_job_tracker_does_not_make_focus_scrollable():

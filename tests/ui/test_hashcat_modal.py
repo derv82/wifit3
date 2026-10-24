@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
+from textual.containers import VerticalScroll
 from textual.widgets import Button, Checkbox, Input, Label
 
 import wifit3.ui.vault.modals.hashcat as mod
@@ -27,6 +28,29 @@ def _unset_saved_paths(monkeypatch):
 
 class _Host(App):
     """A bare app to host the modal (no USB, no splash)."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("modal_type", [HashcatConfigModal, CpuCrackConfigModal])
+async def test_cracker_modal_fits_viewport_and_scrolls_fields_inside(modal_type):
+    app = _Host()
+    async with app.run_test(size=(40, 9)) as pilot:
+        app.push_screen(modal_type())
+        await pilot.pause()
+
+        dialog = app.screen.query_one("#wordlist-dialog")
+        body = app.screen.query_one("#wordlist-body", VerticalScroll)
+        title = app.screen.query_one("#wordlist-title", Label)
+        buttons = app.screen.query_one("#wordlist-buttons")
+        assert dialog.region.x >= 0 and dialog.region.right <= app.size.width
+        assert dialog.region.y >= 0 and dialog.region.bottom <= app.size.height
+        assert body.virtual_size.height > body.size.height
+        assert body.region.bottom == dialog.content_region.bottom
+        assert body.parent is dialog
+        assert title.parent is body and buttons.parent is body
+        body.scroll_end(animate=False)
+        await pilot.pause()
+        assert buttons.region.bottom <= body.content_region.bottom
 
 
 def test_default_path_prefers_which(monkeypatch):

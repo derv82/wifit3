@@ -36,15 +36,26 @@ def _random_bssid() -> str:
 class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
     """Pick the twin/punter interfaces, BSSID, channel and punt method before EvilTwin starts."""
 
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (56, "-wide")]
+    VERTICAL_BREAKPOINTS = [(0, "-short"), (24, "-tall")]
+
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=True)]
 
     DEFAULT_CSS = """
     EvilTwinInputModal { align: center middle; }
     EvilTwinInputModal #dialog {
-        width: 65; height: auto; max-height: 95%;
+        width: 65; max-width: 100%; height: auto; max-height: 100%;
         border: thick $primary; background: $surface; padding: 1 2;
         overflow-y: auto;
     }
+    EvilTwinInputModal.-narrow #dialog { padding: 0 1; }
+    EvilTwinInputModal.-narrow .row-label { width: 16; }
+    EvilTwinInputModal.-short #title { margin-bottom: 0; }
+    EvilTwinInputModal.-short .row-label { height: 1; }
+    EvilTwinInputModal.-short .row Select,
+    EvilTwinInputModal.-short .row Input { height: 1; border: none; }
+    EvilTwinInputModal.-short #button-row { margin-top: 0; }
+    EvilTwinInputModal.-short #button-row Button { height: 1; border: none; }
     EvilTwinInputModal #title { width: 1fr; content-align: center middle; margin-bottom: 1; text-style: bold; }
     EvilTwinInputModal .row { height: auto; margin-bottom: 0; }
     EvilTwinInputModal .row-label { width: 20; height: 3; content-align: left middle; color: $text-muted; }

@@ -5,7 +5,7 @@ from rich.markup import escape
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select
 
@@ -43,10 +43,12 @@ class HashtopolisConfigModal(ModalScreen[dict]):
         width: 64;
         max-width: 100%;
         height: auto;
+        max-height: 100%;
         padding: 0 1;
         background: $surface;
         border: solid $primary;
     }
+    #hashtopolis-body { height: auto; max-height: 1fr; }
     #hashtopolis-title {
         width: 1fr;
         text-align: center;
@@ -79,13 +81,14 @@ class HashtopolisConfigModal(ModalScreen[dict]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="hashtopolis-dialog"):
-            yield Label("Hashtopolis", id="hashtopolis-title")
-            yield from self._compose_server()
-            yield from self._compose_test()
-            yield from self._compose_targets()
-            with Horizontal(id="hashtopolis-buttons"):
-                yield Button("Cancel", variant="error", id="hashtopolis-cancel")
-                yield Button(self._confirm_label, variant="success", id="hashtopolis-confirm")
+            with VerticalScroll(id="hashtopolis-body"):
+                yield Label("Hashtopolis", id="hashtopolis-title")
+                yield from self._compose_server()
+                yield from self._compose_test()
+                yield from self._compose_targets()
+                with Horizontal(id="hashtopolis-buttons"):
+                    yield Button("Cancel", variant="error", id="hashtopolis-cancel")
+                    yield Button(self._confirm_label, variant="success", id="hashtopolis-confirm")
 
     def _compose_server(self) -> ComposeResult:
         settings = Config.hashtopolis

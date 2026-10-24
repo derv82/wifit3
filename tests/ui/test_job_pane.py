@@ -112,8 +112,16 @@ def test_pause_button_offers_resume_to_a_paused_job_and_nothing_to_an_unreachabl
 
 
 class JobPaneApp(App):
-    """Just the tracker pane, for the measurements its CSS is responsible for."""
+    """Just the tracker pane, with the app-wide button minimum used by Wifit3."""
 
+    CSS = """
+    Button { min-width: 12; margin-right: 1; }
+    JobTrackerPane.-compact-actions .job-pause-btn,
+    JobTrackerPane.-compact-actions .job-skip-btn,
+    JobTrackerPane.-compact-actions .job-action-btn { min-width: 0; width: auto; }
+    JobTrackerPane.-hide-progress .job-bar { display: none; }
+    JobTrackerPane.-compact-name .job-name { width: 13; }
+    """
     active_jobs: reactive[list[JobState]] = reactive([], always_update=True)
 
     def compose(self) -> ComposeResult:
@@ -131,6 +139,89 @@ async def test_the_bar_fills_its_box_and_the_percentage_has_two_decimals():
         assert app.query_one("#bar").size.width == 11
         assert str(app.query_one(".job-percent", Label).render()) == "0.29%"
         assert app.query_one(".job-name", Label).styles.text_align == "right"
+
+
+def test_compact_name_hides_the_cracking_tool_prefix():
+    job = _job()
+    job.display_name = "Hashcat (HomeNet)"
+    row = JobRow(job, compact_name=True)
+
+    assert row._name_markup(job) == "[bold]HomeNet[/bold]"
+    job.display_name = "Hashcat (VeryLongAccessPointName)"
+    assert row._name_markup(job) == "[bold]VeryLongAcce…[/bold]"
+
+
+async def test_job_buttons_shrink_when_detail_would_have_less_than_16_columns():
+    job = _job(
+        actions=JobAction.STOP | JobAction.PAUSE | JobAction.SKIP,
+        percent=42.0,
+        detail="a-very-long-wordlist-name.txt",
+    )
+
+    narrow_app = JobPaneApp()
+    async with narrow_app.run_test(size=(110, 24)) as pilot:
+        narrow_app.active_jobs = [job]
+        await pilot.pause()
+        narrow_row = narrow_app.query_one(JobRow)
+        narrow_pane = narrow_app.query_one(JobTrackerPane)
+        assert narrow_pane.has_class("-compact-actions")
+        assert not narrow_pane.has_class("-hide-progress")
+        assert narrow_row.query_one(".job-bar").display is True
+        assert all(narrow_row.query_one(button_type).size.width < 12 for button_type in (
+            JobPauseButton, JobSkipButton, JobActionButton))
+
+    compressed_app = JobPaneApp()
+    async with compressed_app.run_test(size=(95, 24)) as pilot:
+        compressed_app.active_jobs = [job]
+        await pilot.pause()
+        compressed_row = compressed_app.query_one(JobRow)
+        compressed_pane = compressed_app.query_one(JobTrackerPane)
+        assert compressed_pane.has_class("-compact-actions")
+        assert compressed_pane.has_class("-hide-progress")
+        assert not compressed_pane.has_class("-compact-name")
+        assert compressed_row.query_one(".job-bar").display is False
+        assert compressed_row.query_one(".job-percent").display is True
+
+    name_compact_app = JobPaneApp()
+    async with name_compact_app.run_test(size=(85, 24)) as pilot:
+        name_compact_app.active_jobs = [job]
+        await pilot.pause()
+        name_compact_row = name_compact_app.query_one(JobRow)
+        name_compact_pane = name_compact_app.query_one(JobTrackerPane)
+        assert name_compact_pane.has_class("-compact-actions")
+        assert name_compact_pane.has_class("-hide-progress")
+        assert name_compact_pane.has_class("-compact-name")
+        assert name_compact_row.query_one(".job-name", Label).size.width == 13
+        assert "Hashcat" not in str(name_compact_row.query_one(".job-name", Label).render())
+
+    wide_app = JobPaneApp()
+    async with wide_app.run_test(size=(130, 24)) as pilot:
+        wide_app.active_jobs = [job]
+        await pilot.pause()
+        wide_row = wide_app.query_one(JobRow)
+        wide_pane = wide_app.query_one(JobTrackerPane)
+        assert not wide_pane.has_class("-compact-actions")
+        assert not wide_pane.has_class("-hide-progress")
+        assert not wide_pane.has_class("-compact-name")
+        assert wide_row.query_one(".job-bar").display is True
+        assert wide_row.query_one(".job-detail", Label).size.width >= 16
+        assert all(wide_row.query_one(button_type).size.width >= 12 for button_type in (
+            JobPauseButton, JobSkipButton, JobActionButton))
+
+
+async def test_most_constrained_job_sets_the_layout_for_every_row():
+    many_actions = _job(actions=JobAction.STOP | JobAction.PAUSE | JobAction.SKIP)
+    one_action = _job(actions=JobAction.STOP)
+    one_action.job_id = "cpu-test"
+    app = JobPaneApp()
+    async with app.run_test(size=(95, 24)) as pilot:
+        app.active_jobs = [many_actions, one_action]
+        await pilot.pause()
+
+        pane = app.query_one(JobTrackerPane)
+        assert pane.has_class("-compact-actions") and pane.has_class("-hide-progress")
+        assert all(not bar.display for bar in pane.query(".job-bar"))
+        assert all(button.size.width < 12 for button in pane.query(JobActionButton))
 
 
 def test_action_button_stops_a_running_job_and_clears_a_finished_one():

@@ -14,8 +14,9 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalGroup
+from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalGroup
 from textual.content import Content
+from textual.css.query import NoMatches
 from textual.events import Event
 from textual.reactive import reactive
 from textual.screen import ModalScreen
@@ -87,13 +88,20 @@ class _CapturePanel(VerticalGroup):
         border: round $primary; padding: 0 1;
         margin-top: 1;
     }
-    _CapturePanel .key-group { padding-left: 1; }
+
+    _CapturePanel .info-group { width: auto; height: auto; }
+    _CapturePanel .key-group { width: auto; height: auto; padding-left: 1; }
     _CapturePanel .date { height: 1; padding-left: 1; margin-bottom: 1; }
-    _CapturePanel .key-row { height: 1; align: left middle; }
-    _CapturePanel .key-display { height: 1; margin-right: 3; }
+    _CapturePanel .key-row { width: auto; height: 1; align: left middle; }
+    _CapturePanel .key-scroll {
+        width: 100%; min-width: 0; height: auto;
+        overflow-x: auto; overflow-y: hidden;
+    }
+    _CapturePanel .key-display { width: auto; height: 1; margin-right: 3; }
     _CapturePanel .copy-btn { min-width: 0; margin-right: 3; }
     _CapturePanel .verify-btn { min-width: 14; }
     _CapturePanel .tools { height: auto; margin-bottom: 1; }
+    _CapturePanel .tool-row { height: auto; }
     _CapturePanel .actions { height: auto; align: left middle; }
     _CapturePanel .spacer { width: 1fr; }
     """
@@ -104,10 +112,20 @@ class _CapturePanel(VerticalGroup):
         self._title = title
         self._cracked_key = cracked_key
         self._by_path: Dict[str, PersistedCapture] = {}
+        self._hashline_counts: dict[str, tuple[int, int]] = {}
         for cap in sorted(captures, key=lambda c: c.timestamp, reverse=True):
             self._by_path.setdefault(cap.path, cap)
+            handshakes, pmkids = self._hashline_counts.get(cap.path, (0, 0))
+            if cap.type == CaptureType.HS:
+                handshakes += cap.record_count
+            elif cap.type == CaptureType.PMKID:
+                pmkids += cap.record_count
+            self._hashline_counts[cap.path] = handshakes, pmkids
         self._files = list(self._by_path.values())
         self._verify_task: Optional[asyncio.Task] = None
+        self._selected_capture = self._files[0]
+        self._tool_layout: tuple[tuple[str, ...], int] | None = None
+        self._tool_update_scheduled = False
 
     def cancel_verification(self) -> None:
         """Cancel any running verification task on this panel."""
@@ -134,15 +152,21 @@ class _CapturePanel(VerticalGroup):
             self.border_title = f"{self._title} ({n})"
 
         newest = self._files[0]
-        yield Select([(Path(c.path).name, c.path) for c in self._files], value=newest.path, allow_blank=False, classes="file")
+        yield Select(
+            [(Path(c.path).name, c.path) for c in self._files],
+            value=newest.path,
+            allow_blank=False,
+            classes="file",
+        )
 
         # Display Key or Summary
-        with VerticalGroup(classes="key-group"):
-            pass # populated on file_changed
+        with HorizontalScroll(classes="key-scroll"):
+            with VerticalGroup(classes="info-group"):
+                with VerticalGroup(classes="key-group"):
+                    pass # populated on file_changed
+                yield Label(self._date_markup(newest), classes="date")
 
-        yield Label(self._date_markup(newest), classes="date")
-
-        yield Horizontal(classes="tools")
+        yield VerticalGroup(classes="tools")
         with Horizontal(classes="actions"):
             yield Button("Open Directory", classes="open-dir")
             yield Label("", classes="spacer")
@@ -151,32 +175,42 @@ class _CapturePanel(VerticalGroup):
     def on_mount(self) -> None:
         self._update_display(self._files[0])
 
+    def on_resize(self) -> None:
+        self._schedule_tool_rows()
+
+    def _schedule_tool_rows(self) -> None:
+        if self._tool_update_scheduled:
+            return
+        self._tool_update_scheduled = True
+        self.call_after_refresh(self._update_tool_rows)
+
     def _date_markup(self, cap: PersistedCapture) -> str:
         dt = datetime.fromtimestamp(cap.timestamp).strftime("%Y-%m-%d %H:%M")
         return f"[dim]Modified:[/] {dt} [dim]({relative_time(cap.timestamp)})[/dim]"
 
     def _update_display(self, cap: PersistedCapture) -> None:
+        self._selected_capture = cap
         self.query_one(".date", Label).update(self._date_markup(cap))
 
         kg = self.query_one(".key-group")
         kg.remove_children()
-        
-        tools = self.query_one(".tools")
-        tools.remove_children()
-        crackers = [t for t in self.app.vault.manager.tools.values() if t.can_crack(cap)]
-        tools.mount_all(Button(t.label, "primary", classes=f"tool-btn launch-tool-{t.name}")
-                        for t in crackers)
-        tools.display = bool(crackers)
+
+        self._tool_layout = None
+        self._schedule_tool_rows()
 
         def _row(label: str, val: str, btn_id: str, target_type: Optional[CaptureType] = None):
             verify_btn = Button("Verify", id=f"verify-{btn_id}", variant="primary", classes="verify-btn",
                                 compact=True, tooltip="Connect to live AP and verify credentials")
             setattr(verify_btn, "target_type", target_type)
+            key_text = Label(
+                f"[bold dim]{label}:[/bold dim] [black bold on lightgreen] {escape(val)} [/]",
+                classes="key-display",
+            )
             return Horizontal(
-                Label(f"[bold dim]{label}:[/bold dim] [black bold on lightgreen] {escape(val)} [/]", classes="key-display"),
+                key_text,
                 Button("Copy", id=btn_id, classes="copy-btn", compact=True),
                 verify_btn,
-                classes="key-row"
+                classes="key-row",
             )
 
         if self._title in ("WPS PSKs", "WPA PSKs"):
@@ -189,9 +223,7 @@ class _CapturePanel(VerticalGroup):
             if ascii_val:
                 kg.mount(_row("ASCII Key", ascii_val, "copy-ascii", target_type=CaptureType.WEP))
         elif self._title == "HASHCAT":
-            text = self.app.vault.capture_payload(cap)
-            hs = sum(1 for ln in text.splitlines() if ln.startswith(("WPA*02*", "WPA*04*")))
-            pmkid = sum(1 for ln in text.splitlines() if ln.startswith(("WPA*01*", "WPA*03*")))
+            hs, pmkid = self._hashline_counts.get(cap.path, (0, 0))
             parts = []
             if hs: parts.append(f"{hs} handshake{'s' if hs != 1 else ''}")
             if pmkid: parts.append(f"{pmkid} PMKID{'s' if pmkid != 1 else ''}")
@@ -202,6 +234,51 @@ class _CapturePanel(VerticalGroup):
             kg.mount(Label(summary, classes="key-display"))
         elif self._title == "HANDSHAKE":
             kg.mount(Label("[italic]raw .pcap capture[/italic]", classes="key-display"))
+
+    def _update_tool_rows(self) -> None:
+        self._tool_update_scheduled = False
+        if not self.is_attached:
+            return
+        try:
+            tools = self.query_one(".tools", VerticalGroup)
+        except NoMatches:
+            return
+        crackers = [
+            tool for tool in self.app.vault.manager.tools.values()
+            if tool.can_crack(self._selected_capture)
+        ]
+        available_width = tools.content_size.width or self.content_size.width
+        signature = (tuple(str(tool.name) for tool in crackers), available_width)
+        if signature == self._tool_layout:
+            return
+        self._tool_layout = signature
+        tools.remove_children()
+
+        rows: list[list] = []
+        row: list = []
+        row_width = 0
+        for tool in crackers:
+            button_width = max(12, Text(str(tool.label)).cell_len + 4) + 1
+            if row and row_width + button_width > available_width:
+                rows.append(row)
+                row = []
+                row_width = 0
+            row.append(tool)
+            row_width += button_width
+        if row:
+            rows.append(row)
+
+        tools.mount_all(
+            Horizontal(
+                *(
+                    Button(tool.label, "primary", classes=f"tool-btn launch-tool-{tool.name}")
+                    for tool in row_tools
+                ),
+                classes="tool-row",
+            )
+            for row_tools in rows
+        )
+        tools.display = bool(crackers)
 
     @on(Select.Changed)
     def _file_changed(self, event: Select.Changed) -> None:
@@ -215,14 +292,14 @@ class _CapturePanel(VerticalGroup):
         event.stop()
         cap = self._by_path.get(self.query_one(Select).value)
         if not cap: return
-        
+
         btn_id = event.button.id
         text = ""
         if btn_id == "copy-psk": text = cap.value or ""
         elif btn_id == "copy-pin": text = cap.pin or ""
         elif btn_id == "copy-hex": text = cap.value or ""
         elif btn_id == "copy-ascii": text = _hex_to_ascii(cap.value)
-        
+
         if not text:
             self.notify("Nothing to copy for this entry", severity="warning")
             return
@@ -283,7 +360,7 @@ class _CapturePanel(VerticalGroup):
             self.notify(f"Removed {Path(cap.path).name}")
 
         self.app.push_screen(ConfirmModal(f"Delete [bold]{escape(Path(cap.path).name)}[/]?"), after)
-        
+
     @on(Button.Pressed, ".tool-btn")
     def _launch_tool(self, event: Button.Pressed) -> None:
         event.stop()
@@ -292,24 +369,24 @@ class _CapturePanel(VerticalGroup):
         if not cap:
             logger.warning(f"Unable to launch tool for {selected_file}: Not found in index")
             return
-        
+
         tool_name = next((c.replace("launch-tool-", "") for c in event.button.classes if c.startswith("launch-tool-")), None)
         if not tool_name:
             return
-        
+
         modal_cls = UI_TOOLS.get(tool_name)
         if not modal_cls:
             logger.error(f"Unable to launch tool: No entry in UI_TOOLS for {tool_name}")
             self.notify(f"No UI configured for tool: {tool_name}", severity="error")
             return
-            
+
         def _on_config(config: dict | None) -> None:
             if not config:
                 return
             job_id = self.app.vault.manager.submit_job(
                 tool_name, cap, self.app.vault.add_probed_ssids(config))
             self.notify(f"Queued job: {job_id}")
-            
+
         self.app.push_screen(modal_cls(capture=cap, probed_ssids=self.app.vault.probed_ssids()),
                              _on_config)
 
@@ -367,11 +444,12 @@ class VaultItemView(Vertical):
             self.border_title = "Vault Detail"
             yield Label("Select an AP to view its captures", id="vault-item-empty")
             return
-            
+
         name = ssid or "‹hidden›"
-        title = Content.from_markup(f"[$background bold on $primary] {escape(name)}[/]")
-        self.border_title = title.append(Content.from_text(f" ({bssid}) "))
-        
+        title = Content.from_markup(f"[$background bold on $primary] {escape(name)} [/]")
+        title = title.append(Content.from_text(f" ({bssid}) "))
+        self.border_title = title
+
         groups = {
             "HANDSHAKE": [c for c in captures if c.path.endswith(".pcap")],
             "HASHCAT": [c for c in captures if c.path.endswith(".hc22000")],

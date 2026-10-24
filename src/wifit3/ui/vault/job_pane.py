@@ -26,12 +26,18 @@ class JobActionButton(Button):
     def __init__(self, job: JobState):
         super().__init__(classes="job-action-btn", compact=True)
         self.job_id = job.job_id
+        self.stops = False
+        self._state: tuple[bool, bool] | None = None
         self.sync(job)
 
     def sync(self, job: JobState) -> None:
         """Match the button's label + colour to the job's current state."""
-        self.stops = JobAction.STOP in job.actions
-        self.display = self.stops or JobAction.CLEAR in job.actions
+        state = (JobAction.STOP in job.actions, JobAction.CLEAR in job.actions)
+        if state == self._state:
+            return
+        self._state = state
+        self.stops, clears = state
+        self.display = self.stops or clears
         self.label = "Stop" if self.stops else "Clear"
         self.variant = "error" if self.stops else "default"
 
@@ -40,11 +46,17 @@ class JobPauseButton(Button):
     def __init__(self, job: JobState):
         super().__init__(classes="job-pause-btn", compact=True)
         self.job_id = job.job_id
+        self.resumes = False
+        self._state: tuple[bool, bool] | None = None
         self.sync(job)
 
     def sync(self, job: JobState) -> None:
-        self.resumes = JobAction.RESUME in job.actions
-        self.display = self.resumes or JobAction.PAUSE in job.actions
+        state = (JobAction.RESUME in job.actions, JobAction.PAUSE in job.actions)
+        if state == self._state:
+            return
+        self._state = state
+        self.resumes, pauses = state
+        self.display = self.resumes or pauses
         self.label = "Resume" if self.resumes else "Pause"
 
 
@@ -52,19 +64,27 @@ class JobSkipButton(Button):
     def __init__(self, job: JobState):
         super().__init__("Skip", classes="job-skip-btn", compact=True, variant="warning")
         self.job_id = job.job_id
+        self._visible: bool | None = None
         self.sync(job)
 
     def sync(self, job: JobState) -> None:
-        self.display = JobAction.SKIP in job.actions
+        visible = JobAction.SKIP in job.actions
+        if visible == self._visible:
+            return
+        self._visible = visible
+        self.display = visible
 
 
 class JobRow(Horizontal):
     """One job on a single line: name, progress bar, status badge, detail, skip + action buttons."""
 
-    def __init__(self, job: JobState):
+    def __init__(self, job: JobState, compact_name: bool = False):
         super().__init__(classes="job-row")
         self.job_id = job.job_id
         self._job = job
+        self._compact_name = compact_name
+        self._labels: dict[str, str] = {}
+        self._percent: float | None = None
 
     def compose(self) -> ComposeResult:
         yield Label(self._name_markup(self._job), classes="job-name")
@@ -81,18 +101,38 @@ class JobRow(Horizontal):
 
     def sync(self, job: JobState) -> None:
         self._job = job
-        self.query_one(".job-name", Label).update(self._name_markup(job))
-        self.query_one(".job-status", Label).update(self._status_markup(job))
-        self.query_one(".job-detail", Label).update(self._detail_markup(job))
-        self.query_one(ProgressBar).update(total=100, progress=job.percent or 0.0)
-        self.query_one(".job-percent", Label).update(self._percent_text(job))
+        self._update_label(".job-name", self._name_markup(job))
+        self._update_label(".job-status", self._status_markup(job))
+        self._update_label(".job-detail", self._detail_markup(job))
+        percent = job.percent or 0.0
+        if percent != self._percent:
+            self._percent = percent
+            self.query_one(ProgressBar).update(total=100, progress=percent)
+        self._update_label(".job-percent", self._percent_text(job))
         self.query_one(JobPauseButton).sync(job)
         self.query_one(JobSkipButton).sync(job)
         self.query_one(JobActionButton).sync(job)
 
+    def set_compact_name(self, compact_name: bool) -> None:
+        if self._compact_name == compact_name:
+            return
+        self._compact_name = compact_name
+        if self.is_attached:
+            self._update_label(".job-name", self._name_markup(self._job))
+
+    def _update_label(self, selector: str, value: str) -> None:
+        if value == self._labels.get(selector):
+            return
+        self._labels[selector] = value
+        self.query_one(selector, Label).update(value)
+
     def _name_markup(self, job: JobState) -> str:
         name = job.display_name
-        if len(name) > 25:
+        if self._compact_name and " (" in name and name.endswith(")"):
+            name = name.rsplit(" (", 1)[1][:-1]
+            if len(name) > 13:
+                name = name[:12] + "…"
+        elif len(name) > 25:
             name = name[:24] + "…"
         return f"[bold]{escape(name)}[/bold]"
 
@@ -123,6 +163,7 @@ class JobTrackerPane(Widget):
     """Active-job list inside the Vault drawer. Rows are updated in place so a progress
     tick never tears the list down and rebuilds it (which was the source of the flicker)."""
 
+
     DEFAULT_CSS = """
     JobTrackerPane {
         height: auto;
@@ -150,9 +191,14 @@ class JobTrackerPane(Widget):
 
     def on_mount(self) -> None:
         self._rows: dict[str, JobRow] = {}
+        self._jobs: list[JobState] = []
+        self._layout_signature: tuple | None = None
         if not hasattr(self.app, "active_jobs"):
             return
         self.watch(self.app, "active_jobs", self._sync)
+
+    def on_resize(self) -> None:
+        self._sync_layout()
 
     def _sync(self, jobs: list[JobState]) -> None:
         try:
@@ -161,7 +207,9 @@ class JobTrackerPane(Widget):
             return
 
         jobs = jobs or []
+        self._jobs = jobs
         self.display = bool(jobs)
+        self._sync_layout()
 
         present = {job.job_id for job in jobs}
         for job_id in list(self._rows):
@@ -171,11 +219,47 @@ class JobTrackerPane(Widget):
         for job in jobs:
             row = self._rows.get(job.job_id)
             if row is None:
-                row = JobRow(job)
+                row = JobRow(job, compact_name=self.has_class("-compact-name"))
                 self._rows[job.job_id] = row
                 container.mount(row)
             else:
                 row.sync(job)
+
+    def _sync_layout(self) -> None:
+        signature = (self.size.width, tuple((job.job_id, int(job.actions)) for job in self._jobs))
+        if signature == self._layout_signature:
+            return
+        self._layout_signature = signature
+        normal_fixed_columns = 57
+        no_bar_fixed_columns = 45
+        normal_required = normal_fixed_columns + 16
+        compact_required = normal_fixed_columns + 16
+        compact_name_required = no_bar_fixed_columns + 16
+        for job in self._jobs:
+            labels: list[tuple[str, int]] = []
+            if JobAction.PAUSE in job.actions or JobAction.RESUME in job.actions:
+                labels.append(("Resume" if JobAction.RESUME in job.actions else "Pause", 1))
+            if JobAction.SKIP in job.actions:
+                labels.append(("Skip", 1))
+            if JobAction.STOP in job.actions or JobAction.CLEAR in job.actions:
+                labels.append(("Stop" if JobAction.STOP in job.actions else "Clear", 0))
+            normal_required = max(
+                normal_required,
+                normal_fixed_columns + 16 + sum(12 + margin for _, margin in labels),
+            )
+            compact_action_columns = sum(len(label) + 4 + margin for label, margin in labels)
+            compact_required = max(
+                compact_required, normal_fixed_columns + 16 + compact_action_columns)
+            compact_name_required = max(
+                compact_name_required, no_bar_fixed_columns + 16 + compact_action_columns)
+        compact_actions = self.size.width < normal_required
+        hide_progress = compact_actions and self.size.width < compact_required
+        compact_name = hide_progress and self.size.width < compact_name_required
+        self.set_class(compact_actions, "-compact-actions")
+        self.set_class(hide_progress, "-hide-progress")
+        self.set_class(compact_name, "-compact-name")
+        for row in self._rows.values():
+            row.set_compact_name(compact_name)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button = event.button
