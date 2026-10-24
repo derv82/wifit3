@@ -40,6 +40,8 @@ import os
 import re
 from pathlib import Path
 
+NM_UNMANAGED_RULE = Path("/run/udev/rules.d/00-wifit3-capture-unmanaged.rules")
+
 # A 5 GHz channel renders as "5.NNN GHz" (iwlist) or "5NNN[.N] MHz" (iw phy info); a
 # 2.4 GHz frequency matches neither. Used by detect_5g against whichever tool answered.
 _FIVE_GHZ_RE = re.compile(r"5\.\d+\s*GHz|\b5\d{3}(?:\.\d+)?\s*MHz")
@@ -119,7 +121,6 @@ class Capture:
         self.lsusb_baseline = ""
         self.driver_module = None
         self.firmware_files = []
-        self.nm_managed_state = None
 
         # /dev/shm is always tmpfs (RAM): writing the pcap there means no
         # persistent-USB writes during capture, so a usbmon0 capture on a
@@ -253,38 +254,25 @@ class Capture:
         self.cleanup()
         sys.exit(1)
 
-    def protect_capture_interface(self):
-        """Temporarily keep NetworkManager off the newly detected adapter."""
-        if shutil.which("nmcli") is None:
-            self.logger.log_main("[*] nmcli unavailable; NetworkManager protection skipped.")
+    def unmanage_new_wlan_devices(self):
+        """Keep NetworkManager off any wlan device that appears from now on (udev NM_UNMANAGED), so
+        it never opens the card before airmon-ng. Without NetworkManager, fall back to check kill."""
+        running = subprocess.run(["nmcli", "-t", "-f", "RUNNING", "general"],
+                                 capture_output=True, text=True).stdout.strip() if shutil.which("nmcli") else ""
+        if running != "running":
+            self.logger.log_main("[*] NetworkManager not running; using `airmon-ng check kill`.")
+            subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
-        result = subprocess.run(
-            ["nmcli", "-g", "GENERAL.NM-MANAGED", "device", "show", self.base_iface],
-            capture_output=True, text=True,
-        )
-        state = result.stdout.strip().lower()
-        if state not in {"yes", "no"}:
-            self.logger.log_main(
-                f"[*] Could not determine NetworkManager state for {self.base_iface}; protection skipped."
-            )
-            return
-        self.nm_managed_state = state
-        if state == "yes":
-            subprocess.run(
-                ["nmcli", "device", "set", self.base_iface, "managed", "no"],
-                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            self.logger.log_main(f"[*] NetworkManager released {self.base_iface}.")
+        NM_UNMANAGED_RULE.parent.mkdir(parents=True, exist_ok=True)
+        NM_UNMANAGED_RULE.write_text(
+            'ACTION=="add", SUBSYSTEM=="net", ENV{DEVTYPE}=="wlan", ENV{NM_UNMANAGED}="1"\n')
+        subprocess.run(["sudo", "udevadm", "control", "--reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.logger.log_main(f"[*] NetworkManager will ignore the new card ({NM_UNMANAGED_RULE}).")
 
-    def restore_network_manager(self):
-        if self.nm_managed_state != "yes" or shutil.which("nmcli") is None:
-            return
-        subprocess.run(
-            ["nmcli", "device", "set", self.base_iface, "managed", "yes"],
-            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        self.logger.log_main(f"[*] NetworkManager restored for {self.base_iface}.")
-        self.nm_managed_state = None
+    def remove_unmanage_rule(self):
+        if NM_UNMANAGED_RULE.exists():
+            NM_UNMANAGED_RULE.unlink()
+            subprocess.run(["sudo", "udevadm", "control", "--reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     @staticmethod
     def _lsusb():
@@ -684,7 +672,7 @@ class Capture:
         else:
             subprocess.run(["sudo", "airmon-ng", "stop", f"{self.base_iface}mon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run(["sudo", "airmon-ng", "stop", self.base_iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.restore_network_manager()
+        self.remove_unmanage_rule()
 
         self.logger.log_main("[+] Cleanup complete. Safe to unplug.")
 
@@ -719,8 +707,8 @@ class Capture:
 
         # 0. System Prep
         subprocess.run(["sudo", "modprobe", "usbmon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        # Do not run `airmon-ng check kill`: it stops NetworkManager globally and
-        # disconnects the separate control interface used for the test client.
+        # Not `airmon-ng check kill` when NetworkManager runs: it would also drop --control-interface.
+        self.unmanage_new_wlan_devices()
         self.logger.log_main("\n[!] PREPARATION: Prepare to plug in the USB card.")
         self.logger.log_main("[!] IMPORTANT: DO NOT plug it in yet.")
         input("\nPress ENTER to start the capture sequence...")
@@ -762,9 +750,6 @@ class Capture:
             self.logger.log_main(f"[*] Card enumerated as: {self.base_iface}")
         else:
             self.logger.log_main(f"[!] No new wlan interface appeared; using {self.base_iface}.")
-
-        # Keep NetworkManager away from the capture adapter, not the control adapter.
-        self.protect_capture_interface()
 
         # Monitor-mode bring-up: the one step that must succeed.
         self.run_cmd(["sudo", "airmon-ng", "start", self.base_iface], fatal=True, timeout=30)
