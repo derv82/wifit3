@@ -186,14 +186,6 @@ ar9271 also has a TxSlots race, and rt2800usb / rt5572 can transmit in the middl
 **Direction.** A lock per driver, written in each driver (no shared base); re-run the TX lab flood
 test on each.
 
-## Remaining DKMS drivers may still inject at 1M CCK on 5 GHz
-
-**Problem.** CCK does not exist on 5 GHz. rtl8814au_dkms still defaults to `DESC_RATE1M` /
-`RATEID_IDX_B` in `build_mgmt_txdesc`; rtl8821cu_dkms and rtl8822cu are unchecked. Not necessarily a
-bug: it may be harmless on those chips.
-
-**Direction.** Check each against its C source; measure frames heard on a 5 GHz channel in the TX lab.
-
 ## Focus view CPU usage
 
 **Problem.** Focus is the most CPU-heavy screen. After the LED art and signal bar were changed to
