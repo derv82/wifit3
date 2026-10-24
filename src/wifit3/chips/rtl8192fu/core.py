@@ -785,7 +785,7 @@ def rtl8xxxu_init_burst(priv: Rtl8xxxuPriv) -> None:
     rtl8xxxu_write8_set(priv, C.REG_RSV_CTRL, C.RSV_CTRL_WLOCK_1C | C.RSV_CTRL_DIS_PRST)
 
 
-def rtl8xxxu_init_device(priv: Rtl8xxxuPriv) -> None:
+def rtl8xxxu_init_device(priv: Rtl8xxxuPriv, progress: Callable[[float, str], None] = lambda _v, _m: None) -> None:
     fops = priv.fops
 
     val8 = rtl8xxxu_read8(priv, C.REG_CR)
@@ -794,6 +794,7 @@ def rtl8xxxu_init_device(priv: Rtl8xxxuPriv) -> None:
     if fops.needs_full_init:
         macpower = False
 
+    progress(0.20, "Power on")
     fops.power_on(priv)
 
     if not macpower:
@@ -803,8 +804,11 @@ def rtl8xxxu_init_device(priv: Rtl8xxxuPriv) -> None:
 
     rtl8xxxu_write16(priv, C.REG_TRXFF_BNDY + 2, fops.trxff_boundary)
 
+    progress(0.25, "Firmware download")
     rtl8xxxu_download_firmware(priv)
     rtl8xxxu_start_firmware(priv)
+
+    progress(0.45, "MAC/BB/RF tables")
 
     rtl8xxxu_init_mac(priv)
     rtl8xxxu_init_phy_bb(priv)
@@ -910,6 +914,7 @@ def rtl8xxxu_init_device(priv: Rtl8xxxuPriv) -> None:
 
     rtl8xxxu_write8_clear(priv, C.REG_GPIO_MUXCFG, C.GPIO_MUXCFG_IO_SEL_ENBT)
 
+    progress(0.65, "LC + IQ calibration")
     fops.phy_lc_calibrate(priv)
     fops.phy_iq_calibrate(priv)
 
@@ -1044,13 +1049,16 @@ MONITOR_FILTER_FLAGS = (
 """What mac80211 passes configure_filter for a monitor interface (the RCR the captures record)."""
 
 
-def rtl8xxxu_probe(priv: Rtl8xxxuPriv, fw_data: bytes) -> None:
+def rtl8xxxu_probe(priv: Rtl8xxxuPriv, fw_data: bytes,
+                   progress: Callable[[float, str], None] = lambda _v, _m: None) -> None:
     """Register I/O of rtl8xxxu_probe (core.c:7787-7890), after rtl8xxxu_parse_usb."""
+    progress(0.10, "Identify chip")
     priv.fops.identify_chip(priv)
+    progress(0.12, "Read EFUSE")
     rtl8xxxu_read_efuse(priv)
     priv.fops.parse_efuse(priv)
     rtl8xxxu_load_firmware(priv, fw_data)
-    rtl8xxxu_init_device(priv)
+    rtl8xxxu_init_device(priv, progress)
     rtl8xxxu_init_led(priv)
 
 

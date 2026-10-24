@@ -73,9 +73,9 @@ class RTL8192FUDriver(Driver):
         if self._disconnect_callback is not None:
             self._disconnect_callback(error)
 
-    def _probe(self) -> None:
+    def _probe(self, progress: Callable[[float, str], None]) -> None:
         self.transport.rtl8xxxu_parse_usb(self.priv)
-        rtl8xxxu_probe(self.priv, files(__package__).joinpath("assets/rtl8192fufw.bin").read_bytes())
+        rtl8xxxu_probe(self.priv, files(__package__).joinpath("assets/rtl8192fufw.bin").read_bytes(), progress)
         self.mac_address = self.priv.mac_addr.hex(":")
 
     async def connect(self, progress_cb: ProgressCallback | None = None) -> bool:
@@ -84,8 +84,10 @@ class RTL8192FUDriver(Driver):
         try:
             progress(0.00, "Claiming USB interface")
             await loop.run_in_executor(None, self.transport.claim)
-            progress(0.10, "Probe: identify, EFUSE, firmware, MAC/BB/RF init, calibration")
-            await loop.run_in_executor(None, self._probe)
+            def from_worker(value: float, message: str) -> None:
+                loop.call_soon_threadsafe(progress, value, message)
+
+            await loop.run_in_executor(None, self._probe, from_worker)
             progress(0.90, "Starting monitor interface")
             self._rx_reader = RxReaderThread(
                 loop, self._read_once, self._dispatch, name="rtl8192fu-rx", on_fatal=self._on_rx_fatal,

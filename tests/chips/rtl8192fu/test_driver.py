@@ -20,7 +20,7 @@ def _driver(monkeypatch, calls: list[str]) -> drv.RTL8192FUDriver:
     monkeypatch.setattr(driver.transport, "release", lambda: calls.append("release"))
     monkeypatch.setattr(driver.transport, "interface_number", 0)
     monkeypatch.setattr(driver.transport, "rtl8xxxu_parse_usb", lambda priv: calls.append("parse_usb"))
-    monkeypatch.setattr(drv, "rtl8xxxu_probe", lambda priv, fw: calls.append("probe"))
+    monkeypatch.setattr(drv, "rtl8xxxu_probe", lambda priv, fw, progress: calls.append("probe"))
     monkeypatch.setattr(drv, "start_monitor_interface", lambda priv: calls.append("start_monitor"))
     reader = MagicMock()
     reader.stop = MagicMock(side_effect=lambda: _done(calls, "reader_stop"))
