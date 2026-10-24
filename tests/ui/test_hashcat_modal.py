@@ -1,3 +1,5 @@
+import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -5,10 +7,14 @@ from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Label
 
 import wifit3.ui.vault.modals.hashcat as mod
-from wifit3.persist.config import Config, ConfigError
+from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH, read_passwords, ssid_passwords, ssid_variants
+from wifit3.models import CaptureType, PersistedCapture
+from wifit3.persist.config import Config, ConfigError, HashcatSettings
+from wifit3.persist.meta import update_meta
 from wifit3.ui.vault.modals.cpu_crack import CpuCrackConfigModal
 from wifit3.ui.vault.modals.hashcat import HashcatConfigModal, _default_hashcat_path
-from wifit3.ui.vault.modals.wordlists import _RemoveButton
+from wifit3.ui.vault.modals.wordlists import _RemoveButton, _UseCheckbox, _exhausted_tooltip
+from wifit3.vault.exhaustion import Exhaustion, hashline_id, wordlist_identity
 
 
 @pytest.fixture(autouse=True)
@@ -48,15 +54,18 @@ def test_saved_path_outranks_a_hashcat_found_on_path(monkeypatch):
 
 def test_launching_remembers_the_launch_settings():
     """Straight through the real Config.save(): tests/ui/conftest.py points it at a tmp file."""
-    HashcatConfigModal()._remember({"hashcat_exe": r"D:\hashcat.exe",
-                                    "wordlists": [r"D:\rockyou.txt", r"D:\top29m.txt"],
-                                    "hashcat_args": "-w 3"})
-    Config.hashcat.path = Config.hashcat.args = None
-    Config.hashcat.wordlists = []
+    modal = HashcatConfigModal(probed_ssids=["CafeGuest"])
+    modal._wordlists = [r"D:\rockyou.txt", r"D:\top29m.txt"]
+    modal._remember({"hashcat_exe": r"D:\hashcat.exe",
+                     "wordlists": [r"D:\rockyou.txt", r"D:\top29m.txt"],
+                     "hashcat_args": "-w 3", "default_passwords": False,
+                     "ap_ssid_passwords": True, "probed_ssid_passwords": False})
+    Config.hashcat = HashcatSettings()
     Config.load()
 
-    assert (Config.hashcat.path, Config.hashcat.wordlists, Config.hashcat.args) == (
-        r"D:\hashcat.exe", [r"D:\rockyou.txt", r"D:\top29m.txt"], "-w 3")
+    assert Config.hashcat == HashcatSettings(
+        path=r"D:\hashcat.exe", args="-w 3", wordlists=[r"D:\rockyou.txt", r"D:\top29m.txt"],
+        default_passwords=False, ap_ssid_passwords=True, probed_ssid_passwords=False)
 
 
 def test_an_unwritable_config_warns_but_keeps_the_paths(monkeypatch):
@@ -69,7 +78,8 @@ def test_an_unwritable_config_warns_but_keeps_the_paths(monkeypatch):
     warnings = []
     monkeypatch.setattr(modal, "notify", lambda *a, **k: warnings.append((a, k)))
     modal._remember({"hashcat_exe": r"D:\hashcat.exe", "wordlists": [r"D:\rockyou.txt"],
-                     "hashcat_args": ""})
+                     "hashcat_args": "", "default_passwords": True, "ap_ssid_passwords": True,
+                     "probed_ssid_passwords": True})
 
     assert Config.hashcat.path == r"D:\hashcat.exe"
     assert warnings and warnings[0][1].get("title") == "Config Error"
@@ -98,7 +108,7 @@ async def test_saved_args_prefill_the_modal_and_come_back_on_launch():
     app = _Host()
     async with app.run_test() as pilot:
         dismissed = []
-        app.push_screen(HashcatConfigModal(), dismissed.append)
+        app.push_screen(HashcatConfigModal(probed_ssids=["CafeGuest"]), dismissed.append)
         await pilot.pause(0)
         assert app.screen.query_one("#hashcat-self-test-disable", Checkbox).value
         app.screen.query_one("#hashcat-exe", Input).value = r"D:\hashcat.exe"
@@ -107,7 +117,8 @@ async def test_saved_args_prefill_the_modal_and_come_back_on_launch():
         await pilot.pause(0)
 
     assert dismissed == [{"hashcat_exe": r"D:\hashcat.exe", "wordlists": [r"D:\rockyou.txt"],
-                          "hashcat_args": "-w 3 --self-test-disable"}]
+                          "default_passwords": True, "ap_ssid_passwords": True,
+                          "probed_ssid_passwords": True, "hashcat_args": "-w 3 --self-test-disable"}]
 
 
 async def test_escape_dismisses_without_saving():
@@ -118,7 +129,7 @@ async def test_escape_dismisses_without_saving():
         await pilot.pause(0)
         app.screen.query_one("#hashcat-args", Input).value = "-w 3"
         await pilot.press("escape")
-        await pilot.pause()
+        await pilot.pause(0)
 
         assert not isinstance(app.screen, HashcatConfigModal)
 
@@ -132,17 +143,19 @@ async def test_the_modal_reads_back_the_wordlists_it_was_given():
     async with app.run_test() as pilot:
         app.push_screen(HashcatConfigModal())
         await pilot.pause(0)
-        shown = [str(label.content) for label in app.screen.query(".wordlist-name")]
+        shown = [str(box.label) for box in app.screen.query(_UseCheckbox)]
         assert len(shown) == 2
-        assert "1:" in shown[0] and "a.txt" in shown[0]
-        assert "2:" in shown[1] and "b.txt" in shown[1]
+        assert "a.txt" in shown[0] and "b.txt" in shown[1]
 
         await app.screen._wordlists_chosen(None)        # a cancelled picker keeps the selection
         await pilot.pause(0)
         assert app.screen._wordlists == [r"D:\a.txt", r"D:\b.txt"]
 
 
-async def test_launch_is_refused_without_a_wordlist():
+async def test_launch_is_refused_without_a_wordlist_or_password_source():
+    Config.hashcat.default_passwords = False
+    Config.hashcat.ap_ssid_passwords = False
+    Config.hashcat.probed_ssid_passwords = False
     app = _Host()
     async with app.run_test() as pilot:
         dismissed = []
@@ -172,9 +185,9 @@ async def test_x_removes_one_wordlist_and_clear_removes_them_all(tmp_path):
 
         next(b for b in modal.query(_RemoveButton) if b.path.endswith("b.txt")).press()
         await pilot.pause()
-        names = [str(label.content) for label in rows.query(".wordlist-name")]
+        names = [str(box.label) for box in rows.query(_UseCheckbox)]
         assert len(names) == 2
-        assert names[0].startswith("[bold]1:[/bold] a.txt") and names[1].startswith("[bold]2:[/bold] c.txt")
+        assert names[0].startswith("a.txt") and names[1].startswith("c.txt")
         assert str(tmp_path) in names[0], "the parent directory tells same-named files apart"
 
         clear.press()
@@ -196,9 +209,9 @@ async def test_launch_saves_what_is_left_after_a_removal(tmp_path):
         modal = app.screen
         modal.query_one("#hashcat-exe", Input).value = str(tmp_path / "hashcat")
         modal.query(_RemoveButton).first().press()
-        await pilot.pause()
+        await pilot.pause(0)
         modal.query_one("#wordlist-launch", Button).press()
-        await pilot.pause()
+        await pilot.pause(0)
 
     assert dismissed[0]["wordlists"] == [str(tmp_path / "b.txt")]
     assert Config.hashcat.wordlists == [str(tmp_path / "b.txt")]
@@ -233,18 +246,34 @@ async def test_cpu_crack_launches_with_only_the_wordlists_and_remembers_them():
     app = _Host()
     async with app.run_test() as pilot:
         dismissed = []
-        app.push_screen(CpuCrackConfigModal(), dismissed.append)
+        app.push_screen(CpuCrackConfigModal(probed_ssids=["CafeGuest"]), dismissed.append)
         await pilot.pause()
         assert str(app.screen.query_one("#wordlist-title", Label).content) == "CPU Crack"
         assert not app.screen.query("#hashcat-exe")
         await app.screen._wordlists_chosen([Path(r"D:\a.txt"), Path(r"D:\b.txt")])
         app.screen.query_one("#wordlist-launch", Button).press()
-        await pilot.pause()
+        await pilot.pause(0)
 
     assert dismissed == [{"wordlists": [r"D:\a.txt", r"D:\b.txt"], "default_passwords": True,
                           "ap_ssid_passwords": True, "probed_ssid_passwords": True}]
     assert Config.cpu_crack.wordlists == [r"D:\a.txt", r"D:\b.txt"]
     assert Config.hashcat.wordlists == []
+
+
+async def test_no_probed_ssids_disables_their_box_but_keeps_the_saved_choice():
+    Config.cpu_crack.probed_ssid_passwords = True
+    app = _Host()
+    async with app.run_test() as pilot:
+        dismissed = []
+        app.push_screen(CpuCrackConfigModal(confirm_label="Save"), dismissed.append)
+        await pilot.pause(0)
+        probed = app.screen.query_one("#probed-ssid-passwords", Checkbox)
+        assert (probed.value, probed.disabled, str(probed.label)) == (False, True, "Probed SSIDs (0)")
+        app.screen.query_one("#wordlist-launch", Button).press()
+        await pilot.pause(0)
+
+    assert dismissed[0]["probed_ssid_passwords"] is False
+    assert Config.cpu_crack.probed_ssid_passwords is True
 
 
 async def test_cpu_crack_refuses_to_launch_without_a_wordlist_or_password_source():
@@ -279,3 +308,107 @@ async def test_remove_and_clear_shrink_below_the_global_button_width_in_both_mod
             await pilot.pause()
             assert app.screen.query_one(_RemoveButton).size.width == 3
             assert app.screen.query_one("#wordlist-clear", Button).size.width == 7
+
+
+async def test_password_source_labels_count_the_capture_or_one_ssid_and_the_probed(tmp_path):
+    capture = tmp_path / "ab_02-00-00-00-00-01.hc22000"
+    capture.write_text(f"WPA*01*{'00' * 16}*020000000001*020000000002*6162***\n"
+                       f"WPA*01*{'00' * 16}*020000000001*020000000003*6162***\n", encoding="utf-8")
+    persisted = PersistedCapture(type=CaptureType.PMKID, timestamp=0, path=str(capture),
+                                 bssid="02:00:00:00:00:01")
+    default_count = sum(1 for _ in read_passwords(DEFAULT_PASSWORDS_PATH))
+    app = _Host()
+    async with app.run_test() as pilot:
+        for modal, ssid_label in (
+                (CpuCrackConfigModal(capture=persisted, probed_ssids=["CafeGuest"]),
+                 f"This AP's SSID variants ({len(ssid_variants('ab'))})"),
+                (HashcatConfigModal(confirm_label="Save", probed_ssids=["CafeGuest"]),
+                 f"This AP's SSID variants (about {len(ssid_variants('HomeWifi')):,} per SSID)")):
+            app.push_screen(modal)
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            labels = [str(checkbox.label) for checkbox in modal.query(Checkbox)
+                      if checkbox.id != "hashcat-self-test-disable"]
+            assert labels == [f"Default passwords ({default_count:,})", ssid_label,
+                              f"Probed SSIDs ({len(ssid_passwords(['CafeGuest']))})"]
+            app.pop_screen()
+
+
+async def test_exhausted_wordlists_and_sources_are_marked_with_when_and_on_how_many(tmp_path):
+    lines = [f"WPA*01*{'00' * 16}*020000000001*02000000000{n}*6162***" for n in (2, 3)]
+    capture = tmp_path / "ab_02-00-00-00-00-01.hc22000"
+    capture.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
+    persisted = PersistedCapture(type=CaptureType.PMKID, timestamp=0, path=str(capture),
+                                 bssid="02:00:00:00:00:01", ssid="ab")
+    exhausted_list, fresh_list = tmp_path / "exhausted.txt", tmp_path / "fresh.txt"
+    exhausted_list.write_text("password1\n", encoding="utf-8")
+    fresh_list.write_text("password2\npassword3\n", encoding="utf-8")
+    Config.cpu_crack.wordlists = [str(exhausted_list), str(fresh_list)]
+    when = int(time.time()) - 3 * 86400 - 60
+    ids = [hashline_id(line) for line in lines]
+    update_meta("ab", "02:00:00:00:00:01", exhausted={
+        wordlist_identity(exhausted_list): {ids[0]: when},
+        wordlist_identity(DEFAULT_PASSWORDS_PATH): {ids[0]: when - 60, ids[1]: when}})
+    date = datetime.fromtimestamp(when).strftime("%Y-%m-%d")
+    app = _Host()
+    async with app.run_test() as pilot:
+        modal = CpuCrackConfigModal(capture=persisted)
+        app.push_screen(modal)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        exhausted_row, fresh_row = modal.query(".wordlist-row")
+        default = modal.query_one("#default-passwords", Checkbox)
+        assert exhausted_row.has_class("exhausted") and default.has_class("exhausted")
+        assert not fresh_row.has_class("exhausted")
+        assert exhausted_row.styles.background != fresh_row.styles.background
+        assert not modal.query_one("#ap-ssid-passwords", Checkbox).has_class("exhausted")
+        assert exhausted_row.tooltip == f"Exhausted {date} (3 days ago) on 1/2 hashlines"
+        assert default.tooltip == f"Exhausted {date} (3 days ago) on 2/2 hashlines"
+
+
+async def test_exhausted_rows_start_unchecked_and_one_click_restores_them(tmp_path):
+    line = f"WPA*01*{'00' * 16}*020000000001*020000000002*6162***"
+    capture = tmp_path / "ab_02-00-00-00-00-01.hc22000"
+    capture.write_text(f"{line}\n", encoding="utf-8")
+    persisted = PersistedCapture(type=CaptureType.PMKID, timestamp=0, path=str(capture),
+                                 bssid="02:00:00:00:00:01", ssid="ab")
+    exhausted_list, fresh_list = tmp_path / "exhausted.txt", tmp_path / "fresh.txt"
+    exhausted_list.write_text("password1\n", encoding="utf-8")
+    fresh_list.write_text("password2\n", encoding="utf-8")
+    Config.cpu_crack.wordlists = [str(exhausted_list), str(fresh_list)]
+    update_meta("ab", "02:00:00:00:00:01", exhausted={
+        wordlist_identity(exhausted_list): {hashline_id(line): int(time.time())}})
+    app = _Host()
+    async with app.run_test() as pilot:
+        modal = CpuCrackConfigModal(capture=persisted)
+        app.push_screen(modal)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        exhausted_box, fresh_box = modal.query(_UseCheckbox)
+        assert (exhausted_box.value, fresh_box.value) == (False, True)
+        assert modal._launch_config()["wordlists"] == [str(fresh_list)]
+        exhausted_box.value = True
+        await pilot.pause()
+        await modal._show_wordlists()
+        assert modal.query(_UseCheckbox).first().value is True
+        assert modal._launch_config()["wordlists"] == [str(exhausted_list), str(fresh_list)]
+
+
+async def test_deselecting_a_wordlist_skips_it_in_the_launch_but_keeps_it_saved():
+    Config.cpu_crack.wordlists = [r"D:\a.txt", r"D:\b.txt"]
+    app = _Host()
+    async with app.run_test() as pilot:
+        modal = CpuCrackConfigModal()
+        app.push_screen(modal)
+        await pilot.pause()
+        modal.query(_UseCheckbox).first().value = False
+        await pilot.pause()
+        config = modal._launch_config()
+        modal._remember(config)
+    assert config["wordlists"] == [r"D:\b.txt"]
+    assert Config.cpu_crack.wordlists == [r"D:\a.txt", r"D:\b.txt"]
+
+
+def test_exhausted_today_is_not_zero_days_ago():
+    tooltip = _exhausted_tooltip(Exhaustion(1, 2, int(time.time()) - 60))
+    assert "(today)" in tooltip and "days ago" not in tooltip

@@ -5,10 +5,12 @@ indexed (a handshake may have either or both). Counterpart: persist.save."""
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List
 
+from wifit3.crack.hc22000_format import parse_hc22000
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.common import (
     AGGREGATED_HC22000_RE,
@@ -17,10 +19,13 @@ from wifit3.persist.common import (
     WPS_PSK_RE,
     bssid_to_colon,
     parse_wps_pin,
+    safe_ssid,
 )
 from wifit3.persist.config import Config
 
 logger = logging.getLogger(__name__)
+
+_SSID_LINE_RE = re.compile(r"^SSID:[ \t]*(.*)$", re.MULTILINE)
 
 
 def _read_text(path: Path) -> str | None:
@@ -31,38 +36,41 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
-def _read_wep_key(path: Path) -> str | None:
-    """Extract the hex WEP key from a ``_wep_key.txt`` file, or None."""
-    text = _read_text(path)
-    if text is None:
-        return None
+def _read_wep_key(text: str) -> str | None:
+    """Extract the hex WEP key from a ``_wep_key.txt`` body, or None."""
     m = WEP_KEY_HEX_RE.search(text)
     return m.group(1).lower() if m else None
 
 
-def _read_wps_psk(path: Path) -> str | None:
-    """Extract the PSK from a ``_wps_pin.txt`` or ``_wps_pbc.txt`` file, or None."""
-    text = _read_text(path)
-    if text is None:
-        return None
+def _read_wps_psk(text: str) -> str | None:
+    """Extract the PSK from a ``_wps_pin.txt`` or ``_wps_pbc.txt`` body, or None."""
     m = WPS_PSK_RE.search(text)
     return m.group(1).strip() if m else None
 
 
-def _read_wps_pin(path: Path) -> str | None:
-    """Extract the PIN from a ``_wps_pin.txt`` file, or None."""
-    text = _read_text(path)
-    if text is None:
-        return None
-    return parse_wps_pin(text)
-
-
-def _count_hashlines(path: Path, prefixes: tuple[str, ...]) -> int:
-    """Number of records starting with one of ``prefixes`` in a .hc22000 file (0 if unreadable)."""
-    text = _read_text(path)
-    if text is None:
-        return 0
+def _count_hashlines(text: str, prefixes: tuple[str, ...]) -> int:
+    """Number of records starting with one of ``prefixes`` in a .hc22000 body."""
     return sum(1 for ln in text.splitlines() if ln.strip().startswith(prefixes))
+
+
+def _ssid_naming_file(ssid: str, filename_ssid: str) -> str:
+    return ssid if ssid and safe_ssid(ssid) == filename_ssid else filename_ssid
+
+
+def _body_ssid(text: str, filename_ssid: str) -> str:
+    m = _SSID_LINE_RE.search(text)
+    return _ssid_naming_file(m.group(1) if m else "", filename_ssid)
+
+
+def _essid(text: str, filename_ssid: str) -> str:
+    line = next((parsed for parsed in map(parse_hc22000, text.splitlines()) if parsed), None)
+    if line is None:
+        return filename_ssid
+    try:
+        essid = bytes.fromhex(line.essid).decode("utf-8")
+    except UnicodeDecodeError:
+        return filename_ssid
+    return _ssid_naming_file(essid, filename_ssid)
 
 
 def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
@@ -74,7 +82,7 @@ def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
     except OSError:
         mtime = 0
     m = AGGREGATED_HC22000_RE.match(path.name)
-    ssid = m.group("ssid") if m else None
+    ssid = _essid(text, m.group("ssid")) if m else None
     pmkid = hs = 0
     for line in text.splitlines():
         line = line.strip()
@@ -103,33 +111,39 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
     epoch = int(m.group("epoch"))
     kind = m.group("kind")
     ext = m.group("ext")
-    ssid = m.group("ssid")
+    text = "" if ext == "pcap" else _read_text(path) or ""
+    if ext == "hc22000":
+        ssid = _essid(text, m.group("ssid"))
+    elif ext == "txt":
+        ssid = _body_ssid(text, m.group("ssid"))
+    else:
+        ssid = m.group("ssid")
 
     if kind == "wep_key" and ext == "txt":
-        key = _read_wep_key(path)
+        key = _read_wep_key(text)
         if key is None:
             return []
         return [PersistedCapture(type=CaptureType.WEP, timestamp=epoch, path=str(path),
                                  bssid=bssid, value=key, ssid=ssid)]
     if kind == "wps_pin" and ext == "txt":
         return [PersistedCapture(type=CaptureType.WPS_PIN, timestamp=epoch, path=str(path),
-                                 bssid=bssid, value=_read_wps_psk(path), ssid=ssid,
-                                 pin=_read_wps_pin(path))]
+                                 bssid=bssid, value=_read_wps_psk(text), ssid=ssid,
+                                 pin=parse_wps_pin(text))]
     if kind == "wps_pbc" and ext == "txt":
         return [PersistedCapture(type=CaptureType.WPS_PBC, timestamp=epoch, path=str(path),
-                                 bssid=bssid, value=_read_wps_psk(path), ssid=ssid)]
+                                 bssid=bssid, value=_read_wps_psk(text), ssid=ssid)]
     if kind == "wpa_psk" and ext == "txt":
-        psk = _read_wps_psk(path)
+        psk = _read_wps_psk(text)
         if psk is None:
             return []
         return [PersistedCapture(type=CaptureType.WPA_PSK, timestamp=epoch, path=str(path),
                                  bssid=bssid, value=psk, ssid=ssid)]
     if kind == "handshake" and ext in ("hc22000", "pcap"):
-        count = _count_hashlines(path, ("WPA*02*", "WPA*04*")) if ext == "hc22000" else 0
+        count = _count_hashlines(text, ("WPA*02*", "WPA*04*"))
         return [PersistedCapture(type=CaptureType.HS, timestamp=epoch, path=str(path),
                                  bssid=bssid, ssid=ssid, record_count=count)]
     if kind == "pmkid" and ext in ("hc22000", "pcap"):
-        count = _count_hashlines(path, ("WPA*01*", "WPA*03*")) if ext == "hc22000" else 0
+        count = _count_hashlines(text, ("WPA*01*", "WPA*03*"))
         return [PersistedCapture(type=CaptureType.PMKID, timestamp=epoch, path=str(path),
                                  bssid=bssid, ssid=ssid, record_count=count)]
     return []
@@ -166,5 +180,6 @@ def summarize(index: Dict[str, List[PersistedCapture]]) -> tuple[int, int, int, 
         hs += CaptureType.HS in types
         pmkid += CaptureType.PMKID in types
         wep += CaptureType.WEP in types
-        psk += bool(types & {CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK})
+        psk += any(c.type in (CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.WPA_PSK)
+                   and c.value for c in caps)
     return hs, pmkid, wep, psk

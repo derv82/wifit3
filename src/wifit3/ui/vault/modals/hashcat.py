@@ -45,6 +45,7 @@ class HashcatConfigModal(WordlistConfigModal):
                         id="hashcat-exe")
 
         yield from self._compose_wordlists()
+        yield from self._compose_password_sources()
 
         args = Config.hashcat.args or ""
         yield Label("Hashcat Args:", classes="hashcat-label")

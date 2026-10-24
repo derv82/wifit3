@@ -65,6 +65,8 @@ class BeaconPacket(Packet):
     encryption: str = "OPEN"
     akms: List[str] = field(default_factory=list)
     akm_suites: List[int] = field(default_factory=list)
+    rsn_valid: bool = False
+    vendor_akm_offered: bool = False
     pairwise_cipher: Optional[str] = None
     wpa3: bool = False
     transition_mode: bool = False
@@ -98,11 +100,18 @@ class EapolPacket(Packet):
     payload: bytes = b""
     pmkid: Optional[bytes] = None
     akm: Optional[int] = None
+    akm_selection_rejected: bool = False  # M2's RSN IE is present but names no single AKM
     key_info: Optional[int] = None
     # 802.11r identifiers from an M2's MDE / FTE; empty when absent.
     mdid: bytes = b""
     r0khid: bytes = b""
     r1khid: bytes = b""
+
+
+@dataclass(slots=True, kw_only=True)
+class EapPacket(Packet):
+    raw: bytes = field(repr=False)
+    eap_type: Optional[int] = None
 
 
 @dataclass(slots=True, kw_only=True)

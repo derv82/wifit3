@@ -31,6 +31,7 @@ from typing import List, Optional
 from wifit3.models import Handshake
 from wifit3.crack import handshake as wpa
 from wifit3.crack.handshake import mac_compact, ssid_hex
+from wifit3.dot11.rsn import AKM_FT_PSK, AKM_PSK_SHA256
 
 PMKID_SHA256_MESSAGE_PAIR_BIT = 0x02
 _PMKID_SHA256_MESSAGE_PAIR = "03"
@@ -50,12 +51,12 @@ def pmkid_hashline(ssid: str, hs: Handshake) -> Optional[str]:
         f"*{mac_compact(hs.client_mac)}"
         f"*{ssid_hex(ssid)}"
     )
-    ft_frame = wpa.ft_identifiers_frame(hs) if akm == wpa.FT_PSK_AKM else None
+    ft_frame = wpa.ft_identifiers_frame(hs) if akm == AKM_FT_PSK else None
     if ft_frame is not None:
         # hashcat uses a PMKID's MESSAGEPAIR only on WPA*01, so it stays empty here.
         return (f"WPA*03{prefix}***"
                 f"*{ft_frame.mdid.hex()}*{ft_frame.r0khid.hex()}*{ft_frame.r1khid.hex()}")
-    message_pair = _PMKID_SHA256_MESSAGE_PAIR if akm == wpa.PMKID_PSK_SHA256_AKM else ""
+    message_pair = _PMKID_SHA256_MESSAGE_PAIR if akm == AKM_PSK_SHA256 else ""
     return f"WPA*01{prefix}***{message_pair}"
 
 

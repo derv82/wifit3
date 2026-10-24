@@ -11,9 +11,12 @@ from pathlib import Path
 
 import pytest
 
+from wifit3.crack import wpa_psk
 from wifit3.crack.hc22000_format import Hc22000Line
+from wifit3.dot11.wpa import derive_pmk
 from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage, ToolName
 from wifit3.persist.config import Config
+from wifit3.persist.meta import update_meta
 from wifit3.persist.vault import Vault, crosses_auto_crack_threshold
 
 
@@ -173,6 +176,15 @@ def test_non_wps_persisted_is_not_a_psk(tmp_path):
     assert v.has_psk(ap) is False and v.known_psk(ap) is None
 
 
+def test_a_pin_only_capture_is_not_a_psk(tmp_path):
+    ap = AccessPoint(bssid="00:11:22:33:44:99", ssid="Net")
+    Vault().save_wps_pin(ap, "12345670", None)
+    v = Vault()
+    caps = v.persisted(ap.bssid)
+    assert len(caps) == 1 and caps[0].pin == "12345670" and caps[0].value is None
+    assert not v.has_psk(ap) and not v.has_wps_psk(ap) and v.summary() is None
+
+
 def test_known_psk_from_cracked_wpa_psk_file(tmp_path):
     _write_wpa_psk(tmp_path, "00-11-22-33-44-aa", psk="crackedpw")
     v = Vault()
@@ -257,6 +269,42 @@ def test_delete_capture_removes_file_and_cache_entry(tmp_path):
     assert v.persisted(ap.bssid) == []
 
 
+def test_delete_capture_removes_the_meta_with_the_last_capture(tmp_path):
+    v = Vault()
+    ap = AccessPoint(bssid="00:11:22:33:44:01", ssid="A")
+    v.save_wep_key(ap, b"abcde")
+    v.save_wep_key(ap, b"fghij")
+    meta = tmp_path / "A_00-11-22-33-44-01.meta"
+    v.delete_capture(v.persisted(ap.bssid)[0])
+    assert meta.exists()
+    v.delete_capture(v.persisted(ap.bssid)[0])
+    assert not meta.exists()
+
+
+def test_delete_capture_keeps_the_meta_of_another_ssid_on_the_bssid(tmp_path):
+    v = Vault()
+    v.save_wep_key(AccessPoint(bssid="00:11:22:33:44:01", ssid="A"), b"abcde")
+    v.save_wep_key(AccessPoint(bssid="00:11:22:33:44:01", ssid="B"), b"fghij")
+    v.delete_capture(next(c for c in v.persisted("00:11:22:33:44:01") if c.ssid == "A"))
+    assert not (tmp_path / "A_00-11-22-33-44-01.meta").exists()
+    assert (tmp_path / "B_00-11-22-33-44-01.meta").exists()
+
+
+def test_every_save_writes_the_meta(tmp_path):
+    v = Vault()
+    ap = _ap_with_hs(pmkid=b"" * 16)
+    v.save_handshake(ap, "11:22:33:44:55:66")
+    v.save_pmkid(ap, "11:22:33:44:55:66")
+    v.save_wps_pin(AccessPoint(bssid="00:11:22:33:44:02", ssid="Pin"), "12345670", "pw123456")
+    v.save_wps_pbc(AccessPoint(bssid="00:11:22:33:44:03", ssid="Pbc"), "pw123456")
+    v.save_wpa_psk("Psk", "00:11:22:33:44:04", "pw123456")
+    v.save_wep_key(AccessPoint(bssid="00:11:22:33:44:05", ssid="Wep"), b"abcde")
+    assert sorted(p.name for p in tmp_path.glob("*.meta")) == [
+        "HomeNet_aa-bb-cc-dd-ee-ff.meta", "Pbc_00-11-22-33-44-03.meta",
+        "Pin_00-11-22-33-44-02.meta", "Psk_00-11-22-33-44-04.meta",
+        "Wep_00-11-22-33-44-05.meta"]
+
+
 def test_delete_capture_drops_all_entries_sharing_a_path(tmp_path):
     # An aggregate .hc22000 backs both an HS and a PMKID entry: deleting drops both.
     agg = tmp_path / "Net_00-11-22-33-44-03.hc22000"
@@ -275,7 +323,8 @@ def test_zip_captures_bundles_beside_dir(tmp_path):
     out = v.zip_captures(v.all_captures())
     assert out is not None and out.parent == tmp_path.parent
     with zipfile.ZipFile(out) as zf:
-        assert len(zf.namelist()) == 1
+        names = zf.namelist()
+    assert len(names) == 2 and "A_00-11-22-33-44-01.meta" in names
 
 
 def test_zip_captures_none_when_empty(tmp_path):
@@ -296,6 +345,16 @@ def test_open_directory_uses_platform_launcher(tmp_path, mocker):
     popen = mocker.patch("wifit3.persist.vault.subprocess.Popen")
     Vault().open_directory()
     popen.assert_called_once_with(["xdg-open", str(tmp_path)])
+
+
+def test_open_directory_raises_file_not_found_before_the_first_capture(tmp_path, mocker,
+                                                                      monkeypatch):
+    mocker.patch.object(sys, "platform", "linux")
+    popen = mocker.patch("wifit3.persist.vault.subprocess.Popen")
+    monkeypatch.setattr(Config, "captures_dir", str(tmp_path / "captures"))
+    with pytest.raises(FileNotFoundError):
+        Vault().open_directory()
+    popen.assert_not_called()
 
 
 def test_capture_payload_value_then_file(tmp_path):
@@ -435,7 +494,9 @@ def test_save_submits_to_the_chosen_tool_with_its_saved_settings(tmp_path, mocke
     capture = v.persisted(_ap_with_hs().bssid)[0]
     assert v.manager.submit_job.call_args == (
         ("hashcat", capture, {"hashcat_exe": "/usr/bin/hashcat", "wordlists": ["/lists/a.txt"],
-                              "hashcat_args": "-w 3"}),
+                              "hashcat_args": "-w 3", "default_passwords": True,
+                              "ap_ssid_passwords": True, "probed_ssid_passwords": True,
+                              "extra_passwords": []}),
         {"auto_crack": True})
 
 
@@ -458,3 +519,98 @@ def test_save_does_not_submit_a_capture_the_tool_cannot_crack(tmp_path, mocker):
     v.save_handshake(_ap_with_hs(), _CLIENT)
 
     v.manager.submit_job.assert_not_called()
+
+
+# ---- PSK verification and related-AP propagation -----------------------------
+
+_STA = "112233445566"
+
+
+def _write_pmkid_line(d, ssid: str, bssid: str, pmk: bytes) -> None:
+    """One PMKID hashline that ``pmk`` cracks, in the AP's aggregate .hc22000."""
+    mac_ap = bssid.replace(":", "")
+    line = (f"WPA*01*{wpa_psk.pmkid(pmk, bytes.fromhex(mac_ap), bytes.fromhex(_STA)).hex()}"
+            f"*{mac_ap}*{_STA}*{ssid.encode().hex()}***\n")
+    (d / f"{ssid}_{bssid.replace(':', '-')}.hc22000").write_text(line, encoding="utf-8")
+
+
+def test_verify_wpa_psk_true_false_none_and_raw_pmk(tmp_path):
+    pmk = derive_pmk("correct horse", b"HomeNet")
+    _write_pmkid_line(tmp_path, "HomeNet", "aa:bb:cc:dd:ee:01", pmk)
+    v = Vault()
+    assert v.verify_wpa_psk("aa:bb:cc:dd:ee:01", "correct horse") is True
+    assert v.verify_wpa_psk("aa:bb:cc:dd:ee:01", "wrong horse") is False
+    assert v.verify_wpa_psk("aa:bb:cc:dd:ee:01", pmk.hex().upper()) is True
+    assert v.verify_wpa_psk("aa:bb:cc:dd:ee:99", "correct horse") is None
+
+
+def _append_eapol_line(d, ssid: str, bssid: str, message_pair: str) -> None:
+    """One EAPOL hashline with a MIC no PSK matches, appended to the AP's .hc22000."""
+    mac_ap = bssid.replace(":", "")
+    line = (f"WPA*02*{'00' * 16}*{mac_ap}*{_STA}*{ssid.encode().hex()}*{'11' * 32}"
+            f"*{_eapol_payload(bytes(16)).hex()}*{message_pair}\n")
+    with (d / f"{ssid}_{bssid.replace(':', '-')}.hc22000").open("a", encoding="utf-8") as f:
+        f.write(line)
+
+
+def test_verify_wpa_psk_m1m2_lines_cannot_reject(tmp_path):
+    _append_eapol_line(tmp_path, "HomeNet", "02:00:00:00:00:01", "00")
+    _append_eapol_line(tmp_path, "HomeNet", "02:00:00:00:00:01", "80")
+    v = Vault()
+    assert v.verify_wpa_psk("02:00:00:00:00:01", "wrong horse") is None
+    _append_eapol_line(tmp_path, "HomeNet", "02:00:00:00:00:01", "02")
+    v = Vault()
+    assert v.verify_wpa_psk("02:00:00:00:00:01", "wrong horse") is False
+
+
+def test_verify_wpa_psk_matches_beside_m1m2_lines(tmp_path):
+    pmk = derive_pmk("correct horse", b"HomeNet")
+    _write_pmkid_line(tmp_path, "HomeNet", "02:00:00:00:00:01", pmk)
+    _append_eapol_line(tmp_path, "HomeNet", "02:00:00:00:00:01", "00")
+    v = Vault()
+    assert v.verify_wpa_psk("02:00:00:00:00:01", pmk.hex()) is True
+    assert v.verify_wpa_psk("02:00:00:00:00:01", "f" * 64) is False
+
+
+def test_propagate_saves_only_related_aps_it_verifies_without_a_psk(tmp_path):
+    psk = "correct horse"
+    _write_pmkid_line(tmp_path, "HomeNet", "aa:bb:cc:dd:ee:01", derive_pmk(psk, b"HomeNet"))
+    _write_pmkid_line(tmp_path, "HomeNet_5G", "02:00:00:00:00:10",
+                      derive_pmk(psk, b"HomeNet_5G"))           # SSID family
+    _write_pmkid_line(tmp_path, "Guest", "aa:bb:cc:dd:ee:03",
+                      derive_pmk(psk, b"Guest"))                # BSSID sibling
+    _write_pmkid_line(tmp_path, "HomeNet-Ext", "02:00:00:00:00:20",
+                      derive_pmk("other pass", b"HomeNet-Ext"))  # related, does not verify
+    _write_pmkid_line(tmp_path, "Office", "02:00:00:00:00:30",
+                      derive_pmk(psk, b"Office"))               # unrelated
+    _write_wpa_psk(tmp_path, "02-00-00-00-00-40", ssid="HomeNet", psk="kept")   # has a PSK
+    v = Vault()
+
+    matched = v.propagate_verified_psk("aa:bb:cc:dd:ee:01", "HomeNet", psk)
+
+    assert sorted(matched) == ["02:00:00:00:00:10", "aa:bb:cc:dd:ee:03"]
+    assert v.known_psk(AccessPoint(bssid="02:00:00:00:00:10")) == psk
+    assert v.known_psk(AccessPoint(bssid="02:00:00:00:00:20")) is None
+    assert v.known_psk(AccessPoint(bssid="02:00:00:00:00:30")) is None
+    assert v.known_psk(AccessPoint(bssid="02:00:00:00:00:40")) == "kept"
+
+
+def test_delete_capture_removes_the_meta_of_a_loaded_capture_with_a_real_ssid(tmp_path):
+    (tmp_path / "Caf__02-00-00-00-00-40_1700000001_wpa_psk.txt").write_text(
+        "SSID: Café\nBSSID: x\nPSK: pw\n", encoding="utf-8")
+    meta = update_meta("Café", "02:00:00:00:00:40", nickname="kitchen")
+    v = Vault()
+    capture = v.persisted("02:00:00:00:00:40")[0]
+    assert capture.ssid == "Café" and meta == tmp_path / "Caf__02-00-00-00-00-40.meta"
+    v.delete_capture(capture)
+    assert not meta.exists()
+
+
+def test_ssid_prefers_a_capture_holding_the_real_ssid_over_a_newer_pcap(tmp_path):
+    (tmp_path / "Caf__02-00-00-00-00-50_1700000001_wpa_psk.txt").write_text(
+        "SSID: Café\nBSSID: x\nPSK: pw\n", encoding="utf-8")
+    (tmp_path / "Caf__02-00-00-00-00-50_1700000009_handshake.pcap").write_bytes(b"")
+    v = Vault()
+    assert v.persisted("02:00:00:00:00:50")[0].path.endswith(".pcap")
+    assert v.ssid("02:00:00:00:00:50") == "Café"
+    assert v.ssid("02:00:00:00:00:99") is None

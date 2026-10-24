@@ -5,10 +5,15 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
+
+from wifit3.dot11.pmf import PmfPosture
+from wifit3.dot11.rsn import AKM_OWE, ENTERPRISE_AKM_SUITES
 
 from .handshake import Handshake
 from .identity import ApIdentity, IdKey, IdSource
+
+_NO_PASSPHRASE_AKM_SUITES = ENTERPRISE_AKM_SUITES | {AKM_OWE}
 
 
 @dataclass
@@ -50,8 +55,10 @@ class AccessPoint:
     encryption: Optional[str] = "Unknown"
     # Structured security fields from the RSN IE; `encryption` (above) is the airodump-style string.
     akms: List[str] = field(default_factory=list)
-    # AKM suite numbers (00-0F-AC:N) from the RSN IE, parallel to `akms` (the names).
+    # AKM suite numbers (00-0F-AC:N) from the RSN IE; vendor-OUI AKMs appear only in `akms`.
     akm_suites: List[int] = field(default_factory=list)
+    rsn_valid: bool = False
+    vendor_akm_offered: bool = False  # an AKM outside 00-0F-AC (DPP, OSEN, ...)
     pairwise_cipher: Optional[str] = None
     beacons: int = 0
     first_seen: float = field(default_factory=time.time)
@@ -62,6 +69,8 @@ class AccessPoint:
     pmf_capable: bool = False
     pmf_required: bool = False
     beacon_protection: bool = False
+    # Passively observed EAP method Type numbers (EAPOL-Type-0), aggregated across clients.
+    observed_eap_methods: Set[int] = field(default_factory=set)
 
     # WPS state decoded from the WPS vendor IE (tag 221, OUI 00:50:F2 type 4).
     wps: bool = False
@@ -135,3 +144,22 @@ class AccessPoint:
     def is_hidden(self) -> bool:
         """No usable SSID: never seen, or still the "<hidden>" placeholder."""
         return not (self.ssid and self.ssid != "<hidden>")
+
+    @property
+    def pmf_posture(self) -> PmfPosture:
+        """802.11w posture from the advertised MFPC (`pmf_capable`) / MFPR (`pmf_required`) bits."""
+        if self.pmf_required:
+            return PmfPosture.REQUIRED if self.pmf_capable else PmfPosture.INVALID
+        return PmfPosture.OPTIONAL if self.pmf_capable else PmfPosture.DISABLED
+
+
+def eap_only(ap: AccessPoint) -> bool:
+    """True when every advertised AKM is 802.1X/EAP or FILS (no PSK, no SAE)."""
+    return (bool(ap.akm_suites) and not ap.vendor_akm_offered
+            and set(ap.akm_suites) <= ENTERPRISE_AKM_SUITES)
+
+
+def no_passphrase(ap: AccessPoint) -> bool:
+    """True when every advertised AKM is 802.1X/EAP, FILS or OWE."""
+    return (bool(ap.akm_suites) and not ap.vendor_akm_offered
+            and set(ap.akm_suites) <= _NO_PASSPHRASE_AKM_SUITES)

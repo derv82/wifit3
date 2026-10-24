@@ -135,8 +135,10 @@ class AutoCrackSetting(VerticalGroup):
 
     def _configure(self, on_dismiss: Callable[[dict | None], None] | None = None) -> None:
         modal = UI_TOOLS.get(ToolName(self._chosen)) if self._chosen else None
-        if modal is not None:
-            self.app.push_screen(modal(confirm_label="Save"), on_dismiss)
+        if modal is None:
+            return
+        self.app.push_screen(modal(confirm_label="Save",
+                                   probed_ssids=self.app.vault.probed_ssids()), on_dismiss)
 
     @property
     def tool(self) -> ToolName | None:

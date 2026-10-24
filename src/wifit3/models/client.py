@@ -17,7 +17,7 @@ class Client:
     bssid: Optional[str] = None  # The AP it is currently connected to or probing for
     packets: int = 0
     probed_ssids: Set[str] = field(default_factory=set)  # SSIDs this client is actively searching for
-    # AKM suite chosen by this client, read from the RSN IE in its (Re)Assoc Request. Latest-wins.
+    # AKM from the latest (Re)Association Request to `bssid`; cleared when that association ends.
     akm_selected: Optional[int] = None
     # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
     signal_by_card: Dict[str, int] = field(default_factory=dict)

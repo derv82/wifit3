@@ -150,10 +150,10 @@ class _Host(App):
 async def test_typing_emits_scan_filter():
     app = _Host([1, 6, 11, 36, 40])
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         app.events.clear()
         app.query_one("#filter-text", Input).value = "net"
-        await pilot.pause()
+        await pilot.pause(0)
         scan = [e for e in app.events if e[0] == "scan"]
         assert scan and scan[-1][1].text == "net"
 
@@ -161,10 +161,10 @@ async def test_typing_emits_scan_filter():
 async def test_encryption_select_emits_scan_filter():
     app = _Host([1, 6, 11])
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         app.events.clear()
         app.query_one("#filter-encryption", Select).value = EncryptionFilter.WPA
-        await pilot.pause()
+        await pilot.pause(0)
         scan = [e for e in app.events if e[0] == "scan"]
         assert scan and scan[-1][1].encryption is EncryptionFilter.WPA
 
@@ -172,11 +172,11 @@ async def test_encryption_select_emits_scan_filter():
 async def test_hide_silenced_checkbox_emits_scan_filter():
     app = _Host([1, 6, 11])
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         app.events.clear()
         assert not app.query_one("#filter-hide-silenced", Checkbox).value
         app.query_one("#filter-hide-silenced", Checkbox).value = True
-        await pilot.pause()
+        await pilot.pause(0)
         scan = [e for e in app.events if e[0] == "scan"]
         assert scan and scan[-1][1].hide_silenced is True
 
@@ -184,12 +184,12 @@ async def test_hide_silenced_checkbox_emits_scan_filter():
 async def test_hide_silenced_checkbox_keeps_the_other_predicates():
     app = _Host([1, 6, 11])
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         app.events.clear()
         app.query_one("#filter-text", Input).value = "net"
         app.query_one("#filter-encryption", Select).value = EncryptionFilter.WPA
         app.query_one("#filter-hide-silenced", Checkbox).value = True
-        await pilot.pause()
+        await pilot.pause(0)
         scan = [e for e in app.events if e[0] == "scan"]
         assert scan
         last = scan[-1][1]
@@ -230,10 +230,10 @@ async def test_filter_bar_fits_every_control_on_screen(width):
 async def test_channels_button_requests_dialog():
     app = _Host([1, 6, 11, 36, 40])
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         app.events.clear()
         app.query_one("#filter-channels", Button).press()
-        await pilot.pause()
+        await pilot.pause(0)
         assert any(e[0] == "channels" for e in app.events)
 
 

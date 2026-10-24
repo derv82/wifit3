@@ -1,11 +1,17 @@
+import logging
 from abc import abstractmethod
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Generic, Optional, Self, TypeVar
 
+from wifit3.crack.hc22000_format import parse_hc22000
+from wifit3.crack.passwords import ssid_variants
 from wifit3.models import PersistedCapture, ToolResult, ToolStatus
 from wifit3.models.jobs import JobAction, JobState
+from wifit3.vault.exhaustion import record_exhausted
 from wifit3.vault.tools.base import VaultTool
+
+logger = logging.getLogger(__name__)
 
 
 def expand_wordlists(wordlist_paths: list[str]) -> list[str]:
@@ -21,12 +27,24 @@ def expand_wordlists(wordlist_paths: list[str]) -> list[str]:
     return expanded
 
 
+def capture_ssid_variants(capture_path: str) -> list[str]:
+    """``ssid_variants`` of every ESSID in the capture's hashlines, deduped."""
+    text = Path(capture_path).read_text(encoding="utf-8", errors="replace")
+    essids = dict.fromkeys(bytes.fromhex(line.essid).decode("utf-8", errors="replace")
+                           for line in map(parse_hc22000, text.splitlines()) if line is not None)
+    return list(dict.fromkeys(psk for essid in essids for psk in ssid_variants(essid)))
+
+
 @dataclass
 class WordlistQueue:
     wordlists: list[str] = field(default_factory=list)
     index: int = 0
     stopped: bool = False
     skipping_wordlist: bool = False
+    ssid: str = ""                  # the capture's SSID and BSSID, naming its .meta
+    bssid: str = ""
+    hashline_ids: list[str] = field(default_factory=list)      # the capture's, at launch
+    identities: list[str] = field(default_factory=list)        # per queue entry; "" records nothing
 
     @classmethod
     def from_job(cls, job: JobState) -> Self:
@@ -41,15 +59,29 @@ class WordlistQueue:
         return self.wordlists[self.index] if 0 <= self.index < len(self.wordlists) else None
 
     @property
+    def entry_count(self) -> int:
+        return len(self.wordlists)
+
+    @property
     def has_next(self) -> bool:
-        return self.index + 1 < len(self.wordlists)
+        return self.index + 1 < self.entry_count
+
+    @property
+    def chosen_wordlists(self) -> list[str]:
+        """The wordlists the job was given, without any file wifit3 wrote for it."""
+        return self.wordlists
+
+    @property
+    def current_name(self) -> str:
+        return Path(self.current).name if self.current else ""
 
     @property
     def label(self) -> str:
-        """Current file (``rockyou.txt``), with its position when there are several:
+        """Current entry (``rockyou.txt``), with its position when there are several:
         ``rockyou.txt (3/16)``."""
-        name = Path(self.current).name if self.current else ""
-        return f"{name} ({self.index + 1}/{len(self.wordlists)})" if len(self.wordlists) > 1 else name
+        if self.entry_count > 1:
+            return f"{self.current_name} ({self.index + 1}/{self.entry_count})"
+        return self.current_name
 
 
 QueueT = TypeVar("QueueT", bound=WordlistQueue)
@@ -115,6 +147,8 @@ class CrackerTool(VaultTool, Generic[QueueT]):
         when it ended without a stop, a skip or exhausting the wordlist."""
         if queue.stopped:
             return ToolResult(status=ToolStatus.STOPPED, value="Stopped by user")
+        if exhausted and not queue.skipping_wordlist:
+            self._record_exhausted(queue)
         if queue.skipping_wordlist and queue.has_next:
             queue.skipping_wordlist = False
             self._start_next_wordlist(job, queue)
@@ -125,6 +159,14 @@ class CrackerTool(VaultTool, Generic[QueueT]):
         if exhausted:
             return self._exhausted(queue)
         return None
+
+    @staticmethod
+    def _record_exhausted(queue: WordlistQueue) -> None:
+        for identity in filter(None, queue.identities[queue.index:queue.index + 1]):
+            try:
+                record_exhausted(queue.ssid or None, queue.bssid, identity, queue.hashline_ids)
+            except OSError:
+                logger.warning(f"Could not record {identity} as exhausted", exc_info=True)
 
     def _start_next_wordlist(self, job: JobState, queue: QueueT) -> None:
         queue.index += 1
@@ -164,6 +206,9 @@ class CrackerTool(VaultTool, Generic[QueueT]):
     @staticmethod
     def _exhausted_msg(queue: WordlistQueue) -> str:
         """What the NOT FOUND badge reports: the one wordlist by name, or how many were tried."""
-        if len(queue.wordlists) == 1:
-            return Path(queue.wordlists[0]).name
-        return f"{len(queue.wordlists)} wordlists"
+        wordlists = queue.chosen_wordlists
+        if not wordlists:
+            return "SSID passwords"
+        if len(wordlists) == 1:
+            return Path(wordlists[0]).name
+        return f"{len(wordlists)} wordlists"

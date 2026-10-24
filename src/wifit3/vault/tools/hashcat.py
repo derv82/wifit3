@@ -4,16 +4,21 @@ import shlex
 import signal
 import subprocess
 import json
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH, ssid_passwords
 from wifit3.models import PersistedCapture, ToolCapability, ToolResult, ToolStatus
 from wifit3.models.jobs import JobAction, JobState, ToolName
 from wifit3.persist.config import Config
+from wifit3.vault.exhaustion import (SSID_VARIANTS_IDENTITY, capture_hashline_ids,
+                                     wordlist_identity)
 from wifit3.vault.tools import hashcat_keypress
-from wifit3.vault.tools.cracker import CrackerTool, WordlistQueue, expand_wordlists
+from wifit3.vault.tools.cracker import (CrackerTool, WordlistQueue, capture_ssid_variants,
+                                        expand_wordlists)
 
 
 logger = logging.getLogger(__name__)
@@ -62,6 +67,15 @@ class HashcatQueue(WordlistQueue):
     log_offset: int = 0         # bytes already in the job's log when the current process started
     stdin_path: str = ""            # hashcat's stdin; see hashcat_keypress.send
     quit_sent_at: float = 0.0       # time.time() of the 'q' keypress
+    ssid_passwords_path: str = ""   # temp wordlist of SSID passwords, deleted when the job ends
+
+    @property
+    def chosen_wordlists(self) -> list[str]:
+        return [path for path in self.wordlists if path != self.ssid_passwords_path]
+
+    @property
+    def current_name(self) -> str:
+        return "SSID passwords" if self.current == self.ssid_passwords_path else super().current_name
 
 
 class HashcatTool(CrackerTool[HashcatQueue]):
@@ -77,34 +91,77 @@ class HashcatTool(CrackerTool[HashcatQueue]):
         self._procs: Dict[int, subprocess.Popen] = {}
 
     def auto_crack_config(self) -> Optional[dict[str, Any]]:
-        if not (Config.hashcat.path and Config.hashcat.wordlists):
+        settings = Config.hashcat
+        if not (settings.path and (settings.wordlists or settings.default_passwords
+                                   or settings.ap_ssid_passwords or settings.probed_ssid_passwords)):
             return None
-        return {"hashcat_exe": Config.hashcat.path, "wordlists": list(Config.hashcat.wordlists),
-                "hashcat_args": Config.hashcat.args or ""}
+        return {"hashcat_exe": settings.path, "wordlists": list(settings.wordlists),
+                "hashcat_args": settings.args or "",
+                "default_passwords": settings.default_passwords,
+                "ap_ssid_passwords": settings.ap_ssid_passwords,
+                "probed_ssid_passwords": settings.probed_ssid_passwords}
 
     def launch(self, job: JobState, capture: PersistedCapture) -> None:
         hashcat_exe = job.config.get("hashcat_exe")
-        requested = job.config.get("wordlists") or []
-        if not hashcat_exe or not requested:
-            logger.error(f"Missing hashcat_exe {hashcat_exe!r} or wordlists {requested!r} in config")
-            raise ValueError("Missing hashcat_exe or wordlists in config")
+        if not hashcat_exe:
+            logger.error("Missing hashcat_exe in config")
+            raise ValueError("Missing hashcat_exe in config")
         if not Path(hashcat_exe).is_file():
             raise ValueError(f"hashcat executable not found: {hashcat_exe}")
+        requested = job.config.get("wordlists") or []
         wordlists = expand_wordlists(requested)
-        if not wordlists:
+        if requested and not wordlists:
             raise ValueError(f"Wordlist not found: {', '.join(requested)}")
+        if job.config.get("default_passwords"):
+            wordlists.insert(0, str(DEFAULT_PASSWORDS_PATH.resolve()))
+        wordlists = list(dict.fromkeys(wordlists))
+        essid_passwords = (capture_ssid_variants(job.capture_path)
+                           if job.config.get("ap_ssid_passwords") else [])
+        ssid_based_passwords = list(dict.fromkeys(
+            essid_passwords + ssid_passwords(job.config.get("extra_passwords", []))))
+        if not (ssid_based_passwords or wordlists):
+            raise ValueError("No passwords to try: choose a wordlist or a password source")
+        queue = HashcatQueue(wordlists=wordlists, ssid=capture.ssid or "", bssid=capture.bssid,
+                             hashline_ids=capture_hashline_ids(job.capture_path),
+                             identities=[wordlist_identity(path) for path in wordlists])
+        if ssid_based_passwords:
+            ssid_passwords_index = 1 if job.config.get("default_passwords") else 0
+            queue.ssid_passwords_path = self._write_ssid_passwords(ssid_based_passwords)
+            queue.wordlists.insert(ssid_passwords_index, queue.ssid_passwords_path)
+            queue.identities.insert(ssid_passwords_index,
+                                    SSID_VARIANTS_IDENTITY if essid_passwords else "")
+        try:
+            potfile = self._potfile(job.capture_path)
+            if potfile and os.path.exists(potfile):
+                try:
+                    logger.info(f"Removing old potfile {potfile}")
+                    os.remove(potfile)
+                except OSError:
+                    logger.warning(f"Could not remove old potfile {potfile}", exc_info=True)
 
-        potfile = self._potfile(job.capture_path)
-        if potfile and os.path.exists(potfile):
-            try:
-                logger.info(f"Removing old potfile {potfile}")
-                os.remove(potfile)
-            except OSError:
-                logger.warning(f"Could not remove old potfile {potfile}", exc_info=True)
+            job.log_path = str(Path(job.capture_path).with_suffix('.hashcat.log').resolve())
+            Path(job.log_path).write_bytes(b"")  # one log per job, every wordlist appended to it
+            self._start_wordlist(job, queue)
+        except Exception:
+            self._remove_ssid_passwords(queue)
+            raise
 
-        job.log_path = str(Path(job.capture_path).with_suffix('.hashcat.log').resolve())
-        Path(job.log_path).write_bytes(b"")      # one log per job, every wordlist appended to it
-        self._start_wordlist(job, HashcatQueue(wordlists=wordlists))
+    @staticmethod
+    def _write_ssid_passwords(passwords: list[str]) -> str:
+        """In the OS temp dir: hashcat outlives wifit3, and captures/ holds only captures."""
+        descriptor, path = tempfile.mkstemp(prefix="wifit3-", suffix=".txt")
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as wordlist:
+            wordlist.writelines(f"{psk}\n" for psk in passwords)
+        return path
+
+    @staticmethod
+    def _remove_ssid_passwords(queue: HashcatQueue) -> None:
+        if not queue.ssid_passwords_path:
+            return
+        try:
+            Path(queue.ssid_passwords_path).unlink(missing_ok=True)
+        except OSError:
+            logger.warning(f"Could not remove {queue.ssid_passwords_path}", exc_info=True)
 
     def _start_wordlist(self, job: JobState, queue: HashcatQueue) -> None:
         """Run hashcat against the queue's current wordlist, appending to the job's log."""
@@ -169,6 +226,7 @@ class HashcatTool(CrackerTool[HashcatQueue]):
         key = self._key_from_potfile(self._potfile(job.capture_path))
         if key is not None:
             self._terminate(job.pid)
+            self._remove_ssid_passwords(queue)
             return self._cracked(key)
 
         if not assume_dead and self._is_running(job.pid, job.config.get("hashcat_exe")):
@@ -176,7 +234,13 @@ class HashcatTool(CrackerTool[HashcatQueue]):
             return self._running(progress_msg, percent, queue)
 
         self._terminate(job.pid)
-        ended = self._wordlist_ended(job, queue, exhausted="Exhausted" in progress_msg)
+        try:
+            ended = self._wordlist_ended(job, queue, exhausted="Exhausted" in progress_msg)
+        except Exception:
+            self._remove_ssid_passwords(queue)
+            raise
+        if ended is None or ended.status is not ToolStatus.RUNNING:
+            self._remove_ssid_passwords(queue)
         if ended is not None:
             return ended
         reason = self._last_log_message(lines)

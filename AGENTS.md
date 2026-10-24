@@ -6,7 +6,7 @@ This file provides guidance to coding agents when working with code in this repo
 
 - **Code style**: Outside of `chips/`, comments/docstrings only on public APIs, 2 line maximum (a ceiling not a quota). Don't paper over bad code with a comment: Precise and accurate naming avoids the need for comments (modules, classes, methods and variables).
 - **Naming modules/classes/methods/variables**: "Intention-revealing, exact names" applies everywhere. Examples: `array` of `devices` instead of a `pool` of `cards`, `device` instead of `radio`, `sink` or `aggregator` instead of `picture` or `airspace`.
-- **Human-facing docs are written by humans.** Any non-chipset `.md` files.
+- **Human-facing docs** (any non-chipset `.md`): agents may edit them; say so in the hand-off so a human reviews the wording.
 - **Planning docs** (NOT auto-loaded, open as needed): `docs/planning/FEATURES.md`, `docs/planning/BUGS.md`, `docs/SUPPORTED-HARDWARE.md` (+ the grading process: `docs/GRADING.md`).
 
 ## Porting Session Cheatsheet

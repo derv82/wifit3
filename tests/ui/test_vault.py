@@ -2,14 +2,17 @@
 The autouse _captures_to_tmp fixture points Config.captures_dir at tmp_path, and WifiteApp builds its Vault from there.
 """
 import pytest
-from textual.widgets import Button, DataTable
+from textual.widgets import Button, DataTable, Input
 
-from wifit3.models import AccessPoint
+from wifit3.models import AccessPoint, CaptureType
 from wifit3.models.jobs import JobState, ToolStatus
+from wifit3.persist.meta import meta_path, read_meta, update_meta
 from wifit3.persist.save import SaveResult
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.vault_drawer import VaultDrawer
 from wifit3.ui.screens.vault_item import ConfirmModal, _CapturePanel
+from wifit3.ui.vault.modals.add_credential import AddCredentialModal, ManualCredential
+from wifit3.ui.vault.modals.nickname import NicknameModal
 
 _HS_LINE = "WPA*02*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***2\n"
 _PMKID_LINE = "WPA*01*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***\n"
@@ -37,7 +40,7 @@ async def test_delete_in_panel_confirms_and_removes(tmp_path):
         aps = view.query_one("#vault-table")._aps
         bssid, (ssid, caps) = next(iter(aps.items()))
         view.query_one("VaultItemView").load(bssid, ssid, caps)
-        await pilot.pause()
+        await pilot.pause(0)
 
         view.query_one(_CapturePanel).query_one(".delete", Button).press()
         await pilot.pause()
@@ -142,13 +145,127 @@ async def test_vault_keeps_emoji_named_mac_octets_literal(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_open_vault_focuses_ap_list(tmp_path):
+async def test_open_vault_focuses_ap_list_and_search_returns_to_it(tmp_path):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
+    _write(tmp_path, "Cafe_11-22-33-44-55-66_1000_wep_key.txt", _WEP_TXT)
     app = WifiteApp()
     async with app.run_test() as pilot:
         view = await _open_vault(app)
         await pilot.pause()
-        assert app.focused is view.query_one("#vault-aps", DataTable)
+        table = view.query_one("#vault-aps", DataTable)
+        search = view.query_one("#vault-search", Input)
+        assert app.focused is table
+
+        await pilot.press("f")
+        assert app.focused is search
+        await pilot.press("h", "o", "m", "e")
+        await pilot.pause(0)
+        assert search.value == "home" and table.row_count == 1
+        await pilot.press("escape")
+        assert app.focused is table and app.screen is view
+
+        await pilot.press("/")
+        assert app.focused is search
+        await pilot.press("backspace", "backspace", "backspace", "backspace", "enter")
+        await pilot.pause(0)
+        assert app.focused is table and table.row_count == 2
+
+        await pilot.press("escape")
+        await pilot.pause(0.4)
+        assert app.screen is not view
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_nickname_shows_in_the_row_and_title_and_n_edits_it(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
+    _write(tmp_path, "Other_11-22-33-44-55-66_1000_wep_key.txt", _WEP_TXT)
+    update_meta("HomeNet", "aa:bb:cc:dd:ee:ff", nickname="Upstairs")
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        table = view.query_one("#vault-aps", DataTable)
+        assert table.get_row_at(0)[0].plain == "Upstairs (HomeNet) ✓WEP"
+        assert view.query_one("VaultItemView")._border_title.plain.startswith(" Upstairs (HomeNet)")
+
+        await pilot.press("n")
+        await pilot.pause(0)
+        assert isinstance(app.screen, NicknameModal)
+        assert app.screen.query_one("#nickname", Input).value == "Upstairs"
+        app.screen.query_one("#nickname", Input).value = "[Den]"
+        await pilot.press("enter")
+        await pilot.pause(0)
+        assert app.screen is view
+        assert read_meta(meta_path("HomeNet", "aa:bb:cc:dd:ee:ff"))["nickname"] == "[Den]"
+        assert table.get_row_at(0)[0].plain == "[Den] (HomeNet) ✓WEP"
+
+        assert table.row_count == 2
+        await pilot.press("f", "d", "e", "n")
+        await pilot.pause(0)
+        assert table.row_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_show_directory_warns_when_there_are_no_captures_yet(tmp_path, mocker):
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        mocker.patch.object(app.vault, "open_directory", side_effect=FileNotFoundError)
+        notify = mocker.patch.object(view, "notify")
+
+        view.action_show_directory()
+
+        notify.assert_called_once_with("No captures yet", severity="warning")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_add_credential_prefills_the_row_and_rejects_a_psk_the_handshake_refutes(
+        tmp_path, mocker):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _PMKID_LINE)
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        view = await _open_vault(app)
+        await pilot.pause()
+        verify = mocker.patch.object(app.vault, "verify_wpa_psk", return_value=False)
+        notify = mocker.patch.object(view, "notify")
+
+        await pilot.press("a")
+        await pilot.pause(0)
+        modal = app.screen
+        assert isinstance(modal, AddCredentialModal)
+        assert modal.query_one("#ssid", Input).value == "HomeNet"
+        assert modal.query_one("#bssid", Input).value == "aa:bb:cc:dd:ee:ff"
+        modal.query_one("#value", Input).focus()
+        modal.query_one("#value", Input).value = "wrongpass"
+        await pilot.press("enter")
+        await pilot.pause(0)
+
+        assert app.screen is view
+        verify.assert_called_once_with("aa:bb:cc:dd:ee:ff", "wrongpass")
+        assert notify.call_args.kwargs["severity"] == "error"
+        assert not app.vault.has_psk(AccessPoint(bssid="aa:bb:cc:dd:ee:ff"))
+
+        verify.return_value = True
+        propagate = mocker.patch.object(app.vault, "propagate_verified_psk",
+                                        return_value=["02:00:00:00:00:10"])
+        view._credential_added(ManualCredential(CaptureType.WPA_PSK, "HomeNet",
+                                                "aa:bb:cc:dd:ee:ff", "rightpass"))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.vault.known_psk(AccessPoint(bssid="aa:bb:cc:dd:ee:ff")) == "rightpass"
+        propagate.assert_called_once_with("aa:bb:cc:dd:ee:ff", "HomeNet", "rightpass")
+        assert [c.args[0] for c in notify.call_args_list[-2:]] == [
+            "Credential verified and added to Vault",
+            "PSK also verified and saved for 1 related APs"]
+
+        view._credential_added(ManualCredential(CaptureType.WPS_PIN, "Other",
+                                                "02:00:00:00:00:20", "1234"))
+        pin = app.vault.persisted("02:00:00:00:00:20")[0]
+        assert pin.pin == "1234" and pin.value is None
 
 
 @pytest.mark.asyncio
@@ -196,9 +313,9 @@ async def test_selection_restored_after_reload(tmp_path):
         assert cursor_bssid() == "11:22:33:44:55:66"
 
         table.move_cursor(row=0)
-        await pilot.pause()
+        await pilot.pause(0)
         app.screen.query_one("#vault-table").reload_table()
-        await pilot.pause()
+        await pilot.pause(0)
         assert cursor_bssid() == "aa:bb:cc:dd:ee:ff"
 
 
@@ -216,12 +333,12 @@ async def test_delete_cancelled_keeps_file(tmp_path):
         aps = view.query_one("#vault-table")._aps
         bssid, (ssid, caps) = next(iter(aps.items()))
         view.query_one("VaultItemView").load(bssid, ssid, caps)
-        await pilot.pause()
+        await pilot.pause(0)
 
         view.query_one(_CapturePanel).query_one(".delete", Button).press()
         await pilot.pause()
         app.screen.query_one("#no", Button).press()
-        await pilot.pause()
+        await pilot.pause(0)
         assert target.exists()
         assert view.query_one("#vault-aps", DataTable).row_count == 1
 
@@ -239,7 +356,7 @@ async def test_a_hashline_capture_offers_each_cracker_by_its_label(tmp_path, wid
         await pilot.pause()
         bssid, (ssid, caps) = next(iter(view.query_one("#vault-table")._aps.items()))
         view.query_one("VaultItemView").load(bssid, ssid, caps)
-        await pilot.pause()
+        await pilot.pause(0)
 
         panel = view.query_one(_CapturePanel)
         buttons = list(panel.query(".tool-btn").results(Button))
@@ -247,5 +364,5 @@ async def test_a_hashline_capture_offers_each_cracker_by_its_label(tmp_path, wid
         assert [(str(b.label), b.region.right) for b in panel.query(Button).results(Button) if b.region.right > panel.content_region.right] == []
 
         buttons[1].press()
-        await pilot.pause()
+        await pilot.pause(0)
         assert isinstance(app.screen, CpuCrackConfigModal)

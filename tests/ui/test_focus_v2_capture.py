@@ -48,6 +48,7 @@ def test_pmf_required_disables_deauth():
     """A PMF-Required AP refuses unauthenticated deauth."""
     ap = build_ap()
     ap.pmf_required = True
+    ap.pmf_capable = True            # a valid PMF-Required AP is MFPC=1 and MFPR=1
 
     # DeauthCampaign block reason should be non-empty (truthy) when blocked
     blocked = fm.deauth_blocked(ap)

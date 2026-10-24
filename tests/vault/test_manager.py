@@ -193,6 +193,8 @@ def test_crack_success_persists_key(manager, tmp_path, monkeypatch):
 
     assert manager.jobs[job_id].status == ToolStatus.SUCCESS
     manager.vault.save_wpa_psk.assert_called_once_with("TestNet", "00:11:22:33:44:55", "hunter2")
+    manager.vault.propagate_verified_psk.assert_called_once_with(
+        "00:11:22:33:44:55", "TestNet", "hunter2")
 
 
 def test_crack_success_writes_real_essid(manager, tmp_path, monkeypatch):
@@ -370,6 +372,20 @@ def test_a_finished_job_loaded_from_disk_can_still_be_cleared(tmp_path, mocker):
     manager = JobManager(MagicMock())
 
     assert manager.jobs["j1"].actions == JobAction.CLEAR
+
+
+def test_clearing_the_last_job_deletes_jobs_json_and_loads_as_no_jobs(tmp_path, mocker):
+    mocker.patch("wifit3.persist.config.Config.captures_dir", str(tmp_path))
+    manager = JobManager(MagicMock())
+    manager.jobs["j1"] = JobState(job_id="j1", tool_name="cpu_crack", capture_path="a.hc22000",
+                                  status=ToolStatus.FAILURE, progress_msg="")
+    manager._save()
+    assert (tmp_path / "jobs.json").exists()
+
+    manager.clear_job("j1")
+
+    assert not (tmp_path / "jobs.json").exists()
+    assert JobManager(MagicMock()).jobs == {}
 
 
 def test_poll_copies_the_tools_progress_onto_the_job(manager):

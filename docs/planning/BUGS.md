@@ -153,3 +153,82 @@ hashcat and is missed by CPU Crack.
 
 Measured: correction costs 1.09x (one byte order) to 1.19x (both) CPU per password; 70 of 71 local
 EAPOL lines have the NC bit set. Not implemented: no real-world miss observed yet.
+
+## Vault Verify from Focus leaves the card on the AP's channel
+
+**Problem.** In Focus, open the Vault, select a cracked AP on a different channel than the Focus
+target, press `Verify`: the card retunes to that AP's channel to verify, but doesn't return to the
+Focus channel. The Focus target's beacons stay at 0 until the Vault is closed, then come back.
+
+## PSK-SHA384 and FT-PSK-SHA384 handshakes are not yet supported
+
+**Problem.** AKM 20 (PSK-SHA384) and AKM 19 (FT-PSK-SHA384) derive the KCK and MIC with SHA-384
+(24-byte MIC). `-m 22000` has no SHA-384 path in released hashcat, so wifit3 withholds these
+captures as "not yet supported". Hashcat mainline added one ([hashcat#4931](https://github.com/hashcat/hashcat/issues/4931)).
+
+**Direction.** Once a hashcat release ships it, add the hashline format and drop the withhold.
+
+## WPA-Enterprise credentials are not yet supported
+
+**Problem.** An Enterprise 4-way is keyed by a per-session PMK from EAP and is never crackable.
+The crackable secret is the user's credential: an EAP-MD5 challenge/response (`-m 4800`) sent in
+the clear, or an MSCHAPv2 response (`-m 5500`) that PEAP/TTLS hide inside TLS, so it takes a rogue
+AP (an Enterprise EvilTwin). Vault, the cracker and capture storage all assume `.hc22000`.
+
+**Direction.** A new capture type through Vault and the cracker; scope it before starting.
+
+## Most drivers have no TX lock
+
+**Problem.** Without a lock, concurrent injects reach the device out of call order. Before mt7921au
+got one, the TX lab saw 42-46 of 500 flooded frames arrive out of order (rtl8822bu has a lock: 0).
+No lock in: ar9271_v2, mt76x0u, mt76x2u, mt7925au, rt2800usb, rt5572, rtl8187, rtl8822cu, rtl8922au.
+ar9271 also has a TxSlots race, and rt2800usb / rt5572 can transmit in the middle of a retune.
+
+**Direction.** A lock per driver, written in each driver (no shared base); re-run the TX lab flood
+test on each.
+
+## Remaining DKMS drivers may still inject at 1M CCK on 5 GHz
+
+**Problem.** CCK does not exist on 5 GHz. rtl8812au_dkms and rtl8821au_dkms sent 1M CCK on every
+band until they were changed to 6M OFDM on 5 GHz, as the C source does. rtl8814au_dkms still
+defaults to `DESC_RATE1M` / `RATEID_IDX_B` in `build_mgmt_txdesc`; rtl8821cu_dkms, rtl8822bu_dkms
+and rtl8822cu are unchecked. Not necessarily a bug: it may be harmless on those chips.
+
+**Direction.** Check each against its C source; measure frames heard on a 5 GHz channel in the TX lab.
+
+## Focus view CPU usage
+
+**Problem.** Focus is the most CPU-heavy screen. After the LED art and signal bar were changed to
+repaint only on change, 120 s of Focus costs 27.5-30.7 s of CPU on the Windows PC (was 44.8 s),
+against 24.8 s for the Scanner (1 run each). Remaining suspects are the per-tick snapshot rebuild
+and Textual compositing.
+
+**Direction.** Cache raw values and rebuild markup only when a value changes, instead of
+rebuilding the whole snapshot each tick.
+
+## Capture handling lives in the Scanner's table refresh
+
+**Problem.** Saving, logging and auto-cracking a capture happen in `ScannerView.refresh_table`, so
+capture handling is tied to a UI loop. Not a functional bug: captures from any screen work today.
+Design debt that needs the backend thought through before moving it.
+
+## Session pcap rewrites every handshake of the session
+
+**Problem.** The capture `.pcap` grows linearly: each save re-dumps every handshake captured this
+session, not just the newest. Unclear whether anything is lost or duplicated; a wrong write path
+here means lost captures.
+
+**Direction.** Read the save path and pin down what is written and when before changing it.
+
+## `beacon_clone` copies HE/EHT operation widths as-is
+
+**Problem.** `beacon_clone` forces the HT/VHT operation elements to 20 MHz but copies HE and EHT
+operation as-is, so a 5 GHz target that advertises a wider channel gets a twin that does too.
+
+## 40/80 MHz APs may be invisible to the scanner
+
+**Problem.** An AP that defaults to 40 MHz is not seen. 40/80 MHz was never ported because it was
+unclear how scanning should use those widths. Unconfirmed as a bug: the wifit3-vs-Linux tests
+showed about the same AP counts.
+
+**Direction.** Reproduce with the 40 MHz AP, then decide whether scanning needs wide-channel support.

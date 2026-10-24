@@ -283,6 +283,16 @@ class TestSaveWpsPin:
         assert result is not None and result.was_new is False
         assert result.path == existing
 
+    def test_pin_only_writes_no_psk_line_and_dedupes(self, tmp_path):
+        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+        first = save_wps_pin(ap, "12345670", None)
+        assert first is not None and first.was_new is True
+        body = first.path.read_text(encoding="utf-8")
+        assert "PSK" not in body and "PIN: 12345670" in body
+        again = save_wps_pin(ap, "12345670", None)
+        assert again is not None and again.was_new is False
+        assert save_wps_pin(ap, "12345670", "abcdefgh").was_new is True
+
     def test_empty_psk_returns_none(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
         assert save_wps_pin(ap, "12345670", "") is None

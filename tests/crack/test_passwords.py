@@ -17,16 +17,33 @@ def test_is_valid_psk_counts_utf8_bytes():
     assert is_valid_psk("é" * 31)
 
 
-def test_ssid_variants_order_dedupe_and_filter():
-    assert ssid_variants("HomeNet") == [
+def test_ssid_variants_start_with_the_cases_and_primary_suffixes():
+    assert ssid_variants("HomeNet")[:12] == [
         "HomeNet123", "HomeNet1234", "HomeNet12345678", "HomeNet!",
         "homenet123", "homenet1234", "homenet12345678", "homenet!",
         "HOMENET123", "HOMENET1234", "HOMENET12345678", "HOMENET!",
     ]
-    assert ssid_variants("lowercase") == [
+    assert ssid_variants("lowercase")[:10] == [
         "lowercase", "LOWERCASE", "lowercase123", "lowercase1234", "lowercase12345678",
         "lowercase!", "LOWERCASE123", "LOWERCASE1234", "LOWERCASE12345678", "LOWERCASE!",
     ]
+
+
+def test_ssid_variants_add_leetspeak_separators_and_common_suffixes():
+    variants = ssid_variants("HomeNet")
+    assert {"H0meNet1", "Hom3Net1", "H0m3N3t1", "HomeNet_123", "HomeNet-1234", "HomeNet@2026",
+            "HomeNetpassword"} <= set(variants)
+    assert len(variants) == len(set(variants))
+    assert all(is_valid_psk(psk) for psk in variants)
+
+
+def test_ssid_variants_pad_numbers_only_as_far_as_eight_bytes_needs():
+    ducky = set(ssid_variants("ducky"))
+    assert {"ducky012", "ducky001", "ducky1234"} <= ducky
+    assert not {"ducky12", "ducky0012"} & ducky
+    longname = set(ssid_variants("longname"))
+    assert {"longname12", "longname9999"} <= longname and "longname012" not in longname
+    assert len(ssid_variants("ab")) < 100
 
 
 def test_read_passwords_strips_newlines_and_skips_invalid(tmp_path: Path):

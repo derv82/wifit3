@@ -223,13 +223,14 @@ def test_unset_tool_settings_are_omitted_from_the_file(config_path):
     'None', which would then load back as a real (broken) path."""
     Config.save()
     text = config_path.read_text()
-    assert "[hashcat]" not in text and "[hashtopolis]" not in text
+    assert "[hashtopolis]" not in text and "path" not in text
     assert "None" not in text
 
 
 def test_hashcat_settings_round_trip_in_their_table(config_path):
     saved = HashcatSettings(path=r"D:\tools\hashcat\hashcat.exe", args="-a 0 -w 3",
-                            wordlists=[r"D:\wordlists\Top29Million.txt", r"D:\wordlists\rockyou.txt"])
+                            wordlists=[r"D:\wordlists\Top29Million.txt", r"D:\wordlists\rockyou.txt"],
+                            default_passwords=False, probed_ssid_passwords=False)
     Config.hashcat = copy.deepcopy(saved)
     Config.save()
     assert "\n[hashcat]\npath = " in config_path.read_text()

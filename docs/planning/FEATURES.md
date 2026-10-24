@@ -36,28 +36,48 @@ Open items:
 - Opt-**in** only: This uploads the user's captured traffic to a third party.
 - Dedupe: Don't re-submit a capture already submitted, and survive a restart.
 
-### Vault: "Enter PSK/PIN" feature
+### Vault: PSKs in `.meta` (verified vs unverified)
 
-- **"Enter"**: User enters credential (PSK/WPS) for a known AP (with an option to `Check` the PSK/PIN).
+An M1+M2-only EAPOL line ("challenge") holds whatever the client typed, so cracking it can yield a
+wrong password. A PMKID (computed by the AP) or an EAPOL line with M3/M4 ("authorized") can only
+crack to the AP's real PSK.
 
-### Improve Default Passwords
+- Store recovered PSKs / PINs / WEP keys in the AP's `.meta`: key, date found, the hashline ids it
+  cracks, and verified (matches a PMKID or M3/M4 line, or the live `Verify` succeeded) vs unverified.
+  Keep reading the old `_*.txt` files forever; stop writing them.
+- After any crack, check the key against every hashline in the capture (1 PBKDF2 per ESSID) to set
+  verified. Today hashcat is killed at the first potfile line and CPU Crack stops at the first
+  matching line, so only the first PSK found is saved.
+- Crackers run only on uncracked hashlines (temp file); nothing left to crack -> cracker disabled.
+- Exhaustion (`.meta` `exhausted`) is only recorded when a wordlist runs to the end, so a crack
+  records nothing. Once every hashline is cracked, there's nothing left to try against them anyway;
+  record the wordlist that cracked them as exhausted only if the hint needs it.
+- Vault: one `CRACKED` entry per unique PSK, each labeled verified / unverified, with `Verify` in
+  the `.hc22000` pane. Old PSKs stay (passwords get reused).
+- Label captures with no PMKID and no M3/M4 "Unverified by AP (no M3/M4)", in the Vault and dim
+  after `HANDSHAKE CAPTURED` in the scanner / focus logs.
 
-Auto-crack runs the tool picked in Preferences (CPU Crack by default, `vault/tools/cpu_crack.py`)
-on a new AP's first capture, and again on its first PMKID / authorized handshake if earlier
-captures were M1+M2 only. Passwords, in order: the
-capture's SSID variants, probed-SSID passwords, then `crack/assets/default_passwords.txt`.
-Document all of it so users can see exactly what runs on every capture:
-- **SSID variants** (`crack/passwords.py:ssid_variants`): the SSID as-is, lower, upper, each plus
-  `123`, `1234`, `12345678`, `!`, kept only if a valid 8-63 byte PSK. A short SSID like `X` only
-  yields its `12345678` variants.
-- **Probed SSIDs** (`ssid_passwords`): every SSID probed this session as-is, then their variants
-  (up to 15 passwords per SSID), capped at `_MAX_SSID_PASSWORDS = 1500`.
-- **Default list**: rockyou.txt in its original frequency order; only the trailing `\r\n` stripped;
-  kept if 8-63 bytes as UTF-8; deduplicated keeping order; first 2,300 (~5s of PBKDF2 on one
-  Raspberry Pi 500 core at ~463 PMK/s). No comment/HTML/control-char/padded lines; lengths 8-17.
+### Auto-crack vs known PSKs (needs design)
 
-Idea: a hashcat-rule-style suffix set, ~1k common suffixes per SSID, ordered shortest-first so
-short SSIDs reach 8+ chars. Still capped.
+Auto-crack skips every new capture once an AP has a saved PSK (`Vault._auto_crack`, `has_psk`).
+Seen live: a wrong password (M1+M2) was cracked first, then the correct M2+M3 capture was never
+tried.
+
+- New capture for an AP with saved PSKs: try each saved PSK against the new hashlines first. A
+  match -> no crack. No match -> a new PSK is in the capture -> auto-crack and log it ("different
+  password").
+- M1+M2-only: still captured and logged as unverified; a non-match may just be a client's typo.
+
+### Show probed SSIDs
+
+The CPU Crack / Hashcat launch modals show `Probed SSIDs (152)` but never which ones. A small
+`Show` button beside it opens a modal with a read-only multi-line box of this session's probed
+SSIDs (not their variants), with `Copy` and a primary `Close`.
+
+### Vault: Delete AP
+
+- `D`: "Delete {ssid}? X captures, Y PINs, Z keys" (zero counts left out). Deletes every file for
+  the AP, including `.meta` and `wps_*.run`, instead of one confirmation per file.
 
 ------------
 
@@ -107,6 +127,60 @@ When a second hashcat mode lands (`-m 4800`/`5500`), the save layer needs a per-
 
 ------------
 
+### (Windows Performance) `timeBeginPeriod(1)` for timer granularity
+
+On Windows `asyncio.sleep` floors at the 15.6 ms timer tick (a 2 ms sleep takes 15.6 ms, 102.4 ms
+takes 109.1). Calling `timeBeginPeriod(1)` at startup measured 2.6 ms and 103.6 ms. It could cut
+latency in the loops that sleep short intervals, but it raises the system timer rate, which can
+cost CPU and battery.
+
+Untested in the app. To adopt: compare CPU with and without it on the Scanner and on Focus
+(about 5 minutes each), then on a slow device; keep it only if CPU doesn't change.
+
+------------
+
+### AutoDeauth settings modal
+
+AutoDeauth has no options today. Give its button a launch modal, like EvilTwin, with
+its settings persisted in `Config` (not in Preferences).
+
+- Checkboxes to select deauth methods (some disabled when PMF Required).
+- Option to deauth from every card at once, offered only when 2+ cards are plugged in.
+   - Idea proposed by xxcosita3czxx in #114
+
+------------
+
+### Focus: Deauth dropdown
+
+Replace the `Deauth all` button with a `Deauth` dropdown:
+- `Deauthenticate`
+- `Channel-Switch Announce (CSA)`
+- `BSS Transition Mode (BTM)`
+- `Deauth from all X cards`, only when 2+ cards are plugged in.
+
+------------
+
+### Remappable keybindings
+
+A modal with its own `keybinds` section in `Config`, opened from one `Edit Keybindings` 
+row in Preferences. Low priority.
+
+Grid with each row having the functionality, current keybinding, "Default" button.
+
+------------
+
+### Settings as a full-screen view
+
+Promote Preferences from a modal to a full-screen (or partial-screen, slide-up like the Vault) view,
+with room for categories.
+
+Not yet: Preferences is deliberately small (core settings users rarely change: color theme, 
+where and how to save captures, how to auto-crack).
+
+Do this only when absolutely necessary; prefer a per-feature modal over a new Preferences row.
+
+------------
+
 ## Undecided
 
 ### Captive Portal
@@ -142,17 +216,6 @@ covers the same ground from the plugin-system angle.
 
 **Where this stands:** still leaning **no**, mostly on the scope/maintenance argument, not on the
 demand one. Issue #55 is intentionally left open to keep gauging demand.
-
-### Remember Exhausted Wordlists
-
-Track which wordlists were tried (and exhausted) per capture; warn when re-running one.
-Nice-to-have.
-
-Blocked on design:
-- Persistence: another file per capture is not acceptable; one giant JSON mapping is ugly.
-- UI: unclear how to render it, e.g. 100 wordlists tried.
-
-Can't start until a clean design exists.
 
 ------------
 

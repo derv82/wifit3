@@ -14,7 +14,12 @@ from ..campaigns.pmkid import PmkidHarvestAttack
 from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.crack.handshake import pmkid_crackable
+from wifit3.dot11.eap import method_name
+from wifit3.dot11.pmf import PmfPosture
+from wifit3.dot11.rsn import SAE_AKM_SUITES
 from wifit3.models import CaptureType, IdKey, IdSource
+from wifit3.models.access_point import eap_only, no_passphrase
+from wifit3.ui.encryption_format import psk_capture_supported
 from wifit3.persist.config import Config
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
@@ -23,6 +28,7 @@ from ..campaigns.decloak import DecloakCampaign
 
 if TYPE_CHECKING:
     from wifit3.models.access_point import AccessPoint
+    from wifit3.persist.vault import Vault
 
 # Attack-button campaigns in button-row order.
 BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign,
@@ -155,12 +161,29 @@ def encryption_chip(ap) -> str:
     return format_encryption_markup(ap, detailed=False)
 
 
-def pmf_status_markup(ap) -> str:
-    """PMF status for the Focus footer.
-    Disabled (dim) → Optional (orange) → Required (red)."""
-    if ap.pmf_required:
+# Identity, Notification, Nak: EAP framing, not the authentication method.
+_EAP_FRAMING_TYPES = frozenset({1, 2, 3})
+
+
+def eap_methods_markup(ap: AccessPoint) -> str | None:
+    """Observed EAP methods for the Focus footer, or None before any EAPOL-Type-0."""
+    seen = ap.observed_eap_methods
+    if not seen:
+        return None
+    types = sorted(t for t in seen if t not in _EAP_FRAMING_TYPES) or sorted(seen)
+    labels = [method_name(t) or f"type {t}" for t in types]
+    return "[dim]EAP:[/dim] " + " · ".join(labels)
+
+
+def pmf_status_markup(ap: AccessPoint) -> str:
+    """PMF status for the Focus footer, off the 802.11w posture.
+    Disabled (dim) → Optional (orange) → Required (red); Invalid (red) = MFPR without MFPC."""
+    posture = ap.pmf_posture
+    if posture is PmfPosture.REQUIRED:
         return "[red]Required[/red]"
-    if ap.pmf_capable:
+    if posture is PmfPosture.INVALID:
+        return "[red]Invalid[/red]"
+    if posture is PmfPosture.OPTIONAL:
         return "[dark_orange]Optional[/dark_orange]"
     return "[dim]Disabled[/dim]"
 
@@ -204,7 +227,7 @@ def router_identity_details(ap: AccessPoint) -> str | None:
 
 
 
-def status_under_dash(ap, array, now: float) -> list[str]:
+def status_under_dash(ap: AccessPoint, array: WlanArray, now: float) -> list[str]:
     """The dashboard footer lines for this target."""
     active = Campaign.active
     if active:
@@ -216,20 +239,23 @@ def status_under_dash(ap, array, now: float) -> list[str]:
         return wep_status_lines(ap, array, None, now)
     lines = [f"[dim]Encryption:[/dim] {format_encryption_markup(ap, detailed=True)}"]
     parts = []
-    if ap.akms or ap.wpa3:              # RSN (WPA2/3): PMF is meaningful
+    if (ap.akms and ap.rsn_valid) or ap.wpa3:   # RSN (WPA2/3): PMF is meaningful
         parts.append(f"[dim]PMF:[/dim] {pmf_status_markup(ap)}")
     if getattr(ap, "wps", None):
         lock = "[red]🔒[/red]" if ap.wps_locked else "[green]🔓[/green]"
         ver = f"{ap.wps_version} " if ap.wps_version else ""
         parts.append(f"[dim]WPS:[/dim] {ver}{lock}")
+    eap = eap_methods_markup(ap)
+    if eap:
+        parts.append(eap)
     if parts:
         lines.append("  ·  ".join(parts))
     return lines
 
 
-def deauth_blocked(ap) -> bool:
-    """Deauth bursts are dead when a campaign owns the radio OR the AP requires PMF."""
-    return other_long_running_tx() or ap.pmf_required
+def deauth_blocked(ap: AccessPoint) -> bool:
+    """True while radio TX is busy or the AP's PMF is required or invalid."""
+    return other_long_running_tx() or ap.pmf_posture in (PmfPosture.REQUIRED, PmfPosture.INVALID)
 
 
 def status_under_card() -> str:
@@ -242,7 +268,7 @@ def status_under_card() -> str:
     return ""
 
 
-def status_headlines(ap, array, vault) -> list[str]:
+def status_headlines(ap: AccessPoint, array: WlanArray, vault: Vault) -> list[str]:
     """The Campaign headline: up to 3 markup lines of current activity (reads the active campaign)."""
     active = Campaign.active
     if active:
@@ -254,6 +280,21 @@ def status_headlines(ap, array, vault) -> list[str]:
     enc = (ap.encryption or "").upper()
     wep = enc == "WEP"
 
+    # 802.1X/Enterprise (incl. FILS): login attacks not yet supported; checked before any stale PSK
+    # or old 4-way left from a previous (PSK) config can surface a misleading headline.
+    if eap_only(ap):
+        if ap.wpa3 and ap.transition_mode:
+            return ["[dim]● WPA3/Enterprise transition: not yet supported[/dim]"]
+        if ap.wpa3:
+            return ["[dim]● WPA3/Enterprise: not yet supported[/dim]"]
+        wpa_label = "WPA2" if ap.rsn_valid else "WPA"
+        return [f"[dim]● {wpa_label}/Enterprise: not yet supported[/dim]"]
+
+    if no_passphrase(ap):
+        return ["[dim]● OWE (Enhanced Open): Diffie-Hellman key, nothing to crack[/dim]"]
+
+    unsupported = bool(ap.akm_suites) and psk_capture_supported(ap) is False
+
     # 4. Recovered credentials, when idle: WEP key / PSK (WPS- or handshake-derived).
     wep_key_hex = (ap.wep_key.hex() if ap.wep_key is not None
                    else next((c.value for c in vault.persisted(ap.bssid)
@@ -263,8 +304,9 @@ def status_headlines(ap, array, vault) -> list[str]:
                 "[dim]● Listening for WEP IVs[/dim]"]
     psk = vault.known_psk(ap)
     if psk:
-        return [f"[black bold on green] ✓ PSK: {escape(psk)} [/black bold on green]",
-                "[dim]● Listening for handshake + PMKID[/dim]"]
+        tail = ("[dim]● Not yet supported: no crack path for this AKM[/dim]"
+                if unsupported else "[dim]● Listening for handshake + PMKID[/dim]")
+        return [f"[black bold on green] ✓ PSK: {escape(psk)} [/black bold on green]", tail]
 
     if Config.is_silenced(ap.bssid):
         return ["[dim]● Silenced[/dim]",
@@ -277,6 +319,13 @@ def status_headlines(ap, array, vault) -> list[str]:
             return ["[green]● Listening for WEP IVs[/green]",
                     f"[dim]{n_ivs:,} captured · press Replay to generate more[/dim]"]
         return ["[green]● Listening for WEP IVs[/green]"]
+
+    if (ap.wpa3 and not ap.transition_mode
+            and SAE_AKM_SUITES.intersection(ap.akm_suites)):
+        return ["[dim]● WPA3/SAE: passive capture not applicable[/dim]"]
+
+    if unsupported:
+        return ["[dim]● Not yet supported: no crack path for this AKM[/dim]"]
 
     n_complete, n_partial, msg_counts = count_handshakes(ap)
     n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid and pmkid_crackable(hs))
@@ -292,9 +341,6 @@ def status_headlines(ap, array, vault) -> list[str]:
         breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
         return ["[yellow]◌ Capturing handshake[/yellow]",
                 f"[dim]{breakdown}: deauth a client to force a re-handshake[/dim]"]
-
-    if ap.wpa3 and not ap.transition_mode:
-        return ["[dim]● WPA3/SAE: passive capture not applicable[/dim]"]
 
     if enc in ("OPEN", ""):
         return ["[dim]● Open network: no handshake to capture[/dim]"]

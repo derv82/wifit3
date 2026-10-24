@@ -21,7 +21,7 @@ from wifit3.models import AccessPoint
 from wifit3.dot11 import mac_to_str, random_client_mac, str_to_mac
 from wifit3.dot11.auth_assoc import auth_req, assoc_req, status_description
 from wifit3.dot11.deauth import reason_description
-from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
+from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket, Packet
 
 if TYPE_CHECKING:
     from wifit3.wlan.interface import WlanInterface
@@ -189,7 +189,7 @@ class WepFakeAuth:
 
     # ---- RX filter (sync, on the loop) --------------------------------------
 
-    def _rx_cb(self, pkt) -> None:
+    def _rx_cb(self, pkt: Packet) -> None:
         """React to the AP's typed auth/assoc-resp/deauth replies addressed to our MAC."""
         if not self._active or pkt.raw[4:10] != self.source_mac:   # Addr1 (dest) must be us
             return
@@ -205,7 +205,7 @@ class WepFakeAuth:
                 self.fail_reason = f"Auth rejected (status {pkt.status}: {desc})"
         elif isinstance(pkt, DeauthPacket):
             # We got kicked
-            kind = "disassoc" if getattr(pkt, "type", "") == "mgmt_10" else "deauth"
+            kind = "disassoc" if pkt.type == "disassoc" else "deauth"
             desc = reason_description(pkt.reason)
             self.fail_reason = f"{kind} (reason {pkt.reason}: {desc})"
             if self.state == "associated":

@@ -30,6 +30,7 @@ _RX_CLASS = {
     "qos_data": CLASS_DATA,
     "wep_data": CLASS_WEP_IV,
     "eapol": CLASS_EAPOL,
+    "eap": CLASS_EAPOL,
     "deauth": CLASS_DEAUTH,
 }
 

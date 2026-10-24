@@ -22,7 +22,7 @@ from typing import Callable, Optional
 from wifit3.dot11 import build_deauth, random_client_mac, str_to_mac
 from wifit3.dot11.auth_assoc import auth_req, assoc_req, status_description
 from wifit3.dot11.deauth import reason_description
-from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
+from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket, Packet
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +219,7 @@ class Association:
                 last_send = time.time()
             await asyncio.sleep(0.02)
 
-    def _rx_cb(self, pkt) -> None:
+    def _rx_cb(self, pkt: Packet) -> None:
         if (not self._active or pkt.raw[4:10] != self.our_mac   # addressed to us
                 or pkt.raw[10:16] != self.bssid_bytes):         # by the AP we targeted
             return
@@ -244,7 +244,7 @@ class Association:
                 self.fail_reason = f"Auth rejected (status {pkt.status}: {desc})"
                 logger.info("<- Auth Resp rejected (status %s: %s) from %s", pkt.status, desc, self.bssid)
         elif isinstance(pkt, DeauthPacket):
-            kind = "disassoc" if getattr(pkt, "type", "") == "mgmt_10" else "deauth"
+            kind = "disassoc" if pkt.type == "disassoc" else "deauth"
             desc = reason_description(pkt.reason)
             self.fail_reason = f"{kind} (reason {pkt.reason}: {desc})"
             logger.info("<- %s (reason %s: %s) from %s", kind.upper(), pkt.reason, desc, self.bssid)

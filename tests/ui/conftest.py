@@ -6,10 +6,10 @@ from wifit3.persist.config import Config
 
 
 @pytest.fixture(autouse=True)
-def _isolate_config(tmp_path, monkeypatch):
+def _isolate_config(_test_dir, monkeypatch):
     """UI tests build WifiteApp, which loads and persists Config: keep that off the real on-disk
     config file and reset the class-level defaults so a theme edit can't leak between tests."""
-    monkeypatch.setattr("wifit3.persist.config._PATH", tmp_path / "config.toml")
+    monkeypatch.setattr("wifit3.persist.config._PATH", _test_dir / "config.toml")
     Config.theme = "wifit3-green-dark"
     Config.scanner_sort = "signal"
     Config.scanner_sort_reverse = True

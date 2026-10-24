@@ -34,6 +34,8 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Static
 
 from wifit3.campaigns import treelog
+from wifit3.dot11.pmf import PmfPosture
+from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
@@ -49,6 +51,7 @@ from .campaign_controls import CampaignControls
 from .decloak_modal import DecloakInputModal
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
+from wifit3.ui.encryption_format import psk_capture_supported
 from wifit3.models import AccessPoint, IdSource
 from wifit3.persist.config import Config
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
@@ -490,10 +493,13 @@ class FocusViewV2(Screen):
         else:
             self._log(treelog.leaf("[yellow]no interface: passive view only[/yellow]"))
 
-        if ap.pmf_required:
+        if ap.pmf_posture is PmfPosture.REQUIRED:
             self._log("[bold yellow]PMF Required:[/] "
                       "AP requires [bold]Protected Management Frames[/]")
             self._log(treelog.leaf("[italic]Deauth[/] attacks have been disabled"))
+        elif ap.pmf_posture is PmfPosture.INVALID:
+            self._log("[bold yellow]PMF Invalid:[/] contradictory MFPC/MFPR advertisement")
+            self._log(treelog.leaf("[italic]Deauth[/] disabled because protection is unknown"))
 
         self._log_persisted_history(ap)
 
@@ -504,8 +510,17 @@ class FocusViewV2(Screen):
         enc = (ap.encryption or "").upper()
         if enc == "WEP":
             self._log("[bold italic]Passively listening[/bold italic] for [bold]WEP IVs[/bold]")
-        elif enc not in ("OPEN", "", "WPA3 "):
-            # 'Crackable' because the pipeline filters SAE-only out.
+        elif enc in ("OPEN", ""):
+            pass
+        elif eap_only(ap):
+            self._log("[dim]802.1X Enterprise: not yet supported[/dim]")
+        elif ap.wpa3 and not ap.transition_mode:
+            self._log("[dim]WPA3/SAE: passive capture not applicable[/dim]")
+        elif no_passphrase(ap):
+            self._log("[dim]OWE (Enhanced Open): Diffie-Hellman key, nothing to crack[/dim]")
+        elif ap.akm_suites and psk_capture_supported(ap) is False:
+            self._log("[dim]Not yet supported: no crack path for this AKM[/dim]")
+        else:
             self._log("[bold italic]Passively listening[/bold italic] for")
             self._log(treelog.branch("Crackable 4-Way [bold]Handshakes[/bold]"))
             self._log(treelog.leaf("Crackable [bold]PMKIDs[/bold]"))
@@ -1245,7 +1260,7 @@ class FocusViewV2(Screen):
                 f"\"{escape(camp.state.found_psk or '')}\" [/black bold on green]"))
             try:
                 result = self.app.vault.save_wps_pin(
-                    camp.target, camp.state.found_pin, camp.state.found_psk or "")
+                    camp.target, camp.state.found_pin, camp.state.found_psk)
                 if result is None:
                     self._log(treelog.leaf("[dim](save failed)[/dim]"))
                 else:

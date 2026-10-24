@@ -64,6 +64,9 @@ class JobManager:
 
     def _save(self) -> None:
         jobs_file = self.get_jobs_file()
+        if not self.jobs:
+            jobs_file.unlink(missing_ok=True)
+            return
         data = {k: v.to_dict() for k, v in self.jobs.items()}
         logger.debug(f"Saving {len(data.keys())} jobs to {jobs_file}")
         jobs_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -217,6 +220,10 @@ class JobManager:
         ssid = self._essid_from_capture(job.capture_path) or cap.ssid
         try:
             self.vault.save_wpa_psk(ssid, cap.bssid, res.key)
+            matched = self.vault.propagate_verified_psk(cap.bssid, ssid, res.key)
+            if matched:
+                logger.info(f"Recovered key also verified for {len(matched)} related APs: "
+                            f"{', '.join(matched)}")
         except OSError:
             logger.exception(f"Failed to save the recovered key for {job.capture_path}")
 

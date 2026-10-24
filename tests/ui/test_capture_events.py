@@ -119,6 +119,24 @@ def test_transition_pmkid_withheld_until_m2_confirms_psk():
     assert sum(e.kind == CaptureKind.PMKID for e in det.poll(ap)) == 1
 
 
+def test_mixed_enterprise_psk_pmkid_is_not_a_capture_event():
+    det = CaptureEventDetector(granular_eapol=False)
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:f4", ssid="X")
+    _hs_with(ap, offered=[1, 2], pmkid=b"\x04" * 16)
+    assert not any(e.kind == CaptureKind.PMKID for e in det.poll(ap))
+
+
+def test_reserved_akm_handshake_emits_no_completion_banner():
+    det = CaptureEventDetector(granular_eapol=True)
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:f9", ssid="X")
+    hs = _hs_with(ap, offered=[42])
+    hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
+    events = list(det.poll(ap))
+    assert not any(e.kind == CaptureKind.HANDSHAKE for e in events)
+    withheld = [e for e in events if e.kind == CaptureKind.UNCRACKABLE_HANDSHAKE]
+    assert len(withheld) == 1 and withheld[0].value == "Unsupported AKM"
+
+
 def _ap(bssid: str = "aa:bb:cc:dd:ee:ff", ssid=None, method=None) -> AccessPoint:
     return AccessPoint(bssid=bssid, ssid=ssid, decloak_method=method)
 

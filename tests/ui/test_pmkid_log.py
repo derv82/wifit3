@@ -45,6 +45,9 @@ def test_pmf_and_no_psk_are_header_plus_leaf_only():
     pmf = render_failure(_ESSID, PmkidFail.PMF_REQUIRED)
     assert len(pmf) == 2                                        # bailed before any TX
     assert "[bold orange1]PMF Required[/bold orange1]" in pmf[1]
+    invalid = render_failure(_ESSID, PmkidFail.PMF_INVALID)
+    assert len(invalid) == 2
+    assert "[bold orange1]PMF Invalid[/bold orange1]" in invalid[1]
     no_psk = render_failure(_ESSID, PmkidFail.NO_PSK_AKM)
     assert len(no_psk) == 2
     assert "No PSK AKM" in no_psk[1]
