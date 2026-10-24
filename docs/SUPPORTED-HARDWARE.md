@@ -115,15 +115,15 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **A** | 2026-10-22 | Strong 2.4 GHz auditing card: Linux-matched RX, observer-confirmed TX and forged-MAC auto-ACK. WEP remains untested. |
-| RX | ✅ | 2026-10-21 | Matches Linux; 85 APs on 2.4 GHz (best so far); 13/13 channels heard their own beacons, 0 silent, 0 cross-channel. |
-| Port | ✅ | 2026-10-21 | RX baseline matches Linux for breadth and channel tuning. |
-| TX | ✅ | 2026-10-22 | Independent RTL8821AU observer confirmed deauth and Evil Twin frames transmit over the air. Linux-capture descriptor replay is byte-exact; USB submit time was 0.6–2.3 ms. Client ACK asymmetry was recipient/state-dependent, not a card TX fault. |
-| Handshake | ✅ | 2026-10-21 | Verified deauth → complete four-way capture; all EAPOL frames M1–M4 can be collected. |
-| PMKID | ✅ | 2026-10-21 | Successfully associated and collected a PMKID. |
-| WEP | ⬜ |  | Not run; dont have target with WEP encryption. - cosita |
-| WPS | ✅ | 2026-10-21 | WPS PIN and WPS identity probe work; PBC untested. |
-| ACKs | ✅ | 2026-10-22 | Independent RTL8821AU observer confirmed RTL8192FU auto-ACKed client authentication and association requests addressed to a forged Evil Twin BSSID. |
+| **Grade** | **92% (A)** | 2026-10-23 | Kernel-parity RX + full 2.4 attack suite; provisional on soak. |
+| RX | ✅ | 2026-10-23 | Ref AP 7.0 vs 7.6/s (92%); breadth 101 vs 102; RSSI −0.6 dB; 11/11 channels. |
+| Port | ✅ | 2026-10-23 | Matches rtl8xxxu: Ref AP beacon rate + RSSI parity. |
+| TX | ✅ | 2026-10-23 | Deauth + WEP inject; live-confirmed. Deauth ACKs: AP 10/10, client 0/10. |
+| Handshake | ✅ | 2026-10-23 | Deauth → 4-way (M1–M4). |
+| PMKID | ✅ | 2026-10-23 | Active extract (M1). |
+| WEP | ✅ | 2026-10-23 | ChopChop + ARP replay ~150–200 IVs/s. |
+| WPS | ✅ | 2026-10-23 | PIN, 2–3 s per PIN; PBC untested. |
+| ACKs | ✅ | 2026-10-23 | Auto-ACK forged MAC via active monitor (Addr2-keyed) & silicon (102/100). |
 | Stress | ✅ | 2026-10-21 | 20-minute, 14-channel RX hop completed without disconnect; 9–14 active channels per snapshot and 206–420 frames per minute window. |
 
 → [RTL8192FU.md](../src/wifit3/chips/rtl8192fu/RTL8192FU.md)

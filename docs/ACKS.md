@@ -51,6 +51,7 @@ A row with only a 2G figure is a 2.4 GHz-only radio.
 | RTL8822CU  | yes, keyed on Addr2 | 2G 1, 5G 1 | 2G 1, 5G 1 | 2G ~7, 5G ~7 |
 | RTL8922AU  | yes, keyed on Addr2 | 2G 1, 5G 1 | 2G 1, 5G 1 | 2G ~32, 5G ~32 |
 | RTL8188EUS | yes, keyed on Addr2 | 2G 1 | 2G 1 | 2G ~13 |
+| RTL8192FU | yes, keyed on Addr2 | 2G 1 | 2G 1 | 2G ~6 |
 | AR9271     | yes, keyed on Addr2 | 2G 1 | 2G 1 | 2G ~8 |
 | MT7612U    | yes, needs active monitor | 2G 11, 5G 16 | 2G 1, 5G 1 | 2G ~13, 5G ~16 |
 | MT7610U    | yes, needs active monitor | 2G 12, 5G 16 | 2G 1, 5G 1 | 2G ~16, 5G ~16 |
@@ -61,13 +62,10 @@ A row with only a 2G figure is a 2.4 GHz-only radio.
 | RT5372     | yes, needs active monitor | 2G 7 | 2G 1 | 2G ~8 |
 | RT5572     | yes, needs active monitor | 2G 7 | 2G 1 (5G: no ACK seen) | 2G ~8, 5G ~8 |
 | RTL8187L   | only its own silicon MAC | silicon 1, spoofed 5-6 | N/A (no AM) | ~6 |
-| RT2500USB | yes, keyed on self-MAC [1] | 2G 1/~15 (ack=off/on) | 2G 1 | 2G 1/~15 (ack=off/on) |
+| RT2500USB | yes, keyed on self-MAC | 2G 1/~15 (ack=off/on) | 2G 1 | 2G 1/~15 (ack=off/on) |
 
 RT3572 (rt2800usb) is omitted from this table: its unburned-EFUSE TX is too weak to elicit AP ACKs, so
 its retry behaviour is unmeasured. Its auto-ACK still confirmed it SPOOFABLE (see below).
-
-[1] RT2500USB corrected 2026-07-19. The original "no, ignores ACKs / 2G ~14 / ~16" was wrong the
-self-MAC register (MAC_CSR2/3/4) never programmed.
 
 The stop-on-ACK match splits by chip vendor. Realtek (8812 / 8821 / 8821cu / 8822 / 8814 / 8188eus) and
 Atheros (AR9271) key on the frame's own Addr2, so they stop without active monitor: both columns are ~1
@@ -75,8 +73,8 @@ on 2.4 GHz, and on 5 GHz AM-off runs at most a copy or two above AM-on (8812au 3
 and Ralink family (mt76x0u / mt76x2u / mt7921au, rt3070 / rt5370 / rt5372 / rt5572) keys on the source
 MAC only once active monitor registers it: AM off ignores the ACK and retries to the limit, AM on
 collapses to 1. The 8187 keys on its own silicon MAC only. The RT2500USB ships ack=False (one copy, no
-retries); the silicon could stop-on-ACK if the self-MAC were programmed, but no shipped code does that
-(note [1]). (The 7921's old "fixed count regardless" label was just its AM-on pass being skipped when
+retries); the silicon could stop-on-ACK if the self-MAC were programmed, but no shipped code does that.
+(The 7921's old "fixed count regardless" label was just its AM-on pass being skipped when
 FAKE_MAC was mis-flagged UNIMPLEMENTED.)
 
 ## HW Auto-ACK -- comparison (bench, 2026-07-16, n=100)
@@ -94,6 +92,7 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
 | RTL8822BU  | yes (2G 108, 5G 100)   | 0   | yes (2G 111, 5G 100) | 0 |
 | RTL8822CU  | yes (2G 101, 5G 99)    | 0   | yes (2G 102, 5G 100) | 0 |
 | RTL8188EUS | yes (2G 100)           | 0   | yes (2G 100)         | 0 |
+| RTL8192FU | yes (2G 102)        | 0   | yes (2G 102)         | 0 |
 | AR9271     | yes (2G 100)           | 0   | yes (2G 100)         | 0 |
 | MT7612U    | yes (2G 97, 5G 80)     | 0   | yes (2G 104, 5G 100) | 0 |
 | MT7610U    | yes (2G 100, 5G 100)   | 0   | yes (2G 100, 5G 100) | 0 |
