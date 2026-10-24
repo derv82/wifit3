@@ -115,7 +115,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **92% (A)** | 2026-10-23 | Kernel-parity RX + full 2.4 attack suite; provisional on soak. |
+| **Grade** | **92% (A)** | 2026-10-23 | Kernel-parity RX + full 2.4 attack suite. |
 | RX | ✅ | 2026-10-23 | Ref AP 7.0 vs 7.6/s (92%); breadth 101 vs 102; RSSI −0.6 dB; 11/11 channels. |
 | Port | ✅ | 2026-10-23 | Matches rtl8xxxu: Ref AP beacon rate + RSSI parity. |
 | TX | ✅ | 2026-10-23 | Deauth + WEP inject; live-confirmed. Deauth ACKs: AP 10/10, client 0/10. |
@@ -124,7 +124,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | WEP | ✅ | 2026-10-23 | ChopChop + ARP replay ~150–200 IVs/s. |
 | WPS | ✅ | 2026-10-23 | PIN, 2–3 s per PIN; PBC untested. |
 | ACKs | ✅ | 2026-10-23 | Auto-ACK forged MAC via active monitor (Addr2-keyed) & silicon (102/100). |
-| Stress | ✅ | 2026-10-21 | 20-minute, 14-channel RX hop completed without disconnect; 9–14 active channels per snapshot and 206–420 frames per minute window. |
+| Stress | ✅ | 2026-10-23 | 30-min 14-ch soak, flat (trend 1.01). |
 
 → [RTL8192FU.md](../src/wifit3/chips/rtl8192fu/RTL8192FU.md)
 
