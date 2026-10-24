@@ -956,8 +956,7 @@ class FocusViewV2(Screen):
             return
         self._log("[bold]Broadcast de-auth: all clients[/bold]")
         try:
-            async with array.lease(channel=ap.channel, iface=card) as iface:
-                sent = await iface.deauth_broadcast(ap.bssid, count=self._DEAUTH_BCAST_COUNT)
+            sent = await card.deauth_broadcast(ap.bssid, count=self._DEAUTH_BCAST_COUNT)
         except Exception as exc:
             logger.exception("Broadcast deauth crashed")
             self._log(treelog.leaf_fail(f"Broadcast failed: {escape(str(exc))}"))
@@ -975,8 +974,7 @@ class FocusViewV2(Screen):
             return
         self._log(f"[bold]De-authenticating Client {escape(mac)}[/bold]")
         try:
-            async with array.lease(channel=ap.channel, iface=card) as iface:
-                res = await iface.deauth_client(ap.bssid, mac, rounds=self._DEAUTH_SEL_ROUNDS)
+            res = await card.deauth_client(ap.bssid, mac, rounds=self._DEAUTH_SEL_ROUNDS)
         except Exception as exc:
             logger.exception("Deauth %s crashed", mac)
             self._log(treelog.leaf_fail(f"Deauth failed: {escape(str(exc))}"))
