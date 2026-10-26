@@ -4,9 +4,10 @@ from pathlib import Path
 import pytest
 
 from wifit3.crack import wpa_psk
+from wifit3.crack.hc22000_format import pmkid_hashline
 from wifit3.crack.passwords import ssid_passwords, ssid_variants
 from wifit3.dot11 import wpa
-from wifit3.models import PersistedCapture, ToolResult, ToolStatus
+from wifit3.models import Handshake, PersistedCapture, ToolResult, ToolStatus
 from wifit3.models.access_point import CaptureType
 from wifit3.models.jobs import JobAction, JobState
 from wifit3.persist.config import Config
@@ -81,6 +82,21 @@ def test_cpu_crack_can_crack_only_hc22000(tool):
                                            bssid="fc:69:0c:15:82:64"))
     assert not tool.can_crack(PersistedCapture(type=CaptureType.HS, timestamp=0, path="a.pcap",
                                                bssid="fc:69:0c:15:82:64"))
+
+
+def test_cpu_crack_finds_a_stored_psk_sha256_pmkid(tool, tmp_path):
+    ssid = "sha256-net"
+    pmk = wpa.derive_pmk("sha256-secret", ssid.encode())
+    hs = Handshake(bssid="11:22:33:44:55:66", client_mac="aa:bb:cc:dd:ee:ff",
+                   pmkid=wpa_psk.sha256_pmkid(pmk, bytes.fromhex("112233445566"),
+                                              bytes.fromhex("aabbccddeeff")))
+    hs.pmkid_akm = 6
+    line = pmkid_hashline(ssid, hs)
+    assert line is not None and line.endswith("***03")
+
+    job = _launch(tool, tmp_path, [line], [["nope", "sha256-secret"]])
+
+    assert _poll_finished(tool, job).key == "sha256-secret"
 
 
 def test_cpu_crack_finds_the_hashcat_example_key(tool, tmp_path):

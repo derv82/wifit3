@@ -116,14 +116,17 @@ def test_ptk_sha256_kdf_layout():
 
 
 def test_psk_matches_sha256_pmkid_when_message_pair_bit_set():
-    pmkid = hmac.new(_PMK, b"PMK Name" + _AA + _SPA, hashlib.sha256).digest()[:16]
-    line = Hc22000Line(kind="01", pmkid_or_mic=pmkid.hex(), mac_ap=_AA.hex(), mac_sta=_SPA.hex(),
-                       essid=_SSID.hex(), message_pair="03")
-    assert wpa_psk.psk_matches(_PMK, line)
-    assert not wpa_psk.psk_matches(_WRONG_PMK, line)
-    unflagged = Hc22000Line(kind="01", pmkid_or_mic=pmkid.hex(), mac_ap=_AA.hex(),
+    digest = hmac.new(_PMK, b"PMK Name" + _AA + _SPA, hashlib.sha256).digest()[:16]
+    assert wpa_psk.sha256_pmkid(_PMK, _AA, _SPA) == digest
+    for message_pair in ("03", "02"):
+        line = Hc22000Line(kind="01", pmkid_or_mic=digest.hex(), mac_ap=_AA.hex(), mac_sta=_SPA.hex(),
+                           essid=_SSID.hex(), message_pair=message_pair)
+        assert wpa_psk.psk_matches(_PMK, line)
+        assert not wpa_psk.psk_matches(_WRONG_PMK, line)
+    unflagged = Hc22000Line(kind="01", pmkid_or_mic=digest.hex(), mac_ap=_AA.hex(),
                             mac_sta=_SPA.hex(), essid=_SSID.hex())
     assert not wpa_psk.psk_matches(_PMK, unflagged)
+    assert wpa_psk.pmkid(_PMK, _AA, _SPA) != digest
 
 
 # FT-PSK known answers, generated outside wifit3 from hostapd's sha256_prf_bits / wpa_derive_pmk_r0 /

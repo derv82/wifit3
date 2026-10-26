@@ -1,8 +1,8 @@
 """WPA/WPA2-PSK candidate checks against captured MICs and PMKIDs (no I/O).
 
 EAPOL key descriptor versions 1 (HMAC-MD5), 2 (HMAC-SHA1) and 3 (AES-CMAC, PSK-SHA256 and FT-PSK);
-PMKIDs in HMAC-SHA1, HMAC-SHA256 when the message-pair field flags it, or FT PMKR1Name. No nonce
-error correction.
+PMKIDs in HMAC-SHA1, HMAC-SHA256 when message-pair bit 0x02 is set (hcxpcapngtool writes ``03``),
+or FT PMKR1Name. No nonce error correction.
 """
 import hashlib
 import hmac
@@ -37,7 +37,13 @@ def mic_for(psk: str, ssid: bytes, aa: bytes, spa: bytes, anonce: bytes, snonce:
 
 
 def pmkid(pmk: bytes, aa: bytes, spa: bytes) -> bytes:
+    """AKM 2 PMKID: HMAC-SHA1-128(PMK, ``PMK Name`` || AP MAC || STA MAC)."""
     return hmac.new(pmk, b"PMK Name" + aa + spa, hashlib.sha1).digest()[:16]
+
+
+def sha256_pmkid(pmk: bytes, aa: bytes, spa: bytes) -> bytes:
+    """AKM 6 PMKID: HMAC-SHA256-128 of the same input. Hashcat 8 reads it from message pair ``03``."""
+    return hmac.new(pmk, b"PMK Name" + aa + spa, hashlib.sha256).digest()[:16]
 
 
 def _message_pair_bits(line: Hc22000Line) -> int:
@@ -82,8 +88,7 @@ def psk_matches(pmk: bytes, line: Hc22000Line) -> bool:
     expected = bytes.fromhex(line.pmkid_or_mic)
     if line.kind == "01":
         if _message_pair_bits(line) & PMKID_SHA256_MESSAGE_PAIR_BIT:
-            digest = hmac.new(pmk, b"PMK Name" + mac_ap + mac_sta, hashlib.sha256).digest()
-            return hmac.compare_digest(digest[:16], expected)
+            return hmac.compare_digest(sha256_pmkid(pmk, mac_ap, mac_sta), expected)
         return hmac.compare_digest(pmkid(pmk, mac_ap, mac_sta), expected)
     if line.kind != "02":
         return False
