@@ -7,6 +7,8 @@ from wifit3.crack import wpa_psk
 from wifit3.crack.hc22000_format import pmkid_hashline
 from wifit3.crack.passwords import ssid_passwords, ssid_variants
 from wifit3.dot11 import wpa
+from wifit3.dot11.eapol import eapol_key
+from wifit3.dot11.wpa import KCK_LEN, derive_ptk_sha256, eapol_mic_aes_cmac
 from wifit3.models import Handshake, PersistedCapture, ToolResult, ToolStatus
 from wifit3.models.access_point import CaptureType
 from wifit3.models.jobs import JobAction, JobState
@@ -84,6 +86,40 @@ def test_cpu_crack_can_crack_only_hc22000(tool):
                                                bssid="fc:69:0c:15:82:64"))
 
 
+_FT_COMMON = "*020000000001*020000000002*66742d70736b2d74657374"
+_FT_IDENTIFIERS = "*a1b2*72306b682e6578616d706c652e74657374*020000000001"
+_FT_SNONCE = "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+_FT_ANONCE_DRIFT = "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e30"
+_FT_EAPOL_PREFIX = "020300fb02010b00100000000000000001"
+_FT_EAPOL_SUFFIX = (
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "009c30260100000fac040100000fac040100000fac0400000100a296df8e01721dbac1685bc39d5b78ad3603a1b201376d"
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    "000000000000000000000000000000000000000000000000000000000000000000000106020000000001031172306b68"
+    "2e6578616d706c652e74657374")
+_FT_EAPOL_PAIR3_WITH_ANONCE_DRIFT = (
+    f"WPA*04*8d98ed12e5f7c4525f5628d4619618df{_FT_COMMON}"
+    f"*{_FT_SNONCE}*{_FT_EAPOL_PREFIX}{_FT_ANONCE_DRIFT}{_FT_EAPOL_SUFFIX}"
+    f"*83{_FT_IDENTIFIERS}")
+
+
+def test_cpu_crack_corrects_a_key_version_3_anonce(tool, tmp_path):
+    ssid = b"kv3-net"
+    pmk = wpa.derive_pmk("kv3-secret", ssid)
+    mac_ap, mac_sta = bytes.fromhex("112233445566"), bytes.fromhex("aabbccddeeff")
+    snonce = bytes.fromhex("5b" * 32)
+    true = bytes.fromhex("a0" * 28) + (1000).to_bytes(4, "big")
+    stored = bytes.fromhex("a0" * 28) + (1001).to_bytes(4, "big")
+    frame = eapol_key(key_info=0x010B, key_len=0, replay=1, nonce=snonce)
+    mic = eapol_mic_aes_cmac(derive_ptk_sha256(pmk, mac_ap, mac_sta, true, snonce, KCK_LEN), frame)
+    line = (f"WPA*02*{mic.hex()}*{mac_ap.hex()}*{mac_sta.hex()}*{ssid.hex()}"
+            f"*{stored.hex()}*{frame.hex()}*80")
+
+    job = _launch(tool, tmp_path, [line], [["nope", "kv3-secret"]])
+
+    assert _poll_finished(tool, job).key == "kv3-secret"
+
+
 def test_cpu_crack_finds_a_stored_psk_sha256_pmkid(tool, tmp_path):
     ssid = "sha256-net"
     pmk = wpa.derive_pmk("sha256-secret", ssid.encode())
@@ -97,6 +133,15 @@ def test_cpu_crack_finds_a_stored_psk_sha256_pmkid(tool, tmp_path):
     job = _launch(tool, tmp_path, [line], [["nope", "sha256-secret"]])
 
     assert _poll_finished(tool, job).key == "sha256-secret"
+
+
+def test_cpu_crack_corrects_an_ft_psk_message_three_anonce(tool, tmp_path):
+    job = _launch(tool, tmp_path, [_FT_EAPOL_PAIR3_WITH_ANONCE_DRIFT],
+                  [["correct horse battery!", "correct horse battery"]])
+
+    result = _poll_finished(tool, job)
+
+    assert (result.status, result.key) == (ToolStatus.SUCCESS, "correct horse battery")
 
 
 def test_cpu_crack_finds_the_hashcat_example_key(tool, tmp_path):
