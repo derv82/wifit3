@@ -132,16 +132,6 @@ and reused (2.5x), on a high-end x86 laptop.
 `HMAC_AuthKey(E-S || psk || PKe || PKr)` directly, instead of going through `check_pin_half` per
 candidate. Keep `check_pin_half` as-is: it is the hostapd-shaped primitive the online path uses.
 
-## CPU Crack has no nonce error correction for key versions 1 and 2
-
-**Problem.** hashcat applies nonce error correction (last four ANonce bytes, +/-4, both byte
-orders) to EAPOL hashlines. CPU Crack matches hashcat 8 for key version 3 WPA*02 and FT-PSK WPA*04
-lines. Only key versions 1 and 2 still check the captured ANonce alone. A rare handshake with a
-drifted nonce cracks in hashcat and is missed by CPU Crack.
-
-Measured before key version 3 was corrected: 1.09x (one byte order) to 1.19x (both) CPU per
-password; 70 of 71 local EAPOL lines have the NC bit set.
-
 ## Vault Verify from Focus leaves the card on the AP's channel
 
 **Problem.** In Focus, open the Vault, select a cracked AP on a different channel than the Focus

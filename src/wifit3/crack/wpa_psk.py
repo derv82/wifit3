@@ -1,8 +1,10 @@
 """WPA/WPA2-PSK checks for key versions 1-3, PMKIDs, and FT-PSK."""
 import hashlib
 import hmac
+from functools import cache
 
 from wifit3.crack.hc22000_format import PMKID_SHA256_MESSAGE_PAIR_BIT, Hc22000Line
+from wifit3.crack.handshake import NONCE_CORRECTION_BIT, NONCE_ERROR_CORRECTIONS
 from wifit3.dot11.wpa import (
     KCK_LEN,
     derive_ft_pmk_r0,
@@ -23,10 +25,8 @@ _NONCE_LEN = 32
 # hcxpcapngtool's FT message pairs 3 and 4 hold the SNonce in the ANONCE field (module_22000.c).
 _FT_MESSAGE_PAIRS_WITH_SNONCE_FIELD = frozenset({3, 4})
 _MESSAGE_PAIR_AP_LESS = 0x10
-_MESSAGE_PAIR_UNSWAPPED_COUNTER = 0x20
-_MESSAGE_PAIR_SWAPPED_COUNTER = 0x40
-_MESSAGE_PAIR_NC = 0x80
-_NONCE_ERROR_CORRECTIONS = 8
+_MESSAGE_PAIR_LE_ROUTER = 0x20
+_MESSAGE_PAIR_BE_ROUTER = 0x40
 
 
 def mic_for(psk: str, ssid: bytes, aa: bytes, spa: bytes, anonce: bytes, snonce: bytes,
@@ -77,49 +77,38 @@ def _ft_psk_matches(pmk: bytes, line: Hc22000Line) -> bool:
     else:
         snonce, anonce = frame_nonce, field_nonce
     pmk_r1 = derive_ft_pmk_r1(pmk_r0, r1khid, mac_sta)
-    for corrected_anonce in _keyver3_anonces(anonce, message_pair):
+    for corrected_anonce in _anonce_candidates(anonce, message_pair):
         kck = derive_ft_ptk(pmk_r1, snonce, corrected_anonce, mac_ap, mac_sta, KCK_LEN)
         if hmac.compare_digest(eapol_mic_aes_cmac(kck, eapol), expected):
             return True
     return False
 
 
-def _swap32(value: int) -> int:
-    return int.from_bytes(value.to_bytes(4, "big"), "little")
-
-
-def _keyver3_anonces(anonce: bytes, message_pair: int) -> list[bytes]:
-    if not (message_pair & _MESSAGE_PAIR_NC) or message_pair & _MESSAGE_PAIR_AP_LESS:
-        return [anonce]
+@cache
+def _anonce_candidates(anonce: bytes, message_pair: int) -> tuple[bytes, ...]:
+    if not (message_pair & NONCE_CORRECTION_BIT) or message_pair & _MESSAGE_PAIR_AP_LESS:
+        return (anonce,)
     counter = anonce[-4:]
-    origin = int.from_bytes(counter, "big")
-    if message_pair & _MESSAGE_PAIR_UNSWAPPED_COUNTER:
-        endian_swap = (False,)
-    elif message_pair & _MESSAGE_PAIR_SWAPPED_COUNTER:
-        endian_swap = (True,)
+    if message_pair & _MESSAGE_PAIR_LE_ROUTER:
+        byte_orders = ("big",)
+    elif message_pair & _MESSAGE_PAIR_BE_ROUTER:
+        byte_orders = ("little",)
     else:
-        endian_swap = (False, True)
+        byte_orders = ("big", "little")
     prefix = anonce[:-4]
-    found = [anonce]
-    seen = {counter}
-    half = _NONCE_ERROR_CORRECTIONS // 2
-    for extra_swap in endian_swap:
-        for step in range(_NONCE_ERROR_CORRECTIONS + 1):
-            delta = step - half
-            if extra_swap:
-                adjusted = (_swap32(origin) + delta) & 0xFFFFFFFF
-                raw = _swap32(adjusted).to_bytes(4, "big")
-            else:
-                raw = ((origin + delta) & 0xFFFFFFFF).to_bytes(4, "big")
-            if raw not in seen:
-                seen.add(raw)
-                found.append(prefix + raw)
-    return found
+    candidates = [anonce]
+    half = NONCE_ERROR_CORRECTIONS // 2
+    for byte_order in byte_orders:
+        origin = int.from_bytes(counter, byte_order)
+        candidates.extend(
+            prefix + ((origin + delta) & 0xFFFFFFFF).to_bytes(4, byte_order)
+            for delta in range(-half, half + 1) if delta)
+    return tuple(candidates)
 
 
 def psk_matches(pmk: bytes, line: Hc22000Line) -> bool:
     """True if this PMK cracks the hashline (key version 1, 2 or 3, or FT-PSK).
-    Key version 3 with message-pair bit 7 corrects the ANonce the way hashcat 8 does."""
+    EAPOL lines with message-pair bit 7 correct the ANonce the way hashcat 8 does."""
     if line.kind in ("03", "04"):
         return _ft_psk_matches(pmk, line)
     mac_ap, mac_sta = bytes.fromhex(line.mac_ap), bytes.fromhex(line.mac_sta)
@@ -135,16 +124,15 @@ def psk_matches(pmk: bytes, line: Hc22000Line) -> bool:
     snonce = eapol[_SNONCE_OFFSET:_SNONCE_OFFSET + _NONCE_LEN]
     anonce = bytes.fromhex(line.anonce)
     if key_descriptor_version == 1:
-        kck = derive_ptk(pmk, mac_ap, mac_sta, anonce, snonce, KCK_LEN)
-        return hmac.compare_digest(eapol_mic_hmac_md5(kck, eapol), expected)
-    if key_descriptor_version == 2:
-        kck = derive_ptk(pmk, mac_ap, mac_sta, anonce, snonce, KCK_LEN)
-        return hmac.compare_digest(eapol_mic(kck, eapol), expected)
-    if key_descriptor_version == 3:
-        bits = _message_pair_bits(line)
-        for corrected in _keyver3_anonces(anonce, bits):
-            kck = derive_ptk_sha256(pmk, mac_ap, mac_sta, corrected, snonce, KCK_LEN)
-            if hmac.compare_digest(eapol_mic_aes_cmac(kck, eapol), expected):
-                return True
+        derive_kck, calculate_mic = derive_ptk, eapol_mic_hmac_md5
+    elif key_descriptor_version == 2:
+        derive_kck, calculate_mic = derive_ptk, eapol_mic
+    elif key_descriptor_version == 3:
+        derive_kck, calculate_mic = derive_ptk_sha256, eapol_mic_aes_cmac
+    else:
         return False
+    for corrected_anonce in _anonce_candidates(anonce, _message_pair_bits(line)):
+        kck = derive_kck(pmk, mac_ap, mac_sta, corrected_anonce, snonce, KCK_LEN)
+        if hmac.compare_digest(calculate_mic(kck, eapol), expected):
+            return True
     return False

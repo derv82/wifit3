@@ -2,6 +2,8 @@
 import hashlib
 import hmac
 
+import pytest
+
 from wifit3.crack import wpa_psk
 from wifit3.crack.hc22000_format import Hc22000Line, parse_hc22000
 from wifit3.dot11.eapol import eapol_key, set_mic, MIC_OFFSET, MIC_LEN
@@ -101,54 +103,59 @@ def _stored_anonce(last: bytes) -> bytes:
     return b"\xa0" * 28 + last
 
 
-def _keyver3_line(true_anonce: bytes, stored_anonce: bytes, message_pair: str,
-                  *, key_info: int = 0x010B) -> Hc22000Line:
+def _eapol_line_with_anonce(true_anonce: bytes, stored_anonce: bytes, message_pair: str,
+                            *, key_descriptor_version: int = 3) -> Hc22000Line:
+    key_info = 0x0108 | key_descriptor_version
     eapol = eapol_key(key_info=key_info, key_len=0, replay=1, nonce=_SNONCE, key_data=_RSN_IE)
-    if key_info & 3 == 3:
-        kck = derive_ptk_sha256(_PMK, _AA, _SPA, true_anonce, _SNONCE, KCK_LEN)
-        mic = eapol_mic_aes_cmac(kck, eapol)
-    else:
+    if key_descriptor_version == 1:
+        kck = derive_ptk(_PMK, _AA, _SPA, true_anonce, _SNONCE, KCK_LEN)
+        mic = eapol_mic_hmac_md5(kck, eapol)
+    elif key_descriptor_version == 2:
         kck = derive_ptk(_PMK, _AA, _SPA, true_anonce, _SNONCE, KCK_LEN)
         mic = eapol_mic(kck, eapol)
+    else:
+        kck = derive_ptk_sha256(_PMK, _AA, _SPA, true_anonce, _SNONCE, KCK_LEN)
+        mic = eapol_mic_aes_cmac(kck, eapol)
     return Hc22000Line(kind="02", pmkid_or_mic=mic.hex(), mac_ap=_AA.hex(), mac_sta=_SPA.hex(),
                        essid=_SSID.hex(), anonce=stored_anonce.hex(), eapol=eapol.hex(),
                        message_pair=message_pair)
 
 
-def test_keyver3_nonce_correction_accepts_both_byte_orders_within_four():
+@pytest.mark.parametrize("key_descriptor_version", [1, 2, 3])
+def test_nonce_correction_accepts_both_router_byte_orders_for_all_key_versions(
+        key_descriptor_version):
     true = _stored_anonce((1000).to_bytes(4, "big"))
-    big = _stored_anonce((1001).to_bytes(4, "big"))
-    little = _stored_anonce((int.from_bytes(true[-4:], "little") + 1).to_bytes(4, "little"))
+    le_router = _stored_anonce((1001).to_bytes(4, "big"))
+    be_router = _stored_anonce((int.from_bytes(true[-4:], "little") + 1).to_bytes(4, "little"))
     far = _stored_anonce((1005).to_bytes(4, "big"))
-    assert wpa_psk.psk_matches(_PMK, _keyver3_line(true, big, "80"))
-    assert wpa_psk.psk_matches(_PMK, _keyver3_line(true, little, "80"))
-    assert wpa_psk.psk_matches(_PMK, _keyver3_line(true, true, "80"))
-    assert not wpa_psk.psk_matches(_PMK, _keyver3_line(true, far, "80"))
-    assert not wpa_psk.psk_matches(_PMK, _keyver3_line(true, big, "00"))
-    assert not wpa_psk.psk_matches(_PMK, _keyver3_line(true, big, "90"))
+
+    def line(stored, pair):
+        return _eapol_line_with_anonce(
+            true, stored, pair, key_descriptor_version=key_descriptor_version)
+
+    assert wpa_psk.psk_matches(_PMK, line(le_router, "80"))
+    assert wpa_psk.psk_matches(_PMK, line(be_router, "80"))
+    assert wpa_psk.psk_matches(_PMK, line(true, "80"))
+    assert not wpa_psk.psk_matches(_PMK, line(far, "80"))
+    assert not wpa_psk.psk_matches(_PMK, line(le_router, "00"))
+    assert not wpa_psk.psk_matches(_PMK, line(le_router, "90"))
 
 
-def test_keyver3_nonce_correction_bit_selects_one_byte_order():
+def test_nonce_correction_bit_selects_one_router_byte_order():
     true = _stored_anonce((1000).to_bytes(4, "big"))
-    big = _stored_anonce((1001).to_bytes(4, "big"))
-    little = _stored_anonce((int.from_bytes(true[-4:], "little") + 1).to_bytes(4, "little"))
-    assert wpa_psk.psk_matches(_PMK, _keyver3_line(true, big, "a0"))
-    assert not wpa_psk.psk_matches(_PMK, _keyver3_line(true, little, "a0"))
-    assert wpa_psk.psk_matches(_PMK, _keyver3_line(true, little, "c0"))
-    assert not wpa_psk.psk_matches(_PMK, _keyver3_line(true, big, "c0"))
+    le_router = _stored_anonce((1001).to_bytes(4, "big"))
+    be_router = _stored_anonce((int.from_bytes(true[-4:], "little") + 1).to_bytes(4, "little"))
+    assert wpa_psk.psk_matches(_PMK, _eapol_line_with_anonce(true, le_router, "a0"))
+    assert not wpa_psk.psk_matches(_PMK, _eapol_line_with_anonce(true, be_router, "a0"))
+    assert wpa_psk.psk_matches(_PMK, _eapol_line_with_anonce(true, be_router, "c0"))
+    assert not wpa_psk.psk_matches(_PMK, _eapol_line_with_anonce(true, le_router, "c0"))
 
 
-def test_keyver3_nonce_correction_wraps_the_counter():
+def test_nonce_correction_wraps_the_counter():
     zero = _stored_anonce((0).to_bytes(4, "big"))
     maximum = _stored_anonce((0xFFFFFFFF).to_bytes(4, "big"))
-    assert wpa_psk.psk_matches(_PMK, _keyver3_line(zero, maximum, "a0"))
-    assert wpa_psk.psk_matches(_PMK, _keyver3_line(maximum, zero, "a0"))
-
-
-def test_keyver2_nonce_is_not_corrected():
-    true = _stored_anonce((1000).to_bytes(4, "big"))
-    stored = _stored_anonce((1001).to_bytes(4, "big"))
-    assert not wpa_psk.psk_matches(_PMK, _keyver3_line(true, stored, "80", key_info=0x010A))
+    assert wpa_psk.psk_matches(_PMK, _eapol_line_with_anonce(zero, maximum, "a0"))
+    assert wpa_psk.psk_matches(_PMK, _eapol_line_with_anonce(maximum, zero, "a0"))
 
 
 def test_psk_matches_key_descriptor_version_3():
@@ -190,8 +197,8 @@ _FT_COMMON = "*020000000001*020000000002*66742d70736b2d74657374"
 _FT_IDENTIFIERS = "*a1b2*72306b682e6578616d706c652e74657374*020000000001"
 _FT_PMKID_LINE = f"WPA*03*a296df8e01721dbac1685bc39d5b78ad{_FT_COMMON}***{_FT_IDENTIFIERS}"
 _FT_ANONCE = "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
-_FT_BIG_ENDIAN_DRIFT = "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e30"
-_FT_LITTLE_ENDIAN_DRIFT = "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2d2d2e2f"
+_FT_LE_ROUTER_DRIFT = "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e30"
+_FT_BE_ROUTER_DRIFT = "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2d2d2e2f"
 _FT_SNONCE = "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
 _FT_EAPOL_PREFIX = "020300fb02010b00100000000000000001"
 _FT_EAPOL_SUFFIX = (
@@ -206,7 +213,7 @@ _FT_EAPOL_LINE = (
     f"*80{_FT_IDENTIFIERS}")
 _FT_EAPOL_PAIR3_DRIFT_LINE = (
     f"WPA*04*8d98ed12e5f7c4525f5628d4619618df{_FT_COMMON}"
-    f"*{_FT_SNONCE}*{_FT_EAPOL_PREFIX}{_FT_BIG_ENDIAN_DRIFT}{_FT_EAPOL_SUFFIX}"
+    f"*{_FT_SNONCE}*{_FT_EAPOL_PREFIX}{_FT_LE_ROUTER_DRIFT}{_FT_EAPOL_SUFFIX}"
     f"*83{_FT_IDENTIFIERS}")
 
 
@@ -233,25 +240,25 @@ def test_psk_matches_ft_eapol_known_answer():
 
 
 def test_psk_matches_ft_eapol_corrects_known_answer_anonce_drift():
-    big_endian_drift = _ft_line_with_field_anonce(_FT_BIG_ENDIAN_DRIFT, "80")
-    little_endian_drift = _ft_line_with_field_anonce(_FT_LITTLE_ENDIAN_DRIFT, "80")
-    assert _matches("correct horse battery", big_endian_drift)
-    assert _matches("correct horse battery", little_endian_drift)
-    assert not _matches("correct horse battery!", big_endian_drift)
-    assert not _matches("correct horse battery", _ft_line_with_field_anonce(_FT_BIG_ENDIAN_DRIFT,
+    le_router_drift = _ft_line_with_field_anonce(_FT_LE_ROUTER_DRIFT, "80")
+    be_router_drift = _ft_line_with_field_anonce(_FT_BE_ROUTER_DRIFT, "80")
+    assert _matches("correct horse battery", le_router_drift)
+    assert _matches("correct horse battery", be_router_drift)
+    assert not _matches("correct horse battery!", le_router_drift)
+    assert not _matches("correct horse battery", _ft_line_with_field_anonce(_FT_LE_ROUTER_DRIFT,
                                                                              "00"))
-    assert not _matches("correct horse battery", _ft_line_with_field_anonce(_FT_BIG_ENDIAN_DRIFT,
+    assert not _matches("correct horse battery", _ft_line_with_field_anonce(_FT_LE_ROUTER_DRIFT,
                                                                              "90"))
 
 
 def test_psk_matches_ft_eapol_honors_nonce_counter_byte_order_flags():
-    assert _matches("correct horse battery", _ft_line_with_field_anonce(_FT_BIG_ENDIAN_DRIFT, "a0"))
+    assert _matches("correct horse battery", _ft_line_with_field_anonce(_FT_LE_ROUTER_DRIFT, "a0"))
     assert not _matches("correct horse battery", _ft_line_with_field_anonce(
-        _FT_LITTLE_ENDIAN_DRIFT, "a0"))
+        _FT_BE_ROUTER_DRIFT, "a0"))
     assert _matches("correct horse battery", _ft_line_with_field_anonce(
-        _FT_LITTLE_ENDIAN_DRIFT, "c0"))
+        _FT_BE_ROUTER_DRIFT, "c0"))
     assert not _matches("correct horse battery", _ft_line_with_field_anonce(
-        _FT_BIG_ENDIAN_DRIFT, "c0"))
+        _FT_LE_ROUTER_DRIFT, "c0"))
 
 
 def test_psk_matches_ft_eapol_corrects_frame_anonce_for_message_pairs_three_and_four():

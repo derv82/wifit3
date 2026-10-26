@@ -80,14 +80,9 @@ _ZERO_MIC = b"\x00" * _MIC_LEN
 # skipped when timestamps are unset (fixtures / round-tripped pcaps).
 _EAPOL_PAIR_WINDOW_S = 5.0
 
-# Nonce-error-correction tolerance (hcxpcapngtool --nonce-error-corrections, 8 by
-# default): pair a keystone with a donor whose replay counter is within this many
-# of the expected value, then set the NC bit so hashcat brute-forces the small
-# nonce drift. Exact (gap 0) is the norm; the tolerance only bridges lossy
-# captures / AP retransmits that bumped the counter or the ANonce.
-_NC_MAX = 8
-# message_pair bit 7: tells hashcat nonce-error-correction is needed/allowed.
-_NC_BIT = 0x80
+# hcxpcapngtool/hashcat --nonce-error-corrections default and MESSAGEPAIR bit 7.
+NONCE_ERROR_CORRECTIONS = 8
+NONCE_CORRECTION_BIT = 0x80
 
 # ----- AKM crackability (00-0F-AC suite numbers) -----------------------------
 # A capture is worth emitting only if hashcat -m 22000 can crack the *specific
@@ -335,7 +330,7 @@ def _pairs_ignoring_akm(hs: Handshake) -> List[CrackablePair]:
     tell 'a usable 4-way arrived but its AKM is worthless' from 'no 4-way yet'.
 
     Each usable keystone (a complete M2, or a non-zeroed M4) is paired with every
-    ANonce donor (M1/M3) whose replay counter is within ``_NC_MAX`` of the
+    ANonce donor (M1/M3) whose replay counter is within ``NONCE_ERROR_CORRECTIONS`` of the
     expected value (the nonce-error-correction tolerance) AND that sits on the
     correct side of it in arrival order: the 4-way runs M1→M2→M3→M4, so the
     lower-numbered message is captured first. Candidates are then taken best-first:
@@ -373,7 +368,7 @@ def _pairs_ignoring_akm(hs: Handshake) -> List[CrackablePair]:
                 if not _within_window(d, mic_f):
                     continue
                 rcgap = abs(_replay(d) - exp_rc)
-                if rcgap > _NC_MAX:
+                if rcgap > NONCE_ERROR_CORRECTIONS:
                     continue
                 dist = abs(pos[id(d)] - pos[id(mic_f)])
                 cands.append((mic_f.akm_selection_rejected, rcgap, confidence, dist,
@@ -424,7 +419,7 @@ def hc22000_line(ssid: str, hs: Handshake, pair: CrackablePair) -> str:
         f"*{ssid_hex(ssid)}"
         f"*{pair.anonce_frame.nonce.hex()}"
         f"*{bytes(payload).hex()}"
-        f"*{pair.pair_byte | _NC_BIT:02x}"
+        f"*{pair.pair_byte | NONCE_CORRECTION_BIT:02x}"
     )
     if is_ft:
         line += f"*{f.mdid.hex()}*{f.r0khid.hex()}*{f.r1khid.hex()}"
