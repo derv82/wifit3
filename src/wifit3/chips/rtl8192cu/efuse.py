@@ -192,3 +192,68 @@ def rtl_get_hwinfo(rtlpriv: RtlPriv, max_size: int, hwinfo: bytearray, params: l
     rtlefuse.eeprom_oemid = hwinfo[params[8]]
     rtlefuse.channel_plan = params[9]
     return 0
+
+
+def efuse_read_1byte(rtlpriv: RtlPriv, address: int) -> int:
+    """efuse.c:70."""
+    io = rtlpriv.io
+    efuse_len = maps.EFUSE_REAL_CONTENT_SIZE
+    if address >= efuse_len:
+        return 0xFF
+    io.write8(maps.EFUSE_CTRL + 1, address & 0xFF)
+    bytetemp = io.read8(maps.EFUSE_CTRL + 2)
+    io.write8(maps.EFUSE_CTRL + 2, ((address >> 8) & 0x03) | (bytetemp & 0xFC))
+
+    bytetemp = io.read8(maps.EFUSE_CTRL + 3)
+    io.write8(maps.EFUSE_CTRL + 3, bytetemp & 0x7F)
+
+    bytetemp = io.read8(maps.EFUSE_CTRL + 3)
+    k = 0
+    while not (bytetemp & 0x80):
+        bytetemp = io.read8(maps.EFUSE_CTRL + 3)
+        k += 1
+        if k == 1000:
+            break
+    return io.read8(maps.EFUSE_CTRL)
+
+
+def _rtl_fw_block_write_usb(rtlpriv: RtlPriv, buffer: bytes) -> None:
+    """efuse.c:1299."""
+    start = C.START_ADDRESS
+    offset = 0
+    size = len(buffer)
+    while size > 0:
+        if size >= 64:
+            n = 64
+        elif size >= 8:
+            n = 8
+        else:
+            n = 1
+        rtlpriv.io.write_chunk(start, buffer[offset:offset + n])
+        start += n
+        offset += n
+        size -= n
+
+
+def rtl_fw_block_write(rtlpriv: RtlPriv, buffer: bytes) -> None:
+    """efuse.c:1321."""
+    if rtlpriv.rtlhal.interface == C.INTF_PCI:
+        for i, byte in enumerate(buffer):
+            rtlpriv.io.write8(C.START_ADDRESS + i, byte)
+    elif rtlpriv.rtlhal.interface == C.INTF_USB:
+        _rtl_fw_block_write_usb(rtlpriv, buffer)
+
+
+def rtl_fw_page_write(rtlpriv: RtlPriv, page: int, buffer: bytes) -> None:
+    """efuse.c:1336."""
+    u8page = page & 0x07
+    value8 = (rtlpriv.io.read8(C.REG_MCUFWDL + 2) & 0xF8) | u8page
+    rtlpriv.io.write8(C.REG_MCUFWDL + 2, value8)
+    rtl_fw_block_write(rtlpriv, buffer)
+
+
+def rtl_fill_dummy(pfwbuf: bytes) -> bytes:
+    """efuse.c:1350: zero-pad to a 4-byte multiple."""
+    remain = len(pfwbuf) % 4
+    remain = 0 if remain == 0 else 4 - remain
+    return bytes(pfwbuf) + bytes(remain)

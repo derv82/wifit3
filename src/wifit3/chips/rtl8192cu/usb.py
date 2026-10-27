@@ -1,4 +1,4 @@
-"""rtlwifi usb.c probe path and rtl8192cu/sw.c init_sw_vars."""
+"""rtlwifi usb.c probe path."""
 from __future__ import annotations
 
 import errno
@@ -6,8 +6,9 @@ from dataclasses import dataclass
 
 from . import constants as C
 from .hw import rtl92cu_read_eeprom_info
-from .mac import IS_81XXC_VENDOR_UMC_B_CUT, IS_92C_SERIAL, IS_VENDOR_UMC_A_CUT, rtl92c_read_chip_version
+from .mac import rtl92c_read_chip_version
 from .priv import RtlPriv
+from .sw import rtl92cu_init_sw_vars
 from .trx import rtl8192cu_endpoint_mapping
 
 USB_DIR_IN = 0x80
@@ -73,26 +74,35 @@ def _rtl_usb_init(rtlpriv: RtlPriv, endpoints: list[UsbEndpointDescriptor], is_h
     return _rtl_usb_init_rx(rtlpriv)
 
 
-def rtl92cu_init_sw_vars(rtlpriv: RtlPriv) -> None:
-    """rtl8192cu/sw.c:31; the firmware itself loads in hw_init."""
-    rtlpriv.dm.dm_initialgain_enable = True
-    rtlpriv.dm.dm_flag = 0
-    rtlpriv.dm.disable_framebursting = False
-    rtlpriv.dm.thermalvalue = 0
-    version = rtlpriv.rtlhal.version
-    if IS_VENDOR_UMC_A_CUT(version) and not IS_92C_SERIAL(version):
-        rtlpriv.rtlhal.fw_name = "rtl8192cufw_A.bin"
-    elif IS_81XXC_VENDOR_UMC_B_CUT(version):
-        rtlpriv.rtlhal.fw_name = "rtl8192cufw_B.bin"
-    else:
-        rtlpriv.rtlhal.fw_name = "rtl8192cufw_TMSC.bin"
+def rtl_usb_init_sw(rtlpriv: RtlPriv) -> None:
+    """usb.c:310."""
+    mac = rtlpriv.mac80211
+    ppsc = rtlpriv.psc
+    rtlusb = rtlpriv.usb
+    ppsc.inactiveps = False
+    ppsc.leisure_ps = False
+    ppsc.fwctrl_lps = False
+    ppsc.reg_fwctrl_lps = 3
+    ppsc.reg_max_lps_awakeintvl = 5
+    ppsc.fwctrl_psmode = C.FW_PS_DTIM_MODE
+    mac.beacon_interval = 100
+    mac.min_space_cfg = 0
+    mac.max_mss_density = 0
+    mac.current_ampdu_density = 7
+    mac.current_ampdu_factor = 3
+    rtlusb.acm_method = C.EACMWAY2_SW
+    rtlusb.irq_mask[0] = 0xFFFFFFFF
+    rtlusb.irq_mask[1] = 0xFFFFFFFF
+    rtlusb.disablehwsm = True
 
 
 def rtl_usb_probe(rtlpriv: RtlPriv, endpoints: list[UsbEndpointDescriptor], is_high_speed: bool) -> None:
-    """usb.c:951, the register-touching steps: chip version, EFUSE, endpoint config."""
+    """usb.c:951: chip version, EFUSE, endpoint config, sw state, firmware load."""
     rtl92c_read_chip_version(rtlpriv)
     rtl92cu_read_eeprom_info(rtlpriv)
     err = _rtl_usb_init(rtlpriv, endpoints, is_high_speed)
     if err:
         raise ProbeError(err, "_rtl_usb_init failed")
-    rtl92cu_init_sw_vars(rtlpriv)
+    rtl_usb_init_sw(rtlpriv)
+    if rtl92cu_init_sw_vars(rtlpriv):
+        raise ProbeError(-errno.ENODEV, "Can't init_sw_vars")

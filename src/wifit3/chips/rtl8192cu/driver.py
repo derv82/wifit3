@@ -9,6 +9,7 @@ from wifit3.chips.driver import Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.models.device_id import DeviceID
 
+from .hw import rtl92cu_hw_init
 from .priv import RtlPriv
 from .transport import RTL8192CUTransport
 from .usb import ProbeError, UsbEndpointDescriptor, rtl_usb_probe
@@ -43,13 +44,16 @@ class RTL8192CUDriver(Driver):
         self._disconnect_callback = cb
 
     def _bringup(self) -> None:
-        """Everything the cold-boot capture records, from rtl_usb_probe on."""
+        """Everything the cold-boot capture records, from rtl_usb_probe through rtl92cu_hw_init."""
         try:
             rtl_usb_probe(self.priv, self._endpoints, self._is_high_speed)
         except ProbeError as error:
             raise BringUpError("RTL8192CU probe", str(error)) from error
         self.mac_address = self.priv.efuse.dev_addr.hex(":")
-        raise BringUpError("RTL8192CU hw_init", "rtl92cu_hw_init is not ported")
+        err = rtl92cu_hw_init(self.priv)
+        if err:
+            raise BringUpError("RTL8192CU hw_init", f"rtl92cu_hw_init failed ({err})")
+        raise BringUpError("RTL8192CU start", "rtl_usb_start after hw_init (RX config, monitor) is not ported")
 
     async def connect(self, progress_cb: ProgressCallback | None = None) -> bool:
         loop = asyncio.get_running_loop()
@@ -61,7 +65,7 @@ class RTL8192CUDriver(Driver):
             self._endpoints = [UsbEndpointDescriptor(ep.bEndpointAddress, ep.bmAttributes)
                                for ep in self.transport.interface]
             self._is_high_speed = self.transport.is_high_speed()
-            progress(0.05, "Reading EFUSE")
+            progress(0.05, "Reading EFUSE, downloading firmware, initialising MAC/BB/RF")
             await loop.run_in_executor(None, self._bringup)
         except Exception as error:
             self.transport.release()

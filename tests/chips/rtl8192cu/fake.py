@@ -54,13 +54,20 @@ class FakeRegisters:
         self.regs = dict(regs or {})
         self.efuse = efuse if efuse is not None else bytearray(b"\xff" * C.EFUSE_REAL_CONTENT_LEN)
         self.log: list[tuple[str, int, int, int]] = []
+        self.chunks: list[tuple[int, bytes]] = []
         self._efuse_addr = 0
 
-    def _read(self, addr: int, width: int) -> int:
+    def _value(self, addr: int, width: int) -> int:
         if addr == C.REG_EFUSE_CTRL and width == 4:
-            value = 0x80000000 | (self._efuse_addr << 8) | self.efuse[self._efuse_addr]
-        else:
-            value = self.regs.get(addr, 0) & ((1 << (8 * width)) - 1)
+            return 0x80000000 | (self._efuse_addr << 8) | self.efuse[self._efuse_addr]
+        if addr == C.REG_EFUSE_CTRL and width == 1:
+            return self.efuse[self._efuse_addr]
+        if addr == C.REG_EFUSE_CTRL + 3 and width == 1:
+            return 0x80
+        return self.regs.get(addr, 0) & ((1 << (8 * width)) - 1)
+
+    def _read(self, addr: int, width: int) -> int:
+        value = self._value(addr, width)
         self.log.append(("R", addr, width, value))
         return value
 
@@ -90,9 +97,40 @@ class FakeRegisters:
     def write32(self, addr: int, value: int) -> None:
         self._write(addr, 4, value)
 
+    def write_chunk(self, addr: int, data: bytes) -> None:
+        self.log.append(("C", addr, len(data), int.from_bytes(bytes(data), "little")))
+        self.chunks.append((addr, bytes(data)))
+
+    def writes(self, addr: int) -> list[int]:
+        return [v for (k, a, _w, v) in self.log if k == "W" and a == addr]
+
     def addrs(self, kind: str) -> list[int]:
         return [a for (k, a, _w, _v) in self.log if k == kind]
 
 
 SYS_CFG_88C_TSMC = 0x04400735
 NORMAL_SIE_EP_2OUT = {C.REG_NORMAL_SIE_EP + 1: 0x32, C.REG_NORMAL_SIE_EP + 2: 0x00}
+
+
+class FakeChip(FakeRegisters):
+    """FakeRegisters plus the hardware handshakes rtl92cu_hw_init polls on."""
+
+    def __init__(self, regs: dict[int, int] | None = None, efuse: bytearray | None = None) -> None:
+        super().__init__({C.REG_APS_FSMCO: C.PFM_ALDN, **(regs or {})}, efuse)
+
+    def _value(self, addr: int, width: int) -> int:
+        value = super()._value(addr, width)
+        if addr == C.REG_APS_FSMCO and width == 2:
+            value &= ~C.APFM_ONMAC
+        elif addr == C.REG_LLT_INIT:
+            value &= 0x3FFFFFFF
+        elif addr == C.REG_MCUFWDL and width == 4:
+            value |= C.FWDL_CHKSUM_RPT | C.WINTINI_RDY
+        return value
+
+
+def probed_efuse(pa_setting: int = 0xFF, **logical) -> bytearray:
+    """A physical EFUSE image for logical_map(**logical) with ``pa_setting`` at byte 0x1FA."""
+    phys = encode_physical(logical_map(**logical))
+    phys[0x1FA] = pa_setting
+    return phys
