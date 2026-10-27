@@ -935,7 +935,7 @@ class FocusViewV2(Screen):
             ))
             self._log(treelog.branch("runs Broadcom wps_monitor"))
             self._log(treelog.branch(
-                "[link=https://github.com/qkaiser/broadcom-wps][cyan]github.com/qkaiser/broadcom-wps[/cyan][/link]"
+                "[link=https://github.com/derv82/wifit3/discussions/135][cyan]derv82/wifit3 discussion#135[/cyan][/link]"
             ))
         elif implementation is WpsImplementation.HOSTAPD:
             self._log(treelog.branch("[dim][bold]broadcom-wps:[/bold] hostapd, unaffected[/dim]"))
