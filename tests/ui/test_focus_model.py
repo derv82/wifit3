@@ -439,7 +439,7 @@ def test_router_identity_details_shows_source_provenance():
     assert details is not None
     assert "[bold]MikroTik hAP ac²[/bold]" in details
     assert "[dim]Model:[/dim] hAP ac² [dim](WSC Beacon)[/dim]" in details
-    assert "[dim]Manufacturer:[/dim] MikroTik [dim](WSC Beacon)[/dim]" in details
+    assert "[dim]Manuf:[/dim] MikroTik [dim](WSC Beacon)[/dim]" in details
 
 
 def test_router_identity_details_can_show_m1_and_oui_separately():
@@ -451,7 +451,7 @@ def test_router_identity_details_can_show_m1_and_oui_separately():
     assert details is not None
     assert "[bold]Cisco AP-500[/bold]" in details
     assert "[dim]Model:[/dim] AP-500 [dim](WSC M1)[/dim]" in details
-    assert "[dim]Manufacturer:[/dim] Cisco [dim](WSC M1)[/dim]" in details
+    assert "[dim]Manuf:[/dim] Cisco [dim](WSC M1)[/dim]" in details
     assert "[dim]IEEE OUI:[/dim] Apple" in details
 
 
@@ -465,7 +465,7 @@ def test_router_identity_details_asus_wsc_beacon():
     assert fm.router_identity_details(ap) == "\n".join([
         "[bold]ASUS RT-AC66U[/bold]",
         "[dim]Model:[/dim] RT-AC66U [dim](WSC Beacon)[/dim]",
-        "[dim]Manufacturer:[/dim] ASUS [dim](WSC Beacon)[/dim]",
+        "[dim]Manuf:[/dim] ASUS [dim](WSC Beacon)[/dim]",
         "[dim]IEEE OUI:[/dim] ASUS",
     ])
 
@@ -480,7 +480,7 @@ def test_router_identity_details_netgear_wsc_m1():
     assert fm.router_identity_details(ap) == "\n".join([
         "[bold]Netgear C3700-100NAS[/bold]",
         "[dim]Model:[/dim] C3700-100NAS [dim](WSC M1)[/dim]",
-        "[dim]Manufacturer:[/dim] Netgear [dim](WSC M1)[/dim]",
+        "[dim]Manuf:[/dim] Netgear [dim](WSC M1)[/dim]",
         "[dim]IEEE OUI:[/dim] Netgear",
     ])
 
@@ -495,7 +495,7 @@ def test_router_identity_details_odm_wsc_beacon_with_branded_oui():
     assert fm.router_identity_details(ap) == "\n".join([
         "[bold]Jensen of Scandinavia Air:Link 5000AC[/bold]",
         "[dim]Model:[/dim] Jensen of Scandinavia Air:Link 5000AC [dim](WSC Beacon)[/dim]",
-        "[dim]Manufacturer:[/dim] Jensen [dim](IEEE OUI)[/dim]",
+        "[dim]Manuf:[/dim] Jensen [dim](IEEE OUI)[/dim]",
         "[dim]Chipset:[/dim] Ralink [dim](WSC)[/dim]",
     ])
 
@@ -510,7 +510,7 @@ def test_router_identity_details_includes_device_type():
     assert details == "\n".join([
         "[bold]HP OfficeJet Pro (printer)[/bold]",
         "[dim]Model:[/dim] OfficeJet Pro [dim](WSC M1)[/dim]",
-        "[dim]Manufacturer:[/dim] HP [dim](WSC M1)[/dim]",
+        "[dim]Manuf:[/dim] HP [dim](WSC M1)[/dim]",
         "[dim]Device Type:[/dim] printer [dim](WSC M1)[/dim]",
     ])
 

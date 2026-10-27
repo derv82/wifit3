@@ -201,11 +201,11 @@ def router_identity_details(ap: AccessPoint) -> str | None:
     if ident.manufacturer:
         mfr_src = getattr(ident, "manufacturer_source", None) or ident.get(IdKey.MANUFACTURER)[1]
         src_label = mfr_src.label if mfr_src else ""
-        rows.append(f"[dim]Manufacturer:[/dim] {escape(ident.manufacturer)} [dim]({src_label})[/dim]")
+        rows.append(f"[dim]Manuf:[/dim] {escape(ident.manufacturer)} [dim]({src_label})[/dim]")
     if ident.device_name and ident.device_name != ident.model:
         dev_src = ident.get(IdKey.DEVICE_NAME)[1]
         src_label = dev_src.label if dev_src else ""
-        rows.append(f"[dim]Device Name:[/dim] {escape(ident.device_name)} [dim]({src_label})[/dim]")
+        rows.append(f"[dim]Device:[/dim] {escape(ident.device_name)} [dim]({src_label})[/dim]")
     if ident.serial_number:
         sn_src = ident.get(IdKey.SERIAL_NUMBER)[1]
         src_label = sn_src.label if sn_src else ""
