@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Callable
 
 import usb.core
@@ -12,7 +13,7 @@ from wifit3.errors import BringUpError, is_device_gone
 from wifit3.models.device_id import DeviceID
 
 from . import constants as C
-from .base import rtl_watchdog_wq_callback
+from .base import ieee80211_is_ctl, rtl_watchdog_wq_callback
 from .core import (
     Cfg80211ChanDef,
     ieee80211_channel_to_frequency,
@@ -37,6 +38,8 @@ from .usb import (
     rtl_usb_stop,
     rtl_usb_tx,
 )
+
+logger = logging.getLogger(__name__)
 
 WATCHDOG_SECONDS = C.RTL_WATCH_DOG_TIME / 1000
 MONITOR_FILTER_FLAGS = C.FIF_ALLMULTI | C.FIF_CONTROL | C.FIF_OTHER_BSS
@@ -119,6 +122,9 @@ class RTL8192CUDriver(Driver):
         rtl_op_config(self.priv, C.IEEE80211_CONF_CHANGE_CHANNEL, chandef)
 
     async def connect(self, progress_cb: ProgressCallback | None = None) -> bool:
+        """rtl_op_start returns early once the HAL is started (core.c:135)."""
+        if self._started:
+            return True
         loop = asyncio.get_running_loop()
         progress = progress_cb or (lambda _value, _message: None)
         try:
@@ -149,12 +155,31 @@ class RTL8192CUDriver(Driver):
 
     async def _watchdog(self) -> None:
         """rtl_op_start fires the watchdog timer once straight away (core.c:141), then every
-        RTL_WATCH_DOG_TIME (base.c:2221)."""
+        RTL_WATCH_DOG_TIME (base.c:2221); the timer re-arms whatever the tick did."""
         loop = asyncio.get_running_loop()
         while True:
             async with self._io_lock:
-                await loop.run_in_executor(None, rtl_watchdog_wq_callback, self.priv)
+                try:
+                    await loop.run_in_executor(None, rtl_watchdog_wq_callback, self.priv)
+                except Exception as error:
+                    if is_device_gone(error):
+                        self._device_gone = True
+                        return
+                    logger.warning("RTL8192CU watchdog tick failed: %s", error)
             await asyncio.sleep(WATCHDOG_SECONDS)
+
+    async def _cancel_watchdog(self) -> None:
+        """rtl_deinit_deferred_work's cancel_delayed_work_sync (base.c:478): a tick in flight
+        holds _io_lock, so taking it first waits for that tick to finish."""
+        if self._watchdog_task is None:
+            return
+        async with self._io_lock:
+            self._watchdog_task.cancel()
+        try:
+            await self._watchdog_task
+        except asyncio.CancelledError:
+            pass
+        self._watchdog_task = None
 
     def _read_once(self) -> bytes | None:
         return self.transport.bulk_read(USB_DIR_IN | self.priv.usb.in_ep, self.priv.usb.rx_max_size,
@@ -212,8 +237,8 @@ class RTL8192CUDriver(Driver):
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """HWSEQ_EN is set only under firmware-controlled LPS (trx.c:600), never on USB, and
-        mac80211 assigns no sequence to monitor-injected frames: stamp it here."""
-        if len(frame_bytes) < 24:
+        mac80211 assigns no sequence to monitor-injected frames: stamp it here. Control frames have none."""
+        if len(frame_bytes) < 24 or ieee80211_is_ctl(int.from_bytes(frame_bytes[0:2], "little")):
             return frame_bytes
         stamped = bytearray(frame_bytes)
         stamped[22:24] = ((self._tx_sequence << 4) | (stamped[22] & 0x0F)).to_bytes(2, "little")
@@ -265,13 +290,7 @@ class RTL8192CUDriver(Driver):
     async def close(self) -> None:
         """rtl_op_stop: the watchdog is cancelled first (rtl_deinit_deferred_work), then
         rtl_usb_stop idles the reader and rtl92cu_card_disable powers the chip down."""
-        if self._watchdog_task is not None:
-            self._watchdog_task.cancel()
-            try:
-                await self._watchdog_task
-            except asyncio.CancelledError:
-                pass
-            self._watchdog_task = None
+        await self._cancel_watchdog()
         try:
             if self._started and not self._device_gone:
                 async with self._io_lock:

@@ -1,13 +1,16 @@
 """Monitor-mode bring-up after hw_init: configure_filter, rtl_op_config tunes, the watchdog, active monitor."""
 import asyncio
+import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import usb.core
 
 from wifit3.chips.rtl8192cu import SUPPORTED_IDS
 from wifit3.chips.rtl8192cu import constants as C
+from wifit3.chips.rtl8192cu import driver as driver_module
 from wifit3.chips.rtl8192cu.base import rtl_watchdog_wq_callback
 from wifit3.chips.rtl8192cu.core import Cfg80211ChanDef, ieee80211_channel_to_frequency, rtl_op_config
 from wifit3.chips.rtl8192cu.driver import RTL8192CUDriver
@@ -243,3 +246,67 @@ async def test_rx_acks_toggle_the_ack_subtype_in_the_ctrl_filter():
     io.regs[C.REG_RXFLTMAP1] = C.BIT(13)
     await driver.disable_rx_acks()
     assert io.writes(C.REG_RXFLTMAP1)[-1] == 0
+
+
+async def test_close_waits_for_an_in_flight_watchdog_tick(monkeypatch):
+    driver, _io = await _connected_driver()
+    driver.transport = MagicMock()
+    order = []
+    tick_started, release_tick = threading.Event(), threading.Event()
+
+    def tick(_priv):
+        tick_started.set()
+        release_tick.wait(5)
+        order.append("tick done")
+
+    monkeypatch.setattr(driver_module, "rtl_watchdog_wq_callback", tick)
+    monkeypatch.setattr(driver, "_stop", lambda: order.append("card disable"))
+    loop = asyncio.get_running_loop()
+    driver._watchdog_task = loop.create_task(driver._watchdog())
+    await loop.run_in_executor(None, tick_started.wait, 5)
+    closing = loop.create_task(driver.close())
+    await asyncio.sleep(0.05)
+    assert order == []
+    release_tick.set()
+    await closing
+    assert order == ["tick done", "card disable"]
+
+
+@pytest.mark.parametrize("errno_value, device_gone", [(32, False), (19, True)])
+async def test_a_failed_watchdog_tick_leaves_close_working(monkeypatch, errno_value, device_gone):
+    driver, _io = await _connected_driver()
+    driver.transport = MagicMock()
+    ticks = []
+
+    def tick(_priv):
+        ticks.append(1)
+        raise usb.core.USBError("tick", errno=errno_value)
+
+    monkeypatch.setattr(driver_module, "rtl_watchdog_wq_callback", tick)
+    monkeypatch.setattr(driver_module, "WATCHDOG_SECONDS", 0)
+    stops = []
+    monkeypatch.setattr(driver, "_stop", lambda: stops.append(1))
+    driver._watchdog_task = asyncio.get_running_loop().create_task(driver._watchdog())
+    await asyncio.sleep(0.05)
+    assert (len(ticks) == 1) == device_gone
+    await driver.close()
+    assert stops == ([] if device_gone else [1])
+    driver.transport.release.assert_called_once()
+
+
+async def test_connect_on_a_started_driver_is_a_no_op():
+    driver, io = await _connected_driver()
+    driver.transport = MagicMock()
+    io.log.clear()
+    assert await driver.connect() is True
+    assert io.log == [] and driver._watchdog_task is None
+    driver.transport.claim.assert_not_called()
+
+
+async def test_sequence_stamp_skips_control_frames():
+    driver, _io = await _connected_driver()
+    driver._tx_sequence = 5
+    block_ack = bytes([0x94, 0x00]) + bytes(2) + SPOOFED + FAKE_MAC + bytes(range(1, 13))
+    assert driver._stamp_tx_seq(block_ack) == block_ack
+    deauth = bytes([0xC0, 0x00]) + bytes(2) + SPOOFED + FAKE_MAC + SPOOFED + bytes(4)
+    assert int.from_bytes(driver._stamp_tx_seq(deauth)[22:24], "little") == 5 << 4

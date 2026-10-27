@@ -18,6 +18,10 @@ def ieee80211_is_mgmt(fc: int) -> bool:
     return (fc & C.IEEE80211_FCTL_FTYPE) == C.IEEE80211_FTYPE_MGMT
 
 
+def ieee80211_is_ctl(fc: int) -> bool:
+    return (fc & C.IEEE80211_FCTL_FTYPE) == C.IEEE80211_FTYPE_CTL
+
+
 def ieee80211_is_data_qos(fc: int) -> bool:
     mask = C.IEEE80211_FCTL_FTYPE | C.IEEE80211_STYPE_QOS_DATA
     return (fc & mask) == (C.IEEE80211_FTYPE_DATA | C.IEEE80211_STYPE_QOS_DATA)
