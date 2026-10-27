@@ -47,6 +47,7 @@ from wifit3.campaigns.deauth import DeauthCampaign
 from wifit3.campaigns.decloak import DecloakCampaign, DecloakInput, named_sibling_ssid
 from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.probe import probe_ap
+from wifit3.campaigns.probe.broadcom_wps import WpsImplementation, probe_wps_implementation
 from .campaign_controls import CampaignControls
 from .decloak_modal import DecloakInputModal
 from wifit3.campaigns.wps.registrar import PinResult
@@ -903,6 +904,7 @@ class FocusViewV2(Screen):
         ))
         try:
             async with array.claim(iface):
+                self._log_wps_implementation(await probe_wps_implementation(iface, ap))
                 result = await probe_ap(iface, ap)
                 if result.ok:
                     self._log(treelog.leaf_ok(f"probe matched: [bold]{escape(ap.identity.summary)}[/bold]"))
@@ -925,6 +927,20 @@ class FocusViewV2(Screen):
                 self.query_one("#router", RouterEndpoint).update(**self._router_values())
             except Exception:
                 pass
+
+    def _log_wps_implementation(self, implementation: WpsImplementation) -> None:
+        if implementation is WpsImplementation.BROADCOM_WPS_MONITOR:
+            self._log(treelog.branch(
+                "[cyan bold]broadcom-wps:[/cyan bold] [black bold on green] may be vulnerable [/black bold on green]"
+            ))
+            self._log(treelog.branch("runs Broadcom wps_monitor"))
+            self._log(treelog.branch(
+                "[link=https://github.com/qkaiser/broadcom-wps][cyan]github.com/qkaiser/broadcom-wps[/cyan][/link]"
+            ))
+        elif implementation is WpsImplementation.HOSTAPD:
+            self._log(treelog.branch("[dim][bold]broadcom-wps:[/bold] hostapd, unaffected[/dim]"))
+        else:
+            self._log(treelog.branch("[dim][bold]broadcom-wps:[/bold] inconclusive[/dim]"))
 
     def _log_identity_details(self, ap: AccessPoint) -> None:
         details = fm.router_identity_details(ap)

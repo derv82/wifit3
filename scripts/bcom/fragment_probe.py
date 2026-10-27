@@ -17,7 +17,6 @@ import argparse
 import asyncio
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +27,7 @@ sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 from dev import select_device
 
 from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
+from wifit3.campaigns.probe.broadcom_wps import RESPONSE_TIMEOUT, WpsImplementation, enter_wps, send_fragment
 from wifit3.device.manager import wlan_close, wlan_ifaces
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.wsc import messages as M
@@ -39,59 +39,12 @@ from wifit3.wlan.array import WlanArray
 SCAN_SECONDS = 6.0
 HOP_INTERVAL = 0.5
 MAX_SWEEPS = 3
-RESPONSE_TIMEOUT = 10.0     # upstream DEFAULT_RESPONSE_TIMEOUT
-RETRANSMIT_INTERVAL = 1.0   # upstream RETRANSMIT_INTERVAL
-FRAME_DEAUTH = 0xC0
-FRAME_DISASSOC = 0xA0
-EAP_CODE_NAMES = {M.EAP_REQUEST: "EAP-Request", M.EAP_RESPONSE: "EAP-Response",
-                  M.EAP_SUCCESS: "EAP-Success", M.EAP_FAILURE: "EAP-Failure"}
-WSC_OPCODE_NAMES = {M.WSC_START: "WSC_START", M.WSC_ACK: "WSC_ACK", M.WSC_NACK: "WSC_NACK",
-                    M.WSC_MSG: "WSC_MSG", M.WSC_DONE: "WSC_DONE", M.WSC_FRAG_ACK: "WSC_FRAG_ACK"}
-IMPLEMENTATION_BY_RESPONSE = {
-    "REJECTED": "Broadcom wps_monitor (upstream: LIKELY_VULNERABLE)",
-    "ACK": "hostapd",
+IMPLEMENTATION_DESCRIPTIONS = {
+    WpsImplementation.BROADCOM_WPS_MONITOR: "Broadcom wps_monitor (upstream: LIKELY_VULNERABLE)",
+    WpsImplementation.HOSTAPD: "hostapd",
+    WpsImplementation.INCONCLUSIVE:
+        "inconclusive (upstream classifies only EAP-Failure / deauth reason 0, and WSC_FRAG_ACK)",
 }
-INCONCLUSIVE = "inconclusive (upstream classifies only EAP-Failure / deauth reason 0, and WSC_FRAG_ACK)"
-
-
-@dataclass
-class ApEvent:
-    eap: Optional[M.ParsedEap] = None
-    leave_frame: str = ""       # "deauth" / "disassoc"
-    leave_reason: int = 0
-
-
-def zero_length_first_fragment(eap_id: int) -> bytes:
-    """EAP-Response WSC_MSG with Length + More Fragments set, a declared total of 0 and no payload."""
-    body = (bytes([M.EAP_TYPE_EXPANDED]) + M.WFA_VENDOR_ID + M.WFA_VENDOR_TYPE_SIMPLECONFIG
-            + bytes([M.WSC_MSG, M.WSC_FLAG_LENGTH_FIELD | M.WSC_FLAG_MORE_FRAGMENTS])
-            + (0).to_bytes(2, "big"))
-    return M._eapol_eap(M.EAP_RESPONSE, eap_id, body)
-
-
-async def next_event(transport: WlanTransport, timeout: float) -> Optional[ApEvent]:
-    """The next EAP frame or deauth/disassoc from the AP within ``timeout``; None on silence."""
-    deadline = asyncio.get_running_loop().time() + timeout
-    while (remaining := deadline - asyncio.get_running_loop().time()) > 0:
-        frame = await transport.recv(remaining)
-        if frame is None:
-            return None
-        if frame[0] in (FRAME_DEAUTH, FRAME_DISASSOC) and len(frame) >= 26:
-            kind = "deauth" if frame[0] == FRAME_DEAUTH else "disassoc"
-            return ApEvent(leave_frame=kind, leave_reason=int.from_bytes(frame[24:26], "little"))
-        parsed = M.parse_rx_frame(frame)
-        if parsed is not None:
-            return ApEvent(eap=parsed)
-    return None
-
-
-def describe(eap: M.ParsedEap) -> str:
-    code = EAP_CODE_NAMES.get(eap.eap_code, f"EAP code {eap.eap_code}")
-    if eap.eap_type == M.EAP_TYPE_EXPANDED:
-        return f"{code}/{WSC_OPCODE_NAMES.get(eap.wsc_opcode, f'op-code 0x{eap.wsc_opcode:02x}')} (id {eap.eap_id})"
-    if eap.eap_type:
-        return f"{code} type {eap.eap_type} (id {eap.eap_id})"
-    return f"{code} (id {eap.eap_id})"
 
 
 def print_result(header: str, rows: list[tuple[str, str]]) -> None:
@@ -99,62 +52,6 @@ def print_result(header: str, rows: list[tuple[str, str]]) -> None:
     print(header)
     for label, value in rows:
         print(f"    {label:<16} {value}")
-
-
-async def enter_wps(transport: WlanTransport, send) -> tuple[Optional[int], Optional[int], Optional[ApEvent]]:
-    """Upstream _start_wps: returns (Identity Request id, WSC_START id, the event that ended it early)."""
-    last = M.eapol_start()
-    await send(last)
-    print("[*] -> EAPOL-Start")
-    identity_id: Optional[int] = None
-    deadline = time.monotonic() + RESPONSE_TIMEOUT
-    while time.monotonic() < deadline:
-        event = await next_event(transport, min(RETRANSMIT_INTERVAL, deadline - time.monotonic()))
-        if event is None:
-            if time.monotonic() < deadline:
-                await send(last)
-            continue
-        if event.leave_frame or event.eap.is_eap_failure:
-            return identity_id, None, event
-        eap = event.eap
-        if eap.is_identity_request:
-            identity_id = eap.eap_id
-            last = M.eap_identity_response(eap.eap_id, M.ENROLLEE_IDENTITY)
-            await send(last)
-            print(f"[*] <- EAP-Request/Identity (id {eap.eap_id}); -> Identity {M.ENROLLEE_IDENTITY.decode()}")
-        elif eap.eap_code == M.EAP_REQUEST and eap.wsc_opcode == M.WSC_START:
-            print(f"[+] <- {describe(eap)}")
-            return identity_id, eap.eap_id, None
-        else:
-            print(f"[*] <- {describe(eap)} (ignored during WPS entry)")
-    print(f"[-] no WSC_START in {RESPONSE_TIMEOUT:.0f}s")
-    return identity_id, None, None
-
-
-async def send_fragment(transport: WlanTransport, send, eap_id: int) -> tuple[str, str]:
-    """Upstream probe_first_fragment: returns (response kind, detail)."""
-    fragment = zero_length_first_fragment(eap_id)
-    print(f"[*] -> first fragment (id {eap_id}, flags LF|MF, declared length 0, no payload)")
-    deadline = time.monotonic() + RESPONSE_TIMEOUT
-    while time.monotonic() < deadline:
-        await send(fragment)
-        event = await next_event(transport, min(RETRANSMIT_INTERVAL, deadline - time.monotonic()))
-        if event is None:
-            continue
-        if event.leave_frame:
-            if event.leave_frame == "deauth" and event.leave_reason == 0:
-                return "REJECTED", "deauth reason 0"
-            return "ERROR", f"{event.leave_frame} reason {event.leave_reason}"
-        eap = event.eap
-        if eap.is_identity_request or (eap.eap_code == M.EAP_REQUEST and eap.wsc_opcode == M.WSC_START):
-            print(f"[*] <- {describe(eap)} (retransmit of an earlier request, ignored)")
-            continue
-        if eap.is_eap_failure:
-            return "REJECTED", describe(eap)
-        if eap.eap_code == M.EAP_REQUEST and eap.wsc_opcode == M.WSC_FRAG_ACK:
-            return "ACK", describe(eap)
-        return "ERROR", describe(eap)
-    return "SILENCE", f"no response in {RESPONSE_TIMEOUT:.0f}s"
 
 
 def matching_aps(array: WlanArray, bssid: Optional[str], ssid: Optional[str]) -> list[AccessPoint]:
@@ -277,22 +174,20 @@ async def run(args) -> int:
             rows.append(("Entry frames",
                          f"{sends - sends_before} sent, {iface.acks_seen(our_mac) - acks_before} ACKed"))
             if early is not None:
-                ended_by = (f"{early.leave_frame} reason {early.leave_reason}" if early.leave_frame
-                            else describe(early.eap))
-                rows.append(("Fragment", f"not sent, the AP ended WPS entry with {ended_by}"))
-                rows.append(("Implementation", INCONCLUSIVE))
+                rows.append(("Fragment", f"not sent, the AP ended WPS entry with {early.describe()}"))
+                rows.append(("Implementation", IMPLEMENTATION_DESCRIPTIONS[WpsImplementation.INCONCLUSIVE]))
                 return 0
             fragment_id = wsc_start_id if wsc_start_id is not None else identity_id
             if fragment_id is None:
                 rows.append(("Fragment", "not sent, no Identity Request to take an EAP id from"))
-                rows.append(("Implementation", INCONCLUSIVE))
+                rows.append(("Implementation", IMPLEMENTATION_DESCRIPTIONS[WpsImplementation.INCONCLUSIVE]))
                 return 0
             acks_before, sends_before = iface.acks_seen(our_mac), sends
-            response, detail = await send_fragment(transport, send, fragment_id)
+            implementation, response = await send_fragment(transport, send, fragment_id)
             rows.append(("Fragment", f"id {fragment_id}, {sends - sends_before} sent, "
                                      f"{iface.acks_seen(our_mac) - acks_before} ACKed"))
-            rows.append(("AP response", detail))
-            rows.append(("Implementation", IMPLEMENTATION_BY_RESPONSE.get(response, INCONCLUSIVE)))
+            rows.append(("AP response", response))
+            rows.append(("Implementation", IMPLEMENTATION_DESCRIPTIONS[implementation]))
         finally:
             await iface.send_no_wait(build_client_leaving(bssid_b, our_mac))
             transport.stop()
