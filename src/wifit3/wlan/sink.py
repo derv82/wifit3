@@ -204,6 +204,7 @@ class WlanSink:
                 wps_config_methods=wps_config_methods,
                 wps_device_password_id=wps_device_password_id,
                 wps_selected_registrar=wps_selected_registrar,
+                chipset=pkt.chipset,
             )
             if wps:
                 ap.identity.update(
@@ -246,6 +247,8 @@ class WlanSink:
                 ap.pmf_capable = pmf_capable
                 ap.pmf_required = pmf_required
                 ap.beacon_protection = beacon_protection
+            if pkt.chipset:
+                ap.chipset = pkt.chipset
             # Only refresh WPS when this frame carried the IE.
             if wps:
                 ap.wps = True

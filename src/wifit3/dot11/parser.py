@@ -79,6 +79,17 @@ from wifit3.dot11.rsn import (
     WpaElement,
 )
 
+# Vendor IE OUIs a chipset's driver adds. Epigram (00:90:4C, Broadcom's) is left out:
+# hostapd adds its 2.4 GHz VHT IE on any chipset.
+CHIPSET_BY_VENDOR_IE_OUI = {
+    bytes.fromhex("001018"): "Broadcom",
+    bytes.fromhex("000c43"): "MediaTek",
+    bytes.fromhex("000ce7"): "MediaTek",
+    bytes.fromhex("00037f"): "Qualcomm",
+    bytes.fromhex("8cfdf0"): "Qualcomm",
+    bytes.fromhex("00e04c"): "Realtek",
+}
+
 
 class WlanFrameParser:
     """Native 802.11 frame parser."""
@@ -179,7 +190,7 @@ class WlanFrameParser:
             for key in ("channel", "rsn_ie_raw", "wps", "wps_locked", "wps_version",
                         "wps_state", "wps_config_methods", "wps_device_password_id",
                         "wps_selected_registrar", "wsc_manufacturer", "wsc_model_name",
-                        "wsc_model_number", "wsc_device_name", "wsc_device_type"):
+                        "wsc_model_number", "wsc_device_name", "wsc_device_type", "chipset"):
                 if key in tags:
                     fields[key] = tags[key]
             return BeaconPacket(**base, **fields)
@@ -697,6 +708,8 @@ class WlanFrameParser:
                         elif oui_type == 4: # WPS
                             # tag_data = OUI(3) + type(1) + WPS TLVs.
                             wps_payloads.append(tag_data[4:])
+                    elif oui in CHIPSET_BY_VENDOR_IE_OUI:
+                        parsed.setdefault("chipset", CHIPSET_BY_VENDOR_IE_OUI[oui])
 
         if wps_payloads:
             parsed.update(cls._parse_wps_ie(b"".join(wps_payloads)))

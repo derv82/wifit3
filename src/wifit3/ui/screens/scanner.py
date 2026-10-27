@@ -323,6 +323,7 @@ class ScannerView(Screen):
             encryption=EncryptionSummary.from_ap(ap),
             wps=ap.wps,
             wps_locked=ap.wps_locked,
+            chipset=ap.chipset or "",
             identity=ap.identity.summary,
             is_stale=is_stale,
             beacon_flash=beacon_flash,

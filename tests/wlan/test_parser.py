@@ -184,6 +184,18 @@ def test_no_wps_ie_absent():
         _build_beacon(rsn_ie=_rsn_ie()), -50)
     assert not r.wps
 
+
+def test_broadcom_vendor_ie_sets_chipset():
+    broadcom_ie = bytes([221, 9]) + bytes.fromhex("001018020200000000")
+    r = WlanFrameParser.parse_80211_frame(_build_beacon(wpa_vendor_ie=broadcom_ie), -50)
+    assert r.chipset == "Broadcom"
+
+
+def test_epigram_vendor_ie_alone_sets_no_chipset():
+    epigram_ie = bytes([221, 5]) + bytes.fromhex("00904c0408")
+    r = WlanFrameParser.parse_80211_frame(_build_beacon(wpa_vendor_ie=epigram_ie), -50)
+    assert r.chipset is None
+
 def test_wlan_frame_parser_validates():
     # A random bunch of bytes too small to be a frame
     assert WlanFrameParser.parse_80211_frame(b'\x00\x01\x02', -50) is None

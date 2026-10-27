@@ -85,6 +85,7 @@ class BeaconPacket(Packet):
     wsc_model_number: Optional[str] = None
     wsc_device_name: Optional[str] = None
     wsc_device_type: Optional[str] = None
+    chipset: Optional[str] = None
     rsn_ie_raw: Optional[bytes] = None
 
 

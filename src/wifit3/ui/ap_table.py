@@ -49,6 +49,7 @@ class APRow:
     encryption: Optional[EncryptionSummary] = None
     wps: bool = False
     wps_locked: bool = False
+    chipset: str = ""
     identity: str = ""
     is_stale: bool = False
     beacon_flash: bool = False
@@ -131,6 +132,10 @@ def _render_identity(row: APRow, fg: str) -> Text:
     return text
 
 
+def _render_chipset(row: APRow, fg: str) -> Text:
+    return Text(row.chipset, style=fg)
+
+
 def _secondary_signal(row: APRow, reverse: bool) -> int:
     """Tie-break that keeps the stronger AP on top whichever way the column sorts."""
     return row.signal if reverse else -row.signal
@@ -178,6 +183,11 @@ def _wps_key(row: APRow, reverse: bool) -> tuple:
             _secondary_signal(row, reverse), row.bssid)
 
 
+def _chipset_key(row: APRow, reverse: bool) -> tuple:
+    return (_sink_empty(not row.chipset, reverse), row.chipset.lower(),
+            _secondary_signal(row, reverse), row.bssid)
+
+
 def _identity_key(row: APRow, reverse: bool) -> tuple:
     return (_sink_empty(not row.identity, reverse), row.identity.lower(),
             _secondary_signal(row, reverse), row.bssid)
@@ -214,6 +224,8 @@ COLUMNS: Tuple[Column, ...] = (
            _render_encryption, _encryption_key),
     Column("wps", "WPS", ("wps", "wps_locked", "is_stale"),
            _render_wps, _wps_key),
+    Column("chipset", "CHIPSET", ("chipset", "is_stale"),
+           _render_chipset, _chipset_key),
     Column("identity", "VENDOR/ID", ("identity", "is_stale"),
            _render_identity, _identity_key),
 )
@@ -223,6 +235,7 @@ COLUMN_KEYS: Tuple[str, ...] = tuple(column.key for column in COLUMNS)
 _HEADER_WIDTHS: Tuple[int, ...] = tuple(Text(column.label).cell_len + 2 for column in COLUMNS)
 _BY_KEY: Dict[str, Column] = {column.key: column for column in COLUMNS}
 _CLIENTS_INDEX = COLUMN_KEYS.index("clients")
+_CHIPSET_INDEX = COLUMN_KEYS.index("chipset")
 
 
 @dataclass(slots=True)
@@ -301,6 +314,7 @@ class APTable(ScrollView, can_focus=True):
         self._order: List[str] = []
         self._index: Dict[str, int] = {}
         self._widths: List[int] = [0] * len(COLUMNS)
+        self._shown: Tuple[int, ...] = tuple(range(len(COLUMNS)))
         self._options_by_width: Dict[int, ConsoleOptions] = {}
         self._header: Optional[Strip] = None
         self._dirty: List[str] = []
@@ -481,8 +495,10 @@ class APTable(ScrollView, can_focus=True):
             for index, column in enumerate(COLUMNS)
         ]
         widths[0] = self._ssid_width_fitting_clients(widths)
-        if widths != self._widths:
+        shown = self._shown_columns(widths)
+        if widths != self._widths or shown != self._shown:
             self._widths = widths
+            self._shown = shown
             self._header = None
             for entry in self._rows.values():
                 entry.segments = [None] * len(COLUMNS)
@@ -493,7 +509,15 @@ class APTable(ScrollView, can_focus=True):
         return repaint
 
     def _content_width(self) -> int:
-        return sum(width + 2 * _CELL_PADDING for width in self._widths)
+        return sum(self._widths[index] + 2 * _CELL_PADDING for index in self._shown)
+
+    def _shown_columns(self, widths: List[int]) -> Tuple[int, ...]:
+        """Every column, less CHIPSET when the full row would overflow the visible width."""
+        every = tuple(range(len(COLUMNS)))
+        visible_width = self.scrollable_content_region.width
+        if not visible_width or sum(widths) + 2 * _CELL_PADDING * len(widths) <= visible_width:
+            return every
+        return tuple(index for index in every if index != _CHIPSET_INDEX)
 
     def _ssid_width_fitting_clients(self, widths: List[int]) -> int:
         visible_width = self.scrollable_content_region.width
@@ -577,7 +601,7 @@ class APTable(ScrollView, can_focus=True):
     ) -> List[Segment]:
         pad = Segment(" " * _CELL_PADDING)
         segments: List[Segment] = []
-        for index in range(len(COLUMNS)):
+        for index in self._shown:
             cell = cache[index]
             if cell is None:
                 cell = self._render_cell(texts[index], self._widths[index])
@@ -650,7 +674,8 @@ class APTable(ScrollView, can_focus=True):
 
     def _sort_by_column_at(self, x: int) -> None:
         edge = 0
-        for index, column in enumerate(COLUMNS):
+        for index in self._shown:
+            column = COLUMNS[index]
             edge += self._widths[index] + 2 * _CELL_PADDING
             if x < edge:
                 if column.key == self.sort_column:

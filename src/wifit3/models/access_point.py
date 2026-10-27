@@ -72,6 +72,8 @@ class AccessPoint:
     # Passively observed EAP method Type numbers (EAPOL-Type-0), aggregated across clients.
     observed_eap_methods: Set[int] = field(default_factory=set)
 
+    chipset: Optional[str] = None  # from a chipset driver's vendor IE
+
     # WPS state decoded from the WPS vendor IE (tag 221, OUI 00:50:F2 type 4).
     wps: bool = False
     wps_locked: bool = False

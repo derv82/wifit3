@@ -146,6 +146,19 @@ async def test_verbose_identity_does_not_widen_the_table(table):
     assert table._content_width() <= table.size.width
 
 
+async def test_chipset_column_hides_only_when_the_row_overflows(table):
+    table, pilot = table
+    chipset = COLUMN_KEYS.index("chipset")
+    table.set_rows([_row(0, chipset="Broadcom")])
+    await pilot.pause()
+    assert chipset in table._shown
+    table.set_rows([_row(0, chipset="Broadcom"), _row(1, identity="Zyxel Communications Corporation "
+                                                                   "Zyxel F680G-6x v2.1.0 Gateway (Router)")])
+    await pilot.pause()
+    assert chipset not in table._shown
+    assert table._content_width() <= table.size.width
+
+
 async def test_header_reserves_room_for_the_sort_indicator(table):
     table, pilot = table
     table.set_rows([_row(0, identity="")])
@@ -542,3 +555,11 @@ async def test_clicking_a_header_re_sorts_and_persists(scanner_host):
     assert table.sort_column == "ssid"
     assert Config.scanner_sort == "ssid"
     assert isinstance(app.screen, ScannerView)    # a header click must not select a row
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_chipset_sort_keeps_blank_rows_last(reverse):
+    column = COLUMNS[COLUMN_KEYS.index("chipset")]
+    rows = [_row(0, chipset=""), _row(1, chipset="Broadcom"), _row(2, chipset="MediaTek")]
+    ordered = sorted(rows, key=lambda row: column.sort_key(row, reverse), reverse=reverse)
+    assert ordered[-1].chipset == ""
