@@ -350,6 +350,9 @@ FRAMES: dict[str, bytes] = {
 }
 
 
+TX_NOT_PORTED = {"rtl8192cu"}
+
+
 def driver_package_names() -> list[str]:
     chips_dir = Path(chips.__file__).parent
     return sorted(init.parent.name for init in chips_dir.glob("*/__init__.py")
@@ -375,6 +378,8 @@ async def inject_and_capture(driver: Driver, dev: RecordingUsbDevice, frame: byt
 @pytest.mark.parametrize("frame_name", list(FRAMES))
 @pytest.mark.parametrize("package_name", driver_package_names())
 async def test_inject_frame_wire_bytes(package_name: str, frame_name: str) -> None:
+    if package_name in TX_NOT_PORTED:
+        pytest.skip(f"{package_name} TX path is not ported")
     case = DRIVER_CASES[package_name]
     frame = FRAMES[frame_name]
     dev = RecordingUsbDevice()

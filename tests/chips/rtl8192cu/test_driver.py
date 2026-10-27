@@ -1,0 +1,32 @@
+"""RTL8192CUDriver: connect claims, reads endpoints from libusb, then runs the probe."""
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+
+from wifit3.chips.rtl8192cu import SUPPORTED_IDS
+from wifit3.chips.rtl8192cu import constants as C
+from wifit3.chips.rtl8192cu.driver import RTL8192CUDriver
+from wifit3.chips.rtl8192cu.priv import RtlPriv
+from wifit3.errors import BringUpError
+
+from .fake import FAKE_MAC, NORMAL_SIE_EP_2OUT, SYS_CFG_88C_TSMC, FakeRegisters, encode_physical, logical_map
+
+
+async def test_connect_runs_probe_then_stops_at_hw_init():
+    entry = next(d for d in SUPPORTED_IDS if (d.vid, d.pid) == (0x0BDA, 0x8176))
+    driver = RTL8192CUDriver.from_usb_device(MagicMock(), entry)
+    io = FakeRegisters({C.REG_SYS_CFG: SYS_CFG_88C_TSMC, C.REG_9346CR: C.EEPROM_EN, **NORMAL_SIE_EP_2OUT},
+                       encode_physical(logical_map()))
+    driver.priv = RtlPriv(io)
+    endpoints = [SimpleNamespace(bEndpointAddress=a, bmAttributes=t)
+                 for a, t in ((0x81, 2), (0x02, 2), (0x03, 2), (0x84, 3))]
+    driver.transport = MagicMock(interface=endpoints, **{"is_high_speed.return_value": True})
+
+    with pytest.raises(BringUpError, match="hw_init"):
+        await driver.connect()
+
+    driver.transport.claim.assert_called_once()
+    driver.transport.release.assert_called_once()
+    assert driver.mac_address == FAKE_MAC.hex(":")
+    assert driver.priv.usb.out_eps[:2] == [2, 3]

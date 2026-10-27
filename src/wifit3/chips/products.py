@@ -32,6 +32,7 @@ class ALFA(ProductName):
     AWUS036H     = "AWUS036H"
     AWUS036NH    = "AWUS036NH"
     AWUS036NHA   = "AWUS036NHA"
+    AWUS036NHR   = "AWUS036NHR"
     AWUS051NH_V2 = "AWUS051NH v2"
     AWUS1900     = "AWUS1900"
 
@@ -90,6 +91,7 @@ class Belkin(ProductName):
     F5D7050_V5    = "F5D7050 v5"    # https://wikidevi.wi-cat.ru/Belkin_F5D7050_v5
     F9L1106V1     = "Belkin F9L1106v1"  # https://linux-hardware.org/?id=usb:050d-1106
     F9L1109V1     = "Belkin F9L1109v1"  # https://linux-hardware.org/?id=usb:050d-1109
+    SURF_N300     = "Belkin Surf N300"
 
 
 class Buffalo(ProductName):
@@ -130,6 +132,7 @@ class Devolo(ProductName):
 class DLink(ProductName):
     AC1200          = "D-Link AC1200"
     AN3U_REV_A1     = "AN3U rev. A1"
+    DWA_131         = "D-Link DWA-131"
     DWA_121B1       = "D-Link DWA-121B1"  # https://linux-hardware.org/?id=usb:2001-331b
     DWA_123_REV_D1  = "DWA-123 rev.D1"
     DWA_125_REV_A2  = "DWA-125 rev.A2"
@@ -295,6 +298,8 @@ class Netgear(ProductName):
     RTL8187     = "Netgear RTL8187"
     WG111_V1_V2 = "WG111 v1/v2"
     WG111V3     = "WG111v3"  # https://linux-hardware.org/?id=usb:0846-4260
+    WNA1000M    = "Netgear WNA1000M"
+    WNA1000M_V2 = "Netgear WNA1000Mv2"
     WNDA3100V3  = "WNDA3100v3"
 
 
@@ -304,6 +309,11 @@ class NovaTech(ProductName):
 
 class Obihai(ProductName):
     OBIWIFI = "Obihai OBiWiFi"
+
+
+class OnNetworks(ProductName):
+    N150MA = "On Networks N150MA"
+    N300MA = "On Networks N300MA"
 
 
 class Panda(ProductName):
@@ -348,6 +358,8 @@ class Sitecom(ProductName):
     N150_V2  = "Sitecom N150 v2"
     WL3001   = "Sitecom WL3001"
     WLA_3100 = "Sitecom WLA-3100"
+    WLA_2100_V2 = "Sitecom WLA-2100 v2"
+    _150N    = "Sitecom 150N"
 
 
 class Spairon(ProductName):
@@ -397,6 +409,7 @@ class TPLink(ProductName):
     TL_WN722N_V2_V3  = "TL-WN722N v2/v3" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v2 & v3
     TL_WN723N_V2_3_4 = "TL-WN723N v2/3/4" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN723N_v3
     TL_WN823N_V2     = "TL-WN823N v2"
+    TL_WN8200ND      = "TL-WN8200ND"
     TL_WN727N_V5_21  = "TL-WN727N v5.21" # 2357:0111, aircrack-ng/rtl8188eus os_dep/linux/usb_intf.c
 
 
