@@ -68,12 +68,19 @@ class RtlPhy:
     rf_mode: int = C.RF_OP_BY_SW_3WIRE
     rf_type: int = C.RF_1T1R
     num_total_rfpath: int = 0
+    current_channel: int = 0
     current_chan_bw: int = C.HT_CHANNEL_WIDTH_20
     set_bwmode_inprogress: bool = False
+    sw_chnl_inprogress: bool = False
+    sw_chnl_stage: int = 0
+    sw_chnl_step: int = 0
+    cur_cck_txpwridx: int = 0
+    cur_ofdm24g_txpwridx: int = 0
     cck_high_power: bool = False
     pwrgroup_cnt: int = 0
     mcs_txpwrlevel_origoffset: list[list[int]] = field(
         default_factory=lambda: [[0] * 16 for _ in range(C.MAX_PG_GROUP)])
+    mcs_offset: list[list[int]] = field(default_factory=lambda: [[0] * 16 for _ in range(C.MAX_PG_GROUP)])
     hwparam_tables: list[tuple[int, ...]] = field(default_factory=lambda: [() for _ in range(C.MAX_TAB)])
     rfreg_chnlval: list[int] = field(default_factory=lambda: [0, 0])
     iqk_initialized: bool = False
@@ -100,6 +107,8 @@ class RtlDm:
     thermalvalue: int = 0
     undec_sm_pwdb: int = 0
     undec_sm_cck: int = 0
+    entry_min_undec_sm_pwdb: int = 0
+    entry_max_undec_sm_pwdb: int = 0
     dynamic_txpower_enable: bool = False
     last_dtp_lvl: int = 0
     dynamic_txhighpower_lvl: int = 0
@@ -119,6 +128,11 @@ class RtlDm:
     tm_trigger: int = 0
     ofdm_pkt_cnt: int = 0
     dm_rssi_sel: int = 0
+    last_txok_cnt: int = 0
+    last_rxok_cnt: int = 0
+    last_bt_edca_ul: int = 0
+    last_bt_edca_dl: int = 0
+    initial_gain_multi_sta_initialized: bool = False
 
 
 @dataclass
@@ -128,6 +142,8 @@ class DigT:
     dig_ext_port_stage: int = 0
     cur_igvalue: int = 0
     pre_igvalue: int = 0
+    cursta_cstate: int = 0
+    rssi_val_min: int = 0
     cur_sta_cstate: int = 0
     presta_cstate: int = 0
     curmultista_cstate: int = 0
@@ -157,6 +173,20 @@ class DigT:
 
 
 @dataclass
+class FalseAlarmStatistics:
+    """struct false_alarm_statistics (wifi.h)."""
+    cnt_parity_fail: int = 0
+    cnt_rate_illegal: int = 0
+    cnt_crc8_fail: int = 0
+    cnt_mcs_fail: int = 0
+    cnt_fast_fsync_fail: int = 0
+    cnt_sb_search_fail: int = 0
+    cnt_ofdm_fail: int = 0
+    cnt_cck_fail: int = 0
+    cnt_all: int = 0
+
+
+@dataclass
 class RateAdaptive:
     ratr_state: int = 0
     pre_ratr_state: int = 0
@@ -173,8 +203,31 @@ class PsT:
 
 
 @dataclass
+class RtlQosParameters:
+    """struct rtl_qos_parameters (wifi.h:1057)."""
+    cw_min: int = 0
+    cw_max: int = 0
+    aifs: int = 0
+    flag: int = 0
+    tx_op: int = 0
+
+
+@dataclass
 class RtlMac:
     mac_addr: bytes = bytes(6)
+    vif: bytes | None = None
+    link_state: int = C.MAC80211_NOLINK
+    opmode: int = C.NL80211_IFTYPE_UNSPECIFIED
+    act_scanning: bool = False
+    ht_enable: bool = False
+    mode: int = 0
+    slot_time: int = 0
+    retry_long: int = 0
+    retry_short: int = 0
+    bw_40: bool = False
+    bw_80: bool = False
+    cur_80_prime_sc: int = 0
+    ac: list[RtlQosParameters] = field(default_factory=lambda: [RtlQosParameters() for _ in range(C.AC_MAX)])
     rx_conf: int = 0
     rx_mgt_filter: int = 0
     rx_ctrl_filter: int = 0
@@ -190,6 +243,9 @@ class RtlMac:
 @dataclass
 class RtlPsCtl:
     rfpwr_state: int = C.ERFON
+    rfchange_inprogress: bool = False
+    fw_current_inpsmode: bool = False
+    p2p_ps_mode: int = 0
     inactiveps: bool = False
     leisure_ps: bool = False
     fwctrl_lps: bool = False
@@ -202,6 +258,21 @@ class RtlPsCtl:
 class RtlSecurity:
     use_sw_sec: bool = False
     use_defaultkey: bool = False
+
+
+@dataclass
+class RtlBtCoexist:
+    """struct bt_coexist_info (wifi.h): never set by rtl8192cu."""
+    bt_coexistence: bool = False
+    bt_coexist_type: int = 0
+    bt_edca_ul: int = 0
+    bt_edca_dl: int = 0
+
+
+@dataclass
+class RtlStats:
+    txbytesunicast: int = 0
+    rxbytesunicast: int = 0
 
 
 @dataclass
@@ -270,13 +341,22 @@ class RtlUsb:
 @dataclass(frozen=True)
 class RtlHalOps:
     """struct rtl_hal_ops: the cfg->ops entries the ported code dispatches through."""
+    hw_init: Callable[[RtlPriv], int]
+    set_network_type: Callable[[RtlPriv, int], int]
+    set_chk_bssid: Callable[[RtlPriv, bool], None]
+    get_hw_reg: Callable[[RtlPriv, int], int | bool]
     set_hw_reg: Callable[[RtlPriv, int, int | bytes], None]
+    set_channel_access: Callable[[RtlPriv], None]
     set_bw_mode: Callable[[RtlPriv, int], None]
+    switch_channel: Callable[[RtlPriv], int]
+    dm_watchdog: Callable[[RtlPriv], None]
     get_bbreg: Callable[[RtlPriv, int, int], int]
     set_bbreg: Callable[[RtlPriv, int, int, int], None]
     get_rfreg: Callable[[RtlPriv, int, int, int], int]
     set_rfreg: Callable[[RtlPriv, int, int, int, int], None]
     phy_rf6052_config: Callable[[RtlPriv], bool]
+    phy_rf6052_set_cck_txpower: Callable[[RtlPriv, list[int]], None]
+    phy_rf6052_set_ofdm_txpower: Callable[[RtlPriv, list[int], int], None]
     config_bb_with_headerfile: Callable[[RtlPriv, int], bool]
     config_bb_with_pgheaderfile: Callable[[RtlPriv, int], bool]
     phy_lc_calibrate: Callable[[RtlPriv, bool], None]
@@ -286,6 +366,7 @@ class RtlHalOps:
 @dataclass(frozen=True)
 class RtlModParams:
     sw_crypto: bool = False
+    disable_watchdog: bool = False
 
 
 @dataclass(frozen=True)
@@ -311,6 +392,9 @@ class RtlPriv:
     dm: RtlDm = field(default_factory=RtlDm)
     dm_digtable: DigT = field(default_factory=DigT)
     dm_pstable: PsT = field(default_factory=PsT)
+    falsealm_cnt: FalseAlarmStatistics = field(default_factory=FalseAlarmStatistics)
+    btcoexist: RtlBtCoexist = field(default_factory=RtlBtCoexist)
+    stats: RtlStats = field(default_factory=RtlStats)
     ra: RateAdaptive = field(default_factory=RateAdaptive)
     mac80211: RtlMac = field(default_factory=RtlMac)
     psc: RtlPsCtl = field(default_factory=RtlPsCtl)
@@ -319,3 +403,8 @@ class RtlPriv:
     efuse: RtlEfuse = field(default_factory=RtlEfuse)
     usb: RtlUsb = field(default_factory=RtlUsb)
     max_fw_size: int = 0
+    reg_init: bool = False
+    reg_874: int = 0
+    reg_c70: int = 0
+    reg_85c: int = 0
+    reg_a74: int = 0

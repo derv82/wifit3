@@ -20,7 +20,7 @@
 
 ## Python Port Details
 - VID:PID: the full `rtl8192c_usb_ids[]` table (72 IDs) in `__init__.py`; no other package claims them.
-- Status: probe and `rtl92cu_hw_init` ported (power-on, LLT, queue/MAC init, firmware download, MAC/BB/AGC/RF tables for every variant, CAM reset, RF path switch, IQK, LCK, PA bias, `rtl92c_dm_init`, thermal-meter TX power tracking). `verify_pcap` replays probe + hw_init, ops 0-3210, 3211/3211 byte-for-byte. `connect()` runs both, then stops with `BringUpError` at `rtl_usb_start`'s next step.
+- Status: probe, `rtl92cu_hw_init` and the monitor-mode bring-up ported: `rtl_usb_start`, `rtl_op_configure_filter`, `rtl_op_config` channel switch (TX power, RF_CHNLBW, channel access, bandwidth; 20 and 40 MHz; 1T1R/1T2R/2T2R, UMC B-cut, regulatory 0-3, dynamic TX power levels), the `rtl92c_dm_watchdog` tick, and active monitor / RX ACKs. `verify_pcap` replays the whole capture, 6298/6298 ops byte-for-byte. RX descriptor decode, TX and `inject_frame` are not ported.
 - Firmware: `assets/rtl8192cufw_TMSC.bin`, `_A.bin`, `_B.bin` (linux-firmware `rtlwifi/`, SHA-256 `c083f2db…`, `32846065…`, `479e5e67…`), picked by `rtl92cu_init_sw_vars` (sw.c:48): UMC A-cut 1T → `_A`, UMC B-cut → `_B`, else `_TMSC`. The alt name `rtl8192cufw.bin` is not shipped.
 - Related ports: none share code (rtl8xxxu also drives this silicon upstream; no rtl8xxxu 8192C port exists here).
 - Non-obvious in the port:
@@ -38,10 +38,21 @@
   - `txpower_track_control` and `cck_inch14` are never set by rtlwifi, so the tracking callback only reads the thermal meter, swing indices and re-runs LCK/IQK on drift.
   - The path-A IQK retry loop re-reads 0xe9c on every pass that does not break (phy_common.c:1266, a misplaced brace in the source); the port keeps the read.
   - `RADIOB_1T` has one element; its loop would read past the end, but no chip reaches it (1T tables imply `rf_type` 1T1R, so path B is never configured).
+  - mac80211 calls in monitor mode: `start` → `configure_filter` → `config(CHANGE_CHANNEL)`; no `add_interface` (rtlwifi sets no `NL80211_EXT_FEATURE_ACTIVE_MONITOR`, and `rtl_op_add_interface` rejects MONITOR). `rtl_ips_nic_on/off` do nothing on USB (`inactiveps` cleared, usb.c:318).
+  - `rtl_op_start` fires the watchdog timer once straight away (core.c:141); the driver runs the first tick right after bring-up, then every `RTL_WATCH_DOG_TIME`, under the same lock as tunes.
+  - The watchdog opens with the `REG_RCR` read of `HW_VAR_FWLPS_RF_ON` (hw.c:1416); nothing else reads `REG_RCR`.
+  - `rtlphy->mcs_offset` (read by rf.c's TX power) is never filled for rtl8192cu, unlike `mcs_txpwrlevel_origoffset`; its terms add 0.
+  - `rtl92c_phy_sw_chnl_callback` breaks out after the first step with a delay (the RF_CHNLBW write, 10 ms), so `postcommoncmd` never runs.
+  - `struct dig_t` has both `cur_sta_cstate` (set by `rtl_dm_diginit`) and `cursta_cstate` (read by dm_common.c); `cur_igvalue` is a u32.
+  - Unlinked, the watchdog's DIG, CCK-PD, RF-saving, dynamic TX power and EDCA-turbo steps write nothing; `rf_saving` reads 0x874/0xc70/0x85c/0xa74 once. `rtl92c_dm_refresh_rate_adaptive_mask` is commented out in `rtl92c_dm_watchdog`. `btcoexist.bt_coexistence` is never set for rtl8192cu, so BT coexist is off the graph. `rtl92cu_led_control` writes no register.
+  - `REG_RXFLTMAP1` is cleared by hw_init ("Reject all control frame"), so ACKs never reach RX despite `RCR_ACF`; `_enable_rx_acks` sets the ACK subtype bit (`IEEE80211_STYPE_ACK >> 4`) through `HW_VAR_CTRL_FILTER`.
+  - `enter_active_monitor` is `rtl_op_add_interface`'s STATION path: `set_network_type` (MSR infra, beacon functions off; unlinked, so `set_check_bssid(false)` keeps RCR's BSSID checks off), `HW_VAR_ETHER_ADDR`, `HW_VAR_RETRY_LIMIT`. `exit_active_monitor` is `rtl_op_remove_interface` (MSR no-link; `REG_MACID` keeps the address, as in the source).
+  - Not ported (STA/AP only): the watchdog's linked traffic/LPS and roaming blocks, `_rtl92cu_set_media_status` ADHOC/AP, `HW_VAR_CORRECT_TSF`, `BASIC_RATE`, `BSSID`, `AID`, H2C join/power-mode variables.
 
 ## Known Problems
-- `connect()` cannot bring the card up: monitor/RX config after hw_init, channel tune, the DM watchdog, RX and TX are not ported.
-- `rtl92cu_set_hw_reg` handles only the variables hw_init sets (ETHER_ADDR, RCR, WPA_CONFIG, MGT/CTRL/DATA_FILTER); any other raises `NotImplementedError`.
+- RX is not ported: `connect()` starts no bulk-IN reader (`_rtl_usb_receive`), so no frames reach the RX callback.
+- `close()` cancels the watchdog and releases the interface; `rtl_op_stop` / `rtl92cu_card_disable` are not ported.
+- `rtl92cu_set_hw_reg` / `rtl92cu_get_hw_reg` raise `NotImplementedError` for the STA/AP variables listed above.
 - `tests/chips/test_inject_frame.py` skips this package (`TX_NOT_PORTED`) until the TX path exists.
 
 ## Driver Entry Points
@@ -56,6 +67,10 @@
 - MAC/BB/RF tables (rtl8192cu/table.c) → `table.py`, selected in `hw._rtl92cu_phy_param_tab_init`; applied by `phy.py`, `rf.py`
 - BB/RF register access, IQK, LCK, RF path switch (rtl8192c/phy_common.c) → `phy_common.py`; LCK body (`_rtl92cu_phy_lc_calibrate`) → `phy.py`
 - DM init + thermal tracking (rtl8192c/dm_common.c; `rtl_dm_diginit`, core.c:1932) → `dm_common.py`, `core.py`
+- Adapter start (`rtl_usb_start`, usb.c:681; `rtl_init_rx_config`, base.c:590) → `usb.rtl_usb_start`, `base.py`
+- mac80211 ops (`rtl_op_configure_filter`, `rtl_op_config`, `rtl_op_add_interface`, `rtl_op_remove_interface`, core.c) → `core.py`; driven by `driver._bringup`, `set_channel`, `enter/exit_active_monitor`
+- Channel switch (`rtl92c_phy_sw_chnl`, `rtl92c_phy_set_txpower_level`, phy_common.c:546-890) → `phy_common.py`; CCK/OFDM TX power (rtl8192cu/rf.c:36-357) → `rf.py`; channel access, network type, check-BSSID, get/set_hw_reg (rtl8192cu/hw.c) → `hw.py`
+- Watchdog (`rtl_watchdog_wq_callback`, base.c:2036; `rtl92c_dm_watchdog`, dm_common.c:1416) → `base.py`, `dm_common.py`; scheduled by `driver._watchdog`
 - CAM reset (cam.c:155) → `cam.py`
 - Register I/O (`_usbctrl_vendorreq_sync`, usb.c:28) → `transport.RTL8192CUTransport`
 
@@ -69,9 +84,17 @@
 - 1492-1536: `_rtl92cu_init_power_on`. 1537-2048: `rtl92c_init_llt_table`. 2049-2109: queue pages, TRX buffer, priority, interrupts, WMAC, EDCA, beacon params.
 - 2110-2386: `rtl92c_download_fw`. 2387-2472: MAC table. 2473-2830: `rtl92cu_phy_bb_config` (PHY_REG, PG table has no wire ops, AGC). 2831-2991: `rtl92c_phy_rf_config` (RADIOA).
 - 2992-3004: BB block on, CAM reset, security config, `REG_MACID` (zeros: no vif yet). 3005-3010: RF path switch. 3011-3176: IQK (3 passes, 1T). 3177-3192: LCK. 3193-3199: `_rtl92cu_hw_configure`. 3200-3210: `_initpabias` (EFUSE 0x1FA = 0xfe → path A bias). `rtl92c_dm_init` has no wire ops.
-- 3211: first read of `REG_RCR` (0x0608), the first op after hw_init (milestone 3 starts here); 22 such reads, ~2 s apart from 3330 on.
+- From 3211 two kernel contexts write the wire: mac80211's (filter, tunes) and the watchdog work. Only tick 1 interleaves with the other context.
+- 3211: tick 1 opener (`HW_VAR_FWLPS_RF_ON` reads `REG_RCR` = f0002a0e). 3212: `configure_filter` writes `REG_RCR` = f000790f (control + other-BSS + allmulti). 3213-3233: rest of tick 1: false-alarm counters 3213-3228, `rf_saving` first-run reads 3229-3232, `RF_T_METER` trigger 3233.
+- 3234-3281: first `rtl_op_config`, ch 1: TX power 3234-3259, RF_CHNLBW 3260, 10 ms, channel access (slot, 4 AC params, SIFS) 3261-3271, `set_bw_mode` 3272-3281. 3282-3329: ch 10.
+- 3330-3354: tick 2: thermal-meter read and tracking callback (thermal 0x0c sets the LCK/IQK baselines).
+- 3355: second `configure_filter` (same RCR; mac80211 refilters when the capture tool comes up; replayed as an `FIF_ALLMULTI` change).
+- 3356-4646: hops, each two tunes (mac80211 goes back to ch 1 first): 1,1 then 1 + {7, 13, 2, 8, 3, 9, 4, 10, 5, 11, 6, 12}, ~0.27 s apart. 4708-4803: 1,1.
+- 4804-4844: tick 8: thermal 0x0e, `delta_lck` 2 → `rtl92c_phy_lc_calibrate` 4829-4844 (`REG_TXPAUSE` ff, RF 0x18 | 0x08000, 100 ms, `REG_TXPAUSE` 00).
+- 4992-6272: 1 + N for N = 2..13, ~1 s apart.
+- Watchdog ticks (22, every 2.016 s): 3211, 3330, 3644, 4238, 4647, 4665, 4690, 4804, 4845, 4863, 4888, 4906, 4931, 4949, 4974, 5088, 5305, 5515, 5732, 5942, 6159, 6273-6297. 18 ops trigger the thermal meter, 25 read it and run the tracking callback.
 
 ## Scripts
-- `scripts/chips/rtl8192cu/verify_pcap.py`: replay-diff of probe + hw_init, ops 0-3210 (also `scripts/porting/verify_pcap.py rtl8192cu`).
+- `scripts/chips/rtl8192cu/verify_pcap.py`: replay-diff of the whole capture, ops 0-6297 (also `scripts/porting/verify_pcap.py rtl8192cu`). The mac80211 context and each watchdog tick replay in their own threads; a scheduler grants each capture op to the thread blocked on it and spawns a tick at each `REG_RCR` read.
 
 ## Debug log

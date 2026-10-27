@@ -1,15 +1,17 @@
-"""rtlwifi usb.c probe path."""
+"""rtlwifi usb.c: probe and adapter start."""
 from __future__ import annotations
 
 import errno
 from dataclasses import dataclass
 
 from . import constants as C
+from .base import rtl_init_rx_config
 from .hw import rtl92cu_read_eeprom_info
 from .mac import rtl92c_read_chip_version
 from .priv import RtlPriv
 from .sw import rtl92cu_init_sw_vars
 from .trx import rtl8192cu_endpoint_mapping
+from .wifi import set_hal_start
 
 USB_DIR_IN = 0x80
 USB_ENDPOINT_NUMBER_MASK = 0x0F
@@ -106,3 +108,12 @@ def rtl_usb_probe(rtlpriv: RtlPriv, endpoints: list[UsbEndpointDescriptor], is_h
     rtl_usb_init_sw(rtlpriv)
     if rtl92cu_init_sw_vars(rtlpriv):
         raise ProbeError(-errno.ENODEV, "Can't init_sw_vars")
+
+
+def rtl_usb_start(rtlpriv: RtlPriv) -> int:
+    """usb.c:681. _rtl_usb_receive (bulk-IN URBs) belongs to the RX path, not here."""
+    err = rtlpriv.cfg.ops.hw_init(rtlpriv)
+    if not err:
+        rtl_init_rx_config(rtlpriv)
+        set_hal_start(rtlpriv.rtlhal)
+    return err

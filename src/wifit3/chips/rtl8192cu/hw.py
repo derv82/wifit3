@@ -546,21 +546,180 @@ def rtl92cu_hw_init(rtlpriv: RtlPriv) -> int:
     return 0
 
 
+def _rtl92cu_set_bcn_ctrl_reg(rtlpriv: RtlPriv, set_bits: int, clear_bits: int) -> None:
+    """hw.c:1126."""
+    rtlusb = rtlpriv.usb
+    rtlusb.reg_bcn_ctrl_val |= set_bits
+    rtlusb.reg_bcn_ctrl_val &= ~clear_bits
+    rtlpriv.io.write8(C.REG_BCN_CTRL, rtlusb.reg_bcn_ctrl_val & 0xFF)
+
+
+def _rtl92cu_stop_tx_beacon(rtlpriv: RtlPriv) -> None:
+    """hw.c:1137."""
+    io = rtlpriv.io
+    if IS_NORMAL_CHIP(rtlpriv.rtlhal.version):
+        tmp1byte = io.read8(C.REG_FWHW_TXQ_CTRL + 2)
+        io.write8(C.REG_FWHW_TXQ_CTRL + 2, tmp1byte & ~C.BIT(6) & 0xFF)
+        io.write8(C.REG_TBTT_PROHIBIT + 1, 0x64)
+        tmp1byte = io.read8(C.REG_TBTT_PROHIBIT + 2)
+        tmp1byte &= ~C.BIT(0) & 0xFF
+        io.write8(C.REG_TBTT_PROHIBIT + 2, tmp1byte)
+    else:
+        io.write8(C.REG_TXPAUSE, io.read8(C.REG_TXPAUSE) | C.BIT(6))
+
+
+def _rtl92cu_enable_bcn_sub_func(rtlpriv: RtlPriv) -> None:
+    """hw.c:1177."""
+    if IS_NORMAL_CHIP(rtlpriv.rtlhal.version):
+        _rtl92cu_set_bcn_ctrl_reg(rtlpriv, 0, C.BIT(1))
+    else:
+        _rtl92cu_set_bcn_ctrl_reg(rtlpriv, 0, C.BIT(4))
+
+
+def _rtl92cu_set_media_status(rtlpriv: RtlPriv, type: int) -> int:
+    """hw.c:1199, NO LINK and STATION only: the ADHOC/AP beacon paths are not ported."""
+    io = rtlpriv.io
+    bt_msr = io.read8(C.MSR)
+    bt_msr &= 0xfc
+    if type in (C.NL80211_IFTYPE_UNSPECIFIED, C.NL80211_IFTYPE_STATION):
+        _rtl92cu_stop_tx_beacon(rtlpriv)
+        _rtl92cu_enable_bcn_sub_func(rtlpriv)
+    else:
+        logger.warning("Set HW_VAR_MEDIA_STATUS:No such media status(%x)", type)
+    if type == C.NL80211_IFTYPE_UNSPECIFIED:
+        bt_msr |= C.MSR_NOLINK
+    elif type == C.NL80211_IFTYPE_STATION:
+        bt_msr |= C.MSR_INFRA
+    else:
+        logger.error("Network type %d not supported!", type)
+        return 1
+    io.write8(C.MSR, bt_msr)
+    if (bt_msr & C.MSR_MASK) == C.MSR_AP:
+        io.write8(C.REG_BCNTCFG + 1, 0x00)
+    else:
+        io.write8(C.REG_BCNTCFG + 1, 0x66)
+    return 0
+
+
+def rtl92cu_set_check_bssid(rtlpriv: RtlPriv, check_bssid: bool) -> None:
+    """hw.c:1279."""
+    if rtlpriv.psc.rfpwr_state != C.ERFON:
+        return
+    reg_rcr = rtlpriv.cfg.ops.get_hw_reg(rtlpriv, C.HW_VAR_RCR)
+    normal_chip = IS_NORMAL_CHIP(rtlpriv.rtlhal.version)
+    if check_bssid:
+        if normal_chip:
+            reg_rcr |= C.RCR_CBSSID_DATA | C.RCR_CBSSID_BCN
+            tmp = C.BIT(4)
+        else:
+            reg_rcr |= C.RCR_CBSSID
+            tmp = C.BIT(4) | C.BIT(5)
+        rtlpriv.cfg.ops.set_hw_reg(rtlpriv, C.HW_VAR_RCR, reg_rcr)
+        _rtl92cu_set_bcn_ctrl_reg(rtlpriv, 0, tmp)
+    else:
+        if normal_chip:
+            reg_rcr &= ~(C.RCR_CBSSID_DATA | C.RCR_CBSSID_BCN)
+            tmp = C.BIT(4)
+        else:
+            reg_rcr &= ~C.RCR_CBSSID
+            tmp = C.BIT(4) | C.BIT(5)
+        reg_rcr &= ~(C.RCR_CBSSID_DATA | C.RCR_CBSSID_BCN)
+        rtlpriv.cfg.ops.set_hw_reg(rtlpriv, C.HW_VAR_RCR, reg_rcr & 0xFFFFFFFF)
+        _rtl92cu_set_bcn_ctrl_reg(rtlpriv, tmp, 0)
+
+
+def rtl92cu_set_network_type(rtlpriv: RtlPriv, type: int) -> int:
+    """hw.c:1322; returns -EOPNOTSUPP for a type _rtl92cu_set_media_status rejects."""
+    if _rtl92cu_set_media_status(rtlpriv, type):
+        return -errno.EOPNOTSUPP
+    if rtlpriv.mac80211.link_state == C.MAC80211_LINKED:
+        if type != C.NL80211_IFTYPE_AP:
+            rtl92cu_set_check_bssid(rtlpriv, True)
+    else:
+        rtl92cu_set_check_bssid(rtlpriv, False)
+    return 0
+
+
+def rtl92cu_get_hw_reg(rtlpriv: RtlPriv, variable: int) -> int | bool:
+    """hw.c:1403, minus HW_VAR_CORRECT_TSF (STA/IBSS TSF sync)."""
+    mac = rtlpriv.mac80211
+    ppsc = rtlpriv.psc
+    io = rtlpriv.io
+    if variable == C.HW_VAR_RCR:
+        return mac.rx_conf
+    if variable == C.HW_VAR_RF_STATE:
+        return ppsc.rfpwr_state
+    if variable == C.HW_VAR_FWLPS_RF_ON:
+        rfstate = rtlpriv.cfg.ops.get_hw_reg(rtlpriv, C.HW_VAR_RF_STATE)
+        if rfstate == C.ERFOFF:
+            return True
+        val_rcr = io.read32(C.REG_RCR)
+        val_rcr &= 0x00070000
+        return not val_rcr
+    if variable == C.HW_VAR_FW_PSMODE_STATUS:
+        return ppsc.fw_current_inpsmode
+    if variable == C.HW_VAR_MGT_FILTER:
+        return io.read16(C.REG_RXFLTMAP0)
+    if variable == C.HW_VAR_CTRL_FILTER:
+        return io.read16(C.REG_RXFLTMAP1)
+    if variable == C.HW_VAR_DATA_FILTER:
+        return io.read16(C.REG_RXFLTMAP2)
+    if variable == C.HAL_DEF_WOWLAN:
+        return False
+    raise NotImplementedError(f"rtl92cu_get_hw_reg variable {variable:#x} is not ported")
+
+
 def rtl92cu_set_hw_reg(rtlpriv: RtlPriv, variable: int, val: int | bytes) -> None:
-    """hw.c:1480, the variables hw_init sets."""
+    """hw.c:1480: the variables the monitor-mode bring-up, channel switch and watchdog set."""
     io = rtlpriv.io
     mac = rtlpriv.mac80211
     if variable == C.HW_VAR_ETHER_ADDR:
         assert isinstance(val, bytes)
         for idx in range(6):
             io.write8(C.REG_MACID + idx, val[idx])
+    elif variable == C.HW_VAR_SIFS:
+        assert isinstance(val, bytes)
+        io.write8(C.REG_SIFS_CCK + 1, val[0])
+        io.write8(C.REG_SIFS_OFDM + 1, val[1])
+        io.write8(C.REG_SPEC_SIFS + 1, val[0])
+        io.write8(C.REG_MAC_SPEC_SIFS + 1, val[0])
+        io.write8(C.REG_R2T_SIFS + 1, val[0])
+        io.write8(C.REG_T2T_SIFS + 1, val[0])
+    elif variable == C.HW_VAR_SLOT_TIME:
+        assert isinstance(val, int)
+        io.write8(C.REG_SLOT, val)
+        for e_aci in range(C.AC_MAX):
+            rtlpriv.cfg.ops.set_hw_reg(rtlpriv, C.HW_VAR_AC_PARAM, e_aci)
+    elif variable == C.HW_VAR_AC_PARAM:
+        assert isinstance(val, int)
+        e_aci = val
+        ac = mac.ac[e_aci]
+        u4b_ac_param = ac.aifs
+        u4b_ac_param |= (ac.cw_min & 0xF) << C.AC_PARAM_ECW_MIN_OFFSET
+        u4b_ac_param |= (ac.cw_max & 0xF) << C.AC_PARAM_ECW_MAX_OFFSET
+        u4b_ac_param |= ac.tx_op << C.AC_PARAM_TXOP_OFFSET
+        if e_aci == C.AC1_BK:
+            io.write32(C.REG_EDCA_BK_PARAM, u4b_ac_param)
+        elif e_aci == C.AC0_BE:
+            io.write32(C.REG_EDCA_BE_PARAM, u4b_ac_param)
+        elif e_aci == C.AC2_VI:
+            io.write32(C.REG_EDCA_VI_PARAM, u4b_ac_param)
+        elif e_aci == C.AC3_VO:
+            io.write32(C.REG_EDCA_VO_PARAM, u4b_ac_param)
+        else:
+            logger.warning("rtl8192cu: invalid aci: %d !", e_aci)
     elif variable == C.HW_VAR_RCR:
         assert isinstance(val, int)
         io.write32(C.REG_RCR, val)
         mac.rx_conf = val
+    elif variable == C.HW_VAR_RETRY_LIMIT:
+        assert isinstance(val, int)
+        io.write16(C.REG_RL, val << C.RETRY_LIMIT_SHORT_SHIFT | val << C.RETRY_LIMIT_LONG_SHIFT)
     elif variable == C.HW_VAR_WPA_CONFIG:
         assert isinstance(val, int)
         io.write8(C.REG_SECCFG, val)
+    elif variable == C.HW_VAR_FW_PSMODE_STATUS:
+        rtlpriv.psc.fw_current_inpsmode = bool(val)
     elif variable == C.HW_VAR_MGT_FILTER:
         assert isinstance(val, int)
         io.write16(C.REG_RXFLTMAP0, val)
@@ -575,3 +734,11 @@ def rtl92cu_set_hw_reg(rtlpriv: RtlPriv, variable: int, val: int | bytes) -> Non
         mac.rx_data_filter = val
     else:
         raise NotImplementedError(f"rtl92cu_set_hw_reg variable {variable:#x} is not ported")
+
+
+def rtl92cu_update_channel_access_setting(rtlpriv: RtlPriv) -> None:
+    """hw.c:2063."""
+    mac = rtlpriv.mac80211
+    rtlpriv.cfg.ops.set_hw_reg(rtlpriv, C.HW_VAR_SLOT_TIME, mac.slot_time)
+    sifs_timer = 0x0a0a if not mac.ht_enable else 0x0e0e
+    rtlpriv.cfg.ops.set_hw_reg(rtlpriv, C.HW_VAR_SIFS, sifs_timer.to_bytes(2, "little"))

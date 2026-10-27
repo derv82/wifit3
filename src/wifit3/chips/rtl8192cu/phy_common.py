@@ -8,9 +8,9 @@ import logging
 import time
 
 from . import constants as C
-from .mac import IS_92C_SERIAL
+from .mac import IS_81XXC_VENDOR_UMC_B_CUT, IS_92C_SERIAL
 from .priv import RtlPriv
-from .wifi import calculate_bit_shift, is_hal_stop, rtl_get_bbreg, rtl_set_bbreg
+from .wifi import calculate_bit_shift, is_hal_stop, rtl_get_bbreg, rtl_get_rfreg, rtl_set_bbreg, rtl_set_rfreg
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +246,137 @@ def rtl92c_phy_set_bw_mode(rtlpriv: RtlPriv, ch_type: int) -> None:
         logger.debug("false driver sleep or unload")
         rtlphy.set_bwmode_inprogress = False
         rtlphy.current_chan_bw = tmp_bw
+
+
+def _rtl92c_get_txpower_index(rtlpriv: RtlPriv, channel: int, cckpowerlevel: list[int],
+                              ofdmpowerlevel: list[int]) -> None:
+    """phy_common.c:510."""
+    rtlefuse = rtlpriv.efuse
+    rf_type = rtlpriv.phy.rf_type
+    index = channel - 1
+    cckpowerlevel[C.RF90_PATH_A] = rtlefuse.txpwrlevel_cck[C.RF90_PATH_A][index]
+    cckpowerlevel[C.RF90_PATH_B] = rtlefuse.txpwrlevel_cck[C.RF90_PATH_B][index]
+    if rf_type in (C.RF_1T2R, C.RF_1T1R):
+        ofdmpowerlevel[C.RF90_PATH_A] = rtlefuse.txpwrlevel_ht40_1s[C.RF90_PATH_A][index]
+        ofdmpowerlevel[C.RF90_PATH_B] = rtlefuse.txpwrlevel_ht40_1s[C.RF90_PATH_B][index]
+    elif rf_type == C.RF_2T2R:
+        ofdmpowerlevel[C.RF90_PATH_A] = rtlefuse.txpwrlevel_ht40_2s[C.RF90_PATH_A][index]
+        ofdmpowerlevel[C.RF90_PATH_B] = rtlefuse.txpwrlevel_ht40_2s[C.RF90_PATH_B][index]
+
+
+def _rtl92c_ccxpower_index_check(rtlpriv: RtlPriv, channel: int, cckpowerlevel: list[int],
+                                 ofdmpowerlevel: list[int]) -> None:
+    rtlpriv.phy.cur_cck_txpwridx = cckpowerlevel[0]
+    rtlpriv.phy.cur_ofdm24g_txpwridx = ofdmpowerlevel[0]
+
+
+def rtl92c_phy_set_txpower_level(rtlpriv: RtlPriv, channel: int) -> None:
+    """phy_common.c:546."""
+    if not rtlpriv.efuse.txpwr_fromeprom:
+        return
+    cckpowerlevel = [0, 0]
+    ofdmpowerlevel = [0, 0]
+    _rtl92c_get_txpower_index(rtlpriv, channel, cckpowerlevel, ofdmpowerlevel)
+    _rtl92c_ccxpower_index_check(rtlpriv, channel, cckpowerlevel, ofdmpowerlevel)
+    rtlpriv.cfg.ops.phy_rf6052_set_cck_txpower(rtlpriv, cckpowerlevel)
+    rtlpriv.cfg.ops.phy_rf6052_set_ofdm_txpower(rtlpriv, ofdmpowerlevel, channel)
+
+
+def rtl92c_phy_sw_chnl_callback(rtlpriv: RtlPriv) -> None:
+    """phy_common.c:674. The loop breaks after the first step with a delay (the RF_CHNLBW write),
+    so stage 2 (postcommoncmd) is never reached."""
+    rtlphy = rtlpriv.phy
+    if is_hal_stop(rtlpriv.rtlhal):
+        return
+    while True:
+        if not rtlphy.sw_chnl_inprogress:
+            break
+        done, delay = _rtl92c_phy_sw_chnl_step_by_step(rtlpriv, rtlphy.current_channel)
+        if not done:
+            if delay > 0:
+                time.sleep(delay / 1000)
+            else:
+                continue
+        else:
+            rtlphy.sw_chnl_inprogress = False
+        break
+
+
+def rtl92c_phy_sw_chnl(rtlpriv: RtlPriv) -> int:
+    """phy_common.c:704."""
+    rtlphy = rtlpriv.phy
+    if rtlphy.sw_chnl_inprogress:
+        return 0
+    if rtlphy.set_bwmode_inprogress:
+        return 0
+    if rtlphy.current_channel > 14:
+        logger.warning("rtl8192c-common: WIRELESS_MODE_G but channel>14")
+    rtlphy.sw_chnl_inprogress = True
+    rtlphy.sw_chnl_stage = 0
+    rtlphy.sw_chnl_step = 0
+    if not is_hal_stop(rtlpriv.rtlhal):
+        rtl92c_phy_sw_chnl_callback(rtlpriv)
+        rtlphy.sw_chnl_inprogress = False
+    else:
+        rtlphy.sw_chnl_inprogress = False
+    return 1
+
+
+def _rtl92c_phy_sw_rf_seting(rtlpriv: RtlPriv, channel: int) -> None:
+    """phy_common.c:733."""
+    if IS_81XXC_VENDOR_UMC_B_CUT(rtlpriv.rtlhal.version):
+        if channel == 6 and rtlpriv.phy.current_chan_bw == C.HT_CHANNEL_WIDTH_20:
+            rtl_set_rfreg(rtlpriv, C.RF90_PATH_A, C.RF_RX_G1, C.MASKDWORD, 0x00255)
+        else:
+            backuprf0x1a = rtl_get_rfreg(rtlpriv, C.RF90_PATH_A, C.RF_RX_G1, C.RFREG_OFFSET_MASK)
+            rtl_set_rfreg(rtlpriv, C.RF90_PATH_A, C.RF_RX_G1, C.MASKDWORD, backuprf0x1a)
+
+
+def _rtl92c_phy_sw_chnl_step_by_step(rtlpriv: RtlPriv, channel: int) -> tuple[bool, int]:
+    """phy_common.c:777; advances rtlphy->sw_chnl_stage/step and returns (done, delay)."""
+    rtlphy = rtlpriv.phy
+    io = rtlpriv.io
+    precommoncmd = [(C.CMDID_SET_TXPOWEROWER_LEVEL, 0, 0, 0), (C.CMDID_END, 0, 0, 0)]
+    postcommoncmd = [(C.CMDID_END, 0, 0, 0)]
+    if channel < 1 or channel > 14:
+        logger.warning("rtl8192c-common: illegal channel for Zebra: %d", channel)
+    rfdependcmd = [(C.CMDID_RF_WRITEREG, C.RF_CHNLBW, channel, 10), (C.CMDID_END, 0, 0, 0)]
+
+    while True:
+        if rtlphy.sw_chnl_stage == 0:
+            currentcmd = precommoncmd[rtlphy.sw_chnl_step]
+        elif rtlphy.sw_chnl_stage == 1:
+            currentcmd = rfdependcmd[rtlphy.sw_chnl_step]
+        elif rtlphy.sw_chnl_stage == 2:
+            currentcmd = postcommoncmd[rtlphy.sw_chnl_step]
+        else:
+            logger.error("Invalid 'stage' = %d, Check it!", rtlphy.sw_chnl_stage)
+            return True, 0
+        cmdid, para1, para2, msdelay = currentcmd
+        if cmdid == C.CMDID_END:
+            if rtlphy.sw_chnl_stage == 2:
+                return True, 0
+            rtlphy.sw_chnl_stage += 1
+            rtlphy.sw_chnl_step = 0
+            continue
+        if cmdid == C.CMDID_SET_TXPOWEROWER_LEVEL:
+            rtl92c_phy_set_txpower_level(rtlpriv, channel)
+        elif cmdid == C.CMDID_WRITEPORT_ULONG:
+            io.write32(para1, para2)
+        elif cmdid == C.CMDID_WRITEPORT_USHORT:
+            io.write16(para1, para2 & 0xFFFF)
+        elif cmdid == C.CMDID_WRITEPORT_UCHAR:
+            io.write8(para1, para2 & 0xFF)
+        elif cmdid == C.CMDID_RF_WRITEREG:
+            for rfpath in range(rtlphy.num_total_rfpath):
+                rtlphy.rfreg_chnlval[rfpath] = (rtlphy.rfreg_chnlval[rfpath] & 0xfffffc00) | para2
+                rtl_set_rfreg(rtlpriv, rfpath, para1, C.RFREG_OFFSET_MASK, rtlphy.rfreg_chnlval[rfpath])
+            _rtl92c_phy_sw_rf_seting(rtlpriv, channel)
+        else:
+            logger.debug("switch case %#x not processed", cmdid)
+        break
+    rtlphy.sw_chnl_step += 1
+    return False, msdelay
 
 
 def _rtl92c_phy_path_a_iqk(rtlpriv: RtlPriv, config_pathb: bool) -> int:
