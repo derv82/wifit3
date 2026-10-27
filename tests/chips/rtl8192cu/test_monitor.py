@@ -30,7 +30,7 @@ def _started(sys_cfg=SYS_CFG_88C_TSMC) -> tuple[RtlPriv, FakeChip]:
     io = FakeChip({C.REG_SYS_CFG: sys_cfg, C.REG_9346CR: C.EEPROM_EN, **NORMAL_SIE_EP_2OUT}, probed_efuse())
     priv = RtlPriv(io)
     rtl_usb_probe(priv, EP_2OUT, True)
-    assert rtl_usb_start(priv) == 0
+    assert rtl_usb_start(priv, lambda: 0) == 0
     io.log.clear()
     return priv, io
 
@@ -51,7 +51,8 @@ async def test_connect_brings_up_monitor_and_starts_the_watchdog(monkeypatch):
                   probed_efuse())
     driver.priv = RtlPriv(io)
     endpoints = [SimpleNamespace(bEndpointAddress=e.bEndpointAddress, bmAttributes=e.bmAttributes) for e in EP_2OUT]
-    driver.transport = MagicMock(interface=endpoints, **{"is_high_speed.return_value": True})
+    driver.transport = MagicMock(interface=endpoints,
+                                 **{"is_high_speed.return_value": True, "bulk_read.return_value": None})
 
     assert await driver.connect() is True
     await asyncio.sleep(0)
@@ -67,8 +68,10 @@ async def test_connect_brings_up_monitor_and_starts_the_watchdog(monkeypatch):
     assert driver.priv.phy.current_channel == 11
     with pytest.raises(ValueError):
         await driver.set_channel(36)
+    assert driver.transport.bulk_read.call_args.args[:2] == (0x81, C.RTL92C_SIZE_MAX_RX_BUFFER)
     await driver.close()
-    assert driver._watchdog_task is None
+    assert driver._watchdog_task is None and driver._rx_reader is None
+    assert io.writes(C.REG_RSV_CTRL)[-1] == 0x0E
     driver.transport.release.assert_called()
 
 

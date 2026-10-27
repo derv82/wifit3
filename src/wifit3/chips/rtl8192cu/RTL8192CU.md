@@ -20,7 +20,7 @@
 
 ## Python Port Details
 - VID:PID: the full `rtl8192c_usb_ids[]` table (72 IDs) in `__init__.py`; no other package claims them.
-- Status: probe, `rtl92cu_hw_init` and the monitor-mode bring-up ported: `rtl_usb_start`, `rtl_op_configure_filter`, `rtl_op_config` channel switch (TX power, RF_CHNLBW, channel access, bandwidth; 20 and 40 MHz; 1T1R/1T2R/2T2R, UMC B-cut, regulatory 0-3, dynamic TX power levels), the `rtl92c_dm_watchdog` tick, and active monitor / RX ACKs. `verify_pcap` replays the whole capture, 6298/6298 ops byte-for-byte. RX descriptor decode, TX and `inject_frame` are not ported.
+- Status: probe, `rtl92cu_hw_init` and the monitor-mode bring-up ported: `rtl_usb_start`, `rtl_op_configure_filter`, `rtl_op_config` channel switch (TX power, RF_CHNLBW, channel access, bandwidth; 20 and 40 MHz; 1T1R/1T2R/2T2R, UMC B-cut, regulatory 0-3, dynamic TX power levels), the `rtl92c_dm_watchdog` tick, and active monitor / RX ACKs. `verify_pcap` replays the whole capture, 6298/6298 ops byte-for-byte. The bulk-IN RX path, the TX descriptor + bulk-OUT path (`inject_frame`) and `rtl_op_stop` / `rtl92cu_card_disable` are ported from source; the capture has no bulk traffic and no stop, so nothing checks them against the wire.
 - Firmware: `assets/rtl8192cufw_TMSC.bin`, `_A.bin`, `_B.bin` (linux-firmware `rtlwifi/`, SHA-256 `c083f2db…`, `32846065…`, `479e5e67…`), picked by `rtl92cu_init_sw_vars` (sw.c:48): UMC A-cut 1T → `_A`, UMC B-cut → `_B`, else `_TMSC`. The alt name `rtl8192cufw.bin` is not shipped.
 - Related ports: none share code (rtl8xxxu also drives this silicon upstream; no rtl8xxxu 8192C port exists here).
 - Non-obvious in the port:
@@ -47,13 +47,26 @@
   - Unlinked, the watchdog's DIG, CCK-PD, RF-saving, dynamic TX power and EDCA-turbo steps write nothing; `rf_saving` reads 0x874/0xc70/0x85c/0xa74 once. `rtl92c_dm_refresh_rate_adaptive_mask` is commented out in `rtl92c_dm_watchdog`. `btcoexist.bt_coexistence` is never set for rtl8192cu, so BT coexist is off the graph. `rtl92cu_led_control` writes no register.
   - `REG_RXFLTMAP1` is cleared by hw_init ("Reject all control frame"), so ACKs never reach RX despite `RCR_ACF`; `_enable_rx_acks` sets the ACK subtype bit (`IEEE80211_STYPE_ACK >> 4`) through `HW_VAR_CTRL_FILTER`.
   - `enter_active_monitor` is `rtl_op_add_interface`'s STATION path: `set_network_type` (MSR infra, beacon functions off; unlinked, so `set_check_bssid(false)` keeps RCR's BSSID checks off), `HW_VAR_ETHER_ADDR`, `HW_VAR_RETRY_LIMIT`. `exit_active_monitor` is `rtl_op_remove_interface` (MSR no-link; `REG_MACID` keeps the address, as in the source).
-  - Not ported (STA/AP only): the watchdog's linked traffic/LPS and roaming blocks, `_rtl92cu_set_media_status` ADHOC/AP, `HW_VAR_CORRECT_TSF`, `BASIC_RATE`, `BSSID`, `AID`, H2C join/power-mode variables.
+  - Not ported (STA/AP only): the watchdog's linked traffic/LPS and roaming blocks, `_rtl92cu_set_media_status` ADHOC/AP, `HW_VAR_CORRECT_TSF`, `BASIC_RATE`, `BSSID`, `AID`, H2C join/power-mode variables, `rtl_beacon_statistic` (linked STATION only), TX `hw_key` security types and the per-STA A-MPDU / HT-rate / short-GI picks in `rtl_get_tcb_desc` and `rtl92cu_tx_fill_desc`.
+- RX notes:
+  - One frame per bulk-IN transfer: `rtl92cu_interface_cfg.usb_rx_segregate_hdl` is NULL (sw.c), and hw_init never enables RX DMA aggregation (`REG_TRXDMA_CTRL` reads 0 in the capture and only the queue-map bits are written; no `REG_RXDMA_AGG_PG_TH` / USB agg writes). `_rtl_rx_work` takes `_rtl_usb_rx_process_noagg`, which does not trim to the descriptor's `pkt_len`: the frame is the rest of the transfer.
+  - `rtl8192cu_rx_hdl` / `_rtl_rx_process` (trx.c:344) is registered as `usb_rx_hdl` but usb.c never calls it, so its `rxdesc + RTL_RX_DESC_SIZE` drvinfo pointer (a `__le32 *`, 96 bytes) is off the graph.
+  - `rtl92cu_rx_query_desc` reads the PHY status at `skb->data + rx_bufshift` (after the 24-byte descriptor), then the frame starts `drvinfo_size + bufshift` past the descriptor.
+  - CRC32-error frames are freed in `_rtl_usb_rx_process_noagg` (RCR has `ACRC32`, so the MAC delivers them); ICV-error frames go on. No C2H/report packet type exists in this descriptor; the interrupt endpoint is never read.
+  - `rx_status->signal` is `recvsignalpower + 10` (trx.c:338), the value the RX callback gets. The FCS (`RCR_APPFCS`, mac80211 `RX_INCLUDES_FCS`) is stripped in `driver._dispatch`.
+  - `rtl_process_phyinfo` runs only for frames whose BSSID equals `mac->bssid`, which stays zero in monitor mode.
+  - `_rtl_rx_completed` drops transfers shorter than `RTL_RX_DESC_SIZE + sizeof(struct ieee80211_hdr)` (54 bytes).
+- TX notes:
+  - Sequence numbers are stamped in software (`_stamp_tx_seq`): `set_tx_desc_hwseq_en` is set only with `leisure_ps && fwctrl_lps` (trx.c:600), both cleared on USB (usb.c:319-320), and mac80211 assigns no sequence to monitor-injected frames. The descriptor's SEQ field copies the stamped header.
+  - Injection models what mac80211 hands `rtl_op_tx` for a STA-less monitor frame: `control.rates[0].idx` 0 (`rate_control_send_low`, 1 Mbps, `USE_RATE`, rate fallback off), queue from `ieee80211_select_queue_80211` (non-data → VO, non-QoS data → BE, QoS data → its TID's AC). Management frames go to `QSLT_MGNT` / `RTL_TXQ_MGT` regardless.
+  - The descriptor has no per-frame retry limit; the MAC uses `REG_RL` (hw_init's default, or `HW_VAR_RETRY_LIMIT` 0x30 in active monitor). No-ACK for group frames is the `BMC` bit, set from `ieee80211_get_DA` (addr3 on a ToDS frame).
+  - `RATE_ID` / `MACID`: with `dm.useramask` (set by `rtl92c_dm_init` on a driver-DM chip) they are `ratr_index` / `mac_id`; otherwise `0xC + ratr_index` (masked to 4 bits) / `ratr_index`.
+  - Bulk-OUT goes to `ep_mapping[rtl8192cu_mq_to_hwq()]` with `URB_ZERO_PACKET` (usb.c:840): the transport sends a ZLP after a `max_bulk_out_size` multiple.
+- Stop: `close()` cancels the watchdog (`rtl_deinit_deferred_work`), then `rtl_op_stop` → `rtl_usb_stop` (HAL stop, USB stop, reader paused) → `rtl92cu_card_disable`. `rtl_usb_init_sw` sets `disablehwsm`, so the HW-state-machine power-off runs; `_resetdigitalprocedure1` takes the 8051 self-reset branch on firmware newer than 0x20. `_disablegpio` writes its GPIO_MUXCFG-derived value to `REG_GPIO_PIN_CTRL+2`, as the source does.
 
 ## Known Problems
-- RX is not ported: `connect()` starts no bulk-IN reader (`_rtl_usb_receive`), so no frames reach the RX callback.
-- `close()` cancels the watchdog and releases the interface; `rtl_op_stop` / `rtl92cu_card_disable` are not ported.
+- No card in hand: RX, TX and power-off have never run on hardware; the capture has no bulk-IN/OUT traffic to replay.
 - `rtl92cu_set_hw_reg` / `rtl92cu_get_hw_reg` raise `NotImplementedError` for the STA/AP variables listed above.
-- `tests/chips/test_inject_frame.py` skips this package (`TX_NOT_PORTED`) until the TX path exists.
 
 ## Driver Entry Points
 - Probe (`rtl_usb_probe`, usb.c:951) → `usb.rtl_usb_probe`
@@ -73,6 +86,9 @@
 - Watchdog (`rtl_watchdog_wq_callback`, base.c:2036; `rtl92c_dm_watchdog`, dm_common.c:1416) → `base.py`, `dm_common.py`; scheduled by `driver._watchdog`
 - CAM reset (cam.c:155) → `cam.py`
 - Register I/O (`_usbctrl_vendorreq_sync`, usb.c:28) → `transport.RTL8192CUTransport`
+- RX: `_rtl_usb_receive` (usb.c:641) → `driver._rtl_usb_receive` (the `RxReaderThread`); `_rtl_rx_completed`, `_rtl_rx_work`, `_rtl_usb_rx_process_noagg` (usb.c:411-620) → `usb.py`; `rtl92cu_rx_query_desc` (trx.c:289) → `trx.py`; `rtl92c_translate_rx_signal_stuff`, `_rtl92c_query_rxphystatus` (mac.c:570-735) → `mac.py`; stats.c → `stats.py`; `rtl_action_proc`, `rtlwifi_rate_mapping` → `base.py`
+- TX: `rtl_op_tx` (core.c:185) → `core.rtl_op_tx`; `rtl_usb_tx`, `_rtl_usb_tx_preprocess`, `_rtl_usb_transmit` (usb.c:844-925) → `usb.py`; `rtl_get_tcb_desc` (base.c:1228) → `base.py`; `rtl92cu_tx_fill_desc`, `_rtl_tx_desc_checksum`, `rtl8192cu_mq_to_hwq` (trx.c:206-610) → `trx.py`; bulk-OUT → `transport.bulk_write`
+- Stop: `rtl_op_stop` (core.c:147) → `core.rtl_op_stop`; `rtl_usb_stop` (usb.c:737) → `usb.rtl_usb_stop`; `rtl92cu_card_disable` and helpers (hw.c:939-1277) → `hw.py`; `rtl_cam_reset_sec_info` → `cam.py`
 
 ## Capture phase map (capture-2, vendor ops)
 - Frames before 54: USB-core enumeration (descriptors, SET_CONFIGURATION); no vendor requests. `verify_pcap` starts at the first vendor op.

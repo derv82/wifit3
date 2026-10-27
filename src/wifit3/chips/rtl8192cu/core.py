@@ -6,10 +6,13 @@ import logging
 import time
 from dataclasses import dataclass
 from importlib.resources import files
+from typing import Callable
 
 from . import constants as C
-from .priv import RtlPriv
-from .wifi import rtl_set_rfreg
+from .base import ieee80211_is_data, ieee80211_is_data_qos
+from .cam import rtl_cam_reset_sec_info
+from .priv import Ieee80211TxInfo, RtlPriv
+from .wifi import is_hal_stop, rtl_set_rfreg
 
 logger = logging.getLogger(__name__)
 
@@ -263,3 +266,47 @@ def rtl_op_configure_filter(rtlpriv: RtlPriv, changed_flags: int, new_flags: int
     if update_rcr:
         rtlpriv.cfg.ops.set_hw_reg(rtlpriv, C.HW_VAR_RCR, mac.rx_conf)
     return new_flags
+
+
+def ieee80211_select_queue_80211(skb: bytes) -> int:
+    """net/mac80211/wme.c: the AC an injected frame is queued on (rtlwifi sets hw->queues = AC_MAX).
+    A QoS frame too short for its QoS control gets 0, as ieee80211_monitor_select_queue returns."""
+    fc = int.from_bytes(skb[0:2], "little")
+    if not ieee80211_is_data(fc):
+        priority = 7
+    elif not ieee80211_is_data_qos(fc):
+        priority = 0
+    else:
+        has_a4 = fc & C.IEEE80211_FCTL_TODS and fc & C.IEEE80211_FCTL_FROMDS
+        qos_ctl = 30 if has_a4 else 24
+        if len(skb) <= qos_ctl:
+            return 0
+        priority = skb[qos_ctl] & C.IEEE80211_QOS_CTL_TAG1D_MASK
+    return C.ieee802_1d_to_ac[priority]
+
+
+def rtl_op_stop(rtlpriv: RtlPriv, adapter_stop: Callable[[], None]) -> None:
+    """core.c:147. HAL_DEF_WOWLAN reads false; rtl_ips_nic_on is a no-op on USB (inactiveps is
+    cleared, usb.c:318). rtl_deinit_deferred_work is the driver cancelling its watchdog first."""
+    mac = rtlpriv.mac80211
+    if is_hal_stop(rtlpriv.rtlhal):
+        return
+    support_remote_wakeup = rtlpriv.cfg.ops.get_hw_reg(rtlpriv, C.HAL_DEF_WOWLAN)
+    if not support_remote_wakeup:
+        mac.link_state = C.MAC80211_NOLINK
+        mac.bssid = bytes(6)
+        mac.vendor = C.PEER_UNKNOWN
+        rtl_cam_reset_sec_info(rtlpriv)
+    adapter_stop()
+
+
+def rtl_op_tx(rtlpriv: RtlPriv, skb: bytes, info: Ieee80211TxInfo,
+              adapter_tx: Callable[[RtlPriv, bytes, Ieee80211TxInfo], tuple[int, bytes] | None],
+              ) -> tuple[int, bytes] | None:
+    """core.c:185: the bulk-OUT endpoint and payload ``adapter_tx`` (rtl_usb_tx) built, or None
+    when the frame is dropped."""
+    if is_hal_stop(rtlpriv.rtlhal) or rtlpriv.psc.rfpwr_state != C.ERFON:
+        return None
+    if not rtlpriv.status & C.BIT(C.RTL_STATUS_INTERFACE_START):
+        return None
+    return adapter_tx(rtlpriv, skb, info)

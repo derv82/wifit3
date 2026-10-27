@@ -215,6 +215,8 @@ class RtlQosParameters:
 @dataclass
 class RtlMac:
     mac_addr: bytes = bytes(6)
+    bssid: bytes = bytes(6)
+    vendor: int = 0
     vif: bytes | None = None
     link_state: int = C.MAC80211_NOLINK
     opmode: int = C.NL80211_IFTYPE_UNSPECIFIED
@@ -238,6 +240,7 @@ class RtlMac:
     max_mss_density: int = 0
     current_ampdu_density: int = 0
     current_ampdu_factor: int = 0
+    rdg_en: bool = False
 
 
 @dataclass
@@ -252,12 +255,16 @@ class RtlPsCtl:
     reg_fwctrl_lps: int = 0
     reg_max_lps_awakeintvl: int = 0
     fwctrl_psmode: int = 0
+    sw_ps_enabled: bool = False
+    cur_ps_level: int = 0
 
 
 @dataclass
 class RtlSecurity:
     use_sw_sec: bool = False
     use_defaultkey: bool = False
+    pairwise_enc_algorithm: int = C.NO_ENCRYPTION
+    group_enc_algorithm: int = C.NO_ENCRYPTION
 
 
 @dataclass
@@ -270,9 +277,122 @@ class RtlBtCoexist:
 
 
 @dataclass
-class RtlStats:
+class RtSmoothData:
+    """struct rt_smooth_data (wifi.h)."""
+    elements: list[int] = field(default_factory=lambda: [0] * C.PHY_RSSI_SLID_WIN_MAX)
+    index: int = 0
+    total_num: int = 0
+    total_val: int = 0
+
+
+@dataclass
+class WirelessStats:
+    """struct wireless_stats (wifi.h): rtlpriv->stats."""
     txbytesunicast: int = 0
+    txbytesmulticast: int = 0
+    txbytesbroadcast: int = 0
     rxbytesunicast: int = 0
+    rx_snr_db: list[int] = field(default_factory=lambda: [0] * 4)
+    recv_signal_power: int = 0
+    signal_quality: int = 0
+    last_sigstrength_inpercent: int = 0
+    rssi_calculate_cnt: int = 0
+    pwdb_all_cnt: int = 0
+    signal_strength: int = 0
+    rx_rssi_percentage: list[int] = field(default_factory=lambda: [0] * 4)
+    rx_evm_dbm: list[int] = field(default_factory=lambda: [0] * 4)
+    rx_evm_percentage: list[int] = field(default_factory=lambda: [0] * 2)
+    rx_cfo_short: list[int] = field(default_factory=lambda: [0] * 4)
+    rx_cfo_tail: list[int] = field(default_factory=lambda: [0] * 4)
+    ui_rssi: RtSmoothData = field(default_factory=RtSmoothData)
+    ui_link_quality: RtSmoothData = field(default_factory=RtSmoothData)
+
+
+@dataclass
+class RtlStats:
+    """struct rtl_stats (wifi.h:2018): one received packet's descriptor and PHY-status fields."""
+    length: int = 0
+    rx_drvinfo_size: int = 0
+    rx_bufshift: int = 0
+    icv: int = 0
+    crc: int = 0
+    hwerror: int = 0
+    decrypted: bool = False
+    rate: int = 0
+    shortpreamble: int = 0
+    isampdu: bool = False
+    isfirst_ampdu: bool = False
+    timestamp_low: int = 0
+    rx_is40mhzpacket: bool = False
+    is_ht: bool = False
+    rssi: int = 0
+    signalquality: int = 0
+    recvsignalpower: int = 0
+    rxpower: int = 0
+    signalstrength: int = 0
+    rx_pwdb_all: int = 0
+    rx_mimo_signalstrength: list[int] = field(default_factory=lambda: [0] * 4)
+    rx_mimo_evm_dbm: list[int] = field(default_factory=lambda: [0] * 4)
+    cfo_short: list[int] = field(default_factory=lambda: [0] * 4)
+    cfo_tail: list[int] = field(default_factory=lambda: [0] * 4)
+    rx_mimo_sig_qual: list[int] = field(default_factory=lambda: [0] * 4)
+    rx_snr: list[int] = field(default_factory=lambda: [0] * 4)
+    packet_matchbssid: bool = False
+    is_cck: bool = False
+    packet_toself: bool = False
+    packet_beacon: bool = False
+
+
+@dataclass
+class RtlTcbDesc:
+    """struct rtl_tcb_desc (wifi.h:2110)."""
+    packet_bw: int = 0
+    multicast: bool = False
+    broadcast: bool = False
+    rts_stbc: bool = False
+    rts_enable: bool = False
+    cts_enable: bool = False
+    rts_use_shortpreamble: bool = False
+    rts_use_shortgi: bool = False
+    rts_sc: int = 0
+    rts_bw: bool = False
+    rts_rate: int = 0
+    use_shortgi: bool = False
+    use_shortpreamble: bool = False
+    use_driver_rate: bool = False
+    disable_ratefallback: bool = False
+    ratr_index: int = 0
+    mac_id: int = 0
+    hw_rate: int = 0
+
+
+@dataclass(frozen=True)
+class Ieee80211TxInfo:
+    """The struct ieee80211_tx_info fields rtlwifi's TX path reads: control.rates[0] (an index into
+    rtl_ratetable_2g, or an MCS with IEEE80211_TX_RC_MCS) and the skb's queue mapping. No STA,
+    no hw_key: injected frames carry neither."""
+    rate_idx: int = 0
+    rate_flags: int = 0
+    queue_mapping: int = C.IEEE80211_AC_BE
+
+
+@dataclass
+class Ieee80211RxStatus:
+    """struct ieee80211_rx_status (include/net/mac80211.h), as rtl92cu_rx_query_desc fills it."""
+    freq: int = 0
+    failed_fcs_crc: bool = False
+    decrypted: bool = False
+    bw: int = C.RATE_INFO_BW_20
+    encoding: int = C.RX_ENC_LEGACY
+    rate_idx: int = 0
+    mactime: int = 0
+    signal: int = 0
+
+
+@dataclass
+class RtLinkDetect:
+    """struct rt_link_detect (wifi.h): rtlpriv->link_info, the counters the RX path bumps."""
+    num_rx_inperiod: int = 0
 
 
 @dataclass
@@ -335,6 +455,7 @@ class RtlUsb:
     acm_method: int = 0
     irq_mask: list[int] = field(default_factory=lambda: [0, 0])
     disablehwsm: bool = False
+    state: int = C.USB_STATE_STOP
     reg_bcn_ctrl_val: int = 0
 
 
@@ -361,6 +482,7 @@ class RtlHalOps:
     config_bb_with_pgheaderfile: Callable[[RtlPriv, int], bool]
     phy_lc_calibrate: Callable[[RtlPriv, bool], None]
     phy_set_bw_mode_callback: Callable[[RtlPriv], None]
+    hw_disable: Callable[[RtlPriv], None]
 
 
 @dataclass(frozen=True)
@@ -394,7 +516,8 @@ class RtlPriv:
     dm_pstable: PsT = field(default_factory=PsT)
     falsealm_cnt: FalseAlarmStatistics = field(default_factory=FalseAlarmStatistics)
     btcoexist: RtlBtCoexist = field(default_factory=RtlBtCoexist)
-    stats: RtlStats = field(default_factory=RtlStats)
+    stats: WirelessStats = field(default_factory=WirelessStats)
+    link_info: RtLinkDetect = field(default_factory=RtLinkDetect)
     ra: RateAdaptive = field(default_factory=RateAdaptive)
     mac80211: RtlMac = field(default_factory=RtlMac)
     psc: RtlPsCtl = field(default_factory=RtlPsCtl)
@@ -403,6 +526,9 @@ class RtlPriv:
     efuse: RtlEfuse = field(default_factory=RtlEfuse)
     usb: RtlUsb = field(default_factory=RtlUsb)
     max_fw_size: int = 0
+    status: int = 0
+    conf_center_freq: int = 0
+    """hw->conf.chandef.chan->center_freq: mac80211's current channel, set before each config."""
     reg_init: bool = False
     reg_874: int = 0
     reg_c70: int = 0

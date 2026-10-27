@@ -37,6 +37,21 @@ class RTL8192CUTransport:
     def is_high_speed(self) -> bool:
         return self.dev.speed == usb.util.SPEED_HIGH
 
+    def bulk_read(self, endpoint: int, size: int, timeout_ms: int) -> bytes | None:
+        """One bulk-IN URB of ``size`` bytes; None when nothing arrived within ``timeout_ms``."""
+        try:
+            return bytes(self.dev.read(endpoint, size, timeout_ms))
+        except usb.core.USBTimeoutError:
+            return None
+
+    def bulk_write(self, endpoint: int, data: bytes, max_packet_size: int, timeout_ms: int) -> None:
+        """One bulk-OUT URB with URB_ZERO_PACKET (usb.c:840): PyUSB sends no ZLP itself."""
+        written = self.dev.write(endpoint, data, timeout=timeout_ms)
+        if written != len(data):
+            raise IOError(f"short bulk write to {endpoint:#04x}: {written}/{len(data)}")
+        if len(data) % max_packet_size == 0:
+            self.dev.write(endpoint, b"", timeout=timeout_ms)
+
     def read8(self, addr: int) -> int:
         return self._usb_read_sync(addr, 1)
 

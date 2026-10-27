@@ -22,7 +22,7 @@ from wifit3.models.device_id import DeviceID
 from wifit3.chips import (
     mt7601u, mt76x0u, mt76x2u, mt7921au, mt7925au, rt2500usb, rt2800usb, rt5572, rtl8187,
     rtl8188eus, rtl8812au, rtl8812au_dkms, rtl8814au_dkms, rtl8821au, rtl8821au_dkms, rtl8821cu_dkms, rtl8822bu, rtl8822bu_dkms, rtl8822cu,
-    rtl8192fu, rtl8922au, rtw88_8814au,
+    rtl8192cu, rtl8192fu, rtl8922au, rtw88_8814au,
 )
 from wifit3.chips.ar9271_v2 import constants as ar9271_constants
 from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
@@ -59,6 +59,11 @@ from wifit3.chips.rt5572.mac import ChipId as RT5572ChipId
 from wifit3.chips.rtl8187.driver import RTL8187Driver
 from wifit3.chips.rtl8187.mac import ChipVariant as RTL8187ChipVariant
 from wifit3.chips.rtl8188eus.constants import TXDESC_BROADMULTICAST as RTL8188EUS_BROADMULTICAST
+from wifit3.chips.rtl8192cu import constants as RTL8192CU_CONSTANTS
+from wifit3.chips.rtl8192cu.driver import RTL8192CUDriver
+from wifit3.chips.rtl8192cu.usb import UsbEndpointDescriptor as RTL8192CUEndpoint
+from wifit3.chips.rtl8192cu.usb import _rtl_usb_init as rtl8192cu_usb_init
+from wifit3.chips.rtl8192cu.wifi import set_hal_start as rtl8192cu_set_hal_start
 from wifit3.chips.rtl8192fu import constants as RTL8192FU_CONSTANTS
 from wifit3.chips.rtl8192fu.core import rtl8xxxu_config_endpoints_no_sie, rtl8xxxu_init_queue_priority
 from wifit3.chips.rtl8192fu.driver import RTL8192FUDriver
@@ -217,6 +222,17 @@ def build_rtl8188eus_dkms(dev: RecordingUsbDevice) -> Driver:
     return Rtl8188eusDkmsDriver(transport)
 
 
+def build_rtl8192cu(dev: RecordingUsbDevice) -> Driver:
+    driver = RTL8192CUDriver.from_usb_device(dev, first_id(rtl8192cu.SUPPORTED_IDS))
+    endpoints = [RTL8192CUEndpoint(address, 0x02) for address in (0x81, 0x02, 0x03)]
+    assert rtl8192cu_usb_init(driver.priv, endpoints, True) == 0    # zeroed reads: test chip, HQ+LQ
+    driver.priv.status |= RTL8192CU_CONSTANTS.BIT(RTL8192CU_CONSTANTS.RTL_STATUS_INTERFACE_START)
+    driver.priv.usb.state = RTL8192CU_CONSTANTS.USB_STATE_START
+    rtl8192cu_set_hal_start(driver.priv.rtlhal)
+    driver._started = True
+    return driver
+
+
 def build_rtl8192fu(dev: RecordingUsbDevice) -> Driver:
     driver = RTL8192FUDriver.from_usb_device(dev, first_id(rtl8192fu.SUPPORTED_IDS))
     driver.priv.out_ep = [0x05, 0x06, 0x08, 0x09, 0x0C, 0x0D]
@@ -323,6 +339,7 @@ DRIVER_CASES: dict[str, DriverCase] = {
     "rtl8188eus_dkms": DriverCase(build_rtl8188eus_dkms, 32, 32,
                                   hw_seq_bit=DescriptorBit(12, 1 << 31),    # txdw3 EN_HWSEQ
                                   no_ack_bit=DescriptorBit(0, RTL8188EUS_DKMS_BMC)),
+    "rtl8192cu": DriverCase(build_rtl8192cu, 32, 32, hw_seq_bit=None, no_ack_bit=REALTEK_BMC),
     "rtl8192fu": DriverCase(build_rtl8192fu, 40, 40, hw_seq_bit=None,
                              no_ack_bit=DescriptorBit(0, RTL8192FU_CONSTANTS.TXDESC_BROADMULTICAST << 24)),
     "rtl8812au": DriverCase(build_rtl8812au, 40, 40, REALTEK_W8_EN_HWSEQ, REALTEK_BMC),
@@ -350,9 +367,6 @@ FRAMES: dict[str, bytes] = {
 }
 
 
-TX_NOT_PORTED = {"rtl8192cu"}
-
-
 def driver_package_names() -> list[str]:
     chips_dir = Path(chips.__file__).parent
     return sorted(init.parent.name for init in chips_dir.glob("*/__init__.py")
@@ -378,8 +392,6 @@ async def inject_and_capture(driver: Driver, dev: RecordingUsbDevice, frame: byt
 @pytest.mark.parametrize("frame_name", list(FRAMES))
 @pytest.mark.parametrize("package_name", driver_package_names())
 async def test_inject_frame_wire_bytes(package_name: str, frame_name: str) -> None:
-    if package_name in TX_NOT_PORTED:
-        pytest.skip(f"{package_name} TX path is not ported")
     case = DRIVER_CASES[package_name]
     frame = FRAMES[frame_name]
     dev = RecordingUsbDevice()

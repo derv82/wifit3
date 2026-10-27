@@ -38,6 +38,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ⚠️ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
+| [RTL8192CU](#rtl8192cu) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ## Atheros Chipset
 ### AR9271
@@ -105,6 +106,27 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Stress | ✅ | 2026-07-30 | 30-min soak, flat (trend 0.97); mainline degrades/collapses. |
 
 → [RTL8188EUS_DKMS.md](../src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](../src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
+
+### RTL8192CU
+
+*RTL8188CUS capture (`0bda:8176`) · 2.4 GHz*
+
+> Ported from the mainline Linux `rtlwifi` driver (`rtl8192cu/`, `rtl8192c/`, `usb.c`), Linux v6.12.107.
+> **Not run on hardware.** The only evidence is `verify_pcap`: the cold-boot capture replays 6298/6298
+> register ops byte-for-byte (probe, hw_init, monitor, hops, watchdog). The capture has no bulk traffic,
+> so RX and TX are ported from source with no wire check.
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **ungraded** | 2026-10-27 | No card in hand: no RX, TX, ACK or soak measurement to score. |
+| RX | ⬜ | | Bulk-IN path ported; never received a frame. |
+| Port | ⬜ | | No Linux baseline; register-level fidelity only (verify_pcap). |
+| TX | ⬜ | | Descriptor + bulk-OUT ported; never transmitted. |
+| Handshake / PMKID / WEP / WPS | ⬜ | | |
+| ACKs | ⬜ | | Active monitor (MSR infra + REG_MACID) ported; untried. |
+| Stress | ⬜ | | |
+
+→ [RTL8192CU.md](../src/wifit3/chips/rtl8192cu/RTL8192CU.md)
 
 ### RTL8192FU
 <img align="right" width="140" src="../assets/cardart/card-dlink-an3u-n300.png" alt="D-Link AN3U rev. A1">
@@ -513,5 +535,5 @@ Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_
 **Wishlist (not yet bought):**
 
 - *Generic/no-name brand*: RTL8188FTV [PR#62](https://github.com/derv82/wifit3/pull/62) (verify port in PR)
-- **TP-Link TL-WN823N**:  RTL8192CU [Issue#71](https://github.com/derv82/wifit3/issues/71) (new port)
+- **TP-Link TL-WN823N**:  RTL8192CU [Issue#71](https://github.com/derv82/wifit3/issues/71) (ported from a capture; needs a card to test)
 - **Asus USB-AC68**: RTL8814AU [Issue#86](https://github.com/derv82/wifit3/issues/86) ("for the art")

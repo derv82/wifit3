@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import errno
 import logging
+from dataclasses import dataclass
 
 from . import constants as C
-from .priv import RtlPriv
+from .priv import RtlPriv, RtlStats
+from .stats import rtl_evm_db_to_percentage, rtl_process_phyinfo, rtl_query_rxpwrpercentage, rtl_signal_scale_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -230,3 +232,160 @@ def rtl92c_init_retry_function(rtlpriv: RtlPriv) -> None:
 def rtl92c_set_min_space(rtlpriv: RtlPriv, is2T: bool) -> None:
     value = C.MAX_MSS_DENSITY_2T if is2T else C.MAX_MSS_DENSITY_1T
     rtlpriv.io.write8(C.REG_AMPDU_MIN_SPACE, value)
+
+
+def _s8(value: int) -> int:
+    return value - 0x100 if value & 0x80 else value
+
+
+@dataclass(frozen=True)
+class RxFwinfo92c:
+    """struct rx_fwinfo_92c (mac.h:50), the PHY status after the RX descriptor; packed, 28 bytes."""
+    gain_trsw: tuple[int, int, int, int]
+    pwdb_all: int
+    cfosho: tuple[int, int, int, int]
+    cfotail: tuple[int, int, int, int]
+    rxevm: tuple[int, int]
+    rxsnr: tuple[int, int, int, int]
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> "RxFwinfo92c":
+        data = bytes(data[:28]).ljust(28, b"\x00")
+        return cls(gain_trsw=(data[0], data[1], data[2], data[3]), pwdb_all=data[4],
+                   cfosho=(data[5], data[6], data[7], data[8]), cfotail=(data[9], data[10], data[11], data[12]),
+                   rxevm=(_s8(data[13]), _s8(data[14])),
+                   rxsnr=(_s8(data[15]), _s8(data[16]), _s8(data[17]), _s8(data[18])))
+
+
+@dataclass(frozen=True)
+class PhyStsCck8192sT:
+    """struct phy_sts_cck_8192s_t (rtl8192ce/def.h:101), the same bytes read as a CCK report."""
+    adc_pwdb_X: tuple[int, int, int, int]
+    sq_rpt: int
+    cck_agc_rpt: int
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> "PhyStsCck8192sT":
+        data = bytes(data[:6]).ljust(6, b"\x00")
+        return cls(adc_pwdb_X=(data[0], data[1], data[2], data[3]), sq_rpt=data[4], cck_agc_rpt=data[5])
+
+
+def RX_HAL_IS_CCK_RATE(rxmcs: int) -> bool:
+    """wifi.h:367."""
+    return rxmcs in (C.DESC_RATE1M, C.DESC_RATE2M, C.DESC_RATE5_5M, C.DESC_RATE11M)
+
+
+def _rtl92c_query_rxphystatus(rtlpriv: RtlPriv, pstats: RtlStats, rxmcs: int, drvinfo: bytes,
+                              packet_match_bssid: bool, packet_toself: bool, packet_beacon: bool) -> None:
+    """mac.c:570. ``rxmcs`` is the descriptor's rx_desc_92c.rxmcs (word 3 [5:0])."""
+    rtlphy = rtlpriv.phy
+    p_drvinfo = RxFwinfo92c.from_bytes(drvinfo)
+    in_powersavemode = False
+    rx_pwr_all = 0
+    rx_pwr = [0, 0, 0, 0]
+    rf_rx_num = 0
+    total_rssi = 0
+    pwdb_all = 0
+    is_cck_rate = RX_HAL_IS_CCK_RATE(rxmcs)
+    pstats.packet_matchbssid = packet_match_bssid
+    pstats.packet_toself = packet_toself
+    pstats.packet_beacon = packet_beacon
+    pstats.is_cck = is_cck_rate
+    pstats.rx_mimo_sig_qual[0] = -1
+    pstats.rx_mimo_sig_qual[1] = -1
+    if is_cck_rate:
+        cck_buf = PhyStsCck8192sT.from_bytes(drvinfo)
+        cck_highpwr = rtlphy.cck_high_power if not in_powersavemode else False
+        cck_agc_rpt = cck_buf.cck_agc_rpt
+        if not cck_highpwr:
+            report = (cck_buf.cck_agc_rpt & 0xc0) >> 6
+            if report == 0x3:
+                rx_pwr_all = -46 - (cck_agc_rpt & 0x3e)
+            elif report == 0x2:
+                rx_pwr_all = -26 - (cck_agc_rpt & 0x3e)
+            elif report == 0x1:
+                rx_pwr_all = -12 - (cck_agc_rpt & 0x3e)
+            else:
+                rx_pwr_all = 16 - (cck_agc_rpt & 0x3e)
+        else:
+            report = (p_drvinfo.cfosho[0] & 0x60) >> 5
+            if report == 0x3:
+                rx_pwr_all = -46 - ((cck_agc_rpt & 0x1f) << 1)
+            elif report == 0x2:
+                rx_pwr_all = -26 - ((cck_agc_rpt & 0x1f) << 1)
+            elif report == 0x1:
+                rx_pwr_all = -12 - ((cck_agc_rpt & 0x1f) << 1)
+            else:
+                rx_pwr_all = 16 - ((cck_agc_rpt & 0x1f) << 1)
+        pwdb_all = rtl_query_rxpwrpercentage(rx_pwr_all)
+        pstats.rx_pwdb_all = pwdb_all
+        pstats.recvsignalpower = rx_pwr_all
+        if packet_match_bssid:
+            if pstats.rx_pwdb_all > 40:
+                sq = 100
+            else:
+                sq = cck_buf.sq_rpt
+                if sq > 64:
+                    sq = 0
+                elif sq < 20:
+                    sq = 100
+                else:
+                    sq = ((64 - sq) * 100) // 44
+            pstats.signalquality = sq
+            pstats.rx_mimo_sig_qual[0] = sq
+            pstats.rx_mimo_sig_qual[1] = -1
+    else:
+        rtlpriv.dm.rfpath_rxenable[0] = rtlpriv.dm.rfpath_rxenable[1] = True
+        for i in range(C.RF90_PATH_A, C.RF90_PATH_MAX):
+            if rtlpriv.dm.rfpath_rxenable[i]:
+                rf_rx_num += 1
+            rx_pwr[i] = ((p_drvinfo.gain_trsw[i] & 0x3f) * 2) - 110
+            rssi = rtl_query_rxpwrpercentage(rx_pwr[i])
+            total_rssi += rssi
+            rtlpriv.stats.rx_snr_db[i] = int(p_drvinfo.rxsnr[i] / 2)
+            if packet_match_bssid:
+                pstats.rx_mimo_signalstrength[i] = rssi
+        rx_pwr_all = ((p_drvinfo.pwdb_all >> 1) & 0x7f) - 110
+        pwdb_all = rtl_query_rxpwrpercentage(rx_pwr_all)
+        pstats.rx_pwdb_all = pwdb_all
+        pstats.rxpower = rx_pwr_all
+        pstats.recvsignalpower = rx_pwr_all
+        if rxmcs and C.DESC_RATEMCS8 <= rxmcs <= C.DESC_RATEMCS15:
+            max_spatial_stream = 2
+        else:
+            max_spatial_stream = 1
+        for i in range(max_spatial_stream):
+            evm = rtl_evm_db_to_percentage(p_drvinfo.rxevm[i])
+            if packet_match_bssid:
+                if i == 0:
+                    pstats.signalquality = evm & 0xff
+                pstats.rx_mimo_sig_qual[i] = evm & 0xff
+    if is_cck_rate:
+        pstats.signalstrength = rtl_signal_scale_mapping(pwdb_all) & 0xFF
+    elif rf_rx_num != 0:
+        total_rssi //= rf_rx_num
+        pstats.signalstrength = rtl_signal_scale_mapping(total_rssi) & 0xFF
+
+
+def rtl92c_translate_rx_signal_stuff(rtlpriv: RtlPriv, skb: bytes, pstats: RtlStats, rxmcs: int,
+                                     drvinfo: bytes) -> None:
+    """mac.c:710. ``skb`` starts after the RX descriptor, as in the source."""
+    mac = rtlpriv.mac80211
+    rtlefuse = rtlpriv.efuse
+    tmp_buf = skb[pstats.rx_drvinfo_size + pstats.rx_bufshift:]
+    cpu_fc = int.from_bytes(tmp_buf[0:2], "little")
+    type = cpu_fc & C.IEEE80211_FCTL_FTYPE
+    addr1, addr2, addr3 = bytes(tmp_buf[4:10]), bytes(tmp_buf[10:16]), bytes(tmp_buf[16:22])
+    if cpu_fc & C.IEEE80211_FCTL_TODS:
+        bssid_addr = addr1
+    elif cpu_fc & C.IEEE80211_FCTL_FROMDS:
+        bssid_addr = addr2
+    else:
+        bssid_addr = addr3
+    packet_matchbssid = (C.IEEE80211_FTYPE_CTL != type and mac.bssid == bssid_addr
+                         and not pstats.hwerror and not pstats.crc and not pstats.icv)
+    packet_toself = packet_matchbssid and addr1 == rtlefuse.dev_addr
+    packet_beacon = (cpu_fc & (C.IEEE80211_FCTL_FTYPE | C.IEEE80211_FCTL_STYPE)) == (
+        C.IEEE80211_FTYPE_MGMT | C.IEEE80211_STYPE_BEACON)
+    _rtl92c_query_rxphystatus(rtlpriv, pstats, rxmcs, drvinfo, packet_matchbssid, packet_toself, packet_beacon)
+    rtl_process_phyinfo(rtlpriv, pstats)

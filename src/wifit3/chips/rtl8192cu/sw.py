@@ -7,6 +7,7 @@ from . import constants as C
 from .core import request_firmware, rtl_fw_cb
 from .dm_common import rtl92c_dm_watchdog
 from .hw import (
+    rtl92cu_card_disable,
     rtl92cu_get_hw_reg,
     rtl92cu_hw_init,
     rtl92cu_set_check_bssid,
@@ -72,6 +73,7 @@ rtl8192cu_hal_ops = RtlHalOps(
     config_bb_with_pgheaderfile=_rtl92cu_phy_config_bb_with_pgheaderfile,
     phy_lc_calibrate=_rtl92cu_phy_lc_calibrate,
     phy_set_bw_mode_callback=rtl92cu_phy_set_bw_mode_callback,
+    hw_disable=rtl92cu_card_disable,
 )
 
 rtl92cu_hal_cfg = RtlHalCfg(

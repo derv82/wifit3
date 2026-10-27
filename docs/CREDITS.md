@@ -45,7 +45,7 @@ Realtek USB Wi-Fi working for the Linux community, year after year, outside the 
 ## Mainline (Linux kernel) authors & maintainers
 
 The people who wrote and maintained these drivers in `drivers/net/wireless/`, across the
-Ralink (`rt2x00`), MediaTek (`mt76`), Atheros (`ath9k`), and Realtek (`rtl818x`, `rtw88`, `rtl8xxxu`)
+Ralink (`rt2x00`), MediaTek (`mt76`), Atheros (`ath9k`), and Realtek (`rtl818x`, `rtw88`, `rtl8xxxu`, `rtlwifi`)
 trees.
 
 - **Stanislaw Gruszka** ([@sgruszka](https://github.com/sgruszka)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, MT7610U, MT7612U, MT7921AU, MT7925AU, AR9271
@@ -56,20 +56,20 @@ trees.
 - **Helmut Schaa** — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Jes Sorensen** — RTL8188EUS, RTL8192FU
 - **Sujith Manoharan** — AR9271
-- **Bitterblue Smith** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU, RTL8188EUS, RTL8192FU
+- **Bitterblue Smith** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU, RTL8188EUS, RTL8192FU, RTL8192CU
 - **Sean Wang** ([@moore-bros](https://github.com/moore-bros)) — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Ryder Lee** ([@ryderlee1110](https://github.com/ryderlee1110)) — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Yan-Hsuan Chuang** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
-- **Ping-Ke Shih** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU, RTL8188EUS, RTL8192FU
+- **Ping-Ke Shih** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU, RTL8188EUS, RTL8192FU, RTL8192CU
 - **Martin Kaistra** ([@djfun](https://github.com/djfun)) — RTL8188EUS, RTL8192FU
 - **Gabor Juhos** ([@juhosg](https://github.com/juhosg)) — RT2800USB, RT3070, RT5370, RT5372, RT5572, AR9271
-- **John W. Linville** ([@linvjw](https://github.com/linvjw)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, AR9271, RTL8187
+- **John W. Linville** ([@linvjw](https://github.com/linvjw)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, AR9271, RTL8187, RTL8192CU
 - **Luis R. Rodriguez** ([@mcgrof](https://github.com/mcgrof)) — AR9271
 - **Shayne Chen** ([@csyuanc](https://github.com/csyuanc)) — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Po-Hao Huang** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Ching-Te Ku** ([@ku920601](https://github.com/ku920601)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Deren Wu** ([@deren](https://github.com/deren)) — MT7610U, MT7612U, MT7921AU, MT7925AU
-- **Larry Finger** ([@lwfinger](https://github.com/lwfinger)) — RTL8187, RTL8822BU
+- **Larry Finger** ([@lwfinger](https://github.com/lwfinger)) — RTL8187, RTL8822BU, RTL8192CU
 - **Chris Chiu** ([@mschiu77](https://github.com/mschiu77)) — RTL8188EUS, RTL8192FU
 - **Michael Wu** — RTL8187
 - **Bartlomiej Zolnierkiewicz** — RT2800USB, RT3070, RT5370, RT5372, RT5572
@@ -94,13 +94,21 @@ trees.
 - **Mohammed Shafi Shajakhan** — AR9271
 - **Hin-Tak Leung** — RTL8187
 - **Herton Ronaldo Krzesinski** — RTL8187
-- **Dmitry Antipov** ([@dmantipov](https://github.com/dmantipov)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
+- **Dmitry Antipov** ([@dmantipov](https://github.com/dmantipov)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU, RTL8192CU
 - **Jakub Sitnicki** ([@jsitnicki](https://github.com/jsitnicki)) — RTL8188EUS, RTL8192FU
 - **Bruno Randolf** — RTL8188EUS, RTL8192FU
 - **Kim Wooseok** — RTL8188EUS, RTL8192FU
 - **Zenm Chen** ([@a5a5aa555oo](https://github.com/a5a5aa555oo)) — RTL8192FU
 - **Miaoqing Pan** ([@miaoqing-pan](https://github.com/miaoqing-pan)) — AR9271
 - **Ben Greear** ([@greearb](https://github.com/greearb)) — MT7921AU, MT7925AU, AR9271
+- **Taehee Yoo** ([@TaeheeYoo](https://github.com/TaeheeYoo)) — RTL8192CU
+- **Chaoming Li** ([@chaoming-li](https://github.com/chaoming-li)) — RTL8192CU
+- **George** (Realtek) — RTL8192CU
+- **Jussi Kivilinna** ([@jkivilin](https://github.com/jkivilin)) — RTL8192CU
+- **Thadeu Lima de Souza Cascardo** — RTL8192CU
+- **Mark Cave-Ayland** ([@mcayland](https://github.com/mcayland)) — RTL8192CU
+- **Mike McCormack** ([@mikemccormack](https://github.com/mikemccormack)) — RTL8192CU
+- **Karsten Wiese** ([@fzuuzf](https://github.com/fzuuzf)) — RTL8192CU
 
 ### Foundational maintainers
 

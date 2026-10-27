@@ -601,6 +601,120 @@ def _rtl92cu_set_media_status(rtlpriv: RtlPriv, type: int) -> int:
     return 0
 
 
+def disable_rfafeandresetbb(rtlpriv: RtlPriv) -> None:
+    """hw.c:939."""
+    io = rtlpriv.io
+    erfpath = 0
+    io.write8(C.REG_TXPAUSE, 0xFF)
+    rtl_set_rfreg(rtlpriv, erfpath, 0x0, C.MASKBYTE0, 0x0)
+    value8 = C.APSDOFF
+    io.write8(C.REG_APSD_CTRL, value8)
+    value8 = C.FEN_USBD | C.FEN_USBA | C.FEN_BB_GLB_RSTN
+    io.write8(C.REG_SYS_FUNC_EN, value8)
+    value8 &= ~C.FEN_BB_GLB_RSTN
+    io.write8(C.REG_SYS_FUNC_EN, value8)
+
+
+def _resetdigitalprocedure1(rtlpriv: RtlPriv, withouthwsm: bool) -> None:
+    """hw.c:963."""
+    io = rtlpriv.io
+    if rtlpriv.rtlhal.fw_version <= 0x20:
+        io.write8(C.REG_MCUFWDL, 0)
+        valu16 = io.read16(C.REG_SYS_FUNC_EN)
+        io.write16(C.REG_SYS_FUNC_EN, valu16 & ~C.FEN_CPUEN)
+        valu16 = io.read16(C.REG_SYS_FUNC_EN) & 0x0FFF
+        io.write16(C.REG_SYS_FUNC_EN, valu16 | C.FEN_HWPDN | C.FEN_ELDR)
+        valu16 = io.read16(C.REG_SYS_FUNC_EN)
+        io.write16(C.REG_SYS_FUNC_EN, valu16 | C.FEN_CPUEN)
+    else:
+        retry_cnts = 0
+        if io.read8(C.REG_MCUFWDL) & C.BIT(1):
+            io.write8(C.REG_MCUFWDL, 0)
+            io.write8(C.REG_HMETFR + 3, 0x20)
+            while True:
+                retry_cnts += 1
+                if not (retry_cnts - 1 < 100 and C.FEN_CPUEN & io.read16(C.REG_SYS_FUNC_EN)):
+                    break
+                time.sleep(50e-6)
+            if retry_cnts >= 100:
+                logger.error("8051 reset failed!.........................")
+                io.write8(C.REG_SYS_FUNC_EN + 1, 0x50)
+                time.sleep(100e-6)
+        io.write8(C.REG_SYS_FUNC_EN + 1, 0x54)
+        io.write8(C.REG_MCUFWDL, 0)
+    if withouthwsm:
+        io.write16(C.REG_SYS_CLKR, 0x70A3)
+        io.write8(C.REG_AFE_PLL_CTRL, 0x80)
+        io.write16(C.REG_AFE_XTAL_CTRL, 0x880F)
+        io.write8(C.REG_SYS_ISO_CTRL, 0xF9)
+
+
+def _resetdigitalprocedure2(rtlpriv: RtlPriv) -> None:
+    """hw.c:1029."""
+    rtlpriv.io.write16(C.REG_SYS_CLKR, 0x70A3)
+    rtlpriv.io.write8(C.REG_SYS_ISO_CTRL + 1, 0x82)
+
+
+def _disablegpio(rtlpriv: RtlPriv) -> None:
+    """hw.c:1041. Step 2 writes the GPIO_MUXCFG value to REG_GPIO_PIN_CTRL+2, as the source does."""
+    io = rtlpriv.io
+    io.write16(C.REG_GPIO_PIN_CTRL + 2, 0x0000)
+    value32 = io.read32(C.REG_GPIO_PIN_CTRL) & 0xFFFF00FF
+    value8 = value32 & 0x000000FF
+    value32 |= (value8 << 8) | 0x00FF0000
+    io.write32(C.REG_GPIO_PIN_CTRL, value32)
+    io.write8(C.REG_GPIO_MUXCFG + 3, 0x00)
+    value16 = io.read16(C.REG_GPIO_MUXCFG + 2) & 0xFF0F
+    value8 = value16 & 0x000F
+    value16 |= (value8 << 4) | 0x0780
+    io.write16(C.REG_GPIO_PIN_CTRL + 2, value16)
+    io.write16(C.REG_LEDCFG0, 0x8080)
+
+
+def disable_analog(rtlpriv: RtlPriv, withouthwsm: bool) -> None:
+    """hw.c:1071."""
+    io = rtlpriv.io
+    if withouthwsm:
+        io.write8(C.REG_LDOA15_CTRL, 0x04)
+        value8 = io.read8(C.REG_LDOV12D_CTRL)
+        value8 &= ~C.LDV12_EN & 0xFF
+        io.write8(C.REG_LDOV12D_CTRL, value8)
+    io.write8(C.REG_SPS0_CTRL, 0x23)
+    value16 = C.APDM_HOST | C.AFSM_HSUS | C.PFM_ALDN
+    io.write16(C.REG_APS_FSMCO, value16)
+    io.write8(C.REG_RSV_CTRL, 0x0E)
+
+
+def carddisable_hwsm(rtlpriv: RtlPriv) -> None:
+    """hw.c:1100."""
+    disable_rfafeandresetbb(rtlpriv)
+    _resetdigitalprocedure1(rtlpriv, False)
+    _disablegpio(rtlpriv)
+    disable_analog(rtlpriv, False)
+
+
+def carddisablewithout_hwsm(rtlpriv: RtlPriv) -> None:
+    """hw.c:1112."""
+    disable_rfafeandresetbb(rtlpriv)
+    _resetdigitalprocedure1(rtlpriv, True)
+    _disablegpio(rtlpriv)
+    _resetdigitalprocedure2(rtlpriv)
+    disable_analog(rtlpriv, True)
+
+
+def rtl92cu_card_disable(rtlpriv: RtlPriv) -> None:
+    """hw.c:1257. led_control writes no register (led.c:63)."""
+    rtlpriv.mac80211.link_state = C.MAC80211_NOLINK
+    opmode = C.NL80211_IFTYPE_UNSPECIFIED
+    _rtl92cu_set_media_status(rtlpriv, opmode)
+    rtlpriv.psc.cur_ps_level |= C.RT_RF_OFF_LEVL_HALT_NIC
+    if rtlpriv.usb.disablehwsm:
+        carddisable_hwsm(rtlpriv)
+    else:
+        carddisablewithout_hwsm(rtlpriv)
+    rtlpriv.phy.iqk_initialized = False
+
+
 def rtl92cu_set_check_bssid(rtlpriv: RtlPriv, check_bssid: bool) -> None:
     """hw.c:1279."""
     if rtlpriv.psc.rfpwr_state != C.ERFON:
