@@ -22,7 +22,7 @@ from wifit3.persist.ap_state import ApState, Key, PasswordStatus, read_hashlines
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid, wps_run_state_name
 from wifit3.persist.config import Config
-from wifit3.persist.meta import meta_path, update_meta
+from wifit3.persist.meta import clear_meta_paths_cache, meta_path, update_meta
 from wifit3.persist.save import SaveResult
 from wifit3.vault.manager import JobManager
 from wifit3.wlan.sink import WlanSink
@@ -121,6 +121,7 @@ class Vault:
 
     def refresh(self) -> None:
         """Re-scan Config.captures_dir into the cache."""
+        clear_meta_paths_cache()
         self._index = load_capture_index()
         self.notify_changed(None)
 

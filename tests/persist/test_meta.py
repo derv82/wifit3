@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from wifit3.persist.common import AGGREGATED_HC22000_RE, LEGACY_CAPTURE_RE
-from wifit3.persist.meta import meta_path, read_meta, update_meta
+from wifit3.persist.meta import bssid_meta_paths, meta_path, read_meta, update_meta
 
 
 def test_meta_path_sorts_next_to_the_captures(tmp_path):
@@ -44,3 +45,20 @@ def test_capture_regexes_do_not_match_meta_files():
     name = "Net_aa-bb-cc-dd-ee-ff.meta"
     assert LEGACY_CAPTURE_RE.match(name) is None
     assert AGGREGATED_HC22000_RE.match(name) is None
+
+
+def test_bssid_meta_paths_lists_while_another_thread_writes_a_meta(monkeypatch):
+    update_meta("NetA", "aa:bb:cc:dd:ee:ff", nickname="a")
+    update_meta("NetB", "aa:bb:cc:dd:ee:ff", nickname="b")
+    assert len(bssid_meta_paths("aa:bb:cc:dd:ee:ff")) == 2
+    exists = Path.exists
+    writes: list[str] = []
+
+    def exists_while_a_meta_is_written(path: Path) -> bool:
+        if not writes:
+            writes.append("NetC")
+            update_meta("NetC", "aa:bb:cc:dd:ee:ff", nickname="c")
+        return exists(path)
+    monkeypatch.setattr(Path, "exists", exists_while_a_meta_is_written)
+
+    assert len(bssid_meta_paths("aa:bb:cc:dd:ee:ff")) == 2
