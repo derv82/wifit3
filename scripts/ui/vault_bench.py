@@ -56,12 +56,13 @@ def bssid_of(app: WifiteApp, ssid: str) -> str:
 
 def shown_state(drawer: VaultDrawer, bssid: str) -> Optional[ApState]:
     """The state the item pane has composed and mounted, when it is ``bssid``'s; None while it is
-    another AP's or a recompose is under way."""
+    another AP's or an update is under way."""
     if drawer._pending_bssid is not None:
         return None
     item = drawer.query_one("#vault-item", VaultItemView)
     panel = next(iter(item.query_children(_ApStatePanel).results(_ApStatePanel)), None)
-    if panel is None or item._bssid != bssid or panel._state.bssid != bssid:
+    if (item.lock.is_locked or panel is None or panel._state is None or item._bssid != bssid
+            or panel._state.bssid != bssid):
         return None
     state = panel._state
     uncracked = panel._uncracked_list

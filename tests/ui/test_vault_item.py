@@ -40,11 +40,13 @@ def test_hashline_groups_join_runs_from_one_minute_pair_and_client():
     assert [len(group) for group in hashline_groups(lines)] == [2, 1, 1]
 
 
-def _row(key: Key, state: ApState) -> _KeyRow:
-    return _KeyRow(key, state, show_client=False, show_ssid=False, expanded=False, verifying=None)
+async def _row(key: Key, state: ApState) -> _KeyRow:
+    row = _KeyRow()
+    await row.show(key, state, show_client=False, show_ssid=False, expanded=False, verifying=None)
+    return row
 
 
-def test_key_row_takes_its_keys_status_and_says_why():
+async def test_key_row_takes_its_keys_status_and_says_why():
     hashlines = (_hashline(1_700_000_000),)
     current = Key(CaptureType.WPA_PSK, "hunter22", (PersistedCapture(type=CaptureType.WPS_PBC, timestamp=1,
                                                                       path="x.txt", bssid="aa:bb:cc:dd:ee:ff",
@@ -52,7 +54,7 @@ def test_key_row_takes_its_keys_status_and_says_why():
     guess = _key(CaptureType.WPA_PSK, "guess")
     state = ApState("aa:bb:cc:dd:ee:ff", (), hashlines, (current, guess), PasswordStatus.CURRENT, current,
                     {current.id: PasswordStatus.CURRENT, guess.id: PasswordStatus.NOT_VERIFIED}, None, hashlines, (), ())
-    current_row, guess_row = _row(current, state), _row(guess, state)
+    current_row, guess_row = await _row(current, state), await _row(guess, state)
 
     assert current_row.has_class("-current") and guess_row.has_class("-not-verified")
     assert "(0/1 captures, verified)" in current_row._summary_markup()

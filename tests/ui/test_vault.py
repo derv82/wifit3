@@ -505,7 +505,7 @@ async def test_a_refresh_shows_the_new_state_and_keeps_expansion_ticks_and_scrol
         item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
         item.query_one(_KeyRow).toggle_button.press()
         uncracked = item.query_one(_UncrackedList)
-        uncracked.deselect(uncracked.groups()[0])
+        uncracked.toggle(uncracked.groups()[0])
         await pilot.pause(0)
         scrolled = item.max_scroll_y
         assert scrolled > 0
@@ -614,6 +614,71 @@ async def test_a_reload_that_keeps_the_selected_ap_leaves_the_next_key_press_sho
 
         await pilot.press("down")
         assert item._bssid == "aa:bb:cc:dd:ee:03"
+
+
+@pytest.mark.asyncio
+async def test_switching_aps_shows_each_aps_keys_and_uncracked_section(tmp_path):
+    _write_a_checked_wep_key_and_three_hashlines(tmp_path)
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_2000_wep_key.txt", _WEP_TXT.replace("6162636465", "6162636466"))
+    _write(tmp_path, "Other_aa-bb-cc-dd-ee-fe_1000_wep_key.txt",
+           _WEP_TXT.replace("HomeNet", "Other").replace("aa:bb:cc:dd:ee:ff", "aa:bb:cc:dd:ee:fe"))
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
+        uncracked = item.query_one(_UncrackedList)
+        assert str(item.query_one(".ssid", Label).content) == "HomeNet"
+
+        for bssid, ssid, key_count in (("aa:bb:cc:dd:ee:fe", "Other", 1), ("aa:bb:cc:dd:ee:ff", "HomeNet", 2)):
+            item.load(bssid, ssid)
+            await _wait_until(pilot, lambda: len(item.query(_KeyRow)) == key_count)
+            await pilot.pause(0)
+
+            rows = list(item.query(_KeyRow).results(_KeyRow))
+            assert {row.key.id for row in rows} == {key.id for key in app.vault.ap_state(bssid).keys}
+            assert str(item.query_one(".ssid", Label).content) == ssid
+            assert item.query_one(_UncrackedList) is uncracked
+            assert item.query_one(".uncracked-section").display == (ssid == "HomeNet")
+        assert len(uncracked.groups()) == 3
+        assert "3 captures selected" in str(item.query_one(".selected-count", Label).content)
+
+
+@pytest.mark.asyncio
+async def test_switching_to_an_ap_without_uncracked_hashlines_takes_the_focus_off_the_hidden_list(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE)
+    _write(tmp_path, "Other_aa-bb-cc-dd-ee-fe_1000_wep_key.txt",
+           _WEP_TXT.replace("HomeNet", "Other").replace("aa:bb:cc:dd:ee:ff", "aa:bb:cc:dd:ee:fe"))
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
+        uncracked = item.query_one(_UncrackedList)
+        uncracked.focus()
+        await pilot.pause(0)
+        assert app.focused is uncracked
+
+        item.load("aa:bb:cc:dd:ee:fe", "Other")
+        await _wait_until(pilot, lambda: not item.query_one(".uncracked-section").display)
+        await pilot.pause(0)
+
+        assert app.focused is not uncracked
+
+
+@pytest.mark.asyncio
+async def test_a_tick_handled_after_switching_aps_is_kept_for_its_own_hashlines(tmp_path):
+    for bssid in ("aa:bb:cc:dd:ee:ff", "aa:bb:cc:dd:ee:fe"):
+        _write(tmp_path, f"HomeNet_{bssid.replace(':', '-')}.hc22000",
+               _EAPOL_LINE.replace("aabbccddeeff", bssid.replace(":", "")))
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
+        uncracked = item.query_one(_UncrackedList)
+        group = uncracked.groups()[0]
+
+        uncracked.toggle(group)
+        item.load("aa:bb:cc:dd:ee:fe", "HomeNet")
+        await _wait_until(pilot, lambda: uncracked.groups()[0][0].line.mac_ap == "aabbccddeefe")
+        await pilot.pause(0)
+
+        assert item.unticked_hashline_ids == {group[0].id}
 
 
 @pytest.mark.asyncio
