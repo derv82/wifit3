@@ -360,7 +360,7 @@ class ScannerView(Screen):
             ap.wps, ap.wps_locked, ap.identity.summary,
             wep.unique_ivs if wep else 0, ap.wep_key, ap.wps_pbc_psk,
             clients, is_stale, beacon_flash, sibling_ssid,
-            vault.revision, Config.is_silenced(ap.bssid),
+            vault.revision(ap.bssid), Config.is_silenced(ap.bssid),
         )
 
     def _log_decloak(self, ap: AccessPoint) -> None:

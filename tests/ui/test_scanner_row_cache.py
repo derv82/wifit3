@@ -69,7 +69,7 @@ async def scanner(_app):
     app.array.access_points.clear()
     app.array.clients.clear()
     app.vault._index.clear()
-    app.vault.revision += 1
+    app.vault.notify_changed(None)
     Config.silenced_bssids = []
     screen = app.screen
     screen.ap_cache.clear()
@@ -208,7 +208,7 @@ async def test_channel_move_is_seen(scanner):
 
 
 async def test_a_saved_capture_lights_the_badge(scanner):
-    # The badges read the vault, which no frame touches — Vault.revision is their key.
+    # The badges read the vault, which no frame touches — the AP's Vault.revision is their key.
     from wifit3.models import CaptureType, PersistedCapture
     app, screen = scanner
     ap = _ap()
@@ -216,8 +216,19 @@ async def test_a_saved_capture_lights_the_badge(scanner):
 
     app.vault._index[ap.bssid] = [PersistedCapture(
         type=CaptureType.PMKID, timestamp=0, path="x", bssid=ap.bssid)]
-    app.vault.revision += 1
+    app.vault.notify_changed(ap.bssid)
     assert _assert_cache_is_honest(screen, ap).has_pmkid is True
+
+
+async def test_another_aps_vault_change_reuses_the_row_object(scanner):
+    app, screen = scanner
+    ap = _ap()
+    now = time.time()
+    first = screen._row_for(ap, now, 0, None)
+    app.vault.notify_changed("02:00:00:00:00:02")
+    assert screen._row_for(ap, now, 0, None) is first
+    app.vault.notify_changed(None)
+    assert screen._row_for(ap, now, 0, None) is not first
 
 
 async def test_a_recovered_wep_key_lights_the_badge(scanner):

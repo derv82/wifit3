@@ -104,7 +104,8 @@ class Vault:
         self._ap_states: Dict[str, ApState] = {}
         self._change_listeners: list[Callable[[Optional[str]], None]] = []
         self._probed_ssids_source: Callable[[], Iterable[str]] = lambda: ()
-        self.revision = 0   # bumped on every notify_changed; a cache key for readers
+        self._refresh_count = 0
+        self._change_counts: Dict[str, int] = {}
         self.errors: list[str] = []                       # surfaced as toasts by the app on mount
         self._propagation_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="psk-propagation")
         try:
@@ -112,7 +113,6 @@ class Vault:
         except Exception as exc:
             logger.exception("Vault: failed to load the capture index")
             self._index = {}
-            self.revision += 1
             self.errors.append(f"Failed to load captures: {exc}")
         self.manager = JobManager(self)
         try:
@@ -145,12 +145,17 @@ class Vault:
         """This session's probed SSIDs, sorted."""
         return sorted(self._probed_ssids_source())
 
+    def revision(self, bssid: str) -> tuple[int, int]:
+        """Changes whenever the AP's captures or state may have; a cache key for readers."""
+        return self._refresh_count, self._change_counts.get(bssid, 0)
+
     def notify_changed(self, bssid: Optional[str]) -> None:
-        """Drop the AP's cached state (every AP's for None) and tell the listeners."""
-        self.revision += 1
+        """Bump the AP's revision and drop its cached state (every AP's for None), then tell the listeners."""
         if bssid is None:
+            self._refresh_count += 1
             self._ap_states.clear()
         else:
+            self._change_counts[bssid] = self._change_counts.get(bssid, 0) + 1
             self._ap_states.pop(bssid, None)
         for listener in self._change_listeners:
             try:
@@ -172,9 +177,9 @@ class Vault:
         """The AP's keys, hashlines and password status, cached until the AP changes."""
         state = self._ap_states.get(bssid)
         if state is None:
-            revision = self.revision
+            revision = self.revision(bssid)
             state = self._ap_states[bssid] = ap_state.load_ap_state(bssid, self.persisted(bssid))
-            if self.revision != revision:       # changed by another thread meanwhile
+            if self.revision(bssid) != revision:    # changed by another thread meanwhile
                 self._ap_states.pop(bssid, None)
             self._record_pcap_dates(state)
         return state

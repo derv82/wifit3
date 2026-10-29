@@ -108,13 +108,13 @@ def test_refresh_rescans_the_current_config_dir(tmp_path, monkeypatch):
 def test_vault_notifies_subscribers_only_when_capture_index_changes(tmp_path):
     vault = Vault()
     changes = []
-    vault.subscribe(lambda bssid: changes.append((bssid, vault.revision)))
+    vault.subscribe(lambda bssid: changes.append((bssid, vault.revision(bssid))))
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
 
     vault.save_wep_key(ap, b"abcde")
     vault.save_wep_key(ap, b"abcde")
 
-    assert changes == [("aa:bb:cc:dd:ee:ff", 2)]
+    assert changes == [("aa:bb:cc:dd:ee:ff", (1, 1))]
 
 
 def test_ap_state_is_cached_until_that_ap_changes(tmp_path):
@@ -133,6 +133,41 @@ def test_ap_state_is_cached_until_that_ap_changes(tmp_path):
 
     v.refresh()
     assert v.ap_state(home.bssid) is not home_state
+
+
+def test_a_change_moves_only_that_aps_revision_and_a_refresh_moves_every_aps(tmp_path):
+    v = Vault()
+    home, other = "aa:bb:cc:dd:ee:ff", "aa:bb:cc:dd:ee:01"
+    home_before, other_before = v.revision(home), v.revision(other)
+
+    v.notify_changed(home)
+    assert v.revision(home) != home_before
+    assert v.revision(other) == other_before
+
+    home_changed = v.revision(home)
+    v.refresh()
+    assert v.revision(home) != home_changed
+    assert v.revision(other) != other_before
+
+
+@pytest.mark.parametrize("changed_bssid, cached", [("aa:bb:cc:dd:ee:01", True), ("aa:bb:cc:dd:ee:ff", False)])
+def test_ap_state_is_not_cached_only_when_that_ap_changes_while_it_loads(tmp_path, monkeypatch, changed_bssid,
+                                                                        cached):
+    import wifit3.persist.ap_state as ap_state_mod
+    v = Vault()
+    home = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+    v.save_wep_key(home, b"abcde")
+    load_ap_state = ap_state_mod.load_ap_state
+
+    def load_while_another_thread_saves(bssid, captures):
+        state = load_ap_state(bssid, captures)
+        v.notify_changed(changed_bssid)
+        return state
+
+    monkeypatch.setattr(ap_state_mod, "load_ap_state", load_while_another_thread_saves)
+    state = v.ap_state(home.bssid)
+    monkeypatch.setattr(ap_state_mod, "load_ap_state", load_ap_state)
+    assert (v.ap_state(home.bssid) is state) is cached
 
 
 def test_each_write_notifies_its_ap_and_a_refresh_every_ap(tmp_path):

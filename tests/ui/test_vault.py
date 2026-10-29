@@ -10,7 +10,7 @@ import pytest
 from textual import events
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.widgets import Label
+from textual.widgets import DataTable, Label
 
 from wifit3.campaigns.live_check import LiveKeyVerifier, VerifyResult, VerifyStatus
 from wifit3.crack.hc22000_format import hashline_id
@@ -22,6 +22,7 @@ from wifit3.persist.meta import update_meta
 from wifit3.persist.vault import Vault
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.vault_drawer import VaultDrawer, _ap_contents_text
+from wifit3.ui.screens.vault_table import VaultTable
 from wifit3.ui.screens.vault_item import (DeleteKeyPressed, VaultItemView, date_text, hashline_groups, _ApStatePanel,
                                           _CrackerButton, _exhausted_count_text, _exhausted_names, _hashline_prompt,
                                           _KeyRow, _no_crackable_text, _UncrackedList)
@@ -367,6 +368,118 @@ async def test_a_vault_change_from_another_thread_refreshes_the_drawer(mocker):
         await pilot.pause(0)
 
         vault_changed.assert_called_once_with(False)
+
+
+def _save_wep_aps(vault: Vault, count: int) -> list[AccessPoint]:
+    """``count`` APs with a WEP key each, Net-00 first in the table."""
+    aps = [AccessPoint(bssid=f"02:00:00:00:00:{n:02x}", ssid=f"Net-{n:02d}") for n in range(count)]
+    for ap in aps:
+        vault.save_wep_key(ap, b"abcde")
+    return aps
+
+
+async def _open_vault_scrolled_to(app, pilot, row: int) -> DataTable:
+    drawer = await _open_vault(app, pilot)
+    table = drawer.query_one("#vault-aps", DataTable)
+    table.move_cursor(row=row)
+    item = drawer.query_one(VaultItemView)
+    await _wait_until(pilot, lambda: table.scroll_y > 0 and item._bssid == _cursor_bssid(table))
+    await pilot.pause(0)
+    return table
+
+
+def _cursor_bssid(table: DataTable) -> str:
+    return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+
+
+@pytest.mark.asyncio
+async def test_another_aps_new_key_redraws_only_its_row_and_keeps_the_cursor_scroll_and_item_pane():
+    app = _VaultApp()
+    aps = _save_wep_aps(app.vault, 40)
+    async with app.run_test(size=(80, 24)) as pilot:
+        table = await _open_vault_scrolled_to(app, pilot, 30)
+        scroll_y = table.scroll_y
+        cells = {ap.bssid: table.get_cell(ap.bssid, "ap") for ap in aps}
+        item = app.screen.query_one(VaultItemView)
+        state = item._state
+
+        app.vault.save_wps_pin(aps[5], "12345670", None)
+        await _wait_until(pilot, lambda: "✓PIN" in table.get_cell(aps[5].bssid, "ap").plain)
+        await pilot.pause(0)
+
+        assert [bssid for bssid, cell in cells.items() if table.get_cell(bssid, "ap") is not cell] == [aps[5].bssid]
+        assert (table.cursor_row, table.scroll_y) == (30, scroll_y)
+        assert item._state is state
+        assert app.screen.query_one("#vault-tabs").get_tab("tab-pin") is not None
+
+
+@pytest.mark.asyncio
+async def test_a_new_ap_above_the_cursor_keeps_the_cursors_ap_at_the_same_height_without_highlighting(mocker):
+    app = _VaultApp()
+    aps = _save_wep_aps(app.vault, 40)
+    async with app.run_test(size=(80, 24)) as pilot:
+        table = await _open_vault_scrolled_to(app, pilot, 30)
+        scroll_y = table.scroll_y
+        schedule_widget_load = mocker.patch.object(app.screen, "_schedule_widget_load")
+
+        app.vault.save_wep_key(AccessPoint(bssid="02:00:00:00:01:00", ssid="Aardvark"), b"abcde")
+        await _wait_until(pilot, lambda: table.row_count == 41)
+        await pilot.pause(0)
+
+        assert table.get_row_index("02:00:00:00:01:00") == 0
+        assert _cursor_bssid(table) == aps[30].bssid
+        assert (table.cursor_row, table.scroll_y) == (31, scroll_y + 1)
+        schedule_widget_load.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_nickname_redraws_only_its_row_and_keeps_the_cursor_and_scroll():
+    app = _VaultApp()
+    aps = _save_wep_aps(app.vault, 40)
+    async with app.run_test(size=(80, 24)) as pilot:
+        table = await _open_vault_scrolled_to(app, pilot, 30)
+        scroll_y = table.scroll_y
+        cells = {ap.bssid: table.get_cell(ap.bssid, "ap") for ap in aps}
+
+        update_meta(aps[29].ssid, aps[29].bssid, nickname="Upstairs")
+        app.screen.query_one(VaultTable).reload_nicknames()
+        await pilot.pause(0)
+
+        assert "Upstairs" in table.get_cell(aps[29].bssid, "ap").plain
+        assert [bssid for bssid, cell in cells.items() if table.get_cell(bssid, "ap") is not cell] == [aps[29].bssid]
+        assert (table.cursor_row, table.scroll_y) == (30, scroll_y)
+
+
+@pytest.mark.asyncio
+async def test_deleting_another_ap_keeps_the_cursor_on_its_ap():
+    app = _VaultApp()
+    aps = _save_wep_aps(app.vault, 40)
+    async with app.run_test(size=(80, 24)) as pilot:
+        table = await _open_vault_scrolled_to(app, pilot, 30)
+
+        app.vault.delete_ap(aps[2].bssid)
+        await _wait_until(pilot, lambda: table.row_count == 39)
+        await pilot.pause(0)
+
+        assert _cursor_bssid(table) == aps[30].bssid
+
+
+@pytest.mark.asyncio
+async def test_a_second_ap_with_an_ssid_adds_the_bssid_to_both_rows():
+    app = _VaultApp()
+    aps = _save_wep_aps(app.vault, 3)
+    async with app.run_test(size=(80, 24)) as pilot:
+        drawer = await _open_vault(app, pilot)
+        table = drawer.query_one("#vault-aps", DataTable)
+        twin = AccessPoint(bssid="02:00:00:00:01:00", ssid=aps[1].ssid)
+
+        app.vault.save_wep_key(twin, b"abcde")
+        await _wait_until(pilot, lambda: table.row_count == 4)
+        await pilot.pause(0)
+
+        assert aps[1].bssid in table.get_cell(aps[1].bssid, "ap").plain
+        assert twin.bssid in table.get_cell(twin.bssid, "ap").plain
+        assert aps[0].bssid not in table.get_cell(aps[0].bssid, "ap").plain
 
 
 def test_a_vault_change_from_another_thread_after_quit_logs_no_error(caplog):
