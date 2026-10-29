@@ -352,6 +352,13 @@ class TestSaveWpaPsk:
         result = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
         assert result is not None and result.was_new is True
 
+    def test_dedupes_against_an_upper_case_file_name_and_skips_directories(self, tmp_path):
+        (tmp_path / "Cafe_AA-BB-CC-DD-EE-FF_1_dir_wpa_psk.txt").mkdir()
+        upper = tmp_path / "Cafe_AA-BB-CC-DD-EE-FF_1_WPA_PSK.TXT"
+        upper.write_text("SSID: Cafe\nBSSID: AA:BB:CC:DD:EE:FF\nPSK: hashcat!\n", encoding="utf-8")
+        result = save_wpa_psk("Cafe", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        assert result is not None and result.was_new is False and result.path == upper
+
 
 # ---- SSID sanitization (path traversal) ------------------------------------
 
