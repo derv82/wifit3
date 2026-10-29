@@ -2,6 +2,7 @@
 The autouse _captures_to_tmp fixture points Config.captures_dir at tmp_path, and WifiteApp builds its Vault from there.
 """
 import asyncio
+import threading
 import time
 from typing import Callable
 
@@ -255,9 +256,8 @@ async def test_add_key_adds_a_psk_no_saved_capture_confirms_as_not_verified(tmp_
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-fe.hc22000", _pmkid_line("rightpass", "aabbccddeefe"))
     write_hashline_dates("HomeNet", "aa:bb:cc:dd:ee:ff", {right: 1_700_000_000})
     app = _VaultApp()
-    async with app.run_test():
-        drawer = _DrawerWithoutWidgets()
-        await app.push_screen(drawer)
+    async with app.run_test() as pilot:
+        drawer = await _open_vault(app, pilot, "aa:bb:cc:dd:ee:ff")
 
         drawer._credential_added(ManualCredential(CaptureType.WPA_PSK, "HomeNet", "aa:bb:cc:dd:ee:ff", "wrongpass"))
         await app.workers.wait_for_complete()
@@ -267,9 +267,8 @@ async def test_add_key_adds_a_psk_no_saved_capture_confirms_as_not_verified(tmp_
         assert state.keys[0].manual_capture_names
 
         drawer._credential_added(ManualCredential(CaptureType.WPA_PSK, "HomeNet", "aa:bb:cc:dd:ee:ff", "rightpass"))
-        await app.workers.wait_for_complete()
-        assert app.notified[-2:] == ["Credential verified and added to Vault",
-                                     "PSK also verified and saved for 1 related APs"]
+        await _wait_until(pilot, lambda: app.notified[-1] == "PSK also verified and saved for 1 related APs")
+        assert app.notified[-2] == "Credential verified and added to Vault"
         assert app.vault.ap_state("aa:bb:cc:dd:ee:ff").status is PasswordStatus.CURRENT
 
 
@@ -368,6 +367,21 @@ async def test_a_vault_change_from_another_thread_refreshes_the_drawer(mocker):
         await pilot.pause(0)
 
         vault_changed.assert_called_once_with(False)
+
+
+def test_a_vault_change_from_another_thread_after_quit_logs_no_error(caplog):
+    app = _VaultApp()
+
+    async def run_and_quit() -> None:
+        async with app.run_test():
+            pass
+
+    asyncio.run(run_and_quit())
+    notice = threading.Thread(target=app.vault.notify_changed, args=("aa:bb:cc:dd:ee:01",))
+    notice.start()
+    notice.join()
+
+    assert not [record for record in caplog.records if record.levelname == "ERROR"]
 
 
 @pytest.mark.asyncio

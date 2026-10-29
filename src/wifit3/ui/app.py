@@ -260,7 +260,8 @@ class WifiteApp(App):
         self._job_status = {k: v for k, v in self._job_status.items() if k in live}
 
     def _vault_changed(self, bssid: Optional[str]) -> None:
-        """Any thread: one table refresh per tick, however many notices the Vault sends."""
+        """Any thread: one table refresh per tick, however many notices the Vault sends. None once the
+        app has stopped (a PSK propagation can finish after quit)."""
         with self._vault_notices_lock:
             self._vault_full_refresh |= bssid is None
             if self._vault_refresh_pending:
@@ -268,7 +269,7 @@ class WifiteApp(App):
             self._vault_refresh_pending = True
         if threading.current_thread() is threading.main_thread():    # the app runs on the main thread
             self.call_later(self._refresh_vault_table)
-        else:
+        elif self.is_running:
             self.call_from_thread(self.call_later, self._refresh_vault_table)
 
     def _refresh_vault_table(self) -> None:

@@ -10,6 +10,7 @@ import sys
 import time
 import unicodedata
 import zipfile
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Optional
@@ -105,6 +106,7 @@ class Vault:
         self._probed_ssids_source: Callable[[], Iterable[str]] = lambda: ()
         self.revision = 0   # bumped on every notify_changed; a cache key for readers
         self.errors: list[str] = []                       # surfaced as toasts by the app on mount
+        self._propagation_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="psk-propagation")
         try:
             self.refresh()
         except Exception as exc:
@@ -263,9 +265,12 @@ class Vault:
         return psk_verdict([psk], [line for _, line in read_hashlines(bssid, self.persisted(bssid)).values()])
 
     def propagate_verified_psk(self, source_bssid: str, source_ssid: Optional[str],
-                               psk: str) -> List[str]:
-        """Save ``psk`` for every related AP (SSID family or sibling BSSID) that holds no PSK
-        (see ``_saved_psk``) and that it verifies against; returns their BSSIDs."""
+                               psk: str) -> Future[List[str]]:
+        """Save ``psk`` for every related AP (SSID family or sibling BSSID) that holds no PSK and that it
+        verifies against, one propagation at a time on a background thread; the future holds their BSSIDs."""
+        return self._propagation_executor.submit(self._propagate_verified_psk, source_bssid, source_ssid, psk)
+
+    def _propagate_verified_psk(self, source_bssid: str, source_ssid: Optional[str], psk: str) -> List[str]:
         matched: List[str] = []
         for bssid in list(self._index):
             if bssid == source_bssid:

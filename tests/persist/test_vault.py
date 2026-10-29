@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import zipfile
 from pathlib import Path
 
@@ -808,13 +809,38 @@ def test_propagate_saves_only_related_aps_it_verifies_without_a_psk(tmp_path):
     _write_wpa_psk(tmp_path, "02-00-00-00-00-40", ssid="HomeNet", psk="kept")   # has a PSK
     v = Vault()
 
-    matched = v.propagate_verified_psk("aa:bb:cc:dd:ee:01", "HomeNet", psk)
+    matched = v.propagate_verified_psk("aa:bb:cc:dd:ee:01", "HomeNet", psk).result(timeout=10)
 
     assert sorted(matched) == ["02:00:00:00:00:10", "aa:bb:cc:dd:ee:03"]
     assert v.known_psk(AccessPoint(bssid="02:00:00:00:00:10")) == psk
     assert v.known_psk(AccessPoint(bssid="02:00:00:00:00:20")) is None
     assert v.known_psk(AccessPoint(bssid="02:00:00:00:00:30")) is None
     assert v.known_psk(AccessPoint(bssid="02:00:00:00:00:40")) == "kept"
+
+
+def test_propagations_run_one_at_a_time_off_the_calling_thread(tmp_path):
+    psk = "correct horse"
+    _write_pmkid_line(tmp_path, "HomeNet", "aa:bb:cc:dd:ee:01", derive_pmk(psk, b"HomeNet"))
+    _write_pmkid_line(tmp_path, "HomeNet_5G", "02:00:00:00:00:10", derive_pmk(psk, b"HomeNet_5G"))
+    v = Vault()
+    first_saving, release_first = threading.Event(), threading.Event()
+    saving_threads: list[threading.Thread] = []
+
+    def on_change(bssid):
+        saving_threads.append(threading.current_thread())
+        first_saving.set()
+        assert release_first.wait(timeout=10)
+
+    v.subscribe(on_change)
+    first = v.propagate_verified_psk("aa:bb:cc:dd:ee:01", "HomeNet", psk)
+    second = v.propagate_verified_psk("aa:bb:cc:dd:ee:01", "HomeNet", psk)
+    assert first_saving.wait(timeout=10)
+    assert not second.running()
+    release_first.set()
+
+    assert first.result(timeout=10) == ["02:00:00:00:00:10"]
+    assert second.result(timeout=10) == []              # saw the first one's save: no duplicate PSK file
+    assert len(saving_threads) == 1 and saving_threads[0] is not threading.current_thread()
 
 
 def test_delete_ap_removes_the_meta_of_a_loaded_capture_with_a_real_ssid(tmp_path):
