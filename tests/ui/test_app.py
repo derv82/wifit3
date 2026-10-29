@@ -13,6 +13,7 @@ from textual.widgets import Button, RichLog
 from textual.widgets._header import HeaderTitle
 
 from wifit3.ui.ap_table import APTable
+from tests.ui.wait_until import wait_until
 
 
 @pytest.mark.asyncio
@@ -191,34 +192,26 @@ def _write_two_aps() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_startup_loads_each_aps_state_off_the_ui_thread(mocker):
+async def test_startup_loads_each_aps_state_off_the_ui_thread_and_one_that_fails_to_load_leaves_the_app_running(
+        mocker):
     _write_two_aps()
     loads: list[tuple[str, bool]] = []
     load_ap_state = ap_state.load_ap_state
 
-    def record_load(bssid, captures):
+    def record_load_and_fail_the_last(bssid, captures):
         loads.append((bssid, threading.current_thread() is threading.main_thread()))
+        if len(loads) == 2:
+            raise OSError("unreadable")
         return load_ap_state(bssid, captures)
-    mocker.patch.object(ap_state, "load_ap_state", side_effect=record_load)
-
-    app = WifiteApp()
-    async with app.run_test():
-        await app.workers.wait_for_complete()
-
-    assert sorted(loads) == [("aa:bb:cc:dd:ee:01", False), ("aa:bb:cc:dd:ee:ff", False)]
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
-async def test_an_ap_state_that_fails_to_load_at_startup_leaves_the_app_running(mocker):
-    _write_two_aps()
-    mocker.patch.object(ap_state, "load_ap_state", side_effect=OSError("unreadable"))
+    mocker.patch.object(ap_state, "load_ap_state", side_effect=record_load_and_fail_the_last)
 
     app = WifiteApp()
     async with app.run_test() as pilot:
-        await app.workers.wait_for_complete()
+        await wait_until(pilot, lambda: len(loads) == 2 and all(worker.is_finished for worker in app.workers))
         await pilot.pause(0)
         assert app.is_running
+
+    assert sorted(loads) == [("aa:bb:cc:dd:ee:01", False), ("aa:bb:cc:dd:ee:ff", False)]
 
 
 @pytest.mark.asyncio

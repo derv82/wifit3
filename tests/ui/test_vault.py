@@ -97,6 +97,20 @@ class _DrawerWithoutWidgets(VaultDrawer):
         yield from ()
 
 
+class _DrawerWithOnlyItsApTable(VaultDrawer):
+    """The drawer with its AP table but no item pane; records each AP it would show there."""
+
+    def __init__(self, preselected_bssid: str | None = None) -> None:
+        super().__init__(preselected_bssid)
+        self.shown_bssids: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        yield VaultTable(id="vault-table")
+
+    def _load_widget(self, bssid: str) -> None:
+        self.shown_bssids.append(bssid)
+
+
 class _ItemViewScreen(Screen):
     def compose(self) -> ComposeResult:
         yield VaultItemView()
@@ -251,25 +265,29 @@ def test_each_uncracked_row_counts_and_names_its_exhausted_wordlists(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_add_key_adds_a_psk_no_saved_capture_confirms_as_not_verified(tmp_path):
+async def test_add_key_adds_a_psk_no_saved_capture_confirms_as_not_verified(tmp_path, mocker):
     right = _pmkid_line("rightpass", "aabbccddeeff")
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", right)
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-fe.hc22000", _pmkid_line("rightpass", "aabbccddeefe"))
     write_hashline_dates("HomeNet", "aa:bb:cc:dd:ee:ff", {right: 1_700_000_000})
     app = _VaultApp()
+    propagate = mocker.spy(app.vault, "propagate_verified_psk")
     async with app.run_test() as pilot:
-        drawer = await _open_vault(app, pilot, "aa:bb:cc:dd:ee:ff")
+        drawer = _DrawerWithOnlyItsApTable()
+        await app.push_screen(drawer)
 
         drawer._credential_added(ManualCredential(CaptureType.WPA_PSK, "HomeNet", "aa:bb:cc:dd:ee:ff", "wrongpass"))
-        await app.workers.wait_for_complete()
         assert app.notified[-1] == "Credential added, not verified"
         state = app.vault.ap_state("aa:bb:cc:dd:ee:ff")
         assert [k.value for k in state.keys] == ["wrongpass"]
         assert state.keys[0].manual_capture_names
 
         drawer._credential_added(ManualCredential(CaptureType.WPA_PSK, "HomeNet", "aa:bb:cc:dd:ee:ff", "rightpass"))
-        await _wait_until(pilot, lambda: app.notified[-1] == "PSK also verified and saved for 1 related APs")
-        assert app.notified[-2] == "Credential verified and added to Vault"
+        await _wait_until(pilot, lambda: propagate.call_args is not None and "rightpass" in propagate.call_args.args)
+        await asyncio.wrap_future(propagate.spy_return)
+        await app.workers.wait_for_complete()
+        assert app.notified[-2:] == ["Credential verified and added to Vault",
+                                     "PSK also verified and saved for 1 related APs"]
         assert app.vault.ap_state("aa:bb:cc:dd:ee:ff").status is PasswordStatus.CURRENT
 
 
@@ -378,108 +396,69 @@ def _save_wep_aps(vault: Vault, count: int) -> list[AccessPoint]:
     return aps
 
 
-async def _open_vault_scrolled_to(app, pilot, row: int) -> DataTable:
-    drawer = await _open_vault(app, pilot)
-    table = drawer.query_one("#vault-aps", DataTable)
-    table.move_cursor(row=row)
-    item = drawer.query_one(VaultItemView)
-    await _wait_until(pilot, lambda: table.scroll_y > 0 and item._bssid == _cursor_bssid(table))
-    await pilot.pause(0)
-    return table
-
-
 def _cursor_bssid(table: DataTable) -> str:
     return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
 
 
-@pytest.mark.asyncio
-async def test_another_aps_new_key_redraws_only_its_row_and_keeps_the_cursor_scroll_and_item_pane():
-    app = _VaultApp()
-    aps = _save_wep_aps(app.vault, 40)
-    async with app.run_test(size=(80, 24)) as pilot:
-        table = await _open_vault_scrolled_to(app, pilot, 30)
-        scroll_y = table.scroll_y
-        cells = {ap.bssid: table.get_cell(ap.bssid, "ap") for ap in aps}
-        item = app.screen.query_one(VaultItemView)
-        state = item._state
+def _cells(table: DataTable) -> dict[str, object]:
+    return {row.key.value: table.get_cell(row.key, "ap") for row in table.ordered_rows}
 
-        app.vault.save_wps_pin(aps[5], "12345670", None)
-        await _wait_until(pilot, lambda: "✓PIN" in table.get_cell(aps[5].bssid, "ap").plain)
-        await pilot.pause(0)
 
-        assert [bssid for bssid, cell in cells.items() if table.get_cell(bssid, "ap") is not cell] == [aps[5].bssid]
-        assert (table.cursor_row, table.scroll_y) == (30, scroll_y)
-        assert item._state is state
-        assert app.screen.query_one("#vault-tabs").get_tab("tab-pin") is not None
+def _redrawn_bssids(table: DataTable, cells: dict[str, object]) -> list[str]:
+    return [bssid for bssid, cell in _cells(table).items() if cell is not cells[bssid]]
 
 
 @pytest.mark.asyncio
-async def test_a_new_ap_above_the_cursor_keeps_the_cursors_ap_at_the_same_height_without_highlighting(mocker):
+async def test_changes_to_other_aps_redraw_only_their_rows_and_keep_the_cursors_ap_scroll_and_item_pane(mocker):
     app = _VaultApp()
-    aps = _save_wep_aps(app.vault, 40)
-    async with app.run_test(size=(80, 24)) as pilot:
-        table = await _open_vault_scrolled_to(app, pilot, 30)
-        scroll_y = table.scroll_y
-        schedule_widget_load = mocker.patch.object(app.screen, "_schedule_widget_load")
-
-        app.vault.save_wep_key(AccessPoint(bssid="02:00:00:00:01:00", ssid="Aardvark"), b"abcde")
-        await _wait_until(pilot, lambda: table.row_count == 41)
-        await pilot.pause(0)
-
-        assert table.get_row_index("02:00:00:00:01:00") == 0
-        assert _cursor_bssid(table) == aps[30].bssid
-        assert (table.cursor_row, table.scroll_y) == (31, scroll_y + 1)
-        schedule_widget_load.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_a_nickname_redraws_only_its_row_and_keeps_the_cursor_and_scroll():
-    app = _VaultApp()
-    aps = _save_wep_aps(app.vault, 40)
-    async with app.run_test(size=(80, 24)) as pilot:
-        table = await _open_vault_scrolled_to(app, pilot, 30)
-        scroll_y = table.scroll_y
-        cells = {ap.bssid: table.get_cell(ap.bssid, "ap") for ap in aps}
-
-        update_meta(aps[29].ssid, aps[29].bssid, nickname="Upstairs")
-        app.screen.query_one(VaultTable).reload_nicknames()
-        await pilot.pause(0)
-
-        assert "Upstairs" in table.get_cell(aps[29].bssid, "ap").plain
-        assert [bssid for bssid, cell in cells.items() if table.get_cell(bssid, "ap") is not cell] == [aps[29].bssid]
-        assert (table.cursor_row, table.scroll_y) == (30, scroll_y)
-
-
-@pytest.mark.asyncio
-async def test_deleting_another_ap_keeps_the_cursor_on_its_ap():
-    app = _VaultApp()
-    aps = _save_wep_aps(app.vault, 40)
-    async with app.run_test(size=(80, 24)) as pilot:
-        table = await _open_vault_scrolled_to(app, pilot, 30)
-
-        app.vault.delete_ap(aps[2].bssid)
-        await _wait_until(pilot, lambda: table.row_count == 39)
-        await pilot.pause(0)
-
-        assert _cursor_bssid(table) == aps[30].bssid
-
-
-@pytest.mark.asyncio
-async def test_a_second_ap_with_an_ssid_adds_the_bssid_to_both_rows():
-    app = _VaultApp()
-    aps = _save_wep_aps(app.vault, 3)
+    aps = _save_wep_aps(app.vault, 12)
     async with app.run_test(size=(80, 24)) as pilot:
         drawer = await _open_vault(app, pilot)
         table = drawer.query_one("#vault-aps", DataTable)
-        twin = AccessPoint(bssid="02:00:00:00:01:00", ssid=aps[1].ssid)
-
-        app.vault.save_wep_key(twin, b"abcde")
-        await _wait_until(pilot, lambda: table.row_count == 4)
+        item = drawer.query_one(VaultItemView)
+        table.move_cursor(row=10)
+        await _wait_until(pilot, lambda: table.scroll_y > 0 and item._bssid == aps[10].bssid)
         await pilot.pause(0)
+        scroll_y, state = table.scroll_y, item._state
+        schedule_widget_load = mocker.patch.object(drawer, "_schedule_widget_load")
 
+        cells = _cells(table)
+        app.vault.save_wps_pin(aps[5], "12345670", None)
+        await _wait_until(pilot, lambda: "✓PIN" in table.get_cell(aps[5].bssid, "ap").plain)
+        await pilot.pause(0)
+        assert _redrawn_bssids(table, cells) == [aps[5].bssid]
+        assert (table.cursor_row, table.scroll_y) == (10, scroll_y)
+        assert item._state is state
+        assert drawer.query_one("#vault-tabs").get_tab("tab-pin") is not None
+
+        cells = _cells(table)
+        update_meta(aps[9].ssid, aps[9].bssid, nickname="Upstairs")
+        drawer.query_one(VaultTable).reload_nicknames()
+        await pilot.pause(0)
+        assert "Upstairs" in table.get_cell(aps[9].bssid, "ap").plain
+        assert _redrawn_bssids(table, cells) == [aps[9].bssid]
+        assert (table.cursor_row, table.scroll_y) == (10, scroll_y)
+
+        app.vault.save_wep_key(AccessPoint(bssid="02:00:00:00:01:00", ssid="Aardvark"), b"abcde")
+        await _wait_until(pilot, lambda: table.row_count == 13)
+        await pilot.pause(0)
+        assert table.get_row_index("02:00:00:00:01:00") == 0
+        assert _cursor_bssid(table) == aps[10].bssid
+        assert (table.cursor_row, table.scroll_y) == (11, scroll_y + 1)
+
+        app.vault.delete_ap(aps[2].bssid)
+        await _wait_until(pilot, lambda: table.row_count == 12)
+        await pilot.pause(0)
+        assert _cursor_bssid(table) == aps[10].bssid
+
+        twin = AccessPoint(bssid="02:00:00:00:01:01", ssid=aps[1].ssid)
+        app.vault.save_wep_key(twin, b"abcde")
+        await _wait_until(pilot, lambda: table.row_count == 13)
+        await pilot.pause(0)
         assert aps[1].bssid in table.get_cell(aps[1].bssid, "ap").plain
         assert twin.bssid in table.get_cell(twin.bssid, "ap").plain
         assert aps[0].bssid not in table.get_cell(aps[0].bssid, "ap").plain
+        schedule_widget_load.assert_not_called()
 
 
 def test_a_vault_change_from_another_thread_after_quit_logs_no_error(caplog):
@@ -577,47 +556,43 @@ def _write_a_pmkid_ap(tmp_path, ssid: str, bssid: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_key_press_shows_its_ap_at_once_and_held_keys_show_the_last_ap_once_they_stop(
-        tmp_path, monkeypatch):
+async def test_a_key_press_shows_its_ap_at_once_held_keys_show_the_last_ap_once_they_stop_and_a_reload_holds_nothing(
+        tmp_path, mocker):
     for ssid, bssid in (("Bbb", "aa:bb:cc:dd:ee:01"), ("Ccc", "aa:bb:cc:dd:ee:02"), ("Ddd", "aa:bb:cc:dd:ee:03")):
         _write_a_pmkid_ap(tmp_path, ssid, bssid)
-    monkeypatch.setattr(VaultDrawer, "_SELECTION_DELAY", 0.3)
     app = _VaultApp()
     async with app.run_test() as pilot:
-        drawer = await _open_vault(app, pilot)
-        item = drawer.query_one(VaultItemView)
+        drawer = _DrawerWithOnlyItsApTable()
+        set_timer = mocker.patch.object(drawer, "set_timer")
+        await app.push_screen(drawer)
+        table = drawer.query_one("#vault-aps", DataTable)
+        assert drawer.shown_bssids == ["aa:bb:cc:dd:ee:01"]
 
-        await pilot.press("down")
-        assert item._bssid == "aa:bb:cc:dd:ee:02"
-        await pilot.press("down")
-        assert item._bssid == "aa:bb:cc:dd:ee:02"
-        await _wait_until(pilot, lambda: item._bssid == "aa:bb:cc:dd:ee:03")
-
-
-@pytest.mark.asyncio
-async def test_a_reload_that_keeps_the_selected_ap_leaves_the_next_key_press_shown_at_once(
-        tmp_path, monkeypatch):
-    for ssid, bssid in (("Bbb", "aa:bb:cc:dd:ee:01"), ("Ccc", "aa:bb:cc:dd:ee:02"), ("Ddd", "aa:bb:cc:dd:ee:03")):
-        _write_a_pmkid_ap(tmp_path, ssid, bssid)
-    monkeypatch.setattr(VaultDrawer, "_SELECTION_DELAY", 0.3)
-    app = _VaultApp()
-    async with app.run_test() as pilot:
-        drawer = await _open_vault(app, pilot, "aa:bb:cc:dd:ee:02")
-        await pilot.pause(VaultDrawer._SELECTION_DELAY)
-        item = drawer.query_one(VaultItemView)
+        table.action_cursor_down()
+        await _wait_until(pilot, lambda: set_timer.call_count == 1)
+        assert drawer.shown_bssids[-1] == "aa:bb:cc:dd:ee:02"
+        table.action_cursor_down()
+        await _wait_until(pilot, lambda: set_timer.call_count == 2)
+        assert drawer.shown_bssids[-1] == "aa:bb:cc:dd:ee:02"
+        delay, load_once_keys_stop = set_timer.call_args.args
+        assert delay == VaultDrawer._SELECTION_DELAY
+        load_once_keys_stop()
+        assert drawer.shown_bssids[-1] == "aa:bb:cc:dd:ee:03"
 
         _write_a_pmkid_ap(tmp_path, "Aaa", "aa:bb:cc:dd:ee:00")
         app.vault.refresh()
-        await _wait_until(pilot, lambda: drawer.query_one("#vault-aps", DataTable).row_count == 4)
+        await _wait_until(pilot, lambda: table.row_count == 4)
         await pilot.pause(0)
-        assert item._bssid == "aa:bb:cc:dd:ee:02"
+        assert drawer.shown_bssids[-1] == "aa:bb:cc:dd:ee:03"
 
-        await pilot.press("down")
-        assert item._bssid == "aa:bb:cc:dd:ee:03"
+        table.action_cursor_up()
+        await _wait_until(pilot, lambda: set_timer.call_count == 3)
+        assert drawer.shown_bssids[-1] == "aa:bb:cc:dd:ee:02"
 
 
 @pytest.mark.asyncio
-async def test_switching_aps_shows_each_aps_keys_and_uncracked_section(tmp_path):
+async def test_switching_aps_shows_each_aps_keys_and_uncracked_section_and_takes_the_focus_off_a_hidden_list(
+        tmp_path):
     _write_a_checked_wep_key_and_three_hashlines(tmp_path)
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_2000_wep_key.txt", _WEP_TXT.replace("6162636465", "6162636466"))
     _write(tmp_path, "Other_aa-bb-cc-dd-ee-fe_1000_wep_key.txt",
@@ -627,39 +602,24 @@ async def test_switching_aps_shows_each_aps_keys_and_uncracked_section(tmp_path)
         item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
         uncracked = item.query_one(_UncrackedList)
         assert str(item.query_one(".ssid", Label).content) == "HomeNet"
+        uncracked.focus()
+        await pilot.pause(0)
+        assert app.focused is uncracked
 
         for bssid, ssid, key_count in (("aa:bb:cc:dd:ee:fe", "Other", 1), ("aa:bb:cc:dd:ee:ff", "HomeNet", 2)):
             item.load(bssid, ssid)
-            await _wait_until(pilot, lambda: len(item.query(_KeyRow)) == key_count)
+            await _wait_until(pilot, lambda: len(item.query(_KeyRow)) == key_count
+                              and item.query_one(".uncracked-section").display == (ssid == "HomeNet"))
             await pilot.pause(0)
 
             rows = list(item.query(_KeyRow).results(_KeyRow))
             assert {row.key.id for row in rows} == {key.id for key in app.vault.ap_state(bssid).keys}
             assert str(item.query_one(".ssid", Label).content) == ssid
             assert item.query_one(_UncrackedList) is uncracked
-            assert item.query_one(".uncracked-section").display == (ssid == "HomeNet")
+            if ssid == "Other":
+                assert app.focused is not uncracked
         assert len(uncracked.groups()) == 3
         assert "3 captures selected" in str(item.query_one(".selected-count", Label).content)
-
-
-@pytest.mark.asyncio
-async def test_switching_to_an_ap_without_uncracked_hashlines_takes_the_focus_off_the_hidden_list(tmp_path):
-    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE)
-    _write(tmp_path, "Other_aa-bb-cc-dd-ee-fe_1000_wep_key.txt",
-           _WEP_TXT.replace("HomeNet", "Other").replace("aa:bb:cc:dd:ee:ff", "aa:bb:cc:dd:ee:fe"))
-    app = _VaultApp()
-    async with app.run_test() as pilot:
-        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
-        uncracked = item.query_one(_UncrackedList)
-        uncracked.focus()
-        await pilot.pause(0)
-        assert app.focused is uncracked
-
-        item.load("aa:bb:cc:dd:ee:fe", "Other")
-        await _wait_until(pilot, lambda: not item.query_one(".uncracked-section").display)
-        await pilot.pause(0)
-
-        assert app.focused is not uncracked
 
 
 @pytest.mark.asyncio
