@@ -137,6 +137,7 @@ def pmk_matches(pmk: bytes, line: Hc22000Line) -> bool:
 _derive_pmk_cached = functools.lru_cache(maxsize=1024)(derive_pmk)
 
 
+@functools.lru_cache(maxsize=100_000)
 def psk_matches(psk: str, line: Hc22000Line) -> bool:
     """True if the passphrase (or 64-hex raw PMK) cracks the hashline."""
     if RAW_PMK_RE.fullmatch(psk):
