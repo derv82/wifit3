@@ -5,6 +5,7 @@ import signal
 import sys
 import threading
 from textual import events, work
+from textual.worker import get_current_worker
 from textual.app import App
 from textual.binding import Binding
 from textual.message import Message
@@ -206,11 +207,21 @@ class WifiteApp(App):
         self.install_screen(FocusViewV2(), name="focus")
         
         self.push_screen("splash")
+        self._load_ap_states({c.bssid for c in self.vault.all_captures()})
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
         self.set_interval(2.0, self._poll_jobs)
         self.call_after_refresh(self.device_watch.poll)
         self.call_after_refresh(self._poll_jobs)
         self._quit_on_termination_signals()
+
+    @work(thread=True, exit_on_error=False)
+    def _load_ap_states(self, bssids: set[str]) -> None:
+        """Cache these APs' states off the UI thread, for the vault table's PSK badges and the item pane."""
+        worker = get_current_worker()
+        for bssid in bssids:
+            if worker.is_cancelled:
+                return
+            self.vault.ap_state(bssid)
 
     def _quit_on_termination_signals(self) -> None:
         if sys.platform == "win32":

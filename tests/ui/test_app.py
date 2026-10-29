@@ -1,6 +1,11 @@
+import threading
+
 import pytest
 
 from wifit3.chips.driver import DeviceID
+from wifit3.models import AccessPoint
+from wifit3.persist import ap_state
+from wifit3.persist.vault import Vault
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
@@ -177,3 +182,60 @@ async def test_app_layout_and_boot():
         # Check that FocusViewV2 is registered (but requires target_ap to mount properly without escaping immediately, so we won't push it here)
         assert "focus" in pilot.app._installed_screens
 
+
+def _write_two_aps() -> None:
+    vault = Vault()
+    vault.save_wpa_psk("HomeNet", "aa:bb:cc:dd:ee:ff", "password1", manual=True)
+    vault.save_wep_key(AccessPoint(bssid="aa:bb:cc:dd:ee:01", ssid="OldNet"), b"abcde", manual=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_startup_loads_each_aps_state_off_the_ui_thread(mocker):
+    _write_two_aps()
+    loads: list[tuple[str, bool]] = []
+    load_ap_state = ap_state.load_ap_state
+
+    def record_load(bssid, captures):
+        loads.append((bssid, threading.current_thread() is threading.main_thread()))
+        return load_ap_state(bssid, captures)
+    mocker.patch.object(ap_state, "load_ap_state", side_effect=record_load)
+
+    app = WifiteApp()
+    async with app.run_test():
+        await app.workers.wait_for_complete()
+
+    assert sorted(loads) == [("aa:bb:cc:dd:ee:01", False), ("aa:bb:cc:dd:ee:ff", False)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_an_ap_state_that_fails_to_load_at_startup_leaves_the_app_running(mocker):
+    _write_two_aps()
+    mocker.patch.object(ap_state, "load_ap_state", side_effect=OSError("unreadable"))
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause(0)
+        assert app.is_running
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_cancelling_the_startup_load_stops_before_the_next_ap(mocker):
+    _write_two_aps()
+    app = WifiteApp()
+    loads: list[str] = []
+    load_ap_state = ap_state.load_ap_state
+
+    def load_then_cancel(bssid, captures):
+        loads.append(bssid)
+        app.call_from_thread(app.workers.cancel_all)
+        return load_ap_state(bssid, captures)
+    mocker.patch.object(ap_state, "load_ap_state", side_effect=load_then_cancel)
+
+    async with app.run_test():
+        await app.workers.wait_for_complete()
+
+    assert len(loads) == 1
