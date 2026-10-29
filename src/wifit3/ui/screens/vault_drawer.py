@@ -151,8 +151,13 @@ class VaultDrawer(ModalScreen):
         self._pending_bssid = None
 
     def _schedule_widget_load(self, bssid: str) -> None:
+        """Load at once, unless the previous highlight came within the delay (a held key): then
+        load once the highlights stop."""
+        keys_held = self._selection_timer is not None
         self._cancel_pending_selection()
         self._pending_bssid = bssid
+        if not keys_held:
+            self._load_pending_widget()
         self._selection_timer = self.set_timer(self._SELECTION_DELAY, self._load_pending_widget)
 
     def _load_pending_widget(self) -> None:

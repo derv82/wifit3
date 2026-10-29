@@ -571,6 +571,51 @@ async def test_switching_aps_starts_the_uncracked_list_at_its_top(tmp_path):
         assert (uncracked.scroll_y, uncracked.highlighted) == (0, 0)
 
 
+def _write_a_pmkid_ap(tmp_path, ssid: str, bssid: str) -> None:
+    _write(tmp_path, f"{ssid}_{bssid.replace(':', '-')}.hc22000",
+           _PMKID_LINE.replace("aabbccddeeff", bssid.replace(":", "")))
+
+
+@pytest.mark.asyncio
+async def test_a_key_press_shows_its_ap_at_once_and_held_keys_show_the_last_ap_once_they_stop(
+        tmp_path, monkeypatch):
+    for ssid, bssid in (("Bbb", "aa:bb:cc:dd:ee:01"), ("Ccc", "aa:bb:cc:dd:ee:02"), ("Ddd", "aa:bb:cc:dd:ee:03")):
+        _write_a_pmkid_ap(tmp_path, ssid, bssid)
+    monkeypatch.setattr(VaultDrawer, "_SELECTION_DELAY", 0.3)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        drawer = await _open_vault(app, pilot)
+        item = drawer.query_one(VaultItemView)
+
+        await pilot.press("down")
+        assert item._bssid == "aa:bb:cc:dd:ee:02"
+        await pilot.press("down")
+        assert item._bssid == "aa:bb:cc:dd:ee:02"
+        await _wait_until(pilot, lambda: item._bssid == "aa:bb:cc:dd:ee:03")
+
+
+@pytest.mark.asyncio
+async def test_a_reload_that_keeps_the_selected_ap_leaves_the_next_key_press_shown_at_once(
+        tmp_path, monkeypatch):
+    for ssid, bssid in (("Bbb", "aa:bb:cc:dd:ee:01"), ("Ccc", "aa:bb:cc:dd:ee:02"), ("Ddd", "aa:bb:cc:dd:ee:03")):
+        _write_a_pmkid_ap(tmp_path, ssid, bssid)
+    monkeypatch.setattr(VaultDrawer, "_SELECTION_DELAY", 0.3)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        drawer = await _open_vault(app, pilot, "aa:bb:cc:dd:ee:02")
+        await pilot.pause(VaultDrawer._SELECTION_DELAY)
+        item = drawer.query_one(VaultItemView)
+
+        _write_a_pmkid_ap(tmp_path, "Aaa", "aa:bb:cc:dd:ee:00")
+        app.vault.refresh()
+        await _wait_until(pilot, lambda: drawer.query_one("#vault-aps", DataTable).row_count == 4)
+        await pilot.pause(0)
+        assert item._bssid == "aa:bb:cc:dd:ee:02"
+
+        await pilot.press("down")
+        assert item._bssid == "aa:bb:cc:dd:ee:03"
+
+
 @pytest.mark.asyncio
 async def test_unchecked_hashlines_are_left_out_of_the_crack_job(tmp_path, mocker):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE + _OTHER_CLIENT_LINE + _PMKID_LINE)
