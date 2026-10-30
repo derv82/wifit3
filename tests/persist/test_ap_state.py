@@ -134,9 +134,9 @@ def test_a_correct_live_verification_after_a_change_makes_the_new_key_current():
     assert status == (PasswordStatus.CURRENT, new_key)
 
 
-def test_a_rejected_live_verification_is_not_judged():
+def test_a_live_rejection_newer_than_the_proof_makes_the_key_stale():
     key = _key(newest := _hashline(_EAPOL_LINE, 10), verifications=(LiveVerification(20, False),))
-    assert password_status([newest], [key]) == (PasswordStatus.CURRENT, key)
+    assert password_status([newest], [key]) == (PasswordStatus.STALE, key)
 
 
 def test_a_key_recovered_from_the_ap_is_current_without_hashlines():
