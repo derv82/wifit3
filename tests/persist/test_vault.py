@@ -614,6 +614,18 @@ def test_save_does_not_submit_when_a_known_psk_matches_the_capture(tmp_path, moc
     v.manager.submit_job.assert_not_called()
 
 
+def test_a_capture_a_related_aps_key_cracks_gets_that_key_and_no_auto_crack(tmp_path, mocker):
+    _write_wpa_psk(tmp_path, "02-00-00-00-00-10", ssid="HomeNet_5G", psk="knownpsk")
+    v = Vault()
+    mocker.patch.object(v.manager, "submit_job")
+
+    result = v.save_pmkid(_ap_with_pmkid_for("knownpsk"), _CLIENT)
+
+    assert result.matches_saved_psk is True
+    assert "knownpsk" in {key.value for key in v.ap_state("aa:bb:cc:dd:ee:ff").keys}
+    v.manager.submit_job.assert_not_called()
+
+
 def test_save_submits_when_no_known_psk_matches_the_capture(tmp_path, mocker):
     v = Vault()
     mocker.patch.object(v.manager, "submit_job")

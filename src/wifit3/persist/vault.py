@@ -277,19 +277,24 @@ class Vault:
 
     def _propagate_verified_psk(self, source_bssid: str, source_ssid: Optional[str], psk: str) -> List[str]:
         matched: List[str] = []
-        for bssid in list(self._index):
-            if bssid == source_bssid:
-                continue
-            ssid = self.ssid(bssid)
-            if not ((source_ssid and ssid and _related_ssids(source_ssid, ssid))
-                    or _sibling_bssids(source_bssid, bssid)):
-                continue
+        for bssid, ssid in self._related_aps(source_bssid, source_ssid):
             if psk in {key.value for key in self.ap_state(bssid).keys}:
                 continue
             if any(psk_matches(psk, line) for _, line in read_hashlines(bssid, self.persisted(bssid)).values()):
                 self.save_wpa_psk(ssid, bssid, psk)
                 matched.append(bssid)
         return matched
+
+    def _related_aps(self, bssid: str, ssid: Optional[str]) -> List[tuple[str, Optional[str]]]:
+        """Every other saved AP in the SSID family or a sibling BSSID, with its SSID."""
+        related: List[tuple[str, Optional[str]]] = []
+        for other in list(self._index):
+            if other == bssid:
+                continue
+            other_ssid = self.ssid(other)
+            if (ssid and other_ssid and _related_ssids(ssid, other_ssid)) or _sibling_bssids(bssid, other):
+                related.append((other, other_ssid))
+        return related
 
     def has_handshake(self, ap: "AccessPoint") -> bool:
         return self._has(ap.bssid, CaptureType.HS)
@@ -342,6 +347,15 @@ class Vault:
             psks |= {psk for psk in (ap.wps_pbc_psk, ap.wps_pin_psk) if psk}
             matches_saved_psk = psk_verdict(psks, [line for _, line in new_lines.values()])
         self._insert_capture(capture)
+        if new_lines and not matches_saved_psk:
+            lines = [line for _, line in new_lines.values()]
+            related_psks = {key.value for other, _ in self._related_aps(ap.bssid, ap.ssid)
+                            for key in self.ap_state(other).keys if key.type == CaptureType.WPA_PSK}
+            for psk in related_psks - psks:
+                if any(psk_matches(psk, line) for line in lines):
+                    self.save_wpa_psk(ap.ssid, ap.bssid, psk)
+                    psks.add(psk)
+            matches_saved_psk = psk_verdict(psks, lines)
         if not matches_saved_psk:
             self._auto_crack(ap, state)
         return HashlineSaveResult(result.path, was_new=True, matches_saved_psk=matches_saved_psk)
