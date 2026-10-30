@@ -26,8 +26,8 @@ def _ef(msg, rc, nonce, ts):
 
 
 def test_handshake_complete_refires_per_instance():
-    """One banner per distinct 4-way (ANonce), deduped within an instance but
-    re-fired on a genuine re-handshake."""
+    """One banner per distinct 4-way (ANonce), once more when it becomes authorized, deduped
+    otherwise, and re-fired on a genuine re-handshake."""
     det = CaptureEventDetector(granular_eapol=True)
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="X")
     hs = Handshake(bssid=ap.bssid, client_mac="11:22:33:44:55:66", beacon_frame=b"B")
@@ -37,9 +37,11 @@ def test_handshake_complete_refires_per_instance():
     hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
     n1 = sum(e.kind == "handshake_complete" for e in det.poll(ap))
     assert n1 == 1
-    # Re-poll with nothing new (incl. an M3 retransmit of the same instance) →
-    # no repeat banner.
+    # Its M3 makes the instance authorized → one more banner, so the M2+M3 gets saved.
     hs.messages.append(_ef(3, 6, b"\xaa" * 32, 100.2))
+    assert sum(e.kind == "handshake_complete" for e in det.poll(ap)) == 1
+    # An M3 retransmit of the same instance → no repeat banner.
+    hs.messages.append(_ef(3, 6, b"\xaa" * 32, 100.3))
     assert sum(e.kind == "handshake_complete" for e in det.poll(ap)) == 0
     # Instance 2 (fresh ANonce + replay base) → banner fires again.
     hs.messages += [_ef(1, 9, b"\xbb" * 32, 200.0), _ef(2, 9, b"\x22" * 32, 200.1)]

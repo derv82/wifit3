@@ -1,6 +1,7 @@
 """Tests for the typed auto-save module (persist.save)."""
 from __future__ import annotations
 
+from wifit3.crack.hc22000_format import read_hc22000
 from wifit3.models import AccessPoint, HandshakeMessage, Handshake
 from wifit3.persist.save import (
     HcFiles,
@@ -107,6 +108,29 @@ class TestSaveHandshake:
         assert len(files) == 1
         lines = second.path.read_text(encoding="utf-8").strip().splitlines()
         assert len(lines) == 2
+
+    def test_an_m3_after_a_saved_m1_m2_saves_the_authorized_pair(self, tmp_path):
+        anonce = b"\xA0" + b"\x00" * 31
+        ap = _ap_with_hs(anonce=anonce)
+        assert save_handshake(ap, "11:22:33:44:55:66").was_new is True
+        ap.handshakes["11:22:33:44:55:66"].messages.append(_ef(3, replay=6, nonce=anonce, key_data_len=22))
+
+        again = save_handshake(ap, "11:22:33:44:55:66")
+
+        assert again is not None and again.was_new is True
+        lines = [line for _, line in read_hc22000(again.path)]
+        assert [line.authorized for line in lines] == [False, True]
+        assert len(list(tmp_path.glob("*_handshake.pcap"))) == 2
+
+    def test_an_m1_m2_for_an_anonce_saved_authorized_is_deduped(self, tmp_path):
+        anonce = b"\xA0" + b"\x00" * 31
+        ap = _ap_with_hs(anonce=anonce)
+        ap.handshakes["11:22:33:44:55:66"].messages.append(_ef(3, replay=6, nonce=anonce, key_data_len=22))
+        assert save_handshake(ap, "11:22:33:44:55:66").was_new is True
+
+        again = save_handshake(_ap_with_hs(anonce=anonce), "11:22:33:44:55:66")
+
+        assert again is not None and again.was_new is False
 
     def test_hidden_ssid_returns_none(self, tmp_path):
         ap = _ap_with_hs(ssid="")
@@ -496,16 +520,16 @@ class TestHcFiles:
         hc = HcFiles(tmp_path, "HomeNet", "aa:bb:cc:dd:ee:ff")
         anonce1 = "11" * 32
         anonce2 = "22" * 32
-        assert hc.find_existing_anonce(anonce1) is None
+        assert hc.find_existing_anonce(anonce1, False) is None
 
         # Write to aggregate file
         hc.agg_path.write_text(f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{anonce1}**00\n", encoding="utf-8")
-        assert hc.find_existing_anonce(anonce1) == hc.agg_path
+        assert hc.find_existing_anonce(anonce1, False) == hc.agg_path
 
         # Write to split file
         split_p = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000"
         split_p.write_text(f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{anonce2}**00\n", encoding="utf-8")
-        assert hc.find_existing_anonce(anonce2) == split_p
+        assert hc.find_existing_anonce(anonce2, False) == split_p
 
     def test_find_existing_pmkid_in_aggregate_and_split(self, tmp_path):
         hc = HcFiles(tmp_path, "HomeNet", "aa:bb:cc:dd:ee:ff")
