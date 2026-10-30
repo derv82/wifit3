@@ -6,10 +6,11 @@ import subprocess
 import json
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from wifit3.crack.hc22000_format import read_hc22000
 from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH, expand_wordlists, ssid_passwords
 from wifit3.models import PersistedCapture, ToolCapability, ToolResult, ToolStatus
 from wifit3.models.jobs import JobAction, JobState, ToolName
@@ -220,19 +221,15 @@ class HashcatTool(CrackerTool[HashcatQueue]):
         queue = HashcatQueue.from_job(job)
         lines = _read_log_tail(job.log_path, start=queue.log_offset)
         progress_msg, percent = self._parse_progress(lines) or ("Running...", None)
-
-        # The potfile is the source of truth for a recovered key. Check it FIRST, regardless of
-        # liveness: hashcat sometimes hangs after printing its result, and blocking the poll until
-        # the process exits froze the whole UI. If the key is there, end the process and succeed.
-        key = self._key_from_potfile(self._potfile(job, queue))
-        if key is not None:
-            self._terminate(job.pid)
-            self._remove_ssid_passwords(queue)
-            return self._cracked(key)
+        entries = self._potfile_entries(self._potfile(job, queue))
+        keys = tuple(dict.fromkeys(entries))
+        every_line_cracked = bool(entries) and len(entries) >= len(read_hc22000(job.hashlines_path))
 
         if not assume_dead and self._is_running(job.pid, job.config.get("hashcat_exe")):
-            self._kill_if_quit_timed_out(job, queue)
-            return self._running(progress_msg, percent, queue)
+            if not every_line_cracked:
+                self._kill_if_quit_timed_out(job, queue)
+                return replace(self._running(progress_msg, percent, queue), keys=keys)
+            self._kill(job)     # hashcat sometimes hangs after printing its result
 
         self._terminate(job.pid)
         try:
@@ -242,8 +239,10 @@ class HashcatTool(CrackerTool[HashcatQueue]):
             raise
         if ended is None or ended.status is not ToolStatus.RUNNING:
             self._remove_ssid_passwords(queue)
+        if keys and (ended is None or ended.status is ToolStatus.FAILURE):
+            return self._cracked(keys)
         if ended is not None:
-            return ended
+            return replace(ended, keys=keys)
         reason = self._last_log_message(lines)
         return ToolResult(status=ToolStatus.ERROR, value=reason or "hashcat exited without recovering the key")
 
@@ -283,20 +282,16 @@ class HashcatTool(CrackerTool[HashcatQueue]):
         """The one recorded at launch; jobs launched before it was recorded used the capture's."""
         return queue.potfile_path or str(Path(job.capture_path).resolve().with_suffix(".potfile"))
 
-    def _key_from_potfile(self, potfile: str) -> Optional[str]:
-        """The recovered passphrase from the job's potfile, or None. A line is
-        ``<hash>[*<essid>]:<password>``, so the passphrase is everything after the first colon."""
+    def _potfile_entries(self, potfile: str) -> list[str]:
+        """The password of each potfile entry, one per cracked hashline. A line is
+        ``<hash>[*<essid>]:<password>``, so the password is everything after the first colon."""
         if not os.path.exists(potfile):
-            return None
+            return []
         try:
             lines = Path(potfile).read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
-            return None
-        for line in reversed(lines):
-            line = line.strip()
-            if ":" in line:
-                return line.split(":", 1)[1]
-        return None
+            return []
+        return [line.strip().split(":", 1)[1] for line in lines if ":" in line]
 
     def _is_running(self, pid, exe: Optional[str] = None) -> bool:
         """Whether the job's process is alive: via our Popen handle if we launched it, else via the

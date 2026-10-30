@@ -169,8 +169,9 @@ class CrackerTool(VaultTool, Generic[QueueT]):
                           actions=self._running_actions(queue, progress_msg))
 
     @staticmethod
-    def _cracked(key: str) -> ToolResult:
-        return ToolResult(status=ToolStatus.SUCCESS, value=f"Cracked! Key: {key}", percent=100.0, keys=(key,))
+    def _cracked(keys: tuple[str, ...]) -> ToolResult:
+        return ToolResult(status=ToolStatus.SUCCESS, value=f"Cracked! Keys: {', '.join(keys)}", percent=100.0,
+                          keys=keys)
 
     @classmethod
     def _exhausted(cls, queue: WordlistQueue) -> ToolResult:

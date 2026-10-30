@@ -172,7 +172,7 @@ class CpuCrackTool(CrackerTool[CpuCrackQueue]):
         run = self._runs.get(job.job_id)
         if run is not None and run.key is not None:
             del self._runs[job.job_id]
-            return self._cracked(run.key)
+            return self._cracked((run.key,))
         if run is not None and not assume_dead and run.thread.is_alive():
             percent = run.passwords_tried / max(run.passwords_total, 1) * 100
             state = "Running" if run.unpaused.is_set() else "Paused"
