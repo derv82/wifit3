@@ -299,7 +299,9 @@ def test_a_key_no_line_verifies_is_saved_under_the_first_lines_ssid_not_the_file
 
 
 def _ap_state(status: PasswordStatus, key: str) -> MagicMock:
-    return MagicMock(status=status, status_key=MagicMock(value=key), keys=())
+    from wifit3.models.access_point import CaptureType
+    return MagicMock(status=status, status_key=MagicMock(value=key), keys=(),
+                     key_statuses={(CaptureType.WPA_PSK, key): status})
 
 
 def test_a_running_job_whose_key_makes_the_ap_current_is_stopped(manager):

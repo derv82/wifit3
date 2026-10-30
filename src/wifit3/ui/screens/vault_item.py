@@ -31,7 +31,7 @@ from wifit3.persist.ap_state import (
     epoch_sort_key,
 )
 from wifit3.persist.exhaustion import ExhaustedWordlist
-from wifit3.ui.colors import PASSWORD_MISMATCH_COLOR
+from wifit3.ui.colors import KEY_CHIP_STYLE, PASSWORD_MISMATCH_COLOR
 from wifit3.ui.encryption_format import wep_key_ascii
 from wifit3.ui.screens.vault_breakpoints import NARROW, SHORT, TALL, TINY, WIDE
 from wifit3.ui.vault.tools_ui import UI_TOOLS
@@ -45,11 +45,6 @@ _STATUS_COLOR = {
     PasswordStatus.NOT_VERIFIED: "$text-warning",
     PasswordStatus.STALE: PASSWORD_MISMATCH_COLOR,
     PasswordStatus.NOT_CRACKED: "$text-error",
-}
-_KEY_CHIP_STYLE = {
-    PasswordStatus.CURRENT: "black bold on lightgreen",
-    PasswordStatus.NOT_VERIFIED: "black bold on $warning",
-    PasswordStatus.STALE: f"black bold on {PASSWORD_MISMATCH_COLOR}",
 }
 _AUTHORIZED_TOOLTIP = "[$text-success]authorized:[/] PMKID or M3/M4 (the AP accepted this password)"
 _CHALLENGE_TOOLTIP = "[$text-warning]challenge:[/] No M3/M4 (could be a wrong password)"
@@ -217,7 +212,7 @@ def _status_markup(state: ApState) -> str:
     key = state.status_key
     if key is None:
         return status
-    chip = f"[{_KEY_CHIP_STYLE[state.status]}] {_KEY_KINDS[key.type].badge}: {escape(key_text(key))} [/]"
+    chip = f"[{KEY_CHIP_STYLE[state.status]}] {_KEY_KINDS[key.type].badge}: {escape(key_text(key))} [/]"
     return f"{chip} {status}"
 
 
@@ -348,7 +343,7 @@ class _KeyRow(VerticalGroup):
         key = self.key
         kind = _KEY_KINDS[key.type]
         markup = (f"[bold {kind.badge_color}]{kind.badge.ljust(_BADGE_WIDTH)}[/] "
-                  f"[{_KEY_CHIP_STYLE[self.status]}] {escape(key_text(key))} [/]")
+                  f"[{KEY_CHIP_STYLE[self.status]}] {escape(key_text(key))} [/]")
         return f"{markup} [dim]({self._details()})[/dim]"
 
     def _details(self) -> str:

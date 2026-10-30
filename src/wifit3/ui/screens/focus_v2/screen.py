@@ -54,6 +54,7 @@ from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
 from wifit3.ui.encryption_format import psk_capture_supported
 from wifit3.models import AccessPoint, IdSource
+from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config
 from wifit3.persist.save import SaveResult
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
@@ -830,9 +831,14 @@ class FocusViewV2(Screen):
 
     def on_wifite_app_job_cracked(self, message: "WifiteApp.JobCracked") -> None:
         job = message.job
+        status = self.app.vault.manager.key_status(job) or PasswordStatus.CURRENT
+        if status is PasswordStatus.CURRENT:
+            chip, label = "black bold on green", ""
+        else:
+            chip, label = "black bold on yellow", f" [bold yellow]{status.value}[/bold yellow]"
         self._log(
-            f'[black bold on green] ✓ PSK cracked [/black bold on green] '
-            f'"{escape(job.key or "")}" [dim](via {escape(job.display_name)})[/dim]'
+            f'[{chip}] ✓ PSK cracked [/{chip}] '
+            f'"{escape(job.key or "")}"{label} [dim](via {escape(job.display_name)})[/dim]'
         )
 
     def _log(self, markup: str) -> None:

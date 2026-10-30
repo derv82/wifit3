@@ -1,3 +1,5 @@
+from unittest.mock import PropertyMock, patch
+
 from textual.app import App, ComposeResult
 from textual.reactive import reactive
 from textual.widgets import Label
@@ -44,7 +46,9 @@ def test_a_cracked_job_shows_its_key():
     row = JobRow(job)
 
     assert "SUCCESS" in row._status_markup(job)
-    assert "hunter2" in row._detail_markup(job)
+    with patch.object(JobRow, "app", new_callable=PropertyMock) as app:
+        app.return_value.vault.manager.key_status.return_value = None
+        assert "hunter2" in row._detail_markup(job)
 
 
 def test_a_cracked_job_saved_without_its_key_shows_the_status_line():

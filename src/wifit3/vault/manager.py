@@ -218,7 +218,7 @@ class JobManager:
                     detail_and_status = (job.detail, job.status)
                     res = tool.poll_status(job)
                     self._persist_cracked_key(job, res, capture_for)
-                    if self._cracked_current_key(job, capture_for):
+                    if self.key_status(job, capture_for) is PasswordStatus.CURRENT:
                         if res.status is ToolStatus.RUNNING:
                             tool.apply(JobAction.STOP, job)          # 'q', then _kill after the grace period
                         elif res.status is ToolStatus.STOPPED:
@@ -293,15 +293,14 @@ class JobManager:
         else:
             job.key = res.keys[-1]
 
-    def _cracked_current_key(self, job: JobState,
-                             capture_for: Callable[[str], Optional[PersistedCapture]]) -> bool:
-        """Whether the key this job recovered is the one the AP's CURRENT password status names."""
-        cap = self._job_capture(job, capture_for)
+    def key_status(self, job: JobState,
+                   capture_for: Optional[Callable[[str], Optional[PersistedCapture]]] = None
+                   ) -> Optional[PasswordStatus]:
+        """The password status of the key this job recovered; None until it recovers one."""
+        cap = self._job_capture(job, capture_for or self._capture)
         if job.key is None or cap is None:
-            return False
-        state = self.vault.ap_state(cap.bssid)
-        return (state.status is PasswordStatus.CURRENT and state.status_key is not None
-                and state.status_key.value == job.key)
+            return None
+        return self.vault.ap_state(cap.bssid).key_statuses.get((CaptureType.WPA_PSK, job.key))
 
     @staticmethod
     def _cracked_ssids(job: JobState, key: str, cap: PersistedCapture) -> list[Optional[str]]:
