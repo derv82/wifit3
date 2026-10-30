@@ -1,6 +1,6 @@
 import logging
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CpuCrackQueue(WordlistQueue):
     ssid_passwords_index: Optional[int] = None  # queue entry of the in-memory SSID passwords
+    keys: list[str] = field(default_factory=list)   # recovered by the job's earlier wordlists
 
     @property
     def on_ssid_passwords(self) -> bool:
@@ -53,7 +54,7 @@ class _WordlistRun:
     lines_by_essid: dict[bytes, list[Hc22000Line]]
     passwords_tried: int = 0
     passwords_total: int = 0
-    key: Optional[str] = None
+    keys: list[str] = field(default_factory=list)
     exhausted: bool = False
     error: Optional[str] = None
     stop_requested: threading.Event = field(default_factory=threading.Event)
@@ -126,6 +127,8 @@ class CpuCrackTool(CrackerTool[CpuCrackQueue]):
 
     def _start_wordlist(self, job: JobState, queue: CpuCrackQueue) -> None:
         lines_by_essid = _lines_by_essid(job.hashlines_path)
+        for key in queue.keys:
+            self._remove_cracked_lines(key, lines_by_essid)
         run = _WordlistRun(
             wordlist=Path(queue.current) if queue.current else None,
             ssid_passwords=(_ssid_passwords(job, _ap_ssid_variants(job))
@@ -146,9 +149,10 @@ class CpuCrackTool(CrackerTool[CpuCrackQueue]):
                 run.unpaused.wait()
                 if run.stop_requested.is_set():
                     return
-                if self._psk_cracks(psk, run.lines_by_essid):
-                    run.key = psk
-                    return
+                if self._remove_cracked_lines(psk, run.lines_by_essid):
+                    run.keys.append(psk)
+                    if not run.lines_by_essid:
+                        return
                 run.passwords_tried += 1
             run.exhausted = True
         except Exception as exc:
@@ -160,28 +164,39 @@ class CpuCrackTool(CrackerTool[CpuCrackQueue]):
         return read_passwords(run.wordlist) if run.wordlist is not None else iter(run.ssid_passwords)
 
     @staticmethod
-    def _psk_cracks(psk: str, lines_by_essid: dict[bytes, list[Hc22000Line]]) -> bool:
-        for essid, lines in lines_by_essid.items():
+    def _remove_cracked_lines(psk: str, lines_by_essid: dict[bytes, list[Hc22000Line]]) -> bool:
+        """Drop the lines ``psk`` cracks (and any ESSID left with none); whether it cracked one."""
+        cracked_any = False
+        for essid, lines in list(lines_by_essid.items()):
             pmk = wpa.derive_pmk(psk, essid)
-            if any(wpa_psk.pmk_matches(pmk, line) for line in lines):
-                return True
-        return False
+            uncracked = [line for line in lines if not wpa_psk.pmk_matches(pmk, line)]
+            if len(uncracked) < len(lines):
+                cracked_any = True
+                if uncracked:
+                    lines_by_essid[essid] = uncracked
+                else:
+                    del lines_by_essid[essid]
+        return cracked_any
 
     def poll_status(self, job: JobState, assume_dead: bool = False) -> ToolResult:
         queue = CpuCrackQueue.from_job(job)
         run = self._runs.get(job.job_id)
-        if run is not None and run.key is not None:
-            del self._runs[job.job_id]
-            return self._cracked((run.key,))
+        keys = tuple(dict.fromkeys([*queue.keys, *(run.keys if run is not None else [])]))
         if run is not None and not assume_dead and run.thread.is_alive():
             percent = run.passwords_tried / max(run.passwords_total, 1) * 100
             state = "Running" if run.unpaused.is_set() else "Paused"
-            return self._running(self._progress_msg(state, percent), percent, queue)
+            return replace(self._running(self._progress_msg(state, percent), percent, queue), keys=keys)
 
         self._runs.pop(job.job_id, None)
+        queue.keys = list(keys)
+        queue.write_to(job)
+        if keys and run is not None and not run.lines_by_essid:
+            return self._cracked(keys)
         ended = self._wordlist_ended(job, queue, exhausted=run is not None and run.exhausted)
+        if keys and (ended is None or ended.status is ToolStatus.FAILURE):
+            return self._cracked(keys)
         if ended is not None:
-            return ended
+            return replace(ended, keys=keys)
         reason = run.error if run is not None else None
         return ToolResult(status=ToolStatus.ERROR, value=reason or "cpu_crack ended without recovering the key")
 
