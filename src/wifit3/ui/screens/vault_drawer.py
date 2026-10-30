@@ -32,7 +32,7 @@ def _ap_contents_text(captures: list[PersistedCapture], state: ApState) -> str:
 class VaultDrawer(ModalScreen):
     """The Vault drawer overlay."""
 
-    _SELECTION_DELAY = 0.08
+    _SELECTION_DELAY = 0.1
 
     HORIZONTAL_BREAKPOINTS = [(0, TINY), (60, NARROW), (90, COMPACT), (105, WIDE)]
     VERTICAL_BREAKPOINTS = [(0, SHORT), (36, TALL)]
@@ -118,6 +118,7 @@ class VaultDrawer(ModalScreen):
         self._reveal_scheduled = False
         if self.is_attached:
             self.add_class("open")
+            self.app.preload_vault_states()
 
     def _focus_list(self) -> None:
         """Land focus on the AP list so up/down works without a Tab press."""

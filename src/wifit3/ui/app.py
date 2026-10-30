@@ -208,21 +208,31 @@ class WifiteApp(App):
         self.install_screen(FocusViewV2(), name="focus")
         
         self.push_screen("splash")
-        self._load_ap_states({c.bssid for c in self.vault.all_captures()})
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
         self.set_interval(2.0, self._poll_jobs)
         self.call_after_refresh(self.device_watch.poll)
         self.call_after_refresh(self._poll_jobs)
         self._quit_on_termination_signals()
 
+    def preload_vault_states(self) -> None:
+        """Begin ordered Vault state loading once the drawer is visibly opening."""
+        bssids = sorted(
+            {capture.bssid for capture in self.vault.all_captures()},
+            key=lambda bssid: ((self.vault.ssid(bssid) or "").lower(), bssid),
+        )
+        self._load_ap_states(bssids)
+
     @work(thread=True, exit_on_error=False)
-    def _load_ap_states(self, bssids: set[str]) -> None:
-        """Cache these APs' states off the UI thread, for the vault table's PSK badges and the item pane."""
+    def _load_ap_states(self, bssids: list[str]) -> None:
+        """Cache AP state in Vault display order, after its first item is usable."""
         worker = get_current_worker()
         for bssid in bssids:
             if worker.is_cancelled:
                 return
-            self.vault.ap_state(bssid)
+            if self.vault.cached_ap_state(bssid) is None:
+                self.vault.ap_state(bssid)
+        if self.is_running:
+            self.call_from_thread(self._refresh_vault_table)
 
     def _quit_on_termination_signals(self) -> None:
         if sys.platform == "win32":

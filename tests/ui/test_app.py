@@ -9,6 +9,7 @@ from wifit3.persist.vault import Vault
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
+from wifit3.ui.screens.vault_drawer import VaultDrawer
 from textual.widgets import Button, RichLog
 from textual.widgets._header import HeaderTitle
 
@@ -192,8 +193,7 @@ def _write_two_aps() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_startup_loads_each_aps_state_off_the_ui_thread_and_one_that_fails_to_load_leaves_the_app_running(
-        mocker):
+async def test_vault_loads_its_selected_ap_then_preloads_the_rest_off_the_ui_thread(mocker):
     _write_two_aps()
     loads: list[tuple[str, bool]] = []
     load_ap_state = ap_state.load_ap_state
@@ -207,18 +207,23 @@ async def test_startup_loads_each_aps_state_off_the_ui_thread_and_one_that_fails
 
     app = WifiteApp()
     async with app.run_test() as pilot:
-        await wait_until(pilot, lambda: len(loads) == 2 and all(worker.is_finished for worker in app.workers))
         await pilot.pause(0)
+        assert loads == []
+        drawer = VaultDrawer()
+        await app.push_screen(drawer)
+        await wait_until(pilot, lambda: drawer.has_class("open") and len(loads) == 2)
+        await app.workers.wait_for_complete()
         assert app.is_running
 
-    assert sorted(loads) == [("aa:bb:cc:dd:ee:01", False), ("aa:bb:cc:dd:ee:ff", False)]
+    assert loads == [("aa:bb:cc:dd:ee:ff", True), ("aa:bb:cc:dd:ee:01", False)]
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_cancelling_the_startup_load_stops_before_the_next_ap(mocker):
+async def test_cancelling_vault_preload_stops_before_the_next_ap(mocker):
     _write_two_aps()
     app = WifiteApp()
+    app.vault.ap_state("aa:bb:cc:dd:ee:ff")
     loads: list[str] = []
     load_ap_state = ap_state.load_ap_state
 
@@ -228,7 +233,10 @@ async def test_cancelling_the_startup_load_stops_before_the_next_ap(mocker):
         return load_ap_state(bssid, captures)
     mocker.patch.object(ap_state, "load_ap_state", side_effect=load_then_cancel)
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
+        drawer = VaultDrawer()
+        await app.push_screen(drawer)
+        await wait_until(pilot, lambda: drawer.has_class("open") and bool(loads))
         await app.workers.wait_for_complete()
 
-    assert len(loads) == 1
+    assert loads == ["aa:bb:cc:dd:ee:01"]

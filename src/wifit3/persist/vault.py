@@ -173,9 +173,13 @@ class Vault:
         """This AP's saved captures, newest-first (empty if none)."""
         return self._index.get(bssid, [])
 
+    def cached_ap_state(self, bssid: str) -> Optional[ApState]:
+        """The cached state for ``bssid``, or ``None`` while it has not been loaded."""
+        return self._ap_states.get(bssid)
+
     def ap_state(self, bssid: str) -> ApState:
         """The AP's keys, hashlines and password status, cached until the AP changes."""
-        state = self._ap_states.get(bssid)
+        state = self.cached_ap_state(bssid)
         if state is None:
             revision = self.revision(bssid)
             state = self._ap_states[bssid] = ap_state.load_ap_state(bssid, self.persisted(bssid))

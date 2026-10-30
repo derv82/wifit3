@@ -241,7 +241,8 @@ class VaultTable(Widget):
         bssid_suffix = f" [dim]{bssid}[/dim]" if ssid_counts.get(ssid or "", 0) > 1 else ""
         badges = []
         if _has_psk(caps):
-            stale = self.app.vault.ap_state(bssid).status is PasswordStatus.STALE
+            state = self.app.vault.cached_ap_state(bssid)
+            stale = state is not None and state.status is PasswordStatus.STALE
             badges.append(f"[bold {PASSWORD_MISMATCH_COLOR if stale else 'green'}]✓PSK[/]")
         if _has_wps_pin(caps):
             badges.append("[bold green]✓PIN[/]")

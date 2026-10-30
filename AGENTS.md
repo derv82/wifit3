@@ -40,7 +40,7 @@ uv run pytest tests/wlan/test_parser.py::test_wlan_frame_parser_extracts_ssid
 uv run ruff check src/
 
 # Textual live dev (hot-reload)
-uv run textual run --dev src/wifit3/ui/app.py
+uv run textual run --dev wifit3.ui.app:WifiteApp
 ```
 
 Tests require no hardware: all USB interactions are mocked via `pytest-mock`. `asyncio_mode = "auto"` is set globally, so async tests require no decorator.

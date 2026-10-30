@@ -351,14 +351,29 @@ class FocusViewV2(Screen):
         target = getattr(self.app, "target_ap", None)
         if target is not self._target_ap:
             await self._enter_target()
-        elif target is not None and not self._any_campaign_active():
-            # Re-pin the pool to the target's channel on re-entry (STACK across channel-capable cards).
-            # Not while a campaign runs: it owns its cards' channels (EvilTwin's twin sits off-target).
-            array = self.app.array
-            if array is not None:
-                ok = await array.set_channel(target.channel, scan=False)
-                logger.info("[FOCUS] re-pin: bssid=%s ch=%s -> %s",
-                            target.bssid, target.channel, ok)
+        elif target is not None and self.app.array is not None:
+            self.run_worker(self._repin_to_target(self.app.array, target), group="tune", exclusive=True)
+
+    async def _tune_to_target(self, array, ap: AccessPoint) -> None:
+        await array.stop_hopping()
+        try:
+            ok = await array.set_channel(ap.channel, scan=False)
+        except Exception:
+            logger.exception("Focus v2 channel tune failed")
+            ok = False
+        if ok:
+            self._log(f"Tuned to [cyan]channel {ap.channel}[/cyan]")
+        else:
+            self._log(f"[yellow]Tried to tune to channel {ap.channel}[/yellow]")
+
+    async def _repin_to_target(self, array, target: AccessPoint) -> None:
+        await array.stop_hopping()
+        # Re-pin the pool to the target's channel on re-entry (STACK across channel-capable cards).
+        # Not while a campaign runs: it owns its cards' channels (EvilTwin's twin sits off-target).
+        if self._any_campaign_active():
+            return
+        ok = await array.set_channel(target.channel, scan=False)
+        logger.info("[FOCUS] re-pin: bssid=%s ch=%s -> %s", target.bssid, target.channel, ok)
 
     def on_resize(self) -> None:
         self._distribute()
@@ -553,16 +568,8 @@ class FocusViewV2(Screen):
         self._log(treelog.branch(f"[dim]Encryption:[/dim] {enc}"))
         self._log(treelog.branch(f"[dim]BSSID:[/dim] {ap.bssid}"))
         if array:
-            try:
-                ok = await array.set_channel(ap.channel, scan=False)
-            except Exception:
-                logger.exception("Focus v2 channel tune failed")
-                ok = False
-            if ok:
-                self._log(treelog.leaf(f"Tuned to [cyan]channel {ap.channel}[/cyan]"))
-            else:
-                self._log(treelog.leaf(
-                    f"[yellow]Tried to tune to channel {ap.channel}[/yellow]"))
+            self._log(treelog.leaf(f"Tuning to [cyan]channel {ap.channel}[/cyan]…"))
+            self.run_worker(self._tune_to_target(array, ap), group="tune", exclusive=True)
         else:
             self._log(treelog.leaf("[yellow]no interface: passive view only[/yellow]"))
 

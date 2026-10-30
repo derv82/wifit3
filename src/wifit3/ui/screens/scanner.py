@@ -761,8 +761,6 @@ class ScannerView(Screen):
     async def on_ap_table_row_selected(self, event: APTable.RowSelected) -> None:
         target_ap = self.ap_cache.get(event.bssid)
         if target_ap:
-            if self.app.array:
-                await self.app.array.stop_hopping()
             self.app.target_ap = target_ap
             self.app.push_screen("focus")
 
