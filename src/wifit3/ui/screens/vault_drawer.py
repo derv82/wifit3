@@ -118,6 +118,7 @@ class VaultDrawer(ModalScreen):
         self._reveal_scheduled = False
         if self.is_attached:
             self.add_class("open")
+            self.app.preload_vault_states()
 
     def _focus_list(self) -> None:
         """Land focus on the AP list so up/down works without a Tab press."""
