@@ -119,7 +119,7 @@ def test_cpu_crack_corrects_an_anonce_for_every_key_version(
 
     job = _launch(tool, tmp_path, [line], [["wrong-password", password]])
 
-    assert _poll_finished(tool, job).key == password
+    assert _poll_finished(tool, job).keys == (password,)
 
 
 def test_cpu_crack_finds_a_stored_psk_sha256_pmkid(tool, tmp_path):
@@ -134,7 +134,7 @@ def test_cpu_crack_finds_a_stored_psk_sha256_pmkid(tool, tmp_path):
 
     job = _launch(tool, tmp_path, [line], [["nope", "sha256-secret"]])
 
-    assert _poll_finished(tool, job).key == "sha256-secret"
+    assert _poll_finished(tool, job).keys == ("sha256-secret",)
 
 
 def test_cpu_crack_finds_the_hashcat_example_key(tool, tmp_path):
@@ -143,8 +143,8 @@ def test_cpu_crack_finds_the_hashcat_example_key(tool, tmp_path):
     result = _poll_finished(tool, job)
 
     assert result.status == ToolStatus.SUCCESS
-    assert result.value == "Cracked! Key: hashcat!"
-    assert (result.key, result.percent) == ("hashcat!", 100.0)
+    assert result.value == "Cracked! Keys: hashcat!"
+    assert (result.keys, result.percent) == (("hashcat!",), 100.0)
 
 
 def test_cpu_crack_reports_not_found_once_the_wordlist_is_exhausted(tool, tmp_path):
@@ -178,7 +178,7 @@ def test_cpu_crack_tries_ssid_variants_before_the_wordlist(tool, tmp_path, mocke
     job = _launch(tool, tmp_path, [line], [["wrongpass1"]], ap_ssid_passwords=True)
     result = _poll_finished(tool, job)
 
-    assert result.value == f"Cracked! Key: {psk}"
+    assert result.value == f"Cracked! Keys: {psk}"
     assert pmk_spy.call_args_list[0].args == (ssid, ssid.encode())
     assert "wrongpass1" not in [call.args[0] for call in pmk_spy.call_args_list]
 
@@ -194,7 +194,7 @@ def test_cpu_crack_tries_probed_ssid_variants_before_the_wordlist(tool, tmp_path
     job = _launch(tool, tmp_path, [line], [["wrongpass1"]], extra_passwords=[probed_ssid])
     result = _poll_finished(tool, job)
 
-    assert result.value == f"Cracked! Key: {psk}"
+    assert result.value == f"Cracked! Keys: {psk}"
     tried = [call.args[0] for call in pmk_spy.call_args_list]
     expected = ssid_passwords([probed_ssid])
     assert tried == expected[:expected.index(psk) + 1]
@@ -300,7 +300,7 @@ def test_a_job_without_wordlist_files_cracks_from_the_ssid_passwords(tool, tmp_p
     job = _launch_with(tool, tmp_path, [_HASHCAT_PMKID_LINE], extra_passwords=["hashcat!"],
                        ap_ssid_passwords=False)
     result = _poll_finished(tool, job)
-    assert result.status == ToolStatus.SUCCESS and result.key == "hashcat!"
+    assert result.status == ToolStatus.SUCCESS and result.keys == ("hashcat!",)
 
 
 def test_a_job_without_wordlist_files_ends_not_found_on_the_ssid_passwords(tool, tmp_path):

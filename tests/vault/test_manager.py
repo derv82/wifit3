@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from wifit3.vault.manager import JobManager
 from wifit3.models.jobs import JobAction, JobState, ToolCapability, ToolStatus, ToolResult
 from wifit3.models import PersistedCapture
+from wifit3.persist.ap_state import PasswordStatus
 from wifit3.crack import wpa_psk
 from wifit3.dot11.wpa import derive_pmk
 
@@ -80,7 +81,7 @@ def test_job_lifecycle(manager):
     # Second poll updates status
     with patch.object(manager.tools["dummy"], "poll_status") as mock_poll:
         mock_poll.return_value = ToolResult(status=ToolStatus.SUCCESS, value="Cracked! Key: 1234",
-                                            percent=100.0, key="1234")
+                                            percent=100.0, keys=("1234",))
         manager.poll_jobs()
         
     assert job.status == ToolStatus.SUCCESS
@@ -208,7 +209,7 @@ def test_crack_success_persists_key(manager):
 
     with patch.object(manager.tools["dummy"], "poll_status") as mock_poll:
         mock_poll.return_value = ToolResult(status=ToolStatus.SUCCESS, value="Cracked!",
-                                            key="hunter2")
+                                            keys=("hunter2",))
         manager.poll_jobs()
 
     assert manager.jobs[job_id].status == ToolStatus.SUCCESS
@@ -254,20 +255,22 @@ def test_crack_success_saves_the_key_under_the_ssid_of_the_line_it_cracks(manage
     manager.poll_jobs()
     with patch.object(manager.tools["dummy"], "poll_status") as mock_poll:
         mock_poll.return_value = ToolResult(status=ToolStatus.SUCCESS, value="Cracked!",
-                                            key="oldpass1")
+                                            keys=("oldpass1",))
         manager.poll_jobs()
 
     assert manager.jobs[job_id].status == ToolStatus.SUCCESS
     manager.vault.save_wpa_psk.assert_called_once_with("Old Cafe", "00:11:22:33:44:55", "oldpass1")
 
 
-def _crack(manager, cap: PersistedCapture, hashlines: list[str], key: str) -> None:
+def _crack(manager, cap: PersistedCapture, hashlines: list[str], key: str,
+           status: ToolStatus = ToolStatus.SUCCESS) -> JobState:
     manager.vault.all_captures.return_value = [cap]
-    manager.submit_job("dummy", cap, {}, hashlines)
+    job_id = manager.submit_job("dummy", cap, {}, hashlines)
     manager.poll_jobs()
     with patch.object(manager.tools["dummy"], "poll_status") as mock_poll:
-        mock_poll.return_value = ToolResult(status=ToolStatus.SUCCESS, value="Cracked!", key=key)
+        mock_poll.return_value = ToolResult(status=status, value="Cracked!", keys=(key,))
         manager.poll_jobs()
+    return manager.jobs[job_id]
 
 
 def test_a_key_that_cracks_lines_of_two_ssids_is_saved_under_both(manager):
@@ -295,6 +298,45 @@ def test_a_key_no_line_verifies_is_saved_under_the_first_lines_ssid_not_the_file
     manager.vault.save_wpa_psk.assert_called_once_with("Cafe WiFi", "00:11:22:33:44:55", "not-the-psk")
 
 
+def _ap_state(status: PasswordStatus, key: str) -> MagicMock:
+    return MagicMock(status=status, status_key=MagicMock(value=key), keys=())
+
+
+def test_a_running_job_whose_key_makes_the_ap_current_is_stopped(manager):
+    from wifit3.models.access_point import CaptureType
+    cap = PersistedCapture(type=CaptureType.PMKID, timestamp=0, path="Cafe_WiFi_00-11-22-33-44-55.hc22000",
+                           bssid="00:11:22:33:44:55", ssid="Cafe_WiFi")
+    manager.vault.ap_state.return_value = _ap_state(PasswordStatus.CURRENT, "newpass1")
+
+    job = _crack(manager, cap, [_pmkid_line("newpass1", "Cafe WiFi")], "newpass1", ToolStatus.RUNNING)
+
+    assert manager.tools["dummy"].applied == [(JobAction.STOP, 1234)]
+    assert job.key == "newpass1"
+
+
+def test_a_running_job_whose_key_leaves_the_ap_not_verified_keeps_running(manager):
+    from wifit3.models.access_point import CaptureType
+    cap = PersistedCapture(type=CaptureType.PMKID, timestamp=0, path="Cafe_WiFi_00-11-22-33-44-55.hc22000",
+                           bssid="00:11:22:33:44:55", ssid="Cafe_WiFi")
+    manager.vault.ap_state.return_value = _ap_state(PasswordStatus.NOT_VERIFIED, "newpass1")
+
+    job = _crack(manager, cap, [_pmkid_line("newpass1", "Cafe WiFi")], "newpass1", ToolStatus.RUNNING)
+
+    assert manager.tools["dummy"].applied == []
+    assert job.status == ToolStatus.RUNNING
+
+
+def test_a_stopped_job_whose_key_makes_the_ap_current_is_a_success(manager):
+    from wifit3.models.access_point import CaptureType
+    cap = PersistedCapture(type=CaptureType.PMKID, timestamp=0, path="Cafe_WiFi_00-11-22-33-44-55.hc22000",
+                           bssid="00:11:22:33:44:55", ssid="Cafe_WiFi")
+    manager.vault.ap_state.return_value = _ap_state(PasswordStatus.CURRENT, "newpass1")
+
+    job = _crack(manager, cap, [_pmkid_line("newpass1", "Cafe WiFi")], "newpass1", ToolStatus.STOPPED)
+
+    assert (job.status, job.progress_msg, job.key) == (ToolStatus.SUCCESS, "Cracked! Key: newpass1", "newpass1")
+
+
 def test_a_job_whose_capture_is_gone_still_launches_and_saves_its_key_from_its_own_hashlines(manager):
     from wifit3.models.access_point import CaptureType
     cap = PersistedCapture(type=CaptureType.PMKID, timestamp=0, path="Cafe_WiFi_00-11-22-33-44-55.hc22000",
@@ -305,7 +347,7 @@ def test_a_job_whose_capture_is_gone_still_launches_and_saves_its_key_from_its_o
     manager.poll_jobs()
     assert manager.jobs[job_id].status == ToolStatus.RUNNING
     with patch.object(manager.tools["dummy"], "poll_status") as mock_poll:
-        mock_poll.return_value = ToolResult(status=ToolStatus.SUCCESS, value="Cracked!", key="newpass1")
+        mock_poll.return_value = ToolResult(status=ToolStatus.SUCCESS, value="Cracked!", keys=("newpass1",))
         manager.poll_jobs()
 
     manager.vault.save_wpa_psk.assert_called_once_with("Cafe WiFi", "00:11:22:33:44:55", "newpass1")
