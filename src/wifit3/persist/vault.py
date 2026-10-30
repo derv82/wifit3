@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Optional
 
 from wifit3.crack.hc22000_format import Hc22000Line
-from wifit3.crack.wpa_psk import psk_verdict
+from wifit3.crack.wpa_psk import psk_matches, psk_verdict
 from wifit3.models import WPS_CAPTURE_TYPES, CaptureType, PersistedCapture
 from wifit3.persist import ap_state, save
 from wifit3.persist.ap_state import ApState, Key, PasswordStatus, read_hashlines
@@ -271,8 +271,8 @@ class Vault:
 
     def propagate_verified_psk(self, source_bssid: str, source_ssid: Optional[str],
                                psk: str) -> Future[List[str]]:
-        """Save ``psk`` for every related AP (SSID family or sibling BSSID) that holds no PSK and that it
-        verifies against, one propagation at a time on a background thread; the future holds their BSSIDs."""
+        """Save ``psk`` for every related AP (SSID family or sibling BSSID), one propagation at a time on
+        a background thread; the future holds their BSSIDs."""
         return self._propagation_executor.submit(self._propagate_verified_psk, source_bssid, source_ssid, psk)
 
     def _propagate_verified_psk(self, source_bssid: str, source_ssid: Optional[str], psk: str) -> List[str]:
@@ -284,9 +284,7 @@ class Vault:
             if not ((source_ssid and ssid and _related_ssids(source_ssid, ssid))
                     or _sibling_bssids(source_bssid, bssid)):
                 continue
-            if self._saved_psk(bssid) is not None:
-                continue
-            if self.verify_wpa_psk(bssid, psk) is True:
+            if any(psk_matches(psk, line) for _, line in read_hashlines(bssid, self.persisted(bssid)).values()):
                 self.save_wpa_psk(ssid, bssid, psk)
                 matched.append(bssid)
         return matched
@@ -343,26 +341,26 @@ class Vault:
             matches_saved_psk = psk_verdict(psks, [line for _, line in new_lines.values()])
         self._insert_capture(capture)
         if not matches_saved_psk:
-            self._auto_crack(ap, list(before.values()), [line for _, line in after.values()],
-                             state.status is PasswordStatus.CURRENT)
+            self._auto_crack(ap, state)
         return HashlineSaveResult(result.path, was_new=True, matches_saved_psk=matches_saved_psk)
 
-    def _auto_crack(self, ap: "AccessPoint", before: List[Hc22000Line], after: List[Hc22000Line],
-                    was_current: bool) -> None:
-        """Crack the AP's uncracked hashlines when no PSK is held (see ``_saved_psk``) and the save
-        crossed the auto-crack threshold or turned a current password stale."""
+    def _auto_crack(self, ap: "AccessPoint", before: ApState) -> None:
+        """Crack the AP's uncracked hashlines except when the password is CURRENT."""
         tool = self.manager.tools.get(Config.auto_crack) if Config.auto_crack else None
         config = tool.auto_crack_config() if tool is not None else None
-        if tool is None or config is None or self._saved_psk(ap.bssid) is not None:
+        if tool is None or config is None:
             return
-        state = self.ap_state(ap.bssid)
-        became_stale = was_current and state.status is PasswordStatus.STALE
-        if not (crosses_auto_crack_threshold(before, after) or became_stale):
+        after = self.ap_state(ap.bssid)
+        if after.status is PasswordStatus.CURRENT:  # Don't auto-crack known networks
             return
-        uncracked = [h.line for h in state.uncracked]
-        if state.hashline_capture is not None and tool.can_crack(uncracked):
-            self.manager.submit_job(tool.name, state.hashline_capture, self.add_probed_ssids(config),
-                                    auto_crack=True, hashlines=[h.raw for h in state.uncracked])
+        became_stale = before.status is PasswordStatus.CURRENT and after.status is PasswordStatus.STALE
+        if not (crosses_auto_crack_threshold([h.line for h in before.hashlines],
+                                             [h.line for h in after.hashlines]) or became_stale):
+            return
+        uncracked = [h.line for h in after.uncracked]
+        if after.hashline_capture is not None and tool.can_crack(uncracked):
+            self.manager.submit_job(tool.name, after.hashline_capture, self.add_probed_ssids(config),
+                                    auto_crack=True, hashlines=[h.raw for h in after.uncracked])
 
     def record_live_verification(self, key: Key, correct: bool) -> None:
         """Note that a live check against the AP accepted or rejected the key."""
