@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 
 from rich.markup import escape
@@ -31,7 +32,7 @@ def _ap_contents_text(captures: list[PersistedCapture], state: ApState) -> str:
 class VaultDrawer(ModalScreen):
     """The Vault drawer overlay."""
 
-    _SELECTION_DELAY = 0.08
+    _SELECTION_DELAY = 0.1
 
     HORIZONTAL_BREAKPOINTS = [(0, TINY), (60, NARROW), (90, COMPACT), (105, WIDE)]
     VERTICAL_BREAKPOINTS = [(0, SHORT), (36, TALL)]
@@ -91,6 +92,7 @@ class VaultDrawer(ModalScreen):
         self._reveal_scheduled = False
         self._selection_timer = None
         self._pending_bssid: str | None = None
+        self._psk_to_propagate_after_reload: tuple[str, str, str] | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="vault-content"):
@@ -116,6 +118,7 @@ class VaultDrawer(ModalScreen):
         self._reveal_scheduled = False
         if self.is_attached:
             self.add_class("open")
+            self.app.preload_vault_states()
 
     def _focus_list(self) -> None:
         """Land focus on the AP list so up/down works without a Tab press."""
@@ -149,8 +152,13 @@ class VaultDrawer(ModalScreen):
         self._pending_bssid = None
 
     def _schedule_widget_load(self, bssid: str) -> None:
+        """Load at once, unless the previous highlight came within the delay (a held key): then
+        load once the highlights stop."""
+        keys_held = self._selection_timer is not None
         self._cancel_pending_selection()
         self._pending_bssid = bssid
+        if not keys_held:
+            self._load_pending_widget()
         self._selection_timer = self.set_timer(self._SELECTION_DELAY, self._load_pending_widget)
 
     def _load_pending_widget(self) -> None:
@@ -202,6 +210,9 @@ class VaultDrawer(ModalScreen):
                 self._load_widget(key)
         else:
             self._load_widget("")
+        if self._psk_to_propagate_after_reload is not None:
+            self.call_after_refresh(self._propagate_psk, *self._psk_to_propagate_after_reload)
+            self._psk_to_propagate_after_reload = None
         self._schedule_reveal()
 
     @on(DataTable.RowHighlighted, "#vault-aps")
@@ -304,7 +315,10 @@ class VaultDrawer(ModalScreen):
                     state = vault.ap_state(ap.bssid)
                     key = next(k for k in state.keys if k.id == (CaptureType.WPA_PSK, credential.value))
                     verified = is_confirmed(key, state.hashlines)
-                    self._propagate_psk(ap.bssid, ap.ssid, credential.value)
+                    if result.was_new:
+                        self._psk_to_propagate_after_reload = (ap.bssid, ap.ssid, credential.value)
+                    else:
+                        self._propagate_psk(ap.bssid, ap.ssid, credential.value)
             elif credential.kind == CaptureType.WPS_PIN:
                 result = vault.save_wps_pin(ap, credential.value, None, manual=True)
             else:
@@ -323,17 +337,16 @@ class VaultDrawer(ModalScreen):
         else:
             self.notify("Credential added, not verified")
 
-    @work(thread=True)
-    def _propagate_psk(self, bssid: str, ssid: str, psk: str) -> None:
+    @work
+    async def _propagate_psk(self, bssid: str, ssid: str, psk: str) -> None:
+        propagation = asyncio.wrap_future(self.app.vault.propagate_verified_psk(bssid, ssid, psk))
         try:
-            matched = self.app.vault.propagate_verified_psk(bssid, ssid, psk)
+            matched = await asyncio.shield(propagation)
         except OSError as exc:
-            self.app.call_from_thread(
-                self.notify, f"Could not save a related AP's PSK: {exc}", severity="warning")
+            self.notify(f"Could not save a related AP's PSK: {exc}", severity="warning")
             return
         if matched:
-            self.app.call_from_thread(
-                self.notify, f"PSK also verified and saved for {len(matched)} related APs")
+            self.notify(f"PSK also verified and saved for {len(matched)} related APs")
 
     def action_export_zip(self) -> None:
         try:

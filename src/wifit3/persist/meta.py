@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -14,9 +15,58 @@ def meta_path(ssid: Optional[str], bssid: str) -> Path:
     return Path(Config.captures_dir) / f"{safe_ssid(ssid)}_{bssid_to_dashed(bssid)}.meta"
 
 
+_META_SUFFIX_LEN = len("_aa-bb-cc-dd-ee-ff.meta")
+
+
+class _MetaPaths:
+    """The .meta files in captures/ by dashed BSSID; scanned once per captures_dir."""
+
+    def __init__(self) -> None:
+        self._by_bssid: dict[str, set[Path]] = {}
+        self._scanned_dir: Optional[str] = None
+
+    def for_bssid(self, dashed: str) -> set[Path]:
+        return self._scanned().get(dashed, set())
+
+    def add(self, path: Path) -> None:
+        if (dashed := _meta_bssid(path.name)) is not None and path.parent == Path(Config.captures_dir):
+            self._scanned().setdefault(dashed, set()).add(path)
+
+    def clear(self) -> None:
+        self._scanned_dir = None
+
+    def _scanned(self) -> dict[str, set[Path]]:
+        captures_dir = Config.captures_dir
+        if self._scanned_dir != captures_dir:
+            found: dict[str, set[Path]] = {}
+            try:
+                with os.scandir(captures_dir) as entries:
+                    for entry in entries:
+                        if (dashed := _meta_bssid(entry.name)) is not None:
+                            found.setdefault(dashed, set()).add(Path(captures_dir) / entry.name)
+            except FileNotFoundError:
+                pass
+            self._by_bssid, self._scanned_dir = found, captures_dir
+        return self._by_bssid
+
+
+def _meta_bssid(name: str) -> Optional[str]:
+    if len(name) < _META_SUFFIX_LEN or not name.endswith(".meta") or name[-_META_SUFFIX_LEN] != "_":
+        return None
+    return name[-_META_SUFFIX_LEN + 1:-len(".meta")]
+
+
+_meta_paths = _MetaPaths()
+
+
 def bssid_meta_paths(bssid: str) -> list[Path]:
     """Every SSID's .meta for this BSSID."""
-    return sorted(Path(Config.captures_dir).glob(f"*_{bssid_to_dashed(bssid)}.meta"))
+    return sorted(path for path in _meta_paths.for_bssid(bssid_to_dashed(bssid)).copy() if path.exists())
+
+
+def clear_meta_paths_cache() -> None:
+    """Scan captures/ again for .meta files on the next lookup; ``_write_meta`` adds the ones it creates."""
+    _meta_paths.clear()
 
 
 def read_bssid_metas(bssid: str) -> list[dict[str, Any]]:
@@ -60,3 +110,4 @@ def _write_meta(path: Path, data: dict[str, Any], fields: dict[str, Any]) -> Non
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                          encoding="utf-8")
     temporary.replace(path)
+    _meta_paths.add(path)

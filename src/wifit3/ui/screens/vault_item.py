@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Hashable
 from dataclasses import dataclass
 from itertools import groupby
 from typing import Mapping, Optional
@@ -21,6 +20,7 @@ from textual.widgets.selection_list import Selection
 
 from wifit3.campaigns.live_check import LiveKeyVerifier, VerifyStatus
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
+from wifit3.crack.hc22000_format import Hc22000Line
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.ap_state import (
     ApState,
@@ -208,6 +208,30 @@ def _status_class(status: PasswordStatus) -> str:
     return "-" + status.name.lower().replace("_", "-")
 
 
+def _client_and_ssid_columns(state: ApState) -> tuple[bool, bool]:
+    return len({h.line.mac_sta for h in state.hashlines}) > 1, len(state.ssids) > 1
+
+
+def _status_markup(state: ApState) -> str:
+    status = f"[bold {_STATUS_COLOR[state.status]}]{state.status.value}[/]"
+    key = state.status_key
+    if key is None:
+        return status
+    chip = f"[{_KEY_CHIP_STYLE[state.status]}] {_KEY_KINDS[key.type].badge}: {escape(key_text(key))} [/]"
+    return f"{chip} {status}"
+
+
+def _ssid_texts(state: ApState) -> list[tuple[str, str, Optional[str]]]:
+    ssids = state.ssids
+    if len(ssids) <= 1:
+        return [("SSID", ssids[0].ssid if ssids else "‹hidden›", None)]
+    texts: list[tuple[str, str, Optional[str]]] = []
+    for i, history in enumerate(ssids):
+        first, last = date_text(history.first_seen), date_text(history.last_seen)
+        texts.append(("" if i else "SSID", history.ssid, first if first == last else f"{first} → {last}"))
+    return texts
+
+
 class DeleteKeyPressed(Message):
     """The user asked to delete ``key`` and every file holding it."""
 
@@ -246,26 +270,51 @@ class _KeyRow(VerticalGroup):
             super().__init__()
             self.key = key
 
-    def __init__(self, key: Key, state: ApState, *, show_client: bool, show_ssid: bool, expanded: bool,
-                 verifying: Optional[_VerifyingKey]) -> None:
-        status = state.key_statuses[key.id]
-        super().__init__(classes=_status_class(status))
-        self.status = status
-        self.key = key
-        self._state = state
-        self._show_client = show_client
-        self._show_ssid = show_ssid
-        self._has_history = bool(key.live_verifications or key.hashline_ids)
+    key: Key
+    status: PasswordStatus
+    _state: ApState
+    _show_client: bool
+    _show_ssid: bool
+    _has_history: bool
+
+    def __init__(self) -> None:
+        super().__init__()
         self._history_built = False
         self.toggle_button = Button("", compact=True, classes="toggle")
+        self._no_toggle_label = Label("", classes="no-toggle")
+        self._summary_label = Label("", classes="key-text")
         self.copy_button = Button("Copy", classes="key-btn")
         self.verify_button = Button("Verify", variant="primary", classes="key-btn")
         self.delete_button = Button("Delete", variant="error", classes="key-btn",
                                     tooltip="Delete this key and every file holding it")
         self.history_rows = VerticalScroll(classes="history-rows")
+
+    @property
+    def buttons(self) -> tuple[Button, Button, Button, Button]:
+        return self.toggle_button, self.copy_button, self.verify_button, self.delete_button
+
+    async def show(self, key: Key, state: ApState, *, show_client: bool, show_ssid: bool, expanded: bool,
+                   verifying: Optional[_VerifyingKey]) -> None:
+        """Show ``key``; its history rows are rebuilt only when they would read differently."""
+        if self._history_built and (key, state.hashlines, show_client, show_ssid) != (
+                self.key, self._state.hashlines, self._show_client, self._show_ssid):
+            self._history_built = False
+            await self.history_rows.remove_children()
+        self.status = state.key_statuses[key.id]
+        for status in PasswordStatus:
+            self.set_class(status is self.status, _status_class(status))
+        self.key, self._state = key, state
+        self._show_client, self._show_ssid = show_client, show_ssid
+        self._has_history = bool(key.live_verifications or key.hashline_ids)
+        self.toggle_button.display = self._has_history
+        self._no_toggle_label.display = not self._has_history
+        self._summary_label.update(Content.from_markup(self._summary_markup()))
+        self._summary_label.tooltip = self._details()
+        self.show_verifying(verifying)
         self.set_reactive(_KeyRow.expanded, expanded)
         self._show_expansion(expanded)
-        self.show_verifying(verifying)
+        if expanded:
+            await self._build_history()
 
     def _history(self) -> list[Static]:
         rows = [(v.at, Static(_live_verification_content(v, self._show_client), classes="history-row"))
@@ -279,20 +328,14 @@ class _KeyRow(VerticalGroup):
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="key-line"):
-            yield self.toggle_button if self._has_history else Label("", classes="no-toggle")
-            summary = Label(Content.from_markup(self._summary_markup()), classes="key-text")
-            summary.tooltip = self._details()
-            yield summary
+            yield self.toggle_button
+            yield self._no_toggle_label
+            yield self._summary_label
             yield self.copy_button
             yield self.verify_button
             yield self.delete_button
-        if self._has_history:
-            with Vertical(classes="history"):
-                yield self.history_rows
-
-    async def on_mount(self) -> None:
-        if self.expanded:
-            await self._build_history()
+        with Vertical(classes="history"):
+            yield self.history_rows
 
     async def _build_history(self) -> None:
         """The history rows, built the first time the key is expanded."""
@@ -365,21 +408,50 @@ class AddKeyPressed(Message):
 
 
 class _CrackerButton(Button):
-    """Opens ``tool``'s launch modal for the ticked hashlines; jobs are filed under ``capture``."""
+    """Opens ``tool``'s launch modal for the ticked hashlines."""
 
-    def __init__(self, tool: VaultTool, capture: PersistedCapture, disabled: bool) -> None:
-        super().__init__(tool.label, "primary", classes="tool-btn", disabled=disabled)
+    def __init__(self, tool: VaultTool) -> None:
+        super().__init__(tool.label, "primary", classes="tool-btn")
         self.tool = tool
-        self.capture = capture
+
+
+class _SsidLine(Horizontal):
+    """One SSID the AP went by, with its dates when it went by several."""
+
+    def __init__(self) -> None:
+        super().__init__(classes="section-line")
+        self._section_label = Label("", classes="section")
+        self._ssid_label = Label("", classes="ssid", markup=False)
+        self._dates_label = Label("", classes="dates")
+
+    def compose(self) -> ComposeResult:
+        yield self._section_label
+        yield self._ssid_label
+        yield self._dates_label
+
+    def show(self, section: str, ssid: str, dates: Optional[str]) -> None:
+        self._section_label.update(section)
+        self._ssid_label.update(ssid)
+        self._dates_label.update(dates or "")
+        self._dates_label.display = dates is not None
 
 
 class _UncrackedList(SelectionList[_HashlineGroup]):
     """The uncracked hashline groups, each ticked to crack or not."""
 
-    def __init__(self, *selections: Selection[_HashlineGroup],
-                 exhausted: Mapping[str, frozenset[ExhaustedWordlist]], classes: str) -> None:
-        super().__init__(*selections, classes=classes)
+    def __init__(self, classes: str) -> None:
+        super().__init__(classes=classes)
+        self._exhausted: Mapping[str, frozenset[ExhaustedWordlist]] = {}
+
+    def show(self, selections: list[Selection[_HashlineGroup]],
+             exhausted: Mapping[str, frozenset[ExhaustedWordlist]]) -> None:
+        """Replace the options, highlighting the first; posts no SelectedChanged."""
         self._exhausted = exhausted
+        self.tooltip = None
+        with self.prevent(SelectionList.SelectedChanged):
+            self.clear_options()
+            self.add_options(selections)
+        self.action_first()
 
     def on_mouse_move(self, event: MouseMove) -> None:
         index = event.style.meta.get("option")
@@ -434,168 +506,163 @@ class _ApStatePanel(VerticalGroup):
     Screen.{TALL}.{WIDE} _ApStatePanel .uncracked {{ max-height: 12; }}
     """
 
-    add_key_button: Button
-    _selected_count_label: Label
-    _uncracked_list: Optional[_UncrackedList] = None
-
-    def __init__(self, state: ApState, expanded_key_ids: frozenset[tuple[CaptureType, str]],
-                 unticked_hashline_ids: frozenset[str], verifying: Optional[_VerifyingKey]) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._state = state
-        self._expanded_key_ids = expanded_key_ids
-        self._unticked_hashline_ids = unticked_hashline_ids
-        self._verifying = verifying
+        self._state: Optional[ApState] = None
+        self._status_label = Static(classes="status")
+        self._ssid_lines_container = Vertical(classes="ssids")
+        self._ssid_lines: list[_SsidLine] = []
+        self._ssid_rule = Rule()
+        self.add_key_button = Button("Add key", compact=True, classes="add-key",
+                                     tooltip="Add a PSK, WPS PIN or WEP key")
+        self.key_rows: list[_KeyRow] = []
+        self._no_keys_label = Label("none yet", classes="none-yet")
+        self._no_crackable_label = Label("", classes="none-yet")
+        self._uncracked_section = VerticalGroup(classes="uncracked-section")
+        self._uncracked_count_label = Label("")
+        self._uncracked_list = _UncrackedList(classes="uncracked")
+        self._selected_count_label = Label("", classes="selected-count")
+        self._cracker_buttons = [_CrackerButton(tool) for tool in self.app.vault.manager.tools.values()]
 
     async def show(self, state: ApState, expanded_key_ids: frozenset[tuple[CaptureType, str]],
                    unticked_hashline_ids: frozenset[str], verifying: Optional[_VerifyingKey]) -> None:
-        """Recompose for ``state``; for the same AP, keep the focus, the highlighted hashline and each
-        list's scroll."""
-        same_ap = state.bssid == self._state.bssid
-        focused = self.screen.focused
-        focus_key = self._focus_key(focused) if focused is not None and self in focused.ancestors else None
-        history_scroll = {row.key.id: row.history_rows.scroll_y for row in self.query(_KeyRow).results(_KeyRow)}
+        """Update the widgets in place for ``state``; for the same AP, keep the focus, the highlighted
+        hashline and each list's scroll."""
+        same_ap = self._state is not None and state.bssid == self._state.bssid
+        focus_key = self._key_row_focus(self.screen.focused) if same_ap else None
+        history_scroll = {row.key.id: row.history_rows.scroll_y for row in self.key_rows} if same_ap else {}
         uncracked = self._uncracked_list
-        uncracked_scroll = uncracked.scroll_y if uncracked is not None else 0.0
-        highlighted = uncracked.highlighted_group() if uncracked is not None else None
-        self._state, self._expanded_key_ids = state, expanded_key_ids
-        self._unticked_hashline_ids, self._verifying = unticked_hashline_ids, verifying
-        await self.recompose()
-        if same_ap:
-            self.call_after_refresh(self._restore, focus_key, history_scroll, uncracked_scroll,
-                                    highlighted[0].id if highlighted else None)
+        uncracked_scroll = uncracked.scroll_y if same_ap else 0.0
+        highlighted = uncracked.highlighted_group() if same_ap else None
+        show_client, show_ssid = _client_and_ssid_columns(state)
+        async with self.batch():
+            self._state = state
+            await self._show_ssid_lines(state)
+            await self._show_key_rows(state, show_client, show_ssid, expanded_key_ids, verifying)
+            self._status_label.update(Content.from_markup(_status_markup(state)))
+            self._no_keys_label.display = not state.keys
+            files = state.handshake_and_pmkid_files
+            self._no_crackable_label.display = bool(files and not state.hashlines)
+            if files:
+                self._no_crackable_label.update(_no_crackable_text(files))
+            self._show_uncracked(state, show_client, show_ssid, unticked_hashline_ids)
+        focused = self.screen.focused
+        if focused is not None and self in focused.ancestors and focused not in self.screen.focus_chain:
+            focused.blur()
+        self.call_after_refresh(self._restore, focus_key, history_scroll, uncracked_scroll,
+                                highlighted[0].id if highlighted else None)
 
-    def _restore(self, focus_key: Optional[Hashable], history_scroll: dict[tuple[CaptureType, str], float],
-                 uncracked_scroll: float, highlighted_hashline_id: Optional[str]) -> None:
-        for row in self.query(_KeyRow).results(_KeyRow):
+    async def _show_ssid_lines(self, state: ApState) -> None:
+        texts = _ssid_texts(state)
+        lines = self._ssid_lines[:len(texts)] + [_SsidLine() for _ in texts[len(self._ssid_lines):]]
+        await self._ssid_lines_container.remove_children(self._ssid_lines[len(texts):])
+        await self._ssid_lines_container.mount_all(lines[len(self._ssid_lines):], before=self._ssid_rule)
+        self._ssid_lines = lines
+        for line, (section, ssid, dates) in zip(lines, texts):
+            line.show(section, ssid, dates)
+
+    async def _show_key_rows(self, state: ApState, show_client: bool, show_ssid: bool,
+                             expanded_key_ids: frozenset[tuple[CaptureType, str]],
+                             verifying: Optional[_VerifyingKey]) -> None:
+        rows = self.key_rows[:len(state.keys)] + [_KeyRow() for _ in state.keys[len(self.key_rows):]]
+        await self.remove_children(self.key_rows[len(state.keys):])
+        await self.mount_all(rows[len(self.key_rows):], before=self._no_keys_label)
+        for row, key in zip(rows, state.keys):
+            await row.show(key, state, show_client=show_client, show_ssid=show_ssid,
+                           expanded=key.id in expanded_key_ids, verifying=verifying)
+        self.key_rows = rows
+
+    def _restore(self, focus_key: Optional[tuple[tuple[CaptureType, str], int]],
+                 history_scroll: dict[tuple[CaptureType, str], float], uncracked_scroll: float,
+                 highlighted_hashline_id: Optional[str]) -> None:
+        for row in self.key_rows:
             row.history_rows.scroll_to(y=history_scroll.get(row.key.id, 0.0), animate=False)
         uncracked = self._uncracked_list
-        if uncracked is not None:
-            index = next((i for i, group in enumerate(uncracked.groups())
-                          if group[0].id == highlighted_hashline_id), None)
-            if index is not None:
-                uncracked.highlighted = index
-            uncracked.scroll_to(y=uncracked_scroll, animate=False)
+        index = next((i for i, group in enumerate(uncracked.groups()) if group[0].id == highlighted_hashline_id),
+                     None)
+        if index is not None:
+            uncracked.highlighted = index
+        uncracked.scroll_to(y=uncracked_scroll, animate=False)
         if focus_key is not None:
-            match = next((w for w in self.query("*") if w.focusable and self._focus_key(w) == focus_key), None)
-            if match is not None:
-                match.focus(scroll_visible=False)
+            key_id, button_index = focus_key
+            button = next((row.buttons[button_index] for row in self.key_rows if row.key.id == key_id), None)
+            if button is not None and button in self.screen.focus_chain:
+                button.focus(scroll_visible=False)
 
-    def _focus_key(self, widget: Widget) -> Optional[Hashable]:
-        """What ``widget`` stands for, the same before and after a recompose; None if nothing."""
-        if isinstance(widget, _UncrackedList):
-            return "uncracked"
-        if isinstance(widget, _CrackerButton):
-            return "tool", widget.tool.name
-        if widget is self.add_key_button:
-            return "add-key"
-        row = next((a for a in widget.ancestors if isinstance(a, _KeyRow)), None)
-        if row is None:
-            return None
-        buttons = (row.toggle_button, row.copy_button, row.verify_button, row.delete_button)
-        return ("key", row.key.id, buttons.index(widget)) if widget in buttons else None
+    def _key_row_focus(self, widget: Optional[Widget]) -> Optional[tuple[tuple[CaptureType, str], int]]:
+        for row in self.key_rows:
+            if widget in row.buttons:
+                return row.key.id, row.buttons.index(widget)
+        return None
 
     def compose(self) -> ComposeResult:
-        state = self._state
-        show_client = len({h.line.mac_sta for h in state.hashlines}) > 1
-        show_ssid = len(state.ssids) > 1
-        yield Static(Content.from_markup(self._status_markup()), classes="status")
+        yield self._status_label
         yield Rule()
-        with Vertical(classes="ssids"):
-            yield from self._compose_ssids()
-            yield Rule()
+        with self._ssid_lines_container:
+            yield self._ssid_rule
         with Horizontal(classes="section-line"):
             yield Label("KEYS", classes="section")
-            self.add_key_button = Button("Add key", compact=True, classes="add-key",
-                                         tooltip="Add a PSK, WPS PIN or WEP key")
             yield self.add_key_button
-        for key in state.keys:
-            yield _KeyRow(key, state, show_client=show_client, show_ssid=show_ssid,
-                          expanded=key.id in self._expanded_key_ids, verifying=self._verifying)
-        if not state.keys:
-            yield Label("none yet", classes="none-yet")
-        if state.handshake_and_pmkid_files and not state.hashlines:
-            yield Label(_no_crackable_text(state.handshake_and_pmkid_files), classes="none-yet")
-        self._uncracked_list = None
-        if state.uncracked:
+        yield self._no_keys_label
+        yield self._no_crackable_label
+        with self._uncracked_section:
             yield Rule(classes="uncracked-rule")
-            yield from self._compose_uncracked(show_client, show_ssid)
-
-    def _status_markup(self) -> str:
-        state = self._state
-        status = f"[bold {_STATUS_COLOR[state.status]}]{state.status.value}[/]"
-        key = state.status_key
-        if key is None:
-            return status
-        chip = f"[{_KEY_CHIP_STYLE[state.status]}] {_KEY_KINDS[key.type].badge}: {escape(key_text(key))} [/]"
-        return f"{chip} {status}"
-
-    def _compose_ssids(self) -> ComposeResult:
-        ssids = self._state.ssids
-        if len(ssids) <= 1:
             with Horizontal(classes="section-line"):
-                yield Label("SSID", classes="section")
-                yield Label(ssids[0].ssid if ssids else "‹hidden›", classes="ssid", markup=False)
-            return
-        for i, history in enumerate(ssids):
-            first, last = date_text(history.first_seen), date_text(history.last_seen)
-            dates = first if first == last else f"{first} → {last}"
-            with Horizontal(classes="section-line"):
-                yield Label("" if i else "SSID", classes="section")
-                yield Label(history.ssid, classes="ssid", markup=False)
-                yield Label(dates, classes="dates")
+                yield Label("UNCRACKED", classes="section")
+                yield self._uncracked_count_label
+            yield self._uncracked_list
+            yield self._selected_count_label
+            with Horizontal(classes="tools"):
+                yield from self._cracker_buttons
 
-    def _compose_uncracked(self, show_client: bool, show_ssid: bool) -> ComposeResult:
-        state = self._state
+    def _show_uncracked(self, state: ApState, show_client: bool, show_ssid: bool,
+                        unticked_hashline_ids: frozenset[str]) -> None:
         uncracked = state.uncracked
+        self._uncracked_section.display = bool(uncracked)
         exhausted = state.exhausted_wordlists
-        with Horizontal(classes="section-line"):
-            yield Label("UNCRACKED", classes="section")
-            yield Label(Content.from_markup(_captures_count_markup(len(uncracked), len(state.hashlines))))
+        self._uncracked_count_label.update(
+            Content.from_markup(_captures_count_markup(len(uncracked), len(state.hashlines))))
         groups = hashline_groups(uncracked)
-        ticked = [not all(h.id in self._unticked_hashline_ids for h in group) for group in groups]
+        ticked = [not all(h.id in unticked_hashline_ids for h in group) for group in groups]
         exhausted_counts = [_exhausted_count_text(group, exhausted) for group in groups]
         exhausted_width = max(map(len, exhausted_counts), default=0)
-        self._uncracked_list = _UncrackedList(
-            *(Selection(_hashline_prompt(group, show_client, show_ssid, count, exhausted_width), group, is_ticked)
-              for group, count, is_ticked in zip(groups, exhausted_counts, ticked)),
-            exhausted=exhausted, classes="uncracked")
-        yield self._uncracked_list
+        self._uncracked_list.show(
+            [Selection(_hashline_prompt(group, show_client, show_ssid, count, exhausted_width), group, is_ticked)
+             for group, count, is_ticked in zip(groups, exhausted_counts, ticked)], exhausted)
         selected = [h.line for group, is_ticked in zip(groups, ticked) if is_ticked for h in group]
-        self._selected_count_label = Label(_selected_count_text(len(selected)), classes="selected-count")
-        yield self._selected_count_label
-        capture = state.hashline_capture
-        with Horizontal(classes="tools"):
-            if capture is not None:
-                for tool in self.app.vault.manager.tools.values():
-                    if tool.can_crack([h.line for h in uncracked]):
-                        yield _CrackerButton(tool, capture, disabled=not tool.can_crack(selected))
+        self._show_selected_count(selected)
+        uncracked_lines = [h.line for h in uncracked]
+        for button in self._cracker_buttons:
+            button.display = state.hashline_capture is not None and button.tool.can_crack(uncracked_lines)
+
+    def _show_selected_count(self, selected: list[Hc22000Line]) -> None:
+        self._selected_count_label.update(_selected_count_text(len(selected)))
+        for button in self._cracker_buttons:
+            button.disabled = not button.tool.can_crack(selected)
 
     def _selected_hashlines(self) -> list[DatedHashline]:
-        if self._uncracked_list is None:
-            return []
         return [h for group in self._uncracked_list.selected for h in group]
 
     @on(SelectionList.SelectedChanged)
     def _selection_changed(self, event: SelectionList.SelectedChanged) -> None:
-        if event.selection_list is not self._uncracked_list:
-            return
-        selected = [h.line for h in self._selected_hashlines()]
-        self._selected_count_label.update(_selected_count_text(len(selected)))
-        for button in self.query(_CrackerButton).results(_CrackerButton):
-            button.disabled = not button.tool.can_crack(selected)
+        if event.selection_list is self._uncracked_list:
+            self._show_selected_count([h.line for h in self._selected_hashlines()])
 
     @on(Button.Pressed)
     def _button_pressed(self, event: Button.Pressed) -> None:
         if isinstance(event.button, _CrackerButton):
-            self._launch_tool(event.button)
+            self._launch_tool(event.button.tool)
         elif event.button is self.add_key_button:
             self.post_message(AddKeyPressed())
         else:
             return
         event.stop()
 
-    def _launch_tool(self, button: _CrackerButton) -> None:
-        tool, capture = button.tool, button.capture
+    def _launch_tool(self, tool: VaultTool) -> None:
+        state = self._state
+        if state is None or state.hashline_capture is None:
+            return
+        capture = state.hashline_capture
         selected = self._selected_hashlines()
 
         def _on_config(config: dict | None) -> None:
@@ -605,7 +672,7 @@ class _ApStatePanel(VerticalGroup):
                 tool.name, capture, self.app.vault.add_probed_ssids(config), hashlines=[h.raw for h in selected])
             self.notify(f"Queued job: {job_id}")
 
-        self.app.push_screen(UI_TOOLS[tool.name](bssid=self._state.bssid, probed_ssids=self.app.vault.probed_ssids(),
+        self.app.push_screen(UI_TOOLS[tool.name](bssid=state.bssid, probed_ssids=self.app.vault.probed_ssids(),
                                                  hashlines=selected), _on_config)
 
 
@@ -648,10 +715,8 @@ class VaultItemView(Vertical):
         if not same_ap:
             self.history_expanded_by_user.clear()
         self._bssid, self._ssid, self._state = bssid, ssid, state
-        if state is None or not self.query_children(_ApStatePanel):
-            self.refresh(recompose=True)
-            return
-        self._set_title()
+        if state is not None:
+            self._set_title()
         if same_ap and same_state:
             return
         self.call_later(self._show_state)
@@ -659,9 +724,20 @@ class VaultItemView(Vertical):
             self.scroll_home(animate=False)
 
     async def _show_state(self) -> None:
-        panel = next(iter(self.query_children(_ApStatePanel).results(_ApStatePanel)), None)
-        if panel is not None and self._state is not None:
-            await panel.show(self._state, *self._panel_choices(self._state))
+        state = self._state
+        async with self.batch():
+            if (state is None) != (self._panel() is None):
+                await self.recompose()
+            panel = self._panel()
+            if state is not None and panel is not None:
+                await panel.show(state, *self._panel_choices(state))
+
+    def _panel(self) -> Optional[_ApStatePanel]:
+        return next(iter(self.query_children(_ApStatePanel).results(_ApStatePanel)), None)
+
+    def _key_rows(self) -> list[_KeyRow]:
+        panel = self._panel()
+        return [] if panel is None else panel.key_rows
 
     def history_expanded(self, key: Key) -> bool:
         """The user's choice for this key's history, else expanded only in a tall, wide drawer."""
@@ -681,35 +757,32 @@ class VaultItemView(Vertical):
             self.border_title = "Vault Detail"
             yield Label("Select an AP to view its captures", id="vault-item-empty")
             return
-        self._set_title()
-        yield _ApStatePanel(self._state, *self._panel_choices(self._state))
+        yield _ApStatePanel()
 
     def on_resize(self, event: Resize) -> None:
         self.call_after_refresh(self._expand_by_drawer_size)
 
     def _expand_by_drawer_size(self) -> None:
-        for row in self.query(_KeyRow).results(_KeyRow):
+        for row in self._key_rows():
             row.expanded = self.history_expanded(row.key)
 
     def watch_verifying(self, verifying: Optional[_VerifyingKey]) -> None:
-        for row in self.query(_KeyRow).results(_KeyRow):
+        for row in self._key_rows():
             row.show_verifying(verifying)
 
     @on(_KeyRow.Toggled)
     def _key_toggled(self, event: _KeyRow.Toggled) -> None:
         self.history_expanded_by_user[event.key.id] = event.expanded
 
-    @on(SelectionList.SelectedChanged)
-    def _hashline_tick_changed(self, event: SelectionList.SelectedChanged) -> None:
+    @on(SelectionList.SelectionToggled)
+    def _hashline_toggled(self, event: SelectionList.SelectionToggled) -> None:
         if not isinstance(event.selection_list, _UncrackedList):
             return
-        ticked = set(event.selection_list.selected)
-        for group in event.selection_list.groups():
-            ids = {h.id for h in group}
-            if group in ticked:
-                self.unticked_hashline_ids -= ids
-            else:
-                self.unticked_hashline_ids |= ids
+        ids = {h.id for h in event.selection.value}
+        if ids <= self.unticked_hashline_ids:
+            self.unticked_hashline_ids -= ids
+        else:
+            self.unticked_hashline_ids |= ids
 
     @on(_KeyRow.VerifyPressed)
     def _verify_pressed(self, event: _KeyRow.VerifyPressed) -> None:

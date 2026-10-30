@@ -3,6 +3,7 @@ WEP keys, WPS credentials. One save_* per kind, each returning a SaveResult
 (or None when there's nothing worth saving). Dedupe never overwrites."""
 from __future__ import annotations
 
+import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -52,12 +53,11 @@ def _existing(captures_dir: Path, bssid: str, suffix: str) -> list[Path]:
         return []
     dashed = bssid_to_dashed(bssid)
     out: list[Path] = []
-    for p in captures_dir.iterdir():
-        if not p.is_file():
-            continue
-        name = p.name.lower()
-        if dashed in name and name.endswith(suffix):
-            out.append(p)
+    with os.scandir(captures_dir) as entries:
+        for entry in entries:
+            name = entry.name.lower()
+            if dashed in name and name.endswith(suffix) and entry.is_file():
+                out.append(Path(entry.path))
     return out
 
 

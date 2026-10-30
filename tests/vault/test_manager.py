@@ -3,6 +3,7 @@ import pathlib
 import sys
 import time
 import pytest
+from concurrent.futures import Future
 from unittest.mock import MagicMock, patch
 from wifit3.vault.manager import JobManager
 from wifit3.models.jobs import JobAction, JobState, ToolCapability, ToolStatus, ToolResult
@@ -214,6 +215,25 @@ def test_crack_success_persists_key(manager):
     manager.vault.save_wpa_psk.assert_called_once_with("TestNet", "00:11:22:33:44:55", "hunter2")
     manager.vault.propagate_verified_psk.assert_called_once_with(
         "00:11:22:33:44:55", "TestNet", "hunter2")
+
+
+def test_a_failed_propagation_to_related_aps_is_logged_and_the_job_still_succeeds(manager, caplog):
+    from wifit3.models.access_point import CaptureType
+    cap = PersistedCapture(type=CaptureType.HS, timestamp=0, path="test.pcap",
+                           bssid="00:11:22:33:44:55", ssid="TestNet")
+    propagation: Future = Future()
+    manager.vault.propagate_verified_psk.return_value = propagation
+    manager.vault.all_captures.return_value = [cap]
+    job_id = manager.submit_job("dummy", cap, {}, [])
+    manager.poll_jobs()
+    with patch.object(manager.tools["dummy"], "poll_status") as mock_poll:
+        mock_poll.return_value = ToolResult(status=ToolStatus.SUCCESS, value="Cracked!", key="hunter2")
+        manager.poll_jobs()                 # returns before the propagation ends
+
+    propagation.set_exception(OSError("disk full"))
+
+    assert manager.jobs[job_id].status == ToolStatus.SUCCESS
+    assert "Failed to pass a recovered key on to related APs" in caplog.text
 
 
 def _pmkid_line(psk: str, ssid: str) -> str:

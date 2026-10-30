@@ -5,6 +5,7 @@ import signal
 import sys
 import threading
 from textual import events, work
+from textual.worker import get_current_worker
 from textual.app import App
 from textual.binding import Binding
 from textual.message import Message
@@ -212,6 +213,26 @@ class WifiteApp(App):
         self.call_after_refresh(self._poll_jobs)
         self._quit_on_termination_signals()
 
+    def preload_vault_states(self) -> None:
+        """Begin ordered Vault state loading once the drawer is visibly opening."""
+        bssids = sorted(
+            {capture.bssid for capture in self.vault.all_captures()},
+            key=lambda bssid: ((self.vault.ssid(bssid) or "").lower(), bssid),
+        )
+        self._load_ap_states(bssids)
+
+    @work(thread=True, exit_on_error=False)
+    def _load_ap_states(self, bssids: list[str]) -> None:
+        """Cache AP state in Vault display order, after its first item is usable."""
+        worker = get_current_worker()
+        for bssid in bssids:
+            if worker.is_cancelled:
+                return
+            if self.vault.cached_ap_state(bssid) is None:
+                self.vault.ap_state(bssid)
+        if self.is_running:
+            self.call_from_thread(self._refresh_vault_table)
+
     def _quit_on_termination_signals(self) -> None:
         if sys.platform == "win32":
             return
@@ -260,7 +281,8 @@ class WifiteApp(App):
         self._job_status = {k: v for k, v in self._job_status.items() if k in live}
 
     def _vault_changed(self, bssid: Optional[str]) -> None:
-        """Any thread: one table refresh per tick, however many notices the Vault sends."""
+        """Any thread: one table refresh per tick, however many notices the Vault sends. None once the
+        app has stopped (a PSK propagation can finish after quit)."""
         with self._vault_notices_lock:
             self._vault_full_refresh |= bssid is None
             if self._vault_refresh_pending:
@@ -268,7 +290,7 @@ class WifiteApp(App):
             self._vault_refresh_pending = True
         if threading.current_thread() is threading.main_thread():    # the app runs on the main thread
             self.call_later(self._refresh_vault_table)
-        else:
+        elif self.is_running:
             self.call_from_thread(self.call_later, self._refresh_vault_table)
 
     def _refresh_vault_table(self) -> None:

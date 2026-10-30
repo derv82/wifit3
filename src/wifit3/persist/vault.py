@@ -10,6 +10,7 @@ import sys
 import time
 import unicodedata
 import zipfile
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Optional
@@ -22,7 +23,7 @@ from wifit3.persist.ap_state import ApState, Key, PasswordStatus, read_hashlines
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid, wps_run_state_name
 from wifit3.persist.config import Config
-from wifit3.persist.meta import meta_path, update_meta
+from wifit3.persist.meta import clear_meta_paths_cache, meta_path, update_meta
 from wifit3.persist.save import SaveResult
 from wifit3.vault.manager import JobManager
 from wifit3.wlan.sink import WlanSink
@@ -103,14 +104,15 @@ class Vault:
         self._ap_states: Dict[str, ApState] = {}
         self._change_listeners: list[Callable[[Optional[str]], None]] = []
         self._probed_ssids_source: Callable[[], Iterable[str]] = lambda: ()
-        self.revision = 0   # bumped on every notify_changed; a cache key for readers
+        self._refresh_count = 0
+        self._change_counts: Dict[str, int] = {}
         self.errors: list[str] = []                       # surfaced as toasts by the app on mount
+        self._propagation_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="psk-propagation")
         try:
             self.refresh()
         except Exception as exc:
             logger.exception("Vault: failed to load the capture index")
             self._index = {}
-            self.revision += 1
             self.errors.append(f"Failed to load captures: {exc}")
         self.manager = JobManager(self)
         try:
@@ -121,6 +123,7 @@ class Vault:
 
     def refresh(self) -> None:
         """Re-scan Config.captures_dir into the cache."""
+        clear_meta_paths_cache()
         self._index = load_capture_index()
         self.notify_changed(None)
 
@@ -142,12 +145,17 @@ class Vault:
         """This session's probed SSIDs, sorted."""
         return sorted(self._probed_ssids_source())
 
+    def revision(self, bssid: str) -> tuple[int, int]:
+        """Changes whenever the AP's captures or state may have; a cache key for readers."""
+        return self._refresh_count, self._change_counts.get(bssid, 0)
+
     def notify_changed(self, bssid: Optional[str]) -> None:
-        """Drop the AP's cached state (every AP's for None) and tell the listeners."""
-        self.revision += 1
+        """Bump the AP's revision and drop its cached state (every AP's for None), then tell the listeners."""
         if bssid is None:
+            self._refresh_count += 1
             self._ap_states.clear()
         else:
+            self._change_counts[bssid] = self._change_counts.get(bssid, 0) + 1
             self._ap_states.pop(bssid, None)
         for listener in self._change_listeners:
             try:
@@ -165,13 +173,17 @@ class Vault:
         """This AP's saved captures, newest-first (empty if none)."""
         return self._index.get(bssid, [])
 
+    def cached_ap_state(self, bssid: str) -> Optional[ApState]:
+        """The cached state for ``bssid``, or ``None`` while it has not been loaded."""
+        return self._ap_states.get(bssid)
+
     def ap_state(self, bssid: str) -> ApState:
         """The AP's keys, hashlines and password status, cached until the AP changes."""
-        state = self._ap_states.get(bssid)
+        state = self.cached_ap_state(bssid)
         if state is None:
-            revision = self.revision
+            revision = self.revision(bssid)
             state = self._ap_states[bssid] = ap_state.load_ap_state(bssid, self.persisted(bssid))
-            if self.revision != revision:       # changed by another thread meanwhile
+            if self.revision(bssid) != revision:    # changed by another thread meanwhile
                 self._ap_states.pop(bssid, None)
             self._record_pcap_dates(state)
         return state
@@ -262,9 +274,12 @@ class Vault:
         return psk_verdict([psk], [line for _, line in read_hashlines(bssid, self.persisted(bssid)).values()])
 
     def propagate_verified_psk(self, source_bssid: str, source_ssid: Optional[str],
-                               psk: str) -> List[str]:
-        """Save ``psk`` for every related AP (SSID family or sibling BSSID) that holds no PSK
-        (see ``_saved_psk``) and that it verifies against; returns their BSSIDs."""
+                               psk: str) -> Future[List[str]]:
+        """Save ``psk`` for every related AP (SSID family or sibling BSSID) that holds no PSK and that it
+        verifies against, one propagation at a time on a background thread; the future holds their BSSIDs."""
+        return self._propagation_executor.submit(self._propagate_verified_psk, source_bssid, source_ssid, psk)
+
+    def _propagate_verified_psk(self, source_bssid: str, source_ssid: Optional[str], psk: str) -> List[str]:
         matched: List[str] = []
         for bssid in list(self._index):
             if bssid == source_bssid:

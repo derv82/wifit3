@@ -2,6 +2,7 @@ import logging
 import json
 import time
 from collections import Counter
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -27,6 +28,13 @@ def _copy_progress(job: JobState, res: ToolResult) -> None:
     job.percent = res.percent
     job.detail = res.detail
     job.key = res.key
+
+
+def _log_propagation(propagation: Future[list[str]]) -> None:
+    if (error := propagation.exception()) is not None:
+        logger.error("Failed to pass a recovered key on to related APs", exc_info=error)
+    elif matched := propagation.result():
+        logger.info(f"Recovered key also verified for {len(matched)} related APs: {', '.join(matched)}")
 
 
 class JobManager:
@@ -253,7 +261,7 @@ class JobManager:
     def _persist_cracked_key(self, job: JobState, res: ToolResult,
                              capture_for: Callable[[str], Optional[PersistedCapture]]) -> None:
         """Save a SUCCESS result's key under each SSID whose line it cracks, and pass it on to
-        related APs."""
+        related APs (in the background)."""
         if res.status != ToolStatus.SUCCESS or res.key is None:
             return
         cap = self._job_capture(job, capture_for)
@@ -263,10 +271,7 @@ class JobManager:
         try:
             for ssid in self._cracked_ssids(job, res.key, cap):
                 self.vault.save_wpa_psk(ssid, cap.bssid, res.key)
-                matched = self.vault.propagate_verified_psk(cap.bssid, ssid, res.key)
-                if matched:
-                    logger.info(f"Recovered key also verified for {len(matched)} related APs: "
-                                f"{', '.join(matched)}")
+                self.vault.propagate_verified_psk(cap.bssid, ssid, res.key).add_done_callback(_log_propagation)
         except OSError:
             logger.exception(f"Failed to save the recovered key for {job.capture_path}")
 

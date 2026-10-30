@@ -1,6 +1,6 @@
 import unicodedata
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from rich.markup import escape
 from rich.text import Text
@@ -36,6 +36,37 @@ def matches_filter(query: str, fields: Iterable[str]) -> bool:
         if query_form in normalized or ascii_query and ascii_query in ascii_form:
             return True
     return False
+
+
+def _has_psk(captures: List[PersistedCapture]) -> bool:
+    return any(c.type in PSK_CAPTURE_TYPES and c.value for c in captures)
+
+
+def _has_wep_key(captures: List[PersistedCapture]) -> bool:
+    return any(c.type == CaptureType.WEP for c in captures)
+
+
+def _has_wps_pin(captures: List[PersistedCapture]) -> bool:
+    return any(c.type == CaptureType.WPS_PIN and c.pin is not None for c in captures)
+
+
+def _has_handshake(captures: List[PersistedCapture]) -> bool:
+    return any(c.type == CaptureType.HS for c in captures)
+
+
+def _has_pmkid(captures: List[PersistedCapture]) -> bool:
+    return any(c.type == CaptureType.PMKID for c in captures)
+
+
+_TAB_TITLES: Dict[str, str] = {
+    "tab-all": "ALL", "tab-psk": "PSK", "tab-wep": "WEP KEY", "tab-pin": "WPS PIN", "tab-hs": "HANDSHAKE",
+    "tab-pmk": "PMKID",
+}
+
+_TAB_FILTERS: Dict[str, Callable[[List[PersistedCapture]], bool]] = {
+    "tab-psk": _has_psk, "tab-wep": _has_wep_key, "tab-pin": _has_wps_pin, "tab-hs": _has_handshake,
+    "tab-pmk": _has_pmkid,
+}
 
 
 class VaultFilterBar(Horizontal):
@@ -135,103 +166,90 @@ class VaultTable(Widget):
                     if isinstance(nickname, str) and nickname:
                         self._nicknames[bssid] = nickname
                 self._nicknames_stale = False
+            self._update_tabs()
             table = self.query_one("#vault-aps", DataTable)
-            selected_bssid = self._current_row_key(table)
-            table.clear()
-            
-            # Determine available tabs
-            has_psk = False
-            has_wep = False
-            has_pin = False
-            has_hs = False
-            has_pmk = False
-            
-            for _, caps in self._aps.values():
-                if any(c.type in PSK_CAPTURE_TYPES and c.value for c in caps):
-                    has_psk = True
-                if any(c.type == CaptureType.WEP for c in caps):
-                    has_wep = True
-                if any(c.type == CaptureType.WPS_PIN and c.pin is not None for c in caps):
-                    has_pin = True
-                if any(c.type == CaptureType.HS for c in caps):
-                    has_hs = True
-                if any(c.type == CaptureType.PMKID for c in caps):
-                    has_pmk = True
-                    
-            # Manage Tabs
-            tabs = self.query_one("#vault-tabs", Tabs)
-            
-            def _ensure_tab(tab_id: str, title: str, exists: bool):
-                tab = tabs.get_tab(tab_id)
-                if tab is not None:
-                    if not exists:
-                        tabs.remove_tab(tab_id)
-                else:
-                    if exists:
-                        tabs.add_tab(Tab(title, id=tab_id))
-                        
-            _ensure_tab("tab-all", "ALL", True)
-            _ensure_tab("tab-psk", "PSK", has_psk)
-            _ensure_tab("tab-wep", "WEP KEY", has_wep)
-            _ensure_tab("tab-pin", "WPS PIN", has_pin)
-            _ensure_tab("tab-hs", "HANDSHAKE", has_hs)
-            _ensure_tab("tab-pmk", "PMKID", has_pmk)
-            
-            try:
-                tabs.active = self._current_tab
-            except Exception:
-                self._current_tab = "tab-all"
-                tabs.active = "tab-all"
-
-            # Sort Alphabetical by SSID
-            ssid_counts: Dict[str, int] = {}
-            for ssid, _ in self._aps.values():
-                ssid_counts[ssid or ""] = ssid_counts.get(ssid or "", 0) + 1
-                
-            rows = sorted(self._aps.items(), key=lambda kv: ((kv[1][0] or "").lower(), kv[0]))
-            
-            # Populate current tab
-            for bssid, (ssid, caps) in rows:
-                if self._filter_text and not matches_filter(
-                        self._filter_text,
-                        [ssid or "", bssid, self._nicknames.get(bssid, ""),
-                         *(Path(c.path).name for c in caps)]):
-                    continue
-                # Check filter
-                if self._current_tab == "tab-psk" and not any(c.type in PSK_CAPTURE_TYPES and c.value for c in caps): continue
-                if self._current_tab == "tab-wep" and not any(c.type == CaptureType.WEP for c in caps): continue
-                if self._current_tab == "tab-pin" and not any(c.type == CaptureType.WPS_PIN and c.pin is not None for c in caps): continue
-                if self._current_tab == "tab-hs" and not any(c.type == CaptureType.HS for c in caps): continue
-                if self._current_tab == "tab-pmk" and not any(c.type == CaptureType.PMKID for c in caps): continue
-                
-                # Build Row Markup
-                name = escape(self.display_name(bssid, ssid))
-                bssid_suffix = f" [dim]{bssid}[/dim]" if ssid_counts.get(ssid or "", 0) > 1 else ""
-                
-                badges = []
-                if any(c.type in PSK_CAPTURE_TYPES and c.value for c in caps):
-                    stale = self.app.vault.ap_state(bssid).status is PasswordStatus.STALE
-                    badges.append(f"[bold {PASSWORD_MISMATCH_COLOR if stale else 'green'}]✓PSK[/]")
-                if any(c.type == CaptureType.WPS_PIN and c.pin is not None for c in caps):
-                    badges.append("[bold green]✓PIN[/]")
-                if any(c.type == CaptureType.WEP for c in caps):
-                    badges.append("[bold green]✓WEP[/]")
-                
-                badges_str = " ".join(badges)
-                markup = f"{name} {badges_str}{bssid_suffix}".strip()
-                table.add_row(Text.from_markup(markup, emoji=False), key=bssid)
-
-            # Restore the prior selection when that AP survived the reload.
-            if selected_bssid is not None:
-                try:
-                    table.move_cursor(row=table.get_row_index(selected_bssid))
-                except Exception:
-                    pass
-
+            shown = self._shown_bssids()
+            ssid_counts = self._ssid_counts()
+            if [row.key.value for row in table.ordered_rows] == shown:
+                for bssid in shown:
+                    text = self._row_text(bssid, ssid_counts)
+                    if table.get_cell(bssid, "ap") != text:
+                        table.update_cell(bssid, "ap", text, update_width=True)
+            else:
+                self._replace_rows(table, shown, ssid_counts)
             self.border_title = f"VAULT ({len(self._aps)} APs)"
             self.post_message(self.TableReloaded())
         finally:
             self._is_reloading = False
+
+    def _replace_rows(self, table: DataTable, shown: List[str], ssid_counts: Dict[str, int]) -> None:
+        """Rebuild the rows as ``shown``, keeping the cursor's AP (else its row) at the same height."""
+        selected_bssid = self._current_row_key(table)
+        cursor_row, scroll_y = table.cursor_row, table.scroll_y
+        with table.prevent(DataTable.RowHighlighted):
+            table.clear()
+            for bssid in shown:
+                table.add_row(self._row_text(bssid, ssid_counts), key=bssid)
+            if table.row_count == 0:
+                return
+            if selected_bssid in table.rows:
+                row = table.get_row_index(selected_bssid)
+            else:
+                row = min(cursor_row, table.row_count - 1)
+            table.move_cursor(row=row, scroll=False)
+        table.scroll_to(y=scroll_y + row - cursor_row, animate=False, immediate=True)
+
+    def _update_tabs(self) -> None:
+        """A tab for each kind of capture the vault holds; back to ALL when the current tab goes."""
+        tabs = self.query_one("#vault-tabs", Tabs)
+        for tab_id, title in _TAB_TITLES.items():
+            belongs = _TAB_FILTERS.get(tab_id)
+            exists = belongs is None or any(belongs(caps) for _, caps in self._aps.values())
+            if tabs.get_tab(tab_id) is not None:
+                if not exists:
+                    tabs.remove_tab(tab_id)
+            elif exists:
+                tabs.add_tab(Tab(title, id=tab_id))
+        try:
+            tabs.active = self._current_tab
+        except Exception:
+            self._current_tab = "tab-all"
+            tabs.active = "tab-all"
+
+    def _ssid_counts(self) -> Dict[str, int]:
+        ssid_counts: Dict[str, int] = {}
+        for ssid, _ in self._aps.values():
+            ssid_counts[ssid or ""] = ssid_counts.get(ssid or "", 0) + 1
+        return ssid_counts
+
+    def _shown_bssids(self) -> List[str]:
+        """The APs passing the filter and the current tab, sorted by SSID."""
+        belongs = _TAB_FILTERS.get(self._current_tab)
+        shown = []
+        for bssid, (ssid, caps) in sorted(self._aps.items(), key=lambda kv: ((kv[1][0] or "").lower(), kv[0])):
+            if self._filter_text and not matches_filter(
+                    self._filter_text,
+                    [ssid or "", bssid, self._nicknames.get(bssid, ""), *(Path(c.path).name for c in caps)]):
+                continue
+            if belongs is None or belongs(caps):
+                shown.append(bssid)
+        return shown
+
+    def _row_text(self, bssid: str, ssid_counts: Dict[str, int]) -> Text:
+        ssid, caps = self._aps[bssid]
+        name = escape(self.display_name(bssid, ssid))
+        bssid_suffix = f" [dim]{bssid}[/dim]" if ssid_counts.get(ssid or "", 0) > 1 else ""
+        badges = []
+        if _has_psk(caps):
+            state = self.app.vault.cached_ap_state(bssid)
+            stale = state is not None and state.status is PasswordStatus.STALE
+            badges.append(f"[bold {PASSWORD_MISMATCH_COLOR if stale else 'green'}]✓PSK[/]")
+        if _has_wps_pin(caps):
+            badges.append("[bold green]✓PIN[/]")
+        if _has_wep_key(caps):
+            badges.append("[bold green]✓WEP[/]")
+        markup = f"{name} {' '.join(badges)}{bssid_suffix}".strip()
+        return Text.from_markup(markup, emoji=False)
 
     def display_name(self, bssid: str, ssid: Optional[str]) -> str:
         """``nickname (SSID)`` when the AP has a nickname, else the SSID."""
