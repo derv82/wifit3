@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from wifit3.crack.hc22000_format import read_hc22000
+from wifit3.crack.wpa_psk import hashcat_plain
 from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH, expand_wordlists, ssid_passwords
 from wifit3.models import PersistedCapture, ToolCapability, ToolResult, ToolStatus
 from wifit3.models.jobs import JobAction, JobState, ToolName
@@ -291,7 +292,7 @@ class HashcatTool(CrackerTool[HashcatQueue]):
             lines = Path(potfile).read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             return []
-        return [line.strip().split(":", 1)[1] for line in lines if ":" in line]
+        return [hashcat_plain(line.strip().split(":", 1)[1]) for line in lines if ":" in line]
 
     def _is_running(self, pid, exe: Optional[str] = None) -> bool:
         """Whether the job's process is alive: via our Popen handle if we launched it, else via the

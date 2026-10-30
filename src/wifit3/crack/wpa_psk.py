@@ -138,6 +138,17 @@ _derive_pmk_cached = functools.lru_cache(maxsize=1024)(derive_pmk)
 
 
 @functools.lru_cache(maxsize=100_000)
+def hashcat_plain(plain: str) -> str:
+    """A password as hashcat printed it, with ``$HEX[...]`` decoded (hashcat hex-encodes a ':',
+    control characters and non-UTF-8 bytes); non-UTF-8 bytes stay as hashcat wrote them."""
+    if not (plain.startswith("$HEX[") and plain.endswith("]")):
+        return plain
+    try:
+        return bytes.fromhex(plain[5:-1]).decode("utf-8")
+    except ValueError:
+        return plain
+
+
 def psk_matches(psk: str, line: Hc22000Line) -> bool:
     """True if the passphrase (or 64-hex raw PMK) cracks the hashline."""
     if RAW_PMK_RE.fullmatch(psk):

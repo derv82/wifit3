@@ -8,6 +8,8 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
+from wifit3.crack.wpa_psk import hashcat_plain
+
 TIMEOUT_SECONDS = 10.0
 WPA_HASH_TYPE_ID = 22000
 WORDLIST_FILE_TYPE = 0
@@ -123,7 +125,7 @@ class HashtopolisApi:
     def cracked_keys(self, hashlist_id: int) -> list[str]:
         cracked = self.call("hashlist", "getCracked", hashlistId=hashlist_id).get("cracked") or []
         with _reply_to("hashlist/getCracked"):
-            return [str(c["plain"]) for c in cracked if c["plain"]]
+            return [hashcat_plain(str(c["plain"])) for c in cracked if c["plain"]]
 
     def task_progress(self, task_id: int) -> TaskProgress:
         task = self.call("task", "getTask", taskId=task_id)
