@@ -3,6 +3,7 @@ import json
 import time
 from collections import Counter
 from concurrent.futures import Future
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
@@ -14,6 +15,7 @@ from wifit3.vault.tools.hashcat import HashcatTool
 from wifit3.vault.tools.hashtopolis import HashtopolisTool
 from wifit3.crack import wpa_psk
 from wifit3.crack.hc22000_format import read_hc22000
+from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config
 
 if TYPE_CHECKING:
@@ -215,13 +217,19 @@ class JobManager:
                     tracked = job.to_dict()
                     detail_and_status = (job.detail, job.status)
                     res = tool.poll_status(job)
+                    self._persist_cracked_key(job, res, capture_for)
+                    if self._cracked_current_key(job, capture_for):
+                        if res.status is ToolStatus.RUNNING:
+                            tool.apply(JobAction.STOP, job)          # 'q', then _kill after the grace period
+                        elif res.status is ToolStatus.STOPPED:
+                            res = replace(res, status=ToolStatus.SUCCESS, value=f"Cracked! Key: {job.key}",
+                                          percent=100.0)
                     if res.status != job.status or res.value != job.progress_msg:
                         logger.info(f"Changed status for job ID {job_id}: {res}")
                         job.status = res.status
                         if res.value is not None:
                             job.progress_msg = res.value
                         _copy_progress(job, res)
-                        self._persist_cracked_key(job, res, capture_for)
                         changed = True
                     elif job.to_dict() != tracked:
                         changed = True      # the tool moved the job on (its next wordlist)
@@ -271,8 +279,9 @@ class JobManager:
         if not cap:
             logger.warning(f"Recovered key for job {job.job_id} not saved: no capture or hashlines")
             return
+        held = {key.value for key in self.vault.ap_state(cap.bssid).keys}
         try:
-            for key in res.keys:
+            for key in (k for k in res.keys if k not in held):
                 for ssid in self._cracked_ssids(job, key, cap):
                     self.vault.save_wpa_psk(ssid, cap.bssid, key)
                     self.vault.propagate_verified_psk(cap.bssid, ssid, key).add_done_callback(_log_propagation)
@@ -283,6 +292,16 @@ class JobManager:
             job.key = status_key.value
         else:
             job.key = res.keys[-1]
+
+    def _cracked_current_key(self, job: JobState,
+                             capture_for: Callable[[str], Optional[PersistedCapture]]) -> bool:
+        """Whether the key this job recovered is the one the AP's CURRENT password status names."""
+        cap = self._job_capture(job, capture_for)
+        if job.key is None or cap is None:
+            return False
+        state = self.vault.ap_state(cap.bssid)
+        return (state.status is PasswordStatus.CURRENT and state.status_key is not None
+                and state.status_key.value == job.key)
 
     @staticmethod
     def _cracked_ssids(job: JobState, key: str, cap: PersistedCapture) -> list[Optional[str]]:
