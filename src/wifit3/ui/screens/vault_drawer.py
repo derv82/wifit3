@@ -32,7 +32,7 @@ def _ap_contents_text(captures: list[PersistedCapture], state: ApState) -> str:
 class VaultDrawer(ModalScreen):
     """The Vault drawer overlay."""
 
-    _SELECTION_DELAY = 0.08
+    _SELECTION_DELAY = 0.1
 
     HORIZONTAL_BREAKPOINTS = [(0, TINY), (60, NARROW), (90, COMPACT), (105, WIDE)]
     VERTICAL_BREAKPOINTS = [(0, SHORT), (36, TALL)]

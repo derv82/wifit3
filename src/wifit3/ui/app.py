@@ -230,6 +230,8 @@ class WifiteApp(App):
                 return
             if self.vault.cached_ap_state(bssid) is None:
                 self.vault.ap_state(bssid)
+        if self.is_running:
+            self.call_from_thread(self._refresh_vault_table)
 
     def _quit_on_termination_signals(self) -> None:
         if sys.platform == "win32":
