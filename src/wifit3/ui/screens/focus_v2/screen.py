@@ -831,6 +831,8 @@ class FocusViewV2(Screen):
 
     def on_wifite_app_job_cracked(self, message: "WifiteApp.JobCracked") -> None:
         job = message.job
+        if self._target_ap is None or self.app.vault.manager.job_bssid(job) != self._target_ap.bssid:
+            return
         status = self.app.vault.manager.key_status(job) or PasswordStatus.CURRENT
         if status is PasswordStatus.CURRENT:
             chip, label = "black bold on green", ""

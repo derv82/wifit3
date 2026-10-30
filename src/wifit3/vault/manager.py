@@ -293,14 +293,20 @@ class JobManager:
         else:
             job.key = res.keys[-1]
 
+    def job_bssid(self, job: JobState,
+                  capture_for: Optional[Callable[[str], Optional[PersistedCapture]]] = None) -> Optional[str]:
+        """The BSSID of the AP the job cracks; None once its capture and hashlines are gone."""
+        cap = self._job_capture(job, capture_for or self._capture)
+        return cap.bssid if cap is not None else None
+
     def key_status(self, job: JobState,
                    capture_for: Optional[Callable[[str], Optional[PersistedCapture]]] = None
                    ) -> Optional[PasswordStatus]:
         """The password status of the key this job recovered; None until it recovers one."""
-        cap = self._job_capture(job, capture_for or self._capture)
-        if job.key is None or cap is None:
+        bssid = self.job_bssid(job, capture_for)
+        if job.key is None or bssid is None:
             return None
-        return self.vault.ap_state(cap.bssid).key_statuses.get((CaptureType.WPA_PSK, job.key))
+        return self.vault.ap_state(bssid).key_statuses.get((CaptureType.WPA_PSK, job.key))
 
     @staticmethod
     def _cracked_ssids(job: JobState, key: str, cap: PersistedCapture) -> list[Optional[str]]:

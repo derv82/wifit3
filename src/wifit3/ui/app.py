@@ -253,8 +253,9 @@ class WifiteApp(App):
         self._notify_completions()
 
     def _notify_completions(self) -> None:
-        """Toast each job the first time it finishes this session (auto-crack jobs only on SUCCESS);
-        jobs already terminal when the app started are recorded silently."""
+        """Toast each job the first time it finishes this session (auto-crack jobs only on SUCCESS)
+        and tell every screen about each success; jobs already terminal when the app started are
+        recorded silently."""
         terminal = (
             ToolStatus.SUCCESS, ToolStatus.FAILURE, ToolStatus.ERROR, ToolStatus.STOPPED,
         )
@@ -264,7 +265,7 @@ class WifiteApp(App):
                 succeeded = job.status == ToolStatus.SUCCESS
                 if succeeded or not job.auto_crack:
                     self._toast_job(job)
-                if succeeded and job.auto_crack:
+                if succeeded:
                     for screen in self.screen_stack:
                         screen.post_message(self.JobCracked(job))
             self._job_status[job.job_id] = job.status
