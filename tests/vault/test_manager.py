@@ -228,7 +228,7 @@ def test_a_failed_propagation_to_related_aps_is_logged_and_the_job_still_succeed
     job_id = manager.submit_job("dummy", cap, {}, [])
     manager.poll_jobs()
     with patch.object(manager.tools["dummy"], "poll_status") as mock_poll:
-        mock_poll.return_value = ToolResult(status=ToolStatus.SUCCESS, value="Cracked!", key="hunter2")
+        mock_poll.return_value = ToolResult(status=ToolStatus.SUCCESS, value="Cracked!", keys=("hunter2",))
         manager.poll_jobs()                 # returns before the propagation ends
 
     propagation.set_exception(OSError("disk full"))

@@ -284,6 +284,8 @@ class Vault:
             if not ((source_ssid and ssid and _related_ssids(source_ssid, ssid))
                     or _sibling_bssids(source_bssid, bssid)):
                 continue
+            if psk in {key.value for key in self.ap_state(bssid).keys}:
+                continue
             if any(psk_matches(psk, line) for _, line in read_hashlines(bssid, self.persisted(bssid)).values()):
                 self.save_wpa_psk(ssid, bssid, psk)
                 matched.append(bssid)
