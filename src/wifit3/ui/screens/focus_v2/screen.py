@@ -116,6 +116,23 @@ _BUTTON_TIPS = {
     "Stop EvilTwin": "Tear down the twin and return clients to the AP",
 }
 
+_SHORT_BUTTON_LABELS = {
+    "AutoDeauth": "Deauth",
+    "ARP Replay": "Replay",
+    "ChopChop": "Chop",
+    "WPS PIN": "PIN",
+    "EvilTwin": "Twin",
+    "Stop Deauth": "Stop",
+    "Stop Replay": "Stop",
+    "Stop Chop": "Stop",
+    "Stop PMKID": "Stop",
+    "Stop PIN": "Stop",
+    "Stop EvilTwin": "Stop",
+    "Stop Decloak": "Stop",
+    "Stop PBC": "Stop",
+    "Stopping…": "Stop…",
+}
+
 
 # Pretty-print a capture filename, skipping the <bssid>_<epoch> middle
 _FILENAME_MIDDLE = re.compile(r"_[0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5}_\d+_")
@@ -168,6 +185,8 @@ class FocusViewV2(Screen):
     #topbar { height: %(top)d; }
     #actions { width: auto; height: 100%%; }
     #topbar Button { height: 3; width: auto; min-width: 0; margin: 0 1 0 0; }
+    FocusViewV2.-tiny #topbar Button { margin: 0; padding: 0; min-width: 0; }
+    FocusViewV2.-tiny #back { margin: 0; padding: 0; min-width: 0; }
     FocusViewV2.-compact-height #actions { align: left middle; }
     FocusViewV2.-compact-height #topbar Button { height: 1; border: none; }
     /* No background override on .attack-btn */
@@ -375,6 +394,7 @@ class FocusViewV2(Screen):
         logger.info("[FOCUS] re-pin: bssid=%s ch=%s -> %s", target.bssid, target.channel, ok)
 
     def on_resize(self) -> None:
+        self.refresh_buttons()
         self._distribute()
 
     # ----- snapshot building -------------------------------------------------
@@ -496,6 +516,10 @@ class FocusViewV2(Screen):
             btn.tooltip = reason or _BUTTON_TIPS.get(str(btn.label))
         self._refresh_chop_button(ap, active, probing)
         self._refresh_stop_pbc_button(probing)
+        if self.size.width < 60:
+            for btn in self.query_one("#actions").query(Button):
+                if btn.id != "back":
+                    btn.label = _SHORT_BUTTON_LABELS.get(str(btn.label), btn.label)
 
     def _refresh_chop_button(self, ap, active, probing: bool) -> None:
         """ChopChop: a WEP sub-action, enabled only while the WEP campaign runs."""
@@ -720,6 +744,13 @@ class FocusViewV2(Screen):
         """Center status beside actions, or place it below when symmetry no longer fits."""
         topbar = self.query_one("#topbar")
         topbar_w = self.size.width
+        back = self.query_one("#back", Button)
+        if topbar_w < 48:
+            back.label = "‹"
+        elif topbar_w < 60:
+            back.label = "‹ Back"
+        else:
+            back.label = "‹ Scanner"
         actions = self.query_one("#actions")
         visible_buttons = [button for button in actions.query(Button) if button.display]
         widest = max((Text.from_markup(s, emoji=False).cell_len

@@ -236,6 +236,13 @@ _HEADER_WIDTHS: Tuple[int, ...] = tuple(Text(column.label).cell_len + 2 for colu
 _BY_KEY: Dict[str, Column] = {column.key: column for column in COLUMNS}
 _CLIENTS_INDEX = COLUMN_KEYS.index("clients")
 _CHIPSET_INDEX = COLUMN_KEYS.index("chipset")
+_DROP_ORDER: Tuple[int, ...] = (
+    _CHIPSET_INDEX,
+    COLUMN_KEYS.index("identity"),
+    COLUMN_KEYS.index("wps"),
+    COLUMN_KEYS.index("beacons"),
+    COLUMN_KEYS.index("clients"),
+)
 
 
 @dataclass(slots=True)
@@ -496,6 +503,13 @@ class APTable(ScrollView, can_focus=True):
         ]
         widths[0] = self._ssid_width_fitting_clients(widths)
         shown = self._shown_columns(widths)
+        visible_width = self.scrollable_content_region.width
+        if visible_width:
+            shown_width = sum(widths[i] + 2 * _CELL_PADDING for i in shown)
+            if shown_width > visible_width:
+                other_width = sum(widths[i] + 2 * _CELL_PADDING for i in shown if i != 0)
+                available = visible_width - other_width - 2 * _CELL_PADDING
+                widths[0] = max(6, available)
         if widths != self._widths or shown != self._shown:
             self._widths = widths
             self._shown = shown
@@ -512,12 +526,16 @@ class APTable(ScrollView, can_focus=True):
         return sum(self._widths[index] + 2 * _CELL_PADDING for index in self._shown)
 
     def _shown_columns(self, widths: List[int]) -> Tuple[int, ...]:
-        """Every column, less CHIPSET when the full row would overflow the visible width."""
-        every = tuple(range(len(COLUMNS)))
+        every = list(range(len(COLUMNS)))
         visible_width = self.scrollable_content_region.width
         if not visible_width or sum(widths) + 2 * _CELL_PADDING * len(widths) <= visible_width:
-            return every
-        return tuple(index for index in every if index != _CHIPSET_INDEX)
+            return tuple(every)
+        for drop_idx in _DROP_ORDER:
+            if drop_idx in every:
+                every.remove(drop_idx)
+                if sum(widths[i] + 2 * _CELL_PADDING for i in every) <= visible_width:
+                    break
+        return tuple(every)
 
     def _ssid_width_fitting_clients(self, widths: List[int]) -> int:
         visible_width = self.scrollable_content_region.width

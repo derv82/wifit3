@@ -20,17 +20,24 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         Binding("enter", "confirm", "OK", show=True, priority=True),
     ]
 
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (50, "-normal")]
+
     DEFAULT_CSS = """
     ChannelFilterDialog {
         align: center middle;
     }
     ChannelFilterDialog #dialog {
         width: 48;
+        max-width: 100%;
         height: auto;
         max-height: 90%;
         border: thick $primary;
         background: $surface;
         padding: 1 2;
+    }
+    ChannelFilterDialog.-narrow #dialog {
+        padding: 1 1;
+        border: round $primary;
     }
     ChannelFilterDialog #title {
         width: 1fr;

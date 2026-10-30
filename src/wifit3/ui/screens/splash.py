@@ -90,7 +90,7 @@ class SplashView(Screen):
 
     app: "WifiteApp"
 
-    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (70, "-wide")]
+    HORIZONTAL_BREAKPOINTS = [(0, "-phone"), (54, "-narrow"), (70, "-wide")]
     VERTICAL_BREAKPOINTS = [(0, "-tiny"), (25, "-short"), (33, "-tall")]
 
     CSS = """
@@ -105,6 +105,7 @@ class SplashView(Screen):
         margin-bottom: 1;
     }
 
+    SplashView.-phone #device-row,
     SplashView.-narrow #device-row {
         layout: vertical;
         width: 100%;
@@ -119,6 +120,7 @@ class SplashView(Screen):
     SplashView.-tiny.-wide #device-select { max-height: 8; }
     SplashView.-short #device-list,
     SplashView.-short #device-select { max-height: 8; }
+    SplashView.-phone #button-col,
     SplashView.-narrow #button-col {
         layout: horizontal;
         width: 100%;
@@ -128,15 +130,19 @@ class SplashView(Screen):
         margin-left: 0;
         align: center middle;
     }
+    SplashView.-phone #button-col Button,
     SplashView.-narrow #button-col Button {
         width: 1fr;
         min-width: 0;
         height: 3;
         margin: 0 1 0 0;
     }
+    SplashView.-phone #button-col #uninstall-btn,
     SplashView.-narrow #button-col #uninstall-btn { margin: 0; }
+    SplashView.-phone #ascii-art,
     SplashView.-tiny #ascii-art,
     SplashView.-short #ascii-art { display: none; }
+    SplashView.-phone #compact-logo,
     SplashView.-tiny #compact-logo,
     SplashView.-short #compact-logo { display: block; }
     """

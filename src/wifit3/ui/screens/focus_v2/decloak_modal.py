@@ -98,7 +98,7 @@ class DecloakInputModal(ModalScreen[Optional[DecloakInput]]):
     DEFAULT_CSS = """
     DecloakInputModal { align: center middle; }
     DecloakInputModal #dialog {
-        width: 64; height: auto; max-height: 90%; overflow-y: auto;
+        width: 64; max-width: 100%; height: auto; max-height: 90%; overflow-y: auto;
         border: thick $primary; background: $surface; padding: 1 2;
     }
     DecloakInputModal #dialog > Label { width: 100%; }
