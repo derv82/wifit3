@@ -93,7 +93,7 @@ class CaptureEventDetector:
         self._seen_eapol_count: dict[Tuple[str, str], int] = {}
         # Keyed (bssid, client_mac, anonce): one entry per captured handshake
         # instance, so a re-handshake (new ANonce) re-announces.
-        self._completed: Set[Tuple[str, str, bytes]] = set()
+        self._completed: Set[Tuple[str, str, bytes, bool]] = set()   # (bssid, client, ANonce, authorized)
         self._pmkid: Set[Tuple[str, str]] = set()
         # BSSIDs with an announced withheld (EAP/OWE) 4-way, once per AP.
         self._withheld_announced: Set[str] = set()
@@ -178,11 +178,11 @@ class CaptureEventDetector:
                         )
                     self._seen_eapol_count[key] = len(frames)
 
-            # Completion banner: once per handshake INSTANCE (keyed by ANonce), in both
-            # modes: M2/M3/M4 of one handshake share the instance (one banner), but a genuine
-            # re-handshake (new ANonce) re-fires.
+            # Completion banner: once per handshake INSTANCE (keyed by ANonce), and once more if
+            # an M1+M2 instance becomes authorized (M3/M4), so the stronger pair gets saved; a
+            # genuine re-handshake (new ANonce) re-fires.
             for anonce, pair in hs.valid_pairs_by_instance().items():
-                ikey = (ap.bssid, client_mac, anonce)
+                ikey = (ap.bssid, client_mac, anonce, pair[1].msg_num > 2)
                 if ikey in self._completed:
                     continue
                 self._completed.add(ikey)

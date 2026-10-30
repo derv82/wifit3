@@ -105,7 +105,7 @@ def test_cracked_hash_succeeds_with_its_key(server, tmp_path):
 
     result = _poll_until(tool, job, lambda r: r.status != ToolStatus.RUNNING)
 
-    assert (result.status, result.key) == (ToolStatus.SUCCESS, "secret-psk")
+    assert (result.status, result.keys) == (ToolStatus.SUCCESS, ("secret-psk",))
     assert (job.api_id, job.tool_state["hashlist_id"]) == ("50", 40)
 
 
@@ -156,7 +156,7 @@ def test_unreachable_server_while_polling_keeps_the_job_running(server, tmp_path
 
     server.poll_error = None
     server.cracked_keys_found = ["secret-psk"]
-    assert _poll_until(tool, job, lambda r: r.status != ToolStatus.RUNNING).key == "secret-psk"
+    assert _poll_until(tool, job, lambda r: r.status != ToolStatus.RUNNING).keys == ("secret-psk",)
 
 
 def test_stop_archives_the_task(server, tmp_path):
@@ -181,7 +181,7 @@ def test_relaunched_app_polls_the_existing_task(server, tmp_path):
 
     result = _poll_until(ht.HashtopolisTool(), job, lambda r: r.status != ToolStatus.RUNNING)
 
-    assert result.key == "secret-psk"
+    assert result.keys == ("secret-psk",)
     assert server.created_tasks == 0
 
 

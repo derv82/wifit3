@@ -18,6 +18,7 @@ from wifit3.chips import log_trace
 from textual.reactive import reactive
 from typing import List, Set
 from wifit3.models.jobs import JobState, ToolStatus
+from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
@@ -262,8 +263,9 @@ class WifiteApp(App):
         self._notify_completions()
 
     def _notify_completions(self) -> None:
-        """Toast each job the first time it finishes this session (auto-crack jobs only on SUCCESS);
-        jobs already terminal when the app started are recorded silently."""
+        """Toast each job the first time it finishes this session (auto-crack jobs only on SUCCESS)
+        and tell every screen about each success; jobs already terminal when the app started are
+        recorded silently."""
         terminal = (
             ToolStatus.SUCCESS, ToolStatus.FAILURE, ToolStatus.ERROR, ToolStatus.STOPPED,
         )
@@ -273,7 +275,7 @@ class WifiteApp(App):
                 succeeded = job.status == ToolStatus.SUCCESS
                 if succeeded or not job.auto_crack:
                     self._toast_job(job)
-                if succeeded and job.auto_crack:
+                if succeeded:
                     for screen in self.screen_stack:
                         screen.post_message(self.JobCracked(job))
             self._job_status[job.job_id] = job.status
@@ -306,7 +308,12 @@ class WifiteApp(App):
 
     def _toast_job(self, job: JobState) -> None:
         if job.status == ToolStatus.SUCCESS:
-            self.notify(f"SUCCESS  PSK: {job.key}", title=job.display_name, severity="information")
+            status = self.vault.manager.key_status(job) or PasswordStatus.CURRENT
+            if status is PasswordStatus.CURRENT:
+                self.notify(f"SUCCESS  PSK: {job.key}", title=job.display_name, severity="information")
+            else:
+                self.notify(f"SUCCESS  PSK: {job.key} ({status.value})", title=job.display_name,
+                            severity="warning")
         elif job.status == ToolStatus.FAILURE:
             self.notify(f"NOT FOUND  {job.progress_msg}", title=job.display_name, severity="warning")
         elif job.status == ToolStatus.STOPPED:

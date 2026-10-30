@@ -5,6 +5,8 @@ from textual.widget import Widget
 from textual.widgets import Label, Button, ProgressBar
 
 from wifit3.models.jobs import JobAction, JobState, ToolStatus
+from wifit3.persist.ap_state import PasswordStatus
+from wifit3.ui.colors import KEY_CHIP_STYLE
 
 # One colour per status; black text on a solid fill reads as a badge.
 _JOB_NAME_W = 25
@@ -160,7 +162,9 @@ class JobRow(Horizontal):
 
     def _detail_markup(self, job: JobState) -> str:
         if job.status == ToolStatus.SUCCESS and job.key is not None:
-            return f"PSK: [black bold on lightgreen] {escape(job.key)} [/]"
+            status = self.app.vault.manager.key_status(job) or PasswordStatus.CURRENT
+            label = "" if status is PasswordStatus.CURRENT else f" [dim]{status.value}[/dim]"
+            return f"PSK: [{KEY_CHIP_STYLE[status]}] {escape(job.key)} [/]{label}"
         if job.status == ToolStatus.RUNNING:
             return f"[dim]{escape(job.detail)}[/dim]" if job.detail else ""
         if job.status == ToolStatus.QUEUED:

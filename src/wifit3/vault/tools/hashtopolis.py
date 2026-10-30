@@ -26,6 +26,7 @@ class _ServerRun:
     wordlist: ServerFile
     hashlist_id: Optional[int] = None
     task_id: Optional[int] = None
+    hash_count: int = 0                         # hashes uploaded; 0 for jobs started before it was recorded
     result: ToolResult = field(default_factory=lambda: ToolResult(
         status=ToolStatus.RUNNING, value="Uploading hashes...", actions=JobAction.STOP))
     stop_requested: threading.Event = field(default_factory=threading.Event)
@@ -65,6 +66,7 @@ class HashtopolisTool(VaultTool):
             raise ValueError(f"No WPA*01/WPA*02 hashlines in {job.hashlines_path}")
         job.tool_state["server"] = _configured_server()
         run = self._new_run(job)
+        run.hash_count = job.tool_state["hash_count"] = len(hashlines)
         name = f"wifit3 {capture.ssid or Path(capture.path).stem}"
         self._start(job, run, name, hashlines)
 
@@ -81,6 +83,7 @@ class HashtopolisTool(VaultTool):
             run = self._new_run(job)
             run.hashlist_id = job.tool_state.get("hashlist_id")
             run.task_id = int(job.api_id)
+            run.hash_count = int(job.tool_state.get("hash_count") or 0)
             run.result = ToolResult(status=ToolStatus.RUNNING, value="Reconnecting...",
                                     actions=JobAction.STOP)
             self._start(job, run, "", [])
@@ -141,19 +144,20 @@ class HashtopolisTool(VaultTool):
     @staticmethod
     def _task_result(run: _ServerRun) -> ToolResult:
         assert run.hashlist_id is not None and run.task_id is not None
-        key = next(iter(run.api.cracked_keys(run.hashlist_id)), None)
-        if key is not None:
-            return ToolResult(status=ToolStatus.SUCCESS, value=f"Cracked! Key: {key}",
-                              percent=100.0, key=key)
+        plains = run.api.cracked_keys(run.hashlist_id)
+        keys = tuple(dict.fromkeys(plains))
         progress = run.api.task_progress(run.task_id)
+        if keys and (progress.is_complete or len(plains) >= run.hash_count):
+            return ToolResult(status=ToolStatus.SUCCESS, value=f"Cracked! Keys: {', '.join(keys)}",
+                              percent=100.0, keys=keys)
         if progress.is_complete:
             return ToolResult(status=ToolStatus.FAILURE, value=run.wordlist.filename, percent=100.0)
         if progress.keyspace == 0:
             return ToolResult(status=ToolStatus.RUNNING, value="Waiting for an agent",
-                              detail=run.wordlist.filename, actions=JobAction.STOP)
+                              detail=run.wordlist.filename, actions=JobAction.STOP, keys=keys)
         percent = min(progress.searched / progress.keyspace * 100, 100.0)
         return ToolResult(status=ToolStatus.RUNNING, value=f"Running ({percent:.2f}%)",
-                          percent=percent, detail=run.wordlist.filename, actions=JobAction.STOP)
+                          percent=percent, detail=run.wordlist.filename, actions=JobAction.STOP, keys=keys)
 
 
 def _configured_server() -> Optional[str]:

@@ -215,18 +215,6 @@ def _matching_key(hashline: DatedHashline, keys: list[Key]) -> Optional[Key]:
     return next((k for k in keys if hashline.id in k.hashline_ids), None)
 
 
-def _evidence(hashlines: list[DatedHashline], keys: list[Key]) -> list[tuple[Optional[int], Optional[Key]]]:
-    """Each authorized hashline (with the password key matching it), correct live check and AP
-    recovery of a password key, newest first."""
-    evidence: list[tuple[Optional[int], Optional[Key]]] = [
-        (h.first_captured, _matching_key(h, keys)) for h in hashlines if h.line.authorized]
-    for key in keys:
-        evidence += [(v.at, key) for v in key.live_verifications if v.correct]
-        if (recovered_at := key.ap_recovered_at) is not None:
-            evidence.append((recovered_at, key))
-    return sorted(evidence, key=lambda e: epoch_sort_key(e[0]), reverse=True)
-
-
 def password_status(hashlines: Iterable[DatedHashline],
                     keys: Iterable[Key]) -> tuple[PasswordStatus, Optional[Key]]:
     """Judged on the newest authorized hashline, correct live check, or AP recovery of a PSK or WEP
@@ -235,15 +223,37 @@ def password_status(hashlines: Iterable[DatedHashline],
     keys = [k for k in keys if k.is_password]
     if not keys:
         return PasswordStatus.NOT_CRACKED, None
-    evidence = _evidence(hashlines, keys)
-    if not evidence:
-        newest_match = next((k for h in hashlines if (k := _matching_key(h, keys))), None)
-        return PasswordStatus.NOT_VERIFIED, newest_match or keys[0]
 
-    _, newest_key = evidence[0]
-    if newest_key is not None:
-        return PasswordStatus.CURRENT, newest_key
-    return PasswordStatus.STALE, next((key for _, key in evidence if key is not None), None)
+    proofs: list[tuple[Optional[int], Optional[Key]]] = []
+    for h in hashlines:
+        if h.line.authorized:
+            proofs.append((h.first_captured, _matching_key(h, keys)))
+    for key in keys:
+        for v in key.live_verifications:
+            if v.correct:
+                proofs.append((v.at, key))
+        if key.ap_recovered_at is not None:
+            proofs.append((key.ap_recovered_at, key))
+
+    if not proofs:
+        for h in hashlines:
+            key = _matching_key(h, keys)
+            if key is not None:
+                return PasswordStatus.NOT_VERIFIED, key
+        return PasswordStatus.NOT_VERIFIED, keys[0]
+
+    proofs.sort(key=lambda p: epoch_sort_key(p[0]), reverse=True)
+    newest_at, newest_key = proofs[0]
+    if newest_key is None:
+        for _, key in proofs:
+            if key is not None:
+                return PasswordStatus.STALE, key
+        return PasswordStatus.STALE, None
+
+    for v in newest_key.live_verifications:
+        if not v.correct and epoch_sort_key(v.at) > epoch_sort_key(newest_at):
+            return PasswordStatus.STALE, newest_key
+    return PasswordStatus.CURRENT, newest_key
 
 
 def key_statuses(keys: Iterable[Key], hashlines: Iterable[DatedHashline], status: PasswordStatus,

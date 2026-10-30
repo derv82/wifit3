@@ -99,7 +99,7 @@ def test_poll_status_reports_key_from_potfile(tmp_path):
     )
     res = HashcatTool().poll_status(_job(pid=999999, tool_state={"potfile_path": str(potfile)}))
     assert res.status == ToolStatus.SUCCESS
-    assert res.key == "0xdeadbeef"
+    assert res.keys == ("0xdeadbeef",)
 
 
 def test_an_adopted_job_from_before_potfiles_were_recorded_reads_the_capture_potfile(tmp_path):
@@ -113,11 +113,11 @@ def test_an_adopted_job_from_before_potfiles_were_recorded_reads_the_capture_pot
 
     res = HashcatTool().poll_status(job)
 
-    assert (res.status, res.key) == (ToolStatus.SUCCESS, "recovered-key")
+    assert (res.status, res.keys) == (ToolStatus.SUCCESS, ("recovered-key",))
 
 
-def test_poll_status_prefers_a_recovered_key_over_a_stop_request(tmp_path):
-    """Stopping a job that already found the key still reports the key."""
+def test_a_stopped_job_that_recovered_a_key_is_stopped_with_the_key(tmp_path):
+    """The job manager judges whether the key ends the job as SUCCESS."""
     potfile = tmp_path / "jobs" / f"{_JOB_ID}.potfile"
     potfile.parent.mkdir()
     potfile.write_text("hash:recovered-key\n")
@@ -125,8 +125,7 @@ def test_poll_status_prefers_a_recovered_key_over_a_stop_request(tmp_path):
     res = HashcatTool().poll_status(
         _job(tool_state={"stopped": True, "potfile_path": str(potfile)}), assume_dead=True)
 
-    assert res.status == ToolStatus.SUCCESS
-    assert res.key == "recovered-key"
+    assert (res.status, res.keys) == (ToolStatus.STOPPED, ("recovered-key",))
 
 
 def test_poll_status_running_uses_popen_handle(tmp_path):
@@ -505,6 +504,18 @@ def test_stop_asks_hashcat_to_quit_instead_of_killing_it(tmp_path, mocker):
     assert keys.call_args.kwargs == {"pid": 4242, "stdin_path": "/keys"}
     spawn.proc.kill.assert_not_called()
     assert job.tool_state["stopped"] is True
+
+
+def test_a_second_stop_sends_no_second_quit(tmp_path, mocker):
+    wordlist = tmp_path / "a.txt"
+    wordlist.write_text("one\n")
+    tool, job, spawn, keys = _reachable_job(tmp_path, mocker, [wordlist])
+
+    assert tool.apply(JobAction.STOP, job) is True
+    assert tool.apply(JobAction.STOP, job) is True
+
+    assert keys.call_count == 1
+    spawn.proc.kill.assert_not_called()
 
 
 def test_stop_kills_hashcat_when_it_takes_no_keypresses(tmp_path, mocker):

@@ -80,8 +80,13 @@ def _pcap_records_for(ap: AccessPoint, client_mac: str) -> list[tuple[bytes, flo
     return records
 
 
-def _read_anonces(path: Path) -> set[str]:
-    return {line.anonce for _, line in read_hc22000(path) if not line.is_pmkid and line.anonce}
+def _read_anonces(path: Path) -> dict[str, bool]:
+    """Each EAPOL line's ANonce, and whether any line for it is authorized (M3/M4)."""
+    anonces: dict[str, bool] = {}
+    for _, line in read_hc22000(path):
+        if not line.is_pmkid and line.anonce:
+            anonces[line.anonce] = anonces.get(line.anonce, False) or line.authorized
+    return anonces
 
 
 def _read_pmkids(path: Path) -> set[str]:
@@ -97,12 +102,15 @@ class HcFiles:
         self.bssid = bssid
         self.agg_path = captures_dir / f"{safe_ssid(self.ssid)}_{bssid_to_dashed(bssid)}.hc22000"
 
-    def find_existing_anonce(self, anonce: str) -> Path | None:
-        """Find if ANonce already exists in either the aggregate file or any split file."""
-        if self.agg_path.exists() and anonce in _read_anonces(self.agg_path):
-            return self.agg_path
-        for p in _existing(self.captures_dir, self.bssid, "_handshake.hc22000"):
-            if anonce in _read_anonces(p):
+    def find_existing_anonce(self, anonce: str, authorized: bool) -> Path | None:
+        """The aggregate or split file already holding a line for the ANonce at least as strong:
+        an authorized one, or any one when ``authorized`` is False (an M1+M2 doesn't count against
+        an M2+M3)."""
+        paths = [self.agg_path] if self.agg_path.exists() else []
+        paths += _existing(self.captures_dir, self.bssid, "_handshake.hc22000")
+        for p in paths:
+            saved = _read_anonces(p)
+            if anonce in saved and (saved[anonce] or not authorized):
                 return p
         return None
 
@@ -123,9 +131,12 @@ class HcFiles:
             new_lines = []
             for ln in lines:
                 entry = parse_hc22000(ln)
-                if entry and entry.anonce and entry.anonce not in existing_anonces:
-                    new_lines.append(ln)
-                    existing_anonces.add(entry.anonce)
+                if not (entry and entry.anonce):
+                    continue
+                if entry.anonce in existing_anonces and (existing_anonces[entry.anonce] or not entry.authorized):
+                    continue
+                new_lines.append(ln)
+                existing_anonces[entry.anonce] = existing_anonces.get(entry.anonce, False) or entry.authorized
             if new_lines:
                 with self.agg_path.open("a", encoding="utf-8") as f:
                     f.write("\n".join(new_lines) + "\n")
@@ -218,11 +229,11 @@ def save_handshake(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
     if not lines:
         return None
 
-    new_anonces = set()
+    new_anonces: dict[str, bool] = {}       # ANonce -> any of its lines authorized
     for ln in lines:
         entry = parse_hc22000(ln)
         if entry and entry.anonce:
-            new_anonces.add(entry.anonce)
+            new_anonces[entry.anonce] = new_anonces.get(entry.anonce, False) or entry.authorized
 
     if not new_anonces:
         return None
@@ -231,8 +242,8 @@ def save_handshake(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
 
     existing_path = None
     all_seen = True
-    for anonce in new_anonces:
-        p = hc.find_existing_anonce(anonce)
+    for anonce, authorized in new_anonces.items():
+        p = hc.find_existing_anonce(anonce, authorized)
         if p is None:
             all_seen = False
             break

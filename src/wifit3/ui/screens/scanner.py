@@ -20,6 +20,7 @@ from wifit3.campaigns import treelog
 from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.campaigns.wps.registrar import PinResult
+from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config
 from wifit3.models import AccessPoint
 from wifit3.crack.handshake import pmkid_crackable
@@ -565,8 +566,13 @@ class ScannerView(Screen):
 
     def on_wifite_app_job_cracked(self, message: "WifiteApp.JobCracked") -> None:
         job = message.job
+        status = self.app.vault.manager.key_status(job) or PasswordStatus.CURRENT
+        if status is PasswordStatus.CURRENT:
+            label = "[bold green]✓ WPA PSK[/bold green]"
+        else:
+            label = f"[bold yellow]✓ WPA PSK ({status.value})[/bold yellow]"
         self._write_log(Text.from_markup(
-            f' [bold green]✓ WPA PSK[/bold green] [dim](via {escape(job.display_name)})[/dim] '
+            f' {label} [dim](via {escape(job.display_name)})[/dim] '
             f'= "{escape(job.key or "")}"', emoji=False))
 
     def _poll_pbc(self) -> None:
