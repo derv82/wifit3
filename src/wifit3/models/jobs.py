@@ -78,9 +78,9 @@ class ToolResult:
     value: Optional[str] = None # The progress string or error msg
     percent: Optional[float] = None
     detail: str = ""
-    key: Optional[str] = None                   # recovered PSK; None for tools that recover none
+    keys: tuple[str, ...] = ()                  # every PSK recovered so far; empty for tools that recover none
     actions: JobAction = JobAction.NONE
 
     def __str__(self) -> str:
         return (f"status={self.status.value}, value={self.value}, percent={self.percent}, "
-                f"detail={self.detail}, key={self.key}, actions={self.actions.name}")
+                f"detail={self.detail}, keys={self.keys}, actions={self.actions.name}")

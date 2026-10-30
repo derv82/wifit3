@@ -170,7 +170,7 @@ class CrackerTool(VaultTool, Generic[QueueT]):
 
     @staticmethod
     def _cracked(key: str) -> ToolResult:
-        return ToolResult(status=ToolStatus.SUCCESS, value=f"Cracked! Key: {key}", percent=100.0, key=key)
+        return ToolResult(status=ToolStatus.SUCCESS, value=f"Cracked! Key: {key}", percent=100.0, keys=(key,))
 
     @classmethod
     def _exhausted(cls, queue: WordlistQueue) -> ToolResult:

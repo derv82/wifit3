@@ -141,10 +141,10 @@ class HashtopolisTool(VaultTool):
     @staticmethod
     def _task_result(run: _ServerRun) -> ToolResult:
         assert run.hashlist_id is not None and run.task_id is not None
-        key = next(iter(run.api.cracked_keys(run.hashlist_id)), None)
-        if key is not None:
-            return ToolResult(status=ToolStatus.SUCCESS, value=f"Cracked! Key: {key}",
-                              percent=100.0, key=key)
+        keys = tuple(run.api.cracked_keys(run.hashlist_id))
+        if keys:
+            return ToolResult(status=ToolStatus.SUCCESS, value=f"Cracked! Key: {keys[0]}",
+                              percent=100.0, keys=keys)
         progress = run.api.task_progress(run.task_id)
         if progress.is_complete:
             return ToolResult(status=ToolStatus.FAILURE, value=run.wordlist.filename, percent=100.0)
