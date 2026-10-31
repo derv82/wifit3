@@ -1060,7 +1060,7 @@ class FocusViewV2(Screen):
                       "[bold green]enabled[/bold green] [dim](press w to toggle)[/dim]")
         else:
             self._log("[bold]WPS PushButton Extraction[/bold] "
-                      "[yellow]disabled[/yellow] [dim](detect only, press w to toggle)[/dim]")
+                      "[yellow]disabled[/yellow] [dim](press w to toggle)[/dim]")
 
     def action_silence(self) -> None:
         self._toggle_silence()
