@@ -27,6 +27,8 @@ from wifit3.ui.screens.vault_item import (DeleteKeyPressed, VaultItemView, date_
                                           _CrackerButton, _exhausted_count_text, _exhausted_names, _hashline_prompt,
                                           _KeyRow, _no_crackable_text, _UncrackedList)
 from wifit3.ui.vault.modals.add_credential import ManualCredential
+from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
+from wifit3.vault.tools.dwpa_api import DwpaNetwork
 from wifit3.crack import wpa_psk
 from wifit3.dot11.wpa import derive_pmk
 from tests.hashline_dates import write_hashline_dates
@@ -238,6 +240,43 @@ def test_an_ap_with_only_pcaps_says_how_many_captures_none_crackable(tmp_path):
     files = Vault().ap_state("aa:bb:cc:dd:ee:ff").handshake_and_pmkid_files
 
     assert _no_crackable_text(files) == f"2 captures, none crackable ({date_text(1700000500)})"
+
+
+@pytest.mark.asyncio
+async def test_the_dwpa_button_opens_the_modal_for_the_newest_capture(tmp_path, mocker):
+    (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_handshake.pcap").write_bytes(b"old")
+    (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000500_pmkid.pcap").write_bytes(b"new")
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
+        push = mocker.patch.object(app, "push_screen")
+        dwpa = item.query_one(_ApStatePanel)._dwpa_button
+        assert dwpa.display
+
+        dwpa.press()
+        await pilot.pause(0)
+
+        modal = push.call_args.args[0]
+        assert isinstance(modal, DwpaConfigModal)
+        assert modal.capture.path.endswith("1700000500_pmkid.pcap")
+        assert (modal.bssid, modal.ssid) == ("aa:bb:cc:dd:ee:ff", "Test1")
+
+
+@pytest.mark.asyncio
+async def test_a_dwpa_upload_is_confirmed_when_the_modal_closes(tmp_path, mocker):
+    name = "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_handshake.pcap"
+    (tmp_path / name).write_bytes(b"")
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
+        mocker.patch.object(app, "push_screen", side_effect=lambda modal, callback: callback(True))
+
+        item.query_one(_ApStatePanel)._dwpa_button.press()
+        await pilot.pause(0)
+
+        assert f"Uploaded {name} to DWPA" in app.notified
 
 
 def test_each_uncracked_row_reads_its_pair_client_verdict_and_ssid(tmp_path):
@@ -732,3 +771,23 @@ async def test_removing_the_pane_cancels_its_running_live_check(tmp_path):
 
         assert verifier.cancelled
         assert app.vault.ap_state("aa:bb:cc:dd:ee:ff").keys[0].live_verifications == ()
+
+
+@pytest.mark.asyncio
+async def test_dwpa_retrieved_keys_are_saved_to_the_vault(tmp_path):
+    name = "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_handshake.pcap"
+    (tmp_path / name).write_bytes(b"")
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
+        panel = item.query_one(_ApStatePanel)
+        network = DwpaNetwork("aa:bb:cc:dd:ee:ff", "HomeNet", "88888888")
+
+        assert panel._store_dwpa_keys([network]) == "Retrieved 1 new key from DWPA"
+        assert "88888888" in [key.value for key in app.vault.ap_state("aa:bb:cc:dd:ee:ff").keys]
+        assert panel._store_dwpa_keys([network]) == "1 key already in Vault"
+
+        other = DwpaNetwork("8e:6a:8d:a6:db:51", "Elsewhere", "hunter22")
+        assert panel._store_dwpa_keys([other]) == "No DWPA keys for the Vault's APs"
+        assert app.vault.persisted("8e:6a:8d:a6:db:51") == []

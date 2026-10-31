@@ -15,12 +15,10 @@ We could automate this as well (opt-**in**), in Preferences: `[x] Automatically 
 
 ------------
 
-### Vault tool: WPA-Sec submission / polling
+### Vault tool: DWPA submission / polling
 
-[wpa-sec.stanev.org](https://wpa-sec.stanev.org/) is a free distributed cracking pool: submit a
-handshake with an API key, poll for a result. pwnagotchi already does exactly this
-([dadav's `wpa-sec.py` plugin](https://github.com/dadav/pwnagotchi-custom-plugins/blob/master/wpa-sec.py)).
-Raised in [D#25](https://github.com/derv82/wifit3/discussions/25).
+Distributed WPA PSK Auditor (DWPA) is a free distributed cracking pool: submit a
+handshake with an API key, poll for a result (see https://github.com/RealEnder/dwpa).
 
 Why it fits: turnaround is reportedly bimodal (minutes, or never), which makes it a *free*
 background attempt to fire off the moment a capture lands. Especially valuable for mobile /

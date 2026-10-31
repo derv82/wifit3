@@ -4,15 +4,15 @@ import pytest
 
 import wifit3.persist.config as cfg
 from wifit3.models import ToolName
-from wifit3.persist.config import (Config, ConfigError, CpuCrackSettings, HashcatSettings,
-                                   HashtopolisSettings)
+from wifit3.persist.config import (Config, ConfigError, CpuCrackSettings, DwpaSettings,
+                                   HashcatSettings, HashtopolisSettings)
 
 _DEFAULTS = {n: copy.deepcopy(getattr(Config, n))
              for n in (
                  "theme", "scanner_sort", "scanner_sort_reverse", "scanner_sort_delay",
                  "silenced_bssids", "hide_silenced", "log_level", "captures_dir", "save_pcap",
                  "decloaked_ssids", "wps_auto_pbc", "auto_crack", "cpu_crack", "hashcat",
-                 "hashtopolis")}
+                 "hashtopolis", "dwpa")}
 
 
 @pytest.fixture(autouse=True)
@@ -216,6 +216,7 @@ def test_tool_settings_defaults(config_path):
                                                 ap_ssid_passwords=True, probed_ssid_passwords=True)
     assert Config.hashcat == HashcatSettings()
     assert Config.hashtopolis == HashtopolisSettings()
+    assert Config.dwpa == DwpaSettings()
 
 
 def test_unset_tool_settings_are_omitted_from_the_file(config_path):
@@ -269,6 +270,15 @@ def test_hashtopolis_settings_save_load_roundtrip(config_path):
     Config.hashtopolis = HashtopolisSettings()
     Config.load()
     assert Config.hashtopolis == saved
+
+
+def test_dwpa_settings_save_load_roundtrip(config_path):
+    saved = DwpaSettings(url="https://dwpa.example", key="0123456789abcdef0123456789abcdef")
+    Config.dwpa = copy.deepcopy(saved)
+    Config.save()
+    Config.dwpa = DwpaSettings()
+    Config.load()
+    assert Config.dwpa == saved
 
 
 def test_a_value_of_the_wrong_type_keeps_the_default(config_path):
