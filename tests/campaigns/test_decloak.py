@@ -8,10 +8,13 @@ from wifit3.campaigns.decloak import (
     SIBLING_SUFFIXES,
     DecloakCampaign,
     DecloakInput,
+    KnownDecloakCampaign,
     candidates_from_sibling,
 )
 from wifit3.campaigns.auth_assoc import AssocState
 from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
+from wifit3.wlan.array import WlanArray
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.probe import probe_req
 
@@ -143,3 +146,21 @@ async def test_sweep_stops_when_asked():
     association = _FakeAssociation({"B": 0})
     assert await campaign._claim_each(association) is None
     assert association.calls == []
+
+
+def test_known_decloak_shows_only_for_a_hidden_ap_with_a_remembered_ssid(monkeypatch):
+    monkeypatch.setattr(Config, "decloaked_ssids", {_BSSID: "MyRouter-Guest"})
+    hidden = AccessPoint(bssid=_BSSID, channel=6)
+    assert KnownDecloakCampaign.visible(hidden)
+    assert KnownDecloakCampaign.button_label(hidden) == "Decloak MyRouter-Guest"
+
+    assert not KnownDecloakCampaign.visible(AccessPoint(bssid=_BSSID, ssid="MyRouter-Guest"))
+    assert not KnownDecloakCampaign.visible(AccessPoint(bssid="aa:bb:cc:dd:ee:01", channel=6))
+
+
+def test_known_decloak_sends_only_the_remembered_ssid_with_every_method(monkeypatch):
+    monkeypatch.setattr(Config, "decloaked_ssids", {_BSSID: "MyRouter-Guest"})
+    campaign = KnownDecloakCampaign(WlanArray(), AccessPoint(bssid=_BSSID, channel=6))
+    assert campaign.candidate_ssids == ["MyRouter-Guest"]
+    assert campaign.use_directed_probe and campaign.use_broadcast_probe
+    assert campaign.use_authassoc_probe

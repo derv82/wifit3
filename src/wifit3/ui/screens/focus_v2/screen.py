@@ -30,6 +30,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.content import Content
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Static
 
@@ -44,7 +45,7 @@ from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal, _can_h
 from wifit3.campaigns.pin import (EMPTY_PIN_LABEL, WpsCampaign, load_run_state,
                                   run_progress_line)
 from wifit3.campaigns.deauth import DeauthCampaign
-from wifit3.campaigns.decloak import DecloakCampaign, DecloakInput
+from wifit3.campaigns.decloak import DecloakCampaign, DecloakInput, KnownDecloakCampaign
 from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.probe import probe_ap
 from wifit3.campaigns.probe.broadcom_wps import WpsImplementation, probe_wps_implementation
@@ -98,7 +99,7 @@ _PAD_RATE = 0.4
 _PBC_RETRY_COOLDOWN_S = 3.0
 
 _ATTACK_BUTTONS = [
-    ("btn-decloak", "Decloak"),
+    ("btn-decloak", "Decloak"), ("btn-known-decloak", "Decloak"),
     ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-deauth", "AutoDeauth"),
     ("btn-pmkid", "PMKID"), ("btn-wps-pin", "WPS PIN"), ("btn-eviltwin", "EvilTwin"),
     ("btn-stop-pbc", "Stop PBC"),
@@ -490,7 +491,7 @@ class FocusViewV2(Screen):
                 btn.label, btn.variant, btn.disabled, reason = cls.run_label, cls.run_variant, False, ""
             else:
                 reason = fm.campaign_blocked(cls, ap)
-                btn.label, btn.variant = cls.idle_label, cls.idle_variant
+                btn.label, btn.variant = Content(cls.button_label(ap)), cls.idle_variant
                 btn.disabled = reason is not None
             if probing and not running:
                 btn.disabled, reason = True, "Disabled while probing"
@@ -872,6 +873,8 @@ class FocusViewV2(Screen):
             self._toggle_pmkid()
         elif bid == "btn-decloak":
             self._toggle_decloak()
+        elif bid == "btn-known-decloak":
+            self._toggle_known_decloak()
         elif bid == "btn-wps-pin":
             self._toggle_wps_pin()
         elif bid == "btn-eviltwin":
@@ -1175,6 +1178,24 @@ class FocusViewV2(Screen):
             self._log(treelog.branch("another campaign owns the radio"))
         self.refresh_buttons()
 
+    def _toggle_known_decloak(self) -> None:
+        cur = self._controls.current
+        if cur is not None and cur.key == KnownDecloakCampaign.key:
+            self._controls.request_stop()
+            self.refresh_buttons()
+            return
+        ap = self._target_ap
+        array = self.app.array
+        if not ap or not array:
+            self._log("[red]✗ No target / interface. Aborting decloak.[/red]")
+            return
+        self._log(treelog.header(f"Decloaking {escape(ap.bssid)}"))
+        started = self._controls.start(KnownDecloakCampaign, array, ap,
+                                       log=lambda m: self._log(treelog.branch(m)))
+        if started is None:
+            self._log(treelog.branch("another campaign owns the radio"))
+        self.refresh_buttons()
+
     def _toggle_pmkid(self) -> None:
         cur = self._controls.current
         if cur is not None and cur.key == "pmkid":
@@ -1200,6 +1221,8 @@ class FocusViewV2(Screen):
                 self.app.persist_config()
         else:
             self._log(treelog.leaf_fail(f"no match in {camp.sent} guesses"))
+
+    _finish_known_decloak = _finish_decloak
 
     def _finish_pmkid(self, camp) -> None:
         """Handle a completed harvest."""

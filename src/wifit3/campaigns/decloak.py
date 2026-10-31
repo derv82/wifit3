@@ -23,6 +23,7 @@ from wifit3.dot11.mac import BROADCAST_MAC, random_client_mac
 from wifit3.dot11.probe import probe_req
 from wifit3.id.ssid import strip_suffix
 from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
 from wifit3.wlan.array import WlanArray
 
 logger = logging.getLogger(__name__)
@@ -268,3 +269,28 @@ class DecloakCampaign(Campaign):
             )
         except Exception:
             logger.debug("[DECLOAK] client-leaving cleanup failed", exc_info=True)
+
+
+class KnownDecloakCampaign(DecloakCampaign):
+    """Decloak with the SSID this AP revealed in an earlier session, every method on."""
+
+    button_id = "btn-known-decloak"
+    key = "known_decloak"
+    hotkey = None
+    idle_variant = "success"
+
+    @classmethod
+    def visible(cls, ap: AccessPoint) -> bool:
+        return ap.is_hidden and Config.decloaked_ssid(ap.bssid) is not None
+
+    @classmethod
+    def button_label(cls, ap: AccessPoint) -> str:
+        return f"Decloak {Config.decloaked_ssid(ap.bssid)}"
+
+    def __init__(self, array: WlanArray, target: AccessPoint, *,
+                 log: Optional[Callable[[str], None]] = None) -> None:
+        known_ssid = Config.decloaked_ssid(target.bssid) or ""
+        super().__init__(array, target,
+                         DecloakInput([known_ssid], use_directed_probe=True,
+                                      use_broadcast_probe=True, use_authassoc_probe=True),
+                         log=log)
