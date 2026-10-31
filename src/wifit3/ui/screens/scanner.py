@@ -389,13 +389,11 @@ class ScannerView(Screen):
     def on_wifite_app_ap_event_detected(self, message: "WifiteApp.ApEventDetected") -> None:
         ev = message.event
         ap_label = escape(ev.ssid or ev.bssid)
-        save_result = None
         if isinstance(ev, HandshakeCaptured):
             msg = (
                 f"[bold green]✓ HANDSHAKE[/bold green] ({ev.pair_label}) on "
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
-            save_result = ev.save_result
         elif isinstance(ev, UncrackableHandshakeSeen):
             msg = (
                 f"[bold yellow]● {escape(ev.akm_label)} 4-way[/bold yellow] on "
@@ -406,7 +404,6 @@ class ScannerView(Screen):
                 f"[bold green]✓ PMKID[/bold green] on "
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
-            save_result = ev.save_result
         elif isinstance(ev, ApDecloaked):
             # A ● header (not a ✓ win): a hidden SSID became visible, not a credential.
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
@@ -431,11 +428,16 @@ class ScannerView(Screen):
             return  # eapol events suppressed in scanner
         # Leading space aligns the ✓ win with the ● / ├─► / └─► tree log above it.
         self._write_log(Text.from_markup(f" {msg}", emoji=False))
-        if save_result is not None:
-            verb = "saved" if save_result.was_new else "already saved as"
-            self._write_log(Text.from_markup(treelog.leaf(
-                f"[dim]({verb} {escape(save_result.path.name)})[/dim]"
-                f"{saved_psk_markup(save_result.matches_saved_psk)}"), emoji=False))
+        if isinstance(ev, (HandshakeCaptured, PmkidCaptured)):
+            save_result = ev.save_result
+            if save_result is None:
+                reason = "not saved: SSID unknown" if not ev.ssid else "not saved"
+                self._write_log(Text.from_markup(treelog.leaf(f"[dim]({reason})[/dim]"), emoji=False))
+            else:
+                verb = "saved" if save_result.was_new else "already saved as"
+                self._write_log(Text.from_markup(treelog.leaf(
+                    f"[dim]({verb} {escape(save_result.path.name)})[/dim]"
+                    f"{saved_psk_markup(save_result.matches_saved_psk)}"), emoji=False))
 
     def _write_log(self, text) -> None:
         try:

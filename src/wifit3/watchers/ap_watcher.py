@@ -78,28 +78,40 @@ class WpsPbcPskRecovered(ApEvent):
 
 class ApWatcher:
     """Polls every AP in the array except twins and silenced APs, saves new handshakes and
-    PMKIDs to the Vault, and returns the new events."""
+    PMKIDs to the Vault, and returns the new events. A hidden AP's captures are saved, and
+    reported again, once its SSID is known."""
 
     def __init__(self, vault: Vault) -> None:
         self._vault = vault
         self._array: Optional[WlanArray] = None
         self._detector = CaptureEventDetector()
+        self._captures_waiting_for_ssid: Dict[str, List[HandshakeCaptured | PmkidCaptured]] = {}
 
     def poll(self, array: WlanArray) -> List[ApEvent]:
         if array is not self._array:
             self._array = array
             self._detector = CaptureEventDetector()
+            self._captures_waiting_for_ssid = {}
         events: List[ApEvent] = []
         for ap in array.get_access_points(include_eviltwin=False):
             if Config.is_silenced(ap.bssid):
                 continue
             for event in self._detector.poll(ap, array.forged_macs):
-                if isinstance(event, HandshakeCaptured):
-                    event = replace(event, save_result=self._vault.save_handshake(ap, event.client_mac))
-                elif isinstance(event, PmkidCaptured):
-                    event = replace(event, save_result=self._vault.save_pmkid(ap, event.client_mac))
+                if isinstance(event, (HandshakeCaptured, PmkidCaptured)):
+                    event = self._saved(ap, event)
+                    if event.save_result is None and ap.is_hidden:
+                        self._captures_waiting_for_ssid.setdefault(ap.bssid, []).append(event)
                 events.append(event)
+            if not ap.is_hidden and ap.bssid in self._captures_waiting_for_ssid:
+                for event in self._captures_waiting_for_ssid.pop(ap.bssid):
+                    events.append(self._saved(ap, replace(event, ssid=ap.ssid)))
         return events
+
+    def _saved(self, ap: AccessPoint,
+               event: HandshakeCaptured | PmkidCaptured) -> HandshakeCaptured | PmkidCaptured:
+        if isinstance(event, HandshakeCaptured):
+            return replace(event, save_result=self._vault.save_handshake(ap, event.client_mac))
+        return replace(event, save_result=self._vault.save_pmkid(ap, event.client_mac))
 
 
 class ApClient(NamedTuple):

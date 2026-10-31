@@ -308,3 +308,21 @@ def test_watcher_forgets_events_when_the_array_changes(monkeypatch):
     for _ in range(2):
         array, _ = _array_with_handshake()
         assert len(_handshakes(watcher.poll(array))) == 1
+
+
+def test_watcher_saves_a_hidden_aps_handshake_once_its_ssid_is_known(monkeypatch):
+    monkeypatch.setattr(Config, "auto_crack", None)
+    array, ap = _array_with_handshake()
+    ap.ssid = None
+    watcher = ApWatcher(Vault())
+    assert [e.save_result for e in _handshakes(watcher.poll(array))] == [None]
+    assert watcher.poll(array) == []
+
+    array.decloak(ap, "X", "probe_resp")
+    events = watcher.poll(array)
+    assert isinstance(events[0], ApDecloaked)
+    handshakes = _handshakes(events)
+    assert len(handshakes) == 1
+    assert handshakes[0].ssid == "X"
+    assert handshakes[0].save_result is not None and handshakes[0].save_result.was_new
+    assert watcher.poll(array) == []
