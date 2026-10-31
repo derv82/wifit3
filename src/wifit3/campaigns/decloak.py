@@ -93,17 +93,6 @@ def candidates_from_sibling(sibling_ssid: str) -> list[str]:
     return candidates
 
 
-def named_sibling_ssid(array: WlanArray, hidden: AccessPoint) -> str:
-    """The SSID of whichever of hidden.siblings has an SSID and the most beacons. Empty
-    when it has no siblings, or none of them are named."""
-    best_ssid, best_beacons = "", -1
-    for bssid in hidden.siblings:
-        sibling = array.access_points.get(bssid)
-        if sibling and sibling.ssid and sibling.beacons > best_beacons:
-            best_ssid, best_beacons = sibling.ssid, sibling.beacons
-    return best_ssid
-
-
 class DecloakCampaign(Campaign):
     """Names every candidate SSID at one hidden AP until the AP names itself back."""
 
@@ -121,7 +110,7 @@ class DecloakCampaign(Campaign):
                  decloak_input: Optional[DecloakInput] = None, *,
                  log: Optional[Callable[[str], None]] = None) -> None:
         super().__init__(ap=target, array=array)
-        self.sibling_ssid = named_sibling_ssid(array, target)
+        self.sibling_ssid = array.guessid(target)
         chosen = decloak_input or DecloakInput(candidates_from_sibling(self.sibling_ssid))
         self.candidate_ssids = list(chosen.candidate_ssids)
         self.use_directed_probe = chosen.use_directed_probe

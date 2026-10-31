@@ -10,7 +10,7 @@ import pytest
 
 from wifit3.dot11.mac import str_to_mac
 from wifit3.dot11.wsc import messages as WSC
-from wifit3.models import IdKey, IdSource
+from wifit3.models import AccessPoint, IdKey, IdSource
 from wifit3.wlan.sink import WlanSink
 from wifit3.wlan.packet_stats import PACKET_CLASSES
 from wifit3.dot11.parser import WlanFrameParser
@@ -710,3 +710,21 @@ def test_wpa1_akm_reaches_handshake_crack_gate(encryption, akm_name, akm, verdic
     assert hs.akm_offered == [akm] and hs.rsn_ie_seen is False
     assert wpa.eapol_verdict(None, hs) == verdict
     assert wpa.uncrackable_label(None, hs) == label
+
+
+def _sink_with(*aps: AccessPoint) -> WlanSink:
+    sink = WlanSink()
+    for ap in aps:
+        sink.access_points[ap.bssid] = ap
+    return sink
+
+
+def test_guessid_is_the_alphabetically_first_named_sibling():
+    hidden = AccessPoint(bssid="aa:bb:cc:dd:ee:00", channel=6,
+                         siblings=["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:03"])
+    sink = _sink_with(hidden,
+                      AccessPoint(bssid="aa:bb:cc:dd:ee:01", ssid="Quiet", beacons=3),
+                      AccessPoint(bssid="aa:bb:cc:dd:ee:02", ssid="Loud", beacons=90),
+                      AccessPoint(bssid="aa:bb:cc:dd:ee:03", ssid=None, beacons=500))
+    assert sink.guessid(hidden) == "Loud"
+

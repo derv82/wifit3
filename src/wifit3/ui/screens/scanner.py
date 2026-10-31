@@ -263,8 +263,10 @@ class ScannerView(Screen):
         now = time.time()
         rows: List[APRow] = []
         for ap in array.get_access_points(include_eviltwin=False):
-            sibling_ssid = self._best_named_sibling_ssid(ap) if ap.ssid is None else None
-            if not self._scan_filter.matches(ap, ssid=sibling_ssid):
+            guessid = None
+            if ap.ssid is None:
+                guessid = Config.decloaked_ssid(ap.bssid) or array.guessid(ap) or None
+            if not self._scan_filter.matches(ap, ssid=guessid):
                 if ap.bssid in self.ap_cache:
                     self._forget_row(ap.bssid, drop_from_array=False)
                 continue
@@ -275,7 +277,7 @@ class ScannerView(Screen):
 
             self.ap_cache[ap.bssid] = ap
             if visible:
-                rows.append(self._row_for(ap, now, client_counts.get(ap.bssid, 0), sibling_ssid))
+                rows.append(self._row_for(ap, now, client_counts.get(ap.bssid, 0), guessid))
 
         if not visible:
             return
@@ -286,7 +288,7 @@ class ScannerView(Screen):
             table.resort()
 
     def _row_for(
-        self, ap: AccessPoint, now: float, clients: int, sibling_ssid: Optional[str]
+        self, ap: AccessPoint, now: float, clients: int, guessid: Optional[str]
     ) -> APRow:
         """The AP as plain values; the table owns every colour decision made from them.
         An AP whose signature is unchanged reuses its previous row object untouched."""
@@ -299,7 +301,7 @@ class ScannerView(Screen):
         is_stale = self._ap_row_age(ap, now) > STALE_DURATION_S
         beacon_flash = now < self._beacon_flash_until.get(ap.bssid, 0.0)
         signature = self._row_signature(
-            ap, vault, clients, is_stale, beacon_flash, sibling_ssid)
+            ap, vault, clients, is_stale, beacon_flash, guessid)
         # EAPOL rewrites ap.handshakes off the beacon path, so APs holding one are
         # never cached. There are only ever a handful of them.
         cacheable = not ap.handshakes
@@ -311,7 +313,7 @@ class ScannerView(Screen):
         row = APRow(
             bssid=ap.bssid,
             ssid=ap.ssid,
-            sibling_ssid=sibling_ssid,
+            guessid=guessid,
             channel=ap.channel,
             signal=ap.signal,
             beacons=ap.beacons,
@@ -337,7 +339,7 @@ class ScannerView(Screen):
 
     def _row_signature(
         self, ap: AccessPoint, vault, clients: int, is_stale: bool,
-        beacon_flash: bool, sibling_ssid: Optional[str],
+        beacon_flash: bool, guessid: Optional[str],
     ) -> tuple:
         """Every input to the row, reduced to values that are cheap to read.
 
@@ -354,7 +356,7 @@ class ScannerView(Screen):
             ap.last_seen, ap.beacons, ap.signal, ap.channel, ap.ssid,
             ap.wps, ap.wps_locked, ap.identity.summary,
             wep.unique_ivs if wep else 0, ap.wep_key, ap.wps_pbc_psk,
-            clients, is_stale, beacon_flash, sibling_ssid,
+            clients, is_stale, beacon_flash, guessid,
             vault.revision(ap.bssid), Config.is_silenced(ap.bssid),
         )
 
@@ -380,20 +382,6 @@ class ScannerView(Screen):
         self._prev_beacons.pop(bssid, None)
         self._beacon_flash_until.pop(bssid, None)
         self._row_cache.pop(bssid, None)
-
-    def _best_named_sibling_ssid(self, ap: AccessPoint) -> Optional[str]:
-        """Guess the sibling SSID to display for a hidden AP."""
-        array = self.app.array
-        if not array or not ap.siblings:
-            return None
-        best_ssid: Optional[str] = None
-        best_beacons = -1
-        for sib_bssid in ap.siblings:
-            sib_ap = array.access_points.get(sib_bssid)
-            if sib_ap and sib_ap.ssid and sib_ap.beacons > best_beacons:
-                best_ssid = sib_ap.ssid
-                best_beacons = sib_ap.beacons
-        return best_ssid
 
     # ----- Capture-event logging ---------------------------------------------
 

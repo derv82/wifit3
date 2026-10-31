@@ -2,7 +2,6 @@
 sweep's adherence to the 802.11 state machine."""
 from __future__ import annotations
 
-import types
 from unittest.mock import MagicMock
 
 from wifit3.campaigns.decloak import (
@@ -10,7 +9,6 @@ from wifit3.campaigns.decloak import (
     DecloakCampaign,
     DecloakInput,
     candidates_from_sibling,
-    named_sibling_ssid,
 )
 from wifit3.campaigns.auth_assoc import AssocState
 from wifit3.models import AccessPoint
@@ -53,23 +51,6 @@ def test_candidates_drop_names_over_32_octets():
     assert "X" * 31 in out                      # the bare sibling still fits
     assert all(len(c.encode("utf-8")) <= 32 for c in out)
     assert ("X" * 31) + "-Guest" not in out
-
-
-def test_named_sibling_prefers_the_most_beaconed():
-    array = MagicMock()
-    array.access_points = {
-        "11:11:11:11:11:11": types.SimpleNamespace(ssid="Quiet", beacons=3),
-        "22:22:22:22:22:22": types.SimpleNamespace(ssid="Loud", beacons=90),
-        "33:33:33:33:33:33": types.SimpleNamespace(ssid=None, beacons=500),
-    }
-    hidden = AccessPoint(bssid=_BSSID, channel=6,
-                         siblings=["11:11:11:11:11:11", "22:22:22:22:22:22",
-                                   "33:33:33:33:33:33"])
-    assert named_sibling_ssid(array, hidden) == "Loud"
-
-
-def test_named_sibling_is_empty_without_siblings():
-    assert named_sibling_ssid(MagicMock(), AccessPoint(bssid=_BSSID, channel=6)) == ""
 
 
 # ----- frame building ----------------------------------------------------------
