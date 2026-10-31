@@ -18,7 +18,8 @@ def _eapol(msg, *, client=_CLIENT, nonce=True, mic=True, eapol=True, pmkid=None)
 
 
 def _hs(pair="M1+M2", client=_CLIENT):
-    return HandshakeCaptured(bssid=_BSSID, ssid="X", channel=1, client_mac=client, pair_label=pair)
+    return HandshakeCaptured(bssid=_BSSID, ssid="X", channel=1, client_mac=client, pair_label=pair,
+                             authorized=pair != "M1+M2")
 
 
 def test_complete_handshake_flushes_one_tree():

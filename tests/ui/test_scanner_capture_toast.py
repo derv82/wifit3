@@ -1,34 +1,10 @@
-"""The Scanner raises a non-blocking toast on a capture win, so a handshake /
-PMKID / recovered key isn't silent while the user watches the table. Driven
-through the real ScannerView's ApEventDetected handler."""
+"""ScannerView's ApEventDetected handler, and the app's decloak persistence."""
 import pytest
 
 from wifit3.ui.app import WifiteApp
-from wifit3.ui.screens.scanner import ScannerView
-from wifit3.watchers.ap_watcher import UncrackableHandshakeSeen, WepKeyRecovered
+from wifit3.watchers.ap_watcher import UncrackableHandshakeSeen
 from wifit3.models import AccessPoint
 from wifit3.wlan.array import WlanArray
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
-async def test_scanner_capture_win_raises_toast():
-    app = WifiteApp()
-    async with app.run_test() as pilot:
-        app.push_screen("scanner")
-        await pilot.pause(0)
-        scanner = app.screen
-        assert isinstance(scanner, ScannerView)
-
-        toasts: list = []
-        scanner.notify = lambda msg, **kw: toasts.append((kw.get("title"), msg))
-
-        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:06", ssid="dd-wrt", channel=6)
-        ev = WepKeyRecovered(bssid=ap.bssid, ssid=ap.ssid, channel=ap.channel,
-                             key_hex="6162636465")   # "abcde"
-        scanner.on_wifite_app_ap_event_detected(WifiteApp.ApEventDetected(ev))
-
-        assert ("WEP key recovered", 'dd-wrt: 6162636465 = "abcde"') in toasts, toasts
 
 
 @pytest.mark.asyncio

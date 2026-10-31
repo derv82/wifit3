@@ -37,6 +37,7 @@ from .screens.vault_drawer import VaultDrawer
 from .clipboard import copy_copyq_text, copy_macos_text, copy_windows_text
 from .pref import PreferencesModal
 from .themes import register_app_themes
+from .toasts import Toasts
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,7 @@ class WifiteApp(App):
         self.vault.subscribe(self._vault_changed)
         self.vault.set_probed_ssids_source(self._probed_ssids)
         self.ap_watcher = ApWatcher(self.vault)
+        self.toasts = Toasts(self)
         self._job_status: dict[str, ToolStatus] = {}
         self.pbc_enabled: bool = Config.wps_auto_pbc
         register_app_themes(self)
@@ -279,6 +281,11 @@ class WifiteApp(App):
             if isinstance(event, ApDecloaked):
                 if Config.remember_decloak(event.bssid, event.ssid or ""):
                     self.persist_config()
+            ap = self.array.access_points.get(event.bssid)
+            guessid = ""
+            if ap is not None and ap.is_hidden:
+                guessid = Config.decloaked_ssid(ap.bssid) or self.array.guessid(ap)
+            self.toasts.ap_event(event, guessid)
             for screen in self.screen_stack:
                 screen.post_message(self.ApEventDetected(event))
 

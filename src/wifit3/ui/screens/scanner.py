@@ -389,14 +389,12 @@ class ScannerView(Screen):
         ev = message.event
         ap_label = escape(ev.ssid or ev.bssid)
         save_result = None
-        toast_title = None
         if isinstance(ev, HandshakeCaptured):
             msg = (
                 f"[bold green]✓ HANDSHAKE[/bold green] ({ev.pair_label}) on "
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
             save_result = ev.save_result
-            toast_title = f"Handshake captured ({ev.pair_label})"
         elif isinstance(ev, UncrackableHandshakeSeen):
             msg = (
                 f"[bold yellow]● {escape(ev.akm_label)} 4-way[/bold yellow] on "
@@ -408,7 +406,6 @@ class ScannerView(Screen):
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
             save_result = ev.save_result
-            toast_title = "PMKID captured (M1)"
         elif isinstance(ev, ApDecloaked):
             # A ● header (not a ✓ win): a hidden SSID became visible, not a credential.
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
@@ -420,8 +417,6 @@ class ScannerView(Screen):
         elif isinstance(ev, WepKeyRecovered):
             msg = (f"[bold green]✓ WEP KEY[/bold green] on "
                    f"[bold cyan]{ap_label}[/bold cyan] = {escape(wep_key_hex_and_ascii(ev.key_hex))}")
-            self.notify(f"{ev.ssid or ev.bssid}: {wep_key_hex_and_ascii(ev.key_hex)}",
-                        title="WEP key recovered", timeout=6)
         elif isinstance(ev, WpsPinRecovered):
             msg = (f"[bold green]✓ WPS PIN[/bold green] on "
                    f"[bold cyan]{ap_label}[/bold cyan] = {escape(ev.pin or EMPTY_PIN_LABEL)}")
@@ -440,10 +435,6 @@ class ScannerView(Screen):
             self._write_log(Text.from_markup(treelog.leaf(
                 f"[dim]({verb} {escape(save_result.path.name)})[/dim]"
                 f"{saved_psk_markup(save_result.matches_saved_psk)}"), emoji=False))
-        if toast_title:
-            body = (f"[bold]{escape(ev.ssid or ev.bssid)}[/bold] on channel [bold]{ev.channel}[/bold] "
-                    f"[dim bold](BSSID: {escape(ev.bssid)})[/dim bold]")
-            self.notify(body, title=toast_title, timeout=6)
 
     def _write_log(self, text) -> None:
         try:

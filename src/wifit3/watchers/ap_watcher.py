@@ -35,6 +35,7 @@ class EapolFrameSeen(ApEvent):
 class HandshakeCaptured(ApEvent):
     client_mac: str
     pair_label: str              # "M1+M2", "M2+M3", ...
+    authorized: bool             # M3/M4 in the pair: the AP confirmed the client's PSK
     save_result: Optional[HashlineSaveResult] = None   # None when not saved (no SSID yet)
 
 
@@ -197,6 +198,7 @@ class HandshakeDetector:
                 channel=ap.channel,
                 client_mac=client_mac,
                 pair_label=f"M{first.msg_num}+M{second.msg_num}",
+                authorized=instance.authorized,
             ))
         return events
 
