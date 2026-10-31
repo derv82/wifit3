@@ -4,7 +4,6 @@ re-scan the directory. Wraps persist.save + persist.capture_history."""
 from __future__ import annotations
 
 import logging
-import re
 import subprocess
 import sys
 import time
@@ -17,6 +16,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Optional
 
 from wifit3.crack.hc22000_format import Hc22000Line
 from wifit3.crack.wpa_psk import psk_matches, psk_verdict
+from wifit3.id.ssid import strip_suffix
 from wifit3.models import WPS_CAPTURE_TYPES, CaptureType, PersistedCapture
 from wifit3.persist import ap_state, save
 from wifit3.persist.ap_state import ApState, Key, PasswordStatus, read_hashlines
@@ -33,12 +33,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_BAND_SUFFIX_RE = re.compile(r"(?:[\s_-]+(?:2[._]?4|5|6)g(?:hz)?)$", re.IGNORECASE)
-
-
 def _ssid_family(ssid: str) -> str:
     normalized = unicodedata.normalize("NFKC", ssid).casefold().strip()
-    return _BAND_SUFFIX_RE.sub("", normalized).rstrip(" _-")
+    return strip_suffix(normalized).rstrip(" _-")
 
 
 def _related_ssids(left: str, right: str) -> bool:

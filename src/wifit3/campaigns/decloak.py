@@ -21,6 +21,7 @@ from wifit3.campaigns.campaign import Campaign
 from wifit3.dot11 import SSID_MAX_OCTETS, mac_to_str, str_to_mac
 from wifit3.dot11.mac import BROADCAST_MAC, random_client_mac
 from wifit3.dot11.probe import probe_req
+from wifit3.id.ssid import strip_suffix
 from wifit3.models import AccessPoint
 from wifit3.wlan.array import WlanArray
 
@@ -80,13 +81,14 @@ class DecloakInput:
 
 
 def candidates_from_sibling(sibling_ssid: str) -> list[str]:
-    """Every SIBLING_SUFFIXES entry appended to sibling_ssid, minus duplicates and names
-    over 32 octets. Empty when sibling_ssid is empty."""
+    """Every SIBLING_SUFFIXES entry appended to sibling_ssid without its own band/type suffix,
+    minus duplicates and names over 32 octets. Empty when sibling_ssid is empty."""
     if not sibling_ssid:
         return []
+    base_ssid = strip_suffix(sibling_ssid)
     candidates: list[str] = []
     for suffix in SIBLING_SUFFIXES:
-        candidate = (sibling_ssid + suffix).rstrip()
+        candidate = (base_ssid + suffix).rstrip()
         if (candidate and candidate not in candidates
                 and len(candidate.encode("utf-8")) <= SSID_MAX_OCTETS):
             candidates.append(candidate)
