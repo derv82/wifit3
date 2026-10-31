@@ -395,6 +395,8 @@ class Vault:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WEP, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=key.hex(), ssid=ap.ssid))
+        elif result and not manual:
+            self._record_key_recovered_again(ap.bssid, (CaptureType.WEP, key.hex()))
         return result
 
     def save_wps_pin(self, ap: "AccessPoint", pin: str, psk: Optional[str],
@@ -409,6 +411,8 @@ class Vault:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PIN, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=psk, pin=pin, ssid=ap.ssid))
+        elif result and psk and not manual:
+            self._record_key_recovered_again(ap.bssid, (CaptureType.WPA_PSK, psk))
         return result
 
     def save_wps_pbc(self, ap: "AccessPoint", psk: str) -> Optional[SaveResult]:
@@ -419,7 +423,15 @@ class Vault:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PBC, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=psk, ssid=ap.ssid))
+        elif result:
+            self._record_key_recovered_again(ap.bssid, (CaptureType.WPA_PSK, psk))
         return result
+
+    def _record_key_recovered_again(self, bssid: str, key_id: tuple[CaptureType, str]) -> None:
+        """The AP gave up a key already saved: a correct live check, so it is CURRENT again."""
+        key = next((k for k in self.ap_state(bssid).keys if k.id == key_id), None)
+        if key is not None:
+            self.record_live_verification(key, True)
 
     def save_wpa_psk(self, ssid: Optional[str], bssid: str, psk: str, manual: bool = False) -> Optional[SaveResult]:
         """``manual``: typed in, not cracked or recovered from the AP."""
