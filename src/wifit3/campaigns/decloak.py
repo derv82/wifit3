@@ -146,7 +146,10 @@ class DecloakCampaign(Campaign):
         if self.iface is None:
             self._log(f"no card can reach channel {self.ap.channel}")
             return
-        self._log(f"guessing from '{self.sibling_ssid}'")
+        if len(self.candidate_ssids) == 1:
+            self._log(f"trying '{self.candidate_ssids[0]}'")
+        else:
+            self._log(f"guessing from '{self.sibling_ssid}'")
         async with self.array.claim(self.iface):
             if self.iface.current_channel != self.ap.channel:
                 await self.iface.set_channel(self.ap.channel)
@@ -197,6 +200,7 @@ class DecloakCampaign(Campaign):
         for ssid in self.candidate_ssids:
             if self.stopped:
                 return None
+            logger.debug("[DECLOAK] %s: %s probe for %r", self.ap.bssid, method, ssid)
             await self.iface.send_no_wait(
                 probe_req(addressee, self.source_mac, ssid, channel=self.ap.channel)
             )
@@ -256,6 +260,7 @@ class DecloakCampaign(Campaign):
                     logger.info("[DECLOAK] %s deauthenticated us mid-sweep", self.ap.bssid)
                     return None
             self.sent += 1
+            logger.debug("[DECLOAK] %s: association request for %r", self.ap.bssid, ssid)
             if await association.associate_as(ssid) == 0:
                 self.array.decloak(self.ap, ssid, "assoc")
                 logger.info("[DECLOAK] %s accepted %r", self.ap.bssid, ssid)
