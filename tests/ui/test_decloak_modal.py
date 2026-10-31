@@ -401,5 +401,5 @@ def test_wordlist_head_keeps_spacing_and_skips_undecodable_lines(tmp_path):
 
 def test_airtime_counts_every_enabled_method():
     assert seconds_per_ssid(DecloakInput([])) == pytest.approx(0.15)
-    assert seconds_per_ssid(DecloakInput([], True, True, True)) == pytest.approx(0.6)
+    assert seconds_per_ssid(DecloakInput([], True, True, True)) == pytest.approx(1.3)
     assert seconds_per_ssid(DecloakInput([], False, False, False)) == 0

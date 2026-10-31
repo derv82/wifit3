@@ -29,8 +29,8 @@ from wifit3.wlan.array import WlanArray
 logger = logging.getLogger(__name__)
 
 PROBE_RESPONSE_WAIT_S = 0.15
-AUTH_TIMEOUT_S = 0.2
-ASSOC_TIMEOUT_S = 0.3
+AUTH_TIMEOUT_S = 0.5
+ASSOC_TIMEOUT_S = 1.0
 
 # In-house list: keep growing it, do not import anyone else's.
 SIBLING_SUFFIXES: list[str] = [
