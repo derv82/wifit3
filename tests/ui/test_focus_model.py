@@ -16,7 +16,7 @@ from textual.widgets import Button
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.deauth import DeauthCampaign
 from wifit3.campaigns.eviltwin import EvilTwinCampaign
-from wifit3.campaigns.pbc import WpsPbcCapture
+from wifit3.campaigns.pbc import WpsPbcCampaign
 from wifit3.campaigns.pin import WpsCampaign
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
@@ -81,7 +81,7 @@ class _FakePmkid(PmkidHarvestAttack):
         self.fail_reason = None
         self.pmkid = None
 
-class _FakePbc(WpsPbcCapture):
+class _FakePbc(WpsPbcCampaign):
     def __init__(self, *, target=None):
         self.target = target or _wpa_ap()
 

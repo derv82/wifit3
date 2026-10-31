@@ -46,7 +46,7 @@ from wifit3.campaigns.pin import (EMPTY_PIN_LABEL, WpsCampaign, load_run_state,
                                   run_progress_line)
 from wifit3.campaigns.deauth import DeauthCampaign
 from wifit3.campaigns.decloak import DecloakCampaign, DecloakInput, KnownDecloakCampaign
-from wifit3.campaigns.pbc import WpsPbcCapture
+from wifit3.campaigns.pbc import WpsPbcCampaign
 from wifit3.campaigns.probe import probe_ap
 from wifit3.campaigns.probe.broadcom_wps import WpsImplementation, probe_wps_implementation
 from .campaign_controls import CampaignControls
@@ -383,7 +383,7 @@ class FocusViewV2(Screen):
 
     def _pbc_busy(self) -> bool:
         cur = self._controls.current
-        return isinstance(cur, WpsPbcCapture) and not cur.done
+        return isinstance(cur, WpsPbcCampaign) and not cur.done
 
     def _is_probing(self) -> bool:
         return self._probe_task is not None and not self._probe_task.done()
@@ -1450,7 +1450,7 @@ class FocusViewV2(Screen):
             return
         self._log("[bold cyan]WPS PushButton:[/bold cyan] [bold green]Window Open[/bold green] "
                   "(auto-capturing PSK)")
-        self._controls.start(WpsPbcCapture, array, ap,
+        self._controls.start(WpsPbcCampaign, array, ap,
                              log=lambda m: self._log(treelog.branch(m)))
 
     def _finish_pbc(self, camp) -> None:

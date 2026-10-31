@@ -1,9 +1,9 @@
-"""Tests for WpsPbcCapture.capture()'s lease."""
+"""Tests for WpsPbcCampaign.capture()'s lease."""
 
 import pytest
 
 from wifit3.campaigns import pbc as pbc_mod
-from wifit3.campaigns.pbc import WpsPbcCapture
+from wifit3.campaigns.pbc import WpsPbcCampaign
 from wifit3.campaigns.wps.registrar import AttemptOutcome, PinResult
 from wifit3.wlan.lease import Lease
 from wifit3.dot11 import mac_to_str, str_to_mac
@@ -127,7 +127,7 @@ async def test_pbc_capture_arms_and_restores_via_lease(monkeypatch):
     aborted = AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="x")
     _patch_collaborators(monkeypatch, aborted)
 
-    camp = WpsPbcCapture(array, _pbc_target(), our_mac=bytes.fromhex("02aabbccddee"))
+    camp = WpsPbcCampaign(array, _pbc_target(), our_mac=bytes.fromhex("02aabbccddee"))
     outcome = await camp.capture()
 
     assert outcome is aborted
@@ -148,7 +148,7 @@ async def test_pbc_capture_success_skips_leaving_deauth(monkeypatch):
     ok = AttemptOutcome(PinResult.SUCCESS, "<PBC>", psk="secret")
     _patch_collaborators(monkeypatch, ok)
 
-    camp = WpsPbcCapture(array, _pbc_target(), our_mac=bytes.fromhex("02aabbccddee"))
+    camp = WpsPbcCampaign(array, _pbc_target(), our_mac=bytes.fromhex("02aabbccddee"))
     outcome = await camp.capture()
 
     assert outcome is ok

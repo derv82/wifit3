@@ -18,7 +18,7 @@ from ..ap_table import APTable, APRow, COLUMN_KEYS
 from ..selectable_rich_log import SelectableRichLog
 
 from wifit3.campaigns import treelog
-from wifit3.campaigns.pbc import WpsPbcCapture
+from wifit3.campaigns.pbc import WpsPbcCampaign
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.persist.ap_state import PasswordStatus
@@ -572,7 +572,7 @@ class ScannerView(Screen):
         try:
             await array.stop_hopping()
             await array.set_channel(ap.channel)
-            outcome = await WpsPbcCapture(
+            outcome = await WpsPbcCampaign(
                 array, ap, log=lambda m: self._write_log(treelog.branch(m))
             ).capture()
             if outcome.result is PinResult.SUCCESS:

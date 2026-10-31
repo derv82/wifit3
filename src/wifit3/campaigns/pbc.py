@@ -1,4 +1,4 @@
-"""WpsPbcCapture: live orchestrator for opportunistic WPS Push-Button capture.
+"""WpsPbcCampaign: live orchestrator for opportunistic WPS Push-Button capture.
 
 Given an AP in (or entering) its PBC walk window, associate as an Enrollee and
 run the WpsEnrollee exchange to extract the PSK from M8. This is the active piece
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 SETTLE_S = 1.0  # On the AP's channel before Auth: some routers advertise PBC before they're actually ready
 
 
-class WpsPbcCapture(Campaign):
+class WpsPbcCampaign(Campaign):
     button_id = None   # no button, auto-triggered when a PBC window opens
     key = "pbc"
     stoppable = False
