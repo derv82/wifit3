@@ -18,9 +18,7 @@ from ..ap_table import APTable, APRow, COLUMN_KEYS
 from ..selectable_rich_log import SelectableRichLog
 
 from wifit3.campaigns import treelog
-from wifit3.campaigns.pbc import WpsPbcCampaign
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
-from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config
 from wifit3.models import AccessPoint
@@ -184,7 +182,6 @@ class ScannerView(Screen):
         self._beacon_flash_until: Dict[str, float] = {}
         # Per-BSSID (signature, row): an unchanged AP reuses its row object.
         self._row_cache: Dict[str, tuple] = {}
-        self._pbc_capturing = False          # one PBC invade at a time
         self._logged_auto_crack: Optional[bool] = None
 
     # ----- Compose / mount ---------------------------------------------------
@@ -239,7 +236,7 @@ class ScannerView(Screen):
             channels=self._channel_filter, interval=0.25
         )
         if self.app.pbc_enabled:
-            self._arm_open_windows()
+            self._check_open_pbc_windows()
 
     # ----- Per-tick refresh --------------------------------------------------
 
@@ -402,9 +399,9 @@ class ScannerView(Screen):
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
         elif isinstance(ev, PbcWindowOpened):
-            # Windows that open under another screen are picked up on resume (_arm_open_windows).
+            # Windows that open under another screen are picked up on resume.
             ap = self.app.array.access_points.get(ev.bssid) if self.app.array else None
-            if ap is not None and self.app.screen is self:
+            if ap is not None:
                 self._on_pbc_window(ap)
             return
         elif isinstance(ev, ApDecloaked):
@@ -479,22 +476,14 @@ class ScannerView(Screen):
         self.app.persist_config()
         self._log_pbc_status()
         if self.app.pbc_enabled:
-            self._arm_open_windows()
+            self._check_open_pbc_windows()
 
-    def _arm_open_windows(self) -> None:
-        """React to PBC windows that are *already* open at the instant we arm."""
+    def _check_open_pbc_windows(self) -> None:
         array = self.app.array
         if not array:
             return
-        launched = self._pbc_capturing
         for ap in array.get_access_points():
-            if not ap.wps_pbc_active:
-                continue
-            if self.app.vault.has_psk(ap):
-                ssid = escape(ap.ssid or ap.bssid)
-                self._write_log(f"  [dim]({ssid} already captured, PSK: [bold]{escape(self.app.vault.known_psk(ap) or '?')}[/bold])[/dim]")
-            elif not launched:
-                launched = True
+            if ap.wps_pbc_active:
                 self._on_pbc_window(ap)
 
     def _log_pbc_status(self) -> None:
@@ -540,7 +529,7 @@ class ScannerView(Screen):
             f'= "{escape(job.key or "")}"', emoji=False))
 
     def _on_pbc_window(self, ap: AccessPoint) -> None:
-        if Config.is_silenced(ap.bssid):
+        if Config.is_silenced(ap.bssid) or ap.is_hidden or self.app.screen is not self:
             return
         label = escape(ap.ssid or ap.bssid)
         self._write_log(
@@ -550,56 +539,11 @@ class ScannerView(Screen):
         if not self.app.pbc_enabled:
             self._write_log(treelog.leaf("[dim]auto-invade off: press [bold]w[/bold] to enable[/dim]"))
             return
-        if self.app.vault.has_psk(ap):
-            wps = self.app.vault.wps_capture(ap)
-            where = f" [dim]({escape(Path(wps.path).name)})[/dim]" if wps else ""
-            self._write_log(treelog.leaf(f"[italic]already captured[/italic]{where}"))
+        if self.app.vault.ap_state(ap.bssid).status is PasswordStatus.CURRENT:
+            self._write_log(treelog.leaf("[italic]password already CURRENT[/italic]"))
             return
-        if self._pbc_capturing:
-            return
-        self.run_worker(self._invade_pbc(ap))
-
-    async def _invade_pbc(self, ap: AccessPoint) -> None:
-        """Pause hop → tune to the target → run the PBC enrollment → resume."""
-        array = self.app.array
-        if not array:
-            return
-        self._pbc_capturing = True
-        label = escape(ap.ssid or ap.bssid)
-        self._write_log(treelog.branch(
-            f"[cyan]invading[/cyan] [bold]{label}[/bold]: pausing hop, "
-            f"tuning [cyan]CH {ap.channel}[/cyan]…"))
-        try:
-            await array.stop_hopping()
-            await array.set_channel(ap.channel)
-            outcome = await WpsPbcCampaign(
-                array, ap, log=lambda m: self._write_log(treelog.branch(m))
-            ).capture()
-            if outcome.result is PinResult.SUCCESS:
-                ap.wps_pbc_psk = outcome.psk
-                name = escape(outcome.ssid or ap.ssid or ap.bssid)
-                self._write_log(treelog.branch_ok(
-                    f"[black bold on cyan] PSK for {name}: \"{escape(outcome.psk)}\" [/black bold on cyan]"))
-                try:
-                    result = self.app.vault.save_wps_pbc(ap, outcome.psk)
-                except OSError:
-                    result = None
-                if result is None:
-                    self._write_log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
-                else:
-                    verb = "saved" if result.was_new else "already saved as"
-                    self._write_log(treelog.leaf(
-                        f"[cyan]{verb}[/cyan] [dim]{escape(result.path.name)}[/dim]"))
-            else:
-                self._write_log(treelog.leaf_fail(
-                    f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim]"))
-        except Exception as exc:                       # never let an invade kill the scanner
-            self._write_log(treelog.leaf_fail(f"capture error: {escape(str(exc))}"))
-        finally:
-            self._pbc_capturing = False
-            if self.app.screen is self:
-                # Resume hopping only if we're still the foreground screen (not Focus).
-                await array.start_hopping(channels=self._channel_filter, interval=0.25)
+        self.app.target_ap = ap
+        self.app.push_screen("focus")
 
     def action_open_vault(self) -> None:
         self.app.action_toggle_vault()

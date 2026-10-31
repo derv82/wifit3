@@ -689,7 +689,7 @@ class FocusViewV2(Screen):
             return False
         if Config.is_silenced(ap.bssid) or ap.is_hidden:
             return False
-        if self.app.vault.has_psk(ap) or self._pbc_user_stopped:
+        if self.app.vault.ap_state(ap.bssid).status is PasswordStatus.CURRENT or self._pbc_user_stopped:
             return False
         if time.monotonic() < self._pbc_retry_after or self._pbc_busy():
             return False
