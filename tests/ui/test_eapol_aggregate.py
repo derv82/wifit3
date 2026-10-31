@@ -1,9 +1,9 @@
 """Unit tests for the deferred EAPOL → handshake-tree aggregator.
 
-Pure + clock-injected, so no UI / no hardware: feed CaptureEvents + a fake
+Pure + clock-injected, so no UI / no hardware: feed EAPOL / handshake events + a fake
 ``now`` and assert on the rendered markup lines.
 """
-from wifit3.ui.capture_events import CaptureEvent, CaptureKind
+from wifit3.watchers.ap_watcher import EapolFrameSeen, HandshakeCaptured
 from wifit3.ui.eapol_aggregate import EapolAggregator
 
 _BSSID = "11:22:33:44:55:66"
@@ -11,15 +11,14 @@ _CLIENT = "aa:bb:cc:dd:ee:ff"
 
 
 def _eapol(msg, *, client=_CLIENT, nonce=True, mic=True, eapol=True, pmkid=None):
-    return CaptureEvent(
-        kind=CaptureKind.EAPOL, bssid=_BSSID, client_mac=client, msg_num=msg,
+    return EapolFrameSeen(
+        bssid=_BSSID, ssid="X", channel=1, client_mac=client, msg_num=msg, replay_hex="00" * 8,
         has_nonce=nonce, has_mic=mic, eapol_complete=eapol, has_pmkid=pmkid,
     )
 
 
 def _hs(pair="M1+M2", client=_CLIENT):
-    return CaptureEvent(kind=CaptureKind.HANDSHAKE, bssid=_BSSID,
-                        client_mac=client, pair_label=pair)
+    return HandshakeCaptured(bssid=_BSSID, ssid="X", channel=1, client_mac=client, pair_label=pair)
 
 
 def test_complete_handshake_flushes_one_tree():

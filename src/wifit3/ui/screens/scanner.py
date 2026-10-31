@@ -25,11 +25,12 @@ from wifit3.persist.config import Config
 from wifit3.models import AccessPoint
 from wifit3.crack.handshake import pmkid_crackable
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
-
-from ..capture_events import (
-    CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
+from wifit3.watchers.ap_watcher import (
+    ApDecloaked, HandshakeCaptured, PmkidCaptured, UncrackableHandshakeSeen, WepKeyRecovered,
+    WpsPbcPskRecovered, WpsPinRecovered, WpsPskRecovered,
 )
-from ..capture_log import saved_psk_markup
+
+from ..capture_log import DECLOAK_METHOD_LABELS, saved_psk_markup
 from ..encryption_format import EncryptionSummary, wep_key_hex_and_ascii
 from wifit3.wlan.channels import band_ranges
 
@@ -42,8 +43,6 @@ if TYPE_CHECKING:
 
 STALE_DURATION_S = 10.0  # Seconds without a beacon before an AP row is dimmed.
 EVICT_DURATION_S = 30.0  # Seconds without a beacon before an AP is dropped from the table.
-FADE_DURATION_S = EVICT_DURATION_S
-
 
 
 def device_scan_summary(members) -> Optional[str]:
@@ -76,7 +75,7 @@ class _ChannelReadout(HeaderClock):
         self.set_interval(0.25, self._poll)   # hop cadence
 
     def _poll(self) -> None:
-        array = getattr(self.app, "array", None)
+        array = self.app.array
         members = array.members if array else []
         channels = " | ".join(f"CH:{m.current_channel:>3}" for m in members)
         if channels != self.channels:
@@ -178,13 +177,10 @@ class ScannerView(Screen):
         self._last_sort_time: float = 0.0
         self._channel_filter: Optional[List[int]] = None
         self._scan_filter: ScanFilter = ScanFilter(hide_silenced=Config.hide_silenced)
-        self._events = CaptureEventDetector(granular_eapol=False)
         # Per-BSSID prev-beacon-count + flash-deadline for "beacon arrived"
         # cell highlight.
         self._prev_beacons: Dict[str, int] = {}
         self._beacon_flash_until: Dict[str, float] = {}
-        # Per-BSSID last-shown SSID, so a decloak is logged exactly once.
-        self._prev_ssids: Dict[str, Optional[str]] = {}
         # Per-BSSID (signature, row): an unchanged AP reuses its row object.
         self._row_cache: Dict[str, tuple] = {}
         # WPS PBC auto-invade. ON by default. The enabled flag lives on the app
@@ -254,8 +250,8 @@ class ScannerView(Screen):
         if not array:
             return
         self._evict_expired_aps()
-        # Under an opaque screen (Focus) the table is hidden: keep draining capture events, skip the
-        # rows. Textual's is_current is True here, and every table repaint would repaint Focus too.
+        # Under an opaque screen (Focus) the table is hidden: skip the rows. Textual's is_current is
+        # True here, and every table repaint would repaint Focus too.
         visible = self.is_active or self.app.screen.styles.background.a < 1
 
         # Pre-compute per-AP client counts to avoid O(N×M) inside the AP loop below.
@@ -280,8 +276,6 @@ class ScannerView(Screen):
             self.ap_cache[ap.bssid] = ap
             if visible:
                 rows.append(self._row_for(ap, now, client_counts.get(ap.bssid, 0), sibling_ssid))
-            self._log_decloak(ap)
-            self._drain_capture_events(ap, array.forged_macs)
 
         if not visible:
             return
@@ -364,9 +358,6 @@ class ScannerView(Screen):
             vault.revision(ap.bssid), Config.is_silenced(ap.bssid),
         )
 
-    def _log_decloak(self, ap: AccessPoint) -> None:
-        self._prev_ssids[ap.bssid] = ap.ssid
-
     def _evict_expired_aps(self) -> None:
         if not self.app.array:
             return
@@ -388,7 +379,6 @@ class ScannerView(Screen):
         self.ap_cache.pop(bssid, None)
         self._prev_beacons.pop(bssid, None)
         self._beacon_flash_until.pop(bssid, None)
-        self._prev_ssids.pop(bssid, None)
         self._row_cache.pop(bssid, None)
 
     def _best_named_sibling_ssid(self, ap: AccessPoint) -> Optional[str]:
@@ -407,56 +397,52 @@ class ScannerView(Screen):
 
     # ----- Capture-event logging ---------------------------------------------
 
-    def _drain_capture_events(self, ap: AccessPoint, forged_macs) -> None:
-        if Config.is_silenced(ap.bssid):
-            return
-        for ev in self._events.poll(ap, forged_macs=forged_macs):
-            self._log_capture_event(ev, ap)
-
-    def _log_capture_event(self, ev: CaptureEvent, ap: AccessPoint) -> None:
+    def on_wifite_app_ap_event_detected(self, message: "WifiteApp.ApEventDetected") -> None:
+        ev = message.event
         ap_label = escape(ev.ssid or ev.bssid)
-        client = escape(ev.client_mac)
         save_result = None
-        if ev.kind == CaptureKind.HANDSHAKE:
-            pair = ev.pair_label or "?"
+        toast_title = None
+        if isinstance(ev, HandshakeCaptured):
             msg = (
-                f"[bold green]✓ HANDSHAKE[/bold green] ({pair}) on "
-                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{client}[/bold]"
+                f"[bold green]✓ HANDSHAKE[/bold green] ({ev.pair_label}) on "
+                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
-            save_result = self.app.vault.save_handshake(ap, ev.client_mac)
-        elif ev.kind == CaptureKind.UNCRACKABLE_HANDSHAKE:
+            save_result = ev.save_result
+            toast_title = f"Handshake captured ({ev.pair_label})"
+        elif isinstance(ev, UncrackableHandshakeSeen):
             msg = (
-                f"[bold yellow]● {escape(ev.value or '?')} 4-way[/bold yellow] on "
+                f"[bold yellow]● {escape(ev.akm_label)} 4-way[/bold yellow] on "
                 f"[bold cyan]{ap_label}[/bold cyan] [dim](not crackable, -m 22000)[/dim]"
             )
-        elif ev.kind == CaptureKind.PMKID:
+        elif isinstance(ev, PmkidCaptured):
             msg = (
                 f"[bold green]✓ PMKID[/bold green] on "
-                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{client}[/bold]"
+                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
-            save_result = self.app.vault.save_pmkid(ap, ev.client_mac)
-        elif ev.kind == CaptureKind.DECLOAK:
+            save_result = ev.save_result
+            toast_title = "PMKID captured (M1)"
+        elif isinstance(ev, ApDecloaked):
             # A ● header (not a ✓ win): a hidden SSID became visible, not a credential.
-            if Config.remember_decloak(ev.bssid, ev.ssid or ""):
-                self.app.persist_config()
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._write_log(Text.from_markup(treelog.header(
                 f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
                 f"[green]{escape(ev.ssid or '')}[/green] "
                 f"[dim]via {method_label}[/dim]"), emoji=False))
             return
-        elif ev.kind == CaptureKind.WEP_KEY:
+        elif isinstance(ev, WepKeyRecovered):
             msg = (f"[bold green]✓ WEP KEY[/bold green] on "
-                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(wep_key_hex_and_ascii(ev.value or ''))}")
-        elif ev.kind == CaptureKind.WPS_PIN:
+                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(wep_key_hex_and_ascii(ev.key_hex))}")
+            self.notify(f"{ev.ssid or ev.bssid}: {wep_key_hex_and_ascii(ev.key_hex)}",
+                        title="WEP key recovered", timeout=6)
+        elif isinstance(ev, WpsPinRecovered):
             msg = (f"[bold green]✓ WPS PIN[/bold green] on "
-                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(ev.value or EMPTY_PIN_LABEL)}")
-        elif ev.kind == CaptureKind.WPS_PSK:
+                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(ev.pin or EMPTY_PIN_LABEL)}")
+        elif isinstance(ev, WpsPskRecovered):
             msg = (f'[bold green]✓ WPS PSK[/bold green] on '
-                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.value or "")}"')
-        elif ev.kind == CaptureKind.WPS_PBC:
+                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.psk)}"')
+        elif isinstance(ev, WpsPbcPskRecovered):
             msg = (f'[bold green]✓ WPS PSK[/bold green] [dim](via PushButton)[/dim] on '
-                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.value or "")}"')
+                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.psk)}"')
         else:
             return  # eapol events suppressed in scanner
         # Leading space aligns the ✓ win with the ● / ├─► / └─► tree log above it.
@@ -466,17 +452,10 @@ class ScannerView(Screen):
             self._write_log(Text.from_markup(treelog.leaf(
                 f"[dim]({verb} {escape(save_result.path.name)})[/dim]"
                 f"{saved_psk_markup(save_result.matches_saved_psk)}"), emoji=False))
-        title = CAPTURE_TOAST_TITLES.get(ev.kind)
-        if title:
-            name = ev.ssid or ev.bssid
-            if ev.kind == CaptureKind.WEP_KEY:
-                self.notify(f"{name}: {wep_key_hex_and_ascii(ev.value or '')}", title=title, timeout=6)
-            else:
-                pair = ev.pair_label or ("M1" if ev.kind == CaptureKind.PMKID else None)
-                full_title = f"{title} ({pair})" if pair else title
-                body = (f"[bold]{escape(name)}[/bold] on channel [bold]{ap.channel}[/bold] "
-                        f"[dim bold](BSSID: {escape(ap.bssid)})[/dim bold]")
-                self.notify(body, title=full_title, timeout=6)
+        if toast_title:
+            body = (f"[bold]{escape(ev.ssid or ev.bssid)}[/bold] on channel [bold]{ev.channel}[/bold] "
+                    f"[dim bold](BSSID: {escape(ev.bssid)})[/dim bold]")
+            self.notify(body, title=toast_title, timeout=6)
 
     def _write_log(self, text) -> None:
         try:

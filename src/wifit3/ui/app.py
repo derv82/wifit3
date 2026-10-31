@@ -26,6 +26,7 @@ from wifit3.device.manager import DeviceManager, Status
 from wifit3.device.watch import DeviceWatch
 from wifit3.wlan.array import WlanArray
 from wifit3.models import AccessPoint
+from wifit3.watchers.ap_watcher import ApDecloaked, ApEvent, ApWatcher
 
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView
@@ -144,6 +145,13 @@ class WifiteApp(App):
             super().__init__()
             self.job = job
 
+    class ApEventDetected(Message):
+        """An ApWatcher event; posted to every screen on the stack."""
+
+        def __init__(self, event: ApEvent) -> None:
+            super().__init__()
+            self.event = event
+
     active_jobs: reactive[List[JobState]] = reactive([], always_update=True)
     vault_open: reactive[bool] = reactive(False)
 
@@ -168,6 +176,7 @@ class WifiteApp(App):
         self._vault_full_refresh = False        # one of them was a full refresh (BSSID None)
         self.vault.subscribe(self._vault_changed)
         self.vault.set_probed_ssids_source(self._probed_ssids)
+        self.ap_watcher = ApWatcher(self.vault)
         self._job_status: dict[str, ToolStatus] = {}
         self.pbc_enabled: bool = Config.wps_auto_pbc
         register_app_themes(self)
@@ -210,6 +219,7 @@ class WifiteApp(App):
         self.push_screen("splash")
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
         self.set_interval(2.0, self._poll_jobs)
+        self.set_interval(1 / 15, self._poll_ap_events)
         self.call_after_refresh(self.device_watch.poll)
         self.call_after_refresh(self._poll_jobs)
         self._quit_on_termination_signals()
@@ -261,6 +271,16 @@ class WifiteApp(App):
         self.vault.manager.poll_jobs()
         self.active_jobs = self.vault.manager.get_active_jobs()
         self._notify_completions()
+
+    def _poll_ap_events(self) -> None:
+        if self.array is None:
+            return
+        for event in self.ap_watcher.poll(self.array):
+            if isinstance(event, ApDecloaked):
+                if Config.remember_decloak(event.bssid, event.ssid or ""):
+                    self.persist_config()
+            for screen in self.screen_stack:
+                screen.post_message(self.ApEventDetected(event))
 
     def _notify_completions(self) -> None:
         """Toast each job the first time it finishes this session (auto-crack jobs only on SUCCESS)

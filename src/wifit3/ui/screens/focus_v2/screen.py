@@ -58,12 +58,12 @@ from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config
 from wifit3.persist.save import SaveResult
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
+from wifit3.watchers.ap_watcher import (
+    ApDecloaked, ApEvent, CaptureEventDetector, EapolFrameSeen, HandshakeCaptured, PmkidCaptured,
+)
 
 from ... import focus_model as fm
-from ...capture_events import (
-    CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
-)
-from ...capture_log import saved_psk_chip, short_sta
+from ...capture_log import DECLOAK_METHOD_LABELS, saved_psk_chip, short_sta
 from ...eapol_aggregate import EapolAggregator
 from ... import pmkid_log
 from ...encryption_format import wep_key_hex_and_ascii
@@ -286,7 +286,7 @@ class FocusViewV2(Screen):
         self._target_ap = None
         self._last_status: list[str] | None = None   # last-pushed headline; skip no-op repaints
         self._beacon_samples: deque = deque()
-        self._events = CaptureEventDetector(granular_eapol=True)
+        self._events = CaptureEventDetector()
         self._eapol_agg = EapolAggregator(settle_s=3.0)
         self._tick_timer = None
         # The one running campaign (Campaign.active is the radio mutex).
@@ -539,7 +539,7 @@ class FocusViewV2(Screen):
         logger.info("[FOCUS] enter: ssid=%r bssid=%s ch=%s", ap.ssid, ap.bssid, ap.channel)
 
         self._beacon_samples.clear()
-        self._events.reset()
+        self._events = CaptureEventDetector()
         self._eapol_agg.reset()
         self._prev_stats = None        # drop the old target's counters
         self._last_footer_markups = None
@@ -790,10 +790,10 @@ class FocusViewV2(Screen):
         # EAPOL + handshake completions go through the aggregator (one tree per client); PMKID / decloak are immediate.
         if Config.is_silenced(ap.bssid):
             return
-        for ev in self._events.poll(ap, forged_macs=forged_macs):
-            if ev.kind == CaptureKind.EAPOL:
+        for ev in self._events.poll(ap, forged_macs):
+            if isinstance(ev, EapolFrameSeen):
                 self._eapol_agg.on_eapol(ev, now)
-            elif ev.kind == CaptureKind.HANDSHAKE:
+            elif isinstance(ev, HandshakeCaptured):
                 # Save instantly
                 result = self.app.vault.save_handshake(ap, ev.client_mac)
                 hint = _save_line(result) if result is not None else None
@@ -814,8 +814,8 @@ class FocusViewV2(Screen):
         hs = ap.handshakes.get(mac)
         return handshake_uncrackable_label(hs) if hs is not None else None
 
-    def _log_capture_event(self, ev: CaptureEvent, ap) -> None:
-        if ev.kind == CaptureKind.PMKID:
+    def _log_capture_event(self, ev: ApEvent, ap) -> None:
+        if isinstance(ev, PmkidCaptured):
             self._log(
                 f"[black bold on green] ✓ PMKID captured [/black bold on green] "
                 f"from [bold]{short_sta(ev.client_mac)}[/bold]"
@@ -826,7 +826,7 @@ class FocusViewV2(Screen):
                 if chip:
                     self._log(treelog.branch(chip))
                 self._log(treelog.leaf(_save_line(result)))
-        elif ev.kind == CaptureKind.DECLOAK:
+        elif isinstance(ev, ApDecloaked):
             if Config.remember_decloak(ev.bssid, ev.ssid or ""):
                 self.app.persist_config()
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
@@ -1212,7 +1212,7 @@ class FocusViewV2(Screen):
             name = camp.target.ssid or camp.target.bssid
             body = (f"[bold]{escape(name)}[/bold] on channel [bold]{camp.target.channel}[/bold] "
                     f"[dim bold](BSSID: {escape(camp.target.bssid)})[/dim bold]")
-            self.notify(body, title=f"{CAPTURE_TOAST_TITLES[CaptureKind.PMKID]} (M1)", timeout=6)
+            self.notify(body, title="PMKID captured (M1)", timeout=6)
         elif getattr(camp, "stopped", False):
             self._log(treelog.leaf_fail("[bright_red bold]Stopped harvest[/]"))
         else:
@@ -1240,7 +1240,7 @@ class FocusViewV2(Screen):
 
     def _finish_deauth(self, camp) -> None:
         """Reap a completed deauth run. A captured handshake is saved+toasted by the
-        always-on capture path (CaptureKind.HANDSHAKE); we only log the campaign's end."""
+        always-on capture path (HandshakeCaptured); we only log the campaign's end."""
         if camp.captured:
             self._log("[bold green]✓ Deauth provoked a crackable handshake[/bold green]")
         else:
