@@ -1,4 +1,3 @@
-import asyncio
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -7,7 +6,9 @@ from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.reactive import Reactive
+from textual.css.query import NoMatches
 from textual.screen import Screen
+from textual.timer import Timer
 from textual.widgets import Footer, Header, RichLog, Static
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
 from rich.markup import escape
@@ -173,7 +174,8 @@ class ScannerView(Screen):
     def __init__(self):
         super().__init__()
         self.ap_cache: Dict[str, AccessPoint] = {}
-        self._refresh_timer = None
+        self._refresh_timer: Optional[Timer] = None
+        self._pbc_timer: Optional[Timer] = None
         self._last_sort_time: float = 0.0
         self._channel_filter: Optional[List[int]] = None
         self._scan_filter: ScanFilter = ScanFilter(hide_silenced=Config.hide_silenced)
@@ -204,7 +206,6 @@ class ScannerView(Screen):
         yield Footer()
 
     async def on_mount(self) -> None:
-        log = self.query_one("#system-log", RichLog)
         table = self.query_one("#ap-table", APTable)
         stored = "identity" if Config.scanner_sort in ("vendor", "brand") else Config.scanner_sort
         table.sort_column = stored if stored in COLUMN_KEYS else "signal"
@@ -212,7 +213,7 @@ class ScannerView(Screen):
         table.focus()
         array = self.app.array
 
-        log.write(treelog.header("Scanner initialized"))
+        self._write_log(treelog.header("Scanner initialized"))
         rows: List[str] = []
         summary = self.app.vault.summary()
         if summary:
@@ -224,7 +225,7 @@ class ScannerView(Screen):
         else:
             rows.append("[yellow]No active interface[/yellow]")
         for i, row in enumerate(rows):
-            log.write(treelog.leaf(row) if i == len(rows) - 1 else treelog.branch(row))
+            self._write_log(treelog.leaf(row) if i == len(rows) - 1 else treelog.branch(row))
 
         if array:
             # 15 FPS in-place value updates and sort refreshes.
@@ -439,7 +440,7 @@ class ScannerView(Screen):
     def _write_log(self, text) -> None:
         try:
             log = self.query_one("#system-log", RichLog)
-        except Exception:
+        except NoMatches:
             return
         # Bypass RichLog's emojis (would turn :ab: / :cd: inside a BSSID into 🆎 / 💿).
         if isinstance(text, str):
@@ -558,7 +559,7 @@ class ScannerView(Screen):
             return
         if self._pbc_capturing:
             return
-        asyncio.create_task(self._invade_pbc(ap))
+        self.run_worker(self._invade_pbc(ap))
 
     async def _invade_pbc(self, ap: AccessPoint) -> None:
         """Pause hop → tune to the target → run the PBC enrollment → resume."""
@@ -583,14 +584,14 @@ class ScannerView(Screen):
                     f"[black bold on cyan] PSK for {name}: \"{escape(outcome.psk)}\" [/black bold on cyan]"))
                 try:
                     result = self.app.vault.save_wps_pbc(ap, outcome.psk)
-                    if result is None:
-                        self._write_log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
-                    else:
-                        verb = "saved" if result.was_new else "already saved as"
-                        self._write_log(treelog.leaf(
-                            f"[cyan]{verb}[/cyan] [dim]{escape(result.path.name)}[/dim]"))
-                except Exception:
+                except OSError:
+                    result = None
+                if result is None:
                     self._write_log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
+                else:
+                    verb = "saved" if result.was_new else "already saved as"
+                    self._write_log(treelog.leaf(
+                        f"[cyan]{verb}[/cyan] [dim]{escape(result.path.name)}[/dim]"))
             else:
                 self._write_log(treelog.leaf_fail(
                     f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim]"))
@@ -636,17 +637,14 @@ class ScannerView(Screen):
         table.move_cursor(table.row_count - 1, animate=True)
 
     def action_change_channel(self) -> None:
-        log = self.query_one("#system-log", RichLog)
         array = self.app.array
         if not array:
-            log.write("[bold red][!] No active interface.[/bold red]")
+            self._write_log("[bold red][!] No active interface.[/bold red]")
             return
 
         supported = array.supported_channels
         if not supported:
-            log.write(
-                "[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]"
-            )
+            self._write_log("[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]")
             return
 
         dialog = ChannelFilterDialog(
@@ -659,7 +657,7 @@ class ScannerView(Screen):
         self, result: Optional[List[int]]
     ) -> None:
         if result is None:
-            self.query_one("#system-log", RichLog).write("[dim]Channel filter unchanged.[/dim]")
+            self._write_log("[dim]Channel filter unchanged.[/dim]")
         else:
             await self._apply_channel_filter(result)
         self.query_one(FilterBar).set_channels(self._channel_filter)
@@ -676,19 +674,16 @@ class ScannerView(Screen):
         dropped = self._prune_aps_outside(channels)
         await array.start_hopping(channels=self._channel_filter, interval=0.25)
 
-        log = self.query_one("#system-log", RichLog)
         pieces = [
             f"[bold cyan]{name}[/bold cyan] [dim]({rngs})[/dim]"
             for name, rngs in band_ranges(channels)
         ]
         summary = " and ".join(pieces) if pieces else "[dim]no channels[/dim]"
-        log.write(f" [dim]●[/dim] [bold]Channel hopping[/bold] across {summary}")
+        self._write_log(f" [dim]●[/dim] [bold]Channel hopping[/bold] across {summary}")
         if dropped:
             noun = "AP" if dropped == 1 else "APs"
-            log.write(
-                treelog.leaf(f"[dim]Cleared [bold]{dropped}[/bold] "
-                             f"{noun} outside the filter[/dim]")
-            )
+            self._write_log(treelog.leaf(f"[dim]Cleared [bold]{dropped}[/bold] "
+                                         f"{noun} outside the filter[/dim]"))
 
     # ----- Filter bar --------------------------------------------------------
 

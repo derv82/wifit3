@@ -4,19 +4,20 @@ import os
 import signal
 import sys
 import threading
+from typing import Any, List, Optional, Set
+
 from textual import events, work
-from textual.worker import get_current_worker
 from textual.app import App
 from textual.binding import Binding
 from textual.message import Message
+from textual.reactive import reactive
+from textual.timer import Timer
 from textual.widgets import Header
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
-from typing import Optional
+from textual.worker import get_current_worker
 
 from wifit3 import __version__
 from wifit3.chips import log_trace
-from textual.reactive import reactive
-from typing import List, Set
 from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config, ConfigError
@@ -140,7 +141,7 @@ class WifiteApp(App):
     """
 
     class JobCracked(Message):
-        """An auto-crack job recovered a key; posted to every screen on the stack."""
+        """A cracking job recovered a key; posted to every screen on the stack."""
 
         def __init__(self, job: JobState) -> None:
             super().__init__()
@@ -178,6 +179,8 @@ class WifiteApp(App):
         self.vault.subscribe(self._vault_changed)
         self.vault.set_probed_ssids_source(self._probed_ssids)
         self.ap_watcher = ApWatcher(self.vault)
+        self._device_timer: Optional[Timer] = None
+        self._handlers_before_mount: dict[signal.Signals, Any] = {}
         self.toasts = Toasts(self)
         self._job_status: dict[str, ToolStatus] = {}
         self.pbc_enabled: bool = Config.wps_auto_pbc
@@ -262,7 +265,7 @@ class WifiteApp(App):
         self._handlers_before_mount = {sig: signal.signal(sig, quit_on_signal) for sig in signals}
 
     def on_unmount(self) -> None:
-        for sig, handler in getattr(self, "_handlers_before_mount", {}).items():
+        for sig, handler in self._handlers_before_mount.items():
             signal.signal(sig, handler)
 
     def _quit_after_signal(self, sig: signal.Signals) -> None:
@@ -411,7 +414,8 @@ class WifiteApp(App):
 
     def _on_usb_fatal(self, err: WifiteFatalError) -> None:
         """The bus scan hit an unrecoverable backend error: stop watching + show the Quit-only modal."""
-        self._device_timer.stop()
+        if self._device_timer is not None:
+            self._device_timer.stop()
         self.push_screen(FatalErrorModal(err))
 
     def notify_device_lost(self, exc: Exception, remaining: int) -> None:
@@ -516,5 +520,5 @@ def _configure_file_logging(cli_log_level: Optional[str]) -> None:
     root.setLevel(level)
     root.addHandler(handler)
     _FILE_LOGGING_CONFIGURED = True
-    logger.info(f"Logging enabled (level={logging.getLevelName(level)})")
+    logger.info("Logging enabled (level=%s)", logging.getLevelName(level))
 

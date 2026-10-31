@@ -14,6 +14,7 @@ DECLOAK_METHOD_LABELS = {
     "probe_resp": "Probe Response",
     "assoc_req": "Association Request",
     "reassoc_req": "Reassociation Request",
+    "assoc": "Association Response",
 }
 
 
