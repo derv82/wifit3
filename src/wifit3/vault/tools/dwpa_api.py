@@ -1,7 +1,5 @@
 """Talk to a DWPA instance: submit a capture, query the k-anonymity DB for a network, and
 download the potfile of keys it has cracked for the user."""
-import base64
-import binascii
 import hashlib
 import json
 import re
@@ -46,7 +44,7 @@ def query_endpoint(url: str) -> str:
 
 
 def potfile_endpoint(url: str) -> str:
-    """The user's cracked keys, base64-encoded, as the API's download link serves them."""
+    """The user's cracked keys, as the API's download link serves them."""
     return f"{_base_url(url)}/?api&dl=1"
 
 
@@ -73,14 +71,12 @@ def retrieve_cracked(url: str, key: str) -> list[PotfileEntry]:
 
 
 def decode_potfile(body: bytes) -> str:
-    """wpa-sec serves the potfile as plain text; instances that base64-encode it also work."""
+    """The downloaded potfile text; an answer holding no potfile lines is an error, not an
+    empty result (e.g. a login page for a key the server no longer accepts)."""
     text = body.decode("utf-8", "replace")
-    if parse_potfile(text):
+    if not text.strip() or parse_potfile(text):
         return text
-    try:
-        return base64.b64decode(b"".join(body.split()), validate=True).decode("utf-8", "replace")
-    except (binascii.Error, ValueError):
-        raise DwpaError("The server did not send a potfile") from None
+    raise DwpaError("The server did not send a potfile")
 
 
 def upload_capture(url: str, key: str, capture_path: str) -> str:

@@ -1,4 +1,3 @@
-import base64
 import json
 import socket
 import threading
@@ -197,8 +196,8 @@ def test_the_potfile_lines_become_networks_and_skip_unusable_rows():
     ]
 
 
-def test_retrieve_downloads_and_base64_decodes_the_potfile(dwpa_service):
-    dwpa_service.answer(base64.b64encode(POTFILE.encode("utf-8")))
+def test_retrieve_downloads_the_potfile_with_the_key_cookie(dwpa_service):
+    dwpa_service.answer(POTFILE.encode("utf-8"))
 
     assert retrieve_cracked(dwpa_service.url, _KEY) == [
         PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", "TestAP-DWPA", "88888888"),
@@ -210,23 +209,6 @@ def test_retrieve_downloads_and_base64_decodes_the_potfile(dwpa_service):
     assert request.header("Cookie") == f"key={_KEY}"
 
 
-def test_an_unwrapped_base64_potfile_still_decodes(dwpa_service):
-    encoded = base64.encodebytes(POTFILE.encode("utf-8"))       # 76-column, newline-wrapped
-    dwpa_service.answer(encoded)
-
-    assert retrieve_cracked(dwpa_service.url, _KEY)[0].key == "88888888"
-
-
-def test_a_plain_text_potfile_like_wpa_sec_serves_it_is_read_too(dwpa_service):
-    dwpa_service.answer(POTFILE.encode("utf-8"))
-
-    assert retrieve_cracked(dwpa_service.url, _KEY) == [
-        PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", "TestAP-DWPA", "88888888"),
-        PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "E36W126F-Guest1",
-                     "pass:with:colons"),
-    ]
-
-
 def test_an_html_answer_raises_instead_of_looking_empty(dwpa_service):
     dwpa_service.answer(b"<!DOCTYPE html><html><body><form>Key</form></body></html>")
 
@@ -235,6 +217,6 @@ def test_an_html_answer_raises_instead_of_looking_empty(dwpa_service):
 
 
 def test_an_empty_potfile_has_no_networks(dwpa_service):
-    dwpa_service.answer(base64.b64encode(b""))
+    dwpa_service.answer(b"")
 
     assert retrieve_cracked(dwpa_service.url, _KEY) == []
