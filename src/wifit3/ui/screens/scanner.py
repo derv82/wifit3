@@ -235,8 +235,6 @@ class ScannerView(Screen):
         await array.start_hopping(
             channels=self._channel_filter, interval=0.25
         )
-        if self.app.pbc_enabled:
-            self._check_open_pbc_windows()
 
     # ----- Per-tick refresh --------------------------------------------------
 
@@ -399,7 +397,6 @@ class ScannerView(Screen):
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
         elif isinstance(ev, PbcWindowOpened):
-            # Windows that open under another screen are picked up on resume.
             ap = self.app.array.access_points.get(ev.bssid) if self.app.array else None
             if ap is not None:
                 self._on_pbc_window(ap)

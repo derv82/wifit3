@@ -1470,17 +1470,17 @@ class FocusViewV2(Screen):
         if outcome.result is PinResult.SUCCESS:
             ap.wps_pbc_psk = outcome.psk
             name = escape(outcome.ssid or ap.ssid or ap.bssid)
-            self._log(treelog.branch(
-                f"[black bold on green] Password for {name}: "
-                f"\"{escape(outcome.psk)}\" [/black bold on green]"))
+            password = (f"[black bold on green] Password for {name}: "
+                        f"\"{escape(outcome.psk)}\" [/black bold on green]")
             try:
                 result = self.app.vault.save_wps_pbc(ap, outcome.psk)
-                if result is None:
-                    self._log(treelog.leaf("[dim](save failed)[/dim]"))
-                else:
-                    self._log(treelog.leaf(_save_line(result)))
             except Exception:
+                result = None
+            if result is None:
+                self._log(treelog.branch(password))
                 self._log(treelog.leaf("[dim](save failed)[/dim]"))
+            else:
+                self._log(treelog.leaf(password))
         else:
             self._pbc_retry_after = time.monotonic() + _PBC_RETRY_COOLDOWN_S
             self._log(treelog.leaf_warn(
