@@ -8,6 +8,7 @@ the Scanner/Focus arming wires to; detection itself is passive
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -22,6 +23,7 @@ from .wps.registrar import AttemptOutcome, PinResult
 
 logger = logging.getLogger(__name__)
 
+SETTLE_S = 1.0  # On the AP's channel before Auth: some routers advertise PBC before they're actually ready
 
 
 class WpsPbcCapture(Campaign):
@@ -66,6 +68,7 @@ class WpsPbcCapture(Campaign):
                                  bssid=str_to_mac(self.bssid), ack_tally=True, iface=self.iface)
         wsc_2_0 = self.target.wps_version == "2.0"
         async with lease as iface:
+            await asyncio.sleep(SETTLE_S)
             if lease.mac:
                 self.our_mac = str_to_mac(lease.mac)
             assoc = Association(iface, self.bssid, self.target.ssid or "",
