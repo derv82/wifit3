@@ -9,7 +9,7 @@ from typing import Callable
 import pytest
 from textual import events
 from textual.app import ComposeResult
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Label
 
 from wifit3.campaigns.live_check import LiveKeyVerifier, VerifyResult, VerifyStatus
@@ -792,3 +792,22 @@ async def test_dwpa_retrieved_keys_are_merged_into_the_aps_potfile(tmp_path):
         other = PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "Elsewhere", "hunter22")
         assert panel._store_dwpa_keys([other]) == "No DWPA keys for the Vault's APs"
         assert app.vault.persisted("8e:6a:8d:a6:db:51") == []
+
+
+@pytest.mark.asyncio
+async def test_a_key_merged_while_a_modal_is_open_refreshes_the_vault(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        drawer = await _open_vault(app, pilot, "aa:bb:cc:dd:ee:ff")
+        item = drawer.query_one(VaultItemView)
+        app.push_screen(ModalScreen())      # the DWPA dialog stays open while it merges
+        await pilot.pause(0)
+
+        app.vault.merge_dwpa_keys("aa:bb:cc:dd:ee:ff", "HomeNet",
+                                  [PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66",
+                                                "HomeNet", "88888888")])
+        await pilot.pause(0)
+        await pilot.pause(0)
+
+        assert [key.value for key in item._state.keys] == ["88888888"]
