@@ -79,6 +79,7 @@ class _FakeArray:
 
 class _ScannerHost(App):
     CSS = WifiteApp.CSS
+    guessid = WifiteApp.guessid
 
     def __init__(self, array):
         super().__init__()

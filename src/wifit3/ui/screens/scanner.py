@@ -258,7 +258,7 @@ class ScannerView(Screen):
         for ap in array.get_access_points(include_eviltwin=False):
             guessid = None
             if ap.ssid is None:
-                guessid = Config.decloaked_ssid(ap.bssid) or array.guessid(ap) or None
+                guessid = self.app.guessid(ap) or None
             if not self._scan_filter.matches(ap, ssid=guessid):
                 if ap.bssid in self.ap_cache:
                     self._forget_row(ap.bssid, drop_from_array=False)

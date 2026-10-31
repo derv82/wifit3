@@ -405,7 +405,13 @@ class FocusViewV2(Screen):
             return dict(essid="", bssid="", channel=0, power_dbm=-100, signal=None,
                         wps=False, has_m1=False, probing=False, probe_disabled=False,
                         identity="", identity_details=None)
-        essid = fm.truncate_ssid(ap.ssid) if ap.ssid else "‹hidden›"
+        if ap.ssid:
+            essid = fm.truncate_ssid(ap.ssid)
+        else:
+            essid = "‹hidden›"
+            guessid = self.app.guessid(ap)
+            if guessid:
+                essid = f"{fm.truncate_ssid(guessid)}?"
         rate, _ = fm.beacon_rate(ap, self._beacon_samples, time.time())
         return dict(essid=essid, bssid=ap.bssid, channel=ap.channel,
                     power_dbm=ap.signal, signal=rate,
@@ -560,9 +566,13 @@ class FocusViewV2(Screen):
 
         # Log initial "target acquired"
         enc = fm.encryption_chip(ap)
+        guessid = self.app.guessid(ap)
         if ap.ssid:
             chip = f"[black bold on cyan] {escape(ap.ssid)} [/black bold on cyan]"
             self._log(f"[bold]Target acquired:[/bold] {chip}")
+        elif guessid:
+            self._log("[bold]Target acquired:[/bold] "
+                      f"[dim italic]cloaked network, likely {escape(guessid)}?[/dim italic]")
         else:
             self._log("[bold]Target acquired:[/bold] "
                       "[dim italic]cloaked network (hidden SSID)[/dim italic]")

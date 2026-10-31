@@ -10,6 +10,7 @@ from wifit3.wlan.sink import WlanSink
 from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
 from wifit3.ui.ap_table import APTable
+from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.scanner import ScannerView
 
 
@@ -85,6 +86,8 @@ class _FakeArray:
 
 
 class _ScannerHost(App):
+    guessid = WifiteApp.guessid
+
     def __init__(self, array: _FakeArray):
         super().__init__()
         self.array = array

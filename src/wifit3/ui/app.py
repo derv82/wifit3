@@ -287,10 +287,14 @@ class WifiteApp(App):
             ap = self.array.access_points.get(event.bssid)
             guessid = ""
             if ap is not None and ap.is_hidden:
-                guessid = Config.decloaked_ssid(ap.bssid) or self.array.guessid(ap)
+                guessid = self.guessid(ap)
             self.toasts.ap_event(event, guessid)
             for screen in self.screen_stack:
                 screen.post_message(self.ApEventDetected(event))
+
+    def guessid(self, ap: AccessPoint) -> str:
+        """The SSID this AP revealed in an earlier session, else its first named sibling's."""
+        return Config.decloaked_ssid(ap.bssid) or self.array.guessid(ap)
 
     def _notify_completions(self) -> None:
         """Toast each job the first time it finishes this session (auto-crack jobs only on SUCCESS)
