@@ -31,7 +31,7 @@ class _Host(App):
 
 
 class _FakeIface:
-    """Stubs app.array: get_access_points for _poll_pbc, start_hopping for on_screen_resume,
+    """Stubs app.array: get_access_points and start_hopping for on_screen_resume,
     members for the header's _ChannelReadout._poll timer."""
     members = []
 

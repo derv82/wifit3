@@ -23,18 +23,6 @@ from .wps.registrar import AttemptOutcome, PinResult
 logger = logging.getLogger(__name__)
 
 
-class PbcWatcher:
-    """Edge-detects PBC walk windows opening across the live AP list."""
-
-    def __init__(self):
-        self._active: set = set()
-
-    def new_windows(self, aps):
-        current = {ap.bssid for ap in aps if getattr(ap, "wps_pbc_active", False)}
-        opened = current - self._active
-        self._active = current
-        return [ap for ap in aps if ap.bssid in opened]
-
 
 class WpsPbcCapture(Campaign):
     button_id = None   # no button, auto-triggered when a PBC window opens

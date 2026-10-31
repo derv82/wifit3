@@ -18,7 +18,7 @@ from ..ap_table import APTable, APRow, COLUMN_KEYS
 from ..selectable_rich_log import SelectableRichLog
 
 from wifit3.campaigns import treelog
-from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
+from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.persist.ap_state import PasswordStatus
@@ -27,8 +27,8 @@ from wifit3.models import AccessPoint
 from wifit3.crack.handshake import pmkid_crackable
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
 from wifit3.watchers.ap_watcher import (
-    ApDecloaked, HandshakeCaptured, PmkidCaptured, UncrackableHandshakeSeen, WepKeyRecovered,
-    WpsPbcPskRecovered, WpsPinRecovered, WpsPskRecovered,
+    ApDecloaked, HandshakeCaptured, PbcWindowOpened, PmkidCaptured, UncrackableHandshakeSeen,
+    WepKeyRecovered, WpsPbcPskRecovered, WpsPinRecovered, WpsPskRecovered,
 )
 
 from ..capture_log import DECLOAK_METHOD_LABELS, saved_psk_markup
@@ -175,7 +175,6 @@ class ScannerView(Screen):
         super().__init__()
         self.ap_cache: Dict[str, AccessPoint] = {}
         self._refresh_timer: Optional[Timer] = None
-        self._pbc_timer: Optional[Timer] = None
         self._last_sort_time: float = 0.0
         self._channel_filter: Optional[List[int]] = None
         self._scan_filter: ScanFilter = ScanFilter(hide_silenced=Config.hide_silenced)
@@ -185,10 +184,7 @@ class ScannerView(Screen):
         self._beacon_flash_until: Dict[str, float] = {}
         # Per-BSSID (signature, row): an unchanged AP reuses its row object.
         self._row_cache: Dict[str, tuple] = {}
-        # WPS PBC auto-invade. ON by default. The enabled flag lives on the app
-        # (app.pbc_enabled). Watcher + capturing serialization stay Scanner-local.
-        self._pbc_watcher = PbcWatcher()
-        self._pbc_capturing = False          # serialize: one invade at a time
+        self._pbc_capturing = False          # one PBC invade at a time
         self._logged_auto_crack: Optional[bool] = None
 
     # ----- Compose / mount ---------------------------------------------------
@@ -230,7 +226,6 @@ class ScannerView(Screen):
         if array:
             # 15 FPS in-place value updates and sort refreshes.
             self._refresh_timer = self.set_interval(1 / 15, self.refresh_table)
-            self._pbc_timer = self.set_interval(1.0, self._poll_pbc)
             self._log_pbc_status()  # Auto-invade is ON by default
             self._log_auto_crack_status_when_changed()
 
@@ -243,6 +238,8 @@ class ScannerView(Screen):
         await array.start_hopping(
             channels=self._channel_filter, interval=0.25
         )
+        if self.app.pbc_enabled:
+            self._arm_open_windows()
 
     # ----- Per-tick refresh --------------------------------------------------
 
@@ -404,6 +401,12 @@ class ScannerView(Screen):
                 f"[bold green]✓ PMKID[/bold green] on "
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
+        elif isinstance(ev, PbcWindowOpened):
+            # Windows that open under another screen are picked up on resume (_arm_open_windows).
+            ap = self.app.array.access_points.get(ev.bssid) if self.app.array else None
+            if ap is not None and self.app.screen is self:
+                self._on_pbc_window(ap)
+            return
         elif isinstance(ev, ApDecloaked):
             # A ● header (not a ✓ win): a hidden SSID became visible, not a credential.
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
@@ -535,13 +538,6 @@ class ScannerView(Screen):
         self._write_log(Text.from_markup(
             f' {label} [dim](via {escape(job.display_name)})[/dim] '
             f'= "{escape(job.key or "")}"', emoji=False))
-
-    def _poll_pbc(self) -> None:
-        array = self.app.array
-        if not array or self.app.screen is not self:
-            return
-        for ap in self._pbc_watcher.new_windows(array.get_access_points()):
-            self._on_pbc_window(ap)
 
     def _on_pbc_window(self, ap: AccessPoint) -> None:
         if Config.is_silenced(ap.bssid):

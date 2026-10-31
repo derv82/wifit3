@@ -502,7 +502,6 @@ async def _scanner_app():
         # These tests drive refresh_table() themselves; leaving the 15 Hz tick running
         # just makes every pilot.pause() wait on another round of timer messages.
         app.screen._refresh_timer.stop()
-        app.screen._pbc_timer.stop()
         yield app, aps, pilot
 
 

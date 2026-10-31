@@ -6,7 +6,8 @@ from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
 from wifit3.watchers.ap_watcher import (
     ApDecloaked, ApWatcher, CaptureEventDetector, DecloakDetector, EapolFrameDetector,
-    HandshakeCaptured, HandshakeDetector, PmkidCaptured, PmkidDetector, UncrackableHandshakeDetector,
+    HandshakeCaptured, HandshakeDetector, PbcWindowDetector, PmkidCaptured, PmkidDetector,
+    UncrackableHandshakeDetector,
     WepKeyDetector, WepKeyRecovered, WpsPbcPskDetector, WpsPbcPskRecovered, WpsPinDetector,
     WpsPinRecovered, WpsPskDetector, WpsPskRecovered,
 )
@@ -188,6 +189,26 @@ def test_no_decloak_for_an_ap_never_seen_hidden():
     det = DecloakDetector()
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="Public_WiFi", decloak_method="probe_resp")
     assert det.poll(ap) == []
+
+
+# ----- PbcWindowDetector -------------------------------------------------------
+
+def _pbc_ap(bssid: str) -> AccessPoint:
+    return AccessPoint(bssid=bssid, ssid="Net", wps=True, wps_device_password_id=0x0004)
+
+
+def test_pbc_window_reported_once_per_opening():
+    det = PbcWindowDetector()
+    ap = _pbc_ap("aa:bb:cc:dd:ee:01")
+    assert det.poll(ap) == []
+
+    ap.wps_selected_registrar = True
+    assert len(det.poll(ap)) == 1
+    assert det.poll(ap) == []                    # still open
+    ap.wps_selected_registrar = False
+    assert det.poll(ap) == []                    # closed
+    ap.wps_selected_registrar = True
+    assert len(det.poll(ap)) == 1                # reopened
 
 
 # ----- Credential detectors ----------------------------------------------------

@@ -57,6 +57,11 @@ class ApDecloaked(ApEvent):
 
 
 @dataclass(frozen=True)
+class PbcWindowOpened(ApEvent):
+    pass
+
+
+@dataclass(frozen=True)
 class WepKeyRecovered(ApEvent):
     key_hex: str
 
@@ -253,6 +258,22 @@ class PmkidDetector:
         return [PmkidCaptured(bssid=ap.bssid, ssid=ap.ssid, channel=ap.channel, client_mac=client_mac)]
 
 
+class PbcWindowDetector:
+    """A WPS Push-Button window opening; again after it closes and reopens."""
+
+    def __init__(self) -> None:
+        self._open_bssids: Set[str] = set()
+
+    def poll(self, ap: AccessPoint) -> List[PbcWindowOpened]:
+        if not ap.wps_pbc_active:
+            self._open_bssids.discard(ap.bssid)
+            return []
+        if ap.bssid in self._open_bssids:
+            return []
+        self._open_bssids.add(ap.bssid)
+        return [PbcWindowOpened(bssid=ap.bssid, ssid=ap.ssid, channel=ap.channel)]
+
+
 class WepKeyDetector:
     """A recovered WEP key, once per AP."""
 
@@ -316,6 +337,7 @@ class CaptureEventDetector:
         self._handshakes = HandshakeDetector()
         self._uncrackable_handshakes = UncrackableHandshakeDetector()
         self._pmkids = PmkidDetector()
+        self._pbc_windows = PbcWindowDetector()
         self._wep_keys = WepKeyDetector()
         self._wps_pins = WpsPinDetector()
         self._wps_psks = WpsPskDetector()
@@ -333,6 +355,7 @@ class CaptureEventDetector:
             events += self._handshakes.poll(ap, client_mac, handshake)
             events += self._uncrackable_handshakes.poll(ap, client_mac, handshake)
             events += self._pmkids.poll(ap, client_mac, handshake)
+        events += self._pbc_windows.poll(ap)
         events += self._wep_keys.poll(ap)
         events += self._wps_pins.poll(ap)
         events += self._wps_psks.poll(ap)
