@@ -7,10 +7,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from wifit3.vault.tools.dwpa_api import (DwpaError, DwpaNetwork, is_valid_key, network_hash,
-                                         network_leaked, parse_potfile, potfile_endpoint,
-                                         query_endpoint, retrieve_cracked, submit_endpoint,
-                                         upload_capture)
+from wifit3.persist.potfile import PotfileEntry, parse_potfile
+from wifit3.vault.tools.dwpa_api import (DwpaError, is_valid_key, network_hash, network_leaked,
+                                         potfile_endpoint, query_endpoint, retrieve_cracked,
+                                         submit_endpoint, upload_capture)
 
 _KEY = "0123456789abcdef0123456789abcdef"
 
@@ -191,8 +191,9 @@ def test_an_answer_without_the_suffix_is_a_miss(dwpa_service):
 
 def test_the_potfile_lines_become_networks_and_skip_unusable_rows():
     assert parse_potfile(POTFILE) == [
-        DwpaNetwork("aa:bb:cc:dd:ee:ff", "TestAP-DWPA", "88888888"),
-        DwpaNetwork("8e:6a:8d:a6:db:51", "E36W126F-Guest1", "pass:with:colons"),
+        PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", "TestAP-DWPA", "88888888"),
+        PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "E36W126F-Guest1",
+                     "pass:with:colons"),
     ]
 
 
@@ -200,8 +201,9 @@ def test_retrieve_downloads_and_base64_decodes_the_potfile(dwpa_service):
     dwpa_service.answer(base64.b64encode(POTFILE.encode("utf-8")))
 
     assert retrieve_cracked(dwpa_service.url, _KEY) == [
-        DwpaNetwork("aa:bb:cc:dd:ee:ff", "TestAP-DWPA", "88888888"),
-        DwpaNetwork("8e:6a:8d:a6:db:51", "E36W126F-Guest1", "pass:with:colons"),
+        PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", "TestAP-DWPA", "88888888"),
+        PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "E36W126F-Guest1",
+                     "pass:with:colons"),
     ]
     request = dwpa_service.requests[0]
     assert (request.method, request.path) == ("GET", "/?api&dl=1")
@@ -219,8 +221,9 @@ def test_a_plain_text_potfile_like_wpa_sec_serves_it_is_read_too(dwpa_service):
     dwpa_service.answer(POTFILE.encode("utf-8"))
 
     assert retrieve_cracked(dwpa_service.url, _KEY) == [
-        DwpaNetwork("aa:bb:cc:dd:ee:ff", "TestAP-DWPA", "88888888"),
-        DwpaNetwork("8e:6a:8d:a6:db:51", "E36W126F-Guest1", "pass:with:colons"),
+        PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", "TestAP-DWPA", "88888888"),
+        PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "E36W126F-Guest1",
+                     "pass:with:colons"),
     ]
 
 

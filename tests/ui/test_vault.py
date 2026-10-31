@@ -28,7 +28,7 @@ from wifit3.ui.screens.vault_item import (DeleteKeyPressed, VaultItemView, date_
                                           _KeyRow, _no_crackable_text, _UncrackedList)
 from wifit3.ui.vault.modals.add_credential import ManualCredential
 from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
-from wifit3.vault.tools.dwpa_api import DwpaNetwork
+from wifit3.persist.potfile import PotfileEntry, read_potfile
 from wifit3.crack import wpa_psk
 from wifit3.dot11.wpa import derive_pmk
 from tests.hashline_dates import write_hashline_dates
@@ -774,7 +774,7 @@ async def test_removing_the_pane_cancels_its_running_live_check(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dwpa_retrieved_keys_are_saved_to_the_vault(tmp_path):
+async def test_dwpa_retrieved_keys_are_merged_into_the_aps_potfile(tmp_path):
     name = "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_handshake.pcap"
     (tmp_path / name).write_bytes(b"")
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE)
@@ -782,12 +782,13 @@ async def test_dwpa_retrieved_keys_are_saved_to_the_vault(tmp_path):
     async with app.run_test() as pilot:
         item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
         panel = item.query_one(_ApStatePanel)
-        network = DwpaNetwork("aa:bb:cc:dd:ee:ff", "HomeNet", "88888888")
+        network = PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", "HomeNet", "88888888")
 
         assert panel._store_dwpa_keys([network]) == "Retrieved 1 new key from DWPA"
         assert "88888888" in [key.value for key in app.vault.ap_state("aa:bb:cc:dd:ee:ff").keys]
+        assert read_potfile(tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.potfile") == [network]
         assert panel._store_dwpa_keys([network]) == "1 key already in Vault"
 
-        other = DwpaNetwork("8e:6a:8d:a6:db:51", "Elsewhere", "hunter22")
+        other = PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "Elsewhere", "hunter22")
         assert panel._store_dwpa_keys([other]) == "No DWPA keys for the Vault's APs"
         assert app.vault.persisted("8e:6a:8d:a6:db:51") == []

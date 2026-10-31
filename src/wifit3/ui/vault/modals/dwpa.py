@@ -12,8 +12,9 @@ from textual.widgets import Button, Input, Label
 
 from wifit3.models import PersistedCapture
 from wifit3.persist.config import Config, ConfigError
-from wifit3.vault.tools.dwpa_api import (DwpaError, DwpaNetwork, is_valid_key, network_leaked,
-                                         retrieve_cracked, upload_capture)
+from wifit3.persist.potfile import PotfileEntry
+from wifit3.vault.tools.dwpa_api import (DwpaError, is_valid_key, network_leaked, retrieve_cracked,
+                                         upload_capture)
 
 _KEY_HINT = "[dim]32 lowercase hex characters, as issued by the DWPA server[/dim]"
 _LEAKED = "[$warning]⚠ Possibly already cracked on DWPA[/]"
@@ -56,7 +57,7 @@ class DwpaConfigModal(ModalScreen[bool]):
     """
 
     def __init__(self, capture: PersistedCapture, bssid: str, ssid: Optional[str],
-                 save_keys: Optional[Callable[[Sequence[DwpaNetwork]], str]] = None) -> None:
+                 save_keys: Optional[Callable[[Sequence[PotfileEntry]], str]] = None) -> None:
         """``save_keys`` stores the networks a Retrieve gets from the server and returns the
         status line; without it the dialog only reports how many were cracked."""
         super().__init__()
@@ -163,7 +164,7 @@ class DwpaConfigModal(ModalScreen[bool]):
         self.query_one("#dwpa-retrieve", Button).disabled = False
         self.query_one("#dwpa-result", Label).update(f"[$error]{escape(message)}[/]")
 
-    def _show_retrieved(self, networks: Sequence[DwpaNetwork]) -> None:
+    def _show_retrieved(self, networks: Sequence[PotfileEntry]) -> None:
         if not self.is_attached:
             return
         self.query_one("#dwpa-retrieve", Button).disabled = False
@@ -177,7 +178,7 @@ class DwpaConfigModal(ModalScreen[bool]):
             message = self._save_keys(networks)
         self.query_one("#dwpa-result", Label).update(f"[$success]{escape(message)}[/]")
 
-    def _announce_selected_key(self, networks: Sequence[DwpaNetwork]) -> None:
+    def _announce_selected_key(self, networks: Sequence[PotfileEntry]) -> None:
         mine = [network for network in networks if network.bssid == self.bssid]
         keys = tuple(dict.fromkeys(network.key for network in mine))
         if keys:

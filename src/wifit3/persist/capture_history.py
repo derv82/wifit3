@@ -22,6 +22,7 @@ from wifit3.persist.common import (
     safe_ssid,
 )
 from wifit3.persist.config import Config
+from wifit3.persist.potfile import POTFILE_RE, parse_potfile
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +86,24 @@ def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
     return out
 
 
+def _parse_potfile(path: Path, bssid: str) -> List[PersistedCapture]:
+    """One capture per key the AP's potfile holds."""
+    try:
+        timestamp = int(path.stat().st_mtime)
+    except OSError:
+        timestamp = 0
+    entries = {}
+    for entry in parse_potfile(_read_text(path) or ""):
+        entries.setdefault(entry.key, entry)
+    return [PersistedCapture(type=CaptureType.WPA_PSK, timestamp=timestamp, path=str(path),
+                             bssid=bssid, value=entry.key, ssid=entry.ssid or None)
+            for entry in entries.values()]
+
+
 def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
     """Parse one captures/ file into zero or more PersistedCapture entries."""
+    if POTFILE_RE.match(path.name):
+        return _parse_potfile(path, bssid)
     if AGGREGATED_HC22000_RE.match(path.name):
         return _parse_aggregate_hc(path, bssid)
 
@@ -133,6 +150,15 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
     return []
 
 
+def captures_in(path: Path) -> List[PersistedCapture]:
+    """The captures one saved file represents; empty when its name is not a capture."""
+    patterns = (POTFILE_RE, LEGACY_CAPTURE_RE, AGGREGATED_HC22000_RE)
+    for pattern in patterns:
+        if (match := pattern.match(path.name)) is not None:
+            return _parse_file(path, bssid_to_colon(match.group("bssid")))
+    return []
+
+
 def load_capture_index() -> Dict[str, List[PersistedCapture]]:
     """Scan ``captures_dir``, return bssid->captures sorted by newest-first."""
     index: Dict[str, List[PersistedCapture]] = defaultdict(list)
@@ -141,6 +167,11 @@ def load_capture_index() -> Dict[str, List[PersistedCapture]]:
         return {}
     for path in root.iterdir():
         if not path.is_file():
+            continue
+        m_potfile = POTFILE_RE.match(path.name)
+        if m_potfile:
+            bssid = bssid_to_colon(m_potfile.group("bssid"))
+            index[bssid].extend(_parse_potfile(path, bssid))
             continue
         m = LEGACY_CAPTURE_RE.match(path.name)
         if m:

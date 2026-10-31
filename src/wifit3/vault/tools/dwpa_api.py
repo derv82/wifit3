@@ -8,10 +8,9 @@ import re
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 
-from wifit3.crack.passwords import is_valid_psk
+from wifit3.persist.potfile import PotfileEntry, parse_potfile
 
 TIMEOUT_SECONDS = 120.0
 FILE_FIELD = "webfile"
@@ -25,19 +24,10 @@ REJECTIONS = (
 )
 
 _KEY = re.compile(r"[0-9a-f]{32}")
-_BSSID = re.compile(r"[0-9a-f]{12}")
 
 
 class DwpaError(Exception):
     """The server refused the request; the message is the server's own when it sent one."""
-
-
-@dataclass(frozen=True)
-class DwpaNetwork:
-    """One cracked line of the DWPA potfile: the AP, its SSID and the recovered PSK."""
-    bssid: str
-    ssid: str
-    key: str
 
 
 def is_valid_key(key: str) -> bool:
@@ -76,7 +66,7 @@ def network_leaked(url: str, bssid: str, ssid: str) -> bool:
     return digest[-8:] in _response_text(request, url)
 
 
-def retrieve_cracked(url: str, key: str) -> list[DwpaNetwork]:
+def retrieve_cracked(url: str, key: str) -> list[PotfileEntry]:
     """The networks DWPA cracked for ``key``, read from its potfile download."""
     request = urllib.request.Request(potfile_endpoint(url), headers={"Cookie": f"key={key}"})
     return parse_potfile(decode_potfile(_response_bytes(request, url)))
@@ -93,12 +83,6 @@ def decode_potfile(body: bytes) -> str:
         raise DwpaError("The server did not send a potfile") from None
 
 
-def parse_potfile(text: str) -> list[DwpaNetwork]:
-    """``BSSID:MAC_STA:SSID:PASS`` lines, as DWPA writes them, without duplicates."""
-    networks = (network for network in map(_potfile_line, text.splitlines()) if network)
-    return list(dict.fromkeys(networks))
-
-
 def upload_capture(url: str, key: str, capture_path: str) -> str:
     """Submit the capture and return the server's answer; raise DwpaError on any refusal."""
     endpoint = submit_endpoint(url)
@@ -113,24 +97,6 @@ def upload_capture(url: str, key: str, capture_path: str) -> str:
     if rejection is not None:
         raise DwpaError(rejection)
     return answer
-
-
-def _potfile_line(line: str) -> DwpaNetwork | None:
-    fields = line.split(":", 3)
-    if len(fields) != 4:
-        return None
-    bssid = _colon_bssid(fields[0])
-    ssid, key = fields[2], fields[3]
-    if bssid is None or not ssid or not is_valid_psk(key):
-        return None
-    return DwpaNetwork(bssid, ssid, key)
-
-
-def _colon_bssid(text: str) -> str | None:
-    hex_bssid = text.strip().lower()
-    if _BSSID.fullmatch(hex_bssid) is None:
-        return None
-    return ":".join(hex_bssid[index:index + 2] for index in range(0, 12, 2))
 
 
 def _base_url(url: str) -> str:

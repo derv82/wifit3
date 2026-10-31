@@ -37,8 +37,8 @@ from wifit3.ui.encryption_format import wep_key_ascii
 from wifit3.ui.screens.vault_breakpoints import NARROW, SHORT, TALL, TINY, WIDE
 from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
 from wifit3.ui.vault.tools_ui import UI_TOOLS
+from wifit3.persist.potfile import PotfileEntry
 from wifit3.vault.tools.base import VaultTool
-from wifit3.vault.tools.dwpa_api import DwpaNetwork
 
 
 logger = logging.getLogger(__name__)
@@ -680,21 +680,22 @@ class _ApStatePanel(VerticalGroup):
         self.app.push_screen(DwpaConfigModal(capture, state.bssid, ssid, self._store_dwpa_keys),
                              _on_upload)
 
-    def _store_dwpa_keys(self, networks: Sequence[DwpaNetwork]) -> str:
+    def _store_dwpa_keys(self, networks: Sequence[PotfileEntry]) -> str:
         added = known = 0
+        by_bssid: dict[str, list[PotfileEntry]] = {}
         for network in networks:
-            if not self.app.vault.persisted(network.bssid):
+            by_bssid.setdefault(network.bssid, []).append(network)
+        for bssid, entries in by_bssid.items():
+            if not self.app.vault.persisted(bssid):
                 continue            # a DWPA network this Vault has no record of
+            ssid = entries[0].ssid
             try:
-                result = self.app.vault.save_wpa_psk(network.ssid, network.bssid, network.key)
+                new = self.app.vault.merge_dwpa_keys(bssid, ssid, entries)
             except OSError as e:
-                self.notify(f"Could not save {network.ssid}: {e}", severity="warning")
+                self.notify(f"Could not save {ssid}: {e}", severity="warning")
                 continue
-            if result is not None:
-                if result.was_new:
-                    added += 1
-                else:
-                    known += 1
+            added += len(new)
+            known += len({entry.key for entry in entries}) - len(new)
         if not added:
             return (f"{known} key{'s' if known > 1 else ''} already in Vault" if known
                     else "No DWPA keys for the Vault's APs")

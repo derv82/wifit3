@@ -5,10 +5,11 @@ from textual.widgets import Button, Input, Label
 
 import wifit3.persist.config as cfg
 import wifit3.ui.vault.modals.dwpa as mod
+from wifit3.vault.tools.dwpa_api import DwpaError
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.config import Config, DwpaSettings
 from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
-from wifit3.vault.tools.dwpa_api import DwpaError, DwpaNetwork
+from wifit3.persist.potfile import PotfileEntry
 from tests.ui.wait_until import wait_until
 
 _KEY = "0123456789abcdef0123456789abcdef"
@@ -269,8 +270,8 @@ async def _retrieve(app, pilot, result, expected: str) -> None:
 
 async def test_retrieve_hands_the_cracked_keys_to_the_vault(capture, retrievals):
     calls, networks = retrievals
-    networks.extend([DwpaNetwork("aa:bb:cc:dd:ee:ff", "TestAP-DWPA", "88888888"),
-                     DwpaNetwork("8e:6a:8d:a6:db:51", "E36W126F-Guest1", "hunter22")])
+    networks.extend([PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", "TestAP-DWPA", "88888888"),
+                     PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "E36W126F-Guest1", "hunter22")])
     store = _StoreKeys()
     app = _Host()
     async with app.run_test() as pilot:
@@ -338,8 +339,8 @@ async def test_a_failed_retrieve_shows_the_message(capture, monkeypatch):
 async def test_a_downloaded_key_for_the_selected_handshake_is_announced(capture, retrievals,
                                                                         monkeypatch):
     calls, networks = retrievals
-    networks.extend([DwpaNetwork(_BSSID, "HomeNet", "88888888"),
-                     DwpaNetwork("8e:6a:8d:a6:db:51", "Elsewhere", "hunter22")])
+    networks.extend([PotfileEntry(_BSSID, "11:22:33:44:55:66", "HomeNet", "88888888"),
+                     PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "Elsewhere", "hunter22")])
     app = _Host()
     async with app.run_test() as pilot:
         announced = []
@@ -356,7 +357,7 @@ async def test_a_downloaded_key_for_the_selected_handshake_is_announced(capture,
 
 async def test_keys_for_other_networks_are_not_announced(capture, retrievals, monkeypatch):
     calls, networks = retrievals
-    networks.append(DwpaNetwork("8e:6a:8d:a6:db:51", "Elsewhere", "hunter22"))
+    networks.append(PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "Elsewhere", "hunter22"))
     app = _Host()
     async with app.run_test() as pilot:
         announced = []

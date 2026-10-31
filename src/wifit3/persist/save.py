@@ -23,6 +23,7 @@ from wifit3.persist.common import (
 )
 from wifit3.persist.config import Config
 from wifit3.persist.pcap import write_pcap
+from wifit3.persist.potfile import potfile_path, read_potfile
 
 
 @dataclass(frozen=True)
@@ -381,6 +382,9 @@ def save_wps_pbc(ap: AccessPoint, psk: str) -> Optional[SaveResult]:
 
 def save_wpa_psk(ssid: str | None, bssid: str, psk: str) -> Optional[SaveResult]:
     """Persist a passphrase recovered from a handshake/PMKID. Dedupes by PSK for this BSSID."""
+    potfile = potfile_path(Path(Config.captures_dir), ssid, bssid)
+    if psk and any(entry.key == psk for entry in read_potfile(potfile)):
+        return SaveResult(path=potfile, was_new=False)
     return _save_psk(ssid, bssid, psk, "_wpa_psk.txt")
 
 
