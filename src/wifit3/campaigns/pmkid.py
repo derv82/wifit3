@@ -214,6 +214,7 @@ class PmkidHarvestAttack(Campaign):
                         hs = self._received_m1()
                         if hs is not None:
                             await self._send_leaving_deauth()
+                            await asyncio.sleep(0.5)
                             if hs.pmkid:
                                 if hs.pmkid_akm is None:
                                     hs.pmkid_akm = AKM_PSK    # we negotiated PSK in our Assoc
