@@ -237,11 +237,16 @@ class DecloakCampaign(Campaign):
         try:
             if not await association.authenticate():
                 logger.info("[DECLOAK] %s will not authenticate us", self.ap.bssid)
+                if association.auth_status is None:
+                    self._log("no Auth response")
+                else:
+                    self._log(f"Auth refused (status {association.auth_status})")
                 return None
-            invented = f"wifit3-control-{os.urandom(8).hex()}"
+            invented = os.urandom(8).hex()
             if await association.associate_as(invented) == 0:
                 logger.info("[DECLOAK] %s accepts any SSID; association proves nothing",
                             self.ap.bssid)
+                self._log("AP accepts any SSID; association can't reveal it")
                 return None
             return await self._claim_each(association)
         finally:
@@ -258,6 +263,7 @@ class DecloakCampaign(Campaign):
             if association.state is AssocState.UNAUTHENTICATED:
                 if not await association.authenticate():
                     logger.info("[DECLOAK] %s deauthenticated us mid-sweep", self.ap.bssid)
+                    self._log(f"deauthenticated after {self.sent} guesses")
                     return None
             self.sent += 1
             logger.debug("[DECLOAK] %s: association request for %r", self.ap.bssid, ssid)
