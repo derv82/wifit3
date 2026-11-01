@@ -26,7 +26,7 @@ def test_complete_handshake_flushes_one_tree():
     agg = EapolAggregator()
     agg.on_eapol(_eapol(1, pmkid=True), now=0.0)
     agg.on_eapol(_eapol(2), now=0.1)
-    lines = agg.on_handshake(_hs("M1+M2"), now=0.1)
+    lines = agg.on_handshake(_hs("M1+M2"))
     text = "\n".join(lines)
     assert _CLIENT in text and "4-Way Handshake" in text       # header names the client
     assert "M1" in text and "AP→Client" in text                # M1 direction
@@ -41,7 +41,7 @@ def test_save_hint_folds_in_as_the_closing_leaf():
     agg.on_eapol(_eapol(1, pmkid=True), now=0.0)
     agg.on_eapol(_eapol(2), now=0.1)
     hint = "[dim]saved: captures/NETGEAR2G_…_handshake.hc22000[/dim]"
-    lines = agg.on_handshake(_hs("M1+M2"), now=0.1, save_hint=hint)
+    lines = agg.on_handshake(_hs("M1+M2"), save_hint=hint)
     # header + M1 + M2 + verdict(branch) + save(leaf) → the verdict is no longer
     # the terminal node; the save note closes the tree.
     assert len(lines) == 5
@@ -96,7 +96,7 @@ def test_suppress_until_new_instance():
     agg = EapolAggregator()
     agg.on_eapol(_eapol(1), now=0.0)
     agg.on_eapol(_eapol(2), now=0.1)
-    first = agg.on_handshake(_hs("M1+M2"), now=0.1)
+    first = agg.on_handshake(_hs("M1+M2"))
     assert "capture ×" not in "\n".join(first)                 # first capture, no ×N
 
     # Retransmitted M3/M4 of the captured exchange are swallowed (no new burst).
@@ -105,7 +105,7 @@ def test_suppress_until_new_instance():
     assert agg.tick(now=100.0) == []
 
     # A genuinely new instance completing re-announces compactly as ×2.
-    second = agg.on_handshake(_hs("M2+M3"), now=5.0)
+    second = agg.on_handshake(_hs("M2+M3"))
     text = "\n".join(second)
     assert "Valid 4-Way Handshake (M2+M3)" in text and "capture ×2" in text
     assert len(second) == 1                                    # one-liner, no tree
@@ -114,10 +114,10 @@ def test_suppress_until_new_instance():
 def test_reset_makes_a_client_brand_new_again():
     agg = EapolAggregator()
     agg.on_eapol(_eapol(1), now=0.0)
-    agg.on_handshake(_hs(), now=0.0)
+    agg.on_handshake(_hs())
     agg.reset()
     agg.on_eapol(_eapol(1), now=1.0)
-    lines = agg.on_handshake(_hs("M1+M2"), now=1.0)
+    lines = agg.on_handshake(_hs("M1+M2"))
     assert "capture ×" not in "\n".join(lines)                 # not a re-announce
     assert len(lines) >= 2                                     # a fresh tree
 

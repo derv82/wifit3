@@ -23,7 +23,7 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Set
+from typing import TYPE_CHECKING, Optional
 
 from rich.markup import escape
 from rich.text import Text
@@ -35,45 +35,43 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Static
 
 from wifit3.campaigns import treelog
-from wifit3.dot11.pmf import PmfPosture
-from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
-from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput
-from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal, _can_host
-from wifit3.campaigns.pin import (EMPTY_PIN_LABEL, WpsCampaign, load_run_state,
-                                  run_progress_line)
 from wifit3.campaigns.deauth import DeauthCampaign
 from wifit3.campaigns.decloak import DecloakCampaign, DecloakInput, KnownDecloakCampaign
+from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput
 from wifit3.campaigns.pbc import WpsPbcCampaign
+from wifit3.campaigns.pin import (EMPTY_PIN_LABEL, WpsCampaign, load_run_state,
+                                  run_progress_line)
 from wifit3.campaigns.probe import probe_ap
 from wifit3.campaigns.probe.broadcom_wps import WpsImplementation, probe_wps_implementation
-from .campaign_controls import CampaignControls
-from .decloak_modal import DecloakInputModal
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
-from wifit3.ui.encryption_format import psk_capture_supported
+from wifit3.dot11.pmf import PmfPosture
 from wifit3.models import AccessPoint, IdSource
+from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config
 from wifit3.persist.save import SaveResult
+from wifit3.ui import focus_model as fm, pmkid_log
+from wifit3.ui.capture_log import DECLOAK_METHOD_LABELS, saved_psk_chip, short_sta
+from wifit3.ui.eapol_aggregate import EapolAggregator
+from wifit3.ui.encryption_format import psk_capture_supported, wep_key_hex_and_ascii
+from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal, _can_host
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
 from wifit3.watchers.ap_watcher import (
-    ApDecloaked, ApEvent, CaptureEventDetector, EapolFrameSeen, HandshakeCaptured, PmkidCaptured,
+    ApDecloaked, ApEvent, EapolFrameSeen, HandshakeCaptured, PmkidCaptured,
 )
 
-from ... import focus_model as fm
-from ...capture_log import DECLOAK_METHOD_LABELS, saved_psk_chip, short_sta
-from ...eapol_aggregate import EapolAggregator
-from ... import pmkid_log
-from ...encryption_format import wep_key_hex_and_ascii
+from .campaign_controls import CampaignControls
 from .card_endpoint import CardEndpoint
-from .tx_picker import TxDevicePicker
 from .clients_list import ClientsList, ClientWidget, FingerprintModal
-from .packet_dashboard import PacketDashboard
+from .decloak_modal import DecloakInputModal
 from .log_band import LogBand
 from .router_endpoint import RouterEndpoint
+from .tx_picker import TxDevicePicker
+from .packet_dashboard import PacketDashboard
 from . import art
 
 if TYPE_CHECKING:
@@ -287,7 +285,6 @@ class FocusViewV2(Screen):
         self._target_ap = None
         self._last_status: list[str] | None = None   # last-pushed headline; skip no-op repaints
         self._beacon_samples: deque = deque()
-        self._events = CaptureEventDetector()
         self._eapol_agg = EapolAggregator(settle_s=3.0)
         self._tick_timer = None
         # The one running campaign (Campaign.active is the radio mutex).
@@ -553,7 +550,6 @@ class FocusViewV2(Screen):
         logger.info("[FOCUS] enter: ssid=%r bssid=%s ch=%s", ap.ssid, ap.bssid, ap.channel)
 
         self._beacon_samples.clear()
-        self._events = CaptureEventDetector()
         self._eapol_agg.reset()
         self._prev_stats = None        # drop the old target's counters
         self._last_footer_markups = None
@@ -699,7 +695,7 @@ class FocusViewV2(Screen):
         self._refresh_status_footer()
         array = self.app.array
         self._drive_leds(ap, array)
-        self._drain_capture_events(ap, array.forged_macs if array else set(), time.time())
+        self._flush_eapol_bursts(ap)
 
     def _should_auto_invade_pbc(self, ap) -> bool:
         if not (ap.wps_pbc_active and self.app.pbc_enabled):
@@ -804,23 +800,24 @@ class FocusViewV2(Screen):
 
     # ----- event log (capture pipeline) --------------------------------------
 
-    def _drain_capture_events(self, ap, forged_macs: Set[str], now: float) -> None:
+    def on_wifite_app_ap_event_detected(self, message: "WifiteApp.ApEventDetected") -> None:
         # EAPOL + handshake completions go through the aggregator (one tree per client); PMKID / decloak are immediate.
-        if Config.is_silenced(ap.bssid):
+        ev = message.event
+        if self._target_ap is None or ev.bssid != self._target_ap.bssid:
             return
-        for ev in self._events.poll(ap, forged_macs):
-            if isinstance(ev, EapolFrameSeen):
-                self._eapol_agg.on_eapol(ev, now)
-            elif isinstance(ev, HandshakeCaptured):
-                # Save instantly
-                result = self.app.vault.save_handshake(ap, ev.client_mac)
-                hint = _save_line(result) if result is not None else None
-                chip = saved_psk_chip(result.matches_saved_psk) if result is not None else None
-                self._emit_lines(self._eapol_agg.on_handshake(ev, now, save_hint=hint, psk_chip=chip))
-            else:
-                self._log_capture_event(ev, ap)
-        # Flush any per-client bursts that have gone quiet; label real-but-uncrackable ones.
-        for lines in self._eapol_agg.tick(now, label_for=lambda mac: self._uncrackable_reason(ap, mac)):
+        if isinstance(ev, EapolFrameSeen):
+            self._eapol_agg.on_eapol(ev, time.time())
+        elif isinstance(ev, HandshakeCaptured):
+            result = ev.save_result
+            hint = _save_line(result) if result is not None else None
+            chip = saved_psk_chip(result.matches_saved_psk) if result is not None else None
+            self._emit_lines(self._eapol_agg.on_handshake(ev, save_hint=hint, psk_chip=chip))
+        else:
+            self._log_capture_event(ev)
+
+    def _flush_eapol_bursts(self, ap) -> None:
+        # Label real-but-uncrackable bursts.
+        for lines in self._eapol_agg.tick(time.time(), label_for=lambda mac: self._uncrackable_reason(ap, mac)):
             self._emit_lines(lines)
 
     def _emit_lines(self, lines) -> None:
@@ -832,21 +829,19 @@ class FocusViewV2(Screen):
         hs = ap.handshakes.get(mac)
         return handshake_uncrackable_label(hs) if hs is not None else None
 
-    def _log_capture_event(self, ev: ApEvent, ap) -> None:
+    def _log_capture_event(self, ev: ApEvent) -> None:
         if isinstance(ev, PmkidCaptured):
             self._log(
                 f"[black bold on green] ✓ PMKID captured [/black bold on green] "
                 f"from [bold]{short_sta(ev.client_mac)}[/bold]"
             )
-            result = self.app.vault.save_pmkid(ap, ev.client_mac)
+            result = ev.save_result
             if result is not None:
                 chip = saved_psk_chip(result.matches_saved_psk)
                 if chip:
                     self._log(treelog.branch(chip))
                 self._log(treelog.leaf(_save_line(result)))
         elif isinstance(ev, ApDecloaked):
-            if Config.remember_decloak(ev.bssid, ev.ssid or ""):
-                self.app.persist_config()
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._log(
                 f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "

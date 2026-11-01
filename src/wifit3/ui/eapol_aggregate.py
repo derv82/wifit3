@@ -149,8 +149,8 @@ class EapolAggregator:
             return
         self._bursts.setdefault(ev.client_mac, _Burst()).add(ev, now)
 
-    def on_handshake(self, ev: HandshakeCaptured, now: float,
-                     save_hint: str | None = None, psk_chip: str | None = None) -> list[str]:
+    def on_handshake(self, ev: HandshakeCaptured, save_hint: str | None = None, 
+                     psk_chip: str | None = None) -> list[str]:
         """A crackable pair completed (one HANDSHAKE per instance). First time for
         a client → flush its buffered tree with the verdict (and the screen's
         ``save_hint`` as the closing leaf); afterwards → a compact ``×N``
