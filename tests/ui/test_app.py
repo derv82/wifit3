@@ -1,3 +1,4 @@
+import contextlib
 import threading
 
 import pytest
@@ -11,6 +12,7 @@ from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
 from wifit3.ui.screens.vault_drawer import VaultDrawer
 from textual.widgets import Button, RichLog
+from textual.worker import WorkerCancelled
 from textual.widgets._header import HeaderTitle
 
 from wifit3.ui.ap_table import APTable
@@ -237,6 +239,7 @@ async def test_cancelling_vault_preload_stops_before_the_next_ap(mocker):
         drawer = VaultDrawer()
         await app.push_screen(drawer)
         await wait_until(pilot, lambda: drawer.has_class("open") and bool(loads))
-        await app.workers.wait_for_complete()
+        with contextlib.suppress(WorkerCancelled):
+            await app.workers.wait_for_complete()
 
     assert loads == ["aa:bb:cc:dd:ee:01"]
