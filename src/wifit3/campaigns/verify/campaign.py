@@ -30,6 +30,7 @@ class VerifyCampaign(Campaign):
 
     key = "verify"
     stoppable = False
+    idle_label = "Verify"
     credential_name = ""     # "PSK", "WPS PIN", "WEP key"
 
     def __init__(self, array, target, value: str, log=None):
