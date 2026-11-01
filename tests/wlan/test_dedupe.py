@@ -120,3 +120,18 @@ def test_submit_auto_registers_unknown_source():
     m = StreamMerger(window=0.3)
     assert m.submit("wlanX", _frame(), 0.0) is True
     assert m.rx["wlanX"] == 1 and m.first["wlanX"] == 1
+
+
+def test_qos_data_on_different_tids_with_the_same_seq_is_two_frames():
+    qos_data = b"\x88\x01"
+    assert StreamMerger.key(_frame(fc=qos_data, tail=b"\x00\x00")) != StreamMerger.key(
+        _frame(fc=qos_data, tail=b"\x06\x00"))
+    assert StreamMerger.key(_frame(fc=qos_data, tail=b"\x06\x00")) == StreamMerger.key(
+        _frame(fc=qos_data, tail=b"\x06\x00"))
+
+
+def test_qos_control_follows_addr4_in_a_four_address_frame():
+    wds_qos_data = b"\x88\x03"
+    addr4 = b"\x44" * 6
+    assert StreamMerger.key(_frame(fc=wds_qos_data, tail=addr4 + b"\x00\x00")) != StreamMerger.key(
+        _frame(fc=wds_qos_data, tail=addr4 + b"\x06\x00"))
