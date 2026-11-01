@@ -1,24 +1,22 @@
 from __future__ import annotations
 
-import logging
 import time
 from dataclasses import dataclass
 from itertools import groupby
 from typing import Mapping, Optional
 
 from rich.markup import escape
-from textual import on, work
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalGroup, VerticalScroll
 from textual.content import Content
 from textual.events import MouseMove, Resize
 from textual.message import Message
-from textual.reactive import reactive, var
+from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Button, Label, Rule, SelectionList, Static
 from textual.widgets.selection_list import Selection
 
-from wifit3.campaigns.live_check import LiveKeyVerifier, VerifyStatus
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.crack.hc22000_format import Hc22000Line
 from wifit3.models import CaptureType, PersistedCapture
@@ -38,8 +36,6 @@ from wifit3.ui.vault.tools_ui import UI_TOOLS
 from wifit3.vault.tools.base import VaultTool
 
 
-logger = logging.getLogger(__name__)
-
 _STATUS_COLOR = {
     PasswordStatus.CURRENT: "$text-success",
     PasswordStatus.NOT_VERIFIED: "$text-warning",
@@ -50,8 +46,6 @@ _AUTHORIZED_TOOLTIP = "[$text-success]authorized:[/] PMKID or M3/M4 (the AP acce
 _CHALLENGE_TOOLTIP = "[$text-warning]challenge:[/] No M3/M4 (could be a wrong password)"
 _EXPAND_LABEL, _COLLAPSE_LABEL = "▶", "▼"
 _EXPAND_TOOLTIP, _COLLAPSE_TOOLTIP = "Show captures and verifications", "Hide captures and verifications"
-_VERIFY_TOOLTIP = "Connect to the live AP and verify this key"
-_BUSY_TOOLTIP = "A live check is running on another AP"
 
 
 @dataclass(frozen=True)
@@ -71,7 +65,6 @@ _BADGE_WIDTH = max(len(kind.badge) for kind in _KEY_KINDS.values())
 _VALUE_COLUMN = _TOGGLE_WIDTH + _BADGE_WIDTH + 2       # a space after the badge, then the chip's own space
 _LIST_INDENT = 2                                        # the UNCRACKED rows under their header
 
-_VerifyingKey = tuple[str, tuple[CaptureType, str]]    # BSSID, Key.id
 _HashlineGroup = tuple[DatedHashline, ...]
 
 
@@ -260,11 +253,6 @@ class _KeyRow(VerticalGroup):
             self.key = key
             self.expanded = expanded
 
-    class VerifyPressed(Message):
-        def __init__(self, key: Key) -> None:
-            super().__init__()
-            self.key = key
-
     key: Key
     status: PasswordStatus
     _state: ApState
@@ -279,17 +267,15 @@ class _KeyRow(VerticalGroup):
         self._no_toggle_label = Label("", classes="no-toggle")
         self._summary_label = Label("", classes="key-text")
         self.copy_button = Button("Copy", classes="key-btn")
-        self.verify_button = Button("Verify", variant="primary", classes="key-btn")
         self.delete_button = Button("Delete", variant="error", classes="key-btn",
                                     tooltip="Delete this key and every file holding it")
         self.history_rows = VerticalScroll(classes="history-rows")
 
     @property
-    def buttons(self) -> tuple[Button, Button, Button, Button]:
-        return self.toggle_button, self.copy_button, self.verify_button, self.delete_button
+    def buttons(self) -> tuple[Button, Button, Button]:
+        return self.toggle_button, self.copy_button, self.delete_button
 
-    async def show(self, key: Key, state: ApState, *, show_client: bool, show_ssid: bool, expanded: bool,
-                   verifying: Optional[_VerifyingKey]) -> None:
+    async def show(self, key: Key, state: ApState, *, show_client: bool, show_ssid: bool, expanded: bool) -> None:
         """Show ``key``; its history rows are rebuilt only when they would read differently."""
         if self._history_built and (key, state.hashlines, show_client, show_ssid) != (
                 self.key, self._state.hashlines, self._show_client, self._show_ssid):
@@ -305,7 +291,6 @@ class _KeyRow(VerticalGroup):
         self._no_toggle_label.display = not self._has_history
         self._summary_label.update(Content.from_markup(self._summary_markup()))
         self._summary_label.tooltip = self._details()
-        self.show_verifying(verifying)
         self.set_reactive(_KeyRow.expanded, expanded)
         self._show_expansion(expanded)
         if expanded:
@@ -327,7 +312,6 @@ class _KeyRow(VerticalGroup):
             yield self._no_toggle_label
             yield self._summary_label
             yield self.copy_button
-            yield self.verify_button
             yield self.delete_button
         with Vertical(classes="history"):
             yield self.history_rows
@@ -363,17 +347,6 @@ class _KeyRow(VerticalGroup):
         if expanded and self.is_mounted:
             await self._build_history()
 
-    def show_verifying(self, verifying: Optional[_VerifyingKey]) -> None:
-        """Verify is disabled while any live check runs: "Verifying…" on its key, "Busy" when it is
-        another AP's."""
-        button = self.verify_button
-        button.disabled = verifying is not None
-        button.label, button.tooltip = "Verify", _VERIFY_TOOLTIP
-        if verifying == (self._state.bssid, self.key.id):
-            button.label = "Verifying…"
-        elif verifying is not None and verifying[0] != self._state.bssid:
-            button.label, button.tooltip = "Busy", _BUSY_TOOLTIP
-
     @on(Button.Pressed)
     def _button_pressed(self, event: Button.Pressed) -> None:
         if event.button is self.toggle_button:
@@ -381,8 +354,6 @@ class _KeyRow(VerticalGroup):
             self.post_message(self.Toggled(self.key, self.expanded))
         elif event.button is self.copy_button:
             self._copy()
-        elif event.button is self.verify_button:
-            self.post_message(self.VerifyPressed(self.key))
         elif event.button is self.delete_button:
             self.post_message(DeleteKeyPressed(self.key))
         else:
@@ -520,7 +491,7 @@ class _ApStatePanel(VerticalGroup):
         self._cracker_buttons = [_CrackerButton(tool) for tool in self.app.vault.manager.tools.values()]
 
     async def show(self, state: ApState, expanded_key_ids: frozenset[tuple[CaptureType, str]],
-                   unticked_hashline_ids: frozenset[str], verifying: Optional[_VerifyingKey]) -> None:
+                   unticked_hashline_ids: frozenset[str]) -> None:
         """Update the widgets in place for ``state``; for the same AP, keep the focus, the highlighted
         hashline and each list's scroll."""
         same_ap = self._state is not None and state.bssid == self._state.bssid
@@ -533,7 +504,7 @@ class _ApStatePanel(VerticalGroup):
         async with self.batch():
             self._state = state
             await self._show_ssid_lines(state)
-            await self._show_key_rows(state, show_client, show_ssid, expanded_key_ids, verifying)
+            await self._show_key_rows(state, show_client, show_ssid, expanded_key_ids)
             self._status_label.update(Content.from_markup(_status_markup(state)))
             self._no_keys_label.display = not state.keys
             files = state.handshake_and_pmkid_files
@@ -557,14 +528,13 @@ class _ApStatePanel(VerticalGroup):
             line.show(section, ssid, dates)
 
     async def _show_key_rows(self, state: ApState, show_client: bool, show_ssid: bool,
-                             expanded_key_ids: frozenset[tuple[CaptureType, str]],
-                             verifying: Optional[_VerifyingKey]) -> None:
+                             expanded_key_ids: frozenset[tuple[CaptureType, str]]) -> None:
         rows = self.key_rows[:len(state.keys)] + [_KeyRow() for _ in state.keys[len(self.key_rows):]]
         await self.remove_children(self.key_rows[len(state.keys):])
         await self.mount_all(rows[len(self.key_rows):], before=self._no_keys_label)
         for row, key in zip(rows, state.keys):
             await row.show(key, state, show_client=show_client, show_ssid=show_ssid,
-                           expanded=key.id in expanded_key_ids, verifying=verifying)
+                           expanded=key.id in expanded_key_ids)
         self.key_rows = rows
 
     def _restore(self, focus_key: Optional[tuple[tuple[CaptureType, str], int]],
@@ -689,11 +659,8 @@ class VaultItemView(Vertical):
     VaultItemView #vault-item-empty { color: $text-muted; }
     """
 
-    verifying: var[Optional[_VerifyingKey]] = var(None)
-
     def __init__(self, id: Optional[str] = None) -> None:
         super().__init__(id=id)
-        self.key_verifier = LiveKeyVerifier()
         self.history_expanded_by_user: dict[tuple[CaptureType, str], bool] = {}    # by Key.id, this AP's
         self.unticked_hashline_ids: set[str] = set()
         self._bssid = ""
@@ -739,10 +706,9 @@ class VaultItemView(Vertical):
         chosen = self.history_expanded_by_user.get(key.id)
         return chosen if chosen is not None else self.screen.has_class(TALL) and self.screen.has_class(WIDE)
 
-    def _panel_choices(self, state: ApState
-                       ) -> tuple[frozenset[tuple[CaptureType, str]], frozenset[str], Optional[_VerifyingKey]]:
+    def _panel_choices(self, state: ApState) -> tuple[frozenset[tuple[CaptureType, str]], frozenset[str]]:
         expanded = frozenset(key.id for key in state.keys if self.history_expanded(key))
-        return expanded, frozenset(self.unticked_hashline_ids), self.verifying
+        return expanded, frozenset(self.unticked_hashline_ids)
 
     def _set_title(self) -> None:
         self.border_title = Content.from_text(f" {self._ssid or '‹hidden›'} ({self._bssid}) ")
@@ -761,10 +727,6 @@ class VaultItemView(Vertical):
         for row in self._key_rows():
             row.expanded = self.history_expanded(row.key)
 
-    def watch_verifying(self, verifying: Optional[_VerifyingKey]) -> None:
-        for row in self._key_rows():
-            row.show_verifying(verifying)
-
     @on(_KeyRow.Toggled)
     def _key_toggled(self, event: _KeyRow.Toggled) -> None:
         self.history_expanded_by_user[event.key.id] = event.expanded
@@ -778,27 +740,3 @@ class VaultItemView(Vertical):
             self.unticked_hashline_ids -= ids
         else:
             self.unticked_hashline_ids |= ids
-
-    @on(_KeyRow.VerifyPressed)
-    def _verify_pressed(self, event: _KeyRow.VerifyPressed) -> None:
-        if self.verifying is not None or not self._bssid:
-            return
-        self.verifying = self._bssid, event.key.id
-        self._verify(event.key)
-
-    @work
-    async def _verify(self, key: Key) -> None:
-        """Check the key against the live AP; one check at a time, since they share the devices."""
-        try:
-            res = await self.key_verifier.verify_credential(key.newest_capture, self.app.array,
-                                                            target_type=key.type)
-            severity = {VerifyStatus.SUCCESS: "information",
-                        VerifyStatus.INCORRECT: "warning"}.get(res.status, "error")
-            self.notify(res.body, title=res.title, severity=severity)
-            if res.status in (VerifyStatus.SUCCESS, VerifyStatus.INCORRECT):
-                self.app.vault.record_live_verification(key, correct=res.status == VerifyStatus.SUCCESS)
-        except Exception as exc:
-            logger.exception("Error during live verification")
-            self.notify(f"Verification error: {exc}", title="Verify", severity="error")
-        finally:
-            self.verifying = None
