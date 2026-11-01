@@ -668,6 +668,10 @@ class FocusViewV2(Screen):
         cur = self._controls.current
         if cur is not None and cur.check_auto_stop():
             self._controls.request_stop()
+        elif (cur is not None and not isinstance(cur, WpsPbcCampaign) and not cur.stopped
+              and self._target_wants_pbc(ap)):
+            self._log(f"[bold cyan]WPS PBC[/bold cyan] window open: stopping {cur.idle_label}")
+            self._controls.request_stop()
 
         # Reap a finished campaign: log/save its result, free the slot.
         finished = self._controls.reap()
@@ -699,12 +703,13 @@ class FocusViewV2(Screen):
         self._drive_leds(ap, array)
         self._flush_eapol_bursts(ap)
 
-    def _should_auto_invade_pbc(self, ap) -> bool:
+    def _target_wants_pbc(self, ap) -> bool:
         if not ap.wps_pbc_active or self.app.pbc_ignore_reasons(ap):
             return False
-        if self._pbc_user_stopped:
-            return False
-        if time.monotonic() < self._pbc_retry_after or self._pbc_busy():
+        return not self._pbc_user_stopped
+
+    def _should_auto_invade_pbc(self, ap) -> bool:
+        if not self._target_wants_pbc(ap) or time.monotonic() < self._pbc_retry_after:
             return False
         return self._controls.current is None   # no other attack owns the radio
 

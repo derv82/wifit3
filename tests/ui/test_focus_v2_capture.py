@@ -10,6 +10,7 @@ from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.deauth import DeauthCampaign
 from wifit3.campaigns.eviltwin import EvilTwinCampaign
 from wifit3.campaigns.wep import WepCampaign
+from wifit3.campaigns.pbc import WpsPbcCampaign
 from wifit3.campaigns.pin import WpsCampaign
 from wifit3.models import AccessPoint
 from wifit3.ui.screens.focus_v2.screen import FocusViewV2
@@ -107,3 +108,30 @@ async def test_retarget_clears_the_previous_targets_pbc_stop_and_retry_wait():
 
     assert host._pbc_user_stopped is False
     assert host._pbc_retry_after == 0.0
+
+
+def test_a_pbc_window_on_the_target_stops_the_running_non_pbc_campaign():
+    host = MagicMock()
+    deauth = MagicMock(stopped=False, idle_label="AutoDeauth")
+    deauth.check_auto_stop.return_value = False
+    host._controls.current = deauth
+    host._controls.reap.return_value = None
+    host._target_wants_pbc.return_value = True
+
+    FocusViewV2._tick(host)
+
+    host._controls.request_stop.assert_called_once()
+
+
+def test_a_pbc_window_on_the_target_leaves_a_finished_unreaped_pbc_campaign_alone():
+    host = MagicMock()
+    pbc = MagicMock(spec=WpsPbcCampaign, stopped=False, done=True)
+    pbc.check_auto_stop.return_value = False
+    host._controls.current = pbc
+    host._controls.reap.return_value = None
+    host._pbc_busy.return_value = False
+    host._target_wants_pbc.return_value = True
+
+    FocusViewV2._tick(host)
+
+    host._controls.request_stop.assert_not_called()
