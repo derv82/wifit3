@@ -134,6 +134,11 @@ class Campaign:
     def ineligible_reason(cls, ap) -> Optional[str]:
         return None
 
+    @classmethod
+    def button_label(cls, ap) -> str:
+        """The idle button text for this target."""
+        return cls.idle_label
+
     def status_headlines(self, vault) -> Optional[list[str]]:
         """Up to 3 markup lines of current activity. Return None to render default passive status."""
         return None

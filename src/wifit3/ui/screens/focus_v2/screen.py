@@ -23,56 +23,55 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Set
+from typing import TYPE_CHECKING, Optional
 
 from rich.markup import escape
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.content import Content
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Static
 
 from wifit3.campaigns import treelog
-from wifit3.dot11.pmf import PmfPosture
-from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
 from wifit3.campaigns.wep import WepCampaign
+from wifit3.campaigns.deauth import DeauthCampaign
+from wifit3.campaigns.decloak import DecloakCampaign, DecloakInput, KnownDecloakCampaign
 from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput
-from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal, _can_host
+from wifit3.campaigns.pbc import WpsPbcCampaign
 from wifit3.campaigns.pin import (EMPTY_PIN_LABEL, WpsCampaign, load_run_state,
                                   run_progress_line)
-from wifit3.campaigns.deauth import DeauthCampaign
-from wifit3.campaigns.decloak import DecloakCampaign, DecloakInput, named_sibling_ssid
-from wifit3.campaigns.pbc import WpsPbcCapture
 from wifit3.campaigns.probe import probe_ap
 from wifit3.campaigns.probe.broadcom_wps import WpsImplementation, probe_wps_implementation
-from .campaign_controls import CampaignControls
-from .decloak_modal import DecloakInputModal
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
-from wifit3.ui.encryption_format import psk_capture_supported
+from wifit3.dot11.pmf import PmfPosture
 from wifit3.models import AccessPoint, IdSource
+from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config
 from wifit3.persist.save import SaveResult
+from wifit3.ui import focus_model as fm, pmkid_log
+from wifit3.ui.capture_log import DECLOAK_METHOD_LABELS, saved_psk_chip, short_sta
+from wifit3.ui.eapol_aggregate import EapolAggregator
+from wifit3.ui.encryption_format import psk_capture_supported, wep_key_hex_and_ascii
+from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal, _can_host
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
-
-from ... import focus_model as fm
-from ...capture_events import (
-    CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
+from wifit3.watchers.ap_watcher import (
+    ApDecloaked, ApEvent, EapolFrameSeen, HandshakeCaptured, PmkidCaptured,
 )
-from ...capture_log import saved_psk_chip, short_sta
-from ...eapol_aggregate import EapolAggregator
-from ... import pmkid_log
-from ...encryption_format import wep_key_hex_and_ascii
+
+from .campaign_controls import CampaignControls
 from .card_endpoint import CardEndpoint
-from .tx_picker import TxDevicePicker
 from .clients_list import ClientsList, ClientWidget, FingerprintModal
-from .packet_dashboard import PacketDashboard
+from .decloak_modal import DecloakInputModal
 from .log_band import LogBand
 from .router_endpoint import RouterEndpoint
+from .tx_picker import TxDevicePicker
+from .packet_dashboard import PacketDashboard
 from . import art
 
 if TYPE_CHECKING:
@@ -98,10 +97,10 @@ _PAD_RATE = 0.4
 _PBC_RETRY_COOLDOWN_S = 3.0
 
 _ATTACK_BUTTONS = [
-    ("btn-decloak", "Decloak"),
+    ("btn-decloak", "Decloak"), ("btn-known-decloak", "Decloak"),
     ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-deauth", "AutoDeauth"),
     ("btn-pmkid", "PMKID"), ("btn-wps-pin", "WPS PIN"), ("btn-eviltwin", "EvilTwin"),
-    ("btn-stop-pbc", "Stop PBC"),
+    ("btn-pbc", "Stop PBC"),
 ]
 
 # Static button tooltips, keyed by live label so toggled buttons get idle/run-specific tips.
@@ -286,7 +285,6 @@ class FocusViewV2(Screen):
         self._target_ap = None
         self._last_status: list[str] | None = None   # last-pushed headline; skip no-op repaints
         self._beacon_samples: deque = deque()
-        self._events = CaptureEventDetector(granular_eapol=True)
         self._eapol_agg = EapolAggregator(settle_s=3.0)
         self._tick_timer = None
         # The one running campaign (Campaign.active is the radio mutex).
@@ -382,7 +380,7 @@ class FocusViewV2(Screen):
 
     def _pbc_busy(self) -> bool:
         cur = self._controls.current
-        return isinstance(cur, WpsPbcCapture) and not cur.done
+        return isinstance(cur, WpsPbcCampaign) and not cur.done
 
     def _is_probing(self) -> bool:
         return self._probe_task is not None and not self._probe_task.done()
@@ -404,7 +402,13 @@ class FocusViewV2(Screen):
             return dict(essid="", bssid="", channel=0, power_dbm=-100, signal=None,
                         wps=False, has_m1=False, probing=False, probe_disabled=False,
                         identity="", identity_details=None)
-        essid = fm.truncate_ssid(ap.ssid) if ap.ssid else "‹hidden›"
+        if ap.ssid:
+            essid = fm.truncate_ssid(ap.ssid)
+        else:
+            essid = "‹hidden›"
+            guessid = self.app.guessid(ap)
+            if guessid:
+                essid = f"{fm.truncate_ssid(guessid)}?"
         rate, _ = fm.beacon_rate(ap, self._beacon_samples, time.time())
         return dict(essid=essid, bssid=ap.bssid, channel=ap.channel,
                     power_dbm=ap.signal, signal=rate,
@@ -490,13 +494,13 @@ class FocusViewV2(Screen):
                 btn.label, btn.variant, btn.disabled, reason = cls.run_label, cls.run_variant, False, ""
             else:
                 reason = fm.campaign_blocked(cls, ap)
-                btn.label, btn.variant = cls.idle_label, cls.idle_variant
+                btn.label, btn.variant = Content(cls.button_label(ap)), cls.idle_variant
                 btn.disabled = reason is not None
             if probing and not running:
                 btn.disabled, reason = True, "Disabled while probing"
             btn.tooltip = reason or _BUTTON_TIPS.get(str(btn.label))
         self._refresh_chop_button(ap, active, probing)
-        self._refresh_stop_pbc_button(probing)
+        self._refresh_pbc_button(ap, probing)
 
     def _refresh_chop_button(self, ap, active, probing: bool) -> None:
         """ChopChop: a WEP sub-action, enabled only while the WEP campaign runs."""
@@ -509,17 +513,24 @@ class FocusViewV2(Screen):
         btn.variant = "warning" if chopping else "primary"
         btn.tooltip = _BUTTON_TIPS.get(str(btn.label))
 
-    def _refresh_stop_pbc_button(self, probing: bool) -> None:
-        """The transient 'Stop PBC' button (PBC has no start button; it auto-invades)."""
-        stop_pbc = self.query_one("#btn-stop-pbc", Button)
+    def _refresh_pbc_button(self, ap, probing: bool) -> None:
+        """Stop PBC while it runs; Start PBC while the target's window is open and it doesn't."""
+        btn = self.query_one("#btn-pbc", Button)
         if self._pbc_busy():
             stopping = getattr(self._controls.current, "stopped", False)
-            stop_pbc.display = True
-            stop_pbc.disabled = stopping or probing         # already draining → no double-stop
-            stop_pbc.variant = "error"
-            stop_pbc.label = "Stopping…" if stopping else "Stop PBC"
+            btn.display = True
+            btn.disabled = stopping or probing         # already draining → no double-stop
+            btn.variant = "error"
+            btn.label = "Stopping…" if stopping else "Stop PBC"
+        elif ap.wps_pbc_active:
+            reason = fm.campaign_blocked(WpsPbcCampaign, ap)
+            btn.display = True
+            btn.disabled = reason is not None or probing
+            btn.variant = "primary"
+            btn.label = "Start PBC"
+            btn.tooltip = reason
         else:
-            stop_pbc.display = False
+            btn.display = False
 
     # ----- target (re)acquisition --------------------------------------------
 
@@ -539,7 +550,6 @@ class FocusViewV2(Screen):
         logger.info("[FOCUS] enter: ssid=%r bssid=%s ch=%s", ap.ssid, ap.bssid, ap.channel)
 
         self._beacon_samples.clear()
-        self._events.reset()
         self._eapol_agg.reset()
         self._prev_stats = None        # drop the old target's counters
         self._last_footer_markups = None
@@ -559,9 +569,13 @@ class FocusViewV2(Screen):
 
         # Log initial "target acquired"
         enc = fm.encryption_chip(ap)
+        guessid = self.app.guessid(ap)
         if ap.ssid:
             chip = f"[black bold on cyan] {escape(ap.ssid)} [/black bold on cyan]"
             self._log(f"[bold]Target acquired:[/bold] {chip}")
+        elif guessid:
+            self._log("[bold]Target acquired:[/bold] "
+                      f"[dim italic]cloaked network, likely {escape(guessid)}?[/dim italic]")
         else:
             self._log("[bold]Target acquired:[/bold] "
                       "[dim italic]cloaked network (hidden SSID)[/dim italic]")
@@ -681,14 +695,14 @@ class FocusViewV2(Screen):
         self._refresh_status_footer()
         array = self.app.array
         self._drive_leds(ap, array)
-        self._drain_capture_events(ap, array.forged_macs if array else set(), time.time())
+        self._flush_eapol_bursts(ap)
 
     def _should_auto_invade_pbc(self, ap) -> bool:
         if not (ap.wps_pbc_active and self.app.pbc_enabled):
             return False
         if Config.is_silenced(ap.bssid) or ap.is_hidden:
             return False
-        if self.app.vault.has_psk(ap) or self._pbc_user_stopped:
+        if self.app.vault.ap_state(ap.bssid).status is PasswordStatus.CURRENT or self._pbc_user_stopped:
             return False
         if time.monotonic() < self._pbc_retry_after or self._pbc_busy():
             return False
@@ -786,23 +800,24 @@ class FocusViewV2(Screen):
 
     # ----- event log (capture pipeline) --------------------------------------
 
-    def _drain_capture_events(self, ap, forged_macs: Set[str], now: float) -> None:
+    def on_wifite_app_ap_event_detected(self, message: "WifiteApp.ApEventDetected") -> None:
         # EAPOL + handshake completions go through the aggregator (one tree per client); PMKID / decloak are immediate.
-        if Config.is_silenced(ap.bssid):
+        ev = message.event
+        if self._target_ap is None or ev.bssid != self._target_ap.bssid:
             return
-        for ev in self._events.poll(ap, forged_macs=forged_macs):
-            if ev.kind == CaptureKind.EAPOL:
-                self._eapol_agg.on_eapol(ev, now)
-            elif ev.kind == CaptureKind.HANDSHAKE:
-                # Save instantly
-                result = self.app.vault.save_handshake(ap, ev.client_mac)
-                hint = _save_line(result) if result is not None else None
-                chip = saved_psk_chip(result.matches_saved_psk) if result is not None else None
-                self._emit_lines(self._eapol_agg.on_handshake(ev, now, save_hint=hint, psk_chip=chip))
-            else:
-                self._log_capture_event(ev, ap)
-        # Flush any per-client bursts that have gone quiet; label real-but-uncrackable ones.
-        for lines in self._eapol_agg.tick(now, label_for=lambda mac: self._uncrackable_reason(ap, mac)):
+        if isinstance(ev, EapolFrameSeen):
+            self._eapol_agg.on_eapol(ev, time.time())
+        elif isinstance(ev, HandshakeCaptured):
+            result = ev.save_result
+            hint = _save_line(result) if result is not None else None
+            chip = saved_psk_chip(result.matches_saved_psk) if result is not None else None
+            self._emit_lines(self._eapol_agg.on_handshake(ev, save_hint=hint, psk_chip=chip))
+        else:
+            self._log_capture_event(ev)
+
+    def _flush_eapol_bursts(self, ap) -> None:
+        # Label real-but-uncrackable bursts.
+        for lines in self._eapol_agg.tick(time.time(), label_for=lambda mac: self._uncrackable_reason(ap, mac)):
             self._emit_lines(lines)
 
     def _emit_lines(self, lines) -> None:
@@ -814,21 +829,19 @@ class FocusViewV2(Screen):
         hs = ap.handshakes.get(mac)
         return handshake_uncrackable_label(hs) if hs is not None else None
 
-    def _log_capture_event(self, ev: CaptureEvent, ap) -> None:
-        if ev.kind == CaptureKind.PMKID:
+    def _log_capture_event(self, ev: ApEvent) -> None:
+        if isinstance(ev, PmkidCaptured):
             self._log(
                 f"[black bold on green] ✓ PMKID captured [/black bold on green] "
                 f"from [bold]{short_sta(ev.client_mac)}[/bold]"
             )
-            result = self.app.vault.save_pmkid(ap, ev.client_mac)
+            result = ev.save_result
             if result is not None:
                 chip = saved_psk_chip(result.matches_saved_psk)
                 if chip:
                     self._log(treelog.branch(chip))
                 self._log(treelog.leaf(_save_line(result)))
-        elif ev.kind == CaptureKind.DECLOAK:
-            if Config.remember_decloak(ev.bssid, ev.ssid or ""):
-                self.app.persist_config()
+        elif isinstance(ev, ApDecloaked):
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._log(
                 f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
@@ -872,6 +885,8 @@ class FocusViewV2(Screen):
             self._toggle_pmkid()
         elif bid == "btn-decloak":
             self._toggle_decloak()
+        elif bid == "btn-known-decloak":
+            self._toggle_known_decloak()
         elif bid == "btn-wps-pin":
             self._toggle_wps_pin()
         elif bid == "btn-eviltwin":
@@ -880,8 +895,8 @@ class FocusViewV2(Screen):
             self._toggle_generate_ivs()
         elif bid == "btn-chop":
             self._toggle_chop()
-        elif bid == "btn-stop-pbc":
-            self._user_stop_pbc()
+        elif bid == "btn-pbc":
+            self._toggle_pbc()
 
     def on_client_widget_deauth_requested(self, event: ClientWidget.DeauthRequested) -> None:
         self.run_worker(self._run_deauth_selected(event.mac), exclusive=True)
@@ -1057,7 +1072,7 @@ class FocusViewV2(Screen):
                       "[bold green]enabled[/bold green] [dim](press w to toggle)[/dim]")
         else:
             self._log("[bold]WPS PushButton Extraction[/bold] "
-                      "[yellow]disabled[/yellow] [dim](detect only, press w to toggle)[/dim]")
+                      "[yellow]disabled[/yellow] [dim](press w to toggle)[/dim]")
 
     def action_silence(self) -> None:
         self._toggle_silence()
@@ -1151,7 +1166,7 @@ class FocusViewV2(Screen):
         if not ap or not array:
             self._log("[red]✗ No target / interface. Aborting decloak.[/red]")
             return
-        self.app.push_screen(DecloakInputModal(ap.bssid, named_sibling_ssid(array, ap)),
+        self.app.push_screen(DecloakInputModal(ap.bssid, array.guessid(ap)),
                              self._on_decloak_input)
 
     def _on_decloak_input(self, chosen: Optional[DecloakInput]) -> None:
@@ -1170,6 +1185,24 @@ class FocusViewV2(Screen):
             return
         self._log(treelog.header(f"Decloaking {escape(ap.bssid)}"))
         started = self._controls.start(DecloakCampaign, array, ap, decloak_input=chosen,
+                                       log=lambda m: self._log(treelog.branch(m)))
+        if started is None:
+            self._log(treelog.branch("another campaign owns the radio"))
+        self.refresh_buttons()
+
+    def _toggle_known_decloak(self) -> None:
+        cur = self._controls.current
+        if cur is not None and cur.key == KnownDecloakCampaign.key:
+            self._controls.request_stop()
+            self.refresh_buttons()
+            return
+        ap = self._target_ap
+        array = self.app.array
+        if not ap or not array:
+            self._log("[red]✗ No target / interface. Aborting decloak.[/red]")
+            return
+        self._log(treelog.header(f"Decloaking {escape(ap.bssid)}"))
+        started = self._controls.start(KnownDecloakCampaign, array, ap,
                                        log=lambda m: self._log(treelog.branch(m)))
         if started is None:
             self._log(treelog.branch("another campaign owns the radio"))
@@ -1201,6 +1234,8 @@ class FocusViewV2(Screen):
         else:
             self._log(treelog.leaf_fail(f"no match in {camp.sent} guesses"))
 
+    _finish_known_decloak = _finish_decloak
+
     def _finish_pmkid(self, camp) -> None:
         """Handle a completed harvest."""
         if camp.pmkid:
@@ -1212,7 +1247,7 @@ class FocusViewV2(Screen):
             name = camp.target.ssid or camp.target.bssid
             body = (f"[bold]{escape(name)}[/bold] on channel [bold]{camp.target.channel}[/bold] "
                     f"[dim bold](BSSID: {escape(camp.target.bssid)})[/dim bold]")
-            self.notify(body, title=f"{CAPTURE_TOAST_TITLES[CaptureKind.PMKID]} (M1)", timeout=6)
+            self.notify(body, title="PMKID captured (M1)", timeout=6)
         elif getattr(camp, "stopped", False):
             self._log(treelog.leaf_fail("[bright_red bold]Stopped harvest[/]"))
         else:
@@ -1240,7 +1275,7 @@ class FocusViewV2(Screen):
 
     def _finish_deauth(self, camp) -> None:
         """Reap a completed deauth run. A captured handshake is saved+toasted by the
-        always-on capture path (CaptureKind.HANDSHAKE); we only log the campaign's end."""
+        always-on capture path (HandshakeCaptured); we only log the campaign's end."""
         if camp.captured:
             self._log("[bold green]✓ Deauth provoked a crackable handshake[/bold green]")
         else:
@@ -1427,7 +1462,7 @@ class FocusViewV2(Screen):
             return
         self._log("[bold cyan]WPS PushButton:[/bold cyan] [bold green]Window Open[/bold green] "
                   "(auto-capturing PSK)")
-        self._controls.start(WpsPbcCapture, array, ap,
+        self._controls.start(WpsPbcCampaign, array, ap,
                              log=lambda m: self._log(treelog.branch(m)))
 
     def _finish_pbc(self, camp) -> None:
@@ -1447,31 +1482,30 @@ class FocusViewV2(Screen):
         if outcome.result is PinResult.SUCCESS:
             ap.wps_pbc_psk = outcome.psk
             name = escape(outcome.ssid or ap.ssid or ap.bssid)
-            self._log(treelog.branch(
-                f"[black bold on green] Password for {name}: "
-                f"\"{escape(outcome.psk)}\" [/black bold on green]"))
+            password = (f"[black bold on green] Password for {name}: "
+                        f"\"{escape(outcome.psk)}\" [/black bold on green]")
             try:
                 result = self.app.vault.save_wps_pbc(ap, outcome.psk)
-                if result is None:
-                    self._log(treelog.leaf("[dim](save failed)[/dim]"))
-                else:
-                    self._log(treelog.leaf(_save_line(result)))
             except Exception:
+                result = None
+            if result is None:
+                self._log(treelog.branch(password))
                 self._log(treelog.leaf("[dim](save failed)[/dim]"))
+            else:
+                self._log(treelog.leaf(password))
         else:
             self._pbc_retry_after = time.monotonic() + _PBC_RETRY_COOLDOWN_S
             self._log(treelog.leaf_warn(
                 f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim], "
                 f"retrying in {_PBC_RETRY_COOLDOWN_S:.0f}s while the window's open"))
 
-    def _user_stop_pbc(self) -> None:
-        """The transient 'Stop PBC' button."""
+    def _toggle_pbc(self) -> None:
         cur = self._controls.current
-        if cur is None or cur.key != "pbc":
-            return
-        self._pbc_user_stopped = True
-        self._controls.request_stop()
-        self.refresh_buttons()
+        if cur is not None and cur.key == "pbc":
+            self._pbc_user_stopped = True
+            self._controls.request_stop()
+        else:
+            self._start_pbc_capture(self._target_ap)
 
     # ----- navigation --------------------------------------------------------
 

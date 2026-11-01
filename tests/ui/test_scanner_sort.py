@@ -6,9 +6,11 @@ import pytest
 from textual.app import App
 
 from wifit3.models import AccessPoint
+from wifit3.wlan.sink import WlanSink
 from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
 from wifit3.ui.ap_table import APTable
+from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.scanner import ScannerView
 
 
@@ -53,11 +55,16 @@ class _FakeIface:
 class _FakeArray:
     def __init__(self, aps: List[AccessPoint], supported: List[int]):
         self.access_points = {ap.bssid: ap for ap in aps}
+        self._sink = WlanSink()
+        self._sink.access_points = self.access_points
         self.clients = {}
         self.removed_access_points = []
         self.forged_macs = set()
         self.supported_channels = supported
         self.members = [_FakeIface(supported)] if supported else []
+
+    def guessid(self, ap):
+        return self._sink.guessid(ap)
 
     def get_access_points(self, include_eviltwin: bool = True) -> List[AccessPoint]:
         return list(self.access_points.values())
@@ -79,10 +86,13 @@ class _FakeArray:
 
 
 class _ScannerHost(App):
+    guessid = WifiteApp.guessid
+
     def __init__(self, array: _FakeArray):
         super().__init__()
         self.array = array
         self.pbc_enabled = True
+        self.target_ap = None
         self.vault = Vault()
 
     def persist_config(self) -> None:

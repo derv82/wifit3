@@ -4,19 +4,20 @@ import os
 import signal
 import sys
 import threading
+from typing import Any, List, Optional, Set
+
 from textual import events, work
-from textual.worker import get_current_worker
 from textual.app import App
 from textual.binding import Binding
 from textual.message import Message
+from textual.reactive import reactive
+from textual.timer import Timer
 from textual.widgets import Header
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
-from typing import Optional
+from textual.worker import get_current_worker
 
 from wifit3 import __version__
 from wifit3.chips import log_trace
-from textual.reactive import reactive
-from typing import List, Set
 from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config, ConfigError
@@ -26,6 +27,7 @@ from wifit3.device.manager import DeviceManager, Status
 from wifit3.device.watch import DeviceWatch
 from wifit3.wlan.array import WlanArray
 from wifit3.models import AccessPoint
+from wifit3.watchers.ap_watcher import ApDecloaked, ApEvent, ApWatcher
 
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView
@@ -36,6 +38,7 @@ from .screens.vault_drawer import VaultDrawer
 from .clipboard import copy_copyq_text, copy_macos_text, copy_windows_text
 from .pref import PreferencesModal
 from .themes import register_app_themes
+from .toasts import Toasts
 
 logger = logging.getLogger(__name__)
 
@@ -138,11 +141,18 @@ class WifiteApp(App):
     """
 
     class JobCracked(Message):
-        """An auto-crack job recovered a key; posted to every screen on the stack."""
+        """A cracking job recovered a key; posted to every screen on the stack."""
 
         def __init__(self, job: JobState) -> None:
             super().__init__()
             self.job = job
+
+    class ApEventDetected(Message):
+        """An ApWatcher event; posted to every screen on the stack."""
+
+        def __init__(self, event: ApEvent) -> None:
+            super().__init__()
+            self.event = event
 
     active_jobs: reactive[List[JobState]] = reactive([], always_update=True)
     vault_open: reactive[bool] = reactive(False)
@@ -168,6 +178,10 @@ class WifiteApp(App):
         self._vault_full_refresh = False        # one of them was a full refresh (BSSID None)
         self.vault.subscribe(self._vault_changed)
         self.vault.set_probed_ssids_source(self._probed_ssids)
+        self.ap_watcher = ApWatcher(self.vault)
+        self._device_timer: Optional[Timer] = None
+        self._handlers_before_mount: dict[signal.Signals, Any] = {}
+        self.toasts = Toasts(self)
         self._job_status: dict[str, ToolStatus] = {}
         self.pbc_enabled: bool = Config.wps_auto_pbc
         register_app_themes(self)
@@ -210,6 +224,7 @@ class WifiteApp(App):
         self.push_screen("splash")
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
         self.set_interval(2.0, self._poll_jobs)
+        self.set_interval(1 / 15, self._poll_ap_events)
         self.call_after_refresh(self.device_watch.poll)
         self.call_after_refresh(self._poll_jobs)
         self._quit_on_termination_signals()
@@ -250,7 +265,7 @@ class WifiteApp(App):
         self._handlers_before_mount = {sig: signal.signal(sig, quit_on_signal) for sig in signals}
 
     def on_unmount(self) -> None:
-        for sig, handler in getattr(self, "_handlers_before_mount", {}).items():
+        for sig, handler in self._handlers_before_mount.items():
             signal.signal(sig, handler)
 
     def _quit_after_signal(self, sig: signal.Signals) -> None:
@@ -261,6 +276,25 @@ class WifiteApp(App):
         self.vault.manager.poll_jobs()
         self.active_jobs = self.vault.manager.get_active_jobs()
         self._notify_completions()
+
+    def _poll_ap_events(self) -> None:
+        if self.array is None:
+            return
+        for event in self.ap_watcher.poll(self.array):
+            if isinstance(event, ApDecloaked):
+                if Config.remember_decloak(event.bssid, event.ssid or ""):
+                    self.persist_config()
+            ap = self.array.access_points.get(event.bssid)
+            guessid = ""
+            if ap is not None and ap.is_hidden:
+                guessid = self.guessid(ap)
+            self.toasts.ap_event(event, guessid)
+            for screen in self.screen_stack:
+                screen.post_message(self.ApEventDetected(event))
+
+    def guessid(self, ap: AccessPoint) -> str:
+        """The SSID this AP revealed in an earlier session, else its first named sibling's."""
+        return Config.decloaked_ssid(ap.bssid) or self.array.guessid(ap)
 
     def _notify_completions(self) -> None:
         """Toast each job the first time it finishes this session (auto-crack jobs only on SUCCESS)
@@ -384,7 +418,8 @@ class WifiteApp(App):
 
     def _on_usb_fatal(self, err: WifiteFatalError) -> None:
         """The bus scan hit an unrecoverable backend error: stop watching + show the Quit-only modal."""
-        self._device_timer.stop()
+        if self._device_timer is not None:
+            self._device_timer.stop()
         self.push_screen(FatalErrorModal(err))
 
     def notify_device_lost(self, exc: Exception, remaining: int) -> None:
@@ -489,5 +524,5 @@ def _configure_file_logging(cli_log_level: Optional[str]) -> None:
     root.setLevel(level)
     root.addHandler(handler)
     _FILE_LOGGING_CONFIGURED = True
-    logger.info(f"Logging enabled (level={logging.getLevelName(level)})")
+    logger.info("Logging enabled (level=%s)", logging.getLevelName(level))
 

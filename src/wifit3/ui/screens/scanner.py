@@ -1,4 +1,3 @@
-import asyncio
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -7,7 +6,9 @@ from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.reactive import Reactive
-from textual.screen import Screen
+from textual.css.query import NoMatches
+from textual.screen import ModalScreen, Screen
+from textual.timer import Timer
 from textual.widgets import Footer, Header, RichLog, Static
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
 from rich.markup import escape
@@ -17,19 +18,18 @@ from ..ap_table import APTable, APRow, COLUMN_KEYS
 from ..selectable_rich_log import SelectableRichLog
 
 from wifit3.campaigns import treelog
-from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
-from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config
 from wifit3.models import AccessPoint
 from wifit3.crack.handshake import pmkid_crackable
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
-
-from ..capture_events import (
-    CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
+from wifit3.watchers.ap_watcher import (
+    ApDecloaked, HandshakeCaptured, PbcWindowOpened, PmkidCaptured, UncrackableHandshakeSeen,
+    WepKeyRecovered, WpsPbcPskRecovered, WpsPinRecovered, WpsPskRecovered,
 )
-from ..capture_log import saved_psk_markup
+
+from ..capture_log import DECLOAK_METHOD_LABELS, saved_psk_markup
 from ..encryption_format import EncryptionSummary, wep_key_hex_and_ascii
 from wifit3.wlan.channels import band_ranges
 
@@ -42,8 +42,6 @@ if TYPE_CHECKING:
 
 STALE_DURATION_S = 10.0  # Seconds without a beacon before an AP row is dimmed.
 EVICT_DURATION_S = 30.0  # Seconds without a beacon before an AP is dropped from the table.
-FADE_DURATION_S = EVICT_DURATION_S
-
 
 
 def device_scan_summary(members) -> Optional[str]:
@@ -76,7 +74,7 @@ class _ChannelReadout(HeaderClock):
         self.set_interval(0.25, self._poll)   # hop cadence
 
     def _poll(self) -> None:
-        array = getattr(self.app, "array", None)
+        array = self.app.array
         members = array.members if array else []
         channels = " | ".join(f"CH:{m.current_channel:>3}" for m in members)
         if channels != self.channels:
@@ -174,23 +172,17 @@ class ScannerView(Screen):
     def __init__(self):
         super().__init__()
         self.ap_cache: Dict[str, AccessPoint] = {}
-        self._refresh_timer = None
+        self._refresh_timer: Optional[Timer] = None
         self._last_sort_time: float = 0.0
         self._channel_filter: Optional[List[int]] = None
+        self._pbc_bssids_under_modal: set[str] = set()
         self._scan_filter: ScanFilter = ScanFilter(hide_silenced=Config.hide_silenced)
-        self._events = CaptureEventDetector(granular_eapol=False)
         # Per-BSSID prev-beacon-count + flash-deadline for "beacon arrived"
         # cell highlight.
         self._prev_beacons: Dict[str, int] = {}
         self._beacon_flash_until: Dict[str, float] = {}
-        # Per-BSSID last-shown SSID, so a decloak is logged exactly once.
-        self._prev_ssids: Dict[str, Optional[str]] = {}
         # Per-BSSID (signature, row): an unchanged AP reuses its row object.
         self._row_cache: Dict[str, tuple] = {}
-        # WPS PBC auto-invade. ON by default. The enabled flag lives on the app
-        # (app.pbc_enabled). Watcher + capturing serialization stay Scanner-local.
-        self._pbc_watcher = PbcWatcher()
-        self._pbc_capturing = False          # serialize: one invade at a time
         self._logged_auto_crack: Optional[bool] = None
 
     # ----- Compose / mount ---------------------------------------------------
@@ -208,7 +200,6 @@ class ScannerView(Screen):
         yield Footer()
 
     async def on_mount(self) -> None:
-        log = self.query_one("#system-log", RichLog)
         table = self.query_one("#ap-table", APTable)
         stored = "identity" if Config.scanner_sort in ("vendor", "brand") else Config.scanner_sort
         table.sort_column = stored if stored in COLUMN_KEYS else "signal"
@@ -216,7 +207,7 @@ class ScannerView(Screen):
         table.focus()
         array = self.app.array
 
-        log.write(treelog.header("Scanner initialized"))
+        self._write_log(treelog.header("Scanner initialized"))
         rows: List[str] = []
         summary = self.app.vault.summary()
         if summary:
@@ -228,12 +219,11 @@ class ScannerView(Screen):
         else:
             rows.append("[yellow]No active interface[/yellow]")
         for i, row in enumerate(rows):
-            log.write(treelog.leaf(row) if i == len(rows) - 1 else treelog.branch(row))
+            self._write_log(treelog.leaf(row) if i == len(rows) - 1 else treelog.branch(row))
 
         if array:
             # 15 FPS in-place value updates and sort refreshes.
             self._refresh_timer = self.set_interval(1 / 15, self.refresh_table)
-            self._pbc_timer = self.set_interval(1.0, self._poll_pbc)
             self._log_pbc_status()  # Auto-invade is ON by default
             self._log_auto_crack_status_when_changed()
 
@@ -243,6 +233,13 @@ class ScannerView(Screen):
         if not array:
             return
         self._log_auto_crack_status_when_changed()
+        bssids, self._pbc_bssids_under_modal = self._pbc_bssids_under_modal, set()
+        for bssid in bssids:
+            ap = array.access_points.get(bssid)
+            if ap is not None and ap.wps_pbc_active:
+                self._on_pbc_window(ap)
+        if self.app.screen is not self:
+            return
         await array.start_hopping(
             channels=self._channel_filter, interval=0.25
         )
@@ -254,8 +251,8 @@ class ScannerView(Screen):
         if not array:
             return
         self._evict_expired_aps()
-        # Under an opaque screen (Focus) the table is hidden: keep draining capture events, skip the
-        # rows. Textual's is_current is True here, and every table repaint would repaint Focus too.
+        # Under an opaque screen (Focus) the table is hidden: skip the rows. Textual's is_current is
+        # True here, and every table repaint would repaint Focus too.
         visible = self.is_active or self.app.screen.styles.background.a < 1
 
         # Pre-compute per-AP client counts to avoid O(N×M) inside the AP loop below.
@@ -267,8 +264,10 @@ class ScannerView(Screen):
         now = time.time()
         rows: List[APRow] = []
         for ap in array.get_access_points(include_eviltwin=False):
-            sibling_ssid = self._best_named_sibling_ssid(ap) if ap.ssid is None else None
-            if not self._scan_filter.matches(ap, ssid=sibling_ssid):
+            guessid = None
+            if ap.ssid is None:
+                guessid = self.app.guessid(ap) or None
+            if not self._scan_filter.matches(ap, ssid=guessid):
                 if ap.bssid in self.ap_cache:
                     self._forget_row(ap.bssid, drop_from_array=False)
                 continue
@@ -279,9 +278,7 @@ class ScannerView(Screen):
 
             self.ap_cache[ap.bssid] = ap
             if visible:
-                rows.append(self._row_for(ap, now, client_counts.get(ap.bssid, 0), sibling_ssid))
-            self._log_decloak(ap)
-            self._drain_capture_events(ap, array.forged_macs)
+                rows.append(self._row_for(ap, now, client_counts.get(ap.bssid, 0), guessid))
 
         if not visible:
             return
@@ -292,7 +289,7 @@ class ScannerView(Screen):
             table.resort()
 
     def _row_for(
-        self, ap: AccessPoint, now: float, clients: int, sibling_ssid: Optional[str]
+        self, ap: AccessPoint, now: float, clients: int, guessid: Optional[str]
     ) -> APRow:
         """The AP as plain values; the table owns every colour decision made from them.
         An AP whose signature is unchanged reuses its previous row object untouched."""
@@ -305,7 +302,7 @@ class ScannerView(Screen):
         is_stale = self._ap_row_age(ap, now) > STALE_DURATION_S
         beacon_flash = now < self._beacon_flash_until.get(ap.bssid, 0.0)
         signature = self._row_signature(
-            ap, vault, clients, is_stale, beacon_flash, sibling_ssid)
+            ap, vault, clients, is_stale, beacon_flash, guessid)
         # EAPOL rewrites ap.handshakes off the beacon path, so APs holding one are
         # never cached. There are only ever a handful of them.
         cacheable = not ap.handshakes
@@ -317,7 +314,7 @@ class ScannerView(Screen):
         row = APRow(
             bssid=ap.bssid,
             ssid=ap.ssid,
-            sibling_ssid=sibling_ssid,
+            guessid=guessid,
             channel=ap.channel,
             signal=ap.signal,
             beacons=ap.beacons,
@@ -343,7 +340,7 @@ class ScannerView(Screen):
 
     def _row_signature(
         self, ap: AccessPoint, vault, clients: int, is_stale: bool,
-        beacon_flash: bool, sibling_ssid: Optional[str],
+        beacon_flash: bool, guessid: Optional[str],
     ) -> tuple:
         """Every input to the row, reduced to values that are cheap to read.
 
@@ -352,28 +349,27 @@ class ScannerView(Screen):
         rest cannot move without it. Listed explicitly alongside it are the fields a
         frame can change WITHOUT touching last_seen -- cross-card RSSI, a decloak from a
         client's probe, a WPS M1's identity, WEP IV counting -- plus the vault and
-        config state the badges read. tests/ui/test_scanner_row_cache.py holds the
-        cached row against a freshly built one, so a missing input here fails loudly.
+        config state the badges read.
         """
         wep = ap.wep
         return (
             ap.last_seen, ap.beacons, ap.signal, ap.channel, ap.ssid,
             ap.wps, ap.wps_locked, ap.identity.summary,
             wep.unique_ivs if wep else 0, ap.wep_key, ap.wps_pbc_psk,
-            clients, is_stale, beacon_flash, sibling_ssid,
+            clients, is_stale, beacon_flash, guessid,
             vault.revision(ap.bssid), Config.is_silenced(ap.bssid),
         )
-
-    def _log_decloak(self, ap: AccessPoint) -> None:
-        self._prev_ssids[ap.bssid] = ap.ssid
 
     def _evict_expired_aps(self) -> None:
         if not self.app.array:
             return
         now = time.time()
+        focused_bssid = None
+        if self.app.target_ap is not None and self.app.get_screen("focus") in self.app.screen_stack:
+            focused_bssid = self.app.target_ap.bssid
         to_drop = [
             ap.bssid for ap in self.app.array.get_access_points(include_eviltwin=False)
-            if self._ap_row_age(ap, now) >= EVICT_DURATION_S
+            if self._ap_row_age(ap, now) >= EVICT_DURATION_S and ap.bssid != focused_bssid
         ]
         for bssid in to_drop:
             self._forget_row(bssid, drop_from_array=True)
@@ -388,100 +384,72 @@ class ScannerView(Screen):
         self.ap_cache.pop(bssid, None)
         self._prev_beacons.pop(bssid, None)
         self._beacon_flash_until.pop(bssid, None)
-        self._prev_ssids.pop(bssid, None)
         self._row_cache.pop(bssid, None)
-
-    def _best_named_sibling_ssid(self, ap: AccessPoint) -> Optional[str]:
-        """Guess the sibling SSID to display for a hidden AP."""
-        array = self.app.array
-        if not array or not ap.siblings:
-            return None
-        best_ssid: Optional[str] = None
-        best_beacons = -1
-        for sib_bssid in ap.siblings:
-            sib_ap = array.access_points.get(sib_bssid)
-            if sib_ap and sib_ap.ssid and sib_ap.beacons > best_beacons:
-                best_ssid = sib_ap.ssid
-                best_beacons = sib_ap.beacons
-        return best_ssid
 
     # ----- Capture-event logging ---------------------------------------------
 
-    def _drain_capture_events(self, ap: AccessPoint, forged_macs) -> None:
-        if Config.is_silenced(ap.bssid):
-            return
-        for ev in self._events.poll(ap, forged_macs=forged_macs):
-            self._log_capture_event(ev, ap)
-
-    def _log_capture_event(self, ev: CaptureEvent, ap: AccessPoint) -> None:
+    def on_wifite_app_ap_event_detected(self, message: "WifiteApp.ApEventDetected") -> None:
+        ev = message.event
         ap_label = escape(ev.ssid or ev.bssid)
-        client = escape(ev.client_mac)
-        save_result = None
-        if ev.kind == CaptureKind.HANDSHAKE:
-            pair = ev.pair_label or "?"
+        if isinstance(ev, HandshakeCaptured):
             msg = (
-                f"[bold green]✓ HANDSHAKE[/bold green] ({pair}) on "
-                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{client}[/bold]"
+                f"[bold green]✓ HANDSHAKE[/bold green] ({ev.pair_label}) on "
+                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
-            save_result = self.app.vault.save_handshake(ap, ev.client_mac)
-        elif ev.kind == CaptureKind.UNCRACKABLE_HANDSHAKE:
+        elif isinstance(ev, UncrackableHandshakeSeen):
             msg = (
-                f"[bold yellow]● {escape(ev.value or '?')} 4-way[/bold yellow] on "
+                f"[bold yellow]● {escape(ev.akm_label)} 4-way[/bold yellow] on "
                 f"[bold cyan]{ap_label}[/bold cyan] [dim](not crackable, -m 22000)[/dim]"
             )
-        elif ev.kind == CaptureKind.PMKID:
+        elif isinstance(ev, PmkidCaptured):
             msg = (
                 f"[bold green]✓ PMKID[/bold green] on "
-                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{client}[/bold]"
+                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
-            save_result = self.app.vault.save_pmkid(ap, ev.client_mac)
-        elif ev.kind == CaptureKind.DECLOAK:
+        elif isinstance(ev, PbcWindowOpened):
+            ap = self.app.array.access_points.get(ev.bssid) if self.app.array else None
+            if ap is not None:
+                self._on_pbc_window(ap)
+            return
+        elif isinstance(ev, ApDecloaked):
             # A ● header (not a ✓ win): a hidden SSID became visible, not a credential.
-            if Config.remember_decloak(ev.bssid, ev.ssid or ""):
-                self.app.persist_config()
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._write_log(Text.from_markup(treelog.header(
                 f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
                 f"[green]{escape(ev.ssid or '')}[/green] "
                 f"[dim]via {method_label}[/dim]"), emoji=False))
             return
-        elif ev.kind == CaptureKind.WEP_KEY:
+        elif isinstance(ev, WepKeyRecovered):
             msg = (f"[bold green]✓ WEP KEY[/bold green] on "
-                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(wep_key_hex_and_ascii(ev.value or ''))}")
-        elif ev.kind == CaptureKind.WPS_PIN:
+                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(wep_key_hex_and_ascii(ev.key_hex))}")
+        elif isinstance(ev, WpsPinRecovered):
             msg = (f"[bold green]✓ WPS PIN[/bold green] on "
-                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(ev.value or EMPTY_PIN_LABEL)}")
-        elif ev.kind == CaptureKind.WPS_PSK:
+                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(ev.pin or EMPTY_PIN_LABEL)}")
+        elif isinstance(ev, WpsPskRecovered):
             msg = (f'[bold green]✓ WPS PSK[/bold green] on '
-                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.value or "")}"')
-        elif ev.kind == CaptureKind.WPS_PBC:
+                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.psk)}"')
+        elif isinstance(ev, WpsPbcPskRecovered):
             msg = (f'[bold green]✓ WPS PSK[/bold green] [dim](via PushButton)[/dim] on '
-                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.value or "")}"')
+                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.psk)}"')
         else:
             return  # eapol events suppressed in scanner
         # Leading space aligns the ✓ win with the ● / ├─► / └─► tree log above it.
         self._write_log(Text.from_markup(f" {msg}", emoji=False))
-        if save_result is not None:
-            verb = "saved" if save_result.was_new else "already saved as"
-            self._write_log(Text.from_markup(treelog.leaf(
-                f"[dim]({verb} {escape(save_result.path.name)})[/dim]"
-                f"{saved_psk_markup(save_result.matches_saved_psk)}"), emoji=False))
-        title = CAPTURE_TOAST_TITLES.get(ev.kind)
-        if title:
-            name = ev.ssid or ev.bssid
-            if ev.kind == CaptureKind.WEP_KEY:
-                self.notify(f"{name}: {wep_key_hex_and_ascii(ev.value or '')}", title=title, timeout=6)
+        if isinstance(ev, (HandshakeCaptured, PmkidCaptured)):
+            save_result = ev.save_result
+            if save_result is None:
+                reason = "not saved: SSID unknown" if not ev.ssid else "not saved"
+                self._write_log(Text.from_markup(treelog.leaf(f"[dim]({reason})[/dim]"), emoji=False))
             else:
-                pair = ev.pair_label or ("M1" if ev.kind == CaptureKind.PMKID else None)
-                full_title = f"{title} ({pair})" if pair else title
-                body = (f"[bold]{escape(name)}[/bold] on channel [bold]{ap.channel}[/bold] "
-                        f"[dim bold](BSSID: {escape(ap.bssid)})[/dim bold]")
-                self.notify(body, title=full_title, timeout=6)
+                verb = "saved" if save_result.was_new else "already saved as"
+                self._write_log(Text.from_markup(treelog.leaf(
+                    f"[dim]({verb} {escape(save_result.path.name)})[/dim]"
+                    f"{saved_psk_markup(save_result.matches_saved_psk)}"), emoji=False))
 
     def _write_log(self, text) -> None:
         try:
             log = self.query_one("#system-log", RichLog)
-        except Exception:
+        except NoMatches:
             return
         # Bypass RichLog's emojis (would turn :ab: / :cd: inside a BSSID into 🆎 / 💿).
         if isinstance(text, str):
@@ -515,22 +483,14 @@ class ScannerView(Screen):
         self.app.persist_config()
         self._log_pbc_status()
         if self.app.pbc_enabled:
-            self._arm_open_windows()
+            self._check_open_pbc_windows()
 
-    def _arm_open_windows(self) -> None:
-        """React to PBC windows that are *already* open at the instant we arm."""
+    def _check_open_pbc_windows(self) -> None:
         array = self.app.array
         if not array:
             return
-        launched = self._pbc_capturing
         for ap in array.get_access_points():
-            if not ap.wps_pbc_active:
-                continue
-            if self.app.vault.has_psk(ap):
-                ssid = escape(ap.ssid or ap.bssid)
-                self._write_log(f"  [dim]({ssid} already captured, PSK: [bold]{escape(self.app.vault.known_psk(ap) or '?')}[/bold])[/dim]")
-            elif not launched:
-                launched = True
+            if ap.wps_pbc_active:
                 self._on_pbc_window(ap)
 
     def _log_pbc_status(self) -> None:
@@ -575,15 +535,13 @@ class ScannerView(Screen):
             f' {label} [dim](via {escape(job.display_name)})[/dim] '
             f'= "{escape(job.key or "")}"', emoji=False))
 
-    def _poll_pbc(self) -> None:
-        array = self.app.array
-        if not array or self.app.screen is not self:
-            return
-        for ap in self._pbc_watcher.new_windows(array.get_access_points()):
-            self._on_pbc_window(ap)
-
     def _on_pbc_window(self, ap: AccessPoint) -> None:
-        if Config.is_silenced(ap.bssid):
+        if Config.is_silenced(ap.bssid) or ap.is_hidden:
+            return
+        if self.app.screen is not self:
+            stack = self.app.screen_stack
+            if all(isinstance(s, ModalScreen) for s in stack[stack.index(self) + 1:]):
+                self._pbc_bssids_under_modal.add(ap.bssid)
             return
         label = escape(ap.ssid or ap.bssid)
         self._write_log(
@@ -593,56 +551,11 @@ class ScannerView(Screen):
         if not self.app.pbc_enabled:
             self._write_log(treelog.leaf("[dim]auto-invade off: press [bold]w[/bold] to enable[/dim]"))
             return
-        if self.app.vault.has_psk(ap):
-            wps = self.app.vault.wps_capture(ap)
-            where = f" [dim]({escape(Path(wps.path).name)})[/dim]" if wps else ""
-            self._write_log(treelog.leaf(f"[italic]already captured[/italic]{where}"))
+        if self.app.vault.ap_state(ap.bssid).status is PasswordStatus.CURRENT:
+            self._write_log(treelog.leaf("[italic]password already CURRENT[/italic]"))
             return
-        if self._pbc_capturing:
-            return
-        asyncio.create_task(self._invade_pbc(ap))
-
-    async def _invade_pbc(self, ap: AccessPoint) -> None:
-        """Pause hop → tune to the target → run the PBC enrollment → resume."""
-        array = self.app.array
-        if not array:
-            return
-        self._pbc_capturing = True
-        label = escape(ap.ssid or ap.bssid)
-        self._write_log(treelog.branch(
-            f"[cyan]invading[/cyan] [bold]{label}[/bold]: pausing hop, "
-            f"tuning [cyan]CH {ap.channel}[/cyan]…"))
-        try:
-            await array.stop_hopping()
-            await array.set_channel(ap.channel)
-            outcome = await WpsPbcCapture(
-                array, ap, log=lambda m: self._write_log(treelog.branch(m))
-            ).capture()
-            if outcome.result is PinResult.SUCCESS:
-                ap.wps_pbc_psk = outcome.psk
-                name = escape(outcome.ssid or ap.ssid or ap.bssid)
-                self._write_log(treelog.branch_ok(
-                    f"[black bold on cyan] PSK for {name}: \"{escape(outcome.psk)}\" [/black bold on cyan]"))
-                try:
-                    result = self.app.vault.save_wps_pbc(ap, outcome.psk)
-                    if result is None:
-                        self._write_log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
-                    else:
-                        verb = "saved" if result.was_new else "already saved as"
-                        self._write_log(treelog.leaf(
-                            f"[cyan]{verb}[/cyan] [dim]{escape(result.path.name)}[/dim]"))
-                except Exception:
-                    self._write_log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
-            else:
-                self._write_log(treelog.leaf_fail(
-                    f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim]"))
-        except Exception as exc:                       # never let an invade kill the scanner
-            self._write_log(treelog.leaf_fail(f"capture error: {escape(str(exc))}"))
-        finally:
-            self._pbc_capturing = False
-            if self.app.screen is self:
-                # Resume hopping only if we're still the foreground screen (not Focus).
-                await array.start_hopping(channels=self._channel_filter, interval=0.25)
+        self.app.target_ap = ap
+        self.app.push_screen("focus")
 
     def action_open_vault(self) -> None:
         self.app.action_toggle_vault()
@@ -678,17 +591,14 @@ class ScannerView(Screen):
         table.move_cursor(table.row_count - 1, animate=True)
 
     def action_change_channel(self) -> None:
-        log = self.query_one("#system-log", RichLog)
         array = self.app.array
         if not array:
-            log.write("[bold red][!] No active interface.[/bold red]")
+            self._write_log("[bold red][!] No active interface.[/bold red]")
             return
 
         supported = array.supported_channels
         if not supported:
-            log.write(
-                "[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]"
-            )
+            self._write_log("[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]")
             return
 
         dialog = ChannelFilterDialog(
@@ -701,7 +611,7 @@ class ScannerView(Screen):
         self, result: Optional[List[int]]
     ) -> None:
         if result is None:
-            self.query_one("#system-log", RichLog).write("[dim]Channel filter unchanged.[/dim]")
+            self._write_log("[dim]Channel filter unchanged.[/dim]")
         else:
             await self._apply_channel_filter(result)
         self.query_one(FilterBar).set_channels(self._channel_filter)
@@ -718,19 +628,16 @@ class ScannerView(Screen):
         dropped = self._prune_aps_outside(channels)
         await array.start_hopping(channels=self._channel_filter, interval=0.25)
 
-        log = self.query_one("#system-log", RichLog)
         pieces = [
             f"[bold cyan]{name}[/bold cyan] [dim]({rngs})[/dim]"
             for name, rngs in band_ranges(channels)
         ]
         summary = " and ".join(pieces) if pieces else "[dim]no channels[/dim]"
-        log.write(f" [dim]●[/dim] [bold]Channel hopping[/bold] across {summary}")
+        self._write_log(f" [dim]●[/dim] [bold]Channel hopping[/bold] across {summary}")
         if dropped:
             noun = "AP" if dropped == 1 else "APs"
-            log.write(
-                treelog.leaf(f"[dim]Cleared [bold]{dropped}[/bold] "
-                             f"{noun} outside the filter[/dim]")
-            )
+            self._write_log(treelog.leaf(f"[dim]Cleared [bold]{dropped}[/bold] "
+                                         f"{noun} outside the filter[/dim]"))
 
     # ----- Filter bar --------------------------------------------------------
 

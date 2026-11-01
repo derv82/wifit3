@@ -21,14 +21,16 @@ from wifit3.campaigns.campaign import Campaign
 from wifit3.dot11 import SSID_MAX_OCTETS, mac_to_str, str_to_mac
 from wifit3.dot11.mac import BROADCAST_MAC, random_client_mac
 from wifit3.dot11.probe import probe_req
+from wifit3.id.ssid import strip_suffix
 from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
 from wifit3.wlan.array import WlanArray
 
 logger = logging.getLogger(__name__)
 
 PROBE_RESPONSE_WAIT_S = 0.15
-AUTH_TIMEOUT_S = 0.2
-ASSOC_TIMEOUT_S = 0.3
+AUTH_TIMEOUT_S = 0.5
+ASSOC_TIMEOUT_S = 1.0
 
 # In-house list: keep growing it, do not import anyone else's.
 SIBLING_SUFFIXES: list[str] = [
@@ -80,28 +82,18 @@ class DecloakInput:
 
 
 def candidates_from_sibling(sibling_ssid: str) -> list[str]:
-    """Every SIBLING_SUFFIXES entry appended to sibling_ssid, minus duplicates and names
-    over 32 octets. Empty when sibling_ssid is empty."""
+    """sibling_ssid, then every SIBLING_SUFFIXES entry appended to it without its own band/type
+    suffix, minus duplicates and names over 32 octets. Empty when sibling_ssid is empty."""
     if not sibling_ssid:
         return []
-    candidates: list[str] = []
+    base_ssid = strip_suffix(sibling_ssid)
+    candidates: list[str] = [sibling_ssid]
     for suffix in SIBLING_SUFFIXES:
-        candidate = (sibling_ssid + suffix).rstrip()
+        candidate = (base_ssid + suffix).rstrip()
         if (candidate and candidate not in candidates
                 and len(candidate.encode("utf-8")) <= SSID_MAX_OCTETS):
             candidates.append(candidate)
     return candidates
-
-
-def named_sibling_ssid(array: WlanArray, hidden: AccessPoint) -> str:
-    """The SSID of whichever of hidden.siblings has an SSID and the most beacons. Empty
-    when it has no siblings, or none of them are named."""
-    best_ssid, best_beacons = "", -1
-    for bssid in hidden.siblings:
-        sibling = array.access_points.get(bssid)
-        if sibling and sibling.ssid and sibling.beacons > best_beacons:
-            best_ssid, best_beacons = sibling.ssid, sibling.beacons
-    return best_ssid
 
 
 class DecloakCampaign(Campaign):
@@ -121,7 +113,7 @@ class DecloakCampaign(Campaign):
                  decloak_input: Optional[DecloakInput] = None, *,
                  log: Optional[Callable[[str], None]] = None) -> None:
         super().__init__(ap=target, array=array)
-        self.sibling_ssid = named_sibling_ssid(array, target)
+        self.sibling_ssid = array.guessid(target)
         chosen = decloak_input or DecloakInput(candidates_from_sibling(self.sibling_ssid))
         self.candidate_ssids = list(chosen.candidate_ssids)
         self.use_directed_probe = chosen.use_directed_probe
@@ -154,7 +146,10 @@ class DecloakCampaign(Campaign):
         if self.iface is None:
             self._log(f"no card can reach channel {self.ap.channel}")
             return
-        self._log(f"guessing from '{self.sibling_ssid}'")
+        if len(self.candidate_ssids) == 1:
+            self._log(f"trying '{self.candidate_ssids[0]}'")
+        else:
+            self._log(f"guessing from '{self.sibling_ssid}'")
         async with self.array.claim(self.iface):
             if self.iface.current_channel != self.ap.channel:
                 await self.iface.set_channel(self.ap.channel)
@@ -205,6 +200,7 @@ class DecloakCampaign(Campaign):
         for ssid in self.candidate_ssids:
             if self.stopped:
                 return None
+            logger.debug("[DECLOAK] %s: %s probe for %r", self.ap.bssid, method, ssid)
             await self.iface.send_no_wait(
                 probe_req(addressee, self.source_mac, ssid, channel=self.ap.channel)
             )
@@ -241,11 +237,16 @@ class DecloakCampaign(Campaign):
         try:
             if not await association.authenticate():
                 logger.info("[DECLOAK] %s will not authenticate us", self.ap.bssid)
+                if association.auth_status is None:
+                    self._log("no Auth response")
+                else:
+                    self._log(f"Auth refused (status {association.auth_status})")
                 return None
-            invented = f"wifit3-control-{os.urandom(8).hex()}"
+            invented = os.urandom(8).hex()
             if await association.associate_as(invented) == 0:
                 logger.info("[DECLOAK] %s accepts any SSID; association proves nothing",
                             self.ap.bssid)
+                self._log("AP accepts any SSID; association can't reveal it")
                 return None
             return await self._claim_each(association)
         finally:
@@ -262,8 +263,10 @@ class DecloakCampaign(Campaign):
             if association.state is AssocState.UNAUTHENTICATED:
                 if not await association.authenticate():
                     logger.info("[DECLOAK] %s deauthenticated us mid-sweep", self.ap.bssid)
+                    self._log(f"deauthenticated after {self.sent} guesses")
                     return None
             self.sent += 1
+            logger.debug("[DECLOAK] %s: association request for %r", self.ap.bssid, ssid)
             if await association.associate_as(ssid) == 0:
                 self.array.decloak(self.ap, ssid, "assoc")
                 logger.info("[DECLOAK] %s accepted %r", self.ap.bssid, ssid)
@@ -277,3 +280,28 @@ class DecloakCampaign(Campaign):
             )
         except Exception:
             logger.debug("[DECLOAK] client-leaving cleanup failed", exc_info=True)
+
+
+class KnownDecloakCampaign(DecloakCampaign):
+    """Decloak with the SSID this AP revealed in an earlier session, every method on."""
+
+    button_id = "btn-known-decloak"
+    key = "known_decloak"
+    hotkey = None
+    idle_variant = "success"
+
+    @classmethod
+    def visible(cls, ap: AccessPoint) -> bool:
+        return ap.is_hidden and Config.decloaked_ssid(ap.bssid) is not None
+
+    @classmethod
+    def button_label(cls, ap: AccessPoint) -> str:
+        return f"Decloak {Config.decloaked_ssid(ap.bssid)}"
+
+    def __init__(self, array: WlanArray, target: AccessPoint, *,
+                 log: Optional[Callable[[str], None]] = None) -> None:
+        known_ssid = Config.decloaked_ssid(target.bssid) or ""
+        super().__init__(array, target,
+                         DecloakInput([known_ssid], use_directed_probe=True,
+                                      use_broadcast_probe=True, use_authassoc_probe=True),
+                         log=log)

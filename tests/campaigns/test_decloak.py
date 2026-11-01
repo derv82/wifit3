@@ -2,18 +2,19 @@
 sweep's adherence to the 802.11 state machine."""
 from __future__ import annotations
 
-import types
 from unittest.mock import MagicMock
 
 from wifit3.campaigns.decloak import (
     SIBLING_SUFFIXES,
     DecloakCampaign,
     DecloakInput,
+    KnownDecloakCampaign,
     candidates_from_sibling,
-    named_sibling_ssid,
 )
 from wifit3.campaigns.auth_assoc import AssocState
 from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
+from wifit3.wlan.array import WlanArray
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.probe import probe_req
 
@@ -42,10 +43,11 @@ def test_candidates_dedup_and_keep_suffix_order():
     assert len(out) <= len(SIBLING_SUFFIXES)
 
 
-def test_candidates_strip_trailing_whitespace():
+def test_candidates_replace_the_siblings_band_suffix():
     out = candidates_from_sibling("TestSSID 2.4")
-    assert "TestSSID 2.4 Guest" in out
-    assert "TestSSID 2.4-Guest" in out
+    assert "TestSSID" in out
+    assert "TestSSID-Guest" in out
+    assert "TestSSID 2.4-2.4G" not in out
 
 
 def test_candidates_drop_names_over_32_octets():
@@ -53,23 +55,6 @@ def test_candidates_drop_names_over_32_octets():
     assert "X" * 31 in out                      # the bare sibling still fits
     assert all(len(c.encode("utf-8")) <= 32 for c in out)
     assert ("X" * 31) + "-Guest" not in out
-
-
-def test_named_sibling_prefers_the_most_beaconed():
-    array = MagicMock()
-    array.access_points = {
-        "11:11:11:11:11:11": types.SimpleNamespace(ssid="Quiet", beacons=3),
-        "22:22:22:22:22:22": types.SimpleNamespace(ssid="Loud", beacons=90),
-        "33:33:33:33:33:33": types.SimpleNamespace(ssid=None, beacons=500),
-    }
-    hidden = AccessPoint(bssid=_BSSID, channel=6,
-                         siblings=["11:11:11:11:11:11", "22:22:22:22:22:22",
-                                   "33:33:33:33:33:33"])
-    assert named_sibling_ssid(array, hidden) == "Loud"
-
-
-def test_named_sibling_is_empty_without_siblings():
-    assert named_sibling_ssid(MagicMock(), AccessPoint(bssid=_BSSID, channel=6)) == ""
 
 
 # ----- frame building ----------------------------------------------------------
@@ -161,3 +146,21 @@ async def test_sweep_stops_when_asked():
     association = _FakeAssociation({"B": 0})
     assert await campaign._claim_each(association) is None
     assert association.calls == []
+
+
+def test_known_decloak_shows_only_for_a_hidden_ap_with_a_remembered_ssid(monkeypatch):
+    monkeypatch.setattr(Config, "decloaked_ssids", {_BSSID: "MyRouter-Guest"})
+    hidden = AccessPoint(bssid=_BSSID, channel=6)
+    assert KnownDecloakCampaign.visible(hidden)
+    assert KnownDecloakCampaign.button_label(hidden) == "Decloak MyRouter-Guest"
+
+    assert not KnownDecloakCampaign.visible(AccessPoint(bssid=_BSSID, ssid="MyRouter-Guest"))
+    assert not KnownDecloakCampaign.visible(AccessPoint(bssid="aa:bb:cc:dd:ee:01", channel=6))
+
+
+def test_known_decloak_sends_only_the_remembered_ssid_with_every_method(monkeypatch):
+    monkeypatch.setattr(Config, "decloaked_ssids", {_BSSID: "MyRouter-Guest"})
+    campaign = KnownDecloakCampaign(WlanArray(), AccessPoint(bssid=_BSSID, channel=6))
+    assert campaign.candidate_ssids == ["MyRouter-Guest"]
+    assert campaign.use_directed_probe and campaign.use_broadcast_probe
+    assert campaign.use_authassoc_probe

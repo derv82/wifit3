@@ -25,7 +25,7 @@ class WepStats:
 
 class CaptureType(StrEnum):
     """Kind of a saved capture artifact, one member per on-disk file kind. Distinct
-    from ui.capture_events.CaptureKind, which enumerates live detector events."""
+    from the watchers.ap_watcher.ApEvent classes, which are live AP events."""
     HS = "HS"
     PMKID = "PMKID"
     WEP = "WEP"

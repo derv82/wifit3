@@ -26,7 +26,7 @@ from wifit3.persist.config import Config
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
-from ..campaigns.decloak import DecloakCampaign
+from ..campaigns.decloak import DecloakCampaign, KnownDecloakCampaign
 
 if TYPE_CHECKING:
     from wifit3.models.access_point import AccessPoint
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 # Attack-button campaigns in button-row order.
 BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign,
-                    EvilTwinCampaign, DecloakCampaign]
+                    EvilTwinCampaign, DecloakCampaign, KnownDecloakCampaign]
 
 
 CAMPAIGN_BY_KEY = {cls.key: cls for cls in BUTTON_CAMPAIGNS}
