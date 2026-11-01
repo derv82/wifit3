@@ -85,6 +85,7 @@ class _ScannerHost(App):
         super().__init__()
         self.array = array
         self.pbc_enabled = True
+        self.target_ap = None
         self.vault = Vault()
         self.persist_calls = 0
 

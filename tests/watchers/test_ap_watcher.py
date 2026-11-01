@@ -6,7 +6,7 @@ from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
 from wifit3.watchers.ap_watcher import (
     ApDecloaked, ApWatcher, CaptureEventDetector, DecloakDetector, EapolFrameDetector,
-    HandshakeCaptured, HandshakeDetector, PbcWindowDetector, PmkidCaptured, PmkidDetector,
+    HandshakeCaptured, HandshakeDetector, PbcWindowDetector, PbcWindowOpened, PmkidCaptured, PmkidDetector,
     UncrackableHandshakeDetector,
     WepKeyDetector, WepKeyRecovered, WpsPbcPskDetector, WpsPbcPskRecovered, WpsPinDetector,
     WpsPinRecovered, WpsPskDetector, WpsPskRecovered,
@@ -210,6 +210,22 @@ def test_pbc_window_reported_once_per_opening():
     ap.wps_selected_registrar = True
     assert len(det.poll(ap)) == 1                # reopened
 
+
+
+def test_watcher_reports_an_open_window_again_after_its_ap_was_evicted():
+    array = WlanArray()
+    ap = _pbc_ap("aa:bb:cc:dd:ee:01")
+    ap.wps_selected_registrar = True
+    array.access_points[ap.bssid] = ap
+    watcher = ApWatcher(Vault())
+    assert len([e for e in watcher.poll(array) if isinstance(e, PbcWindowOpened)]) == 1
+
+    del array.access_points[ap.bssid]
+    watcher.poll(array)
+    returned = _pbc_ap(ap.bssid)
+    returned.wps_selected_registrar = True
+    array.access_points[returned.bssid] = returned
+    assert len([e for e in watcher.poll(array) if isinstance(e, PbcWindowOpened)]) == 1
 
 # ----- Credential detectors ----------------------------------------------------
 

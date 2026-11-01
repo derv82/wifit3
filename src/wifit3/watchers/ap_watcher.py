@@ -3,7 +3,7 @@ credentials) by diffing AP state across polls."""
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import AbstractSet, Dict, List, NamedTuple, Optional, Set
+from typing import AbstractSet, Dict, Iterable, List, NamedTuple, Optional, Set
 
 from wifit3.crack import handshake as wpa
 from wifit3.models import AccessPoint, Handshake, HandshakeMessage
@@ -98,6 +98,7 @@ class ApWatcher:
             self._detector = CaptureEventDetector()
             self._captures_waiting_for_ssid = {}
         events: List[ApEvent] = []
+        self._detector.evict_stale_aps(array.access_points.keys())
         for ap in array.get_access_points(include_eviltwin=False):
             if Config.is_silenced(ap.bssid):
                 continue
@@ -273,6 +274,10 @@ class PbcWindowDetector:
         self._open_bssids.add(ap.bssid)
         return [PbcWindowOpened(bssid=ap.bssid, ssid=ap.ssid, channel=ap.channel)]
 
+    def evict_stale_open_bssids(self, present_bssids: Iterable[str]) -> None:
+        """Forget evicted APs that previously had open PBC windows."""
+        self._open_bssids.intersection_update(present_bssids)
+
 
 class WepKeyDetector:
     """A recovered WEP key, once per AP."""
@@ -342,6 +347,10 @@ class CaptureEventDetector:
         self._wps_pins = WpsPinDetector()
         self._wps_psks = WpsPskDetector()
         self._wps_pbc_psks = WpsPbcPskDetector()
+
+    def evict_stale_aps(self, present_bssids: Iterable[str]) -> None:
+        """Forget state kept for APs no longer in the array."""
+        self._pbc_windows.evict_stale_open_bssids(present_bssids)
 
     def poll(self, ap: AccessPoint, forged_macs: AbstractSet[str]) -> List[ApEvent]:
         events: List[ApEvent] = []

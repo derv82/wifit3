@@ -46,6 +46,7 @@ class _Host(App):
         super().__init__()
         self.array = array
         self.pbc_enabled = False
+        self.target_ap = None
         self.vault = Vault()
 
     def persist_config(self) -> None:

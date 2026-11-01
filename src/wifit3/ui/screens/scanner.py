@@ -349,8 +349,7 @@ class ScannerView(Screen):
         rest cannot move without it. Listed explicitly alongside it are the fields a
         frame can change WITHOUT touching last_seen -- cross-card RSSI, a decloak from a
         client's probe, a WPS M1's identity, WEP IV counting -- plus the vault and
-        config state the badges read. tests/ui/test_scanner_row_cache.py holds the
-        cached row against a freshly built one, so a missing input here fails loudly.
+        config state the badges read.
         """
         wep = ap.wep
         return (
@@ -365,9 +364,12 @@ class ScannerView(Screen):
         if not self.app.array:
             return
         now = time.time()
+        focused_bssid = None
+        if self.app.target_ap is not None and self.app.get_screen("focus") in self.app.screen_stack:
+            focused_bssid = self.app.target_ap.bssid
         to_drop = [
             ap.bssid for ap in self.app.array.get_access_points(include_eviltwin=False)
-            if self._ap_row_age(ap, now) >= EVICT_DURATION_S
+            if self._ap_row_age(ap, now) >= EVICT_DURATION_S and ap.bssid != focused_bssid
         ]
         for bssid in to_drop:
             self._forget_row(bssid, drop_from_array=True)
