@@ -10,7 +10,7 @@ from wifit3.campaigns.verify.wep import VerifyWepCampaign
 from wifit3.campaigns.wps.registrar import AttemptOutcome, PinResult
 from wifit3.crack.wep import rc4_keystream
 from wifit3.dot11 import str_to_mac
-from wifit3.dot11.packet import EapolPacket, WepDataPacket
+from wifit3.dot11.packet import DeauthPacket, EapolPacket, WepDataPacket
 from wifit3.dot11.wep.crypto import icv
 from wifit3.models import AccessPoint
 
@@ -115,6 +115,32 @@ async def test_verify_psk_m1_resent_after_each_m2_is_rejected(monkeypatch):
 
     assert (campaign.outcome, campaign.error) == (VerifyOutcome.REJECTED, None)
     assert iface.send_until_ack.await_count == 3
+
+
+def _deauth_from_ap(reason: int) -> DeauthPacket:
+    return DeauthPacket(type="deauth", type_id=0, subtype_id=12, bssid=BSSID, source=BSSID, dest=OUR_MAC,
+                        to_ds=False, from_ds=False, rssi=-50, raw=b"\x00" * 26, reason=reason)
+
+
+async def test_verify_psk_deauth_after_a_resent_m1_is_rejected(monkeypatch):
+    """hostapd answers its first bad M2s by re-sending M1, then deauths (reason 15) at its retry limit."""
+    array = _array(_iface())
+    array.next_frame = AsyncMock(side_effect=[_eapol_from_ap(1, 2), _eapol_from_ap(1, 3), _deauth_from_ap(15)])
+    _associates(monkeypatch)
+
+    campaign = await _run(VerifyPskCampaign, array, "pw")
+
+    assert (campaign.outcome, campaign.error) == (VerifyOutcome.REJECTED, None)
+
+
+async def test_verify_psk_deauth_before_any_resent_m1_is_an_error(monkeypatch):
+    array = _array(_iface())
+    array.next_frame = AsyncMock(side_effect=[_eapol_from_ap(1, 1), _deauth_from_ap(15)])
+    _associates(monkeypatch)
+
+    campaign = await _run(VerifyPskCampaign, array, "pw")
+
+    assert (campaign.outcome, campaign.error) == (VerifyOutcome.ERROR, "AP sent deauth (reason 15) after EAPOL M2")
 
 
 @pytest.mark.parametrize("acked, frames, error", [

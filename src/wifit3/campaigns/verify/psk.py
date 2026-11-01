@@ -6,7 +6,7 @@ from typing import Optional
 from wifit3.campaigns.auth_assoc import Association
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.ie import GENERIC_RSN_IE, force_psk_akm
-from wifit3.dot11.packet import EapolPacket
+from wifit3.dot11.packet import DeauthPacket, EapolPacket
 from wifit3.dot11.wpa import KCK_LEN, build_eapol_m2, derive_pmk, derive_ptk, random_nonce
 
 from .campaign import VerifyCampaign, VerifyOutcome
@@ -49,24 +49,33 @@ class VerifyPskCampaign(VerifyCampaign):
             return VerifyOutcome.ERROR, "AP never sent EAPOL M1"
 
         replay = _replay_counter(m1)
+
+        def answers_m2(p) -> bool:
+            if p.dest != our_mac_str or p.bssid != bssid:
+                return False
+            if isinstance(p, DeauthPacket):
+                return True
+            return isinstance(p, EapolPacket) and (
+                p.msg_num == 3 or (p.msg_num == 1 and p.nonce is not None and _replay_counter(p) > replay))
+
         pmk = derive_pmk(self.value, (ap.ssid or "").encode())
         bssid_mac = str_to_mac(bssid)
-        for _ in range(_M2_ATTEMPTS):
+        for attempt in range(_M2_ATTEMPTS):
             snonce = random_nonce()
             kck = derive_ptk(pmk, bssid_mac, our_mac, m1.nonce, snonce, KCK_LEN)
             m2 = build_eapol_m2(bssid_mac, our_mac, snonce, kck, replay=replay, rsn_ie=trailer)
             if not await iface.send_until_ack(m2, max_retries=_M2_RESENDS):
                 return VerifyOutcome.ERROR, "AP never ACKed EAPOL M2"
             self._log_step("M1 received, M2 sent")
-            previous_replay = replay
-            reply = await self.array.next_frame(
-                lambda p: (isinstance(p, EapolPacket) and p.dest == our_mac_str and p.bssid == bssid
-                           and (p.msg_num == 3
-                                or (p.msg_num == 1 and p.nonce is not None
-                                    and _replay_counter(p) > previous_replay))),
-                timeout=_EAPOL_REPLY_TIMEOUT_S)
+            reply = await self.array.next_frame(answers_m2, timeout=_EAPOL_REPLY_TIMEOUT_S)
             if reply is None:
                 return VerifyOutcome.ERROR, "no reply from the AP after EAPOL M2"
+            if isinstance(reply, DeauthPacket):
+                self._log_step(f"{reply.type.capitalize()} received (reason {reply.reason})")
+                # hostapd stops re-sending M1 at its retry limit and deauths instead
+                if attempt > 0:
+                    return VerifyOutcome.REJECTED, None
+                return VerifyOutcome.ERROR, f"AP sent {reply.type} (reason {reply.reason}) after EAPOL M2"
             if reply.msg_num == 3:
                 self._log_step("M3 received")
                 return VerifyOutcome.VERIFIED, None
