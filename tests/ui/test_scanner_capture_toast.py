@@ -50,3 +50,33 @@ async def test_a_passive_decloak_reaches_disk():
 
         assert Config.decloaked_ssids == {"aa:bb:cc:dd:ee:08": "Songsong"}
         assert "Songsong" in _PATH.read_text("utf-8")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_a_pbc_window_under_a_modal_opens_focus_when_the_modal_closes():
+    from textual.screen import ModalScreen
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        array = WlanArray()
+        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:09", ssid="PbcNet", channel=6)
+        array.access_points[ap.bssid] = ap
+        app.array = array
+        app.pbc_enabled = True
+        app.push_screen("scanner")
+        await pilot.pause(0)
+        scanner = app.screen
+        modal = ModalScreen()
+        app.push_screen(modal)
+        await pilot.pause(0)
+
+        ap.wps, ap.wps_selected_registrar, ap.wps_device_password_id = True, True, 0x0004
+        app._poll_ap_events()
+        await pilot.pause(0.1)
+        assert app.screen is modal
+
+        modal.dismiss()
+        await pilot.pause(0.1)
+        assert app.target_ap is ap
+        assert app.screen is not scanner and app.screen is not modal

@@ -7,7 +7,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.reactive import Reactive
 from textual.css.query import NoMatches
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.timer import Timer
 from textual.widgets import Footer, Header, RichLog, Static
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
@@ -175,6 +175,7 @@ class ScannerView(Screen):
         self._refresh_timer: Optional[Timer] = None
         self._last_sort_time: float = 0.0
         self._channel_filter: Optional[List[int]] = None
+        self._pbc_bssids_under_modal: set[str] = set()
         self._scan_filter: ScanFilter = ScanFilter(hide_silenced=Config.hide_silenced)
         # Per-BSSID prev-beacon-count + flash-deadline for "beacon arrived"
         # cell highlight.
@@ -232,6 +233,13 @@ class ScannerView(Screen):
         if not array:
             return
         self._log_auto_crack_status_when_changed()
+        bssids, self._pbc_bssids_under_modal = self._pbc_bssids_under_modal, set()
+        for bssid in bssids:
+            ap = array.access_points.get(bssid)
+            if ap is not None and ap.wps_pbc_active:
+                self._on_pbc_window(ap)
+        if self.app.screen is not self:
+            return
         await array.start_hopping(
             channels=self._channel_filter, interval=0.25
         )
@@ -526,7 +534,12 @@ class ScannerView(Screen):
             f'= "{escape(job.key or "")}"', emoji=False))
 
     def _on_pbc_window(self, ap: AccessPoint) -> None:
-        if Config.is_silenced(ap.bssid) or ap.is_hidden or self.app.screen is not self:
+        if Config.is_silenced(ap.bssid) or ap.is_hidden:
+            return
+        if self.app.screen is not self:
+            stack = self.app.screen_stack
+            if all(isinstance(s, ModalScreen) for s in stack[stack.index(self) + 1:]):
+                self._pbc_bssids_under_modal.add(ap.bssid)
             return
         label = escape(ap.ssid or ap.bssid)
         self._write_log(
