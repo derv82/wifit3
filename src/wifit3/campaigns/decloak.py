@@ -82,12 +82,12 @@ class DecloakInput:
 
 
 def candidates_from_sibling(sibling_ssid: str) -> list[str]:
-    """Every SIBLING_SUFFIXES entry appended to sibling_ssid without its own band/type suffix,
-    minus duplicates and names over 32 octets. Empty when sibling_ssid is empty."""
+    """sibling_ssid, then every SIBLING_SUFFIXES entry appended to it without its own band/type
+    suffix, minus duplicates and names over 32 octets. Empty when sibling_ssid is empty."""
     if not sibling_ssid:
         return []
     base_ssid = strip_suffix(sibling_ssid)
-    candidates: list[str] = []
+    candidates: list[str] = [sibling_ssid]
     for suffix in SIBLING_SUFFIXES:
         candidate = (base_ssid + suffix).rstrip()
         if (candidate and candidate not in candidates
