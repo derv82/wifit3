@@ -11,7 +11,7 @@ from textual.binding import Binding
 
 from .vault_breakpoints import COMPACT, NARROW, SHORT, TALL, TINY, WIDE
 from .vault_table import VaultTable
-from .vault_item import AddKeyPressed, DeleteKeyPressed, VaultItemView, key_description
+from .vault_item import AddKeyPressed, DeleteKeyPressed, ShowApPressed, VaultItemView, key_description
 from wifit3.models import AccessPoint, CaptureType, PersistedCapture
 from wifit3.persist.ap_state import ApState, is_confirmed
 from wifit3.persist.meta import meta_path, read_meta, update_meta
@@ -78,7 +78,8 @@ class VaultDrawer(ModalScreen):
     VaultDrawer.open #vault-content {
         offset-y: 0%;
     }
-    VaultDrawer #vault-item .key-line Button, VaultDrawer #vault-item Button.add-key {
+    VaultDrawer #vault-item .key-line Button, VaultDrawer #vault-item Button.add-key,
+    VaultDrawer #vault-item Button.show-ap {
         min-width: 0;
         margin-right: 0;
     }
@@ -297,6 +298,22 @@ class VaultDrawer(ModalScreen):
     @on(AddKeyPressed)
     def _add_key_pressed(self, event: AddKeyPressed) -> None:
         self.action_add_credential()
+
+    @on(ShowApPressed)
+    def _show_ap_pressed(self, event: ShowApPressed) -> None:
+        """Close onto Focus on the AP: back down to Focus when it is on the stack, else push it."""
+        ap = self.app.array.access_points.get(event.bssid) if self.app.array is not None else None
+        if ap is None:
+            self.notify("AP not in range")
+            return
+        app = self.app
+        app.target_ap = ap
+        self.dismiss()
+        focus = app.get_screen("focus")
+        while focus in app.screen_stack and app.screen is not focus:
+            app.pop_screen()
+        if app.screen is not focus:
+            app.push_screen(focus)
 
     def action_add_credential(self) -> None:
         ssid, bssid = self._selected_network()

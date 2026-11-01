@@ -373,6 +373,14 @@ class AddKeyPressed(Message):
     """The user asked to add a key to the AP in view."""
 
 
+class ShowApPressed(Message):
+    """The user asked for Focus on the AP in view."""
+
+    def __init__(self, bssid: str) -> None:
+        super().__init__()
+        self.bssid = bssid
+
+
 class _CrackerButton(Button):
     """Opens ``tool``'s launch modal for the ticked hashlines."""
 
@@ -389,11 +397,14 @@ class _SsidLine(Horizontal):
         self._section_label = Label("", classes="section")
         self._ssid_label = Label("", classes="ssid", markup=False)
         self._dates_label = Label("", classes="dates")
+        self.show_ap_button = Button("Show AP", compact=True, classes="show-ap",
+                                     tooltip="Open Focus on this AP")
 
     def compose(self) -> ComposeResult:
         yield self._section_label
         yield self._ssid_label
         yield self._dates_label
+        yield self.show_ap_button
 
     def show(self, section: str, ssid: str, dates: Optional[str]) -> None:
         self._section_label.update(section)
@@ -447,6 +458,7 @@ class _ApStatePanel(VerticalGroup):
     _ApStatePanel .ssids .section {{ width: 4; }}
     _ApStatePanel .ssid {{ width: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }}
     _ApStatePanel .dates {{ width: auto; color: $text-muted; margin-left: 1; }}
+    _ApStatePanel Button.show-ap {{ margin-left: 2; }}
     _ApStatePanel .none-yet {{ color: $text-muted; padding-left: 2; }}
     _ApStatePanel .tools {{ height: auto; align-horizontal: center; }}
     _ApStatePanel .selected-count {{ color: $text-muted; padding-left: {2 * _LIST_INDENT}; }}
@@ -464,7 +476,11 @@ class _ApStatePanel(VerticalGroup):
     Screen.{NARROW} _ApStatePanel .key-line {{
         height: 1;
     }}
-    Screen.{TINY} _ApStatePanel .ssids, Screen.{NARROW} _ApStatePanel .ssids {{ display: none; }}
+    Screen.{TINY} _ApStatePanel .ssids _SsidLine.-older, Screen.{NARROW} _ApStatePanel .ssids _SsidLine.-older,
+    Screen.{TINY} _ApStatePanel .ssids .dates, Screen.{NARROW} _ApStatePanel .ssids .dates,
+    Screen.{TINY} _ApStatePanel .ssids Rule, Screen.{NARROW} _ApStatePanel .ssids Rule {{
+        display: none;
+    }}
     Screen.{TINY} _ApStatePanel .status, Screen.{NARROW} _ApStatePanel .status,
     Screen.{TINY} _ApStatePanel Rule.uncracked-rule, Screen.{NARROW} _ApStatePanel Rule.uncracked-rule {{
         margin-top: 0;
@@ -526,6 +542,15 @@ class _ApStatePanel(VerticalGroup):
         self._ssid_lines = lines
         for line, (section, ssid, dates) in zip(lines, texts):
             line.show(section, ssid, dates)
+            line.set_class(line is not lines[0], "-older")
+        self._show_show_ap_button()
+
+    def _show_show_ap_button(self) -> None:
+        """On the first SSID line, while the AP is in the device array."""
+        array = self.app.array
+        in_array = self._state is not None and array is not None and self._state.bssid in array.access_points
+        for line in self._ssid_lines:
+            line.show_ap_button.display = in_array and line is self._ssid_lines[0]
 
     async def _show_key_rows(self, state: ApState, show_client: bool, show_ssid: bool,
                              expanded_key_ids: frozenset[tuple[CaptureType, str]]) -> None:
@@ -559,6 +584,9 @@ class _ApStatePanel(VerticalGroup):
             if widget in row.buttons:
                 return row.key.id, row.buttons.index(widget)
         return None
+
+    def on_mount(self) -> None:
+        self.set_interval(1.0, self._show_show_ap_button)
 
     def compose(self) -> ComposeResult:
         yield self._status_label
@@ -619,6 +647,8 @@ class _ApStatePanel(VerticalGroup):
             self._launch_tool(event.button.tool)
         elif event.button is self.add_key_button:
             self.post_message(AddKeyPressed())
+        elif event.button.has_class("show-ap") and self._state is not None:
+            self.post_message(ShowApPressed(self._state.bssid))
         else:
             return
         event.stop()
