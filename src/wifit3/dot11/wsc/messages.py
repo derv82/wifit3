@@ -138,7 +138,7 @@ _DEVICE_NAME = b"DESKTOP-7H2K9P3"   # Windows-default-style hostname
 _AUTH_TYPE_FLAGS = 0x003F          # WPS_AUTH_TYPES (open|wpapsk|shared|wpa|wpa2|wpa2psk)
 _ENCR_TYPE_FLAGS = 0x000F          # WPS_ENCR_TYPES (none|wep|tkip|aes)
 _CONN_TYPE_ESS = 0x01
-_CONFIG_METHODS = 0x0084           # Label | Display
+_CONFIG_METHODS = 0x008C           # Label | Display | PushButton
 _PRIMARY_DEV_TYPE = bytes.fromhex("00010050f2040001")   # Computer / WFA / PC
 _OS_VERSION = 0x80000000
 

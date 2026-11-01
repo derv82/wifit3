@@ -25,6 +25,12 @@ def test_pmk_ieee_annex_j_vectors():
         "0dc0d6eb90555ed6419756b9a15ec3e3209b63df707dd508d14581f8982721af")
 
 
+def test_a_64_hex_digit_psk_is_the_pmk_itself():
+    pmk_hex = "f42c6fc52df0ebef9ebb4b90b38a5f902e83fe1b135a70e23aed762e9710a12e"
+    assert derive_pmk(pmk_hex, b"IEEE").hex() == pmk_hex
+    assert derive_pmk(pmk_hex.upper(), b"IEEE").hex() == pmk_hex
+
+
 def test_ptk_is_deterministic_and_nonce_order_independent():
     p = derive_pmk("password", b"IEEE")
     aa, spa = bytes.fromhex("112233445566"), bytes.fromhex("aabbccddeeff")

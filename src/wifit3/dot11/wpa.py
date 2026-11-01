@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import string
 
 from wifit3.dot11.aes_cmac import aes_cmac
 from wifit3.dot11.eapol import (
@@ -27,9 +28,12 @@ _FT_R0_KEY_DATA_BITS = 384  # PMK-R0 (256) + PMK-R0Name-Salt (128)
 _FT_PMK_R1_BITS = 256
 
 
-def derive_pmk(passphrase: str, ssid: bytes) -> bytes:
-    """802.11i PSK passphrase to PMK: PBKDF2-HMAC-SHA1(passphrase, ssid, 4096, 32)."""
-    return hashlib.pbkdf2_hmac("sha1", passphrase.encode(), ssid, 4096, 32)
+def derive_pmk(psk: str, ssid: bytes) -> bytes:
+    """802.11i PSK to PMK: 64 hex digits are the PMK itself, else
+    PBKDF2-HMAC-SHA1(passphrase, ssid, 4096, 32)."""
+    if len(psk) == 64 and all(c in string.hexdigits for c in psk):
+        return bytes.fromhex(psk)
+    return hashlib.pbkdf2_hmac("sha1", psk.encode(), ssid, 4096, 32)
 
 
 def prf(key: bytes, label: bytes, data: bytes, nbytes: int) -> bytes:
