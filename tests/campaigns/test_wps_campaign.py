@@ -667,6 +667,19 @@ def test_dead_first_half_skips_shared_prefix_common(tmp_path, monkeypatch):
     assert "12345678" not in seen           # skipped: prefix already dead
 
 
+def test_a_changed_pin_forgets_the_old_pins_dead_first_halves(monkeypatch):
+    monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: ["00025614", "20001322"])
+    c = WpsCampaign(_iface(), _target(), log=lambda m: None)
+    c.state.dead_first_halves = ["0002", "2000"]
+    c.state.found_pin = "12345670"
+    c.state.phase = "verify"
+
+    c._apply_verify_outcome("12345670", AttemptOutcome(PinResult.FIRST_HALF_WRONG, "12345670"))
+
+    assert c.state.dead_first_halves == ["1234"]
+    assert c._next_pin() == "00025614"
+
+
 def test_dead_first_half_skips_common_prefix_in_sweep(tmp_path):
     # A COMMON prefix ruled out (e.g. "0000" via 00000000) is not re-tried when the
     # first-half sweep reaches p1_index 0.
