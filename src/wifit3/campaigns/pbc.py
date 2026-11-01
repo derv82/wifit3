@@ -31,6 +31,12 @@ class WpsPbcCampaign(Campaign):
     key = "pbc"
     stoppable = False
 
+    @classmethod
+    def ineligible_reason(cls, ap) -> Optional[str]:
+        if ap.is_hidden:
+            return "hidden SSID: can't associate"
+        return None
+
     def status_under_card(self) -> str:
         return "● WPS PBC"
 

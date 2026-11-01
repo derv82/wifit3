@@ -675,6 +675,46 @@ async def test_buttons_hidden_ssid_disables_assoc_attacks(buttons_screen):
     assert wb["btn-gen-ivs"].disabled is True and "hidden" in fm.campaign_blocked(WepCampaign, wap)
 
 
+def _pbc_window_ap(*, ssid: str | None = "EvilNet") -> AccessPoint:
+    ap = _rsn_ap(wps=True, ssid=ssid)
+    ap.wps_selected_registrar = True
+    ap.wps_device_password_id = 0x0004
+    return ap
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_buttons_pbc_window_shows_start_pbc(buttons_screen):
+    buttons_screen.app.target_ap = _pbc_window_ap()
+    buttons_screen.refresh_buttons()
+    assert _bs(buttons_screen.query_one("#btn-pbc", Button)) == (True, False, "Start PBC", "primary")
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_buttons_pbc_window_hidden_ssid_disables_start_pbc(buttons_screen):
+    buttons_screen.app.target_ap = _pbc_window_ap(ssid=None)
+    buttons_screen.refresh_buttons()
+    btn = buttons_screen.query_one("#btn-pbc", Button)
+    assert _bs(btn) == (True, True, "Start PBC", "primary")
+    assert "hidden" in btn.tooltip
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_buttons_no_pbc_window_hides_pbc_button(buttons_screen):
+    buttons_screen.app.target_ap = _rsn_ap(wps=True)
+    buttons_screen.refresh_buttons()
+    assert buttons_screen.query_one("#btn-pbc", Button).display is False
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_start_pbc_starts_capture_on_the_target(buttons_screen, monkeypatch):
+    ap = _pbc_window_ap()
+    started = []
+    monkeypatch.setattr(buttons_screen, "_target_ap", ap)
+    monkeypatch.setattr(buttons_screen, "_start_pbc_capture", started.append)
+    buttons_screen._toggle_pbc()
+    assert started == [ap]
+
+
 @pytest.mark.asyncio(loop_scope="module")
 async def test_buttons_hidden_leaves_deauth_enabled(buttons_screen):
     """Deauth spoofs addresses (no association), so a hidden SSID does not disable it."""

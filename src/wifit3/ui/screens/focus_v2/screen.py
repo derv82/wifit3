@@ -102,7 +102,7 @@ _ATTACK_BUTTONS = [
     ("btn-decloak", "Decloak"), ("btn-known-decloak", "Decloak"),
     ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-deauth", "AutoDeauth"),
     ("btn-pmkid", "PMKID"), ("btn-wps-pin", "WPS PIN"), ("btn-eviltwin", "EvilTwin"),
-    ("btn-stop-pbc", "Stop PBC"),
+    ("btn-pbc", "Stop PBC"),
 ]
 
 # Static button tooltips, keyed by live label so toggled buttons get idle/run-specific tips.
@@ -503,7 +503,7 @@ class FocusViewV2(Screen):
                 btn.disabled, reason = True, "Disabled while probing"
             btn.tooltip = reason or _BUTTON_TIPS.get(str(btn.label))
         self._refresh_chop_button(ap, active, probing)
-        self._refresh_stop_pbc_button(probing)
+        self._refresh_pbc_button(ap, probing)
 
     def _refresh_chop_button(self, ap, active, probing: bool) -> None:
         """ChopChop: a WEP sub-action, enabled only while the WEP campaign runs."""
@@ -516,17 +516,24 @@ class FocusViewV2(Screen):
         btn.variant = "warning" if chopping else "primary"
         btn.tooltip = _BUTTON_TIPS.get(str(btn.label))
 
-    def _refresh_stop_pbc_button(self, probing: bool) -> None:
-        """The transient 'Stop PBC' button (PBC has no start button; it auto-invades)."""
-        stop_pbc = self.query_one("#btn-stop-pbc", Button)
+    def _refresh_pbc_button(self, ap, probing: bool) -> None:
+        """Stop PBC while it runs; Start PBC while the target's window is open and it doesn't."""
+        btn = self.query_one("#btn-pbc", Button)
         if self._pbc_busy():
             stopping = getattr(self._controls.current, "stopped", False)
-            stop_pbc.display = True
-            stop_pbc.disabled = stopping or probing         # already draining → no double-stop
-            stop_pbc.variant = "error"
-            stop_pbc.label = "Stopping…" if stopping else "Stop PBC"
+            btn.display = True
+            btn.disabled = stopping or probing         # already draining → no double-stop
+            btn.variant = "error"
+            btn.label = "Stopping…" if stopping else "Stop PBC"
+        elif ap.wps_pbc_active:
+            reason = fm.campaign_blocked(WpsPbcCampaign, ap)
+            btn.display = True
+            btn.disabled = reason is not None or probing
+            btn.variant = "primary"
+            btn.label = "Start PBC"
+            btn.tooltip = reason
         else:
-            stop_pbc.display = False
+            btn.display = False
 
     # ----- target (re)acquisition --------------------------------------------
 
@@ -893,8 +900,8 @@ class FocusViewV2(Screen):
             self._toggle_generate_ivs()
         elif bid == "btn-chop":
             self._toggle_chop()
-        elif bid == "btn-stop-pbc":
-            self._user_stop_pbc()
+        elif bid == "btn-pbc":
+            self._toggle_pbc()
 
     def on_client_widget_deauth_requested(self, event: ClientWidget.DeauthRequested) -> None:
         self.run_worker(self._run_deauth_selected(event.mac), exclusive=True)
@@ -1497,14 +1504,13 @@ class FocusViewV2(Screen):
                 f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim], "
                 f"retrying in {_PBC_RETRY_COOLDOWN_S:.0f}s while the window's open"))
 
-    def _user_stop_pbc(self) -> None:
-        """The transient 'Stop PBC' button."""
+    def _toggle_pbc(self) -> None:
         cur = self._controls.current
-        if cur is None or cur.key != "pbc":
-            return
-        self._pbc_user_stopped = True
-        self._controls.request_stop()
-        self.refresh_buttons()
+        if cur is not None and cur.key == "pbc":
+            self._pbc_user_stopped = True
+            self._controls.request_stop()
+        else:
+            self._start_pbc_capture(self._target_ap)
 
     # ----- navigation --------------------------------------------------------
 

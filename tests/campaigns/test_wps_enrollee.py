@@ -17,7 +17,7 @@ import struct
 
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc import crypto as wc
-from wifit3.campaigns.wps.enrollee import WpsEnrollee
+from wifit3.campaigns.wps.enrollee import UUID_E, WpsEnrollee
 from wifit3.campaigns.wps.registrar import PinResult
 
 BSSID = bytes.fromhex("3421090001ff")
@@ -65,6 +65,7 @@ class FakeRegistrar:
         self.last_recv = b""
         self._id = 1
         self.e_hash1_verified = False
+        self.nack = None
 
     def _nid(self):
         self._id += 1
@@ -79,6 +80,11 @@ class FakeRegistrar:
 
     def _req_identity(self, eap_id):
         eap = struct.pack(">BBH", M.EAP_REQUEST, eap_id, 5) + bytes([M.EAP_TYPE_IDENTITY])
+        x = struct.pack(">BBH", 1, 0, len(eap)) + eap
+        return b"\x08\x02\x00\x00" + STA + BSSID + BSSID + b"\x00\x00" + M.LLC_SNAP_EAPOL + x
+
+    def _eap_failure(self, eap_id):
+        eap = struct.pack(">BBH", M.EAP_FAILURE, eap_id, 4)
         x = struct.pack(">BBH", 1, 0, len(eap)) + eap
         return b"\x08\x02\x00\x00" + STA + BSSID + BSSID + b"\x00\x00" + M.LLC_SNAP_EAPOL + x
 
@@ -109,6 +115,10 @@ class FakeRegistrar:
             elif p.wsc_msg_type == M.WPS_M7:
                 await self._on_m7(p)
             elif p.wsc_msg_type == M.WPS_WSC_DONE:
+                return
+            elif p.wsc_msg_type == M.WPS_WSC_NACK:
+                self.nack = p
+                await self.t.send(self._eap_failure(p.eap_id))
                 return
 
     async def _on_m1(self, p):
@@ -157,11 +167,33 @@ class FakeRegistrar:
         await self.t.send(self._req(self._nid(), M.WSC_MSG, m8))
 
 
-async def _run(psk="correct horse 9", ssid="HomeNet"):
+class _M2dRegistrar(FakeRegistrar):
+    """Answers M1 with M2D: a registrar that won't enroll us (PBC overlap)."""
+
+    async def _on_m1(self, p):
+        self.m1 = p
+        self.m2d_id = self._nid()
+        m2d = (M.tlv_u8(M.ATTR_VERSION, 0x10) + M.tlv_u8(M.ATTR_MSG_TYPE, M.WPS_M2D)
+               + M.tlv(M.ATTR_ENROLLEE_NONCE, p.attrs[M.ATTR_ENROLLEE_NONCE])
+               + M.tlv(M.ATTR_REGISTRAR_NONCE, self.nonce_r)
+               + M.tlv_u16(M.ATTR_CONFIG_ERROR, 12))
+        await self.t.send(self._req(self.m2d_id, M.WSC_MSG, m2d))
+
+
+class _RetransmittingRegistrar(FakeRegistrar):
+    """Answers M1 with a retransmit of WSC_Start, then a fresh request."""
+
+    async def _on_m1(self, p):
+        await self.t.send(self._req(self._id, M.WSC_START))
+        self.next_id = self._nid()
+        await self.t.send(self._req(self.next_id, M.WSC_MSG))
+
+
+async def _run(psk="correct horse 9", ssid="HomeNet", registrar_cls=FakeRegistrar, should_stop=None):
     a, b = asyncio.Queue(), asyncio.Queue()
-    reg = FakeRegistrar(_QueueTransport(b, a), psk, ssid)
+    reg = registrar_cls(_QueueTransport(b, a), psk, ssid)
     enr = WpsEnrollee(_QueueTransport(a, b), BSSID, STA, channel=6, wsc_2_0=False,
-                      msg_timeout=1.0, eapol_start_timeout=1.0)
+                      msg_timeout=1.0, eapol_start_timeout=1.0, should_stop=should_stop)
     task = asyncio.create_task(reg.run())
     try:
         out = await asyncio.wait_for(enr.run(), timeout=5.0)
@@ -175,6 +207,7 @@ async def test_pbc_capture_recovers_psk():
     assert out.result is PinResult.SUCCESS
     assert out.psk == "correct horse 9"
     assert out.ssid == "HomeNet"
+    assert reg.nack is None
     # The headline log line the orchestrator will emit:
     assert f"PBC: captured PSK for {out.ssid}: {out.psk}" == \
         "PBC: captured PSK for HomeNet: correct horse 9"
@@ -204,3 +237,26 @@ async def test_pbc_enrollee_aborts_on_should_stop():
     out = await asyncio.wait_for(enr.run(), timeout=5.0)
     assert out.result is PinResult.ABORTED
     assert "stopped" in out.detail
+
+
+async def test_pbc_m2d_is_refused_and_nacked_with_its_eap_id():
+    out, reg = await _run(registrar_cls=_M2dRegistrar)
+    assert out.result is PinResult.PROTO_ERROR
+    assert out.detail.startswith("M2D:") and out.config_error == 12
+    assert reg.nack.eap_id == reg.m2d_id
+    assert reg.nack.attrs[M.ATTR_REGISTRAR_NONCE] == reg.nonce_r
+
+
+async def test_pbc_uuid_e_is_the_same_every_attempt():
+    _, first = await _run(registrar_cls=_M2dRegistrar)
+    _, second = await _run(registrar_cls=_M2dRegistrar)
+    assert first.m1.attrs[M.ATTR_UUID_E] == second.m1.attrs[M.ATTR_UUID_E] == UUID_E
+
+
+async def test_pbc_stop_after_answering_nacks_the_next_request():
+    # Polls: before Identity-Req, before WSC_Start, then right after M1 is sent.
+    polls = iter([False, False])
+    out, reg = await _run(registrar_cls=_RetransmittingRegistrar,
+                          should_stop=lambda: next(polls, True))
+    assert out.result is PinResult.ABORTED
+    assert reg.nack.eap_id == reg.next_id
