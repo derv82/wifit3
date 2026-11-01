@@ -346,7 +346,7 @@ class FocusViewV2(Screen):
 
     async def on_screen_resume(self) -> None:
         # Full re-acquire only on a target change; a same-target return keeps the live view.
-        target = getattr(self.app, "target_ap", None)
+        target = self.app.target_ap
         if target is not self._target_ap:
             await self._enter_target()
         elif target is not None and self.app.array is not None:
@@ -458,7 +458,7 @@ class FocusViewV2(Screen):
         array = self.app.array
         members = array.members if array else []
         active = Campaign.active
-        ap = getattr(self.app, "target_ap", None)
+        ap = self.app.target_ap
         if active is not None:
             primary = active.iface
         elif ap is not None and array is not None:
@@ -481,7 +481,7 @@ class FocusViewV2(Screen):
     def refresh_buttons(self) -> None:
         """Set each attack button straight from its campaign class + the active campaign.
         No ButtonState in between: read the campaign, write the widget."""
-        ap = getattr(self.app, "target_ap", None)
+        ap = self.app.target_ap
         if ap is None:
             return
         active = Campaign.active
@@ -541,8 +541,10 @@ class FocusViewV2(Screen):
         if campaign is not None:
             await campaign.stop()      # let its teardown finish before we retune for the new target
         self._stop_probe()
+        self._pbc_user_stopped = False
+        self._pbc_retry_after = 0.0
 
-        ap = getattr(self.app, "target_ap", None)
+        ap = self.app.target_ap
         self._target_ap = ap
         if ap is None:
             return

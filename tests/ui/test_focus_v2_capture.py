@@ -92,3 +92,18 @@ def test_save_line_joins_natively_instead_of_gluing_a_slash(monkeypatch):
 
     monkeypatch.setattr(Config, "captures_dir", "captures")
     assert f"captures{os.sep}AP" in _save_line(result)
+
+
+async def test_retarget_clears_the_previous_targets_pbc_stop_and_retry_wait():
+    host = SimpleNamespace(
+        app=SimpleNamespace(target_ap=None),
+        _controls=SimpleNamespace(current=None, stop=MagicMock()),
+        _stop_probe=MagicMock(),
+        _pbc_user_stopped=True,
+        _pbc_retry_after=1e12,
+    )
+
+    await FocusViewV2._enter_target(host)
+
+    assert host._pbc_user_stopped is False
+    assert host._pbc_retry_after == 0.0
