@@ -27,7 +27,7 @@ from wifit3.device.manager import DeviceManager, Status
 from wifit3.device.watch import DeviceWatch
 from wifit3.wlan.array import WlanArray
 from wifit3.models import AccessPoint
-from wifit3.watchers.ap_watcher import ApDecloaked, ApEvent, ApWatcher
+from wifit3.watchers.ap_watcher import ApDecloaked, ApEvent, ApWatcher, PbcWindowOpened
 
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView
@@ -288,9 +288,25 @@ class WifiteApp(App):
             guessid = ""
             if ap is not None and ap.is_hidden:
                 guessid = self.guessid(ap)
-            self.toasts.ap_event(event, guessid)
+            pbc_ignore_reasons = []
+            if isinstance(event, PbcWindowOpened) and ap is not None:
+                pbc_ignore_reasons = self.pbc_ignore_reasons(ap)
+            self.toasts.ap_event(event, guessid, pbc_ignore_reasons)
             for screen in self.screen_stack:
                 screen.post_message(self.ApEventDetected(event))
+
+    def pbc_ignore_reasons(self, ap: AccessPoint) -> List[str]:
+        """Why a PBC window on ``ap`` won't be acted on; empty when it will."""
+        reasons = []
+        if Config.is_silenced(ap.bssid):
+            reasons.append("AP silenced")
+        if ap.is_hidden:
+            reasons.append("hidden SSID")
+        if self.vault.ap_state(ap.bssid).status is PasswordStatus.CURRENT:
+            reasons.append("PSK already current")
+        if not self.pbc_enabled:
+            reasons.append("PBC disabled (press [bold]w[/bold])")
+        return reasons
 
     def guessid(self, ap: AccessPoint) -> str:
         """The SSID this AP revealed in an earlier session, else its first named sibling's."""

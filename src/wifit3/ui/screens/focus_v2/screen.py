@@ -700,11 +700,9 @@ class FocusViewV2(Screen):
         self._flush_eapol_bursts(ap)
 
     def _should_auto_invade_pbc(self, ap) -> bool:
-        if not (ap.wps_pbc_active and self.app.pbc_enabled):
+        if not ap.wps_pbc_active or self.app.pbc_ignore_reasons(ap):
             return False
-        if Config.is_silenced(ap.bssid) or ap.is_hidden:
-            return False
-        if self.app.vault.ap_state(ap.bssid).status is PasswordStatus.CURRENT or self._pbc_user_stopped:
+        if self._pbc_user_stopped:
             return False
         if time.monotonic() < self._pbc_retry_after or self._pbc_busy():
             return False

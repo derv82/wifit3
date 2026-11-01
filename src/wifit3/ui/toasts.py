@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Dict
+from typing import Dict, List
 
 from rich.markup import escape
 from textual.app import App
@@ -10,8 +10,8 @@ from textual.app import App
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.ui.encryption_format import wep_key_hex_and_ascii
 from wifit3.watchers.ap_watcher import (
-    ApEvent, HandshakeCaptured, PmkidCaptured, WepKeyRecovered, WpsPbcPskRecovered, WpsPinRecovered,
-    WpsPskRecovered,
+    ApEvent, HandshakeCaptured, PbcWindowOpened, PmkidCaptured, WepKeyRecovered, WpsPbcPskRecovered,
+    WpsPinRecovered, WpsPskRecovered,
 )
 
 TOAST_TIMEOUT_S = 6
@@ -30,7 +30,7 @@ class Toasts:
         self._app = app
         self._shown_capture_ranks: Dict[str, ShownCaptureRank] = {}
 
-    def ap_event(self, event: ApEvent, guessid: str) -> None:
+    def ap_event(self, event: ApEvent, guessid: str, pbc_ignore_reasons: List[str]) -> None:
         if event.ssid and event.ssid != "<hidden>":
             name = f"[bold]{escape(event.ssid)}[/bold]"
             location = (f"on channel [bold]{event.channel}[/bold] "
@@ -62,6 +62,13 @@ class Toasts:
         elif isinstance(event, WpsPbcPskRecovered):
             self._app.notify(f'{name}: "{escape(event.psk)}"',
                              title="WPS PSK recovered (PushButton)", timeout=TOAST_TIMEOUT_S)
+        elif isinstance(event, PbcWindowOpened):
+            if pbc_ignore_reasons:
+                outcome = f"[dim]ignored: {', '.join(pbc_ignore_reasons)}[/dim]"
+            else:
+                outcome = "Targeting now"
+            self._app.notify(f"{name} {location}\n{outcome}",
+                             title="WPS PBC window open", timeout=TOAST_TIMEOUT_S)
 
     def _show_capture(self, bssid: str, rank: ShownCaptureRank, title: str, message: str) -> None:
         shown_rank = self._shown_capture_ranks.get(bssid)

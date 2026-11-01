@@ -536,23 +536,18 @@ class ScannerView(Screen):
             f'= "{escape(job.key or "")}"', emoji=False))
 
     def _on_pbc_window(self, ap: AccessPoint) -> None:
-        if Config.is_silenced(ap.bssid) or ap.is_hidden:
-            return
         if self.app.screen is not self:
             stack = self.app.screen_stack
             if all(isinstance(s, ModalScreen) for s in stack[stack.index(self) + 1:]):
                 self._pbc_bssids_under_modal.add(ap.bssid)
             return
         label = escape(ap.ssid or ap.bssid)
-        self._write_log(
-            f"[bold cyan]WPS PushButton [italic]auto-invade:[/italic][/bold cyan] "
-            f"[bold green]Open Window[/bold green] on [bold]{label}[/bold] "
-            f"[dim](CH {ap.channel})[/dim]")
-        if not self.app.pbc_enabled:
-            self._write_log(treelog.leaf("[dim]auto-invade off: press [bold]w[/bold] to enable[/dim]"))
-            return
-        if self.app.vault.ap_state(ap.bssid).status is PasswordStatus.CURRENT:
-            self._write_log(treelog.leaf("[italic]password already CURRENT[/italic]"))
+        self._write_log(treelog.header(
+            f"[bold cyan]WPS PBC[/bold cyan] [bold green]Window Open[/bold green] on "
+            f"[bold]{label}[/bold] [dim]CH{ap.channel}[/dim]"))
+        reasons = self.app.pbc_ignore_reasons(ap)
+        if reasons:
+            self._write_log(treelog.leaf(f"[dim]ignored: {', '.join(reasons)}[/dim]"))
             return
         self.app.target_ap = ap
         self.app.push_screen("focus")
