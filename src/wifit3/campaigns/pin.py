@@ -472,6 +472,7 @@ class WpsCampaign(Campaign):
             st.p1_index = 0
             st.p2_index = 0
             st.skip_middle = None
+            st.dead_first_halves = [pin[:4]]   # earlier rejections were against the old PIN
 
     async def _loop(self) -> None:
         self.status = "running"
