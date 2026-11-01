@@ -14,11 +14,7 @@ from wifit3.dot11 import str_to_mac
 from wifit3.dot11.ap import beacon_clone
 from wifit3.dot11.csa import build_csa_beacon
 from wifit3.dot11.rsn import SAE_AKM_SUITES
-from wifit3.crack.handshake import (
-    PSK_CAPTURE_AKMS,
-    crackable_pairs,
-    pmkid_crackable,
-)
+from wifit3.crack.handshake import PSK_CAPTURE_AKMS, crackable_captures
 from wifit3.dot11.pmf import PmfPosture
 from wifit3.models import AccessPoint
 from wifit3.campaigns.campaign import Campaign
@@ -180,10 +176,8 @@ class EvilTwinCampaign(Campaign):
         captures = set()
         for bssid in {self.twin_bssid, self.ap.bssid.lower()}:
             ap = self.array.access_points.get(bssid)
-            for client, hs in (ap.handshakes.items() if ap else ()):
-                captures |= {(bssid, client, pair.instance_key) for pair in crackable_pairs(hs)}
-                if hs.pmkid and pmkid_crackable(hs):
-                    captures.add((bssid, client, hs.pmkid))
+            if ap is not None:
+                captures |= {(bssid, client, key) for client, key in crackable_captures(ap)}
         return captures
 
     async def teardown(self) -> None:

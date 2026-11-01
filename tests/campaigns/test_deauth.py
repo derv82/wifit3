@@ -150,12 +150,34 @@ async def test_no_clients_broadcasts_each_round():
     assert camp.captured is True
 
 
+async def test_a_replaced_capture_is_new_though_the_count_stays_the_same():
+    ap = SimpleNamespace(bssid=_BSSID, handshakes={"c1": _pmkid_hs("c1")})
+    radio = _FakeRadio()
+    array = _FakeArray(radio, ap, {"c1": _client()})
+    camp = DeauthCampaign(array, _target())
+    fresh = Handshake(bssid=_BSSID, client_mac="c1", pmkid=b"\x22" * 16, pmkid_akm=2)
+    bursts = []
+
+    def on_client():
+        bursts.append(1)
+        if len(bursts) == 1:
+            ap.handshakes["c1"] = fresh
+        else:
+            camp.stopped = True
+
+    radio.on_client = on_client
+
+    await camp._loop()
+
+    assert camp.captured is True
+
+
 async def test_mixed_offer_pmkid_is_not_a_campaign_capture():
     ap = SimpleNamespace(bssid=_BSSID, handshakes={"c1": _mixed_offer_pmkid_hs("c1")})
     radio = _FakeRadio()
     array = _FakeArray(radio, ap, {"c1": _client()})
     camp = DeauthCampaign(array, _target())
-    assert camp._crackable_count() == 0
+    assert camp._crackable_captures() == set()
     radio.on_client = lambda: setattr(camp, "stopped", True)
     await camp._loop()
     assert camp.captured is False

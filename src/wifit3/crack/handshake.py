@@ -45,7 +45,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
-from wifit3.models import HandshakeMessage, Handshake
+from wifit3.models import AccessPoint, HandshakeMessage, Handshake
 from wifit3.dot11.rsn import (
     AKM_FT_PSK,
     AKM_FT_PSK_SHA384,
@@ -295,6 +295,16 @@ def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
             if not p.mic_frame.akm_selection_rejected
             and eapol_verdict(p.mic_frame.akm, hs) == "crackable"
             and not _ft_pair_incomplete(p)]
+
+
+def crackable_captures(ap: AccessPoint) -> set[tuple[str, bytes]]:
+    """(client, ANonce or PMKID) per crackable capture on ``ap``."""
+    captures = set()
+    for client, hs in ap.handshakes.items():
+        captures |= {(client, pair.instance_key) for pair in crackable_pairs(hs)}
+        if hs.pmkid and pmkid_crackable(hs):
+            captures.add((client, hs.pmkid))
+    return captures
 
 
 def withheld_capture_label(hs: Handshake) -> Optional[str]:
