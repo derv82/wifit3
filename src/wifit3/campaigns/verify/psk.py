@@ -1,0 +1,74 @@
+"""VerifyPskCampaign: associate, answer M1 with an M2 MIC'd from the PSK; an M3 means the AP accepted it."""
+from __future__ import annotations
+
+from typing import Optional
+
+from wifit3.campaigns.auth_assoc import Association
+from wifit3.dot11 import str_to_mac
+from wifit3.dot11.ie import GENERIC_RSN_IE, force_psk_akm
+from wifit3.dot11.packet import EapolPacket
+from wifit3.dot11.wpa import KCK_LEN, build_eapol_m2, derive_pmk, derive_ptk, random_nonce
+
+from .campaign import VerifyCampaign, VerifyOutcome
+
+_M2_ATTEMPTS = 3             # M1s answered before an AP that keeps re-sending M1 means a wrong PSK
+_M2_RESENDS = 3              # M2 resends while the AP hasn't ACKed it
+_M1_TIMEOUT_S = 2.0
+_EAPOL_REPLY_TIMEOUT_S = 3.0     # hostapd re-sends M1 or M3 about once a second
+
+
+def _replay_counter(packet: EapolPacket) -> int:
+    return int.from_bytes(packet.replay_counter, "big") if packet.replay_counter else 0
+
+
+class VerifyPskCampaign(VerifyCampaign):
+    """Also verifies a PSK the AP gave up over WPS."""
+
+    credential_name = "PSK"
+
+    async def _exchange(self, iface, our_mac: bytes, our_mac_str: str) -> tuple[VerifyOutcome, Optional[str]]:
+        ap = self.target
+        bssid = ap.bssid.lower()
+        trailer = force_psk_akm(ap.rsn_ie or GENERIC_RSN_IE) or GENERIC_RSN_IE
+        association = Association(iface, bssid, ap.ssid or "", ap.channel, our_mac=our_mac,
+                                  assoc_trailer_ies=trailer, should_stop=lambda: self.stopped)
+        association.start()
+        self._log_step("Authentication and association requests sent")
+        try:
+            associated = await association.associate(attempts=2)
+        finally:
+            association.stop()
+        if not associated:
+            return VerifyOutcome.ERROR, association.fail_reason or "association rejected"
+
+        m1 = await self.array.next_frame(
+            lambda p: (isinstance(p, EapolPacket) and p.dest == our_mac_str and p.bssid == bssid
+                       and p.msg_num == 1 and p.nonce is not None),
+            timeout=_M1_TIMEOUT_S)
+        if m1 is None:
+            return VerifyOutcome.ERROR, "AP never sent EAPOL M1"
+
+        replay = _replay_counter(m1)
+        pmk = derive_pmk(self.value, (ap.ssid or "").encode())
+        bssid_mac = str_to_mac(bssid)
+        for _ in range(_M2_ATTEMPTS):
+            snonce = random_nonce()
+            kck = derive_ptk(pmk, bssid_mac, our_mac, m1.nonce, snonce, KCK_LEN)
+            m2 = build_eapol_m2(bssid_mac, our_mac, snonce, kck, replay=replay, rsn_ie=trailer)
+            if not await iface.send_until_ack(m2, max_retries=_M2_RESENDS):
+                return VerifyOutcome.ERROR, "AP never ACKed EAPOL M2"
+            self._log_step("M1 received, M2 sent")
+            previous_replay = replay
+            reply = await self.array.next_frame(
+                lambda p: (isinstance(p, EapolPacket) and p.dest == our_mac_str and p.bssid == bssid
+                           and (p.msg_num == 3
+                                or (p.msg_num == 1 and p.nonce is not None
+                                    and _replay_counter(p) > previous_replay))),
+                timeout=_EAPOL_REPLY_TIMEOUT_S)
+            if reply is None:
+                return VerifyOutcome.ERROR, "no reply from the AP after EAPOL M2"
+            if reply.msg_num == 3:
+                self._log_step("M3 received")
+                return VerifyOutcome.VERIFIED, None
+            m1, replay = reply, _replay_counter(reply)
+        return VerifyOutcome.REJECTED, None
