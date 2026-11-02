@@ -151,8 +151,8 @@ class Rtl8188ftvDkmsDriver(Driver):
                 "(EFUSE map bytes, not the matched USB descriptors)",
                 params.vid, params.pid)
         self.params = params
-        # rtl8188f_hal_init.c:4201 + rtw_mlme_ext.c:1019
-        self.SUPPORTED_CHANNELS = chplan_mod.init_channel_set(params.chplan)
+        logger.info("EFUSE channel plan 0x%02x: vendor enables ch %s; offering ch1-14",
+                    params.chplan, chplan_mod.init_channel_set(params.chplan))
         # usb_intf.c:1198
         self.mac = prom_mod.macaddr_cfg(params.mac)
         self.mac_address = self.mac.hex(":")

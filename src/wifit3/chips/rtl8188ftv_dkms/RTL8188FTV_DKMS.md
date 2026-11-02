@@ -45,7 +45,8 @@
   - `phydm_ra_dynamic_retry_count` writes `0x430=0` / `0x434=0x04030201` on the first watchdog tick only.
   - phydm table conditions (`phy_cond.driver1`): cut from SYS_CFG, PackageType from hidden-report byte 4
     bits[6:4] (`hal_com.c:829`), board 0. Only RadioA branches on cut (cut 1 vs other); no row tests package.
-  - `SUPPORTED_CHANNELS` = `chplan.init_channel_set(params.chplan)`: EFUSE plan 0x20 → ch1-13 (ch14 off).
+  - `SUPPORTED_CHANNELS` is ch1-14, like the sibling ports. The EFUSE plan (0x20: vendor ch1-13) is only logged.
+    CH14 paths (spur PSD 0xFF9A + notch 0xD4C, CCK power group 5) are unit-tested only: no capture tunes ch14.
   - Poll counts vary run to run: gates assert byte-exact replay, never op counts.
   - A watchdog tick can race a channel switch op-by-op; `verify_pcap` merge-walks it.
     Not reproduced in capture-1..3 (0 races).

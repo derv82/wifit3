@@ -366,12 +366,11 @@ def test_bring_up_init_burst_takes_enumerated_bulk_out_size(monkeypatch):
     assert seen == [64]
 
 
-def test_bring_up_narrows_supported_channels_to_efuse_chplan(monkeypatch):
-    # rtl8188f_hal_init.c:4201 ChannelPlan from EFUSE; rtw_mlme_ext.c:1019 init_channel_set
+def test_bring_up_offers_ch1_to_14_whatever_the_efuse_chplan(monkeypatch):
+    # Like the sibling ports: the EFUSE plan (0x22: ch1-11 in the vendor) is logged, not applied
     import asyncio
     import types
     from wifit3.chips.rtl8188ftv_dkms import prom as prom_mod
-    from wifit3.chips.rtl8188ftv_dkms.driver import Rtl8188ftvDkmsDriver
     calls = []
     _stubbed_bring_up_modules(monkeypatch, calls)
     monkeypatch.setattr(
@@ -383,8 +382,7 @@ def test_bring_up_narrows_supported_channels_to_efuse_chplan(monkeypatch):
     d = _driver()
     d.transport = MagicMock()
     assert asyncio.run(d._bring_up(lambda p, m: None)) is True
-    assert d.SUPPORTED_CHANNELS == list(range(1, 12))
-    assert Rtl8188ftvDkmsDriver.SUPPORTED_CHANNELS == list(range(1, 15))
+    assert d.SUPPORTED_CHANNELS == list(range(1, 15))
 
 
 def test_connect_runs_cold_bring_up_on_warm_chip(monkeypatch):

@@ -100,3 +100,20 @@ def test_set_level_writes_twenty_rates():
     assert len(t.writes) == 20
     assert t.writes[0][0] == 0xE08
     assert t.writes[0] == (0xE08, (0x0 & ~0xFF00) | (0x1D << 8))
+
+
+def test_ch14_cck_base_is_efuse_group5():
+    # rtl8188f_hal_init.c:4119-4121: ch14 CCK base = IndexCCK_Base[5]; BW40 group 4 (:3865)
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    from wifit3.chips.rtl8188ftv_dkms import txpower as T
+    m = bytearray([0xFF] * 512)
+    m[prom.EEPROM_TX_PWR_INX_8188F:prom.EEPROM_TX_PWR_INX_8188F + 12] = bytes(
+        [0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x31, 0x32, 0x33, 0x34, 0x35, 0x00])
+    params = prom.EfuseParams()
+    prom.parse_txpower(bytes(m), False, params)
+    tables = T.load_default_pg_tables()
+    assert params.cck_base_ch[0][12] == 0x25
+    assert params.cck_base_ch[0][13] == 0x26
+    assert params.bw40_base_ch[0][13] == 0x35
+    assert T.get_index(params, tables, 0, T.MGN_1M, 14) == 0x26
+    assert T.get_index(params, tables, 0, T.MGN_1M, 13) == 0x25
