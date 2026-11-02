@@ -14,6 +14,9 @@ import time
 from . import bb
 
 
+USB_HIGH_SPEED_BULK_SIZE = 512  # include/usb_ops.h:130
+
+
 def BIT(n: int) -> int:
     return 1 << n
 
@@ -35,10 +38,11 @@ def init_beacon_params(t, st: dict, station: bool = True) -> None:
     st["cr1"] = t.read8(0x0101)
 
 
-def init_burst(t, bulk_out_size: int = 512, ampdu_burst_mode: bool = False) -> None:
+def init_burst(t, bulk_out_size: int, ampdu_burst_mode: bool = False) -> None:
+    """``_InitBurstPktLen``; ``bulk_out_size`` is ``UsbBulkOutSize`` (usb_halinit.c:632-639)."""
     tmp8 = t.read8(0x0290)
     tmp8 &= ~(BIT(4) | BIT(5))
-    if bulk_out_size == 512:
+    if bulk_out_size == USB_HIGH_SPEED_BULK_SIZE:
         tmp8 |= BIT(4)
     else:
         tmp8 |= BIT(5)

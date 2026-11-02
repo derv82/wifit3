@@ -485,7 +485,7 @@ def _walk_m5e(ops, start: int, hal: dict) -> int:
     """Beacon params + burst + USB agg + turn-on block."""
     t = rp.ReplayTransport(ops[start:])
     misc_mod.init_beacon_params(t, hal)
-    misc_mod.init_burst(t)
+    misc_mod.init_burst(t, misc_mod.USB_HIGH_SPEED_BULK_SIZE)
     misc_mod.agg_tx_update(t)
     misc_mod.agg_rx_update(t)
     misc_mod.init_hw_led(t)

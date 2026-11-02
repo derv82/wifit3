@@ -359,3 +359,23 @@ def test_bring_up_applies_kfree_trim_when_flag_on(monkeypatch):
     d.transport = MagicMock()
     assert asyncio.run(d._bring_up(lambda p, m: None)) is True
     assert seen == [-3]
+
+
+def test_bring_up_init_burst_takes_enumerated_bulk_out_size(monkeypatch):
+    # usb_halinit.c:632: _InitBurstPktLen switches on UsbBulkOutSize
+    import asyncio
+    from wifit3.chips.rtl8188ftv_dkms import misc as misc_mod
+    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
+    from wifit3.chips.rtl8188ftv_dkms import tx as tx_mod
+    calls = []
+    _stubbed_bring_up_modules(monkeypatch, calls)
+    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: True)
+    monkeypatch.setattr(power_mod, "warm_state", lambda t: (0xC6, 0x06FF))
+    monkeypatch.setattr(tx_mod, "bulk_out_size", lambda dev: 64)
+    seen = []
+    monkeypatch.setattr(misc_mod, "init_burst",
+                        lambda t, size: seen.append(size))
+    d = _driver()
+    d.transport = MagicMock()
+    assert asyncio.run(d._bring_up(lambda p, m: None)) is True
+    assert seen == [64]

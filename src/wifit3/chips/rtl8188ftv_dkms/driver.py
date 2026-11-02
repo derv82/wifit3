@@ -231,7 +231,8 @@ class Rtl8188ftvDkmsDriver(Driver):
         await loop.run_in_executor(None, queues_mod.init_rate_fallback, t)
         await loop.run_in_executor(None, queues_mod.init_retry_function, t)
         await loop.run_in_executor(None, misc_mod.init_beacon_params, t, hal)
-        await loop.run_in_executor(None, misc_mod.init_burst, t)
+        await loop.run_in_executor(
+            None, misc_mod.init_burst, t, tx_mod.bulk_out_size(self.dev))
         await loop.run_in_executor(None, misc_mod.agg_tx_update, t)
         await loop.run_in_executor(None, misc_mod.agg_rx_update, t)
         await loop.run_in_executor(None, misc_mod.init_hw_led, t)

@@ -50,7 +50,7 @@ def test_beacon_params():
 def test_burst_and_agg():
     from wifit3.chips.rtl8188ftv_dkms import misc
     t = FakeT([0x00, 0x00, 0x1C])
-    misc.init_burst(t)
+    misc.init_burst(t, 512)
     assert (0x290, 1, 0x10 | 0x0E) in t.writes
     assert (0x456, 1, 0x70) in t.writes
     assert (0x458, 4, 0xFFFFFFFF) in t.writes
@@ -62,6 +62,15 @@ def test_burst_and_agg():
     assert t.writes[0] == (0x10C, 1, 0x04)
     assert t.writes[1] == (0x280, 4, 0x2005)
     assert t.writes[2] == (0x290, 1, 0x02)
+
+
+def test_init_burst_full_speed_sets_64b_burst_len():
+    # usb_halinit.c:636-638: USB_FULL_SPEED_BULK_SIZE and default -> BIT(5)
+    from wifit3.chips.rtl8188ftv_dkms import misc
+    for bulk_out_size in (64, 32):
+        t = FakeT([0x30, 0x00, 0x1C])
+        misc.init_burst(t, bulk_out_size)
+        assert t.writes[0] == (0x290, 1, 0x20 | 0x0E)
 
 
 def test_drop_lifetime_turnon():
