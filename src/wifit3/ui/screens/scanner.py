@@ -365,7 +365,7 @@ class ScannerView(Screen):
             return
         now = time.time()
         focused_bssid = None
-        if self.app.target_ap is not None and self.app.get_screen("focus") in self.app.screen_stack:
+        if self.app.target_ap is not None and self.app.focus_view in self.app.screen_stack:
             focused_bssid = self.app.target_ap.bssid
         to_drop = [
             ap.bssid for ap in self.app.array.get_access_points(include_eviltwin=False)
@@ -550,7 +550,7 @@ class ScannerView(Screen):
             self._write_log(treelog.leaf(f"[dim]ignored: {', '.join(reasons)}[/dim]"))
             return
         self.app.target_ap = ap
-        self.app.push_screen("focus")
+        self.app.push_screen(self.app.focus_view)
 
     def action_open_vault(self) -> None:
         self.app.action_toggle_vault()
@@ -664,7 +664,7 @@ class ScannerView(Screen):
         target_ap = self.ap_cache.get(event.bssid)
         if target_ap:
             self.app.target_ap = target_ap
-            self.app.push_screen("focus")
+            self.app.push_screen(self.app.focus_view)
 
     def on_ap_table_sort_changed(self, event: APTable.SortChanged) -> None:
         self._persist_sort()

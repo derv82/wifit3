@@ -17,14 +17,11 @@ class _App:
         self.screen_stack = list(stack)
         self.array = array
         self.target_ap = None
-        self.focus = SimpleNamespace(name="focus")
+        self.focus_view = SimpleNamespace(name="focus")
 
     @property
     def screen(self):
         return self.screen_stack[-1]
-
-    def get_screen(self, name):
-        return self.focus
 
     def pop_screen(self) -> None:
         self.screen_stack.pop()
@@ -52,7 +49,7 @@ def test_show_ap_over_scanner_pushes_focus_on_the_ap():
 
     VaultDrawer._show_ap_pressed(_drawer(app), ShowApPressed(BSSID))
 
-    assert app.screen_stack == [scanner, app.focus]
+    assert app.screen_stack == [scanner, app.focus_view]
     assert app.target_ap is ap
 
 
@@ -60,11 +57,11 @@ def test_show_ap_with_focus_on_the_stack_goes_back_down_to_it():
     ap, array = _array_with_ap()
     scanner, modal = SimpleNamespace(name="scanner"), SimpleNamespace(name="modal")
     app = _App(scanner, None, modal, array=array)
-    app.screen_stack[1] = app.focus
+    app.screen_stack[1] = app.focus_view
 
     VaultDrawer._show_ap_pressed(_drawer(app), ShowApPressed(BSSID))
 
-    assert app.screen_stack == [scanner, app.focus]
+    assert app.screen_stack == [scanner, app.focus_view]
     assert app.target_ap is ap
 
 

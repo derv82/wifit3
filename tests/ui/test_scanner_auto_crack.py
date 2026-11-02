@@ -8,7 +8,7 @@ from wifit3.ui.screens.scanner import ScannerView
 
 
 async def _scanner(app: WifiteApp, pilot) -> ScannerView:
-    app.push_screen("scanner")
+    app.push_screen(app.scanner_view)
     await pilot.pause(0)
     assert isinstance(app.screen, ScannerView)
     return app.screen

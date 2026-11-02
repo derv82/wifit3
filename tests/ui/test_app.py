@@ -172,7 +172,7 @@ async def test_app_layout_and_boot():
         assert device_list is not None
         
         # Manually transition to Scanner View
-        pilot.app.push_screen("scanner")
+        pilot.app.push_screen(pilot.app.scanner_view)
         await pilot.pause(0)
         
         assert isinstance(pilot.app.screen, ScannerView)

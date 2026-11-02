@@ -172,6 +172,9 @@ class WifiteApp(App):
                                         on_change=self._on_devices_changed,
                                         on_fatal=self._on_usb_fatal)
         self.target_ap: Optional[AccessPoint] = None
+        self.splash_view = SplashView()
+        self.scanner_view = ScannerView()
+        self.focus_view = FocusViewV2()
         self.vault = Vault()
         self._vault_notices_lock = threading.Lock()
         self._vault_refresh_pending = False     # a table refresh is scheduled for the notices so far
@@ -217,11 +220,11 @@ class WifiteApp(App):
             self.notify(self._config_error, severity="error", title="Config")
         for msg in self.vault.errors:
             self.notify(msg, severity="warning", title="Vault")
-        self.install_screen(SplashView(), name="splash")
-        self.install_screen(ScannerView(), name="scanner")
-        self.install_screen(FocusViewV2(), name="focus")
+        self.install_screen(self.splash_view, name="splash")
+        self.install_screen(self.scanner_view, name="scanner")
+        self.install_screen(self.focus_view, name="focus")
         
-        self.push_screen("splash")
+        self.push_screen(self.splash_view)
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
         self.set_interval(2.0, self._poll_jobs)
         self.set_interval(1 / 15, self._poll_ap_events)
@@ -406,7 +409,7 @@ class WifiteApp(App):
         """DeviceWatch fired. On Splash, refresh the card list; mid-session, prompt to bring up
         each newly-plugged card."""
         if any(isinstance(s, SplashView) for s in self.screen_stack):
-            self.get_screen("splash", SplashView).render_devices(current)
+            self.splash_view.render_devices(current)
             return
         # Ignore already-attached devices
         fresh = [d for d in arrived if not (self.array and self.array.contains(d))]
@@ -464,9 +467,9 @@ class WifiteApp(App):
         # Unwind to the base default screen (kept by `> 1`), then re-push splash onto it.
         while len(self.screen_stack) > 1:
             await self.pop_screen()
-        await self.push_screen("splash")
+        await self.push_screen(self.splash_view)
         # The installed splash only resumes (on_mount won't re-run), so reset its state explicitly.
-        self.get_screen("splash", SplashView).reset_for_reentry()
+        self.splash_view.reset_for_reentry()
         # Close the dead pool only once scanner/focus are gone, so their teardown can't read a
         # half-closed interface.
         if array is not None:

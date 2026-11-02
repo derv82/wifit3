@@ -13,7 +13,7 @@ async def test_scanner_withheld_handshake_is_log_only_no_toast():
     """A withheld EAP/OWE 4-way logs but must NOT toast (not a crackable win)."""
     app = WifiteApp()
     async with app.run_test() as pilot:
-        app.push_screen("scanner")
+        app.push_screen(app.scanner_view)
         await pilot.pause(0)
         scanner = app.screen
 
@@ -37,7 +37,7 @@ async def test_a_passive_decloak_reaches_disk():
 
     app = WifiteApp()
     async with app.run_test() as pilot:
-        app.push_screen("scanner")
+        app.push_screen(app.scanner_view)
         await pilot.pause(0)
 
         array = WlanArray()
@@ -64,7 +64,7 @@ async def test_a_pbc_window_under_a_modal_opens_focus_when_the_modal_closes():
         array.access_points[ap.bssid] = ap
         app.array = array
         app.pbc_enabled = True
-        app.push_screen("scanner")
+        app.push_screen(app.scanner_view)
         await pilot.pause(0)
         scanner = app.screen
         modal = ModalScreen()

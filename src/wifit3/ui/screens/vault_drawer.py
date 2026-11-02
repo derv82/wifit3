@@ -311,7 +311,7 @@ class VaultDrawer(ModalScreen):
             return
         app.target_ap = ap
         self.dismiss()
-        focus = app.get_screen("focus")
+        focus = app.focus_view
         while focus in app.screen_stack and app.screen is not focus:
             app.pop_screen()
         if app.screen is not focus:
