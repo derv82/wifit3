@@ -428,3 +428,32 @@ def test_bring_up_skips_kfree_when_flag_off(monkeypatch):
     d.transport = MagicMock()
     assert asyncio.run(d._bring_up(lambda p, m: None)) is True
     assert seen == []
+
+
+def test_fake_mac_is_spoofable():
+    from wifit3.chips.driver import FakeMacSupport
+    from wifit3.chips.rtl8188ftv_dkms.driver import Rtl8188ftvDkmsDriver
+    assert Rtl8188ftvDkmsDriver.FAKE_MAC is FakeMacSupport.SPOOFABLE
+
+
+def test_enter_active_monitor_writes_reg_macid_bytewise():
+    # rtl8188f_hal_init.c:5117-5132 hw_var_set_macaddr: rtw_write8(REG_MACID + idx, val[idx]), idx 0..5
+    import asyncio
+    d = _driver()
+    d.transport = MagicMock()
+    spoof = bytes.fromhex("02acac000001")
+    assert asyncio.run(d.enter_active_monitor(spoof, bytes.fromhex("020000000002"))) == spoof
+    assert d.transport.method_calls == [
+        ("write8", (0x610 + i, b), {}) for i, b in enumerate(spoof)]
+
+
+def test_exit_active_monitor_restores_own_mac():
+    import asyncio
+    d = _driver()
+    d.transport = MagicMock()
+    d.mac = bytes.fromhex("020000000001")
+    asyncio.run(d.enter_active_monitor(bytes.fromhex("02acac000001")))
+    d.transport.reset_mock()
+    asyncio.run(d.exit_active_monitor())
+    assert d.transport.method_calls == [
+        ("write8", (0x610 + i, b), {}) for i, b in enumerate(d.mac)]

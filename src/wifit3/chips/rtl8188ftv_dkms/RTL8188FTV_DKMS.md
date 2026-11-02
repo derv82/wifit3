@@ -87,7 +87,7 @@
    (client drop; 40 broadcast deauths on the wire, AP-spoofed TA,
    seq 0-39, all checksums valid). The C2H hidden report never posts
    live (0xFD echo; descriptive caps only, no functional impact).
-- Live verification 2026-09-24 (AR9271 witness, ch1): RX at the known-good bar (9.7 bcn/s, 11/11 channels tuned); breadth ties the mainline sibling (4 = 4 APs, RSSI ±0 dB — both hit the local strong-AP ceiling; the AR9271 hears 19, a 1T1R sensitivity gap, not a driver one), so the DKMS default is non-regressive. On-air TX-ACK 100/100 (copies collapse to 1; a dead target piles to the retry limit at 0 ACKs). Auto-ACK re-proven NONE (spoofed 8/100, silicon 8/100, controls 0). 20-min 13-ch hop soak flat pre-watchdog (trend 4→4, ratio 1.00); watchdog-era 20-min soak 2026-09-25 flat (trend 35→37, ratio 1.06, active 30–38, no wedge). Handshake + PMKID passed on DKMS in a hands-on lab pass 2026-09-25; WPS only lightly tested there, still open for a full run.
+- Live verification 2026-09-24 (AR9271 witness, ch1): RX at the known-good bar (9.7 bcn/s, 11/11 channels tuned); breadth ties the mainline sibling (4 = 4 APs, RSSI ±0 dB — both hit the local strong-AP ceiling; the AR9271 hears 19, a 1T1R sensitivity gap, not a driver one), so the DKMS default is non-regressive. On-air TX-ACK 100/100 (copies collapse to 1; a dead target piles to the retry limit at 0 ACKs). Auto-ACK: see Status below (8/100 did not reproduce 2026-11-02). 20-min 13-ch hop soak flat pre-watchdog (trend 4→4, ratio 1.00); watchdog-era 20-min soak 2026-09-25 flat (trend 35→37, ratio 1.06, active 30–38, no wedge). Handshake + PMKID passed on DKMS in a hands-on lab pass 2026-09-25; WPS only lightly tested there, still open for a full run.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
   - No `start`/`stop` cfg80211 ops: `iw set channel` hits `cfg80211_rtw_set_monitor_channel`, monitor entry is `cfg80211_rtw_change_iface` → `Ndis802_11Monitor` on the same netdev (no `wlan0mon` twin; capture keeps `wlx…`).
@@ -188,7 +188,7 @@
    bring-up over it (proven same day); replug only if the scanner stays
    empty. Warm attach skips the FW#1 probe tail (single FW download,
    like the vendor on warm silicon — see below).
-- Firmware-based hard-MAC: no auto-ACK for forged MACs — `FAKE_MAC = NONE`, re-proven on hardware 2026-09-24 (AR9271 prober: spoofed 8/100, own silicon MAC 8/100, controls 0/100; `enter_active_monitor` not overridden, so `rx_autoack` skips the spoofed pass). The vendor stack does not change this silicon limit. WPS/PMKID instead rely on the now-wired software ACK-retry (`_enable_rx_acks` + `inject_frame_slow_retry`), not HW auto-ACK.
+- Auto-ACK follows REG_MACID (0x610) in monitor mode (MSR NOLINK): `FAKE_MAC = SPOOFABLE`, `enter_active_monitor` writes REG_MACID via `hw_var_set_macaddr`. Measured 2026-11-02 (1 card, 1 AP, AR9271 prober on ch1, n=100/phase): own MAC 99/100, MAC written to REG_MACID 98/100, bogus control 0/100, own MAC while REG_MACID held the spoofed MAC 0/100. The 2026-09-24 "spoofed 8/100, own silicon MAC 8/100" result did not reproduce.
 
 ## Driver Entry Points
 - Bring-up: `driver.connect` → M1 probe + M2 EFUSE → M3 power →

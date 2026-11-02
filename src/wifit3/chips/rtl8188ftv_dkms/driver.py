@@ -77,7 +77,7 @@ WATCHDOG_PERIOD_S = 2.0
 
 class Rtl8188ftvDkmsDriver(Driver):
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))
-    FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.NONE
+    FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Rtl8188ftvDkmsDriver":
@@ -390,6 +390,22 @@ class Rtl8188ftvDkmsDriver(Driver):
             return tx_mod.stamp_seqnum(bytes(frame_bytes),
                                        self.hal.get("mgnt_seq", 0))
         return bytes(frame_bytes)
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Point REG_MACID at ``mac`` so the hardware HW-ACKs frames to it; ``bssid`` unused.
+        ``rtw_net_set_mac_address`` (os_intfs.c:822) → ``hw_var_set_macaddr``."""
+        await self._set_macaddr(bytes(mac))
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the card's own MAC in REG_MACID."""
+        if self.mac:
+            await self._set_macaddr(self.mac)
+
+    async def _set_macaddr(self, mac: bytes) -> None:
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, queues_mod.init_macaddr, self.transport, mac)
 
     async def _enable_rx_acks(self) -> None:
         loop = asyncio.get_running_loop()
