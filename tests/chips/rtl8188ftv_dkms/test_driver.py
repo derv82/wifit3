@@ -309,19 +309,6 @@ def _stubbed_bring_up_modules(monkeypatch, calls):
             monkeypatch.setattr(mod, fn_name, fn)
 
 
-def test_bring_up_warm_skips_fw1_probe_tail(monkeypatch):
-    import asyncio
-    calls = []
-    _stubbed_bring_up_modules(monkeypatch, calls)
-    d = _driver()
-    d.transport = MagicMock()
-    d.is_warm = True
-    assert asyncio.run(d._bring_up(lambda p, m: None)) is True
-    assert calls.count("fw") == 1
-    assert "c2h-req" not in calls and "c2h-get" not in calls
-    assert d.current_channel == 1 and d.hal["channel"] == 1
-
-
 def test_bring_up_cold_runs_fw1_probe_tail(monkeypatch):
     import asyncio
     calls = []
@@ -396,24 +383,23 @@ def test_bring_up_narrows_supported_channels_to_efuse_chplan(monkeypatch):
     assert Rtl8188ftvDkmsDriver.SUPPORTED_CHANNELS == list(range(1, 15))
 
 
-def test_connect_checks_warm_before_bring_up(monkeypatch):
-    # The warm probe is wifit3-only; _bring_up starts at the C's chip-version read.
+def test_connect_runs_cold_bring_up_on_warm_chip(monkeypatch):
+    # usb_halinit.c:2240: the vendor probe runs FW#1 + hidden report + power off on every attach
     import asyncio
-    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
-    order = []
-    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: order.append("warm") or True)
-    monkeypatch.setattr(power_mod, "warm_state", lambda t: (0xC6, 0x06FF))
+    from wifit3.chips.rtl8188ftv_dkms import driver as drv_mod
+    calls = []
+    _stubbed_bring_up_modules(monkeypatch, calls)
+    monkeypatch.setenv("WIFIT3_RTL8188FTV_WATCHDOG", "off")
+    monkeypatch.setattr(drv_mod, "RxReaderThread", MagicMock())
     d = _driver()
     d.transport = MagicMock()
+    d.transport.read8.return_value = 0xC6
+    d.transport.read16.return_value = 0x06FF
     monkeypatch.setattr(d, "_claim_usb", lambda: None)
-
-    async def bring_up(update):
-        order.append(("bring_up", d.is_warm))
-        return False
-
-    monkeypatch.setattr(d, "_bring_up", bring_up)
-    assert asyncio.run(d.connect()) is False
-    assert order == ["warm", ("bring_up", True)]
+    assert asyncio.run(d.connect()) is True
+    assert calls == ["c2h-req", "fw", "c2h-get", "fw"]
+    d.transport.read8.assert_not_called()
+    d.transport.read16.assert_not_called()
 
 
 def test_bring_up_skips_kfree_when_flag_off(monkeypatch):

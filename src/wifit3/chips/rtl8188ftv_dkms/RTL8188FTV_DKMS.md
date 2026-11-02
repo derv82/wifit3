@@ -79,10 +79,9 @@
    first-principles. TX is a standalone bulk-OUT gate (`verify_tx.py`):
    87 station-capture URBs rebuild byte-exact (48 MGMT incl. the
    disconnect deauth, 39 BE DATA). `driver._inject_frame` sends MGMT
-   and DATA on the monitor template; warm state (`is_chip_warm`: MCUFWDL
-   != 0x05 or CR != 0) logs a warning and runs the cold bring-up over
-   it, proven live 2026-09-24 (MCUFWDL=0xc6/CR=0x06ff warm, full RX mix
-   after). Replug only if the scanner stays empty. Live RX proven
+   and DATA on the monitor template; `connect()` always runs the cold
+   bring-up, warm chip included, proven live 2026-09-24
+   (MCUFWDL=0xc6/CR=0x06ff warm, full RX mix after). Live RX proven
    2026-09-24 (hal tail was the gate); live deauth proven same day
    (client drop; 40 broadcast deauths on the wire, AP-spoofed TA,
    seq 0-39, all checksums valid). The C2H hidden report never posts
@@ -184,10 +183,8 @@
    `driver._inject_frame` sends MGMT and DATA on the monitor template
    (frame-seq == desc-seq, `mgnt_seq` state; per-link station DATA rules
    stay unported — wifit3 injects in monitor mode only). Live deauth
-   proven 2026-09-24 (client drop). Warm state warns and runs the cold
-   bring-up over it (proven same day); replug only if the scanner stays
-   empty. Warm attach skips the FW#1 probe tail (single FW download,
-   like the vendor on warm silicon — see below).
+   proven 2026-09-24 (client drop). A warm chip gets the same cold
+   bring-up (proven same day).
 - Auto-ACK follows REG_MACID (0x610) in monitor mode (MSR NOLINK): `FAKE_MAC = SPOOFABLE`, `enter_active_monitor` writes REG_MACID via `hw_var_set_macaddr`. Measured 2026-11-02 (1 card, 1 AP, AR9271 prober on ch1, n=100/phase): own MAC 99/100, MAC written to REG_MACID 98/100, bogus control 0/100, own MAC while REG_MACID held the spoofed MAC 0/100. The 2026-09-24 "spoofed 8/100, own silicon MAC 8/100" result did not reproduce.
 
 ## Driver Entry Points
@@ -218,9 +215,6 @@
   probe through the last op of both captures (switches + ticks + race).
 - `scripts/chips/rtl8188ftv_dkms/verify_tx.py` — standalone bulk-OUT
   byte gate against the station TX reference (capture-6.pcap).
-- `scripts/chips/rtl8188ftv_dkms/verify_warm.py` — warm-prefix gate:
-  power-on + single FW replayed against a warm reference (no probe
-  FW#1 / hidden report / power-off sandwich).
 
 ## Debug log
 - 2026-09-22 — vendor capture triage: 30k packets / 57 s, ~6k control setups all `bRequest 0x05`, bulk-IN `0x81` with live RX sizes, zero bulk-OUT (aireplay `No such BSSID available` against `02:00:00:00:00:03`); `iw set channel` rc=0 on ch1–13, ch14 rejected (`channel is disabled`, regulatory). Monitor lives on the `wlx…` netdev itself.
@@ -256,3 +250,9 @@
   still runs at modprobe — our skip covers only our own M2 tail.
   `verify_warm.py` replays power-on through the FW download (op #516)
   green; branch tests pin warm=1 FW / cold=2 FWs.
+- 2026-11-02 - warm skip removed: the skipped block is the vendor's
+  probe-time `hal_read_mac_hidden_rpt` (hal_com.c:954-1023) ending in
+  `CardDisableRTL8188FU`, run on every probe (usb_halinit.c:2240), and
+  the C re-downloads FW over a running 8051 (rtl8188f_hal_init.c:1168-1171).
+  `connect()` always runs the cold path; `is_chip_warm`, `warm_state` and
+  `verify_warm.py` deleted.
