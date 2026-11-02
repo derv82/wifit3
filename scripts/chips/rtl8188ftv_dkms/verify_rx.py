@@ -1,91 +1,150 @@
-"""Acceptance check: decode rtl8188ftv_dkms bulk-IN RX against the vendor capture.
+"""Check the driver's RX path on a vendor capture's bulk-IN stream against tshark.
 
-Extracts every 0x81 completion, walks the aggregation with the port's
-``rx.iter_rx``, feeds NORMAL_RX frames to ``WlanFrameParser`` and
-cross-checks the seen AP BSSIDs against the over-air reference. Slow
-(full tshark pass); run on demand, not in the hot gate.
+    uv run python scripts/chips/rtl8188ftv_dkms/verify_rx.py <capture.pcap>
 
-Run: uv run python scripts/chips/rtl8188ftv_dkms/verify_rx.py [capture-1|capture-2]
+Each recorded bulk-IN completion goes through the driver's RX decode (``rx.iter_rx`` +
+``WlanFrameParser``, as in ``_rx_dispatch``). Two independent checks:
+  * frame slicing: a frame whose trailing 4 bytes are a valid FCS was cut from the aggregate
+    at exactly the right offset and length. Frames without one are counted as unchecked.
+  * decode: every parsed packet's type/subtype, BSSID, SA, DA and beacon/probe-response SSID
+    must equal what tshark's 802.11 dissector reports for the same bytes.
+Not checked: RSSI (no reference value in a USB capture), frames the parser returns None for.
 """
 from __future__ import annotations
 
+import argparse
+import struct
 import subprocess
 import sys
+import tempfile
+import zlib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
-from wifit3.chips.rtl8188ftv_dkms import rx as rx_mod
+import rtw88_pcap_replay as rp
+from wifit3.chips.rtl8188ftv_dkms import rx
+from wifit3.dot11.packet import BeaconPacket
 from wifit3.dot11.parser import WlanFrameParser
 
-CAP_DIR = REPO / "driver_captures" / "captures_8188fu"
-KNOWN_APS = {"1c:63:49:79:c1:04", "a8:42:a1:99:85:1f", "18:0f:76:39:8a:20"}
+LINKTYPE_IEEE802_11 = 105
+FCS_LEN = 4
+SHOWN_MISMATCHES = 10
+TSHARK_FIELDS = ["wlan.fc.type", "wlan.fc.subtype", "wlan.bssid", "wlan.sa", "wlan.da",
+                 "wlan.ssid"]
 
 
-def _resolve(capture: str | None) -> Path:
-    if capture is None:
-        return CAP_DIR / "capture-1.pcap"
-    p = Path(capture)
-    if p.exists():
-        return p
-    cand = CAP_DIR / f"{capture}.pcap"
-    if cand.exists():
-        return cand
-    raise SystemExit(f"capture not found: {capture}")
+def _has_valid_fcs(frame: bytes) -> bool:
+    if len(frame) <= FCS_LEN:
+        return False
+    return zlib.crc32(frame[:-FCS_LEN]) == int.from_bytes(frame[-FCS_LEN:], "little")
 
 
-def main() -> int:
-    pcap = _resolve(sys.argv[1] if len(sys.argv) > 1 else None)
-    out = subprocess.run(
-        ["tshark", "-r", str(pcap), "-T", "fields", "-e", "frame.number",
-         "-e", "usb.capdata",
-         "-Y", "usb.endpoint_address==0x81 && usb.urb_type==67"],
-        capture_output=True, text=True, check=True).stdout
-    n_urb = n_pkt = n_c2h = n_exc = drops = 0
-    bssids: set[str] = set()
-    for line in out.splitlines():
-        fno, _, capdata = line.partition("\t")
-        capdata = capdata.strip()
-        if not capdata:
-            continue
-        n_urb += 1
-        try:
-            buf = bytes.fromhex(capdata)
-        except ValueError:
-            print(f"  FAIL frame {fno}: bad hex")
-            return 1
-        for a, payload in rx_mod.iter_rx(buf):
-            n_pkt += 1
-            if a["c2h"]:
+def _write_80211_pcap(path: Path, frames: list[bytes]) -> None:
+    with path.open("wb") as f:
+        f.write(struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, LINKTYPE_IEEE802_11))
+        for frame in frames:
+            f.write(struct.pack("<IIII", 0, 0, len(frame), len(frame)))
+            f.write(frame)
+
+
+def _tshark_rows(frames: list[bytes]) -> list[list[str]]:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "frames.pcap"
+        _write_80211_pcap(path, frames)
+        cmd = ["tshark", "-r", str(path), "-T", "fields", "-E", "occurrence=f"]
+        for field in TSHARK_FIELDS:
+            cmd += ["-e", field]
+        out = subprocess.run(cmd, capture_output=True, text=True, check=True,
+                             encoding="utf-8", errors="replace").stdout
+    rows = [(line.split("\t") + [""] * len(TSHARK_FIELDS))[:len(TSHARK_FIELDS)]
+            for line in out.splitlines()]
+    if len(rows) != len(frames):
+        raise SystemExit(f"tshark returned {len(rows)} rows for {len(frames)} frames")
+    return rows
+
+
+def _mismatches(packet, row: list[str]) -> list[str]:
+    ftype, subtype, bssid, sa, da, ssid = row
+    found = []
+    if str(packet.type_id) != ftype or str(packet.subtype_id) != subtype:
+        found.append(f"type {packet.type_id}/{packet.subtype_id} vs tshark {ftype}/{subtype}")
+    for name, ours, theirs in (("bssid", packet.bssid, bssid), ("sa", packet.source, sa),
+                               ("da", packet.dest, da)):
+        if theirs and ours != theirs:
+            found.append(f"{name} {ours} vs tshark {theirs}")
+    if isinstance(packet, BeaconPacket) and packet.ssid != _tshark_ssid(ssid):
+        found.append(f"ssid {packet.ssid!r} vs tshark {ssid!r}")
+    return found
+
+
+def _tshark_ssid(field: str) -> str | None:
+    """tshark's SSID field (hex bytes; ``<MISSING>`` for a zero-length IE) in the parser's
+    text form: ``<hidden>`` when empty, UTF-8 with undecodable bytes dropped."""
+    if not field:
+        return None
+    if field == "<MISSING>":
+        return "<hidden>"
+    return bytes.fromhex(field.replace(":", "")).decode("utf-8", errors="ignore")
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description="Check rtl8188ftv_dkms RX decode on a capture's bulk-IN stream.")
+    parser.add_argument("pcap", type=Path, help="vendor-driver USB capture")
+    args = parser.parse_args(argv)
+    if not args.pcap.exists():
+        print(f"FAIL: no such capture {args.pcap}")
+        return 1
+    buffers = rp.extract_bulk_in_ops(args.pcap, rp.find_card_device(args.pcap))
+    frames: list[bytes] = []
+    n_c2h = 0
+    for buf in buffers:
+        for attrib, payload in rx.iter_rx(buf):
+            if attrib["c2h"]:
                 n_c2h += 1
-                continue
-            if len(payload) < 2 or payload[0] & 0x03:
-                print(f"  FAIL frame {fno}: bad FC {payload[:2].hex()}")
-                return 1
-            if a["pkt_len"] != len(payload):
-                drops += 1
-                continue
-            try:
-                pkt = WlanFrameParser.parse_80211_frame(payload, 0)
-            except Exception as e:  # noqa: BLE001
-                print(f"  FAIL frame {fno}: parser raised {e!r}")
-                n_exc += 1
-                continue
-            if pkt is not None and pkt.bssid:
-                bssids.add(pkt.bssid.lower())
-    print(f"rx: {n_urb} urbs, {n_pkt} packets ({n_c2h} c2h), "
-          f"parser-exc={n_exc} len-drops={drops}")
-    print(f"rx: {len(bssids)} ap bssids, known-found="
-          f"{sorted(bssids & KNOWN_APS)}")
-    if n_exc:
+            else:
+                frames.append(payload)
+    if not frames:
+        print(f"FAIL: no 802.11 frames in {len(buffers)} bulk-IN completions; RX unverified")
         return 1
-    if not (bssids & KNOWN_APS):
-        print("  FAIL: no known AP seen")
+
+    fcs_ok = [_has_valid_fcs(f) for f in frames]
+    rows = _tshark_rows([f[:-FCS_LEN] if ok else f for f, ok in zip(frames, fcs_ok)])
+    problems = []
+    n_parsed = n_unparsed_mgmt_data = 0
+    for frame, row in zip(frames, rows):
+        try:
+            packet = WlanFrameParser.parse_80211_frame(frame, 0)
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"{frame[:2].hex()} {len(frame)}B: parser raised {e!r}")
+            continue
+        if packet is None:
+            if row[0] in ("0", "2"):
+                n_unparsed_mgmt_data += 1
+            continue
+        n_parsed += 1
+        for m in _mismatches(packet, row):
+            problems.append(f"{frame[:2].hex()} {len(frame)}B: {m}")
+
+    print(f"rx: {len(buffers)} bulk-IN completions -> {len(frames)} frames + {n_c2h} C2H")
+    print(f"  slicing: {sum(fcs_ok)} frames end in a valid FCS; "
+          f"{len(frames) - sum(fcs_ok)} unchecked (no valid FCS)")
+    print(f"  decode: {n_parsed} parsed packets compared with tshark, {len(problems)} problems; "
+          f"unchecked: {n_unparsed_mgmt_data} mgmt/data frames the parser returned None for, "
+          f"{len(frames) - n_parsed - n_unparsed_mgmt_data} control/other")
+    for p in problems[:SHOWN_MISMATCHES]:
+        print(f"    {p}")
+    if len(problems) > SHOWN_MISMATCHES:
+        print(f"    ... {len(problems) - SHOWN_MISMATCHES} more")
+    if problems or not n_parsed:
+        print("FAIL")
         return 1
-    print("rx: green")
+    print("PASS: every parsed packet agrees with tshark")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
