@@ -10,6 +10,7 @@ from textual.widgets import Checkbox, Input, Label, TextArea
 from wifit3.campaigns.decloak import DecloakCampaign, DecloakInput
 from wifit3.models import AccessPoint
 from wifit3.persist.config import Config
+from wifit3.wlan.array import WlanArray
 from wifit3.ui.screens.focus_v2.decloak_modal import (
     DecloakInputModal,
     candidates_from_base,
@@ -98,9 +99,9 @@ def test_an_explicit_empty_list_does_not_fall_back_to_sibling_guesses():
 
 def test_no_input_falls_back_to_sibling_guesses():
     sibling = AccessPoint(bssid="aa:bb:cc:dd:ee:f0", channel=6)
-    sibling.ssid, sibling.beacons = "Loud", 9
-    array = MagicMock()
-    array.access_points = {sibling.bssid: sibling}
+    sibling.ssid = "Loud"
+    array = WlanArray()
+    array.access_points[sibling.bssid] = sibling
     hidden = AccessPoint(bssid=_BSSID, channel=6)
     hidden.siblings.append(sibling.bssid)
 
@@ -400,5 +401,5 @@ def test_wordlist_head_keeps_spacing_and_skips_undecodable_lines(tmp_path):
 
 def test_airtime_counts_every_enabled_method():
     assert seconds_per_ssid(DecloakInput([])) == pytest.approx(0.15)
-    assert seconds_per_ssid(DecloakInput([], True, True, True)) == pytest.approx(0.6)
+    assert seconds_per_ssid(DecloakInput([], True, True, True)) == pytest.approx(1.3)
     assert seconds_per_ssid(DecloakInput([], False, False, False)) == 0

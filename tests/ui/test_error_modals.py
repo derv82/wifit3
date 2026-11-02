@@ -8,7 +8,6 @@ from textual.widgets import Button, Label, ListItem, ListView
 
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.error_modals import FatalErrorModal, RecoverableErrorModal
-from wifit3.ui.screens.splash import SplashView
 
 
 def _raise_no_backend(*args, **kwargs):
@@ -57,7 +56,7 @@ async def test_reset_for_reentry_clears_a_frozen_splash():
     installed screen only resumes on return, so on_mount can't."""
     app = WifiteApp()
     async with app.run_test() as pilot:
-        splash = app.get_screen("splash", SplashView)
+        splash = app.splash_view
         device_list = splash.query_one("#device-list", ListView)
 
         # Freeze splash the way a bring-up leaves it (initializing latched, START disabled, a stale

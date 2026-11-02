@@ -107,7 +107,7 @@ def test_refresh_rescans_the_current_config_dir(tmp_path, monkeypatch):
 
 # ---- writes fold into the cache ---------------------------------------------
 
-def test_vault_notifies_subscribers_only_when_capture_index_changes(tmp_path):
+def test_vault_records_a_live_check_when_the_ap_gives_up_a_saved_key_again(tmp_path):
     vault = Vault()
     changes = []
     vault.subscribe(lambda bssid: changes.append((bssid, vault.revision(bssid))))
@@ -115,8 +115,11 @@ def test_vault_notifies_subscribers_only_when_capture_index_changes(tmp_path):
 
     vault.save_wep_key(ap, b"abcde")
     vault.save_wep_key(ap, b"abcde")
+    vault.save_wep_key(ap, b"abcde", manual=True)
 
-    assert changes == [("aa:bb:cc:dd:ee:ff", (1, 1))]
+    assert changes == [("aa:bb:cc:dd:ee:ff", (1, 1)), ("aa:bb:cc:dd:ee:ff", (1, 2))]
+    (key,) = vault.ap_state(ap.bssid).keys
+    assert [v.correct for v in key.live_verifications] == [True]
 
 
 def test_ap_state_is_cached_until_that_ap_changes(tmp_path):

@@ -472,6 +472,7 @@ class WpsCampaign(Campaign):
             st.p1_index = 0
             st.p2_index = 0
             st.skip_middle = None
+            st.dead_first_halves = [pin[:4]]   # earlier rejections were against the old PIN
 
     async def _loop(self) -> None:
         self.status = "running"
@@ -482,15 +483,14 @@ class WpsCampaign(Campaign):
             self.our_mac = str_to_mac(self._lease.mac)
         name = self.target.ssid or self.bssid
         logger.info("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
-        if self._oui_pin_count:
-            self.log(f"[dim]Prioritizing [bold]{self._oui_pin_count} OUI-matching "
-                     f"default PIN(s)[/bold][/dim]")
 
         # When resuming with a previously-recovered PIN, re-verify it against the AP
         if self.state.phase == "done" and self.state.found_pin is not None:
-            self.log("re-verifying PIN against the AP "
-                     "[dim](if the PSK changed, we'll catch it)[/dim]")
+            self.log("re-verifying PIN against the AP")
             self.state.phase = "verify"
+        elif self._oui_pin_count:
+            self.log(f"[dim]prioritizing [bold]{self._oui_pin_count} OUI-matching "
+                     f"default PIN(s)[/bold][/dim]")
 
         try:
             while not self.stopped:

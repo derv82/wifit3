@@ -1,9 +1,9 @@
 """Unit tests for the deferred EAPOL → handshake-tree aggregator.
 
-Pure + clock-injected, so no UI / no hardware: feed CaptureEvents + a fake
+Pure + clock-injected, so no UI / no hardware: feed EAPOL / handshake events + a fake
 ``now`` and assert on the rendered markup lines.
 """
-from wifit3.ui.capture_events import CaptureEvent, CaptureKind
+from wifit3.watchers.ap_watcher import EapolFrameSeen, HandshakeCaptured
 from wifit3.ui.eapol_aggregate import EapolAggregator
 
 _BSSID = "11:22:33:44:55:66"
@@ -11,22 +11,22 @@ _CLIENT = "aa:bb:cc:dd:ee:ff"
 
 
 def _eapol(msg, *, client=_CLIENT, nonce=True, mic=True, eapol=True, pmkid=None):
-    return CaptureEvent(
-        kind=CaptureKind.EAPOL, bssid=_BSSID, client_mac=client, msg_num=msg,
+    return EapolFrameSeen(
+        bssid=_BSSID, ssid="X", channel=1, client_mac=client, msg_num=msg, replay_hex="00" * 8,
         has_nonce=nonce, has_mic=mic, eapol_complete=eapol, has_pmkid=pmkid,
     )
 
 
 def _hs(pair="M1+M2", client=_CLIENT):
-    return CaptureEvent(kind=CaptureKind.HANDSHAKE, bssid=_BSSID,
-                        client_mac=client, pair_label=pair)
+    return HandshakeCaptured(bssid=_BSSID, ssid="X", channel=1, client_mac=client, pair_label=pair,
+                             authorized=pair != "M1+M2")
 
 
 def test_complete_handshake_flushes_one_tree():
     agg = EapolAggregator()
     agg.on_eapol(_eapol(1, pmkid=True), now=0.0)
     agg.on_eapol(_eapol(2), now=0.1)
-    lines = agg.on_handshake(_hs("M1+M2"), now=0.1)
+    lines = agg.on_handshake(_hs("M1+M2"))
     text = "\n".join(lines)
     assert _CLIENT in text and "4-Way Handshake" in text       # header names the client
     assert "M1" in text and "AP→Client" in text                # M1 direction
@@ -41,7 +41,7 @@ def test_save_hint_folds_in_as_the_closing_leaf():
     agg.on_eapol(_eapol(1, pmkid=True), now=0.0)
     agg.on_eapol(_eapol(2), now=0.1)
     hint = "[dim]saved: captures/NETGEAR2G_…_handshake.hc22000[/dim]"
-    lines = agg.on_handshake(_hs("M1+M2"), now=0.1, save_hint=hint)
+    lines = agg.on_handshake(_hs("M1+M2"), save_hint=hint)
     # header + M1 + M2 + verdict(branch) + save(leaf) → the verdict is no longer
     # the terminal node; the save note closes the tree.
     assert len(lines) == 5
@@ -96,7 +96,7 @@ def test_suppress_until_new_instance():
     agg = EapolAggregator()
     agg.on_eapol(_eapol(1), now=0.0)
     agg.on_eapol(_eapol(2), now=0.1)
-    first = agg.on_handshake(_hs("M1+M2"), now=0.1)
+    first = agg.on_handshake(_hs("M1+M2"))
     assert "capture ×" not in "\n".join(first)                 # first capture, no ×N
 
     # Retransmitted M3/M4 of the captured exchange are swallowed (no new burst).
@@ -105,7 +105,7 @@ def test_suppress_until_new_instance():
     assert agg.tick(now=100.0) == []
 
     # A genuinely new instance completing re-announces compactly as ×2.
-    second = agg.on_handshake(_hs("M2+M3"), now=5.0)
+    second = agg.on_handshake(_hs("M2+M3"))
     text = "\n".join(second)
     assert "Valid 4-Way Handshake (M2+M3)" in text and "capture ×2" in text
     assert len(second) == 1                                    # one-liner, no tree
@@ -114,10 +114,10 @@ def test_suppress_until_new_instance():
 def test_reset_makes_a_client_brand_new_again():
     agg = EapolAggregator()
     agg.on_eapol(_eapol(1), now=0.0)
-    agg.on_handshake(_hs(), now=0.0)
+    agg.on_handshake(_hs())
     agg.reset()
     agg.on_eapol(_eapol(1), now=1.0)
-    lines = agg.on_handshake(_hs("M1+M2"), now=1.0)
+    lines = agg.on_handshake(_hs("M1+M2"))
     assert "capture ×" not in "\n".join(lines)                 # not a re-announce
     assert len(lines) >= 2                                     # a fresh tree
 

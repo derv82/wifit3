@@ -46,6 +46,7 @@ class _Host(App):
         super().__init__()
         self.array = array
         self.pbc_enabled = False
+        self.target_ap = None
         self.vault = Vault()
 
     def persist_config(self) -> None:
@@ -269,8 +270,8 @@ async def test_a_sibling_gaining_a_name_is_seen(scanner):
     app, screen = scanner
     ap = _ap()
     ap.ssid = None
-    assert _assert_cache_is_honest(screen, ap, sibling=None).sibling_ssid is None
-    assert _assert_cache_is_honest(screen, ap, sibling="Guest").sibling_ssid == "Guest"
+    assert _assert_cache_is_honest(screen, ap, sibling=None).guessid is None
+    assert _assert_cache_is_honest(screen, ap, sibling="Guest").guessid == "Guest"
 
 
 async def test_the_live_tick_still_tracks_a_mutating_ap(scanner):

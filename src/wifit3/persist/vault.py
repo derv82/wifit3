@@ -4,7 +4,6 @@ re-scan the directory. Wraps persist.save + persist.capture_history."""
 from __future__ import annotations
 
 import logging
-import re
 import subprocess
 import sys
 import time
@@ -17,6 +16,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Iterable, List, Optional
 
 from wifit3.crack.hc22000_format import Hc22000Line
 from wifit3.crack.wpa_psk import psk_matches, psk_verdict
+from wifit3.id.ssid import strip_suffix
 from wifit3.models import WPS_CAPTURE_TYPES, CaptureType, PersistedCapture
 from wifit3.persist import ap_state, save
 from wifit3.persist.ap_state import ApState, Key, PasswordStatus, read_hashlines
@@ -35,12 +35,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_BAND_SUFFIX_RE = re.compile(r"(?:[\s_-]+(?:2[._]?4|5|6)g(?:hz)?)$", re.IGNORECASE)
-
-
 def _ssid_family(ssid: str) -> str:
     normalized = unicodedata.normalize("NFKC", ssid).casefold().strip()
-    return _BAND_SUFFIX_RE.sub("", normalized).rstrip(" _-")
+    return strip_suffix(normalized).rstrip(" _-")
 
 
 def _related_ssids(left: str, right: str) -> bool:
@@ -400,6 +397,8 @@ class Vault:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WEP, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=key.hex(), ssid=ap.ssid))
+        elif result and not manual:
+            self._record_key_recovered_again(ap.bssid, (CaptureType.WEP, key.hex()))
         return result
 
     def save_wps_pin(self, ap: "AccessPoint", pin: str, psk: Optional[str],
@@ -414,6 +413,8 @@ class Vault:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PIN, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=psk, pin=pin, ssid=ap.ssid))
+        elif result and psk and not manual:
+            self._record_key_recovered_again(ap.bssid, (CaptureType.WPA_PSK, psk))
         return result
 
     def save_wps_pbc(self, ap: "AccessPoint", psk: str) -> Optional[SaveResult]:
@@ -424,7 +425,15 @@ class Vault:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PBC, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=psk, ssid=ap.ssid))
+        elif result:
+            self._record_key_recovered_again(ap.bssid, (CaptureType.WPA_PSK, psk))
         return result
+
+    def _record_key_recovered_again(self, bssid: str, key_id: tuple[CaptureType, str]) -> None:
+        """The AP gave up a key already saved: a correct live check, so it is CURRENT again."""
+        key = next((k for k in self.ap_state(bssid).keys if k.id == key_id), None)
+        if key is not None:
+            self.record_live_verification(key, True)
 
     def save_wpa_psk(self, ssid: Optional[str], bssid: str, psk: str, manual: bool = False) -> Optional[SaveResult]:
         """``manual``: typed in, not cracked or recovered from the AP."""

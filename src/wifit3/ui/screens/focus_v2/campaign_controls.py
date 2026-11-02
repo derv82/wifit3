@@ -7,6 +7,7 @@ from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.wep import WepCampaign
 from wifit3.campaigns.eviltwin import EvilTwinCampaign, EvilTwinInput
 from wifit3.campaigns.decloak import DecloakCampaign, DecloakInput
+from wifit3.campaigns.verify.campaign import VerifyCampaign
 
 
 class CampaignControls:
@@ -20,11 +21,13 @@ class CampaignControls:
 
     def start(self, campaign: type[Campaign], array, ap, *,
               log=None, evil_input: Optional[EvilTwinInput] = None,
-              decloak_input: Optional[DecloakInput] = None) -> Optional[Campaign]:
+              decloak_input: Optional[DecloakInput] = None,
+              verify_value: Optional[str] = None) -> Optional[Campaign]:
         """Construct and run one campaign, None if another campaign is active.
 
         Constructors differ per campaign (intentionally not unified): wep takes
-        ``log_callback``, EvilTwin takes its ``evil_input`` dataclass, the rest take ``log``.
+        ``log_callback``, EvilTwin takes its ``evil_input`` dataclass, Verify its ``verify_value``,
+        the rest take ``log``.
         """
         if Campaign.active is not None or self._campaign is not None:
             return None
@@ -34,6 +37,8 @@ class CampaignControls:
             inst = campaign(array, ap, evil_input)
         elif campaign is DecloakCampaign:
             inst = campaign(array, ap, decloak_input, log=log)
+        elif issubclass(campaign, VerifyCampaign):
+            inst = campaign(array, ap, verify_value, log=log)
         else:
             inst = campaign(array, ap, log=log)
         inst.run()

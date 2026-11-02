@@ -396,7 +396,7 @@ class SplashView(Screen):
         if pooled > 0:
             if failures:
                 self.notify(f"{len(failures)} card(s) failed to start.", severity="warning")
-            self.app.switch_screen("scanner")
+            self.app.switch_screen(self.app.scanner_view)
         elif failures:
             self._show_error(failures[-1])
         else:  # all declined / nothing checked

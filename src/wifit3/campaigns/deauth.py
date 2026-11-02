@@ -14,7 +14,7 @@ import logging
 from typing import Optional
 
 from wifit3.campaigns.eviltwin.campaign import csa_target_channel
-from wifit3.crack.handshake import PSK_CAPTURE_AKMS, crackable_pairs, pmkid_crackable
+from wifit3.crack.handshake import PSK_CAPTURE_AKMS, crackable_captures
 from wifit3.dot11.csa import build_csa_beacon
 from wifit3.dot11.pmf import PmfPosture
 from wifit3.models import AccessPoint
@@ -71,23 +71,17 @@ class DeauthCampaign(Campaign):
         self.bcast_sent = 0
         self.csa_sent = 0
         self.captured = False
-        self._baseline = 0
+        self._captures_before_start: set[tuple[str, bytes]] = set()
 
-    def _crackable_count(self) -> int:
-        """How many crackable handshakes (4-way pairs + plain-PSK PMKIDs) the sink holds."""
+    def _crackable_captures(self) -> set[tuple[str, bytes]]:
         ap = self.array.access_points.get(self.target.bssid.lower())
         if ap is None:
-            return 0
-        total = 0
-        for hs in ap.handshakes.values():
-            total += len(crackable_pairs(hs))
-            if hs.pmkid and pmkid_crackable(hs):
-                total += 1
-        return total
+            return set()
+        return crackable_captures(ap)
 
     def _new_capture(self) -> bool:
-        """A crackable handshake landed since we started (baseline guards a pre-existing one)."""
-        return self._crackable_count() > self._baseline
+        """A crackable capture landed since we started; one held before the start doesn't count."""
+        return bool(self._crackable_captures() - self._captures_before_start)
 
     def _target_clients(self) -> list[str]:
         target = self.target.bssid.lower()
@@ -114,7 +108,7 @@ class DeauthCampaign(Campaign):
         await self.array.wait_until(lambda: self._new_capture() or self.stopped, SETTLE_SEC)
 
     async def _loop(self) -> None:
-        self._baseline = self._crackable_count()
+        self._captures_before_start = self._crackable_captures()
         deauth_allowed = self.target.pmf_posture in (PmfPosture.DISABLED, PmfPosture.OPTIONAL)
         csa = self._csa_frame()
         if not deauth_allowed and csa is None:

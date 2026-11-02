@@ -249,6 +249,9 @@ class WlanArray:
             return aps
         return [ap for ap in aps if ap.bssid not in self._evil_twin_bssids]
 
+    def guessid(self, ap: AccessPoint) -> str:
+        return self._sink.guessid(ap)
+
     def remove_access_point(self, bssid: str) -> Optional[AccessPoint]:
         """Evict an AP and its dependent registry state."""
         return self._sink.remove_access_point(bssid)

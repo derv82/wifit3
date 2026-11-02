@@ -4,19 +4,20 @@ import os
 import signal
 import sys
 import threading
+from typing import Any, List, Optional, Set
+
 from textual import events, work
-from textual.worker import get_current_worker
 from textual.app import App
 from textual.binding import Binding
 from textual.message import Message
+from textual.reactive import reactive
+from textual.timer import Timer
 from textual.widgets import Header
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
-from typing import Optional
+from textual.worker import get_current_worker
 
 from wifit3 import __version__
 from wifit3.chips import log_trace
-from textual.reactive import reactive
-from typing import List, Set
 from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config, ConfigError
@@ -26,6 +27,7 @@ from wifit3.device.manager import DeviceManager, Status
 from wifit3.device.watch import DeviceWatch
 from wifit3.wlan.array import WlanArray
 from wifit3.models import AccessPoint
+from wifit3.watchers.ap_watcher import ApDecloaked, ApEvent, ApWatcher, PbcWindowOpened
 
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView
@@ -36,6 +38,7 @@ from .screens.vault_drawer import VaultDrawer
 from .clipboard import copy_copyq_text, copy_macos_text, copy_windows_text
 from .pref import PreferencesModal
 from .themes import register_app_themes
+from .toasts import Toasts
 
 logger = logging.getLogger(__name__)
 
@@ -138,11 +141,18 @@ class WifiteApp(App):
     """
 
     class JobCracked(Message):
-        """An auto-crack job recovered a key; posted to every screen on the stack."""
+        """A cracking job recovered a key; posted to every screen on the stack."""
 
         def __init__(self, job: JobState) -> None:
             super().__init__()
             self.job = job
+
+    class ApEventDetected(Message):
+        """An ApWatcher event; posted to every screen on the stack."""
+
+        def __init__(self, event: ApEvent) -> None:
+            super().__init__()
+            self.event = event
 
     active_jobs: reactive[List[JobState]] = reactive([], always_update=True)
     vault_open: reactive[bool] = reactive(False)
@@ -162,12 +172,19 @@ class WifiteApp(App):
                                         on_change=self._on_devices_changed,
                                         on_fatal=self._on_usb_fatal)
         self.target_ap: Optional[AccessPoint] = None
+        self.splash_view = SplashView()
+        self.scanner_view = ScannerView()
+        self.focus_view = FocusViewV2()
         self.vault = Vault()
         self._vault_notices_lock = threading.Lock()
         self._vault_refresh_pending = False     # a table refresh is scheduled for the notices so far
         self._vault_full_refresh = False        # one of them was a full refresh (BSSID None)
         self.vault.subscribe(self._vault_changed)
         self.vault.set_probed_ssids_source(self._probed_ssids)
+        self.ap_watcher = ApWatcher(self.vault)
+        self._device_timer: Optional[Timer] = None
+        self._handlers_before_mount: dict[signal.Signals, Any] = {}
+        self.toasts = Toasts(self)
         self._job_status: dict[str, ToolStatus] = {}
         self.pbc_enabled: bool = Config.wps_auto_pbc
         register_app_themes(self)
@@ -203,13 +220,14 @@ class WifiteApp(App):
             self.notify(self._config_error, severity="error", title="Config")
         for msg in self.vault.errors:
             self.notify(msg, severity="warning", title="Vault")
-        self.install_screen(SplashView(), name="splash")
-        self.install_screen(ScannerView(), name="scanner")
-        self.install_screen(FocusViewV2(), name="focus")
+        self.install_screen(self.splash_view, name="splash")
+        self.install_screen(self.scanner_view, name="scanner")
+        self.install_screen(self.focus_view, name="focus")
         
-        self.push_screen("splash")
+        self.push_screen(self.splash_view)
         self._device_timer = self.set_interval(0.5, self.device_watch.poll)
         self.set_interval(2.0, self._poll_jobs)
+        self.set_interval(1 / 15, self._poll_ap_events)
         self.call_after_refresh(self.device_watch.poll)
         self.call_after_refresh(self._poll_jobs)
         self._quit_on_termination_signals()
@@ -250,7 +268,7 @@ class WifiteApp(App):
         self._handlers_before_mount = {sig: signal.signal(sig, quit_on_signal) for sig in signals}
 
     def on_unmount(self) -> None:
-        for sig, handler in getattr(self, "_handlers_before_mount", {}).items():
+        for sig, handler in self._handlers_before_mount.items():
             signal.signal(sig, handler)
 
     def _quit_after_signal(self, sig: signal.Signals) -> None:
@@ -261,6 +279,41 @@ class WifiteApp(App):
         self.vault.manager.poll_jobs()
         self.active_jobs = self.vault.manager.get_active_jobs()
         self._notify_completions()
+
+    def _poll_ap_events(self) -> None:
+        if self.array is None:
+            return
+        for event in self.ap_watcher.poll(self.array):
+            if isinstance(event, ApDecloaked):
+                if Config.remember_decloak(event.bssid, event.ssid or ""):
+                    self.persist_config()
+            ap = self.array.access_points.get(event.bssid)
+            guessid = ""
+            if ap is not None and ap.is_hidden:
+                guessid = self.guessid(ap)
+            pbc_ignore_reasons = []
+            if isinstance(event, PbcWindowOpened) and ap is not None:
+                pbc_ignore_reasons = self.pbc_ignore_reasons(ap)
+            self.toasts.ap_event(event, guessid, pbc_ignore_reasons)
+            for screen in self.screen_stack:
+                screen.post_message(self.ApEventDetected(event))
+
+    def pbc_ignore_reasons(self, ap: AccessPoint) -> List[str]:
+        """Why a PBC window on ``ap`` won't be acted on; empty when it will."""
+        reasons = []
+        if Config.is_silenced(ap.bssid):
+            reasons.append("AP silenced")
+        if ap.is_hidden:
+            reasons.append("hidden SSID")
+        if self.vault.ap_state(ap.bssid).status is PasswordStatus.CURRENT:
+            reasons.append("PSK already current")
+        if not self.pbc_enabled:
+            reasons.append("PBC disabled (press [bold]w[/bold])")
+        return reasons
+
+    def guessid(self, ap: AccessPoint) -> str:
+        """The SSID this AP revealed in an earlier session, else its first named sibling's."""
+        return Config.decloaked_ssid(ap.bssid) or self.array.guessid(ap)
 
     def _notify_completions(self) -> None:
         """Toast each job the first time it finishes this session (auto-crack jobs only on SUCCESS)
@@ -359,7 +412,7 @@ class WifiteApp(App):
         """DeviceWatch fired. On Splash, refresh the card list; mid-session, prompt to bring up
         each newly-plugged card."""
         if any(isinstance(s, SplashView) for s in self.screen_stack):
-            self.get_screen("splash", SplashView).render_devices(current)
+            self.splash_view.render_devices(current)
             return
         # Ignore already-attached devices
         fresh = [d for d in arrived if not (self.array and self.array.contains(d))]
@@ -387,7 +440,8 @@ class WifiteApp(App):
 
     def _on_usb_fatal(self, err: WifiteFatalError) -> None:
         """The bus scan hit an unrecoverable backend error: stop watching + show the Quit-only modal."""
-        self._device_timer.stop()
+        if self._device_timer is not None:
+            self._device_timer.stop()
         self.push_screen(FatalErrorModal(err))
 
     def notify_device_lost(self, exc: Exception, remaining: int) -> None:
@@ -416,9 +470,9 @@ class WifiteApp(App):
         # Unwind to the base default screen (kept by `> 1`), then re-push splash onto it.
         while len(self.screen_stack) > 1:
             await self.pop_screen()
-        await self.push_screen("splash")
+        await self.push_screen(self.splash_view)
         # The installed splash only resumes (on_mount won't re-run), so reset its state explicitly.
-        self.get_screen("splash", SplashView).reset_for_reentry()
+        self.splash_view.reset_for_reentry()
         # Close the dead pool only once scanner/focus are gone, so their teardown can't read a
         # half-closed interface.
         if array is not None:
@@ -492,5 +546,5 @@ def _configure_file_logging(cli_log_level: Optional[str]) -> None:
     root.setLevel(level)
     root.addHandler(handler)
     _FILE_LOGGING_CONFIGURED = True
-    logger.info(f"Logging enabled (level={logging.getLevelName(level)})")
+    logger.info("Logging enabled (level=%s)", logging.getLevelName(level))
 

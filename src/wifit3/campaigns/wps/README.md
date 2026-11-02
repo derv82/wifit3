@@ -29,7 +29,7 @@ The attack machinery lives here in `campaigns/wps/`:
   heuristic for silent lockers) and adaptive backoff that learns per-router lock duration.
 
 The Focus-facing orchestrators are one level up: `campaigns/pin.py` (`WpsCampaign`) drives
-the PIN sweep, `campaigns/pbc.py` (`WpsPbcCapture`) drives PBC, and
+the PIN sweep, `campaigns/pbc.py` (`WpsPbcCampaign`) drives PBC, and
 `campaigns/auth_assoc.py` (`Association` + `WlanTransport`) is the shared auth/assoc engine.
 
 ## One PIN attempt

@@ -231,3 +231,10 @@ def test_registrar_and_enrollee_take_rf_bands_from_their_channel():
     assert WpsRegistrar(None, b, sta, channel=6, wsc_2_0=False).rf_bands == M.RF_BAND_24GHZ
     assert WpsEnrollee(None, b, sta, channel=44, wsc_2_0=False).rf_bands == M.RF_BAND_5GHZ
 
+
+
+def test_m1_advertises_display_so_hostapd_sends_the_passphrase_not_the_hex_psk():
+    m1 = M.build_m1(b"U" * 16, b"M" * 6, b"N" * 16, b"P" * 192,
+                    rf_bands=M.RF_BAND_24GHZ, wsc_2_0=True)
+    config_methods = struct.unpack(">H", M.parse_tlvs(m1)[M.ATTR_CONFIG_METHODS])[0]
+    assert config_methods & 0x0008

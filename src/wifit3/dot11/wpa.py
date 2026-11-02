@@ -7,29 +7,35 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import string
 
 from wifit3.dot11.aes_cmac import aes_cmac
 from wifit3.dot11.eapol import (
     LLC_SNAP_EAPOL,
+    HMAC_MD5_RC4,
+    HMAC_SHA1_AES,
+    KeyDescriptorVersion,
     data_header,
     eapol_key,
     set_mic,
 )
 
-# Key Info bits for Supplicant Message 2 (M2):
-# Bit 0-2: Key Descriptor Version = 2 (HMAC-SHA1 MIC / AES-128-CCMP)
+# Key Info bits for Supplicant Message 2 (M2), ORed with the M1's Key Descriptor Version (bits 0-2):
 # Bit 3: Key Type = 1 (Pairwise)
 # Bit 8: MIC bit set (1)
-_M2_KEY_INFO = 0x010A
+_M2_KEY_INFO = 0x0108
 KCK_LEN = 16
 _PTK_SHA256_BITS = 384
 _FT_R0_KEY_DATA_BITS = 384  # PMK-R0 (256) + PMK-R0Name-Salt (128)
 _FT_PMK_R1_BITS = 256
 
 
-def derive_pmk(passphrase: str, ssid: bytes) -> bytes:
-    """802.11i PSK passphrase to PMK: PBKDF2-HMAC-SHA1(passphrase, ssid, 4096, 32)."""
-    return hashlib.pbkdf2_hmac("sha1", passphrase.encode(), ssid, 4096, 32)
+def derive_pmk(psk: str, ssid: bytes) -> bytes:
+    """802.11i PSK to PMK: 64 hex digits are the PMK itself, else
+    PBKDF2-HMAC-SHA1(passphrase, ssid, 4096, 32)."""
+    if len(psk) == 64 and all(c in string.hexdigits for c in psk):
+        return bytes.fromhex(psk)
+    return hashlib.pbkdf2_hmac("sha1", psk.encode(), ssid, 4096, 32)
 
 
 def prf(key: bytes, label: bytes, data: bytes, nbytes: int) -> bytes:
@@ -115,20 +121,28 @@ def build_eapol_m2(
     sta_mac: bytes,
     snonce: bytes,
     kck: bytes,
+    key_descriptor_version: KeyDescriptorVersion,
     replay: int = 1,
     rsn_ie: bytes = b"",
 ) -> bytes:
-    """Construct a full 802.11 Data frame carrying EAPOL-Key Message 2 with MIC."""
+    """Construct a full 802.11 Data frame carrying EAPOL-Key Message 2 with MIC; the
+    ``key_descriptor_version`` is the M1's."""
     hdr = data_header(to_ds=True, bssid=bssid, client=sta_mac)
     raw_payload = eapol_key(
-        key_info=_M2_KEY_INFO,
+        key_info=_M2_KEY_INFO | key_descriptor_version,
         key_len=0,
         replay=replay,
         nonce=snonce,
         key_data=rsn_ie,
         mic=bytes(16),
     )
-    return hdr + LLC_SNAP_EAPOL + set_mic(raw_payload, eapol_mic(kck, raw_payload))
+    if key_descriptor_version == HMAC_MD5_RC4:
+        mic = eapol_mic_hmac_md5(kck, raw_payload)
+    elif key_descriptor_version == HMAC_SHA1_AES:
+        mic = eapol_mic(kck, raw_payload)
+    else:
+        raise ValueError(f"unsupported key descriptor version {key_descriptor_version}")
+    return hdr + LLC_SNAP_EAPOL + set_mic(raw_payload, mic)
 
 
 def random_nonce() -> bytes:

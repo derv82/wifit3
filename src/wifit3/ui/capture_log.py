@@ -1,11 +1,21 @@
-"""Rich-markup helpers for EAPOL capture events: the per-field ``✓``/``✗`` fragments the
-EAPOL aggregator paints, plus the short-STA formatter shared with the Focus banners."""
+"""Display helpers for AP events: labels and the Rich-markup fragments the EAPOL aggregator
+and the Scanner/Focus logs paint."""
 from __future__ import annotations
 
 from typing import List, Optional
 
-from wifit3.ui.capture_events import CaptureEvent
 from wifit3.ui.colors import PASSWORD_MISMATCH_COLOR
+from wifit3.watchers.ap_watcher import EapolFrameSeen
+
+
+# Human-readable labels for AccessPoint.decloak_method / ApEvent.method.
+DECLOAK_METHOD_LABELS = {
+    "beacon": "Beacon Leak",
+    "probe_resp": "Probe Response",
+    "assoc_req": "Association Request",
+    "reassoc_req": "Reassociation Request",
+    "assoc": "Association Response",
+}
 
 
 def _tick(ok: bool) -> str:
@@ -18,7 +28,7 @@ def short_sta(mac: str) -> str:
     return ("…" + mac[-8:]) if mac else "…"
 
 
-def _eapol_fields(ev: CaptureEvent) -> List[str]:
+def _eapol_fields(ev: EapolFrameSeen) -> List[str]:
     """The per-field ``label✓/✗`` fragments for one EAPOL frame. Which fields show is
     message-specific: hashcat wants an ANonce from M1/M3 and SNonce + MIC + complete EAPOL
     from the M2/M4 keystone, so we tick exactly those."""
