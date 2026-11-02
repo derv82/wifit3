@@ -1,6 +1,8 @@
 """rtl8188ftv_dkms driver assembly: FW asset, RX dispatch, channel plumbing."""
 from unittest.mock import MagicMock
 
+import pytest
+
 
 def _driver():
     from wifit3.chips.rtl8188ftv_dkms.driver import Rtl8188ftvDkmsDriver
@@ -321,7 +323,9 @@ def test_bring_up_cold_runs_fw1_probe_tail(monkeypatch):
     assert calls[:3] == ["c2h-req", "fw", "c2h-get"]
 
 
-def test_bring_up_applies_kfree_trim_when_flag_on(monkeypatch):
+@pytest.mark.parametrize("kfree_bb_gain", [-3, 0])
+def test_bring_up_applies_kfree_trim_when_flag_on(monkeypatch, kfree_bb_gain):
+    # hal_com.c:3693-3694: KFREE_FLAG_ON alone gates the RF 0x55 write, bb_gain 0 included
     import asyncio
     import types
     from unittest.mock import MagicMock
@@ -334,7 +338,7 @@ def test_bring_up_applies_kfree_trim_when_flag_on(monkeypatch):
         lambda t, s: (types.SimpleNamespace(
             vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("020000000001"),
             thermal=0x1A, crystal=0x1D,
-            kfree_flag=prom_mod.KFREE_FLAG_ON, kfree_bb_gain=-3,
+            kfree_flag=prom_mod.KFREE_FLAG_ON, kfree_bb_gain=kfree_bb_gain,
             chplan=0x20), b""))
     seen = []
     monkeypatch.setattr(track_mod, "kfree_gain_offset",
@@ -342,7 +346,7 @@ def test_bring_up_applies_kfree_trim_when_flag_on(monkeypatch):
     d = _driver()
     d.transport = MagicMock()
     assert asyncio.run(d._bring_up(lambda p, m: None)) is True
-    assert seen == [-3]
+    assert seen == [kfree_bb_gain]
 
 
 def test_bring_up_init_burst_takes_enumerated_bulk_out_size(monkeypatch):
@@ -443,3 +447,41 @@ def test_exit_active_monitor_restores_own_mac():
     asyncio.run(d.exit_active_monitor())
     assert d.transport.method_calls == [
         ("write8", (0x610 + i, b), {}) for i, b in enumerate(d.mac)]
+
+
+def _bring_up_with_efuse(monkeypatch, mac_hex):
+    import asyncio
+    import types
+    from wifit3.chips.rtl8188ftv_dkms import prom as prom_mod
+    from wifit3.chips.rtl8188ftv_dkms import queues as queues_mod
+    init_macaddr = queues_mod.init_macaddr
+    _stubbed_bring_up_modules(monkeypatch, [])
+    monkeypatch.setattr(queues_mod, "init_macaddr", init_macaddr)
+    monkeypatch.setattr(prom_mod, "random32", lambda: 0x44332211)
+    monkeypatch.setattr(
+        prom_mod, "read_adapter_info",
+        lambda t, s: (types.SimpleNamespace(
+            vid=0x0BDA, pid=0xF179, mac=bytes.fromhex(mac_hex),
+            thermal=0x1A, crystal=0x1D, kfree_flag=0, kfree_bb_gain=0,
+            chplan=0x20), b""))
+    d = _driver()
+    d.transport = MagicMock()
+    assert asyncio.run(d._bring_up(lambda p, m: None)) is True
+    reg_macid = bytes(c.args[1] for c in d.transport.write8.call_args_list
+                      if 0x610 <= c.args[0] < 0x616)
+    return d, reg_macid
+
+
+def test_bring_up_writes_valid_efuse_mac_to_reg_macid(monkeypatch):
+    # usb_intf.c:1198 rtw_macaddr_cfg keeps a valid EEPROMMACAddr; usb_halinit.c:1302 writes it
+    d, reg_macid = _bring_up_with_efuse(monkeypatch, "001122334455")
+    assert d.mac == bytes.fromhex("001122334455")
+    assert reg_macid == bytes.fromhex("001122334455")
+
+
+def test_bring_up_writes_random_mac_when_efuse_mac_invalid(monkeypatch):
+    # hal_com.c:3584 zeroes an invalid EFUSE MAC; rtw_ieee80211.c:1522-1528 then randomizes it
+    d, reg_macid = _bring_up_with_efuse(monkeypatch, "000000000000")
+    assert d.mac == bytes.fromhex("00e04c223344")
+    assert reg_macid == bytes.fromhex("00e04c223344")
+
