@@ -15,6 +15,36 @@ from .hw import AthHw
 
 logger = logging.getLogger(__name__)
 
+_BASE_LE16_OFFSETS = (0, 2, 4, 8, 10, 20, 22, 24)
+_MODAL_LE32_OFFSETS = (52, 56)
+_SPUR_LE16_OFFSETS = tuple(100 + i * 4 for i in range(5))
+
+
+def _swab16_at(data: bytearray, offset: int) -> None:
+    data[offset:offset + 2] = data[offset:offset + 2][::-1]
+
+
+def _swab32_at(data: bytearray, offset: int) -> None:
+    data[offset:offset + 4] = data[offset:offset + 4][::-1]
+
+
+def _normalize_endianness(hw: AthHw, magic: int) -> None:
+    """ath9k_hw_nvram_swap_data + the map4k field fixups [SRC] eeprom.c/eeprom_4k.c."""
+    if ((magic >> 8) | ((magic & 0xff) << 8)) == R.AR5416_EEPROM_MAGIC:
+        for offset in range(0, len(hw.eeprom), 2):
+            _swab16_at(hw.eeprom, offset)
+    elif magic != R.AR5416_EEPROM_MAGIC:
+        raise RuntimeError(f"ar9271_v2: invalid EEPROM magic 0x{magic:04x}")
+
+    if not hw.eeprom[7] & R.AR5416_EEPMISC_BIG_ENDIAN:
+        return
+    for offset in _BASE_LE16_OFFSETS:
+        _swab16_at(hw.eeprom, offset)
+    for offset in _MODAL_LE32_OFFSETS:
+        _swab32_at(hw.eeprom, offset)
+    for offset in _SPUR_LE16_OFFSETS:
+        _swab16_at(hw.eeprom, offset)
+
 
 def _gen_fill(hw: AthHw, start_loc: int, size: int) -> list[int]:
     """ath9k_hw_usb_gen_fill_eeprom [SRC] eeprom.c:79 — read ``size`` words in 8-word
@@ -57,13 +87,7 @@ def check(hw: AthHw) -> None:
     """ath9k_hw_4k_check_eeprom [SRC] eeprom_4k.c — magic read + endianness, then checksum
     and version validation over the stashed words (no further wire ops)."""
     magic = usb_eeprom_read(hw, R.AR5416_EEPROM_MAGIC_OFFSET)
-    # swab16(magic) == MAGIC means the EEPROM is byte-swapped vs. the host; our card is LE.
-    if ((magic >> 8) | ((magic & 0xff) << 8)) == R.AR5416_EEPROM_MAGIC:
-        for i in range(len(hw.eeprom) // 2):
-            v = _word(hw, i)
-            struct.pack_into("<H", hw.eeprom, i * 2, ((v >> 8) | ((v & 0xff) << 8)) & 0xffff)
-    elif magic != R.AR5416_EEPROM_MAGIC:
-        raise RuntimeError(f"ar9271_v2: invalid EEPROM magic 0x{magic:04x}")
+    _normalize_endianness(hw, magic)
 
     length = _word(hw, 0)                                   # baseEepHeader.length (word 0)
     el = min(length // 2, R.SIZE_EEPROM_4K)

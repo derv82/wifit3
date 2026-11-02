@@ -6,6 +6,8 @@ from wifit3.chips.ar9271_v2 import eeprom, hw, phy, reg as R
 from wifit3.chips.ar9271_v2.transport import AR9271Transport
 from wifit3.chips.ar9271_v2.wmi import WMI
 
+from .test_txpower import EEPROM
+
 
 class FakeDev:
     """Records writes; answers REG_READ with 0 and REG_READ_MULTI with N zero words."""
@@ -46,6 +48,28 @@ def test_rf_claim_phy_writes():
     assert dev.cmds[1] == (WRITE, bytes.fromhex(batch))
     # then a read of AR_PHY(256)=0x9c00.
     assert dev.cmds[2] == (0x0014, bytes.fromhex("00009c00"))
+
+
+def test_big_endian_eeprom_normalizes_to_packed_map():
+    canonical = bytearray(EEPROM)
+    canonical[7] |= R.AR5416_EEPMISC_BIG_ENDIAN
+    raw = bytearray(canonical)
+    for offset in eeprom._BASE_LE16_OFFSETS:
+        eeprom._swab16_at(raw, offset)
+    for offset in eeprom._MODAL_LE32_OFFSETS:
+        eeprom._swab32_at(raw, offset)
+    for offset in eeprom._SPUR_LE16_OFFSETS:
+        eeprom._swab16_at(raw, offset)
+    for offset in range(0, len(raw), 2):
+        eeprom._swab16_at(raw, offset)
+
+    h = hw.AthHw(None)
+    h.eeprom = raw
+    eeprom._normalize_endianness(h, 0x5AA5)
+
+    assert h.eeprom == canonical
+    assert h.eeprom[18:20] == b"\x01\x01"
+    assert h.eeprom[12:18] == EEPROM[12:18]
 
 
 def test_eeprom_gen_fill_addresses():
