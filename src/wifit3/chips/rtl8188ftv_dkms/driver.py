@@ -280,10 +280,10 @@ class Rtl8188ftvDkmsDriver(Driver):
 
         _update(0.85, "Station opmode + monitor entry...")
         await loop.run_in_executor(None, mode_mod.set_station_opmode, t, hal)
-        trim = params.kfree_bb_gain \
-            if params.kfree_flag & prom_mod.KFREE_FLAG_ON else 0
-        await loop.run_in_executor(None, track_mod.kfree_gain_offset, t,
-                                   trim)
+        # hal_com.c:3693 rtw_bb_rf_gain_offset
+        if params.kfree_flag & prom_mod.KFREE_FLAG_ON:
+            await loop.run_in_executor(None, track_mod.kfree_gain_offset, t,
+                                       params.kfree_bb_gain)
         await loop.run_in_executor(None, mode_mod.enter_monitor, t)
         self.current_channel = 1
         hal["channel"] = 1

@@ -414,3 +414,17 @@ def test_connect_checks_warm_before_bring_up(monkeypatch):
     monkeypatch.setattr(d, "_bring_up", bring_up)
     assert asyncio.run(d.connect()) is False
     assert order == ["warm", ("bring_up", True)]
+
+
+def test_bring_up_skips_kfree_when_flag_off(monkeypatch):
+    # hal_com.c:3693: rtw_rf_apply_tx_gain_offset only if kfree_data->flag & KFREE_FLAG_ON
+    import asyncio
+    from wifit3.chips.rtl8188ftv_dkms import track as track_mod
+    calls = []
+    _stubbed_bring_up_modules(monkeypatch, calls)
+    seen = []
+    monkeypatch.setattr(track_mod, "kfree_gain_offset", lambda t, off: seen.append(off))
+    d = _driver()
+    d.transport = MagicMock()
+    assert asyncio.run(d._bring_up(lambda p, m: None)) is True
+    assert seen == []
