@@ -47,6 +47,7 @@ from . import bb as bb_mod
 from . import c2h as c2h_mod
 from . import cal as cal_mod
 from . import chan as chan_mod
+from . import chplan as chplan_mod
 from . import dm as dm_mod
 from . import firmware as firmware_mod
 from . import info as info_mod
@@ -163,6 +164,8 @@ class Rtl8188ftvDkmsDriver(Driver):
                 "(EFUSE map bytes, not the matched USB descriptors)",
                 params.vid, params.pid)
         self.params = params
+        # rtl8188f_hal_init.c:4201 + rtw_mlme_ext.c:1019
+        self.SUPPORTED_CHANNELS = chplan_mod.init_channel_set(params.chplan)
         self.mac_address = params.mac.hex(":")
         hal.update({"cur_cck": 0, "th_l2h_ini": 0xF5,
                     "adaptivity_ability": False, "tm_trigger": False,
