@@ -90,32 +90,110 @@ def set_delta_slope(hw: AthHw, chan: Channel) -> None:
     hw.rmw_field(R.AR_PHY_HALFGI, R.AR_PHY_HALFGI_DSC_EXP, exp)
 
 
+def _cdiv(numerator: int, denominator: int) -> int:
+    return abs(numerator) // denominator * (-1 if numerator < 0 else 1)
+
+
+def _pack_mask(values: list[int], indices: list[int], shifts: list[int]) -> int:
+    return sum(values[index] << shift for index, shift in zip(indices, shifts))
+
+
+def _common_spur_mitigate(hw: AthHw, bin_value: int) -> None:
+    """ar5008_hw_cmn_spur_mitigate [SRC] ar5008_phy.c."""
+    cur_bin = -6000
+    lower, upper = bin_value - 100, bin_value + 100
+    pilot_regs = (R.AR_PHY_TIMING7, R.AR_PHY_TIMING8,
+                  R.AR_PHY_PILOT_MASK_01_30, R.AR_PHY_PILOT_MASK_31_60)
+    channel_regs = (R.AR_PHY_TIMING9, R.AR_PHY_TIMING10,
+                    R.AR_PHY_CHANNEL_MASK_01_30, R.AR_PHY_CHANNEL_MASK_31_60)
+    for pilot_reg, channel_reg, increment in zip(pilot_regs, channel_regs, (0, 100, 0, 0)):
+        mask = 0
+        for bit in range(30):
+            if lower < cur_bin < upper:
+                mask |= 1 << bit
+            cur_bin += 100
+        cur_bin += increment
+        hw.write(pilot_reg, mask)
+        hw.write(channel_reg, mask)
+
+    mask_m = [0] * 123
+    mask_p = [0] * 123
+    cur_vit_mask = 6100
+    lower, upper = bin_value - 120, bin_value + 120
+    for _ in range(123):
+        if lower < cur_vit_mask < upper:
+            amount = int(abs(cur_vit_mask - bin_value) < 75)
+            if cur_vit_mask < 0:
+                mask_m[abs(_cdiv(cur_vit_mask, 100))] = amount
+            else:
+                mask_p[_cdiv(cur_vit_mask, 100)] = amount
+        cur_vit_mask -= 100
+
+    negative_masks = (
+        (R.AR_PHY_BIN_MASK_1, R.AR_PHY_VIT_MASK2_M_46_61,
+         list(range(46, 62)), list(range(30, -1, -2))),
+        (R.AR_PHY_BIN_MASK_2, R.AR_PHY_MASK2_M_31_45,
+         [31, 32, 33, 34, 35, 36, 37, 48, 39, 40, 41, 42, 43, 44, 45],
+         list(range(28, -1, -2))),
+        (R.AR_PHY_BIN_MASK_3, R.AR_PHY_MASK2_M_16_30,
+         [16, 16, 18, 18, 20, 20, 22, 22, 24, 24, 25, 26, 27, 28, 29, 30],
+         list(range(30, -1, -2))),
+        (R.AR_PHY_MASK_CTL, R.AR_PHY_MASK2_M_00_15,
+         list(range(16)), list(range(30, -1, -2))),
+    )
+    for first, second, indices, shifts in negative_masks:
+        value = _pack_mask(mask_m, indices, shifts)
+        hw.write(first, value)
+        hw.write(second, value)
+
+    positive_masks = (
+        (R.AR_PHY_BIN_MASK2_1, R.AR_PHY_MASK2_P_15_01, list(range(15, 0, -1))),
+        (R.AR_PHY_BIN_MASK2_2, R.AR_PHY_MASK2_P_30_16, list(range(30, 15, -1))),
+        (R.AR_PHY_BIN_MASK2_3, R.AR_PHY_MASK2_P_45_31, list(range(45, 30, -1))),
+        (R.AR_PHY_BIN_MASK2_4, R.AR_PHY_MASK2_P_61_45, list(range(61, 45, -1))),
+    )
+    for first, second, indices in positive_masks:
+        shifts = list(range(30 if len(indices) == 16 else 28, -1, -2))
+        value = _pack_mask(mask_p, indices, shifts)
+        hw.write(first, value)
+        hw.write(second, value)
+
+
 def spur_mitigate(hw: AthHw, chan: Channel) -> None:
-    """ar9002_hw_spur_mitigate [SRC] ar9002_phy.c — find an in-band baseband spur from the
-    EEPROM spur table; this card's first 2 GHz spur is AR_NO_SPUR, so the path is the single
-    REG_CLR_BIT(AR_PHY_FORCE_CLKEN_CCK, MRC_MUX) and return. The spur-programming branch is
-    ported behind its guard but not exercised here."""
+    """ar9002_hw_spur_mitigate [SRC] ar9002_phy.c — AR9271 2 GHz/20 MHz path."""
     from .eeprom_4k import Map4k
     eep = Map4k(hw.eeprom)
-    freq = chan.center_freq
     bb_spur = R.AR_NO_SPUR
-    for i in range(5):                                   # AR_EEPROM_MODAL_SPURS
+    for i in range(5):
         cur = eep.get_spur_channel(i)
         if cur == R.AR_NO_SPUR:
             break
-        cur = (cur // 10) + R.AR_BASE_FREQ_2GHZ - freq
+        cur = _cdiv(cur, 10) + R.AR_BASE_FREQ_2GHZ - chan.center_freq
         if -R.AR_SPUR_FEEQ_BOUND_HT20 < cur < R.AR_SPUR_FEEQ_BOUND_HT20:
             bb_spur = cur
             break
-    hw.rmw(R.AR_PHY_FORCE_CLKEN_CCK, 0, R.AR_PHY_FORCE_CLKEN_CCK_MRC_MUX)   # REG_CLR_BIT
-    if bb_spur != R.AR_NO_SPUR:
-        # The notch-filter programming (ar9002_hw_spur_mitigate tail + ar5008_hw_cmn_spur_mitigate,
-        # ~24 further PHY regs) is unported: the reference card's spurChans[0] is AR_NO_SPUR, as is
-        # every AR9271 4k EEPROM seen, so this path has no wire to verify against. Documented residual
-        # in AR9271_V2.md; a card with a populated 2 GHz spur table would need it ported.
-        raise NotImplementedError(
-            f"ar9271_v2: untested variant: in-band 2 GHz spur (bb_spur={bb_spur}) — notch-filter "
-            "mitigation not ported (reference EEPROM has no in-band spur)")
+    hw.rmw(R.AR_PHY_FORCE_CLKEN_CCK, 0, R.AR_PHY_FORCE_CLKEN_CCK_MRC_MUX)
+    if bb_spur == R.AR_NO_SPUR:
+        return
+
+    bin_value = bb_spur * 320
+    timing = hw.read(R.AR_PHY_TIMING_CTRL4_0)
+    hw.enable_write_buffer()
+    hw.write(R.AR_PHY_TIMING_CTRL4_0, timing | R.AR_PHY_TIMING_CTRL4_ENABLE_SPUR_RSSI
+             | R.AR_PHY_TIMING_CTRL4_ENABLE_SPUR_FILTER | R.AR_PHY_TIMING_CTRL4_ENABLE_CHAN_MASK
+             | R.AR_PHY_TIMING_CTRL4_ENABLE_PILOT_MASK)
+    hw.write(R.AR_PHY_SPUR_REG, R.AR_PHY_SPUR_REG_MASK_RATE_CNTL
+             | R.AR_PHY_SPUR_REG_ENABLE_MASK_PPM | R.AR_PHY_SPUR_REG_MASK_RATE_SELECT
+             | R.AR_PHY_SPUR_REG_ENABLE_VIT_SPUR_RSSI
+             | R.SM(R.SPUR_RSSI_THRESH, R.AR_PHY_SPUR_REG_SPUR_RSSI_THRESH))
+    delta_phase = _cdiv(bb_spur * 524288, 10) & R.AR_PHY_TIMING11_SPUR_DELTA_PHASE
+    freq_sd = _cdiv(bb_spur * 2048, 44) & 0x3FF
+    hw.write(R.AR_PHY_TIMING11, R.AR_PHY_TIMING11_USE_SPUR_IN_AGC
+             | R.SM(freq_sd, R.AR_PHY_TIMING11_SPUR_FREQ_SD)
+             | R.SM(delta_phase, R.AR_PHY_TIMING11_SPUR_DELTA_PHASE))
+    hw.write(R.AR_PHY_SFCORR_EXT, 0 << R.AR_PHY_SFCORR_SPUR_SUBCHNL_SD_S)
+    _common_spur_mitigate(hw, bin_value)
+    hw.write_flush()
 
 
 def init_bb(hw: AthHw, chan: Channel) -> None:
