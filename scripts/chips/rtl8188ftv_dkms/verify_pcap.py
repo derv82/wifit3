@@ -151,7 +151,7 @@ class SubsequenceTransport:
         self._take("W", a, 4, v & 0xFFFFFFFF)
 
 
-def _ignore_progress(pct: float, msg: str) -> None:
+def ignore_progress(pct: float, msg: str) -> None:
     pass
 
 
@@ -212,20 +212,20 @@ class Walk:
         self.i = end
 
 
-def _first_divergence(e: BaseException) -> BaseException:
+def first_divergence(e: BaseException) -> BaseException:
     """A Divergence raised in a finally-block hides the first one; report the first."""
     while isinstance(e.__context__, rp.Divergence):
         e = e.__context__
     return e
 
 
-def _fmt(op: dict) -> str:
+def fmt_op(op: dict) -> str:
     return f"{rp.ReplayTransport._fmt(op)} (frame {op['frame']})"
 
 
 async def _walk(w: Walk) -> dict:
     counts = {"hops": 0, "ticks": 0, "races": 0, "injects": 0}
-    await w.run(lambda: w.driver._bring_up(_ignore_progress), "_bring_up")
+    await w.run(lambda: w.driver._bring_up(ignore_progress), "_bring_up")
     counts["bring_up_ops"] = w.i
     while w.i < len(w.ops):
         op = w.ops[w.i]
@@ -273,8 +273,8 @@ def run_capture(pcap: Path) -> int:
     try:
         counts = asyncio.run(_walk(w))
     except (rp.Divergence, HandlerFailed) as e:
-        first = _first_divergence(e)
-        at = f" at {_fmt(w.ops[w.i])}" if w.i < len(w.ops) else ""
+        first = first_divergence(e)
+        at = f" at {fmt_op(w.ops[w.i])}" if w.i < len(w.ops) else ""
         print(f"\nFAIL after {w.i} matched ops{at}:\n  {type(first).__name__}: {first}")
         return 1
     except Exception as e:  # noqa: BLE001
@@ -288,7 +288,7 @@ def run_capture(pcap: Path) -> int:
     if w.i < len(ops):
         n = len(ops) - w.i
         print(f"\nFAIL: {n} ops UNVERIFIED, op#{w.i}-{len(ops) - 1} (frames "
-              f"{ops[w.i]['frame']}-{ops[-1]['frame']}); first: {_fmt(ops[w.i])}. "
+              f"{ops[w.i]['frame']}-{ops[-1]['frame']}); first: {fmt_op(ops[w.i])}. "
               f"No driver handler opens there (a teardown or a path the driver lacks).")
         return 1
     if not coverage_ok:
