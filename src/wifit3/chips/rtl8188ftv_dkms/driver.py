@@ -87,7 +87,7 @@ class Rtl8188ftvDkmsDriver(Driver):
         super().__init__()
         self.dev = dev
         self.transport = Rtl8188ftvDkmsTransport(dev)
-        self.hal: dict = {}
+        self.hal: dict = {"isMonitor": False}
         self.params = None
         self.by_rate = None
         self.mac: bytes = b""
@@ -284,7 +284,7 @@ class Rtl8188ftvDkmsDriver(Driver):
         if params.kfree_flag & prom_mod.KFREE_FLAG_ON:
             await loop.run_in_executor(None, track_mod.kfree_gain_offset, t,
                                        params.kfree_bb_gain)
-        await loop.run_in_executor(None, mode_mod.enter_monitor, t)
+        await loop.run_in_executor(None, mode_mod.enter_monitor, t, hal)
         self.current_channel = 1
         hal["channel"] = 1
         return True

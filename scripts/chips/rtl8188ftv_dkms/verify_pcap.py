@@ -25,7 +25,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
-from wifit3.chips.rtl8188ftv_dkms import dm, mode, prom, queues, tx
+from wifit3.chips.rtl8188ftv_dkms import dm, prom, queues, tx
 from wifit3.chips.rtl8188ftv_dkms.driver import Rtl8188ftvDkmsDriver
 
 # dm.watchdog_tick head: misc.check_rxfifo_full (0x667/0x664) + false_alarm_stats hold (0xC00/0xD00).
@@ -308,10 +308,10 @@ def run_capture(pcap: Path) -> int:
     if random32 is not None:
         prom.random32 = lambda: random32
         print(f"  runtime input: rtw_random32 = 0x{random32:08x} (invalid EFUSE MAC, from REG_MACID)")
-    mode.isMonitor = wire_is_monitor(ops)
-    if mode.isMonitor:
-        print("  precondition: isMonitor static left TRUE by an earlier plug (opmode resets RCR)")
     w = Walk(ops)
+    w.driver.hal["isMonitor"] = wire_is_monitor(ops)
+    if w.driver.hal["isMonitor"]:
+        print("  precondition: isMonitor static left TRUE by an earlier plug (opmode resets RCR)")
     try:
         counts = asyncio.run(_walk(w))
     except (rp.Divergence, HandlerFailed) as e:
