@@ -30,6 +30,7 @@ REASON_CODES = {
     24: "cipher-suite-rejected",
     31: "pmf-policy-violation",
 }
+REASON_4WAY_HANDSHAKE_TIMEOUT = 15
 
 
 def reason_description(code: Optional[int]) -> str:

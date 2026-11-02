@@ -5,6 +5,7 @@ from typing import Optional
 
 from wifit3.campaigns.auth_assoc import Association
 from wifit3.dot11 import str_to_mac
+from wifit3.dot11.deauth import REASON_4WAY_HANDSHAKE_TIMEOUT
 from wifit3.dot11.eapol import KEY_DESCRIPTOR_VERSION_MASK, KeyDescriptorVersion
 from wifit3.dot11.ie import GENERIC_RSN_IE, force_psk_akm
 from wifit3.dot11.packet import DeauthPacket, EapolPacket
@@ -79,7 +80,7 @@ class VerifyPskCampaign(VerifyCampaign):
             if isinstance(reply, DeauthPacket):
                 self._log_step(f"{reply.type.capitalize()} received (reason {reply.reason})")
                 # hostapd stops re-sending M1 at its retry limit and deauths instead
-                if attempt > 0:
+                if attempt > 0 and reply.reason == REASON_4WAY_HANDSHAKE_TIMEOUT:
                     return VerifyOutcome.REJECTED, None
                 return VerifyOutcome.ERROR, f"AP sent {reply.type} (reason {reply.reason}) after M2"
             if reply.msg_num == 3:

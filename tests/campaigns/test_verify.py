@@ -150,6 +150,16 @@ async def test_verify_psk_deauth_after_a_resent_m1_is_rejected(monkeypatch):
     assert (campaign.outcome, campaign.error) == (VerifyOutcome.REJECTED, None)
 
 
+async def test_verify_psk_deauth_after_a_resent_m1_for_another_reason_is_an_error(monkeypatch):
+    array = _array(_iface())
+    array.next_frame = AsyncMock(side_effect=[_eapol_from_ap(1, 2), _eapol_from_ap(1, 3), _deauth_from_ap(2)])
+    _associates(monkeypatch)
+
+    campaign = await _run(VerifyPskCampaign, array, "pw")
+
+    assert (campaign.outcome, campaign.error) == (VerifyOutcome.ERROR, "AP sent deauth (reason 2) after M2")
+
+
 async def test_verify_psk_deauth_before_any_resent_m1_is_an_error(monkeypatch):
     array = _array(_iface())
     array.next_frame = AsyncMock(side_effect=[_eapol_from_ap(1, 1), _deauth_from_ap(15)])
