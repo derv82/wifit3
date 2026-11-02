@@ -1,6 +1,7 @@
 """Tests for the typed auto-save module (persist.save)."""
 from __future__ import annotations
 
+from wifit3.crack.hc22000_format import read_hc22000
 from wifit3.models import AccessPoint, HandshakeMessage, Handshake
 from wifit3.persist.save import (
     HcFiles,
@@ -8,6 +9,7 @@ from wifit3.persist.save import (
     save_handshake,
     save_pmkid,
     save_wep_key,
+    save_wpa_psk,
     save_wps_pbc,
     save_wps_pin,
 )
@@ -106,6 +108,29 @@ class TestSaveHandshake:
         assert len(files) == 1
         lines = second.path.read_text(encoding="utf-8").strip().splitlines()
         assert len(lines) == 2
+
+    def test_an_m3_after_a_saved_m1_m2_saves_the_authorized_pair(self, tmp_path):
+        anonce = b"\xA0" + b"\x00" * 31
+        ap = _ap_with_hs(anonce=anonce)
+        assert save_handshake(ap, "11:22:33:44:55:66").was_new is True
+        ap.handshakes["11:22:33:44:55:66"].messages.append(_ef(3, replay=6, nonce=anonce, key_data_len=22))
+
+        again = save_handshake(ap, "11:22:33:44:55:66")
+
+        assert again is not None and again.was_new is True
+        lines = [line for _, line in read_hc22000(again.path)]
+        assert [line.authorized for line in lines] == [False, True]
+        assert len(list(tmp_path.glob("*_handshake.pcap"))) == 2
+
+    def test_an_m1_m2_for_an_anonce_saved_authorized_is_deduped(self, tmp_path):
+        anonce = b"\xA0" + b"\x00" * 31
+        ap = _ap_with_hs(anonce=anonce)
+        ap.handshakes["11:22:33:44:55:66"].messages.append(_ef(3, replay=6, nonce=anonce, key_data_len=22))
+        assert save_handshake(ap, "11:22:33:44:55:66").was_new is True
+
+        again = save_handshake(_ap_with_hs(anonce=anonce), "11:22:33:44:55:66")
+
+        assert again is not None and again.was_new is False
 
     def test_hidden_ssid_returns_none(self, tmp_path):
         ap = _ap_with_hs(ssid="")
@@ -260,9 +285,40 @@ class TestSaveWpsPin:
         second = save_wps_pin(ap, "12345670", "newpsk")
         assert second is not None and second.was_new is True
 
-    def test_empty_inputs_return_none(self, tmp_path):
+    def test_empty_pin_is_written_and_deduplicated(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        assert save_wps_pin(ap, "", "psk") is None
+        first = save_wps_pin(ap, "", "psk")
+        assert first is not None and first.was_new is True
+        assert "PIN: \n" in first.path.read_text(encoding="utf-8")
+        again = save_wps_pin(ap, "", "psk")
+        assert again is not None and again.was_new is False
+        assert again.path == first.path
+
+    def test_legacy_empty_pin_label_is_deduplicated(self, tmp_path):
+        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+        existing = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_wps_pin.txt"
+        existing.write_text(
+            "SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: psk\nPIN: <empty>\n",
+            encoding="utf-8",
+        )
+
+        result = save_wps_pin(ap, "", "psk")
+
+        assert result is not None and result.was_new is False
+        assert result.path == existing
+
+    def test_pin_only_writes_no_psk_line_and_dedupes(self, tmp_path):
+        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+        first = save_wps_pin(ap, "12345670", None)
+        assert first is not None and first.was_new is True
+        body = first.path.read_text(encoding="utf-8")
+        assert "PSK" not in body and "PIN: 12345670" in body
+        again = save_wps_pin(ap, "12345670", None)
+        assert again is not None and again.was_new is False
+        assert save_wps_pin(ap, "12345670", "abcdefgh").was_new is True
+
+    def test_empty_psk_returns_none(self, tmp_path):
+        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
         assert save_wps_pin(ap, "12345670", "") is None
 
 
@@ -290,6 +346,42 @@ class TestSaveWpsPbc:
         save_wps_pbc(ap, "psk1")
         second = save_wps_pbc(ap, "psk2")
         assert second is not None and second.was_new is True
+
+
+# ---- save_wpa_psk -----------------------------------------------------------
+
+class TestSaveWpaPsk:
+    def test_writes_ssid_bssid_and_psk(self, tmp_path):
+        result = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        assert result is not None and result.was_new is True
+        assert result.path.name.endswith("_wpa_psk.txt")
+        assert result.path.read_text(encoding="utf-8") == (
+            "SSID: Cafe WiFi\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: hashcat!\n")
+
+    def test_dedupes_same_bssid_and_psk_returns_existing_path(self, tmp_path):
+        first = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        again = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        assert again is not None and again.was_new is False
+        assert first is not None and again.path == first.path
+
+    def test_different_psk_or_bssid_writes_new(self, tmp_path):
+        save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        other_psk = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat?")
+        other_bssid = save_wpa_psk("Cafe WiFi", "11:22:33:44:55:66", "hashcat!")
+        assert other_psk is not None and other_psk.was_new is True
+        assert other_bssid is not None and other_bssid.was_new is True
+
+    def test_does_not_dedupe_against_a_wps_file(self, tmp_path):
+        save_wps_pbc(AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="Cafe WiFi"), "hashcat!")
+        result = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        assert result is not None and result.was_new is True
+
+    def test_dedupes_against_an_upper_case_file_name_and_skips_directories(self, tmp_path):
+        (tmp_path / "Cafe_AA-BB-CC-DD-EE-FF_1_dir_wpa_psk.txt").mkdir()
+        upper = tmp_path / "Cafe_AA-BB-CC-DD-EE-FF_1_WPA_PSK.TXT"
+        upper.write_text("SSID: Cafe\nBSSID: AA:BB:CC:DD:EE:FF\nPSK: hashcat!\n", encoding="utf-8")
+        result = save_wpa_psk("Cafe", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        assert result is not None and result.was_new is False and result.path == upper
 
 
 # ---- SSID sanitization (path traversal) ------------------------------------
@@ -359,10 +451,10 @@ class TestConsolidateHcFiles:
         assert consolidate_hc_files(tmp_path) == (0, 0)
 
     def test_consolidate_multiple_aps_and_deduplicates(self, tmp_path):
-        hs_line1 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*11111111111111111111111111111111**\n"
-        hs_line2 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*22222222222222222222222222222222**\n"
-        pmk_line1 = "WPA*01*33333333333333333333333333333333*aabbccddeeff*112233445566*5465737431***\n"
-        office_hs = "WPA*02*01*112233445566*aabbccddeeff*4f6666696365*44444444444444444444444444444444**\n"
+        hs_line1 = f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{'11' * 32}**00\n"
+        hs_line2 = f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{'22' * 32}**00\n"
+        pmk_line1 = f"WPA*01*{'33' * 16}*aabbccddeeff*112233445566*5465737431***\n"
+        office_hs = f"WPA*02*{'01' * 16}*112233445566*aabbccddeeff*4f6666696365*{'44' * 32}**00\n"
 
         # AP1 files: 2 handshakes (one duplicate), 1 pmkid
         (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000").write_text(hs_line1, encoding="utf-8")
@@ -403,8 +495,8 @@ class TestConsolidateHcFiles:
         assert other_file.exists()
 
     def test_consolidate_appends_to_existing_target(self, tmp_path):
-        hs_line1 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*11111111111111111111111111111111**\n"
-        hs_line2 = "WPA*02*01*aabbccddeeff*112233445566*5465737431*22222222222222222222222222222222**\n"
+        hs_line1 = f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{'11' * 32}**00\n"
+        hs_line2 = f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{'22' * 32}**00\n"
 
         target = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.hc22000"
         target.write_text(hs_line1, encoding="utf-8")
@@ -426,28 +518,30 @@ class TestConsolidateHcFiles:
 class TestHcFiles:
     def test_find_existing_anonce_in_aggregate_and_split(self, tmp_path):
         hc = HcFiles(tmp_path, "HomeNet", "aa:bb:cc:dd:ee:ff")
-        assert hc.find_existing_anonce("1111") is None
+        anonce1 = "11" * 32
+        anonce2 = "22" * 32
+        assert hc.find_existing_anonce(anonce1, False) is None
 
         # Write to aggregate file
-        hc.agg_path.write_text("WPA*02*01*aabbccddeeff*112233445566*5465737431*1111**\n", encoding="utf-8")
-        assert hc.find_existing_anonce("1111") == hc.agg_path
+        hc.agg_path.write_text(f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{anonce1}**00\n", encoding="utf-8")
+        assert hc.find_existing_anonce(anonce1, False) == hc.agg_path
 
         # Write to split file
         split_p = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000"
-        split_p.write_text("WPA*02*01*aabbccddeeff*112233445566*5465737431*2222**\n", encoding="utf-8")
-        assert hc.find_existing_anonce("2222") == split_p
+        split_p.write_text(f"WPA*02*{'01' * 16}*aabbccddeeff*112233445566*5465737431*{anonce2}**00\n", encoding="utf-8")
+        assert hc.find_existing_anonce(anonce2, False) == split_p
 
     def test_find_existing_pmkid_in_aggregate_and_split(self, tmp_path):
         hc = HcFiles(tmp_path, "HomeNet", "aa:bb:cc:dd:ee:ff")
-        assert hc.find_existing_pmkid("3333") is None
+        pmkid1 = "33" * 16
+        pmkid2 = "44" * 16
+        assert hc.find_existing_pmkid(pmkid1) is None
 
         # Write to aggregate file
-        hc.agg_path.write_text("WPA*01*3333*aabbccddeeff*112233445566*5465737431***\n", encoding="utf-8")
-        assert hc.find_existing_pmkid("3333") == hc.agg_path
+        hc.agg_path.write_text(f"WPA*01*{pmkid1}*aabbccddeeff*112233445566*5465737431***\n", encoding="utf-8")
+        assert hc.find_existing_pmkid(pmkid1) == hc.agg_path
 
         # Write to split file
         split_p = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000002_pmkid.hc22000"
-        split_p.write_text("WPA*01*4444*aabbccddeeff*112233445566*5465737431***\n", encoding="utf-8")
-        assert hc.find_existing_pmkid("4444") == split_p
-
-
+        split_p.write_text(f"WPA*01*{pmkid2}*aabbccddeeff*112233445566*5465737431***\n", encoding="utf-8")
+        assert hc.find_existing_pmkid(pmkid2) == split_p

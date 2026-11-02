@@ -45,7 +45,8 @@ from .constants import (
 from .rf_radio_a_tbl import RADIO_A
 
 
-def phy_rf_config(t, driver_words=None) -> None:
+def phy_rf_config(t, driver_words=None) -> bool:
+    """Returns True when the I-cut TX-power-track tables are selected."""
     # Store original RFENV control type (path A).
     rfenv = bb.query_bb_reg(t, RF_INTFS_A, bRFSI_RFENV)
     # Set RF_ENV enable, then output high.
@@ -62,13 +63,10 @@ def phy_rf_config(t, driver_words=None) -> None:
     bb.set_bb_reg(t, RF_INTFS_A, bRFSI_RFENV, rfenv)
     # Select + load the TX-power-tracking table [SRC] odm_config_rf_with_tx_pwr_track_header_file
     # (phydm_hwconfig.c:372), the tail of phy_RF6052_Config_ParaFile: read SYS_CFG[15:12] for
-    # the foundry (>= 8 SMIC/I-cut, else TSMC) to pick the table. This card reads < 8 (TSMC) ->
-    # the non-I-cut USB table (already in powertrack_tbl), a software load, so the lone wire op
-    # is this SYS_CFG read.
-    foundry = (t.read32(REG_SYS_CFG) >> 12) & 0xF       # odm_get_mac_reg(0xF0, 0xF000)
-    if foundry >= 8:
-        raise NotImplementedError(
-            f"8188e SMIC/I-cut TX-power-track tables not ported (SYS_CFG[15:12]={foundry})")
+    # the cut (>= 8 -> _txpowertrack_usb_icut, else _txpowertrack_usb). Both are software
+    # loads (powertrack_tbl), so the lone wire op is this SYS_CFG read.
+    cut = (t.read32(REG_SYS_CFG) >> 12) & 0xF           # odm_get_mac_reg(0xF0, 0xF000)
+    return cut >= 8
 
 
 def _emit_rf(t):

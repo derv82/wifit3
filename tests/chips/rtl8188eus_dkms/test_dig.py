@@ -6,7 +6,7 @@ isolate on its own: the 11N FA-counter sum, the no-link IGI step (+2/+1/-2 by fa
 FA>1000 -> 0x83, FA<500 -> 0x40) with write-on-change + moving-average reset. The carried
 DM state is threaded explicitly. Runtime RX benefit is validated by the beacon-watch A/B.
 """
-from wifit3.chips.rtl8188eus_dkms import dig
+from wifit3.chips.rtl8188eus_dkms import dig, powertrack
 
 
 class RegTx:
@@ -27,6 +27,12 @@ class RegTx:
         v &= 0xFF
         self.regs[a] = v
         self.w.append((a, v))
+
+
+def _pt_state(channel=1):
+    pt = powertrack.seed_state(0, 0, 0x18, None, False)
+    pt.channel = channel
+    return pt
 
 
 def test_read_fa_counters_sums_ofdm_and_cck():
@@ -64,13 +70,13 @@ def test_watchdog_tick_clamps_and_writes_igi(mocker):
     # Low FA -> IGI steps down from the carried value; clamps at 0x1c (sensitive floor).
     st = dig.WatchdogState(cur_ig_value=0x1D, cur_cck_cca_thres=0x40)
     t = RegTx({0x0C50: 0x1D})                      # all FA regs 0 -> cnt_all=0 < fa_th[0]
-    tick = dig.watchdog_tick(t, st, None)
+    tick = dig.watchdog_tick(t, st, _pt_state())
     assert tick.igi == 0x1C                         # 0x1d - 2 = 0x1b -> clamped to 0x1c
     assert (0x0C50, 0x1C) in t.w
     assert st.cur_ig_value == 0x1C                  # state carried forward
     # High FA -> IGI steps up; clamps at 0x2a (least sensitive).
     st = dig.WatchdogState(cur_ig_value=0x29, cur_cck_cca_thres=0x40)
-    tick = dig.watchdog_tick(RegTx({0x0CF0: 6000}), st, None)  # cnt_all 6000 > fa_th[2]
+    tick = dig.watchdog_tick(RegTx({0x0CF0: 6000}), st, _pt_state())  # cnt_all 6000 > fa_th[2]
     assert tick.igi == 0x2A                         # 0x29 + 2 = 0x2b -> clamped to 0x2a
 
 
@@ -78,7 +84,7 @@ def test_watchdog_tick_no_igi_write_when_unchanged(mocker):
     mocker.patch("wifit3.chips.rtl8188eus_dkms.powertrack.thermal_tick")
     st = dig.WatchdogState(cur_ig_value=0x20, cur_cck_cca_thres=0x40)
     t = RegTx({0x0C50: 0x20, 0x0CF0: 3000})        # in-band FA -> IGI unchanged
-    dig.watchdog_tick(t, st, None)
+    dig.watchdog_tick(t, st, _pt_state())
     assert not any(a == 0x0C50 for a, _ in t.w)    # no IGI write
 
 
@@ -130,3 +136,104 @@ def test_nhm_skips_unchanged_writes():
     dig._nhm(t, st)
     assert not any(a == 0x0898 for a, _ in t.w)    # IGI unchanged -> no threshold write
     assert not any(a == 0x0894 for a, _ in t.w)    # period already max -> no rewrite
+
+
+# --- phydm_receiver_blocking ----------------------------------------------
+_T_CUT = 0x0000          # SYS_CFG[15:12] < 8 -> 8188E_T
+_S_CUT = 0x8000          # SYS_CFG[15:12] >= 8 -> 8188E_S
+
+
+def _armable_state(**kw):
+    return dig.WatchdogState(cur_ig_value=0x20, consecutive_idlel_time=12,
+                             adaptivity_enable=True, **kw)
+
+
+def test_receiver_blocking_t_cut_ch1_arms_nbi():
+    # fc 2412, f_intf 2410 -> tone_idx_tmp 64 -> nbi_table_128 reg_idx 3; then NBI enable BIT9.
+    st = _armable_state()
+    t = RegTx({0x00F0: _T_CUT})
+    dig._receiver_blocking(t, st, 1)
+    assert [w for w in t.w if w[0] == 0x0C40] == [(0x0C40, 0x03000000), (0x0C40, 0x03000200)]
+    assert st.is_receiver_blocking_en is True
+
+
+def test_receiver_blocking_t_cut_ch13_arms_nbi():
+    # fc 2472, f_intf 2473 -> tone_idx_tmp 32 -> reg_idx 2.
+    st = _armable_state()
+    t = RegTx({0x00F0: _T_CUT})
+    dig._receiver_blocking(t, st, 13)
+    assert t.regs[0x0C40] == 0x02000200
+    assert st.is_receiver_blocking_en is True
+
+
+def test_receiver_blocking_s_cut_ch13_arms_nbi():
+    st = _armable_state()
+    t = RegTx({0x00F0: _S_CUT})
+    dig._receiver_blocking(t, st, 13)
+    assert t.regs[0x0C40] == 0x02000200
+    assert st.is_receiver_blocking_en is True
+
+
+def test_receiver_blocking_s_cut_ch1_does_not_arm():
+    st = _armable_state()
+    t = RegTx({0x00F0: _S_CUT})
+    dig._receiver_blocking(t, st, 1)
+    assert t.w == []
+    assert st.is_receiver_blocking_en is False
+
+
+def test_receiver_blocking_disarms_on_leaving_ch1_ch13():
+    # Disarm: NBI enable BIT9 cleared, then 0xc40[28:24] = 0x1f.
+    st = _armable_state(is_receiver_blocking_en=True)
+    t = RegTx({0x00F0: _T_CUT, 0x0C40: 0x03000200})
+    dig._receiver_blocking(t, st, 6)
+    assert [w for w in t.w if w[0] == 0x0C40] == [(0x0C40, 0x03000000), (0x0C40, 0x1F000000)]
+    assert st.is_receiver_blocking_en is False
+    st = _armable_state(is_receiver_blocking_en=True)            # S-cut: leaving ch13 for ch1
+    t = RegTx({0x00F0: _S_CUT, 0x0C40: 0x02000200})
+    dig._receiver_blocking(t, st, 1)
+    assert t.regs[0x0C40] == 0x1F000000
+    assert st.is_receiver_blocking_en is False
+
+
+def test_receiver_blocking_disarms_when_gate_closes():
+    # Armed, but adaptivity_enable False -> the unconditional disarm at the tail.
+    st = dig.WatchdogState(cur_ig_value=0x20, consecutive_idlel_time=12,
+                           is_receiver_blocking_en=True)
+    t = RegTx({0x00F0: _T_CUT, 0x0C40: 0x03000200})
+    dig._receiver_blocking(t, st, 1)
+    assert t.regs[0x0C40] == 0x1F000000
+    assert st.is_receiver_blocking_en is False
+
+
+def test_receiver_blocking_idle_time_gate():
+    st = _armable_state()
+    st.consecutive_idlel_time = 10                                # not > 10
+    t = RegTx({0x00F0: _T_CUT})
+    dig._receiver_blocking(t, st, 1)
+    assert t.w == []
+    assert st.is_receiver_blocking_en is False
+
+
+def test_watchdog_tick_updates_idle_time_before_receiver_blocking(mocker):
+    # phydm_common_info_self_update (idle += 2) runs before phydm_receiver_blocking, and
+    # phydm_adaptivity's check (adaptivity_enable = False) runs after it.
+    mocker.patch("wifit3.chips.rtl8188eus_dkms.powertrack.thermal_tick")
+    st = dig.WatchdogState(cur_ig_value=0x20, cur_cck_cca_thres=0x40,
+                           consecutive_idlel_time=10, adaptivity_enable=True)
+    t = RegTx({0x00F0: _T_CUT, 0x0CF0: 3000})
+    dig.watchdog_tick(t, st, _pt_state(1))
+    assert st.consecutive_idlel_time == 12
+    assert st.is_receiver_blocking_en is True
+    assert st.adaptivity_enable is False
+
+
+def test_watchdog_tick_never_arms_in_this_build(mocker):
+    mocker.patch("wifit3.chips.rtl8188eus_dkms.powertrack.thermal_tick")
+    st = dig.WatchdogState(cur_ig_value=0x20, cur_cck_cca_thres=0x40)
+    for _ in range(10):
+        t = RegTx({0x00F0: _T_CUT, 0x0CF0: 3000})
+        dig.watchdog_tick(t, st, _pt_state(1))
+        assert not any(a == 0x0C40 for a, _ in t.w)
+    assert st.consecutive_idlel_time == 20
+    assert st.is_receiver_blocking_en is False

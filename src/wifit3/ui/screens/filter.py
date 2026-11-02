@@ -7,11 +7,12 @@ from typing import List, Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import HorizontalScroll
 from textual.message import Message
-from textual.widgets import Button, Input, Label, Select
+from textual.widgets import Button, Checkbox, Input, Label, Select
 
 from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
 from wifit3.ui.encryption_format import EncryptionType
 from wifit3.wlan.channels import band_ranges
 
@@ -57,14 +58,20 @@ _FILTER_TYPES = {
 class ScanFilter:
     text: str = ""
     encryption: EncryptionFilter = EncryptionFilter.ALL
+    hide_silenced: bool = False
 
     def matches(self, ap: AccessPoint, *, ssid: Optional[str] = None) -> bool:
         """``ssid`` overrides ap.ssid so a hidden AP is searchable by its guessed name."""
-        return self.encryption.matches(ap) and text_matches(self.text, ap.bssid, ssid or ap.ssid)
+        if self.hide_silenced and Config.is_silenced(ap.bssid):
+            return False
+        if not self.encryption.matches(ap):
+            return False
+        # The scanner runs this over every AP every tick, and the box is usually empty.
+        return not self.text or text_matches(self.text, ap.bssid, ssid or ap.ssid)
 
 
-class FilterBar(Horizontal):
-    """One row above the AP table: text query, encryption select, channels button."""
+class FilterBar(HorizontalScroll):
+    """One row above the AP table: text query, encryption select, channels button, hide-silenced."""
 
     ALLOW_SELECT = False
 
@@ -72,14 +79,19 @@ class FilterBar(Horizontal):
     FilterBar {
         height: auto;
         padding: 0 1;
+        overflow-x: auto;
+        overflow-y: hidden;
         border: round $primary;
         border-title-color: $primary;
         border-title-style: bold;
     }
     FilterBar > Label { margin-right: 1; color: $text-muted; }
-    FilterBar > #filter-encryption { width: 12; margin-right: 2; }
+    FilterBar > #filter-encryption-label,
+    FilterBar > #filter-channels-label { text-wrap: nowrap; text-overflow: clip; }
+    FilterBar > #filter-encryption { width: 9; margin-right: 2; }
     FilterBar > #filter-channels { margin-right: 2; }
-    FilterBar > Input { width: 32; }
+    FilterBar > Input { width: 1fr; min-width: 16; max-width: 32; }
+    FilterBar > #filter-hide-silenced { margin-left: 2; border: none; }
     FilterBar Select.-expanded SelectOverlay { border: round $primary !important; background: $surface; }
     """
 
@@ -99,15 +111,20 @@ class FilterBar(Horizontal):
         self.border_title = "FILTER"
 
     def compose(self) -> ComposeResult:
-        enc = Label("[u]E[/u]ncryption")
+        enc = Label("[u]E[/u]ncryption", id="filter-encryption-label")
         enc.ALLOW_SELECT = False
         yield enc
         yield Select(
             [(f.value, f) for f in EncryptionFilter], value=EncryptionFilter.ALL,
             allow_blank=False, id="filter-encryption", compact=True,
         )
+        channels_label = Label("[u]C[/u]hannel", id="filter-channels-label")
+        channels_label.ALLOW_SELECT = False
+        yield channels_label
         yield Button(self._channels_text(None), id="filter-channels", compact=True)
         yield Input(placeholder="filter by ssid…", id="filter-text", compact=True)
+        yield Checkbox("Hide silenced", value=Config.hide_silenced,
+                       id="filter-hide-silenced", compact=True)
 
     def focus_text(self) -> None:
         self.query_one("#filter-text", Input).focus()
@@ -130,7 +147,7 @@ class FilterBar(Horizontal):
             picked = [c for c in band if c in chans]
             if picked:
                 parts.append(short if set(picked) == set(band) else band_ranges(picked)[0][1])
-        return "[u]C[/u]hannels: " + (" + ".join(parts) or "none")
+        return " + ".join(parts) or "none"
 
     def action_leave(self) -> None:
         self._focus_table()
@@ -148,10 +165,15 @@ class FilterBar(Horizontal):
     def on_button_pressed(self) -> None:
         self.post_message(self.EditChannels())
 
+    def on_checkbox_changed(self) -> None:
+        self._emit_scan_filter()
+
     def _emit_scan_filter(self) -> None:
         text = self.query_one("#filter-text", Input).value
         encryption = self.query_one("#filter-encryption", Select).value
-        self.post_message(self.ScanFilterChanged(ScanFilter(text=text, encryption=encryption)))
+        hide_silenced = self.query_one("#filter-hide-silenced", Checkbox).value
+        self.post_message(self.ScanFilterChanged(
+            ScanFilter(text=text, encryption=encryption, hide_silenced=hide_silenced)))
 
     def _focus_table(self) -> None:
         tables = self.screen.query("#ap-table")

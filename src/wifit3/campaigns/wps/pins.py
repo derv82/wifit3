@@ -37,6 +37,12 @@ def full_pin(first4: str, middle3: str) -> str:
     return seven + str(pin_checksum(int(seven)))
 
 
+def join_halves(first4: str, second4: str) -> str:
+    """Assemble an 8-digit PIN from two 4-digit halves, forcing no checksum on the 8th digit
+    (unlike ``full_pin``); for offline sweeps of second halves whose checksum may be wrong."""
+    return first4 + second4
+
+
 def split_pin(pin: str) -> Tuple[str, str]:
     """('01030365') -> ('0103', '0365')."""
     return pin[:4], pin[4:]

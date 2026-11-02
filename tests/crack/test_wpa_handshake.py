@@ -2,6 +2,7 @@
 WPA 4-way crackability + hc22000 emission."""
 from wifit3.models import HandshakeMessage, Handshake
 from wifit3.crack import handshake as wpa
+from wifit3.crack import hc22000_format as hc
 
 ANONCE = b"\xaa" * 32
 SNONCE = b"\x02" * 32
@@ -11,9 +12,12 @@ def _rc(n: int) -> str:
     return n.to_bytes(8, "big").hex()
 
 
-def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0, akm=None):
+def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0, akm=None,
+           keyver=0, mdid=b"", r0khid=b"", r1khid=b""):
     """An HandshakeMessage with the fields crackability cares about. `complete=False`
     simulates a clipped 802.1X payload; `mic=False` an M1-style no-MIC frame."""
+    payload = bytearray(120 if complete else 50)
+    payload[5:7] = keyver.to_bytes(2, "big")
     return HandshakeMessage(
         raw=b"",
         msg_num=msg,
@@ -21,10 +25,17 @@ def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0, akm=None
         nonce=(nonce if nonce is not None else bytes([msg]) * 32),
         mic=(b"\x11" * 16 if mic else b"\x00" * 16),
         key_data_len=0,
-        eapol_payload=(bytes(120) if complete else bytes(50)),
+        eapol_payload=bytes(payload),
         timestamp=ts,
         akm=akm,
+        mdid=mdid,
+        r0khid=r0khid,
+        r1khid=r1khid,
     )
+
+
+_FT_IDENTIFIERS = {"mdid": b"\x12\x34", "r0khid": b"r0kh.example.test",
+                   "r1khid": bytes.fromhex("020000000001")}
 
 
 def _hs(*frames):
@@ -157,18 +168,21 @@ def test_describe_flags():
 
 # ----- AKM crackability gating (SAE / FT / SHA256-PMKID) ---------------------
 
-def _m1m2(*, offered, client=None):
+def _m1m2(*, offered, client=None, vendor=False):
     """A structurally perfect M1+M2 (always a crackable pair if the AKM allows),
     tagged with the AP's offered AKM suites and the client's chosen one (on the M2)."""
     hs = _hs(_frame(1, 5, nonce=ANONCE, mic=False), _frame(2, 5, nonce=SNONCE, akm=client))
     hs.akm_offered = list(offered)
+    hs.vendor_akm_offered = vendor
     return hs
 
 
-def _hs_pmkid(*, offered, client=None):
+def _hs_pmkid(*, offered, client=None, m1_key_descriptor_version=None, vendor=False):
     hs = Handshake(bssid="aa:bb:cc:dd:ee:ff", client_mac="11:22:33:44:55:66",
                    beacon_frame=b"B", pmkid=b"\x01" * 16, pmkid_akm=client)
     hs.akm_offered = list(offered)
+    hs.pmkid_key_descriptor_version = m1_key_descriptor_version
+    hs.vendor_akm_offered = vendor
     return hs
 
 
@@ -177,14 +191,14 @@ def _keystone_akm(hs):
 
 
 def _verdict(hs):
-    return wpa.eapol_verdict(_keystone_akm(hs), hs.akm_offered)
+    return wpa.eapol_verdict(_keystone_akm(hs), hs)
 
 
 def _label(hs):
-    return wpa.uncrackable_label(_keystone_akm(hs), hs.akm_offered)
+    return wpa.uncrackable_label(_keystone_akm(hs), hs)
 
 
-# --- EAPOL (WPA*02) gate: suppress SAE + FT-PSK ------------------------------
+# --- EAPOL gate: suppress SAE, FT-PSK only as a complete WPA*04 ----------------
 
 def test_sae_only_ap_suppresses_handshake():
     """The user's Beryl AX: beacon offers SAE only → every 4-way is uncrackable,
@@ -220,17 +234,70 @@ def test_transition_ap_unknown_client_not_emitted():
     assert wpa.crackable_pairs(hs) == []
 
 
-def test_ft_psk_handshake_suppressed():
-    """FT-PSK (4) is PSK-derived, but hashcat -m 22000 has no FT mode → the
-    handshake is NOT emitted, and the trace badges 'FT'."""
-    hs = _m1m2(offered=[4], client=4)
+def _ft_m1m2(*, keyver=3, **identifiers):
+    hs = _hs(_frame(1, 5, nonce=ANONCE, mic=False),
+             _frame(2, 5, nonce=SNONCE, akm=4, keyver=keyver, **identifiers))
+    hs.akm_offered = [4]
+    return hs
+
+
+def test_ft_psk_handshake_withheld_without_ft_identifiers():
+    """FT-PSK (4) cracks only as WPA*04, which needs MDID / R0KH-ID / R1KH-ID."""
+    hs = _ft_m1m2()
+    assert _verdict(hs) == "crackable"
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.withheld_capture_label(hs) == "FT"
+
+
+def test_ft_psk_handshake_withheld_unless_m2_keyver_3():
+    hs = _ft_m1m2(keyver=2, **_FT_IDENTIFIERS)
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.withheld_capture_label(hs) == "FT"
+
+
+def test_ft_psk_handshake_withheld_on_m4_keystone():
+    hs = _hs(_frame(3, 6, nonce=ANONCE), _frame(4, 6, nonce=SNONCE, akm=4, keyver=3, **_FT_IDENTIFIERS))
+    hs.akm_offered = [4]
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.withheld_capture_label(hs) == "FT"
+
+
+def test_ft_psk_handshake_emits_wpa04_with_ft_identifiers():
+    hs = _ft_m1m2(**_FT_IDENTIFIERS)
+    pairs = wpa.crackable_pairs(hs)
+    assert len(pairs) == 1
+    assert wpa.withheld_capture_label(hs) is None
+    fields = wpa.hc22000_line("FTNet", hs, pairs[0]).split("*")
+    assert fields[1] == "04" and fields[8] == "80"
+    assert fields[9:] == ["1234", b"r0kh.example.test".hex(), "020000000001"]
+
+
+def test_ft_psk_sha384_uncrackable_and_badged_ft():
+    """AKM 19 has a passphrase PMK, but -m 22000's FT path is SHA-256 only. Not Enterprise."""
+    hs = _m1m2(offered=[19], client=19)
     assert _verdict(hs) == "uncrackable"
     assert wpa.crackable_pairs(hs) == []
     assert _label(hs) == "FT"
+    assert wpa.withheld_capture_label(hs) == "FT"
 
 
 def test_ft_psk_only_ap_suppressed_without_client_akm():
     assert wpa.crackable_pairs(_m1m2(offered=[4, 19])) == []
+
+
+def test_psk_sha384_uncrackable_and_badged():
+    hs = _m1m2(offered=[20], client=20)
+    assert _verdict(hs) == "uncrackable"
+    assert wpa.crackable_pairs(hs) == []
+    assert _label(hs) == "PSK-SHA384"
+    assert wpa.withheld_capture_label(hs) == "PSK-SHA384"
+
+
+def test_psk_sha384_only_ap_unknown_client_badged():
+    hs = _m1m2(offered=[20])
+    assert _verdict(hs) == "uncrackable"
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.withheld_capture_label(hs) == "PSK-SHA384"
 
 
 def test_wpa2_plus_ft_unknown_client_withheld():
@@ -276,7 +343,7 @@ def test_eap_only_ap_suppresses_handshake():
 
 
 def test_eap_variants_all_suppressed():
-    """FT-EAP (3), EAP-SHA256 (5), EAP-Suite-B[-192] (11/12), FT-EAP-SHA384 (13)."""
+    """FT-EAP (3), EAP-SHA256 (5), EAP-Suite-B[-192] (11/12), FT-EAP-Suite-B-192 (13)."""
     for suite in (3, 5, 11, 12, 13):
         assert wpa.crackable_pairs(_m1m2(offered=[suite])) == [], suite
 
@@ -310,7 +377,7 @@ def test_withheld_capture_label_needs_a_usable_pairing():
     so the log line means 'you got a handshake but it's worthless', not noise."""
     m1_only = _hs(_frame(1, 5, nonce=ANONCE, mic=False))
     m1_only.akm_offered = [1]
-    assert wpa.uncrackable_label(None, m1_only.akm_offered) == "EAP/Enterprise"   # AKM says EAP
+    assert wpa.uncrackable_label(None, m1_only) == "EAP/Enterprise"   # AKM says EAP
     assert wpa.withheld_capture_label(m1_only) is None          # but no usable pair
 
 
@@ -362,31 +429,45 @@ def test_owe_needs_a_usable_pairing():
     """Like EAP: the OWE badge fires only on a real captured 4-way, not a stray M1."""
     m1_only = _hs(_frame(1, 5, nonce=ANONCE, mic=False))
     m1_only.akm_offered = [18]
-    assert wpa.uncrackable_label(None, m1_only.akm_offered) == "OWE"
+    assert wpa.uncrackable_label(None, m1_only) == "OWE"
     assert wpa.withheld_capture_label(m1_only) is None
 
 
-# --- PMKID (WPA*01) gate: only plain-PSK (AKM 2) HMAC-SHA1 -------------------
+# --- PMKID (WPA*01) gate: PSK (AKM 2, HMAC-SHA1) and PSK-SHA256 (AKM 6) --------
 
 def test_pmkid_plain_psk_crackable():
-    assert wpa.pmkid_crackable(_hs_pmkid(offered=[2], client=2))
-    assert wpa.pmkid_crackable(_hs_pmkid(offered=[2]))      # unknown client, PSK-only AP
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[2], client=2)) == 2
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[2])) == 2   # unknown client, PSK-only AP
 
 
-def test_pmkid_sha256_client_suppressed():
-    """AKM-6 PMKID is HMAC-SHA256: hashcat's PMKID path is SHA1-only."""
-    assert not wpa.pmkid_crackable(_hs_pmkid(offered=[2, 6], client=6))
+def test_pmkid_sha256_client_crackable():
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[2, 6], client=6)) == 6
 
 
-def test_pmkid_sha256_only_ap_suppressed():
-    """SHA256-PSK offered with no plain PSK → the PMKID can't be SHA1."""
-    assert not wpa.pmkid_crackable(_hs_pmkid(offered=[6]))
+def test_pmkid_sha256_only_ap_crackable():
+    """SHA256-PSK offered with no plain PSK → the PMKID can only be HMAC-SHA256."""
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[6])) == 6
 
 
 def test_pmkid_unknown_client_assumes_sha1():
     """Asymmetry vs SAE: AKM 6 is rare, so a PMKID of unknown AKM on a PSK+PSK256
     AP is assumed to be the common SHA1 one (emit). We don't withhold."""
-    assert wpa.pmkid_crackable(_hs_pmkid(offered=[2, 6], client=None))
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[2, 6], client=None)) == 2
+
+
+def test_pmkid_unknown_client_takes_m1_key_descriptor_version():
+    """hcxpcapngtool's rule: a PMKID from a keyver-3 M1 is HMAC-SHA256, from keyver 2 HMAC-SHA1."""
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[2, 6], m1_key_descriptor_version=3)) == 6
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[2, 6], m1_key_descriptor_version=2)) == 2
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[], m1_key_descriptor_version=3)) == 6
+
+
+def test_pmkid_m1_key_descriptor_version_never_overrides_the_withhold():
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[1], m1_key_descriptor_version=2)) is None
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[2, 8], m1_key_descriptor_version=2)) is None
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[4, 6], m1_key_descriptor_version=3)) is None
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[2, 6], client=8,
+                                             m1_key_descriptor_version=3)) is None
 
 
 def test_pmkid_sae_or_ft_unknown_withheld():
@@ -396,16 +477,23 @@ def test_pmkid_sae_or_ft_unknown_withheld():
     assert not wpa.pmkid_crackable(_hs_pmkid(offered=[2, 4]))   # PSK + FT-PSK
 
 
-def test_ft_pmkid_suppressed():
-    assert not wpa.pmkid_crackable(_hs_pmkid(offered=[4], client=4))
+def test_ft_pmkid_needs_ft_identifiers_from_an_m2():
+    hs = _hs_pmkid(offered=[4], client=4)
+    assert wpa.crackable_pmkid_akm(hs) is None
+    hs.messages.append(_frame(2, 5, nonce=SNONCE, akm=4, keyver=3, **_FT_IDENTIFIERS))
+    assert wpa.crackable_pmkid_akm(hs) == 4
 
 
-def test_akm6_eapol_crackable_but_pmkid_not():
-    """The split that motivates two gates: an AKM-6 (PSK-SHA256) network's EAPOL
-    cracks (keyver → AES-CMAC), but its PMKID (HMAC-SHA256) does not."""
+def test_ft_psk_sha384_pmkid_suppressed():
+    hs = _hs_pmkid(offered=[19], client=19)
+    hs.messages.append(_frame(2, 5, nonce=SNONCE, akm=19, keyver=3, **_FT_IDENTIFIERS))
+    assert not wpa.pmkid_crackable(hs)
+
+
+def test_akm6_eapol_and_pmkid_both_crackable():
     eapol = _m1m2(offered=[6], client=6)
     assert len(wpa.crackable_pairs(eapol)) == 1
-    assert not wpa.pmkid_crackable(_hs_pmkid(offered=[6], client=6))
+    assert wpa.pmkid_crackable(_hs_pmkid(offered=[6], client=6))
 
 
 def test_hc22000_line_shape():
@@ -417,3 +505,74 @@ def test_hc22000_line_shape():
     assert parts[3] == "aabbccddeeff"            # AP MAC
     assert parts[6] == ANONCE.hex()              # ANonce
     assert parts[8] == "80"                      # M1+M2 (0x00) | NC bit (0x80)
+
+
+def test_reserved_akm_is_not_crackable_and_never_misnamed_sae():
+    hs = _m1m2(offered=[42], client=42)
+    assert _verdict(hs) == "uncrackable"
+    assert wpa.crackable_pairs(hs) == []
+    assert not hs.is_complete
+    assert hc.eapol_hashlines("Net", hs) == []
+    assert _label(hs) == "Unsupported AKM"
+    assert wpa.withheld_capture_label(hs) == "Unsupported AKM"
+
+
+def test_reserved_akm_unknown_selection_offer_is_withheld():
+    assert _verdict(_m1m2(offered=[42])) == "uncrackable"
+    assert wpa.crackable_pairs(_m1m2(offered=[42])) == []
+    assert _verdict(_m1m2(offered=[2, 42])) == "unknown"
+    assert wpa.crackable_pairs(_m1m2(offered=[2, 42])) == []
+    assert hc.eapol_hashlines("Net", _m1m2(offered=[2, 42])) == []
+
+
+def test_vendor_akm_only_is_not_legacy_psk_fallback():
+    hs = _m1m2(offered=[], vendor=True)
+    assert _verdict(hs) == "uncrackable"
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.withheld_capture_label(hs) == "Unsupported AKM"
+
+
+def test_vendor_akm_mixed_with_psk_needs_a_proven_selection():
+    assert _verdict(_m1m2(offered=[2], vendor=True)) == "unknown"
+    assert wpa.crackable_pairs(_m1m2(offered=[2], vendor=True)) == []
+    assert len(wpa.crackable_pairs(_m1m2(offered=[2], client=2, vendor=True))) == 1
+
+
+def test_vendor_akm_pmkid_fallback_is_withheld():
+    for offered in ([], [2]):
+        hs = _hs_pmkid(offered=offered, vendor=True, m1_key_descriptor_version=2)
+        assert wpa.crackable_pmkid_akm(hs) is None
+        assert hc.pmkid_hashline("Net", hs) is None
+
+
+def test_mixed_eap_psk_crackable_only_with_a_proven_psk_selection():
+    assert len(wpa.crackable_pairs(_m1m2(offered=[1, 2], client=2))) == 1
+    assert wpa.crackable_pairs(_m1m2(offered=[1, 2], client=None)) == []
+
+
+def test_pmkid_mixed_enterprise_psk_offer_withheld_without_selection():
+    hs = _hs_pmkid(offered=[1, 2], m1_key_descriptor_version=2)
+    assert wpa.crackable_pmkid_akm(hs) is None
+    assert wpa.pmkid_crackable(hs) is False
+    assert hc.pmkid_hashline("Net", hs) is None
+    for off in ([2, 42], [42], [2, 8], [2, 4]):
+        assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=off, m1_key_descriptor_version=2)) is None, off
+
+
+def test_pmkid_mixed_offer_crackable_with_a_proven_psk_selection():
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[1, 2], client=2)) == 2
+
+
+def test_pmkid_legacy_fallback_with_no_akm_evidence_is_preserved():
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[])) == 2
+    assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=[], m1_key_descriptor_version=3)) == 6
+
+
+def test_rsn_ie_without_a_standard_akm_is_withheld():
+    eapol = _m1m2(offered=[])
+    eapol.rsn_ie_seen = True
+    assert _verdict(eapol) == "uncrackable"
+    assert wpa.crackable_pairs(eapol) == []
+    pmkid = _hs_pmkid(offered=[], m1_key_descriptor_version=2)
+    pmkid.rsn_ie_seen = True
+    assert wpa.crackable_pmkid_akm(pmkid) is None

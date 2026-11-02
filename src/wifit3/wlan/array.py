@@ -226,6 +226,10 @@ class WlanArray:
         return self._sink.forged_macs
 
     @property
+    def probed_ssids(self) -> Set[str]:
+        return self._sink.probed_ssids
+
+    @property
     def wep_store(self) -> WepCaptureStore:
         return self._sink.wep_store
 
@@ -245,8 +249,18 @@ class WlanArray:
             return aps
         return [ap for ap in aps if ap.bssid not in self._evil_twin_bssids]
 
+    def guessid(self, ap: AccessPoint) -> str:
+        return self._sink.guessid(ap)
+
+    def remove_access_point(self, bssid: str) -> Optional[AccessPoint]:
+        """Evict an AP and its dependent registry state."""
+        return self._sink.remove_access_point(bssid)
+
     def register_forged_mac(self, mac) -> None:
         self._sink.register_forged_mac(mac)
+
+    def decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:
+        self._sink.decloak(ap, ssid, method)
 
     def register_own_mac(self, mac) -> str:
         return self._sink.register_own_mac(mac)
@@ -256,6 +270,9 @@ class WlanArray:
 
     def record_injected_eapol(self, frame) -> None:
         self._sink.record_injected_eapol(frame)
+
+    def record_injected_beacon(self, frame: bytes, card_id: str, channel_hint: int) -> None:
+        self._sink.record_injected_beacon(frame, card_id, channel_hint)
 
     def mark_evil_twin(self, bssid: str) -> None:
         """Hide this BSSID's AP from get_access_points(include_eviltwin=False): it's our own twin."""
@@ -404,5 +421,15 @@ class WlanArray:
         self._run_on_loop(_spawn)
 
     async def close(self) -> None:
-        await asyncio.gather(*(m.close() for m in self._members), return_exceptions=True)
+        await self.stop_hopping()
+        rehop_tasks = list(self._rehop_tasks)
+        if rehop_tasks:
+            await asyncio.gather(*rehop_tasks, return_exceptions=True)
+        members = list(self._members)
         self._members.clear()
+        await asyncio.gather(*(member.close() for member in members), return_exceptions=True)
+        close_tasks = list(self._close_tasks)
+        if close_tasks:
+            await asyncio.gather(*close_tasks, return_exceptions=True)
+        self._preferred = None
+        self._loop = None

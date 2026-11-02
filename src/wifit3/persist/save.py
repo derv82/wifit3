@@ -3,22 +3,22 @@ WEP keys, WPS credentials. One save_* per kind, each returning a SaveResult
 (or None when there's nothing worth saving). Dedupe never overwrites."""
 from __future__ import annotations
 
+import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from wifit3.crack.hc22000_format import eapol_hashlines, pmkid_hashline
+from wifit3.crack.hc22000_format import eapol_hashlines, parse_hc22000, pmkid_hashline, read_hc22000
 from wifit3.models import AccessPoint
 from wifit3.persist.common import (
     LEGACY_CAPTURE_RE,
     WEP_KEY_HEX_RE,
-    WPS_PIN_RE,
     WPS_PSK_RE,
     bssid_to_colon,
     bssid_to_dashed,
-    parse_hc22000,
+    parse_wps_pin,
     safe_ssid,
 )
 from wifit3.persist.config import Config
@@ -53,12 +53,11 @@ def _existing(captures_dir: Path, bssid: str, suffix: str) -> list[Path]:
         return []
     dashed = bssid_to_dashed(bssid)
     out: list[Path] = []
-    for p in captures_dir.iterdir():
-        if not p.is_file():
-            continue
-        name = p.name.lower()
-        if dashed in name and name.endswith(suffix):
-            out.append(p)
+    with os.scandir(captures_dir) as entries:
+        for entry in entries:
+            name = entry.name.lower()
+            if dashed in name and name.endswith(suffix) and entry.is_file():
+                out.append(Path(entry.path))
     return out
 
 
@@ -81,30 +80,17 @@ def _pcap_records_for(ap: AccessPoint, client_mac: str) -> list[tuple[bytes, flo
     return records
 
 
-def _read_anonces(path: Path) -> set[str]:
-    out: set[str] = set()
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return out
-    for line in text.splitlines():
-        entry = parse_hc22000(line)
-        if entry and entry.kind == "02" and entry.anonce:
-            out.add(entry.anonce)
-    return out
+def _read_anonces(path: Path) -> dict[str, bool]:
+    """Each EAPOL line's ANonce, and whether any line for it is authorized (M3/M4)."""
+    anonces: dict[str, bool] = {}
+    for _, line in read_hc22000(path):
+        if not line.is_pmkid and line.anonce:
+            anonces[line.anonce] = anonces.get(line.anonce, False) or line.authorized
+    return anonces
 
 
 def _read_pmkids(path: Path) -> set[str]:
-    out: set[str] = set()
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return out
-    for line in text.splitlines():
-        entry = parse_hc22000(line)
-        if entry and entry.kind == "01" and entry.pmkid_or_mic:
-            out.add(entry.pmkid_or_mic)
-    return out
+    return {line.pmkid_or_mic for _, line in read_hc22000(path) if line.is_pmkid and line.pmkid_or_mic}
 
 
 class HcFiles:
@@ -116,12 +102,15 @@ class HcFiles:
         self.bssid = bssid
         self.agg_path = captures_dir / f"{safe_ssid(self.ssid)}_{bssid_to_dashed(bssid)}.hc22000"
 
-    def find_existing_anonce(self, anonce: str) -> Path | None:
-        """Find if ANonce already exists in either the aggregate file or any split file."""
-        if self.agg_path.exists() and anonce in _read_anonces(self.agg_path):
-            return self.agg_path
-        for p in _existing(self.captures_dir, self.bssid, "_handshake.hc22000"):
-            if anonce in _read_anonces(p):
+    def find_existing_anonce(self, anonce: str, authorized: bool) -> Path | None:
+        """The aggregate or split file already holding a line for the ANonce at least as strong:
+        an authorized one, or any one when ``authorized`` is False (an M1+M2 doesn't count against
+        an M2+M3)."""
+        paths = [self.agg_path] if self.agg_path.exists() else []
+        paths += _existing(self.captures_dir, self.bssid, "_handshake.hc22000")
+        for p in paths:
+            saved = _read_anonces(p)
+            if anonce in saved and (saved[anonce] or not authorized):
                 return p
         return None
 
@@ -142,9 +131,12 @@ class HcFiles:
             new_lines = []
             for ln in lines:
                 entry = parse_hc22000(ln)
-                if entry and entry.anonce and entry.anonce not in existing_anonces:
-                    new_lines.append(ln)
-                    existing_anonces.add(entry.anonce)
+                if not (entry and entry.anonce):
+                    continue
+                if entry.anonce in existing_anonces and (existing_anonces[entry.anonce] or not entry.authorized):
+                    continue
+                new_lines.append(ln)
+                existing_anonces[entry.anonce] = existing_anonces.get(entry.anonce, False) or entry.authorized
             if new_lines:
                 with self.agg_path.open("a", encoding="utf-8") as f:
                     f.write("\n".join(new_lines) + "\n")
@@ -179,9 +171,9 @@ class HcFiles:
                         continue
                     e = parse_hc22000(ln)
                     if e:
-                        if e.kind == "01" and e.pmkid_or_mic:
+                        if e.is_pmkid and e.pmkid_or_mic:
                             seen_pmkids.add(e.pmkid_or_mic)
-                        elif e.kind == "02" and e.anonce:
+                        elif not e.is_pmkid and e.anonce:
                             seen_anonces.add(e.anonce)
                     merged_lines.append(ln)
             except OSError:
@@ -200,11 +192,11 @@ class HcFiles:
                     continue
                 e = parse_hc22000(ln)
                 if e:
-                    if e.kind == "01" and e.pmkid_or_mic:
+                    if e.is_pmkid and e.pmkid_or_mic:
                         if e.pmkid_or_mic in seen_pmkids:
                             continue
                         seen_pmkids.add(e.pmkid_or_mic)
-                    elif e.kind == "02" and e.anonce:
+                    elif not e.is_pmkid and e.anonce:
                         if e.anonce in seen_anonces:
                             continue
                         seen_anonces.add(e.anonce)
@@ -237,11 +229,11 @@ def save_handshake(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
     if not lines:
         return None
 
-    new_anonces = set()
+    new_anonces: dict[str, bool] = {}       # ANonce -> any of its lines authorized
     for ln in lines:
         entry = parse_hc22000(ln)
         if entry and entry.anonce:
-            new_anonces.add(entry.anonce)
+            new_anonces[entry.anonce] = new_anonces.get(entry.anonce, False) or entry.authorized
 
     if not new_anonces:
         return None
@@ -250,8 +242,8 @@ def save_handshake(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
 
     existing_path = None
     all_seen = True
-    for anonce in new_anonces:
-        p = hc.find_existing_anonce(anonce)
+    for anonce, authorized in new_anonces.items():
+        p = hc.find_existing_anonce(anonce, authorized)
         if p is None:
             all_seen = False
             break
@@ -352,10 +344,11 @@ def save_wep_key(ap: AccessPoint, key: bytes) -> Optional[SaveResult]:
 
 # ----- WPS PIN / PBC --------------------------------------------------------
 
-def save_wps_pin(ap: AccessPoint, pin: str, psk: str) -> Optional[SaveResult]:
-    """Persist a WPS-PIN credential. Dedupes by (PIN, PSK) for this BSSID."""
+def save_wps_pin(ap: AccessPoint, pin: str, psk: Optional[str]) -> Optional[SaveResult]:
+    """Persist a WPS-PIN credential, with no PSK line when ``psk`` is None.
+    Dedupes by (PIN, PSK) for this BSSID."""
     captures_dir = Path(Config.captures_dir)
-    if not pin or not psk:
+    if psk == "":
         return None
     for p in _existing(captures_dir, ap.bssid, "_wps_pin.txt"):
         try:
@@ -363,9 +356,8 @@ def save_wps_pin(ap: AccessPoint, pin: str, psk: str) -> Optional[SaveResult]:
         except OSError:
             continue
         psk_match = WPS_PSK_RE.search(text)
-        pin_match = WPS_PIN_RE.search(text)
-        if (psk_match and psk_match.group(1).strip() == psk
-                and pin_match and pin_match.group(1).strip() == pin):
+        existing_psk = psk_match.group(1).strip() if psk_match else None
+        if existing_psk == psk and parse_wps_pin(text) == pin:
             return SaveResult(path=p, was_new=False)
 
     captures_dir.mkdir(parents=True, exist_ok=True)
@@ -373,8 +365,8 @@ def save_wps_pin(ap: AccessPoint, pin: str, psk: str) -> Optional[SaveResult]:
     body = (
         f"SSID: {ap.ssid or ''}\n"
         f"BSSID: {ap.bssid}\n"
-        f"PSK: {psk}\n"
-        f"PIN: {pin}\n"
+        + (f"PSK: {psk}\n" if psk is not None else "")
+        + f"PIN: {pin}\n"
     )
     path.write_text(body, encoding="utf-8")
     return SaveResult(path=path, was_new=True)
@@ -382,10 +374,21 @@ def save_wps_pin(ap: AccessPoint, pin: str, psk: str) -> Optional[SaveResult]:
 
 def save_wps_pbc(ap: AccessPoint, psk: str) -> Optional[SaveResult]:
     """Persist a WPS-PBC credential. Dedupes by PSK for this BSSID."""
+    return _save_psk(ap.ssid, ap.bssid, psk, "_wps_pbc.txt")
+
+
+# ----- WPA PSK --------------------------------------------------------------
+
+def save_wpa_psk(ssid: str | None, bssid: str, psk: str) -> Optional[SaveResult]:
+    """Persist a passphrase recovered from a handshake/PMKID. Dedupes by PSK for this BSSID."""
+    return _save_psk(ssid, bssid, psk, "_wpa_psk.txt")
+
+
+def _save_psk(ssid: str | None, bssid: str, psk: str, suffix: str) -> Optional[SaveResult]:
     captures_dir = Path(Config.captures_dir)
     if not psk:
         return None
-    for p in _existing(captures_dir, ap.bssid, "_wps_pbc.txt"):
+    for p in _existing(captures_dir, bssid, suffix):
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -395,10 +398,10 @@ def save_wps_pbc(ap: AccessPoint, psk: str) -> Optional[SaveResult]:
             return SaveResult(path=p, was_new=False)
 
     captures_dir.mkdir(parents=True, exist_ok=True)
-    path = _fresh_path(captures_dir, ap.ssid, ap.bssid, "_wps_pbc.txt")
+    path = _fresh_path(captures_dir, ssid, bssid, suffix)
     body = (
-        f"SSID: {ap.ssid or ''}\n"
-        f"BSSID: {ap.bssid}\n"
+        f"SSID: {ssid or ''}\n"
+        f"BSSID: {bssid}\n"
         f"PSK: {psk}\n"
     )
     path.write_text(body, encoding="utf-8")

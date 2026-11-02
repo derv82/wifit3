@@ -72,7 +72,7 @@ async def test_reconnect_after_last_card_lost_dismisses_recovery_modal(monkeypat
 
     app = WifiteApp()
     async with app.run_test() as pilot:
-        app.switch_screen("scanner")
+        app.switch_screen(app.scanner_view)
         await pilot.pause(0)
         app.push_screen(RecoverableErrorModal(WifiteDeviceLostError("the wireless adapter")))
         await pilot.pause(0)

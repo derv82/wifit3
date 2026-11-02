@@ -27,7 +27,7 @@ def test_build_m2_structure():
     authkey = b"\x01" * 32
     m1_attrs = M.tlv_u8(M.ATTR_VERSION, 0x10) + M.tlv_u8(M.ATTR_MSG_TYPE, M.WPS_M1)
 
-    m2 = M.build_m2(nonce_e, nonce_r, uuid_r, pkr, authkey, m1_attrs)
+    m2 = M.build_m2(nonce_e, nonce_r, uuid_r, pkr, authkey, m1_attrs, M.RF_BAND_24GHZ, False)
     attrs = M.parse_tlvs(m2)
     assert attrs[M.ATTR_MSG_TYPE] == bytes([M.WPS_M2])
     assert attrs[M.ATTR_ENROLLEE_NONCE] == nonce_e
@@ -48,7 +48,7 @@ def test_build_m4_encrypted_settings_roundtrip():
     psk1, psk2 = b"\x09" * 16, b"\x0a" * 16
     m3 = M.tlv_u8(M.ATTR_MSG_TYPE, M.WPS_M3)
 
-    m4 = M.build_m4(nonce_e, r_s1, r_s2, psk1, psk2, pke, pkr, authkey, keywrapkey, m3)
+    m4 = M.build_m4(nonce_e, r_s1, r_s2, psk1, psk2, pke, pkr, authkey, keywrapkey, m3, False)
     attrs = M.parse_tlvs(m4)
     assert attrs[M.ATTR_R_HASH1] == wc.e_or_r_hash(authkey, r_s1, psk1, pke, pkr)
     assert attrs[M.ATTR_R_HASH2] == wc.e_or_r_hash(authkey, r_s2, psk2, pke, pkr)
@@ -176,3 +176,65 @@ def test_extract_m7_credentials():
     assert creds is not None
     assert creds["ssid"] == b"TestNet"
     assert creds["network_key"] == b"s3cr3tpassword"
+
+
+_M2_ARGS = (b"A" * 16, b"B" * 16, b"C" * 16, b"D" * 192, b"E" * 32,
+            M.tlv_u8(M.ATTR_MSG_TYPE, M.WPS_M1))
+
+
+def test_rf_bands_follows_the_operating_channel():
+    assert M.rf_band_for_channel(1) == M.RF_BAND_24GHZ
+    assert M.rf_band_for_channel(14) == M.RF_BAND_24GHZ
+    assert M.rf_band_for_channel(36) == M.RF_BAND_5GHZ
+    assert M.rf_band_for_channel(165) == M.RF_BAND_5GHZ
+
+    m2 = M.build_m2(*_M2_ARGS, M.rf_band_for_channel(44), False)
+    assert M.parse_tlvs(m2)[M.ATTR_RF_BANDS] == bytes([M.RF_BAND_5GHZ])
+    m1 = M.build_m1(b"U" * 16, b"M" * 6, b"N" * 16, b"P" * 192,
+                    M.rf_band_for_channel(6), False)
+    assert M.parse_tlvs(m1)[M.ATTR_RF_BANDS] == bytes([M.RF_BAND_24GHZ])
+
+
+def test_wfa_version2_ext_bytes():
+    # Vendor Extension 0x1049, len 6: WFA OUI 00:37:2A, subelement 0 (Version2) len 1 = 0x20.
+    assert M.wfa_version2_ext(True).hex() == "1049000600372a000120"
+    assert M.wfa_version2_ext(False) == b""
+
+
+def test_wsc_2_0_rides_in_every_registrar_message():
+    ext = M.wfa_version2_ext(True)
+    m2 = M.build_m2(*_M2_ARGS, M.RF_BAND_24GHZ, True)
+    m4 = M.build_m4(b"A" * 16, b"1" * 16, b"2" * 16, b"p" * 16, b"q" * 16, b"k" * 192,
+                    b"r" * 192, b"E" * 32, b"W" * 16, b"", True)
+    m6 = M.build_m6(b"A" * 16, b"2" * 16, b"E" * 32, b"W" * 16, b"", True)
+    tail = 4 + wc.AUTHENTICATOR_LEN                  # the trailing Authenticator attribute
+    for msg in (m2, m4, m6):
+        # Inside the body the Authenticator covers, i.e. ahead of that trailing attribute.
+        assert 0 <= msg.index(ext) <= len(msg) - tail - len(ext)
+    assert ext not in M.build_m2(*_M2_ARGS, M.RF_BAND_24GHZ, False)
+
+
+def test_assoc_ie_advertises_wsc_2_0_only_when_asked():
+    from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
+    v1 = wps_assoc_ie(WPS_REQ_REGISTRAR, False)
+    v2 = wps_assoc_ie(WPS_REQ_REGISTRAR, True)
+    assert v1.hex() == "dd0e0050f204104a000110103a000102"
+    assert v2[1] == len(v2) - 2                      # tag length still covers the whole body
+    assert v2[2:].hex() == v1[2:].hex() + "1049000600372a000120"
+
+
+def test_registrar_and_enrollee_take_rf_bands_from_their_channel():
+    from wifit3.campaigns.wps.enrollee import WpsEnrollee
+    from wifit3.campaigns.wps.registrar import WpsRegistrar
+    b, sta = b"B" * 6, b"S" * 6
+    assert WpsRegistrar(None, b, sta, channel=44, wsc_2_0=True).rf_bands == M.RF_BAND_5GHZ
+    assert WpsRegistrar(None, b, sta, channel=6, wsc_2_0=False).rf_bands == M.RF_BAND_24GHZ
+    assert WpsEnrollee(None, b, sta, channel=44, wsc_2_0=False).rf_bands == M.RF_BAND_5GHZ
+
+
+
+def test_m1_advertises_display_so_hostapd_sends_the_passphrase_not_the_hex_psk():
+    m1 = M.build_m1(b"U" * 16, b"M" * 6, b"N" * 16, b"P" * 192,
+                    rf_bands=M.RF_BAND_24GHZ, wsc_2_0=True)
+    config_methods = struct.unpack(">H", M.parse_tlvs(m1)[M.ATTR_CONFIG_METHODS])[0]
+    assert config_methods & 0x0008

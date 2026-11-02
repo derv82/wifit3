@@ -7,14 +7,14 @@ seed (M5 §1/§2) -> monitor opmode entry (M5 §3) — then starts the bulk-IN R
 (promiscuous monitor frames + per-frame 8821a RSSI) and the runtime phydm DIG/AGC
 watchdog. All steps except the live EDCCA PSD search are pcap-verified byte-for-byte.
 
-The RX reader is started **before** the monitor RCR write: the kernel posts RX URBs
-before opening the gate, and this chip has RX-starvation history (see rx_reader.py).
+The RX reader is started **before** the monitor RCR write, as the vendor does: ``_netdev_open``
+posts the bulk-IN URBs (os_intfs.c:4026 ``rtw_intf_start``) before monitor opmode sets RCR.
 
 ``inject_frame`` (M6) transmits one fake-descriptor frame on bulk-OUT — deauth,
 fake-auth, and WEP ARP replay all ride this one path; it is explicit-action only
 (passive-by-default). 2.4 GHz + 5 GHz (M7) RX/TX with EFUSE-calibrated per-rate power
-are complete. Registered in ``wlan/discovery.py`` for 0bda:0811 alongside the mainline
-``chips/rtl8821au/``, ordered by ``$WIFIT3_RTL8821`` — **this DKMS port is the default**;
+are complete. Paired with the mainline ``chips/rtl8821au/`` in ``device/manager.py``
+``_DKMS_BY_DIR``, ordered by ``$WIFIT3_RTL8821`` — **this DKMS port is the default**;
 ``=mainline`` falls back to the mainline driver. Sibling to the untouched mainline driver.
 """
 from __future__ import annotations
@@ -26,6 +26,7 @@ from importlib import resources
 from typing import Callable, ClassVar, List, Optional
 
 import usb.core
+import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
@@ -35,7 +36,7 @@ from ..rx_reader import RxReaderThread
 from . import bb, chan, dig, efuse, firmware, led, mac, monitor, phy_cond, rf, txpower
 from .rx import iter_frames
 from .transport import RTL8821AUDkmsTransport
-from .tx import build_mgmt_txdesc
+from .tx import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G, build_mgmt_txdesc
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,10 @@ class Rtl8821auDkmsDriver(Driver):
         loop = asyncio.get_running_loop()
         # All bring-up is blocking synchronous USB I/O; keep it off the event loop.
 
+        # Hold interface 0 for the session: unclaimed, WinUSB claims and releases it around every
+        # EP0 transfer, and that churn intermittently fails with "Entity not found".
+        await loop.run_in_executor(None, usb.util.claim_interface, self.transport.dev, 0)
+
         # EFUSE read (probe phase, before power-on, like the vendor): crystal_cap (AFE
         # trim) + the per-rate TX-power base/diffs + the MAC address.
         if progress_cb:
@@ -165,7 +170,7 @@ class Rtl8821auDkmsDriver(Driver):
         self._channel = _DEFAULT_CHANNEL
 
         # M5 §5: start the bulk-IN RX reader BEFORE the monitor RCR opens the RX gate
-        # (the kernel posts URBs before the gate; this chip has RX-starvation history).
+        # (the vendor posts URBs before the gate, os_intfs.c:4026).
         # The reader keeps a blocking bulk read posted on a dedicated thread (off the
         # event loop, so the TUI can't starve RX); each aggregated buffer is split into
         # 802.11 frames (FCS-stripped, per-frame RSSI) and fanned to the rx callback.
@@ -280,7 +285,12 @@ class Rtl8821auDkmsDriver(Driver):
             return False
         loop = asyncio.get_running_loop()
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
-        payload = build_mgmt_txdesc(len(frame_bytes), bmc=bmc) + frame_bytes
+        # [SRC] rtl8812a_phycfg.c:1360 "avoid using cck rate in 5G band": 6M OFDM, rate group G
+        # (rtw_wlan_util.c:3217, rtw_mlme_ext.c:7803-7808).
+        hw_rate, rate_id = ((DESC_RATE6M, RATEID_IDX_G) if self._channel > 14
+                            else (DESC_RATE1M, RATEID_IDX_B))
+        payload = build_mgmt_txdesc(len(frame_bytes), hw_rate=hw_rate, rate_id=rate_id,
+                                    bmc=bmc) + frame_bytes
         async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
         self._start_tx_led_blink()

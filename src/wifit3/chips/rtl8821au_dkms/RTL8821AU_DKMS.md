@@ -39,8 +39,15 @@ before being threaded through.
 [0,63] — no by-rate, no limit, no init amends; the JAGUAR odd-index workaround does not fire on a
 normal chip like the AWUS036ACS.
 
-**Start the RX reader before RX-enable.** The kernel posts URBs at probe (before the monitor RCR
-write), and this chip has RX-starvation history — `RxReaderThread` must start before `enter_monitor`.
+**Start the RX reader before RX-enable.** The vendor posts the bulk-IN URBs at netdev open, after
+`rtw_hal_init` (`os_intfs.c:4000`) via `rtw_intf_start` (`:4026`), and before monitor opmode writes
+RCR; all 3 cold-boot pcaps show 8 bulk-IN submits ahead of `RCR=0x9000382F`. `RxReaderThread`
+starts before `enter_monitor` to match.
+
+**Claim interface 0 before the first EP0 transfer (Windows).** Unclaimed, libusb/WinUSB claims and
+releases it around every control transfer; that churn intermittently fails with `[170] The
+requested resource is in use` (pyusb: `Entity not found`), worst when the RX reader's first read
+claims it concurrently. Measured on one Windows host: 12/50 bring-ups failed unclaimed, 0/100 claimed.
 
 **The EDCCA PSD-search loop is live-only**, not byte-replayable: it reads live PSD and steps
 thresholds, so the port reproduces the `phydm_search_pwdb_lower_bound` algorithm rather than the wire

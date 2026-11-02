@@ -193,9 +193,14 @@ class MT7925AUDriver(Driver):
                                               wait_resp=False)
 
     async def _enable_rx_acks(self) -> None:
+        """Documented no-op: the connac3 sniffer RX filter already admits ACK control frames
+        (FC=0xD4) to any RA — enter_monitor sets MT_FILTER_CONTROL (init.py). Verified on the
+        bench: the tally counts ACKs to a foreign injected MAC with no register write here.
+        Contrast the connac2 sibling (mt7921au), which must clear RFCR DROP_UNWANTED_CTL."""
         return None
 
     async def _disable_rx_acks(self) -> None:
+        """No-op, matching _enable_rx_acks: nothing was toggled to admit ACKs."""
         return None
 
     async def close(self):
@@ -212,6 +217,11 @@ class MT7925AUDriver(Driver):
             return
         frame_bytes = data[mpdu_off:mpdu_end]
         if len(frame_bytes) < 10:
+            return
+        # A 10-byte 0xD4 frame is an ACK (the parser drops control frames); the base tallies it
+        # iff the ACK tap is armed and RA=frame[4:10] is a MAC we inject as.
+        if len(frame_bytes) == 10 and frame_bytes[0] == 0xD4:
+            self.record_ack(frame_bytes)
             return
         try:
             parsed = self.parser.parse_80211_frame(frame_bytes, rssi)

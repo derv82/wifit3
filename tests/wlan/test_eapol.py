@@ -5,6 +5,8 @@ import struct
 import pytest
 
 from wifit3.models import HandshakeMessage, Handshake
+from wifit3.crack.handshake import crackable_pairs
+from wifit3.crack.hc22000_format import eapol_hashlines
 from wifit3.dot11.parser import WlanFrameParser
 
 
@@ -71,6 +73,126 @@ def _build_eapol_frame(
 )
 def test_classify_eapol_msg(key_info, key_data_len, expected):
     assert WlanFrameParser._classify_eapol_msg(key_info, key_data_len) == expected
+
+
+# ---- EAP (EAPOL-Type-0) passive classifier --------------------------------------
+
+_EAP_BSSID = b"\xaa\xbb\xcc\x00\x11\x22"
+_EAP_CLIENT = b"\xde\xad\xbe\xef\x00\x01"
+
+
+def _build_eap_frame(
+    bssid_bytes: bytes,
+    client_bytes: bytes,
+    code: int,
+    identifier: int = 1,
+    eap_type=None,
+    data: bytes = b"",
+    *,
+    from_ds: bool = True,
+    qos: bool = False,
+    ht_control: bool = False,
+    version: int = 1,
+) -> bytes:
+    """Build an 802.11 data frame carrying an EAPOL-Type-0 (EAP) packet.
+
+    from_ds=True is AP->client (Request); from_ds=False is client->AP (Response).
+    qos/ht_control add the header fields the parser's LLC/SNAP window must tolerate.
+    """
+    fc0 = 0x88 if qos else 0x08                      # QoS Data (subtype 8) vs Data
+    fc1 = 0x02 if from_ds else 0x01                  # from_ds vs to_ds
+    if ht_control:
+        fc1 |= 0x80                                  # Order bit -> +4 HT Control
+    addrs = (client_bytes + bssid_bytes + bssid_bytes) if from_ds \
+        else (bssid_bytes + client_bytes + bssid_bytes)
+    mac_hdr = bytes([fc0, fc1]) + b"\x00\x00" + addrs + b"\x00\x00"
+    if qos:
+        mac_hdr += b"\x00\x00"
+    if ht_control:
+        mac_hdr += b"\x00\x00\x00\x00"
+    llc_snap = b"\xaa\xaa\x03\x00\x00\x00\x88\x8e"
+    has_type = eap_type is not None
+    eap = struct.pack(">BBH", code, identifier, 4 + (1 if has_type else 0) + len(data))
+    if has_type:
+        eap += bytes([eap_type]) + data
+    x802_1x = struct.pack(">BBH", version, 0, len(eap))   # 802.1X type 0 = EAP-Packet
+    return mac_hdr + llc_snap + x802_1x + eap
+
+
+@pytest.mark.parametrize(
+    "code, identifier, eap_type",
+    [
+        (2, 1, 1),            # EAP-Response/Identity
+        (1, 2, 13),           # EAP-TLS
+        (1, 3, 25),           # PEAP
+        (1, 4, 21),           # EAP-TTLS
+        (1, 5, 4),            # MD5-Challenge
+        (2, 6, 3),            # Nak
+        (3, 7, None),         # Success: no Type byte
+        (4, 8, None),         # Failure: no Type byte
+        (1, 9, 99),           # unassigned Type, still an EapPacket
+    ],
+)
+def test_eap_classification(code, identifier, eap_type):
+    frame = _build_eap_frame(_EAP_BSSID, _EAP_CLIENT, code, identifier, eap_type)
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed.type == "eap"
+    assert parsed.eap_type == eap_type
+    assert not hasattr(parsed, "msg_num")    # an EAP packet is not an EAPOL-Key
+
+
+def test_eap_expanded_stays_eapol_so_wps_is_untouched():
+    # EAP-Expanded (0xFE) carrying the WFA / SimpleConfig vendor tuple is the WSC envelope; it
+    # must NOT become an EapPacket, so the sink's WPS path (_on_eapol_frame -> _on_wps_m1_frame)
+    # keeps seeing it.
+    wsc = b"\x00\x37\x2a" + b"\x00\x00\x00\x01" + b"\x04\x00"   # WFA id + SimpleConfig + opcode + flags
+    frame = _build_eap_frame(_EAP_BSSID, _EAP_CLIENT, code=1, identifier=1, eap_type=0xFE, data=wsc)
+    assert WlanFrameParser.parse_80211_frame(frame, -50).type == "eapol"
+
+
+def test_non_wsc_expanded_eap_is_classified_as_eap():
+    # A generic Expanded EAP (not WFA / SimpleConfig) is a real method, not the WSC envelope,
+    # so it must be classified as EAP rather than silently kept on the EAPOL/WSC path.
+    other = b"\x00\x00\x2a" + b"\x00\x00\x00\x09" + b"\x01\x00"   # non-WFA vendor id + type
+    frame = _build_eap_frame(_EAP_BSSID, _EAP_CLIENT, code=1, identifier=1, eap_type=0xFE, data=other)
+    assert WlanFrameParser.parse_80211_frame(frame, -50).type == "eap"
+
+
+def test_eap_identity_username_is_never_parsed_into_a_field():
+    frame = _build_eap_frame(_EAP_BSSID, _EAP_CLIENT, code=2, identifier=1, eap_type=1,
+                             data=b"alice@corp.example", from_ds=False)
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed.type == "eap" and parsed.eap_type == 1
+    assert not hasattr(parsed, "identity") and not hasattr(parsed, "username")
+    assert b"alice@corp.example" in parsed.raw    # only in the transient raw frame
+
+
+def test_eap_repr_does_not_leak_identity_bytes():
+    frame = _build_eap_frame(_EAP_BSSID, _EAP_CLIENT, code=2, identifier=1, eap_type=1,
+                             data=b"alice@corp.example", from_ds=False)
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert "alice@corp.example" not in repr(parsed)
+    assert b"alice@corp.example" in parsed.raw
+
+
+@pytest.mark.parametrize("trim", [1, 2, 3, 4, 7])
+def test_eap_truncated_frame_never_raises(trim):
+    frame = _build_eap_frame(_EAP_BSSID, _EAP_CLIENT, code=1, eap_type=25, data=b"\x00" * 4)
+    assert WlanFrameParser.parse_80211_frame(frame[:-trim], -50) is not None
+
+
+@pytest.mark.parametrize("qos, ht_control",
+                         [(False, False), (True, False), (False, True), (True, True)])
+def test_eap_header_offsets_qos_and_ht(qos, ht_control):
+    frame = _build_eap_frame(_EAP_BSSID, _EAP_CLIENT, code=1, eap_type=25,
+                             qos=qos, ht_control=ht_control)
+    assert WlanFrameParser.parse_80211_frame(frame, -50).eap_type == 25
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_eap_is_802_1x_version_agnostic(version):
+    frame = _build_eap_frame(_EAP_BSSID, _EAP_CLIENT, code=1, eap_type=13, version=version)
+    assert WlanFrameParser.parse_80211_frame(frame, -50).eap_type == 13
 
 
 def test_parser_extracts_full_eapol_fields():
@@ -183,16 +305,142 @@ def test_parser_rejects_truncated_kde():
     assert parsed.pmkid is None
 
 
+def _forge_body_len(frame: bytes, body_len: int) -> bytes:
+    b = bytearray(frame)
+    b[34:36] = struct.pack(">H", body_len)
+    return bytes(b)
+
+
+def test_forged_short_body_length_is_not_a_complete_eapol_key():
+    frame = _build_eapol_frame(
+        bssid_bytes=bytes.fromhex("AABBCCDDEEFF"),
+        client_bytes=bytes.fromhex("112233445566"),
+        key_info=0x0080 | 0x0008,
+        replay_counter=b"\x00" * 7 + b"\x01",
+        nonce=bytes(range(32)),
+        mic=bytes(range(16)),
+    )
+    parsed = WlanFrameParser.parse_80211_frame(_forge_body_len(frame, 0), -42)
+    assert parsed is not None and parsed.type == "eapol"
+    assert parsed.msg_num == 0
+    assert parsed.nonce is None and parsed.mic is None and parsed.replay_counter is None
+
+
+def test_key_data_length_exceeding_declared_body_is_rejected():
+    frame = _build_eapol_frame(
+        bssid_bytes=bytes.fromhex("AABBCCDDEEFF"),
+        client_bytes=bytes.fromhex("112233445566"),
+        key_info=0x0080 | 0x0008,
+        replay_counter=b"\x00" * 7 + b"\x01",
+        key_data=_pmkid_kde(bytes(range(16))),
+    )
+    parsed = WlanFrameParser.parse_80211_frame(_forge_body_len(frame, 95), -42)
+    assert parsed is not None and parsed.type == "eapol"
+    assert parsed.pmkid is None and parsed.msg_num == 0
+
+
+def test_well_formed_key_frame_still_parses_after_bound_check():
+    pmkid = bytes.fromhex("ad2fad48da558cdfeb19cea25e2ce5af")
+    frame = _build_eapol_frame(
+        bssid_bytes=bytes.fromhex("AABBCCDDEEFF"),
+        client_bytes=bytes.fromhex("112233445566"),
+        key_info=0x0080 | 0x0008,
+        replay_counter=b"\x00" * 7 + b"\x01",
+        key_data=_pmkid_kde(pmkid),
+    )
+    parsed = WlanFrameParser.parse_80211_frame(frame, -42)
+    assert parsed.msg_num == 1 and parsed.pmkid == pmkid
+
+
+_BSSID = bytes.fromhex("AABBCCDDEEFF")
+_CLIENT = bytes.fromhex("112233445566")
+
+
+def _hmsg(parsed, akm=None) -> HandshakeMessage:
+    return HandshakeMessage(
+        raw=parsed.raw, msg_num=parsed.msg_num,
+        replay_hex=(parsed.replay_counter or b"").hex(),
+        nonce=parsed.nonce or b"", mic=parsed.mic or b"",
+        key_data_len=parsed.key_data_len, eapol_payload=parsed.payload, akm=akm,
+    )
+
+
+def test_oversized_outer_body_length_withholds_payload():
+    frame = _build_eapol_frame(_BSSID, _CLIENT, key_info=0x0100 | 0x0008,
+                               replay_counter=b"\x00" * 7 + b"\x01",
+                               nonce=bytes(range(32)), mic=bytes(range(16)))
+    parsed = WlanFrameParser.parse_80211_frame(_forge_body_len(frame, 65535), -42)
+    assert parsed.type == "eapol" and parsed.msg_num == 4
+    assert parsed.nonce == bytes(range(32)) and parsed.mic == bytes(range(16))
+    assert parsed.payload == b""
+
+
+def test_inconsistent_body_with_complete_physical_padding_withholds_payload():
+    frame = _build_eapol_frame(_BSSID, _CLIENT, key_info=0x0100 | 0x0008,
+                               replay_counter=b"\x00" * 7 + b"\x01",
+                               nonce=bytes(range(32)), mic=bytes(range(16)))
+    padded = _forge_body_len(frame, 105) + b"\x00" * 10
+    assert WlanFrameParser.parse_80211_frame(padded, -42).payload == b""
+
+
+def test_oversized_keystone_yields_no_crackable_pair_or_hashline():
+    m1 = WlanFrameParser.parse_80211_frame(
+        _build_eapol_frame(_BSSID, _CLIENT, key_info=0x0080 | 0x0008,
+                           replay_counter=b"\x00" * 7 + b"\x05", nonce=b"\xaa" * 32), -42)
+    m4_frame = _build_eapol_frame(_BSSID, _CLIENT, key_info=0x0100 | 0x0008,
+                                  replay_counter=b"\x00" * 7 + b"\x06",
+                                  nonce=b"\x02" * 32, mic=b"\x11" * 16)
+
+    good = _make_hs(_hmsg(m1, akm=2),
+                    _hmsg(WlanFrameParser.parse_80211_frame(m4_frame, -42), akm=2))
+    assert good.is_complete and len(crackable_pairs(good)) == 1
+    assert eapol_hashlines("Net", good)
+
+    oversized = _make_hs(
+        _hmsg(m1, akm=2),
+        _hmsg(WlanFrameParser.parse_80211_frame(_forge_body_len(m4_frame, 65535), -42), akm=2))
+    assert not oversized.is_complete
+    assert crackable_pairs(oversized) == []
+    assert eapol_hashlines("Net", oversized) == []
+
+
+def test_truncated_m1_pmkid_fragment_stays_usable_without_payload():
+    pmkid = bytes.fromhex("ad2fad48da558cdfeb19cea25e2ce5af")
+    frame = _build_eapol_frame(_BSSID, _CLIENT, key_info=0x0080 | 0x0008,
+                               replay_counter=b"\x00" * 7 + b"\x01",
+                               nonce=b"\xaa" * 32, key_data=_pmkid_kde(pmkid) + b"\x00" * 18)
+    truncated = frame[:-18]
+    parsed = WlanFrameParser.parse_80211_frame(truncated, -42)
+    assert parsed.msg_num == 1 and parsed.pmkid == pmkid
+    assert parsed.nonce == b"\xaa" * 32 and parsed.payload == b""
+
+
+def test_truncated_m1_still_donates_anonce_to_a_full_m2():
+    m1 = _build_eapol_frame(_BSSID, _CLIENT, key_info=0x0080 | 0x0008,
+                            replay_counter=b"\x00" * 7 + b"\x05",
+                            nonce=b"\xaa" * 32, key_data=_pmkid_kde(bytes(range(16))) + b"\x00" * 18)
+    m1_parsed = WlanFrameParser.parse_80211_frame(m1[:-18], -42)
+    m2_parsed = WlanFrameParser.parse_80211_frame(
+        _m2(_rsn_keydata(0x02)), -42)
+    hs = _make_hs(_hmsg(m1_parsed, akm=2), _hmsg(m2_parsed, akm=2))
+    assert m1_parsed.payload == b"" and m2_parsed.payload != b""
+    assert hs.is_complete and len(crackable_pairs(hs)) == 1
+
+
 # ---- M2 client-AKM extraction ---------------------------------------------------
 
-def _rsn_keydata(akm_suite: int) -> bytes:
+def _rsn_keydata(*akm_suites: int | bytes) -> bytes:
     """A minimal RSN IE (tag 48 + header) as the supplicant ships it in M2's
-    cleartext Key Data: CCMP group + pairwise, one AKM suite."""
+    cleartext Key Data."""
+    selectors = b"".join(
+        b"\x00\x0f\xac" + bytes([akm]) if isinstance(akm, int) else akm
+        for akm in akm_suites
+    )
     body = (
         b"\x01\x00"                              # Version = 1
         + b"\x00\x0f\xac\x04"                    # Group cipher = CCMP
         + b"\x01\x00" + b"\x00\x0f\xac\x04"      # 1 pairwise = CCMP
-        + b"\x01\x00" + b"\x00\x0f\xac" + bytes([akm_suite])   # 1 AKM
+        + len(akm_suites).to_bytes(2, "little") + selectors
         + b"\x00\x00"                            # RSN capabilities
     )
     return bytes([48, len(body)]) + body
@@ -219,6 +467,53 @@ def test_parser_extracts_sae_client_akm_from_m2():
 def test_parser_extracts_psk_client_akm_from_m2():
     parsed = WlanFrameParser.parse_80211_frame(_m2(_rsn_keydata(0x02)), -42)
     assert parsed.akm == 0x02          # PSK: crackable
+
+
+@pytest.mark.parametrize(
+    "akms",
+    [
+        (0x02, 0x01),
+        (0x02, bytes.fromhex("00112299")),
+    ],
+)
+def test_parser_does_not_select_an_ambiguous_m2_akm(akms):
+    parsed = WlanFrameParser.parse_80211_frame(_m2(_rsn_keydata(*akms)), -42)
+    assert parsed.msg_num == 2
+    assert parsed.akm is None
+    assert parsed.akm_selection_rejected
+
+
+@pytest.mark.parametrize("key_data", [
+    b"\x30", b"\x30\x14\x01\x00", b"\xdd\x00\x30",
+    _rsn_keydata(bytes.fromhex("00112299")),
+    bytes.fromhex("30150100000fac040100000fac040100000fac02000000"),
+])
+def test_parser_rejects_unusable_m2_selection(key_data):
+    parsed = WlanFrameParser.parse_80211_frame(_m2(key_data), -42)
+    assert parsed.akm is None and parsed.akm_selection_rejected
+
+
+@pytest.mark.parametrize("key_data, expected", [(b"\xdd\x00", None), (_rsn_keydata(2), 2)])
+def test_parser_keeps_absent_and_valid_m2_selection_distinct(key_data, expected):
+    parsed = WlanFrameParser.parse_80211_frame(_m2(key_data), -42)
+    assert parsed.akm == expected and not parsed.akm_selection_rejected
+
+
+def test_ambiguous_m2_akm_does_not_make_a_mixed_offer_crackable():
+    m1 = WlanFrameParser.parse_80211_frame(
+        _build_eapol_frame(
+            _BSSID,
+            _CLIENT,
+            key_info=0x0080 | 0x0008,
+            replay_counter=b"\x00" * 7 + b"\x01",
+            nonce=b"\xaa" * 32,
+        ),
+        -42,
+    )
+    m2 = WlanFrameParser.parse_80211_frame(_m2(_rsn_keydata(0x02, 0x01)), -42)
+    hs = _make_hs(_hmsg(m1), _hmsg(m2, akm=m2.akm))
+    hs.akm_offered = [0x02, 0x01]
+    assert crackable_pairs(hs) == []
 
 
 def test_parser_no_client_akm_on_m1():

@@ -1,97 +1,166 @@
-"""Tests for the active-decloak attack: candidate generation and the
-frame builder. The driver loop (poll-for-ssid-flip) is covered by the
-existing WlanInterface decloak tests once the parser path lights up.
-"""
+"""Active decloak: candidate generation, the probe frame builder, and the association
+sweep's adherence to the 802.11 state machine."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
 from wifit3.campaigns.decloak import (
     SIBLING_SUFFIXES,
-    DecloakAttack,
-    build_candidates,
+    DecloakCampaign,
+    DecloakInput,
+    KnownDecloakCampaign,
+    candidates_from_sibling,
 )
+from wifit3.campaigns.auth_assoc import AssocState
 from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
+from wifit3.wlan.array import WlanArray
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.probe import probe_req
 
-
-def test_build_candidates_empty_base_returns_empty():
-    assert build_candidates("") == []
+_BSSID = "aa:bb:cc:dd:ee:ff"
 
 
-def test_build_candidates_dedups_and_orders():
-    out = build_candidates("Foo")
-    # Empty suffix must be first: covers mesh / same-SSID dual-band case.
-    assert out[0] == "Foo"
-    # No duplicates.
+def _campaign(candidates, *, target=None):
+    array = MagicMock()
+    array.access_points = {}
+    return DecloakCampaign(array, target or AccessPoint(bssid=_BSSID, channel=6),
+                           DecloakInput(candidates, use_authassoc_probe=True))
+
+
+# ----- candidate generation ----------------------------------------------------
+
+
+def test_no_sibling_ssid_yields_no_candidates():
+    assert candidates_from_sibling("") == []
+
+
+def test_candidates_dedup_and_keep_suffix_order():
+    out = candidates_from_sibling("Foo")
+    assert out[0] == "Foo"                      # empty suffix: the same-SSID dual-band case
     assert len(out) == len(set(out))
-    # Guest-like variants should appear before the niche -EXT etc.
-    guest_idx = out.index("Foo-Guest")
-    ext_idx = out.index("Foo-EXT")
-    assert guest_idx < ext_idx
-    # We get one entry per suffix (after rstrip dedup).
+    assert out.index("Foo-Guest") < out.index("Foo-EXT")
     assert len(out) <= len(SIBLING_SUFFIXES)
 
 
-def test_build_candidates_strips_trailing_whitespace():
-    """' Guest' suffix would produce 'Base Guest', fine. But if base
-    already ends in whitespace, we shouldn't propagate that into all
-    candidates and shouldn't double up."""
-    out = build_candidates("TestSSID 2.4")
-    assert "TestSSID 2.4 Guest" in out
-    assert "TestSSID 2.4-Guest" in out
+def test_candidates_replace_the_siblings_band_suffix():
+    out = candidates_from_sibling("TestSSID 2.4")
+    assert "TestSSID" in out
+    assert "TestSSID-Guest" in out
+    assert "TestSSID 2.4-2.4G" not in out
 
 
-def test_decloak_probe_req_parses_back_with_candidate_ssid():
-    """Round-trip: feed a frame we built through the same parser the
-    receive path uses. Confirms wire format is well-formed AND that the
-    SSID we asked for is what an AP would see."""
-    mock_array = MagicMock()
-    mock_array.access_points = {}
-    target = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", channel=6)
-    attack = DecloakAttack(
-        mock_array,
-        target,
-        base_ssid="Foo",
-        source_mac=bytes.fromhex("02deadbeefaa"),
-    )
+def test_candidates_drop_names_over_32_octets():
+    out = candidates_from_sibling("X" * 31)
+    assert "X" * 31 in out                      # the bare sibling still fits
+    assert all(len(c.encode("utf-8")) <= 32 for c in out)
+    assert ("X" * 31) + "-Guest" not in out
 
-    frame = probe_req(attack.bssid_bytes, attack.source_mac, "Foo-Guest")
+
+# ----- frame building ----------------------------------------------------------
+
+
+def test_probe_req_round_trips_with_the_candidate_ssid():
+    """Feed a frame we built back through the parser the receive path uses: the wire
+    format is well formed and the SSID we asked for is what an AP would see."""
+    campaign = _campaign(["Foo-Guest"])
+    frame = probe_req(campaign.bssid_bytes, campaign.source_mac, "Foo-Guest", channel=6)
     parsed = WlanFrameParser.parse_80211_frame(frame, rssi=-30)
 
     assert parsed is not None
     assert parsed.type == "probe_req"
-    assert parsed.bssid == "aa:bb:cc:dd:ee:ff"
-    assert parsed.source == "02:de:ad:be:ef:aa"
-    assert parsed.dest == "aa:bb:cc:dd:ee:ff"
+    assert parsed.bssid == _BSSID
+    assert parsed.dest == _BSSID
     assert parsed.ssid == "Foo-Guest"
 
 
-def test_decloak_probe_req_handles_empty_ssid_candidate():
-    """The '' (mesh/exact-match) suffix yields a candidate equal to the
-    base SSID, never an empty SSID IE, since build_candidates filters
-    empties. But the builder itself should still accept and round-trip
-    a long-SSID candidate."""
-    mock_array = MagicMock()
-    mock_array.access_points = {}
-    target = AccessPoint(bssid="11:22:33:44:55:66", channel=44)
-    attack = DecloakAttack(
-        mock_array,
-        target,
-        base_ssid="X" * 32,
-        source_mac=bytes.fromhex("020000000001"),
-    )
-    frame = probe_req(attack.bssid_bytes, attack.source_mac, "X" * 32)
+def test_probe_req_round_trips_a_full_length_ssid():
+    campaign = _campaign(["X" * 32],
+                         target=AccessPoint(bssid="11:22:33:44:55:66", channel=44))
+    frame = probe_req(campaign.bssid_bytes, campaign.source_mac, "X" * 32, channel=44)
     parsed = WlanFrameParser.parse_80211_frame(frame, rssi=-30)
-    assert parsed is not None
-    assert parsed.ssid == "X" * 32
+    assert parsed is not None and parsed.ssid == "X" * 32
 
 
-def test_decloak_attack_registers_forged_mac():
-    """The attack's source MAC must be registered via array.register_forged_mac so the
-    EAPOL/handshake/client paths don't treat it as a real STA."""
-    mock_array = MagicMock()
-    target = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", channel=6)
-    attack = DecloakAttack(mock_array, target, base_ssid="Foo")
-    mock_array.register_forged_mac.assert_called_once_with(attack.source_mac)
+async def test_teardown_unregisters_the_forged_mac():
+    campaign = _campaign(["Foo"])
+    await campaign.teardown()
+    campaign.array.unregister_own_mac.assert_called_once_with(campaign.source_mac)
+
+
+# ----- association sweep -------------------------------------------------------
+
+
+class _FakeAssociation:
+    """Records the auth/assoc calls a sweep makes, and replays scripted verdicts."""
+
+    def __init__(self, verdicts: dict, *, deauth_after: str = ""):
+        self._verdicts = verdicts
+        self._deauth_after = deauth_after
+        self.state = AssocState.AUTHENTICATED   # _claim_each's caller authenticates first
+        self.calls: list[str] = []
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+    async def authenticate(self) -> bool:
+        self.calls.append("auth")
+        self.state = AssocState.AUTHENTICATED
+        return True
+
+    async def associate_as(self, ssid: str):
+        self.calls.append(f"assoc:{ssid}")
+        status = self._verdicts.get(ssid)
+        if status == 0:
+            self.state = AssocState.ASSOCIATED
+        elif ssid == self._deauth_after:
+            self.state = AssocState.UNAUTHENTICATED     # the AP deauthed us
+        return status
+
+
+async def test_sweep_authenticates_once_for_every_candidate():
+    campaign = _campaign(["A", "B", "C"])
+    association = _FakeAssociation({"C": 0})
+    found = await campaign._claim_each(association)
+
+    assert found == "C"
+    assert association.calls == ["assoc:A", "assoc:B", "assoc:C"]   # no re-auth
+    campaign.array.decloak.assert_called_once_with(campaign.ap, "C", "assoc")
+
+
+async def test_sweep_reauthenticates_only_after_a_deauth():
+    campaign = _campaign(["A", "B"])
+    association = _FakeAssociation({}, deauth_after="A")
+    found = await campaign._claim_each(association)
+
+    assert found is None
+    assert association.calls == ["assoc:A", "auth", "assoc:B"]
+
+
+async def test_sweep_stops_when_asked():
+    campaign = _campaign(["A", "B"])
+    campaign.stopped = True
+    association = _FakeAssociation({"B": 0})
+    assert await campaign._claim_each(association) is None
+    assert association.calls == []
+
+
+def test_known_decloak_shows_only_for_a_hidden_ap_with_a_remembered_ssid(monkeypatch):
+    monkeypatch.setattr(Config, "decloaked_ssids", {_BSSID: "MyRouter-Guest"})
+    hidden = AccessPoint(bssid=_BSSID, channel=6)
+    assert KnownDecloakCampaign.visible(hidden)
+    assert KnownDecloakCampaign.button_label(hidden) == "Decloak MyRouter-Guest"
+
+    assert not KnownDecloakCampaign.visible(AccessPoint(bssid=_BSSID, ssid="MyRouter-Guest"))
+    assert not KnownDecloakCampaign.visible(AccessPoint(bssid="aa:bb:cc:dd:ee:01", channel=6))
+
+
+def test_known_decloak_sends_only_the_remembered_ssid_with_every_method(monkeypatch):
+    monkeypatch.setattr(Config, "decloaked_ssids", {_BSSID: "MyRouter-Guest"})
+    campaign = KnownDecloakCampaign(WlanArray(), AccessPoint(bssid=_BSSID, channel=6))
+    assert campaign.candidate_ssids == ["MyRouter-Guest"]
+    assert campaign.use_directed_probe and campaign.use_broadcast_probe
+    assert campaign.use_authassoc_probe

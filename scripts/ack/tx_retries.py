@@ -105,7 +105,9 @@ async def run_scenario(injector, sniffer, counter: CopyCounter, *, active_monito
                        target: bytes, is_bogus: bool, src: bytes, count: int, interval: float) -> None:
     drv = injector.driver
     if drv.FAKE_MAC == FakeMacSupport.SPOOFABLE:   # only spoofable cards have enter/exit_active_monitor
-        await (drv.enter_active_monitor(src) if active_monitor else drv.exit_active_monitor())
+        # Peer bssid = the target we inject at, matching what campaigns lease with.
+        await (drv.enter_active_monitor(src, target) if active_monitor
+               else drv.exit_active_monitor())
     await asyncio.sleep(0.3)
 
     sniffer.driver._our_tx_macs.add(src)          # the sniffer's ACK tap counts ACKs whose RA==src

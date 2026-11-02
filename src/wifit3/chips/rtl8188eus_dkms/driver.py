@@ -22,11 +22,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from importlib import resources
 from typing import Callable, ClassVar, List, Optional
 
 import usb.core
+import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
@@ -63,18 +63,23 @@ class Rtl8188eusDkmsDriver(Driver):
         self._channel: Optional[int] = None
         self._tx_power = None              # path-A efuse TX-power info (TxPwr2G)
         self._board = None                 # efuse board options (BoardOptions; set in connect)
+        self._i_cut_series = False         # IS_VENDOR_8188E_I_CUT_SERIES (set in connect)
+        self._cut_version = phy_cond.ODM_CUT_A   # dm->cut_version (set in connect)
+        self._ext_lna = False              # dm->ext_lna (set in connect)
+        self._type_glna = 0                # dm->type_glna (set in connect)
+        self._txpowertrack_icut = False    # I-cut power-track tables selected (set in connect)
         self._eeprom_thermal = 0x18        # efuse thermal base (set from efuse in connect)
         self._dm_seed = None               # dm.DmSeed carried from InitHalDm to the watchdog
+        self._pt_state: Optional[powertrack.PowerTrackState] = None   # set in connect
+        self._watchdog_state: Optional[dig.WatchdogState] = None     # set in connect
         self._rf_chnl: int = 0            # RfRegChnlVal[A], stateful across set_channel
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
-        # Runtime DIG/AGC watchdog (M12). Toggleable so a fixed-channel A/B can isolate its
-        # effect on per-AP reception (scan_hw.py --no-dig).
-        self.enable_dig: bool = True
         self._dig_task: Optional["asyncio.Task"] = None
         # Serializes EP0 control batches (DIG watchdog vs set_channel); RX uses bulk-IN.
         self._io_lock = asyncio.Lock()
+
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Rtl8188eusDkmsDriver":
@@ -89,7 +94,7 @@ class Rtl8188eusDkmsDriver(Driver):
         self._on_lost = cb
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
-        """Wrap the blocking bring-up so a USB fault (e.g. the intermittent EFUSE-read ENOENT)
+        """Wrap the blocking bring-up so a USB fault (e.g. an unplug mid bring-up)
         surfaces as a BringUpError instead of a raw USBError that slips past
         WlanInterface.connect's handler as a hard crash."""
         try:
@@ -102,20 +107,24 @@ class Rtl8188eusDkmsDriver(Driver):
     async def _bringup(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()
 
+        # Hold interface 0 for the session: unclaimed, WinUSB claims and releases it around every
+        # EP0 transfer, and that churn intermittently fails with "Entity not found".
+        await loop.run_in_executor(None, usb.util.claim_interface, self.transport.dev, 0)
+
         if progress_cb:
             progress_cb(0.0, "Power-on + reading EFUSE / chip parameters")
         params = await loop.run_in_executor(None, self._power_on_and_read_efuse)
         self._mac_bytes = params.mac_address
         self.mac_address = params.mac_address.hex(":") if params.mac_address else None
         self._tx_power = params.tx_power
-        # Thermal base for the power-track watchdog (efuse EEPROM_THERMAL_METER_88E 0xBA;
-        # the 0xff/autoload-fail default is EEPROM_Default_ThermalMeter_88E 0x18).
-        raw_thermal = params.efuse_map[0xBA]
-        self._eeprom_thermal = 0x18 if raw_thermal == 0xFF else raw_thermal
+        self._eeprom_thermal = params.thermal_meter
         self._board = params.board
-        logger.debug("RTL8188EUS efuse: crystal_cap=0x%02x mac=%s",
-                    params.crystal_cap,
-                    params.mac_address.hex(":") if params.mac_address else "<none>")
+        self._cut_version = phy_cond.odm_cut_version(self._i_cut_series)
+        self._ext_lna = params.board.external_lna_2g       # hal_dm.c:228-230
+        self._type_glna = params.board.type_glna           # hal_dm.c:260
+        logger.debug("RTL8188EUS efuse: autoload=%s crystal_cap=0x%02x mac=%s plan=0x%02x",
+                    "failed" if params.autoload_failed else "ok", params.crystal_cap,
+                    params.mac_address.hex(":"), params.channel_plan)
         # Board-option config log (efuse 0xCA). The reference card is internal PA+LNA;
         # an external-PA/LNA burn drives PHY_SetRFEReg_8188E + the board-gated init-table
         # rows and is untested on hardware (only the internal card is pcap-gated).
@@ -159,11 +168,7 @@ class Rtl8188eusDkmsDriver(Driver):
 
         # M12: the runtime phydm DIG/AGC watchdog — adapt the M7 IGI seed to the live
         # false-alarm rate every ~2 s. RX-side only (reads FA counters, writes RX gain).
-        dig_enabled = self.enable_dig and os.environ.get("WIFIT3_RTL8188_DIG") != "off"
-        if dig_enabled:
-            self._dig_task = loop.create_task(self._dig_watchdog())
-        else:
-            logger.info("RTL8188EUS DM watchdog disabled (gain frozen at the InitHalDm seed)")
+        self._dig_task = loop.create_task(self._dig_watchdog())
 
         if progress_cb:
             progress_cb(1.0, f"Tuned to channel {_SCAN_START_CHANNEL} @ 20 MHz")
@@ -171,15 +176,13 @@ class Rtl8188eusDkmsDriver(Driver):
 
     async def _dig_watchdog(self) -> None:
         """Periodic no-link phydm DM watchdog. Serialized with set_channel via _io_lock. The DM
-        carries software state (IGI + CCK-PD + thermal) across ticks, seeded from the values
-        InitHalDm read — carried in self._dm_seed, NOT re-read (the vendor does not re-read at
-        tick-start, so neither do we: no extra wire ops)."""
+        carries software state (IGI + CCK-PD + thermal) across ticks, seeded in _phy_config from
+        the values InitHalDm read, NOT re-read (the vendor does not re-read at tick-start, so
+        neither do we: no extra wire ops). set_channel shares the same WatchdogState."""
         loop = asyncio.get_running_loop()
         try:
-            seed = self._dm_seed
-            state = dig.seed_state(seed.igi, seed.cck_cca)
-            pt_state = powertrack.seed_state(
-                seed.ofdm_swing_raw, seed.cck_swing_raw, self._eeprom_thermal)
+            state = self._watchdog_state
+            pt_state = self._pt_state
             while True:
                 await asyncio.sleep(dig.WATCHDOG_PERIOD_S)
                 try:
@@ -187,16 +190,14 @@ class Rtl8188eusDkmsDriver(Driver):
                         # rtw_dynamic_chk_wk_hdl runs the silent-reset poll then the phydm
                         # watchdog in one 2 s tick (rtw_cmd.c:2737).
                         await loop.run_in_executor(None, sreset.status_check, self.transport)
+                        pt_state.channel = self._channel or 1
                         tick = await loop.run_in_executor(
                             None, dig.watchdog_tick, self.transport, state, pt_state)
                 except asyncio.CancelledError:
                     raise
                 except Exception:  # noqa: BLE001
-                    # A per-tick fault must skip this tick, NOT end the watchdog. The
-                    # deferred IQK/LCK recalibration raises NotImplementedError once the
-                    # chip heats past |Δthermal| >= 8 C; ending the loop there freezes the
-                    # gain while the RF keeps drifting, collapsing RX sensitivity over a
-                    # long run. Keep DIG/CCK-PD adapting; only the deferred work is skipped.
+                    # A transport fault must skip this tick, NOT end the watchdog: a
+                    # stopped loop freezes the gain while the RF drifts.
                     logger.debug("RTL8188EUS DIG: tick skipped on fault", exc_info=True)
                     continue
                 logger.debug("RTL8188EUS DIG: IGI=0x%02x fa=%d (ofdm=%d cck=%d)",
@@ -208,12 +209,14 @@ class Rtl8188eusDkmsDriver(Driver):
 
     # --- bring-up (blocking; run in an executor) ---------------------------
     def _power_on_and_read_efuse(self):
-        """Vendor probe order: power-on, then the IOL efuse read (crystal_cap / MAC /
-        TX-power), then the MISC01 queue/page setup."""
+        """Vendor probe order: the efuse map read (which powers the MAC on when autoload is OK),
+        then hal_init's power-on stage and the MISC01 queue/page setup."""
         t = self.transport
-        efuse.read_adapter_info(t)          # probe: chip-version + autoload + efuse-access ON
-        pwrseq.power_on(t)
-        params = efuse.read_chip_params(t)
+        info = efuse.read_adapter_info(t)
+        self._i_cut_series = info.i_cut_series
+        params = efuse.read_chip_params(t, info.autoload_failed)
+        if info.autoload_failed:                    # else bMacPwrCtrlOn: no-op [SRC] usb_halinit.c:132
+            pwrseq.power_on(t)
         mac.init_misc01(t)
         return params
 
@@ -225,10 +228,11 @@ class Rtl8188eusDkmsDriver(Driver):
         # phydm board/LNA-type driver words gate the board-conditional init-table rows
         # (internal PA+LNA -> the reference walk). Derived from efuse 0xCA.
         dw = phy_cond.build_driver_words(
-            params.board.external_lna_2g, params.board.external_pa_2g, params.board.type_glna)
+            params.board.external_lna_2g, params.board.external_pa_2g, params.board.type_glna,
+            phy_cond.odm_cut_version(self._i_cut_series))
         mac.phy_mac_config(t, dw)                               # M2a
         bb.phy_bb_config(t, crystal_cap=params.crystal_cap, driver_words=dw)   # M2b
-        rf.phy_rf_config(t, dw)                                 # M2c
+        self._txpowertrack_icut = rf.phy_rf_config(t, dw)     # M2c
         efuse.iol_efuse_patch(t)                                # M2d
         mac.init_tx_buffer_boundary(t)
         mac.init_llt(t)                                         # M2e
@@ -236,10 +240,14 @@ class Rtl8188eusDkmsDriver(Driver):
         self._rf_chnl = rf.read_rf_chnl_val(t)[0]              # M4a (RfRegChnlVal base)
         bb.bb_turn_on_block(t)                                  # M4b
         mac.invalidate_cam_all(t)                               # M4c
-        txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL)  # M5
+        txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL, 0, 0)  # M5
         mac.init_misc11_tail(t)                                 # M6
         bb.phy_set_rfe_reg(t, params.board)                    # PHY_SetRFEReg_8188E (MISC11 tail)
         self._dm_seed = dm.init_hal_dm(t)                       # M7 — and carry the DM seed
+        self._watchdog_state = dig.seed_state(self._dm_seed.igi, self._dm_seed.cck_cca)
+        self._pt_state = powertrack.seed_state(
+            self._dm_seed.ofdm_swing_raw, self._dm_seed.cck_swing_raw, params.thermal_meter,
+            params.tx_power, self._txpowertrack_icut)
         dm.init_hal_tail(t)                                     # M8 (power-track + LCK)
         mac.set_macid(t, self._mac_bytes or b"\x00" * 6)      # HW_VAR_MAC_ADDR (airmon)
         # monitor opmode is entered in connect() AFTER the channel re-tune (wire order).
@@ -251,7 +259,7 @@ class Rtl8188eusDkmsDriver(Driver):
         cb = self._rx_cb
         if cb is None and not self._ack_detect_on:
             return
-        for frame, rssi in iter_frames(buf):
+        for frame, rssi in iter_frames(buf, self._cut_version, self._ext_lna, self._type_glna):
             # A 10-byte 0xD4 frame is an ACK (the parser drops control frames); the base tallies
             # it iff the ACK tap is armed and RA=frame[4:10] is a MAC we inject as.
             if len(frame) == 10 and frame[0] == 0xD4:
@@ -282,7 +290,9 @@ class Rtl8188eusDkmsDriver(Driver):
         loop = asyncio.get_running_loop()
         async with self._io_lock:
             self._rf_chnl = await loop.run_in_executor(
-                None, chan.set_channel, self.transport, self._tx_power, self._rf_chnl, channel)
+                None, chan.set_channel, self.transport, self._tx_power, self._rf_chnl, channel,
+                self._i_cut_series, self._pt_state.remnant_cck_swing_idx,
+                self._pt_state.remnant_ofdm_swing_idx, self._watchdog_state)
         self._channel = channel
         return True
 

@@ -36,7 +36,7 @@ sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
 from wifit3.chips.rtl8188eus_dkms import (
-    bb, chan, dig, dm, efuse, firmware, mac, monitor, powertrack, pwrseq, rf, sreset,
+    bb, chan, dig, dm, efuse, firmware, mac, monitor, phy_cond, powertrack, pwrseq, rf, sreset,
     txpower,
 )
 from wifit3.chips.rtl8188eus_dkms import constants as C
@@ -47,8 +47,6 @@ DEFAULT_CAP = REPO / "driver_captures" / "captures_8188eu" / "capture-1.pcap"
 REG_APS_FSMCO_B2 = 0x0006   # first power-seq op (CARDEMU_TO_ACT step-1 poll) — the init anchor
 REG_SYS_CFG = 0x00F0        # 32-bit SYS_CFG read; used to anchor the walk (see _is_syscfg_read)
 REG_FA_HOLD = 0x0C00        # phydm FA-counter hold — opens the watchdog slot of a tick
-EEPROM_THERMAL_METER_88E = 0xBA   # efuse offset of the thermal-meter base
-EEPROM_DEFAULT_THERMAL_88E = 0x18  # fallback when the efuse byte is 0xff (autoload fail)
 
 # Operational-dispatch opener signatures (each a unique first op of a vendor handler):
 _OP_RX_BAR = C.REG_RXFLTMAP1            # 0x06a2 R: init_hw_mlme_ext HW_VAR_ENABLE_RX_BAR
@@ -92,15 +90,14 @@ class Walk:
         self.i += 1
 
 
-def _seed_dm_state(dm_seed, params):
+def _seed_dm_state(dm_seed, params, txpowertrack_icut):
     """Build the carried DM state from the seed InitHalDm returned — running the *real*
     seeding handlers (dig.seed_state / powertrack.seed_state), the same ones the driver's
     _dig_watchdog uses. No modeling: the gate exercises the actual code path, and because the
     seed is carried (not re-read), the watchdog start emits no extra wire ops."""
-    raw = params.efuse_map[EEPROM_THERMAL_METER_88E]
-    eeprom_thermal = EEPROM_DEFAULT_THERMAL_88E if raw == 0xFF else raw
     state = dig.seed_state(dm_seed.igi, dm_seed.cck_cca)
-    pt = powertrack.seed_state(dm_seed.ofdm_swing_raw, dm_seed.cck_swing_raw, eeprom_thermal)
+    pt = powertrack.seed_state(dm_seed.ofdm_swing_raw, dm_seed.cck_swing_raw, params.thermal_meter,
+                               params.tx_power, txpowertrack_icut)
     return state, pt
 
 
@@ -108,15 +105,20 @@ def _walk_init(w: Walk, out: dict) -> None:
     """The deterministic bring-up, in driver source order, threaded through one cursor.
     No re-anchoring: each call consumes the next span of the same wire. Mirrors
     driver.py connect() + _phy_config()."""
-    w.run(lambda t: efuse.read_adapter_info(t), "adapter-info")   # probe (pre power-on)
-    w.run(lambda t: pwrseq.power_on(t), "power-on")
-    params, _ = w.run(lambda t: efuse.read_chip_params(t), "efuse")
+    info, _ = w.run(lambda t: efuse.read_adapter_info(t), "adapter-info")
+    params, _ = w.run(lambda t: efuse.read_chip_params(t, info.autoload_failed), "efuse")
+    if info.autoload_failed:
+        w.run(lambda t: pwrseq.power_on(t), "power-on")
     out["params"] = params
+    out["i_cut_series"] = info.i_cut_series
     w.run(lambda t: mac.init_misc01(t), "misc01")
     w.run(lambda t: firmware.download_firmware(t, firmware.load_firmware_blob()), "firmware")
-    w.run(lambda t: mac.phy_mac_config(t), "mac-cfg")
-    w.run(lambda t: bb.phy_bb_config(t, crystal_cap=params.crystal_cap), "bb-cfg")
-    w.run(lambda t: rf.phy_rf_config(t), "rf-cfg")
+    dw = phy_cond.build_driver_words(
+        params.board.external_lna_2g, params.board.external_pa_2g, params.board.type_glna,
+        phy_cond.odm_cut_version(info.i_cut_series))
+    w.run(lambda t: mac.phy_mac_config(t, dw), "mac-cfg")
+    w.run(lambda t: bb.phy_bb_config(t, crystal_cap=params.crystal_cap, driver_words=dw), "bb-cfg")
+    out["txpowertrack_icut"], _ = w.run(lambda t: rf.phy_rf_config(t, dw), "rf-cfg")
     w.run(lambda t: efuse.iol_efuse_patch(t), "efuse-patch")
     w.run(lambda t: mac.init_tx_buffer_boundary(t), "tx-buf")
     w.run(lambda t: mac.init_llt(t), "llt")
@@ -125,7 +127,7 @@ def _walk_init(w: Walk, out: dict) -> None:
     out["rf_chnl"] = rf_chnl_pair[0]                          # RfRegChnlVal[A], tune base
     w.run(lambda t: bb.bb_turn_on_block(t), "bb-on")
     w.run(lambda t: mac.invalidate_cam_all(t), "cam-clear")
-    w.run(lambda t: txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL), "tx-power")
+    w.run(lambda t: txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL, 0, 0), "tx-power")
     w.run(lambda t: mac.init_misc11_tail(t), "misc11")
     w.run(lambda t: bb.phy_set_rfe_reg(t, params.board), "rfe")  # no-op on internal board
     (dm_seed, _) = w.run(lambda t: dm.init_hal_dm(t), "init-hal-dm")
@@ -145,7 +147,8 @@ def _peek_channel(ops: list[dict], i: int, window: int = 80) -> int | None:
     return None
 
 
-def _walk_operational(w: Walk, params, rf_chnl: int, state, pt) -> tuple[list[int], dict | None]:
+def _walk_operational(w: Walk, params, rf_chnl: int, state, pt,
+                      i_cut_series: bool) -> tuple[list[int], dict | None]:
     """Dispatch each operational burst to the real vendor handler at the cursor, carrying
     channel + DM state across fires. The first op that is neither a wired handler nor a named
     waiver STOPS the walk and is returned as the frontier."""
@@ -162,7 +165,7 @@ def _walk_operational(w: Walk, params, rf_chnl: int, state, pt) -> tuple[list[in
 
         addr = o.get("addr")
 
-        # aireplay's injection makes the firmware emit TX reports, so the RA TX-report-timing
+        # aireplay's injection makes the chip emit TX reports, so the driver RA's TX-report-timing
         # write (REG_TX_RPT_TIME) interleaves the injected frames. It is TX-driven (the no-link
         # RX ticks never touch it) [SRC] hal8188erateadaptive.c:1206 odm_ra_set_tx_rpt_time —
         # the same external-tool activity as the bulk frames.
@@ -216,9 +219,13 @@ def _walk_operational(w: Walk, params, rf_chnl: int, state, pt) -> tuple[list[in
             try:
                 rf_chnl, _ = w.run(
                     lambda t, ch=channel, rc=rf_chnl:
-                        chan.set_channel(t, params.tx_power, rc, ch), f"chan{channel}")
+                        chan.set_channel(t, params.tx_power, rc, ch, i_cut_series,
+                                         pt.remnant_cck_swing_idx, pt.remnant_ofdm_swing_idx,
+                                         state),
+                    f"chan{channel}")
             except Exception as e:  # noqa: BLE001
                 return ticks, _frontier(w, o, f"chan{channel}", e)
+            pt.channel = channel                              # driver: pt_state.channel per tick
             continue
 
         break  # frontier: unknown opener
@@ -276,8 +283,9 @@ def run(cap: str | None = None) -> int:
     # 2) OPERATIONAL — dispatch each burst to a real handler, carrying state. NOTHING beyond
     #    the named waivers is pre-allowed: the first op that is neither a wired handler nor a
     #    waiver STOPS the walk and is reported as the frontier.
-    state, pt = _seed_dm_state(out["dm_seed"], params)
-    ticks, frontier = _walk_operational(w, params, out["rf_chnl"], state, pt)
+    state, pt = _seed_dm_state(out["dm_seed"], params, out["txpowertrack_icut"])
+    ticks, frontier = _walk_operational(w, params, out["rf_chnl"], state, pt,
+                                        out["i_cut_series"])
 
     # 3) Report — fail-closed. PASS only if the whole stream is matched-or-waived.
     print(f"  operational: dispatched {len(ticks)} dynamic-check ticks "

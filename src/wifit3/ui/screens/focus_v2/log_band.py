@@ -17,7 +17,9 @@ class LogBand(Vertical):
         self._initial = lines
 
     def compose(self) -> ComposeResult:
-        yield SelectableRichLog(id="log-rich", markup=True, highlight=False, wrap=True)
+        yield SelectableRichLog(
+            id="log-rich", markup=True, highlight=False, wrap=True, max_lines=500
+        )
 
     def on_mount(self) -> None:
         self.border_title = "LOG"

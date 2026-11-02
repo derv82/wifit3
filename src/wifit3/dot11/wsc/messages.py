@@ -121,6 +121,10 @@ WFA_VENDOR_ID = b"\x00\x37\x2a"
 WFA_VENDOR_TYPE_SIMPLECONFIG = b"\x00\x00\x00\x01"
 
 WPS_VERSION = 0x10
+WSC_VERSION2 = 0x20            # WSC 2.0; rides in the WFA Vendor Extension
+RF_BAND_24GHZ = 0x01
+RF_BAND_5GHZ = 0x02
+WFA_SUBELEM_VERSION2 = 0x00
 REGISTRAR_IDENTITY = b"WFA-SimpleConfig-Registrar-1-0"
 ENROLLEE_IDENTITY = b"WFA-SimpleConfig-Enrollee-1-0"
 
@@ -134,9 +138,8 @@ _DEVICE_NAME = b"DESKTOP-7H2K9P3"   # Windows-default-style hostname
 _AUTH_TYPE_FLAGS = 0x003F          # WPS_AUTH_TYPES (open|wpapsk|shared|wpa|wpa2|wpa2psk)
 _ENCR_TYPE_FLAGS = 0x000F          # WPS_ENCR_TYPES (none|wep|tkip|aes)
 _CONN_TYPE_ESS = 0x01
-_CONFIG_METHODS = 0x0084           # Label | Display
+_CONFIG_METHODS = 0x008C           # Label | Display | PushButton
 _PRIMARY_DEV_TYPE = bytes.fromhex("00010050f2040001")   # Computer / WFA / PC
-_RF_BANDS = 0x01                   # 2.4 GHz
 _OS_VERSION = 0x80000000
 
 
@@ -186,12 +189,26 @@ def _device_attrs() -> bytes:
 # ---------------------------------------------------------------------------
 # Registrar message builders: return WSC attribute bytes (Version TLV onward)
 # ---------------------------------------------------------------------------
+def rf_band_for_channel(channel: int) -> int:
+    """The ATTR_RF_BANDS value for an 802.11 channel number."""
+    return RF_BAND_5GHZ if channel > 14 else RF_BAND_24GHZ
+
+
+def wfa_version2_ext(wsc_2_0: bool) -> bytes:
+    """The WFA Vendor Extension that identifies the sender as a WSC 2.0 peer."""
+    if not wsc_2_0:
+        return b""
+    return tlv(ATTR_VENDOR_EXTENSION,
+               WFA_VENDOR_ID + bytes([WFA_SUBELEM_VERSION2, 1, WSC_VERSION2]))
+
+
 def _version_and_type(msg_type: int) -> bytes:
     return tlv_u8(ATTR_VERSION, WPS_VERSION) + tlv_u8(ATTR_MSG_TYPE, msg_type)
 
 
 def build_m2(nonce_e: bytes, nonce_r: bytes, uuid_r: bytes, pkr: bytes,
-    authkey: bytes, m1_attrs: bytes, dev_pw_id: int = 0x0000,
+    authkey: bytes, m1_attrs: bytes, rf_bands: int, wsc_2_0: bool,
+    dev_pw_id: int = 0x0000,
 ) -> bytes:
     """M2 (hostapd ``wps_build_m2`` attribute order). Authenticator over M1||M2*."""
     body = (
@@ -205,11 +222,12 @@ def build_m2(nonce_e: bytes, nonce_r: bytes, uuid_r: bytes, pkr: bytes,
         + tlv_u8(ATTR_CONN_TYPE_FLAGS, _CONN_TYPE_ESS)
         + tlv_u16(ATTR_CONFIG_METHODS, _CONFIG_METHODS)
         + _device_attrs()
-        + tlv_u8(ATTR_RF_BANDS, _RF_BANDS)
+        + tlv_u8(ATTR_RF_BANDS, rf_bands)
         + tlv_u16(ATTR_ASSOC_STATE, 0x0000)
         + tlv_u16(ATTR_CONFIG_ERROR, 0x0000)
         + tlv_u16(ATTR_DEV_PASSWORD_ID, dev_pw_id)
         + tlv(ATTR_OS_VERSION, struct.pack(">I", _OS_VERSION))
+        + wfa_version2_ext(wsc_2_0)
     )
     auth = wc.authenticator(authkey, m1_attrs, body)
     return body + tlv(ATTR_AUTHENTICATOR, auth)
@@ -225,6 +243,7 @@ def _encr_settings(authkey: bytes, keywrapkey: bytes, inner: bytes) -> bytes:
 
 def build_m4(nonce_e: bytes, r_s1: bytes, r_s2: bytes, psk1: bytes, psk2: bytes,
     pke: bytes, pkr: bytes, authkey: bytes, keywrapkey: bytes, m3_attrs: bytes,
+    wsc_2_0: bool,
 ) -> bytes:
     """M4: commits R-Hash1=H(R-S1||PSK1||..), R-Hash2=H(R-S2||PSK2||..) and
     reveals R-S1 in the Encrypted Settings. Authenticator over M3||M4*."""
@@ -236,17 +255,20 @@ def build_m4(nonce_e: bytes, r_s1: bytes, r_s2: bytes, psk1: bytes, psk2: bytes,
         + tlv(ATTR_R_HASH1, r_hash1)
         + tlv(ATTR_R_HASH2, r_hash2)
         + tlv(ATTR_ENCR_SETTINGS, _encr_settings(authkey, keywrapkey, tlv(ATTR_R_SNONCE1, r_s1)))
+        + wfa_version2_ext(wsc_2_0)
     )
     auth = wc.authenticator(authkey, m3_attrs, body)
     return body + tlv(ATTR_AUTHENTICATOR, auth)
 
 
-def build_m6(nonce_e: bytes, r_s2: bytes, authkey: bytes, keywrapkey: bytes, m5_attrs: bytes) -> bytes:
+def build_m6(nonce_e: bytes, r_s2: bytes, authkey: bytes, keywrapkey: bytes, m5_attrs: bytes,
+             wsc_2_0: bool) -> bytes:
     """M6: ENC{R-S2}. Authenticator over M5||M6*."""
     body = (
         _version_and_type(WPS_M6)
         + tlv(ATTR_ENROLLEE_NONCE, nonce_e)
         + tlv(ATTR_ENCR_SETTINGS, _encr_settings(authkey, keywrapkey, tlv(ATTR_R_SNONCE2, r_s2)))
+        + wfa_version2_ext(wsc_2_0)
     )
     auth = wc.authenticator(authkey, m5_attrs, body)
     return body + tlv(ATTR_AUTHENTICATOR, auth)
@@ -265,8 +287,8 @@ def build_wsc_nack(nonce_e: bytes, nonce_r: bytes, config_error: int = 0) -> byt
 # Enrollee message builders (PBC capture: we're the Enrollee; AP = Registrar).
 # Mirror hostapd wps_build_m1/m3/m5/m7. PSK1/PSK2 come from PBC_PASSWORD.
 # ---------------------------------------------------------------------------
-def build_m1(uuid_e: bytes, mac_e: bytes, nonce_e: bytes, pke: bytes,
-             dev_pw_id: int = DEV_PW_PUSHBUTTON) -> bytes:
+def build_m1(uuid_e: bytes, mac_e: bytes, nonce_e: bytes, pke: bytes, rf_bands: int,
+             wsc_2_0: bool, dev_pw_id: int = DEV_PW_PUSHBUTTON) -> bytes:
     """M1 (hostapd wps_build_m1 order). No Authenticator: keys don't exist yet."""
     return (
         _version_and_type(WPS_M1)
@@ -280,11 +302,12 @@ def build_m1(uuid_e: bytes, mac_e: bytes, nonce_e: bytes, pke: bytes,
         + tlv_u16(ATTR_CONFIG_METHODS, _CONFIG_METHODS)
         + tlv_u8(ATTR_WPS_STATE, 1)                # 1 = unconfigured
         + _device_attrs()
-        + tlv_u8(ATTR_RF_BANDS, _RF_BANDS)
+        + tlv_u8(ATTR_RF_BANDS, rf_bands)
         + tlv_u16(ATTR_ASSOC_STATE, 0x0000)
         + tlv_u16(ATTR_DEV_PASSWORD_ID, dev_pw_id)
         + tlv_u16(ATTR_CONFIG_ERROR, 0x0000)
         + tlv(ATTR_OS_VERSION, struct.pack(">I", _OS_VERSION))
+        + wfa_version2_ext(wsc_2_0)
     )
 
 

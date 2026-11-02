@@ -61,6 +61,7 @@ We only have the rfe=1 ALFA capture, so non-rfe-1 branches can't be pcap-gated �
   disabled) — N/A here.
 
 ## Known Problems
+- **Fixed: intermittent `Entity not found` during the EFUSE read (Windows).** Unclaimed, libusb/WinUSB claims and releases interface 0 around every control transfer, and that churn sometimes fails with `[170] The requested resource is in use`. `connect()` now claims it up front. One Windows host: 12/150 bring-ups failed unclaimed, 0/150 claimed.
 - **Card can wedge (radio silence) when it crosses 5 GHz → a 2.4 GHz channel and parks there.** Hopping hides it (a re-tune un-wedges); only a static dwell exposes it. Port-vs-silicon is unresolved — a fresh-replug kernel card didn't reproduce it, a cycled one did (Debug log). Graded low.
 - 2.4 GHz RX under sustained hopping is jittery — one soak saw a 60 s dropout, a later one didn't.
 - 20 MHz primary only (40/80 out of scope); the USB3 firmware/burst branch is unported (see [EFUSE variants → Untested variants](#untested-variants-ported-from-c-hardware-unverified-residual-gaps)).

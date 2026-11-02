@@ -50,21 +50,23 @@
 | Chipset | Bands | Cards (Make + Model) |
 |---|---|---|
 | Atheros AR9271 | 2.4 GHz | ALFA AWUS036**NHA**, TP-Link TL-WN722N V1 |
+| MediaTek MT7601U | 2.4 GHz | Generic unbranded "nano" dongles |
 | MediaTek MT7610U | 2.4 / 5 GHz | ALFA AWUS036**ACHM**, Panda PAU0B |
 | MediaTek MT7612U | 2.4 / 5 GHz | ALFA AWUS036**ACM** |
-| MediaTek MT7921AU | 2.4 / 5 GHz | ALFA AWUS036**AXML**, Panda PAU0F |
+| MediaTek MT7921AU | 2.4 / 5 GHz | ALFA AWUS036**AXM[L]**, Panda PAU0F |
 | MediaTek MT7925U | 2.4 / 5 GHz | Netgear A9000 |
 | Realtek RTL8812AU | 2.4 / 5 GHz | ALFA AWUS036**ACH** |
-| Realtek RTL8814AU | 2.4 / 5 GHz | ALFA AWUS1900 |
+| Realtek RTL8814AU | 2.4 / 5 GHz | ALFA AWUS1900, ASUS USB-AC68 |
 | Realtek RTL8821AU | 2.4 / 5 GHz | ALFA AWUS036**ACS**, TP-Link Archer T2U Plus/Nano |
-| Realtek RTL8821CU | 2.4 / 5 GHz | Auscoumer 600 Mbps |
+| Realtek RTL8821CU | 2.4 / 5 GHz | Auscoumer 600 Mbps, Mercusys MU6H |
 | Realtek RTL8922AU | 2.4 / 5 GHz | ASUS USB-BE93 |
 | Realtek RTL8822BU | 2.4 / 5 GHz | TP-Link T3U Plus, Archer T4U v3 / T4U+ |
 | Realtek RTL8822CU | 2.4 / 5 GHz | D-Link AC13U |
 | Realtek RTL8187L | 2.4 GHz | ALFA AWUS036**H** |
-| Realtek RTL8188EUS | 2.4 GHz | TP-Link TL-WN722N v2/v3 |
+| Realtek RTL8188EUS | 2.4 GHz | TP-Link TL-WN722N v2/v3, Mercusys MW150US |
+| Realtek RTL8192FU | 2.4 GHz | D-Link AN3U rev. A1 |
 | Ralink RT2570 | 2.4 GHz | Buffalo Nintendo Wi-Fi USB Controller |
-| Ralink RT3070 | 2.4 GHz | ALFA AWUS036**NH** |
+| Ralink RT3070 | 2.4 GHz | ALFA AWUS036**NH**, TP-Link TL-WN7200ND |
 | Ralink RT5370 | 2.4 GHz | LOTEKOO 150 Mbps |
 | Ralink RT5372 | 2.4 GHz | Panda PAU05/PAU06 |
 | Ralink RT5572 | 2.4 / 5 GHz | Panda PAU09 N600 |
@@ -105,6 +107,7 @@ wifit3 automatically handles hardware configuration within the app, after clicki
 - **Linux:** Prompts once via `pkexec`/`sudo` to write udev permissions and blocklists in `/etc/modprobe.d/`.
 - **macOS:** No installation required; plug in the device and select *Allow* in the authorization dialog.
 - **Windows:** Prompts once via UAC to install WinUSB for the device.
+- **VirtualBox:** Add your device(s) to VirtualBox's `USB Filters` *before* plugging in.
 
 ## Uninstalling
 Return the previously-installed device to your operating system's Wi-Fi stack:

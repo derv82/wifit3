@@ -7,6 +7,7 @@ delta table -> absolute -3) must write OFDM idx 25 (0xc80=0x300000c0) + CCK idx 
 (0xa22=0x17 ...), matching the wire.
 """
 from wifit3.chips.rtl8188eus_dkms import powertrack
+from wifit3.chips.rtl8188eus_dkms import powertrack_tbl as T
 
 _RF = "wifit3.chips.rtl8188eus_dkms.powertrack.rf"
 
@@ -40,8 +41,10 @@ def test_swing_index_lookup():
 
 
 def test_apply_mix_mode_writes_base_swing():
-    st = powertrack.PowerTrackState(eeprom_thermal=29, default_ofdm_index=28,
-                                    default_cck_index=20)
+    st = powertrack.PowerTrackState(eeprom_thermal=29, tx_pwr=None, default_ofdm_index=28,
+                                    default_cck_index=20,
+                                    delta_swing_table_idx_2g_cck_a_p=T.DELTA_TT_2G_CCK_A_P,
+                                    delta_swing_table_idx_2g_cck_a_n=T.DELTA_TT_2G_CCK_A_N)
     t = RegTx({0x0C4C: 0x001C0324})
     powertrack._apply_mix_mode(t, st, -3)            # final OFDM 25, CCK 17
     assert (0x0C80, 0x300000C0) in t.w               # OFDM_SWING_TABLE[25]
@@ -49,11 +52,25 @@ def test_apply_mix_mode_writes_base_swing():
     assert (0x0A29, 0x02) in t.w                     # CCK row 17 [7]
 
 
+def test_apply_mix_mode_uses_ch14_cck_table_on_channel_14():
+    st = powertrack.PowerTrackState(eeprom_thermal=29, tx_pwr=None, default_ofdm_index=28,
+                                    default_cck_index=20, channel=14,
+                                    delta_swing_table_idx_2g_cck_a_p=T.DELTA_TT_2G_CCK_A_P,
+                                    delta_swing_table_idx_2g_cck_a_n=T.DELTA_TT_2G_CCK_A_N)
+    t = RegTx({0x0C4C: 0x001C0324})
+    powertrack._apply_mix_mode(t, st, -3)
+    row = powertrack.T.CCK_SWING_TABLE_CH14[17]
+    assert [v for a, v in t.w if 0x0A22 <= a <= 0x0A29] == list(row)
+    assert row != powertrack.T.CCK_SWING_TABLE_CH1_CH13[17]
+
+
 def test_callback_cold_boot_drops_three_indices(mocker):
     # thermal read 25 < efuse base 29 -> ad=4 -> -CCK_A_N[4]=-3 -> idx 25/17.
     mocker.patch(f"{_RF}.phy_query_rf_reg", return_value=25)
-    st = powertrack.PowerTrackState(eeprom_thermal=29, default_ofdm_index=28,
-                                    default_cck_index=20)
+    st = powertrack.PowerTrackState(eeprom_thermal=29, tx_pwr=None, default_ofdm_index=28,
+                                    default_cck_index=20,
+                                    delta_swing_table_idx_2g_cck_a_p=T.DELTA_TT_2G_CCK_A_P,
+                                    delta_swing_table_idx_2g_cck_a_n=T.DELTA_TT_2G_CCK_A_N)
     t = RegTx({0x0C4C: 0x001C0324})
     powertrack._callback(t, st)
     assert st.delta_power_index == -3
@@ -64,8 +81,10 @@ def test_callback_cold_boot_drops_three_indices(mocker):
 def test_callback_thermal_at_base_no_apply(mocker):
     # thermal == efuse base -> delta 0 -> power_index_offset 0 -> no swing write.
     mocker.patch(f"{_RF}.phy_query_rf_reg", return_value=29)
-    st = powertrack.PowerTrackState(eeprom_thermal=29, default_ofdm_index=28,
-                                    default_cck_index=20)
+    st = powertrack.PowerTrackState(eeprom_thermal=29, tx_pwr=None, default_ofdm_index=28,
+                                    default_cck_index=20,
+                                    delta_swing_table_idx_2g_cck_a_p=T.DELTA_TT_2G_CCK_A_P,
+                                    delta_swing_table_idx_2g_cck_a_n=T.DELTA_TT_2G_CCK_A_N)
     t = RegTx({0x0C4C: 0x001C0324})
     powertrack._callback(t, st)
     assert not any(a == 0x0C80 for a, _ in t.w)      # no OFDM swing write
@@ -75,8 +94,10 @@ def test_callback_thermal_at_base_no_apply(mocker):
 def test_thermal_tick_arms_then_runs(mocker):
     # tm_trigger toggles: an un-armed tick arms the meter (RF write), no swing change.
     rfwrite = mocker.patch(f"{_RF}.set_rf_reg")
-    st = powertrack.PowerTrackState(eeprom_thermal=29, default_ofdm_index=28,
-                                    default_cck_index=20, tm_trigger=0)
+    st = powertrack.PowerTrackState(eeprom_thermal=29, tx_pwr=None, default_ofdm_index=28,
+                                    default_cck_index=20, tm_trigger=0,
+                                    delta_swing_table_idx_2g_cck_a_p=T.DELTA_TT_2G_CCK_A_P,
+                                    delta_swing_table_idx_2g_cck_a_n=T.DELTA_TT_2G_CCK_A_N)
     powertrack.thermal_tick(RegTx(), st)
     rfwrite.assert_called_once()
     assert st.tm_trigger == 1

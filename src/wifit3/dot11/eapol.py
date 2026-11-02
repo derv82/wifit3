@@ -2,6 +2,7 @@
 
 EAPOL-Key multi-byte fields are network order.
 """
+from enum import IntEnum
 import struct
 
 from wifit3.dot11.mac import mac_header
@@ -13,11 +14,25 @@ NONCE_LEN = 32
 MIC_OFFSET = 81                 # MIC start within the 802.1X payload (hashcat -m 22000 reads it here)
 
 _EAPOL_VERSION = 2
-_EAPOL_TYPE_KEY = 3
+EAPOL_TYPE_EAP = 0
+EAPOL_TYPE_KEY = 3
 _KEY_DESC_RSN = 2
+KEY_DESCRIPTOR_VERSION_MASK = 0x0007     # Key Information bits 0-2
 _KEY_IV = bytes(16)
 _KEY_RSC = bytes(8)
 _KEY_ID = bytes(8)
+
+
+class KeyDescriptorVersion(IntEnum):
+    """Key Information bits 0-2: the MIC and key-wrap algorithms."""
+    HMAC_MD5_RC4 = 1      # TKIP pairwise
+    HMAC_SHA1_AES = 2     # CCMP pairwise
+    AES_128_CMAC = 3      # PSK-SHA256, FT-PSK
+
+
+HMAC_MD5_RC4 = KeyDescriptorVersion.HMAC_MD5_RC4
+HMAC_SHA1_AES = KeyDescriptorVersion.HMAC_SHA1_AES
+AES_128_CMAC = KeyDescriptorVersion.AES_128_CMAC
 
 
 def data_header(*, to_ds: bool, bssid: bytes, client: bytes) -> bytes:
@@ -47,7 +62,7 @@ def eapol_key(*, key_info: int, key_len: int, replay: int, nonce: bytes,
         + struct.pack(">H", len(key_data))
         + key_data
     )
-    return bytes([_EAPOL_VERSION, _EAPOL_TYPE_KEY]) + struct.pack(">H", len(body)) + body
+    return bytes([_EAPOL_VERSION, EAPOL_TYPE_KEY]) + struct.pack(">H", len(body)) + body
 
 
 def set_mic(payload: bytes, mic: bytes) -> bytes:

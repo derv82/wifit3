@@ -3,8 +3,9 @@
 A card that auto-ACKs answers any unicast frame sent to a MAC it owns with a link-layer ACK.
 This tests it directly, no AP needed:
 
-  under test:  enters active monitor for a spoofed MAC (if it can), so its hardware should
-               auto-ACK frames addressed to that MAC. We also probe its own silicon MAC.
+  under test:  enters active monitor for a spoofed MAC (if it can), armed with a peer bssid the way
+               campaigns do, so its hardware should auto-ACK frames addressed to that MAC. We also
+               probe its own silicon MAC.
   prober:      injects unicast frames addressed to that MAC, sourced from a fixed probe MAC S,
                and counts the ACKs that come back to S with its own ACK tap.
 
@@ -102,11 +103,15 @@ async def main(a) -> None:
     prober.driver._our_tx_macs.add(mac_bytes(PROBE_SRC))
     print(f"[*] channel {a.channel}, {a.count} frames per probe\n")
 
-    # 1. spoofed MAC via active monitor (if the card can do it).
+    # 1. spoofed MAC via active monitor. Armed WITH a peer bssid, which is what production does
+    # (campaigns lease with bssid=the target AP's). The peer here is the prober, since that is who
+    # sends us the unicast. Re-armed without one for comparison: three drivers program the bssid
+    # (rtl8922au addr-cam mask, mt7921au/mt7925au BSS_INFO), the rest document it unused.
     spoof = mac_bytes(SPOOF)
+    peer = mac_bytes(a.peer_bssid)
     can_am = True
     try:
-        await dut.driver.enter_active_monitor(spoof)
+        await dut.driver.enter_active_monitor(spoof, peer)
     except Exception as e:                            # noqa: BLE001
         can_am = False
         print(f"[*] {dut.description}: active monitor unavailable ({e})")
@@ -139,6 +144,9 @@ async def main(a) -> None:
     print(f"[#] bogus MAC {BOGUS} (control): {bog}/{a.count} ACKed")
 
     margin = max(a.count // 4, 5)
+    if on is not None and on > a.count * 2:
+        print(f"[*] counts exceed {a.count}: this prober's HW retransmits each inject (it stops "
+              f"only when active-monitoring the source), and every on-air copy is ACKed")
     if can_am and on is not None and on > max(off or 0, bog) + margin:
         verdict = "auto-ACKs a SPOOFED MAC via active monitor"
     elif sil is not None and sil > bog + margin:
@@ -158,6 +166,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="RX auto-ACK lab: does a card ACK frames sent to it?")
     p.add_argument("--test-card", required=True, help="substring of the card under test, e.g. 8822 or mt")
     p.add_argument("--prober-card", default="", help="substring of the prober card (default: first other on channel)")
+    p.add_argument("--peer-bssid", default=PROBE_SRC, help="peer bssid armed with active monitor, as production does")
     p.add_argument("--channel", type=int, default=1)
     p.add_argument("--count", type=int, default=100)
     p.add_argument("--interval", type=float, default=0.02)

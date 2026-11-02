@@ -4,6 +4,7 @@ Drivers wrap the libusb open/claim error in BringUpError (sometimes through an I
 classifier walks the cause/context chain rather than the top exception. A genuine bring-up fault
 (firmware/init) and an unrelated USBError (e.g. a timeout) must pass through unchanged.
 """
+import usb.backend
 import usb.core
 import pytest
 
@@ -31,9 +32,28 @@ def _iface(exc=None, ok=True):
     return WlanInterface(_Driver(exc, ok), "wlan0", "Test card", vid=0x1, pid=0x2)
 
 
-async def test_notimplemented_becomes_permissions():
+def _pyusb_notimplemented() -> NotImplementedError:
+    try:
+        usb.backend.IBackend().is_kernel_driver_active(None, 0)
+    except NotImplementedError as e:
+        return e
+    raise AssertionError("IBackend stub did not raise")
+
+
+async def test_pyusb_notimplemented_becomes_permissions():
     with pytest.raises(BringUpPermissionsError):
-        await _iface(NotImplementedError("no WinUSB backend")).connect()
+        await _iface(_pyusb_notimplemented()).connect()
+
+
+async def test_driver_notimplemented_stays_bringup_error():
+    try:
+        raise NotImplementedError("8188e SMIC/I-cut TX-power-track tables not ported")
+    except NotImplementedError as inner:
+        be = BringUpError("bring-up", str(inner))
+        be.__cause__ = inner
+    with pytest.raises(BringUpError) as ei:
+        await _iface(be).connect()
+    assert not isinstance(ei.value, BringUpPermissionsError)
 
 
 async def test_eacces_usberror_becomes_permissions():
@@ -94,7 +114,8 @@ async def test_success_returns_true():
 
 
 def test_is_permission_error_direct():
-    assert is_permission_error(NotImplementedError())
+    assert is_permission_error(_pyusb_notimplemented())
+    assert not is_permission_error(NotImplementedError())
     assert is_permission_error(usb.core.USBError("x", -3))
     assert is_permission_error(usb.core.USBError("x", errno=16))
     assert not is_permission_error(usb.core.USBError("x", errno=110))

@@ -92,10 +92,10 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
     monitor vif uses the reserved wcid, the sequence number comes from the frame,
     and the rate is the band's lowest basic rate.
 
-    ``retry_count`` fills MT_TXD3_REM_TX_COUNT (the HW ACK-based retry limit). The frame
-    always requests an ACK (NO_ACK is never set), so the chip retransmits it up to
-    ``retry_count`` times until the recipient ACKs. That HW retry is inject_frame's only
-    retransmission.
+    ``retry_count`` fills MT_TXD3_REM_TX_COUNT (the HW ACK-based retry limit). A unicast
+    addr1 requests an ACK (NO_ACK clear), so the chip retransmits it up to ``retry_count``
+    times until the recipient ACKs; a group addr1 sets NO_ACK. That HW retry is
+    inject_frame's only retransmission.
     """
     if len(frame) < 24:
         raise ValueError(f"802.11 frame too short to inject: {len(frame)} bytes")
@@ -149,9 +149,10 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
         val2 |= _fp(MT_TXD2_FRAG, MT_TX_FRAG_LAST)
     txwi[2] = val2
 
-    # Always request an ACK (NO_ACK stays clear) so the chip HW-retries up to retry_count
-    # times; the base's inject_frame relies on that HW retry as the only retransmission.
+    # mac80211 sets IEEE80211_TX_CTL_NO_ACK for a group addr1 (mt76_connac_mac.c:563).
     val3 = _fp(MT_TXD3_REM_TX_COUNT, retry_count)
+    if multicast:
+        val3 |= MT_TXD3_NO_ACK
     # Injected frame: carry its own sequence number (SEQ_TO_SN = seqno >> 4).
     val3 |= MT_TXD3_SN_VALID | _fp(MT_TXD3_SEQ, seq_ctrl >> 4)
     txwi[3] = val3

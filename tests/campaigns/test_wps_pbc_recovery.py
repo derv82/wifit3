@@ -35,5 +35,5 @@ def test_build_client_leaving_disassoc_variant():
 
 def test_enrollee_is_patient_by_default():
     # 5s covers a slow 5 GHz AP's ~4.6s M6 without abandoning it mid-exchange.
-    e = WpsEnrollee(transport=None, bssid=_AP, our_mac=_US)
+    e = WpsEnrollee(transport=None, bssid=_AP, our_mac=_US, channel=6, wsc_2_0=False)
     assert e.msg_timeout == 5.0

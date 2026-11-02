@@ -16,7 +16,7 @@ def _rx(has_fcs_error=False, mpdu=b"mpdu", rssi=-40):
 def test_rx_dispatch_parses_and_fires_callback(monkeypatch):
     d = drv.RTL8187Driver(MagicMock())
     monkeypatch.setattr(drv, "parse_rx_urb",
-                        lambda buf: _rx() if buf == b"BULK" else None)
+                        lambda buf, is_rtl8187b: _rx() if buf == b"BULK" else None)
     monkeypatch.setattr(
         drv.WlanFrameParser, "parse_80211_frame",
         staticmethod(lambda mpdu, rssi: {"type": "beacon", "rssi": rssi}),
@@ -29,7 +29,7 @@ def test_rx_dispatch_parses_and_fires_callback(monkeypatch):
 
 def test_rx_dispatch_drops_fcs_error(monkeypatch):
     d = drv.RTL8187Driver(MagicMock())
-    monkeypatch.setattr(drv, "parse_rx_urb", lambda buf: _rx(has_fcs_error=True))
+    monkeypatch.setattr(drv, "parse_rx_urb", lambda buf, is_rtl8187b: _rx(has_fcs_error=True))
     got = []
     d.register_rx_callback(got.append)
     d._rx_dispatch(b"BULK")

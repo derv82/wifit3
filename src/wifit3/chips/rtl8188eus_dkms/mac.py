@@ -108,8 +108,8 @@ def init_misc02(t) -> None:
     usbv = t.read8(C.REG_USB_SPECIAL_OPTION)
     t.write8(C.REG_TRXDMA_CTRL, dma & ~C.RXDMA_AGG_EN)
     t.write8(C.REG_USB_SPECIAL_OPTION, usbv | C.USB_AGG_EN)
-    t.write8(C.REG_RXDMA_AGG_PG_TH + 1, C.RXAGG_USB_TIMEOUT)
-    t.write8(C.REG_RXDMA_AGG_PG_TH, C.RXAGG_USB_SIZE)
+    t.write8(C.REG_USB_AGG_TH, C.RXAGG_USB_SIZE)
+    t.write8(C.REG_USB_AGG_TO, C.RXAGG_USB_TIMEOUT)
     # InitBeaconParameters_8188e
     t.write16(C.REG_BCN_CTRL, C.BCN_CTRL_INIT)
     t.write8(C.REG_TBTT_PROHIBIT, C.TBTT_PROHIBIT_SETUP_TIME)

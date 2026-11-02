@@ -1,9 +1,10 @@
 """ScanFilter predicate (text + encryption) and FilterBar message wiring."""
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, Select
+from textual.widgets import Button, Checkbox, Input, Select
 
 from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
 from wifit3.ui.encryption_format import EncryptionType
 from wifit3.ui.screens.filter import EncryptionFilter, FilterBar, ScanFilter, text_matches
 
@@ -102,6 +103,32 @@ def test_hidden_ap_found_by_guessed_ssid():
     assert ScanFilter(text="castle").matches(hidden, ssid="Castle Crasher")
 
 
+# ---- ScanFilter hide_silenced ----------------------------------------------
+
+def test_hide_silenced_drops_only_silenced_aps():
+    Config.silenced_bssids = ["aa:bb:cc:dd:ee:ff"]
+    ap = _ap(ssid="neighbour")
+    assert not ScanFilter(hide_silenced=True).matches(ap)
+    assert ScanFilter().matches(ap)          # off by default: Silence only hides the row's badge
+
+
+def test_hide_silenced_keeps_unsilenced_aps():
+    Config.silenced_bssids = ["11:22:33:44:55:66"]
+    assert ScanFilter(hide_silenced=True).matches(_ap(ssid="neighbour"))
+
+
+def test_hide_silenced_combines_with_text_and_encryption():
+    Config.silenced_bssids = ["aa:bb:cc:dd:ee:ff"]
+    assert not ScanFilter(text="net", hide_silenced=True).matches(_ap(ssid="netgear", akms=["PSK"]))
+    assert ScanFilter(text="net", encryption=EncryptionFilter.WPA, hide_silenced=True).matches(
+        AccessPoint(bssid="11:22:33:44:55:66", ssid="netgear", akms=["PSK"]))
+
+
+def test_hide_silenced_matches_config_case_insensitively():
+    Config.silenced_bssids = ["aa:bb:cc:dd:ee:ff"]
+    assert not ScanFilter(hide_silenced=True).matches(AccessPoint(bssid="AA:BB:CC:DD:EE:FF"))
+
+
 # ---- FilterBar message wiring ----------------------------------------------
 
 class _Host(App):
@@ -123,10 +150,10 @@ class _Host(App):
 async def test_typing_emits_scan_filter():
     app = _Host([1, 6, 11, 36, 40])
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         app.events.clear()
         app.query_one("#filter-text", Input).value = "net"
-        await pilot.pause()
+        await pilot.pause(0)
         scan = [e for e in app.events if e[0] == "scan"]
         assert scan and scan[-1][1].text == "net"
 
@@ -134,21 +161,79 @@ async def test_typing_emits_scan_filter():
 async def test_encryption_select_emits_scan_filter():
     app = _Host([1, 6, 11])
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         app.events.clear()
         app.query_one("#filter-encryption", Select).value = EncryptionFilter.WPA
-        await pilot.pause()
+        await pilot.pause(0)
         scan = [e for e in app.events if e[0] == "scan"]
         assert scan and scan[-1][1].encryption is EncryptionFilter.WPA
+
+
+async def test_hide_silenced_checkbox_emits_scan_filter():
+    app = _Host([1, 6, 11])
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        app.events.clear()
+        assert not app.query_one("#filter-hide-silenced", Checkbox).value
+        app.query_one("#filter-hide-silenced", Checkbox).value = True
+        await pilot.pause(0)
+        scan = [e for e in app.events if e[0] == "scan"]
+        assert scan and scan[-1][1].hide_silenced is True
+
+
+async def test_hide_silenced_checkbox_keeps_the_other_predicates():
+    app = _Host([1, 6, 11])
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        app.events.clear()
+        app.query_one("#filter-text", Input).value = "net"
+        app.query_one("#filter-encryption", Select).value = EncryptionFilter.WPA
+        app.query_one("#filter-hide-silenced", Checkbox).value = True
+        await pilot.pause(0)
+        scan = [e for e in app.events if e[0] == "scan"]
+        assert scan
+        last = scan[-1][1]
+        assert (last.text, last.encryption, last.hide_silenced) == ("net", EncryptionFilter.WPA, True)
+
+
+async def test_hide_silenced_follows_a_later_silence():
+    """The scanner re-runs the predicate each tick, so silencing from Focus drops the row."""
+    ap = _ap(ssid="neighbour")
+    scan_filter = ScanFilter(hide_silenced=True)
+    assert scan_filter.matches(ap)
+    Config.silenced_bssids = ["aa:bb:cc:dd:ee:ff"]
+    assert not scan_filter.matches(ap)
+
+
+async def test_checkbox_starts_from_the_persisted_setting():
+    Config.hide_silenced = True
+    app = _Host([1, 6, 11])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#filter-hide-silenced", Checkbox).value is True
+        app.query_one("#filter-text", Input).value = "net"
+        await pilot.pause()
+        scan = [e for e in app.events if e[0] == "scan"]
+        assert scan and scan[-1][1].hide_silenced is True
+
+
+@pytest.mark.parametrize("width", [90, 100, 120])
+async def test_filter_bar_fits_every_control_on_screen(width):
+    """The text Input yields width so the hide-silenced checkbox is never clipped off the bar."""
+    app = _Host([1, 6, 11, 36, 40])
+    async with app.run_test(size=(width, 6)) as pilot:
+        await pilot.pause()
+        bar = app.query_one(FilterBar)
+        assert not [c.id for c in bar.children if c.region.x + c.region.width > width]
 
 
 async def test_channels_button_requests_dialog():
     app = _Host([1, 6, 11, 36, 40])
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await pilot.pause(0)
         app.events.clear()
         app.query_one("#filter-channels", Button).press()
-        await pilot.pause()
+        await pilot.pause(0)
         assert any(e[0] == "channels" for e in app.events)
 
 

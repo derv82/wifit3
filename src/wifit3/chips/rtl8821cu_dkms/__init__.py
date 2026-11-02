@@ -32,6 +32,9 @@ SUPPORTED_IDS = [
 ]
 
 
+ZEROCD_IDS = [(0x0BDA, 0x1A2B)]   # Realtek CD-ROM (ZeroCD) stub; ejects to the Wi-Fi PID 0bda:c820.
+
+
 def import_driver():
     from .driver import Rtl8821cuDkmsDriver
     return Rtl8821cuDkmsDriver

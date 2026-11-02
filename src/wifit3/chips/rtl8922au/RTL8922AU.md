@@ -178,6 +178,10 @@ Bench-confirmed (ASUS USB-BE93 DUT + RTL8812AU prober, ch1, `scripts/chips/rtl89
   frames (forged and silicon), 0 on broadcast. The hardware reads the CAM SMA as "me".
 - `monitor_check.py`: while armed, the DUT still receives foreign toDS traffic (addr1 != SMA) and
   ACKs **only** the armed MAC (foreign frames get 0 ACKs). So it stays a real promiscuous monitor.
+- wifit3 ACK lab (`scripts/ack/rx_autoack.py` / `tx_retries.py`, EP-BE1703S DUT, 8822BU prober, both
+  bands, 2026-09-16): forged SMA auto-ACKed 100/100, silicon MAC 0/100 (no self-MAC register, so
+  plain monitor ACKs nothing); TX stops on the target's ACK keyed on Addr2 (real AP 1 copy),
+  dead-target retry limit ~32. Rows added to `docs/ACKS.md`.
 
 **The flaky-RX confound (why this took so long).** The 8922A's bulk-IN RX DMA wedges after repeated
 cold-boot-of-a-warm-chip cycles: `connect()` always cold-boots, and `dev.reset()` / sysfs re-authorize

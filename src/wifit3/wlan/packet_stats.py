@@ -30,6 +30,7 @@ _RX_CLASS = {
     "qos_data": CLASS_DATA,
     "wep_data": CLASS_WEP_IV,
     "eapol": CLASS_EAPOL,
+    "eap": CLASS_EAPOL,
     "deauth": CLASS_DEAUTH,
 }
 
@@ -55,6 +56,9 @@ class PacketStats:
         """Tally an injected frame: deauths spike the DEAUTH line (alongside any ambient
         deauths we hear); every other inject spikes INJECT."""
         self._counts[bssid][CLASS_DEAUTH if is_deauth else CLASS_INJECT] += 1
+
+    def remove(self, bssid: str) -> None:
+        self._counts.pop(bssid, None)
 
     def snapshot(self, bssid: str) -> Dict[str, int]:
         """Current cumulative counts for ``bssid`` (zero-filled, all classes).

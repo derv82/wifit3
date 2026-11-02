@@ -1,6 +1,7 @@
-"""RTL8187L RX path: bulk-IN URB → 802.11 MPDU + RSSI.
+"""RTL8187 RX path: bulk-IN URB → 802.11 MPDU + RSSI.
 
-Ported from ``rtl8187_rx_cb`` (dev.c:325-412), L-branch only.
+Ported from ``rtl8187_rx_cb`` (dev.c:325-412). The 8187B trailer is the 20-byte
+``rtl8187b_rx_hdr`` (rtl8187.h:53-63), on bulk-IN 0x83.
 
 URB layout (8187L):
 
@@ -32,7 +33,12 @@ from typing import Optional
 
 import usb.core
 
-from .constants import RTL8187_MAX_RX, RX_DESC_FLAG_CRC32_ERR, RX_HDR_SIZE_8187L
+from .constants import (
+    RTL8187_MAX_RX,
+    RX_DESC_FLAG_CRC32_ERR,
+    RX_HDR_SIZE_8187B,
+    RX_HDR_SIZE_8187L,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,27 +105,35 @@ class RxFrame:
     has_fcs_error: bool
 
 
-def parse_rx_urb(buf: bytes) -> Optional[RxFrame]:
-    """Decode one bulk-IN URB → RxFrame, or None if malformed.
+def parse_rx_urb(buf: bytes, is_rtl8187b: bool) -> Optional[RxFrame]:
+    """Decode one bulk-IN URB → RxFrame, or None if malformed (rtl8187_rx_cb, dev.c:346-381).
 
     Returns None for:
       * URBs too short to even contain a trailer
       * trailer-reported frame length that doesn't fit in the URB
       * frames shorter than (FCS=4) — can't be a valid 802.11 MPDU
     """
-    if len(buf) < RX_HDR_SIZE_8187L:
+    hdr_size = RX_HDR_SIZE_8187B if is_rtl8187b else RX_HDR_SIZE_8187L
+    if len(buf) < hdr_size:
         return None
 
-    # The trailer is the LAST 16 bytes of the URB.
-    hdr_off = len(buf) - RX_HDR_SIZE_8187L
-    flags, noise, signal, agc, _reserved, mac_time = struct.unpack(
-        "<IBBBBQ", buf[hdr_off:hdr_off + RX_HDR_SIZE_8187L]
-    )
+    hdr_off = len(buf) - hdr_size
+    if not is_rtl8187b:
+        flags, _noise, signal, agc, _reserved, mac_time = struct.unpack(
+            "<IBBBBQ", buf[hdr_off:])
+        # dev.c:354 — scaling constants derived from p54usb
+        rssi_dbm = -4 - ((27 * agc) >> 6)
+        antenna = (signal >> 7) & 1
+    else:
+        # rtl8187b_rx_hdr: flags, mac_time, sq, rssi, agc, flags2, snr_long2end, pwdb_g12, fot
+        flags, mac_time, _sq, rssi, agc, _flags2, _snr, _pwdb_g12, _fot = struct.unpack(
+            "<IQBBBBHbB", buf[hdr_off:])
+        rssi_dbm = 14 - agc // 2                  # dev.c:373
+        antenna = (rssi >> 7) & 1
 
     frame_len = flags & 0x0FFF
     rate_idx = (flags >> 20) & 0xF
     has_fcs_error = bool(flags & RX_DESC_FLAG_CRC32_ERR)
-    antenna = (signal >> 7) & 1
 
     if frame_len < 4 or frame_len > hdr_off:
         # Trailer claims a length we can't satisfy from the URB.
@@ -128,12 +142,6 @@ def parse_rx_urb(buf: bytes) -> Optional[RxFrame]:
     # FCS-inclusive length per RX_INCLUDES_FCS; strip the final 4 bytes
     # before handing the payload to the parser.
     mpdu = bytes(buf[: frame_len - 4])
-
-    # RSSI computation from the kernel L-branch:
-    #     signal = -4 - ((27 * hdr->agc) >> 6)
-    # (See dev.c:354 — derived from p54usb scaling constants, applies
-    # to both rtl8225 BCD + rtl8225z2 silicon.)
-    rssi_dbm = -4 - ((27 * agc) >> 6)
 
     return RxFrame(
         mpdu=mpdu,

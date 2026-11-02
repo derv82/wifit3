@@ -74,6 +74,14 @@ def main() -> None:
     if args.quiet:
         cli_log_level = "quiet"
 
+    # Textual's stderr has fileno -1, which kills multiprocessing's resource tracker if it starts
+    # later (Linux): crashed every ProcessPoolExecutor (WEP crack, Pixie). No tracker on Windows.
+    from multiprocessing import resource_tracker
+    try:
+        resource_tracker.ensure_running()
+    except Exception:
+        pass
+
     WifiteApp(cli_log_level=cli_log_level).run()
 
 

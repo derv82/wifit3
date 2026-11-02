@@ -25,6 +25,7 @@ from importlib import resources
 from typing import Callable, ClassVar, List, Optional
 
 import usb.core
+import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
@@ -182,6 +183,9 @@ class Rtl8814auDkmsDriver(Driver):
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()
+        # Hold interface 0 for the session: unclaimed, WinUSB claims and releases it around every
+        # EP0 transfer, and that churn intermittently fails with "Entity not found".
+        await loop.run_in_executor(None, usb.util.claim_interface, self.transport.dev, 0)
         # USB link speed decides rf_path (RF_2T4R over USB 2, RF_3T3R for a SuperSpeed 3T/4T
         # part). Read it once here (the pcap gate never calls connect(), so its _bringup keeps
         # the __init__ default False -> RF_2T4R, byte-matching the capture).

@@ -62,9 +62,14 @@ _LABELS = {
     "archert4uplus":   "TP-Link Archer T4U Plus",
     "archertx20uplus": "TP-Link Archer TX20U Plus",
 
+    "asusac68":        "ASUS USB-AC68",
     "asusbe93":        "ASUS USB-BE93",
     "auscomer600":     "Auscoumer 600",
+    "dlinkdwa125":     "D-Link DWA-125",
     "dlinkdwa126":     "D-Link DWA-126",
+    "dlinkdwa140":     "D-Link DWA-140",
+    "dlink-an3u-n300": "D-Link AN3U N300",
+    "mercusys-mw150us": "Mercusys MW150US",
     "buffalonintendo": "Buffalo Nintendo Wi-Fi",
     "lotekoo150":      "LOTEKOO 150",
     "netgeara9000":    "Netgear A9000",
@@ -74,6 +79,7 @@ _LABELS = {
 _STACKS = {
     "stack-ar9271":    ["card-awus036nha", "card-tpwn722nv23", "card-dlinkdwa126"],
     "stack-mt7921au":  ["card-awus036axml", "card-pau0f"],
+    "stack-rtl8814au": ["card-awus1900", "card-asusac68"],
     "stack-rtl8821au": ["card-awus036acs", "card-archert2uplus", "card-archert2u"],
     "stack-rtl8822au": ["card-archert3uplus", "card-archert4uplus"],
     "stack-rt3070":    ["card-awus036nh", "card-dlinkdwa140"],

@@ -24,7 +24,9 @@ _COND_ELSE, _COND_ENDIF = 2, 3  # [SRC] phydm_types.h:236 (IF=0, ELSE_IF=1)
 # plain board with no external LNA/PA/BT (the efuse ExternalLNA/PA flags are 0,
 # confirmed by the wire taking every board-gated table branch's ELSE default).
 # [SRC] hal/hal_dm.c Init_ODM_ComInfo + rtl8188e_dm.c Init_ODM_ComInfo_88E.
-_CUT_VERSION = 0x00       # ODM_CUT_A
+ODM_CUT_A = 0x00          # phydm_pre_define.h:524
+ODM_CUT_I = 0x08          # phydm_pre_define.h:532
+_CUT_VERSION = ODM_CUT_A
 _SUPPORT_PLATFORM = 0x04  # ODM_CE
 _SUPPORT_INTERFACE = 0x02  # ODM_ITRF_USB
 _PACKAGE_TYPE = 0x00
@@ -49,8 +51,14 @@ def build_driver1() -> int:
 DRIVER1 = build_driver1()  # 0x00040200 on this card (internal PA+LNA, board_type 0)
 
 
+def odm_cut_version(i_cut_series: bool) -> int:
+    """[SRC] Init_ODM_ComInfo_88E (rtl8188e_dm.c:217-220): ODM_CUT_I when
+    IS_VENDOR_8188E_I_CUT_SERIES, else ODM_CUT_A."""
+    return ODM_CUT_I if i_cut_series else ODM_CUT_A
+
+
 def build_driver_words(external_lna_2g: bool, external_pa_2g: bool,
-                       type_glna: int) -> tuple[int, int, int]:
+                       type_glna: int, odm_cut: int) -> tuple[int, int, int]:
     """Assemble (driver1, driver2, driver4) from the runtime efuse board options.
     [SRC] check_positive (halhwimg8188e_bb.c:30-54) + the ODM_CMNINFO feed
     (hal_dm.c:224-260). The board_type byte repacks to _board_type[0]=GLNA(ext-LNA
@@ -58,10 +66,10 @@ def build_driver_words(external_lna_2g: bool, external_pa_2g: bool,
     (no 88EU init table gates on it). type_gpa/alna/apa are never set on 88EU, so the
     only non-zero type field is type_glna (0x0/0x1/0x2) and driver4 is always 0.
 
-    A default (internal PA+LNA, type_glna 0) returns exactly the module DRIVER* words,
-    so the reference card walks byte-identically."""
+    A default (internal PA+LNA, type_glna 0, ODM_CUT_A) returns exactly the module DRIVER*
+    words, so the reference card walks byte-identically."""
     board_type = (int(bool(external_lna_2g)) << 0) | (int(bool(external_pa_2g)) << 1)
-    driver1 = (DRIVER1 & ~0x1F) | board_type            # replace the 5 _board_type bits
+    driver1 = (DRIVER1 & ~0xFF00001F) | (odm_cut & 0xFF) << 24 | board_type
     driver2 = type_glna & 0xFF                           # (type_glna) | gpa<<8 | ... (all 0)
     driver4 = (type_glna & 0xFF00) >> 8                  # 0 for TypeGLNA <= 0x2
     return driver1, driver2, driver4

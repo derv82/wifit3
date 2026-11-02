@@ -1,10 +1,16 @@
 # RTL8188EUS — DKMS (vendor) port
 
-Sibling of `chips/rtl8188eus/` (mainline), ported from the Realtek vendor/DKMS driver
-(`realtek-rtl8188eus` 5.3.9, module `8188eu`, in the capture bundle). RTL8188EUS silicon: 1T1R,
-2.4 GHz only, phydm/ODM RX stack, firmware-based. The goal of the re-port is hotter, **stable**
-2.4 GHz monitor RX than mainline drives the 8188e at. VID:PID `2357:010c`; registered behind
-`WIFIT3_RTL8188` (mainline default, `=dkms` opts in).
+Sibling of `chips/rtl8188eus/` (mainline), ported from the Realtek vendor/DKMS driver. RTL8188EUS
+silicon: 1T1R, 2.4 GHz only, phydm/ODM RX stack, firmware-based. The goal of the re-port is hotter,
+**stable** 2.4 GHz monitor RX than mainline drives the 8188e at. VID:PIDs (e.g. `2357:010c`,
+`0bda:8179`) in lockstep with mainline; this port is the family default and `WIFIT3_RTL8188=mainline`
+falls back (`device/manager.py` `_DKMS_BY_DIR`).
+
+## Linux Driver Source
+
+- DKMS source: [aircrack-ng/rtl8188eus](https://github.com/aircrack-ng/rtl8188eus), branch `v5.3.9`.
+- Pinned source commit: [`af3bf004458f76b7aec33e9ba552cd382ed1f5c3`](https://github.com/aircrack-ng/rtl8188eus/tree/af3bf004458f76b7aec33e9ba552cd382ed1f5c3).
+- External audit checkout: `driver_captures/captures_8188eu/driver-source` (not vendored into the Python package).
 
 ## Status
 
@@ -14,12 +20,17 @@ reconnected, 20/20 captured EAPOL to/from it). RX is promiscuous both directions
 data is captured, so the crackable WPA M2 is reachable (no ToDS-filter gap). `verify_pcap` is clean
 end-to-end on all three captures.
 
-Default still ships `mainline`. The RX A/B is nuanced (2026-07-07, see Debug log): the DKMS port is at
+The RX A/B is nuanced (2026-07-07, see Debug log): the DKMS port is at
 **kernel parity fixed-channel on a strong AP** (6.5 vs 6.2 bcn/s) but shows a **real ~18 % gap in the
 hopping sweep** (7/6 same-session Kali A/B: 5.3 vs 7.0 on the reference AP, concentrated on weaker
-APs) — and mainline had a *smaller* sweep gap than dkms there, so the flip is **not** justified on RX
-rate yet. Untested/un-walked: uncaptured TX-desc variants, 40 MHz, power-save, sreset recovery, and
+APs) — and mainline had a *smaller* sweep gap than dkms there. Untested/un-walked: uncaptured TX-desc variants, 40 MHz, power-save, sreset recovery, and
 the runtime IQK/LCK/power-track triggers — no wire ground-truth exists for any of these.
+
+**Driver rate adaptation is not ported.** This build runs RA in the driver (`fw_ractrl=False`):
+TX_REPORT2 packets drive `odm_ra_tx_rpt2_handle_8188e` and the per-macid rate decision (with
+I-cut tables, hal8188erateadaptive.c:950), which reprograms `REG_TX_RPT_TIME`. The port drops TX
+reports and never writes it after init. Injected frames use fixed rates, so frame content and
+rate are unaffected, but heavy TX (e.g. ARP replay) runs without the vendor's report timing.
 
 ## Gotchas
 
@@ -39,27 +50,37 @@ chip state (extract the real efuse / chip-version from the pcap, never trust the
 claims), then diff our emitted bytes against it. Treat every `always / never runs / no-op / we skip`
 comment as a hypothesis to falsify.
 
-**efuse fields are read live, and the ONE wire-affecting board option is now runtime-gated.** MAC /
-TX-power / crystal / thermal all come from the *real* 512 B logical map, not hardcoded. Of the
-board-option bytes, most are inert **in this driver build**: the antenna option (`0xC9 = 0x03`) never
-reaches the wire (`CONFIG_ANTENNA_DIVERSITY` off, [SRC] autoconf.h:94 — `_InitAntenna_Selection` is a
-no-op), the regulatory bits of the board option (`0xC1[2:0]`) are dead code (`CONFIG_TXPWR_LIMIT_EN`
-off, Makefile), the channel plan (`0xB8 = 0xA2`) only picks the SW channel list (no register write),
-and `rfe_type` (`0xCA[1:0]`) never gates a table row nor changes `PHY_SetRFEReg`'s single case-0 arm.
-The *one* byte that changes what the chip is programmed with on another unit is the PA/LNA select
-`0xCA[3:2]` (+ its gain-select `0xCA[6:4]`): this card is blank `0xFF` → `iPA+iLNA`, so the reference
-walk + a no-op `PHY_SetRFEReg_8188E`. As of 2026-07-11 an **external-PA/LNA burn is ported and
-runtime-gated** (`efuse.read_board_options` → `phy_cond.build_driver_words` drives the board-gated
-MAC/PHY_REG/AGC/RADIO_A table rows, and `bb.phy_set_rfe_reg` emits the `0x40 / 0xEE8 / 0x87C` writes).
-The fail-loud `assert_board_options_ported` is gone. (Verified comment-blind 2026-07-07: all four
-captures are the same physical dev card — internal PA+LNA, identical MAC and board bytes; the external
-path is source-ported but **hardware-untested** — see the Debug log.)
+**EFUSE is decoded with the vendor fallbacks, not treated as reference-card constants.** The port
+uses the real 512 B logical map for MAC, TX-power, crystal cap, thermal baseline, PA/LNA, GLNA,
+RFE classification, and channel-plan metadata. `REG_9346CR` autoload failure or an invalid logical-map
+ID (`0x8129`) selects the source defaults; blank TX-power bases use the RTL8188E IC default table.
+`rtw_mask_map_read` (default `rtw_OffEfuseMask=0`) then sets every byte hidden by
+`Array_MP_8188E_MUSB` to `0xFF`: `0x1C-0xB7`, `0xCA-0xCF`, `0x100-0x12F`, `0x13E-0x1FF`. So the
+country code (`0xCB`) never overrides `0xB8`, and `0xCA` always decodes as 0xFF. Wifit3 does not
+restrict monitor tuning to that policy: the 2.4 GHz radio advertises its physical channels 1–14. The
+attached reference card resolved to plan `0x21` (ETSI1-null) during the 2026-10-23 live bring-up.
 
-**Two more deferred items, non-default but real:** the receiver-blocking NBI notch arms only with
-`rtw_adaptivity_en=1` (e.g. ETSI), and powertrack IQK/LCK only fires on ≥8 °C thermal drift.
+**Compile-disabled EFUSE consumers remain inert in this vendor build.** Antenna diversity (`0xC9`) and
+RF-power trim are disabled in `include/autoconf.h`; rate/regulatory power limits from `0xC1` are
+disabled by `CONFIG_TXPWR_LIMIT_EN=n`; VID/PID, customer ID, EEPROM version, power-save, and LED
+settings do not affect monitor-mode hardware initialization. `rfe_type` is retained for source
+parity but `PHY_SetRFEReg_8188E` has only its common case-0/default write sequence. The PA/LNA
+select `0xCA[3:2]` and GLNA select `0xCA[6:4]` gate table rows, but the mask forces `0xCA` to
+`0xFF` (internal PA+LNA) on every card; the external decode is kept for source parity.
 
-**The kernel never runs IQK in monitor mode.** Init-time IQK only flags `neediqk_24g` (no
-calibration); the deferred IQK fires from link / AP-start / join / sreset — never a monitor-mode
+**Claim interface 0 before the first EP0 transfer (Windows).** Unclaimed, libusb/WinUSB claims and
+releases it around every control transfer; that churn intermittently fails with `[170] The
+requested resource is in use` (pyusb: `Entity not found`), the old "EFUSE-read ENOENT" flake.
+Measured on one Windows host, two cards: 17/300 bring-ups failed unclaimed, 0/600 claimed. The
+`_POST_RESET_SETTLE_S` pause in `firmware.py` was added for the same error; 0/200 with it at 0.
+
+**The receiver-blocking NBI notch** (`dig._receiver_blocking`) arms only with
+`rtw_adaptivity_en=1` (e.g. ETSI). This build's default (`disable`, Makefile:74) keeps
+`adaptivity_enable` false, so no capture arms or disarms it; the branches are unit-tested only.
+
+**In monitor mode the kernel runs IQK only from power tracking** (`iqk.py`, |Δthermal| ≥ 8 °C;
+the I-cut captures hit it on tick 1). Init-time IQK only flags `neediqk_24g` (no
+calibration); the other IQK triggers are link / AP-start / join / sreset — never a monitor-mode
 channel hop. The one-shot trigger value (`0xf9000000`/`0xf8000000`) appears as a write zero times in
 the whole capture. So `chan.set_channel` skipping IQK is correct, and the `0xe30–0xe8c` writes that
 look IQK-adjacent are the BB-config table verbatim.
@@ -192,7 +213,7 @@ Autonomous RX-gap + verify-audit pass (4 captures incl. the new `driver_captures
 - **verify_pcap waiver audit (all 4 PASS):** the only waived ops are aireplay-ng's injected TX —
   all bulk-OUT sits in the capture tail (82–91% in), zero bulk-OUT between init-end and the first
   injected frame (the vendor driver TX's nothing in NOLINK monitor), and the waived `REG_TX_RPT_TIME`
-  writes are the firmware RA's timestamp-derived values that aireplay's TX triggers (the init
+  writes are the driver RA's `dynamic_tx_rpt_timing` values that aireplay's TX triggers (the init
   `0xCDF0`/`0x3DF0` writes are *matched*, not waived). Nothing vendor-bring-up is wrongly waived. A
   true zero-waiver gate would need a *passive* cold-boot capture (no aireplay) — none of the 4 are.
   Open idea: byte-check the vendor 32 B TX-descriptor prefix of each injected frame (waive only the

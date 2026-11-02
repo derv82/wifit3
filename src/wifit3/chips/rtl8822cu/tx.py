@@ -41,8 +41,8 @@ def build_tx_desc_inject(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
     # [SRC core/rtw_xmit.c:4876,4931-4988,5014]. wifit3 injects the bare MPDU with no radiotap,
     # so fixed_rate stays MGN_1M -> MRateToHwRate(MGN_1M) = DESC_RATE1M = 0
     # [SRC hal/hal_com.c:447,533-538]. The vendor default is unconditional across bands (it
-    # emits CCK 1M on 5 GHz too); band_is_2g is therefore unused here on purpose. Whether wifit3
-    # should instead inject a 5 GHz-valid basic rate is a derv decision: see NEEDS-DERV INJ-1.
+    # emits CCK 1M on 5 GHz too); band_is_2g is therefore unused here on purpose. The TX lab heard
+    # 100/100 of these frames on ch149, so 1M stays on 5 GHz.
     rate = DESC_RATE1M
     # retry_ctrl = (txflags & 0x08 NOACK) ? _FALSE : _TRUE [SRC core/rtw_xmit.c:5019]. wifit3 has
     # no radiotap TX_FLAGS so txflags = 0 -> retry_ctrl = _TRUE -> RTS_DATA_RTY_LMT = 6

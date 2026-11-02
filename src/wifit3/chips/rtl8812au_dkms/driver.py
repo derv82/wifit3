@@ -36,7 +36,7 @@ from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rtl88xxau_base.transport import Rtl88xxauTransport
-from ..rtl88xxau_base.tx import build_mgmt_txdesc
+from ..rtl88xxau_base.tx import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G, build_mgmt_txdesc
 from ..rx_reader import RxReaderThread
 from . import bb, chan, dig, efuse, firmware, mac, monitor, rf, txpower
 from .rx import iter_frames
@@ -303,7 +303,12 @@ class Rtl8812auDkmsDriver(Driver):
             return False
         loop = asyncio.get_running_loop()
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast/broadcast) bit
-        payload = build_mgmt_txdesc(len(frame_bytes), bmc=bmc) + frame_bytes
+        # [SRC] rtl8812a_phycfg.c:1360 "avoid using cck rate in 5G band": 6M OFDM, rate group G
+        # (rtw_wlan_util.c:3217, rtw_mlme_ext.c:7803-7808).
+        hw_rate, rate_id = ((DESC_RATE6M, RATEID_IDX_G) if self._channel > 14
+                            else (DESC_RATE1M, RATEID_IDX_B))
+        payload = build_mgmt_txdesc(len(frame_bytes), hw_rate=hw_rate, rate_id=rate_id,
+                                    bmc=bmc) + frame_bytes
         async with self._io_lock:           # don't TX mid-retune (set_channel / DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
         return True

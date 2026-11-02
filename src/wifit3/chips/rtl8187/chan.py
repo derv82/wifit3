@@ -1,4 +1,4 @@
-"""RTL8187L channel tune.
+"""RTL8187 channel tune.
 
 Port of ``rtl8187_config`` (dev.c:1155-1179) and its inner ``rtl8225_rf_set_channel``
 (rtl8225.c:986-1002). A channel change is NOT just the synth write: the kernel brackets the
@@ -24,7 +24,7 @@ from .constants import (
     TX_CONF_LOOPBACK_MAC,
 )
 from .rtl8225 import (
-    RfVariant,
+    RfSetup,
     TxPower,
     rtl8225_chan,
     rtl8225_write,
@@ -34,32 +34,18 @@ from .transport import RTL8187Transport
 
 logger = logging.getLogger(__name__)
 
-# Channels 1..14 (2.4 GHz only). Channel 14 is JP-only and uses a
-# different CCK power table — supported by the kernel set_chan but kept
-# off the default hop list (see RTL8187Driver.SUPPORTED_CHANNELS).
+# rtl818x_channels: 1..14 (2.4 GHz). Channel 14 uses its own CCK power table.
 VALID_CHANNELS = tuple(range(1, 15))
 
 
-def set_chan(
-    t: RTL8187Transport,
-    asic_rev: int,
-    variant: RfVariant,
-    channel: int,
-    power: TxPower,
-) -> None:
+def set_chan(t: RTL8187Transport, setup: RfSetup, channel: int, power: TxPower) -> None:
     """rtl8225_rf_set_channel: per-variant TX-power refresh + the single RF7 synth write."""
-    set_tx_power(t, variant, channel, power)
-    rtl8225_write(t, 0x7, rtl8225_chan[channel - 1], asic_rev)
+    set_tx_power(t, setup, channel, power)
+    rtl8225_write(t, 0x7, rtl8225_chan[channel - 1], setup.asic_rev)
     time.sleep(0.010)  # PLL settle
 
 
-def config_channel(
-    t: RTL8187Transport,
-    asic_rev: int,
-    variant: RfVariant,
-    channel: int,
-    power: TxPower,
-) -> None:
+def config_channel(t: RTL8187Transport, setup: RfSetup, channel: int, power: TxPower) -> None:
     """Retune to ``channel`` (1..14), full ``rtl8187_config`` sequence.
 
     Raises ValueError for out-of-range channels. The TX_CONF base is read back from the
@@ -67,12 +53,12 @@ def config_channel(
     write the replay serves — never a hardcoded value.
     """
     if channel not in VALID_CHANNELS:
-        raise ValueError(f"RTL8187L: channel {channel} out of range (1..14)")
+        raise ValueError(f"RTL8187: channel {channel} out of range (1..14)")
 
     # Enable MAC loopback so no TX leaks out mid-tune, then retune, then restore TX_CONF.
     reg = t.read32(REG_TX_CONF)
     t.write32(REG_TX_CONF, reg | TX_CONF_LOOPBACK_MAC)
-    set_chan(t, asic_rev, variant, channel, power)
+    set_chan(t, setup, channel, power)
     time.sleep(0.010)
     t.write32(REG_TX_CONF, reg)
 
@@ -84,5 +70,5 @@ def config_channel(
 
     logger.debug(
         "config_channel: ch=%d, RF7=0x%03x, variant=%s",
-        channel, rtl8225_chan[channel - 1], variant.value,
+        channel, rtl8225_chan[channel - 1], setup.variant.value,
     )

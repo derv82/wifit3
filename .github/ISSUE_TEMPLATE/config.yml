@@ -5,10 +5,3 @@ contact_links:
     about: >-
       Not sure how to run a scan, capture a handshake, or drive an attack? Ask in Q&A Discussions —
       please don't open a bug report for usage questions.
-  - name: Add support for a new adapter — port it and send a PR
-    url: https://github.com/derv82/wifit3/discussions/categories/hardware
-    about: >-
-      Adding a chipset is contributor-driven: we don't port cards we can't test on hardware — only
-      the person holding the card can iterate. You capture its cold-boot USB traffic with
-      capture.py, run `/port <chipset>` to port it against that capture, and open a pull request
-      (see the pinned post + CONTRIBUTING.md). Use this space for porting questions.

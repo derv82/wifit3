@@ -4,6 +4,7 @@ from wifit3.chips.products import ALFA, DLink
 
 SUPPORTED_IDS = [
     DeviceID(0x148F, 0x3070, "RT3070", product_name=ALFA.AWUS036NH),
+    DeviceID(0x07D1, 0x3C16, "RT3070", product_name=DLink.DWA_125_REV_A2),
     DeviceID(0x07D1, 0x3C0A, "RT3072", product_name=DLink.DWA_140_REV_B2),
 ]
 

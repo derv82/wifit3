@@ -63,8 +63,8 @@ def _8051_reset(t) -> None:
     t.write8(REG_SYS_FUNC_EN + 1, u & ~BIT(2))
     _mcuio_reset(t, False)
     t.write8(REG_SYS_FUNC_EN + 1, u | BIT(2))   # cached u, no re-read (per vendor)
-    # Userland-only settle (the vendor has none): a WinUSB ctrl_transfer in the window while the
-    # 8051 leaves CPU reset intermittently returns ENOENT; let it recover before the next read.
+    # Userland-only settle (the vendor has none), added for an ENOENT that was WinUSB auto-claim
+    # churn, fixed by the interface claim in driver._bringup; 0/200 bring-ups failed with it at 0.
     time.sleep(_POST_RESET_SETTLE_S)
 
 

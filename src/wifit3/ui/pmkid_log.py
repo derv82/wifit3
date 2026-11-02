@@ -27,6 +27,8 @@ _FAIL_LEAF = {
     PmkidFail.NO_RESPONSE:  ("[bold bright_red]M1 not received[/bold bright_red]", "AP did not respond"),
     PmkidFail.PMF_REQUIRED: ("[bold orange1]PMF Required[/bold orange1]",
                              "AP only associates protected clients"),
+    PmkidFail.PMF_INVALID:  ("[bold orange1]PMF Invalid[/bold orange1]",
+                             "protection cannot be determined from contradictory bits"),
     PmkidFail.NO_PSK_AKM:   ("[bold orange1]No PSK AKM[/bold orange1]",
                              "nothing to harvest, e.g. SAE-only"),
 }
@@ -59,12 +61,13 @@ def _fail_leaf(reason: Optional[PmkidFail]) -> str:
     return treelog.leaf(f"{head}{tail}")
 
 
-def verdict_success(save_hint: Optional[str]) -> list[str]:
+def verdict_success(save_hint: Optional[str], psk_chip: Optional[str] = None) -> list[str]:
     """The terminal success line(s) only: the ``✓ PMKID Extracted`` chip closed by
     the ``saved/exists: …`` leaf (or the chip alone as the closing leaf when
     ``save_hint`` is None). Emitted on its own once progress streams live."""
     if save_hint:
-        return [treelog.branch(_EXTRACTED), treelog.leaf(save_hint)]
+        psk_branch = [treelog.branch(psk_chip)] if psk_chip else []
+        return [treelog.branch(_EXTRACTED), *psk_branch, treelog.leaf(save_hint)]
     return [treelog.leaf(_EXTRACTED)]
 
 

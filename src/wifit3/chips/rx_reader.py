@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 DROP_LOG_PERIOD = 2.0  # Log drop errors once every (seconds)
 PAUSE_POLL = 0.003     # wait while paused (seconds)
 MAX_BATCH_SIZE = 64    # frame buffers per batch
-MAX_BATCH_WAIT = 0.1   # wait time per batch
 MAX_BACKLOG = 256      # backlog = produced - consumed
+EMPTY_SPIN_LIMIT = 8   # consecutive zero-length reads before backing off
+EMPTY_BACKOFF = 0.001  # wait after a zero-length read run (seconds)
 
 
 class RxReaderThread:
@@ -42,7 +43,7 @@ class RxReaderThread:
         self._paused = threading.Event()
         self._fatal_fired = False
         self._bufs_produced = 0  # total buffers sent to be dispatched
-        self._bufs_consumed = 0  # total buffers dispatched
+        self._bufs_consumed = 0  # total buffers the loop has finished dispatching
         self._dropped = 0
         self._next_drop_log = 0.0
 
@@ -82,8 +83,8 @@ class RxReaderThread:
     def _run(self) -> None:
         """Loops over blocking reads, batches & submits buffers."""
         consec_errors = 0
+        consec_empty = 0
         batch: list[bytes] = []
-        next_drain = time.monotonic() + MAX_BATCH_WAIT
         while self._running:
             if self._pause_req.is_set():
                 self._paused.set()
@@ -100,13 +101,17 @@ class RxReaderThread:
             consec_errors = 0
             if buf:
                 batch.append(buf)
-            elif not batch:
-                continue  # discard "falsy" buffers
+                consec_empty = 0
+            else:
+                consec_empty += 1
+                if consec_empty >= EMPTY_SPIN_LIMIT:
+                    time.sleep(EMPTY_BACKOFF)
+                if not batch:
+                    continue
+            loop_busy = self._bufs_produced != self._bufs_consumed
+            if loop_busy and len(batch) < MAX_BATCH_SIZE:
+                continue  # the loop is still on the previous batch; keep collecting
             now = time.monotonic()
-            if len(batch) < MAX_BATCH_SIZE and now < next_drain:
-                continue  # batch not full, still have time
-
-            next_drain = now + MAX_BATCH_WAIT
 
             # Check for backlogged consumer
             if self._bufs_produced - self._bufs_consumed >= MAX_BACKLOG:
@@ -122,6 +127,7 @@ class RxReaderThread:
             self._bufs_produced += len(batch)
             self._loop.call_soon_threadsafe(self._dispatch_batch, batch)
             batch = []
+        self._running = False
         if self._dropped:
             logger.error(f"[{self._name}] RX reader stopped: {self._dropped} buffers dropped total")
         logger.debug(f"[{self._name}] RX reader thread stopped")
@@ -147,9 +153,9 @@ class RxReaderThread:
     # -- loop side -----------------------------------------------------------
 
     def _dispatch_batch(self, batch: list[bytes]) -> None:
-        self._bufs_consumed += len(batch)
         for buf in batch:
             try:
                 self._dispatch(buf)
             except Exception:
                 logger.exception(f"[{self._name}] dispatch raised")
+        self._bufs_consumed += len(batch)

@@ -8,6 +8,7 @@ import struct
 from unittest.mock import MagicMock
 
 from wifit3.chips.rtl8187.driver import RTL8187Driver
+from wifit3.chips.rtl8187.mac import ChipVariant
 
 
 def _ack_buf(ra: bytes) -> bytes:
@@ -31,6 +32,8 @@ def _mgmt_frame(ta: bytes = bytes.fromhex("020000000001")) -> bytes:
 
 def _driver() -> RTL8187Driver:
     d = RTL8187Driver(MagicMock())
+    d._bulk_out_max_packet_sizes = {0x02: 512}
+    d.chip_variant = ChipVariant(hwver_raw=0, name="RTL8187vB", is_rtl8187b=False, hw_rev=None)
     d._parsed = []
     d.register_rx_callback(d._parsed.append)
     return d

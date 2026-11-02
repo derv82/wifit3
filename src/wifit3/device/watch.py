@@ -6,10 +6,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Callable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
 from wifit3.errors import WifiteFatalError
 from wifit3.models.device_id import DeviceID
+
+if TYPE_CHECKING:
+    from wifit3.device.manager import DeviceManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +34,15 @@ def _diff(current: List[DeviceID], seen: List[DeviceID]) -> Tuple[List[DeviceID]
 class DeviceWatch:
     """Owns the last-seen device set; the app calls ``poll`` on a timer. ``has-a`` DeviceManager."""
 
-    def __init__(self, device_manager, on_change: OnChange,
+    def __init__(self, device_manager: "DeviceManager", on_change: OnChange,
                  on_fatal: Optional[OnFatal] = None) -> None:
-        self._dm = device_manager
+        self._dm: "DeviceManager" = device_manager
         self._on_change = on_change      # (current, arrived, departed)
         self._on_fatal = on_fatal
         self._seen: List[DeviceID] = []
         self._paused = False
         self._stopped = False            # latched after a fatal so it isn't re-reported every tick
+        self._polling = False
 
     def pause(self) -> None:
         self._paused = True
@@ -49,23 +53,34 @@ class DeviceWatch:
     def present(self) -> List[DeviceID]:
         return list(self._seen)
 
+    def _scan(self) -> List[DeviceID]:
+        """One device manager scan, ejects any ZeroCD stub present first."""
+        self._dm.eject_zerocd_devices()
+        return self._dm.devices()
+
     async def poll(self) -> None:
         """One bus scan (off the event loop). When the present set changed, fire ``on_change(current,
         arrived, departed)``. A no-op while paused (during a bring-up, so the list can't churn and no
         second prompt stacks) or after a fatal backend error."""
-        if self._paused or self._stopped:
+        if self._paused or self._stopped or self._polling:
             return
+        self._polling = True
         try:
-            current = await asyncio.to_thread(self._dm.devices)
-        except WifiteFatalError as err:
-            self._stopped = True
-            if self._on_fatal is not None:
-                self._on_fatal(err)
-            return
-        arrived, departed = _diff(current, self._seen)
-        if arrived or departed:
-            self._seen = current
-            self._on_change(current, arrived, departed)
+            try:
+                current = await asyncio.to_thread(self._scan)
+            except WifiteFatalError as err:
+                self._stopped = True
+                if self._on_fatal is not None:
+                    self._on_fatal(err)
+                return
+            if self._paused or self._stopped:
+                return
+            arrived, departed = _diff(current, self._seen)
+            if arrived or departed:
+                self._seen = current
+                self._on_change(current, arrived, departed)
+        finally:
+            self._polling = False
 
     async def wait_departure(self, device_id: DeviceID, *, timeout: float = 120.0,
                              interval: float = 0.3) -> bool:
@@ -74,7 +89,7 @@ class DeviceWatch:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
-            present = {d.instance_key for d in await asyncio.to_thread(self._dm.devices)}
+            present = {d.instance_key for d in await asyncio.to_thread(self._scan)}
             if device_id.instance_key not in present:
                 return True
             if loop.time() >= deadline:
@@ -87,9 +102,9 @@ class DeviceWatch:
         Computes its own fresh baseline (not ``_seen``); valid only inside a ``pause()`` window."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
-        baseline = {d.instance_key for d in await asyncio.to_thread(self._dm.devices)}
+        baseline = {d.instance_key for d in await asyncio.to_thread(self._scan)}
         while True:
-            for d in await asyncio.to_thread(self._dm.devices):
+            for d in await asyncio.to_thread(self._scan):
                 if (d.vid, d.pid) == (device_id.vid, device_id.pid) and d.instance_key not in baseline:
                     return d
             if loop.time() >= deadline:

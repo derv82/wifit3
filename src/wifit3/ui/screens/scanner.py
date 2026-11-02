@@ -1,36 +1,36 @@
-import asyncio
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Set
+from typing import TYPE_CHECKING, Dict, List, Optional
 
-from textual._two_way_dict import TwoWayDict
 from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.reactive import Reactive
-from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, RichLog
+from textual.css.query import NoMatches
+from textual.screen import ModalScreen, Screen
+from textual.timer import Timer
+from textual.widgets import Footer, Header, RichLog, Static
 from textual.widgets._header import HeaderClock, HeaderIcon, HeaderTitle
-from textual.widgets.data_table import CellKey, ColumnKey, RowKey
 from rich.markup import escape
 from rich.text import Text
 
+from ..ap_table import APTable, APRow, COLUMN_KEYS
 from ..selectable_rich_log import SelectableRichLog
 
 from wifit3.campaigns import treelog
-from wifit3.campaigns.pbc import PbcWatcher, WpsPbcCapture
-from wifit3.campaigns.wps.registrar import PinResult
-from wifit3.persist.capture_history import load_capture_index, summarize
+from wifit3.campaigns.pin import EMPTY_PIN_LABEL
+from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config
-from wifit3.models import AccessPoint, PersistedCapture
-from wifit3.persist.save import save_handshake, save_pmkid, save_wps_pbc
+from wifit3.models import AccessPoint
 from wifit3.crack.handshake import pmkid_crackable
-
-from ..capture_events import (
-    CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
+from wifit3.ui.vault.global_tracker import GlobalJobTracker
+from wifit3.watchers.ap_watcher import (
+    ApDecloaked, HandshakeCaptured, PbcWindowOpened, PmkidCaptured, UncrackableHandshakeSeen,
+    WepKeyRecovered, WpsPbcPskRecovered, WpsPinRecovered, WpsPskRecovered,
 )
-from ..encryption_format import format_encryption_markup, wep_key_ascii
+
+from ..capture_log import DECLOAK_METHOD_LABELS, saved_psk_markup
+from ..encryption_format import EncryptionSummary, wep_key_hex_and_ascii
 from wifit3.wlan.channels import band_ranges
 
 from .channel_filter import ChannelFilterDialog
@@ -42,24 +42,6 @@ if TYPE_CHECKING:
 
 STALE_DURATION_S = 10.0  # Seconds without a beacon before an AP row is dimmed.
 EVICT_DURATION_S = 30.0  # Seconds without a beacon before an AP is dropped from the table.
-FADE_DURATION_S = EVICT_DURATION_S
-
-
-
-@dataclass(slots=True)
-class _APRowState:
-    signal: int
-    beacons: int
-    clients: int
-    is_stale: bool
-    flash: bool = False
-    wps: bool = False
-    wps_locked: bool = False
-    ssid: Optional[str] = None
-    chips_markup: str = ""
-    identity: str = ""
-    channel: int = 0
-    encryption: str = ""
 
 
 def device_scan_summary(members) -> Optional[str]:
@@ -92,93 +74,80 @@ class _ChannelReadout(HeaderClock):
         self.set_interval(0.25, self._poll)   # hop cadence
 
     def _poll(self) -> None:
-        array = getattr(self.app, "array", None)
+        array = self.app.array
         members = array.members if array else []
-        self.channels = " | ".join(f"CH:{m.current_channel:>3}" for m in members)
+        channels = " | ".join(f"CH:{m.current_channel:>3}" for m in members)
+        if channels != self.channels:
+            self.channels = channels
+            self.parent.update_channel_layout(channels)
 
     def render(self) -> RenderResult:
         return Text(self.channels)
 
 
+class _ChannelBar(Static):
+    DEFAULT_CSS = """
+    _ChannelBar {
+        display: none;
+        width: 100%;
+        height: 1;
+        background: $panel;
+        tint: $foreground-darken-1 5%;
+        color: $foreground;
+        text-opacity: 85%;
+        content-align: right middle;
+    }
+    """
+
+
 class _ScannerHeader(Header):
     """Header whose right slot shows the hopped channel(s) in place of the clock."""
+
+    _channel_layout_inputs: tuple = ()
+    _use_channel_bar = False
+
     def compose(self) -> ComposeResult:
         yield HeaderIcon().data_bind(Header.icon)
         yield HeaderTitle()
         yield _ChannelReadout()
 
+    def update_channel_layout(self, channels: str) -> None:
+        title_width = self.format_title().cell_length
+        inputs = (self.size.width, title_width, len(channels))
+        if inputs != self._channel_layout_inputs:
+            self._channel_layout_inputs = inputs
+            title_right = (self.size.width + title_width + 1) // 2
+            channels_left = self.size.width - len(channels)
+            self._use_channel_bar = bool(channels) and channels_left - title_right < 3
+            self.query_one(_ChannelReadout).display = not self._use_channel_bar
+            for channel_bar in self.screen.query(_ChannelBar):
+                channel_bar.display = self._use_channel_bar
+        if self._use_channel_bar:
+            for channel_bar in self.screen.query(_ChannelBar):
+                channel_bar.update(channels)
 
-class _APScanTable(DataTable):
-    """AP list table that can re-pin its row cursor without moving the viewport."""
-
-    SSID_MIN_WIDTH: int = 20
-    _suppress_scroll: bool = False
-
-    def add_column(
-        self,
-        label: Any,
-        *,
-        width: Optional[int] = None,
-        key: Optional[str] = None,
-        default: Any = None,
-    ) -> ColumnKey:
-        col_key = super().add_column(label, width=width, key=key, default=default)
-        if (key == "ssid" or col_key.value == "ssid") and width is None:
-            col = self.columns.get(col_key)
-            if col and col.content_width < self.SSID_MIN_WIDTH:
-                col.content_width = self.SSID_MIN_WIDTH
-        return col_key
-
-    def _update_dimensions(self, new_rows: Iterable[RowKey]) -> None:
-        col = self.columns.get(ColumnKey("ssid"))
-        if col and col.content_width < self.SSID_MIN_WIDTH:
-            col.content_width = self.SSID_MIN_WIDTH
-        super()._update_dimensions(new_rows)
-        if col and col.content_width < self.SSID_MIN_WIDTH:
-            col.content_width = self.SSID_MIN_WIDTH
-
-    def _update_column_widths(self, updated_cells: Set[CellKey]) -> None:
-        super()._update_column_widths(updated_cells)
-        col = self.columns.get(ColumnKey("ssid"))
-        if col and col.content_width < self.SSID_MIN_WIDTH:
-            col.content_width = self.SSID_MIN_WIDTH
-
-    def _scroll_cursor_into_view(self, animate: bool = False) -> None:
-        if self._suppress_scroll:
-            return
-        super()._scroll_cursor_into_view(animate=animate)
-
-    def pin_cursor_row(self, row: int) -> None:
-        """Move the row cursor to ``row`` without scrolling the viewport."""
-        self._suppress_scroll = True
-        self.move_cursor(row=row, animate=False)
-        self.call_after_refresh(self._release_scroll)
-
-    def _release_scroll(self) -> None:
-        self._suppress_scroll = False
-
-    def sort_aps(self, sort_key: str, key_func: Callable[[str, Any], Any], reverse: bool) -> bool:
-        """Sort rows by key_func(row_key, cell_value). Returns True if row order changed."""
-        ordered_rows = sorted(
-            self._data.items(),
-            key=lambda r: key_func(r[0].value, r[1].get(sort_key)),
-            reverse=reverse,
-        )
-        ordered_keys = [row_key for row_key, _ in ordered_rows]
-        if ordered_keys == list(self._row_locations):
-            return False
-        self._row_locations = TwoWayDict(
-            {row_key: idx for idx, row_key in enumerate(ordered_keys)}
-        )
-        self._update_count += 1
-        self.refresh()
-        return True
+    def on_resize(self) -> None:
+        self.update_channel_layout(self.query_one(_ChannelReadout).channels)
 
 
 class ScannerView(Screen):
     """The main AP scanning list screen."""
 
     app: "WifiteApp"
+
+    HORIZONTAL_BREAKPOINTS = [
+        (0, "-narrow"), (67, "-compact"), (71, "-medium"), (76, "-large"), (83, "-wide"),
+    ]
+
+    CSS = """
+    ScannerView.-narrow #filter-encryption-label,
+    ScannerView.-compact #filter-encryption-label { display: none; }
+    ScannerView.-medium #filter-encryption-label,
+    ScannerView.-large #filter-encryption-label { width: 3; }
+    ScannerView.-narrow #filter-channels-label { display: none; }
+    ScannerView.-compact #filter-channels-label,
+    ScannerView.-medium #filter-channels-label { width: 2; }
+    """
 
     BINDINGS = [
         Binding("q", "app.quit", "Quit", show=True),
@@ -187,29 +156,15 @@ class ScannerView(Screen):
         Binding("s", "cycle_sort", "Sort Col", show=True),
         Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
         Binding("f", "focus_filter", "Filter", show=True),
+        Binding("/", "focus_filter", "Filter", show=False),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
+        Binding("v", "open_vault", "Vault", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
+        Binding("g", "scroll_home", "Top", show=False, priority=True),
+        Binding("G", "scroll_end", "Bottom", show=False, priority=True),
     ]
-
-    # (column_key, display_label). Order here = on-screen order.
-    _COLUMNS = [
-        ("ssid", "SSID"),
-        ("channel", "CH"),
-        ("signal", "POWER"),
-        ("beacons", "🥓"),
-        ("clients", "💻"),
-        ("encryption", "ENCRYPT"),
-        ("wps", "WPS"),
-        ("identity", "VENDOR/ID"),
-    ]
-
-    # Columns whose values are right-aligned in display.
-    _RIGHT_ALIGNED = {"ssid", "channel", "signal", "beacons", "clients"}
-
-    # Columns whose values are numeric for sorting.
-    _NUMERIC_COLS = {"channel", "signal", "beacons", "clients"}
 
     # How long to flash the 🥓 cell when a beacon arrives.
     BEACON_FLASH_S = 0.2
@@ -217,58 +172,46 @@ class ScannerView(Screen):
     def __init__(self):
         super().__init__()
         self.ap_cache: Dict[str, AccessPoint] = {}
-        self._refresh_timer = None
-        self._sort_idx = 2         # Default to POWER
-        self._sort_reverse = True  # Descending
+        self._refresh_timer: Optional[Timer] = None
         self._last_sort_time: float = 0.0
         self._channel_filter: Optional[List[int]] = None
-        self._scan_filter: ScanFilter = ScanFilter()
-        self._events = CaptureEventDetector(granular_eapol=False)
+        self._pbc_bssids_under_modal: set[str] = set()
+        self._scan_filter: ScanFilter = ScanFilter(hide_silenced=Config.hide_silenced)
         # Per-BSSID prev-beacon-count + flash-deadline for "beacon arrived"
         # cell highlight.
         self._prev_beacons: Dict[str, int] = {}
         self._beacon_flash_until: Dict[str, float] = {}
-        # Per-BSSID dynamic row state.
-        self._row_states: Dict[str, _APRowState] = {}
-        # captures/ history, loaded once at mount and hydrated onto APs by
-        # BSSID so previously-saved handshakes/PMKIDs/WEP keys re-badge.
-        self._capture_index: Dict[str, List[PersistedCapture]] = {}
-        # WPS PBC auto-invade. ON by default. The enabled flag lives on the app
-        # (app.pbc_enabled). Watcher + capturing serialization stay Scanner-local.
-        self._pbc_watcher = PbcWatcher()
-        self._pbc_capturing = False          # serialize: one invade at a time
+        # Per-BSSID (signature, row): an unchanged AP reuses its row object.
+        self._row_cache: Dict[str, tuple] = {}
+        self._logged_auto_crack: Optional[bool] = None
 
     # ----- Compose / mount ---------------------------------------------------
 
     def compose(self) -> ComposeResult:
         yield _ScannerHeader()
+        yield _ChannelBar()
         array = self.app.array
         supported = list(array.supported_channels) if array else []
         with Vertical():
             yield FilterBar(supported)
-            table = _APScanTable(cursor_type="row", id="ap-table")
-            for key, label in self._COLUMNS:
-                # Reserve 2 chars in every header to account for sort indicator
-                table.add_column(label + "  ", key=key)
-            yield table
+            yield APTable(id="ap-table")
             yield SelectableRichLog(id="system-log", markup=True, highlight=True)
+        yield GlobalJobTracker()
         yield Footer()
 
     async def on_mount(self) -> None:
-        log = self.query_one("#system-log", RichLog)
-        scanner_sort = "identity" if Config.scanner_sort in ("vendor", "brand") else Config.scanner_sort
-        self._sort_idx = next(
-            (i for i, (key, _label) in enumerate(self._COLUMNS) if key == scanner_sort), 2)
-        self._sort_reverse = Config.scanner_sort_reverse
-        self._update_column_headers()
-        self.query_one("#ap-table", DataTable).focus()
+        table = self.query_one("#ap-table", APTable)
+        stored = "identity" if Config.scanner_sort in ("vendor", "brand") else Config.scanner_sort
+        table.sort_column = stored if stored in COLUMN_KEYS else "signal"
+        table.sort_reverse = Config.scanner_sort_reverse
+        table.focus()
         array = self.app.array
 
-        log.write(treelog.header("Scanner initialized"))
+        self._write_log(treelog.header("Scanner initialized"))
         rows: List[str] = []
-        summary = self._load_capture_history()
+        summary = self.app.vault.summary()
         if summary:
-            rows.append(summary)
+            rows.append(f"Existing [bold]{Path(Config.captures_dir).as_posix()}/[/bold]: {summary}")
         if array:
             device_line = device_scan_summary(array.members)
             if device_line:
@@ -276,91 +219,55 @@ class ScannerView(Screen):
         else:
             rows.append("[yellow]No active interface[/yellow]")
         for i, row in enumerate(rows):
-            log.write(treelog.leaf(row) if i == len(rows) - 1 else treelog.branch(row))
+            self._write_log(treelog.leaf(row) if i == len(rows) - 1 else treelog.branch(row))
 
         if array:
             # 15 FPS in-place value updates and sort refreshes.
             self._refresh_timer = self.set_interval(1 / 15, self.refresh_table)
-            self._pbc_timer = self.set_interval(1.0, self._poll_pbc)
             self._log_pbc_status()  # Auto-invade is ON by default
-
-    def _load_capture_history(self) -> Optional[str]:
-        """Load captures/ once; return the one-line summary (None if empty)."""
-        self._capture_index = load_capture_index()
-        return self._format_history_summary(*summarize(self._capture_index))
-
-    @staticmethod
-    def _format_history_summary(hs: int, pmkid: int, wep: int, wps: int) -> Optional[str]:
-        """`Existing captures/: N handshakes, N PMKIDs, N WEP keys, N WPS PSKs`."""
-        parts = []
-        if hs:
-            parts.append(f"{hs} handshake{'s' * (hs != 1)}")
-        if pmkid:
-            parts.append(f"{pmkid} PMKID{'s' * (pmkid != 1)}")
-        if wep:
-            parts.append(f"{wep} WEP key{'s' * (wep != 1)}")
-        if wps:
-            parts.append(f"{wps} WPS PSK{'s' * (wps != 1)}")
-        if not parts:
-            return None
-        return f"Existing [bold]{Config.captures_dir}/[/bold]: " + ", ".join(parts)
+            self._log_auto_crack_status_when_changed()
 
     async def on_screen_resume(self) -> None:
         # Restart channel hopper
         array = self.app.array
         if not array:
             return
+        self._log_auto_crack_status_when_changed()
+        bssids, self._pbc_bssids_under_modal = self._pbc_bssids_under_modal, set()
+        for bssid in bssids:
+            ap = array.access_points.get(bssid)
+            if ap is not None and ap.wps_pbc_active:
+                self._on_pbc_window(ap)
+        if self.app.screen is not self:
+            return
         await array.start_hopping(
             channels=self._channel_filter, interval=0.25
         )
 
-    # ----- Column header / sort indicator ------------------------------------
-
-    def _update_column_headers(self) -> None:
-        table = self.query_one("#ap-table", DataTable)
-        sort_key, _ = self._COLUMNS[self._sort_idx]
-        arrow = "▼" if self._sort_reverse else "▲"
-
-        for key, base_label in self._COLUMNS:
-            is_sorted = key == sort_key
-            if key in self._RIGHT_ALIGNED:
-                # Right-align column header to rows
-                prefix = f"{arrow} " if is_sorted else "  "
-                label = Text(prefix + base_label, justify="right")
-            else:
-                # Left-aligned text columns: arrow trails the label.
-                suffix = f" {arrow}" if is_sorted else "  "
-                label = Text(base_label + suffix, justify="left")
-            if key in table.columns:
-                table.columns[key].label = label
-        table.refresh()
-
     # ----- Per-tick refresh --------------------------------------------------
 
     def refresh_table(self) -> None:
-        if not self.app.array:
-            return
         array = self.app.array
-        table = self.query_one("#ap-table", DataTable)
-
+        if not array:
+            return
         self._evict_expired_aps()
+        # Under an opaque screen (Focus) the table is hidden: skip the rows. Textual's is_current is
+        # True here, and every table repaint would repaint Focus too.
+        visible = self.is_active or self.app.screen.styles.background.a < 1
 
         # Pre-compute per-AP client counts to avoid O(N×M) inside the AP loop below.
         client_counts: Dict[str, int] = {}
-        for c in array.clients.values():
+        for c in array.clients.values() if visible else ():
             if c.bssid and c.mac not in array.forged_macs:
                 client_counts[c.bssid] = client_counts.get(c.bssid, 0) + 1
 
         now = time.time()
-        self._theme_fg = self.app.theme_variables.get("foreground", "#ffffff")
-
+        rows: List[APRow] = []
         for ap in array.get_access_points(include_eviltwin=False):
-            guessed_ssid = (
-                self._best_named_sibling_ssid(ap)
-                if self._scan_filter.text and ap.ssid is None
-                else None
-            )
-            if not self._scan_filter.matches(ap, ssid=guessed_ssid):
+            guessid = None
+            if ap.ssid is None:
+                guessid = self.app.guessid(ap) or None
+            if not self._scan_filter.matches(ap, ssid=guessid):
                 if ap.bssid in self.ap_cache:
                     self._forget_row(ap.bssid, drop_from_array=False)
                 continue
@@ -369,139 +276,100 @@ class ScannerView(Screen):
             if age >= EVICT_DURATION_S:
                 continue
 
-            if not ap.persisted:
-                hist = self._capture_index.get(ap.bssid)
-                if hist:
-                    ap.persisted = hist
+            self.ap_cache[ap.bssid] = ap
+            if visible:
+                rows.append(self._row_for(ap, now, client_counts.get(ap.bssid, 0), guessid))
 
-            is_stale = age > STALE_DURATION_S
-            n_cli = client_counts.get(ap.bssid, 0)
-
-            # Beacon-arrival flash: bump the deadline when beacon count changes.
-            prev = self._prev_beacons.get(ap.bssid)
-            if prev is not None and ap.beacons > prev:
-                self._beacon_flash_until[ap.bssid] = now + self.BEACON_FLASH_S
-            self._prev_beacons[ap.bssid] = ap.beacons
-            flash_bacon = now < self._beacon_flash_until.get(ap.bssid, 0.0)
-
-            shown_beacons = ap.beacons
-            chips_markup = self._ssid_chips_markup(ap)
-            enc_markup = format_encryption_markup(ap, muted=self._theme_fg)
-            ident_summary = ap.identity.summary
-
-            prev_state = self._row_states.get(ap.bssid)
-            if prev_state is None:
-                self.ap_cache[ap.bssid] = ap
-                self._row_states[ap.bssid] = _APRowState(
-                    signal=ap.signal,
-                    beacons=shown_beacons,
-                    clients=n_cli,
-                    is_stale=is_stale,
-                    flash=flash_bacon,
-                    wps=ap.wps,
-                    wps_locked=ap.wps_locked,
-                    ssid=ap.ssid,
-                    chips_markup=chips_markup,
-                    identity=ident_summary,
-                    channel=ap.channel,
-                    encryption=enc_markup,
-                )
-                row_cells = [
-                    self._render_cell(
-                        ap, col_k, is_stale, n_cli=n_cli,
-                        flash_bacon=flash_bacon, shown_beacons=shown_beacons,
-                    )
-                    for col_k, _ in self._COLUMNS
-                ]
-                table.add_row(*row_cells, key=ap.bssid)
-            else:
-                self.ap_cache[ap.bssid] = ap
-
-                # Decloak event: already logged here.
-                if not prev_state.ssid and ap.ssid:
-                    self._write_log(
-                        Text.from_markup(
-                            f"[bold yellow][*] Decloaked Hidden Network: "
-                            f"{escape(ap.bssid)} -> {escape(ap.ssid)}[/bold yellow]",
-                            emoji=False,
-                        )
-                    )
-
-                if prev_state.is_stale != is_stale:
-                    prev_state.is_stale = is_stale
-                    prev_state.signal = ap.signal
-                    prev_state.beacons = shown_beacons
-                    prev_state.clients = n_cli
-                    prev_state.flash = flash_bacon
-                    prev_state.wps = ap.wps
-                    prev_state.wps_locked = ap.wps_locked
-                    prev_state.ssid = ap.ssid
-                    prev_state.chips_markup = chips_markup
-                    prev_state.identity = ident_summary
-                    prev_state.channel = ap.channel
-                    prev_state.encryption = enc_markup
-                    for col_k, _ in self._COLUMNS:
-                        cell = self._render_cell(
-                            ap, col_k, is_stale, n_cli=n_cli,
-                            flash_bacon=flash_bacon, shown_beacons=shown_beacons,
-                        )
-                        table.update_cell(ap.bssid, col_k, cell)
-                else:
-                    if prev_state.ssid != ap.ssid or prev_state.chips_markup != chips_markup:
-                        prev_state.ssid = ap.ssid
-                        prev_state.chips_markup = chips_markup
-                        table.update_cell(
-                            ap.bssid, "ssid", self._render_cell(ap, "ssid", is_stale), update_width=True,
-                        )
-
-                    if prev_state.channel != ap.channel:
-                        prev_state.channel = ap.channel
-                        table.update_cell(ap.bssid, "channel", self._render_cell(ap, "channel", is_stale))
-
-                    if prev_state.signal != ap.signal:
-                        prev_state.signal = ap.signal
-                        table.update_cell(ap.bssid, "signal", self._render_cell(ap, "signal", is_stale))
-
-                    if prev_state.beacons != shown_beacons or prev_state.flash != flash_bacon:
-                        prev_state.beacons = shown_beacons
-                        prev_state.flash = flash_bacon
-                        table.update_cell(
-                            ap.bssid, "beacons",
-                            self._render_cell(ap, "beacons", is_stale, flash_bacon=flash_bacon, shown_beacons=shown_beacons),
-                        )
-
-                    if prev_state.clients != n_cli:
-                        prev_state.clients = n_cli
-                        table.update_cell(
-                            ap.bssid, "clients",
-                            self._render_cell(ap, "clients", is_stale, n_cli=n_cli),
-                        )
-
-                    if prev_state.encryption != enc_markup:
-                        prev_state.encryption = enc_markup
-                        table.update_cell(ap.bssid, "encryption", self._render_cell(ap, "encryption", is_stale))
-
-                    if prev_state.wps != ap.wps or prev_state.wps_locked != ap.wps_locked:
-                        prev_state.wps = ap.wps
-                        prev_state.wps_locked = ap.wps_locked
-                        table.update_cell(ap.bssid, "wps", self._render_cell(ap, "wps", is_stale))
-
-                    if prev_state.identity != ident_summary:
-                        prev_state.identity = ident_summary
-                        table.update_cell(ap.bssid, "identity", self._render_cell(ap, "identity", is_stale))
-
-            self._drain_capture_events(ap, array.forged_macs)
-
+        if not visible:
+            return
+        table = self.query_one("#ap-table", APTable)
+        table.set_rows(rows)
         if self._should_sort():
-            self._apply_sort(scroll_to_cursor=False)
+            self._last_sort_time = now
+            table.resort()
+
+    def _row_for(
+        self, ap: AccessPoint, now: float, clients: int, guessid: Optional[str]
+    ) -> APRow:
+        """The AP as plain values; the table owns every colour decision made from them.
+        An AP whose signature is unchanged reuses its previous row object untouched."""
+        previous = self._prev_beacons.get(ap.bssid)
+        if previous is not None and ap.beacons > previous:
+            self._beacon_flash_until[ap.bssid] = now + self.BEACON_FLASH_S
+        self._prev_beacons[ap.bssid] = ap.beacons
+
+        vault = self.app.vault
+        is_stale = self._ap_row_age(ap, now) > STALE_DURATION_S
+        beacon_flash = now < self._beacon_flash_until.get(ap.bssid, 0.0)
+        signature = self._row_signature(
+            ap, vault, clients, is_stale, beacon_flash, guessid)
+        # EAPOL rewrites ap.handshakes off the beacon path, so APs holding one are
+        # never cached. There are only ever a handful of them.
+        cacheable = not ap.handshakes
+        if cacheable:
+            cached = self._row_cache.get(ap.bssid)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+
+        row = APRow(
+            bssid=ap.bssid,
+            ssid=ap.ssid,
+            guessid=guessid,
+            channel=ap.channel,
+            signal=ap.signal,
+            beacons=ap.beacons,
+            clients=clients,
+            encryption=EncryptionSummary.from_ap(ap),
+            wps=ap.wps,
+            wps_locked=ap.wps_locked,
+            chipset=ap.chipset or "",
+            identity=ap.identity.summary,
+            is_stale=is_stale,
+            beacon_flash=beacon_flash,
+            silenced=Config.is_silenced(ap.bssid),
+            has_handshake=vault.has_handshake(ap) or any(
+                hs.is_complete for hs in ap.handshakes.values()),
+            has_pmkid=vault.has_pmkid(ap) or any(
+                hs.pmkid and pmkid_crackable(hs) for hs in ap.handshakes.values()),
+            has_wep_key=vault.has_wep_key(ap) or ap.wep_key is not None,
+            has_wps_psk=vault.has_wps_psk(ap) or ap.wps_pbc_psk is not None,
+        )
+        if cacheable:
+            self._row_cache[ap.bssid] = (signature, row)
+        return row
+
+    def _row_signature(
+        self, ap: AccessPoint, vault, clients: int, is_stale: bool,
+        beacon_flash: bool, guessid: Optional[str],
+    ) -> tuple:
+        """Every input to the row, reduced to values that are cheap to read.
+
+        ``last_seen`` stands in for the whole beacon/probe-response path: wlan/sink.py
+        rewrites it after every IE-derived field, so encryption, AKMs, channel and the
+        rest cannot move without it. Listed explicitly alongside it are the fields a
+        frame can change WITHOUT touching last_seen -- cross-card RSSI, a decloak from a
+        client's probe, a WPS M1's identity, WEP IV counting -- plus the vault and
+        config state the badges read.
+        """
+        wep = ap.wep
+        return (
+            ap.last_seen, ap.beacons, ap.signal, ap.channel, ap.ssid,
+            ap.wps, ap.wps_locked, ap.identity.summary,
+            wep.unique_ivs if wep else 0, ap.wep_key, ap.wps_pbc_psk,
+            clients, is_stale, beacon_flash, guessid,
+            vault.revision(ap.bssid), Config.is_silenced(ap.bssid),
+        )
 
     def _evict_expired_aps(self) -> None:
         if not self.app.array:
             return
         now = time.time()
+        focused_bssid = None
+        if self.app.target_ap is not None and self.app.focus_view in self.app.screen_stack:
+            focused_bssid = self.app.target_ap.bssid
         to_drop = [
-            bssid for bssid, ap in self.ap_cache.items()
-            if self._ap_row_age(ap, now) >= EVICT_DURATION_S
+            ap.bssid for ap in self.app.array.get_access_points(include_eviltwin=False)
+            if self._ap_row_age(ap, now) >= EVICT_DURATION_S and ap.bssid != focused_bssid
         ]
         for bssid in to_drop:
             self._forget_row(bssid, drop_from_array=True)
@@ -512,154 +380,38 @@ class ScannerView(Screen):
     def _forget_row(self, bssid: str, *, drop_from_array: bool) -> None:
         """Drop the AP's row and caches; drop_from_array also evicts it and its clients from the registry."""
         if drop_from_array and self.app.array:
-            self.app.array.access_points.pop(bssid, None)
-            orphans = [
-                mac for mac, c in self.app.array.clients.items()
-                if c.bssid == bssid
-            ]
-            for mac in orphans:
-                self.app.array.clients.pop(mac, None)
+            self.app.array.remove_access_point(bssid)
         self.ap_cache.pop(bssid, None)
         self._prev_beacons.pop(bssid, None)
         self._beacon_flash_until.pop(bssid, None)
-        self._row_states.pop(bssid, None)
-        try:
-            self.query_one("#ap-table", DataTable).remove_row(bssid)
-        except Exception:
-            pass
-
-    # ----- Cell construction -------------------------------------------------
-
-    def _render_cell(
-        self, ap: AccessPoint, col_key: str, is_stale: bool,
-        n_cli: int = 0, flash_bacon: bool = False, shown_beacons: Optional[int] = None,
-    ) -> Text:
-        """Build the Text renderable for a single column cell."""
-        fg = self._theme_fg
-        dim = "dim " if is_stale else ""
-        if col_key == "ssid":
-            cell = self._ssid_cell(ap)
-            if is_stale:
-                cell.stylize("dim")
-            return cell
-        if col_key == "channel":
-            return Text(str(ap.channel), justify="right", style=f"{dim}{fg}")
-        if col_key == "signal":
-            return Text(f"{ap.signal} dBm", justify="right", style=f"{dim}{fg}")
-        if col_key == "beacons":
-            count = ap.beacons if shown_beacons is None else shown_beacons
-            style = f"{dim}{fg} bold" if flash_bacon else f"{dim}{fg}"
-            return Text(str(count), justify="right", style=style)
-        if col_key == "clients":
-            return Text(str(n_cli) if n_cli else "", justify="right", style=f"{dim}{fg}")
-        if col_key == "encryption":
-            cell = Text.from_markup(format_encryption_markup(ap, muted=fg), emoji=False, style=fg)
-            if is_stale:
-                cell.stylize("dim")
-            return cell
-        if col_key == "wps":
-            if ap.wps:
-                label = "WPS 🔒" if ap.wps_locked else "WPS"
-                return Text(label, style=f"{dim}{fg}")
-            return Text("", style=f"{dim}{fg}")
-        if col_key == "identity":
-            return self._identity_cell(ap, is_stale)
-        return Text("")
-
-    def _identity_cell(self, ap: AccessPoint, is_stale: bool = False) -> Text:
-        fg = self._theme_fg
-        dim = "dim " if is_stale else ""
-        text = ap.identity.summary
-        return Text(text, style=f"{dim}{fg}")
-
-    # Cap the SSID+badges cell so the capture badges never overflow.
-    _SSID_CELL_MAX = 32
-
-    def _ssid_cell(self, ap: AccessPoint) -> Text:
-        """badges (left) + name (bold=named, italic=hidden, +'?'=sibling guess), right-aligned."""
-        if ap.ssid:
-            name = Text(ap.ssid, style=f"{self._theme_fg} bold")
-        else:
-            sib = self._best_named_sibling_ssid(ap)
-            name = Text(f"{sib}?" if sib else "<Hidden>", style=f"{self._theme_fg} italic")
-
-        chips_markup = self._ssid_chips_markup(ap)  # ✗S, ✓HS, ✓PMK, ✓WEP, ✓WPS
-        chips_text = Text.from_markup(chips_markup, emoji=False) if chips_markup else None
-        reserved = 1 + chips_text.cell_len if chips_text else 0   # 1 = separator space
-        name.truncate(max(1, self._SSID_CELL_MAX - reserved), overflow="ellipsis")
-        if chips_text:
-            out = Text(justify="right")
-            out.append_text(chips_text)
-            out.append(" ")
-            out.append_text(name)
-        else:
-            out = name
-            out.justify = "right"
-        return out
-
-    def _best_named_sibling_ssid(self, ap: AccessPoint) -> Optional[str]:
-        """Guess the sibling SSID to display for a hidden AP."""
-        array = self.app.array
-        if not array or not ap.siblings:
-            return None
-        best_ssid: Optional[str] = None
-        best_beacons = -1
-        for sib_bssid in ap.siblings:
-            sib_ap = array.access_points.get(sib_bssid)
-            if sib_ap and sib_ap.ssid and sib_ap.beacons > best_beacons:
-                best_ssid = sib_ap.ssid
-                best_beacons = sib_ap.beacons
-        return best_ssid
-
-    @staticmethod
-    def _ssid_chips_markup(ap: AccessPoint) -> str:
-        """Badges to the left of SSID for HS, PMK, WEP, WPS, silenced."""
-        types = {p.type for p in ap.persisted}
-        has_hs  = "HS"    in types or any(hs.is_complete for hs in ap.handshakes.values())
-        has_pmk = "PMKID" in types or any(hs.pmkid and pmkid_crackable(hs) for hs in ap.handshakes.values())
-        has_wep = "WEP"   in types or ap.wep_key is not None
-        has_wps = "WPS"   in types or ap.wps_pbc_psk is not None
-        silent = Config.is_silenced(ap.bssid)
-        badges = [
-            (silent, "[red]✗S[/red]"),
-            (has_hs, "[green]✓HS[/green]"),
-            (has_pmk, "[green]✓PMK[/green]"),
-            (has_wep, "[green]✓WEP[/green]"),
-            (has_wps, "[green]✓WPS[/green]"),
-        ]
-        return " ".join(text for cond, text in badges if cond)
+        self._row_cache.pop(bssid, None)
 
     # ----- Capture-event logging ---------------------------------------------
 
-    def _drain_capture_events(self, ap: AccessPoint, forged_macs) -> None:
-        if Config.is_silenced(ap.bssid):
-            return
-        for ev in self._events.poll(ap, forged_macs=forged_macs):
-            self._log_capture_event(ev, ap)
-
-    def _log_capture_event(self, ev: CaptureEvent, ap: AccessPoint) -> None:
+    def on_wifite_app_ap_event_detected(self, message: "WifiteApp.ApEventDetected") -> None:
+        ev = message.event
         ap_label = escape(ev.ssid or ev.bssid)
-        client = escape(ev.client_mac)
-        save_result = None
-        if ev.kind == CaptureKind.HANDSHAKE:
-            pair = ev.pair_label or "?"
+        if isinstance(ev, HandshakeCaptured):
             msg = (
-                f"[bold green]✓ HANDSHAKE[/bold green] ({pair}) on "
-                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{client}[/bold]"
+                f"[bold green]✓ HANDSHAKE[/bold green] ({ev.pair_label}) on "
+                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
-            save_result = save_handshake(ap, ev.client_mac)
-        elif ev.kind == CaptureKind.UNCRACKABLE_HANDSHAKE:
+        elif isinstance(ev, UncrackableHandshakeSeen):
             msg = (
-                f"[bold yellow]● {escape(ev.value or '?')} 4-way[/bold yellow] on "
+                f"[bold yellow]● {escape(ev.akm_label)} 4-way[/bold yellow] on "
                 f"[bold cyan]{ap_label}[/bold cyan] [dim](not crackable, -m 22000)[/dim]"
             )
-        elif ev.kind == CaptureKind.PMKID:
+        elif isinstance(ev, PmkidCaptured):
             msg = (
                 f"[bold green]✓ PMKID[/bold green] on "
-                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{client}[/bold]"
+                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
-            save_result = save_pmkid(ap, ev.client_mac)
-        elif ev.kind == CaptureKind.DECLOAK:
+        elif isinstance(ev, PbcWindowOpened):
+            ap = self.app.array.access_points.get(ev.bssid) if self.app.array else None
+            if ap is not None:
+                self._on_pbc_window(ap)
+            return
+        elif isinstance(ev, ApDecloaked):
             # A ● header (not a ✓ win): a hidden SSID became visible, not a credential.
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._write_log(Text.from_markup(treelog.header(
@@ -667,42 +419,37 @@ class ScannerView(Screen):
                 f"[green]{escape(ev.ssid or '')}[/green] "
                 f"[dim]via {method_label}[/dim]"), emoji=False))
             return
-        elif ev.kind == CaptureKind.WEP_KEY:
+        elif isinstance(ev, WepKeyRecovered):
             msg = (f"[bold green]✓ WEP KEY[/bold green] on "
-                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(wep_key_ascii(ev.value or ''))}")
-        elif ev.kind == CaptureKind.WPS_PIN:
+                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(wep_key_hex_and_ascii(ev.key_hex))}")
+        elif isinstance(ev, WpsPinRecovered):
             msg = (f"[bold green]✓ WPS PIN[/bold green] on "
-                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(ev.value or '')}")
-        elif ev.kind == CaptureKind.WPS_PSK:
+                   f"[bold cyan]{ap_label}[/bold cyan] = {escape(ev.pin or EMPTY_PIN_LABEL)}")
+        elif isinstance(ev, WpsPskRecovered):
             msg = (f'[bold green]✓ WPS PSK[/bold green] on '
-                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.value or "")}"')
-        elif ev.kind == CaptureKind.WPS_PBC:
+                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.psk)}"')
+        elif isinstance(ev, WpsPbcPskRecovered):
             msg = (f'[bold green]✓ WPS PSK[/bold green] [dim](via PushButton)[/dim] on '
-                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.value or "")}"')
+                   f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.psk)}"')
         else:
             return  # eapol events suppressed in scanner
         # Leading space aligns the ✓ win with the ● / ├─► / └─► tree log above it.
         self._write_log(Text.from_markup(f" {msg}", emoji=False))
-        if save_result is not None:
-            verb = "saved" if save_result.was_new else "already saved as"
-            self._write_log(Text.from_markup(treelog.leaf(
-                f"[dim]({verb} {escape(save_result.path.name)})[/dim]"), emoji=False))
-        title = CAPTURE_TOAST_TITLES.get(ev.kind)
-        if title:
-            name = ev.ssid or ev.bssid
-            if ev.kind == CaptureKind.WEP_KEY:
-                self.notify(f"{name}: {wep_key_ascii(ev.value or '')}", title=title, timeout=6)
+        if isinstance(ev, (HandshakeCaptured, PmkidCaptured)):
+            save_result = ev.save_result
+            if save_result is None:
+                reason = "not saved: SSID unknown" if not ev.ssid else "not saved"
+                self._write_log(Text.from_markup(treelog.leaf(f"[dim]({reason})[/dim]"), emoji=False))
             else:
-                pair = ev.pair_label or ("M1" if ev.kind == CaptureKind.PMKID else None)
-                full_title = f"{title} ({pair})" if pair else title
-                body = (f"[bold]{escape(name)}[/bold] on channel [bold]{ap.channel}[/bold] "
-                        f"[dim bold](BSSID: {escape(ap.bssid)})[/dim bold]")
-                self.notify(body, title=full_title, timeout=6)
+                verb = "saved" if save_result.was_new else "already saved as"
+                self._write_log(Text.from_markup(treelog.leaf(
+                    f"[dim]({verb} {escape(save_result.path.name)})[/dim]"
+                    f"{saved_psk_markup(save_result.matches_saved_psk)}"), emoji=False))
 
     def _write_log(self, text) -> None:
         try:
             log = self.query_one("#system-log", RichLog)
-        except Exception:
+        except NoMatches:
             return
         # Bypass RichLog's emojis (would turn :ab: / :cd: inside a BSSID into 🆎 / 💿).
         if isinstance(text, str):
@@ -717,137 +464,33 @@ class ScannerView(Screen):
             return False
         return (time.time() - self._last_sort_time) >= delay
 
-    def _apply_sort(self, *, scroll_to_cursor: bool = True) -> None:
-        """Re-sort the table, maintaining selected item.
-        ``scroll_to_cursor`` controls whether the viewport follows the cursor."""
-        self._last_sort_time = time.time()
-        table = self.query_one("#ap-table", _APScanTable)
-        if table.row_count == 0:
-            return
-
-        try:
-            current_key = table.coordinate_to_cell_key(
-                table.cursor_coordinate
-            ).row_key
-        except Exception:
-            current_key = None
-
-        sort_key, _ = self._COLUMNS[self._sort_idx]
-        reverse = self._sort_reverse
-
-        def _key(bssid: str, val: Any) -> tuple:
-            ap = self.ap_cache.get(bssid)
-            sig = ap.signal if ap else -100
-            sec_sig = sig if reverse else -sig
-
-            if sort_key == "signal":
-                state = self._row_states.get(bssid)
-                cli = state.clients if state else 0
-                sec_cli = cli if reverse else -cli
-                sentinel = 1 if reverse else 0
-                return (sentinel, sig, sec_cli, bssid)
-
-            if sort_key == "wps":
-                wps_rank = 0
-                if ap and ap.wps:
-                    wps_rank = 1 if ap.wps_locked else 2
-                is_empty = (wps_rank == 0)
-                sentinel = int(is_empty != reverse)
-                return (sentinel, wps_rank, sec_sig, bssid)
-
-            if sort_key == "ssid":
-                name = (ap.ssid or "") if ap else ""
-                is_empty = not name
-                sentinel = int(is_empty != reverse)
-                return (sentinel, name.lower(), sec_sig, bssid)
-
-            if sort_key == "channel":
-                ch = ap.channel if ap else 0
-                sentinel = 1 if reverse else 0
-                return (sentinel, ch, sec_sig, bssid)
-
-            if sort_key == "beacons":
-                bc = ap.beacons if ap else 0
-                sentinel = 1 if reverse else 0
-                return (sentinel, bc, sec_sig, bssid)
-
-            if sort_key == "clients":
-                state = self._row_states.get(bssid)
-                cli = state.clients if state else 0
-                is_empty = (cli == 0)
-                sentinel = int(is_empty != reverse)
-                return (sentinel, cli, sec_sig, bssid)
-
-            if sort_key == "encryption":
-                enc = (ap.encryption or "") if ap else ""
-                is_empty = not enc or enc.lower() == "unknown"
-                sentinel = int(is_empty != reverse)
-                return (sentinel, enc.lower(), sec_sig, bssid)
-
-            if sort_key == "identity":
-                ident = (ap.identity.summary or "") if ap else ""
-                is_empty = not ident
-                sentinel = int(is_empty != reverse)
-                return (sentinel, ident.lower(), sec_sig, bssid)
-
-            if isinstance(val, Text):
-                val = val.plain
-            s = str(val).strip() if val is not None else ""
-            is_empty = not s
-            sentinel = int(is_empty != reverse)
-            return (sentinel, s.lower(), sec_sig, bssid)
-
-        order_changed = table.sort_aps(sort_key, key_func=_key, reverse=reverse)
-
-        if current_key and (order_changed or scroll_to_cursor):
-            try:
-                new_idx = table.get_row_index(current_key)
-                if scroll_to_cursor:
-                    table.move_cursor(row=new_idx, animate=False)
-                elif order_changed:
-                    table.pin_cursor_row(new_idx)
-            except Exception:
-                pass
-
     # ----- Actions -----------------------------------------------------------
 
     def action_toggle_log(self) -> None:
         log_widget = self.query_one("#system-log")
         log_widget.display = not log_widget.display
 
-    def _selected_ap(self) -> Optional[AccessPoint]:
-        table = self.query_one("#ap-table", DataTable)
-        if table.row_count == 0:
-            return None
-        try:
-            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
-        except Exception:
-            return None
-        return self.ap_cache.get(row_key)
+    def selected_ap(self) -> Optional[AccessPoint]:
+        bssid = self.query_one("#ap-table", APTable).cursor_bssid
+        return self.ap_cache.get(bssid) if bssid else None
 
     # ----- WPS PBC opportunistic capture -------------------------------------
 
     def action_wps_pbc_mode(self) -> None:
         """Toggle WPS PBC auto-invade on/off (ON by default)."""
         self.app.pbc_enabled = not self.app.pbc_enabled
+        Config.wps_auto_pbc = self.app.pbc_enabled
+        self.app.persist_config()
         self._log_pbc_status()
         if self.app.pbc_enabled:
-            self._arm_open_windows()
+            self._check_open_pbc_windows()
 
-    def _arm_open_windows(self) -> None:
-        """React to PBC windows that are *already* open at the instant we arm."""
+    def _check_open_pbc_windows(self) -> None:
         array = self.app.array
         if not array:
             return
-        launched = self._pbc_capturing
         for ap in array.get_access_points():
-            if not ap.wps_pbc_active:
-                continue
-            if ap.has_psk:
-                ssid = escape(ap.ssid or ap.bssid)
-                self._write_log(f"  [dim]({ssid} already captured, PSK: [bold]{escape(ap.known_psk or '?')}[/bold])[/dim]")
-            elif not launched:
-                launched = True
+            if ap.wps_pbc_active:
                 self._on_pbc_window(ap)
 
     def _log_pbc_status(self) -> None:
@@ -867,74 +510,50 @@ class ScannerView(Screen):
                 "[orange1]disabled[/orange1] [dim](detect only, press [bold]w[/bold] to toggle)[/dim]",
                 color="orange1"))
 
-    def _poll_pbc(self) -> None:
-        array = self.app.array
-        if not array or self.app.screen is not self:
+    def _log_auto_crack_status_when_changed(self) -> None:
+        enabled = Config.auto_crack is not None
+        if enabled == self._logged_auto_crack:
             return
-        for ap in self._pbc_watcher.new_windows(array.get_access_points()):
-            self._on_pbc_window(ap)
+        self._logged_auto_crack = enabled
+        if enabled:
+            self._write_log(treelog.header(
+                "[bold]Auto-crack[/bold] is [bold green]enabled[/bold green] "
+                f"[dim]({Config.auto_crack}, change in Prefs: [bold]ctrl+p[/bold])[/dim]", color="green"))
+        else:
+            self._write_log(treelog.header(
+                "[bold]Auto-crack[/bold] is [orange1]disabled[/orange1] "
+                "[dim](change in Prefs: [bold]ctrl+p[/bold])[/dim]", color="orange1"))
+
+    def on_wifite_app_job_cracked(self, message: "WifiteApp.JobCracked") -> None:
+        job = message.job
+        status = self.app.vault.manager.key_status(job) or PasswordStatus.CURRENT
+        if status is PasswordStatus.CURRENT:
+            label = "[bold green]✓ WPA PSK[/bold green]"
+        else:
+            label = f"[bold yellow]✓ WPA PSK ({status.value})[/bold yellow]"
+        self._write_log(Text.from_markup(
+            f' {label} [dim](via {escape(job.display_name)})[/dim] '
+            f'= "{escape(job.key or "")}"', emoji=False))
 
     def _on_pbc_window(self, ap: AccessPoint) -> None:
-        if Config.is_silenced(ap.bssid):
+        if self.app.screen is not self:
+            stack = self.app.screen_stack
+            if all(isinstance(s, ModalScreen) for s in stack[stack.index(self) + 1:]):
+                self._pbc_bssids_under_modal.add(ap.bssid)
             return
         label = escape(ap.ssid or ap.bssid)
-        self._write_log(
-            f"[bold cyan]WPS PushButton [italic]auto-invade:[/italic][/bold cyan] "
-            f"[bold green]Open Window[/bold green] on [bold]{label}[/bold] "
-            f"[dim](CH {ap.channel})[/dim]")
-        if not self.app.pbc_enabled:
-            self._write_log(treelog.leaf("[dim]auto-invade off: press [bold]w[/bold] to enable[/dim]"))
+        self._write_log(treelog.header(
+            f"[bold cyan]WPS PBC[/bold cyan] [bold green]Window Open[/bold green] on "
+            f"[bold]{label}[/bold] [dim]CH{ap.channel}[/dim]"))
+        reasons = self.app.pbc_ignore_reasons(ap)
+        if reasons:
+            self._write_log(treelog.leaf(f"[dim]ignored: {', '.join(reasons)}[/dim]"))
             return
-        if ap.has_psk:
-            wps = next((p for p in ap.persisted if p.type == "WPS" and p.value), None)
-            where = f" [dim]({escape(Path(wps.path).name)})[/dim]" if wps else ""
-            self._write_log(treelog.leaf(f"[italic]already captured[/italic]{where}"))
-            return
-        if self._pbc_capturing:
-            return
-        asyncio.create_task(self._invade_pbc(ap))
+        self.app.target_ap = ap
+        self.app.push_screen(self.app.focus_view)
 
-    async def _invade_pbc(self, ap: AccessPoint) -> None:
-        """Pause hop → tune to the target → run the PBC enrollment → resume."""
-        array = self.app.array
-        if not array:
-            return
-        self._pbc_capturing = True
-        label = escape(ap.ssid or ap.bssid)
-        self._write_log(treelog.branch(
-            f"[cyan]invading[/cyan] [bold]{label}[/bold]: pausing hop, "
-            f"tuning [cyan]CH {ap.channel}[/cyan]…"))
-        try:
-            await array.stop_hopping()
-            await array.set_channel(ap.channel)
-            outcome = await WpsPbcCapture(
-                array, ap, log=lambda m: self._write_log(treelog.branch(m))
-            ).capture()
-            if outcome.result is PinResult.SUCCESS:
-                ap.wps_pbc_psk = outcome.psk
-                name = escape(outcome.ssid or ap.ssid or ap.bssid)
-                self._write_log(treelog.branch_ok(
-                    f"[black bold on cyan] PSK for {name}: \"{escape(outcome.psk)}\" [/black bold on cyan]"))
-                try:
-                    result = save_wps_pbc(ap, outcome.psk)
-                    if result is None:
-                        self._write_log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
-                    else:
-                        verb = "saved" if result.was_new else "already saved as"
-                        self._write_log(treelog.leaf(
-                            f"[cyan]{verb}[/cyan] [dim]{escape(result.path.name)}[/dim]"))
-                except Exception:
-                    self._write_log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
-            else:
-                self._write_log(treelog.leaf_fail(
-                    f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim]"))
-        except Exception as exc:                       # never let an invade kill the scanner
-            self._write_log(treelog.leaf_fail(f"capture error: {escape(str(exc))}"))
-        finally:
-            self._pbc_capturing = False
-            if self.app.screen is self:
-                # Resume hopping only if we're still the foreground screen (not Focus).
-                await array.start_hopping(channels=self._channel_filter, interval=0.25)
+    def action_open_vault(self) -> None:
+        self.app.action_toggle_vault()
 
     def action_focus_filter(self) -> None:
         self.query_one(FilterBar).focus_text()
@@ -943,41 +562,38 @@ class ScannerView(Screen):
         self.query_one(FilterBar).focus_encryption()
 
     def action_cycle_sort(self) -> None:
-        self._sort_idx = (self._sort_idx + 1) % len(self._COLUMNS)
-        Config.scanner_sort = self._COLUMNS[self._sort_idx][0]
-        self.app.persist_config()
-        self._update_column_headers()
-        self._apply_sort()
+        table = self.query_one("#ap-table", APTable)
+        index = COLUMN_KEYS.index(table.sort_column)
+        table.sort_column = COLUMN_KEYS[(index + 1) % len(COLUMN_KEYS)]
+        self._persist_sort()
 
     def action_toggle_sort_dir(self) -> None:
-        self._sort_reverse = not self._sort_reverse
-        Config.scanner_sort_reverse = self._sort_reverse
+        table = self.query_one("#ap-table", APTable)
+        table.sort_reverse = not table.sort_reverse
+        self._persist_sort()
+
+    def _persist_sort(self) -> None:
+        table = self.query_one("#ap-table", APTable)
+        Config.scanner_sort = table.sort_column
+        Config.scanner_sort_reverse = table.sort_reverse
         self.app.persist_config()
-        self._update_column_headers()
-        self._apply_sort()
 
     def action_scroll_home(self) -> None:
-        table = self.query_one("#ap-table", DataTable)
-        if table.row_count > 0:
-            table.move_cursor(row=0, animate=True)
+        self.query_one("#ap-table", APTable).move_cursor(0, animate=True)
 
     def action_scroll_end(self) -> None:
-        table = self.query_one("#ap-table", DataTable)
-        if table.row_count > 0:
-            table.move_cursor(row=table.row_count - 1, animate=True)
+        table = self.query_one("#ap-table", APTable)
+        table.move_cursor(table.row_count - 1, animate=True)
 
     def action_change_channel(self) -> None:
-        log = self.query_one("#system-log", RichLog)
         array = self.app.array
         if not array:
-            log.write("[bold red][!] No active interface.[/bold red]")
+            self._write_log("[bold red][!] No active interface.[/bold red]")
             return
 
         supported = array.supported_channels
         if not supported:
-            log.write(
-                "[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]"
-            )
+            self._write_log("[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]")
             return
 
         dialog = ChannelFilterDialog(
@@ -990,11 +606,11 @@ class ScannerView(Screen):
         self, result: Optional[List[int]]
     ) -> None:
         if result is None:
-            self.query_one("#system-log", RichLog).write("[dim]Channel filter unchanged.[/dim]")
+            self._write_log("[dim]Channel filter unchanged.[/dim]")
         else:
             await self._apply_channel_filter(result)
         self.query_one(FilterBar).set_channels(self._channel_filter)
-        self.query_one("#ap-table", DataTable).focus()
+        self.query_one("#ap-table", APTable).focus()
 
     async def _apply_channel_filter(self, channels: List[int]) -> None:
         """Re-point the hopper; a full-band pick becomes None so hotplug keeps re-spreading it."""
@@ -1007,23 +623,23 @@ class ScannerView(Screen):
         dropped = self._prune_aps_outside(channels)
         await array.start_hopping(channels=self._channel_filter, interval=0.25)
 
-        log = self.query_one("#system-log", RichLog)
         pieces = [
             f"[bold cyan]{name}[/bold cyan] [dim]({rngs})[/dim]"
             for name, rngs in band_ranges(channels)
         ]
         summary = " and ".join(pieces) if pieces else "[dim]no channels[/dim]"
-        log.write(f" [dim]●[/dim] [bold]Channel hopping[/bold] across {summary}")
+        self._write_log(f" [dim]●[/dim] [bold]Channel hopping[/bold] across {summary}")
         if dropped:
             noun = "AP" if dropped == 1 else "APs"
-            log.write(
-                treelog.leaf(f"[dim]Cleared [bold]{dropped}[/bold] "
-                             f"{noun} outside the filter[/dim]")
-            )
+            self._write_log(treelog.leaf(f"[dim]Cleared [bold]{dropped}[/bold] "
+                                         f"{noun} outside the filter[/dim]"))
 
     # ----- Filter bar --------------------------------------------------------
 
     def on_filter_bar_scan_filter_changed(self, message: FilterBar.ScanFilterChanged) -> None:
+        if message.scan_filter.hide_silenced != Config.hide_silenced:
+            Config.hide_silenced = message.scan_filter.hide_silenced
+            self.app.persist_config()   # the text query re-emits per keystroke; only the box writes
         self._scan_filter = message.scan_filter
         self.refresh_table()
 
@@ -1044,32 +660,11 @@ class ScannerView(Screen):
             self._forget_row(bssid, drop_from_array=True)
         return len(stale)
 
-    async def on_data_table_row_selected(
-        self, event: DataTable.RowSelected
-    ) -> None:
-        bssid = event.row_key.value
-        target_ap = self.ap_cache.get(bssid)
+    async def on_ap_table_row_selected(self, event: APTable.RowSelected) -> None:
+        target_ap = self.ap_cache.get(event.bssid)
         if target_ap:
-            if self.app.array:
-                await self.app.array.stop_hopping()
             self.app.target_ap = target_ap
-            self.app.push_screen("focus")
+            self.app.push_screen(self.app.focus_view)
 
-    def on_data_table_header_selected(
-        self, event: DataTable.HeaderSelected
-    ) -> None:
-        """Click a column header to sort by it; click again to flip direction."""
-        key = event.column_key.value
-        for idx, (col_key, _) in enumerate(self._COLUMNS):
-            if col_key != key:
-                continue
-            if idx == self._sort_idx:
-                self._sort_reverse = not self._sort_reverse
-            else:
-                self._sort_idx = idx
-            Config.scanner_sort = self._COLUMNS[self._sort_idx][0]
-            Config.scanner_sort_reverse = self._sort_reverse
-            self.app.persist_config()
-            self._update_column_headers()
-            self._apply_sort()
-            return
+    def on_ap_table_sort_changed(self, event: APTable.SortChanged) -> None:
+        self._persist_sort()

@@ -105,6 +105,23 @@ def test_transition_pmkid_only_classified_via_assoc():
         assert wpa.pmkid_crackable(hs) is expect_crackable
 
 
+def test_pmkid_records_m1_key_descriptor_version():
+    from wifit3.crack import handshake as wpa
+    s = WlanSink()
+    b, client = "aa:bb:cc:dd:ee:ff", "12:22:33:44:55:66"
+    s.update(pkt({"type": "beacon", "bssid": b, "source": b, "dest": "ff:ff:ff:ff:ff:ff",
+                  "rssi": -40, "ssid": "T", "channel": 1, "encryption": "WPA2",
+                  "akm_suites": [0x02, 0x06], "raw": bytes(36)}), W0)
+    s.update(pkt({"type": "eapol", "bssid": b, "source": b, "dest": client, "rssi": -45,
+                  "raw": bytes(100), "eapol_msg_num": 1, "eapol_replay_counter": bytes(8),
+                  "eapol_nonce": bytes.fromhex("01" * 32), "eapol_mic": bytes(16),
+                  "eapol_key_data_len": 0, "eapol_payload": bytes(99), "eapol_key_info": 0x008B,
+                  "eapol_pmkid": bytes.fromhex("07" * 16)}), W0)
+    hs = s.access_points[b].handshakes[client]
+    assert hs.pmkid_key_descriptor_version == 3
+    assert wpa.crackable_pmkid_akm(hs) == 6
+
+
 def test_wpa3_and_pmf_flags_propagate_and_refresh():
     s = WlanSink()
     b = "aa:bb:cc:dd:ee:ff"
@@ -191,3 +208,29 @@ def test_siblings_channel_change_drops_stale_link():
     _seed_beacon(s, "aa:bb:cc:dd:ee:02", 149)      # roams away
     assert s.access_points["aa:bb:cc:dd:ee:00"].siblings == []
     assert s.access_points["aa:bb:cc:dd:ee:02"].siblings == []
+
+
+def test_remove_access_point_clears_clients_and_sibling_backlinks():
+    s = WlanSink()
+    removed_bssid = "aa:bb:cc:dd:ee:00"
+    remaining_bssid = "aa:bb:cc:dd:ee:02"
+    client = "12:22:33:44:55:66"
+    _seed_beacon(s, removed_bssid, 44)
+    _seed_beacon(s, remaining_bssid, 44)
+    s.update(pkt({"type": "data", "to_ds": True, "from_ds": False,
+                  "bssid": removed_bssid, "source": client,
+                  "dest": "de:ad:be:ef:00:02", "rssi": -50}), W0)
+    s.wep_store.record(removed_bssid, b"\x01\x02\x03")
+    assert removed_bssid in s.packet_stats._counts
+
+    removed = s.remove_access_point(removed_bssid)
+
+    assert removed is not None and removed.bssid == removed_bssid
+    assert client not in s.clients
+    assert s.wep_store.stats(removed_bssid) is None
+    assert removed_bssid not in s.packet_stats._counts
+    assert s.access_points[remaining_bssid].siblings == []
+
+    _seed_beacon(s, removed_bssid, 149)
+    assert s.access_points[removed_bssid].siblings == []
+    assert s.access_points[remaining_bssid].siblings == []

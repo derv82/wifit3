@@ -1,4 +1,6 @@
 """Ctrl+P preferences modal."""
+from typing import Callable
+
 from rich.padding import Padding
 from rich.style import Style
 from rich.text import Text
@@ -6,17 +8,17 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.color import Color
-from textual.containers import Horizontal, Vertical, VerticalGroup
+from textual.containers import Horizontal, VerticalGroup, VerticalScroll
 from textual.events import Event
 from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import Button, Checkbox, Input, Label, Select
 
-from pathlib import Path
-
-from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid
+from wifit3.models import ToolName
 from wifit3.persist.config import Config
-from wifit3.persist.save import consolidate_hc_files
+from wifit3.ui.path_picker import PathInput
+from wifit3.ui.vault.tools_ui import UI_TOOLS
+from wifit3.vault.tools.base import VaultTool
 
 
 class ThemeSetting(VerticalGroup):
@@ -84,7 +86,63 @@ class CapturesDirSetting(VerticalGroup):
     """
     def compose(self) -> ComposeResult:
         self.border_title = "Save directory"
-        yield Input(Config.captures_dir, id="captures_dir")
+        yield PathInput(Config.captures_dir, directories_only=True, prefer_relative=True,
+                        title="Save directory", id="captures_dir")
+
+
+class AutoCrackSetting(VerticalGroup):
+    DEFAULT_CSS = """
+    AutoCrackSetting { border: round $primary }
+    AutoCrackSetting Horizontal { height: auto }
+    AutoCrackSetting Select { width: 1fr }
+    """
+
+    def compose(self) -> ComposeResult:
+        self.border_title = "Auto-crack new captures with"
+        self._chosen = Config.auto_crack or ""
+        tools = sorted(self.app.vault.manager.tools.values(), key=lambda t: t.label)
+        options = [("Off", "")] + [(tool.label, tool.name) for tool in tools]
+        with Horizontal():
+            yield Select(options, id="auto_crack", value=self._chosen, allow_blank=False)
+            yield Button("≡", id="auto_crack_configure")
+
+    def on_mount(self) -> None:
+        self.query_one("#auto_crack_configure", Button).display = bool(self._chosen)
+
+    @on(Select.Changed, "#auto_crack")
+    def select_tool(self, event: Select.Changed) -> None:
+        if event.value == self._chosen:
+            return
+        previous = self._chosen
+        self._choose(str(event.value))
+        tool = self.app.vault.manager.tools.get(self._chosen)
+        if tool is not None and tool.auto_crack_config() is None:
+            self._configure(lambda _: self._revert_if_unconfigured(tool, previous))
+
+    @on(Button.Pressed, "#auto_crack_configure")
+    def configure_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._configure()
+
+    def _choose(self, tool_name: str) -> None:
+        self._chosen = tool_name
+        self.query_one("#auto_crack", Select).value = tool_name
+        self.query_one("#auto_crack_configure", Button).display = bool(tool_name)
+
+    def _revert_if_unconfigured(self, tool: VaultTool, previous: str) -> None:
+        if tool.auto_crack_config() is None:
+            self._choose(previous)
+
+    def _configure(self, on_dismiss: Callable[[dict | None], None] | None = None) -> None:
+        modal = UI_TOOLS.get(ToolName(self._chosen)) if self._chosen else None
+        if modal is None:
+            return
+        self.app.push_screen(modal(confirm_label="Save",
+                                   probed_ssids=self.app.vault.probed_ssids()), on_dismiss)
+
+    @property
+    def tool(self) -> ToolName | None:
+        return ToolName(self._chosen) if self._chosen else None
 
 
 class SaveFooter(Horizontal):
@@ -104,100 +162,6 @@ class SaveFooter(Horizontal):
         self.app.pop_screen()
 
 
-class ConsolidateModal(ModalScreen[bool]):
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    DEFAULT_CSS = """
-    ConsolidateModal { align: center middle; }
-    ConsolidateModal #dialog {
-        width: 54; height: auto;
-        border: thick $primary; background: $surface; padding: 1 2;
-    }
-    ConsolidateModal #prompt { margin-bottom: 1; }
-    ConsolidateModal Horizontal { align: right middle; height: auto; }
-    ConsolidateModal Button { margin-left: 1; }
-    """
-
-    def __init__(self, legacy_count: int, target_count: int) -> None:
-        super().__init__()
-        self.legacy_count = legacy_count
-        self.target_count = target_count
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
-            yield Label("[bold]Consolidate .hc22000 Captures[/]", id="title")
-            dupes = self.legacy_count - self.target_count
-            msg = Text.from_markup(
-                f"\nYou have [bold orange1]{self.legacy_count}[/] separate .hc22000 files from [bold green]{self.target_count}[/] APs.\n\n"
-                f"Do you want to condense these into single files per AP?\n\n"
-                f"    [bold green]{self.target_count} files will be created/updated[/]\n"
-                f"    [bold red]{dupes} duplicate files will be removed[/]"
-            )
-            yield Label(msg, id="prompt")
-            with Horizontal():
-                yield Button(Text("Yes"), "primary", id="confirm")
-                yield Button(Text("No"), "default", id="cancel")
-
-    @on(Button.Pressed, "#confirm")
-    def on_confirm(self, event: Event) -> None:
-        self.dismiss(True)
-
-    @on(Button.Pressed, "#cancel")
-    def on_cancel(self, event: Event) -> None:
-        self.dismiss(False)
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
-
-
-class LegacyCapturesSetting(VerticalGroup):
-    DEFAULT_CSS = """
-    LegacyCapturesSetting {
-        height: auto; margin-top: 0; margin-bottom: 0;
-        align: center middle;
-    }
-    LegacyCapturesSetting Button {
-        margin-top: 0; width: 100%;
-    }
-    """
-
-    def compose(self) -> ComposeResult:
-        captures_path = Path(Config.captures_dir)
-        legacy_files = [
-            p for p in captures_path.iterdir()
-            if p.is_file() and (m := LEGACY_CAPTURE_RE.match(p.name)) and m.group("ext") == "hc22000"
-        ] if captures_path.is_dir() else []
-        if legacy_files:
-            yield Label(f"[dim]{len(legacy_files)} legacy split file(s) found[/dim]", id="legacy_label")
-            btn = Button(Text("Consolidate Captures"), "warning", id="consolidate")
-            btn.tooltip = "Merge separate timestamped .hc22000 files into 1 file per AP"
-            yield btn
-
-    @on(Button.Pressed, "#consolidate")
-    def consolidate_pressed(self, event: Event) -> None:
-        captures_path = Path(Config.captures_dir)
-        legacy_files = [
-            p for p in captures_path.iterdir()
-            if p.is_file() and (m := LEGACY_CAPTURE_RE.match(p.name)) and m.group("ext") == "hc22000"
-        ] if captures_path.is_dir() else []
-        if not legacy_files:
-            return
-
-        targets = {
-            f"{safe_ssid(m.group('ssid'))}_{bssid_to_dashed(m.group('bssid'))}"
-            for p in legacy_files if (m := LEGACY_CAPTURE_RE.match(p.name))
-        }
-
-        def after_confirm(confirmed: bool | None) -> None:
-            if confirmed:
-                migrated, deleted = consolidate_hc_files(captures_path)
-                self.notify(f"Consolidated {deleted} files into {migrated} AP files.", title="Captures Consolidated")
-                self.remove_children()
-                self.mount(Label("[bold green]Captures consolidated[/]", id="legacy_done"))
-
-        self.app.push_screen(ConsolidateModal(len(legacy_files), len(targets)), after_confirm)
-
-
 class PreferencesModal(ModalScreen):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
@@ -207,6 +171,7 @@ class PreferencesModal(ModalScreen):
         width: 44; height: auto;
         max-height: 100%;
         border: thick $primary; background: $surface; padding: 0 2;
+        overflow-y: auto;
     }
     PreferencesModal #dialog > * { width: 100% }
     PreferencesModal #title {
@@ -215,14 +180,19 @@ class PreferencesModal(ModalScreen):
     }
     """
 
+    # CSS, not DEFAULT_CSS: the app's `Button { min-width: 12 }` outranks any DEFAULT_CSS rule.
+    CSS = """
+    #auto_crack_configure { min-width: 0; width: 5; margin-left: 1; }
+    """
+
     def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
+        with VerticalScroll(id="dialog"):
             yield Label("Preferences", id="title")
             yield ThemeSetting()
             yield SortDelaySetting()
             yield CapturesDirSetting()
             yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap")
-            yield LegacyCapturesSetting()
+            yield AutoCrackSetting()
             yield SaveFooter()
 
     def on_mount(self) -> None:
@@ -233,7 +203,9 @@ class PreferencesModal(ModalScreen):
     def save_pressed(self, event: Event):
         Config.theme = self.app.theme
         Config.captures_dir = self.query_one("#captures_dir", Input).value
+        self.app.vault.refresh()
         Config.save_pcap = self.query_one("#save_pcap", Checkbox).value
+        Config.auto_crack = self.query_one(AutoCrackSetting).tool
         Config.scanner_sort_delay = float(self.query_one("#sort_delay", Select).value)
         self._save_and_dismiss()
 

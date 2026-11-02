@@ -111,6 +111,10 @@ class Campaign:
         """True once ``_loop()`` + ``teardown()`` have finished."""
         return self._task is not None and self._task.done()
 
+    def check_auto_stop(self) -> bool:
+        """Called every tick. Return True if the campaign has organically finished its work and should be stopped."""
+        return False
+
     # ---- behaviour (subclass fills these) -----------------------------------
     async def _loop(self) -> None:
         """The campaign's work."""
@@ -128,4 +132,21 @@ class Campaign:
 
     @classmethod
     def ineligible_reason(cls, ap) -> Optional[str]:
+        return None
+
+    @classmethod
+    def button_label(cls, ap) -> str:
+        """The idle button text for this target."""
+        return cls.idle_label
+
+    def status_headlines(self, vault) -> Optional[list[str]]:
+        """Up to 3 markup lines of current activity. Return None to render default passive status."""
+        return None
+
+    def status_under_card(self) -> Optional[str]:
+        """What the card is doing right now. Return None for default/blank."""
+        return None
+
+    def status_under_dash(self, array, now: float) -> Optional[list[str]]:
+        """Footer lines under the dashboard. Return None to render default encryption/WPS info."""
         return None

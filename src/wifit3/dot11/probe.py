@@ -10,11 +10,11 @@ from wifit3.dot11.mac import mac_header
 _CAPABILITY_INFO = 0x0411
 
 
-def probe_req(bssid: bytes, our_mac: bytes, ssid: str) -> bytes:
+def probe_req(bssid: bytes, our_mac: bytes, ssid: str, channel: int = 1) -> bytes:
     """Directed Probe Request for ``ssid``, addressed to ``bssid`` (RA/BSSID), from our
     forged STA. The AP answers only if the SSID matches (or it responds broadly)."""
     hdr = mac_header(b"\x40\x00", bssid, our_mac, bssid)
-    return hdr + ssid_ie(ssid) + rates_ie() + ext_rates_ie()
+    return hdr + ssid_ie(ssid) + rates_ie(channel) + ext_rates_ie(channel)
 
 
 def probe_resp(bssid: bytes, ssid: str, channel: int) -> bytes:
@@ -25,6 +25,6 @@ def probe_resp(bssid: bytes, ssid: str, channel: int) -> bytes:
     fixed = (struct.pack("<Q", int(time.time() * 1_000_000))
              + struct.pack("<H", 100)                      # beacon interval, 100 TU
              + struct.pack("<H", _CAPABILITY_INFO))
-    tags = (ssid_ie(ssid) + rates_ie() + ds_param_ie(channel)
-            + ext_rates_ie() + GENERIC_RSN_IE)
+    tags = (ssid_ie(ssid) + rates_ie(channel) + ds_param_ie(channel)
+            + ext_rates_ie(channel) + GENERIC_RSN_IE)
     return hdr + fixed + tags

@@ -141,7 +141,7 @@ class SnifferTap:
         )
 
 
-async def _one(iface, bssid, ssid, channel, our_mac, pin, msg_timeout, cap,
+async def _one(iface, bssid, ssid, channel, our_mac, pin, msg_timeout, cap, wsc_2_0,
                max_resends=0, auto_ack=False, tx_ack=False, ack_resends=0, tap=None):
     """Run one full attempt; return a dict of stage->relative-ms + assoc timing + outcome.
 
@@ -164,7 +164,7 @@ async def _one(iface, bssid, ssid, channel, our_mac, pin, msg_timeout, cap,
     if tap is not None:                 # arm the sniffer on the ACTUAL inject MAC (post fake-mac)
         tap.reset(our_mac, str_to_mac(bssid))
     assoc = Association(iface, bssid, ssid, channel, our_mac=our_mac,
-                        assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR))
+                        assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, wsc_2_0))
     assoc.start()
     # auto_ack is now armed via set_fake_mac (active monitor) above; WlanTransport no longer
     # carries an ack flag (the driver requests ACK per inject_frame). tx_ack below drives the
@@ -177,7 +177,8 @@ async def _one(iface, bssid, ssid, channel, our_mac, pin, msg_timeout, cap,
         associated = await assoc.associate()
         t_assoc = (time.monotonic() - t_assoc0) * 1000
         transport.start()
-        reg = WpsRegistrar(transport, str_to_mac(bssid), our_mac,
+        reg = WpsRegistrar(transport, str_to_mac(bssid), our_mac, channel=channel,
+                           wsc_2_0=wsc_2_0,
                            msg_timeout=msg_timeout, eapol_start_timeout=max(7.0, msg_timeout),
                            overall_timeout=msg_timeout * 8, max_resends=max_resends,
                            tx_ack=tx_ack, ack_resends=ack_resends, log=log)
@@ -232,6 +233,7 @@ async def mode_timing(iface, tgt, args, tap=None):
         elif args.ab == "resend":
             rs = 0 if i % 2 == 0 else 2
         r = await _one(iface, bssid, ssid, channel, mac, pin, args.timeout, cap,
+                       tgt["wsc_2_0"],
                        max_resends=rs, auto_ack=aa,
                        tx_ack=args.ack_resend,
                        ack_resends=(args.ack_resends if args.ack_resend else 0), tap=tap)
@@ -360,7 +362,8 @@ async def main_async(args) -> int:
     tgt = {"bssid": bssid, "ssid": args.ssid or d.get("ssid", ""),
            "channel": args.channel or int(d.get("channel", "1")), "pin": args.pin or d.get("pin")}
     ifaces, iface, array = await discover_iface(args.debug, args.card)
-    await find_ap(iface, array, tgt["channel"], bssid, tgt["ssid"], args.scan_secs)
+    found = await find_ap(iface, array, tgt["channel"], bssid, tgt["ssid"], args.scan_secs)
+    tgt["wsc_2_0"] = bool(found and found.wps_version == "2.0")
     tap = sniffer = None
     if args.sniffer_card:
         sniffer = next((i for i in ifaces

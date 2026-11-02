@@ -1,47 +1,167 @@
-"""WPA/WPA2-PSK key derivation + the 4-way EAPOL MIC (no I/O).
-
-PMK = PBKDF2-HMAC-SHA1(psk, ssid, 4096, 32). PTK = PRF-512 over the sorted MAC pair and
-sorted nonce pair. The MIC (key descriptor version 2, plain PSK) is HMAC-SHA1-128 over the
-EAPOL payload with its MIC field zeroed, keyed by the KCK (PTK[:16]). Version 3 (PSK-SHA256,
-AES-CMAC) is not implemented: the FakeAP twin advertises plain PSK.
-"""
+"""WPA/WPA2-PSK checks for key versions 1-3, PMKIDs, and FT-PSK."""
+import functools
 import hashlib
 import hmac
+import re
+from typing import Iterable, Optional
 
-_KCK_LEN = 16
+from wifit3.crack.hc22000_format import PMKID_SHA256_MESSAGE_PAIR_BIT, Hc22000Line
+from wifit3.crack.handshake import NONCE_CORRECTION_BIT, NONCE_ERROR_CORRECTIONS
+from wifit3.dot11.eapol import AES_128_CMAC, HMAC_MD5_RC4, HMAC_SHA1_AES, KEY_DESCRIPTOR_VERSION_MASK
+from wifit3.dot11.wpa import (
+    KCK_LEN,
+    derive_ft_pmk_r0,
+    derive_ft_pmk_r1,
+    derive_ft_ptk,
+    derive_pmk,
+    derive_ptk,
+    derive_ptk_sha256,
+    eapol_mic,
+    eapol_mic_aes_cmac,
+    eapol_mic_hmac_md5,
+    ft_pmk_r1_name,
+)
 
-
-def pmk(psk: str, ssid: str) -> bytes:
-    return hashlib.pbkdf2_hmac("sha1", psk.encode(), ssid.encode(), 4096, 32)
-
-
-def _prf(key: bytes, label: bytes, data: bytes, nbytes: int) -> bytes:
-    out = b""
-    i = 0
-    while len(out) < nbytes:
-        out += hmac.new(key, label + b"\x00" + data + bytes([i]), hashlib.sha1).digest()
-        i += 1
-    return out[:nbytes]
-
-
-def ptk(pmk_bytes: bytes, aa: bytes, spa: bytes, anonce: bytes, snonce: bytes,
-        nbytes: int = 48) -> bytes:
-    """AA = AP MAC, SPA = client MAC. Both the MAC pair and the nonce pair enter sorted, so
-    the two peers derive the same PTK regardless of who is addressed first."""
-    data = min(aa, spa) + max(aa, spa) + min(anonce, snonce) + max(anonce, snonce)
-    return _prf(pmk_bytes, b"Pairwise key expansion", data, nbytes)
-
-
-def kck(ptk_bytes: bytes) -> bytes:
-    return ptk_bytes[:_KCK_LEN]
-
-
-def eapol_mic(kck_bytes: bytes, eapol_payload_mic_zeroed: bytes) -> bytes:
-    return hmac.new(kck_bytes, eapol_payload_mic_zeroed, hashlib.sha1).digest()[:16]
+_KEY_INFO_OFFSET = 5
+_SNONCE_OFFSET = 17
+_NONCE_LEN = 32
+# hcxpcapngtool's FT message pairs 3 and 4 hold the SNonce in the ANONCE field (module_22000.c).
+_FT_MESSAGE_PAIRS_WITH_SNONCE_FIELD = frozenset({3, 4})
+_MESSAGE_PAIR_AP_LESS = 0x10
+_MESSAGE_PAIR_LE_ROUTER = 0x20
+_MESSAGE_PAIR_BE_ROUTER = 0x40
+RAW_PMK_RE = re.compile(r"[0-9a-fA-F]{64}")      # a PMK given in place of a passphrase
 
 
-def mic_for(psk: str, ssid: str, aa: bytes, spa: bytes, anonce: bytes, snonce: bytes,
+def mic_for(psk: str, ssid: bytes, aa: bytes, spa: bytes, anonce: bytes, snonce: bytes,
             eapol_payload_mic_zeroed: bytes) -> bytes:
     """The M2 MIC a client with this PSK would produce over these EAPOL bytes."""
-    k = kck(ptk(pmk(psk, ssid), aa, spa, anonce, snonce))
-    return eapol_mic(k, eapol_payload_mic_zeroed)
+    kck = derive_ptk(derive_pmk(psk, ssid), aa, spa, anonce, snonce, KCK_LEN)
+    return eapol_mic(kck, eapol_payload_mic_zeroed)
+
+
+def pmkid(pmk: bytes, aa: bytes, spa: bytes) -> bytes:
+    """AKM 2 PMKID: HMAC-SHA1-128(PMK, ``PMK Name`` || AP MAC || STA MAC)."""
+    return hmac.new(pmk, b"PMK Name" + aa + spa, hashlib.sha1).digest()[:16]
+
+
+def sha256_pmkid(pmk: bytes, aa: bytes, spa: bytes) -> bytes:
+    """AKM 6 PMKID: HMAC-SHA256-128 of the same input. Hashcat 8 reads it from message pair ``03``."""
+    return hmac.new(pmk, b"PMK Name" + aa + spa, hashlib.sha256).digest()[:16]
+
+
+def _key_descriptor_version(eapol: bytes) -> int:
+    return int.from_bytes(eapol[_KEY_INFO_OFFSET:_KEY_INFO_OFFSET + 2], "big") & KEY_DESCRIPTOR_VERSION_MASK
+
+
+def _ft_pmk_matches(pmk: bytes, line: Hc22000Line) -> bool:
+    """FT-PSK (``WPA*03`` PMKR1Name / ``WPA*04`` MIC) check, as module_22000.c derives it."""
+    mac_ap, mac_sta = bytes.fromhex(line.mac_ap), bytes.fromhex(line.mac_sta)
+    expected = bytes.fromhex(line.pmkid_or_mic)
+    r1khid = bytes.fromhex(line.r1khid)
+    pmk_r0, pmk_r0_name = derive_ft_pmk_r0(pmk, bytes.fromhex(line.essid), bytes.fromhex(line.mdid),
+                                           bytes.fromhex(line.r0khid), mac_sta)
+    if line.kind == "03":
+        return hmac.compare_digest(ft_pmk_r1_name(pmk_r0_name, r1khid, mac_sta), expected)
+    eapol = bytes.fromhex(line.eapol)
+    if _key_descriptor_version(eapol) != AES_128_CMAC:
+        return False
+    frame_nonce = eapol[_SNONCE_OFFSET:_SNONCE_OFFSET + _NONCE_LEN]
+    field_nonce = bytes.fromhex(line.anonce)
+    message_pair = line.message_pair_bits
+    if line.eapol_message_pair in _FT_MESSAGE_PAIRS_WITH_SNONCE_FIELD:
+        snonce, anonce = field_nonce, frame_nonce
+    else:
+        snonce, anonce = frame_nonce, field_nonce
+    pmk_r1 = derive_ft_pmk_r1(pmk_r0, r1khid, mac_sta)
+    for corrected_anonce in _anonce_candidates(anonce, message_pair):
+        kck = derive_ft_ptk(pmk_r1, snonce, corrected_anonce, mac_ap, mac_sta, KCK_LEN)
+        if hmac.compare_digest(eapol_mic_aes_cmac(kck, eapol), expected):
+            return True
+    return False
+
+
+@functools.cache
+def _anonce_candidates(anonce: bytes, message_pair: int) -> tuple[bytes, ...]:
+    if not (message_pair & NONCE_CORRECTION_BIT) or message_pair & _MESSAGE_PAIR_AP_LESS:
+        return (anonce,)
+    counter = anonce[-4:]
+    if message_pair & _MESSAGE_PAIR_LE_ROUTER:
+        byte_orders = ("big",)
+    elif message_pair & _MESSAGE_PAIR_BE_ROUTER:
+        byte_orders = ("little",)
+    else:
+        byte_orders = ("big", "little")
+    prefix = anonce[:-4]
+    candidates = [anonce]
+    half = NONCE_ERROR_CORRECTIONS // 2
+    for byte_order in byte_orders:
+        origin = int.from_bytes(counter, byte_order)
+        candidates.extend(
+            prefix + ((origin + delta) & 0xFFFFFFFF).to_bytes(4, byte_order)
+            for delta in range(-half, half + 1) if delta)
+    return tuple(candidates)
+
+
+def pmk_matches(pmk: bytes, line: Hc22000Line) -> bool:
+    """True if this PMK cracks the hashline (key version 1, 2 or 3, or FT-PSK).
+    EAPOL lines with message-pair bit 7 correct the ANonce the way hashcat 8 does."""
+    if line.kind in ("03", "04"):
+        return _ft_pmk_matches(pmk, line)
+    mac_ap, mac_sta = bytes.fromhex(line.mac_ap), bytes.fromhex(line.mac_sta)
+    expected = bytes.fromhex(line.pmkid_or_mic)
+    if line.kind == "01":
+        if line.message_pair_bits & PMKID_SHA256_MESSAGE_PAIR_BIT:
+            return hmac.compare_digest(sha256_pmkid(pmk, mac_ap, mac_sta), expected)
+        return hmac.compare_digest(pmkid(pmk, mac_ap, mac_sta), expected)
+    if line.kind != "02":
+        return False
+    eapol = bytes.fromhex(line.eapol)
+    key_descriptor_version = _key_descriptor_version(eapol)
+    snonce = eapol[_SNONCE_OFFSET:_SNONCE_OFFSET + _NONCE_LEN]
+    anonce = bytes.fromhex(line.anonce)
+    if key_descriptor_version == HMAC_MD5_RC4:
+        derive_kck, calculate_mic = derive_ptk, eapol_mic_hmac_md5
+    elif key_descriptor_version == HMAC_SHA1_AES:
+        derive_kck, calculate_mic = derive_ptk, eapol_mic
+    elif key_descriptor_version == AES_128_CMAC:
+        derive_kck, calculate_mic = derive_ptk_sha256, eapol_mic_aes_cmac
+    else:
+        return False
+    for corrected_anonce in _anonce_candidates(anonce, line.message_pair_bits):
+        kck = derive_kck(pmk, mac_ap, mac_sta, corrected_anonce, snonce, KCK_LEN)
+        if hmac.compare_digest(calculate_mic(kck, eapol), expected):
+            return True
+    return False
+
+
+_derive_pmk_cached = functools.lru_cache(maxsize=1024)(derive_pmk)
+
+
+@functools.lru_cache(maxsize=100_000)
+def hashcat_plain(plain: str) -> str:
+    """A password as hashcat printed it, with ``$HEX[...]`` decoded (hashcat hex-encodes a ':',
+    control characters and non-UTF-8 bytes); non-UTF-8 bytes stay as hashcat wrote them."""
+    if not (plain.startswith("$HEX[") and plain.endswith("]")):
+        return plain
+    try:
+        return bytes.fromhex(plain[5:-1]).decode("utf-8")
+    except ValueError:
+        return plain
+
+
+def psk_matches(psk: str, line: Hc22000Line) -> bool:
+    """True if the passphrase (or 64-hex raw PMK) cracks the hashline."""
+    if RAW_PMK_RE.fullmatch(psk):
+        return pmk_matches(bytes.fromhex(psk), line)
+    return pmk_matches(_derive_pmk_cached(psk, bytes.fromhex(line.essid)), line)
+
+
+def psk_verdict(psks: Iterable[str], lines: Iterable[Hc22000Line]) -> Optional[bool]:
+    """Whether any PSK cracks the lines, judged on the authorized lines when there are any (an M1+M2
+    line may hold a client's wrong password); None when that can't be told."""
+    psks, lines = list(psks), list(lines)
+    authorized = [line for line in lines if line.authorized]
+    if any(psk_matches(psk, line) for psk in psks for line in authorized or lines):
+        return True
+    return False if psks and authorized else None

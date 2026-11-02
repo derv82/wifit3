@@ -2,6 +2,7 @@
 hand-off (read_once on the thread -> dispatch on the loop) and the
 consecutive-error give-up. Driver-specific decode is tested per driver."""
 import asyncio
+import threading
 
 import pytest
 import usb.core
@@ -58,6 +59,7 @@ async def test_reader_gives_up_after_consecutive_errors():
         await loop.run_in_executor(None, r._thread.join, 1.0)
         assert calls["n"] == 3
         assert not r._thread.is_alive()
+        assert not r.running
     finally:
         await r.stop()
 
@@ -148,19 +150,26 @@ def test_pause_on_stopped_reader_returns_immediately():
 
 
 @pytest.mark.asyncio
-async def test_reader_batches_by_size_and_preserves_order(monkeypatch):
-    monkeypatch.setattr(rx_reader, "MAX_BATCH_SIZE", 3)
-    monkeypatch.setattr(rx_reader, "MAX_BATCH_WAIT", 999)
+async def test_reader_dispatches_at_once_when_idle_and_batches_while_loop_busy():
     loop = asyncio.get_running_loop()
     seq = [b"A", b"B", b"C"]
+    b_and_c_read = threading.Event()
     event = asyncio.Event()
     batches = []
     dispatched = []
 
     def read_once():
-        return seq.pop(0) if seq else None
+        buf = seq.pop(0) if seq else None
+        if not seq:
+            b_and_c_read.set()
+        return buf
 
-    r = RxReaderThread(loop, read_once, dispatched.append, name="batch")
+    def on_dispatch(buf):
+        dispatched.append(buf)
+        if buf == b"A":
+            b_and_c_read.wait(1.0)            # hold the loop on A while the reader takes B, C
+
+    r = RxReaderThread(loop, read_once, on_dispatch, name="batch")
     orig = r._dispatch_batch
 
     def spy(batch):
@@ -172,8 +181,8 @@ async def test_reader_batches_by_size_and_preserves_order(monkeypatch):
     r._dispatch_batch = spy
     r.start()
     try:
-        await asyncio.wait_for(event.wait(), timeout=1.0)
-        assert batches == [[b"A", b"B", b"C"]]
+        await asyncio.wait_for(event.wait(), timeout=2.0)
+        assert batches == [[b"A"], [b"B", b"C"]]
         assert dispatched == [b"A", b"B", b"C"]
     finally:
         await r.stop()
@@ -213,3 +222,38 @@ async def test_reader_skips_falsy_buffers(monkeypatch):
         assert dispatched == [b"real"]
     finally:
         await r.stop()
+
+
+@pytest.mark.asyncio
+async def test_reader_backs_off_on_a_run_of_zero_length_reads(monkeypatch):
+    """A device streaming ZLPs must not spin the core: reads return instantly, so the
+    reader sleeps once it has seen EMPTY_SPIN_LIMIT of them in a row (issue #66)."""
+    monkeypatch.setattr(rx_reader, "EMPTY_SPIN_LIMIT", 3)
+    loop = asyncio.get_running_loop()
+    slept = []
+    reads = 0
+
+    real_sleep = rx_reader.time.sleep
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        real_sleep(0)
+
+    monkeypatch.setattr(rx_reader.time, "sleep", fake_sleep)
+
+    def read_once():
+        nonlocal reads
+        reads += 1
+        return b""
+
+    r = RxReaderThread(loop, read_once, lambda buf: None, name="test")
+    r.start()
+    try:
+        while reads < 20:
+            await asyncio.sleep(0.01)
+    finally:
+        monkeypatch.setattr(rx_reader.time, "sleep", real_sleep)
+        await r.stop()
+
+    assert slept, "reader spun on zero-length reads without backing off"
+    assert set(slept) == {rx_reader.EMPTY_BACKOFF}

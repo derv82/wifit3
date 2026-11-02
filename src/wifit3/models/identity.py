@@ -99,6 +99,7 @@ class ApIdentity:
         device_type: str | None = None,
     ) -> None:
         self._evidence: dict[IdKey, dict[IdSource, str]] = {}
+        self._summary: str | None = None
         has_attrs = any(
             v is not None
             for v in (manufacturer, model_name, model_number, device_name, serial_number, device_type)
@@ -123,6 +124,7 @@ class ApIdentity:
             if key is IdKey.MANUFACTURER:
                 cleaned = canonical_vendor(cleaned) or cleaned
             self._evidence.setdefault(key, {})[source] = cleaned
+            self._summary = None
 
     def update(
         self,
@@ -235,11 +237,13 @@ class ApIdentity:
 
     @property
     def summary(self) -> str:
-        base = self._name_summary()
-        device_type = self.device_type
-        if device_type:
-            return f"{base} ({device_type})".strip()
-        return base
+        # Memoised: the scanner reads this for every AP on every frame, and ``set``
+        # is the only thing that can change it.
+        if self._summary is None:
+            base = self._name_summary()
+            device_type = self.device_type
+            self._summary = f"{base} ({device_type})".strip() if device_type else base
+        return self._summary
 
     def _name_summary(self) -> str:
         if not self.manufacturer:

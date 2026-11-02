@@ -28,14 +28,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..campaigns import treelog
-from .capture_events import CaptureEvent
+from wifit3.watchers.ap_watcher import EapolFrameSeen, HandshakeCaptured
 from .capture_log import _eapol_fields
 
 # AP is always drawn on the left; the arrow shows the frame's direction.
 _DIR = {1: "AP→Client", 3: "AP→Client", 2: "AP←Client", 4: "AP←Client"}
 
 
-def _field_score(ev: CaptureEvent) -> int:
+def _field_score(ev: EapolFrameSeen) -> int:
     """How 'complete' a frame is, used to pick the representative when a message
     is aggregated, so ``M1 ×20`` shows the best M1 we actually saw (not a synthetic
     OR of fields across frames)."""
@@ -44,10 +44,10 @@ def _field_score(ev: CaptureEvent) -> int:
 
 @dataclass
 class _MsgAgg:
-    rep: CaptureEvent          # most-complete representative frame for this Mx
+    rep: EapolFrameSeen        # most-complete representative frame for this Mx
     count: int = 1
 
-    def merge(self, ev: CaptureEvent) -> None:
+    def merge(self, ev: EapolFrameSeen) -> None:
         self.count += 1
         if _field_score(ev) > _field_score(self.rep):
             self.rep = ev
@@ -58,9 +58,9 @@ class _Burst:
     last_ts: float = 0.0
     msgs: dict = field(default_factory=dict)        # msg_num -> _MsgAgg
 
-    def add(self, ev: CaptureEvent, now: float) -> None:
+    def add(self, ev: EapolFrameSeen, now: float) -> None:
         self.last_ts = now
-        m = ev.msg_num or 0
+        m = ev.msg_num
         agg = self.msgs.get(m)
         if agg is None:
             self.msgs[m] = _MsgAgg(rep=ev)
@@ -73,8 +73,9 @@ def _msg_label(msg_num: int, count: int) -> str:
     return f"{base} ×{count}" if count > 1 else base
 
 
-def _render_tree(client_mac: str, burst: _Burst, hs_ev, instance: int,
-                 save_hint: str | None = None, uncrackable: str | None = None) -> list[str]:
+def _render_tree(client_mac: str, burst: _Burst, hs_ev: HandshakeCaptured | None, instance: int,
+                 save_hint: str | None = None, uncrackable: str | None = None,
+                 psk_chip: str | None = None) -> list[str]:
     """A burst (+ optional completion event + save note) as treelog markup lines.
 
     ``save_hint`` (the screen's short 'saved: captures/…' string) closes the tree
@@ -99,6 +100,8 @@ def _render_tree(client_mac: str, burst: _Burst, hs_ev, instance: int,
         lines += [treelog.branch(b) for b in bodies]       # every Mx a branch …
         if save_hint:                                      # … verdict branches too,
             lines.append(treelog.branch(verdict))          #     the save note closes
+            if psk_chip:
+                lines.append(treelog.branch(psk_chip))
             lines.append(treelog.leaf(save_hint))
         else:
             lines.append(treelog.leaf(verdict))            # … else verdict closes it
@@ -114,7 +117,7 @@ def _render_tree(client_mac: str, burst: _Burst, hs_ev, instance: int,
     return lines
 
 
-def _render_reannounce(client_mac: str, hs_ev, instance: int) -> list[str]:
+def _render_reannounce(client_mac: str, hs_ev: HandshakeCaptured, instance: int) -> list[str]:
     """A compact one-liner for a repeat capture on an already-announced client
     (its per-frame detail was suppressed, so there's no tree to redraw)."""
     return [f"[black bold on green] ✓ Valid 4-Way Handshake ({hs_ev.pair_label}) "
@@ -139,15 +142,15 @@ class EapolAggregator:
         self._captured.clear()
         self._instances.clear()
 
-    def on_eapol(self, ev: CaptureEvent, now: float) -> None:
+    def on_eapol(self, ev: EapolFrameSeen, now: float) -> None:
         """Buffer a new EAPOL frame, unless its client is already captured (then
         we suppress until a new instance completes)."""
         if ev.client_mac in self._captured:
             return
         self._bursts.setdefault(ev.client_mac, _Burst()).add(ev, now)
 
-    def on_handshake(self, ev: CaptureEvent, now: float,
-                     save_hint: str | None = None) -> list[str]:
+    def on_handshake(self, ev: HandshakeCaptured, save_hint: str | None = None, 
+                     psk_chip: str | None = None) -> list[str]:
         """A crackable pair completed (one HANDSHAKE per instance). First time for
         a client → flush its buffered tree with the verdict (and the screen's
         ``save_hint`` as the closing leaf); afterwards → a compact ``×N``
@@ -157,7 +160,7 @@ class EapolAggregator:
         if ev.client_mac not in self._captured:
             self._captured.add(ev.client_mac)
             burst = self._bursts.pop(ev.client_mac, _Burst())
-            return _render_tree(ev.client_mac, burst, ev, n, save_hint)
+            return _render_tree(ev.client_mac, burst, ev, n, save_hint, psk_chip=psk_chip)
         return _render_reannounce(ev.client_mac, ev, n)
 
     def tick(self, now: float, label_for=None) -> list[list[str]]:

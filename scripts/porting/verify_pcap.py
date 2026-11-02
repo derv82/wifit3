@@ -99,6 +99,8 @@ REGISTRY: dict[str, Chip] = {
                    "Ralink RT5572 (RF5592) / Panda PAU09 — standalone; gate drives the real bring_up()"),
     "rtl8188eus": Chip("rtl8188eus", "chips/rtl8188eus/verify_pcap.py",
                        "Realtek RTL8188EUS / rtl8xxxu (vendor 0x05)"),
+    "rtl8192fu": Chip("rtl8192fu", "chips/rtl8192fu/verify_pcap.py",
+                      "Realtek RTL8192FU / mainline rtl8xxxu (vendor 0x05)"),
     "rtl8188eus_dkms": Chip("rtl8188eus_dkms", "chips/rtl8188eus_dkms/verify_pcap.py",
                             "Realtek RTL8188EUS 1T1R DKMS (vendor 0x05)"),
     "rtl8188ftv_dkms": Chip("rtl8188ftv_dkms", "chips/rtl8188ftv_dkms/verify_pcap.py",
@@ -113,6 +115,8 @@ REGISTRY: dict[str, Chip] = {
                     "MediaTek MT7612U mt76-USB (vendor 0x06/0x07; cold-boot + FW + MCU + TX)"),
     "mt76x0u": Chip("mt76x0u", "chips/mt76x0u/verify_pcap.py",
                     "MediaTek MT7610U mt76-USB (vendor 0x06/0x07; cold-boot + FW + 2.4 GHz TX)"),
+    "mt7601u": Chip("mt7601u", "chips/mt7601u/verify_pcap.py",
+                    "MediaTek MT7601U (vendor 0x02 split 16-bit writes, 0x07 reads; cold boot)"),
     "ar9271_v2": Chip("ar9271_v2", "chips/ar9271_v2/verify_pcap.py",
                       "Atheros AR9271 ath9k_htc clean-room re-port (firmware + HTC/WMI; WIP)"),
 }

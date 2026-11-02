@@ -30,6 +30,7 @@ def _mgmt_frame(ta: bytes = bytes.fromhex("020000000001")) -> bytes:
 
 def _driver() -> Rtl8821auDkmsDriver:
     d = Rtl8821auDkmsDriver(MagicMock())
+    d._channel = 1                        # connect() leaves the card tuned
     d._parsed = []
     d.register_rx_callback(d._parsed.append)
     return d
@@ -87,3 +88,14 @@ async def test_inject_builds_descriptor_with_hw_retry_limit():
     pkt = sent[0]
     assert (int.from_bytes(pkt[0x10:0x14], "little") >> 17) & 1 == 0   # RTY_LMT_EN clear -> HW global retry
     assert pkt[tx.TXDESC_SIZE:] == frame         # HW-stamp: payload byte-for-byte unchanged
+    assert pkt[16] & 0x7F == tx.DESC_RATE1M      # TX_RATE: 1M CCK on 2.4 GHz
+
+
+async def test_inject_uses_6m_ofdm_on_5ghz():
+    d = _driver()
+    d._channel = 149
+    sent: list[bytes] = []
+    d.transport.bulk_out = lambda pkt: sent.append(pkt)
+    assert await d.inject_frame(_mgmt_frame()) is True
+    assert sent[0][16] & 0x7F == tx.DESC_RATE6M
+    assert (int.from_bytes(sent[0][4:8], "little") >> 16) & 0x1F == tx.RATEID_IDX_G

@@ -1,5 +1,5 @@
 name: Hardware request
-description: Ask for a USB Wi-Fi adapter to be supported.
+description: Ask for wifit3 to support a new USB Wi-Fi adapter.
 title: "[Hardware]: "
 labels: ["hardware-request"]
 body:
@@ -7,6 +7,13 @@ body:
     attributes:
       value: |
         Request wifit3 to support a new wireless USB adapter.
+
+        Adding a chipset is contributor-driven: I can't port devices I don't have.
+        If you have the adapter and want to help, you can port it yourself using a coding agent and
+        https://github.com/derv82/wifit3/blob/master/docs/porting/METHODOLOGY.md
+        
+        Even if you can't capture/port the driver, please still file the request
+        so I know there is demand for the device.
   - type: input
     id: adapter
     attributes:
@@ -19,7 +26,7 @@ body:
     id: link
     attributes:
       label: Store / product link
-      description: An Amazon or vendor URL, so we can identify the exact chipset and hardware revision.
+      description: An Amazon or vendor URL, to identify the exact chipset and hardware revision.
       placeholder: "https://..."
   - type: dropdown
     id: have-it
@@ -37,7 +44,5 @@ body:
     attributes:
       label: Before submitting
       options:
-        - label: I searched existing issues and this adapter hasn't been requested already.
-          required: true
         - label: This adapter is known to support monitor mode + injection on Linux.
           required: true

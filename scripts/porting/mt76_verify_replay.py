@@ -420,12 +420,18 @@ class Walk:
     """One forward-only cursor over the capture, plus the ledger. `run` drives a real port
     handler at the cursor; `waive` consumes named non-port ops."""
 
-    def __init__(self, capture: Capture, waivers: WaiverSet | None = None):
+    def __init__(self, capture: Capture, waivers: WaiverSet | None = None,
+                 continue_responses: bool = False):
         self.cap = capture
         self.ops = capture.ops
         self.i = 0
         self.waivers = waivers or WaiverSet()
         self.ledger = Ledger(len(self.ops))
+        # Off by default: a single-phase walk serves responses from the start every time.
+        # A multi-phase walk needs them to carry on where the last phase stopped, or the
+        # port's MCU sequence counter runs ahead of the replies it is matching against.
+        self.continue_responses = continue_responses
+        self.resp_i = 0
 
     def peek(self) -> Op | None:
         return self.ops[self.i] if self.i < len(self.ops) else None
@@ -444,6 +450,8 @@ class Walk:
 
     def _device(self, feed_responses: bool, async_interleave=None) -> ReplayDevice:
         resp = self.cap.responses if feed_responses else []
+        if self.continue_responses:
+            resp = resp[self.resp_i:]
         dev = ReplayDevice(self.ops[self.i:], responses=resp, base=self.i, waivers=self.waivers)
         dev.async_interleave = async_interleave
         return dev
@@ -465,6 +473,8 @@ class Walk:
     def _drive(self, dev: ReplayDevice, label: str, exc: BaseException | None) -> None:
         """Book a finished handler's ops and advance the cursor. On a Divergence, leave the
         cursor on the diverging op (which `_next` advanced past but did not match)."""
+        if self.continue_responses:
+            self.resp_i += dev.resp_i
         for w, op in dev.waived:
             self.ledger.waive(w, op)
         for w, _port in dev.extra:

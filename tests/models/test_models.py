@@ -1,4 +1,13 @@
-from wifit3.models import AccessPoint, HandshakeMessage, Handshake, PersistedCapture
+from wifit3.models import AccessPoint, HandshakeMessage, Handshake
+from wifit3.models.access_point import eap_only, no_passphrase
+from wifit3.models.jobs import JobAction, ToolResult, ToolStatus
+
+
+def test_tool_result_reads_as_one_line_in_the_log():
+    result = ToolResult(status=ToolStatus.RUNNING, value="Running (4.13%)", percent=4.13,
+                        detail="rockyou.txt", actions=JobAction.STOP | JobAction.SKIP)
+    assert str(result) == ("status=RUNNING, value=Running (4.13%), percent=4.13, "
+                           "detail=rockyou.txt, keys=(), actions=STOP|SKIP")
 
 
 def test_access_point_model_defaults():
@@ -38,47 +47,6 @@ def test_wps_pbc_active_detection():
     assert ap.wps_pbc_active is False
 
 
-def test_has_psk():
-    """has_psk gates the opportunistic PBC re-invade: true once we hold the
-    passphrase from any source (live PBC/PIN this session, or a prior session's
-    WPS capture on disk), but a PIN with no PSK does not count."""
-    ap = AccessPoint(bssid="00:11:22:33:44:55")
-    assert ap.has_psk is False                              # nothing yet
-    assert ap.known_psk is None
-
-    # Live PBC win this session.
-    ap.wps_pbc_psk = "hunter2pbc"
-    assert ap.has_psk is True
-    assert ap.known_psk == "hunter2pbc"
-
-    # Live PIN-cracked PSK this session.
-    ap2 = AccessPoint(bssid="00:11:22:33:44:66")
-    ap2.wps_pin_psk = "hunter2pin"
-    assert ap2.has_psk is True
-    assert ap2.known_psk == "hunter2pin"
-
-    # A bare PIN with no recovered PSK does NOT block. PBC still worth running.
-    ap3 = AccessPoint(bssid="00:11:22:33:44:77")
-    ap3.wps_pin = "12345670"
-    assert ap3.has_psk is False
-    assert ap3.known_psk is None
-
-    # A prior session's WPS capture loaded from disk (PBC or PIN file → kind WPS).
-    ap4 = AccessPoint(bssid="00:11:22:33:44:88")
-    ap4.persisted = [PersistedCapture(type="WPS", timestamp=0, value="diskpsk", path="x_wps_pbc.txt")]
-    assert ap4.has_psk is True
-    assert ap4.known_psk == "diskpsk"
-
-    # Other persisted kinds (HS/PMKID/WEP) are not a PSK → no block.
-    ap5 = AccessPoint(bssid="00:11:22:33:44:99")
-    ap5.persisted = [
-        PersistedCapture(type="HS", timestamp=0, path="x_handshake.hc22000"),
-        PersistedCapture(type="WEP", timestamp=0, value="abcde", path="x_wep_key.txt"),
-    ]
-    assert ap5.has_psk is False
-    assert ap5.known_psk is None
-
-
 def _eapol(msg_num: int, replay: int) -> HandshakeMessage:
     """A *usable* EAPOL frame: non-zero nonce, real MIC, complete 802.1X payload,
     so M2/M4 qualify as MIC keystones and M1/M3 as ANonce donors."""
@@ -91,6 +59,71 @@ def _eapol(msg_num: int, replay: int) -> HandshakeMessage:
         key_data_len=0,
         eapol_payload=bytes(120),
     )
+
+
+def test_handshake_add_deduplicates_and_bounds_history():
+    hs = Handshake(
+        bssid="00:11:22:33:44:55",
+        client_mac="AA:BB:CC:DD:EE:FF",
+        beacon_frame=b"beacon",
+    )
+    donor = _eapol(1, replay=5)
+    keystone = _eapol(2, replay=5)
+    assert hs.add_message(donor) is True
+    assert hs.add_message(donor) is False
+    assert hs.add_message(keystone) is True
+
+    for index in range(Handshake.MAX_MESSAGES + 50):
+        hs.add_message(HandshakeMessage(
+            raw=b"junk" + index.to_bytes(4, "big"),
+            msg_num=0,
+            replay_hex=index.to_bytes(8, "big").hex(),
+            nonce=b"",
+            mic=b"",
+            key_data_len=0,
+        ))
+
+    assert Handshake.RETAINED_MESSAGES <= len(hs.messages) <= Handshake.MAX_MESSAGES
+    assert donor in hs.messages
+    assert keystone in hs.messages
+    assert hs.is_complete
+    assert hs.has_message(b"junk" + (Handshake.MAX_MESSAGES + 49).to_bytes(4, "big"))
+    assert not hs.has_message(b"junk" + (0).to_bytes(4, "big"))
+
+
+def test_handshake_prune_keeps_the_best_pair_over_newer_ones():
+    def frame(msg_num: int, replay: int, nonce: int) -> HandshakeMessage:
+        return HandshakeMessage(
+            raw=bytes([msg_num]) + replay.to_bytes(8, "big"),
+            msg_num=msg_num,
+            replay_hex=replay.to_bytes(8, "big").hex(),
+            nonce=nonce.to_bytes(32, "big"),
+            mic=b"\x11" * 16,
+            key_data_len=0,
+            eapol_payload=bytes(120),
+        )
+
+    hs = Handshake(bssid="00:11:22:33:44:55", client_mac="AA:BB:CC:DD:EE:FF", beacon_frame=b"beacon")
+    hs.add_message(frame(1, replay=1000, nonce=1))
+    hs.add_message(frame(2, replay=1000, nonce=2))
+    best = hs.find_valid_pair()
+    for instance in range(2, Handshake.MAX_COMPLETE_INSTANCES + 10):
+        hs.add_message(frame(1, replay=instance * 1000, nonce=instance * 2 + 1))
+        hs.add_message(frame(2, replay=instance * 1000 + 1, nonce=instance * 2 + 2))
+    for index in range(Handshake.MAX_MESSAGES):
+        hs.add_message(frame(0, replay=10**9 + index, nonce=0))
+
+    assert len(hs.messages) <= Handshake.MAX_MESSAGES
+    assert hs.find_valid_pair() == best
+
+
+def test_handshake_index_tracks_direct_fixture_mutations():
+    hs = Handshake(bssid="00:11:22:33:44:55", client_mac="AA:BB:CC:DD:EE:FF")
+    message = _eapol(1, replay=5)
+    hs.messages.append(message)
+
+    assert hs.has_message(message.raw)
+    assert hs.add_message(message) is False
 
 
 def test_handshake_is_complete():
@@ -107,3 +140,10 @@ def test_handshake_is_complete():
     # A matching M2 (same replay counter) completes the pair
     hs.messages.append(_eapol(2, replay=5))
     assert hs.is_complete
+
+
+def test_vendor_akm_disqualifies_eap_only_and_no_passphrase():
+    enterprise = AccessPoint(bssid="02:00:00:00:00:01", akm_suites=[1])
+    mixed = AccessPoint(bssid="02:00:00:00:00:02", akm_suites=[1], vendor_akm_offered=True)
+    assert eap_only(enterprise) and no_passphrase(enterprise)
+    assert not eap_only(mixed) and not no_passphrase(mixed)

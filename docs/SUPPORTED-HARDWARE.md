@@ -22,7 +22,9 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7921AU](#mt7921au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7925AU](#mt7925au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [MT7601U](#mt7601u) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8192FU](#rtl8192fu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
@@ -39,7 +41,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 ## Atheros Chipset
 ### AR9271
-<img align="right" width="140" src="../assets/cardart/stack-ar9271.png" alt="ALFA AWUS036NHA / TP-Link TL-WN722N / D-Link DWA-126">
+<img align="right" width="110" src="../assets/cardart/stack-ar9271.png" alt="ALFA AWUS036NHA / TP-Link TL-WN722N / D-Link DWA-126">
 
 *ALFA AWUS036NHA / TP-Link TL-WN722N / D-Link DWA-126 · 2.4 GHz*
 
@@ -66,10 +68,10 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **71% (C)** | 2026-07-25 | Matches Linux RX + TX, limited 802.11g, hard-MAC (no auto-ACKs), 100 ivs/s WEP. |
-| RX | ✅ | 2026-07-09 | ref AP 5.9 vs linux 6.7/s (88%); breadth 59 vs 54 (≥ linux); RSSI −0.9 dB. |
+| RX | ✅ | 2026-10-20 | ref AP 7.4 vs linux 7.9/s (94%); breadth 53 vs 63; RSSI −0.5 dB; 11/11 channels heard their own beacons. |
 | TX | ✅ | 2026-07-25 | Deauth + WEP inject; live-confirmed. |
 | ACKs | ⚠️ | 2026-07-25 | Hard-MAC = fixed-MAC (can't ACK spoofed MACs). |
-| Port | ✅ | 2026-07-09 | Matches linux breadth (59/54 APs), RSSI −0.9 dB, worse beacon rate (5.9 vs 6.7/s = 88%). |
+| Port | ✅ | 2026-10-20 | Matches rtl8187: beacon rate 94% (7.4 vs 7.9/s), RSSI −0.5 dB over 48 shared APs; breadth 53 vs 63 APs. |
 | Handshake | ✅ | 2026-07-25 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-07-25 | Passive + active. |
 | WEP | ✅ | 2026-07-25 | FakeAuth + ARP replay + ChopChop; ~100 IVs/s. |
@@ -80,8 +82,11 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 ### RTL8188EUS
 <img align="right" width="96" height="165" src="../assets/cardart/card-tpwn722nv23.png" alt="TP-Link TL-WN722N v2/v3">
+<img align="right" width="72" src="../assets/cardart/card-mercusys-mw150us.png" alt="Mercusys MW150US">
 
-*TP-Link TL-WN722N v2/v3 · 2.4 GHz*
+*TP-Link TL-WN722N v2/v3 / Mercusys MW150US · 2.4 GHz*
+
+> Mercusys MW150US (`2c4e:0102`) is stable in current use.
 
 > Ported from the [aircrack-ng/rtl8188eus](https://github.com/aircrack-ng/rtl8188eus) vendor/DKMS
 > port. There is a separate (weaker) port for the mainline kernel v6.18 driver (opt-in via
@@ -89,15 +94,15 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **90% (A)** | 2026-07-25 | Kernel-parity RX + full 2.4 attack suite. |
-| RX | ✅ | 2026-07-09 | (DKMS) beacon rate matches Linux 7.7 vs 7.29/s, breadth 102 vs 91 (≥ linux); RSSI −0.6 dB. |
-| Port | ✅ | 2026-07-09 | (DKMS) Matches Linux 98% total beacons (6570 vs 6693), breadth 102 ≥ 91, RSSI −0.6 dB. |
-| Handshake | ✅ | 2026-07-25 | Deauth → 4-way. |
-| PMKID | ✅ | 2026-07-25 | Active extract. |
-| WEP | ✅ | 2026-07-25 | ChopChop + ARP replay ~170 IVs/s. |
-| WPS | ✅ | 2026-07-25 | PIN → M7 (5/5); PBC (~20 EAPOL). |
-| ACKs | ✅ | 2026-07-25 | Auto-ACK forged MAC via active monitor (Addr2-keyed). |
-| Stress | ✅ | 2026-07-30 | 30-min soak, flat (trend 0.97); mainline degrades/collapses. |
+| **Grade** | **88% (A)** | 2026-10-27 | Linux-parity RX + full 2.4 attack suite. |
+| RX | ✅ | 2026-10-27 | 7.1 bcn/s = linux; breadth 94 vs 95; RSSI 0.0 dB. |
+| Port | ✅ | 2026-10-27 | Byte-exact vs 4 vendor cold boots (A- and I-cut). |
+| Handshake | ✅ | 2026-10-27 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-10-27 | Passive + active. |
+| WEP | ✅ | 2026-10-27 | ChopChop + ARP replay ~150 IVs/s. |
+| WPS | ✅ | 2026-10-27 | PIN; PBC. |
+| ACKs | ✅ | 2026-10-27 | Auto-ACK forged MAC via active monitor (Addr2-keyed). |
+| Stress | ✅ | 2026-10-27 | 30-min soak, flat (trend 1.00). |
 
 → [RTL8188EUS_DKMS.md](../src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](../src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
 
@@ -131,6 +136,28 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 → [RTL8188FTV_DKMS.md](../src/wifit3/chips/rtl8188ftv_dkms/RTL8188FTV_DKMS.md) (default) · [RTL8188FTV.md](../src/wifit3/chips/rtl8188ftv/RTL8188FTV.md) (mainline)
 
+### RTL8192FU
+<img align="right" width="140" src="../assets/cardart/card-dlink-an3u-n300.png" alt="D-Link AN3U rev. A1">
+
+*D-Link AN3U rev. A1 · 2.4 GHz*
+
+> Ported from the mainline Linux `rtl8xxxu` driver (`8192f.c` / `core.c`), Linux v6.19.14.
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **92% (A)** | 2026-10-23 | Kernel-parity RX + full 2.4 attack suite. |
+| RX | ✅ | 2026-10-23 | Ref AP 7.0 vs 7.6/s (92%); breadth 101 vs 102; RSSI −0.6 dB; 11/11 channels. |
+| Port | ✅ | 2026-10-23 | Matches rtl8xxxu: Ref AP beacon rate + RSSI parity. |
+| TX | ✅ | 2026-10-23 | Deauth + WEP inject; live-confirmed. Deauth ACKs: AP 10/10, client 0/10. |
+| Handshake | ✅ | 2026-10-23 | Deauth → 4-way (M1–M4). |
+| PMKID | ✅ | 2026-10-23 | Active extract (M1). |
+| WEP | ✅ | 2026-10-23 | ChopChop + ARP replay ~150–200 IVs/s. |
+| WPS | ✅ | 2026-10-23 | PIN, 2–3 s per PIN; PBC untested. |
+| ACKs | ✅ | 2026-10-23 | Auto-ACK forged MAC via active monitor (Addr2-keyed) & silicon (102/100). |
+| Stress | ✅ | 2026-10-23 | 30-min 14-ch soak, flat (trend 1.01). |
+
+→ [RTL8192FU.md](../src/wifit3/chips/rtl8192fu/RTL8192FU.md)
+
 ### RTL8812AU
 <img align="right" width="109" height="165" src="../assets/cardart/card-awus036ach.png" alt="ALFA AWUS036ACH">
 
@@ -158,7 +185,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 → [RTL8812AU_DKMS.md](../src/wifit3/chips/rtl8812au_dkms/RTL8812AU_DKMS.md) (default) · [RTL8812AU.md](../src/wifit3/chips/rtl8812au/RTL8812AU.md) (mainline)
 
 ### RTL8814AU
-<img align="right" width="140" height="159" src="../assets/cardart/card-awus1900.png" alt="ALFA AWUS1900">
+<img align="right" width="140" src="../assets/cardart/stack-rtl8814au.png" alt="ALFA AWUS1900 (top) / ASUS USB-AC68 (bottom)">
 
 *ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*
 
@@ -183,7 +210,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 → [RTL8814AU.md](../src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](../src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
 ### RTL8821AU
-<img align="right" width="140" src="../assets/cardart/stack-rtl8821au.png" alt="ALFA AWUS036ACS (top) / Archer T2U+ (middle) / Archer T2U (bottom)">
+<img align="right" width="110" src="../assets/cardart/stack-rtl8821au.png" alt="ALFA AWUS036ACS (top) / Archer T2U+ (middle) / Archer T2U (bottom)">
 
 *ALFA AWUS036ACS / Archer T2U+ / Archer T2U · 2.4 / 5 GHz*
 
@@ -284,6 +311,24 @@ live in each chip's `<CHIP>.md` (linked under its table).
 → [RTL8922AU.md](../src/wifit3/chips/rtl8922au/RTL8922AU.md)
 
 ## Mediatek Chipsets
+### MT7601U
+
+*Two generic nano dongles · 2.4 GHz*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **94% (A)** | 2026-10-06 | Linux-parity RX, the fleet's fastest WEP, full campaign suite. |
+| RX | ✅ | 2026-10-06 | ref2g 7.8 and 7.9 b/s across two units; breadth 86 / 69 APs (2.4 only); 11/11 channels heard their own beacons, 0 silent. |
+| Port | ✅ | 2026-10-06 | Matches mt7601u on both units: RSSI −1.2 / −1.0 dB over 68 / 58 shared APs, beacon rate at parity, breadth gaps run both ways. |
+| Handshake | ✅ | 2026-10-06 | Deauth → 4-way capture. |
+| PMKID | ✅ | 2026-10-06 | Harvest + passive capture. |
+| WEP | ✅ | 2026-10-06 | ChopChop + ARP replay ~500 IVs/s sustained; 17k IVs cracked in 1m40s. |
+| WPS | ✅ | 2026-10-06 | PIN → 10 consecutive attempts, 3–8 s each, none timed out. |
+| ACKs | ✅ | 2026-10-06 | Auto-ACKs a spoofed MAC 100/100 via active monitor; 0/100 with it off and 0/100 to an unowned MAC. |
+| Stress | ✅ | 2026-10-06 | 24-min sustained hop, flat (73–88 APs, ~2.3k frames/min, trend ratio 0.80). |
+
+→ [MT7601U.md](../src/wifit3/chips/mt7601u/MT7601U.md)
+
 ### MT7610U
 <img align="right" width="124" height="165" src="../assets/cardart/card-awus036achm.png" alt="ALFA AWUS036ACHM">
 
@@ -497,5 +542,6 @@ Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_
 
 **Wishlist (not yet bought):**
 
-- **TP-Link Archer T2U Plus**: RTL8821AU / RTL8811AU.
-- **Generic MT7601U**: cheapest dongle; known for awkward packet injection.
+- *Generic/no-name brand*: RTL8188FTV [PR#62](https://github.com/derv82/wifit3/pull/62) (verify port in PR)
+- **TP-Link TL-WN823N**:  RTL8192CU [Issue#71](https://github.com/derv82/wifit3/issues/71) (new port)
+- **Asus USB-AC68**: RTL8814AU [Issue#86](https://github.com/derv82/wifit3/issues/86) ("for the art")

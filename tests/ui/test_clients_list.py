@@ -118,6 +118,39 @@ async def test_sync_adds_updates_in_place_and_drops_by_mac():
         assert set(cl._rows) == {b_mac}
 
 
+@pytest.mark.asyncio
+async def test_sync_skips_an_unchanged_client_snapshot():
+    client = _client()
+    app = _DemoApp([client])
+    async with app.run_test():
+        clients = app.query_one("#clients", ClientsList)
+        clients.sync([client])
+        clients._update_title = Mock(wraps=clients._update_title)
+
+        clients.sync([client])
+
+        clients._update_title.assert_not_called()
+
+
+# ----- deauth state ---------------------------------------------------------
+
+def test_repeated_deauth_state_does_not_rewrite_buttons():
+    clients = ClientsList([])
+    buttons = [Mock(), Mock()]
+    clients.query = Mock(return_value=buttons)
+
+    clients.set_deauth_enabled(False)
+    assert all(button.disabled is True for button in buttons)
+    assert clients.query.call_count == 1
+
+    clients.set_deauth_enabled(False)
+    assert clients.query.call_count == 1
+
+    clients.set_deauth_enabled(True)
+    assert all(button.disabled is False for button in buttons)
+    assert clients.query.call_count == 2
+
+
 # ----- detail popup ---------------------------------------------------------
 
 def test_detail_popup_dismisses_on_backdrop_click_not_inner_content():

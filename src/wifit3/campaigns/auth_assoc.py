@@ -15,15 +15,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from enum import IntEnum
 import time
 from typing import Callable, Optional
 
 from wifit3.dot11 import build_deauth, random_client_mac, str_to_mac
 from wifit3.dot11.auth_assoc import auth_req, assoc_req, status_description
 from wifit3.dot11.deauth import reason_description
-from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket
+from wifit3.dot11.packet import AuthPacket, AssocRespPacket, DeauthPacket, Packet
 
 logger = logging.getLogger(__name__)
+
+
+class AssocState(IntEnum):
+    """Where a station stands with one AP (802.11-2020 11.3). AUTHENTICATED means
+    the 802.11 open-system exchange succeeded, not 802.1X authorization."""
+
+    UNAUTHENTICATED = 1
+    AUTHENTICATED = 2
+    ASSOCIATED = 3
 
 
 def build_client_leaving(bssid: bytes, our_mac: bytes, deauth: bool = True) -> bytes:
@@ -34,12 +44,14 @@ def build_client_leaving(bssid: bytes, our_mac: bytes, deauth: bool = True) -> b
 class WlanTransport:
     """Send/recv/drain over a live WlanInterface."""
 
+    RX_QUEUE_SIZE = 64
+
     def __init__(self, iface, bssid: bytes, our_mac: bytes, tx_observer=None):
         self.iface = iface
         self.bssid = bssid
         self.our_mac = our_mac
         self.tx_observer = tx_observer
-        self._q: asyncio.Queue = asyncio.Queue()
+        self._q: asyncio.Queue = asyncio.Queue(maxsize=self.RX_QUEUE_SIZE)
         self._loop = asyncio.get_running_loop()
         self._active = False
 
@@ -51,7 +63,15 @@ class WlanTransport:
         if frame[4:10] != self.our_mac or frame[10:16] != self.bssid:
             return
         # Thread-safe handoff (driver RX may fire from a background reader).
-        self._loop.call_soon_threadsafe(self._q.put_nowait, bytes(frame))
+        self._loop.call_soon_threadsafe(self._enqueue_frame, bytes(frame))
+
+    def _enqueue_frame(self, frame: bytes) -> None:
+        if self._q.full():
+            try:
+                self._q.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+        self._q.put_nowait(frame)
 
     def start(self) -> None:
         if self._active:
@@ -98,6 +118,7 @@ class Association:
                  our_mac: Optional[bytes] = None, assoc_timeout: float = 1.5,
                  auth_timeout: float = 1.0,
                  assoc_trailer_ies: bytes = b"",
+                 privacy: Optional[bool] = None,
                  should_stop: Optional[Callable[[], bool]] = None):
         self.iface = iface
         self.bssid = bssid.lower()
@@ -108,11 +129,15 @@ class Association:
         self.assoc_timeout = assoc_timeout
         self.auth_timeout = auth_timeout
         self.assoc_trailer_ies = assoc_trailer_ies
+        self.privacy = privacy
         self.should_stop = should_stop or (lambda: False)
         self.associated = False
         self.fail_reason: Optional[str] = None
         self._auth_ok = False
         self._assoc_ok = False
+        self.auth_status: Optional[int] = None
+        self.assoc_status: Optional[int] = None
+        self.state = AssocState.UNAUTHENTICATED
         self._active = False
 
     # ---- lifecycle ----------------------------------------------------------
@@ -137,6 +162,8 @@ class Association:
                 return False
             self._auth_ok = False
             self._assoc_ok = False
+            self.auth_status = None
+            self.assoc_status = None
             logger.info("-> Auth Req to %s", self.bssid)
             await self._send_until(auth_req(self.bssid_bytes, self.our_mac),
                                    lambda: self._auth_ok, self.auth_timeout)
@@ -144,7 +171,7 @@ class Association:
             logger.info("-> Assoc Req to %s", self.bssid)
             await self._send_until(assoc_req(self.bssid_bytes, self.our_mac, self.ssid,
                                              self.assoc_trailer_ies,
-                                             channel=self.channel),
+                                             channel=self.channel, privacy=self.privacy),
                                    lambda: self._assoc_ok, self.assoc_timeout)
             if self._assoc_ok:
                 self.associated = True
@@ -153,6 +180,32 @@ class Association:
         if not self.fail_reason:
             self.fail_reason = "no Assoc resp"
         return False
+
+    async def authenticate(self) -> bool:
+        """Send an Auth Req and wait. True once the AP answers with status 0."""
+        if self.iface.current_channel != self.channel:
+            await self.iface.set_channel(self.channel)
+        self._auth_ok = False
+        self.auth_status = None
+        logger.info("-> Auth Req to %s", self.bssid)
+        await self._send_until(auth_req(self.bssid_bytes, self.our_mac),
+                               lambda: self._auth_ok, self.auth_timeout)
+        return self._auth_ok
+
+    async def associate_as(self, ssid: str) -> Optional[int]:
+        """Send an Assoc Req claiming ``ssid``, without sending an Auth Req first.
+        Returns the Assoc Resp status code, or None when the AP never answers. A refusal
+        leaves us AUTHENTICATED, so the caller can claim the next SSID directly."""
+        self._assoc_ok = False
+        self.assoc_status = None
+        self.ssid = ssid
+        logger.info("-> Assoc Req to %s as %r", self.bssid, ssid)
+        await self._send_until(assoc_req(self.bssid_bytes, self.our_mac, ssid,
+                                         self.assoc_trailer_ies,
+                                         channel=self.channel, privacy=self.privacy),
+                               lambda: self.assoc_status is not None, self.assoc_timeout)
+        self.associated = self._assoc_ok
+        return self.assoc_status
 
     async def _send_until(self, frame: bytes, done, timeout: float,
                           resend_after: float = 0.4) -> None:
@@ -166,29 +219,36 @@ class Association:
                 last_send = time.time()
             await asyncio.sleep(0.02)
 
-    def _rx_cb(self, pkt) -> None:
-        if not self._active or pkt.raw[4:10] != self.our_mac:   # addressed to us
+    def _rx_cb(self, pkt: Packet) -> None:
+        if (not self._active or pkt.raw[4:10] != self.our_mac   # addressed to us
+                or pkt.raw[10:16] != self.bssid_bytes):         # by the AP we targeted
             return
         if isinstance(pkt, AssocRespPacket):
+            self.assoc_status = pkt.status
             desc = status_description(pkt.status)
             if pkt.status == 0:
                 self._assoc_ok = True
+                self.state = AssocState.ASSOCIATED
                 logger.info("<- Assoc Resp (status 0: %s) from %s", desc, self.bssid)
             elif pkt.status is not None:
                 self.fail_reason = f"Assoc rejected (status {pkt.status}: {desc})"
                 logger.info("<- Assoc Resp rejected (status %s: %s) from %s", pkt.status, desc, self.bssid)
         elif isinstance(pkt, AuthPacket):
+            self.auth_status = pkt.status
             desc = status_description(pkt.status)
             if pkt.status == 0:
                 self._auth_ok = True
+                self.state = AssocState.AUTHENTICATED
                 logger.info("<- Auth Resp (status 0: %s) from %s", desc, self.bssid)
             elif pkt.status is not None:
                 self.fail_reason = f"Auth rejected (status {pkt.status}: {desc})"
                 logger.info("<- Auth Resp rejected (status %s: %s) from %s", pkt.status, desc, self.bssid)
         elif isinstance(pkt, DeauthPacket):
-            kind = "disassoc" if getattr(pkt, "type", "") == "mgmt_10" else "deauth"
+            kind = "disassoc" if pkt.type == "disassoc" else "deauth"
             desc = reason_description(pkt.reason)
             self.fail_reason = f"{kind} (reason {pkt.reason}: {desc})"
             logger.info("<- %s (reason %s: %s) from %s", kind.upper(), pkt.reason, desc, self.bssid)
             self.associated = False
             self._assoc_ok = False
+            self.state = (AssocState.AUTHENTICATED if kind == "disassoc"
+                          else AssocState.UNAUTHENTICATED)

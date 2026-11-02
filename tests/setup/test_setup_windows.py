@@ -2,6 +2,8 @@
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 import wifit3.setup.windows as win
 from wifit3.models import DeviceID
 from wifit3.setup.base import SetupResult
@@ -48,6 +50,12 @@ class _Restore:
 def _pending(launched=True, win_error=0):
     run = win._ElevatedRun(launched=launched, win_error=win_error, exit_code=None, hproc=1)
     return win._PendingInstall(logpath=Path("wdi.log"), run=run)
+
+
+@pytest.fixture(autouse=True)
+def _offline_bus(monkeypatch):
+    """_enum_usb_nodes calls into setupapi via ctypes.WinDLL, which only exists on Windows."""
+    monkeypatch.setattr(win, "_enum_usb_nodes", lambda vid, pid: [])
 
 
 def test_requires_setup_true_when_present_and_not_winusb_bound(monkeypatch):
@@ -140,12 +148,63 @@ async def test_install_cancelled_shows_no_error(monkeypatch):
 
 
 async def test_uninstall_cancelled(monkeypatch):
-    monkeypatch.setattr(win, "restore_driver", lambda v, p: _Restore(ok=True))
+    monkeypatch.setattr(win, "restore_driver", lambda v, p, **kw: _Restore(ok=True))
     res = await win.SetupWindows().uninstall(_DEV, FakePrompter(ask=None))
     assert res.cancelled and not res.ok
 
 
 async def test_uninstall_success(monkeypatch):
-    monkeypatch.setattr(win, "restore_driver", lambda v, p: _Restore(ok=True, message="removed"))
+    monkeypatch.setattr(win, "restore_driver",
+                        lambda v, p, **kw: _Restore(ok=True, message="removed"))
     res = await win.SetupWindows().uninstall(_DEV, FakePrompter(ask="narrow"))
     assert isinstance(res, SetupResult) and res.ok and res.message == "removed"
+
+
+# --- _verify_restore: pnputil's exit code says nothing about what got rebound ------------
+# Each case below was observed on real hardware while investigating the composite-device bugs.
+
+def _n(mi, service, inf, problem=0, wifi=False):
+    hwid = r"USB\VID_0BDA&PID_C820&REV_0200" + (rf"&MI_{mi:02X}" if mi is not None else "")
+    compat = (rf"USB\COMPAT_VID_0bda&Class_{'ff' if wifi else 'e0'}&SubClass_01&Prot_01",)
+    return win._Node(instance_id=hwid, hwid=hwid, compat_ids=compat, service=service,
+                     inf=inf, problem=problem)
+
+
+def _bus(monkeypatch, nodes, still=None):
+    monkeypatch.setattr(win, "_enum_usb_nodes", lambda v, p: nodes)
+    monkeypatch.setattr(win, "_find_winusb_inf", lambda v, p: still)
+
+
+def test_verify_restore_reports_a_stale_package_that_retook_the_card(monkeypatch):
+    # 8822bu: the bound package was deleted, its tied twin won the re-rank, card never left WinUSB.
+    _bus(monkeypatch, [_n(None, "WinUSB", "oem291.inf")], still="oem291.inf")
+    res = win._verify_restore(0x0BDA, 0xC820, ["oem305.inf"], 0)
+    assert not res.ok and res.detail == "oem291.inf"
+
+
+def test_verify_restore_reports_a_vendor_driver_that_seized_the_composite_parent(monkeypatch):
+    # AXML + vendor drivers: the parent re-ranked to the Wi-Fi INF and died at CM_PROB_FAILED_START.
+    _bus(monkeypatch, [_n(None, "mtkwl6eux", "oem266.inf", problem=10)])
+    res = win._verify_restore(0x0BDA, 0xC820, ["oem310.inf"], 0)
+    assert not res.ok and "mtkwl6eux" in res.detail
+
+
+def test_verify_restore_ignores_a_sibling_bluetooth_problem(monkeypatch):
+    # 8821cu: BT sat at CM_PROB_NEED_RESTART from its own driver install. Not our node, not our bug.
+    _bus(monkeypatch, [_n(None, "usbccgp", "usb.inf"),
+                       _n(2, "RtlWlanu", "netrtwlanu.inf", wifi=True),
+                       _n(0, "BTHUSB", "oem291.inf", problem=14)])
+    res = win._verify_restore(0x0BDA, 0xC820, ["oem304.inf"], 0)
+    assert res.ok and "reboot" not in res.message.lower()
+
+
+def test_verify_restore_asks_for_a_reboot_when_our_own_node_defers(monkeypatch):
+    _bus(monkeypatch, [_n(None, "usbccgp", "usb.inf", problem=14)])
+    res = win._verify_restore(0x0BDA, 0xC820, ["oem304.inf"], 0)
+    assert res.ok and "reboot" in res.message.lower()
+
+
+def test_verify_restore_passes_a_clean_release(monkeypatch):
+    _bus(monkeypatch, [_n(None, "usbccgp", "usb.inf"), _n(2, "RtlWlanu", "x.inf", wifi=True)])
+    res = win._verify_restore(0x0BDA, 0xC820, ["oem304.inf"], 0)
+    assert res.ok and res.detail == "oem304.inf"

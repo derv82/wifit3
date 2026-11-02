@@ -6,25 +6,35 @@ from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
 from rich.markup import escape
+from wifit3.wlan.array import WlanArray
 
-from .encryption_format import format_encryption_markup
+from .colors import PASSWORD_MISMATCH_COLOR
+from .encryption_format import format_encryption_markup, wep_key_hex_and_ascii
 from ..campaigns.campaign import Campaign
 from ..campaigns.pmkid import PmkidHarvestAttack
 from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.crack.handshake import pmkid_crackable
-from wifit3.models import IdKey, IdSource
+from wifit3.dot11.eap import method_name
+from wifit3.dot11.pmf import PmfPosture
+from wifit3.dot11.rsn import SAE_AKM_SUITES
+from wifit3.models import CaptureType, IdKey, IdSource
+from wifit3.models.access_point import eap_only, no_passphrase
+from wifit3.ui.encryption_format import psk_capture_supported
+from wifit3.persist.ap_state import ApState, PasswordStatus
 from wifit3.persist.config import Config
 from ..campaigns.pin import WpsCampaign
 from ..campaigns.deauth import DeauthCampaign
 from ..campaigns.eviltwin import EvilTwinCampaign
-from ..campaigns.pbc import WpsPbcCapture
+from ..campaigns.decloak import DecloakCampaign, KnownDecloakCampaign
 
 if TYPE_CHECKING:
     from wifit3.models.access_point import AccessPoint
+    from wifit3.persist.vault import Vault
 
 # Attack-button campaigns in button-row order.
-BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign, EvilTwinCampaign]
+BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign,
+                    EvilTwinCampaign, DecloakCampaign, KnownDecloakCampaign]
 
 
 CAMPAIGN_BY_KEY = {cls.key: cls for cls in BUTTON_CAMPAIGNS}
@@ -100,54 +110,6 @@ def beacon_rate(ap, samples: deque, now: float, window_s: float = 5.0):
     rate = (ap.beacons - oldest_n) / span if span >= 1.0 else None
     return rate, ap.beacons
 
-
-def _fmt_eta(secs: Optional[float]) -> str:
-    if secs is None:
-        return "?"
-    if secs < 60:
-        return f"{int(secs)}s"
-    if secs < 3600:
-        return f"{int(secs / 60)}m"
-    return f"{secs / 3600:.1f}h"
-
-
-def _compact_count(n: int) -> str:
-    """Width-bounded counter: 0..999 verbatim, then 1.5k / 15k."""
-    if n < 1000:
-        return str(n)
-    if n < 10000:
-        return f"{n / 1000:.1f}k"            # 1500 -> "1.5k"
-    return f"{n // 1000}k"                    # 15000 -> "15k"
-
-
-def wps_status_markup(camp) -> str:
-    """Compact WPS-PIN campaign status: PIN progress + soft/hard lock state."""
-    st = camp.state
-    if st.found_pin:
-        return (f"[black bold on cyan] PIN CRACKED: ✓ "
-                f"{escape(st.found_pin)} [/black bold on cyan]")
-    tested = _compact_count(st.tested)
-    if camp.status == "locked":
-        # Countdown updates each tick
-        remaining = int(camp.lock_remaining_seconds)
-        m, s = divmod(remaining, 60)
-        countdown = f"{m}:{s:02d}"
-        kind = camp.lock_kind or "soft"
-        color = "red" if kind == "hard" else "dark_orange"
-        return (f"WPS PIN: [cyan]{tested}[/cyan]/11k · "
-                f"[{color}]{kind} {countdown}[/{color}]")
-    if camp.status in ("failed", "error"):
-        reason = getattr(camp, "fail_reason", None)
-        suffix = f" · [dim]{escape(reason)}[/dim]" if reason else f" [dim]({tested}/11k)[/dim]"
-        return f"WPS PIN: [red]{camp.status}[/red]{suffix}"
-    eta = _fmt_eta(camp.eta_seconds)
-    if st.phase == "second_half" and st.first_half:
-        # First half locked in: the meaningful keyspace is the second half
-        return (f"WPS PIN: [cyan]{st.p2_index}[/cyan]/1k · "
-                f"[green]p1={escape(st.first_half)}[/green] [dim]{eta}[/dim]")
-    return f"WPS PIN: [cyan]{tested}[/cyan]/11k · [dim]ETA {eta}[/dim]"
-
-
 def count_handshakes(ap):
     """``(complete, partial, msg_counts)`` across this AP's handshakes."""
     n_complete = sum(hs.complete_instances for hs in ap.handshakes.values())
@@ -201,12 +163,29 @@ def encryption_chip(ap) -> str:
     return format_encryption_markup(ap, detailed=False)
 
 
-def pmf_status_markup(ap) -> str:
-    """PMF status for the Focus footer.
-    Disabled (dim) → Optional (orange) → Required (red)."""
-    if ap.pmf_required:
+# Identity, Notification, Nak: EAP framing, not the authentication method.
+_EAP_FRAMING_TYPES = frozenset({1, 2, 3})
+
+
+def eap_methods_markup(ap: AccessPoint) -> str | None:
+    """Observed EAP methods for the Focus footer, or None before any EAPOL-Type-0."""
+    seen = ap.observed_eap_methods
+    if not seen:
+        return None
+    types = sorted(t for t in seen if t not in _EAP_FRAMING_TYPES) or sorted(seen)
+    labels = [method_name(t) or f"type {t}" for t in types]
+    return "[dim]EAP:[/dim] " + " · ".join(labels)
+
+
+def pmf_status_markup(ap: AccessPoint) -> str:
+    """PMF status for the Focus footer, off the 802.11w posture.
+    Disabled (dim) → Optional (orange) → Required (red); Invalid (red) = MFPR without MFPC."""
+    posture = ap.pmf_posture
+    if posture is PmfPosture.REQUIRED:
         return "[red]Required[/red]"
-    if ap.pmf_capable:
+    if posture is PmfPosture.INVALID:
+        return "[red]Invalid[/red]"
+    if posture is PmfPosture.OPTIONAL:
         return "[dark_orange]Optional[/dark_orange]"
     return "[dim]Disabled[/dim]"
 
@@ -224,11 +203,11 @@ def router_identity_details(ap: AccessPoint) -> str | None:
     if ident.manufacturer:
         mfr_src = getattr(ident, "manufacturer_source", None) or ident.get(IdKey.MANUFACTURER)[1]
         src_label = mfr_src.label if mfr_src else ""
-        rows.append(f"[dim]Manufacturer:[/dim] {escape(ident.manufacturer)} [dim]({src_label})[/dim]")
+        rows.append(f"[dim]Manuf:[/dim] {escape(ident.manufacturer)} [dim]({src_label})[/dim]")
     if ident.device_name and ident.device_name != ident.model:
         dev_src = ident.get(IdKey.DEVICE_NAME)[1]
         src_label = dev_src.label if dev_src else ""
-        rows.append(f"[dim]Device Name:[/dim] {escape(ident.device_name)} [dim]({src_label})[/dim]")
+        rows.append(f"[dim]Device:[/dim] {escape(ident.device_name)} [dim]({src_label})[/dim]")
     if ident.serial_number:
         sn_src = ident.get(IdKey.SERIAL_NUMBER)[1]
         src_label = sn_src.label if sn_src else ""
@@ -250,122 +229,109 @@ def router_identity_details(ap: AccessPoint) -> str | None:
 
 
 
-def status_footer_lines(ap, array, campaign, now: float) -> list[str]:
+def status_under_dash(ap: AccessPoint, array: WlanArray, now: float) -> list[str]:
     """The dashboard footer lines for this target."""
+    active = Campaign.active
+    if active:
+        dash = active.status_under_dash(array, now)
+        if dash is not None:
+            return dash
+
     if is_wep(ap):
-        return wep_status_lines(ap, array, campaign, now)
+        return wep_status_lines(ap, array, None, now)
     lines = [f"[dim]Encryption:[/dim] {format_encryption_markup(ap, detailed=True)}"]
     parts = []
-    if ap.akms or ap.wpa3:              # RSN (WPA2/3): PMF is meaningful
+    if (ap.akms and ap.rsn_valid) or ap.wpa3:   # RSN (WPA2/3): PMF is meaningful
         parts.append(f"[dim]PMF:[/dim] {pmf_status_markup(ap)}")
     if getattr(ap, "wps", None):
         lock = "[red]🔒[/red]" if ap.wps_locked else "[green]🔓[/green]"
         ver = f"{ap.wps_version} " if ap.wps_version else ""
         parts.append(f"[dim]WPS:[/dim] {ver}{lock}")
+    eap = eap_methods_markup(ap)
+    if eap:
+        parts.append(eap)
     if parts:
         lines.append("  ·  ".join(parts))
     return lines
 
 
-def deauth_blocked(ap) -> bool:
-    """Deauth bursts are dead when a campaign owns the radio OR the AP requires PMF."""
-    return other_long_running_tx() or ap.pmf_required
+def deauth_blocked(ap: AccessPoint) -> bool:
+    """True while radio TX is busy or the AP's PMF is required or invalid."""
+    return other_long_running_tx() or ap.pmf_posture in (PmfPosture.REQUIRED, PmfPosture.INVALID)
 
 
-def card_dynamic() -> str:
+def status_under_card() -> str:
     """What the card is doing right now, shown under the card art (reads the active campaign)."""
     active = Campaign.active
-    if isinstance(active, WepCampaign):
-        return "● chopping" if getattr(active, "chop_active", False) else "● replaying"
-    if isinstance(active, WpsCampaign):
-        return "● WPS PIN"
-    if isinstance(active, DeauthCampaign):
-        return "● Deauth"
-    if isinstance(active, EvilTwinCampaign):
-        return "● EvilTwin"
-    if isinstance(active, WpsPbcCapture):
-        return "● WPS PBC"
+    if active:
+        status = active.status_under_card()
+        if status is not None:
+            return status
     return ""
 
 
-def wep_action_phrase(campaign) -> str:
-    """What the WEP campaign's TX side is doing right now."""
-    if getattr(campaign, "chop_active", False):
-        return "Chopping a packet"
-    state = getattr(getattr(campaign, "replay", None), "state", None)
-    return {
-        "replaying": "Replaying ARP",
-        "testing": "Testing a packet",
-        "waiting-arp": "Waiting for a packet",
-        "waiting-auth": "Associating",
-        "paused": "Paused",
-    }.get(state, "Listening for a packet")
+def _psk_chip(psk: Optional[str], state: ApState) -> Optional[str]:
+    key = state.status_key
+    if psk is None:
+        if state.status is not PasswordStatus.STALE or key is None or key.type != CaptureType.WPA_PSK:
+            return None
+        return (f"[black bold on {PASSWORD_MISMATCH_COLOR}] PSK: {escape(key.value)} [/] "
+                f"[bold {PASSWORD_MISMATCH_COLOR}]{state.status.value}[/]")
+    if state.status is PasswordStatus.NOT_VERIFIED and key is not None and key.value == psk:
+        return f"[black bold on yellow] PSK: {escape(psk)} [/black bold on yellow] [bold yellow]NOT VERIFIED[/bold yellow]"
+    return f"[black bold on green] ✓ PSK: {escape(psk)} [/black bold on green]"
 
 
-def derive_headline(ap, array) -> list[str]:
+def _wep_chip(recovered: Optional[bytes], state: ApState) -> Optional[str]:
+    key = state.status_key
+    if recovered is None and (key is None or key.type != CaptureType.WEP):
+        return None
+    text = escape(wep_key_hex_and_ascii(recovered.hex() if recovered is not None else key.value))
+    if recovered is not None or state.status is PasswordStatus.CURRENT:
+        return f"[black bold on green] ✓ WEP key: {text} [/black bold on green]"
+    if state.status is PasswordStatus.NOT_VERIFIED:
+        return f"[black bold on yellow] WEP key: {text} [/black bold on yellow] [bold yellow]NOT VERIFIED[/bold yellow]"
+    return (f"[black bold on {PASSWORD_MISMATCH_COLOR}] WEP key: {text} [/] "
+            f"[bold {PASSWORD_MISMATCH_COLOR}]{state.status.value}[/]")
+
+
+def status_headlines(ap: AccessPoint, array: WlanArray, vault: Vault) -> list[str]:
     """The Campaign headline: up to 3 markup lines of current activity (reads the active campaign)."""
+    active = Campaign.active
+    if active:
+        headlines = active.status_headlines(vault)
+        if headlines is not None:
+            return headlines
+
+    # Passive capture state (no active campaign on this AP)
     enc = (ap.encryption or "").upper()
     wep = enc == "WEP"
-    active = Campaign.active
 
-    # 1. WEP active attack: cracking / replaying / chopping.
-    if isinstance(active, WepCampaign):
-        camp = active
-        n_ivs = ap.wep.unique_ivs if ap.wep else 0
-        cracker_samples = getattr(getattr(camp, "cracker", None), "sample_count", 0)
-        action = wep_action_phrase(camp)
-        if cracker_samples >= CRACK_READY_THRESHOLD:
-            # Replay/chop and cracking run concurrently.
-            return [f"[bold cyan]● {action}[/bold cyan] & "
-                    f"[bold cyan]Cracking[/bold cyan] WEP key",
-                    f"[dim]{cracker_samples:,} usable IVs[/dim]"]
-        if camp.chop_active:
-            return ["[bold cyan]● ChopChop[/bold cyan] forging an ARP seed",
-                    f"[dim]{n_ivs:,} IVs captured[/dim]"]
-        suffix = " [dim]for IVs[/dim]" if action == "Replaying ARP" else ""
-        return [f"[bold green]● {action}[/bold green]{suffix}",
-                f"[dim]{n_ivs:,} IVs · cracks at "
-                f"{CRACK_READY_THRESHOLD // 1000}k usable[/dim]"]
+    # 802.1X/Enterprise (incl. FILS): login attacks not yet supported; checked before any stale PSK
+    # or old 4-way left from a previous (PSK) config can surface a misleading headline.
+    if eap_only(ap):
+        if ap.wpa3 and ap.transition_mode:
+            return ["[dim]● WPA3/Enterprise transition: not yet supported[/dim]"]
+        if ap.wpa3:
+            return ["[dim]● WPA3/Enterprise: not yet supported[/dim]"]
+        wpa_label = "WPA2" if ap.rsn_valid else "WPA"
+        return [f"[dim]● {wpa_label}/Enterprise: not yet supported[/dim]"]
 
-    # 2. Live WPS attack.
-    if isinstance(active, WpsPbcCapture):
-        return ["[bold green]● WPS PushButton[/bold green] window: capturing PSK"]
-    if isinstance(active, WpsCampaign):
-        wps = active
-        if wps.state.found_pin:
-            return ["[black bold on green] ✓ WPS PIN cracked [/black bold on green]",
-                    f"[dim]PIN {escape(wps.state.found_pin)}[/dim]"]
-        return ["[bold cyan]● WPS PIN brute-force[/bold cyan]",
-                f"[dim]{wps_status_markup(wps)}[/dim]"]
+    if no_passphrase(ap):
+        return ["[dim]● OWE (Enhanced Open): Diffie-Hellman key, nothing to crack[/dim]"]
 
-    # 3. EvilTwin campaign running.
-    if isinstance(active, EvilTwinCampaign):
-        camp = active
-        if camp.captured:
-            return ["[black bold on green] ✓ Captured [/black bold on green] crackable M2",
-                    f"[dim]saved to {Config.captures_dir}/[/dim]"]
-        stats = getattr(camp.fakeap, "stats", None)
-        if stats is None:
-            return [f"[bold cyan]EvilTwin arming…[/bold cyan] on CH {camp.twin_channel}"]
-        return [f"[bold cyan]EvilTwin active[/bold cyan] on CH {camp.twin_channel}",
-                f"[dim]auth:{stats.auth} · assoc:{stats.assoc} · M2:{stats.m2}[/dim]",
-                f"[dim]probes: {stats.probes_direct} direct · "
-                f"{stats.probes_wildcard} wildcard[/dim]"]
+    unsupported = bool(ap.akm_suites) and psk_capture_supported(ap) is False
 
-    # 3b. Deauth campaign running: provoking a re-handshake for the passive capture.
-    if isinstance(active, DeauthCampaign):
-        deauth = active
-        return ["[bold cyan]● Deauth[/bold cyan] forcing a re-handshake",
-                f"[dim]client acks:{deauth.client_acks}/{deauth.client_sent} · "
-                f"bcast:{deauth.bcast_sent}[/dim]"]
-
-    # 4. Recovered credentials, when idle: WEP key / WPS PSK.
-    if ap.wep_key is not None or any(p.type == "WEP" for p in ap.persisted):
-        return ["[black bold on green] ✓ WEP key recovered [/black bold on green]",
-                "[dim]see the event log for the key[/dim]"]
-    if ap.known_psk:
-        return ["[black bold on green] ✓ WPS PSK recovered [/black bold on green]",
-                "[dim]see the event log for the passphrase[/dim]"]
+    # 4. Recovered credentials, when idle: WEP key / PSK (WPS- or handshake-derived).
+    state = vault.ap_state(ap.bssid)
+    wep_chip = _wep_chip(ap.wep_key, state)
+    if wep_chip:
+        return [wep_chip, "[dim]● Listening for WEP IVs[/dim]"]
+    psk_chip = _psk_chip(vault.known_psk(ap), state)
+    if psk_chip:
+        tail = ("[dim]● Not yet supported: no crack path for this AKM[/dim]"
+                if unsupported else "[dim]● Listening for handshake + PMKID[/dim]")
+        return [psk_chip, tail]
 
     if Config.is_silenced(ap.bssid):
         return ["[dim]● Silenced[/dim]",
@@ -378,6 +344,13 @@ def derive_headline(ap, array) -> list[str]:
             return ["[green]● Listening for WEP IVs[/green]",
                     f"[dim]{n_ivs:,} captured · press Replay to generate more[/dim]"]
         return ["[green]● Listening for WEP IVs[/green]"]
+
+    if (ap.wpa3 and not ap.transition_mode
+            and SAE_AKM_SUITES.intersection(ap.akm_suites)):
+        return ["[dim]● WPA3/SAE: passive capture not applicable[/dim]"]
+
+    if unsupported:
+        return ["[dim]● Not yet supported: no crack path for this AKM[/dim]"]
 
     n_complete, n_partial, msg_counts = count_handshakes(ap)
     n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid and pmkid_crackable(hs))
@@ -393,35 +366,29 @@ def derive_headline(ap, array) -> list[str]:
         breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
         return ["[yellow]◌ Capturing handshake[/yellow]",
                 f"[dim]{breakdown}: deauth a client to force a re-handshake[/dim]"]
+
     if enc in ("OPEN", ""):
         return ["[dim]● Open network: no handshake to capture[/dim]"]
     return ["[green]● Listening for handshake + PMKID[/green]",
             "[dim]passive: deauth a client to force a handshake[/dim]"]
 
 
-def card_identity(source) -> tuple[str, str | None]:
-    """``(chipset/label, own_bssid_or_None)`` for the card endpoint. ``source`` is the WlanArray
-    (or a bare interface): a one-card pool shows that card's chipset + MAC, a multi-card pool the
-    count."""
-    if source is None:
+def card_identity(array: WlanArray) -> tuple[str, str | None]:
+    """``(chipset/label, own_bssid_or_None)`` for the card endpoint."""
+    if array is None:
         return "no card", None
-    members = getattr(source, "members", None)
-    if members is not None:                 # a WlanArray
-        if not members:
-            return "no card", None
-        if len(members) > 1:
-            return f"{len(members)} cards", None
-        source = members[0]                 # a pool of one: describe that single card
-    driver = getattr(source, "driver", None)
-    label = getattr(source, "chipset", None)
+    if array.members is None or len(array.members) == 0:
+        return "no card", None
+    if len(array.members) > 1:
+        return f"{len(array.members)} cards", None
+    iface = array.preferred or array.members[0]
+    label = iface.chipset
     if not label:
         # legacy fallback: strip the "(Make Model)" suffix off a description/name
-        label = str(getattr(source, "description", None)
-                    or getattr(source, "name", None) or "card").split("(")[0].strip()
+        label = str(iface.description or iface.name or "card").split("(")[0].strip()
     label = label or "card"
-    mac = getattr(driver, "mac_address", None)
+    mac = iface.driver.mac_address
     if isinstance(mac, (bytes, bytearray)) and len(mac) == 6:
         mac = ":".join(f"{b:02x}" for b in mac)
     return str(label), (str(mac) if mac else None)
-
 

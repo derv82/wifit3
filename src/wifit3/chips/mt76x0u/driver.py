@@ -986,8 +986,8 @@ class MT76x0UDriver(Driver):
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Build the mt76x02 DMA-info + TXWI for ``frame_bytes`` and bulk-OUT it once over
-        EP 0x07 (AC_VO). The frame always requests ACK, so the chip's own HW retry (limit set
-        globally in TX_RTY_CFG at connect) retransmits an un-ACKed unicast. The sequence number
+        EP 0x07 (AC_VO). A unicast addr1 requests ACK, so the chip's own HW retry (limit set
+        globally in TX_RTY_CFG at connect) retransmits it un-ACKed. The sequence number
         is already stamped by ``_stamp_tx_seq`` (the base calls it before this)."""
         from .tx import TXError, inject_80211_frame
         loop = asyncio.get_running_loop()
@@ -996,7 +996,8 @@ class MT76x0UDriver(Driver):
             # No _hw_lock here: the bulk-OUT endpoint, not the control-register batches it guards.
             n = await loop.run_in_executor(
                 None, lambda: inject_80211_frame(self.transport, frame_bytes,
-                                                 request_ack=True, wcid=0xFF))
+                                                 request_ack=not frame_bytes[4] & 0x01,
+                                                 wcid=0xFF))
         except TXError as e:
             logger.error("MT7610U: inject_frame failed: %s", e)
             return False

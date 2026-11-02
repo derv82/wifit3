@@ -54,6 +54,8 @@ import os
 import re
 from pathlib import Path
 
+NM_UNMANAGED_RULE = Path("/run/udev/rules.d/00-wifit3-capture-unmanaged.rules")
+
 # A 5 GHz channel renders as "5.NNN GHz" (iwlist) or "5NNN[.N] MHz" (iw phy info); a
 # 2.4 GHz frequency matches neither. Used by detect_5g against whichever tool answered.
 _FIVE_GHZ_RE = re.compile(r"5\.\d+\s*GHz|\b5\d{3}(?:\.\d+)?\s*MHz")
@@ -176,6 +178,7 @@ class Capture:
         # Per-band injection targets. The 5 GHz pass is gated on supports_5g at
         # run time (see _injection_plan), so --bssid5g is safe to always pass.
         self.bssid2g, self.channel2g, self.client2g = bssid2g, channel2g, client2g
+        self.control_interface = None
         self.bssid5g, self.channel5g, self.client5g = bssid5g, channel5g, client5g
         # Injection backend: aireplay (default) or raw (AF_PACKET frames with
         # a 12-byte radiotap; see RAW_RTAP_12B).
@@ -340,6 +343,26 @@ class Capture:
         self.logger.log_main(f"\n[ERROR] {msg}")
         self.cleanup()
         sys.exit(1)
+
+    def unmanage_new_wlan_devices(self):
+        """Keep NetworkManager off any wlan device that appears from now on (udev NM_UNMANAGED), so
+        it never opens the card before airmon-ng. Without NetworkManager, fall back to check kill."""
+        running = subprocess.run(["nmcli", "-t", "-f", "RUNNING", "general"],
+                                 capture_output=True, text=True).stdout.strip() if shutil.which("nmcli") else ""
+        if running != "running":
+            self.logger.log_main("[*] NetworkManager not running; using `airmon-ng check kill`.")
+            subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        NM_UNMANAGED_RULE.parent.mkdir(parents=True, exist_ok=True)
+        NM_UNMANAGED_RULE.write_text(
+            'ACTION=="add", SUBSYSTEM=="net", ENV{DEVTYPE}=="wlan", ENV{NM_UNMANAGED}="1"\n')
+        subprocess.run(["sudo", "udevadm", "control", "--reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.logger.log_main(f"[*] NetworkManager will ignore the new card ({NM_UNMANAGED_RULE}).")
+
+    def remove_unmanage_rule(self):
+        if NM_UNMANAGED_RULE.exists():
+            NM_UNMANAGED_RULE.unlink()
+            subprocess.run(["sudo", "udevadm", "control", "--reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     @staticmethod
     def _lsusb():
@@ -657,6 +680,38 @@ class Capture:
             if remain > 0:
                 time.sleep(remain)
 
+    def populate_target_from_control_interface(self):
+        if not self.control_interface:
+            return
+        link = subprocess.run(
+            ["iw", "dev", self.control_interface, "link"],
+            capture_output=True, text=True,
+        ).stdout
+        match = re.search(r"Connected to ([0-9a-f:]{17})", link, re.IGNORECASE)
+        frequency = re.search(r"freq: (\d+)", link)
+        if not match or not frequency:
+            self.logger.log_main(
+                f"[!] {self.control_interface} is not connected; TX target was not populated."
+            )
+            return
+        freq = int(frequency.group(1))
+        if not 2400 < freq < 2500:
+            self.logger.log_main(f"[!] {self.control_interface} is not connected on 2.4 GHz.")
+            return
+        if not self.bssid2g:
+            self.bssid2g = match.group(1).lower()
+            self.channel2g = 14 if freq == 2484 else round((freq - 2407) / 5)
+        info = subprocess.run(
+            ["iw", "dev", self.control_interface, "info"],
+            capture_output=True, text=True,
+        ).stdout
+        client = re.search(r"^\s*addr ([0-9a-f:]{17})", info, re.IGNORECASE | re.MULTILINE)
+        self.client2g = self.client2g or (client.group(1).lower() if client else None)
+        self.logger.log_main(
+            f"[*] Control link: bssid={self.bssid2g} channel={self.channel2g} "
+            f"client={self.client2g or 'not supplied'}"
+        )
+
     def _injection_plan(self):
         """The injection passes to run, as ``(channel, bssid, client, label)``
         tuples. Pure (no I/O) so the 5 GHz gate is unit-testable: legacy --target
@@ -830,6 +885,7 @@ class Capture:
         else:
             subprocess.run(["sudo", "airmon-ng", "stop", f"{self.base_iface}mon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run(["sudo", "airmon-ng", "stop", self.base_iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.remove_unmanage_rule()
 
         self.logger.log_main("[+] Cleanup complete. Safe to unplug.")
 
@@ -864,8 +920,8 @@ class Capture:
 
         # 0. System Prep
         subprocess.run(["sudo", "modprobe", "usbmon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["sudo", "airmon-ng", "check", "kill"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
+        # Not `airmon-ng check kill` when NetworkManager runs: it would also drop --control-interface.
+        self.unmanage_new_wlan_devices()
         self.logger.log_main("\n[!] PREPARATION: Prepare to plug in the USB card.")
         self.logger.log_main("[!] IMPORTANT: DO NOT plug it in yet.")
         input("\nPress ENTER to start the capture sequence...")
@@ -1001,6 +1057,8 @@ class Capture:
             for ch in channels_5g:
                 self.run_cmd(["sudo", "iw", "dev", self.mon_iface, "set", "channel", str(ch)], timeout=10)
 
+        self.populate_target_from_control_interface()
+
         # Injection passes (the over-air TX an inject port is byte-matched
         # against). Each pins its own channel; the 5 GHz pass is dropped on a
         # 2.4-only card. All non-fatal so a slow/failing aireplay never discards
@@ -1036,6 +1094,7 @@ def main():
     parser.add_argument("--bssid2g", help="2.4 GHz AP BSSID for an injection test + deauth")
     parser.add_argument("--channel2g", type=int, default=1, help="channel for the --bssid2g pass (default 1)")
     parser.add_argument("--client2g", help="client BSSID for the --bssid2g deauth")
+    parser.add_argument("--control-interface", help="connected interface used to derive the current AP/client target")
     parser.add_argument("--bssid5g", help="5 GHz AP BSSID for an injection test + deauth (no-op without 5 GHz support)")
     parser.add_argument("--channel5g", type=int, default=36, help="channel for the --bssid5g pass (default 36)")
     parser.add_argument("--client5g", help="client BSSID for the --bssid5g deauth")
@@ -1071,6 +1130,7 @@ def main():
                       station_ssid=args.station_ssid,
                       station_pings=args.station_pings,
                       iface=args.iface)
+        app.control_interface = args.control_interface
         app.run()
     except KeyboardInterrupt:
         # Use stdout.write to ensure clean newline even in raw mode

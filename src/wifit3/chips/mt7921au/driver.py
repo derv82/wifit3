@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional, Callable
@@ -67,6 +68,7 @@ class MT7921AUDriver(Driver):
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._init_state: Optional[chip_init.InitState] = None
         self._channel = self.SUPPORTED_CHANNELS[0]
+        self._tx_lock = asyncio.Lock()   # FIFO: concurrent injects reach the bulk-OUT in call order
         # is_warm reflects the bring-up path taken by connect(): True when we light-reattached
         # to already-running firmware (_warm_reattach), False on a cold boot. mac_address is
         # parsed from the GET_NIC_CAPAB reply during cold boot (MT_NIC_CAP_MAC_ADDR TLV); it
@@ -109,6 +111,7 @@ class MT7921AUDriver(Driver):
         self.transport.subscribe(self._on_raw_rx)
 
         if self._detect_warm():
+            self._require_own_firmware()
             return await self._warm_reattach(progress_cb)
         return await self._cold_boot(progress_cb)
 
@@ -125,6 +128,18 @@ class MT7921AUDriver(Driver):
             return False
         logger.debug("MT7921AU warm-check: MT_CONN_ON_MISC=0x%x", misc)
         return (misc & MT_TOP_MISC2_FW_N9_RDY) != 0
+
+    def _require_own_firmware(self) -> None:
+        try:
+            needs_reset = self.firmware.dma_need_reinit()
+        except usb.core.USBError as e:
+            logger.warning("MT7921AU warm check: WFDMA read failed (%s); assuming reset needed.", e)
+            needs_reset = True
+        if needs_reset:
+            logger.error("MT7921AU: firmware was booted by another driver; replug required.")
+            raise BringUpError(
+                "Warm-reattach",
+                "please unplug/replug the device and try again")
 
     @staticmethod
     def derive_product_name(mac: Optional[str]) -> Optional[str]:
@@ -152,7 +167,7 @@ class MT7921AUDriver(Driver):
         if progress_cb:
             progress_cb(0.1, "Uploading firmware...")
         if not await self.firmware.load_firmware():
-            raise BringUpError("firmware", "MT7921AU firmware load failed")
+            raise BringUpError("Firmware upload", "please unplug/replug the device and try again")
         self.transport.start_rx()   # idempotent — load_firmware already started it
 
         if progress_cb:
@@ -262,7 +277,7 @@ class MT7921AUDriver(Driver):
         return True
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the connac2 TX descriptor (HW ACK-retry limit 15, NO_ACK clear,
+        """Build the connac2 TX descriptor (HW ACK-retry limit 15, NO_ACK set iff addr1 is group,
         byte-verified by verify_pcap CHECK 4 against the captured aireplay TX) and send it once
         on the frame's USB bulk-OUT endpoint: mgmt/ctrl on HCCA (0x09), data on AC_BE (0x04).
         The seq is already stamped (``_stamp_tx_seq``) and the hardware appends the FCS, so pass
@@ -272,7 +287,8 @@ class MT7921AUDriver(Driver):
         except ValueError as e:
             logger.error("MT7921AU inject_frame: %s", e)
             return False
-        return await self.transport.send_bulk_checked(wire, endpoint)
+        async with self._tx_lock:
+            return await self.transport.send_bulk_checked(wire, endpoint)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Software-stamp an incrementing 802.11 sequence number (frag-preserving, one step is

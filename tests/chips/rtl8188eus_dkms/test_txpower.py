@@ -44,23 +44,23 @@ def test_power_index_ch6_matches_wire():
     gp, cck_gp = txpower.ch_group_2g(6)
     p = WIRE_TXPWR
     # 1M (CCK, no bias) = 0x2f; 2M (CCK, -9) = 0x26.
-    assert txpower._power_index(p, gp, cck_gp, txpower._CCK, 0) == 0x2F
-    assert txpower._power_index(p, gp, cck_gp, txpower._CCK, -9) == 0x26
+    assert txpower._power_index(p, gp, cck_gp, txpower.CCK, 0, 0) == 0x2F
+    assert txpower._power_index(p, gp, cck_gp, txpower.CCK, -9, 0) == 0x26
     # OFDM = 0x33 + ofdm_diff(1) = 0x34; HT = 0x33 + bw20_diff(0) = 0x33.
-    assert txpower._power_index(p, gp, cck_gp, txpower._OFDM, 0) == 0x34
-    assert txpower._power_index(p, gp, cck_gp, txpower._HT, 0) == 0x33
+    assert txpower._power_index(p, gp, cck_gp, txpower.OFDM, 0, 0) == 0x34
+    assert txpower._power_index(p, gp, cck_gp, txpower.HT_MCS0_MCS7, 0, 0) == 0x33
 
 
 def test_power_index_clamps_to_max():
     p = TxPwr2G((0x3F,) * 6, (0x3F,) * 5, 0, 4, 0)
     gp, cck_gp = txpower.ch_group_2g(6)
     # base 0x3f + ofdm_diff 4 = 0x43 -> clamps to MAX_POWER_INDEX 0x3f.
-    assert txpower._power_index(p, gp, cck_gp, txpower._OFDM, 0) == 0x3F
+    assert txpower._power_index(p, gp, cck_gp, txpower.OFDM, 0, 0) == 0x3F
 
 
 def test_set_tx_power_final_register_values():
     t = RegTx()
-    txpower.set_tx_power(t, WIRE_TXPWR, 6)
+    txpower.set_tx_power(t, WIRE_TXPWR, 6, 0, 0)
     r = t.regs
     assert r[0x0E08] == 0x2D2D2F2D                 # CCK 1M in byte1
     assert r[0x086C] == 0x2F2F262D                 # CCK 2M(0x26)/5.5M/11M bytes 1/2/3

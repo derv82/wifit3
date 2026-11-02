@@ -159,6 +159,9 @@ class RT3070Driver(Driver):
         if progress_cb:
             progress_cb(0.1, "RT3070: probe + EFUSE + firmware + radio bring-up")
         try:
+            # Hold interface 0 for the session: unclaimed, WinUSB claims and releases it around
+            # every EP0 transfer, and that churn intermittently fails with "Entity not found".
+            await loop.run_in_executor(None, usb.util.claim_interface, self.transport.dev, 0)
             await loop.run_in_executor(None, self._bringup)
         except Exception as e:  # noqa: BLE001
             raise BringUpError("bring-up", str(e)) from e
@@ -245,9 +248,10 @@ class RT3070Driver(Driver):
     def _do_inject(self, frame: bytes) -> None:
         # Executor thread; share _hw_lock with _tune so an inject can never collide with
         # an in-flight (or cancelled-but-draining) channel tune on the USB device. ACK bit ON
-        # (use_no_ack=False) so the chip requests the AP's ACK + retries un-ACKed frames.
+        # for a unicast addr1 so the chip requests the AP's ACK + retries un-ACKed frames.
         with self._hw_lock:
-            tx.send_frame(self.transport.dev, self._bulk_out_ep, frame, use_no_ack=False)
+            tx.send_frame(self.transport.dev, self._bulk_out_ep, frame,
+                          use_no_ack=bool(frame[4] & 0x01))
 
     def _stamp_tx_seq(self, frame: bytes) -> bytes:
         """Stamp the next running sequence number into the frame's seqctl (bytes 22-23,

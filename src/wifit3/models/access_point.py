@@ -4,10 +4,16 @@ previously-saved capture artifacts).
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional
+from enum import StrEnum
+from typing import Dict, List, Optional, Set
+
+from wifit3.dot11.pmf import PmfPosture
+from wifit3.dot11.rsn import AKM_OWE, ENTERPRISE_AKM_SUITES
 
 from .handshake import Handshake
 from .identity import ApIdentity, IdKey, IdSource
+
+_NO_PASSPHRASE_AKM_SUITES = ENTERPRISE_AKM_SUITES | {AKM_OWE}
 
 
 @dataclass
@@ -17,13 +23,35 @@ class WepStats:
     total_frames: int = 0
 
 
+class CaptureType(StrEnum):
+    """Kind of a saved capture artifact, one member per on-disk file kind. Distinct
+    from the watchers.ap_watcher.ApEvent classes, which are live AP events."""
+    HS = "HS"
+    PMKID = "PMKID"
+    WEP = "WEP"
+    WPS_PIN = "WPS_PIN"
+    WPS_PBC = "WPS_PBC"
+    WPA_PSK = "WPA_PSK"           # passphrase recovered from a handshake/PMKID (e.g. hashcat)
+
+
+WPS_CAPTURE_TYPES = frozenset({CaptureType.WPS_PIN, CaptureType.WPS_PBC})
+PSK_CAPTURE_TYPES = frozenset({CaptureType.WPA_PSK, *WPS_CAPTURE_TYPES})    # value is a WPA PSK
+# A WEP key cracked from the AP's IVs, or WPS credentials the AP sent.
+AP_RECOVERED_CAPTURE_TYPES = frozenset({CaptureType.WEP, *WPS_CAPTURE_TYPES})
+# A stored key's type as it reads in a sentence: ``WPS PIN 12345670``.
+CREDENTIAL_NAMES = {CaptureType.WPA_PSK: "PSK", CaptureType.WPS_PIN: "WPS PIN", CaptureType.WEP: "WEP key"}
+
+
 @dataclass
 class PersistedCapture:
     """One previously-saved capture artifact found under captures/."""
-    type: Literal["HS", "PMKID", "WEP", "WPS"]
+    type: CaptureType
     timestamp: int                  # epoch seconds, parsed from the filename
     path: str                       # source file under captures/
+    bssid: str                      # AP this capture belongs to (colon form)
     value: Optional[str] = None     # WEP key (hex) / WPS PSK; None for HS/PMKID
+    ssid: Optional[str] = None      # parsed from the filename, for display (VAULT)
+    pin: Optional[str] = None       # WPS PIN (WPS_PIN captures only)
 
 
 @dataclass
@@ -34,8 +62,10 @@ class AccessPoint:
     encryption: Optional[str] = "Unknown"
     # Structured security fields from the RSN IE; `encryption` (above) is the airodump-style string.
     akms: List[str] = field(default_factory=list)
-    # AKM suite numbers (00-0F-AC:N) from the RSN IE, parallel to `akms` (the names).
+    # AKM suite numbers (00-0F-AC:N) from the RSN IE; vendor-OUI AKMs appear only in `akms`.
     akm_suites: List[int] = field(default_factory=list)
+    rsn_valid: bool = False
+    vendor_akm_offered: bool = False  # an AKM outside 00-0F-AC (DPP, OSEN, ...)
     pairwise_cipher: Optional[str] = None
     beacons: int = 0
     first_seen: float = field(default_factory=time.time)
@@ -46,6 +76,10 @@ class AccessPoint:
     pmf_capable: bool = False
     pmf_required: bool = False
     beacon_protection: bool = False
+    # Passively observed EAP method Type numbers (EAPOL-Type-0), aggregated across clients.
+    observed_eap_methods: Set[int] = field(default_factory=set)
+
+    chipset: Optional[str] = None  # from a chipset driver's vendor IE
 
     # WPS state decoded from the WPS vendor IE (tag 221, OUI 00:50:F2 type 4).
     wps: bool = False
@@ -89,9 +123,6 @@ class AccessPoint:
     wps_pin: Optional[str] = None
     wps_pin_psk: Optional[str] = None
 
-    # Read-only capture history loaded from captures/ at scan start.
-    persisted: List[PersistedCapture] = field(default_factory=list)
-
     # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.
     signal_by_card: Dict[str, int] = field(default_factory=dict)
     signal_history: Dict[str, deque[int]] = field(default_factory=dict, repr=False)
@@ -119,22 +150,25 @@ class AccessPoint:
         )
 
     @property
-    def known_psk(self) -> Optional[str]:
-        """The passphrase we hold for this AP from any source, recovered this session
-        (PBC/PIN) or loaded from a prior session's captures/ WPS file, else None. A WPS PIN
-        alone (no PSK) does not count."""
-        return (
-            self.wps_pbc_psk
-            or self.wps_pin_psk
-            or next((p.value for p in self.persisted if p.type == "WPS" and p.value), None)
-        )
-
-    @property
-    def has_psk(self) -> bool:
-        """True once we hold this AP's passphrase (see known_psk)."""
-        return self.known_psk is not None
-
-    @property
     def is_hidden(self) -> bool:
         """No usable SSID: never seen, or still the "<hidden>" placeholder."""
         return not (self.ssid and self.ssid != "<hidden>")
+
+    @property
+    def pmf_posture(self) -> PmfPosture:
+        """802.11w posture from the advertised MFPC (`pmf_capable`) / MFPR (`pmf_required`) bits."""
+        if self.pmf_required:
+            return PmfPosture.REQUIRED if self.pmf_capable else PmfPosture.INVALID
+        return PmfPosture.OPTIONAL if self.pmf_capable else PmfPosture.DISABLED
+
+
+def eap_only(ap: AccessPoint) -> bool:
+    """True when every advertised AKM is 802.1X/EAP or FILS (no PSK, no SAE)."""
+    return (bool(ap.akm_suites) and not ap.vendor_akm_offered
+            and set(ap.akm_suites) <= ENTERPRISE_AKM_SUITES)
+
+
+def no_passphrase(ap: AccessPoint) -> bool:
+    """True when every advertised AKM is 802.1X/EAP, FILS or OWE."""
+    return (bool(ap.akm_suites) and not ap.vendor_akm_offered
+            and set(ap.akm_suites) <= _NO_PASSPHRASE_AKM_SUITES)

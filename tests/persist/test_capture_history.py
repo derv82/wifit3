@@ -1,6 +1,7 @@
 """Tests for the captures/ history loader (synthetic files, no real IDs)."""
 from __future__ import annotations
 
+from wifit3.models import CaptureType
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.config import Config
 
@@ -8,8 +9,9 @@ _BSSID_DASH = "aa-bb-cc-dd-ee-ff"
 _BSSID_COLON = "aa:bb:cc:dd:ee:ff"
 
 
-# Minimal hashlines: only the WPA*TYPE* prefix is inspected.
-_HS_LINE = "WPA*02*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***2\n"
+# Valid hashlines: a malformed line is not counted.
+_HS_LINE = ("WPA*02*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431*" + "a" * 64 + "*"
+            + "00" * 99 + "*02\n")
 _PMKID_LINE = "WPA*01*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431***\n"
 _WEPKEY_TXT = (
     "SSID:  TestNet\n"
@@ -32,6 +34,10 @@ _WPS_PIN_TXT = (
 
 def _write(d, name, content):
     (d / name).write_text(content, encoding="utf-8")
+
+
+def _pmkid_line(essid: bytes) -> str:
+    return "WPA*01*" + "0" * 32 + f"*aabbccddeeff*112233445566*{essid.hex()}***\n"
 
 
 class TestLoadCaptureIndex:
@@ -65,23 +71,69 @@ class TestLoadCaptureIndex:
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000005_wps_pbc.txt", _WPS_PBC_TXT)
         caps = load_capture_index()[_BSSID_COLON]
         assert len(caps) == 1
-        assert caps[0].type == "WPS" and caps[0].value == "yxws3tik"
+        assert caps[0].type == CaptureType.WPS_PBC and caps[0].value == "yxws3tik"
 
     def test_wps_pin_txt(self, tmp_path):
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000006_wps_pin.txt", _WPS_PIN_TXT)
         caps = load_capture_index()[_BSSID_COLON]
         assert len(caps) == 1
-        assert caps[0].type == "WPS" and caps[0].value == "abcdefgh"
+        assert caps[0].type == CaptureType.WPS_PIN and caps[0].value == "abcdefgh"
+        assert caps[0].pin == "12345670"
 
-    def test_pcap_companion_is_ignored(self, tmp_path):
-        # A handshake.pcap on its own contributes no PersistedCapture. Its
-        # hashline sibling carries the verdict.
+    def test_empty_wps_pin_is_preserved(self, tmp_path):
+        body = _WPS_PIN_TXT.replace("PIN: 12345670", "PIN: ")
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000006_wps_pin.txt", body)
+        capture = load_capture_index()[_BSSID_COLON][0]
+        assert capture.pin == ""
+
+    def test_legacy_empty_wps_pin_label_is_normalized(self, tmp_path):
+        body = _WPS_PIN_TXT.replace("PIN: 12345670", "PIN: <empty>")
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000006_wps_pin.txt", body)
+        capture = load_capture_index()[_BSSID_COLON][0]
+        assert capture.pin == ""
+
+    def test_wpa_psk_txt(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000012_wpa_psk.txt",
+               f"SSID: TestNet\nBSSID: {_BSSID_COLON}\nPSK: crackedpass\n")
+        caps = load_capture_index()[_BSSID_COLON]
+        assert len(caps) == 1
+        assert caps[0].type == CaptureType.WPA_PSK and caps[0].value == "crackedpass"
+
+    def test_handshake_pcap_is_indexed(self, tmp_path):
+        # .pcap files are first-class now (a handshake may exist only as a .pcap).
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000007_handshake.pcap", "binary-ish")
-        assert load_capture_index() == {}
+        caps = load_capture_index()[_BSSID_COLON]
+        assert len(caps) == 1 and caps[0].type == CaptureType.HS
+
+    def test_handshake_hc22000_and_pcap_both_indexed(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000021_handshake.hc22000", _HS_LINE)
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000021_handshake.pcap", "binary-ish")
+        caps = load_capture_index()[_BSSID_COLON]
+        assert len(caps) == 2 and {c.type for c in caps} == {CaptureType.HS}
+
+    def test_bssid_populated_on_captures(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000_handshake.hc22000", _HS_LINE)
+        assert load_capture_index()[_BSSID_COLON][0].bssid == _BSSID_COLON
+
+    def test_aggregate_lists_one_entry_per_record_kind(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}.hc22000", _HS_LINE + _PMKID_LINE + _PMKID_LINE)
+        assert sorted(c.type for c in load_capture_index()[_BSSID_COLON]) == [CaptureType.HS, CaptureType.PMKID]
+
+    def test_malformed_hashlines_make_no_entry(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}.hc22000", _HS_LINE + "WPA*01*truncated\nWPA*02*x\n")
+        assert [c.type for c in load_capture_index()[_BSSID_COLON]] == [CaptureType.HS]
 
     def test_ssid_with_underscores_parses(self, tmp_path):
         _write(tmp_path, f"Beach_2_4_{_BSSID_DASH}_1700000008_handshake.hc22000", _HS_LINE)
         assert _BSSID_COLON in load_capture_index()
+
+    def test_ssid_recovered_from_filename(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000_handshake.hc22000", _HS_LINE)
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "TestNet"
+
+    def test_ssid_with_underscores_recovered_whole(self, tmp_path):
+        _write(tmp_path, f"Beach_2_4_{_BSSID_DASH}_1700000008_handshake.hc22000", _HS_LINE)
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Beach_2_4"
 
     def test_unrecognized_name_ignored(self, tmp_path):
         _write(tmp_path, "cracks.txt", "somekey\n")
@@ -121,6 +173,38 @@ class TestLoadCaptureIndex:
         caps = load_capture_index()[_BSSID_COLON]
         assert len(caps) == 1 and caps[0].type == "PMKID"
 
+    def test_hc22000_ssid_is_the_hashline_essid(self, tmp_path):
+        _write(tmp_path, f"Caf___{_BSSID_DASH}_1700000000_pmkid.hc22000",
+               _pmkid_line("Café📶".encode()))
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Café📶"
+
+    def test_aggregated_hc22000_ssid_is_the_hashline_essid(self, tmp_path):
+        _write(tmp_path, f"Caf___{_BSSID_DASH}.hc22000", _pmkid_line("Café📶".encode()))
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Café📶"
+
+    def test_invalid_utf8_essid_keeps_the_filename_ssid(self, tmp_path):
+        _write(tmp_path, f"Caf__{_BSSID_DASH}_1700000000_pmkid.hc22000", _pmkid_line(b"Caf\xe9"))
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Caf_"
+
+    def test_essid_not_naming_the_file_keeps_the_filename_ssid(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000_pmkid.hc22000",
+               _pmkid_line(b"Other"))
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "TestNet"
+
+    def test_txt_ssid_is_the_ssid_line(self, tmp_path):
+        _write(tmp_path, f"Caf__{_BSSID_DASH}_1700000012_wpa_psk.txt",
+               f"SSID: Café\nBSSID: {_BSSID_COLON}\nPSK: crackedpass\n")
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Café"
+
+    def test_empty_txt_ssid_keeps_the_filename_ssid(self, tmp_path):
+        _write(tmp_path, f"hidden_{_BSSID_DASH}_1700000012_wpa_psk.txt",
+               f"SSID: \nBSSID: {_BSSID_COLON}\nPSK: crackedpass\n")
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "hidden"
+
+    def test_pcap_keeps_the_filename_ssid(self, tmp_path):
+        (tmp_path / f"Caf__{_BSSID_DASH}_1700000000_handshake.pcap").write_bytes(b"\x00" * 24)
+        assert load_capture_index()[_BSSID_COLON][0].ssid == "Caf_"
+
 
 class TestSummarize:
     def test_totals(self, tmp_path):
@@ -141,4 +225,3 @@ class TestSummarize:
         _write(tmp_path, f"TestNet_{_BSSID_DASH}.hc22000", _HS_LINE + _PMKID_LINE)
         hs, pmkid, wep, wps = summarize(load_capture_index())
         assert (hs, pmkid, wep, wps) == (1, 1, 0, 0)
-

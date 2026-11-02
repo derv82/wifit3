@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sys
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -40,6 +41,11 @@ class Prompter(Protocol):
     async def wait_replug(self, device_id: DeviceID) -> DeviceID | None: ...
     def status(self, message: str) -> None: ...
     def error(self, title: str, body: str) -> None: ...
+
+    async def run_with_terminal(self, run: Callable[[], int]) -> int | None:
+        """Suspend the UI and call ``run`` with the terminal handed to the user (a password prompt).
+        None if the terminal can't be handed over."""
+        ...
 
     def begin_assistant(self, greeting: tuple[str, ...], messages: list[tuple[str, ...]],
                         *, intro_delay: float = 2.0) -> None:

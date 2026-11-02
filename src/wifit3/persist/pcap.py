@@ -10,7 +10,7 @@ from __future__ import annotations
 import struct
 import time
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Iterator
 
 LINKTYPE_IEEE802_11 = 105
 PCAP_MAGIC = 0xA1B2C3D4
@@ -54,3 +54,20 @@ def write_pcap(path: Path, records: Iterable[tuple[bytes, float]]) -> int:
             f.write(frame)
             count += 1
     return count
+
+
+def read_pcap(path: Path) -> Iterator[tuple[bytes, int]]:
+    """``(frame, epoch seconds)`` of each record in a little-endian pcap written by ``write_pcap``;
+    nothing for any other format or an unreadable file."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return
+    if len(data) < 24 or struct.unpack_from("<I", data)[0] != PCAP_MAGIC:
+        return
+    offset = 24
+    while offset + 16 <= len(data):
+        ts_sec, _, length, _ = struct.unpack_from("<IIII", data, offset)
+        offset += 16
+        yield data[offset:offset + length], ts_sec
+        offset += length

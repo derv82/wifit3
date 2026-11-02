@@ -24,6 +24,7 @@ class FakePrompter:
     def __init__(self, ask=True, replug=True):
         self._ask, self._replug = ask, replug
         self.statuses, self.errors = [], []
+        self.terminal_runs = 0
 
     async def ask(self, dialog):
         return self._ask
@@ -36,6 +37,10 @@ class FakePrompter:
 
     def error(self, title, body):
         self.errors.append((title, body))
+
+    async def run_with_terminal(self, run):
+        self.terminal_runs += 1
+        return run()
 
 
 class _Result:
@@ -130,6 +135,16 @@ async def test_install_access_never_takes_effect(monkeypatch):
     assert ui.errors and "didn't take effect" in ui.errors[0][0]
 
 
+async def test_install_rule_hands_terminal_over_on_the_ui_loop(monkeypatch):
+    monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: _target())
+    monkeypatch.setattr(lin, "install_rule",
+                        lambda t, *, node, run_with_terminal: _Result(ok=run_with_terminal(lambda: 0) == 0))
+    monkeypatch.setattr(lin.SetupLinux, "_wait_for_access", _access_ok)
+    ui = FakePrompter()
+    assert await lin.SetupLinux().install(_DEV, ui) is _DEV
+    assert ui.terminal_runs == 1
+
+
 async def test_install_unsupported_chipset(monkeypatch):
     monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: None)
     ui = FakePrompter()
@@ -158,7 +173,7 @@ async def test_uninstall_narrow_removes_only_self(monkeypatch):
     monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: _target())
     monkeypatch.setattr(lin, "plan_uninstall", lambda t: _Plan(siblings=[_Sib("rt3070", "RT3070")]))
     monkeypatch.setattr(lin, "remove_rule",
-                        lambda t, *, node, also_keys: seen.update(also=also_keys) or _Result(ok=True, message="removed"))
+                        lambda t, *, node, also_keys, run_with_terminal: seen.update(also=also_keys) or _Result(ok=True, message="removed"))
     monkeypatch.setattr(lin.SetupLinux, "_wait_for_access", _access_ok)
     res = await lin.SetupLinux().uninstall(_DEV, FakePrompter(ask="narrow"))
     assert res.ok and seen["also"] == ()
@@ -169,10 +184,22 @@ async def test_uninstall_wide_passes_sibling_keys(monkeypatch):
     monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: _target())
     monkeypatch.setattr(lin, "plan_uninstall", lambda t: _Plan(siblings=[_Sib("rt3070", "RT3070")]))
     monkeypatch.setattr(lin, "remove_rule",
-                        lambda t, *, node, also_keys: seen.update(also=also_keys) or _Result(ok=True, message="removed"))
+                        lambda t, *, node, also_keys, run_with_terminal: seen.update(also=also_keys) or _Result(ok=True, message="removed"))
     monkeypatch.setattr(lin.SetupLinux, "_wait_for_access", _access_ok)
     res = await lin.SetupLinux().uninstall(_DEV, FakePrompter(ask="wide"))
     assert res.ok and seen["also"] == ("rt3070",)
+
+
+async def test_uninstall_hands_terminal_over_on_the_ui_loop(monkeypatch):
+    monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: _target())
+    monkeypatch.setattr(lin, "plan_uninstall", lambda t: _Plan())
+    monkeypatch.setattr(lin, "remove_rule",
+                        lambda t, *, node, also_keys, run_with_terminal:
+                        _Result(ok=run_with_terminal(lambda: 0) == 0, message="removed"))
+    monkeypatch.setattr(lin.SetupLinux, "_wait_for_access", _access_ok)
+    ui = FakePrompter(ask="narrow")
+    res = await lin.SetupLinux().uninstall(_DEV, ui)
+    assert res.ok and ui.terminal_runs == 1
 
 
 async def test_uninstall_not_revoked_message(monkeypatch):

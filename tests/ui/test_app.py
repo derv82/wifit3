@@ -1,10 +1,156 @@
+import contextlib
+import threading
+
 import pytest
 
+from wifit3.chips.driver import DeviceID
+from wifit3.models import AccessPoint
+from wifit3.persist import ap_state
+from wifit3.persist.vault import Vault
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
-from textual.widgets import RichLog, DataTable
+from wifit3.ui.screens.vault_drawer import VaultDrawer
+from textual.widgets import Button, RichLog
+from textual.worker import WorkerCancelled
+from textual.widgets._header import HeaderTitle
 
+from wifit3.ui.ap_table import APTable
+from tests.ui.wait_until import wait_until
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_header_title_is_centered_across_the_terminal():
+    app = WifiteApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(0)
+        title = app.screen.query_one(HeaderTitle)
+        assert title.region.x == 0
+        assert title.region.width == app.size.width
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_narrow_splash_moves_buttons_below_device_list():
+    app = WifiteApp()
+    async with app.run_test(size=(60, 33)) as pilot:
+        splash = app.screen
+        splash.render_devices([DeviceID(0x2357, 0x0106, "RTL8814AU", "TP-Link", "T9UH")])
+        await pilot.pause(0)
+
+        device_list = splash.query_one("#device-list")
+        start = splash.query_one("#start-btn", Button)
+        uninstall = splash.query_one("#uninstall-btn", Button)
+        assert splash.query_one("#ascii-art").display is True
+        assert device_list.region.x > 0
+        assert start.region.y >= device_list.region.bottom
+        assert uninstall.region.y == start.region.y
+        assert start.region.x == device_list.region.x
+        assert uninstall.region.right == device_list.region.right
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_splash_device_list_scrolls_when_cards_exceed_available_height():
+    app = WifiteApp()
+    async with app.run_test(size=(60, 33)) as pilot:
+        splash = app.screen
+        splash.render_devices([
+            DeviceID(0x148F, 0x3000 + index, f"RT{3000 + index}")
+            for index in range(20)
+        ])
+        await pilot.pause(0)
+
+        device_select = splash.query_one("#device-select")
+        assert device_select.region.height <= 12
+        assert device_select.max_scroll_y > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_splash_54x24_keeps_buttons_above_footer_with_many_cards():
+    app = WifiteApp()
+    async with app.run_test(size=(54, 24)) as pilot:
+        splash = app.screen
+        splash.render_devices([
+            DeviceID(0x148F, 0x3000 + index, f"RT{3000 + index}")
+            for index in range(20)
+        ])
+        await pilot.pause(0)
+
+        device_select = splash.query_one("#device-select")
+        start = splash.query_one("#start-btn", Button)
+        uninstall = splash.query_one("#uninstall-btn", Button)
+        footer = splash.query_one("Footer")
+        splash.query_one("GlobalJobTracker").display = True
+        await pilot.pause(0)
+        assert device_select.region.height <= 4
+        assert device_select.max_scroll_y > 0
+        assert start.region.bottom <= footer.region.y
+        assert uninstall.region.bottom <= footer.region.y
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_wide_24_row_splash_uses_button_column_space_for_more_devices():
+    app = WifiteApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        splash = app.screen
+        splash.render_devices([
+            DeviceID(0x148F, 0x3000 + index, f"RT{3000 + index}")
+            for index in range(20)
+        ])
+        await pilot.pause(0)
+
+        device_select = splash.query_one("#device-select")
+        start = splash.query_one("#start-btn", Button)
+        footer = splash.query_one("Footer")
+        assert 4 < device_select.region.height <= 8
+        assert start.region.y == device_select.region.y
+        assert device_select.max_scroll_y > 0
+        assert device_select.region.bottom <= footer.region.y
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_short_splash_hides_logo_through_32_rows():
+    app = WifiteApp()
+    async with app.run_test(size=(80, 32)) as pilot:
+        await pilot.pause(0)
+        assert app.screen.query_one("#ascii-art").display is False
+        compact_logo = app.screen.query_one("#compact-logo")
+        assert compact_logo.display is True
+        assert len(compact_logo.content.split("\n")) == 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_short_splash_expands_scrollable_list_when_height_is_available():
+    app = WifiteApp()
+    async with app.run_test(size=(54, 32)) as pilot:
+        splash = app.screen
+        splash.render_devices([
+            DeviceID(0x148F, 0x3000 + index, f"RT{3000 + index}")
+            for index in range(20)
+        ])
+        await pilot.pause(0)
+
+        device_select = splash.query_one("#device-select")
+        footer = splash.query_one("Footer")
+        assert 4 < device_select.region.height <= 8
+        assert device_select.max_scroll_y > 0
+        assert splash.query_one("#start-btn", Button).region.bottom <= footer.region.y
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_splash_logo_returns_above_32_rows():
+    app = WifiteApp()
+    async with app.run_test(size=(80, 34)) as pilot:
+        await pilot.pause(0)
+        assert app.screen.query_one("#ascii-art").display is True
+        assert app.screen.query_one("#compact-logo").display is False
 
 
 @pytest.mark.asyncio
@@ -26,13 +172,13 @@ async def test_app_layout_and_boot():
         assert device_list is not None
         
         # Manually transition to Scanner View
-        pilot.app.push_screen("scanner")
+        pilot.app.push_screen(pilot.app.scanner_view)
         await pilot.pause(0)
         
         assert isinstance(pilot.app.screen, ScannerView)
         
         # Check Scanner Screen Components
-        table = pilot.app.screen.query_one("#ap-table", DataTable)
+        table = pilot.app.screen.query_one("#ap-table", APTable)
         assert table is not None
         log = pilot.app.screen.query_one("#system-log", RichLog)
         assert log is not None
@@ -40,3 +186,60 @@ async def test_app_layout_and_boot():
         # Check that FocusViewV2 is registered (but requires target_ap to mount properly without escaping immediately, so we won't push it here)
         assert "focus" in pilot.app._installed_screens
 
+
+def _write_two_aps() -> None:
+    vault = Vault()
+    vault.save_wpa_psk("HomeNet", "aa:bb:cc:dd:ee:ff", "password1", manual=True)
+    vault.save_wep_key(AccessPoint(bssid="aa:bb:cc:dd:ee:01", ssid="OldNet"), b"abcde", manual=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_vault_loads_its_selected_ap_then_preloads_the_rest_off_the_ui_thread(mocker):
+    _write_two_aps()
+    loads: list[tuple[str, bool]] = []
+    load_ap_state = ap_state.load_ap_state
+
+    def record_load_and_fail_the_last(bssid, captures):
+        loads.append((bssid, threading.current_thread() is threading.main_thread()))
+        if len(loads) == 2:
+            raise OSError("unreadable")
+        return load_ap_state(bssid, captures)
+    mocker.patch.object(ap_state, "load_ap_state", side_effect=record_load_and_fail_the_last)
+
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        assert loads == []
+        drawer = VaultDrawer()
+        await app.push_screen(drawer)
+        await wait_until(pilot, lambda: drawer.has_class("open") and len(loads) == 2)
+        await app.workers.wait_for_complete()
+        assert app.is_running
+
+    assert loads == [("aa:bb:cc:dd:ee:ff", True), ("aa:bb:cc:dd:ee:01", False)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_cancelling_vault_preload_stops_before_the_next_ap(mocker):
+    _write_two_aps()
+    app = WifiteApp()
+    app.vault.ap_state("aa:bb:cc:dd:ee:ff")
+    loads: list[str] = []
+    load_ap_state = ap_state.load_ap_state
+
+    def load_then_cancel(bssid, captures):
+        loads.append(bssid)
+        app.call_from_thread(app.workers.cancel_all)
+        return load_ap_state(bssid, captures)
+    mocker.patch.object(ap_state, "load_ap_state", side_effect=load_then_cancel)
+
+    async with app.run_test() as pilot:
+        drawer = VaultDrawer()
+        await app.push_screen(drawer)
+        await wait_until(pilot, lambda: drawer.has_class("open") and bool(loads))
+        with contextlib.suppress(WorkerCancelled):
+            await app.workers.wait_for_complete()
+
+    assert loads == ["aa:bb:cc:dd:ee:01"]

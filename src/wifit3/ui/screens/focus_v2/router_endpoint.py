@@ -56,6 +56,8 @@ class RouterEndpoint(Vertical):
         self._identity_details = identity_details
         self._width = art_size("focus-ap.ans")[0]      # endpoint column width
         self._last: dict[str, str] = {}                # last-pushed label value; skip no-op repaints
+        self._last_power: Text | None = None           # last-pushed signal bar line
+        self._last_static: tuple | None = None
 
     def compose(self) -> ComposeResult:
         yield Label(self._power_line(), classes="ap-power", id="ap-power")
@@ -88,7 +90,15 @@ class RouterEndpoint(Vertical):
         self._wps, self._has_m1 = wps, has_m1
         self._probing, self._probe_disabled = probing, probe_disabled
         self._identity, self._identity_details = identity, identity_details
-        self.query_one("#ap-power", Label).update(self._power_line())
+        power = self._power_line()
+        if power != self._last_power:
+            self._last_power = power
+            self.query_one("#ap-power", Label).update(power, layout=False)   # always one row
+        static = (essid, bssid, channel, wps, has_m1, probing, probe_disabled,
+                  identity, identity_details)
+        if static == self._last_static:
+            return
+        self._last_static = static
         self.query_one("#router-art", BreathingArt).tooltip = identity_details
         self._push("#ap-essid", self._essid_markup(essid))
         self._push("#ap-bssid", bssid)

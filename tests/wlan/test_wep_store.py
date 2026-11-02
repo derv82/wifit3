@@ -17,6 +17,24 @@ def test_dedup_counts_unique_vs_total():
     assert c.unique_count(BSSID) == 2
 
 
+def test_remove_purges_all_state_for_one_bssid():
+    c = WepCaptureStore()
+    c.record(BSSID, b"\x01\x02\x03")
+    c.record_broadcast_frame(BSSID, b"\x00" * 68)
+    c.record_crack_sample(BSSID, b"\x01\x02\x03", b"\x00" * 16)
+    c.record_seed_sample(BSSID, b"\x01\x02\x03", b"\x00" * 16)
+
+    c.remove(BSSID)
+
+    assert c.stats(BSSID) is None
+    assert c.unique_count(BSSID) == 0
+    assert c.arp_candidate_count(BSSID) == 0
+    assert c.chop_candidates(BSSID) == []
+    assert c.broadcast_seen_count(BSSID) == 0
+    assert c.crack_sample_count(BSSID) == 0
+    assert c.seed_samples(BSSID) == []
+
+
 def test_per_bssid_isolation():
     c = WepCaptureStore()
     c.record("aa:aa:aa:aa:aa:aa", b"\x01\x01\x01")

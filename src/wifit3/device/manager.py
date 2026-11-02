@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Callable, List, NamedTuple, NoReturn, Optional
 import libusb_package
 import usb.core
 
+from wifit3.device.zerocd import ZeroCdEjector
 from wifit3.errors import BringUpError, BringUpPermissionsError, WifiteFatalError, is_device_gone
 from wifit3.models.device_id import DeviceID
 from wifit3.setup.base import Setup, SetupResult
@@ -111,9 +112,29 @@ _DKMS_BY_DIR: dict[str, DkmsFamily] = {
     for d in (fam.default, fam.mainline) if d
 }
 
+def _resolve_148f_760a(dev: usb.core.Device) -> str:
+    """148f:760a is claimed by both mt7601u and mt76x0's tables upstream, so the
+    two kernels drivers both match it; only the silicon ID tells them apart.
+
+    mt7601u reads MT_ASIC_VERSION (regs.h:12) and requires (asic_rev >> 16) == 0x7601
+    (usb.c:298); mt76x0 reads MT_ASIC_VERSION for 0x7610. One vendor IN read is
+    therefore the same discriminator each driver itself applies, and it needs no
+    interrupt endpoint heuristic.
+    """
+    try:
+        data = dev.ctrl_transfer(
+            bmRequestType=0xC0, bRequest=0x07, wValue=0, wIndex=0x0000,
+            data_or_wLength=4, timeout=300)
+        asic_rev = int.from_bytes(bytes(data), "little") if data else 0
+    except Exception:
+        return "mt7601u"  # default
+    return "mt7601u" if (asic_rev >> 16) == 0x7601 else "mt76x0u"
+
+
 # Distinct chips behind one vid:pid, keyed by (vid, pid).
 _VIDPID_FAMILIES: dict[VidPid, VidPidFamily] = {
     (0x2357, 0x0137): VidPidFamily(default="mt76x2u", resolve=_resolve_2357_0137),
+    (0x148F, 0x760A): VidPidFamily(default="mt7601u", resolve=_resolve_148f_760a),
 }
 
 
@@ -150,6 +171,23 @@ def supported_ids() -> dict[VidPid, Claim]:
                 f"add a DkmsFamily or VidPidFamily to disambiguate")
             mapping[slot] = Claim(entry, key, mod.import_driver)
     return mapping
+
+
+@functools.cache
+def zerocd_ids() -> frozenset[VidPid]:
+    """Every ZeroCD (mass-storage stub) VID:PID any driver opts into, merged across all packages.
+    Unlike ``supported_ids`` this keeps both members of a DKMS pair: the stub needs ejecting whichever
+    driver ultimately wins."""
+    from wifit3 import chips as chips_pkg
+
+    ids: set[VidPid] = set()
+    for mod_info in pkgutil.iter_modules(chips_pkg.__path__, chips_pkg.__name__ + "."):
+        if not mod_info.ispkg:
+            continue
+        mod = importlib.import_module(mod_info.name)
+        for entry in getattr(mod, "ZEROCD_IDS", None) or ():
+            ids.add((entry[0], entry[1]))
+    return frozenset(ids)
 
 
 def driver_for(vid: int, pid: int) -> Optional[Tuple[type["Driver"], str]]:
@@ -211,11 +249,17 @@ def _bus_devices(backend) -> List[usb.core.Device]:
         _raise_usblib_fatal(exc)
 
 
+def raw_devices() -> List[usb.core.Device]:
+    """Every ``usb.core.Device`` on the bus right now, unfiltered (the ZeroCD ejector's view)."""
+    return _bus_devices(libusb_package.get_libusb1_backend())
+
+
 def devices() -> List[DeviceID]:
     """Every supported device present on the USB bus right now."""
     backend = libusb_package.get_libusb1_backend()
     smap = supported_ids()
     out: List[DeviceID] = []
+    seen: set[VidPid] = set()
     for dev in _bus_devices(backend):
         slot = (dev.idVendor, dev.idProduct)
         claim = smap.get(slot)
@@ -228,6 +272,26 @@ def devices() -> List[DeviceID]:
             if resolved is not None:
                 entry = resolved.entry
         out.append(replace(entry, bus=dev.bus, address=dev.address))
+        seen.add(slot)
+    out.extend(_pnp_only_devices(smap, seen))
+    return out
+
+
+def _pnp_only_devices(smap: dict[VidPid, Claim], seen: set[VidPid]) -> List[DeviceID]:
+    """Present supported cards libusb can't see because no WinUSB/libusb driver is bound yet (Windows
+    only). Tagged bus/address None: present but not openable until WinUSB is installed. Empty
+    elsewhere, where libusb enumerates a driverless device on its own."""
+    if sys.platform != "win32":
+        return []
+    from wifit3.device.windows_pnp import present_usb_ids
+    out: List[DeviceID] = []
+    for slot in present_usb_ids():
+        if slot in seen:
+            continue
+        claim = smap.get(slot)
+        if claim is not None:
+            out.append(replace(claim.entry))
+            seen.add(slot)
     return out
 
 
@@ -326,9 +390,14 @@ class DeviceManager:
             prompter = BringupPrompter(app)
         self.prompter = prompter
         self._name_counter = 0
+        self._ejector = ZeroCdEjector(zerocd_ids, raw_devices)
 
     def devices(self) -> List[DeviceID]:
         return devices()
+
+    def eject_zerocd_devices(self) -> None:
+        """Eject any present ZeroCD stub so it re-enumerates as its Wi-Fi device (rate-limited)."""
+        self._ejector.eject_present()
 
     def device(self, device_id: DeviceID) -> Optional[DeviceID]:
         return device(device_id)
@@ -354,13 +423,16 @@ class DeviceManager:
         try:
             await self._connect_and_attach(device_id)
             return BringupResult.ready()
-        except BringUpPermissionsError:
+        except BringUpPermissionsError as e:
+            logger.warning("%s: bring-up needs setup (%s): %s", device_id.chipset, e.stage, e.detail)
             if bail_at_permissions:
                 return BringupResult.failed("Installation required. START it from the main menu.")
             # else fixable: fall through to setup
         except BringUpError as e:
+            logger.warning("%s: bring-up failed (%s): %s", device_id.chipset, e.stage, e.detail)
             return BringupResult.failed(self._fault_message(device_id, e))
         except OSError as e:
+            logger.exception("%s: USB error during bring-up", device_id.chipset)
             return BringupResult.failed(self._usb_fault_message(device_id, e))
 
         device_id = await self.setup.install(device_id, self.prompter)
@@ -371,8 +443,10 @@ class DeviceManager:
             await self._connect_and_attach(device_id)
             return BringupResult.ready()
         except BringUpError as e:
+            logger.warning("%s: bring-up failed (%s): %s", device_id.chipset, e.stage, e.detail)
             return BringupResult.failed(self._fault_message(device_id, e))
         except OSError as e:
+            logger.exception("%s: USB error during bring-up", device_id.chipset)
             return BringupResult.failed(self._usb_fault_message(device_id, e))
 
     async def uninstall(self, device_id) -> SetupResult:
@@ -424,4 +498,11 @@ class DeviceManager:
         chip = device_id.chipset
         if is_device_gone(e) or e.errno in (errno.EIO, errno.ENODEV):
             return f"{chip}: adapter disconnected during bring-up; replug it and try again"
+        # claim_interface raises ENOENT when the device enumerates but never bound its
+        # interface -- a dead or half-reset dongle, not transient I/O. Measured on an
+        # MT7601U left authorized but unconfigured: without this it surfaces as
+        # "USB I/O failed: [Errno 2] Entity not found" and names no remedy.
+        if e.errno == errno.ENOENT:
+            return (f"{chip}: the dongle is present but not answering -- it enumerates "
+                    "without an interface. Unplug it, wait a few seconds, and replug it.")
         return f"{chip}: USB I/O failed during bring-up: {e}"

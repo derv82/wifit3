@@ -48,12 +48,22 @@ def is_permission_error(exc: BaseException) -> bool:
     cur = exc
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
-        if isinstance(cur, NotImplementedError):
+        if isinstance(cur, NotImplementedError) and _raised_inside_pyusb(cur):
             return True
         if isinstance(cur, usb.core.USBError) and _usberror_is_permission(cur):
             return True
         cur = cur.__cause__ or cur.__context__
     return False
+
+
+def _raised_inside_pyusb(exc: BaseException) -> bool:
+    tb = exc.__traceback__
+    if tb is None:
+        return False
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    module = tb.tb_frame.f_globals.get("__name__", "")
+    return module == "usb" or module.startswith("usb.")
 
 
 def _scrub_paths(text: str) -> str:

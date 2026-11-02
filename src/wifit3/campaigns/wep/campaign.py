@@ -230,6 +230,9 @@ class WepCampaign(Campaign):
         self.array.wep_store.record_broadcast_frame(self.target.bssid, forged_frame)
         self.replay.resume()
 
+    def check_auto_stop(self) -> bool:
+        return self.recovered_key is not None
+
     @property
     def chop_active(self) -> bool:
         return self.chop is not None and self.chop.is_active
@@ -237,3 +240,39 @@ class WepCampaign(Campaign):
     @property
     def is_active(self) -> bool:
         return self._active
+
+    def status_under_card(self) -> str:
+        return "● chopping" if self.chop_active else "● replaying"
+
+    def status_under_dash(self, array, now: float) -> list[str]:
+        from wifit3.ui.focus_model import wep_status_lines
+        return wep_status_lines(self.target, array, self, now)
+
+    def status_headlines(self, vault) -> list[str]:
+        from wifit3.crack.wep import CRACK_READY_THRESHOLD
+        n_ivs = self.target.wep.unique_ivs if getattr(self.target, "wep", None) else 0
+        cracker_samples = getattr(self.cracker, "sample_count", 0)
+
+        if self.chop_active:
+            action = "Chopping a packet"
+        else:
+            state = getattr(self.replay, "state", None)
+            action = {
+                "replaying": "Replaying ARP",
+                "testing": "Testing a packet",
+                "waiting-arp": "Waiting for a packet",
+                "waiting-auth": "Associating",
+                "paused": "Paused",
+            }.get(state, "Listening for a packet")
+
+        if cracker_samples >= CRACK_READY_THRESHOLD:
+            return [f"[bold cyan]● {action}[/bold cyan] & "
+                    f"[bold cyan]Cracking[/bold cyan] WEP key",
+                    f"[dim]{cracker_samples:,} usable IVs[/dim]"]
+        if self.chop_active:
+            return ["[bold cyan]● ChopChop[/bold cyan] forging an ARP seed",
+                    f"[dim]{n_ivs:,} IVs captured[/dim]"]
+        suffix = " [dim]for IVs[/dim]" if action == "Replaying ARP" else ""
+        return [f"[bold green]● {action}[/bold green]{suffix}",
+                f"[dim]{n_ivs:,} IVs · cracks at "
+                f"{CRACK_READY_THRESHOLD // 1000}k usable[/dim]"]

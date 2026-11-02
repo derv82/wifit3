@@ -138,8 +138,8 @@ def test_inject_desc_takes_seq_from_frame_not_hwseq():
 def test_inject_desc_uses_raw_monitor_1m_rate():
     # The raw monitor inject path mirrors rtw_monitor_xmit_entry, whose fixed_rate default
     # is MGN_1M -> DESC_RATE1M on both bands (no radiotap rate is parsed). This differs from
-    # build_tx_desc_mgmt, which is band aware (6M OFDM on 5 GHz). Whether the inject path
-    # should also be band aware for 5 GHz is an open decision: NEEDS-DERV INJ-1.
+    # build_tx_desc_mgmt, which is band aware (6M OFDM on 5 GHz). The TX lab heard 100/100
+    # 1M injects on ch149, so the inject path stays 1M on 5 GHz.
     for band_2g in (True, False):
         desc = build_tx_desc_inject(_CAPTURE_INJECT_FRAME, band_is_2g=band_2g)
         assert _field(desc, 4, 0, 7) == DESC_RATE1M

@@ -19,17 +19,17 @@ delta-swing table is **rate-selected** [SRC] halrf_8188e_ce.c:538: the no-link T
 tables apply (``DELTA_TT_2G_CCK_A_*``, the HWImg ``TxPowerTrack_USB`` tables) — not the
 OFDM ones. ``phydm_get_thermal_offset`` is 0 (8188E has no kfree thermal-K).
 
-DEFERRED (raise a clear guard, never silently skip): the IQK and LCK re-calibration paths
-(fire only at |delta| >= 8 °C; IQK is the same subsystem InitHalDm defers), and the
-over/under-swing-limit branches that reset per-rate TX-AGC (need
-``phy_set_tx_power_index_by_rate_section``). None are reached at normal temperatures.
+LCK (``_phy_lc_calibrate_8188e``) and IQK (``iqk.do_iqk_8188e``) run at |delta| >= 8, as
+the vendor does. A swing past the limit clamps and carries the remnant into the per-rate
+TX-AGC (``txpower``). The IQK result feeds the OFDM swing writes (``set_iqk_matrix_8188e``).
 """
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 
-from . import bb, rf
+from . import bb, iqk, rf, txpower
 from . import powertrack_tbl as T
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,15 @@ _REG_OFDM_XA_TX_IQ = 0x0C80            # rOFDM0_XATxIQImbalance (OFDM BB swing, 
 _REG_OFDM_XC_TX_AFE = 0x0C94           # rOFDM0_XCTxAFE (MASKH4BITS)
 _REG_OFDM_ECCA_TH = 0x0C4C             # rOFDM0_ECCAThreshold (BIT24)
 _REG_CCK_FIR = 0x0A22                  # CCK TX-FIR coefficients 0xa22..0xa29
+
+# LCK [SRC] _phy_lc_calibrate_8188e (halrf_8188e_ce.c:1308).
+_REG_CONT_TX = 0x0D03                  # continuous/packet-TX mode bits [6:4]
+_REG_TXPAUSE = 0x0522
+_RF_AC = 0x00
+_RF_CHNLBW = 0x18
+_MASK12BITS = 0xFFF
+_LCK_START = 0x08000                   # RF_CHNLBW bit15
+_LCK_SETTLE_S = 0.1                    # ODM_delay_ms(100)
 
 # config [SRC] configure_txpower_track_8188e + halrf_powertracking_ce.h + halrf.h.
 _AVG_THERMAL_NUM = 4                   # AVG_THERMAL_NUM_88E
@@ -63,8 +72,12 @@ class PowerTrackState:
     the chip. ``thermal_value``/``_iqk``/``_lck`` seed to the efuse base; the swing-index
     bases come from the chip's current BB swing."""
     eeprom_thermal: int
+    tx_pwr: object                      # efuse.TxPwr2G, for the TX-AGC reset by rate section
     default_ofdm_index: int
     default_cck_index: int
+    delta_swing_table_idx_2g_cck_a_p: list[int]    # rf->delta_swing_table_idx_2g_cck_a_p
+    delta_swing_table_idx_2g_cck_a_n: list[int]
+    channel: int = 1                    # dm->channel, picks the CCK swing table
     tm_trigger: int = 1                 # InitHalDm tail already armed the meter
     thermal_value: int = -1            # -> eeprom_thermal in __post_init__
     thermal_value_iqk: int = -1
@@ -73,6 +86,23 @@ class PowerTrackState:
     thermal_avg_index: int = 0
     delta_power_index: int = 0
     delta_power_index_last: int = 0
+    remnant_ofdm_swing_idx: int = 0     # s8, feeds txpower's tpt for OFDM/HT rates
+    remnant_cck_swing_idx: int = 0      # s8, feeds txpower's tpt for CCK rates
+    modify_tx_agc_flag_path_a: bool = False
+    modify_tx_agc_flag_path_a_cck: bool = False
+    # IQK [SRC] halrf_powertracking_ce.h:136,225-231.
+    iqk_matrix_reg_setting: list = field(default_factory=lambda: [
+        iqk.IqkMatrixRegsSetting() for _ in range(iqk.IQK_MATRIX_SETTINGS_NUM)])
+    is_iqk_in_progress: bool = False
+    is_rf_pi_enable: int = 0
+    rege94: int = 0
+    rege9c: int = 0
+    regeb4: int = 0
+    regebc: int = 0
+    ADDA_backup: list = field(default_factory=lambda: [0] * iqk.IQK_ADDA_REG_NUM)
+    IQK_MAC_backup: list = field(default_factory=lambda: [0] * iqk.IQK_MAC_REG_NUM)
+    IQK_BB_backup: list = field(default_factory=lambda: [0] * iqk.IQK_BB_REG_NUM)
+    IQK_BB_backup_recover: list = field(default_factory=lambda: [0] * 9)
 
     def __post_init__(self):
         if self.thermal_value < 0:
@@ -101,65 +131,137 @@ def get_cck_swing_index(a22: int) -> int:
     return _CCK_TABLE_SIZE
 
 
-def seed_state(ofdm_swing_raw: int, cck_swing_raw: int, eeprom_thermal: int) -> PowerTrackState:
+def seed_state(ofdm_swing_raw: int, cck_swing_raw: int, eeprom_thermal: int, tx_pwr,
+               txpowertrack_icut: bool) -> PowerTrackState:
     """``odm_txpowertracking_thermal_meter_init`` [SRC] halrf_powertracking_ce.c:566 — the
     default swing indices come from the BB swing the chip held at InitHalDm (0xc80 OFDM /
     0xa22 CCK), seeded with the efuse thermal base. The vendor reads those during InitHalDm and
     *carries* them (``dm.DmSeed``); we do the same instead of re-reading at tick-start.
-    ``eeprom_thermal`` is ``efuse[EEPROM_THERMAL_METER_88E=0xBA]``."""
+    ``eeprom_thermal`` is ``efuse[EEPROM_THERMAL_METER_88E=0xBA]``. ``txpowertrack_icut``
+    picks the delta tables ``odm_read_and_config_mp_8188e_txpowertrack_usb[_icut]`` loaded."""
     ofdm = get_swing_index(ofdm_swing_raw)
     cck = get_cck_swing_index(cck_swing_raw)
     return PowerTrackState(
         eeprom_thermal=eeprom_thermal,
+        tx_pwr=tx_pwr,
         default_ofdm_index=_DEFAULT_OFDM_INDEX if ofdm >= _OFDM_TABLE_SIZE else ofdm,
         default_cck_index=_DEFAULT_CCK_INDEX if cck >= _CCK_TABLE_SIZE else cck,
+        delta_swing_table_idx_2g_cck_a_p=(T.DELTA_TT_2G_CCK_A_P_ICUT if txpowertrack_icut
+                                          else T.DELTA_TT_2G_CCK_A_P),
+        delta_swing_table_idx_2g_cck_a_n=(T.DELTA_TT_2G_CCK_A_N_ICUT if txpowertrack_icut
+                                          else T.DELTA_TT_2G_CCK_A_N),
     )
 
 
-def _set_iqk_matrix(t, ofdm_index: int) -> None:
-    """``set_iqk_matrix_8188e`` else-branch (no prior IQK result, RF_PATH_A) [SRC]
-    halrf_8188e_ce.c:120 — write the OFDM BB swing + zero the AFE/ECCA IQ fields."""
-    bb.set_bb_reg(t, _REG_OFDM_XA_TX_IQ, 0xFFFFFFFF, T.OFDM_SWING_TABLE[ofdm_index])
-    bb.set_bb_reg(t, _REG_OFDM_XC_TX_AFE, 0xF0000000, 0x0)   # MASKH4BITS
-    bb.set_bb_reg(t, _REG_OFDM_ECCA_TH, 1 << 24, 0x0)        # BIT24
+def _set_iqk_matrix(t, ofdm_index: int, iqk_result_x: int, iqk_result_y: int) -> None:
+    """``set_iqk_matrix_8188e(RF_PATH_A)`` [SRC] halrf_8188e_ce.c:69 — the OFDM BB swing,
+    scaled by the IQK X/Y result when there is one (s32 sign-extended from 10 bits)."""
+    ele_D = (T.OFDM_SWING_TABLE[ofdm_index] & 0xFFC00000) >> 22
+    if iqk_result_x != 0:
+        if iqk_result_x & 0x00000200:
+            iqk_result_x |= -0x400                          # | 0xFFFFFC00 as s32
+        ele_A = ((iqk_result_x * ele_D) >> 8) & 0x000003FF
+        if iqk_result_y & 0x00000200:
+            iqk_result_y |= -0x400
+        ele_C = ((iqk_result_y * ele_D) >> 8) & 0x000003FF
+        value32 = (ele_D << 22) | ((ele_C & 0x3F) << 16) | ele_A
+        bb.set_bb_reg(t, _REG_OFDM_XA_TX_IQ, 0xFFFFFFFF, value32)
+        bb.set_bb_reg(t, _REG_OFDM_XC_TX_AFE, 0xF0000000, (ele_C & 0x000003C0) >> 6)
+        bb.set_bb_reg(t, _REG_OFDM_ECCA_TH, 1 << 24, ((iqk_result_x * ele_D) >> 7) & 0x01)
+    else:
+        bb.set_bb_reg(t, _REG_OFDM_XA_TX_IQ, 0xFFFFFFFF, T.OFDM_SWING_TABLE[ofdm_index])
+        bb.set_bb_reg(t, _REG_OFDM_XC_TX_AFE, 0xF0000000, 0x0)   # MASKH4BITS
+        bb.set_bb_reg(t, _REG_OFDM_ECCA_TH, 1 << 24, 0x0)        # BIT24
 
 
-def _write_cck_fir(t, cck_index: int) -> None:
-    """Write the 8 CCK TX-FIR coefficients (0xa22..0xa29) for the channel-1..13 swing row
-    [SRC] halrf_8188e_ce.c:454 (this card is 2.4 GHz ch 1-13, never ch14)."""
-    row = T.CCK_SWING_TABLE_CH1_CH13[cck_index]
+def _write_cck_fir(t, cck_index: int, channel: int) -> None:
+    """Write the 8 CCK TX-FIR coefficients (0xa22..0xa29), ch14 row on channel 14
+    [SRC] halrf_8188e_ce.c:454."""
+    row = (T.CCK_SWING_TABLE_CH14 if channel == 14 else T.CCK_SWING_TABLE_CH1_CH13)[cck_index]
     for i in range(8):
         t.write8(_REG_CCK_FIR + i, row[i])
 
 
+def _u8(v: int) -> int:
+    return v & 0xFF
+
+
+def _s8(v: int) -> int:
+    v &= 0xFF
+    return v - 0x100 if v & 0x80 else v
+
+
+def _reset_tx_agc(t, state: PowerTrackState, sections: tuple[int, ...]) -> None:
+    for section in sections:
+        txpower.set_tx_power_by_rate_section(
+            t, state.tx_pwr, state.channel, section,
+            state.remnant_cck_swing_idx, state.remnant_ofdm_swing_idx)
+
+
 def _apply_mix_mode(t, state: PowerTrackState, absolute: int) -> None:
-    """``odm_tx_pwr_track_set_pwr88_e(MIX_MODE, RF_PATH_A)`` [SRC] halrf_8188e_ce.c:339 —
-    final index = default + absolute swing offset, clamped to the power-tracking limit,
-    applied as BB swing. The over/under-limit branches reset per-rate TX-AGC (deferred)."""
-    final_ofdm = state.default_ofdm_index + absolute
-    final_cck = state.default_cck_index + absolute
+    """``odm_tx_pwr_track_set_pwr88_e(MIX_MODE, RF_PATH_A)`` [SRC] halrf_8188e_ce.c:339.
+    The final indices are C ``u8``: a negative sum wraps and takes the over-limit branch."""
+    final_cck = _u8(state.default_cck_index + absolute)
+    final_ofdm = _u8(state.default_ofdm_index + absolute)
+    # channel_mapped_index is 0 [SRC] halphyrf_ce.c:674 (and every 2.4 GHz IQK slot is 0).
+    iqk_x, iqk_y = state.iqk_matrix_reg_setting[0].value[0][0:2]
+    logger.debug("pwrtrack: apply MIX swing ofdm=%d cck=%d (abs=%d)", final_ofdm, final_cck, absolute)
 
-    if final_ofdm > _PWR_LIMIT_OFDM or final_ofdm <= 0:
-        # Clamps to the limit and resets per-rate TX-AGC (phy_set_tx_power_index_by_rate
-        # _section) — not yet ported; not reached at normal temperatures.
-        logger.debug("pwrtrack: OFDM swing %d hit limit (0..%d) DEFERRED -> tick skips",
-                     final_ofdm, _PWR_LIMIT_OFDM)
-        raise NotImplementedError(
-            f"8188e power-track OFDM swing {final_ofdm} hit a limit "
-            f"(0..{_PWR_LIMIT_OFDM}); per-rate TX-AGC reset path is deferred")
-    logger.debug("pwrtrack: apply MIX swing ofdm=%d cck=%d (abs=%d)",
-                 final_ofdm, final_cck, absolute)
-    _set_iqk_matrix(t, final_ofdm)
-    # if modify_tx_agc_flag_path_a: reset TX-AGC — flag is False until a limit is hit.
+    if final_ofdm > _PWR_LIMIT_OFDM:
+        state.remnant_ofdm_swing_idx = _s8(final_ofdm - _PWR_LIMIT_OFDM)
+        _set_iqk_matrix(t, _PWR_LIMIT_OFDM, iqk_x, iqk_y)
+        state.modify_tx_agc_flag_path_a = True
+        _reset_tx_agc(t, state, (txpower.OFDM, txpower.HT_MCS0_MCS7))
+    elif final_ofdm <= 0:
+        state.remnant_ofdm_swing_idx = _s8(final_ofdm)
+        _set_iqk_matrix(t, 0, iqk_x, iqk_y)
+        state.modify_tx_agc_flag_path_a = True
+        _reset_tx_agc(t, state, (txpower.OFDM, txpower.HT_MCS0_MCS7))
+    else:
+        _set_iqk_matrix(t, final_ofdm, iqk_x, iqk_y)
+        if state.modify_tx_agc_flag_path_a:
+            state.remnant_ofdm_swing_idx = 0
+            _reset_tx_agc(t, state, (txpower.OFDM, txpower.HT_MCS0_MCS7))
+            state.modify_tx_agc_flag_path_a = False
 
-    if final_cck > _PWR_LIMIT_CCK or final_cck <= 0:
-        logger.debug("pwrtrack: CCK swing %d hit limit (0..%d) DEFERRED -> tick skips",
-                     final_cck, _PWR_LIMIT_CCK)
-        raise NotImplementedError(
-            f"8188e power-track CCK swing {final_cck} hit a limit "
-            f"(0..{_PWR_LIMIT_CCK}); per-rate TX-AGC reset path is deferred")
-    _write_cck_fir(t, final_cck)
-    # if modify_tx_agc_flag_path_a_cck: reset TX-AGC — flag is False until a limit is hit.
+    if final_cck > _PWR_LIMIT_CCK:
+        state.remnant_cck_swing_idx = _s8(final_cck - _PWR_LIMIT_CCK)
+        _write_cck_fir(t, _PWR_LIMIT_CCK, state.channel)
+        state.modify_tx_agc_flag_path_a_cck = True
+        _reset_tx_agc(t, state, (txpower.CCK,))
+    elif final_cck <= 0:
+        state.remnant_cck_swing_idx = _s8(final_cck)
+        _write_cck_fir(t, 0, state.channel)
+        state.modify_tx_agc_flag_path_a_cck = True
+        _reset_tx_agc(t, state, (txpower.CCK,))
+    else:
+        _write_cck_fir(t, final_cck, state.channel)
+        if state.modify_tx_agc_flag_path_a_cck:
+            state.remnant_cck_swing_idx = 0
+            _reset_tx_agc(t, state, (txpower.CCK,))
+            state.modify_tx_agc_flag_path_a_cck = False
+
+
+def phy_lc_calibrate(t) -> None:
+    """``_phy_lc_calibrate_8188e(dm, is2T=false)`` [SRC] halrf_8188e_ce.c:1308, reached via
+    ``halrf_lck_trigger`` -> ``phy_lc_calibrate_8188e``."""
+    tmp_reg = t.read8(_REG_CONT_TX)
+    continuous_tx = (tmp_reg & 0x70) != 0
+    rf_amode = 0
+    if continuous_tx:
+        t.write8(_REG_CONT_TX, tmp_reg & 0x8F)
+        rf_amode = rf.phy_query_rf_reg(t, 0, _RF_AC, _MASK12BITS)
+        rf.set_rf_reg(t, 0, _RF_AC, _MASK12BITS, (rf_amode & 0x8FFFF) | 0x10000)
+    else:
+        t.write8(_REG_TXPAUSE, 0xFF)
+    lc_cal = rf.phy_query_rf_reg(t, 0, _RF_CHNLBW, _MASK12BITS)
+    rf.set_rf_reg(t, 0, _RF_CHNLBW, _MASK12BITS, lc_cal | _LCK_START)
+    time.sleep(_LCK_SETTLE_S)
+    if continuous_tx:
+        t.write8(_REG_CONT_TX, tmp_reg)
+        rf.set_rf_reg(t, 0, _RF_AC, _MASK12BITS, rf_amode)
+    else:
+        t.write8(_REG_TXPAUSE, 0x00)
 
 
 def _callback(t, state: PowerTrackState) -> None:
@@ -184,11 +286,11 @@ def _callback(t, state: PowerTrackState) -> None:
     logger.debug("pwrtrack: thermal=0x%02x base=0x%02x delta=%d (lck=%d iqk=%d)",
                  thermal, state.eeprom_thermal, delta, delta_lck, delta_iqk)
 
+    # halphyrf_ce.c:376-386; is_scan_in_process and rfk_forbidden are never set in monitor mode.
     if delta_lck >= _IQK_THRESHOLD:
-        logger.debug("pwrtrack: LCK VCO re-cal DEFERRED (delta_lck=%d >= %d) -> tick skips",
-                     delta_lck, _IQK_THRESHOLD)
-        raise NotImplementedError(
-            "8188e power-track LCK (VCO re-cal) deferred (delta_LCK >= 8 C)")
+        logger.debug("pwrtrack: LCK (delta_lck=%d >= %d)", delta_lck, _IQK_THRESHOLD)
+        state.thermal_value_lck = thermal
+        phy_lc_calibrate(t)
 
     if delta > 0:
         ad = abs(thermal - state.eeprom_thermal)
@@ -197,9 +299,9 @@ def _callback(t, state: PowerTrackState) -> None:
         state.delta_power_index_last = state.delta_power_index
         # no-link tx_rate = p_rate_index = unlinked low (CCK) rate -> CCK-A delta tables.
         if thermal > state.eeprom_thermal:
-            absolute = T.DELTA_TT_2G_CCK_A_P[ad]
+            absolute = state.delta_swing_table_idx_2g_cck_a_p[ad]
         else:
-            absolute = -1 * T.DELTA_TT_2G_CCK_A_N[ad]
+            absolute = -1 * state.delta_swing_table_idx_2g_cck_a_n[ad]
         state.delta_power_index = absolute
         offset = (0 if state.delta_power_index == state.delta_power_index_last
                   else state.delta_power_index - state.delta_power_index_last)
@@ -207,12 +309,12 @@ def _callback(t, state: PowerTrackState) -> None:
             _apply_mix_mode(t, state, absolute)
         state.thermal_value = thermal
 
+    # halphyrf_ce.c:760-772.
     if delta_iqk >= _IQK_THRESHOLD:
-        logger.debug("pwrtrack: IQK DEFERRED (delta_iqk=%d >= %d) -> tick skips",
-                     delta_iqk, _IQK_THRESHOLD)
-        raise NotImplementedError(
-            "8188e power-track IQK deferred (delta_IQK >= 8 C; same subsystem InitHalDm "
-            "defers)")
+        logger.debug("pwrtrack: IQK (delta_iqk=%d >= %d)", delta_iqk, _IQK_THRESHOLD)
+        state.thermal_value_iqk = thermal
+        if not state.is_iqk_in_progress:
+            iqk.do_iqk_8188e(t, state, delta_iqk, thermal, 8)
 
 
 def thermal_tick(t, state: PowerTrackState) -> None:

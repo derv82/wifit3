@@ -3,7 +3,11 @@ bring-up path that touches Textual. It carries no decisions (the "humble object"
 pushes a screen or updates a label. DeviceManager owns its lifecycle via open()/close()."""
 from __future__ import annotations
 
+import signal
+from collections.abc import Callable
 from typing import TYPE_CHECKING
+
+from textual.app import SuspendNotSupported
 
 from wifit3.ui.screens.bringup_progress import BringupProgressModal
 from wifit3.ui.screens.replug import ReplugModal
@@ -42,6 +46,18 @@ class BringupPrompter:
         # Take down the progress modal first so the error dialog isn't buried under it.
         self.close()
         self._app.push_screen(SetupErrorDialog(title, body))
+
+    async def run_with_terminal(self, run: Callable[[], int]) -> int | None:
+        # Blocks the loop while suspended. Ctrl-C must raise here, not cancel the app's main task.
+        try:
+            with self._app.suspend():
+                previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+                try:
+                    return run()
+                finally:
+                    signal.signal(signal.SIGINT, previous)
+        except SuspendNotSupported:
+            return None
 
     async def ask(self, dialog):
         return await self._app.push_screen_wait(dialog)

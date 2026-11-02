@@ -28,7 +28,7 @@ class ALFA(ProductName):
     AWUS036ACHM  = "AWUS036ACHM"
     AWUS036ACM   = "AWUS036ACM"
     AWUS036ACS   = "AWUS036ACS"
-    AWUS036AXML  = "AWUS036AXML"
+    AWUS036AXML  = "AWUS036AXM/L"
     AWUS036H     = "AWUS036H"
     AWUS036NH    = "AWUS036NH"
     AWUS036NHA   = "AWUS036NHA"
@@ -62,6 +62,7 @@ class ASUS(ProductName):
     USB_BE92      = "ASUS USB-BE92"
     USB_BE92_NANO = "USB-BE92 Nano"
     USB_BE93      = "ASUS USB-BE93"
+    USB_N13_C1    = "ASUS USB-N13 C1"
     USB_N14       = "ASUS USB-N14"
     USB_N53_B1    = "ASUS USB-N53 B1"
     WL_167G       = "ASUS WL-167g"
@@ -85,9 +86,10 @@ class AVM(ProductName):
 
 
 class Belkin(ProductName):
-    F5D7050   = "F5D7050"
-    F9L1106V1 = "Belkin F9L1106v1"  # https://linux-hardware.org/?id=usb:050d-1106
-    F9L1109V1 = "Belkin F9L1109v1"  # https://linux-hardware.org/?id=usb:050d-1109
+    F5D7050       = "F5D7050"
+    F5D7050_V5    = "F5D7050 v5"    # https://wikidevi.wi-cat.ru/Belkin_F5D7050_v5
+    F9L1106V1     = "Belkin F9L1106v1"  # https://linux-hardware.org/?id=usb:050d-1106
+    F9L1109V1     = "Belkin F9L1109v1"  # https://linux-hardware.org/?id=usb:050d-1109
 
 
 class Buffalo(ProductName):
@@ -117,6 +119,7 @@ class Comcast(ProductName):
 
 
 class Comfast(ProductName):
+    CF_826F  = "CF-826F"
     CF_953AX = "CF-953AX"
 
 
@@ -126,8 +129,10 @@ class Devolo(ProductName):
 
 class DLink(ProductName):
     AC1200          = "D-Link AC1200"
+    AN3U_REV_A1     = "AN3U rev. A1"
     DWA_121B1       = "D-Link DWA-121B1"  # https://linux-hardware.org/?id=usb:2001-331b
     DWA_123_REV_D1  = "DWA-123 rev.D1"
+    DWA_125_REV_A2  = "DWA-125 rev.A2"
     DWA_125_REV_D1  = "DWA-125 rev.D1"
     DWA_126         = "D-Link DWA-126"
     DWA_137         = "D-Link DWA-137"
@@ -152,6 +157,7 @@ class DLink(ProductName):
 class Edimax(ProductName):
     EW_7711MAC    = "EW-7711MAC"
     EW_7722UAC    = "EW-7722UAC"
+    EW_7722UTN_V3 = "EW-7722UTn V3"
     EW_7811UAC    = "EW-7811UAC"
     EW_7811UCB    = "EW-7811UCB"
     EW_7811UN_V2  = "EW-7811UN v2"
@@ -224,6 +230,7 @@ class Linksys(ProductName):
     AE6000      = "Linksys AE6000"
     HU200TS     = "Linksys HU200TS"
     WUSB54GP_V4 = "WUSB54GP v4"
+    WUSB54GC_V2 = "WUSB54GC v2"  # https://wikidevi.wi-cat.ru/Linksys_WUSB54GC_v2
     WUSB54G_V4  = "WUSB54G v4"
     WUSB6300    = "Linksys WUSB6300"
     WUSB6300_V2 = "WUSB6300 v2"
@@ -257,6 +264,7 @@ class Mercury(ProductName):
 class Mercusys(ProductName):
     MA30H = "Mercusys MA30H"
     MA30N = "Mercusys MA30N"
+    MW150US = "Mercusys MW150US"  # 2c4e:0102, rtl8xxxu core.c:7984
 
 
 class Microsoft(ProductName):
@@ -286,6 +294,7 @@ class Netgear(ProductName):
     N150        = "Netgear N150"
     RTL8187     = "Netgear RTL8187"
     WG111_V1_V2 = "WG111 v1/v2"
+    WG111V3     = "WG111v3"  # https://linux-hardware.org/?id=usb:0846-4260
     WNDA3100V3  = "WNDA3100v3"
 
 
@@ -388,6 +397,7 @@ class TPLink(ProductName):
     TL_WN722N_V1     = "TL-WN722N v1"    # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v1.x
     TL_WN722N_V2_V3  = "TL-WN722N v2/v3" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v2 & v3
     TL_WN723N_V2_3_4 = "TL-WN723N v2/3/4" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN723N_v3
+    TL_WN823N_V2     = "TL-WN823N v2"
     TL_WN727N_V5_21  = "TL-WN727N v5.21" # 2357:0111, aircrack-ng/rtl8188eus os_dep/linux/usb_intf.c
 
 

@@ -14,6 +14,9 @@ def mac_to_str(mac: bytes) -> str:
     return ":".join(f"{b:02x}" for b in mac)
 
 
+BROADCAST_MAC = b"\xff" * 6
+
+
 def mac_header(fc: bytes, addr1: bytes, addr2: bytes, addr3: bytes, duration: bytes = b"\x00\x00") -> bytes:
     """Build a 24-byte 802.11 MAC header with a zero sequence-control field."""
     return fc + duration + addr1 + addr2 + addr3 + b"\x00\x00"

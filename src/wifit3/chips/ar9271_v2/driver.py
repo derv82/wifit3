@@ -473,9 +473,8 @@ class AR9271V2Driver(Driver):
         return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
-        """Identity: the AR9271 does not software-stamp a sequence here (the injected frame carries
-        the caller's own seqctl and ath9k leaves the sequence to hardware), so it goes out
-        unchanged."""
+        """Identity: the ath9k_htc host never stamps an injected seq; the target firmware does
+        (distinct on-air seqs measured with tx_retries)."""
         return frame_bytes
 
     def _emit_frame(self, dot11: bytes) -> int:

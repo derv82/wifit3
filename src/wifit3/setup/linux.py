@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -260,32 +261,71 @@ def _remove_cmd(keys: list[str], node: str | None) -> str:
     return " && ".join(steps)
 
 
-def _choose_escalation_method() -> str | None:
-    if shutil.which("pkexec"):
-        return "pkexec"
-    if shutil.which("sudo"):
-        return "sudo"
+RunWithTerminal = Callable[[Callable[[], int]], int | None]
+"""Runs a callable with the terminal handed to the user; None if the terminal can't be handed over."""
+
+
+@dataclass(frozen=True)
+class Escalation:
+    """How to run a command as root: the elevator argv prefix, and whether it prompts on the terminal."""
+    argv: tuple[str, ...]
+    needs_terminal: bool
+
+
+def _sudo_without_password(sudo: str) -> bool:
+    try:
+        return subprocess.run([sudo, "-n", "true"], capture_output=True, timeout=5).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _choose_escalation() -> Escalation | None:
+    sudo = shutil.which("sudo")
+    pkexec = shutil.which("pkexec")
+    if sudo and _sudo_without_password(sudo):
+        return Escalation(argv=(sudo, "-n"), needs_terminal=False)
+    if pkexec and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return Escalation(argv=(pkexec,), needs_terminal=False)
+    if sudo:
+        return Escalation(argv=(sudo,), needs_terminal=True)
+    if pkexec:
+        return Escalation(argv=(pkexec,), needs_terminal=True)
     return None
 
 
-def run_privileged(shell_cmd: str, method: str) -> int:
+def run_privileged(shell_cmd: str, escalation: Escalation) -> int:
     sh = shutil.which("sh") or "/bin/sh"
-    runner = shutil.which(method)
-    if not runner:
-        logger.warning("Linux setup: %s not found", method)
-        return 127
-    argv = [runner, sh, "-c", shell_cmd]
-    logger.info("Linux setup: elevating via %s: sh -c %r", Path(runner).name, shell_cmd)
+    argv = [*escalation.argv, sh, "-c", shell_cmd]
+    logger.info("Linux setup: elevating via %s: sh -c %r", Path(escalation.argv[0]).name, shell_cmd)
+    # A terminal prompt shows the elevator's own errors (wrong password) to the user directly.
+    stderr = None if escalation.needs_terminal else subprocess.PIPE
     try:
-        proc = subprocess.run(argv, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.run(argv, stderr=stderr, text=True)
     except KeyboardInterrupt:
         return 130
+    except OSError as e:
+        logger.warning("Linux setup: couldn't run %s: %s", escalation.argv[0], e)
+        return 127
     if proc.returncode == 0:
         logger.info("Linux setup: elevated command succeeded")
     else:
         logger.warning("Linux setup: elevated command failed (rc=%d): %s",
                        proc.returncode, (proc.stderr or "").strip())
     return proc.returncode
+
+
+def _elevate(shell_cmd: str, escalation: Escalation, action: str,
+             run_with_terminal: RunWithTerminal) -> int | None:
+    if not escalation.needs_terminal:
+        return run_privileged(shell_cmd, escalation)
+
+    def _prompt() -> int:
+        elevator = Path(escalation.argv[0]).name
+        print(f"wifit3: {action}. {elevator} is asking for your password (Ctrl-C cancels).",
+              flush=True)
+        return run_privileged(shell_cmd, escalation)
+
+    return run_with_terminal(_prompt)
 
 
 def _run_as_root(shell_cmd: str) -> int:
@@ -443,7 +483,8 @@ def _residual_blocked(own_modules: set[str], removed_keys: set[str]) -> dict[str
 
 # --- public install / remove --------------------------------------------------------------------
 
-def install_rule(target: SetupTarget, *, node: str | None = None) -> SetupResult:
+def install_rule(target: SetupTarget, *, run_with_terminal: RunWithTerminal,
+                 node: str | None = None) -> SetupResult:
     """Hand ``target``'s chipset to wifit3: write the per-chipset blacklist + udev access rule under
     one elevation prompt, reload udev, and best-effort unload the kernel module. The card needs a
     physical replug afterwards to reach a clean cold state (the caller asks for it)."""
@@ -477,19 +518,25 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> SetupResult
         if is_root:
             rc = _run_as_root(cmd)
         else:
-            method = _choose_escalation_method()
-            if method is None:
+            escalation = _choose_escalation()
+            if escalation is None:
                 return SetupResult(
                     ok=False, detail=_manual_hint(target.key),
                     message="No graphical elevator (pkexec/sudo) found to install the udev rule + blocklist.")
-            rc = run_privileged(cmd, method)
+            rc = _elevate(cmd, escalation,
+                          f"installing the udev rule + modprobe blocklist for {target.description}",
+                          run_with_terminal)
+            if rc is None:
+                return SetupResult(
+                    ok=False, detail=_manual_hint(target.key),
+                    message="Couldn't hand the terminal over for the password prompt.")
 
         if rc == 0:
             detail = blacklist_path(target.key) if modules else (
                 "Couldn't determine the kernel module to blacklist. The card may be re-grabbed on "
                 "replug. Tell us the chipset so we can add a fallback hint.")
             return SetupResult(ok=True, detail=detail, message=_REPLUG_MSG)
-        if rc == 126:
+        if rc in (126, 130):
             return SetupResult(
                 ok=False, cancelled=True,
                 message="Authorization dismissed. The udev rule + blocklist were not installed.")
@@ -504,8 +551,8 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> SetupResult
                     pass
 
 
-def remove_rule(target: SetupTarget, *, node: str | None = None,
-                also_keys: tuple[str, ...] = ()) -> SetupResult:
+def remove_rule(target: SetupTarget, *, run_with_terminal: RunWithTerminal,
+                node: str | None = None, also_keys: tuple[str, ...] = ()) -> SetupResult:
     """Return ``target``'s chipset (and any ``also_keys`` siblings) to the kernel: delete their
     per-chipset blacklist + access-rule pairs and reload udev. The normal Wi-Fi driver rebinds on the
     next replug.
@@ -548,18 +595,23 @@ def remove_rule(target: SetupTarget, *, node: str | None = None,
                 else SetupResult(ok=False, detail=rpath,
                                       message=f"Couldn't remove the udev rule + blocklist (exit {rc})."))
 
-    method = _choose_escalation_method()
-    if method is None:
+    escalation = _choose_escalation()
+    if escalation is None:
         rmpaths = " ".join(shlex.quote(p) for k in keys for p in (rule_path(k), blacklist_path(k)))
         return SetupResult(
             ok=False,
             detail=f"sudo rm -f {rmpaths} && sudo udevadm control --reload-rules",
             message="No graphical elevator (pkexec/sudo) found to remove the udev rule + blocklist.")
 
-    rc = run_privileged(cmd, method)
+    rc = _elevate(cmd, escalation,
+                  f"removing the udev rule + modprobe blocklist for {target.description}",
+                  run_with_terminal)
+    if rc is None:
+        return SetupResult(ok=False, detail=rpath,
+                           message="Couldn't hand the terminal over for the password prompt.")
     if rc == 0:
         return _ok()
-    if rc == 126:
+    if rc in (126, 130):
         return SetupResult(
             ok=False, cancelled=True,
             message="Authorization dismissed. The udev rule + blocklist are still installed.")
@@ -575,6 +627,16 @@ def _dedupe(keys) -> list[str]:
             seen.add(k)
             out.append(k)
     return out
+
+
+def _terminal_from_worker(ui: Prompter) -> RunWithTerminal:
+    # install_rule/remove_rule run in a worker thread; the terminal handover must run on the UI loop.
+    loop = asyncio.get_running_loop()
+
+    def run_with_terminal(run: Callable[[], int]) -> int | None:
+        return asyncio.run_coroutine_threadsafe(ui.run_with_terminal(run), loop).result()
+
+    return run_with_terminal
 
 
 class SetupLinux(Setup):
@@ -616,7 +678,8 @@ class SetupLinux(Setup):
             return None
 
         ui.status(f"Installing udev rule + blocklist for {chip}…")
-        result = await asyncio.to_thread(install_rule, target, node=usb_node_path(device_id))
+        result = await asyncio.to_thread(install_rule, target, node=usb_node_path(device_id),
+                                         run_with_terminal=_terminal_from_worker(ui))
         if not result.ok:
             if not result.cancelled:
                 ui.error("Couldn't install the device rules", result.message)
@@ -660,7 +723,8 @@ class SetupLinux(Setup):
         # Wide radius also removes the sibling chipsets so the shared kernel module is freed.
         also = tuple(s.key for s in plan.siblings) if choice == "wide" else ()
         result = await asyncio.to_thread(
-            remove_rule, target, node=usb_node_path(device_id), also_keys=also)
+            remove_rule, target, node=usb_node_path(device_id), also_keys=also,
+            run_with_terminal=_terminal_from_worker(ui))
         if not result.ok:
             return result
 

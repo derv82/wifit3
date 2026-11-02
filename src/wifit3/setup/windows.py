@@ -37,6 +37,7 @@ _ERROR_CANCELLED = 1223            # user declined the UAC elevation prompt
 _DIGCF_PRESENT = 0x00000002
 _DIGCF_ALLCLASSES = 0x00000004
 _SPDRP_HARDWAREID = 0x00000001
+_SPDRP_COMPATIBLEIDS = 0x00000002
 _SPDRP_SERVICE = 0x00000004
 _DICS_FLAG_GLOBAL = 0x00000001
 _DIREG_DRV = 0x00000002
@@ -46,8 +47,21 @@ _ERROR_SUCCESS = 0
 
 _LIBUSB_SERVICES = frozenset({"winusb", "libusbk", "libusb0"})
 _PNPUTIL_OK = frozenset({0, 3010})  # Exit codes, 3010=ERROR_SUCCESS_REBOOT_REQUIRED
+_CM_PROB_NEED_RESTART = 14          # Windows deferred the rebind to a reboot; not a failure
 
 _LIBWDI_DEBUG_LOG_PREFIX = re.compile(r"^libwdi:debug\s*")
+
+# A composite device's children carry &MI_xx in their hardware id and the function's USB class in a
+# compatible id; usbccgp publishes both even when the child has no driver bound.
+_MI = re.compile(r"&MI_([0-9A-Fa-f]{2})")
+_CLASS_FF = re.compile(r"Class_FF", re.IGNORECASE)
+
+# Published driver packages. libwdi hardcodes this provider; the DeviceName is whatever we passed
+# as --name, which is how our own packages are told apart from Zadig's.
+_INF_DIR = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "INF"
+_INF_PROVIDER = re.compile(r'^\s*Provider\s*=\s*"?([^"\r\n]*)"?', re.IGNORECASE | re.MULTILINE)
+_INF_DEVICE_ID = re.compile(r'^\s*DeviceID\s*=\s*"([^"]*)"', re.IGNORECASE | re.MULTILINE)
+_INF_DEVICE_NAME = re.compile(r'^\s*DeviceName\s*=\s*"([^"]*)"', re.IGNORECASE | re.MULTILINE)
 
 # libwdi wdi_error codes (libwdi.h) -> human message.
 _WDI_MESSAGES = {
@@ -102,6 +116,32 @@ class _SP_DEVINFO_DATA(ctypes.Structure):
         ("DevInst", ctypes.c_ulong),
         ("Reserved", ctypes.c_void_p),
     ]
+
+
+@dataclass(frozen=True)
+class _Node:
+    """One present USB devnode matching a vid:pid."""
+    instance_id: str
+    hwid: str
+    compat_ids: tuple[str, ...]
+    service: str
+    inf: str | None
+    problem: int   # CM_PROB_* from CM_Get_DevNode_Status; 0 when the device started cleanly
+
+    @property
+    def mi(self) -> int | None:
+        """The composite interface number, or None for a whole-device (non-composite) node."""
+        found = _MI.search(self.hwid)
+        return int(found.group(1), 16) if found else None
+
+    @property
+    def is_libusb(self) -> bool:
+        return self.service.lower() in _LIBUSB_SERVICES
+
+    @property
+    def is_wifi_function(self) -> bool:
+        """True for the vendor-specific (class 0xFF) function of a composite device."""
+        return self.mi is not None and any(_CLASS_FF.search(c) for c in self.compat_ids)
 
 
 @dataclass(frozen=True)
@@ -174,9 +214,23 @@ def _last_line(text: str) -> str:
     return lines[-1] if lines else ""
 
 
-def _restore_command(inf: str) -> str:
-    """Removes ``inf`` & re-scans bus. ``/uninstall`` restores previous driver."""
-    return f'/c pnputil /delete-driver "{inf}" /uninstall /force && pnputil /scan-devices'
+def _restore_script(infs: list[str], log: str | None = None) -> str:
+    """Batch that deletes each package then re-scans, exiting with the first delete's code.
+
+    A one-line ``cmd /c`` can't do this: ``&&`` skips the rescan when a delete returns 3010
+    (reboot required, a *success* code) and ``&`` discards it. ``/force`` is ignored with
+    ``/uninstall``, so it is omitted. Redirects stay per-line because a parenthesised block
+    would expand every ``%errorlevel%`` at parse time.
+    """
+    out = f' >> "{log}" 2>&1' if log else ""
+    lines = ["@echo off", "set RC=0"]
+    if log:
+        lines.append(f'if exist "{log}" del "{log}"')
+    for inf in infs:
+        lines.append(f'pnputil /delete-driver "{inf}" /uninstall{out}')
+        lines.append('if not "%errorlevel%"=="0" if "%RC%"=="0" set RC=%errorlevel%')
+    lines += [f"pnputil /scan-devices{out}", "exit /b %RC%"]
+    return "\r\n".join(lines) + "\r\n"
 
 
 def _launch_elevated(file: str, params: str) -> _ElevatedRun:
@@ -317,10 +371,26 @@ def _read_inf_path(setupapi, advapi32, hdev, data: _SP_DEVINFO_DATA) -> str | No
         advapi32.RegCloseKey(hkey)
 
 
-def _find_winusb_inf(vid: int, pid: int) -> str | None:
-    """The oemNN.inf of the WinUSB/libusb driver bound to ``vid:pid``, or ``None``."""
+def _reg_multi_prop(setupapi, hdev, data: _SP_DEVINFO_DATA, prop: int) -> tuple[str, ...]:
+    """Every string of a REG_MULTI_SZ device property (:func:`_reg_prop` returns only the first)."""
+    buf = ctypes.create_unicode_buffer(2048)
+    size = ctypes.c_ulong(0)
+    ok = setupapi.SetupDiGetDeviceRegistryPropertyW(
+        hdev, ctypes.byref(data), prop, None,
+        ctypes.cast(buf, ctypes.c_void_p), ctypes.sizeof(buf), ctypes.byref(size))
+    if not ok:
+        return ()
+    return tuple(s for s in buf[:size.value // 2].split("\0") if s)
+
+
+def _enum_usb_nodes(vid: int, pid: int) -> list[_Node]:
+    """Every present USB devnode whose hardware id carries ``vid:pid``, in SetupAPI order.
+
+    Order is undocumented and unstable, so callers must filter rather than take the first hit.
+    """
     setupapi = ctypes.WinDLL("setupapi", use_last_error=True)
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    cfgmgr32 = ctypes.WinDLL("cfgmgr32", use_last_error=True)
     setupapi.SetupDiGetClassDevsW.restype = ctypes.c_void_p
     setupapi.SetupDiGetClassDevsW.argtypes = [
         ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_void_p, ctypes.c_ulong]
@@ -334,7 +404,15 @@ def _find_winusb_inf(vid: int, pid: int) -> str | None:
     setupapi.SetupDiOpenDevRegKey.argtypes = [
         ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong,
         ctypes.c_ulong, ctypes.c_ulong]
+    setupapi.SetupDiGetDeviceInstanceIdW.restype = ctypes.c_bool
+    setupapi.SetupDiGetDeviceInstanceIdW.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_ulong)]
     setupapi.SetupDiDestroyDeviceInfoList.argtypes = [ctypes.c_void_p]
+    cfgmgr32.CM_Get_DevNode_Status.restype = ctypes.c_ulong
+    cfgmgr32.CM_Get_DevNode_Status.argtypes = [
+        ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_ulong),
+        ctypes.c_ulong, ctypes.c_ulong]
     advapi32.RegQueryValueExW.restype = ctypes.c_long
     advapi32.RegQueryValueExW.argtypes = [
         ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong),
@@ -343,8 +421,9 @@ def _find_winusb_inf(vid: int, pid: int) -> str | None:
 
     hdev = setupapi.SetupDiGetClassDevsW(None, "USB", None, _DIGCF_PRESENT | _DIGCF_ALLCLASSES)
     if not hdev or hdev == _INVALID_HANDLE_VALUE:
-        return None
+        return []
     needle = f"VID_{vid:04X}&PID_{pid:04X}"
+    nodes: list[_Node] = []
     try:
         data = _SP_DEVINFO_DATA()
         data.cbSize = ctypes.sizeof(_SP_DEVINFO_DATA)
@@ -354,36 +433,119 @@ def _find_winusb_inf(vid: int, pid: int) -> str | None:
             hwid = _reg_prop(setupapi, hdev, data, _SPDRP_HARDWAREID)
             if not hwid or needle not in hwid.upper():
                 continue
-            service = (_reg_prop(setupapi, hdev, data, _SPDRP_SERVICE) or "").lower()
-            if service not in _LIBUSB_SERVICES:
-                logger.info("Restore: %s is on service %r, not a libusb driver - skipping",
-                            needle, service)
-                return None
-            inf = _read_inf_path(setupapi, advapi32, hdev, data)
-            logger.info("Restore: %s bound to %s via service %s", needle, inf, service)
-            return inf
-        logger.info("Restore: no present device matched %s", needle)
-        return None
+            buf = ctypes.create_unicode_buffer(512)
+            setupapi.SetupDiGetDeviceInstanceIdW(
+                hdev, ctypes.byref(data), buf, ctypes.sizeof(buf) // 2, None)
+            status, problem = ctypes.c_ulong(0), ctypes.c_ulong(0)
+            cfgmgr32.CM_Get_DevNode_Status(
+                ctypes.byref(status), ctypes.byref(problem), data.DevInst, 0)
+            nodes.append(_Node(
+                instance_id=buf.value,
+                hwid=hwid,
+                compat_ids=_reg_multi_prop(setupapi, hdev, data, _SPDRP_COMPATIBLEIDS),
+                service=_reg_prop(setupapi, hdev, data, _SPDRP_SERVICE) or "",
+                inf=_read_inf_path(setupapi, advapi32, hdev, data),
+                problem=problem.value))
+        return nodes
     finally:
         setupapi.SetupDiDestroyDeviceInfoList(hdev)
 
 
-def restore_driver(vid: int, pid: int) -> SetupResult:
-    """Remove the WinUSB/libusb binding on ``vid:pid`` so the native driver reclaims it."""
+def _find_winusb_inf(vid: int, pid: int) -> str | None:
+    """The oemNN.inf of the WinUSB/libusb driver bound to ``vid:pid``, or ``None``."""
+    bound = [n for n in _enum_usb_nodes(vid, pid) if n.is_libusb]
+    if not bound:
+        logger.info("Restore: no present VID_%04X&PID_%04X node is on a libusb driver", vid, pid)
+        return None
+    # An &MI_xx node is a correctly targeted binding; a bare one is a hijacked composite parent.
+    bound.sort(key=lambda n: n.mi is None)
+    logger.info("Restore: %s bound to %s via service %s",
+                bound[0].instance_id, bound[0].inf, bound[0].service)
+    return bound[0].inf
+
+
+def _composite_iid(vid: int, pid: int) -> int | None:
+    """The interface number to bind on a split composite device, else ``None`` for the whole device.
+
+    Selecting from the live devnodes means we can only ever pass an ``--iid`` that actually exists.
+    """
+    iid = next((n.mi for n in _enum_usb_nodes(vid, pid) if n.is_wifi_function), None)
+    if iid is not None:
+        logger.info("Install: %04x:%04x is composite, targeting interface %d", vid, pid, iid)
+    return iid
+
+
+def _ours(text: str, vid: int, pid: int, name: str | None, chipset: str | None) -> bool:
+    """True when a published INF is a libwdi package *this app* generated for ``vid:pid``.
+
+    Zadig names its packages after the card's own bus-reported descriptor ("UB93", "802.11ac NIC"),
+    so matching our own ``--name`` leaves those alone.
+    """
+    provider = _INF_PROVIDER.search(text)
+    if not provider or provider.group(1).strip().lower() != "libwdi":
+        return False
+    device_id = _INF_DEVICE_ID.search(text)
+    if not device_id or not device_id.group(1).upper().startswith(f"VID_{vid:04X}&PID_{pid:04X}"):
+        return False
+    device_name = _INF_DEVICE_NAME.search(text)
+    if not device_name:
+        return False
+    # The chipset prefix also catches packages left by older builds, whose product_name differed.
+    return bool((name and device_name.group(1) == name)
+                or (chipset and device_name.group(1).startswith(f"{chipset} (")))
+
+
+def _our_packages(vid: int, pid: int, name: str | None, chipset: str | None) -> list[str]:
+    """Published ``oemNN.inf`` names of our own libwdi packages claiming ``vid:pid``.
+
+    Reads the INFs rather than parsing pnputil, whose field labels are localised.
+    """
+    found = []
+    try:
+        candidates = sorted(_INF_DIR.glob("oem*.inf"))
+    except OSError as e:
+        logger.warning("Restore: couldn't list %s: %s", _INF_DIR, e)
+        return found
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-16", errors="replace")
+        except (OSError, UnicodeError):
+            continue
+        if _ours(text, vid, pid, name, chipset):
+            found.append(path.name)
+    return found
+
+
+def restore_driver(vid: int, pid: int, *, name: str | None = None,
+                   chipset: str | None = None) -> SetupResult:
+    """Remove every WinUSB/libusb binding we made on ``vid:pid`` so the native driver reclaims it."""
     if sys.platform != "win32":
         raise RuntimeError("restore_driver is Windows-only")
 
-    inf = _find_winusb_inf(vid, pid)
-    if inf is None:
+    bound = _find_winusb_inf(vid, pid)
+    stale = _our_packages(vid, pid, name, chipset)
+    infs = list(dict.fromkeys(([bound] if bound else []) + stale))
+    if not infs:
         return SetupResult(
             ok=False,
             message="Couldn't find a WinUSB/libusb driver bound to this card to remove.")
 
-    comspec = os.environ.get("ComSpec", r"C:\Windows\System32\cmd.exe")
-    params = _restore_command(inf)
-    logger.info("Restore driver (elevated): %s %s", comspec, params)
+    dest = _winusb_dir()
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.warning("Restore: couldn't create %s: %s", dest, e)
+    batpath, logpath = dest / "run-restore.bat", dest / "pnputil.log"
+    try:
+        batpath.write_text(_restore_script(infs, str(logpath)), encoding="mbcs")
+    except OSError as e:
+        return SetupResult(ok=False, message=f"Couldn't stage the uninstaller: {e}")
+    logger.info("Restore driver (elevated): removing %s", ", ".join(infs))
 
-    run = _run_elevated(comspec, params)
+    run = _run_elevated(str(batpath), "")
+    output = _read_text(logpath)
+    if output:
+        logger.info("pnputil output:\n%s", output)
     if not run.launched:
         if run.win_error == _ERROR_CANCELLED:
             logger.info("Restore: user declined the UAC prompt")
@@ -394,19 +556,38 @@ def restore_driver(vid: int, pid: int) -> SetupResult:
         return SetupResult(
             ok=False, message=f"Could not launch the uninstaller (WinError {run.win_error}).")
     if run.exit_code is None:
-        return SetupResult(ok=False, detail=inf,
+        return SetupResult(ok=False, detail=", ".join(infs),
                              message="The driver uninstall didn't finish in time.")
+    if run.exit_code not in _PNPUTIL_OK:
+        logger.warning("Restore: pnputil failed for %s (exit=%d)", infs, run.exit_code)
+        return SetupResult(ok=False, detail=", ".join(infs),
+                           message=f"pnputil couldn't remove the driver (exit {run.exit_code}).")
+    return _verify_restore(vid, pid, infs, run.exit_code)
 
-    code = run.exit_code
-    if code in _PNPUTIL_OK:
-        msg = "Removed the WinUSB driver. The card should return to normal Wi-Fi."
-        if code == 3010:
-            msg += " (A reboot may be needed to finish.)"
-        logger.info("Restore: removed %s (pnputil exit=%d)", inf, code)
-        return SetupResult(ok=True, message=msg, detail=inf)
-    logger.warning("Restore: pnputil failed for %s (exit=%d)", inf, code)
-    return SetupResult(
-        ok=False, detail=inf, message=f"pnputil couldn't remove the driver (exit {code}).")
+
+def _verify_restore(vid: int, pid: int, infs: list[str], code: int) -> SetupResult:
+    """Re-read the bus after a restore: pnputil's exit code says nothing about what got rebound."""
+    still = _find_winusb_inf(vid, pid)
+    if still is not None:
+        logger.warning("Restore: %s still holds %04x:%04x", still, vid, pid)
+        return SetupResult(
+            ok=False, detail=still,
+            message="Another WinUSB driver package is still bound to this card.")
+    # Only the nodes a restore can affect: the whole-device/parent node and the Wi-Fi function.
+    # A sibling function (Bluetooth) carries its own driver and its own problems, none of ours.
+    touched = [n for n in _enum_usb_nodes(vid, pid) if n.mi is None or n.is_wifi_function]
+    sick = next((n for n in touched if n.problem and n.problem != _CM_PROB_NEED_RESTART), None)
+    if sick is not None:
+        logger.warning("Restore: %s has problem %d on %s / %s",
+                       sick.instance_id, sick.problem, sick.service, sick.inf)
+        return SetupResult(
+            ok=False, detail=f"{sick.service or '(none)'} / {sick.inf or '(none)'}",
+            message="The card's driver did not come back correctly. Unplug and replug it.")
+    msg = "Removed the WinUSB driver. The card should return to normal Wi-Fi."
+    if code == 3010 or any(n.problem == _CM_PROB_NEED_RESTART for n in touched):
+        msg += " (A reboot may be needed to finish.)"
+    logger.info("Restore: removed %s (pnputil exit=%d)", ", ".join(infs), code)
+    return SetupResult(ok=True, message=msg, detail=", ".join(infs))
 
 
 class SetupWindows(Setup):
@@ -427,8 +608,10 @@ class SetupWindows(Setup):
         ui.status(f"Installing WinUSB driver for {device_id.description}… (up to a minute)")
         tail = asyncio.create_task(self._tail_log(ui))
         try:
+            iid = await asyncio.to_thread(_composite_iid, device_id.vid, device_id.pid)
             pending = await asyncio.to_thread(
-                _launch_winusb, device_id.vid, device_id.pid, name=device_id.description)
+                _launch_winusb, device_id.vid, device_id.pid, iid=iid,
+                name=device_id.description)
             if pending.launched:
                 ui.begin_assistant(*INSTALL_LINES)   # UAC dismissed
             result = await asyncio.to_thread(_finish_winusb, pending)
@@ -463,7 +646,9 @@ class SetupWindows(Setup):
         ui.status(f"Removing wifit3 driver for {device_id.description}…")
         # pnputil is quick and streams nothing, so give WiFFy a short intro so he still gets a line in.
         ui.begin_assistant(*UNINSTALL_LINES, intro_delay=0.5)
-        result = await asyncio.to_thread(restore_driver, device_id.vid, device_id.pid)
+        result = await asyncio.to_thread(
+            restore_driver, device_id.vid, device_id.pid,
+            name=device_id.description, chipset=device_id.chipset)
         await ui.end_assistant(result.ok)
         return SetupResult(ok=result.ok, message=result.message, cancelled=result.cancelled,
                            detail=result.detail)

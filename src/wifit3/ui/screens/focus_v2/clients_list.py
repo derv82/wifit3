@@ -59,10 +59,10 @@ class ClientWidget(Horizontal):
         wipes text selection and burns CPU)."""
         if power != self._power:
             self._power = power
-            self._pwr_label.update(str(power))
+            self._pwr_label.update(str(power), layout=False)      # fixed-width column
         if packets != self._packets:
             self._packets = packets
-            self._pkts_label.update(str(packets))
+            self._pkts_label.update(str(packets), layout=False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -142,6 +142,8 @@ class ClientsList(Vertical):
         super().__init__(**kwargs)
         self._clients = clients
         self._rows: dict[str, ClientWidget] = {}
+        self._deauth_enabled: bool | None = None
+        self._last_snapshot: tuple | None = None
 
     def compose(self) -> ComposeResult:
         # Broadcast button pinned at the top; only the row list scrolls below it.
@@ -163,6 +165,11 @@ class ClientsList(Vertical):
 
     def sync(self, clients) -> None:
         """Reconcile client row information to match ``clients``."""
+        clients = list(clients)
+        snapshot = tuple((c.mac, c.signal, c.packets, c.fingerprint) for c in clients)
+        if snapshot == self._last_snapshot:
+            return
+        self._last_snapshot = snapshot
         current = {c.mac for c in clients}
         for mac in list(self._rows):
             if mac not in current:
@@ -186,9 +193,14 @@ class ClientsList(Vertical):
 
     def set_deauth_enabled(self, enabled: bool) -> None:
         """Enable/disable every deauth control (✕)."""
+        if enabled == self._deauth_enabled:
+            return
+        self._deauth_enabled = enabled
         disabled = not enabled
         for btn in self.query(Button):
             btn.disabled = disabled
 
     def _update_title(self) -> None:
-        self.border_title = f"CLIENTS ({len(self._rows)})"
+        title = f"CLIENTS ({len(self._rows)})"
+        if self.border_title != title:
+            self.border_title = title

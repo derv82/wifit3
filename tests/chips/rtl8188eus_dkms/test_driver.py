@@ -5,7 +5,7 @@ the stateful RfRegChnlVal threading through set_channel, the RX dispatch, the (n
 inject_frame, and the manager registration + env-var ordering. asyncio_mode=auto runs the
 async tests without a decorator.
 """
-from wifit3.chips.rtl8188eus_dkms import SUPPORTED_IDS, chan, driver as drv_mod
+from wifit3.chips.rtl8188eus_dkms import SUPPORTED_IDS, chan, driver as drv_mod, powertrack
 from wifit3.chips.rtl8188eus_dkms.constants import PID, VID
 from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
 
@@ -31,9 +31,11 @@ def test_supported_ids_and_channels():
 async def test_set_channel_threads_rfregchnlval(monkeypatch):
     drv = Rtl8188eusDkmsDriver(_FakeTransport())
     drv._tx_power = object()
+    drv._pt_state = powertrack.seed_state(0, 0, 0x18, drv._tx_power, False)
     calls = []
 
-    def fake_set_channel(t, txp, rf_chnl, ch):
+    def fake_set_channel(t, txp, rf_chnl, ch, i_cut_series, remnant_cck, remnant_ofdm,
+                         watchdog_state):
         calls.append((rf_chnl, ch))
         return 0x07C00 | ch                      # stand-in updated RfRegChnlVal
     monkeypatch.setattr(chan, "set_channel", fake_set_channel)
@@ -51,7 +53,7 @@ def test_dispatch_parses_and_fans(monkeypatch):
     drv = Rtl8188eusDkmsDriver(_FakeTransport())
     got = []
     drv.register_rx_callback(got.append)
-    monkeypatch.setattr(drv_mod, "iter_frames", lambda buf: [(b"frame", -50)])
+    monkeypatch.setattr(drv_mod, "iter_frames", lambda buf, cut_version, ext_lna, type_glna: [(b"frame", -50)])
     monkeypatch.setattr(drv_mod.WlanFrameParser, "parse_80211_frame",
                         staticmethod(lambda f, r: {"frame": f, "rssi": r}))
     drv._dispatch(b"aggregated-bulk-in")

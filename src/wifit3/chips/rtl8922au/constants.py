@@ -901,7 +901,8 @@ ADDR_CAM_W13_BSSID_MASK = 0xFC       # GENMASK(7, 2)
 ADDR_CAM_ENT_SHORT_SIZE = 0x20       # mac.h:16
 BSSID_CAM_ENT_SIZE = 0x08            # mac.h:17
 RTW89_ADDR_CAM_SEC_NORMAL = 2        # core.h:473
-RTW89_BSSID_MATCH_ALL = 0x3F         # GENMASK(5, 0). cam.h:12
+RTW89_BSSID_MATCH_ALL = 0x3F         # GENMASK(5, 0): one bit per BSSID byte, so this compares all
+                                     # six. Not a wildcard. cam.h:12
 # USB mac_post_init -> rx_agg_cfg_v3 (8922A). [SRC] usb.c rtw89_usb_rx_agg_cfg_v3, usb.h:32-38.
 R_BE_RXAGG_0_V1 = 0x6000         # usb.h:32
 B_BE_RXAGG_0_EN = 1 << 31        # usb.h:33

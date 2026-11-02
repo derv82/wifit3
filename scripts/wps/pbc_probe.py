@@ -27,7 +27,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from wifit3.campaigns.pbc import WpsPbcCapture
+from wifit3.campaigns.pbc import WpsPbcCampaign
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.device.manager import wlan_ifaces, wlan_close
 
@@ -129,7 +129,7 @@ async def main_async(args) -> int:
                 return 1
 
         step("Associate as Enrollee + run WSC (M1..M8)")
-        cap = WpsPbcCapture(iface, target, log=lambda m: print(f"    {m}"),
+        cap = WpsPbcCampaign(iface, target, log=lambda m: print(f"    {m}"),
                             tx_observer=lambda fr: capture.append((time.time(), bytes(fr))))
         outcome = await cap.capture()
 

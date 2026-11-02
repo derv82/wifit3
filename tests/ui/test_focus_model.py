@@ -6,6 +6,9 @@ campaign off ``Campaign.active``. The button-matrix cases drive the real
 ``FocusViewV2.refresh_buttons`` against a headless screen, since button assembly
 moved onto the screen (there is no ``derive_buttons`` any more)."""
 import types
+from pathlib import Path
+
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
@@ -15,15 +18,23 @@ from textual.widgets import Button
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.deauth import DeauthCampaign
 from wifit3.campaigns.eviltwin import EvilTwinCampaign
-from wifit3.campaigns.pbc import WpsPbcCapture
+from wifit3.campaigns.pbc import WpsPbcCampaign
 from wifit3.campaigns.pin import WpsCampaign
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
+from wifit3.campaigns.verify.psk import VerifyPskCampaign
 from wifit3.campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
-from wifit3.models import AccessPoint, Handshake, IdKey, IdSource
+from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage, IdKey, IdSource, PersistedCapture
+from wifit3.persist.ap_state import Key
 from wifit3.ui import focus_model as fm
+from tests.wlan.mocks import build_ap
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.persist.config import Config
+from wifit3.persist.vault import Vault
+from wifit3.crack import wpa_psk
+from wifit3.dot11.wpa import derive_pmk
+from wifit3.ui.colors import PASSWORD_MISMATCH_COLOR
+from tests.hashline_dates import write_hashline_dates
 
 
 @pytest.fixture(autouse=True)
@@ -44,72 +55,82 @@ def _running(key, **extra):
 
 
 class _FakeWep(WepCampaign):
-    def __init__(self, *, chop=False, cracker_samples=0, replay_state=None, recovered_key=None):
-        self.chop = types.SimpleNamespace(is_active=chop)   # chop_active is a property reading this
+    def __init__(self, *, chop=False, cracker_samples=0, replay_state=None, recovered_key=None, target=None):
+        self.chop = types.SimpleNamespace(is_active=chop)
         self.cracker = types.SimpleNamespace(sample_count=cracker_samples)
         self.replay = types.SimpleNamespace(state=replay_state)
         self.recovered_key = recovered_key
-
+        self.target = target or _wep_ap()
 
 class _FakeWps(WpsCampaign):
-    def __init__(self, *, found_pin=None):
+    def __init__(self, *, found_pin=None, target=None):
         self.state = types.SimpleNamespace(found_pin=found_pin)
-
+        self.target = target or _wpa_ap()
 
 class _FakeDeauth(DeauthCampaign):
-    def __init__(self):
-        pass
-
+    def __init__(self, *, target=None):
+        self.target = target or _wpa_ap()
 
 class _FakeEvilTwin(EvilTwinCampaign):
-    def __init__(self, *, captured=False, twin_channel=1, fakeap=None):
+    def __init__(self, *, captured=False, twin_channel=1, fakeap=None, target=None):
         self.captured = captured
         self.twin_channel = twin_channel
         self.fakeap = fakeap
-
+        self.target = target or _rsn_ap()
 
 class _FakePmkid(PmkidHarvestAttack):
-    def __init__(self):
-        pass
+    def __init__(self, *, target=None):
+        self.target = target or _wpa_ap()
+        self.source_mac = b"\x00\x11\x22\x33\x44\x55"
+        self.fail_reason = None
+        self.pmkid = None
+
+class _FakePbc(WpsPbcCampaign):
+    def __init__(self, *, target=None):
+        self.target = target or _wpa_ap()
 
 
-class _FakePbc(WpsPbcCapture):
-    def __init__(self):
-        pass
+def _headline(ap):
+    """Real Vault (over the tmp captures dir) fed to derive_headline."""
+    return fm.status_headlines(ap, None, Vault())
 
 
-def _wep_ap(*, wep_key=None, persisted_wep=False, unique_ivs=0):
-    persisted = []
-    if persisted_wep:
-        persisted = [types.SimpleNamespace(type="WEP", value="6162636465", timestamp=0)]
+def _seed_wep(d, bssid_dashed, ssid="Net", epoch=1700000000, key_hex="6162636465"):
+    (d / f"{ssid}_{bssid_dashed}_{epoch}_wep_key.txt").write_text(
+        f"SSID: {ssid}\nBSSID: x\nWEP key (hex):   {key_hex}\n", encoding="utf-8")
+
+
+def _wep_ap(*, wep_key=None, unique_ivs=0):
     return types.SimpleNamespace(
-        encryption="WEP", wep_key=wep_key, persisted=persisted,
+        encryption="WEP", wep_key=wep_key,
         wep=types.SimpleNamespace(unique_ivs=unique_ivs),
         handshakes={}, wpa3=False, transition_mode=False, bssid="aa:bb:cc:dd:ee:ff",
+        akm_suites=[],
     )
 
 
-def _wpa_ap(*, known_psk=None):
+def _wpa_ap(*, wps_pbc_psk=None):
     return types.SimpleNamespace(
-        encryption="WPA2", wep_key=None, persisted=[], wep=None,
-        handshakes={}, wpa3=False, transition_mode=False, known_psk=known_psk,
-        bssid="aa:bb:cc:dd:ee:ff",
+        encryption="WPA2", wep_key=None, wep=None, handshakes={},
+        wpa3=False, transition_mode=False, bssid="aa:bb:cc:dd:ee:ff",
+        wps_pbc_psk=wps_pbc_psk, wps_pin_psk=None, akm_suites=[],
     )
 
 
-def test_headline_persisted_wep_idle_shows_recovered():
-    """An already-cracked AP, no campaign → the recovered-key banner."""
-    h = fm.derive_headline(_wep_ap(persisted_wep=True), None)
-    assert "WEP key recovered" in h[0]
+def test_headline_persisted_wep_idle_shows_recovered(tmp_path):
+    """A prior-session WEP key on disk, no campaign → the recovered-key banner."""
+    _seed_wep(tmp_path, "aa-bb-cc-dd-ee-ff")
+    h = _headline(_wep_ap())
+    assert 'WEP key: 6162636465 = "abcde"' in h[0]
 
 
 def test_headline_active_campaign_outranks_recovered_key():
     """Re-running Replay on an already-cracked AP must show LIVE progress (with
     the IV count), not the frozen 'recovered' banner: an active attack is the
     dominant activity."""
-    ap = _wep_ap(persisted_wep=True, unique_ivs=1234)
-    Campaign.active = _FakeWep(replay_state="replaying")
-    h = fm.derive_headline(ap, None)
+    ap = _wep_ap(unique_ivs=1234)
+    Campaign.active = _FakeWep(replay_state="replaying", target=ap)
+    h = _headline(ap)
     joined = " ".join(h)
     assert "Replaying" in h[0]
     assert "recovered" not in joined.lower()
@@ -119,90 +140,254 @@ def test_headline_active_campaign_outranks_recovered_key():
 def _pmkid_ap(pmkid_akm):
     hs = Handshake(bssid="aa:bb:cc:dd:ee:01", client_mac="11:22:33:44:55:66",
                    pmkid=bytes(16), pmkid_akm=pmkid_akm, beacon_frame=b"x")
-    return types.SimpleNamespace(encryption="WPA2", wep_key=None, persisted=[], wep=None,
-                                 known_psk=None, handshakes={"11:22:33:44:55:66": hs}, bssid="aa:bb:cc:dd:ee:ff")
+    ap = build_ap(encryption="WPA2", bssid="aa:bb:cc:dd:ee:ff", wpa3=False)
+    ap.transition_mode = False
+    ap.handshakes={"11:22:33:44:55:66": hs}
+    return ap
 
 
 def test_headline_sae_pmkid_is_not_a_captured_win():
     """A WPA3/SAE PMKID lands on the handshake but save_pmkid withholds it, so the
     headline must NOT claim 'Captured … saved' (the false-save bug)."""
-    joined = " ".join(fm.derive_headline(_pmkid_ap(pmkid_akm=8), None))
+    joined = " ".join(_headline(_pmkid_ap(pmkid_akm=8)))
     assert "Captured" not in joined and "PMKID ×" not in joined
     assert "saved to captures/" not in joined
 
 
 def test_headline_psk_pmkid_is_a_captured_win():
-    joined = " ".join(fm.derive_headline(_pmkid_ap(pmkid_akm=2), None))
+    joined = " ".join(_headline(_pmkid_ap(pmkid_akm=2)))
     assert "Captured" in joined and "PMKID ×1" in joined
 
 
+def test_headline_names_wpa3_enterprise_without_calling_it_sae():
+    ap = build_ap(encryption="WPA3", bssid="aa:bb:cc:dd:ee:ff", wpa3=True)
+    ap.akms = ["EAP-SHA256"]
+    ap.akm_suites = [5]
+    headline = " ".join(_headline(ap))
+    assert "WPA3/Enterprise" in headline
+    assert "SAE" not in headline
+    assert "transition" not in headline
+
+
+def test_headline_names_wpa3_sae_before_generic_unsupported_state():
+    ap = build_ap(
+        encryption="WPA3", wpa3=True, transition_mode=False,
+        akms=["SAE"], akm_suites=[8],
+    )
+    headline = " ".join(_headline(ap))
+    assert "WPA3/SAE" in headline
+    assert "Not yet supported" not in headline
+
+
+def test_headline_wpa2_enterprise_does_not_promise_a_psk_capture():
+    ap = build_ap(encryption="WPA2", akms=["EAP"], akm_suites=[1])
+    headline = " ".join(_headline(ap))
+    assert "WPA2/Enterprise" in headline
+    assert "Listening for handshake" not in headline
+    assert "PMKID" not in headline
+
+
+def test_headline_wpa1_enterprise_says_wpa_not_wpa2():
+    ap = build_ap(encryption="WPA-EAP-TKIP", akms=["EAP"], akm_suites=[1], rsn_valid=False)
+    headline = " ".join(_headline(ap))
+    assert "WPA/Enterprise" in headline and "WPA2" not in headline
+    assert "Listening for handshake" not in headline
+
+
+def test_status_footer_wpa1_has_no_pmf():
+    ap = build_ap(encryption="WPA-PSK-TKIP", akms=["PSK"], akm_suites=[2], rsn_valid=False,
+                  pairwise_cipher="TKIP")
+    lines = fm.status_under_dash(ap, None, 0)
+    assert lines == ["[dim]Encryption:[/dim] [red]WPA[/red] [dim](PSK·TKIP)[/dim]"]
+
+
+def test_wpa1_psk_shows_deauth_but_not_pmkid_and_disables_eviltwin():
+    ap = build_ap(encryption="WPA-PSK-TKIP", akms=["PSK"], akm_suites=[2], rsn_valid=False)
+    assert DeauthCampaign.visible(ap) is True
+    assert PmkidHarvestAttack.visible(ap) is False
+    assert EvilTwinCampaign.visible(ap) is True
+    assert EvilTwinCampaign.ineligible_reason(ap) == "Needs a WPA2/WPA3 network"
+
+
+def test_enterprise_headline_ignores_a_stale_known_psk():
+    """A PSK AP reconfigured to Enterprise must show Enterprise, not a stale saved PSK
+    (eap_only is checked before the known-PSK / captured-handshake branches)."""
+    class _VaultWithStalePSK:
+        def persisted(self, bssid):
+            return []
+
+        def known_psk(self, ap):
+            return "stale-passphrase"
+
+    ap = build_ap(encryption="WPA2", akms=["EAP"], akm_suites=[1])
+    joined = " ".join(fm.status_headlines(ap, None, _VaultWithStalePSK()))
+    assert "WPA2/Enterprise" in joined
+    assert "stale-passphrase" not in joined and "PSK:" not in joined
+
+
+def test_headline_enterprise_transition_does_not_promise_a_psk_capture():
+    ap = build_ap(
+        encryption="WPA2/WPA3-EAP+EAP-SHA256-CCMP", wpa3=True, transition_mode=True,
+        akms=["EAP", "EAP-SHA256"], akm_suites=[1, 5],
+    )
+    headline = " ".join(_headline(ap))
+    assert "WPA3/Enterprise transition" in headline
+    assert "Listening for handshake" not in headline
+
+
+def test_headline_enterprise_partial_eapol_does_not_ask_for_deauth():
+    hs = Handshake(bssid="aa:bb:cc:dd:ee:ff", client_mac="11:22:33:44:55:66",
+                   akm_offered=[1])
+    hs.add_message(HandshakeMessage(
+        raw=b"m1", msg_num=1, replay_hex="0000000000000001", nonce=b"\x11" * 32,
+        mic=bytes(16), key_data_len=0, eapol_payload=bytes(99), akm=1,
+    ))
+    ap = build_ap(encryption="WPA2", akms=["EAP"], akm_suites=[1])
+    ap.handshakes = {"11:22:33:44:55:66": hs}
+    joined = " ".join(_headline(ap))
+    assert "WPA2/Enterprise" in joined
+    assert "deauth" not in joined.lower()
+
+
+def test_status_footer_names_observed_eap_method():
+    ap = build_ap(akms=["EAP"], akm_suites=[1], pmf_capable=True, pmf_required=True)
+    ap.observed_eap_methods.update({1, 25})
+    lines = fm.status_under_dash(ap, None, 0)
+    assert "PEAP" in lines[1]
+    assert "Identity" not in lines[1]
+
+
+def test_status_footer_shows_identity_until_a_method_arrives():
+    ap = build_ap(akms=["EAP"], akm_suites=[1])
+    ap.observed_eap_methods.add(1)
+    assert "Identity" in " ".join(fm.status_under_dash(ap, None, 0))
+
+
 def test_headline_chop_and_crack_states():
-    ap = _wep_ap(persisted_wep=True)
+    ap = _wep_ap()
     Campaign.active = _FakeWep(chop=True)
-    chop = fm.derive_headline(ap, None)
+    chop = _headline(ap)
     assert "ChopChop" in chop[0]
     Campaign.active = _FakeWep(cracker_samples=CRACK_READY_THRESHOLD)
-    cracking = fm.derive_headline(ap, None)
+    cracking = _headline(ap)
     assert "Cracking" in cracking[0]
 
 
 def test_headline_cracking_names_the_concurrent_tx_action():
     """While cracking, the headline names BOTH the live TX action and the crack
     (replay/chop run concurrently and the action can change mid-crack)."""
-    ap = _wep_ap(persisted_wep=True)
+    ap = _wep_ap()
     crk = CRACK_READY_THRESHOLD
     Campaign.active = _FakeWep(cracker_samples=crk, replay_state="replaying")
-    replaying = fm.derive_headline(ap, None)
+    replaying = _headline(ap)
     assert "Replaying ARP" in replaying[0] and "Cracking" in replaying[0]
     Campaign.active = _FakeWep(cracker_samples=crk, replay_state="waiting-arp")
-    waiting = fm.derive_headline(ap, None)
+    waiting = _headline(ap)
     assert "Waiting for a packet" in waiting[0] and "Cracking" in waiting[0]
     Campaign.active = _FakeWep(chop=True, cracker_samples=crk)
-    chopping = fm.derive_headline(ap, None)
+    chopping = _headline(ap)
     assert "Chopping a packet" in chopping[0] and "Cracking" in chopping[0]
 
 
-def test_wps_status_shows_fail_reason():
-    camp = types.SimpleNamespace(
-        state=types.SimpleNamespace(found_pin=None, tested=0, phase="common", first_half=None),
-        status="failed",
-        fail_reason="WPS stayed locked for 5 cycles without PIN progress",
-        eta_seconds=None,
-    )
 
-    line = fm.wps_status_markup(camp)
-
-    assert "failed" in line
-    assert "stayed locked" in line
 
 
 def test_headline_recovered_wps_psk_shows_banner():
     """A recovered WPS PSK (PBC or PIN, after the campaign is torn down) shows a
     terminal banner instead of decaying back to 'Listening'."""
-    h = fm.derive_headline(_wpa_ap(known_psk="hunter2"), None)
-    assert "WPS PSK recovered" in h[0]
+    h = _headline(_wpa_ap(wps_pbc_psk="hunter2"))
+    assert "PSK: hunter2" in h[0]
 
 
 def test_headline_listening_when_no_psk():
-    h = fm.derive_headline(_wpa_ap(known_psk=None), None)
+    h = _headline(_wpa_ap())
     assert "Listening for handshake" in h[0]
+
+
+def test_headline_owe_is_not_a_crackable_capture():
+    joined = " ".join(_headline(build_ap(encryption="OWE", akms=["OWE"], akm_suites=[18])))
+    assert "Listening for handshake" not in joined
+    assert "nothing to crack" in joined
+
+
+@pytest.mark.parametrize("suites", [[20], [19]])
+def test_headline_sha384_psk_is_not_a_crackable_capture(suites):
+    joined = " ".join(_headline(build_ap(encryption="WPA2", akms=["PSK-SHA384"], akm_suites=suites)))
+    assert "Listening for handshake" not in joined
+    assert "Not yet supported" in joined
+
+
+def test_headline_unsupported_akm_partial_handshake_is_not_capturing():
+    hs = Handshake(bssid="aa:bb:cc:dd:ee:ff", client_mac="11:22:33:44:55:66",
+                   beacon_frame=b"B", akm_offered=[20])
+    for msg in (1, 2):
+        hs.add_message(HandshakeMessage(
+            raw=bytes([msg]), msg_num=msg, replay_hex="0000000000000005",
+            nonce=bytes([msg]) * 32, mic=b"\x11" * 16, key_data_len=0,
+            eapol_payload=bytes(120), akm=20))
+    ap = build_ap(encryption="WPA2", akms=["PSK-SHA384"], akm_suites=[20])
+    ap.handshakes = {"11:22:33:44:55:66": hs}
+    joined = " ".join(_headline(ap))
+    assert "Capturing handshake" not in joined and "deauth" not in joined.lower()
+    assert "Not yet supported" in joined
+
+
+def _write_saved_psk(kind: str, psk: str) -> None:
+    """A saved ``wpa_psk`` (cracked) or ``wps_pbc`` (from the AP) file for build_ap's AP."""
+    (Path(Config.captures_dir) / f"TESTNET_aa-bb-cc-dd-ee-01_1700000000_{kind}.txt").write_text(
+        f"SSID: TESTNET\nBSSID: aa:bb:cc:dd:ee:01\nPSK: {psk}\n", encoding="utf-8")
+
+
+def test_headline_unsupported_akm_with_saved_psk_shows_psk_without_listening():
+    _write_saved_psk("wpa_psk", "sha384-pass")
+    ap = build_ap(encryption="WPA2", akms=["PSK-SHA384"], akm_suites=[20])
+    joined = " ".join(fm.status_headlines(ap, None, Vault()))
+    assert "PSK: sha384-pass" in joined
+    assert "Listening for handshake" not in joined
+    assert "Not yet supported" in joined
+
+
+def test_a_psk_the_ap_gave_up_is_a_green_tick():
+    _write_saved_psk("wps_pbc", "from-the-ap")
+    assert fm.status_headlines(build_ap(akms=["PSK"], akm_suites=[2]), None, Vault())[0] == (
+        "[black bold on green] ✓ PSK: from-the-ap [/black bold on green]")
+
+
+def test_a_psk_nothing_confirms_reads_not_verified():
+    _write_saved_psk("wpa_psk", "cracked")
+    headline = fm.status_headlines(build_ap(akms=["PSK"], akm_suites=[2]), None, Vault())[0]
+    assert "✓" not in headline and "PSK: cracked" in headline and "NOT VERIFIED" in headline
+
+
+def test_a_psk_a_newer_capture_refutes_reads_stale_in_orange():
+    _write_saved_psk("wps_pbc", "old-pass")
+    pmkid = wpa_psk.pmkid(derive_pmk("new-pass", b"TESTNET"), bytes.fromhex("aabbccddee01"),
+                          bytes.fromhex("021122334455"))
+    line = f"WPA*01*{pmkid.hex()}*aabbccddee01*021122334455*{b'TESTNET'.hex()}***"
+    (Path(Config.captures_dir) / "TESTNET_aa-bb-cc-dd-ee-01.hc22000").write_text(line + "\n", encoding="utf-8")
+    write_hashline_dates("TESTNET", "aa:bb:cc:dd:ee:01", {line: 1700000500})
+
+    headline = fm.status_headlines(build_ap(akms=["PSK"], akm_suites=[2]), None, Vault())[0]
+
+    assert headline == (f"[black bold on {PASSWORD_MISMATCH_COLOR}] PSK: old-pass [/] "
+                        f"[bold {PASSWORD_MISMATCH_COLOR}]STALE PASSWORD[/]")
 
 
 def test_headline_live_pbc_outranks_listening():
     Campaign.active = _FakePbc()
-    h = fm.derive_headline(_wpa_ap(known_psk=None), None)
+    h = _headline(_wpa_ap())
     assert "PushButton" in h[0] and "capturing" in h[0].lower()
 
 
 def test_headline_wps_pin_found_while_held_then_psk_after_teardown():
     # Campaign still held with a found PIN → cracked banner.
     Campaign.active = _FakeWps(found_pin="12345670")
-    held = fm.derive_headline(_wpa_ap(known_psk=None), None)
+    held = _headline(_wpa_ap())
     assert "WPS PIN cracked" in held[0]
     # After teardown the PSK lives on the AP → recovered banner (not Listening).
     Campaign.active = None
-    after = fm.derive_headline(_wpa_ap(known_psk="hunter2"), None)
-    assert "WPS PSK recovered" in after[0]
+    after = _headline(_wpa_ap(wps_pbc_psk="hunter2"))
+    assert "PSK: hunter2" in after[0]
 
 
 def _iface_with_usable(n):
@@ -243,18 +428,18 @@ def test_wep_status_lines_drops_threshold_once_crossed():
 _AKM_NUM = {"PSK": 2, "PSK-SHA256": 6, "SAE": 8, "802.1X": 1, "EAP": 1, "FT-PSK": 4}
 
 
-def _rsn_ap(*, encryption="WPA2", akms=("PSK",), wpa3=False, transition_mode=False,
-            pmf_required=False, pmf_capable=False, akm_suites=None, ssid="EvilNet",
-            last_beacon_frame=b"\x80\x00beacon",
-            wps=False, wps_locked=False, wps_version="1.0"):
-    akms = list(akms)
+def _rsn_ap(*, encryption: str = "WPA2", akms: tuple[str, ...] = ("PSK",), wpa3: bool = False,
+            transition_mode: bool = False, pmf_required: bool = False, pmf_capable: bool = False,
+            akm_suites: list[int] | None = None, ssid: str | None = "EvilNet",
+            last_beacon_frame: bytes | None = b"\x80\x00beacon",
+            wps: bool = False, wps_locked: bool = False, wps_version: str = "1.0") -> AccessPoint:
     if akm_suites is None:
         akm_suites = [_AKM_NUM[a] for a in akms if a in _AKM_NUM]
-    return types.SimpleNamespace(
-        encryption=encryption, akms=akms, akm_suites=akm_suites, pairwise_cipher="CCMP",
-        ssid=ssid, is_hidden=not (ssid and ssid != "<hidden>"), last_beacon_frame=last_beacon_frame,
-        wpa3=wpa3, transition_mode=transition_mode, wep=None,
-        pmf_required=pmf_required, pmf_capable=pmf_capable, bssid="aa:bb:cc:dd:ee:ff",
+    return AccessPoint(
+        bssid="aa:bb:cc:dd:ee:ff", encryption=encryption, akms=list(akms), akm_suites=akm_suites,
+        rsn_valid=True, pairwise_cipher="CCMP", ssid=ssid, last_beacon_frame=last_beacon_frame,
+        wpa3=wpa3, transition_mode=transition_mode,
+        pmf_required=pmf_required, pmf_capable=pmf_capable,
         wps=wps, wps_locked=wps_locked, wps_version=wps_version)
 
 
@@ -262,10 +447,12 @@ def test_pmf_status_markup_gradient():
     assert fm.pmf_status_markup(_rsn_ap(pmf_required=True, pmf_capable=True)) == "[red]Required[/red]"
     assert "dark_orange" in fm.pmf_status_markup(_rsn_ap(pmf_capable=True))
     assert fm.pmf_status_markup(_rsn_ap()) == "[dim]Disabled[/dim]"
+    # MFPR without MFPC is malformed, shown distinctly rather than as "Required".
+    assert fm.pmf_status_markup(_rsn_ap(pmf_required=True, pmf_capable=False)) == "[red]Invalid[/red]"
 
 
 def test_status_footer_wpa_shows_encryption_and_pmf():
-    lines = fm.status_footer_lines(_rsn_ap(pmf_required=True, pmf_capable=True), None, None, 0)
+    lines = fm.status_under_dash(_rsn_ap(pmf_required=True, pmf_capable=True), None, 0)
     assert len(lines) == 2
     assert "Encryption:" in lines[0] and "WPA2" in lines[0]
     assert "PMF:" in lines[1] and "Required" in lines[1]
@@ -274,7 +461,7 @@ def test_status_footer_wpa_shows_encryption_and_pmf():
 
 def test_status_footer_combines_pmf_and_wps():
     """WPS rejoins the footer (it was dropped in v2) on the same row as PMF."""
-    lines = fm.status_footer_lines(_rsn_ap(wps=True, wps_version="1.0"), None, None, 0)
+    lines = fm.status_under_dash(_rsn_ap(wps=True, wps_version="1.0"), None, 0)
     assert len(lines) == 2
     assert "PMF:" in lines[1] and "WPS:" in lines[1] and "1.0" in lines[1]
 
@@ -287,7 +474,7 @@ def test_router_identity_details_shows_source_provenance():
     assert details is not None
     assert "[bold]MikroTik hAP ac²[/bold]" in details
     assert "[dim]Model:[/dim] hAP ac² [dim](WSC Beacon)[/dim]" in details
-    assert "[dim]Manufacturer:[/dim] MikroTik [dim](WSC Beacon)[/dim]" in details
+    assert "[dim]Manuf:[/dim] MikroTik [dim](WSC Beacon)[/dim]" in details
 
 
 def test_router_identity_details_can_show_m1_and_oui_separately():
@@ -299,7 +486,7 @@ def test_router_identity_details_can_show_m1_and_oui_separately():
     assert details is not None
     assert "[bold]Cisco AP-500[/bold]" in details
     assert "[dim]Model:[/dim] AP-500 [dim](WSC M1)[/dim]" in details
-    assert "[dim]Manufacturer:[/dim] Cisco [dim](WSC M1)[/dim]" in details
+    assert "[dim]Manuf:[/dim] Cisco [dim](WSC M1)[/dim]" in details
     assert "[dim]IEEE OUI:[/dim] Apple" in details
 
 
@@ -313,7 +500,7 @@ def test_router_identity_details_asus_wsc_beacon():
     assert fm.router_identity_details(ap) == "\n".join([
         "[bold]ASUS RT-AC66U[/bold]",
         "[dim]Model:[/dim] RT-AC66U [dim](WSC Beacon)[/dim]",
-        "[dim]Manufacturer:[/dim] ASUS [dim](WSC Beacon)[/dim]",
+        "[dim]Manuf:[/dim] ASUS [dim](WSC Beacon)[/dim]",
         "[dim]IEEE OUI:[/dim] ASUS",
     ])
 
@@ -328,7 +515,7 @@ def test_router_identity_details_netgear_wsc_m1():
     assert fm.router_identity_details(ap) == "\n".join([
         "[bold]Netgear C3700-100NAS[/bold]",
         "[dim]Model:[/dim] C3700-100NAS [dim](WSC M1)[/dim]",
-        "[dim]Manufacturer:[/dim] Netgear [dim](WSC M1)[/dim]",
+        "[dim]Manuf:[/dim] Netgear [dim](WSC M1)[/dim]",
         "[dim]IEEE OUI:[/dim] Netgear",
     ])
 
@@ -343,7 +530,7 @@ def test_router_identity_details_odm_wsc_beacon_with_branded_oui():
     assert fm.router_identity_details(ap) == "\n".join([
         "[bold]Jensen of Scandinavia Air:Link 5000AC[/bold]",
         "[dim]Model:[/dim] Jensen of Scandinavia Air:Link 5000AC [dim](WSC Beacon)[/dim]",
-        "[dim]Manufacturer:[/dim] Jensen [dim](IEEE OUI)[/dim]",
+        "[dim]Manuf:[/dim] Jensen [dim](IEEE OUI)[/dim]",
         "[dim]Chipset:[/dim] Ralink [dim](WSC)[/dim]",
     ])
 
@@ -358,7 +545,7 @@ def test_router_identity_details_includes_device_type():
     assert details == "\n".join([
         "[bold]HP OfficeJet Pro (printer)[/bold]",
         "[dim]Model:[/dim] OfficeJet Pro [dim](WSC M1)[/dim]",
-        "[dim]Manufacturer:[/dim] HP [dim](WSC M1)[/dim]",
+        "[dim]Manuf:[/dim] HP [dim](WSC M1)[/dim]",
         "[dim]Device Type:[/dim] printer [dim](WSC M1)[/dim]",
     ])
 
@@ -368,10 +555,8 @@ def test_router_identity_details_is_blank_without_evidence():
 
 
 def test_status_footer_open_is_encryption_only():
-    ap = types.SimpleNamespace(
-        encryption="OPEN", akms=[], pairwise_cipher=None, wpa3=False,
-        transition_mode=False, wep=None, pmf_required=False, pmf_capable=False, bssid="x")
-    lines = fm.status_footer_lines(ap, None, None, 0)
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", encryption="OPEN")
+    lines = fm.status_under_dash(ap, None, 0)
     assert len(lines) == 1 and "Encryption:" in lines[0]
 
 
@@ -379,20 +564,19 @@ def test_status_footer_wep_is_fakeauth_and_usable_ivs():
     ap = types.SimpleNamespace(
         encryption="WEP", akms=[], pairwise_cipher=None, wpa3=False,
         transition_mode=False, wep=types.SimpleNamespace(unique_ivs=0), bssid="x")
-    lines = fm.status_footer_lines(ap, _iface_with_usable(5), None, 0)
+    lines = fm.status_under_dash(ap, _iface_with_usable(5), 0)
     assert any("Usable IVs" in ln for ln in lines)
     assert not any("Encryption:" in ln for ln in lines)
 
 
-def _wep_btn_ap():
-    return types.SimpleNamespace(encryption="WEP", wps=None, wpa3=False,
-                                 transition_mode=False, wps_locked=False, is_hidden=False,
-                                 ssid="WepNet", akm_suites=[], bssid="aa:bb:cc:dd:ee:ff", last_beacon_frame=b"\x80\x00beacon")
+def _wep_btn_ap() -> AccessPoint:
+    return AccessPoint(bssid="aa:bb:cc:dd:ee:ff", encryption="WEP", ssid="WepNet",
+                       last_beacon_frame=b"\x80\x00beacon")
 
 
-def _wep_hidden_ap():
+def _wep_hidden_ap() -> AccessPoint:
     ap = _wep_btn_ap()
-    ap.ssid, ap.is_hidden = None, True
+    ap.ssid = None
     return ap
 
 
@@ -407,6 +591,8 @@ class _ButtonHost(App):
         self.array = None
         self.target_ap = None
         self.pbc_enabled = True
+        self.vault = MagicMock()
+        self.vault.ap_state.return_value.keys = ()
 
     def on_mount(self) -> None:
         self.push_screen(FocusViewV2())
@@ -459,15 +645,14 @@ async def test_buttons_wpa2_psk_no_wps_pmkid_and_deauth_visible(buttons_screen):
 
 
 @pytest.mark.asyncio(loop_scope="module")
-async def test_buttons_deauth_hidden_for_sae_open_wep_and_pmf(buttons_screen):
-    """Deauth shows only for a confirmed PSK-family AKM with PMF off: SAE-only,
-    open, WEP and PMF-Required all hide it (deauth can't provoke a crackable PSK
-    handshake, or PMF protects the frame)."""
+async def test_buttons_deauth_shown_for_psk_hidden_for_sae_open_wep(buttons_screen):
+    """Deauth shows for a confirmed PSK-family AKM, PMF-Required included (CSA only there):
+    SAE-only, open and WEP hide it (no crackable PSK handshake to provoke)."""
     assert _buttons(buttons_screen, _rsn_ap(akms=("PSK",)))["btn-deauth"].display is True
     assert _buttons(buttons_screen, _rsn_ap(akms=("SAE",)))["btn-deauth"].display is False
     assert _buttons(buttons_screen, _rsn_ap(encryption="OPEN", akms=()))["btn-deauth"].display is False
     assert _buttons(buttons_screen, _wep_btn_ap())["btn-deauth"].display is False
-    assert _buttons(buttons_screen, _rsn_ap(akms=("PSK",), pmf_required=True))["btn-deauth"].display is False
+    assert _buttons(buttons_screen, _rsn_ap(akms=("PSK",), pmf_required=True))["btn-deauth"].display is True
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -494,6 +679,46 @@ async def test_buttons_hidden_ssid_disables_assoc_attacks(buttons_screen):
     wap = _wep_hidden_ap()
     wb = _buttons(buttons_screen, wap)
     assert wb["btn-gen-ivs"].disabled is True and "hidden" in fm.campaign_blocked(WepCampaign, wap)
+
+
+def _pbc_window_ap(*, ssid: str | None = "EvilNet") -> AccessPoint:
+    ap = _rsn_ap(wps=True, ssid=ssid)
+    ap.wps_selected_registrar = True
+    ap.wps_device_password_id = 0x0004
+    return ap
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_buttons_pbc_window_shows_start_pbc(buttons_screen):
+    buttons_screen.app.target_ap = _pbc_window_ap()
+    buttons_screen.refresh_buttons()
+    assert _bs(buttons_screen.query_one("#btn-pbc", Button)) == (True, False, "Start PBC", "primary")
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_buttons_pbc_window_hidden_ssid_disables_start_pbc(buttons_screen):
+    buttons_screen.app.target_ap = _pbc_window_ap(ssid=None)
+    buttons_screen.refresh_buttons()
+    btn = buttons_screen.query_one("#btn-pbc", Button)
+    assert _bs(btn) == (True, True, "Start PBC", "primary")
+    assert "hidden" in btn.tooltip
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_buttons_no_pbc_window_hides_pbc_button(buttons_screen):
+    buttons_screen.app.target_ap = _rsn_ap(wps=True)
+    buttons_screen.refresh_buttons()
+    assert buttons_screen.query_one("#btn-pbc", Button).display is False
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_start_pbc_starts_capture_on_the_target(buttons_screen, monkeypatch):
+    ap = _pbc_window_ap()
+    started = []
+    monkeypatch.setattr(buttons_screen, "_target_ap", ap)
+    monkeypatch.setattr(buttons_screen, "_start_pbc_capture", started.append)
+    buttons_screen._toggle_pbc()
+    assert started == [ap]
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -566,7 +791,8 @@ def test_other_long_running_tx_mutex_and_excludes():
 
 def test_deauth_blocked_by_mutex_or_pmf():
     assert fm.deauth_blocked(_rsn_ap()) is False
-    assert fm.deauth_blocked(_rsn_ap(pmf_required=True)) is True
+    assert fm.deauth_blocked(_rsn_ap(pmf_required=True, pmf_capable=True)) is True
+    assert fm.deauth_blocked(_rsn_ap(pmf_required=True, pmf_capable=False)) is True
     Campaign.active = _running("wep")
     assert fm.deauth_blocked(_rsn_ap()) is True
 
@@ -597,26 +823,37 @@ async def test_buttons_unconfirmed_encryption_shows_pmkid_disabled_with_reason(b
 
 
 @pytest.mark.asyncio(loop_scope="module")
-async def test_buttons_enterprise_hides_pmkid(buttons_screen):
-    """802.1X (enterprise) PMK isn't dictionary-crackable → no PMKID button."""
+async def test_buttons_enterprise_hides_psk_attacks(buttons_screen):
+    """802.1X-only: no PSK to harvest or deauth for; EvilTwin shown disabled with the reason."""
     b = _buttons(buttons_screen, _rsn_ap(akms=("802.1X",)))
     assert b["btn-pmkid"].display is False
+    assert b["btn-deauth"].display is False
+    assert b["btn-eviltwin"].display is True and b["btn-eviltwin"].disabled is True
+    assert b["btn-eviltwin"].tooltip == "Needs a PSK or SAE network"
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_buttons_mixed_psk_and_eap_keeps_psk_attacks(buttons_screen):
+    b = _buttons(buttons_screen, _rsn_ap(akms=("PSK", "EAP")))
+    assert b["btn-pmkid"].display is True
+    assert b["btn-deauth"].display is True
+    assert b["btn-eviltwin"].display is True
 
 
 def test_card_dynamic_each_state():
-    assert fm.card_dynamic() == ""
+    assert fm.status_under_card() == ""
     Campaign.active = _FakeWep()
-    assert fm.card_dynamic() == "● replaying"
+    assert fm.status_under_card() == "● replaying"
     Campaign.active = _FakeWep(chop=True)
-    assert fm.card_dynamic() == "● chopping"
+    assert fm.status_under_card() == "● chopping"
     Campaign.active = _FakeWps()
-    assert fm.card_dynamic() == "● WPS PIN"
+    assert fm.status_under_card() == "● WPS PIN"
     Campaign.active = _FakeDeauth()
-    assert fm.card_dynamic() == "● Deauth"
+    assert fm.status_under_card() == "● Deauth"
     Campaign.active = _FakeEvilTwin()
-    assert fm.card_dynamic() == "● EvilTwin"
+    assert fm.status_under_card() == "● EvilTwin"
     Campaign.active = _FakePbc()
-    assert fm.card_dynamic() == "● WPS PBC"
+    assert fm.status_under_card() == "● WPS PBC"
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -631,12 +868,12 @@ def test_headline_eviltwin_active_and_captured():
     camp = _FakeEvilTwin(captured=False, twin_channel=1,
                          fakeap=types.SimpleNamespace(stats=stats))
     Campaign.active = camp
-    active = fm.derive_headline(_rsn_ap(), None)
+    active = _headline(_rsn_ap())
     assert "EvilTwin active" in active[0] and "CH 1" in active[0]
     assert "auth:2" in active[1] and "assoc:1" in active[1]
     assert "3 direct" in active[2] and "5 wildcard" in active[2]
     camp.captured = True
-    assert "Captured" in fm.derive_headline(_rsn_ap(), None)[0]
+    assert "Captured" in _headline(_rsn_ap())[0]
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -651,7 +888,40 @@ async def test_derive_buttons_all_disabled_when_silenced(buttons_screen, monkeyp
     assert fm.campaign_blocked(DeauthCampaign, ap) == "AP silenced"
 
 
+def _stored_psk(value: str, saved_at: int) -> Key:
+    capture = PersistedCapture(type=CaptureType.WPA_PSK, timestamp=saved_at, path=f"/tmp/{saved_at}",
+                               bssid="aa:bb:cc:dd:ee:ff", value=value, ssid="x")
+    return Key(type=CaptureType.WPA_PSK, value=value, captures=(capture,), hashline_ids=frozenset(),
+               live_verifications=())
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_verify_button_follows_the_stored_credentials_and_the_running_campaign(buttons_screen):
+    ap = _rsn_ap(akms=("PSK",))
+    state = buttons_screen.app.vault.ap_state.return_value
+
+    def verify_button():
+        buttons_screen.app.target_ap = ap
+        buttons_screen.refresh_buttons()
+        button = buttons_screen.query_one("#btn-verify", Button)
+        return button.display, button.disabled, str(button.label)
+
+    try:
+        assert verify_button()[0] is False
+        state.keys = (_stored_psk("a", 10),)
+        assert verify_button() == (True, False, "Verify")
+        state.keys = (_stored_psk("a", 10), _stored_psk("b", 20))
+        assert verify_button() == (True, False, "Verify ▾")
+        buttons_screen._controls._campaign = VerifyPskCampaign(None, ap, "a")
+        assert verify_button() == (True, True, "Verifying…")
+        buttons_screen._controls._campaign = _FakeWep(chop=False)
+        assert verify_button() == (True, True, "Verify ▾")
+    finally:
+        buttons_screen._controls._campaign = None
+        state.keys = ()
+
+
 def test_headline_silenced_outranks_listening(monkeypatch):
-    ap = _wpa_ap(known_psk=None)
+    ap = _wpa_ap()
     monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
-    assert "Silenced" in fm.derive_headline(ap, None)[0]
+    assert "Silenced" in _headline(ap)[0]

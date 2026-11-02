@@ -11,15 +11,17 @@ from wifit3.dot11.parser import WlanFrameParser
 
 from wifit3.campaigns.pmkid import PmkidFail, PmkidHarvestAttack
 from wifit3.dot11.ie import force_psk_akm
+from wifit3.models import AccessPoint
 
 _BSSID = "aa:bb:cc:dd:ee:01"
 _BSSID_B = bytes.fromhex("aabbccddee01")
 
 
-def _target(pmf_required=False, pmf_capable=False, akm_suites=(0x02,), rsn_ie=None):
-    return SimpleNamespace(bssid=_BSSID, channel=36, ssid="TESTNET", rsn_ie=rsn_ie,
-                           pmf_required=pmf_required, pmf_capable=pmf_capable,
-                           akm_suites=list(akm_suites))
+def _target(pmf_required: bool = False, pmf_capable: bool = False,
+            akm_suites: tuple[int, ...] = (0x02,), rsn_ie: bytes | None = None) -> AccessPoint:
+    return AccessPoint(bssid=_BSSID, channel=36, ssid="TESTNET", rsn_ie=rsn_ie,
+                       pmf_required=pmf_required, pmf_capable=pmf_capable,
+                       akm_suites=list(akm_suites))
 
 
 class _FakeIface:
@@ -154,12 +156,21 @@ async def test_silent_ap_retries_then_gives_up_without_deauth():
 
 async def test_pmf_required_short_circuits_without_tx():
     iface = _FakeIface(deliver_m1=False)
-    a = PmkidHarvestAttack(iface, _target(pmf_required=True))
+    a = PmkidHarvestAttack(iface, _target(pmf_required=True, pmf_capable=True))
     await a._loop()
     await a.teardown()
     assert a.pmkid is None
     assert a.fail_reason is PmkidFail.PMF_REQUIRED
     assert iface.sent == []                                    # don't even try: no auth/assoc/deauth
+
+
+async def test_invalid_pmf_short_circuits_without_tx():
+    iface = _FakeIface(deliver_m1=False)
+    a = PmkidHarvestAttack(iface, _target(pmf_required=True, pmf_capable=False))
+    await a._loop()
+    await a.teardown()
+    assert a.fail_reason is PmkidFail.PMF_INVALID
+    assert iface.sent == []
 
 
 async def test_no_psk_akm_short_circuits():

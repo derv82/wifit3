@@ -106,6 +106,8 @@ def test_present_false_when_all_none():
 # ---- end-to-end against a real M1 blob ------------------------------------
 def test_identity_from_built_m1():
     m1 = M.build_m1(
+        rf_bands=M.RF_BAND_24GHZ,
+        wsc_2_0=False,
         uuid_e=b"\x11" * 16,
         mac_e=b"\x22" * 6,
         nonce_e=b"\x33" * 16,

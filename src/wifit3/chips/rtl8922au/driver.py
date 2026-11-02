@@ -405,7 +405,8 @@ class RTL8922AUDriver(Driver):
         if self._mgmt_ep is None:
             logger.error("RTL8922AU inject_frame: no mgmt bulk-OUT endpoint (not connected?)")
             return False
-        desc = tx.build_tx_desc_mgmt(frame_bytes, band_is_2g=self._band_is_2g)
+        desc = tx.build_tx_desc_mgmt(frame_bytes, band_is_2g=self._band_is_2g,
+                                     ack=not frame_bytes[4] & 0x01)
         payload = desc + frame_bytes
         try:
             await asyncio.get_event_loop().run_in_executor(
@@ -437,19 +438,19 @@ class RTL8922AUDriver(Driver):
 
     async def enter_active_monitor(self, mac: bytes,
                                    bssid: Optional[bytes] = None) -> bytes:
-        """Arm HW auto-ACK for ``mac`` by programming it as addr-cam entry 0's SMA (the RX addr1 the
-        responder auto-ACKs). Programming the SMA is the whole trigger: the card keeps monitoring all
-        traffic and ACKs only this MAC (bench-confirmed). TMA/bssid-cam = ``bssid`` (exact match) or
-        match-all when no peer is given. Return the MAC armed. [SRC] cam.c:819."""
+        """Arm HW auto-ACK for ``mac``: the card ACKs any frame whose addr1 equals the SMA we put in
+        addr-cam entry 0. The entry's bssid fields change nothing about that on this chip (the bench
+        ACKs every combination of them); MATCH_ALL is simply what mainline writes.
+        [SRC] cam.c:768,819."""
         if self._h2c_ep is None:
             raise RuntimeError("RTL8922AU enter_active_monitor: not connected")
         sma = bytes(mac)
         tma = bytes(bssid) if bssid is not None else b"\x00" * 6
-        bssid_mask = RTW89_BSSID_MATCH_ALL if bssid is None else 0
         await asyncio.get_event_loop().run_in_executor(
             None, lambda: firmware.h2c_addr_cam(
                 self.transport, self._h2c_ep, sma=sma, tma=tma,
-                net_type=RTW89_NET_TYPE_NO_LINK, bssid=tma, bssid_mask=bssid_mask))
+                net_type=RTW89_NET_TYPE_NO_LINK, bssid=tma,
+                bssid_mask=RTW89_BSSID_MATCH_ALL))
         self._active_mac = sma
         return sma
 

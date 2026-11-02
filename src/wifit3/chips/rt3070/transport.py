@@ -79,8 +79,8 @@ def _is_device_gone(err: usb.core.USBError) -> bool:
     Mirrors the kernel's intent (rt2x00usb_check_usb_error stops on a removed device)
     but mapped to libusb reality: only ``LIBUSB_ERROR_NO_DEVICE (-4)`` / ``ENODEV`` mean
     physically-gone. NOT ``LIBUSB_ERROR_NOT_FOUND (-5)`` / ``ENOENT`` — on Windows/WinUSB
-    that's a *transient* stale-handle / mid-enumeration hiccup, not a removed device, so
-    retrying it through the deadline is what recovers a warm bring-up (the kernel's literal
+    that was the interface auto-claim failing while unclaimed (driver.connect now claims it), not
+    a removed device, so it stays retryable (the kernel's literal
     ``-ENOENT`` is a URB-unlink, a different beast). Matches chips/mt76x0u's
     ``_is_fatal_usb_error``; unknown codes default to transient (the deadline bounds it)."""
     if getattr(err, "errno", None) == errno.ENODEV:

@@ -5,18 +5,28 @@ exercise the COMMON→first-half→second-half progression, the first-half-confi
 switch, success/PSK capture, and .run resume, without a radio or fake enrollee.
 """
 
+import asyncio
+import concurrent.futures
+import multiprocessing.connection
+import threading
+import time
+from concurrent.futures.process import BrokenProcessPool
 from types import SimpleNamespace
 
+import pytest
+
+from wifit3.campaigns import pin as pin_mod
 from wifit3.campaigns.wps import known_pins, pins
 from wifit3.campaigns.pin import WpsCampaign, _state_path
-from wifit3.campaigns.wps.pixie import PixieBundle
+from wifit3.campaigns.wps.pixie import PixieBundle, PixieMode, PixieResult
 from wifit3.campaigns.wps.registrar import AttemptOutcome, PinResult
 from wifit3.dot11.wsc import crypto as wc
+from wifit3.models import AccessPoint
 from wifit3.dot11.wsc.crypto import pin_is_valid
 
 
 def _target(bssid="02:00:00:00:00:ff", ssid="Net", ch=1):
-    return SimpleNamespace(bssid=bssid, ssid=ssid, channel=ch, wps_locked=False)
+    return AccessPoint(bssid=bssid, ssid=ssid, channel=ch)
 
 
 async def _set_fake_mac(*_a, **_k):
@@ -56,6 +66,9 @@ def _iface():
     return ns
 
 
+PIXIE_PIN = pins.full_pin("1357", "246")
+
+
 def _pixie_bundle(pin: str, e_s1: bytes, e_s2: bytes) -> PixieBundle:
     authkey = bytes.fromhex("11" * wc.AUTHKEY_LEN)
     pke = bytes.fromhex("22" * wc.PUBKEY_LEN)
@@ -66,7 +79,9 @@ def _pixie_bundle(pin: str, e_s1: bytes, e_s2: bytes) -> PixieBundle:
         pkr=pkr,
         e_hash1=wc.e_or_r_hash(authkey, e_s1, psk1, pke, pkr),
         e_hash2=wc.e_or_r_hash(authkey, e_s2, psk2, pke, pkr),
-        e_nonce=bytes.fromhex("44" * wc.NONCE_LEN),
+        # Top bit set in the first word. A real glibc nonce never has it, so a no-match bundle
+        # skips the RTL819x +/-1-day seed sweep instead of paying 0.7s on every test run.
+        e_nonce=bytes.fromhex("c4" + "44" * (wc.NONCE_LEN - 1)),
         authkey=authkey,
     )
 
@@ -161,6 +176,275 @@ async def test_campaign_falls_back_when_pixie_has_no_match(tmp_path, monkeypatch
     assert c.state.found_pin == known
     assert c.tried[:2] == [pins.COMMON_PINS[0], pins.COMMON_PINS[1]]
     assert len(c.tried) > 2
+
+
+async def test_campaign_resumes_the_sweep_when_a_pixie_half_is_wrong(tmp_path, monkeypatch):
+    # PixieDust can prove a first half the AP never confirmed (RTL819x, E-S2's seed missed). When
+    # that half is wrong the second-half phase has to retire it and resume the sweep.
+    monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])
+    known = pins.full_pin("0001", "000")
+    zero = b"\x00" * wc.SECRET_NONCE_LEN
+
+    class PixieWrongHalf(ScriptedCampaign):
+        async def _try(self, pin):
+            if len(self.tried) >= 40:
+                self.stopped = True   # a sweep stuck on one PIN would never return on its own
+            out = await super()._try(pin)
+            if len(self.tried) == 1:
+                out.pixie = _pixie_bundle(known, zero, zero)
+            return out
+
+        async def _run_pixie(self, bundle):
+            return PixieResult(first_half="9999", mode=PixieMode.RTL819X)
+
+    c = PixieWrongHalf(_iface(), _target(), log=lambda m: None, known_pin=known, psk="pw")
+    await c._loop()
+
+    wrong = pins.full_pin("9999", "000")
+    assert c.status == "found"
+    assert c.state.found_pin == known
+    assert "9999" in c.state.dead_first_halves
+    assert c.tried[1] == wrong and c.tried.count(wrong) == 1
+
+
+async def test_campaign_verifies_and_reports_an_empty_pin(tmp_path, monkeypatch):
+    # A zero-length device password is a real PixieDust outcome. "" is falsy, so the campaign has
+    # to carry it as a recovered PIN and render it as <empty> rather than drop the win.
+    monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])
+    zero = b"\x00" * wc.SECRET_NONCE_LEN
+
+    class PixieEmptyPin(ScriptedCampaign):
+        async def _try(self, pin):
+            out = await super()._try(pin)
+            if len(self.tried) == 1:
+                out.pixie = _pixie_bundle("", zero, zero)
+            return out
+
+        async def _run_pixie(self, bundle):
+            return PixieResult(pin="", mode=PixieMode.NULL_SECRET, found=True)
+
+    c = PixieEmptyPin(_iface(), _target(), log=lambda m: None, known_pin="", psk="pw")
+    await c._loop()
+
+    assert c.status == "found"
+    assert c.state.found_pin == ""
+    assert c.state.found_psk == "pw"
+    assert c.tried == [pins.COMMON_PINS[0], ""]
+    assert "<empty>" in pin_mod.wps_status_markup(c)
+    assert pin_mod.run_progress_line(c.state) is None
+
+
+# ----- PixieDust offload: the sweep must never make Stop or process exit wait on it -----
+
+class _FakeWorker:
+    def __init__(self):
+        self.killed = False
+
+    def kill(self):
+        self.killed = True
+
+
+class _FakePool:
+    """Stands in for ProcessPoolExecutor to assert how the pool is dropped, with no worker to
+    spawn. ``shutdown`` clears the process map exactly as the real executor does."""
+
+    def __init__(self):
+        self._processes = {1: _FakeWorker()}
+        self.shutdown_kwargs = None
+
+    def shutdown(self, **kwargs):
+        self.shutdown_kwargs = kwargs
+        self._processes = None
+
+
+def _pixie_campaign(known=PIXIE_PIN):
+    c = ScriptedCampaign(_iface(), _target(), log=lambda m: None, known_pin=known, psk="pw")
+    c._PIXIE_POLL = 0.001   # the production 0.2s Stop cadence only slows the tests down
+    return c
+
+
+def _no_process_pool(*_a, **_k):
+    raise OSError("no subprocesses in this environment")
+
+
+def _parked_recover(started, release):
+    """A search that parks until released, so Stop/cancel can be caught mid-flight."""
+    def recover(_bundle):
+        started.set()
+        release.wait(5)
+        return PixieResult(pin="99999999", found=True)
+    return recover
+
+
+async def _await_started(started):
+    await asyncio.get_running_loop().run_in_executor(None, started.wait, 5)
+
+
+async def test_pixie_search_runs_in_a_worker_process(monkeypatch):
+    # The only test here that spawns a worker. The bundle is null-secret, so the search hits on
+    # its first mode and this costs a spawn and nothing more.
+    created, workers = [], []
+
+    class RecordingPool(concurrent.futures.ProcessPoolExecutor):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            assert isinstance(self._processes, dict)   # _halt_pixie relies on this private map
+            created.append(self)
+
+        def submit(self, *a, **kw):
+            future = super().submit(*a, **kw)
+            workers.extend(self._processes.values())   # populated by submit, cleared by shutdown
+            return future
+
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", RecordingPool)
+    c = _pixie_campaign()
+    zero = bytes(wc.SECRET_NONCE_LEN)
+
+    result = await c._run_pixie(_pixie_bundle(PIXIE_PIN, zero, zero))
+
+    assert result.found and result.pin == PIXIE_PIN
+    assert len(created) == 1       # the search really left the event loop's process
+    assert c._pixie_pool is None   # and the worker was dropped once it answered
+    assert workers, "the search never reached a worker process"
+    for worker in workers:
+        # Wait on the sentinel, not is_alive(): the pool's manager thread reaps these workers too,
+        # and the thread that loses the waitpid race sees ECHILD, which is_alive() reports as alive.
+        died = multiprocessing.connection.wait([worker.sentinel], timeout=10)
+        assert died, "the search worker outlived the campaign"
+
+
+async def test_pixie_falls_back_to_a_thread_without_subprocesses(monkeypatch):
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _no_process_pool)
+    c = _pixie_campaign()
+    zero = bytes(wc.SECRET_NONCE_LEN)
+
+    result = await c._run_pixie(_pixie_bundle(PIXIE_PIN, zero, zero))
+
+    assert result.found and result.pin == PIXIE_PIN
+
+
+class _BrokenOnUsePool:
+    """Constructs fine, then fails on first use. ProcessPoolExecutor spawns its workers lazily,
+    so an unusable subprocess environment surfaces out of the awaited future, not the ctor."""
+
+    def __init__(self, *_a, **_k):
+        self._processes = {}
+        self.shutdown_kwargs = None
+
+    def submit(self, *_a, **_k):
+        broken = concurrent.futures.Future()
+        broken.set_exception(BrokenProcessPool("boom"))
+        return broken
+
+    def shutdown(self, **kwargs):
+        self.shutdown_kwargs = kwargs
+        self._processes = None
+
+
+async def test_pixie_falls_back_to_a_thread_when_the_pool_breaks_on_use(monkeypatch):
+    pools = []
+
+    def _broken_on_use(*a, **kw):
+        pools.append(_BrokenOnUsePool(*a, **kw))
+        return pools[-1]
+
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _broken_on_use)
+    c = _pixie_campaign()
+    zero = bytes(wc.SECRET_NONCE_LEN)
+
+    result = await c._run_pixie(_pixie_bundle(PIXIE_PIN, zero, zero))
+
+    assert result.found and result.pin == PIXIE_PIN   # the thread fallback still answered
+    assert len(pools) == 1                            # the process pool was tried first
+    assert pools[0].shutdown_kwargs == {"wait": False, "cancel_futures": True}
+    assert c._pixie_pool is None
+
+
+async def test_stop_abandons_the_pixie_search(monkeypatch):
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _no_process_pool)
+    started, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(pin_mod, "recover_pin", _parked_recover(started, release))
+    c = _pixie_campaign()
+    try:
+        search = asyncio.ensure_future(c._run_pixie(object()))
+        await _await_started(started)
+        c.stopped = True
+
+        result = await asyncio.wait_for(search, timeout=5)
+
+        assert result.found is False   # abandoned, not the answer the sweep would have given
+        assert c._pixie_pool is None
+    finally:
+        release.set()
+
+
+async def test_cancelling_the_search_does_not_join_it(monkeypatch):
+    # Quitting the app cancels the campaign task. Leaving the search must not wait on it.
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _no_process_pool)
+    started, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(pin_mod, "recover_pin", _parked_recover(started, release))
+    c = _pixie_campaign()
+    try:
+        search = asyncio.ensure_future(c._run_pixie(object()))
+        await _await_started(started)
+
+        search.cancel()
+        t0 = time.perf_counter()
+        with pytest.raises(asyncio.CancelledError):
+            await search
+        elapsed = time.perf_counter() - t0
+
+        assert elapsed < 2.0, f"cancellation joined the search ({elapsed:.1f}s of a 5s sweep)"
+        assert c._pixie_pool is None
+    finally:
+        release.set()
+
+
+async def test_stopped_search_does_not_claim_there_were_no_matches(monkeypatch):
+    # A search cut short by Stop never looked; saying "no matches" would be a lie.
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _no_process_pool)
+    started, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(pin_mod, "recover_pin", _parked_recover(started, release))
+    zero = bytes(wc.SECRET_NONCE_LEN)
+    logged = []
+    c = ScriptedCampaign(_iface(), _target(), log=logged.append, known_pin=PIXIE_PIN, psk="pw")
+    c._PIXIE_POLL = 0.001
+    out = AttemptOutcome(PinResult.FIRST_HALF_WRONG, PIXIE_PIN,
+                         pixie=_pixie_bundle(PIXIE_PIN, zero, zero))
+    try:
+        attempt = asyncio.ensure_future(c._try_pixie(PIXIE_PIN, out))
+        await _await_started(started)
+        c.stopped = True
+
+        assert await asyncio.wait_for(attempt, timeout=5) is False
+        assert not any("no PixieDust matches" in m for m in logged)
+    finally:
+        release.set()
+
+
+async def test_halt_pixie_kills_the_worker_instead_of_waiting():
+    c = _pixie_campaign()
+    pool = _FakePool()
+    worker = pool._processes[1]
+    c._pixie_pool = pool
+
+    c._halt_pixie()
+
+    assert pool.shutdown_kwargs == {"wait": False, "cancel_futures": True}
+    assert worker.killed, "workers must be captured before shutdown() clears the map"
+    assert c._pixie_pool is None
+
+
+async def test_teardown_halts_the_pixie_pool():
+    c = _pixie_campaign()
+    pool = _FakePool()
+    c._pixie_pool = pool
+
+    c._teardown()
+
+    assert pool.shutdown_kwargs is not None
+    assert c._pixie_pool is None
+    c._teardown()   # idempotent: no pool left to halt
 
 
 def _write_done_state(tmp_path, found_pin, found_psk, bssid="02:00:00:00:00:ff"):
@@ -383,6 +667,19 @@ def test_dead_first_half_skips_shared_prefix_common(tmp_path, monkeypatch):
     assert "12345678" not in seen           # skipped: prefix already dead
 
 
+def test_a_changed_pin_forgets_the_old_pins_dead_first_halves(monkeypatch):
+    monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: ["00025614", "20001322"])
+    c = WpsCampaign(_iface(), _target(), log=lambda m: None)
+    c.state.dead_first_halves = ["0002", "2000"]
+    c.state.found_pin = "12345670"
+    c.state.phase = "verify"
+
+    c._apply_verify_outcome("12345670", AttemptOutcome(PinResult.FIRST_HALF_WRONG, "12345670"))
+
+    assert c.state.dead_first_halves == ["1234"]
+    assert c._next_pin() == "00025614"
+
+
 def test_dead_first_half_skips_common_prefix_in_sweep(tmp_path):
     # A COMMON prefix ruled out (e.g. "0000" via 00000000) is not re-tried when the
     # first-half sweep reaches p1_index 0.
@@ -532,3 +829,20 @@ def test_lost_reply_retry_is_bounded(tmp_path):
         else:
             break
     assert trues == c._MAX_TIMEOUT_RETRIES   # concedes after the cap, doesn't wedge
+
+
+def test_wps_status_shows_fail_reason():
+    import types
+    from wifit3.campaigns.pin import wps_status_markup
+    camp = types.SimpleNamespace(
+        state=types.SimpleNamespace(found_pin=None, tested=0, phase="common", first_half=None),
+        status="failed",
+        fail_reason="WPS stayed locked for 5 cycles without PIN progress",
+        eta_seconds=None,
+        lock_kind=None,
+    )
+
+    line = wps_status_markup(camp)
+
+    assert "failed" in line
+    assert "stayed locked" in line

@@ -67,7 +67,12 @@ def render_signal_bar(
         # blocks (a centred ✕ glyph floats high).
         bar.append("╳", style=f"bold rgb({int(110 + 145 * pulse)},0,0)")
         bar.append(" ")
-        for i in range(width):
+        # The track fills what is LEFT after the cross and its gap, not the full
+        # width. Emitting width blocks after a 2-cell prefix returned width+2 and
+        # pushed the caller's right-aligned dBm past the edge (router_endpoint.
+        # _power_line sizes the bar to fill its column), so the readout tore apart
+        # only on a dead AP while every live AP rendered correctly.
+        for i in range(max(0, width - 2)):
             bar.append("█", style=_dim(_hue(i / span), beat))
         return bar
 

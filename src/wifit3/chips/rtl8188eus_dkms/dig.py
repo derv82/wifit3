@@ -4,6 +4,8 @@ Ports the periodic ~2 s ``phydm_watchdog`` no-link (always-monitor) path [SRC] p
 On the wire each fire is one contiguous EP0 run (the kernel holds the IO lock across the
 timer callback). The mechanisms layer in wire order [SRC] phydm.c:1846-1878:
 
+    phydm_traffic_load_decision          consecutive_idlel_time     (_traffic_load_decision)
+    phydm_receiver_blocking              SYS_CFG cut + NBI notch    (_receiver_blocking)
     odm_false_alarm_counter_statistics   FA counters + EDCCA flag   (_fa_statistics)
     phydm_dig                            step the initial gain (IGI) (_dig)
     phydm_cck_pd_th                      CCK packet-detection thresh (_cck_pd)
@@ -28,6 +30,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from . import bb, powertrack
+from .constants import NOTCH_FILTER_EN, NOTCH_RXDSP_TH, rOFDM0_RxDSP
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +38,94 @@ WATCHDOG_PERIOD_S = 2.0        # kernel DIG-watchdog cadence
 
 _REG_SYS_CFG = 0x00F0          # phydm_receiver_blocking reads the 8188E cut from SYS_CFG[15:12]
 
+# --- phydm_receiver_blocking / NBI (11N) [SRC] phydm.c:3041, phydm_api.c:720-1006 -----
+PHYDM_WATCH_DOG_PERIOD = 2     # seconds (CE) [SRC] phydm.h:107
+_MP_MODE = False               # registrypriv.mp_mode = rtw_mp_mode = 0 [SRC] os_intfs.c:127
+FUNC_ENABLE = 1                # [SRC] phydm_api.h:38
+FUNC_DISABLE = 2
+PHYDM_SET_SUCCESS = 1          # [SRC] phydm_pre_define.h:39
+PHYDM_SET_NO_NEED = 3
+# nbi_table_128 (tone_idx x 10) [SRC] phydm_api.c:727
+_NBI_TABLE_128 = (25, 55, 85, 115, 135, 155, 185, 205, 225, 245,
+                  265, 285, 305, 335, 355, 375, 395, 415, 435, 455,
+                  485, 505, 525, 555, 585, 615, 635)
 
-def _receiver_blocking(t) -> None:
-    """``phydm_receiver_blocking`` [SRC] phydm.c:3041 — the first op of ``phydm_watchdog``
-    (before the FA stats). Reads SYS_CFG (``odm_get_bb_reg(dm, 0xf0, MASKDWORD)``) for the
-    8188E cut, which gates a narrowband-interference notch (``receiver_blocking``) on ch1/ch13.
-    The notch only arms when ``consecutive_idle_time > 10 && !mp_mode && adaptivity_enable`` —
-    never true in the cold-boot capture (the card never idles long enough on ch1/13), so the
-    wire shows a lone SYS_CFG read each tick. Ported as the read; the conditional notch is a
-    separate (live-relevant) milestone."""
-    t.read32(_REG_SYS_CFG)
+
+def _traffic_load_decision(state: WatchdogState) -> None:
+    """``phydm_traffic_load_decision``'s idle-time update [SRC] phydm.c:79-82, called from
+    ``phydm_common_info_self_update`` before ``phydm_receiver_blocking``. ``total_tp`` is always
+    0 in monitor mode: RX skips ``count_rx_stats`` [SRC] rtw_recv.c:4188 and injected frames are
+    MGNT_FRAMETAG [SRC] rtw_mlme_ext.c:7901, which ``rtw_count_tx_stats`` does not count."""
+    state.consecutive_idlel_time = (state.consecutive_idlel_time + PHYDM_WATCH_DOG_PERIOD) & 0xFFFF
+
+
+def _nbi_enable(t, enable: int) -> None:
+    """``phydm_nbi_enable`` (11N) [SRC] phydm_api.c:787."""
+    bb.set_bb_reg(t, rOFDM0_RxDSP, NOTCH_FILTER_EN, 1 if enable == FUNC_ENABLE else 0)
+
+
+def _set_nbi_reg(t, tone_idx_tmp: int) -> None:
+    """``phydm_set_nbi_reg`` (11N, FFT_128_TYPE) [SRC] phydm_api.c:720."""
+    reg_idx = 0
+    for i, tone in enumerate(_NBI_TABLE_128):
+        if tone_idx_tmp < tone:
+            reg_idx = i + 1
+            break
+    bb.set_bb_reg(t, rOFDM0_RxDSP, NOTCH_RXDSP_TH, reg_idx)
+
+
+def _nbi_setting(t, enable: int, channel: int, bw: int, f_interference: int) -> int:
+    """``phydm_nbi_setting`` [SRC] phydm_api.c:968, second_ch PHYDM_DONT_CARE. Only the 2.4 GHz
+    20 MHz ``phydm_calculate_fc`` branch is reachable [SRC] phydm_api.c:831."""
+    set_result = PHYDM_SET_SUCCESS
+    if enable != FUNC_DISABLE:
+        fc = 2412 + (channel - 1) * 5                          # phydm_calculate_fc
+        bw_up = fc + bw // 2                                   # phydm_calculate_intf_distance
+        bw_low = fc - bw // 2
+        if bw_low <= f_interference <= bw_up:
+            tone_idx_tmp = abs(fc - f_interference) << 5
+            _set_nbi_reg(t, tone_idx_tmp)
+            set_result = PHYDM_SET_SUCCESS
+        else:
+            set_result = PHYDM_SET_NO_NEED
+    _nbi_enable(t, enable if set_result == PHYDM_SET_SUCCESS else FUNC_DISABLE)
+    return set_result
+
+
+def _receiver_blocking(t, state: WatchdogState, channel: int) -> None:
+    """``phydm_receiver_blocking`` [SRC] phydm.c:3041. Arms an NBI notch on 8188E_T ch1/13 and
+    8188E_S ch13 (20 MHz). In this build ``adaptivity_enable`` stays False, so the notch never
+    arms."""
+    bb_regf0 = t.read32(_REG_SYS_CFG)
+    if ((bb_regf0 & 0xF000) >> 12) < 8:                       # 8188E_T version
+        if state.consecutive_idlel_time > 10 and not _MP_MODE and state.adaptivity_enable:
+            if channel == 1:
+                _nbi_setting(t, FUNC_ENABLE, channel, 20, 2410)
+                state.is_receiver_blocking_en = True
+            elif channel == 13:
+                _nbi_setting(t, FUNC_ENABLE, channel, 20, 2473)
+                state.is_receiver_blocking_en = True
+            elif state.is_receiver_blocking_en and channel != 1 and channel != 13:
+                _nbi_enable(t, FUNC_DISABLE)
+                bb.set_bb_reg(t, rOFDM0_RxDSP, NOTCH_RXDSP_TH, 0x1F)
+                state.is_receiver_blocking_en = False
+            return
+    else:                                                      # 8188E_S version
+        if state.consecutive_idlel_time > 10 and not _MP_MODE and state.adaptivity_enable:
+            if channel == 13:
+                _nbi_setting(t, FUNC_ENABLE, channel, 20, 2473)
+                state.is_receiver_blocking_en = True
+            elif state.is_receiver_blocking_en and channel != 13:
+                _nbi_enable(t, FUNC_DISABLE)
+                bb.set_bb_reg(t, rOFDM0_RxDSP, NOTCH_RXDSP_TH, 0x1F)
+                state.is_receiver_blocking_en = False
+            return
+
+    if state.is_receiver_blocking_en:
+        _nbi_enable(t, FUNC_DISABLE)
+        bb.set_bb_reg(t, rOFDM0_RxDSP, NOTCH_RXDSP_TH, 0x1F)
+        state.is_receiver_blocking_en = False
+
 
 # --- IGI / DIG (11N) [SRC] phydm_dig.c ------------------------------------
 _REG_IGI = 0x0C50              # ODM_REG(IGI_A_11N), mask 0x7f
@@ -122,6 +203,9 @@ class WatchdogState:
     nhm_period: int = 0                    # ccx->nhm_period (init 0 -> first tick writes)
     clm_period: int = _CLM_PERIOD_MAX      # ccx->clm_period (init already 65535 -> skip)
     nhm_igi: int = _IGI_SEED              # IGI the NHM thresholds were last computed for
+    is_receiver_blocking_en: bool = False  # dm->is_receiver_blocking_en
+    consecutive_idlel_time: int = 0        # dm->consecutive_idlel_time (u16, seconds)
+    adaptivity_enable: bool = False        # dm->adaptivity_enable [SRC] phydm_adaptivity.c:526
 
 
 def seed_state(igi: int, cck_cca: int) -> WatchdogState:
@@ -286,6 +370,9 @@ def _adaptivity(t, state: WatchdogState) -> None:
     drive the EDCCA L2H/H2L threshold (0xc4c) from the carried IGI.
     th_l2h = th_l2h_ini + (igi_target - igi); th_h2l = th_l2h - hl_diff (lower bounds
     h2l_lb/l2h_lb = 0). Replaces the no-link 0x7f/0x7f seed with an active threshold."""
+    # phydm_check_adaptivity: no ODM_BB_ADAPTIVITY (CONFIG_RTW_ADAPTIVITY_EN = disable,
+    # Makefile:74) [SRC] phydm_adaptivity.c:78
+    state.adaptivity_enable = False
     igi = state.cur_ig_value
     th_l2h = _TH_L2H_INI + (_IGI_TARGET - igi)
     th_h2l = th_l2h - _TH_EDCCA_HL_DIFF
@@ -335,11 +422,12 @@ def _nhm(t, state: WatchdogState) -> None:
 
 
 def watchdog_tick(t, state: WatchdogState, pt_state) -> DigTick:
-    """One no-link ``phydm_watchdog`` tick (wire order [SRC] phydm.c:1846-1878): FA statistics
-    -> DIG -> CCK-PD -> adaptivity -> halrf thermal power-track -> NHM/CLM env-monitor. Both
-    ``state`` (DIG/CCK-PD/adaptivity/NHM) and ``pt_state`` (thermal) are carried across ticks
-    (the driver owns them; the chip stays in sync)."""
-    _receiver_blocking(t)                # phydm_watchdog's first op: SYS_CFG cut read
+    """One no-link ``phydm_watchdog`` tick (wire order [SRC] phydm.c:1846-1878): receiver
+    blocking -> FA statistics -> DIG -> CCK-PD -> adaptivity -> halrf thermal power-track ->
+    NHM/CLM env-monitor. Both ``state`` (DIG/CCK-PD/adaptivity/NHM) and ``pt_state`` (thermal,
+    ``dm->channel``) are carried across ticks (the driver owns them; the chip stays in sync)."""
+    _traffic_load_decision(state)        # phydm_common_info_self_update
+    _receiver_blocking(t, state, pt_state.channel)
     fa = _fa_statistics(t)
     _dig(t, state, fa.cnt_all)
     _cck_pd(t, state, fa.cck_fa)

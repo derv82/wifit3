@@ -8,7 +8,7 @@ falling back to sending it anyway if no matchable Auth Resp arrives.
 import struct
 from wifit3.dot11.parser import WlanFrameParser
 
-from wifit3.campaigns.auth_assoc import Association
+from wifit3.campaigns.auth_assoc import Association, WlanTransport
 
 _BSSID = "34:21:09:00:01:ff"
 _BSSID_B = bytes.fromhex("3421090001ff")
@@ -62,6 +62,16 @@ class _RespIface:
 
 def _subtypes(iface):
     return [(f[0] & 0xF0) >> 4 for f in iface.sent]
+
+
+async def test_transport_queue_keeps_only_recent_frames():
+    transport = WlanTransport(_RespIface(), _BSSID_B, _US)
+
+    for index in range(WlanTransport.RX_QUEUE_SIZE + 5):
+        transport._enqueue_frame(index.to_bytes(2, "big"))
+
+    assert transport._q.qsize() == WlanTransport.RX_QUEUE_SIZE
+    assert await transport.recv(0.01) == (5).to_bytes(2, "big")
 
 
 async def test_waits_for_auth_resp_then_sends_assoc():
@@ -159,3 +169,21 @@ def test_assoc_req_dynamic_privacy():
     f_rsn = assoc_req(_BSSID_B, _US, "Net", trailer_ies=rsn_trailer)
     cap_rsn = struct.unpack("<H", f_rsn[24:26])[0]
     assert (cap_rsn & 0x0010) != 0   # Privacy bit SET for RSN
+
+
+_OTHER_AP = bytes.fromhex("020000000001")
+
+
+def _auth_resp_from(bssid: bytes, status: int = 0) -> bytes:
+    # Same shape as _auth_resp, but addr2/addr3 name a different AP.
+    return (b"\xb0\x00\x00\x00" + _US + bssid + bssid + b"\x00\x00"
+            + b"\x00\x00" + b"\x02\x00" + struct.pack("<H", status))
+
+
+def test_rx_cb_ignores_a_response_from_another_bssid():
+    a = Association(_RespIface(), _BSSID, "Net", 1, our_mac=_US)
+    a._active = True
+    a._rx_cb(WlanFrameParser.parse_80211_frame(_auth_resp_from(_OTHER_AP), -40))
+    assert a._auth_ok is False and a.fail_reason is None
+    a._rx_cb(WlanFrameParser.parse_80211_frame(_auth_resp_from(_BSSID_B), -40))
+    assert a._auth_ok is True

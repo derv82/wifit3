@@ -25,14 +25,17 @@ from __future__ import annotations
 
 from typing import Iterator, NamedTuple, Tuple
 
+from .phy_cond import ODM_CUT_I
+
 RXDESC_SIZE = 24            # [SRC] rtw_recv.h RXDESC_SIZE (6 dwords); == RXDESC_OFFSET
 FCS_LEN = 4                 # IEEE80211_FCS_LEN
 NORMAL_RX = 0              # [SRC] rtw_recv.h pkt_rpt_type enum (vs TX_REPORT1/2, HIS_REPORT)
 _RSSI_UNKNOWN = 0          # reported when a frame carries no PHY status (physt=0)
 
-# CCK LNA gain table for this card's cut (A => TSMC branch), lna_gain_table_1
-# [SRC] phydm_cck_rssi_8188e. (cut >= I would use lna_gain_table_0/2.)
-_CCK_LNA_GAIN = (29, 20, 12, 3, -6, -15, -24, -33)
+# [SRC] phydm_cck_rssi_8188e (phydm_phystatus.c:833-835)
+lna_gain_table_0 = (17, -1, -13, -29, -32, -35, -38, -41)
+lna_gain_table_1 = (29, 20, 12, 3, -6, -15, -24, -33)
+lna_gain_table_2 = (17, -1, -13, -17, -32, -43, -38, -47)
 
 
 class RxDesc(NamedTuple):
@@ -66,17 +69,32 @@ def query_rx_desc(desc: bytes) -> RxDesc:
     )
 
 
-def decode_rssi(phy_status: bytes, data_rate: int) -> int:
+def phydm_cck_rssi_8188e(cut_version: int, ext_lna: bool, type_glna: int,
+                         lna_idx: int, vga_idx: int) -> int:
+    """[SRC] phydm_phystatus.c:827. cut >= ODM_CUT_I is SMIC silicon, else TSMC."""
+    if cut_version >= ODM_CUT_I:
+        if ext_lna and type_glna == 0x2:            # eLNA 14dB
+            lna_gain = lna_gain_table_2[lna_idx]
+        else:
+            lna_gain = lna_gain_table_0[lna_idx]
+    else:
+        lna_gain = lna_gain_table_1[lna_idx]
+    return lna_gain - 2 * vga_idx
+
+
+def decode_rssi(phy_status: bytes, data_rate: int, cut_version: int, ext_lna: bool,
+                type_glna: int) -> int:
     """Per-frame RSSI in dBm (recv_signal_power) from ``phy_status_rpt_8192cd``
     [SRC] phydm_rx_phy_status92c_series_parsing. CCK (rate <= 3): the CCK AGC report
-    (byte 5) gives LNA[7:5]/VGA[4:0] -> ``lna_gain - 2*VGA``. OFDM/HT: the combined
+    (byte 5) gives LNA[7:5]/VGA[4:0] -> ``phydm_cck_rssi_8188e``. OFDM/HT: the combined
     pwdb byte (byte 4) gives ``((pwdb >> 1) & 0x7f) - 110``.
     """
     if len(phy_status) < 6:
         return _RSSI_UNKNOWN
     if data_rate <= 3:                              # CCK (1/2/5.5/11 Mbps)
         cck = phy_status[5]
-        return _CCK_LNA_GAIN[(cck & 0xE0) >> 5] - 2 * (cck & 0x1F)
+        return phydm_cck_rssi_8188e(cut_version, ext_lna, type_glna,
+                                    (cck & 0xE0) >> 5, cck & 0x1F)
     return ((phy_status[4] >> 1) & 0x7F) - 110      # OFDM/HT pwdb_all
 
 
@@ -84,7 +102,8 @@ def _rnd4(x: int) -> int:
     return (x + 3) & ~3
 
 
-def iter_frames(buf: bytes) -> Iterator[Tuple[bytes, int]]:
+def iter_frames(buf: bytes, cut_version: int, ext_lna: bool,
+                type_glna: int) -> Iterator[Tuple[bytes, int]]:
     """[SRC] recvbuf2recvframe — walk the aggregated bulk-IN buffer.
 
     Yields ``(frame, rssi_dbm)`` for each good NORMAL_RX MPDU, FCS stripped. C2H/TX
@@ -102,7 +121,8 @@ def iter_frames(buf: bytes) -> Iterator[Tuple[bytes, int]]:
             start = off + RXDESC_SIZE + d.drvinfo_sz + d.shift_sz
             frame = buf[start:start + d.pkt_len]
             if len(frame) > FCS_LEN:            # strip the HW-appended FCS
-                rssi = (decode_rssi(buf[off + RXDESC_SIZE:start], d.data_rate)
+                rssi = (decode_rssi(buf[off + RXDESC_SIZE:start], d.data_rate,
+                                    cut_version, ext_lna, type_glna)
                         if d.physt else _RSSI_UNKNOWN)
                 yield frame[:-FCS_LEN], rssi
         pkt_offset = _rnd4(pkt_offset)          # RX_AGG_USB 4-byte alignment

@@ -98,6 +98,7 @@ async def test_set_channel_without_params_is_false():
 async def test_inject_frame_builds_desc_and_sends_on_bulk_out():
     transport = MagicMock()
     d = drv.Rtl8812auDkmsDriver(transport)
+    d._channel = 1                                        # connect() leaves the card tuned
     # deauth-shaped MPDU: fc/dur(4) + addr1(6) + addr2(6) + addr3(6) + seq(2) + reason(2).
     frame = bytes.fromhex("c0000000") + b"\x11" * 6 + b"\x22" * 6 + b"\x33" * 6 + b"\x00\x00\x07\x00"
     assert await d.inject_frame(frame) is True
@@ -106,6 +107,18 @@ async def test_inject_frame_builds_desc_and_sends_on_bulk_out():
     # [40-byte fake TXDESC | frame]; the frame is appended verbatim (HW appends the FCS).
     assert len(sent) == 40 + len(frame)
     assert sent.endswith(frame)
+    assert sent[16] & 0x7F == 0x00                        # TX_RATE: 1M CCK on 2.4 GHz
+
+
+async def test_inject_frame_uses_6m_ofdm_on_5ghz():
+    transport = MagicMock()
+    d = drv.Rtl8812auDkmsDriver(transport)
+    d._channel = 149
+    frame = bytes.fromhex("c0000000") + b"\x11" * 6 + b"\x22" * 6 + b"\x33" * 6 + b"\x00\x00\x07\x00"
+    assert await d.inject_frame(frame) is True
+    sent = transport.bulk_out.call_args.args[0]
+    assert sent[16] & 0x7F == 0x04                        # TX_RATE: 6M OFDM
+    assert (int.from_bytes(sent[4:8], "little") >> 16) & 0x1F == 7   # RATE_ID: G group
 
 
 async def test_inject_frame_rejects_runt():

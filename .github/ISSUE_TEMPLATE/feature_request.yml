@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest a capability or improvement for wifit3.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Suggest a new capability or an improvement to an existing one. For a USB device that isn't
+        supported yet, use the **Hardware request** template instead; for "how do I…?", use the
+        **Usage question** link on the previous page.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: |
+        The problem or gap you're hitting; what you want to accomplish and what's in the way today?
+        It helps to describe exactly what you need, not just what you think the solution should be.
+      placeholder: When I'm focused on one AP, I can't tell at a glance which clients have already been deauthed…
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should wifit3 do?
+      description: The behavior or capability you'd like. Be as descriptive as you can.
+      placeholder: Mark deauthed clients in the focus view with a status column / colour…
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of wifit3 does this touch?
+      options:
+        - Scanner view (AP discovery / channel hopping)
+        - Focus view (single-AP)
+        - Attacks (Deauth, PMKID, WEP, WPS, EvilTwin)
+        - Capture / output files
+        - Terminal UI (general)
+        - Other / Not sure
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: This is a feature idea, not a bug or a request to support a new adapter.
+          required: true

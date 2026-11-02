@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
 from wifit3.chips.rtl8188eus_dkms import (
-    bb, chan, dm, efuse, firmware, mac, pwrseq, rf, txpower,
+    bb, chan, dig, dm, efuse, firmware, mac, rf, txpower,
 )
 from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL
 
@@ -43,9 +43,8 @@ def _strip(ops):
 
 
 def _replay_halinit(pcap, dev):
-    """Replay the whole hal_init and return (transport, ops, params, RfRegChnlVal[A])."""
-    t0 = rp.ReplayTransport(rp.extract_ops(pcap, dev, start_addr=0x0006))
-    pwrseq.power_on(t0)
+    """Replay the whole hal_init and return (transport, ops, params, RfRegChnlVal[A], DM seed)."""
+    t0 = rp.ReplayTransport(rp.extract_ops(pcap, dev, start_addr=0x00CF))
     params = efuse.read_chip_params(t0)
     ops = _strip(rp.extract_ops(pcap, dev, start_addr=0x0080))
     t = rp.ReplayTransport(ops)
@@ -60,11 +59,11 @@ def _replay_halinit(pcap, dev):
     rf_chnl = rf.read_rf_chnl_val(t)[0]
     bb.bb_turn_on_block(t)
     mac.invalidate_cam_all(t)
-    txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL)
+    txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL, 0, 0)
     mac.init_misc11_tail(t)
-    dm.init_hal_dm(t)
+    dm_seed = dm.init_hal_dm(t)
     dm.init_hal_tail(t)
-    return t, ops, params, rf_chnl
+    return t, ops, params, rf_chnl, dm_seed
 
 
 def verify(cap_name: str) -> int:
@@ -74,7 +73,7 @@ def verify(cap_name: str) -> int:
         print(f"FAIL: no such capture {pcap}")
         return 1
     dev = rp.find_card_device(pcap)
-    t, ops, params, rf_chnl = _replay_halinit(pcap, dev)
+    t, ops, params, rf_chnl, dm_seed = _replay_halinit(pcap, dev)
 
     # The channel set sits between the airmon monitor-prefix (RXFLTMAP1 write) and the
     # monitor opmode entry (MSR read). airmon's first iw command tunes channel 1.
@@ -90,7 +89,8 @@ def verify(cap_name: str) -> int:
     window = ops[i6a2 + 1:j102]
     tw = rp.ReplayTransport(window)
     try:
-        new_rf = chan.set_channel(tw, params.tx_power, rf_chnl, 1)
+        new_rf = chan.set_channel(tw, params.tx_power, rf_chnl, 1, False, 0, 0,
+                                  dig.seed_state(dm_seed.igi, dm_seed.cck_cca))
     except rp.Divergence as d:
         print(f"{cap_name}: FAIL ch1 @ first divergence:\n  {d}")
         return 1

@@ -5,7 +5,7 @@ gain rows) and that the EDCCA pwdb search terminates on a clear band. The full
 byte-for-byte replay (incl. capture-2's data-dependent 279-op loop) lives in
 ``scripts/chips/rtl8188eus_dkms/verify_pcap.py``.
 """
-from wifit3.chips.rtl8188eus_dkms import dm
+from wifit3.chips.rtl8188eus_dkms import dm, powertrack
 
 
 class RegTx:
@@ -125,10 +125,11 @@ def test_txpwrtrack_arm_rf_t_meter():
     assert (0x0840, (0x42 << 20) | 0x364C8) in t.w32
 
 
-def test_lc_calibrate_sets_begin_bit():
+def test_lc_calibrate_sets_begin_bit(mocker):
+    mocker.patch("time.sleep")
     # LCK: block queues, read RF 0x18=0x07407, set bit15 -> 0x0f407 (via 0xfff no-remask).
     t = RfTx({0x18: 0x07407})
-    dm._lc_calibrate(t)
+    powertrack.phy_lc_calibrate(t)
     assert t.w8[0] == (0x0522, 0xFF) and t.w8[-1] == (0x0522, 0x00)   # TXPAUSE bracket
     assert (0x0840, (0x18 << 20) | 0x0F407) in t.w32
 

@@ -194,7 +194,8 @@ async def _harvest_m1(transport, bssid: bytes, our_mac: bytes,
     return None
 
 
-async def wps_probe_m1(iface, bssid: str, ssid: str, channel: int, err, sink=print) -> None:
+async def wps_probe_m1(iface, bssid: str, ssid: str, channel: int, wsc_2_0: bool,
+                       err, sink=print) -> None:
     """Associate to `bssid` as an external registrar (active monitor for auto-ACK) and print its WSC
     M1 device attributes. One shot: it transmits auth/assoc + EAPOL, then leaves the BSS."""
     bssid_b = str_to_mac(bssid)
@@ -207,7 +208,7 @@ async def wps_probe_m1(iface, bssid: str, ssid: str, channel: int, err, sink=pri
     except Exception as e:  # noqa: BLE001
         err(f"\r[wps] enable_rx_acks failed (continuing): {e}")
     assoc = Association(iface, bssid, ssid, channel, our_mac=our_mac,
-                        assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR))
+                        assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, wsc_2_0))
     transport = WlanTransport(iface, bssid_b, our_mac)
     assoc.start()
     try:
@@ -234,6 +235,8 @@ async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--channel", type=int, required=True, help="channel to tune to")
+    ap.add_argument("--wsc2", action="store_true",
+                    help="advertise WSC 2.0 (Version2) in the assoc WPS IE")
     ap.add_argument("--mac", default="", help="only frames whose source/dest == this MAC")
     ap.add_argument("--card", default="", help="adapter name/description substring (default: first)")
     ap.add_argument("--seconds", type=float, default=0.0,
@@ -281,7 +284,7 @@ async def main() -> int:
         ssid = _ssid_for(scanner.tracker, args.mac)
         err(f"\r[wps] probing {args.mac} (ssid={ssid!r}) as external registrar (transmits)...")
         try:
-            await wps_probe_m1(iface, args.mac, ssid, args.channel, err)
+            await wps_probe_m1(iface, args.mac, ssid, args.channel, args.wsc2, err)
         except Exception as e:  # noqa: BLE001
             err(f"\r[wps] error: {e}")
 
