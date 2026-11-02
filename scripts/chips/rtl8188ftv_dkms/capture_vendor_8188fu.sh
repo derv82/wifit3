@@ -148,13 +148,6 @@ fi
 CAP_ARGS=()
 [[ -n "$BSSID2G" ]] && CAP_ARGS+=(--bssid2g "$BSSID2G" --channel2g "$CHANNEL2G")
 [[ -n "$CLIENT2G" ]] && CAP_ARGS+=(--client2g "$CLIENT2G")
-[[ -n "$STASSID" ]] && CAP_ARGS+=(--station-ssid "$STASSID" --station-pings "$STAPINGS")
-[[ -n "$IFACE" ]] && CAP_ARGS+=(--iface "$IFACE")
-# Raw injector, not aireplay: rtw_monitor_xmit_entry drops any injected frame
-# whose radiotap header is not exactly 12 bytes (silently), so aireplay's
-# probes never reach USB (0 bulk-OUT in captures 1-4). The raw path emits
-# deauth + directed probes with a 12-byte radiotap over AF_PACKET.
-CAP_ARGS+=(--tx-injector raw)
 if [[ "${#CAP_ARGS[@]}" -gt 0 ]]; then
     python3 "$CAPTURE_PY" "${CAP_ARGS[@]}"
 else
