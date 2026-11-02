@@ -393,17 +393,18 @@ class AR9271V2Driver(Driver):
 
     # ---- channel ----------------------------------------------------------
     async def set_channel(self, channel: int, scan: bool = False, *, _fastcc: bool = False) -> bool:
-        """Tune to ``channel`` via a full ath9k_hw_reset (the always-correct retune). ``_fastcc``
-        selects the kernel's within-band fast channel change — used only by the verify gate, which
-        reads the full-vs-fast decision off the wire; the live hopper always takes the full reset
-        (simple + safe). No running loop -> inline (the gate); otherwise offloaded."""
+        """Tune to ``channel``; transient scan hops use the kernel's fast channel-change path,
+        while settled tunes use a full reset. ``_fastcc`` reproduces captured kernel decisions in
+        the verify gate. No running loop -> inline (the gate); otherwise offloaded."""
         ch = chanmod.channel_2ghz(channel)
+        fastcc = _fastcc or (scan and self.hw is not None and self.hw.curchan is not None
+                             and self.hw.curchan.channel != ch.channel)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            self._do_channel_change(ch, _fastcc)
+            self._do_channel_change(ch, fastcc)
             return True
-        await loop.run_in_executor(None, self._do_channel_change, ch, _fastcc)
+        await loop.run_in_executor(None, self._do_channel_change, ch, fastcc)
         return True
 
     def _do_channel_change(self, ch: chanmod.Channel, fastcc: bool) -> None:

@@ -130,6 +130,45 @@ async def test_inject_frame_async_returns_bool():
     assert sent[0] == tx.build_mgmt_tx(5, PROBE, 0)
 
 
+def test_fast_channel_change_falls_back_when_chip_is_not_alive(mocker):
+    wmi = SimpleNamespace(cmd=mocker.Mock())
+    hw = SimpleNamespace(getnf=mocker.Mock(), check_alive=mocker.Mock(return_value=False))
+    channel = chan.channel_2ghz(6)
+    full = mocker.patch.object(bringup, "_full_channel_change_stopped")
+    restart = mocker.patch.object(bringup, "_restart_after_channel_change")
+
+    bringup.fast_channel_change(wmi, hw, channel)
+
+    full.assert_called_once_with(wmi, hw, channel)
+    restart.assert_called_once_with(wmi, hw, channel)
+
+
+async def test_scan_tune_uses_fast_channel_change(mocker):
+    sent: list[bytes] = []
+    drv = _replay_driver(sent)
+    drv.hw = SimpleNamespace(curchan=chan.channel_2ghz(1))
+    fast = mocker.patch.object(bringup, "fast_channel_change")
+    full = mocker.patch.object(bringup, "full_channel_change")
+
+    assert await drv.set_channel(6, scan=True) is True
+
+    fast.assert_called_once()
+    full.assert_not_called()
+
+
+async def test_settled_tune_uses_full_channel_change(mocker):
+    sent: list[bytes] = []
+    drv = _replay_driver(sent)
+    drv.hw = SimpleNamespace(curchan=chan.channel_2ghz(1))
+    fast = mocker.patch.object(bringup, "fast_channel_change")
+    full = mocker.patch.object(bringup, "full_channel_change")
+
+    assert await drv.set_channel(6, scan=False) is True
+
+    full.assert_called_once()
+    fast.assert_not_called()
+
+
 def test_channel_change_and_tx_share_operation_lock(mocker):
     class OverlapTracker:
         def __init__(self):
