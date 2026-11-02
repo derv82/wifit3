@@ -99,6 +99,10 @@ async def test_upload_saves_the_settings_and_dismisses(capture, uploads):
         assert dismissed == [True]
         assert Config.dwpa == DwpaSettings(url="https://dwpa.example", key=_KEY)
 
+        Config.dwpa = DwpaSettings()
+        Config.load()
+        assert Config.dwpa == DwpaSettings(url="https://dwpa.example", key=_KEY)
+
 
 @pytest.mark.parametrize("key", ["", _KEY.upper(), "0123", "zz" * 16])
 async def test_an_invalid_key_is_not_sent(capture, uploads, key):
@@ -142,7 +146,10 @@ async def test_a_rejected_capture_shows_the_message_and_frees_the_form(capture, 
 
         assert dismissed == []
         assert not app.screen.query_one("#dwpa-upload", Button).disabled
-        assert Config.dwpa == DwpaSettings()
+        assert Config.dwpa == DwpaSettings(url="https://dwpa.example", key=_KEY)
+        Config.dwpa = DwpaSettings()
+        Config.load()
+        assert Config.dwpa == DwpaSettings(url="https://dwpa.example", key=_KEY)
 
 
 async def test_cancel_dismisses_without_uploading(capture, uploads):
@@ -180,10 +187,12 @@ async def test_the_query_asks_about_the_networks_bssid_and_ssid(capture, queries
     async with app.run_test() as pilot:
         await _open(app, pilot, capture)
         app.screen.query_one("#dwpa-url", Input).value = "https://dwpa.example"
+        app.screen.query_one("#dwpa-key", Input).value = _KEY
         result = app.screen.query_one("#dwpa-result", Label)
         await _query(app, pilot, result, "cracked")
 
         assert calls == [("https://dwpa.example", _BSSID, _SSID)]
+        assert Config.dwpa == DwpaSettings(url="https://dwpa.example", key=_KEY)
         assert "⚠" in str(result.render())
         assert "Possibly already cracked on DWPA" in str(result.render())
 
@@ -284,6 +293,7 @@ async def test_retrieve_hands_the_cracked_keys_to_the_vault(capture, retrievals)
 
         assert calls == [("https://dwpa.example", _KEY)]
         assert store.networks == networks
+        assert Config.dwpa == DwpaSettings(url="https://dwpa.example", key=_KEY)
         assert "Retrieved 2 new keys from DWPA" in str(result.render())
 
 

@@ -107,6 +107,7 @@ class DwpaConfigModal(ModalScreen[bool]):
         if not is_valid_key(key):
             self.notify("The key must be 32 lowercase hex characters", severity="error")
             return
+        self._remember(url, key)
         self._set_enabled(False)
         self.query_one("#dwpa-result", Label).update("[dim]Uploading...[/dim]")
         self._upload(url, key)
@@ -121,6 +122,7 @@ class DwpaConfigModal(ModalScreen[bool]):
         if not self.ssid:
             self.notify("This capture has no SSID to query", severity="error")
             return
+        self._remember(url, self.query_one("#dwpa-key", Input).value.strip())
         self.query_one("#dwpa-query", Button).disabled = True
         self.query_one("#dwpa-result", Label).update("[dim]Querying...[/dim]")
         self._query(url, self.ssid)
@@ -145,6 +147,7 @@ class DwpaConfigModal(ModalScreen[bool]):
         if not is_valid_key(key):
             self.notify("The key must be 32 lowercase hex characters", severity="error")
             return
+        self._remember(url, key)
         self.query_one("#dwpa-retrieve", Button).disabled = True
         self.query_one("#dwpa-result", Label).update("[dim]Retrieving...[/dim]")
         self._retrieve(url, key)
@@ -204,7 +207,7 @@ class DwpaConfigModal(ModalScreen[bool]):
         except DwpaError as e:
             self.app.call_from_thread(self._show_failure, str(e))
             return
-        self.app.call_from_thread(self._show_success, url, key)
+        self.app.call_from_thread(self._show_success)
 
     def _set_enabled(self, enabled: bool) -> None:
         for selector in ("#dwpa-url", "#dwpa-key", "#dwpa-upload", "#dwpa-cancel"):
@@ -216,13 +219,16 @@ class DwpaConfigModal(ModalScreen[bool]):
         self._set_enabled(True)
         self.query_one("#dwpa-result", Label).update(f"[$error]{escape(message)}[/]")
 
-    def _show_success(self, url: str, key: str) -> None:
+    def _show_success(self) -> None:
         if not self.is_attached:
             return
-        Config.dwpa.url = url
-        Config.dwpa.key = key
+        self.dismiss(True)
+
+    def _remember(self, url: str, key: str) -> None:
+        settings = Config.dwpa
+        settings.url = url
+        settings.key = key
         try:
             Config.save()
         except ConfigError as e:
             self.notify(str(e), title="Config Error", severity="warning")
-        self.dismiss(True)
