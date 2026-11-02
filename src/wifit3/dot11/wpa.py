@@ -17,11 +17,10 @@ from wifit3.dot11.eapol import (
     set_mic,
 )
 
-# Key Info bits for Supplicant Message 2 (M2):
-# Bit 0-2: Key Descriptor Version = 2 (HMAC-SHA1 MIC / AES-128-CCMP)
+# Key Info bits for Supplicant Message 2 (M2), ORed with the M1's Key Descriptor Version (bits 0-2):
 # Bit 3: Key Type = 1 (Pairwise)
 # Bit 8: MIC bit set (1)
-_M2_KEY_INFO = 0x010A
+_M2_KEY_INFO = 0x0108
 KCK_LEN = 16
 _PTK_SHA256_BITS = 384
 _FT_R0_KEY_DATA_BITS = 384  # PMK-R0 (256) + PMK-R0Name-Salt (128)
@@ -119,20 +118,28 @@ def build_eapol_m2(
     sta_mac: bytes,
     snonce: bytes,
     kck: bytes,
+    key_descriptor_version: int,
     replay: int = 1,
     rsn_ie: bytes = b"",
 ) -> bytes:
-    """Construct a full 802.11 Data frame carrying EAPOL-Key Message 2 with MIC."""
+    """Construct a full 802.11 Data frame carrying EAPOL-Key Message 2 with MIC; the
+    ``key_descriptor_version`` is the M1's: 1 (HMAC-MD5, TKIP) or 2 (HMAC-SHA1)."""
     hdr = data_header(to_ds=True, bssid=bssid, client=sta_mac)
     raw_payload = eapol_key(
-        key_info=_M2_KEY_INFO,
+        key_info=_M2_KEY_INFO | key_descriptor_version,
         key_len=0,
         replay=replay,
         nonce=snonce,
         key_data=rsn_ie,
         mic=bytes(16),
     )
-    return hdr + LLC_SNAP_EAPOL + set_mic(raw_payload, eapol_mic(kck, raw_payload))
+    if key_descriptor_version == 1:
+        mic = eapol_mic_hmac_md5(kck, raw_payload)
+    elif key_descriptor_version == 2:
+        mic = eapol_mic(kck, raw_payload)
+    else:
+        raise ValueError(f"unsupported key descriptor version {key_descriptor_version}")
+    return hdr + LLC_SNAP_EAPOL + set_mic(raw_payload, mic)
 
 
 def random_nonce() -> bytes:

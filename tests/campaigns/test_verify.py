@@ -11,6 +11,7 @@ from wifit3.campaigns.wps.registrar import AttemptOutcome, PinResult
 from wifit3.crack.wep import rc4_keystream
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.packet import DeauthPacket, EapolPacket, WepDataPacket
+from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.wep.crypto import icv
 from wifit3.models import AccessPoint
 
@@ -53,9 +54,10 @@ def _array(iface, *, lease_mac=OUR_MAC, heard=True):
     return array
 
 
-def _eapol_from_ap(msg_num: int, replay: int) -> EapolPacket:
+def _eapol_from_ap(msg_num: int, replay: int, key_descriptor_version: int = 2) -> EapolPacket:
     return EapolPacket(type="eapol", type_id=2, subtype_id=0, bssid=BSSID, source=BSSID, dest=OUR_MAC,
                        to_ds=False, from_ds=True, rssi=-50, raw=b"\x00" * 30, msg_num=msg_num,
+                       key_info=0x0088 | key_descriptor_version,
                        nonce=b"\x11" * 32, replay_counter=replay.to_bytes(8, "big"))
 
 
@@ -93,6 +95,19 @@ async def test_verify_psk_m3_is_verified(monkeypatch):
     assert (campaign.outcome, campaign.error) == (VerifyOutcome.VERIFIED, None)
     steps = [call.args[0] for call in campaign.log.call_args_list]
     assert steps == ["auth/assoc sent", "M1 received, M2 sent", "M3 received"]
+
+
+async def test_verify_psk_m2_takes_the_m1s_key_descriptor_version(monkeypatch):
+    iface = _iface()
+    array = _array(iface)
+    array.next_frame = AsyncMock(side_effect=[_eapol_from_ap(1, 1, key_descriptor_version=1),
+                                              _eapol_from_ap(3, 2, key_descriptor_version=1)])
+    _associates(monkeypatch)
+
+    await _run(VerifyPskCampaign, array, "pw")
+
+    m2 = WlanFrameParser.parse_80211_frame(iface.send_until_ack.await_args.args[0], rssi=0)
+    assert m2.key_info == 0x0109
 
 
 async def test_verify_psk_m3_after_a_resent_m1_is_verified(monkeypatch):

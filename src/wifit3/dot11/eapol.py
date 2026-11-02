@@ -16,6 +16,7 @@ _EAPOL_VERSION = 2
 EAPOL_TYPE_EAP = 0
 EAPOL_TYPE_KEY = 3
 _KEY_DESC_RSN = 2
+KEY_DESCRIPTOR_VERSION_MASK = 0x0007     # Key Information bits 0-2
 _KEY_IV = bytes(16)
 _KEY_RSC = bytes(8)
 _KEY_ID = bytes(8)
