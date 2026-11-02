@@ -302,11 +302,13 @@ class VaultDrawer(ModalScreen):
     @on(ShowApPressed)
     def _show_ap_pressed(self, event: ShowApPressed) -> None:
         """Close onto Focus on the AP: back down to Focus when it is on the stack, else push it."""
-        ap = self.app.array.access_points.get(event.bssid) if self.app.array is not None else None
+        app = self.app
+        ap = None
+        if app.array is not None:
+            ap = app.array.access_points.get(event.bssid)
         if ap is None:
             self.notify("AP not in range")
             return
-        app = self.app
         app.target_ap = ap
         self.dismiss()
         focus = app.get_screen("focus")

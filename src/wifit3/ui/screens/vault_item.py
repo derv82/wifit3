@@ -544,9 +544,9 @@ class _ApStatePanel(VerticalGroup):
         for line, (section, ssid, dates) in zip(lines, texts):
             line.show(section, ssid, dates)
             line.set_class(line is not lines[0], "-older")
-        self._show_show_ap_button()
+        self._refresh_show_ap_button()
 
-    def _show_show_ap_button(self) -> None:
+    def _refresh_show_ap_button(self) -> None:
         """On the first SSID line, while the AP is in the device array; disabled while a campaign is active."""
         array = self.app.array
         in_array = self._state is not None and array is not None and self._state.bssid in array.access_points
@@ -594,7 +594,7 @@ class _ApStatePanel(VerticalGroup):
         return None
 
     def on_mount(self) -> None:
-        self.set_interval(1.0, self._show_show_ap_button)
+        self.set_interval(1.0, self._refresh_show_ap_button)
 
     def compose(self) -> ComposeResult:
         yield self._status_label
@@ -655,7 +655,8 @@ class _ApStatePanel(VerticalGroup):
             self._launch_tool(event.button.tool)
         elif event.button is self.add_key_button:
             self.post_message(AddKeyPressed())
-        elif event.button.has_class("show-ap") and self._state is not None:
+        elif (self._ssid_lines and event.button is self._ssid_lines[0].show_ap_button
+              and self._state is not None):
             self.post_message(ShowApPressed(self._state.bssid))
         else:
             return

@@ -91,15 +91,15 @@ def test_show_ap_shows_on_the_first_ssid_line_only_while_the_ap_is_in_the_array(
     _, array = _array_with_ap()
     panel = _panel(array, 2)
 
-    _ApStatePanel._show_show_ap_button(panel)
+    _ApStatePanel._refresh_show_ap_button(panel)
     assert [line.show_ap_button.display for line in panel._ssid_lines] == [True, False]
 
     array.access_points.clear()
-    _ApStatePanel._show_show_ap_button(panel)
+    _ApStatePanel._refresh_show_ap_button(panel)
     assert [line.show_ap_button.display for line in panel._ssid_lines] == [False, False]
 
     panel.app.array = None
-    _ApStatePanel._show_show_ap_button(panel)
+    _ApStatePanel._refresh_show_ap_button(panel)
     assert [line.show_ap_button.display for line in panel._ssid_lines] == [False, False]
 
 
@@ -108,10 +108,23 @@ def test_show_ap_is_disabled_while_a_campaign_is_active():
     panel = _panel(array, 1)
     Campaign.active = SimpleNamespace(key="wps_pin")
 
-    _ApStatePanel._show_show_ap_button(panel)
+    _ApStatePanel._refresh_show_ap_button(panel)
     button = panel._ssid_lines[0].show_ap_button
     assert (button.disabled, button.tooltip) == (True, "Disabled; wps_pin campaign is active")
 
     Campaign.active = None
-    _ApStatePanel._show_show_ap_button(panel)
+    _ApStatePanel._refresh_show_ap_button(panel)
     assert (button.disabled, button.tooltip) == (False, "Focus this AP")
+
+
+def test_show_ap_press_posts_show_ap_pressed_for_the_ap_in_view():
+    _, array = _array_with_ap()
+    panel = _panel(array, 2)
+    panel.add_key_button = object()
+    panel.post_message = MagicMock()
+    event = SimpleNamespace(button=panel._ssid_lines[0].show_ap_button, stop=MagicMock())
+
+    _ApStatePanel._button_pressed(panel, event)
+
+    assert panel.post_message.call_args.args[0].bssid == BSSID
+    event.stop.assert_called_once()
