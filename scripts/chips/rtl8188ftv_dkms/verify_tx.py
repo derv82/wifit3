@@ -6,6 +6,7 @@ Each recorded URB's 802.11 frame (after the 40-byte descriptor and any PKT_OFFSE
 through ``Rtl8188ftvDkmsDriver._inject_frame``; the endpoint and bytes it sends must equal the
 recorded URB. The driver has one TX path, the monitor injection template, so a frame the vendor
 sent another way (managed-mode assoc / DATA) diverges and is reported, not skipped.
+Exit 0 all matched, 1 a divergence, 2 nothing to check (no bulk-OUT URBs in the capture).
 """
 from __future__ import annotations
 
@@ -116,8 +117,8 @@ def main(argv: list[str]) -> int:
     logging.disable(logging.CRITICAL)
     urbs = _bulk_out_urbs(args.pcap, rp.find_card_device(args.pcap))
     if not urbs:
-        print(f"FAIL: no bulk-OUT URBs in {args.pcap.name}; TX unverified")
-        return 1
+        print(f"{args.pcap.name}: no bulk-OUT URBs: TX unverified by capture")
+        return 2
     matched, diverged, messages = asyncio.run(_drive(urbs))
     print(f"tx: {len(urbs)} bulk-OUT URBs from {args.pcap.name}")
     print(f"  matched:  {sum(matched.values())} {dict(sorted(matched.items()))}")
