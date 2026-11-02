@@ -68,7 +68,6 @@
 - ACK detection: `rx.admit_ack_frames` + `_rx_dispatch` → `record_ack`.
 
 ## Scripts
-- `scripts/chips/rtl8188ftv_dkms/capture_vendor_8188fu.sh`: pinned monitor-enabled DKMS build + `capture.py`.
 - `scripts/chips/rtl8188ftv_dkms/verify_pcap.py`: cold-boot byte gate, capture-1..3.
 - `scripts/chips/rtl8188ftv_dkms/verify_tx.py`: bulk-OUT byte gate; exits 2 on capture-1..3 (no bulk-OUT).
 - `scripts/chips/rtl8188ftv_dkms/verify_rx.py`: decodes every bulk-IN completion of a capture.
