@@ -123,8 +123,8 @@ _BUTTON_TIPS = {
     "WPS PIN": "PIN attacks: PixieDust, default vendor PINs, then brute-force",
     "EvilTwin": "Punt clients onto a WPA2 twin to capture a crackable handshake",
     "Stop EvilTwin": "Tear down the twin and return clients to the AP",
-    "Verify": "Connect to the AP and check the stored credential",
-    "Verify ▾": "Pick a stored credential to check against the AP",
+    "Verify": "Connect & verify the stored credential",
+    "Verify ▾": "Connect & verify stored credentials",
 }
 
 
@@ -557,9 +557,10 @@ class FocusViewV2(Screen):
         btn.display = bool(keys)
         current = self._controls.current
         if isinstance(current, VerifyCampaign):
-            btn.label, btn.disabled, reason = "Verifying…", True, None
+            btn.label, btn.disabled, btn.variant, reason = "Verifying…", True, "warning", None
         else:
             btn.label = "Verify ▾" if len(keys) > 1 else "Verify"
+            btn.variant = "success"
             reason = fm.campaign_blocked(VerifyCampaign, ap)
             if probing:
                 reason = "Disabled while probing"

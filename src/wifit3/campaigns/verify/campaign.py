@@ -42,6 +42,12 @@ class VerifyCampaign(Campaign):
         self.outcome: Optional[VerifyOutcome] = None
         self.error: Optional[str] = None
 
+    @classmethod
+    def ineligible_reason(cls, ap) -> Optional[str]:
+        if ap.is_hidden:
+            return "hidden SSID: can't associate"
+        return None
+
     def status_under_card(self) -> str:
         return "● Verify"
 

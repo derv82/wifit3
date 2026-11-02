@@ -303,3 +303,9 @@ async def test_verify_wep_key_that_decrypts_nothing_is_rejected(monkeypatch):
     campaign = await _run(VerifyWepCampaign, array, "0987654321")
 
     assert (campaign.outcome, campaign.error) == (VerifyOutcome.REJECTED, None)
+
+
+@pytest.mark.parametrize("campaign_class", [VerifyPskCampaign, VerifyPinCampaign, VerifyWepCampaign])
+def test_verify_is_ineligible_on_a_hidden_ssid(campaign_class):
+    assert campaign_class.ineligible_reason(AccessPoint(bssid=BSSID, ssid=None, channel=1)) == "hidden SSID: can't associate"
+    assert campaign_class.ineligible_reason(AccessPoint(bssid=BSSID, ssid="TestNet", channel=1)) is None
