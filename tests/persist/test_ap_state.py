@@ -7,6 +7,7 @@ from pathlib import Path
 
 from wifit3.crack import wpa_psk
 from wifit3.crack.hc22000_format import hashline_id, parse_hc22000
+from wifit3.dot11.eapol import LLC_SNAP_EAPOL, data_header, set_mic
 from wifit3.dot11.wpa import derive_pmk
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.capture_history import load_capture_index
@@ -291,8 +292,10 @@ def test_a_wps_pbc_capture_is_a_current_psk(tmp_path):
 
 def test_load_dates_a_hashline_from_the_pcap_frame_carrying_its_mic(tmp_path):
     _write_aggregate(_SSID, _EAPOL_LINE)
+    m2 = set_mic(bytes.fromhex(parse_hc22000(_EAPOL_LINE).eapol), bytes.fromhex(_MIC))
+    header = data_header(to_ds=True, bssid=bytes.fromhex(_DASHED.replace("-", "")), client=bytes(6))
     write_pcap(tmp_path / f"{_SSID}_{_DASHED}_1700000005_handshake.pcap",
-               [(b"\x88\x02" + bytes.fromhex(_MIC), 1700000003.5)])
+               [(header + LLC_SNAP_EAPOL + m2, 1700000003.5)])
     assert _state().hashlines[0].captured == (1700000003,)
 
 
