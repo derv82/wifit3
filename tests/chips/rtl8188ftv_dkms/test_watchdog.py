@@ -101,7 +101,7 @@ def test_watchdog_tick_resets_trigger_on_callback_raise(monkeypatch):
                         lambda t, st, fa: None)
 
     def boom(t, st, ch, params, by_rate):
-        raise ValueError("thermal DoIQK path untested here")
+        raise ValueError("tick fault")
     monkeypatch.setattr(track_mod, "tracking_callback", boom)
 
     st = {"tm_trigger": True, "channel": 1, "params": object(),

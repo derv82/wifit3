@@ -134,6 +134,78 @@ def test_tracking_callback_second_fires_on_table_step():
     assert (0xC80, 4, 0x40020103) in t.writes
 
 
+def _cal_spies(monkeypatch, iqk_result):
+    from wifit3.chips.rtl8188ftv_dkms import track
+
+    def lck(t):
+        t.writes.append("LCK")
+
+    def iqk(t):
+        t.writes.append("IQK")
+        return iqk_result
+    monkeypatch.setattr(track.cal_mod, "lc_calibrate", lck)
+    monkeypatch.setattr(track.iqk_mod, "iq_calibrate", iqk)
+
+
+_IQK_FINAL_0 = {"final": 0, "result": [[0x101, 0x3, 0, 0, 0, 0, 0, 0]] * 4}
+_THERMAL_34 = [0xA1390204, 0xA1390204, 0x01000100, 0x00108800]
+
+
+def test_tracking_callback_lck_then_setpwr_then_iqk_ce_278_552(monkeypatch):
+    from wifit3.chips.rtl8188ftv_dkms import track
+    _cal_spies(monkeypatch, _IQK_FINAL_0)
+    st = _st()
+    params, tables = _params()
+    t = FakeT(_THERMAL_34 + [0x0] * 40)
+    assert track.tracking_callback(t, st, 10, params, tables) is True
+    lck, iqk = t.writes.index("LCK"), t.writes.index("IQK")
+    pwr = [i for i, w in enumerate(t.writes) if w != "LCK" and w[0] == 0xC80]
+    assert lck < pwr[0] and iqk == len(t.writes) - 1
+    assert t.writes.count("LCK") == 1 and t.writes.count("IQK") == 1
+    assert (st["th_val"], st["th_lck"], st["th_iqk"]) == (34, 34, 34)
+    assert (st["iqk_x"], st["iqk_y"]) == (0x101, 0x3)
+    assert st["iqk"] is _IQK_FINAL_0
+
+
+def test_tracking_callback_below_threshold_no_lck_no_iqk(monkeypatch):
+    from wifit3.chips.rtl8188ftv_dkms import track
+    _cal_spies(monkeypatch, _IQK_FINAL_0)
+    st = _st()
+    st["th_lck"] = st["th_iqk"] = 27
+    params, tables = _params()
+    t = FakeT(_THERMAL_34 + [0x0] * 40)
+    track.tracking_callback(t, st, 10, params, tables)
+    assert "LCK" not in t.writes and "IQK" not in t.writes
+    assert (st["th_lck"], st["th_iqk"]) == (27, 27)
+
+
+def test_tracking_callback_iqk_without_power_change_ce_552(monkeypatch):
+    from wifit3.chips.rtl8188ftv_dkms import track
+    _cal_spies(monkeypatch, {"final": 0xFF, "result": [[0] * 8] * 4})
+    st = _st()
+    st["th_val"] = st["th_lck"] = 34
+    params, tables = _params()
+    t = FakeT(list(_THERMAL_34))
+    assert track.tracking_callback(t, st, 10, params, tables) is False
+    assert t.writes[-1] == "IQK" and "LCK" not in t.writes
+    assert st["th_iqk"] == 34
+    # halphyrf_8188f.c:2911: final_candidate 0xFF keeps the old matrix
+    assert (st["iqk_x"], st["iqk_y"]) == (0x103, 0x2)
+
+
+def test_tracking_callback_no_pg_references_ce_252_264(monkeypatch):
+    from wifit3.chips.rtl8188ftv_dkms import track
+    _cal_spies(monkeypatch, _IQK_FINAL_0)
+    st = _st()
+    st["th_val"] = 34
+    st["th_lck"] = st["th_iqk"] = 0xFF
+    params, tables = _params()
+    t = FakeT(list(_THERMAL_34))
+    assert track.tracking_callback(t, st, 10, params, tables) is False
+    assert t.writes.count("LCK") == 1 and "IQK" not in t.writes
+    assert (st["th_lck"], st["th_iqk"]) == (34, 34)
+
+
 def test_ra_dynamic_retry_count_flips_once():
     from wifit3.chips.rtl8188ftv_dkms import track
     st = _st()

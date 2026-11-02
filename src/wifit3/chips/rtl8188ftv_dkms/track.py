@@ -9,13 +9,17 @@ TM_Trigger toggle), ``ODM_TXPowerTrackingCallback_ThermalMeter``
 (hal/phydm/phydm_rainfo.c). 1T1R keeps path A only; with no TX in monitor
 mode ``pDM_Odm->TxRate`` stays 0, ``HwRateToMRate(0)`` is MGN_1M, so the CCK
 delta pair (MP USB ``2GCCKA``) feeds Absolute and the OFDM remnant never
-leaves 0 in either capture. LCK/DoIQK/DPK never fire here (deltas stay
-under Threshold_IQK 8, DpkThermal is zero); base/index bookkeeping is sw-only.
+leaves 0 in either capture. LCK (``PHY_LCCalibrate_8188F``) and DoIQK
+(``DoIQK_8188F`` → ``PHY_IQCalibrate_8188F``) re-run on a Threshold_IQK 8
+thermal swing; DPK never fires (8188F never sets DpkThermal); base/index
+bookkeeping is sw-only.
 """
 from __future__ import annotations
 
 from . import bb
 from . import bb_swing_tbl
+from . import cal as cal_mod
+from . import iqk as iqk_mod
 from . import rf
 from . import rf_txpwr_track_tbl
 from . import txpower as txpower_mod
@@ -161,13 +165,23 @@ def tracking_callback(t, st: dict, channel: int, params, by_rate) -> bool:
     st["th_avg"][st["th_avg_idx"]] = raw
     st["th_avg_idx"] = (st["th_avg_idx"] + 1) % AVG_THERMAL_NUM
     nz = [v for v in st["th_avg"] if v]
-    probe = sum(nz) // len(nz)
+    probe = sum(nz) // len(nz) if nz else raw
     delta = abs(probe - st["th_val"])
+    delta_lck = abs(probe - st["th_lck"])
     delta_iqk = abs(probe - st["th_iqk"])
+    # halphyrf_ce.c:252-256
+    if st["th_iqk"] == 0xFF:
+        st["th_iqk"] = probe
+        delta_iqk = abs(probe - st["th_iqk"])
+    # halphyrf_ce.c:264-284
     if st["th_lck"] == 0xFF:
-        raise ValueError("no-PG LCK path untested here")
-    if delta_iqk >= THRESHOLD_IQK:
-        raise ValueError("thermal DoIQK path untested here")
+        st["th_lck"] = probe
+        cal_mod.lc_calibrate(t)
+        delta_lck = abs(probe - st["th_lck"])
+    if delta_lck >= THRESHOLD_IQK:
+        st["th_lck"] = probe
+        cal_mod.lc_calibrate(t)
+    power_set = False
     if delta > 0 and st["track_control"]:
         table_delta = abs(probe - st["eeprom_thermal"])
         if table_delta >= TRACK_TABLE_SIZE:
@@ -183,8 +197,16 @@ def tracking_callback(t, st: dict, channel: int, params, by_rate) -> bool:
         if offset != 0 and st["eeprom_thermal"] != 0xFF:
             set_pwr_mix(t, st, channel, params, by_rate)
             st["th_val"] = probe
-            return True
-    return False
+            power_set = True
+    # halphyrf_ce.c:552-554 DoIQK_8188F (halphyrf_8188f.c:174), matrix
+    # kept only for final_candidate < 4 (halphyrf_8188f.c:2911-2913)
+    if delta_iqk >= THRESHOLD_IQK:
+        st["th_iqk"] = probe
+        st["iqk"] = iqk_mod.iq_calibrate(t)
+        final = st["iqk"]["final"]
+        if final != 0xFF:
+            st["iqk_x"], st["iqk_y"] = st["iqk"]["result"][final][:2]
+    return power_set
 
 
 def noisy_score(fa: dict, st: dict) -> tuple[int, int]:
