@@ -2,9 +2,9 @@
 
     uv run python scripts/chips/rtl8188ftv_dkms/verify_warm.py <warm-capture.pcap>
 
-Runs ``Rtl8188ftvDkmsDriver._bring_up`` against ``ReplayTransport`` from the card's first vendor
-op, so the driver's own ``power.is_chip_warm`` picks the branch from the recorded reads. Checks
-the bring-up only; the ops after it are counted, not walked (run verify_pcap.py for those).
+Runs ``Rtl8188ftvDkmsDriver._bring_up`` with ``is_warm`` set (what ``connect()`` decides from
+``power.is_chip_warm``) against ``ReplayTransport`` from the card's first vendor op. Checks the
+bring-up only; the ops after it are counted, not walked (run verify_pcap.py for those).
 """
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ def main(argv: list[str]) -> int:
         print("FAIL: no vendor ops")
         return 1
     w = gate.Walk(ops)
+    w.driver.is_warm = True
     try:
         asyncio.run(w.run(lambda: w.driver._bring_up(gate.ignore_progress), "_bring_up"))
     except (rp.Divergence, gate.HandlerFailed) as e:

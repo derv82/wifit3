@@ -311,13 +311,11 @@ def _stubbed_bring_up_modules(monkeypatch, calls):
 
 def test_bring_up_warm_skips_fw1_probe_tail(monkeypatch):
     import asyncio
-    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
     calls = []
     _stubbed_bring_up_modules(monkeypatch, calls)
-    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: True)
-    monkeypatch.setattr(power_mod, "warm_state", lambda t: (0xC6, 0x06FF))
     d = _driver()
     d.transport = MagicMock()
+    d.is_warm = True
     assert asyncio.run(d._bring_up(lambda p, m: None)) is True
     assert calls.count("fw") == 1
     assert "c2h-req" not in calls and "c2h-get" not in calls
@@ -326,10 +324,8 @@ def test_bring_up_warm_skips_fw1_probe_tail(monkeypatch):
 
 def test_bring_up_cold_runs_fw1_probe_tail(monkeypatch):
     import asyncio
-    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
     calls = []
     _stubbed_bring_up_modules(monkeypatch, calls)
-    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: False)
     d = _driver()
     d.transport = MagicMock()
     assert asyncio.run(d._bring_up(lambda p, m: None)) is True
@@ -341,12 +337,10 @@ def test_bring_up_applies_kfree_trim_when_flag_on(monkeypatch):
     import asyncio
     import types
     from unittest.mock import MagicMock
-    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
     from wifit3.chips.rtl8188ftv_dkms import prom as prom_mod
     from wifit3.chips.rtl8188ftv_dkms import track as track_mod
     calls = []
     _stubbed_bring_up_modules(monkeypatch, calls)
-    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: False)
     monkeypatch.setattr(
         prom_mod, "read_adapter_info",
         lambda t, s: (types.SimpleNamespace(
@@ -367,12 +361,9 @@ def test_bring_up_init_burst_takes_enumerated_bulk_out_size(monkeypatch):
     # usb_halinit.c:632: _InitBurstPktLen switches on UsbBulkOutSize
     import asyncio
     from wifit3.chips.rtl8188ftv_dkms import misc as misc_mod
-    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
     from wifit3.chips.rtl8188ftv_dkms import tx as tx_mod
     calls = []
     _stubbed_bring_up_modules(monkeypatch, calls)
-    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: True)
-    monkeypatch.setattr(power_mod, "warm_state", lambda t: (0xC6, 0x06FF))
     monkeypatch.setattr(tx_mod, "bulk_out_size", lambda dev: 64)
     seen = []
     monkeypatch.setattr(misc_mod, "init_burst",
@@ -387,13 +378,10 @@ def test_bring_up_narrows_supported_channels_to_efuse_chplan(monkeypatch):
     # rtl8188f_hal_init.c:4201 ChannelPlan from EFUSE; rtw_mlme_ext.c:1019 init_channel_set
     import asyncio
     import types
-    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
     from wifit3.chips.rtl8188ftv_dkms import prom as prom_mod
     from wifit3.chips.rtl8188ftv_dkms.driver import Rtl8188ftvDkmsDriver
     calls = []
     _stubbed_bring_up_modules(monkeypatch, calls)
-    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: True)
-    monkeypatch.setattr(power_mod, "warm_state", lambda t: (0xC6, 0x06FF))
     monkeypatch.setattr(
         prom_mod, "read_adapter_info",
         lambda t, s: (types.SimpleNamespace(
@@ -405,3 +393,23 @@ def test_bring_up_narrows_supported_channels_to_efuse_chplan(monkeypatch):
     assert asyncio.run(d._bring_up(lambda p, m: None)) is True
     assert d.SUPPORTED_CHANNELS == list(range(1, 12))
     assert Rtl8188ftvDkmsDriver.SUPPORTED_CHANNELS == list(range(1, 15))
+
+
+def test_connect_checks_warm_before_bring_up(monkeypatch):
+    # The warm probe is wifit3-only; _bring_up starts at the C's chip-version read.
+    import asyncio
+    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
+    order = []
+    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: order.append("warm") or True)
+    monkeypatch.setattr(power_mod, "warm_state", lambda t: (0xC6, 0x06FF))
+    d = _driver()
+    d.transport = MagicMock()
+    monkeypatch.setattr(d, "_claim_usb", lambda: None)
+
+    async def bring_up(update):
+        order.append(("bring_up", d.is_warm))
+        return False
+
+    monkeypatch.setattr(d, "_bring_up", bring_up)
+    assert asyncio.run(d.connect()) is False
+    assert order == ["warm", ("bring_up", True)]

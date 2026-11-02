@@ -118,6 +118,15 @@ class Rtl8188ftvDkmsDriver(Driver):
         try:
             _update(0.02, "Claiming USB interface...")
             await loop.run_in_executor(None, self._claim_usb)
+            self.is_warm = await loop.run_in_executor(
+                None, power_mod.is_chip_warm, self.transport)
+            if self.is_warm:
+                mcufwdl, cr = await loop.run_in_executor(
+                    None, power_mod.warm_state, self.transport)
+                logger.warning(
+                    "chip already initialized (warm state: MCUFWDL=0x%02x, "
+                    "CR=0x%04x); skipping the FW#1 probe tail, replug "
+                    "if the scanner stays empty", mcufwdl, cr)
             logger.info("RTL8188FTV DKMS bring-up")
             ok = await self._bring_up(_update)
             if not ok:
@@ -128,7 +137,6 @@ class Rtl8188ftvDkmsDriver(Driver):
                 on_fatal=lambda e: self._on_lost and self._on_lost(e),
             )
             self._rx_reader.start()
-            self.is_warm = True
             if os.environ.get("WIFIT3_RTL8188FTV_WATCHDOG") != "off":
                 self._watchdog_task = loop.create_task(self._watchdog_loop())
             else:
@@ -143,15 +151,6 @@ class Rtl8188ftvDkmsDriver(Driver):
         t = self.transport
         loop = asyncio.get_running_loop()
         hal = self.hal
-
-        warm = await loop.run_in_executor(None, power_mod.is_chip_warm, t)
-        if warm:
-            mcufwdl, cr = await loop.run_in_executor(
-                None, power_mod.warm_state, t)
-            logger.warning(
-                "chip already initialized (warm state: MCUFWDL=0x%02x, "
-                "CR=0x%04x); skipping the FW#1 probe tail, replug "
-                "if the scanner stays empty", mcufwdl, cr)
 
         _update(0.05, "Probing chip version + EFUSE...")
         version = await loop.run_in_executor(None, info_mod.read_chip_version, t)
@@ -178,7 +177,7 @@ class Rtl8188ftvDkmsDriver(Driver):
             raise BringUpError("power", "probe power_on failed")
 
         blob = firmware_mod.load_firmware_blob()
-        if not warm:
+        if not self.is_warm:
             _update(0.08, "Probe firmware + hidden report...")
             ver = await loop.run_in_executor(
                 None, firmware_mod.download_firmware, t, blob)
