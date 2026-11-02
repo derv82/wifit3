@@ -179,11 +179,12 @@ class Rtl8188ftvDkmsDriver(Driver):
         blob = firmware_mod.load_firmware_blob()
         if not self.is_warm:
             _update(0.08, "Probe firmware + hidden report...")
+            # hal_com.c:975-978: C2HEVT request before the FW download
+            await loop.run_in_executor(None, c2h_mod.request_hidden_report, t)
             ver = await loop.run_in_executor(
                 None, firmware_mod.download_firmware, t, blob)
             if ver != (4, 0, 0x88F1):
                 raise BringUpError("fw", f"unexpected probe version {ver}")
-            await loop.run_in_executor(None, c2h_mod.request_hidden_report, t)
             ident, report = await loop.run_in_executor(
                 None, c2h_mod.collect_hidden_report, t)
             logger.info("Probe hidden report: id 0x%02x, %dB (%s)",

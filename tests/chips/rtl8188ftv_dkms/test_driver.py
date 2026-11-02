@@ -330,7 +330,8 @@ def test_bring_up_cold_runs_fw1_probe_tail(monkeypatch):
     d.transport = MagicMock()
     assert asyncio.run(d._bring_up(lambda p, m: None)) is True
     assert calls.count("fw") == 2
-    assert calls.index("c2h-req") < calls.index("c2h-get")
+    # hal_com.c:975-978: C2HEVT request, FW download, then the poll
+    assert calls[:3] == ["c2h-req", "fw", "c2h-get"]
 
 
 def test_bring_up_applies_kfree_trim_when_flag_on(monkeypatch):
