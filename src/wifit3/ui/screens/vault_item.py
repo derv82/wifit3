@@ -187,8 +187,8 @@ def _hashline_prompt(group: _HashlineGroup, show_client: bool, show_ssid: bool,
 
 
 def _live_verification_content(verification: LiveVerification, show_client: bool) -> Content:
-    verdict = (("✓ verified live", "$text-success") if verification.correct
-               else ("✗ rejected live", "$text-error"))
+    verdict = (("verified live", "$text-success") if verification.correct
+               else ("rejected live", "$text-error"))
     return _row_content(verification.at, "", "", verdict, show_client, [])
 
 

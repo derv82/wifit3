@@ -40,7 +40,7 @@ class VerifyWepCampaign(VerifyCampaign):
             keystream = rc4_keystream(p.iv + key, len(_LLC_SNAP_HEADER))
             return bytes(c ^ k for c, k in zip(p.cipher, keystream)) == _LLC_SNAP_HEADER
 
-        self._log_step("Listening for the AP's WEP data")
+        self._log_step("listening for WEP data")
         if await self.array.next_frame(decrypts, timeout=_PASSIVE_LISTEN_S) is not None:
             self._log_step("WEP data decrypted")
             return VerifyOutcome.VERIFIED, None
@@ -48,7 +48,7 @@ class VerifyWepCampaign(VerifyCampaign):
         association = Association(iface, bssid, ap.ssid or "", ap.channel, our_mac=our_mac,
                                   should_stop=lambda: self.stopped)
         association.start()
-        self._log_step("Authentication and association requests sent")
+        self._log_step("auth/assoc sent")
         try:
             associated = await association.associate(attempts=2)
         finally:
@@ -56,7 +56,8 @@ class VerifyWepCampaign(VerifyCampaign):
         if not associated:
             return VerifyOutcome.ERROR, association.fail_reason or "association rejected"
 
-        plaintext = arp_request_plaintext(sender_mac=our_mac, sender_ip=b"\xc0\xa8\x01\xfe",
+        plaintext = arp_request_plaintext(sender_mac=our_mac,
+                                          sender_ip=b"\xc0\xa8\x01\xfe",
                                           target_ip=b"\xc0\xa8\x01\x01")
         iv = os.urandom(3)
         keystream = rc4_keystream(iv + key, len(plaintext) + 4)
@@ -67,8 +68,8 @@ class VerifyWepCampaign(VerifyCampaign):
         for _ in range(_ARP_SENDS):
             await iface.send_no_wait(frame)
             await asyncio.sleep(0.1)
-        self._log_step("Encrypted ARP request sent")
+        self._log_step("encrypted ARP request sent")
         if await relayed is not None:
-            self._log_step("Relayed ARP decrypted")
+            self._log_step("relayed ARP decrypted")
             return VerifyOutcome.VERIFIED, None
         return VerifyOutcome.REJECTED, None

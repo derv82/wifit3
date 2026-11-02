@@ -92,7 +92,7 @@ async def test_verify_psk_m3_is_verified(monkeypatch):
 
     assert (campaign.outcome, campaign.error) == (VerifyOutcome.VERIFIED, None)
     steps = [call.args[0] for call in campaign.log.call_args_list]
-    assert steps == ["Authentication and association requests sent", "M1 received, M2 sent", "M3 received"]
+    assert steps == ["auth/assoc sent", "M1 received, M2 sent", "M3 received"]
 
 
 async def test_verify_psk_m3_after_a_resent_m1_is_verified(monkeypatch):
@@ -140,13 +140,13 @@ async def test_verify_psk_deauth_before_any_resent_m1_is_an_error(monkeypatch):
 
     campaign = await _run(VerifyPskCampaign, array, "pw")
 
-    assert (campaign.outcome, campaign.error) == (VerifyOutcome.ERROR, "AP sent deauth (reason 15) after EAPOL M2")
+    assert (campaign.outcome, campaign.error) == (VerifyOutcome.ERROR, "AP sent deauth (reason 15) after M2")
 
 
 @pytest.mark.parametrize("acked, frames, error", [
-    (True, [_eapol_from_ap(1, 1), None], "no reply from the AP after EAPOL M2"),
-    (False, [_eapol_from_ap(1, 1)], "AP never ACKed EAPOL M2"),
-    (True, [None], "AP never sent EAPOL M1"),
+    (True, [_eapol_from_ap(1, 1), None], "no reply after M2"),
+    (False, [_eapol_from_ap(1, 1)], "AP never ACKed M2"),
+    (True, [None], "AP never sent M1"),
 ])
 async def test_verify_psk_errors(monkeypatch, acked, frames, error):
     array = _array(_iface(acked=acked))

@@ -22,8 +22,6 @@ def _replay_counter(packet: EapolPacket) -> int:
 
 
 class VerifyPskCampaign(VerifyCampaign):
-    """Also verifies a PSK the AP gave up over WPS."""
-
     credential_name = "PSK"
 
     async def _exchange(self, iface, our_mac: bytes, our_mac_str: str) -> tuple[VerifyOutcome, Optional[str]]:
@@ -33,7 +31,7 @@ class VerifyPskCampaign(VerifyCampaign):
         association = Association(iface, bssid, ap.ssid or "", ap.channel, our_mac=our_mac,
                                   assoc_trailer_ies=trailer, should_stop=lambda: self.stopped)
         association.start()
-        self._log_step("Authentication and association requests sent")
+        self._log_step("auth/assoc sent")
         try:
             associated = await association.associate(attempts=2)
         finally:
@@ -46,7 +44,7 @@ class VerifyPskCampaign(VerifyCampaign):
                        and p.msg_num == 1 and p.nonce is not None),
             timeout=_M1_TIMEOUT_S)
         if m1 is None:
-            return VerifyOutcome.ERROR, "AP never sent EAPOL M1"
+            return VerifyOutcome.ERROR, "AP never sent M1"
 
         replay = _replay_counter(m1)
 
@@ -55,8 +53,13 @@ class VerifyPskCampaign(VerifyCampaign):
                 return False
             if isinstance(p, DeauthPacket):
                 return True
-            return isinstance(p, EapolPacket) and (
-                p.msg_num == 3 or (p.msg_num == 1 and p.nonce is not None and _replay_counter(p) > replay))
+            if not isinstance(p, EapolPacket):
+                return False
+            if p.msg_num == 1 and p.nonce is not None and _replay_counter(p) > replay:
+                return True
+            if p.msg_num == 3:
+                return True
+            return False
 
         pmk = derive_pmk(self.value, (ap.ssid or "").encode())
         bssid_mac = str_to_mac(bssid)
@@ -65,17 +68,17 @@ class VerifyPskCampaign(VerifyCampaign):
             kck = derive_ptk(pmk, bssid_mac, our_mac, m1.nonce, snonce, KCK_LEN)
             m2 = build_eapol_m2(bssid_mac, our_mac, snonce, kck, replay=replay, rsn_ie=trailer)
             if not await iface.send_until_ack(m2, max_retries=_M2_RESENDS):
-                return VerifyOutcome.ERROR, "AP never ACKed EAPOL M2"
+                return VerifyOutcome.ERROR, "AP never ACKed M2"
             self._log_step("M1 received, M2 sent")
             reply = await self.array.next_frame(answers_m2, timeout=_EAPOL_REPLY_TIMEOUT_S)
             if reply is None:
-                return VerifyOutcome.ERROR, "no reply from the AP after EAPOL M2"
+                return VerifyOutcome.ERROR, "no reply after M2"
             if isinstance(reply, DeauthPacket):
                 self._log_step(f"{reply.type.capitalize()} received (reason {reply.reason})")
                 # hostapd stops re-sending M1 at its retry limit and deauths instead
                 if attempt > 0:
                     return VerifyOutcome.REJECTED, None
-                return VerifyOutcome.ERROR, f"AP sent {reply.type} (reason {reply.reason}) after EAPOL M2"
+                return VerifyOutcome.ERROR, f"AP sent {reply.type} (reason {reply.reason}) after M2"
             if reply.msg_num == 3:
                 self._log_step("M3 received")
                 return VerifyOutcome.VERIFIED, None

@@ -26,7 +26,7 @@ class VerifyPinCampaign(VerifyCampaign):
         transport = WlanTransport(iface, bssid_mac, our_mac)
         transport.start()
         try:
-            self._log_step("Authentication and association requests sent")
+            self._log_step("auth/assoc sent")
             if not await association.associate(attempts=2):
                 return VerifyOutcome.ERROR, association.fail_reason or "association rejected"
             self._log_step(f"EAPOL-Start sent, trying PIN {self.value or EMPTY_PIN_LABEL}")
