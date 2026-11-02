@@ -101,7 +101,7 @@ trees.
 - **Zenm Chen** ([@a5a5aa555oo](https://github.com/a5a5aa555oo)) — RTL8192FU
 - **Miaoqing Pan** ([@miaoqing-pan](https://github.com/miaoqing-pan)) — AR9271
 - **Ben Greear** ([@greearb](https://github.com/greearb)) — MT7921AU, MT7925AU, AR9271
-- **Jes Sørensen** — RTL8188EUS, RTL8188FTV (the `rtl8xxxu` driver both ports share)
+- **Jes Sørensen** — RTL8188EUS (the `rtl8xxxu` driver)
 
 ### Foundational maintainers
 

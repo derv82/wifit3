@@ -13,7 +13,7 @@
 - Build notes: stock `Makefile` has `CONFIG_POWER_SAVING=y` / `CONFIG_WIFI_MONITOR=n`; the capture was built with `POWER_SAVING=n` / `WIFI_MONITOR=y`, else no monitor/airmon-ng. Conflicts with `rtl8xxxu` / `r8188eu` (blacklisted at capture).
 
 ## Python Port Details
-- VID/PID: `0bda:f179`; selected by the `rtl8188ftv` family row in `device/manager.py` (this package wins by default, `WIFIT3_RTL8188FTV=mainline` opts back to `chips/rtl8188ftv`).
+- VID/PID: `0bda:f179`; selected by the `rtl8188ftv` family row in `device/manager.py`.
 - Status: **M1–M8 green; cold bring-up + live RX/TX verified.** M1 (probe chip-version read: cut 1, SMIC, 1T1R),
   M2 (EFUSE map + full parse suite: ID 0x8129, MAC/VID:PID/chplan-0x20 all at
   independent ground truth; hidden-report C2H handshake + probe power-off),
@@ -86,10 +86,8 @@
    2026-09-24 (hal tail was the gate); live deauth proven same day
    (client drop; 40 broadcast deauths on the wire, AP-spoofed TA,
    seq 0-39, all checksums valid). The C2H hidden report never posts
-   live (0xFD echo; descriptive caps only, no functional impact). DKMS
-   is the default (`DkmsFamily`), `WIFIT3_RTL8188FTV=mainline` opts out.
+   live (0xFD echo; descriptive caps only, no functional impact).
 - Live verification 2026-09-24 (AR9271 witness, ch1): RX at the known-good bar (9.7 bcn/s, 11/11 channels tuned); breadth ties the mainline sibling (4 = 4 APs, RSSI ±0 dB — both hit the local strong-AP ceiling; the AR9271 hears 19, a 1T1R sensitivity gap, not a driver one), so the DKMS default is non-regressive. On-air TX-ACK 100/100 (copies collapse to 1; a dead target piles to the retry limit at 0 ACKs). Auto-ACK re-proven NONE (spoofed 8/100, silicon 8/100, controls 0). 20-min 13-ch hop soak flat pre-watchdog (trend 4→4, ratio 1.00); watchdog-era 20-min soak 2026-09-25 flat (trend 35→37, ratio 1.06, active 30–38, no wedge). Handshake + PMKID passed on DKMS in a hands-on lab pass 2026-09-25; WPS only lightly tested there, still open for a full run.
-- Related port: `chips/rtl8188ftv/` (same silicon, mainline `rtl8xxxu` 8188F vector, at kernel parity). Shares no code with it.
 - Non-obvious in the port:
   - Wire is USB vendor-control `bRequest 0x05` register access (8-bit `usb_read8`/`usb_write8` ladder, `MAX_VENDOR_REQ_CMD_SIZE 254`) + bulk-IN EP `0x81` RX; FW download rides control transfers (`rtw_writeN`/`rtw_write8`), never bulk.
   - No `start`/`stop` cfg80211 ops: `iw set channel` hits `cfg80211_rtw_set_monitor_channel`, monitor entry is `cfg80211_rtw_change_iface` → `Ndis802_11Monitor` on the same netdev (no `wlan0mon` twin; capture keeps `wlx…`).
@@ -215,7 +213,7 @@
 - ACK detection: RX-tap admit/drop (M7 tail); auto-ACK verdict deferred to hardware.
 
 ## Scripts
-- `scripts/chips/rtl8188ftv/capture_vendor_8188fu.sh` — reproducible vendor capture (pin + monitor-enabled DKMS build + `capture.py` + bundle self-check).
+- `scripts/chips/rtl8188ftv_dkms/capture_vendor_8188fu.sh` — reproducible vendor capture (pin + monitor-enabled DKMS build + `capture.py` + bundle self-check).
 - `scripts/chips/rtl8188ftv_dkms/verify_pcap.py` — cold-boot byte gate,
   probe through the last op of both captures (switches + ticks + race).
 - `scripts/chips/rtl8188ftv_dkms/verify_tx.py` — standalone bulk-OUT

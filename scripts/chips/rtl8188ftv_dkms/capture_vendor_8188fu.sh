@@ -8,7 +8,7 @@
 # driver-source bundle to port against.
 #
 # Run as root on the Linux capture box, with the card UNPLUGGED:
-#   sudo bash scripts/chips/rtl8188ftv/capture_vendor_8188fu.sh \
+#   sudo bash scripts/chips/rtl8188ftv_dkms/capture_vendor_8188fu.sh \
 #     --bssid2g <AP_BSSID_CH1> [--client2g <CLIENT>] [--channel2g 1]
 #
 # Flags:
