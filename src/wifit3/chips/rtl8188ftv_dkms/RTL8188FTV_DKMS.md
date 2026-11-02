@@ -70,8 +70,8 @@
   RSSI (`rx.signal_dbm`: CCK `odm_CCKRSSI_8188F` LNA/VGA table on
   drvinfo[5] for desc rates ≤ 3, OFDM `((drvinfo[4]>>1)&0x7F)-110` like
   `ODM_PhyStatusQuery_92CSeries`; `None` when `physt=0`, dispatch maps
-  to −100) cross-checks against airodump PWR logs: BEWAVE_AP median
-  −52 exact, Dzial −62 vs −57, dlink −46 vs −49 (air variance +
+  to −100) cross-checks against airodump PWR logs: AP 1 median
+  −52 exact, AP 2 −62 vs −57, AP 3 −46 vs −49 (air variance +
    averaging). Bring-up is one contiguous verified flow from probe through
    monitor entry, then a unified event walk (switches + ticks + one race)
    to the last op of both captures (cap1: 29 switches + 28 ticks,
@@ -223,7 +223,7 @@
   FW#1 / hidden report / power-off sandwich).
 
 ## Debug log
-- 2026-09-22 — vendor capture triage: 30k packets / 57 s, ~6k control setups all `bRequest 0x05`, bulk-IN `0x81` with live RX sizes, zero bulk-OUT (aireplay `No such BSSID available` against `a8:5e:45:04:ce:e0`); `iw set channel` rc=0 on ch1–13, ch14 rejected (`channel is disabled`, regulatory). Monitor lives on the `wlx…` netdev itself.
+- 2026-09-22 — vendor capture triage: 30k packets / 57 s, ~6k control setups all `bRequest 0x05`, bulk-IN `0x81` with live RX sizes, zero bulk-OUT (aireplay `No such BSSID available` against `02:00:00:00:00:03`); `iw set channel` rc=0 on ch1–13, ch14 rejected (`channel is disabled`, regulatory). Monitor lives on the `wlx…` netdev itself.
 - 2026-09-24 — live run deaf on RX (bring-up 100%, hopping, zero
   bulk-IN payloads, zero errors) while captures stream RX from identical
   bytes. Two driver-vs-walk gaps found by diffing `_cold_bring_up` against

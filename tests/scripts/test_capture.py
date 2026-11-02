@@ -378,29 +378,29 @@ def test_raw_radiotap_is_12_bytes():
 
 def test_mac_bytes_round_trip():
     from wifit3.scripts.capture import mac_bytes
-    assert mac_bytes("A8:5E:45:04:CE:E0") == bytes.fromhex("A85E4504CEE0")
+    assert mac_bytes("02:00:00:00:00:03") == bytes.fromhex("020000000003")
     with pytest.raises(ValueError):
-        mac_bytes("A8:5E:45:04:CE")
+        mac_bytes("02:00:00:00:00")
 
 
 def test_build_raw_deauth_layout():
     from wifit3.scripts.capture import build_raw_deauth
-    frame = build_raw_deauth("FF:FF:FF:FF:FF:FF", "A8:5E:45:04:CE:E0",
-                             "A8:5E:45:04:CE:E0")
+    frame = build_raw_deauth("FF:FF:FF:FF:FF:FF", "02:00:00:00:00:03",
+                             "02:00:00:00:00:03")
     assert len(frame) == 12 + 26
     assert frame[12:14] == b"\xC0\x00"
     assert frame[16:22] == bytes.fromhex("FFFFFFFFFFFF")
-    assert frame[22:28] == bytes.fromhex("A85E4504CEE0")
-    assert frame[28:34] == bytes.fromhex("A85E4504CEE0")
+    assert frame[22:28] == bytes.fromhex("020000000003")
+    assert frame[28:34] == bytes.fromhex("020000000003")
     assert frame[36:38] == b"\x07\x00"
 
 
 def test_build_raw_probe_layout():
     from wifit3.scripts.capture import build_raw_probe
-    frame = build_raw_probe("44:EF:BF:1F:9D:FB", "1C:63:49:79:C1:04")
+    frame = build_raw_probe("02:00:00:00:00:01", "02:00:00:00:00:02")
     assert frame[12:14] == b"\x40\x00"
-    assert frame[16:22] == bytes.fromhex("1C634979C104")
-    assert frame[22:28] == bytes.fromhex("44EFBF1F9DFB")
+    assert frame[16:22] == bytes.fromhex("020000000002")
+    assert frame[22:28] == bytes.fromhex("020000000001")
     assert frame[36:38] == b"\x00\x00"
     assert frame[38:40] == b"\x01\x08"
 
@@ -464,7 +464,7 @@ def test_station_tx_segment_runs_assoc_dhcp_ping_disconnect(tmp_path):
     cap = _capture(tmp_path)
     cap.mon_iface = "lo"
     cap.base_iface = "lo"
-    cap.station_ssid = "BEWAVE"
+    cap.station_ssid = "test-open"
     cap.station_pings = 3
     outs = ["", "", "", "",
             "default via 10.0.0.1 dev lo proto dhcp metric 600\n", "", "",
@@ -475,7 +475,7 @@ def test_station_tx_segment_runs_assoc_dhcp_ping_disconnect(tmp_path):
         cap._station_tx_segment()
     cmds = [" ".join(c.args[0]) for c in mock_run.call_args_list]
     assert cmds[0].startswith("sudo airmon-ng stop lo")
-    assert "iw dev lo connect BEWAVE" in cmds[1]
+    assert "iw dev lo connect test-open" in cmds[1]
     assert "dhclient -r lo" in cmds[2]
     assert cmds[3].startswith("sudo dhclient lo")
     assert cmds[4].startswith("ip route show dev lo")
@@ -488,7 +488,7 @@ def test_station_tx_segment_skips_without_carrier(tmp_path):
     cap = _capture(tmp_path)
     cap.mon_iface = "lo"
     cap.base_iface = "lo"
-    cap.station_ssid = "BEWAVE"
+    cap.station_ssid = "test-open"
     with patch.object(cap, "run_cmd", return_value="") as mock_run, \
          patch.object(cap, "_carrier_up", return_value=False), \
          patch("time.sleep"):
@@ -499,7 +499,7 @@ def test_station_tx_segment_skips_without_carrier(tmp_path):
 def test_station_tx_segment_skips_without_mon_iface(tmp_path):
     cap = _capture(tmp_path)
     cap.mon_iface = None
-    cap.station_ssid = "BEWAVE"
+    cap.station_ssid = "test-open"
     with patch.object(cap, "run_cmd", return_value="") as mock_run:
         cap._station_tx_segment()
     assert mock_run.call_count == 0

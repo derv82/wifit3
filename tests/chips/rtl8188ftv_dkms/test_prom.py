@@ -18,11 +18,11 @@ def test_sign4():
 
 def test_check_invalid_mac():
     from wifit3.chips.rtl8188ftv_dkms import prom
-    assert prom.check_invalid_mac(bytes.fromhex("44efbf1f9dfb"), True) is False
+    assert prom.check_invalid_mac(bytes.fromhex("000000000001"), True) is False
     assert prom.check_invalid_mac(b"\x00" * 6, True) is True
     assert prom.check_invalid_mac(b"\xff" * 6, True) is True
-    assert prom.check_invalid_mac(bytes.fromhex("03efbf1f9dfb"), True) is True
-    assert prom.check_invalid_mac(bytes.fromhex("02efbf1f9dfb"), False) is False
+    assert prom.check_invalid_mac(bytes.fromhex("030000000001"), True) is True
+    assert prom.check_invalid_mac(bytes.fromhex("020000000001"), False) is False
 
 
 def test_chnl_group_2g():

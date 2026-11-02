@@ -40,7 +40,7 @@ def test_rx_dispatch_beacon_bssid():
     from wifit3.dot11.parser import WlanFrameParser
     # Synthetic beacon for the log-known AP: 24B header + 12B fixed params
     # + SSID IE, wrapped in one RX descriptor entry.
-    bssid = bytes.fromhex("1c634979c104")
+    bssid = bytes.fromhex("020000000002")
     hdr = (b"\x80\x00\x00\x00" + b"\xff" * 6 + bssid + bssid + b"\x00\x00")
     beacon = hdr + bytes(12) + b"\x00\x04TEST"
     buf = _rx_desc(len(beacon)) + beacon
@@ -54,7 +54,7 @@ def test_rx_dispatch_beacon_bssid():
             continue
         if pkt is not None and pkt.bssid:
             bssids.add(pkt.bssid.lower())
-    assert "1c:63:49:79:c1:04" in bssids
+    assert "02:00:00:00:00:02" in bssids
 
 
 def test_set_channel_threads_hal():
@@ -111,8 +111,8 @@ def test_inject_frame_sends_mgnt_urb_and_advances_seq():
     d = _driver()
     d.transport = MagicMock()
     d.hal = {"mgnt_seq": 5}
-    ap = bytes.fromhex("1c634979c104")
-    card = bytes.fromhex("44efbf1f9dfb")
+    ap = bytes.fromhex("020000000002")
+    card = bytes.fromhex("020000000001")
     frame = tx_mod.stamp_seqnum(tx_mod.build_deauth_frame(ap, card, ap, 0), 5)
     assert asyncio.run(d._inject_frame(frame)) is True
     data = d.transport.bulk_out.call_args[0][0]
@@ -242,7 +242,7 @@ def _stubbed_bring_up_modules(monkeypatch, calls):
     import types
     from wifit3.chips.rtl8188ftv_dkms import driver as drv_mod
     params = types.SimpleNamespace(
-        vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("44efbf1f9dfb"),
+        vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("020000000001"),
         thermal=0x1A, crystal=0x1D, kfree_flag=0, kfree_bb_gain=0,
         chplan=0x20)
 
@@ -350,7 +350,7 @@ def test_bring_up_applies_kfree_trim_when_flag_on(monkeypatch):
     monkeypatch.setattr(
         prom_mod, "read_adapter_info",
         lambda t, s: (types.SimpleNamespace(
-            vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("44efbf1f9dfb"),
+            vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("020000000001"),
             thermal=0x1A, crystal=0x1D,
             kfree_flag=prom_mod.KFREE_FLAG_ON, kfree_bb_gain=-3,
             chplan=0x20), b""))
@@ -397,7 +397,7 @@ def test_bring_up_narrows_supported_channels_to_efuse_chplan(monkeypatch):
     monkeypatch.setattr(
         prom_mod, "read_adapter_info",
         lambda t, s: (types.SimpleNamespace(
-            vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("44efbf1f9dfb"),
+            vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("020000000001"),
             thermal=0x1A, crystal=0x1D, kfree_flag=0, kfree_bb_gain=0,
             chplan=0x22), b""))
     d = _driver()

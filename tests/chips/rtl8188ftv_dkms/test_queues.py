@@ -62,8 +62,8 @@ def test_page_and_transfer_and_drvinfo():
 def test_macaddr_networktype():
     from wifit3.chips.rtl8188ftv_dkms import queues
     t = FakeT([0x00000000])
-    queues.init_macaddr(t, bytes.fromhex("44efbf1f9dfb"))
-    assert t.writes == [(0x610 + i, 1, b) for i, b in enumerate(bytes.fromhex("44efbf1f9dfb"))]
+    queues.init_macaddr(t, bytes.fromhex("020000000001"))
+    assert t.writes == [(0x610 + i, 1, b) for i, b in enumerate(bytes.fromhex("020000000001"))]
     t = FakeT([0x00000000])
     queues.init_network_type(t)
     assert t.writes == [(0x100, 4, 0x00020000)]
