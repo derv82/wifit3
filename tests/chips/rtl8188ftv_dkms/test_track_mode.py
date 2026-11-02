@@ -39,16 +39,19 @@ def test_kfree_gain_offset_clears_tx_gain_bits():
     assert t.writes[-1] == (0x840, 4, 0x5502060)
 
 
-def test_enter_monitor():
+def test_enter_monitor(monkeypatch):
     from wifit3.chips.rtl8188ftv_dkms import mode
+    monkeypatch.setattr(mode, "isMonitor", False)
     t = FakeT([0x02])
     mode.enter_monitor(t)
     assert t.writes == [(0x102, 1, 0x0), (0x608, 4, 0x9000382F),
                         (0x6A4, 2, 0xFFFF)]
+    assert mode.isMonitor is True
 
 
-def test_set_station_opmode():
+def test_set_station_opmode(monkeypatch):
     from wifit3.chips.rtl8188ftv_dkms import mode
+    monkeypatch.setattr(mode, "isMonitor", False)
     t = FakeT([0x10, 0x02])
     st = {"fw_hw_tx_q_ctrl": 0x71, "reg542": 0x00}
     mode.set_station_opmode(t, st)
@@ -56,3 +59,14 @@ def test_set_station_opmode():
                         (0x422, 1, 0x31), (0x541, 1, 0x64),
                         (0x542, 1, 0x00), (0x550, 1, 0x19)]
     assert st == {"fw_hw_tx_q_ctrl": 0x31, "reg542": 0x00}
+
+
+def test_set_station_opmode_after_monitor_resets_rcr(monkeypatch):
+    # rtl8188f_hal_init.c:4868-4871: static isMonitor -> RCR = ReceiveConfig, then cleared
+    from wifit3.chips.rtl8188ftv_dkms import mode
+    monkeypatch.setattr(mode, "isMonitor", True)
+    t = FakeT([0x10, 0x02])
+    mode.set_station_opmode(t, {"fw_hw_tx_q_ctrl": 0x71, "reg542": 0x00})
+    assert t.writes[0] == (0x608, 4, 0x700060CE)
+    assert t.writes[1] == (0x550, 1, 0x10)
+    assert mode.isMonitor is False

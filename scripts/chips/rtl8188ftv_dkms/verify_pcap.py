@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
-from wifit3.chips.rtl8188ftv_dkms import dm, prom, tx
+from wifit3.chips.rtl8188ftv_dkms import dm, mode, prom, queues, tx
 from wifit3.chips.rtl8188ftv_dkms.driver import Rtl8188ftvDkmsDriver
 
 # dm.watchdog_tick head: misc.check_rxfifo_full (0x667/0x664) + false_alarm_stats hold (0xC00/0xD00).
@@ -34,6 +34,7 @@ SWITCH_HEAD = [("R", 0x824, 4), ("W", 0x824, 4), ("R", 0x824, 4),
                ("W", 0x824, 4), ("W", 0x824, 4), ("R", 0x820, 4)]
 SWITCH_RF18_WRITE_OFFSET = 7    # the RF 0x18 LSSI write, then spur_calibration's 0xC40 RMW
 REG_MACID = 0x0610
+REG_RCR = 0x0608
 REG_LSSI_A = 0x0840
 REG_SPUR_C40 = 0x0C40
 RF_CHNLBW = 0x18
@@ -268,6 +269,20 @@ def wire_random32(ops: list[dict]) -> int | None:
     return None
 
 
+def wire_is_monitor(ops: list[dict]) -> bool:
+    """``hw_var_set_opmode``'s static ``isMonitor`` at plug time is left by the previous plug in
+    the same module load (rtl8188f_hal_init.c:4862-4871): read from the wire as a second
+    ReceiveConfig RCR write (the opmode reset) ahead of the first monitor RCR write."""
+    receive_config_writes = 0
+    for op in ops:
+        if op["kind"] != "W" or op.get("addr") != REG_RCR or op.get("width") != 4:
+            continue
+        if op["value"] != queues.RCR_ALL:
+            break
+        receive_config_writes += 1
+    return receive_config_writes == 2
+
+
 def run_capture(pcap: Path) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no settle delays
     if not pcap.exists():
@@ -285,6 +300,9 @@ def run_capture(pcap: Path) -> int:
     random32 = wire_random32(ops)
     if random32 is not None:
         prom.random32 = lambda: random32
+    mode.isMonitor = wire_is_monitor(ops)
+    if mode.isMonitor:
+        print("  precondition: isMonitor static left TRUE by an earlier plug (opmode resets RCR)")
     w = Walk(ops)
     try:
         counts = asyncio.run(_walk(w))

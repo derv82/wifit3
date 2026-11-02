@@ -8,6 +8,12 @@ opens all data frames.
 """
 from __future__ import annotations
 
+from . import queues
+
+# rtl8188f_hal_init.c:4862 ``static u8 isMonitor``: function-static, so it outlives an adapter
+# and carries across replugs for the module's (here: the process's) lifetime.
+isMonitor = False
+
 
 def BIT(n: int) -> int:
     return 1 << n
@@ -17,7 +23,18 @@ _RCR_MONITOR = (BIT(0) | BIT(1) | BIT(2) | BIT(3) | BIT(5) | BIT(11)
                 | BIT(12) | BIT(13) | BIT(28) | BIT(31))
 
 
+def reset_rcr_after_monitor(t) -> None:
+    """``hw_var_set_opmode`` head (rtl8188f_hal_init.c:4868-4871): RCR back to ReceiveConfig."""
+    global isMonitor
+    if isMonitor:
+        t.write32(0x608, queues.RCR_ALL)
+        isMonitor = False
+
+
 def enter_monitor(t) -> None:
+    global isMonitor
+    reset_rcr_after_monitor(t)
+    isMonitor = True
     msr = t.read8(0x102) & 0x0C
     t.write8(0x102, msr | 0x00)
     t.write32(0x608, _RCR_MONITOR)
@@ -25,6 +42,7 @@ def enter_monitor(t) -> None:
 
 
 def set_station_opmode(t, st: dict) -> None:
+    reset_rcr_after_monitor(t)
     bcn = t.read8(0x550) | BIT(4)
     t.write8(0x550, bcn)
     msr = t.read8(0x102) & 0x0C
