@@ -54,7 +54,7 @@
 ## Known Problems
 - capture-1..3 have no bulk-OUT: the vendor's monitor TX never reaches USB. `rtw_monitor_xmit_entry` drops
   any radiotap that isn't 12 B, and carrier stays off in monitor. The port injects over PyUSB, unaffected.
-- The C2H hidden report never posts live (reads back 0xFD). Descriptive caps only.
+- The C2H hidden report (id 0x19, 13 B) arrives on the first or second poll in all 3 captures; package type comes from it.
 
 ## Driver Entry Points
 - Bring-up: `driver.connect` → probe + EFUSE → power → FW (`assets/rtl8188fufw.bin`) → MAC/BB/RF →
