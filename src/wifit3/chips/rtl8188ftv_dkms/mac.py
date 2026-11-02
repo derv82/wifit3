@@ -27,5 +27,6 @@ def init_antenna_selection(t) -> None:
     bb.set_mac_reg(t, 0x38, BIT(11), 0x1)
 
 
-def mac_config(t) -> None:
-    phy_cond.walk_table(mac_reg_tbl.TABLE, lambda addr, value: t.write8(addr, value))
+def mac_config(t, cut_version: int, package_type: int) -> None:
+    phy_cond.walk_table(mac_reg_tbl.TABLE, lambda addr, value: t.write8(addr, value),
+                        cut_version, package_type)

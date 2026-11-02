@@ -250,7 +250,7 @@ def _stubbed_bring_up_modules(monkeypatch, calls):
         return None
 
     stubs = {
-        "info_mod": {"read_chip_version": lambda t: object(),
+        "info_mod": {"read_chip_version": lambda t: types.SimpleNamespace(cut=1),
                      "is_smic": lambda v: True},
         "prom_mod": {"read_adapter_info": lambda t, s: (params, b"")},
         "power_mod": {"power_on": lambda *a, **k: True,

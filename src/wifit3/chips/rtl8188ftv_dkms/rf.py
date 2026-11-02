@@ -111,9 +111,11 @@ def config_rf_reg(t, addr: int, data: int, path: int = RF_PATH_A) -> None:
                 break
 
 
-def radio_a_config(t, path: int = RF_PATH_A) -> None:
+def radio_a_config(t, cut_version: int, package_type: int,
+                   path: int = RF_PATH_A) -> None:
     phy_cond.walk_table(rf_radio_a_tbl.TABLE,
-                        lambda a, v: config_rf_reg(t, a, v, path))
+                        lambda a, v: config_rf_reg(t, a, v, path),
+                        cut_version, package_type)
 
 
 def txpwr_track_tables() -> dict:
@@ -123,7 +125,8 @@ def txpwr_track_tables() -> dict:
             for k, v in rf_txpwr_track_tbl.TABLES.items()}
 
 
-def rf_config(t, num_paths: int = 1, load_phy_file: int = 0x44) -> dict:
+def rf_config(t, cut_version: int, package_type: int, num_paths: int = 1,
+              load_phy_file: int = 0x44) -> dict:
     for path in range(num_paths):
         saved = bb.query_bb_reg(t, RFINTFS_A, RFSI_RFENV)
         bb.set_bb_reg(t, RFINTFE_A, RFSI_RFENV << 16, 0x1)
@@ -135,7 +138,7 @@ def rf_config(t, num_paths: int = 1, load_phy_file: int = 0x44) -> dict:
         bb.set_bb_reg(t, RF_HSSI_PARAM2_A, WIRE_DATA_LEN, 0x0)
         time.sleep(1e-6)
         if path == RF_PATH_A:
-            radio_a_config(t, path)
+            radio_a_config(t, cut_version, package_type, path)
         bb.set_bb_reg(t, RFINTFS_A, RFSI_RFENV, saved)
     if load_phy_file & 0x20:
         # TODO: verify, untested here, needs a host TxPowerTrack para-file

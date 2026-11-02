@@ -179,6 +179,7 @@ class Rtl8188ftvDkmsDriver(Driver):
             None, c2h_mod.collect_hidden_report, t)
         logger.info("Probe hidden report: id 0x%02x, %dB (%s)",
                     ident, len(report), report.hex())
+        package_type = c2h_mod.get_c2h_mac_hidden_rpt_package_type(report)
         if not await loop.run_in_executor(None, power_mod.card_disable,
                                           t, False):
             raise BringUpError("power", "probe power_off failed")
@@ -201,10 +202,12 @@ class Rtl8188ftvDkmsDriver(Driver):
 
         _update(0.30, "MAC/BB/RF init...")
         await loop.run_in_executor(None, mac_mod.init_antenna_selection, t)
-        await loop.run_in_executor(None, mac_mod.mac_config, t)
         await loop.run_in_executor(
-            None, bb_mod.bb_config, t, params.crystal)
-        await loop.run_in_executor(None, rf_mod.rf_config, t)
+            None, mac_mod.mac_config, t, version.cut, package_type)
+        await loop.run_in_executor(
+            None, bb_mod.bb_config, t, params.crystal, version.cut, package_type)
+        await loop.run_in_executor(
+            None, rf_mod.rf_config, t, version.cut, package_type)
 
         _update(0.45, "Queues/misc/ch1 tune...")
         await loop.run_in_executor(

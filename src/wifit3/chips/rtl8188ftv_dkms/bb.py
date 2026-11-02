@@ -69,7 +69,8 @@ def set_crystal_cap(t, crystal_cap: int) -> None:
                crystal_cap | (crystal_cap << 6))
 
 
-def bb_config(t, crystal_cap: int, mp_mode: int = 0) -> None:
+def bb_config(t, crystal_cap: int, cut_version: int, package_type: int,
+              mp_mode: int = 0) -> None:
     reg_val = t.read16(C.REG_SYS_FUNC_EN)
     t.write16(C.REG_SYS_FUNC_EN, reg_val | BIT(13) | BIT(0) | BIT(1))
     t.write8(C.REG_RF_CTRL, C.RF_EN | C.RF_RSTB | C.RF_SDMRSTB)
@@ -77,11 +78,13 @@ def bb_config(t, crystal_cap: int, mp_mode: int = 0) -> None:
     rf.set_rf_reg(t, rf.RF_PATH_A, 0x1, rf.RF_REG_OFFSET_MASK, 0x780)
     t.write8(C.REG_SYS_FUNC_EN,
              C.FEN_USBD | C.FEN_USBA | C.FEN_BB_GLB_RSTn | C.FEN_BBRSTB)
-    phy_cond.walk_table(bb_phy_reg_tbl.TABLE, lambda a, v: _config_phy_reg(t, a, v))
+    phy_cond.walk_table(bb_phy_reg_tbl.TABLE, lambda a, v: _config_phy_reg(t, a, v),
+                        cut_version, package_type)
     if mp_mode == 1:
         # TODO: verify, untested here, needs mp_mode=1
         raise ValueError("MP PHY_REG table untested here")
     phy_cond.walk_table(bb_agc_tab_tbl.TABLE,
                         lambda a, v: (set_bb_reg(t, a, MASK_DWORD, v),
-                                      time.sleep(1e-6)))
+                                      time.sleep(1e-6)),
+                        cut_version, package_type)
     set_crystal_cap(t, crystal_cap)
