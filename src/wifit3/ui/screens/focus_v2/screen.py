@@ -552,7 +552,10 @@ class FocusViewV2(Screen):
         btn.display = bool(keys)
         current = self._controls.current
         if isinstance(current, VerifyCampaign):
-            btn.label, btn.disabled, btn.variant, reason = "Verifying…", True, "warning", None
+            btn.label = "Verifying…"
+            btn.disabled = True
+            btn.variant = "warning"
+            reason = None
         else:
             btn.label = "Verify ▾" if len(keys) > 1 else "Verify"
             btn.variant = "success"
