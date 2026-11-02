@@ -46,14 +46,12 @@ from wifit3.campaigns.pin import (EMPTY_PIN_LABEL, WpsCampaign, load_run_state,
                                   run_progress_line)
 from wifit3.campaigns.probe import probe_ap
 from wifit3.campaigns.probe.broadcom_wps import WpsImplementation, probe_wps_implementation
+from wifit3.campaigns.verify import VERIFY_CAMPAIGNS
 from wifit3.campaigns.verify.campaign import VerifyCampaign, VerifyOutcome
-from wifit3.campaigns.verify.pin import VerifyPinCampaign
-from wifit3.campaigns.verify.psk import VerifyPskCampaign
-from wifit3.campaigns.verify.wep import VerifyWepCampaign
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
 from wifit3.dot11.pmf import PmfPosture
-from wifit3.models import AccessPoint, CaptureType, IdSource
+from wifit3.models import AccessPoint, IdSource
 from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.persist.ap_state import Key, PasswordStatus, epoch_sort_key
 from wifit3.persist.config import Config
@@ -108,9 +106,6 @@ _ATTACK_BUTTONS = [
     ("btn-pmkid", "PMKID"), ("btn-wps-pin", "WPS PIN"), ("btn-eviltwin", "EvilTwin"),
     ("btn-verify", "Verify"), ("btn-pbc", "Stop PBC"),
 ]
-
-_VERIFY_CAMPAIGNS = {CaptureType.WPA_PSK: VerifyPskCampaign, CaptureType.WPS_PIN: VerifyPinCampaign,
-                     CaptureType.WEP: VerifyWepCampaign}
 
 # Static button tooltips, keyed by live label so toggled buttons get idle/run-specific tips.
 _BUTTON_TIPS = {
@@ -1564,7 +1559,7 @@ class FocusViewV2(Screen):
         array = self.app.array
         if key is None or ap is None or array is None:
             return
-        campaign = _VERIFY_CAMPAIGNS[key.type]
+        campaign = VERIFY_CAMPAIGNS[key.type]
         self._log(f"Verifying {campaign.credential_name} [cyan]{escape(key_text(key))}[/]...")
         started = self._controls.start(campaign, array, ap, verify_value=key.value,
                                        log=lambda m: self._log(treelog.branch(m)))

@@ -133,5 +133,5 @@ def test_menu_rows_align_the_dates_right():
     prompts = key_option_prompts([_key(CaptureType.WPA_PSK, "hunter22", sep_23),
                                   _key(CaptureType.WPS_PIN, "12345670", sep_18)])
 
-    assert [prompt.plain for prompt in prompts] == ["PSK: hunter22    Sep 23 05:06",
-                                                   "PIN: 12345670    Sep 18 13:14"]
+    assert [prompt.plain for prompt in prompts] == ["PSK: hunter22        Sep 23 05:06",
+                                                   "WPS PIN: 12345670    Sep 18 13:14"]

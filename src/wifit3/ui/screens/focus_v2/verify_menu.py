@@ -11,16 +11,13 @@ from textual.screen import ModalScreen
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
 
-from wifit3.models import CaptureType
+from wifit3.campaigns.verify import VERIFY_CAMPAIGNS
 from wifit3.persist.ap_state import Key
 from wifit3.ui.screens.vault_item import date_text, key_text
 
-_KEY_LABELS = {CaptureType.WPA_PSK: "PSK", CaptureType.WPS_PIN: "PIN", CaptureType.WEP: "WEP"}
-
-
 def key_option_prompts(keys: list[Key]) -> list[Content]:
     """``PSK: hunter22    Sep 23 05:06``: type and value left, the date right-aligned and dim."""
-    values = [f"{_KEY_LABELS[key.type]}: {key_text(key)}" for key in keys]
+    values = [f"{VERIFY_CAMPAIGNS[key.type].credential_name}: {key_text(key)}" for key in keys]
     dates = [date_text(key.newest_capture.timestamp) for key in keys]
     value_width = max(len(value) for value in values)
     date_width = max(len(date) for date in dates)
