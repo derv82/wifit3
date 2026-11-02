@@ -405,10 +405,6 @@ class AddKeyPressed(Message):
     """The user asked to add a key to the AP in view."""
 
 
-def _newest_pcap(captures: Sequence[PersistedCapture]) -> Optional[PersistedCapture]:
-    return next((capture for capture in captures if capture.path.endswith(".pcap")), None)
-
-
 class _CrackerButton(Button):
     """Opens ``tool``'s launch modal for the ticked hashlines."""
 
@@ -639,7 +635,7 @@ class _ApStatePanel(VerticalGroup):
         uncracked_lines = [h.line for h in uncracked]
         for button in self._cracker_buttons:
             button.display = state.hashline_capture is not None and button.tool.can_crack(uncracked_lines)
-        self._dwpa_button.display = _newest_pcap(state.handshake_and_pmkid_files) is not None
+        self._dwpa_button.display = any(c.path.endswith(".pcap") for c in state.handshake_and_pmkid_files)
 
     def _show_selected_count(self, selected: list[Hc22000Line]) -> None:
         self._selected_count_label.update(_selected_count_text(len(selected)))
@@ -668,7 +664,8 @@ class _ApStatePanel(VerticalGroup):
 
     def _upload_dwpa_capture(self) -> None:
         state = self._state
-        capture = None if state is None else _newest_pcap(state.handshake_and_pmkid_files)
+        capture = None if state is None else next(
+            (c for c in state.handshake_and_pmkid_files if c.path.endswith(".pcap")), None)
         if capture is None:
             return
 
