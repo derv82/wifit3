@@ -10,7 +10,7 @@ import threading
 import time
 from types import SimpleNamespace
 
-from wifit3.chips.ar9271_v2 import constants as C, tx
+from wifit3.chips.ar9271_v2 import bringup, chan, constants as C, tx
 from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
 
 # 24-byte stubs (no IEs): ProbeReq (mgmt), Null (data), RTS (control).
@@ -128,6 +128,37 @@ async def test_inject_frame_async_returns_bool():
     drv = _replay_driver(sent)
     assert await drv.inject_frame(PROBE) is True
     assert sent[0] == tx.build_mgmt_tx(5, PROBE, 0)
+
+
+def test_channel_change_and_tx_share_operation_lock(mocker):
+    class OverlapTracker:
+        def __init__(self):
+            self.active = 0
+            self.max_active = 0
+            self.lock = threading.Lock()
+
+        def operation(self, *args):
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            time.sleep(0.01)
+            with self.lock:
+                self.active -= 1
+
+    tracker = OverlapTracker()
+    transport = SimpleNamespace(wlan_out=lambda data: tracker.operation(data) or len(data))
+    wmi = SimpleNamespace(t=transport)
+    endpoints = {C.WMI_MGMT_SVC: 5, C.WMI_DATA_BE_SVC: 6}
+    drv = AR9271V2Driver.for_replay(wmi, object(), endpoints)
+    mocker.patch.object(bringup, "full_channel_change", side_effect=tracker.operation)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        tune = executor.submit(drv._do_channel_change, chan.channel_2ghz(1), False)
+        emit = executor.submit(drv._emit_frame, PROBE)
+        tune.result()
+        emit.result()
+
+    assert tracker.max_active == 1
 
 
 async def test_concurrent_injects_serialize_usb_submissions():

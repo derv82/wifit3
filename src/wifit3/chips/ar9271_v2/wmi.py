@@ -21,6 +21,7 @@ Register access [SRC] htc_drv_init.c:234-509:
 from __future__ import annotations
 
 import struct
+import threading
 
 from . import constants as C
 from . import htc
@@ -63,6 +64,7 @@ class WMI:
         self.t = t
         self.ctrl_epid = ctrl_epid
         self.tx_seq_id = 0
+        self._command_lock = threading.RLock()
         self._mwrite: list[tuple[int, int]] = []          # buffered (reg, val)
         self._mwrite_enabled = 0
         self._mrmw: list[tuple[int, int, int]] = []        # buffered (reg, set, clr)
@@ -77,12 +79,13 @@ class WMI:
     def cmd(self, command_id: int, payload: bytes) -> bytes:
         """Issue one WMI command and return its response body (htc + wmi headers stripped).
         Mirrors ath9k_wmi_cmd_issue: ++seq, frame, send on ctrl_epid [SRC] wmi.c:286-307."""
-        if self.async_injector is not None:
-            self.async_injector(command_id, payload)
-        self.tx_seq_id = (self.tx_seq_id + 1) & 0xFFFF
-        hdr = struct.pack(">HH", command_id, self.tx_seq_id)
-        self.t.reg_out(htc.frame(self.ctrl_epid, hdr + payload))
-        return self._await_response(self.tx_seq_id)
+        with self._command_lock:
+            if self.async_injector is not None:
+                self.async_injector(command_id, payload)
+            self.tx_seq_id = (self.tx_seq_id + 1) & 0xFFFF
+            hdr = struct.pack(">HH", command_id, self.tx_seq_id)
+            self.t.reg_out(htc.frame(self.ctrl_epid, hdr + payload))
+            return self._await_response(self.tx_seq_id)
 
     def _await_response(self, seq: int) -> bytes:
         """Read REG_IN frames until the command response for ``seq`` arrives, skipping any
@@ -93,6 +96,8 @@ class WMI:
             cmd_id, rsp_seq = struct.unpack_from(">HH", body)
             if cmd_id & WMI_EVENT_BIT:
                 continue                                   # async event — not our response
+            if rsp_seq != seq:
+                continue                                   # stale response after a timed-out command
             return body[4:]                                # strip wmi_cmd_hdr -> value(s)
 
     def vap_create(self, index: int, opmode: int, macaddr: bytes, ath_cap: int = 0,

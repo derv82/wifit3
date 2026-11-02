@@ -1,6 +1,9 @@
 """M2b mechanism: WMI command framing + register I/O reproduce the exact wire bytes the
 ath9k_htc init issues (sampled from the cold-boot capture)."""
+from concurrent.futures import ThreadPoolExecutor
 import struct
+import threading
+import time
 
 from wifit3.chips.ar9271_v2 import wmi as W
 from wifit3.chips.ar9271_v2.transport import AR9271Transport
@@ -82,9 +85,62 @@ def test_get_fw_version():
     assert dev.writes[0].hex() == "0100000400000000" + "00030001"
 
 
+def test_stale_response_sequence_is_ignored():
+    class StaleThenCurrentDev(FakeDev):
+        def write(self, ep, data, timeout=None):
+            result = super().write(ep, data, timeout)
+            cmd_id, seq = struct.unpack_from(">HH", data, 8)
+            stale_body = struct.pack(">HHI", cmd_id, seq - 1, 0xBAD0BAD0)
+            current_body = struct.pack(">HHI", cmd_id, seq, 0xDEADBEEF)
+            self._responses = [
+                struct.pack(">BBH4x", 1, 0, len(stale_body)) + stale_body,
+                struct.pack(">BBH4x", 1, 0, len(current_body)) + current_body,
+            ]
+            return result
+
+        def read(self, ep, length, timeout=None):
+            return bytearray(self._responses.pop(0))
+
+    w = W.WMI(AR9271Transport(StaleThenCurrentDev()), ctrl_epid=1)
+    assert w.reg_read(0x4020) == 0xDEADBEEF
+
+
 def test_seq_increments_per_command():
     w = _wmi()
     for _ in range(5):
         w.reg_read(0x4020)
     seqs = [struct.unpack_from(">H", wr, 10)[0] for wr in w.t.dev.writes]
     assert seqs == [1, 2, 3, 4, 5]
+
+
+def test_concurrent_commands_serialize_request_response_pairs():
+    class OverlapDetectingDev(FakeDev):
+        def __init__(self):
+            super().__init__()
+            self.active = 0
+            self.max_active = 0
+            self.lock = threading.Lock()
+
+        def write(self, ep, data, timeout=None):
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            result = super().write(ep, data, timeout)
+            time.sleep(0.005)
+            return result
+
+        def read(self, ep, length, timeout=None):
+            result = super().read(ep, length, timeout)
+            with self.lock:
+                self.active -= 1
+            return result
+
+    dev = OverlapDetectingDev()
+    w = W.WMI(AR9271Transport(dev), ctrl_epid=1)
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        values = list(executor.map(lambda _: w.reg_read(0x4020), range(32)))
+
+    assert values == [0xDEADBEEF] * 32
+    assert dev.max_active == 1
+    seqs = [struct.unpack_from(">H", wr, 10)[0] for wr in dev.writes]
+    assert seqs == list(range(1, 33))

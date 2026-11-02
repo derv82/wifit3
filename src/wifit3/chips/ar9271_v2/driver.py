@@ -158,7 +158,7 @@ class AR9271V2Driver(Driver):
         self.mgmt_epid = endpoints[C.WMI_MGMT_SVC]
         self.data_be_epid = endpoints[C.WMI_DATA_BE_SVC]
         self.tx_slots = tx.TxSlots()
-        self._tx_lock = threading.Lock()
+        self._operation_lock = threading.RLock()
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -407,10 +407,11 @@ class AR9271V2Driver(Driver):
         return True
 
     def _do_channel_change(self, ch: chanmod.Channel, fastcc: bool) -> None:
-        if fastcc:
-            bringup.fast_channel_change(self.wmi, self.hw, ch)
-        else:
-            bringup.full_channel_change(self.wmi, self.hw, ch)
+        with self._operation_lock:
+            if fastcc:
+                bringup.fast_channel_change(self.wmi, self.hw, ch)
+            else:
+                bringup.full_channel_change(self.wmi, self.hw, ch)
 
     # ---- RX (live only; the pcap gate does not model device->host frames) -
     def _read_once(self) -> Optional[bytes]:
@@ -486,7 +487,7 @@ class AR9271V2Driver(Driver):
         sequence number) is the caller's; only the wrapper and the cookie are ours. Returns the
         allocated cookie (TX slot). The verify gate + unit tests drive this directly (no event loop);
         the public async ``inject_frame`` wraps it for the UI."""
-        with self._tx_lock:
+        with self._operation_lock:
             cookie = self.tx_slots.get()
             if tx.is_data_frame(dot11):
                 frame = tx.build_data_tx(self.data_be_epid, dot11, cookie)
@@ -526,10 +527,11 @@ class AR9271V2Driver(Driver):
     def _write_sta_id(self, mac: bytes) -> None:
         """ath_hw_setbssidmask-style STA address write: low 4 bytes -> AR_STA_ID0, high 2 ->
         AR_STA_ID1 (preserving the upper opmode/KSRCH bits) [SRC] ath/hw.c ath_hw_setbssidmask."""
-        self.hw.write(R.AR_STA_ID0, int.from_bytes(mac[0:4], "little"))
-        id1 = (self.hw.read(R.AR_STA_ID1) & ~R.AR_STA_ID1_SADH_MASK) & 0xFFFFFFFF
-        id1 |= int.from_bytes(mac[4:6], "little")
-        self.hw.write(R.AR_STA_ID1, id1)
+        with self._operation_lock:
+            self.hw.write(R.AR_STA_ID0, int.from_bytes(mac[0:4], "little"))
+            id1 = (self.hw.read(R.AR_STA_ID1) & ~R.AR_STA_ID1_SADH_MASK) & 0xFFFFFFFF
+            id1 |= int.from_bytes(mac[4:6], "little")
+            self.hw.write(R.AR_STA_ID1, id1)
 
     async def close(self) -> None:
         if self._reader is not None:
