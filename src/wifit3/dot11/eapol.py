@@ -2,6 +2,7 @@
 
 EAPOL-Key multi-byte fields are network order.
 """
+from enum import IntEnum
 import struct
 
 from wifit3.dot11.mac import mac_header
@@ -20,6 +21,18 @@ KEY_DESCRIPTOR_VERSION_MASK = 0x0007     # Key Information bits 0-2
 _KEY_IV = bytes(16)
 _KEY_RSC = bytes(8)
 _KEY_ID = bytes(8)
+
+
+class KeyDescriptorVersion(IntEnum):
+    """Key Information bits 0-2: the MIC and key-wrap algorithms."""
+    HMAC_MD5_RC4 = 1      # TKIP pairwise
+    HMAC_SHA1_AES = 2     # CCMP pairwise
+    AES_128_CMAC = 3      # PSK-SHA256, FT-PSK
+
+
+HMAC_MD5_RC4 = KeyDescriptorVersion.HMAC_MD5_RC4
+HMAC_SHA1_AES = KeyDescriptorVersion.HMAC_SHA1_AES
+AES_128_CMAC = KeyDescriptorVersion.AES_128_CMAC
 
 
 def data_header(*, to_ds: bool, bssid: bytes, client: bytes) -> bytes:

@@ -3,7 +3,7 @@ import hmac
 
 import pytest
 
-from wifit3.dot11.eapol import MIC_OFFSET
+from wifit3.dot11.eapol import AES_128_CMAC, HMAC_MD5_RC4, HMAC_SHA1_AES, MIC_OFFSET
 from wifit3.dot11.wpa import build_eapol_m2, derive_pmk, derive_ptk
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.packet import EapolPacket
@@ -33,7 +33,7 @@ def test_build_eapol_m2_parsed_correctly():
     snonce = bytes(range(32, 64))
     kck = b"\xaa" * 16
 
-    frame = build_eapol_m2(bssid, sta_mac, snonce, kck, key_descriptor_version=2, replay=1)
+    frame = build_eapol_m2(bssid, sta_mac, snonce, kck, key_descriptor_version=HMAC_SHA1_AES, replay=1)
     assert len(frame) > 100
 
     parsed = WlanFrameParser.parse_80211_frame(frame, rssi=0)
@@ -49,8 +49,8 @@ def test_build_eapol_m2_parsed_correctly():
 
 
 @pytest.mark.parametrize("key_descriptor_version, key_info, digest", [
-    (1, 0x0109, hashlib.md5),
-    (2, 0x010A, hashlib.sha1),
+    (HMAC_MD5_RC4, 0x0109, hashlib.md5),
+    (HMAC_SHA1_AES, 0x010A, hashlib.sha1),
 ])
 def test_build_eapol_m2_mic_follows_the_key_descriptor_version(key_descriptor_version, key_info, digest):
     kck = b"\xaa" * 16
@@ -66,4 +66,4 @@ def test_build_eapol_m2_mic_follows_the_key_descriptor_version(key_descriptor_ve
 
 def test_build_eapol_m2_rejects_an_unsupported_key_descriptor_version():
     with pytest.raises(ValueError):
-        build_eapol_m2(bytes(6), bytes(6), bytes(32), b"\xaa" * 16, key_descriptor_version=3)
+        build_eapol_m2(bytes(6), bytes(6), bytes(32), b"\xaa" * 16, key_descriptor_version=AES_128_CMAC)

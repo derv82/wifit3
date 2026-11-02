@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Set
 
 from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
 from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage, IdSource
-from wifit3.dot11.eapol import KEY_DESCRIPTOR_VERSION_MASK
+from wifit3.dot11.eapol import AES_128_CMAC, HMAC_SHA1_AES, KEY_DESCRIPTOR_VERSION_MASK
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.rsn import AKM_FT_PSK, AKM_PSK, AKM_PSK_SHA256
@@ -31,7 +31,7 @@ from wifit3.wlan.wep_store import WepCaptureStore
 
 logger = logging.getLogger(__name__)
 
-_KEY_DESCRIPTOR_VERSION_BY_PMKID_AKM = {AKM_PSK: 2, AKM_PSK_SHA256: 3, AKM_FT_PSK: 3}
+_KEY_DESCRIPTOR_VERSION_BY_PMKID_AKM = {AKM_PSK: HMAC_SHA1_AES, AKM_PSK_SHA256: AES_128_CMAC, AKM_FT_PSK: AES_128_CMAC}
 _EAPOL_KEY_DESCRIPTOR_TYPE_OFFSET = 4
 _EAPOL_KEY_DESCRIPTOR_TYPE_RSN = 2
 _KEY_INFO_PAIRWISE = 0x0008
@@ -428,7 +428,7 @@ class WlanSink:
             hs.pmkid = pmkid
             hs.pmkid_akm = akm
             if pkt.key_info is not None:
-                hs.pmkid_key_descriptor_version = pkt.key_info & 3
+                hs.pmkid_key_descriptor_version = pkt.key_info & KEY_DESCRIPTOR_VERSION_MASK
             logger.info(f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}")
         self._confirm_pmkid_akm(hs, pkt)
         return True

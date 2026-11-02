@@ -5,7 +5,7 @@ from typing import Optional
 
 from wifit3.campaigns.auth_assoc import Association
 from wifit3.dot11 import str_to_mac
-from wifit3.dot11.eapol import KEY_DESCRIPTOR_VERSION_MASK
+from wifit3.dot11.eapol import KEY_DESCRIPTOR_VERSION_MASK, KeyDescriptorVersion
 from wifit3.dot11.ie import GENERIC_RSN_IE, force_psk_akm
 from wifit3.dot11.packet import DeauthPacket, EapolPacket
 from wifit3.dot11.wpa import KCK_LEN, build_eapol_m2, derive_pmk, derive_ptk, random_nonce
@@ -67,8 +67,8 @@ class VerifyPskCampaign(VerifyCampaign):
         for attempt in range(_M2_ATTEMPTS):
             snonce = random_nonce()
             kck = derive_ptk(pmk, bssid_mac, our_mac, m1.nonce, snonce, KCK_LEN)
-            m2 = build_eapol_m2(bssid_mac, our_mac, snonce, kck,
-                                key_descriptor_version=m1.key_info & KEY_DESCRIPTOR_VERSION_MASK,
+            key_descriptor_version = KeyDescriptorVersion(m1.key_info & KEY_DESCRIPTOR_VERSION_MASK)
+            m2 = build_eapol_m2(bssid_mac, our_mac, snonce, kck, key_descriptor_version=key_descriptor_version,
                                 replay=replay, rsn_ie=trailer)
             if not await iface.send_until_ack(m2, max_retries=_M2_RESENDS):
                 return VerifyOutcome.ERROR, "AP never ACKed M2"

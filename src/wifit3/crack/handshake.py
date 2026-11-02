@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from wifit3.models import AccessPoint, HandshakeMessage, Handshake
+from wifit3.dot11.eapol import AES_128_CMAC, HMAC_SHA1_AES, KEY_DESCRIPTOR_VERSION_MASK
 from wifit3.dot11.rsn import (
     AKM_FT_PSK,
     AKM_FT_PSK_SHA384,
@@ -106,11 +107,11 @@ NONCE_CORRECTION_BIT = 0x80
 # A PMKID of unknown AKM takes the algorithm from its M1's key descriptor version
 # (3 = SHA256, 2 = SHA1); failing that, SHA1 unless the AP offers no plain PSK.
 _FT_PSK_AKMS = frozenset({AKM_FT_PSK, AKM_FT_PSK_SHA384})
-_FT_KEY_DESCRIPTOR_VERSION = 3              # hashcat rejects a WPA*04 of any other keyver
+_FT_KEY_DESCRIPTOR_VERSION = AES_128_CMAC   # hashcat rejects a WPA*04 of any other keyver
 _FT_KEY_HOLDER_ID_MAX_LEN = 48
 # PSK (HMAC-SHA1 PMKID) and PSK-SHA256 (HMAC-SHA256 PMKID): plain WPA*01 / WPA*02.
 _WPA2_PSK_AKMS = frozenset({AKM_PSK, AKM_PSK_SHA256})
-_PMKID_AKM_BY_KEY_DESCRIPTOR_VERSION = {2: AKM_PSK, 3: AKM_PSK_SHA256}
+_PMKID_AKM_BY_KEY_DESCRIPTOR_VERSION = {HMAC_SHA1_AES: AKM_PSK, AES_128_CMAC: AKM_PSK_SHA256}
 
 # Supported PSK capture AKMs: PSK, FT-PSK (additionally gated), PSK-SHA256.
 PSK_CAPTURE_AKMS = _WPA2_PSK_AKMS | {AKM_FT_PSK}
@@ -284,7 +285,7 @@ def _ft_pair_incomplete(pair: CrackablePair) -> bool:
     if f.akm != AKM_FT_PSK:
         return False
     key_info = int.from_bytes(f.eapol_payload[_KEY_INFO_OFFSET:_KEY_INFO_OFFSET + 2], "big")
-    return not (f.msg_num == 2 and key_info & 3 == _FT_KEY_DESCRIPTOR_VERSION
+    return not (f.msg_num == 2 and key_info & KEY_DESCRIPTOR_VERSION_MASK == _FT_KEY_DESCRIPTOR_VERSION
                 and _ft_identifiers_complete(f))
 
 

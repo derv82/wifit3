@@ -10,6 +10,7 @@ from wifit3.campaigns.verify.wep import VerifyWepCampaign
 from wifit3.campaigns.wps.registrar import AttemptOutcome, PinResult
 from wifit3.crack.wep import rc4_keystream
 from wifit3.dot11 import str_to_mac
+from wifit3.dot11.eapol import HMAC_MD5_RC4, HMAC_SHA1_AES, KeyDescriptorVersion
 from wifit3.dot11.packet import DeauthPacket, EapolPacket, WepDataPacket
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.wep.crypto import icv
@@ -54,7 +55,8 @@ def _array(iface, *, lease_mac=OUR_MAC, heard=True):
     return array
 
 
-def _eapol_from_ap(msg_num: int, replay: int, key_descriptor_version: int = 2) -> EapolPacket:
+def _eapol_from_ap(msg_num: int, replay: int,
+                   key_descriptor_version: KeyDescriptorVersion = HMAC_SHA1_AES) -> EapolPacket:
     return EapolPacket(type="eapol", type_id=2, subtype_id=0, bssid=BSSID, source=BSSID, dest=OUR_MAC,
                        to_ds=False, from_ds=True, rssi=-50, raw=b"\x00" * 30, msg_num=msg_num,
                        key_info=0x0088 | key_descriptor_version,
@@ -100,8 +102,8 @@ async def test_verify_psk_m3_is_verified(monkeypatch):
 async def test_verify_psk_m2_takes_the_m1s_key_descriptor_version(monkeypatch):
     iface = _iface()
     array = _array(iface)
-    array.next_frame = AsyncMock(side_effect=[_eapol_from_ap(1, 1, key_descriptor_version=1),
-                                              _eapol_from_ap(3, 2, key_descriptor_version=1)])
+    array.next_frame = AsyncMock(side_effect=[_eapol_from_ap(1, 1, key_descriptor_version=HMAC_MD5_RC4),
+                                              _eapol_from_ap(3, 2, key_descriptor_version=HMAC_MD5_RC4)])
     _associates(monkeypatch)
 
     await _run(VerifyPskCampaign, array, "pw")

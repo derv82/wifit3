@@ -12,6 +12,9 @@ import string
 from wifit3.dot11.aes_cmac import aes_cmac
 from wifit3.dot11.eapol import (
     LLC_SNAP_EAPOL,
+    HMAC_MD5_RC4,
+    HMAC_SHA1_AES,
+    KeyDescriptorVersion,
     data_header,
     eapol_key,
     set_mic,
@@ -118,12 +121,12 @@ def build_eapol_m2(
     sta_mac: bytes,
     snonce: bytes,
     kck: bytes,
-    key_descriptor_version: int,
+    key_descriptor_version: KeyDescriptorVersion,
     replay: int = 1,
     rsn_ie: bytes = b"",
 ) -> bytes:
     """Construct a full 802.11 Data frame carrying EAPOL-Key Message 2 with MIC; the
-    ``key_descriptor_version`` is the M1's: 1 (HMAC-MD5, TKIP) or 2 (HMAC-SHA1)."""
+    ``key_descriptor_version`` is the M1's."""
     hdr = data_header(to_ds=True, bssid=bssid, client=sta_mac)
     raw_payload = eapol_key(
         key_info=_M2_KEY_INFO | key_descriptor_version,
@@ -133,9 +136,9 @@ def build_eapol_m2(
         key_data=rsn_ie,
         mic=bytes(16),
     )
-    if key_descriptor_version == 1:
+    if key_descriptor_version == HMAC_MD5_RC4:
         mic = eapol_mic_hmac_md5(kck, raw_payload)
-    elif key_descriptor_version == 2:
+    elif key_descriptor_version == HMAC_SHA1_AES:
         mic = eapol_mic(kck, raw_payload)
     else:
         raise ValueError(f"unsupported key descriptor version {key_descriptor_version}")

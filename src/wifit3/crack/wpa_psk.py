@@ -7,6 +7,7 @@ from typing import Iterable, Optional
 
 from wifit3.crack.hc22000_format import PMKID_SHA256_MESSAGE_PAIR_BIT, Hc22000Line
 from wifit3.crack.handshake import NONCE_CORRECTION_BIT, NONCE_ERROR_CORRECTIONS
+from wifit3.dot11.eapol import AES_128_CMAC, HMAC_MD5_RC4, HMAC_SHA1_AES, KEY_DESCRIPTOR_VERSION_MASK
 from wifit3.dot11.wpa import (
     KCK_LEN,
     derive_ft_pmk_r0,
@@ -50,7 +51,7 @@ def sha256_pmkid(pmk: bytes, aa: bytes, spa: bytes) -> bytes:
 
 
 def _key_descriptor_version(eapol: bytes) -> int:
-    return int.from_bytes(eapol[_KEY_INFO_OFFSET:_KEY_INFO_OFFSET + 2], "big") & 3
+    return int.from_bytes(eapol[_KEY_INFO_OFFSET:_KEY_INFO_OFFSET + 2], "big") & KEY_DESCRIPTOR_VERSION_MASK
 
 
 def _ft_pmk_matches(pmk: bytes, line: Hc22000Line) -> bool:
@@ -63,7 +64,7 @@ def _ft_pmk_matches(pmk: bytes, line: Hc22000Line) -> bool:
     if line.kind == "03":
         return hmac.compare_digest(ft_pmk_r1_name(pmk_r0_name, r1khid, mac_sta), expected)
     eapol = bytes.fromhex(line.eapol)
-    if _key_descriptor_version(eapol) != 3:
+    if _key_descriptor_version(eapol) != AES_128_CMAC:
         return False
     frame_nonce = eapol[_SNONCE_OFFSET:_SNONCE_OFFSET + _NONCE_LEN]
     field_nonce = bytes.fromhex(line.anonce)
@@ -119,11 +120,11 @@ def pmk_matches(pmk: bytes, line: Hc22000Line) -> bool:
     key_descriptor_version = _key_descriptor_version(eapol)
     snonce = eapol[_SNONCE_OFFSET:_SNONCE_OFFSET + _NONCE_LEN]
     anonce = bytes.fromhex(line.anonce)
-    if key_descriptor_version == 1:
+    if key_descriptor_version == HMAC_MD5_RC4:
         derive_kck, calculate_mic = derive_ptk, eapol_mic_hmac_md5
-    elif key_descriptor_version == 2:
+    elif key_descriptor_version == HMAC_SHA1_AES:
         derive_kck, calculate_mic = derive_ptk, eapol_mic
-    elif key_descriptor_version == 3:
+    elif key_descriptor_version == AES_128_CMAC:
         derive_kck, calculate_mic = derive_ptk_sha256, eapol_mic_aes_cmac
     else:
         return False
