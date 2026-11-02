@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
+import threading
 import time
 from typing import Callable, ClassVar, List, Optional, Tuple
 
@@ -157,6 +158,7 @@ class AR9271V2Driver(Driver):
         self.mgmt_epid = endpoints[C.WMI_MGMT_SVC]
         self.data_be_epid = endpoints[C.WMI_DATA_BE_SVC]
         self.tx_slots = tx.TxSlots()
+        self._tx_lock = threading.Lock()
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -484,13 +486,18 @@ class AR9271V2Driver(Driver):
         sequence number) is the caller's; only the wrapper and the cookie are ours. Returns the
         allocated cookie (TX slot). The verify gate + unit tests drive this directly (no event loop);
         the public async ``inject_frame`` wraps it for the UI."""
-        cookie = self.tx_slots.get()
-        if tx.is_data_frame(dot11):
-            frame = tx.build_data_tx(self.data_be_epid, dot11, cookie)
-        else:
-            frame = tx.build_mgmt_tx(self.mgmt_epid, dot11, cookie)
-        self.wmi.t.wlan_out(frame)
-        return cookie
+        with self._tx_lock:
+            cookie = self.tx_slots.get()
+            if tx.is_data_frame(dot11):
+                frame = tx.build_data_tx(self.data_be_epid, dot11, cookie)
+            else:
+                frame = tx.build_mgmt_tx(self.mgmt_epid, dot11, cookie)
+            try:
+                self.wmi.t.wlan_out(frame)
+            except Exception:
+                self.tx_slots.clear(cookie)
+                raise
+            return cookie
 
     def tx_status_event(self, event_body: bytes) -> None:
         """ath9k_htc_txstatus [SRC] htc_drv_txrx.c:647 — a WMI_TXSTATUS event reports completed

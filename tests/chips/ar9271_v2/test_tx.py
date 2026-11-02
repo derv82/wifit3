@@ -3,7 +3,11 @@
 Frame-control classification routes data frames to the BE data endpoint (tx_frame_hdr, 12 B) and
 everything else (mgmt + control) to the mgmt endpoint (tx_mgmt_hdr, 8 B); the per-frame cookie is
 the TX slot (find_first_zero_bit), freed on the WMI_TXSTATUS completion. [SRC] htc_drv_txrx.c."""
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import struct
+import threading
+import time
 from types import SimpleNamespace
 
 from wifit3.chips.ar9271_v2 import constants as C, tx
@@ -52,6 +56,13 @@ def test_tx_slots_find_first_zero_and_clear():
     assert slots.get() == 4                                        # then the next fresh slot
 
 
+def test_tx_slots_allocate_unique_cookies_concurrently():
+    slots = tx.TxSlots()
+    with ThreadPoolExecutor(max_workers=32) as executor:
+        cookies = list(executor.map(lambda _: slots.get(), range(128)))
+    assert sorted(cookies) == list(range(128))
+
+
 def test_txstatus_cookies_decode():
     # wmi_event_txstatus: u8 cnt, then cnt x (cookie, ts_rate, ts_flags).
     body = bytes([3, 5, 0x60, 0x01, 9, 0x50, 0x01, 2, 0x60, 0x00])
@@ -82,6 +93,34 @@ def test_inject_frame_routes_and_allocates_cookies():
     assert sent[2] == tx.build_mgmt_tx(5, RTS, 0)
 
 
+def test_failed_usb_submission_releases_cookie():
+    attempts = 0
+    sent: list[bytes] = []
+
+    def wlan_out(data):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("USB submission failed")
+        sent.append(bytes(data))
+        return len(data)
+
+    transport = SimpleNamespace(wlan_out=wlan_out)
+    wmi = SimpleNamespace(t=transport)
+    endpoints = {C.WMI_MGMT_SVC: 5, C.WMI_DATA_BE_SVC: 6}
+    drv = AR9271V2Driver.for_replay(wmi, None, endpoints)
+
+    try:
+        drv._emit_frame(PROBE)
+    except OSError:
+        pass
+    else:
+        raise AssertionError("failed USB submission did not propagate")
+
+    assert drv._emit_frame(PROBE) == 0
+    assert sent == [tx.build_mgmt_tx(5, PROBE, 0)]
+
+
 async def test_inject_frame_async_returns_bool():
     # The Driver contract the UI awaits: async, returns True, and actually sends the frame
     # (regression guard for the "object int can't be used in 'await' expression" crash).
@@ -89,6 +128,31 @@ async def test_inject_frame_async_returns_bool():
     drv = _replay_driver(sent)
     assert await drv.inject_frame(PROBE) is True
     assert sent[0] == tx.build_mgmt_tx(5, PROBE, 0)
+
+
+async def test_concurrent_injects_serialize_usb_submissions():
+    class OverlapDetectingTransport:
+        def __init__(self):
+            self.active = 0
+            self.max_active = 0
+            self.lock = threading.Lock()
+
+        def wlan_out(self, data):
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            time.sleep(0.005)
+            with self.lock:
+                self.active -= 1
+            return len(data)
+
+    transport = OverlapDetectingTransport()
+    wmi = SimpleNamespace(t=transport)
+    endpoints = {C.WMI_MGMT_SVC: 5, C.WMI_DATA_BE_SVC: 6}
+    drv = AR9271V2Driver.for_replay(wmi, None, endpoints)
+
+    assert all(await asyncio.gather(*(drv.inject_frame(PROBE) for _ in range(32))))
+    assert transport.max_active == 1
 
 
 async def test_inject_frame_recycles_slots_past_bitmap():
