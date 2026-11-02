@@ -16,7 +16,7 @@ class FakeT:
 
 def test_recorded_sys_cfg_decodes():
     from wifit3.chips.rtl8188ftv_dkms import info
-    version = info.read_chip_version(FakeT(0x44441525))   # capture-2 op0
+    version = info.read_chip_version(FakeT(0x04441525))   # capture-2 op0
     assert version.test_chip is False
     assert version.vendor == info.VENDOR_SMIC
     assert info.is_smic(version) is True

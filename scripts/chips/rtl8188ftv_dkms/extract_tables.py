@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract the phydm init tables for the rtl8188ftv_dkms port, verbatim.
 
-Reads the pinned vendor tree (driver_captures/captures_8188fu/driver-source)
+Reads the pinned vendor tree (driver_captures/captures_rtl8188fu_dkms/driver-source)
 and emits one flat-u32 Python table per phydm array. Re-run after any source
 re-pin and diff the output.
 
@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-SRC = REPO / "driver_captures" / "captures_8188fu" / "driver-source"
+SRC = REPO / "driver_captures" / "captures_rtl8188fu_dkms" / "driver-source"
 OUTDIR = REPO / "src" / "wifit3" / "chips" / "rtl8188ftv_dkms"
 
 TABLES = [
