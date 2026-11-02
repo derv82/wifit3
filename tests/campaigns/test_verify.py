@@ -96,7 +96,7 @@ async def test_verify_psk_m3_is_verified(monkeypatch):
 
     assert (campaign.outcome, campaign.error) == (VerifyOutcome.VERIFIED, None)
     steps = [call.args[0] for call in campaign.log.call_args_list]
-    assert steps == ["auth/assoc sent", "M1 received, M2 sent", "M3 received"]
+    assert steps == ["associated", "M1 received, M2 sent", "M3 received"]
 
 
 async def test_verify_psk_m2_takes_the_m1s_key_descriptor_version(monkeypatch):

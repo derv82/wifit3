@@ -33,13 +33,14 @@ class VerifyPskCampaign(VerifyCampaign):
         association = Association(iface, bssid, ap.ssid or "", ap.channel, our_mac=our_mac,
                                   assoc_trailer_ies=trailer, should_stop=lambda: self.stopped)
         association.start()
-        self._log_step("auth/assoc sent")
+        self.step = "associating"
         try:
             associated = await association.associate(attempts=2)
         finally:
             association.stop()
         if not associated:
             return VerifyOutcome.ERROR, association.fail_reason or "association rejected"
+        self._log_step("associated")
 
         m1 = await self.array.next_frame(
             lambda p: (isinstance(p, EapolPacket) and p.dest == our_mac_str and p.bssid == bssid

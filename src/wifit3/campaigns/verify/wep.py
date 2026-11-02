@@ -48,13 +48,14 @@ class VerifyWepCampaign(VerifyCampaign):
         association = Association(iface, bssid, ap.ssid or "", ap.channel, our_mac=our_mac,
                                   should_stop=lambda: self.stopped)
         association.start()
-        self._log_step("auth/assoc sent")
+        self.step = "associating"
         try:
             associated = await association.associate(attempts=2)
         finally:
             association.stop()
         if not associated:
             return VerifyOutcome.ERROR, association.fail_reason or "association rejected"
+        self._log_step("associated")
 
         plaintext = arp_request_plaintext(sender_mac=our_mac,
                                           sender_ip=b"\xc0\xa8\x01\xfe",

@@ -26,10 +26,11 @@ class VerifyPinCampaign(VerifyCampaign):
         transport = WlanTransport(iface, bssid_mac, our_mac)
         transport.start()
         try:
-            self._log_step("auth/assoc sent")
+            self.step = "associating"
             if not await association.associate(attempts=2):
                 return VerifyOutcome.ERROR, association.fail_reason or "association rejected"
-            self._log_step(f"EAPOL-Start sent, trying PIN {self.value or EMPTY_PIN_LABEL}")
+            self._log_step("associated")
+            self._log_step(f"trying PIN {self.value or EMPTY_PIN_LABEL}")
             registrar = WpsRegistrar(transport, bssid_mac, our_mac, channel=ap.channel, wsc_2_0=wsc_2_0,
                                      should_stop=lambda: self.stopped)
             attempt = await registrar.try_pin(self.value)
