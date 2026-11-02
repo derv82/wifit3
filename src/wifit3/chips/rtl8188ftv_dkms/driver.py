@@ -90,6 +90,7 @@ class Rtl8188ftvDkmsDriver(Driver):
         self.hal: dict = {}
         self.params = None
         self.by_rate = None
+        self.mac: bytes = b""
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self.current_channel: int = 1
@@ -165,7 +166,9 @@ class Rtl8188ftvDkmsDriver(Driver):
         self.params = params
         # rtl8188f_hal_init.c:4201 + rtw_mlme_ext.c:1019
         self.SUPPORTED_CHANNELS = chplan_mod.init_channel_set(params.chplan)
-        self.mac_address = params.mac.hex(":")
+        # usb_intf.c:1198
+        self.mac = prom_mod.macaddr_cfg(params.mac)
+        self.mac_address = self.mac.hex(":")
         hal.update({"cur_cck": 0, "th_l2h_ini": 0xF5,
                     "adaptivity_ability": False, "tm_trigger": False,
                     "channel": 1, "mgnt_seq": 0})
@@ -226,7 +229,7 @@ class Rtl8188ftvDkmsDriver(Driver):
         await loop.run_in_executor(None, queues_mod.init_page_boundary, t)
         await loop.run_in_executor(None, queues_mod.init_transfer_page_size, t)
         await loop.run_in_executor(None, queues_mod.init_driver_info_size, t)
-        await loop.run_in_executor(None, queues_mod.init_macaddr, t, params.mac)
+        await loop.run_in_executor(None, queues_mod.init_macaddr, t, self.mac)
         await loop.run_in_executor(None, queues_mod.init_network_type, t)
         await loop.run_in_executor(None, queues_mod.init_wmac_setting, t)
         await loop.run_in_executor(None, queues_mod.init_adaptive_ctrl, t)

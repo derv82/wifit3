@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
-from wifit3.chips.rtl8188ftv_dkms import dm, tx
+from wifit3.chips.rtl8188ftv_dkms import dm, prom, tx
 from wifit3.chips.rtl8188ftv_dkms.driver import Rtl8188ftvDkmsDriver
 
 # dm.watchdog_tick head: misc.check_rxfifo_full (0x667/0x664) + false_alarm_stats hold (0xC00/0xD00).
@@ -33,6 +33,7 @@ TICK_HEAD = [("R", 0x667, 1), ("W", 0x667, 1), ("R", 0x664, 2),
 SWITCH_HEAD = [("R", 0x824, 4), ("W", 0x824, 4), ("R", 0x824, 4),
                ("W", 0x824, 4), ("W", 0x824, 4), ("R", 0x820, 4)]
 SWITCH_RF18_WRITE_OFFSET = 7    # the RF 0x18 LSSI write, then spur_calibration's 0xC40 RMW
+REG_MACID = 0x0610
 REG_LSSI_A = 0x0840
 REG_SPUR_C40 = 0x0C40
 RF_CHNLBW = 0x18
@@ -255,6 +256,18 @@ async def _walk(w: Walk) -> dict:
     return counts
 
 
+def wire_random32(ops: list[dict]) -> int | None:
+    """``rtw_random32`` behind an invalid-EFUSE MAC (usb_intf.c:1198) is a runtime input like a
+    hop's channel: read from the first REG_MACID byte writes (``hal_init_macaddr``)."""
+    mac = {}
+    for op in ops:
+        if op["kind"] == "W" and op.get("width") == 1 and REG_MACID <= op["addr"] < REG_MACID + 6:
+            mac.setdefault(op["addr"] - REG_MACID, op["value"])
+            if len(mac) == 6:
+                return int.from_bytes(bytes(mac[k] for k in range(2, 6)), "little")
+    return None
+
+
 def run_capture(pcap: Path) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no settle delays
     if not pcap.exists():
@@ -269,6 +282,9 @@ def run_capture(pcap: Path) -> int:
         print("FAIL: no vendor ops")
         return 1
 
+    random32 = wire_random32(ops)
+    if random32 is not None:
+        prom.random32 = lambda: random32
     w = Walk(ops)
     try:
         counts = asyncio.run(_walk(w))

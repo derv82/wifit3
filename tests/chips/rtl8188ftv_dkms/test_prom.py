@@ -25,6 +25,18 @@ def test_check_invalid_mac():
     assert prom.check_invalid_mac(bytes.fromhex("020000000001"), False) is False
 
 
+def test_macaddr_cfg_keeps_valid_efuse_mac():
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    assert prom.macaddr_cfg(bytes.fromhex("000000000001")) == bytes.fromhex("000000000001")
+
+
+def test_macaddr_cfg_randomizes_invalid_mac(monkeypatch):
+    # rtw_ieee80211.c:1525-1528: *(u32 *)&mac[2] = rtw_random32(); mac[0..2] = 00:e0:4c
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    monkeypatch.setattr(prom, "random32", lambda: 0x44332211)
+    assert prom.macaddr_cfg(b"\x00" * 6) == bytes.fromhex("00e04c223344")
+
+
 def test_chnl_group_2g():
     from wifit3.chips.rtl8188ftv_dkms import prom
     assert [prom.chnl_group_2g(ch) for ch in (1, 2)] == [0, 0]

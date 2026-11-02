@@ -16,6 +16,7 @@ None of those are ported.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 from . import chplan, efuse
@@ -95,6 +96,20 @@ def check_invalid_mac(mac: bytes, check_local_bit: bool) -> bool:
     if mac[0] & BIT(0):
         return True
     return check_local_bit and bool(mac[0] & BIT(1))
+
+
+def random32() -> int:
+    return int.from_bytes(os.urandom(4), "little")
+
+
+def macaddr_cfg(hw_mac: bytes) -> bytes:
+    """``rtw_macaddr_cfg`` (core/rtw_ieee80211.c:1489, DEFAULT_RANDOM_MACADDR 1): an invalid
+    EFUSE MAC becomes 00:e0:4c + the top three bytes of ``rtw_random32``."""
+    if not check_invalid_mac(hw_mac, True):
+        return bytes(hw_mac)
+    mac = bytearray(2) + bytearray(random32().to_bytes(4, "little"))
+    mac[0:3] = bytes((0x00, 0xE0, 0x4C))
+    return bytes(mac)
 
 
 def _check_txpwr(value: int) -> int:
