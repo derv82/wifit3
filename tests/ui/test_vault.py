@@ -12,9 +12,8 @@ from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Label
 
-from wifit3.campaigns.live_check import LiveKeyVerifier, VerifyResult, VerifyStatus
 from wifit3.crack.hc22000_format import hashline_id
-from wifit3.models import AccessPoint, CaptureType, PersistedCapture, ToolName
+from wifit3.models import AccessPoint, CaptureType, ToolName
 from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.exhaustion import record_exhausted
@@ -665,70 +664,3 @@ async def test_unchecked_hashlines_are_left_out_of_the_crack_job(tmp_path, mocke
         uncracked.deselect_all()
         await pilot.pause(0)
         assert all(button.disabled for button in item.query(_CrackerButton).results(_CrackerButton))
-
-
-class _HeldVerifier(LiveKeyVerifier):
-    """Answers SUCCESS once ``release`` is set; records each capture it was asked to check."""
-
-    def __init__(self) -> None:
-        self.release = asyncio.Event()
-        self.checked: list[PersistedCapture] = []
-        self.cancelled = False
-
-    async def verify_credential(self, capture, array, target_type=None) -> VerifyResult:
-        self.checked.append(capture)
-        try:
-            await self.release.wait()
-        except asyncio.CancelledError:
-            self.cancelled = True
-            raise
-        return VerifyResult(VerifyStatus.SUCCESS, "Verified", "still works")
-
-
-@pytest.mark.asyncio
-async def test_one_live_check_runs_at_a_time_even_across_a_refresh(tmp_path):
-    _write_a_checked_wep_key_and_three_hashlines(tmp_path)
-    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_2000_wep_key.txt", _WEP_TXT.replace("6162636465", "6162636466"))
-    app = _VaultApp()
-    async with app.run_test() as pilot:
-        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
-        item.key_verifier = verifier = _HeldVerifier()
-
-        def rows() -> list[_KeyRow]:
-            return sorted(item.query(_KeyRow).results(_KeyRow), key=lambda r: r.key.value)
-
-        rows()[0].verify_button.press()
-        await _wait_until(pilot, lambda: bool(verifier.checked))
-        update_meta("HomeNet", "aa:bb:cc:dd:ee:ff",
-                    live_verifications=[{**_LIVE_CHECK, "at": 1000}, {**_LIVE_CHECK, "at": 2000}])
-        await _reload_item_view(pilot, item, "aa:bb:cc:dd:ee:ff")
-
-        assert [(str(r.verify_button.label), r.verify_button.disabled) for r in rows()] == [
-            ("Verifying…", True), ("Verify", True)]
-        rows()[1].verify_button.press()
-        await pilot.pause(0)
-        assert len(verifier.checked) == 1
-
-        verifier.release.set()
-        await app.workers.wait_for_complete()
-        await _reload_item_view(pilot, item, "aa:bb:cc:dd:ee:ff")
-        assert [(str(r.verify_button.label), r.verify_button.disabled) for r in rows()] == [
-            ("Verify", False), ("Verify", False)]
-        assert len(rows()[0].key.live_verifications) == 3
-
-
-@pytest.mark.asyncio
-async def test_removing_the_pane_cancels_its_running_live_check(tmp_path):
-    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff_1000_wep_key.txt", _WEP_TXT)
-    app = _VaultApp()
-    async with app.run_test() as pilot:
-        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
-        item.key_verifier = verifier = _HeldVerifier()
-        item.query_one(_KeyRow).verify_button.press()
-        await _wait_until(pilot, lambda: bool(verifier.checked))
-
-        await app.pop_screen()
-        await _wait_until(pilot, lambda: item.verifying is None)
-
-        assert verifier.cancelled
-        assert app.vault.ap_state("aa:bb:cc:dd:ee:ff").keys[0].live_verifications == ()

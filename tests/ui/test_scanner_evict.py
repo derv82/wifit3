@@ -20,11 +20,11 @@ async def test_the_focused_ap_is_not_evicted_while_focus_is_open():
         array.access_points[focused.bssid] = focused
         array.access_points[other.bssid] = other
         app.array = array
-        app.push_screen("scanner")
+        app.push_screen(app.scanner_view)
         await pilot.pause(0)
         scanner = app.screen
         app.target_ap = focused
-        app.push_screen("focus")
+        app.push_screen(app.focus_view)
         await pilot.pause(0.1)
 
         focused.last_seen = other.last_seen = time.time() - EVICT_DURATION_S - 1

@@ -42,7 +42,7 @@ def test_hashline_groups_join_runs_from_one_minute_pair_and_client():
 
 async def _row(key: Key, state: ApState) -> _KeyRow:
     row = _KeyRow()
-    await row.show(key, state, show_client=False, show_ssid=False, expanded=False, verifying=None)
+    await row.show(key, state, show_client=False, show_ssid=False, expanded=False)
     return row
 
 

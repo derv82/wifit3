@@ -46,12 +46,14 @@ from wifit3.campaigns.pin import (EMPTY_PIN_LABEL, WpsCampaign, load_run_state,
                                   run_progress_line)
 from wifit3.campaigns.probe import probe_ap
 from wifit3.campaigns.probe.broadcom_wps import WpsImplementation, probe_wps_implementation
+from wifit3.campaigns.verify import VERIFY_CAMPAIGNS
+from wifit3.campaigns.verify.campaign import VerifyCampaign, VerifyOutcome
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
 from wifit3.dot11.pmf import PmfPosture
-from wifit3.models import AccessPoint, IdSource
+from wifit3.models import CREDENTIAL_NAMES, AccessPoint, IdSource
 from wifit3.models.access_point import eap_only, no_passphrase
-from wifit3.persist.ap_state import PasswordStatus
+from wifit3.persist.ap_state import Key, PasswordStatus, epoch_sort_key
 from wifit3.persist.config import Config
 from wifit3.persist.save import SaveResult
 from wifit3.ui import focus_model as fm, pmkid_log
@@ -59,6 +61,7 @@ from wifit3.ui.capture_log import DECLOAK_METHOD_LABELS, saved_psk_chip, short_s
 from wifit3.ui.eapol_aggregate import EapolAggregator
 from wifit3.ui.encryption_format import psk_capture_supported, wep_key_hex_and_ascii
 from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal, _can_host
+from wifit3.ui.screens.vault_item import key_text
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
 from wifit3.watchers.ap_watcher import (
     ApDecloaked, ApEvent, EapolFrameSeen, HandshakeCaptured, PmkidCaptured,
@@ -71,6 +74,7 @@ from .decloak_modal import DecloakInputModal
 from .log_band import LogBand
 from .router_endpoint import RouterEndpoint
 from .tx_picker import TxDevicePicker
+from .verify_menu import VerifyKeyMenu
 from .packet_dashboard import PacketDashboard
 from . import art
 
@@ -100,7 +104,7 @@ _ATTACK_BUTTONS = [
     ("btn-decloak", "Decloak"), ("btn-known-decloak", "Decloak"),
     ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-deauth", "AutoDeauth"),
     ("btn-pmkid", "PMKID"), ("btn-wps-pin", "WPS PIN"), ("btn-eviltwin", "EvilTwin"),
-    ("btn-pbc", "Stop PBC"),
+    ("btn-verify", "Verify"), ("btn-pbc", "Stop PBC"),
 ]
 
 # Static button tooltips, keyed by live label so toggled buttons get idle/run-specific tips.
@@ -114,6 +118,8 @@ _BUTTON_TIPS = {
     "WPS PIN": "PIN attacks: PixieDust, default vendor PINs, then brute-force",
     "EvilTwin": "Punt clients onto a WPA2 twin to capture a crackable handshake",
     "Stop EvilTwin": "Tear down the twin and return clients to the AP",
+    "Verify": "Connect & verify the stored credential",
+    "Verify ▾": "Connect & verify stored credentials",
 }
 
 
@@ -289,6 +295,7 @@ class FocusViewV2(Screen):
         self._tick_timer = None
         # The one running campaign (Campaign.active is the radio mutex).
         self._controls = CampaignControls()
+        self._verify_key: Optional[Key] = None     # the credential the running Verify checks
         self._pbc_user_stopped = False
         self._pbc_retry_after = 0.0   # monotonic time before which we won't re-arm a PBC retry
         self._probe_task: Optional[asyncio.Task] = None
@@ -501,6 +508,7 @@ class FocusViewV2(Screen):
             btn.tooltip = reason or _BUTTON_TIPS.get(str(btn.label))
         self._refresh_chop_button(ap, active, probing)
         self._refresh_pbc_button(ap, probing)
+        self._refresh_verify_button(ap, probing)
 
     def _refresh_chop_button(self, ap, active, probing: bool) -> None:
         """ChopChop: a WEP sub-action, enabled only while the WEP campaign runs."""
@@ -531,6 +539,31 @@ class FocusViewV2(Screen):
             btn.tooltip = reason
         else:
             btn.display = False
+
+    def _verify_keys(self, ap) -> list[Key]:
+        """The target's stored credentials, newest first."""
+        return sorted(self.app.vault.ap_state(ap.bssid).keys,
+                      key=lambda key: epoch_sort_key(key.newest_capture.timestamp), reverse=True)
+
+    def _refresh_verify_button(self, ap, probing: bool) -> None:
+        """Shown while the Vault holds a credential for the target; ``Verify ▾`` picks one of several."""
+        btn = self.query_one("#btn-verify", Button)
+        keys = self._verify_keys(ap)
+        btn.display = bool(keys)
+        current = self._controls.current
+        if isinstance(current, VerifyCampaign):
+            btn.label = "Verifying…"
+            btn.disabled = True
+            btn.variant = "warning"
+            reason = None
+        else:
+            btn.label = "Verify ▾" if len(keys) > 1 else "Verify"
+            btn.variant = "success"
+            reason = fm.campaign_blocked(VerifyCampaign, ap)
+            if probing:
+                reason = "Disabled while probing"
+            btn.disabled = reason is not None or current is not None
+        btn.tooltip = reason or _BUTTON_TIPS.get(str(btn.label))
 
     # ----- target (re)acquisition --------------------------------------------
 
@@ -902,6 +935,8 @@ class FocusViewV2(Screen):
             self._toggle_chop()
         elif bid == "btn-pbc":
             self._toggle_pbc()
+        elif bid == "btn-verify":
+            self._verify_pressed(event.button)
 
     def on_client_widget_deauth_requested(self, event: ClientWidget.DeauthRequested) -> None:
         self.run_worker(self._run_deauth_selected(event.mac), exclusive=True)
@@ -1511,6 +1546,44 @@ class FocusViewV2(Screen):
             self._controls.request_stop()
         else:
             self._start_pbc_capture(self._target_ap)
+
+    # ----- Verify ------------------------------------------------------------
+
+    def _verify_pressed(self, button: Button) -> None:
+        keys = self._verify_keys(self._target_ap)
+        if len(keys) == 1:
+            self._start_verify(keys[0])
+        elif keys:
+            self.app.push_screen(VerifyKeyMenu(keys, offset=(button.region.x, button.region.bottom)),
+                                 self._start_verify)
+
+    def _start_verify(self, key: Optional[Key]) -> None:
+        ap = self._target_ap
+        array = self.app.array
+        if key is None or ap is None or array is None:
+            return
+        campaign = VERIFY_CAMPAIGNS[key.type]
+        self._log(f"Verifying {CREDENTIAL_NAMES[key.type]} [cyan]{escape(key_text(key))}[/]...")
+        started = self._controls.start(campaign, array, ap, verify_value=key.value,
+                                       log=lambda m: self._log(treelog.branch(m)))
+        if started is None:
+            self._log(treelog.leaf("another campaign owns the radio"))
+            return
+        self._verify_key = key
+        self.refresh_buttons()
+
+    def _finish_verify(self, camp: VerifyCampaign) -> None:
+        if camp.stopped or camp.outcome is None:
+            self._log(treelog.leaf("[yellow]Stopped[/yellow]"))
+            return
+        if camp.outcome is VerifyOutcome.VERIFIED:
+            self._log(treelog.leaf("[green]Verified correct[/green]"))
+        elif camp.outcome is VerifyOutcome.REJECTED:
+            self._log(treelog.leaf("[red]Incorrect (stale)[/red]"))
+        else:
+            self._log(treelog.leaf(f"[yellow]Error:[/yellow] {escape(camp.error or '')}"))
+            return
+        self.app.vault.record_live_verification(self._verify_key, correct=camp.outcome is VerifyOutcome.VERIFIED)
 
     # ----- navigation --------------------------------------------------------
 

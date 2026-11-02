@@ -8,6 +8,8 @@ moved onto the screen (there is no ``derive_buttons`` any more)."""
 import types
 from pathlib import Path
 
+from unittest.mock import MagicMock
+
 import pytest
 import pytest_asyncio
 from textual.app import App
@@ -19,9 +21,11 @@ from wifit3.campaigns.eviltwin import EvilTwinCampaign
 from wifit3.campaigns.pbc import WpsPbcCampaign
 from wifit3.campaigns.pin import WpsCampaign
 from wifit3.campaigns.pmkid import PmkidHarvestAttack
+from wifit3.campaigns.verify.psk import VerifyPskCampaign
 from wifit3.campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
-from wifit3.models import AccessPoint, Handshake, HandshakeMessage, IdKey, IdSource
+from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage, IdKey, IdSource, PersistedCapture
+from wifit3.persist.ap_state import Key
 from wifit3.ui import focus_model as fm
 from tests.wlan.mocks import build_ap
 from wifit3.ui.screens.focus_v2 import FocusViewV2
@@ -587,6 +591,8 @@ class _ButtonHost(App):
         self.array = None
         self.target_ap = None
         self.pbc_enabled = True
+        self.vault = MagicMock()
+        self.vault.ap_state.return_value.keys = ()
 
     def on_mount(self) -> None:
         self.push_screen(FocusViewV2())
@@ -880,6 +886,39 @@ async def test_derive_buttons_all_disabled_when_silenced(buttons_screen, monkeyp
                 "btn-eviltwin", "btn-chop"):
         assert btns[bid].disabled is True
     assert fm.campaign_blocked(DeauthCampaign, ap) == "AP silenced"
+
+
+def _stored_psk(value: str, saved_at: int) -> Key:
+    capture = PersistedCapture(type=CaptureType.WPA_PSK, timestamp=saved_at, path=f"/tmp/{saved_at}",
+                               bssid="aa:bb:cc:dd:ee:ff", value=value, ssid="x")
+    return Key(type=CaptureType.WPA_PSK, value=value, captures=(capture,), hashline_ids=frozenset(),
+               live_verifications=())
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_verify_button_follows_the_stored_credentials_and_the_running_campaign(buttons_screen):
+    ap = _rsn_ap(akms=("PSK",))
+    state = buttons_screen.app.vault.ap_state.return_value
+
+    def verify_button():
+        buttons_screen.app.target_ap = ap
+        buttons_screen.refresh_buttons()
+        button = buttons_screen.query_one("#btn-verify", Button)
+        return button.display, button.disabled, str(button.label)
+
+    try:
+        assert verify_button()[0] is False
+        state.keys = (_stored_psk("a", 10),)
+        assert verify_button() == (True, False, "Verify")
+        state.keys = (_stored_psk("a", 10), _stored_psk("b", 20))
+        assert verify_button() == (True, False, "Verify ▾")
+        buttons_screen._controls._campaign = VerifyPskCampaign(None, ap, "a")
+        assert verify_button() == (True, True, "Verifying…")
+        buttons_screen._controls._campaign = _FakeWep(chop=False)
+        assert verify_button() == (True, True, "Verify ▾")
+    finally:
+        buttons_screen._controls._campaign = None
+        state.keys = ()
 
 
 def test_headline_silenced_outranks_listening(monkeypatch):

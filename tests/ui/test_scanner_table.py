@@ -450,10 +450,9 @@ class _FocusStub(Screen):
 
 
 class _ScannerHost(App):
-    SCREENS = {"focus": _FocusStub}
-
     def __init__(self, aps):
         super().__init__()
+        self.focus_view = _FocusStub()
         self.array = _StubArray(aps)
         self.pbc_enabled = False
         self.vault = Vault()

@@ -19,10 +19,10 @@ async def test_focus_logs_the_watchers_save_result_for_its_target_only():
         target = AccessPoint(bssid="aa:bb:cc:dd:ee:01", ssid="Target", channel=6)
         array.access_points[target.bssid] = target
         app.array = array
-        app.push_screen("scanner")
+        app.push_screen(app.scanner_view)
         await pilot.pause(0)
         app.target_ap = target
-        app.push_screen("focus")
+        app.push_screen(app.focus_view)
         await pilot.pause(0.1)
         focus = app.screen
         lines: list[str] = []
