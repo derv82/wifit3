@@ -17,6 +17,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Label, Rule, SelectionList, Static
 from textual.widgets.selection_list import Selection
 
+from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.crack.hc22000_format import Hc22000Line
 from wifit3.models import CaptureType, PersistedCapture
@@ -45,6 +46,7 @@ _STATUS_COLOR = {
 _AUTHORIZED_TOOLTIP = "[$text-success]authorized:[/] PMKID or M3/M4 (the AP accepted this password)"
 _CHALLENGE_TOOLTIP = "[$text-warning]challenge:[/] No M3/M4 (could be a wrong password)"
 _EXPAND_LABEL, _COLLAPSE_LABEL = "▶", "▼"
+_SHOW_AP_TOOLTIP = "Focus this AP"
 _EXPAND_TOOLTIP, _COLLAPSE_TOOLTIP = "Show captures and verifications", "Hide captures and verifications"
 
 
@@ -397,8 +399,7 @@ class _SsidLine(Horizontal):
         self._section_label = Label("", classes="section")
         self._ssid_label = Label("", classes="ssid", markup=False)
         self._dates_label = Label("", classes="dates")
-        self.show_ap_button = Button("Show AP", compact=True, classes="show-ap",
-                                     tooltip="Open Focus on this AP")
+        self.show_ap_button = Button("Show AP", compact=True, classes="show-ap", tooltip=_SHOW_AP_TOOLTIP)
 
     def compose(self) -> ComposeResult:
         yield self._section_label
@@ -546,11 +547,18 @@ class _ApStatePanel(VerticalGroup):
         self._show_show_ap_button()
 
     def _show_show_ap_button(self) -> None:
-        """On the first SSID line, while the AP is in the device array."""
+        """On the first SSID line, while the AP is in the device array; disabled while a campaign is active."""
         array = self.app.array
         in_array = self._state is not None and array is not None and self._state.bssid in array.access_points
+        active = Campaign.active
         for line in self._ssid_lines:
-            line.show_ap_button.display = in_array and line is self._ssid_lines[0]
+            button = line.show_ap_button
+            button.display = in_array and line is self._ssid_lines[0]
+            button.disabled = active is not None
+            if active is None:
+                button.tooltip = _SHOW_AP_TOOLTIP
+            else:
+                button.tooltip = f"Disabled; {active.key} campaign is active"
 
     async def _show_key_rows(self, state: ApState, show_client: bool, show_ssid: bool,
                              expanded_key_ids: frozenset[tuple[CaptureType, str]]) -> None:

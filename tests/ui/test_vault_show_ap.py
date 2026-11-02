@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from wifit3.campaigns.campaign import Campaign
 from wifit3.models import AccessPoint
 from wifit3.ui.screens.vault_drawer import VaultDrawer
 from wifit3.ui.screens.vault_item import ShowApPressed, _ApStatePanel
@@ -80,7 +81,8 @@ def test_show_ap_for_an_ap_no_longer_in_the_array_stays_in_the_vault():
 
 
 def _panel(array, line_count: int):
-    lines = [SimpleNamespace(show_ap_button=SimpleNamespace(display=None)) for _ in range(line_count)]
+    lines = [SimpleNamespace(show_ap_button=SimpleNamespace(display=None, disabled=None, tooltip=None))
+             for _ in range(line_count)]
     return SimpleNamespace(app=SimpleNamespace(array=array), _state=SimpleNamespace(bssid=BSSID),
                            _ssid_lines=lines)
 
@@ -99,3 +101,17 @@ def test_show_ap_shows_on_the_first_ssid_line_only_while_the_ap_is_in_the_array(
     panel.app.array = None
     _ApStatePanel._show_show_ap_button(panel)
     assert [line.show_ap_button.display for line in panel._ssid_lines] == [False, False]
+
+
+def test_show_ap_is_disabled_while_a_campaign_is_active():
+    _, array = _array_with_ap()
+    panel = _panel(array, 1)
+    Campaign.active = SimpleNamespace(key="wps_pin")
+
+    _ApStatePanel._show_show_ap_button(panel)
+    button = panel._ssid_lines[0].show_ap_button
+    assert (button.disabled, button.tooltip) == (True, "Disabled; wps_pin campaign is active")
+
+    Campaign.active = None
+    _ApStatePanel._show_show_ap_button(panel)
+    assert (button.disabled, button.tooltip) == (False, "Focus this AP")
