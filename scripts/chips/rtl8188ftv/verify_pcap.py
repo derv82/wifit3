@@ -61,12 +61,21 @@ from wifit3.chips.rtl8188ftv.constants import (
     FW_HEADER_SIZE,
     REG_AFE_XTAL_CTRL,
     REG_EFUSE_ACCESS,
+    REG_FPGA0_XA_LSSI_PARM,
     REG_FW_START_ADDRESS,
     REG_SYS_CFG,
     REG_SYS_FUNC,
     RTL_FW_PAGE_SIZE,
 )
 from wifit3.dot11.parser import WlanFrameParser
+
+
+class RfregReplayTransport(rp.ReplayTransport):
+    """ReplayTransport plus the transport's ``write_rfreg`` (an LSSI 32-bit write)."""
+
+    def write_rfreg(self, path, reg, data):
+        data &= 0xFFFFF
+        self._write(REG_FPGA0_XA_LSSI_PARM + path * 4, 4, (reg << 20) | data)
 
 CAP_DIR = REPO / "driver_captures" / "captures_rtl8188ftv"
 _WHOLE = (1, 10 ** 9)
@@ -106,7 +115,7 @@ def _efuse_gate(ops) -> dict | None:
     fw_start = next((i for i, o in enumerate(ops)
                      if o["kind"] == "W" and o.get("addr") == REG_FW_START_ADDRESS), None)
     end = fw_start if fw_start is not None else len(ops)
-    rt = rp.ReplayTransport(ops[anchor:end])
+    rt = RfregReplayTransport(ops[anchor:end])
     try:
         parsed = efuse.read_and_parse(rt)
     except (rp.Divergence, IOError) as e:
@@ -187,7 +196,7 @@ def _firmware_gate(ops) -> bool:
         print("  FAIL: MAC init table anchor not found post-FW")
         return False
 
-    rt = rp.ReplayTransport(ops[anchor:end])
+    rt = RfregReplayTransport(ops[anchor:end])
     try:
         firmware.download_firmware(rt, firmware.load_firmware_blob())
         firmware.start_firmware(rt)
@@ -259,7 +268,7 @@ def _bringup_gate(ops, efuse_defaults: dict | None = None) -> bool:
         crystal_cap = ((xw["value"] >> 11) & 0x3F) if xw else 0
         eff = f"wire ({crystal_cap:02x})"
 
-    rt = rp.ReplayTransport(ops[anchor:])
+    rt = RfregReplayTransport(ops[anchor:])
     miles: list[tuple[str, int]] = []
     try:
         mac.apply_mac_init_table(rt)
