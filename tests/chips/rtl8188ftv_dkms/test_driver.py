@@ -243,7 +243,8 @@ def _stubbed_bring_up_modules(monkeypatch, calls):
     from wifit3.chips.rtl8188ftv_dkms import driver as drv_mod
     params = types.SimpleNamespace(
         vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("44efbf1f9dfb"),
-        thermal=0x1A, crystal=0x1D, kfree_flag=0, kfree_bb_gain=0)
+        thermal=0x1A, crystal=0x1D, kfree_flag=0, kfree_bb_gain=0,
+        chplan=0x20)
 
     def noop(*a, **k):
         return None
@@ -351,7 +352,8 @@ def test_bring_up_applies_kfree_trim_when_flag_on(monkeypatch):
         lambda t, s: (types.SimpleNamespace(
             vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("44efbf1f9dfb"),
             thermal=0x1A, crystal=0x1D,
-            kfree_flag=prom_mod.KFREE_FLAG_ON, kfree_bb_gain=-3), b""))
+            kfree_flag=prom_mod.KFREE_FLAG_ON, kfree_bb_gain=-3,
+            chplan=0x20), b""))
     seen = []
     monkeypatch.setattr(track_mod, "kfree_gain_offset",
                         lambda t, off: seen.append(off))
@@ -359,3 +361,47 @@ def test_bring_up_applies_kfree_trim_when_flag_on(monkeypatch):
     d.transport = MagicMock()
     assert asyncio.run(d._bring_up(lambda p, m: None)) is True
     assert seen == [-3]
+
+
+def test_bring_up_init_burst_takes_enumerated_bulk_out_size(monkeypatch):
+    # usb_halinit.c:632: _InitBurstPktLen switches on UsbBulkOutSize
+    import asyncio
+    from wifit3.chips.rtl8188ftv_dkms import misc as misc_mod
+    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
+    from wifit3.chips.rtl8188ftv_dkms import tx as tx_mod
+    calls = []
+    _stubbed_bring_up_modules(monkeypatch, calls)
+    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: True)
+    monkeypatch.setattr(power_mod, "warm_state", lambda t: (0xC6, 0x06FF))
+    monkeypatch.setattr(tx_mod, "bulk_out_size", lambda dev: 64)
+    seen = []
+    monkeypatch.setattr(misc_mod, "init_burst",
+                        lambda t, size: seen.append(size))
+    d = _driver()
+    d.transport = MagicMock()
+    assert asyncio.run(d._bring_up(lambda p, m: None)) is True
+    assert seen == [64]
+
+
+def test_bring_up_narrows_supported_channels_to_efuse_chplan(monkeypatch):
+    # rtl8188f_hal_init.c:4201 ChannelPlan from EFUSE; rtw_mlme_ext.c:1019 init_channel_set
+    import asyncio
+    import types
+    from wifit3.chips.rtl8188ftv_dkms import power as power_mod
+    from wifit3.chips.rtl8188ftv_dkms import prom as prom_mod
+    from wifit3.chips.rtl8188ftv_dkms.driver import Rtl8188ftvDkmsDriver
+    calls = []
+    _stubbed_bring_up_modules(monkeypatch, calls)
+    monkeypatch.setattr(power_mod, "is_chip_warm", lambda t: True)
+    monkeypatch.setattr(power_mod, "warm_state", lambda t: (0xC6, 0x06FF))
+    monkeypatch.setattr(
+        prom_mod, "read_adapter_info",
+        lambda t, s: (types.SimpleNamespace(
+            vid=0x0BDA, pid=0xF179, mac=bytes.fromhex("44efbf1f9dfb"),
+            thermal=0x1A, crystal=0x1D, kfree_flag=0, kfree_bb_gain=0,
+            chplan=0x22), b""))
+    d = _driver()
+    d.transport = MagicMock()
+    assert asyncio.run(d._bring_up(lambda p, m: None)) is True
+    assert d.SUPPORTED_CHANNELS == list(range(1, 12))
+    assert Rtl8188ftvDkmsDriver.SUPPORTED_CHANNELS == list(range(1, 15))

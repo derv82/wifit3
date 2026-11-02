@@ -96,7 +96,7 @@
   - A 2 s `dynamic_chk_timer` → `traffic_status_watchdog` → `hal_dm_watchdog` tick plus the SW-LED blink timer interleave control traffic in monitor mode.
   - Monitor RCR appends FCS (`mode._RCR_MONITOR` BIT31), so every RX frame carries a trailing 4-byte FCS. The parser ignores it, but an ACK arrives as 14 bytes, not 10 — the ACK tap must match `len in (10, 14)`.
   - ACK RX-tap: `rx.admit_ack_frames`/`drop_ack_frames` toggle RXFLTMAP1 bit 13 (monitor entry leaves it at 0x0400, PS-Poll only); `_rx_dispatch` feeds 0xD4 ACKs to `record_ack`, enabling `inject_frame_slow_retry` software ACK-retry. Live-verified: the FTV tallies 100/100 ACKs as an `rx_autoack` prober.
-  - Channel 14 is regulatory-disabled (`iw` rejects before the chip is touched); the sweep is ch1–13.
+  - Channel 14 is regulatory-disabled (`iw` rejects before the chip is touched); the sweep is ch1–13. The port mirrors it: bring-up sets the instance `SUPPORTED_CHANNELS` to `chplan.init_channel_set(params.chplan)` (EFUSE plan 0x20 → `RTW_RD_2G_WORLD`, ch1–13).
   - Probe ends powered OFF: `hal_read_mac_hidden_rpt` powers off (`CardDisable`, no deinit/FIFO quiesce) when HW init hasn't completed, so every cold plug downloads FW twice (probe + open).
   - `FirmwareDownload` always closes with `InitializeFirmwareVars` (`HMETFR=0x0f`), even on failure; the `&`-vs-`==` precedence in the self-reset gate is a live trap.
   - Poll-count timing varies run to run (power-flow 34 vs 37 ops); the gate must never assert exact op counts, only byte-exact replay.

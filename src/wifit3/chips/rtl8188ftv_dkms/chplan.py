@@ -4,7 +4,8 @@ Ported from ``hal_com_config_channel_plan`` (hal/hal_com.c:152-243) +
 ``rtw_get_chplan_from_country`` (core/rtw_rf.c:559-598) +
 ``rtw_chplan_is_empty`` (core/rtw_mlme_ext.c:307-318) with the
 ``RTW_ChannelPlanMap``/``country_chplan_map`` tables from regdomain.py
-(machine-extracted verbatim). ``RTW_DEF_MODULE_REGULATORY_CERT`` is 0 and
+(machine-extracted verbatim), and the 2.4 GHz half of ``init_channel_set``
+(core/rtw_mlme_ext.c:889-941). ``RTW_DEF_MODULE_REGULATORY_CERT`` is 0 and
 neither ``CUSTOMIZED`` nor ``80211AC_VHT`` is set in this build, so the
 module-map and def-module branches compile out.
 """
@@ -29,6 +30,19 @@ TXPWR_LMT_FCC = 0  # hal_com_phycfg.h:40
 # rtw_mlme_ext.c:303-310 — the C maps REALTEK_DEFINE to the
 # {WORLD, FCC1} row and runs the same null test (returns FALSE).
 _REALTEK_DEFINE_ROW = (RTW_RD_2G_WORLD, RTW_RD_5G_FCC1, TXPWR_LMT_FCC)
+
+# core/rtw_mlme_ext.c:146-156, index = RTW_RD_2G_*
+RTW_ChannelPlan2G: list[list[int]] = [
+    [],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+    [10, 11, 12, 13],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+]
 
 
 def _alpha2_specified(alpha2: bytes) -> bool:
@@ -86,3 +100,15 @@ def config_channel_plan(hw_alpha2: bytes | None, hw_chplan: int,
     if chplan is None:
         chplan = def_chplan
     return chplan, force_hw, country
+
+
+def init_channel_set(plan: int) -> list[int]:
+    """Channels cfg80211 enables for ``plan`` (wifi_regd.c:341-359); 8188F is
+    WIRELESS_11BG_24N (rtl8188f_hal_init.c:3397), so the 5G half never runs."""
+    if not is_valid(plan):
+        return []
+    if plan == RTW_CHPLAN_REALTEK_DEFINE:
+        index_2g = _REALTEK_DEFINE_ROW[0]
+    else:
+        index_2g = regdomain.CHANNEL_PLAN_MAP[plan][0]
+    return list(RTW_ChannelPlan2G[index_2g])
