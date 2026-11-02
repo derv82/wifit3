@@ -51,7 +51,7 @@ from wifit3.campaigns.verify.campaign import VerifyCampaign, VerifyOutcome
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
 from wifit3.dot11.pmf import PmfPosture
-from wifit3.models import AccessPoint, IdSource
+from wifit3.models import CREDENTIAL_NAMES, AccessPoint, IdSource
 from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.persist.ap_state import Key, PasswordStatus, epoch_sort_key
 from wifit3.persist.config import Config
@@ -1563,7 +1563,7 @@ class FocusViewV2(Screen):
         if key is None or ap is None or array is None:
             return
         campaign = VERIFY_CAMPAIGNS[key.type]
-        self._log(f"Verifying {campaign.credential_name} [cyan]{escape(key_text(key))}[/]...")
+        self._log(f"Verifying {CREDENTIAL_NAMES[key.type]} [cyan]{escape(key_text(key))}[/]...")
         started = self._controls.start(campaign, array, ap, verify_value=key.value,
                                        log=lambda m: self._log(treelog.branch(m)))
         if started is None:

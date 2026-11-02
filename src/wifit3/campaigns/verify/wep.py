@@ -12,6 +12,7 @@ from wifit3.dot11 import str_to_mac
 from wifit3.dot11.mac import mac_header
 from wifit3.dot11.packet import WepDataPacket
 from wifit3.dot11.wep.crypto import arp_request_plaintext, wep_encrypt
+from wifit3.models import CaptureType
 
 from .campaign import VerifyCampaign, VerifyOutcome
 
@@ -22,7 +23,7 @@ _ARP_SENDS = 3
 
 
 class VerifyWepCampaign(VerifyCampaign):
-    credential_name = "WEP key"
+    credential_type = CaptureType.WEP
 
     async def _exchange(self, iface, our_mac: bytes, our_mac_str: str) -> tuple[VerifyOutcome, Optional[str]]:
         ap = self.target

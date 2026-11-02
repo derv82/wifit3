@@ -8,12 +8,13 @@ from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.campaigns.wps.registrar import PinResult, WpsRegistrar
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
+from wifit3.models import CaptureType
 
 from .campaign import VerifyCampaign, VerifyOutcome
 
 
 class VerifyPinCampaign(VerifyCampaign):
-    credential_name = "WPS PIN"
+    credential_type = CaptureType.WPS_PIN
 
     async def _exchange(self, iface, our_mac: bytes, our_mac_str: str) -> tuple[VerifyOutcome, Optional[str]]:
         ap = self.target

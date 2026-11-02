@@ -20,7 +20,7 @@ from textual.widgets.selection_list import Selection
 from wifit3.campaigns.campaign import Campaign
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.crack.hc22000_format import Hc22000Line
-from wifit3.models import CaptureType, PersistedCapture
+from wifit3.models import CREDENTIAL_NAMES, CaptureType, PersistedCapture
 from wifit3.persist.ap_state import (
     ApState,
     DatedHashline,
@@ -52,15 +52,14 @@ _EXPAND_TOOLTIP, _COLLAPSE_TOOLTIP = "Show captures and verifications", "Hide ca
 
 @dataclass(frozen=True)
 class _KeyKind:
-    name: str           # in sentences: ``WPS PIN 12345670``
     badge: str          # before the value in its row, and on the status chip
     badge_color: str
 
 
 _KEY_KINDS = {
-    CaptureType.WPA_PSK: _KeyKind("PSK", "PSK", "$text-success"),
-    CaptureType.WPS_PIN: _KeyKind("WPS PIN", "WPS", "$text-accent"),
-    CaptureType.WEP: _KeyKind("WEP key", "WEP", "$text-secondary"),
+    CaptureType.WPA_PSK: _KeyKind("PSK", "$text-success"),
+    CaptureType.WPS_PIN: _KeyKind("WPS", "$text-accent"),
+    CaptureType.WEP: _KeyKind("WEP", "$text-secondary"),
 }
 _TOGGLE_WIDTH = 3
 _BADGE_WIDTH = max(len(kind.badge) for kind in _KEY_KINDS.values())
@@ -72,7 +71,7 @@ _HashlineGroup = tuple[DatedHashline, ...]
 
 def key_description(key: Key) -> str:
     """``PSK hunter22``, ``WPS PIN 12345670``, ``WEP key abcde``."""
-    return f"{_KEY_KINDS[key.type].name} {key_text(key)}"
+    return f"{CREDENTIAL_NAMES[key.type]} {key_text(key)}"
 
 
 def _status_reason(key: Key, status: PasswordStatus) -> str:

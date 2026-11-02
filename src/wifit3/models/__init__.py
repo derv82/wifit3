@@ -4,6 +4,7 @@ across the parser, attacks, persistence, and UI.
 from .handshake import HandshakeMessage, Handshake
 from .access_point import (
     AP_RECOVERED_CAPTURE_TYPES,
+    CREDENTIAL_NAMES,
     PSK_CAPTURE_TYPES,
     WPS_CAPTURE_TYPES,
     AccessPoint,
@@ -18,6 +19,7 @@ from .jobs import JobAction, ToolCapability, ToolName, ToolStatus, JobState, Too
 
 __all__ = [
     "AP_RECOVERED_CAPTURE_TYPES",
+    "CREDENTIAL_NAMES",
     "PSK_CAPTURE_TYPES",
     "WPS_CAPTURE_TYPES",
     "ApIdentity",

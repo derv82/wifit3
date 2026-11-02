@@ -10,6 +10,7 @@ from wifit3.dot11.eapol import KEY_DESCRIPTOR_VERSION_MASK, KeyDescriptorVersion
 from wifit3.dot11.ie import GENERIC_RSN_IE, force_psk_akm
 from wifit3.dot11.packet import DeauthPacket, EapolPacket
 from wifit3.dot11.wpa import KCK_LEN, build_eapol_m2, derive_pmk, derive_ptk, random_nonce
+from wifit3.models import CaptureType
 
 from .campaign import VerifyCampaign, VerifyOutcome
 
@@ -24,7 +25,7 @@ def _replay_counter(packet: EapolPacket) -> int:
 
 
 class VerifyPskCampaign(VerifyCampaign):
-    credential_name = "PSK"
+    credential_type = CaptureType.WPA_PSK
 
     async def _exchange(self, iface, our_mac: bytes, our_mac_str: str) -> tuple[VerifyOutcome, Optional[str]]:
         ap = self.target

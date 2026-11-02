@@ -10,6 +10,7 @@ from typing import Optional
 from wifit3.campaigns.auth_assoc import build_client_leaving
 from wifit3.campaigns.campaign import Campaign
 from wifit3.dot11 import str_to_mac
+from wifit3.models import CREDENTIAL_NAMES, CaptureType
 from wifit3.wlan.lease import SPOOFABLE
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ class VerifyCampaign(Campaign):
     key = "verify"
     stoppable = False
     idle_label = "Verify"
-    credential_name = ""     # "PSK", "WPS PIN", "WEP key"
+    credential_type: CaptureType
 
     def __init__(self, array, target, value: str, log=None):
         super().__init__(ap=target, array=array)
@@ -52,7 +53,7 @@ class VerifyCampaign(Campaign):
         return "● Verify"
 
     def status_headlines(self, vault) -> list[str]:
-        return [f"[bold cyan]● Verifying {self.credential_name}[/bold cyan]", f"[dim]{self.step}[/dim]"]
+        return [f"[bold cyan]● Verifying {CREDENTIAL_NAMES[self.credential_type]}[/bold cyan]", f"[dim]{self.step}[/dim]"]
 
     def _log_step(self, step: str) -> None:
         self.step = step
@@ -77,7 +78,7 @@ class VerifyCampaign(Campaign):
             try:
                 self.outcome, self.error = await self._exchange(iface, our_mac, lease.mac)
             except Exception as exc:
-                logger.exception("verify %s crashed", self.credential_name)
+                logger.exception("verify %s crashed", CREDENTIAL_NAMES[self.credential_type])
                 self.outcome, self.error = VerifyOutcome.ERROR, str(exc) or type(exc).__name__
             finally:
                 await iface.send_no_wait(build_client_leaving(bssid_mac, our_mac))
