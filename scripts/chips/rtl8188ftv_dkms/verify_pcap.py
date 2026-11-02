@@ -8,7 +8,9 @@ One cursor per capture, from the card's first vendor op to its last, fail-closed
 iw/airodump hop, channel read from the wire), ``dm.watchdog_tick`` (the body of
 ``_watchdog_loop``) or ``_inject_frame`` (a bulk-OUT). A whole watchdog tick spliced between two
 ops of another handler is drained there. A tick racing a channel switch op-by-op is checked as
-two in-order subsequences that together consume the region. Any op no handler claims fails.
+two in-order subsequences that together consume the region. Any op no handler claims fails;
+there are no waivers. Runtime inputs read from the wire: each hop's channel, the random MAC
+behind an invalid EFUSE MAC, and the ``isMonitor`` static an earlier plug left behind.
 """
 from __future__ import annotations
 
@@ -283,6 +285,11 @@ def wire_is_monitor(ops: list[dict]) -> bool:
     return receive_config_writes == 2
 
 
+def summary(total: int, claimed: int) -> str:
+    """No waivers: an op no driver handler claims fails the run."""
+    return f"  total {total} ops: claimed {claimed}, waived 0, unclaimed {total - claimed}"
+
+
 def run_capture(pcap: Path) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no settle delays
     if not pcap.exists():
@@ -300,6 +307,7 @@ def run_capture(pcap: Path) -> int:
     random32 = wire_random32(ops)
     if random32 is not None:
         prom.random32 = lambda: random32
+        print(f"  runtime input: rtw_random32 = 0x{random32:08x} (invalid EFUSE MAC, from REG_MACID)")
     mode.isMonitor = wire_is_monitor(ops)
     if mode.isMonitor:
         print("  precondition: isMonitor static left TRUE by an earlier plug (opmode resets RCR)")
@@ -310,6 +318,7 @@ def run_capture(pcap: Path) -> int:
         first = first_divergence(e)
         at = f" at {fmt_op(w.ops[w.i])}" if w.i < len(w.ops) else ""
         print(f"\nFAIL after {w.i} matched ops{at}:\n  {type(first).__name__}: {first}")
+        print(summary(len(ops), w.i))
         return 1
     except Exception as e:  # noqa: BLE001
         print(f"\nERROR (harness/port bug) after {w.i} ops: {type(e).__name__}: {e}")
@@ -321,6 +330,7 @@ def run_capture(pcap: Path) -> int:
           f"set_channel x tick + {counts['injects']} _inject_frame")
     if w.i < len(ops):
         n = len(ops) - w.i
+        print(summary(len(ops), w.i))
         print(f"\nFAIL: {n} ops UNVERIFIED, op#{w.i}-{len(ops) - 1} (frames "
               f"{ops[w.i]['frame']}-{ops[-1]['frame']}); first: {fmt_op(ops[w.i])}. "
               f"No driver handler opens there (a teardown or a path the driver lacks).")
@@ -329,6 +339,7 @@ def run_capture(pcap: Path) -> int:
         print("\nFAIL: every vendor op matched, but the card used a channel the replay "
               "does not reproduce (coverage audit above)")
         return 1
+    print(summary(len(ops), w.i))
     print(f"\nPASS: {w.i} of {len(ops)} ops reproduced by the driver.")
     return 0
 
