@@ -332,9 +332,9 @@ class AR9271V2Driver(Driver):
     def _is_chip_warm(self) -> bool:
         """Detect a warm card (firmware already running) by smoke-testing the bulk-IN pipe: a
         firmware-running card in monitor mode streams HIF-framed RX (stream tag 0x4e00) on
-        WLAN_RX 0x82, while a cold bootloader is silent there [[warm_reattach]]. Claim interface 0
-        (the bulk pipe needs it), read a few times, and look for the tag. Any failure -> assume
-        cold (the cold path is the safe default; it re-claims after re-enumeration)."""
+        WLAN_RX 0x82, while a cold bootloader is silent there [[warm_reattach]]. Claim interface 0,
+        resync stale endpoint toggles, then read a few times and look for the tag. Any failure ->
+        assume cold (the cold path re-claims after re-enumeration)."""
         dev = self.transport.dev
         try:
             try:
@@ -346,6 +346,7 @@ class AR9271V2Driver(Driver):
             logger.debug("ar9271_v2: warm-probe claim failed (%s) -> assume cold", e)
             return False
         try:
+            self._clear_pipe_halts()
             for _ in range(6):                         # warm returns on the first beacon (~ms)
                 try:
                     buf = bytes(dev.read(C.EP_WLAN_RX, _RX_BUF_SIZE, 200))
