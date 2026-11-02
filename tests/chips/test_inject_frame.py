@@ -21,7 +21,7 @@ from wifit3.models.device_id import DeviceID
 
 from wifit3.chips import (
     mt7601u, mt76x0u, mt76x2u, mt7921au, mt7925au, rt2500usb, rt2800usb, rt5572, rtl8187,
-    rtl8188eus, rtl8812au, rtl8812au_dkms, rtl8814au_dkms, rtl8821au, rtl8821au_dkms, rtl8821cu_dkms, rtl8822bu, rtl8822bu_dkms, rtl8822cu,
+    rtl8188eus, rtl8188ftv, rtl8188ftv_dkms, rtl8812au, rtl8812au_dkms, rtl8814au_dkms, rtl8821au, rtl8821au_dkms, rtl8821cu_dkms, rtl8822bu, rtl8822bu_dkms, rtl8822cu,
     rtl8192fu, rtl8922au, rtw88_8814au,
 )
 from wifit3.chips.ar9271_v2 import constants as ar9271_constants
@@ -66,6 +66,9 @@ from wifit3.chips.rtl8188eus.driver import RTL8188EUSDriver
 from wifit3.chips.rtl8188eus_dkms.constants import BMC as RTL8188EUS_DKMS_BMC
 from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
 from wifit3.chips.rtl8188eus_dkms.transport import Rtl8188eusTransport
+from wifit3.chips.rtl8188ftv.constants import TXDESC_BROADMULTICAST as RTL8188FTV_BROADMULTICAST
+from wifit3.chips.rtl8188ftv.driver import RTL8188FTVDriver
+from wifit3.chips.rtl8188ftv_dkms.driver import Rtl8188ftvDkmsDriver
 from wifit3.chips.rtl8812au.driver import RTL8812AUDriver
 from wifit3.chips.rtl8812au_dkms.driver import Rtl8812auDkmsDriver
 from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
@@ -217,6 +220,17 @@ def build_rtl8188eus_dkms(dev: RecordingUsbDevice) -> Driver:
     return Rtl8188eusDkmsDriver(transport)
 
 
+def build_rtl8188ftv(dev: RecordingUsbDevice) -> Driver:
+    driver = RTL8188FTVDriver.from_usb_device(dev, first_id(rtl8188ftv.SUPPORTED_IDS))
+    driver._mgmt_bulk_out = 0x02
+    driver._data_bulk_out = 0x03
+    return driver
+
+
+def build_rtl8188ftv_dkms(dev: RecordingUsbDevice) -> Driver:
+    return Rtl8188ftvDkmsDriver.from_usb_device(dev, first_id(rtl8188ftv_dkms.SUPPORTED_IDS))
+
+
 def build_rtl8192fu(dev: RecordingUsbDevice) -> Driver:
     driver = RTL8192FUDriver.from_usb_device(dev, first_id(rtl8192fu.SUPPORTED_IDS))
     driver.priv.out_ep = [0x05, 0x06, 0x08, 0x09, 0x0C, 0x0D]
@@ -323,6 +337,9 @@ DRIVER_CASES: dict[str, DriverCase] = {
     "rtl8188eus_dkms": DriverCase(build_rtl8188eus_dkms, 32, 32,
                                   hw_seq_bit=DescriptorBit(12, 1 << 31),    # txdw3 EN_HWSEQ
                                   no_ack_bit=DescriptorBit(0, RTL8188EUS_DKMS_BMC)),
+    "rtl8188ftv": DriverCase(build_rtl8188ftv, 40, 40, hw_seq_bit=None,
+                             no_ack_bit=DescriptorBit(0, RTL8188FTV_BROADMULTICAST << 24)),
+    "rtl8188ftv_dkms": DriverCase(build_rtl8188ftv_dkms, 40, 40, REALTEK_W8_EN_HWSEQ, REALTEK_BMC),
     "rtl8192fu": DriverCase(build_rtl8192fu, 40, 40, hw_seq_bit=None,
                              no_ack_bit=DescriptorBit(0, RTL8192FU_CONSTANTS.TXDESC_BROADMULTICAST << 24)),
     "rtl8812au": DriverCase(build_rtl8812au, 40, 40, REALTEK_W8_EN_HWSEQ, REALTEK_BMC),
