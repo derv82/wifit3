@@ -30,6 +30,9 @@ C, so the name is the cross-reference.
 **Scripts**: the reusable diagnostics, grouped, one line each. Mark the one-offs that are safe to
 delete.
 
+**Final checklist**: one line per docs/porting/FINAL-CHECKLIST.md item: the result, its sample
+size, the date. An item that couldn't be run says why.
+
 **Debug log**: at the bottom, for open or unresolved findings only. One entry per finding: a live
 investigation and what's been ruled out, or a durable non-obvious fact worth keeping. Date an entry
 so a reader can judge how current it is. This is **not** a port-order or milestone log: no "ported
@@ -49,5 +52,6 @@ the correct steady state.
 ## Known Problems            what breaks, when, current state, bulleted
 ## Driver Entry Points       feature -> module/function, one bullet each
 ## Scripts                   reusable diagnostics, grouped, one line each
+## Final checklist           one line per FINAL-CHECKLIST.md item: result, sample size, date
 ## Debug log                 open/unresolved findings + what's ruled out; NOT a port-order log
 ```
