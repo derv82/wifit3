@@ -6,7 +6,8 @@ the descriptor layout from include/rtl8188f_xmit.h. One bulk completion
 carries an 8-byte-aligned aggregation of 24-byte-desc + drvinfo +
 shift + 802.11 packets; C2H packets (``RPT_SEL``) share the endpoint.
 A crc/icv error or short length drops the rest of the buffer, like the
-source (``goto _exit_recvbuf2recvframe``).
+source (``goto _exit_recvbuf2recvframe``). 802.11 frames lose the trailing
+FCS the monitor RCR appends (usb_ops.c:201 ``recvframe_pull_tail``).
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from . import constants as C
 
 RXDESC_SIZE = 24
 RX_DRV_INFO_UNIT = 8
+FCS_LEN = 4               # IEEE80211_FCS_LEN
 RXFLTMAP1_ACK = 1 << 13   # control subtype 13 = ACK; monitor entry leaves RXFLTMAP1 at 0x0400
 
 
@@ -75,8 +77,12 @@ def iter_rx(buf: bytes):
             a["rssi"] = signal_dbm(buf[off + RXDESC_SIZE:start], a["rate"])
         else:
             a["rssi"] = None
-        yield a, bytes(buf[start:start + a["pkt_len"]])
-        off = (start + a["pkt_len"] + 7) & ~7
+        end = start + a["pkt_len"]
+        off = (end + 7) & ~7
+        if a["c2h"]:
+            yield a, bytes(buf[start:end])
+        elif a["pkt_len"] > FCS_LEN:
+            yield a, bytes(buf[start:end - FCS_LEN])
 
 
 def admit_ack_frames(t) -> None:

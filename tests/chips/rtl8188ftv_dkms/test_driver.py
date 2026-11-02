@@ -31,7 +31,7 @@ def test_rx_dispatch_control_frames_parse_to_none():
     p2 = b"\xc4\x00" + bytes(12)
     buf = _rx_desc(20) + p1 + bytes(4) + _rx_desc(14) + p2 + bytes(2)
     pkts = list(rx_mod.iter_rx(buf))
-    assert [len(p) for _, p in pkts] == [20, 14]
+    assert [len(p) for _, p in pkts] == [16, 10]
     assert [p[:2] for _, p in pkts] == [b"\xb4\x00", b"\xc4\x00"]
     assert all(WlanFrameParser.parse_80211_frame(p, -100) is None
                for _, p in pkts)
@@ -44,7 +44,7 @@ def test_rx_dispatch_beacon_bssid():
     # + SSID IE, wrapped in one RX descriptor entry.
     bssid = bytes.fromhex("020000000002")
     hdr = (b"\x80\x00\x00\x00" + b"\xff" * 6 + bssid + bssid + b"\x00\x00")
-    beacon = hdr + bytes(12) + b"\x00\x04TEST"
+    beacon = hdr + bytes(12) + b"\x00\x04TEST" + bytes(4)   # + appended FCS
     buf = _rx_desc(len(beacon)) + beacon
     bssids = set()
     for attrib, payload in rx_mod.iter_rx(buf):
@@ -139,27 +139,22 @@ def test_inject_frame_sends_data_without_consuming_seq_on_reject():
     assert d.hal["mgnt_seq"] == 6
 
 
-def test_rx_dispatch_records_ack_with_and_without_fcs():
-    """The monitor RCR appends FCS (BIT31), so an ACK arrives as 14 bytes; the
-    tap must record both the bare 10-byte ACK and the FCS-appended 14-byte one."""
+def test_rx_dispatch_records_ack_after_fcs_strip():
+    """The monitor RCR appends FCS (BIT31); iter_rx strips it, so the tap sees a 10-byte ACK."""
     import struct
     ra = bytes.fromhex("02b0b0000001")
+    ack14 = bytes([0xD4, 0, 0, 0]) + ra + bytes(4)   # FC=ACK, dur, RA, appended FCS
+    buf = struct.pack("<I", len(ack14)) + bytes(20) + ack14
 
-    def buf_for(ack):                              # 24-byte desc (pkt_len only) + ack
-        return struct.pack("<I", len(ack)) + bytes(20) + ack
-
-    ack10 = bytes([0xD4, 0, 0, 0]) + ra           # FC=ACK, dur, RA
-    ack14 = ack10 + bytes(4)                       # + appended FCS
-    for ack in (ack10, ack14):
-        d = _driver()
-        d._ack_detect_on = True
-        d._our_tx_macs.add(ra)
-        d._rx_dispatch(buf_for(ack))
-        assert d.acks_seen(ra) == 1
+    d = _driver()
+    d._ack_detect_on = True
+    d._our_tx_macs.add(ra)
+    d._rx_dispatch(buf)
+    assert d.acks_seen(ra) == 1
 
     d = _driver()                                  # tap disarmed -> no tally
     d._our_tx_macs.add(ra)
-    d._rx_dispatch(buf_for(ack14))
+    d._rx_dispatch(buf)
     assert d.acks_seen(ra) == 0
 
 

@@ -330,8 +330,8 @@ class Rtl8188ftvDkmsDriver(Driver):
             if attrib["c2h"]:
                 self._c2h_count += 1
                 continue
-            if payload[0] == 0xD4 and len(payload) in (10, 14):
-                self.record_ack(payload)   # 14 = 10-byte ACK + appended FCS (monitor RCR BIT31)
+            if payload[0] == 0xD4 and len(payload) == 10:
+                self.record_ack(payload)
                 continue
             if callback is None:
                 continue

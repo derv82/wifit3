@@ -31,7 +31,7 @@
     (`rtw_xmit.c:3841`, `rtl8188f_hal_init.c:4676-4693`).
   - Auto-ACK answers the MAC in REG_MACID (0x610), also in monitor (MSR NOLINK).
     `enter_active_monitor` writes it via `hw_var_set_macaddr` (`rtl8188f_hal_init.c:5117`): `FAKE_MAC = SPOOFABLE`.
-  - Monitor RCR appends FCS (`mode._RCR_MONITOR` BIT31): an ACK arrives as 14 B, not 10.
+  - Monitor RCR appends FCS (`mode._RCR_MONITOR` BIT31); `rx.iter_rx` strips it like `usb_ops.c:201`.
   - ACK tap: `rx.admit_ack_frames` / `drop_ack_frames` toggle RXFLTMAP1 bit 13 (monitor entry leaves 0x0400).
   - `connect()` always runs the vendor probe's cold bring-up, warm chip included (`usb_halinit.c:2240`).
   - FW downloads twice: `hal_read_mac_hidden_rpt` powers off (`CardDisable`) after the probe FW.

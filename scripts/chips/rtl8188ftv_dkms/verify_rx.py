@@ -4,8 +4,9 @@
 
 Each recorded bulk-IN completion goes through the driver's RX decode (``rx.iter_rx`` +
 ``WlanFrameParser``, as in ``_rx_dispatch``). Two independent checks:
-  * frame slicing: a frame whose trailing 4 bytes are a valid FCS was cut from the aggregate
-    at exactly the right offset and length. Frames without one are counted as unchecked.
+  * frame slicing: each frame's descriptor-length slice (FCS included) is recomputed from the
+    aggregate; one ending in a valid FCS was cut at exactly the right offset and length (frames
+    without one are counted as unchecked). Every delivered frame must be that slice minus 4 B.
   * decode: every parsed packet's type/subtype, BSSID, SA, DA and beacon/probe-response SSID
     must equal what tshark's 802.11 dissector reports for the same bytes.
 Not checked: RSSI (no reference value in a USB capture), frames the parser returns None for.
@@ -100,19 +101,26 @@ def main(argv: list[str]) -> int:
         return 1
     buffers = rp.extract_bulk_in_ops(args.pcap, rp.find_card_device(args.pcap))
     frames: list[bytes] = []
-    n_c2h = 0
+    fcs_ok: list[bool] = []
+    n_c2h = n_not_stripped = 0
     for buf in buffers:
+        off = 0
         for attrib, payload in rx.iter_rx(buf):
+            start = off + rx.RXDESC_SIZE + attrib["drvinfo_sz"] + attrib["shift_sz"]
+            pre_strip = bytes(buf[start:start + attrib["pkt_len"]])
+            off = (start + attrib["pkt_len"] + 7) & ~7
             if attrib["c2h"]:
                 n_c2h += 1
-            else:
-                frames.append(payload)
+                continue
+            if payload != pre_strip[:-FCS_LEN]:
+                n_not_stripped += 1
+            frames.append(payload)
+            fcs_ok.append(_has_valid_fcs(pre_strip))
     if not frames:
         print(f"FAIL: no 802.11 frames in {len(buffers)} bulk-IN completions; RX unverified")
         return 1
 
-    fcs_ok = [_has_valid_fcs(f) for f in frames]
-    rows = _tshark_rows([f[:-FCS_LEN] if ok else f for f, ok in zip(frames, fcs_ok)])
+    rows = _tshark_rows(frames)
     problems = []
     n_parsed = n_unparsed_mgmt_data = 0
     for frame, row in zip(frames, rows):
@@ -131,7 +139,8 @@ def main(argv: list[str]) -> int:
 
     print(f"rx: {len(buffers)} bulk-IN completions -> {len(frames)} frames + {n_c2h} C2H")
     print(f"  slicing: {sum(fcs_ok)} frames end in a valid FCS; "
-          f"{len(frames) - sum(fcs_ok)} unchecked (no valid FCS)")
+          f"{len(frames) - sum(fcs_ok)} unchecked (no valid FCS); "
+          f"{n_not_stripped} delivered frames are not the slice minus the FCS")
     print(f"  decode: {n_parsed} parsed packets compared with tshark, {len(problems)} problems; "
           f"unchecked: {n_unparsed_mgmt_data} mgmt/data frames the parser returned None for, "
           f"{len(frames) - n_parsed - n_unparsed_mgmt_data} control/other")
@@ -139,7 +148,7 @@ def main(argv: list[str]) -> int:
         print(f"    {p}")
     if len(problems) > SHOWN_MISMATCHES:
         print(f"    ... {len(problems) - SHOWN_MISMATCHES} more")
-    if problems or not n_parsed:
+    if problems or not n_parsed or n_not_stripped:
         print("FAIL")
         return 1
     print("PASS: every parsed packet agrees with tshark")

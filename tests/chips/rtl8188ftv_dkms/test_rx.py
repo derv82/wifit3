@@ -26,8 +26,29 @@ def test_iter_rx_two_packets():
     buf = desc(20) + p1 + bytes(4) + desc(14) + p2 + bytes(2)
     pkts = list(rx.iter_rx(buf))
     assert [a["pkt_len"] for a, _ in pkts] == [20, 14]
-    assert pkts[0][1][:2] == b"\xb4\x00"
+    assert [len(p) for _, p in pkts] == [16, 10]          # pkt_len minus the FCS
+    assert pkts[0][1] == p1[:-4]
     assert pkts[1][1][:2] == b"\xc4\x00"
+
+
+def test_iter_rx_skips_frame_shorter_than_fcs():
+    import struct
+    from wifit3.chips.rtl8188ftv_dkms import rx
+
+    def desc(n):
+        return struct.pack("<IIIIII", n, 0, 0, 0, 0, 0)
+
+    ack = b"\xd4\x00" + bytes(12)
+    buf = desc(3) + bytes(3) + bytes(5) + desc(14) + ack + bytes(2)
+    assert [p for _, p in rx.iter_rx(buf)] == [ack[:10]]
+
+
+def test_iter_rx_keeps_c2h_payload_whole():
+    import struct
+    from wifit3.chips.rtl8188ftv_dkms import rx
+    report = bytes(range(8))
+    buf = struct.pack("<IIIIII", len(report), 0, 1 << 28, 0, 0, 0) + report
+    assert [p for _, p in rx.iter_rx(buf)] == [report]
 
 
 def test_iter_rx_stops_on_crc():
