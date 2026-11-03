@@ -5,11 +5,10 @@ from textual.widgets import Button, Input, Label
 
 import wifit3.persist.config as cfg
 import wifit3.ui.vault.modals.dwpa as mod
-from wifit3.vault.tools.dwpa_api import DwpaError
+from wifit3.vault.tools.dwpa_api import DwpaError, PotfileEntry
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.config import Config, DwpaSettings
 from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
-from wifit3.persist.potfile import PotfileEntry
 from tests.ui.wait_until import wait_until
 
 _KEY = "0123456789abcdef0123456789abcdef"
@@ -251,13 +250,11 @@ async def test_a_failed_query_shows_the_servers_message(capture, monkeypatch):
 
 
 class _StoreKeys:
-    def __init__(self, message: str = "Retrieved 2 new keys from DWPA") -> None:
-        self.message = message
+    def __init__(self) -> None:
         self.networks = []
 
     def __call__(self, networks):
         self.networks = list(networks)
-        return self.message
 
 
 @pytest.fixture
@@ -289,12 +286,11 @@ async def test_retrieve_hands_the_cracked_keys_to_the_vault(capture, retrievals)
         app.screen.query_one("#dwpa-url", Input).value = "https://dwpa.example"
         app.screen.query_one("#dwpa-key", Input).value = _KEY
         result = app.screen.query_one("#dwpa-result", Label)
-        await _retrieve(app, pilot, result, "Retrieved 2 new keys")
+        await _retrieve(app, pilot, result, "2 cracked keys on DWPA")
 
         assert calls == [("https://dwpa.example", _KEY)]
         assert store.networks == networks
         assert Config.dwpa == DwpaSettings(url="https://dwpa.example", key=_KEY)
-        assert "Retrieved 2 new keys from DWPA" in str(result.render())
 
 
 async def test_retrieve_with_nothing_cracked_says_so(capture, retrievals):

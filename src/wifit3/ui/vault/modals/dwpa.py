@@ -12,9 +12,8 @@ from textual.widgets import Button, Input, Label
 
 from wifit3.models import PersistedCapture
 from wifit3.persist.config import Config, ConfigError
-from wifit3.persist.potfile import PotfileEntry
-from wifit3.vault.tools.dwpa_api import (DwpaError, is_valid_key, network_leaked, retrieve_cracked,
-                                         upload_capture)
+from wifit3.vault.tools.dwpa_api import (DwpaError, PotfileEntry, is_valid_key, network_leaked,
+                                         retrieve_cracked, upload_capture)
 
 _KEY_HINT = "[dim]32 lowercase hex characters, as issued by the DWPA server[/dim]"
 _LEAKED = "[$warning]⚠ Possibly already cracked on DWPA[/]"
@@ -57,9 +56,8 @@ class DwpaConfigModal(ModalScreen[bool]):
     """
 
     def __init__(self, capture: PersistedCapture, bssid: str, ssid: Optional[str],
-                 save_keys: Optional[Callable[[Sequence[PotfileEntry]], str]] = None) -> None:
-        """``save_keys`` stores the networks a Retrieve gets from the server and returns the
-        status line; without it the dialog only reports how many were cracked."""
+                 save_keys: Optional[Callable[[Sequence[PotfileEntry]], None]] = None) -> None:
+        """``save_keys`` stores the networks a Retrieve gets from the server."""
         super().__init__()
         self.capture = capture
         self.bssid = bssid
@@ -175,10 +173,9 @@ class DwpaConfigModal(ModalScreen[bool]):
             self.query_one("#dwpa-result", Label).update("[dim]No cracked keys on DWPA[/]")
             return
         self._announce_selected_key(networks)
-        if self._save_keys is None:
-            message = f"{len(networks)} cracked key{'s' if len(networks) > 1 else ''} on DWPA"
-        else:
-            message = self._save_keys(networks)
+        if self._save_keys is not None:
+            self._save_keys(networks)
+        message = f"{len(networks)} cracked key{'s' if len(networks) > 1 else ''} on DWPA"
         self.query_one("#dwpa-result", Label).update(f"[$success]{escape(message)}[/]")
 
     def _announce_selected_key(self, networks: Sequence[PotfileEntry]) -> None:

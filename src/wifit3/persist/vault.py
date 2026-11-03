@@ -20,12 +20,10 @@ from wifit3.id.ssid import strip_suffix
 from wifit3.models import WPS_CAPTURE_TYPES, CaptureType, PersistedCapture
 from wifit3.persist import ap_state, save
 from wifit3.persist.ap_state import ApState, Key, PasswordStatus, read_hashlines
-from wifit3.persist.capture_history import captures_in, load_capture_index, summarize
+from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid, wps_run_state_name
 from wifit3.persist.config import Config
 from wifit3.persist.meta import clear_meta_paths_cache, meta_path, update_meta
-from wifit3.persist.potfile import (POTFILE_RE, PotfileEntry, missing_entries, potfile_line,
-                                    potfile_path, read_potfile, remove_potfile_key)
 from wifit3.persist.save import SaveResult
 from wifit3.vault.manager import JobManager
 from wifit3.wlan.sink import WlanSink
@@ -448,26 +446,6 @@ class Vault:
                 bssid=bssid, value=psk, ssid=ssid))
         return result
 
-    def merge_dwpa_keys(self, bssid: str, ssid: Optional[str],
-                        entries: List[PotfileEntry]) -> List[PotfileEntry]:
-        """Add the keys DWPA cracked for this AP to its own potfile, only the ones it lacks;
-        returns the keys added. The downloaded potfile is merged in memory and never stored."""
-        known = {key.value for key in self.ap_state(bssid).keys
-                 if key.type is CaptureType.WPA_PSK}
-        path = potfile_path(Path(Config.captures_dir), ssid, bssid)
-        added = missing_entries(read_potfile(path), [e for e in entries if e.key not in known])
-        if not added:
-            return []
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as potfile:
-            potfile.writelines(f"{potfile_line(entry)}\n" for entry in added)
-        update_meta(ssid, bssid)
-        for entry in added:
-            self._insert_capture(PersistedCapture(
-                type=CaptureType.WPA_PSK, timestamp=int(time.time()), path=str(path),
-                bssid=bssid, value=entry.key, ssid=entry.ssid))
-        return added
-
     # ----- filesystem ops (the screen goes through these, never touches disk) -----
 
     def delete_ap(self, bssid: str) -> None:
@@ -481,39 +459,21 @@ class Vault:
 
     def delete_key(self, bssid: str, key_id: tuple[CaptureType, str]) -> None:
         """Delete every capture file holding the AP's key ``key_id`` (and any key held only in those
-        files), with their live checks and Add key marks. A potfile keeps its other keys."""
+        files), with their live checks and Add key marks."""
         state = self.ap_state(bssid)
         key = next((k for k in state.keys if k.id == key_id), None)
         if key is None:
             return
         paths = {Path(c.path) for c in key.captures}
         removed = [k for k in state.keys if {Path(c.path) for c in k.captures} <= paths]
-        potfiles = {path for path in paths if POTFILE_RE.match(path.name)}
         try:
-            for path in potfiles:
-                remove_potfile_key(path, key_id[1])
-            self._delete_files(bssid, paths - potfiles)
+            self._delete_files(bssid, paths)
         finally:
-            for path in potfiles:
-                self._reindex(path, bssid)
             gone = [k for k in removed if not any(Path(c.path).exists() for c in k.captures)]
-            if key not in gone:
-                gone.append(key)
             for gone_key in gone:
                 ap_state.forget_key(gone_key)
-            if gone or potfiles:
+            if gone:
                 self.notify_changed(bssid)
-
-    def _reindex(self, path: Path, bssid: str) -> None:
-        """Re-read one rewritten file into the index, dropping what it no longer holds."""
-        remaining = [c for c in self._index.get(bssid, []) if Path(c.path) != path]
-        if path.exists():
-            remaining.extend(captures_in(path))
-        if remaining:
-            self._index[bssid] = remaining
-        else:
-            self._index.pop(bssid, None)
-        self._ap_states.pop(bssid, None)
 
     def _delete_files(self, bssid: str, paths: set[Path]) -> None:
         """Delete ``paths``, drop the deleted ones from the index and notify every BSSID that lost one;

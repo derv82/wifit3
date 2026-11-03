@@ -6,10 +6,11 @@ import re
 import urllib.error
 import urllib.request
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from wifit3.persist.potfile import PotfileEntry, parse_potfile
+from wifit3.crack.passwords import is_valid_psk
 
 TIMEOUT_SECONDS = 120.0
 FILE_FIELD = "webfile"
@@ -23,10 +24,26 @@ REJECTIONS = (
 )
 
 _KEY = re.compile(r"[0-9a-f]{32}")
+_BSSID = re.compile(r"[0-9a-f]{12}")
 
 
 class DwpaError(Exception):
     """The server refused the request; the message is the server's own when it sent one."""
+
+
+@dataclass(frozen=True)
+class PotfileEntry:
+    bssid: str
+    mac_sta: str
+    ssid: str
+    key: str
+
+
+def parse_potfile(text: str) -> list[PotfileEntry]:
+    """The usable entries of a potfile, one ``BSSID:MAC_STA:SSID:PASS`` line per key, without
+    duplicates."""
+    entries = (entry for entry in map(_entry, text.splitlines()) if entry is not None)
+    return list(dict.fromkeys(entries))
 
 
 def is_valid_key(key: str) -> bool:
@@ -131,3 +148,21 @@ def _multipart_body(path: Path, boundary: str) -> bytes:
             f'Content-Disposition: form-data; name="{FILE_FIELD}"; filename="{path.name}"\r\n'
             "Content-Type: application/octet-stream\r\n\r\n")
     return head.encode("utf-8") + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+
+def _entry(line: str) -> PotfileEntry | None:
+    fields = line.split(":", 3)
+    if len(fields) != 4:
+        return None
+    bssid = _colon_bssid(fields[0])
+    ssid, key = fields[2], fields[3]
+    if bssid is None or not ssid or not is_valid_psk(key):
+        return None
+    return PotfileEntry(bssid, _colon_bssid(fields[1]) or "", ssid, key)
+
+
+def _colon_bssid(text: str) -> str | None:
+    hex_bssid = text.strip().lower()
+    if _BSSID.fullmatch(hex_bssid) is None:
+        return None
+    return ":".join(hex_bssid[index:index + 2] for index in range(0, 12, 2))

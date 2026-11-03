@@ -22,7 +22,6 @@ from wifit3.persist.config import Config
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.meta import meta_path, read_meta, update_meta
 from wifit3.persist.pcap import write_pcap
-from wifit3.persist.potfile import PotfileEntry, read_potfile
 from wifit3.persist.vault import Vault, crosses_auto_crack_threshold
 from tests.hashline_dates import write_hashline_dates
 
@@ -986,78 +985,3 @@ def test_a_key_typed_in_is_not_verified_until_a_live_check_accepts_it(tmp_path, 
     v.record_live_verification(typed_key, correct=True)
 
     assert v.ap_state(typed.bssid).key_statuses[typed_key.id] is PasswordStatus.CURRENT
-
-
-def test_merge_dwpa_keys_writes_one_potfile_per_ap_and_skips_known_keys(tmp_path):
-    bssid = "aa:bb:cc:dd:ee:ff"
-    (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_handshake.pcap").write_bytes(b"")
-    v = Vault()
-    first = PotfileEntry(bssid, "11:22:33:44:55:66", "HomeNet", "88888888")
-    second = PotfileEntry(bssid, "11:22:33:44:55:66", "HomeNet", "hunter22")
-    potfile = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.potfile"
-
-    assert v.merge_dwpa_keys(bssid, "HomeNet", [first, first]) == [first]
-    assert read_potfile(potfile) == [first]
-    assert v.merge_dwpa_keys(bssid, "HomeNet", [first, second]) == [second]
-    assert read_potfile(potfile) == [first, second]
-    assert {key.value for key in v.ap_state(bssid).keys} == {"88888888", "hunter22"}
-    assert not list(tmp_path.glob("*_wpa_psk.txt"))
-
-
-def test_a_key_already_in_the_potfile_is_not_saved_as_a_key_file(tmp_path):
-    bssid = "aa:bb:cc:dd:ee:ff"
-    (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_handshake.pcap").write_bytes(b"")
-    v = Vault()
-    entry = PotfileEntry(bssid, "11:22:33:44:55:66", "HomeNet", "88888888")
-    v.merge_dwpa_keys(bssid, "HomeNet", [entry])
-
-    result = v.save_wpa_psk("HomeNet", bssid, "88888888")
-
-    assert result is not None and not result.was_new
-    assert result.path == tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.potfile"
-    assert not list(tmp_path.glob("*_wpa_psk.txt"))
-
-
-def test_deleting_a_potfile_key_keeps_the_aps_other_keys(tmp_path):
-    bssid = "aa:bb:cc:dd:ee:ff"
-    (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_handshake.pcap").write_bytes(b"")
-    v = Vault()
-    first = PotfileEntry(bssid, "11:22:33:44:55:66", "HomeNet", "88888888")
-    second = PotfileEntry(bssid, "11:22:33:44:55:66", "HomeNet", "hunter22")
-    potfile = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.potfile"
-    v.merge_dwpa_keys(bssid, "HomeNet", [first, second])
-
-    v.delete_key(bssid, (CaptureType.WPA_PSK, "88888888"))
-
-    assert read_potfile(potfile) == [second]
-    assert [key.value for key in v.ap_state(bssid).keys] == ["hunter22"]
-
-    v.delete_key(bssid, (CaptureType.WPA_PSK, "hunter22"))
-
-    assert not potfile.exists()
-    assert v.ap_state(bssid).keys == ()
-
-
-def test_a_potfile_key_survives_a_vault_reload(tmp_path):
-    bssid = "aa:bb:cc:dd:ee:ff"
-    (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_handshake.pcap").write_bytes(b"")
-    entry = PotfileEntry(bssid, "11:22:33:44:55:66", "HomeNet", "88888888")
-    Vault().merge_dwpa_keys(bssid, "HomeNet", [entry])
-
-    reloaded = Vault()
-
-    assert [key.value for key in reloaded.ap_state(bssid).keys] == ["88888888"]
-    assert reloaded.persisted(bssid)[0].path.endswith("HomeNet_aa-bb-cc-dd-ee-ff.potfile")
-
-
-def test_a_reloaded_potfile_key_is_matched_to_the_handshake(tmp_path):
-    bssid = "02:00:00:00:00:01"
-    _write_pmkid_line(tmp_path, "HomeNet", bssid, derive_pmk("correct horse", b"HomeNet"))
-    entry = PotfileEntry(bssid, "11:22:33:44:55:66", "HomeNet", "correct horse")
-    Vault().merge_dwpa_keys(bssid, "HomeNet", [entry])
-
-    state = Vault().ap_state(bssid)
-
-    [key] = state.keys
-    assert key.value == "correct horse" and key.hashline_ids
-    assert state.status is PasswordStatus.CURRENT

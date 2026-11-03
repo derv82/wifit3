@@ -36,8 +36,9 @@ from wifit3.ui.encryption_format import wep_key_ascii
 from wifit3.ui.screens.vault_breakpoints import NARROW, SHORT, TALL, TINY, WIDE
 from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
 from wifit3.ui.vault.tools_ui import UI_TOOLS
-from wifit3.persist.potfile import PotfileEntry
+from wifit3.vault.manager import log_propagation
 from wifit3.vault.tools.base import VaultTool
+from wifit3.vault.tools.dwpa_api import PotfileEntry
 
 
 _STATUS_COLOR = {
@@ -685,7 +686,7 @@ class _ApStatePanel(VerticalGroup):
         self.app.push_screen(DwpaConfigModal(capture, state.bssid, ssid, self._store_dwpa_keys),
                              _on_upload)
 
-    def _store_dwpa_keys(self, networks: Sequence[PotfileEntry]) -> str:
+    def _store_dwpa_keys(self, networks: Sequence[PotfileEntry]) -> None:
         added = known = 0
         by_bssid: dict[str, list[PotfileEntry]] = {}
         for network in networks:
@@ -694,18 +695,24 @@ class _ApStatePanel(VerticalGroup):
             if not self.app.vault.persisted(bssid):
                 continue            # a DWPA network this Vault has no record of
             ssid = entries[0].ssid
-            try:
-                new = self.app.vault.merge_dwpa_keys(bssid, ssid, entries)
-            except OSError as e:
-                self.notify(f"Could not save {ssid}: {e}", severity="warning")
-                continue
-            added += len(new)
-            known += len({entry.key for entry in entries}) - len(new)
+            held = {key.value for key in self.app.vault.ap_state(bssid).keys}
+            for key in dict.fromkeys(entry.key for entry in entries):
+                if key in held:
+                    known += 1
+                    continue
+                try:
+                    self.app.vault.save_wpa_psk(ssid, bssid, key)
+                except OSError as e:
+                    self.notify(f"Could not save {ssid}: {e}", severity="warning")
+                    continue
+                self.app.vault.propagate_verified_psk(bssid, ssid, key).add_done_callback(log_propagation)
+                added += 1
         if not added:
-            return (f"{known} key{'s' if known > 1 else ''} already in Vault" if known
-                    else "No DWPA keys for the Vault's APs")
+            self.notify(f"{known} key{'s' if known > 1 else ''} already in Vault" if known
+                        else "No DWPA keys for the Vault's APs")
+            return
         already = f", {known} already in Vault" if known else ""
-        return f"Retrieved {added} new key{'s' if added > 1 else ''} from DWPA{already}"
+        self.notify(f"Retrieved {added} new key{'s' if added > 1 else ''} from DWPA{already}")
 
     def _launch_tool(self, tool: VaultTool) -> None:
         state = self._state

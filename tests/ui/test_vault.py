@@ -27,7 +27,7 @@ from wifit3.ui.screens.vault_item import (DeleteKeyPressed, VaultItemView, date_
                                           _KeyRow, _no_crackable_text, _UncrackedList)
 from wifit3.ui.vault.modals.add_credential import ManualCredential
 from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
-from wifit3.persist.potfile import PotfileEntry, read_potfile
+from wifit3.vault.tools.dwpa_api import PotfileEntry
 from wifit3.crack import wpa_psk
 from wifit3.dot11.wpa import derive_pmk
 from tests.hashline_dates import write_hashline_dates
@@ -703,8 +703,10 @@ async def test_unchecked_hashlines_are_left_out_of_the_crack_job(tmp_path, mocke
         uncracked.deselect_all()
         await pilot.pause(0)
         assert all(button.disabled for button in item.query(_CrackerButton).results(_CrackerButton))
+
+
 @pytest.mark.asyncio
-async def test_dwpa_retrieved_keys_are_merged_into_the_aps_potfile(tmp_path):
+async def test_dwpa_retrieved_keys_are_saved_as_the_aps_wpa_psk(tmp_path):
     name = "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_handshake.pcap"
     (tmp_path / name).write_bytes(b"")
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE)
@@ -714,29 +716,30 @@ async def test_dwpa_retrieved_keys_are_merged_into_the_aps_potfile(tmp_path):
         panel = item.query_one(_ApStatePanel)
         network = PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", "HomeNet", "88888888")
 
-        assert panel._store_dwpa_keys([network]) == "Retrieved 1 new key from DWPA"
+        panel._store_dwpa_keys([network])
+        assert app.notified[-1] == "Retrieved 1 new key from DWPA"
         assert "88888888" in [key.value for key in app.vault.ap_state("aa:bb:cc:dd:ee:ff").keys]
-        assert read_potfile(tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.potfile") == [network]
-        assert panel._store_dwpa_keys([network]) == "1 key already in Vault"
+        assert list(tmp_path.glob("HomeNet_aa-bb-cc-dd-ee-ff_*_wpa_psk.txt"))
+        panel._store_dwpa_keys([network])
+        assert app.notified[-1] == "1 key already in Vault"
 
-        other = PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "Elsewhere", "hunter22")
-        assert panel._store_dwpa_keys([other]) == "No DWPA keys for the Vault's APs"
-        assert app.vault.persisted("8e:6a:8d:a6:db:51") == []
+        other = PotfileEntry("02:00:00:00:00:02", "02:00:00:00:00:03", "Elsewhere", "hunter22")
+        panel._store_dwpa_keys([other])
+        assert app.notified[-1] == "No DWPA keys for the Vault's APs"
+        assert app.vault.persisted("02:00:00:00:00:02") == []
 
 
 @pytest.mark.asyncio
-async def test_a_key_merged_while_a_modal_is_open_refreshes_the_vault(tmp_path):
+async def test_a_key_saved_while_a_modal_is_open_refreshes_the_vault(tmp_path):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE)
     app = _VaultApp()
     async with app.run_test() as pilot:
         drawer = await _open_vault(app, pilot, "aa:bb:cc:dd:ee:ff")
         item = drawer.query_one(VaultItemView)
-        app.push_screen(ModalScreen())      # the DWPA dialog stays open while it merges
+        app.push_screen(ModalScreen())      # the DWPA dialog stays open while it saves
         await pilot.pause(0)
 
-        app.vault.merge_dwpa_keys("aa:bb:cc:dd:ee:ff", "HomeNet",
-                                  [PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66",
-                                                "HomeNet", "88888888")])
+        app.vault.save_wpa_psk("HomeNet", "aa:bb:cc:dd:ee:ff", "88888888")
         await pilot.pause(0)
         await pilot.pause(0)
 

@@ -34,7 +34,7 @@ def _copy_progress(job: JobState, res: ToolResult) -> None:
     job.detail = res.detail
 
 
-def _log_propagation(propagation: Future[list[str]]) -> None:
+def log_propagation(propagation: Future[list[str]]) -> None:
     if (error := propagation.exception()) is not None:
         logger.error("Failed to pass a recovered key on to related APs", exc_info=error)
     elif matched := propagation.result():
@@ -284,7 +284,7 @@ class JobManager:
             for key in (k for k in res.keys if k not in held):
                 for ssid in self._cracked_ssids(job, key, cap):
                     self.vault.save_wpa_psk(ssid, cap.bssid, key)
-                    self.vault.propagate_verified_psk(cap.bssid, ssid, key).add_done_callback(_log_propagation)
+                    self.vault.propagate_verified_psk(cap.bssid, ssid, key).add_done_callback(log_propagation)
         except OSError:
             logger.exception(f"Failed to save the recovered key for {job.capture_path}")
         status_key = self.vault.ap_state(cap.bssid).status_key

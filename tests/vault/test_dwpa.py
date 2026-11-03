@@ -6,10 +6,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from wifit3.persist.potfile import PotfileEntry, parse_potfile
-from wifit3.vault.tools.dwpa_api import (DwpaError, is_valid_key, network_hash, network_leaked,
-                                         potfile_endpoint, query_endpoint, retrieve_cracked,
-                                         submit_endpoint, upload_capture)
+from wifit3.vault.tools.dwpa_api import (DwpaError, PotfileEntry, is_valid_key, network_hash,
+                                         network_leaked, parse_potfile, potfile_endpoint,
+                                         query_endpoint, retrieve_cracked, submit_endpoint,
+                                         upload_capture)
 
 _KEY = "0123456789abcdef0123456789abcdef"
 
@@ -204,6 +204,10 @@ def test_the_potfile_lines_become_networks_and_skip_unusable_rows():
         PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "E36W126F-Guest1",
                      "pass:with:colons"),
     ]
+
+
+def test_a_line_without_an_ssid_is_skipped():
+    assert parse_potfile("aabbccddeeff:112233445566::88888888\n") == []
 
 
 def test_retrieve_downloads_the_potfile_with_the_key_cookie(dwpa_service):
