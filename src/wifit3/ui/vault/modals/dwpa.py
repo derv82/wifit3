@@ -12,10 +12,11 @@ from textual.widgets import Button, Input, Label
 
 from wifit3.models import PersistedCapture
 from wifit3.persist.config import Config, ConfigError
-from wifit3.vault.tools.dwpa_api import (DwpaError, PotfileEntry, is_valid_key, network_leaked,
-                                         retrieve_cracked, split_on_known_ssid, upload_capture)
+from wifit3.vault.tools.dwpa_api import (DwpaError, PotfileEntry, is_valid_user_key,
+                                         network_leaked, retrieve_cracked, split_on_known_ssid,
+                                         upload_capture)
 
-_KEY_HINT = "[dim]32 lowercase hex characters, as issued by the DWPA server[/dim]"
+_USER_KEY_HINT = "[dim]32 lowercase hex characters, as issued by the DWPA server[/dim]"
 _LEAKED = "[$warning]⚠ Possibly already cracked on DWPA[/]"
 _NOT_LEAKED = "[dim]Not found on DWPA[/]"
 
@@ -73,8 +74,8 @@ class DwpaConfigModal(ModalScreen[bool]):
                 yield Label("Server URL:", classes="dwpa-label")
                 yield Input(settings.url or "", id="dwpa-url")
                 yield Label("Key:")
-                yield Input(settings.key or "", password=True, id="dwpa-key")
-                yield Label(_KEY_HINT)
+                yield Input(settings.user_key or "", password=True, id="dwpa-key")
+                yield Label(_USER_KEY_HINT)
                 with Horizontal(id="dwpa-query-row"):
                     yield Button("KQUERY", "primary", compact=True, id="dwpa-query")
                     yield Button("Retrieve", "primary", compact=True, id="dwpa-retrieve")
@@ -98,17 +99,17 @@ class DwpaConfigModal(ModalScreen[bool]):
     def _upload_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         url = self.query_one("#dwpa-url", Input).value.strip()
-        key = self.query_one("#dwpa-key", Input).value.strip()
+        user_key = self.query_one("#dwpa-key", Input).value.strip()
         if not url:
             self.notify("Please provide the DWPA server URL", severity="error")
             return
-        if not is_valid_key(key):
+        if not is_valid_user_key(user_key):
             self.notify("The key must be 32 lowercase hex characters", severity="error")
             return
-        self._remember(url, key)
+        self._remember(url, user_key)
         self._set_enabled(False)
         self.query_one("#dwpa-result", Label).update("[dim]Uploading...[/dim]")
-        self._upload(url, key)
+        self._upload(url, user_key)
 
     @on(Button.Pressed, "#dwpa-query")
     def _query_pressed(self, event: Button.Pressed) -> None:
@@ -138,22 +139,22 @@ class DwpaConfigModal(ModalScreen[bool]):
     def _retrieve_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         url = self.query_one("#dwpa-url", Input).value.strip()
-        key = self.query_one("#dwpa-key", Input).value.strip()
+        user_key = self.query_one("#dwpa-key", Input).value.strip()
         if not url:
             self.notify("Please provide the DWPA server URL", severity="error")
             return
-        if not is_valid_key(key):
+        if not is_valid_user_key(user_key):
             self.notify("The key must be 32 lowercase hex characters", severity="error")
             return
-        self._remember(url, key)
+        self._remember(url, user_key)
         self.query_one("#dwpa-retrieve", Button).disabled = True
         self.query_one("#dwpa-result", Label).update("[dim]Retrieving...[/dim]")
-        self._retrieve(url, key)
+        self._retrieve(url, user_key)
 
     @work(thread=True, exclusive=True, group="dwpa-retrieve")
-    def _retrieve(self, url: str, key: str) -> None:
+    def _retrieve(self, url: str, user_key: str) -> None:
         try:
-            networks = retrieve_cracked(url, key)
+            networks = retrieve_cracked(url, user_key)
         except DwpaError as e:
             self.app.call_from_thread(self._show_retrieve_failure, str(e))
             return
@@ -182,9 +183,9 @@ class DwpaConfigModal(ModalScreen[bool]):
         ssids = [self.ssid] if self.ssid else []
         mine = [split_on_known_ssid(network, ssids) for network in networks
                 if network.bssid == self.bssid]
-        keys = tuple(dict.fromkeys(network.key for network in mine))
-        if keys:
-            self.notify(f"DWPA recovered the PSK for {mine[0].ssid}: {', '.join(keys)}",
+        psks = tuple(dict.fromkeys(network.psk for network in mine))
+        if psks:
+            self.notify(f"DWPA recovered the PSK for {mine[0].ssid}: {', '.join(psks)}",
                         title="DWPA")
 
     def _show_query_failure(self, message: str) -> None:
@@ -200,9 +201,9 @@ class DwpaConfigModal(ModalScreen[bool]):
         self.query_one("#dwpa-result", Label).update(_LEAKED if leaked else _NOT_LEAKED)
 
     @work(thread=True, exclusive=True, group="dwpa-upload")
-    def _upload(self, url: str, key: str) -> None:
+    def _upload(self, url: str, user_key: str) -> None:
         try:
-            upload_capture(url, key, self.capture.path)
+            upload_capture(url, user_key, self.capture.path)
         except DwpaError as e:
             self.app.call_from_thread(self._show_failure, str(e))
             return
@@ -223,10 +224,10 @@ class DwpaConfigModal(ModalScreen[bool]):
             return
         self.dismiss(True)
 
-    def _remember(self, url: str, key: str) -> None:
+    def _remember(self, url: str, user_key: str) -> None:
         settings = Config.dwpa
         settings.url = url
-        settings.key = key
+        settings.user_key = user_key
         try:
             Config.save()
         except ConfigError as e:

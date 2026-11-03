@@ -24,7 +24,7 @@ REJECTIONS = (
     "No capture submitted",
 )
 
-_KEY = re.compile(r"[0-9a-f]{32}")
+_USER_KEY = re.compile(r"[0-9a-f]{32}")
 _BSSID = re.compile(r"[0-9a-f]{12}")
 
 
@@ -37,7 +37,7 @@ class PotfileEntry:
     bssid: str
     mac_sta: str
     ssid: str
-    key: str
+    psk: str
 
 
 def parse_potfile(text: str) -> list[PotfileEntry]:
@@ -50,18 +50,18 @@ def parse_potfile(text: str) -> list[PotfileEntry]:
 def split_on_known_ssid(entry: PotfileEntry, ssids: Iterable[str]) -> PotfileEntry:
     """``entry`` split after the longest of ``ssids`` its ``SSID:PASS`` starts with; the server
     does not escape a colon in an SSID, so the parse splits on the first one."""
-    ssid_and_psk = f"{entry.ssid}:{entry.key}"
+    ssid_and_psk = f"{entry.ssid}:{entry.psk}"
     for ssid in sorted(ssids, key=len, reverse=True):
         if ssid_and_psk.startswith(f"{ssid}:"):
             psk = ssid_and_psk[len(ssid) + 1:]
             if is_valid_psk(psk):
-                return replace(entry, ssid=ssid, key=psk)
+                return replace(entry, ssid=ssid, psk=psk)
     return entry
 
 
-def is_valid_key(key: str) -> bool:
-    """Whether ``key`` is the 32-character lowercase hex key a DWPA server issues."""
-    return _KEY.fullmatch(key) is not None
+def is_valid_user_key(user_key: str) -> bool:
+    """Whether ``user_key`` is the 32-character lowercase hex key a DWPA server issues."""
+    return _USER_KEY.fullmatch(user_key) is not None
 
 
 def submit_endpoint(url: str) -> str:
@@ -95,10 +95,10 @@ def network_leaked(url: str, bssid: str, ssid: str) -> bool:
     return digest[-8:] in _response_text(request, url)
 
 
-def retrieve_cracked(url: str, key: str) -> list[PotfileEntry]:
-    """The networks DWPA cracked for ``key``, read from its potfile download."""
+def retrieve_cracked(url: str, user_key: str) -> list[PotfileEntry]:
+    """The networks DWPA cracked for ``user_key``, read from its potfile download."""
     request = urllib.request.Request(potfile_endpoint(url))
-    request.add_unredirected_header("Cookie", f"key={key}")
+    request.add_unredirected_header("Cookie", f"key={user_key}")
     return parse_potfile(decode_potfile(_response_bytes(request, url)))
 
 
@@ -111,7 +111,7 @@ def decode_potfile(body: bytes) -> str:
     raise DwpaError("The server did not send a potfile")
 
 
-def upload_capture(url: str, key: str, capture_path: str) -> str:
+def upload_capture(url: str, user_key: str, capture_path: str) -> str:
     """Submit the capture and return the server's answer; raise DwpaError on any refusal."""
     endpoint = submit_endpoint(url)
     boundary = uuid.uuid4().hex
@@ -119,7 +119,7 @@ def upload_capture(url: str, key: str, capture_path: str) -> str:
     request = urllib.request.Request(
         endpoint, data=body, method="POST",
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
-    request.add_unredirected_header("Cookie", f"key={key}")
+    request.add_unredirected_header("Cookie", f"key={user_key}")
     answer = _response_text(request, url)
     rejection = next((message for message in REJECTIONS if message in answer), None)
     if rejection is not None:
@@ -168,10 +168,10 @@ def _entry(line: str) -> PotfileEntry | None:
     if len(fields) != 4:
         return None
     bssid = _colon_bssid(fields[0])
-    ssid, key = fields[2], fields[3]
-    if bssid is None or not ssid or not is_valid_psk(key):
+    ssid, psk = fields[2], fields[3]
+    if bssid is None or not ssid or not is_valid_psk(psk):
         return None
-    return PotfileEntry(bssid, _colon_bssid(fields[1]) or "", ssid, key)
+    return PotfileEntry(bssid, _colon_bssid(fields[1]) or "", ssid, psk)
 
 
 def _colon_bssid(text: str) -> str | None:

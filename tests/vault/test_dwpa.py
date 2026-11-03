@@ -6,10 +6,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from wifit3.vault.tools.dwpa_api import (DwpaError, PotfileEntry, is_valid_key, network_hash,
-                                         network_leaked, parse_potfile, potfile_endpoint,
-                                         query_endpoint, retrieve_cracked, split_on_known_ssid,
-                                         submit_endpoint, upload_capture)
+from wifit3.vault.tools.dwpa_api import (DwpaError, PotfileEntry, is_valid_user_key,
+                                         network_hash, network_leaked, parse_potfile,
+                                         potfile_endpoint, query_endpoint, retrieve_cracked,
+                                         split_on_known_ssid, submit_endpoint, upload_capture)
 
 _KEY = "0123456789abcdef0123456789abcdef"
 
@@ -127,13 +127,13 @@ def test_the_potfile_endpoint_is_the_api_download(dwpa_service):
 
 @pytest.mark.parametrize("key", [_KEY, "ffffffffffffffffffffffffffffffff"])
 def test_a_32_character_lowercase_hex_key_is_valid(key):
-    assert is_valid_key(key)
+    assert is_valid_user_key(key)
 
 
 @pytest.mark.parametrize("key", ["", "0123456789ABCDEF0123456789ABCDEF", "0123", "0" * 31,
                                  "g" * 32, " " + _KEY])
 def test_anything_else_is_not_a_key(key):
-    assert not is_valid_key(key)
+    assert not is_valid_user_key(key)
 
 
 def test_upload_posts_the_capture_as_multipart_with_the_key_cookie(capture, dwpa_service):
@@ -209,7 +209,7 @@ def test_the_potfile_lines_become_networks_and_skip_unusable_rows():
 def test_a_colon_in_the_ssid_splits_on_the_aps_known_ssid():
     [entry] = parse_potfile("020000000a01:020000000c01:My:Net:password1\n")
 
-    assert (entry.ssid, entry.key) == ("My", "Net:password1")
+    assert (entry.ssid, entry.psk) == ("My", "Net:password1")
     assert split_on_known_ssid(entry, ["My", "My:Net"]) == PotfileEntry(
         "02:00:00:00:0a:01", "02:00:00:00:0c:01", "My:Net", "password1")
 

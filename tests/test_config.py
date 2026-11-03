@@ -273,7 +273,7 @@ def test_hashtopolis_settings_save_load_roundtrip(config_path):
 
 
 def test_dwpa_settings_save_load_roundtrip(config_path):
-    saved = DwpaSettings(url="https://dwpa.example", key="0123456789abcdef0123456789abcdef")
+    saved = DwpaSettings(url="https://dwpa.example", user_key="0123456789abcdef0123456789abcdef")
     Config.dwpa = copy.deepcopy(saved)
     Config.save()
     Config.dwpa = DwpaSettings()

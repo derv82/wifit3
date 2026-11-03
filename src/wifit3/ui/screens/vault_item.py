@@ -699,16 +699,16 @@ class _ApStatePanel(VerticalGroup):
                        for entry in entries]
             ssid = entries[0].ssid
             held = {key.value for key in state.keys}
-            for key in dict.fromkeys(entry.key for entry in entries):
-                if key in held:
+            for psk in dict.fromkeys(entry.psk for entry in entries):
+                if psk in held:
                     known += 1
                     continue
                 try:
-                    self.app.vault.save_wpa_psk(ssid, bssid, key)
+                    self.app.vault.save_wpa_psk(ssid, bssid, psk)
                 except OSError as e:
                     self.notify(f"Could not save {ssid}: {e}", severity="warning")
                     continue
-                self.app.vault.propagate_verified_psk(bssid, ssid, key).add_done_callback(log_propagation)
+                self.app.vault.propagate_verified_psk(bssid, ssid, psk).add_done_callback(log_propagation)
                 added += 1
         if not added:
             self.notify(f"{known} key{'s' if known > 1 else ''} already in Vault" if known

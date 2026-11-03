@@ -50,7 +50,7 @@ class HashtopolisSettings:
 @dataclass
 class DwpaSettings:
     url: str | None = None
-    key: str | None = None
+    user_key: str | None = None
 
 
 SettingsT = TypeVar("SettingsT", CpuCrackSettings, HashcatSettings, HashtopolisSettings, DwpaSettings)
