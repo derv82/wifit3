@@ -333,8 +333,14 @@ class AthHw:
         computation (no further wire ops)."""
         if self.read(R.AR_PHY_AGC_CONTROL) & R.AR_PHY_AGC_CONTROL_NF:
             return False                          # NF did not complete in the cal window
-        self.read(R.AR_PHY_CCA)                    # nfarray[0] = MS(.., AR9280_PHY_MINCCA_PWR)
+        cca = self.read(R.AR_PHY_CCA)
         self.read(R.AR_PHY_EXT_CCA)                # nfarray[3] only on HT40 (not here)
+        nf = R.MS(cca, R.AR9280_PHY_MINCCA_PWR)
+        nf = nf - 0x200 if nf & 0x100 else nf
+        from .eeprom_4k import Map4k
+        threshold = Map4k(self.eeprom).noiseFloorThreshCh0
+        if nf > threshold:
+            logger.debug("ar9271_v2: noise floor %d above EEPROM threshold %d", nf, threshold)
         # rxchainmask == 1 -> BIT(1) clear -> the CH1 reads are skipped.
         return True
 

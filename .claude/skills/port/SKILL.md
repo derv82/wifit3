@@ -43,7 +43,7 @@ Creating `chips/<name>/`? Two registration rules the `Driver` ABC does not enfor
 Run the loop to a stopping point on your own. Surface only when:
 
 - you need a decision you can't make from the source and the pcap,
-- you've hit the human gate: live 802.11 TX (injection/deauth) is the user's action, never yours,
+- you need the user's test APs (BSSIDs, channels, keys) for live TX, or a replug,
 - a milestone is ported, verified, and committed, or
 - you're genuinely blocked.
 

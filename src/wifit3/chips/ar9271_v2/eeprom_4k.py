@@ -79,6 +79,11 @@ class Map4k:
         return self._u8(_OFF_ANTGAIN)
 
     @property
+    def noiseFloorThreshCh0(self) -> int:
+        value = self._u8(_MODAL + 19)
+        return value - 256 if value & 0x80 else value
+
+    @property
     def xpdGain(self) -> int:
         return self._u8(_OFF_XPDGAIN)
 

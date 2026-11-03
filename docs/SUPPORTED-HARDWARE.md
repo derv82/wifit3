@@ -48,7 +48,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **92% (A)** | 2026-07-25 | Full 2.4 GHz attack suite, kernel-parity RX (now baselined). |
-| RX | ✅ | 2026-07-25 | Ref AP 7.1 vs 7.6/s (93%); RSSI accurate; run-to-run variance at weak signal. |
+| RX | ✅ | 2026-11-02 | Ref AP 7.3 vs 7.7/s (95%); 61 vs 63 APs; RSSI +0.7 dB. |
 | Port | ✅ | 2026-07-25 | Matches ath9k_htc: Ref AP beacon rate + RSSI parity. |
 | Handshake | ✅ | 2026-07-25 | Deauth → 4-way (M1–M4). |
 | PMKID | ✅ | 2026-07-25 | Passive + active extract. |

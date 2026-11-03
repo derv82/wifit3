@@ -14,6 +14,7 @@ This file provides guidance to coding agents when working with code in this repo
 - **Porting code style**: When porting or working within `src/wifit3/chips/**/*`: `docs/porting/CODE-STYLE.md`.
 - **Porting / bringing up a chip?** Playbook: `docs/porting/METHODOLOGY.md` (or run `/port <chip>` in `.claude/skills/port`).
 - **Per-chipset port-reference docs**: each chip dir has a `<CHIP>.md`. Template + rules in `docs/porting/CHIP-DOC.md`.
+- **Before a port ships**: run every item in `docs/porting/FINAL-CHECKLIST.md`; record each result in the chip doc's Final checklist section.
 - **Within `chips/`, don't re-use code from another driver**, even when the tables or sequences look identical. Don't import another chip's module, and don't extract "shared" code into a base. Duplicated code across drivers is expected and fine.
   *Why:* each port follows its own kernel/DKMS source, and those diverge, sometimes subtly, sometimes on a later upstream update to one driver only. Shared code turns into `if chip X: ... elif chip Y:` and makes every edit a re-test of every device that uses it (a 30-minute soak per device). A port is a standalone, confined unit.
   `rtw88_base` is the one deliberate shared base; don't add to it or create new ones.
