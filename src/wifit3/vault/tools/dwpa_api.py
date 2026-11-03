@@ -120,7 +120,8 @@ def _response_bytes(request: urllib.request.Request, url: str) -> bytes:
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             if response.url != request.full_url:
-                raise DwpaError(f"{request.full_url} redirects to {response.url}; use that URL")
+                target = urlsplit(response.url)
+                raise DwpaError(f"Redirect detected, use {target.scheme}://{target.netloc} instead")
             return response.read()
     except urllib.error.HTTPError as e:
         raise DwpaError(f"HTTP {e.code} from {request.full_url}") from None

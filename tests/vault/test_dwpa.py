@@ -178,7 +178,7 @@ def test_a_redirect_raises_and_the_key_does_not_follow_it(dwpa_service):
     try:
         dwpa_service.answer(b"", status=301, location=f"{target.url}/?api&dl=1")
 
-        with pytest.raises(DwpaError, match="redirects to"):
+        with pytest.raises(DwpaError, match=f"^Redirect detected, use {target.url} instead$"):
             retrieve_cracked(dwpa_service.url, _KEY)
         assert target.requests[0].header("Cookie") is None
     finally:
