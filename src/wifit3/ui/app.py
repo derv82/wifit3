@@ -353,14 +353,13 @@ class WifiteApp(App):
         with self._vault_notices_lock:
             full_refresh, self._vault_full_refresh = self._vault_full_refresh, False
             self._vault_refresh_pending = False
-        drawer = next((screen for screen in reversed(self.screen_stack)
-                       if isinstance(screen, VaultDrawer)), None)
-        if drawer is None:
-            return
-        try:
-            drawer.vault_changed(full_refresh)
-        except Exception:
-            logger.debug("Vault table refresh skipped", exc_info=True)
+        for screen in reversed(self.screen_stack):
+            if isinstance(screen, VaultDrawer):
+                try:
+                    screen.vault_changed(full_refresh)
+                except Exception:
+                    logger.debug("Vault table refresh skipped", exc_info=True)
+                return
 
     def _toast_job(self, job: JobState) -> None:
         if job.status == ToolStatus.SUCCESS:
