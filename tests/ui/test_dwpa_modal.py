@@ -191,12 +191,11 @@ async def test_the_query_asks_about_the_networks_bssid_and_ssid(capture, queries
         await _query(app, pilot, result, "cracked")
 
         assert calls == [("https://dwpa.example", _BSSID, _SSID)]
-        assert Config.dwpa == DwpaSettings(url="https://dwpa.example", user_key=_KEY)
-        assert "⚠" in str(result.render())
+        assert Config.dwpa == DwpaSettings(url="https://dwpa.example")
         assert "Possibly already cracked on DWPA" in str(result.render())
 
 
-async def test_a_network_the_server_does_not_know_gets_no_warning_symbol(capture, queries):
+async def test_a_network_the_server_does_not_know_gets_no_warning(capture, queries):
     app = _Host()
     async with app.run_test() as pilot:
         await _open(app, pilot, capture)
@@ -204,7 +203,7 @@ async def test_a_network_the_server_does_not_know_gets_no_warning_symbol(capture
         result = app.screen.query_one("#dwpa-result", Label)
         await _query(app, pilot, result, "Not found")
 
-        assert "⚠" not in str(result.render())
+        assert "Possibly already cracked" not in str(result.render())
         assert not app.screen.query_one("#dwpa-query", Button).disabled
 
 
@@ -245,7 +244,7 @@ async def test_a_failed_query_shows_the_servers_message(capture, monkeypatch):
         result = app.screen.query_one("#dwpa-result", Label)
         await _query(app, pilot, result, "Cannot reach")
 
-        assert "⚠" not in str(result.render())
+        assert "Possibly already cracked" not in str(result.render())
         assert not app.screen.query_one("#dwpa-query", Button).disabled
 
 

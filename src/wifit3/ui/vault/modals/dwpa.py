@@ -17,7 +17,7 @@ from wifit3.vault.tools.dwpa_api import (DwpaError, PotfileEntry, is_valid_user_
                                          upload_capture)
 
 _USER_KEY_HINT = "[dim]32 lowercase hex characters, as issued by the DWPA server[/dim]"
-_LEAKED = "[$warning]⚠ Possibly already cracked on DWPA[/]"
+_LEAKED = "[$warning]Possibly already cracked on DWPA[/]"
 _NOT_LEAKED = "[dim]Not found on DWPA[/]"
 
 
@@ -121,7 +121,7 @@ class DwpaConfigModal(ModalScreen[bool]):
         if not self.ssid:
             self.notify("This capture has no SSID to query", severity="error")
             return
-        self._remember(url, self.query_one("#dwpa-key", Input).value.strip())
+        self._remember(url, Config.dwpa.user_key)
         self.query_one("#dwpa-query", Button).disabled = True
         self.query_one("#dwpa-result", Label).update("[dim]Querying...[/dim]")
         self._query(url, self.ssid)
@@ -224,7 +224,7 @@ class DwpaConfigModal(ModalScreen[bool]):
             return
         self.dismiss(True)
 
-    def _remember(self, url: str, user_key: str) -> None:
+    def _remember(self, url: str, user_key: Optional[str]) -> None:
         settings = Config.dwpa
         settings.url = url
         settings.user_key = user_key
