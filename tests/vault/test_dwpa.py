@@ -13,7 +13,7 @@ _KEY = "0123456789abcdef0123456789abcdef"
 POTFILE = (
     "aabbccddeeff:112233445566:TestAP-DWPA:88888888\n"
     "aabbccddeeff:112233445566:TestAP-DWPA:88888888\n"
-    "8e6a8da6db51:001122334455:E36W126F-Guest1:pass:with:colons\n"
+    "020000000002:001122334455:GuestNet:pass:with:colons\n"
     "nothex:112233445566:Broken:12345678\n"
     "aabbccddeeff:112233445566:TooShort:short\n"
 )
@@ -99,6 +99,7 @@ def test_an_unreachable_server_raises(capture):
 
 
 def test_the_network_hash_matches_the_k_anonymity_example():
+    # DWPA's own documented example: RealEnder/dwpa KQUERY.md:18.
     assert network_hash("1c7ee5e2f2d0", "dlink") == "1fe143ebc72790738a4346dc2a4e26ea92ed78a5"
     assert network_hash("1C:7E:E5:E2:F2:D0", "dlink") == network_hash("1c7ee5e2f2d0", "dlink")
 
@@ -122,7 +123,7 @@ def test_an_answer_without_the_suffix_is_a_miss(dwpa_service):
 def test_the_potfile_lines_become_networks_and_skip_unusable_rows():
     assert parse_potfile(POTFILE) == [
         PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", "TestAP-DWPA", "88888888"),
-        PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "E36W126F-Guest1",
+        PotfileEntry("02:00:00:00:00:02", "00:11:22:33:44:55", "GuestNet",
                      "pass:with:colons"),
     ]
 
@@ -157,7 +158,7 @@ def test_retrieve_downloads_the_potfile_with_the_key_cookie(dwpa_service):
 
     assert retrieve_cracked(dwpa_service.url, _KEY) == [
         PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", "TestAP-DWPA", "88888888"),
-        PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "E36W126F-Guest1",
+        PotfileEntry("02:00:00:00:00:02", "00:11:22:33:44:55", "GuestNet",
                      "pass:with:colons"),
     ]
     request = dwpa_service.requests[0]
