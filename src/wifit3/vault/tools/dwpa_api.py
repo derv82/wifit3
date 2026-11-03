@@ -66,7 +66,8 @@ def network_leaked(url: str, bssid: str, ssid: str) -> bool:
 
 def retrieve_cracked(url: str, key: str) -> list[PotfileEntry]:
     """The networks DWPA cracked for ``key``, read from its potfile download."""
-    request = urllib.request.Request(potfile_endpoint(url), headers={"Cookie": f"key={key}"})
+    request = urllib.request.Request(potfile_endpoint(url))
+    request.add_unredirected_header("Cookie", f"key={key}")
     return parse_potfile(decode_potfile(_response_bytes(request, url)))
 
 
@@ -86,8 +87,8 @@ def upload_capture(url: str, key: str, capture_path: str) -> str:
     body = _multipart_body(Path(capture_path), boundary)
     request = urllib.request.Request(
         endpoint, data=body, method="POST",
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
-                 "Cookie": f"key={key}"})
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    request.add_unredirected_header("Cookie", f"key={key}")
     answer = _response_text(request, url)
     rejection = next((message for message in REJECTIONS if message in answer), None)
     if rejection is not None:
@@ -103,6 +104,8 @@ def _base_url(url: str) -> str:
 def _response_bytes(request: urllib.request.Request, url: str) -> bytes:
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+            if response.url != request.full_url:
+                raise DwpaError(f"{request.full_url} redirects to {response.url}; use that URL")
             return response.read()
     except urllib.error.HTTPError as e:
         raise DwpaError(f"HTTP {e.code} from {request.full_url}") from None

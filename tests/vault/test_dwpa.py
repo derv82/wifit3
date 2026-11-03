@@ -43,6 +43,7 @@ class MockDwpaService:
         self.requests: list[SentRequest] = []
         self.status = 200
         self.body = b""
+        self.location: str | None = None
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(self))
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
@@ -51,8 +52,8 @@ class MockDwpaService:
     def url(self) -> str:
         return f"http://127.0.0.1:{self._server.server_port}"
 
-    def answer(self, body: bytes, status: int = 200) -> None:
-        self.body, self.status = body, status
+    def answer(self, body: bytes, status: int = 200, location: str | None = None) -> None:
+        self.body, self.status, self.location = body, status, location
 
     def close(self) -> None:
         self._server.shutdown()
@@ -75,6 +76,8 @@ def _handler(service: MockDwpaService) -> type[BaseHTTPRequestHandler]:
             self.send_response(service.status)
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", str(len(service.body)))
+            if service.location is not None:
+                self.send_header("Location", service.location)
             self.end_headers()
             self.wfile.write(service.body)
 
@@ -214,6 +217,18 @@ def test_an_html_answer_raises_instead_of_looking_empty(dwpa_service):
 
     with pytest.raises(DwpaError, match="did not send a potfile"):
         retrieve_cracked(dwpa_service.url, _KEY)
+
+
+def test_a_redirect_raises_and_the_key_does_not_follow_it(dwpa_service):
+    target = MockDwpaService()
+    try:
+        dwpa_service.answer(b"", status=301, location=f"{target.url}/?api&dl=1")
+
+        with pytest.raises(DwpaError, match="redirects to"):
+            retrieve_cracked(dwpa_service.url, _KEY)
+        assert target.requests[0].header("Cookie") is None
+    finally:
+        target.close()
 
 
 def test_an_empty_potfile_has_no_networks(dwpa_service):
