@@ -8,8 +8,7 @@ import pytest
 
 from wifit3.vault.tools.dwpa_api import (DwpaError, PotfileEntry, is_valid_user_key,
                                          network_hash, network_leaked, parse_potfile,
-                                         potfile_endpoint, query_endpoint, retrieve_cracked,
-                                         split_on_known_ssid, submit_endpoint, upload_capture)
+                                         retrieve_cracked, split_on_known_ssid, upload_capture)
 
 _KEY = "0123456789abcdef0123456789abcdef"
 
@@ -101,28 +100,25 @@ def capture(tmp_path):
     return path
 
 
-def test_endpoint_appends_the_submit_query_to_a_bare_host_over_https():
-    assert submit_endpoint("dwpa.example") == "https://dwpa.example/?submit="
+def test_a_bare_host_is_reached_over_https(capture):
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        port = taken.getsockname()[1]
+
+    with pytest.raises(DwpaError, match=rf"Cannot reach https://127.0.0.1:{port}/[?]submit="):
+        upload_capture(f"127.0.0.1:{port}", _KEY, str(capture))
 
 
-def test_endpoint_keeps_the_scheme_and_drops_a_trailing_slash():
-    assert submit_endpoint("https://dwpa.example:8080/") == "https://dwpa.example:8080/?submit="
-    assert submit_endpoint("http://192.168.1.10") == "http://192.168.1.10/?submit="
+def test_a_trailing_slash_on_the_url_is_dropped(capture, dwpa_service):
+    upload_capture(f"{dwpa_service.url}/", _KEY, str(capture))
+
+    assert dwpa_service.requests[0].path == "/?submit="
 
 
 @pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://dwpa.example"])
-def test_a_scheme_other_than_http_or_https_is_refused(url):
+def test_a_scheme_other_than_http_or_https_is_refused(capture, url):
     with pytest.raises(DwpaError, match="Invalid server URL"):
-        submit_endpoint(url)
-
-
-def test_the_query_endpoint_is_bmacssid(dwpa_service):
-    assert query_endpoint("dwpa.example") == "https://dwpa.example/bmacssid"
-    assert query_endpoint(dwpa_service.url) == f"{dwpa_service.url}/bmacssid"
-
-
-def test_the_potfile_endpoint_is_the_api_download(dwpa_service):
-    assert potfile_endpoint(dwpa_service.url) == f"{dwpa_service.url}/?api&dl=1"
+        upload_capture(url, _KEY, str(capture))
 
 
 @pytest.mark.parametrize("key", [_KEY, "ffffffffffffffffffffffffffffffff"])
@@ -139,9 +135,8 @@ def test_anything_else_is_not_a_key(key):
 def test_upload_posts_the_capture_as_multipart_with_the_key_cookie(capture, dwpa_service):
     dwpa_service.answer(b"<pre>1 handshakes</pre>")
 
-    answer = upload_capture(dwpa_service.url, _KEY, str(capture))
+    upload_capture(dwpa_service.url, _KEY, str(capture))
 
-    assert "1 handshakes" in answer
     request = dwpa_service.requests[0]
     assert request.method == "POST"
     assert request.path == "/?submit="

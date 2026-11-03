@@ -15,7 +15,7 @@ from wifit3.crack.passwords import is_valid_psk
 
 TIMEOUT_SECONDS = 120.0
 FILE_FIELD = "webfile"
-REJECTIONS = (
+UPLOAD_ERRORS = (
     "Not a valid capture file.",
     "No valid handshakes/PMKIDs found in the submitted file.",
     "This capture file was already submitted.",
@@ -64,21 +64,6 @@ def is_valid_user_key(user_key: str) -> bool:
     return _USER_KEY.fullmatch(user_key) is not None
 
 
-def submit_endpoint(url: str) -> str:
-    """``url`` with the submit query; the server accepts its web form's ``?submit=`` target."""
-    return f"{_base_url(url)}/?submit="
-
-
-def query_endpoint(url: str) -> str:
-    """The k-anonymity endpoint for the BSSID + SSID perspective."""
-    return f"{_base_url(url)}/bmacssid"
-
-
-def potfile_endpoint(url: str) -> str:
-    """The user's cracked keys, as the API's download link serves them."""
-    return f"{_base_url(url)}/?api&dl=1"
-
-
 def network_hash(bssid: str, ssid: str) -> str:
     """SHA-1 of the BSSID then the SSID, both as lowercase hex: the k-anonymity lookup hash."""
     hex_bssid = bssid.replace(":", "").lower()
@@ -90,30 +75,26 @@ def network_leaked(url: str, bssid: str, ssid: str) -> bool:
     possible when the key was changed after it leaked."""
     digest = network_hash(bssid, ssid)
     request = urllib.request.Request(
-        query_endpoint(url), data=json.dumps([digest[:4]]).encode("utf-8"), method="POST",
+        f"{_base_url(url)}/bmacssid", data=json.dumps([digest[:4]]).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json"})
     return digest[-8:] in _response_text(request, url)
 
 
 def retrieve_cracked(url: str, user_key: str) -> list[PotfileEntry]:
-    """The networks DWPA cracked for ``user_key``, read from its potfile download."""
-    request = urllib.request.Request(potfile_endpoint(url))
+    """The networks DWPA cracked for ``user_key``; a body with text but no potfile lines (e.g. an
+    error page) raises DwpaError."""
+    request = urllib.request.Request(f"{_base_url(url)}/?api&dl=1")
     request.add_unredirected_header("Cookie", f"key={user_key}")
-    return parse_potfile(decode_potfile(_response_bytes(request, url)))
+    text = _response_text(request, url)
+    entries = parse_potfile(text)
+    if text.strip() and not entries:
+        raise DwpaError("The server did not send a potfile")
+    return entries
 
 
-def decode_potfile(body: bytes) -> str:
-    """The downloaded potfile text; an answer holding no potfile lines is an error, not an
-    empty result (e.g. a login page for a key the server no longer accepts)."""
-    text = body.decode("utf-8", "replace")
-    if not text.strip() or parse_potfile(text):
-        return text
-    raise DwpaError("The server did not send a potfile")
-
-
-def upload_capture(url: str, user_key: str, capture_path: str) -> str:
-    """Submit the capture and return the server's answer; raise DwpaError on any refusal."""
-    endpoint = submit_endpoint(url)
+def upload_capture(url: str, user_key: str, capture_path: str) -> None:
+    """Submit the capture; raise DwpaError on any refusal."""
+    endpoint = f"{_base_url(url)}/?submit="
     boundary = uuid.uuid4().hex
     body = _multipart_body(Path(capture_path), boundary)
     request = urllib.request.Request(
@@ -121,10 +102,9 @@ def upload_capture(url: str, user_key: str, capture_path: str) -> str:
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
     request.add_unredirected_header("Cookie", f"key={user_key}")
     answer = _response_text(request, url)
-    rejection = next((message for message in REJECTIONS if message in answer), None)
+    rejection = next((message for message in UPLOAD_ERRORS if message in answer), None)
     if rejection is not None:
         raise DwpaError(rejection)
-    return answer
 
 
 def _base_url(url: str) -> str:
