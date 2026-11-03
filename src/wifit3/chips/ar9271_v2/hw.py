@@ -42,8 +42,6 @@ class AthHw:
         self.gpio_mask = 0                         # no GPIO override on the STA bring-up path
         self.htc_reset_init = True                 # AR9271 RF-reset pulse fires once [SRC] hw.c:1923
         self.curchan = None                        # set after the first reset (gates getnf)
-        self.noise_floor = 0
-        self.noise_floor_threshold_exceeded = False
         # TX-power regulatory state (ath_regulatory + ieee80211_channel):
         self.chan_max_power = 20                    # channel->max_power [SRC] common-init.c:26
         self.reg_power_limit = 254                  # reg->power_limit = MAX_COMBINED_POWER
@@ -338,10 +336,11 @@ class AthHw:
         cca = self.read(R.AR_PHY_CCA)
         self.read(R.AR_PHY_EXT_CCA)                # nfarray[3] only on HT40 (not here)
         nf = R.MS(cca, R.AR9280_PHY_MINCCA_PWR)
-        self.noise_floor = nf - 0x200 if nf & 0x100 else nf
+        nf = nf - 0x200 if nf & 0x100 else nf
         from .eeprom_4k import Map4k
         threshold = Map4k(self.eeprom).noiseFloorThreshCh0
-        self.noise_floor_threshold_exceeded = self.noise_floor > threshold
+        if nf > threshold:
+            logger.debug("ar9271_v2: noise floor %d above EEPROM threshold %d", nf, threshold)
         # rxchainmask == 1 -> BIT(1) clear -> the CH1 reads are skipped.
         return True
 

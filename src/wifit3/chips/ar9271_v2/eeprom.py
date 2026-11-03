@@ -28,16 +28,19 @@ def _swab32_at(data: bytearray, offset: int) -> None:
     data[offset:offset + 4] = data[offset:offset + 4][::-1]
 
 
-def _normalize_endianness(hw: AthHw, magic: int) -> None:
-    """ath9k_hw_nvram_swap_data + the map4k field fixups [SRC] eeprom.c/eeprom_4k.c."""
+def _nvram_swap_data(hw: AthHw, magic: int) -> bool:
+    """ath9k_hw_nvram_swap_data [SRC] eeprom.c:156 — swab every word if the magic is byte-swapped;
+    returns swap_needed (eepMisc BIG_ENDIAN) for the field swaps after the checksum."""
     if ((magic >> 8) | ((magic & 0xff) << 8)) == R.AR5416_EEPROM_MAGIC:
         for offset in range(0, len(hw.eeprom), 2):
             _swab16_at(hw.eeprom, offset)
     elif magic != R.AR5416_EEPROM_MAGIC:
         raise RuntimeError(f"ar9271_v2: invalid EEPROM magic 0x{magic:04x}")
+    return bool(hw.eeprom[7] & R.AR5416_EEPMISC_BIG_ENDIAN)
 
-    if not hw.eeprom[7] & R.AR5416_EEPMISC_BIG_ENDIAN:
-        return
+
+def _swab_big_endian_fields(hw: AthHw) -> None:
+    """The need_swap field swaps of ath9k_hw_4k_check_eeprom [SRC] eeprom_4k.c."""
     for offset in _BASE_LE16_OFFSETS:
         _swab16_at(hw.eeprom, offset)
     for offset in _MODAL_LE32_OFFSETS:
@@ -87,15 +90,19 @@ def check(hw: AthHw) -> None:
     """ath9k_hw_4k_check_eeprom [SRC] eeprom_4k.c — magic read + endianness, then checksum
     and version validation over the stashed words (no further wire ops)."""
     magic = usb_eeprom_read(hw, R.AR5416_EEPROM_MAGIC_OFFSET)
-    _normalize_endianness(hw, magic)
+    need_swap = _nvram_swap_data(hw, magic)
 
     length = _word(hw, 0)                                   # baseEepHeader.length (word 0)
+    if need_swap:
+        length = (length >> 8) | ((length & 0xff) << 8)
     el = min(length // 2, R.SIZE_EEPROM_4K)
     checksum = 0
     for i in range(el):
         checksum ^= _word(hw, i)
     if checksum != 0xFFFF:
         raise RuntimeError(f"ar9271_v2: bad EEPROM checksum 0x{checksum:04x}")
+    if need_swap:
+        _swab_big_endian_fields(hw)
 
     version = _word(hw, 2)                                  # baseEepHeader.version (word 2)
     ver = (version & R.AR5416_EEP_VER_MAJOR_MASK) >> R.AR5416_EEP_VER_MAJOR_SHIFT

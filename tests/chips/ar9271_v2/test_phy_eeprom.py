@@ -50,22 +50,32 @@ def test_rf_claim_phy_writes():
     assert dev.cmds[2] == (0x0014, bytes.fromhex("00009c00"))
 
 
-def test_big_endian_eeprom_normalizes_to_packed_map():
+def test_big_endian_eeprom_checksum_before_field_swaps(monkeypatch):
     canonical = bytearray(EEPROM)
     canonical[7] |= R.AR5416_EEPMISC_BIG_ENDIAN
-    raw = bytearray(canonical)
+    stored = bytearray(canonical)
     for offset in eeprom._BASE_LE16_OFFSETS:
-        eeprom._swab16_at(raw, offset)
+        eeprom._swab16_at(stored, offset)
     for offset in eeprom._MODAL_LE32_OFFSETS:
-        eeprom._swab32_at(raw, offset)
+        eeprom._swab32_at(stored, offset)
     for offset in eeprom._SPUR_LE16_OFFSETS:
-        eeprom._swab16_at(raw, offset)
+        eeprom._swab16_at(stored, offset)
+    length = struct.unpack_from(">H", stored, 0)[0]
+    words = struct.unpack_from("<%dH" % (length // 2), stored)
+    checksum = 0xFFFF
+    for i, word in enumerate(words):
+        if i != 1:
+            checksum ^= word
+    struct.pack_into("<H", stored, 2, checksum)
+    canonical[2:4] = stored[2:4][::-1]
+    raw = bytearray(stored)
     for offset in range(0, len(raw), 2):
         eeprom._swab16_at(raw, offset)
 
     h = hw.AthHw(None)
     h.eeprom = raw
-    eeprom._normalize_endianness(h, 0x5AA5)
+    monkeypatch.setattr(eeprom, "usb_eeprom_read", lambda _hw, _off: 0x5AA5)
+    eeprom.check(h)
 
     assert h.eeprom == canonical
     assert h.eeprom[18:20] == b"\x01\x01"
