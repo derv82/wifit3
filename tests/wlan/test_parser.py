@@ -229,6 +229,33 @@ def test_wlan_frame_parser_ignores_second_ssid_ie():
     assert parsed.ssid == "<hidden>"
 
 
+@pytest.mark.parametrize("length", [1, 8, 32])
+def test_wlan_frame_parser_reads_a_zero_filled_ssid_as_hidden(length):
+    """A hidden AP may send its SSID as NULs of the real length (hostapd
+    ignore_broadcast_ssid=2); that beacon was rejected as corrupt, so the AP never showed."""
+    fc = b"\x80\x00"
+    addr2 = b"\x11\x22\x33\x44\x55\x66"
+    mac_hdr = fc + b"\x00\x00" + b"\xff" * 6 + addr2 + addr2 + b"\x00\x00"
+    fixed = b"\x00" * 12
+    zero_filled_ssid = bytes([0x00, length]) + b"\x00" * length
+    rates = b"\x01\x04\x82\x84\x8b\x96"
+
+    parsed = WlanFrameParser.parse_80211_frame(mac_hdr + fixed + zero_filled_ssid + rates, -50)
+
+    assert isinstance(parsed, BeaconPacket)
+    assert parsed.ssid == "<hidden>"
+
+
+def test_wlan_frame_parser_still_rejects_an_ssid_with_some_nul_bytes():
+    fc = b"\x80\x00"
+    addr2 = b"\x11\x22\x33\x44\x55\x66"
+    mac_hdr = fc + b"\x00\x00" + b"\xff" * 6 + addr2 + addr2 + b"\x00\x00"
+    ssid = b"Net\x00\x00"
+    frame = mac_hdr + b"\x00" * 12 + bytes([0x00, len(ssid)]) + ssid + b"\x01\x04\x82\x84\x8b\x96"
+
+    assert WlanFrameParser.parse_80211_frame(frame, -50) is None
+
+
 def test_wlan_frame_parser_extracts_ssid():
     # Construct a minimal fake beacon frame to test tag parsing
     # MAC Header (24 bytes)
