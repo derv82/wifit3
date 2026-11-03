@@ -201,16 +201,13 @@ def warm_reattach(t: AR9271Transport) -> BringupResult:
     return BringupResult(wmi=wmi, hw=hw, endpoints=endpoints)
 
 
-def full_channel_change(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
-    """One ath9k_htc_set_channel hop via a full ath9k_hw_reset [SRC] htc_drv_main.c:225: stop the
-    target, reset to ``chan``, restart RX. This is the always-correct retune path (the cold tune
-    uses the same body); the fast path below is the kernel's within-band optimisation."""
+def _stop_for_channel_change(wmi: WMI) -> None:
     wmi.cmd(WMI_DISABLE_INTR_CMDID, b"")
     wmi.cmd(WMI_DRAIN_TXQ_ALL_CMDID, b"")
     wmi.cmd(WMI_STOP_RECV_CMDID, b"")
-    hw.getnf(chan)
-    hw.reset_begin(chan)
-    hw_reset_body(wmi, hw, chan)
+
+
+def _restart_after_channel_change(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
     wmi.cmd(WMI_START_RECV_CMDID, b"")
     rx.host_rx_init(hw)
     wmi.cmd(WMI_SET_MODE_CMDID, _MODE_11NG)
@@ -218,13 +215,30 @@ def full_channel_change(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> Non
     hw.curchan = chan
 
 
-def _channel_change_body(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
+def _full_channel_change_stopped(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
+    hw.reset_begin(chan)
+    hw_reset_body(wmi, hw, chan)
+
+
+def full_channel_change(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
+    """One ath9k_htc_set_channel hop via a full ath9k_hw_reset [SRC] htc_drv_main.c:225: stop the
+    target, reset to ``chan``, restart RX. This is the always-correct retune path (the cold tune
+    uses the same body); the fast path below is the kernel's within-band optimisation."""
+    _stop_for_channel_change(wmi)
+    hw.getnf(chan)
+    _full_channel_change_stopped(wmi, hw, chan)
+    _restart_after_channel_change(wmi, hw, chan)
+
+
+def _channel_change_body(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> bool:
     """ath9k_hw_channel_change [SRC] hw.c:1543 — the fast retune the AR9271 runs without a full
     reset: confirm the QCUs are idle, pause the baseband (rfbus), reprogram the per-channel PHY +
     synth + TX power, then release. The FCC_BAND_SWITCH / band_switch reloads are guarded by caps
     the 9271 never sets on a within-band hop, so they are skipped."""
-    [hw.numtxpending(q) for q in range(R.AR_NUM_QCU)]
-    phy.rfbus_req(hw)
+    if any(hw.numtxpending(q) for q in range(R.AR_NUM_QCU)):
+        return False
+    if not phy.rfbus_req(hw):
+        return False
     phy.set_channel_regs(hw, chan)
     phy.rf_set_freq(hw, chan)
     hw.set_clockrate()                              # no wire ops
@@ -233,6 +247,7 @@ def _channel_change_body(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> No
     phy.spur_mitigate(hw, chan)
     phy.init_bb(hw, chan)
     phy.rfbus_done(hw)
+    return True
 
 
 def fast_channel_change(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
@@ -240,17 +255,12 @@ def fast_channel_change(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> Non
     NULL): stop the target, then ath9k_hw_reset's fastcc branch -> ath9k_hw_do_fastcc [SRC]
     hw.c:1788 (check_alive + channel_change + loadnf + start_nfcal + the AR9271 ANI-reg reload),
     then restart RX."""
-    wmi.cmd(WMI_DISABLE_INTR_CMDID, b"")
-    wmi.cmd(WMI_DRAIN_TXQ_ALL_CMDID, b"")
-    wmi.cmd(WMI_STOP_RECV_CMDID, b"")
+    _stop_for_channel_change(wmi)
     hw.getnf(chan)                                  # ath9k_hw_reset getnf(curchan)
-    hw.check_alive()
-    _channel_change_body(wmi, hw, chan)
-    calib.loadnf(hw, chan)
-    calib.start_nfcal(hw, update=True)
-    phy.load_ani_reg(hw, chan)                      # AR9271-only
-    wmi.cmd(WMI_START_RECV_CMDID, b"")
-    rx.host_rx_init(hw)
-    wmi.cmd(WMI_SET_MODE_CMDID, _MODE_11NG)
-    wmi.cmd(WMI_ENABLE_INTR_CMDID, b"")
-    hw.curchan = chan
+    if hw.check_alive() and _channel_change_body(wmi, hw, chan):
+        calib.loadnf(hw, chan)
+        calib.start_nfcal(hw, update=True)
+        phy.load_ani_reg(hw, chan)                  # AR9271-only
+    else:
+        _full_channel_change_stopped(wmi, hw, chan)
+    _restart_after_channel_change(wmi, hw, chan)

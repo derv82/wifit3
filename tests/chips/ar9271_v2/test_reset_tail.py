@@ -78,3 +78,24 @@ def test_spur_mitigate_no_spur():
     phy.spur_mitigate(h, chanmod.channel_2ghz(1))
     # No in-band spur -> a single REG_CLR_BIT on AR_PHY_FORCE_CLKEN_CCK.
     assert _rmws(dev) == [(R.AR_PHY_FORCE_CLKEN_CCK, 0, R.AR_PHY_FORCE_CLKEN_CCK_MRC_MUX)]
+
+
+def test_spur_mitigate_programs_in_band_notch_and_masks():
+    dev, h = _mk(spur0=1130)                      # 2300 + 1130/10 = 2413, +1 MHz from ch1
+    phy.spur_mitigate(h, chanmod.channel_2ghz(1))
+
+    writes = _writes(dev)
+    assert (R.AR_PHY_TIMING11,
+            R.AR_PHY_TIMING11_USE_SPUR_IN_AGC
+            | R.SM(46, R.AR_PHY_TIMING11_SPUR_FREQ_SD)
+            | R.SM(52428, R.AR_PHY_TIMING11_SPUR_DELTA_PHASE)) in writes
+    assert len(writes) == 28
+    assert {reg for reg, _ in writes} >= {
+        R.AR_PHY_TIMING_CTRL4_0, R.AR_PHY_SPUR_REG, R.AR_PHY_SFCORR_EXT,
+        R.AR_PHY_TIMING7, R.AR_PHY_TIMING8, R.AR_PHY_TIMING9, R.AR_PHY_TIMING10,
+        R.AR_PHY_PILOT_MASK_01_30, R.AR_PHY_PILOT_MASK_31_60,
+        R.AR_PHY_CHANNEL_MASK_01_30, R.AR_PHY_CHANNEL_MASK_31_60,
+        R.AR_PHY_BIN_MASK_1, R.AR_PHY_BIN_MASK_2, R.AR_PHY_BIN_MASK_3,
+        R.AR_PHY_BIN_MASK2_1, R.AR_PHY_BIN_MASK2_2, R.AR_PHY_BIN_MASK2_3,
+        R.AR_PHY_BIN_MASK2_4,
+    }
