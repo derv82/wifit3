@@ -706,7 +706,7 @@ class _ApStatePanel(VerticalGroup):
                 try:
                     self.app.vault.save_wpa_psk(ssid, bssid, psk)
                 except OSError as e:
-                    self.notify(f"Could not save {ssid}: {e}", severity="warning")
+                    self.notify(f"Could not save {escape(ssid)}: {escape(str(e))}", severity="warning")
                     continue
                 self.app.vault.propagate_verified_psk(bssid, ssid, psk).add_done_callback(log_propagation)
                 added += 1

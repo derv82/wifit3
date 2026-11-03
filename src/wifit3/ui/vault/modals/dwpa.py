@@ -185,8 +185,8 @@ class DwpaConfigModal(ModalScreen[bool]):
                 if network.bssid == self.bssid]
         psks = tuple(dict.fromkeys(network.psk for network in mine))
         if psks:
-            self.notify(f"DWPA recovered the PSK for {mine[0].ssid}: {', '.join(psks)}",
-                        title="DWPA")
+            self.notify(f"DWPA recovered the PSK for {escape(mine[0].ssid)}: "
+                        f"{escape(', '.join(psks))}", title="DWPA")
 
     def _show_query_failure(self, message: str) -> None:
         if not self.is_attached:

@@ -375,3 +375,26 @@ async def test_keys_for_other_networks_are_not_announced(capture, retrievals, mo
         await _retrieve(app, pilot, result, "cracked key on DWPA")
 
         assert announced == []
+
+
+class _NotifiedHost(_Host):
+    def __init__(self) -> None:
+        super().__init__()
+        self.notified: list[str] = []
+
+    def notify(self, message, **kwargs) -> None:
+        self.notified.append(str(message))
+
+
+async def test_the_announced_ssid_and_psk_are_not_read_as_markup(capture, retrievals):
+    calls, networks = retrievals
+    networks.append(PotfileEntry(_BSSID, "02:00:00:00:00:03", "[b]HomeNet", "pass[/]word"))
+    app = _NotifiedHost()
+    async with app.run_test() as pilot:
+        await _open(app, pilot, capture)
+        app.screen.query_one("#dwpa-url", Input).value = "https://dwpa.example"
+        app.screen.query_one("#dwpa-key", Input).value = _KEY
+        result = app.screen.query_one("#dwpa-result", Label)
+        await _retrieve(app, pilot, result, "cracked key on DWPA")
+
+        assert app.notified == [r"DWPA recovered the PSK for \[b]HomeNet: pass\[/]word"]
