@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from wifit3.persist.potfile import PotfileEntry, parse_potfile
 
@@ -98,7 +99,11 @@ def upload_capture(url: str, key: str, capture_path: str) -> str:
 
 def _base_url(url: str) -> str:
     url = url.strip().rstrip("/")
-    return url if "://" in url else f"http://{url}"
+    if "://" not in url:
+        url = f"https://{url}"
+    if urlsplit(url).scheme not in ("http", "https"):
+        raise DwpaError(f"Invalid server URL: {url}")
+    return url
 
 
 def _response_bytes(request: urllib.request.Request, url: str) -> bytes:

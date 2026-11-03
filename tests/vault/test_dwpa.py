@@ -101,16 +101,23 @@ def capture(tmp_path):
     return path
 
 
-def test_endpoint_appends_the_submit_query_to_a_bare_host():
-    assert submit_endpoint("dwpa.example") == "http://dwpa.example/?submit="
+def test_endpoint_appends_the_submit_query_to_a_bare_host_over_https():
+    assert submit_endpoint("dwpa.example") == "https://dwpa.example/?submit="
 
 
 def test_endpoint_keeps_the_scheme_and_drops_a_trailing_slash():
     assert submit_endpoint("https://dwpa.example:8080/") == "https://dwpa.example:8080/?submit="
+    assert submit_endpoint("http://192.168.1.10") == "http://192.168.1.10/?submit="
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://dwpa.example"])
+def test_a_scheme_other_than_http_or_https_is_refused(url):
+    with pytest.raises(DwpaError, match="Invalid server URL"):
+        submit_endpoint(url)
 
 
 def test_the_query_endpoint_is_bmacssid(dwpa_service):
-    assert query_endpoint("dwpa.example") == "http://dwpa.example/bmacssid"
+    assert query_endpoint("dwpa.example") == "https://dwpa.example/bmacssid"
     assert query_endpoint(dwpa_service.url) == f"{dwpa_service.url}/bmacssid"
 
 
