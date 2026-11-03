@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from importlib import resources
 from typing import Callable, ClassVar, List, Optional
 
@@ -48,9 +49,23 @@ _FALLBACK_CRYSTAL_CAP = 0x20  # EEPROM default if the efuse xtal byte reads blan
 CHANNELS_2G = list(range(1, 15))
 CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
-# Scan set excludes the DFS band (52-144): passive-scan-only, radar-shared, home APs avoid it.
-# set_channel + verify_channels still drive the full CHANNELS_5G above, byte-for-byte vs the capture.
+# Default set excludes the DFS band (52-144), matching the original behavior. Set WIFIT3_DFS=1
+# to include the full 5 GHz table for both scanning and transmission.
 CHANNELS_5G_NON_DFS = [36, 40, 44, 48, 149, 153, 157, 161, 165]
+
+
+def _dfs_enabled() -> bool:
+    return os.environ.get("WIFIT3_DFS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _channels() -> List[int]:
+    return CHANNELS_2G + (CHANNELS_5G if _dfs_enabled() else CHANNELS_5G_NON_DFS)
+
+
+if _dfs_enabled():
+    logging.getLogger(__name__).warning(
+        "WIFIT3_DFS=1: DFS scanning and transmission enabled; "
+        "radar detection is the operator's responsibility")
 
 
 def _load_firmware() -> bytes:
@@ -58,7 +73,7 @@ def _load_firmware() -> bytes:
 
 
 class Rtl8821auDkmsDriver(Driver):
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G_NON_DFS
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = _channels()
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: RTL8821AUDkmsTransport):

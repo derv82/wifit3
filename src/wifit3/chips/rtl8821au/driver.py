@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Callable, Optional
+import os
+from typing import Callable, List, Optional
 
 import usb.core
 import usb.util
@@ -72,6 +73,20 @@ from .tx import (
 logger = logging.getLogger(__name__)
 
 
+def _dfs_enabled() -> bool:
+    return os.environ.get("WIFIT3_DFS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _channels() -> List[int]:
+    channels = CHANNELS_5G_ALL if _dfs_enabled() else CHANNELS_5G_NON_DFS
+    return sorted(list(range(1, 15)) + list(channels))
+
+
+if _dfs_enabled():
+    logger.warning("WIFIT3_DFS=1: DFS scanning and transmission enabled; "
+                   "radar detection is the operator's responsibility")
+
+
 class RTL8821AUDriver(Driver):
     """Driver for the Realtek RTL8821AU (e.g. ALFA AWUS036ACS).
 
@@ -79,10 +94,9 @@ class RTL8821AUDriver(Driver):
     TX injection is not yet implemented (M7).
     """
 
-    # 2.4 GHz channels 1..14 + non-DFS 5 GHz UNII-1 (36..48) + UNII-3
-    # (149..165). DFS channels are excluded by default to avoid the
-    # regulator-required clearance dance.
-    SUPPORTED_CHANNELS = list(range(1, 15)) + list(CHANNELS_5G_NON_DFS)
+    # Default set: 2.4 GHz + non-DFS 5 GHz, matching the original behavior. WIFIT3_DFS=1
+    # enables the full 5 GHz table for both scanning and transmission.
+    SUPPORTED_CHANNELS = _channels()
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
