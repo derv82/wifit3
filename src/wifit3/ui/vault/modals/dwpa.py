@@ -13,7 +13,7 @@ from textual.widgets import Button, Input, Label
 from wifit3.models import PersistedCapture
 from wifit3.persist.config import Config, ConfigError
 from wifit3.vault.tools.dwpa_api import (DwpaError, PotfileEntry, is_valid_key, network_leaked,
-                                         retrieve_cracked, upload_capture)
+                                         retrieve_cracked, split_on_known_ssid, upload_capture)
 
 _KEY_HINT = "[dim]32 lowercase hex characters, as issued by the DWPA server[/dim]"
 _LEAKED = "[$warning]⚠ Possibly already cracked on DWPA[/]"
@@ -179,7 +179,9 @@ class DwpaConfigModal(ModalScreen[bool]):
         self.query_one("#dwpa-result", Label).update(f"[$success]{escape(message)}[/]")
 
     def _announce_selected_key(self, networks: Sequence[PotfileEntry]) -> None:
-        mine = [network for network in networks if network.bssid == self.bssid]
+        ssids = [self.ssid] if self.ssid else []
+        mine = [split_on_known_ssid(network, ssids) for network in networks
+                if network.bssid == self.bssid]
         keys = tuple(dict.fromkeys(network.key for network in mine))
         if keys:
             self.notify(f"DWPA recovered the PSK for {mine[0].ssid}: {', '.join(keys)}",

@@ -38,7 +38,7 @@ from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
 from wifit3.ui.vault.tools_ui import UI_TOOLS
 from wifit3.vault.manager import log_propagation
 from wifit3.vault.tools.base import VaultTool
-from wifit3.vault.tools.dwpa_api import PotfileEntry
+from wifit3.vault.tools.dwpa_api import PotfileEntry, split_on_known_ssid
 
 
 _STATUS_COLOR = {
@@ -694,8 +694,11 @@ class _ApStatePanel(VerticalGroup):
         for bssid, entries in by_bssid.items():
             if not self.app.vault.persisted(bssid):
                 continue            # a DWPA network this Vault has no record of
+            state = self.app.vault.ap_state(bssid)
+            entries = [split_on_known_ssid(entry, [history.ssid for history in state.ssids])
+                       for entry in entries]
             ssid = entries[0].ssid
-            held = {key.value for key in self.app.vault.ap_state(bssid).keys}
+            held = {key.value for key in state.keys}
             for key in dict.fromkeys(entry.key for entry in entries):
                 if key in held:
                     known += 1

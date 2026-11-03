@@ -8,8 +8,8 @@ import pytest
 
 from wifit3.vault.tools.dwpa_api import (DwpaError, PotfileEntry, is_valid_key, network_hash,
                                          network_leaked, parse_potfile, potfile_endpoint,
-                                         query_endpoint, retrieve_cracked, submit_endpoint,
-                                         upload_capture)
+                                         query_endpoint, retrieve_cracked, split_on_known_ssid,
+                                         submit_endpoint, upload_capture)
 
 _KEY = "0123456789abcdef0123456789abcdef"
 
@@ -204,6 +204,27 @@ def test_the_potfile_lines_become_networks_and_skip_unusable_rows():
         PotfileEntry("8e:6a:8d:a6:db:51", "00:11:22:33:44:55", "E36W126F-Guest1",
                      "pass:with:colons"),
     ]
+
+
+def test_a_colon_in_the_ssid_splits_on_the_aps_known_ssid():
+    [entry] = parse_potfile("020000000a01:020000000c01:My:Net:password1\n")
+
+    assert (entry.ssid, entry.key) == ("My", "Net:password1")
+    assert split_on_known_ssid(entry, ["My", "My:Net"]) == PotfileEntry(
+        "02:00:00:00:0a:01", "02:00:00:00:0c:01", "My:Net", "password1")
+
+
+def test_colons_in_both_the_ssid_and_the_psk_split_on_the_aps_known_ssid():
+    [entry] = parse_potfile("020000000a01:020000000c01:a:b:c:x:y:12345678\n")
+
+    assert split_on_known_ssid(entry, ["a:b:c"]) == PotfileEntry(
+        "02:00:00:00:0a:01", "02:00:00:00:0c:01", "a:b:c", "x:y:12345678")
+
+
+def test_an_ssid_the_ap_does_not_have_keeps_the_first_colon_split():
+    [entry] = parse_potfile("020000000a01:020000000c01:My:Net:password1\n")
+
+    assert split_on_known_ssid(entry, ["Elsewhere"]) == entry
 
 
 def test_a_line_without_an_ssid_is_skipped():

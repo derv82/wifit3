@@ -6,7 +6,8 @@ import re
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -44,6 +45,18 @@ def parse_potfile(text: str) -> list[PotfileEntry]:
     duplicates."""
     entries = (entry for entry in map(_entry, text.splitlines()) if entry is not None)
     return list(dict.fromkeys(entries))
+
+
+def split_on_known_ssid(entry: PotfileEntry, ssids: Iterable[str]) -> PotfileEntry:
+    """``entry`` split after the longest of ``ssids`` its ``SSID:PASS`` starts with; the server
+    does not escape a colon in an SSID, so the parse splits on the first one."""
+    ssid_and_psk = f"{entry.ssid}:{entry.key}"
+    for ssid in sorted(ssids, key=len, reverse=True):
+        if ssid_and_psk.startswith(f"{ssid}:"):
+            psk = ssid_and_psk[len(ssid) + 1:]
+            if is_valid_psk(psk):
+                return replace(entry, ssid=ssid, key=psk)
+    return entry
 
 
 def is_valid_key(key: str) -> bool:

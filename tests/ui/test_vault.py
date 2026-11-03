@@ -27,7 +27,7 @@ from wifit3.ui.screens.vault_item import (DeleteKeyPressed, VaultItemView, date_
                                           _KeyRow, _no_crackable_text, _UncrackedList)
 from wifit3.ui.vault.modals.add_credential import ManualCredential
 from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
-from wifit3.vault.tools.dwpa_api import PotfileEntry
+from wifit3.vault.tools.dwpa_api import PotfileEntry, parse_potfile
 from wifit3.crack import wpa_psk
 from wifit3.dot11.wpa import derive_pmk
 from tests.hashline_dates import write_hashline_dates
@@ -727,6 +727,20 @@ async def test_dwpa_retrieved_keys_are_saved_as_the_aps_wpa_psk(tmp_path):
         panel._store_dwpa_keys([other])
         assert app.notified[-1] == "No DWPA keys for the Vault's APs"
         assert app.vault.persisted("02:00:00:00:00:02") == []
+
+
+@pytest.mark.asyncio
+async def test_a_dwpa_key_for_an_ssid_with_a_colon_is_split_on_the_aps_ssid(tmp_path):
+    _write(tmp_path, "My_Net_aa-bb-cc-dd-ee-ff.hc22000",
+           _EAPOL_LINE.replace("5465737431", "My:Net".encode().hex()))
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
+
+        item.query_one(_ApStatePanel)._store_dwpa_keys(
+            parse_potfile("aabbccddeeff:112233445566:My:Net:password1"))
+
+        assert [key.value for key in app.vault.ap_state("aa:bb:cc:dd:ee:ff").keys] == ["password1"]
 
 
 @pytest.mark.asyncio
