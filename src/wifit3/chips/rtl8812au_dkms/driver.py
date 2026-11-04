@@ -16,10 +16,8 @@ FIFO (see ``rx_reader.py``).
 Registered in ``wlan/discovery.py`` for 0bda:8812 alongside the mainline
 ``chips/rtl8812au/``. **This DKMS port is the default** — it survives the 2.4+5 GHz channel
 hop that RF-synth-wedges the mainline driver (A/B-proven on hardware); set
-``WIFIT3_RTL8812=mainline`` to fall back to the mainline driver. ``inject_frame`` (2.4 GHz
-TX: deauth /
-fake-auth / WEP ARP replay) rides bulk-OUT 0x02 — a source port of the vendor fake-txdesc,
-live-verified (no TX pcap exists), not byte-for-byte. ``set_channel`` tunes 2.4 GHz + 5 GHz
+``WIFIT3_RTL8812=mainline`` to fall back to the mainline driver. ``inject_frame`` rides
+bulk-OUT 0x02 with rtw_monitor_xmit_entry's update_txdesc (``tx.py``); no TX pcap exists. ``set_channel`` tunes 2.4 GHz + 5 GHz
 @ 20 MHz (the band switch is byte-verified against the capture's 5 GHz hops).
 """
 from __future__ import annotations
@@ -36,10 +34,13 @@ from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rtl88xxau_base.transport import Rtl88xxauTransport
-from ..rtl88xxau_base.tx import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G, build_mgmt_txdesc
 from ..rx_reader import RxReaderThread
 from . import bb, chan, dig, efuse, firmware, led, mac, monitor, rf, txpower, watchdog
 from .rx import iter_frames
+from .tx import (
+    DESC_RATE1M, DESC_RATE6M, DESC_RATE24M, DESC_RATEVHTSS1MCS9, RATEID_IDX_B, RATEID_IDX_G, RATEID_IDX_VHT_2SS,
+    update_txdesc,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -309,25 +310,25 @@ class Rtl8812auDkmsDriver(Driver):
         return True
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the vendor fake TX descriptor (``rtl8812a_fill_fake_txdesc``, the shared base
-        builder, the 8812a function; no retry-limit field, HW global retry)
-        and send ``[desc | frame]`` once on bulk-OUT 0x02 (the 8812's MGMT queue).
-        ``frame_bytes`` is the MPDU *without* FCS (the HW appends it). A WEP ARP-replay frame
-        is already encrypted and injected raw (the descriptor's SEC_TYPE = 0). Serialized with
-        set_channel / the DIG watchdog via ``_io_lock`` so a frame is never emitted mid-retune.
-
-        No byte-for-byte gate backs this path — morrownr's cold-boot captures contain no
-        successful card TX. It is a source port of the vendor fake-txdesc."""
+        """Transmit one 802.11 frame as rtw_monitor_xmit_entry does (rtw_xmit.c:4871), on bulk-OUT
+        0x02 (the 8812's MGMT queue). ``frame_bytes`` is the MPDU without FCS (the HW appends it)."""
         if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read the BMC bit
             return False
         loop = asyncio.get_running_loop()
-        bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast/broadcast) bit
-        # [SRC] rtl8812a_phycfg.c:1360 "avoid using cck rate in 5G band": 6M OFDM, rate group G
-        # (rtw_wlan_util.c:3217, rtw_mlme_ext.c:7803-7808).
-        hw_rate, rate_id = ((DESC_RATE6M, RATEID_IDX_G) if self._channel > 14
-                            else (DESC_RATE1M, RATEID_IDX_B))
-        payload = build_mgmt_txdesc(len(frame_bytes), hw_rate=hw_rate, rate_id=rate_id,
-                                    bmc=bmc) + frame_bytes
+        broadcast = bytes([0xFF] * 6)
+        # rtw_xmit.c:4924-4935: a data frame takes update_monitor_frame_attrib (rtw_mlme_ext.c:7671), any
+        # other update_mgntframe_attrib at pmlmeext->tx_rate, 6M on 5 GHz (rtw_wlan_util.c:3214-3217).
+        if frame_bytes[0] & 0x0C == 0x08:
+            rate_id = RATEID_IDX_VHT_2SS
+            if frame_bytes[16:22] == broadcast or frame_bytes[4:10] == broadcast:
+                hw_rate = DESC_RATE24M
+            else:
+                hw_rate = DESC_RATEVHTSS1MCS9
+        elif self._channel > 14:
+            rate_id, hw_rate = RATEID_IDX_G, DESC_RATE6M
+        else:
+            rate_id, hw_rate = RATEID_IDX_B, DESC_RATE1M
+        payload = update_txdesc(frame_bytes, rate_id=rate_id, hw_rate=hw_rate)
         async with self._io_lock:           # don't TX mid-retune (set_channel / DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
         return True

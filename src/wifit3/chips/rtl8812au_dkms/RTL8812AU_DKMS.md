@@ -119,8 +119,9 @@ in `monitor.set_monitor_mode` (the rtw_hal_init re-tune tail + RXFLTMAP open). 5
 switch is `chan._switch_band_5g` + `_set_rfe_5g` (phy_SwitchWirelessBand8812 5G branch, all
 rfe_types). `Rtl8812auDkmsDriver` (`driver.py`) starts the RX reader before the monitor RX
 gate, arms the 2 s dynamic-check watchdog (`watchdog.rtw_dynamic_chk_wk_hdl`: the no-link
-phydm_watchdog incl. TX power tracking), then enters monitor. TX rides the
-shared base fake-txdesc (`rtl8812a_fill_fake_txdesc`) on bulk-OUT 0x02.
+phydm_watchdog incl. TX power tracking), then enters monitor. TX rides
+`rtw_monitor_xmit_entry`'s `update_txdesc` (`tx.py`: MACID 1, retry limit 12; a data frame
+VHT1SS MCS9, 24M if broadcast) on bulk-OUT 0x02. The descriptor change needs a live TX re-check.
 
 Names match the vendor C — vendor source + captures in `driver_captures/captures_8812au/`
 (8812a HAL in `hal/rtl8812a/` + `hal/phydm/`). capture-2/3 are complete; capture-1 is
