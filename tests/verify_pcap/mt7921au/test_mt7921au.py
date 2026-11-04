@@ -13,6 +13,7 @@ CAPTURES_DIR = Path(__file__).resolve().parents[3] / "driver_captures"
 PAU0F_CAPTURE_DIR = CAPTURES_DIR / "captures_mt7921u_pau0f-no-adapter-scatter"
 AXML_CAPTURE_DIR = CAPTURES_DIR / "captures_mt7921u_axml-no-adapter-scatter"
 INJECTION_5GHZ_CAPTURE_PATH = CAPTURES_DIR / "captures_mt7921u_5g-injection" / "capture-1.pcap"
+AXML_KERNEL_6_19_CAPTURE_PATH = CAPTURES_DIR / "captures_mt7921au_warm" / "capture-1.pcap"
 # mt76_connac2_mcu_rxd (mt76_connac_mcu.h:117-126): rxd[6], len, pkt_type_id, then eid and seq.
 CONNAC2_RXD_EID_OFFSET = 28
 CONNAC2_RXD_SEQ_OFFSET = 29
@@ -34,7 +35,7 @@ class TestMt7921au(VerifyCapture):
     CAPTURE_PATHS = [PAU0F_CAPTURE_DIR / "capture-1.pcap", PAU0F_CAPTURE_DIR / "capture-2.pcap",
                      PAU0F_CAPTURE_DIR / "capture-3.pcap", AXML_CAPTURE_DIR / "capture-1.pcap",
                      AXML_CAPTURE_DIR / "capture-2.pcap", AXML_CAPTURE_DIR / "capture-3.pcap",
-                     INJECTION_5GHZ_CAPTURE_PATH]
+                     INJECTION_5GHZ_CAPTURE_PATH, AXML_KERNEL_6_19_CAPTURE_PATH]
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = MT7921AUDriver
     # mt7921_change_chanctx (main.c:1397-1398) sends only the sniffer config per hop.
