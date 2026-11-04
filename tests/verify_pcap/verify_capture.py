@@ -281,6 +281,8 @@ class VerifyCapture:
                                driver_only_progress: dict[Waiver, int]) -> bool:
         """``request``'s register ops are the next ones of a driver_only_run; advances its progress. A run starts
         only where the capture differs; once started, it claims the driver's next requests first."""
+        if not driver_only_progress:
+            return False
         register_ops = self.DECODER.register_ops(request)
         if not register_ops:
             return False
