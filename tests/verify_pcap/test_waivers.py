@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import struct
+from dataclasses import replace
 
 from tests.verify_pcap.ath9k_htc_decoder import Ath9kHtcDecoder
 from tests.verify_pcap.realtek_decoder import (HALMAC_TX_DESC_SW_SEQ, REALTEK_USB_CMD_REQ, TXDESC_QUEUE_BEACON,
@@ -252,6 +253,13 @@ def test_realtek_capture_only_run_value_none_matches_any_value() -> None:
     ops = [realtek_read(REALTEK_OTHER_REGISTER, 0x1), realtek_write(REALTEK_OTHER_REGISTER, 0x5),
            realtek_write(REALTEK_WAIVED_REGISTER, 0x5)]
     assert RealtekCaptureOnlyRun().capture_only_run_occurrences(ops, REALTEK_ANY_VALUE_RUN) == [[0, 1]]
+
+
+def test_realtek_capture_only_run_compares_the_access_width() -> None:
+    byte_write = realtek_write(REALTEK_OTHER_REGISTER, 0x2)
+    byte_write = replace(byte_write, setup=byte_write.setup[:6] + struct.pack("<H", 1), data=bytes([0x2]))
+    ops = [realtek_read(REALTEK_OTHER_REGISTER, 0x1), byte_write]
+    assert RealtekCaptureOnlyRun().capture_only_run_occurrences(ops, REALTEK_RUN) == []
 
 
 class RealtekDriverOnlyRun(VerifyCapture):

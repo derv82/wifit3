@@ -52,10 +52,11 @@ class RegisterAccess(enum.Enum):
 @dataclass(frozen=True)
 class RegisterOp:
     """One register access an op carries; ``value`` is None when the op does not carry it (a read request).
-    In a waiver's run, a value of None matches any value."""
+    In a waiver's run, a value of None matches any value. ``width``: the bytes accessed, or an MCU command's payload."""
     access: RegisterAccess
     address: int
     value: int | None
+    width: int = 4
 
 
 @dataclass(frozen=True)
@@ -101,11 +102,12 @@ class Waiver:
 
 
 def register_ops_match(register_ops: Sequence[RegisterOp], run: Sequence[RegisterOp]) -> bool:
-    """Same accesses and addresses; a run op's value is compared unless it is None."""
+    """Same accesses, addresses and widths; a run op's value is compared unless it is None."""
     if len(register_ops) != len(run):
         return False
     for register_op, run_op in zip(register_ops, run):
-        if register_op.access != run_op.access or register_op.address != run_op.address:
+        if (register_op.access != run_op.access or register_op.address != run_op.address
+                or register_op.width != run_op.width):
             return False
         if run_op.value is not None and register_op.value != run_op.value:
             return False

@@ -54,12 +54,12 @@ class TestRtl8821cuDkms(VerifyCapture):
         Waiver(WaiverReason.CAPTURE_SETUP, "halbtc8821c1ant.c:467 halbtc8821c1ant_write_scbd skips a write equal to "
                "its static preval: the previous capture's bits were already written; "
                "usb_ops_linux.c:191 its 0x04e0 write",
-               driver_only_run=(RegisterOp(WRITE, 0x00aa, 0x8403), RegisterOp(WRITE, 0x04e0, 0x03)),
+               driver_only_run=(RegisterOp(WRITE, 0x00aa, 0x8403, 2), RegisterOp(WRITE, 0x04e0, 0x03, 1)),
                capture_paths=(CAPTURE_DIR / "capture-2.pcap", CAPTURE_DIR / "capture-3.pcap",
                               CAPTURE_DIR / "capture-4.pcap")),
         Waiver(WaiverReason.CAPTURE_SETUP, "halbtc8821c1ant.c:467 halbtc8821c1ant_write_scbd skips a write equal to "
                "its static preval, kept from the previous capture (module not reloaded); usb_ops_linux.c:191 its "
                "0x04e0 write",
-               driver_only_run=(RegisterOp(WRITE, 0x00aa, 0x8003), RegisterOp(WRITE, 0x04e0, 0x03)),
+               driver_only_run=(RegisterOp(WRITE, 0x00aa, 0x8003, 2), RegisterOp(WRITE, 0x04e0, 0x03, 1)),
                capture_paths=(CAPTURE_DIR / "capture-4.pcap",)),
     ]

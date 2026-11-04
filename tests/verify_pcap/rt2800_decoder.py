@@ -145,7 +145,7 @@ class Rt2800Decoder(FamilyDecoder):
         if op.transfer_type != TransferType.CONTROL or op.setup is None:
             return []
         if op.request == C.USB_SINGLE_WRITE:
-            return [RegisterOp(RegisterAccess.WRITE, op.index, op.value)]
+            return [RegisterOp(RegisterAccess.WRITE, op.index, op.value, 2)]
         if op.request == C.USB_MULTI_WRITE:
             access = RegisterAccess.WRITE
         elif op.request == C.USB_MULTI_READ:

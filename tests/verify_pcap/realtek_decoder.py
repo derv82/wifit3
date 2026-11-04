@@ -135,8 +135,8 @@ class RealtekDecoder(FamilyDecoder):
         if not is_register_access(op):
             return []
         if op.is_in:
-            return [RegisterOp(RegisterAccess.READ, op.value, register_value(op))]
-        return [RegisterOp(RegisterAccess.WRITE, op.value, int.from_bytes(op.data, "little"))]
+            return [RegisterOp(RegisterAccess.READ, op.value, register_value(op), op.length)]
+        return [RegisterOp(RegisterAccess.WRITE, op.value, int.from_bytes(op.data, "little"), op.length)]
 
     def with_tx_op_fields(self, op: UsbOp, fields: list[TxOpField], source: UsbOp) -> UsbOp:
         """The dword 7 [15:0] XOR checksum changes by a descriptor field's changed halfwords (fields in its coverage)."""

@@ -47,7 +47,8 @@ class TestMt7921au(VerifyCapture):
     WAIVERS = [
         Waiver(WaiverReason.CAPTURE_SETUP, CONFIGURE_FILTER_SOURCE,
                capture_only_run=(RegisterOp(RegisterAccess.WRITE, SET_RX_FILTER_ADDRESS,
-                                            int.from_bytes(MONITOR_RX_FILTER_PAYLOAD, "little")),)),
+                                            int.from_bytes(MONITOR_RX_FILTER_PAYLOAD, "little"),
+                                            len(MONITOR_RX_FILTER_PAYLOAD)),)),
         Waiver(WaiverReason.HOST_VALUE, "mt76_connac_mcu.c:80-153 mt76_connac_mcu_set_channel_domain sends each "
                "channel's cfg80211 flags; this host's cfg80211 beacon hints had cleared NO_IR on ch40 and ch48",
                value_only_register=SET_CHAN_DOMAIN_ADDRESS, capture_paths=(INJECTION_5GHZ_CAPTURE_PATH,)),

@@ -10,13 +10,13 @@ from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
 CAPTURE_DIR = Path(__file__).resolve().parents[3] / "driver_captures" / "captures_rtl8821au"
 READ = RegisterAccess.READ
 WRITE = RegisterAccess.WRITE
-# hw_var_set_opmode(STATION): REG_MACID (the card's MAC, not compared), StopTxBeacon, BCN_CTRL.
+# hw_var_set_opmode(STATION), byte accesses: REG_MACID (the card's MAC, not compared), StopTxBeacon, BCN_CTRL.
 STATION_OPMODE_RUN = (
-    RegisterOp(WRITE, 0x0610, None), RegisterOp(WRITE, 0x0611, None), RegisterOp(WRITE, 0x0612, None),
-    RegisterOp(WRITE, 0x0613, None), RegisterOp(WRITE, 0x0614, None), RegisterOp(WRITE, 0x0615, None),
-    RegisterOp(READ, 0x0550, None), RegisterOp(READ, 0x0102, None), RegisterOp(WRITE, 0x0102, 0x02),
-    RegisterOp(READ, 0x0422, None), RegisterOp(WRITE, 0x0422, 0x31), RegisterOp(WRITE, 0x0541, 0x64),
-    RegisterOp(READ, 0x0542, None), RegisterOp(WRITE, 0x0542, 0x00), RegisterOp(WRITE, 0x0550, 0x19),
+    RegisterOp(WRITE, 0x0610, None, 1), RegisterOp(WRITE, 0x0611, None, 1), RegisterOp(WRITE, 0x0612, None, 1),
+    RegisterOp(WRITE, 0x0613, None, 1), RegisterOp(WRITE, 0x0614, None, 1), RegisterOp(WRITE, 0x0615, None, 1),
+    RegisterOp(READ, 0x0550, None, 1), RegisterOp(READ, 0x0102, None, 1), RegisterOp(WRITE, 0x0102, 0x02, 1),
+    RegisterOp(READ, 0x0422, None, 1), RegisterOp(WRITE, 0x0422, 0x31, 1), RegisterOp(WRITE, 0x0541, 0x64, 1),
+    RegisterOp(READ, 0x0542, None, 1), RegisterOp(WRITE, 0x0542, 0x00, 1), RegisterOp(WRITE, 0x0550, 0x19, 1),
 )
 
 

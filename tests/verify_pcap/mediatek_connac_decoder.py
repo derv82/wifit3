@@ -168,20 +168,23 @@ class MediatekConnacDecoder(FamilyDecoder):
         return None
 
     def register_ops(self, op: UsbOp) -> list[RegisterOp]:
-        """A UNI MCU command, as one WRITE of its command id valued its payload, little-endian; a legacy one only
-        with legacy_command_register_ops."""
+        """A UNI MCU command, as one WRITE of its command id valued its payload, little-endian, the payload's length
+        its width; a legacy one only with legacy_command_register_ops."""
         data = op.data
         if (op.transfer_type != TransferType.BULK or op.endpoint != C.EP_OUT_MCU
                 or len(data) < UNI_PAYLOAD_OFFSET):
             return []
+        # The SDIO header's TX_BYTES; the USB padding mt7921u_mcu_send_message adds follows (mt7921/usb.c:53).
+        message_end = C.SDIO_HDR_SIZE + struct.unpack_from("<H", data, 0)[0]
         if not is_uni_mcu_frame(data):
             if not self.legacy_command_register_ops or len(data) < LEGACY_PAYLOAD_OFFSET:
                 return []
             address = (C.MCU_PQ_ID << 16) | (data[MCU_TXD_OFFSET + 41] << 8) | data[MCU_TXD_OFFSET + 36]
-            return [RegisterOp(RegisterAccess.WRITE, address,
-                               int.from_bytes(data[LEGACY_PAYLOAD_OFFSET:], "little"))]
+            payload = data[LEGACY_PAYLOAD_OFFSET:message_end]
+            return [RegisterOp(RegisterAccess.WRITE, address, int.from_bytes(payload, "little"), len(payload))]
         command_id = struct.unpack_from("<H", data, MCU_TXD_OFFSET + 34)[0]
-        return [RegisterOp(RegisterAccess.WRITE, command_id, int.from_bytes(data[UNI_PAYLOAD_OFFSET:], "little"))]
+        payload = data[UNI_PAYLOAD_OFFSET:message_end]
+        return [RegisterOp(RegisterAccess.WRITE, command_id, int.from_bytes(payload, "little"), len(payload))]
 
     def skip_capture_only_ops(self, ops: list[UsbOp], positions: set[int]) -> tuple[list[UsbOp], set[int]]:
         """Each later MCU command and its reply renumbered back by the skipped MCU commands before it; a skipped
