@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
+import threading
+from contextlib import suppress
 from typing import Callable, ClassVar, Optional
 
 import usb.core
@@ -64,6 +66,7 @@ from .rx import iter_bulk_frames, read_rx_burst
 from .transport import EndpointLayout, RTL8822CUTransport
 from .txpwr_index import TxPwrIdxState, txpwr_idx_state
 from .tx import TX_DESC_QSEL_MGMT, build_tx_desc_inject, pick_bulk_out_ep, write_bulk
+from .watchdog import WatchdogState, tick as watchdog_tick
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +100,9 @@ class RTL8822CUDriver(Driver):
         self._rx_callback: Optional[Callable] = None
         self._on_lost: Optional[Callable] = None
         self._rx_reader: Optional[RxReaderThread] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
+        self._watchdog_state: Optional[WatchdogState] = None
+        self._control_lock = threading.Lock()
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
         self.current_band_is_2g = True
@@ -208,7 +214,11 @@ class RTL8822CUDriver(Driver):
                         rfe_type=self.efuse.rfe_type)
         odm_dm_init(t, self.h2c, self.dack, self.efuse, self.power_trim, self.txgapk, self.phydm)
         phy_bf_init(t)
-        btcoex_wifionly_hw_config(t)
+        if not self.efuse.bluetooth_coexist:
+            btcoex_wifionly_hw_config(t)
+        else:
+            logger.warning("RTL8822CU BT-combo board: coexistence policy is not ported; "
+                           "leaving the vendor BT tables untouched")
         init_misc(t)
         self._log_state("bringup")
 
@@ -326,33 +336,63 @@ class RTL8822CUDriver(Driver):
         except (ValueError, RuntimeError) as exc:
             await self.close()
             raise BringUpError("phy", str(exc)) from exc
-        # Start the RX reader only AFTER monitor entry. arm_monitor + the first tune +
-        # enter_monitor_mode is what enables MAC RX; starting it before bringup (the prior "sibling
-        # parity" position, commit 7333e4e5) ran the bulk IN pipe through the power cycle and both
-        # firmware downloads while the RX chain was not latched, and hardware saw zero frames.
-        # rtl8821au and the last known good 1a445c1f both start the reader here, last.
-        self._rx_reader = RxReaderThread(
-            loop, self._rx_read_once, self._rx_dispatch, name="rtl8822cu-rx",
-            on_fatal=lambda exc: self._on_lost and self._on_lost(exc),
-        )
-        self._rx_reader.start()
-        logger.debug("rtl8822cu RX reader started (bulk IN ep 0x%02x) after monitor entry",
-                     self._bulk_in_ep)
-        self._current_channel = _DEFAULT_CHANNEL
-        self.is_warm = True
-        if progress_cb:
-            progress_cb(1.0, "RTL8822CU monitor receiver online")
-        return True
+        try:
+            # Start the RX reader only AFTER monitor entry. arm_monitor + the first tune +
+            # enter_monitor_mode is what enables MAC RX; starting it before bringup ran the bulk IN
+            # pipe through the power cycle and firmware downloads while the RX chain was not latched.
+            self._rx_reader = RxReaderThread(
+                loop, self._rx_read_once, self._rx_dispatch, name="rtl8822cu-rx",
+                on_fatal=lambda exc: self._on_lost and self._on_lost(exc),
+            )
+            self._rx_reader.start()
+            logger.debug("rtl8822cu RX reader started (bulk IN ep 0x%02x) after monitor entry",
+                         self._bulk_in_ep)
+            self._current_channel = _DEFAULT_CHANNEL
+            self.is_warm = True
+            self._watchdog_state = WatchdogState.from_phydm(self.phydm)
+            self._watchdog_task = asyncio.create_task(self._watchdog(), name="rtl8822cu-watchdog")
+            if progress_cb:
+                progress_cb(1.0, "RTL8822CU monitor receiver online")
+            return True
+        except Exception:
+            await self.close()
+            raise
+
+    def _run_watchdog_tick(self) -> None:
+        state = self._watchdog_state
+        if not self.is_warm or state is None:
+            return
+        with self._control_lock:
+            if self.is_warm:
+                watchdog_tick(self.transport, state, self._current_channel)
+
+    async def _watchdog(self, period_s: float = 2.0) -> None:
+        """Run the vendor no-link PHYDM maintenance pass without blocking the event loop."""
+        try:
+            while True:
+                await asyncio.sleep(period_s)
+                try:
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, self._run_watchdog_tick)
+                except (IOError, usb.core.USBError) as exc:
+                    logger.debug("RTL8822CU watchdog tick skipped: %s", exc)
+        except asyncio.CancelledError:
+            pass
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Runtime channel tune: the vendor ``config_phydm_switch_channel_8822c`` +
         ``switch_bandwidth`` sequence (``phy.switch_channel``), the same call the pcap harness
         verifies per hop. ``scan`` no longer selects a different path: every hop on the wire is a
         plain ``switch_channel``."""
+        if channel not in self.SUPPORTED_CHANNELS:
+            logger.warning("RTL8822CU unsupported 20 MHz channel %d", channel)
+            return False
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(None, switch_channel, self.transport, channel,
-                                       self.txpwr)
+            def _tune() -> None:
+                with self._control_lock:
+                    switch_channel(self.transport, channel, self.txpwr)
+            await loop.run_in_executor(None, _tune)
             self._current_channel = channel
             self.current_band_is_2g = channel <= 14
             if not self._rx_regs_after_tune_logged:
@@ -364,6 +404,13 @@ class RTL8822CUDriver(Driver):
             return False
 
     async def close(self) -> None:
+        self.is_warm = False
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._watchdog_task
+            self._watchdog_task = None
+        self._watchdog_state = None
         if self._rx_reader:
             await self._rx_reader.stop()
             self._rx_reader = None
@@ -372,8 +419,10 @@ class RTL8822CUDriver(Driver):
             cut_mask = cut_mask_from_sys_cfg1(self.chip_info.raw_cfg1)
             try:
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(
-                    None, lambda: mac_power_off(self.transport, cut_mask=cut_mask))
+                def _power_off() -> None:
+                    with self._control_lock:
+                        mac_power_off(self.transport, cut_mask=cut_mask)
+                await loop.run_in_executor(None, _power_off)
             except (IOError, usb.core.USBError) as exc:
                 logger.debug("RTL8822CU MAC power-off during close failed: %s", exc)
         if self._claimed:
@@ -386,7 +435,6 @@ class RTL8822CUDriver(Driver):
             except usb.core.USBError as exc:
                 logger.debug("RTL8822CU resource disposal during close failed: %s", exc)
             self._claimed = False
-        self.is_warm = False
         self._bulk_in_ep = None
         self._bulk_out_eps = []
         self.dack = DackState()

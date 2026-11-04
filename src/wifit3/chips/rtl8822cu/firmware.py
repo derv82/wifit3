@@ -301,46 +301,48 @@ def download_firmware(dev: usb.core.Device, transport: RTL8822CUTransport,
     request marker (``C2HEVT=0xFD``) is written by the caller, not here. [SRC halmac_fw_88xx.c:114-206]"""
     _txfifo_wait_empty(transport)
     lte_backup = _ltecoex_read(transport, 0x38)
-    _wlan_cpu_enable(transport, False)
-    # Backup + config the 6 DMA/queue registers, reads interleaved with writes exactly as
-    # the vendor emits them. [SRC halmac_fw_88xx.c:147-187]
-    pq1 = transport.read8(REG_TXDMA_PQ_MAP + 1)
-    transport.write8(REG_TXDMA_PQ_MAP + 1, RTW_DMA_MAPPING_HIGH << 6)
-    cr = transport.read8(REG_CR)
-    transport.write8(REG_CR, BIT_HCI_TXDMA_EN | BIT_TXDMA_EN)
-    transport.write32(REG_H2CQ_CSR, 1 << 31)
-    info1 = transport.read16(REG_FIFOPAGE_INFO_1)
-    rqpn2 = transport.read32(REG_RQPN_CTRL_2) | (1 << 31)
-    transport.write16(REG_FIFOPAGE_INFO_1, 0x200)
-    transport.write32(REG_RQPN_CTRL_2, rqpn2)
-    bcn = transport.read8(REG_BCN_CTRL)
-    transport.write8(REG_BCN_CTRL, (bcn & ~BIT_EN_BCN_FUNCTION) | BIT_DIS_TSF_UDT)
     try:
-        _reset_platform(transport)
-        transport.write16(REG_MCUFW_CTRL, (transport.read16(REG_MCUFW_CTRL) & 0x3800) | BIT_MCUFWDL_EN)
-        _upload_section(dev, transport, bulk_out, image.dmem_addr & 0x7FFFFFFF, image.dmem,
-                        beacon=beacon, rsvd_boundary=rsvd_boundary)
-        _upload_section(dev, transport, bulk_out, image.imem_addr & 0x7FFFFFFF, image.imem,
-                        beacon=beacon, rsvd_boundary=rsvd_boundary)
-        if image.emem:
-            _upload_section(dev, transport, bulk_out, image.emem_addr & 0x7FFFFFFF, image.emem,
-                            beacon=beacon, rsvd_boundary=rsvd_boundary)
-    finally:  # restore_mac_reg_88xx, in backup order [SRC halmac_fw_88xx.c:620]
-        transport.write8(REG_TXDMA_PQ_MAP + 1, pq1)
-        transport.write8(REG_CR, cr)
+        _wlan_cpu_enable(transport, False)
+        # Backup + config the 6 DMA/queue registers, reads interleaved with writes exactly as
+        # the vendor emits them. [SRC halmac_fw_88xx.c:147-187]
+        pq1 = transport.read8(REG_TXDMA_PQ_MAP + 1)
+        transport.write8(REG_TXDMA_PQ_MAP + 1, RTW_DMA_MAPPING_HIGH << 6)
+        cr = transport.read8(REG_CR)
+        transport.write8(REG_CR, BIT_HCI_TXDMA_EN | BIT_TXDMA_EN)
         transport.write32(REG_H2CQ_CSR, 1 << 31)
-        transport.write16(REG_FIFOPAGE_INFO_1, info1)
+        info1 = transport.read16(REG_FIFOPAGE_INFO_1)
+        rqpn2 = transport.read32(REG_RQPN_CTRL_2) | (1 << 31)
+        transport.write16(REG_FIFOPAGE_INFO_1, 0x200)
         transport.write32(REG_RQPN_CTRL_2, rqpn2)
-        transport.write8(REG_BCN_CTRL, bcn)
-    # dlfw_end_flow_88xx: TXDMA_STATUS first, then the checksum-status check. [SRC halmac_fw_88xx.c:647]
-    transport.write32(REG_TXDMA_STATUS, BTI_PAGE_OVF)
-    fw_ctrl = transport.read16(REG_MCUFW_CTRL)
-    if (fw_ctrl & BIT_CHECK_SUM_OK) != BIT_CHECK_SUM_OK:
-        raise IOError(f"RTL8822CU FW checksum status invalid: 0x{fw_ctrl:04x}")
-    transport.write16(REG_MCUFW_CTRL, (fw_ctrl | BIT_FW_DW_RDY) & ~BIT_MCUFWDL_EN)
-    _wlan_cpu_enable(transport, True)
-    firmware_ready(transport)
-    _ltecoex_write(transport, 0x38, lte_backup)
+        bcn = transport.read8(REG_BCN_CTRL)
+        transport.write8(REG_BCN_CTRL, (bcn & ~BIT_EN_BCN_FUNCTION) | BIT_DIS_TSF_UDT)
+        try:
+            _reset_platform(transport)
+            transport.write16(REG_MCUFW_CTRL, (transport.read16(REG_MCUFW_CTRL) & 0x3800) | BIT_MCUFWDL_EN)
+            _upload_section(dev, transport, bulk_out, image.dmem_addr & 0x7FFFFFFF, image.dmem,
+                            beacon=beacon, rsvd_boundary=rsvd_boundary)
+            _upload_section(dev, transport, bulk_out, image.imem_addr & 0x7FFFFFFF, image.imem,
+                            beacon=beacon, rsvd_boundary=rsvd_boundary)
+            if image.emem:
+                _upload_section(dev, transport, bulk_out, image.emem_addr & 0x7FFFFFFF, image.emem,
+                                beacon=beacon, rsvd_boundary=rsvd_boundary)
+        finally:  # restore_mac_reg_88xx, in backup order [SRC halmac_fw_88xx.c:620]
+            transport.write8(REG_TXDMA_PQ_MAP + 1, pq1)
+            transport.write8(REG_CR, cr)
+            transport.write32(REG_H2CQ_CSR, 1 << 31)
+            transport.write16(REG_FIFOPAGE_INFO_1, info1)
+            transport.write32(REG_RQPN_CTRL_2, rqpn2)
+            transport.write8(REG_BCN_CTRL, bcn)
+        # dlfw_end_flow_88xx: TXDMA_STATUS first, then checksum-status check. [SRC halmac_fw_88xx.c:647]
+        transport.write32(REG_TXDMA_STATUS, BTI_PAGE_OVF)
+        fw_ctrl = transport.read16(REG_MCUFW_CTRL)
+        if (fw_ctrl & BIT_CHECK_SUM_OK) != BIT_CHECK_SUM_OK:
+            raise IOError(f"RTL8822CU FW checksum status invalid: 0x{fw_ctrl:04x}")
+        transport.write16(REG_MCUFW_CTRL, (fw_ctrl | BIT_FW_DW_RDY) & ~BIT_MCUFWDL_EN)
+        _wlan_cpu_enable(transport, True)
+        firmware_ready(transport)
+    finally:
+        _ltecoex_write(transport, 0x38, lte_backup)
 
 
 def firmware_ready(transport: RTL8822CUTransport) -> int:
@@ -438,6 +440,8 @@ def fill_h2c_cmd(transport: RTL8822CUTransport, h2c_state: H2cState, element_id:
         if not transport.read8(REG_HMETFR) & (1 << box):
             break
         time.sleep(0.001)
+    else:
+        raise IOError(f"RTL8822CU H2C box {box} stayed owned by firmware for 100 ms")
     transport.write32(REG_HMEBOX_E0 + box * EX_MESSAGE_BOX_SIZE,
                       int.from_bytes(h2c[4:8], "little"))
     transport.write32(REG_HMEBOX0 + box * MESSAGE_BOX_SIZE,

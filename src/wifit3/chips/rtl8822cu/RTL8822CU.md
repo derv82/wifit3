@@ -93,6 +93,7 @@
 ## Known Problems
 
 - A TSSI mode part (EFUSE 0xC8 nibble 4..7) brings up and RXes with no TX power programmed: the TSSI branch is not ported, `txpwr_idx_state` returns `None` and `_set_tx_power` writes nothing, so the txagc table keeps power on defaults. Completing it requires the vendor's TSSI EFUSE group offsets, DE setup, codeword calculation/programming, and enable path (`halrf_do_tssi_8822c` / `halrf_tssi_8822c.c`), validated on an actual TSSI-mode device.
+- A BT-combo board (EFUSE 0xC1[7:5] == 1) does not receive the Wi-Fi-only coexistence-table configuration; Wifit3 leaves its BT tables untouched because the vendor coexistence policy is outside monitor-mode scope. The required USB suspend H2C workaround still runs for every board.
 - The vendor computes a TSSI table on every tune via `halrf_get_tssi_codeword_for_txindex()` [hal_com_phycfg.c:6321-6326, rtl8822c_phy.c:675], so that divergence recurs per tune.
 - Whether any 8822CU ships in TSSI mode is unknown; nobody has looked.
 - `efuse.rfe_type` raises `RuntimeError` when EFUSE 0xCA reads 0xFF on a valid map, so an unburned EFUSE fails bring up there against policy EFUSE-1. Setting `constants.RFE_TYPE` is the escape hatch.

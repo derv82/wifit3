@@ -225,7 +225,31 @@ async def test_set_channel_reports_failure(monkeypatch):
         raise ValueError("bad channel")
 
     monkeypatch.setattr(drv, "switch_channel", _boom)
+    assert await d.set_channel(6, scan=True) is False
+
+
+async def test_set_channel_rejects_unsupported_values_without_tuning(monkeypatch):
+    d = _driver()
+    tune = MagicMock()
+    monkeypatch.setattr(drv, "switch_channel", tune)
+
     assert await d.set_channel(200, scan=True) is False
+    tune.assert_not_called()
+
+
+def test_watchdog_tick_runs_only_for_a_live_driver(monkeypatch):
+    d = _driver()
+    calls = []
+    monkeypatch.setattr(drv, "watchdog_tick", lambda *args: calls.append(args))
+    d._watchdog_state = MagicMock()
+
+    d._run_watchdog_tick()
+    assert calls == []
+
+    d.is_warm = True
+    d._current_channel = 149
+    d._run_watchdog_tick()
+    assert calls == [(d.transport, d._watchdog_state, 149)]
 
 
 # --- bring up wiring: the EFUSE and the MAC hidden report, not literals --------
@@ -301,6 +325,14 @@ def test_bringup_feeds_config_bb_rf_the_efuse_derived_values(monkeypatch):
 
     assert calls["config_bb_rf"] == [dict(cut=5, rfe_type=0x01, crystal_cap=0x71,
                                           dis_dpd_rate=DIS_DPD_RATE_ALL)]
+    assert calls["btcoex_wifionly_hw_config"] == [{}]
+
+
+def test_bringup_leaves_bt_combo_coexistence_tables_untouched(monkeypatch, caplog):
+    _d, calls = _run_bringup(monkeypatch, _efuse(0x33, board_option=0x21))
+
+    assert "btcoex_wifionly_hw_config" not in calls
+    assert "BT-combo board" in caplog.text
 
 
 # --- teardown: vendor rtw_halmac_deinit_hal powers the MAC off before USB release ---
@@ -323,6 +355,31 @@ async def test_connect_rejects_unsupported_bulk_out_layout_before_claiming(monke
 
     assert exc_info.value.stage == "endpoints"
     claim.assert_not_called()
+
+
+async def test_connect_starts_the_phydm_watchdog_after_monitor_entry(monkeypatch):
+    d = _driver()
+    d.transport.endpoints.return_value = EndpointLayout(0, (0x81,), (0x05, 0x06, 0x08))
+    monkeypatch.setattr(d, "_claim", lambda: setattr(d, "_claimed", True))
+    monkeypatch.setattr(d, "_bringup", lambda *args: None)
+    monkeypatch.setattr(d, "_monitor_entry", lambda: None)
+
+    reader = MagicMock()
+    monkeypatch.setattr(drv, "RxReaderThread", lambda *args, **kwargs: reader)
+    tasks: list[str] = []
+
+    def _create_task(coro, *, name):
+        tasks.append(name)
+        coro.close()
+        return MagicMock()
+
+    monkeypatch.setattr(drv.asyncio, "create_task", _create_task)
+
+    assert await d.connect() is True
+    reader.start.assert_called_once()
+    assert d.is_warm is True
+    assert d._watchdog_state is not None
+    assert tasks == ["rtl8822cu-watchdog"]
 
 
 async def test_connect_cleans_up_a_failed_bringup(monkeypatch):
