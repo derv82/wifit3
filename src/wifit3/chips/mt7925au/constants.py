@@ -274,8 +274,9 @@ MT_TXD6_MSDU_CNT = 0x000003F0  # GENMASK(9,4)
 MT_TXD6_DIS_MAT  = 1 << 3      # BIT(3)
 MT_TXD6_DAS      = 1 << 2      # BIT(2)
 
-# tx_mgnt_type (mt76_connac3_mac.h:194-198): mgmt frames carry MT_TX_NORMAL.
+# tx_mgnt_type (mt76_connac3_mac.h:194-198): mgmt frames carry MT_TX_NORMAL, an ADDBA request MT_TX_ADDBA.
 MT_TX_NORMAL = 0
+MT_TX_ADDBA = 2
 
 # Monitor-vif TX context (mt7925/main.c:375-392, mt792x_mac.c). The monitor link is
 # vif idx 0: omac_idx 0, band_idx 0xff (masked to TGID=3), wcid = MT792x_WTBL_RESERVED

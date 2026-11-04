@@ -33,6 +33,11 @@ _FCTL_FROMDS = 0x0200
 _FCTL_ORDER = 0x8000
 _HT_CTL_LEN = 4
 _QOS_CTL_LEN = 2
+_STYPE_ACTION = 0x00D0
+_QOS_CTL_TID_MASK = 0x000F         # IEEE80211_QOS_CTL_TID_MASK
+_MIN_ACTION_SIZE = 25              # IEEE80211_MIN_ACTION_SIZE: offsetof(ieee80211_mgmt, u.action.u)
+_CATEGORY_BACK = 3                 # WLAN_CATEGORY_BACK
+_ACTION_ADDBA_REQ = 0              # WLAN_ACTION_ADDBA_REQ
 
 
 def _is_mgmt(fc: int) -> bool:
@@ -105,7 +110,21 @@ def build_txwi(mpdu: bytes, *, wcid_idx: int, omac_idx: int = MON_TX_OMAC_IDX,
     txwi[6] = MT_TXD6_DAS | ((1 << 4) & MT_TXD6_MSDU_CNT) | MT_TXD6_DIS_MAT
 
     # --- mt7925_mac_write_txwi_80211 ---
-    tid = MT_TX_NORMAL if _is_mgmt(fc) else 0        # mgmt -> NORMAL(0); ADDBA path n/a here
+    # skb->priority mac80211 gives an injected frame (wme.c:117-145 ieee80211_select_queue_80211).
+    if not _is_data(fc):
+        priority = 7
+    elif _is_data_qos(fc):
+        four_address = (fc & (_FCTL_TODS | _FCTL_FROMDS)) == (_FCTL_TODS | _FCTL_FROMDS)
+        priority = mpdu[30 if four_address else 24] & _QOS_CTL_TID_MASK   # ieee80211_get_qos_ctl
+    else:
+        priority = 0
+    tid = priority & _QOS_CTL_TID_MASK
+    if ((fc & (_FCTL_FTYPE | _FCTL_STYPE)) == (_FTYPE_MGMT | _STYPE_ACTION)
+            and len(mpdu) >= _MIN_ACTION_SIZE + 1
+            and mpdu[24] == _CATEGORY_BACK and mpdu[25] == _ACTION_ADDBA_REQ):
+        tid = MT_TX_ADDBA
+    elif _is_mgmt(fc):
+        tid = MT_TX_NORMAL
     hdr_info = ieee80211_hdrlen(fc) // 2
     val = ((MT_HDR_FORMAT_802_11 << 14) & MT_TXD1_HDR_FORMAT) \
         | ((hdr_info << 16) & MT_TXD1_HDR_INFO) \
