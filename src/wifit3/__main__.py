@@ -88,8 +88,9 @@ def main() -> None:
         from wifit3.device.termux_usb import list_devices
         paths = list_devices()
         if not paths:
-            parser.exit(1, "wifit3: no USB devices are visible. Connect an OTG adapter and "
-                           "install the Termux:API app (pkg install termux-api).\n")
+            parser.exit(1, "wifit3: no USB devices are visible. Connect an OTG adapter, then "
+                           "install the Termux:API app (F-Droid/Play) and its termux-api "
+                           "package.\n")
         for path in paths:
             print(path)
         return

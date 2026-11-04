@@ -7,7 +7,7 @@ VM, no proot, and no root.
 ## Requirements
 
 - An Android device with USB-OTG support
-- Termux and the Termux:API app
+- Termux and the **Termux:API app** (from F-Droid or Google Play; the `termux-api` package alone is not enough)
 - A supported USB adapter (for example the TP-Link Archer T2U+ / RTL8821AU, `2357:0120`)
 - A Termux `libusb` build that understands `TERMUX_USB_FD` (the patch landed in late 2024)
 
@@ -16,6 +16,9 @@ Install the packages:
 ```bash
 pkg install python libusb termux-api git uv
 ```
+
+`pkg install termux-api` is only the CLI client; install the Termux:API app from F-Droid or Google
+Play as well.
 
 ## Install
 
@@ -98,6 +101,7 @@ departure/arrival flow as desktop. If you deny a permission dialog, wifit3 backs
 | Splash shows no devices | Plug in the adapter and accept Android's permission dialog; `uv run wifit3 --list-usb` shows what Android exposes. |
 | `termux-usb -l` does not list the card | Check OTG support; if the phone's port cannot supply enough current, try a powered hub or OTG Y-cable. |
 | `system libusb not found` | `pkg install libusb`. |
+| `termux-usb` is missing or the splash never sees a card | Install the Termux:API app (F-Droid/Play) and `pkg install termux-api`; the package alone is not enough. |
 | `uv sync` fails on `libusb-package` (no wheel for the current platform) | Python < 3.13 on Termux reports `sys.platform == "linux"`, so the Android marker does not skip it. Run `uv sync --no-install-package libusb-package`, `pip install .` (the build hook drops it), or `pkg upgrade python`. |
 | Permission dialog keeps appearing | Tick "Use by default for this USB device"; after a denial wifit3 waits 30 s before retrying. |
 | Adapter disappears mid-run | Often power-related: try a powered hub or OTG Y-cable. |

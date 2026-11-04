@@ -110,7 +110,8 @@ def acquire(device: str | None = None) -> int | None:
     if device is None:
         found = list_devices()
         if not found:
-            _set_error("no USB device is visible; connect the adapter and install Termux:API")
+            _set_error("no USB device is visible; connect the adapter and install the "
+                       "Termux:API app")
             return None
         device = found[0]
     fd = _request_fd(device)
@@ -238,7 +239,8 @@ def _reconcile() -> bool:
     try:
         paths = _list_raw()
         if paths is None:
-            _set_error("termux-usb is unavailable; install the Termux:API app")
+            _set_error("termux-usb is unavailable; install the Termux:API app and its "
+                       "termux-api package")
             return False
         now = time.monotonic()
         with _lock:

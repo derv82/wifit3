@@ -86,7 +86,8 @@ Download the latest standalone executable from [**Releases**](https://github.com
   chmod +x wifit3-macos-universal2
   ./wifit3-macos-universal2
   ```
-* **Android (Termux):** no executable; each release also ships a prebuilt wheel.
+* **Android (Termux):** no executable; each release also ships a prebuilt wheel. Install the
+  **Termux:API app** from F-Droid or Google Play (the `termux-api` package alone is not enough).
   ```bash
   pkg install python libusb termux-api
   pip install wifit3-<version>-py3-none-any.whl   # downloaded from Releases

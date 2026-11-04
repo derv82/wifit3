@@ -13,6 +13,7 @@ class SetupTermux(Setup):
             "USB access",
             "Android grants USB access when an adapter is attached. Plug it in and accept "
             "the permission dialog.\n\n"
+            "The Termux:API app must be installed (the termux-api package alone is not enough).\n\n"
             "List attached devices with: wifit3 --list-usb",
         )
         return None
