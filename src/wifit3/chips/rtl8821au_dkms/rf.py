@@ -50,6 +50,11 @@ def _rf_serial_read(t, path: int, offset: int) -> int:
     return query_bb(t, rb, 0x000FFFFF)
 
 
+def query_rf_reg(t, path: int, addr: int, mask: int) -> int:
+    """PHY_QueryRFReg8812: SIPI read, masked and shifted."""
+    return (_rf_serial_read(t, path, addr) & mask) >> _shift(mask)
+
+
 def set_rf_reg(t, path: int, addr: int, mask: int, val: int) -> None:
     """PHY_SetRFReg8812: masked write reads-modifies via SIPI; full mask writes direct."""
     if mask != RFREG_WRITE_MASK:

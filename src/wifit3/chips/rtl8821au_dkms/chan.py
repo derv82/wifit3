@@ -55,7 +55,7 @@ def _set_rfe_2g(t, ext_lna_2g: bool) -> None:
         set_bb(t, 0x0CB0, 0x00000700, 0x7)   # 0xCB0[10:8]=b'111
 
 
-def _switch_band_2g(t, bb_swing: int, ext_lna_2g: bool = False) -> None:
+def _switch_band_2g(t, bb_swing: int, ext_lna_2g: bool = False) -> int:
     """[SRC] PHY_SwitchWirelessBand8812(BAND_ON_2_4G), 8821a path."""
     _ext_band_switch(t, band_5g=False)
     set_bb(t, 0x808, 0x30000000, 0x3)        # rOFDMCCKEN: OFDM + CCK on
@@ -63,13 +63,14 @@ def _switch_band_2g(t, bb_swing: int, ext_lna_2g: bool = False) -> None:
     set_bb(t, 0x0C1C, 0x00000F00, 0x0)       # AGC table select (MP chip)
     set_bb(t, 0x080C, 0x000000F0, 0x1)       # rTxPath
     set_bb(t, 0x0A04, 0x0F000000, 0x1)       # rCCK_RX
-    _update_tx_basic_rate(t, 0x015F)         # 2.4G 11BG basic rates
+    rrsr = _update_tx_basic_rate(t, 0x015F)  # 2.4G 11BG basic rates
     t.write8(REG_CCK_CHECK, t.read8(REG_CCK_CHECK) & ~0x80)  # clear BIT7 (2.4 GHz)
     set_bb(t, 0x0C1C, 0xFFE00000, bb_swing)  # bb_swing path A
     set_bb(t, 0x0E1C, 0xFFE00000, bb_swing)  # bb_swing path B (unconditional)
+    return rrsr
 
 
-def _switch_band_5g(t, bb_swing: int) -> None:
+def _switch_band_5g(t, bb_swing: int) -> int:
     """[SRC] PHY_SwitchWirelessBand8812(BAND_ON_5G), 8821a path. The phy_SwBand band
     marker (REG_CCK_CHECK BIT7) is read by the caller; this sets it for 5 GHz."""
     _ext_band_switch(t, band_5g=True)
@@ -89,17 +90,19 @@ def _switch_band_5g(t, bb_swing: int) -> None:
     set_bb(t, 0x0C1C, 0x00000F00, 0x1)       # AGC table select (5 GHz, MP chip)
     set_bb(t, 0x080C, 0x000000F0, 0x0)       # rTxPath
     set_bb(t, 0x0A04, 0x0F000000, 0xF)       # rCCK_RX
-    _update_tx_basic_rate(t, 0x0150)         # 5G 11A basic rates (OFDM only)
+    rrsr = _update_tx_basic_rate(t, 0x0150)  # 5G 11A basic rates (OFDM only)
     set_bb(t, 0x0C1C, 0xFFE00000, bb_swing)  # bb_swing path A
     set_bb(t, 0x0E1C, 0xFFE00000, bb_swing)  # bb_swing path B (unconditional)
+    return rrsr
 
 
-def _update_tx_basic_rate(t, brate_cfg: int) -> None:
+def _update_tx_basic_rate(t, brate_cfg: int) -> int:
     # [SRC] update_tx_basic_rate -> HW_VAR_BASIC_RATE: RRSR rate bitmap (masked RMW) +
-    # clear the RRSR+2 low nibble.
+    # clear the RRSR+2 low nibble. Returns the value rtw_phydm_set_rrsr hands phydm.
     temp = (t.read32(0x0440) & 0xFFFF0000) | brate_cfg
     set_bb(t, 0x0440, 0x000FFFFF, temp)
     t.write8(0x0442, t.read8(0x0442) & 0xF0)
+    return temp
 
 
 def _fc_area(t, ch: int) -> None:
@@ -130,17 +133,20 @@ def _rf_mod_ag(t, ch: int) -> None:
     set_rf_reg(t, RF_PATH_A, RF_CHNLBW, _RF_MOD_AG, v)
 
 
-def _sw_chnl(t, ch: int, bb_swing_2g: int, bb_swing_5g: int, ext_lna_2g: bool = False) -> None:
-    """[SRC] phy_SwChnl8812: phy_SwBand (conditional band switch) + fc_area + channel."""
+def _sw_chnl(t, ch: int, bb_swing_2g: int, bb_swing_5g: int, ext_lna_2g: bool = False) -> int | None:
+    """[SRC] phy_SwChnl8812: phy_SwBand (conditional band switch) + fc_area + channel.
+    Returns the band switch's RRSR value, None without a band switch."""
     cur_5g = bool(t.read8(REG_CCK_CHECK) & 0x80)   # phy_SwBand8812 band marker
     want_5g = ch > 14
+    rrsr = None
     if want_5g and not cur_5g:
-        _switch_band_5g(t, bb_swing_5g)
+        rrsr = _switch_band_5g(t, bb_swing_5g)
     elif cur_5g and not want_5g:
-        _switch_band_2g(t, bb_swing_2g, ext_lna_2g)
+        rrsr = _switch_band_2g(t, bb_swing_2g, ext_lna_2g)
     _fc_area(t, ch)
     _rf_mod_ag(t, ch)
     set_rf_reg(t, RF_PATH_A, RF_CHNLBW, 0xFF, ch)   # channel byte0
+    return rrsr
 
 
 def _post_set_bw_20(t) -> None:
@@ -164,7 +170,9 @@ def set_chnl_bw(t, ch: int = 1, bb_swing_2g: int = BB_SWING_DEFAULT,
 
 
 def set_channel_bw(t, ch: int, bb_swing_2g: int = BB_SWING_DEFAULT,
-                   bb_swing_5g: int = BB_SWING_DEFAULT, ext_lna_2g: bool = False) -> None:
-    """Runtime hop (M7): phy_SwChnl (band switch only on a 2.4<->5 crossing) + channel + BW."""
-    _sw_chnl(t, ch, bb_swing_2g, bb_swing_5g, ext_lna_2g)
+                   bb_swing_5g: int = BB_SWING_DEFAULT, ext_lna_2g: bool = False) -> int | None:
+    """Runtime hop (M7): phy_SwChnl (band switch only on a 2.4<->5 crossing) + channel + BW.
+    Returns the band switch's RRSR value, None without a band switch."""
+    rrsr = _sw_chnl(t, ch, bb_swing_2g, bb_swing_5g, ext_lna_2g)
     _post_set_bw_20(t)
+    return rrsr

@@ -117,7 +117,8 @@ are 8812-only), so a board_type-set card matches only the type-0 rows.
 
 Start at `driver.connect` — it runs power-on → FW → MAC → BB/RF → tune → RX in the kernel's order.
 RX-desc decode + the 8821a RSSI tables are in `rx.py`; monitor RCR (0x9000382F) in `monitor.py`; the
-PHYDM DIG init + watchdog in `dig.py`. Channel/band hop is `chan.set_channel_bw` (`phy_SwBand`
+PHYDM InitHalDm in `dig.py`; the 2 s dynamic-check tick (DIG, CCK-PD, EDCCA, RRSR, TX power tracking,
+NHM/CLM) in `watchdog.py`. Channel/band hop is `chan.set_channel_bw` (`phy_SwBand`
 switches band only on a 2.4↔5 crossing). EFUSE decode is `efuse.read_chip_params`; per-rate TXAGC in
 `txpower.set_tx_power` (+ `_5g`). One descriptor builder, `tx.build_mgmt_txdesc`, serves all
 injection (40-byte fake TX desc + XOR-16 checksum, bulk-OUT ep 0x09). Bulk-IN is ep 0x84.

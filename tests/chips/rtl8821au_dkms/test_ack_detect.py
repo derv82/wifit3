@@ -7,7 +7,7 @@ arming live on the ``Driver`` base (``record_ack`` / ``enable_rx_acks`` / ``acks
 import struct
 from unittest.mock import MagicMock
 
-from wifit3.chips.rtl8821au_dkms import tx
+from wifit3.chips.rtl8821au_dkms import tx, watchdog
 from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
 
 
@@ -31,6 +31,8 @@ def _mgmt_frame(ta: bytes = bytes.fromhex("020000000001")) -> bytes:
 def _driver() -> Rtl8821auDkmsDriver:
     d = Rtl8821auDkmsDriver(MagicMock())
     d._channel = 1                        # connect() leaves the card tuned
+    d._dm = watchdog.DmState(cur_ig_value=0x20, nhm_igi=0x20, rrsr_val_init=0x15F, h2l_lb=0, l2h_lb=0,
+                             eeprom_thermal=0xFF, default_ofdm_index=24, bb_swing_diff_2g=0, bb_swing_diff_5g=0)
     d._parsed = []
     d.register_rx_callback(d._parsed.append)
     return d

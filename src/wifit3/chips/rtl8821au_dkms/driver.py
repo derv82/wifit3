@@ -33,7 +33,7 @@ from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bb, chan, dig, efuse, firmware, led, mac, monitor, phy_cond, rf, txpower
+from . import bb, chan, dig, efuse, firmware, led, mac, monitor, phy_cond, rf, txpower, watchdog
 from .rx import iter_frames
 from .transport import RTL8821AUDkmsTransport
 from .tx import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G, build_mgmt_txdesc
@@ -74,6 +74,8 @@ class Rtl8821auDkmsDriver(Driver):
         # so a value-less construction reproduces the recorded card byte-for-byte).
         self._ext_lna_2g: bool = False           # efuse LNAType_2G[3] — RFE pinmux branch
         self._interface_sel: int = 0             # efuse board option [7:5] — LED register branch
+        self._thermal_meter: int = 0xFF          # efuse thermal base (power tracking)
+        self._dm: Optional[watchdog.DmState] = None
         self._jaguar_params = phy_cond.JaguarParams()  # phy_cond walker inputs (board_type)
         self._channel: Optional[int] = None
         self.is_warm: bool = False
@@ -83,7 +85,7 @@ class Rtl8821auDkmsDriver(Driver):
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
-        self._dig_task: Optional[asyncio.Task] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
         self._led_task: Optional[asyncio.Task] = None
         self._tx_led_task: Optional[asyncio.Task] = None
         # Serializes control-transfer batches (DIG watchdog vs set_channel) so two
@@ -123,6 +125,7 @@ class Rtl8821auDkmsDriver(Driver):
         self._bb_swing_5g = params.bb_swing_5g
         self._ext_lna_2g = params.ext_lna_2g
         self._interface_sel = params.interface_sel
+        self._thermal_meter = params.thermal_meter
         self._jaguar_params = efuse.build_jaguar_params(params)
         logger.info("RTL8821AU efuse: valid_id=%d autoload_fail=%d ver=0x%02x crystal=0x%02x "
                     "thermal=0x%02x mac=%s cck_base[0]=0x%02x bb_swing 2g=0x%03x 5g=0x%03x",
@@ -166,7 +169,7 @@ class Rtl8821auDkmsDriver(Driver):
                              self._ext_lna_2g)        # M4: 2.4 GHz tune
             txpower.set_tx_power(t, _DEFAULT_CHANNEL, self._tx_power)  # M-TXPWR: per-rate txagc
             mac.hal_init_misc_pre(t)                  # M5 §1a: security + MISC11
-            dig.init_hal_dm(t, search_edcca=True)     # M5 §2: phydm DIG/AGC/EDCCA seed
+            seed = dig.init_hal_dm(t, search_edcca=True)  # M5 §2: phydm DIG/AGC/EDCCA seed
             mac.hal_init_misc_post(t)                 # M5 §1b: turn-on tail
             # rtw_hal_init after hal_init [SRC] hal_intf.c:609 rtw_mi_set_mac_addr,
             # :621 init_hw_mlme_ext (rtw_mlme_ext.c:1299-1300: RX BAR + set_channel_bwmode)
@@ -177,8 +180,15 @@ class Rtl8821auDkmsDriver(Driver):
             chan.set_channel_bw(t, _DEFAULT_CHANNEL, self._bb_swing_2g, self._bb_swing_5g,
                                 self._ext_lna_2g)
             txpower.set_tx_power(t, _DEFAULT_CHANNEL, self._tx_power)
+            return seed
 
-        await loop.run_in_executor(None, _init, self.transport)
+        seed = await loop.run_in_executor(None, _init, self.transport)
+        self._dm = watchdog.DmState(
+            cur_ig_value=seed.cur_ig_value, nhm_igi=seed.nhm_igi, rrsr_val_init=seed.rrsr_val_init,
+            h2l_lb=seed.h2l_lb, l2h_lb=seed.l2h_lb, eeprom_thermal=self._thermal_meter,
+            default_ofdm_index=watchdog.default_ofdm_index(self._bb_swing_2g),
+            bb_swing_diff_2g=watchdog.BB_SWING_DIFF[self._bb_swing_2g],
+            bb_swing_diff_5g=watchdog.BB_SWING_DIFF[self._bb_swing_5g])
         self._channel = _DEFAULT_CHANNEL
 
         # M5 §5: start the bulk-IN RX reader BEFORE the monitor RCR opens the RX gate
@@ -197,31 +207,31 @@ class Rtl8821auDkmsDriver(Driver):
         # M5 §3: monitor opmode entry (Set_MSR NOLINK + RCR accept-all + RXFLTMAP).
         await loop.run_in_executor(None, monitor.enter_monitor, self.transport)
 
-        # M5 §6: the runtime phydm DIG/AGC watchdog — adapt the InitHalDm IGI seed to
-        # the live false-alarm rate every ~2 s (the kernel cadence). RX-side only.
+        # M5 §6: the 2 s dynamic-check tick (_netdev_open dynamic_chk_timer, os_intfs.c:4044).
         if self.enable_dig:
-            self._dig_task = loop.create_task(self._dig_watchdog())
+            self._watchdog_task = loop.create_task(self._watchdog())
         else:
-            logger.info("RTL8821AU DIG watchdog disabled (IGI stays at the InitHalDm seed)")
+            logger.info("RTL8821AU watchdog disabled (IGI stays at the InitHalDm seed)")
 
         if progress_cb:
             progress_cb(1.0, f"Tuned to channel {_DEFAULT_CHANNEL} @ 20 MHz (monitor)")
         return True
 
-    async def _dig_watchdog(self) -> None:
-        """Periodic DIG watchdog. Serialized with set_channel via _io_lock."""
+    async def _watchdog(self) -> None:
+        """rtw_dynamic_check_timer_handler: re-armed 2 s from its own fire. Serialized via _io_lock."""
         loop = asyncio.get_running_loop()
+        next_fire = loop.time() + watchdog.WATCHDOG_PERIOD_S
         try:
             while True:
-                await asyncio.sleep(dig.WATCHDOG_PERIOD_S)
+                await asyncio.sleep(next_fire - loop.time())
+                next_fire += watchdog.WATCHDOG_PERIOD_S
                 async with self._io_lock:
-                    tick = await loop.run_in_executor(None, dig.watchdog_tick, self.transport)
-                logger.debug("RTL8821AU DIG: IGI=0x%02x fa=%d (ofdm=%d cck=%d)",
-                             tick.igi, tick.fa_cnt, tick.ofdm_fa, tick.cck_fa)
+                    await loop.run_in_executor(None, watchdog.tick, self.transport, self._dm, self._channel)
+                logger.debug("RTL8821AU watchdog: IGI=0x%02x", self._dm.cur_ig_value)
         except asyncio.CancelledError:
             pass
         except Exception:  # noqa: BLE001 — a watchdog fault must not kill RX
-            logger.exception("RTL8821AU DIG watchdog stopped on error")
+            logger.exception("RTL8821AU watchdog stopped on error")
 
     async def _led_blink(self) -> None:
         """SW_LED_MODE9 LED0 no-link slow blink: SwLedBlink9 LED_BLINK_SLOWLY (hal_usb_led.c:934)."""
@@ -289,8 +299,12 @@ class Rtl8821auDkmsDriver(Driver):
         loop = asyncio.get_running_loop()
 
         def _tune(t):
-            chan.set_channel_bw(t, channel, self._bb_swing_2g, self._bb_swing_5g,
-                                self._ext_lna_2g)
+            rrsr = chan.set_channel_bw(t, channel, self._bb_swing_2g, self._bb_swing_5g,
+                                       self._ext_lna_2g)
+            if rrsr is not None:
+                self._dm.rrsr_val_init = rrsr                   # rtw_phydm_set_rrsr (hal_com.c:13241)
+                watchdog.set_bb_swing_by_band(self._dm, channel > 14)
+            watchdog.clear_txpowertracking_state(self._dm)      # phy_SwChnlAndSetBwMode8812
             if not scan:
                 if channel <= 14:
                     txpower.set_tx_power(t, channel, self._tx_power)
@@ -326,6 +340,7 @@ class Rtl8821auDkmsDriver(Driver):
                                     bmc=bmc) + frame_bytes
         async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
+        self._dm.tx_bytes += len(frame_bytes)   # rtw_monitor_xmit_entry tx_bytes (rtw_xmit.c:5168)
         self._start_tx_led_blink()
         return True
 
@@ -374,14 +389,14 @@ class Rtl8821auDkmsDriver(Driver):
             await loop.run_in_executor(None, monitor._write_mac_addr, self.transport, real)
 
     async def close(self) -> None:
-        # Stop the DIG watchdog, the LED blink and the reader before releasing the USB handle.
-        if self._dig_task is not None:
-            self._dig_task.cancel()
+        # Stop the watchdog, the LED blink and the reader before releasing the USB handle.
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
             try:
-                await self._dig_task
+                await self._watchdog_task
             except asyncio.CancelledError:
                 pass
-            self._dig_task = None
+            self._watchdog_task = None
         if self._led_task is not None:
             self._led_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
