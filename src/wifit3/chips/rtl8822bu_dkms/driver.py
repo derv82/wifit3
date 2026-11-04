@@ -220,7 +220,7 @@ class Rtl8822buDkmsDriver(Driver):
 
             await loop.run_in_executor(None, _initial_tune, self.transport)
             self._channel = _DEFAULT_CHANNEL
-            # rtw_hal_init_opmode (hal_intf.c:616): a new interface is in STATION state.
+            # rtw_hal_init_opmode (hal_intf.c:622): a new interface is in STATION state.
             await loop.run_in_executor(None, mac.set_opmode_station, self.transport)
             # _netdev_open: rtw_hal_init, then rtw_led_control(LED_CTL_NO_LINK) (os_intfs.c:4063).
             self._led_task = loop.create_task(self._led_blink())
@@ -303,7 +303,7 @@ class Rtl8822buDkmsDriver(Driver):
 
     async def _led_blink(self) -> None:
         """SW_LED_MODE9 LED0 no-link slow blink: SwLedBlink9 LED_BLINK_SLOWLY (hal_usb_led.c:934), first fire ON.
-        Not under _io_lock: the blink runs on a workqueue, not the cmd thread (hal_usb_led.c:1863)."""
+        Not under _io_lock: the blink runs on a workqueue, not the cmd thread (hal_usb_led.c:1864)."""
         loop = asyncio.get_running_loop()
         led_on = False
         try:

@@ -47,7 +47,7 @@ class Rtl8822buTransport:
         self.dev = dev
         self._bulk_out_ep = bulk_out_ep
         self._in_ep = None  # bulk-IN (RX) endpoint, probed lazily
-        # usb_vendor_req_mutex: one request and its 0x4E0 mirror at a time (usb_ops_linux.c:69).
+        # usb_vendor_req_mutex: one request and its 0x4E0 mirror at a time (usb_ops_linux.c:70).
         self._vendor_req_lock = threading.Lock()
 
     # --- vendor control transfers (with the ON-section page-switch mirror) ---

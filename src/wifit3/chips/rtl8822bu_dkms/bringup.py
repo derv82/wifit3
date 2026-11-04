@@ -82,6 +82,6 @@ def cold_bringup(t):
     txbf.phy_bf_init(t)                    # rtl8822b_phy_bf_init: MU-MIMO/sounding default seed
     coex.wifi_only_hw_config(t)            # rtw_btcoex_wifionly_hw_config: wifi-only antenna/RFE seed
     mac.init_misc(t)                       # rtl8822b_init_misc: CAM/RCR/sec-en/TXQ/AMPDU MAC misc
-    # --- rtl8822bu_init tail: hal_init_misc (rtl8822bu_halinit.c:178), SW_LED_MODE9 -> SW-controlled LED ---
+    # --- rtl8822bu_init tail: hal_init_misc (rtl8822bu_halinit.c:205), SW_LED_MODE9 -> SW-controlled LED ---
     led.led_cfg(t, led.HALMAC_WLLED_MODE_SW_CTRL)
     return info, e
