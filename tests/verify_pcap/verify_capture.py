@@ -30,6 +30,7 @@ IDLE_PASSES_IN_A_ROW = 3
 IGNORED_OTHER_DEVICES = "other devices and address 0"
 IGNORED_OTHER_INTERFACES = "other interfaces (class requests, endpoints of non-vendor-class interfaces)"
 IGNORED_ENUMERATION = "usbcore enumeration (standard control requests)"
+IGNORED_OTHER_FUNCTION = "another function's vendor requests (not the driver's request types)"
 IGNORED_RX = "RX: IN ops carrying only 802.11 frames"
 IGNORED_INCOMPLETE = "submitted, never completed"
 IGNORED_KILLED = "killed by the host at teardown (-ESHUTDOWN)"
@@ -129,6 +130,10 @@ class FamilyDecoder(ABC):
 
     @abstractmethod
     def carries_only_80211_frames(self, op: UsbOp) -> bool: ...
+
+    def is_driver_vendor_request(self, op: UsbOp) -> bool:
+        """Whether a vendor control request is the WLAN driver's, not another function's on the same device."""
+        return True
 
     def register_ops(self, op: UsbOp) -> list[RegisterOp]:
         """The register accesses ``op`` carries, in wire order; WAIVERS match on these."""
@@ -449,6 +454,8 @@ class VerifyCapture:
             elif (op.transfer_type == TransferType.CONTROL
                   and op.request_type & REQUEST_TYPE_MASK == REQUEST_TYPE_STANDARD):
                 ignored_counts[IGNORED_ENUMERATION] += 1
+            elif op.transfer_type == TransferType.CONTROL and not self.DECODER.is_driver_vendor_request(op):
+                ignored_counts[IGNORED_OTHER_FUNCTION] += 1
             elif is_bulk_or_interrupt_in(op) and self.DECODER.carries_only_80211_frames(op):
                 ignored_counts[IGNORED_RX] += 1
             else:

@@ -21,6 +21,8 @@ RXD_PKT_TYPE_SHIFT = 27
 RXD_PKT_FLAG_SHIFT = 16
 RXD_PKT_FLAG_NORMAL = 0x1
 TX_ENDPOINTS = (C.EP_OUT_AC_BE, C.EP_OUT_AC_BK, C.EP_OUT_AC_VI, C.EP_OUT_AC_VO, C.EP_OUT_HCCA)
+# MT_USB_TYPE_VENDOR and MT_USB_TYPE_UHW_VENDOR (mt792x.h:479-480), IN and OUT; Bluetooth's are plain vendor ones.
+DRIVER_REQUEST_TYPES = (C.MT_REQ_IN_VENDOR, C.MT_REQ_OUT_VENDOR, C.MT_REQ_IN_UHW_VENDOR, C.MT_REQ_OUT_UHW_VENDOR)
 
 CONTROL_REQUEST_NAMES = {
     C.MT_VEND_READ_EXT: "R ", C.MT_VEND_WRITE_EXT: "W ",
@@ -224,6 +226,9 @@ class MediatekConnacDecoder(FamilyDecoder):
             source_dword = struct.unpack_from("<I", source.data, 4 * field.dword)[0]
             struct.pack_into("<I", data, 4 * field.dword, (dword & ~mask) | (source_dword & mask))
         return replace(op, data=bytes(data))
+
+    def is_driver_vendor_request(self, op: UsbOp) -> bool:
+        return op.request_type in DRIVER_REQUEST_TYPES
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """connac3 bulk IN: PKT_TYPE_RX_EVENT is an MCU reply (kept) unless PKT_FLAG marks a tunnelled frame."""
