@@ -94,12 +94,13 @@ class CaptureReplay:
                         candidate = self._next_unreproduced(candidate + 1)
                 if candidate is None:
                     raise self._diverge(position, request, caller, "request differs from the capture")
+                # The clock stays: the ops passed over are not reproduced yet.
                 position = candidate
+            else:
+                self._loop.advance_clock(self.ops[position].completion_time)
             self.reproduced_by[position] = caller
             self.next_position_by_caller[caller] = position + 1
-            captured = self.ops[position]
-            self._loop.advance_clock(captured.completion_time)
-            return captured
+            return self.ops[position]
 
     def read(self, endpoint: int, caller: str) -> UsbOp | None:
         """The next captured IN op on ``endpoint``, or None while the replay has not reached it."""
