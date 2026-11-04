@@ -269,10 +269,10 @@ class Rtl8822buDkmsDriver(Driver):
         """rtw_dynamic_check_timer_handlder re-arms 2 s from its own fire (rtw_mlme.c:4130) and queues the
         tick on the cmd thread, so a tick waits for _io_lock, never skips. A USB error skips one tick."""
         loop = asyncio.get_running_loop()
-        expiry = armed_at
+        fired_at = armed_at
         while True:
-            expiry += 2.0
-            await asyncio.sleep(expiry - loop.time())
+            await asyncio.sleep(fired_at + 2.0 - loop.time())
+            fired_at = loop.time()
             try:
                 async with self._io_lock:
                     await loop.run_in_executor(None, dm_watchdog.rtw_dynamic_chk_wk_hdl, self.transport,
