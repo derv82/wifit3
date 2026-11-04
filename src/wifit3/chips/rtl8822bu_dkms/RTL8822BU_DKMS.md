@@ -14,16 +14,22 @@ modules — it does NOT reuse `rtw88_base` or `rtl88xxau_base`; expect a separat
 - Live monitor RX: working on hardware (ch6 -> 7 APs/383 bcn; hop 1-13 -> 25 APs/447 bcn).
 - TX descriptor (`build_inject_txdesc`): byte-for-byte 251/251 vs the captured aireplay injector;
   deauth + 4-way handshake confirmed live by the user.
-- Honest one-line status: **cold init byte-for-byte; runtime mostly ported.** The runtime wire
-  (op 9855 -> ~28910) is partial — `set_channel`, `enable_monitor`, the PHYDM watchdog and the TX
-  descriptor are ported; the continuous DIG/FA/spur adaptation the capture runs is not fully
-  reproduced (the golden capture holds 24 bcn/s median while hopping; ours measures lower).
+- The ~2 s dynamic-check tick (`dm_watchdog.rtw_dynamic_chk_wk_hdl`) is the whole C tick for a USB
+  monitor iface with no link: sreset DMA checks, USB RX-agg, RCR, then `phydm_watchdog` (condition
+  number, HT-STF/ant weighting, NHM/CLM/FAHM, FA + dbg ports, DIG, CCK-PD, EDCCA, RRSR, thermal
+  TX-power tracking, BW indication). The replay reproduces every tick on cap-1/2/3 up to the
+  aireplay TX at the end.
 - The `rtw_hal_init` / `_netdev_open` tail after `rtl8822b_init` is ported (cap-1 op 9855 -> 10095):
   `hal_init_misc` SW-LED pinmux, MAC address, `rtw_restore_hw_port_cfg`, RX BAR, the initial channel
   set, `rtw_hal_init_opmode` (STATION), then the SW_LED_MODE9 1 s no-link blink task
   (`driver._led_blink`, replaces the earlier hardware TX-blink LED mode, which has no C source).
-- Not ported (by evidence-backed choice): per-channel FW-IQK (an H2C subsystem), and thermal
-  TX-power tracking (`phydm_rf_watchdog`; sustained-flood only).
+- Not ported: per-channel FW-IQK (an H2C subsystem); `rtw_hal_sreset_reset` on a non-zero DMA
+  status (the tick reads the status, the reset is a TODO).
+- Silent tick members in this state (no register access): linked/traffic checks, turbo EDCCA,
+  RSSI monitor, power training, path diversity (CONFIG_RTW_PATH_DIV unset), CFO tracking (crystal
+  cap already at default), adaptive SoML (CONFIG_DYNAMIC_SOML unset), DPK track, BT coex
+  (EEPROMBluetoothCoexist false on USB), IPS, TSF update. The NHM/CLM/FAHM racing state always
+  releases within a tick, so it is not carried.
 - **Never re-assert "byte-for-byte" without a fresh byte-diff** — two real bugs (RX antenna mux,
   TX G_ID) hid behind exactly that unverified claim.
 
@@ -250,3 +256,13 @@ Empirical baselines (`rtl8822budkms_20260909-185305.md` & `rtl8822budkms_2026090
 4. **TASK-4 (PA Bias & RF 0x18 Synth Lock)**: Physical EFUSE `0x3D7`/`0x3D8` (PA bias = 0xF0, 0xF0) was verified wired through `cal.tx_current_calibration()` in `bringup.py:78`. The RF18 bit 15 synth-unlock fault was caused by `_dynamic_spur_det_eliminate` toggling Path A off in `0x0808` ("Cannot shut down path-A, because synthesizer will be shut down"); bypassing it via `is_scan=True` prevents Path A shutdown, stabilizing synthesizer lock on cold boot.
 5. **TASK-5 (Watchdog Lock & DIG Clamping)**: `_watchdog_loop` now checks `self._io_lock.locked()` to skip watchdog ticks during active channel tuning. In `driver._seed_dig()`, `dig_max_of_min` is clamped to `DIG_MIN_COVERAGE` (`0x1C`), maintaining peak RX sensitivity in unassociated monitor mode.
 
+### 2026-11-04 — the whole dynamic-check tick, spur eliminator on every hop
+
+The tick now follows rtw_dynamic_chk_wk_hdl op for op (see Status). Three earlier choices were
+not the C and are gone: `DigState.first_disconnect=True` (the C's pre_is_linked starts false, so
+the first tick hunts by FA), `dig_max_of_min` 0x22 (dig_init sets 0x2A), and `is_scan=True` on
+every hop (TASK-3/4 above): `is_scan_in_process` is `bScanInProcess`, which only the watchdog sets,
+from WIFI_UNDER_SURVEY, never true in monitor, so the C runs the PSD spur eliminator on spur
+channels at every hop. The watchdog timer now re-arms 2 s from its own fire. The TX-power tracking
+state is cleared on every tune (odm_clear_txpowertracking_state, rtl8822b_phy.c:986). The TASK-3/4
+live claims (ch153 yield, RF18 lock) need a recheck with the eliminator running.
