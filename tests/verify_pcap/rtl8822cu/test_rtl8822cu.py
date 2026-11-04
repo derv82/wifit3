@@ -16,7 +16,7 @@ class TestRtl8822cu(VerifyCapture):
     CAPTURE_PATHS = [
         CAPTURE_DIR / "capture-1.pcap",
         CAPTURE_DIR / "capture-2.pcap",
-        CAPTURE_DIR / "capture-3.pcap",
+        # No capture-3: the vendor driver failed it (CFG_PARA timeout, then -71; driver.log:5640-6037).
     ]
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RTL8822CUDriver
