@@ -94,6 +94,17 @@ def describe_mcu_command(data: bytes) -> str:
 
 
 class MediatekConnacDecoder(FamilyDecoder):
+    """Defaults are the connac3 (mt7925) values. rx_event_eid_offset / rx_event_seq_offset: eid and seq in the MCU
+    event RX descriptor. sniffer_enable_starts_channel_change: Linux sends sniffer enable before each sniffer config;
+    when False, the sniffer config alone is the channel change."""
+
+    def __init__(self, rx_event_eid_offset: int = C.MT7925_RXD_EID_OFF,
+                 rx_event_seq_offset: int = C.MT7925_RXD_SEQ_OFF,
+                 sniffer_enable_starts_channel_change: bool = True) -> None:
+        self.rx_event_eid_offset = rx_event_eid_offset
+        self.rx_event_seq_offset = rx_event_seq_offset
+        self.sniffer_enable_starts_channel_change = sniffer_enable_starts_channel_change
+
     def describe(self, op: UsbOp) -> str:
         status = f"  status {op.status}" if op.status else ""
         data = op.data
@@ -110,9 +121,9 @@ class MediatekConnacDecoder(FamilyDecoder):
             if len(data) < 4:
                 return f"IN ep 0x{op.endpoint:02x} {len(data)}B{status}"
             packet_type, packet_flag = rx_packet_type(data)
-            if packet_type == C.PKT_TYPE_RX_EVENT and len(data) > C.MT7925_RXD_SEQ_OFF:
-                return (f"MCU EVENT ep 0x{op.endpoint:02x} eid 0x{data[C.MT7925_RXD_EID_OFF]:02x} "
-                        f"seq {data[C.MT7925_RXD_SEQ_OFF]} flag {packet_flag} {len(data)}B{status}")
+            if packet_type == C.PKT_TYPE_RX_EVENT and len(data) > self.rx_event_seq_offset:
+                return (f"MCU EVENT ep 0x{op.endpoint:02x} eid 0x{data[self.rx_event_eid_offset]:02x} "
+                        f"seq {data[self.rx_event_seq_offset]} flag {packet_flag} {len(data)}B{status}")
             return f"RX ep 0x{op.endpoint:02x} type {packet_type} {len(data)}B{status}"
         if op.endpoint == C.EP_OUT_MCU:
             return describe_mcu_command(data) + status
@@ -134,6 +145,10 @@ class MediatekConnacDecoder(FamilyDecoder):
     def channel_change_at(self, ops: Sequence[UsbOp], position: int) -> int | None:
         op = ops[position]
         if op.transfer_type != TransferType.BULK or op.is_in:
+            return None
+        if not self.sniffer_enable_starts_channel_change:
+            if sniffer_tag(op) == C.UNI_SNIFFER_CONFIG:
+                return op.data[UNI_PAYLOAD_OFFSET + 12]
             return None
         if sniffer_tag(op) != C.UNI_SNIFFER_ENABLE:
             return None
@@ -173,14 +188,14 @@ class MediatekConnacDecoder(FamilyDecoder):
                     skipped_seqs.discard(seq)
                     renumbered_seq_by_seq[seq] = (seq - 1 - skipped_count) % MCU_SEQ_COUNT + 1
                     op = with_byte(op, MCU_SEQ_OFFSET, renumbered_seq_by_seq[seq])
-            elif (op.transfer_type == TransferType.BULK and op.is_in and len(op.data) > C.MT7925_RXD_SEQ_OFF
+            elif (op.transfer_type == TransferType.BULK and op.is_in and len(op.data) > self.rx_event_seq_offset
                   and rx_packet_type(op.data)[0] == C.PKT_TYPE_RX_EVENT):
-                seq = op.data[C.MT7925_RXD_SEQ_OFF]
+                seq = op.data[self.rx_event_seq_offset]
                 if seq in skipped_seqs:
                     skipped_seqs.discard(seq)
                     waived_positions.add(position)
                 elif seq in renumbered_seq_by_seq:
-                    op = with_byte(op, C.MT7925_RXD_SEQ_OFF, renumbered_seq_by_seq[seq])
+                    op = with_byte(op, self.rx_event_seq_offset, renumbered_seq_by_seq[seq])
             renumbered_ops.append(op)
         return renumbered_ops, waived_positions
 
