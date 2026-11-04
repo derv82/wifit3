@@ -115,8 +115,8 @@ class Rtl8814auDkmsDriver(Driver):
         self._reader: Optional[RxReaderThread] = None
         self._dig_task: Optional[asyncio.Task] = None
         self._led_task: Optional[asyncio.Task] = None
-        # Serializes control-transfer batches (DIG watchdog vs set_channel) so two
-        # executor threads never drive EP0 at once; the RX reader uses bulk-IN.
+        # Serializes control-transfer batches (DIG watchdog vs set_channel); the transport's
+        # usb_vendor_req_mutex keeps any two threads' EP0 requests apart. RX uses bulk-IN.
         self._io_lock = asyncio.Lock()
 
     @classmethod
@@ -270,14 +270,16 @@ class Rtl8814auDkmsDriver(Driver):
             logger.exception("RTL8814AU phydm watchdog stopped on error")
 
     async def _led_blink(self) -> None:
-        """SW_LED_MODE9 LED0 no-link slow blink: SwLedBlink9 LED_BLINK_SLOWLY (hal_usb_led.c:934)."""
+        """SW_LED_MODE9 LED0 no-link slow blink: SwLedBlink9 LED_BLINK_SLOWLY (hal_usb_led.c:934).
+
+        Not under _io_lock: a workqueue, not the cmd thread (hal_usb_led.c:1863); the transport's
+        usb_vendor_req_mutex keeps its EP0 requests apart from the other thread's."""
         loop = asyncio.get_running_loop()
         st = self._wd_state
         try:
             while True:
                 await asyncio.sleep(LED_BLINK_NO_LINK_INTERVAL_ALPHA_S)
-                async with self._io_lock:
-                    await loop.run_in_executor(None, led_blink, self.transport, st)
+                await loop.run_in_executor(None, led_blink, self.transport, st)
         except asyncio.CancelledError:
             pass
         except Exception:  # noqa: BLE001 — an LED fault must not kill RX

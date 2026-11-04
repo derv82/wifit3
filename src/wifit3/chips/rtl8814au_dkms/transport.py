@@ -11,6 +11,7 @@ transport on hardware and the pcap-replay transport in the M1 verifier.
 from __future__ import annotations
 
 import struct
+import threading
 
 import usb.core
 import usb.util
@@ -35,17 +36,21 @@ class Rtl8814auTransport:
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
         self._in_ep = None  # bulk-IN endpoint address, probed lazily
+        # CONFIG_USB_VENDOR_REQ_MUTEX (autoconf.h:224): one vendor request at a time (usb_ops_linux.c:70).
+        self.usb_vendor_req_mutex = threading.Lock()
 
     # --- register access ---------------------------------------------------
     def _read(self, addr: int, length: int) -> bytes:
-        return bytes(self.dev.ctrl_transfer(
-            REQ_TYPE_READ, REALTEK_VENDOR_REQUEST, addr, 0, length, _CTRL_TIMEOUT_MS
-        ))
+        with self.usb_vendor_req_mutex:
+            return bytes(self.dev.ctrl_transfer(
+                REQ_TYPE_READ, REALTEK_VENDOR_REQUEST, addr, 0, length, _CTRL_TIMEOUT_MS
+            ))
 
     def _write(self, addr: int, data: bytes) -> None:
-        self.dev.ctrl_transfer(
-            REQ_TYPE_WRITE, REALTEK_VENDOR_REQUEST, addr, 0, data, _CTRL_TIMEOUT_MS
-        )
+        with self.usb_vendor_req_mutex:
+            self.dev.ctrl_transfer(
+                REQ_TYPE_WRITE, REALTEK_VENDOR_REQUEST, addr, 0, data, _CTRL_TIMEOUT_MS
+            )
 
     def read8(self, addr: int) -> int:
         return self._read(addr, 1)[0]
