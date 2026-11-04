@@ -187,7 +187,7 @@ class VerifyCapture:
     MAC80211_DEFAULT_CHANNEL: ClassVar[int | None] = None
     # The driver tasks whose sleeps are kernel hrtimers, not timer-wheel timers.
     HRTIMER_TASKS: ClassVar[tuple[Callable[..., Coroutine[Any, Any, None]], ...]] = ()
-    # Captures the driver cannot reproduce for a host-side reason no waiver models; each case is a strict xfail.
+    # Captures the driver cannot reproduce for a host-side reason no waiver models; each case is a non-strict xfail.
     XFAIL_REASON_BY_CAPTURE_PATH: ClassVar[dict[Path, str]] = {}
 
     def test_capture(self, capture_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

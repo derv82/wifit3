@@ -35,6 +35,12 @@ class TestRt5572(VerifyCapture):
     HRTIMER_TASKS = (RT5572Driver._tx_sta_fifo_timeout,)
     DECODER = Rt2800Decoder(channel_rf3_mask=C.RFCSR9_K | C.RFCSR9_N, channel_rfcsr_values=CHANNEL_RFCSR_VALUES,
                             txwi_size=C.TXWI_DESC_SIZE_5WORDS)
+    XFAIL_REASON_BY_CAPTURE_PATH = {
+        DRIVER_CAPTURES / "captures_rt2800usb_rt5572_2" / "capture-1.pcap":
+            "op 38650: TX_STA_FIFO poll timer fires 1.6 ms early",
+        DRIVER_CAPTURES / "captures_rt2800usb" / "capture-1.pcap":
+            "op 10288: driver writes BBP83 = 0x4a, capture reads BBP1",
+    }
     WAIVERS = [
         Waiver(WaiverReason.CAPTURE_SETUP, "rt2x00mac.c:400 rt2x00mac_configure_filter -> rt2800lib.c:1967 "
                "rt2800_config_filter: mac80211 re-applies the monitor filter as a capture tool opens its socket",

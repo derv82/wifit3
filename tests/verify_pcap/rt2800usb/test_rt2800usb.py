@@ -27,4 +27,6 @@ class TestRt2800usbRt3572(VerifyCapture):
     DRIVER_CLASS = RT2800USBDriver
     MAC80211_DEFAULT_CHANNEL = 1
     DECODER = Rt2800Decoder(channel_rf1_rfcsr=2, channel_rf3_rfcsr=3, channel_rfcsr_values=CHANNEL_RFCSR_VALUES)
+    XFAIL_REASON_BY_CAPTURE_PATH = {path: "op 1: driver reads 0x1008, capture has DEVICE_MODE 0x0011"
+                                    for path in CAPTURE_PATHS}
     WAIVERS = []

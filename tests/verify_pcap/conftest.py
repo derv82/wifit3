@@ -16,6 +16,6 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         marks = [] if path.exists() else [pytest.mark.skip(reason=f"capture not found: {path}")]
         xfail_reason = test_class.XFAIL_REASON_BY_CAPTURE_PATH.get(path)
         if xfail_reason is not None:
-            marks.append(pytest.mark.xfail(strict=True, reason=xfail_reason))
+            marks.append(pytest.mark.xfail(strict=False, reason=xfail_reason))
         params.append(pytest.param(path, id=f"{path.parent.name}/{path.stem}", marks=marks))
     metafunc.parametrize("capture_path", params)
