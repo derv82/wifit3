@@ -35,6 +35,7 @@ _FCTL_ORDER = 0x8000
 _HT_CTL_LEN = 4
 _QOS_CTL_LEN = 2
 _STYPE_ACTION = 0x00D0
+_STYPE_BEACON = 0x0080
 _STYPE_DISASSOC = 0x00A0
 _STYPE_DEAUTH = 0x00C0
 _STYPE_BACK_REQ = 0x0080             # control subtype BlockAckReq
@@ -185,6 +186,8 @@ def build_txwi(mpdu: bytes, *, qid: int, wcid_idx: int, omac_idx: int = MON_TX_O
 
     if multicast:
         txwi[3] |= MT_TXD3_BCM
+    if (fc & (_FCTL_FTYPE | _FCTL_STYPE)) == (_FTYPE_MGMT | _STYPE_BEACON):   # mac.c:703-704
+        txwi[3] |= MT_TXD3_REM_TX_COUNT
 
     # injected branch (IEEE80211_TX_CTL_INJECTED): sequence comes from the MPDU itself, a
     # BlockAckReq's from its start_seq_num (mac.c:706-714). Bytes past the end read as 0.
