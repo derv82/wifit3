@@ -41,7 +41,8 @@ class TestAr9271V2(VerifyCapture):
                value_only_register=R.AR_TSF_L32),
         Waiver(WaiverReason.CAPTURE_SETUP, f"{SOURCE_DIR}/htc_drv_main.c:1257-1279 ath9k_htc_configure_filter: "
                "mac80211 re-applies the monitor filter as capture tools open their sockets",
-               capture_only_run=MONITOR_RX_FILTER_RUN),
+               capture_only_run=MONITOR_RX_FILTER_RUN, driver_occurrence_count=4),
         Waiver(WaiverReason.CAPTURE_SETUP, f"{SOURCE_DIR}/htc_drv_gpio.c:226-246 ath9k_led_work: mac80211's "
-               "throughput LED trigger blinks the LED", capture_only_run=LED_RUN),
+               "throughput LED trigger blinks the LED", capture_only_run=LED_RUN,
+               driver_occurrence_count=2),
     ]

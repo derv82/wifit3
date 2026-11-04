@@ -139,6 +139,19 @@ def test_capture_only_run_matches_every_occurrence() -> None:
     assert CaptureOnlyRun().capture_only_run_occurrences(ops, RUN) == [[0, 1], [3, 4]]
 
 
+class CaptureOnlyRunAfterTheDriversOwn(VerifyCapture):
+    DECODER = Ath9kHtcDecoder()
+    WAIVERS = [Waiver(WaiverReason.CAPTURE_SETUP, "synthetic", capture_only_run=RUN, driver_occurrence_count=1)]
+
+
+def test_capture_only_run_does_not_waive_the_drivers_own_occurrences() -> None:
+    ops = [reg_read(2, [READ_REGISTER]), reg_write(3, [OTHER_REGISTER, 0x2, R.AR_TSF_U32, 0x0]),
+           reg_write(4, [OTHER_REGISTER, 0x3]),
+           reg_read(5, [READ_REGISTER]), reg_write(6, [OTHER_REGISTER, 0x2, R.AR_TSF_U32, 0x0])]
+    waiver = CaptureOnlyRunAfterTheDriversOwn.WAIVERS[0]
+    assert CaptureOnlyRunAfterTheDriversOwn().waivable_occurrences(ops, waiver) == [[3, 4]]
+
+
 class RealtekValueOnly(VerifyCapture):
     DECODER = RealtekDecoder()
     WAIVERS = [Waiver(WaiverReason.HOST_VALUE, "synthetic", value_only_register=REALTEK_WAIVED_REGISTER)]

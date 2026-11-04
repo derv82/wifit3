@@ -71,8 +71,9 @@ class TxOpField:
 class Waiver:
     """value_only_register / value_only_tx_op_field: the driver makes the op; that register's written value (only its
     value_only_bits, if given) or that field of an injected frame's TX op is not compared. capture_only_run: this run
-    of register ops is in the capture only, waived where the replay would stop at its first op. driver_only_run: this
-    run of register ops, in order, is the driver's only. capture_paths: the captures it applies to; empty: all."""
+    of register ops is in the capture only, waived where the replay would stop at its first op, except its first
+    driver_occurrence_count occurrences: the driver's own. driver_only_run: this run of register ops, in order, is the
+    driver's only. capture_paths: the captures it applies to; empty: all."""
     reason: WaiverReason
     c_source: str
     value_only_register: int | None = None
@@ -81,6 +82,7 @@ class Waiver:
     driver_only_run: tuple[RegisterOp, ...] = ()
     capture_paths: tuple[Path, ...] = ()
     value_only_bits: int | None = None
+    driver_occurrence_count: int = 0
 
     def __post_init__(self) -> None:
         forms = [self.value_only_register is not None, bool(self.capture_only_run),
@@ -90,6 +92,8 @@ class Waiver:
                              "value_only_tx_op_field, driver_only_run")
         if self.value_only_bits is not None and self.value_only_register is None:
             raise ValueError("value_only_bits narrows a value_only_register")
+        if self.driver_occurrence_count and not self.capture_only_run:
+            raise ValueError("driver_occurrence_count scopes a capture_only_run")
 
     def describe(self) -> str:
         field = self.value_only_tx_op_field
@@ -186,7 +190,7 @@ class VerifyCapture:
             if waiver.driver_only_run:
                 driver_only_progress[waiver] = 0
             elif waiver.capture_only_run:
-                occurrences = self.capture_only_run_occurrences(capture.ops, waiver.capture_only_run)
+                occurrences = self.waivable_occurrences(capture.ops, waiver)
                 occurrences_by_waiver[waiver] = occurrences
                 for occurrence in occurrences:
                     capture_only_run_by_start[occurrence[0]] = occurrence
@@ -210,6 +214,9 @@ class VerifyCapture:
             occurrence = capture_only_run_by_start.get(position)
             if occurrence is None:
                 return None
+            for occurrence_position in occurrence:
+                if replay.reproduced_by[occurrence_position] is not None:
+                    return None
             return self.DECODER.skip_capture_only_ops(ops, set(occurrence))
 
         replay = CaptureReplay(capture.ops, is_same_request, is_driver_only_request, skip_capture_only_run_at, loop)
@@ -345,6 +352,11 @@ class VerifyCapture:
                 driver_only_progress[waiver] = progress + len(register_ops)
                 return True
         return False
+
+    def waivable_occurrences(self, ops: list[UsbOp], waiver: Waiver) -> list[list[int]]:
+        """The occurrences of ``waiver``'s capture_only_run after the driver's own first driver_occurrence_count."""
+        occurrences = self.capture_only_run_occurrences(ops, waiver.capture_only_run)
+        return occurrences[waiver.driver_occurrence_count:]
 
     def capture_only_run_occurrences(self, ops: list[UsbOp], run: tuple[RegisterOp, ...]) -> list[list[int]]:
         """The positions of each occurrence of ``run``: consecutive control / OUT ops whose register ops, joined,

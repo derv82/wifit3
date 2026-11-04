@@ -36,7 +36,8 @@ class TestMt7925au(VerifyCapture):
         Waiver(WaiverReason.CAPTURE_SETUP, CONFIGURE_FILTER_SOURCE,
                capture_only_run=(RegisterOp(RegisterAccess.WRITE, C.MCU_UNI_CMD_BAND_CONFIG,
                                             int.from_bytes(MONITOR_RX_FILTER_PAYLOAD, "little"),
-                                            len(MONITOR_RX_FILTER_PAYLOAD)),)),
+                                            len(MONITOR_RX_FILTER_PAYLOAD)),),
+               driver_occurrence_count=2),
         Waiver(WaiverReason.WIFIT3_ONLY, "wifit3 only: Driver.inject_frame _stamp_tx_seq; aireplay-ng's radiotap NOSEQ "
                "keeps its own", value_only_tx_op_field=FRAME_SEQUENCE_NUMBER, capture_paths=TX_CAPTURE_PATHS),
         Waiver(WaiverReason.WIFIT3_ONLY, "mac.c:705-718 mt7925_mac_write_txwi_80211 copies the injected frame's "
