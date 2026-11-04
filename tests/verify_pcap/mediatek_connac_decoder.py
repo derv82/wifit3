@@ -14,6 +14,8 @@ MCU_SEQ_OFFSET = MCU_TXD_OFFSET + 39
 # mt76_mcu msg_seq: 1 .. 15, never 0.
 MCU_SEQ_COUNT = 15
 UNI_PAYLOAD_OFFSET = C.SDIO_HDR_SIZE + 48
+# After the 64-byte mt76_connac2_mcu_txd.
+LEGACY_PAYLOAD_OFFSET = C.SDIO_HDR_SIZE + 64
 TX_MPDU_OFFSET = C.SDIO_HDR_SIZE + C.MT_SDIO_TXD_SIZE
 RXD_PKT_TYPE_SHIFT = 27
 RXD_PKT_FLAG_SHIFT = 16
@@ -96,14 +98,17 @@ def describe_mcu_command(data: bytes) -> str:
 class MediatekConnacDecoder(FamilyDecoder):
     """Defaults are the connac3 (mt7925) values. rx_event_eid_offset / rx_event_seq_offset: eid and seq in the MCU
     event RX descriptor. sniffer_enable_starts_channel_change: Linux sends sniffer enable before each sniffer config;
-    when False, the sniffer config alone is the channel change."""
+    when False, the sniffer config alone is the channel change. legacy_command_register_ops: a legacy MCU command is
+    also one WRITE of pq_id << 16 | ext_cid << 8 | cid valued its payload."""
 
     def __init__(self, rx_event_eid_offset: int = C.MT7925_RXD_EID_OFF,
                  rx_event_seq_offset: int = C.MT7925_RXD_SEQ_OFF,
-                 sniffer_enable_starts_channel_change: bool = True) -> None:
+                 sniffer_enable_starts_channel_change: bool = True,
+                 legacy_command_register_ops: bool = False) -> None:
         self.rx_event_eid_offset = rx_event_eid_offset
         self.rx_event_seq_offset = rx_event_seq_offset
         self.sniffer_enable_starts_channel_change = sniffer_enable_starts_channel_change
+        self.legacy_command_register_ops = legacy_command_register_ops
 
     def describe(self, op: UsbOp) -> str:
         status = f"  status {op.status}" if op.status else ""
@@ -161,11 +166,18 @@ class MediatekConnacDecoder(FamilyDecoder):
         return None
 
     def register_ops(self, op: UsbOp) -> list[RegisterOp]:
-        """A UNI MCU command only, as one WRITE of its command id valued its payload, little-endian."""
+        """A UNI MCU command, as one WRITE of its command id valued its payload, little-endian; a legacy one only
+        with legacy_command_register_ops."""
         data = op.data
         if (op.transfer_type != TransferType.BULK or op.endpoint != C.EP_OUT_MCU
-                or len(data) < UNI_PAYLOAD_OFFSET or not is_uni_mcu_frame(data)):
+                or len(data) < UNI_PAYLOAD_OFFSET):
             return []
+        if not is_uni_mcu_frame(data):
+            if not self.legacy_command_register_ops or len(data) < LEGACY_PAYLOAD_OFFSET:
+                return []
+            address = (C.MCU_PQ_ID << 16) | (data[MCU_TXD_OFFSET + 41] << 8) | data[MCU_TXD_OFFSET + 36]
+            return [RegisterOp(RegisterAccess.WRITE, address,
+                               int.from_bytes(data[LEGACY_PAYLOAD_OFFSET:], "little"))]
         command_id = struct.unpack_from("<H", data, MCU_TXD_OFFSET + 34)[0]
         return [RegisterOp(RegisterAccess.WRITE, command_id, int.from_bytes(data[UNI_PAYLOAD_OFFSET:], "little"))]
 
