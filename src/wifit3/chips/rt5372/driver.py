@@ -17,6 +17,7 @@ for the ground-truth facts. RT5392 is 2T2R (txpath=rxpath=2 per the correct EFUS
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import threading
 from collections import deque
@@ -64,6 +65,7 @@ class RT5372Driver(Driver):
         self._tx_status_pending: list[deque[float]] = [deque() for _ in range(C.NUM_TX_QUEUES)]
         self._txstatus_fifo: deque[int] = deque()
         self._tx_status_reading = False
+        self._txdone_work_queued = False
         self._txstatus_timer: Optional[asyncio.Task] = None
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
@@ -240,7 +242,7 @@ class RT5372Driver(Driver):
         self._tx_status_pending[qid].append(loop.time())    # rt2x00lib_dmadone
         self._async_read_tx_status()                        # rt2800usb_tx_dma_done
         if self._txstatus_fifo:
-            self._work_txdone()
+            self._queue_txdone_work()
         return True
 
     def _async_read_tx_status(self) -> None:
@@ -251,30 +253,59 @@ class RT5372Driver(Driver):
         self._txstatus_timer = asyncio.get_running_loop().create_task(self._tx_sta_fifo_timeout())
 
     async def _tx_sta_fifo_timeout(self) -> None:
-        """rt2800usb_tx_sta_fifo_timeout and rt2800usb_tx_sta_fifo_read_completed [SRC rt2800usb.c:94-169]."""
+        """rt2800usb_tx_sta_fifo_timeout: each hrtimer expiry reads TX_STA_FIFO; rt2800usb_tx_sta_fifo_read_completed
+        resubmits the read or re-arms the hrtimer [SRC rt2800usb.c:94-169]."""
         loop = asyncio.get_running_loop()
-        await asyncio.sleep(2 * C.TXSTATUS_READ_INTERVAL)
-        while True:
-            try:
-                tx_status = await loop.run_in_executor(None, self.transport.register_read, C.TX_STA_FIFO)
-            except usb.core.USBError as e:
-                logger.warning("TX status read failed %s", e)
-                self._tx_status_reading = False
-                return
-            if tx_status & C.TX_STA_FIFO_VALID:
-                self._txstatus_fifo.append(tx_status)
-                self._work_txdone()
-                continue
-            if self._txstatus_timeout():
-                self._work_txdone()
-            if not self._txstatus_pending():
-                self._tx_status_reading = False
-                return
-            await asyncio.sleep(C.TXSTATUS_READ_INTERVAL)
+        hrtimer_delay: Optional[float] = 2 * C.TXSTATUS_READ_INTERVAL
+        while hrtimer_delay is not None:
+            await asyncio.sleep(hrtimer_delay)
+            hrtimer_delay = None
+            queue_txdone_work = False
+            resubmit = True
+            while resubmit:
+                try:
+                    tx_status = await loop.run_in_executor(None, self.transport.register_read, C.TX_STA_FIFO)
+                except usb.core.USBError as e:
+                    if e.errno == errno.ENODEV:            # usb_submit_urb fails once the device is gone
+                        self._tx_status_reading = False
+                        return
+                    logger.warning("TX status read failed %s", e)
+                    resubmit = self._stop_reading_tx_status()
+                    continue
+                if tx_status & C.TX_STA_FIFO_VALID:
+                    self._txstatus_fifo.append(tx_status)
+                    queue_txdone_work = True
+                    continue
+                if self._txstatus_timeout():
+                    queue_txdone_work = True
+                if self._txstatus_pending():
+                    hrtimer_delay = C.TXSTATUS_READ_INTERVAL
+                    resubmit = False
+                else:
+                    resubmit = self._stop_reading_tx_status()
+            # txdone_work runs after the resubmitted reads complete, so each one still sees its entry pending.
+            if queue_txdone_work:
+                self._queue_txdone_work()
+
+    def _stop_reading_tx_status(self) -> bool:
+        """The stop_reading tail of rt2800usb_tx_sta_fifo_read_completed [SRC rt2800usb.c:129-140]."""
+        self._tx_status_reading = False
+        if self._txstatus_pending() and not self._tx_status_reading:
+            self._tx_status_reading = True
+            return True
+        return False
+
+    def _queue_txdone_work(self) -> None:
+        """queue_work(txdone_work): a no-op while the work is already queued."""
+        if self._txdone_work_queued:
+            return
+        self._txdone_work_queued = True
+        asyncio.get_running_loop().call_soon(self._work_txdone)
 
     def _work_txdone(self) -> None:
         """rt2800usb_work_txdone [SRC rt2800usb.c:456-476]: rt2800_txdone, then rt2800_txdone_nostatus
         [SRC rt2800lib.c:1121-1156, 1212-1238]."""
+        self._txdone_work_queued = False
         while self._txstatus_fifo or self._txstatus_timeout():
             while self._txstatus_fifo:
                 qid = (self._txstatus_fifo.popleft() & C.TX_STA_FIFO_PID_QUEUE) >> 1
