@@ -71,6 +71,7 @@ from .watchdog import WatchdogState, tick as watchdog_tick
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CHANNEL = 1
+_TRAFFIC_THRESHOLD_BYTES = 250_000
 
 
 class RTL8822CUDriver(Driver):
@@ -108,6 +109,8 @@ class RTL8822CUDriver(Driver):
         self.current_band_is_2g = True
         self._tx_seq = 0
         self._current_channel = 1
+        self._rx_bytes = 0
+        self._tx_bytes = 0
         self._rx_regs_after_tune_logged = False
 
     @classmethod
@@ -362,9 +365,13 @@ class RTL8822CUDriver(Driver):
         state = self._watchdog_state
         if not self.is_warm or state is None:
             return
+        rx_bytes, tx_bytes = self._rx_bytes, self._tx_bytes
+        traffic_bytes = (rx_bytes - state.last_rx_bytes) + (tx_bytes - state.last_tx_bytes)
+        state.last_rx_bytes, state.last_tx_bytes = rx_bytes, tx_bytes
         with self._control_lock:
             if self.is_warm:
-                watchdog_tick(self.transport, state, self._current_channel)
+                watchdog_tick(self.transport, state, self._current_channel,
+                              low_traffic=traffic_bytes < _TRAFFIC_THRESHOLD_BYTES)
 
     async def _watchdog(self, period_s: float = 2.0) -> None:
         """Run the vendor no-link PHYDM maintenance pass without blocking the event loop."""
@@ -467,7 +474,10 @@ class RTL8822CUDriver(Driver):
             ep = pick_bulk_out_ep(self._bulk_out_eps, queue=TX_DESC_QSEL_MGMT)
             loop = asyncio.get_running_loop()
             sent = await loop.run_in_executor(None, lambda: write_bulk(self.dev, ep, desc + frame_bytes))
-            return sent == len(desc) + len(frame_bytes)
+            if sent == len(desc) + len(frame_bytes):
+                self._tx_bytes += len(frame_bytes)
+                return True
+            return False
         except (ValueError, IOError, usb.core.USBError) as exc:
             logger.warning("RTL8822CU TX failed: %s", exc)
             return False
@@ -494,7 +504,10 @@ class RTL8822CUDriver(Driver):
     def _rx_read_once(self) -> bytes | None:
         if self._bulk_in_ep is None:
             return None
-        return read_rx_burst(self.dev, self._bulk_in_ep, max_size=16384, timeout_ms=100)
+        buf = read_rx_burst(self.dev, self._bulk_in_ep, max_size=16384, timeout_ms=100)
+        if buf:
+            self._rx_bytes += len(buf)
+        return buf
 
     def _rx_dispatch(self, buf: bytes) -> None:
         callback = self._rx_callback

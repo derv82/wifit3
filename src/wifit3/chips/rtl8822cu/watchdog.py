@@ -85,6 +85,8 @@ class WatchdogState:
     # thermal_value_lck: the averaged path-A meter latched the last time LCK fired. Seeds to the
     # EFUSE thermal reference (tssi->thermal[RF_PATH_A]) at init [SRC halrf_powertracking_ce.c:721].
     thermal_value_lck: int = 0xFF
+    last_rx_bytes: int = 0
+    last_tx_bytes: int = 0
 
     @classmethod
     def from_phydm(cls, dm: PhydmState) -> "WatchdogState":
@@ -101,16 +103,17 @@ def _sreset_check(t: RTL8822CUTransport) -> None:
     t.read16(0x1118)
 
 
-def _usb_rx_agg(t: RTL8822CUTransport) -> None:
-    """cfg_usb_rx_agg_88xx (USB, low-traffic monitor): pre-calc enable, USB-mode bits, size/timeout
-    word (size 1, timeout 1 -> 0x0101 on 8822C). [SRC halmac_usb_88xx.c:88]"""
+def _usb_rx_agg(t: RTL8822CUTransport, *, low_traffic: bool) -> None:
+    """cfg_usb_rx_agg_88xx: use 1/1 for low traffic and the USB2 5/0x20 default otherwise.
+    [SRC rtl8822cu_ops.c:sethwreg(HW_VAR_RXDMA_AGG_PG_TH), halmac_usb_88xx.c:88]"""
     dma_usb_agg = t.read8(0x0283)
     agg_enable = t.read8(0x010C)
     value32 = t.read32(0x0280)
+    size, timeout = (0x01, 0x01) if low_traffic else (0x05, 0x20)
     t.write32(0x0280, value32 | (1 << 29))              # EN_PRE_CALC
     t.write8(0x010C, agg_enable | (1 << 2))             # RXDMA_AGG_EN
     t.write8(0x0283, dma_usb_agg & ~(1 << 7))           # USB (not DMA) aggregation mode
-    t.write16(0x0280, 0x01 | (0x01 << 8))               # size 1, timeout 1
+    t.write16(0x0280, size | (timeout << 8))
 
 
 def _hw_setting(t: RTL8822CUTransport) -> None:
@@ -501,11 +504,11 @@ def _env_mntr_set(t: RTL8822CUTransport, st: WatchdogState) -> None:
     set_bb_reg(t, _REG_EDCCA_CLM_TRIG, 1 << 26, 1)
 
 
-def tick(t: RTL8822CUTransport, st: WatchdogState, channel: int) -> None:
+def tick(t: RTL8822CUTransport, st: WatchdogState, channel: int, *, low_traffic: bool = True) -> None:
     """One phydm dynamic-check watchdog tick, in wire order (phydm.c:2624-2715). ``channel`` is the
     driver's current channel; the thermal callback selects its delta swing table by it."""
     _sreset_check(t)
-    _usb_rx_agg(t)
+    _usb_rx_agg(t, low_traffic=low_traffic)
     t.read32(0x0608)                                    # hw_var_rcr_get (interleaved)
     _hw_setting(t)
     _env_mntr_result(t, st)

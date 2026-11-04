@@ -240,8 +240,8 @@ async def test_set_channel_rejects_unsupported_values_without_tuning(monkeypatch
 def test_watchdog_tick_runs_only_for_a_live_driver(monkeypatch):
     d = _driver()
     calls = []
-    monkeypatch.setattr(drv, "watchdog_tick", lambda *args: calls.append(args))
-    d._watchdog_state = MagicMock()
+    monkeypatch.setattr(drv, "watchdog_tick", lambda *args, **kwargs: calls.append((args, kwargs)))
+    d._watchdog_state = drv.WatchdogState()
 
     d._run_watchdog_tick()
     assert calls == []
@@ -249,7 +249,20 @@ def test_watchdog_tick_runs_only_for_a_live_driver(monkeypatch):
     d.is_warm = True
     d._current_channel = 149
     d._run_watchdog_tick()
-    assert calls == [(d.transport, d._watchdog_state, 149)]
+    assert calls == [((d.transport, d._watchdog_state, 149), {"low_traffic": True})]
+
+
+def test_watchdog_keeps_default_rx_aggregation_under_load(monkeypatch):
+    d = _driver()
+    d.is_warm = True
+    d._watchdog_state = drv.WatchdogState()
+    d._rx_bytes = drv._TRAFFIC_THRESHOLD_BYTES
+    calls = []
+    monkeypatch.setattr(drv, "watchdog_tick", lambda *args, **kwargs: calls.append(kwargs))
+
+    d._run_watchdog_tick()
+
+    assert calls == [{"low_traffic": False}]
 
 
 # --- bring up wiring: the EFUSE and the MAC hidden report, not literals --------
