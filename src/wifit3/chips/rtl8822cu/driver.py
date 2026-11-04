@@ -314,11 +314,11 @@ class RTL8822CUDriver(Driver):
         try:
             await loop.run_in_executor(
                 None, self._bringup, self.transport, self.layout.bulk_out[0], _emit)
-            # _netdev_open arms dynamic_chk_timer right after rtw_hal_init. [SRC os_intfs.c:4080]
             self._watchdog_state = WatchdogState.from_phydm(self.phydm)
-            self._watchdog_task = loop.create_task(self._watchdog_loop(loop.time()))
             async with self._io_lock:
                 await loop.run_in_executor(None, self._monitor_entry)
+            # airmon's ifup in monitor type: _netdev_open re-arms dynamic_chk_timer. [SRC os_intfs.c:4080]
+            self._watchdog_task = loop.create_task(self._watchdog_loop(loop.time()))
         except (IOError, usb.core.USBError) as exc:
             raise BringUpError("firmware", str(exc)) from exc
         except (ValueError, RuntimeError) as exc:
@@ -362,13 +362,13 @@ class RTL8822CUDriver(Driver):
             return False
 
     async def _watchdog_loop(self, armed_at: float) -> None:
-        """rtw_dynamic_check_timer_handlder: re-arms from its own expiry, so ticks run start to start
-        every WATCHDOG_PERIOD_S from ``armed_at``. [SRC core/rtw_mlme.c:4099-4131]"""
+        """rtw_dynamic_check_timer_handlder re-arms WATCHDOG_PERIOD_S from its own fire, not from
+        its nominal expiry. [SRC core/rtw_mlme.c:4130]"""
         loop = asyncio.get_running_loop()
-        expiry = armed_at
+        fired_at = armed_at
         while True:
-            expiry += WATCHDOG_PERIOD_S
-            await asyncio.sleep(expiry - loop.time())
+            await asyncio.sleep(fired_at + WATCHDOG_PERIOD_S - loop.time())
+            fired_at = loop.time()
             try:
                 async with self._io_lock:
                     await loop.run_in_executor(None, tick, self.transport, self._watchdog_state,
