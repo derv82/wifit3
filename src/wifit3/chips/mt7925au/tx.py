@@ -26,6 +26,7 @@ from .constants import *
 _FCTL_FTYPE = 0x000C
 _FCTL_STYPE = 0x00F0
 _FTYPE_MGMT = 0x0000
+_FTYPE_CTL = 0x0004
 _FTYPE_DATA = 0x0008
 _STYPE_QOS_DATA = 0x0080
 _FCTL_TODS = 0x0100
@@ -36,6 +37,7 @@ _QOS_CTL_LEN = 2
 _STYPE_ACTION = 0x00D0
 _STYPE_DISASSOC = 0x00A0
 _STYPE_DEAUTH = 0x00C0
+_STYPE_BACK_REQ = 0x0080             # control subtype BlockAckReq
 _QOS_CTL_TID_MASK = 0x000F         # IEEE80211_QOS_CTL_TID_MASK
 _QOS_CTL_TAG1D_MASK = 0x0007       # IEEE80211_QOS_CTL_TAG1D_MASK
 _QOS_CTL_ACK_POLICY_NOACK = 0x0020 # IEEE80211_QOS_CTL_ACK_POLICY_NOACK
@@ -184,8 +186,11 @@ def build_txwi(mpdu: bytes, *, qid: int, wcid_idx: int, omac_idx: int = MON_TX_O
     if multicast:
         txwi[3] |= MT_TXD3_BCM
 
-    # injected branch (IEEE80211_TX_CTL_INJECTED): sequence comes from the MPDU itself.
+    # injected branch (IEEE80211_TX_CTL_INJECTED): sequence comes from the MPDU itself, a
+    # BlockAckReq's from its start_seq_num (mac.c:706-714). Bytes past the end read as 0.
     seqno = struct.unpack_from("<H", mpdu, 22)[0] if len(mpdu) >= 24 else 0
+    if (fc & (_FCTL_FTYPE | _FCTL_STYPE)) == (_FTYPE_CTL | _STYPE_BACK_REQ):
+        seqno = int.from_bytes(mpdu[18:20], "little")
     sn = (seqno >> 4) & 0xFFF                         # IEEE80211_SEQ_TO_SN
     txwi[3] |= MT_TXD3_SN_VALID | ((sn << 16) & MT_TXD3_SEQ)
     txwi[3] &= ~MT_TXD3_HW_AMSDU
