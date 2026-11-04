@@ -1,0 +1,31 @@
+# Hardware-found divergences from the C
+
+Code added after a live hardware observation that the Linux C does not do. "Removed" rows were taken out on `verify-pcap` to follow the C; restore one if its live test shows dead RF or a wedged card.
+"Conflicts" means `git revert <sha>` stops on those files against `verify-pcap` HEAD; re-apply the removed hunk by hand.
+
+## Removed or changed on `verify-pcap`
+
+| Driver | Hack | Hardware evidence | Commit | Live test that decides it |
+|---|---|---|---|---|
+| rtl8822bu_dkms | `_heal_cold_synth`: if RF18 BIT15 set after the cold tune, sleep 0.3 s, re-tune ch36 then ch1, up to 4x | ~20% of cold boots 2.4 GHz deaf; 80/80 cold-boot soak OK with it (removed chip-doc text + docstring, 97cfd3c4). Live 2026-11-04, 1 card: without it 3/9 warm connects deaf on ch1-14 until the first 5 GHz hop (RF18 A = `0x18c01`); with it `0x00c01` 2/2 | 261bf57c; conflicts in `driver.py` | N connects: RF18 BIT15 after the initial tune + ch1 frames before any 5 GHz hop |
+| rtl8822bu_dkms | `is_scan=True` on every tune: skip `_dynamic_spur_det_eliminate`, only clear the notch masks | ch153 ~2 -> 17.8 fps (89 frames / 5 s); credited with keeping RF18 locked (chip doc "2026-09-09 Comprehensive Audit" TASK-3/4, 1791d3aa). Live 2026-11-04, 1 card, 10 s windows, not interleaved: eliminator on adds ~30 ms per hop on ch5-8/13/153/161; ch153 2.5-15.2 bcn/s vs 13.6-20.9 bcn/s before | 12276433; reverts clean | Interleaved A/B: ch153/161 bcn/s and per-hop time |
+| rtl8822bu_dkms | Watchdog skips a tick while `_io_lock` is held (a tune is running) | none recorded (1791d3aa TASK-5, "EP0 lock contention") | 917acf3e; conflicts in `driver.py` | Hop soak: tune time and RX with the tick waiting on the lock |
+| rtl8821cu_dkms | `_dc_cancellation` not called (its ck320 stop/restart) | RX dead on both bands ~30-60% of cold boots; 8/8 cold boots good without it; settle delay did not help (e1625305 message, `dc_steps.py`/`dc_ck320.py`) | b886d5cb; conflicts in the verify_pcap test only | N cold boots: count boots with RX dead on both bands |
+| rtl8821cu_dkms | `_prime_2g_band`: re-run the ch1 band switch after cold init (`current_band = None`) | Without it deaf 5/5 boots, with it 0/5; warm-reattach soak 2/40 -> 0/40 (9d04cd78). Fixed ch1 6.5 bcn/s vs kernel ~6.1-6.6 (c58d8748) | 66b3c481; conflicts in the chip doc only | N cold boots on fixed ch1, no hopping: beacon count |
+| rt5370 | Monitor link tuner: BBP66 +0x10 when the RX RSSI EWMA beats -80 dBm, ~1 Hz | -36 dBm AP on ch9 at 3-5 bcn/s; BBP66 sweep 4.0 -> 9.7/s; with tuner ~7.1/s, ch1 reference 7.9/s unchanged. 1 card, 1 AP (RT5370.md, `agc_sweep.py`) | e0af526a; conflicts in `driver.py` | Close (~-36 dBm) AP on a fixed channel: bcn/s |
+| rt5572 | Monitor link tuner (rt2800_link_tuner fed by every good frame) | PAU05 beacon rate wandered 1-3 -> 7-8 -> 4-5/s with ~10-15 s gaps; PAU09 with tuner 9.1 vs kernel 9.6/s, 2.4 GHz breadth 87 vs 111 APs (RT5572.md "RX-AGC link tuner") | b02502c5; conflicts in `driver.py` | Strong near AP: bcn/s and gaps; 2.4 GHz AP count vs kernel |
+| mt7921au | FIX_RATE for unicast data on 5 GHz (`or band_5ghz`) | WPS EAPOL-Start on 5 GHz drew no answer while mgmt frames did (8798c38d message). Live 2026-11-04, 1 card, 3 runs: 5 GHz unicast data inject 0/50 seen, 0 ACKs; broadcast data on the same endpoint goes out at 6M | 76bce75d; conflicts in `tx.py` (re-add `or band_5ghz`) | 5 GHz unicast data inject: frames seen on air + ACKs |
+| rtl8812au_dkms | Re-open RCR to `0x9000382F` after the monitor tail | Beacons not delivered at RCR `0x90000001`; was with RXFLTMAP0 left at 0 (removed chip-doc text). No sample | 3dc362b8; conflicts (doc, `driver.py`, `efuse.py`, `led.py`); revert also drops the LED blink | Cold boot: beacons delivered at RCR `0x90000001` + RXFLTMAP `0xFFFF` |
+| rtl8812au_dkms | airmon opmode writes around the re-tune (Set_MSR AP, BCN_CTRL `0x19`, TBTT, MSR NOLINK) | The tail as a whole cured `crc_err` RX; not bisected, opmode part "not ruled out" (chip doc Gotchas, 71ed6bf7). No sample | 0bf39b0c; conflicts in the verify_pcap test only | Cold boot: RX `crc_err` rate without the opmode writes |
+
+## Still present
+
+| Driver | Hack | Hardware evidence | Commit | Live test that decides it |
+|---|---|---|---|---|
+| rt3070, rt5370, rt5372 | `close()` leaves the radio on so the next `connect()` warm-reattaches; C runs `rt2x00lib_disable_radio` | rt5372 PAU06: warm ~8.7/s vs cold ~8.5/s, cold re-init on a warm chip showed an RX dip (RT5372.md); rt3070 warm reattach "working" (RT3070.md) | present; rt5572 now disables (00106153) | Close with disable_radio, reconnect: bcn/s vs today's warm path |
+| mt7921au, mt7925au | Warm chip is light-reattached (resume model), no `usb_reset_device` + `wfsys_reset`; `set_hif_suspend(false)` omitted | Cold-boot ops on a running chip -> `Errno 32` bulk stall on WinUSB, bisected with no driver code; libusbK `dev.reset()` is a no-op; warm reattach 400-500 frames/3 s, repeatable (MT7921AU.md "2026-06-12") | present | WinUSB: reconnect without replug after a session, RX + no `Errno 32` |
+| mt7921au, mt7925au | `epctl_rst_opt` falls back from the UHW bus to the unified bus | UHW request -> `Errno 5` on WinUSB (`firmware._epctl_rst_opt` docstring) | present (9d694c8d) | Windows cold boot: which bus succeeds; Linux takes UHW |
+| rtl8821cu_dkms | `set_channel` pauses the RX reader across a non-hop tune | Focus tune RX-dead (reader reverts the RF18 RMW); with pause 0 dead across 2 runs of ch36/44/149/153/157 (196f31b3) | present | Fixed 5 GHz focus tune without the pause: RX alive? |
+| ar9271_v2 | Warm reattach resends the SREV read up to 8x to resync the OUT data toggle | Reattach ~50/50 without, reliable with (AR9271_V2.md warm reattach) | present | Repeated warm reattaches with a single SREV read |
+| rt2800usb | Monitor link tuner (kernel skips it for a monitor-only vif) | Same as rt5572 row: PAU05 wander, PAU09 9.1 vs 9.6/s, 87 vs 111 APs (RT2800USB.md "RX-AGC link tuner") | present | Same as the rt5572 row |
+| rt2800usb | `RX_FILTER_CFG=0x11` in `enable_radio`, not the kernel's `0x97 -> 0x93` | "HW-validated", no sample (RT2800USB.md) | present | RX with `0x93`: frame classes + bcn/s vs `0x11` |
