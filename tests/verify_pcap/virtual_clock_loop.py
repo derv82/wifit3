@@ -2,12 +2,34 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import selectors
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable
 
 MAIN_CALLER = "main"
+KERNEL_HZ = 250
+TIMER_WHEEL_LEVEL_SHIFT = 3
+TIMER_WHEEL_LEVEL_SIZE = 64
+TIMER_WHEEL_LEVEL_DEPTH = 9
+# A fire time, bucket_expiry / KERNEL_HZ, converts back to the same jiffy despite float error.
+JIFFY_TOLERANCE = 0.01
+
+
+def timer_wheel_expiry(jiffy_zero_time: float, now: float, when: float) -> float:
+    """When a kernel timer armed at ``now`` for ``when`` fires: msecs_to_jiffies rounds up, then the expiry
+    rounds up to its timer wheel level's granularity (kernel/time/timer.c calc_wheel_index, calc_index)."""
+    now_jiffies = math.floor((now - jiffy_zero_time) * KERNEL_HZ + JIFFY_TOLERANCE)
+    delta = math.ceil((when - now) * KERNEL_HZ - JIFFY_TOLERANCE)
+    level = 0
+    while level < TIMER_WHEEL_LEVEL_DEPTH - 1 and delta >= (TIMER_WHEEL_LEVEL_SIZE - 1) << (level * TIMER_WHEEL_LEVEL_SHIFT):
+        level += 1
+    shift = level * TIMER_WHEEL_LEVEL_SHIFT
+    bucket_expiry = (((now_jiffies + delta) >> shift) + 1) << shift
+    return jiffy_zero_time + bucket_expiry / KERNEL_HZ
+
+
 def wake_loop() -> None:
     """Scheduled from another thread so the loop re-checks its timers and whether the driver is idle."""
 
@@ -47,6 +69,8 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         self.fired_timers: set[asyncio.TimerHandle] = set()
         self._timer_lock = threading.Lock()
         self.pending_executor_call_count = 0
+        # Until CaptureReplay sets it, driver task timers fire after their jiffies exactly.
+        self.jiffy_zero_time: float | None = None
 
     def time(self) -> float:
         return self.virtual_time
@@ -87,6 +111,10 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         task = asyncio.current_task(self)
         if task is None or task.get_name() == MAIN_CALLER:
             return super().call_at(when, callback, *args, context=context)
+        if self.jiffy_zero_time is None:
+            when = self.time() + math.ceil((when - self.time()) * KERNEL_HZ - JIFFY_TOLERANCE) / KERNEL_HZ
+        else:
+            when = timer_wheel_expiry(self.jiffy_zero_time, self.time(), when)
 
         def record_fired_and_run(*callback_args: Any) -> None:
             with self._timer_lock:

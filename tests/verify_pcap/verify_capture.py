@@ -322,7 +322,8 @@ class VerifyCapture:
 
     @staticmethod
     async def run_driver_until_idle(loop: VirtualClockEventLoop, timestamp: float) -> None:
-        """Idle, move the clock to ``timestamp``, idle: idle is IDLE_PASSES_IN_A_ROW loop passes in a row."""
+        """Idle, sleep to ``timestamp`` (driver task timers due before it fire at their own time), idle: idle is
+        IDLE_PASSES_IN_A_ROW loop passes in a row."""
         async def wait_until_idle() -> None:
             idle_passes = 0
             while idle_passes < IDLE_PASSES_IN_A_ROW:
@@ -333,7 +334,8 @@ class VerifyCapture:
                     idle_passes = 0
 
         await wait_until_idle()
-        loop.advance_clock(timestamp)
+        if timestamp > loop.time():
+            await asyncio.sleep(timestamp - loop.time())
         await wait_until_idle()
 
     def load_capture(self, capture_path: Path) -> LoadedCapture:

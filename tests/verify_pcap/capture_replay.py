@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.virtual_clock_loop import VirtualClockEventLoop, is_driver_thread, wake_loop
+from tests.verify_pcap.virtual_clock_loop import (
+    KERNEL_HZ, MAIN_CALLER, VirtualClockEventLoop, is_driver_thread, wake_loop)
 
 PROCESSING_REPLY = -1
 WAIVED = "waived"
@@ -94,6 +95,10 @@ class CaptureReplay:
                 position = candidate
             else:
                 self._loop.advance_clock(self.ops[position].completion_time)
+            if (self._loop.jiffy_zero_time is None and caller != MAIN_CALLER
+                    and self._loop.earliest_due_driver_timer() is not None):
+                # The kernel's jiffy phase: a woken driver task's first op is made in the jiffy after its timer fired.
+                self._loop.jiffy_zero_time = self.ops[position].submit_time - 1 / KERNEL_HZ
             self.reproduced_by[position] = caller
             self.next_position_by_caller[caller] = position + 1
             return self.ops[position]
