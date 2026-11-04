@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-from tests.verify_pcap.realtek_decoder import RealtekDecoder, is_register_access
+from tests.verify_pcap.realtek_decoder import HALMAC_TX_DESC_RTS_DATA_RTY_LMT, RealtekDecoder, is_register_access
 from tests.verify_pcap.usb_capture import UsbOp
 from tests.verify_pcap.verify_capture import RegisterAccess, RegisterOp, VerifyCapture, Waiver, WaiverReason
 from wifit3.chips.rtl8821cu_dkms import SUPPORTED_IDS
@@ -45,6 +45,8 @@ class TestRtl8821cuDkms(VerifyCapture):
     DRIVER_CLASS = Rtl8821cuDkmsDriver
     DECODER = Rtl8821cuDecoder(hop_start_register=0x2860, tx_descriptor_size=48)
     WAIVERS = [
+        Waiver(WaiverReason.CAPTURE_SETUP, "core/rtw_xmit.c:5042 aireplay's radiotap NOACK, rtl8821cu_xmit.c:314-318",
+               value_only_tx_op_field=HALMAC_TX_DESC_RTS_DATA_RTY_LMT),
         Waiver(WaiverReason.CAPTURE_SETUP, "halbtc8821c1ant.c:467 halbtc8821c1ant_write_scbd's static originalval "
                "keeps the previous capture's scoreboard bits (module not reloaded)",
                value_only_register=0x00aa,
