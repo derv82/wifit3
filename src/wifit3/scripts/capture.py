@@ -6,8 +6,8 @@ Run on the (Linux) capture box as root, with the card UNPLUGGED:
 
 It starts a full usbmon0 (all-buses) tshark capture, walks the card through
 monitor-mode bring-up, two airodump reference segments (native hopping + a
-fixed-channel over-air pcap), a deterministic channel sweep, and an optional
-injection test. It saves the usbmon pcap + per-tool logs + a sysinfo snapshot
+fixed-channel over-air pcap), a deterministic channel sweep, an optional
+injection test, and a warm restart (airmon-ng stop + start, then airodump). It saves the usbmon pcap + per-tool logs + a sysinfo snapshot
 + the fixed-channel pcap + the bound driver's firmware and DKMS source under
 `captures_<chipset>/`. `main.log` records when each step ran (epoch
 timestamps); `pcap_slicer.py` maps those to pcap frame ranges.
@@ -566,6 +566,29 @@ class Capture:
             if remain > 0:
                 time.sleep(remain)
 
+    def warm_restart_segment(self):
+        """airmon-ng stop + start on the already-probed card: mac80211 calls the driver's .stop / .start,
+        not probe (wifit3's warm START). Then airodump, so the capture shows the restarted card hopping."""
+        self.logger.log_main(f"[{time.time():.3f}] [WARM-RESTART] airmon-ng stop {self.mon_iface}")
+        self.run_cmd(["sudo", "airmon-ng", "stop", self.mon_iface], timeout=30)
+        time.sleep(2)
+        iw_out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout
+        new_ifaces = sorted(self.parse_wifi_ifaces(iw_out) - self.iface_baseline)
+        if new_ifaces:
+            self.base_iface = new_ifaces[-1]
+        self.logger.log_main(f"[{time.time():.3f}] [WARM-RESTART] airmon-ng start {self.base_iface}")
+        self.run_cmd(["sudo", "airmon-ng", "start", self.base_iface], timeout=30)
+        time.sleep(2)
+        iw_out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout
+        mon_iface = self.parse_monitor_iface(iw_out, self.base_iface) or self.parse_first_monitor(iw_out)
+        if mon_iface:
+            self.mon_iface = mon_iface
+        else:
+            self.logger.log_main("[!] No monitor interface after the warm restart.")
+        self.logger.log_main(f"[{time.time():.3f}] [WARM-RESTART] monitor interface: {self.mon_iface}")
+        if self.run_air:
+            self.airodump_segment(duration=10)
+
     def populate_target_from_control_interface(self):
         if not self.control_interface:
             return
@@ -856,6 +879,8 @@ class Capture:
         # reference above.
         if self.fast_hop:
             self.fast_hop_segment()
+
+        self.warm_restart_segment()
 
         self.cleanup()
 
