@@ -39,6 +39,7 @@ _QOS_CTL_LEN    = 2
 _HT_CTL_LEN     = 4
 _QOS_CTL_TID_MASK = 0x000F     # IEEE80211_QOS_CTL_TID_MASK
 _QOS_CTL_TAG1D_MASK = 0x0007   # IEEE80211_QOS_CTL_TAG1D_MASK
+_QOS_CTL_ACK_POLICY_NOACK = 0x0020   # IEEE80211_QOS_CTL_ACK_POLICY_NOACK
 _BAR_CTRL_TID_INFO_SHIFT = 12  # IEEE80211_BAR_CTRL_TID_INFO_MASK 0xf000
 _MIN_ACTION_SIZE = 25          # IEEE80211_MIN_ACTION_SIZE: offsetof(ieee80211_mgmt, u.action.u)
 _CATEGORY_BACK = 3             # WLAN_CATEGORY_BACK
@@ -164,9 +165,9 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
     and that queue's bulk-OUT. The monitor vif uses the reserved wcid, the sequence number
     comes from the frame, and the rate is the band's lowest basic rate.
 
-    ``retry_count`` fills MT_TXD3_REM_TX_COUNT (the HW ACK-based retry limit). A unicast
-    addr1 requests an ACK (NO_ACK clear), so the chip retransmits it up to ``retry_count``
-    times until the recipient ACKs; a group addr1 sets NO_ACK. That HW retry is
+    ``retry_count`` fills MT_TXD3_REM_TX_COUNT (the HW ACK-based retry limit). A frame that
+    requests an ACK (NO_ACK clear) is retransmitted up to ``retry_count`` times until the
+    recipient ACKs; a group addr1 or a QoS NoAck policy sets NO_ACK. That HW retry is
     inject_frame's only retransmission.
     """
     # ieee80211_monitor_start_xmit drops a frame shorter than its header.
@@ -241,10 +242,15 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
         val2 |= _fp(MT_TXD2_FRAG, MT_TX_FRAG_LAST)
     txwi[2] = val2
 
-    # mac80211 sets IEEE80211_TX_CTL_NO_ACK for a group addr1 (mt76_connac_mac.c:563).
+    # mt76_connac_mac.c:564-565. mac80211 sets IEEE80211_TX_CTL_NO_ACK for a group addr1
+    # (tx.c:1275-1277) and for an injected QoS frame with the NoAck policy (wme.c:208-211).
     val3 = _fp(MT_TXD3_REM_TX_COUNT, retry_count)
     if multicast:
         val3 |= MT_TXD3_NO_ACK
+    elif is_data and fc & _STYPE_QOS_DATA:
+        four_address = (fc & (_FCTL_TODS | _FCTL_FROMDS)) == (_FCTL_TODS | _FCTL_FROMDS)
+        if frame[30 if four_address else 24] & _QOS_CTL_ACK_POLICY_NOACK:
+            val3 |= MT_TXD3_NO_ACK
     # Injected frame: carry its own sequence number (SEQ_TO_SN = seqno >> 4).
     val3 |= MT_TXD3_SN_VALID | _fp(MT_TXD3_SEQ, seqno >> 4)
     txwi[3] = val3

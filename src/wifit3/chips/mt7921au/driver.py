@@ -307,9 +307,8 @@ class MT7921AUDriver(Driver):
             logger.exception("MT7921AU mac_work stopped on error")
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the connac2 TX descriptor (HW ACK-retry limit 15, NO_ACK set iff addr1 is group,
-        byte-verified by verify_pcap CHECK 4 against the captured aireplay TX) and send it once
-        on the frame's USB bulk-OUT endpoint: mgmt/ctrl on HCCA (0x09), data on AC_BE (0x04).
+        """Build the connac2 TX descriptor (HW ACK-retry limit 15) and send it once on its
+        mt76 TX queue's bulk-OUT.
         The seq is already stamped (``_stamp_tx_seq``) and the hardware appends the FCS, so pass
         the bare MPDU. The TX rate is the current channel's band basic rate."""
         try:
