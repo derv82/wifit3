@@ -120,8 +120,8 @@ RX-desc decode + the 8821a RSSI tables are in `rx.py`; monitor RCR (0x9000382F) 
 PHYDM InitHalDm in `dig.py`; the 2 s dynamic-check tick (DIG, CCK-PD, EDCCA, RRSR, TX power tracking,
 NHM/CLM) in `watchdog.py`. Channel/band hop is `chan.set_channel_bw` (`phy_SwBand`
 switches band only on a 2.4↔5 crossing). EFUSE decode is `efuse.read_chip_params`; per-rate TXAGC in
-`txpower.set_tx_power` (+ `_5g`). One descriptor builder, `tx.build_mgmt_txdesc`, serves all
-injection (40-byte fake TX desc + XOR-16 checksum, bulk-OUT ep 0x09). Bulk-IN is ep 0x84.
+`txpower.set_tx_power` (+ `_5g`). Every injected frame goes through `tx.update_txdesc`, the
+monitor-xmit path of the vendor's `update_txdesc` (MGNT_FRAMETAG, bulk-OUT ep 0x09). Bulk-IN is ep 0x84.
 
 Names match the vendor C, so grep the bundle's `driver-source/` to cross-reference.
 

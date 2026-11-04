@@ -36,7 +36,7 @@ from ..rx_reader import RxReaderThread
 from . import bb, chan, dig, efuse, firmware, led, mac, monitor, phy_cond, rf, txpower, watchdog
 from .rx import iter_frames
 from .transport import RTL8821AUDkmsTransport
-from .tx import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G, build_mgmt_txdesc
+from .tx import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G, RATEID_IDX_VHT_1SS, update_txdesc
 
 logger = logging.getLogger(__name__)
 
@@ -316,27 +316,21 @@ class Rtl8821auDkmsDriver(Driver):
         return True
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Transmit one 802.11 frame (M6) — deauth, fake-auth, or WEP ARP replay.
-
-        Builds the fake TX descriptor (M6; no retry-limit field, HW global retry)
-        and sends ``[desc | frame]`` once on the bulk-OUT pipe (ep 0x09, the MGMT queue).
-        ``frame_bytes`` is the MPDU *without* FCS (the HW appends it). For WEP ARP replay the
-        frame is already WEP-encrypted and is injected raw (the descriptor's SEC_TYPE = 0).
-        Serialized with set_channel / the DIG watchdog via ``_io_lock`` so the frame is never
-        emitted mid-retune.
-
-        Per-rate EFUSE TX power is applied by connect() and every non-scan channel settle.
-        """
+        """Transmit one 802.11 frame as rtw_monitor_xmit_entry does (rtw_xmit.c:4866), without a
+        radiotap header. ``frame_bytes`` is the MPDU without FCS (the HW appends it)."""
         if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read BMC
             return False
         loop = asyncio.get_running_loop()
-        bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
-        # [SRC] rtl8812a_phycfg.c:1360 "avoid using cck rate in 5G band": 6M OFDM, rate group G
-        # (rtw_wlan_util.c:3217, rtw_mlme_ext.c:7803-7808).
-        hw_rate, rate_id = ((DESC_RATE6M, RATEID_IDX_G) if self._channel > 14
-                            else (DESC_RATE1M, RATEID_IDX_B))
-        payload = build_mgmt_txdesc(len(frame_bytes), hw_rate=hw_rate, rate_id=rate_id,
-                                    bmc=bmc) + frame_bytes
+        # rtw_xmit.c:4973-4987: a data frame takes update_monitor_frame_attrib (1T1R raid,
+        # rtw_mlme_ext.c:7639) at MGN_1M; any other takes update_mgntframe_attrib at
+        # pmlmeext->tx_rate, 6M on 5 GHz (update_tx_basic_rate rtw_wlan_util.c:3212-3215).
+        if len(frame_bytes) >= 24 and frame_bytes[0] & 0x0C == 0x08:
+            rate_id, hw_rate = RATEID_IDX_VHT_1SS, DESC_RATE1M     # TODO(8812au): 2T2R is RATEID_IDX_VHT_2SS.
+        elif self._channel > 14:
+            rate_id, hw_rate = RATEID_IDX_G, DESC_RATE6M
+        else:
+            rate_id, hw_rate = RATEID_IDX_B, DESC_RATE1M
+        payload = update_txdesc(frame_bytes, rate_id=rate_id, hw_rate=hw_rate)
         async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
         self._dm.tx_bytes += len(frame_bytes)   # rtw_monitor_xmit_entry tx_bytes (rtw_xmit.c:5168)

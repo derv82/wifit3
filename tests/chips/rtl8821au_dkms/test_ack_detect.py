@@ -80,7 +80,7 @@ def test_stamp_tx_seq_is_identity():
     assert d._stamp_tx_seq(frame) is frame      # Realtek HW-stamps; frame goes out unchanged
 
 
-async def test_inject_builds_descriptor_with_hw_retry_limit():
+async def test_inject_builds_descriptor_with_mgnt_retry_limit():
     d = _driver()
     sent: list[bytes] = []
     d.transport.bulk_out = lambda pkt: sent.append(pkt)
@@ -88,7 +88,9 @@ async def test_inject_builds_descriptor_with_hw_retry_limit():
     assert await d.inject_frame(frame) is True   # base entry -> _stamp_tx_seq -> _inject_frame
     assert len(sent) == 1
     pkt = sent[0]
-    assert (int.from_bytes(pkt[0x10:0x14], "little") >> 17) & 1 == 0   # RTY_LMT_EN clear -> HW global retry
+    dw4 = int.from_bytes(pkt[0x10:0x14], "little")
+    assert (dw4 >> 17) & 1 == 1                  # RETRY_LIMIT_ENABLE
+    assert (dw4 >> 18) & 0x3F == tx.MGNT_DATA_RETRY_LIMIT
     assert pkt[tx.TXDESC_SIZE:] == frame         # HW-stamp: payload byte-for-byte unchanged
     assert pkt[16] & 0x7F == tx.DESC_RATE1M      # TX_RATE: 1M CCK on 2.4 GHz
 
@@ -101,3 +103,14 @@ async def test_inject_uses_6m_ofdm_on_5ghz():
     assert await d.inject_frame(_mgmt_frame()) is True
     assert sent[0][16] & 0x7F == tx.DESC_RATE6M
     assert (int.from_bytes(sent[0][4:8], "little") >> 16) & 0x1F == tx.RATEID_IDX_G
+
+
+async def test_inject_data_frame_uses_vht_1ss_raid_at_1m():
+    d = _driver()
+    d._channel = 149
+    sent: list[bytes] = []
+    d.transport.bulk_out = lambda pkt: sent.append(pkt)
+    data_frame = b"\x08" + _mgmt_frame()[1:]   # FC type data
+    assert await d.inject_frame(data_frame) is True
+    assert sent[0][16] & 0x7F == tx.DESC_RATE1M
+    assert (int.from_bytes(sent[0][4:8], "little") >> 16) & 0x1F == tx.RATEID_IDX_VHT_1SS
