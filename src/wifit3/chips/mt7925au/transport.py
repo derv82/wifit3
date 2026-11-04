@@ -206,6 +206,8 @@ class MT7925AUTransport:
     async def send_fw_chunk(self, chunk: bytes, timeout_ms: int = 1000) -> bool:
         """One FW_SCATTER chunk on EP_OUT_FW (0x04): [4B SDIO hdr][chunk][pad to 4B +4].
         FW_SCATTER prepends no MCU txd (mt7925_mcu_fill_message:3476)."""
+        # mt7925_mcu_fill_message:3472 advances msg_seq before the FW_SCATTER skip.
+        self._next_mcu_seq()
         frame = bytearray(SDIO_HDR_SIZE + len(chunk))
         struct.pack_into("<I", frame, 0, len(chunk) & 0xFFFF)
         frame[SDIO_HDR_SIZE:] = chunk
