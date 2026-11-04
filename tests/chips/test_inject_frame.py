@@ -90,6 +90,7 @@ class RecordingUsbDevice(MagicMock):
     def __init__(self) -> None:
         super().__init__()
         self.bulk_writes: list[bytes] = []
+        self.bulk_write_endpoints: list[int] = []
         self.write.side_effect = self._record_write
         self.ctrl_transfer.side_effect = self._answer_ctrl_transfer
 
@@ -98,6 +99,7 @@ class RecordingUsbDevice(MagicMock):
 
     def _record_write(self, endpoint: int, data: bytes, timeout: Optional[int] = None) -> int:
         self.bulk_writes.append(bytes(data))
+        self.bulk_write_endpoints.append(endpoint)
         return len(data)
 
     @staticmethod
@@ -126,6 +128,8 @@ class DriverCase:
     seq_stamped_by_firmware: bool = False     # neither: the firmware stamps it (measured on air)
     no_ack_bit: Optional[DescriptorBit] = None
     ack_request_bit: Optional[DescriptorBit] = None   # inverse polarity: set = wait for ACK
+    non_data_ep: Optional[int] = None         # bulk-OUT a non-data frame must go out on
+    data_ep: Optional[int] = None             # same, for a non-QoS data frame
 
 
 def first_id(supported_ids: list[DeviceID]) -> DeviceID:
@@ -173,21 +177,26 @@ def build_rt2800usb(dev: RecordingUsbDevice) -> Driver:
     return driver
 
 
+RT2800_TX_QUEUE_EPS = [0x01, 0x02, 0x03, 0x04]     # AC_VO, AC_VI, AC_BE, AC_BK
+RT2800_AC_VO_EP = 0x01
+RT2800_AC_BE_EP = 0x03
+
+
 def build_rt3070(dev: RecordingUsbDevice) -> Driver:
     driver = RT3070Driver(RT3070Transport(dev))
-    driver._bulk_out_ep = 0x01
+    driver._tx_queue_eps = RT2800_TX_QUEUE_EPS
     return driver
 
 
 def build_rt5370(dev: RecordingUsbDevice) -> Driver:
     driver = RT5370Driver(RT5370Transport(dev))
-    driver._bulk_out_ep = 0x01
+    driver._tx_queue_eps = RT2800_TX_QUEUE_EPS
     return driver
 
 
 def build_rt5372(dev: RecordingUsbDevice) -> Driver:
     driver = RT5372Driver(RT5372Transport(dev))
-    driver._bulk_out_ep = 0x01
+    driver._tx_queue_eps = RT2800_TX_QUEUE_EPS
     return driver
 
 
@@ -195,6 +204,7 @@ def build_rt5572(dev: RecordingUsbDevice) -> Driver:
     driver = RT5572Driver.from_usb_device(dev, first_id(rt5572.SUPPORTED_IDS))
     driver.chip_id = RT5572ChipId(raw=RT5572_RT5592 << 16, silicon_id=RT5572_RT5592,
                                   revision=0, name="RT5592", is_supported=True)
+    driver._tx_queue_eps = RT2800_TX_QUEUE_EPS
     return driver
 
 
@@ -313,13 +323,17 @@ DRIVER_CASES: dict[str, DriverCase] = {
     "rt2800usb": DriverCase(build_rt2800usb, 20, 20, hw_seq_bit=None,
                             ack_request_bit=DescriptorBit(8, RT2800USB_TXWI_W1_ACK)),
     "rt3070": DriverCase(build_rt3070, 20, 20, hw_seq_bit=None,
-                         ack_request_bit=DescriptorBit(8, RT3070_TXWI_W1_ACK)),
+                         ack_request_bit=DescriptorBit(8, RT3070_TXWI_W1_ACK),
+                         non_data_ep=RT2800_AC_VO_EP, data_ep=RT2800_AC_BE_EP),
     "rt5370": DriverCase(build_rt5370, 20, 20, hw_seq_bit=None,
-                         ack_request_bit=DescriptorBit(8, RT5370_TXWI_W1_ACK)),
+                         ack_request_bit=DescriptorBit(8, RT5370_TXWI_W1_ACK),
+                         non_data_ep=RT2800_AC_VO_EP, data_ep=RT2800_AC_BE_EP),
     "rt5372": DriverCase(build_rt5372, 20, 20, hw_seq_bit=None,
-                         ack_request_bit=DescriptorBit(8, RT5372_TXWI_W1_ACK)),
+                         ack_request_bit=DescriptorBit(8, RT5372_TXWI_W1_ACK),
+                         non_data_ep=RT2800_AC_VO_EP, data_ep=RT2800_AC_BE_EP),
     "rt5572": DriverCase(build_rt5572, 24, 24, hw_seq_bit=None,
-                         ack_request_bit=DescriptorBit(8, RT5572_TXWI_W1_ACK)),
+                         ack_request_bit=DescriptorBit(8, RT5572_TXWI_W1_ACK),
+                         non_data_ep=RT2800_AC_VO_EP, data_ep=RT2800_AC_BE_EP),
     # The 8187L tx_hdr has no no-ACK flag; the MAC decides from addr1.
     "rtl8187": DriverCase(build_rtl8187, 12, 12, hw_seq_bit=None),
     "rtl8188eus": DriverCase(build_rtl8188eus, 32, 32, hw_seq_bit=None,
@@ -368,12 +382,13 @@ def seq_number(frame: bytes) -> int:
     return int.from_bytes(frame[22:24], "little") >> 4
 
 
-async def inject_and_capture(driver: Driver, dev: RecordingUsbDevice, frame: bytes) -> bytes:
+async def inject_and_capture(driver: Driver, dev: RecordingUsbDevice, frame: bytes) -> tuple[int, bytes]:
     sent_before = len(dev.bulk_writes)
     assert await driver.inject_frame(frame) is True
-    payloads = [w for w in dev.bulk_writes[sent_before:] if w]    # drop rtl8187's ZLP
-    assert len(payloads) == 1, f"expected one bulk-OUT write, got {len(payloads)}"
-    return payloads[0]
+    writes = [(ep, w) for ep, w in zip(dev.bulk_write_endpoints[sent_before:], dev.bulk_writes[sent_before:])
+              if w]    # drop rtl8187's ZLP
+    assert len(writes) == 1, f"expected one bulk-OUT write, got {len(writes)}"
+    return writes[0]
 
 
 @pytest.mark.parametrize("frame_name", list(FRAMES))
@@ -386,12 +401,16 @@ async def test_inject_frame_wire_bytes(package_name: str, frame_name: str) -> No
     is_data = (frame[0] & 0x0C) == 0x08
     offset = case.data_payload_offset if is_data else case.payload_offset
 
-    first_payload = await inject_and_capture(driver, dev, frame)
-    second_payload = await inject_and_capture(driver, dev, frame)
+    first_ep, first_payload = await inject_and_capture(driver, dev, frame)
+    _, second_payload = await inject_and_capture(driver, dev, frame)
     first_mpdu = first_payload[offset:offset + len(frame)]
     second_mpdu = second_payload[offset:offset + len(frame)]
 
     assert without_seq_ctrl(first_mpdu) == without_seq_ctrl(frame), "802.11 bytes altered"
+
+    expected_ep = case.data_ep if is_data else case.non_data_ep
+    if expected_ep is not None:
+        assert first_ep == expected_ep, f"sent on bulk-OUT {first_ep:#04x}, expected {expected_ep:#04x}"
 
     if case.hw_seq_bit is not None:
         assert case.hw_seq_bit.is_set(first_payload), "HW-seq descriptor flag clear"
