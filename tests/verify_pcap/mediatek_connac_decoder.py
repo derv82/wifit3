@@ -18,6 +18,7 @@ TX_MPDU_OFFSET = C.SDIO_HDR_SIZE + C.MT_SDIO_TXD_SIZE
 RXD_PKT_TYPE_SHIFT = 27
 RXD_PKT_FLAG_SHIFT = 16
 RXD_PKT_FLAG_NORMAL = 0x1
+TX_ENDPOINTS = (C.EP_OUT_AC_BE, C.EP_OUT_AC_BK, C.EP_OUT_AC_VI, C.EP_OUT_AC_VO, C.EP_OUT_HCCA)
 
 CONTROL_REQUEST_NAMES = {
     C.MT_VEND_READ_EXT: "R ", C.MT_VEND_WRITE_EXT: "W ",
@@ -56,6 +57,17 @@ def sniffer_tag(op: UsbOp) -> int | None:
     if struct.unpack_from("<H", data, MCU_TXD_OFFSET + 34)[0] != C.MCU_UNI_CMD_SNIFFER:
         return None
     return struct.unpack_from("<H", data, UNI_PAYLOAD_OFFSET + 4)[0]
+
+
+def is_tx_frame(op: UsbOp) -> bool:
+    """A bulk-OUT on a TX queue endpoint whose TXD0 TX_BYTES is the SDIO header's; FW_SCATTER chunks share AC_BE."""
+    data = op.data
+    if op.transfer_type != TransferType.BULK or op.is_in or op.endpoint not in TX_ENDPOINTS:
+        return False
+    if len(data) < TX_MPDU_OFFSET:
+        return False
+    txd0 = struct.unpack_from("<I", data, C.SDIO_HDR_SIZE)[0]
+    return txd0 & C.MT_TXD0_TX_BYTES == struct.unpack_from("<H", data, 0)[0]
 
 
 def with_byte(op: UsbOp, offset: int, value: int) -> UsbOp:
@@ -104,23 +116,20 @@ class MediatekConnacDecoder(FamilyDecoder):
             return f"RX ep 0x{op.endpoint:02x} type {packet_type} {len(data)}B{status}"
         if op.endpoint == C.EP_OUT_MCU:
             return describe_mcu_command(data) + status
+        if is_tx_frame(op) and len(data) >= TX_MPDU_OFFSET + 2:
+            frame_control = struct.unpack_from("<H", data, TX_MPDU_OFFSET)[0]
+            return (f"TX ep 0x{op.endpoint:02x} {len(data)}B txd {data[C.SDIO_HDR_SIZE:TX_MPDU_OFFSET].hex()} "
+                    f"FC 0x{frame_control:04x}{status}")
         if op.endpoint == C.EP_OUT_FW and len(data) >= 4:
             return f"FW/DATA ep 0x04 {len(data)}B tx_bytes {struct.unpack_from('<H', data, 0)[0]}{status}"
-        if op.endpoint == C.EP_OUT_HCCA and len(data) >= TX_MPDU_OFFSET + 2:
-            frame_control = struct.unpack_from("<H", data, TX_MPDU_OFFSET)[0]
-            return (f"TX ep 0x09 {len(data)}B txd {data[C.SDIO_HDR_SIZE:TX_MPDU_OFFSET].hex()} "
-                    f"FC 0x{frame_control:04x}{status}")
         return f"OUT ep 0x{op.endpoint:02x} {len(data)}B{status}"
 
     def injected_frame_at(self, ops: Sequence[UsbOp], position: int) -> bytes | None:
         op = ops[position]
-        if op.transfer_type != TransferType.BULK or op.is_in:
+        if not is_tx_frame(op):
             return None
-        data = op.data
-        if op.endpoint == C.EP_OUT_HCCA and len(data) >= TX_MPDU_OFFSET:
-            tx_bytes = struct.unpack_from("<H", data, 0)[0]
-            return data[TX_MPDU_OFFSET:C.SDIO_HDR_SIZE + tx_bytes]
-        return None
+        tx_bytes = struct.unpack_from("<H", op.data, 0)[0]
+        return op.data[TX_MPDU_OFFSET:C.SDIO_HDR_SIZE + tx_bytes]
 
     def channel_change_at(self, ops: Sequence[UsbOp], position: int) -> int | None:
         op = ops[position]
@@ -176,9 +185,8 @@ class MediatekConnacDecoder(FamilyDecoder):
         return renumbered_ops, waived_positions
 
     def with_tx_op_fields(self, op: UsbOp, fields: list[TxOpField], source: UsbOp) -> UsbOp:
-        """A TX op on the HCCA endpoint with ``source``'s bits in each field; the connac TXD has no checksum."""
-        if (op.transfer_type != TransferType.BULK or op.is_in or op.endpoint != C.EP_OUT_HCCA
-                or len(source.data) != len(op.data)):
+        """A TX op with ``source``'s bits in each field; the connac TXD has no checksum."""
+        if not is_tx_frame(op) or len(source.data) != len(op.data):
             return op
         data = bytearray(op.data)
         for field in fields:
