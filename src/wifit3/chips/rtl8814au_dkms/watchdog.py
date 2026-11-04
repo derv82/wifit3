@@ -96,8 +96,8 @@ _LED_GPI_VAL = (1 << 0) | (1 << 1) | (1 << 5) | (1 << 6)       # gpi value (clea
 # the two-phase thermal-meter gate (arm one tick, read + correct the next). The arm and the
 # callback both read RF reg 0x42 (R 0x2908 path-A readback); the arm writes it back (W 0xc90),
 # the callback applies the per-path TXAGC/BB-swing correction (see powertrack.py). halrf_dpk_track
-# is a no-op on 8814A. The first call runs the txpwrtrack init (a no-change RMW of 0x440).
-_REG_TXPWRTRACK_INIT = 0x0440  # BB reg touched once on the first txpwrtrack init (no change)
+# is a no-op on 8814A.
+_REG_RRSR = 0x0440
 
 
 # phydm_cck_pd_th + phydm_cckpd_type1 [SRC phydm_cck_pd.c:1019/78] — CCK packet-detect
@@ -118,7 +118,7 @@ class WatchdogState:
     """State carried across watchdog ticks (the parts the chip does not re-encode in a read)."""
     cur_ig_value: int = _IGI_MIN   # phydm_dig cur_ig_value; SEED from InitHalDm's _dig_init read
     led_on: bool = True            # SwLedBlink9 BlinkingLedState: bLedOn starts FALSE, so the first fire is ON
-    txpwrtrack_init: bool = False  # odm_txpowertracking_check is_txpowertracking_init first-run
+    rrsr_val_curr_is_init: bool = False   # ra_table rrsr_val_curr == rrsr_val_init
     # phydm_cckpd: CCK-PD moving average + current level. InitHalDm commits LV_0 (0xa0a=0x40)
     # and leaves the MA reset, so the carried state starts there.
     cck_fa_ma: int = _CCK_FA_MA_RESET
@@ -296,17 +296,24 @@ def _adaptivity(t, st: WatchdogState) -> None:
 def _halrf(t, st: WatchdogState, channel: int) -> None:
     """[SRC] halrf_watchdog -> odm_txpowertracking_check — the RF thermal-meter track.
 
-    The first call runs the txpwrtrack init (a no-change RMW of 0x440). Then the two-phase
-    check_ce gate (powertrack.txpowertracking_check_ce): one tick arms RF 0x42, the next reads
-    it and applies the per-path TXAGC/BB-swing correction from the delta-swing tables. TX-power
+    The two-phase check_ce gate (powertrack.txpowertracking_check_ce): one tick arms RF 0x42, the
+    next reads it and applies the per-path TXAGC/BB-swing correction from the delta-swing tables. TX-power
     thermal compensation — RX-irrelevant, but on the wire each tick. The channel selects the
     delta-swing table (2.4 GHz CCK/OFDM vs a 5 GHz sub-band).
     """
-    if not st.txpwrtrack_init:
-        v = t.read32(_REG_TXPWRTRACK_INIT)
-        t.write32(_REG_TXPWRTRACK_INIT, v)             # first-run init: no-change RMW
-        st.txpwrtrack_init = True
     powertrack.txpowertracking_check_ce(t, st, channel)
+
+
+def _rrsr_mask(t, st: WatchdogState) -> None:
+    """[SRC] phydm_rrsr_mask -> phydm_masked_rrsr_set_register (phydm_rainfo.c:1790-1794), not linked.
+
+    rrsr_val_init is InitHalDm's 0x440 read (:1890), so the one write puts back the register's own bits.
+    """
+    if st.rrsr_val_curr_is_init:
+        return
+    st.rrsr_val_curr_is_init = True
+    rrsr = t.read32(_REG_RRSR)
+    t.write32(_REG_RRSR, rrsr)
 
 
 def _set_nhm_th(t, igi: int) -> None:
@@ -378,6 +385,7 @@ def tick(t, st: WatchdogState, channel: int) -> int:
     _dig(t, st, cnt_all)
     _cck_pd(t, st, cck_fa)
     _adaptivity(t, st)
+    _rrsr_mask(t, st)                   # phydm_ra_info_watchdog
     _halrf(t, st, channel)
     _env_mntr(t, st)
     return cnt_all
