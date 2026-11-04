@@ -7,14 +7,10 @@ from dataclasses import dataclass
 from typing import Callable
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.virtual_clock_loop import VirtualClockEventLoop, is_driver_thread
+from tests.verify_pcap.virtual_clock_loop import VirtualClockEventLoop, is_driver_thread, wake_loop
 
 PROCESSING_REPLY = -1
 WAIVED = "waived"
-
-
-def _wake_loop() -> None:
-    """Scheduled from a driver thread so the loop re-checks whether the driver is idle."""
 
 
 class CaptureDivergence(Exception):
@@ -114,7 +110,7 @@ class CaptureReplay:
                 else:
                     self._driver_thread_state[threading.current_thread()] = PROCESSING_REPLY
             if position is None:
-                self._loop.call_soon_threadsafe(_wake_loop)
+                self._loop.call_soon_threadsafe(wake_loop)
                 return None
             self._in_positions_by_endpoint[endpoint].popleft()
             self.refused_read_by_caller.pop(caller, None)

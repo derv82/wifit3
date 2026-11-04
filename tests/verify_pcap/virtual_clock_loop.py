@@ -8,6 +8,10 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable
 
 MAIN_CALLER = "main"
+def wake_loop() -> None:
+    """Scheduled from another thread so the loop re-checks its timers and whether the driver is idle."""
+
+
 class PoolThreadCaller(threading.local):
     def __init__(self) -> None:
         self.caller: str | None = None
@@ -48,8 +52,16 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         return self.virtual_time
 
     def advance_clock(self, timestamp: float) -> None:
-        if timestamp > self.virtual_time:
-            self.virtual_time = timestamp
+        """From another thread, also wakes the loop: a driver task timer may now be due."""
+        if timestamp <= self.virtual_time:
+            return
+        self.virtual_time = timestamp
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop is not self:
+            self.call_soon_threadsafe(wake_loop)
 
     def run_in_executor(self, executor: Any, func: Callable[..., Any], *args: Any) -> asyncio.Future[Any]:
         """Pending until the result is delivered on the loop, not just until the pool thread returns.
