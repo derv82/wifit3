@@ -81,7 +81,7 @@ def _panel(array, line_count: int):
     lines = [SimpleNamespace(show_ap_button=SimpleNamespace(display=None, disabled=None, tooltip=None))
              for _ in range(line_count)]
     return SimpleNamespace(app=SimpleNamespace(array=array), _state=SimpleNamespace(bssid=BSSID),
-                           _ssid_lines=lines)
+                           _ssid_lines=lines, _dwpa_button=object())
 
 
 def test_show_ap_shows_on_the_first_ssid_line_only_while_the_ap_is_in_the_array():

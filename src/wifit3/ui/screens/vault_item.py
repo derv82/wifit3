@@ -3,7 +3,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from itertools import groupby
-from typing import Mapping, Optional
+from pathlib import Path
+from typing import Mapping, Optional, Sequence
 
 from rich.markup import escape
 from textual import on
@@ -33,8 +34,11 @@ from wifit3.persist.exhaustion import ExhaustedWordlist
 from wifit3.ui.colors import KEY_CHIP_STYLE, PASSWORD_MISMATCH_COLOR
 from wifit3.ui.encryption_format import wep_key_ascii
 from wifit3.ui.screens.vault_breakpoints import NARROW, SHORT, TALL, TINY, WIDE
+from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
 from wifit3.ui.vault.tools_ui import UI_TOOLS
+from wifit3.vault.manager import log_propagation
 from wifit3.vault.tools.base import VaultTool
+from wifit3.vault.tools.dwpa_api import PotfileEntry, split_on_known_ssid
 
 
 _STATUS_COLOR = {
@@ -505,6 +509,8 @@ class _ApStatePanel(VerticalGroup):
         self._uncracked_list = _UncrackedList(classes="uncracked")
         self._selected_count_label = Label("", classes="selected-count")
         self._cracker_buttons = [_CrackerButton(tool) for tool in self.app.vault.manager.tools.values()]
+        self._dwpa_button = Button("DWPA", "primary", classes="tool-btn",
+                                   tooltip="Upload the AP's newest capture to a DWPA server")
 
     async def show(self, state: ApState, expanded_key_ids: frozenset[tuple[CaptureType, str]],
                    unticked_hashline_ids: frozenset[str]) -> None:
@@ -614,6 +620,7 @@ class _ApStatePanel(VerticalGroup):
             yield self._selected_count_label
             with Horizontal(classes="tools"):
                 yield from self._cracker_buttons
+                yield self._dwpa_button
 
     def _show_uncracked(self, state: ApState, show_client: bool, show_ssid: bool,
                         unticked_hashline_ids: frozenset[str]) -> None:
@@ -634,6 +641,7 @@ class _ApStatePanel(VerticalGroup):
         uncracked_lines = [h.line for h in uncracked]
         for button in self._cracker_buttons:
             button.display = state.hashline_capture is not None and button.tool.can_crack(uncracked_lines)
+        self._dwpa_button.display = any(c.path.endswith(".pcap") for c in state.handshake_and_pmkid_files)
 
     def _show_selected_count(self, selected: list[Hc22000Line]) -> None:
         self._selected_count_label.update(_selected_count_text(len(selected)))
@@ -652,6 +660,8 @@ class _ApStatePanel(VerticalGroup):
     def _button_pressed(self, event: Button.Pressed) -> None:
         if isinstance(event.button, _CrackerButton):
             self._launch_tool(event.button.tool)
+        elif event.button is self._dwpa_button:
+            self._upload_dwpa_capture()
         elif event.button is self.add_key_button:
             self.post_message(AddKeyPressed())
         elif (self._ssid_lines and event.button is self._ssid_lines[0].show_ap_button
@@ -660,6 +670,52 @@ class _ApStatePanel(VerticalGroup):
         else:
             return
         event.stop()
+
+    def _upload_dwpa_capture(self) -> None:
+        state = self._state
+        capture = None if state is None else next(
+            (c for c in state.handshake_and_pmkid_files if c.path.endswith(".pcap")), None)
+        if capture is None:
+            return
+
+        def _on_upload(uploaded: bool | None) -> None:
+            if uploaded:
+                self.notify(f"Uploaded {Path(capture.path).name} to DWPA")
+
+        ssid = state.ssids[0].ssid if state.ssids else capture.ssid
+        self.app.push_screen(DwpaConfigModal(capture, state.bssid, ssid, self._store_dwpa_keys),
+                             _on_upload)
+
+    def _store_dwpa_keys(self, networks: Sequence[PotfileEntry]) -> None:
+        added = known = 0
+        by_bssid: dict[str, list[PotfileEntry]] = {}
+        for network in networks:
+            by_bssid.setdefault(network.bssid, []).append(network)
+        for bssid, entries in by_bssid.items():
+            if not self.app.vault.persisted(bssid):
+                continue            # a DWPA network this Vault has no record of
+            state = self.app.vault.ap_state(bssid)
+            entries = [split_on_known_ssid(entry, [history.ssid for history in state.ssids])
+                       for entry in entries]
+            ssid = entries[0].ssid
+            held = {key.value for key in state.keys}
+            for psk in dict.fromkeys(entry.psk for entry in entries):
+                if psk in held:
+                    known += 1
+                    continue
+                try:
+                    self.app.vault.save_wpa_psk(ssid, bssid, psk)
+                except OSError as e:
+                    self.notify(f"Could not save {escape(ssid)}: {escape(str(e))}", severity="warning")
+                    continue
+                self.app.vault.propagate_verified_psk(bssid, ssid, psk).add_done_callback(log_propagation)
+                added += 1
+        if not added:
+            self.notify(f"{known} key{'s' if known > 1 else ''} already in Vault" if known
+                        else "No DWPA keys for the Vault's APs")
+            return
+        already = f", {known} already in Vault" if known else ""
+        self.notify(f"Retrieved {added} new key{'s' if added > 1 else ''} from DWPA{already}")
 
     def _launch_tool(self, tool: VaultTool) -> None:
         state = self._state
