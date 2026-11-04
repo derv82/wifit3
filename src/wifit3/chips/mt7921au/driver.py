@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional, Callable
 
 import usb.core
+import usb.util
 
 from . import init as chip_init
 from . import mac, mcu, rx, tx
@@ -373,6 +374,10 @@ class MT7921AUDriver(Driver):
                 pass
             self._mac_work_task = None
         await self.transport.stop_rx()
+        try:
+            usb.util.dispose_resources(self.dev)
+        except usb.core.USBError as e:
+            logger.debug("MT7921AU: dispose_resources ignored: %s", e)
 
     def _on_raw_rx(self, data: bytes):
         """Decode one 802.11 frame off EP 0x84 (MCU responses are demuxed away by
