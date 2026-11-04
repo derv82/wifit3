@@ -66,6 +66,8 @@ class CaptureReplay:
         # The request the capture ends in, never completed: from it on, requests are past the capture, not compared.
         self.truncated_request: UsbOp | None = None
         self.past_capture_end = False
+        # Replies, in order, to the driver's probe requests the capture starts after: not compared.
+        self.probe_replies: list[UsbOp] = []
         # Per thread the driver started itself (its RX reader): PROCESSING_REPLY, or the endpoint it waits on.
         self._driver_thread_state: dict[threading.Thread, int] = {}
         self._loop = loop
@@ -89,6 +91,9 @@ class CaptureReplay:
                 raise CaptureDivergence()
             if is_driver_thread():
                 self._driver_thread_state[threading.current_thread()] = PROCESSING_REPLY
+            if (self.probe_replies and self.probe_replies[0].same_request(request)
+                    and all(reproduced is None for reproduced in self.reproduced_by)):
+                return self.probe_replies.pop(0)
             request_time = self._loop.virtual_time
             start = max(self.next_position_by_caller.get(caller, 0), self._advance_first_unreproduced())
             passed_over = False

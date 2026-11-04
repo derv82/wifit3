@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import struct
 from abc import ABC, abstractmethod
 from collections import Counter
 from dataclasses import dataclass, replace
@@ -110,6 +111,24 @@ class Waiver:
         return f"{self.reason.name} {ops_text} [{self.c_source}]"
 
 
+@dataclass(frozen=True)
+class ProbeReply:
+    """A vendor control IN request of the driver's probe, made before the capture's first op: answered, not compared,
+    with the reply to its first occurrence in ``reply_capture_path``."""
+    request: int
+    value: int
+    index: int
+    length: int
+    reply_capture_path: Path
+
+    def request_op(self) -> UsbOp:
+        setup = struct.pack("<BBHHH", usb.util.CTRL_IN | REQUEST_TYPE_VENDOR, self.request, self.value, self.index,
+                            self.length)
+        return UsbOp(frame_number=0, bus=0, device_address=0, endpoint=usb.util.ENDPOINT_IN,
+                     transfer_type=TransferType.CONTROL, setup=setup, data=b"", status=0, submit_time=0.0,
+                     completion_time=0.0)
+
+
 def register_ops_match(register_ops: Sequence[RegisterOp], run: Sequence[RegisterOp]) -> bool:
     """Same accesses, addresses and widths; a run op's value is compared unless it is None."""
     if len(register_ops) != len(run):
@@ -189,6 +208,8 @@ class VerifyCapture:
     HRTIMER_TASKS: ClassVar[tuple[Callable[..., Coroutine[Any, Any, None]], ...]] = ()
     # Captures the driver cannot reproduce for a host-side reason no waiver models; each case is a non-strict xfail.
     XFAIL_REASON_BY_CAPTURE_PATH: ClassVar[dict[Path, str]] = {}
+    # Captures that start after the driver's probe: the probe's requests, in the driver's order.
+    PROBE_REPLIES_BY_CAPTURE_PATH: ClassVar[dict[Path, tuple[ProbeReply, ...]]] = {}
 
     def test_capture(self, capture_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         capture = self.load_capture(capture_path)
@@ -237,6 +258,8 @@ class VerifyCapture:
         replay = CaptureReplay(capture.ops, is_same_request, is_driver_only_request, skip_capture_only_run_at,
                                self.DECODER.is_racing_extra_request, loop)
         replay.truncated_request = capture.truncated_request
+        for probe_reply in self.PROBE_REPLIES_BY_CAPTURE_PATH.get(capture_path, ()):
+            replay.probe_replies.append(self.load_probe_reply(probe_reply, capture_path, capture))
         device = FakeUsbDevice(replay, capture.device_descriptor, capture.configuration_descriptor,
                                capture.device_id.bus or 0, capture.device_id.address or 0)
 
@@ -285,6 +308,10 @@ class VerifyCapture:
         unused = [waiver.describe() for waiver, count in waived_counts.items() if count == 0]
         if unused:
             pytest.fail(f"{capture_path.name}: unused waivers: {unused}\n" + summary, pytrace=False)
+        if replay.probe_replies:
+            unrequested = [self.DECODER.describe(probe_reply) for probe_reply in replay.probe_replies]
+            pytest.fail(f"{capture_path.name}: probe replies never requested: {unrequested}\n" + summary,
+                        pytrace=False)
         print(summary)
 
     def is_same_request_counting_masked(self, captured: UsbOp, request: UsbOp, waivers: list[Waiver],
@@ -484,6 +511,17 @@ class VerifyCapture:
         if timestamp > loop.time():
             await asyncio.sleep(timestamp - loop.time())
         await wait_until_idle()
+
+    def load_probe_reply(self, probe_reply: ProbeReply, capture_path: Path, capture: LoadedCapture) -> UsbOp:
+        reply_capture = capture
+        if probe_reply.reply_capture_path != capture_path:
+            reply_capture = self.load_capture(probe_reply.reply_capture_path)
+        request = probe_reply.request_op()
+        for op in reply_capture.ops:
+            if op.same_request(request):
+                return op
+        pytest.fail(f"{probe_reply.reply_capture_path.name}: no {self.DECODER.describe(request)} to reply to the "
+                    "probe with", pytrace=False)
 
     def load_capture(self, capture_path: Path) -> LoadedCapture:
         all_ops, incomplete_submits = pair_submits_with_completions(read_usbmon_records(capture_path))
