@@ -4,8 +4,10 @@ import struct
 
 from tests.verify_pcap.ath9k_htc_decoder import Ath9kHtcDecoder
 from tests.verify_pcap.realtek_decoder import HALMAC_TX_DESC_SW_SEQ, REALTEK_USB_CMD_REQ, RealtekDecoder
+from tests.verify_pcap.rt2800_decoder import Rt2800Decoder
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import RegisterAccess, RegisterOp, VerifyCapture, Waiver, WaiverReason
+from tests.verify_pcap.verify_capture import (RegisterAccess, RegisterOp, TxOpField, VerifyCapture, Waiver,
+                                              WaiverReason)
 from wifit3.chips.ar9271_v2 import constants as C, reg as R, wmi
 
 OTHER_REGISTER = 0x7014
@@ -191,6 +193,32 @@ def test_tx_op_field_outside_the_checksum_span_leaves_the_checksum() -> None:
     request = realtek_tx(sw_seq=1, checksum=0x3005 ^ 0x002A)
     assert RealtekSwSeqOutsideChecksumValueOnly().is_same_request_except_waived_values(
         captured, request, RealtekSwSeqOutsideChecksumValueOnly.WAIVERS)
+
+
+RT2800_TXWI_W1_ACK = TxOpField(dword=2, shift=0, width=1)
+
+
+def rt2800_tx(txwi_word1: int) -> UsbOp:
+    data = struct.pack("<5I", 0x00000020, 0, txwi_word1, 0, 0) + bytes(12)
+    return UsbOp(frame_number=0, bus=1, device_address=2, endpoint=0x01, transfer_type=TransferType.BULK,
+                 setup=None, data=data, status=0, submit_time=0.0, completion_time=0.0)
+
+
+class Rt2800AckValueOnly(VerifyCapture):
+    DECODER = Rt2800Decoder()
+    WAIVERS = [Waiver(WaiverReason.CAPTURE_SETUP, "synthetic", value_only_tx_op_field=RT2800_TXWI_W1_ACK)]
+
+
+def test_rt2800_tx_op_field_accepts_a_different_value() -> None:
+    captured = rt2800_tx(txwi_word1=0x000C0000)
+    request = rt2800_tx(txwi_word1=0x000C0001)
+    assert Rt2800AckValueOnly().is_same_request_except_waived_values(captured, request, Rt2800AckValueOnly.WAIVERS)
+
+
+def test_rt2800_tx_op_field_compares_the_other_bits() -> None:
+    captured = rt2800_tx(txwi_word1=0x000C0000)
+    request = rt2800_tx(txwi_word1=0x000D0001)
+    assert not Rt2800AckValueOnly().is_same_request_except_waived_values(captured, request, Rt2800AckValueOnly.WAIVERS)
 
 
 REALTEK_ANY_VALUE_RUN = (RegisterOp(RegisterAccess.READ, REALTEK_OTHER_REGISTER, None),

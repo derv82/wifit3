@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import struct
+from dataclasses import replace
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import FamilyDecoder, RegisterAccess, RegisterOp
+from tests.verify_pcap.verify_capture import FamilyDecoder, RegisterAccess, RegisterOp, TxOpField
 from wifit3.chips.rt5370 import constants as C
 
 CHANNEL_SWITCH_LOOKAHEAD = 64
@@ -141,6 +142,22 @@ class Rt2800Decoder(FamilyDecoder):
         for word_index, value in enumerate(values):
             register_ops.append(RegisterOp(access, op.index + 4 * word_index, value))
         return register_ops
+
+    def with_tx_op_fields(self, op: UsbOp, fields: list[TxOpField], source: UsbOp) -> UsbOp:
+        """Fields in the TXINFO + TXWI (rt2800usb_write_tx_desc, rt2800_write_tx_data); there is no checksum."""
+        descriptor_size = C.TXINFO_DESC_SIZE + C.TXWI_DESC_SIZE_4WORDS
+        if (op.transfer_type != TransferType.BULK or op.is_in or len(op.data) < descriptor_size
+                or len(source.data) != len(op.data)):
+            return op
+        data = bytearray(op.data)
+        for field in fields:
+            if 4 * field.dword + 4 > descriptor_size:
+                continue
+            mask = ((1 << field.width) - 1) << field.shift
+            dword = struct.unpack_from("<I", data, 4 * field.dword)[0]
+            source_dword = struct.unpack_from("<I", source.data, 4 * field.dword)[0]
+            struct.pack_into("<I", data, 4 * field.dword, (dword & ~mask) | (source_dword & mask))
+        return replace(op, data=bytes(data))
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """rt2800usb bulk IN is RX only; TX status is polled through TX_STA_FIFO."""
