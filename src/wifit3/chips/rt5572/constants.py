@@ -529,37 +529,6 @@ RXD_W0_CRC_ERROR = 0x00000100
 RXD_W0_L2PAD = 0x00004000      # [SRC] rt2800usb.h:91 — 2B hdr/body align pad
 
 # ----------------------------------------------------------------------
-# USB endpoint addresses (re-stated here for the rx/tx modules).
-# Per the kernel rt2800usb_probe + endpoint enumeration:
-#   bulk-IN  data : 0x84
-#   bulk-OUT data : 0x01..0x06 (EDCA QSEL prio queues; 0x05 = EDCA Q0)
-# ----------------------------------------------------------------------
-# Already defined above as USB_EP_BULK_IN / USB_EP_BULK_OUT.
-
-# ----------------------------------------------------------------------
-# Default RX/TX bulk endpoint addresses.  Probed at runtime by
-# rx.probe_endpoints (M3) — these are fallback values for tests.
-#
-# Kernel TX EP-to-queue mapping (rt2800usb.c):
-#   0x01 = AC_BK,  0x02 = AC_BE,  0x03 = AC_VI,  0x04 = AC_VO,
-#   0x05 = HCCA,   0x06 = MGMT
-#
-# For broadcast mgmt-style inject (deauth) we use the MGMT endpoint
-# (0x06).  Real driver picks per-queue based on AC; our injects all go
-# out the MGMT queue since they're spoofed/no-ACK.
-# ----------------------------------------------------------------------
-USB_EP_BULK_IN = 0x84      # RXdata
-USB_EP_BULK_OUT_MGMT = 0x06
-USB_EP_BULK_OUT_AC_BE = 0x02
-# Kernel rt2x00usb_assign_endpoint maps queues to bulk-OUT EPs in
-# descriptor order: 1st bulk-OUT (= 0x01) is AC_VO. Mgmt frames in
-# mac80211 default to the highest-priority queue (AC_VO), so kernel
-# inject (aireplay-ng deauths) all go through EP 0x01. Verified from
-# driver_captures/captures_rt2800usb_rt3572/capture-1.pcap frame 43087.
-# [SRC] rt2x00usb.c:579-595
-USB_EP_BULK_OUT_AC_VO = 0x01
-
-# ----------------------------------------------------------------------
 # TX_BAND_CFG + TX_PIN_CFG (used by config_channel_rf3052 + rf53xx).
 # Shared between RT5392 and RT3572 — the dispatcher in chan.py writes
 # the same register, but RT3572 sets bit A for 5 GHz routing on top of
@@ -594,9 +563,6 @@ TX_PIN_CFG_LNA_PE_A1_EN = 0x00000400       # 2T2R 5 GHz secondary LNA
 TX_PIN_CFG_LNA_PE_G1_EN = 0x00000800       # 2T2R 2.4 GHz secondary LNA
 TX_PIN_CFG_RFTR_EN_BIT = 0x00010000
 TX_PIN_CFG_TRSW_EN_BIT = 0x00040000
-
-# Default for inject_frame.
-USB_EP_BULK_OUT = USB_EP_BULK_OUT_MGMT
 
 # ----------------------------------------------------------------------
 # TX descriptor sizes + bit-fields (M5).  [SRC] rt2800.h + rt2800usb.h

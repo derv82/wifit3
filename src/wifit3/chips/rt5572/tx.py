@@ -1,30 +1,8 @@
-"""rt2800usb TX path: build TXINFO + TXWI + bulk-OUT inject.
+"""rt2800usb TX path: rt2800usb_write_tx_desc (rt2800usb.c:401-435) + rt2800_write_tx_data (rt2800lib.c:795-853).
 
-Ported from rt2800_write_tx_data (rt2800lib.c:795-853) +
-rt2800usb_kick_tx_queue / rt2x00usb tx submit (USB transport bits).
+Wire layout (rt2800usb_get_tx_data_len, rt2800usb.c:440-451):
 
-Wire layout for an injected frame:
-
-    [TXINFO (4B)] [TXWI (16B for RT539x, 20B for RT5592)]
-    [802.11 frame] [pad to 4-byte alignment]
-
-TXINFO_W0.USB_DMA_TX_PKT_LEN counts TXWI + frame + alignment pad
-(but NOT TXINFO itself).
-
-Defaults used by inject_frame:
-  * MCS = 0, PHYMODE = CCK   (1 Mbps — robust broadcast rate)
-  * QSEL = MGMT              (matches our use of bulk-OUT EP 0x06)
-  * WIV = 1                  (no HW crypto, use IV from descriptor zeros)
-  * NSEQ = 1                 (let HW assign sequence number — kernel does
-                              this when ENTRY_TXD_GENERATE_SEQ is set)
-  * WCID = 0xFF              (no associated station — broadcast/inject)
-  * PACKETID = TX queue id + (queue entry index % 3) + 1
-  * ACK = 0  when use_no_ack=True  (matches our spoofed-deauth use case)
-  * ACK = 1  when use_no_ack=False (normal unicast — chip will retry)
-
-For unicast frames where you actually want delivery, set
-``use_no_ack=False`` (this is what the driver's inject_frame already
-does based on the WlanInterface flag).
+    [TXINFO 4B] [TXWI 16B, 20B on RT5592] [802.11 frame] [4-byte align pad] [4-byte USB end pad]
 """
 from __future__ import annotations
 
@@ -74,11 +52,7 @@ from .constants import (
     TXWI_W1_WIRELESS_CLI_ID,
 )
 
-# Kernel `rt2800usb_write_tx_desc` hardcodes QSEL=2 (EDCA) for EVERY
-# TX frame, including management. The "MGMT QSEL" thing earlier was
-# wrong — there's only one QSEL the chip accepts on the bulk-OUT data
-# path.
-QSEL_EDCA = 2
+QSEL_EDCA = 2    # rt2800usb_write_tx_desc [SRC rt2800usb.c:422]
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +120,8 @@ def build_tx_descriptors(
     mcs: int = 0,
     phymode: int = TXWI_PHYMODE_CCK,
     qsel: int = QSEL_EDCA,
-    packetid_queue: int = 0,
-    packetid_entry: int = 2,
+    packetid_queue: int,
+    packetid_entry: int,
     next_valid: int = 0,
     tx_burst: int = 0,
     frag: int = 0,
@@ -185,12 +159,7 @@ def build_tx_descriptors(
     txwi_w0 = _set_field32(txwi_w0, TXWI_W0_TX_OP, TXWI_TX_OP_NONE)
     # MIMO_PS/AMPDU/BW/SHORT_GI/STBC/IFS/FRAG/CF_ACK/TS = 0
 
-    # TXWI_W1 — ACK / WCID / length / packet id
-    # Field choices below mirror kernel rt2800usb aireplay-ng deauth TXWI
-    # (verified against capture-1.pcap frame 43087): WCID=0, NSEQ=0,
-    # PACKETID_QUEUE=0, PACKETID_ENTRY=2. Earlier choices (WCID=0xFF,
-    # NSEQ=1, PACKETID_QUEUE=2, PACKETID_ENTRY=1) were producing
-    # TX_SUCCESS=1 but no on-air emission on RT3572.
+    # TXWI_W1 [SRC rt2800lib.c:827-839]
     txwi_w1 = 0
     txwi_w1 = _set_field32(txwi_w1, TXWI_W1_ACK, 0 if use_no_ack else 1)
     txwi_w1 = _set_field32(txwi_w1, TXWI_W1_NSEQ, 0)              # use seqctl from frame
