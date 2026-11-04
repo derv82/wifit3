@@ -144,6 +144,41 @@ class RealtekValueOnly(VerifyCapture):
     WAIVERS = [Waiver(WaiverReason.HOST_VALUE, "synthetic", value_only_register=REALTEK_WAIVED_REGISTER)]
 
 
+class RealtekValueBitsOnly(VerifyCapture):
+    DECODER = RealtekDecoder()
+    WAIVERS = [Waiver(WaiverReason.HOST_VALUE, "synthetic", value_only_register=REALTEK_WAIVED_REGISTER,
+                      value_only_bits=0x0000FF00)]
+
+
+def test_realtek_value_only_bits_accepts_a_difference_in_them() -> None:
+    captured = realtek_write(REALTEK_WAIVED_REGISTER, 0x11223344)
+    request = realtek_write(REALTEK_WAIVED_REGISTER, 0x1122AA44)
+    assert RealtekValueBitsOnly().is_same_request_except_waived_values(captured, request,
+                                                                       RealtekValueBitsOnly.WAIVERS)
+
+
+def test_realtek_value_only_bits_compares_the_other_bits() -> None:
+    captured = realtek_write(REALTEK_WAIVED_REGISTER, 0x11223344)
+    request = realtek_write(REALTEK_WAIVED_REGISTER, 0x112233AA)
+    assert not RealtekValueBitsOnly().is_same_request_except_waived_values(captured, request,
+                                                                           RealtekValueBitsOnly.WAIVERS)
+
+
+def realtek_block_write(address: int, data: bytes) -> UsbOp:
+    setup = struct.pack("<BBHHH", 0x40, REALTEK_USB_CMD_REQ, address, 0, len(data))
+    return UsbOp(frame_number=0, bus=1, device_address=2, endpoint=0x00, transfer_type=TransferType.CONTROL,
+                 setup=setup, data=data, status=0, submit_time=0.0, completion_time=0.0)
+
+
+def test_realtek_value_only_masks_only_its_dword_of_a_block_write() -> None:
+    captured = realtek_block_write(REALTEK_WAIVED_REGISTER, bytes(8))
+    first_dword_differs = realtek_block_write(REALTEK_WAIVED_REGISTER, b"" + bytes(7))
+    second_dword_differs = realtek_block_write(REALTEK_WAIVED_REGISTER, bytes(4) + b"" + bytes(3))
+    test = RealtekValueOnly()
+    assert test.is_same_request_except_waived_values(captured, first_dword_differs, RealtekValueOnly.WAIVERS)
+    assert not test.is_same_request_except_waived_values(captured, second_dword_differs, RealtekValueOnly.WAIVERS)
+
+
 REALTEK_RUN = (RegisterOp(RegisterAccess.READ, REALTEK_OTHER_REGISTER, None),
                RegisterOp(RegisterAccess.WRITE, REALTEK_OTHER_REGISTER, 0x2))
 

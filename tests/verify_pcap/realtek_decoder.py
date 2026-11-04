@@ -131,12 +131,17 @@ class RealtekDecoder(FamilyDecoder):
 
     def register_ops(self, op: UsbOp) -> list[RegisterOp]:
         """One read or write of wValue per vendor request; its value is its data, little-endian (None for a read the
-        driver requests: no reply yet)."""
+        driver requests: no reply yet). A block write is one write per dword from wValue."""
         if not is_register_access(op):
             return []
         if op.is_in:
             return [RegisterOp(RegisterAccess.READ, op.value, register_value(op), op.length)]
-        return [RegisterOp(RegisterAccess.WRITE, op.value, int.from_bytes(op.data, "little"), op.length)]
+        register_ops: list[RegisterOp] = []
+        for offset in range(0, len(op.data), 4):
+            dword = op.data[offset:offset + 4]
+            register_ops.append(RegisterOp(RegisterAccess.WRITE, op.value + offset, int.from_bytes(dword, "little"),
+                                           len(dword)))
+        return register_ops
 
     def with_tx_op_fields(self, op: UsbOp, fields: list[TxOpField], source: UsbOp) -> UsbOp:
         """The dword 7 [15:0] XOR checksum changes by a descriptor field's changed halfwords (fields in its coverage)."""

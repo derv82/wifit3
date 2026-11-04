@@ -69,10 +69,10 @@ class TxOpField:
 
 @dataclass(frozen=True)
 class Waiver:
-    """value_only_register / value_only_tx_op_field: the driver makes the op; that register's written value or that
-    field of an injected frame's TX op is not compared. capture_only_run: this run of register ops is in the capture only, waived where the
-    replay would stop at its first op. driver_only_run: this run of register ops, in order, is the driver's only.
-    capture_paths: the captures it applies to; empty: all."""
+    """value_only_register / value_only_tx_op_field: the driver makes the op; that register's written value (only its
+    value_only_bits, if given) or that field of an injected frame's TX op is not compared. capture_only_run: this run
+    of register ops is in the capture only, waived where the replay would stop at its first op. driver_only_run: this
+    run of register ops, in order, is the driver's only. capture_paths: the captures it applies to; empty: all."""
     reason: WaiverReason
     c_source: str
     value_only_register: int | None = None
@@ -80,6 +80,7 @@ class Waiver:
     value_only_tx_op_field: TxOpField | None = None
     driver_only_run: tuple[RegisterOp, ...] = ()
     capture_paths: tuple[Path, ...] = ()
+    value_only_bits: int | None = None
 
     def __post_init__(self) -> None:
         forms = [self.value_only_register is not None, bool(self.capture_only_run),
@@ -87,11 +88,15 @@ class Waiver:
         if forms.count(True) != 1:
             raise ValueError("a Waiver takes one of value_only_register, capture_only_run, "
                              "value_only_tx_op_field, driver_only_run")
+        if self.value_only_bits is not None and self.value_only_register is None:
+            raise ValueError("value_only_bits narrows a value_only_register")
 
     def describe(self) -> str:
         field = self.value_only_tx_op_field
         if self.value_only_register is not None:
             ops_text = f"value of 0x{self.value_only_register:04x} not compared"
+            if self.value_only_bits is not None:
+                ops_text = f"value bits 0x{self.value_only_bits:x} of 0x{self.value_only_register:04x} not compared"
         elif field is not None:
             ops_text = f"TX op dword {field.dword} bits {field.shift}..{field.shift + field.width - 1} not compared"
         elif self.driver_only_run:
@@ -284,11 +289,17 @@ class VerifyCapture:
         if (tx_op_fields and self.DECODER.injected_frame_at([captured], 0) is not None
                 and self.DECODER.with_tx_op_fields(captured, tx_op_fields, request).same_request(request)):
             return True
-        value_only_registers: set[int] = set()
+        # None: the whole value.
+        value_only_bits_by_register: dict[int, int | None] = {}
         for waiver in waivers:
-            if waiver.value_only_register is not None:
-                value_only_registers.add(waiver.value_only_register)
-        if not value_only_registers:
+            if waiver.value_only_register is None:
+                continue
+            bits = value_only_bits_by_register.get(waiver.value_only_register, 0)
+            if bits is None or waiver.value_only_bits is None:
+                value_only_bits_by_register[waiver.value_only_register] = None
+            else:
+                value_only_bits_by_register[waiver.value_only_register] = bits | waiver.value_only_bits
+        if not value_only_bits_by_register:
             return False
         if (captured.transfer_type != request.transfer_type or captured.endpoint != request.endpoint
                 or captured.setup != request.setup or len(captured.data) != len(request.data)):
@@ -310,7 +321,11 @@ class VerifyCapture:
                     continue
                 if (captured_op.access != RegisterAccess.WRITE or changed_op.access != RegisterAccess.WRITE
                         or captured_op.address != changed_op.address
-                        or captured_op.address not in value_only_registers):
+                        or captured_op.address not in value_only_bits_by_register):
+                    return False
+                bits = value_only_bits_by_register[captured_op.address]
+                assert captured_op.value is not None and changed_op.value is not None
+                if bits is not None and (captured_op.value ^ changed_op.value) & ~bits:
                     return False
         return True
 

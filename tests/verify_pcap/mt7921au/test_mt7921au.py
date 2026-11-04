@@ -30,6 +30,10 @@ TXD3_SEQ = TxOpField(dword=(C.SDIO_HDR_SIZE + 3 * 4) // 4, shift=16, width=12)
 # The 802.11 sequence number: bits 4..15 of the frame's Sequence Control, after the SDIO header and 64-byte TXD.
 FRAME_SEQUENCE_NUMBER = TxOpField(dword=(C.SDIO_HDR_SIZE + C.MT_SDIO_TXD_SIZE + 22) // 4, shift=20, width=12)
 TXD3_NO_ACK = TxOpField(dword=(C.SDIO_HDR_SIZE + 3 * 4) // 4, shift=0, width=1)
+# mt76_connac_mcu_set_channel_domain: a 12-byte header, then 8-byte {hw_value, pad, flags} per enabled channel;
+# ch40 and ch48 are entries 15 and 17, after ch1-14 and ch36.
+IEEE80211_CHAN_NO_IR = 1 << 1
+CH40_CH48_NO_IR_BITS = (IEEE80211_CHAN_NO_IR << 8 * (12 + 8 * 15 + 4)) | (IEEE80211_CHAN_NO_IR << 8 * (12 + 8 * 17 + 4))
 
 
 class TestMt7921au(VerifyCapture):
@@ -51,7 +55,8 @@ class TestMt7921au(VerifyCapture):
                                             len(MONITOR_RX_FILTER_PAYLOAD)),)),
         Waiver(WaiverReason.HOST_VALUE, "mt76_connac_mcu.c:80-153 mt76_connac_mcu_set_channel_domain sends each "
                "channel's cfg80211 flags; this host's cfg80211 beacon hints had cleared NO_IR on ch40 and ch48",
-               value_only_register=SET_CHAN_DOMAIN_ADDRESS, capture_paths=(INJECTION_5GHZ_CAPTURE_PATH,)),
+               value_only_register=SET_CHAN_DOMAIN_ADDRESS, value_only_bits=CH40_CH48_NO_IR_BITS,
+               capture_paths=(INJECTION_5GHZ_CAPTURE_PATH,)),
         Waiver(WaiverReason.WIFIT3_ONLY, "wifit3 only: Driver.inject_frame _stamp_tx_seq; aireplay-ng's radiotap NOSEQ "
                "keeps its own", value_only_tx_op_field=FRAME_SEQUENCE_NUMBER),
         Waiver(WaiverReason.WIFIT3_ONLY, "mt76_connac_mac.c:478-480 mt76_connac2_mac_write_txwi_80211 copies the "
