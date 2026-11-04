@@ -115,7 +115,8 @@ class CaptureReplay:
             self.refused_read_by_caller.pop(caller, None)
             self.reproduced_by[position] = caller
             captured = self.ops[position]
-            self._loop.advance_clock(captured.completion_time)
+            if not is_driver_thread():
+                self._loop.advance_clock(captured.completion_time)
             return captured
 
     def driver_thread_is_working(self) -> bool:

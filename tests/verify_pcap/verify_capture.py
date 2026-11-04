@@ -87,7 +87,7 @@ class VerifyCapture:
         thread_pool = DriverThreadPool()
 
         def is_driver_idle() -> bool:
-            return thread_pool.busy_thread_count == 0 and not replay.driver_thread_is_working()
+            return loop.pending_executor_call_count == 0 and not replay.driver_thread_is_working()
 
         loop = VirtualClockEventLoop(capture.ops[0].submit_time, is_driver_idle)
         loop.set_default_executor(thread_pool)

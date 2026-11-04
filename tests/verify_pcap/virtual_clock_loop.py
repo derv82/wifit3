@@ -41,6 +41,7 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         self.is_driver_idle = is_driver_idle
         self.latest_timer_by_task: dict[asyncio.Task[Any], asyncio.TimerHandle] = {}
         self._timer_lock = threading.Lock()
+        self.pending_executor_call_count = 0
 
     def time(self) -> float:
         return self.virtual_time
@@ -48,6 +49,17 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
     def advance_clock(self, timestamp: float) -> None:
         if timestamp > self.virtual_time:
             self.virtual_time = timestamp
+
+    def run_in_executor(self, executor: Any, func: Callable[..., Any], *args: Any) -> asyncio.Future[Any]:
+        """Pending until the result is delivered on the loop, not just until the pool thread returns."""
+        self.pending_executor_call_count += 1
+        future = super().run_in_executor(executor, func, *args)
+
+        def count_delivered(done: asyncio.Future[Any]) -> None:
+            self.pending_executor_call_count -= 1
+
+        future.add_done_callback(count_delivered)
+        return future
 
     def call_at(self, when: float, callback: Callable[..., object], *args: Any,
                 context: Any = None) -> asyncio.TimerHandle:
@@ -76,13 +88,9 @@ class DriverThreadPool(ThreadPoolExecutor):
 
     def __init__(self) -> None:
         super().__init__(thread_name_prefix="verify-capture-thread_pool")
-        self.busy_thread_count = 0
-        self._count_lock = threading.Lock()
 
     def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
         caller = current_caller_name()
-        with self._count_lock:
-            self.busy_thread_count += 1
         return super().submit(self._run_as_caller, caller, fn, *args, **kwargs)
 
     def _run_as_caller(self, caller: str, fn: Callable[..., Any], *args: Any,
@@ -92,8 +100,6 @@ class DriverThreadPool(ThreadPoolExecutor):
             return fn(*args, **kwargs)
         finally:
             _pool_thread_caller.caller = None
-            with self._count_lock:
-                self.busy_thread_count -= 1
 
 
 def is_driver_thread() -> bool:
