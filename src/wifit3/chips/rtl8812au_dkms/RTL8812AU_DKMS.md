@@ -138,8 +138,8 @@ running longer on one boot's RF environment, both reproduced byte-for-byte. The 
 is reproduced (recorded PSD fed back), not stripped. Not in the gate, each accounted for:
 bulk-IN RX (chip→host input); channel hops (= `set_channel_bw` + `set_tx_power`, proven
 byte-identical to the monitor-tail re-tune). The 2 s watchdog (`watchdog.py`) is diffed by
-`tests/verify_pcap/rtl8812au_dkms` across the captures' runtime ticks; unported in it:
-`phy_set_tx_power_level_by_path` past the BB-swing limit and the sreset reset. The 1 µs
+`tests/verify_pcap/rtl8812au_dkms` across the captures' runtime ticks; its sreset reset is
+empty without `DBG_CONFIG_ERROR_RESET` (autoconf.h:311). The 1 µs
 inter-write `ODM_delay_us(1)` gaps are not USB ops (invisible to a byte diff) and are swamped
 by control-transfer latency; the 8812 RADIO tables have no `0xfe`/`0xffe` settle-delay rows.
 

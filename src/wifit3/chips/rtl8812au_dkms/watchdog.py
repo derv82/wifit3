@@ -217,7 +217,7 @@ def phy_set_bb_swing_by_band_8812a(st: PhydmState, band_5g: bool, tx_bb_swing_b:
 def rtl8812_sreset_status_check(t) -> None:
     """rtl8812_sreset_xmit_status_check + rtl8812_sreset_linked_status_check (rtl8812a_sreset.c:21,73).
 
-    TODO: rtl8812a_sreset.c:33 rtw_hal_sreset_reset on a non-zero REG_TXDMA_STATUS is unported.
+    Its rtw_hal_sreset_reset is sreset_reset, empty without DBG_CONFIG_ERROR_RESET (autoconf.h:311).
     """
     t.read32(REG_TXDMA_STATUS)
     t.read32(REG_RXDMA_STATUS)
