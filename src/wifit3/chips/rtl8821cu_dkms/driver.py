@@ -31,7 +31,7 @@ from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallba
 from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
-from . import bringup, chan, efuse, led, mac, phy, tx, watchdog
+from . import bringup, btc, chan, efuse, led, mac, phy, tx, watchdog
 from .rx import iter_frames
 from .transport import Rtl8821cuTransport
 
@@ -83,6 +83,7 @@ class Rtl8821cuDkmsDriver(Driver):
         self._wifi_intf: Optional[int] = None       # claimed vendor (WiFi) interface number
         self._io_lock = asyncio.Lock()              # serialize set_channel / inject / watchdog / mac-write
         self._wd_state = None
+        self._btc_periodical_state: Optional[btc.PeriodicalState] = None
         self._watchdog_task = None
         self._led_task: Optional[asyncio.Task] = None
 
@@ -158,6 +159,8 @@ class Rtl8821cuDkmsDriver(Driver):
         self._led_task = loop.create_task(self._led_blink_loop())
         self._wd_state = watchdog.WatchdogState(
             eeprom_thermal=info.eeprom_thermal, thermal_offset=efuse.thermal_offset(info))
+        if info.bt_coexist:
+            self._btc_periodical_state = btc.PeriodicalState()
         self._watchdog_task = loop.create_task(self._watchdog_loop())
         _p(0.85, "Enabling monitor RX")
         await loop.run_in_executor(None, bringup.phase_monitor, t, info)
@@ -205,7 +208,8 @@ class Rtl8821cuDkmsDriver(Driver):
             while True:
                 fired_at = loop.time()
                 async with self._io_lock:
-                    await loop.run_in_executor(None, watchdog.tick, self.transport, self._wd_state)
+                    await loop.run_in_executor(None, watchdog.tick, self.transport, self._wd_state,
+                                               self._btc_periodical_state)
                 await asyncio.sleep(fired_at + _WATCHDOG_PERIOD_S - loop.time())
         except asyncio.CancelledError:
             pass

@@ -18,7 +18,9 @@ the hold band, computes no change and writes nothing — matching the wire.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional
 
+from . import btc
 from .bb import set_bb_reg
 from .dm import (_b2d, _get_bb_dbg_port_val, _nhm_th_background, _release_bb_dbg_port,
                  _set_bb_dbg_port, get_bb_reg)
@@ -441,9 +443,10 @@ def _env_mntr(t, st: WatchdogState) -> None:
     _ccx_trigger(t, 1 << 2)                             # FAHM trigger
 
 
-def tick(t, st: WatchdogState) -> None:
+def tick(t, st: WatchdogState, btc_st: Optional[btc.PeriodicalState]) -> None:
     """One dynamic-check watchdog tick, in wire order. ``phydm_noisy_detection`` / ``phydm_dig``
-    (no change) / ``phydm_ra_info_watchdog`` / ``phydm_cfo_tracking`` are software-silent here."""
+    (no change) / ``phydm_ra_info_watchdog`` / ``phydm_cfo_tracking`` are software-silent here.
+    ``btc_st`` is None on a card without EEPROMBluetoothCoexist [SRC] rtw_btcoex.c:288."""
     _sreset_check(t)
     _usb_rx_agg(t)
     t.read32(_REG_RCR)                                   # hw_var_rcr_get (interleaved)
@@ -457,3 +460,5 @@ def tick(t, st: WatchdogState) -> None:
     _dyn_bw_indication(t)
     _env_mntr(t, st)
     st.first_tick = False
+    if btc_st is not None:
+        btc.periodical(t, btc_st)                       # rtw_btcoex_Handler [SRC] rtw_cmd.c:3016
