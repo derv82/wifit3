@@ -295,15 +295,19 @@ class VerifyCapture:
 
     @staticmethod
     async def run_driver_until_idle(loop: VirtualClockEventLoop, timestamp: float) -> None:
-        """Move the clock to ``timestamp``; return once the driver is idle IDLE_PASSES_IN_A_ROW loop passes in a row."""
+        """Idle, move the clock to ``timestamp``, idle: idle is IDLE_PASSES_IN_A_ROW loop passes in a row."""
+        async def wait_until_idle() -> None:
+            idle_passes = 0
+            while idle_passes < IDLE_PASSES_IN_A_ROW:
+                await asyncio.sleep(0)
+                if loop.is_driver_idle():
+                    idle_passes += 1
+                else:
+                    idle_passes = 0
+
+        await wait_until_idle()
         loop.advance_clock(timestamp)
-        idle_passes = 0
-        while idle_passes < IDLE_PASSES_IN_A_ROW:
-            await asyncio.sleep(0)
-            if loop.is_driver_idle():
-                idle_passes += 1
-            else:
-                idle_passes = 0
+        await wait_until_idle()
 
     def load_capture(self, capture_path: Path) -> LoadedCapture:
         all_ops, incomplete_count = pair_submits_with_completions(read_usbmon_records(capture_path))
