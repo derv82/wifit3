@@ -29,7 +29,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.rtl8822bu_dkms import (
-    SUPPORTED_IDS, bb, bringup, chan, chipid, dm_watchdog, mac, rx, sipi, txpower,
+    SUPPORTED_IDS, bb, bringup, cal, chan, chipid, dm_watchdog, mac, rx, sipi, txpower,
 )
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport
 from wifit3.dot11.parser import WlanFrameParser
@@ -223,15 +223,15 @@ def _rxstats(t, channel, dwell, rcr, txpwr_pg=None, rfe_type=None):
         print("  => no good frames and no crc/icv: walk likely mis-aligned -> decode bug, not CRC.")
 
 
-def _dwell_count(t, dwell, rssi, total, wd=None):
-    """One dwell window: bulk-IN loop, tally beacons. If `wd` (a DigState) is set, tick the PHYDM
-    watchdog every ~2 s to adapt RX gain. Returns (beacons, bufs, bytes, frames, total)."""
+def _dwell_count(t, dwell, rssi, total, channel, txpwr_pg, dm_st=None):
+    """One dwell window: bulk-IN loop, tally beacons. If `dm_st` (a cal.DmState) is set, run the
+    dynamic-check tick every ~2 s. Returns (beacons, bufs, bytes, frames, total)."""
     beacons: Counter = Counter()
     raw_bytes = raw_bufs = ch_frames = 0
     start = last_wd = time.monotonic()
     while time.monotonic() - start < dwell:
-        if wd is not None and time.monotonic() - last_wd >= 2.0:
-            dm_watchdog.phydm_watchdog(t, wd)        # runtime IGI/CCK-PD/EDCCA adaptation
+        if dm_st is not None and time.monotonic() - last_wd >= 2.0:
+            dm_watchdog.rtw_dynamic_chk_wk_hdl(t, dm_st, channel, txpwr_pg)
             last_wd = time.monotonic()
         buf = t.bulk_in()
         if not buf:
@@ -253,11 +253,11 @@ def _dwell_count(t, dwell, rssi, total, wd=None):
     return beacons, raw_bufs, raw_bytes, ch_frames, total
 
 
-def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=False, cckpd=None,
+def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, dm_st=None, cckpd=None,
            txpwr_pg=None, rfe_type=None):
     """Tune each channel, then a bulk-IN loop for `dwell` s; tally beacons. `igi` forces RX gain to a
     hex value or sweeps a range (DIG-watchdog hypothesis test); `rcr` overrides the monitor RCR;
-    `watchdog` runs the runtime PHYDM watchdog (live IGI adaptation) every ~2 s. rx-dma bytes vs parsed
+    `dm_st` (cal.DmState) runs the dynamic-check tick every ~2 s. rx-dma bytes vs parsed
     frames split "no bytes off USB" (RX-DMA gap) from "bytes but no good frames"."""
     per_ch: dict[int, Counter] = {}
     rssi: dict[str, int] = {}
@@ -267,19 +267,18 @@ def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=Fals
     mac.enable_monitor(t)                          # airmon monitor RX-enable (once)
     if rcr is not None:
         t.write32(0x0608, int(rcr, 0))             # diagnostic RCR override (e.g. accept CRC/ICV errors)
-    wd = None
-    if watchdog:
-        wd = dm_watchdog.DigState(cur_ig_value=sipi.get_bb_reg(t, 0x0C50, 0x7F),
-                                  cck_new_agc=bool(sipi.get_bb_reg(t, 0x0A9C, 1 << 17)))
     for ch in channels:
         _set_channel_verify_txagc(t, ch, prev_ch=prev_ch, txpwr_pg=txpwr_pg, rfe_type=rfe_type)
+        if dm_st is not None:
+            cal.clear_txpowertracking_state(dm_st)   # rtl8822b_phy.c:986
         if cckpd is not None:
             t.write8(0x0A0A, int(cckpd, 0))        # force CCK PD threshold (0x40 sensitive .. 0x83 LV_1)
         prev_ch = ch
         for g in igis:
             if g is not None:
                 _force_igi(t, g)
-            beacons, bufs, nbytes, frames, total = _dwell_count(t, dwell / len(igis), rssi, total, wd=wd)
+            beacons, bufs, nbytes, frames, total = _dwell_count(t, dwell / len(igis), rssi, total, ch,
+                                                                txpwr_pg, dm_st=dm_st)
             per_ch[ch] = per_ch.get(ch, Counter()) + beacons
             tag = f" IGI=0x{g:02x}" if g is not None else ""
             print(f"    ch {ch:>3}{tag}: {len(beacons):>2} APs, {sum(beacons.values()):>4} beacons  "
@@ -334,7 +333,7 @@ def main() -> int:
             return 0
 
         print("[*] running cold bring-up (two-cycle init: chip-ID/EFUSE/FW/MAC/BB/RF)...")
-        _, e = bringup.cold_bringup(t)
+        _, e, dm_st = bringup.cold_bringup(t)
         print("  EFUSE: "
               f"autoload_fail={int(e.autoload_fail)} rfe_type={e.rfe_type} crystal_cap=0x{e.crystal_cap:02x} "
               f"thermal=0x{e.thermal_meter:02x} id_valid={int(e.eeprom_id_valid)} "
@@ -369,8 +368,8 @@ def main() -> int:
         print(f"[*] monitor RX: {'channel ' + str(args.channel) if args.channel else 'hop 1-13'}, "
               f"{dwell:g}s/ch{igi_note}...")
         per_ch, rssi, frames = _watch(t, channels, dwell, prev_ch=None, igi=args.igi, rcr=args.rcr,
-                                      watchdog=args.watchdog, cckpd=args.cckpd, txpwr_pg=txpwr_pg,
-                                      rfe_type=e.rfe_type)
+                                      dm_st=dm_st if args.watchdog else None, cckpd=args.cckpd,
+                                      txpwr_pg=txpwr_pg, rfe_type=e.rfe_type)
 
         allb: Counter = Counter()
         for c in per_ch.values():

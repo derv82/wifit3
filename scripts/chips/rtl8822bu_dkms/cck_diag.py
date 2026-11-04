@@ -35,7 +35,7 @@ import libusb_package
 import usb.core
 import usb.util
 
-from wifit3.chips.rtl8822bu_dkms import bringup, chan, chipid, dm_watchdog, mac, rx, sipi
+from wifit3.chips.rtl8822bu_dkms import bringup, cal, chan, chipid, dm_watchdog, mac, rx, sipi, txpower
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport
 from wifit3.dot11.parser import WlanFrameParser
 
@@ -232,7 +232,8 @@ def main() -> int:
         info = chipid.get_chip_info(t)
         print(f"  chip_ver (cut) = {info.chip_ver}")
         print("[*] cold bring-up...")
-        bringup.cold_bringup(t)
+        _, e, dm_st = bringup.cold_bringup(t)
+        txpwr_pg = txpower.parse_pg(e.log_map)
         print("[*] enable monitor + tune...")
         mac.enable_monitor(t)
         if args.rcr is not None:
@@ -263,6 +264,7 @@ def main() -> int:
             return 0
 
         chan.set_channel_bw(t, args.channel, prev_ch=None)
+        cal.clear_txpowertracking_state(dm_st)   # rtl8822b_phy.c:986
 
         # Report the live CCK-path register state BEFORE any override.
         cck_en = (t.read32(0x0808) >> 28) & 1
@@ -323,26 +325,22 @@ def main() -> int:
                       f"{zeros:>6} {seg_tally.rssi.get(foc, '?'):>5}  {foc}")
             return 0
 
-        wd = None
-        if args.watchdog:
-            wd = dm_watchdog.DigState(cur_ig_value=t.read32(0x0C50) & 0x7F,
-                                      cck_new_agc=bool((t.read32(0x0A9C) >> 17) & 1))
         tally = Tally()
         start = last_wd = time.monotonic()
         while True:
             now = time.monotonic()
             if now - start >= args.dwell:
                 break
-            if wd is not None and now - last_wd >= 2.0:
-                dm_watchdog.phydm_watchdog(t, wd)
+            if args.watchdog and now - last_wd >= 2.0:
+                dm_watchdog.rtw_dynamic_chk_wk_hdl(t, dm_st, args.channel, txpwr_pg)
                 last_wd = now
             buf = t.bulk_in()
             if buf:
                 tally.walk(buf, now)
-        if wd is not None:
+        if args.watchdog:
             print(f"  [watchdog] converged IGI 0xC50=0x{t.read32(0x0C50) & 0x7F:02x}  "
-                  f"0xA0A=0x{t.read8(0x0A0A):02x}  (DigState cur_ig=0x{wd.cur_ig_value:02x}, "
-                  f"cck_pd_lv={wd.cck_pd_lv})")
+                  f"0xA0A=0x{t.read8(0x0A0A):02x}  (DmState cur_ig=0x{dm_st.cur_ig_value:02x}, "
+                  f"cck_pd_lv={dm_st.cck_pd_lv})")
         tally.report(args.channel, args.dwell)
         return 0
     finally:
