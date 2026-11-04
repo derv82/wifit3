@@ -28,9 +28,13 @@ Every User API call the tool makes exists since 0.12.0, going by the server's gi
    change that. An expired key fails jobs with "Expired access key!".
 3. **Configure in wifit3.** Open the Hashtopolis modal from the Vault or from Preferences (≡ next to
    the auto-crack dropdown). Enter:
-   - the server URL, e.g. `http://192.168.1.10:8080`
+   - the server URL, e.g. `http://192.168.1.10:8080`; if no scheme is entered, wifit3 uses HTTP
    - the access key
-   
+
+   HTTP is suitable for a trusted local network. The access key and uploaded hashes are not
+   encrypted in transit; use an HTTPS URL when the network is not trusted and TLS is configured
+   for the server.
+
    Then press Test / Refresh and choose a wordlist and an access group.
 
 ## Wordlists

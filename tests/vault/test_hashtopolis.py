@@ -323,10 +323,14 @@ def test_newest_hashcat_version_is_the_highest_version_id(monkeypatch):
     assert HashtopolisApi("server", "key").newest_hashcat_version_id() == 4
 
 
-@pytest.mark.parametrize("url", ["server:8080", "http://server:8080/",
-                                 "http://server:8080/api/user.php"])
-def test_user_api_endpoint(url):
-    assert user_api_endpoint(url) == "http://server:8080/api/user.php"
+@pytest.mark.parametrize(("url", "expected"), [
+    ("server:8080", "http://server:8080/api/user.php"),
+    ("https://server:8080/", "https://server:8080/api/user.php"),
+    ("https://server:8080/api/user.php", "https://server:8080/api/user.php"),
+    ("http://server:8080", "http://server:8080/api/user.php"),
+])
+def test_user_api_endpoint(url, expected):
+    assert user_api_endpoint(url) == expected
 
 
 @pytest.mark.parametrize("error", [ValueError("nonnumeric port: '8080x'"),
