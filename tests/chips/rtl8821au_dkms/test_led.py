@@ -30,10 +30,10 @@ class _FakeRegs:
         self.gpio8 = value & 0xFFFFFFFF
 
 
-def test_turn_on_uses_vendor_gpio8_led_sequence():
+def test_usb_dongle_turn_on_uses_vendor_gpio8_led_sequence():
     regs = _FakeRegs(ledcfg2=0xAF, gpio8=0xA55A5BA5)
 
-    led.turn_on(regs)
+    led.turn_on(regs, interface_sel=0)
 
     assert regs.reads == [(led.REG_LEDCFG2, 1), (led.REG_GPIO_PIN_CTRL_2, 4)]
     assert regs.writes8 == [(led.REG_LEDCFG2, 0x80)]
@@ -43,10 +43,10 @@ def test_turn_on_uses_vendor_gpio8_led_sequence():
     assert regs.gpio8 & led.BIT_GPIO8_MODE == 0
 
 
-def test_turn_off_uses_vendor_gpio8_led_sequence():
+def test_usb_dongle_turn_off_uses_vendor_gpio8_led_sequence():
     regs = _FakeRegs(gpio8=0xA55A5AA5)
 
-    led.turn_off(regs)
+    led.turn_off(regs, interface_sel=0)
 
     assert regs.reads == [(led.REG_GPIO_PIN_CTRL_2, 4)]
     assert regs.writes8 == []

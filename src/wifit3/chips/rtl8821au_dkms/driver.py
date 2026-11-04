@@ -73,6 +73,7 @@ class Rtl8821auDkmsDriver(Driver):
         # Runtime fuse-derived branch selectors (default = the reference AWUS036ACS values,
         # so a value-less construction reproduces the recorded card byte-for-byte).
         self._ext_lna_2g: bool = False           # efuse LNAType_2G[3] — RFE pinmux branch
+        self._interface_sel: int = 0             # efuse board option [7:5] — LED register branch
         self._jaguar_params = phy_cond.JaguarParams()  # phy_cond walker inputs (board_type)
         self._channel: Optional[int] = None
         self.is_warm: bool = False
@@ -83,6 +84,7 @@ class Rtl8821auDkmsDriver(Driver):
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._dig_task: Optional[asyncio.Task] = None
+        self._led_task: Optional[asyncio.Task] = None
         self._tx_led_task: Optional[asyncio.Task] = None
         # Serializes control-transfer batches (DIG watchdog vs set_channel) so two
         # executor threads never drive EP0 at once; the RX reader uses bulk-IN.
@@ -120,6 +122,7 @@ class Rtl8821auDkmsDriver(Driver):
         self._bb_swing_2g = params.bb_swing_2g
         self._bb_swing_5g = params.bb_swing_5g
         self._ext_lna_2g = params.ext_lna_2g
+        self._interface_sel = params.interface_sel
         self._jaguar_params = efuse.build_jaguar_params(params)
         logger.info("RTL8821AU efuse: valid_id=%d autoload_fail=%d ver=0x%02x crystal=0x%02x "
                     "thermal=0x%02x mac=%s cck_base[0]=0x%02x bb_swing 2g=0x%03x 5g=0x%03x",
@@ -188,6 +191,9 @@ class Rtl8821auDkmsDriver(Driver):
             on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
 
+        # _netdev_open: rtw_hal_init, rtw_intf_start, then rtw_led_control(LED_CTL_NO_LINK) (os_intfs.c:4033).
+        self._led_task = loop.create_task(self._led_blink())
+
         # M5 §3: monitor opmode entry (Set_MSR NOLINK + RCR accept-all + RXFLTMAP).
         await loop.run_in_executor(None, monitor.enter_monitor, self.transport)
 
@@ -216,6 +222,24 @@ class Rtl8821auDkmsDriver(Driver):
             pass
         except Exception:  # noqa: BLE001 — a watchdog fault must not kill RX
             logger.exception("RTL8821AU DIG watchdog stopped on error")
+
+    async def _led_blink(self) -> None:
+        """SW_LED_MODE9 LED0 no-link slow blink: SwLedBlink9 LED_BLINK_SLOWLY (hal_usb_led.c:934)."""
+        loop = asyncio.get_running_loop()
+        led_on = False
+        try:
+            while True:
+                await asyncio.sleep(led.LED_BLINK_NO_LINK_INTERVAL_ALPHA_S)
+                async with self._io_lock:
+                    if led_on:
+                        await loop.run_in_executor(None, led.turn_off, self.transport, self._interface_sel)
+                    else:
+                        await loop.run_in_executor(None, led.turn_on, self.transport, self._interface_sel)
+                led_on = not led_on
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 — an LED fault must not kill RX
+            logger.exception("RTL8821AU LED blink stopped on error")
 
     # --- RX path -----------------------------------------------------------
     def _read_once(self) -> Optional[bytes]:
@@ -314,7 +338,7 @@ class Rtl8821auDkmsDriver(Driver):
         loop = asyncio.get_running_loop()
         try:
             async with self._io_lock:
-                await loop.run_in_executor(None, led.turn_on, self.transport)
+                await loop.run_in_executor(None, led.turn_on, self.transport, self._interface_sel)
             await asyncio.sleep(led.TX_BLINK_INTERVAL_S)
         except asyncio.CancelledError:
             raise
@@ -323,7 +347,7 @@ class Rtl8821auDkmsDriver(Driver):
         finally:
             try:
                 async with self._io_lock:
-                    await loop.run_in_executor(None, led.turn_off, self.transport)
+                    await loop.run_in_executor(None, led.turn_off, self.transport, self._interface_sel)
             except Exception:  # noqa: BLE001 — closing/unplugged devices can reject LED-off
                 logger.debug("RTL8821AU TX LED off failed", exc_info=True)
 
@@ -350,7 +374,7 @@ class Rtl8821auDkmsDriver(Driver):
             await loop.run_in_executor(None, monitor._write_mac_addr, self.transport, real)
 
     async def close(self) -> None:
-        # Stop the DIG watchdog and the reader before releasing the USB handle.
+        # Stop the DIG watchdog, the LED blink and the reader before releasing the USB handle.
         if self._dig_task is not None:
             self._dig_task.cancel()
             try:
@@ -358,6 +382,11 @@ class Rtl8821auDkmsDriver(Driver):
             except asyncio.CancelledError:
                 pass
             self._dig_task = None
+        if self._led_task is not None:
+            self._led_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._led_task
+            self._led_task = None
         if self._tx_led_task is not None:
             self._tx_led_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
