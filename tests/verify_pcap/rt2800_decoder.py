@@ -5,7 +5,7 @@ import struct
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import FamilyDecoder
+from tests.verify_pcap.verify_capture import FamilyDecoder, RegisterAccess, RegisterOp
 from wifit3.chips.rt5370 import constants as C
 
 CHANNEL_SWITCH_LOOKAHEAD = 64
@@ -118,6 +118,29 @@ class Rt2800Decoder(FamilyDecoder):
             if (channel_rf1, channel_rf3) == (rf1, rf3):
                 return channel
         return None
+
+    def register_ops(self, op: UsbOp) -> list[RegisterOp]:
+        """A multi read or write is one 32-bit access per dword from wIndex (rt2x00usb_register_multiwrite); a single
+        write is one 16-bit write of wValue (rt2x00usb_vendor_request_sw). A read with no reply yet has value None."""
+        if op.transfer_type != TransferType.CONTROL or op.setup is None:
+            return []
+        if op.request == C.USB_SINGLE_WRITE:
+            return [RegisterOp(RegisterAccess.WRITE, op.index, op.value)]
+        if op.request == C.USB_MULTI_WRITE:
+            access = RegisterAccess.WRITE
+        elif op.request == C.USB_MULTI_READ:
+            access = RegisterAccess.READ
+        else:
+            return []
+        values: list[int | None]
+        if op.is_in and not op.data:
+            values = [None] * (op.length // 4)
+        else:
+            values = list(struct.unpack(f"<{len(op.data) // 4}I", op.data))
+        register_ops: list[RegisterOp] = []
+        for word_index, value in enumerate(values):
+            register_ops.append(RegisterOp(access, op.index + 4 * word_index, value))
+        return register_ops
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """rt2800usb bulk IN is RX only; TX status is polled through TX_STA_FIFO."""
