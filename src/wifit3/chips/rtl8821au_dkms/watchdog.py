@@ -258,7 +258,8 @@ def _tx_pwr_track_set_pwr(t, st: DmState, channel: int) -> None:
     not ported: the captures never reach them.
     """
     pwr_tracking_limit = 32 if channel <= 14 else 30    # MGN_1M (CCK) / MGN_6M (OFDM)
-    final_ofdm_swing_index = st.default_ofdm_index + st.absolute_ofdm_swing_idx
+    # u8 in the C: a negative sum wraps past the limit and takes the over-limit branch.
+    final_ofdm_swing_index = (st.default_ofdm_index + st.absolute_ofdm_swing_idx) & 0xFF
     if final_ofdm_swing_index > pwr_tracking_limit:
         set_bb(t, REG_A_TX_SCALE_JAGUAR, 0xFFE00000, TX_SCALING_TABLE_JAGUAR[pwr_tracking_limit])
         st.modify_tx_agc_flag_path_a = True
