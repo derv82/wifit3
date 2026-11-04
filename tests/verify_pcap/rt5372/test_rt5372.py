@@ -39,4 +39,22 @@ class TestRt5372(VerifyCapture):
                value_only_tx_op_field=TxOpField(dword=2, shift=0, width=1)),
         Waiver(WaiverReason.WIFIT3_ONLY, "wifit3 only: Driver.inject_frame _stamp_tx_seq; aireplay-ng's radiotap NOSEQ "
                "keeps its own", value_only_tx_op_field=FRAME_SEQUENCE_NUMBER),
+        Waiver(WaiverReason.WIFIT3_ONLY, "rt2x00dev.c:88-113 rt2x00lib_disable_radio -> rt2800usb.c:352-358 "
+               "STATE_RADIO_OFF: the capture ends with the interface brought down; wifit3's close() leaves the radio "
+               "on for the warm reattach (mac.is_chip_warm)",
+               capture_only_run=(RegisterOp(RegisterAccess.READ, C.MAC_SYS_CTRL, None),
+                                 RegisterOp(RegisterAccess.WRITE, C.MAC_SYS_CTRL, None),
+                                 RegisterOp(RegisterAccess.READ, C.WPDMA_GLO_CFG, None),
+                                 RegisterOp(RegisterAccess.WRITE, C.WPDMA_GLO_CFG, None),
+                                 RegisterOp(RegisterAccess.READ, C.WPDMA_GLO_CFG, None),
+                                 RegisterOp(RegisterAccess.READ, C.MAC_SYS_CTRL, None),
+                                 RegisterOp(RegisterAccess.WRITE, C.MAC_SYS_CTRL, None),
+                                 RegisterOp(RegisterAccess.READ, C.H2M_MAILBOX_CSR, None),
+                                 RegisterOp(RegisterAccess.WRITE, C.H2M_MAILBOX_CSR, None),
+                                 RegisterOp(RegisterAccess.WRITE, C.HOST_CMD_CSR, C.MCU_SLEEP),
+                                 RegisterOp(RegisterAccess.READ, C.H2M_MAILBOX_CSR, None),
+                                 RegisterOp(RegisterAccess.WRITE, C.H2M_MAILBOX_CSR, None),
+                                 RegisterOp(RegisterAccess.WRITE, C.HOST_CMD_CSR, C.MCU_LED)),
+               capture_paths=(PAU05_CAPTURE_DIR / "pau05_1.pcap", PAU05_CAPTURE_DIR / "pau05_2.pcap",
+                              PAU05_CAPTURE_DIR / "pau05_3.pcap")),
     ]
