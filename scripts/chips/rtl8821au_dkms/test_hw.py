@@ -276,22 +276,22 @@ def main() -> int:
             print(f"[*] running channel tune (M4/M7: ch{channel} + 20 MHz BW + TX power)...")
             if channel <= 14:
                 chan.set_chnl_bw(t, ch=channel, bb_swing_2g=params.bb_swing_2g,
-                                 ext_lna_2g=params.ext_lna_2g)
+                                 bb_swing_2g_b=params.bb_swing_2g_b, ext_lna_2g=params.ext_lna_2g)
                 txpower.set_tx_power(t, channel, params.tx_power)
                 group, cck_group = txpower._ch_group_2g(channel)
-                cck = txpower._pg_idx(params.tx_power, "cck", group, cck_group)
-                ofdm = txpower._pg_idx(params.tx_power, "ofdm", group, cck_group)
-                bw20 = txpower._pg_idx(params.tx_power, "bw20", group, cck_group)
+                cck = txpower._pg_idx(params.tx_power, "cck", group, cck_group, 0)
+                ofdm = txpower._pg_idx(params.tx_power, "ofdm", group, cck_group, 0)
+                bw20 = txpower._pg_idx(params.tx_power, "bw20", group, cck_group, 0)
                 checks = ((0x0C20, cck), (0x0C24, ofdm), (0x0C2C, bw20))
             else:
                 chan.set_chnl_bw(t, ch=1, bb_swing_2g=params.bb_swing_2g,
-                                 ext_lna_2g=params.ext_lna_2g)
-                chan.set_channel_bw(t, channel, params.bb_swing_2g, params.bb_swing_5g,
-                                    params.ext_lna_2g)
+                                 bb_swing_2g_b=params.bb_swing_2g_b, ext_lna_2g=params.ext_lna_2g)
+                chan.set_channel_bw(t, channel, params.bb_swing_2g, params.bb_swing_2g_b,
+                                    params.bb_swing_5g, params.bb_swing_5g_b, params.ext_lna_2g)
                 txpower.set_tx_power_5g(t, channel, params.tx_power_5g)
                 group = txpower._ch_group_5g(channel)
-                ofdm = txpower._pg_idx(params.tx_power_5g, "ofdm", group, 0)
-                bw20 = txpower._pg_idx(params.tx_power_5g, "bw20", group, 0)
+                ofdm = txpower._pg_idx(params.tx_power_5g, "ofdm", group, 0, 0)
+                bw20 = txpower._pg_idx(params.tx_power_5g, "bw20", group, 0, 0)
                 checks = ((0x0C24, ofdm), (0x0C2C, bw20))
             rf18 = rf._rf_serial_read(t, rf.RF_PATH_A, rf.RF_CHNLBW)
             print(f"  RF[0x18] = 0x{rf18:05x}  (channel/BW reg — ch{channel} @ 20 MHz)")

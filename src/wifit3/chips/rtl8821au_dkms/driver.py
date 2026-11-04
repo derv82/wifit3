@@ -171,7 +171,7 @@ class Rtl8821auDkmsDriver(Driver):
             bb.phy_bb_config(t, crystal_cap=self._crystal_cap,
                              params=self._jaguar_params)        # M3: BB PHY_REG + AGC + xtal
             rf.phy_rf_config(t, self._jaguar_params)  # M3: RadioA
-            chan.set_chnl_bw(t, _DEFAULT_CHANNEL, self._bb_swing_2g,
+            chan.set_chnl_bw(t, _DEFAULT_CHANNEL, self._bb_swing_2g, self._bb_swing_2g_b,
                              self._ext_lna_2g)        # M4: 2.4 GHz tune
             txpower.set_tx_power(t, _DEFAULT_CHANNEL, self._tx_power)  # M-TXPWR: per-rate txagc
             mac.hal_init_misc_pre(t)                  # M5 §1a: security + MISC11
@@ -183,8 +183,8 @@ class Rtl8821auDkmsDriver(Driver):
                 monitor._write_mac_addr(t, bytes(int(b, 16) for b in self.mac_address.split(":")))
             # HW_VAR_ENABLE_RX_BAR [SRC] hal_com.c:13480-13483
             t.write16(monitor.REG_RXFLTMAP1, t.read16(monitor.REG_RXFLTMAP1) | (1 << 8))
-            chan.set_channel_bw(t, _DEFAULT_CHANNEL, self._bb_swing_2g, self._bb_swing_5g,
-                                self._ext_lna_2g)
+            chan.set_channel_bw(t, _DEFAULT_CHANNEL, self._bb_swing_2g, self._bb_swing_2g_b,
+                                self._bb_swing_5g, self._bb_swing_5g_b, self._ext_lna_2g)
             txpower.set_tx_power(t, _DEFAULT_CHANNEL, self._tx_power)
             return seed
 
@@ -306,8 +306,8 @@ class Rtl8821auDkmsDriver(Driver):
         loop = asyncio.get_running_loop()
 
         def _tune(t):
-            rrsr = chan.set_channel_bw(t, channel, self._bb_swing_2g, self._bb_swing_5g,
-                                       self._ext_lna_2g)
+            rrsr = chan.set_channel_bw(t, channel, self._bb_swing_2g, self._bb_swing_2g_b,
+                                       self._bb_swing_5g, self._bb_swing_5g_b, self._ext_lna_2g)
             if rrsr is not None:
                 self._dm.rrsr_val_init = rrsr                   # rtw_phydm_set_rrsr (hal_com.c:13241)
                 if channel > 14:

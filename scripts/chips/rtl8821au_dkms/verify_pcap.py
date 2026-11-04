@@ -130,7 +130,7 @@ def run(cap: str | None = None) -> int:
         bb.phy_bb_config(t, crystal_cap=p.crystal_cap, params=jp)  # M3: BB PHY_REG + AGC + xtal
         rf.phy_rf_config(t, jp)                         # M3: RadioA
         m3_ops = t.i
-        chan.set_chnl_bw(t, 1, p.bb_swing_2g, p.ext_lna_2g)  # M4: band + channel + 20 MHz BW
+        chan.set_chnl_bw(t, 1, p.bb_swing_2g, p.bb_swing_2g_b, p.ext_lna_2g)  # M4: band + channel + 20 MHz BW
         m4_ops = t.i
         txpower.set_tx_power(t, 1, p.tx_power)          # M-TXPWR: per-rate txagc (7485-7607)
         mtxpwr_ops = t.i

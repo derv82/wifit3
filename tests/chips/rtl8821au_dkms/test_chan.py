@@ -54,7 +54,18 @@ def test_switch_band_2g_rfe_images():
     # Full 2.4 GHz band switch: 0xCB4 carries _ext_band_switch's DPDT(0x77)+band-2.4G
     # (0x10000000), then the RFE inv bit. Matches the vendor's documented 0xCB4 images.
     ref, var = BandT(), BandT()
-    chan._switch_band_2g(ref, chan.BB_SWING_DEFAULT, ext_lna_2g=False)
-    chan._switch_band_2g(var, chan.BB_SWING_DEFAULT, ext_lna_2g=True)
+    chan._switch_band_2g(ref, chan.BB_SWING_DEFAULT, chan.BB_SWING_DEFAULT, ext_lna_2g=False)
+    chan._switch_band_2g(var, chan.BB_SWING_DEFAULT, chan.BB_SWING_DEFAULT, ext_lna_2g=True)
     assert ref.regs[0x0CB0] == 0x7777 and ref.regs[0x0CB4] == 0x10000077   # bypass
     assert var.regs[0x0CB0] == 0x7272 and var.regs[0x0CB4] == 0x10100077   # ext LNA on
+
+
+def test_band_switch_writes_each_path_its_own_swing():
+    # phy_SetBBSwingByBand_8812A (rtl8812a_phycfg.c:1148-1151): 0xC1C gets path A's, 0xE1C path B's.
+    for switch in (lambda t: chan._switch_band_2g(t, 0x16A, 0x101),
+                   lambda t: chan._switch_band_5g(t, 0x16A, 0x101)):
+        t = BandT()
+        t.regs[chan.REG_TXPKT_EMPTY] = 0x30     # TX FIFO idle for the 5 GHz wait
+        switch(t)
+        assert t.regs[0x0C1C] >> 21 == 0x16A
+        assert t.regs[0x0E1C] >> 21 == 0x101

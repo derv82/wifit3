@@ -92,7 +92,8 @@ def verify(cap_name: str) -> int:
 
         t = rp.ReplayTransport(ops)
         try:
-            chan.set_channel_bw(t, ch, p.bb_swing_2g, p.bb_swing_5g, p.ext_lna_2g)
+            chan.set_channel_bw(t, ch, p.bb_swing_2g, p.bb_swing_2g_b, p.bb_swing_5g, p.bb_swing_5g_b,
+                                p.ext_lna_2g)
             if ch <= 14:
                 txpower.set_tx_power(t, ch, p.tx_power)
             else:
