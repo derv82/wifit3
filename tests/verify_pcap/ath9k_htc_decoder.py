@@ -149,6 +149,19 @@ class Ath9kHtcDecoder(FamilyDecoder):
                     return channel
         return None
 
+    def channel_change_is_scan_at(self, ops: Sequence[UsbOp], position: int) -> bool:
+        """IEEE80211_CONF_OFFCHANNEL hops take ath9k_hw_do_fastcc (htc_drv_main.c:256), whose check_alive reads
+        AR_CFG (hw.c:1647) where the full reset's first read is AR_DEF_ANTENNA (hw.c:1905)."""
+        for lookahead in ops[position + 1:position + CHANNEL_SWITCH_LOOKAHEAD]:
+            if lookahead.is_in or wmi_command_id(lookahead) != wmi.WMI_REG_READ_CMDID:
+                continue
+            for address in register_words(lookahead):
+                if address == R.AR_CFG:
+                    return True
+                if address == R.AR_DEF_ANTENNA:
+                    return False
+        return False
+
     def register_ops(self, op: UsbOp) -> list[RegisterOp]:
         """REG_READ / REG_WRITE / REG_RMW commands, a REG_RMW entry as its SET_BITS then CLEAR_BITS; responses and
         events list none."""

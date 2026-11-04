@@ -119,6 +119,10 @@ class FamilyDecoder(ABC):
     def channel_change_at(self, ops: Sequence[UsbOp], position: int) -> int | None:
         """The channel, if the op at ``position`` starts Linux's channel change."""
 
+    def channel_change_is_scan_at(self, ops: Sequence[UsbOp], position: int) -> bool:
+        """Whether the channel change at ``position`` is an off-channel hop, made as ``set_channel(scan=True)``."""
+        return False
+
     @abstractmethod
     def injected_frame_at(self, ops: Sequence[UsbOp], position: int) -> bytes | None:
         """The 802.11 frame, if the op at ``position`` sends one."""
@@ -365,8 +369,9 @@ class VerifyCapture:
                 channel = self.DECODER.channel_change_at(replay.ops, position)
                 frame = self.DECODER.injected_frame_at(replay.ops, position)
                 if channel is not None:
-                    called = f"set_channel({channel})"
-                    await driver.set_channel(channel)
+                    scan = self.DECODER.channel_change_is_scan_at(replay.ops, position)
+                    called = f"set_channel({channel}, scan={scan})"
+                    await driver.set_channel(channel, scan)
                 elif frame is not None:
                     called = f"inject_frame({len(frame)}B)"
                     await driver.inject_frame(frame)
