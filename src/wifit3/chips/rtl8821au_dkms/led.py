@@ -17,7 +17,6 @@ BIT6 = 1 << 6
 BIT_GPIO8_OUTPUT = 1 << 8
 BIT_GPIO8_OUTPUT_ENABLE = 1 << 16
 BIT_GPIO8_MODE = 1 << 24
-TX_BLINK_INTERVAL_S = 0.05
 
 
 def _is_minicard_or_slim(interface_sel: int) -> bool:
