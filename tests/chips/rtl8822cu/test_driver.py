@@ -218,6 +218,23 @@ async def test_set_channel_tracks_the_5ghz_band(monkeypatch):
     assert d._current_channel == 149 and d.current_band_is_2g is False
 
 
+async def test_set_channel_commits_band_state_before_releasing_control_lock(monkeypatch):
+    d = _driver()
+
+    class LockProbe:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            assert d._current_channel == 149
+            assert d.current_band_is_2g is False
+
+    d._control_lock = LockProbe()
+    monkeypatch.setattr(drv, "switch_channel", lambda *args: None)
+
+    assert await d.set_channel(149) is True
+
+
 async def test_set_channel_reports_failure(monkeypatch):
     d = _driver()
 

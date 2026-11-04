@@ -135,11 +135,12 @@ class RTL8822CUDriver(Driver):
         usb.util.claim_interface(self.dev, self.layout.interface if self.layout else 0)
         self._claimed = True
 
-    def _cold_cycle(self, t: RTL8822CUTransport, bulk_out: int, *, beacon: bool = False) -> None:
+    def _cold_cycle(self, t: RTL8822CUTransport, bulk_out: int, *, bulk_out_size: int = 512,
+                    beacon: bool = False) -> None:
         """Firmware download, MAC config, general info. ``beacon`` selects the second cycle's
         ``dump_mgntframe`` TX descriptor and its resolved ``get_trx_path`` config."""
         download_firmware(t.dev, t, bulk_out, load_firmware(), beacon=beacon,
-                          rsvd_boundary=0x792 if beacon else 0)
+                          bulk_out_size=bulk_out_size, rsvd_boundary=0x792 if beacon else 0)
         self.h2c.box_num = 0                    # [SRC hal_halmac.c:3465]
         init_mac_cfg(t)
         init_mac_flow_tail(t)
@@ -157,7 +158,8 @@ class RTL8822CUDriver(Driver):
                               self.chip_info.chip_ver, rf_type=HALMAC_RF_1T1R,
                               tx_ant=BB_PATH_A, rx_ant=BB_PATH_A, package=0)
 
-    def _bringup(self, t: RTL8822CUTransport, bulk_out: int = 0, progress=None) -> None:
+    def _bringup(self, t: RTL8822CUTransport, bulk_out: int = 0, bulk_out_size: int = 512,
+                 progress=None) -> None:
         """Cold register init: power-on, firmware, MAC, BB/RF. It runs twice because the first
         cycle exists only to read the MAC-hidden report, and ends by powering the chip back off
         [SRC hal/hal_com.c:1560]. Bulk writes go through ``t.dev``."""
@@ -175,7 +177,7 @@ class RTL8822CUDriver(Driver):
         progress(0.2, "Uploading RTL8822C firmware (cycle 1 of 2)")
         mac_power_on(t, cut_mask=cut_mask, chip_ver=self.chip_info.cut)
         t.write8(REG_C2HEVT_MSG_NORMAL, C2H_DEFEATURE_RSVD)   # ask FW for the report
-        self._cold_cycle(t, bulk_out)
+        self._cold_cycle(t, bulk_out, bulk_out_size=bulk_out_size)
         progress(0.45, "Reading RTL8822C MAC capabilities")
         self.mac_hidden_rpt = read_mac_hidden_rpt(t)
         # rtw_hal_rfpath_init [SRC hal/hal_intf.c:318-390] consumes the report that
@@ -200,7 +202,7 @@ class RTL8822CUDriver(Driver):
 
         progress(0.5, "Uploading RTL8822C firmware (cycle 2 of 2)")
         mac_power_on(t, cut_mask=cut_mask, chip_ver=self.chip_info.cut)
-        self._cold_cycle(t, bulk_out, beacon=True)
+        self._cold_cycle(t, bulk_out, bulk_out_size=bulk_out_size, beacon=True)
         config_rx_info(t)
         enable_bb_rf(t)
         progress(0.85, "Loading RTL8822C BB/RF tables")
@@ -336,7 +338,8 @@ class RTL8822CUDriver(Driver):
         try:
             self._claim()
             await loop.run_in_executor(
-                None, self._bringup, self.transport, self.layout.bulk_out[0], _emit)
+                None, self._bringup, self.transport, self.layout.bulk_out[0],
+                self.layout.bulk_out_max_packet_size, _emit)
             await loop.run_in_executor(None, self._monitor_entry)
         except BringUpError:
             await self.close()
@@ -407,9 +410,9 @@ class RTL8822CUDriver(Driver):
             def _tune() -> None:
                 with self._control_lock:
                     switch_channel(self.transport, channel, self.txpwr)
+                    self._current_channel = channel
+                    self.current_band_is_2g = channel <= 14
             await loop.run_in_executor(None, _tune)
-            self._current_channel = channel
-            self.current_band_is_2g = channel <= 14
             if not self._rx_regs_after_tune_logged:
                 self._rx_regs_after_tune_logged = True
                 await loop.run_in_executor(None, self._log_rx_registers, "after_tune")

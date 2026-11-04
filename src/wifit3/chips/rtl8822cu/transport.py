@@ -20,6 +20,7 @@ class EndpointLayout:
     interface: int
     bulk_in: tuple[int, ...]
     bulk_out: tuple[int, ...]
+    bulk_out_max_packet_size: int = 512
 
 
 # ON-section page-switch echo, guarded #if CONFIG_RTL8822B||8821C||8822C||8822E
@@ -64,6 +65,7 @@ class RTL8822CUTransport(Rtw88Transport):
                 continue
             ins: list[int] = []
             outs: list[int] = []
+            bulk_out_max_packet_size = 512
             for ep in intf:
                 if (ep.bmAttributes & USB_ENDPOINT_TYPE_MASK) != USB_ENDPOINT_TYPE_BULK:
                     continue
@@ -71,6 +73,9 @@ class RTL8822CUTransport(Rtw88Transport):
                     ins.append(ep.bEndpointAddress)
                 else:
                     outs.append(ep.bEndpointAddress)
+                    if len(outs) == 1:
+                        bulk_out_max_packet_size = ep.wMaxPacketSize
             if ins or outs:
-                return EndpointLayout(intf.bInterfaceNumber, tuple(ins), tuple(outs))
+                return EndpointLayout(intf.bInterfaceNumber, tuple(ins), tuple(outs),
+                                      bulk_out_max_packet_size)
         raise RuntimeError("RTL8822CU: no vendor-specific bulk interface")
