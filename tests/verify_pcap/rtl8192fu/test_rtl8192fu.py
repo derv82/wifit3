@@ -15,4 +15,4 @@ class TestRtl8192fu(VerifyCapture):
                      CAPTURE_DIR / "capture-3.pcap"]
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RTL8192FUDriver
-    DECODER = RealtekDecoder()
+    DECODER = RealtekDecoder(hop_start_register=0x0E08, rf_sipi_address=0x0840)
