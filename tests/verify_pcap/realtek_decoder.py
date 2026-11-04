@@ -5,7 +5,7 @@ import struct
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import FamilyDecoder
+from tests.verify_pcap.verify_capture import FamilyDecoder, RegisterAccess, RegisterOp
 from wifit3.chips.rtl8192fu import constants as C
 
 REALTEK_USB_CMD_REQ = 0x05
@@ -110,6 +110,14 @@ class RealtekDecoder(FamilyDecoder):
         if self.rf_base_address is not None and 0 <= op.value - self.rf_base_address < 0x400:
             return (op.value - self.rf_base_address) >> 2, value & LSSI_DATA_MASK
         return None
+
+    def register_ops(self, op: UsbOp) -> list[RegisterOp]:
+        """One read or write of wValue per vendor request; a write's value is its data, little-endian."""
+        if not is_register_access(op):
+            return []
+        if op.is_in:
+            return [RegisterOp(RegisterAccess.READ, op.value, None)]
+        return [RegisterOp(RegisterAccess.WRITE, op.value, int.from_bytes(op.data, "little"))]
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """Bulk IN with no rxdesc24 rpt_sel packet; C2H (rpt_sel) stays in the replay for the driver."""

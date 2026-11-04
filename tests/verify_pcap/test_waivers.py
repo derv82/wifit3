@@ -3,12 +3,15 @@ from __future__ import annotations
 import struct
 
 from tests.verify_pcap.ath9k_htc_decoder import Ath9kHtcDecoder
+from tests.verify_pcap.realtek_decoder import REALTEK_USB_CMD_REQ, RealtekDecoder
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
 from tests.verify_pcap.verify_capture import RegisterAccess, RegisterOp, VerifyCapture, Waiver, WaiverReason
 from wifit3.chips.ar9271_v2 import constants as C, reg as R, wmi
 
 OTHER_REGISTER = 0x7014
 READ_REGISTER = 0x803C
+REALTEK_WAIVED_REGISTER = 0x0560
+REALTEK_OTHER_REGISTER = 0x0100
 
 
 def wmi_op(endpoint: int, command_id: int, seq: int, words: list[int]) -> UsbOp:
@@ -28,6 +31,18 @@ def reg_read(seq: int, addresses: list[int]) -> UsbOp:
 
 def response(seq: int) -> UsbOp:
     return wmi_op(C.EP_REG_IN, wmi.WMI_REG_WRITE_CMDID, seq, [])
+
+
+def realtek_read(address: int, value: int) -> UsbOp:
+    setup = struct.pack("<BBHHH", 0xC0, REALTEK_USB_CMD_REQ, address, 0, 4)
+    return UsbOp(frame_number=0, bus=1, device_address=2, endpoint=0x80, transfer_type=TransferType.CONTROL,
+                 setup=setup, data=value.to_bytes(4, "little"), status=0, submit_time=0.0, completion_time=0.0)
+
+
+def realtek_write(address: int, value: int) -> UsbOp:
+    setup = struct.pack("<BBHHH", 0x40, REALTEK_USB_CMD_REQ, address, 0, 4)
+    return UsbOp(frame_number=0, bus=1, device_address=2, endpoint=0x00, transfer_type=TransferType.CONTROL,
+                 setup=setup, data=value.to_bytes(4, "little"), status=0, submit_time=0.0, completion_time=0.0)
 
 
 class TsfValueOnly(VerifyCapture):
@@ -104,3 +119,36 @@ def test_capture_only_run_matches_every_occurrence() -> None:
            reg_write(4, [OTHER_REGISTER, 0x3]),
            reg_read(5, [READ_REGISTER]), reg_write(6, [OTHER_REGISTER, 0x2, R.AR_TSF_U32, 0x0])]
     assert CaptureOnlyRun().capture_only_run_positions(ops, RUN) == [0, 1, 3, 4]
+
+
+class RealtekValueOnly(VerifyCapture):
+    DECODER = RealtekDecoder()
+    WAIVERS = [Waiver(WaiverReason.HOST_VALUE, "synthetic", value_only_register=REALTEK_WAIVED_REGISTER)]
+
+
+REALTEK_RUN = (RegisterOp(RegisterAccess.READ, REALTEK_OTHER_REGISTER, None),
+               RegisterOp(RegisterAccess.WRITE, REALTEK_OTHER_REGISTER, 0x2))
+
+
+class RealtekCaptureOnlyRun(VerifyCapture):
+    DECODER = RealtekDecoder()
+    WAIVERS = [Waiver(WaiverReason.CAPTURE_SETUP, "synthetic", capture_only_run=REALTEK_RUN)]
+
+
+def test_realtek_value_only_accepts_a_different_waived_value() -> None:
+    captured = realtek_write(REALTEK_WAIVED_REGISTER, 0x007D1AAA)
+    request = realtek_write(REALTEK_WAIVED_REGISTER, 0x007CFD9D)
+    assert RealtekValueOnly().is_same_request_except_waived_values(captured, request)
+
+
+def test_realtek_value_only_compares_other_registers_values() -> None:
+    captured = realtek_write(REALTEK_OTHER_REGISTER, 0x007D1AAA)
+    request = realtek_write(REALTEK_OTHER_REGISTER, 0x007CFD9D)
+    assert not RealtekValueOnly().is_same_request_except_waived_values(captured, request)
+
+
+def test_realtek_capture_only_run_matches_a_read_and_a_write() -> None:
+    ops = [realtek_write(REALTEK_OTHER_REGISTER, 0x1),
+           realtek_read(REALTEK_OTHER_REGISTER, 0x1), realtek_write(REALTEK_OTHER_REGISTER, 0x2),
+           realtek_read(REALTEK_OTHER_REGISTER, 0x2), realtek_write(REALTEK_OTHER_REGISTER, 0x3)]
+    assert RealtekCaptureOnlyRun().capture_only_run_positions(ops, REALTEK_RUN) == [1, 2]
