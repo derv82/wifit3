@@ -218,17 +218,19 @@ class MT7925AUDriver(Driver):
 
     async def _mac_work(self) -> None:
         """mt792x_mac_work (mt792x_mac.c:9): survey every tick, MIB stats every 2nd, re-armed
-        MT792x_WATCHDOG_TIME after its own run (queued by __mt7925_start, main.c:332)."""
+        MT792x_WATCHDOG_TIME after its own run (queued by __mt7925_start, main.c:332). The
+        kernel runs it on the mac80211 workqueue, so the register I/O runs off the event loop."""
+        loop = asyncio.get_running_loop()
         mac_work_count = 0
         try:
             while True:
                 await asyncio.sleep(MT792x_WATCHDOG_TIME / HZ)
                 async with self._mutex:
-                    mac.update_survey(self.transport)
+                    await loop.run_in_executor(None, mac.update_survey, self.transport)
                     mac_work_count += 1
                     if mac_work_count == 2:
                         mac_work_count = 0
-                        mac.update_mib_stats(self.transport)
+                        await loop.run_in_executor(None, mac.update_mib_stats, self.transport)
         except asyncio.CancelledError:
             pass
         except Exception:  # noqa: BLE001 — a stats fault must not kill RX
