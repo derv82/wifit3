@@ -31,7 +31,7 @@ from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallba
 from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
-from . import bringup, chan, efuse, mac, phy, tx, watchdog
+from . import bringup, chan, efuse, led, mac, phy, tx, watchdog
 from .rx import iter_frames
 from .transport import Rtl8821cuTransport
 
@@ -51,7 +51,7 @@ _RAID_INJECT = 1              # [WIRE] aireplay tx-desc dw1[20:16]
 _WIFI_INTF_CLASS = 0xFF        # combo card: the WiFi function is the vendor-specific interface
                                # (class 0xFF, #2); the Bluetooth interfaces 0/1 are class 0xE0
 
-_WATCHDOG_PERIOD_S = 2.0        # phydm dynamic-check cadence [SRC] rtw_cmd.c rtw_dynamic_chk_wk
+_WATCHDOG_PERIOD_S = 2.0        # dynamic_chk_timer period [SRC] os_intfs.c:4052, rtw_mlme.c:4117
 
 # 2.4 GHz re-lock after cold init: the cold ch1 tune lands before the antenna switches to WiFi, so
 # the LO never locks (RF18 BIT16 stuck). _prime_2g_band re-runs the band switch post-antenna-switch.
@@ -84,6 +84,7 @@ class Rtl8821cuDkmsDriver(Driver):
         self._io_lock = asyncio.Lock()              # serialize set_channel / inject / watchdog / mac-write
         self._wd_state = None
         self._watchdog_task = None
+        self._led_task: Optional[asyncio.Task] = None
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Rtl8821cuDkmsDriver":
@@ -153,17 +154,17 @@ class Rtl8821cuDkmsDriver(Driver):
         await loop.run_in_executor(None, bringup.phase_hal_init, t, info)
         _p(0.75, "Interface + channel tune")
         await loop.run_in_executor(None, bringup.phase_iface, t, info)
+        # _netdev_open after rtw_hal_init: LED_CTL_NO_LINK, then the dynamic_chk_timer [SRC] os_intfs.c:4039/4052.
+        self._led_task = loop.create_task(self._led_blink_loop())
+        self._wd_state = watchdog.WatchdogState(
+            eeprom_thermal=info.eeprom_thermal, thermal_offset=efuse.thermal_offset(info))
+        self._watchdog_task = loop.create_task(self._watchdog_loop())
         _p(0.85, "Enabling monitor RX")
         await loop.run_in_executor(None, bringup.phase_monitor, t, info)
         self.info = info
         self._log_detected_config(info)
         _p(0.90, "Priming 2.4 GHz band")
         await self._prime_2g_band()
-        # phydm dynamic-check watchdog (kernel-parity — its ~2 s ticks are in the pcap). DIG runs
-        # here; without it the RX AGC sits at full gain and the OFDM false-alarm count floods.
-        self._wd_state = watchdog.WatchdogState(
-            eeprom_thermal=self.info.eeprom_thermal, thermal_offset=efuse.thermal_offset(self.info))
-        self._watchdog_task = loop.create_task(self._watchdog_loop())
         _p(1.0, "RTL8821CU monitor up (ch 1 @ 20 MHz)")
         return True
 
@@ -196,20 +197,34 @@ class Rtl8821cuDkmsDriver(Driver):
         await self.set_channel(_PRIME_2G_CH)
 
     async def _watchdog_loop(self) -> None:
-        """Run the phydm dynamic-check tick at the kernel ~2 s cadence (DIG / CCK-PD / RX-agg /
-        thermal / env-monitor) — the runtime maintenance the kernel does and the cold path does not.
-        Serialized with set_channel via _io_lock so two control-transfer sequences never interleave;
-        the blocking tick is offloaded so it never stalls the RX dispatch on the event loop."""
+        """rtw_dynamic_check_timer_handlder re-arms the timer from its own fire [SRC] rtw_mlme.c:4117; the
+        tick runs on the cmd thread, so _io_lock serializes it with set_channel."""
         loop = asyncio.get_running_loop()
         try:
+            await asyncio.sleep(_WATCHDOG_PERIOD_S)
             while True:
-                await asyncio.sleep(_WATCHDOG_PERIOD_S)
+                fired_at = loop.time()
                 async with self._io_lock:
                     await loop.run_in_executor(None, watchdog.tick, self.transport, self._wd_state)
+                await asyncio.sleep(fired_at + _WATCHDOG_PERIOD_S - loop.time())
         except asyncio.CancelledError:
             pass
         except Exception:  # noqa: BLE001 — a watchdog fault must not kill RX
             logger.exception("RTL8821CU watchdog stopped on error")
+
+    async def _led_blink_loop(self) -> None:
+        """SwLedBlink9 re-arms LED0's BlinkTimer after each blink [SRC] hal_usb_led.c:939. Not under
+        _io_lock: the blink runs on a workqueue, not the cmd thread [SRC] hal_usb_led.c:1868."""
+        loop = asyncio.get_running_loop()
+        state = led.LedBlinkState()
+        try:
+            while True:
+                await asyncio.sleep(led.LED_BLINK_NO_LINK_INTERVAL_ALPHA_S)
+                await loop.run_in_executor(None, led.led_blink, self.transport, state)
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 — an LED fault must not kill RX
+            logger.exception("RTL8821CU LED blink stopped on error")
 
     def _read_once(self) -> Optional[bytes]:
         """Reader-thread side: one blocking bulk-IN read (None on no traffic)."""
@@ -323,6 +338,13 @@ class Rtl8821cuDkmsDriver(Driver):
             except asyncio.CancelledError:
                 pass
             self._watchdog_task = None
+        if self._led_task is not None:
+            self._led_task.cancel()
+            try:
+                await self._led_task
+            except asyncio.CancelledError:
+                pass
+            self._led_task = None
         if self._reader is not None:
             await self._reader.stop()       # join the reader BEFORE releasing the USB handle
             self._reader = None

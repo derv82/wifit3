@@ -134,12 +134,10 @@ def init_hw_mlme_ext(t, info) -> None:
 
 
 def set_monitor_mode(t, info) -> None:
-    """The airmon vif setopmode sequence after the channel tune ([SRC] hw_var_set_opmode
-    rtl8821c_ops.c:1002): set STATION net-type on the primary vif, then MONITOR (promiscuous RCR +
-    all-open RXFLTMAP) on the monitor vif — the driver-side RX-enable for monitor capture. For a
-    combo card the MONITOR setopmode handler ends by firing the BT-coex media-connect notify
-    ([SRC] setopmode_hdl core/rtw_mlme_ext.c:13575), which switches the shared antenna to WiFi."""
-    mac.set_opmode_station(t, efuse.mac_address(info))
+    """The airmon setopmode(MONITOR) ([SRC] cfg80211_rtw_change_iface ioctl_cfg80211.c:2777 ->
+    hw_var_set_opmode rtl8821c_ops.c:1035): promiscuous RCR + all-open RXFLTMAP. For a combo card
+    setopmode_hdl ends with the BT-coex media-connect notify ([SRC] rtw_mlme_ext.c:13575), which
+    switches the shared antenna to WiFi."""
     mac.set_opmode_monitor(t)
     if info.bt_coexist:
         btc.media_status_notify_connect_2g(t)
@@ -174,9 +172,11 @@ def phase_hal_init(t, info):
 
 
 def phase_iface(t, info):
-    """Interface MAC + HW port enable, RX BAR, and the first (ch1 / 20 MHz) channel set."""
+    """Interface MAC + HW port enable, RX BAR, the first (ch1 / 20 MHz) channel set, then
+    rtw_hal_init_opmode's setopmode(STATION) [SRC] hal_intf.c:494 — the rtw_hal_init tail."""
     iface_init(t, info)
     init_hw_mlme_ext(t, info)
+    mac.set_opmode_station(t, efuse.mac_address(info))
 
 
 def phase_monitor(t, info):
