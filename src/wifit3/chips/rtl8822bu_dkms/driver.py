@@ -30,7 +30,8 @@ from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
 from . import bringup, cal, chan, dm_watchdog, led, mac, sipi, tx, txpower
-from .constants import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G
+from .constants import (DESC_RATE1M, DESC_RATE6M, DESC_RATE24M, DESC_RATEVHTSS1MCS9, RATEID_IDX_B, RATEID_IDX_G,
+                        RATEID_IDX_VHT_2SS)
 from .rx import FCS_LEN, RXDESC_SIZE, _rnd8, iter_frames
 from .transport import Rtl8822buTransport
 
@@ -395,12 +396,19 @@ class Rtl8822buDkmsDriver(Driver):
         return True
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the fill_fake_txdesc descriptor (`tx.build_inject_txdesc`, HW ACK-retry limit
-        12) and bulk-OUT the frame once. Live TX is the user's explicit
-        action — the agent never calls this; the descriptor build is unit-tested in test_tx.py (no
-        TX in the passive capture to pcap-diff)."""
-        hw_rate, rate_id = ((DESC_RATE6M, RATEID_IDX_G) if self._channel is not None and self._channel > 14
-                            else (DESC_RATE1M, RATEID_IDX_B))
+        """rtw_monitor_xmit_entry (rtw_xmit.c:4871): a data frame takes update_monitor_frame_attrib's
+        2T2R raid and VHT rate, 24M if addr1 or addr3 is broadcast; any other frame the mgmt rate."""
+        broadcast = b"\xff" * 6
+        if frame_bytes[0] & 0x0C == 0x08:
+            rate_id = RATEID_IDX_VHT_2SS
+            if frame_bytes[4:10] == broadcast or frame_bytes[16:22] == broadcast:
+                hw_rate = DESC_RATE24M
+            else:
+                hw_rate = DESC_RATEVHTSS1MCS9
+        elif self._channel is not None and self._channel > 14:
+            hw_rate, rate_id = DESC_RATE6M, RATEID_IDX_G
+        else:
+            hw_rate, rate_id = DESC_RATE1M, RATEID_IDX_B
         payload = tx.build_inject_txdesc(bytes(frame_bytes), hw_rate=hw_rate, rate_id=rate_id)
         loop = asyncio.get_running_loop()
         async with self._io_lock:

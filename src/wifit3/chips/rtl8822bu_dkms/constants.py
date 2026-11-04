@@ -94,6 +94,9 @@ RATEID_IDX_B = 8                        # [SRC] fill_fake_txdesc RATE_ID: 2.4 GH
 RATEID_IDX_G = 7                        # 5 GHz / OFDM-only (G)
 DESC_RATE1M = 0x00                      # [SRC] hal_com.h DESC_RATE1M — CCK 1M (2.4 GHz inject default)
 DESC_RATE6M = 0x04                      # OFDM 6M (5 GHz inject default)
+RATEID_IDX_VHT_2SS = 9                  # [SRC] ieee80211.h:249
+DESC_RATE24M = 0x08                     # [SRC] hal_com.h:43
+DESC_RATEVHTSS1MCS9 = 0x35              # [SRC] hal_com.h:90
 PACKET_OFFSET_SZ = 8
 
 # --- _send_general_info: the two FW-offload H2C packets ----------------------
