@@ -189,9 +189,63 @@ jobs:
           path: out/wifit3-macos-universal2
           if-no-files-found: error
 
+  # Pure-Python wheel with Termux metadata. hatch_build.py drops libusb-package, so installing
+  # this wheel on the phone needs no compiler and uses Termux's system libusb.
+  termux-wheel:
+    name: Build (Termux wheel)
+    runs-on: ubuntu-latest
+    env:
+      TERMUX_VERSION: "0.118.3"
+      PREFIX: /data/data/com.termux/files/usr
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          proj=$(grep -m1 '^__version__ = ' src/wifit3/__init__.py | sed -E 's/.*"(.*)".*/\1/')
+          echo "tag=$tag  __version__=$proj"
+          if [ "$tag" != "$proj" ]; then
+            echo "::error::Tag v$tag does not match src/wifit3/__init__.py __version__ $proj"
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Build wheel
+        run: uv build --wheel --out-dir dist-termux
+
+      - name: Verify the wheel uses the system libusb
+        run: |
+          python3 - <<'PY'
+          import glob, zipfile
+          wheel = glob.glob("dist-termux/*.whl")[0]
+          archive = zipfile.ZipFile(wheel)
+          metadata = archive.read(
+              next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))).decode()
+          requires = [line for line in metadata.splitlines()
+                      if line.startswith("Requires-Dist:")]
+          assert not any("libusb-package" in line for line in requires), \
+              "Termux wheel must use the system libusb"
+          print(wheel)
+          PY
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: wifit3-termux-wheel
+          path: dist-termux/*.whl
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
-    needs: [build, build-macos]
+    needs: [build, build-macos, termux-wheel]
     # Only publish for an actual tag push; a manual workflow_dispatch just leaves the
     # artifacts attached to the run for download.
     if: startsWith(github.ref, 'refs/tags/')

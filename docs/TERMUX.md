@@ -19,6 +19,19 @@ pkg install python libusb termux-api git uv
 
 ## Install
 
+### Prebuilt wheel
+
+Each release attaches a pure-Python wheel, so the phone needs no compiler or checkout:
+
+```bash
+pkg install python libusb termux-api
+pip install ./wifit3-<version>-py3-none-any.whl   # from the release assets
+```
+
+It uses the system libusb from `pkg install libusb`.
+
+### From source
+
 ```bash
 git clone https://github.com/derv82/wifit3
 cd wifit3
@@ -39,8 +52,8 @@ Start wifit3 like on any other platform:
 uv run wifit3
 ```
 
-If you installed with `pip install .` instead, the bare `wifit3` command works. The examples below
-use `uv run`; drop it when using the pip install.
+If you installed with pip (the prebuilt wheel or `pip install .`), the bare `wifit3` command works.
+The examples below use `uv run`; drop it when using a pip install.
 
 No adapter is needed to launch: the splash keeps scanning, and Android asks for permission when
 a card appears. Accept that dialog, and tick "Use by default for this USB device" if Android offers

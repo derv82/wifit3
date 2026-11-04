@@ -90,7 +90,10 @@ jobs:
           archive = zipfile.ZipFile(wheel)
           metadata = archive.read(
               next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))).decode()
-          assert "libusb-package" not in metadata, "Termux wheel must use the system libusb"
+          requires = [line for line in metadata.splitlines()
+                      if line.startswith("Requires-Dist:")]
+          assert not any("libusb-package" in line for line in requires), \
+              "Termux wheel must use the system libusb"
           print("Termux wheel metadata omits libusb-package")
           PY
 
@@ -106,6 +109,9 @@ jobs:
           archive = zipfile.ZipFile(wheel)
           metadata = archive.read(
               next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))).decode()
-          assert "libusb-package" in metadata, "desktop wheel lost its bundled libusb"
+          requires = [line for line in metadata.splitlines()
+                      if line.startswith("Requires-Dist:")]
+          assert any("libusb-package" in line for line in requires), \
+              "desktop wheel lost its bundled libusb"
           print("Desktop wheel metadata keeps libusb-package")
           PY

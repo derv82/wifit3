@@ -86,7 +86,7 @@ Download the latest standalone executable from [**Releases**](https://github.com
   chmod +x wifit3-macos-universal2
   ./wifit3-macos-universal2
   ```
-* **Android (Termux):** no prebuilt binary — install from source with [Option 2](#option-2-run-from-source). See [Running in Termux](docs/TERMUX.md).
+* **Android (Termux):** no executable; each release also ships a prebuilt wheel. Download it and run `pip install wifit3-<version>-py3-none-any.whl`. See [Running in Termux](docs/TERMUX.md).
 
 ### Option 2: Run from Source
 wifit3 uses Astral's [`uv`](https://docs.astral.sh/uv/). `sync` sets up dependencies:
