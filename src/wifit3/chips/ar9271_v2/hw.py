@@ -283,8 +283,8 @@ class AthHw:
 
     def settsf64(self, tsf: int) -> None:
         """ath9k_hw_settsf64 [SRC] mac.c — write the low then high TSF word. The caller passes
-        tsf + a wall-clock offset; in replay the offset is 0 (the low word is value-excepted in
-        the gate, since it can never be byte-reproduced)."""
+        tsf + elapsed µs (hw.c:1946-1947); the port passes offset 0, so the replay can't
+        reproduce the low word."""
         self.write(R.AR_TSF_L32, tsf & 0xffffffff)
         self.write(R.AR_TSF_U32, (tsf >> 32) & 0xffffffff)
 
@@ -319,7 +319,7 @@ class AthHw:
         if first:
             self.htc_reset_init = False
             self.write(R.AR9271_RESET_POWER_DOWN_CONTROL, R.AR9271_GATE_MAC_CTL)
-        # Restore TSF (low word value-excepted) [SRC] hw.c:1946-1947.
+        # Restore TSF; Linux adds elapsed µs, the port adds 0 [SRC] hw.c:1946-1947.
         self.settsf64(self.tsf)
         # Disable JTAG so GPIO 0-3 are usable [SRC] hw.c:1949-1950.
         if self.is_9280_20_or_later():

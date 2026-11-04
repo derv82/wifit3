@@ -74,13 +74,10 @@ def connect_service(t: AR9271Transport, st: HTCState, service_id: int) -> int:
 
 
 def config_pipe_credits(t: AR9271Transport, st: HTCState) -> None:
-    """htc_config_pipe_msg: message_id, pipe_id (=WLAN_TX), credits [SRC] htc_hst.c:154-186."""
+    """htc_config_pipe_msg: message_id, pipe_id (=WLAN_TX), credits [SRC] htc_hst.c:154-190.
+    Linux waits only on the OUT's completion (:342-346) and drops the response (:474)."""
     msg = struct.pack(">HBB", C.HTC_MSG_CONFIG_PIPE_ID, C.USB_WLAN_TX_PIPE, st.credits)
     t.reg_out(frame(C.ENDPOINT0, msg))
-    rsp = t.reg_in()[C.HTC_FRAME_HDR_LEN:]
-    (msg_id,) = struct.unpack_from(">H", rsp)
-    if msg_id != C.HTC_MSG_CONFIG_PIPE_RESPONSE_ID:
-        raise ValueError(f"config-pipe response expected, got 0x{msg_id:04x}")
 
 
 def setup_complete(t: AR9271Transport) -> None:

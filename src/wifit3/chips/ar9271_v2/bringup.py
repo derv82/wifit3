@@ -98,7 +98,8 @@ def cold_bringup(t: AR9271Transport) -> BringupResult:
     wmi.cmd(WMI_FLUSH_RECV_CMDID, b"")
 
     # ath9k_hw_reset (cold): preamble saves + chip_reset(WARM) + init_pll + MAC-gate + TSF restore
-    # (the low word is wall-clock-dependent — the gate value-excepts AR_TSF_L32) + JTAG disable.
+    # (Linux adds elapsed µs, the port writes offset 0; the replay can't reproduce AR_TSF_L32)
+    # + JTAG disable.
     hw.reset_begin(chan)
     hw_reset_body(wmi, hw, chan)
 
