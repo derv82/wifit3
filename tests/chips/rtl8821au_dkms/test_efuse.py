@@ -189,3 +189,41 @@ def test_board_type_gates_walker_row():
     # Ext 5 GHz PA+LNA card (APA|ALNA): the same row is now walked.
     variant = efuse.ODM_BOARD_EXT_PA_5G | efuse.ODM_BOARD_EXT_LNA_5G
     assert _collect(_BOARD_GATED, JaguarParams(board_type=variant)) == [(0x100, 0xAAAA)]
+
+
+class SlowEfuse:
+    """EFUSE_CTRL+3 bit7 sets on poll ``ready_after``."""
+
+    def __init__(self, ready_after):
+        self.ops = []
+        self.polls = 0
+        self.ready_after = ready_after
+
+    def read8(self, a):
+        self.ops.append(("R8", a))
+        if a == efuse.C.REG_EFUSE_CTRL + 3:
+            self.polls += 1
+            return 0x80 if self.polls > self.ready_after else 0x00
+        return 0x5A
+
+    def read32(self, a):
+        self.ops.append(("R32", a))
+        return 0
+
+    def write8(self, a, v):
+        self.ops.append(("W8", a, v))
+
+
+def test_one_byte_read_timeout_dumps_efuse_ctrl(monkeypatch):
+    # rtw_efuse.c:2366-2372: past 100 polls the byte is 0xFF and EFUSE_CTRL is read32 for the log.
+    monkeypatch.setattr(efuse.time, "sleep", lambda s: None)
+    t = SlowEfuse(ready_after=150)
+    assert efuse._efuse_one_byte_read(t, 0x3FB) == 0xFF
+    assert t.ops[-1] == ("R32", efuse.C.REG_EFUSE_CTRL)
+
+
+def test_one_byte_read_in_time_reads_the_byte(monkeypatch):
+    monkeypatch.setattr(efuse.time, "sleep", lambda s: None)
+    t = SlowEfuse(ready_after=3)
+    assert efuse._efuse_one_byte_read(t, 0x3FB) == 0x5A
+    assert ("R32", efuse.C.REG_EFUSE_CTRL) not in t.ops

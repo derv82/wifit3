@@ -123,6 +123,7 @@ def _efuse_one_byte_read(t, addr: int) -> int:
         tmpidx += 1
     if tmpidx < 100:
         return t.read8(C.REG_EFUSE_CTRL)
+    t.read32(C.REG_EFUSE_CTRL)             # the timeout RTW_INFO's EFUSE_CTRL dump (rtw_efuse.c:2372)
     return 0xFF
 
 
