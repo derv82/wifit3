@@ -13,12 +13,12 @@ import pytest
 import usb.core
 import usb.util
 
-from tests.verify_pcap.capture_walk import CaptureWalk, Divergence, is_endpoint_queued
+from tests.verify_pcap.capture_replay import CaptureReplay, Divergence, is_bulk_or_interrupt_in
 from tests.verify_pcap.fake_usb_device import (
     LINUX_ESHUTDOWN, REQUEST_TYPE_MASK, REQUEST_TYPE_STANDARD, FakeUsbDevice)
-from tests.verify_pcap.usb_capture import TransferType, UsbTransfer, pair_transfers, read_usbmon_records
+from tests.verify_pcap.usb_capture import TransferType, UsbOp, pair_submits_with_completions, read_usbmon_records
 from tests.verify_pcap.virtual_clock_loop import (
-    MAIN_PRODUCER, SELECT_TIMEOUT_SECONDS, ProducerTrackingExecutor, VirtualClockEventLoop)
+    MAIN_CALLER, SELECT_TIMEOUT_SECONDS, DriverThreadPool, VirtualClockEventLoop)
 from wifit3.chips.driver import Driver
 from wifit3.models import DeviceID
 
@@ -28,11 +28,11 @@ GET_DESCRIPTOR = 6
 DESCRIPTOR_TYPE_DEVICE = 1
 DESCRIPTOR_TYPE_CONFIGURATION = 2
 
-EXCLUDED_OTHER_DEVICES = "other devices and address 0"
-EXCLUDED_ENUMERATION = "usbcore enumeration (standard control requests)"
-EXCLUDED_RX = "RX: IN transfers carrying only 802.11 frames"
-EXCLUDED_INCOMPLETE = "submitted, never completed"
-EXCLUDED_KILLED = "killed by the host at teardown (-ESHUTDOWN)"
+IGNORED_OTHER_DEVICES = "other devices and address 0"
+IGNORED_ENUMERATION = "usbcore enumeration (standard control requests)"
+IGNORED_RX = "RX: IN ops carrying only 802.11 frames"
+IGNORED_INCOMPLETE = "submitted, never completed"
+IGNORED_KILLED = "killed by the host at teardown (-ESHUTDOWN)"
 
 
 @dataclass(frozen=True)
@@ -50,31 +50,31 @@ Trigger = SetChannelTrigger | InjectFrameTrigger
 
 @dataclass(frozen=True)
 class Waiver:
-    """A named divergence from Linux: captured transfers ``matches`` accepts are not reproduced."""
+    """A named divergence from Linux: captured ops ``matches`` accepts are not reproduced."""
     label: str
     c_source: str
-    matches: Callable[[UsbTransfer], bool]
+    matches: Callable[[UsbOp], bool]
 
 
 class FamilyDecoder(ABC):
     @abstractmethod
-    def describe(self, transfer: UsbTransfer) -> str: ...
+    def describe(self, op: UsbOp) -> str: ...
 
     @abstractmethod
-    def find_trigger(self, transfers: Sequence[UsbTransfer], position: int) -> Trigger | None:
-        """The entry point the capture's transfer at ``position`` starts, or None."""
+    def find_trigger(self, ops: Sequence[UsbOp], position: int) -> Trigger | None:
+        """The entry point the capture's op at ``position`` starts, or None."""
 
     @abstractmethod
-    def carries_only_80211_frames(self, transfer: UsbTransfer) -> bool: ...
+    def carries_only_80211_frames(self, op: UsbOp) -> bool: ...
 
 
 @dataclass(frozen=True)
 class LoadedCapture:
-    walk_transfers: list[UsbTransfer]
+    ops: list[UsbOp]
     device_descriptor: bytes
     configuration_descriptor: bytes
-    id_entry: DeviceID
-    excluded_counts: Counter[str]
+    device_id: DeviceID
+    ignored_counts: Counter[str]
 
 
 class VerifyCapture:
@@ -88,22 +88,22 @@ class VerifyCapture:
     def test_capture(self, capture_path: Path) -> None:
         capture = self.load_capture(capture_path)
         waiver_label_by_position: dict[int, str] = {}
-        for position, transfer in enumerate(capture.walk_transfers):
+        for position, op in enumerate(capture.ops):
             for waiver in self.WAIVERS:
-                if waiver.matches(transfer):
+                if waiver.matches(op):
                     waiver_label_by_position[position] = waiver.label
                     break
 
-        executor = ProducerTrackingExecutor()
+        thread_pool = DriverThreadPool()
 
         def is_driver_idle() -> bool:
-            return executor.running_count == 0 and not walk.has_in_transfer_in_flight()
+            return thread_pool.busy_thread_count == 0 and not replay.has_in_transfer_in_flight()
 
-        loop = VirtualClockEventLoop(capture.walk_transfers[0].timestamp, is_driver_idle)
-        loop.set_default_executor(executor)
-        walk = CaptureWalk(capture.walk_transfers, waiver_label_by_position, loop)
-        device = FakeUsbDevice(walk, capture.device_descriptor, capture.configuration_descriptor,
-                               capture.id_entry.bus or 0, capture.id_entry.address or 0)
+        loop = VirtualClockEventLoop(capture.ops[0].timestamp, is_driver_idle)
+        loop.set_default_executor(thread_pool)
+        replay = CaptureReplay(capture.ops, waiver_label_by_position, loop)
+        device = FakeUsbDevice(replay, capture.device_descriptor, capture.configuration_descriptor,
+                               capture.device_id.bus or 0, capture.device_id.address or 0)
 
         def find_fake_device(find_all: bool = False, backend: Any = None,
                              custom_match: Any = None, **match: Any) -> FakeUsbDevice | None | Iterator[FakeUsbDevice]:
@@ -128,8 +128,8 @@ class VerifyCapture:
         usb.util.release_interface = accept_claim_or_release
         usb.util.dispose_resources = accept_dispose_resources
         try:
-            main_task = loop.create_task(self.drive_driver(walk, device, executor, capture.id_entry),
-                                         name=MAIN_PRODUCER)
+            main_task = loop.create_task(self.run_driver(replay, device, thread_pool, capture.device_id),
+                                         name=MAIN_CALLER)
             loop.run_until_complete(main_task)
         finally:
             usb.core.find = original_find
@@ -142,156 +142,156 @@ class VerifyCapture:
             loop.run_until_complete(loop.shutdown_default_executor())
             loop.close()
 
-        summary = self.format_summary(walk, capture)
-        if walk.divergence is not None:
-            pytest.fail(self.format_dump(capture_path, walk, walk.divergence) + summary, pytrace=False)
-        unclaimed = walk.unclaimed_positions()
-        if unclaimed:
-            never_claimed = Divergence(unclaimed[0], None, "-", f"{len(unclaimed)} transfers never claimed")
-            pytest.fail(self.format_dump(capture_path, walk, never_claimed) + summary, pytrace=False)
-        used_labels = set(walk.claimed_by)
+        summary = self.format_summary(replay, capture)
+        if replay.divergence is not None:
+            pytest.fail(self.format_dump(capture_path, replay, replay.divergence) + summary, pytrace=False)
+        unreproduced = replay.unreproduced_positions()
+        if unreproduced:
+            never_reproduced = Divergence(unreproduced[0], None, "-", f"{len(unreproduced)} ops never reproduced")
+            pytest.fail(self.format_dump(capture_path, replay, never_reproduced) + summary, pytrace=False)
+        used_labels = set(replay.reproduced_by)
         unused = [waiver.label for waiver in self.WAIVERS if waiver.label not in used_labels]
         if unused:
             pytest.fail(f"{capture_path.name}: unused waivers: {unused}\n" + summary, pytrace=False)
         print(summary)
 
-    async def drive_driver(self, walk: CaptureWalk, device: FakeUsbDevice,
-                           executor: ProducerTrackingExecutor, id_entry: DeviceID) -> None:
+    async def run_driver(self, replay: CaptureReplay, device: FakeUsbDevice,
+                           thread_pool: DriverThreadPool, device_id: DeviceID) -> None:
         loop = asyncio.get_running_loop()
         assert isinstance(loop, VirtualClockEventLoop)
-        driver = self.DRIVER_CLASS.from_usb_device(device, id_entry)  # type: ignore[arg-type]
+        driver = self.DRIVER_CLASS.from_usb_device(device, device_id)  # type: ignore[arg-type]
         try:
             await driver.connect()
-            while walk.divergence is None:
-                position = walk.first_unclaimed_cursor_position()
+            while replay.divergence is None:
+                position = replay.next_unreproduced_position()
                 if position is None:
                     break
-                await self.run_due_driver_tasks(loop, executor, walk.transfers[position].timestamp)
-                if walk.first_unclaimed_cursor_position() != position:
+                await self.run_due_driver_tasks(loop, thread_pool, replay.ops[position].timestamp)
+                if replay.next_unreproduced_position() != position:
                     continue
-                trigger = self.DECODER.find_trigger(walk.transfers, position)
+                trigger = self.DECODER.find_trigger(replay.ops, position)
                 if trigger is None:
-                    walk.record_divergence(position, MAIN_PRODUCER,
-                                           "no producer claimed this transfer and it starts no trigger")
+                    replay.record_divergence(position, MAIN_CALLER,
+                                           "no caller reproduced this op and it starts no trigger")
                     break
                 if isinstance(trigger, SetChannelTrigger):
                     await driver.set_channel(trigger.channel)
                 else:
                     await driver.inject_frame(trigger.frame)
-                if walk.divergence is None and walk.claimed_by[position] is None:
-                    walk.record_divergence(position, MAIN_PRODUCER,
-                                           f"{trigger} fired; the driver did not produce this transfer")
-            await self.run_due_driver_tasks(loop, executor, walk.transfers[-1].timestamp)
+                if replay.divergence is None and replay.reproduced_by[position] is None:
+                    replay.record_divergence(position, MAIN_CALLER,
+                                           f"{trigger} fired; the driver did not produce this op")
+            await self.run_due_driver_tasks(loop, thread_pool, replay.ops[-1].timestamp)
             while not loop.is_driver_idle():
                 await asyncio.sleep(SELECT_TIMEOUT_SECONDS)
         except Exception as error:  # noqa: BLE001
             reason = f"driver raised {type(error).__name__}: {error}"
-            for producer, refused_read in list(walk.refused_read_by_producer.items()):
-                reason += (f"; {producer} read 0x{refused_read.endpoint:02x} refused: walk {refused_read.position}"
-                           f" is readable only after walk {refused_read.gate_position}")
-            walk.record_divergence(walk.first_unclaimed_cursor_position(), MAIN_PRODUCER, reason)
+            for caller, refused_read in list(replay.refused_read_by_caller.items()):
+                reason += (f"; {caller} read 0x{refused_read.endpoint:02x} refused: replay {refused_read.position}"
+                           f" is readable only after replay {refused_read.gate_position}")
+            replay.record_divergence(replay.next_unreproduced_position(), MAIN_CALLER, reason)
         finally:
-            walk.driver_closing = True
+            replay.driver_closing = True
             try:
                 await driver.close()
             except Exception as error:  # noqa: BLE001
-                if walk.requests_after_capture_end == 0:
-                    walk.record_divergence(None, MAIN_PRODUCER,
+                if replay.requests_after_capture_end == 0:
+                    replay.record_divergence(None, MAIN_CALLER,
                                            f"close() raised {type(error).__name__}: {error}")
 
     @staticmethod
-    async def run_due_driver_tasks(loop: VirtualClockEventLoop, executor: ProducerTrackingExecutor,
+    async def run_due_driver_tasks(loop: VirtualClockEventLoop, thread_pool: DriverThreadPool,
                                    timestamp: float) -> None:
         """Move the clock to ``timestamp`` and yield until no driver work is running."""
         loop.advance_clock(timestamp)
         quiet_rounds = 0
         while quiet_rounds < QUIET_ROUNDS:
             await asyncio.sleep(0)
-            if executor.running_count == 0:
+            if thread_pool.busy_thread_count == 0:
                 quiet_rounds += 1
             else:
                 quiet_rounds = 0
 
     def load_capture(self, capture_path: Path) -> LoadedCapture:
-        transfers, incomplete_count = pair_transfers(read_usbmon_records(capture_path))
-        id_entry: DeviceID | None = None
+        all_ops, incomplete_count = pair_submits_with_completions(read_usbmon_records(capture_path))
+        device_id: DeviceID | None = None
         device_descriptor = b""
         configuration_descriptor = b""
-        for transfer in transfers:
-            if transfer.transfer_type != TransferType.CONTROL or transfer.setup is None:
+        for op in all_ops:
+            if op.transfer_type != TransferType.CONTROL or op.setup is None:
                 continue
-            if transfer.request != GET_DESCRIPTOR or not transfer.is_in or transfer.device_address == 0:
+            if op.request != GET_DESCRIPTOR or not op.is_in or op.device_address == 0:
                 continue
-            descriptor_type = transfer.value >> 8
-            if descriptor_type == DESCRIPTOR_TYPE_DEVICE and len(transfer.data) >= 18:
-                vid, pid = struct.unpack_from("<HH", transfer.data, 8)
+            descriptor_type = op.value >> 8
+            if descriptor_type == DESCRIPTOR_TYPE_DEVICE and len(op.data) >= 18:
+                vid, pid = struct.unpack_from("<HH", op.data, 8)
                 for supported in self.SUPPORTED_IDS:
                     if (supported.vid, supported.pid) == (vid, pid):
-                        id_entry = replace(supported, bus=transfer.bus, address=transfer.device_address)
-                        device_descriptor = transfer.data
-            elif (descriptor_type == DESCRIPTOR_TYPE_CONFIGURATION and id_entry is not None
-                  and (transfer.bus, transfer.device_address) == (id_entry.bus, id_entry.address)
-                  and len(transfer.data) == struct.unpack_from("<H", transfer.data, 2)[0]):
-                configuration_descriptor = transfer.data
-        if id_entry is None or not configuration_descriptor:
+                        device_id = replace(supported, bus=op.bus, address=op.device_address)
+                        device_descriptor = op.data
+            elif (descriptor_type == DESCRIPTOR_TYPE_CONFIGURATION and device_id is not None
+                  and (op.bus, op.device_address) == (device_id.bus, device_id.address)
+                  and len(op.data) == struct.unpack_from("<H", op.data, 2)[0]):
+                configuration_descriptor = op.data
+        if device_id is None or not configuration_descriptor:
             pytest.fail(f"{capture_path.name}: no enumeration of a SUPPORTED_IDS device "
                         "(device + configuration descriptor) in the capture", pytrace=False)
 
-        excluded_counts: Counter[str] = Counter()
-        excluded_counts[EXCLUDED_INCOMPLETE] = incomplete_count
-        walk_transfers: list[UsbTransfer] = []
-        for transfer in transfers:
-            if (transfer.bus, transfer.device_address) != (id_entry.bus, id_entry.address):
-                excluded_counts[EXCLUDED_OTHER_DEVICES] += 1
-            elif transfer.status == -LINUX_ESHUTDOWN:
-                excluded_counts[EXCLUDED_KILLED] += 1
-            elif (transfer.transfer_type == TransferType.CONTROL
-                  and transfer.request_type & REQUEST_TYPE_MASK == REQUEST_TYPE_STANDARD):
-                excluded_counts[EXCLUDED_ENUMERATION] += 1
-            elif is_endpoint_queued(transfer) and self.DECODER.carries_only_80211_frames(transfer):
-                excluded_counts[EXCLUDED_RX] += 1
+        ignored_counts: Counter[str] = Counter()
+        ignored_counts[IGNORED_INCOMPLETE] = incomplete_count
+        driver_ops: list[UsbOp] = []
+        for op in all_ops:
+            if (op.bus, op.device_address) != (device_id.bus, device_id.address):
+                ignored_counts[IGNORED_OTHER_DEVICES] += 1
+            elif op.status == -LINUX_ESHUTDOWN:
+                ignored_counts[IGNORED_KILLED] += 1
+            elif (op.transfer_type == TransferType.CONTROL
+                  and op.request_type & REQUEST_TYPE_MASK == REQUEST_TYPE_STANDARD):
+                ignored_counts[IGNORED_ENUMERATION] += 1
+            elif is_bulk_or_interrupt_in(op) and self.DECODER.carries_only_80211_frames(op):
+                ignored_counts[IGNORED_RX] += 1
             else:
-                walk_transfers.append(transfer)
-        return LoadedCapture(walk_transfers, device_descriptor, configuration_descriptor, id_entry,
-                             excluded_counts)
+                driver_ops.append(op)
+        return LoadedCapture(driver_ops, device_descriptor, configuration_descriptor, device_id,
+                             ignored_counts)
 
-    def format_dump(self, capture_path: Path, walk: CaptureWalk, divergence: Divergence) -> str:
-        transfers = walk.transfers
-        lines = [f"{capture_path.name}: {divergence.reason} (producer {divergence.producer})"]
+    def format_dump(self, capture_path: Path, replay: CaptureReplay, divergence: Divergence) -> str:
+        ops = replay.ops
+        lines = [f"{capture_path.name}: {divergence.reason} (caller {divergence.caller})"]
         if divergence.request is not None:
             lines.append(f"driver sent: {self.DECODER.describe(divergence.request)}")
         if divergence.position is None:
-            position = len(transfers)
+            position = len(ops)
         else:
             position = divergence.position
-            lines.append(f"capture has: {self.DECODER.describe(transfers[position])}")
-        start_time = transfers[0].timestamp
+            lines.append(f"capture has: {self.DECODER.describe(ops[position])}")
+        start_time = ops[0].timestamp
         waiver_labels = {waiver.label for waiver in self.WAIVERS}
         for context_position in range(max(0, position - DUMP_CONTEXT),
-                                      min(len(transfers), position + DUMP_CONTEXT + 1)):
-            transfer = transfers[context_position]
+                                      min(len(ops), position + DUMP_CONTEXT + 1)):
+            op = ops[context_position]
             marker = ">>" if context_position == position else "  "
-            claimed_by = walk.claimed_by[context_position] or "-"
-            if claimed_by in waiver_labels:
-                claimed_by = "waived"
-            lines.append(f"{marker} {context_position:5d} frame {transfer.frame_number:<6d} "
-                         f"{transfer.timestamp - start_time:8.4f}s {claimed_by:<8} "
-                         f"{self.DECODER.describe(transfer)}")
+            reproduced_by = replay.reproduced_by[context_position] or "-"
+            if reproduced_by in waiver_labels:
+                reproduced_by = "waived"
+            lines.append(f"{marker} {context_position:5d} frame {op.frame_number:<6d} "
+                         f"{op.timestamp - start_time:8.4f}s {reproduced_by:<8} "
+                         f"{self.DECODER.describe(op)}")
         return "\n".join(lines) + "\n"
 
-    def format_summary(self, walk: CaptureWalk, capture: LoadedCapture) -> str:
-        claimed_counts = Counter(walk.claimed_by)
+    def format_summary(self, replay: CaptureReplay, capture: LoadedCapture) -> str:
+        reproduced_counts = Counter(replay.reproduced_by)
         waiver_labels = {waiver.label for waiver in self.WAIVERS}
-        produced = sum(count for label, count in claimed_counts.items()
+        produced = sum(count for label, count in reproduced_counts.items()
                        if label is not None and label not in waiver_labels)
-        lines = [f"claimed {produced} of {len(walk.transfers)} transfers"
-                 + "".join(f", {producer} {count}" for producer, count in claimed_counts.items()
-                           if producer is not None and producer not in waiver_labels)]
+        lines = [f"reproduced {produced} of {len(replay.ops)} ops"
+                 + "".join(f", {caller} {count}" for caller, count in reproduced_counts.items()
+                           if caller is not None and caller not in waiver_labels)]
         for waiver in self.WAIVERS:
-            lines.append(f"waived {claimed_counts[waiver.label]:5d}  {waiver.label} [{waiver.c_source}]")
-        for label, count in capture.excluded_counts.items():
-            lines.append(f"excluded {count:5d}  {label}")
-        if walk.requests_after_capture_end:
-            lines.append(f"close(): {walk.requests_after_capture_end} requests after the last captured transfer, "
+            lines.append(f"waived {reproduced_counts[waiver.label]:5d}  {waiver.label} [{waiver.c_source}]")
+        for label, count in capture.ignored_counts.items():
+            lines.append(f"ignored {count:5d}  {label}")
+        if replay.requests_after_capture_end:
+            lines.append(f"close(): {replay.requests_after_capture_end} requests after the last captured op, "
                          "not compared")
         return "\n".join(lines)

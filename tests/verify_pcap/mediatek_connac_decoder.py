@@ -4,7 +4,7 @@ from __future__ import annotations
 import struct
 from typing import Sequence
 
-from tests.verify_pcap.usb_capture import TransferType, UsbTransfer
+from tests.verify_pcap.usb_capture import TransferType, UsbOp
 from tests.verify_pcap.verify_capture import FamilyDecoder, InjectFrameTrigger, SetChannelTrigger, Trigger
 from wifit3.chips.mt7925au import constants as C
 
@@ -43,10 +43,10 @@ def rx_packet_type(data: bytes) -> tuple[int, int]:
     return rxd0 >> RXD_PKT_TYPE_SHIFT, (rxd0 >> RXD_PKT_FLAG_SHIFT) & 0xF
 
 
-def sniffer_tag(transfer: UsbTransfer) -> int | None:
+def sniffer_tag(op: UsbOp) -> int | None:
     """The TLV tag of a UNI SNIFFER command on the MCU endpoint, else None."""
-    data = transfer.data
-    if (transfer.transfer_type != TransferType.BULK or transfer.endpoint != C.EP_OUT_MCU
+    data = op.data
+    if (op.transfer_type != TransferType.BULK or op.endpoint != C.EP_OUT_MCU
             or len(data) < UNI_PAYLOAD_OFFSET + 13 or not is_uni_mcu_frame(data)):
         return None
     if struct.unpack_from("<H", data, MCU_TXD_OFFSET + 34)[0] != C.MCU_UNI_CMD_SNIFFER:
@@ -74,57 +74,57 @@ def describe_mcu_command(data: bytes) -> str:
 
 
 class MediatekConnacDecoder(FamilyDecoder):
-    def describe(self, transfer: UsbTransfer) -> str:
-        status = f"  status {transfer.status}" if transfer.status else ""
-        data = transfer.data
-        if transfer.transfer_type == TransferType.CONTROL:
-            assert transfer.setup is not None
-            address = (transfer.value << 16) | transfer.index
-            name = CONTROL_REQUEST_NAMES.get(transfer.request)
+    def describe(self, op: UsbOp) -> str:
+        status = f"  status {op.status}" if op.status else ""
+        data = op.data
+        if op.transfer_type == TransferType.CONTROL:
+            assert op.setup is not None
+            address = (op.value << 16) | op.index
+            name = CONTROL_REQUEST_NAMES.get(op.request)
             if name is None:
-                return f"CTRL setup {transfer.setup.hex()} data {data.hex()}{status}"
+                return f"CTRL setup {op.setup.hex()} data {data.hex()}{status}"
             if len(data) == 4:
                 return f"{name} 0x{address:08x} = 0x{struct.unpack('<I', data)[0]:08x}{status}"
             return f"{name} 0x{address:08x}{status}"
-        if transfer.is_in:
+        if op.is_in:
             if len(data) < 4:
-                return f"IN ep 0x{transfer.endpoint:02x} {len(data)}B{status}"
+                return f"IN ep 0x{op.endpoint:02x} {len(data)}B{status}"
             packet_type, packet_flag = rx_packet_type(data)
             if packet_type == C.PKT_TYPE_RX_EVENT and len(data) > C.MT7925_RXD_SEQ_OFF:
-                return (f"MCU EVENT ep 0x{transfer.endpoint:02x} eid 0x{data[C.MT7925_RXD_EID_OFF]:02x} "
+                return (f"MCU EVENT ep 0x{op.endpoint:02x} eid 0x{data[C.MT7925_RXD_EID_OFF]:02x} "
                         f"seq {data[C.MT7925_RXD_SEQ_OFF]} flag {packet_flag} {len(data)}B{status}")
-            return f"RX ep 0x{transfer.endpoint:02x} type {packet_type} {len(data)}B{status}"
-        if transfer.endpoint == C.EP_OUT_MCU:
+            return f"RX ep 0x{op.endpoint:02x} type {packet_type} {len(data)}B{status}"
+        if op.endpoint == C.EP_OUT_MCU:
             return describe_mcu_command(data) + status
-        if transfer.endpoint == C.EP_OUT_FW and len(data) >= 4:
+        if op.endpoint == C.EP_OUT_FW and len(data) >= 4:
             return f"FW/DATA ep 0x04 {len(data)}B tx_bytes {struct.unpack_from('<H', data, 0)[0]}{status}"
-        if transfer.endpoint == C.EP_OUT_HCCA and len(data) >= TX_MPDU_OFFSET + 2:
+        if op.endpoint == C.EP_OUT_HCCA and len(data) >= TX_MPDU_OFFSET + 2:
             frame_control = struct.unpack_from("<H", data, TX_MPDU_OFFSET)[0]
             return (f"TX ep 0x09 {len(data)}B txd {data[C.SDIO_HDR_SIZE:TX_MPDU_OFFSET].hex()} "
                     f"FC 0x{frame_control:04x}{status}")
-        return f"OUT ep 0x{transfer.endpoint:02x} {len(data)}B{status}"
+        return f"OUT ep 0x{op.endpoint:02x} {len(data)}B{status}"
 
-    def find_trigger(self, transfers: Sequence[UsbTransfer], position: int) -> Trigger | None:
-        transfer = transfers[position]
-        if transfer.transfer_type != TransferType.BULK or transfer.is_in:
+    def find_trigger(self, ops: Sequence[UsbOp], position: int) -> Trigger | None:
+        op = ops[position]
+        if op.transfer_type != TransferType.BULK or op.is_in:
             return None
-        data = transfer.data
-        if transfer.endpoint == C.EP_OUT_HCCA and len(data) >= TX_MPDU_OFFSET:
+        data = op.data
+        if op.endpoint == C.EP_OUT_HCCA and len(data) >= TX_MPDU_OFFSET:
             tx_bytes = struct.unpack_from("<H", data, 0)[0]
             return InjectFrameTrigger(data[TX_MPDU_OFFSET:C.SDIO_HDR_SIZE + tx_bytes])
-        if sniffer_tag(transfer) != C.UNI_SNIFFER_ENABLE:
+        if sniffer_tag(op) != C.UNI_SNIFFER_ENABLE:
             return None
         # mt7925_change_chanctx (main.c:1781): sniffer enable, then the sniffer config carrying the channel.
-        for later in transfers[position + 1:]:
+        for later in ops[position + 1:]:
             if later.transfer_type == TransferType.BULK and later.endpoint == C.EP_OUT_MCU:
                 if sniffer_tag(later) == C.UNI_SNIFFER_CONFIG:
                     return SetChannelTrigger(later.data[UNI_PAYLOAD_OFFSET + 12])
                 return None
         return None
 
-    def carries_only_80211_frames(self, transfer: UsbTransfer) -> bool:
+    def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """connac3 bulk IN: PKT_TYPE_RX_EVENT is an MCU reply (kept) unless PKT_FLAG marks a tunnelled frame."""
-        if transfer.transfer_type != TransferType.BULK or len(transfer.data) < 4:
+        if op.transfer_type != TransferType.BULK or len(op.data) < 4:
             return False
-        packet_type, packet_flag = rx_packet_type(transfer.data)
+        packet_type, packet_flag = rx_packet_type(op.data)
         return packet_type != C.PKT_TYPE_RX_EVENT or packet_flag == RXD_PKT_FLAG_NORMAL

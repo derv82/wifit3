@@ -1,4 +1,4 @@
-"""A pyusb Device stand-in whose transfers are claimed from a CaptureWalk; libusb is never loaded."""
+"""A pyusb Device stand-in whose ops are reproduced from a CaptureReplay; libusb is never loaded."""
 from __future__ import annotations
 
 import errno
@@ -9,13 +9,13 @@ from typing import Iterator
 
 import usb.core
 
-from tests.verify_pcap.capture_walk import CaptureWalk
-from tests.verify_pcap.usb_capture import TransferType, UsbTransfer
-from tests.verify_pcap.virtual_clock_loop import current_producer_name
+from tests.verify_pcap.capture_replay import CaptureReplay
+from tests.verify_pcap.usb_capture import TransferType, UsbOp
+from tests.verify_pcap.virtual_clock_loop import current_caller_name
 
 DESCRIPTOR_TYPE_INTERFACE = 4
 DESCRIPTOR_TYPE_ENDPOINT = 5
-# Endpoint descriptor bmAttributes order differs from usbmon's transfer-type order.
+# Endpoint descriptor bmAttributes order differs from usbmon's op-type order.
 TRANSFER_TYPE_BY_ENDPOINT_ATTRIBUTES = (TransferType.CONTROL, TransferType.ISOCHRONOUS,
                                         TransferType.BULK, TransferType.INTERRUPT)
 REQUEST_TYPE_MASK = 0x60
@@ -101,9 +101,9 @@ def usb_error_for_status(status: int) -> usb.core.USBError:
 
 
 class FakeUsbDevice:
-    def __init__(self, walk: CaptureWalk, device_descriptor: bytes, configuration_descriptor: bytes,
+    def __init__(self, replay: CaptureReplay, device_descriptor: bytes, configuration_descriptor: bytes,
                  bus: int, address: int) -> None:
-        self.walk = walk
+        self.replay = replay
         self.bus = bus
         self.address = address
         self.idVendor, self.idProduct, self.bcdDevice = struct.unpack_from("<HHH", device_descriptor, 8)
@@ -127,12 +127,12 @@ class FakeUsbDevice:
             length = len(data)
         if bmRequestType & REQUEST_TYPE_MASK == REQUEST_TYPE_STANDARD and not is_in:
             return length
-        request = UsbTransfer(
+        request = UsbOp(
             frame_number=0, bus=self.bus, device_address=self.address,
             endpoint=0x80 if is_in else 0x00, transfer_type=TransferType.CONTROL,
             setup=struct.pack("<BBHHH", bmRequestType, bRequest, wValue, wIndex, length),
             data=data, status=0, timestamp=0.0)
-        captured = self.walk.claim(request, current_producer_name())
+        captured = self.replay.match_request(request, current_caller_name())
         if captured is None:
             raise usb_error_for_status(-LINUX_ENODEV)
         if captured.status != 0:
@@ -142,11 +142,11 @@ class FakeUsbDevice:
         return length
 
     def write(self, endpoint: int, data: bytes | array[int], timeout: int | None = None) -> int:
-        request = UsbTransfer(
+        request = UsbOp(
             frame_number=0, bus=self.bus, device_address=self.address, endpoint=endpoint,
             transfer_type=self.transfer_type_by_endpoint[endpoint], setup=None, data=bytes(data),
             status=0, timestamp=0.0)
-        captured = self.walk.claim(request, current_producer_name())
+        captured = self.replay.match_request(request, current_caller_name())
         if captured is None:
             raise usb_error_for_status(-LINUX_ENODEV)
         if captured.status != 0:
@@ -155,7 +155,7 @@ class FakeUsbDevice:
 
     def read(self, endpoint: int, size_or_buffer: int | array[int],
              timeout: int | None = None) -> array[int]:
-        captured = self.walk.read(endpoint, current_producer_name())
+        captured = self.replay.read(endpoint, current_caller_name())
         if captured is None:
             raise usb_error_for_status(-LINUX_ETIMEDOUT)
         if captured.status != 0:

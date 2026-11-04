@@ -4,7 +4,7 @@ from __future__ import annotations
 import struct
 from typing import Sequence
 
-from tests.verify_pcap.usb_capture import TransferType, UsbTransfer
+from tests.verify_pcap.usb_capture import TransferType, UsbOp
 from tests.verify_pcap.verify_capture import FamilyDecoder, InjectFrameTrigger, SetChannelTrigger, Trigger
 from wifit3.chips.ar9271_v2 import chan, constants as C, reg as R, tx, wmi
 from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
@@ -38,17 +38,17 @@ CHANNEL_BY_SYNTH_SELECT = {R.CHANSEL_2G(chan.channel_2ghz(number).center_freq): 
                            for number in AR9271V2Driver.SUPPORTED_CHANNELS}
 
 
-def wmi_command_id(transfer: UsbTransfer) -> int | None:
+def wmi_command_id(op: UsbOp) -> int | None:
     """WMI command (OUT) or response / event (IN) id on the REG pipes; None for HTC control or other pipes."""
-    if transfer.endpoint not in (C.EP_REG_OUT, C.EP_REG_IN) or len(transfer.data) < C.HTC_FRAME_HDR_LEN + 4:
+    if op.endpoint not in (C.EP_REG_OUT, C.EP_REG_IN) or len(op.data) < C.HTC_FRAME_HDR_LEN + 4:
         return None
-    if transfer.data[0] == C.ENDPOINT0:
+    if op.data[0] == C.ENDPOINT0:
         return None
-    return struct.unpack_from(">H", transfer.data, C.HTC_FRAME_HDR_LEN)[0]
+    return struct.unpack_from(">H", op.data, C.HTC_FRAME_HDR_LEN)[0]
 
 
-def register_words(transfer: UsbTransfer) -> list[int]:
-    payload = transfer.data[C.HTC_FRAME_HDR_LEN + 4:]
+def register_words(op: UsbOp) -> list[int]:
+    payload = op.data[C.HTC_FRAME_HDR_LEN + 4:]
     return list(struct.unpack(f">{len(payload) // 4}I", payload[:len(payload) // 4 * 4]))
 
 
@@ -60,41 +60,41 @@ def register_text(address: int) -> str:
 
 
 class Ath9kHtcDecoder(FamilyDecoder):
-    def describe(self, transfer: UsbTransfer) -> str:
-        status = f"  status {transfer.status}" if transfer.status else ""
-        if transfer.transfer_type == TransferType.CONTROL:
-            assert transfer.setup is not None
-            if transfer.request == C.FIRMWARE_DOWNLOAD:
-                return f"FW download 0x{transfer.value << 8:06x} {len(transfer.data)}B{status}"
-            if transfer.request == C.FIRMWARE_DOWNLOAD_COMP:
-                return f"FW boot 0x{transfer.value << 8:06x}{status}"
-            return f"CTRL setup {transfer.setup.hex()} data {transfer.data[:16].hex()}{status}"
-        if transfer.endpoint == C.EP_WLAN_TX:
-            frame_control = struct.unpack_from("<H", tx.dot11_from_bulk(transfer.data))[0]
-            return (f"TX {len(transfer.data)}B epid {transfer.data[4]} "
-                    f"header {transfer.data[:24].hex()} FC 0x{frame_control:04x}{status}")
-        if transfer.endpoint == C.EP_WLAN_RX:
-            return f"RX {len(transfer.data)}B{status}"
-        direction = "<-" if transfer.is_in else "->"
-        if transfer.status and not transfer.data:
-            return f"{direction} ep 0x{transfer.endpoint:02x}{status}"
-        if len(transfer.data) >= C.HTC_FRAME_HDR_LEN + 2 and transfer.data[0] == C.ENDPOINT0:
-            message_id = struct.unpack_from(">H", transfer.data, C.HTC_FRAME_HDR_LEN)[0]
+    def describe(self, op: UsbOp) -> str:
+        status = f"  status {op.status}" if op.status else ""
+        if op.transfer_type == TransferType.CONTROL:
+            assert op.setup is not None
+            if op.request == C.FIRMWARE_DOWNLOAD:
+                return f"FW download 0x{op.value << 8:06x} {len(op.data)}B{status}"
+            if op.request == C.FIRMWARE_DOWNLOAD_COMP:
+                return f"FW boot 0x{op.value << 8:06x}{status}"
+            return f"CTRL setup {op.setup.hex()} data {op.data[:16].hex()}{status}"
+        if op.endpoint == C.EP_WLAN_TX:
+            frame_control = struct.unpack_from("<H", tx.dot11_from_bulk(op.data))[0]
+            return (f"TX {len(op.data)}B epid {op.data[4]} "
+                    f"header {op.data[:24].hex()} FC 0x{frame_control:04x}{status}")
+        if op.endpoint == C.EP_WLAN_RX:
+            return f"RX {len(op.data)}B{status}"
+        direction = "<-" if op.is_in else "->"
+        if op.status and not op.data:
+            return f"{direction} ep 0x{op.endpoint:02x}{status}"
+        if len(op.data) >= C.HTC_FRAME_HDR_LEN + 2 and op.data[0] == C.ENDPOINT0:
+            message_id = struct.unpack_from(">H", op.data, C.HTC_FRAME_HDR_LEN)[0]
             name = HTC_MESSAGE_NAMES.get(message_id, f"0x{message_id:04x}")
-            return f"{direction} HTC {name} {transfer.data[C.HTC_FRAME_HDR_LEN + 2:].hex()}{status}"
-        command_id = wmi_command_id(transfer)
+            return f"{direction} HTC {name} {op.data[C.HTC_FRAME_HDR_LEN + 2:].hex()}{status}"
+        command_id = wmi_command_id(op)
         if command_id is None:
-            return f"{direction} ep 0x{transfer.endpoint:02x} {transfer.data.hex()}{status}"
-        seq = struct.unpack_from(">H", transfer.data, C.HTC_FRAME_HDR_LEN + 2)[0]
+            return f"{direction} ep 0x{op.endpoint:02x} {op.data.hex()}{status}"
+        seq = struct.unpack_from(">H", op.data, C.HTC_FRAME_HDR_LEN + 2)[0]
         name = WMI_COMMAND_NAMES.get(command_id, f"0x{command_id:04x}")
         text = f"{direction} {name} seq {seq}"
-        words = register_words(transfer)
-        if transfer.is_in:
+        words = register_words(op)
+        if op.is_in:
             if command_id == wmi.WMI_REG_READ_CMDID:
                 values = " ".join(f"0x{word:08x}" for word in words[:DESCRIBED_REGISTER_COUNT])
                 text += f" = {values}"
             elif words:
-                text += f" {transfer.data[C.HTC_FRAME_HDR_LEN + 4:][:16].hex()}"
+                text += f" {op.data[C.HTC_FRAME_HDR_LEN + 4:][:16].hex()}"
             return text + status
         if command_id == wmi.WMI_REG_READ_CMDID:
             entries = [register_text(word) for word in words]
@@ -104,20 +104,20 @@ class Ath9kHtcDecoder(FamilyDecoder):
             entries = [f"{register_text(words[i])} set 0x{words[i + 1]:08x} clr 0x{words[i + 2]:08x}"
                        for i in range(0, len(words) - 2, 3)]
         else:
-            entries = [transfer.data[C.HTC_FRAME_HDR_LEN + 4:].hex()] if words else []
+            entries = [op.data[C.HTC_FRAME_HDR_LEN + 4:].hex()] if words else []
         text += " " + ", ".join(entries[:DESCRIBED_REGISTER_COUNT])
         if len(entries) > DESCRIBED_REGISTER_COUNT:
             text += f" +{len(entries) - DESCRIBED_REGISTER_COUNT}"
         return text + status
 
-    def find_trigger(self, transfers: Sequence[UsbTransfer], position: int) -> Trigger | None:
-        transfer = transfers[position]
-        if transfer.transfer_type == TransferType.BULK and transfer.endpoint == C.EP_WLAN_TX:
-            return InjectFrameTrigger(tx.dot11_from_bulk(transfer.data))
+    def find_trigger(self, ops: Sequence[UsbOp], position: int) -> Trigger | None:
+        op = ops[position]
+        if op.transfer_type == TransferType.BULK and op.endpoint == C.EP_WLAN_TX:
+            return InjectFrameTrigger(tx.dot11_from_bulk(op.data))
         # ath9k_htc_set_channel: DISABLE_INTR, then the reset / fast change that writes the synth.
-        if wmi_command_id(transfer) != wmi.WMI_DISABLE_INTR_CMDID or transfer.is_in:
+        if wmi_command_id(op) != wmi.WMI_DISABLE_INTR_CMDID or op.is_in:
             return None
-        for lookahead in transfers[position + 1:position + CHANNEL_SWITCH_LOOKAHEAD]:
+        for lookahead in ops[position + 1:position + CHANNEL_SWITCH_LOOKAHEAD]:
             command_id = wmi_command_id(lookahead)
             if lookahead.is_in or command_id is None:
                 continue
@@ -134,6 +134,6 @@ class Ath9kHtcDecoder(FamilyDecoder):
                     return SetChannelTrigger(channel)
         return None
 
-    def carries_only_80211_frames(self, transfer: UsbTransfer) -> bool:
+    def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """WLAN_RX bulk IN is the HIF RX stream only; WMI responses and events (TXSTATUS) come on REG_IN."""
-        return transfer.transfer_type == TransferType.BULK and transfer.endpoint == C.EP_WLAN_RX
+        return op.transfer_type == TransferType.BULK and op.endpoint == C.EP_WLAN_RX

@@ -1,4 +1,4 @@
-"""Event loop whose time() is the capture's clock, and the producer bookkeeping the walk needs."""
+"""Event loop whose time() is the capture's clock, and the caller bookkeeping the replay needs."""
 from __future__ import annotations
 
 import asyncio
@@ -7,17 +7,17 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable
 
-MAIN_PRODUCER = "main"
+MAIN_CALLER = "main"
 SELECT_TIMEOUT_SECONDS = 0.005
 IDLE_SELECTS_BEFORE_CLOCK_JUMP = 2
 
 
-class ExecutorThreadState(threading.local):
+class PoolThreadCaller(threading.local):
     def __init__(self) -> None:
-        self.producer: str | None = None
+        self.caller: str | None = None
 
 
-_executor_thread_state = ExecutorThreadState()
+_pool_thread_caller = PoolThreadCaller()
 
 
 class ClockJumpSelector(selectors.SelectSelector):
@@ -64,7 +64,7 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
                 context: Any = None) -> asyncio.TimerHandle:
         handle = super().call_at(when, callback, *args, context=context)
         task = asyncio.current_task(self)
-        if task is not None and task.get_name() != MAIN_PRODUCER:
+        if task is not None and task.get_name() != MAIN_CALLER:
             with self._timer_lock:
                 self.latest_timer_by_task[task] = handle
         return handle
@@ -82,41 +82,41 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         return earliest
 
 
-class ProducerTrackingExecutor(ThreadPoolExecutor):
+class DriverThreadPool(ThreadPoolExecutor):
     """run_in_executor work runs as the asyncio task that submitted it."""
 
     def __init__(self) -> None:
-        super().__init__(thread_name_prefix="verify-capture-executor")
-        self.running_count = 0
+        super().__init__(thread_name_prefix="verify-capture-thread_pool")
+        self.busy_thread_count = 0
         self._count_lock = threading.Lock()
 
     def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
-        producer = current_producer_name()
+        caller = current_caller_name()
         with self._count_lock:
-            self.running_count += 1
-        return super().submit(self._run_as_producer, producer, fn, *args, **kwargs)
+            self.busy_thread_count += 1
+        return super().submit(self._run_as_caller, caller, fn, *args, **kwargs)
 
-    def _run_as_producer(self, producer: str, fn: Callable[..., Any], *args: Any,
+    def _run_as_caller(self, caller: str, fn: Callable[..., Any], *args: Any,
                          **kwargs: Any) -> Any:
-        _executor_thread_state.producer = producer
+        _pool_thread_caller.caller = caller
         try:
             return fn(*args, **kwargs)
         finally:
-            _executor_thread_state.producer = None
+            _pool_thread_caller.caller = None
             with self._count_lock:
-                self.running_count -= 1
+                self.busy_thread_count -= 1
 
 
-def current_producer_name() -> str:
+def current_caller_name() -> str:
     """The asyncio task (main, or a driver task by coroutine name) or plain thread making the call."""
-    if _executor_thread_state.producer is not None:
-        return _executor_thread_state.producer
+    if _pool_thread_caller.caller is not None:
+        return _pool_thread_caller.caller
     try:
         task = asyncio.current_task()
     except RuntimeError:
         task = None
     if task is None:
         return threading.current_thread().name
-    if task.get_name() == MAIN_PRODUCER:
-        return MAIN_PRODUCER
+    if task.get_name() == MAIN_CALLER:
+        return MAIN_CALLER
     return task.get_coro().__qualname__

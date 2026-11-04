@@ -1,4 +1,4 @@
-"""usbmon capture reader: pcap / pcapng file -> USB transfers (submit and completion paired)."""
+"""usbmon capture reader: pcap / pcapng file -> USB ops (submit and completion paired)."""
 from __future__ import annotations
 
 import enum
@@ -30,7 +30,7 @@ class TransferType(enum.IntEnum):
 
 
 @dataclass(frozen=True)
-class UsbTransfer:
+class UsbOp:
     """One URB. ``data`` is the OUT payload (from the submit) or the IN payload (from the completion).
     ``timestamp`` is the completion time in seconds since the capture's first record."""
     frame_number: int
@@ -72,7 +72,7 @@ class UsbTransfer:
         assert self.setup is not None
         return int.from_bytes(self.setup[6:8], "little")
 
-    def same_request(self, other: UsbTransfer) -> bool:
+    def same_request(self, other: UsbOp) -> bool:
         """Same endpoint, setup packet and OUT payload; IN payloads and status are not compared."""
         if self.transfer_type != other.transfer_type or self.endpoint != other.endpoint:
             return False
@@ -189,10 +189,10 @@ def parse_usbmon_packet(frame_number: int, linktype: int, packet: bytes, start_s
     )
 
 
-def pair_transfers(records: list[UsbmonRecord]) -> tuple[list[UsbTransfer], int]:
+def pair_submits_with_completions(records: list[UsbmonRecord]) -> tuple[list[UsbOp], int]:
     """Transfers in completion order, and the count of submits that never completed."""
     submits: dict[tuple[int, int], UsbmonRecord] = {}
-    transfers: list[UsbTransfer] = []
+    ops: list[UsbOp] = []
     for record in records:
         key = (record.bus, record.urb_id)
         if record.event_type == "S":
@@ -205,7 +205,7 @@ def pair_transfers(records: list[UsbmonRecord]) -> tuple[list[UsbTransfer], int]
             data = record.data
         else:
             data = submit.data
-        transfers.append(UsbTransfer(
+        ops.append(UsbOp(
             frame_number=record.frame_number,
             bus=record.bus,
             device_address=record.device_address,
@@ -216,4 +216,4 @@ def pair_transfers(records: list[UsbmonRecord]) -> tuple[list[UsbTransfer], int]
             status=record.status,
             timestamp=record.timestamp,
         ))
-    return transfers, len(submits)
+    return ops, len(submits)

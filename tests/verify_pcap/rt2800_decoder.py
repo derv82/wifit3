@@ -4,7 +4,7 @@ from __future__ import annotations
 import struct
 from typing import Sequence
 
-from tests.verify_pcap.usb_capture import TransferType, UsbTransfer
+from tests.verify_pcap.usb_capture import TransferType, UsbOp
 from tests.verify_pcap.verify_capture import FamilyDecoder, InjectFrameTrigger, SetChannelTrigger, Trigger
 from wifit3.chips.rt5370 import constants as C
 
@@ -28,41 +28,41 @@ REGISTER_NAMES = {
 }
 
 
-def is_register_access(transfer: UsbTransfer, request: int, address: int) -> bool:
-    return (transfer.transfer_type == TransferType.CONTROL and transfer.setup is not None
-            and transfer.request == request and transfer.index == address)
+def is_register_access(op: UsbOp, request: int, address: int) -> bool:
+    return (op.transfer_type == TransferType.CONTROL and op.setup is not None
+            and op.request == request and op.index == address)
 
 
-def register_value(transfer: UsbTransfer) -> int | None:
-    if len(transfer.data) != 4:
+def register_value(op: UsbOp) -> int | None:
+    if len(op.data) != 4:
         return None
-    return struct.unpack("<I", transfer.data)[0]
+    return struct.unpack("<I", op.data)[0]
 
 
 class Rt2800Decoder(FamilyDecoder):
-    def describe(self, transfer: UsbTransfer) -> str:
-        status = f"  status {transfer.status}" if transfer.status else ""
-        if transfer.transfer_type != TransferType.CONTROL:
-            direction = "RX" if transfer.is_in else "TX"
-            text = f"{direction} ep 0x{transfer.endpoint:02x} {len(transfer.data)}B"
+    def describe(self, op: UsbOp) -> str:
+        status = f"  status {op.status}" if op.status else ""
+        if op.transfer_type != TransferType.CONTROL:
+            direction = "RX" if op.is_in else "TX"
+            text = f"{direction} ep 0x{op.endpoint:02x} {len(op.data)}B"
             frame_offset = C.TXINFO_DESC_SIZE + C.TXWI_DESC_SIZE_4WORDS
-            if not transfer.is_in and len(transfer.data) >= frame_offset + 2:
-                frame_control = struct.unpack_from("<H", transfer.data, frame_offset)[0]
-                text += f" descriptor {transfer.data[:frame_offset].hex()} FC 0x{frame_control:04x}"
+            if not op.is_in and len(op.data) >= frame_offset + 2:
+                frame_control = struct.unpack_from("<H", op.data, frame_offset)[0]
+                text += f" descriptor {op.data[:frame_offset].hex()} FC 0x{frame_control:04x}"
             return text + status
-        assert transfer.setup is not None
-        address = transfer.index
+        assert op.setup is not None
+        address = op.index
         name = REGISTER_NAMES.get(address, "")
-        value = register_value(transfer)
-        if transfer.request == C.USB_MULTI_READ:
-            if transfer.status == 0 and not transfer.data:
+        value = register_value(op)
+        if op.request == C.USB_MULTI_READ:
+            if op.status == 0 and not op.data:
                 return f"R  0x{address:04x} {name}"
             if value is None:
-                return f"R  0x{address:04x} {name} <{transfer.length}B> {transfer.data.hex()}{status}"
+                return f"R  0x{address:04x} {name} <{op.length}B> {op.data.hex()}{status}"
             return f"R  0x{address:04x} {name} = 0x{value:08x}{status}"
-        if transfer.request == C.USB_MULTI_WRITE:
+        if op.request == C.USB_MULTI_WRITE:
             if value is None:
-                return f"W  0x{address:04x} {name} <{len(transfer.data)}B>{status}"
+                return f"W  0x{address:04x} {name} <{len(op.data)}B>{status}"
             text = f"W  0x{address:04x} {name} = 0x{value:08x}"
             if address == C.BBP_CSR_CFG:
                 register = (value & C.BBP_CSR_CFG_REGNUM) >> 8
@@ -77,30 +77,30 @@ class Rt2800Decoder(FamilyDecoder):
                 else:
                     text += f"  (RFCSR{register} read)"
             return text + status
-        if transfer.request == C.USB_DEVICE_MODE:
-            return f"DEVICE_MODE wValue=0x{transfer.value:04x} wIndex=0x{address:04x}{status}"
-        return f"CTRL setup {transfer.setup.hex()} data {transfer.data.hex()}{status}"
+        if op.request == C.USB_DEVICE_MODE:
+            return f"DEVICE_MODE wValue=0x{op.value:04x} wIndex=0x{address:04x}{status}"
+        return f"CTRL setup {op.setup.hex()} data {op.data.hex()}{status}"
 
-    def find_trigger(self, transfers: Sequence[UsbTransfer], position: int) -> Trigger | None:
-        transfer = transfers[position]
-        if transfer.transfer_type == TransferType.BULK and not transfer.is_in:
-            txwi_word1 = struct.unpack_from("<I", transfer.data, C.TXINFO_DESC_SIZE + 4)[0]
+    def find_trigger(self, ops: Sequence[UsbOp], position: int) -> Trigger | None:
+        op = ops[position]
+        if op.transfer_type == TransferType.BULK and not op.is_in:
+            txwi_word1 = struct.unpack_from("<I", op.data, C.TXINFO_DESC_SIZE + 4)[0]
             frame_length = (txwi_word1 & C.TXWI_W1_MPDU_TOTAL_BYTE_COUNT) >> 16
             frame_offset = C.TXINFO_DESC_SIZE + C.TXWI_DESC_SIZE_4WORDS
-            return InjectFrameTrigger(transfer.data[frame_offset:frame_offset + frame_length])
-        if position + 2 >= len(transfers):
+            return InjectFrameTrigger(op.data[frame_offset:frame_offset + frame_length])
+        if position + 2 >= len(ops):
             return None
-        rx_stop = transfers[position + 1]
+        rx_stop = ops[position + 1]
         rx_stop_value = register_value(rx_stop)
         # rt2x00mac_config(CHANGE_CHANNEL): stop RX, then the survey reads, then the RF tune.
-        if not (is_register_access(transfer, C.USB_MULTI_READ, C.MAC_SYS_CTRL)
+        if not (is_register_access(op, C.USB_MULTI_READ, C.MAC_SYS_CTRL)
                 and is_register_access(rx_stop, C.USB_MULTI_WRITE, C.MAC_SYS_CTRL)
                 and rx_stop_value is not None and not rx_stop_value & C.MAC_SYS_CTRL_ENABLE_RX
-                and is_register_access(transfers[position + 2], C.USB_MULTI_READ, C.CH_IDLE_STA)):
+                and is_register_access(ops[position + 2], C.USB_MULTI_READ, C.CH_IDLE_STA)):
             return None
         rf1: int | None = None
         rf3: int | None = None
-        for lookahead in transfers[position:position + CHANNEL_SWITCH_LOOKAHEAD]:
+        for lookahead in ops[position:position + CHANNEL_SWITCH_LOOKAHEAD]:
             value = register_value(lookahead)
             if (value is None or not is_register_access(lookahead, C.USB_MULTI_WRITE, C.RF_CSR_CFG)
                     or not value & C.RF_CSR_CFG_WRITE):
@@ -115,6 +115,6 @@ class Rt2800Decoder(FamilyDecoder):
                 return SetChannelTrigger(channel)
         return None
 
-    def carries_only_80211_frames(self, transfer: UsbTransfer) -> bool:
+    def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """rt2800usb bulk IN is RX only; TX status is polled through TX_STA_FIFO."""
-        return transfer.transfer_type == TransferType.BULK and transfer.is_in
+        return op.transfer_type == TransferType.BULK and op.is_in
