@@ -47,24 +47,25 @@ async def post_boot_init(transport: MT7925AUTransport) -> InitState:
     # Phase D — mt7925_mac_init register block.
     _mac_init(transport)
 
+    # Phase E — mt7925_init_work tail (mt7925/init.c:164-192): mt76_register_device's
+    # world-"00" reg notifier (regd.c:200 -> mt7925_mcu_regd_update: no CLC on USB, then
+    # channel domain + rate TX power), thermal protection, deep sleep.
+    await transport.send_mcu_command(*mcu.set_channel_domain())
+    for cmd, payload in txpower.rate_txpower_all(caps.has_6ghz):
+        await transport.send_mcu_command(cmd, payload)
+    await transport.send_mcu_command(*mcu.thermal_gband(), wait_resp=False)
+    await transport.send_mcu_command(*mcu.thermal_aband(), wait_resp=False)
+    await transport.send_mcu_command(*mcu.set_deep_sleep(False), wait_resp=False)
+
     return InitState(caps=caps)
 
 
-async def enter_monitor(transport: MT7925AUTransport, channel: int,
-                        has_6ghz: bool = True) -> None:
-    """Bring the chip into monitor mode on ``channel`` (the mac80211 add_interface +
-    start + config(MONITOR) + configure_filter path). Sends the connac3 UNI commands
-    the capture shows; CHIP_CONFIG (thermal/deep-sleep) get no ack, the rest do."""
+async def enter_monitor(transport: MT7925AUTransport, channel: int) -> None:
+    """Bring the chip into monitor mode on ``channel`` (the mac80211 start +
+    add_interface + config(MONITOR) + configure_filter path)."""
     t = transport
-    # init_work device tuning + the per-band TX power tables (world "00", 20 dBm).
-    await t.send_mcu_command(*mcu.thermal_gband(), wait_resp=False)
-    await t.send_mcu_command(*mcu.thermal_aband(), wait_resp=False)
-    await t.send_mcu_command(*mcu.set_deep_sleep(False), wait_resp=False)
-    # __mt7925_start / regd: hand the device the world-"00" channel domain so it applies
-    # the regulatory TX-power/DFS limits, then the per-band TX power tables.
+    # __mt7925_start (mt7925/main.c:316).
     await t.send_mcu_command(*mcu.set_channel_domain())
-    for cmd, payload in txpower.rate_txpower_all(has_6ghz):
-        await t.send_mcu_command(cmd, payload, wait_resp=False)
     await t.send_mcu_command(*mcu.set_rts_thresh())
     # __mt7925_start: reset the MIB counters, then add the monitor vif.
     mac.reset_counters(t)
