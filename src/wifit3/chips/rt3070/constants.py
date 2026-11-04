@@ -635,8 +635,16 @@ EEPROM_RSSI_BG_OFFSET0 = 0x00FF
 EEPROM_RSSI_BG_OFFSET1 = 0xFF00
 EEPROM_RSSI_BG2_OFFSET2 = 0x00FF
 
-# TX queue id (QID_MGMT) for the management-frame inject path [SRC rt2x00queue.h].
-QID_MGMT = 5
+# TX queue ids, in bulk-OUT endpoint order [SRC rt2x00queue.h:47-50, rt2x00usb.c:599 rt2x00usb_find_endpoints].
+QID_AC_VO = 0
+QID_AC_VI = 1
+QID_AC_BE = 2
+QID_AC_BK = 3
+NUM_TX_QUEUES = 4                         # [SRC rt2800.h:111]
+# 802.1d priority -> AC queue [SRC net/mac80211/wme.c ieee802_1d_to_ac].
+IEEE802_1D_TO_AC = (QID_AC_BE, QID_AC_BK, QID_AC_BK, QID_AC_BE, QID_AC_VI, QID_AC_VI, QID_AC_VO, QID_AC_VO)
+# TX queue depth [SRC rt2800usb.c:734-738 rt2800usb_queue_init QID_AC_*].
+TX_QUEUE_LIMIT = 16
 
 # RF3020 2.4 GHz channel table {rf1, rf2, rf3} [SRC rt2800lib.c:11435 rf_vals_3x].
 # This card is 2.4 GHz only (RF3020); chs 1-14. rf2 is 2 for every 2.4 GHz channel.
