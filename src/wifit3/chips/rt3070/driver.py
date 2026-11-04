@@ -260,7 +260,7 @@ class RT3070Driver(Driver):
             qid = tx.select_queue(frame)
             tx.send_frame(self.transport.dev, self._tx_queue_eps[qid], frame, qid, self._tx_entry_index[qid],
                           use_no_ack=bool(frame[4] & 0x01))
-            # rt2x00queue_index_inc(entry, Q_INDEX) [SRC rt2x00queue.c:703, 877-879]
+            # rt2x00queue_index_inc(entry, Q_INDEX) [SRC rt2x00queue.c:703, 874-876]
             self._tx_entry_index[qid] += 1
             if self._tx_entry_index[qid] >= C.TX_QUEUE_LIMIT:
                 self._tx_entry_index[qid] = 0
