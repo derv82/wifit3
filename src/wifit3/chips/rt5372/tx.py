@@ -3,8 +3,7 @@
 Ported from ``rt2800usb_write_tx_desc`` (rt2800usb.c:401-451) + ``rt2800_write_tx_data``
 (rt2800lib.c:795-853). The descriptor is built and the bulk-OUT path is wired, but this
 driver NEVER fires a frame on its own — injection/deauth is the user's explicit action
-[[passive_by_default]]. Bulk-OUT is chip-bound and out of the control gate, so the
-descriptor is verified against the kernel wire-format, not by ``verify_pcap``.
+[[passive_by_default]].
 
 Wire layout (``rt2800usb_get_tx_data_len`` :440-451):
 
