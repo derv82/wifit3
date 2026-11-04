@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import struct
+from dataclasses import replace
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
@@ -34,6 +35,8 @@ REGISTER_NAMES = {
     R.AR_DEF_ANTENNA: "DEF_ANTENNA", R.AR_STA_ID0: "STA_ID0", R.AR_STA_ID1: "STA_ID1",
 }
 SYNTH_CHANNEL_SELECT_MASK = 0x00FFFFFF
+WMI_SEQ_OFFSET = C.HTC_FRAME_HDR_LEN + 2
+WMI_SEQ_COUNT = 0x10000
 CHANNEL_BY_SYNTH_SELECT = {R.CHANSEL_2G(chan.channel_2ghz(number).center_freq): number
                            for number in AR9271V2Driver.SUPPORTED_CHANNELS}
 
@@ -45,6 +48,14 @@ def wmi_command_id(op: UsbOp) -> int | None:
     if op.data[0] == C.ENDPOINT0:
         return None
     return struct.unpack_from(">H", op.data, C.HTC_FRAME_HDR_LEN)[0]
+
+
+def wmi_seq(op: UsbOp) -> int:
+    return struct.unpack_from(">H", op.data, WMI_SEQ_OFFSET)[0]
+
+
+def with_wmi_seq(op: UsbOp, seq: int) -> UsbOp:
+    return replace(op, data=op.data[:WMI_SEQ_OFFSET] + struct.pack(">H", seq) + op.data[WMI_SEQ_OFFSET + 2:])
 
 
 def register_words(op: UsbOp) -> list[int]:
@@ -85,7 +96,7 @@ class Ath9kHtcDecoder(FamilyDecoder):
         command_id = wmi_command_id(op)
         if command_id is None:
             return f"{direction} ep 0x{op.endpoint:02x} {op.data.hex()}{status}"
-        seq = struct.unpack_from(">H", op.data, C.HTC_FRAME_HDR_LEN + 2)[0]
+        seq = wmi_seq(op)
         name = WMI_COMMAND_NAMES.get(command_id, f"0x{command_id:04x}")
         text = f"{direction} {name} seq {seq}"
         words = register_words(op)
@@ -139,7 +150,8 @@ class Ath9kHtcDecoder(FamilyDecoder):
         return None
 
     def register_ops(self, op: UsbOp) -> list[RegisterOp]:
-        """REG_READ / REG_WRITE commands; responses, events and REG_RMW list none."""
+        """REG_READ / REG_WRITE / REG_RMW commands, a REG_RMW entry as its SET_BITS then CLEAR_BITS; responses and
+        events list none."""
         command_id = wmi_command_id(op)
         if op.is_in or command_id is None:
             return []
@@ -148,7 +160,40 @@ class Ath9kHtcDecoder(FamilyDecoder):
             return [RegisterOp(RegisterAccess.READ, word, None) for word in words]
         if command_id == wmi.WMI_REG_WRITE_CMDID:
             return [RegisterOp(RegisterAccess.WRITE, words[i], words[i + 1]) for i in range(0, len(words) - 1, 2)]
-        return []
+        register_ops: list[RegisterOp] = []
+        if command_id == wmi.WMI_REG_RMW_CMDID:
+            for i in range(0, len(words) - 2, 3):
+                register_ops.append(RegisterOp(RegisterAccess.SET_BITS, words[i], words[i + 1]))
+                register_ops.append(RegisterOp(RegisterAccess.CLEAR_BITS, words[i], words[i + 2]))
+        return register_ops
+
+    def skip_capture_only_ops(self, ops: list[UsbOp], positions: set[int]) -> tuple[list[UsbOp], set[int]]:
+        """Each later WMI command and its response renumbered back by the skipped commands before it (one
+        tx_seq_id, wmi.c:286-307); a skipped command's response is waived with it."""
+        skipped_count = 0
+        skipped_seqs: set[int] = set()
+        renumbered_seq_by_seq: dict[int, int] = {}
+        waived_positions = set(positions)
+        renumbered_ops: list[UsbOp] = []
+        for position, op in enumerate(ops):
+            command_id = wmi_command_id(op)
+            if command_id is not None and not op.is_in:
+                seq = wmi_seq(op)
+                if position in positions:
+                    skipped_count += 1
+                    skipped_seqs.add(seq)
+                elif skipped_count:
+                    renumbered_seq_by_seq[seq] = (seq - skipped_count) % WMI_SEQ_COUNT
+                    op = with_wmi_seq(op, renumbered_seq_by_seq[seq])
+            elif command_id is not None and not command_id & wmi.WMI_EVENT_BIT:
+                seq = wmi_seq(op)
+                if seq in skipped_seqs:
+                    skipped_seqs.discard(seq)
+                    waived_positions.add(position)
+                elif seq in renumbered_seq_by_seq:
+                    op = with_wmi_seq(op, renumbered_seq_by_seq[seq])
+            renumbered_ops.append(op)
+        return renumbered_ops, waived_positions
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """WLAN_RX bulk IN is the HIF RX stream only; WMI responses and events (TXSTATUS) come on REG_IN."""

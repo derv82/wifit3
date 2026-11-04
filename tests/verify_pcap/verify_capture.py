@@ -44,6 +44,8 @@ class WaiverReason(enum.Enum):
 class RegisterAccess(enum.Enum):
     READ = enum.auto()
     WRITE = enum.auto()
+    SET_BITS = enum.auto()
+    CLEAR_BITS = enum.auto()
 
 
 @dataclass(frozen=True)
