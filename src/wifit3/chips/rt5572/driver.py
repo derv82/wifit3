@@ -210,11 +210,6 @@ class RT5572Driver(Driver):
                     self._rf_cal.bbp25, self._rf_cal.bbp26,
                 )
 
-            # Program the EEPROM MAC so the RX matching engine has identity.
-            await loop.run_in_executor(
-                None, write_mac_address, self.transport, state.eeprom.mac_address,
-            )
-
             # Kernel-faithful monitor entry — the mac80211/airmon monitor bring-up
             # (configure_filter 0x97→0x93 + config_txpower/retry/ps/ant + reset_tuner),
             # the exact sequence the acceptance gate replays byte-for-byte. Replaces the
