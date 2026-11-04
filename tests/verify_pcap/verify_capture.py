@@ -14,7 +14,8 @@ import usb.util
 
 from tests.verify_pcap.capture_replay import CaptureReplay, Divergence, is_bulk_or_interrupt_in
 from tests.verify_pcap.fake_usb_device import (
-    LINUX_ESHUTDOWN, REQUEST_TYPE_MASK, REQUEST_TYPE_STANDARD, FakeUsbDevice, find_chip_descriptors)
+    INTERFACE_CLASS_VENDOR_SPECIFIC, LINUX_ESHUTDOWN, REQUEST_TYPE_CLASS, REQUEST_TYPE_MASK, REQUEST_TYPE_STANDARD,
+    FakeUsbDevice, find_chip_descriptors, parse_configuration_descriptor)
 from tests.verify_pcap.usb_capture import TransferType, UsbOp, pair_submits_with_completions, read_usbmon_records
 from tests.verify_pcap.virtual_clock_loop import (
     MAIN_CALLER, DriverThreadPool, VirtualClockEventLoop)
@@ -26,6 +27,7 @@ DUMP_CONTEXT = 10
 IDLE_PASSES_IN_A_ROW = 3
 
 IGNORED_OTHER_DEVICES = "other devices and address 0"
+IGNORED_OTHER_INTERFACES = "other interfaces (class requests, endpoints of non-vendor-class interfaces)"
 IGNORED_ENUMERATION = "usbcore enumeration (standard control requests)"
 IGNORED_RX = "RX: IN ops carrying only 802.11 frames"
 IGNORED_INCOMPLETE = "submitted, never completed"
@@ -194,6 +196,11 @@ class VerifyCapture:
             pytest.fail(f"{capture_path.name}: no plug-in of a SUPPORTED_IDS device "
                         "(device + configuration descriptor) in the capture", pytrace=False)
         device_id, device_descriptor, configuration_descriptor = found
+        other_interface_endpoints: set[int] = set()
+        for interface in parse_configuration_descriptor(configuration_descriptor):
+            if interface.bInterfaceClass != INTERFACE_CLASS_VENDOR_SPECIFIC:
+                for endpoint in interface:
+                    other_interface_endpoints.add(endpoint.bEndpointAddress)
 
         ignored_counts: Counter[str] = Counter()
         ignored_counts[IGNORED_INCOMPLETE] = incomplete_count
@@ -201,6 +208,10 @@ class VerifyCapture:
         for op in all_ops:
             if (op.bus, op.device_address) != (device_id.bus, device_id.address):
                 ignored_counts[IGNORED_OTHER_DEVICES] += 1
+            elif (op.endpoint in other_interface_endpoints
+                  or (op.transfer_type == TransferType.CONTROL
+                      and op.request_type & REQUEST_TYPE_MASK == REQUEST_TYPE_CLASS)):
+                ignored_counts[IGNORED_OTHER_INTERFACES] += 1
             elif op.status == -LINUX_ESHUTDOWN:
                 ignored_counts[IGNORED_KILLED] += 1
             elif (op.transfer_type == TransferType.CONTROL
