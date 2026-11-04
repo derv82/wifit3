@@ -63,6 +63,7 @@
 
 - `driver._bringup` builds `self.txpwr` once as `txpwr_idx_state(...)` immediately after `read_mac_hidden_rpt`; nothing per tune recomputes it.
 - `driver.close` stops the RX reader, then executes the HALMAC power-off flow before releasing the USB interface. The vendor `rtw_halmac_deinit_hal` calls `halmac_deinit_interface_cfg` followed by `rtw_hal_power_off`; USB's `deinit_usb_cfg_88xx` is a no-op, so `mac_power_off` is the required hardware teardown [hal/hal_halmac.c:rtw_halmac_deinit_hal, halmac_usb_88xx.c:deinit_usb_cfg_88xx]. A device-gone USB error does not prevent local resource cleanup. Failed bring-up uses this same cleanup path, so it cannot retain a claimed interface or partial MAC power state. Teardown also drops the saved DACK state because the next `connect` uses the port's full cold initialization rather than the unported warm DACK restore path.
+- Wi-Fi-only boards configure GPIO8 as the vendor WL LED after monitor entry and select `HALMAC_WLLED_MODE_TX`; the LED blinks in hardware only for transmitted frames, with no Python timer or RX-triggered writes [hal_halmac.c:5135-5192, halmac_gpio_8822c.c:349-354, halmac_gpio_88xx.c:29-64].
 - RX records flagged CRC or ICV invalid are discarded before ACK accounting and parsing, matching `recvbuf2recvframe` outside the vendor's manufacturing mode. The shared RX layer deliberately strips the appended FCS because Wifit3 consumers operate on FCS-free MPDUs; this is an application-level normalization rather than vendor radiotap delivery semantics.
 - TX power splits across `txpower.py` (PG walk), `txpwr_tables.py` (the compiled by rate array) and `txpwr_index.py` (index math); `phy._set_tx_power` is the only writer.
 - `_set_tx_power` writes 0x18A0 / 0x41A0 (CCK, mask 0x007F0000), 0x18E8 / 0x41E8 (OFDM, mask 0x0001FC00) and twelve 0x3A00 diff dwords, bracketed by `_bbrstb_txagc_off`.
@@ -122,6 +123,7 @@
 - Watchdog tick: `watchdog.py`, the phydm 2 s JGR3 dynamic check (env monitor result/set, false alarm stats, DIG, CCK-PD, thermal).
 - RX decode: `rx.iter_bulk_frames` (`rtw88_base.parse_rx_pkt_desc` plus the 8822C JGR3 `_phy_rssi`: CCK type 0 and OFDM types 1..5, signed pwdb, floor -120 with no upper clamp, and per-path CCK gain correction from the `cck_gi` bounds `phy.config_bb_rf` returns).
 - TX inject: `tx.build_tx_desc_inject` (vendor `dump_mgntframe` inject branch, `pattrib->inject == 0xa5`).
+- TX LED: `led.enable_tx_blink` selects GPIO8 WL LED then the HALMAC TX-only hardware mode after `driver._monitor_entry`; `disable_tx_blink` restores software-off mode before MAC power-off.
 
 ## Scripts
 

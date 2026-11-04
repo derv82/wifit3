@@ -18,6 +18,7 @@ from wifit3.chips.rx_reader import RxReaderThread
 
 from .cal import DackState, odm_dm_init
 from .kfree import PowerTrimState
+from .led import disable_tx_blink, enable_tx_blink
 from .dm import PhydmState
 from .txgapk import TxGapKState
 from .chipid import ChipInfo, read_chip_info
@@ -112,6 +113,7 @@ class RTL8822CUDriver(Driver):
         self._rx_bytes = 0
         self._tx_bytes = 0
         self._rx_regs_after_tune_logged = False
+        self._tx_led_enabled = False
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8822CUDriver":
@@ -299,6 +301,12 @@ class RTL8822CUDriver(Driver):
         arm_monitor(self.transport, self.h2c, bytes(self.efuse.mac_address))
         switch_channel(self.transport, _DEFAULT_CHANNEL, self.txpwr)
         enter_monitor_mode(self.transport)
+        if not self.efuse.bluetooth_coexist:
+            try:
+                enable_tx_blink(self.transport)
+                self._tx_led_enabled = True
+            except (IOError, usb.core.USBError) as exc:
+                logger.warning("RTL8822CU TX LED setup failed: %s", exc)
         self._log_state("monitor_entry")
         self._log_rx_registers("monitor_entry")
 
@@ -421,14 +429,21 @@ class RTL8822CUDriver(Driver):
         if self._rx_reader:
             await self._rx_reader.stop()
             self._rx_reader = None
-        if self._claimed and self.chip_info:
+        if self._claimed and (self.chip_info or self._tx_led_enabled):
             # rtw_halmac_deinit_hal: deinit_usb_cfg_88xx is a no-op, then power off.
-            cut_mask = cut_mask_from_sys_cfg1(self.chip_info.raw_cfg1)
             try:
                 loop = asyncio.get_running_loop()
                 def _power_off() -> None:
                     with self._control_lock:
-                        mac_power_off(self.transport, cut_mask=cut_mask)
+                        if self._tx_led_enabled:
+                            try:
+                                disable_tx_blink(self.transport)
+                            except (IOError, usb.core.USBError) as exc:
+                                logger.debug("RTL8822CU TX LED disable during close failed: %s", exc)
+                            self._tx_led_enabled = False
+                        if self.chip_info:
+                            cut_mask = cut_mask_from_sys_cfg1(self.chip_info.raw_cfg1)
+                            mac_power_off(self.transport, cut_mask=cut_mask)
                 await loop.run_in_executor(None, _power_off)
             except (IOError, usb.core.USBError) as exc:
                 logger.debug("RTL8822CU MAC power-off during close failed: %s", exc)

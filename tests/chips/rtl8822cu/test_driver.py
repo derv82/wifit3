@@ -348,6 +348,56 @@ def test_bringup_leaves_bt_combo_coexistence_tables_untouched(monkeypatch, caplo
     assert "BT-combo board" in caplog.text
 
 
+def test_monitor_entry_enables_tx_only_hardware_led_after_monitor_mode(monkeypatch):
+    d = _driver()
+    d.efuse = _efuse(0x33)
+    calls: list[str] = []
+    monkeypatch.setattr(drv, "arm_monitor", lambda *args: calls.append("arm"))
+    monkeypatch.setattr(drv, "switch_channel", lambda *args: calls.append("tune"))
+    monkeypatch.setattr(drv, "enter_monitor_mode", lambda *args: calls.append("monitor"))
+    monkeypatch.setattr(drv, "enable_tx_blink", lambda *args: calls.append("led"))
+    monkeypatch.setattr(d, "_log_state", lambda *args: None)
+    monkeypatch.setattr(d, "_log_rx_registers", lambda *args: None)
+
+    d._monitor_entry()
+
+    assert calls == ["arm", "tune", "monitor", "led"]
+    assert d._tx_led_enabled is True
+
+
+def test_monitor_entry_does_not_claim_the_tx_led_pin_on_bt_combo(monkeypatch):
+    d = _driver()
+    d.efuse = _efuse(0x33, board_option=0x21)
+    led = MagicMock()
+    monkeypatch.setattr(drv, "arm_monitor", lambda *args: None)
+    monkeypatch.setattr(drv, "switch_channel", lambda *args: None)
+    monkeypatch.setattr(drv, "enter_monitor_mode", lambda *args: None)
+    monkeypatch.setattr(drv, "enable_tx_blink", led)
+    monkeypatch.setattr(d, "_log_state", lambda *args: None)
+    monkeypatch.setattr(d, "_log_rx_registers", lambda *args: None)
+
+    d._monitor_entry()
+
+    led.assert_not_called()
+    assert d._tx_led_enabled is False
+
+
+def test_monitor_entry_continues_when_tx_led_setup_fails(monkeypatch, caplog):
+    d = _driver()
+    d.efuse = _efuse(0x33)
+    monkeypatch.setattr(drv, "arm_monitor", lambda *args: None)
+    monkeypatch.setattr(drv, "switch_channel", lambda *args: None)
+    monkeypatch.setattr(drv, "enter_monitor_mode", lambda *args: None)
+    monkeypatch.setattr(drv, "enable_tx_blink", lambda *args: (_ for _ in ()).throw(IOError("LED absent")))
+    monkeypatch.setattr(d, "_log_state", lambda *args: None)
+    monkeypatch.setattr(d, "_log_rx_registers", lambda *args: None)
+
+    d._monitor_entry()
+
+    assert "TX LED setup failed" in caplog.text
+    assert d._tx_led_enabled is False
+
+
 # --- teardown: vendor rtw_halmac_deinit_hal powers the MAC off before USB release ---
 
 
@@ -458,6 +508,24 @@ async def test_close_powers_mac_off_before_releasing_usb(monkeypatch):
     assert d._bulk_in_ep is None
     assert d._bulk_out_eps == []
     assert d.dack.dack_en is False
+
+
+async def test_close_turns_off_the_tx_led_before_mac_power_off(monkeypatch):
+    d = _driver()
+    d._claimed = True
+    d._tx_led_enabled = True
+    d.chip_info = _chip_info()
+    calls: list[str] = []
+
+    monkeypatch.setattr(drv, "disable_tx_blink", lambda transport: calls.append("led_off"))
+    monkeypatch.setattr(drv, "mac_power_off", lambda transport, *, cut_mask: calls.append("power_off"))
+    monkeypatch.setattr(drv.usb.util, "release_interface", lambda dev, interface: None)
+    monkeypatch.setattr(drv.usb.util, "dispose_resources", lambda dev: None)
+
+    await d.close()
+
+    assert calls == ["led_off", "power_off"]
+    assert d._tx_led_enabled is False
 
 
 async def test_close_releases_usb_when_mac_power_off_fails(monkeypatch):
