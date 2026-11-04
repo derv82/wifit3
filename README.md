@@ -86,7 +86,13 @@ Download the latest standalone executable from [**Releases**](https://github.com
   chmod +x wifit3-macos-universal2
   ./wifit3-macos-universal2
   ```
-* **Android (Termux):** no executable; each release also ships a prebuilt wheel. Download it and run `pip install wifit3-<version>-py3-none-any.whl`. See [Running in Termux](docs/TERMUX.md).
+* **Android (Termux):** no executable; each release also ships a prebuilt wheel.
+  ```bash
+  pkg install python libusb termux-api
+  pip install wifit3-<version>-py3-none-any.whl   # downloaded from Releases
+  wifit3
+  ```
+  See [Running in Termux](docs/TERMUX.md).
 
 ### Option 2: Run from Source
 wifit3 uses Astral's [`uv`](https://docs.astral.sh/uv/). `sync` sets up dependencies:
@@ -95,7 +101,7 @@ uv sync
 uv run wifit3
 ```
 
-**Android (Termux):** `uv sync && uv run wifit3` inside the cloned repo (Python 3.13+; the lockfile skips the glibc `libusb-package` on Android). Older Termux Pythons can use `pip install .`. See [Running in Termux](docs/TERMUX.md) for the Termux packages and USB setup.
+**Android (Termux):** `uv sync && uv run wifit3` inside the cloned repo (plain `uv sync` needs Python 3.13+; the lockfile skips the glibc `libusb-package` on Android). Older Termux Pythons can use the prebuilt wheel above or `pip install .`. See [Running in Termux](docs/TERMUX.md) for the Termux packages and USB setup.
 
 ### Option 3: Build your own binary
 ```bash

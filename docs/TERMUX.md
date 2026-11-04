@@ -28,7 +28,9 @@ pkg install python libusb termux-api
 pip install ./wifit3-<version>-py3-none-any.whl   # from the release assets
 ```
 
-It uses the system libusb from `pkg install libusb`.
+It uses the system libusb from `pkg install libusb`. The wheel is built with `hatch_build.py`'s
+Termux metadata, so it installs on any Python the project supports (3.11+); the 3.13+ note under
+*From source* only applies to `uv sync`.
 
 ### From source
 
