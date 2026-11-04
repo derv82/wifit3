@@ -163,7 +163,9 @@ class Rtl8821cuDkmsDriver(Driver):
             self._btc_periodical_state = btc.PeriodicalState()
         self._watchdog_task = loop.create_task(self._watchdog_loop())
         _p(0.85, "Enabling monitor RX")
-        await loop.run_in_executor(None, bringup.phase_monitor, t, info)
+        # setopmode is queued on the cmd thread with the watchdog tick [SRC] ioctl_cfg80211.c:2777.
+        async with self._io_lock:
+            await loop.run_in_executor(None, bringup.phase_monitor, t, info)
         self.info = info
         self._log_detected_config(info)
         _p(0.90, "Priming 2.4 GHz band")
