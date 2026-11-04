@@ -20,6 +20,12 @@ def _isolate_config(_test_dir, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _desktop_splash_layout(monkeypatch):
+    """Splash layout tests assert the desktop thresholds; Termux layout has its own test."""
+    monkeypatch.setattr("wifit3.ui.screens.splash.is_termux", lambda: False)
+
+
 @pytest.fixture
 def no_usb_devices():
     """Bus scan finds zero cards, so booting WifiteApp touches no real backend.

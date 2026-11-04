@@ -11,6 +11,13 @@ _test_dir_numbers = itertools.count()
 
 
 @pytest.fixture(autouse=True)
+def _no_termux_usb_poller(monkeypatch):
+    """Unit tests have no Android device: never start the real termux-usb watcher thread."""
+    from wifit3.device import termux_usb
+    monkeypatch.setattr(termux_usb, "_ensure_poller", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _reset_campaign_active():
     Campaign.active = None   # before test
     yield

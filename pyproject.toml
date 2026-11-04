@@ -7,7 +7,7 @@ license = "GPL-2.0-only"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
-    "libusb-package>=1.0.26.3",
+    "libusb-package>=1.0.26.3; sys_platform != 'android'",
     "platformdirs",
     "pyusb>=1.3.1",
     "rich",
@@ -16,6 +16,10 @@ dependencies = [
 
 [project.scripts]
 wifit3 = "wifit3.__main__:main"
+
+# Termux has no PEP 508 marker and reports sys.platform == "linux", so the platform is
+# detected at build time and libusb-package dropped there (see hatch_build.py).
+[tool.hatch.metadata.hooks.custom]
 
 [build-system]
 requires = ["hatchling"]

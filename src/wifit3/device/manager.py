@@ -18,11 +18,12 @@ from dataclasses import dataclass, replace
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable, List, NamedTuple, NoReturn, Optional, Tuple
 
-import libusb_package
 import usb.core
 
+from wifit3.device.backend import usb_backend
 from wifit3.device.zerocd import ZeroCdEjector
 from wifit3.errors import BringUpError, BringUpPermissionsError, WifiteFatalError, is_device_gone
+from wifit3.host import is_termux
 from wifit3.models.device_id import DeviceID
 from wifit3.setup.base import Setup, SetupResult
 from wifit3.wlan.array import WlanArray
@@ -221,7 +222,11 @@ def resolve_driver(vid: int, pid: int, dev: usb.core.Device) -> Optional[Tuple[t
 
 def _raise_usblib_fatal(cause: Exception) -> NoReturn:
     # pyusb's NoBackendError is opaque.
-    if sys.platform.startswith("linux"):
+    if is_termux():
+        message = (
+            "libusb could not be loaded. Install it in Termux and relaunch:\n\n"
+            "  pkg install libusb")
+    elif sys.platform.startswith("linux"):
         message = (
             "The bundled libusb could not be loaded. A system dependency is missing.\n\n"
             "Install it for your architecture and replug the card:\n"
@@ -243,19 +248,28 @@ def _raise_usblib_fatal(cause: Exception) -> NoReturn:
 def _bus_devices(backend) -> List[usb.core.Device]:
     # The raw bus enumeration, turning pyusb's opaque NoBackendError into a WifiteFatalError.
     try:
-        return list(usb.core.find(find_all=True, backend=backend))
+        return list(backend.enumerate())
     except usb.core.NoBackendError as exc:
         _raise_usblib_fatal(exc)
 
 
+def _require_backend(backend):
+    if backend is None:
+        _raise_usblib_fatal(usb.core.NoBackendError("no USB backend"))
+    return backend
+
+
 def raw_devices() -> List[usb.core.Device]:
     """Every ``usb.core.Device`` on the bus right now, unfiltered (the ZeroCD ejector's view)."""
-    return _bus_devices(libusb_package.get_libusb1_backend())
+    backend = usb_backend()
+    if backend is None:
+        return []
+    return _bus_devices(backend)
 
 
 def devices() -> List[DeviceID]:
     """Every supported device present on the USB bus right now."""
-    backend = libusb_package.get_libusb1_backend()
+    backend = _require_backend(usb_backend())
     smap = supported_ids()
     out: List[DeviceID] = []
     seen: set[VidPid] = set()
@@ -303,26 +317,23 @@ def device(device_id: DeviceID) -> Optional[DeviceID]:
 
 
 def linux_node_path(device_id: DeviceID) -> Optional[str]:
-    """The usbfs node ``/dev/bus/usb/BBB/DDD`` of the present card matching ``device_id`` (Linux),
-    or None if it isn't on the bus. Honors the (bus, address) instance when set, so the right node is
-    returned with identical siblings plugged in. The path the udev rule / chgrp acts on."""
-    backend = libusb_package.get_libusb1_backend()
-    want_instance = device_id.bus is not None and device_id.address is not None
-    for dev in _bus_devices(backend):
-        if (dev.idVendor, dev.idProduct) != (device_id.vid, device_id.pid):
-            continue
-        if want_instance and (dev.bus, dev.address) != (device_id.bus, device_id.address):
-            continue
-        return f"/dev/bus/usb/{dev.bus:03d}/{dev.address:03d}"
-    return None
+    """The usbfs node ``/dev/bus/usb/BBB/DDD`` of the present card matching ``device_id`` (desktop
+    Linux), or None when the platform has no usbfs node or the card isn't on the bus. Honors the
+    (bus, address) instance when set, so identical siblings resolve to the right node."""
+    backend = usb_backend()
+    if backend is None:
+        return None
+    dev = backend.find(device_id.vid, device_id.pid,
+                       bus=device_id.bus, address=device_id.address)
+    return backend.node_path(dev) if dev is not None else None
 
 
 def _live_dev(device_id: DeviceID) -> Optional[usb.core.Device]:
-    backend = libusb_package.get_libusb1_backend()
-    if device_id.bus is not None and device_id.address is not None:
-        return usb.core.find(idVendor=device_id.vid, idProduct=device_id.pid,
-                             bus=device_id.bus, address=device_id.address, backend=backend)
-    return usb.core.find(idVendor=device_id.vid, idProduct=device_id.pid, backend=backend)
+    backend = usb_backend()
+    if backend is None:
+        return None
+    return backend.find(device_id.vid, device_id.pid,
+                        bus=device_id.bus, address=device_id.address)
 
 
 def wlan_iface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanInterface]:

@@ -11,7 +11,7 @@ from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
 from wifit3.ui.screens.vault_drawer import VaultDrawer
-from textual.widgets import Button, RichLog
+from textual.widgets import Button, Label, RichLog
 from textual.worker import WorkerCancelled
 from textual.widgets._header import HeaderTitle
 
@@ -151,6 +151,36 @@ async def test_splash_logo_returns_above_32_rows():
         await pilot.pause(0)
         assert app.screen.query_one("#ascii-art").display is True
         assert app.screen.query_one("#compact-logo").display is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_termux_splash_stays_compact_on_a_wide_phone(monkeypatch):
+    monkeypatch.setattr("wifit3.ui.screens.splash.is_termux", lambda: True)
+    app = WifiteApp()
+    async with app.run_test(size=(110, 30)) as pilot:
+        await pilot.pause(0)
+        splash = app.screen
+        assert splash.has_class("-narrow") and not splash.has_class("-wide")
+        assert splash.has_class("-short") and not splash.has_class("-tall")
+        assert splash.query_one("#ascii-art").display is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_termux_splash_shows_the_backend_error(monkeypatch):
+    class _Backend:
+        def status_hint(self):
+            return "install the Termux:API app"
+
+    monkeypatch.setattr("wifit3.ui.screens.splash.is_termux", lambda: True)
+    monkeypatch.setattr("wifit3.ui.screens.splash.usb_backend", lambda: _Backend())
+    app = WifiteApp()
+    async with app.run_test(size=(80, 30)) as pilot:
+        app.screen._refresh_backend_hint()
+        await pilot.pause(0)
+        label = app.screen.query_one("#status-label", Label)
+        assert "Termux:API" in str(label.render())
 
 
 @pytest.mark.asyncio

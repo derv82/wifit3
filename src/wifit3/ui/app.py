@@ -25,6 +25,7 @@ from wifit3.persist.vault import Vault
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
 from wifit3.device.manager import DeviceManager, Status
 from wifit3.device.watch import DeviceWatch
+from wifit3.host import is_termux
 from wifit3.wlan.array import WlanArray
 from wifit3.models import AccessPoint
 from wifit3.watchers.ap_watcher import ApDecloaked, ApEvent, ApWatcher, PbcWindowOpened
@@ -427,7 +428,7 @@ class WifiteApp(App):
             for dev in arrived:
                 if await self.push_screen_wait(NewDeviceDialog(dev.description)):
                     res = await self.device_manager.bringup(
-                        dev, bail_at_permissions=(sys.platform == "win32"))
+                        dev, bail_at_permissions=(sys.platform == "win32" or is_termux()))
                     if res.status is Status.FAILED:
                         self.notify(res.message, severity="error")
                     elif res.status is Status.READY:

@@ -35,6 +35,7 @@ async def test_device_lost_from_offloop_context_shows_recoverable_modal():
 async def test_no_usb_backend_shows_fatal_modal(monkeypatch):
     # The broken-udev Linux condition: find() resolves no backend and raises. (Deliberately does
     # NOT use no_usb_devices: that stubs find->[], the success path; here find must raise.)
+    monkeypatch.setattr("wifit3.device.backend.is_termux", lambda: False)
     monkeypatch.setattr("usb.core.find", _raise_no_backend)
 
     app = WifiteApp()

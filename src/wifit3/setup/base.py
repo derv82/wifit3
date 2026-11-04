@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from wifit3.host import is_termux
 from wifit3.models import DeviceID
 
 
@@ -63,7 +64,10 @@ class Setup(ABC):
     def for_platform() -> "Setup":
         """The Setup for the current OS: WinUSB on Windows, udev+modprobe on Linux, a no-op
         retry on macOS (nothing ever binds the card there), a plain no-op anywhere else.
-        The only place setup dispatches on ``sys.platform``."""
+        Termux is handled first because its Python reports ``sys.platform == "linux"``."""
+        if is_termux():
+            from wifit3.setup.termux import SetupTermux
+            return SetupTermux()
         if sys.platform == "win32":
             from wifit3.setup.windows import SetupWindows
             return SetupWindows()

@@ -32,12 +32,20 @@ async def test_nosetup_uninstall_reports_ok():
     assert isinstance(res, SetupResult) and res.ok and not res.cancelled
 
 
+def test_for_platform_termux(monkeypatch):
+    from wifit3.setup.termux import SetupTermux
+    monkeypatch.setattr("wifit3.setup.base.is_termux", lambda: True)
+    assert isinstance(Setup.for_platform(), SetupTermux)
+
+
 def test_for_platform_macos(monkeypatch):
     from wifit3.setup.macos import SetupMacOS
+    monkeypatch.setattr("wifit3.setup.base.is_termux", lambda: False)
     monkeypatch.setattr(sys, "platform", "darwin")
     assert isinstance(Setup.for_platform(), SetupMacOS)
 
 
 def test_for_platform_falls_back_to_nosetup(monkeypatch):
+    monkeypatch.setattr("wifit3.setup.base.is_termux", lambda: False)
     monkeypatch.setattr(sys, "platform", "sunos5")
     assert isinstance(Setup.for_platform(), NoSetup)

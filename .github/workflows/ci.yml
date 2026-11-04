@@ -50,3 +50,62 @@ jobs:
           print(f"{len(classes)} driver classes import cleanly across {len(supported_ids())} VID:PIDs")
           assert len(classes) >= 10, f"driver registry looks broken: {len(classes)}"
           PY
+
+  # Termux/Android reports sys.platform == "linux", so this lane runs the same suite with the
+  # Termux detection env set, then checks the platform-specific build metadata.
+  termux:
+    name: Termux paths
+    runs-on: ubuntu-latest
+    env:
+      TERMUX_VERSION: "0.118.3"
+      PREFIX: /data/data/com.termux/files/usr
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync env (runtime + dev deps)
+        run: uv sync --group dev
+
+      - name: Unit tests under Termux detection
+        run: uv run pytest
+
+      # Termux's Python reports sys_platform == "android"; the lock must stay installable there.
+      - name: Resolve the Termux dependency set
+        run: |
+          UV_PROJECT_ENVIRONMENT="$(mktemp -d)" uv sync --frozen --no-dev --no-install-project \
+            --python-platform aarch64-linux-android
+
+      # The glibc libusb wheel cannot load under Termux, so hatch_build.py drops it there only.
+      - name: Termux wheel omits the bundled libusb
+        run: |
+          uv build --wheel --out-dir dist-termux
+          uv run python - <<'PY'
+          import glob, zipfile
+          wheel = glob.glob("dist-termux/*.whl")[0]
+          archive = zipfile.ZipFile(wheel)
+          metadata = archive.read(
+              next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))).decode()
+          assert "libusb-package" not in metadata, "Termux wheel must use the system libusb"
+          print("Termux wheel metadata omits libusb-package")
+          PY
+
+      - name: Desktop wheel keeps the bundled libusb
+        env:
+          TERMUX_VERSION: ""
+          PREFIX: ""
+        run: |
+          uv build --wheel --out-dir dist-desktop
+          uv run python - <<'PY'
+          import glob, zipfile
+          wheel = glob.glob("dist-desktop/*.whl")[0]
+          archive = zipfile.ZipFile(wheel)
+          metadata = archive.read(
+              next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))).decode()
+          assert "libusb-package" in metadata, "desktop wheel lost its bundled libusb"
+          print("Desktop wheel metadata keeps libusb-package")
+          PY

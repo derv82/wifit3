@@ -1,5 +1,5 @@
 # wifit3
-> A standalone USB Wi-Fi auditor for Linux, Windows, and macOS.
+> A standalone USB Wi-Fi auditor for Linux, Windows, macOS, and Android (via Termux).
 
 <p align="center">
   <img src="assets/wifit3-1-splash.png" alt="wifit3 splash / adapter picker" width="700">
@@ -8,7 +8,7 @@
 > *At least* one of the [supported USB adapters](#supported-hardware) is **required**.
 
 ## Why?
-* **Cross-Platform:** Runs identically on Linux, macOS, and Windows.
+* **Cross-Platform:** Runs identically on Linux, macOS, Windows, and Android (via Termux).
 * **Wireless Driver Heaven:** Built-in wireless stack avoids kernel driver versioning hell and Windows' NDIS.
 * **Zero Runtime Dependencies:** No `aircrack-ng` or `reaver`, just pure Python with PyUSB & Textual libraries.
 
@@ -86,6 +86,7 @@ Download the latest standalone executable from [**Releases**](https://github.com
   chmod +x wifit3-macos-universal2
   ./wifit3-macos-universal2
   ```
+* **Android (Termux):** no prebuilt binary — install from source with [Option 2](#option-2-run-from-source). See [Running in Termux](docs/TERMUX.md).
 
 ### Option 2: Run from Source
 wifit3 uses Astral's [`uv`](https://docs.astral.sh/uv/). `sync` sets up dependencies:
@@ -93,6 +94,8 @@ wifit3 uses Astral's [`uv`](https://docs.astral.sh/uv/). `sync` sets up dependen
 uv sync
 uv run wifit3
 ```
+
+**Android (Termux):** `uv sync && uv run wifit3` inside the cloned repo (Python 3.13+; the lockfile skips the glibc `libusb-package` on Android). Older Termux Pythons can use `pip install .`. See [Running in Termux](docs/TERMUX.md) for the Termux packages and USB setup.
 
 ### Option 3: Build your own binary
 ```bash
@@ -107,6 +110,7 @@ wifit3 automatically handles hardware configuration within the app, after clicki
 - **Linux:** Prompts once via `pkexec`/`sudo` to write udev permissions and blocklists in `/etc/modprobe.d/`.
 - **macOS:** No installation required; plug in the device and select *Allow* in the authorization dialog.
 - **Windows:** Prompts once via UAC to install WinUSB for the device.
+- **Android (Termux):** No privileged setup; accept Android's USB permission dialog. See [TERMUX.md](docs/TERMUX.md).
 - **VirtualBox:** Add your device(s) to VirtualBox's `USB Filters` *before* plugging in.
 
 ## Uninstalling

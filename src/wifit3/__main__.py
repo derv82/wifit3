@@ -20,12 +20,21 @@ async def _smoke() -> None:
     import ctypes
     import os
 
-    from libusb_package import get_library_path
+    from wifit3.host import is_termux
 
-    lib = get_library_path()
-    if not (lib and os.path.isfile(str(lib))):
-        raise RuntimeError(f"bundled libusb not found via libusb_package: {lib!r}")
-    ctypes.CDLL(str(lib))  # must load from the bundle (deps resolved), not just exist on disk
+    if is_termux():
+        from usb.backend import libusb1
+        try:
+            libusb1._load_library()
+        except Exception as exc:
+            raise RuntimeError("system libusb not found; run: pkg install libusb") from exc
+    else:
+        from libusb_package import get_library_path
+
+        lib = get_library_path()
+        if not (lib and os.path.isfile(str(lib))):
+            raise RuntimeError(f"bundled libusb not found via libusb_package: {lib!r}")
+        ctypes.CDLL(str(lib))  # must load from the bundle (deps resolved), not just exist on disk
 
     from wifit3.ui.app import WifiteApp
 
@@ -42,8 +51,15 @@ async def _smoke() -> None:
         raise RuntimeError("chip discovery found no driver packages (PyInstaller bundling break)")
 
 
-def main() -> None:
-    """Parse CLI args, then run the headless smoke test or launch the TUI."""
+def _require_termux_libusb(parser) -> None:
+    """Termux uses the system libusb; fail early with the install command."""
+    from usb.backend import libusb1
+
+    if libusb1.get_backend() is None:
+        parser.exit(1, "wifit3: system libusb not found. Run: pkg install libusb\n")
+
+
+def _parser():
     import argparse
 
     from wifit3 import __version__
@@ -54,7 +70,29 @@ def main() -> None:
     parser.add_argument("--quiet", action="store_true", help="Do not emit any logs")
     parser.add_argument("--debug", action="store_true", help="Emit verbose debug logs")
     parser.add_argument("--trace", action="store_true", help="Emit very verbose trace logs")
+    parser.add_argument("--list-usb", action="store_true",
+                        help="Termux: list attached USB device paths and exit")
+    return parser
+
+
+def main() -> None:
+    """Parse CLI args, then run the headless smoke test or launch the TUI."""
+    from wifit3.host import is_termux
+
+    parser = _parser()
     args = parser.parse_args()
+
+    if args.list_usb:
+        if not is_termux():
+            parser.error("--list-usb is only available on Termux/Android")
+        from wifit3.device.termux_usb import list_devices
+        paths = list_devices()
+        if not paths:
+            parser.exit(1, "wifit3: no USB devices are visible. Connect an OTG adapter and "
+                           "install the Termux:API app (pkg install termux-api).\n")
+        for path in paths:
+            print(path)
+        return
 
     if args.smoke:
         import asyncio
@@ -62,6 +100,9 @@ def main() -> None:
         # 60s ceiling so a hung mount fails CI instead of stalling the runner.
         asyncio.run(asyncio.wait_for(_smoke(), timeout=60))
         return
+
+    if is_termux():
+        _require_termux_libusb(parser)
 
     # Lazy import for WEP cracker ProcessPoolExecutor case
     from wifit3.ui.app import WifiteApp

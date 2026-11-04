@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING
 from wifit3.ui.ansi_art import make_black_transparent, recolor_logo
 from wifit3.ui.screens.setup_error import SetupErrorDialog
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
+from wifit3.device.backend import usb_backend
 from wifit3.device.manager import Status
+from wifit3.host import is_termux
 
 if TYPE_CHECKING:
     from wifit3.ui.app import WifiteApp
@@ -83,6 +85,10 @@ def load_logo() -> Text:
 
 LOGO = load_logo()
 
+_TERMUX_HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (120, "-wide")]
+_TERMUX_VERTICAL_BREAKPOINTS = [(0, "-tiny"), (25, "-short"), (50, "-tall")]
+
+
 class SplashView(Screen):
     """Splash + device picker: the logo, the list of live cards, Start and Uninstall buttons. START
     and Uninstall delegate the whole bring-up / setup flow to ``app.device_manager``; the splash only
@@ -90,8 +96,6 @@ class SplashView(Screen):
 
     app: "WifiteApp"
 
-    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (70, "-wide")]
-    VERTICAL_BREAKPOINTS = [(0, "-tiny"), (25, "-short"), (33, "-tall")]
 
     CSS = """
     #compact-logo {
@@ -146,8 +150,14 @@ class SplashView(Screen):
         Binding("enter", "enter", "Start", priority=True),
     ]
 
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (70, "-wide")]
+    VERTICAL_BREAKPOINTS = [(0, "-tiny"), (25, "-short"), (33, "-tall")]
+
     def __init__(self):
         super().__init__()
+        if is_termux():
+            self.HORIZONTAL_BREAKPOINTS = _TERMUX_HORIZONTAL_BREAKPOINTS
+            self.VERTICAL_BREAKPOINTS = _TERMUX_VERTICAL_BREAKPOINTS
         self._is_initializing = False
         # DeviceIDs from the last render (the app's DeviceWatch feeds them), indexed to the rows.
         self._devices = []
@@ -221,6 +231,18 @@ class SplashView(Screen):
             uninstall.tooltip = f"Uninstall {hint} for the highlighted card"
         self.app.theme_changed_signal.subscribe(self, lambda _theme: self.refresh_theme_art())
         self._enter_scanning_mode()
+        self.set_interval(1.0, self._refresh_backend_hint)
+
+    def _refresh_backend_hint(self) -> None:
+        if not is_termux() or self._is_initializing or self._devices:
+            return
+        backend = usb_backend()
+        hint = backend.status_hint() if backend is not None else None
+        status = self.query_one("#status-label", Label)
+        if hint:
+            status.update(f"[bold red]{hint}[/bold red]")
+        else:
+            status.update("Scanning for compatible hardware…")
 
     def reset_for_reentry(self) -> None:
         """Returning to splash (adapter lost): the installed screen only resumes (on_mount doesn't
