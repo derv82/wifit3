@@ -36,19 +36,6 @@ IGNORED_KILLED = "killed by the host at teardown (-ESHUTDOWN)"
 
 
 @dataclass(frozen=True)
-class SetChannelTrigger:
-    channel: int
-
-
-@dataclass(frozen=True)
-class InjectFrameTrigger:
-    frame: bytes
-
-
-Trigger = SetChannelTrigger | InjectFrameTrigger
-
-
-@dataclass(frozen=True)
 class Waiver:
     """A named divergence from Linux: captured ops ``matches`` accepts are not reproduced."""
     label: str
@@ -61,8 +48,12 @@ class FamilyDecoder(ABC):
     def describe(self, op: UsbOp) -> str: ...
 
     @abstractmethod
-    def find_trigger(self, ops: Sequence[UsbOp], position: int) -> Trigger | None:
-        """The entry point the capture's op at ``position`` starts, or None."""
+    def channel_change_at(self, ops: Sequence[UsbOp], position: int) -> int | None:
+        """The channel, if the op at ``position`` starts Linux's channel change."""
+
+    @abstractmethod
+    def injected_frame_at(self, ops: Sequence[UsbOp], position: int) -> bytes | None:
+        """The 802.11 frame, if the op at ``position`` sends one."""
 
     @abstractmethod
     def carries_only_80211_frames(self, op: UsbOp) -> bool: ...
@@ -169,18 +160,21 @@ class VerifyCapture:
                 await self.run_due_driver_tasks(loop, thread_pool, replay.ops[position].timestamp)
                 if replay.next_unreproduced_position() != position:
                     continue
-                trigger = self.DECODER.find_trigger(replay.ops, position)
-                if trigger is None:
-                    replay.record_divergence(position, MAIN_CALLER,
-                                           "no caller reproduced this op and it starts no trigger")
-                    break
-                if isinstance(trigger, SetChannelTrigger):
-                    await driver.set_channel(trigger.channel)
+                channel = self.DECODER.channel_change_at(replay.ops, position)
+                frame = self.DECODER.injected_frame_at(replay.ops, position)
+                if channel is not None:
+                    called = f"set_channel({channel})"
+                    await driver.set_channel(channel)
+                elif frame is not None:
+                    called = f"inject_frame({len(frame)}B)"
+                    await driver.inject_frame(frame)
                 else:
-                    await driver.inject_frame(trigger.frame)
+                    replay.record_divergence(position, MAIN_CALLER,
+                                             "the driver did not make this op, and it starts no channel change or TX")
+                    break
                 if replay.divergence is None and replay.reproduced_by[position] is None:
                     replay.record_divergence(position, MAIN_CALLER,
-                                           f"{trigger} fired; the driver did not produce this op")
+                                             f"called {called}; the driver did not make this op")
             await self.run_due_driver_tasks(loop, thread_pool, replay.ops[-1].timestamp)
             while not loop.is_driver_idle():
                 await asyncio.sleep(SELECT_TIMEOUT_SECONDS)

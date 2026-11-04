@@ -5,7 +5,7 @@ import struct
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import FamilyDecoder, InjectFrameTrigger, SetChannelTrigger, Trigger
+from tests.verify_pcap.verify_capture import FamilyDecoder
 from wifit3.chips.rt5370 import constants as C
 
 CHANNEL_SWITCH_LOOKAHEAD = 64
@@ -81,13 +81,17 @@ class Rt2800Decoder(FamilyDecoder):
             return f"DEVICE_MODE wValue=0x{op.value:04x} wIndex=0x{address:04x}{status}"
         return f"CTRL setup {op.setup.hex()} data {op.data.hex()}{status}"
 
-    def find_trigger(self, ops: Sequence[UsbOp], position: int) -> Trigger | None:
+    def injected_frame_at(self, ops: Sequence[UsbOp], position: int) -> bytes | None:
         op = ops[position]
         if op.transfer_type == TransferType.BULK and not op.is_in:
             txwi_word1 = struct.unpack_from("<I", op.data, C.TXINFO_DESC_SIZE + 4)[0]
             frame_length = (txwi_word1 & C.TXWI_W1_MPDU_TOTAL_BYTE_COUNT) >> 16
             frame_offset = C.TXINFO_DESC_SIZE + C.TXWI_DESC_SIZE_4WORDS
-            return InjectFrameTrigger(op.data[frame_offset:frame_offset + frame_length])
+            return op.data[frame_offset:frame_offset + frame_length]
+        return None
+
+    def channel_change_at(self, ops: Sequence[UsbOp], position: int) -> int | None:
+        op = ops[position]
         if position + 2 >= len(ops):
             return None
         rx_stop = ops[position + 1]
@@ -112,7 +116,7 @@ class Rt2800Decoder(FamilyDecoder):
                 rf3 = value & C.RF_CSR_CFG_DATA
         for channel, (channel_rf1, _channel_rf2, channel_rf3) in C.RF_VALS_3X_2G.items():
             if (channel_rf1, channel_rf3) == (rf1, rf3):
-                return SetChannelTrigger(channel)
+                return channel
         return None
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:

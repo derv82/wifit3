@@ -5,7 +5,7 @@ import struct
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import FamilyDecoder, InjectFrameTrigger, SetChannelTrigger, Trigger
+from tests.verify_pcap.verify_capture import FamilyDecoder
 from wifit3.chips.rtl8192fu import constants as C
 
 REALTEK_USB_CMD_REQ = 0x05
@@ -78,10 +78,14 @@ class RealtekDecoder(FamilyDecoder):
             text += f"  (RF 0x{rf_write[0]:02x} <- 0x{rf_write[1]:05x})"
         return text + status
 
-    def find_trigger(self, ops: Sequence[UsbOp], position: int) -> Trigger | None:
+    def injected_frame_at(self, ops: Sequence[UsbOp], position: int) -> bytes | None:
         op = ops[position]
         if op.transfer_type == TransferType.BULK and not op.is_in:
-            return InjectFrameTrigger(op.data[TXDESC40_SIZE:])
+            return op.data[TXDESC40_SIZE:]
+        return None
+
+    def channel_change_at(self, ops: Sequence[UsbOp], position: int) -> int | None:
+        op = ops[position]
         # rtl8xxxu_config(CHANGE_CHANNEL): set_tx_power opens on TX_AGC_A_CCK1_MCS32, then the RF 0x18 tune.
         if not (is_register_access(op) and op.is_in
                 and op.value == C.REG_TX_AGC_A_CCK1_MCS32):
@@ -89,7 +93,7 @@ class RealtekDecoder(FamilyDecoder):
         for lookahead in ops[position:position + CHANNEL_TUNE_LOOKAHEAD]:
             rf_write = lssi_rf_write(lookahead)
             if rf_write is not None and rf_write[0] == C.RF6052_REG_MODE_AG:
-                return SetChannelTrigger(rf_write[1] & 0xFF)
+                return rf_write[1] & 0xFF
         return None
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:

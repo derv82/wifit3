@@ -5,7 +5,7 @@ import struct
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import FamilyDecoder, InjectFrameTrigger, SetChannelTrigger, Trigger
+from tests.verify_pcap.verify_capture import FamilyDecoder
 from wifit3.chips.mt7925au import constants as C
 
 MCU_TXD_OFFSET = C.SDIO_HDR_SIZE
@@ -104,21 +104,27 @@ class MediatekConnacDecoder(FamilyDecoder):
                     f"FC 0x{frame_control:04x}{status}")
         return f"OUT ep 0x{op.endpoint:02x} {len(data)}B{status}"
 
-    def find_trigger(self, ops: Sequence[UsbOp], position: int) -> Trigger | None:
+    def injected_frame_at(self, ops: Sequence[UsbOp], position: int) -> bytes | None:
         op = ops[position]
         if op.transfer_type != TransferType.BULK or op.is_in:
             return None
         data = op.data
         if op.endpoint == C.EP_OUT_HCCA and len(data) >= TX_MPDU_OFFSET:
             tx_bytes = struct.unpack_from("<H", data, 0)[0]
-            return InjectFrameTrigger(data[TX_MPDU_OFFSET:C.SDIO_HDR_SIZE + tx_bytes])
+            return data[TX_MPDU_OFFSET:C.SDIO_HDR_SIZE + tx_bytes]
+        return None
+
+    def channel_change_at(self, ops: Sequence[UsbOp], position: int) -> int | None:
+        op = ops[position]
+        if op.transfer_type != TransferType.BULK or op.is_in:
+            return None
         if sniffer_tag(op) != C.UNI_SNIFFER_ENABLE:
             return None
         # mt7925_change_chanctx (main.c:1781): sniffer enable, then the sniffer config carrying the channel.
         for later in ops[position + 1:]:
             if later.transfer_type == TransferType.BULK and later.endpoint == C.EP_OUT_MCU:
                 if sniffer_tag(later) == C.UNI_SNIFFER_CONFIG:
-                    return SetChannelTrigger(later.data[UNI_PAYLOAD_OFFSET + 12])
+                    return later.data[UNI_PAYLOAD_OFFSET + 12]
                 return None
         return None
 

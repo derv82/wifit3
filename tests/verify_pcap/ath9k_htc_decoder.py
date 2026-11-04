@@ -5,7 +5,7 @@ import struct
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import FamilyDecoder, InjectFrameTrigger, SetChannelTrigger, Trigger
+from tests.verify_pcap.verify_capture import FamilyDecoder
 from wifit3.chips.ar9271_v2 import chan, constants as C, reg as R, tx, wmi
 from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
 
@@ -110,10 +110,14 @@ class Ath9kHtcDecoder(FamilyDecoder):
             text += f" +{len(entries) - DESCRIBED_REGISTER_COUNT}"
         return text + status
 
-    def find_trigger(self, ops: Sequence[UsbOp], position: int) -> Trigger | None:
+    def injected_frame_at(self, ops: Sequence[UsbOp], position: int) -> bytes | None:
         op = ops[position]
         if op.transfer_type == TransferType.BULK and op.endpoint == C.EP_WLAN_TX:
-            return InjectFrameTrigger(tx.dot11_from_bulk(op.data))
+            return tx.dot11_from_bulk(op.data)
+        return None
+
+    def channel_change_at(self, ops: Sequence[UsbOp], position: int) -> int | None:
+        op = ops[position]
         # ath9k_htc_set_channel: DISABLE_INTR, then the reset / fast change that writes the synth.
         if wmi_command_id(op) != wmi.WMI_DISABLE_INTR_CMDID or op.is_in:
             return None
@@ -131,7 +135,7 @@ class Ath9kHtcDecoder(FamilyDecoder):
                     channel = CHANNEL_BY_SYNTH_SELECT.get(words[i + 1] & SYNTH_CHANNEL_SELECT_MASK)
                     if channel is None:
                         return None
-                    return SetChannelTrigger(channel)
+                    return channel
         return None
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:
