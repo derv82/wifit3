@@ -214,7 +214,7 @@ class Rtl8822buDkmsDriver(Driver):
 
             def _initial_tune(t):
                 chan.set_channel_bw(t, _DEFAULT_CHANNEL, txpwr_pg=self._txpwr_pg,
-                                    rfe_type=self._rfe_type, cut=self._cut, is_scan=True)
+                                    rfe_type=self._rfe_type, cut=self._cut)
                 cal.clear_txpowertracking_state(self._dm_st)   # rtl8822b_phy.c:986
 
             await loop.run_in_executor(None, _initial_tune, self.transport)
@@ -384,7 +384,7 @@ class Rtl8822buDkmsDriver(Driver):
 
         def _tune(t):
             chan.set_channel_bw(t, channel, prev_ch=prev, txpwr_pg=self._txpwr_pg,
-                                rfe_type=self._rfe_type, cut=self._cut, is_scan=True)
+                                rfe_type=self._rfe_type, cut=self._cut)
             cal.clear_txpowertracking_state(self._dm_st)       # rtl8822b_phy.c:986
 
         async with self._io_lock:
