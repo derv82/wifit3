@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from collections import deque
 from typing import Callable, ClassVar, List, Optional
 
 import usb.core
@@ -60,6 +61,11 @@ class RT5370Driver(Driver):
         self._tx_queue_eps: list[int] = []    # bulk-OUT endpoint per TX queue id
         self._tx_seq: int = 0            # running 802.11 seq stamped into injected frames
         self._tx_entry_index: list[int] = [0] * C.NUM_TX_QUEUES   # Q_INDEX per TX queue [SRC rt2x00queue.c:670]
+        # Per TX queue, the DMA-done time of each entry still waiting for its TX_STA_FIFO status.
+        self._tx_status_pending: list[deque[float]] = [deque() for _ in range(C.NUM_TX_QUEUES)]
+        self._txstatus_fifo: deque[int] = deque()
+        self._tx_status_reading = False
+        self._txstatus_timer: Optional[asyncio.Task] = None
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
@@ -229,8 +235,76 @@ class RT5370Driver(Driver):
             return False
         loop = asyncio.get_running_loop()
         async with self._io_lock:
-            await loop.run_in_executor(None, self._do_inject, frame_bytes)
+            qid = await loop.run_in_executor(None, self._do_inject, frame_bytes)
+        # rt2x00usb_interrupt_txdone [SRC rt2x00usb.c:274-294]
+        self._tx_status_pending[qid].append(loop.time())    # rt2x00lib_dmadone
+        self._async_read_tx_status()                        # rt2800usb_tx_dma_done
+        if self._txstatus_fifo:
+            self._work_txdone()
         return True
+
+    def _async_read_tx_status(self) -> None:
+        """rt2800usb_async_read_tx_status [SRC rt2800usb.c:143-153]."""
+        if self._tx_status_reading:
+            return
+        self._tx_status_reading = True
+        self._txstatus_timer = asyncio.get_running_loop().create_task(self._tx_sta_fifo_timeout())
+
+    async def _tx_sta_fifo_timeout(self) -> None:
+        """rt2800usb_tx_sta_fifo_timeout and rt2800usb_tx_sta_fifo_read_completed [SRC rt2800usb.c:94-169]."""
+        loop = asyncio.get_running_loop()
+        await asyncio.sleep(2 * C.TXSTATUS_READ_INTERVAL)
+        while True:
+            try:
+                tx_status = await loop.run_in_executor(None, self.transport.register_read, C.TX_STA_FIFO)
+            except usb.core.USBError as e:
+                logger.warning("TX status read failed %s", e)
+                self._tx_status_reading = False
+                return
+            if tx_status & C.TX_STA_FIFO_VALID:
+                self._txstatus_fifo.append(tx_status)
+                self._work_txdone()
+                continue
+            if self._txstatus_timeout():
+                self._work_txdone()
+            if not self._txstatus_pending():
+                self._tx_status_reading = False
+                return
+            await asyncio.sleep(C.TXSTATUS_READ_INTERVAL)
+
+    def _work_txdone(self) -> None:
+        """rt2800usb_work_txdone [SRC rt2800usb.c:456-476]: rt2800_txdone, then rt2800_txdone_nostatus
+        [SRC rt2800lib.c:1121-1156, 1212-1238]."""
+        while self._txstatus_fifo or self._txstatus_timeout():
+            while self._txstatus_fifo:
+                qid = (self._txstatus_fifo.popleft() & C.TX_STA_FIFO_PID_QUEUE) >> 1
+                if not self._tx_status_pending[qid]:
+                    logger.debug("Got TX status for an empty queue %u, dropping", qid)
+                    break
+                self._tx_status_pending[qid].popleft()
+            for pending in self._tx_status_pending:
+                while pending and self._entry_txstatus_timeout(pending[0]):
+                    pending.popleft()
+            if self._txstatus_pending():
+                self._async_read_tx_status()
+
+    def _entry_txstatus_timeout(self, last_action: float) -> bool:
+        """rt2800_entry_txstatus_timeout [SRC rt2800lib.c:1158-1178]."""
+        return asyncio.get_running_loop().time() > last_action + C.TXSTATUS_TIMEOUT
+
+    def _txstatus_timeout(self) -> bool:
+        """rt2800_txstatus_timeout [SRC rt2800lib.c:1180-1193]."""
+        for pending in self._tx_status_pending:
+            if pending and self._entry_txstatus_timeout(pending[0]):
+                return True
+        return False
+
+    def _txstatus_pending(self) -> bool:
+        """rt2800_txstatus_pending [SRC rt2800lib.c:1199-1210]."""
+        for pending in self._tx_status_pending:
+            if pending:
+                return True
+        return False
 
     async def _enable_rx_acks(self) -> None:
         """No-op: the Ralink monitor RX filter (RX_FILTER_CFG=0x93, DROP_ACK + DROP_NOT_TO_ME
@@ -243,7 +317,7 @@ class RT5370Driver(Driver):
         """No-op, matching ``_enable_rx_acks``: the monitor RX filter is left untouched."""
         return
 
-    def _do_inject(self, frame: bytes) -> None:
+    def _do_inject(self, frame: bytes) -> int:
         # Executor thread; share _hw_lock with _tune so an inject can never collide with
         # an in-flight (or cancelled-but-draining) channel tune on the USB device. ACK bit ON
         # for a unicast addr1 so the chip requests the AP's ACK + retries un-ACKed frames.
@@ -260,6 +334,7 @@ class RT5370Driver(Driver):
             self._tx_entry_index[qid] += 1
             if self._tx_entry_index[qid] >= C.TX_QUEUE_LIMIT:
                 self._tx_entry_index[qid] = 0
+        return qid
 
     def _stamp_tx_seq(self, frame: bytes) -> bytes:
         """Stamp the next running sequence number into the frame's seqctl (bytes 22-23,
@@ -296,6 +371,13 @@ class RT5370Driver(Driver):
             mac.write_mac_address(self.transport, mac_bytes, u2me_mask=u2me_mask)
 
     async def close(self) -> None:
+        if self._txstatus_timer is not None:
+            self._txstatus_timer.cancel()          # hrtimer_cancel [SRC rt2x00usb.c:749]
+            try:
+                await self._txstatus_timer
+            except asyncio.CancelledError:
+                pass
+            self._txstatus_timer = None
         if self._reader is not None:
             await self._reader.stop()
             self._reader = None
