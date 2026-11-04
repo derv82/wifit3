@@ -82,6 +82,7 @@ class AR9271V2Driver(Driver):
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
+        self._tx_cleanup_task: Optional[asyncio.Task] = None
 
     @classmethod
     def from_usb_device(cls, dev: Device, id_entry: DeviceID) -> "AR9271V2Driver":
@@ -119,6 +120,7 @@ class AR9271V2Driver(Driver):
         self.endpoints = endpoints
         self._rx_callback = None
         self._reader = None
+        self._tx_cleanup_task = None
         Driver.__init__(self)       # base ACK tally (for_replay bypasses __init__)
         self._init_tx(endpoints)
         return self
@@ -132,6 +134,7 @@ class AR9271V2Driver(Driver):
         self.mac_address = ":".join(f"{b:02x}" for b in res.hw.macaddr)
         self._refine_product_name()
         self._init_tx(res.endpoints)
+        res.wmi.event_tasklet = self._wmi_event_tasklet
         self._log_detected_config(res.hw)
 
     def _log_detected_config(self, hw) -> None:
@@ -157,7 +160,7 @@ class AR9271V2Driver(Driver):
         :102; injected monitor frames carry no QoS, so they all map to BE."""
         self.mgmt_epid = endpoints[C.WMI_MGMT_SVC]
         self.data_be_epid = endpoints[C.WMI_DATA_BE_SVC]
-        self.tx_slots = tx.TxSlots()
+        self.tx = tx.Ath9kHtcTx(endpoints)
         self._operation_lock = threading.RLock()
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -224,6 +227,7 @@ class AR9271V2Driver(Driver):
                 self._reader.start()
                 res = await loop.run_in_executor(None, bringup.warm_reattach, self.transport)
                 self._adopt(res)
+                self._tx_cleanup_task = loop.create_task(self._tx_cleanup_timer())
                 _p(1.0, f"AR9271 re-attached warm (ch ?, {self.mac_address})")
                 return True
             except Exception as e:  # noqa: BLE001
@@ -284,6 +288,7 @@ class AR9271V2Driver(Driver):
                 "USB timeout; please replug and try again."
             ) from e
         self._adopt(res)
+        self._tx_cleanup_task = loop.create_task(self._tx_cleanup_timer())
         _p(1.0, f"AR9271 monitor up (ch 1, {self.mac_address})")
         return True
 
@@ -408,11 +413,16 @@ class AR9271V2Driver(Driver):
         except RuntimeError:
             self._do_channel_change(ch, fastcc)
             return True
+        # ath9k_htc_set_channel's timer_delete_sync / mod_timer [SRC] htc_drv_main.c:263, :311-312.
+        if self._tx_cleanup_task is not None:
+            self._tx_cleanup_task.cancel()
         await loop.run_in_executor(None, self._do_channel_change, ch, fastcc)
+        self._tx_cleanup_task = loop.create_task(self._tx_cleanup_timer())
         return True
 
     def _do_channel_change(self, ch: chanmod.Channel, fastcc: bool) -> None:
         with self._operation_lock:
+            self.tx.tx_drain()
             if fastcc:
                 bringup.fast_channel_change(self.wmi, self.hw, ch)
             else:
@@ -464,53 +474,57 @@ class AR9271V2Driver(Driver):
 
     # ---- TX (the UI/attacks await inject_frame; live firing is the user's gate) -------
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the HTC TX wrapper for ``frame_bytes`` and bulk-OUT it once on the WLAN_TX pipe.
-        The chip's own HW ACK-retry (AR_DRETRY_LIMIT STA short/long, programmed to the kernel
-        INIT_SSH_RETRY/INIT_SLG_RETRY at MAC-queue init, not per-frame) is the only
-        retransmission. The blocking bulk-OUT is offloaded so a TX burst doesn't stall the event
-        loop; the pcap gate + unit tests drive ``_emit_frame`` directly (no running loop)."""
+        """Build the HTC TX wrapper for ``frame_bytes`` and bulk-OUT it once on the WLAN_TX pipe; False
+        when every TX slot awaits its WMI_TXSTATUS (ath9k_htc_tx drops the frame). The chip's own HW
+        ACK-retry is the only retransmission."""
         loop = asyncio.get_running_loop()
-        cookie = await loop.run_in_executor(None, self._emit_frame, bytes(frame_bytes))
-        # Free the TX slot at emit time. The bitmap only holds an in-flight skb until its
-        # WMI_TXSTATUS arrives (kernel ath9k_htc_txstatus -> tx_clear_slot [SRC] htc_drv_txrx.c:647);
-        # userland inject is fire-and-forget — nothing consumes TXSTATUS at runtime, so the slot is
-        # done once bulk-OUT queues the frame. Without this the 256-slot bitmap leaks one per frame
-        # and throws ENOBUFS after 256: fatal to high-rate WEP replay/chopchop, invisible to
-        # low-volume deauth/PMKID/WPS. (The verify gate drives _emit_frame directly — untouched.)
-        self.tx_slots.clear(cookie)
-        return True
+        slot = await loop.run_in_executor(None, self._emit_frame, bytes(frame_bytes), loop.time())
+        return slot >= 0
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Identity: the ath9k_htc host never stamps an injected seq; the target firmware does
         (distinct on-air seqs measured with tx_retries)."""
         return frame_bytes
 
-    def _emit_frame(self, dot11: bytes) -> int:
-        """Sync core: allocate a TX slot, build the HTC wrapper (tx_frame_hdr for data, tx_mgmt_hdr
-        otherwise; see ``tx.py``), and bulk-OUT it on the WLAN_TX pipe. Mirrors ath9k_htc_tx ->
-        ath9k_htc_tx_start [SRC] htc_drv_main.c:862 / htc_drv_txrx.c:340. The 802.11 frame (incl. its
-        sequence number) is the caller's; only the wrapper and the cookie are ours. Returns the
-        allocated cookie (TX slot). The verify gate + unit tests drive this directly (no event loop);
-        the public async ``inject_frame`` wraps it for the UI."""
+    def _emit_frame(self, dot11: bytes, timestamp: float) -> int:
+        """ath9k_htc_tx [SRC] htc_drv_main.c:862-905 -> ath9k_htc_tx_start [SRC] htc_drv_txrx.c:340:
+        take a TX slot, wrap ``dot11`` (tx_frame_hdr for data, tx_mgmt_hdr otherwise; see ``tx.py``)
+        and bulk-OUT it. Returns the slot (the cookie), -1 when none is free."""
         with self._operation_lock:
-            cookie = self.tx_slots.get()
+            cookie = self.tx.tx_get_slot()
+            if cookie < 0:
+                logger.debug("ar9271_v2: No free TX slot")
+                return cookie
             if tx.is_data_frame(dot11):
-                frame = tx.build_data_tx(self.data_be_epid, dot11, cookie)
+                epid = self.data_be_epid
+                frame = tx.build_data_tx(epid, dot11, cookie)
             else:
-                frame = tx.build_mgmt_tx(self.mgmt_epid, dot11, cookie)
+                epid = self.mgmt_epid
+                frame = tx.build_mgmt_tx(epid, dot11, cookie)
+            # Queued before the bulk-OUT returns, as its URB completion precedes its WMI_TXSTATUS.
+            self.tx.txep(epid, cookie, timestamp)
             try:
                 self.wmi.t.wlan_out(frame)
             except Exception:
-                self.tx_slots.clear(cookie)
+                self.tx.tx_failed(epid, cookie)
                 raise
             return cookie
 
-    def tx_status_event(self, event_body: bytes) -> None:
-        """ath9k_htc_txstatus [SRC] htc_drv_txrx.c:647 — a WMI_TXSTATUS event reports completed
-        TX cookies; free each one's slot. In production this is dispatched from the WMI-event RX
-        path; the verify gate feeds the recorded events, interleaved by capture order."""
-        for cookie in tx.txstatus_cookies(event_body):
-            self.tx_slots.clear(cookie)
+    def _wmi_event_tasklet(self, cmd_id: int, wmi_event: bytes) -> None:
+        """ath9k_wmi_event_tasklet's switch [SRC] wmi.c:168-189; a monitor vif never gets WMI_SWBA_EVENTID."""
+        if cmd_id == tx.WMI_TXSTATUS_EVENTID:
+            self.tx.txstatus(wmi_event)
+        elif cmd_id == tx.WMI_FATAL_EVENTID:
+            # ath9k_fatal_work -> ath9k_htc_reset [SRC] wmi.c:195-203, htc_drv_main.c:184-238.
+            logger.warning("ar9271_v2: FATAL Event received, resetting device")
+            asyncio.get_running_loop().create_task(self.set_channel(self.hw.curchan.channel))
+
+    async def _tx_cleanup_timer(self) -> None:
+        """ath9k_htc_tx_cleanup_timer [SRC] htc_drv_txrx.c:761-807, re-armed every 50 ms."""
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(tx.ATH9K_HTC_TX_CLEANUP_INTERVAL)
+            self.tx.cleanup_timer(loop.time())
 
     # ---- active monitor (HW-ACK a chosen MAC) — needed for ACKed conversations (WPS/EAP/PMKID) -
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
@@ -539,6 +553,9 @@ class AR9271V2Driver(Driver):
             self.hw.write(R.AR_STA_ID1, id1)
 
     async def close(self) -> None:
+        if self._tx_cleanup_task is not None:
+            self._tx_cleanup_task.cancel()
+            self._tx_cleanup_task = None
         await asyncio.get_running_loop().run_in_executor(None, self.transport.stop_reg_in)
         if self._reader is not None:
             await self._reader.stop()        # join the reader BEFORE releasing the USB handle
