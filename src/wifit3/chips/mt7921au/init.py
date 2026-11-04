@@ -48,7 +48,6 @@ async def post_boot_init(t) -> InitState:
     await _run_firmware_tail(t, state)
     await _init_hardware(t)
     await _regd_and_start(t, state)
-    await _monitor_entry(t, state)
     return state
 
 
@@ -123,34 +122,34 @@ async def _set_rate_txpower(t, caps) -> None:
         await t.send_mcu_command(cmd, p, wait_resp=False)
 
 
-async def _monitor_entry(t, state: InitState) -> None:
-    """mt7921_add_interface for the monitor vif, then configure_filter + sniffer.
-    uni_add_dev sends DEV_INFO then BSS_INFO; afterwards the reserved wcid gets a
-    WTBL admission-count clear. (rxfilter / set_sniffer / config_sniffer follow.)"""
-    cmd, payload = mcu.uni_dev_info(True)               # DEV_INFO_UPDATE
-    await t.send_mcu_command(cmd, payload)
-    cmd, payload = mcu.uni_bss_info(True)               # BSS_INFO_UPDATE
-    await t.send_mcu_command(cmd, payload)
-    mac.wtbl_update(t, MT792x_WTBL_RESERVED, MT_WTBL_UPDATE_ADM_COUNT_CLEAR)
-
-
 async def enter_monitor(t, channel: int) -> None:
-    """Operational monitor-mode entry + initial channel — the airmon equivalent.
-
-    NOT part of the single-cursor init gate: airmon/mac80211 interleave these in a
-    tool-timing-dependent order (it differs pau0f vs AXML), but each command is
-    byte-verified against the capture. Sent here in the kernel's logical order.
-    Requires the RX loop running so the seq-matched responses are routed back.
-    """
-    cmd, p = mcu.set_sniffer(True)                      # UNI SNIFFER enable
+    """Monitor-mode entry on ``channel``: mac80211's add_interface, change_chanctx, configure_filter
+    and config(CHANGE_MONITOR) for the monitor vif. Needs the RX loop running for the replies."""
+    # mt7921_add_interface (main.c:300-358): uni_add_dev sends DEV_INFO then BSS_INFO, then the
+    # reserved wcid's WTBL admission-count clear.
+    cmd, p = mcu.uni_dev_info(True)
     await t.send_mcu_command(cmd, p)
-    cmd, p = mcu.configure_filter()                     # SET_RX_FILTER (monitor)
+    cmd, p = mcu.uni_bss_info(True)
+    await t.send_mcu_command(cmd, p)
+    mac.wtbl_update(t, MT792x_WTBL_RESERVED, MT_WTBL_UPDATE_ADM_COUNT_CLEAR)
+    # mt7921_change_chanctx (main.c:1397-1398).
+    cmd, p = mcu.config_sniffer(channel)
+    await t.send_mcu_command(cmd, p)
+    # mt7921_configure_filter (main.c:661-684).
+    cmd, p = mcu.configure_filter()
     await t.send_mcu_command(cmd, p, wait_resp=False)
-    cmd, p = mcu.set_bss_abort()                        # set_beacon_filter(false)
+    # mt7921_sniffer_interface_iter (main.c:598-611): set_sniffer, set_deep_sleep, and
+    # set_beacon_filter(false) = set_bss_pm(false) + the DROP_OTHER_BEACON clear (mcu.c:1095-1101).
+    cmd, p = mcu.set_sniffer(True)
+    await t.send_mcu_command(cmd, p)
+    cmd, p = mcu.set_deep_sleep(False)
+    await t.send_mcu_command(cmd, p, wait_resp=False)
+    cmd, p = mcu.set_bss_abort()
     await t.send_mcu_command(cmd, p, wait_resp=False)
     cmd, p = mcu.set_rxfilter(0, mcu.MT7921_FIF_BIT_CLR, mcu.MT_WF_RFCR_DROP_OTHER_BEACON)
     await t.send_mcu_command(cmd, p, wait_resp=False)
-    cmd, p = mcu.config_sniffer(channel)                # initial channel
+    # configure_filter again, from mac80211's interface-up filter reconfig.
+    cmd, p = mcu.configure_filter()
     await t.send_mcu_command(cmd, p, wait_resp=False)
 
 

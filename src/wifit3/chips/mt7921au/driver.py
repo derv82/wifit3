@@ -6,7 +6,7 @@ from typing import Optional, Callable
 import usb.core
 
 from . import init as chip_init
-from . import mcu, rx, tx
+from . import mac, mcu, rx, tx
 from .transport import MT7921AUTransport
 from .firmware import MT7921AUFirmwareLoader
 # Star-imports the chip's register/PHY constants; the names resolve at runtime
@@ -69,6 +69,9 @@ class MT7921AUDriver(Driver):
         self._init_state: Optional[chip_init.InitState] = None
         self._channel = self.SUPPORTED_CHANNELS[0]
         self._tx_lock = asyncio.Lock()   # FIFO: concurrent injects reach the bulk-OUT in call order
+        # mt792x_mutex_acquire: mac_work and set_channel never interleave their I/O.
+        self._mutex = asyncio.Lock()
+        self._mac_work_task: Optional[asyncio.Task] = None
         # is_warm reflects the bring-up path taken by connect(): True when we light-reattached
         # to already-running firmware (_warm_reattach), False on a cold boot. mac_address is
         # parsed from the GET_NIC_CAPAB reply during cold boot (MT_NIC_CAP_MAC_ADDR TLV); it
@@ -184,6 +187,8 @@ class MT7921AUDriver(Driver):
         self._antenna_mask = caps.antenna_mask
         self._nic_has_6ghz = int(caps.has_6ghz)
         self._log_nic_caps(caps)
+        # __mt7921_start queues mac_work (main.c:250-251).
+        self._mac_work_task = asyncio.get_running_loop().create_task(self._mac_work())
 
         # Enter monitor mode on the initial channel (the RX reader routes the
         # monitor commands' acks back, and 802.11 frames to _on_raw_rx).
@@ -276,9 +281,29 @@ class MT7921AUDriver(Driver):
         """Tune to a 20 MHz channel via the monitor sniffer config command."""
         logger.debug("MT7921AU: tuning to channel %d", channel)
         cmd, payload = mcu.config_sniffer(channel)
-        await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
+        async with self._mutex:
+            await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
         self._channel = channel
         return True
+
+    async def _mac_work(self) -> None:
+        """mt792x_mac_work (mt792x_mac.c:9-32): survey every tick, MIB stats every 2nd, re-armed
+        MT792x_WATCHDOG_TIME after its own run. The register I/O runs off the event loop."""
+        loop = asyncio.get_running_loop()
+        mac_work_count = 0
+        try:
+            while True:
+                await asyncio.sleep(MT792x_WATCHDOG_TIME / HZ)
+                async with self._mutex:
+                    await loop.run_in_executor(None, mac.update_survey, self.transport)
+                    mac_work_count += 1
+                    if mac_work_count == 2:
+                        mac_work_count = 0
+                        await loop.run_in_executor(None, mac.update_mib_stats, self.transport)
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 — a stats fault must not kill RX
+            logger.exception("MT7921AU mac_work stopped on error")
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Build the connac2 TX descriptor (HW ACK-retry limit 15, NO_ACK set iff addr1 is group,
@@ -340,6 +365,13 @@ class MT7921AUDriver(Driver):
         await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
 
     async def close(self):
+        if self._mac_work_task is not None:
+            self._mac_work_task.cancel()
+            try:
+                await self._mac_work_task
+            except asyncio.CancelledError:
+                pass
+            self._mac_work_task = None
         await self.transport.stop_rx()
 
     def _on_raw_rx(self, data: bytes):

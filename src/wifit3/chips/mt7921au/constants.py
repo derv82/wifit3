@@ -392,3 +392,5 @@ def MT_ETBF_RX_FB_CNT(b):  return MT_WF_ETBF_BASE(b) + 0x158
 MT_PLE_BASE = 0x820c0000
 def MT_PLE_AMSDU_PACK_MSDU_CNT(n): return MT_PLE_BASE + 0x10E0 + (n << 2)
 MT792x_MIB_TX_AMSDU_LEN = 8     # ARRAY_SIZE(mt76_mib_stats.tx_amsdu)
+HZ = 250                        # CONFIG_HZ of the captured Kali kernel; jiffies per second
+MT792x_WATCHDOG_TIME = HZ // 4  # mt792x.h:38, in jiffies
