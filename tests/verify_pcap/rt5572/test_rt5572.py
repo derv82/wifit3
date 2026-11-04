@@ -37,9 +37,6 @@ class TestRt5572(VerifyCapture):
                "rt2800_config_filter: mac80211 re-applies the monitor filter as a capture tool opens its socket",
                capture_only_run=(RegisterOp(RegisterAccess.READ, C.RX_FILTER_CFG, 0x93),
                                  RegisterOp(RegisterAccess.WRITE, C.RX_FILTER_CFG, 0x93))),
-        Waiver(WaiverReason.WIFIT3_ONLY, "rt2800usb.c:155-169 rt2800usb_tx_dma_done -> "
-               "rt2800usb_tx_sta_fifo_timeout; wifit3 skips it: inject_frame reads no TX status",
-               capture_only_run=(RegisterOp(RegisterAccess.READ, C.TX_STA_FIFO, None),)),
         Waiver(WaiverReason.CAPTURE_SETUP, "rt2x00queue.c:406-407 rt2x00queue_create_tx_descriptor -> rt2800lib.c:828 "
                "TXWI_W1_ACK: aireplay-ng's radiotap TX flags set NOACK, so mac80211 sets IEEE80211_TX_CTL_NO_ACK",
                value_only_tx_op_field=TxOpField(dword=2, shift=0, width=1)),

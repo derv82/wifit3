@@ -266,7 +266,11 @@ RX_STA_CNT2 = 0x1708
 TX_STA_CNT0 = 0x170C
 TX_STA_CNT1 = 0x1710
 TX_STA_CNT2 = 0x1714
-TX_STA_FIFO = 0x1718    # per-frame TX status FIFO (read-to-pop, VALID bit = entry present)
+TX_STA_FIFO = 0x1718                     # [SRC rt2800.h:1931]
+TX_STA_FIFO_VALID = 0x00000001               # [SRC rt2800.h:1932]
+TX_STA_FIFO_PID_QUEUE = 0x00000006           # [SRC rt2800.h:1934]
+TXSTATUS_READ_INTERVAL = 0.001               # seconds [SRC rt2800usb.c:92]
+TXSTATUS_TIMEOUT = 2.0                       # seconds, msecs_to_jiffies(2000) [SRC rt2800lib.c:1170]
 MAC_STATUS_CFG = 0x1200 # bit 0 = BBP/RF busy on TX, bit 1 = busy on RX
 # HT/LG rate-fallback config. [SRC] rt2800.h:1397-1436. NOTE: 0x1500-0x150C are
 # TX_SEC_CNT0 / RX_SEC_CNT0 / CCMP_FC_MUTE (security regs), NOT the FBK block —

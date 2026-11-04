@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from typing import Callable, Optional
 
 import usb.core
@@ -26,6 +27,11 @@ from .constants import (
     NUM_TX_QUEUES,
     RT_RT5592,
     TX_QUEUE_LIMIT,
+    TX_STA_FIFO,
+    TX_STA_FIFO_PID_QUEUE,
+    TX_STA_FIFO_VALID,
+    TXSTATUS_READ_INTERVAL,
+    TXSTATUS_TIMEOUT,
     TXWI_PHYMODE_CCK,
     TXWI_PHYMODE_OFDM,
 )
@@ -76,6 +82,11 @@ class RT5572Driver(Driver):
         self._bulk_in_ep: Optional[int] = None
         self._tx_queue_eps: list[int] = []    # bulk-OUT endpoint per TX queue id
         self._tx_entry_index: list[int] = [0] * NUM_TX_QUEUES   # Q_INDEX per TX queue [SRC rt2x00queue.c:670]
+        # Per TX queue, the DMA-done time of each entry still waiting for its TX_STA_FIFO status.
+        self._tx_status_pending: list[deque[float]] = [deque() for _ in range(NUM_TX_QUEUES)]
+        self._txstatus_fifo: deque[int] = deque()
+        self._tx_status_reading = False
+        self._txstatus_timer: Optional[asyncio.Task] = None
         self._conf_lock = asyncio.Lock()    # rt2x00dev->conf_mutex
         self._rxwi_size: int = 16          # set at connect-time from silicon_id
         self._claimed = False
@@ -461,11 +472,79 @@ class RT5572Driver(Driver):
         except usb.core.USBError as e:
             logger.error("rt5572 inject_frame USBError: %s", e)
             return False
+        # rt2x00usb_interrupt_txdone [SRC rt2x00usb.c:274-294]
+        self._tx_status_pending[qid].append(loop.time())    # rt2x00lib_dmadone
+        self._async_read_tx_status()                        # rt2800usb_tx_dma_done
+        if self._txstatus_fifo:
+            self._work_txdone()
         logger.trace("inject_frame: ch=%d len=%d txwi=%dB phymode=%d bulk-OUT accepted %d bytes",
                      self.current_channel, len(frame_bytes), txwi_sz, phymode, sent)
         if logger.isEnabledFor(logging.DEBUG):
             await loop.run_in_executor(None, self._dump_tx_counters, "post-inject")
         return True
+
+    def _async_read_tx_status(self) -> None:
+        """rt2800usb_async_read_tx_status [SRC rt2800usb.c:143-153]."""
+        if self._tx_status_reading:
+            return
+        self._tx_status_reading = True
+        self._txstatus_timer = asyncio.get_running_loop().create_task(self._tx_sta_fifo_timeout())
+
+    async def _tx_sta_fifo_timeout(self) -> None:
+        """rt2800usb_tx_sta_fifo_timeout and rt2800usb_tx_sta_fifo_read_completed [SRC rt2800usb.c:94-169]."""
+        loop = asyncio.get_running_loop()
+        await asyncio.sleep(2 * TXSTATUS_READ_INTERVAL)
+        while True:
+            try:
+                tx_status = await loop.run_in_executor(None, self.transport.read32, TX_STA_FIFO)
+            except usb.core.USBError as e:
+                logger.warning("TX status read failed %s", e)
+                self._tx_status_reading = False
+                return
+            if tx_status & TX_STA_FIFO_VALID:
+                self._txstatus_fifo.append(tx_status)
+                self._work_txdone()
+                continue
+            if self._txstatus_timeout():
+                self._work_txdone()
+            if not self._txstatus_pending():
+                self._tx_status_reading = False
+                return
+            await asyncio.sleep(TXSTATUS_READ_INTERVAL)
+
+    def _work_txdone(self) -> None:
+        """rt2800usb_work_txdone [SRC rt2800usb.c:456-476]: rt2800_txdone, then rt2800_txdone_nostatus
+        [SRC rt2800lib.c:1121-1156, 1212-1238]."""
+        while self._txstatus_fifo or self._txstatus_timeout():
+            while self._txstatus_fifo:
+                qid = (self._txstatus_fifo.popleft() & TX_STA_FIFO_PID_QUEUE) >> 1
+                if not self._tx_status_pending[qid]:
+                    logger.debug("Got TX status for an empty queue %u, dropping", qid)
+                    break
+                self._tx_status_pending[qid].popleft()
+            for pending in self._tx_status_pending:
+                while pending and self._entry_txstatus_timeout(pending[0]):
+                    pending.popleft()
+            if self._txstatus_pending():
+                self._async_read_tx_status()
+
+    def _entry_txstatus_timeout(self, last_action: float) -> bool:
+        """rt2800_entry_txstatus_timeout [SRC rt2800lib.c:1158-1178]."""
+        return asyncio.get_running_loop().time() > last_action + TXSTATUS_TIMEOUT
+
+    def _txstatus_timeout(self) -> bool:
+        """rt2800_txstatus_timeout [SRC rt2800lib.c:1180-1193]."""
+        for pending in self._tx_status_pending:
+            if pending and self._entry_txstatus_timeout(pending[0]):
+                return True
+        return False
+
+    def _txstatus_pending(self) -> bool:
+        """rt2800_txstatus_pending [SRC rt2800lib.c:1199-1210]."""
+        for pending in self._tx_status_pending:
+            if pending:
+                return True
+        return False
 
     async def _enable_rx_acks(self) -> None:
         """No-op: the Ralink monitor RX filter (RX_FILTER_CFG=0x93, DROP_ACK + DROP_NOT_TO_ME
@@ -518,34 +597,14 @@ class RT5572Driver(Driver):
             logger.debug("[%s] register read failed: %s", tag, e)
 
     def _dump_tx_counters(self, tag: str) -> None:
-        """Read TX_STA_CNT0/1 + drain TX_STA_FIFO. CNT0/1 are read-to-clear
-        aggregates. TX_STA_FIFO is the per-frame status FIFO — each read
-        pops one entry. VALID bit (0x1) set means a real entry; if we get
-        all-zero entries, the FIFO is empty (= no frames actually TX'd by
-        chip). Drain up to 8 entries per call."""
-        from .constants import TX_STA_CNT0, TX_STA_CNT1, TX_STA_FIFO
+        """Read the read-to-clear TX_STA_CNT0/1 aggregates [SRC rt2800.h:1889-1898]."""
+        from .constants import TX_STA_CNT0, TX_STA_CNT1
         try:
             cnt0 = self.transport.read32(TX_STA_CNT0)
             cnt1 = self.transport.read32(TX_STA_CNT1)
-            # TX_STA_CNT0: bits[15:0] = TX_FAIL_COUNT, bits[31:16] = TX_BEACON_COUNT
-            # TX_STA_CNT1: bits[15:0] = TX_SUCCESS_COUNT, bits[31:16] = TX_RETRANSMIT_COUNT
-            # [SRC] rt2800.h:1889-1898
-            tx_fail = cnt0 & 0xFFFF
-            tx_beacon = (cnt0 >> 16) & 0xFFFF
-            tx_ok = cnt1 & 0xFFFF
-            tx_retry = (cnt1 >> 16) & 0xFFFF
-            fifo_entries = []
-            for _ in range(8):
-                entry = self.transport.read32(TX_STA_FIFO)
-                if not (entry & 0x1):
-                    break
-                fifo_entries.append(entry)
             logger.debug(
-                "[%s] CNT0=0x%08x CNT1=0x%08x "
-                "→ ok=%d fail=%d retry=%d beacon=%d | FIFO drained %d: %s",
-                tag, cnt0, cnt1, tx_ok, tx_fail, tx_retry, tx_beacon,
-                len(fifo_entries),
-                " ".join(f"0x{e:08x}" for e in fifo_entries) or "(empty)",
+                "[%s] CNT0=0x%08x CNT1=0x%08x → ok=%d fail=%d retry=%d beacon=%d",
+                tag, cnt0, cnt1, cnt1 & 0xFFFF, cnt0 & 0xFFFF, (cnt1 >> 16) & 0xFFFF, (cnt0 >> 16) & 0xFFFF,
             )
         except (IOError, usb.core.USBError) as e:
             logger.debug("[%s] TX counter read failed: %s", tag, e)
@@ -571,6 +630,13 @@ class RT5572Driver(Driver):
         )
 
     async def close(self) -> None:
+        if self._txstatus_timer is not None:
+            self._txstatus_timer.cancel()          # hrtimer_cancel [SRC rt2x00usb.c:749]
+            try:
+                await self._txstatus_timer
+            except asyncio.CancelledError:
+                pass
+            self._txstatus_timer = None
         if self._rx_reader is not None:
             await self._rx_reader.stop()
             self._rx_reader = None
