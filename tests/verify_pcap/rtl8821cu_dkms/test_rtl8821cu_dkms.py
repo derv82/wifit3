@@ -44,6 +44,10 @@ class TestRtl8821cuDkms(VerifyCapture):
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = Rtl8821cuDkmsDriver
     DECODER = Rtl8821cuDecoder(hop_start_register=0x2860, tx_descriptor_size=48)
+    XFAIL_REASON_BY_CAPTURE_PATH = {
+        CAPTURE_DIR / "capture-4.pcap": "halbtc8821c1ant.c:834 static pre_num_of_wifi_link kept from the previous "
+                                        "session (module not reloaded): later H2C mailbox indexes shift",
+    }
     WAIVERS = [
         Waiver(WaiverReason.CAPTURE_SETUP, "core/rtw_xmit.c:5042 aireplay's radiotap NOACK, rtl8821cu_xmit.c:314-318",
                value_only_tx_op_field=HALMAC_TX_DESC_RTS_DATA_RTY_LMT),
