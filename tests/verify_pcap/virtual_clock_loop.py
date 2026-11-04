@@ -52,9 +52,17 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
             self.virtual_time = timestamp
 
     def run_in_executor(self, executor: Any, func: Callable[..., Any], *args: Any) -> asyncio.Future[Any]:
-        """Pending until the result is delivered on the loop, not just until the pool thread returns."""
+        """Pending until the result is delivered on the loop, not just until the pool thread returns.
+        The pool thread starts once the callbacks scheduled before this call have run."""
         self.pending_executor_call_count += 1
-        future = super().run_in_executor(executor, func, *args)
+        earlier_callbacks_ran = threading.Event()
+        self.call_soon(earlier_callbacks_ran.set)
+
+        def run_after_earlier_callbacks(*func_args: Any) -> Any:
+            earlier_callbacks_ran.wait()
+            return func(*func_args)
+
+        future = super().run_in_executor(executor, run_after_earlier_callbacks, *args)
 
         def count_delivered(done: asyncio.Future[Any]) -> None:
             self.pending_executor_call_count -= 1
