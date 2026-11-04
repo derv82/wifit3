@@ -9,6 +9,7 @@ from tests.verify_pcap.usb_capture import TransferType, UsbOp
 from tests.verify_pcap.verify_capture import (RegisterAccess, RegisterOp, TxOpField, VerifyCapture, Waiver,
                                               WaiverReason)
 from wifit3.chips.ar9271_v2 import constants as C, reg as R, wmi
+from wifit3.chips.rt3070 import constants as RT3070
 
 OTHER_REGISTER = 0x7014
 READ_REGISTER = 0x803C
@@ -246,3 +247,35 @@ def test_realtek_driver_only_run_starts_where_the_capture_differs_then_claims_it
     assert test.is_driver_only_request(realtek_write(REALTEK_OTHER_REGISTER, 0x2), False, progress)
     assert not test.is_driver_only_request(realtek_read(REALTEK_OTHER_REGISTER, 0x0), True, progress)
     assert progress[waiver] == 2
+
+
+def rt2800_register_access(request: int, address: int, value: int) -> UsbOp:
+    request_type = 0xC0 if request == RT3070.USB_MULTI_READ else 0x40
+    setup = struct.pack("<BBHHH", request_type, request, 0, address, 4)
+    return UsbOp(frame_number=0, bus=1, device_address=2, endpoint=request_type & 0x80,
+                 transfer_type=TransferType.CONTROL, setup=setup, data=value.to_bytes(4, "little"), status=0,
+                 submit_time=0.0, completion_time=0.0)
+
+
+def rt2800_rfcsr_write(register: int, value: int) -> UsbOp:
+    return rt2800_register_access(RT3070.USB_MULTI_WRITE, RT3070.RF_CSR_CFG,
+                                  RT3070.RF_CSR_CFG_BUSY | RT3070.RF_CSR_CFG_WRITE | register << 8 | value)
+
+
+RF3XXX_CHANNEL_10_TUNE = [
+    rt2800_register_access(RT3070.USB_MULTI_READ, RT3070.MAC_SYS_CTRL, RT3070.MAC_SYS_CTRL_ENABLE_TX
+                           | RT3070.MAC_SYS_CTRL_ENABLE_RX),
+    rt2800_register_access(RT3070.USB_MULTI_WRITE, RT3070.MAC_SYS_CTRL, RT3070.MAC_SYS_CTRL_ENABLE_TX),
+    rt2800_register_access(RT3070.USB_MULTI_READ, RT3070.CH_IDLE_STA, 0x0),
+    rt2800_rfcsr_write(2, 0xF5),
+    rt2800_rfcsr_write(3, 0x37),
+]
+
+
+def test_rt2800_channel_change_reads_the_rf3xxx_tune_when_given_its_rfcsrs() -> None:
+    decoder = Rt2800Decoder(channel_rf1_rfcsr=2, channel_rf3_rfcsr=3, channel_rf3_mask=RT3070.RFCSR3_K)
+    assert decoder.channel_change_at(RF3XXX_CHANNEL_10_TUNE, 0) == 10
+
+
+def test_rt2800_channel_change_default_reads_only_the_rf53xx_tune() -> None:
+    assert Rt2800Decoder().channel_change_at(RF3XXX_CHANNEL_10_TUNE, 0) is None

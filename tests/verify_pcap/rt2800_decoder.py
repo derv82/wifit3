@@ -41,6 +41,15 @@ def register_value(op: UsbOp) -> int | None:
 
 
 class Rt2800Decoder(FamilyDecoder):
+    """Defaults are the rf53xx channel tune, RFCSR8 = rf1 and RFCSR9 = rf3 (rt2800lib.c:3395-3396); rf3xxx is RFCSR2
+    = rf1 and RFCSR3's RFCSR3_K field = rf3 (rt2800lib.c:2555-2559)."""
+
+    def __init__(self, channel_rf1_rfcsr: int = RFCSR_CHANNEL_RF1, channel_rf3_rfcsr: int = RFCSR_CHANNEL_RF3,
+                 channel_rf3_mask: int = C.RF_CSR_CFG_DATA) -> None:
+        self.channel_rf1_rfcsr = channel_rf1_rfcsr
+        self.channel_rf3_rfcsr = channel_rf3_rfcsr
+        self.channel_rf3_mask = channel_rf3_mask
+
     def describe(self, op: UsbOp) -> str:
         status = f"  status {op.status}" if op.status else ""
         if op.transfer_type != TransferType.CONTROL:
@@ -111,12 +120,12 @@ class Rt2800Decoder(FamilyDecoder):
                     or not value & C.RF_CSR_CFG_WRITE):
                 continue
             register = (value & C.RF_CSR_CFG_REGNUM) >> 8
-            if register == RFCSR_CHANNEL_RF1 and rf1 is None:
+            if register == self.channel_rf1_rfcsr and rf1 is None:
                 rf1 = value & C.RF_CSR_CFG_DATA
-            elif register == RFCSR_CHANNEL_RF3 and rf3 is None:
-                rf3 = value & C.RF_CSR_CFG_DATA
+            elif register == self.channel_rf3_rfcsr and rf3 is None:
+                rf3 = value & self.channel_rf3_mask
         for channel, (channel_rf1, _channel_rf2, channel_rf3) in C.RF_VALS_3X_2G.items():
-            if (channel_rf1, channel_rf3) == (rf1, rf3):
+            if (channel_rf1, channel_rf3 & self.channel_rf3_mask) == (rf1, rf3):
                 return channel
         return None
 

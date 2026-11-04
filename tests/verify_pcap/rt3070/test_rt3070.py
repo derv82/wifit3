@@ -15,7 +15,7 @@ class TestRt3070(VerifyCapture):
                      CAPTURE_DIR / "capture-3.pcap"]
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RT3070Driver
-    DECODER = Rt2800Decoder()
+    DECODER = Rt2800Decoder(channel_rf1_rfcsr=2, channel_rf3_rfcsr=3, channel_rf3_mask=C.RFCSR3_K)
     WAIVERS = [
         Waiver(WaiverReason.WIFIT3_ONLY, "wifit3 only: warm check (mac.is_chip_warm)",
                driver_only_run=(RegisterOp(RegisterAccess.READ, C.PBF_SYS_CTRL, None),)),
