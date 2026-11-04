@@ -193,8 +193,7 @@ class AR9271V2Driver(Driver):
         try:
             return await self._bring_up_with_loop(loop, fw, _p)
         except htc.HTCReadyError as e:
-            logger.warning("ar9271_v2: post-boot handshake mis-framed (first bytes %s); "
-                           "tearing down for one clean retry", e.raw[:8].hex(" "))
+            logger.warning("ar9271_v2: %s; tearing down for one clean retry", e)
             await self._teardown_cold_attempt()
             redev = await self._await_reenumeration(self.transport.dev)
             if redev is not None:
@@ -218,6 +217,7 @@ class AR9271V2Driver(Driver):
             try:
                 await loop.run_in_executor(None, self._claim, self.transport.dev)
                 await loop.run_in_executor(None, self._clear_pipe_halts)
+                self.transport.start_reg_in(loop, lambda e: self._on_lost and self._on_lost(e))
                 self._reader = RxReaderThread(
                     loop, self._read_once, self._dispatch, name="ar9271v2-rx",
                     on_fatal=lambda e: self._on_lost and self._on_lost(e))
@@ -228,6 +228,7 @@ class AR9271V2Driver(Driver):
                 return True
             except Exception as e:  # noqa: BLE001
                 logger.warning("ar9271_v2: warm reattach failed (%s); falling back to replug", e)
+                await loop.run_in_executor(None, self.transport.stop_reg_in)
                 if self._reader is not None:
                     await self._reader.stop()
                     self._reader = None
@@ -269,6 +270,7 @@ class AR9271V2Driver(Driver):
         await loop.run_in_executor(None, self._claim, redev)
 
         _p(0.45, "Starting RX reader + HTC/WMI init...")
+        self.transport.start_reg_in(loop, lambda e: self._on_lost and self._on_lost(e))
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="ar9271v2-rx",
                                       on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
@@ -286,6 +288,7 @@ class AR9271V2Driver(Driver):
         return True
 
     async def _teardown_cold_attempt(self) -> None:
+        await asyncio.get_running_loop().run_in_executor(None, self.transport.stop_reg_in)
         if self._reader is not None:
             try:
                 await self._reader.stop()
@@ -536,6 +539,7 @@ class AR9271V2Driver(Driver):
             self.hw.write(R.AR_STA_ID1, id1)
 
     async def close(self) -> None:
+        await asyncio.get_running_loop().run_in_executor(None, self.transport.stop_reg_in)
         if self._reader is not None:
             await self._reader.stop()        # join the reader BEFORE releasing the USB handle
             self._reader = None

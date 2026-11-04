@@ -42,6 +42,7 @@ EP_WLAN_TX = 0x01
 EP_WLAN_RX = 0x82
 EP_REG_IN = 0x83
 EP_REG_OUT = 0x04
+MAX_REG_IN_BUF_SIZE = 64   # [SRC] hif_usb.h:66
 
 # ---- HTC (host-target communication) ---------------------------------------
 # [SRC] htc_hst.h:42-53,132-139,164-172.

@@ -38,7 +38,7 @@ class FakeDev:
 
 def test_handshake_frames_and_endpoint_map():
     dev = FakeDev([_READY, *_CONN_RSPS, _CONFIG_RSP])
-    st = htc.handshake(AR9271Transport(dev))
+    target = htc.handshake(AR9271Transport(dev))
 
     # 9 service connects + config-pipe + setup-complete, all on the REG_OUT pipe.
     assert len(dev.writes) == 11
@@ -52,19 +52,34 @@ def test_handshake_frames_and_endpoint_map():
     assert dev.writes[10][1] == bytes.fromhex("00000002000000000004")
 
     # Endpoint map learned from the responses.
-    assert st.endpoints[C.WMI_CONTROL_SVC] == 1
-    assert st.endpoints[C.WMI_MGMT_SVC] == 5
-    assert st.credit_size == 0x0140
+    assert target.endpoints[C.WMI_CONTROL_SVC] == 1
+    assert target.endpoints[C.WMI_MGMT_SVC] == 5
+    assert target.target_wait.is_set()
 
 
-def test_process_ready_rejects_stale_reg_in_prefix():
-    # The real crash: stale bytes ahead of a valid HTC_READY.
-    crash = bytes.fromhex("00c60000") + _READY
-    with pytest.raises(htc.HTCReadyError) as ei:
-        htc.process_ready(AR9271Transport(FakeDev([crash])), htc.HTCState())
-    assert ei.value.raw == crash
+def test_process_ready_skips_the_watchdog_pattern():
+    # htc_hst.c:446-452: 00c60000 ahead of an ENDPOINT0 message is the watchdog pattern, moved past.
+    t = AR9271Transport(FakeDev([bytes.fromhex("00c60000") + _READY]))
+    htc.process_ready(t)
+    assert t.htc.target_wait.is_set()
 
 
-def test_process_ready_rejects_short_frame():
+def test_short_frame_is_not_htc_ready():
+    t = AR9271Transport(FakeDev([]))
+    t.htc.rx_msg(bytes.fromhex("0000000800"))
+    assert not t.htc.target_wait.is_set()
+
+
+def test_process_ready_times_out_without_htc_ready(monkeypatch):
+    monkeypatch.setattr(AR9271Transport, "wait_for_completion_timeout", lambda self, completion, timeout: False)
     with pytest.raises(htc.HTCReadyError):
-        htc.process_ready(AR9271Transport(FakeDev([bytes.fromhex("0000000800")])), htc.HTCState())
+        htc.process_ready(AR9271Transport(FakeDev([])))
+
+
+def test_config_pipe_response_reaches_no_endpoint():
+    # htc_hst.c:468-473: an ENDPOINT0 message other than READY / CONNECT_SERVICE_RESPONSE is dropped.
+    t = AR9271Transport(FakeDev([]))
+    received = []
+    t.htc.endpoint_rx[1] = received.append
+    t.htc.rx_msg(_CONFIG_RSP)
+    assert received == []

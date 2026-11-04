@@ -35,6 +35,8 @@ def _driver(mocker, original) -> tuple[AR9271V2Driver, MagicMock]:
     mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.dispose_resources")
     reader = MagicMock(start=MagicMock(), stop=AsyncMock())
     mocker.patch("wifit3.chips.ar9271_v2.driver.RxReaderThread", return_value=reader)
+    mocker.patch("wifit3.chips.ar9271_v2.driver.AR9271Transport.start_reg_in")
+    mocker.patch("wifit3.chips.ar9271_v2.driver.AR9271Transport.stop_reg_in")
     return driver, reader
 
 
@@ -108,7 +110,7 @@ async def test_post_boot_handshake_double_failure_becomes_a_clean_replug_error(m
     from wifit3.chips.ar9271_v2 import htc
 
     async def _always_mis_framed(*_a, **_k):
-        raise htc.HTCReadyError(b"\x00" * 8)
+        raise htc.HTCReadyError()
 
     mocker.patch.object(driver, "_bring_up_with_loop", side_effect=_always_mis_framed)
 

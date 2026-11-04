@@ -8,8 +8,8 @@ ported separately and calls these primitives.
 Command wire format [SRC] wmi.c:286-307 + htc_hst.c:21-38:
     htc_frame_hdr(endpoint_id=ctrl_epid) | wmi_cmd_hdr(be16 command_id, be16 seq_no) | payload
 sent out the REG_OUT interrupt pipe; the response returns on REG_IN with the same framing,
-its body being the value(s). Events (command_id & 0x1000) are delivered out-of-band and are
-skipped here while waiting for a command response [SRC] wmi.c:233.
+its body being the value(s). ``ctrl_rx`` completes the waiting command with it, or hands an event
+(command_id & 0x1000) to ``event_tasklet`` [SRC] wmi.c:215-250.
 
 Register access [SRC] htc_drv_init.c:234-509:
     REG_READ   payload be32(addr)                  -> be32(val)
@@ -22,6 +22,9 @@ from __future__ import annotations
 
 import struct
 import threading
+from typing import Callable
+
+import usb.core
 
 from . import constants as C
 from . import htc
@@ -51,6 +54,7 @@ HTC_M_MONITOR = 8
 HTC_M_WDS = 2
 
 WMI_EVENT_BIT = 0x1000           # command_id & 0x1000 => async event, not a cmd response
+WMI_CMD_HDR_LEN = 4              # [SRC] wmi.h:28-31 struct wmi_cmd_hdr
 
 MAX_CMD_NUMBER = 62              # multi-write batch cap [SRC] wmi.h:128
 MAX_RMW_CMD_NUMBER = 15          # multi-rmw batch cap   [SRC] wmi.h:129
@@ -64,6 +68,13 @@ class WMI:
         self.t = t
         self.ctrl_epid = ctrl_epid
         self.tx_seq_id = 0
+        self.last_seq_id = 0
+        self.cmd_rsp_buf = b""
+        self.cmd_wait = threading.Event()
+        self.wmi_lock = threading.Lock()
+        # ath9k_wmi_event_tasklet's switch on priv; None until the driver owns the chip (priv->initialized).
+        self.event_tasklet: Callable[[int, bytes], None] | None = None
+        t.htc.endpoint_rx[ctrl_epid] = self.ctrl_rx      # ath9k_wmi_connect [SRC] wmi.c:262-280
         self._command_lock = threading.RLock()
         self._mwrite: list[tuple[int, int]] = []          # buffered (reg, val)
         self._mwrite_enabled = 0
@@ -77,28 +88,38 @@ class WMI:
 
     # ---- raw command / response -------------------------------------------
     def cmd(self, command_id: int, payload: bytes) -> bytes:
-        """Issue one WMI command and return its response body (htc + wmi headers stripped).
-        Mirrors ath9k_wmi_cmd_issue: ++seq, frame, send on ctrl_epid [SRC] wmi.c:286-307."""
+        """ath9k_wmi_cmd [SRC] wmi.c:310-369: issue one command and return its response body (htc + wmi
+        headers stripped), as ath9k_wmi_rsp_callback copies it."""
         with self._command_lock:
             if self.async_injector is not None:
                 self.async_injector(command_id, payload)
             self.tx_seq_id = (self.tx_seq_id + 1) & 0xFFFF
             hdr = struct.pack(">HH", command_id, self.tx_seq_id)
+            with self.wmi_lock:
+                self.last_seq_id = self.tx_seq_id
+                self.cmd_wait.clear()
             self.t.reg_out(htc.frame(self.ctrl_epid, hdr + payload))
-            return self._await_response(self.tx_seq_id)
+            if not self.t.wait_for_completion_timeout(self.cmd_wait, C.USB_MSG_TIMEOUT / 1000):
+                with self.wmi_lock:
+                    self.last_seq_id = 0
+                raise usb.core.USBTimeoutError(f"Timeout waiting for WMI command 0x{command_id:04x}")
+            return self.cmd_rsp_buf
 
-    def _await_response(self, seq: int) -> bytes:
-        """Read REG_IN frames until the command response for ``seq`` arrives, skipping any
-        interleaved WMI events (command_id & 0x1000) [SRC] wmi.c:215-250."""
-        while True:
-            frame = self.t.reg_in()
-            body = frame[C.HTC_FRAME_HDR_LEN:]
-            cmd_id, rsp_seq = struct.unpack_from(">HH", body)
-            if cmd_id & WMI_EVENT_BIT:
-                continue                                   # async event — not our response
-            if rsp_seq != seq:
-                continue                                   # stale response after a timed-out command
-            return body[4:]                                # strip wmi_cmd_hdr -> value(s)
+    def ctrl_rx(self, body: bytes) -> None:
+        """ath9k_wmi_ctrl_rx [SRC] wmi.c:215-250: an event goes to the event tasklet, the response to
+        the last command issued completes it, any other response (a timed-out command's) is dropped."""
+        if len(body) < WMI_CMD_HDR_LEN:
+            return
+        cmd_id, seq_no = struct.unpack_from(">HH", body)
+        if cmd_id & WMI_EVENT_BIT:
+            if self.event_tasklet is not None:
+                self.event_tasklet(cmd_id, body[WMI_CMD_HDR_LEN:])
+            return
+        with self.wmi_lock:
+            if seq_no != self.last_seq_id:
+                return
+            self.cmd_rsp_buf = body[WMI_CMD_HDR_LEN:]
+            self.cmd_wait.set()
 
     def vap_create(self, index: int, opmode: int, macaddr: bytes, ath_cap: int = 0,
                    rtsthreshold: int = 0) -> None:
