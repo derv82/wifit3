@@ -500,7 +500,7 @@ class RT5572Driver(Driver):
                     use_no_ack=bool(frame_bytes[4] & 0x01), phymode=phymode,
                 ),
             )
-            # rt2x00queue_index_inc(entry, Q_INDEX) [SRC rt2x00queue.c:703, 877-879]
+            # rt2x00queue_index_inc(entry, Q_INDEX) [SRC rt2x00queue.c:703, 874-876]
             self._tx_entry_index[qid] += 1
             if self._tx_entry_index[qid] >= TX_QUEUE_LIMIT:
                 self._tx_entry_index[qid] = 0
