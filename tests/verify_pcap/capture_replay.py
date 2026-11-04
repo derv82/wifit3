@@ -8,7 +8,7 @@ from typing import Callable, Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
 from tests.verify_pcap.virtual_clock_loop import (
-    KERNEL_HZ, MAIN_CALLER, VirtualClockEventLoop, is_driver_thread, wake_loop)
+    KERNEL_HZ, MAIN_CALLER, HrtimerDelay, VirtualClockEventLoop, is_driver_thread, wake_loop)
 
 PROCESSING_REPLY = -1
 WAIVED = "waived"
@@ -49,7 +49,7 @@ class CaptureReplay:
         ``is_driver_only_request(request, cursor_differs)`` accepts a request the capture does not have;
         ``skip_capture_only_run_at(ops, position)``: the ops without the capture-only run there, and the positions to waive;
         ``is_racing_extra_request(caller_ops, request)``: Linux makes ``request`` after an hrtimer task's last two ops
-        or not, by a race."""
+        or not, by a race; not making it, Linux re-armed its hrtimer on an event inside the request's delay."""
         self.ops = ops
         self.reproduced_by: list[str | None] = [None] * len(ops)
         self._is_same_request = is_same_request
@@ -100,7 +100,7 @@ class CaptureReplay:
                     if self.truncated_request is not None and self._is_same_request(self.truncated_request, request):
                         self.past_capture_end = True
                         return None
-                    racing_reply = self._racing_extra_reply(request, caller)
+                    racing_reply = self._racing_extra_reply(request, caller, request_time)
                     if racing_reply is not None:
                         return racing_reply
                     raise self._diverge(None, request, caller, "request after the last captured op")
@@ -126,7 +126,7 @@ class CaptureReplay:
                     break
                 self.waive_capture_only_run_at(position)
                 if self.reproduced_by[position] is None:
-                    racing_reply = self._racing_extra_reply(request, caller)
+                    racing_reply = self._racing_extra_reply(request, caller, request_time)
                     if racing_reply is not None:
                         return racing_reply
                     raise self._diverge(position, request, caller, "request differs from the capture")
@@ -142,7 +142,7 @@ class CaptureReplay:
                         captured_time = self.ops[earlier].submit_time
                     earlier -= 1
                 if captured_time - request_time > timer_tolerance:
-                    racing_reply = self._racing_extra_reply(request, caller)
+                    racing_reply = self._racing_extra_reply(request, caller, request_time)
                     if racing_reply is not None:
                         return racing_reply
                     raise self._diverge(position, request, caller, f"the driver task's timer fired "
@@ -160,8 +160,9 @@ class CaptureReplay:
             self._loop.completion_time_by_caller[caller] = self.ops[position].completion_time
             return self.ops[position]
 
-    def _racing_extra_reply(self, request: UsbOp, caller: str) -> UsbOp | None:
-        """For a racing extra request the capture does not have, made once after the caller's last op: that op."""
+    def _racing_extra_reply(self, request: UsbOp, caller: str, request_time: float) -> UsbOp | None:
+        """For a racing extra request the capture does not have, made once after the caller's last op: that op.
+        The caller's next hrtimer fires up to the request's delay later, as Linux's re-armed one did."""
         if caller not in self._loop.hrtimer_callers:
             return None
         caller_positions: list[int] = []
@@ -176,6 +177,12 @@ class CaptureReplay:
             return None
         self._racing_extra_request_after[caller] = caller_positions[-1]
         self.racing_extra_request_count += 1
+        next_position = self._next_unreproduced(caller_positions[-1] + 1)
+        while next_position is not None and not self.ops[next_position].same_request(request):
+            next_position = self._next_unreproduced(next_position + 1)
+        if next_position is not None:
+            self._loop.hrtimer_delay_by_caller[caller] = HrtimerDelay(
+                request_time - self.ops[caller_positions[-1]].completion_time, self.ops[next_position].submit_time)
         return self.ops[caller_positions[-1]]
 
     def read(self, endpoint: int, caller: str) -> UsbOp | None:

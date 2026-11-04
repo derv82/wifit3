@@ -137,3 +137,27 @@ def test_tx_status_second_extra_poll_is_not_accepted() -> None:
            tx_sta_fifo_read(VALID_STATUS, 0.5)]
     replay = replay_tx_status_task(ops, [0.0, 0.0001, 0.001, 0.001])
     assert replay.divergence is not None and "timer fired" in replay.divergence.reason
+
+
+def test_tx_status_read_after_an_extra_poll_may_be_early_by_the_extra_polls_delay() -> None:
+    # Linux made no extra poll; a TX DMA done in its 1 ms window armed the 2 ms hrtimer (rt2800usb.c:143-153).
+    ops = [tx_sta_fifo_read(VALID_STATUS, 0.0), tx_sta_fifo_read(EMPTY_STATUS, 0.0001),
+           tx_sta_fifo_read(EMPTY_STATUS, 0.0034)]
+    replay = replay_tx_status_task(ops, [0.0, 0.0001, 0.001, 0.001])
+    assert replay.divergence is None
+    assert replay.unreproduced_positions() == []
+    assert replay.racing_extra_request_count == 1
+
+
+def test_tx_status_read_after_an_extra_poll_earlier_than_its_delay_is_not_accepted() -> None:
+    ops = [tx_sta_fifo_read(VALID_STATUS, 0.0), tx_sta_fifo_read(EMPTY_STATUS, 0.0001),
+           tx_sta_fifo_read(EMPTY_STATUS, 0.0045)]
+    replay = replay_tx_status_task(ops, [0.0, 0.0001, 0.001, 0.001])
+    assert replay.divergence is not None and "timer fired" in replay.divergence.reason
+
+
+def test_tx_status_extra_polls_delay_applies_to_one_read() -> None:
+    ops = [tx_sta_fifo_read(VALID_STATUS, 0.0), tx_sta_fifo_read(EMPTY_STATUS, 0.0001),
+           tx_sta_fifo_read(EMPTY_STATUS, 0.0025), tx_sta_fifo_read(EMPTY_STATUS, 0.0049)]
+    replay = replay_tx_status_task(ops, [0.0, 0.0001, 0.001, 0.001, 0.001])
+    assert replay.divergence is not None and replay.divergence.position == 3

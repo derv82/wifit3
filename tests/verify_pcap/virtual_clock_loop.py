@@ -6,6 +6,7 @@ import math
 import selectors
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Any, Callable
 
 MAIN_CALLER = "main"
@@ -57,6 +58,13 @@ def wake_loop() -> None:
     """Scheduled from another thread so the loop re-checks its timers and whether the driver is idle."""
 
 
+@dataclass(frozen=True)
+class HrtimerDelay:
+    """An hrtimer Linux armed up to ``window`` after the driver task's, firing no later than ``captured_time``."""
+    window: float
+    captured_time: float
+
+
 class PoolThreadCaller(threading.local):
     def __init__(self) -> None:
         self.caller: str | None = None
@@ -105,6 +113,8 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         self.tolerance_by_driver_timer: dict[asyncio.TimerHandle, float] = {}
         # The driver tasks whose timer fired and that have made no request since, with that timer's tolerance.
         self.timer_tolerance_by_woken_caller: dict[str, float] = {}
+        # Per hrtimer task, the delay of its next timer.
+        self.hrtimer_delay_by_caller: dict[str, HrtimerDelay] = {}
 
     def time(self) -> float:
         """In a driver task, the later of its last fired timer's due time and its last op's completion,
@@ -184,6 +194,9 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
             return super().call_at(when, callback, *args, context=context)
         if task.get_coro().__qualname__ in self.hrtimer_callers:
             tolerance = HRTIMER_LATENCY
+            delay = self.hrtimer_delay_by_caller.pop(task.get_coro().__qualname__, None)
+            if delay is not None:
+                when = min(max(when, delay.captured_time), when + delay.window)
         else:
             delta = math.ceil((when - self.time()) * KERNEL_HZ - JIFFY_TOLERANCE)
             tolerance = timer_wheel_tolerance(delta)
