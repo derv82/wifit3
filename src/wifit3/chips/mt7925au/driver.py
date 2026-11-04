@@ -167,6 +167,10 @@ class MT7925AUDriver(Driver):
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Build the connac3 TXWI for a raw 802.11 frame and send it once on its mt76 TX queue's bulk-OUT.
         The TXWI reads the 802.11 sequence from the frame itself."""
+        # ieee80211_monitor_start_xmit drops a frame shorter than its header (tx.c:2345-2353).
+        if len(frame_bytes) < 2 or len(frame_bytes) < tx.ieee80211_hdrlen(frame_bytes[0] | (frame_bytes[1] << 8)):
+            logger.error("MT7925AU inject_frame: 802.11 frame too short to inject: %d bytes", len(frame_bytes))
+            return False
         qid = tx.select_tx_queue(frame_bytes)
         wire = tx.build_tx(frame_bytes, qid=qid, wcid_idx=self._tx_wcid)
         return await self.transport.send_bulk_checked(wire, tx.TX_QUEUE_ENDPOINTS[qid])
