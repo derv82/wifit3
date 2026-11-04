@@ -205,9 +205,10 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
         add_ba = True
         tid = (capab >> 2) & _QOS_CTL_TID_MASK
     elif frame_kind == (_FTYPE_CTL << 2) | _STYPE_BACK_REQ:
-        tid = (frame[16] | (frame[17] << 8)) >> _BAR_CTRL_TID_INFO_SHIFT
-        # The injected-frame branch takes a BlockAckReq's start_seq_num as its seqno (:470-476).
-        seqno = frame[18] | (frame[19] << 8)
+        # The C reads control and start_seq_num (:470-476) past the end of a BAR shorter than
+        # 20 bytes; the missing bytes are 0 here.
+        tid = int.from_bytes(frame[16:18], "little") >> _BAR_CTRL_TID_INFO_SHIFT
+        seqno = int.from_bytes(frame[18:20], "little")
 
     # mt76_connac_mac.c:449-451. USE_MINRATE: an injected rfc1042 data frame whose ethertype is
     # the monitor sdata's control_port_protocol, ETH_P_PAE (mac80211 tx.c:2359-2365, :556-560).
