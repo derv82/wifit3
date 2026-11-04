@@ -89,10 +89,11 @@ def test_stamp_tx_seq_increments_and_copies():
 async def test_inject_sets_ack_bit_and_stamps_seq(monkeypatch):
     d = drv.RT5572Driver(MagicMock())
     d.chip_id = SimpleNamespace(silicon_id=0x5592)
+    d._tx_queue_eps = [0x01, 0x02, 0x03, 0x04]
     sent: list = []
     monkeypatch.setattr(
         drv, "_tx_inject_frame",
-        lambda dev, frame, *, txwi_size, use_no_ack, phymode: sent.append((frame, use_no_ack)) or 0,
+        lambda dev, frame, *, txwi_size, ep, qid, entry_index, use_no_ack, phymode: sent.append((frame, use_no_ack)) or 0,
     )
     assert await d.inject_frame(_mgmt_frame()) is True   # base -> _stamp_tx_seq -> _inject_frame
     assert len(sent) == 1

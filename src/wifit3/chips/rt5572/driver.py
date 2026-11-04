@@ -19,7 +19,9 @@ from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallba
 from wifit3.errors import BringUpError
 
 from .constants import (
+    NUM_TX_QUEUES,
     RT_RT5592,
+    TX_QUEUE_LIMIT,
     TXWI_PHYMODE_CCK,
     TXWI_PHYMODE_OFDM,
 )
@@ -42,7 +44,7 @@ from .rx import (
 )
 from ..rx_reader import RxReaderThread
 from .transport import RT5572Transport
-from .tx import inject_frame as _tx_inject_frame, txwi_size_for_silicon
+from .tx import inject_frame as _tx_inject_frame, select_queue, txwi_size_for_silicon
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,8 @@ class RT5572Driver(Driver):
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
         self._bulk_in_ep: Optional[int] = None
+        self._tx_queue_eps: list[int] = []    # bulk-OUT endpoint per TX queue id
+        self._tx_entry_index: list[int] = [0] * NUM_TX_QUEUES   # Q_INDEX per TX queue [SRC rt2x00queue.c:670]
         # Periodic RX-AGC adaptation (rt2x00 link tuner). The accumulator is
         # fed from RX dispatch; a background task re-seeds BBP66 once a second.
         # _conf_lock serialises the tuner's register I/O against set_channel,
@@ -246,6 +250,15 @@ class RT5572Driver(Driver):
             self._rxwi_size = rxwi_size_for_silicon(self.chip_id.silicon_id)
             eps = probe_endpoints(self.dev)
             self._bulk_in_ep = eps.primary_bulk_in
+            # Bulk-OUTs go to the TX queues in descriptor order; a queue past the last one shares
+            # it [SRC rt2x00usb.c:599-647 rt2x00usb_find_endpoints].
+            self._tx_queue_eps = []
+            if eps.bulk_out:
+                for qid in range(NUM_TX_QUEUES):
+                    if qid < len(eps.bulk_out):
+                        self._tx_queue_eps.append(eps.bulk_out[qid])
+                    else:
+                        self._tx_queue_eps.append(eps.bulk_out[-1])
             self._rx_reader = RxReaderThread(
                 loop, self._rx_read_once, self._rx_dispatch, name="rt2800usb-rx",
                 on_fatal=lambda e: self._on_lost and self._on_lost(e))
@@ -465,7 +478,7 @@ class RT5572Driver(Driver):
         """Build TXINFO + TXWI (TXWI ACK bit ON for a unicast addr1 so the chip retries up to the
         global TX_RTY_CFG SHORT_RTY_LIMIT (mac80211 default 7), set at monitor entry)
         and bulk-OUT ``frame_bytes`` once. The seq is already stamped by the base."""
-        if self.chip_id is None:
+        if self.chip_id is None or not self._tx_queue_eps:
             logger.error("inject_frame: connect() must run first")
             return False
         txwi_sz = txwi_size_for_silicon(self.chip_id.silicon_id)
@@ -476,15 +489,21 @@ class RT5572Driver(Driver):
         if logger.isEnabledFor(logging.DEBUG) and not self._first_inject_dumped:
             await loop.run_in_executor(None, self._dump_tx_state, "pre-first-inject")
             self._first_inject_dumped = True
+        qid = select_queue(frame_bytes)
+        entry_index = self._tx_entry_index[qid]
         try:
             sent = await loop.run_in_executor(
                 None,
                 lambda: _tx_inject_frame(
                     self.dev, frame_bytes,
-                    txwi_size=txwi_sz, use_no_ack=bool(frame_bytes[4] & 0x01),
-                    phymode=phymode,
+                    txwi_size=txwi_sz, ep=self._tx_queue_eps[qid], qid=qid, entry_index=entry_index,
+                    use_no_ack=bool(frame_bytes[4] & 0x01), phymode=phymode,
                 ),
             )
+            # rt2x00queue_index_inc(entry, Q_INDEX) [SRC rt2x00queue.c:703, 877-879]
+            self._tx_entry_index[qid] += 1
+            if self._tx_entry_index[qid] >= TX_QUEUE_LIMIT:
+                self._tx_entry_index[qid] = 0
         except ValueError as e:
             logger.warning("rt5572 inject_frame bad frame: %s", e)
             return False

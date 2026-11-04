@@ -18,7 +18,7 @@ Defaults used by inject_frame:
   * NSEQ = 1                 (let HW assign sequence number — kernel does
                               this when ENTRY_TXD_GENERATE_SEQ is set)
   * WCID = 0xFF              (no associated station — broadcast/inject)
-  * PACKETID = QUEUE 2 + ENTRY 1
+  * PACKETID = TX queue id + (queue entry index % 3) + 1
   * ACK = 0  when use_no_ack=True  (matches our spoofed-deauth use case)
   * ACK = 1  when use_no_ack=False (normal unicast — chip will retry)
 
@@ -36,6 +36,13 @@ import usb.core
 from wifit3.chips import log_trace
 
 from .constants import (
+    IEEE80211_FCTL_FTYPE,
+    IEEE80211_FCTL_MOREFRAGS,
+    IEEE80211_FCTL_STYPE,
+    IEEE80211_FTYPE_CTL,
+    IEEE80211_STYPE_CTS,
+    IEEE80211_STYPE_RTS,
+    IEEE802_1D_TO_AC,
     RT_RT5592,
     TXINFO_W0_QSEL,
     TXINFO_W0_USB_DMA_NEXT_VALID,
@@ -46,6 +53,7 @@ from .constants import (
     TXWI_DESC_SIZE_5WORDS,
     TXWI_PHYMODE_CCK,
     TXWI_TX_OP_NONE,
+    TXWI_W0_FRAG,
     TXWI_W0_MCS,
     TXWI_W0_PHYMODE,
     TXWI_W0_TX_OP,
@@ -55,7 +63,6 @@ from .constants import (
     TXWI_W1_PACKETID_ENTRY,
     TXWI_W1_PACKETID_QUEUE,
     TXWI_W1_WIRELESS_CLI_ID,
-    USB_EP_BULK_OUT_AC_VO,
 )
 
 # Kernel `rt2800usb_write_tx_desc` hardcodes QSEL=2 (EDCA) for EVERY
@@ -72,6 +79,18 @@ def txwi_size_for_silicon(silicon_id: int) -> int:
     if silicon_id == RT_RT5592:
         return TXWI_DESC_SIZE_5WORDS
     return TXWI_DESC_SIZE_4WORDS
+
+
+def select_queue(frame: bytes) -> int:
+    """The AC queue mac80211 puts an injected frame on [SRC net/mac80211/tx.c ieee80211_monitor_start_xmit,
+    wme.c ieee80211_select_queue_80211]; a monitor vif has no ACM bits, so ieee80211_downgrade_queue keeps it."""
+    fc0 = frame[0]
+    if (fc0 & 0x0C) != 0x08:                          # not a data frame: priority 7
+        return IEEE802_1D_TO_AC[7]
+    if not (fc0 & 0x80):                              # data without QoS: priority 0
+        return IEEE802_1D_TO_AC[0]
+    qos_offset = 30 if (frame[1] & 0x03) == 0x03 else 24    # ieee80211_get_qos_ctl
+    return IEEE802_1D_TO_AC[frame[qos_offset] & 0x07]       # IEEE80211_QOS_CTL_TAG1D_MASK
 
 
 def _set_field32(reg: int, mask: int, value: int) -> int:
@@ -92,6 +111,7 @@ def build_tx_descriptors(
     packetid_entry: int = 2,
     next_valid: int = 0,
     tx_burst: int = 0,
+    frag: int = 0,
 ) -> bytes:
     """Build the TXINFO + TXWI prefix for an 802.11 frame.
 
@@ -120,6 +140,7 @@ def build_tx_descriptors(
     # round-trip fails and the actual data frame never goes on air, even
     # though TX_STA_FIFO flags TX_SUCCESS=1.
     txwi_w0 = 0
+    txwi_w0 = _set_field32(txwi_w0, TXWI_W0_FRAG, frag)          # [SRC] rt2800lib.c:806-807
     txwi_w0 = _set_field32(txwi_w0, TXWI_W0_MCS, mcs)
     txwi_w0 = _set_field32(txwi_w0, TXWI_W0_PHYMODE, phymode)
     txwi_w0 = _set_field32(txwi_w0, TXWI_W0_TX_OP, TXWI_TX_OP_NONE)
@@ -151,13 +172,15 @@ def inject_frame(
     frame: bytes,
     *,
     txwi_size: int = TXWI_DESC_SIZE_4WORDS,
-    ep: int = USB_EP_BULK_OUT_AC_VO,
+    ep: int,
+    qid: int,
+    entry_index: int,
     use_no_ack: bool = True,
     mcs: int = 0,
     phymode: int = TXWI_PHYMODE_CCK,
     timeout_ms: int = 1000,
 ) -> int:
-    """Build TX descriptors + pad-align frame + bulk-OUT write.
+    """Build TX descriptors for TX queue ``qid`` entry ``entry_index`` + pad-align frame + bulk-OUT write on ``ep``.
 
     Wire layout (kernel rt2800usb_get_tx_data_len, rt2800usb.c:440-451):
 
@@ -172,14 +195,24 @@ def inject_frame(
     Returns bytes accepted by the controller. Raises USBError on
     transport failure.
     """
-    if not frame:
-        raise ValueError("frame is empty")
+    if len(frame) < 2:
+        raise ValueError("frame is shorter than its frame control field")
     if len(frame) > 0x0FFF:
         raise ValueError(f"frame too long for TXWI MPDU field ({len(frame)} > 4095)")
 
+    # ENTRY_TXD_MORE_FRAG / ENTRY_TXD_BURST [SRC rt2x00queue.c:409-434 rt2x00queue_create_tx_descriptor]
+    frame_control = struct.unpack_from("<H", frame)[0]
+    more_frag = bool(frame_control & IEEE80211_FCTL_MOREFRAGS)
+    burst = more_frag
+    if (frame_control & IEEE80211_FCTL_FTYPE) == IEEE80211_FTYPE_CTL:
+        subtype = frame_control & IEEE80211_FCTL_STYPE
+        if subtype == IEEE80211_STYPE_RTS or subtype == IEEE80211_STYPE_CTS:
+            burst = True
     prefix = build_tx_descriptors(
         len(frame), txwi_size,
         use_no_ack=use_no_ack, mcs=mcs, phymode=phymode,
+        packetid_queue=qid, packetid_entry=(entry_index % 3) + 1,      # [SRC] rt2800lib.c:838-839
+        tx_burst=int(burst), frag=int(more_frag),                      # [SRC] rt2800usb.c:425-426
     )
 
     # 4-byte align the frame body, then add the mandatory 4-byte USB
