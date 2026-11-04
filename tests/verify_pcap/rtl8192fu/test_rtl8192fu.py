@@ -21,5 +21,4 @@ class TestRtl8192fu(VerifyCapture):
     DECODER = RealtekDecoder(hop_start_register=0x0E08, rf_sipi_address=0x0840)
     WAIVERS = [
         Waiver(WaiverReason.CAPTURE_SETUP, CONFIGURE_FILTER_SOURCE, capture_only_run=MONITOR_RCR_WRITE),
-        Waiver(WaiverReason.CAPTURE_SETUP, CONFIGURE_FILTER_SOURCE, driver_only_run=MONITOR_RCR_WRITE),
     ]
