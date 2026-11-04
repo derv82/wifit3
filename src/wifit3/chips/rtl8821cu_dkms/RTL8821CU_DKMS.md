@@ -14,7 +14,8 @@ Active monitor (HW-ACK a forged MAC) works too — WPS-PBC HW-confirmed (see log
 Three hardware bugs, all invisible to the byte-gate, were found and fixed (see Gotchas + log):
 
 - the cross-band RX coin toss — `_dc_cancellation` is no longer called (its ck320 toggle killed RX).
-- fixed-channel 2.4 GHz dead — a reader-quieted band bounce in `connect` (`_prime_2g_band`).
+- fixed-channel 2.4 GHz dead — was a band bounce in `connect` (`_prime_2g_band`), now removed: no C
+  basis (C tunes ch1 once, hal_intf.c:621). Needs a live fixed-ch1 recheck.
 - runtime focus RX-dead + transient 5 GHz TX — the same reader-vs-RF18 race at runtime: a reader
   pause across deliberate (`scan=False`) tunes + `inject` under `_io_lock`.
 
@@ -38,14 +39,9 @@ bands ~half of cold boots. Its DC compensation is unneeded here — skipping it 
 rate. Don't re-enable without re-validating on hardware; the byte-gate can't catch it (every wire op
 matches the vendor — the failure is the analog clock-restart transient, not a register value).
 
-**2.4 GHz needs a band-bounce prime, with the reader quiet.** The cold ch1 tune never makes the synth
-actually jump TO 2.4 GHz (it runs `_switch_band` but the LO doesn't re-lock on the premature,
-pre-antenna-switch tune), so RF18 BIT16 reads stuck-SET and every 2.4 GHz frame fails CRC. Only a
-real 5→2.4 GHz band switch re-locks the LO — a direct `RF18[16]=0` write does not (a reverted
-regression). `driver._prime_2g_band` bounces 2.4→5→2.4 after cold init; crucially the band-switch
-RF18 write is DROPPED if the bulk-IN reader runs concurrently (`_switch_channel` re-writes the stale
-BIT16=1), so it STOPS the reader across the bounce, then restarts it. Continuous hopping hides this
-(a later switch lands); only a fixed-2.4 GHz session exposes it.
+**No 2.4 GHz band-bounce prime.** `_prime_2g_band` re-tuned ch1 after cold init, claiming RF18
+BIT16 stuck; BIT16 is the 5 GHz band bit (phydm_hal_api8821c.c:740/773-774) and C tunes ch1 once
+(hal_intf.c:621). Removed to follow C; a fixed-ch1 session needs a live recheck.
 
 **The byte-gate is blind to timing and to read-modify-write correctness.** `verify_pcap` replays the
 *captured* read values, so a dropped settle delay, or an RMW that's only wrong when the real chip
@@ -117,8 +113,7 @@ Residual gaps (vendor-ported but HW-untested; only the reference burn is pcap+HW
 
 Start at `bringup.cold_bringup` — init → power seq → firmware → MAC → BB → RF, in kernel order.
 Channel tuning is `chan.set_channel` (band-switch sub-step only when the band changes). RSSI is
-`rx.decode_rssi` — jgr2 phystatus (decoding it as Jaguar-1 was an early mistake). The two
-hardware-bug fixes live in `dm.phy_init_haldm` (the skipped cal) and `driver._prime_2g_band`. Names
+`rx.decode_rssi` — jgr2 phystatus (decoding it as Jaguar-1 was an early mistake). Names
 match the vendor C, so grep the bundle's `driver-source/` to cross-reference.
 
 ## Scripts

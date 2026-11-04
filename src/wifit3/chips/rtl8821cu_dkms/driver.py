@@ -53,10 +53,6 @@ _WIFI_INTF_CLASS = 0xFF        # combo card: the WiFi function is the vendor-spe
 
 _WATCHDOG_PERIOD_S = 2.0        # dynamic_chk_timer period [SRC] os_intfs.c:4052, rtw_mlme.c:4117
 
-# 2.4 GHz re-lock after cold init: the cold ch1 tune lands before the antenna switches to WiFi, so
-# the LO never locks (RF18 BIT16 stuck). _prime_2g_band re-runs the band switch post-antenna-switch.
-_PRIME_2G_CH = 1
-
 # The pcap-gated reference card's EFUSE burn. A card whose burn differs selects ported-but-hardware-
 # untested branches (walker rows / cut / rf_set / rfe-2 / ant port), so connect() tags it once.
 _REF_RFE_TYPE = 0x22            # rfe_type_expand (raw 0xCA): BTG, 1-Ant@main, combo
@@ -168,8 +164,6 @@ class Rtl8821cuDkmsDriver(Driver):
             await loop.run_in_executor(None, bringup.phase_monitor, t, info)
         self.info = info
         self._log_detected_config(info)
-        _p(0.90, "Priming 2.4 GHz band")
-        await self._prime_2g_band()
         _p(1.0, "RTL8821CU monitor up (ch 1 @ 20 MHz)")
         return True
 
@@ -191,15 +185,6 @@ class Rtl8821cuDkmsDriver(Driver):
         if info.ant_num == 2:
             logger.warning("RTL8821CU: untested variant: 2-antenna board — only the 1-antenna "
                            "BT-coex path is ported; antenna routing may be wrong.")
-
-    async def _prime_2g_band(self) -> None:
-        """Re-lock 2.4 GHz after cold init. The cold ch1 tune runs before the antenna is switched to
-        WiFi, so the LO never locks (RF18 BIT16 stays set) and 2.4 GHz decodes nothing. Invalidating
-        ``current_band`` and re-tuning re-runs the full band switch, now post-antenna-switch; a bare
-        ``RF18[16]=0`` write does not lock it. ``set_channel`` pauses the reader across the RF18
-        write so it lands."""
-        self.transport.current_band = None
-        await self.set_channel(_PRIME_2G_CH)
 
     async def _watchdog_loop(self) -> None:
         """rtw_dynamic_check_timer_handlder re-arms the timer from its own fire [SRC] rtw_mlme.c:4117; the
