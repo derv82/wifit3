@@ -40,16 +40,19 @@ def register_value(op: UsbOp) -> int | None:
 
 
 class RealtekDecoder(FamilyDecoder):
-    """Defaults are the Jaguar (rtl88xxau) values; rf_sipi_address or rf_base_address locates path A RF writes."""
+    """Defaults are the Jaguar (rtl88xxau) values; rf_sipi_address or rf_base_address locates path A RF writes.
+    tx_descriptor_checksum_size: the descriptor bytes the dword 7 checksum covers (rtl8812a_cal_txdesc_chksum: 32)."""
 
     def __init__(self, hop_start_register: int = 0x0454, rf_sipi_address: int | None = 0xC90,
                  rf_base_address: int | None = None, tx_descriptor_size: int = 40,
+                 tx_descriptor_checksum_size: int = 32,
                  report_type_dword_and_mask: tuple[int, int] = (2, RXDESC24_RPT_SEL),
                  rx_packet_alignment: int = 8) -> None:
         self.hop_start_register = hop_start_register
         self.rf_sipi_address = rf_sipi_address
         self.rf_base_address = rf_base_address
         self.tx_descriptor_size = tx_descriptor_size
+        self.tx_descriptor_checksum_size = tx_descriptor_checksum_size
         self.report_type_dword_and_mask = report_type_dword_and_mask
         self.rx_packet_alignment = rx_packet_alignment
 
@@ -142,7 +145,7 @@ class RealtekDecoder(FamilyDecoder):
             source_dword = struct.unpack_from("<I", source.data, 4 * field.dword)[0]
             new_dword = (dword & ~mask) | (source_dword & mask)
             struct.pack_into("<I", data, 4 * field.dword, new_dword)
-            if 4 * field.dword < self.tx_descriptor_size:
+            if 4 * field.dword < self.tx_descriptor_checksum_size:
                 changed_bits = dword ^ new_dword
                 checksum_change ^= (changed_bits & 0xFFFF) ^ (changed_bits >> 16)
         checksum = struct.unpack_from("<H", data, TX_DESCRIPTOR_CHECKSUM_OFFSET)[0]

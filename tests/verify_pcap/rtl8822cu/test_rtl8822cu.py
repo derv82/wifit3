@@ -21,7 +21,7 @@ class TestRtl8822cu(VerifyCapture):
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RTL8822CUDriver
     DECODER = RealtekDecoder(hop_start_register=0x3C60, rf_sipi_address=None, rf_base_address=0x3C00,
-                             tx_descriptor_size=48)
+                             tx_descriptor_size=48, tx_descriptor_checksum_size=48)
     WAIVERS = [
         Waiver(WaiverReason.WIFIT3_ONLY, "rtl8822cu_xmit.c:119-120 SW_SEQ is the frame's; wifit3 _stamp_tx_seq",
                value_only_tx_op_field=HALMAC_TX_DESC_SW_SEQ),

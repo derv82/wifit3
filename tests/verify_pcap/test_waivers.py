@@ -165,7 +165,7 @@ def realtek_tx(sw_seq: int, checksum: int) -> UsbOp:
 
 
 class RealtekSwSeqValueOnly(VerifyCapture):
-    DECODER = RealtekDecoder(tx_descriptor_size=48)
+    DECODER = RealtekDecoder(tx_descriptor_size=48, tx_descriptor_checksum_size=48)
     WAIVERS = [Waiver(WaiverReason.WIFIT3_ONLY, "synthetic", value_only_tx_op_field=HALMAC_TX_DESC_SW_SEQ)]
 
 
@@ -179,6 +179,18 @@ def test_tx_op_field_compares_the_checksum() -> None:
     captured = realtek_tx(sw_seq=0, checksum=0x3005 ^ 0x002A)
     request = realtek_tx(sw_seq=1, checksum=0x3005 ^ 0x002A)
     assert not RealtekSwSeqValueOnly().is_same_request_except_waived_values(captured, request, RealtekSwSeqValueOnly.WAIVERS)
+
+
+class RealtekSwSeqOutsideChecksumValueOnly(VerifyCapture):
+    DECODER = RealtekDecoder(tx_descriptor_size=48)
+    WAIVERS = [Waiver(WaiverReason.WIFIT3_ONLY, "synthetic", value_only_tx_op_field=HALMAC_TX_DESC_SW_SEQ)]
+
+
+def test_tx_op_field_outside_the_checksum_span_leaves_the_checksum() -> None:
+    captured = realtek_tx(sw_seq=0, checksum=0x3005 ^ 0x002A)
+    request = realtek_tx(sw_seq=1, checksum=0x3005 ^ 0x002A)
+    assert RealtekSwSeqOutsideChecksumValueOnly().is_same_request_except_waived_values(
+        captured, request, RealtekSwSeqOutsideChecksumValueOnly.WAIVERS)
 
 
 REALTEK_ANY_VALUE_RUN = (RegisterOp(RegisterAccess.READ, REALTEK_OTHER_REGISTER, None),
