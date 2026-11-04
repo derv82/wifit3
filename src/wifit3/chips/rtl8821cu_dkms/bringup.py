@@ -141,6 +141,8 @@ def set_monitor_mode(t, info) -> None:
     mac.set_opmode_monitor(t)
     if info.bt_coexist:
         btc.media_status_notify_connect_2g(t)
+        # rtw_indicate_connect sets WIFI_ASOC_STATE [SRC] ioctl_cfg80211.c:2778-2781.
+        t.btc.wifi_asoc = True
     # No-BT card: the wifi-only connect notify is just switch_antenna, already done by the first
     # set_channel band-switch (btcwifionly.switch_antenna) — nothing further to route here.
 

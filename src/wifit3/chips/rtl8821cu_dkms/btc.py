@@ -20,7 +20,8 @@ Ported from:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 
 from . import firmware
 from .rf import write_rf_masked
@@ -195,6 +196,8 @@ class BtcState:
     tdma_timer_base: int = 0
     cur_ps_tdma: int = -1
     cur_ps_tdma_on: bool = False
+    wifi_asoc: bool = False             # the port's WIFI_ASOC_STATE (rtw_indicate_connect)
+    num_of_active_port: int = 0         # wifi_link_info_ext [SRC] :1043-1062
 
 
 def _wait_indirect_ready(t) -> None:
@@ -519,7 +522,9 @@ def _limited_rx(t, st: BtcState, force: bool, bt_ctrl_agg: bool, agg_size: int) 
 def _update_wifi_link_info(t, st: BtcState) -> None:
     """halbtc8821c1ant_update_wifi_link_info [SRC] :1080 (monitor / num_of_wifi_link==0 /
     BT-NCON-IDLE branch): low-penalty-RA off, tx-limit off, rx-limit off. The btc_get classifiers
-    are software; the only wire effect is `limited_tx`'s 4 backup reads."""
+    are software; the only wire effect is `limited_tx`'s 4 backup reads. An associated non-AP port
+    counts as WIFI_STA_CONNECTED [SRC] hal_btcoex.c:559-570."""
+    st.num_of_active_port = 1 if st.wifi_asoc else 0
     _low_penalty_ra(t, st, force=False, low_penalty=False, thres=0)
     _limited_tx(t, st, force=False, tx_limit_en=False, ampdu_limit_en=False)
     _limited_rx(t, st, force=False, bt_ctrl_agg=True, agg_size=64)
@@ -641,13 +646,15 @@ def media_status_notify_connect_2g(t) -> None:
     run_coex(t, _RSN_2GMEDIA)
 
 
+
+
 # ======================================================================
 # the BT-coex periodical (the 4th operational async producer)
 # ======================================================================
-# `hal_btcoex_Hanlder` [SRC] hal_btcoex.c:6069 runs every ~2 s from the driver's dynamic-check
-# thread (alongside the phydm watchdog). It calls `EXhalbtcoutsrc_periodical` ->
-# `ex_halbtc8821c1ant_periodical` [SRC] halbtc8821c1ant.c:5411, then a one-shot BT-FW-version
-# query. Opener = the BT hi-pri TX/RX counter read 0x0770 (unique in the operational phase).
+# `hal_btcoex_Hanlder` [SRC] hal_btcoex.c:6069 runs on each dynamic-check tick: the 1-ant
+# `ex_halbtc8821c1ant_periodical` [SRC] halbtc8821c1ant.c:5411, then the BT-FW-version query while
+# `bt_get_fw_ver` is 0. coex_dm->bt_status and the BT link info are set only by the C2H_BT_INFO
+# notify, which is not ported, so they keep their zeroed init (BT non-connected idle).
 
 REG_BT_HI_PRI_TXRX = 0x0770     # monitor_bt_ctr hi-pri counter [SRC] :590
 REG_BT_LO_PRI_TXRX = 0x0774     # monitor_bt_ctr lo-pri counter [SRC] :591
@@ -655,70 +662,143 @@ REG_BT_CNT_RST = 0x076E         # 0x76e=0xc resets the BT counters [SRC] :613
 _RSN_PERIODICAL = 0xF           # [SRC] halbtc8821c1ant.h:188
 _H2C_BT_MP_OPER = 0x67          # [SRC] include/hal_com_h2c.h:95 H2C_BT_MP_OPER
 _BT_OP_GET_BT_VERSION = 0x00    # [SRC] hal_btcoex.c:165
+_BTC_MPOPER_TIMEOUT_S = 0.050   # BTC_MPOPER_TIMEOUT [SRC] hal_btcoex.c:188
+_C2H_WIFI_FW_ACTIVE_RSP = 0     # [SRC] hal_btcoex.c:151
+_C2H_TRIG_BY_BT_FW = 1
+_BT_STATUS_OK = 0               # [SRC] hal_btcoex.c:157
 
 
 @dataclass
 class PeriodicalState:
-    """ex_halbtc8821c1ant_periodical carried state — the bits the time-less replay can't re-derive
-    from a chip read. `run_coex` re-runs only when a wifi/bt status change is detected
-    (`moniter_wifibt_status`): in monitor-idle that is the monitor port-count going 0->1 on the
-    first tick, then steady, so the run fires once. The BT-FW-version query also fires once — the
-    real C2H reply caches `bt_get_fw_ver` non-zero, which gates out later ticks."""
-    first_tick: bool = True
-    fw_ver_queried: bool = False
-    bt_mp_oper_seq: int = 0
+    """The periodical's function statics and the hal_btcoex BT_MP_OPER globals."""
+    cnt_bt_pre: int = 0                     # monitor_bt_ctr static [SRC] :583
+    bt_disable_cnt: int = 0                 # monitor_bt_enable static [SRC] :771
+    bt_disabled: bool = False               # coex_sta->bt_disabled
+    pre_bt_off: bool = False                # moniter_wifibt_status statics [SRC] :821-834
+    pre_num_of_wifi_link: int = 0
+    bt_get_fw_ver: int = 0                  # bt_info.bt_get_fw_ver [SRC] hal_btcoex.c:6075
+    get_bt_fw_ver_cnt: int = 0
+    bt_real_fw_ver: int = 0
+    bt_mp_oper_seq: int = 0                 # GLBtcBtMpOperSeq
+    bt_mp_rpt_wait: bool = False            # GLBtcBtMpRpt* [SRC] hal_btcoex.c:788-797
+    bt_mp_rpt_wifi_ok: bool = False
+    bt_mp_rpt_bt_ok: bool = False
+    bt_mp_rpt_seq: int = 0
+    bt_mp_rpt_status: int = 0
+    bt_mp_rpt_rsp: bytes = b""
+    bt_mp_rpt_sema: threading.Event = field(default_factory=threading.Event)
 
 
-def _monitor_bt_ctr(t) -> None:
-    """halbtc8821c1ant_monitor_bt_ctr [SRC] :576 — sample the BT hi/lo-priority TX/RX counters and
-    reset them. The `is_run_coex` return (a >50 counter delta while BT is NCON_IDLE) is FALSE in the
-    capture (the counters read 0), so it never forces run_coex; the fold-in stats are software."""
-    t.read32(REG_BT_HI_PRI_TXRX)
-    t.read32(REG_BT_LO_PRI_TXRX)
+def _monitor_bt_ctr(t, st: PeriodicalState) -> bool:
+    """halbtc8821c1ant_monitor_bt_ctr [SRC] :576 — sample and reset the BT hi/lo-priority counters;
+    TRUE (run coex) when their sum moves by more than 50 while BT is non-connected idle."""
+    u32tmp = t.read32(REG_BT_HI_PRI_TXRX)
+    hp_tx, hp_rx = u32tmp & 0xFFFF, u32tmp >> 16
+    u32tmp = t.read32(REG_BT_LO_PRI_TXRX)
+    lp_tx, lp_rx = u32tmp & 0xFFFF, u32tmp >> 16
     t.write8(REG_BT_CNT_RST, 0x0C)
+    if hp_tx == hp_rx == lp_tx == lp_rx == 0xFFFF:       # bt_ctr_ok FALSE [SRC] :616-624
+        return False
+    cnt_bt_all = hp_tx + hp_rx + lp_tx + lp_rx
+    is_run_coex = st.cnt_bt_pre > cnt_bt_all + 50 or cnt_bt_all > st.cnt_bt_pre + 50
+    st.cnt_bt_pre = cnt_bt_all
+    return is_run_coex
 
 
 def _monitor_wifi_ctr(t, st: BtcState) -> None:
-    """halbtc8821c1ant_monitor_wifi_ctr [SRC] :669 — the CCK-lock / wl-noisy identification reads
-    phydm's cached PHY counters (software, not the wire). The only register effect is the WL-FW-dbg
-    H2C 0x69 {0x8}, gated on `cur_ps_tdma_on` (the fw-version outer gate is TRUE for this card's FW).
-    PS-TDMA is off in monitor, so this stays silent until a PS-TDMA-on action sets the flag."""
+    """halbtc8821c1ant_monitor_wifi_ctr [SRC] :669 — the WL-FW-dbg H2C 0x69 {0x8} while PS-TDMA is
+    on. Its CCK-lock / noisy-level outputs only feed the wifi_connected checks, FALSE in monitor."""
     if st.cur_ps_tdma_on:
         _fill_h2c(t, 0x69, (0x8,))
 
 
-def _read_scbd(t) -> int:
-    """halbtc8821c1ant_read_scbd [SRC] :487 — read the 15-bit BT scoreboard mirror (0xaa). Called by
-    monitor_bt_enable; the rest of that function (bt_disable_cnt bookkeeping) is software."""
-    return t.read16(REG_BT_SCOREBOARD_W) & 0x7FFF
+def _monitor_bt_enable(t, st: PeriodicalState) -> None:
+    """halbtc8821c1ant_monitor_bt_enable [SRC] :768 — scoreboard BIT1 is BT on; two reads off in a
+    row mark BT disabled."""
+    bt_active = bool(t.read16(REG_BT_SCOREBOARD_W) & 0x7FFF & (1 << 1))
+    bt_disabled = False
+    if bt_active:
+        st.bt_disable_cnt = 0
+    else:
+        st.bt_disable_cnt += 1
+        if st.bt_disable_cnt >= 2:
+            bt_disabled = True
+            st.bt_disable_cnt = 2
+    st.bt_disabled = bt_disabled
 
 
-def _get_bt_patch_ver(t, st: PeriodicalState) -> None:
-    """hal_btcoex_Hanlder's post-periodical BT-FW-version query [SRC] hal_btcoex.c:6075 ->
-    halbtcoutsrc_GetBtPatchVer :859 -> _btmpoper_cmd(BT_OP_GET_BT_VERSION, 0, NULL, 0) :775. The
-    H2C is BT_MP_OPER (0x67) carrying buf = {(seq<<4)|opcodever, opcode} = {0, 0} on the first send
-    (seq starts 0), so the message-box word reads 0x00000067. The function then blocks on the C2H
-    reply (interrupt-IN, off the gate's replay) — we send the H2C and return."""
+def _moniter_wifibt_status(st: PeriodicalState, btc_st: BtcState) -> bool:
+    """halbtc8821c1ant_moniter_wifibt_status [SRC] :815. Monitor is never wifi_connected (MI_LINKED
+    needs a linked STA) and link_mode stays BTC_LINK_NONE, so only BT on/off and the port count move."""
+    if st.bt_disabled != st.pre_bt_off:
+        st.pre_bt_off = st.bt_disabled
+        st.bt_get_fw_ver = 0
+        return True
+    if btc_st.num_of_active_port != st.pre_num_of_wifi_link:
+        st.pre_num_of_wifi_link = btc_st.num_of_active_port
+        return True
+    return False
+
+
+def bt_mp_rpt_notify(st: PeriodicalState, payload: bytes) -> None:
+    """hal_btcoex_BtMpRptNotify [SRC] hal_btcoex.c:5987 — the C2H_BT_MP_INFO reply to a BT_MP_OPER
+    H2C: the WiFi-FW ack, then the BT-FW response; both in wakes the waiting `_btmpoper_cmd`."""
+    if not st.bt_mp_rpt_wait or len(payload) < 3:
+        return
+    extid = payload[0]
+    if extid == _C2H_WIFI_FW_ACTIVE_RSP:
+        st.bt_mp_rpt_wifi_ok = True
+    elif extid == _C2H_TRIG_BY_BT_FW:
+        st.bt_mp_rpt_bt_ok = True
+        st.bt_mp_rpt_status = payload[1] & 0xF
+        st.bt_mp_rpt_seq = payload[2] >> 4
+        st.bt_mp_rpt_rsp = bytes(payload[3:])
+    else:
+        return
+    if st.bt_mp_rpt_wifi_ok and st.bt_mp_rpt_bt_ok:
+        st.bt_mp_rpt_wait = False
+        st.bt_mp_rpt_sema.set()
+
+
+def _btmpoper_cmd(t, st: PeriodicalState, opcode: int, opcodever: int) -> bool:
+    """_btmpoper_cmd [SRC] hal_btcoex.c:774 — send BT_MP_OPER {(seq<<4)|opcodever, opcode} and block
+    up to BTC_MPOPER_TIMEOUT on the C2H reply. TRUE is BT_STATUS_BT_OP_SUCCESS."""
     seq = st.bt_mp_oper_seq & 0xF
     st.bt_mp_oper_seq += 1
-    _fill_h2c(t, _H2C_BT_MP_OPER, ((seq << 4), _BT_OP_GET_BT_VERSION))
+    st.bt_mp_rpt_wait = True
+    st.bt_mp_rpt_wifi_ok = False
+    st.bt_mp_rpt_bt_ok = False
+    st.bt_mp_rpt_status = 0
+    st.bt_mp_rpt_sema.clear()
+    _fill_h2c(t, _H2C_BT_MP_OPER, ((opcodever & 0xF) | (seq << 4), opcode))
+    st.bt_mp_rpt_sema.wait(_BTC_MPOPER_TIMEOUT_S)
+    st.bt_mp_rpt_wait = False                            # _btmpoper_timer_hdl [SRC] :763
+    if not (st.bt_mp_rpt_wifi_ok and st.bt_mp_rpt_bt_ok):
+        return False
+    if seq != st.bt_mp_rpt_seq:
+        return False
+    return st.bt_mp_rpt_status == _BT_STATUS_OK
+
+
+def _get_bt_patch_ver(t, st: PeriodicalState) -> int:
+    """halbtcoutsrc_GetBtPatchVer [SRC] hal_btcoex.c:859 — at most 6 successful queries; the 8821C
+    has the HW mailbox (halbtcoutsrc_IsHwMailboxExist :289)."""
+    if st.get_bt_fw_ver_cnt <= 5:
+        if _btmpoper_cmd(t, st, _BT_OP_GET_BT_VERSION, 0):
+            st.bt_real_fw_ver = int.from_bytes(st.bt_mp_rpt_rsp[:4].ljust(4, b"\x00"), "little")
+            st.get_bt_fw_ver_cnt += 1
+    return st.bt_real_fw_ver
 
 
 def periodical(t, st: PeriodicalState) -> None:
-    """One BT-coex periodical tick, in wire order [SRC] ex_halbtc8821c1ant_periodical :5411 wrapped
-    by hal_btcoex_Hanlder :6069. `auto_report` is on so the leading query_bt_info is skipped; the
-    downcounts / freeze / moniter_wifibt_status bookkeeping is software.
-
-    Wire effects: monitor_bt_ctr (counters + reset), monitor_wifi_ctr (silent in monitor),
-    update_wifi_link_info (the limited_tx backup reads), monitor_bt_enable (read_scbd); then the
-    gated run_coex (first tick) and the gated post-periodical BT-FW-version query (first tick)."""
-    _monitor_bt_ctr(t)
-    _monitor_wifi_ctr(t, t.btc)
-    _update_wifi_link_info(t, t.btc)
-    _read_scbd(t)
-    if st.first_tick:
+    """hal_btcoex_Hanlder [SRC] hal_btcoex.c:6069 -> ex_halbtc8821c1ant_periodical [SRC] :5411.
+    `auto_report` is on so query_bt_info is skipped; the BT-info downcounts never arm here."""
+    btc_st = t.btc
+    bt_ctr_change = _monitor_bt_ctr(t, st)
+    _monitor_wifi_ctr(t, btc_st)
+    _update_wifi_link_info(t, btc_st)
+    _monitor_bt_enable(t, st)
+    if _moniter_wifibt_status(st, btc_st) or bt_ctr_change:
         run_coex(t, _RSN_PERIODICAL)
-    if not st.fw_ver_queried:
-        _get_bt_patch_ver(t, st)
-        st.fw_ver_queried = True
-    st.first_tick = False
+    if st.bt_get_fw_ver == 0:
+        st.bt_get_fw_ver = _get_bt_patch_ver(t, st)

@@ -19,7 +19,7 @@ are skipped.
 """
 from __future__ import annotations
 
-from typing import Iterator, NamedTuple, Tuple
+from typing import Callable, Iterator, NamedTuple, Optional, Tuple
 
 RXDESC_SIZE = 24            # [SRC] rtw_recv.h RXDESC_SIZE (6 dwords)
 FCS_LEN = 4                 # IEEE80211_FCS_LEN
@@ -101,13 +101,14 @@ def _rnd8(x: int) -> int:
     return (x + 7) & ~7
 
 
-def iter_frames(buf: bytes, cck_new_agc: bool = False,
-                cck_report_type: int = 1) -> Iterator[Tuple[bytes, int]]:
+def iter_frames(buf: bytes, cck_new_agc: bool = False, cck_report_type: int = 1,
+                on_c2h: Optional[Callable[[int, bytes], None]] = None) -> Iterator[Tuple[bytes, int]]:
     """recvbuf2recvframe — walk the aggregated bulk-IN buffer, yielding (frame, rssi_dbm) for each
-    good NORMAL_RX MPDU, FCS stripped. C2H reports and crc/icv-error frames are skipped but still
-    advance the walk; only a malformed length ends it. The PHY-status passed to ``decode_rssi`` is
-    the ``drvinfo_sz`` block right after the desc (the ``shift_sz`` pad sits after it, before the
-    MPDU)."""
+    good NORMAL_RX MPDU, FCS stripped. A C2H packet goes to ``on_c2h(c2h_id, payload)`` with the
+    rest of the transfer as its payload, as c2h_handler_rtl8821c takes it [SRC] rtl8821cu_recv.c:132-136,
+    rtl8821c_cmd.c:401-405. crc/icv-error frames are skipped but still advance the walk; only a
+    malformed length ends it. The PHY-status passed to ``decode_rssi`` is the ``drvinfo_sz`` block
+    right after the desc (the ``shift_sz`` pad sits after it, before the MPDU)."""
     transfer_len = len(buf)
     off = 0
     while transfer_len >= RXDESC_SIZE:
@@ -115,7 +116,11 @@ def iter_frames(buf: bytes, cck_new_agc: bool = False,
         pkt_offset = RXDESC_SIZE + d.drvinfo_sz + d.shift_sz + d.pkt_len
         if d.pkt_len <= 0 or pkt_offset > transfer_len:
             break
-        if not (d.crc_err or d.icv_err or d.rpt_sel):
+        if d.rpt_sel and not (d.crc_err or d.icv_err):
+            if on_c2h is not None:
+                hdr = off + RXDESC_SIZE
+                on_c2h(buf[hdr], bytes(buf[hdr + 2:off + transfer_len]))
+        elif not (d.crc_err or d.icv_err):
             phystart = off + RXDESC_SIZE
             start = phystart + d.drvinfo_sz + d.shift_sz
             frame = buf[start:start + d.pkt_len]

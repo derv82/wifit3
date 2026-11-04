@@ -47,6 +47,7 @@ CHANNELS_5G = [36, 40, 44, 48, 149, 153, 157, 161, 165]
 # only TXPKTSIZE + BMC (from addr1) + the XOR checksum vary, all derived from the 802.11 frame.
 _QSEL_MGNT = 0x12              # [SRC] halmac_type.h HALMAC_TXDESC_QSEL_MGNT
 _RAID_INJECT = 1              # [WIRE] aireplay tx-desc dw1[20:16]
+_C2H_BT_MP_INFO = 0x0B         # [SRC] hal_com_c2h.h:58
 
 _WIFI_INTF_CLASS = 0xFF        # combo card: the WiFi function is the vendor-specific interface
                                # (class 0xFF, #2); the Bluetooth interfaces 0/1 are class 0xE0
@@ -223,12 +224,10 @@ class Rtl8821cuDkmsDriver(Driver):
 
     def _dispatch(self, buf: bytes) -> None:
         """Loop side: split the aggregated bulk-IN buffer into (frame, rssi) pairs (FCS already
-        stripped) and fan each parsed dict to the rx callback."""
+        stripped) and fan each parsed dict to the rx callback; C2H packets go to ``_c2h``."""
         cb = self._rx_cb
-        if cb is None and not self._ack_detect_on:
-            return
         for frame, rssi in iter_frames(buf, self.transport.cck_new_agc,
-                                       self.transport.cck_agc_report_type):
+                                       self.transport.cck_agc_report_type, self._c2h):
             # A 10-byte 0xD4 frame is an ACK (the parser drops control frames); the base tallies it
             # iff the ACK tap is armed and RA=frame[4:10] is a MAC we inject as.
             if len(frame) == 10 and frame[0] == 0xD4:
@@ -238,6 +237,12 @@ class Rtl8821cuDkmsDriver(Driver):
                 parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
                 if parsed is not None:
                     cb(parsed)
+
+    def _c2h(self, c2h_id: int, payload: bytes) -> None:
+        """c2h_handler_rtl8821c's direct C2H_BT_MP_INFO arm [SRC] rtl8821c_cmd.c:458, hal_intf.c:1298;
+        the other C2H ids go through the cmd-thread c2h_handler, not ported."""
+        if c2h_id == _C2H_BT_MP_INFO and self._btc_periodical_state is not None:
+            btc.bt_mp_rpt_notify(self._btc_periodical_state, payload)
 
     async def _enable_rx_acks(self) -> None:
         """No-op: set_opmode_monitor accept-alls RXFLTMAP1, so the recipient's ACK control frames
