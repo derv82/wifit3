@@ -36,7 +36,10 @@ from ..rx_reader import RxReaderThread
 from . import bb, chan, dig, efuse, firmware, led, mac, monitor, phy_cond, rf, txpower, watchdog
 from .rx import iter_frames
 from .transport import RTL8821AUDkmsTransport
-from .tx import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G, RATEID_IDX_VHT_1SS, update_txdesc
+from .tx import (
+    DESC_RATE1M, DESC_RATE6M, IEEE80211_RADIOTAP_HEADER_SIZE, RATEID_IDX_B, RATEID_IDX_G, RATEID_IDX_VHT_1SS,
+    update_txdesc,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +344,8 @@ class Rtl8821auDkmsDriver(Driver):
         payload = update_txdesc(frame_bytes, rate_id=rate_id, hw_rate=hw_rate)
         async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
-        self._dm.tx_bytes += len(frame_bytes)   # rtw_monitor_xmit_entry tx_bytes (rtw_xmit.c:5168)
+        # rtw_monitor_xmit_entry counts skb->len, the radiotap header included (rtw_xmit.c:5168).
+        self._dm.tx_bytes += IEEE80211_RADIOTAP_HEADER_SIZE + len(frame_bytes)
         return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:

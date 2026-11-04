@@ -24,6 +24,8 @@ PACKET_OFFSET_SZ = 8            # include/rtw_xmit.h:239
 USB_HIGH_SPEED_BULK_SIZE = 512  # include/usb_ops.h:136; the 8821AU is a USB 2.0 device
 # rtw_monitor_xmit_entry sets retry_ctrl = _FALSE (rtw_xmit.c:4989): rtl8812au_xmit.c:306.
 MGNT_DATA_RETRY_LIMIT = 12
+# struct ieee80211_radiotap_header (include/net/ieee80211_radiotap.h): wifit3 injects with no radiotap fields.
+IEEE80211_RADIOTAP_HEADER_SIZE = 8
 
 
 def txdesc_checksum(desc: bytes | bytearray) -> int:
