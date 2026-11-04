@@ -38,6 +38,37 @@ DEAUTH_REASON_CLASS3 = 7
 DEAUTH_DURATION = 0x013A
 
 
+def ieee80211_hdrlen(frame_control: int) -> int:
+    """802.11 header length mac80211 requires of an injected frame [SRC net/wireless/util.c:430-473]."""
+    ftype = frame_control & C.IEEE80211_FCTL_FTYPE
+    if ftype == C.IEEE80211_FTYPE_EXT:
+        return 4
+    hdrlen = 24
+    if ftype == C.IEEE80211_FTYPE_DATA:
+        a4 = C.IEEE80211_FCTL_TODS | C.IEEE80211_FCTL_FROMDS
+        if (frame_control & a4) == a4:                # ieee80211_has_a4
+            hdrlen = 30
+        if frame_control & C.IEEE80211_STYPE_QOS_DATA:
+            hdrlen += C.IEEE80211_QOS_CTL_LEN
+            if frame_control & C.IEEE80211_FCTL_ORDER:
+                hdrlen += C.IEEE80211_HT_CTL_LEN
+    elif ftype == C.IEEE80211_FTYPE_MGMT:
+        if frame_control & C.IEEE80211_FCTL_ORDER:
+            hdrlen += C.IEEE80211_HT_CTL_LEN
+    elif (frame_control & 0x00E0) == 0x00C0:          # ACK, CTS
+        hdrlen = 10
+    else:
+        hdrlen = 16
+    return hdrlen
+
+
+def ieee80211_get_qos_ctl(frame: bytes) -> int:
+    """Offset of a QoS data frame's QoS control field [SRC include/linux/ieee80211.h:4540-4552]."""
+    if (frame[1] & 0x03) == 0x03:                     # ieee80211_has_a4
+        return 30
+    return 24
+
+
 def select_queue(frame: bytes) -> int:
     """The AC queue mac80211 puts an injected frame on [SRC net/mac80211/tx.c ieee80211_monitor_start_xmit,
     wme.c ieee80211_select_queue_80211]; a monitor vif has no ACM bits, so ieee80211_downgrade_queue keeps it."""
@@ -46,8 +77,7 @@ def select_queue(frame: bytes) -> int:
         return C.IEEE802_1D_TO_AC[7]
     if not (fc0 & 0x80):                              # data without QoS: priority 0
         return C.IEEE802_1D_TO_AC[0]
-    qos_offset = 30 if (frame[1] & 0x03) == 0x03 else 24    # ieee80211_get_qos_ctl
-    return C.IEEE802_1D_TO_AC[frame[qos_offset] & 0x07]       # IEEE80211_QOS_CTL_TAG1D_MASK
+    return C.IEEE802_1D_TO_AC[frame[ieee80211_get_qos_ctl(frame)] & 0x07]    # IEEE80211_QOS_CTL_TAG1D_MASK
 
 
 def build_txdesc(frame_len: int, frame_control: int, qid: int, entry_index: int, *, use_no_ack: bool = True,
