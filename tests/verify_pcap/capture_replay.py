@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
 from tests.verify_pcap.virtual_clock_loop import (
@@ -43,15 +43,22 @@ class CaptureReplay:
     def __init__(self, ops: list[UsbOp], is_same_request: Callable[[UsbOp, UsbOp], bool],
                  is_driver_only_request: Callable[[UsbOp, bool], bool],
                  skip_capture_only_run_at: Callable[[list[UsbOp], int], tuple[list[UsbOp], set[int]] | None],
+                 is_racing_extra_request: Callable[[Sequence[UsbOp], UsbOp], bool],
                  loop: VirtualClockEventLoop) -> None:
         """``is_same_request(captured, request)`` compares a driver request to a captured op;
         ``is_driver_only_request(request, cursor_differs)`` accepts a request the capture does not have;
-        ``skip_capture_only_run_at(ops, position)``: the ops without the capture-only run there, and the positions to waive."""
+        ``skip_capture_only_run_at(ops, position)``: the ops without the capture-only run there, and the positions to waive;
+        ``is_racing_extra_request(caller_ops, request)``: Linux makes ``request`` after an hrtimer task's last two ops
+        or not, by a race."""
         self.ops = ops
         self.reproduced_by: list[str | None] = [None] * len(ops)
         self._is_same_request = is_same_request
         self._is_driver_only_request = is_driver_only_request
         self._skip_capture_only_run_at = skip_capture_only_run_at
+        self._is_racing_extra_request = is_racing_extra_request
+        # Per hrtimer task, the position of its op after which it made a racing extra request.
+        self._racing_extra_request_after: dict[str, int] = {}
+        self.racing_extra_request_count = 0
         self.next_position_by_caller: dict[str, int] = {}
         self.divergence: Divergence | None = None
         self.refused_read_by_caller: dict[str, RefusedRead] = {}
@@ -81,11 +88,15 @@ class CaptureReplay:
                 self._driver_thread_state[threading.current_thread()] = PROCESSING_REPLY
             request_time = self._loop.virtual_time
             start = max(self.next_position_by_caller.get(caller, 0), self._advance_first_unreproduced())
+            passed_over = False
             while True:
                 position = self._next_unreproduced(start)
                 if position is None:
                     if self.driver_closing:
                         return None
+                    racing_reply = self._racing_extra_reply(request, caller)
+                    if racing_reply is not None:
+                        return racing_reply
                     raise self._diverge(None, request, caller, "request after the last captured op")
                 cursor_differs = not self._is_same_request(self.ops[position], request)
                 if self._is_driver_only_request(request, cursor_differs):
@@ -95,7 +106,6 @@ class CaptureReplay:
                             return self.ops[earlier]
                     return None
                 if not cursor_differs:
-                    self._loop.advance_clock(self.ops[position].completion_time)
                     break
                 # Pass over unreproduced ops only if a driver task was due before the first of them.
                 due_time = self._loop.earliest_due_driver_timer()
@@ -105,11 +115,14 @@ class CaptureReplay:
                     while candidate is not None and not self._is_same_request(self.ops[candidate], request):
                         candidate = self._next_unreproduced(candidate + 1)
                 if candidate is not None:
-                    # The clock stays: the ops passed over are not reproduced yet.
                     position = candidate
+                    passed_over = True
                     break
                 self.waive_capture_only_run_at(position)
                 if self.reproduced_by[position] is None:
+                    racing_reply = self._racing_extra_reply(request, caller)
+                    if racing_reply is not None:
+                        return racing_reply
                     raise self._diverge(position, request, caller, "request differs from the capture")
             timer_tolerance = self._loop.timer_tolerance_by_woken_caller.pop(caller, None)
             if timer_tolerance is not None:
@@ -123,8 +136,14 @@ class CaptureReplay:
                         captured_time = self.ops[earlier].submit_time
                     earlier -= 1
                 if captured_time - request_time > timer_tolerance:
+                    racing_reply = self._racing_extra_reply(request, caller)
+                    if racing_reply is not None:
+                        return racing_reply
                     raise self._diverge(position, request, caller, f"the driver task's timer fired "
                                         f"{(captured_time - request_time) * 1000:.1f} ms before the capture's op")
+            if not passed_over:
+                # Passing over, the clock stays: the ops passed over are not reproduced yet.
+                self._loop.advance_clock(self.ops[position].completion_time)
             if (self._loop.jiffy_zero_time is None and caller != MAIN_CALLER
                     and caller not in self._loop.hrtimer_callers
                     and self._loop.earliest_due_driver_timer() is not None):
@@ -134,6 +153,24 @@ class CaptureReplay:
             self.next_position_by_caller[caller] = position + 1
             self._loop.completion_time_by_caller[caller] = self.ops[position].completion_time
             return self.ops[position]
+
+    def _racing_extra_reply(self, request: UsbOp, caller: str) -> UsbOp | None:
+        """For a racing extra request the capture does not have, made once after the caller's last op: that op."""
+        if caller not in self._loop.hrtimer_callers:
+            return None
+        caller_positions: list[int] = []
+        earlier = self.next_position_by_caller.get(caller, 0) - 1
+        while earlier >= 0 and len(caller_positions) < 2:
+            if self.reproduced_by[earlier] == caller:
+                caller_positions.insert(0, earlier)
+            earlier -= 1
+        if not caller_positions or self._racing_extra_request_after.get(caller) == caller_positions[-1]:
+            return None
+        if not self._is_racing_extra_request([self.ops[position] for position in caller_positions], request):
+            return None
+        self._racing_extra_request_after[caller] = caller_positions[-1]
+        self.racing_extra_request_count += 1
+        return self.ops[caller_positions[-1]]
 
     def read(self, endpoint: int, caller: str) -> UsbOp | None:
         """The next captured IN op on ``endpoint``, or None while the replay has not reached it."""

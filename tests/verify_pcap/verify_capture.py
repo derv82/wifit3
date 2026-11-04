@@ -154,6 +154,10 @@ class FamilyDecoder(ABC):
         """``op`` with ``source``'s value in each of ``fields``; WAIVERS compare through this."""
         raise NotImplementedError(f"{type(self).__name__} does not edit TX ops")
 
+    def is_racing_extra_request(self, caller_ops: Sequence[UsbOp], request: UsbOp) -> bool:
+        """Whether Linux makes ``request`` after an hrtimer task's last ops ``caller_ops`` or not, by a race."""
+        return False
+
     def skip_capture_only_ops(self, ops: list[UsbOp], positions: set[int]) -> tuple[list[UsbOp], set[int]]:
         """The ops as if the capture-only ops at ``positions`` were never made, and the positions to waive."""
         return ops, positions
@@ -225,7 +229,8 @@ class VerifyCapture:
                     return None
             return self.DECODER.skip_capture_only_ops(ops, set(occurrence))
 
-        replay = CaptureReplay(capture.ops, is_same_request, is_driver_only_request, skip_capture_only_run_at, loop)
+        replay = CaptureReplay(capture.ops, is_same_request, is_driver_only_request, skip_capture_only_run_at,
+                               self.DECODER.is_racing_extra_request, loop)
         device = FakeUsbDevice(replay, capture.device_descriptor, capture.configuration_descriptor,
                                capture.device_id.bus or 0, capture.device_id.address or 0)
 
@@ -540,6 +545,8 @@ class VerifyCapture:
         lines = [f"reproduced {produced} of {len(replay.ops)} ops"
                  + "".join(f", {caller} {count}" for caller, count in reproduced_counts.items()
                            if caller is not None and caller != WAIVED)]
+        if replay.racing_extra_request_count:
+            lines.append(f"racing extra requests {replay.racing_extra_request_count} (not in the capture)")
         for waiver, count in waived_counts.items():
             lines.append(f"waived {count:5d}  {waiver.describe()}")
         for label, count in capture.ignored_counts.items():

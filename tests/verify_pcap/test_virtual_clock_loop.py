@@ -30,7 +30,8 @@ def replay_driver_task_sleeping(sleep: float, second_op_time: float, is_hrtimer:
     hrtimer_callers = frozenset({watchdog.__qualname__}) if is_hrtimer else frozenset()
     loop = VirtualClockEventLoop(0.0, lambda: True, hrtimer_callers)
     replay = CaptureReplay(ops, lambda captured, request: captured.same_request(request),
-                           lambda request, cursor_differs: False, lambda ops, position: None, loop)
+                           lambda request, cursor_differs: False, lambda ops, position: None,
+                           lambda caller_ops, request: False, loop)
 
     async def main() -> None:
         try:
@@ -94,7 +95,8 @@ def test_woken_driver_task_passes_over_a_main_op_captured_within_its_timer_toler
                                       (0x4, fire_time + 0.0002)]]
     loop = VirtualClockEventLoop(0.0, lambda: True)
     replay = CaptureReplay(ops, lambda captured, request: captured.same_request(request),
-                           lambda request, cursor_differs: False, lambda ops, position: None, loop)
+                           lambda request, cursor_differs: False, lambda ops, position: None,
+                           lambda caller_ops, request: False, loop)
 
     async def watchdog() -> None:
         replay.match_request(ops[0], current_caller_name())
@@ -122,7 +124,8 @@ def test_hrtimer_read_does_not_wait_on_another_callers_op() -> None:
 
     loop = VirtualClockEventLoop(0.0, lambda: True, frozenset({hrtimer_task.__qualname__}))
     replay = CaptureReplay(ops, lambda captured, request: captured.same_request(request),
-                           lambda request, cursor_differs: False, lambda ops, position: None, loop)
+                           lambda request, cursor_differs: False, lambda ops, position: None,
+                           lambda caller_ops, request: False, loop)
 
     async def main() -> None:
         try:

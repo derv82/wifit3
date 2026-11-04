@@ -139,6 +139,19 @@ class Rt2800Decoder(FamilyDecoder):
                 return channel
         return None
 
+    def is_racing_extra_request(self, caller_ops: Sequence[UsbOp], request: UsbOp) -> bool:
+        """A TX_STA_FIFO read after a valid then an empty one: the empty read's completion re-arms the 1 ms hrtimer only
+        if txdone_work has not yet completed the entry (rt2800usb.c:94-140, 456-476)."""
+        if len(caller_ops) != 2 or not is_register_access(request, C.USB_MULTI_READ, C.TX_STA_FIFO):
+            return False
+        values: list[int] = []
+        for op in caller_ops:
+            value = register_value(op)
+            if not is_register_access(op, C.USB_MULTI_READ, C.TX_STA_FIFO) or value is None:
+                return False
+            values.append(value)
+        return bool(values[0] & C.TX_STA_FIFO_VALID) and not values[1] & C.TX_STA_FIFO_VALID
+
     def register_ops(self, op: UsbOp) -> list[RegisterOp]:
         """A multi read or write is one 32-bit access per dword from wIndex (rt2x00usb_register_multiwrite); a single
         write is one 16-bit write of wValue (rt2x00usb_vendor_request_sw). A read with no reply yet has value None."""
