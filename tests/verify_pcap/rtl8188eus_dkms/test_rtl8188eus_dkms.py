@@ -23,4 +23,4 @@ class TestRtl8188eusDkms(VerifyCapture):
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = Rtl8188eusDkmsDriver
     DECODER = RealtekDecoder(hop_start_register=0x0E08, rf_sipi_address=0x0840, tx_descriptor_size=32,
-                             report_type_dword_and_mask=(3, 0x3 << 14))
+                             report_type_dword_and_mask=(3, 0x3 << 14), rx_packet_alignment=4)

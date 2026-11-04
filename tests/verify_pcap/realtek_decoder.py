@@ -39,12 +39,14 @@ class RealtekDecoder(FamilyDecoder):
 
     def __init__(self, hop_start_register: int = 0x0454, rf_sipi_address: int | None = 0xC90,
                  rf_base_address: int | None = None, tx_descriptor_size: int = 40,
-                 report_type_dword_and_mask: tuple[int, int] = (2, RXDESC24_RPT_SEL)) -> None:
+                 report_type_dword_and_mask: tuple[int, int] = (2, RXDESC24_RPT_SEL),
+                 rx_packet_alignment: int = 8) -> None:
         self.hop_start_register = hop_start_register
         self.rf_sipi_address = rf_sipi_address
         self.rf_base_address = rf_base_address
         self.tx_descriptor_size = tx_descriptor_size
         self.report_type_dword_and_mask = report_type_dword_and_mask
+        self.rx_packet_alignment = rx_packet_alignment
 
     def describe(self, op: UsbOp) -> str:
         status = f"  status {op.status}" if op.status else ""
@@ -137,5 +139,6 @@ class RealtekDecoder(FamilyDecoder):
             driver_info_size = ((dw0 >> 16) & 0xF) * 8
             shift = (dw0 >> 24) & 0x3
             kinds.append("C2H" if report_type else "RX")
-            offset += (packet_length + driver_info_size + shift + RXDESC24_SIZE + 7) // 8 * 8
+            packet_size = packet_length + driver_info_size + shift + RXDESC24_SIZE
+            offset += (packet_size + self.rx_packet_alignment - 1) // self.rx_packet_alignment * self.rx_packet_alignment
         return kinds
