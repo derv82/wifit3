@@ -218,7 +218,7 @@ class Rtl8821cuDkmsDriver(Driver):
 
     async def _led_blink_loop(self) -> None:
         """SwLedBlink9 re-arms LED0's BlinkTimer after each blink [SRC] hal_usb_led.c:939. Not under
-        _io_lock: the blink runs on a workqueue, not the cmd thread [SRC] hal_usb_led.c:1868."""
+        _io_lock: the blink runs on a workqueue, not the cmd thread [SRC] hal_usb_led.c:1864."""
         loop = asyncio.get_running_loop()
         state = led.LedBlinkState()
         try:
