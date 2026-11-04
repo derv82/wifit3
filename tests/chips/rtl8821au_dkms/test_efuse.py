@@ -124,9 +124,9 @@ def test_board_option_country_usb_and_mac_parsers():
 def test_hidden_usb_type_decode(monkeypatch):
     hidden = {efuse.C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_0: 0x04,
               efuse.C.EFUSE_HIDDEN_USB_TYPE_WMODE_0: 0x08}
-    monkeypatch.setattr(efuse, "_efuse_one_byte_read", lambda t, addr: hidden.get(addr, 0xFF))
+    monkeypatch.setattr(efuse, "_efuse_one_byte_read", lambda t, addr, is_chip_vendor_smic: hidden.get(addr, 0xFF))
 
-    assert efuse._read_usb_type(_UnusedTransport(), _map()) == (2, 2, True)
+    assert efuse._read_usb_type(_UnusedTransport(), _map(), False) == (2, 2, True)
 
 
 
@@ -213,17 +213,35 @@ class SlowEfuse:
     def write8(self, a, v):
         self.ops.append(("W8", a, v))
 
+    def read16(self, a):
+        self.ops.append(("R16", a))
+        return 0x0F00
+
+    def write16(self, a, v):
+        self.ops.append(("W16", a, v))
+
 
 def test_one_byte_read_timeout_dumps_efuse_ctrl(monkeypatch):
     # rtw_efuse.c:2366-2372: past 100 polls the byte is 0xFF and EFUSE_CTRL is read32 for the log.
     monkeypatch.setattr(efuse.time, "sleep", lambda s: None)
     t = SlowEfuse(ready_after=150)
-    assert efuse._efuse_one_byte_read(t, 0x3FB) == 0xFF
+    assert efuse._efuse_one_byte_read(t, 0x3FB, False) == 0xFF
     assert t.ops[-1] == ("R32", efuse.C.REG_EFUSE_CTRL)
 
 
 def test_one_byte_read_in_time_reads_the_byte(monkeypatch):
     monkeypatch.setattr(efuse.time, "sleep", lambda s: None)
     t = SlowEfuse(ready_after=3)
-    assert efuse._efuse_one_byte_read(t, 0x3FB) == 0x5A
+    assert efuse._efuse_one_byte_read(t, 0x3FB, False) == 0x5A
     assert ("R32", efuse.C.REG_EFUSE_CTRL) not in t.ops
+
+
+def test_one_byte_read_smic_clears_efuse_test_bit11(monkeypatch):
+    # rtw_efuse.c:2341-2348: an SMIC chip clears 0x34[11] before the address writes; TSMC does not.
+    monkeypatch.setattr(efuse.time, "sleep", lambda s: None)
+    t = SlowEfuse(ready_after=0)
+    efuse._efuse_one_byte_read(t, 0x3FB, True)
+    assert t.ops[:3] == [("R16", 0x0034), ("W16", 0x0034, 0x0700), ("W8", efuse.C.REG_EFUSE_CTRL + 1, 0xFB)]
+    t = SlowEfuse(ready_after=0)
+    efuse._efuse_one_byte_read(t, 0x3FB, False)
+    assert ("R16", 0x0034) not in t.ops

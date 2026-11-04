@@ -110,8 +110,10 @@ def _read_efuse_byte(t, addr: int) -> int:
     return value32 & 0xFF
 
 
-def _efuse_one_byte_read(t, addr: int) -> int:
+def _efuse_one_byte_read(t, addr: int, is_chip_vendor_smic: bool) -> int:
     """[SRC] efuse_OneByteRead (rtw_efuse.c:2314) — one physical efuse byte, 0xFF on poll timeout."""
+    if is_chip_vendor_smic:
+        t.write16(C.REG_EFUSE_TEST, t.read16(C.REG_EFUSE_TEST) & ~(1 << 11))   # rtw_efuse.c:2341-2348
     t.write8(C.REG_EFUSE_CTRL + 1, addr & 0xFF)
     v = t.read8(C.REG_EFUSE_CTRL + 2)
     t.write8(C.REG_EFUSE_CTRL + 2, ((addr >> 8) & 0x03) | (v & 0xFC))
@@ -440,11 +442,11 @@ def _parse_usb_mode_switch(m: bytes, autoload_fail: bool) -> bool:
     return False if autoload_fail else bool((m[C.EEPROM_USB_MODE_8812] & C.BIT1) >> 1)
 
 
-def _read_usb_type(t, m: bytes) -> tuple[int, int, bool]:
+def _read_usb_type(t, m: bytes, is_chip_vendor_smic: bool) -> tuple[int, int, bool]:
     """[SRC] hal_ReadUsbType_8812AU (rtl8812a_hal_init.c:1437) — hidden physical EFUSE antenna/wmode selector."""
     antenna = 0
     for addr in (C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_0, C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_1):
-        v = _efuse_one_byte_read(t, addr)
+        v = _efuse_one_byte_read(t, addr, is_chip_vendor_smic)
         if ((v >> 5) & 0x7) != 0:
             antenna = (v >> 5) & 0x7
             break
@@ -453,7 +455,7 @@ def _read_usb_type(t, m: bytes) -> tuple[int, int, bool]:
             break
     wmode = 0
     for addr in (C.EFUSE_HIDDEN_USB_TYPE_WMODE_0, C.EFUSE_HIDDEN_USB_TYPE_WMODE_1):
-        v = _efuse_one_byte_read(t, addr)
+        v = _efuse_one_byte_read(t, addr, is_chip_vendor_smic)
         if ((v >> 2) & 0x3) != 0:
             wmode = (v >> 2) & 0x3
             break
@@ -480,6 +482,8 @@ def read_chip_params(t) -> ChipParams:
     EFUSE access-on + power-switch reads, the byte loop, access-off.
     """
     chip_version = t.read32(C.REG_SYS_CFG)         # ReadChipVersion (0xF0)
+    # read_chip_version_8812a, 8821: EXT_VENDOR_ID 1 is CHIP_VENDOR_SMIC (rtl8812a_hal_init.c:3369-3381).
+    is_chip_vendor_smic = (chip_version & C.EXT_VENDOR_ID) >> C.EXT_VENDOR_ID_SHIFT == 1
     t.read32(C.REG_MULTI_FUNC_CTRL)                # ReadChipVersion8812A MultiFunc (rtl8812a_hal_init.c:3392)
     ee = t.read8(C.REG_9346CR)
     autoload_fail = not (ee & (1 << 5))            # bit5 = EEPROM present
@@ -498,7 +502,7 @@ def read_chip_params(t) -> ChipParams:
     eeprom_vid, eeprom_pid, eeprom_customer_id, eeprom_subcustomer_id, customer_id = _parse_ids(
         m, autoload_fail)
     thermal_meter, thermal_meter_ignore = _parse_thermal_meter(m, autoload_fail)
-    usb_type_antenna, usb_type_wmode, usb_type_disable_11ac = _read_usb_type(t, m)
+    usb_type_antenna, usb_type_wmode, usb_type_disable_11ac = _read_usb_type(t, m, is_chip_vendor_smic)
     return ChipParams(
         crystal_cap=_parse_crystal_cap(m, autoload_fail),
         mac_address=_parse_mac_address(m, autoload_fail),

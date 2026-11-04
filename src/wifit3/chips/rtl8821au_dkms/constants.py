@@ -28,11 +28,14 @@ REG_SYS_ISO_CTRL = 0x0000       # :39
 REG_SYS_FUNC_EN = 0x0002        # :40  (+1 = 0x0003, bit2 = 8051 core gate)
 REG_APS_FSMCO = 0x0004          # :41  (pwr-seq touches 0x04/0x05/0x06 byte-wise)
 REG_SYS_CLKR = 0x0008           # :42
+REG_EFUSE_TEST = 0x0034         # :64
 REG_RSV_CTRL = 0x001C           # :52  (8051 reset wrapper)
 REG_RF_CTRL = 0x001F            # :53
 REG_MULTI_FUNC_CTRL = 0x0068     # :78  (BT_FUNC_EN probe in EFUSE parse)
 REG_MCUFWDL = 0x0080            # :88  (FW download ctrl; +2 = page idx / 8051 rst hold)
 REG_SYS_CFG = 0x00F0            # :102 (no REG_SYS_CFG1/CFG2 in this tree)
+EXT_VENDOR_ID = (1 << 18) | (1 << 19)   # hal_com_reg.h:1297
+EXT_VENDOR_ID_SHIFT = 18                # hal_com_reg.h:1312
 REG_CR = 0x0100                 # :117 (MAC DMA / WMAC / SCHEDULE / SEC enable)
 REG_LLT_INIT = 0x01E0           # :159
 REG_HMETFR = 0x01CC             # :153  (H2C trigger; InitializeFirmwareVars8812 writes 0x0F)
