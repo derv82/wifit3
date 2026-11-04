@@ -69,7 +69,7 @@ class TxOpField:
 @dataclass(frozen=True)
 class Waiver:
     """value_only_register / value_only_tx_op_field: the driver makes the op; that register's written value or that
-    TX op field is not compared. capture_only_run: this run of register ops is in the capture only, waived where the
+    field of an injected frame's TX op is not compared. capture_only_run: this run of register ops is in the capture only, waived where the
     replay would stop at its first op. driver_only_run: this run of register ops, in order, is the driver's only.
     capture_paths: the captures it applies to; empty: all."""
     reason: WaiverReason
@@ -279,7 +279,7 @@ class VerifyCapture:
         for waiver in waivers:
             if waiver.value_only_tx_op_field is not None:
                 tx_op_fields.append(waiver.value_only_tx_op_field)
-        if (tx_op_fields
+        if (tx_op_fields and self.DECODER.injected_frame_at([captured], 0) is not None
                 and self.DECODER.with_tx_op_fields(captured, tx_op_fields, request).same_request(request)):
             return True
         value_only_registers: set[int] = set()

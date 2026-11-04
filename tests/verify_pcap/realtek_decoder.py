@@ -14,6 +14,11 @@ RXDESC24_SIZE = 24
 RXDESC24_RPT_SEL = 1 << 28
 LSSI_DATA_MASK = 0xFFFFF
 TX_DESCRIPTOR_CHECKSUM_OFFSET = 7 * 4
+# TX descriptor dword 1 QSEL (rtl8xxxu.h:494-503): firmware and reserved pages go to the beacon queue, H2C to the command one.
+TXDESC_QUEUE_SHIFT = 8
+TXDESC_QUEUE_MASK = 0x1F00
+TXDESC_QUEUE_BEACON = 0x10
+TXDESC_QUEUE_CMD = 0x13
 # halmac 48-byte TX descriptor (rtl8822c)
 HALMAC_TX_DESC_RTS_DATA_RTY_LMT = TxOpField(dword=4, shift=18, width=6)
 HALMAC_TX_DESC_SW_SEQ = TxOpField(dword=9, shift=12, width=12)
@@ -88,9 +93,12 @@ class RealtekDecoder(FamilyDecoder):
 
     def injected_frame_at(self, ops: Sequence[UsbOp], position: int) -> bytes | None:
         op = ops[position]
-        if op.transfer_type == TransferType.BULK and not op.is_in:
-            return op.data[self.tx_descriptor_size:]
-        return None
+        if op.transfer_type != TransferType.BULK or op.is_in or len(op.data) <= self.tx_descriptor_size:
+            return None
+        queue = (struct.unpack_from("<I", op.data, 4)[0] & TXDESC_QUEUE_MASK) >> TXDESC_QUEUE_SHIFT
+        if queue in (TXDESC_QUEUE_BEACON, TXDESC_QUEUE_CMD):
+            return None
+        return op.data[self.tx_descriptor_size:]
 
     def channel_change_at(self, ops: Sequence[UsbOp], position: int) -> int | None:
         """A hop opens on a read of hop_start_register; its channel is the last path A RF 0x18 write before

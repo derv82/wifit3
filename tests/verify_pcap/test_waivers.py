@@ -3,7 +3,8 @@ from __future__ import annotations
 import struct
 
 from tests.verify_pcap.ath9k_htc_decoder import Ath9kHtcDecoder
-from tests.verify_pcap.realtek_decoder import HALMAC_TX_DESC_SW_SEQ, REALTEK_USB_CMD_REQ, RealtekDecoder
+from tests.verify_pcap.realtek_decoder import (HALMAC_TX_DESC_SW_SEQ, REALTEK_USB_CMD_REQ, TXDESC_QUEUE_BEACON,
+                                               TXDESC_QUEUE_SHIFT, RealtekDecoder)
 from tests.verify_pcap.rt2800_decoder import Rt2800Decoder
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
 from tests.verify_pcap.verify_capture import (RegisterAccess, RegisterOp, TxOpField, VerifyCapture, Waiver,
@@ -15,6 +16,8 @@ OTHER_REGISTER = 0x7014
 READ_REGISTER = 0x803C
 REALTEK_WAIVED_REGISTER = 0x0560
 REALTEK_OTHER_REGISTER = 0x0100
+# rtl8xxxu.h:502
+TXDESC_QUEUE_MGNT = 0x12
 
 
 def wmi_op(endpoint: int, command_id: int, seq: int, words: list[int]) -> UsbOp:
@@ -168,9 +171,10 @@ def test_realtek_capture_only_run_matches_a_read_and_a_write() -> None:
     assert RealtekCaptureOnlyRun().capture_only_run_occurrences(ops, REALTEK_RUN) == [[1, 2]]
 
 
-def realtek_tx(sw_seq: int, checksum: int) -> UsbOp:
+def realtek_tx(sw_seq: int, checksum: int, queue: int = TXDESC_QUEUE_MGNT) -> UsbOp:
     words = [0] * 12
     words[0] = 0x3005002A
+    words[1] = queue << TXDESC_QUEUE_SHIFT
     words[7] = checksum
     words[9] = sw_seq << 12
     data = struct.pack("<12I", *words) + bytes(24)
@@ -187,6 +191,13 @@ def test_tx_op_field_accepts_a_different_value_with_its_checksum() -> None:
     captured = realtek_tx(sw_seq=0, checksum=0x3005 ^ 0x002A)
     request = realtek_tx(sw_seq=1, checksum=0x3005 ^ 0x002A ^ 0x1000)
     assert RealtekSwSeqValueOnly().is_same_request_except_waived_values(captured, request, RealtekSwSeqValueOnly.WAIVERS)
+
+
+def test_tx_op_field_does_not_apply_to_a_firmware_chunk() -> None:
+    captured = realtek_tx(sw_seq=0, checksum=0x3005 ^ 0x002A, queue=TXDESC_QUEUE_BEACON)
+    request = realtek_tx(sw_seq=1, checksum=0x3005 ^ 0x002A ^ 0x1000, queue=TXDESC_QUEUE_BEACON)
+    assert not RealtekSwSeqValueOnly().is_same_request_except_waived_values(captured, request,
+                                                                            RealtekSwSeqValueOnly.WAIVERS)
 
 
 def test_tx_op_field_compares_the_checksum() -> None:
