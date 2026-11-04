@@ -264,7 +264,8 @@ class RT5370Driver(Driver):
         SHORT_RTY_LIMIT (mac80211 default 7, set at monitor entry). The seq is
         already stamped by the base. Explicit-action only — nothing on the scan/connect path
         calls this [[passive_by_default]]. Serialized via ``_io_lock`` so it never races a retune."""
-        if not frame_bytes:
+        # ieee80211_monitor_start_xmit / ieee80211_tx drop [SRC net/mac80211/tx.c:2348-2349, 1941-1942]
+        if len(frame_bytes) < 10 or len(frame_bytes) < tx.ieee80211_hdrlen(frame_bytes[0] | frame_bytes[1] << 8):
             return False
         if not self._tx_queue_eps:
             logger.error("RT5370 inject: no bulk-OUT endpoint")
@@ -291,8 +292,13 @@ class RT5370Driver(Driver):
         # for a unicast addr1 so the chip requests the AP's ACK + retries un-ACKed frames.
         with self._hw_lock:
             qid = tx.select_queue(frame)
+            use_no_ack = bool(frame[4] & 0x01)    # multicast addr1 [SRC net/mac80211/tx.c:1273-1275]
+            if ((frame[0] & (C.IEEE80211_FCTL_FTYPE | C.IEEE80211_STYPE_QOS_DATA))
+                    == C.IEEE80211_FTYPE_DATA | C.IEEE80211_STYPE_QOS_DATA
+                    and frame[tx.ieee80211_get_qos_ctl(frame)] & C.IEEE80211_QOS_CTL_ACK_POLICY_NOACK):
+                use_no_ack = True                 # ieee80211_set_qos_hdr [SRC net/mac80211/wme.c:208-211]
             tx.send_frame(self.transport.dev, self._tx_queue_eps[qid], frame, qid, self._tx_entry_index[qid],
-                          use_no_ack=bool(frame[4] & 0x01))
+                          use_no_ack=use_no_ack)
             # rt2x00queue_index_inc(entry, Q_INDEX) [SRC rt2x00queue.c:703, 874-876]
             self._tx_entry_index[qid] += 1
             if self._tx_entry_index[qid] >= C.TX_QUEUE_LIMIT:
