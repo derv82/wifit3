@@ -72,12 +72,21 @@ async def enter_monitor(transport: MT7925AUTransport, channel: int) -> None:
     _wtbl_update(t, MT792x_WTBL_RESERVED)
     await t.send_mcu_command(*mcu.uni_dev_info(True))
     await t.send_mcu_command(*mcu.uni_bss_info(True))
-    # config(MONITOR) + configure_filter.
+    # change_chanctx for the monitor vif (main.c:1780-1782).
     await t.send_mcu_command(*mcu.set_sniffer(True))
     await t.send_mcu_command(*mcu.config_sniffer(channel))
-    await t.send_mcu_command(*mcu.set_rxfilter(mcu.MT_FILTER_ENABLE
-                                              | mcu.MT_FILTER_CONTROL | mcu.MT_FILTER_OTHER_BSS))
+    monitor_filter = mcu.MT_FILTER_ENABLE | mcu.MT_FILTER_CONTROL | mcu.MT_FILTER_OTHER_BSS
+    # configure_filter (main.c:808).
+    await t.send_mcu_command(*mcu.set_rxfilter(monitor_filter))
+    # config(CHANGE_MONITOR) -> mt7925_sniffer_interface_iter (main.c:737-744), whose
+    # set_beacon_filter(false) is set_bss_pm(false) + the DROP_OTHER_BEACON clear (mcu.c:2060-2066).
+    await t.send_mcu_command(*mcu.set_sniffer(True))
+    await t.send_mcu_command(*mcu.set_deep_sleep(False), wait_resp=False)
     await t.send_mcu_command(*mcu.uni_bss_pm_disable())
+    await t.send_mcu_command(*mcu.set_rxfilter(0, mcu.MT_WF_RFCR_DROP_OTHER_BEACON,
+                                              mcu.MT7925_FIF_BIT_CLR))
+    # configure_filter again, from mac80211's interface-up filter reconfig.
+    await t.send_mcu_command(*mcu.set_rxfilter(monitor_filter))
 
 
 def _mac_init(t: MT7925AUTransport) -> None:

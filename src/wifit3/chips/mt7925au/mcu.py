@@ -410,6 +410,9 @@ MT_FILTER_FCSFAIL   = 1 << 2
 MT_FILTER_CONTROL   = 1 << 5
 MT_FILTER_OTHER_BSS = 1 << 6
 
+MT7925_FIF_BIT_CLR = 1 << 1             # mt7925/mcu.c:2046
+MT_WF_RFCR_DROP_OTHER_BEACON = 1 << 11  # mt792x_regs.h:232
+
 
 def chip_config(cmd: bytes):
     """mt7925_mcu_chip_config (mt7925/mcu.c:994) — MCU_UNI_CMD(CHIP_CONFIG), CHIP_CFG tag.
