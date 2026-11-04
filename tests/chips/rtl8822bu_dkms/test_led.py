@@ -15,18 +15,25 @@ class _Regs:
         self.regs[addr] = val & 0xFF
 
 
-def test_enable_tx_blink_selects_gpio8_wl_led_and_tx_mode():
-    t = _Regs({0x4A: 0xFF, 0x4E: 0xFF})
+def test_led_cfg_sw_ctrl_selects_gpio8_wl_led_and_leaves_the_led_off():
+    t = _Regs({0x4A: 0x00, 0x4E: 0x62})
 
-    led.enable_tx_blink(t)
+    led.led_cfg(t, led.HALMAC_WLLED_MODE_SW_CTRL)
 
-    assert t.regs[0x4A] == 0xFC
-    assert t.regs[0x4E] == 0xBC
     assert t.ops == [
         ("R8", 0x4A),
-        ("W8", 0x4A, 0xFC),
+        ("W8", 0x4A, 0x00),
         ("R8", 0x4E),
-        ("W8", 0x4E, 0xFF),
+        ("W8", 0x4E, 0x62),
         ("R8", 0x4E),
-        ("W8", 0x4E, 0xBC),
+        ("W8", 0x4E, 0x28),
     ]
+
+
+def test_pinmux_wl_led_sw_ctrl_clears_bit3_for_on_and_sets_it_for_off():
+    t = _Regs({0x4E: 0x28})
+
+    led.pinmux_wl_led_sw_ctrl(t, True)
+    led.pinmux_wl_led_sw_ctrl(t, False)
+
+    assert t.ops == [("R8", 0x4E), ("W8", 0x4E, 0x20), ("R8", 0x4E), ("W8", 0x4E, 0x28)]

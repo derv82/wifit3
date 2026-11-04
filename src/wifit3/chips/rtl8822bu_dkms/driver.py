@@ -158,6 +158,7 @@ class Rtl8822buDkmsDriver(Driver):
         self._io_lock = asyncio.Lock()
         self._dig_st: Optional[dm_watchdog.DigState] = None
         self._watchdog_task: Optional[asyncio.Task] = None
+        self._led_task: Optional[asyncio.Task] = None
         # Per-dwell RX tally (DEBUG only) — proves which channels are deaf when the
         # intermittent cold-boot "2.4 GHz silent until the first 5 GHz hop" wedge hits.
         self._dbg_frames = 0
@@ -205,6 +206,9 @@ class Rtl8822buDkmsDriver(Driver):
             if e.mac_address:                          # program the card's own MAC (TX source/ACK)
                 await loop.run_in_executor(None, mac.set_mac_addr, self.transport, e.mac_address)
                 self.mac_address = e.mac_address
+            # rtw_hal_init (hal_intf.c:610): rtw_restore_hw_port_cfg, then init_hw_mlme_ext's RX BAR + channel set.
+            await loop.run_in_executor(None, mac.hw_port_enable, self.transport)
+            await loop.run_in_executor(None, mac.enable_rx_bar, self.transport)
             self._log_detected_config(info, e)
 
             if progress_cb:
@@ -216,6 +220,10 @@ class Rtl8822buDkmsDriver(Driver):
 
             await loop.run_in_executor(None, _initial_tune, self.transport)
             self._channel = _DEFAULT_CHANNEL
+            # rtw_hal_init_opmode (hal_intf.c:616): a new interface is in STATION state.
+            await loop.run_in_executor(None, mac.set_opmode_station, self.transport)
+            # _netdev_open: rtw_hal_init, then rtw_led_control(LED_CTL_NO_LINK) (os_intfs.c:4063).
+            self._led_task = loop.create_task(self._led_blink())
             await self._dbg_rx_state(f"post-initial-tune ch{_DEFAULT_CHANNEL}")
 
             # Start the bulk-IN reader before opening the RX gate (an undrained pipe wedges RX FIFO).
@@ -226,7 +234,6 @@ class Rtl8822buDkmsDriver(Driver):
             # The airmon monitor RX-enable (gate-verified vs the capture's monitor switch):
             # MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode, RXFLTMAP0/1/2=0xFFFF.
             await loop.run_in_executor(None, mac.enable_monitor, self.transport)
-            await loop.run_in_executor(None, led.enable_tx_blink, self.transport)
             await loop.run_in_executor(None, self._heal_cold_synth, self.transport)
             await self._dbg_rx_state(f"post-enable-monitor ch{_DEFAULT_CHANNEL}")
 
@@ -293,6 +300,21 @@ class Rtl8822buDkmsDriver(Driver):
                 raise
             except Exception as e:
                 logger.debug("8822bu watchdog tick skipped: %s", e)
+
+    async def _led_blink(self) -> None:
+        """SW_LED_MODE9 LED0 no-link slow blink: SwLedBlink9 LED_BLINK_SLOWLY (hal_usb_led.c:934), first fire ON.
+        Not under _io_lock: the blink runs on a workqueue, not the cmd thread (hal_usb_led.c:1863)."""
+        loop = asyncio.get_running_loop()
+        led_on = False
+        try:
+            while True:
+                await asyncio.sleep(led.LED_BLINK_NO_LINK_INTERVAL_ALPHA_S)
+                led_on = not led_on
+                await loop.run_in_executor(None, led.pinmux_wl_led_sw_ctrl, self.transport, led_on)
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 - an LED fault must not kill RX
+            logger.exception("RTL8822BU LED blink stopped on error")
 
     # --- RX path -----------------------------------------------------------
     def _read_once(self) -> Optional[bytes]:
@@ -450,6 +472,9 @@ class Rtl8822buDkmsDriver(Driver):
         if self._watchdog_task is not None:
             self._watchdog_task.cancel()
             self._watchdog_task = None
+        if self._led_task is not None:
+            self._led_task.cancel()
+            self._led_task = None
         if self._reader is not None:
             await self._reader.stop()
             self._reader = None

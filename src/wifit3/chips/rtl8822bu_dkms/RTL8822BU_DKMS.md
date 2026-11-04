@@ -18,10 +18,12 @@ modules — it does NOT reuse `rtw88_base` or `rtl88xxau_base`; expect a separat
   (op 9855 -> ~28910) is partial — `set_channel`, `enable_monitor`, the PHYDM watchdog and the TX
   descriptor are ported; the continuous DIG/FA/spur adaptation the capture runs is not fully
   reproduced (the golden capture holds 24 bcn/s median while hopping; ours measures lower).
-- Not ported (by evidence-backed choice): the OS managed-vif opmode block (op 9855 — LED pinmux,
-  BCN_CTRL, managed RX-filter; the monitor driver uses `enable_monitor` instead), per-channel
-  FW-IQK (an H2C subsystem), and thermal TX-power tracking (`phydm_rf_watchdog`; sustained-flood
-  only).
+- The `rtw_hal_init` / `_netdev_open` tail after `rtl8822b_init` is ported (cap-1 op 9855 -> 10095):
+  `hal_init_misc` SW-LED pinmux, MAC address, `rtw_restore_hw_port_cfg`, RX BAR, the initial channel
+  set, `rtw_hal_init_opmode` (STATION), then the SW_LED_MODE9 1 s no-link blink task
+  (`driver._led_blink`, replaces the earlier hardware TX-blink LED mode, which has no C source).
+- Not ported (by evidence-backed choice): per-channel FW-IQK (an H2C subsystem), and thermal
+  TX-power tracking (`phydm_rf_watchdog`; sustained-flood only).
 - **Never re-assert "byte-for-byte" without a fresh byte-diff** — two real bugs (RX antenna mux,
   TX G_ID) hid behind exactly that unverified claim.
 

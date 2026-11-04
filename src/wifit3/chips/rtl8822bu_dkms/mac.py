@@ -27,12 +27,15 @@ from .constants import (
     BIT_APP_PHYSTS,
     BIT_AUTO_INIT_LLT_V1,
     BIT_BOOT_FSPI_EN,
+    BIT_DIS_ATIM_ROOT,
+    BIT_DIS_TSF_UDT,
     BIT_EN_BCN_FUNCTION,
     BIT_EN_EOF_V1,
     BIT_EN_PRE_CALC,
     BIT_FSPI_EN,
     BIT_FWEN,
     BIT_MASK_BLK_DESC_NUM,
+    BIT_P0_EN_RXBCN_RPT,
     BIT_R_DISABLE_CHECK_VHTSIGB_CRC,
     BIT_RXDMA_AGG_EN,
     BIT_SHIFT_BLK_DESC_NUM,
@@ -82,6 +85,9 @@ from .constants import (
     REG_MACID,
     REG_MCUFW_CTRL,
     REG_MSR,
+    HW_STATE_STATION,
+    REG_DIS_ATIM,
+    TBTT_PROHIBIT_HOLD_TIME_STOP_BCN,
     REG_PAD_CTRL1,
     REG_PIFS,
     REG_PRE_INIT_FE5B,
@@ -238,15 +244,37 @@ def enable_monitor(t) -> None:
 
 def set_mac_addr(t, mac: str) -> None:
     """[SRC] SetHwReg8822B(HW_VAR_MAC_ADDR) → HALMAC cfg_mac_addr: program the per-port MAC into
-    REG_MACID — low 4 bytes at 0x610, high 2 at 0x614. `mac` is the EFUSE-read address, so the write
-    reproduces the capture without hardcoding this card's identity. The card needs its own address for
-    TX (ACK/source); monitor RX does not, which is why the opmode block around it (LED pinmux, beacon
-    ctrl, the managed RXFLTMAP1 that enable_monitor overrides) is the OS managed-vif layer, not ported."""
+    REG_MACID — low 4 bytes at 0x610, high 2 at 0x614. `mac` is the EFUSE-read address."""
     b = bytes(int(x, 16) for x in mac.split(":"))
     if len(b) != 6:
         raise ValueError(f"RTL8822BU: malformed MAC address {mac!r}")
     t.write32(REG_MACID, int.from_bytes(b[:4], "little"))
     t.write16(REG_MACID + 4, int.from_bytes(b[4:], "little"))
+
+
+def hw_port_enable(t) -> None:
+    """hw_var_hw_port_cfg(enable) (rtl8822b_ops.c:1334): port 0 BCN_CTRL |= RXBCN_RPT | DIS_TSF_UDT | BCN_FUNCTION."""
+    t.write8(REG_BCN_CTRL, t.read8(REG_BCN_CTRL) | BIT_P0_EN_RXBCN_RPT | BIT_DIS_TSF_UDT | BIT_EN_BCN_FUNCTION)
+
+
+def set_opmode_station(t) -> None:
+    """hw_var_set_opmode(_HW_STATE_STATION_) -> set_opmode_port0 (rtl8822b_ops.c:1006), from rtw_hal_init_opmode."""
+    bcn_ctrl = t.read8(REG_BCN_CTRL)                            # rtw_hal_set_tsf_update(0) (hal_com.c:3320)
+    if not bcn_ctrl & BIT_DIS_TSF_UDT:
+        t.write8(REG_BCN_CTRL, bcn_ctrl | BIT_DIS_TSF_UDT)
+    t.write8(REG_MSR, (t.read8(REG_MSR) & ~0x3) | HW_STATE_STATION)
+    # StopTxBeacon (hal_com.c:16104)
+    t.write8(REG_FWHW_TXQ_CTRL + 2, t.read8(REG_FWHW_TXQ_CTRL + 2) & ~(1 << 6))
+    t.write8(REG_TBTT_PROHIBIT + 1, TBTT_PROHIBIT_HOLD_TIME_STOP_BCN & 0xFF)
+    t.write8(REG_TBTT_PROHIBIT + 2,
+             (t.read8(REG_TBTT_PROHIBIT + 2) & 0xF0) | (TBTT_PROHIBIT_HOLD_TIME_STOP_BCN >> 8))
+    t.write8(REG_BCN_CTRL, BIT_DIS_TSF_UDT | BIT_EN_BCN_FUNCTION)
+    t.write8(REG_DIS_ATIM, t.read8(REG_DIS_ATIM) | BIT_DIS_ATIM_ROOT)
+
+
+def enable_rx_bar(t) -> None:
+    """SetHwReg(HW_VAR_ENABLE_RX_BAR, TRUE) (hal_com.c:13618): RXFLTMAP1 |= BIT(8), the BlockAckReq subtype."""
+    t.write16(REG_RXFLTMAP1, t.read16(REG_RXFLTMAP1) | (1 << 8))
 
 
 def pre_init_system_cfg(t) -> None:
