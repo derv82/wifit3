@@ -208,11 +208,11 @@ class Rtl8812auDkmsDriver(Driver):
     async def _dig_watchdog(self) -> None:
         """rtw_dynamic_check_timer_handlder: the 2 s timer re-arms from its own fire (rtw_mlme.c:4136)."""
         loop = asyncio.get_running_loop()
-        fire_time = loop.time()
+        next_fire = loop.time() + watchdog.DYNAMIC_CHK_TIMER_PERIOD_S
         try:
             while True:
-                fire_time += watchdog.DYNAMIC_CHK_TIMER_PERIOD_S
-                await asyncio.sleep(fire_time - loop.time())
+                await asyncio.sleep(next_fire - loop.time())
+                next_fire = loop.time() + watchdog.DYNAMIC_CHK_TIMER_PERIOD_S
                 async with self._io_lock:
                     fa_cnt = await loop.run_in_executor(None, watchdog.rtw_dynamic_chk_wk_hdl,
                                                         self.transport, self._phydm, self._channel)

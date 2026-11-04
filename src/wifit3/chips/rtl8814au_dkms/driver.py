@@ -248,15 +248,15 @@ class Rtl8814auDkmsDriver(Driver):
         DIG, adaptivity, CCX env-monitor) carrying ``_wd_state`` across fires, so the IGI +
         EDCCA thresholds adapt to the live RF environment instead of freezing at the seed.
         The TX-power thermal-delta correction is a no-op here (RX-irrelevant).
-        The 2 s timer re-arms before the work runs (rtw_mlme.c:3452), so fires are 2 s start-to-start.
+        The 2 s timer re-arms from its own fire, before the work runs (rtw_mlme.c:3452).
         """
         loop = asyncio.get_running_loop()
         st = self._wd_state
-        fire_time = loop.time()
+        next_fire = loop.time() + WATCHDOG_PERIOD_S
         try:
             while True:
-                fire_time += WATCHDOG_PERIOD_S
-                await asyncio.sleep(fire_time - loop.time())
+                await asyncio.sleep(next_fire - loop.time())
+                next_fire = loop.time() + WATCHDOG_PERIOD_S
                 async with self._io_lock:
                     ch = self._channel or _DEFAULT_CHANNEL
                     fa = await loop.run_in_executor(None, watchdog_tick, self.transport, st, ch)
