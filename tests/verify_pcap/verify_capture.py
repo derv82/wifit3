@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-import struct
 from abc import ABC, abstractmethod
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Iterator, Sequence
 
@@ -15,7 +14,7 @@ import usb.util
 
 from tests.verify_pcap.capture_replay import CaptureReplay, Divergence, is_bulk_or_interrupt_in
 from tests.verify_pcap.fake_usb_device import (
-    LINUX_ESHUTDOWN, REQUEST_TYPE_MASK, REQUEST_TYPE_STANDARD, FakeUsbDevice)
+    LINUX_ESHUTDOWN, REQUEST_TYPE_MASK, REQUEST_TYPE_STANDARD, FakeUsbDevice, find_chip_descriptors)
 from tests.verify_pcap.usb_capture import TransferType, UsbOp, pair_submits_with_completions, read_usbmon_records
 from tests.verify_pcap.virtual_clock_loop import (
     MAIN_CALLER, DriverThreadPool, VirtualClockEventLoop)
@@ -25,9 +24,6 @@ from wifit3.models import DeviceID
 DUMP_CONTEXT = 10
 # A driver task makes its next USB call one loop pass after the last one ends.
 IDLE_PASSES_IN_A_ROW = 3
-GET_DESCRIPTOR = 6
-DESCRIPTOR_TYPE_DEVICE = 1
-DESCRIPTOR_TYPE_CONFIGURATION = 2
 
 IGNORED_OTHER_DEVICES = "other devices and address 0"
 IGNORED_ENUMERATION = "usbcore enumeration (standard control requests)"
@@ -77,7 +73,7 @@ class VerifyCapture:
     DECODER: ClassVar[FamilyDecoder]
     WAIVERS: ClassVar[list[Waiver]] = []
 
-    def test_capture(self, capture_path: Path) -> None:
+    def test_capture(self, capture_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         capture = self.load_capture(capture_path)
         waiver_label_by_position: dict[int, str] = {}
         for position, op in enumerate(capture.ops):
@@ -105,29 +101,18 @@ class VerifyCapture:
                 return iter([device] if matches else [])
             return device if matches else None
 
-        def accept_claim_or_release(device: FakeUsbDevice, interface: Any) -> None:
+        def do_nothing(*args: Any) -> None:
             return None
 
-        def accept_dispose_resources(device: FakeUsbDevice) -> None:
-            return None
-
-        original_find = usb.core.find
-        original_claim_interface = usb.util.claim_interface
-        original_release_interface = usb.util.release_interface
-        original_dispose_resources = usb.util.dispose_resources
-        usb.core.find = find_fake_device
-        usb.util.claim_interface = accept_claim_or_release
-        usb.util.release_interface = accept_claim_or_release
-        usb.util.dispose_resources = accept_dispose_resources
+        monkeypatch.setattr(usb.core, "find", find_fake_device)
+        monkeypatch.setattr(usb.util, "claim_interface", do_nothing)
+        monkeypatch.setattr(usb.util, "release_interface", do_nothing)
+        monkeypatch.setattr(usb.util, "dispose_resources", do_nothing)
         try:
             main_task = loop.create_task(self.run_driver(replay, device, capture.device_id),
                                          name=MAIN_CALLER)
             loop.run_until_complete(main_task)
         finally:
-            usb.core.find = original_find
-            usb.util.claim_interface = original_claim_interface
-            usb.util.release_interface = original_release_interface
-            usb.util.dispose_resources = original_dispose_resources
             for task in asyncio.all_tasks(loop):
                 task.cancel()
             loop.run_until_complete(asyncio.sleep(0))
@@ -204,28 +189,11 @@ class VerifyCapture:
 
     def load_capture(self, capture_path: Path) -> LoadedCapture:
         all_ops, incomplete_count = pair_submits_with_completions(read_usbmon_records(capture_path))
-        device_id: DeviceID | None = None
-        device_descriptor = b""
-        configuration_descriptor = b""
-        for op in all_ops:
-            if op.transfer_type != TransferType.CONTROL or op.setup is None:
-                continue
-            if op.request != GET_DESCRIPTOR or not op.is_in or op.device_address == 0:
-                continue
-            descriptor_type = op.value >> 8
-            if descriptor_type == DESCRIPTOR_TYPE_DEVICE and len(op.data) >= 18:
-                vid, pid = struct.unpack_from("<HH", op.data, 8)
-                for supported in self.SUPPORTED_IDS:
-                    if (supported.vid, supported.pid) == (vid, pid):
-                        device_id = replace(supported, bus=op.bus, address=op.device_address)
-                        device_descriptor = op.data
-            elif (descriptor_type == DESCRIPTOR_TYPE_CONFIGURATION and device_id is not None
-                  and (op.bus, op.device_address) == (device_id.bus, device_id.address)
-                  and len(op.data) == struct.unpack_from("<H", op.data, 2)[0]):
-                configuration_descriptor = op.data
-        if device_id is None or not configuration_descriptor:
-            pytest.fail(f"{capture_path.name}: no enumeration of a SUPPORTED_IDS device "
+        found = find_chip_descriptors(all_ops, self.SUPPORTED_IDS)
+        if found is None:
+            pytest.fail(f"{capture_path.name}: no plug-in of a SUPPORTED_IDS device "
                         "(device + configuration descriptor) in the capture", pytrace=False)
+        device_id, device_descriptor, configuration_descriptor = found
 
         ignored_counts: Counter[str] = Counter()
         ignored_counts[IGNORED_INCOMPLETE] = incomplete_count

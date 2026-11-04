@@ -4,7 +4,7 @@ from __future__ import annotations
 import errno
 import struct
 from array import array
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Iterator
 
 import usb.core
@@ -12,7 +12,11 @@ import usb.core
 from tests.verify_pcap.capture_replay import CaptureReplay
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
 from tests.verify_pcap.virtual_clock_loop import current_caller_name
+from wifit3.models import DeviceID
 
+GET_DESCRIPTOR = 6
+DESCRIPTOR_TYPE_DEVICE = 1
+DESCRIPTOR_TYPE_CONFIGURATION = 2
 DESCRIPTOR_TYPE_INTERFACE = 4
 DESCRIPTOR_TYPE_ENDPOINT = 5
 # Endpoint descriptor bmAttributes order differs from usbmon's op-type order.
@@ -66,6 +70,33 @@ class FakeConfiguration:
 
     def __iter__(self) -> Iterator[FakeInterface]:
         return iter(self.interfaces)
+
+
+def find_chip_descriptors(ops: list[UsbOp], supported_ids: list[DeviceID]
+                          ) -> tuple[DeviceID, bytes, bytes] | None:
+    """The chip's DeviceID and its device + configuration descriptors, read by the kernel at plug-in."""
+    device_id: DeviceID | None = None
+    device_descriptor = b""
+    configuration_descriptor = b""
+    for op in ops:
+        if op.transfer_type != TransferType.CONTROL or op.setup is None:
+            continue
+        if op.request != GET_DESCRIPTOR or not op.is_in or op.device_address == 0:
+            continue
+        descriptor_type = op.value >> 8
+        if descriptor_type == DESCRIPTOR_TYPE_DEVICE and len(op.data) >= 18:
+            vid, pid = struct.unpack_from("<HH", op.data, 8)
+            for supported in supported_ids:
+                if (supported.vid, supported.pid) == (vid, pid):
+                    device_id = replace(supported, bus=op.bus, address=op.device_address)
+                    device_descriptor = op.data
+        elif (descriptor_type == DESCRIPTOR_TYPE_CONFIGURATION and device_id is not None
+              and (op.bus, op.device_address) == (device_id.bus, device_id.address)
+              and len(op.data) == struct.unpack_from("<H", op.data, 2)[0]):
+            configuration_descriptor = op.data
+    if device_id is None or not configuration_descriptor:
+        return None
+    return device_id, device_descriptor, configuration_descriptor
 
 
 def parse_configuration_descriptor(descriptor: bytes) -> FakeConfiguration:
