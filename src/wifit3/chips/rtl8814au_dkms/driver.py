@@ -385,10 +385,8 @@ class Rtl8814auDkmsDriver(Driver):
         bulk-OUT pipe. ``frame_bytes`` is the MPDU without FCS (HW appends it); BMC is read from
         addr1's group bit, matching update_txdesc.
 
-        ``hw_rate``/``rate_id`` default to the fixed CCK-1M management rate wifite's own deauths
-        ride; a userspace injector (aireplay-ng) picks them per-frame via radiotap, so the pcap
-        gate reads the recorded pair back and passes it here to byte-verify the descriptor. (The
-        gate's inject byte-check matches the capture, including DATA_RETRY_LIMIT=12.)"""
+        ``hw_rate``/``rate_id`` default to update_mgntframe_attrib's 1M CCK rate; the C reads and
+        discards the radiotap header (rtw_xmit.c:4478-4486), so no injector picks them."""
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
         # A data frame takes update_monitor_frame_attrib's rate [SRC rtw_mlme_ext.c:7447-7486,
         # rtw_xmit.c:4525-4532].
