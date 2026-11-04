@@ -132,6 +132,14 @@ def test_ralink_mode_recovers_pin():
     assert result.found and result.pin == pin and result.mode is PixieMode.RALINK
 
 
+def test_ralink_mode_recovers_forward_secrets():
+    pin = pins.full_pin("1357", "246")
+    stream = pixie_prng.ralink_forward_stream(0x12345678, 64)
+    bundle = _bundle_for(pin, stream[32:48], stream[48:64], stream[16:32])
+    result = recover_pin(bundle, modes=(PixieMode.RALINK,))
+    assert result.found and result.pin == pin and result.mode is PixieMode.RALINK
+
+
 def test_ralink_mode_skips_non_ralink_nonce():
     pin = pins.full_pin("1357", "246")
     stream = pixie_prng.ralink_forward_stream(0x12345678, 48)
@@ -197,6 +205,24 @@ def test_ecos_simple_mode_recovers_pin():
     bundle = _bundle_for(pin, es1, es2, nonce)
     result = recover_pin(bundle, modes=(PixieMode.ECOS_SIMPLE,), ecos_max_counter=1000)
     assert result.found and result.pin == pin and result.mode is PixieMode.ECOS_SIMPLE
+
+
+def test_ecos_simplest_mode_recovers_pin_when_explicitly_bounded():
+    pin = pins.full_pin("8642", "097")
+    nonce, es1, es2 = pixie_prng.ecos_simplest_model(137)
+    bundle = _bundle_for(pin, es1, es2, nonce)
+    result = recover_pin(
+        bundle, modes=(PixieMode.ECOS_SIMPLEST,), ecos_simplest_max_counter=1_000,
+    )
+    assert result.found and result.pin == pin and result.mode is PixieMode.ECOS_SIMPLEST
+
+
+def test_ecos_knuth_mode_recovers_pin_when_explicitly_bounded():
+    pin = pins.full_pin("8642", "097")
+    nonce, es1, es2 = pixie_prng.ecos_knuth_model(137)
+    bundle = _bundle_for(pin, es1, es2, nonce)
+    result = recover_pin(bundle, modes=(PixieMode.ECOS_KNUTH,), ecos_knuth_max_counter=1_000)
+    assert result.found and result.pin == pin and result.mode is PixieMode.ECOS_KNUTH
 
 
 def test_empty_device_password_recovered():
