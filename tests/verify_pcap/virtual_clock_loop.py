@@ -53,7 +53,7 @@ class ClockJumpSelector(selectors.SelectSelector):
     def select(self, timeout: float | None = None) -> list[tuple[selectors.SelectorKey, int]]:
         if timeout == 0:
             return super().select(0)
-        if self.loop.is_driver_idle():
+        if self.loop.is_driver_idle() and self.loop.pending_thread_callback_count == 0:
             if timeout is not None:
                 self.loop.advance_clock(self.loop.time() + timeout)
             return super().select(0)
@@ -70,6 +70,8 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         self.completion_time_by_caller: dict[str, float] = {}
         self._timer_lock = threading.Lock()
         self.pending_executor_call_count = 0
+        self.pending_thread_callback_count = 0
+        self._thread_callback_lock = threading.Lock()
         # Until CaptureReplay sets it, driver task timers fire after their jiffies exactly.
         self.jiffy_zero_time: float | None = None
 
@@ -102,6 +104,19 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
             running_loop = None
         if running_loop is not self:
             self.call_soon_threadsafe(wake_loop)
+
+    def call_soon_threadsafe(self, callback: Callable[..., object], *args: Any,
+                             context: Any = None) -> asyncio.Handle:
+        """Pending until the callback runs: asyncio may have computed the select timeout before it arrived."""
+        with self._thread_callback_lock:
+            self.pending_thread_callback_count += 1
+
+        def count_ran_and_run(*callback_args: Any) -> None:
+            with self._thread_callback_lock:
+                self.pending_thread_callback_count -= 1
+            callback(*callback_args)
+
+        return super().call_soon_threadsafe(count_ran_and_run, *args, context=context)
 
     def run_in_executor(self, executor: Any, func: Callable[..., Any], *args: Any) -> asyncio.Future[Any]:
         """Pending until the result is delivered on the loop, not just until the pool thread returns.
