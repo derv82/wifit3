@@ -83,7 +83,7 @@ async def test_inject_sets_ack_bit_and_stamps_seq(monkeypatch):
     sent: list = []
     monkeypatch.setattr(
         drv.tx, "send_frame",
-        lambda dev, ep, frame, *, use_no_ack=True, timeout_ms=1000: sent.append((frame, use_no_ack)),
+        lambda dev, ep, frame, entry_index, *, use_no_ack=True, timeout_ms=1000: sent.append((frame, use_no_ack)),
     )
     assert await d.inject_frame(_mgmt_frame()) is True   # base -> _stamp_tx_seq -> _inject_frame
     assert len(sent) == 1

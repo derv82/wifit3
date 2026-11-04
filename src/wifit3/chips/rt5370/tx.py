@@ -39,9 +39,9 @@ DEAUTH_REASON_CLASS3 = 7
 DEAUTH_DURATION = 0x013A
 
 
-def build_mgmt_txdesc(frame_len: int, *, use_no_ack: bool = True, mcs: int = 0,
+def build_mgmt_txdesc(frame_len: int, entry_index: int, *, use_no_ack: bool = True, mcs: int = 0,
                       phymode: int = C.RATE_MODE_CCK) -> bytes:
-    """TXINFO + TXWI prefix for a management frame [SRC rt2800usb.c:401-435,
+    """TXINFO + TXWI prefix for a management frame in AC_VO queue entry ``entry_index`` [SRC rt2800usb.c:401-435,
     rt2800lib.c:795-853]. Returns ``TXINFO_DESC_SIZE + TXWI_DESC_SIZE_4WORDS`` bytes."""
     aligned = (frame_len + 3) & ~3
     pkt_len = C.TXWI_DESC_SIZE_4WORDS + aligned        # TXWI + frame + pad; NOT TXINFO
@@ -61,14 +61,14 @@ def build_mgmt_txdesc(frame_len: int, *, use_no_ack: bool = True, mcs: int = 0,
     txwi_w1 = set_field(txwi_w1, C.TXWI_W1_NSEQ, 0)            # use the frame's seqctl
     txwi_w1 = set_field(txwi_w1, C.TXWI_W1_WIRELESS_CLI_ID, 0)  # broadcast / unassociated
     txwi_w1 = set_field(txwi_w1, C.TXWI_W1_MPDU_TOTAL_BYTE_COUNT, frame_len)
-    txwi_w1 = set_field(txwi_w1, C.TXWI_W1_PACKETID_QUEUE, 0)
-    txwi_w1 = set_field(txwi_w1, C.TXWI_W1_PACKETID_ENTRY, 2)
+    txwi_w1 = set_field(txwi_w1, C.TXWI_W1_PACKETID_QUEUE, C.QID_AC_VO)
+    txwi_w1 = set_field(txwi_w1, C.TXWI_W1_PACKETID_ENTRY, (entry_index % 3) + 1)
 
     # TXWI W2/W3 are IV/EIV — zeroed (no HW crypto on an inject).
     return struct.pack("<5I", txinfo_w0, txwi_w0, txwi_w1, 0, 0)
 
 
-def build_frame(frame: bytes, *, use_no_ack: bool = True) -> bytes:
+def build_frame(frame: bytes, entry_index: int, *, use_no_ack: bool = True) -> bytes:
     """Full bulk-OUT payload: ``[TXINFO|TXWI|frame|align pad|USB end pad]``.
 
     ``frame`` is the MPDU without FCS (the chip appends it). The +4 USB end pad is
@@ -77,16 +77,16 @@ def build_frame(frame: bytes, *, use_no_ack: bool = True) -> bytes:
         raise ValueError("frame is empty")
     if len(frame) > 0x0FFF:
         raise ValueError(f"frame too long for TXWI MPDU field ({len(frame)} > 4095)")
-    prefix = build_mgmt_txdesc(len(frame), use_no_ack=use_no_ack)
+    prefix = build_mgmt_txdesc(len(frame), entry_index, use_no_ack=use_no_ack)
     pad = (-len(frame)) & 3
     return prefix + frame + b"\x00" * pad + b"\x00\x00\x00\x00"
 
 
-def send_frame(dev: usb.core.Device, ep: int, frame: bytes, *, use_no_ack: bool = True,
+def send_frame(dev: usb.core.Device, ep: int, frame: bytes, entry_index: int, *, use_no_ack: bool = True,
                timeout_ms: int = 1000) -> int:
     """Build + bulk-OUT one frame on ``ep``. The driver gates this behind an explicit
     user action — nothing on the scan/connect path calls it [[passive_by_default]]."""
-    payload = build_frame(frame, use_no_ack=use_no_ack)
+    payload = build_frame(frame, entry_index, use_no_ack=use_no_ack)
     if logger.isEnabledFor(log_trace.TRACE):
         logger.trace("bulk-OUT EP 0x%02x (%dB): %s", ep, len(payload), payload.hex())
     return dev.write(ep, payload, timeout_ms)

@@ -642,8 +642,10 @@ EEPROM_RSSI_BG_OFFSET0 = 0x00FF
 EEPROM_RSSI_BG_OFFSET1 = 0xFF00
 EEPROM_RSSI_BG2_OFFSET2 = 0x00FF
 
-# TX queue id (QID_MGMT) for the management-frame inject path [SRC rt2x00queue.h].
-QID_MGMT = 5
+# TX queue id of the first bulk-OUT endpoint, the inject path [SRC rt2x00queue.h:47].
+QID_AC_VO = 0
+# TX queue depth [SRC rt2800usb.c:734-738 rt2800usb_queue_init QID_AC_*].
+TX_QUEUE_LIMIT = 16
 
 # 2.4 GHz channel table {rf1, rf2, rf3} [SRC rt2800lib.c:11435 rf_vals_3x] — the byte
 # values are shared across the rt3/rt5 family. RF53xx (this card) packs rf1->RFCSR8,

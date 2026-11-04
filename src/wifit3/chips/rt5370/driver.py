@@ -31,6 +31,7 @@ from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
 from . import bbp, chan, eeprom, firmware, link_tuner, mac, monitor, rfcsr, tx
+from . import constants as C
 from .rx import iter_frames, probe_endpoints, read_rx_burst
 from .transport import RT5370Transport
 
@@ -69,6 +70,7 @@ class RT5370Driver(Driver):
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_ep: Optional[int] = None
         self._tx_seq: int = 0            # running 802.11 seq stamped into injected frames
+        self._tx_entry_index: int = 0    # AC_VO queue Q_INDEX [SRC rt2x00queue.c:670]
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
@@ -282,8 +284,12 @@ class RT5370Driver(Driver):
         # an in-flight (or cancelled-but-draining) channel tune on the USB device. ACK bit ON
         # for a unicast addr1 so the chip requests the AP's ACK + retries un-ACKed frames.
         with self._hw_lock:
-            tx.send_frame(self.transport.dev, self._bulk_out_ep, frame,
+            tx.send_frame(self.transport.dev, self._bulk_out_ep, frame, self._tx_entry_index,
                           use_no_ack=bool(frame[4] & 0x01))
+            # rt2x00queue_index_inc(entry, Q_INDEX) [SRC rt2x00queue.c:703, 877-879]
+            self._tx_entry_index += 1
+            if self._tx_entry_index >= C.TX_QUEUE_LIMIT:
+                self._tx_entry_index = 0
 
     def _stamp_tx_seq(self, frame: bytes) -> bytes:
         """Stamp the next running sequence number into the frame's seqctl (bytes 22-23,
