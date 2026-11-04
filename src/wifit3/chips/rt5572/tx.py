@@ -36,12 +36,21 @@ import usb.core
 from wifit3.chips import log_trace
 
 from .constants import (
+    IEEE80211_FCTL_FROMDS,
     IEEE80211_FCTL_FTYPE,
     IEEE80211_FCTL_MOREFRAGS,
+    IEEE80211_FCTL_ORDER,
     IEEE80211_FCTL_STYPE,
+    IEEE80211_FCTL_TODS,
     IEEE80211_FTYPE_CTL,
+    IEEE80211_FTYPE_DATA,
+    IEEE80211_FTYPE_EXT,
+    IEEE80211_FTYPE_MGMT,
+    IEEE80211_HT_CTL_LEN,
+    IEEE80211_QOS_CTL_LEN,
     IEEE80211_STYPE_CTS,
     IEEE80211_STYPE_RTS,
+    IEEE80211_STYPE_QOS_DATA,
     IEEE802_1D_TO_AC,
     RT_RT5592,
     TXINFO_W0_QSEL,
@@ -81,6 +90,37 @@ def txwi_size_for_silicon(silicon_id: int) -> int:
     return TXWI_DESC_SIZE_4WORDS
 
 
+def ieee80211_hdrlen(frame_control: int) -> int:
+    """802.11 header length mac80211 requires of an injected frame [SRC net/wireless/util.c:430-473]."""
+    ftype = frame_control & IEEE80211_FCTL_FTYPE
+    if ftype == IEEE80211_FTYPE_EXT:
+        return 4
+    hdrlen = 24
+    if ftype == IEEE80211_FTYPE_DATA:
+        a4 = IEEE80211_FCTL_TODS | IEEE80211_FCTL_FROMDS
+        if (frame_control & a4) == a4:                # ieee80211_has_a4
+            hdrlen = 30
+        if frame_control & IEEE80211_STYPE_QOS_DATA:
+            hdrlen += IEEE80211_QOS_CTL_LEN
+            if frame_control & IEEE80211_FCTL_ORDER:
+                hdrlen += IEEE80211_HT_CTL_LEN
+    elif ftype == IEEE80211_FTYPE_MGMT:
+        if frame_control & IEEE80211_FCTL_ORDER:
+            hdrlen += IEEE80211_HT_CTL_LEN
+    elif (frame_control & 0x00E0) == 0x00C0:          # ACK, CTS
+        hdrlen = 10
+    else:
+        hdrlen = 16
+    return hdrlen
+
+
+def ieee80211_get_qos_ctl(frame: bytes) -> int:
+    """Offset of a QoS data frame's QoS control field [SRC include/linux/ieee80211.h:4540-4552]."""
+    if (frame[1] & 0x03) == 0x03:                     # ieee80211_has_a4
+        return 30
+    return 24
+
+
 def select_queue(frame: bytes) -> int:
     """The AC queue mac80211 puts an injected frame on [SRC net/mac80211/tx.c ieee80211_monitor_start_xmit,
     wme.c ieee80211_select_queue_80211]; a monitor vif has no ACM bits, so ieee80211_downgrade_queue keeps it."""
@@ -89,8 +129,7 @@ def select_queue(frame: bytes) -> int:
         return IEEE802_1D_TO_AC[7]
     if not (fc0 & 0x80):                              # data without QoS: priority 0
         return IEEE802_1D_TO_AC[0]
-    qos_offset = 30 if (frame[1] & 0x03) == 0x03 else 24    # ieee80211_get_qos_ctl
-    return IEEE802_1D_TO_AC[frame[qos_offset] & 0x07]       # IEEE80211_QOS_CTL_TAG1D_MASK
+    return IEEE802_1D_TO_AC[frame[ieee80211_get_qos_ctl(frame)] & 0x07]    # IEEE80211_QOS_CTL_TAG1D_MASK
 
 
 def _set_field32(reg: int, mask: int, value: int) -> int:

@@ -19,6 +19,10 @@ from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallba
 from wifit3.errors import BringUpError
 
 from .constants import (
+    IEEE80211_FCTL_FTYPE,
+    IEEE80211_FTYPE_DATA,
+    IEEE80211_QOS_CTL_ACK_POLICY_NOACK,
+    IEEE80211_STYPE_QOS_DATA,
     NUM_TX_QUEUES,
     RT_RT5592,
     TX_QUEUE_LIMIT,
@@ -44,7 +48,10 @@ from .rx import (
 )
 from ..rx_reader import RxReaderThread
 from .transport import RT5572Transport
-from .tx import inject_frame as _tx_inject_frame, select_queue, txwi_size_for_silicon
+from .tx import (
+    ieee80211_get_qos_ctl, ieee80211_hdrlen, inject_frame as _tx_inject_frame, select_queue,
+    txwi_size_for_silicon,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -481,6 +488,9 @@ class RT5572Driver(Driver):
         if self.chip_id is None or not self._tx_queue_eps:
             logger.error("inject_frame: connect() must run first")
             return False
+        # ieee80211_monitor_start_xmit / ieee80211_tx drop [SRC net/mac80211/tx.c:2348-2349, 1941-1942]
+        if len(frame_bytes) < 10 or len(frame_bytes) < ieee80211_hdrlen(frame_bytes[0] | frame_bytes[1] << 8):
+            return False
         txwi_sz = txwi_size_for_silicon(self.chip_id.silicon_id)
         # 5 GHz has no CCK modulation, so a CCK-tagged frame is armed but never
         # emitted; 5 GHz TX must be OFDM (MCS 0 = 6 Mbps OFDM).
@@ -491,13 +501,18 @@ class RT5572Driver(Driver):
             self._first_inject_dumped = True
         qid = select_queue(frame_bytes)
         entry_index = self._tx_entry_index[qid]
+        use_no_ack = bool(frame_bytes[4] & 0x01)    # multicast addr1 [SRC net/mac80211/tx.c:1273-1275]
+        if ((frame_bytes[0] & (IEEE80211_FCTL_FTYPE | IEEE80211_STYPE_QOS_DATA))
+                == IEEE80211_FTYPE_DATA | IEEE80211_STYPE_QOS_DATA
+                and frame_bytes[ieee80211_get_qos_ctl(frame_bytes)] & IEEE80211_QOS_CTL_ACK_POLICY_NOACK):
+            use_no_ack = True                       # ieee80211_set_qos_hdr [SRC net/mac80211/wme.c:208-211]
         try:
             sent = await loop.run_in_executor(
                 None,
                 lambda: _tx_inject_frame(
                     self.dev, frame_bytes,
                     txwi_size=txwi_sz, ep=self._tx_queue_eps[qid], qid=qid, entry_index=entry_index,
-                    use_no_ack=bool(frame_bytes[4] & 0x01), phymode=phymode,
+                    use_no_ack=use_no_ack, phymode=phymode,
                 ),
             )
             # rt2x00queue_index_inc(entry, Q_INDEX) [SRC rt2x00queue.c:703, 874-876]
