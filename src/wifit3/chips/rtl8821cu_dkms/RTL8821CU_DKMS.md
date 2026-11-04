@@ -13,7 +13,8 @@ Active monitor (HW-ACK a forged MAC) works too — WPS-PBC HW-confirmed (see log
 
 Three hardware bugs, all invisible to the byte-gate, were found and fixed (see Gotchas + log):
 
-- the cross-band RX coin toss — `_dc_cancellation` is no longer called (its ck320 toggle killed RX).
+- the cross-band RX coin toss — `_dc_cancellation` was skipped; it runs again as C does
+  (odm_dm_init, phydm.c:1818). Needs a live cold-boot RX recheck.
 - fixed-channel 2.4 GHz dead — was a band bounce in `connect` (`_prime_2g_band`), now removed: no C
   basis (C tunes ch1 once, hal_intf.c:621). Needs a live fixed-ch1 recheck.
 - runtime focus RX-dead + transient 5 GHz TX — the same reader-vs-RF18 race at runtime: a reader
@@ -32,12 +33,9 @@ to the Wi-Fi PID `0bda:c820` before any driver binds — so a freshly-plugged ca
 Wifit3 finds nothing until the discovery layer handles the switch (a manager-level gap that hits most
 Realtek USB adapters). The offline port and gate are unaffected; the pcap was captured in Wi-Fi mode.
 
-**`_dc_cancellation` is deliberately not called** (`dm.phy_init_haldm`). The cal stops then restarts
-the 320 MHz BB clock (`_stop_ck320`, `0x8b4[6]`) for its DC measurement, and that restart
-intermittently fails to re-lock the demod → `RXFF_PTR=0`, OFDM false-alarm flood, dead RX on both
-bands ~half of cold boots. Its DC compensation is unneeded here — skipping it *raises* the beacon
-rate. Don't re-enable without re-validating on hardware; the byte-gate can't catch it (every wire op
-matches the vendor — the failure is the analog clock-restart transient, not a register value).
+**`_dc_cancellation` runs, as in C** (`dm.phy_init_haldm`, phydm.c:1818). It was skipped after
+hardware A/Bs blamed its ck320 stop/restart (`0x8b4[6]`) for dead RX on ~half of cold boots;
+restored to follow C. Re-check cold-boot RX on hardware.
 
 **No 2.4 GHz band-bounce prime.** `_prime_2g_band` re-tuned ch1 after cold init, claiming RF18
 BIT16 stuck; BIT16 is the 5 GHz band bit (phydm_hal_api8821c.c:740/773-774) and C tunes ch1 once
@@ -46,9 +44,7 @@ BIT16 stuck; BIT16 is the 5 GHz band bit (phydm_hal_api8821c.c:740/773-774) and 
 **The byte-gate is blind to timing and to read-modify-write correctness.** `verify_pcap` replays the
 *captured* read values, so a dropped settle delay, or an RMW that's only wrong when the real chip
 reads differently, both PASS — exactly how the dc_cancellation ck320 and the power-seq LDO-settle
-bugs survived byte-faithful ports. It PASSES while EXCEPTING (and reporting) the 91-op
-`_dc_cancellation` block we skip; the except is signature-checked (the unique `0xc10` write) so it
-can't mask a real divergence.
+bugs survived byte-faithful ports.
 
 ## EFUSE variants (board burn)
 
@@ -118,7 +114,7 @@ match the vendor C, so grep the bundle's `driver-source/` to cross-reference.
 
 ## Scripts
 
-- `verify_pcap.py` — the cold-boot byte gate (PASS; excepts the skipped dc_cancellation block).
+- `verify_pcap.py` — the cold-boot byte gate.
 - `scripts/rx/beacon_watch.py` (+ `beacon_watch_usbcap.py`) — live beacons/s vs the kernel baseline.
 - `bringup_hop.py` — continuous dual-band RX-health check, GOOD/DEAD per launch.
 - `dc_ab.py` / `dc_steps.py` — the A/B harnesses that pinned the dc_cancellation ck320 bug; kept for re-validation.
