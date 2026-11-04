@@ -29,7 +29,7 @@ from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bringup, chan, dm_watchdog, led, mac, sipi, tx, txpower
+from . import bringup, cal, chan, dm_watchdog, led, mac, sipi, tx, txpower
 from .constants import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G
 from .rx import FCS_LEN, RXDESC_SIZE, _rnd8, iter_frames
 from .transport import Rtl8822buTransport
@@ -154,7 +154,7 @@ class Rtl8822buDkmsDriver(Driver):
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._io_lock = asyncio.Lock()
-        self._dig_st: Optional[dm_watchdog.DigState] = None
+        self._dm_st: Optional[cal.DmState] = None
         self._watchdog_task: Optional[asyncio.Task] = None
         self._led_task: Optional[asyncio.Task] = None
         # Per-dwell RX tally (DEBUG only) — proves which channels are deaf when the
@@ -197,7 +197,7 @@ class Rtl8822buDkmsDriver(Driver):
 
             if progress_cb:
                 progress_cb(0.1, "Cold bring-up: chip-ID / EFUSE / FW / MAC / BB / RF")
-            info, e, dm_st = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
+            info, e, self._dm_st = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
             self._chip = (info, e)
             self._rfe_type, self._cut = e.rfe_type, info.chip_ver
             self._txpwr_pg = txpower.parse_pg(e.log_map)
@@ -215,6 +215,7 @@ class Rtl8822buDkmsDriver(Driver):
             def _initial_tune(t):
                 chan.set_channel_bw(t, _DEFAULT_CHANNEL, txpwr_pg=self._txpwr_pg,
                                     rfe_type=self._rfe_type, cut=self._cut, is_scan=True)
+                cal.clear_txpowertracking_state(self._dm_st)   # rtl8822b_phy.c:986
 
             await loop.run_in_executor(None, _initial_tune, self.transport)
             self._channel = _DEFAULT_CHANNEL
@@ -222,11 +223,7 @@ class Rtl8822buDkmsDriver(Driver):
             await loop.run_in_executor(None, mac.set_opmode_station, self.transport)
             # _netdev_open: rtw_hal_init, then rtw_led_control(LED_CTL_NO_LINK) (os_intfs.c:4063).
             self._led_task = loop.create_task(self._led_blink())
-            # _netdev_open then arms dynamic_chk_timer (os_intfs.c:4076). The runtime DIG carries
-            # phydm_dig_init's state (phydm_dig.c:1000), not a later re-read.
-            self._dig_st = dm_watchdog.DigState(cur_ig_value=dm_st.cur_ig_value,
-                                                big_jump_step1=dm_st.big_jump_step1,
-                                                cck_new_agc=dm_st.cck_new_agc)
+            # _netdev_open then arms dynamic_chk_timer (os_intfs.c:4076).
             self._watchdog_task = loop.create_task(self._watchdog_loop(loop.time()))
             await self._dbg_rx_state(f"post-initial-tune ch{_DEFAULT_CHANNEL}")
 
@@ -278,15 +275,10 @@ class Rtl8822buDkmsDriver(Driver):
             await asyncio.sleep(expiry - loop.time())
             try:
                 async with self._io_lock:
-                    fa = await loop.run_in_executor(
-                        None, dm_watchdog.phydm_watchdog, self.transport, self._dig_st)
-                if logger.isEnabledFor(logging.DEBUG) and self._dig_st is not None:
-                    logger.debug(
-                        "[WATCHDOG] fa=%d cca=%d cck=%d ofdm=%d igi=0x%02x cckpd=%d cck_ma=%s",
-                        fa.cnt_all, fa.cnt_cca_all, fa.cck_fail, fa.ofdm_fail,
-                        self._dig_st.cur_ig_value, self._dig_st.cck_pd_lv,
-                        "reset" if self._dig_st.cck_fa_ma == dm_watchdog.CCK_FA_MA_RESET
-                        else self._dig_st.cck_fa_ma)
+                    await loop.run_in_executor(None, dm_watchdog.rtw_dynamic_chk_wk_hdl, self.transport,
+                                               self._dm_st, self._channel, self._txpwr_pg)
+                logger.debug("[WATCHDOG] igi=0x%02x cckpd=%d", self._dm_st.cur_ig_value,
+                             self._dm_st.cck_pd_lv)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -393,10 +385,11 @@ class Rtl8822buDkmsDriver(Driver):
         def _tune(t):
             chan.set_channel_bw(t, channel, prev_ch=prev, txpwr_pg=self._txpwr_pg,
                                 rfe_type=self._rfe_type, cut=self._cut, is_scan=True)
+            cal.clear_txpowertracking_state(self._dm_st)       # rtl8822b_phy.c:986
 
         async with self._io_lock:
             await loop.run_in_executor(None, _tune, self.transport)
-        self._channel = channel
+            self._channel = channel                      # the watchdog's dm->channel
         if band_change:
             await self._dbg_rx_state(f"post-tune ch{channel} (band change)")
         return True

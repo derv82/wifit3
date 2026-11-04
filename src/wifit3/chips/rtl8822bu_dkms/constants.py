@@ -399,6 +399,7 @@ EEPROM_RFE_OPTION = 0x00CA             # :475  rfe_type (RF front-end variant)
 EEPROM_COUNTRY_CODE = 0x00CB           # :476
 EEPROM_MAC_ADDR = 0x0107               # :479  (the 8822bU MAC sits past the 256-byte page)
 EFUSE_PA_BIAS = 0x03D7                  # physical efuse PA-bias pair [SRC] rtl8822b_ops.c:560
+PPG_THERMAL_OFFSET_22B = 0x03EF         # physical efuse thermal trim [SRC] halrf_kfree.h:77
 # Field defaults when the efuse byte is blank (0xFF) or the map is invalid.
 EEPROM_DEFAULT_BOARD_OPTION = 0x00     # [SRC] hal_pg.h:824 EEPROM_DEFAULT_BOARD_OPTION
 EEPROM_DEFAULT_CRYSTAL_CAP = 0x00      # [SRC] hal_pg.h:841 EEPROM_Default_CrystalCap (8822b uses generic)

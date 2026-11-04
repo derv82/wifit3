@@ -13,6 +13,7 @@ is still 0 here, so ccapar takes col 1 (2.4G/2R) and phydm_rfe is a no-op (chann
 from __future__ import annotations
 
 from . import chan, sipi
+from .txpowertrack_tbl import TXPWRTRK
 
 BB_PATH_A, BB_PATH_B, BB_PATH_AB = 1, 2, 3
 RF_0xEF, RF_0x33, RF_0x3E, RF_0x3F = 0xEF, 0x33, 0x3E, 0x3F
@@ -22,28 +23,62 @@ MASKDWORD = 0xFFFFFFFF                 # full 32-bit BB write (plain write32, no
 # Debug-port priorities [SRC] phydm_debug.h:317 (RELEASE=0 lowest .. PRI_3=3 highest).
 DBGPORT_RELEASE, DBGPORT_PRI_1, DBGPORT_PRI_3 = 0, 1, 3
 
+CCK_FA_MA_RESET = 0xFFFFFFFF                           # [SRC] phydm_cck_pd.h:37
+CCK_PD_LV_INIT, CCK_PD_LV_0, CCK_PD_LV_1 = 0xFF, 0, 1  # [SRC] phydm_cck_pd.h:87
+NHM_CNT_INIT, NHM_CCA_INIT, NHM_TXON_INIT = 2, 2, 2    # [SRC] phydm_ccx.h:116/128/134
+CCA_CAP = 14                                           # [SRC] phydm_ccx.h:41
+AVG_THERMAL_NUM_8822B = 4                              # [SRC] halrf_8822b.h:29
+# [SRC] halrf_powertracking_ce.c:538 tx_scaling_table_jaguar
+TX_SCALING_TABLE_JAGUAR = (
+    0x081, 0x088, 0x090, 0x099, 0x0A2, 0x0AC, 0x0B6, 0x0C0, 0x0CC, 0x0D8, 0x0E5, 0x0F2, 0x101,
+    0x110, 0x120, 0x131, 0x143, 0x156, 0x16A, 0x180, 0x197, 0x1AF, 0x1C8, 0x1E3, 0x200, 0x21E,
+    0x23E, 0x261, 0x285, 0x2AB, 0x2D3, 0x2FE, 0x32B, 0x35C, 0x38E, 0x3C4, 0x3FE)
+
 
 class DmState:
-    """The parts of PHYDM's `struct dm_struct` whose register *writes* are computed from cached
-    values, so a correct replay must carry them between the functions that set and use them.
-    Seeded during the DM init (dig_init / init_cck_setting) and consumed by `dc_cancellation`:
-
-    - cur_ig_value      `dig_t->cur_ig_value` — live IGI; the !=-guard in odm_write_dig.
-    - big_jump_step1    `dig_t->big_jump_step1` = (0x8C8[3:1] read once at dig_init); drives the
-                        0x8C8 big-jump write, which CANNOT be re-derived later (the write mutates
-                        those very bits), so it must be latched at dig_init.
-    - cck_new_agc       `dm->cck_new_agc` = 0xA9C[17]; gates the 0xA0C IGI-for-CCK write.
-    - pre_dbg_priority  `dm->pre_dbg_priority`; set_bb_dbg_port only fires when priority rises.
-    - tx_queue_bitmap / ccktx_path  `api->...`; saved on stop_ic_trx SET, restored on REVERT.
-    """
+    """The parts of PHYDM's `struct dm_struct` (and the halrf `rf_table`/`rf_calibrate_info`) that
+    carry a value from where it is set to a later register write: the DM init, the channel tune and
+    the ~2 s watchdog tick all read and write this one object, as they share `dm` in the C."""
 
     def __init__(self) -> None:
-        self.cur_ig_value = 0
-        self.big_jump_step1 = 0
-        self.cck_new_agc = False
+        self.cur_ig_value = 0                   # dig_t->cur_ig_value
+        self.big_jump_step1 = 0                 # dig_t->big_jump_step1 (0x8C8[3:1] at dig_init)
+        self.cck_new_agc = False                # dm->cck_new_agc (0xA9C[17])
         self.pre_dbg_priority = DBGPORT_RELEASE
-        self.tx_queue_bitmap = 0
-        self.ccktx_path = 0
+        self.tx_queue_bitmap = 0                # api->tx_queue_bitmap (stop_ic_trx)
+        self.ccktx_path = 0                     # api->ccktx_path (dis_cck_trx)
+        self.cck_pd_lv = CCK_PD_LV_INIT         # dm_cckpd_table
+        self.cck_fa_ma = CCK_FA_MA_RESET
+        self.ofdm2_rate_idx = 0                 # false_alm_cnt CRC32 count-2 rates
+        self.ht2_rate_idx = 0
+        self.vht2_rate_idx = 0
+        self.nhm_igi = 0xFF                     # dm_ccx_info
+        self.nhm_period = 0
+        self.nhm_include_txon = NHM_TXON_INIT
+        self.nhm_include_cca = NHM_CCA_INIT
+        self.nhm_divider_opt = NHM_CNT_INIT
+        self.clm_period = 0
+        self.fahm_igi = 0xFF
+        self.fahm_period = 0
+        self.fahm_numer_opt = 0
+        self.fahm_denom_opt = 0
+        self.fahm_inclu_cck = False
+        self.rrsr_val_init = 0                  # dm_ra_table
+        self.rrsr_val_curr = 0
+        self.eeprom_thermal = 0                 # rf->eeprom_thermal (HALRF_CMNINFO_EEPROM_THERMAL_VALUE)
+        self.thermal_offset = 0                 # phydm_get_thermal_offset (power_trim_data.thermal)
+        self.delta_swing = TXPWRTRK             # cali_info->delta_swing_table_idx_*
+        self.default_ofdm_index = 0             # rf_calibrate_info
+        self.tm_trigger = False
+        self.thermal_value = 0
+        self.thermal_value_avg = [0] * AVG_THERMAL_NUM_8822B
+        self.thermal_value_avg_index = 0
+        self.bb_swing_idx_ofdm = [0, 0]
+        self.power_index_offset = [0, 0]
+        self.delta_power_index = [0, 0]
+        self.delta_power_index_last = [0, 0]
+        self.absolute_ofdm_swing_idx = [0, 0]
+        self.remnant_ofdm_swing_idx = [0, 0]
 
 
 def aac_check(t) -> None:
@@ -138,41 +173,54 @@ def dig_init(t, st: DmState) -> None:
     st.big_jump_step1 = (ret & 0xE) >> 1
 
 
-def cck_pd_init(t) -> None:
+def cck_pd_init(t, st: DmState) -> None:
     """[SRC] phydm_cck_pd_init (phydm_cck_pd.c:1698) — 8822b is CCK-PD type1 (non-MP): the only wire
     op is phydm_set_cckpd_lv_type1(CCK_PD_LV_1) writing pd_th 0x83 to CCK_CCA_TH (0xA0A)."""
+    st.cck_pd_lv = CCK_PD_LV_1
+    st.cck_fa_ma = CCK_FA_MA_RESET
     t.write8(0x0A0A, 0x83)
 
 
-def env_monitor_init(t) -> None:
-    """[SRC] phydm_env_monitor_init (phydm_ccx.c:3447) — NHM + CLM environment-monitor seed.
+def nhm_th_background(igi: int) -> list[int]:
+    """[SRC] phydm_nhm_th_update_chk / phydm_fahm_th_update_chk (phydm_ccx.c:470/2080) BACKGROUND
+    thresholds: th[0] = IGI_2_NHM_TH(igi - CCA_CAP), th[i] = th[0] + IGI_2_NHM_TH(2 * i), all u8."""
+    th0 = (((igi - CCA_CAP) & 0xFF) << 1) & 0xFF
+    return [(th0 + ((2 * i) << 1)) & 0xFF for i in range(11)]
 
-    phydm_ccx_hw_restart (11AC reg 0x994): disable NHM/CLM/FAHM then toggle BIT(8). phydm_nhm_init →
-    phydm_nhm_th_update_chk(NHM_BACKGROUND) derives 11 thresholds from the live IGI
-    (`th[i] = ((igi - CCA_CAP=14) << 1) + IGI_2_NHM_TH(2)*i`, IGI_2_NHM_TH(x)=x<<1) and
-    phydm_nhm_set_th_reg packs them into 0x998/0x99c/0x9a0[7:0]/0x994[31:16]. phydm_clm_init →
-    phydm_clm_setting(65535) writes the CLM period to 0x990[15:0]."""
+
+def nhm_set_th_reg(t, th: list[int]) -> None:
+    """[SRC] phydm_nhm_set_th_reg (phydm_ccx.c:420), 11AC registers."""
+    sipi.set_bb_reg(t, 0x0998, MASKDWORD, th[3] << 24 | th[2] << 16 | th[1] << 8 | th[0])
+    sipi.set_bb_reg(t, 0x099C, MASKDWORD, th[7] << 24 | th[6] << 16 | th[5] << 8 | th[4])
+    sipi.set_bb_reg(t, 0x09A0, 0xFF, th[8])
+    sipi.set_bb_reg(t, 0x0994, 0xFFFF0000, th[10] << 8 | th[9])
+
+
+def fahm_set_th_reg(t, th: list[int]) -> None:
+    """[SRC] phydm_fahm_set_th_reg (phydm_ccx.c:2024), PHYDM_IC_AC registers."""
+    sipi.set_bb_reg(t, 0x1C38, 0xFFFFFF00, th[2] << 16 | th[1] << 8 | th[0])
+    sipi.set_bb_reg(t, 0x1C78, 0xFFFFFF00, th[5] << 16 | th[4] << 8 | th[3])
+    sipi.set_bb_reg(t, 0x1C7C, 0xFFFF0000, th[7] << 8 | th[6])
+    sipi.set_bb_reg(t, 0x1CB8, 0xFFFFFF00, th[10] << 16 | th[9] << 8 | th[8])
+
+
+def env_monitor_init(t, st: DmState) -> None:
+    """[SRC] phydm_env_monitor_init (phydm_ccx.c:3447): phydm_ccx_hw_restart, phydm_nhm_init,
+    phydm_clm_init (period 65535), phydm_fahm_init (+ count OFDM pkt 0x994[3])."""
     sipi.set_bb_reg(t, 0x0994, 0x7, 0x0)              # ccx_hw_restart: disable NHM/CLM/FAHM
     sipi.set_bb_reg(t, 0x0994, 1 << 8, 0x0)
     sipi.set_bb_reg(t, 0x0994, 1 << 8, 0x1)
-    igi = sipi.get_bb_reg(t, 0x0C50, 0x7F)            # phydm_get_igi(path A)
-    th0 = (igi - 14) << 1
-    th = [(th0 + 4 * i) & 0xFF for i in range(11)]    # th_step 2 -> +IGI_2_NHM_TH(2*i) = +4*i
-    sipi.set_bb_reg(t, 0x0998, 0xFFFFFFFF, th[3] << 24 | th[2] << 16 | th[1] << 8 | th[0])
-    sipi.set_bb_reg(t, 0x099C, 0xFFFFFFFF, th[7] << 24 | th[6] << 16 | th[5] << 8 | th[4])
-    sipi.set_bb_reg(t, 0x09A0, 0xFF, th[8])
-    sipi.set_bb_reg(t, 0x0994, 0xFFFF0000, th[10] << 8 | th[9])
-    sipi.set_bb_reg(t, 0x0990, 0xFFFF, 65535)         # phydm_clm_setting period
-    # phydm_fahm_init: same IGI-derived thresholds (FAHM_BACKGROUND) -> 0x1c38/0x1c78/0x1c7c/0x1cb8
-    # (PHYDM_IC_AC packing), then count-OFDM-pkt enable 0x994[3].
-    fi = sipi.get_bb_reg(t, 0x0C50, 0x7F)
-    f0 = (fi - 14) << 1
-    f = [(f0 + 4 * i) & 0xFF for i in range(11)]
-    sipi.set_bb_reg(t, 0x1C38, 0xFFFFFF00, f[2] << 16 | f[1] << 8 | f[0])
-    sipi.set_bb_reg(t, 0x1C78, 0xFFFFFF00, f[5] << 16 | f[4] << 8 | f[3])
-    sipi.set_bb_reg(t, 0x1C7C, 0xFFFF0000, f[7] << 8 | f[6])
-    sipi.set_bb_reg(t, 0x1CB8, 0xFFFFFF00, f[10] << 16 | f[9] << 8 | f[8])
-    sipi.set_bb_reg(t, 0x0994, 1 << 3, 1)             # phydm_fahm_init: count OFDM pkt
+    igi = sipi.get_bb_reg(t, 0x0C50, 0x7F)            # phydm_nhm_th_update_chk: phydm_get_igi(A)
+    if igi >= 0x10:                                   # protect for invalid IGI
+        st.nhm_igi = igi
+        nhm_set_th_reg(t, nhm_th_background(igi))
+    sipi.set_bb_reg(t, 0x0990, 0xFFFF, 65535)         # phydm_clm_setting
+    st.clm_period = 65535
+    igi = sipi.get_bb_reg(t, 0x0C50, 0x7F)            # phydm_fahm_th_update_chk
+    if igi >= 0x10:
+        st.fahm_igi = igi
+        fahm_set_th_reg(t, nhm_th_background(igi))
+    sipi.set_bb_reg(t, 0x0994, 1 << 3, 1)             # counting OFDM pkt
 
 
 def adaptivity_init(t) -> None:
@@ -190,13 +238,13 @@ def adaptivity_init(t) -> None:
     sipi.set_bb_reg(t, 0x0524, 1 << 11, 0x1)          # mac_edcca_state: disable count-down
 
 
-def ra_info_init(t) -> None:
+def ra_info_init(t, st: DmState) -> None:
     """[SRC] phydm_ra_info_init (phydm_rainfo.c:2034) — rate-adaptation init.
 
     Caches rrsr_val_init (R 0x440); 8822b sets 0x4cc[31:24] = 0x4c8[23:16] - 1; phydm_arfr_table_init
     (RATEID_IDX_TYPE2) writes the 2.4G AC 2ss/1ss auto-rate-fallback tables to 0x494/0x498/0x4a4/
     0x4a8. phydm_rate_adaptive_mask_init is software."""
-    sipi.get_bb_reg(t, 0x0440, 0xFFFFFFFF)            # rrsr_val_init
+    st.rrsr_val_init = sipi.get_bb_reg(t, 0x0440, MASKDWORD)
     rv = sipi.get_bb_reg(t, 0x04C8, 0xFF0000)         # 0x4c8[23:16]
     sipi.set_bb_reg(t, 0x04CC, 0xFF000000, (rv - 1) & 0xFF)
     t.write32(0x0494, 0xFE01F015)                     # phydm_arfr_table_init
@@ -214,13 +262,28 @@ def cfo_tracking_init(t) -> None:
     sipi.set_bb_reg(t, 0x0010, 0x40, 0x1)             # crystal cap control by WiFi
 
 
-def rf_init(t) -> None:
-    """[SRC] phydm_rf_init (halphyrf_ce.c:1152) — odm_txpowertracking_init + clear-state.
+def clear_txpowertracking_state(st: DmState) -> None:
+    """[SRC] odm_clear_txpowertracking_state (halphyrf_ce.c:134) — the two 8822b RF paths."""
+    for p in range(2):
+        st.bb_swing_idx_ofdm[p] = st.default_ofdm_index
+        st.power_index_offset[p] = 0
+        st.delta_power_index[p] = 0
+        st.delta_power_index_last[p] = 0
+        st.absolute_ofdm_swing_idx[p] = 0
+        st.remnant_ofdm_swing_idx[p] = 0
+    st.thermal_value = st.eeprom_thermal
 
-    odm_txpowertracking_thermal_meter_init calls get_swing_index, whose only 8822b wire op is the
-    OFDM bb-swing read 0xc1c[31:21] (compared against tx_scaling_table_jaguar in software);
-    get_cck_swing_index and odm_clear_txpowertracking_state are software-only on 8822b."""
-    sipi.get_bb_reg(t, 0x0C1C, 0xFFE00000)            # get_swing_index: default OFDM bb-swing
+
+def rf_init(t, st: DmState) -> None:
+    """[SRC] phydm_rf_init (halphyrf_ce.c:1152): odm_txpowertracking_thermal_meter_init
+    (halrf_powertracking_ce.c:684), whose get_swing_index reads 0xc1c[31:21], then the clear-state."""
+    bb_swing = sipi.get_bb_reg(t, 0x0C1C, 0xFFE00000)
+    if bb_swing in TX_SCALING_TABLE_JAGUAR:
+        st.default_ofdm_index = TX_SCALING_TABLE_JAGUAR.index(bb_swing)
+    else:                                             # swing_idx >= TXSCALE_TABLE_SIZE
+        st.default_ofdm_index = 24
+    st.tm_trigger = False
+    clear_txpowertracking_state(st)
 
 
 # --- DC-cancellation BB primitives [SRC] phydm_api.c / phydm_debug.c / phydm_dig.c (11AC paths) ---

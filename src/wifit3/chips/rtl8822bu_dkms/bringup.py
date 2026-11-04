@@ -14,7 +14,7 @@ package 7). See RTL8822BU_DKMS.md for the per-step citations.
 """
 from __future__ import annotations
 
-from . import bb, cal, chipid, coex, efuse, firmware, led, mac, phy_cond, rf, txbf, usbphy
+from . import bb, cal, chipid, coex, efuse, firmware, led, mac, phy_cond, rf, txbf, txpowertrack_tbl, usbphy
 from . import constants as const
 
 
@@ -37,7 +37,7 @@ def cold_bringup(t):
     firmware.read_mac_hidden_rpt(t)
     t.write16(0x00AA, 0x8000)              # [WIRE] post-C2H op before the power-off
     mac.power_off(t, info.chip_ver)
-    efuse.read_phydm_trim(t)               # 3 cached PG-trim reads
+    thermal_trim = efuse.read_phydm_trim(t, e.phy_map)  # 3 cached PG-trim reads
     t.write8(0xFE58, 0x00)                 # [WIRE] RPWM clear before the 2nd power-on
 
     # --- cycle 2: rtl8822b_hal_init (the real init) ---
@@ -64,16 +64,19 @@ def cold_bringup(t):
     cal.config_trx_mode(t, rfe_type=e.rfe_type, cut=info.chip_ver)   # config_phydm_trx_mode: TX/RX path
     cal.aac_check(t)                       # one-off AAC check (RF_A 0xC9) before the DM init
     cal.rfe_init(t)                        # phydm_rfe_8822b_init: RFE pin mux (DM init start)
-    st = cal.DmState()                     # PHYDM software state seeded here, used by dc_cancellation
+    st = cal.DmState()                     # PHYDM software state: DM init, channel tune, watchdog
+    st.eeprom_thermal = e.thermal_meter    # HALRF_CMNINFO_EEPROM_THERMAL_VALUE (hal_dm.c:446)
+    st.thermal_offset = thermal_trim
+    st.delta_swing = txpowertrack_tbl.TXPWRTRK_BY_RFE_TYPE.get(e.rfe_type, txpowertrack_tbl.TXPWRTRK)
     cal.common_info_self_init(t, st, e.rfe_type)   # cck_setting + rf_path_rx_enable + SoML RxHP seed
     cal.dig_init(t, st)                    # phydm_dig_init: DIG/IGI seed (RX detection)
-    cal.cck_pd_init(t)                     # phydm_cck_pd_init: CCK packet-detection threshold
-    cal.env_monitor_init(t)                # phydm_env_monitor_init: NHM + CLM + FAHM env-monitor
+    cal.cck_pd_init(t, st)                 # phydm_cck_pd_init: CCK packet-detection threshold
+    cal.env_monitor_init(t, st)            # phydm_env_monitor_init: NHM + CLM + FAHM env-monitor
     cal.adaptivity_init(t)                 # phydm_adaptivity_init: EDCCA seed
-    cal.ra_info_init(t)                    # phydm_ra_info_init: rate-adaptation + ARFR tables
+    cal.ra_info_init(t, st)                # phydm_ra_info_init: rate-adaptation + ARFR tables
     # phydm_rssi_monitor_init is a software no-op.
     cal.cfo_tracking_init(t)               # phydm_cfo_tracking_init: crystal-cap-by-WiFi (0x10[6])
-    cal.rf_init(t)                         # phydm_rf_init: tx-power-track init (get_swing_index 0xc1c)
+    cal.rf_init(t, st)                     # phydm_rf_init: tx-power-track init (get_swing_index 0xc1c)
     cal.dc_cancellation(t, st)             # phydm_dc_cancellation: RX DC-offset measure + cancel
     cal.tx_current_calibration(t, e.pa_bias[0], e.pa_bias[1])  # phydm_txcurrentcalibration (TxA bias)
     cal.get_pa_bias_offset(t, e.phy_map)   # phydm_get_pa_bias_offset: PG PA-bias (0x3D5/6) -> RF 0x3f

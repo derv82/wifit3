@@ -64,6 +64,7 @@ from .constants import (
     ODM_BOARD_EXT_LNA_5G,
     ODM_BOARD_EXT_PA,
     ODM_BOARD_EXT_PA_5G,
+    PPG_THERMAL_OFFSET_22B,
     PRTCT_EFUSE_SIZE_8822B,
     REG_EFUSE_CTRL,
     REG_LDO_EFUSE_CTRL,
@@ -266,15 +267,19 @@ def _odm_board_type(external_pa_2g: bool, external_lna_2g: bool, external_pa_5g:
     return board_type
 
 
-def read_phydm_trim(t) -> None:
+def read_phydm_trim(t, phy_map: bytes) -> int:
     """rtw_phydm_read_efuse [SRC] hal_dm.c -> phydm_get_thermal_trim_offset_8822b +
     phydm_get_power_trim_offset_8822b [SRC] halrf_kfree.c — read the thermal + 2G/5G power-trim
-    PG bytes (PPG_THERMAL, PPG_2G_TXAB, PPG_5GL1_TXA). On this card those PG bytes are blank (0xFF),
-    so each is one odm_efuse_one_byte_read served from the cached physical map — only the WIFI
-    bank-switch (R 0x35) reaches the wire, three times. Runs at the tail of read_chip_info, after
-    hal_read_mac_hidden_rpt's power-off."""
-    for _ in range(3):
+    PG bytes (PPG_THERMAL, PPG_2G_TXAB, PPG_5GL1_TXA): each is one odm_efuse_one_byte_read, so one
+    WIFI bank-switch (R 0x35) on the wire. Returns power_trim_data.thermal (0 when blank)."""
+    pg_therm = efuse_one_byte_read(t, phy_map, PPG_THERMAL_OFFSET_22B)
+    thermal = 0
+    if pg_therm != 0xFF:                             # KFREE_FLAG_THERMAL_K_ON
+        pg_therm &= 0x1F
+        thermal = (pg_therm >> 1) if (pg_therm & 1) else -(pg_therm >> 1)
+    for _ in range(2):
         _switch_efuse_bank_wifi(t)
+    return thermal
 
 
 def efuse_one_byte_read(t, phy_map: bytes, addr: int) -> int:
