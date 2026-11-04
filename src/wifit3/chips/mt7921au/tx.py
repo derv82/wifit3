@@ -25,8 +25,34 @@ _FCTL_STYPE     = 0x00F0   # subtype field (bits 4-7)
 _FCTL_TODS      = 0x0100
 _FCTL_FROMDS    = 0x0200
 _FCTL_MOREFRAGS = 0x0400
+_FCTL_ORDER     = 0x8000
+_FTYPE_MGMT     = 0
+_FTYPE_CTL      = 1
 _FTYPE_DATA     = 2
+_FTYPE_EXT      = 3
 _STYPE_QOS_DATA = 0x0080   # data-subtype bit that marks a QoS frame
+_STYPE_ACTION   = 0x00D0
+_STYPE_DISASSOC = 0x00A0
+_STYPE_DEAUTH   = 0x00C0
+_STYPE_BACK_REQ = 0x0080   # control subtype BlockAckReq
+_QOS_CTL_LEN    = 2
+_HT_CTL_LEN     = 4
+_QOS_CTL_TID_MASK = 0x000F     # IEEE80211_QOS_CTL_TID_MASK
+_QOS_CTL_TAG1D_MASK = 0x0007   # IEEE80211_QOS_CTL_TAG1D_MASK
+_BAR_CTRL_TID_INFO_SHIFT = 12  # IEEE80211_BAR_CTRL_TID_INFO_MASK 0xf000
+_MIN_ACTION_SIZE = 25          # IEEE80211_MIN_ACTION_SIZE: offsetof(ieee80211_mgmt, u.action.u)
+_CATEGORY_BACK = 3             # WLAN_CATEGORY_BACK
+_ACTION_ADDBA_REQ = 0          # WLAN_ACTION_ADDBA_REQ
+_CATEGORY_PUBLIC = 4           # WLAN_CATEGORY_PUBLIC
+_CATEGORY_PROTECTED_DUAL_OF_ACTION = 9   # WLAN_CATEGORY_PROTECTED_DUAL_OF_ACTION
+_PUB_ACTION_FTM_REQUEST = 32   # WLAN_PUB_ACTION_FTM_REQUEST
+_PUB_ACTION_FTM_RESPONSE = 33  # WLAN_PUB_ACTION_FTM_RESPONSE
+_FTM_ACTION_CODE_END = 26      # offsetofend(struct ieee80211_mgmt, u.action.u.ftm.action_code)
+# mac80211 ieee802_1d_to_ac (wme.c): an 802.1d priority's AC.
+_IEEE802_1D_TO_AC = (MT_TXQ_BE, MT_TXQ_BK, MT_TXQ_BK, MT_TXQ_BE, MT_TXQ_VI, MT_TXQ_VI, MT_TXQ_VO, MT_TXQ_VO)
+# Each TX queue's bulk-OUT: mt76u_ac_to_hwq for 0x7961 (usb.c:927-930), out_ep[mt76_ac_to_hwq(ac) + 1], PSD on HCCA.
+TX_QUEUE_ENDPOINTS = {MT_TXQ_VO: EP_OUT_AC_VO, MT_TXQ_VI: EP_OUT_AC_VI, MT_TXQ_BE: EP_OUT_AC_BE,
+                      MT_TXQ_BK: EP_OUT_AC_BK, MT_TXQ_PSD: EP_OUT_HCCA}
 
 
 def _ffs(mask: int) -> int:
@@ -39,14 +65,60 @@ def _fp(mask: int, val: int) -> int:
 
 
 def _ieee80211_hdrlen(fc: int) -> int:
-    """ieee80211_hdrlen — MAC-header length in bytes for frame-control ``fc``."""
-    hdrlen = 24
-    if ((fc & _FCTL_FTYPE) >> 2) == _FTYPE_DATA:
+    """ieee80211_hdrlen (include/linux/ieee80211.h): MAC-header length in bytes for frame-control ``fc``."""
+    fc_type = (fc & _FCTL_FTYPE) >> 2
+    if fc_type == _FTYPE_EXT:
+        return 4
+    if fc_type == _FTYPE_DATA:
+        hdrlen = 24
         if (fc & (_FCTL_TODS | _FCTL_FROMDS)) == (_FCTL_TODS | _FCTL_FROMDS):
-            hdrlen += 6                       # 4-address frame
+            hdrlen = 30
         if fc & _STYPE_QOS_DATA:
-            hdrlen += 2                       # QoS control field
-    return hdrlen
+            hdrlen += _QOS_CTL_LEN
+            if fc & _FCTL_ORDER:
+                hdrlen += _HT_CTL_LEN
+        return hdrlen
+    if fc_type == _FTYPE_MGMT:
+        if fc & _FCTL_ORDER:
+            return 24 + _HT_CTL_LEN
+        return 24
+    # Control: ACK and CTS are 10 bytes, all others 16.
+    if (fc & 0x00E0) == 0x00C0:
+        return 10
+    return 16
+
+
+def skb_priority(frame: bytes) -> int:
+    """The skb->priority mac80211 gives an injected frame (wme.c ieee80211_select_queue_80211)."""
+    fc = frame[0] | (frame[1] << 8)
+    if (fc & _FCTL_FTYPE) >> 2 != _FTYPE_DATA:
+        return 7
+    if not fc & _STYPE_QOS_DATA:
+        return 0
+    four_address = (fc & (_FCTL_TODS | _FCTL_FROMDS)) == (_FCTL_TODS | _FCTL_FROMDS)
+    return frame[30 if four_address else 24] & _QOS_CTL_TAG1D_MASK   # ieee80211_get_qos_ctl
+
+
+def select_tx_queue(frame: bytes) -> int:
+    """The mt76 TX queue of an injected frame: its mac80211 AC (ieee802_1d_to_ac[skb_priority]), or MT_TXQ_PSD for a
+    non-bufferable or deauth mgmt/ctl frame (mt76-source-v6.19.14 tx.c:617-623, MT_DRV_HW_MGMT_TXQ)."""
+    fc = frame[0] | (frame[1] << 8)
+    fc_type = (fc & _FCTL_FTYPE) >> 2
+    stype = fc & _FCTL_STYPE
+    if fc_type == _FTYPE_DATA:
+        return _IEEE802_1D_TO_AC[skb_priority(frame)]
+    # ieee80211_is_bufferable_mmpdu (include/linux/ieee80211.h)
+    if fc_type != _FTYPE_MGMT or stype == _STYPE_DEAUTH:
+        return MT_TXQ_PSD
+    if stype == _STYPE_DISASSOC:
+        return _IEEE802_1D_TO_AC[skb_priority(frame)]
+    if stype != _STYPE_ACTION:
+        return MT_TXQ_PSD
+    if (len(frame) >= _FTM_ACTION_CODE_END
+            and frame[24] in (_CATEGORY_PUBLIC, _CATEGORY_PROTECTED_DUAL_OF_ACTION)
+            and frame[25] in (_PUB_ACTION_FTM_REQUEST, _PUB_ACTION_FTM_RESPONSE)):
+        return MT_TXQ_PSD
+    return _IEEE802_1D_TO_AC[skb_priority(frame)]
 
 
 def _tx_rate_val(band_5ghz: bool) -> int:
@@ -86,34 +158,53 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
              pid: int = 0) -> tuple[bytes, int]:
     """Build the USB bulk-OUT bytes for raw 802.11 ``frame`` and pick its endpoint.
 
-    Returns ``(wire_bytes, endpoint)``. Mirrors how mac80211 framed the aireplay
-    injection: management/control frames take the PSD path (LMAC ALTX0, fixed
-    lowest-rate, HCCA endpoint 0x09); data frames take their AC (BE -> 0x04). The
-    monitor vif uses the reserved wcid, the sequence number comes from the frame,
-    and the rate is the band's lowest basic rate.
+    Returns ``(wire_bytes, endpoint)``: the frame goes on its mt76 TX queue (select_tx_queue)
+    and that queue's bulk-OUT. The monitor vif uses the reserved wcid, the sequence number
+    comes from the frame, and the rate is the band's lowest basic rate.
 
     ``retry_count`` fills MT_TXD3_REM_TX_COUNT (the HW ACK-based retry limit). A unicast
     addr1 requests an ACK (NO_ACK clear), so the chip retransmits it up to ``retry_count``
     times until the recipient ACKs; a group addr1 sets NO_ACK. That HW retry is
     inject_frame's only retransmission.
     """
-    if len(frame) < 24:
+    # ieee80211_monitor_start_xmit drops a frame shorter than its header.
+    if len(frame) < 2 or len(frame) < _ieee80211_hdrlen(frame[0] | (frame[1] << 8)):
         raise ValueError(f"802.11 frame too short to inject: {len(frame)} bytes")
 
     fc = frame[0] | (frame[1] << 8)
-    seq_ctrl = frame[22] | (frame[23] << 8)
+    # The C reads hdr->seq_ctrl past the end of a frame shorter than 24 bytes; 0 here.
+    seq_ctrl = 0
+    if len(frame) >= 24:
+        seq_ctrl = frame[22] | (frame[23] << 8)
     fc_type = (fc & _FCTL_FTYPE) >> 2
     fc_stype = (fc & _FCTL_STYPE) >> 4
     is_data = fc_type == _FTYPE_DATA
     multicast = bool(frame[4] & 0x01)         # addr1 group bit
 
-    # qid policy -> (q_idx in the TXD, TID, USB OUT endpoint). mac80211 puts mgmt
-    # on AC_VO/PSD (LMAC ALTX0, HCCA pipe) and this monitor's injected data on BE.
-    if is_data:
-        q_idx = 0 * MT76_CONNAC_MAX_WMM_SETS + (3 - 2)    # wmm0 + lmac_mapping(AC_BE)
-        tid, endpoint = 0, EP_OUT_DATA
+    # mt76_connac2_mac_write_txwi: PSD on LMAC ALTX0, an AC on
+    # wmm_idx 0 * MT76_CONNAC_MAX_WMM_SETS + mt76_connac_lmac_mapping(ac).
+    qid = select_tx_queue(frame)
+    if qid == MT_TXQ_PSD:
+        q_idx = MT_LMAC_ALTX0
     else:
-        q_idx, tid, endpoint = MT_LMAC_ALTX0, 7, EP_OUT_HCCA
+        q_idx = 0 * MT76_CONNAC_MAX_WMM_SETS + (3 - qid)
+    endpoint = TX_QUEUE_ENDPOINTS[qid]
+
+    # mt76_connac2_mac_write_txwi_80211 (mt76_connac_mac.c:401-427): tid from skb->priority,
+    # an ADDBA request's capab, or a BlockAckReq's control.
+    tid = skb_priority(frame) & _QOS_CTL_TID_MASK
+    seqno = seq_ctrl
+    add_ba = False
+    frame_kind = fc & (_FCTL_FTYPE | _FCTL_STYPE)
+    if (frame_kind == _STYPE_ACTION and len(frame) >= _MIN_ACTION_SIZE + 4
+            and frame[24] == _CATEGORY_BACK and frame[25] == _ACTION_ADDBA_REQ):
+        capab = frame[27] | (frame[28] << 8)
+        add_ba = True
+        tid = (capab >> 2) & _QOS_CTL_TID_MASK
+    elif frame_kind == (_FTYPE_CTL << 2) | _STYPE_BACK_REQ:
+        tid = (frame[16] | (frame[17] << 8)) >> _BAR_CTRL_TID_INFO_SHIFT
+        # The injected-frame branch takes a BlockAckReq's start_seq_num as its seqno (:470-476).
+        seqno = frame[18] | (frame[19] << 8)
 
     # [SRC] mt76_connac2_mac_write_txwi (mt76_connac_mac.c:450): FIX_RATE if non-data OR
     # multicast OR IEEE80211_TX_CTL_USE_MINRATE. mac80211 sets USE_MINRATE for frames with no
@@ -154,12 +245,14 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
     if multicast:
         val3 |= MT_TXD3_NO_ACK
     # Injected frame: carry its own sequence number (SEQ_TO_SN = seqno >> 4).
-    val3 |= MT_TXD3_SN_VALID | _fp(MT_TXD3_SEQ, seq_ctrl >> 4)
+    val3 |= MT_TXD3_SN_VALID | _fp(MT_TXD3_SEQ, seqno >> 4)
     txwi[3] = val3
 
     val5 = _fp(MT_TXD5_PID, pid)
     if pid >= MT_PACKET_ID_FIRST:
         val5 |= MT_TXD5_TX_STATUS_HOST
+    if add_ba:
+        val5 |= MT_TXD5_ADD_BA
     txwi[5] = val5
 
     txwi[8] = _fp(MT_TXD8_L_TYPE, fc_type) | _fp(MT_TXD8_L_SUB_TYPE, fc_stype)

@@ -40,7 +40,6 @@ FIRMWARE_WM        = "WIFI_RAM_CODE_MT7961_1.bin"
 # 0); the ALFA AWUS036AXML is a composite device whose wifi function is interface 3.
 EP_OUT_MCU  = 0x08   # MT_EP_OUT_INBAND_CMD: 64+ byte MCU commands
 EP_OUT_FW   = 0x04   # MT_EP_OUT_AC_BE: FW_SCATTER chunks + 802.11 TX data
-EP_OUT_DATA = 0x04   # alias — same physical EP as EP_OUT_FW
 EP_IN_BULK  = 0x84   # MT_EP_IN_PKT_RX: RX 802.11 frames (+ MCU resp once RXEVT_EP4_EN set)
 EP_IN_MCU   = 0x85   # MT_EP_IN_CMD_RESP: MCU command responses (RXEVT_EP4_EN cleared)
 
@@ -165,6 +164,7 @@ MT_TXD3_REM_TX_COUNT  = 0x0000F800  # GENMASK(15, 11)
 MT_TXD3_PROTECT_FRAME = 0x00000002  # BIT(1)
 MT_TXD3_NO_ACK        = 0x00000001  # BIT(0)
 
+MT_TXD5_ADD_BA         = 0x00004000  # BIT(14)
 MT_TXD5_TX_STATUS_HOST = 0x00000400  # BIT(10)
 MT_TXD5_PID            = 0x000000FF  # GENMASK(7, 0)
 # mt76.h: a pktid >= MT_PACKET_ID_FIRST requests host TX status. Injection uses
@@ -189,7 +189,11 @@ MT_TX_RATE_NSS  = 0x00001C00   # GENMASK(12, 10)
 MT_TX_TYPE_SF        = 1     # enum tx_pkt_type (USB packet format)
 MT_HDR_FORMAT_802_11 = 2     # enum tx_header_format
 MT_LMAC_ALTX0        = 0x10  # mgmt/PSD LMAC queue
-MT_TXQ_PSD           = 4     # enum mt76_txq_id
+MT_TXQ_VO            = 0     # enum mt76_txq_id: the mac80211 AC index for VO..BK, then PSD
+MT_TXQ_VI            = 1
+MT_TXQ_BE            = 2
+MT_TXQ_BK            = 3
+MT_TXQ_PSD           = 4
 MT_PHY_TYPE_OFDM     = 1     # mt76_rates hw_value high byte for 5 GHz
 MT76_CONNAC_MAX_WMM_SETS = 4   # q_idx = wmm_idx * this + lmac_mapping(ac)
 
@@ -197,9 +201,12 @@ MT76_CONNAC_MAX_WMM_SETS = 4   # q_idx = wmm_idx * this + lmac_mapping(ac)
 MT792x_SDIO_HDR_TX_BYTES = 0x0000FFFF   # GENMASK(15, 0)
 MT792x_SDIO_HDR_PKT_TYPE = 0x00030000   # GENMASK(17, 16)
 
-# USB bulk-OUT endpoints chosen by qid (mt76u q->ep): mgmt/PSD -> HCCA, data ->
-# its AC endpoint. EP_OUT_DATA (0x04 = AC_BE) is defined above.
-EP_OUT_HCCA = 0x09   # MT_EP_OUT_HCCA: qid == MT_TXQ_PSD (mgmt/deauth)
+# USB bulk-OUT endpoints, in the interface's out_ep[] order after EP_OUT_MCU (enum mt76u_out_ep).
+EP_OUT_AC_BE = 0x04   # MT_EP_OUT_AC_BE
+EP_OUT_AC_BK = 0x05   # MT_EP_OUT_AC_BK
+EP_OUT_AC_VI = 0x06   # MT_EP_OUT_AC_VI
+EP_OUT_AC_VO = 0x07   # MT_EP_OUT_AC_VO
+EP_OUT_HCCA  = 0x09   # MT_EP_OUT_HCCA: qid == MT_TXQ_PSD
 
 # Vendor request opcodes (bRequest field)
 MT_VEND_POWER_ON       = 0x04   # mt792xu_mcu_power_on: wValue=0, wIndex=1
