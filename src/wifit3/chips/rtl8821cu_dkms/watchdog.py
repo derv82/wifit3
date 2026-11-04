@@ -91,7 +91,7 @@ _REG_OFDM_TX_AGC = 0x0C94       # set_pwr8821c: [6:1] = absolute_ofdm_swing_idx 
 _REG_OFDM_BB_SWING = 0x0C1C     # [31:21] = tx_scaling_table_jaguar[bb_swing_idx_ofdm]  [SRC] :222
 _AVG_THERMAL_NUM = 4            # AVG_THERMAL_NUM_8821C [SRC] halrf_8821c.h:19
 _TXPWR_TRACK_TABLE_MAX = 29     # TXPWR_TRACK_TABLE_SIZE-1 clamp [SRC] halrf_powertracking_ce.h:40
-# delta-swing index tables, path-A [SRC] halhwimg8821c_rf.c (rfe-invariant). 2.4 GHz is one table;
+# delta-swing index tables, path-A, default set [SRC] halhwimg8821c_rf.c:2784. 2.4 GHz is one table;
 # 5 GHz has three sub-bands (band-1 36-64 / band-2 100-144 / band-3 149-177) [SRC] :2784/2793.
 _DELTA_SWING_2GA_N = (0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 4,
                       4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 8, 8, 9)
@@ -109,13 +109,42 @@ _DELTA_SWING_5GA_P = (
 )
 
 
-def _delta_swing_tables(channel: int | None) -> tuple[tuple[int, ...], tuple[int, ...]]:
+# type0x20 / type0x28 5 GHz sets [SRC] halhwimg8821c_rf.c:2901/3018 (their 2.4 GHz pairs equal the default).
+_DELTA_SWING_5GA_N_TYPE0X20 = (
+    (0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6, 6, 6, 7, 8, 8, 8, 9, 9, 9, 10, 10, 11, 11, 12, 12, 12, 12, 12),
+    (0, 0, 1, 1, 2, 2, 3, 3, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 12, 12, 12, 12, 12),
+    (0, 1, 2, 3, 4, 4, 4, 5, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 9, 10, 10, 11, 11, 12, 12, 12, 12, 12, 12, 12),
+)
+_DELTA_SWING_5GA_P_TYPE0X20 = (
+    (0, 1, 2, 2, 2, 3, 3, 4, 5, 5, 5, 6, 6, 7, 8, 8, 8, 9, 9, 10, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12),
+    (0, 1, 2, 2, 3, 4, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 8, 9, 10, 10, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12),
+    (0, 1, 1, 1, 2, 3, 3, 3, 4, 4, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 12, 12, 12, 12, 12),
+)
+_DELTA_SWING_5GA_N_TYPE0X28 = (
+    (0, 1, 3, 3, 4, 5, 5, 6, 7, 8, 8, 9, 10, 10, 11, 12, 12, 12, 14, 15, 15, 16, 16, 17, 18, 18, 18, 18, 18, 18),
+    (0, 1, 2, 3, 4, 4, 5, 7, 7, 8, 8, 9, 10, 10, 11, 12, 12, 13, 14, 14, 15, 16, 16, 17, 18, 18, 18, 18, 18, 18),
+    (0, 1, 2, 3, 4, 6, 6, 6, 6, 7, 8, 9, 10, 11, 11, 12, 12, 13, 14, 14, 15, 16, 16, 17, 18, 18, 18, 18, 18, 18),
+)
+_DELTA_SWING_5GA_P_TYPE0X28 = (
+    (0, 1, 2, 3, 3, 3, 4, 5, 7, 7, 8, 8, 9, 9, 10, 11, 12, 12, 13, 14, 15, 16, 16, 17, 17, 17, 17, 17, 17, 17),
+    (0, 1, 2, 3, 3, 4, 4, 5, 6, 7, 8, 9, 10, 10, 11, 13, 13, 14, 15, 15, 16, 16, 17, 17, 17, 17, 17, 17, 17, 17),
+    (0, 1, 2, 2, 3, 4, 4, 5, 6, 7, 7, 8, 8, 9, 10, 10, 11, 12, 13, 14, 14, 14, 14, 15, 16, 16, 16, 16, 16, 16),
+)
+# odm_config_rf_with_tx_pwr_track_header_file [SRC] phydm_hwconfig.c:799: dm->rfe_type 5 / 4 / other.
+_DELTA_SWING_5GA_BY_RFE = {
+    5: (_DELTA_SWING_5GA_N_TYPE0X28, _DELTA_SWING_5GA_P_TYPE0X28),
+    4: (_DELTA_SWING_5GA_N_TYPE0X20, _DELTA_SWING_5GA_P_TYPE0X20),
+}
+
+
+def _delta_swing_tables(channel: int | None, phydm_rfe_type: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
     """get_delta_swing_table_8821c [SRC] halrf_8821c.c:239 — the (down, up) delta-swing tables for
     the tune's band: the 2.4 GHz pair, or the 5 GHz sub-band pair (36-64 / 100-144 / 149-177)."""
     if channel is None or channel <= 14:
         return _DELTA_SWING_2GA_N, _DELTA_SWING_2GA_P
     sub = 0 if channel <= 64 else 1 if channel <= 144 else 2
-    return _DELTA_SWING_5GA_N[sub], _DELTA_SWING_5GA_P[sub]
+    tbl_n, tbl_p = _DELTA_SWING_5GA_BY_RFE.get(phydm_rfe_type, (_DELTA_SWING_5GA_N, _DELTA_SWING_5GA_P))
+    return tbl_n[sub], tbl_p[sub]
 
 # --- dyn-bw indication (bw-fixed) [SRC] phydm_api.c:800 ----------------------
 _REG_BW_FIXED = 0x0840          # [3:0]=pri-ch (20 MHz->0) ; BIT4 = bw-fixed enable
@@ -178,6 +207,7 @@ class WatchdogState:
     # halrf thermal power-tracking (CALLBACK phase). eeprom_thermal/thermal_offset are seeded from
     # EFUSE by the gate; the rest are the cali_info carried state (thermal_value init = eeprom).
     eeprom_thermal: int = 0x12          # rf->eeprom_thermal (EFUSE 0xBA); delta base
+    phydm_rfe_type: int = 0             # dm->rfe_type: picks the delta-swing table set
     thermal_offset: int = 0             # kfree thermal trim (EFUSE 0x1EF), added to the raw meter
     thermal_value: int = -1             # last averaged meter; __post_init__ seeds it = eeprom_thermal
     thermal_avg: list[int] = field(default_factory=lambda: [0] * _AVG_THERMAL_NUM)  # averaging ring
@@ -362,7 +392,7 @@ def _halrf_thermal_callback(t, st: WatchdogState) -> None:
     if avg == st.thermal_value:                         # outer delta 0 -> no power-track this tick
         return
     delta = min(abs(avg - st.eeprom_thermal), _TXPWR_TRACK_TABLE_MAX)
-    tbl_n, tbl_p = _delta_swing_tables(t.current_channel)
+    tbl_n, tbl_p = _delta_swing_tables(t.current_channel, st.phydm_rfe_type)
     if avg > st.eeprom_thermal:                         # temp above PG base: positive swing
         new_idx = tbl_p[delta]
     else:                                               # at/below base: negative swing

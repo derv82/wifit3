@@ -155,7 +155,8 @@ class Rtl8821cuDkmsDriver(Driver):
         # _netdev_open after rtw_hal_init: LED_CTL_NO_LINK, then the dynamic_chk_timer [SRC] os_intfs.c:4039/4052.
         self._led_task = loop.create_task(self._led_blink_loop())
         self._wd_state = watchdog.WatchdogState(
-            eeprom_thermal=info.eeprom_thermal, thermal_offset=efuse.thermal_offset(info))
+            eeprom_thermal=info.eeprom_thermal, thermal_offset=efuse.thermal_offset(info),
+            phydm_rfe_type=info.phydm_rfe_type)
         if info.bt_coexist:
             self._btc_periodical_state = btc.PeriodicalState()
         self._watchdog_task = loop.create_task(self._watchdog_loop())
