@@ -36,7 +36,7 @@ from .chan import (
 )
 from .eeprom import resolve_rf_chip
 from .mac import (
-    ChipId, write_mac_address,
+    ChipId, disable_radio, write_mac_address,
 )
 from .monitor import enable_monitor
 from .bring_up import bring_up
@@ -574,5 +574,12 @@ class RT5572Driver(Driver):
         if self._rx_reader is not None:
             await self._rx_reader.stop()
             self._rx_reader = None
+        if self._eeprom is not None and self._claimed:
+            try:
+                async with self._conf_lock:
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: disable_radio(self.transport, self._eeprom))
+            except (IOError, usb.core.USBError) as e:
+                logger.warning("rt5572 disable_radio: %s", e)
         self._release()
         logger.debug("rt2800usb driver closed")

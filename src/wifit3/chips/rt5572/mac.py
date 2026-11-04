@@ -381,6 +381,23 @@ def enable_radio_finish(t: RT5572Transport, ev) -> None:
     set_radio_led(t, ev.word(EEPROM_OFFSET_FREQ))
 
 
+def disable_radio(t: RT5572Transport, ev) -> None:
+    """rt2x00lib_disable_radio (rt2x00dev.c:88-113): stop_queue(RX), STATE_RADIO_OFF (rt2800usb.c:352-358) and
+    the radio LED off."""
+    from . import constants as C
+    from .eeprom import EEPROM_OFFSET_FREQ
+    from .firmware import disable_wpdma, mcu_request
+
+    toggle_rx(t, False)                                   # rt2x00queue_stop_queues -> rt2800usb_stop_queue(QID_RX)
+    disable_wpdma(t)                                      # rt2800_disable_radio [SRC rt2800lib.c:10878-10891]
+    _wait_wpdma_ready(t)
+    reg = t.read32(C.MAC_SYS_CTRL)
+    reg &= ~(C.MAC_SYS_CTRL_ENABLE_TX | C.MAC_SYS_CTRL_ENABLE_RX) & 0xFFFFFFFF
+    t.write32(C.MAC_SYS_CTRL, reg)
+    mcu_request(t, C.MCU_SLEEP, token=0xFF, arg0=0xFF, arg1=2)    # rt2800usb_set_state [SRC rt2800usb.c:325-333]
+    set_radio_led(t, ev.word(EEPROM_OFFSET_FREQ), enabled=False)   # rt2x00leds_led_radio(false)
+
+
 def enable_radio(t: RT5572Transport, silicon_id: int = 0, ev=None) -> None:
     """Enable RX + TX on the radio.  Call AFTER all init_* steps.
 

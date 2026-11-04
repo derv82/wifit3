@@ -46,8 +46,8 @@ class TestRt5572(VerifyCapture):
         Waiver(WaiverReason.WIFIT3_ONLY, "wifit3 only: Driver.inject_frame _stamp_tx_seq; aireplay-ng's radiotap NOSEQ "
                "keeps its own", value_only_tx_op_field=FRAME_SEQUENCE_NUMBER),
         Waiver(WaiverReason.WIFIT3_ONLY, "rt2x00dev.c:88-113 rt2x00lib_disable_radio -> rt2800usb.c:352-358 "
-               "STATE_RADIO_OFF: the capture ends with the interface brought down; wifit3's close() leaves the radio "
-               "on",
+               "STATE_RADIO_OFF: the capture ends with the interface brought down; close() makes these ops, but the "
+               "replay calls close() only after the capture's last op",
                capture_only_run=(RegisterOp(RegisterAccess.READ, C.MAC_SYS_CTRL, None),
                                  RegisterOp(RegisterAccess.WRITE, C.MAC_SYS_CTRL, None),
                                  RegisterOp(RegisterAccess.READ, C.WPDMA_GLO_CFG, None),
