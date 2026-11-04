@@ -29,7 +29,7 @@ from .chan import (
     CHANNELS_5G_NON_DFS, default_power as _default_power, hop_channel,
 )
 from .eeprom import resolve_rf_chip
-from .link_tuner import LINK_TUNE_SECONDS, LinkTuner, compute_link_vgc, set_vgc
+from .link_tuner import LINK_TUNE_SECONDS, LinkTuner, compute_link_vgc, get_default_vgc, set_vgc
 from .mac import (
     ChipId, write_mac_address,
 )
@@ -253,7 +253,7 @@ class RT5572Driver(Driver):
 
             # Start the RX-AGC link tuner now that the channel is tuned and
             # frames are flowing (it adapts off received-frame RSSI).
-            self._link_tuner.reset()
+            self._link_tuner.reset(get_default_vgc(self.chip_id.silicon_id, 1, self._channel_kwargs(1)["lna_gain"]))
             self._link_tuner_task = loop.create_task(self._link_tuner_loop())
 
             self.is_warm = True
@@ -443,7 +443,7 @@ class RT5572Driver(Driver):
         # _set_channel just rewrote BBP66 to the per-channel AGC seed, so the
         # tuner must re-establish from scratch on the new channel (and not
         # carry the old channel's averaged RSSI across the hop).
-        self._link_tuner.reset()
+        self._link_tuner.reset(get_default_vgc(self.chip_id.silicon_id, channel, kwargs["lna_gain"]))
         return True
 
     # ---- TX inject (M5) -------------------------------------------------

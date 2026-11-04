@@ -117,8 +117,7 @@ class LinkTuner:
     def __init__(self) -> None:
         self._ewma_mag: float | None = None   # running |RSSI| magnitude
         self._rx_this_interval: int = 0       # frames fed since last tick
-        # Last VGC we actually wrote; None forces the next tick to write,
-        # mirroring the kernel's vgc_level reset to 0 in reset_tuner.
+        # Last VGC written (qual->vgc_level); None until the first reset.
         self.vgc_level: int | None = None
 
     def feed(self, rssi_dbm: int) -> None:
@@ -147,13 +146,9 @@ class LinkTuner:
         """Clear the per-interval frame tally; the EWMA itself persists."""
         self._rx_this_interval = 0
 
-    def reset(self) -> None:
-        """Channel/radio change — drop the averaged RSSI and force a rewrite.
-
-        Mirrors rt2x00link_reset_tuner: the channel-tune path has just
-        rewritten BBP66 to its own AGC value, so the next tick must
-        re-establish the tuner's default. [SRC] rt2x00link.c:252.
-        """
+    def reset(self, vgc_level: int) -> None:
+        """Channel change: drop the averaged RSSI; the tune's reset_tuner wrote ``vgc_level``, so the next tick
+        writes only a different VGC (rt2800_reset_tuner -> rt2800_set_vgc, rt2800lib.c:5761, 5775)."""
         self._ewma_mag = None
         self._rx_this_interval = 0
-        self.vgc_level = None
+        self.vgc_level = vgc_level
