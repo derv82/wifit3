@@ -51,23 +51,23 @@ def _frames() -> tuple[Text, Text, list[Text]]:
 # to <=~21 cols (the bubble is 23 wide) and keep to <=7 elements (a message renders 2N-1 rows and
 # the bubble is 14 tall). GREETING plays once on entry; MESSAGES rotate (shuffled, no repeat until
 # the pack is exhausted). Tune wording/spacing live with scripts/ui/wiffy_preview.py ([space] = next).
-_INSTALL_GREETING = ("Hi, I'm WiFFy!", "\nIt looks like", "you are trying to", "HACK THE PLANET!!!", "", "I can help!")
+_INSTALL_GREETING = ("Cześć, jestem WiFFy!", "\nWygląda na to, że", "próbujesz", "ZHACKOWAĆ PLANETĘ!!!", "", "Mogę pomóc!")
 _INSTALL_MESSAGES = [
-    ('\nI can help to recover', '"your" password from', '"your" router.', '', 'Just ask me how!'),
-    ('\nSee Wifite on Netflix:', 'How To Sell Drugs Online:\n  Season 2 Episode 2\n  (6:20)', 'Youngbloods:\n  Season 2 Episode 1\n  (49:00)'),
-    ('', 'If you were on Linux,', "you'd be cracking", 'PMKIDs by now.'),
-    ('', 'I only exist because', 'installing WinUSB', 'is extremely slow.', '', '..up to 5 minutes!'),
-    ('\nThe first rule of', 'wifit3 club is:', '', 'DO NOT TALK ABOUT', 'WIFIT3 CLUB'),
-    ('', 'I want to apologize', 'in advance for', 'dropping handshakes.'),
-    ('Remember:', '', 'Only audit networks', 'that you own!', '', '                lol'),
+    ('\nMogę pomóc odzyskać', '"hasło" z', '"Twojego" routera.', '', 'Wystarczy zapytać!'),
+    ('\nWifite na Netflixie:', 'How To Sell Drugs Online:\n  Sezon 2, odc. 2\n  (6:20)', 'Youngbloods:\n  Sezon 2, odc. 1\n  (49:00)'),
+    ('', 'Na Linuksie', 'PMKIDy byłyby', 'już złamane.'),
+    ('', 'Jestem tu tylko', 'bo instalacja WinUSB', 'trwa wieczność.', '', '..nawet 5 minut!'),
+    ('\nPierwsza zasada', 'klubu wifit3:', '', 'NIE MOŻNA MÓWIĆ', 'O KLUBIE WIFIT3'),
+    ('', 'Przepraszam z góry', 'za gubienie', "handshake'ów."),
+    ('Pamiętaj:', '', 'Audytuj tylko sieci', 'które są Twoje!', '', '                lol'),
     # ('Everyone asks', '"WiFi?"', '', 'but nobody asks', '"HowFi?"'),
     # ('Did you know?', '', 'The 2.4GHz wave is', '~6 in / 12.5cm long.', '', '5GHz is half that:', '~3in / 6cm.'),
 ]
-_UNINSTALL_GREETING = ("You did it? You hacked", "the ENTIRE planet?", "", "Restoring driver now...")
+_UNINSTALL_GREETING = ("Zhackowałeś całą", "planetę? Serio?", "", "Przywracam sterownik...")
 _UNINSTALL_MESSAGES = [
-    ('Your card now goes', 'back to being a', 'boring Wi-Fi card.', '', 'ZeroCool would be', 'so disappointed.'),
-    ("I'll be here when", 'you want to', 'HACK THE PLANET again!'),
-    ("You'll be back", "they always come back"),
+    ('Twoja karta znowu', 'jest po prostu', 'nudną kartą Wi-Fi.', '', 'ZeroCool byłby', 'rozczarowany.'),
+    ("Będę tu, gdy", 'zechcesz znów', 'ZHACKOWAĆ PLANETĘ!'),
+    ("Jeszcze tu wrócisz.", "Zawsze wracają."),
 ]
 
 INSTALL_LINES = (_INSTALL_GREETING, _INSTALL_MESSAGES)

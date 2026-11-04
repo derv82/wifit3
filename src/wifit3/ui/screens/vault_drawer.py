@@ -25,8 +25,8 @@ def _ap_contents_text(captures: list[PersistedCapture], state: ApState) -> str:
     capture_count = len({c.path for c in captures if c.type in (CaptureType.HS, CaptureType.PMKID)})
     pin_count = sum(1 for k in state.keys if k.type == CaptureType.WPS_PIN)
     key_count = sum(1 for k in state.keys if k.is_password)
-    counts = [(capture_count, "capture"), (pin_count, "PIN"), (key_count, "key")]
-    return ", ".join(f"{n} {noun}{'' if n == 1 else 's'}" for n, noun in counts if n)
+    counts = [(capture_count, "przechwyt"), (pin_count, "PIN"), (key_count, "klucz")]
+    return ", ".join(f"{n}× {noun}" for n, noun in counts if n)
 
 
 class VaultDrawer(ModalScreen):
@@ -38,16 +38,16 @@ class VaultDrawer(ModalScreen):
     VERTICAL_BREAKPOINTS = [(0, SHORT), (36, TALL)]
 
     BINDINGS = [
-        Binding("v", "dismiss_drawer", "Close", show=False),
-        Binding("escape", "dismiss_drawer", "Close", show=True),
-        Binding("f", "focus_filter", "Filter", show=False),
-        Binding("/", "focus_filter", "Filter", show=False),
-        Binding("n", "set_nickname", "Nickname", show=True),
-        Binding("a", "add_credential", "Add Key", show=True),
-        Binding("o", "show_directory", "Open Dir", show=True),
-        Binding("z", "export_zip", "Export .zip", show=True),
-        Binding("d", "delete_ap", "Delete AP", show=True),
-        Binding("q", "app.quit", "Quit", show=True),
+        Binding("v", "dismiss_drawer", "Zamknij", show=False),
+        Binding("escape", "dismiss_drawer", "Zamknij", show=True),
+        Binding("f", "focus_filter", "Filtr", show=False),
+        Binding("/", "focus_filter", "Filtr", show=False),
+        Binding("n", "set_nickname", "Nick", show=True),
+        Binding("a", "add_credential", "Dodaj klucz", show=True),
+        Binding("o", "show_directory", "Katalog", show=True),
+        Binding("z", "export_zip", "Eksport .zip", show=True),
+        Binding("d", "delete_ap", "Usuń AP", show=True),
+        Binding("q", "app.quit", "Wyjdź", show=True),
     ]
 
     CSS = """
@@ -232,7 +232,7 @@ class VaultDrawer(ModalScreen):
     def action_set_nickname(self) -> None:
         ssid, bssid = self._selected_network()
         if not bssid:
-            self.notify("Select an AP first", severity="warning")
+            self.notify("Najpierw wybierz AP", severity="warning")
             return
         nickname = read_meta(meta_path(ssid, bssid)).get("nickname")
         current = nickname if isinstance(nickname, str) else ""
@@ -243,21 +243,21 @@ class VaultDrawer(ModalScreen):
             try:
                 update_meta(ssid, bssid, nickname=value or None)
             except OSError as exc:
-                self.notify(f"Could not save nickname: {exc}", severity="error")
+                self.notify(f"Nie udało się zapisać nicku: {exc}", severity="error")
                 return
             self.query_one("#vault-table", VaultTable).reload_nicknames()
-            self.notify("Nickname saved" if value else "Nickname cleared")
+            self.notify("Nick zapisany" if value else "Nick usunięty")
 
         self.app.push_screen(NicknameModal(ssid, current), _save)
 
     def action_delete_ap(self) -> None:
         ssid, bssid = self._selected_network()
         if not bssid:
-            self.notify("Select an AP first", severity="warning")
+            self.notify("Najpierw wybierz AP", severity="warning")
             return
         name = self.query_one("#vault-table", VaultTable).display_name(bssid, ssid)
         contents = _ap_contents_text(self.app.vault.persisted(bssid), self.app.vault.ap_state(bssid))
-        prompt = f"Delete [bold]{escape(name)}[/]?" + (f" {contents}" if contents else "")
+        prompt = f"Usunąć [bold]{escape(name)}[/]?" + (f" {contents}" if contents else "")
 
         def _delete(confirmed: Optional[bool]) -> None:
             if not confirmed:
@@ -265,9 +265,9 @@ class VaultDrawer(ModalScreen):
             try:
                 self.app.vault.delete_ap(bssid)
             except OSError as exc:
-                self.notify(f"Could not delete {name}: {exc}", severity="error")
+                self.notify(f"Nie udało się usunąć {name}: {exc}", severity="error")
                 return
-            self.notify(f"Deleted {name}")
+            self.notify(f"Usunięto {name}")
 
         self.app.push_screen(ConfirmModal(prompt), _delete)
 
@@ -279,9 +279,9 @@ class VaultDrawer(ModalScreen):
         state = self.app.vault.ap_state(bssid)
         others = [k for k in state.keys if k.id != key.id and {c.path for c in k.captures} <= paths]
         description = escape(key_description(key))
-        prompt = f"Delete [bold]{description}[/]?"
+        prompt = f"Usunąć [bold]{description}[/]?"
         if others:
-            prompt += f" Also removes {escape(', '.join(key_description(k) for k in others))}."
+            prompt += f" Usunie też {escape(', '.join(key_description(k) for k in others))}."
 
         def _delete(confirmed: Optional[bool]) -> None:
             if not confirmed:
@@ -289,9 +289,9 @@ class VaultDrawer(ModalScreen):
             try:
                 self.app.vault.delete_key(bssid, key.id)
             except OSError as exc:
-                self.notify(f"Could not delete {description}: {escape(str(exc))}", severity="error")
+                self.notify(f"Nie udało się usunąć {description}: {escape(str(exc))}", severity="error")
                 return
-            self.notify(f"Deleted {description}")
+            self.notify(f"Usunięto {description}")
 
         self.app.push_screen(ConfirmModal(prompt), _delete)
 
@@ -307,7 +307,7 @@ class VaultDrawer(ModalScreen):
         if app.array is not None:
             ap = app.array.access_points.get(event.bssid)
         if ap is None:
-            self.notify("AP not in range")
+            self.notify("AP poza zasięgiem")
             return
         app.target_ap = ap
         self.dismiss()
@@ -345,16 +345,16 @@ class VaultDrawer(ModalScreen):
                 key = bytes.fromhex(value) if len(value) in (10, 26) else value.encode("ascii")
                 result = vault.save_wep_key(ap, key, manual=True)
         except OSError as exc:
-            self.notify(f"Could not save credential: {exc}", severity="error")
+            self.notify(f"Nie udało się zapisać klucza: {exc}", severity="error")
             return
         if result is None:
-            self.notify("Credential could not be saved", severity="error")
+            self.notify("Nie udało się zapisać klucza", severity="error")
         elif not result.was_new:
-            self.notify("Credential is already in Vault", severity="warning")
+            self.notify("Klucz jest już w skrytce", severity="warning")
         elif verified:
-            self.notify("Credential verified and added to Vault")
+            self.notify("Klucz zweryfikowany i dodany do skrytki")
         else:
-            self.notify("Credential added, not verified")
+            self.notify("Klucz dodany, niezweryfikowany")
 
     @work
     async def _propagate_psk(self, bssid: str, ssid: str, psk: str) -> None:
@@ -362,26 +362,26 @@ class VaultDrawer(ModalScreen):
         try:
             matched = await asyncio.shield(propagation)
         except OSError as exc:
-            self.notify(f"Could not save a related AP's PSK: {exc}", severity="warning")
+            self.notify(f"Nie udało się zapisać PSK powiązanego AP: {exc}", severity="warning")
             return
         if matched:
-            self.notify(f"PSK also verified and saved for {len(matched)} related APs")
+            self.notify(f"PSK zweryfikowano i zapisano też dla {len(matched)} powiązanych AP")
 
     def action_export_zip(self) -> None:
         try:
             out = self.app.vault.zip_captures(self.app.vault.all_captures())
         except OSError as exc:
-            self.notify(f"Export failed: {exc}", severity="error")
+            self.notify(f"Błąd eksportu: {exc}", severity="error")
             return
         if out is None:
-            self.notify("Nothing to export", severity="warning")
+            self.notify("Nic do eksportu", severity="warning")
             return
-        self.notify(f"Exported to {out}")
+        self.notify(f"Eksport: {out}")
 
     def action_show_directory(self) -> None:
         try:
             self.app.vault.open_directory()
         except FileNotFoundError:
-            self.notify("No captures yet", severity="warning")
+            self.notify("Brak przechwytów", severity="warning")
         except OSError as exc:
-            self.notify(f"Could not open captures dir: {exc}", severity="error")
+            self.notify(f"Nie udało się otworzyć katalogu: {exc}", severity="error")

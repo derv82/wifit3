@@ -19,9 +19,9 @@ from wifit3.dot11.pmf import PmfPosture
 _MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
 
 # (label, punt_period_sec, punt_once)
-_CYCLES = [("Never", None, False), ("Once", 30.0, True), ("5 seconds", 5.0, False),
-           ("10 seconds", 10.0, False), ("20 seconds", 20.0, False), ("30 seconds", 30.0, False),
-           ("45 seconds", 45.0, False), ("60 seconds", 60.0, False)]
+_CYCLES = [("Nigdy", None, False), ("Raz", 30.0, True), ("5 sekund", 5.0, False),
+           ("10 sekund", 10.0, False), ("20 sekund", 20.0, False), ("30 sekund", 30.0, False),
+           ("45 sekund", 45.0, False), ("60 sekund", 60.0, False)]
 _DEFAULT_CYCLE = 5
 
 
@@ -39,7 +39,7 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
     HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (56, "-wide")]
     VERTICAL_BREAKPOINTS = [(0, "-short"), (24, "-tall")]
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=True)]
+    BINDINGS = [Binding("escape", "cancel", "Anuluj", show=True)]
 
     DEFAULT_CSS = """
     EvilTwinInputModal { align: center middle; }
@@ -90,55 +90,55 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
             yield Label("Evil Twin", id="title")
 
             with Horizontal(classes="row"):
-                yield Label("EvilTwin interface", classes="row-label")
+                yield Label("Interfejs EvilTwin", classes="row-label")
                 yield Select([(display_name(m), m.name) for m in self._hosts],
                              value=twin.name if twin else Select.BLANK,
                              allow_blank=False, id="twin-iface")
 
             with Horizontal(classes="row"):
-                yield Label("EvilTwin channel", classes="row-label")
+                yield Label("Kanał EvilTwin", classes="row-label")
                 yield Select(self._channel_options(twin), value=self._default_channel(twin),
                              allow_blank=False, id="twin-channel", disabled=self._single)
 
             with Horizontal(classes="row"):
-                yield Label("EvilTwin BSSID", classes="row-label")
+                yield Label("BSSID EvilTwin", classes="row-label")
                 with Vertical(id="bssid-col"):
                     yield Input(value=self._default_bssid(), id="twin-bssid")
                     with Horizontal(id="bssid-btns"):
-                        yield Button("Same", id="bssid-same")
+                        yield Button("Ten sam", id="bssid-same")
                         yield Button("+1", id="bssid-plus1")
-                        yield Button("Rand", id="bssid-random")
+                        yield Button("Losowy", id="bssid-random")
 
             with Horizontal(classes="row"):
-                yield Label("Punter interface", classes="row-label")
+                yield Label("Interfejs wyrzucania", classes="row-label")
                 yield Select([(display_name(m), m.name) for m in self._punters],
                              value=punter.name if punter else Select.BLANK,
                              allow_blank=False, id="punt-iface")
 
             with Vertical(id="punt-methods"):
-                yield Checkbox("De-authenticate", value=PuntMode.DEAUTH in d_modes,
+                yield Checkbox("Deautoryzacja", value=PuntMode.DEAUTH in d_modes,
                                id="punt-deauth", disabled=robust_frames_blocked)
-                yield Checkbox("Channel Switch Announcement", value=PuntMode.CSA in d_modes,
+                yield Checkbox("Ogłoszenie zmiany kanału (CSA)", value=PuntMode.CSA in d_modes,
                                id="punt-csa")
-                yield Checkbox("BSS-Transition Mode (BTM)", value=PuntMode.BTM in d_modes,
+                yield Checkbox("Tryb BSS-Transition (BTM)", value=PuntMode.BTM in d_modes,
                                id="punt-btm", disabled=robust_frames_blocked)
 
             with Horizontal(classes="row"):
-                yield Label("Punt cycle", classes="row-label")
+                yield Label("Cykl wyrzucania", classes="row-label")
                 yield Select([(label, i) for i, (label, *_) in enumerate(_CYCLES)],
                              value=_DEFAULT_CYCLE, allow_blank=False, id="punt-cycle")
 
             yield Label("", id="warn")
             with Horizontal(id="button-row"):
                 yield Button("Start EvilTwin", variant="primary", id="btn-start")
-                yield Button("Cancel", variant="default", id="btn-cancel")
+                yield Button("Anuluj", variant="default", id="btn-cancel")
 
     def on_mount(self) -> None:
         self._sync_bssid_field()
         self._sync_warning()
         if self.target.pmf_posture in (PmfPosture.REQUIRED, PmfPosture.INVALID):
-            self.query_one("#punt-deauth", Checkbox).tooltip = "Can't send deauths: PMF required or invalid"
-            self.query_one("#punt-btm", Checkbox).tooltip = "Can't send BTMs: PMF required or invalid"
+            self.query_one("#punt-deauth", Checkbox).tooltip = "Nie można wysyłać deauth: PMF wymagany lub błędny"
+            self.query_one("#punt-btm", Checkbox).tooltip = "Nie można wysyłać BTM: PMF wymagany lub błędny"
 
     # ----- interface / channel wiring ---------------------------------------
 
@@ -149,7 +149,7 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
         return [(self._channel_label(c), c) for c in chans]
 
     def _channel_label(self, channel: int) -> str:
-        return f"{channel} (target)" if channel == self.target.channel else str(channel)
+        return f"{channel} (cel)" if channel == self.target.channel else str(channel)
 
     def _default_channel(self, twin) -> int:
         if self._single:
@@ -187,7 +187,7 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
 
     def _sync_warning(self) -> None:
         same_iface = self._selected("twin-iface") is self._selected("punt-iface")
-        self._set_warn("EvilTwin works best with 2 different interfaces" if same_iface else "")
+        self._set_warn("EvilTwin działa najlepiej z 2 różnymi interfejsami" if same_iface else "")
 
     def _set_warn(self, text: str) -> None:
         """Update the warning line and collapse it to zero rows when there's nothing to say."""
@@ -220,10 +220,10 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
         channel = self.query_one("#twin-channel", Select).value
         twin_bssid = self.query_one("#twin-bssid", Input).value.strip().lower()
         if not _MAC_RE.match(twin_bssid):
-            self._error("Invalid BSSID")
+            self._error("Błędny BSSID")
             return
         if twin_bssid == self.target.bssid and channel == self.target.channel:
-            self._error("Same BSSID on the same channel collides; change one")
+            self._error("Ten sam BSSID na tym samym kanale koliduje; zmień jedno")
             return
         _, period, once = _CYCLES[self.query_one("#punt-cycle", Select).value]
         self.dismiss(EvilTwinInput(

@@ -59,7 +59,7 @@ def _has_pmkid(captures: List[PersistedCapture]) -> bool:
 
 
 _TAB_TITLES: Dict[str, str] = {
-    "tab-all": "ALL", "tab-psk": "PSK", "tab-wep": "WEP KEY", "tab-pin": "WPS PIN", "tab-hs": "HANDSHAKE",
+    "tab-all": "WSZYSTKIE", "tab-psk": "PSK", "tab-wep": "WEP", "tab-pin": "WPS PIN", "tab-hs": "HANDSHAKE",
     "tab-pmk": "PMKID",
 }
 
@@ -75,7 +75,7 @@ class VaultFilterBar(Horizontal):
     BINDINGS = [Binding("escape", "leave", "", show=False)]
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="SSID, BSSID, or filename", id="vault-filter", compact=True)
+        yield Input(placeholder="SSID, BSSID lub nazwa pliku", id="vault-filter", compact=True)
 
     def action_leave(self) -> None:
         self.screen.query_one("#vault-aps", DataTable).focus()
@@ -136,7 +136,7 @@ class VaultTable(Widget):
 
     def compose(self) -> ComposeResult:
         filter_bar = VaultFilterBar(id="vault-filter-bar")
-        filter_bar.border_title = "[u]F[/u]ILTER"
+        filter_bar.border_title = "[u]F[/u]ILTR"
         yield filter_bar
         yield Tabs(id="vault-tabs")
         yield VaultApsTable(id="vault-aps", show_header=False, cursor_type="row")
@@ -177,7 +177,7 @@ class VaultTable(Widget):
                         table.update_cell(bssid, "ap", text, update_width=True)
             else:
                 self._replace_rows(table, shown, ssid_counts)
-            self.border_title = f"VAULT ({len(self._aps)} APs)"
+            self.border_title = f"SKRYTKA ({len(self._aps)} AP)"
             self.post_message(self.TableReloaded())
         finally:
             self._is_reloading = False
@@ -253,7 +253,7 @@ class VaultTable(Widget):
 
     def display_name(self, bssid: str, ssid: Optional[str]) -> str:
         """``nickname (SSID)`` when the AP has a nickname, else the SSID."""
-        name = ssid or "‹hidden›"
+        name = ssid or "‹ukryta›"
         nickname = self._nicknames.get(bssid)
         return f"{nickname} ({name})" if nickname else name
 

@@ -14,19 +14,19 @@ from wifit3.persist.config import Config, ConfigError
 from wifit3.vault.tools.hashtopolis_api import (AccessGroup, HashtopolisApi, HashtopolisError,
                                                 ServerFile)
 
-_ACCESS_KEY_HINT = "[dim]Use port 8080 (legacy API), [i]not 4200[/i]: Users → API Management[/dim]"
-_REFRESH_HINT = "[dim]Refresh to list wordlists[/dim]"
+_ACCESS_KEY_HINT = "[dim]Użyj portu 8080 (stare API), [i]nie 4200[/i]: Users → API Management[/dim]"
+_REFRESH_HINT = "[dim]Odśwież, aby zobaczyć słowniki[/dim]"
 
 
 def _plural(count: int, noun: str) -> str:
-    return f"{count} {noun}{'' if count == 1 else 's'}"
+    return f"{count} {noun.split('/')[0 if count == 1 else 1 if 2 <= count % 10 <= 4 and count % 100 not in (12, 13, 14) else 2]}"
 
 
 class HashtopolisConfigModal(ModalScreen[dict]):
     """Server, access key, wordlist and access group for Hashtopolis jobs; dismisses with the
     job's ``config``, or None when cancelled."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS = [Binding("escape", "cancel", "Anuluj")]
 
     # CSS, not DEFAULT_CSS: the app's `Button { min-width: 12 }` outranks any DEFAULT_CSS rule.
     CSS = """
@@ -64,7 +64,7 @@ class HashtopolisConfigModal(ModalScreen[dict]):
     #hashtopolis-buttons { align: right middle; }
     """
 
-    def __init__(self, confirm_label: str = "Launch", bssid: Optional[str] = None,
+    def __init__(self, confirm_label: str = "Uruchom", bssid: Optional[str] = None,
                  probed_ssids: Sequence[str] = (), hashlines: Sequence[DatedHashline] = ()) -> None:
         """``confirm_label`` "Save" configures the tool without the caller launching a job; the
         other arguments (LaunchModalConstructor's) are unused: the server holds the wordlists."""
@@ -87,37 +87,37 @@ class HashtopolisConfigModal(ModalScreen[dict]):
                 yield from self._compose_test()
                 yield from self._compose_targets()
                 with Horizontal(id="hashtopolis-buttons"):
-                    yield Button("Cancel", variant="error", id="hashtopolis-cancel")
+                    yield Button("Anuluj", variant="error", id="hashtopolis-cancel")
                     yield Button(self._confirm_label, variant="success", id="hashtopolis-confirm")
 
     def _compose_server(self) -> ComposeResult:
         settings = Config.hashtopolis
-        yield Label("Server URL:")
+        yield Label("URL serwera:")
         yield Input(settings.url or "", placeholder="http://192.168.1.10:8080",
                     id="hashtopolis-url")
         with Horizontal():
-            yield Label("Access key:", id="hashtopolis-access-key-label")
-            yield Button("reveal", compact=True, id="hashtopolis-reveal")
+            yield Label("Klucz dostępu:", id="hashtopolis-access-key-label")
+            yield Button("pokaż", compact=True, id="hashtopolis-reveal")
         yield Input(settings.access_key or "", password=True,
                     id="hashtopolis-access-key")
         yield Label(_ACCESS_KEY_HINT)
 
     def _compose_test(self) -> ComposeResult:
         with Horizontal(id="hashtopolis-test-row"):
-            yield Button("Test / Refresh", "primary", compact=True, id="hashtopolis-test")
+            yield Button("Testuj / Odśwież", "primary", compact=True, id="hashtopolis-test")
             yield Label("" if self._wordlists else _REFRESH_HINT, id="hashtopolis-test-result")
 
     def _compose_targets(self) -> ComposeResult:
         settings = Config.hashtopolis
         with Horizontal(classes="hashtopolis-target-row"):
-            yield Label("Wordlist:", classes="hashtopolis-target-label")
+            yield Label("Słownik:", classes="hashtopolis-target-label")
             yield Select([(name, file_id) for file_id, name in self._wordlists.items()],
-                         prompt="Choose a wordlist", value=settings.wordlist_id or Select.NULL,
+                         prompt="Wybierz słownik", value=settings.wordlist_id or Select.NULL,
                          id="hashtopolis-wordlist")
         with Horizontal(classes="hashtopolis-target-row"):
-            yield Label("Group:", classes="hashtopolis-target-label")
+            yield Label("Grupa:", classes="hashtopolis-target-label")
             yield Select([(name, group_id) for group_id, name in self._groups.items()],
-                         prompt="Choose an access group",
+                         prompt="Wybierz grupę dostępu",
                          value=settings.access_group_id or Select.NULL,
                          id="hashtopolis-access-group")
 
@@ -126,12 +126,12 @@ class HashtopolisConfigModal(ModalScreen[dict]):
         event.stop()
         access_key = self.query_one("#hashtopolis-access-key", Input)
         access_key.password = not access_key.password
-        event.button.label = "reveal" if access_key.password else "hide"
+        event.button.label = "pokaż" if access_key.password else "ukryj"
 
     @on(Button.Pressed, "#hashtopolis-test")
     def _test_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.query_one("#hashtopolis-test-result", Label).update("[dim]Connecting...[/dim]")
+        self.query_one("#hashtopolis-test-result", Label).update("[dim]Łączenie…[/dim]")
         self._test(self.query_one("#hashtopolis-url", Input).value.strip(),
                    self.query_one("#hashtopolis-access-key", Input).value.strip())
 
@@ -157,10 +157,10 @@ class HashtopolisConfigModal(ModalScreen[dict]):
             return
         result = self.query_one("#hashtopolis-test-result", Label)
         if wordlists:
-            result.update(f"[$success]Connected · {_plural(len(wordlists), 'wordlist')} · "
-                          f"{_plural(len(groups), 'group')}[/]")
+            result.update(f"[$success]Połączono · {_plural(len(wordlists), 'słownik/słowniki/słowników')} · "
+                          f"{_plural(len(groups), 'grupa/grupy/grup')}[/]")
         else:
-            result.update("[$warning]Connected · no wordlists found[/]")
+            result.update("[$warning]Połączono · brak słowników[/]")
         self._wordlists = {f.file_id: f.filename for f in wordlists}
         self._groups = {g.group_id: g.name for g in groups}
         self._fill(self.query_one("#hashtopolis-wordlist", Select),
@@ -192,7 +192,7 @@ class HashtopolisConfigModal(ModalScreen[dict]):
         url = self.query_one("#hashtopolis-url", Input).value.strip()
         access_key = self.query_one("#hashtopolis-access-key", Input).value.strip()
         if not (url and access_key):
-            self.notify("Please provide the server URL and access key", severity="error")
+            self.notify("Podaj URL serwera i klucz dostępu", severity="error")
             return
         config = self._launch_config()
         if config is None:
@@ -205,7 +205,7 @@ class HashtopolisConfigModal(ModalScreen[dict]):
         wordlist_id = self.query_one("#hashtopolis-wordlist", Select).selection
         group_id = self.query_one("#hashtopolis-access-group", Select).selection
         if wordlist_id is None or group_id is None:
-            self.notify("Please refresh and choose a wordlist and access group", severity="error")
+            self.notify("Odśwież i wybierz słownik oraz grupę dostępu", severity="error")
             return None
         return {"wordlist_id": wordlist_id, "wordlist_name": self._wordlists.get(wordlist_id, ""),
                 "access_group_id": group_id}
@@ -221,4 +221,4 @@ class HashtopolisConfigModal(ModalScreen[dict]):
         try:
             Config.save()
         except ConfigError as e:
-            self.notify(str(e), title="Config Error", severity="warning")
+            self.notify(str(e), title="Błąd konfiguracji", severity="warning")

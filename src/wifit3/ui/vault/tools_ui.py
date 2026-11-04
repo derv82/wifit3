@@ -13,7 +13,7 @@ from wifit3.ui.vault.modals.hashtopolis import HashtopolisConfigModal
 class LaunchModalConstructor(Protocol):
     """The constructor every Vault tool's launch modal shares."""
 
-    def __call__(self, confirm_label: str = "Launch", bssid: Optional[str] = None,
+    def __call__(self, confirm_label: str = "Uruchom", bssid: Optional[str] = None,
                  probed_ssids: Sequence[str] = (),
                  hashlines: Sequence[DatedHashline] = ()) -> ModalScreen[dict]: ...
 

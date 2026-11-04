@@ -34,7 +34,7 @@ class BringupProgressModal(ModalScreen):
     def __init__(self, title: str) -> None:
         super().__init__()
         self._title = title
-        self._status = "Starting…"
+        self._status = "Uruchamianie…"
         self._wiffy = None
 
     def compose(self) -> ComposeResult:

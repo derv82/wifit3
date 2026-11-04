@@ -74,7 +74,7 @@ def _render_ssid(row: APRow, fg: str) -> Text:
     if row.ssid:
         name = Text(row.ssid, style=f"{fg} bold")
     else:
-        shown = f"{row.guessid}?" if row.guessid else "<Hidden>"
+        shown = f"{row.guessid}?" if row.guessid else "<Ukryta>"
         name = Text(shown, style=f"{fg} italic")
 
     badges = Text()
@@ -212,21 +212,21 @@ COLUMNS: Tuple[Column, ...] = (
            ("ssid", "guessid", "silenced", "has_handshake", "has_pmkid",
             "has_wep_key", "has_wps_psk", "is_stale"),
            _render_ssid, _ssid_key, right_aligned=True, min_width=20),
-    Column("channel", "CH", ("channel", "is_stale"),
+    Column("channel", "KAN", ("channel", "is_stale"),
            _render_channel, _channel_key, right_aligned=True),
-    Column("signal", "POWER", ("signal", "is_stale"),
+    Column("signal", "MOC", ("signal", "is_stale"),
            _render_signal, _signal_key, right_aligned=True),
     Column("beacons", "🥓", ("beacons", "beacon_flash", "is_stale"),
            _render_beacons, _beacons_key, right_aligned=True),
     Column("clients", "💻", ("clients", "is_stale"),
            _render_clients, _clients_key, right_aligned=True),
-    Column("encryption", "ENCRYPT", ("encryption", "is_stale"),
+    Column("encryption", "SZYFR", ("encryption", "is_stale"),
            _render_encryption, _encryption_key),
     Column("wps", "WPS", ("wps", "wps_locked", "is_stale"),
            _render_wps, _wps_key),
     Column("chipset", "CHIPSET", ("chipset", "is_stale"),
            _render_chipset, _chipset_key),
-    Column("identity", "VENDOR/ID", ("identity", "is_stale"),
+    Column("identity", "PRODUCENT/ID", ("identity", "is_stale"),
            _render_identity, _identity_key),
 )
 
@@ -285,11 +285,11 @@ class APTable(ScrollView, can_focus=True):
     """
 
     BINDINGS = [
-        Binding("up,k", "cursor_up", "Up", show=False),
-        Binding("down,j", "cursor_down", "Down", show=False),
-        Binding("pageup", "cursor_page_up", "Page up", show=False),
-        Binding("pagedown", "cursor_page_down", "Page down", show=False),
-        Binding("enter", "select_row", "Select", show=False),
+        Binding("up,k", "cursor_up", "Góra", show=False),
+        Binding("down,j", "cursor_down", "Dół", show=False),
+        Binding("pageup", "cursor_page_up", "Strona w górę", show=False),
+        Binding("pagedown", "cursor_page_down", "Strona w dół", show=False),
+        Binding("enter", "select_row", "Wybierz", show=False),
     ]
 
     sort_column: reactive[str] = reactive(COLUMN_KEYS[2], init=False)

@@ -40,16 +40,16 @@ class HashcatConfigModal(WordlistConfigModal):
         return Config.hashcat
 
     def _compose_fields(self) -> ComposeResult:
-        yield Label("Hashcat Executable Path:", classes="hashcat-label")
-        yield PathInput(_default_hashcat_path(), title="Select hashcat executable",
+        yield Label("Ścieżka do hashcat:", classes="hashcat-label")
+        yield PathInput(_default_hashcat_path(), title="Wybierz plik hashcat",
                         id="hashcat-exe")
 
         yield from self._compose_wordlists()
         yield from self._compose_password_sources()
 
         args = Config.hashcat.args or ""
-        yield Label("Hashcat Args:", classes="hashcat-label")
-        yield Input(args, placeholder="custom hashcat args (e.g. -a 0 -w 3)",
+        yield Label("Argumenty:", classes="hashcat-label")
+        yield Input(args, placeholder="własne argumenty hashcat (np. -a 0 -w 3)",
                     id="hashcat-args")
         yield Checkbox(_SELF_TEST_DISABLE, value=_SELF_TEST_DISABLE in args,
                        id="hashcat-self-test-disable")
@@ -66,7 +66,7 @@ class HashcatConfigModal(WordlistConfigModal):
     def _launch_config(self) -> Optional[dict[str, Any]]:
         exe = self.query_one("#hashcat-exe", Input).value.strip()
         if not exe:
-            self.notify("Please provide the hashcat executable", severity="error")
+            self.notify("Podaj plik wykonywalny hashcat", severity="error")
             return None
         config = super()._launch_config()
         if config is None:

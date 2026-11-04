@@ -23,24 +23,24 @@ from textual.widgets import Button, Label
 # rebinds the card on its next replug.
 _BODY = {
     "win": (
-        "This removes the WinUSB driver wifit3 installed for [bold]{name}[/], so Windows "
-        "sees it as a normal wireless adapter again.\n[dim]You can re-install it any time "
-        "with START.[/dim]"),
+        "To usunie sterownik WinUSB zainstalowany przez wifit3 dla [bold]{name}[/], więc "
+        "Windows znów zobaczy ją jako zwykłą kartę bezprzewodową.\n[dim]Zainstalujesz go "
+        "ponownie w każdej chwili przez START.[/dim]"),
     "linux": (
-        "This uninstalls Wifit3's udev and modprobe rules for the [bold]{name}[/].\n\n"
-        "[dim]The card returns to normal on the next unplug/replug.[/dim]"),
+        "To odinstaluje reguły udev i modprobe Wifit3 dla [bold]{name}[/].\n\n"
+        "[dim]Karta wróci do normy po ponownym wyjęciu i włożeniu.[/dim]"),
 }
 
 _TITLE = {
-    "win": "Uninstall wifit3 driver?",
-    "linux": "Uninstall Wifit3's udev + modprobe rules?",
+    "win": "Odinstalować sterownik wifit3?",
+    "linux": "Odinstalować reguły udev + modprobe Wifit3?",
 }
 
 
 class ConfirmUninstallDialog(ModalScreen[str | None]):
     BINDINGS = [
-        Binding("n", "cancel", "Cancel", show=True),
-        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("n", "cancel", "Anuluj", show=True),
+        Binding("escape", "cancel", "Anuluj", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -79,12 +79,12 @@ class ConfirmUninstallDialog(ModalScreen[str | None]):
             # rule(s), so a narrow removal won't free it. Name the blockers; the button counts make
             # the two radii self-explanatory.
             return (base +
-                    f"\n\n[$text-warning]The kernel module is also blocked by {n} other "
-                    f"rule{'s' if n != 1 else ''}:[/]\n{others}")
+                    f"\n\n[$text-warning]Moduł jądra blokują też inne reguły ({n}):[/]"
+                    f"\n{others}")
         # Card has no rules of its own: the block is a sibling's rules. Frame the action around what
         # actually gets removed (the sibling rules), not "this card", which has nothing to remove.
-        return (f"The card returns to normal (kernel-bound) on the next replug.\n\n"
-                f"Remove wifit3's {n} udev + modprobe rule{'s' if n != 1 else ''} for {others}?")
+        return (f"Karta wróci do normy (sterownik jądra) po ponownym wyjęciu i włożeniu.\n\n"
+                f"Usunąć reguły udev + modprobe wifit3 ({n}) dla {others}?")
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -93,15 +93,15 @@ class ConfirmUninstallDialog(ModalScreen[str | None]):
             with Horizontal(id="button-row"):
                 total = 1 + len(self._siblings)
                 if self._siblings and self._has_own:
-                    yield Button(f"Remove {self._name} (1)", variant="primary", id="btn-narrow")
-                    yield Button(f"Remove All ({total})", variant="primary", id="btn-wide")
+                    yield Button(f"Usuń {self._name} (1)", variant="primary", id="btn-narrow")
+                    yield Button(f"Usuń wszystkie ({total})", variant="primary", id="btn-wide")
                 elif self._siblings:                       # blocked-by-sibling, nothing of its own
                     sn = len(self._siblings)
-                    yield Button(f"Remove {sn} Rule{'s' if sn != 1 else ''}",
+                    yield Button(f"Usuń reguły ({sn})",
                                  variant="primary", id="btn-wide")
                 else:                                      # plain single-card uninstall
-                    yield Button("Uninstall", variant="primary", id="btn-narrow")
-                yield Button("Cancel", variant="default", id="btn-cancel")
+                    yield Button("Odinstaluj", variant="primary", id="btn-narrow")
+                yield Button("Anuluj", variant="default", id="btn-cancel")
 
     def on_mount(self) -> None:
         self.query_one("#btn-cancel", Button).focus()  # default to the safe choice

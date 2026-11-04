@@ -68,7 +68,7 @@ def build_rows(members, channel: Optional[int], current) -> List[DeviceRow]:
 
 class _DeviceOverlay(OptionList):
     """The floating list. Escape or losing focus (a click elsewhere) closes it via the picker."""
-    BINDINGS = [Binding("escape", "dismiss", "close", show=False)]
+    BINDINGS = [Binding("escape", "dismiss", "zamknij", show=False)]
 
     def action_dismiss(self) -> None:
         if isinstance(self.parent, TxDevicePicker):
@@ -91,8 +91,8 @@ class TxDevicePicker(Widget):
     """
 
     BINDINGS = [
-        Binding("enter", "open", "select device", show=False),
-        Binding("space", "open", "select device", show=False),
+        Binding("enter", "open", "wybierz kartę", show=False),
+        Binding("space", "open", "wybierz kartę", show=False),
     ]
 
     class Selected(Message):
@@ -123,7 +123,7 @@ class TxDevicePicker(Widget):
         self._current = current
         self._can_open = len(self._members) > 1 and not locked
         self.can_focus = self._can_open
-        name = display_name(current) if current is not None else "no card"
+        name = display_name(current) if current is not None else "brak karty"
         text = f"{_trim_name(name)} ▼" if self._can_open else name
         if self.is_mounted:
             if text != self._text:

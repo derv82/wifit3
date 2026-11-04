@@ -14,8 +14,8 @@ from textual.widgets import Button, Label
 
 class SetupErrorDialog(ModalScreen[None]):
     BINDINGS = [
-        Binding("escape", "close", "Close", show=True),
-        Binding("enter", "close", "Close", show=True, priority=True),
+        Binding("escape", "close", "Zamknij", show=True),
+        Binding("enter", "close", "Zamknij", show=True, priority=True),
     ]
 
     DEFAULT_CSS = """
@@ -53,7 +53,7 @@ class SetupErrorDialog(ModalScreen[None]):
             if self._details:
                 yield Label(self._details, id="details")
             with Horizontal(id="button-row"):
-                yield Button("Close", variant="primary", id="btn-close")
+                yield Button("Zamknij", variant="primary", id="btn-close")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(None)

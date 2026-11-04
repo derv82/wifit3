@@ -29,7 +29,7 @@ _STATUS_STYLE = {
 
 # Badge text override; a wordlist miss (FAILURE) reads better as "NOT FOUND".
 _STATUS_LABEL = {
-    ToolStatus.FAILURE: "NOT FOUND",
+    ToolStatus.FAILURE: "BRAK",
 }
 
 
@@ -49,7 +49,7 @@ class JobActionButton(Button):
         self._state = state
         self.stops, clears = state
         self.display = self.stops or clears
-        self.label = "Stop" if self.stops else "Clear"
+        self.label = "Stop" if self.stops else "Czyść"
         self.variant = "error" if self.stops else "default"
 
 
@@ -68,12 +68,12 @@ class JobPauseButton(Button):
         self._state = state
         self.resumes, pauses = state
         self.display = self.resumes or pauses
-        self.label = "Resume" if self.resumes else "Pause"
+        self.label = "Wznów" if self.resumes else "Pauza"
 
 
 class JobSkipButton(Button):
     def __init__(self, job: JobState):
-        super().__init__("Skip", classes="job-skip-btn", compact=True, variant="warning")
+        super().__init__("Pomiń", classes="job-skip-btn", compact=True, variant="warning")
         self.job_id = job.job_id
         self._visible: bool | None = None
         self.sync(job)
@@ -153,9 +153,9 @@ class JobRow(Horizontal):
     def _status_markup(self, job: JobState) -> str:
         style = _STATUS_STYLE.get(job.status, "black bold on white")
         if job.status == ToolStatus.RUNNING and JobAction.RESUME in job.actions:
-            label = "PAUSED"
+            label = "PAUZA"
         elif job.status == ToolStatus.RUNNING and job.percent is None:
-            label = "STARTING"
+            label = "STARTUJE"
         else:
             label = _STATUS_LABEL.get(job.status, job.status.value)
         return f"[{style}] {label} [/]"
@@ -249,11 +249,11 @@ class JobTrackerPane(Widget):
         for job in self._jobs:
             labels: list[tuple[str, int]] = []
             if JobAction.PAUSE in job.actions or JobAction.RESUME in job.actions:
-                labels.append(("Resume" if JobAction.RESUME in job.actions else "Pause", 1))
+                labels.append(("Wznów" if JobAction.RESUME in job.actions else "Pauza", 1))
             if JobAction.SKIP in job.actions:
-                labels.append(("Skip", 1))
+                labels.append(("Pomiń", 1))
             if JobAction.STOP in job.actions or JobAction.CLEAR in job.actions:
-                labels.append(("Stop" if JobAction.STOP in job.actions else "Clear", 0))
+                labels.append(("Stop" if JobAction.STOP in job.actions else "Czyść", 0))
             normal_required = max(
                 normal_required,
                 _COLUMNS_WITH_BAR + _JOB_DETAIL_MIN_W

@@ -22,7 +22,7 @@ class LogBand(Vertical):
         )
 
     def on_mount(self) -> None:
-        self.border_title = "LOG"
+        self.border_title = "LOGI"
         log = self.query_one("#log-rich", RichLog)
         for line in self._initial:
             log.write(line)

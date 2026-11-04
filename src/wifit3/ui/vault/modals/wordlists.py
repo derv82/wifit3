@@ -55,8 +55,8 @@ def _file_identity(path: str | Path) -> Optional[str]:
 def _exhausted_tooltip(exhaustion: Exhaustion) -> str:
     date = datetime.fromtimestamp(exhaustion.latest).strftime("%Y-%m-%d")
     days = int(time.time() - exhaustion.latest) // 86400
-    ago = f"{days} days ago" if days else "today"
-    return (f"Exhausted {date} ({ago}) on "
+    ago = f"{days} dni temu" if days else "dzisiaj"
+    return (f"Wyczerpane {date} ({ago}) na "
             f"{exhaustion.exhausted_hashlines}/{exhaustion.hashlines} hashlines")
 
 
@@ -83,9 +83,9 @@ class WordlistConfigModal(ModalScreen[dict]):
 
     dialog_title: ClassVar[str]
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS = [Binding("escape", "cancel", "Anuluj")]
 
-    def __init__(self, confirm_label: str = "Launch", bssid: Optional[str] = None,
+    def __init__(self, confirm_label: str = "Uruchom", bssid: Optional[str] = None,
                  probed_ssids: Sequence[str] = (), hashlines: Sequence[DatedHashline] = ()) -> None:
         """``confirm_label`` "Save" configures the tool without the caller launching a job;
         ``hashlines``, of AP ``bssid``, are what a launch cracks."""
@@ -170,7 +170,7 @@ class WordlistConfigModal(ModalScreen[dict]):
                 yield Label(self.dialog_title, id="wordlist-title")
                 yield from self._compose_fields()
                 with Horizontal(id="wordlist-buttons"):
-                    yield Button("Cancel", variant="error", id="wordlist-cancel")
+                    yield Button("Anuluj", variant="error", id="wordlist-cancel")
                     yield Button(self._confirm_label, variant="success", id="wordlist-launch")
 
     def _compose_fields(self) -> ComposeResult:
@@ -178,23 +178,23 @@ class WordlistConfigModal(ModalScreen[dict]):
 
     def _compose_wordlists(self) -> ComposeResult:
         with Horizontal(id="wordlist-choose-row"):
-            yield Button(f"{BROWSE_GLYPH} Choose wordlists", "primary", id="wordlist-choose")
-            yield Button("Clear", variant="error", id="wordlist-clear")
+            yield Button(f"{BROWSE_GLYPH} Wybierz słowniki", "primary", id="wordlist-choose")
+            yield Button("Czyść", variant="error", id="wordlist-clear")
         yield VerticalScroll(id="wordlists", can_focus=False)
 
     def _compose_password_sources(self) -> ComposeResult:
         settings = self._settings()
-        yield Checkbox("Default passwords", value=settings.default_passwords,
+        yield Checkbox("Domyślne hasła", value=settings.default_passwords,
                        compact=True, id="default-passwords")
-        yield Checkbox("This AP's SSID variants", value=settings.ap_ssid_passwords,
-                       tooltip="Passwords based on the AP's SSID: cases, leetspeak, separators, "
-                               "common suffixes and numbers 0-9999",
+        yield Checkbox("Warianty SSID tego AP", value=settings.ap_ssid_passwords,
+                       tooltip="Hasła oparte na SSID tego AP: wielkość liter, leetspeak, separatory, "
+                               "popularne końcówki i liczby 0-9999",
                        compact=True, id="ap-ssid-passwords")
-        yield Checkbox(f"Probed SSIDs [dim]({self._probed_ssid_passwords:,})[/dim]",
+        yield Checkbox(f"Sondowane SSID [dim]({self._probed_ssid_passwords:,})[/dim]",
                        value=settings.probed_ssid_passwords and self._probed_ssid_passwords > 0,
                        disabled=not self._probed_ssid_passwords,
-                       tooltip="Passwords based on SSIDs probed this session (clients may "
-                               "mistype the PSK into the SSID field)",
+                       tooltip="Hasła oparte na SSID sondowanych w tej sesji (klienci mogą "
+                               "omyłkowo wpisać PSK w pole SSID)",
                        compact=True, id="probed-ssid-passwords")
 
     async def on_mount(self) -> None:
@@ -214,12 +214,12 @@ class WordlistConfigModal(ModalScreen[dict]):
             default = self.query_one("#default-passwords", Checkbox)
         except NoMatches:   # dismissed while counting
             return
-        default.label = f"Default passwords [dim]({counts.default_passwords:,})[/dim]"
-        default.tooltip = f"RockYou's top {counts.default_passwords:,} passwords by frequency"
+        default.label = f"Domyślne hasła [dim]({counts.default_passwords:,})[/dim]"
+        default.tooltip = f"Top {counts.default_passwords:,} haseł z RockYou według częstotliwości"
         ap_ssid = (f"{counts.ap_ssid_passwords:,}" if counts.ap_ssid_passwords is not None
-                   else f"about {_ssid_variants_per_ssid():,} per SSID")
+                   else f"ok. {_ssid_variants_per_ssid():,} na SSID")
         self.query_one("#ap-ssid-passwords", Checkbox).label = (
-            f"This AP's SSID variants [dim]({ap_ssid})[/dim]")
+            f"Warianty SSID tego AP [dim]({ap_ssid})[/dim]")
         if self._bssid is not None and self._hashlines:
             metas = await asyncio.to_thread(read_bssid_metas, self._bssid)
             self._exhaustion = read_exhaustion(metas, [h.id for h in self._hashlines])
@@ -250,7 +250,7 @@ class WordlistConfigModal(ModalScreen[dict]):
         rows = self.query_one("#wordlists", VerticalScroll)
         await rows.remove_children()
         if not self._wordlists:
-            await rows.mount(Label("[dim]none chosen[/dim]"))
+            await rows.mount(Label("[dim]brak wyboru[/dim]"))
             return
         await rows.mount_all(
             Horizontal(_UseCheckbox(path, path not in self._deselected), _RemoveButton(path),
@@ -287,7 +287,7 @@ class WordlistConfigModal(ModalScreen[dict]):
         event.stop()
         start = self._wordlists[0] if self._wordlists else str(Path.home())
         self.app.push_screen(
-            PathPickerModal(start, title="Select wordlist(s)", multiple=True,
+            PathPickerModal(start, title="Wybór słowników", multiple=True,
                             checked=[Path(path) for path in self._wordlists]),
             self._wordlists_chosen,
         )
@@ -321,7 +321,7 @@ class WordlistConfigModal(ModalScreen[dict]):
                   "ap_ssid_passwords": self._checked("#ap-ssid-passwords"),
                   "probed_ssid_passwords": self._checked("#probed-ssid-passwords")}
         if not any(config.values()):
-            self.notify("Please choose a wordlist or a password source", severity="error")
+            self.notify("Wybierz słownik lub źródło haseł", severity="error")
             return None
         return config
 
@@ -334,7 +334,7 @@ class WordlistConfigModal(ModalScreen[dict]):
         try:
             Config.save()
         except ConfigError as e:
-            self.notify(str(e), title="Config Error", severity="warning")
+            self.notify(str(e), title="Błąd konfiguracji", severity="warning")
 
     def _settings(self) -> CpuCrackSettings | HashcatSettings:
         """The Config table this tool's wordlists are saved in."""

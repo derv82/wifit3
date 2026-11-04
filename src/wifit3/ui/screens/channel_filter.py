@@ -12,11 +12,11 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
     """Modal dialog that lets the user pick which channels the hopper visits."""
 
     BINDINGS = [
-        Binding("escape", "cancel", "Cancel", show=True),
-        Binding("a", "select_all", "All", show=True),
+        Binding("escape", "cancel", "Anuluj", show=True),
+        Binding("a", "select_all", "Wszystkie", show=True),
         Binding("2", "select_24ghz", "2.4 GHz", show=True),
         Binding("5", "select_5ghz", "5 GHz", show=True),
-        Binding("n", "select_none", "None", show=True),
+        Binding("n", "select_none", "Nic", show=True),
         Binding("enter", "confirm", "OK", show=True, priority=True),
     ]
 
@@ -85,16 +85,16 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         ]
 
         with Vertical(id="dialog"):
-            yield Label("Channel Filter", id="title")
+            yield Label("Filtr kanałów", id="title")
             with Horizontal(id="band-row"):
-                yield Button("[u]a[/]ll", variant="success", id="btn-all", compact=True)
+                yield Button("Wszystkie", variant="success", id="btn-all", compact=True)
                 yield Button("[u]2[/].4 GHz", variant="primary", id="btn-24ghz", compact=True)
                 yield Button("[u]5[/] GHz", variant="primary", id="btn-5ghz", compact=True)
-                yield Button("[u]n[/]one", variant="error", id="btn-none", compact=True)
+                yield Button("[u]n[/]ic", variant="error", id="btn-none", compact=True)
             yield SelectionList[int](*selections, id="channel-list")
             with Horizontal(id="button-row"):
                 yield Button("OK", variant="primary", id="btn-ok")
-                yield Button("Cancel", variant="default", id="btn-cancel")
+                yield Button("Anuluj", variant="default", id="btn-cancel")
 
     # Rows the dialog spends on everything *except* the channel list's own box.
     _CHROME_ROWS = 12

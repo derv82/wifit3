@@ -14,7 +14,7 @@ class NewDeviceDialog(ModalScreen[bool]):
     """Prompt shown when the app's device listener spots a new openable card. Dismisses True (bring it
     up) or False (leave it). Escape declines."""
 
-    BINDINGS = [Binding("escape", "decline", "Not now", show=True)]
+    BINDINGS = [Binding("escape", "decline", "Nie teraz", show=True)]
 
     DEFAULT_CSS = """
     NewDeviceDialog { align: center middle; }
@@ -36,12 +36,12 @@ class NewDeviceDialog(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label("A new wireless device was detected", id="title")
+            yield Label("Wykryto nową kartę bezprzewodową", id="title")
             yield Static(self._description, id="desc")
-            yield Static("Do you want to bring up this device?", id="prompt")
+            yield Static("Czy uruchomić tę kartę?", id="prompt")
             with Horizontal(id="button-row"):
-                yield Button("Yes", variant="success", id="btn-yes")
-                yield Button("No", variant="default", id="btn-no")
+                yield Button("Tak", variant="success", id="btn-yes")
+                yield Button("Nie", variant="default", id="btn-no")
 
     @on(Button.Pressed, "#btn-yes")
     def _yes(self) -> None:

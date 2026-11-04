@@ -18,9 +18,9 @@ _WPS_PIN_RE = re.compile(r"[0-9]{4}|[0-9]{8}")
 _WEP_HEX_RE = re.compile(r"[0-9a-fA-F]{10}|[0-9a-fA-F]{26}")
 
 _PLACEHOLDERS = {
-    CaptureType.WPA_PSK: "8-63 character passphrase or 64 hex digits",
-    CaptureType.WPS_PIN: "4 or 8 digit PIN",
-    CaptureType.WEP: "5/13 ASCII characters or 10/26 hex digits",
+    CaptureType.WPA_PSK: "hasło 8-63 znaków lub 64 cyfry hex",
+    CaptureType.WPS_PIN: "PIN 4 lub 8 cyfr",
+    CaptureType.WEP: "5/13 znaków ASCII lub 10/26 hex",
 }
 
 
@@ -36,18 +36,18 @@ class ManualCredential:
 def credential_error(ssid: str, bssid: str, kind: CaptureType, value: str) -> Optional[str]:
     """Why the typed credential can't be saved, or None when it is valid."""
     if not ssid or len(ssid.encode("utf-8")) > 32:
-        return "SSID must be 1-32 bytes"
+        return "SSID musi mieć 1-32 bajty"
     if not _BSSID_RE.fullmatch(bssid):
-        return "Enter a colon-separated BSSID"
+        return "Podaj BSSID z dwukropkami"
     if kind == CaptureType.WPA_PSK:
         if not (is_valid_psk(value) or RAW_PMK_RE.fullmatch(value)):
-            return "WPA PSK must be 8-63 bytes or 64 hex digits"
+            return "WPA PSK musi mieć 8-63 bajty lub 64 cyfry hex"
     elif kind == CaptureType.WPS_PIN:
         if not _WPS_PIN_RE.fullmatch(value):
-            return "WPS PIN must contain 4 or 8 digits"
+            return "WPS PIN musi mieć 4 lub 8 cyfr"
     elif kind == CaptureType.WEP:
         if not ((len(value) in (5, 13) and value.isascii()) or _WEP_HEX_RE.fullmatch(value)):
-            return "WEP key must be 5/13 ASCII characters or 10/26 hex digits"
+            return "Klucz WEP musi mieć 5/13 znaków ASCII lub 10/26 hex"
     return None
 
 
@@ -55,7 +55,7 @@ class AddCredentialModal(ModalScreen[Optional[ManualCredential]]):
     """Type in a WPA PSK, WPS PIN or WEP key for an AP; dismisses with it, or None."""
 
     AUTO_FOCUS = "#value"
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS = [Binding("escape", "cancel", "Anuluj")]
 
     DEFAULT_CSS = """
     AddCredentialModal { align: center middle; }
@@ -77,23 +77,23 @@ class AddCredentialModal(ModalScreen[Optional[ManualCredential]]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label("Add Credential", id="title")
-            yield Label("Network", classes="field-label")
+            yield Label("Nowe dane dostępu", id="title")
+            yield Label("Sieć", classes="field-label")
             yield Input(self._ssid, placeholder="SSID", id="ssid")
             yield Label("BSSID", classes="field-label")
             yield Input(self._bssid, placeholder="aa:bb:cc:dd:ee:ff", id="bssid")
-            yield Label("Credential type", classes="field-label")
+            yield Label("Typ danych dostępu", classes="field-label")
             yield Select(
                 [("WPA PSK", CaptureType.WPA_PSK), ("WPS PIN", CaptureType.WPS_PIN),
-                 ("WEP key", CaptureType.WEP)],
+                 ("Klucz WEP", CaptureType.WEP)],
                 value=CaptureType.WPA_PSK, allow_blank=False, id="kind",
             )
-            yield Label("Credential", classes="field-label")
+            yield Label("Dane dostępu", classes="field-label")
             yield Input(placeholder=_PLACEHOLDERS[CaptureType.WPA_PSK], id="value")
             yield Label("", id="status")
             with Horizontal(id="buttons"):
-                yield Button("Cancel", id="cancel")
-                yield Button("Add", variant="primary", id="add")
+                yield Button("Anuluj", id="cancel")
+                yield Button("Dodaj", variant="primary", id="add")
 
     @on(Select.Changed, "#kind")
     def _kind_changed(self, event: Select.Changed) -> None:

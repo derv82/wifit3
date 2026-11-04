@@ -55,8 +55,8 @@ class WifiteApp(App):
 
     ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
-        Binding("ctrl+p", "preferences", "Prefs"),
-        Binding("v", "toggle_vault", "Vault")
+        Binding("ctrl+p", "preferences", "Preferencje"),
+        Binding("v", "toggle_vault", "Skrytka")
     ]
 
     CSS = """
@@ -205,21 +205,21 @@ class WifiteApp(App):
             return
         self.copy_to_clipboard(selected)
         chars = len(selected)
-        noun = "char" if chars == 1 else "chars"
-        self.notify(f"Copied {chars} {noun} to clipboard")
+        noun = "znak" if chars == 1 else "zn."
+        self.notify(f"Skopiowano {chars} {noun} do schowka")
 
     def persist_config(self) -> None:
         try:
             Config.save()
         except ConfigError as e:
-            self.notify(str(e), severity="error", title="Config")
+            self.notify(str(e), severity="error", title="Konfiguracja")
 
     def on_mount(self) -> None:
         """Register screens, push the splash, and start the always-on device watch."""
         if self._config_error:
-            self.notify(self._config_error, severity="error", title="Config")
+            self.notify(self._config_error, severity="error", title="Konfiguracja")
         for msg in self.vault.errors:
-            self.notify(msg, severity="warning", title="Vault")
+            self.notify(msg, severity="warning", title="Skrytka")
         self.install_screen(self.splash_view, name="splash")
         self.install_screen(self.scanner_view, name="scanner")
         self.install_screen(self.focus_view, name="focus")
@@ -302,13 +302,13 @@ class WifiteApp(App):
         """Why a PBC window on ``ap`` won't be acted on; empty when it will."""
         reasons = []
         if Config.is_silenced(ap.bssid):
-            reasons.append("AP silenced")
+            reasons.append("AP wyciszone")
         if ap.is_hidden:
-            reasons.append("hidden SSID")
+            reasons.append("ukryty SSID")
         if self.vault.ap_state(ap.bssid).status is PasswordStatus.CURRENT:
-            reasons.append("PSK already current")
+            reasons.append("PSK już aktualny")
         if not self.pbc_enabled:
-            reasons.append("PBC disabled (press [bold]w[/bold])")
+            reasons.append("PBC wyłączone (naciśnij [bold]w[/bold])")
         return reasons
 
     def guessid(self, ap: AccessPoint) -> str:
@@ -363,16 +363,16 @@ class WifiteApp(App):
         if job.status == ToolStatus.SUCCESS:
             status = self.vault.manager.key_status(job) or PasswordStatus.CURRENT
             if status is PasswordStatus.CURRENT:
-                self.notify(f"SUCCESS  PSK: {job.key}", title=job.display_name, severity="information")
+                self.notify(f"SUKCES  PSK: {job.key}", title=job.display_name, severity="information")
             else:
-                self.notify(f"SUCCESS  PSK: {job.key} ({status.value})", title=job.display_name,
+                self.notify(f"SUKCES  PSK: {job.key} ({status.value})", title=job.display_name,
                             severity="warning")
         elif job.status == ToolStatus.FAILURE:
-            self.notify(f"NOT FOUND  {job.progress_msg}", title=job.display_name, severity="warning")
+            self.notify(f"NIE ZNALEZIONO  {job.progress_msg}", title=job.display_name, severity="warning")
         elif job.status == ToolStatus.STOPPED:
-            self.notify("STOPPED  by user", title=job.display_name, severity="information")
+            self.notify("ZATRZYMANO  przez użytkownika", title=job.display_name, severity="information")
         else:
-            self.notify(f"ERROR  {job.progress_msg}", title=job.display_name, severity="error")
+            self.notify(f"BŁĄD  {job.progress_msg}", title=job.display_name, severity="error")
 
     def stop_job(self, job_id: str) -> bool:
         """Stop a running job, then refresh the tracker immediately."""
@@ -431,7 +431,7 @@ class WifiteApp(App):
                     if res.status is Status.FAILED:
                         self.notify(res.message, severity="error")
                     elif res.status is Status.READY:
-                        self.notify(f"{dev.description} added", severity="information")
+                        self.notify(f"Dodano: {dev.description}", severity="information")
         finally:
             self.device_watch.resume()
 
@@ -453,13 +453,13 @@ class WifiteApp(App):
     def _show_device_lost(self, exc: Exception, remaining: int) -> None:
         # Survivors remain: keep running, just toast how many are left.
         if remaining > 0:
-            self.notify(f"A wireless card was lost. {remaining} still active.",
-                        title="Card unplugged", severity="warning")
+            self.notify(f"Utracono kartę bezprzewodową. Pozostało: {remaining}.",
+                        title="Karta odłączona", severity="warning")
             return
         # Last card gone: fall back to the recoverable modal → splash.
         if isinstance(self.screen, (FatalErrorModal, RecoverableErrorModal)):
             return
-        self.push_screen(RecoverableErrorModal(WifiteDeviceLostError("the wireless adapter")))
+        self.push_screen(RecoverableErrorModal(WifiteDeviceLostError("karta bezprzewodowa")))
 
     async def recover_to_splash(self) -> None:
         """Return to the splash screen after the last card was lost."""

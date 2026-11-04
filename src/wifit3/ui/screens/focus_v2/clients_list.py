@@ -47,7 +47,7 @@ class ClientWidget(Horizontal):
             self._fp_label.tooltip = self._fp.label
             self._fp_label.add_class("fp-known")
             self._mac_label.add_class("fp-known")
-        self._deauth = Button("✕", classes="cl-deauth", tooltip="Deauthenticate Client")
+        self._deauth = Button("✕", classes="cl-deauth", tooltip="Deautoryzuj klienta")
         yield self._fp_label
         yield self._mac_label
         yield self._pwr_label
@@ -96,7 +96,7 @@ class ClientWidget(Horizontal):
 class FingerprintModal(ModalScreen[None]):
     """A small popup showing a Client's vendor information."""
 
-    BINDINGS = [Binding("escape", "dismiss", "Close", show=False)]
+    BINDINGS = [Binding("escape", "dismiss", "Zamknij", show=False)]
 
     DEFAULT_CSS = """
     FingerprintModal { background: $background 0%; }
@@ -147,8 +147,8 @@ class ClientsList(Vertical):
 
     def compose(self) -> ComposeResult:
         # Broadcast button pinned at the top; only the row list scrolls below it.
-        yield Button("Deauth all", id="deauth-all", classes="bcast-btn",
-                     tooltip="Deauthenticate all clients (Broadcast)")
+        yield Button("Deauth wszystkich", id="deauth-all", classes="bcast-btn",
+                     tooltip="Deautoryzuj wszystkich klientów (Broadcast)")
         rows = []
         for c in self._clients:
             widget = ClientWidget(c)
@@ -201,6 +201,6 @@ class ClientsList(Vertical):
             btn.disabled = disabled
 
     def _update_title(self) -> None:
-        title = f"CLIENTS ({len(self._rows)})"
+        title = f"KLIENCI ({len(self._rows)})"
         if self.border_title != title:
             self.border_title = title

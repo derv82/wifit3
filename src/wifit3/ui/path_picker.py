@@ -102,7 +102,7 @@ class _RootButton(Button):
 
 class _PickerTree(DirectoryTree):
     # Bind spacebar to select files alongside directory expand/collapse.
-    BINDINGS = [Binding("space", "screen.toggle_check", "Add/remove", show=False)]
+    BINDINGS = [Binding("space", "screen.toggle_check", "Dodaj/usuń", show=False)]
     COMPONENT_CLASSES = {"picker-tree--checked"}
     DEFAULT_CSS = """
     _PickerTree > .picker-tree--checked { color: $text; background: $success-muted; }
@@ -148,7 +148,7 @@ class _DirectoriesOnlyTree(_PickerTree):
 class PathPickerModal(ModalScreen[Optional[list[Path]]]):
     """Pick files or a directory. Dismisses with the chosen paths, or None if cancelled."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS = [Binding("escape", "cancel", "Anuluj")]
     DEFAULT_CSS = """
     PathPickerModal { align: center middle; }
     PathPickerModal #dialog {
@@ -170,7 +170,7 @@ class PathPickerModal(ModalScreen[Optional[list[Path]]]):
     """
 
     def __init__(self, start: str | Path, *, directories_only: bool = False,
-                 title: str = "Select", prefer_relative: bool = False,
+                 title: str = "Wybierz", prefer_relative: bool = False,
                  multiple: bool = False, checked: Iterable[Path] = ()) -> None:
         super().__init__()
         self._start = Path(start).expanduser()
@@ -192,9 +192,9 @@ class PathPickerModal(ModalScreen[Optional[list[Path]]]):
             yield Input(str(self._start), id="picker-path")
             yield tree(root, checked=self._checked, id="picker-tree")
             if self._multiple:
-                yield Label("Select multiple files with spacebar or click", id="picker-hint")
+                yield Label("Zaznacz wiele plików spacją lub kliknięciem", id="picker-hint")
             with Horizontal(id="buttons"):
-                yield Button("Cancel", "default", id="picker-cancel")
+                yield Button("Anuluj", "default", id="picker-cancel")
                 yield Button(self._select_label(), "primary", id="picker-select")
 
     @on(Tree.NodeHighlighted)
@@ -259,7 +259,7 @@ class PathPickerModal(ModalScreen[Optional[list[Path]]]):
         self.query_one("#picker-select", Button).label = self._select_label()
 
     def _select_label(self) -> str:
-        return f"Select ({len(self._checked)})" if self._checked else "Select"
+        return f"Wybierz ({len(self._checked)})" if self._checked else "Wybierz"
 
     def _accept(self, path: Path) -> None:
         """Dismiss with ``path``, or re-root the tree when it's a directory we can't return."""
@@ -267,14 +267,14 @@ class PathPickerModal(ModalScreen[Optional[list[Path]]]):
             if _is_dir(path):
                 self._dismiss_paths([path])
             else:
-                self.notify(f"Not a directory: {path}", severity="error")
+                self.notify(f"To nie jest katalog: {path}", severity="error")
             return
         if _is_dir(path):
             self._reroot(path)
         elif not path.is_file() and self._multiple:
             self._check_glob_matches(path)
         elif not path.is_file():
-            self.notify(f"No such file: {path}", severity="error")
+            self.notify(f"Nie ma takiego pliku: {path}", severity="error")
         elif self._multiple:
             self._toggle_check(path)        # a typed-in file joins the selection
         else:
@@ -283,12 +283,12 @@ class PathPickerModal(ModalScreen[Optional[list[Path]]]):
     def _check_glob_matches(self, pattern: Path) -> None:
         matches = [Path(match) for match in sorted(glob.glob(str(pattern))) if Path(match).is_file()]
         if not matches:
-            self.notify(f"No files match: {pattern}", severity="error")
+            self.notify(f"Brak pasujących plików: {pattern}", severity="error")
             return
         added = [match for match in matches if match not in self._checked]
         for match in added:
             self._toggle_check(match)
-        self.notify(f"Added {len(added)} files")
+        self.notify(f"Dodano plików: {len(added)}")
 
     def _dismiss_paths(self, paths: list[Path]) -> None:
         self.dismiss([relative_to_cwd(path) for path in paths] if self._prefer_relative else paths)
@@ -317,7 +317,7 @@ class PathInput(Horizontal):
     """
 
     def __init__(self, value: str = "", *, directories_only: bool = False,
-                 title: str = "Select", placeholder: str = "", prefer_relative: bool = False,
+                 title: str = "Wybierz", placeholder: str = "", prefer_relative: bool = False,
                  id: str | None = None) -> None:
         super().__init__()
         self._value = value

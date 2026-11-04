@@ -41,19 +41,19 @@ class FatalErrorModal(ModalScreen[None]):
         with Vertical(id="dialog"):
             yield Label(self._error.title, id="title")
             yield Static(self._error.message, id="message")
-            with Collapsible(title="Details", collapsed=True):
+            with Collapsible(title="Szczegóły", collapsed=True):
                 with VerticalScroll(id="trace-scroll"):
                     yield Static(self._error.trace, id="trace")
             with Horizontal(id="button-row"):
-                yield Button("Copy details", variant="default", id="btn-copy")
-                yield Button("Quit", variant="error", id="btn-quit")
+                yield Button("Kopiuj szczegóły", variant="default", id="btn-copy")
+                yield Button("Zakończ", variant="error", id="btn-quit")
 
     @on(Button.Pressed, "#btn-copy")
     def _copy(self) -> None:
         # OSC-52 copy: best-effort (not every terminal supports it), so the trace also stays
         # visible/selectable in the Details box as the manual-copy fallback.
         self.app.copy_to_clipboard(self._error.trace)
-        self.notify("Details copied to clipboard.")
+        self.notify("Szczegóły skopiowano do schowka.")
 
     @on(Button.Pressed, "#btn-quit")
     def _quit(self) -> None:
@@ -89,7 +89,7 @@ class RecoverableErrorModal(ModalScreen[None]):
             yield Label(self._error.title, id="title")
             yield Static(self._error.message, id="message")
             with Horizontal(id="button-row"):
-                yield Button("Back to Splash", variant="warning", id="btn-splash")
+                yield Button("Powrót do startu", variant="warning", id="btn-splash")
 
     @on(Button.Pressed, "#btn-splash")
     def _back_to_splash(self) -> None:

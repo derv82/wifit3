@@ -19,7 +19,7 @@ class GlobalJobTracker(Widget):
     """
 
     def compose(self) -> ComposeResult:
-        yield Label("No active jobs.", id="job-tracker-label")
+        yield Label("Brak zadań w toku.", id="job-tracker-label")
 
     def on_mount(self) -> None:
         self._last_display: bool | None = None
@@ -44,7 +44,7 @@ class GlobalJobTracker(Widget):
             return
             
         if not jobs or vault_open:
-            self._set_tracker(False, "No active jobs.", label)
+            self._set_tracker(False, "Brak zadań w toku.", label)
             return
 
         running = [j for j in jobs if j.status == ToolStatus.RUNNING]
@@ -59,9 +59,9 @@ class GlobalJobTracker(Widget):
             job = running[0]
             parts.append(f"⏳ {job.display_name}: {job.progress_msg}")
             if len(running) > 1:
-                parts.append(f"(+{len(running)-1} more)")
+                parts.append(f"(+{len(running)-1} więcej)")
         if queued:
-            parts.append(f"({len(queued)} queued)")
+            parts.append(f"({len(queued)} w kolejce)")
             
         self._set_tracker(True, " ".join(parts), label)
 

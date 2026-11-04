@@ -45,10 +45,10 @@ def campaign_blocked(cls, ap) -> Optional[str]:
     the AP is silenced, another campaign owns the radio, or the campaign's own
     ineligible_reason (hidden SSID, WPS locked, unconfirmed encryption, …)."""
     if Config.is_silenced(ap.bssid):
-        return "AP silenced"
+        return "AP wyciszony"
     active = Campaign.active
     if active is not None and active.key != cls.key:
-        return f"Blocked ({active.key} is active)"
+        return f"Inna kampania aktywna ({active.key})"
     return cls.ineligible_reason(ap)
 
 
@@ -128,19 +128,19 @@ def count_handshakes(ap):
 def fakeauth_value_markup(campaign, now: float, compact: bool = False) -> str:
     """Just the fake-auth status value (no 'Fake-Auth:' label)."""
     if campaign is None:
-        return "[dim]Off[/dim]"
+        return "[dim]Wył.[/dim]"
     fa = campaign.fake_auth
     if fa.state == "associated":
         countdown = ""
         if fa.next_reauth_at and not compact:
             secs = max(0, int(fa.next_reauth_at - now))
-            countdown = f" [dim](re-auth in {secs}s)[/dim]"
-        return f"[green]✓ Associated[/green]{countdown}"
+            countdown = f" [dim](re-auth za {secs}s)[/dim]"
+        return f"[green]✓ Skojarzony[/green]{countdown}"
     if fa.state == "authenticating":
-        return "[yellow]Associating…[/yellow]"
+        return "[yellow]Skojarzanie…[/yellow]"
     if fa.state == "failed":
-        return f"[red]Failed: {escape(fa.fail_reason or 'unknown')}[/red]"
-    return "[dim]Idle[/dim]"
+        return f"[red]Błąd: {escape(fa.fail_reason or 'nieznany')}[/red]"
+    return "[dim]Bezczynny[/dim]"
 
 
 def wep_status_lines(ap, array, campaign, now: float) -> list[str]:
@@ -154,7 +154,7 @@ def wep_status_lines(ap, array, campaign, now: float) -> list[str]:
     if campaign is not None:
         lines.append(
             f"[dim]Fake-Auth:[/dim] {fakeauth_value_markup(campaign, now, compact=True)}")
-    lines.append(f"[dim]Usable IVs:[/dim] {ivs}")
+    lines.append(f"[dim]Użyteczne IV:[/dim] {ivs}")
     return lines
 
 
@@ -173,7 +173,7 @@ def eap_methods_markup(ap: AccessPoint) -> str | None:
     if not seen:
         return None
     types = sorted(t for t in seen if t not in _EAP_FRAMING_TYPES) or sorted(seen)
-    labels = [method_name(t) or f"type {t}" for t in types]
+    labels = [method_name(t) or f"typ {t}" for t in types]
     return "[dim]EAP:[/dim] " + " · ".join(labels)
 
 
@@ -182,12 +182,12 @@ def pmf_status_markup(ap: AccessPoint) -> str:
     Disabled (dim) → Optional (orange) → Required (red); Invalid (red) = MFPR without MFPC."""
     posture = ap.pmf_posture
     if posture is PmfPosture.REQUIRED:
-        return "[red]Required[/red]"
+        return "[red]Wymagany[/red]"
     if posture is PmfPosture.INVALID:
-        return "[red]Invalid[/red]"
+        return "[red]Błędny[/red]"
     if posture is PmfPosture.OPTIONAL:
-        return "[dark_orange]Optional[/dark_orange]"
-    return "[dim]Disabled[/dim]"
+        return "[dark_orange]Opcjonalny[/dark_orange]"
+    return "[dim]Wyłączony[/dim]"
 
 
 def router_identity_details(ap: AccessPoint) -> str | None:
@@ -203,19 +203,19 @@ def router_identity_details(ap: AccessPoint) -> str | None:
     if ident.manufacturer:
         mfr_src = getattr(ident, "manufacturer_source", None) or ident.get(IdKey.MANUFACTURER)[1]
         src_label = mfr_src.label if mfr_src else ""
-        rows.append(f"[dim]Manuf:[/dim] {escape(ident.manufacturer)} [dim]({src_label})[/dim]")
+        rows.append(f"[dim]Prod.:[/dim] {escape(ident.manufacturer)} [dim]({src_label})[/dim]")
     if ident.device_name and ident.device_name != ident.model:
         dev_src = ident.get(IdKey.DEVICE_NAME)[1]
         src_label = dev_src.label if dev_src else ""
-        rows.append(f"[dim]Device:[/dim] {escape(ident.device_name)} [dim]({src_label})[/dim]")
+        rows.append(f"[dim]Nazwa:[/dim] {escape(ident.device_name)} [dim]({src_label})[/dim]")
     if ident.serial_number:
         sn_src = ident.get(IdKey.SERIAL_NUMBER)[1]
         src_label = sn_src.label if sn_src else ""
-        rows.append(f"[dim]Serial:[/dim] {escape(ident.serial_number)} [dim]({src_label})[/dim]")
+        rows.append(f"[dim]S/N:[/dim] {escape(ident.serial_number)} [dim]({src_label})[/dim]")
     if ident.device_type:
         dt_src = ident.get(IdKey.DEVICE_TYPE)[1]
         src_label = dt_src.label if dt_src else ""
-        rows.append(f"[dim]Device Type:[/dim] {escape(ident.device_type)} [dim]({src_label})[/dim]")
+        rows.append(f"[dim]Typ urządzenia:[/dim] {escape(ident.device_type)} [dim]({src_label})[/dim]")
 
     wsc_mfr = ident.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_M1) or ident.get_source_value(IdKey.MANUFACTURER, IdSource.WSC_BEACON)
     if wsc_mfr and wsc_mfr != ident.manufacturer:
@@ -239,7 +239,7 @@ def status_under_dash(ap: AccessPoint, array: WlanArray, now: float) -> list[str
 
     if is_wep(ap):
         return wep_status_lines(ap, array, None, now)
-    lines = [f"[dim]Encryption:[/dim] {format_encryption_markup(ap, detailed=True)}"]
+    lines = [f"[dim]Szyfrowanie:[/dim] {format_encryption_markup(ap, detailed=True)}"]
     parts = []
     if (ap.akms and ap.rsn_valid) or ap.wpa3:   # RSN (WPA2/3): PMF is meaningful
         parts.append(f"[dim]PMF:[/dim] {pmf_status_markup(ap)}")
@@ -278,7 +278,7 @@ def _psk_chip(psk: Optional[str], state: ApState) -> Optional[str]:
         return (f"[black bold on {PASSWORD_MISMATCH_COLOR}] PSK: {escape(key.value)} [/] "
                 f"[bold {PASSWORD_MISMATCH_COLOR}]{state.status.value}[/]")
     if state.status is PasswordStatus.NOT_VERIFIED and key is not None and key.value == psk:
-        return f"[black bold on yellow] PSK: {escape(psk)} [/black bold on yellow] [bold yellow]NOT VERIFIED[/bold yellow]"
+        return f"[black bold on yellow] PSK: {escape(psk)} [/black bold on yellow] [bold yellow]NIEPOTWIERDZONY[/bold yellow]"
     return f"[black bold on green] ✓ PSK: {escape(psk)} [/black bold on green]"
 
 
@@ -288,10 +288,10 @@ def _wep_chip(recovered: Optional[bytes], state: ApState) -> Optional[str]:
         return None
     text = escape(wep_key_hex_and_ascii(recovered.hex() if recovered is not None else key.value))
     if recovered is not None or state.status is PasswordStatus.CURRENT:
-        return f"[black bold on green] ✓ WEP key: {text} [/black bold on green]"
+        return f"[black bold on green] ✓ Klucz WEP: {text} [/black bold on green]"
     if state.status is PasswordStatus.NOT_VERIFIED:
-        return f"[black bold on yellow] WEP key: {text} [/black bold on yellow] [bold yellow]NOT VERIFIED[/bold yellow]"
-    return (f"[black bold on {PASSWORD_MISMATCH_COLOR}] WEP key: {text} [/] "
+        return f"[black bold on yellow] Klucz WEP: {text} [/black bold on yellow] [bold yellow]NIEPOTWIERDZONY[/bold yellow]"
+    return (f"[black bold on {PASSWORD_MISMATCH_COLOR}] Klucz WEP: {text} [/] "
             f"[bold {PASSWORD_MISMATCH_COLOR}]{state.status.value}[/]")
 
 
@@ -311,14 +311,14 @@ def status_headlines(ap: AccessPoint, array: WlanArray, vault: Vault) -> list[st
     # or old 4-way left from a previous (PSK) config can surface a misleading headline.
     if eap_only(ap):
         if ap.wpa3 and ap.transition_mode:
-            return ["[dim]● WPA3/Enterprise transition: not yet supported[/dim]"]
+            return ["[dim]● WPA3/Enterprise (tryb przejściowy): nieobsługiwane[/dim]"]
         if ap.wpa3:
-            return ["[dim]● WPA3/Enterprise: not yet supported[/dim]"]
+            return ["[dim]● WPA3/Enterprise: nieobsługiwane[/dim]"]
         wpa_label = "WPA2" if ap.rsn_valid else "WPA"
-        return [f"[dim]● {wpa_label}/Enterprise: not yet supported[/dim]"]
+        return [f"[dim]● {wpa_label}/Enterprise: nieobsługiwane[/dim]"]
 
     if no_passphrase(ap):
-        return ["[dim]● OWE (Enhanced Open): Diffie-Hellman key, nothing to crack[/dim]"]
+        return ["[dim]● OWE (Enhanced Open): klucz Diffie-Hellman, nie ma czego łamać[/dim]"]
 
     unsupported = bool(ap.akm_suites) and psk_capture_supported(ap) is False
 
@@ -326,31 +326,31 @@ def status_headlines(ap: AccessPoint, array: WlanArray, vault: Vault) -> list[st
     state = vault.ap_state(ap.bssid)
     wep_chip = _wep_chip(ap.wep_key, state)
     if wep_chip:
-        return [wep_chip, "[dim]● Listening for WEP IVs[/dim]"]
+        return [wep_chip, "[dim]● Nasłuchiwanie IV-ów WEP[/dim]"]
     psk_chip = _psk_chip(vault.known_psk(ap), state)
     if psk_chip:
-        tail = ("[dim]● Not yet supported: no crack path for this AKM[/dim]"
-                if unsupported else "[dim]● Listening for handshake + PMKID[/dim]")
+        tail = ("[dim]● Nieobsługiwane: brak ścieżki łamania dla tego AKM[/dim]"
+                if unsupported else "[dim]● Nasłuchiwanie handshake + PMKID[/dim]")
         return [psk_chip, tail]
 
     if Config.is_silenced(ap.bssid):
-        return ["[dim]● Silenced[/dim]",
-                "[dim]campaigns off, handshakes ignored · press s to resume[/dim]"]
+        return ["[dim]● Wyciszony[/dim]",
+                "[dim]kampanie wyłączone, handshake'i ignorowane · wciśnij s, by wznowić[/dim]"]
 
     # 4-5. Passive capture state: captured / partial / listening.
     if wep:
         n_ivs = ap.wep.unique_ivs if ap.wep else 0
         if n_ivs:
-            return ["[green]● Listening for WEP IVs[/green]",
-                    f"[dim]{n_ivs:,} captured · press Replay to generate more[/dim]"]
-        return ["[green]● Listening for WEP IVs[/green]"]
+            return ["[green]● Nasłuchiwanie IV-ów WEP[/green]",
+                    f"[dim]{n_ivs:,} przechwyconych · Replay wygeneruje więcej[/dim]"]
+        return ["[green]● Nasłuchiwanie IV-ów WEP[/green]"]
 
     if (ap.wpa3 and not ap.transition_mode
             and SAE_AKM_SUITES.intersection(ap.akm_suites)):
-        return ["[dim]● WPA3/SAE: passive capture not applicable[/dim]"]
+        return ["[dim]● WPA3/SAE: przechwytywanie bierne nie dotyczy[/dim]"]
 
     if unsupported:
-        return ["[dim]● Not yet supported: no crack path for this AKM[/dim]"]
+        return ["[dim]● Nieobsługiwane: brak ścieżki łamania dla tego AKM[/dim]"]
 
     n_complete, n_partial, msg_counts = count_handshakes(ap)
     n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid and pmkid_crackable(hs))
@@ -360,33 +360,33 @@ def status_headlines(ap: AccessPoint, array: WlanArray, vault: Vault) -> list[st
             bits.append(f"handshake ×{n_complete}")
         if n_pmkid:
             bits.append(f"PMKID ×{n_pmkid}")
-        return ["[black bold on green] ✓ Captured [/black bold on green] " + " · ".join(bits),
-                f"[dim]saved to {Config.captures_dir}[/dim]"]
+        return ["[black bold on green] ✓ Przechwycono [/black bold on green] " + " · ".join(bits),
+                f"[dim]zapisano w {Config.captures_dir}[/dim]"]
     if n_partial:
         breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
-        return ["[yellow]◌ Capturing handshake[/yellow]",
-                f"[dim]{breakdown}: deauth a client to force a re-handshake[/dim]"]
+        return ["[yellow]◌ Przechwytuję handshake[/yellow]",
+                f"[dim]{breakdown}: zrób deauth klienta, by wymusić re-handshake[/dim]"]
 
     if enc in ("OPEN", ""):
-        return ["[dim]● Open network: no handshake to capture[/dim]"]
-    return ["[green]● Listening for handshake + PMKID[/green]",
-            "[dim]passive: deauth a client to force a handshake[/dim]"]
+        return ["[dim]● Sieć otwarta: nie ma czego przechwytywać[/dim]"]
+    return ["[green]● Nasłuchiwanie handshake + PMKID[/green]",
+            "[dim]pasywnie: zrób deauth klienta, by wymusić handshake[/dim]"]
 
 
 def card_identity(array: WlanArray) -> tuple[str, str | None]:
     """``(chipset/label, own_bssid_or_None)`` for the card endpoint."""
     if array is None:
-        return "no card", None
+        return "brak karty", None
     if array.members is None or len(array.members) == 0:
-        return "no card", None
+        return "brak karty", None
     if len(array.members) > 1:
-        return f"{len(array.members)} cards", None
+        return f"Karty ×{len(array.members)}", None
     iface = array.preferred or array.members[0]
     label = iface.chipset
     if not label:
         # legacy fallback: strip the "(Make Model)" suffix off a description/name
-        label = str(iface.description or iface.name or "card").split("(")[0].strip()
-    label = label or "card"
+        label = str(iface.description or iface.name or "karta").split("(")[0].strip()
+    label = label or "karta"
     mac = iface.driver.mac_address
     if isinstance(mac, (bytes, bytearray)) and len(mac) == 6:
         mac = ":".join(f"{b:02x}" for b in mac)

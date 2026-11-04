@@ -28,7 +28,7 @@ def key_option_prompts(keys: list[Key]) -> list[Content]:
 class VerifyKeyMenu(ModalScreen[Optional[Key]]):
     """Dismisses with the chosen key, or None."""
 
-    BINDINGS = [Binding("escape", "dismiss", "Close", show=False)]
+    BINDINGS = [Binding("escape", "dismiss", "Zamknij", show=False)]
 
     DEFAULT_CSS = """
     VerifyKeyMenu { background: $background 0%; }

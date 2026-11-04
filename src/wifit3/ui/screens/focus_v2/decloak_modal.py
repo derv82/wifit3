@@ -1,4 +1,4 @@
-"""Pick the SSIDs to guess at a hidden AP, and which methods send them."""
+﻿"""Pick the SSIDs to guess at a hidden AP, and which methods send them."""
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -93,7 +93,7 @@ class _TruncateButton(Button):
 class DecloakInputModal(ModalScreen[Optional[DecloakInput]]):
     """Select candidate SSIDs to probe for (guess) and the probing method."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=True)]
+    BINDINGS = [Binding("escape", "cancel", "Anuluj", show=True)]
 
     DEFAULT_CSS = """
     DecloakInputModal { align: center middle; }
@@ -134,41 +134,41 @@ class DecloakInputModal(ModalScreen[Optional[DecloakInput]]):
 
     def compose(self) -> ComposeResult:
         defaults = DecloakInput()
-        wordlist = PathInput("", title="Select wordlist", placeholder="wordlist file",
+        wordlist = PathInput("", title="Wybierz słownik", placeholder="plik słownika",
                              id="wordlist")
-        wordlist.tooltip = "Load the list of SSIDs from a text file (1 SSID per line)"
+        wordlist.tooltip = "Wczytaj listę SSID z pliku tekstowego (1 SSID na linię)"
         with Vertical(id="dialog"):
-            yield Label(f"Decloak Hidden Network ({self._bssid})", id="title")
-            yield Label("Enter base SSID [i]or[/i] load list of SSIDs from file:", id="hint")
+            yield Label(f"Odsłoń ukrytą sieć ({self._bssid})", id="title")
+            yield Label("Wpisz bazowy SSID [i]lub[/i] wczytaj listę SSID z pliku:", id="hint")
             with Horizontal(id="sources"):
-                yield Input(self._base_ssid, placeholder="base SSID", id="base-ssid",
-                            tooltip="Enter a common [i]prefix[/i] and auto-populate "
-                                    "potential suffixes")
+                yield Input(self._base_ssid, placeholder="bazowy SSID", id="base-ssid",
+                            tooltip="Wpisz wspólny [i]prefiks[/i] – sufiksy "
+                                    "uzupełnią się automatycznie")
                 yield wordlist
             yield TextArea("\n".join(self._guesses(self._base_ssid)), id="candidates")
             with Vertical(id="methods"):
                 yield Checkbox(
-                    "Directed Probe Requests", defaults.use_directed_probe, id="use-directed",
-                    tooltip="Send probes directly to the AP (only decloaks the targeted AP). "
-                            "Retries/ACKs, fast.")
+                    "Sondy kierowane", defaults.use_directed_probe, id="use-directed",
+                    tooltip="Wysyła sondy bezpośrednio do AP (odsłania tylko AP docelowy). "
+                            "Z retransmisjami/ACK, szybkie.")
                 yield Checkbox(
-                    "Broadcast Probe Requests", defaults.use_broadcast_probe,
+                    "Sondy rozgłoszeniowe", defaults.use_broadcast_probe,
                     id="use-broadcast",
-                    tooltip="Send a broadcast probe (to all APs), potentially decloaking "
-                            "other APs. No retries/ACKs (lossy), fast.")
+                    tooltip="Wysyła sondę rozgłoszeniową (do wszystkich AP), może odsłonić "
+                            "też inne AP. Bez retransmisji/ACK (część ginie), szybkie.")
                 yield Checkbox(
-                    "Auth + Association Requests", defaults.use_authassoc_probe,
+                    "Uwierzytelnianie + asocjacja", defaults.use_authassoc_probe,
                     id="use-authassoc",
-                    tooltip="Authenticate & associate with the target AP for each guess. "
-                            "Retries/ACKs, but slower than probes.")
+                    tooltip="Uwierzytelnia się i asocjuje z docelowym AP dla każdego "
+                            "zgadywanego SSID. Retransmisje/ACK, ale wolniejsze niż sondy.")
             with Horizontal(id="truncate"):
-                yield Label("Truncate:")
+                yield Label("Skróć do:")
                 for seconds in TRUNCATE_SECONDS:
                     yield _TruncateButton(seconds)
             yield Label("", id="status")
             with Horizontal(id="button-row"):
-                yield Button("Decloak", variant="primary", id="accept")
-                yield Button("Cancel", id="cancel")
+                yield Button("Odsłoń", variant="primary", id="accept")
+                yield Button("Anuluj", id="cancel")
 
     def watch_wordlist_lines(self) -> None:
         self._update_estimate()
@@ -248,28 +248,28 @@ class DecloakInputModal(ModalScreen[Optional[DecloakInput]]):
         self.query_one("#truncate").display = bool(would_shorten)
 
         if not per_ssid:
-            self._set_status("Pick at least one method", error=True)
+            self._set_status("Wybierz minimum jedną metodę", error=True)
             return
         if truncate:
             ssid_count = min(ssid_count, int(truncate / per_ssid))
         if not ssid_count:
-            self._set_status("No candidate SSIDs to send", error=True)
+            self._set_status("Brak kandydatów SSID do wysłania", error=True)
             return
         requests = ssid_count * sum((methods.use_directed_probe, methods.use_broadcast_probe,
                                      methods.use_authassoc_probe))
-        status = (f"{ssid_count:,} SSIDs, {requests:,} requests, "
+        status = (f"{ssid_count:,} SSID, {requests:,} żądań, "
                   f"ETA {_eta_text(ssid_count * per_ssid)}")
         if truncate:
-            status += f" (truncated to {truncate // 60} min)"
+            status += f" (skrócone do {truncate // 60} min)"
         if not self.wordlist_lines and len(written) > len(sendable):
-            status += f" ({len(written) - len(sendable):,} dropped)"
+            status += f" (odrzucono {len(written) - len(sendable):,})"
         self._set_status(status)
 
     def _accept(self) -> None:
         methods = self._picked_methods()
         per_ssid = seconds_per_ssid(methods)
         if not per_ssid:
-            self._set_status("Pick at least one method", error=True)
+            self._set_status("Wybierz minimum jedną metodę", error=True)
             return
         limit = int(self.truncate_seconds / per_ssid) if self.truncate_seconds else None
         if self.wordlist_lines:
@@ -284,6 +284,6 @@ class DecloakInputModal(ModalScreen[Optional[DecloakInput]]):
             methods.candidate_ssids = sendable_ssids(
                 self.query_one("#candidates", TextArea).text.splitlines())[:limit]
         if not methods.candidate_ssids:
-            self._set_status("No candidate SSIDs to send", error=True)
+            self._set_status("Brak kandydatów SSID do wysłania", error=True)
             return
         self.dismiss(methods)

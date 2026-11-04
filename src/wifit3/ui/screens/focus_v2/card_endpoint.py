@@ -14,7 +14,7 @@ from .tx_picker import TxDevicePicker
 
 
 class CardEndpoint(Vertical):
-    def __init__(self, *, chipset: str = "no card", bssid: str | None = None,
+    def __init__(self, *, chipset: str = "brak karty", bssid: str | None = None,
                  dynamic: str = "", **kwargs) -> None:
         super().__init__(**kwargs)
         self._chipset = chipset

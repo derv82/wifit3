@@ -58,8 +58,8 @@ def device_scan_summary(members) -> Optional[str]:
         if hi:
             bands.append("[bold green]5G[/]")
         tags.append(f"[bold]{m.chipset}[/] ({'+'.join(bands)})")
-    noun = "device" if len(members) == 1 else "devices"
-    return f"Scanning with [bold cyan]{len(members)}[/] {noun}: {', '.join(tags)}"
+    noun = "urządzeniu" if len(members) == 1 else "urządzeniach"
+    return f"Skanowanie na [bold cyan]{len(members)}[/] {noun}: {', '.join(tags)}"
 
 
 class _ChannelReadout(HeaderClock):
@@ -150,20 +150,20 @@ class ScannerView(Screen):
     """
 
     BINDINGS = [
-        Binding("q", "app.quit", "Quit", show=True),
-        Binding("c", "change_channel", "Channel Filter", show=True),
-        Binding("e", "focus_encryption", "Encryption", show=True),
-        Binding("s", "cycle_sort", "Sort Col", show=True),
-        Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
-        Binding("f", "focus_filter", "Filter", show=True),
-        Binding("/", "focus_filter", "Filter", show=False),
-        Binding("l", "toggle_log", "Toggle Log", show=True),
+        Binding("q", "app.quit", "Wyjdź", show=True),
+        Binding("c", "change_channel", "Filtr kanałów", show=True),
+        Binding("e", "focus_encryption", "Szyfrowanie", show=True),
+        Binding("s", "cycle_sort", "Sortuj wg", show=True),
+        Binding("o", "toggle_sort_dir", "Rosn./malej.", show=True),
+        Binding("f", "focus_filter", "Filtr", show=True),
+        Binding("/", "focus_filter", "Filtr", show=False),
+        Binding("l", "toggle_log", "Log wł./wył.", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
-        Binding("v", "open_vault", "Vault", show=True),
-        Binding("home", "scroll_home", "Top", show=False, priority=True),
-        Binding("end", "scroll_end", "Bottom", show=False, priority=True),
-        Binding("g", "scroll_home", "Top", show=False, priority=True),
-        Binding("G", "scroll_end", "Bottom", show=False, priority=True),
+        Binding("v", "open_vault", "Skrytka", show=True),
+        Binding("home", "scroll_home", "Góra", show=False, priority=True),
+        Binding("end", "scroll_end", "Dół", show=False, priority=True),
+        Binding("g", "scroll_home", "Góra", show=False, priority=True),
+        Binding("G", "scroll_end", "Dół", show=False, priority=True),
     ]
 
     # How long to flash the 🥓 cell when a beacon arrives.
@@ -207,17 +207,17 @@ class ScannerView(Screen):
         table.focus()
         array = self.app.array
 
-        self._write_log(treelog.header("Scanner initialized"))
+        self._write_log(treelog.header("Skaner uruchomiony"))
         rows: List[str] = []
         summary = self.app.vault.summary()
         if summary:
-            rows.append(f"Existing [bold]{Path(Config.captures_dir).as_posix()}/[/bold]: {summary}")
+            rows.append(f"Zapisane w [bold]{Path(Config.captures_dir).as_posix()}/[/bold]: {summary}")
         if array:
             device_line = device_scan_summary(array.members)
             if device_line:
                 rows.append(device_line)
         else:
-            rows.append("[yellow]No active interface[/yellow]")
+            rows.append("[yellow]Brak aktywnego interfejsu[/yellow]")
         for i, row in enumerate(rows):
             self._write_log(treelog.leaf(row) if i == len(rows) - 1 else treelog.branch(row))
 
@@ -393,18 +393,18 @@ class ScannerView(Screen):
         ap_label = escape(ev.ssid or ev.bssid)
         if isinstance(ev, HandshakeCaptured):
             msg = (
-                f"[bold green]✓ HANDSHAKE[/bold green] ({ev.pair_label}) on "
-                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
+                f"[bold green]✓ HANDSHAKE[/bold green] ({ev.pair_label}) na "
+                f"[bold cyan]{ap_label}[/bold cyan] od [bold]{escape(ev.client_mac)}[/bold]"
             )
         elif isinstance(ev, UncrackableHandshakeSeen):
             msg = (
-                f"[bold yellow]● {escape(ev.akm_label)} 4-way[/bold yellow] on "
-                f"[bold cyan]{ap_label}[/bold cyan] [dim](not crackable, -m 22000)[/dim]"
+                f"[bold yellow]● {escape(ev.akm_label)} 4-way[/bold yellow] na "
+                f"[bold cyan]{ap_label}[/bold cyan] [dim](nie do złamania, -m 22000)[/dim]"
             )
         elif isinstance(ev, PmkidCaptured):
             msg = (
-                f"[bold green]✓ PMKID[/bold green] on "
-                f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
+                f"[bold green]✓ PMKID[/bold green] na "
+                f"[bold cyan]{ap_label}[/bold cyan] od [bold]{escape(ev.client_mac)}[/bold]"
             )
         elif isinstance(ev, PbcWindowOpened):
             ap = self.app.array.access_points.get(ev.bssid) if self.app.array else None
@@ -415,21 +415,21 @@ class ScannerView(Screen):
             # A ● header (not a ✓ win): a hidden SSID became visible, not a credential.
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._write_log(Text.from_markup(treelog.header(
-                f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
+                f"[bold]Odsłonięto[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
                 f"[green]{escape(ev.ssid or '')}[/green] "
-                f"[dim]via {method_label}[/dim]"), emoji=False))
+                f"[dim]przez {method_label}[/dim]"), emoji=False))
             return
         elif isinstance(ev, WepKeyRecovered):
-            msg = (f"[bold green]✓ WEP KEY[/bold green] on "
+            msg = (f"[bold green]✓ KLUCZ WEP[/bold green] na "
                    f"[bold cyan]{ap_label}[/bold cyan] = {escape(wep_key_hex_and_ascii(ev.key_hex))}")
         elif isinstance(ev, WpsPinRecovered):
-            msg = (f"[bold green]✓ WPS PIN[/bold green] on "
+            msg = (f"[bold green]✓ WPS PIN[/bold green] na "
                    f"[bold cyan]{ap_label}[/bold cyan] = {escape(ev.pin or EMPTY_PIN_LABEL)}")
         elif isinstance(ev, WpsPskRecovered):
-            msg = (f'[bold green]✓ WPS PSK[/bold green] on '
+            msg = (f'[bold green]✓ WPS PSK[/bold green] na '
                    f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.psk)}"')
         elif isinstance(ev, WpsPbcPskRecovered):
-            msg = (f'[bold green]✓ WPS PSK[/bold green] [dim](via PushButton)[/dim] on '
+            msg = (f'[bold green]✓ WPS PSK[/bold green] [dim](przez PushButton)[/dim] na '
                    f'[bold cyan]{ap_label}[/bold cyan] = "{escape(ev.psk)}"')
         else:
             return  # eapol events suppressed in scanner
@@ -438,10 +438,10 @@ class ScannerView(Screen):
         if isinstance(ev, (HandshakeCaptured, PmkidCaptured)):
             save_result = ev.save_result
             if save_result is None:
-                reason = "not saved: SSID unknown" if not ev.ssid else "not saved"
+                reason = "nie zapisano: nieznany SSID" if not ev.ssid else "nie zapisano"
                 self._write_log(Text.from_markup(treelog.leaf(f"[dim]({reason})[/dim]"), emoji=False))
             else:
-                verb = "saved" if save_result.was_new else "already saved as"
+                verb = "zapisano" if save_result.was_new else "już zapisano jako"
                 self._write_log(Text.from_markup(treelog.leaf(
                     f"[dim]({verb} {escape(save_result.path.name)})[/dim]"
                     f"{saved_psk_markup(save_result.matches_saved_psk)}"), emoji=False))
@@ -498,16 +498,16 @@ class ScannerView(Screen):
         startup + the 'w' toggle."""
         if self.app.pbc_enabled:
             self._write_log(treelog.header(
-                "[bold]WPS PushButton Extraction[/bold] is "
-                "[bold green]enabled[/bold green] [dim](press [bold]w[/bold] to toggle)[/dim]",
+                "[bold]Ekstrakcja WPS PushButton[/bold] jest "
+                "[bold green]włączona[/bold green] [dim]([bold]w[/bold] przełącza)[/dim]",
                 color="green"))
             self._write_log(treelog.leaf(
-                "[dim](automatically retrieves PSK when [bold italic]any[/bold italic] "
-                "WPS button is pressed)[/dim]"))
+                "[dim](automatycznie pobiera PSK po naciśnięciu [bold italic]dowolnego[/bold italic] "
+                "przycisku WPS)[/dim]"))
         else:
             self._write_log(treelog.header(
-                "[bold]WPS PushButton Extraction[/bold] is "
-                "[orange1]disabled[/orange1] [dim](detect only, press [bold]w[/bold] to toggle)[/dim]",
+                "[bold]Ekstrakcja WPS PushButton[/bold] jest "
+                "[orange1]wyłączona[/orange1] [dim](tylko wykrywanie, [bold]w[/bold] przełącza)[/dim]",
                 color="orange1"))
 
     def _log_auto_crack_status_when_changed(self) -> None:
@@ -517,12 +517,12 @@ class ScannerView(Screen):
         self._logged_auto_crack = enabled
         if enabled:
             self._write_log(treelog.header(
-                "[bold]Auto-crack[/bold] is [bold green]enabled[/bold green] "
-                f"[dim]({Config.auto_crack}, change in Prefs: [bold]ctrl+p[/bold])[/dim]", color="green"))
+                "[bold]Auto-crack[/bold] jest [bold green]włączony[/bold green] "
+                f"[dim]({Config.auto_crack}, zmiana w Preferencjach: [bold]ctrl+p[/bold])[/dim]", color="green"))
         else:
             self._write_log(treelog.header(
-                "[bold]Auto-crack[/bold] is [orange1]disabled[/orange1] "
-                "[dim](change in Prefs: [bold]ctrl+p[/bold])[/dim]", color="orange1"))
+                "[bold]Auto-crack[/bold] jest [orange1]wyłączony[/orange1] "
+                "[dim](zmiana w Preferencjach: [bold]ctrl+p[/bold])[/dim]", color="orange1"))
 
     def on_wifite_app_job_cracked(self, message: "WifiteApp.JobCracked") -> None:
         job = message.job
@@ -532,7 +532,7 @@ class ScannerView(Screen):
         else:
             label = f"[bold yellow]✓ WPA PSK ({status.value})[/bold yellow]"
         self._write_log(Text.from_markup(
-            f' {label} [dim](via {escape(job.display_name)})[/dim] '
+            f' {label} [dim](przez {escape(job.display_name)})[/dim] '
             f'= "{escape(job.key or "")}"', emoji=False))
 
     def _on_pbc_window(self, ap: AccessPoint) -> None:
@@ -543,11 +543,11 @@ class ScannerView(Screen):
             return
         label = escape(ap.ssid or ap.bssid)
         self._write_log(treelog.header(
-            f"[bold cyan]WPS PBC[/bold cyan] [bold green]Window Open[/bold green] on "
+            f"[bold cyan]WPS PBC[/bold cyan] [bold green]okno otwarte[/bold green] na "
             f"[bold]{label}[/bold] [dim]CH{ap.channel}[/dim]"))
         reasons = self.app.pbc_ignore_reasons(ap)
         if reasons:
-            self._write_log(treelog.leaf(f"[dim]ignored: {', '.join(reasons)}[/dim]"))
+            self._write_log(treelog.leaf(f"[dim]pominięto: {', '.join(reasons)}[/dim]"))
             return
         self.app.target_ap = ap
         self.app.push_screen(self.app.focus_view)
@@ -588,12 +588,12 @@ class ScannerView(Screen):
     def action_change_channel(self) -> None:
         array = self.app.array
         if not array:
-            self._write_log("[bold red][!] No active interface.[/bold red]")
+            self._write_log("[bold red][!] Brak aktywnego interfejsu.[/bold red]")
             return
 
         supported = array.supported_channels
         if not supported:
-            self._write_log("[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]")
+            self._write_log("[bold red][!] Sterownik nie zadeklarował SUPPORTED_CHANNELS.[/bold red]")
             return
 
         dialog = ChannelFilterDialog(
@@ -606,7 +606,7 @@ class ScannerView(Screen):
         self, result: Optional[List[int]]
     ) -> None:
         if result is None:
-            self._write_log("[dim]Channel filter unchanged.[/dim]")
+            self._write_log("[dim]Filtr kanałów bez zmian.[/dim]")
         else:
             await self._apply_channel_filter(result)
         self.query_one(FilterBar).set_channels(self._channel_filter)
@@ -627,12 +627,12 @@ class ScannerView(Screen):
             f"[bold cyan]{name}[/bold cyan] [dim]({rngs})[/dim]"
             for name, rngs in band_ranges(channels)
         ]
-        summary = " and ".join(pieces) if pieces else "[dim]no channels[/dim]"
-        self._write_log(f" [dim]●[/dim] [bold]Channel hopping[/bold] across {summary}")
+        summary = " i ".join(pieces) if pieces else "[dim]brak kanałów[/dim]"
+        self._write_log(f" [dim]●[/dim] [bold]Przeskakuje kanały[/bold] {summary}")
         if dropped:
-            noun = "AP" if dropped == 1 else "APs"
-            self._write_log(treelog.leaf(f"[dim]Cleared [bold]{dropped}[/bold] "
-                                         f"{noun} outside the filter[/dim]"))
+            noun = "AP"
+            self._write_log(treelog.leaf(f"[dim]Usunięto [bold]{dropped}[/bold] "
+                                         f"{noun} spoza filtra[/dim]"))
 
     # ----- Filter bar --------------------------------------------------------
 

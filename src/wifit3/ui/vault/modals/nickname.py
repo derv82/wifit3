@@ -11,7 +11,7 @@ from textual.widgets import Button, Input, Label
 class NicknameModal(ModalScreen[Optional[str]]):
     """Edit an AP's nickname; dismisses with the new one ("" clears it), or None when cancelled."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS = [Binding("escape", "cancel", "Anuluj")]
 
     DEFAULT_CSS = """
     NicknameModal { align: center middle; }
@@ -32,12 +32,12 @@ class NicknameModal(ModalScreen[Optional[str]]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label("Set Router Nickname", id="title")
-            yield Label(self._ssid or "Hidden network", markup=False, id="network")
-            yield Input(self._nickname, placeholder="Nickname (leave empty to clear)", id="nickname")
+            yield Label("Ustaw pseudonim routera", id="title")
+            yield Label(self._ssid or "Ukryta sieć", markup=False, id="network")
+            yield Input(self._nickname, placeholder="Pseudonim (puste = wyczyść)", id="nickname")
             with Horizontal(id="buttons"):
-                yield Button("Cancel", id="cancel")
-                yield Button("Save", variant="primary", id="save")
+                yield Button("Anuluj", id="cancel")
+                yield Button("Zapisz", variant="primary", id="save")
 
     def on_mount(self) -> None:
         field = self.query_one("#nickname", Input)

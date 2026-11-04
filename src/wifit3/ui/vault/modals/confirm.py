@@ -12,7 +12,7 @@ from textual.widgets import Button, Label
 class ConfirmModal(ModalScreen[bool]):
     """A yes/no question; No has focus, so a stray Enter does nothing."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS = [Binding("escape", "cancel", "Anuluj")]
     DEFAULT_CSS = """
     ConfirmModal { align: center middle; }
     ConfirmModal #dialog { width: 54; height: auto; border: thick $primary; background: $surface; padding: 1 2; }
@@ -29,8 +29,8 @@ class ConfirmModal(ModalScreen[bool]):
         with Vertical(id="dialog"):
             yield Label(Text.from_markup(self._prompt, emoji=False), id="prompt")
             with Horizontal():
-                yield Button("No", "default", id="no")
-                yield Button("Yes", "error", id="yes")
+                yield Button("Nie", "default", id="no")
+                yield Button("Tak", "error", id="yes")
 
     def on_mount(self) -> None:
         self.query_one("#no", Button).focus()

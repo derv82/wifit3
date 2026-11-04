@@ -33,42 +33,42 @@ class Toasts:
     def ap_event(self, event: ApEvent, guessid: str, pbc_ignore_reasons: List[str]) -> None:
         if event.ssid and event.ssid != "<hidden>":
             name = f"[bold]{escape(event.ssid)}[/bold]"
-            location = (f"on channel [bold]{event.channel}[/bold] "
+            location = (f"na kanale [bold]{event.channel}[/bold] "
                         f"[dim bold](BSSID: {event.bssid})[/dim bold]")
         else:
-            hidden_name = f"{escape(guessid)}?" if guessid else "<Hidden>"
+            hidden_name = f"{escape(guessid)}?" if guessid else "<Ukryta>"
             name = f"[bold]{event.bssid}[/bold] ([italic]{hidden_name}[/italic])"
-            location = f"on channel [bold]{event.channel}[/bold]"
+            location = f"na kanale [bold]{event.channel}[/bold]"
 
         if isinstance(event, HandshakeCaptured):
             if event.authorized:
                 rank = ShownCaptureRank.AUTHORIZED
             else:
                 rank = ShownCaptureRank.CHALLENGE
-            self._show_capture(event.bssid, rank, f"Handshake captured ({event.pair_label})",
+            self._show_capture(event.bssid, rank, f"Przechwycono handshake ({event.pair_label})",
                                f"{name} {location}")
         elif isinstance(event, PmkidCaptured):
-            self._show_capture(event.bssid, ShownCaptureRank.AUTHORIZED, "PMKID captured (M1)",
+            self._show_capture(event.bssid, ShownCaptureRank.AUTHORIZED, "Przechwycono PMKID (M1)",
                                f"{name} {location}")
         elif isinstance(event, WepKeyRecovered):
             self._app.notify(f"{name}: {escape(wep_key_hex_and_ascii(event.key_hex))}",
-                             title="WEP key recovered", timeout=TOAST_TIMEOUT_S)
+                             title="Odzyskano klucz WEP", timeout=TOAST_TIMEOUT_S)
         elif isinstance(event, WpsPinRecovered):
             self._app.notify(f"{name}: {escape(event.pin or EMPTY_PIN_LABEL)}",
-                             title="WPS PIN recovered", timeout=TOAST_TIMEOUT_S)
+                             title="Odzyskano WPS PIN", timeout=TOAST_TIMEOUT_S)
         elif isinstance(event, WpsPskRecovered):
             self._app.notify(f'{name}: "{escape(event.psk)}"',
-                             title="WPS PSK recovered", timeout=TOAST_TIMEOUT_S)
+                             title="Odzyskano WPS PSK", timeout=TOAST_TIMEOUT_S)
         elif isinstance(event, WpsPbcPskRecovered):
             self._app.notify(f'{name}: "{escape(event.psk)}"',
-                             title="WPS PSK recovered (PushButton)", timeout=TOAST_TIMEOUT_S)
+                             title="Odzyskano WPS PSK (PushButton)", timeout=TOAST_TIMEOUT_S)
         elif isinstance(event, PbcWindowOpened):
             if pbc_ignore_reasons:
-                outcome = f"[dim]ignored: {', '.join(pbc_ignore_reasons)}[/dim]"
+                outcome = f"[dim]pominięto: {', '.join(pbc_ignore_reasons)}[/dim]"
             else:
-                outcome = "Targeting now"
+                outcome = "Namierzam"
             self._app.notify(f"{name} {location}\n{outcome}",
-                             title="WPS PBC window open", timeout=TOAST_TIMEOUT_S)
+                             title="Okno WPS PBC otwarte", timeout=TOAST_TIMEOUT_S)
 
     def _show_capture(self, bssid: str, rank: ShownCaptureRank, title: str, message: str) -> None:
         shown_rank = self._shown_capture_ranks.get(bssid)

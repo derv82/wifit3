@@ -43,11 +43,11 @@ _STATUS_COLOR = {
     PasswordStatus.STALE: PASSWORD_MISMATCH_COLOR,
     PasswordStatus.NOT_CRACKED: "$text-error",
 }
-_AUTHORIZED_TOOLTIP = "[$text-success]authorized:[/] PMKID or M3/M4 (the AP accepted this password)"
-_CHALLENGE_TOOLTIP = "[$text-warning]challenge:[/] No M3/M4 (could be a wrong password)"
+_AUTHORIZED_TOOLTIP = "[$text-success]autoryzacja:[/] PMKID lub M3/M4 (AP zaakceptował to hasło)"
+_CHALLENGE_TOOLTIP = "[$text-warning]challenge:[/] Brak M3/M4 (możliwe błędne hasło)"
 _EXPAND_LABEL, _COLLAPSE_LABEL = "▶", "▼"
-_SHOW_AP_TOOLTIP = "Focus this AP"
-_EXPAND_TOOLTIP, _COLLAPSE_TOOLTIP = "Show captures and verifications", "Hide captures and verifications"
+_SHOW_AP_TOOLTIP = "Pokaż ten AP"
+_EXPAND_TOOLTIP, _COLLAPSE_TOOLTIP = "Pokaż przechwyty i weryfikacje", "Ukryj przechwyty i weryfikacje"
 
 
 @dataclass(frozen=True)
@@ -76,12 +76,12 @@ def key_description(key: Key) -> str:
 
 def _status_reason(key: Key, status: PasswordStatus) -> str:
     if status is PasswordStatus.CURRENT:
-        return "verified"
+        return "sprawdzone"
     if status is PasswordStatus.STALE:
-        return "stale"
+        return "nieaktualne"
     if key.manual_capture_names:
-        return "added, unverified"
-    return "not verified yet"
+        return "dodane, niesprawdzone"
+    return "brak weryfikacji"
 
 
 def key_text(key: Key) -> str:
@@ -96,12 +96,12 @@ def key_text(key: Key) -> str:
 def date_text(epoch: Optional[int]) -> str:
     """``today  19:37``, ``Oct 22 19:37``, ``Oct 22 2025``; ``no date`` for None."""
     if epoch is None:
-        return "no date"
+        return "bez daty"
     moment, now = time.localtime(epoch), time.localtime()
     if moment.tm_year != now.tm_year:
         return time.strftime("%b %d %Y", moment)
     if moment.tm_yday == now.tm_yday:
-        return time.strftime("today  %H:%M", moment)
+        return time.strftime("dziś  %H:%M", moment)
     return time.strftime("%b %d %H:%M", moment)
 
 
@@ -120,20 +120,20 @@ def hashline_groups(hashlines: tuple[DatedHashline, ...]) -> list[_HashlineGroup
 
 
 def _captures_count_markup(count: int, total: int) -> str:
-    return f"[dim]({count}/{total} captures)[/]"
+    return f"[dim]({count}/{total} przechwytów)[/]"
 
 
 def _no_crackable_text(files: tuple[PersistedCapture, ...]) -> str:
     count = len(files)
-    return f"{count} capture{'' if count == 1 else 's'}, none crackable ({date_text(files[0].timestamp)})"
+    return f"Przechwytów: {count}, nic do złamania ({date_text(files[0].timestamp)})"
 
 
 def _selected_count_text(count: int) -> str:
-    return f"{count} capture{'' if count == 1 else 's'} selected"
+    return f"Wybrano przechwytów: {count}"
 
 
 def _wordlists_text(count: int) -> str:
-    return f"{count} wordlist{'' if count == 1 else 's'}"
+    return f"{count} słownik{'' if count == 1 else 'i' if count < 5 else 'ów'}"
 
 
 def _exhausted_count_text(group: _HashlineGroup,
@@ -144,12 +144,12 @@ def _exhausted_count_text(group: _HashlineGroup,
     on_some = on_any - frozenset.intersection(*per_line)
     if not on_any:
         return ""
-    return f"{_wordlists_text(len(on_any))} exhausted" + (f" ({len(on_some)} on some lines)" if on_some else "")
+    return f"wyczerpano {_wordlists_text(len(on_any))}" + (f" ({len(on_some)} na części linii)" if on_some else "")
 
 
 def _exhausted_names(group: _HashlineGroup, exhausted: Mapping[str, frozenset[ExhaustedWordlist]]) -> list[str]:
     wordlists = frozenset.union(frozenset(), *(exhausted.get(h.id, frozenset()) for h in group))
-    return sorted(" / ".join(w.names) or "unnamed wordlist" for w in wordlists)
+    return sorted(" / ".join(w.names) or "słownik bez nazwy" for w in wordlists)
 
 
 def _verdict_tooltip(hashline: DatedHashline) -> str:
@@ -160,7 +160,7 @@ def _hashline_tooltip(group: _HashlineGroup, exhausted: Mapping[str, frozenset[E
     tooltip = _verdict_tooltip(group[0])
     names = _exhausted_names(group, exhausted)
     if names:
-        tooltip += f"\n\n[$text-warning]Exhausted {_wordlists_text(len(names))}:[/]\n" + "\n".join(f"- {escape(n)}" for n in names)
+        tooltip += f"\n\n[$text-warning]Wyczerpano {_wordlists_text(len(names))}:[/]\n" + "\n".join(f"- {escape(n)}" for n in names)
     return tooltip
 
 
@@ -177,7 +177,7 @@ def _row_content(epoch: Optional[int], pair: str, client: str, verdict: tuple[st
 def _hashline_prompt(group: _HashlineGroup, show_client: bool, show_ssid: bool,
                      exhausted_count: str, exhausted_width: int) -> Content:
     first = group[0]
-    verdict = ("authorized", "$text-success") if first.line.authorized else ("challenge", "$text-warning")
+    verdict = ("autoryzacja", "$text-success") if first.line.authorized else ("challenge", "$text-warning")
     trailing = [((f"×{len(group)}" if len(group) > 1 else "").ljust(3), "$foreground-muted")]
     if exhausted_width:
         trailing.append((exhausted_count.ljust(exhausted_width), "italic $text-accent"))
@@ -188,8 +188,8 @@ def _hashline_prompt(group: _HashlineGroup, show_client: bool, show_ssid: bool,
 
 
 def _live_verification_content(verification: LiveVerification, show_client: bool) -> Content:
-    verdict = (("verified live", "$text-success") if verification.correct
-               else ("rejected live", "$text-error"))
+    verdict = (("sprawdzone live", "$text-success") if verification.correct
+               else ("odrzucone live", "$text-error"))
     return _row_content(verification.at, "", "", verdict, show_client, [])
 
 
@@ -213,7 +213,7 @@ def _status_markup(state: ApState) -> str:
 def _ssid_texts(state: ApState) -> list[tuple[str, str, Optional[str]]]:
     ssids = state.ssids
     if len(ssids) <= 1:
-        return [("SSID", ssids[0].ssid if ssids else "‹hidden›", None)]
+        return [("SSID", ssids[0].ssid if ssids else "‹ukryta›", None)]
     texts: list[tuple[str, str, Optional[str]]] = []
     for i, history in enumerate(ssids):
         first, last = date_text(history.first_seen), date_text(history.last_seen)
@@ -267,9 +267,9 @@ class _KeyRow(VerticalGroup):
         self.toggle_button = Button("", compact=True, classes="toggle")
         self._no_toggle_label = Label("", classes="no-toggle")
         self._summary_label = Label("", classes="key-text")
-        self.copy_button = Button("Copy", classes="key-btn")
-        self.delete_button = Button("Delete", variant="error", classes="key-btn",
-                                    tooltip="Delete this key and every file holding it")
+        self.copy_button = Button("Kopiuj", classes="key-btn")
+        self.delete_button = Button("Usuń", variant="error", classes="key-btn",
+                                    tooltip="Usuń ten klucz i każdy plik, który go zawiera")
         self.history_rows = VerticalScroll(classes="history-rows")
 
     @property
@@ -335,7 +335,7 @@ class _KeyRow(VerticalGroup):
         details = [_status_reason(self.key, self.status)]
         total = len(self._state.hashlines)
         if self.key.type == CaptureType.WPA_PSK and total:
-            details.insert(0, f"{len(self.key.hashline_ids)}/{total} captures")
+            details.insert(0, f"{len(self.key.hashline_ids)}/{total} przechwytów")
         return ", ".join(details)
 
     def _show_expansion(self, expanded: bool) -> None:
@@ -364,10 +364,10 @@ class _KeyRow(VerticalGroup):
     def _copy(self) -> None:
         if self.key.type == CaptureType.WPS_PIN and not self.key.value:
             self.app.copy_to_clipboard("")
-            self.notify("PIN is empty")
+            self.notify("PIN jest pusty")
             return
         self.app.copy_to_clipboard(key_text(self.key))
-        self.notify("Copied to clipboard")
+        self.notify("Skopiowano do schowka")
 
 
 class AddKeyPressed(Message):
@@ -398,7 +398,7 @@ class _SsidLine(Horizontal):
         self._section_label = Label("", classes="section")
         self._ssid_label = Label("", classes="ssid", markup=False)
         self._dates_label = Label("", classes="dates")
-        self.show_ap_button = Button("Show AP", compact=True, classes="show-ap", tooltip=_SHOW_AP_TOOLTIP)
+        self.show_ap_button = Button("Pokaż AP", compact=True, classes="show-ap", tooltip=_SHOW_AP_TOOLTIP)
 
     def compose(self) -> ComposeResult:
         yield self._section_label
@@ -495,10 +495,10 @@ class _ApStatePanel(VerticalGroup):
         self._ssid_lines_container = Vertical(classes="ssids")
         self._ssid_lines: list[_SsidLine] = []
         self._ssid_rule = Rule()
-        self.add_key_button = Button("Add key", compact=True, classes="add-key",
-                                     tooltip="Add a PSK, WPS PIN or WEP key")
+        self.add_key_button = Button("Dodaj", compact=True, classes="add-key",
+                                     tooltip="Dodaj PSK, PIN WPS lub klucz WEP")
         self.key_rows: list[_KeyRow] = []
-        self._no_keys_label = Label("none yet", classes="none-yet")
+        self._no_keys_label = Label("jeszcze brak", classes="none-yet")
         self._no_crackable_label = Label("", classes="none-yet")
         self._uncracked_section = VerticalGroup(classes="uncracked-section")
         self._uncracked_count_label = Label("")
@@ -557,7 +557,7 @@ class _ApStatePanel(VerticalGroup):
             if active is None:
                 button.tooltip = _SHOW_AP_TOOLTIP
             else:
-                button.tooltip = f"Disabled; {active.key} campaign is active"
+                button.tooltip = f"Wyłączony; trwa kampania {active.key}"
 
     async def _show_key_rows(self, state: ApState, show_client: bool, show_ssid: bool,
                              expanded_key_ids: frozenset[tuple[CaptureType, str]]) -> None:
@@ -601,14 +601,14 @@ class _ApStatePanel(VerticalGroup):
         with self._ssid_lines_container:
             yield self._ssid_rule
         with Horizontal(classes="section-line"):
-            yield Label("KEYS", classes="section")
+            yield Label("KLUCZE", classes="section")
             yield self.add_key_button
         yield self._no_keys_label
         yield self._no_crackable_label
         with self._uncracked_section:
             yield Rule(classes="uncracked-rule")
             with Horizontal(classes="section-line"):
-                yield Label("UNCRACKED", classes="section")
+                yield Label("NIEZŁAMANE", classes="section")
                 yield self._uncracked_count_label
             yield self._uncracked_list
             yield self._selected_count_label
@@ -673,7 +673,7 @@ class _ApStatePanel(VerticalGroup):
                 return
             job_id = self.app.vault.manager.submit_job(
                 tool.name, capture, self.app.vault.add_probed_ssids(config), hashlines=[h.raw for h in selected])
-            self.notify(f"Queued job: {job_id}")
+            self.notify(f"Zadanie w kolejce: {job_id}")
 
         self.app.push_screen(UI_TOOLS[tool.name](bssid=state.bssid, probed_ssids=self.app.vault.probed_ssids(),
                                                  hashlines=selected), _on_config)
@@ -749,12 +749,12 @@ class VaultItemView(Vertical):
         return expanded, frozenset(self.unticked_hashline_ids)
 
     def _set_title(self) -> None:
-        self.border_title = Content.from_text(f" {self._ssid or '‹hidden›'} ({self._bssid}) ")
+        self.border_title = Content.from_text(f" {self._ssid or '‹ukryta›'} ({self._bssid}) ")
 
     def compose(self) -> ComposeResult:
         if self._state is None:
-            self.border_title = "Vault Detail"
-            yield Label("Select an AP to view its captures", id="vault-item-empty")
+            self.border_title = "Szczegóły skrytki"
+            yield Label("Wybierz AP, aby zobaczyć jego przechwyty", id="vault-item-empty")
             return
         yield _ApStatePanel()
 

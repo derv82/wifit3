@@ -75,7 +75,7 @@ class RouterEndpoint(Vertical):
             yield identity
             probe = Button(self._probe_icon(), id="ap-probe")
             probe.display = self._wps and not self._has_m1
-            probe.tooltip = "Cancel WPS/WSC probe" if self._probing else "Probe AP for WPS/WSC attributes"
+            probe.tooltip = "Przerwij sondę WPS/WSC" if self._probing else "Sonda AP: atrybuty WPS/WSC"
             probe.disabled = False if self._probing else self._probe_disabled
             yield probe
 
@@ -108,7 +108,7 @@ class RouterEndpoint(Vertical):
         probe_btn.display = show_probe
         if show_probe:
             probe_btn.label = self._probe_icon()
-            probe_btn.tooltip = "Cancel WPS/WSC probe" if probing else "Probe AP for WPS/WSC attributes"
+            probe_btn.tooltip = "Przerwij sondę WPS/WSC" if probing else "Sonda AP: atrybuty WPS/WSC"
             probe_btn.disabled = False if probing else probe_disabled
 
         self._push("#ap-identity", self._identity_label())
@@ -151,11 +151,11 @@ class RouterEndpoint(Vertical):
 
     def _identity_label(self) -> str:
         if not self._wps:
-            return f"channel {self._channel}"
+            return f"kanał {self._channel}"
         if self._has_m1:
-            text = self._identity or f"channel {self._channel}"
+            text = self._identity or f"kanał {self._channel}"
             return self._truncate(text, 20)
-        text = self._identity or f"ch {self._channel}"
+        text = self._identity or f"kan. {self._channel}"
         return self._truncate(text, 16)
 
     def _probe_icon(self) -> str:

@@ -7,18 +7,18 @@ from textual.containers import Center, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, LoadingIndicator
 
-_UNPLUG = ("Permissions are installed for the [bold]{name}[/].\n"
-           "A replug is required to refresh the card's state.\n\n"
-           "Waiting for you to [bold $text-warning]unplug the card now…[/]")
-_REPLUG = ("[bold $text-success]Card removed ✓[/]\n\n"
-           "Waiting for you to [bold $text-warning]plug it back in…[/]")
+_UNPLUG = ("Uprawnienia dla [bold]{name}[/] są zainstalowane.\n"
+           "Trzeba ponownie wyjąć i włożyć kartę, by odświeżyć jej stan.\n\n"
+           "Oczekiwanie, aż [bold $text-warning]wyjmiesz kartę…[/]")
+_REPLUG = ("[bold $text-success]Karta wyjęta ✓[/]\n\n"
+           "Oczekiwanie, aż [bold $text-warning]włożysz ją z powrotem…[/]")
 
 
 class ReplugModal(ModalScreen[str]):
     """Watches for an unplug→replug via the injected presence-waiter (no device-manager handle, so
     it never drives a bus rescan itself). Dismisses "replugged" / "skip" / "timeout"."""
 
-    BINDINGS = [Binding("escape", "skip", "Skip", show=True)]
+    BINDINGS = [Binding("escape", "skip", "Pomiń", show=True)]
 
     DEFAULT_CSS = """
     ReplugModal { align: center middle; }
@@ -41,12 +41,12 @@ class ReplugModal(ModalScreen[str]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label("[bold $text-warning]Replug Required[/]", id="title")
+            yield Label("[bold $text-warning]Ponowne podłączenie[/]", id="title")
             yield Label(_UNPLUG.format(name=self._name), id="status")
             with Center(id="spin"):
                 yield LoadingIndicator()
             with Horizontal(id="button-row"):
-                yield Button("Skip", id="btn-skip")
+                yield Button("Pomiń", id="btn-skip")
 
     def on_mount(self) -> None:
         self.run_worker(self._watch(), exclusive=True)

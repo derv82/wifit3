@@ -26,7 +26,7 @@ class ThemeSetting(VerticalGroup):
     ThemeSetting { border: round $primary }
     """
     def compose(self) -> ComposeResult:
-        self.border_title = "Theme"
+        self.border_title = "Motyw"
         yield Select(self._theme_options(), id="theme",
                      value=self.app.theme, allow_blank=False)
 
@@ -58,17 +58,17 @@ class SortDelaySetting(VerticalGroup):
     """
 
     OPTIONS: list[tuple[str, float]] = [
-        ("Instant", 0.0),
-        ("0.25 seconds", 0.25),
-        ("1 second", 1.0),
-        ("2 seconds", 2.0),
-        ("3 seconds", 3.0),
-        ("5 seconds", 5.0),
-        ("Never", -1.0),
+        ("Od razu", 0.0),
+        ("0.25 s", 0.25),
+        ("1 s", 1.0),
+        ("2 s", 2.0),
+        ("3 s", 3.0),
+        ("5 s", 5.0),
+        ("Nigdy", -1.0),
     ]
 
     def compose(self) -> ComposeResult:
-        self.border_title = "Sort Delay"
+        self.border_title = "Opóźnienie sortowania"
         current = Config.scanner_sort_delay
         values = [val for _, val in self.OPTIONS]
         value = current if current in values else 2.0
@@ -85,9 +85,9 @@ class CapturesDirSetting(VerticalGroup):
     CapturesDirSetting { border: round $primary }
     """
     def compose(self) -> ComposeResult:
-        self.border_title = "Save directory"
+        self.border_title = "Katalog zapisu"
         yield PathInput(Config.captures_dir, directories_only=True, prefer_relative=True,
-                        title="Save directory", id="captures_dir")
+                        title="Katalog zapisu", id="captures_dir")
 
 
 class AutoCrackSetting(VerticalGroup):
@@ -98,10 +98,10 @@ class AutoCrackSetting(VerticalGroup):
     """
 
     def compose(self) -> ComposeResult:
-        self.border_title = "Auto-crack new captures with"
+        self.border_title = "Auto-łamanie nowych przechwytów"
         self._chosen = Config.auto_crack or ""
         tools = sorted(self.app.vault.manager.tools.values(), key=lambda t: t.label)
-        options = [("Off", "")] + [(tool.label, tool.name) for tool in tools]
+        options = [("Wył.", "")] + [(tool.label, tool.name) for tool in tools]
         with Horizontal():
             yield Select(options, id="auto_crack", value=self._chosen, allow_blank=False)
             yield Button("≡", id="auto_crack_configure")
@@ -137,7 +137,7 @@ class AutoCrackSetting(VerticalGroup):
         modal = UI_TOOLS.get(ToolName(self._chosen)) if self._chosen else None
         if modal is None:
             return
-        self.app.push_screen(modal(confirm_label="Save",
+        self.app.push_screen(modal(confirm_label="Zapisz",
                                    probed_ssids=self.app.vault.probed_ssids()), on_dismiss)
 
     @property
@@ -155,15 +155,15 @@ class SaveFooter(Horizontal):
     """
 
     def compose(self) -> ComposeResult:
-        yield Button(Text("Save"), "primary", id="save")
-        yield Button(Text("Cancel"), "default", id="cancel")
+        yield Button(Text("Zapisz"), "primary", id="save")
+        yield Button(Text("Anuluj"), "default", id="cancel")
 
     def cancel_pressed(self, event: Event):
         self.app.pop_screen()
 
 
 class PreferencesModal(ModalScreen):
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS = [Binding("escape", "cancel", "Anuluj")]
 
     DEFAULT_CSS = """
     PreferencesModal { align: center middle; }
@@ -187,11 +187,11 @@ class PreferencesModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="dialog"):
-            yield Label("Preferences", id="title")
+            yield Label("Preferencje", id="title")
             yield ThemeSetting()
             yield SortDelaySetting()
             yield CapturesDirSetting()
-            yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap")
+            yield Checkbox("Zapisuj handshake'i .pcap", value=Config.save_pcap, id="save_pcap")
             yield AutoCrackSetting()
             yield SaveFooter()
 
@@ -213,7 +213,7 @@ class PreferencesModal(ModalScreen):
         try:
             Config.save()
         except Exception as e:
-            self.notify(str(e), title="Config Error")
+            self.notify(str(e), title="Błąd konfiguracji")
         self.dismiss()
 
     @on(Button.Pressed, "#cancel")
