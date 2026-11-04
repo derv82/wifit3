@@ -133,16 +133,18 @@ class CaptureReplay:
             captured = self.ops[position]
             if not is_driver_thread():
                 self._loop.advance_clock(captured.completion_time)
+            elif captured.status == 0 and captured.data:
+                self._loop.driver_threads_holding_reply.add(threading.current_thread())
             return captured
 
     def driver_thread_is_working(self) -> bool:
-        """A thread the driver started (its RX reader) is processing a reply, or waits on an endpoint that
-        has a readable reply now."""
+        """A thread the driver started (its RX reader) is processing a reply, holds one it has not handed to the
+        loop, or waits on an endpoint that has a readable reply now."""
         with self._lock:
             for thread, state in self._driver_thread_state.items():
                 if not thread.is_alive():
                     continue
-                if state == PROCESSING_REPLY:
+                if state == PROCESSING_REPLY or thread in self._loop.driver_threads_holding_reply:
                     return True
                 waiting_position = self._first_queued_position(state)
                 if waiting_position is not None and self._is_readable(waiting_position):

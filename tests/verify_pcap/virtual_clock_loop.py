@@ -75,6 +75,8 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         self.pending_executor_call_count = 0
         self.pending_thread_callback_count = 0
         self._thread_callback_lock = threading.Lock()
+        # A driver thread holds the replies it read until it schedules a callback (RxReaderThread hands over its batch).
+        self.driver_threads_holding_reply: set[threading.Thread] = set()
         # Until CaptureReplay sets it, driver task timers fire after their jiffies exactly.
         self.jiffy_zero_time: float | None = None
 
@@ -113,6 +115,8 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         """Pending until the callback runs: asyncio may have computed the select timeout before it arrived."""
         with self._thread_callback_lock:
             self.pending_thread_callback_count += 1
+        if callback is not wake_loop:
+            self.driver_threads_holding_reply.discard(threading.current_thread())
 
         def count_ran_and_run(*callback_args: Any) -> None:
             with self._thread_callback_lock:
