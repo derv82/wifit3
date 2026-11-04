@@ -196,12 +196,13 @@ class RealtekDriverOnlyRun(VerifyCapture):
     WAIVERS = [Waiver(WaiverReason.WIFIT3_ONLY, "synthetic", driver_only_run=REALTEK_RUN)]
 
 
-def test_realtek_driver_only_run_accepts_its_ops_in_order_once() -> None:
+def test_realtek_driver_only_run_starts_where_the_capture_differs_then_claims_its_ops_in_order_once() -> None:
     waiver = RealtekDriverOnlyRun.WAIVERS[0]
     progress = {waiver: 0}
     test = RealtekDriverOnlyRun()
-    assert not test.is_driver_only_request(realtek_write(REALTEK_OTHER_REGISTER, 0x2), progress)
-    assert test.is_driver_only_request(realtek_read(REALTEK_OTHER_REGISTER, 0x0), progress)
-    assert test.is_driver_only_request(realtek_write(REALTEK_OTHER_REGISTER, 0x2), progress)
-    assert not test.is_driver_only_request(realtek_read(REALTEK_OTHER_REGISTER, 0x0), progress)
+    assert not test.is_driver_only_request(realtek_write(REALTEK_OTHER_REGISTER, 0x2), True, progress)
+    assert not test.is_driver_only_request(realtek_read(REALTEK_OTHER_REGISTER, 0x0), False, progress)
+    assert test.is_driver_only_request(realtek_read(REALTEK_OTHER_REGISTER, 0x0), True, progress)
+    assert test.is_driver_only_request(realtek_write(REALTEK_OTHER_REGISTER, 0x2), False, progress)
+    assert not test.is_driver_only_request(realtek_read(REALTEK_OTHER_REGISTER, 0x0), True, progress)
     assert progress[waiver] == 2

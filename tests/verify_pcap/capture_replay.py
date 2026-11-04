@@ -41,9 +41,9 @@ def is_bulk_or_interrupt_in(op: UsbOp) -> bool:
 
 class CaptureReplay:
     def __init__(self, ops: list[UsbOp], waived_positions: set[int], is_same_request: Callable[[UsbOp, UsbOp], bool],
-                 is_driver_only_request: Callable[[UsbOp], bool], loop: VirtualClockEventLoop) -> None:
+                 is_driver_only_request: Callable[[UsbOp, bool], bool], loop: VirtualClockEventLoop) -> None:
         """``is_same_request(captured, request)`` compares a driver request to a captured op;
-        ``is_driver_only_request(request)`` accepts a request the capture does not have."""
+        ``is_driver_only_request(request, cursor_differs)`` accepts a request the capture does not have."""
         self.ops = ops
         self.reproduced_by: list[str | None] = [None] * len(ops)
         for position in waived_positions:
@@ -83,7 +83,14 @@ class CaptureReplay:
                 if self.driver_closing:
                     return None
                 raise self._diverge(None, request, caller, "request after the last captured op")
-            if not self._is_same_request(self.ops[position], request):
+            cursor_differs = not self._is_same_request(self.ops[position], request)
+            if self._is_driver_only_request(request, cursor_differs):
+                # Replies with the latest earlier capture op of the same request, or zeros.
+                for earlier in range(position - 1, -1, -1):
+                    if self.ops[earlier].same_request(request):
+                        return self.ops[earlier]
+                return None
+            if cursor_differs:
                 # Pass over unreproduced ops only if a driver task was due before the first of them.
                 due_time = self._loop.earliest_due_driver_timer()
                 candidate = None
@@ -92,12 +99,6 @@ class CaptureReplay:
                     while candidate is not None and not self._is_same_request(self.ops[candidate], request):
                         candidate = self._next_unreproduced(candidate + 1)
                 if candidate is None:
-                    if self._is_driver_only_request(request):
-                        # Replies with the latest earlier capture op of the same request, or zeros.
-                        for earlier in range(position - 1, -1, -1):
-                            if self.ops[earlier].same_request(request):
-                                return self.ops[earlier]
-                        return None
                     raise self._diverge(position, request, caller, "request differs from the capture")
                 # The clock stays: the ops passed over are not reproduced yet.
                 position = candidate

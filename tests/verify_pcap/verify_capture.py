@@ -182,8 +182,8 @@ class VerifyCapture:
         def is_same_request(captured: UsbOp, request: UsbOp) -> bool:
             return self.is_same_request_except_waived_values(captured, request, waivers)
 
-        def is_driver_only_request(request: UsbOp) -> bool:
-            return self.is_driver_only_request(request, driver_only_progress)
+        def is_driver_only_request(request: UsbOp, cursor_differs: bool) -> bool:
+            return self.is_driver_only_request(request, cursor_differs, driver_only_progress)
 
         replay = CaptureReplay(capture.ops, waived_positions, is_same_request, is_driver_only_request, loop)
         device = FakeUsbDevice(replay, capture.device_descriptor, capture.configuration_descriptor,
@@ -277,12 +277,16 @@ class VerifyCapture:
                     return False
         return True
 
-    def is_driver_only_request(self, request: UsbOp, driver_only_progress: dict[Waiver, int]) -> bool:
-        """``request``'s register ops are the next ones of a driver_only_run; advances its progress."""
+    def is_driver_only_request(self, request: UsbOp, cursor_differs: bool,
+                               driver_only_progress: dict[Waiver, int]) -> bool:
+        """``request``'s register ops are the next ones of a driver_only_run; advances its progress. A run starts
+        only where the capture differs; once started, it claims the driver's next requests first."""
         register_ops = self.DECODER.register_ops(request)
         if not register_ops:
             return False
         for waiver, progress in driver_only_progress.items():
+            if progress == 0 and not cursor_differs:
+                continue
             if register_ops_match(register_ops, waiver.driver_only_run[progress:progress + len(register_ops)]):
                 driver_only_progress[waiver] = progress + len(register_ops)
                 return True
