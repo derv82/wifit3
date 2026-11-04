@@ -50,6 +50,8 @@ _CATEGORY_PROTECTED_DUAL_OF_ACTION = 9   # WLAN_CATEGORY_PROTECTED_DUAL_OF_ACTIO
 _PUB_ACTION_FTM_REQUEST = 32       # WLAN_PUB_ACTION_FTM_REQUEST
 _PUB_ACTION_FTM_RESPONSE = 33      # WLAN_PUB_ACTION_FTM_RESPONSE
 _FTM_ACTION_CODE_END = 26          # offsetofend(struct ieee80211_mgmt, u.action.u.ftm.action_code)
+_RFC1042_HEADER = b"\xaa\xaa\x03\x00\x00\x00"   # rfc1042_header (net/wireless/util.c:2681)
+_ETH_P_PAE = b"\x88\x8e"           # ETH_P_PAE, big-endian as skb->protocol
 # mac80211 ieee802_1d_to_ac (wme.c): an 802.1d priority's AC.
 _IEEE802_1D_TO_AC = (MT_TXQ_BE, MT_TXQ_BK, MT_TXQ_BK, MT_TXQ_BE, MT_TXQ_VI, MT_TXQ_VI, MT_TXQ_VO, MT_TXQ_VO)
 # Each TX queue's bulk-OUT: mt76u_ac_to_hwq for 0x7925 (usb.c:910-933), out_ep[mt76_ac_to_hwq(ac) + 1], PSD on HCCA.
@@ -176,7 +178,13 @@ def build_txwi(mpdu: bytes, *, qid: int, wcid_idx: int, omac_idx: int = MON_TX_O
     val = ((MT_HDR_FORMAT_802_11 << 14) & MT_TXD1_HDR_FORMAT) \
         | ((hdr_info << 16) & MT_TXD1_HDR_INFO) \
         | ((tid << 21) & MT_TXD1_TID)
-    if (not _is_data(fc)) or multicast:              # mgmt/ctl/mcast -> fixed rate
+    # mac.c:683-685. USE_MINRATE: an injected rfc1042 data frame whose ethertype is the
+    # monitor sdata's control_port_protocol, ETH_P_PAE (mac80211 tx.c:2359-2365, :556-560).
+    hdrlen = ieee80211_hdrlen(fc)
+    use_minrate = (_is_data(fc) and len(mpdu) >= hdrlen + len(_RFC1042_HEADER) + 2
+                   and mpdu[hdrlen:hdrlen + 6] == _RFC1042_HEADER
+                   and mpdu[hdrlen + 6:hdrlen + 8] == _ETH_P_PAE)
+    if (not _is_data(fc)) or multicast or use_minrate:
         val |= MT_TXD1_FIXED_RATE
     txwi[1] |= val
 
