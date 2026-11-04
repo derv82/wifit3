@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import threading
-import time
 from collections import deque
 from dataclasses import dataclass
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.virtual_clock_loop import VirtualClockEventLoop
+from tests.verify_pcap.virtual_clock_loop import VirtualClockEventLoop, is_driver_thread
 
-POLLED_ENDPOINT_SECONDS = 0.05
+PROCESSING_REPLY = -1
+
+
+def _wake_loop() -> None:
+    """Scheduled from a driver thread so the loop re-checks whether the driver is idle."""
 
 
 class CaptureDivergence(Exception):
@@ -49,8 +52,8 @@ class CaptureReplay:
         self.refused_read_by_caller: dict[str, RefusedRead] = {}
         self.driver_closing = False
         self.requests_after_capture_end = 0
-        self._last_read_time_by_endpoint: dict[int, float] = {}
-        self._last_served_read_time = float("-inf")
+        # Per thread the driver started itself (its RX reader): PROCESSING_REPLY, or the endpoint it waits on.
+        self._driver_thread_state: dict[threading.Thread, int] = {}
         self._loop = loop
         self._lock = threading.Lock()
         self._first_unreproduced = 0
@@ -70,6 +73,8 @@ class CaptureReplay:
         with self._lock:
             if self.divergence is not None:
                 raise CaptureDivergence()
+            if is_driver_thread():
+                self._driver_thread_state[threading.current_thread()] = PROCESSING_REPLY
             start = max(self.next_position_by_caller.get(caller, 0), self._advance_first_unreproduced())
             position = self._next_unreproduced(start)
             if position is None:
@@ -99,43 +104,54 @@ class CaptureReplay:
         with self._lock:
             if self.divergence is not None:
                 raise CaptureDivergence()
-            self._last_read_time_by_endpoint[endpoint] = time.monotonic()
-            queue = self._in_positions_by_endpoint.get(endpoint)
-            if queue is None:
+            position = self._next_readable_position(endpoint, caller)
+            if is_driver_thread():
+                if position is None:
+                    self._driver_thread_state[threading.current_thread()] = endpoint
+                else:
+                    self._driver_thread_state[threading.current_thread()] = PROCESSING_REPLY
+            if position is None:
+                self._loop.call_soon_threadsafe(_wake_loop)
                 return None
-            while queue and self.reproduced_by[queue[0]] is not None:
-                queue.popleft()
-            if not queue:
-                return None
-            position = queue[0]
-            if not self._is_readable(position):
-                self.refused_read_by_caller[caller] = RefusedRead(
-                    endpoint, position, self._gate_by_position[position])
-                return None
-            queue.popleft()
-            self._last_served_read_time = time.monotonic()
+            self._in_positions_by_endpoint[endpoint].popleft()
             self.refused_read_by_caller.pop(caller, None)
             self.reproduced_by[position] = caller
             captured = self.ops[position]
             self._loop.advance_clock(captured.timestamp)
             return captured
 
-    def has_in_transfer_in_flight(self) -> bool:
-        """In the last POLLED_ENDPOINT_SECONDS (real time) an IN op was served, or an endpoint read then
-        has one readable now."""
+    def driver_thread_is_working(self) -> bool:
+        """A thread the driver started (its RX reader) is processing a reply, or waits on an endpoint that
+        has a readable reply now."""
         with self._lock:
-            now = time.monotonic()
-            if now - self._last_served_read_time <= POLLED_ENDPOINT_SECONDS:
-                return True
-            for endpoint, read_time in self._last_read_time_by_endpoint.items():
-                if now - read_time > POLLED_ENDPOINT_SECONDS:
+            for thread, state in self._driver_thread_state.items():
+                if not thread.is_alive():
                     continue
-                for position in self._in_positions_by_endpoint.get(endpoint, ()):
-                    if self.reproduced_by[position] is None:
-                        if self._is_readable(position):
-                            return True
-                        break
+                if state == PROCESSING_REPLY:
+                    return True
+                waiting_position = self._first_queued_position(state)
+                if waiting_position is not None and self._is_readable(waiting_position):
+                    return True
             return False
+
+    def _first_queued_position(self, endpoint: int) -> int | None:
+        queue = self._in_positions_by_endpoint.get(endpoint)
+        if queue is None:
+            return None
+        while queue and self.reproduced_by[queue[0]] is not None:
+            queue.popleft()
+        if not queue:
+            return None
+        return queue[0]
+
+    def _next_readable_position(self, endpoint: int, caller: str) -> int | None:
+        position = self._first_queued_position(endpoint)
+        if position is None:
+            return None
+        if not self._is_readable(position):
+            self.refused_read_by_caller[caller] = RefusedRead(endpoint, position, self._gate_by_position[position])
+            return None
+        return position
 
     def next_unreproduced_position(self) -> int | None:
         with self._lock:

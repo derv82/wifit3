@@ -18,7 +18,7 @@ from tests.verify_pcap.fake_usb_device import (
     LINUX_ESHUTDOWN, REQUEST_TYPE_MASK, REQUEST_TYPE_STANDARD, FakeUsbDevice)
 from tests.verify_pcap.usb_capture import TransferType, UsbOp, pair_submits_with_completions, read_usbmon_records
 from tests.verify_pcap.virtual_clock_loop import (
-    MAIN_CALLER, SELECT_TIMEOUT_SECONDS, DriverThreadPool, VirtualClockEventLoop)
+    MAIN_CALLER, DriverThreadPool, VirtualClockEventLoop)
 from wifit3.chips.driver import Driver
 from wifit3.models import DeviceID
 
@@ -88,7 +88,7 @@ class VerifyCapture:
         thread_pool = DriverThreadPool()
 
         def is_driver_idle() -> bool:
-            return thread_pool.busy_thread_count == 0 and not replay.has_in_transfer_in_flight()
+            return thread_pool.busy_thread_count == 0 and not replay.driver_thread_is_working()
 
         loop = VirtualClockEventLoop(capture.ops[0].timestamp, is_driver_idle)
         loop.set_default_executor(thread_pool)
@@ -177,7 +177,7 @@ class VerifyCapture:
                                              f"called {called}; the driver did not make this op")
             await self.run_due_driver_tasks(loop, thread_pool, replay.ops[-1].timestamp)
             while not loop.is_driver_idle():
-                await asyncio.sleep(SELECT_TIMEOUT_SECONDS)
+                await asyncio.sleep(0)
         except Exception as error:  # noqa: BLE001
             reason = f"driver raised {type(error).__name__}: {error}"
             for caller, refused_read in list(replay.refused_read_by_caller.items()):

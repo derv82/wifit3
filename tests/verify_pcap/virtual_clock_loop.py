@@ -8,10 +8,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable
 
 MAIN_CALLER = "main"
-SELECT_TIMEOUT_SECONDS = 0.005
-IDLE_SELECTS_BEFORE_CLOCK_JUMP = 2
-
-
 class PoolThreadCaller(threading.local):
     def __init__(self) -> None:
         self.caller: str | None = None
@@ -21,28 +17,21 @@ _pool_thread_caller = PoolThreadCaller()
 
 
 class ClockJumpSelector(selectors.SelectSelector):
-    """Waits at most SELECT_TIMEOUT_SECONDS of real time (``timeout`` is virtual seconds to the next timer).
-    After IDLE_SELECTS_BEFORE_CLOCK_JUMP empty waits with the driver idle, the clock jumps to that timer."""
+    """Never waits on the capture's clock: with the driver idle, the clock jumps to the next timer.
+    With the driver busy, waits until a thread wakes the loop (thread pool completion, a driver thread's read)."""
 
     def __init__(self, loop: VirtualClockEventLoop) -> None:
         super().__init__()
         self.loop = loop
-        self.idle_select_count = 0
 
     def select(self, timeout: float | None = None) -> list[tuple[selectors.SelectorKey, int]]:
-        if timeout is None:
-            self.idle_select_count = 0
-            return super().select(SELECT_TIMEOUT_SECONDS)
-        next_timer_time = self.loop.time() + timeout
-        events = super().select(min(timeout, SELECT_TIMEOUT_SECONDS))
-        if events or timeout == 0:
-            self.idle_select_count = 0
-            return events
-        self.idle_select_count += 1
-        if self.idle_select_count >= IDLE_SELECTS_BEFORE_CLOCK_JUMP and self.loop.is_driver_idle():
-            self.idle_select_count = 0
-            self.loop.advance_clock(next_timer_time)
-        return events
+        if timeout == 0:
+            return super().select(0)
+        if self.loop.is_driver_idle():
+            if timeout is not None:
+                self.loop.advance_clock(self.loop.time() + timeout)
+            return super().select(0)
+        return super().select(None)
 
 
 class VirtualClockEventLoop(asyncio.SelectorEventLoop):
@@ -105,6 +94,17 @@ class DriverThreadPool(ThreadPoolExecutor):
             _pool_thread_caller.caller = None
             with self._count_lock:
                 self.busy_thread_count -= 1
+
+
+def is_driver_thread() -> bool:
+    """A thread the driver started itself (e.g. its RX reader): not the event loop, not the thread pool."""
+    if _pool_thread_caller.caller is not None:
+        return False
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return True
+    return False
 
 
 def current_caller_name() -> str:
