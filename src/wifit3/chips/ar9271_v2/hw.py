@@ -9,6 +9,7 @@ claimed here); they are marked untested.
 from __future__ import annotations
 
 import logging
+import time
 
 from . import reg as R
 from .wmi import WMI
@@ -282,9 +283,7 @@ class AthHw:
         self.write(R.AR_PHY_ACTIVE, R.AR_PHY_ACTIVE_DIS)   # [SRC] hw.c ath9k_hw_mark_phy_inactive
 
     def settsf64(self, tsf: int) -> None:
-        """ath9k_hw_settsf64 [SRC] mac.c — write the low then high TSF word. The caller passes
-        tsf + elapsed µs (hw.c:1946-1947); the port passes offset 0, so the replay can't
-        reproduce the low word."""
+        """ath9k_hw_settsf64 [SRC] hw.c:3028-3033 — write the low then high TSF word."""
         self.write(R.AR_TSF_L32, tsf & 0xffffffff)
         self.write(R.AR_TSF_U32, (tsf >> 32) & 0xffffffff)
 
@@ -307,6 +306,7 @@ class AthHw:
         then the AR9271 MAC-gate write. (TSF restore, JTAG-disable and process_ini follow.)"""
         self.saveDefAntenna = self.read(R.AR_DEF_ANTENNA) or 1
         self.macStaId1 = self.read(R.AR_STA_ID1) & R.AR_STA_ID1_BASE_RATE_11B
+        tsf_ts = time.monotonic_ns()              # ktime_get_raw [SRC] hw.c:1912
         self.tsf = self.gettsf64()
         self.saveLedState = self.read(R.AR_CFG_LED) & R.AR_CFG_LED_SAVE_MASK
         self.mark_phy_inactive()
@@ -319,8 +319,9 @@ class AthHw:
         if first:
             self.htc_reset_init = False
             self.write(R.AR9271_RESET_POWER_DOWN_CONTROL, R.AR9271_GATE_MAC_CTL)
-        # Restore TSF; Linux adds elapsed µs, the port adds 0 [SRC] hw.c:1946-1947.
-        self.settsf64(self.tsf)
+        # Restore TSF plus the µs since it was read: ath9k_hw_get_tsf_offset [SRC] hw.c:1851-1856, :1946-1947.
+        tsf_offset = ((time.monotonic_ns() - tsf_ts) // 1000) & 0xffffffff
+        self.settsf64(self.tsf + tsf_offset)
         # Disable JTAG so GPIO 0-3 are usable [SRC] hw.c:1949-1950.
         if self.is_9280_20_or_later():
             self.rmw(R.AR_GPIO_INPUT_EN_VAL, R.AR_GPIO_JTAG_DISABLE, 0)

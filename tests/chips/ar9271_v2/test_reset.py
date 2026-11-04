@@ -79,6 +79,15 @@ def test_reset_begin_key_writes():
     assert (R.AR_GPIO_INPUT_EN_VAL, R.AR_GPIO_JTAG_DISABLE, 0) in jtag
 
 
+def test_reset_begin_restores_tsf_plus_the_us_since_it_was_read(monkeypatch):
+    clock = iter([10_000_000_000, 10_000_250_999])
+    monkeypatch.setattr(hw.time, "monotonic_ns", lambda: next(clock))
+    dev = FakeDev()
+    h = _hw(dev)
+    h.reset_begin(chanmod.channel_2ghz(1))
+    assert (R.AR_TSF_L32, 250) in _all_pairs(dev)                         # TSF read as 0
+
+
 def test_settsf64_low_then_high():
     dev = FakeDev()
     h = _hw(dev)
