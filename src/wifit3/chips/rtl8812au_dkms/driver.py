@@ -189,7 +189,7 @@ class Rtl8812auDkmsDriver(Driver):
         self._reader.start()
 
         # _netdev_open: rtw_hal_init, rtw_led_control(LED_CTL_NO_LINK), then the 2 s
-        # dynamic_chk_timer (os_intfs.c:3886-3937).
+        # dynamic_chk_timer (os_intfs.c:4062, 4075).
         self._led_task = loop.create_task(self._led_blink())
         if self.enable_dig:
             self._dig_task = loop.create_task(self._dig_watchdog())

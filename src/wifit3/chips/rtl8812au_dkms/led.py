@@ -1,7 +1,7 @@
 """RTL8812AU SW LED0 on/off [SRC] hal/rtl8812a/usb/rtl8812au_led.c SwLedOn_8812AU / SwLedOff_8812AU.
 
 LED_PIN_LED0 only: SW_LED_MODE9's no-link blink (hal_usb_led.c:SwLedBlink9) never drives LED1/LED2.
-AntDivCfg is 0: CONFIG_ANTENNA_DIVERSITY is off (include/autoconf.h:97), so its LEDCFG2 branch is dead.
+AntDivCfg is 0: CONFIG_ANTENNA_DIVERSITY is off (include/autoconf.h:107), so its LEDCFG2 branch is dead.
 """
 from __future__ import annotations
 

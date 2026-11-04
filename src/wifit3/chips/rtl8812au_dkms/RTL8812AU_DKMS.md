@@ -36,7 +36,7 @@ CAPTURE_SETUP. RX without it needs a live check.
 
 **The monitor RCR is the C's, with RXFLTMAP0-2 opened.** morrownr's tail leaves RCR
 `0x90000001` (`AAP|APP_PHYST|APPFCS`) and `hw_var_set_monitor` then writes RXFLTMAP0-2 =
-`0xFFFF` (`rtl8812a_hal_init.c:3701-3706`). An earlier port skipped the RXFLTMAP block, leaving
+`0xFFFF` (`rtl8812a_hal_init.c:3685-3690`). An earlier port skipped the RXFLTMAP block, leaving
 RXFLTMAP0 (management) at `0x0000`; beacons did not arrive, which was blamed on the RCR and
 patched with a wifit3 re-open to `0x9000382F`. The port now follows the C and the re-open is
 gone. Beacon delivery at RCR `0x90000001` + RXFLTMAP `0xFFFF` needs a live check.
