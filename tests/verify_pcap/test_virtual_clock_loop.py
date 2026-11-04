@@ -57,3 +57,27 @@ def test_timer_wheel_level_0_rounds_the_expiry_up_to_the_next_bucket() -> None:
 def test_timer_wheel_level_1_rounds_the_expiry_up_to_the_next_8_jiffy_bucket() -> None:
     assert timer_wheel_expiry(0.0, 3 / KERNEL_HZ, 503 / KERNEL_HZ) == pytest.approx(504 / KERNEL_HZ)
     assert timer_wheel_expiry(0.0, 4 / KERNEL_HZ, 504 / KERNEL_HZ) == pytest.approx(512 / KERNEL_HZ)
+
+
+def test_woken_driver_task_passes_over_a_main_op_captured_within_its_timer_tolerance() -> None:
+    """The kernel timer fired a millisecond before the modeled one; main's op came between the task's two ops."""
+    fire_time = WATCHDOG_JIFFIES / KERNEL_HZ - 0.001
+    ops = [replace(realtek_write(REALTEK_OTHER_REGISTER, value), submit_time=submit_time, completion_time=submit_time)
+           for value, submit_time in [(0x1, 0.0), (0x2, fire_time), (0x3, fire_time + 0.0001),
+                                      (0x4, fire_time + 0.0002)]]
+    loop = VirtualClockEventLoop(0.0, lambda: True)
+    replay = CaptureReplay(ops, lambda captured, request: captured.same_request(request),
+                           lambda request, cursor_differs: False, lambda ops, position: None, loop)
+
+    async def watchdog() -> None:
+        replay.match_request(ops[0], current_caller_name())
+        await asyncio.sleep(WATCHDOG_JIFFIES / KERNEL_HZ)
+        replay.match_request(ops[1], current_caller_name())
+        replay.match_request(ops[3], current_caller_name())
+
+    try:
+        loop.run_until_complete(loop.create_task(watchdog()))
+    finally:
+        loop.close()
+    assert replay.divergence is None
+    assert replay.unreproduced_positions() == [2]

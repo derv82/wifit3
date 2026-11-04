@@ -205,15 +205,17 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         return min(due_times, default=None)
 
     def earliest_due_driver_timer(self) -> float | None:
-        """When the earliest driver task that is awake (its last timer has fired) became due."""
+        """The earliest time the kernel timer of a driver task that is awake (its last timer has fired) can have
+        fired: its due time less its tolerance."""
         earliest: float | None = None
         with self._timer_lock:
             timers = list(self.latest_timer_by_task.items())
         for task, handle in timers:
             if task.done() or handle not in self.fired_timers:
                 continue
-            if earliest is None or handle.when() < earliest:
-                earliest = handle.when()
+            due_time = handle.when() - self.tolerance_by_driver_timer[handle]
+            if earliest is None or due_time < earliest:
+                earliest = due_time
         return earliest
 
 
