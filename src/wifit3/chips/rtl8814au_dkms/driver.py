@@ -270,16 +270,14 @@ class Rtl8814auDkmsDriver(Driver):
             logger.exception("RTL8814AU phydm watchdog stopped on error")
 
     async def _led_blink(self) -> None:
-        """SW_LED_MODE9 LED0 no-link slow blink: SwLedBlink9 LED_BLINK_SLOWLY (hal_usb_led.c:934).
-
-        Not under _io_lock: the blink runs on a workqueue, not the cmd thread (hal_usb_led.c:1863).
-        """
+        """SW_LED_MODE9 LED0 no-link slow blink: SwLedBlink9 LED_BLINK_SLOWLY (hal_usb_led.c:934)."""
         loop = asyncio.get_running_loop()
         st = self._wd_state
         try:
             while True:
                 await asyncio.sleep(LED_BLINK_NO_LINK_INTERVAL_ALPHA_S)
-                await loop.run_in_executor(None, led_blink, self.transport, st)
+                async with self._io_lock:
+                    await loop.run_in_executor(None, led_blink, self.transport, st)
         except asyncio.CancelledError:
             pass
         except Exception:  # noqa: BLE001 — an LED fault must not kill RX
