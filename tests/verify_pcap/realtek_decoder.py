@@ -119,11 +119,12 @@ class RealtekDecoder(FamilyDecoder):
         return None
 
     def register_ops(self, op: UsbOp) -> list[RegisterOp]:
-        """One read or write of wValue per vendor request; a write's value is its data, little-endian."""
+        """One read or write of wValue per vendor request; its value is its data, little-endian (None for a read the
+        driver requests: no reply yet)."""
         if not is_register_access(op):
             return []
         if op.is_in:
-            return [RegisterOp(RegisterAccess.READ, op.value, None)]
+            return [RegisterOp(RegisterAccess.READ, op.value, register_value(op))]
         return [RegisterOp(RegisterAccess.WRITE, op.value, int.from_bytes(op.data, "little"))]
 
     def with_tx_op_fields(self, op: UsbOp, fields: list[TxOpField], source: UsbOp) -> UsbOp:
