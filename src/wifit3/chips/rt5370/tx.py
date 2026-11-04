@@ -51,10 +51,17 @@ def select_queue(frame: bytes) -> int:
     return C.IEEE802_1D_TO_AC[frame[qos_offset] & 0x07]       # IEEE80211_QOS_CTL_TAG1D_MASK
 
 
-def build_txdesc(frame_len: int, qid: int, entry_index: int, *, use_no_ack: bool = True, mcs: int = 0,
-                 phymode: int = C.RATE_MODE_CCK) -> bytes:
+def build_txdesc(frame_len: int, frame_control: int, qid: int, entry_index: int, *, use_no_ack: bool = True,
+                 mcs: int = 0, phymode: int = C.RATE_MODE_CCK) -> bytes:
     """TXINFO + TXWI prefix for a frame in TX queue ``qid`` entry ``entry_index`` [SRC rt2800usb.c:401-435,
     rt2800lib.c:795-853]. Returns ``TXINFO_DESC_SIZE + TXWI_DESC_SIZE_4WORDS`` bytes."""
+    # ENTRY_TXD_MORE_FRAG / ENTRY_TXD_BURST [SRC rt2x00queue.c:412-419, 430-433 rt2x00queue_create_tx_descriptor]
+    more_frag = bool(frame_control & C.IEEE80211_FCTL_MOREFRAGS)
+    burst = more_frag
+    if (frame_control & C.IEEE80211_FCTL_FTYPE) == C.IEEE80211_FTYPE_CTL:
+        subtype = frame_control & C.IEEE80211_FCTL_STYPE
+        if subtype == C.IEEE80211_STYPE_RTS or subtype == C.IEEE80211_STYPE_CTS:
+            burst = True
     aligned = (frame_len + 3) & ~3
     pkt_len = C.TXWI_DESC_SIZE_4WORDS + aligned        # TXWI + frame + pad; NOT TXINFO
 
@@ -62,8 +69,10 @@ def build_txdesc(frame_len: int, qid: int, entry_index: int, *, use_no_ack: bool
     txinfo_w0 = set_field(txinfo_w0, C.TXINFO_W0_USB_DMA_TX_PKT_LEN, pkt_len)
     txinfo_w0 = set_field(txinfo_w0, C.TXINFO_W0_WIV, 1)        # use descriptor IV (zeros)
     txinfo_w0 = set_field(txinfo_w0, C.TXINFO_W0_QSEL, C.QSEL_EDCA)
+    txinfo_w0 = set_field(txinfo_w0, C.TXINFO_W0_USB_DMA_TX_BURST, int(burst))
 
     txwi_w0 = 0
+    txwi_w0 = set_field(txwi_w0, C.TXWI_W0_FRAG, int(more_frag))
     txwi_w0 = set_field(txwi_w0, C.TXWI_W0_MCS, mcs)
     txwi_w0 = set_field(txwi_w0, C.TXWI_W0_PHYMODE, phymode)
     txwi_w0 = set_field(txwi_w0, C.TXWI_W0_TX_OP, C.TXWI_TX_OP_HT_NONE)
@@ -85,11 +94,12 @@ def build_frame(frame: bytes, qid: int, entry_index: int, *, use_no_ack: bool = 
 
     ``frame`` is the MPDU without FCS (the chip appends it). The +4 USB end pad is
     mandatory [SRC rt2800usb.c:440-451 ``roundup(skb_len, 4) + 4``]."""
-    if not frame:
-        raise ValueError("frame is empty")
+    if len(frame) < 2:
+        raise ValueError("frame is shorter than its frame control field")
     if len(frame) > 0x0FFF:
         raise ValueError(f"frame too long for TXWI MPDU field ({len(frame)} > 4095)")
-    prefix = build_txdesc(len(frame), qid, entry_index, use_no_ack=use_no_ack)
+    frame_control = struct.unpack_from("<H", frame)[0]
+    prefix = build_txdesc(len(frame), frame_control, qid, entry_index, use_no_ack=use_no_ack)
     pad = (-len(frame)) & 3
     return prefix + frame + b"\x00" * pad + b"\x00\x00\x00\x00"
 
