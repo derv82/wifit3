@@ -27,7 +27,7 @@
 - 2357:0137 is shared: `device/manager.py` `_VIDPID_FAMILIES` maps it to `VidPidFamily(default="mt76x2u", resolve=_resolve_2357_0137)`.
 - `_resolve_2357_0137` reads the live device descriptor: any interface exposing bulk IN endpoint 0x85 routes to `mt76x2u`, otherwise to `rtl8822cu`; `resolve_driver` then pulls that package's `Claim`.
 - `supported_ids()` skips a shared VID:PID for a package that is not the family default, so rtl8822cu never enters 2357:0137 into the static map.
-- Scope is monitor mode at 20 MHz: RX, monitor bringup, channel tune, TX inject, watchdog tick. Managed / STA, 40 and 80 MHz, SDIO and PCIE, and the 2 or 4 bulkout layouts are out of scope.
+- Scope is monitor mode at 20 MHz: RX, monitor bringup, channel tune, TX inject, watchdog tick. Managed / STA, 40 and 80 MHz, SDIO and PCIE are out of scope. The driver rejects 2- and 4-bulk-OUT USB layouts before claiming the interface because its ported queue map and FIFO allocation are specifically the vendor 3-bulk-OUT NORMAL layout.
 - `SUPPORTED_CHANNELS` is 1 to 14 plus 36, 40, 44, 48, 149, 153, 157, 161, 165 [driver.py:73]. Channel 14 takes the vendor's CCK only shaping branch [phy.py:1180].
 - The port was produced and checked by separate scouting, porting and reviewing agents against the vendor C.
 - Related ports: `rtw88_base` supplies the transport, the power sequence runner and the RX descriptor parse.
@@ -61,7 +61,8 @@
 ### Non-obvious in the port
 
 - `driver._bringup` builds `self.txpwr` once as `txpwr_idx_state(...)` immediately after `read_mac_hidden_rpt`; nothing per tune recomputes it.
-- `driver.close` stops the RX reader, then executes the HALMAC power-off flow before releasing the USB interface. The vendor `rtw_halmac_deinit_hal` calls `halmac_deinit_interface_cfg` followed by `rtw_hal_power_off`; USB's `deinit_usb_cfg_88xx` is a no-op, so `mac_power_off` is the required hardware teardown [hal/hal_halmac.c:rtw_halmac_deinit_hal, halmac_usb_88xx.c:deinit_usb_cfg_88xx]. A device-gone USB error does not prevent local resource cleanup.
+- `driver.close` stops the RX reader, then executes the HALMAC power-off flow before releasing the USB interface. The vendor `rtw_halmac_deinit_hal` calls `halmac_deinit_interface_cfg` followed by `rtw_hal_power_off`; USB's `deinit_usb_cfg_88xx` is a no-op, so `mac_power_off` is the required hardware teardown [hal/hal_halmac.c:rtw_halmac_deinit_hal, halmac_usb_88xx.c:deinit_usb_cfg_88xx]. A device-gone USB error does not prevent local resource cleanup. Failed bring-up uses this same cleanup path, so it cannot retain a claimed interface or partial MAC power state. Teardown also drops the saved DACK state because the next `connect` uses the port's full cold initialization rather than the unported warm DACK restore path.
+- RX records flagged CRC or ICV invalid are discarded before ACK accounting and parsing, matching `recvbuf2recvframe` outside the vendor's manufacturing mode. The shared RX layer deliberately strips the appended FCS because Wifit3 consumers operate on FCS-free MPDUs; this is an application-level normalization rather than vendor radiotap delivery semantics.
 - TX power splits across `txpower.py` (PG walk), `txpwr_tables.py` (the compiled by rate array) and `txpwr_index.py` (index math); `phy._set_tx_power` is the only writer.
 - `_set_tx_power` writes 0x18A0 / 0x41A0 (CCK, mask 0x007F0000), 0x18E8 / 0x41E8 (OFDM, mask 0x0001FC00) and twelve 0x3A00 diff dwords, bracketed by `_bbrstb_txagc_off`.
 - `phy._fill_txagc_buff` runs the CCK section on 2.4 GHz only, so the 5 GHz CCK reference on the wire is the carried forward last 2.4 GHz CCK 11M index [rtl8822c_phy.c:662].

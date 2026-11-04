@@ -290,15 +290,21 @@ class RTL8822CUDriver(Driver):
         self._log_rx_registers("monitor_entry")
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        if self.is_warm:
+            return True
+        if self._claimed:
+            raise BringUpError("state", "RTL8822CU is already connecting")
         loop = asyncio.get_running_loop()
         if progress_cb:
             progress_cb(0.05, "Inspecting RTL8822CU USB endpoints")
         self.layout = self.transport.endpoints()
-        self._claim()
-        if not self.layout.bulk_out:
-            raise BringUpError("endpoints", "RTL8822CU has no bulk OUT endpoint for firmware upload")
         if not self.layout.bulk_in:
             raise BringUpError("endpoints", "RTL8822CU has no bulk IN endpoint for RX")
+        if len(self.layout.bulk_out) != 3:
+            raise BringUpError(
+                "endpoints",
+                f"RTL8822CU needs its supported 3 bulk-OUT layout, found {len(self.layout.bulk_out)}",
+            )
 
         def _emit(pct: float, msg: str) -> None:
             if progress_cb:
@@ -307,12 +313,18 @@ class RTL8822CUDriver(Driver):
         self._bulk_in_ep = self.layout.bulk_in[0]
         self._bulk_out_eps = list(self.layout.bulk_out)
         try:
+            self._claim()
             await loop.run_in_executor(
                 None, self._bringup, self.transport, self.layout.bulk_out[0], _emit)
             await loop.run_in_executor(None, self._monitor_entry)
+        except BringUpError:
+            await self.close()
+            raise
         except (IOError, usb.core.USBError) as exc:
+            await self.close()
             raise BringUpError("firmware", str(exc)) from exc
         except (ValueError, RuntimeError) as exc:
+            await self.close()
             raise BringUpError("phy", str(exc)) from exc
         # Start the RX reader only AFTER monitor entry. arm_monitor + the first tune +
         # enter_monitor_mode is what enables MAC RX; starting it before bringup (the prior "sibling
@@ -377,6 +389,7 @@ class RTL8822CUDriver(Driver):
         self.is_warm = False
         self._bulk_in_ep = None
         self._bulk_out_eps = []
+        self.dack = DackState()
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
         """Point REG_MACID at ``mac`` so the hardware HW-ACKs frames addressed to it while
@@ -439,8 +452,10 @@ class RTL8822CUDriver(Driver):
         callback = self._rx_callback
         if callback is None and not self._ack_detect_on:
             return
-        for _stat, mpdu, rssi in iter_bulk_frames(
+        for stat, mpdu, rssi in iter_bulk_frames(
                 buf, cck_gi_l_bnd=self.phydm.cck_gi_l_bnd, cck_gi_u_bnd=self.phydm.cck_gi_u_bnd):
+            if stat.crc_err or stat.icv_err:
+                continue
             if len(mpdu) == 10 and mpdu[0] == 0xD4:
                 self.record_ack(mpdu)
                 continue

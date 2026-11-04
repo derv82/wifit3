@@ -16,14 +16,17 @@ from wifit3.chips.rtl8822cu.driver import RTL8822CUDriver
 from wifit3.chips.rtl8822cu.efuse import EfuseInfo
 from wifit3.chips.rtl8822cu.firmware import MacHiddenRpt
 from wifit3.chips.rtl8822cu.mac import set_mac_addr
+from wifit3.chips.rtl8822cu.transport import EndpointLayout
 from wifit3.chips.driver import FakeMacSupport
+from wifit3.errors import BringUpError
 from wifit3.wlan.interface import WlanInterface
 
 
-def _ack_buf(ra: bytes) -> bytes:
+def _ack_buf(ra: bytes, *, crc_err: bool = False, icv_err: bool = False) -> bytes:
     """A bulk-IN buffer with one 14-byte on-wire ACK to ``ra`` (10-B MPDU + 4-B HW FCS)."""
     desc = bytearray(24)
-    struct.pack_into("<I", desc, 0, 14)         # rxdw0: pkt_len=14, all flags clear
+    flags = (int(crc_err) << 14) | (int(icv_err) << 15)
+    struct.pack_into("<I", desc, 0, 14 | flags)
     mpdu = bytearray(10)
     mpdu[0] = 0xD4                              # FC: ACK control subtype
     mpdu[4:10] = ra                             # addr1 / RA
@@ -179,6 +182,16 @@ def test_tap_ignores_ack_to_foreign_mac():
     assert d.acks_seen(ra) == 0
 
 
+@pytest.mark.parametrize("error", ["crc_err", "icv_err"])
+def test_tap_ignores_hardware_marked_corrupt_acks(error):
+    d = _driver()
+    ra = bytes.fromhex("020000000001")
+    d._our_tx_macs.add(ra)
+    d._ack_detect_on = True
+    d._rx_dispatch(_ack_buf(ra, **{error: True}))
+    assert d.acks_seen(ra) == 0
+
+
 def test_tap_off_by_default():
     d = _driver()
     ra = bytes.fromhex("020000000001")
@@ -299,12 +312,54 @@ def _chip_info(*, raw_cfg1: int = 0) -> ChipInfo:
         raw_cfg1=raw_cfg1, raw_cfg2=0, raw_status1=0, chip_ver=5, raw_multifunc=0)
 
 
+async def test_connect_rejects_unsupported_bulk_out_layout_before_claiming(monkeypatch):
+    d = _driver()
+    d.transport.endpoints.return_value = EndpointLayout(0, (0x81,), (0x05, 0x06))
+    claim = MagicMock()
+    monkeypatch.setattr(d, "_claim", claim)
+
+    with pytest.raises(BringUpError, match="3 bulk-OUT") as exc_info:
+        await d.connect()
+
+    assert exc_info.value.stage == "endpoints"
+    claim.assert_not_called()
+
+
+async def test_connect_cleans_up_a_failed_bringup(monkeypatch):
+    d = _driver()
+    d.transport.endpoints.return_value = EndpointLayout(0, (0x81,), (0x05, 0x06, 0x08))
+    calls: list[str] = []
+
+    def _claim():
+        d._claimed = True
+
+    def _bringup(*args):
+        raise IOError("firmware did not start")
+
+    monkeypatch.setattr(d, "_claim", _claim)
+    monkeypatch.setattr(d, "_bringup", _bringup)
+    monkeypatch.setattr(drv.usb.util, "release_interface",
+                        lambda dev, interface: calls.append("release"))
+    monkeypatch.setattr(drv.usb.util, "dispose_resources",
+                        lambda dev: calls.append("dispose"))
+
+    with pytest.raises(BringUpError, match="firmware did not start") as exc_info:
+        await d.connect()
+
+    assert exc_info.value.stage == "firmware"
+    assert calls == ["release", "dispose"]
+    assert d._claimed is False
+    assert d._bulk_in_ep is None
+    assert d._bulk_out_eps == []
+
+
 async def test_close_powers_mac_off_before_releasing_usb(monkeypatch):
     d = _driver()
     d._claimed = True
     d.is_warm = True
     d._bulk_in_ep = 0x81
     d._bulk_out_eps = [0x05]
+    d.dack.dack_en = True
     d.chip_info = _chip_info(raw_cfg1=3 << 12)
     reader = MagicMock(stop=AsyncMock())
     d._rx_reader = reader
@@ -332,6 +387,7 @@ async def test_close_powers_mac_off_before_releasing_usb(monkeypatch):
     assert d.is_warm is False
     assert d._bulk_in_ep is None
     assert d._bulk_out_eps == []
+    assert d.dack.dack_en is False
 
 
 async def test_close_releases_usb_when_mac_power_off_fails(monkeypatch):
