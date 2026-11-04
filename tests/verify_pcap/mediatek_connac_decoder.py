@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import struct
+from dataclasses import replace
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import FamilyDecoder
+from tests.verify_pcap.verify_capture import FamilyDecoder, RegisterAccess, RegisterOp
 from wifit3.chips.mt7925au import constants as C
 
 MCU_TXD_OFFSET = C.SDIO_HDR_SIZE
+MCU_SEQ_OFFSET = MCU_TXD_OFFSET + 39
+# mt76_mcu msg_seq: 1 .. 15, never 0.
+MCU_SEQ_COUNT = 15
 UNI_PAYLOAD_OFFSET = C.SDIO_HDR_SIZE + 48
 TX_MPDU_OFFSET = C.SDIO_HDR_SIZE + C.MT_SDIO_TXD_SIZE
 RXD_PKT_TYPE_SHIFT = 27
@@ -54,10 +58,14 @@ def sniffer_tag(op: UsbOp) -> int | None:
     return struct.unpack_from("<H", data, UNI_PAYLOAD_OFFSET + 4)[0]
 
 
+def with_byte(op: UsbOp, offset: int, value: int) -> UsbOp:
+    return replace(op, data=op.data[:offset] + bytes([value]) + op.data[offset + 1:])
+
+
 def describe_mcu_command(data: bytes) -> str:
     if len(data) < UNI_PAYLOAD_OFFSET:
         return f"MCU {len(data)}B {data.hex()}"
-    seq = data[MCU_TXD_OFFSET + 39]
+    seq = data[MCU_SEQ_OFFSET]
     if not is_uni_mcu_frame(data):
         cid = data[MCU_TXD_OFFSET + 36]
         name = LEGACY_COMMAND_NAMES.get(cid, f"cmd 0x{cid:02x}")
@@ -127,6 +135,45 @@ class MediatekConnacDecoder(FamilyDecoder):
                     return later.data[UNI_PAYLOAD_OFFSET + 12]
                 return None
         return None
+
+    def register_ops(self, op: UsbOp) -> list[RegisterOp]:
+        """A UNI MCU command only, as one WRITE of its command id valued its seq."""
+        data = op.data
+        if (op.transfer_type != TransferType.BULK or op.endpoint != C.EP_OUT_MCU
+                or len(data) < UNI_PAYLOAD_OFFSET or not is_uni_mcu_frame(data)):
+            return []
+        command_id = struct.unpack_from("<H", data, MCU_TXD_OFFSET + 34)[0]
+        return [RegisterOp(RegisterAccess.WRITE, command_id, data[MCU_SEQ_OFFSET])]
+
+    def skip_capture_only_ops(self, ops: list[UsbOp], positions: set[int]) -> tuple[list[UsbOp], set[int]]:
+        """Each later MCU command and its reply renumbered back by the skipped MCU commands before it; a skipped
+        command's reply is waived with it."""
+        skipped_count = 0
+        skipped_seqs: set[int] = set()
+        renumbered_seq_by_seq: dict[int, int] = {}
+        waived_positions = set(positions)
+        renumbered_ops: list[UsbOp] = []
+        for position, op in enumerate(ops):
+            if (op.transfer_type == TransferType.BULK and op.endpoint == C.EP_OUT_MCU
+                    and len(op.data) > MCU_SEQ_OFFSET):
+                seq = op.data[MCU_SEQ_OFFSET]
+                if position in positions:
+                    skipped_count += 1
+                    skipped_seqs.add(seq)
+                else:
+                    skipped_seqs.discard(seq)
+                    renumbered_seq_by_seq[seq] = (seq - 1 - skipped_count) % MCU_SEQ_COUNT + 1
+                    op = with_byte(op, MCU_SEQ_OFFSET, renumbered_seq_by_seq[seq])
+            elif (op.transfer_type == TransferType.BULK and op.is_in and len(op.data) > C.MT7925_RXD_SEQ_OFF
+                  and rx_packet_type(op.data)[0] == C.PKT_TYPE_RX_EVENT):
+                seq = op.data[C.MT7925_RXD_SEQ_OFF]
+                if seq in skipped_seqs:
+                    skipped_seqs.discard(seq)
+                    waived_positions.add(position)
+                elif seq in renumbered_seq_by_seq:
+                    op = with_byte(op, C.MT7925_RXD_SEQ_OFF, renumbered_seq_by_seq[seq])
+            renumbered_ops.append(op)
+        return renumbered_ops, waived_positions
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """connac3 bulk IN: PKT_TYPE_RX_EVENT is an MCU reply (kept) unless PKT_FLAG marks a tunnelled frame."""

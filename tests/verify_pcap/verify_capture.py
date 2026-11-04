@@ -131,6 +131,10 @@ class FamilyDecoder(ABC):
         """``op`` with ``source``'s value in each of ``fields``; WAIVERS compare through this."""
         raise NotImplementedError(f"{type(self).__name__} does not edit TX ops")
 
+    def skip_capture_only_ops(self, ops: list[UsbOp], positions: set[int]) -> tuple[list[UsbOp], set[int]]:
+        """The ops as if the capture-only ops at ``positions`` were never made, and the positions to waive."""
+        return ops, positions
+
 
 @dataclass(frozen=True)
 class LoadedCapture:
@@ -171,6 +175,7 @@ class VerifyCapture:
                 positions = self.capture_only_run_positions(capture.ops, waiver.capture_only_run)
                 waived_positions.update(positions)
             positions_by_waiver[waiver] = positions
+        ops, waived_positions = self.DECODER.skip_capture_only_ops(capture.ops, waived_positions)
 
         thread_pool = DriverThreadPool()
 
@@ -185,7 +190,7 @@ class VerifyCapture:
         def is_driver_only_request(request: UsbOp, cursor_differs: bool) -> bool:
             return self.is_driver_only_request(request, cursor_differs, driver_only_progress)
 
-        replay = CaptureReplay(capture.ops, waived_positions, is_same_request, is_driver_only_request, loop)
+        replay = CaptureReplay(ops, waived_positions, is_same_request, is_driver_only_request, loop)
         device = FakeUsbDevice(replay, capture.device_descriptor, capture.configuration_descriptor,
                                capture.device_id.bus or 0, capture.device_id.address or 0)
 
