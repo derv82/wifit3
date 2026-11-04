@@ -4,11 +4,13 @@ from __future__ import annotations
 import threading
 from collections import deque
 from dataclasses import dataclass
+from typing import Callable
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
 from tests.verify_pcap.virtual_clock_loop import VirtualClockEventLoop, is_driver_thread
 
 PROCESSING_REPLY = -1
+WAIVED = "waived"
 
 
 def _wake_loop() -> None:
@@ -41,12 +43,14 @@ def is_bulk_or_interrupt_in(op: UsbOp) -> bool:
 
 
 class CaptureReplay:
-    def __init__(self, ops: list[UsbOp], waiver_label_by_position: dict[int, str],
-                 loop: VirtualClockEventLoop) -> None:
+    def __init__(self, ops: list[UsbOp], waived_positions: set[int],
+                 is_same_request: Callable[[UsbOp, UsbOp], bool], loop: VirtualClockEventLoop) -> None:
+        """``is_same_request(captured, request)`` compares a driver request to a captured op."""
         self.ops = ops
         self.reproduced_by: list[str | None] = [None] * len(ops)
-        for position, label in waiver_label_by_position.items():
-            self.reproduced_by[position] = label
+        for position in waived_positions:
+            self.reproduced_by[position] = WAIVED
+        self._is_same_request = is_same_request
         self.next_position_by_caller: dict[str, int] = {}
         self.divergence: Divergence | None = None
         self.refused_read_by_caller: dict[str, RefusedRead] = {}
@@ -80,13 +84,13 @@ class CaptureReplay:
                 if self.driver_closing:
                     return None
                 raise self._diverge(None, request, caller, "request after the last captured op")
-            if not self.ops[position].same_request(request):
+            if not self._is_same_request(self.ops[position], request):
                 # Pass over unreproduced ops only if a driver task was due before the first of them.
                 due_time = self._loop.earliest_due_driver_timer()
                 candidate = None
                 if due_time is not None and self.ops[position].submit_time >= due_time:
                     candidate = self._next_unreproduced(position + 1)
-                    while candidate is not None and not self.ops[candidate].same_request(request):
+                    while candidate is not None and not self._is_same_request(self.ops[candidate], request):
                         candidate = self._next_unreproduced(candidate + 1)
                 if candidate is None:
                     raise self._diverge(position, request, caller, "request differs from the capture")

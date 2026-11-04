@@ -5,7 +5,7 @@ import struct
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import FamilyDecoder
+from tests.verify_pcap.verify_capture import FamilyDecoder, RegisterAccess, RegisterOp
 from wifit3.chips.ar9271_v2 import chan, constants as C, reg as R, tx, wmi
 from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
 
@@ -137,6 +137,18 @@ class Ath9kHtcDecoder(FamilyDecoder):
                         return None
                     return channel
         return None
+
+    def register_ops(self, op: UsbOp) -> list[RegisterOp]:
+        """REG_READ / REG_WRITE commands; responses, events and REG_RMW list none."""
+        command_id = wmi_command_id(op)
+        if op.is_in or command_id is None:
+            return []
+        words = register_words(op)
+        if command_id == wmi.WMI_REG_READ_CMDID:
+            return [RegisterOp(RegisterAccess.READ, word, None) for word in words]
+        if command_id == wmi.WMI_REG_WRITE_CMDID:
+            return [RegisterOp(RegisterAccess.WRITE, words[i], words[i + 1]) for i in range(0, len(words) - 1, 2)]
+        return []
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """WLAN_RX bulk IN is the HIF RX stream only; WMI responses and events (TXSTATUS) come on REG_IN."""
