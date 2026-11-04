@@ -37,7 +37,7 @@ def test_a_paused_job_reads_as_paused():
     job = _job(actions=JobAction.STOP | JobAction.RESUME, progress_msg="Paused (12.00%)",
                percent=12.0)
 
-    assert "PAUSED" in JobRow(job)._status_markup(job)
+    assert "PAUZA" in JobRow(job)._status_markup(job)
 
 
 def test_a_cracked_job_shows_its_key():
@@ -62,7 +62,7 @@ def test_running_job_without_tool_status_shows_starting_badge():
     job = _job()
     row = JobRow(job)
 
-    assert "STARTING" in row._status_markup(job)
+    assert "STARTUJE" in row._status_markup(job)
 
 
 def test_running_job_with_progress_shows_running_badge():
@@ -71,7 +71,7 @@ def test_running_job_with_progress_shows_running_badge():
     badge = JobRow(job)._status_markup(job)
 
     assert "RUNNING" in badge
-    assert "STARTING" not in badge
+    assert "STARTUJE" not in badge
 
 
 def test_stopped_job_has_terminal_badge_and_detail():
@@ -87,7 +87,7 @@ def test_exhausted_job_reads_as_not_found():
     job = _job(status=ToolStatus.FAILURE, actions=JobAction.CLEAR, progress_msg="3 wordlists")
     row = JobRow(job)
 
-    assert "NOT FOUND" in row._status_markup(job)
+    assert "BRAK" in row._status_markup(job)
     assert row._detail_markup(job) == "[dim]3 wordlists[/dim]"
 
 
@@ -106,11 +106,11 @@ def test_skip_button_follows_the_jobs_offered_actions():
 def test_pause_button_offers_resume_to_a_paused_job_and_nothing_to_an_unreachable_one():
     button = JobPauseButton(_job(actions=JobAction.STOP | JobAction.PAUSE))
     assert button.display is True
-    assert str(button.label) == "Pause"
+    assert str(button.label) == "Pauza"
 
     button.sync(_job(actions=JobAction.STOP | JobAction.RESUME))
     assert button.resumes is True
-    assert str(button.label) == "Resume"
+    assert str(button.label) == "Wznów"
 
     button.sync(_job(actions=JobAction.STOP))
     assert button.display is False
@@ -237,7 +237,7 @@ def test_action_button_stops_a_running_job_and_clears_a_finished_one():
 
     button.sync(_job(status=ToolStatus.SUCCESS, actions=JobAction.CLEAR))
     assert button.stops is False
-    assert str(button.label) == "Clear"
+    assert str(button.label) == "Czyść"
 
 
 def test_action_button_is_hidden_while_a_job_offers_nothing():

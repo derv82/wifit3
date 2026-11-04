@@ -40,7 +40,7 @@ async def test_save_notifies_instead_of_crashing_on_config_error(monkeypatch):
         await pilot.pause(0)
 
         assert toasts, "a failed save should surface a toast"
-        assert toasts[0][1].get("title") == "Config Error"
+        assert toasts[0][1].get("title") == "Błąd konfiguracji"
         assert not isinstance(app.screen, PreferencesModal)   # dismissed anyway
 
 
@@ -115,7 +115,7 @@ async def test_choosing_an_unconfigured_tool_opens_its_modal_in_save_mode(monkey
         await wait_until(pilot, lambda: bool(app.screen.query("#wordlist-launch")))
 
         assert isinstance(app.screen, HashcatConfigModal)
-        assert str(app.screen.query_one("#wordlist-launch", Button).label) == "Save"
+        assert str(app.screen.query_one("#wordlist-launch", Button).label) == "Zapisz"
 
 
 @pytest.mark.asyncio
@@ -148,4 +148,4 @@ async def test_configure_button_opens_the_chosen_tools_modal():
         await wait_until(pilot, lambda: bool(app.screen.query("#wordlist-launch")))
 
         assert isinstance(app.screen, CpuCrackConfigModal)
-        assert str(app.screen.query_one("#wordlist-launch", Button).label) == "Save"
+        assert str(app.screen.query_one("#wordlist-launch", Button).label) == "Zapisz"

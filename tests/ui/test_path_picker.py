@@ -221,9 +221,9 @@ async def test_multi_select_journey(tree_fixture):
         tree = picker.query_one("#picker-tree")
         select = picker.query_one("#picker-select", Button)
         await wait_until(pilot, lambda: bool(tree.root.children))
-        assert str(select.label) == "Select"
+        assert str(select.label) == "Wybierz"
         await wait_until(pilot, lambda: tree.has_focus)     # spacebar selects, so the tree owns the keyboard
-        assert "spacebar" in str(picker.query_one("#picker-hint").content), "the key is not guessable"
+        assert "spacją" in str(picker.query_one("#picker-hint").content), "the key is not guessable"
 
         by_name = {n.data.path.name: n for n in tree.root.children}
         tree.cursor_line = by_name["top29m.txt"].line
@@ -231,7 +231,7 @@ async def test_multi_select_journey(tree_fixture):
         assert CHECK_GLYPH not in tree.render_line(painted).text  # paints the row, and caches it
         await pilot.press("space")                          # the real keypress, not the action
         await pilot.pause(0)
-        assert str(select.label) == "Select (1)"
+        assert str(select.label) == "Wybierz (1)"
         # Straight off the painted line: the tree caches rendered rows, so a mark that only
         # appears on the next mouse move is the failure mode here.
         assert CHECK_GLYPH in tree.render_line(painted).text
@@ -239,13 +239,13 @@ async def test_multi_select_journey(tree_fixture):
         tree.cursor_line = by_name["rockyou.txt"].line
         picker.action_toggle_check()
         await pilot.pause(0)
-        assert str(select.label) == "Select (2)"
+        assert str(select.label) == "Wybierz (2)"
         assert CHECK_GLYPH in str(tree.render_label(by_name["rockyou.txt"], None, None))
 
         tree.cursor_line = by_name["top29m.txt"].line       # a second press deselects
         picker.action_toggle_check()
         await pilot.pause(0)
-        assert str(select.label) == "Select (1)"
+        assert str(select.label) == "Wybierz (1)"
 
         tree.cursor_line = by_name["top29m.txt"].line
         picker.action_toggle_check()
@@ -265,7 +265,7 @@ async def test_multi_select_starts_from_what_is_already_chosen(tree_fixture):
         app.push_screen(PathPickerModal(wordlist, multiple=True, checked=[wordlist]), picked.append)
         await pilot.pause(0)
         picker = app.screen
-        assert str(picker.query_one("#picker-select", Button).label) == "Select (1)"
+        assert str(picker.query_one("#picker-select", Button).label) == "Wybierz (1)"
 
         picker.query_one("#picker-select", Button).press()
         await pilot.pause(0)
@@ -304,11 +304,11 @@ async def test_clicking_a_file_selects_it(tree_fixture):
 
         await pilot.click(tree, offset=(8, wordlist.line + 1))      # +1 for the tree's border
         await pilot.pause(0)
-        assert str(select.label) == "Select (1)"
+        assert str(select.label) == "Wybierz (1)"
 
         await pilot.click(tree, offset=(8, wordlist.line + 1))
         await pilot.pause(0)
-        assert str(select.label) == "Select", "clicking again deselects"
+        assert str(select.label) == "Wybierz", "clicking again deselects"
 
 
 @pytest.mark.asyncio
@@ -326,7 +326,7 @@ async def test_enter_selects_a_file(tree_fixture):
         await pilot.press("enter")
         await pilot.pause(0)
 
-        assert str(picker.query_one("#picker-select", Button).label) == "Select (1)"
+        assert str(picker.query_one("#picker-select", Button).label) == "Wybierz (1)"
 
 
 @pytest.mark.asyncio
@@ -345,7 +345,7 @@ async def test_spacebar_on_a_directory_still_expands_it(tree_fixture):
         await pilot.pause(0)
 
         assert folder.is_expanded
-        assert str(app.screen.query_one("#picker-select", Button).label) == "Select"
+        assert str(app.screen.query_one("#picker-select", Button).label) == "Wybierz"
 
 
 async def test_a_typed_glob_adds_its_matching_files(tree_fixture):
@@ -371,15 +371,15 @@ async def test_a_typed_glob_adds_its_matching_files(tree_fixture):
         await box.action_submit()
         await pilot.pause(0)
         assert app.screen is picker, "a glob adds, it doesn't dismiss"
-        assert str(select.label) == "Select (2)"
-        assert toasts == [("Added 1 files",)]
+        assert str(select.label) == "Wybierz (2)"
+        assert toasts == [("Dodano plików: 1",)]
 
         toasts.clear()
         box.value = str(wordlists / "*.zip")
         await box.action_submit()
         await pilot.pause(0)
-        assert toasts == [(f"No files match: {wordlists / '*.zip'}",)]
-        assert str(select.label) == "Select (2)"
+        assert toasts == [(f"Brak pasujących plików: {wordlists / '*.zip'}",)]
+        assert str(select.label) == "Wybierz (2)"
 
         select.press()
         await pilot.pause(0)

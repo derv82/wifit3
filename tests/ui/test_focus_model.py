@@ -121,7 +121,7 @@ def test_headline_persisted_wep_idle_shows_recovered(tmp_path):
     """A prior-session WEP key on disk, no campaign → the recovered-key banner."""
     _seed_wep(tmp_path, "aa-bb-cc-dd-ee-ff")
     h = _headline(_wep_ap())
-    assert 'WEP key: 6162636465 = "abcde"' in h[0]
+    assert 'Klucz WEP: 6162636465 = "abcde"' in h[0]
 
 
 def test_headline_active_campaign_outranks_recovered_key():
@@ -133,7 +133,7 @@ def test_headline_active_campaign_outranks_recovered_key():
     h = _headline(ap)
     joined = " ".join(h)
     assert "Replaying" in h[0]
-    assert "recovered" not in joined.lower()
+    assert "klucz wep" not in joined.lower()
     assert "1,234" in joined
 
 
@@ -150,13 +150,13 @@ def test_headline_sae_pmkid_is_not_a_captured_win():
     """A WPA3/SAE PMKID lands on the handshake but save_pmkid withholds it, so the
     headline must NOT claim 'Captured … saved' (the false-save bug)."""
     joined = " ".join(_headline(_pmkid_ap(pmkid_akm=8)))
-    assert "Captured" not in joined and "PMKID ×" not in joined
-    assert "saved to captures/" not in joined
+    assert "Przechwycono" not in joined and "PMKID ×" not in joined
+    assert "zapisano w" not in joined
 
 
 def test_headline_psk_pmkid_is_a_captured_win():
     joined = " ".join(_headline(_pmkid_ap(pmkid_akm=2)))
-    assert "Captured" in joined and "PMKID ×1" in joined
+    assert "Przechwycono" in joined and "PMKID ×1" in joined
 
 
 def test_headline_names_wpa3_enterprise_without_calling_it_sae():
@@ -166,7 +166,7 @@ def test_headline_names_wpa3_enterprise_without_calling_it_sae():
     headline = " ".join(_headline(ap))
     assert "WPA3/Enterprise" in headline
     assert "SAE" not in headline
-    assert "transition" not in headline
+    assert "przejściowy" not in headline
 
 
 def test_headline_names_wpa3_sae_before_generic_unsupported_state():
@@ -176,14 +176,14 @@ def test_headline_names_wpa3_sae_before_generic_unsupported_state():
     )
     headline = " ".join(_headline(ap))
     assert "WPA3/SAE" in headline
-    assert "Not yet supported" not in headline
+    assert "Nieobsługiwane" not in headline
 
 
 def test_headline_wpa2_enterprise_does_not_promise_a_psk_capture():
     ap = build_ap(encryption="WPA2", akms=["EAP"], akm_suites=[1])
     headline = " ".join(_headline(ap))
     assert "WPA2/Enterprise" in headline
-    assert "Listening for handshake" not in headline
+    assert "Nasłuchiwanie handshake" not in headline
     assert "PMKID" not in headline
 
 
@@ -191,14 +191,14 @@ def test_headline_wpa1_enterprise_says_wpa_not_wpa2():
     ap = build_ap(encryption="WPA-EAP-TKIP", akms=["EAP"], akm_suites=[1], rsn_valid=False)
     headline = " ".join(_headline(ap))
     assert "WPA/Enterprise" in headline and "WPA2" not in headline
-    assert "Listening for handshake" not in headline
+    assert "Nasłuchiwanie handshake" not in headline
 
 
 def test_status_footer_wpa1_has_no_pmf():
     ap = build_ap(encryption="WPA-PSK-TKIP", akms=["PSK"], akm_suites=[2], rsn_valid=False,
                   pairwise_cipher="TKIP")
     lines = fm.status_under_dash(ap, None, 0)
-    assert lines == ["[dim]Encryption:[/dim] [red]WPA[/red] [dim](PSK·TKIP)[/dim]"]
+    assert lines == ["[dim]Szyfrowanie:[/dim] [red]WPA[/red] [dim](PSK·TKIP)[/dim]"]
 
 
 def test_wpa1_psk_shows_deauth_but_not_pmkid_and_disables_eviltwin():
@@ -231,8 +231,8 @@ def test_headline_enterprise_transition_does_not_promise_a_psk_capture():
         akms=["EAP", "EAP-SHA256"], akm_suites=[1, 5],
     )
     headline = " ".join(_headline(ap))
-    assert "WPA3/Enterprise transition" in headline
-    assert "Listening for handshake" not in headline
+    assert "WPA3/Enterprise (tryb przejściowy)" in headline
+    assert "Nasłuchiwanie handshake" not in headline
 
 
 def test_headline_enterprise_partial_eapol_does_not_ask_for_deauth():
@@ -301,20 +301,20 @@ def test_headline_recovered_wps_psk_shows_banner():
 
 def test_headline_listening_when_no_psk():
     h = _headline(_wpa_ap())
-    assert "Listening for handshake" in h[0]
+    assert "Nasłuchiwanie handshake" in h[0]
 
 
 def test_headline_owe_is_not_a_crackable_capture():
     joined = " ".join(_headline(build_ap(encryption="OWE", akms=["OWE"], akm_suites=[18])))
-    assert "Listening for handshake" not in joined
-    assert "nothing to crack" in joined
+    assert "Nasłuchiwanie handshake" not in joined
+    assert "nie ma czego łamać" in joined
 
 
 @pytest.mark.parametrize("suites", [[20], [19]])
 def test_headline_sha384_psk_is_not_a_crackable_capture(suites):
     joined = " ".join(_headline(build_ap(encryption="WPA2", akms=["PSK-SHA384"], akm_suites=suites)))
-    assert "Listening for handshake" not in joined
-    assert "Not yet supported" in joined
+    assert "Nasłuchiwanie handshake" not in joined
+    assert "Nieobsługiwane" in joined
 
 
 def test_headline_unsupported_akm_partial_handshake_is_not_capturing():
@@ -328,8 +328,8 @@ def test_headline_unsupported_akm_partial_handshake_is_not_capturing():
     ap = build_ap(encryption="WPA2", akms=["PSK-SHA384"], akm_suites=[20])
     ap.handshakes = {"11:22:33:44:55:66": hs}
     joined = " ".join(_headline(ap))
-    assert "Capturing handshake" not in joined and "deauth" not in joined.lower()
-    assert "Not yet supported" in joined
+    assert "Przechwytuję handshake" not in joined and "deauth" not in joined.lower()
+    assert "Nieobsługiwane" in joined
 
 
 def _write_saved_psk(kind: str, psk: str) -> None:
@@ -343,8 +343,8 @@ def test_headline_unsupported_akm_with_saved_psk_shows_psk_without_listening():
     ap = build_ap(encryption="WPA2", akms=["PSK-SHA384"], akm_suites=[20])
     joined = " ".join(fm.status_headlines(ap, None, Vault()))
     assert "PSK: sha384-pass" in joined
-    assert "Listening for handshake" not in joined
-    assert "Not yet supported" in joined
+    assert "Nasłuchiwanie handshake" not in joined
+    assert "Nieobsługiwane" in joined
 
 
 def test_a_psk_the_ap_gave_up_is_a_green_tick():
@@ -356,7 +356,7 @@ def test_a_psk_the_ap_gave_up_is_a_green_tick():
 def test_a_psk_nothing_confirms_reads_not_verified():
     _write_saved_psk("wpa_psk", "cracked")
     headline = fm.status_headlines(build_ap(akms=["PSK"], akm_suites=[2]), None, Vault())[0]
-    assert "✓" not in headline and "PSK: cracked" in headline and "NOT VERIFIED" in headline
+    assert "✓" not in headline and "PSK: cracked" in headline and "NIEPOTWIERDZONY" in headline
 
 
 def test_a_psk_a_newer_capture_refutes_reads_stale_in_orange():
@@ -400,7 +400,7 @@ def test_wep_status_lines_idle_is_one_line_usable_only():
     ap = types.SimpleNamespace(bssid="aa:bb:cc:dd:ee:ff")
     lines = fm.wep_status_lines(ap, _iface_with_usable(0), None, 0)
     assert len(lines) == 1
-    assert "Usable IVs:" in lines[0] and "[red]0[/red]" in lines[0]
+    assert "Użyteczne IV:" in lines[0] and "[red]0[/red]" in lines[0]
 
 
 def test_wep_status_lines_campaign_splits_fakeauth_and_ivs():
@@ -411,8 +411,8 @@ def test_wep_status_lines_campaign_splits_fakeauth_and_ivs():
         state="associated", next_reauth_at=0, fail_reason=None))
     lines = fm.wep_status_lines(ap, _iface_with_usable(1234), camp, 0)
     assert len(lines) == 2
-    assert "Fake-Auth:" in lines[0] and "Associated" in lines[0]
-    assert "[cyan]1,234[/cyan]" in lines[1] and "Usable IVs:" in lines[1]
+    assert "Fake-Auth:" in lines[0] and "Skojarzony" in lines[0]
+    assert "[cyan]1,234[/cyan]" in lines[1] and "Użyteczne IV:" in lines[1]
 
 
 def test_wep_status_lines_drops_threshold_once_crossed():
@@ -444,18 +444,18 @@ def _rsn_ap(*, encryption: str = "WPA2", akms: tuple[str, ...] = ("PSK",), wpa3:
 
 
 def test_pmf_status_markup_gradient():
-    assert fm.pmf_status_markup(_rsn_ap(pmf_required=True, pmf_capable=True)) == "[red]Required[/red]"
+    assert fm.pmf_status_markup(_rsn_ap(pmf_required=True, pmf_capable=True)) == "[red]Wymagany[/red]"
     assert "dark_orange" in fm.pmf_status_markup(_rsn_ap(pmf_capable=True))
-    assert fm.pmf_status_markup(_rsn_ap()) == "[dim]Disabled[/dim]"
+    assert fm.pmf_status_markup(_rsn_ap()) == "[dim]Wyłączony[/dim]"
     # MFPR without MFPC is malformed, shown distinctly rather than as "Required".
-    assert fm.pmf_status_markup(_rsn_ap(pmf_required=True, pmf_capable=False)) == "[red]Invalid[/red]"
+    assert fm.pmf_status_markup(_rsn_ap(pmf_required=True, pmf_capable=False)) == "[red]Błędny[/red]"
 
 
 def test_status_footer_wpa_shows_encryption_and_pmf():
     lines = fm.status_under_dash(_rsn_ap(pmf_required=True, pmf_capable=True), None, 0)
     assert len(lines) == 2
-    assert "Encryption:" in lines[0] and "WPA2" in lines[0]
-    assert "PMF:" in lines[1] and "Required" in lines[1]
+    assert "Szyfrowanie:" in lines[0] and "WPA2" in lines[0]
+    assert "PMF:" in lines[1] and "Wymagany" in lines[1]
     assert "Protected Mgmt Frames" not in lines[1]      # abbreviated
 
 
@@ -474,7 +474,7 @@ def test_router_identity_details_shows_source_provenance():
     assert details is not None
     assert "[bold]MikroTik hAP ac²[/bold]" in details
     assert "[dim]Model:[/dim] hAP ac² [dim](WSC Beacon)[/dim]" in details
-    assert "[dim]Manuf:[/dim] MikroTik [dim](WSC Beacon)[/dim]" in details
+    assert "[dim]Prod.:[/dim] MikroTik [dim](WSC Beacon)[/dim]" in details
 
 
 def test_router_identity_details_can_show_m1_and_oui_separately():
@@ -486,7 +486,7 @@ def test_router_identity_details_can_show_m1_and_oui_separately():
     assert details is not None
     assert "[bold]Cisco AP-500[/bold]" in details
     assert "[dim]Model:[/dim] AP-500 [dim](WSC M1)[/dim]" in details
-    assert "[dim]Manuf:[/dim] Cisco [dim](WSC M1)[/dim]" in details
+    assert "[dim]Prod.:[/dim] Cisco [dim](WSC M1)[/dim]" in details
     assert "[dim]IEEE OUI:[/dim] Apple" in details
 
 
@@ -500,7 +500,7 @@ def test_router_identity_details_asus_wsc_beacon():
     assert fm.router_identity_details(ap) == "\n".join([
         "[bold]ASUS RT-AC66U[/bold]",
         "[dim]Model:[/dim] RT-AC66U [dim](WSC Beacon)[/dim]",
-        "[dim]Manuf:[/dim] ASUS [dim](WSC Beacon)[/dim]",
+        "[dim]Prod.:[/dim] ASUS [dim](WSC Beacon)[/dim]",
         "[dim]IEEE OUI:[/dim] ASUS",
     ])
 
@@ -515,7 +515,7 @@ def test_router_identity_details_netgear_wsc_m1():
     assert fm.router_identity_details(ap) == "\n".join([
         "[bold]Netgear C3700-100NAS[/bold]",
         "[dim]Model:[/dim] C3700-100NAS [dim](WSC M1)[/dim]",
-        "[dim]Manuf:[/dim] Netgear [dim](WSC M1)[/dim]",
+        "[dim]Prod.:[/dim] Netgear [dim](WSC M1)[/dim]",
         "[dim]IEEE OUI:[/dim] Netgear",
     ])
 
@@ -530,7 +530,7 @@ def test_router_identity_details_odm_wsc_beacon_with_branded_oui():
     assert fm.router_identity_details(ap) == "\n".join([
         "[bold]Jensen of Scandinavia Air:Link 5000AC[/bold]",
         "[dim]Model:[/dim] Jensen of Scandinavia Air:Link 5000AC [dim](WSC Beacon)[/dim]",
-        "[dim]Manuf:[/dim] Jensen [dim](IEEE OUI)[/dim]",
+        "[dim]Prod.:[/dim] Jensen [dim](IEEE OUI)[/dim]",
         "[dim]Chipset:[/dim] Ralink [dim](WSC)[/dim]",
     ])
 
@@ -545,8 +545,8 @@ def test_router_identity_details_includes_device_type():
     assert details == "\n".join([
         "[bold]HP OfficeJet Pro (printer)[/bold]",
         "[dim]Model:[/dim] OfficeJet Pro [dim](WSC M1)[/dim]",
-        "[dim]Manuf:[/dim] HP [dim](WSC M1)[/dim]",
-        "[dim]Device Type:[/dim] printer [dim](WSC M1)[/dim]",
+        "[dim]Prod.:[/dim] HP [dim](WSC M1)[/dim]",
+        "[dim]Typ urządzenia:[/dim] printer [dim](WSC M1)[/dim]",
     ])
 
 
@@ -557,7 +557,7 @@ def test_router_identity_details_is_blank_without_evidence():
 def test_status_footer_open_is_encryption_only():
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", encryption="OPEN")
     lines = fm.status_under_dash(ap, None, 0)
-    assert len(lines) == 1 and "Encryption:" in lines[0]
+    assert len(lines) == 1 and "Szyfrowanie:" in lines[0]
 
 
 def test_status_footer_wep_is_fakeauth_and_usable_ivs():
@@ -565,8 +565,8 @@ def test_status_footer_wep_is_fakeauth_and_usable_ivs():
         encryption="WEP", akms=[], pairwise_cipher=None, wpa3=False,
         transition_mode=False, wep=types.SimpleNamespace(unique_ivs=0), bssid="x")
     lines = fm.status_under_dash(ap, _iface_with_usable(5), 0)
-    assert any("Usable IVs" in ln for ln in lines)
-    assert not any("Encryption:" in ln for ln in lines)
+    assert any("Użyteczne IV" in ln for ln in lines)
+    assert not any("Szyfrowanie:" in ln for ln in lines)
 
 
 def _wep_btn_ap() -> AccessPoint:
@@ -885,7 +885,7 @@ async def test_derive_buttons_all_disabled_when_silenced(buttons_screen, monkeyp
     for bid in ("btn-gen-ivs", "btn-pmkid", "btn-deauth", "btn-wps-pin",
                 "btn-eviltwin", "btn-chop"):
         assert btns[bid].disabled is True
-    assert fm.campaign_blocked(DeauthCampaign, ap) == "AP silenced"
+    assert fm.campaign_blocked(DeauthCampaign, ap) == "AP wyciszony"
 
 
 def _stored_psk(value: str, saved_at: int) -> Key:
@@ -909,13 +909,13 @@ async def test_verify_button_follows_the_stored_credentials_and_the_running_camp
     try:
         assert verify_button()[0] is False
         state.keys = (_stored_psk("a", 10),)
-        assert verify_button() == (True, False, "Verify")
+        assert verify_button() == (True, False, "Weryfikuj")
         state.keys = (_stored_psk("a", 10), _stored_psk("b", 20))
-        assert verify_button() == (True, False, "Verify ▾")
+        assert verify_button() == (True, False, "Weryfikuj ▾")
         buttons_screen._controls._campaign = VerifyPskCampaign(None, ap, "a")
-        assert verify_button() == (True, True, "Verifying…")
+        assert verify_button() == (True, True, "Weryfikuję…")
         buttons_screen._controls._campaign = _FakeWep(chop=False)
-        assert verify_button() == (True, True, "Verify ▾")
+        assert verify_button() == (True, True, "Weryfikuj ▾")
     finally:
         buttons_screen._controls._campaign = None
         state.keys = ()
@@ -924,4 +924,4 @@ async def test_verify_button_follows_the_stored_credentials_and_the_running_camp
 def test_headline_silenced_outranks_listening(monkeypatch):
     ap = _wpa_ap()
     monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid])
-    assert "Silenced" in _headline(ap)[0]
+    assert "Wyciszony" in _headline(ap)[0]

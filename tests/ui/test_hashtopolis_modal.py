@@ -104,7 +104,7 @@ async def test_server_without_wordlists_says_so(server):
         await pilot.pause(0)
         await _test_connection(app, pilot)
 
-        assert "no wordlists found" in str(
+        assert "brak słowników" in str(
             app.screen.query_one("#hashtopolis-test-result", Label).render())
 
 
@@ -162,7 +162,7 @@ async def test_status_asks_for_a_refresh_until_wordlists_are_known(server):
         app.push_screen(HashtopolisConfigModal())
         await pilot.pause(0)
 
-        assert "Refresh to list wordlists" in str(
+        assert "Odśwież, aby zobaczyć słowniki" in str(
             app.screen.query_one("#hashtopolis-test-result", Label).render())
 
 
@@ -173,7 +173,7 @@ async def test_status_counts_wordlists_and_groups(server):
         await pilot.pause(0)
         await _test_connection(app, pilot)
 
-        assert "Connected · 2 wordlists · 1 group" in str(
+        assert "Połączono · 2 słowniki · 1 grupa" in str(
             app.screen.query_one("#hashtopolis-test-result", Label).render())
 
 
@@ -187,10 +187,10 @@ async def test_reveal_toggles_the_access_key(server):
 
         reveal.press()
         await pilot.pause(0)
-        assert not access_key.password and str(reveal.label) == "hide"
+        assert not access_key.password and str(reveal.label) == "ukryj"
         reveal.press()
         await pilot.pause(0)
-        assert access_key.password and str(reveal.label) == "reveal"
+        assert access_key.password and str(reveal.label) == "pokaż"
 
 
 async def test_confirm_saves_the_access_group_name(server):

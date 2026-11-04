@@ -228,7 +228,7 @@ def test_the_delete_prompt_counts_an_aps_captures_and_keys(tmp_path):
     vault = Vault()
 
     assert _ap_contents_text(vault.persisted("aa:bb:cc:dd:ee:ff"), vault.ap_state("aa:bb:cc:dd:ee:ff")) == \
-        "1 capture, 1 key"
+        "1× przechwyt, 1× klucz"
 
 
 def test_an_ap_with_only_pcaps_says_how_many_captures_none_crackable(tmp_path):
@@ -236,7 +236,7 @@ def test_an_ap_with_only_pcaps_says_how_many_captures_none_crackable(tmp_path):
     (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000500_pmkid.pcap").write_bytes(b"")
     files = Vault().ap_state("aa:bb:cc:dd:ee:ff").handshake_and_pmkid_files
 
-    assert _no_crackable_text(files) == f"2 captures, none crackable ({date_text(1700000500)})"
+    assert _no_crackable_text(files) == f"Przechwytów: 2, nic do złamania ({date_text(1700000500)})"
 
 
 def test_each_uncracked_row_reads_its_pair_client_verdict_and_ssid(tmp_path):
@@ -244,8 +244,8 @@ def test_each_uncracked_row_reads_its_pair_client_verdict_and_ssid(tmp_path):
     groups = hashline_groups(Vault().ap_state("aa:bb:cc:dd:ee:ff").uncracked)
     prompts = [" ".join(str(_hashline_prompt(group, True, True, "", 0)).split()) for group in groups]
 
-    assert prompts == ["no date M2+M3 …55:66 authorized Test1", "no date M2+M3 …55:77 authorized Test1",
-                       "no date PMKID …55:66 authorized Test1"]
+    assert prompts == ["bez daty M2+M3 …55:66 autoryzacja Test1", "bez daty M2+M3 …55:77 autoryzacja Test1",
+                       "bez daty PMKID …55:66 autoryzacja Test1"]
 
 
 def test_each_uncracked_row_counts_and_names_its_exhausted_wordlists(tmp_path):
@@ -258,7 +258,7 @@ def test_each_uncracked_row_counts_and_names_its_exhausted_wordlists(tmp_path):
     groups = hashline_groups(state.uncracked)
 
     assert [_exhausted_count_text(g, state.exhausted_wordlists) for g in groups] == [
-        "2 wordlists exhausted (1 on some lines)", "", "1 wordlist exhausted"]
+        "wyczerpano 2 słowniki (1 na części linii)", "", "wyczerpano 1 słownik"]
     assert [_exhausted_names(g, state.exhausted_wordlists) for g in groups] == [
         ["default.txt", "rockyou.txt"], [], ["default.txt"]]
 
@@ -276,7 +276,7 @@ async def test_add_key_adds_a_psk_no_saved_capture_confirms_as_not_verified(tmp_
         await app.push_screen(drawer)
 
         drawer._credential_added(ManualCredential(CaptureType.WPA_PSK, "HomeNet", "aa:bb:cc:dd:ee:ff", "wrongpass"))
-        assert app.notified[-1] == "Credential added, not verified"
+        assert app.notified[-1] == "Klucz dodany, niezweryfikowany"
         state = app.vault.ap_state("aa:bb:cc:dd:ee:ff")
         assert [k.value for k in state.keys] == ["wrongpass"]
         assert state.keys[0].manual_capture_names
@@ -285,8 +285,8 @@ async def test_add_key_adds_a_psk_no_saved_capture_confirms_as_not_verified(tmp_
         await _wait_until(pilot, lambda: propagate.call_args is not None and "rightpass" in propagate.call_args.args)
         await asyncio.wrap_future(propagate.spy_return)
         await app.workers.wait_for_complete()
-        assert app.notified[-2:] == ["Credential verified and added to Vault",
-                                     "PSK also verified and saved for 1 related APs"]
+        assert app.notified[-2:] == ["Klucz zweryfikowany i dodany do skrytki",
+                                     "PSK zweryfikowano i zapisano też dla 1 powiązanych AP"]
         assert app.vault.ap_state("aa:bb:cc:dd:ee:ff").status is PasswordStatus.CURRENT
 
 
@@ -301,7 +301,7 @@ async def test_add_key_adds_a_psk_as_not_verified_when_the_ap_has_nothing_to_cra
         drawer._credential_added(ManualCredential(CaptureType.WPA_PSK, "Other", "02:00:00:00:00:20", "anything"))
         await app.workers.wait_for_complete()
 
-        assert app.notified[-1] == "Credential added, not verified"
+        assert app.notified[-1] == "Klucz dodany, niezweryfikowany"
         assert app.vault.ap_state("02:00:00:00:00:20").status is PasswordStatus.NOT_VERIFIED
 
         drawer._credential_added(ManualCredential(CaptureType.WPS_PIN, "Other", "02:00:00:00:00:20", "1234"))
@@ -319,11 +319,11 @@ async def test_add_key_adds_a_psk_only_an_m1m2_line_confirms_as_not_verified(tmp
 
         drawer._credential_added(ManualCredential(CaptureType.WPA_PSK, "HomeNet", "aa:bb:cc:dd:ee:ff", "wrongpass"))
         await app.workers.wait_for_complete()
-        assert app.notified[-1] == "Credential added, not verified"
+        assert app.notified[-1] == "Klucz dodany, niezweryfikowany"
         drawer._credential_added(ManualCredential(CaptureType.WPA_PSK, "HomeNet", "aa:bb:cc:dd:ee:ff", "rightpass"))
         await app.workers.wait_for_complete()
 
-        assert app.notified[-1] == "Credential added, not verified"
+        assert app.notified[-1] == "Klucz dodany, niezweryfikowany"
         assert app.vault.ap_state("aa:bb:cc:dd:ee:ff").status is PasswordStatus.NOT_VERIFIED
 
 
@@ -345,7 +345,7 @@ async def test_deleting_a_wps_psk_asks_naming_the_pin_that_goes_with_it():
     app.vault.save_wep_key(ap, b"abcde")
     async with app.run_test() as pilot:
         assert await _delete_key_prompt(app, pilot, "hunter22") == \
-            "Delete PSK hunter22? Also removes WPS PIN 12345670."
+            "Usunąć PSK hunter22? Usunie też WPS PIN 12345670."
 
 
 @pytest.mark.asyncio
@@ -355,7 +355,7 @@ async def test_deleting_a_psk_does_not_name_a_pin_another_file_still_holds():
     app.vault.save_wps_pin(ap, "12345670", "oldpass")
     app.vault.save_wps_pin(ap, "12345670", "newpass")
     async with app.run_test() as pilot:
-        assert await _delete_key_prompt(app, pilot, "oldpass") == "Delete PSK oldpass?"
+        assert await _delete_key_prompt(app, pilot, "oldpass") == "Usunąć PSK oldpass?"
 
 
 @pytest.mark.asyncio
@@ -499,7 +499,7 @@ async def test_a_refresh_shows_the_new_state_and_keeps_expansion_ticks_and_scrol
         assert len(row.query(".history-row")) == 2
         uncracked = item.query_one(_UncrackedList)
         assert [group in uncracked.selected for group in uncracked.groups()] == [False, True, True]
-        assert "2 captures selected" in str(item.query_one(".selected-count", Label).content)
+        assert "Wybrano przechwytów: 2" in str(item.query_one(".selected-count", Label).content)
         assert item.scroll_y == scrolled
 
 
@@ -618,7 +618,7 @@ async def test_switching_aps_shows_each_aps_keys_and_uncracked_section_and_takes
             if ssid == "Other":
                 assert app.focused is not uncracked
         assert len(uncracked.groups()) == 3
-        assert "3 captures selected" in str(item.query_one(".selected-count", Label).content)
+        assert "Wybrano przechwytów: 3" in str(item.query_one(".selected-count", Label).content)
 
 
 @pytest.mark.asyncio
@@ -650,11 +650,11 @@ async def test_unchecked_hashlines_are_left_out_of_the_crack_job(tmp_path, mocke
         mocker.patch.object(app, "push_screen", side_effect=lambda modal, callback: callback({"wordlists": []}))
         uncracked = item.query_one(_UncrackedList)
         groups = uncracked.groups()
-        assert "3 captures selected" in str(item.query_one(".selected-count", Label).content)
+        assert "Wybrano przechwytów: 3" in str(item.query_one(".selected-count", Label).content)
 
         uncracked.deselect(groups[0])
         await pilot.pause(0)
-        assert "2 captures selected" in str(item.query_one(".selected-count", Label).content)
+        assert "Wybrano przechwytów: 2" in str(item.query_one(".selected-count", Label).content)
         next(b for b in item.query(_CrackerButton).results(_CrackerButton) if b.tool.name == ToolName.CPU_CRACK).press()
         await pilot.pause(0)
 

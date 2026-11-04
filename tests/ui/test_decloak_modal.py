@@ -150,7 +150,7 @@ async def test_one_press_sends_the_list_the_status_line_priced():
         modal.query_one("#use-broadcast", Checkbox).value = True
         await pilot.pause(0)
 
-        assert "2 SSIDs, 4 requests" in _status(modal)
+        assert "2 SSID, 4 żądań" in _status(modal)
 
         modal._accept()
         await pilot.pause(0)
@@ -168,7 +168,7 @@ async def test_the_status_line_counts_lines_that_will_not_be_sent():
         modal.query_one("#candidates", TextArea).load_text("Net\nNet\n" + "X" * 33)
         await pilot.pause(0)
 
-        assert "1 SSIDs" in _status(modal) and "(2 dropped)" in _status(modal)
+        assert "1 SSID" in _status(modal) and "(odrzucono 2)" in _status(modal)
 
 
 async def test_editing_the_base_always_re_guesses_the_list():
@@ -198,7 +198,7 @@ async def test_no_method_selected_is_refused():
         modal.query_one("#use-directed", Checkbox).value = False
         await pilot.pause(0)
 
-        assert _status(modal) == "Pick at least one method"
+        assert _status(modal) == "Wybierz minimum jedną metodę"
 
         modal._accept()
         await pilot.pause(0)
@@ -212,7 +212,7 @@ async def test_an_empty_list_is_refused():
         app.push_screen(modal, got.append)
         await pilot.pause(0)
 
-        assert _status(modal) == "No candidate SSIDs to send"
+        assert _status(modal) == "Brak kandydatów SSID do wysłania"
 
         modal._accept()
         await pilot.pause(0)
@@ -232,7 +232,7 @@ async def test_a_picked_wordlist_takes_over_and_hides_the_list(tmp_path):
         await pilot.pause(0)
 
         assert not modal.query_one("#candidates", TextArea).display
-        assert "10 SSIDs, 10 requests" in _status(modal)
+        assert "10 SSID, 10 żądań" in _status(modal)
 
         modal._accept()
         await pilot.pause(0)
@@ -287,7 +287,7 @@ async def test_a_half_typed_path_is_not_an_error(tmp_path):
         await pilot.pause(0)
 
         assert modal.wordlist_lines == 0
-        assert "SSIDs" in _status(modal)
+        assert "SSID" in _status(modal)
 
 
 async def test_a_long_wordlist_opens_truncated_and_the_buttons_move_it(tmp_path):
@@ -302,11 +302,11 @@ async def test_a_long_wordlist_opens_truncated_and_the_buttons_move_it(tmp_path)
         await pilot.pause(0)
 
         # 300s / 0.15s per directed probe
-        assert "2,000 SSIDs" in _status(modal) and "truncated to 5 min" in _status(modal)
+        assert "2,000 SSID" in _status(modal) and "skrócone do 5 min" in _status(modal)
 
         modal.truncate_seconds = 1200
         await pilot.pause(0)
-        assert "8,000 SSIDs" in _status(modal)
+        assert "8,000 SSID" in _status(modal)
 
         modal._accept()
         await pilot.pause(0)
@@ -330,7 +330,7 @@ async def test_pressing_the_chosen_truncation_again_lifts_it(tmp_path):
         await pilot.pause(0)
 
         assert modal.truncate_seconds is None
-        assert "24,001 SSIDs" in _status(modal) and "truncated" not in _status(modal)
+        assert "24,001 SSID" in _status(modal) and "skrócone" not in _status(modal)
 
 
 async def test_only_truncations_that_would_shorten_the_run_are_offered(tmp_path):

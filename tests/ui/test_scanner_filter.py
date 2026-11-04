@@ -98,8 +98,8 @@ class _ScannerHost(App):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("width", "encryption_label_text", "channels_label_text"), [
-    (66, None, None), (67, None, "Ch"), (70, None, "Ch"), (71, "Enc", "Ch"), (75, "Enc", "Ch"),
-    (76, "Enc", "Channel"), (82, "Enc", "Channel"), (83, "Encryption", "Channel"),
+    (66, None, None), (67, None, "CH"), (70, None, "CH"), (71, "Szy", "CH"), (75, "Szy", "CH"),
+    (76, "Szy", "CH"), (82, "Szy", "CH"), (83, "Szyfrowanie", "CH"),
 ])
 async def test_filter_bar_labels_shrink_then_hide_as_the_terminal_narrows(
         width, encryption_label_text, channels_label_text):

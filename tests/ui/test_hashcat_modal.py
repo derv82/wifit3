@@ -109,7 +109,7 @@ def test_an_unwritable_config_warns_but_keeps_the_paths(monkeypatch):
                      "probed_ssid_passwords": True})
 
     assert Config.hashcat.path == r"D:\hashcat.exe"
-    assert warnings and warnings[0][1].get("title") == "Config Error"
+    assert warnings and warnings[0][1].get("title") == "Błąd konfiguracji"
 
 
 async def test_the_self_test_checkbox_edits_the_args_text():
@@ -221,7 +221,7 @@ async def test_x_removes_one_wordlist_and_clear_removes_them_all(tmp_path):
         await pilot.pause()
         assert modal._wordlists == []
         assert not clear.display
-        assert "none chosen" in str(rows.query_one(Label).content)
+        assert "brak wyboru" in str(rows.query_one(Label).content)
         assert Config.hashcat.wordlists == [str(tmp_path / "a.txt"), str(tmp_path / "b.txt"),
                                          str(tmp_path / "c.txt")], "nothing is saved before Launch"
 
@@ -295,7 +295,7 @@ async def test_no_probed_ssids_disables_their_box_but_keeps_the_saved_choice():
         app.push_screen(CpuCrackConfigModal(confirm_label="Save"), dismissed.append)
         await pilot.pause(0)
         probed = app.screen.query_one("#probed-ssid-passwords", Checkbox)
-        assert (probed.value, probed.disabled, str(probed.label)) == (False, True, "Probed SSIDs (0)")
+        assert (probed.value, probed.disabled, str(probed.label)) == (False, True, "Sondowane SSID (0)")
         app.screen.query_one("#wordlist-launch", Button).press()
         await pilot.pause(0)
 
@@ -353,16 +353,16 @@ async def test_password_source_labels_count_the_chosen_hashlines_ssids_or_one_ss
     async with app.run_test() as pilot:
         for modal, ssid_label in (
                 (CpuCrackConfigModal(bssid=persisted.bssid, probed_ssids=["CafeGuest"], hashlines=[_dated(chosen)]),
-                 f"This AP's SSID variants ({len(ssid_variants('ab'))})"),
+                 f"Warianty SSID tego AP ({len(ssid_variants('ab'))})"),
                 (HashcatConfigModal(confirm_label="Save", probed_ssids=["CafeGuest"]),
-                 f"This AP's SSID variants (about {len(ssid_variants('HomeWifi')):,} per SSID)")):
+                 f"Warianty SSID tego AP (ok. {len(ssid_variants('HomeWifi')):,} na SSID)")):
             await app.push_screen(modal)
             await app.workers.wait_for_complete()
             await pilot.pause()
             labels = [str(checkbox.label) for checkbox in modal.query(Checkbox)
                       if checkbox.id != "hashcat-self-test-disable"]
-            assert labels == [f"Default passwords ({default_count:,})", ssid_label,
-                              f"Probed SSIDs ({len(ssid_passwords(['CafeGuest']))})"]
+            assert labels == [f"Domyślne hasła ({default_count:,})", ssid_label,
+                              f"Sondowane SSID ({len(ssid_passwords(['CafeGuest']))})"]
             app.pop_screen()
 
 
@@ -394,8 +394,8 @@ async def test_exhausted_wordlists_and_sources_are_marked_with_when_and_on_how_m
         assert not fresh_row.has_class("exhausted")
         assert exhausted_row.styles.background != fresh_row.styles.background
         assert not modal.query_one("#ap-ssid-passwords", Checkbox).has_class("exhausted")
-        assert exhausted_row.tooltip == f"Exhausted {date} (3 days ago) on 1/2 hashlines"
-        assert default.tooltip == f"Exhausted {date} (3 days ago) on 2/2 hashlines"
+        assert exhausted_row.tooltip == f"Wyczerpane {date} (3 dni temu) na 1/2 hashlines"
+        assert default.tooltip == f"Wyczerpane {date} (3 dni temu) na 2/2 hashlines"
 
 
 async def test_exhausted_rows_start_unchecked_and_one_click_restores_them(tmp_path):
@@ -443,4 +443,4 @@ async def test_deselecting_a_wordlist_skips_it_in_the_launch_but_keeps_it_saved(
 
 def test_exhausted_today_is_not_zero_days_ago():
     tooltip = _exhausted_tooltip(Exhaustion("9:100", ("a.txt",), 1, 2, int(time.time()) - 60))
-    assert "(today)" in tooltip and "days ago" not in tooltip
+    assert "(dzisiaj)" in tooltip and "dni temu" not in tooltip

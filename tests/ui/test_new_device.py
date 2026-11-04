@@ -26,7 +26,7 @@ async def test_shows_description_and_prompt():
         modal = app.screen
         assert isinstance(modal, NewDeviceDialog)
         assert "RTL8812AU (Alfa AWUS036ACH)" in str(modal.query_one("#desc").render())
-        assert "A new wireless device was detected" in str(modal.query_one("#title").render())
+        assert "Wykryto nową kartę bezprzewodową" in str(modal.query_one("#title").render())
 
 
 @pytest.mark.asyncio

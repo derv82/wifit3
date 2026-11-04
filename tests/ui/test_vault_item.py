@@ -21,8 +21,8 @@ def _key(capture_type: CaptureType, value: str) -> Key:
 
 def test_date_text_says_today_and_drops_the_time_for_another_year():
     now = int(time.time())
-    assert date_text(now).startswith("today ")
-    assert date_text(None) == "no date"
+    assert date_text(now).startswith("dziś  ")
+    assert date_text(None) == "bez daty"
     assert date_text(now - 2 * 366 * 86400)[-4:].isdigit()
 
 
@@ -57,5 +57,5 @@ async def test_key_row_takes_its_keys_status_and_says_why():
     current_row, guess_row = await _row(current, state), await _row(guess, state)
 
     assert current_row.has_class("-current") and guess_row.has_class("-not-verified")
-    assert "(0/1 captures, verified)" in current_row._summary_markup()
-    assert "(0/1 captures, not verified yet)" in guess_row._summary_markup()
+    assert "(0/1 przechwytów, sprawdzone)" in current_row._summary_markup()
+    assert "(0/1 przechwytów, brak weryfikacji)" in guess_row._summary_markup()

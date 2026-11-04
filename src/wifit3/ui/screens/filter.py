@@ -123,7 +123,7 @@ class FilterBar(HorizontalScroll):
         yield channels_label
         yield Button(self._channels_text(None), id="filter-channels", compact=True)
         yield Input(placeholder="filtruj po ssid…", id="filter-text", compact=True)
-        yield Checkbox("Ukryj wyciszone", value=Config.hide_silenced,
+        yield Checkbox("Wyciszone", value=Config.hide_silenced,
                        id="filter-hide-silenced", compact=True)
 
     def focus_text(self) -> None:

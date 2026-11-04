@@ -72,7 +72,7 @@ def test_start_logs_the_credential_being_verified():
 
     FocusViewV2._start_verify(host, key)
 
-    assert host._log.call_args_list[0].args[0] == "Verifying PSK [cyan]hunter22[/]..."
+    assert host._log.call_args_list[0].args[0] == "Weryfikuję PSK [cyan]hunter22[/]…"
 
 
 def test_a_dismissed_menu_starts_nothing():
@@ -96,8 +96,8 @@ async def test_controls_construct_a_verify_campaign_with_its_value():
 
 
 @pytest.mark.parametrize("outcome, line, correct", [
-    (VerifyOutcome.VERIFIED, "[green]Verified correct[/green]", True),
-    (VerifyOutcome.REJECTED, "[red]Incorrect (stale)[/red]", False),
+    (VerifyOutcome.VERIFIED, "[green]Poprawne[/green]", True),
+    (VerifyOutcome.REJECTED, "[red]Błędne (nieaktualne)[/red]", False),
 ])
 def test_finish_records_a_verified_or_rejected_key(outcome, line, correct):
     key = _key(CaptureType.WPA_PSK, "hunter22", 10)
@@ -123,7 +123,7 @@ def test_finish_records_nothing_for_an_error_or_a_stop(campaign):
 
     host.app.vault.record_live_verification.assert_not_called()
     if campaign.error:
-        assert "[yellow]Error:[/yellow] AP never sent EAPOL M1" in host._log.call_args.args[0]
+        assert "[yellow]Błąd:[/yellow] AP never sent EAPOL M1" in host._log.call_args.args[0]
 
 
 def test_menu_rows_align_the_dates_right():

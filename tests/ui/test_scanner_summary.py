@@ -14,7 +14,7 @@ def test_none_when_no_members():
 
 def test_single_device_is_singular():
     line = device_scan_summary([_member("MT7921AU", [1, 6, 36, 149])])
-    assert line == ("Scanning with [bold cyan]1[/] device: "
+    assert line == ("Skanowanie na [bold cyan]1[/] urządzeniu: "
                     "[bold]MT7921AU[/] ([bold cyan]2[/]+[bold green]5G[/])")
 
 
@@ -24,6 +24,6 @@ def test_multiple_devices_join_with_band_tags():
         _member("AR9271", [1, 6, 11]),
     ]
     line = device_scan_summary(members)
-    assert line == ("Scanning with [bold cyan]2[/] devices: "
+    assert line == ("Skanowanie na [bold cyan]2[/] urządzeniach: "
                     "[bold]MT7921AU[/] ([bold cyan]2[/]+[bold green]5G[/]), "
                     "[bold]AR9271[/] ([bold cyan]2G[/])")

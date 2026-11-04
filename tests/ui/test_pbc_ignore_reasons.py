@@ -23,4 +23,4 @@ def test_every_reason_is_listed(monkeypatch):
     monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid.lower()])
     assert ap.is_hidden
     assert WifiteApp.pbc_ignore_reasons(_app(PasswordStatus.CURRENT, False), ap) == [
-        "AP silenced", "hidden SSID", "PSK already current", "PBC disabled (press [bold]w[/bold])"]
+        "AP wyciszone", "ukryty SSID", "PSK już aktualny", "PBC wyłączone (naciśnij [bold]w[/bold])"]

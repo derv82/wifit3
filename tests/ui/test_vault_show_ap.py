@@ -74,7 +74,7 @@ def test_show_ap_for_an_ap_no_longer_in_the_array_stays_in_the_vault():
 
     assert app.screen_stack == [scanner, drawer]
     assert app.target_ap is None
-    drawer.notify.assert_called_once_with("AP not in range")
+    drawer.notify.assert_called_once_with("AP poza zasięgiem")
 
 
 def _panel(array, line_count: int):
@@ -107,11 +107,11 @@ def test_show_ap_is_disabled_while_a_campaign_is_active():
 
     _ApStatePanel._refresh_show_ap_button(panel)
     button = panel._ssid_lines[0].show_ap_button
-    assert (button.disabled, button.tooltip) == (True, "Disabled; wps_pin campaign is active")
+    assert (button.disabled, button.tooltip) == (True, "Wyłączony; trwa kampania wps_pin")
 
     Campaign.active = None
     _ApStatePanel._refresh_show_ap_button(panel)
-    assert (button.disabled, button.tooltip) == (False, "Focus this AP")
+    assert (button.disabled, button.tooltip) == (False, "Pokaż ten AP")
 
 
 def test_show_ap_press_posts_show_ap_pressed_for_the_ap_in_view():

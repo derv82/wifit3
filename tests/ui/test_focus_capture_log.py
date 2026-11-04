@@ -35,5 +35,5 @@ async def test_focus_logs_the_watchers_save_result_for_its_target_only():
                                client_mac="11:22:33:44:55:66", save_result=saved)
             focus.on_wifite_app_ap_event_detected(WifiteApp.ApEventDetected(ev))
 
-        assert len([ln for ln in lines if "PMKID captured" in ln]) == 1
-        assert any("saved:" in ln for ln in lines)
+        assert len([ln for ln in lines if "PMKID przechwycony" in ln]) == 1
+        assert any("zapisano:" in ln for ln in lines)
