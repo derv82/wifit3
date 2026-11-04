@@ -48,7 +48,8 @@ class RegisterAccess(enum.Enum):
 
 @dataclass(frozen=True)
 class RegisterOp:
-    """One register access an op carries; ``value`` is None when the op does not carry it (a read request)."""
+    """One register access an op carries; ``value`` is None when the op does not carry it (a read request).
+    In a waiver's run, a value of None matches any value."""
     access: RegisterAccess
     address: int
     value: int | None
@@ -65,19 +66,22 @@ class TxOpField:
 @dataclass(frozen=True)
 class Waiver:
     """value_only_register / value_only_tx_op_field: the driver makes the op; that register's written value or that
-    TX op field is not compared. capture_only_run: this run of register ops is in the capture only."""
+    TX op field is not compared. capture_only_run: this run of register ops is in the capture only. driver_only_run:
+    this run of register ops, in order, is the driver's only. capture_paths: the captures it applies to; empty: all."""
     reason: WaiverReason
     c_source: str
     value_only_register: int | None = None
     capture_only_run: tuple[RegisterOp, ...] = ()
     value_only_tx_op_field: TxOpField | None = None
+    driver_only_run: tuple[RegisterOp, ...] = ()
+    capture_paths: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
         forms = [self.value_only_register is not None, bool(self.capture_only_run),
-                 self.value_only_tx_op_field is not None]
+                 self.value_only_tx_op_field is not None, bool(self.driver_only_run)]
         if forms.count(True) != 1:
             raise ValueError("a Waiver takes one of value_only_register, capture_only_run, "
-                             "value_only_tx_op_field")
+                             "value_only_tx_op_field, driver_only_run")
 
     def describe(self) -> str:
         field = self.value_only_tx_op_field
@@ -85,9 +89,23 @@ class Waiver:
             ops_text = f"value of 0x{self.value_only_register:04x} not compared"
         elif field is not None:
             ops_text = f"TX op dword {field.dword} bits {field.shift}..{field.shift + field.width - 1} not compared"
+        elif self.driver_only_run:
+            ops_text = f"driver-only run of {len(self.driver_only_run)} register ops"
         else:
             ops_text = f"capture-only run of {len(self.capture_only_run)} register ops"
         return f"{self.reason.name} {ops_text} [{self.c_source}]"
+
+
+def register_ops_match(register_ops: Sequence[RegisterOp], run: Sequence[RegisterOp]) -> bool:
+    """Same accesses and addresses; a run op's value is compared unless it is None."""
+    if len(register_ops) != len(run):
+        return False
+    for register_op, run_op in zip(register_ops, run):
+        if register_op.access != run_op.access or register_op.address != run_op.address:
+            return False
+        if run_op.value is not None and register_op.value != run_op.value:
+            return False
+    return True
 
 
 class FamilyDecoder(ABC):
@@ -133,9 +151,17 @@ class VerifyCapture:
 
     def test_capture(self, capture_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         capture = self.load_capture(capture_path)
+        waivers: list[Waiver] = []
+        for waiver in self.WAIVERS:
+            if not waiver.capture_paths or capture_path in waiver.capture_paths:
+                waivers.append(waiver)
         waived_positions: set[int] = set()
         positions_by_waiver: dict[Waiver, list[int]] = {}
-        for waiver in self.WAIVERS:
+        driver_only_progress: dict[Waiver, int] = {}
+        for waiver in waivers:
+            if waiver.driver_only_run:
+                driver_only_progress[waiver] = 0
+                continue
             if waiver.value_only_register is not None:
                 positions = self.register_write_positions(capture.ops, waiver.value_only_register)
             elif waiver.value_only_tx_op_field is not None:
@@ -153,7 +179,13 @@ class VerifyCapture:
 
         loop = VirtualClockEventLoop(capture.ops[0].submit_time, is_driver_idle)
         loop.set_default_executor(thread_pool)
-        replay = CaptureReplay(capture.ops, waived_positions, self.is_same_request_except_waived_values, loop)
+        def is_same_request(captured: UsbOp, request: UsbOp) -> bool:
+            return self.is_same_request_except_waived_values(captured, request, waivers)
+
+        def is_driver_only_request(request: UsbOp) -> bool:
+            return self.is_driver_only_request(request, driver_only_progress)
+
+        replay = CaptureReplay(capture.ops, waived_positions, is_same_request, is_driver_only_request, loop)
         device = FakeUsbDevice(replay, capture.device_descriptor, capture.configuration_descriptor,
                                capture.device_id.bus or 0, capture.device_id.address or 0)
 
@@ -190,6 +222,7 @@ class VerifyCapture:
                 if replay.reproduced_by[position] is not None:
                     count += 1
             waived_counts[waiver] = count
+        waived_counts.update(driver_only_progress)
         summary = self.format_summary(replay, capture, waived_counts)
         if replay.divergence is not None:
             pytest.fail(self.format_dump(capture_path, replay, replay.divergence) + summary, pytrace=False)
@@ -202,20 +235,20 @@ class VerifyCapture:
             pytest.fail(f"{capture_path.name}: unused waivers: {unused}\n" + summary, pytrace=False)
         print(summary)
 
-    def is_same_request_except_waived_values(self, captured: UsbOp, request: UsbOp) -> bool:
+    def is_same_request_except_waived_values(self, captured: UsbOp, request: UsbOp, waivers: list[Waiver]) -> bool:
         """``captured.same_request(request)``, except a value_only_register's value: each differing byte, put
         alone into the captured op, must change only value_only_register write values in its register ops."""
         if captured.same_request(request):
             return True
         tx_op_fields: list[TxOpField] = []
-        for waiver in self.WAIVERS:
+        for waiver in waivers:
             if waiver.value_only_tx_op_field is not None:
                 tx_op_fields.append(waiver.value_only_tx_op_field)
         if (tx_op_fields
                 and self.DECODER.with_tx_op_fields(captured, tx_op_fields, request).same_request(request)):
             return True
         value_only_registers: set[int] = set()
-        for waiver in self.WAIVERS:
+        for waiver in waivers:
             if waiver.value_only_register is not None:
                 value_only_registers.add(waiver.value_only_register)
         if not value_only_registers:
@@ -244,6 +277,17 @@ class VerifyCapture:
                     return False
         return True
 
+    def is_driver_only_request(self, request: UsbOp, driver_only_progress: dict[Waiver, int]) -> bool:
+        """``request``'s register ops are the next ones of a driver_only_run; advances its progress."""
+        register_ops = self.DECODER.register_ops(request)
+        if not register_ops:
+            return False
+        for waiver, progress in driver_only_progress.items():
+            if register_ops_match(register_ops, waiver.driver_only_run[progress:progress + len(register_ops)]):
+                driver_only_progress[waiver] = progress + len(register_ops)
+                return True
+        return False
+
     def register_write_positions(self, ops: list[UsbOp], address: int) -> list[int]:
         positions: list[int] = []
         for position, op in enumerate(ops):
@@ -270,7 +314,7 @@ class VerifyCapture:
                 run_register_ops.extend(register_ops)
                 run_positions.append(request_positions[end])
                 end += 1
-            if tuple(run_register_ops) == run:
+            if register_ops_match(run_register_ops, run):
                 matched_positions.extend(run_positions)
                 start = end
             else:

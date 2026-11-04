@@ -63,31 +63,31 @@ class CaptureOnlyRun(VerifyCapture):
 def test_value_only_accepts_a_different_waived_value() -> None:
     captured = reg_write(7, [OTHER_REGISTER, 0x1, R.AR_TSF_L32, 0x007D1AAA])
     request = reg_write(7, [OTHER_REGISTER, 0x1, R.AR_TSF_L32, 0x007CFD9D])
-    assert TsfValueOnly().is_same_request_except_waived_values(captured, request)
+    assert TsfValueOnly().is_same_request_except_waived_values(captured, request, TsfValueOnly.WAIVERS)
 
 
 def test_value_only_compares_the_other_values_in_the_op() -> None:
     captured = reg_write(7, [OTHER_REGISTER, 0x1, R.AR_TSF_L32, 0x007D1AAA])
     request = reg_write(7, [OTHER_REGISTER, 0x2, R.AR_TSF_L32, 0x007CFD9D])
-    assert not TsfValueOnly().is_same_request_except_waived_values(captured, request)
+    assert not TsfValueOnly().is_same_request_except_waived_values(captured, request, TsfValueOnly.WAIVERS)
 
 
 def test_value_only_compares_the_seq() -> None:
     captured = reg_write(7, [R.AR_TSF_L32, 0x007D1AAA])
     request = reg_write(8, [R.AR_TSF_L32, 0x007CFD9D])
-    assert not TsfValueOnly().is_same_request_except_waived_values(captured, request)
+    assert not TsfValueOnly().is_same_request_except_waived_values(captured, request, TsfValueOnly.WAIVERS)
 
 
 def test_value_only_compares_the_address() -> None:
     captured = reg_write(7, [R.AR_TSF_L32, 0x007D1AAA])
     request = reg_write(7, [R.AR_TSF_U32, 0x007D1AAA])
-    assert not TsfValueOnly().is_same_request_except_waived_values(captured, request)
+    assert not TsfValueOnly().is_same_request_except_waived_values(captured, request, TsfValueOnly.WAIVERS)
 
 
 def test_value_only_compares_other_registers_values() -> None:
     captured = reg_write(7, [OTHER_REGISTER, 0x007D1AAA])
     request = reg_write(7, [OTHER_REGISTER, 0x007CFD9D])
-    assert not TsfValueOnly().is_same_request_except_waived_values(captured, request)
+    assert not TsfValueOnly().is_same_request_except_waived_values(captured, request, TsfValueOnly.WAIVERS)
 
 
 def test_capture_only_run_matches_the_exact_run_with_in_ops_between() -> None:
@@ -138,13 +138,13 @@ class RealtekCaptureOnlyRun(VerifyCapture):
 def test_realtek_value_only_accepts_a_different_waived_value() -> None:
     captured = realtek_write(REALTEK_WAIVED_REGISTER, 0x007D1AAA)
     request = realtek_write(REALTEK_WAIVED_REGISTER, 0x007CFD9D)
-    assert RealtekValueOnly().is_same_request_except_waived_values(captured, request)
+    assert RealtekValueOnly().is_same_request_except_waived_values(captured, request, RealtekValueOnly.WAIVERS)
 
 
 def test_realtek_value_only_compares_other_registers_values() -> None:
     captured = realtek_write(REALTEK_OTHER_REGISTER, 0x007D1AAA)
     request = realtek_write(REALTEK_OTHER_REGISTER, 0x007CFD9D)
-    assert not RealtekValueOnly().is_same_request_except_waived_values(captured, request)
+    assert not RealtekValueOnly().is_same_request_except_waived_values(captured, request, RealtekValueOnly.WAIVERS)
 
 
 def test_realtek_capture_only_run_matches_a_read_and_a_write() -> None:
@@ -172,10 +172,36 @@ class RealtekSwSeqValueOnly(VerifyCapture):
 def test_tx_op_field_accepts_a_different_value_with_its_checksum() -> None:
     captured = realtek_tx(sw_seq=0, checksum=0x3005 ^ 0x002A)
     request = realtek_tx(sw_seq=1, checksum=0x3005 ^ 0x002A ^ 0x1000)
-    assert RealtekSwSeqValueOnly().is_same_request_except_waived_values(captured, request)
+    assert RealtekSwSeqValueOnly().is_same_request_except_waived_values(captured, request, RealtekSwSeqValueOnly.WAIVERS)
 
 
 def test_tx_op_field_compares_the_checksum() -> None:
     captured = realtek_tx(sw_seq=0, checksum=0x3005 ^ 0x002A)
     request = realtek_tx(sw_seq=1, checksum=0x3005 ^ 0x002A)
-    assert not RealtekSwSeqValueOnly().is_same_request_except_waived_values(captured, request)
+    assert not RealtekSwSeqValueOnly().is_same_request_except_waived_values(captured, request, RealtekSwSeqValueOnly.WAIVERS)
+
+
+REALTEK_ANY_VALUE_RUN = (RegisterOp(RegisterAccess.READ, REALTEK_OTHER_REGISTER, None),
+                         RegisterOp(RegisterAccess.WRITE, REALTEK_OTHER_REGISTER, None))
+
+
+def test_realtek_capture_only_run_value_none_matches_any_value() -> None:
+    ops = [realtek_read(REALTEK_OTHER_REGISTER, 0x1), realtek_write(REALTEK_OTHER_REGISTER, 0x5),
+           realtek_write(REALTEK_WAIVED_REGISTER, 0x5)]
+    assert RealtekCaptureOnlyRun().capture_only_run_positions(ops, REALTEK_ANY_VALUE_RUN) == [0, 1]
+
+
+class RealtekDriverOnlyRun(VerifyCapture):
+    DECODER = RealtekDecoder()
+    WAIVERS = [Waiver(WaiverReason.WIFIT3_ONLY, "synthetic", driver_only_run=REALTEK_RUN)]
+
+
+def test_realtek_driver_only_run_accepts_its_ops_in_order_once() -> None:
+    waiver = RealtekDriverOnlyRun.WAIVERS[0]
+    progress = {waiver: 0}
+    test = RealtekDriverOnlyRun()
+    assert not test.is_driver_only_request(realtek_write(REALTEK_OTHER_REGISTER, 0x2), progress)
+    assert test.is_driver_only_request(realtek_read(REALTEK_OTHER_REGISTER, 0x0), progress)
+    assert test.is_driver_only_request(realtek_write(REALTEK_OTHER_REGISTER, 0x2), progress)
+    assert not test.is_driver_only_request(realtek_read(REALTEK_OTHER_REGISTER, 0x0), progress)
+    assert progress[waiver] == 2
