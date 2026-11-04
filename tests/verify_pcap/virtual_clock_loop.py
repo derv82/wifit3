@@ -67,13 +67,29 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         self.is_driver_idle = is_driver_idle
         self.latest_timer_by_task: dict[asyncio.Task[Any], asyncio.TimerHandle] = {}
         self.fired_timers: set[asyncio.TimerHandle] = set()
+        self.completion_time_by_caller: dict[str, float] = {}
         self._timer_lock = threading.Lock()
         self.pending_executor_call_count = 0
         # Until CaptureReplay sets it, driver task timers fire after their jiffies exactly.
         self.jiffy_zero_time: float | None = None
 
     def time(self) -> float:
-        return self.virtual_time
+        """In a driver task, the later of its last fired timer's due time and its last op's completion,
+        never past the capture's clock: not the clock another task's pass-over pushed ahead."""
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            return self.virtual_time
+        if task is None or task.get_name() == MAIN_CALLER:
+            return self.virtual_time
+        task_time = self.completion_time_by_caller.get(task.get_coro().__qualname__)
+        handle = self.latest_timer_by_task.get(task)
+        if handle is not None and handle in self.fired_timers:
+            if task_time is None or handle.when() > task_time:
+                task_time = handle.when()
+        if task_time is None or task_time > self.virtual_time:
+            return self.virtual_time
+        return task_time
 
     def advance_clock(self, timestamp: float) -> None:
         """From another thread, also wakes the loop: a driver task timer may now be due."""

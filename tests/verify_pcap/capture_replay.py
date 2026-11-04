@@ -110,6 +110,7 @@ class CaptureReplay:
                 self._loop.jiffy_zero_time = self.ops[position].submit_time - 1 / KERNEL_HZ
             self.reproduced_by[position] = caller
             self.next_position_by_caller[caller] = position + 1
+            self._loop.completion_time_by_caller[caller] = self.ops[position].completion_time
             return self.ops[position]
 
     def read(self, endpoint: int, caller: str) -> UsbOp | None:
