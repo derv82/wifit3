@@ -54,7 +54,7 @@ def build_txdesc(frame_len: int, frame_control: int, qid: int, entry_index: int,
                  mcs: int = 0, phymode: int = C.RATE_MODE_CCK) -> bytes:
     """TXINFO + TXWI prefix for a frame in TX queue ``qid`` entry ``entry_index`` [SRC rt2800usb.c:401-435,
     rt2800lib.c:795-853]. Returns ``TXINFO_DESC_SIZE + TXWI_DESC_SIZE_4WORDS`` bytes."""
-    # ENTRY_TXD_MORE_FRAG / ENTRY_TXD_BURST [SRC rt2x00queue.c:409-419 rt2x00queue_create_tx_descriptor]
+    # ENTRY_TXD_MORE_FRAG / ENTRY_TXD_BURST [SRC rt2x00queue.c:409-419, 431-434 rt2x00queue_create_tx_descriptor]
     more_frag = bool(frame_control & C.IEEE80211_FCTL_MOREFRAGS)
     burst = more_frag
     if (frame_control & C.IEEE80211_FCTL_FTYPE) == C.IEEE80211_FTYPE_CTL:
