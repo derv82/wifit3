@@ -282,7 +282,7 @@ class MT7921AUDriver(Driver):
         logger.debug("MT7921AU: tuning to channel %d", channel)
         cmd, payload = mcu.config_sniffer(channel)
         async with self._mutex:
-            await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
+            await self.transport.send_mcu_command(cmd, payload)
         self._channel = channel
         return True
 
