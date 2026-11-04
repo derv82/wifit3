@@ -26,10 +26,11 @@ def _set_msr(t, net_type: int) -> None:
     t.write8(MSR, (t.read8(MSR) & MSR_NETTYPE_MASK) | net_type)
 
 
-def _hw_var_set_monitor(t) -> None:
-    # Program the monitor RCR + open all three RX filter maps (accept all frame types).
+def _hw_var_set_monitor(t, rcr: int) -> None:
+    # rtl8812a_hal_init.c:hw_var_set_monitor:3663 (morrownr-8821au-20210708): RCR backup + set,
+    # then RXFLTMAP0-2 backup reads + 0xFFFF writes (3701-3706).
     t.read32(REG_RCR)
-    t.write32(REG_RCR, RCR_MONITOR_VALUE)
+    t.write32(REG_RCR, rcr)
     t.read16(REG_RXFLTMAP0)
     t.read16(REG_RXFLTMAP1)
     t.read16(REG_RXFLTMAP2)
@@ -40,7 +41,7 @@ def _hw_var_set_monitor(t) -> None:
 
 def enter_monitor(t) -> None:
     _set_msr(t, MSR_NOLINK)
-    _hw_var_set_monitor(t)
+    _hw_var_set_monitor(t, RCR_MONITOR_VALUE)
 
 
 # RXFLTMAP1 bit13 admits ACK control frames so RX can see the AP's ACKs to us (off by default).
@@ -108,5 +109,4 @@ def set_monitor_mode(t, channel, params) -> None:
     t.write8(REG_TBTT_PROHIBIT + 2, t.read8(REG_TBTT_PROHIBIT + 2) & 0xF0)
     t.write8(REG_BCN_CTRL, 0x19)
     _set_msr(t, MSR_NOLINK)
-    t.read32(REG_RCR)
-    t.write32(REG_RCR, RCR_MONITOR_AIRMON)
+    _hw_var_set_monitor(t, RCR_MONITOR_AIRMON)
