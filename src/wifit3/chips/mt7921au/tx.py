@@ -32,6 +32,7 @@ _FTYPE_DATA     = 2
 _FTYPE_EXT      = 3
 _STYPE_QOS_DATA = 0x0080   # data-subtype bit that marks a QoS frame
 _STYPE_ACTION   = 0x00D0
+_STYPE_BEACON   = 0x0080
 _STYPE_DISASSOC = 0x00A0
 _STYPE_DEAUTH   = 0x00C0
 _STYPE_BACK_REQ = 0x0080   # control subtype BlockAckReq
@@ -252,6 +253,8 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
         four_address = (fc & (_FCTL_TODS | _FCTL_FROMDS)) == (_FCTL_TODS | _FCTL_FROMDS)
         if frame[30 if four_address else 24] & _QOS_CTL_ACK_POLICY_NOACK:
             val3 |= MT_TXD3_NO_ACK
+    if frame_kind == _STYPE_BEACON:                # mt76_connac_mac.c:463-466
+        val3 |= MT_TXD3_REM_TX_COUNT
     # Injected frame: carry its own sequence number (SEQ_TO_SN = seqno >> 4).
     val3 |= MT_TXD3_SN_VALID | _fp(MT_TXD3_SEQ, seqno >> 4)
     txwi[3] = val3
