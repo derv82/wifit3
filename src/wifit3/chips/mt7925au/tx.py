@@ -38,6 +38,7 @@ _STYPE_DISASSOC = 0x00A0
 _STYPE_DEAUTH = 0x00C0
 _QOS_CTL_TID_MASK = 0x000F         # IEEE80211_QOS_CTL_TID_MASK
 _QOS_CTL_TAG1D_MASK = 0x0007       # IEEE80211_QOS_CTL_TAG1D_MASK
+_QOS_CTL_ACK_POLICY_NOACK = 0x0020 # IEEE80211_QOS_CTL_ACK_POLICY_NOACK
 _MIN_ACTION_SIZE = 25              # IEEE80211_MIN_ACTION_SIZE: offsetof(ieee80211_mgmt, u.action.u)
 _CATEGORY_BACK = 3                 # WLAN_CATEGORY_BACK
 _ACTION_ADDBA_REQ = 0              # WLAN_ACTION_ADDBA_REQ
@@ -126,8 +127,7 @@ def build_txwi(mpdu: bytes, *, qid: int, wcid_idx: int, omac_idx: int = MON_TX_O
 
     ``mpdu`` is the bare 802.11 frame (no descriptor, no pad). The injected-frame branch
     reads the 802.11 sequence from ``mpdu``'s seq_ctrl. Only that (and, for WEP, the IV)
-    legitimately differs run-to-run, plus MT_TXD3_NO_ACK: wifit3 sets it only for a group addr1,
-    but aireplay set it on every frame in the mt7925u TX capture, so the verify masks that bit."""
+    legitimately differs run-to-run."""
     fc = struct.unpack_from("<H", mpdu, 0)[0]
     multicast = bool(mpdu[4] & 0x01)                 # addr1 group bit
 
@@ -147,11 +147,15 @@ def build_txwi(mpdu: bytes, *, qid: int, wcid_idx: int, omac_idx: int = MON_TX_O
     if band_idx:
         txwi[1] |= (band_idx << 12) & MT_TXD1_TGID
 
-    # REM_TX_COUNT=15 is the HW ACK-based retry limit. mac80211 sets IEEE80211_TX_CTL_NO_ACK
-    # for a group addr1 (mac.c:787); a unicast addr1 requests an ACK and HW-retries.
+    # mac.c:789-790. mac80211 sets IEEE80211_TX_CTL_NO_ACK for a group addr1 (tx.c:1275-1277)
+    # and for an injected QoS frame with the NoAck policy (wme.c:208-211).
     txwi[3] = (TXD3_REM_TX_COUNT_UNLTD << 11) & MT_TXD3_REM_TX_COUNT
     if multicast:
         txwi[3] |= MT_TXD3_NO_ACK
+    elif _is_data_qos(fc):
+        four_address = (fc & (_FCTL_TODS | _FCTL_FROMDS)) == (_FCTL_TODS | _FCTL_FROMDS)
+        if mpdu[30 if four_address else 24] & _QOS_CTL_ACK_POLICY_NOACK:
+            txwi[3] |= MT_TXD3_NO_ACK
 
     txwi[5] = 0                                      # pid 0: no host TX-status reporting
 
