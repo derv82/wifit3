@@ -38,7 +38,7 @@ from wifit3.dot11.parser import WlanFrameParser
 from ..rtl88xxau_base.transport import Rtl88xxauTransport
 from ..rtl88xxau_base.tx import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G, build_mgmt_txdesc
 from ..rx_reader import RxReaderThread
-from . import bb, chan, dig, efuse, firmware, led, mac, monitor, rf, txpower
+from . import bb, chan, dig, efuse, firmware, led, mac, monitor, rf, txpower, watchdog
 from .rx import iter_frames
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,7 @@ class Rtl8812auDkmsDriver(Driver):
         self.mac_address: Optional[str] = None            # efuse 0xD7 (ALFA OUI)
         self._params: Optional[efuse.ChipParams] = None   # EFUSE board params (set_channel re-tune)
         self._channel: Optional[int] = None
+        self._phydm: Optional[watchdog.PhydmState] = None
         self.is_warm: bool = False                        # TODO(warm-reattach): cold-plug only
         # Runtime 2-path DIG/AGC watchdog. Toggleable so a fixed-channel A/B can isolate
         # the watchdog's effect on RX breadth.
@@ -170,10 +171,13 @@ class Rtl8812auDkmsDriver(Driver):
                              is_c_cut=params.is_c_cut)                       # M4
             txpower.set_tx_power(t, _DEFAULT_CHANNEL, params.tx_power_2g)    # M-TXPWR: per-rate
             mac.hal_init_misc_pre(t)                                        # M5 §1a
-            dig.init_hal_dm(t, search_edcca=True)                          # M5 §2: DIG/AGC/EDCCA
+            phydm = dig.init_hal_dm(t, search_edcca=True)                  # M5 §2: DIG/AGC/EDCCA
             mac.hal_init_misc_post(t)                                       # M5 §1b: turn-on tail
+            return phydm
 
-        await loop.run_in_executor(None, _init, self.transport)
+        self._phydm = await loop.run_in_executor(None, _init, self.transport)
+        watchdog.phydm_rf_init(self._phydm, params.eeprom_thermal_meter, params.rfe_type,
+                               params.bb_swing_2g[0])
         self._channel = _DEFAULT_CHANNEL
 
         # Start the bulk-IN RX reader BEFORE the monitor RX-START tail opens the RX gate:
@@ -183,8 +187,13 @@ class Rtl8812auDkmsDriver(Driver):
             on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
 
-        # _netdev_open: rtw_hal_init, then rtw_led_control(LED_CTL_NO_LINK) (os_intfs.c:3886).
+        # _netdev_open: rtw_hal_init, rtw_led_control(LED_CTL_NO_LINK), then the 2 s
+        # dynamic_chk_timer (os_intfs.c:3886-3937).
         self._led_task = loop.create_task(self._led_blink())
+        if self.enable_dig:
+            self._dig_task = loop.create_task(self._dig_watchdog())
+        else:
+            logger.info("RTL8812AU watchdog disabled (IGI stays at the InitHalDm seed)")
 
         # morrownr's monitor opmode + set-channel RX-START tail: the channel re-tune that
         # restores a clean RX state after the EDCCA search, then the monitor RCR 0x90000001.
@@ -192,27 +201,22 @@ class Rtl8812auDkmsDriver(Driver):
             await loop.run_in_executor(None, monitor.set_monitor_mode, self.transport,
                                        _DEFAULT_CHANNEL, params)
 
-        # Runtime 2-path DIG/AGC watchdog: adapt the InitHalDm IGI seed to the live false-
-        # alarm rate every ~2 s (kernel cadence), writing both path IGI regs. RX-side only.
-        if self.enable_dig:
-            self._dig_task = loop.create_task(self._dig_watchdog())
-        else:
-            logger.info("RTL8812AU DIG watchdog disabled (IGI stays at the InitHalDm seed)")
-
         if progress_cb:
             progress_cb(1.0, f"Tuned to channel {_DEFAULT_CHANNEL} @ 20 MHz (monitor)")
         return True
 
     async def _dig_watchdog(self) -> None:
-        """Periodic 2-path DIG watchdog. Serialized with set_channel via _io_lock."""
+        """rtw_dynamic_check_timer_handlder: the 2 s timer re-arms from its own fire (rtw_mlme.c:4136)."""
         loop = asyncio.get_running_loop()
+        fire_time = loop.time()
         try:
             while True:
-                await asyncio.sleep(dig.WATCHDOG_PERIOD_S)
+                fire_time += watchdog.DYNAMIC_CHK_TIMER_PERIOD_S
+                await asyncio.sleep(fire_time - loop.time())
                 async with self._io_lock:
-                    tick = await loop.run_in_executor(None, dig.watchdog_tick, self.transport)
-                logger.debug("RTL8812AU DIG: IGI=0x%02x fa=%d (ofdm=%d cck=%d)",
-                             tick.igi, tick.fa_cnt, tick.ofdm_fa, tick.cck_fa)
+                    fa_cnt = await loop.run_in_executor(None, watchdog.rtw_dynamic_chk_wk_hdl,
+                                                        self.transport, self._phydm, self._channel)
+                logger.debug("RTL8812AU watchdog: IGI=0x%02x fa=%d", self._phydm.cur_ig_value, fa_cnt)
         except asyncio.CancelledError:
             pass
         except Exception:  # noqa: BLE001 — a watchdog fault must not kill RX
@@ -292,7 +296,7 @@ class Rtl8812auDkmsDriver(Driver):
                                 bb_swing_2g_b=params.bb_swing_2g[1],
                                 bb_swing_5g_a=params.bb_swing_5g[0],
                                 bb_swing_5g_b=params.bb_swing_5g[1], rfe_type=params.rfe_type,
-                                is_c_cut=params.is_c_cut)
+                                is_c_cut=params.is_c_cut, phydm=self._phydm)
             if not scan:
                 if channel <= 14:
                     txpower.set_tx_power(t, channel, params.tx_power_2g)

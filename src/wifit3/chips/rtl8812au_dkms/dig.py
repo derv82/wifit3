@@ -8,19 +8,17 @@ RX init-gain commit. The 8812 is in the same ODM_IC_PWDB_EDCCA family as the 882
 the live EDCCA lower-bound search is available (``search_edcca``); it reads the live PSD
 debug port so it is off for offline checks.
 
-The watchdog (``phydm_dig``) is the runtime payoff: every ~2 s it steps the initial gain
-toward fewer false alarms within the no-link clamp. It is the **two-path** form (writes
-IGI to 0xC50 path A AND 0xE50 path B) of the 8821au sibling's single-path watchdog. RX-
-side only (reads FA counters, writes RX gain), so it is passive.
+The init reads the watchdog carries (IGI, NHM IGI, RRSR, EDCCA lower bounds) seed the
+returned ``PhydmState``; the 2 s watchdog itself is ``watchdog.py``.
 """
 from __future__ import annotations
 
 import time
-from typing import NamedTuple
 
 from ..rtl88xxau_base.sipi import (
-    RF_PATH_A, RF_PATH_B, RFREG_WRITE_MASK, query_bb, set_bb, set_rf_reg,
+    RF_PATH_A, RF_PATH_B, RFREG_WRITE_MASK, set_bb, set_rf_reg,
 )
+from .watchdog import ADAPT_DC_BACKOFF, PhydmState
 
 _REG_IGI_A = 0x0C50        # ODM_REG(IGI_A) — path-A initial gain, field mask 0x7F
 _REG_IGI_B = 0x0E50        # ODM_REG(IGI_B) — path-B initial gain
@@ -75,11 +73,11 @@ def _cck_pd_init(t) -> None:
     t.write8(0x0A0A, 0x83)
 
 
-def _env_monitor_init(t) -> None:
+def _env_monitor_init(t) -> int:
     """[SRC] phydm_env_monitor_init — CCX hw-restart + NHM thresholds (IGI-derived).
 
     BB-wide (not per-path); th[i] = ((IGI - 14) << 1) + 4*i from the live 0xC50 IGI.
-    Same shape as the 8821au sibling.
+    Returns the IGI phydm_nhm_init records as nhm_igi.
     """
     set_bb(t, 0x0994, 0x7, 0)
     set_bb(t, 0x0994, 1 << 8, 0)
@@ -91,6 +89,7 @@ def _env_monitor_init(t) -> None:
     set_bb(t, 0x09A0, 0xFF, th[8])
     set_bb(t, 0x0994, 0xFFFF0000, th[9] | th[10] << 8)
     set_bb(t, 0x0990, 0xFFFF, 0xFFFF)
+    return igi
 
 
 def _lna_setting(t, *, enable: bool) -> None:
@@ -107,11 +106,13 @@ def _lna_setting(t, *, enable: bool) -> None:
         set_rf_reg(t, path, 0xEF, 0x80000, 0x0)                  # close gain page
 
 
-def _rx_gain_commit(t) -> None:
-    """[SRC] phydm RX init-gain commit — rOFDMRxIGI (0x910[15:10]) ×5."""
-    t.read32(0x0440)
+def _rx_gain_commit(t) -> int:
+    """[SRC] phydm_ra_info_init's rrsr_val_init read (phydm_rainfo.c:2043), then rOFDMRxIGI
+    (0x910[15:10]) ×5. Returns rrsr_val_init."""
+    rrsr_val_init = t.read32(0x0440)
     for val in (0xFC00, 0xEC00, 0x2C00, 0x2C00, 0x2C00):
         set_bb(t, 0x0910, 0xFC00, (val >> 10) & 0x3F)
+    return rrsr_val_init
 
 
 # --- EDCCA lower-bound search — 8812a (ODM_IC_PWDB_EDCCA), reads the PSD debug port 0xFA0 ---
@@ -151,7 +152,7 @@ def _release_dbg_port(t) -> None:
     set_bb(t, 0x08F8, 0x03C00000, 0)           # clear the header select (0x8F8[25:22])
 
 
-def _search_pwdb_lower_bound(t) -> int:
+def _search_pwdb_lower_bound(t, st: PhydmState) -> int:
     """[SRC] phydm_search_pwdb_lower_bound (phydm_adaptivity.c:237) — drop the LNA (both
     radios), walk the L2H threshold up until the EDCCA signal stops firing, then restore the
     LNA + no-link threshold. Reads the live PSD; under the replay differ it reproduces the
@@ -194,6 +195,8 @@ def _search_pwdb_lower_bound(t) -> int:
         else:
             is_adjust = False
 
+    st.h2l_lb = th_h2l + ADAPT_DC_BACKOFF
+    st.l2h_lb = th_l2h + ADAPT_DC_BACKOFF
     _lna_setting(t, enable=True)
     _set_edcca_threshold(t, 0x7F, 0x7F)        # resume to the no-link state
     return igi
@@ -205,86 +208,30 @@ def _mac_edcca_state(t) -> None:
     set_bb(t, 0x0524, 1 << 11, 1)
 
 
-def _adaptivity_init(t) -> None:
+def _adaptivity_init(t, st: PhydmState) -> None:
     """[SRC] phydm_adaptivity_init (8812a PWDB-EDCCA path) — live PSD lower-bound search
     (re-run once if the result lands below the IGI bound), then DONT_IGNORE."""
-    igi = _search_pwdb_lower_bound(t)
+    igi = _search_pwdb_lower_bound(t, st)
     if igi <= _RESEARCH_IGI_UB:                # phydm_re_search_condition
-        _search_pwdb_lower_bound(t)
+        _search_pwdb_lower_bound(t, st)
     _mac_edcca_state(t)
 
 
-def init_hal_dm(t, search_edcca: bool = True) -> None:
+def init_hal_dm(t, search_edcca: bool = True) -> PhydmState:
     """rtl8812_InitHalDm: GPIO + the phydm DIG/AGC/EDCCA seed. ``search_edcca`` runs the
     PWDB-EDCCA lower-bound search (reads the PSD debug port 0xFA0); it reproduces byte-for-
     byte under the replay-diff against the capture's own recorded PSD reads, and runs live
     on hardware -- the flag exists only to A/B it out (rx_diag --no-edcca). Wrap between
-    mac.hal_init_misc_pre and mac.hal_init_misc_post."""
+    mac.hal_init_misc_pre and mac.hal_init_misc_post. Returns the seeded watchdog state."""
+    st = PhydmState()
     _init_gpio(t)
     _common_info_self_init(t)
-    _dig_init(t)
+    st.cur_ig_value = _dig_init(t)
     _cck_pd_init(t)
-    _env_monitor_init(t)
+    st.nhm_igi = _env_monitor_init(t)
     if search_edcca:
-        _adaptivity_init(t)          # LNA-disable -> live PSD search -> LNA-enable -> mac_edcca
-    _rx_gain_commit(t)
+        _adaptivity_init(t, st)      # LNA-disable -> live PSD search -> LNA-enable -> mac_edcca
+    st.rrsr_val_init = _rx_gain_commit(t)
+    return st
 
 
-# --- Runtime DIG watchdog (phydm_dig, no-link, 2-path) -----------------------
-
-_REG_OFDM_FA = 0x0F48          # OFDM false-alarm count (low 16 bits)
-_REG_CCK_FA = 0x0A5C           # CCK false-alarm count (low 16 bits)
-_REG_BB_RX_PATH = 0x0808       # BIT28 = CCK enabled (2.4G)
-_CCK_ENABLE_BIT = 1 << 28
-_FA_TH = (2000, 4000, 5000)
-_IGI_MIN = 0x1C
-_IGI_MAX = 0x2A
-WATCHDOG_PERIOD_S = 2.0
-
-
-class DigTick(NamedTuple):
-    igi: int
-    fa_cnt: int
-    ofdm_fa: int
-    cck_fa: int
-
-
-def _read_fa_cnt(t):
-    ofdm_fa = t.read16(_REG_OFDM_FA)
-    cck_fa = t.read16(_REG_CCK_FA)
-    cck_enabled = bool(t.read32(_REG_BB_RX_PATH) & _CCK_ENABLE_BIT)
-    cnt_all = ofdm_fa + cck_fa if cck_enabled else ofdm_fa
-    return cnt_all, ofdm_fa, cck_fa
-
-
-def _reset_fa_cnt(t) -> None:
-    """[SRC] phydm_false_alarm_counter_reg_reset (11AC) — the 3-pulse FA/CCA reset."""
-    set_bb(t, 0x09A4, 1 << 17, 1)   # OFDM FA reset
-    set_bb(t, 0x09A4, 1 << 17, 0)
-    set_bb(t, 0x0A2C, 1 << 15, 0)   # CCK FA reset
-    set_bb(t, 0x0A2C, 1 << 15, 1)
-    set_bb(t, 0x0B58, 1 << 0, 1)    # page-F CCA-counter reset
-    set_bb(t, 0x0B58, 1 << 0, 0)
-
-
-def _new_igi_by_fa(igi: int, fa_cnt: int) -> int:
-    if fa_cnt > _FA_TH[2]:
-        return igi + 2
-    if fa_cnt > _FA_TH[1]:
-        return igi + 1
-    if fa_cnt < _FA_TH[0]:
-        return igi - 2
-    return igi
-
-
-def watchdog_tick(t) -> DigTick:
-    """One DIG watchdog iteration. Reads IGI, reads+resets FA, picks a new IGI by FA,
-    clamps to the no-link range, and (if changed) writes BOTH path IGI regs (2T2R)."""
-    igi = query_bb(t, _REG_IGI_A, _IGI_MASK)
-    fa_cnt, ofdm_fa, cck_fa = _read_fa_cnt(t)
-    _reset_fa_cnt(t)
-    new_igi = max(_IGI_MIN, min(_IGI_MAX, _new_igi_by_fa(igi, fa_cnt)))
-    if new_igi != igi:
-        set_bb(t, _REG_IGI_A, _IGI_MASK, new_igi)
-        set_bb(t, _REG_IGI_B, _IGI_MASK, new_igi)
-    return DigTick(new_igi, fa_cnt, ofdm_fa, cck_fa)

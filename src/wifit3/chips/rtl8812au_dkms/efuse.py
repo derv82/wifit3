@@ -21,6 +21,8 @@ from . import constants as C
 
 # Logical-map offsets [SRC] hal_pg.h (8812AU)
 EEPROM_XTAL = 0xB9
+EEPROM_THERMAL_METER_8812 = 0xBA                # hal_pg.h:115
+EEPROM_DEFAULT_THERMAL_METER_8812 = 0x18        # hal_pg.h:830
 EEPROM_TX_BBSWING_2G = 0xC6
 EEPROM_TX_BBSWING_5G = 0xC7
 EEPROM_RF_BOARD_OPTION = 0xC1                   # hal_pg.h:121
@@ -75,6 +77,7 @@ class ChipParams(NamedTuple):
     type_alna: int
     type_apa: int
     interface_sel: int             # pHalData->InterfaceSel (LED register choice)
+    eeprom_thermal_meter: int      # pHalData->eeprom_thermal_meter (0xFF: no PG, no TX power tracking)
 
 
 def _s4(n: int) -> int:
@@ -84,6 +87,17 @@ def _s4(n: int) -> int:
 def _parse_crystal_cap(m: bytes) -> int:
     v = m[EEPROM_XTAL]
     return C.EEPROM_DEFAULT_CRYSTAL_CAP if v == 0xFF else v
+
+
+def _parse_thermal_meter(m: bytes, autoload_fail: bool) -> int:
+    """[SRC] Hal_ReadThermalMeter_8812A (rtl8812a_hal_init.c:991)."""
+    if not autoload_fail:
+        eeprom_thermal_meter = m[EEPROM_THERMAL_METER_8812]
+    else:
+        eeprom_thermal_meter = EEPROM_DEFAULT_THERMAL_METER_8812
+    if eeprom_thermal_meter == 0xFF or autoload_fail:
+        eeprom_thermal_meter = 0xFF
+    return eeprom_thermal_meter
 
 
 def _parse_mac_address(m: bytes) -> Optional[str]:
@@ -323,6 +337,7 @@ def read_chip_params(t) -> ChipParams:
         type_alna=type_alna,
         type_apa=type_apa,
         interface_sel=interface_sel,
+        eeprom_thermal_meter=_parse_thermal_meter(m, autoload_fail),
     )
 
 

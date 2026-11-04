@@ -26,7 +26,10 @@ bandwidth option, not a gap).
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from ..rtl88xxau_base.sipi import RF_CHNLBW, RF_PATH_A, RF_PATH_B, set_bb, set_rf_reg
+from .watchdog import PhydmState, odm_clear_txpowertracking_state, phy_set_bb_swing_by_band_8812a
 
 BB_SWING_DEFAULT = 0x200   # 0 dB (efuse-unburned fallback)
 _RF_MOD_AG = (1 << 18) | (1 << 17) | (1 << 16) | (1 << 9) | (1 << 8)   # RF_CHNLBW band bits
@@ -115,15 +118,19 @@ def _set_rfe_5g(t, rfe_type: int) -> None:
         set_bb(t, ib, 0xFFFFFFFF, 0x00000077)
 
 
-def _set_bb_swing(t, bb_swing_a: int, bb_swing_b: int) -> None:
+def _set_bb_swing(t, bb_swing_a: int, bb_swing_b: int, band_5g: bool,
+                  phydm: Optional[PhydmState]) -> None:
     """[SRC] phy_SetBBSwingByBand_8812A (rtl8812a_phycfg.c:1130), NORMAL_CHIP path — the
     per-band TxScale, written at the very end of PHY_SwitchWirelessBand8812 (both paths).
     """
     set_bb(t, _TXSCALE[RF_PATH_A], 0xFFE00000, bb_swing_a)   # 0xC1C[31:21]
     set_bb(t, _TXSCALE[RF_PATH_B], 0xFFE00000, bb_swing_b)   # 0xE1C[31:21]
+    if phydm is not None:
+        phy_set_bb_swing_by_band_8812a(phydm, band_5g, bb_swing_b)
 
 
-def _switch_band_2g(t, bb_swing_a: int, bb_swing_b: int, rfe_type: int = 0) -> None:
+def _switch_band_2g(t, bb_swing_a: int, bb_swing_b: int, rfe_type: int = 0,
+                    phydm: Optional[PhydmState] = None) -> None:
     """[SRC] PHY_SwitchWirelessBand8812(BAND_ON_2_4G), 8812 path."""
     set_bb(t, 0x0808, 0x30000000, 0x3)       # rOFDMCCKEN: OFDM + CCK on
     set_bb(t, 0x0834, 0x00000003, 0x1)       # rBWIndication[1:0]=1 (8812)
@@ -133,12 +140,13 @@ def _switch_band_2g(t, bb_swing_a: int, bb_swing_b: int, rfe_type: int = 0) -> N
     _set_rfe_2g(t, rfe_type)                  # phy_SetRFEReg8812 (no TxScale)
     set_bb(t, 0x080C, 0x000000F0, 0x1)       # rTxPath (mp_mode==0)
     set_bb(t, 0x0A04, 0x0F000000, 0x1)       # rCCK_RX (mp_mode==0)
-    _update_tx_basic_rate(t, 0x015F)         # WIRELESS_11BG basic rates
+    _update_tx_basic_rate(t, 0x015F, phydm)  # WIRELESS_11BG basic rates
     t.write8(REG_CCK_CHECK, t.read8(REG_CCK_CHECK) & ~0x80)  # clear BIT7 (2.4 GHz)
-    _set_bb_swing(t, bb_swing_a, bb_swing_b)  # phy_SetBBSwingByBand_8812A (band tail)
+    _set_bb_swing(t, bb_swing_a, bb_swing_b, False, phydm)  # phy_SetBBSwingByBand_8812A
 
 
-def _switch_band_5g(t, bb_swing_a: int, bb_swing_b: int, rfe_type: int = 0) -> None:
+def _switch_band_5g(t, bb_swing_a: int, bb_swing_b: int, rfe_type: int = 0,
+                    phydm: Optional[PhydmState] = None) -> None:
     """[SRC] PHY_SwitchWirelessBand8812(BAND_ON_5G), 8812 path (mp_mode==0). Unlike the
     2.4 GHz branch, the 5 GHz marker + a TX-FIFO-idle wait come FIRST, then the band regs,
     phy_SetRFEReg8812(5G), and the 11A basic-rate table (no CCK on 5 GHz).
@@ -158,14 +166,16 @@ def _switch_band_5g(t, bb_swing_a: int, bb_swing_b: int, rfe_type: int = 0) -> N
     _set_rfe_5g(t, rfe_type)                  # phy_SetRFEReg8812 (5 GHz, both paths)
     set_bb(t, 0x080C, 0x000000F0, 0x0)       # rTxPath (mp_mode==0)
     set_bb(t, 0x0A04, 0x0F000000, 0xF)       # rCCK_RX (mp_mode==0)
-    _update_tx_basic_rate(t, 0x0150)         # WIRELESS_11A basic rates (OFDM only)
-    _set_bb_swing(t, bb_swing_a, bb_swing_b)  # phy_SetBBSwingByBand_8812A (band tail)
+    _update_tx_basic_rate(t, 0x0150, phydm)  # WIRELESS_11A basic rates (OFDM only)
+    _set_bb_swing(t, bb_swing_a, bb_swing_b, True, phydm)   # phy_SetBBSwingByBand_8812A
 
 
-def _update_tx_basic_rate(t, brate_cfg: int) -> None:
+def _update_tx_basic_rate(t, brate_cfg: int, phydm: Optional[PhydmState]) -> None:
     # [SRC] update_tx_basic_rate -> HW_VAR_BASIC_RATE: RRSR rate bitmap (masked RMW) +
-    # clear the RRSR+2 low nibble.
+    # clear the RRSR+2 low nibble. rtw_phydm_set_rrsr (hal_dm.c:1805) records it as rrsr_val_init.
     temp = (t.read32(0x0440) & 0xFFFF0000) | brate_cfg
+    if phydm is not None:
+        phydm.rrsr_val_init = temp
     set_bb(t, 0x0440, 0x000FFFFF, temp)
     t.write8(0x0442, t.read8(0x0442) & 0xF0)
 
@@ -222,14 +232,15 @@ def _fix_spur(t, ch: int, is_c_cut: bool = True) -> None:
 
 
 def _sw_chnl(t, ch: int, bb_swing_2g_a: int, bb_swing_2g_b: int,
-             bb_swing_5g_a: int, bb_swing_5g_b: int, rfe_type: int, is_c_cut: bool = True) -> None:
+             bb_swing_5g_a: int, bb_swing_5g_b: int, rfe_type: int, is_c_cut: bool = True,
+             phydm: Optional[PhydmState] = None) -> None:
     """[SRC] phy_SwChnl8812: phy_SwBand (conditional band switch) + fc_area + per-path channel."""
     cur_5g = bool(t.read8(REG_CCK_CHECK) & 0x80)   # phy_SwBand8812 band marker
     want_5g = ch > 14
     if want_5g and not cur_5g:
-        _switch_band_5g(t, bb_swing_5g_a, bb_swing_5g_b, rfe_type)
+        _switch_band_5g(t, bb_swing_5g_a, bb_swing_5g_b, rfe_type, phydm)
     elif cur_5g and not want_5g:
-        _switch_band_2g(t, bb_swing_2g_a, bb_swing_2g_b, rfe_type)
+        _switch_band_2g(t, bb_swing_2g_a, bb_swing_2g_b, rfe_type, phydm)
     _fc_area(t, ch)
     for path in (RF_PATH_A, RF_PATH_B):            # 2T2R: both radios
         _rf_mod_ag(t, path, ch)
@@ -264,7 +275,13 @@ def set_chnl_bw(t, ch: int = 1, bb_swing_2g_a: int = BB_SWING_DEFAULT,
 def set_channel_bw(t, ch: int, bb_swing_2g_a: int = BB_SWING_DEFAULT,
                    bb_swing_2g_b: int = BB_SWING_DEFAULT, bb_swing_5g_a: int = BB_SWING_DEFAULT,
                    bb_swing_5g_b: int = BB_SWING_DEFAULT, rfe_type: int = 0,
-                   is_c_cut: bool = True) -> None:
-    """Runtime hop (M7): phy_SwChnl (band switch only on a 2.4<->5 crossing) + channel + BW."""
-    _sw_chnl(t, ch, bb_swing_2g_a, bb_swing_2g_b, bb_swing_5g_a, bb_swing_5g_b, rfe_type, is_c_cut)
+                   is_c_cut: bool = True, phydm: Optional[PhydmState] = None) -> None:
+    """Runtime hop (M7): phy_SwChnl (band switch only on a 2.4<->5 crossing) + channel + BW.
+
+    ``phydm`` records the band switch's RRSR and the TX-power-tracking resets; None before phydm init.
+    """
+    _sw_chnl(t, ch, bb_swing_2g_a, bb_swing_2g_b, bb_swing_5g_a, bb_swing_5g_b, rfe_type, is_c_cut,
+             phydm)
     _post_set_bw_20(t, ch, is_c_cut)
+    if phydm is not None:
+        odm_clear_txpowertracking_state(phydm)     # phy_SwChnlAndSetBwMode8812 (rtl8812a_phycfg.c:1801)
