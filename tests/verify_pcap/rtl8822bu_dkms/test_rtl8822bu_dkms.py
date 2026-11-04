@@ -40,7 +40,4 @@ class TestRtl8822buDkms(VerifyCapture):
                "fresh module load (capture-1), written after the previous capture left the 5 GHz pinmux",
                capture_only_run=RFE_2G_PINMUX_RUN,
                capture_paths=(CAPTURE_DIR / "capture-2.pcap", CAPTURE_DIR / "capture-3.pcap")),
-        Waiver(WaiverReason.WIFIT3_ONLY, "wifit3 connect _seed_dig: seeds the DIG state from IGI 0x0c50, 0x08c8, 0x0a9c",
-               driver_only_run=(RegisterOp(READ, 0x0c50, None), RegisterOp(READ, 0x08c8, None),
-                                RegisterOp(READ, 0x0a9c, None))),
     ]

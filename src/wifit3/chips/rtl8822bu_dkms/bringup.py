@@ -19,7 +19,7 @@ from . import constants as const
 
 
 def cold_bringup(t):
-    """Run the full two-cycle cold init; return (chip_info, efuse_data)."""
+    """Run the full two-cycle cold init; return (chip_info, efuse_data, the odm_dm_init DmState)."""
     info = chipid.get_chip_info(t)         # HALMAC chip-id / cut (R 0xFC, R 0xF1)
     usbphy.phy_cfg_usb(t, info.chip_ver)   # USB3 intf-phy params
     chipid.read_chip_version(t)            # rtw chip-version (R 0xF0/0xF4/0x68)
@@ -84,4 +84,4 @@ def cold_bringup(t):
     mac.init_misc(t)                       # rtl8822b_init_misc: CAM/RCR/sec-en/TXQ/AMPDU MAC misc
     # --- rtl8822bu_init tail: hal_init_misc (rtl8822bu_halinit.c:205), SW_LED_MODE9 -> SW-controlled LED ---
     led.led_cfg(t, led.HALMAC_WLLED_MODE_SW_CTRL)
-    return info, e
+    return info, e, st

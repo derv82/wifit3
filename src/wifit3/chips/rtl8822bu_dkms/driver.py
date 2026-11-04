@@ -197,7 +197,7 @@ class Rtl8822buDkmsDriver(Driver):
 
             if progress_cb:
                 progress_cb(0.1, "Cold bring-up: chip-ID / EFUSE / FW / MAC / BB / RF")
-            info, e = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
+            info, e, dm_st = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
             self._chip = (info, e)
             self._rfe_type, self._cut = e.rfe_type, info.chip_ver
             self._txpwr_pg = txpower.parse_pg(e.log_map)
@@ -234,16 +234,10 @@ class Rtl8822buDkmsDriver(Driver):
             await loop.run_in_executor(None, mac.enable_monitor, self.transport)
             await self._dbg_rx_state(f"post-enable-monitor ch{_DEFAULT_CHANNEL}")
 
-            # Seed the DIG state from the chip and start the runtime PHYDM watchdog (~2 s cadence): the
-            # dig_init IGI is only a seed, so without this loop the RX gain never tracks the channel's
-            # false-alarm rate. Reads FA counters, adapts IGI (0xC50/0xE50), resets the counters.
-            def _seed_dig(tr):
-                return dm_watchdog.DigState(
-                    cur_ig_value=sipi.get_bb_reg(tr, 0x0C50, 0x7F),
-                    big_jump_step1=sipi.get_bb_reg(tr, 0x08C8, 0xE),
-                    cck_new_agc=bool(sipi.get_bb_reg(tr, 0x0A9C, 1 << 17)))
-
-            self._dig_st = await loop.run_in_executor(None, _seed_dig, self.transport)
+            # The runtime DIG carries phydm_dig_init's state (phydm_dig.c:1000), not a later re-read.
+            self._dig_st = dm_watchdog.DigState(cur_ig_value=dm_st.cur_ig_value,
+                                                big_jump_step1=dm_st.big_jump_step1,
+                                                cck_new_agc=dm_st.cck_new_agc)
             self._watchdog_task = loop.create_task(self._watchdog_loop())
 
             if progress_cb:
