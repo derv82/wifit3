@@ -48,6 +48,8 @@ _CATEGORY_PROTECTED_DUAL_OF_ACTION = 9   # WLAN_CATEGORY_PROTECTED_DUAL_OF_ACTIO
 _PUB_ACTION_FTM_REQUEST = 32   # WLAN_PUB_ACTION_FTM_REQUEST
 _PUB_ACTION_FTM_RESPONSE = 33  # WLAN_PUB_ACTION_FTM_RESPONSE
 _FTM_ACTION_CODE_END = 26      # offsetofend(struct ieee80211_mgmt, u.action.u.ftm.action_code)
+_RFC1042_HEADER = b"\xaa\xaa\x03\x00\x00\x00"   # rfc1042_header (net/wireless/util.c:2680)
+_ETH_P_PAE = b"\x88\x8e"       # ETH_P_PAE, big-endian as skb->protocol
 # mac80211 ieee802_1d_to_ac (wme.c): an 802.1d priority's AC.
 _IEEE802_1D_TO_AC = (MT_TXQ_BE, MT_TXQ_BK, MT_TXQ_BK, MT_TXQ_BE, MT_TXQ_VI, MT_TXQ_VI, MT_TXQ_VO, MT_TXQ_VO)
 # Each TX queue's bulk-OUT: mt76u_ac_to_hwq for 0x7961 (usb.c:927-930), out_ep[mt76_ac_to_hwq(ac) + 1], PSD on HCCA.
@@ -206,14 +208,13 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
         # The injected-frame branch takes a BlockAckReq's start_seq_num as its seqno (:470-476).
         seqno = frame[18] | (frame[19] << 8)
 
-    # [SRC] mt76_connac2_mac_write_txwi (mt76_connac_mac.c:450): FIX_RATE if non-data OR
-    # multicast OR IEEE80211_TX_CTL_USE_MINRATE. mac80211 sets USE_MINRATE for frames with no
-    # rate-control context — i.e. everything we inject (monitor vif, reserved WCID, no STA rate
-    # table). We can't read info->flags, so we dropped that 3rd condition; without it injected
-    # unicast data carries no fixed rate and the HW falls back to CCK 1 Mbps (2.4 GHz-only),
-    # silently dropping data uplink on 5 GHz (the WPS EAPOL-Start). Force the band rate on
-    # 5 GHz; 2.4 GHz's CCK fallback is legal there and matches the capture (verify_pcap CHECK 4).
-    fix_rate = (not is_data) or multicast or band_5ghz
+    # mt76_connac_mac.c:449-451. USE_MINRATE: an injected rfc1042 data frame whose ethertype is
+    # the monitor sdata's control_port_protocol, ETH_P_PAE (mac80211 tx.c:2359-2365, :556-560).
+    hdrlen = _ieee80211_hdrlen(fc)
+    use_minrate = (is_data and len(frame) >= hdrlen + len(_RFC1042_HEADER) + 2
+                   and frame[hdrlen:hdrlen + 6] == _RFC1042_HEADER
+                   and frame[hdrlen + 6:hdrlen + 8] == _ETH_P_PAE)
+    fix_rate = (not is_data) or multicast or use_minrate
 
     txwi = [0] * 9
     txwi[0] = (_fp(MT_TXD0_TX_BYTES, len(frame) + MT_SDIO_TXD_SIZE)
