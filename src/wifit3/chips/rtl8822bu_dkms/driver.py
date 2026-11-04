@@ -222,6 +222,12 @@ class Rtl8822buDkmsDriver(Driver):
             await loop.run_in_executor(None, mac.set_opmode_station, self.transport)
             # _netdev_open: rtw_hal_init, then rtw_led_control(LED_CTL_NO_LINK) (os_intfs.c:4063).
             self._led_task = loop.create_task(self._led_blink())
+            # _netdev_open then arms dynamic_chk_timer (os_intfs.c:4076). The runtime DIG carries
+            # phydm_dig_init's state (phydm_dig.c:1000), not a later re-read.
+            self._dig_st = dm_watchdog.DigState(cur_ig_value=dm_st.cur_ig_value,
+                                                big_jump_step1=dm_st.big_jump_step1,
+                                                cck_new_agc=dm_st.cck_new_agc)
+            self._watchdog_task = loop.create_task(self._watchdog_loop(loop.time()))
             await self._dbg_rx_state(f"post-initial-tune ch{_DEFAULT_CHANNEL}")
 
             # Start the bulk-IN reader before opening the RX gate (an undrained pipe wedges RX FIFO).
@@ -229,16 +235,11 @@ class Rtl8822buDkmsDriver(Driver):
                 loop, self._read_once, self._dispatch, name="8822bu-dkms-rx",
                 on_fatal=lambda e: self._on_lost and self._on_lost(e))
             self._reader.start()
-            # The airmon monitor RX-enable (gate-verified vs the capture's monitor switch):
-            # MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode, RXFLTMAP0/1/2=0xFFFF.
-            await loop.run_in_executor(None, mac.enable_monitor, self.transport)
+            # The airmon monitor RX-enable: setopmode is queued on the cmd thread with the watchdog tick
+            # (ioctl_cfg80211.c:2777), so it runs under _io_lock.
+            async with self._io_lock:
+                await loop.run_in_executor(None, mac.enable_monitor, self.transport)
             await self._dbg_rx_state(f"post-enable-monitor ch{_DEFAULT_CHANNEL}")
-
-            # The runtime DIG carries phydm_dig_init's state (phydm_dig.c:1000), not a later re-read.
-            self._dig_st = dm_watchdog.DigState(cur_ig_value=dm_st.cur_ig_value,
-                                                big_jump_step1=dm_st.big_jump_step1,
-                                                cck_new_agc=dm_st.cck_new_agc)
-            self._watchdog_task = loop.create_task(self._watchdog_loop())
 
             if progress_cb:
                 progress_cb(1.0, f"Tuned to channel {_DEFAULT_CHANNEL} @ 20 MHz (monitor)")
@@ -267,15 +268,14 @@ class Rtl8822buDkmsDriver(Driver):
                            "(phydm_8822b_type%d_rfe) is not ported — running the iFEM fallback; "
                            "antenna routing may be wrong.", e.rfe_type, e.rfe_type)
 
-    async def _watchdog_loop(self) -> None:
-        """Run `phydm_watchdog` every ~2 s (the vendor cadence) — read the FA counters, adapt the RX
-        IGI, reset the counters. Serialized with `set_channel` via `_io_lock`; control I/O only, never
-        802.11 TX. A transient USB hiccup skips the tick rather than killing the loop."""
+    async def _watchdog_loop(self, armed_at: float) -> None:
+        """rtw_dynamic_check_timer_handlder re-arms 2 s from its own fire (rtw_mlme.c:4130) and queues the
+        tick on the cmd thread, so a tick waits for _io_lock, never skips. A USB error skips one tick."""
         loop = asyncio.get_running_loop()
+        expiry = armed_at
         while True:
-            await asyncio.sleep(2.0)
-            if self._io_lock.locked():
-                continue
+            expiry += 2.0
+            await asyncio.sleep(expiry - loop.time())
             try:
                 async with self._io_lock:
                     fa = await loop.run_in_executor(
