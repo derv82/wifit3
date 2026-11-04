@@ -98,30 +98,30 @@ def test_capture_only_run_matches_the_exact_run_with_in_ops_between() -> None:
            reg_read(2, [READ_REGISTER]), response(2),
            reg_write(3, [OTHER_REGISTER, 0x2, R.AR_TSF_U32, 0x0]), response(3),
            reg_write(4, [OTHER_REGISTER, 0x3])]
-    assert CaptureOnlyRun().capture_only_run_positions(ops, RUN) == [2, 4]
+    assert CaptureOnlyRun().capture_only_run_occurrences(ops, RUN) == [[2, 4]]
 
 
 def test_capture_only_run_does_not_match_a_different_value() -> None:
     ops = [reg_read(2, [READ_REGISTER]), reg_write(3, [OTHER_REGISTER, 0x2, R.AR_TSF_U32, 0x1])]
-    assert CaptureOnlyRun().capture_only_run_positions(ops, RUN) == []
+    assert CaptureOnlyRun().capture_only_run_occurrences(ops, RUN) == []
 
 
 def test_capture_only_run_does_not_match_a_part_of_an_op() -> None:
     ops = [reg_read(2, [READ_REGISTER]), reg_write(3, [OTHER_REGISTER, 0x2, R.AR_TSF_U32, 0x0, OTHER_REGISTER, 0x4])]
-    assert CaptureOnlyRun().capture_only_run_positions(ops, RUN) == []
+    assert CaptureOnlyRun().capture_only_run_occurrences(ops, RUN) == []
 
 
 def test_capture_only_run_does_not_match_across_an_op_without_register_ops() -> None:
     ops = [reg_read(2, [READ_REGISTER]), wmi_op(C.EP_REG_OUT, wmi.WMI_ENABLE_INTR_CMDID, 3, []),
            reg_write(4, [OTHER_REGISTER, 0x2, R.AR_TSF_U32, 0x0])]
-    assert CaptureOnlyRun().capture_only_run_positions(ops, RUN) == []
+    assert CaptureOnlyRun().capture_only_run_occurrences(ops, RUN) == []
 
 
 def test_capture_only_run_matches_every_occurrence() -> None:
     ops = [reg_read(2, [READ_REGISTER]), reg_write(3, [OTHER_REGISTER, 0x2, R.AR_TSF_U32, 0x0]),
            reg_write(4, [OTHER_REGISTER, 0x3]),
            reg_read(5, [READ_REGISTER]), reg_write(6, [OTHER_REGISTER, 0x2, R.AR_TSF_U32, 0x0])]
-    assert CaptureOnlyRun().capture_only_run_positions(ops, RUN) == [0, 1, 3, 4]
+    assert CaptureOnlyRun().capture_only_run_occurrences(ops, RUN) == [[0, 1], [3, 4]]
 
 
 class RealtekValueOnly(VerifyCapture):
@@ -154,7 +154,7 @@ def test_realtek_capture_only_run_matches_a_read_and_a_write() -> None:
     ops = [realtek_write(REALTEK_OTHER_REGISTER, 0x1),
            realtek_read(REALTEK_OTHER_REGISTER, 0x1), realtek_write(REALTEK_OTHER_REGISTER, 0x2),
            realtek_read(REALTEK_OTHER_REGISTER, 0x2), realtek_write(REALTEK_OTHER_REGISTER, 0x3)]
-    assert RealtekCaptureOnlyRun().capture_only_run_positions(ops, REALTEK_RUN) == [1, 2]
+    assert RealtekCaptureOnlyRun().capture_only_run_occurrences(ops, REALTEK_RUN) == [[1, 2]]
 
 
 def realtek_tx(sw_seq: int, checksum: int) -> UsbOp:
@@ -229,7 +229,7 @@ REALTEK_ANY_VALUE_RUN = (RegisterOp(RegisterAccess.READ, REALTEK_OTHER_REGISTER,
 def test_realtek_capture_only_run_value_none_matches_any_value() -> None:
     ops = [realtek_read(REALTEK_OTHER_REGISTER, 0x1), realtek_write(REALTEK_OTHER_REGISTER, 0x5),
            realtek_write(REALTEK_WAIVED_REGISTER, 0x5)]
-    assert RealtekCaptureOnlyRun().capture_only_run_positions(ops, REALTEK_ANY_VALUE_RUN) == [0, 1]
+    assert RealtekCaptureOnlyRun().capture_only_run_occurrences(ops, REALTEK_ANY_VALUE_RUN) == [[0, 1]]
 
 
 class RealtekDriverOnlyRun(VerifyCapture):

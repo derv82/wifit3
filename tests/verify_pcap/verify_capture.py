@@ -66,8 +66,9 @@ class TxOpField:
 @dataclass(frozen=True)
 class Waiver:
     """value_only_register / value_only_tx_op_field: the driver makes the op; that register's written value or that
-    TX op field is not compared. capture_only_run: this run of register ops is in the capture only. driver_only_run:
-    this run of register ops, in order, is the driver's only. capture_paths: the captures it applies to; empty: all."""
+    TX op field is not compared. capture_only_run: this run of register ops is in the capture only, waived where the
+    replay would stop at its first op. driver_only_run: this run of register ops, in order, is the driver's only.
+    capture_paths: the captures it applies to; empty: all."""
     reason: WaiverReason
     c_source: str
     value_only_register: int | None = None
@@ -159,23 +160,23 @@ class VerifyCapture:
         for waiver in self.WAIVERS:
             if not waiver.capture_paths or capture_path in waiver.capture_paths:
                 waivers.append(waiver)
-        waived_positions: set[int] = set()
         positions_by_waiver: dict[Waiver, list[int]] = {}
+        occurrences_by_waiver: dict[Waiver, list[list[int]]] = {}
+        capture_only_run_by_start: dict[int, list[int]] = {}
         driver_only_progress: dict[Waiver, int] = {}
         for waiver in waivers:
             if waiver.driver_only_run:
                 driver_only_progress[waiver] = 0
-                continue
-            if waiver.value_only_register is not None:
-                positions = self.register_write_positions(capture.ops, waiver.value_only_register)
-            elif waiver.value_only_tx_op_field is not None:
-                positions = [position for position in range(len(capture.ops))
-                             if self.DECODER.injected_frame_at(capture.ops, position) is not None]
+            elif waiver.capture_only_run:
+                occurrences = self.capture_only_run_occurrences(capture.ops, waiver.capture_only_run)
+                occurrences_by_waiver[waiver] = occurrences
+                for occurrence in occurrences:
+                    capture_only_run_by_start[occurrence[0]] = occurrence
+            elif waiver.value_only_register is not None:
+                positions_by_waiver[waiver] = self.register_write_positions(capture.ops, waiver.value_only_register)
             else:
-                positions = self.capture_only_run_positions(capture.ops, waiver.capture_only_run)
-                waived_positions.update(positions)
-            positions_by_waiver[waiver] = positions
-        ops, waived_positions = self.DECODER.skip_capture_only_ops(capture.ops, waived_positions)
+                positions_by_waiver[waiver] = [position for position in range(len(capture.ops))
+                                               if self.DECODER.injected_frame_at(capture.ops, position) is not None]
 
         thread_pool = DriverThreadPool()
 
@@ -190,7 +191,13 @@ class VerifyCapture:
         def is_driver_only_request(request: UsbOp, cursor_differs: bool) -> bool:
             return self.is_driver_only_request(request, cursor_differs, driver_only_progress)
 
-        replay = CaptureReplay(ops, waived_positions, is_same_request, is_driver_only_request, loop)
+        def skip_capture_only_run_at(ops: list[UsbOp], position: int) -> tuple[list[UsbOp], set[int]] | None:
+            occurrence = capture_only_run_by_start.get(position)
+            if occurrence is None:
+                return None
+            return self.DECODER.skip_capture_only_ops(ops, set(occurrence))
+
+        replay = CaptureReplay(capture.ops, is_same_request, is_driver_only_request, skip_capture_only_run_at, loop)
         device = FakeUsbDevice(replay, capture.device_descriptor, capture.configuration_descriptor,
                                capture.device_id.bus or 0, capture.device_id.address or 0)
 
@@ -226,6 +233,13 @@ class VerifyCapture:
             for position in positions:
                 if replay.reproduced_by[position] is not None:
                     count += 1
+            waived_counts[waiver] = count
+        for waiver, occurrences in occurrences_by_waiver.items():
+            count = 0
+            for occurrence in occurrences:
+                for position in occurrence:
+                    if replay.reproduced_by[position] == WAIVED:
+                        count += 1
             waived_counts[waiver] = count
         waived_counts.update(driver_only_progress)
         summary = self.format_summary(replay, capture, waived_counts)
@@ -308,11 +322,11 @@ class VerifyCapture:
                     break
         return positions
 
-    def capture_only_run_positions(self, ops: list[UsbOp], run: tuple[RegisterOp, ...]) -> list[int]:
-        """Positions of every occurrence of ``run``: consecutive control / OUT ops whose register ops, joined,
+    def capture_only_run_occurrences(self, ops: list[UsbOp], run: tuple[RegisterOp, ...]) -> list[list[int]]:
+        """The positions of each occurrence of ``run``: consecutive control / OUT ops whose register ops, joined,
         are exactly ``run``; bulk / interrupt IN ops between them are not part of it."""
         request_positions = [position for position, op in enumerate(ops) if not is_bulk_or_interrupt_in(op)]
-        matched_positions: list[int] = []
+        occurrences: list[list[int]] = []
         start = 0
         while start < len(request_positions):
             run_positions: list[int] = []
@@ -326,11 +340,11 @@ class VerifyCapture:
                 run_positions.append(request_positions[end])
                 end += 1
             if register_ops_match(run_register_ops, run):
-                matched_positions.extend(run_positions)
+                occurrences.append(run_positions)
                 start = end
             else:
                 start += 1
-        return matched_positions
+        return occurrences
 
     async def run_driver(self, replay: CaptureReplay, device: FakeUsbDevice,
                          device_id: DeviceID) -> None:
@@ -355,6 +369,9 @@ class VerifyCapture:
                     called = f"inject_frame({len(frame)}B)"
                     await driver.inject_frame(frame)
                 else:
+                    replay.waive_capture_only_run_at(position)
+                    if replay.next_unreproduced_position() != position:
+                        continue
                     replay.record_divergence(position, MAIN_CALLER,
                                              "the driver did not make this op, and it starts no channel change or TX")
                     break

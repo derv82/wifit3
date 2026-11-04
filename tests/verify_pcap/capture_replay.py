@@ -40,16 +40,18 @@ def is_bulk_or_interrupt_in(op: UsbOp) -> bool:
 
 
 class CaptureReplay:
-    def __init__(self, ops: list[UsbOp], waived_positions: set[int], is_same_request: Callable[[UsbOp, UsbOp], bool],
-                 is_driver_only_request: Callable[[UsbOp, bool], bool], loop: VirtualClockEventLoop) -> None:
+    def __init__(self, ops: list[UsbOp], is_same_request: Callable[[UsbOp, UsbOp], bool],
+                 is_driver_only_request: Callable[[UsbOp, bool], bool],
+                 skip_capture_only_run_at: Callable[[list[UsbOp], int], tuple[list[UsbOp], set[int]] | None],
+                 loop: VirtualClockEventLoop) -> None:
         """``is_same_request(captured, request)`` compares a driver request to a captured op;
-        ``is_driver_only_request(request, cursor_differs)`` accepts a request the capture does not have."""
+        ``is_driver_only_request(request, cursor_differs)`` accepts a request the capture does not have;
+        ``skip_capture_only_run_at(ops, position)``: the ops without the capture-only run there, and the positions to waive."""
         self.ops = ops
         self.reproduced_by: list[str | None] = [None] * len(ops)
-        for position in waived_positions:
-            self.reproduced_by[position] = WAIVED
         self._is_same_request = is_same_request
         self._is_driver_only_request = is_driver_only_request
+        self._skip_capture_only_run_at = skip_capture_only_run_at
         self.next_position_by_caller: dict[str, int] = {}
         self.divergence: Divergence | None = None
         self.refused_read_by_caller: dict[str, RefusedRead] = {}
@@ -57,7 +59,7 @@ class CaptureReplay:
         # Per thread the driver started itself (its RX reader): PROCESSING_REPLY, or the endpoint it waits on.
         self._driver_thread_state: dict[threading.Thread, int] = {}
         self._loop = loop
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._first_unreproduced = 0
         self._in_positions_by_endpoint: dict[int, deque[int]] = {}
         self._gate_by_position: dict[int, int] = {}
@@ -78,19 +80,22 @@ class CaptureReplay:
             if is_driver_thread():
                 self._driver_thread_state[threading.current_thread()] = PROCESSING_REPLY
             start = max(self.next_position_by_caller.get(caller, 0), self._advance_first_unreproduced())
-            position = self._next_unreproduced(start)
-            if position is None:
-                if self.driver_closing:
+            while True:
+                position = self._next_unreproduced(start)
+                if position is None:
+                    if self.driver_closing:
+                        return None
+                    raise self._diverge(None, request, caller, "request after the last captured op")
+                cursor_differs = not self._is_same_request(self.ops[position], request)
+                if self._is_driver_only_request(request, cursor_differs):
+                    # Replies with the latest earlier capture op of the same request, or zeros.
+                    for earlier in range(position - 1, -1, -1):
+                        if self.ops[earlier].same_request(request):
+                            return self.ops[earlier]
                     return None
-                raise self._diverge(None, request, caller, "request after the last captured op")
-            cursor_differs = not self._is_same_request(self.ops[position], request)
-            if self._is_driver_only_request(request, cursor_differs):
-                # Replies with the latest earlier capture op of the same request, or zeros.
-                for earlier in range(position - 1, -1, -1):
-                    if self.ops[earlier].same_request(request):
-                        return self.ops[earlier]
-                return None
-            if cursor_differs:
+                if not cursor_differs:
+                    self._loop.advance_clock(self.ops[position].completion_time)
+                    break
                 # Pass over unreproduced ops only if a driver task was due before the first of them.
                 due_time = self._loop.earliest_due_driver_timer()
                 candidate = None
@@ -98,12 +103,13 @@ class CaptureReplay:
                     candidate = self._next_unreproduced(position + 1)
                     while candidate is not None and not self._is_same_request(self.ops[candidate], request):
                         candidate = self._next_unreproduced(candidate + 1)
-                if candidate is None:
+                if candidate is not None:
+                    # The clock stays: the ops passed over are not reproduced yet.
+                    position = candidate
+                    break
+                self.waive_capture_only_run_at(position)
+                if self.reproduced_by[position] is None:
                     raise self._diverge(position, request, caller, "request differs from the capture")
-                # The clock stays: the ops passed over are not reproduced yet.
-                position = candidate
-            else:
-                self._loop.advance_clock(self.ops[position].completion_time)
             if (self._loop.jiffy_zero_time is None and caller != MAIN_CALLER
                     and self._loop.earliest_due_driver_timer() is not None):
                 # The kernel's jiffy phase: a woken driver task's first op is made in the jiffy after its timer fired.
@@ -173,6 +179,16 @@ class CaptureReplay:
     def next_unreproduced_position(self) -> int | None:
         with self._lock:
             return self._next_unreproduced(self._advance_first_unreproduced())
+
+    def waive_capture_only_run_at(self, position: int) -> None:
+        """Called where the replay would stop at ``position`` because the driver did not make it."""
+        with self._lock:
+            skipped = self._skip_capture_only_run_at(self.ops, position)
+            if skipped is None:
+                return
+            self.ops, waived_positions = skipped
+            for waived_position in waived_positions:
+                self.reproduced_by[waived_position] = WAIVED
 
     def record_divergence(self, position: int | None, caller: str, reason: str) -> None:
         with self._lock:
