@@ -74,6 +74,11 @@ def is_tx_frame(op: UsbOp) -> bool:
     return txd0 & C.MT_TXD0_TX_BYTES == struct.unpack_from("<H", data, 0)[0]
 
 
+def is_uhw_access(op: UsbOp, request: int, address: int) -> bool:
+    return (op.transfer_type == TransferType.CONTROL and op.setup is not None and op.request == request
+            and (op.value << 16) | op.index == address)
+
+
 def with_byte(op: UsbOp, offset: int, value: int) -> UsbOp:
     return replace(op, data=op.data[:offset] + bytes([value]) + op.data[offset + 1:])
 
@@ -230,8 +235,27 @@ class MediatekConnacDecoder(FamilyDecoder):
             struct.pack_into("<I", data, 4 * field.dword, (dword & ~mask) | (source_dword & mask))
         return replace(op, data=bytes(data))
 
-    def is_driver_vendor_request(self, op: UsbOp) -> bool:
-        return op.request_type in DRIVER_REQUEST_TYPES
+    def is_driver_vendor_request(self, ops: Sequence[UsbOp], position: int) -> bool:
+        """mt76 writes EP_RST_OPT only as the read-modify-write of mt792xu_epctl_rst_opt (mt792x_usb.c:200-206);
+        btusb's write of it (btmtk's EP reset option) has the WLAN request types but is no such write."""
+        op = ops[position]
+        if op.request_type not in DRIVER_REQUEST_TYPES:
+            return False
+        if not is_uhw_access(op, C.MT_VEND_WRITE, C.MT_SSUSB_EPCTL_CSR_EP_RST_OPT):
+            return True
+        for earlier in range(position - 1, -1, -1):
+            earlier_op = ops[earlier]
+            if (earlier_op.bus, earlier_op.device_address) != (op.bus, op.device_address):
+                continue
+            if is_uhw_access(earlier_op, C.MT_VEND_WRITE, C.MT_SSUSB_EPCTL_CSR_EP_RST_OPT):
+                return False
+            if is_uhw_access(earlier_op, C.MT_VEND_DEV_MODE, C.MT_SSUSB_EPCTL_CSR_EP_RST_OPT):
+                if len(earlier_op.data) != 4 or len(op.data) != 4:
+                    return False
+                read_value = struct.unpack("<I", earlier_op.data)[0]
+                written_value = struct.unpack("<I", op.data)[0]
+                return (read_value ^ written_value) & ~C.MT_EPCTL_EP_RST_OPT_MASK == 0
+        return False
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """connac3 bulk IN: PKT_TYPE_RX_EVENT is an MCU reply (kept) unless PKT_FLAG marks a tunnelled frame."""
