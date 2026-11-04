@@ -113,10 +113,12 @@ class CaptureReplay:
                     raise self._diverge(position, request, caller, "request differs from the capture")
             timer_tolerance = self._loop.timer_tolerance_by_woken_caller.pop(caller, None)
             if timer_tolerance is not None:
-                # The kernel's work may have waited on the other callers' ops between its previous op and this one.
+                # The kernel's work may have waited on the other callers' ops between its previous op and this one;
+                # an hrtimer submits its URB from the interrupt, waiting on none.
                 captured_time = self.ops[position].submit_time
                 earlier = position - 1
-                while earlier >= 0 and self.reproduced_by[earlier] != caller:
+                while (earlier >= 0 and self.reproduced_by[earlier] != caller
+                       and caller not in self._loop.hrtimer_callers):
                     if not is_bulk_or_interrupt_in(self.ops[earlier]):
                         captured_time = self.ops[earlier].submit_time
                     earlier -= 1

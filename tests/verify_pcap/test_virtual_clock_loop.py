@@ -108,3 +108,43 @@ def test_woken_driver_task_passes_over_a_main_op_captured_within_its_timer_toler
         loop.close()
     assert replay.divergence is None
     assert replay.unreproduced_positions() == [2]
+
+
+def test_hrtimer_read_does_not_wait_on_another_callers_op() -> None:
+    """The capture's read comes 2.7 ms after the hrtimer, behind main's op: the kernel made it late, not waiting."""
+    ops = [replace(realtek_write(REALTEK_OTHER_REGISTER, value), submit_time=submit_time, completion_time=submit_time)
+           for value, submit_time in [(0x1, 0.0), (0x2, 0.0015), (0x3, 0.0038)]]
+
+    async def hrtimer_task() -> None:
+        replay.match_request(ops[0], current_caller_name())
+        await asyncio.sleep(0.001)
+        replay.match_request(ops[2], current_caller_name())
+
+    loop = VirtualClockEventLoop(0.0, lambda: True, frozenset({hrtimer_task.__qualname__}))
+    replay = CaptureReplay(ops, lambda captured, request: captured.same_request(request),
+                           lambda request, cursor_differs: False, lambda ops, position: None, loop)
+
+    async def main() -> None:
+        try:
+            await loop.create_task(hrtimer_task())
+        except CaptureDivergence:
+            pass
+
+    try:
+        loop.run_until_complete(loop.create_task(main(), name=MAIN_CALLER))
+    finally:
+        loop.close()
+    assert replay.divergence is not None and "timer fired" in replay.divergence.reason
+
+
+def test_new_driver_task_starts_at_its_creators_time() -> None:
+    async def driver_task() -> float:
+        return asyncio.get_running_loop().time()
+
+    loop = VirtualClockEventLoop(0.0, lambda: True)
+    loop.completion_time_by_caller[driver_task.__qualname__] = 0.5
+    loop.virtual_time = 1.0
+    try:
+        assert loop.run_until_complete(loop.create_task(driver_task())) == 1.0
+    finally:
+        loop.close()

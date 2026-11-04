@@ -124,6 +124,13 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
             return self.virtual_time
         return task_time
 
+    def create_task(self, coro: Any, **kwargs: Any) -> asyncio.Task[Any]:
+        """A driver task starts at its creator's time, not at the last op of an ended task of the same coroutine."""
+        task = super().create_task(coro, **kwargs)
+        if task.get_name() != MAIN_CALLER:
+            self.completion_time_by_caller.pop(task.get_coro().__qualname__, None)
+        return task
+
     def advance_clock(self, timestamp: float) -> None:
         """From another thread, also wakes the loop: a driver task timer may now be due."""
         if timestamp <= self.virtual_time:
