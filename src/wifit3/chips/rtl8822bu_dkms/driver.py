@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from dataclasses import dataclass
 from typing import Callable, ClassVar, List, Optional
 
@@ -40,7 +39,6 @@ logger = logging.getLogger(__name__)
 USB_VID_REALTEK = 0x2357
 USB_PID_T3U_PLUS = 0x0138
 _DEFAULT_CHANNEL = 1
-_HEAL_5G_CHANNEL = 36                           # 5 GHz channel used to re-cycle a stuck cold synth
 _BULK_OUT_EP_TX = 0x05                          # 8822b bulk-OUT (FW/TX)
 CHANNELS_2G = list(range(1, 15))
 CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
@@ -234,7 +232,6 @@ class Rtl8822buDkmsDriver(Driver):
             # The airmon monitor RX-enable (gate-verified vs the capture's monitor switch):
             # MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode, RXFLTMAP0/1/2=0xFFFF.
             await loop.run_in_executor(None, mac.enable_monitor, self.transport)
-            await loop.run_in_executor(None, self._heal_cold_synth, self.transport)
             await self._dbg_rx_state(f"post-enable-monitor ch{_DEFAULT_CHANNEL}")
 
             # Seed the DIG state from the chip and start the runtime PHYDM watchdog (~2 s cadence): the
@@ -375,30 +372,6 @@ class Rtl8822buDkmsDriver(Driver):
     async def _disable_rx_acks(self) -> None:
         """No-op, matching ``_enable_rx_acks``: the monitor RX filter is left untouched."""
         return
-
-    def _heal_cold_synth(self, t) -> None:
-        """Recover the intermittent cold-boot 2.4 GHz synth wedge (~20% of cold boots).
-
-        Symptom: the cold->2.4 GHz tune leaves the synth unlocked (RF18 bit15 set) and 2.4 GHz RX
-        is deaf until a band re-cycle. The bring-up wire is byte-for-byte (verify_pcap /
-        verify_channels green), so this is a HW synth-lock fault the kernel's tight transfer pacing
-        avoids and userland USB intermittently hits — not a missing op. The chip's own recovery is a
-        5->2.4 GHz re-cycle, but HW-measured it only re-locks once the synth has SETTLED: an immediate
-        bounce right after the stuck tune does nothing, a short settle first makes it take. So settle,
-        bounce through 5 GHz and back, re-check; repeat a few times. No-op on the 80% of boots that
-        lock cleanly (bit15 clear -> returns immediately)."""
-        for attempt in range(4):
-            if not (sipi.read_rf_reg(t, sipi.RF_PATH_A, 0x18) & (1 << 15)):
-                return
-            logger.warning("8822bu cold 2.4 GHz synth unlocked (RF18 bit15) — settle + re-cycle "
-                           "5->2.4 GHz (try %d)", attempt + 1)
-            time.sleep(0.3)
-            chan.set_channel_bw(t, _HEAL_5G_CHANNEL, prev_ch=_DEFAULT_CHANNEL,
-                                txpwr_pg=self._txpwr_pg, rfe_type=self._rfe_type, cut=self._cut)
-            chan.set_channel_bw(t, _DEFAULT_CHANNEL, prev_ch=_HEAL_5G_CHANNEL,
-                                txpwr_pg=self._txpwr_pg, rfe_type=self._rfe_type, cut=self._cut)
-        if sipi.read_rf_reg(t, sipi.RF_PATH_A, 0x18) & (1 << 15):
-            logger.error("8822bu 2.4 GHz synth still unlocked after re-cycles — RX may be deaf on 2.4 GHz")
 
     async def _dbg_rx_state(self, ctx: str) -> None:
         """Log the decoded RX-path register read-back (DEBUG only) — the cold-wedge probe."""

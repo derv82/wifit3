@@ -47,14 +47,10 @@ fails FCS. Fix: run `switch_band` whenever `(prev_ch is None or prev_ch>14)` dif
 The byte gate stayed green because the initial channel-set is a window neither `verify_pcap` (stops
 at op 9855) nor `verify_channels` (iw.log hops, all `prev_ch` set) slices.
 
-**Intermittent cold-boot 2.4 GHz synth wedge.** ~20% of cold boots leave the 2.4 GHz synth
-unlocked (RF18 bit15 set after the initial tune); every 2.4 GHz hop then catches 0 frames until a
-5->2.4 re-cycle. This is *not* a port miss — the bring-up wire is byte-for-byte and the vendor
-reproduces the same ops; it's a HW synth-lock fault the kernel's tight transfer pacing avoids and
-userland USB intermittently hits. Recovery is the chip's own 5->2.4 re-cycle, **but only after the
-synth has settled** — an immediate bounce does nothing. `driver._heal_cold_synth` (after
-`enable_monitor`) sleeps 0.3 s, re-cycles, re-checks, up to 4x. Validated 80/80 cold-boot soak OK
-(was ~20% deaf); no-op on clean boots.
+**No cold-synth heal.** `_heal_cold_synth` re-cycled 5->2.4 GHz when RF18 bit15 read set after the
+initial tune, calling it a synth unlock; bit15 is the LCK trigger/busy bit (halrf_8822b.c:457-466),
+and C has no such step. Removed to follow C; the reported ~20% cold-boot 2.4 GHz deafness needs a
+live recheck.
 
 **TX G_ID must be BMC-keyed, not hardcoded.** `build_inject_txdesc` originally hardcoded G_ID=63,
 which broke unicast (targeted-deauth) descriptors — 0/128 match. It's now 63 for broadcast / 0 for
