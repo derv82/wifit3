@@ -40,7 +40,7 @@ from .constants import (
 from .dm import init_hal_dm
 from .watchdog import LED_BLINK_NO_LINK_INTERVAL_ALPHA_S, WATCHDOG_PERIOD_S, WatchdogState, led_blink
 from .watchdog import tick as watchdog_tick
-from .efuse import read_chip_params
+from .efuse import RF_2T2R, RF_2T4R, RF_3T3R, read_chip_params
 from .firmware import bring_up
 from .mac import hal_init_turn_on, mac_init_misc, phy_mac_config
 from .monitor import _set_macaddr, enable_rx_bar, enter_monitor, set_sta_opmode
@@ -48,7 +48,8 @@ from .powertrack import on_channel_switch
 from .rf import phy_rf_config
 from .rx import iter_frames
 from .transport import Rtl8814auTransport
-from .tx import DESC_RATE1M, RATEID_IDX_B, TXBF_GID_NONE, build_mgmt_txdesc
+from .tx import (DESC_RATE1M, DESC_RATE24M, DESC_RATEVHTSS1MCS9, RATEID_IDX_B, RATEID_IDX_BGN_40M_1SS,
+                 RATEID_IDX_VHT_2SS, RATEID_IDX_VHT_3SS, TXBF_GID_NONE, build_mgmt_txdesc)
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,7 @@ class Rtl8814auDkmsDriver(Driver):
         # spur/NBI branches (chan.py); is_super_speed only promotes a 4T/3T part to RF_3T3R
         # (efuse rf_path). Default rfe_type=1 is the captured ALFA card.
         self._rfe_type: int = 1
+        self._rf_path: int = RF_2T4R
         self._is_super_speed: bool = False
         self._tx_power: tuple = ()  # per-path efuse TX-power info, 2.4 GHz (M2e)
         self._tx_power_5g: tuple = ()  # per-path efuse TX-power info, 5 GHz (M5d)
@@ -147,6 +149,7 @@ class Rtl8814auDkmsDriver(Driver):
         params = read_chip_params(t, self._is_super_speed)            # EFUSE probe (pre power-on)
         self.mac_address = params.mac_address
         self._rfe_type = params.rfe_type
+        self._rf_path = params.rf_path
         self._tx_power, self._tx_power_5g = params.tx_power, params.tx_power_5g
         self._bb_swing_2g, self._bb_swing_5g = params.bb_swing, params.bb_swing_5g
         progress(0.1, "Uploading firmware (3081 IDDMA)")
@@ -387,6 +390,20 @@ class Rtl8814auDkmsDriver(Driver):
         gate reads the recorded pair back and passes it here to byte-verify the descriptor. (The
         gate's inject byte-check matches the capture, including DATA_RETRY_LIMIT=12.)"""
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
+        # A data frame takes update_monitor_frame_attrib's rate [SRC rtw_mlme_ext.c:7447-7486,
+        # rtw_xmit.c:4525-4532].
+        if (frame_bytes[0] & 0x0C) == 0x08:
+            if self._rf_path in (RF_2T2R, RF_2T4R):
+                rate_id = RATEID_IDX_VHT_2SS
+            elif self._rf_path == RF_3T3R:
+                rate_id = RATEID_IDX_VHT_3SS
+            else:
+                rate_id = RATEID_IDX_BGN_40M_1SS
+            broadcast = bytes([0xFF] * 6)
+            if frame_bytes[16:22] == broadcast or frame_bytes[4:10] == broadcast:
+                hw_rate = DESC_RATE24M
+            else:
+                hw_rate = DESC_RATEVHTSS1MCS9
         # GID is the target psta's txbf_g_id: a broadcast pseudo-STA keeps the SU-default 63,
         # a real unicast STA (no beamforming here) is 0 (matches the wire across probe/RTS/auth).
         gid = TXBF_GID_NONE if bmc else 0

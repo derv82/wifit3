@@ -24,11 +24,16 @@ from .firmware import txdesc_checksum  # shared XOR checksum, byte-verified by M
 QSLT_MGNT = 0x12
 # Rate-ID groups [SRC ieee80211.h]: RATEID_IDX_B (CCK basic rates) is the safe 2.4 GHz
 # management default; RATEID_IDX_G selects the OFDM group.
+RATEID_IDX_BGN_40M_1SS = 1
 RATEID_IDX_G = 7
 RATEID_IDX_B = 8
+RATEID_IDX_VHT_2SS = 9
+RATEID_IDX_VHT_3SS = 13
 # DESC hardware rate codes [SRC hal_com.h] (the MRateToHwRate output).
 DESC_RATE1M = 0x00
 DESC_RATE6M = 0x04
+DESC_RATE24M = 0x08
+DESC_RATEVHTSS1MCS9 = 0x35
 # update_txdesc MGNT-path constants [SRC rtl8814au_xmit.c:105-299]:
 MGMT_MACID = 1               # pattrib->mac_id for a no-STA monitor-injected mgmt frame (wire=1)
 TXBF_GID_NONE = 0x3F         # pattrib->txbf_g_id default = 63 (no MU/beamforming group)
