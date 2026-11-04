@@ -6,7 +6,7 @@ from dataclasses import replace
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import FamilyDecoder, RegisterAccess, RegisterOp
+from tests.verify_pcap.verify_capture import FamilyDecoder, RegisterAccess, RegisterOp, TxOpField
 from wifit3.chips.mt7925au import constants as C
 
 MCU_TXD_OFFSET = C.SDIO_HDR_SIZE
@@ -174,6 +174,21 @@ class MediatekConnacDecoder(FamilyDecoder):
                     op = with_byte(op, C.MT7925_RXD_SEQ_OFF, renumbered_seq_by_seq[seq])
             renumbered_ops.append(op)
         return renumbered_ops, waived_positions
+
+    def with_tx_op_fields(self, op: UsbOp, fields: list[TxOpField], source: UsbOp) -> UsbOp:
+        """A TX op on the HCCA endpoint with ``source``'s bits in each field; the connac TXD has no checksum."""
+        if (op.transfer_type != TransferType.BULK or op.is_in or op.endpoint != C.EP_OUT_HCCA
+                or len(source.data) != len(op.data)):
+            return op
+        data = bytearray(op.data)
+        for field in fields:
+            if 4 * field.dword + 4 > len(data):
+                continue
+            mask = ((1 << field.width) - 1) << field.shift
+            dword = struct.unpack_from("<I", data, 4 * field.dword)[0]
+            source_dword = struct.unpack_from("<I", source.data, 4 * field.dword)[0]
+            struct.pack_into("<I", data, 4 * field.dword, (dword & ~mask) | (source_dword & mask))
+        return replace(op, data=bytes(data))
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """connac3 bulk IN: PKT_TYPE_RX_EVENT is an MCU reply (kept) unless PKT_FLAG marks a tunnelled frame."""
