@@ -24,12 +24,15 @@ degradation.
 ## Gotchas
 
 **The monitor / airmon tail is the RX fix — not skippable.** The demod produces `crc_err`
-garbage unless the port reproduces morrownr's monitor RX-START tail (`monitor.set_monitor_mode`):
-after the phydm EDCCA PSD search, morrownr re-runs a full channel tune (`set_channel_bw` +
+garbage unless the port reproduces the rtw_hal_init tail (`monitor.set_monitor_mode`):
+after the phydm EDCCA PSD search, `init_hw_mlme_ext` re-runs a full channel tune (`set_channel_bw` +
 `set_tx_power`) before entering monitor opmode. That re-tune restores the RF/BB to a clean
 receive state after the EDCCA search has toggled the LNA / walked the thresholds. A direct
 `enter_monitor` that skips it gets garbage. (Not bisected to the minimal sub-write; the
-channel re-tune is the prime suspect, RPWM-wake/opmode not ruled out.)
+channel re-tune is the prime suspect, RPWM-wake not ruled out.) The captures' station opmode
+run (airmon opens the netdev managed first) is no longer replayed: `rtw_hal_init_opmode`
+returns early for a monitor iface (`hal_intf.c:494-515`); the verify test waives it as
+CAPTURE_SETUP. RX without it needs a live check.
 
 **The monitor RCR is the C's, with RXFLTMAP0-2 opened.** morrownr's tail leaves RCR
 `0x90000001` (`AAP|APP_PHYST|APPFCS`) and `hw_var_set_monitor` then writes RXFLTMAP0-2 =
@@ -112,7 +115,7 @@ vendor C and run "give-it-a-shot", not fail-loud:
 
 C-cut 2T2R Jaguar; `REG_SYS_CFG = 0x04411137`. Cold bring-up runs efuse → FW → MAC → BB/RF →
 channel → TX-power → phydm-init → monitor through `base/firmware.bring_up`. The RX fix lives
-in `monitor.set_monitor_mode` (the re-tune tail + RXFLTMAP open). 5 GHz band
+in `monitor.set_monitor_mode` (the rtw_hal_init re-tune tail + RXFLTMAP open). 5 GHz band
 switch is `chan._switch_band_5g` + `_set_rfe_5g` (phy_SwitchWirelessBand8812 5G branch, all
 rfe_types). `Rtl8812auDkmsDriver` (`driver.py`) starts the RX reader before the monitor RX
 gate, arms the 2 s dynamic-check watchdog (`watchdog.rtw_dynamic_chk_wk_hdl`: the no-link

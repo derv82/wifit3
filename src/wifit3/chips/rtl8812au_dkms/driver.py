@@ -5,7 +5,7 @@ antenna). ``connect()`` runs the deterministic cold-boot bring-up exactly as the
 byte-for-byte gate verifies it (``scripts/chips/rtl8812au_dkms/verify_pcap.py``): EFUSE probe
 -> firmware download -> MAC -> BB/RF (both paths) -> 2.4 GHz channel tune -> per-rate TX
 power -> the phydm InitHalDm DIG/AGC/EDCCA seed (incl. the live PWDB-EDCCA search) ->
-morrownr's monitor opmode + set-channel RX-START tail. It then starts the bulk-IN RX
+the rtw_hal_init tail (channel re-tune) + monitor opmode. It then starts the bulk-IN RX
 reader (promiscuous monitor frames + per-frame 8812a RSSI) and the runtime 2-path
 DIG/AGC watchdog. No IQK — morrownr receives without it.
 
@@ -195,8 +195,8 @@ class Rtl8812auDkmsDriver(Driver):
         else:
             logger.info("RTL8812AU watchdog disabled (IGI stays at the InitHalDm seed)")
 
-        # morrownr's monitor opmode + set-channel RX-START tail: the channel re-tune that
-        # restores a clean RX state after the EDCCA search, then the monitor RCR 0x90000001.
+        # The rtw_hal_init tail: the channel re-tune that restores a clean RX state after the
+        # EDCCA search, then the monitor opmode (RCR 0x90000001).
         async with self._io_lock:
             await loop.run_in_executor(None, monitor.set_monitor_mode, self.transport,
                                        _DEFAULT_CHANNEL, params)
