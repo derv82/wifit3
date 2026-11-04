@@ -142,6 +142,13 @@ class PhydmState:
     modify_tx_agc_flag_path_b: bool = False
 
 
+def s8(value: int) -> int:
+    v = value & 0xFF
+    if v & 0x80:
+        return v - 0x100
+    return v
+
+
 def bb_swing_diff(tx_bb_swing: int) -> int:
     """The dB pRFCalibrateInfo->bb_swing_diff_* phy_get_tx_bb_swing_8812a records with its output."""
     if tx_bb_swing == 0x16A:
@@ -467,27 +474,28 @@ def odm_tx_pwr_track_set_pwr8812a(t, st: PhydmState, channel: int, rf_path: int)
         pwr_tracking_limit = 28
     else:
         pwr_tracking_limit = 24
-    final_cck_swing_index = st.default_cck_index + st.absolute_ofdm_swing_idx[rf_path]
-    final_ofdm_swing_index = st.default_ofdm_index + st.absolute_ofdm_swing_idx[rf_path]
+    # u8 in the C: a negative sum wraps past the limit and takes the over-limit branch.
+    final_cck_swing_index = (st.default_cck_index + st.absolute_ofdm_swing_idx[rf_path]) & 0xFF
+    final_ofdm_swing_index = (st.default_ofdm_index + st.absolute_ofdm_swing_idx[rf_path]) & 0xFF
     if rf_path == RF_PATH_A:
         reg = REG_A_TX_SCALE_JAGUAR
     else:
         reg = REG_B_TX_SCALE_JAGUAR
     if final_ofdm_swing_index > pwr_tracking_limit:
         if rf_path == RF_PATH_A:
-            st.remnant_cck_swing_idx = final_cck_swing_index - pwr_tracking_limit
+            st.remnant_cck_swing_idx = s8(final_cck_swing_index - pwr_tracking_limit)
             st.modify_tx_agc_flag_path_a = True
         else:
             st.modify_tx_agc_flag_path_b = True
-        st.remnant_ofdm_swing_idx[rf_path] = final_ofdm_swing_index - pwr_tracking_limit
+        st.remnant_ofdm_swing_idx[rf_path] = s8(final_ofdm_swing_index - pwr_tracking_limit)
         set_bb(t, reg, 0xFFE00000, tx_scaling_table_jaguar[pwr_tracking_limit])
     elif final_ofdm_swing_index <= 0:
         if rf_path == RF_PATH_A:
-            st.remnant_cck_swing_idx = final_cck_swing_index
+            st.remnant_cck_swing_idx = s8(final_cck_swing_index)
             st.modify_tx_agc_flag_path_a = True
         else:
             st.modify_tx_agc_flag_path_b = True
-        st.remnant_ofdm_swing_idx[rf_path] = final_ofdm_swing_index
+        st.remnant_ofdm_swing_idx[rf_path] = s8(final_ofdm_swing_index)
         set_bb(t, reg, 0xFFE00000, tx_scaling_table_jaguar[0])
     else:
         set_bb(t, reg, 0xFFE00000, tx_scaling_table_jaguar[final_ofdm_swing_index])
