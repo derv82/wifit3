@@ -17,9 +17,17 @@ TIMER_WHEEL_LEVEL_DEPTH = 9
 JIFFY_TOLERANCE = 0.01
 
 
+def timer_wheel_level_start(level: int) -> int:
+    return (TIMER_WHEEL_LEVEL_SIZE - 1) << ((level - 1) * TIMER_WHEEL_LEVEL_SHIFT)
+
+
+TIMER_WHEEL_TIMEOUT_CUTOFF = timer_wheel_level_start(TIMER_WHEEL_LEVEL_DEPTH)
+TIMER_WHEEL_TIMEOUT_MAX = TIMER_WHEEL_TIMEOUT_CUTOFF - (1 << ((TIMER_WHEEL_LEVEL_DEPTH - 1) * TIMER_WHEEL_LEVEL_SHIFT))
+
+
 def timer_wheel_level(delta: int) -> int:
     level = 0
-    while level < TIMER_WHEEL_LEVEL_DEPTH - 1 and delta >= (TIMER_WHEEL_LEVEL_SIZE - 1) << (level * TIMER_WHEEL_LEVEL_SHIFT):
+    while level < TIMER_WHEEL_LEVEL_DEPTH - 1 and delta >= timer_wheel_level_start(level + 1):
         level += 1
     return level
 
@@ -31,16 +39,15 @@ def timer_wheel_tolerance(delta: int) -> float:
 
 
 def timer_wheel_expiry(jiffy_zero_time: float, now: float, when: float) -> float:
-    """When a kernel timer armed at ``now`` for ``when`` fires: msecs_to_jiffies rounds up, then the expiry
-    rounds up to its timer wheel level's granularity (kernel/time/timer.c calc_wheel_index, calc_index)."""
+    """When a kernel timer armed at ``now`` for ``when`` fires: msecs_to_jiffies rounds up, then every level, level 0
+    too, rounds the expiry up to its next bucket (linux-timer-v6.19.14 kernel/time/timer.c:524-577)."""
     delta = math.ceil((when - now) * KERNEL_HZ - JIFFY_TOLERANCE)
-    level = timer_wheel_level(delta)
-    if level == 0:
-        # At its earliest, delta jiffies after now: jiffy_zero_time is late by the latency of the woken op it came from.
-        return now + delta / KERNEL_HZ
     now_jiffies = math.floor((now - jiffy_zero_time) * KERNEL_HZ + JIFFY_TOLERANCE)
-    shift = level * TIMER_WHEEL_LEVEL_SHIFT
-    bucket_expiry = (((now_jiffies + delta) >> shift) + 1) << shift
+    expires = now_jiffies + delta
+    if delta >= TIMER_WHEEL_TIMEOUT_CUTOFF:
+        expires = now_jiffies + TIMER_WHEEL_TIMEOUT_MAX
+    shift = timer_wheel_level(delta) * TIMER_WHEEL_LEVEL_SHIFT
+    bucket_expiry = ((expires >> shift) + 1) << shift
     return jiffy_zero_time + bucket_expiry / KERNEL_HZ
 
 

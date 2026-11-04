@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 
+import pytest
+
 from tests.verify_pcap.capture_replay import CaptureDivergence, CaptureReplay
 from tests.verify_pcap.test_waivers import REALTEK_OTHER_REGISTER, realtek_write
-from tests.verify_pcap.virtual_clock_loop import KERNEL_HZ, MAIN_CALLER, VirtualClockEventLoop, current_caller_name
+from tests.verify_pcap.virtual_clock_loop import KERNEL_HZ, MAIN_CALLER, VirtualClockEventLoop, current_caller_name, timer_wheel_expiry
 
 WATCHDOG_JIFFIES = 62
 
@@ -46,3 +48,12 @@ def test_driver_task_timer_at_the_captured_period_matches() -> None:
 def test_driver_task_timer_firing_early_diverges() -> None:
     reason = replay_watchdog_sleeping(50)
     assert reason is not None and "timer fired" in reason
+
+
+def test_timer_wheel_level_0_rounds_the_expiry_up_to_the_next_bucket() -> None:
+    assert timer_wheel_expiry(0.0, 0.0, WATCHDOG_JIFFIES / KERNEL_HZ) == pytest.approx((WATCHDOG_JIFFIES + 1) / KERNEL_HZ)
+
+
+def test_timer_wheel_level_1_rounds_the_expiry_up_to_the_next_8_jiffy_bucket() -> None:
+    assert timer_wheel_expiry(0.0, 3 / KERNEL_HZ, 503 / KERNEL_HZ) == pytest.approx(504 / KERNEL_HZ)
+    assert timer_wheel_expiry(0.0, 4 / KERNEL_HZ, 504 / KERNEL_HZ) == pytest.approx(512 / KERNEL_HZ)
