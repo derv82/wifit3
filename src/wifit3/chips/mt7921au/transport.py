@@ -168,21 +168,17 @@ class MT7921AUTransport:
         )
 
     def read_reg32(self, addr: int) -> int:
-        """Standard bus register read (bmRequestType=0xC0, bRequest=0x63)."""
+        """mt792xu_rr (mt792x_usb.c:14-24) that raises on a USB error."""
         wValue = (addr >> 16) & 0xFFFF
         wIndex = addr & 0xFFFF
         res = self.dev.ctrl_transfer(
-            bmRequestType=0xC0, bRequest=MT_VEND_READ_REG_REQ,
+            bmRequestType=MT_VEND_READ_RECIPIENT, bRequest=MT_VEND_READ_REG_REQ,
             wValue=wValue, wIndex=wIndex,
             data_or_wLength=4
         )
         if len(res) < 4:
             return 0
         return struct.unpack("<I", res)[0]
-
-    def read_boot_status(self, length: int = 64) -> bytes:
-        """Queries the 64-byte boot status (wValue=0x0030 as seen in pcap)."""
-        return self.read_vendor_request(MT_VEND_REQ_IN, MT_VEND_REQ_BOOT_STATUS, 0x0030, 0, length)
 
     def write_reg32_unified(self, addr: int, value: int):
         """Unified Bus register write (bmRequestType=0x5F, bRequest=0x66)."""
@@ -200,16 +196,20 @@ class MT7921AUTransport:
         return struct.unpack("<I", res)[0]
 
     def write_reg32_uhw(self, addr: int, value: int):
-        """UHW (USB Host Wrapper) bus write — bmRequestType=0x5E, bRequest=0x02."""
-        wValue = (addr >> 16) & 0xFFFF
-        wIndex = addr & 0xFFFF
-        self.send_vendor_request(MT_UHW_WRITE_RECIPIENT, MT_VEND_WRITE, wValue, wIndex, struct.pack("<I", value))
+        """mt792xu_uhw_wr (mt792x_usb.c) that raises on a USB error."""
+        self.dev.ctrl_transfer(
+            bmRequestType=MT_UHW_WRITE_RECIPIENT, bRequest=MT_VEND_WRITE,
+            wValue=(addr >> 16) & 0xFFFF, wIndex=addr & 0xFFFF,
+            data_or_wLength=struct.pack("<I", value)
+        )
 
     def read_reg32_uhw(self, addr: int) -> int:
-        """UHW (USB Host Wrapper) bus read — bmRequestType=0xDE, bRequest=0x01."""
-        wValue = (addr >> 16) & 0xFFFF
-        wIndex = addr & 0xFFFF
-        res = self.read_vendor_request(MT_UHW_READ_RECIPIENT, MT_VEND_DEV_MODE, wValue, wIndex, 4)
+        """mt792xu_uhw_rr (mt792x_usb.c) that raises on a USB error."""
+        res = self.dev.ctrl_transfer(
+            bmRequestType=MT_UHW_READ_RECIPIENT, bRequest=MT_VEND_DEV_MODE,
+            wValue=(addr >> 16) & 0xFFFF, wIndex=addr & 0xFFFF,
+            data_or_wLength=4
+        )
         if len(res) < 4:
             return 0
         return struct.unpack("<I", res)[0]
@@ -303,6 +303,9 @@ class MT7921AUTransport:
         write afterward to commit the FIFO. Otherwise the MT7921 hardware
         controller holds the data open waiting for a transfer-terminator.
         """
+        # mt76_connac2_mcu_fill_message (mt76_connac_mcu.c:3209-3214) takes a seq before it
+        # skips the TXD for FW_SCATTER, so every chunk consumes one.
+        self._next_mcu_seq()
         frame = bytearray(SDIO_HDR_SIZE + len(chunk))
         # SDIO HDR: tx_bytes = chunk size, pkt_type = 0
         struct.pack_into("<I", frame, 0, len(chunk) & 0xFFFF)

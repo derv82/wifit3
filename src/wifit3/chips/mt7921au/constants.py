@@ -3,7 +3,6 @@
 # Vendor Requests (Control Transfers)
 MT_VEND_REQ_IN           = 0xc0
 MT_VEND_REQ_OUT          = 0x40
-MT_VEND_REQ_BOOT_STATUS  = 0x01
 
 # CONNAC2 Standard Register Bus (Direct link, bmRequestType device=0)
 MT_VEND_READ_REG_REQ    = 0x63
@@ -206,8 +205,8 @@ EP_OUT_HCCA = 0x09   # MT_EP_OUT_HCCA: qid == MT_TXQ_PSD (mgmt/deauth)
 MT_VEND_POWER_ON       = 0x04   # mt792xu_mcu_power_on: wValue=0, wIndex=1
 
 # Registers
-# MT_HW_CHIPID: lower 16 bits contain chip ID (0x7921 for MT7921)
-MT_CHIP_ID_ADDR        = 0x70010200  # confirmed from pcap frame 112 (standard bus)
+MT_HW_CHIPID           = 0x70010200  # mt792x_regs.h:400 — lower 16 bits = chip id
+MT_HW_REV              = 0x70010204  # mt792x_regs.h:401 — ASIC revision
 MT_CHIP_ID_EXPECTED    = 0x7961  # MT7921AU (USB variant); PCI variant would be 0x7921
 MT_USB_SCRATCH_ADDR    = 0x00000410
 # MT_UMAC(0x008) — accessed via unified bus (0x5F/0xDF), confirmed from pcap

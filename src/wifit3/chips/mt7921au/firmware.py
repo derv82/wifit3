@@ -14,7 +14,7 @@ import usb.core
 import usb.util
 from pathlib import Path
 
-from wifit3.errors import BringUpError, is_permission_error
+from wifit3.errors import is_permission_error
 
 from .transport import MT7921AUTransport
 # Star-imports the chip's register/PHY constants; the names resolve at runtime
@@ -82,43 +82,6 @@ class MT7921AUFirmwareLoader:
         logger.debug(f"Claimed vendor-specific interface {iface}")
         await asyncio.sleep(0.2)
 
-        # Chip-id read doubles as a control-endpoint liveness check. A COLD chip
-        # answers it (0x7961); once firmware is running, EP0 control transfers can
-        # stop being serviced and this times out. A USB reset does NOT re-cold-boot
-        # the chip in userland on Windows (verified — it re-acquires at the same
-        # address, still unresponsive), so a timeout here means a physical replug is
-        # the only path to a fresh boot. Fail fast with that guidance instead of
-        # hammering a warm/wedged chip (which only makes it worse).
-        try:
-            chip_id = self.transport.read_reg32(MT_CHIP_ID_ADDR)
-        except usb.core.USBError as e:
-            if is_permission_error(e):
-                # Not warm/wedged: we lack access to the node. Propagate so the engine offers setup.
-                raise BringUpError("permissions", str(e)) from e
-            logger.error(
-                f"Chip-id read failed ({e}). The control endpoint is unresponsive — "
-                "the chip is warm or wedged from a prior boot, which userland cannot "
-                "reset on Windows. PLEASE PHYSICALLY REPLUG the card for a cold boot."
-            )
-            return False
-        if (chip_id & 0xFFFF) != MT_CHIP_ID_EXPECTED:
-            logger.error(f"Unexpected chip ID 0x{chip_id:x} (expected lower 16 = 0x{MT_CHIP_ID_EXPECTED:x})")
-            return False
-        logger.info(f"MT7921 detected: chip_id=0x{chip_id:x}")
-
-        # Safety net only: driver.connect() routes a warm chip to _warm_reattach (the
-        # light reattach), so load_firmware is normally reached only on a cold chip
-        # (MISC==0). If a warm chip ever reaches here, do NOT cold-boot it — the
-        # mcu_power_on below poisons a warm chip's bulk pipes on WinUSB (no pre-reset
-        # usb_reset_device is available). Bail instead. See MT7921AU.md "Warm re-attach".
-        misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
-        if (misc & MT_TOP_MISC2_FW_N9_RDY) != 0:
-            logger.error(
-                f"load_firmware reached on a warm chip (MT_CONN_ON_MISC=0x{misc:x}); "
-                "warm chips must take the _warm_reattach path, not a cold boot. Aborting."
-            )
-            return False
-
         logger.debug("Sending MCU power-on...")
         self.transport.send_vendor_request(
             MT_VEND_WRITE_RECIPIENT, MT_VEND_POWER_ON, 0x0000, 0x0001
@@ -148,13 +111,6 @@ class MT7921AUFirmwareLoader:
 
         if not await self._load_patch():
             return False
-
-        # Mirror Linux behavior observed in capture-3 between patch and RAM
-        # upload (~89 ms after PATCH_SEM_RELEASE): two boot-status reads with
-        # wValue=0x30, wLength=64. Source unknown (possibly btusb concurrent
-        # init, possibly mt76 reset path). Cheap to replicate, side-effect-free.
-        for _ in range(2):
-            self.transport.read_boot_status(length=64)
 
         # Drain any MCU responses that arrived during patch upload, so we can
         # see what the device sent back (now that DL_MODE_NEED_RSP bit is correct).
@@ -196,10 +152,10 @@ class MT7921AUFirmwareLoader:
         handoff) and dump any late bulk-IN responses still queued."""
         logger.error("MCU_EVENT_FW_START never arrived — EP0 liveness diagnostics:")
         try:
-            chip = self.transport.read_reg32(MT_CHIP_ID_ADDR)
-            logger.error(f"  standard-bus MT_HW_CHIPID = 0x{chip:08x} (cold value 0x7961xxxx)")
+            chip = self.transport.read_reg32(MT_HW_CHIPID)
+            logger.error(f"  MT_HW_CHIPID = 0x{chip:08x} (cold value 0x7961xxxx)")
         except Exception as e:
-            logger.error(f"  standard-bus MT_HW_CHIPID FAILED: {e}")
+            logger.error(f"  MT_HW_CHIPID FAILED: {e}")
         try:
             misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
             logger.error(f"  unified MT_CONN_ON_MISC = 0x{misc:08x}")
@@ -277,15 +233,16 @@ class MT7921AUFirmwareLoader:
                     & MT_WFDMA_NEED_REINIT)
 
     def _epctl_rst_opt(self):
-        """mt792xu_dma_rx_evt_ep4's sibling epctl_rst_opt(false): clear the
-        bulk-endpoint reset-option bits in MT_SSUSB_EPCTL_CSR_EP_RST_OPT. The
-        kernel uses the UHW bus (Errno 5 on WinUSB); the register is reachable over
-        the unified bus, which works on WinUSB. The bits read SET on a cold device,
-        so leaving them set holds the bulk EPs in a reset-option state the kernel
-        clears before firmware boot."""
-        v = self.transport.read_reg32_unified(MT_SSUSB_EPCTL_CSR_EP_RST_OPT)
-        new = v & ~MT_EPCTL_EP_RST_OPT_MASK
-        self.transport.write_reg32_unified(MT_SSUSB_EPCTL_CSR_EP_RST_OPT, new)
+        """mt792xu_epctl_rst_opt(dev, false) (mt792x_usb.c:192-207) over the UHW bus.
+        WinUSB refuses the UHW request (Errno 5); the unified bus reaches the register."""
+        try:
+            value = self.transport.read_reg32_uhw(MT_SSUSB_EPCTL_CSR_EP_RST_OPT)
+        except usb.core.USBError:
+            value = self.transport.read_reg32_unified(MT_SSUSB_EPCTL_CSR_EP_RST_OPT)
+            self.transport.write_reg32_unified(MT_SSUSB_EPCTL_CSR_EP_RST_OPT,
+                                               value & ~MT_EPCTL_EP_RST_OPT_MASK)
+            return
+        self.transport.write_reg32_uhw(MT_SSUSB_EPCTL_CSR_EP_RST_OPT, value & ~MT_EPCTL_EP_RST_OPT_MASK)
 
     def _rx_evt_ep4(self):
         """mt792xu_dma_rx_evt_ep4 — route RX events (the firmware-up signal and

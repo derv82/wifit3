@@ -15,7 +15,7 @@ from .firmware import MT7921AUFirmwareLoader
 from .constants import *
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.chips.products import ALFA, Panda
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, is_permission_error
 from wifit3.dot11.parser import WlanFrameParser
 
 logger = logging.getLogger(__name__)
@@ -109,25 +109,29 @@ class MT7921AUDriver(Driver):
             progress_cb(0.1, "Connecting to MT7921AU...")
         logger.info("Initializing MT7921AU...")
         self.transport.subscribe(self._on_raw_rx)
+        # No clear-halt yet: on a warm chip it poisons the pipes on WinUSB.
+        self.firmware._claim_vendor_interface(clear_halts=False)
 
-        if self._detect_warm():
+        # mt7921u_probe (usb.c:209-213): chip-id, hw-rev, then the FW_N9_RDY check. Linux
+        # wfsys-resets a running chip (usb.c:214); wifit3 reattaches to it instead.
+        try:
+            chip_id = self.transport.read_reg32(MT_HW_CHIPID)
+            hw_rev = self.transport.read_reg32(MT_HW_REV)
+        except usb.core.USBError as e:
+            if is_permission_error(e):
+                raise BringUpError("permissions", str(e)) from e
+            raise BringUpError("Firmware upload", f"chip-id read failed ({e}): the control endpoint "
+                                                  "is unresponsive. Replug the card.") from e
+        if (chip_id & 0xFFFF) != MT_CHIP_ID_EXPECTED:
+            raise BringUpError("Firmware upload", f"Unexpected chip ID 0x{chip_id:x} (expected lower "
+                                                  f"16 = 0x{MT_CHIP_ID_EXPECTED:x})")
+        logger.info(f"MT7921 detected: chip_id=0x{chip_id:x} rev=0x{hw_rev & 0xff:02x}")
+        misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
+        logger.debug("MT7921AU warm-check: MT_CONN_ON_MISC=0x%x", misc)
+        if misc & MT_TOP_MISC2_FW_N9_RDY:
             self._require_own_firmware()
             return await self._warm_reattach(progress_cb)
         return await self._cold_boot(progress_cb)
-
-    def _detect_warm(self) -> bool:
-        """True if firmware is already running (FW_N9_RDY set in MT_CONN_ON_MISC) —
-        the kernel mt7921u_probe warm check. Claims the vendor interface (needed for
-        register access) but does NOT clear-halt or reset: a warm chip must not be
-        cold-booted. Reading MT_CONN_ON_MISC is HW-verified safe on this chip.
-        Returns False (treat as cold) if the read fails."""
-        self.firmware._claim_vendor_interface(clear_halts=False)
-        try:
-            misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
-        except usb.core.USBError:
-            return False
-        logger.debug("MT7921AU warm-check: MT_CONN_ON_MISC=0x%x", misc)
-        return (misc & MT_TOP_MISC2_FW_N9_RDY) != 0
 
     def _require_own_firmware(self) -> None:
         try:
