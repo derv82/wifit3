@@ -137,13 +137,13 @@ class MediatekConnacDecoder(FamilyDecoder):
         return None
 
     def register_ops(self, op: UsbOp) -> list[RegisterOp]:
-        """A UNI MCU command only, as one WRITE of its command id valued its seq."""
+        """A UNI MCU command only, as one WRITE of its command id valued its payload, little-endian."""
         data = op.data
         if (op.transfer_type != TransferType.BULK or op.endpoint != C.EP_OUT_MCU
                 or len(data) < UNI_PAYLOAD_OFFSET or not is_uni_mcu_frame(data)):
             return []
         command_id = struct.unpack_from("<H", data, MCU_TXD_OFFSET + 34)[0]
-        return [RegisterOp(RegisterAccess.WRITE, command_id, data[MCU_SEQ_OFFSET])]
+        return [RegisterOp(RegisterAccess.WRITE, command_id, int.from_bytes(data[UNI_PAYLOAD_OFFSET:], "little"))]
 
     def skip_capture_only_ops(self, ops: list[UsbOp], positions: set[int]) -> tuple[list[UsbOp], set[int]]:
         """Each later MCU command and its reply renumbered back by the skipped MCU commands before it; a skipped
