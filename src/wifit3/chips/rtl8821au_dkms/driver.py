@@ -217,13 +217,13 @@ class Rtl8821auDkmsDriver(Driver):
         return True
 
     async def _watchdog(self) -> None:
-        """rtw_dynamic_check_timer_handler: re-armed 2 s from its own fire. Serialized via _io_lock."""
+        """rtw_dynamic_check_timer_handlder: re-armed 2 s from its own fire (rtw_mlme.c:4117). Serialized via _io_lock."""
         loop = asyncio.get_running_loop()
         next_fire = loop.time() + watchdog.WATCHDOG_PERIOD_S
         try:
             while True:
                 await asyncio.sleep(next_fire - loop.time())
-                next_fire += watchdog.WATCHDOG_PERIOD_S
+                next_fire = loop.time() + watchdog.WATCHDOG_PERIOD_S
                 async with self._io_lock:
                     await loop.run_in_executor(None, watchdog.tick, self.transport, self._dm, self._channel)
                 logger.debug("RTL8821AU watchdog: IGI=0x%02x", self._dm.cur_ig_value)
