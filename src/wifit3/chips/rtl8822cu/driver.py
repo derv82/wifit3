@@ -355,13 +355,28 @@ class RTL8822CUDriver(Driver):
         if self._rx_reader:
             await self._rx_reader.stop()
             self._rx_reader = None
+        if self._claimed and self.chip_info:
+            # rtw_halmac_deinit_hal: deinit_usb_cfg_88xx is a no-op, then power off.
+            cut_mask = cut_mask_from_sys_cfg1(self.chip_info.raw_cfg1)
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None, lambda: mac_power_off(self.transport, cut_mask=cut_mask))
+            except (IOError, usb.core.USBError) as exc:
+                logger.debug("RTL8822CU MAC power-off during close failed: %s", exc)
         if self._claimed:
             try:
                 usb.util.release_interface(self.dev, self.layout.interface if self.layout else 0)
-            except usb.core.USBError:
-                pass
-            usb.util.dispose_resources(self.dev)
+            except usb.core.USBError as exc:
+                logger.debug("RTL8822CU interface release during close failed: %s", exc)
+            try:
+                usb.util.dispose_resources(self.dev)
+            except usb.core.USBError as exc:
+                logger.debug("RTL8822CU resource disposal during close failed: %s", exc)
             self._claimed = False
+        self.is_warm = False
+        self._bulk_in_ep = None
+        self._bulk_out_eps = []
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
         """Point REG_MACID at ``mac`` so the hardware HW-ACKs frames addressed to it while

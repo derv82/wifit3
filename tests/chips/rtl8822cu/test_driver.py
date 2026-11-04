@@ -1,6 +1,6 @@
 """RTL8822CU driver TX/ACK/active-monitor unit tests (no hardware)."""
 import struct
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import usb.core
@@ -288,3 +288,69 @@ def test_bringup_feeds_config_bb_rf_the_efuse_derived_values(monkeypatch):
 
     assert calls["config_bb_rf"] == [dict(cut=5, rfe_type=0x01, crystal_cap=0x71,
                                           dis_dpd_rate=DIS_DPD_RATE_ALL)]
+
+
+# --- teardown: vendor rtw_halmac_deinit_hal powers the MAC off before USB release ---
+
+
+def _chip_info(*, raw_cfg1: int = 0) -> ChipInfo:
+    return ChipInfo(
+        chip_id=drv.CHIP_ID_RTL8822CU, cut=5, rf_2t2r=True, rom_version=0,
+        raw_cfg1=raw_cfg1, raw_cfg2=0, raw_status1=0, chip_ver=5, raw_multifunc=0)
+
+
+async def test_close_powers_mac_off_before_releasing_usb(monkeypatch):
+    d = _driver()
+    d._claimed = True
+    d.is_warm = True
+    d._bulk_in_ep = 0x81
+    d._bulk_out_eps = [0x05]
+    d.chip_info = _chip_info(raw_cfg1=3 << 12)
+    reader = MagicMock(stop=AsyncMock())
+    d._rx_reader = reader
+    calls: list[tuple] = []
+
+    def _power_off(transport, *, cut_mask):
+        calls.append(("power_off", transport, cut_mask))
+
+    monkeypatch.setattr(drv, "mac_power_off", _power_off)
+    monkeypatch.setattr(drv.usb.util, "release_interface",
+                        lambda dev, interface: calls.append(("release", dev, interface)))
+    monkeypatch.setattr(drv.usb.util, "dispose_resources",
+                        lambda dev: calls.append(("dispose", dev)))
+
+    await d.close()
+
+    reader.stop.assert_awaited_once()
+    assert calls == [
+        ("power_off", d.transport, 1 << 4),
+        ("release", d.dev, 0),
+        ("dispose", d.dev),
+    ]
+    assert d._claimed is False
+    assert d._rx_reader is None
+    assert d.is_warm is False
+    assert d._bulk_in_ep is None
+    assert d._bulk_out_eps == []
+
+
+async def test_close_releases_usb_when_mac_power_off_fails(monkeypatch):
+    d = _driver()
+    d._claimed = True
+    d.chip_info = _chip_info()
+    calls: list[str] = []
+
+    def _power_off(transport, *, cut_mask):
+        calls.append("power_off")
+        raise IOError("device gone")
+
+    monkeypatch.setattr(drv, "mac_power_off", _power_off)
+    monkeypatch.setattr(drv.usb.util, "release_interface",
+                        lambda dev, interface: calls.append("release"))
+    monkeypatch.setattr(drv.usb.util, "dispose_resources",
+                        lambda dev: calls.append("dispose"))
+
+    await d.close()
+
+    assert calls == ["power_off", "release", "dispose"]
+    assert d._claimed is False
