@@ -400,7 +400,11 @@ AUTO_RSP_CFG_ACK_CTS_PSM_BIT = 0x00000080
 LEGACY_BASIC_RATE = 0x1408               # [SRC rt2800.h:1797-1802]
 HT_BASIC_RATE = 0x140C
 
-TX_STA_FIFO = 0x1718                     # [SRC rt2800.h:1931] TX status FIFO (aireplay polls)
+TX_STA_FIFO = 0x1718                     # [SRC rt2800.h:1931] TX status FIFO
+TX_STA_FIFO_VALID = 0x00000001               # [SRC rt2800.h:1932]
+TX_STA_FIFO_PID_QUEUE = 0x00000006           # [SRC rt2800.h:1934]
+TXSTATUS_READ_INTERVAL = 0.001               # seconds [SRC rt2800usb.c:92]
+TXSTATUS_TIMEOUT = 2.0                       # seconds, msecs_to_jiffies(2000) [SRC rt2800lib.c:1170]
 RX_STA_CNT0 = 0x1700                     # [SRC rt2800.h:1868-1903] cleared-on-read
 RX_STA_CNT1 = 0x1704
 RX_STA_CNT2 = 0x1708
