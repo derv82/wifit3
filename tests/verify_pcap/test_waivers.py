@@ -69,6 +69,17 @@ def test_value_only_accepts_a_different_waived_value() -> None:
     assert TsfValueOnly().is_same_request_except_waived_values(captured, request, TsfValueOnly.WAIVERS)
 
 
+def test_value_only_counts_only_the_matches_it_masks() -> None:
+    waiver = TsfValueOnly.WAIVERS[0]
+    masked_counts = {waiver: 0}
+    captured = reg_write(7, [R.AR_TSF_L32, 0x007D1AAA])
+    assert TsfValueOnly().is_same_request_counting_masked(captured, captured, TsfValueOnly.WAIVERS, masked_counts)
+    assert masked_counts[waiver] == 0
+    request = reg_write(7, [R.AR_TSF_L32, 0x007CFD9D])
+    assert TsfValueOnly().is_same_request_counting_masked(captured, request, TsfValueOnly.WAIVERS, masked_counts)
+    assert masked_counts[waiver] == 1
+
+
 def test_value_only_compares_the_other_values_in_the_op() -> None:
     captured = reg_write(7, [OTHER_REGISTER, 0x1, R.AR_TSF_L32, 0x007D1AAA])
     request = reg_write(7, [OTHER_REGISTER, 0x2, R.AR_TSF_L32, 0x007CFD9D])

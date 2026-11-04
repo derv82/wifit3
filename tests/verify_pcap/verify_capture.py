@@ -171,7 +171,7 @@ class VerifyCapture:
         for waiver in self.WAIVERS:
             if not waiver.capture_paths or capture_path in waiver.capture_paths:
                 waivers.append(waiver)
-        positions_by_waiver: dict[Waiver, list[int]] = {}
+        masked_counts: dict[Waiver, int] = {}
         occurrences_by_waiver: dict[Waiver, list[list[int]]] = {}
         capture_only_run_by_start: dict[int, list[int]] = {}
         driver_only_progress: dict[Waiver, int] = {}
@@ -183,11 +183,8 @@ class VerifyCapture:
                 occurrences_by_waiver[waiver] = occurrences
                 for occurrence in occurrences:
                     capture_only_run_by_start[occurrence[0]] = occurrence
-            elif waiver.value_only_register is not None:
-                positions_by_waiver[waiver] = self.register_write_positions(capture.ops, waiver.value_only_register)
             else:
-                positions_by_waiver[waiver] = [position for position in range(len(capture.ops))
-                                               if self.DECODER.injected_frame_at(capture.ops, position) is not None]
+                masked_counts[waiver] = 0
 
         thread_pool = DriverThreadPool()
 
@@ -197,7 +194,7 @@ class VerifyCapture:
         loop = VirtualClockEventLoop(capture.ops[0].submit_time, is_driver_idle)
         loop.set_default_executor(thread_pool)
         def is_same_request(captured: UsbOp, request: UsbOp) -> bool:
-            return self.is_same_request_except_waived_values(captured, request, waivers)
+            return self.is_same_request_counting_masked(captured, request, waivers, masked_counts)
 
         def is_driver_only_request(request: UsbOp, cursor_differs: bool) -> bool:
             return self.is_driver_only_request(request, cursor_differs, driver_only_progress)
@@ -238,13 +235,7 @@ class VerifyCapture:
             loop.run_until_complete(loop.shutdown_default_executor())
             loop.close()
 
-        waived_counts: dict[Waiver, int] = {}
-        for waiver, positions in positions_by_waiver.items():
-            count = 0
-            for position in positions:
-                if replay.reproduced_by[position] is not None:
-                    count += 1
-            waived_counts[waiver] = count
+        waived_counts = dict(masked_counts)
         for waiver, occurrences in occurrences_by_waiver.items():
             count = 0
             for occurrence in occurrences:
@@ -264,6 +255,20 @@ class VerifyCapture:
         if unused:
             pytest.fail(f"{capture_path.name}: unused waivers: {unused}\n" + summary, pytrace=False)
         print(summary)
+
+    def is_same_request_counting_masked(self, captured: UsbOp, request: UsbOp, waivers: list[Waiver],
+                                        masked_counts: dict[Waiver, int]) -> bool:
+        """``is_same_request_except_waived_values``; counts, per waiver in ``masked_counts``, the matches that differ
+        without it."""
+        if captured.same_request(request):
+            return True
+        if not self.is_same_request_except_waived_values(captured, request, waivers):
+            return False
+        for waiver in masked_counts:
+            other_waivers = [other for other in waivers if other is not waiver]
+            if not self.is_same_request_except_waived_values(captured, request, other_waivers):
+                masked_counts[waiver] += 1
+        return True
 
     def is_same_request_except_waived_values(self, captured: UsbOp, request: UsbOp, waivers: list[Waiver]) -> bool:
         """``captured.same_request(request)``, except a value_only_register's value: each differing byte, put
@@ -323,15 +328,6 @@ class VerifyCapture:
                 driver_only_progress[waiver] = progress + len(register_ops)
                 return True
         return False
-
-    def register_write_positions(self, ops: list[UsbOp], address: int) -> list[int]:
-        positions: list[int] = []
-        for position, op in enumerate(ops):
-            for register_op in self.DECODER.register_ops(op):
-                if register_op.access == RegisterAccess.WRITE and register_op.address == address:
-                    positions.append(position)
-                    break
-        return positions
 
     def capture_only_run_occurrences(self, ops: list[UsbOp], run: tuple[RegisterOp, ...]) -> list[list[int]]:
         """The positions of each occurrence of ``run``: consecutive control / OUT ops whose register ops, joined,
