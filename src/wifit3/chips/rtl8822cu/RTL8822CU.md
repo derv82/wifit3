@@ -1,20 +1,21 @@
 # RTL8822CU
 
-## Captured Wireless Card
+## Ported and Verified Hardware
 
-- D-Link AC13U, `2001:3329`, RTL8822C, 2.4 GHz and 5 GHz.
+- The port, vendor-pcap replay, and current hardware observations are against the D-Link AC13U rev. A1, `2001:3329`, RTL8822C, 2.4 GHz and 5 GHz.
 - Enumerates at USB2 in both usable captures, so the USB3 arm of the 0x0280 size and timeout write is not capture verified.
-- Enumerates 3 bulk OUT endpoints.
+- Enumerates the vendor 3-bulk-OUT layout: RX bulk IN `0x84`; bulk OUT `0x05`, `0x06`, `0x08`; interrupt IN `0x87`. Every bulk endpoint is USB2 512 bytes. This is the only endpoint layout currently supported by the port.
 - Not a B cut part: capture-1 reproduces byte identical with no 0x1018 (`REG_ANAPAR_MAC_0`) write.
 - The C2H MAC hidden report gives max_tx_cnt 2 for this device; the EFUSE PG side gives 0, so the report is what raises it [firmware.py:read_mac_hidden_rpt, efuse.py:hal_rfpath_init].
 - EFUSE 0xC9 is 0x4F, outside the accepted trx_path_bmp set [rtl8822c_ops.c:528-534], so `eeprom_trx_path_bmp` resolves to 0.
-- EFUSE 0xC8 high nibble is 0, so the part runs TXPWR_PG_WITH_PWR_IDX and not TSSI.
+- EFUSE 0xC8 high nibble is 0, so the part runs TXPWR_PG_WITH_PWR_IDX and not TSSI. Its TX power is therefore calculated from the PG bases/diffs and programmed by `_set_tx_power`; TSSI work would not alter this card's TX behavior.
 - capture-1 sweeps 2.4 GHz ch1 to ch12; capture-2 adds ch13 and ch14, which is why its 5 GHz CCK reference differs from capture-1's.
 
 ## Linux Driver Source
 
 - Out of tree DKMS vendor driver: `dkms.conf` gives PACKAGE_NAME realtek-rtl88x2cu and PACKAGE_VERSION 5.15.8-52~20230728. Not mainline.
-- Upstream: https://github.com/libc0607/rtl88x2cu-20230728, branch `main` at commit 132c1e32b93c (2026-04-13, the branch head). Every `file:line` cite below resolves against that tree.
+- Port authority: https://github.com/libc0607/rtl88x2cu-20230728, branch `main` at commit 132c1e32b93c (2026-04-13, the branch head). Every `file:line` cite below resolves against that tree.
+- Comparison-only reference: Linux v7.2 `rtw88_8822cu` / `rtw88_8822c` (https://github.com/torvalds/linux/tree/v7.2/drivers/net/wireless/realtek/rtw88). Cold and warm module-reload usbmon captures for the D-Link card both re-upload firmware; it is evidence against skipping firmware on a warm reattach, not a source authority for this vendor port.
 - DRIVERVERSION [include/rtw_version.h:1] is "v5.15.8.5-3-g88098843f.20240412_COEX20221215-3130". That is Realtek's own build version carried in the source; g88098843f is not a commit in the repo above.
 - README.md:2 self describes as "RTL8812CU/RTL8822CU Linux Driver v5.15.8.5-3 20240412 FPV Mod".
 - The 8822c files are authoritative for this chip; the sibling 8822b files are a different chip.
@@ -91,7 +92,7 @@
 
 ## Known Problems
 
-- A TSSI mode part (EFUSE 0xC8 nibble 4..7) brings up and RXes with no TX power programmed: the TSSI branch is not ported, `txpwr_idx_state` returns `None` and `_set_tx_power` writes nothing, so the txagc table keeps power on defaults.
+- A TSSI mode part (EFUSE 0xC8 nibble 4..7) brings up and RXes with no TX power programmed: the TSSI branch is not ported, `txpwr_idx_state` returns `None` and `_set_tx_power` writes nothing, so the txagc table keeps power on defaults. Completing it requires the vendor's TSSI EFUSE group offsets, DE setup, codeword calculation/programming, and enable path (`halrf_do_tssi_8822c` / `halrf_tssi_8822c.c`), validated on an actual TSSI-mode device.
 - The vendor computes a TSSI table on every tune via `halrf_get_tssi_codeword_for_txindex()` [hal_com_phycfg.c:6321-6326, rtl8822c_phy.c:675], so that divergence recurs per tune.
 - Whether any 8822CU ships in TSSI mode is unknown; nobody has looked.
 - `efuse.rfe_type` raises `RuntimeError` when EFUSE 0xCA reads 0xFF on a valid map, so an unburned EFUSE fails bring up there against policy EFUSE-1. Setting `constants.RFE_TYPE` is the escape hatch.
