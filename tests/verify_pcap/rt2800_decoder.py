@@ -144,14 +144,12 @@ class Rt2800Decoder(FamilyDecoder):
         return register_ops
 
     def with_tx_op_fields(self, op: UsbOp, fields: list[TxOpField], source: UsbOp) -> UsbOp:
-        """Fields in the TXINFO + TXWI (rt2800usb_write_tx_desc, rt2800_write_tx_data); there is no checksum."""
-        descriptor_size = C.TXINFO_DESC_SIZE + C.TXWI_DESC_SIZE_4WORDS
-        if (op.transfer_type != TransferType.BULK or op.is_in or len(op.data) < descriptor_size
-                or len(source.data) != len(op.data)):
+        """The TXINFO + TXWI (rt2800usb_write_tx_desc, rt2800_write_tx_data) carry no checksum."""
+        if op.transfer_type != TransferType.BULK or op.is_in or len(source.data) != len(op.data):
             return op
         data = bytearray(op.data)
         for field in fields:
-            if 4 * field.dword + 4 > descriptor_size:
+            if 4 * field.dword + 4 > len(data):
                 continue
             mask = ((1 << field.width) - 1) << field.shift
             dword = struct.unpack_from("<I", data, 4 * field.dword)[0]
