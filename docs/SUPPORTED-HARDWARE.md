@@ -242,6 +242,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 → [RTL8822BU_DKMS.md](../src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](../src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
 
 ### RTL8822CU
+<img align="right" width="140" src="../assets/cardart/card-dlink-ac13u.png" alt="D-Link AC13U rev. A1">
 
 *D-Link AC13U (rev A1) · 2.4 / 5 GHz*
 
