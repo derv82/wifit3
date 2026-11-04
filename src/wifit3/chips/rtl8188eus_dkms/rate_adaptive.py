@@ -185,8 +185,8 @@ class RateAdaptive:
             self.currmin_rpt_time = min_rpt_time
 
     def odm_rate_decision_8188e(self, p_ra_info: OdmRaInfo) -> None:
-        """hal8188erateadaptive.c:501. The rate-update phydm_c2h_ra_report_handler call is unported: it
-        only updates a linked station's cmn_sta_info."""
+        """hal8188erateadaptive.c:501. phydm_c2h_ra_report_handler is unported: it sets a linked station's
+        cmn_sta_info and dm->tx_rate (phydm_rainfo.c:409-413), which only a linked client reads."""
         if not (p_ra_info.active and p_ra_info.TOTAL > 0):
             return
         if p_ra_info.ra_drop_after_down:

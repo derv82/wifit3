@@ -134,7 +134,8 @@ extracted by `scripts/chips/rtl8188eus_dkms/extract_fw.py`.
 - `rate_adaptive.py` ports the TX_REPORT2 path (usb_ops_linux.c:199 → hal8188erateadaptive.c:1213 →
   :840 → `rtw_rpt_timer_cfg_cmd`); `rx.query_rx_desc` now decodes report descriptors per type
   (rtl8188e_rxdesc.c:46-83: TX_REPORT2 length rxdw0[9:0], no drvinfo/shift, rxdw4/5 valid map).
-  Fed the captured reports, it emits the captured `0x927c / 0x7a12 / 0x61a8 / 0x493e` sequence on all 7.
+  Fed the captured reports, it emits each capture's run of the `0x927c / 0x7a12 / 0x61a8 / 0x493e`
+  sequence on all 7: 2-4 values per capture, all 4 only in captures_8188eu_2.
 - Injected data frames carry `MRateToHwRate(MGN_MCS7)` (rtw_xmit.c:4400, rtw_mlme_ext.c:7976).
 - The DM tick re-arms 2000 ms from its own fire, not from the end of the tick (rtw_mlme.c:3336).
   Linux ticks every 2.016 s on all 7 captures: the 2000 ms timer rounded up by the kernel timer
