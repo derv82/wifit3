@@ -90,3 +90,23 @@ def test_iter_frames_threads_cut_into_cck_rssi():
     buf = (_desc(len(mpdu) + 4, drvinfo_sz=8, physt=1, rate=1)
            + _CCK_LNA5_VGA2[:8] + mpdu + b"\0\0\0\0")
     assert list(rx.iter_frames(buf, ODM_CUT_I, False, 0)) == [(mpdu, -35 - 4)]
+
+
+def test_tx_report2_desc_ignores_normal_rx_fields():
+    # TX_REPORT2: pkt_len is rxdw0[9:0], drvinfo/shift are not read, rxdw4/5 carry MacIDValidEntry.
+    desc = bytearray(_desc(0x10, drvinfo_sz=8, shift_sz=1, rpt=rx.TX_REPORT2))
+    desc[0:4] = (int.from_bytes(desc[0:4], "little") | (1 << 11)).to_bytes(4, "little")
+    desc[16:20] = (0x2).to_bytes(4, "little")
+    d = rx.query_rx_desc(bytes(desc))
+    assert d.pkt_len == 0x10 and d.drvinfo_sz == 0 and d.shift_sz == 0
+    assert d.mac_id_valid_entry0 == 0x2
+
+
+def test_iter_tx_report2_yields_report_not_frame():
+    report = bytes(range(16))
+    mpdu = bytes(range(30))
+    desc = bytearray(_desc(len(report), rpt=rx.TX_REPORT2))
+    desc[16:20] = (0x2).to_bytes(4, "little")
+    buf = bytes(desc) + report + _desc(len(mpdu) + 4) + mpdu + b"\0\0\0\0"
+    assert list(rx.iter_tx_report2(buf)) == [(report, 16, 0x2, 0)]
+    assert [f for f, _ in rx.iter_frames(buf, *TSMC)] == [mpdu]

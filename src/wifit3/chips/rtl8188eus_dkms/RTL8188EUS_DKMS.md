@@ -26,11 +26,13 @@ hopping sweep** (7/6 same-session Kali A/B: 5.3 vs 7.0 on the reference AP, conc
 APs) — and mainline had a *smaller* sweep gap than dkms there. Untested/un-walked: uncaptured TX-desc variants, 40 MHz, power-save, sreset recovery, and
 the runtime IQK/LCK/power-track triggers — no wire ground-truth exists for any of these.
 
-**Driver rate adaptation is not ported.** This build runs RA in the driver (`fw_ractrl=False`):
-TX_REPORT2 packets drive `odm_ra_tx_rpt2_handle_8188e` and the per-macid rate decision (with
-I-cut tables, hal8188erateadaptive.c:950), which reprograms `REG_TX_RPT_TIME`. The port drops TX
-reports and never writes it after init. Injected frames use fixed rates, so frame content and
-rate are unaffected, but heavy TX (e.g. ARP replay) runs without the vendor's report timing.
+**Driver rate adaptation: only the TX-report timing is ported.** This build runs RA in the driver
+(`fw_ractrl=False`): TX_REPORT2 packets drive `odm_ra_tx_rpt2_handle_8188e`, the per-macid rate
+decision (I-cut tables, hal8188erateadaptive.c:954), and the `REG_TX_RPT_TIME` write
+(`rate_adaptive.py`, queued like the vendor's `rtw_rpt_timer_cfg_cmd`). Monitor mode links no
+station, so the RA entries keep their `odm_ra_info_init` rate mask and RSSI; `odm_arfb_refresh_8188e`
+and the rate-update C2H handler are unported. Injected frames do not use the RA decision: a monitor
+data frame takes MCS7 (24M if addr1/addr3 is broadcast), a mgmt frame 1M (`rtw_monitor_xmit_entry`).
 
 ## Gotchas
 
@@ -126,6 +128,17 @@ extracted by `scripts/chips/rtl8188eus_dkms/extract_fw.py`.
 - `verify_channels.py` — byte-diff the initial ch1 channel set on all three captures.
 - `beacon_watch.py` (live) / `beacon_watch_usbcap.py` (capture) — the RX-health A/B.
 ## Debug log
+
+### 2026-11-04 — TX_REPORT2 rate adaptation, monitor data-frame rate, watchdog cadence
+
+- `rate_adaptive.py` ports the TX_REPORT2 path (usb_ops_linux.c:199 → hal8188erateadaptive.c:1213 →
+  :840 → `rtw_rpt_timer_cfg_cmd`); `rx.query_rx_desc` now decodes report descriptors per type
+  (rtl8188e_rxdesc.c:46-83: TX_REPORT2 length rxdw0[9:0], no drvinfo/shift, rxdw4/5 valid map).
+  Fed the captured reports, it emits the captured `0x927c / 0x7a12 / 0x61a8 / 0x493e` sequence on all 7.
+- Injected data frames carry `MRateToHwRate(MGN_MCS7)` (rtw_xmit.c:4400, rtw_mlme_ext.c:7976).
+- The DM tick re-arms 2000 ms from its own fire, not from the end of the tick (rtw_mlme.c:3336).
+  Linux ticks every 2.016 s on all 7 captures: the 2000 ms timer rounded up by the kernel timer
+  wheel (500 jiffies at HZ=250 → 504), a host value the port does not copy.
 
 ### 2026-07-11 — generalize the EFUSE board options (external PA/LNA), reference byte-identical
 

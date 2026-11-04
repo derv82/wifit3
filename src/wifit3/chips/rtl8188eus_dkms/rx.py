@@ -19,7 +19,7 @@ Two DEVIATIONS from the vendor recv loop, both intentional for wifit3:
 
 When ``physt`` the RX desc is followed by the PHY-status struct (``phy_status_rpt_8192cd``,
 the 11N report) from which ``decode_rssi`` derives the per-frame dBm; ``iter_frames`` yields
-``(frame, rssi)``.
+``(frame, rssi)``. ``iter_tx_report2`` yields the TX_REPORT2 packets for ``rate_adaptive``.
 """
 from __future__ import annotations
 
@@ -29,7 +29,10 @@ from .phy_cond import ODM_CUT_I
 
 RXDESC_SIZE = 24            # [SRC] rtw_recv.h RXDESC_SIZE (6 dwords); == RXDESC_OFFSET
 FCS_LEN = 4                 # IEEE80211_FCS_LEN
-NORMAL_RX = 0              # [SRC] rtw_recv.h pkt_rpt_type enum (vs TX_REPORT1/2, HIS_REPORT)
+NORMAL_RX = 0              # [SRC] rtw_recv.h:631 pkt_rpt_type enum
+TX_REPORT1 = 1
+TX_REPORT2 = 2
+TX_RPT1_PKT_LEN = 8        # [SRC] rtl8188e_recv.h:57
 _RSSI_UNKNOWN = 0          # reported when a frame carries no PHY status (physt=0)
 
 # [SRC] phydm_cck_rssi_8188e (phydm_phystatus.c:833-835)
@@ -47,25 +50,53 @@ class RxDesc(NamedTuple):
     physt: bool             # PHY-status present (drvinfo carries RSSI)
     pkt_rpt_type: int       # NORMAL_RX vs a TX/HISR report (not an 802.11 frame)
     data_rate: int          # DESC rate index (<= 3 => CCK)
+    mac_id_valid_entry0: int    # TX_REPORT2 only
+    mac_id_valid_entry1: int
 
 
 def query_rx_desc(desc: bytes) -> RxDesc:
-    """[SRC] rtl8188e_query_rx_desc_status — decode the 24-byte RX status desc.
+    """[SRC] rtl8188e_query_rx_desc_status (rtl8188e_rxdesc.c:20) — decode the 24-byte RX status desc.
 
-    rxdw0: pkt_len[13:0], crc[14], icv[15], drvinfo_sz[19:16], shift[25:24], physt[26];
-    rxdw3: data_rate[5:0], pkt_rpt_type[15:14].
+    The attrib starts zeroed (:42); only NORMAL_RX reads drvinfo/shift/physt/icv/rate from it.
     """
     dw0 = int.from_bytes(desc[0:4], "little")
     dw3 = int.from_bytes(desc[12:16], "little")
+    crc_err = bool((dw0 >> 14) & 1)
+    pkt_rpt_type = (dw3 >> 14) & 0x3
+    if pkt_rpt_type == NORMAL_RX:
+        return RxDesc(
+            pkt_len=dw0 & 0x3FFF,
+            crc_err=crc_err,
+            icv_err=bool((dw0 >> 15) & 1),
+            drvinfo_sz=((dw0 >> 16) & 0xF) * 8,
+            shift_sz=(dw0 >> 24) & 0x3,
+            physt=bool((dw0 >> 26) & 1),
+            pkt_rpt_type=pkt_rpt_type,
+            data_rate=dw3 & 0x3F,
+            mac_id_valid_entry0=0,
+            mac_id_valid_entry1=0,
+        )
+    mac_id_valid_entry0 = 0
+    mac_id_valid_entry1 = 0
+    if pkt_rpt_type == TX_REPORT1:
+        pkt_len = TX_RPT1_PKT_LEN
+    elif pkt_rpt_type == TX_REPORT2:
+        pkt_len = dw0 & 0x3FF
+        mac_id_valid_entry0 = int.from_bytes(desc[16:20], "little")
+        mac_id_valid_entry1 = int.from_bytes(desc[20:24], "little")
+    else:
+        pkt_len = dw0 & 0x3FFF
     return RxDesc(
-        pkt_len=dw0 & 0x3FFF,
-        crc_err=bool((dw0 >> 14) & 1),
-        icv_err=bool((dw0 >> 15) & 1),
-        drvinfo_sz=((dw0 >> 16) & 0xF) * 8,
-        shift_sz=(dw0 >> 24) & 0x3,
-        physt=bool((dw0 >> 26) & 1),
-        pkt_rpt_type=(dw3 >> 14) & 0x3,
-        data_rate=dw3 & 0x3F,
+        pkt_len=pkt_len,
+        crc_err=crc_err,
+        icv_err=False,
+        drvinfo_sz=0,
+        shift_sz=0,
+        physt=False,
+        pkt_rpt_type=pkt_rpt_type,
+        data_rate=0,
+        mac_id_valid_entry0=mac_id_valid_entry0,
+        mac_id_valid_entry1=mac_id_valid_entry1,
     )
 
 
@@ -102,14 +133,9 @@ def _rnd4(x: int) -> int:
     return (x + 3) & ~3
 
 
-def iter_frames(buf: bytes, cut_version: int, ext_lna: bool,
-                type_glna: int) -> Iterator[Tuple[bytes, int]]:
-    """[SRC] recvbuf2recvframe — walk the aggregated bulk-IN buffer.
-
-    Yields ``(frame, rssi_dbm)`` for each good NORMAL_RX MPDU, FCS stripped. C2H/TX
-    reports and crc/icv-error frames are skipped but still advance the walk; only a
-    malformed length ends it.
-    """
+def _iter_packets(buf: bytes) -> Iterator[Tuple[int, RxDesc]]:
+    """[SRC] recvbuf2recvframe — ``(offset, desc)`` per crc/icv-clean packet of the aggregated
+    bulk-IN buffer. Error packets are skipped but advance the walk; only a malformed length ends it."""
     transfer_len = len(buf)
     off = 0
     while transfer_len >= RXDESC_SIZE:
@@ -117,14 +143,32 @@ def iter_frames(buf: bytes, cut_version: int, ext_lna: bool,
         pkt_offset = RXDESC_SIZE + d.drvinfo_sz + d.shift_sz + d.pkt_len
         if d.pkt_len <= 0 or pkt_offset > transfer_len:
             break                               # malformed length: next boundary unknown
-        if d.pkt_rpt_type == NORMAL_RX and not (d.crc_err or d.icv_err):
-            start = off + RXDESC_SIZE + d.drvinfo_sz + d.shift_sz
-            frame = buf[start:start + d.pkt_len]
-            if len(frame) > FCS_LEN:            # strip the HW-appended FCS
-                rssi = (decode_rssi(buf[off + RXDESC_SIZE:start], d.data_rate,
-                                    cut_version, ext_lna, type_glna)
-                        if d.physt else _RSSI_UNKNOWN)
-                yield frame[:-FCS_LEN], rssi
+        if not (d.crc_err or d.icv_err):
+            yield off, d
         pkt_offset = _rnd4(pkt_offset)          # RX_AGG_USB 4-byte alignment
         off += pkt_offset
         transfer_len -= pkt_offset
+
+
+def iter_frames(buf: bytes, cut_version: int, ext_lna: bool,
+                type_glna: int) -> Iterator[Tuple[bytes, int]]:
+    """``(frame, rssi_dbm)`` for each NORMAL_RX MPDU, FCS stripped."""
+    for off, d in _iter_packets(buf):
+        if d.pkt_rpt_type != NORMAL_RX:
+            continue
+        start = off + RXDESC_SIZE + d.drvinfo_sz + d.shift_sz
+        frame = buf[start:start + d.pkt_len]
+        if len(frame) > FCS_LEN:                # strip the HW-appended FCS
+            rssi = (decode_rssi(buf[off + RXDESC_SIZE:start], d.data_rate,
+                                cut_version, ext_lna, type_glna)
+                    if d.physt else _RSSI_UNKNOWN)
+            yield frame[:-FCS_LEN], rssi
+
+
+def iter_tx_report2(buf: bytes) -> Iterator[Tuple[bytes, int, int, int]]:
+    """``(tx_rpt_buf, tx_rpt_len, mac_id_valid_entry0, mac_id_valid_entry1)`` per TX_REPORT2 packet:
+    the odm_ra_tx_rpt2_handle_8188e arguments (usb_ops_linux.c:199)."""
+    for off, d in _iter_packets(buf):
+        if d.pkt_rpt_type == TX_REPORT2:
+            start = off + RXDESC_SIZE
+            yield buf[start:start + d.pkt_len], d.pkt_len, d.mac_id_valid_entry0, d.mac_id_valid_entry1

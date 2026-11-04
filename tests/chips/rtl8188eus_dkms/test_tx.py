@@ -4,7 +4,7 @@ Locks the 32-byte mgmt descriptor (update_txdesc MGNT branch) byte-for-byte agai
 cold-boot capture's injected deauth, plus the field positions and the XOR checksum. Live
 TX is the user's to fire.
 """
-from wifit3.chips.rtl8188eus_dkms import tx
+from wifit3.chips.rtl8188eus_dkms import constants as C, tx
 
 # A 26-byte (deauth) MPDU at seq 0, 1 Mbps — byte-diffed against capture-1's aireplay deauth
 # descriptor. The descriptor is pure metadata (no MAC/BSSID — those live in the MPDU).
@@ -58,3 +58,9 @@ def test_txdesc_checksum_xor():
     assert xor_all == 0
     # And recomputing (field-zeroed) reproduces the stored checksum.
     assert tx.txdesc_checksum(bytes(d)) == int.from_bytes(d[28:30], "little")
+
+
+def test_monitor_data_frame_txdesc_matches_wire():
+    # capture-1's injected null-data frame: 24 B MPDU, seq 0x1be, MRateToHwRate(MGN_MCS7) in txdw5.
+    golden = bytes.fromhex("1800208c01120600000000000000be81800100001300320000000000201e0000")
+    assert tx.build_mgmt_txdesc(24, seqnum=0x1BE, hw_rate=C.DESC_RATEMCS7) == golden

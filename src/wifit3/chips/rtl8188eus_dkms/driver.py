@@ -34,11 +34,14 @@ from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
 from . import (
-    bb, chan, dig, dm, efuse, firmware, mac, monitor, phy_cond, powertrack, pwrseq, rf,
+    bb, chan, dig, dm, efuse, firmware, mac, monitor, phy_cond, powertrack, pwrseq, rate_adaptive, rf,
     sreset, tx, txpower,
 )
-from .constants import DEFAULT_INIT_CHANNEL
-from .rx import iter_frames
+from .constants import (
+    DEFAULT_INIT_CHANNEL, DESC_RATE1M, DESC_RATE24M, DESC_RATEMCS7, REG_TX_RPT_TIME,
+    RTW_IEEE80211_FCTL_FTYPE, RTW_IEEE80211_FTYPE_DATA,
+)
+from .rx import iter_frames, iter_tx_report2
 from .transport import Rtl8188eusTransport
 
 logger = logging.getLogger(__name__)
@@ -72,6 +75,8 @@ class Rtl8188eusDkmsDriver(Driver):
         self._dm_seed = None               # dm.DmSeed carried from InitHalDm to the watchdog
         self._pt_state: Optional[powertrack.PowerTrackState] = None   # set in connect
         self._watchdog_state: Optional[dig.WatchdogState] = None     # set in connect
+        self._rate_adaptive: Optional[rate_adaptive.RateAdaptive] = None   # set in connect
+        self._cmd_tasks: set[asyncio.Task] = set()
         self._rf_chnl: int = 0            # RfRegChnlVal[A], stateful across set_channel
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
@@ -183,8 +188,12 @@ class Rtl8188eusDkmsDriver(Driver):
         try:
             state = self._watchdog_state
             pt_state = self._pt_state
+            delay = dig.WATCHDOG_PERIOD_S
             while True:
-                await asyncio.sleep(dig.WATCHDOG_PERIOD_S)
+                await asyncio.sleep(delay)
+                # rtw_dynamic_check_timer_handlder re-arms 2000 ms from its own fire, not from the
+                # end of the queued rtw_dynamic_chk_wk_hdl work (rtw_mlme.c:3336).
+                fire_time = loop.time()
                 try:
                     async with self._io_lock:
                         # rtw_dynamic_chk_wk_hdl runs the silent-reset poll then the phydm
@@ -200,6 +209,8 @@ class Rtl8188eusDkmsDriver(Driver):
                     # stopped loop freezes the gain while the RF drifts.
                     logger.debug("RTL8188EUS DIG: tick skipped on fault", exc_info=True)
                     continue
+                finally:
+                    delay = fire_time + dig.WATCHDOG_PERIOD_S - loop.time()
                 logger.debug("RTL8188EUS DIG: IGI=0x%02x fa=%d (ofdm=%d cck=%d)",
                              tick.igi, tick.fa_cnt, tick.ofdm_fa, tick.cck_fa)
         except asyncio.CancelledError:
@@ -244,6 +255,8 @@ class Rtl8188eusDkmsDriver(Driver):
         mac.init_misc11_tail(t)                                 # M6
         bb.phy_set_rfe_reg(t, params.board)                    # PHY_SetRFEReg_8188E (MISC11 tail)
         self._dm_seed = dm.init_hal_dm(t)                       # M7 — and carry the DM seed
+        # odm_ra_info_init_all, from odm_dm_init (phydm.c:1352)
+        self._rate_adaptive = rate_adaptive.RateAdaptive(self._cut_version, self._rtw_rpt_timer_cfg_cmd)
         self._watchdog_state = dig.seed_state(self._dm_seed.igi, self._dm_seed.cck_cca)
         self._pt_state = powertrack.seed_state(
             self._dm_seed.ofdm_swing_raw, self._dm_seed.cck_swing_raw, params.thermal_meter,
@@ -256,6 +269,9 @@ class Rtl8188eusDkmsDriver(Driver):
         return self.transport.bulk_in()
 
     def _dispatch(self, buf: bytes) -> None:
+        if self._rate_adaptive is not None:
+            for tx_rpt_buf, tx_rpt_len, valid0, valid1 in iter_tx_report2(buf):
+                self._rate_adaptive.odm_ra_tx_rpt2_handle_8188e(tx_rpt_buf, tx_rpt_len, valid0, valid1)
         cb = self._rx_cb
         if cb is None and not self._ack_detect_on:
             return
@@ -269,6 +285,21 @@ class Rtl8188eusDkmsDriver(Driver):
                 parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
                 if parsed is not None:
                     cb(parsed)
+
+    def _rtw_rpt_timer_cfg_cmd(self, min_rpt_time: int) -> None:
+        """rtw_cmd.c:3025: queue the REG_TX_RPT_TIME write behind the EP0 work already queued."""
+        task = asyncio.get_running_loop().create_task(self._rpt_timer_setting_wk_hdl(min_rpt_time))
+        self._cmd_tasks.add(task)
+        task.add_done_callback(self._cmd_tasks.discard)
+
+    async def _rpt_timer_setting_wk_hdl(self, min_rpt_time: int) -> None:
+        """rtw_cmd.c:3020: HW_VAR_RPT_TIMER_SETTING -> odm_ra_set_tx_rpt_time (hal8188erateadaptive.c:1192)."""
+        loop = asyncio.get_running_loop()
+        try:
+            async with self._io_lock:
+                await loop.run_in_executor(None, self.transport.write16, REG_TX_RPT_TIME, min_rpt_time)
+        except Exception:  # noqa: BLE001 — a transport fault drops this write, as a skipped tick does
+            logger.debug("RTL8188EUS: REG_TX_RPT_TIME write failed", exc_info=True)
 
     async def _enable_rx_acks(self) -> None:
         """Register write: admit ACK control frames (RXFLTMAP1 bit13) so the tap can see the
@@ -311,7 +342,18 @@ class Rtl8188eusDkmsDriver(Driver):
         # wire shows desc-seq == frame-seqctrl>>4); seqctrl is bytes [22:24] of the MPDU.
         seqnum = ((int.from_bytes(frame_bytes[22:24], "little") >> 4) & 0xFFF
                   if len(frame_bytes) >= 24 else 0)
-        payload = tx.build_mgmt_txdesc(len(frame_bytes), bmc=bmc, seqnum=seqnum) + frame_bytes
+        # rtw_monitor_xmit_entry (rtw_xmit.c:4400-4413): a data frame takes update_monitor_frame_attrib's
+        # MGN_MCS7, or MGN_24M when addr1 or addr3 is broadcast; a mgmt frame takes tx_rate (1M).
+        frame_control = int.from_bytes(frame_bytes[0:2], "little")
+        if frame_control & RTW_IEEE80211_FCTL_FTYPE == RTW_IEEE80211_FTYPE_DATA:
+            if frame_bytes[4:10] == b"\xff" * 6 or frame_bytes[16:22] == b"\xff" * 6:
+                hw_rate = DESC_RATE24M
+            else:
+                hw_rate = DESC_RATEMCS7
+        else:
+            hw_rate = DESC_RATE1M
+        payload = (tx.build_mgmt_txdesc(len(frame_bytes), bmc=bmc, seqnum=seqnum, hw_rate=hw_rate)
+                   + frame_bytes)
         async with self._io_lock:           # don't TX mid-retune (set_channel)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
         return True
@@ -345,6 +387,8 @@ class Rtl8188eusDkmsDriver(Driver):
             except asyncio.CancelledError:
                 pass
             self._dig_task = None
+        for task in list(self._cmd_tasks):
+            task.cancel()
         if self._reader is not None:
             await self._reader.stop()
             self._reader = None

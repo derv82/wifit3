@@ -38,11 +38,13 @@ class RealtekDecoder(FamilyDecoder):
     """Defaults are the Jaguar (rtl88xxau) values; rf_sipi_address or rf_base_address locates path A RF writes."""
 
     def __init__(self, hop_start_register: int = 0x0454, rf_sipi_address: int | None = 0xC90,
-                 rf_base_address: int | None = None, tx_descriptor_size: int = 40) -> None:
+                 rf_base_address: int | None = None, tx_descriptor_size: int = 40,
+                 report_type_dword_and_mask: tuple[int, int] = (2, RXDESC24_RPT_SEL)) -> None:
         self.hop_start_register = hop_start_register
         self.rf_sipi_address = rf_sipi_address
         self.rf_base_address = rf_base_address
         self.tx_descriptor_size = tx_descriptor_size
+        self.report_type_dword_and_mask = report_type_dword_and_mask
 
     def describe(self, op: UsbOp) -> str:
         status = f"  status {op.status}" if op.status else ""
@@ -113,17 +115,19 @@ class RealtekDecoder(FamilyDecoder):
         """Bulk IN with no rxdesc24 rpt_sel packet; C2H (rpt_sel) stays in the replay for the driver."""
         return op.transfer_type == TransferType.BULK and "C2H" not in self.rx_packet_kinds(op)
 
-    @staticmethod
-    def rx_packet_kinds(op: UsbOp) -> list[str]:
-        """"RX" or "C2H" per rxdesc24 packet in a bulk-IN buffer (rtl8xxxu_parse_rxdesc24 replay)."""
+    def rx_packet_kinds(self, op: UsbOp) -> list[str]:
+        """"RX" or "C2H" per rxdesc24 packet in a bulk-IN buffer (rtl8xxxu_parse_rxdesc24 replay); a packet
+        is C2H when its report_type_dword_and_mask bits are nonzero."""
+        report_type_dword, report_type_mask = self.report_type_dword_and_mask
         data = op.data
         kinds: list[str] = []
         offset = 0
         while offset + RXDESC24_SIZE <= len(data):
-            dw0, _dw1, dw2 = struct.unpack_from("<III", data, offset)
+            dw0 = struct.unpack_from("<I", data, offset)[0]
+            report_type = struct.unpack_from("<I", data, offset + 4 * report_type_dword)[0] & report_type_mask
             packet_length = dw0 & 0x3FFF
             driver_info_size = ((dw0 >> 16) & 0xF) * 8
             shift = (dw0 >> 24) & 0x3
-            kinds.append("C2H" if dw2 & RXDESC24_RPT_SEL else "RX")
+            kinds.append("C2H" if report_type else "RX")
             offset += (packet_length + driver_info_size + shift + RXDESC24_SIZE + 7) // 8 * 8
         return kinds

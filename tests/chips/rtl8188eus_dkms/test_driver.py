@@ -95,3 +95,16 @@ def test_manager_registration_and_env_order(monkeypatch):
     monkeypatch.setenv("WIFIT3_RTL8188", "mainline")
     assert selected() is RTL8188EUSDriver          # opt back to mainline via env
     manager.supported_ids.cache_clear()            # leave the cache clean
+
+
+async def test_inject_frame_rate_per_monitor_frame_type():
+    # rtw_monitor_xmit_entry: data -> MGN_MCS7, data to/through broadcast -> MGN_24M, mgmt -> 1M.
+    drv = Rtl8188eusDkmsDriver(_FakeTransport())
+    unicast = b"\xaa\xbb\xcc\xdd\xee\xff"
+    null_data = b"\x48\x01\x00\x00" + unicast * 3 + b"\x00\x00"
+    broadcast_data = b"\x08\x02\x00\x00" + b"\xff" * 6 + unicast * 2 + b"\x00\x00"
+    deauth = b"\xc0\x00\x00\x00" + unicast * 3 + b"\x00\x00\x07\x00"
+    for frame in (null_data, broadcast_data, deauth):
+        assert await drv.inject_frame(frame) is True
+    rates = [int.from_bytes(sent[20:24], "little") & 0x3F for sent in drv.transport.sent]
+    assert rates == [0x13, 0x08, 0x00]

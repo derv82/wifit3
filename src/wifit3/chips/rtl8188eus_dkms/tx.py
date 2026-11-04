@@ -7,13 +7,13 @@ capture's deauth + probe-request descriptors. It is NOT ``fill_fake_txdesc`` (th
 the null/reserved-page frame); the two share txdw0/3/4 but the injected-mgmt one also stamps
 MACID + RAID (txdw1) and the retry-limit (txdw5), which the fake one leaves zero.
 
-Field set for a monitor-injected mgmt frame at the HW-default rate (DESC_RATE1M, no rate
-adaptation), HW-assigned sequence number, no HW encryption:
+Field set for a monitor-injected frame (data frames ride the same MGNT_FRAMETAG xmit frame),
+HW-assigned sequence number, no HW encryption:
   txdw0  OWN|FSG|LSG, OFFSET=TXDESC_SIZE, PKT_SIZE  (+ BMC if addr1 is group-addressed)
   txdw1  MACID(1) | QSEL=QSLT_MGNT | RAID(6)        [WIRE: mac_id 1, raid 6 — see constants]
   txdw3  EN_HWSEQ (8<<28)                           (Hw assigns the sequence number)
   txdw4  USERATE (driver picks rate -> 1M) | HW_SSN
-  txdw5  RTY_LMT_EN | retry-limit 12 | MRateToHwRate(1M)=0
+  txdw5  RTY_LMT_EN | retry-limit 12 | MRateToHwRate(pattrib->rate)
   txdw7  checksum (computed last)
 
 The 32-byte descriptor and the XOR checksum (``rtl8188e_cal_txdesc_chksum``: XOR of the
@@ -28,6 +28,7 @@ from __future__ import annotations
 from .constants import (
     BMC,
     DATA_RETRY_LIMIT_SHT,
+    DESC_RATE1M,
     FSG,
     LSG,
     MGMT_INJECT_MACID,
@@ -59,15 +60,15 @@ def txdesc_checksum(desc: bytes) -> int:
 
 
 def build_mgmt_txdesc(pkt_len: int, *, bmc: bool = False, seqnum: int = 0,
-                      retry_limit: int = 12) -> bytes:
+                      retry_limit: int = 12, hw_rate: int = DESC_RATE1M) -> bytes:
     """Build the 32-byte management TX descriptor for one injected frame [SRC] update_txdesc
     MGNT_FRAMETAG branch (rtl8188eu_xmit.c:445). ``bmc`` sets the broadcast/multicast bit when
     addr1 is a group address (e.g. a broadcast deauth). ``seqnum`` is the frame's 802.11
     sequence number, which the driver copies into txdw3 (the wire confirms desc-seq ==
     frame-seqctrl>>4 across every injected frame). ``retry_limit`` fills txdw5 DATA_RETRY_LIMIT
     (6-bit); the default 12 is the vendor cold-boot value, and the inject path passes its own HW
-    ACK-retry limit. No SEC_TYPE — the frame is already final (no HW encryption). Rate is the
-    driver default DESC_RATE1M (MRateToHwRate=0)."""
+    ACK-retry limit. No SEC_TYPE — the frame is already final (no HW encryption). ``hw_rate`` is
+    MRateToHwRate(pattrib->rate) in txdw5 (:484)."""
     d = bytearray(TXDESC_SIZE)
     dw0 = (OWN | FSG | LSG
            | (((TXDESC_SIZE + OFFSET_SZ) << OFFSET_SHT) & 0x00FF0000)
@@ -80,6 +81,7 @@ def build_mgmt_txdesc(pkt_len: int, *, bmc: bool = False, seqnum: int = 0,
            | ((MGMT_INJECT_RAID << RATE_ID_SHT) & 0x000F0000))  #      RAID
     _put32(d, 12, (8 << 28) | ((seqnum << 16) & 0x0FFF0000))  # txdw3: EN_HWSEQ | seq number
     _put32(d, 16, (1 << 7) | (1 << 8))                       # txdw4: HW_SSN | USERATE
-    _put32(d, 20, RTY_LMT_EN | ((retry_limit & 0x3F) << DATA_RETRY_LIMIT_SHT))  # txdw5: retry-limit en + N, rate 0
+    _put32(d, 20, RTY_LMT_EN | ((retry_limit & 0x3F) << DATA_RETRY_LIMIT_SHT)  # txdw5: retry-limit en + N
+           | (hw_rate & 0x3F)),
     _put32(d, 28, txdesc_checksum(d))                        # txdw7: checksum (computed last)
     return bytes(d)

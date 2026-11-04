@@ -105,6 +105,11 @@ DATA_RETRY_LIMIT_SHT = 18   # txdw5 DATA_RETRY_LIMIT field shift (6-bit) [SRC] r
 # constant across the captured probe-req + deauth [WIRE] cap1 aireplay TX.
 MGMT_INJECT_MACID = 1
 MGMT_INJECT_RAID = 6
+DESC_RATE1M = 0x00          # [SRC] hal_com.h:33
+DESC_RATE24M = 0x08         # [SRC] hal_com.h:43
+DESC_RATEMCS7 = 0x13        # [SRC] hal_com.h:56
+RTW_IEEE80211_FCTL_FTYPE = 0x000C   # [SRC] ieee80211.h:483
+RTW_IEEE80211_FTYPE_DATA = 0x0008   # [SRC] ieee80211.h:497
 
 # --- BB byte masks (phy_set_bb_reg) [SRC] Hal8188EPhyReg.h ----------------
 bMaskByte0 = 0x000000FF
