@@ -13,7 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .dig import _dbg_port_read, _set_edcca_threshold
+from .efuse import PathTxPwr
 from .rf import RF_PATH_A, query_bb, query_rf_reg, set_bb, set_rf_reg
+from .txpower import phy_set_tx_power_level_by_path
 
 WATCHDOG_PERIOD_S = 2.0         # dynamic_chk_timer, os_intfs.c:4044
 
@@ -84,6 +86,13 @@ USB_AGG_TX_TP_MBPS = 2
 USB_AGG_LAST_TX_BYTES = 220000
 
 
+def _s8(value: int) -> int:
+    v = value & 0xFF
+    if v & 0x80:
+        return v - 0x100
+    return v
+
+
 def swing_index(bb_swing: int) -> int:
     """[SRC] get_swing_index (halrf_powertracking_ce.c:595): TX_SCALING_TABLE_JAGUAR index, or its size."""
     for i, value in enumerate(TX_SCALING_TABLE_JAGUAR):
@@ -130,6 +139,9 @@ class DmState:
     delta_power_index: int = 0
     delta_power_index_last: int = 0
     absolute_ofdm_swing_idx: int = 0
+    remnant_ofdm_swing_idx: int = 0
+    remnant_cck_swing_idx: int = 0
+    default_cck_index: int = 0      # get_cck_swing_index finds no 8821 branch (halrf_powertracking_ce.c:640)
     modify_tx_agc_flag_path_a: bool = False
 
     def __post_init__(self) -> None:
@@ -141,7 +153,9 @@ def clear_txpowertracking_state(st: DmState) -> None:
     st.delta_power_index = 0
     st.delta_power_index_last = 0
     st.absolute_ofdm_swing_idx = 0
+    st.remnant_ofdm_swing_idx = 0
     st.modify_tx_agc_flag_path_a = False
+    st.remnant_cck_swing_idx = 0
     st.thermal_value = st.eeprom_thermal
 
 
@@ -251,27 +265,39 @@ def _rrsr_mask(t, st: DmState) -> None:
     set_bb(t, REG_RRSR, 0xFFFFF, st.rrsr_val_init)
 
 
-def _tx_pwr_track_set_pwr(t, st: DmState, channel: int) -> None:
-    """[SRC] odm_tx_pwr_track_set_pwr8821a MIX_MODE, path A (halrf_8821a_ce.c:46).
-
-    The limit branches also re-apply the path-A TX AGC with the remnant index (phy_set_tx_power_level_by_path);
-    not ported: the captures never reach them.
-    """
+def _tx_pwr_track_set_pwr(t, st: DmState, channel: int, tx_power_2g: PathTxPwr, tx_power_5g: PathTxPwr) -> None:
+    """[SRC] odm_tx_pwr_track_set_pwr8821a MIX_MODE, path A (halrf_8821a_ce.c:46)."""
     pwr_tracking_limit = 32 if channel <= 14 else 30    # MGN_1M (CCK) / MGN_6M (OFDM)
+    if channel <= 14:
+        pp = tx_power_2g
+    else:
+        pp = tx_power_5g
     # u8 in the C: a negative sum wraps past the limit and takes the over-limit branch.
+    final_cck_swing_index = (st.default_cck_index + st.absolute_ofdm_swing_idx) & 0xFF
     final_ofdm_swing_index = (st.default_ofdm_index + st.absolute_ofdm_swing_idx) & 0xFF
     if final_ofdm_swing_index > pwr_tracking_limit:
+        st.remnant_cck_swing_idx = _s8(final_cck_swing_index - pwr_tracking_limit)
+        st.remnant_ofdm_swing_idx = _s8(final_ofdm_swing_index - pwr_tracking_limit)
         set_bb(t, REG_A_TX_SCALE_JAGUAR, 0xFFE00000, TX_SCALING_TABLE_JAGUAR[pwr_tracking_limit])
         st.modify_tx_agc_flag_path_a = True
+        phy_set_tx_power_level_by_path(t, channel, pp, st.remnant_cck_swing_idx, st.remnant_ofdm_swing_idx)
     elif final_ofdm_swing_index <= 0:
+        st.remnant_cck_swing_idx = _s8(final_cck_swing_index)
+        st.remnant_ofdm_swing_idx = _s8(final_ofdm_swing_index)
         set_bb(t, REG_A_TX_SCALE_JAGUAR, 0xFFE00000, TX_SCALING_TABLE_JAGUAR[0])
         st.modify_tx_agc_flag_path_a = True
+        phy_set_tx_power_level_by_path(t, channel, pp, st.remnant_cck_swing_idx, st.remnant_ofdm_swing_idx)
     else:
         set_bb(t, REG_A_TX_SCALE_JAGUAR, 0xFFE00000, TX_SCALING_TABLE_JAGUAR[final_ofdm_swing_index])
-        st.modify_tx_agc_flag_path_a = False
+        if st.modify_tx_agc_flag_path_a:
+            st.remnant_cck_swing_idx = 0
+            st.remnant_ofdm_swing_idx = 0
+            phy_set_tx_power_level_by_path(t, channel, pp, st.remnant_cck_swing_idx, st.remnant_ofdm_swing_idx)
+            st.modify_tx_agc_flag_path_a = False
 
 
-def _txpowertracking_callback_thermal_meter(t, st: DmState, channel: int) -> None:
+def _txpowertracking_callback_thermal_meter(t, st: DmState, channel: int, tx_power_2g: PathTxPwr,
+                                            tx_power_5g: PathTxPwr) -> None:
     """[SRC] odm_txpowertracking_callback_thermal_meter (halphyrf_ce.c:407), 8821a, not linked (no IQK, no LCK)."""
     thermal_value = query_rf_reg(t, RF_PATH_A, RF_T_METER, 0xFC00)
     if st.eeprom_thermal == 0xFF:
@@ -296,17 +322,17 @@ def _txpowertracking_callback_thermal_meter(t, st: DmState, channel: int) -> Non
     else:
         power_index_offset = 0
     if power_index_offset != 0:
-        _tx_pwr_track_set_pwr(t, st, channel)       # odm_pwrtrk_method, MIX_MODE
+        _tx_pwr_track_set_pwr(t, st, channel, tx_power_2g, tx_power_5g)     # odm_pwrtrk_method, MIX_MODE
     st.thermal_value = thermal_value
 
 
-def _txpowertracking_check(t, st: DmState, channel: int) -> None:
+def _txpowertracking_check(t, st: DmState, channel: int, tx_power_2g: PathTxPwr, tx_power_5g: PathTxPwr) -> None:
     """[SRC] odm_txpowertracking_check_ce (halrf_powertracking_ce.c:818): trigger, then read on the next fire."""
     if not st.tm_trigger:
         set_rf_reg(t, RF_PATH_A, RF_T_METER, (1 << 17) | (1 << 16), 0x03)
         st.tm_trigger = True
         return
-    _txpowertracking_callback_thermal_meter(t, st, channel)
+    _txpowertracking_callback_thermal_meter(t, st, channel, tx_power_2g, tx_power_5g)
     st.tm_trigger = False
 
 
@@ -359,7 +385,7 @@ def _env_mntr(t, st: DmState) -> None:
     st.clm_ongoing = True
 
 
-def tick(t, st: DmState, channel: int) -> None:
+def tick(t, st: DmState, channel: int, tx_power_2g: PathTxPwr, tx_power_5g: PathTxPwr) -> None:
     """One rtw_dynamic_chk_wk_hdl fire."""
     t.read32(REG_TXDMA_STATUS)                  # rtl8812_sreset_xmit_status_check
     t.read32(REG_RXDMA_STATUS)                  # rtl8812_sreset_linked_status_check
@@ -372,5 +398,5 @@ def tick(t, st: DmState, channel: int) -> None:
     _cck_pd_th(t, st, cck_fail)
     _adaptivity(t, st)
     _rrsr_mask(t, st)
-    _txpowertracking_check(t, st, channel)
+    _txpowertracking_check(t, st, channel, tx_power_2g, tx_power_5g)
     _env_mntr(t, st)

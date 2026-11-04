@@ -38,14 +38,14 @@ def test_ch_group_2g():
 
 
 def test_pg_idx_ch1_matches_wire():
-    assert txpower._pg_idx(_PP, "cck", 0, 0) == 0x31
-    assert txpower._pg_idx(_PP, "ofdm", 0, 0) == 0x2D
-    assert txpower._pg_idx(_PP, "bw20", 0, 0) == 0x2B
+    assert txpower._pg_idx(_PP, "cck", 0, 0, 0) == 0x31
+    assert txpower._pg_idx(_PP, "ofdm", 0, 0, 0) == 0x2D
+    assert txpower._pg_idx(_PP, "bw20", 0, 0, 0) == 0x2B
 
 
 def test_pg_idx_clamps():
     hot = PathTxPwr((0xFF,) * 6, (0xFF,) * 5, (0, 0, 0), (8, 0, 0), (0, 0, 0))
-    assert txpower._pg_idx(hot, "ofdm", 0, 0) == 63   # 0xFF + 8 clamped to txgi_max
+    assert txpower._pg_idx(hot, "ofdm", 0, 0, 0) == 63   # 0xFF + 8 clamped to txgi_max
 
 
 def test_set_tx_power_writes_wire_values():

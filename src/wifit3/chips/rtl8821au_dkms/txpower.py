@@ -58,15 +58,15 @@ def _ch_group_2g(channel: int) -> tuple:
     return g, (5 if channel == 14 else g)
 
 
-def _pg_idx(pp: PathTxPwr, section: str, group: int, cck_group: int) -> int:
-    """[SRC] phy_get_pg_txpwr_idx (2.4G, ntx_idx=1) — base[section][group] + 1TX diff."""
+def _pg_idx(pp: PathTxPwr, section: str, group: int, cck_group: int, tpt: int) -> int:
+    """[SRC] phy_get_pg_txpwr_idx (ntx_idx=1) + the PHY_GetTxPowerTrackingOffset remnant, then the clamp."""
     if section == "cck":
         v = pp.cck_base[cck_group] + pp.cck_diff[0]
     elif section == "ofdm":
         v = pp.bw40_base[group] + pp.ofdm_diff[0]
     else:                  # bw20: HT / VHT at 20 MHz share the BW20 diff
         v = pp.bw40_base[group] + pp.bw20_diff[0]
-    return max(0, min(_TXGI_MAX, v))
+    return max(0, min(_TXGI_MAX, v + tpt))
 
 
 # [SRC] rtw_get_ch_group (5G) — channel -> one of 14 UNII groups (the per-channel BW40
@@ -96,21 +96,39 @@ def _training_word(bw20_idx: int) -> int:
     return wd
 
 
-def set_tx_power(t, channel: int, pp: PathTxPwr) -> None:
-    """[SRC] PHY_SetTxPowerLevel8812 (path A) — write the 2.4 GHz per-rate txagc + training."""
-    g, cck_g = _ch_group_2g(channel)
-    idx = {s: _pg_idx(pp, s, g, cck_g) for s in ("cck", "ofdm", "bw20")}
-    for reg, section, n_bytes in _RATE_REGS:
+def phy_set_tx_power_level_by_path(t, channel: int, pp: PathTxPwr, remnant_cck_swing_idx: int,
+                                   remnant_ofdm_swing_idx: int) -> None:
+    """[SRC] phy_set_tx_power_level_by_path (hal_com_phycfg.c:2762), path A; CCK only on 2.4 GHz.
+
+    The remnants are PHY_GetTxPowerTrackingOffset (:2483): CCK rates take the CCK one.
+    """
+    if channel <= 14:
+        g, cck_g = _ch_group_2g(channel)
+        rate_regs = _RATE_REGS
+    else:
+        g, cck_g = _ch_group_5g(channel), 0
+        rate_regs = _RATE_REGS_5G
+    for reg, section, n_bytes in rate_regs:
+        if section == "cck":
+            idx = _pg_idx(pp, section, g, cck_g, remnant_cck_swing_idx)
+        else:
+            idx = _pg_idx(pp, section, g, cck_g, remnant_ofdm_swing_idx)
         for b in range(n_bytes):
-            set_bb(t, reg, _BYTE_MASK[b], idx[section])
-    set_bb(t, _REG_A_TXPWR_TRAINING, 0x00FFFFFF, _training_word(idx["bw20"]))
+            set_bb(t, reg, _BYTE_MASK[b], idx)
+
+
+def set_tx_power(t, channel: int, pp: PathTxPwr) -> None:
+    """[SRC] PHY_SetTxPowerLevel8812 (path A) — write the 2.4 GHz per-rate txagc + training.
+
+    Remnants are 0: phy_SwChnlAndSetBwMode8812 clears the tracking state first (rtl8812a_phycfg.c:1801).
+    """
+    phy_set_tx_power_level_by_path(t, channel, pp, 0, 0)
+    g, cck_g = _ch_group_2g(channel)
+    set_bb(t, _REG_A_TXPWR_TRAINING, 0x00FFFFFF, _training_word(_pg_idx(pp, "bw20", g, cck_g, 0)))
 
 
 def set_tx_power_5g(t, channel: int, pp: PathTxPwr) -> None:
     """[SRC] PHY_SetTxPowerLevel8812 (path A, 5 GHz) — per-rate txagc + training, no CCK."""
+    phy_set_tx_power_level_by_path(t, channel, pp, 0, 0)
     g = _ch_group_5g(channel)
-    idx = {"ofdm": _pg_idx(pp, "ofdm", g, 0), "bw20": _pg_idx(pp, "bw20", g, 0)}
-    for reg, section, n_bytes in _RATE_REGS_5G:
-        for b in range(n_bytes):
-            set_bb(t, reg, _BYTE_MASK[b], idx[section])
-    set_bb(t, _REG_A_TXPWR_TRAINING, 0x00FFFFFF, _training_word(idx["bw20"]))
+    set_bb(t, _REG_A_TXPWR_TRAINING, 0x00FFFFFF, _training_word(_pg_idx(pp, "bw20", g, 0, 0)))

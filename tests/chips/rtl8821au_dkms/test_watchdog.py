@@ -1,4 +1,9 @@
-from wifit3.chips.rtl8821au_dkms import watchdog
+from wifit3.chips.rtl8821au_dkms import efuse, watchdog
+
+PP_2G = efuse.PathTxPwr(cck_base=(0x2A,) * 6, bw40_base=(0x28,) * 5, cck_diff=(0, 0, 0),
+                        ofdm_diff=(2, 0, 0), bw20_diff=(0, 0, 0))
+PP_5G = efuse.PathTxPwr(cck_base=(), bw40_base=(0x26,) * 14, cck_diff=(0, 0, 0),
+                        ofdm_diff=(2, 0, 0), bw20_diff=(0, 0, 0))
 
 
 class Rec:
@@ -24,6 +29,30 @@ def test_negative_final_ofdm_swing_index_wraps_to_the_over_limit_branch():
     st = make_dm_state(24)
     st.absolute_ofdm_swing_idx = -30
     rec = Rec()
-    watchdog._tx_pwr_track_set_pwr(rec, st, 1)
+    watchdog._tx_pwr_track_set_pwr(rec, st, 1, PP_2G, PP_5G)
     assert ("W32", watchdog.REG_A_TX_SCALE_JAGUAR, watchdog.TX_SCALING_TABLE_JAGUAR[32] << 21) in rec.ops
     assert st.modify_tx_agc_flag_path_a
+
+
+def test_over_limit_reapplies_txagc_with_the_remnant():
+    # halrf_8821a_ce.c:166: 24 + 10 = 34 > 32; CCK takes default_cck_index 0 + 10 - 32 = -22.
+    st = make_dm_state(24)
+    st.absolute_ofdm_swing_idx = 10
+    rec = Rec()
+    watchdog._tx_pwr_track_set_pwr(rec, st, 1, PP_2G, PP_5G)
+    assert st.remnant_ofdm_swing_idx == 2
+    assert st.remnant_cck_swing_idx == -22
+    assert ("W32", 0x0C20, 0x2A - 22) in rec.ops                   # CCK 1M
+    assert ("W32", 0x0C24, 0x2C) in rec.ops                        # OFDM 6M: 0x28 + 2 + 2
+
+
+def test_back_in_range_reapplies_txagc_without_the_remnant():
+    st = make_dm_state(24)
+    st.modify_tx_agc_flag_path_a = True
+    st.remnant_ofdm_swing_idx = 3
+    rec = Rec()
+    watchdog._tx_pwr_track_set_pwr(rec, st, 36, PP_2G, PP_5G)
+    assert st.remnant_ofdm_swing_idx == 0
+    assert not st.modify_tx_agc_flag_path_a
+    assert ("W32", 0x0C24, 0x28) in rec.ops                        # 5 GHz OFDM 6M: 0x26 + 2
+    assert not any(op[1] == 0x0C20 for op in rec.ops)              # no CCK on 5 GHz
