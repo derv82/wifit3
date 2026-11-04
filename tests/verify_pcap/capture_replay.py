@@ -51,7 +51,6 @@ class CaptureReplay:
         self.divergence: Divergence | None = None
         self.refused_read_by_caller: dict[str, RefusedRead] = {}
         self.driver_closing = False
-        self.requests_after_capture_end = 0
         # Per thread the driver started itself (its RX reader): PROCESSING_REPLY, or the endpoint it waits on.
         self._driver_thread_state: dict[threading.Thread, int] = {}
         self._loop = loop
@@ -79,7 +78,6 @@ class CaptureReplay:
             position = self._next_unreproduced(start)
             if position is None:
                 if self.driver_closing:
-                    self.requests_after_capture_end += 1
                     return None
                 raise self._diverge(None, request, caller, "request after the last captured op")
             if not self.ops[position].same_request(request):

@@ -23,7 +23,8 @@ from wifit3.chips.driver import Driver
 from wifit3.models import DeviceID
 
 DUMP_CONTEXT = 10
-QUIET_ROUNDS = 3
+# A driver task makes its next USB call one loop pass after the last one ends.
+IDLE_PASSES_IN_A_ROW = 3
 GET_DESCRIPTOR = 6
 DESCRIPTOR_TYPE_DEVICE = 1
 DESCRIPTOR_TYPE_CONFIGURATION = 2
@@ -119,7 +120,7 @@ class VerifyCapture:
         usb.util.release_interface = accept_claim_or_release
         usb.util.dispose_resources = accept_dispose_resources
         try:
-            main_task = loop.create_task(self.run_driver(replay, device, thread_pool, capture.device_id),
+            main_task = loop.create_task(self.run_driver(replay, device, capture.device_id),
                                          name=MAIN_CALLER)
             loop.run_until_complete(main_task)
         finally:
@@ -147,7 +148,7 @@ class VerifyCapture:
         print(summary)
 
     async def run_driver(self, replay: CaptureReplay, device: FakeUsbDevice,
-                           thread_pool: DriverThreadPool, device_id: DeviceID) -> None:
+                         device_id: DeviceID) -> None:
         loop = asyncio.get_running_loop()
         assert isinstance(loop, VirtualClockEventLoop)
         driver = self.DRIVER_CLASS.from_usb_device(device, device_id)  # type: ignore[arg-type]
@@ -157,7 +158,7 @@ class VerifyCapture:
                 position = replay.next_unreproduced_position()
                 if position is None:
                     break
-                await self.run_due_driver_tasks(loop, thread_pool, replay.ops[position].timestamp)
+                await self.run_driver_until_idle(loop, replay.ops[position].timestamp)
                 if replay.next_unreproduced_position() != position:
                     continue
                 channel = self.DECODER.channel_change_at(replay.ops, position)
@@ -175,9 +176,7 @@ class VerifyCapture:
                 if replay.divergence is None and replay.reproduced_by[position] is None:
                     replay.record_divergence(position, MAIN_CALLER,
                                              f"called {called}; the driver did not make this op")
-            await self.run_due_driver_tasks(loop, thread_pool, replay.ops[-1].timestamp)
-            while not loop.is_driver_idle():
-                await asyncio.sleep(0)
+            await self.run_driver_until_idle(loop, replay.ops[-1].timestamp)
         except Exception as error:  # noqa: BLE001
             reason = f"driver raised {type(error).__name__}: {error}"
             for caller, refused_read in list(replay.refused_read_by_caller.items()):
@@ -189,22 +188,19 @@ class VerifyCapture:
             try:
                 await driver.close()
             except Exception as error:  # noqa: BLE001
-                if replay.requests_after_capture_end == 0:
-                    replay.record_divergence(None, MAIN_CALLER,
-                                           f"close() raised {type(error).__name__}: {error}")
+                replay.record_divergence(None, MAIN_CALLER, f"close() raised {type(error).__name__}: {error}")
 
     @staticmethod
-    async def run_due_driver_tasks(loop: VirtualClockEventLoop, thread_pool: DriverThreadPool,
-                                   timestamp: float) -> None:
-        """Move the clock to ``timestamp`` and yield until no driver work is running."""
+    async def run_driver_until_idle(loop: VirtualClockEventLoop, timestamp: float) -> None:
+        """Move the clock to ``timestamp``; return once the driver is idle IDLE_PASSES_IN_A_ROW loop passes in a row."""
         loop.advance_clock(timestamp)
-        quiet_rounds = 0
-        while quiet_rounds < QUIET_ROUNDS:
+        idle_passes = 0
+        while idle_passes < IDLE_PASSES_IN_A_ROW:
             await asyncio.sleep(0)
-            if thread_pool.busy_thread_count == 0:
-                quiet_rounds += 1
+            if loop.is_driver_idle():
+                idle_passes += 1
             else:
-                quiet_rounds = 0
+                idle_passes = 0
 
     def load_capture(self, capture_path: Path) -> LoadedCapture:
         all_ops, incomplete_count = pair_submits_with_completions(read_usbmon_records(capture_path))
@@ -285,7 +281,4 @@ class VerifyCapture:
             lines.append(f"waived {reproduced_counts[waiver.label]:5d}  {waiver.label} [{waiver.c_source}]")
         for label, count in capture.ignored_counts.items():
             lines.append(f"ignored {count:5d}  {label}")
-        if replay.requests_after_capture_end:
-            lines.append(f"close(): {replay.requests_after_capture_end} requests after the last captured op, "
-                         "not compared")
         return "\n".join(lines)
