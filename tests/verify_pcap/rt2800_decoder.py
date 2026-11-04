@@ -42,20 +42,30 @@ def register_value(op: UsbOp) -> int | None:
 
 class Rt2800Decoder(FamilyDecoder):
     """Defaults are the rf53xx channel tune, RFCSR8 = rf1 and RFCSR9 = rf3 (rt2800lib.c:3395-3396); rf3xxx is RFCSR2
-    = rf1 and RFCSR3's RFCSR3_K field = rf3 (rt2800lib.c:2555-2559)."""
+    = rf1 and RFCSR3's RFCSR3_K field = rf3 (rt2800lib.c:2555-2559).
+    channel_rfcsr_values: channel -> (rf1 RFCSR value, rf3 RFCSR value & channel_rf3_mask); None: rf_vals_3x 2.4 GHz.
+    txwi_size: TXWI_DESC_SIZE_4WORDS, or 5WORDS on RT5592 (rt2800lib.c:603-625 rt2800_get_txwi_rxwi_size)."""
 
     def __init__(self, channel_rf1_rfcsr: int = RFCSR_CHANNEL_RF1, channel_rf3_rfcsr: int = RFCSR_CHANNEL_RF3,
-                 channel_rf3_mask: int = C.RF_CSR_CFG_DATA) -> None:
+                 channel_rf3_mask: int = C.RF_CSR_CFG_DATA,
+                 channel_rfcsr_values: dict[int, tuple[int, int]] | None = None,
+                 txwi_size: int = C.TXWI_DESC_SIZE_4WORDS) -> None:
         self.channel_rf1_rfcsr = channel_rf1_rfcsr
         self.channel_rf3_rfcsr = channel_rf3_rfcsr
         self.channel_rf3_mask = channel_rf3_mask
+        if channel_rfcsr_values is None:
+            channel_rfcsr_values = {}
+            for channel, (channel_rf1, _channel_rf2, channel_rf3) in C.RF_VALS_3X_2G.items():
+                channel_rfcsr_values[channel] = (channel_rf1, channel_rf3 & channel_rf3_mask)
+        self.channel_rfcsr_values = channel_rfcsr_values
+        self.txwi_size = txwi_size
 
     def describe(self, op: UsbOp) -> str:
         status = f"  status {op.status}" if op.status else ""
         if op.transfer_type != TransferType.CONTROL:
             direction = "RX" if op.is_in else "TX"
             text = f"{direction} ep 0x{op.endpoint:02x} {len(op.data)}B"
-            frame_offset = C.TXINFO_DESC_SIZE + C.TXWI_DESC_SIZE_4WORDS
+            frame_offset = C.TXINFO_DESC_SIZE + self.txwi_size
             if not op.is_in and len(op.data) >= frame_offset + 2:
                 frame_control = struct.unpack_from("<H", op.data, frame_offset)[0]
                 text += f" descriptor {op.data[:frame_offset].hex()} FC 0x{frame_control:04x}"
@@ -96,7 +106,7 @@ class Rt2800Decoder(FamilyDecoder):
         if op.transfer_type == TransferType.BULK and not op.is_in:
             txwi_word1 = struct.unpack_from("<I", op.data, C.TXINFO_DESC_SIZE + 4)[0]
             frame_length = (txwi_word1 & C.TXWI_W1_MPDU_TOTAL_BYTE_COUNT) >> 16
-            frame_offset = C.TXINFO_DESC_SIZE + C.TXWI_DESC_SIZE_4WORDS
+            frame_offset = C.TXINFO_DESC_SIZE + self.txwi_size
             return op.data[frame_offset:frame_offset + frame_length]
         return None
 
@@ -124,8 +134,8 @@ class Rt2800Decoder(FamilyDecoder):
                 rf1 = value & C.RF_CSR_CFG_DATA
             elif register == self.channel_rf3_rfcsr and rf3 is None:
                 rf3 = value & self.channel_rf3_mask
-        for channel, (channel_rf1, _channel_rf2, channel_rf3) in C.RF_VALS_3X_2G.items():
-            if (channel_rf1, channel_rf3 & self.channel_rf3_mask) == (rf1, rf3):
+        for channel, rfcsr_values in self.channel_rfcsr_values.items():
+            if rfcsr_values == (rf1, rf3):
                 return channel
         return None
 
