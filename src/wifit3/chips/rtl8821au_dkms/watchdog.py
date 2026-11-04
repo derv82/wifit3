@@ -159,8 +159,15 @@ def clear_txpowertracking_state(st: DmState) -> None:
     st.thermal_value = st.eeprom_thermal
 
 
-def set_bb_swing_by_band(st: DmState, band_5g: bool) -> None:
-    """[SRC] phy_SetBBSwingByBand_8812A (rtl8812a_phycfg.c:1130) band-change index shift; the caller clears."""
+def set_bb_swing_by_band(st: DmState, band_5g: bool, tx_bb_swing_b: int) -> None:
+    """[SRC] phy_SetBBSwingByBand_8812A (rtl8812a_phycfg.c:1130) band-change index shift; the caller clears.
+
+    ``tx_bb_swing_b`` is the new band's path-B swing: the last phy_get_tx_bb_swing_8812a call (:1150) records it.
+    """
+    if band_5g:
+        st.bb_swing_diff_5g = BB_SWING_DIFF[tx_bb_swing_b]
+    else:
+        st.bb_swing_diff_2g = BB_SWING_DIFF[tx_bb_swing_b]
     diff = st.bb_swing_diff_2g - st.bb_swing_diff_5g
     st.default_ofdm_index += -diff * 2 if band_5g else diff * 2
 

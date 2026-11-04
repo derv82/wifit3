@@ -70,6 +70,8 @@ class Rtl8821auDkmsDriver(Driver):
         self._tx_power_5g = None                 # efuse PathTxPwr (path A, 5 GHz)
         self._bb_swing_2g: int = chan.BB_SWING_DEFAULT
         self._bb_swing_5g: int = chan.BB_SWING_DEFAULT
+        self._bb_swing_2g_b: int = chan.BB_SWING_DEFAULT
+        self._bb_swing_5g_b: int = chan.BB_SWING_DEFAULT
         # Runtime fuse-derived branch selectors (default = the reference AWUS036ACS values,
         # so a value-less construction reproduces the recorded card byte-for-byte).
         self._ext_lna_2g: bool = False           # efuse LNAType_2G[3] — RFE pinmux branch
@@ -122,6 +124,8 @@ class Rtl8821auDkmsDriver(Driver):
         self._tx_power_5g = params.tx_power_5g
         self._bb_swing_2g = params.bb_swing_2g
         self._bb_swing_5g = params.bb_swing_5g
+        self._bb_swing_2g_b = params.bb_swing_2g_b
+        self._bb_swing_5g_b = params.bb_swing_5g_b
         self._ext_lna_2g = params.ext_lna_2g
         self._interface_sel = params.interface_sel
         self._thermal_meter = params.thermal_meter
@@ -186,8 +190,8 @@ class Rtl8821auDkmsDriver(Driver):
             cur_ig_value=seed.cur_ig_value, nhm_igi=seed.nhm_igi, rrsr_val_init=seed.rrsr_val_init,
             h2l_lb=seed.h2l_lb, l2h_lb=seed.l2h_lb, eeprom_thermal=self._thermal_meter,
             default_ofdm_index=watchdog.default_ofdm_index(self._bb_swing_2g),
-            bb_swing_diff_2g=watchdog.BB_SWING_DIFF[self._bb_swing_2g],
-            bb_swing_diff_5g=watchdog.BB_SWING_DIFF[self._bb_swing_5g])
+            bb_swing_diff_2g=watchdog.BB_SWING_DIFF[self._bb_swing_2g],   # get_swing_index's path-A call
+            bb_swing_diff_5g=0)                                           # until a 5 GHz band switch
         self._channel = _DEFAULT_CHANNEL
 
         # M5 §5: start the bulk-IN RX reader BEFORE the monitor RCR opens the RX gate
@@ -303,7 +307,10 @@ class Rtl8821auDkmsDriver(Driver):
                                        self._ext_lna_2g)
             if rrsr is not None:
                 self._dm.rrsr_val_init = rrsr                   # rtw_phydm_set_rrsr (hal_com.c:13241)
-                watchdog.set_bb_swing_by_band(self._dm, channel > 14)
+                if channel > 14:
+                    watchdog.set_bb_swing_by_band(self._dm, True, self._bb_swing_5g_b)
+                else:
+                    watchdog.set_bb_swing_by_band(self._dm, False, self._bb_swing_2g_b)
             watchdog.clear_txpowertracking_state(self._dm)      # phy_SwChnlAndSetBwMode8812
             if not scan:
                 if channel <= 14:

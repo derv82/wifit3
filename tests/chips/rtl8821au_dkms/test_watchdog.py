@@ -56,3 +56,14 @@ def test_back_in_range_reapplies_txagc_without_the_remnant():
     assert not st.modify_tx_agc_flag_path_a
     assert ("W32", 0x0C24, 0x28) in rec.ops                        # 5 GHz OFDM 6M: 0x26 + 2
     assert not any(op[1] == 0x0C20 for op in rec.ops)              # no CCK on 5 GHz
+
+
+def test_band_switch_records_the_path_b_swing():
+    # rtl8812a_phycfg.c:1148-1151: phy_get_tx_bb_swing_8812a(RF_PATH_B) is the last call before the shift.
+    st = make_dm_state(24)
+    watchdog.set_bb_swing_by_band(st, True, 0x16A)
+    assert st.bb_swing_diff_5g == -3
+    assert st.default_ofdm_index == 24 - 6
+    watchdog.set_bb_swing_by_band(st, False, 0x101)
+    assert st.bb_swing_diff_2g == -6
+    assert st.default_ofdm_index == 24 - 6 - 6

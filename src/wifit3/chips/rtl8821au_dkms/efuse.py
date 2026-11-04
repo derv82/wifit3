@@ -84,6 +84,8 @@ class ChipParams(NamedTuple):
     tx_power_5g: PathTxPwr   # path A, 5 GHz (bw40_base = 14 UNII groups; no CCK)
     bb_swing_2g: int         # path-A TxScale (0x0C1C[31:21]) for 2.4 GHz
     bb_swing_5g: int         # path-A TxScale for 5 GHz
+    bb_swing_2g_b: int       # path-B TxScale (0x0E1C[31:21]) for 2.4 GHz
+    bb_swing_5g_b: int       # path-B TxScale for 5 GHz
     ext_lna_2g: bool         # ExternalLNA_2G — gates the phy_SetRFEReg8821 2.4 GHz pinmux
     board_type: int          # ODM ext-LNA/PA/BT bitfield — the phy_cond walker's board input
 
@@ -372,16 +374,16 @@ def _parse_tx_power_5g(m: bytes) -> PathTxPwr:
 _BB_SWING = {0: 0x200, 1: 0x16A, 2: 0x101, 3: 0x0B6}
 
 
-def _parse_bb_swing(m: bytes, byte_off: int) -> int:
-    """[SRC] PHY_GetTxBBSwing_8812A (registry AUTO) — path-A TxScale for one band.
+def _parse_bb_swing(m: bytes, byte_off: int, path: int) -> int:
+    """[SRC] phy_get_tx_bb_swing_8812a (registry AUTO) — one path's TxScale for one band.
 
-    The efuse byte packs a 2-bit swing index per path (A = bits[1:0]); an unburned byte
-    (0xFF) means 0 dB. The 8821au is 1T1R, so only path A is read.
+    The efuse byte packs a 2-bit swing index per path (A = bits[1:0], B = bits[3:2]); an unburned
+    byte (0xFF) means 0 dB.
     """
     sw = m[byte_off]
     if sw == 0xFF:
         sw = 0x00
-    return _BB_SWING[sw & 0x3]
+    return _BB_SWING[(sw >> (2 * path)) & 0x3]
 
 
 def _ext_amplifier_flags(m: bytes, autoload_fail: bool) -> tuple[int, int, int, int, bool, bool, bool, bool]:
@@ -531,8 +533,10 @@ def read_chip_params(t) -> ChipParams:
         bt_ant_num=bt_ant_num,
         tx_power=_parse_tx_power(m),
         tx_power_5g=_parse_tx_power_5g(m),
-        bb_swing_2g=_parse_bb_swing(m, C.EEPROM_TX_BBSWING_2G),
-        bb_swing_5g=_parse_bb_swing(m, C.EEPROM_TX_BBSWING_5G),
+        bb_swing_2g=_parse_bb_swing(m, C.EEPROM_TX_BBSWING_2G, 0),
+        bb_swing_5g=_parse_bb_swing(m, C.EEPROM_TX_BBSWING_5G, 0),
+        bb_swing_2g_b=_parse_bb_swing(m, C.EEPROM_TX_BBSWING_2G, 1),
+        bb_swing_5g_b=_parse_bb_swing(m, C.EEPROM_TX_BBSWING_5G, 1),
         ext_lna_2g=ext[5],
         board_type=_parse_board_type(ext, bt_coexist),
     )
