@@ -115,7 +115,8 @@ channel → TX-power → phydm-init → monitor through `base/firmware.bring_up`
 in `monitor.set_monitor_mode` (the re-tune tail + RXFLTMAP open). 5 GHz band
 switch is `chan._switch_band_5g` + `_set_rfe_5g` (phy_SwitchWirelessBand8812 5G branch, all
 rfe_types). `Rtl8812auDkmsDriver` (`driver.py`) starts the RX reader before the monitor RX
-gate, runs a 2-path DIG watchdog (`dig.watchdog_tick`), then enters monitor. TX rides the
+gate, arms the 2 s dynamic-check watchdog (`watchdog.rtw_dynamic_chk_wk_hdl`: the no-link
+phydm_watchdog incl. TX power tracking), then enters monitor. TX rides the
 shared base fake-txdesc (`rtl8812a_fill_fake_txdesc`) on bulk-OUT 0x02.
 
 Names match the vendor C — vendor source + captures in `driver_captures/captures_8812au/`
@@ -136,9 +137,9 @@ The cold-boot gate diffs every driver-emitted control read/write contiguously, 0
 running longer on one boot's RF environment, both reproduced byte-for-byte. The EDCCA search
 is reproduced (recorded PSD fed back), not stripped. Not in the gate, each accounted for:
 bulk-IN RX (chip→host input); channel hops (= `set_channel_bw` + `set_tx_power`, proven
-byte-identical to the monitor-tail re-tune); and the DIG watchdog (`dig.watchdog_tick`) —
-ported from kernel but NOT byte-diffed against the capture's runtime ticks, the one
-ported-but-not-byte-verified path, and the next step for long-run gain stability. The 1 µs
+byte-identical to the monitor-tail re-tune). The 2 s watchdog (`watchdog.py`) is diffed by
+`tests/verify_pcap/rtl8812au_dkms` across the captures' runtime ticks; unported in it:
+`phy_set_tx_power_level_by_path` past the BB-swing limit and the sreset reset. The 1 µs
 inter-write `ODM_delay_us(1)` gaps are not USB ops (invisible to a byte diff) and are swamped
 by control-transfer latency; the 8812 RADIO tables have no `0xfe`/`0xffe` settle-delay rows.
 
