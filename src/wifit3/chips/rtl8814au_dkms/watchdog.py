@@ -11,9 +11,8 @@ counter read set and the BB debug-port read are emitted to match the chip's runt
 adaptivity (EDCCA) and env-monitor (NHM/CLM) members re-run every tick — seeding them once at
 init and never updating is what freezes the 2.4 GHz thresholds (the dropout this port fixes).
 
-The USB LED blink [SRC rtl8814au_led.c] is a SEPARATE periodic producer (``dm_DynamicUsbTxAgg``
-is a no-op on 8814AU); ``led_blink`` reproduces it with a carried ON/OFF phase. The driver itself
-need not blink the LED (cosmetic, no RX effect) — it is here so the capture gate accounts for it.
+The SW_LED_MODE9 LED0 blink [SRC hal_usb_led.c SwLedBlink9] is a separate 1 s timer; ``led_blink``
+is one fire of it, carrying the ON/OFF phase in ``WatchdogState.led_on``.
 
 Scope — the no-link path only. wifit3 never associates, so rssi_min stays at the no-link default
 and the linked / DFS / TDMA branches do not apply.
@@ -87,6 +86,7 @@ _NHM_INCL_FIELD = 0x1         # BIT_2_BYTE(CNT_ALL=0, EXCLUDE_TXON=0, EXCLUDE_CC
 
 # LED blink [SRC rtl8814au_led.c SwLedOn/Off_8814AU], LED_PIN_LED0 over REG_GPIO_PIN_CTRL_2 (0x60).
 _REG_LED = 0x0060
+LED_BLINK_NO_LINK_INTERVAL_ALPHA_S = 1.000   # hal_com_led.h:54 (1000 ms)
 _LED_GPO_CFG = (1 << 16) | (1 << 17) | (1 << 21) | (1 << 22)   # config pins as GPO
 _LED_GPO_VAL = (1 << 8) | (1 << 9) | (1 << 13) | (1 << 14)     # gpo output value (set=off)
 _LED_GPI_VAL = (1 << 0) | (1 << 1) | (1 << 5) | (1 << 6)       # gpi value (cleared on)
@@ -117,7 +117,7 @@ _CCK_PD_TH = {_CCK_PD_LV0: 0x40, _CCK_PD_LV1: 0x83}   # phydm_set_cckpd_lv_type1
 class WatchdogState:
     """State carried across watchdog ticks (the parts the chip does not re-encode in a read)."""
     cur_ig_value: int = _IGI_MIN   # phydm_dig cur_ig_value; SEED from InitHalDm's _dig_init read
-    led_on: bool = True            # SwLed starts ON; the blink strictly alternates each fire
+    led_on: bool = True            # SwLedBlink9 BlinkingLedState: bLedOn starts FALSE, so the first fire is ON
     txpwrtrack_init: bool = False  # odm_txpowertracking_check is_txpowertracking_init first-run
     # phydm_cckpd: CCK-PD moving average + current level. InitHalDm commits LV_0 (0xa0a=0x40)
     # and leaves the MA reset, so the carried state starts there.
@@ -179,12 +179,7 @@ class WatchdogState:
 
 
 def led_blink(t, st: WatchdogState) -> None:
-    """[SRC] SwLedOn_8814AU / SwLedOff_8814AU — toggle LED0 on REG_GPIO_PIN_CTRL_2.
-
-    A separate periodic producer from the dynamic-check tick. Strict ON/OFF alternation; the
-    write is a deterministic function of the read (the GPIO config/value bits), with the on/off
-    intent carried in ``st.led_on``.
-    """
+    """[SRC] SwLedBlink9 LED_BLINK_SLOWLY (hal_usb_led.c:908): SwLedOn_8814AU / SwLedOff_8814AU, then flip."""
     cfg = t.read32(_REG_LED) | _LED_GPO_CFG
     if st.led_on:
         cfg &= ~_LED_GPO_VAL        # ON = clear gpo output value...

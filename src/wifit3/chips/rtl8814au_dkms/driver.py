@@ -38,7 +38,7 @@ from .constants import (
     BAND_MAX, BBSWING_DEFAULT, CHANNELS_2G, CHANNELS_5G_NON_DFS,
 )
 from .dm import init_hal_dm
-from .watchdog import WATCHDOG_PERIOD_S, WatchdogState
+from .watchdog import LED_BLINK_NO_LINK_INTERVAL_ALPHA_S, WATCHDOG_PERIOD_S, WatchdogState, led_blink
 from .watchdog import tick as watchdog_tick
 from .efuse import read_chip_params
 from .firmware import bring_up
@@ -112,6 +112,7 @@ class Rtl8814auDkmsDriver(Driver):
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._dig_task: Optional[asyncio.Task] = None
+        self._led_task: Optional[asyncio.Task] = None
         # Serializes control-transfer batches (DIG watchdog vs set_channel) so two
         # executor threads never drive EP0 at once; the RX reader uses bulk-IN.
         self._io_lock = asyncio.Lock()
@@ -220,6 +221,9 @@ class Rtl8814auDkmsDriver(Driver):
             on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
 
+        # _netdev_open: rtw_intf_start, then rtw_led_control(LED_CTL_NO_LINK) (os_intfs.c:3750).
+        self._led_task = loop.create_task(self._led_blink())
+
         # Now open the monitor RX gate (accept-all RCR + RXFLTMAP). The reader is already
         # draining the bulk-IN pipe, so the chip RX FIFO has a host read posted the moment
         # frames are accepted — the kernel's order (post URBs, then write the RCR). Doing the
@@ -244,12 +248,15 @@ class Rtl8814auDkmsDriver(Driver):
         DIG, adaptivity, CCX env-monitor) carrying ``_wd_state`` across fires, so the IGI +
         EDCCA thresholds adapt to the live RF environment instead of freezing at the seed.
         The TX-power thermal-delta correction is a no-op here (RX-irrelevant).
+        The 2 s timer re-arms before the work runs (rtw_mlme.c:3452), so fires are 2 s start-to-start.
         """
         loop = asyncio.get_running_loop()
         st = self._wd_state
+        fire_time = loop.time()
         try:
             while True:
-                await asyncio.sleep(WATCHDOG_PERIOD_S)
+                fire_time += WATCHDOG_PERIOD_S
+                await asyncio.sleep(fire_time - loop.time())
                 async with self._io_lock:
                     ch = self._channel or _DEFAULT_CHANNEL
                     fa = await loop.run_in_executor(None, watchdog_tick, self.transport, st, ch)
@@ -258,6 +265,22 @@ class Rtl8814auDkmsDriver(Driver):
             pass
         except Exception:  # noqa: BLE001 — a watchdog fault must not kill RX
             logger.exception("RTL8814AU phydm watchdog stopped on error")
+
+    async def _led_blink(self) -> None:
+        """SW_LED_MODE9 LED0 no-link slow blink: SwLedBlink9 LED_BLINK_SLOWLY (hal_usb_led.c:934).
+
+        Not under _io_lock: the blink runs on a workqueue, not the cmd thread (hal_usb_led.c:1863).
+        """
+        loop = asyncio.get_running_loop()
+        st = self._wd_state
+        try:
+            while True:
+                await asyncio.sleep(LED_BLINK_NO_LINK_INTERVAL_ALPHA_S)
+                await loop.run_in_executor(None, led_blink, self.transport, st)
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 — an LED fault must not kill RX
+            logger.exception("RTL8814AU LED blink stopped on error")
 
     # --- RX path (M3b-3a) --------------------------------------------------
     def _read_once(self) -> Optional[list]:
@@ -408,7 +431,7 @@ class Rtl8814auDkmsDriver(Driver):
             await loop.run_in_executor(None, _set_macaddr, self.transport, self.mac_address)
 
     async def close(self) -> None:
-        # Stop the DIG watchdog and the reader before releasing the USB handle.
+        # Stop the DIG watchdog, the LED blink and the reader before releasing the USB handle.
         if self._dig_task is not None:
             self._dig_task.cancel()
             try:
@@ -416,6 +439,13 @@ class Rtl8814auDkmsDriver(Driver):
             except asyncio.CancelledError:
                 pass
             self._dig_task = None
+        if self._led_task is not None:
+            self._led_task.cancel()
+            try:
+                await self._led_task
+            except asyncio.CancelledError:
+                pass
+            self._led_task = None
         if self._reader is not None:
             await self._reader.stop()
             self._reader = None
