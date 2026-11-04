@@ -15,6 +15,8 @@ drive the real transport unchanged and byte-check the mirror against the capture
 """
 from __future__ import annotations
 
+import threading
+
 import usb.core
 import usb.util
 
@@ -45,6 +47,8 @@ class Rtl8822buTransport:
         self.dev = dev
         self._bulk_out_ep = bulk_out_ep
         self._in_ep = None  # bulk-IN (RX) endpoint, probed lazily
+        # usb_vendor_req_mutex: one request and its 0x4E0 mirror at a time (usb_ops_linux.c:69).
+        self._vendor_req_lock = threading.Lock()
 
     # --- vendor control transfers (with the ON-section page-switch mirror) ---
     def _mirror(self, low_byte: int) -> None:
@@ -55,11 +59,12 @@ class Rtl8822buTransport:
                                bytes([low_byte & 0xFF]), CTRL_TIMEOUT_MS)
 
     def _read(self, addr: int, length: int) -> bytes:
-        ret = bytes(self.dev.ctrl_transfer(
-            REALTEK_USB_VENQT_READ, REALTEK_USB_VENQT_CMD_REQ,
-            addr & 0xFFFF, REALTEK_USB_VENQT_CMD_IDX, length, CTRL_TIMEOUT_MS))
-        if _is_on_sec(addr):
-            self._mirror(ret[0] if ret else 0)
+        with self._vendor_req_lock:
+            ret = bytes(self.dev.ctrl_transfer(
+                REALTEK_USB_VENQT_READ, REALTEK_USB_VENQT_CMD_REQ,
+                addr & 0xFFFF, REALTEK_USB_VENQT_CMD_IDX, length, CTRL_TIMEOUT_MS))
+            if _is_on_sec(addr):
+                self._mirror(ret[0] if ret else 0)
         return ret
 
     def read8(self, addr: int) -> int:
@@ -75,11 +80,12 @@ class Rtl8822buTransport:
         data = bytes(data)
         if len(data) > MAX_VENDOR_REQ_CMD_SIZE:
             raise ValueError(f"vendor write {len(data)} > {MAX_VENDOR_REQ_CMD_SIZE} B")
-        self.dev.ctrl_transfer(
-            REALTEK_USB_VENQT_WRITE, REALTEK_USB_VENQT_CMD_REQ,
-            addr & 0xFFFF, REALTEK_USB_VENQT_CMD_IDX, data, CTRL_TIMEOUT_MS)
-        if _is_on_sec(addr):
-            self._mirror(data[0] if data else 0)
+        with self._vendor_req_lock:
+            self.dev.ctrl_transfer(
+                REALTEK_USB_VENQT_WRITE, REALTEK_USB_VENQT_CMD_REQ,
+                addr & 0xFFFF, REALTEK_USB_VENQT_CMD_IDX, data, CTRL_TIMEOUT_MS)
+            if _is_on_sec(addr):
+                self._mirror(data[0] if data else 0)
 
     def write8(self, addr: int, val: int) -> None:
         self.writeN(addr, (val & 0xFF).to_bytes(1, "little"))
