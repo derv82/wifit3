@@ -30,6 +30,7 @@ class TestRt5572(VerifyCapture):
                      PAU09_CAPTURE_DIR / "pau09n600_3.pcap"]
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RT5572Driver
+    MAC80211_DEFAULT_CHANNEL = 1
     DECODER = Rt2800Decoder(channel_rf3_mask=C.RFCSR9_K | C.RFCSR9_N, channel_rfcsr_values=CHANNEL_RFCSR_VALUES,
                             txwi_size=C.TXWI_DESC_SIZE_5WORDS)
     WAIVERS = [

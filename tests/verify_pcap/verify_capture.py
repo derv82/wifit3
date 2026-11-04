@@ -175,6 +175,9 @@ class VerifyCapture:
     DRIVER_CLASS: ClassVar[type[Driver]]
     DECODER: ClassVar[FamilyDecoder]
     WAIVERS: ClassVar[list[Waiver]] = []
+    # mac80211 without chanctx ops: a monitor channel change releases the chanctx, tuning dflt_chandef's channel, then
+    # assigns the new one (chan.c:914-930, main.c:132-189); the two tunes are one set_channel.
+    MAC80211_DEFAULT_CHANNEL: ClassVar[int | None] = None
 
     def test_capture(self, capture_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         capture = self.load_capture(capture_path)
@@ -353,6 +356,15 @@ class VerifyCapture:
                 return True
         return False
 
+    def assigned_channel_change_after(self, ops: list[UsbOp], position: int) -> int | None:
+        """Where the channel change after the default channel tune at ``position`` starts, with no TX between."""
+        for later in range(position + 1, len(ops)):
+            if self.DECODER.injected_frame_at(ops, later) is not None:
+                return None
+            if self.DECODER.channel_change_at(ops, later) is not None:
+                return later
+        return None
+
     def waivable_occurrences(self, ops: list[UsbOp], waiver: Waiver) -> list[list[int]]:
         """The occurrences of ``waiver``'s capture_only_run after the driver's own first driver_occurrence_count."""
         occurrences = self.capture_only_run_occurrences(ops, waiver.capture_only_run)
@@ -398,6 +410,14 @@ class VerifyCapture:
                     continue
                 channel = self.DECODER.channel_change_at(replay.ops, position)
                 frame = self.DECODER.injected_frame_at(replay.ops, position)
+                if channel is not None and channel == self.MAC80211_DEFAULT_CHANNEL:
+                    assigned_position = self.assigned_channel_change_after(replay.ops, position)
+                    if assigned_position is not None:
+                        replay.waive_capture_only_ops(self.DECODER.skip_capture_only_ops,
+                                                      set(range(position, assigned_position)))
+                        position = assigned_position
+                        await self.run_driver_until_idle(loop, replay.ops[position].submit_time)
+                        channel = self.DECODER.channel_change_at(replay.ops, position)
                 if channel is not None:
                     scan = self.DECODER.channel_change_is_scan_at(replay.ops, position)
                     called = f"set_channel({channel}, scan={scan})"

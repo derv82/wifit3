@@ -357,3 +357,23 @@ def test_rt2800_channel_change_reads_the_rf3xxx_tune_when_given_its_rfcsrs() -> 
 
 def test_rt2800_channel_change_default_reads_only_the_rf53xx_tune() -> None:
     assert Rt2800Decoder().channel_change_at(RF3XXX_CHANNEL_10_TUNE, 0) is None
+
+
+def rf3xxx_tune(channel: int) -> list[UsbOp]:
+    rf1, _rf2, rf3 = RT3070.RF_VALS_3X_2G[channel]
+    return RF3XXX_CHANNEL_10_TUNE[:3] + [rt2800_rfcsr_write(2, rf1), rt2800_rfcsr_write(3, rf3 & RT3070.RFCSR3_K)]
+
+
+class Rf3xxxDefaultChannel(VerifyCapture):
+    DECODER = Rt2800Decoder(channel_rf1_rfcsr=2, channel_rf3_rfcsr=3, channel_rf3_mask=RT3070.RFCSR3_K)
+    MAC80211_DEFAULT_CHANNEL = 1
+
+
+def test_default_channel_tune_and_the_next_tune_are_one_channel_change() -> None:
+    ops = rf3xxx_tune(1) + rf3xxx_tune(10)
+    assert Rf3xxxDefaultChannel().assigned_channel_change_after(ops, 0) == len(rf3xxx_tune(1))
+
+
+def test_default_channel_tune_followed_by_tx_is_its_own_channel_change() -> None:
+    ops = rf3xxx_tune(1) + [rt2800_tx(txwi_word1=0x000C0000)] + rf3xxx_tune(10)
+    assert Rf3xxxDefaultChannel().assigned_channel_change_after(ops, 0) is None

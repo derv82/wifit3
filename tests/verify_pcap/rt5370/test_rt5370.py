@@ -18,6 +18,7 @@ class TestRt5370(VerifyCapture):
                      CAPTURE_DIR / "capture-3.pcap"]
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RT5370Driver
+    MAC80211_DEFAULT_CHANNEL = 1
     DECODER = Rt2800Decoder()
     WAIVERS = [
         Waiver(WaiverReason.WIFIT3_ONLY, "wifit3 only: warm check (mac.is_chip_warm)",

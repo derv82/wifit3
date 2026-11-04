@@ -25,5 +25,6 @@ class TestRt2800usbRt3572(VerifyCapture):
                      DRIVER_CAPTURES / "captures_rt3572_tx_diff" / "aireplay.pcap"]
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RT2800USBDriver
+    MAC80211_DEFAULT_CHANNEL = 1
     DECODER = Rt2800Decoder(channel_rf1_rfcsr=2, channel_rf3_rfcsr=3, channel_rfcsr_values=CHANNEL_RFCSR_VALUES)
     WAIVERS = []

@@ -23,6 +23,7 @@ class TestRt5372(VerifyCapture):
                      PAU05_CAPTURE_DIR / "pau05_3.pcap"]
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RT5372Driver
+    MAC80211_DEFAULT_CHANNEL = 1
     DECODER = Rt2800Decoder()
     WAIVERS = [
         Waiver(WaiverReason.WIFIT3_ONLY, "wifit3 only: warm check (mac.is_chip_warm)",

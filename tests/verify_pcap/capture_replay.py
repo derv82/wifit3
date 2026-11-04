@@ -203,6 +203,17 @@ class CaptureReplay:
             for waived_position in waived_positions:
                 self.reproduced_by[waived_position] = WAIVED
 
+    def waive_capture_only_ops(self, skip_capture_only_ops: Callable[[list[UsbOp], set[int]],
+                                                                     tuple[list[UsbOp], set[int]]],
+                               positions: set[int]) -> None:
+        """Waives the unreproduced control / OUT ops at ``positions``, through the decoder's skip_capture_only_ops."""
+        with self._lock:
+            unreproduced = {position for position in positions
+                            if self.reproduced_by[position] is None and not is_bulk_or_interrupt_in(self.ops[position])}
+            self.ops, waived_positions = skip_capture_only_ops(self.ops, unreproduced)
+            for waived_position in waived_positions:
+                self.reproduced_by[waived_position] = WAIVED
+
     def record_divergence(self, position: int | None, caller: str, reason: str) -> None:
         with self._lock:
             if self.divergence is None:

@@ -18,6 +18,7 @@ class TestRtl8192fu(VerifyCapture):
                      CAPTURE_DIR / "capture-3.pcap"]
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RTL8192FUDriver
+    MAC80211_DEFAULT_CHANNEL = 1
     DECODER = RealtekDecoder(hop_start_register=0x0E08, rf_sipi_address=0x0840)
     WAIVERS = [
         Waiver(WaiverReason.CAPTURE_SETUP, CONFIGURE_FILTER_SOURCE, capture_only_run=MONITOR_RCR_WRITE,
