@@ -148,7 +148,8 @@ async def enter_monitor(t, channel: int) -> None:
     await t.send_mcu_command(cmd, p, wait_resp=False)
     cmd, p = mcu.set_rxfilter(0, mcu.MT7921_FIF_BIT_CLR, mcu.MT_WF_RFCR_DROP_OTHER_BEACON)
     await t.send_mcu_command(cmd, p, wait_resp=False)
-    # configure_filter again, from mac80211's interface-up filter reconfig.
+    # configure_filter again: __dev_open's ndo_set_rx_mode queues reconfig_filter
+    # (mac80211 iface.c:857, main.c:93).
     cmd, p = mcu.configure_filter()
     await t.send_mcu_command(cmd, p, wait_resp=False)
 

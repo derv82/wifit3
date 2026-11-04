@@ -20,8 +20,9 @@ CONNAC2_RXD_SEQ_OFFSET = 29
 # MediatekConnacDecoder's legacy command address: pq_id << 16 | ext_cid << 8 | cid.
 SET_RX_FILTER_ADDRESS = (C.MCU_PQ_ID << 16) | mcu.CE_CMD_SET_RX_FILTER
 SET_CHAN_DOMAIN_ADDRESS = (C.MCU_PQ_ID << 16) | mcu.CE_CMD_SET_CHAN_DOMAIN
-CONFIGURE_FILTER_SOURCE = ("main.c:661-684 mt7921_configure_filter: mac80211 re-applies the monitor filter as "
-                           "capture tools open their sockets, MCU SET_RX_FILTER fif 0x80000060")
+CONFIGURE_FILTER_SOURCE = ("main.c:661-684 mt7921_configure_filter: mac80211 re-applies the monitor filter on "
+                           "each ndo_set_rx_mode a capture tool causes (iface.c:857, main.c:93), "
+                           "MCU SET_RX_FILTER fif 0x80000060")
 # mcu.c:1451-1470 mt7921_mcu_set_rxfilter(dev, 0x80000060, 0, 0): rsv, mode 1, rsv2, fif, bit_map, bit_op, pad.
 MONITOR_RX_FILTER_PAYLOAD = struct.pack("<4xB3xIIB51x", 1, 0x80000060, 0, 0)
 # MT_TXD3_SEQ: txwi[3] bits 16..27, after the 4-byte SDIO header.
