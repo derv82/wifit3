@@ -214,8 +214,8 @@ class Rtl8812auDkmsDriver(Driver):
                 await asyncio.sleep(next_fire - loop.time())
                 next_fire = loop.time() + watchdog.DYNAMIC_CHK_TIMER_PERIOD_S
                 async with self._io_lock:
-                    fa_cnt = await loop.run_in_executor(None, watchdog.rtw_dynamic_chk_wk_hdl,
-                                                        self.transport, self._phydm, self._channel)
+                    fa_cnt = await loop.run_in_executor(None, watchdog.rtw_dynamic_chk_wk_hdl, self.transport,
+                                                        self._phydm, self._channel, self._params)
                 logger.debug("RTL8812AU watchdog: IGI=0x%02x fa=%d", self._phydm.cur_ig_value, fa_cnt)
         except asyncio.CancelledError:
             pass

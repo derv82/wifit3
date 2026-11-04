@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from ..rtl88xxau_base.sipi import (
     RF_CHNLBW, RF_PATH_A, RF_PATH_B, RFREG_WRITE_MASK, query_bb, query_rf, set_bb, set_rf_reg,
 )
+from .efuse import ChipParams
+from .txpower import phy_set_tx_power_level_by_path
 from .txpwr_track_tbl import (
     DELTA_SWING_TABLE_IDX_2GA_N_8188E, DELTA_SWING_TABLE_IDX_2GA_P_8188E, TXPOWERTRACK_RFE3_8812A,
     TXPOWERTRACK_USB_8812A, DeltaSwingTables,
@@ -459,12 +461,8 @@ def odm_get_tracking_table(st: PhydmState, channel: int, thermal_value: int, del
         st.absolute_ofdm_swing_idx[p] = st.delta_power_index[p]
 
 
-def odm_tx_pwr_track_set_pwr8812a(t, st: PhydmState, channel: int, rf_path: int) -> None:
-    """halrf_8812a_ce.c:87, MIX_MODE (odm_pwrtrk_method, halphyrf_ce.c:371).
-
-    TODO: phy_set_tx_power_level_by_path (halrf_8812a_ce.c:212,229,242) is unported: past the
-    BB-swing limit or at index <= 0 the remnant is not re-applied to TXAGC.
-    """
+def odm_tx_pwr_track_set_pwr8812a(t, st: PhydmState, channel: int, rf_path: int, params: ChipParams) -> None:
+    """halrf_8812a_ce.c:87, MIX_MODE (odm_pwrtrk_method, halphyrf_ce.c:371)."""
     tx_rate = pwr_tracking_tx_rate(channel)
     if (MGN_1M <= tx_rate <= MGN_5_5M) or tx_rate == MGN_11M:
         pwr_tracking_limit = 32
@@ -481,34 +479,48 @@ def odm_tx_pwr_track_set_pwr8812a(t, st: PhydmState, channel: int, rf_path: int)
         reg = REG_A_TX_SCALE_JAGUAR
     else:
         reg = REG_B_TX_SCALE_JAGUAR
+    if channel <= 14:
+        pp = params.tx_power_2g[rf_path]
+    else:
+        pp = params.tx_power_5g[rf_path]
     if final_ofdm_swing_index > pwr_tracking_limit:
         if rf_path == RF_PATH_A:
             st.remnant_cck_swing_idx = s8(final_cck_swing_index - pwr_tracking_limit)
+        st.remnant_ofdm_swing_idx[rf_path] = s8(final_ofdm_swing_index - pwr_tracking_limit)
+        set_bb(t, reg, 0xFFE00000, tx_scaling_table_jaguar[pwr_tracking_limit])
+        if rf_path == RF_PATH_A:
             st.modify_tx_agc_flag_path_a = True
         else:
             st.modify_tx_agc_flag_path_b = True
-        st.remnant_ofdm_swing_idx[rf_path] = s8(final_ofdm_swing_index - pwr_tracking_limit)
-        set_bb(t, reg, 0xFFE00000, tx_scaling_table_jaguar[pwr_tracking_limit])
+        phy_set_tx_power_level_by_path(t, channel, rf_path, pp, st.remnant_cck_swing_idx,
+                                       st.remnant_ofdm_swing_idx[rf_path])
     elif final_ofdm_swing_index <= 0:
         if rf_path == RF_PATH_A:
             st.remnant_cck_swing_idx = s8(final_cck_swing_index)
+        st.remnant_ofdm_swing_idx[rf_path] = s8(final_ofdm_swing_index)
+        set_bb(t, reg, 0xFFE00000, tx_scaling_table_jaguar[0])
+        if rf_path == RF_PATH_A:
             st.modify_tx_agc_flag_path_a = True
         else:
             st.modify_tx_agc_flag_path_b = True
-        st.remnant_ofdm_swing_idx[rf_path] = s8(final_ofdm_swing_index)
-        set_bb(t, reg, 0xFFE00000, tx_scaling_table_jaguar[0])
+        phy_set_tx_power_level_by_path(t, channel, rf_path, pp, st.remnant_cck_swing_idx,
+                                       st.remnant_ofdm_swing_idx[rf_path])
     else:
         set_bb(t, reg, 0xFFE00000, tx_scaling_table_jaguar[final_ofdm_swing_index])
         if rf_path == RF_PATH_A and st.modify_tx_agc_flag_path_a:
             st.remnant_cck_swing_idx = 0
             st.remnant_ofdm_swing_idx[rf_path] = 0
+            phy_set_tx_power_level_by_path(t, channel, rf_path, pp, st.remnant_cck_swing_idx,
+                                           st.remnant_ofdm_swing_idx[rf_path])
             st.modify_tx_agc_flag_path_a = False
         if rf_path == RF_PATH_B and st.modify_tx_agc_flag_path_b:
             st.remnant_ofdm_swing_idx[rf_path] = 0
+            phy_set_tx_power_level_by_path(t, channel, rf_path, pp, st.remnant_cck_swing_idx,
+                                           st.remnant_ofdm_swing_idx[rf_path])
             st.modify_tx_agc_flag_path_b = False
 
 
-def odm_txpowertracking_callback_thermal_meter(t, st: PhydmState, channel: int) -> None:
+def odm_txpowertracking_callback_thermal_meter(t, st: PhydmState, channel: int, params: ChipParams) -> None:
     """halphyrf_ce.c:407. Not linked, so the IQK re-run (:717) never fires."""
     thermal_value = query_rf(t, RF_PATH_A, RF_T_METER_8812A, 0xFC00)   # + thermal offset 0 (no kfree)
     if st.eeprom_thermal == 0xFF:
@@ -546,17 +558,17 @@ def odm_txpowertracking_callback_thermal_meter(t, st: PhydmState, channel: int) 
             st.power_index_offset[p] = 0
     if st.power_index_offset[RF_PATH_A] != 0 or st.power_index_offset[RF_PATH_B] != 0:
         for p in (RF_PATH_A, RF_PATH_B):
-            odm_tx_pwr_track_set_pwr8812a(t, st, channel, p)
+            odm_tx_pwr_track_set_pwr8812a(t, st, channel, p, params)
     st.thermal_value = thermal_value
 
 
-def odm_txpowertracking_check_ce(t, st: PhydmState, channel: int) -> None:
+def odm_txpowertracking_check_ce(t, st: PhydmState, channel: int, params: ChipParams) -> None:
     """halrf_powertracking_ce.c:819 (halrf_watchdog -> phydm_rf_watchdog)."""
     if not st.tm_trigger:
         set_rf_reg(t, RF_PATH_A, RF_T_METER_8812A, (1 << 17) | (1 << 16), 0x03)
         st.tm_trigger = 1
         return
-    odm_txpowertracking_callback_thermal_meter(t, st, channel)
+    odm_txpowertracking_callback_thermal_meter(t, st, channel, params)
     st.tm_trigger = 0
 
 
@@ -604,7 +616,7 @@ def phydm_env_mntr_set_watchdog(t, st: PhydmState) -> None:
     set_bb(t, 0x0994, 1 << 0, 0x1)
 
 
-def phydm_watchdog(t, st: PhydmState, channel: int) -> int:
+def phydm_watchdog(t, st: PhydmState, channel: int, params: ChipParams) -> int:
     """phydm.c:2384. Returns the false-alarm count the DIG step used."""
     phydm_dynamic_ant_weighting_8812a(t)                 # phydm_hw_setting
     phydm_nhm_get_result(t)                              # phydm_env_mntr_result_watchdog
@@ -614,15 +626,15 @@ def phydm_watchdog(t, st: PhydmState, channel: int) -> int:
     phydm_cck_pd_th(t, st, cnt_cck_fail)
     phydm_adaptivity(t, st)
     phydm_rrsr_mask(t, st)                               # phydm_ra_info_watchdog
-    odm_txpowertracking_check_ce(t, st, channel)         # halrf_watchdog
+    odm_txpowertracking_check_ce(t, st, channel, params)  # halrf_watchdog
     phydm_env_mntr_set_watchdog(t, st)
     return cnt_all
 
 
-def rtw_dynamic_chk_wk_hdl(t, st: PhydmState, channel: int) -> int:
+def rtw_dynamic_chk_wk_hdl(t, st: PhydmState, channel: int, params: ChipParams) -> int:
     """rtw_cmd.c:2993: sreset checks, then rtl8812_HalDmWatchDog (rtl8812a_dm.c:230)."""
     rtl8812_sreset_status_check(t)
     # rtw_hal_get_hwreg(HW_VAR_FWLPS_RF_ON) (hal_com.c:13750); with check_hw_status 0
     # rtw_hal_check_rxfifo_full makes no access, so bFwPSAwake changes nothing.
     t.read32(REG_RCR)
-    return phydm_watchdog(t, st, channel)
+    return phydm_watchdog(t, st, channel, params)

@@ -98,37 +98,47 @@ def _write_section(t, spans, value: int, off: int) -> None:
             set_bb(t, reg + off, _BYTE_MASK[b], value)
 
 
-def set_tx_power(t, channel: int, tx_power_2g: List[PathTxPwr]) -> None:
-    """[SRC] PHY_SetTxPowerLevel8812 (2.4 GHz) — per-rate txagc + training, both paths."""
-    g, cck_g = _ch_group_2g(channel)
-    for path, pp in enumerate(tx_power_2g):
-        off = path * _PATH_B_OFFSET
-        cck = _clamp(pp.cck_base[cck_g] + pp.cck_diff[0])
-        ofdm = _clamp(pp.bw40_base[g] + pp.ofdm_diff[0])
-        # The per-nTX diffs are CUMULATIVE [SRC] phy_get_pg_txpwr_idx (hal_com_phycfg.c:2370):
-        # BW20-2S = base + BW20_Diff[1TX] + BW20_Diff[2TX].
-        ss1 = _clamp(pp.bw40_base[g] + pp.bw20_diff[0])                    # HT/VHT 1SS @ 20 MHz
-        ss2 = _clamp(pp.bw40_base[g] + pp.bw20_diff[0] + pp.bw20_diff[1])  # HT/VHT 2SS @ 20 MHz
+def phy_set_tx_power_level_by_path(t, channel: int, path: int, pp: PathTxPwr,
+                                   remnant_cck_swing_idx: int, remnant_ofdm_swing_idx: int) -> None:
+    """[SRC] phy_set_tx_power_level_by_path (hal_com_phycfg.c:2761); CCK only on 2.4 GHz.
+
+    The remnants are PHY_GetTxPowerTrackingOffset (:2482), added before the clamp.
+    """
+    off = path * _PATH_B_OFFSET
+    if channel <= 14:
+        g, cck_g = _ch_group_2g(channel)
+        cck = _clamp(pp.cck_base[cck_g] + pp.cck_diff[0] + remnant_cck_swing_idx)
         _write_section(t, _SEC_CCK, cck, off)
-        _write_section(t, _SEC_OFDM, ofdm, off)
-        _write_section(t, _SEC_HT_1SS, ss1, off)
-        _write_section(t, _SEC_VHT_1SS, ss1, off)
-        _write_section(t, _SEC_HT_2SS, ss2, off)
-        _write_section(t, _SEC_VHT_2SS, ss2, off)
-        set_bb(t, _REG_TXPWR_TRAINING + off, 0x00FFFFFF, _training_word(ss1))
+    else:
+        g = _ch_group_5g(channel)
+    ofdm = _clamp(pp.bw40_base[g] + pp.ofdm_diff[0] + remnant_ofdm_swing_idx)
+    # The per-nTX diffs are CUMULATIVE [SRC] phy_get_pg_txpwr_idx (hal_com_phycfg.c:2370):
+    # BW20-2S = base + BW20_Diff[1TX] + BW20_Diff[2TX].
+    ss1 = _clamp(pp.bw40_base[g] + pp.bw20_diff[0] + remnant_ofdm_swing_idx)
+    ss2 = _clamp(pp.bw40_base[g] + pp.bw20_diff[0] + pp.bw20_diff[1] + remnant_ofdm_swing_idx)
+    _write_section(t, _SEC_OFDM, ofdm, off)
+    _write_section(t, _SEC_HT_1SS, ss1, off)
+    _write_section(t, _SEC_VHT_1SS, ss1, off)
+    _write_section(t, _SEC_HT_2SS, ss2, off)
+    _write_section(t, _SEC_VHT_2SS, ss2, off)
+
+
+def set_tx_power(t, channel: int, tx_power_2g: List[PathTxPwr]) -> None:
+    """[SRC] PHY_SetTxPowerLevel8812 (2.4 GHz) — per-rate txagc + training, both paths.
+
+    Remnants are 0: phy_SwChnlAndSetBwMode8812 clears the tracking state first (rtl8812a_phycfg.c:1801).
+    """
+    g, _ = _ch_group_2g(channel)
+    for path, pp in enumerate(tx_power_2g):
+        phy_set_tx_power_level_by_path(t, channel, path, pp, 0, 0)
+        ss1 = _clamp(pp.bw40_base[g] + pp.bw20_diff[0])
+        set_bb(t, _REG_TXPWR_TRAINING + path * _PATH_B_OFFSET, 0x00FFFFFF, _training_word(ss1))
 
 
 def set_tx_power_5g(t, channel: int, tx_power_5g: List[PathTxPwr]) -> None:
     """[SRC] PHY_SetTxPowerLevel8812 (5 GHz) — per-rate txagc + training, both paths, no CCK."""
     g = _ch_group_5g(channel)
     for path, pp in enumerate(tx_power_5g):
-        off = path * _PATH_B_OFFSET
-        ofdm = _clamp(pp.bw40_base[g] + pp.ofdm_diff[0])
+        phy_set_tx_power_level_by_path(t, channel, path, pp, 0, 0)
         ss1 = _clamp(pp.bw40_base[g] + pp.bw20_diff[0])
-        ss2 = _clamp(pp.bw40_base[g] + pp.bw20_diff[0] + pp.bw20_diff[1])
-        _write_section(t, _SEC_OFDM, ofdm, off)
-        _write_section(t, _SEC_HT_1SS, ss1, off)
-        _write_section(t, _SEC_VHT_1SS, ss1, off)
-        _write_section(t, _SEC_HT_2SS, ss2, off)
-        _write_section(t, _SEC_VHT_2SS, ss2, off)
-        set_bb(t, _REG_TXPWR_TRAINING + off, 0x00FFFFFF, _training_word(ss1))
+        set_bb(t, _REG_TXPWR_TRAINING + path * _PATH_B_OFFSET, 0x00FFFFFF, _training_word(ss1))
