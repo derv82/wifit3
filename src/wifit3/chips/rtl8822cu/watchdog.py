@@ -29,6 +29,10 @@ from .phy import (
 )
 from .transport import RTL8822CUTransport
 
+# dynamic_chk_timer: armed 2000 ms after rtw_hal_init, re-armed 2000 ms from each expiry.
+# [SRC os_dep/linux/os_intfs.c:4080, core/rtw_mlme.c:4130]
+WATCHDOG_PERIOD_S = 2.0
+
 # --- no-link DIG thresholds / clamp [SRC phydm_dig.c:1466, fa_threshold_check :43] ---
 _FA_TH = (2000, 4000, 5000)
 _DIG_MIN, _DIG_MAX_OF_MIN = 0x1C, 0x2A

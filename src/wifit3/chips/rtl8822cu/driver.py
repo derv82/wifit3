@@ -64,6 +64,7 @@ from .rx import iter_bulk_frames, read_rx_burst
 from .transport import EndpointLayout, RTL8822CUTransport
 from .txpwr_index import TxPwrIdxState, txpwr_idx_state
 from .tx import TX_DESC_QSEL_MGMT, build_tx_desc_inject, pick_bulk_out_ep, write_bulk
+from .watchdog import WATCHDOG_PERIOD_S, WatchdogState, tick
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,10 @@ class RTL8822CUDriver(Driver):
         self._tx_seq = 0
         self._current_channel = 1
         self._rx_regs_after_tune_logged = False
+        self._watchdog_state: Optional[WatchdogState] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
+        # Serializes EP0 work the vendor runs on its one cmd thread (watchdog tick, channel set).
+        self._io_lock = asyncio.Lock()
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8822CUDriver":
@@ -309,7 +314,11 @@ class RTL8822CUDriver(Driver):
         try:
             await loop.run_in_executor(
                 None, self._bringup, self.transport, self.layout.bulk_out[0], _emit)
-            await loop.run_in_executor(None, self._monitor_entry)
+            # _netdev_open arms dynamic_chk_timer right after rtw_hal_init. [SRC os_intfs.c:4080]
+            self._watchdog_state = WatchdogState.from_phydm(self.phydm)
+            self._watchdog_task = loop.create_task(self._watchdog_loop(loop.time()))
+            async with self._io_lock:
+                await loop.run_in_executor(None, self._monitor_entry)
         except (IOError, usb.core.USBError) as exc:
             raise BringUpError("firmware", str(exc)) from exc
         except (ValueError, RuntimeError) as exc:
@@ -339,9 +348,10 @@ class RTL8822CUDriver(Driver):
         plain ``switch_channel``."""
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(None, switch_channel, self.transport, channel,
-                                       self.txpwr)
-            self._current_channel = channel
+            async with self._io_lock:
+                await loop.run_in_executor(None, switch_channel, self.transport, channel,
+                                           self.txpwr)
+                self._current_channel = channel
             self.current_band_is_2g = channel <= 14
             if not self._rx_regs_after_tune_logged:
                 self._rx_regs_after_tune_logged = True
@@ -351,7 +361,25 @@ class RTL8822CUDriver(Driver):
             logger.warning("RTL8822CU channel %d failed: %s", channel, exc)
             return False
 
+    async def _watchdog_loop(self, armed_at: float) -> None:
+        """rtw_dynamic_check_timer_handlder: re-arms from its own expiry, so ticks run start to start
+        every WATCHDOG_PERIOD_S from ``armed_at``. [SRC core/rtw_mlme.c:4099-4131]"""
+        loop = asyncio.get_running_loop()
+        expiry = armed_at
+        while True:
+            expiry += WATCHDOG_PERIOD_S
+            await asyncio.sleep(expiry - loop.time())
+            try:
+                async with self._io_lock:
+                    await loop.run_in_executor(None, tick, self.transport, self._watchdog_state,
+                                               self._current_channel)
+            except (IOError, ValueError, usb.core.USBError) as exc:
+                logger.debug("RTL8822CU watchdog tick skipped: %s", exc)
+
     async def close(self) -> None:
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
         if self._rx_reader:
             await self._rx_reader.stop()
             self._rx_reader = None

@@ -17,6 +17,7 @@ RTW_RATEID_G = 7
 # Inject-frame pattrib defaults from update_monitor_frame_attrib [SRC core/rtw_mlme_ext.c:6883-6898].
 INJECT_MACID = 1                # RTW_DEFAULT_MGMT_MACID [SRC include/drv_types.h:939]
 INJECT_RATE_ID = 9             # RATEID_IDX_VHT_2SS [SRC include/ieee80211.h:249]
+BCMC_STA_G_ID = 63             # bcmc stainfo bf_info.g_id [SRC core/rtw_sta_mgt.c:1052]
 
 
 def _fill_txdesc_checksum48(desc: bytearray) -> None:
@@ -52,6 +53,10 @@ def build_tx_desc_inject(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
     w0 = len(mpdu) | (TX_PKT_DESC_SZ << 16) | (int(bmc) << 24) | (1 << 26)
     # w1: MACID / QSEL / RATE_ID from the inject pattrib [SRC rtl8822cu_xmit.c:97-100].
     w1 = INJECT_MACID | (TX_DESC_QSEL_MGMT << 8) | (INJECT_RATE_ID << 16)
+    # w2: G_ID [b24..29] from the RA's stainfo: a group RA finds the bcmc entry; a unicast RA finds
+    # none in monitor mode, leaving the zeroed attrib's 0. [SRC hal/hal_intf.c:923,
+    # core/rtw_mlme_ext.c:7041-7049, core/rtw_sta_mgt.c:983-984, hal/rtl8822c/rtl8822c_ops.c:3473]
+    w2 = (BCMC_STA_G_ID << 24) if bmc else 0
     # w3: USE_RATE + DISRTSFB + DISDATAFB [SRC rtl8822cu_xmit.c:135-138].
     w3 = (1 << 8) | (1 << 9) | (1 << 10)
     # w4: DATARATE [+0x10 b0..6] + RTY_LMT_EN [b17] + RTS_DATA_RTY_LMT [b18..23]
@@ -60,7 +65,7 @@ def build_tx_desc_inject(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
     # w8 EN_HWSEQ stays 0; w9 SW_SEQ is the frame's own seq_ctl [SRC rtl8822cu_xmit.c:119-120].
     seqnum = (struct.unpack_from("<H", mpdu, 22)[0] >> 4) & 0xFFF if len(mpdu) >= 24 else 0
     w9 = seqnum << 12
-    desc = bytearray(struct.pack("<12I", w0, w1, 0, w3, w4, 0, 0, 0, 0, w9, 0, 0))
+    desc = bytearray(struct.pack("<12I", w0, w1, w2, w3, w4, 0, 0, 0, 0, w9, 0, 0))
     _fill_txdesc_checksum48(desc)
     return bytes(desc)
 
