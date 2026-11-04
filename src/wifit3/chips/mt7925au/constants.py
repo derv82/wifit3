@@ -26,12 +26,16 @@ MT_REQ_OUT_VENDOR     = 0x5F   # unified write, power-on
 MT_REQ_IN_UHW_VENDOR  = 0xDE   # UHW read
 MT_REQ_OUT_UHW_VENDOR = 0x5E   # UHW write
 
-# USB endpoints (mt76.h:630-641; physical bEndpointAddress from the vendor
-# interface descriptor, confirmed against the mt7925u capture: bulk-OUT 0x04/0x08).
-EP_OUT_MCU  = 0x08   # MT_EP_OUT_INBAND_CMD: MCU commands (non-FW_SCATTER)
-EP_OUT_FW   = 0x04   # MT_EP_OUT_AC_BE: FW_SCATTER chunks + 802.11 data TX
-EP_OUT_DATA = 0x04   # alias — same physical EP as EP_OUT_FW
-EP_OUT_HCCA = 0x09   # MT_EP_OUT_HCCA: mgmt/PSD TX (deauth)
+# USB endpoints (mt76.h:638-646 enum mt76_ep_out, filled in descriptor order by
+# mt76u_set_endpoints, usb.c:293-317; the mt7925u interface descriptor's bulk-OUTs are
+# 0x08 0x04 0x05 0x06 0x07 0x09).
+EP_OUT_MCU   = 0x08   # MT_EP_OUT_INBAND_CMD: MCU commands (non-FW_SCATTER)
+EP_OUT_FW    = 0x04   # MT_EP_OUT_AC_BE: FW_SCATTER chunks (mt7925/usb.c:35-38)
+EP_OUT_AC_BE = 0x04   # MT_EP_OUT_AC_BE
+EP_OUT_AC_BK = 0x05   # MT_EP_OUT_AC_BK
+EP_OUT_AC_VI = 0x06   # MT_EP_OUT_AC_VI
+EP_OUT_AC_VO = 0x07   # MT_EP_OUT_AC_VO
+EP_OUT_HCCA  = 0x09   # MT_EP_OUT_HCCA: MT_TXQ_PSD
 EP_IN_BULK  = 0x84   # MT_EP_IN_PKT_RX: RX 802.11 frames (+ MCU resp once RXEVT_EP4_EN set)
 EP_IN_MCU   = 0x85   # MT_EP_IN_CMD_RESP: MCU responses (RXEVT_EP4_EN cleared)
 
@@ -237,6 +241,14 @@ MT_TXD0_TX_BYTES = 0x0000FFFF   # GENMASK(15,0)
 # tx_pkt_type (mt76_connac3_mac.h:174-178) + lmac queue idx (:11-18).
 MT_TX_TYPE_SF  = 1              # USB/SDIO short-format (mmio would be CT)
 MT_LMAC_ALTX0  = 0x10          # alt-TX queue for mgmt/PSD
+MT76_CONNAC_MAX_WMM_SETS = 4   # mt76_connac.h:29
+
+# enum mt76_txq_id (mt76.h:114-123): the four mac80211 ACs (IEEE80211_AC_VO 0 .. BK 3), then PSD.
+MT_TXQ_VO  = 0
+MT_TXQ_VI  = 1
+MT_TXQ_BE  = 2
+MT_TXQ_BK  = 3
+MT_TXQ_PSD = 4
 
 # txwi[1] (mt76_connac3_mac.h:221-229).
 MT_TXD1_FIXED_RATE = 1 << 31   # BIT(31)
@@ -284,6 +296,7 @@ MT_TX_ADDBA = 2
 # lands on 5 GHz (the last band with world-enabled channels; mac80211.c:395-418), so
 # main.c:382 takes the non-2.4GHz branch. Constant for the monitor vif's lifetime.
 MON_TX_OMAC_IDX  = 0
+MON_TX_WMM_IDX   = 0        # main.c:378-379: vif idx 0 % MT76_CONNAC_MAX_WMM_SETS
 MON_TX_BAND_IDX  = 0xff
 MON_TX_RATE_IDX  = 11 + 4   # MT792x_BASIC_RATES_TBL(mt792x.h:36) + 4 = 15
 

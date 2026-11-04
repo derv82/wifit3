@@ -9,7 +9,8 @@ descriptor is identical. These lock the per-field TXWI layout against a silent r
 import struct
 
 from wifit3.chips.mt7925au import tx
-from wifit3.chips.mt7925au.constants import MT792x_WTBL_RESERVED
+from wifit3.chips.mt7925au.constants import (EP_OUT_AC_BE, EP_OUT_HCCA, MT792x_WTBL_RESERVED, MT_TXQ_BE,
+                                             MT_TXQ_PSD)
 from wifit3.chips.mt7925au.driver import MT7925AUDriver
 
 # A directed deauth (fc=0x00c0, reason 7), 26 bytes, seq_ctrl = 0. Synthetic unicast MACs.
@@ -36,7 +37,7 @@ DEAUTH_WIRE = bytes.fromhex(
 def test_build_tx_deauth_byte_exact():
     # The captured aireplay frame set MT_TXD3_NO_ACK; production build_tx clears it for unicast,
     # so the replay-only build_tx_no_ack is what reproduces the exact captured bytes.
-    frame = tx.build_tx_no_ack(DEAUTH_MPDU, wcid_idx=MT792x_WTBL_RESERVED)
+    frame = tx.build_tx_no_ack(DEAUTH_MPDU, qid=MT_TXQ_PSD, wcid_idx=MT792x_WTBL_RESERVED)
     assert frame == DEAUTH_WIRE
     assert len(frame) == 100
 
@@ -44,15 +45,15 @@ def test_build_tx_deauth_byte_exact():
 def test_no_ack_gutted_from_production():
     """Production build_tx clears NO_ACK for a unicast addr1 (the chip HW-retries until ACKed);
     the replay-only builder sets it, to byte-match the capture."""
-    prod = tx.build_tx(DEAUTH_MPDU, wcid_idx=19)
-    replay = tx.build_tx_no_ack(DEAUTH_MPDU, wcid_idx=19)
+    prod = tx.build_tx(DEAUTH_MPDU, qid=MT_TXQ_PSD, wcid_idx=19)
+    replay = tx.build_tx_no_ack(DEAUTH_MPDU, qid=MT_TXQ_PSD, wcid_idx=19)
     assert struct.unpack_from("<16I", prod, 4)[3] & 1 == 0     # NO_ACK clear
     assert struct.unpack_from("<16I", replay, 4)[3] & 1 == 1   # replay sets it
     assert prod != replay and len(prod) == len(replay)
 
 
 def test_txwi_fields():
-    frame = tx.build_tx(DEAUTH_MPDU, wcid_idx=MT792x_WTBL_RESERVED)
+    frame = tx.build_tx(DEAUTH_MPDU, qid=MT_TXQ_PSD, wcid_idx=MT792x_WTBL_RESERVED)
     txwi = struct.unpack_from("<16I", frame, 4)
     assert txwi[0] & 0xFFFF == 90            # TX_BYTES = MPDU + 64
     assert (txwi[0] >> 23) & 0x3 == 1        # PKT_FMT = MT_TX_TYPE_SF
@@ -77,7 +78,7 @@ def test_seq_is_read_from_mpdu():
     field changes with the frame's seq_ctrl."""
     mpdu = bytearray(DEAUTH_MPDU)
     struct.pack_into("<H", mpdu, 22, 0x60)   # SN = 6
-    txwi = struct.unpack_from("<16I", tx.build_tx(bytes(mpdu), wcid_idx=19), 4)
+    txwi = struct.unpack_from("<16I", tx.build_tx(bytes(mpdu), qid=MT_TXQ_PSD, wcid_idx=19), 4)
     assert (txwi[3] >> 16) & 0xFFF == 6
 
 
@@ -88,7 +89,7 @@ def test_stamp_tx_seq_increments_and_feeds_txwi():
     second = drv._stamp_tx_seq(DEAUTH_MPDU)
     assert struct.unpack_from("<H", first, 22)[0] == (1 << 4)    # SN 1, frag 0
     assert struct.unpack_from("<H", second, 22)[0] == (2 << 4)   # SN 2
-    txwi = struct.unpack_from("<16I", tx.build_tx(second, wcid_idx=19), 4)
+    txwi = struct.unpack_from("<16I", tx.build_tx(second, qid=MT_TXQ_PSD, wcid_idx=19), 4)
     assert (txwi[3] >> 16) & 0xFFF == 2
 
 
@@ -97,5 +98,21 @@ def test_broadcast_sets_bcm():
     probe = bytearray(DEAUTH_MPDU)
     probe[0:2] = struct.pack("<H", 0x0040)   # probe request
     probe[4:10] = b"\xff" * 6                 # broadcast addr1
-    txwi = struct.unpack_from("<16I", tx.build_tx(bytes(probe), wcid_idx=19), 4)
+    txwi = struct.unpack_from("<16I", tx.build_tx(bytes(probe), qid=MT_TXQ_PSD, wcid_idx=19), 4)
     assert (txwi[3] >> 4) & 1 == 1            # BCM
+
+
+def test_deauth_goes_to_psd_on_hcca():
+    assert tx.select_tx_queue(DEAUTH_MPDU) == MT_TXQ_PSD
+    assert tx.TX_QUEUE_ENDPOINTS[MT_TXQ_PSD] == EP_OUT_HCCA
+
+
+def test_null_data_goes_to_ac_be():
+    """A non-QoS data frame (null data, fc 0x0148) is AC_BE: Q_IDX MT_LMAC_AC01 on the AC_BE bulk-OUT."""
+    null_data = bytearray(DEAUTH_MPDU[:24])
+    null_data[0:2] = struct.pack("<H", 0x0148)
+    qid = tx.select_tx_queue(bytes(null_data))
+    assert qid == MT_TXQ_BE
+    assert tx.TX_QUEUE_ENDPOINTS[qid] == EP_OUT_AC_BE
+    txwi = struct.unpack_from("<16I", tx.build_tx(bytes(null_data), qid=qid, wcid_idx=19), 4)
+    assert (txwi[0] >> 25) & 0x7F == 1

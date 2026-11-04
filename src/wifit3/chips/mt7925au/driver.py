@@ -164,11 +164,11 @@ class MT7925AUDriver(Driver):
         return True
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the connac3 TXWI for a raw 802.11 frame and send it once over the HCCA
-        bulk-OUT (EP 0x09), the mgmt/PSD endpoint the mt76 xmit path routes injected
-        frames to. The TXWI reads the 802.11 sequence from the frame itself."""
-        wire = tx.build_tx(frame_bytes, wcid_idx=self._tx_wcid)
-        return await self.transport.send_bulk_checked(wire, EP_OUT_HCCA)
+        """Build the connac3 TXWI for a raw 802.11 frame and send it once on its mt76 TX queue's bulk-OUT.
+        The TXWI reads the 802.11 sequence from the frame itself."""
+        qid = tx.select_tx_queue(frame_bytes)
+        wire = tx.build_tx(frame_bytes, qid=qid, wcid_idx=self._tx_wcid)
+        return await self.transport.send_bulk_checked(wire, tx.TX_QUEUE_ENDPOINTS[qid])
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Stamp an incrementing 12-bit 802.11 sequence into seq_ctrl (bytes 22-23),

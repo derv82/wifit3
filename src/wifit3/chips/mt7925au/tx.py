@@ -10,7 +10,7 @@ The TXD is ``MT_SDIO_TXD_SIZE`` (64 B); ``mt7925_mac_write_txwi`` fills txwi[0..
 memsets the whole 64 B first). We only ever inject raw 802.11 mgmt/ctrl frames
 through the monitor vif, so this is the ``is_8023 == False`` path with the
 injected-frame branch (info->flags & IEEE80211_TX_CTL_INJECTED) always taken; the
-HW-encap (802.3) and data-AC queue paths are not on wifit3's injection graph.
+HW-encap (802.3) path is not on wifit3's injection graph.
 
 Field masks/sizes come from constants.py (grepped from mt76_connac3_mac.h /
 mt76_connac.h). The monitor-vif context (wcid 19, omac 0, band_idx 0xff -> TGID 3,
@@ -34,10 +34,23 @@ _FCTL_ORDER = 0x8000
 _HT_CTL_LEN = 4
 _QOS_CTL_LEN = 2
 _STYPE_ACTION = 0x00D0
+_STYPE_DISASSOC = 0x00A0
+_STYPE_DEAUTH = 0x00C0
 _QOS_CTL_TID_MASK = 0x000F         # IEEE80211_QOS_CTL_TID_MASK
+_QOS_CTL_TAG1D_MASK = 0x0007       # IEEE80211_QOS_CTL_TAG1D_MASK
 _MIN_ACTION_SIZE = 25              # IEEE80211_MIN_ACTION_SIZE: offsetof(ieee80211_mgmt, u.action.u)
 _CATEGORY_BACK = 3                 # WLAN_CATEGORY_BACK
 _ACTION_ADDBA_REQ = 0              # WLAN_ACTION_ADDBA_REQ
+_CATEGORY_PUBLIC = 4               # WLAN_CATEGORY_PUBLIC
+_CATEGORY_PROTECTED_DUAL_OF_ACTION = 9   # WLAN_CATEGORY_PROTECTED_DUAL_OF_ACTION
+_PUB_ACTION_FTM_REQUEST = 32       # WLAN_PUB_ACTION_FTM_REQUEST
+_PUB_ACTION_FTM_RESPONSE = 33      # WLAN_PUB_ACTION_FTM_RESPONSE
+_FTM_ACTION_CODE_END = 26          # offsetofend(struct ieee80211_mgmt, u.action.u.ftm.action_code)
+# mac80211 ieee802_1d_to_ac (wme.c): an 802.1d priority's AC.
+_IEEE802_1D_TO_AC = (MT_TXQ_BE, MT_TXQ_BK, MT_TXQ_BK, MT_TXQ_BE, MT_TXQ_VI, MT_TXQ_VI, MT_TXQ_VO, MT_TXQ_VO)
+# Each TX queue's bulk-OUT: mt76u_ac_to_hwq for 0x7925 (usb.c:910-933), out_ep[mt76_ac_to_hwq(ac) + 1], PSD on HCCA.
+TX_QUEUE_ENDPOINTS = {MT_TXQ_VO: EP_OUT_AC_VO, MT_TXQ_VI: EP_OUT_AC_VI, MT_TXQ_BE: EP_OUT_AC_BE,
+                      MT_TXQ_BK: EP_OUT_AC_BK, MT_TXQ_PSD: EP_OUT_HCCA}
 
 
 def _is_mgmt(fc: int) -> bool:
@@ -73,8 +86,41 @@ def ieee80211_hdrlen(fc: int) -> int:
     return hdrlen
 
 
-def build_txwi(mpdu: bytes, *, wcid_idx: int, omac_idx: int = MON_TX_OMAC_IDX,
-               band_idx: int = MON_TX_BAND_IDX, rate_idx: int = MON_TX_RATE_IDX) -> bytes:
+def skb_priority(mpdu: bytes) -> int:
+    """The skb->priority mac80211 gives an injected frame (wme.c:117-145 ieee80211_select_queue_80211)."""
+    fc = struct.unpack_from("<H", mpdu, 0)[0]
+    if not _is_data(fc):
+        return 7
+    if not _is_data_qos(fc):
+        return 0
+    four_address = (fc & (_FCTL_TODS | _FCTL_FROMDS)) == (_FCTL_TODS | _FCTL_FROMDS)
+    return mpdu[30 if four_address else 24] & _QOS_CTL_TAG1D_MASK   # ieee80211_get_qos_ctl
+
+
+def select_tx_queue(mpdu: bytes) -> int:
+    """The mt76 TX queue of an injected frame: its mac80211 AC (ieee802_1d_to_ac[skb_priority]), or MT_TXQ_PSD for
+    a non-bufferable or deauth mgmt/ctl frame (tx.c:616-623 mt76_txq_schedule_pending_wcid, MT_DRV_HW_MGMT_TXQ)."""
+    fc = struct.unpack_from("<H", mpdu, 0)[0]
+    if _is_data(fc):
+        return _IEEE802_1D_TO_AC[skb_priority(mpdu)]
+    # ieee80211_is_bufferable_mmpdu (include/linux/ieee80211.h)
+    stype = fc & _FCTL_STYPE
+    if not _is_mgmt(fc) or stype == _STYPE_DEAUTH:
+        return MT_TXQ_PSD
+    if stype == _STYPE_DISASSOC:
+        return _IEEE802_1D_TO_AC[skb_priority(mpdu)]
+    if stype != _STYPE_ACTION:
+        return MT_TXQ_PSD
+    if (len(mpdu) >= _FTM_ACTION_CODE_END
+            and mpdu[24] in (_CATEGORY_PUBLIC, _CATEGORY_PROTECTED_DUAL_OF_ACTION)
+            and mpdu[25] in (_PUB_ACTION_FTM_REQUEST, _PUB_ACTION_FTM_RESPONSE)):
+        return MT_TXQ_PSD
+    return _IEEE802_1D_TO_AC[skb_priority(mpdu)]
+
+
+def build_txwi(mpdu: bytes, *, qid: int, wcid_idx: int, omac_idx: int = MON_TX_OMAC_IDX,
+               band_idx: int = MON_TX_BAND_IDX, wmm_idx: int = MON_TX_WMM_IDX,
+               rate_idx: int = MON_TX_RATE_IDX) -> bytes:
     """Port of mt7925_mac_write_txwi (+ _write_txwi_80211) for a monitor-injected raw
     802.11 frame. Returns the 64-byte connac3 TXD (txwi[0..7] filled, [8..15] zero).
 
@@ -85,10 +131,12 @@ def build_txwi(mpdu: bytes, *, wcid_idx: int, omac_idx: int = MON_TX_OMAC_IDX,
     fc = struct.unpack_from("<H", mpdu, 0)[0]
     multicast = bool(mpdu[4] & 0x01)                 # addr1 group bit
 
-    # q_idx branch: a raw mgmt/PSD injection maps to MT_TXQ_PSD -> ALTX0, USB short-format
-    # (mt7925_mac_write_txwi:758-760). Data-AC TX is out of wifit3's scope.
+    # mt7925_mac_write_txwi:756-763; on the AC queues skb_get_queue_mapping is qid. LMAC orders the ACs in reverse.
     p_fmt = MT_TX_TYPE_SF
-    q_idx = MT_LMAC_ALTX0
+    if qid >= MT_TXQ_PSD:
+        q_idx = MT_LMAC_ALTX0
+    else:
+        q_idx = wmm_idx * MT76_CONNAC_MAX_WMM_SETS + 3 - qid
 
     txwi = [0] * 16
     txwi[0] = (((len(mpdu) + MT_SDIO_TXD_SIZE) << 0) & MT_TXD0_TX_BYTES) \
@@ -110,15 +158,7 @@ def build_txwi(mpdu: bytes, *, wcid_idx: int, omac_idx: int = MON_TX_OMAC_IDX,
     txwi[6] = MT_TXD6_DAS | ((1 << 4) & MT_TXD6_MSDU_CNT) | MT_TXD6_DIS_MAT
 
     # --- mt7925_mac_write_txwi_80211 ---
-    # skb->priority mac80211 gives an injected frame (wme.c:117-145 ieee80211_select_queue_80211).
-    if not _is_data(fc):
-        priority = 7
-    elif _is_data_qos(fc):
-        four_address = (fc & (_FCTL_TODS | _FCTL_FROMDS)) == (_FCTL_TODS | _FCTL_FROMDS)
-        priority = mpdu[30 if four_address else 24] & _QOS_CTL_TID_MASK   # ieee80211_get_qos_ctl
-    else:
-        priority = 0
-    tid = priority & _QOS_CTL_TID_MASK
+    tid = skb_priority(mpdu) & _QOS_CTL_TID_MASK
     if ((fc & (_FCTL_FTYPE | _FCTL_STYPE)) == (_FTYPE_MGMT | _STYPE_ACTION)
             and len(mpdu) >= _MIN_ACTION_SIZE + 1
             and mpdu[24] == _CATEGORY_BACK and mpdu[25] == _ACTION_ADDBA_REQ):
@@ -153,12 +193,12 @@ def build_txwi(mpdu: bytes, *, wcid_idx: int, omac_idx: int = MON_TX_OMAC_IDX,
     return struct.pack("<16I", *(w & 0xFFFFFFFF for w in txwi))
 
 
-def build_tx(mpdu: bytes, *, wcid_idx: int, **kw) -> bytes:
+def build_tx(mpdu: bytes, *, qid: int, wcid_idx: int, **kw) -> bytes:
     """Full USB TX frame for one MPDU: [4B SDIO hdr][64B TXD][MPDU][pad].
 
     SDIO hdr tx_bytes = skb->len at add-hdr time = TXD + MPDU (USB, no pad, no hdr);
     pad = round_up(4+TXD+MPDU, 4) - that, +4 for USB (mt7925_usb_sdio_tx_prepare_skb)."""
-    txd = build_txwi(mpdu, wcid_idx=wcid_idx, **kw)
+    txd = build_txwi(mpdu, qid=qid, wcid_idx=wcid_idx, **kw)
     body = txd + mpdu
     hdr = struct.pack("<I", len(body) & MT792x_SDIO_HDR_TX_BYTES)   # pkt_type 0
     frame = hdr + body
@@ -170,11 +210,11 @@ def build_tx(mpdu: bytes, *, wcid_idx: int, **kw) -> bytes:
 _TXWI3_OFF = SDIO_HDR_SIZE + 3 * 4
 
 
-def build_tx_no_ack(mpdu: bytes, *, wcid_idx: int, **kw) -> bytes:
+def build_tx_no_ack(mpdu: bytes, *, qid: int, wcid_idx: int, **kw) -> bytes:
     """Replay-only. The aireplay frames in the mt7925u TX capture set MT_TXD3_NO_ACK, which
     the production `build_tx` sets only for a group addr1 (a unicast addr1 HW-retries until
     ACKed). verify_pcap uses this to byte-match those exact captured frames.
     NOT an inject path: nothing in the driver calls it."""
-    frame = bytearray(build_tx(mpdu, wcid_idx=wcid_idx, **kw))
+    frame = bytearray(build_tx(mpdu, qid=qid, wcid_idx=wcid_idx, **kw))
     frame[_TXWI3_OFF] |= MT_TXD3_NO_ACK          # txwi[3] bit0 (little-endian low byte)
     return bytes(frame)
