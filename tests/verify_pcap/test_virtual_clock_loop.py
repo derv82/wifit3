@@ -14,17 +14,23 @@ WATCHDOG_JIFFIES = 62
 
 def replay_watchdog_sleeping(sleep_jiffies: int) -> str | None:
     """A driver task makes the first captured op, sleeps, then makes the second, captured WATCHDOG_JIFFIES later."""
+    return replay_driver_task_sleeping(sleep_jiffies / KERNEL_HZ, (WATCHDOG_JIFFIES + 1) / KERNEL_HZ, is_hrtimer=False)
+
+
+def replay_driver_task_sleeping(sleep: float, second_op_time: float, is_hrtimer: bool) -> str | None:
     ops = [replace(realtek_write(REALTEK_OTHER_REGISTER, 0x1), submit_time=0.0, completion_time=0.0),
-           replace(realtek_write(REALTEK_OTHER_REGISTER, 0x2), submit_time=(WATCHDOG_JIFFIES + 1) / KERNEL_HZ,
-                   completion_time=(WATCHDOG_JIFFIES + 1) / KERNEL_HZ)]
-    loop = VirtualClockEventLoop(0.0, lambda: True)
-    replay = CaptureReplay(ops, lambda captured, request: captured.same_request(request),
-                           lambda request, cursor_differs: False, lambda ops, position: None, loop)
+           replace(realtek_write(REALTEK_OTHER_REGISTER, 0x2), submit_time=second_op_time,
+                   completion_time=second_op_time)]
 
     async def watchdog() -> None:
         replay.match_request(ops[0], current_caller_name())
-        await asyncio.sleep(sleep_jiffies / KERNEL_HZ)
+        await asyncio.sleep(sleep)
         replay.match_request(ops[1], current_caller_name())
+
+    hrtimer_callers = frozenset({watchdog.__qualname__}) if is_hrtimer else frozenset()
+    loop = VirtualClockEventLoop(0.0, lambda: True, hrtimer_callers)
+    replay = CaptureReplay(ops, lambda captured, request: captured.same_request(request),
+                           lambda request, cursor_differs: False, lambda ops, position: None, loop)
 
     async def main() -> None:
         try:
@@ -47,6 +53,27 @@ def test_driver_task_timer_at_the_captured_period_matches() -> None:
 
 def test_driver_task_timer_firing_early_diverges() -> None:
     reason = replay_watchdog_sleeping(50)
+    assert reason is not None and "timer fired" in reason
+
+
+def test_hrtimer_is_not_rounded_to_a_jiffy() -> None:
+    async def hrtimer_task() -> float:
+        await asyncio.sleep(0.001)
+        return asyncio.get_running_loop().time()
+
+    loop = VirtualClockEventLoop(0.0, lambda: True, frozenset({hrtimer_task.__qualname__}))
+    try:
+        assert loop.run_until_complete(loop.create_task(hrtimer_task())) == pytest.approx(0.001)
+    finally:
+        loop.close()
+
+
+def test_hrtimer_at_the_captured_time_matches() -> None:
+    assert replay_driver_task_sleeping(0.001, 0.0011, is_hrtimer=True) is None
+
+
+def test_hrtimer_firing_early_diverges() -> None:
+    reason = replay_driver_task_sleeping(0.001, 0.0025, is_hrtimer=True)
     assert reason is not None and "timer fired" in reason
 
 

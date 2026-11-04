@@ -19,6 +19,8 @@ class TestRt3070(VerifyCapture):
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RT3070Driver
     MAC80211_DEFAULT_CHANNEL = 1
+    # rt2800usb.c:94-169: txstatus_timer
+    HRTIMER_TASKS = (RT3070Driver._tx_sta_fifo_timeout,)
     DECODER = Rt2800Decoder(channel_rf1_rfcsr=2, channel_rf3_rfcsr=3, channel_rf3_mask=C.RFCSR3_K)
     WAIVERS = [
         Waiver(WaiverReason.WIFIT3_ONLY, "wifit3 only: warm check (mac.is_chip_warm)",

@@ -31,6 +31,8 @@ class TestRt5572(VerifyCapture):
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RT5572Driver
     MAC80211_DEFAULT_CHANNEL = 1
+    # rt2800usb.c:94-169: txstatus_timer
+    HRTIMER_TASKS = (RT5572Driver._tx_sta_fifo_timeout,)
     DECODER = Rt2800Decoder(channel_rf3_mask=C.RFCSR9_K | C.RFCSR9_N, channel_rfcsr_values=CHANNEL_RFCSR_VALUES,
                             txwi_size=C.TXWI_DESC_SIZE_5WORDS)
     WAIVERS = [

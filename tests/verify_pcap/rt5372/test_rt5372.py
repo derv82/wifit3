@@ -24,6 +24,8 @@ class TestRt5372(VerifyCapture):
     SUPPORTED_IDS = SUPPORTED_IDS
     DRIVER_CLASS = RT5372Driver
     MAC80211_DEFAULT_CHANNEL = 1
+    # rt2800usb.c:94-169: txstatus_timer
+    HRTIMER_TASKS = (RT5372Driver._tx_sta_fifo_timeout,)
     DECODER = Rt2800Decoder()
     WAIVERS = [
         Waiver(WaiverReason.WIFIT3_ONLY, "wifit3 only: warm check (mac.is_chip_warm)",

@@ -124,6 +124,7 @@ class CaptureReplay:
                     raise self._diverge(position, request, caller, f"the driver task's timer fired "
                                         f"{(captured_time - request_time) * 1000:.1f} ms before the capture's op")
             if (self._loop.jiffy_zero_time is None and caller != MAIN_CALLER
+                    and caller not in self._loop.hrtimer_callers
                     and self._loop.earliest_due_driver_timer() is not None):
                 # The kernel's jiffy phase: a woken driver task's first op is made in the jiffy after its timer fired.
                 self._loop.jiffy_zero_time = self.ops[position].submit_time - 1 / KERNEL_HZ

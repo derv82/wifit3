@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, ClassVar, Iterator, Sequence
+from typing import Any, Callable, ClassVar, Coroutine, Iterator, Sequence
 
 import pytest
 import usb.core
@@ -178,6 +178,8 @@ class VerifyCapture:
     # mac80211 without chanctx ops: a monitor channel change releases the chanctx, tuning dflt_chandef's channel, then
     # assigns the new one (chan.c:914-930, main.c:132-189); the two tunes are one set_channel.
     MAC80211_DEFAULT_CHANNEL: ClassVar[int | None] = None
+    # The driver tasks whose sleeps are kernel hrtimers, not timer-wheel timers.
+    HRTIMER_TASKS: ClassVar[tuple[Callable[..., Coroutine[Any, Any, None]], ...]] = ()
 
     def test_capture(self, capture_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         capture = self.load_capture(capture_path)
@@ -205,7 +207,8 @@ class VerifyCapture:
         def is_driver_idle() -> bool:
             return loop.pending_executor_call_count == 0 and not replay.driver_thread_is_working()
 
-        loop = VirtualClockEventLoop(capture.ops[0].submit_time, is_driver_idle)
+        hrtimer_callers = frozenset(hrtimer_task.__qualname__ for hrtimer_task in self.HRTIMER_TASKS)
+        loop = VirtualClockEventLoop(capture.ops[0].submit_time, is_driver_idle, hrtimer_callers)
         loop.set_default_executor(thread_pool)
         def is_same_request(captured: UsbOp, request: UsbOp) -> bool:
             return self.is_same_request_counting_masked(captured, request, waivers, masked_counts)

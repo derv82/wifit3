@@ -15,6 +15,8 @@ TIMER_WHEEL_LEVEL_SIZE = 64
 TIMER_WHEEL_LEVEL_DEPTH = 9
 # A fire time, bucket_expiry / KERNEL_HZ, converts back to the same jiffy despite float error.
 JIFFY_TOLERANCE = 0.01
+# An hrtimer fires at its expiry, unrounded; the kernel's interrupt and URB-submit latency after it.
+HRTIMER_LATENCY = 0.001
 
 
 def timer_wheel_level_start(level: int) -> int:
@@ -82,10 +84,13 @@ class ClockJumpSelector(selectors.SelectSelector):
 
 
 class VirtualClockEventLoop(asyncio.SelectorEventLoop):
-    def __init__(self, start_time: float, is_driver_idle: Callable[[], bool]) -> None:
+    def __init__(self, start_time: float, is_driver_idle: Callable[[], bool],
+                 hrtimer_callers: frozenset[str] = frozenset()) -> None:
+        """``hrtimer_callers``: the driver tasks, by coroutine name, whose timers are kernel hrtimers."""
         super().__init__(ClockJumpSelector(self))
         self.virtual_time = start_time
         self.is_driver_idle = is_driver_idle
+        self.hrtimer_callers = hrtimer_callers
         self.latest_timer_by_task: dict[asyncio.Task[Any], asyncio.TimerHandle] = {}
         self.fired_timers: set[asyncio.TimerHandle] = set()
         self.completion_time_by_caller: dict[str, float] = {}
@@ -170,11 +175,15 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         task = asyncio.current_task(self)
         if task is None or task.get_name() == MAIN_CALLER:
             return super().call_at(when, callback, *args, context=context)
-        delta = math.ceil((when - self.time()) * KERNEL_HZ - JIFFY_TOLERANCE)
-        if self.jiffy_zero_time is None:
-            when = self.time() + delta / KERNEL_HZ
+        if task.get_coro().__qualname__ in self.hrtimer_callers:
+            tolerance = HRTIMER_LATENCY
         else:
-            when = timer_wheel_expiry(self.jiffy_zero_time, self.time(), when)
+            delta = math.ceil((when - self.time()) * KERNEL_HZ - JIFFY_TOLERANCE)
+            tolerance = timer_wheel_tolerance(delta)
+            if self.jiffy_zero_time is None:
+                when = self.time() + delta / KERNEL_HZ
+            else:
+                when = timer_wheel_expiry(self.jiffy_zero_time, self.time(), when)
 
         def record_fired_and_run(*callback_args: Any) -> None:
             with self._timer_lock:
@@ -185,7 +194,7 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
 
         handle = super().call_at(when, record_fired_and_run, *args, context=context)
         with self._timer_lock:
-            self.tolerance_by_driver_timer[handle] = timer_wheel_tolerance(delta)
+            self.tolerance_by_driver_timer[handle] = tolerance
             previous_handle = self.latest_timer_by_task.get(task)
             if previous_handle is not None:
                 self.fired_timers.discard(previous_handle)
