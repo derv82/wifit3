@@ -7,6 +7,7 @@ import pytest
 
 from tests.verify_pcap.capture_replay import CaptureDivergence, CaptureReplay
 from tests.verify_pcap.test_waivers import REALTEK_OTHER_REGISTER, realtek_write
+from tests.verify_pcap.usb_capture import UsbOp
 from tests.verify_pcap.virtual_clock_loop import KERNEL_HZ, MAIN_CALLER, VirtualClockEventLoop, current_caller_name, timer_wheel_expiry
 
 WATCHDOG_JIFFIES = 62
@@ -151,3 +152,33 @@ def test_new_driver_task_starts_at_its_creators_time() -> None:
         assert loop.run_until_complete(loop.create_task(driver_task())) == 1.0
     finally:
         loop.close()
+
+
+def replay_past_a_truncated_capture(requests: list[UsbOp]) -> str | None:
+    """The capture ends in a 0x2 write that never completed."""
+    ops = [realtek_write(REALTEK_OTHER_REGISTER, 0x1)]
+    loop = VirtualClockEventLoop(0.0, lambda: True)
+    replay = CaptureReplay(ops, lambda captured, request: captured.same_request(request),
+                           lambda request, cursor_differs: False, lambda ops, position: None,
+                           lambda caller_ops, request: False, loop)
+    replay.truncated_request = realtek_write(REALTEK_OTHER_REGISTER, 0x2)
+    try:
+        for request in requests:
+            replay.match_request(request, MAIN_CALLER)
+    except CaptureDivergence:
+        pass
+    finally:
+        loop.close()
+    if replay.divergence is None:
+        return None
+    return replay.divergence.reason
+
+
+def test_requests_from_the_truncated_request_on_are_not_compared() -> None:
+    requests = [realtek_write(REALTEK_OTHER_REGISTER, value) for value in (0x1, 0x2, 0x3)]
+    assert replay_past_a_truncated_capture(requests) is None
+
+
+def test_a_request_other_than_the_truncated_one_diverges() -> None:
+    requests = [realtek_write(REALTEK_OTHER_REGISTER, value) for value in (0x1, 0x3)]
+    assert replay_past_a_truncated_capture(requests) == "request after the last captured op"

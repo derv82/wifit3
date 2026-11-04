@@ -190,9 +190,9 @@ def parse_usbmon_packet(frame_number: int, linktype: int, packet: bytes, start_s
     )
 
 
-def pair_submits_with_completions(records: list[UsbmonRecord]) -> tuple[list[UsbOp], int]:
+def pair_submits_with_completions(records: list[UsbmonRecord]) -> tuple[list[UsbOp], list[UsbOp]]:
     """Control and OUT transfers at submit, bulk / interrupt IN at completion (their URBs are queued ahead),
-    and the count of submits that never completed."""
+    and the submits that never completed, at their submit (no IN data)."""
     submits: dict[tuple[int, int], UsbmonRecord] = {}
     ops_by_order: list[tuple[float, int, UsbOp]] = []
     for record in records:
@@ -225,4 +225,11 @@ def pair_submits_with_completions(records: list[UsbmonRecord]) -> tuple[list[Usb
             ops_by_order.append((submit.timestamp, submit.frame_number, op))
     ops_by_order.sort(key=lambda entry: (entry[0], entry[1]))
     ops = [op for _, _, op in ops_by_order]
-    return ops, len(submits)
+    incomplete_submits: list[UsbOp] = []
+    for submit in submits.values():
+        incomplete_submits.append(UsbOp(
+            frame_number=submit.frame_number, bus=submit.bus, device_address=submit.device_address,
+            endpoint=submit.endpoint, transfer_type=submit.transfer_type, setup=submit.setup,
+            data=b"" if submit.endpoint & 0x80 else submit.data, status=0, submit_time=submit.timestamp,
+            completion_time=submit.timestamp))
+    return ops, incomplete_submits

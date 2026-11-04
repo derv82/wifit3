@@ -63,6 +63,9 @@ class CaptureReplay:
         self.divergence: Divergence | None = None
         self.refused_read_by_caller: dict[str, RefusedRead] = {}
         self.driver_closing = False
+        # The request the capture ends in, never completed: from it on, requests are past the capture, not compared.
+        self.truncated_request: UsbOp | None = None
+        self.past_capture_end = False
         # Per thread the driver started itself (its RX reader): PROCESSING_REPLY, or the endpoint it waits on.
         self._driver_thread_state: dict[threading.Thread, int] = {}
         self._loop = loop
@@ -92,7 +95,10 @@ class CaptureReplay:
             while True:
                 position = self._next_unreproduced(start)
                 if position is None:
-                    if self.driver_closing:
+                    if self.driver_closing or self.past_capture_end:
+                        return None
+                    if self.truncated_request is not None and self._is_same_request(self.truncated_request, request):
+                        self.past_capture_end = True
                         return None
                     racing_reply = self._racing_extra_reply(request, caller)
                     if racing_reply is not None:

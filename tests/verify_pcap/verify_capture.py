@@ -16,7 +16,7 @@ import usb.util
 from tests.verify_pcap.capture_replay import WAIVED, CaptureReplay, Divergence, is_bulk_or_interrupt_in
 from tests.verify_pcap.fake_usb_device import (
     INTERFACE_CLASS_VENDOR_SPECIFIC, LINUX_ESHUTDOWN, REQUEST_TYPE_CLASS, REQUEST_TYPE_MASK, REQUEST_TYPE_STANDARD,
-    FakeUsbDevice, find_chip_descriptors, parse_configuration_descriptor)
+    REQUEST_TYPE_VENDOR, FakeUsbDevice, find_chip_descriptors, parse_configuration_descriptor)
 from tests.verify_pcap.usb_capture import TransferType, UsbOp, pair_submits_with_completions, read_usbmon_records
 from tests.verify_pcap.virtual_clock_loop import (
     MAIN_CALLER, DriverThreadPool, VirtualClockEventLoop)
@@ -171,6 +171,8 @@ class LoadedCapture:
     configuration_descriptor: bytes
     device_id: DeviceID
     ignored_counts: Counter[str]
+    # The driver request the capture ends in, submitted after the device's last completion; None if it ends idle.
+    truncated_request: UsbOp | None = None
 
 
 class VerifyCapture:
@@ -234,6 +236,7 @@ class VerifyCapture:
 
         replay = CaptureReplay(capture.ops, is_same_request, is_driver_only_request, skip_capture_only_run_at,
                                self.DECODER.is_racing_extra_request, loop)
+        replay.truncated_request = capture.truncated_request
         device = FakeUsbDevice(replay, capture.device_descriptor, capture.configuration_descriptor,
                                capture.device_id.bus or 0, capture.device_id.address or 0)
 
@@ -483,7 +486,7 @@ class VerifyCapture:
         await wait_until_idle()
 
     def load_capture(self, capture_path: Path) -> LoadedCapture:
-        all_ops, incomplete_count = pair_submits_with_completions(read_usbmon_records(capture_path))
+        all_ops, incomplete_submits = pair_submits_with_completions(read_usbmon_records(capture_path))
         found = find_chip_descriptors(all_ops, self.SUPPORTED_IDS)
         if found is None:
             pytest.fail(f"{capture_path.name}: no plug-in of a SUPPORTED_IDS device "
@@ -496,7 +499,7 @@ class VerifyCapture:
                     other_interface_endpoints.add(endpoint.bEndpointAddress)
 
         ignored_counts: Counter[str] = Counter()
-        ignored_counts[IGNORED_INCOMPLETE] = incomplete_count
+        ignored_counts[IGNORED_INCOMPLETE] = len(incomplete_submits)
         driver_ops: list[UsbOp] = []
         for position, op in enumerate(all_ops):
             if (op.bus, op.device_address) != (device_id.bus, device_id.address):
@@ -517,8 +520,22 @@ class VerifyCapture:
                 ignored_counts[IGNORED_RX] += 1
             else:
                 driver_ops.append(op)
+        last_frame_number = 0
+        for op in all_ops:
+            if (op.bus, op.device_address) == (device_id.bus, device_id.address):
+                last_frame_number = max(last_frame_number, op.frame_number)
+        truncated_request: UsbOp | None = None
+        for submit in sorted(incomplete_submits, key=lambda incomplete: incomplete.frame_number):
+            if ((submit.bus, submit.device_address) == (device_id.bus, device_id.address)
+                    and submit.frame_number > last_frame_number and not is_bulk_or_interrupt_in(submit)
+                    and submit.endpoint not in other_interface_endpoints
+                    and (submit.transfer_type != TransferType.CONTROL
+                         or (submit.request_type & REQUEST_TYPE_MASK == REQUEST_TYPE_VENDOR
+                             and self.DECODER.is_driver_vendor_request(all_ops + [submit], len(all_ops))))):
+                truncated_request = submit
+                break
         return LoadedCapture(driver_ops, device_descriptor, configuration_descriptor, device_id,
-                             ignored_counts)
+                             ignored_counts, truncated_request)
 
     def format_dump(self, capture_path: Path, replay: CaptureReplay, divergence: Divergence) -> str:
         ops = replay.ops
