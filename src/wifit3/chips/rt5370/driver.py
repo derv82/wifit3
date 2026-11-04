@@ -68,9 +68,9 @@ class RT5370Driver(Driver):
         self._vgc_level: Optional[int] = None            # last BBP66 the tuner wrote
         self._agc_task: Optional[asyncio.Task] = None
         self._bulk_in_ep: Optional[int] = None
-        self._bulk_out_ep: Optional[int] = None
+        self._tx_queue_eps: list[int] = []    # bulk-OUT endpoint per TX queue id
         self._tx_seq: int = 0            # running 802.11 seq stamped into injected frames
-        self._tx_entry_index: int = 0    # AC_VO queue Q_INDEX [SRC rt2x00queue.c:670]
+        self._tx_entry_index: list[int] = [0] * C.NUM_TX_QUEUES   # Q_INDEX per TX queue [SRC rt2x00queue.c:670]
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
@@ -160,9 +160,15 @@ class RT5370Driver(Driver):
 
         eps = probe_endpoints(self.transport.dev)
         self._bulk_in_ep = eps.primary_bulk_in
-        # MGMT/inject frames go on the first TX queue's endpoint = the lowest-numbered
-        # bulk-OUT (rt2x00usb assigns endpoints to queues in descriptor order).
-        self._bulk_out_ep = min(eps.bulk_out) if eps.bulk_out else None
+        # Bulk-OUTs go to the TX queues in descriptor order; a queue past the last one shares
+        # it [SRC rt2x00usb.c:599-647 rt2x00usb_find_endpoints].
+        self._tx_queue_eps = []
+        if eps.bulk_out:
+            for qid in range(C.NUM_TX_QUEUES):
+                if qid < len(eps.bulk_out):
+                    self._tx_queue_eps.append(eps.bulk_out[qid])
+                else:
+                    self._tx_queue_eps.append(eps.bulk_out[-1])
         mode = "WARM reattach (skipped FW + init)" if self.is_warm else "cold bring-up"
         # Kernel rt2800_init_eeprom RF-chip resolution, ported so this driver runs on ANY
         # 148f:5370 card regardless of the EEPROM RF / antenna / BT burn. [SRC rt2800lib.c:11187].
@@ -253,14 +259,14 @@ class RT5370Driver(Driver):
         return True
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Transmit one 802.11 frame (e.g. deauth / WEP replay) on the MGMT bulk-OUT pipe.
+        """Transmit one 802.11 frame (e.g. deauth / WEP replay) on its AC queue's bulk-OUT pipe.
         The TXWI ACK bit is set ON so the chip retries up to the global TX_RTY_CFG
         SHORT_RTY_LIMIT (mac80211 default 7, set at monitor entry). The seq is
         already stamped by the base. Explicit-action only — nothing on the scan/connect path
         calls this [[passive_by_default]]. Serialized via ``_io_lock`` so it never races a retune."""
         if not frame_bytes:
             return False
-        if self._bulk_out_ep is None:
+        if not self._tx_queue_eps:
             logger.error("RT5370 inject: no bulk-OUT endpoint")
             return False
         loop = asyncio.get_running_loop()
@@ -284,12 +290,13 @@ class RT5370Driver(Driver):
         # an in-flight (or cancelled-but-draining) channel tune on the USB device. ACK bit ON
         # for a unicast addr1 so the chip requests the AP's ACK + retries un-ACKed frames.
         with self._hw_lock:
-            tx.send_frame(self.transport.dev, self._bulk_out_ep, frame, self._tx_entry_index,
+            qid = tx.select_queue(frame)
+            tx.send_frame(self.transport.dev, self._tx_queue_eps[qid], frame, qid, self._tx_entry_index[qid],
                           use_no_ack=bool(frame[4] & 0x01))
             # rt2x00queue_index_inc(entry, Q_INDEX) [SRC rt2x00queue.c:703, 877-879]
-            self._tx_entry_index += 1
-            if self._tx_entry_index >= C.TX_QUEUE_LIMIT:
-                self._tx_entry_index = 0
+            self._tx_entry_index[qid] += 1
+            if self._tx_entry_index[qid] >= C.TX_QUEUE_LIMIT:
+                self._tx_entry_index[qid] = 0
 
     def _stamp_tx_seq(self, frame: bytes) -> bytes:
         """Stamp the next running sequence number into the frame's seqctl (bytes 22-23,
