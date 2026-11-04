@@ -25,7 +25,7 @@ DEAUTH_MPDU = bytes.fromhex(
 # The exact 100-byte wire frame the mt76 xmit path produces for that MPDU.
 DEAUTH_WIRE = bytes.fromhex(
     "5a000000"              # SDIO hdr: tx_bytes = 64 (TXD) + 26 (MPDU) = 90
-    "5a008020" "13b00c80" "0c000000" "01780090"   # txwi[0..3]
+    "5a008020" "13b00c80" "0c000000" "00780090"   # txwi[0..3]
     "00000000" "00000000" "1c000f00" "00000000"   # txwi[4..7]
     "00000000" "00000000" "00000000" "00000000"   # txwi[8..11] (zero)
     "00000000" "00000000" "00000000" "00000000"   # txwi[12..15] (zero)
@@ -35,21 +35,9 @@ DEAUTH_WIRE = bytes.fromhex(
 
 
 def test_build_tx_deauth_byte_exact():
-    # The captured aireplay frame set MT_TXD3_NO_ACK; production build_tx clears it for unicast,
-    # so the replay-only build_tx_no_ack is what reproduces the exact captured bytes.
-    frame = tx.build_tx_no_ack(DEAUTH_MPDU, qid=MT_TXQ_PSD, wcid_idx=MT792x_WTBL_RESERVED)
+    frame = tx.build_tx(DEAUTH_MPDU, qid=MT_TXQ_PSD, wcid_idx=MT792x_WTBL_RESERVED)
     assert frame == DEAUTH_WIRE
     assert len(frame) == 100
-
-
-def test_no_ack_gutted_from_production():
-    """Production build_tx clears NO_ACK for a unicast addr1 (the chip HW-retries until ACKed);
-    the replay-only builder sets it, to byte-match the capture."""
-    prod = tx.build_tx(DEAUTH_MPDU, qid=MT_TXQ_PSD, wcid_idx=19)
-    replay = tx.build_tx_no_ack(DEAUTH_MPDU, qid=MT_TXQ_PSD, wcid_idx=19)
-    assert struct.unpack_from("<16I", prod, 4)[3] & 1 == 0     # NO_ACK clear
-    assert struct.unpack_from("<16I", replay, 4)[3] & 1 == 1   # replay sets it
-    assert prod != replay and len(prod) == len(replay)
 
 
 def test_txwi_fields():

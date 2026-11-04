@@ -204,17 +204,3 @@ def build_tx(mpdu: bytes, *, qid: int, wcid_idx: int, **kw) -> bytes:
     frame = hdr + body
     pad = ((len(frame) + 3) & ~3) - len(frame) + 4
     return frame + b"\x00" * pad
-
-
-# txwi[3] byte offset in the framed TX: 4-byte SDIO hdr + dword 3 of the TXD.
-_TXWI3_OFF = SDIO_HDR_SIZE + 3 * 4
-
-
-def build_tx_no_ack(mpdu: bytes, *, qid: int, wcid_idx: int, **kw) -> bytes:
-    """Replay-only. The aireplay frames in the mt7925u TX capture set MT_TXD3_NO_ACK, which
-    the production `build_tx` sets only for a group addr1 (a unicast addr1 HW-retries until
-    ACKed). verify_pcap uses this to byte-match those exact captured frames.
-    NOT an inject path: nothing in the driver calls it."""
-    frame = bytearray(build_tx(mpdu, qid=qid, wcid_idx=wcid_idx, **kw))
-    frame[_TXWI3_OFF] |= MT_TXD3_NO_ACK          # txwi[3] bit0 (little-endian low byte)
-    return bytes(frame)
