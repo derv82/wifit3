@@ -70,6 +70,7 @@ from wifit3.chips.rtl8812au.driver import RTL8812AUDriver
 from wifit3.chips.rtl8812au_dkms.driver import Rtl8812auDkmsDriver
 from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
 from wifit3.chips.rtl8821au.driver import RTL8821AUDriver
+from wifit3.chips.rtl8821au_dkms import watchdog as rtl8821au_dkms_watchdog
 from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
 from wifit3.chips.rtl8821cu_dkms.driver import Rtl8821cuDkmsDriver
 from wifit3.chips.rtl8822bu.driver import RTL8822BUDriver
@@ -252,6 +253,9 @@ def build_rtl8821au(dev: RecordingUsbDevice) -> Driver:
 def build_rtl8821au_dkms(dev: RecordingUsbDevice) -> Driver:
     driver = Rtl8821auDkmsDriver.from_usb_device(dev, first_id(rtl8821au_dkms.SUPPORTED_IDS))
     driver._channel = 1
+    driver._dm = rtl8821au_dkms_watchdog.DmState(
+        cur_ig_value=0x20, nhm_igi=0x20, rrsr_val_init=0x15F, h2l_lb=0, l2h_lb=0, eeprom_thermal=0xFF,
+        default_ofdm_index=24, bb_swing_diff_2g=0, bb_swing_diff_5g=0)
     return driver
 
 
