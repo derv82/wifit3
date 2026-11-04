@@ -40,6 +40,7 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         self.virtual_time = start_time
         self.is_driver_idle = is_driver_idle
         self.latest_timer_by_task: dict[asyncio.Task[Any], asyncio.TimerHandle] = {}
+        self.fired_timers: set[asyncio.TimerHandle] = set()
         self._timer_lock = threading.Lock()
         self.pending_executor_call_count = 0
 
@@ -63,11 +64,21 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
 
     def call_at(self, when: float, callback: Callable[..., object], *args: Any,
                 context: Any = None) -> asyncio.TimerHandle:
-        handle = super().call_at(when, callback, *args, context=context)
         task = asyncio.current_task(self)
-        if task is not None and task.get_name() != MAIN_CALLER:
+        if task is None or task.get_name() == MAIN_CALLER:
+            return super().call_at(when, callback, *args, context=context)
+
+        def record_fired_and_run(*callback_args: Any) -> None:
             with self._timer_lock:
-                self.latest_timer_by_task[task] = handle
+                self.fired_timers.add(handle)
+            callback(*callback_args)
+
+        handle = super().call_at(when, record_fired_and_run, *args, context=context)
+        with self._timer_lock:
+            previous_handle = self.latest_timer_by_task.get(task)
+            if previous_handle is not None:
+                self.fired_timers.discard(previous_handle)
+            self.latest_timer_by_task[task] = handle
         return handle
 
     def earliest_due_driver_timer(self) -> float | None:
@@ -76,7 +87,7 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         with self._timer_lock:
             timers = list(self.latest_timer_by_task.items())
         for task, handle in timers:
-            if task.done() or handle.cancelled() or handle.when() > self.virtual_time:
+            if task.done() or handle not in self.fired_timers:
                 continue
             if earliest is None or handle.when() < earliest:
                 earliest = handle.when()
