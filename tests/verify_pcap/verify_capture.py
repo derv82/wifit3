@@ -55,23 +55,36 @@ class RegisterOp:
 
 
 @dataclass(frozen=True)
+class TxOpField:
+    """Bits ``shift`` .. ``shift + width - 1`` of little-endian dword ``dword`` of a bulk-OUT TX op's data."""
+    dword: int
+    shift: int
+    width: int
+
+
+@dataclass(frozen=True)
 class Waiver:
-    """value_only_register: the driver makes the op; that register's written value is not compared.
-    capture_only_run: this exact contiguous run of register ops is in the capture only; not reproduced."""
+    """value_only_register / value_only_tx_op_field: the driver makes the op; that register's written value or that
+    TX op field is not compared. capture_only_run: this run of register ops is in the capture only."""
     reason: WaiverReason
     c_source: str
     value_only_register: int | None = None
     capture_only_run: tuple[RegisterOp, ...] = ()
+    value_only_tx_op_field: TxOpField | None = None
 
     def __post_init__(self) -> None:
-        if self.value_only_register is None and not self.capture_only_run:
-            raise ValueError("a Waiver needs value_only_register or capture_only_run")
-        if self.value_only_register is not None and self.capture_only_run:
-            raise ValueError("a Waiver takes value_only_register or capture_only_run, not both")
+        forms = [self.value_only_register is not None, bool(self.capture_only_run),
+                 self.value_only_tx_op_field is not None]
+        if forms.count(True) != 1:
+            raise ValueError("a Waiver takes one of value_only_register, capture_only_run, "
+                             "value_only_tx_op_field")
 
     def describe(self) -> str:
+        field = self.value_only_tx_op_field
         if self.value_only_register is not None:
             ops_text = f"value of 0x{self.value_only_register:04x} not compared"
+        elif field is not None:
+            ops_text = f"TX op dword {field.dword} bits {field.shift}..{field.shift + field.width - 1} not compared"
         else:
             ops_text = f"capture-only run of {len(self.capture_only_run)} register ops"
         return f"{self.reason.name} {ops_text} [{self.c_source}]"
@@ -95,6 +108,10 @@ class FamilyDecoder(ABC):
     def register_ops(self, op: UsbOp) -> list[RegisterOp]:
         """The register accesses ``op`` carries, in wire order; WAIVERS match on these."""
         raise NotImplementedError(f"{type(self).__name__} does not list register ops")
+
+    def with_tx_op_fields(self, op: UsbOp, fields: list[TxOpField], source: UsbOp) -> UsbOp:
+        """``op`` with ``source``'s value in each of ``fields``; WAIVERS compare through this."""
+        raise NotImplementedError(f"{type(self).__name__} does not edit TX ops")
 
 
 @dataclass(frozen=True)
@@ -121,6 +138,9 @@ class VerifyCapture:
         for waiver in self.WAIVERS:
             if waiver.value_only_register is not None:
                 positions = self.register_write_positions(capture.ops, waiver.value_only_register)
+            elif waiver.value_only_tx_op_field is not None:
+                positions = [position for position in range(len(capture.ops))
+                             if self.DECODER.injected_frame_at(capture.ops, position) is not None]
             else:
                 positions = self.capture_only_run_positions(capture.ops, waiver.capture_only_run)
                 waived_positions.update(positions)
@@ -186,6 +206,13 @@ class VerifyCapture:
         """``captured.same_request(request)``, except a value_only_register's value: each differing byte, put
         alone into the captured op, must change only value_only_register write values in its register ops."""
         if captured.same_request(request):
+            return True
+        tx_op_fields: list[TxOpField] = []
+        for waiver in self.WAIVERS:
+            if waiver.value_only_tx_op_field is not None:
+                tx_op_fields.append(waiver.value_only_tx_op_field)
+        if (tx_op_fields
+                and self.DECODER.with_tx_op_fields(captured, tx_op_fields, request).same_request(request)):
             return True
         value_only_registers: set[int] = set()
         for waiver in self.WAIVERS:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import struct
 
 from tests.verify_pcap.ath9k_htc_decoder import Ath9kHtcDecoder
-from tests.verify_pcap.realtek_decoder import REALTEK_USB_CMD_REQ, RealtekDecoder
+from tests.verify_pcap.realtek_decoder import HALMAC_TX_DESC_SW_SEQ, REALTEK_USB_CMD_REQ, RealtekDecoder
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
 from tests.verify_pcap.verify_capture import RegisterAccess, RegisterOp, VerifyCapture, Waiver, WaiverReason
 from wifit3.chips.ar9271_v2 import constants as C, reg as R, wmi
@@ -152,3 +152,30 @@ def test_realtek_capture_only_run_matches_a_read_and_a_write() -> None:
            realtek_read(REALTEK_OTHER_REGISTER, 0x1), realtek_write(REALTEK_OTHER_REGISTER, 0x2),
            realtek_read(REALTEK_OTHER_REGISTER, 0x2), realtek_write(REALTEK_OTHER_REGISTER, 0x3)]
     assert RealtekCaptureOnlyRun().capture_only_run_positions(ops, REALTEK_RUN) == [1, 2]
+
+
+def realtek_tx(sw_seq: int, checksum: int) -> UsbOp:
+    words = [0] * 12
+    words[0] = 0x3005002A
+    words[7] = checksum
+    words[9] = sw_seq << 12
+    data = struct.pack("<12I", *words) + bytes(24)
+    return UsbOp(frame_number=0, bus=1, device_address=2, endpoint=0x05, transfer_type=TransferType.BULK,
+                 setup=None, data=data, status=0, submit_time=0.0, completion_time=0.0)
+
+
+class RealtekSwSeqValueOnly(VerifyCapture):
+    DECODER = RealtekDecoder(tx_descriptor_size=48)
+    WAIVERS = [Waiver(WaiverReason.WIFIT3_ONLY, "synthetic", value_only_tx_op_field=HALMAC_TX_DESC_SW_SEQ)]
+
+
+def test_tx_op_field_accepts_a_different_value_with_its_checksum() -> None:
+    captured = realtek_tx(sw_seq=0, checksum=0x3005 ^ 0x002A)
+    request = realtek_tx(sw_seq=1, checksum=0x3005 ^ 0x002A ^ 0x1000)
+    assert RealtekSwSeqValueOnly().is_same_request_except_waived_values(captured, request)
+
+
+def test_tx_op_field_compares_the_checksum() -> None:
+    captured = realtek_tx(sw_seq=0, checksum=0x3005 ^ 0x002A)
+    request = realtek_tx(sw_seq=1, checksum=0x3005 ^ 0x002A)
+    assert not RealtekSwSeqValueOnly().is_same_request_except_waived_values(captured, request)

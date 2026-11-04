@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import struct
+from dataclasses import replace
 from typing import Sequence
 
 from tests.verify_pcap.usb_capture import TransferType, UsbOp
-from tests.verify_pcap.verify_capture import FamilyDecoder, RegisterAccess, RegisterOp
+from tests.verify_pcap.verify_capture import FamilyDecoder, RegisterAccess, RegisterOp, TxOpField
 from wifit3.chips.rtl8192fu import constants as C
 
 REALTEK_USB_CMD_REQ = 0x05
 RXDESC24_SIZE = 24
 RXDESC24_RPT_SEL = 1 << 28
 LSSI_DATA_MASK = 0xFFFFF
+TX_DESCRIPTOR_CHECKSUM_OFFSET = 7 * 4
+# halmac 48-byte TX descriptor (rtl8822c)
+HALMAC_TX_DESC_RTS_DATA_RTY_LMT = TxOpField(dword=4, shift=18, width=6)
+HALMAC_TX_DESC_SW_SEQ = TxOpField(dword=9, shift=12, width=12)
 
 REGISTER_NAMES = {
     C.REG_RF_CTRL: "RF_CTRL", C.REG_RCR: "RCR", C.REG_BEACON_CTRL: "BEACON_CTRL", C.REG_TXPAUSE: "TXPAUSE",
@@ -120,6 +125,28 @@ class RealtekDecoder(FamilyDecoder):
         if op.is_in:
             return [RegisterOp(RegisterAccess.READ, op.value, None)]
         return [RegisterOp(RegisterAccess.WRITE, op.value, int.from_bytes(op.data, "little"))]
+
+    def with_tx_op_fields(self, op: UsbOp, fields: list[TxOpField], source: UsbOp) -> UsbOp:
+        """The dword 7 [15:0] XOR checksum changes by a descriptor field's changed halfwords (fields in its coverage)."""
+        if (op.transfer_type != TransferType.BULK or op.is_in or len(op.data) < self.tx_descriptor_size
+                or len(source.data) != len(op.data)):
+            return op
+        data = bytearray(op.data)
+        checksum_change = 0
+        for field in fields:
+            if 4 * field.dword + 4 > len(data):
+                continue
+            mask = ((1 << field.width) - 1) << field.shift
+            dword = struct.unpack_from("<I", data, 4 * field.dword)[0]
+            source_dword = struct.unpack_from("<I", source.data, 4 * field.dword)[0]
+            new_dword = (dword & ~mask) | (source_dword & mask)
+            struct.pack_into("<I", data, 4 * field.dword, new_dword)
+            if 4 * field.dword < self.tx_descriptor_size:
+                changed_bits = dword ^ new_dword
+                checksum_change ^= (changed_bits & 0xFFFF) ^ (changed_bits >> 16)
+        checksum = struct.unpack_from("<H", data, TX_DESCRIPTOR_CHECKSUM_OFFSET)[0]
+        struct.pack_into("<H", data, TX_DESCRIPTOR_CHECKSUM_OFFSET, checksum ^ checksum_change)
+        return replace(op, data=bytes(data))
 
     def carries_only_80211_frames(self, op: UsbOp) -> bool:
         """Bulk IN with no rxdesc24 rpt_sel packet; C2H (rpt_sel) stays in the replay for the driver."""
