@@ -442,3 +442,5 @@ def MT_PLE_AMSDU_PACK_MSDU_CNT(n): return MT_PLE_BASE + 0x10e0 + (n << 2)   # :2
 def MT_TX_AGG_CNT(b, n):  return MT_WF_MIB_BASE(b) + 0x7dc + (n << 2)   # :152
 def MT_TX_AGG_CNT2(b, n): return MT_WF_MIB_BASE(b) + 0x7ec + (n << 2)   # :153
 MT792x_MIB_TX_AMSDU_LEN = 8   # ARRAY_SIZE(mib->tx_amsdu)
+HZ = 250                      # CONFIG_HZ of the captured Kali kernel; jiffies per second
+MT792x_WATCHDOG_TIME = HZ // 4  # mt792x.h:38, in jiffies

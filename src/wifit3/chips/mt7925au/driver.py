@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import struct
 from pathlib import Path
@@ -6,7 +7,7 @@ from typing import Callable, Optional
 import usb.core
 
 from . import init as chip_init
-from . import mcu, rx, tx
+from . import mac, mcu, rx, tx
 from .transport import MT7925AUTransport
 from .firmware import MT7925AUFirmwareLoader
 # ruff: noqa: F403, F405
@@ -54,6 +55,9 @@ class MT7925AUDriver(Driver):
         self._tx_seq: int = 0
         # The monitor link's TX wcid (mt7925/main.c:390: MT792x_WTBL_RESERVED - vif idx 0).
         self._tx_wcid: int = MT792x_WTBL_RESERVED
+        # dev->mt76.mutex (mt792x_mutex_acquire).
+        self._mutex = asyncio.Lock()
+        self._mac_work_task: Optional[asyncio.Task] = None
 
     def register_rx_callback(self, callback: Callable[[dict], None]):
         self._rx_callback = callback
@@ -142,6 +146,8 @@ class MT7925AUDriver(Driver):
 
         if progress_cb:
             progress_cb(0.9, "Enabling monitor mode...")
+        await chip_init.start(self.transport)
+        self._mac_work_task = asyncio.get_running_loop().create_task(self._mac_work())
         await chip_init.enter_monitor(self.transport, self._channel)
         if progress_cb:
             progress_cb(1.0, "Done")
@@ -150,9 +156,10 @@ class MT7925AUDriver(Driver):
         return True
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """Tune to a 20 MHz channel via the monitor sniffer config (UNI SNIFFER, tag 1)."""
-        cmd, payload = mcu.config_sniffer(channel)
-        await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
+        """Tune to a 20 MHz channel: mt7925_change_chanctx for the monitor vif (main.c:1780-1782)."""
+        async with self._mutex:
+            await self.transport.send_mcu_command(*mcu.set_sniffer(True))
+            await self.transport.send_mcu_command(*mcu.config_sniffer(channel))
         self._channel = channel
         return True
 
@@ -209,7 +216,32 @@ class MT7925AUDriver(Driver):
         """No-op, matching _enable_rx_acks: nothing was toggled to admit ACKs."""
         return None
 
+    async def _mac_work(self) -> None:
+        """mt792x_mac_work (mt792x_mac.c:9): survey every tick, MIB stats every 2nd, re-armed
+        MT792x_WATCHDOG_TIME after its own run (queued by __mt7925_start, main.c:332)."""
+        mac_work_count = 0
+        try:
+            while True:
+                await asyncio.sleep(MT792x_WATCHDOG_TIME / HZ)
+                async with self._mutex:
+                    mac.update_survey(self.transport)
+                    mac_work_count += 1
+                    if mac_work_count == 2:
+                        mac_work_count = 0
+                        mac.update_mib_stats(self.transport)
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 — a stats fault must not kill RX
+            logger.exception("MT7925AU mac_work stopped on error")
+
     async def close(self):
+        if self._mac_work_task is not None:
+            self._mac_work_task.cancel()
+            try:
+                await self._mac_work_task
+            except asyncio.CancelledError:
+                pass
+            self._mac_work_task = None
         await self.transport.stop_rx()
 
     def _on_raw_rx(self, data: bytes):

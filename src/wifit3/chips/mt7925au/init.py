@@ -60,15 +60,17 @@ async def post_boot_init(transport: MT7925AUTransport) -> InitState:
     return InitState(caps=caps)
 
 
-async def enter_monitor(transport: MT7925AUTransport, channel: int) -> None:
-    """Bring the chip into monitor mode on ``channel`` (the mac80211 start +
-    add_interface + config(MONITOR) + configure_filter path)."""
-    t = transport
-    # __mt7925_start (mt7925/main.c:316).
+async def start(t: MT7925AUTransport) -> None:
+    """__mt7925_start (mt7925/main.c:316) up to the mac_work queue, which the driver owns."""
     await t.send_mcu_command(*mcu.set_channel_domain())
     await t.send_mcu_command(*mcu.set_rts_thresh())
-    # __mt7925_start: reset the MIB counters, then add the monitor vif.
     mac.reset_counters(t)
+
+
+async def enter_monitor(transport: MT7925AUTransport, channel: int) -> None:
+    """Bring the chip into monitor mode on ``channel`` (the mac80211 add_interface +
+    config(MONITOR) + configure_filter path)."""
+    t = transport
     _wtbl_update(t, MT792x_WTBL_RESERVED)
     await t.send_mcu_command(*mcu.uni_dev_info(True))
     await t.send_mcu_command(*mcu.uni_bss_info(True))
