@@ -212,8 +212,8 @@ EP_OUT_HCCA  = 0x09   # MT_EP_OUT_HCCA: qid == MT_TXQ_PSD
 MT_VEND_POWER_ON       = 0x04   # mt792xu_mcu_power_on: wValue=0, wIndex=1
 
 # Registers
-MT_HW_CHIPID           = 0x70010200  # mt792x_regs.h:400 — lower 16 bits = chip id
-MT_HW_REV              = 0x70010204  # mt792x_regs.h:401 — ASIC revision
+MT_HW_CHIPID           = 0x70010200  # mt792x_regs.h:394 — lower 16 bits = chip id
+MT_HW_REV              = 0x70010204  # mt792x_regs.h:395 — ASIC revision
 MT_CHIP_ID_EXPECTED    = 0x7961  # MT7921AU (USB variant); PCI variant would be 0x7921
 MT_USB_SCRATCH_ADDR    = 0x00000410
 # MT_UMAC(0x008) — accessed via unified bus (0x5F/0xDF), confirmed from pcap
@@ -311,7 +311,7 @@ MT_TOP_MISC2_FW_N9_RDY    = 0x3     # GENMASK(1,0): firmware fully ready
 # ===========================================================================
 # Post-boot device init. All reachable over the unified bus (0x5F/0xDF) like
 # dma_init — verified from the capture. Addresses/masks grepped verbatim from
-# driver_sources/mt76-source-v6.18/{mt7921/regs.h, mt792x_regs.h}.
+# driver_sources/mt76-source-v6.19.14/{mt7921/regs.h, mt792x_regs.h}.
 # ===========================================================================
 
 # EFUSE buffer mode (mt76_connac_mcu.h EE_MODE_* / EE_FORMAT_*).

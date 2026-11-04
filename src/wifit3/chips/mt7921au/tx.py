@@ -48,7 +48,7 @@ _CATEGORY_PROTECTED_DUAL_OF_ACTION = 9   # WLAN_CATEGORY_PROTECTED_DUAL_OF_ACTIO
 _PUB_ACTION_FTM_REQUEST = 32   # WLAN_PUB_ACTION_FTM_REQUEST
 _PUB_ACTION_FTM_RESPONSE = 33  # WLAN_PUB_ACTION_FTM_RESPONSE
 _FTM_ACTION_CODE_END = 26      # offsetofend(struct ieee80211_mgmt, u.action.u.ftm.action_code)
-_RFC1042_HEADER = b"\xaa\xaa\x03\x00\x00\x00"   # rfc1042_header (net/wireless/util.c:2680)
+_RFC1042_HEADER = b"\xaa\xaa\x03\x00\x00\x00"   # rfc1042_header (net/wireless/util.c:2681)
 _ETH_P_PAE = b"\x88\x8e"       # ETH_P_PAE, big-endian as skb->protocol
 # mac80211 ieee802_1d_to_ac (wme.c): an 802.1d priority's AC.
 _IEEE802_1D_TO_AC = (MT_TXQ_BE, MT_TXQ_BK, MT_TXQ_BK, MT_TXQ_BE, MT_TXQ_VI, MT_TXQ_VI, MT_TXQ_VO, MT_TXQ_VO)

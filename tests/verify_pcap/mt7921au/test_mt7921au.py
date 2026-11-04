@@ -54,7 +54,7 @@ class TestMt7921au(VerifyCapture):
                "keeps its own", value_only_tx_op_field=FRAME_SEQUENCE_NUMBER),
         Waiver(WaiverReason.WIFIT3_ONLY, "mt76_connac_mac.c:478-480 mt76_connac2_mac_write_txwi_80211 copies the "
                "injected frame's seq_ctrl into MT_TXD3_SEQ; wifit3 only: _stamp_tx_seq", value_only_tx_op_field=TXD3_SEQ),
-        Waiver(WaiverReason.CAPTURE_SETUP, "mt76_connac_mac.c:563-564 mt76_connac2_mac_write_txwi MT_TXD3_NO_ACK: "
+        Waiver(WaiverReason.CAPTURE_SETUP, "mt76_connac_mac.c:564-565 mt76_connac2_mac_write_txwi MT_TXD3_NO_ACK: "
                "aireplay-ng's radiotap TX flags set NOACK, so mac80211 sets IEEE80211_TX_CTL_NO_ACK",
                value_only_tx_op_field=TXD3_NO_ACK),
     ]

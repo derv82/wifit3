@@ -12,9 +12,9 @@ from wifit3.chips.mt7925au.driver import MT7925AUDriver
 CAPTURES_DIR = Path(__file__).resolve().parents[3] / "driver_captures"
 RX_CAPTURE_DIR = CAPTURES_DIR / "captures_mt7925u"
 TX_CAPTURE_DIR = CAPTURES_DIR / "captures_mt7925u_tx"
-CONFIGURE_FILTER_SOURCE = ("main.c:778-804 mt7925_configure_filter: mac80211 re-applies the monitor filter as "
+CONFIGURE_FILTER_SOURCE = ("main.c:786-812 mt7925_configure_filter: mac80211 re-applies the monitor filter as "
                            "capture tools open their sockets, MCU BAND_CONFIG tag 12 fif 0x80000060")
-# mcu.c:3791-3820 mt7925_mcu_set_rxfilter(dev, 0x80000060, 0, 0): band_idx, tag, len, mode, fif, bit_map, bit_op, pad.
+# mcu.c:3845-3874 mt7925_mcu_set_rxfilter(dev, 0x80000060, 0, 0): band_idx, tag, len, mode, fif, bit_map, bit_op, pad.
 MONITOR_RX_FILTER_PAYLOAD = struct.pack("<B3xHHB3xIIB51x", 0, 12, 68, 0, 0x80000060, 0, 0)
 # MT_TXD3_SEQ: txwi[3] bits 16..27, after the 4-byte SDIO header.
 TXD3_SEQ = TxOpField(dword=(C.SDIO_HDR_SIZE + 3 * 4) // 4, shift=16, width=12)

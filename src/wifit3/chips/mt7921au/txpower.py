@@ -94,7 +94,7 @@ def rate_txpower_payloads(caps=None):
     has_2ghz/has_5ghz/has_6ghz, and last_ch (which flags the last batch's last_msg)
     is the last channel of the highest present band — a 1:1 port of
     mt76_connac_mcu_set_rate_txpower + the last_ch pick in mt76_connac_mcu_rate_txpower_band
-    [SRC mt76_connac_mcu.c:2183-2188,2260-2284]. ``caps=None`` (or the reference units,
+    [SRC mt76_connac_mcu.c:2178-2183,2252-2276]. ``caps=None`` (or the reference units,
     all bands present) reproduces the captured wire: 2.4+5+6 GHz, last_ch 233."""
     from . import regdomain as rd
     has_2 = True if caps is None else caps.has_2ghz

@@ -303,7 +303,7 @@ class MT7921AUTransport:
         write afterward to commit the FIFO. Otherwise the MT7921 hardware
         controller holds the data open waiting for a transfer-terminator.
         """
-        # mt76_connac2_mcu_fill_message (mt76_connac_mcu.c:3209-3214) takes a seq before it
+        # mt76_connac2_mcu_fill_message (mt76_connac_mcu.c:3197-3202) takes a seq before it
         # skips the TXD for FW_SCATTER, so every chunk consumes one.
         self._next_mcu_seq()
         frame = bytearray(SDIO_HDR_SIZE + len(chunk))
