@@ -114,19 +114,18 @@ class Map4k:
         return [CalTargetLeg(self._u8(base + i * 5),
                              [self._u8(base + i * 5 + 1 + k) for k in range(4)]) for i in range(n)]
 
-    @property
-    def calTargetPowerCck(self) -> list[CalTargetLeg]:
-        return self._legs(_CALTARGET_CCK, 3)
+    def calTargetPowerCck(self, num_channels: int) -> list[CalTargetLeg]:
+        return self._legs(_CALTARGET_CCK, num_channels)
 
-    @property
-    def calTargetPower2G(self) -> list[CalTargetLeg]:
-        return self._legs(_CALTARGET_2G, 3)
+    def calTargetPower2G(self, num_channels: int) -> list[CalTargetLeg]:
+        """Past its 3 entries, the C reads on into calTargetPower2GHT20 [SRC] eeprom_4k.c:435-437, eeprom.h:153."""
+        return self._legs(_CALTARGET_2G, num_channels)
 
-    @property
-    def calTargetPower2GHT20(self) -> list[CalTargetHt]:
+    def calTargetPower2GHT20(self, num_channels: int) -> list[CalTargetHt]:
+        """Past its 3 entries, the C reads on into calTargetPower2GHT40 [SRC] eeprom_4k.c:438-441, eeprom.h:153."""
         return [CalTargetHt(self._u8(_CALTARGET_2GHT20 + i * 9),
                             [self._u8(_CALTARGET_2GHT20 + i * 9 + 1 + k) for k in range(8)])
-                for i in range(3)]
+                for i in range(num_channels)]
 
     @property
     def ctlIndex(self) -> list[int]:

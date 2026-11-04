@@ -276,9 +276,12 @@ def _set_power_per_rate_table(hw: AthHw, eep: Map4k, chan: Channel, rates: list[
                  R.CTL_11B_EXT, R.CTL_11G_EXT, R.CTL_2GHT40]
     num_ctl_modes = len(ctl_modes) - R.SUB_NUM_CTL_MODES_AT_2G_40   # 20 MHz -> 3
 
-    tp_cck = _legacy_target_powers(eep.calTargetPowerCck, 3, 4, freq)
-    tp_ofdm = _legacy_target_powers(eep.calTargetPower2G, 3, 4, freq)
-    tp_ht20 = _legacy_target_powers(eep.calTargetPower2GHT20, 3, 8, freq)
+    tp_cck = _legacy_target_powers(eep.calTargetPowerCck(R.AR5416_NUM_2G_CCK_TARGET_POWERS),
+                                   R.AR5416_NUM_2G_CCK_TARGET_POWERS, 4, freq)
+    tp_ofdm = _legacy_target_powers(eep.calTargetPower2G(R.AR5416_NUM_2G_20_TARGET_POWERS),
+                                    R.AR5416_NUM_2G_20_TARGET_POWERS, 4, freq)
+    tp_ht20 = _legacy_target_powers(eep.calTargetPower2GHT20(R.AR5416_NUM_2G_20_TARGET_POWERS),
+                                    R.AR5416_NUM_2G_20_TARGET_POWERS, 8, freq)
 
     ctl_index = eep.ctlIndex
     for mode in ctl_modes[:num_ctl_modes]:

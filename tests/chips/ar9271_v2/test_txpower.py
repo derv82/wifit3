@@ -102,3 +102,12 @@ def test_per_rate_power_registers():
     assert w[R.AR_PHY_POWER_TX_RATE5] == 0x26262626   # HT20 0-3
     assert w[R.AR_PHY_POWER_TX_RATE6] == 0x26262626   # HT20 4-7
     assert w[R.AR_PHY_POWER_TX_RATE_MAX] == R.MAX_RATE_POWER   # TPC disabled
+
+
+def test_ch14_ofdm_and_ht20_targets_read_past_their_eeprom_arrays():
+    # 2484 MHz is past the last OFDM / HT20 pier, so the C's 4th entry (AR5416_NUM_2G_20_TARGET_POWERS)
+    # is calTargetPower2GHT20[0] / calTargetPower2GHT40[0]; CCK has a 2484 pier.
+    w = _writes(_run(ch=14))
+    assert w[R.AR_PHY_POWER_TX_RATE1] == 0x26262626   # OFDM <- HT20[0] = 28
+    assert w[R.AR_PHY_POWER_TX_RATE3] == 0x2E2E262E   # CCK 36 + XR
+    assert w[R.AR_PHY_POWER_TX_RATE5] == 0x24242424   # HT20 <- HT40[0] = 26
