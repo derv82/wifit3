@@ -17,7 +17,7 @@ from pathlib import Path
 import usb.core
 import usb.util
 
-from wifit3.errors import BringUpError, is_permission_error
+from wifit3.errors import is_permission_error
 
 from . import mcu
 from .transport import MT7925AUTransport
@@ -63,29 +63,6 @@ class MT7925AUFirmwareLoader:
         iface = self._claim_vendor_interface()
         logger.debug(f"Claimed vendor-specific interface {iface}")
         await asyncio.sleep(0.2)
-
-        # Probe pre-DMA (mt7925u_probe): chip-id then hw-rev (mdev->rev is built from
-        # both, usb.c:197-198), then MT_CONN_ON_MISC for the warm guard.
-        try:
-            chip_id = self.transport.read_reg32(MT_HW_CHIPID)
-            hw_rev = self.transport.read_reg32(MT_HW_REV)
-        except usb.core.USBError as e:
-            if is_permission_error(e):
-                raise BringUpError("permissions", str(e)) from e
-            logger.error(f"Chip-id read failed ({e}). Control endpoint unresponsive — "
-                         "the chip is warm or wedged. PLEASE PHYSICALLY REPLUG the card.")
-            return False
-        if (chip_id & 0xFFFF) != MT_CHIP_ID_EXPECTED:
-            logger.error(f"Unexpected chip ID 0x{chip_id:x} (expected lower 16 = "
-                         f"0x{MT_CHIP_ID_EXPECTED:x})")
-            return False
-        logger.info(f"MT7925 detected: chip_id=0x{chip_id:x} rev=0x{hw_rev & 0xff:02x}")
-
-        misc = self.transport.read_reg32(MT_CONN_ON_MISC)
-        if (misc & MT_TOP_MISC2_FW_N9_RDY) != 0:
-            logger.error(f"load_firmware reached on a warm chip (MT_CONN_ON_MISC=0x{misc:x}); "
-                         "warm chips must take the reattach path. Aborting.")
-            return False
 
         # mt792xu_mcu_power_on: MT_VEND_POWER_ON (OUT, wValue 0, wIndex 1), then poll.
         logger.debug("MCU power-on...")

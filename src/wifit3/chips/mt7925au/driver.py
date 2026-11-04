@@ -13,7 +13,7 @@ from .firmware import MT7925AUFirmwareLoader
 from .constants import *
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.dot11.parser import WlanFrameParser
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, is_permission_error
 
 logger = logging.getLogger(__name__)
 
@@ -60,17 +60,6 @@ class MT7925AUDriver(Driver):
 
     def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
         self.transport._on_fatal = cb
-
-    def _detect_warm(self) -> bool:
-        """True if firmware is already running (FW_N9_RDY set) from a prior session. Claims
-        the vendor interface for register access but does NOT clear-halt or reset — a warm
-        chip must not be cold-booted (mcu_power_on would poison its pipes on WinUSB)."""
-        self.firmware._claim_vendor_interface(clear_halts=False)
-        try:
-            misc = self.transport.read_reg32(MT_CONN_ON_MISC)
-        except usb.core.USBError:
-            return False
-        return (misc & MT_TOP_MISC2_FW_N9_RDY) != 0
 
     async def _warm_reattach(self, progress_cb: Optional[ProgressCallback]) -> bool:
         """Light reattach to firmware already running in monitor mode (kernel mt7921u_resume
@@ -119,7 +108,24 @@ class MT7925AUDriver(Driver):
         """Cold-boot the firmware and enter monitor mode, or light-reattach if firmware is
         already running (warm)."""
         self.transport.subscribe(self._on_raw_rx)
-        if self._detect_warm():
+        # No clear-halt yet: on a warm chip it poisons the pipes on WinUSB.
+        self.firmware._claim_vendor_interface(clear_halts=False)
+
+        # mt7925u_probe (usb.c:197-201): chip-id, hw-rev, then the FW_N9_RDY check. Linux
+        # wfsys-resets a running chip (usb.c:202); wifit3 reattaches to it instead.
+        try:
+            chip_id = self.transport.read_reg32(MT_HW_CHIPID)
+            hw_rev = self.transport.read_reg32(MT_HW_REV)
+        except usb.core.USBError as e:
+            if is_permission_error(e):
+                raise BringUpError("permissions", str(e)) from e
+            raise BringUpError("firmware", f"MT7925AU chip-id read failed ({e}): the control "
+                                           "endpoint is unresponsive. Replug the card.") from e
+        if (chip_id & 0xFFFF) != MT_CHIP_ID_EXPECTED:
+            raise BringUpError("firmware", f"Unexpected chip ID 0x{chip_id:x} (expected lower "
+                                           f"16 = 0x{MT_CHIP_ID_EXPECTED:x})")
+        logger.info(f"MT7925 detected: chip_id=0x{chip_id:x} rev=0x{hw_rev & 0xff:02x}")
+        if self.transport.read_reg32(MT_CONN_ON_MISC) & MT_TOP_MISC2_FW_N9_RDY:
             return await self._warm_reattach(progress_cb)
 
         if progress_cb:
