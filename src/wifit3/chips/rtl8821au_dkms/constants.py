@@ -29,6 +29,7 @@ REG_SYS_FUNC_EN = 0x0002        # :40  (+1 = 0x0003, bit2 = 8051 core gate)
 REG_APS_FSMCO = 0x0004          # :41  (pwr-seq touches 0x04/0x05/0x06 byte-wise)
 REG_SYS_CLKR = 0x0008           # :42
 REG_RSV_CTRL = 0x001C           # :52  (8051 reset wrapper)
+REG_RF_CTRL = 0x001F            # :53
 REG_MULTI_FUNC_CTRL = 0x0068     # :78  (BT_FUNC_EN probe in EFUSE parse)
 REG_MCUFWDL = 0x0080            # :88  (FW download ctrl; +2 = page idx / 8051 rst hold)
 REG_SYS_CFG = 0x00F0            # :102 (no REG_SYS_CFG1/CFG2 in this tree)
@@ -37,6 +38,9 @@ REG_LLT_INIT = 0x01E0           # :159
 REG_HMETFR = 0x01CC             # :153  (H2C trigger; InitializeFirmwareVars8812 writes 0x0F)
 REG_TXDMA_OFFSET_CHK = 0x020C   # :174
 REG_AUTO_LLT = 0x0224           # :179
+
+# --- BB registers [SRC] include/Hal8812PhyReg.h ---
+rFPGA0_XCD_RFPara = 0x08B4      # :424
 
 # --- REG_MCUFWDL (0x0080) bits [SRC] hal_com_reg.h:1269-1276 ---
 MCUFWDL_EN = BIT(0)
@@ -149,6 +153,7 @@ EEPROM_DEFAULT_SUBCUSTOMER_ID = 0xCD
 EEPROM_DEFAULT_BOARD_OPTION = 0x00
 
 BIT_BT_FUNC_EN = BIT(18)
+Ant_x2 = 0                       # hal_pg.h:964 (EEPROMBluetoothAntNum)
 
 # CustomerID values used by hal_ReadIDs_8812AU VID/PID overrides [SRC] include/rtw_eeprom.h.
 EEPROM_CID_DEFAULT = 0x00

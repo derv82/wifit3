@@ -3,9 +3,8 @@
 wifit3 is always-monitor; it never runs airmon's STA->monitor dance. This emits
 just the vendor monitor opmode entry, hw_var_set_opmode(_HW_STATE_MONITOR_)
 [SRC] rtl8812a_hal_init.c:3710 -> Set_MSR(NOLINK) + hw_var_set_monitor (:3663).
-Verified out-of-line against the cold-boot wire (anchored on the RCR write), like
-the 8814au sibling's verify_monitor_block — the ~120 airmon STA-mode ops the
-capture shows before it are intentionally not replayed.
+The captures open the netdev in managed mode first, so they show the STA opmode
+(rtw_hal_init_opmode hal_intf.c:623) before this; a monitor-only open skips it (:514-515).
 
 8821a divergence vs 8814au: the monitor RCR is 0x9000382F — it CLEARS RCR_ACRC32 |
 RCR_AICV ([SRC] :3689, "CRC/ICV packets dropped in recvbuf2recvframe"), so unlike
@@ -50,7 +49,6 @@ def enter_monitor(t) -> None:
 
 
 def _write_mac_addr(t, mac6) -> None:
-    """[SRC] SetHwReg(HW_VAR_MAC_ADDR) — REG_MACID 0x610-0x615. The cold monitor path never
-    sets it; active-monitor re-points it so the hardware HW-ACKs frames to ``mac6``."""
+    """[SRC] rtw_hal_set_macaddr_port (hal_com.c:3254) — REG_MACID 0x610-0x615."""
     for i, b in enumerate(mac6):
         t.write8(REG_MAC_ADDR + i, b)

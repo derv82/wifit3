@@ -83,6 +83,29 @@ def _8051_reset(t) -> None:
     t.write8(C.REG_SYS_FUNC_EN + 1, sysfn | C.BIT2)
 
 
+# --- lightweight deinit [SRC] rtl8812au_hw_reset usb_halinit.c:1271-1310 ---
+def _hw_reset(t) -> None:
+    if not (t.read8(C.REG_MCUFWDL) & C.BIT7):
+        return
+    _8051_reset(t)
+    t.write8(C.REG_MCUFWDL, 0x00)
+    t.write32(C.rFPGA0_XCD_RFPara, t.read32(C.rFPGA0_XCD_RFPara) | C.BIT6)
+    reg_val = t.read8(C.REG_SYS_FUNC_EN)
+    t.write8(C.REG_SYS_FUNC_EN, reg_val & ~(C.BIT0 | C.BIT1))
+    t.write8(C.REG_RF_CTRL, 0)
+    t.write16(C.REG_CR, 0)
+    reg_val = t.read8(C.REG_APS_FSMCO + 1)
+    t.write8(C.REG_APS_FSMCO + 1, reg_val | C.BIT1)       # auto FSM off
+    reg_val = t.read8(C.REG_APS_FSMCO + 1)
+    while reg_val & C.BIT1:
+        reg_val = t.read8(C.REG_APS_FSMCO + 1)
+    t.write8(C.REG_APS_FSMCO + 1, reg_val | C.BIT0)       # auto FSM on
+    reg_val = t.read8(C.REG_SYS_FUNC_EN + 1)
+    t.write8(C.REG_SYS_FUNC_EN + 1, reg_val & ~(C.BIT(4) | C.BIT7))
+    reg_val = t.read8(C.REG_SYS_FUNC_EN + 1)
+    t.write8(C.REG_SYS_FUNC_EN + 1, reg_val | C.BIT(4) | C.BIT7)
+
+
 # --- firmware download [SRC] FirmwareDownload8812 rtl8812a_hal_init.c:146-668 ---
 def _fw_download_enable(t, enable: bool) -> None:
     if enable:
@@ -180,6 +203,10 @@ def download_firmware(t, fw_blob: bytes, delay=time.sleep) -> bool:
 def bring_up(t, fw_blob: bytes, delay=time.sleep) -> bool:
     """Full M1: power-on -> LLT -> drop-bulkout -> FW download -> FW-ready.
     Returns True once WINTINI_RDY is set (wlan CPU running the firmware)."""
+    # rtl8812au_hal_init usb_halinit.c:1417-1448: MAC power-on check (logged only), hw reset
+    t.read8(C.REG_SYS_CLKR + 1)
+    t.read8(C.REG_CR)
+    _hw_reset(t)
     power_on(t, delay)
     init_llt(t)
     init_drop_incorrect_bulkout(t)

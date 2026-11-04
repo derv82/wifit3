@@ -52,14 +52,25 @@ def test_ext_flags_full_decode():
     assert flags == (0x11, 0x08, 0x11, 0x08, True, True, True, True)
 
 
+class _MultiFuncCtrlTransport:
+    def __init__(self, multi_func_ctrl: int):
+        self.multi_func_ctrl = multi_func_ctrl
+
+    def read32(self, addr: int) -> int:
+        assert addr == efuse.C.REG_MULTI_FUNC_CTRL
+        return self.multi_func_ctrl
+
+
 def test_bt_coexist_policy_uses_multi_func_ctrl_for_8821():
     m = bytearray(_map())
     m[efuse.C.EEPROM_RF_BOARD_OPTION_8821AU] = 0x00
     m[efuse.C.EEPROM_RF_BT_SETTING_8821] = 0x01
 
-    assert efuse._parse_bt_coexist(bytes(m), efuse.C.BIT_BT_FUNC_EN, autoload_fail=False) == (True, 1)
-    assert efuse._parse_bt_coexist(bytes(m), 0, autoload_fail=False) == (False, 1)
-    assert efuse._parse_bt_coexist(bytes(m), efuse.C.BIT_BT_FUNC_EN, autoload_fail=True) == (False, 1)
+    assert efuse._parse_bt_coexist(_MultiFuncCtrlTransport(efuse.C.BIT_BT_FUNC_EN), bytes(m),
+                                   autoload_fail=False) == (True, 1)
+    assert efuse._parse_bt_coexist(_MultiFuncCtrlTransport(0), bytes(m), autoload_fail=False) == (False, 1)
+    assert efuse._parse_bt_coexist(_MultiFuncCtrlTransport(efuse.C.BIT_BT_FUNC_EN), bytes(m),
+                                   autoload_fail=True) == (False, efuse.C.Ant_x2)
 
 
 def test_idcode_controls_autoload_defaults():
@@ -110,11 +121,12 @@ def test_board_option_country_usb_and_mac_parsers():
     assert efuse._parse_mac_address(bytes(m), autoload_fail=True) is None
 
 
-def test_hidden_usb_type_decode():
+def test_hidden_usb_type_decode(monkeypatch):
     hidden = {efuse.C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_0: 0x04,
               efuse.C.EFUSE_HIDDEN_USB_TYPE_WMODE_0: 0x08}
+    monkeypatch.setattr(efuse, "_efuse_one_byte_read", lambda t, addr: hidden.get(addr, 0xFF))
 
-    assert efuse._parse_usb_type_hidden(hidden, _map()) == (2, 2, True)
+    assert efuse._read_usb_type(_UnusedTransport(), _map()) == (2, 2, True)
 
 
 
@@ -131,7 +143,7 @@ class _UnusedTransport:
 
 def _read_logical_map_from(raw, monkeypatch):
     data = dict(enumerate(raw))
-    monkeypatch.setattr(efuse, "_efuse_one_byte_read", lambda t, addr: data.get(addr, 0xFF))
+    monkeypatch.setattr(efuse, "_read_efuse_byte", lambda t, addr: data.get(addr, 0xFF))
     return efuse._read_logical_map(_UnusedTransport())
 
 

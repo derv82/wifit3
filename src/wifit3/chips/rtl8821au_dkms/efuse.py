@@ -23,6 +23,7 @@ PG TX-power block (starting at pg_txpwr_saddr=0x10) is decoded.
 """
 from __future__ import annotations
 
+import time
 from typing import NamedTuple, Optional
 
 from . import constants as C
@@ -87,7 +88,7 @@ class ChipParams(NamedTuple):
     board_type: int          # ODM ext-LNA/PA/BT bitfield — the phy_cond walker's board input
 
 
-def _efuse_one_byte_read(t, addr: int) -> int:
+def _read_efuse_byte(t, addr: int) -> int:
     """[SRC] ReadEFuseByte (rtw_efuse.c:2209) — one physical efuse byte.
 
     Write the 10-bit address (EFUSE_CTRL+1 low, +2 high preserving the top 6 bits),
@@ -107,6 +108,22 @@ def _efuse_one_byte_read(t, addr: int) -> int:
     return value32 & 0xFF
 
 
+def _efuse_one_byte_read(t, addr: int) -> int:
+    """[SRC] efuse_OneByteRead (rtw_efuse.c:2314) — one physical efuse byte, 0xFF on poll timeout."""
+    t.write8(C.REG_EFUSE_CTRL + 1, addr & 0xFF)
+    v = t.read8(C.REG_EFUSE_CTRL + 2)
+    t.write8(C.REG_EFUSE_CTRL + 2, ((addr >> 8) & 0x03) | (v & 0xFC))
+    v = t.read8(C.REG_EFUSE_CTRL + 3)
+    t.write8(C.REG_EFUSE_CTRL + 3, v & 0x7F)
+    tmpidx = 0
+    while not (t.read8(C.REG_EFUSE_CTRL + 3) & 0x80) and tmpidx < 1000:
+        time.sleep(0.001)
+        tmpidx += 1
+    if tmpidx < 100:
+        return t.read8(C.REG_EFUSE_CTRL)
+    return 0xFF
+
+
 def _read_logical_map(t) -> bytes:
     """[SRC] efuse_ReadEFuse — physical efuse PG stream -> 512 B logical map.
 
@@ -118,7 +135,7 @@ def _read_logical_map(t) -> bytes:
     word = [[0xFFFF] * C.EFUSE_MAX_WORD_UNIT for _ in range(C.EFUSE_MAX_SECTION_JAGUAR)]
     addr = 0
 
-    header = _efuse_one_byte_read(t, addr)
+    header = _read_efuse_byte(t, addr)
     addr += 1
     if header == 0xFF:
         return b"\xFF" * C.EFUSE_MAP_LEN_JAGUAR          # empty efuse
@@ -126,12 +143,12 @@ def _read_logical_map(t) -> bytes:
     while header != 0xFF and addr < C.EFUSE_REAL_CONTENT_LEN_JAGUAR:
         if (header & 0x1F) == 0x0F:               # EXT_HEADER
             offset_2_0 = (header & 0xE0) >> 5
-            ext = _efuse_one_byte_read(t, addr)
+            ext = _read_efuse_byte(t, addr)
             addr += 1
             if ext == 0xFF:
                 break
             if (ext & 0x0F) == 0x0F:              # ALL_WORDS_DISABLED
-                header = _efuse_one_byte_read(t, addr)
+                header = _read_efuse_byte(t, addr)
                 addr += 1
                 continue
             offset = ((ext & 0xF0) >> 1) | offset_2_0
@@ -144,12 +161,12 @@ def _read_logical_map(t) -> bytes:
             for i in range(C.EFUSE_MAX_WORD_UNIT):
                 if wden & (1 << i):               # word disabled
                     continue
-                data = _efuse_one_byte_read(t, addr)
+                data = _read_efuse_byte(t, addr)
                 addr += 1
                 word[offset][i] = data & 0xFF
                 if addr >= C.EFUSE_REAL_CONTENT_LEN_JAGUAR:
                     break
-                data = _efuse_one_byte_read(t, addr)
+                data = _read_efuse_byte(t, addr)
                 addr += 1
                 word[offset][i] |= (data << 8) & 0xFF00
                 if addr >= C.EFUSE_REAL_CONTENT_LEN_JAGUAR:
@@ -165,7 +182,7 @@ def _read_logical_map(t) -> bytes:
                 if addr >= C.EFUSE_REAL_CONTENT_LEN_JAGUAR:
                     break
 
-        header = _efuse_one_byte_read(t, addr)
+        header = _read_efuse_byte(t, addr)
         if header != 0xFF:
             addr += 1
 
@@ -387,10 +404,11 @@ def _ext_amplifier_flags(m: bytes, autoload_fail: bool) -> tuple[int, int, int, 
     return pa, lna_2g, pa, lna_5g, ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g
 
 
-def _parse_bt_coexist(m: bytes, multi_func_ctrl: int, autoload_fail: bool) -> tuple[bool, int]:
-    """[SRC] Hal_EfuseParseBTCoexistInfo8812A — 8821U uses REG_MULTI_FUNC_CTRL only."""
+def _parse_bt_coexist(t, m: bytes, autoload_fail: bool) -> tuple[bool, int]:
+    """[SRC] Hal_EfuseParseBTCoexistInfo8812A (rtl8812a_hal_init.c:831-847) — the 8821 branch."""
     if autoload_fail:
-        return False, 1
+        return False, C.Ant_x2
+    multi_func_ctrl = t.read32(C.REG_MULTI_FUNC_CTRL)
     return bool(multi_func_ctrl & C.BIT_BT_FUNC_EN), m[C.EEPROM_RF_BT_SETTING_8821] & 0x1
 
 
@@ -419,11 +437,11 @@ def _parse_usb_mode_switch(m: bytes, autoload_fail: bool) -> bool:
     return False if autoload_fail else bool((m[C.EEPROM_USB_MODE_8812] & C.BIT1) >> 1)
 
 
-def _parse_usb_type_hidden(phy: dict[int, int], m: bytes) -> tuple[int, int, bool]:
-    """[SRC] hal_ReadUsbType_8812AU — hidden physical EFUSE antenna/wmode selector."""
+def _read_usb_type(t, m: bytes) -> tuple[int, int, bool]:
+    """[SRC] hal_ReadUsbType_8812AU (rtl8812a_hal_init.c:1437) — hidden physical EFUSE antenna/wmode selector."""
     antenna = 0
     for addr in (C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_0, C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_1):
-        v = phy.get(addr, 0xFF)
+        v = _efuse_one_byte_read(t, addr)
         if ((v >> 5) & 0x7) != 0:
             antenna = (v >> 5) & 0x7
             break
@@ -432,7 +450,7 @@ def _parse_usb_type_hidden(phy: dict[int, int], m: bytes) -> tuple[int, int, boo
             break
     wmode = 0
     for addr in (C.EFUSE_HIDDEN_USB_TYPE_WMODE_0, C.EFUSE_HIDDEN_USB_TYPE_WMODE_1):
-        v = phy.get(addr, 0xFF)
+        v = _efuse_one_byte_read(t, addr)
         if ((v >> 2) & 0x3) != 0:
             wmode = (v >> 2) & 0x3
             break
@@ -459,7 +477,7 @@ def read_chip_params(t) -> ChipParams:
     EFUSE access-on + power-switch reads, the byte loop, access-off.
     """
     chip_version = t.read32(C.REG_SYS_CFG)         # ReadChipVersion (0xF0)
-    multi_func_ctrl = t.read32(C.REG_MULTI_FUNC_CTRL)  # Hal_EfuseParseBTCoexistInfo input
+    t.read32(C.REG_MULTI_FUNC_CTRL)                # ReadChipVersion8812A MultiFunc (rtl8812a_hal_init.c:3392)
     ee = t.read8(C.REG_9346CR)
     autoload_fail = not (ee & (1 << 5))            # bit5 = EEPROM present
 
@@ -468,21 +486,16 @@ def read_chip_params(t) -> ChipParams:
     t.read16(0x0002)
     t.read16(0x0008)
     m = _read_logical_map(t)
-    hidden_phy = {
-        addr: _efuse_one_byte_read(t, addr)
-        for addr in (C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_0, C.EFUSE_HIDDEN_USB_TYPE_ANTENNA_1,
-                     C.EFUSE_HIDDEN_USB_TYPE_WMODE_0, C.EFUSE_HIDDEN_USB_TYPE_WMODE_1)
-    }
     t.write8(C.REG_EFUSE_ACCESS, C.EFUSE_ACCESS_OFF)
 
     eeprom_id_valid = _eeprom_id_valid(m)           # Hal_EfuseParseIDCode8812A
     autoload_fail = not eeprom_id_valid
     ext = _ext_amplifier_flags(m, autoload_fail)   # Hal_ReadPAType_8821A
-    bt_coexist, bt_ant_num = _parse_bt_coexist(m, multi_func_ctrl, autoload_fail)
+    bt_coexist, bt_ant_num = _parse_bt_coexist(t, m, autoload_fail)
     eeprom_vid, eeprom_pid, eeprom_customer_id, eeprom_subcustomer_id, customer_id = _parse_ids(
         m, autoload_fail)
     thermal_meter, thermal_meter_ignore = _parse_thermal_meter(m, autoload_fail)
-    usb_type_antenna, usb_type_wmode, usb_type_disable_11ac = _parse_usb_type_hidden(hidden_phy, m)
+    usb_type_antenna, usb_type_wmode, usb_type_disable_11ac = _read_usb_type(t, m)
     return ChipParams(
         crystal_cap=_parse_crystal_cap(m, autoload_fail),
         mac_address=_parse_mac_address(m, autoload_fail),

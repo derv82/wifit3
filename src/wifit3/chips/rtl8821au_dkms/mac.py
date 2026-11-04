@@ -219,7 +219,7 @@ def mac_init_misc(t) -> None:
 # rtl8812_InitHalDm (§2, dig.init_hal_dm) -> §1b (the turn-on writes). The two
 # halves bracket InitHalDm, so the driver / verify_pcap call them in that order.
 # wifi_spec-gated (FAST_EDCA=0) and commented (IQK/PWtrack/LCK) steps are no-ops
-# here, as are the CONFIG_XMIT_ACK FWHW_TXQ BIT12 set — none reach the wire.
+# here — none reach the wire.
 # ---------------------------------------------------------------------------
 
 def hal_init_misc_pre(t) -> None:
@@ -239,3 +239,5 @@ def hal_init_misc_post(t) -> None:
     t.write8(REG_SDIO_CTRL_8812, 0x00)           # reset USB mode-switch setting
     t.write8(REG_ACLK_MON_M5, 0x00)
     t.write8(REG_USB_HRPWM, 0x00)
+    # CONFIG_XMIT_ACK (autoconf.h:56): ack for xmit mgmt frames [SRC] usb_halinit.c:1714
+    t.write32(REG_FWHW_TXQ_CTRL, t.read32(REG_FWHW_TXQ_CTRL) | C.BIT(12))

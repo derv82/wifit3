@@ -165,6 +165,15 @@ class Rtl8821auDkmsDriver(Driver):
             mac.hal_init_misc_pre(t)                  # M5 §1a: security + MISC11
             dig.init_hal_dm(t, search_edcca=True)     # M5 §2: phydm DIG/AGC/EDCCA seed
             mac.hal_init_misc_post(t)                 # M5 §1b: turn-on tail
+            # rtw_hal_init after hal_init [SRC] hal_intf.c:609 rtw_mi_set_mac_addr,
+            # :621 init_hw_mlme_ext (rtw_mlme_ext.c:1299-1300: RX BAR + set_channel_bwmode)
+            if self.mac_address:
+                monitor._write_mac_addr(t, bytes(int(b, 16) for b in self.mac_address.split(":")))
+            # HW_VAR_ENABLE_RX_BAR [SRC] hal_com.c:13480-13483
+            t.write16(monitor.REG_RXFLTMAP1, t.read16(monitor.REG_RXFLTMAP1) | (1 << 8))
+            chan.set_channel_bw(t, _DEFAULT_CHANNEL, self._bb_swing_2g, self._bb_swing_5g,
+                                self._ext_lna_2g)
+            txpower.set_tx_power(t, _DEFAULT_CHANNEL, self._tx_power)
 
         await loop.run_in_executor(None, _init, self.transport)
         self._channel = _DEFAULT_CHANNEL
