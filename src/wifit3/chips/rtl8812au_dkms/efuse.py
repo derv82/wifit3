@@ -23,6 +23,8 @@ from . import constants as C
 EEPROM_XTAL = 0xB9
 EEPROM_TX_BBSWING_2G = 0xC6
 EEPROM_TX_BBSWING_5G = 0xC7
+EEPROM_RF_BOARD_OPTION = 0xC1                   # hal_pg.h:121
+EEPROM_DEFAULT_BOARD_OPTION = 0x00              # hal_pg.h:893
 EEPROM_RFE_OPTION = 0xCA
 EEPROM_MAC_ADDR = C.EEPROM_MAC_ADDR_8812AU      # 0xD7
 PG_TXPWR_SADDR = 0x10
@@ -72,6 +74,7 @@ class ChipParams(NamedTuple):
     type_gpa: int
     type_alna: int
     type_apa: int
+    interface_sel: int             # pHalData->InterfaceSel (LED register choice)
 
 
 def _s4(n: int) -> int:
@@ -294,6 +297,15 @@ def read_chip_params(t) -> ChipParams:
     ext = _ext_amplifier_flags(m)                       # Hal_ReadAmplifierType before ReadRFEType
     board_type, type_glna, type_gpa, type_alna, type_apa = _parse_board_type(m, ext)
 
+    # Hal_ReadBoardType8812A (rtl8812a_hal_init.c:972-987)
+    board_option = m[EEPROM_RF_BOARD_OPTION]
+    if board_option == 0xFF:
+        board_option = EEPROM_DEFAULT_BOARD_OPTION
+    if autoload_fail:
+        interface_sel = 0
+    else:
+        interface_sel = (board_option & 0xE0) >> 5
+
     return ChipParams(
         crystal_cap=_parse_crystal_cap(m),
         mac_address=_parse_mac_address(m),
@@ -310,6 +322,7 @@ def read_chip_params(t) -> ChipParams:
         type_gpa=type_gpa,
         type_alna=type_alna,
         type_apa=type_apa,
+        interface_sel=interface_sel,
     )
 
 

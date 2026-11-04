@@ -38,7 +38,7 @@ from wifit3.dot11.parser import WlanFrameParser
 from ..rtl88xxau_base.transport import Rtl88xxauTransport
 from ..rtl88xxau_base.tx import DESC_RATE1M, DESC_RATE6M, RATEID_IDX_B, RATEID_IDX_G, build_mgmt_txdesc
 from ..rx_reader import RxReaderThread
-from . import bb, chan, dig, efuse, firmware, mac, monitor, rf, txpower
+from . import bb, chan, dig, efuse, firmware, led, mac, monitor, rf, txpower
 from .rx import iter_frames
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,7 @@ class Rtl8812auDkmsDriver(Driver):
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._dig_task: Optional[asyncio.Task] = None
+        self._led_task: Optional[asyncio.Task] = None
         # Serializes control-transfer batches (DIG watchdog vs set_channel) so two
         # executor threads never drive EP0 at once; the RX reader uses bulk-IN.
         self._io_lock = asyncio.Lock()
@@ -182,19 +183,14 @@ class Rtl8812auDkmsDriver(Driver):
             on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
 
+        # _netdev_open: rtw_hal_init, then rtw_led_control(LED_CTL_NO_LINK) (os_intfs.c:3886).
+        self._led_task = loop.create_task(self._led_blink())
+
         # morrownr's monitor opmode + set-channel RX-START tail: the channel re-tune that
         # restores a clean RX state after the EDCCA search, then the monitor RCR 0x90000001.
-        await loop.run_in_executor(None, monitor.set_monitor_mode, self.transport,
-                                   _DEFAULT_CHANNEL, params)
-
-        # morrownr's tail leaves RCR = 0x90000001 (AAP|APP_PHYST|APPFCS — airmon's exact
-        # state, leaning on RXFLTMAP). That value does NOT deliver management/broadcast
-        # frames (beacons) into wifit3's RX pipeline, so re-open the filter to wifit3's
-        # monitor RCR (0x9000382F: accept all good frame classes; CRC/ICV-error frames
-        # still dropped). The RF re-tune inside the tail above is the actual RX fix, not
-        # this RCR value. (Outside the byte-for-byte gate, which stops at the tail.)
-        await loop.run_in_executor(None, self.transport.write32,
-                                   monitor.REG_RCR, monitor.RCR_MONITOR_VALUE)
+        async with self._io_lock:
+            await loop.run_in_executor(None, monitor.set_monitor_mode, self.transport,
+                                       _DEFAULT_CHANNEL, params)
 
         # Runtime 2-path DIG/AGC watchdog: adapt the InitHalDm IGI seed to the live false-
         # alarm rate every ~2 s (kernel cadence), writing both path IGI regs. RX-side only.
@@ -221,6 +217,25 @@ class Rtl8812auDkmsDriver(Driver):
             pass
         except Exception:  # noqa: BLE001 — a watchdog fault must not kill RX
             logger.exception("RTL8812AU DIG watchdog stopped on error")
+
+    async def _led_blink(self) -> None:
+        """SW_LED_MODE9 LED0 no-link slow blink: SwLedBlink9 LED_BLINK_SLOWLY (hal_usb_led.c:934)."""
+        loop = asyncio.get_running_loop()
+        interface_sel = self._params.interface_sel
+        led_on = False
+        try:
+            while True:
+                await asyncio.sleep(led.LED_BLINK_NO_LINK_INTERVAL_ALPHA_S)
+                async with self._io_lock:
+                    if led_on:
+                        await loop.run_in_executor(None, led.sw_led_off_8812au, self.transport, interface_sel)
+                    else:
+                        await loop.run_in_executor(None, led.sw_led_on_8812au, self.transport, interface_sel)
+                led_on = not led_on
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 — an LED fault must not kill RX
+            logger.exception("RTL8812AU LED blink stopped on error")
 
     # --- RX path -----------------------------------------------------------
     def _read_once(self) -> Optional[bytes]:
@@ -336,7 +351,7 @@ class Rtl8812auDkmsDriver(Driver):
             await loop.run_in_executor(None, monitor._write_mac_addr, self.transport, real)
 
     async def close(self) -> None:
-        # Stop the DIG watchdog and the reader before releasing the USB handle.
+        # Stop the DIG watchdog, the LED blink and the reader before releasing the USB handle.
         if self._dig_task is not None:
             self._dig_task.cancel()
             try:
@@ -344,6 +359,13 @@ class Rtl8812auDkmsDriver(Driver):
             except asyncio.CancelledError:
                 pass
             self._dig_task = None
+        if self._led_task is not None:
+            self._led_task.cancel()
+            try:
+                await self._led_task
+            except asyncio.CancelledError:
+                pass
+            self._led_task = None
         if self._reader is not None:
             await self._reader.stop()
             self._reader = None

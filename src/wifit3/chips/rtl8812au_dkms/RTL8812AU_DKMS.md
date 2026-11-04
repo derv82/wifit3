@@ -31,13 +31,12 @@ receive state after the EDCCA search has toggled the LNA / walked the thresholds
 `enter_monitor` that skips it gets garbage. (Not bisected to the minimal sub-write; the
 channel re-tune is the prime suspect, RPWM-wake/opmode not ruled out.)
 
-**The monitor RCR is a separate delivery gate from the demod fix.** morrownr/airmon's tail
-leaves RCR `0x90000001` (`AAP|APP_PHYST|APPFCS`, leaning on RXFLTMAP). That reproduces
-airmon's exact chip state but does NOT deliver management/broadcast frames (beacons) into
-wifit3's RX pipeline — it lacks the accept-mgmt/broadcast class bits and RXFLTMAP alone does
-not substitute. So the driver re-opens the filter to wifit3's own monitor RCR `0x9000382F`
-(accept all *good* frame classes; CRC/ICV-error frames still dropped) right after the tail.
-The tail's RF re-tune is the demod fix; the RCR is the delivery gate — both are needed.
+**The monitor RCR is the C's, with RXFLTMAP0-2 opened.** morrownr's tail leaves RCR
+`0x90000001` (`AAP|APP_PHYST|APPFCS`) and `hw_var_set_monitor` then writes RXFLTMAP0-2 =
+`0xFFFF` (`rtl8812a_hal_init.c:3701-3706`). An earlier port skipped the RXFLTMAP block, leaving
+RXFLTMAP0 (management) at `0x0000`; beacons did not arrive, which was blamed on the RCR and
+patched with a wifit3 re-open to `0x9000382F`. The port now follows the C and the re-open is
+gone. Beacon delivery at RCR `0x90000001` + RXFLTMAP `0xFFFF` needs a live check.
 
 **No runtime IQK.** morrownr receives with no IQK (the one-shot is absent from all captures).
 Run `rx_diag.py --no-iqk`. `iqk.py` is a port, kept but unused.
@@ -113,7 +112,7 @@ vendor C and run "give-it-a-shot", not fail-loud:
 
 C-cut 2T2R Jaguar; `REG_SYS_CFG = 0x04411137`. Cold bring-up runs efuse → FW → MAC → BB/RF →
 channel → TX-power → phydm-init → monitor through `base/firmware.bring_up`. The RX fix lives
-in `monitor.set_monitor_mode` (the re-tune tail) plus the driver's RCR re-open. 5 GHz band
+in `monitor.set_monitor_mode` (the re-tune tail + RXFLTMAP open). 5 GHz band
 switch is `chan._switch_band_5g` + `_set_rfe_5g` (phy_SwitchWirelessBand8812 5G branch, all
 rfe_types). `Rtl8812auDkmsDriver` (`driver.py`) starts the RX reader before the monitor RX
 gate, runs a 2-path DIG watchdog (`dig.watchdog_tick`), then enters monitor. TX rides the
