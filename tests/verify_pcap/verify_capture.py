@@ -89,7 +89,7 @@ class VerifyCapture:
         def is_driver_idle() -> bool:
             return thread_pool.busy_thread_count == 0 and not replay.driver_thread_is_working()
 
-        loop = VirtualClockEventLoop(capture.ops[0].timestamp, is_driver_idle)
+        loop = VirtualClockEventLoop(capture.ops[0].submit_time, is_driver_idle)
         loop.set_default_executor(thread_pool)
         replay = CaptureReplay(capture.ops, waiver_label_by_position, loop)
         device = FakeUsbDevice(replay, capture.device_descriptor, capture.configuration_descriptor,
@@ -145,7 +145,7 @@ class VerifyCapture:
                 position = replay.next_unreproduced_position()
                 if position is None:
                     break
-                await self.run_driver_until_idle(loop, replay.ops[position].timestamp)
+                await self.run_driver_until_idle(loop, replay.ops[position].submit_time)
                 if replay.next_unreproduced_position() != position:
                     continue
                 channel = self.DECODER.channel_change_at(replay.ops, position)
@@ -163,7 +163,7 @@ class VerifyCapture:
                 if replay.divergence is None and replay.reproduced_by[position] is None:
                     replay.record_divergence(position, MAIN_CALLER,
                                              f"called {called}; the driver did not make this op")
-            await self.run_driver_until_idle(loop, replay.ops[-1].timestamp)
+            await self.run_driver_until_idle(loop, replay.ops[-1].completion_time)
         except Exception as error:  # noqa: BLE001
             reason = f"driver raised {type(error).__name__}: {error}"
             for caller, refused_read in list(replay.refused_read_by_caller.items()):
@@ -234,7 +234,7 @@ class VerifyCapture:
         else:
             position = divergence.position
             lines.append(f"capture has: {self.DECODER.describe(ops[position])}")
-        start_time = ops[0].timestamp
+        start_time = ops[0].submit_time
         waiver_labels = {waiver.label for waiver in self.WAIVERS}
         for context_position in range(max(0, position - DUMP_CONTEXT),
                                       min(len(ops), position + DUMP_CONTEXT + 1)):
@@ -244,7 +244,7 @@ class VerifyCapture:
             if reproduced_by in waiver_labels:
                 reproduced_by = "waived"
             lines.append(f"{marker} {context_position:5d} frame {op.frame_number:<6d} "
-                         f"{op.timestamp - start_time:8.4f}s {reproduced_by:<8} "
+                         f"S {op.submit_time - start_time:8.4f}s C {op.completion_time - start_time:8.4f}s {reproduced_by:<8} "
                          f"{self.DECODER.describe(op)}")
         return "\n".join(lines) + "\n"
 

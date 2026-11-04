@@ -32,7 +32,7 @@ class TransferType(enum.IntEnum):
 @dataclass(frozen=True)
 class UsbOp:
     """One URB. ``data`` is the OUT payload (from the submit) or the IN payload (from the completion).
-    ``timestamp`` is the completion time in seconds since the capture's first record."""
+    Times are seconds since the capture's first record."""
     frame_number: int
     bus: int
     device_address: int
@@ -41,7 +41,8 @@ class UsbOp:
     setup: bytes | None
     data: bytes
     status: int
-    timestamp: float
+    submit_time: float
+    completion_time: float
 
     @property
     def is_in(self) -> bool:
@@ -190,9 +191,10 @@ def parse_usbmon_packet(frame_number: int, linktype: int, packet: bytes, start_s
 
 
 def pair_submits_with_completions(records: list[UsbmonRecord]) -> tuple[list[UsbOp], int]:
-    """Transfers in completion order, and the count of submits that never completed."""
+    """Control and OUT transfers at submit, bulk / interrupt IN at completion (their URBs are queued ahead),
+    and the count of submits that never completed."""
     submits: dict[tuple[int, int], UsbmonRecord] = {}
-    ops: list[UsbOp] = []
+    ops_by_order: list[tuple[float, int, UsbOp]] = []
     for record in records:
         key = (record.bus, record.urb_id)
         if record.event_type == "S":
@@ -205,7 +207,7 @@ def pair_submits_with_completions(records: list[UsbmonRecord]) -> tuple[list[Usb
             data = record.data
         else:
             data = submit.data
-        ops.append(UsbOp(
+        op = UsbOp(
             frame_number=record.frame_number,
             bus=record.bus,
             device_address=record.device_address,
@@ -214,6 +216,13 @@ def pair_submits_with_completions(records: list[UsbmonRecord]) -> tuple[list[Usb
             setup=submit.setup,
             data=data,
             status=record.status,
-            timestamp=record.timestamp,
-        ))
+            submit_time=submit.timestamp,
+            completion_time=record.timestamp,
+        )
+        if submit.endpoint & 0x80 and submit.transfer_type != TransferType.CONTROL:
+            ops_by_order.append((record.timestamp, record.frame_number, op))
+        else:
+            ops_by_order.append((submit.timestamp, submit.frame_number, op))
+    ops_by_order.sort(key=lambda entry: (entry[0], entry[1]))
+    ops = [op for _, _, op in ops_by_order]
     return ops, len(submits)

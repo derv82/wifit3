@@ -84,7 +84,7 @@ class CaptureReplay:
                 # Pass over unreproduced ops only if a driver task was due before the first of them.
                 due_time = self._loop.earliest_due_driver_timer()
                 candidate = None
-                if due_time is not None and self.ops[position].timestamp >= due_time:
+                if due_time is not None and self.ops[position].submit_time >= due_time:
                     candidate = self._next_unreproduced(position + 1)
                     while candidate is not None and not self.ops[candidate].same_request(request):
                         candidate = self._next_unreproduced(candidate + 1)
@@ -94,7 +94,7 @@ class CaptureReplay:
             self.reproduced_by[position] = caller
             self.next_position_by_caller[caller] = position + 1
             captured = self.ops[position]
-            self._loop.advance_clock(captured.timestamp)
+            self._loop.advance_clock(captured.completion_time)
             return captured
 
     def read(self, endpoint: int, caller: str) -> UsbOp | None:
@@ -115,7 +115,7 @@ class CaptureReplay:
             self.refused_read_by_caller.pop(caller, None)
             self.reproduced_by[position] = caller
             captured = self.ops[position]
-            self._loop.advance_clock(captured.timestamp)
+            self._loop.advance_clock(captured.completion_time)
             return captured
 
     def driver_thread_is_working(self) -> bool:

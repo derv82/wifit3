@@ -164,7 +164,7 @@ class FakeUsbDevice:
             frame_number=0, bus=self.bus, device_address=self.address,
             endpoint=0x80 if is_in else 0x00, transfer_type=TransferType.CONTROL,
             setup=struct.pack("<BBHHH", bmRequestType, bRequest, wValue, wIndex, length),
-            data=data, status=0, timestamp=0.0)
+            data=data, status=0, submit_time=0.0, completion_time=0.0)
         captured = self.replay.match_request(request, current_caller_name())
         if captured is None:  # close() past the end of the capture: not compared
             return array("B", bytes(length)) if is_in else length
@@ -178,7 +178,7 @@ class FakeUsbDevice:
         request = UsbOp(
             frame_number=0, bus=self.bus, device_address=self.address, endpoint=endpoint,
             transfer_type=self.transfer_type_by_endpoint[endpoint], setup=None, data=bytes(data),
-            status=0, timestamp=0.0)
+            status=0, submit_time=0.0, completion_time=0.0)
         captured = self.replay.match_request(request, current_caller_name())
         if captured is None:  # close() past the end of the capture: not compared
             return len(data)
