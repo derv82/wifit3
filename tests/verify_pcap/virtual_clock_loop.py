@@ -17,13 +17,24 @@ TIMER_WHEEL_LEVEL_DEPTH = 9
 JIFFY_TOLERANCE = 0.01
 
 
+def timer_wheel_level(delta: int) -> int:
+    level = 0
+    while level < TIMER_WHEEL_LEVEL_DEPTH - 1 and delta >= (TIMER_WHEEL_LEVEL_SIZE - 1) << (level * TIMER_WHEEL_LEVEL_SHIFT):
+        level += 1
+    return level
+
+
+def timer_wheel_tolerance(delta: int) -> float:
+    """How far a modeled fire time can be from the kernel's: its level's bucket (alignment unknown), a jiffy each for
+    the arm and the fire time (the jiffy phase comes from one woken op), and a jiffy for the kernel worker's latency."""
+    return ((1 << (timer_wheel_level(delta) * TIMER_WHEEL_LEVEL_SHIFT)) + 3) / KERNEL_HZ
+
+
 def timer_wheel_expiry(jiffy_zero_time: float, now: float, when: float) -> float:
     """When a kernel timer armed at ``now`` for ``when`` fires: msecs_to_jiffies rounds up, then the expiry
     rounds up to its timer wheel level's granularity (kernel/time/timer.c calc_wheel_index, calc_index)."""
     delta = math.ceil((when - now) * KERNEL_HZ - JIFFY_TOLERANCE)
-    level = 0
-    while level < TIMER_WHEEL_LEVEL_DEPTH - 1 and delta >= (TIMER_WHEEL_LEVEL_SIZE - 1) << (level * TIMER_WHEEL_LEVEL_SHIFT):
-        level += 1
+    level = timer_wheel_level(delta)
     if level == 0:
         # At its earliest, delta jiffies after now: jiffy_zero_time is late by the latency of the woken op it came from.
         return now + delta / KERNEL_HZ
@@ -79,6 +90,9 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         self.driver_threads_holding_reply: set[threading.Thread] = set()
         # Until CaptureReplay sets it, driver task timers fire after their jiffies exactly.
         self.jiffy_zero_time: float | None = None
+        self.tolerance_by_driver_timer: dict[asyncio.TimerHandle, float] = {}
+        # The driver tasks whose timer fired and that have made no request since, with that timer's tolerance.
+        self.timer_tolerance_by_woken_caller: dict[str, float] = {}
 
     def time(self) -> float:
         """In a driver task, the later of its last fired timer's due time and its last op's completion,
@@ -149,23 +163,39 @@ class VirtualClockEventLoop(asyncio.SelectorEventLoop):
         task = asyncio.current_task(self)
         if task is None or task.get_name() == MAIN_CALLER:
             return super().call_at(when, callback, *args, context=context)
+        delta = math.ceil((when - self.time()) * KERNEL_HZ - JIFFY_TOLERANCE)
         if self.jiffy_zero_time is None:
-            when = self.time() + math.ceil((when - self.time()) * KERNEL_HZ - JIFFY_TOLERANCE) / KERNEL_HZ
+            when = self.time() + delta / KERNEL_HZ
         else:
             when = timer_wheel_expiry(self.jiffy_zero_time, self.time(), when)
 
         def record_fired_and_run(*callback_args: Any) -> None:
             with self._timer_lock:
                 self.fired_timers.add(handle)
+                self.timer_tolerance_by_woken_caller[task.get_coro().__qualname__] = (
+                    self.tolerance_by_driver_timer[handle])
             callback(*callback_args)
 
         handle = super().call_at(when, record_fired_and_run, *args, context=context)
         with self._timer_lock:
+            self.tolerance_by_driver_timer[handle] = timer_wheel_tolerance(delta)
             previous_handle = self.latest_timer_by_task.get(task)
             if previous_handle is not None:
                 self.fired_timers.discard(previous_handle)
             self.latest_timer_by_task[task] = handle
         return handle
+
+    def pending_driver_timer_due_within_tolerance_of(self, timestamp: float) -> float | None:
+        """The earliest due time of a driver task timer not fired yet that is due within its tolerance after ``timestamp``."""
+        with self._timer_lock:
+            timers = list(self.latest_timer_by_task.items())
+        due_times: list[float] = []
+        for task, handle in timers:
+            if task.done() or handle.cancelled() or handle in self.fired_timers:
+                continue
+            if handle.when() - self.tolerance_by_driver_timer[handle] <= timestamp:
+                due_times.append(handle.when())
+        return min(due_times, default=None)
 
     def earliest_due_driver_timer(self) -> float | None:
         """When the earliest driver task that is awake (its last timer has fired) became due."""

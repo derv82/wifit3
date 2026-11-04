@@ -79,6 +79,7 @@ class CaptureReplay:
                 raise CaptureDivergence()
             if is_driver_thread():
                 self._driver_thread_state[threading.current_thread()] = PROCESSING_REPLY
+            request_time = self._loop.virtual_time
             start = max(self.next_position_by_caller.get(caller, 0), self._advance_first_unreproduced())
             while True:
                 position = self._next_unreproduced(start)
@@ -110,6 +111,18 @@ class CaptureReplay:
                 self.waive_capture_only_run_at(position)
                 if self.reproduced_by[position] is None:
                     raise self._diverge(position, request, caller, "request differs from the capture")
+            timer_tolerance = self._loop.timer_tolerance_by_woken_caller.pop(caller, None)
+            if timer_tolerance is not None:
+                # The kernel's work may have waited on the other callers' ops between its previous op and this one.
+                captured_time = self.ops[position].submit_time
+                earlier = position - 1
+                while earlier >= 0 and self.reproduced_by[earlier] != caller:
+                    if not is_bulk_or_interrupt_in(self.ops[earlier]):
+                        captured_time = self.ops[earlier].submit_time
+                    earlier -= 1
+                if captured_time - request_time > timer_tolerance:
+                    raise self._diverge(position, request, caller, f"the driver task's timer fired "
+                                        f"{(captured_time - request_time) * 1000:.1f} ms before the capture's op")
             if (self._loop.jiffy_zero_time is None and caller != MAIN_CALLER
                     and self._loop.earliest_due_driver_timer() is not None):
                 # The kernel's jiffy phase: a woken driver task's first op is made in the jiffy after its timer fired.

@@ -376,6 +376,10 @@ class VerifyCapture:
                     called = f"inject_frame({len(frame)}B)"
                     await driver.inject_frame(frame)
                 else:
+                    due_time = loop.pending_driver_timer_due_within_tolerance_of(replay.ops[position].submit_time)
+                    if due_time is not None:
+                        await self.run_driver_until_idle(loop, due_time)
+                        continue
                     replay.waive_capture_only_run_at(position)
                     if replay.next_unreproduced_position() != position:
                         continue
