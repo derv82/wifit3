@@ -1,5 +1,7 @@
 """RTL8822CU driver TX/ACK/active-monitor unit tests (no hardware)."""
+import asyncio
 import struct
+import threading
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -68,6 +70,20 @@ async def test_inject_frame_sends_desc_and_stamped_frame(monkeypatch):
     assert sent[0][48:48 + 22] == frame[:22]        # header up to seq_ctl unchanged
     assert sent[0][48 + 22:48 + 24] == b"\x10\x00"  # seq_ctl stamped to seq 1 (first inject)
     assert sent[0][48 + 24:] == frame[24:]          # remainder unchanged
+
+
+async def test_inject_frame_pads_usb_packet_boundary(monkeypatch):
+    d = _driver()
+    d._bulk_out_eps = [0x05, 0x06, 0x08]
+    d.layout = EndpointLayout(0, (0x84,), (0x05, 0x06, 0x08), 512)
+    sent = []
+    monkeypatch.setattr(drv, "write_bulk", lambda dev, ep, payload: sent.append(payload) or len(payload))
+    frame = _deauth().ljust(464, b"\x00")
+
+    assert await d.inject_frame(frame)
+    assert len(sent[0]) == 520
+    assert sent[0][48:56] == bytes(8)
+    assert len(sent[0][56:]) == len(frame)
 
 
 async def test_inject_frame_returns_false_without_bulk_out():
@@ -164,6 +180,83 @@ async def test_disable_rx_acks_drops_ack_control_frames():
     d.transport.read16.return_value = 0xFFFF
     await d.disable_rx_acks()
     d.transport.write16.assert_called_once_with(0x06A2, 0xFFFF & ~(1 << 13))
+
+
+async def test_ack_filter_restores_original_bit_after_repeated_enable():
+    d = _driver()
+    d.transport.read16.side_effect = [0x2001, 0x2001, 0x2002]
+    await d.enable_rx_acks()
+    await d.enable_rx_acks()
+    await d.disable_rx_acks()
+    assert d.transport.write16.call_args_list[-1].args == (0x06A2, 0x2002)
+
+
+@pytest.mark.parametrize("operation", ["tune", "tx", "mac", "ack"])
+async def test_close_waits_for_cancelled_runtime_executor(monkeypatch, operation):
+    d = _driver()
+    d._bulk_out_eps = [5]
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def blocked(*args, **kwargs):
+        calls.append(operation)
+        started.set()
+        assert release.wait(3)
+        if operation == "tx":
+            return len(args[2])
+        if operation == "ack":
+            return 0
+
+    if operation == "tune":
+        monkeypatch.setattr(drv, "switch_channel", blocked)
+        task = asyncio.create_task(d.set_channel(6))
+    elif operation == "tx":
+        monkeypatch.setattr(drv, "write_bulk", blocked)
+        task = asyncio.create_task(d.inject_frame(_deauth()))
+    elif operation == "mac":
+        monkeypatch.setattr(drv, "set_mac_addr", blocked)
+        task = asyncio.create_task(d.enter_active_monitor(b"\x02" * 6))
+    else:
+        d.transport.read16.side_effect = blocked
+        task = asyncio.create_task(d.enable_rx_acks())
+
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        task.cancel()
+        closing = asyncio.create_task(d.close())
+        await asyncio.sleep(0.02)
+        assert not closing.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await closing
+        assert await d.set_channel(6) is False
+        assert await d.inject_frame(_deauth()) is False
+        with pytest.raises(RuntimeError):
+            await d.enter_active_monitor(b"\x02" * 6)
+        with pytest.raises(RuntimeError):
+            await d.disable_rx_acks()
+        assert calls == [operation]
+    finally:
+        release.set()
+
+
+def test_rx_dispatch_continues_after_frame_callback_failure(monkeypatch, caplog):
+    d = _driver()
+    frame = _deauth()
+    stat = MagicMock(crc_err=False, icv_err=False)
+    monkeypatch.setattr(drv, "iter_bulk_frames", lambda *args, **kwargs: iter([
+        (stat, frame, -50), (stat, frame, -51),
+    ]))
+    monkeypatch.setattr(drv.WlanFrameParser, "parse_80211_frame", lambda mpdu, rssi: rssi)
+    callback = MagicMock(side_effect=[ValueError("bad frame"), None])
+    d.register_rx_callback(callback)
+
+    d._rx_dispatch(b"aggregate")
+
+    assert callback.call_count == 2
+    assert "RX frame dispatch failed" in caplog.text
 
 
 def test_rx_dispatch_uses_configured_rx_paths(monkeypatch):
@@ -344,6 +437,16 @@ def _run_bringup(monkeypatch, efuse: EfuseInfo, *, ant_num: int = 2, hw_stype: i
     return d, calls
 
 
+def test_bringup_skips_cache_lookup_when_retrying(monkeypatch):
+    d, _ = _run_bringup(monkeypatch, _efuse(0x33))
+    get = MagicMock(side_effect=AssertionError("cache lookup during retry"))
+    monkeypatch.setattr(drv.dack_cache, "get", get)
+    d._skip_dack_cache = True
+    d._bringup(d.transport)
+    get.assert_not_called()
+    assert not d._dack_restored
+
+
 def test_bringup_feeds_config_trx_path_the_computed_rf_path(monkeypatch):
     """The 2T2R values that used to be literals (BB_PATH_AB / BB_PATH_AB / 2)."""
     d, calls = _run_bringup(monkeypatch, _efuse(0x33))
@@ -507,6 +610,180 @@ async def test_connect_cleans_up_a_failed_bringup(monkeypatch):
     assert d._claimed is False
     assert d._bulk_in_ep is None
     assert d._bulk_out_eps == []
+
+
+@pytest.mark.parametrize("stage", ["_bringup", "_monitor_entry"])
+@pytest.mark.parametrize("cancel_connect", [True, False])
+async def test_connect_waits_for_executor_before_cleanup(monkeypatch, stage, cancel_connect):
+    d = _driver()
+    d.transport.endpoints.return_value = EndpointLayout(0, (0x81,), (0x05, 0x06, 0x08))
+    started = threading.Event()
+    finish = threading.Event()
+    calls = []
+
+    def blocked(*args):
+        started.set()
+        assert finish.wait(5)
+        calls.append("executor_done")
+
+    monkeypatch.setattr(d, "_claim", lambda: setattr(d, "_claimed", True))
+    monkeypatch.setattr(d, "_bringup", lambda *args: None)
+    monkeypatch.setattr(d, "_monitor_entry", lambda: None)
+    monkeypatch.setattr(d, stage, blocked)
+    monkeypatch.setattr(drv.usb.util, "release_interface", lambda *args: calls.append("release"))
+    monkeypatch.setattr(drv.usb.util, "dispose_resources", lambda *args: None)
+    reader = MagicMock(stop=AsyncMock())
+    monkeypatch.setattr(drv, "RxReaderThread", lambda *args, **kwargs: reader)
+    connect = asyncio.create_task(d.connect())
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        if cancel_connect:
+            connect.cancel()
+            await asyncio.sleep(0)
+            connect.cancel()
+        close = asyncio.create_task(d.close())
+        await asyncio.sleep(0.01)
+        assert calls == []
+        assert not close.done()
+    finally:
+        finish.set()
+    if cancel_connect:
+        with pytest.raises(asyncio.CancelledError):
+            await connect
+    else:
+        assert await connect
+    await close
+    assert calls == ["executor_done", "release"]
+    assert not d._claimed
+
+
+async def test_connect_cleans_up_unexpected_exception(monkeypatch):
+    d = _driver()
+    d.transport.endpoints.return_value = EndpointLayout(0, (0x81,), (0x05, 0x06, 0x08))
+    monkeypatch.setattr(d, "_claim", lambda: setattr(d, "_claimed", True))
+    monkeypatch.setattr(d, "_bringup", MagicMock(side_effect=KeyError("unexpected")))
+    release = MagicMock()
+    monkeypatch.setattr(drv.usb.util, "release_interface", release)
+    monkeypatch.setattr(drv.usb.util, "dispose_resources", MagicMock())
+
+    with pytest.raises(KeyError, match="unexpected"):
+        await d.connect()
+    release.assert_called_once()
+    assert not d._claimed
+
+
+@pytest.mark.parametrize("error", [drv.DackRestoreError, drv.DackCalibrationError])
+async def test_dack_failure_reinitializes_once_without_cache(monkeypatch, error):
+    d = _driver()
+    d.transport.endpoints.return_value = EndpointLayout(0, (0x81,), (5, 6, 8))
+    calls = []
+    old_states = (d.trx_path, d.h2c, d.power_trim, d.txgapk, d.phydm)
+
+    def claim():
+        calls.append("claim")
+        d._claimed = True
+
+    def bringup(*args):
+        calls.append("bringup")
+        if calls.count("bringup") == 1:
+            d.chip_info = _chip_info()
+            d._dack_cache_key = ("key",)
+            raise error("dack failure")
+        assert d._skip_dack_cache
+        assert all(a is not b for a, b in zip(old_states, (d.trx_path, d.h2c, d.power_trim, d.txgapk, d.phydm)))
+        assert d._bulk_in_ep == 0x81
+
+    monkeypatch.setattr(d, "_claim", claim)
+    monkeypatch.setattr(d, "_bringup", bringup)
+    monkeypatch.setattr(d, "_monitor_entry", lambda: calls.append("monitor"))
+    monkeypatch.setattr(drv.dack_cache, "discard", lambda key: calls.append(("discard", key)))
+    monkeypatch.setattr(drv, "mac_power_off", lambda *args, **kwargs: calls.append("power_off"))
+    monkeypatch.setattr(drv.usb.util, "release_interface", lambda *args: calls.append("release"))
+    monkeypatch.setattr(drv.usb.util, "dispose_resources", lambda *args: calls.append("dispose"))
+    monkeypatch.setattr(drv, "RxReaderThread", lambda *args, **kwargs: MagicMock(stop=AsyncMock()))
+    assert await d.connect()
+    assert calls == ["claim", "bringup", ("discard", ("key",)), "power_off", "release", "dispose",
+                     "claim", "bringup", "monitor"]
+    await d.close()
+
+
+@pytest.mark.parametrize("failure", ["power", "release", "dispose", "missing_chip"])
+async def test_dack_retry_fails_closed_when_reset_fails(monkeypatch, failure):
+    d = _driver()
+    d.transport.endpoints.return_value = EndpointLayout(0, (0x81,), (5, 6, 8))
+    claim = MagicMock(side_effect=lambda: setattr(d, "_claimed", True))
+
+    def bringup(*args):
+        if failure != "missing_chip":
+            d.chip_info = _chip_info()
+        raise drv.DackCalibrationError("dack failure")
+
+    def operation(name):
+        if failure == name:
+            raise usb.core.USBError(name)
+
+    monkeypatch.setattr(d, "_claim", claim)
+    monkeypatch.setattr(d, "_bringup", bringup)
+    monkeypatch.setattr(drv, "mac_power_off", lambda *args, **kwargs: operation("power"))
+    monkeypatch.setattr(drv.usb.util, "release_interface", lambda *args: operation("release"))
+    monkeypatch.setattr(drv.usb.util, "dispose_resources", lambda *args: operation("dispose"))
+    with pytest.raises(BringUpError, match="reset failed"):
+        await d.connect()
+    with pytest.raises(BringUpError, match="replug"):
+        await d.connect()
+    claim.assert_called_once()
+
+
+async def test_dack_retry_only_once(monkeypatch):
+    d = _driver()
+    d.transport.endpoints.return_value = EndpointLayout(0, (0x81,), (5, 6, 8))
+    claim = MagicMock(side_effect=lambda: setattr(d, "_claimed", True))
+
+    def bringup(*args):
+        d.chip_info = _chip_info()
+        raise drv.DackCalibrationError("still failing")
+
+    monkeypatch.setattr(d, "_claim", claim)
+    monkeypatch.setattr(d, "_bringup", bringup)
+    monkeypatch.setattr(drv, "mac_power_off", MagicMock())
+    monkeypatch.setattr(drv.usb.util, "release_interface", MagicMock())
+    monkeypatch.setattr(drv.usb.util, "dispose_resources", MagicMock())
+    with pytest.raises(BringUpError, match="still failing"):
+        await d.connect()
+    assert claim.call_count == 2
+
+
+async def test_dack_retry_cancellation_waits_for_reset(monkeypatch):
+    d = _driver()
+    d.transport.endpoints.return_value = EndpointLayout(0, (0x81,), (5, 6, 8))
+    started, finish = threading.Event(), threading.Event()
+    claim = MagicMock(side_effect=lambda: setattr(d, "_claimed", True))
+
+    def bringup(*args):
+        d.chip_info = _chip_info()
+        raise drv.DackRestoreError("restore failed")
+
+    def power_off(*args, **kwargs):
+        started.set()
+        assert finish.wait(5)
+
+    monkeypatch.setattr(d, "_claim", claim)
+    monkeypatch.setattr(d, "_bringup", bringup)
+    monkeypatch.setattr(drv, "mac_power_off", power_off)
+    monkeypatch.setattr(drv.usb.util, "release_interface", MagicMock())
+    monkeypatch.setattr(drv.usb.util, "dispose_resources", MagicMock())
+    task = asyncio.create_task(d.connect())
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        task.cancel()
+        await asyncio.sleep(0.01)
+        assert not task.done()
+    finally:
+        finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    claim.assert_called_once()
+    assert not d._claimed
 
 
 async def test_close_powers_mac_off_before_releasing_usb(monkeypatch):

@@ -17,7 +17,7 @@ from wifit3.dot11.parser import WlanFrameParser
 from wifit3.chips.rx_reader import RxReaderThread
 
 from . import dack_cache
-from .cal import DackState, odm_dm_init
+from .cal import DackCalibrationError, DackRestoreError, DackState, odm_dm_init
 from .kfree import PowerTrimState
 from .led import disable_tx_blink, enable_tx_blink
 from .dm import PhydmState
@@ -64,10 +64,10 @@ from .phy import (
     phy_bf_init,
     switch_channel,
 )
-from .rx import iter_bulk_frames, read_rx_burst
+from .rx import iter_bulk_frames, read_rx_burst, split_bulk_records
 from .transport import EndpointLayout, RTL8822CUTransport
 from .txpwr_index import TxPwrIdxState, txpwr_idx_state
-from .tx import TX_DESC_QSEL_MGMT, build_tx_desc_inject, pick_bulk_out_ep, write_bulk
+from .tx import TX_DESC_QSEL_MGMT, build_tx_packet_inject, pick_bulk_out_ep, write_bulk
 from .watchdog import WatchdogState, tick as watchdog_tick
 
 logger = logging.getLogger(__name__)
@@ -96,6 +96,8 @@ class RTL8822CUDriver(Driver):
         self.dack = DackState()
         self._dack_cache_key = None
         self._dack_restored = False
+        self._skip_dack_cache = False
+        self._reset_required = False
         self.h2c = H2cState()
         self.power_trim = PowerTrimState()
         self.txgapk = TxGapKState()
@@ -107,6 +109,9 @@ class RTL8822CUDriver(Driver):
         self._watchdog_task: Optional[asyncio.Task] = None
         self._watchdog_state: Optional[WatchdogState] = None
         self._control_lock = threading.Lock()
+        self._lifecycle_lock = asyncio.Lock()
+        self._closed = False
+        self._ack_filter_original = None
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
         self.current_band_is_2g = True
@@ -172,7 +177,7 @@ class RTL8822CUDriver(Driver):
             raise BringUpError("chip-id", f"expected 0x{CHIP_ID_RTL8822CU:02x}, got 0x{self.chip_id:02x}")
         self.efuse = read_efuse(t)
         self._dack_cache_key = dack_cache.identity(self.efuse, self.chip_info)
-        cached_dack = dack_cache.get(self._dack_cache_key)
+        cached_dack = None if self._skip_dack_cache else dack_cache.get(self._dack_cache_key)
         self._dack_restored = cached_dack is not None
         self.dack = cached_dack if cached_dack is not None else DackState()
         if self.efuse.map_valid:
@@ -226,8 +231,10 @@ class RTL8822CUDriver(Driver):
                         rfe_type=self.efuse.rfe_type)
         try:
             odm_dm_init(t, self.h2c, self.dack, self.efuse, self.power_trim, self.txgapk, self.phydm)
-        except Exception:
-            if self._dack_restored:
+        except Exception as exc:
+            if isinstance(exc, (DackRestoreError, DackCalibrationError)):
+                self._reset_required = True
+            if self._dack_restored or isinstance(exc, (DackRestoreError, DackCalibrationError)):
                 dack_cache.discard(self._dack_cache_key)
             raise
         phy_bf_init(t)
@@ -322,7 +329,48 @@ class RTL8822CUDriver(Driver):
         self._log_state("monitor_entry")
         self._log_rx_registers("monitor_entry")
 
+    @staticmethod
+    async def _wait_for_completion(future):
+        cancelled = False
+        while not future.done():
+            try:
+                await asyncio.shield(future)
+            except asyncio.CancelledError:
+                cancelled = True
+            except BaseException:
+                break
+        if cancelled:
+            if not future.cancelled():
+                future.exception()
+            raise asyncio.CancelledError
+        return future.result()
+
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        if self._lifecycle_lock.locked():
+            raise BringUpError("state", "RTL8822CU lifecycle operation in progress")
+        async with self._lifecycle_lock:
+            return await self._connect(progress_cb)
+
+    def _reset_bringup_state(self) -> None:
+        self.chip_id = None
+        self.chip_info = None
+        self.efuse = None
+        self.rfpath = None
+        self.mac_address = None
+        self.mac_hidden_rpt = MacHiddenRpt()
+        self.txpwr = None
+        self.trx_path = TrxPathState()
+        self.dack = DackState()
+        self._dack_cache_key = None
+        self._dack_restored = False
+        self.h2c = H2cState()
+        self.power_trim = PowerTrimState()
+        self.txgapk = TxGapKState()
+        self.phydm = PhydmState()
+
+    async def _connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        if self._reset_required:
+            raise BringUpError("state", "RTL8822CU requires a device replug after failed reset")
         if self.is_warm:
             return True
         if self._claimed:
@@ -346,20 +394,40 @@ class RTL8822CUDriver(Driver):
         self._bulk_in_ep = self.layout.bulk_in[0]
         self._bulk_out_eps = list(self.layout.bulk_out)
         try:
-            self._claim()
-            await loop.run_in_executor(
-                None, self._bringup, self.transport, self.layout.bulk_out[0],
-                self.layout.bulk_out_max_packet_size, _emit)
-            await loop.run_in_executor(None, self._monitor_entry)
-        except BringUpError:
-            await self.close()
+            self._skip_dack_cache = False
+            for attempt in range(2):
+                self._claim()
+                try:
+                    await self._wait_for_completion(loop.run_in_executor(
+                        None, self._bringup, self.transport, self.layout.bulk_out[0],
+                        self.layout.bulk_out_max_packet_size, _emit))
+                    break
+                except (DackRestoreError, DackCalibrationError) as exc:
+                    logger.warning("RTL8822CU DACK failed: %s; %s", exc,
+                                   "full reinitialization required" if not attempt else "retry exhausted")
+                    dack_cache.discard(self._dack_cache_key)
+                    self._reset_required = True
+                    if attempt:
+                        raise
+                    if not await self._wait_for_completion(loop.create_task(self._close())):
+                        raise BringUpError("state", "RTL8822CU reset failed; replug the device")
+                    self._reset_required = False
+                    self._reset_bringup_state()
+                    self._skip_dack_cache = True
+                    self._bulk_in_ep = self.layout.bulk_in[0]
+                    self._bulk_out_eps = list(self.layout.bulk_out)
+            await self._wait_for_completion(loop.run_in_executor(None, self._monitor_entry))
+        except BaseException as exc:
+            reset_ok = await self._wait_for_completion(loop.create_task(self._close()))
+            if self._reset_required and reset_ok:
+                self._reset_required = False
+            if isinstance(exc, BringUpError):
+                raise
+            if isinstance(exc, (IOError, usb.core.USBError)):
+                raise BringUpError("firmware", str(exc)) from exc
+            if isinstance(exc, (ValueError, RuntimeError)):
+                raise BringUpError("phy", str(exc)) from exc
             raise
-        except (IOError, usb.core.USBError) as exc:
-            await self.close()
-            raise BringUpError("firmware", str(exc)) from exc
-        except (ValueError, RuntimeError) as exc:
-            await self.close()
-            raise BringUpError("phy", str(exc)) from exc
         try:
             # Start the RX reader only AFTER monitor entry. arm_monitor + the first tune +
             # enter_monitor_mode is what enables MAC RX; starting it before bringup ran the bulk IN
@@ -367,6 +435,7 @@ class RTL8822CUDriver(Driver):
             self._rx_reader = RxReaderThread(
                 loop, self._rx_read_once, self._rx_dispatch, name="rtl8822cu-rx",
                 on_fatal=lambda exc: self._on_lost and self._on_lost(exc),
+                split=split_bulk_records,
             )
             self._rx_reader.start()
             logger.debug("rtl8822cu RX reader started (bulk IN ep 0x%02x) after monitor entry",
@@ -374,6 +443,7 @@ class RTL8822CUDriver(Driver):
             self._current_channel = _DEFAULT_CHANNEL
             self._tx_bytes = 0
             self.is_warm = True
+            self._closed = False
             self._watchdog_state = WatchdogState.from_phydm(self.phydm)
             self._watchdog_task = asyncio.create_task(self._watchdog(), name="rtl8822cu-watchdog")
             if progress_cb:
@@ -381,8 +451,8 @@ class RTL8822CUDriver(Driver):
             if not self._dack_restored:
                 dack_cache.put(self._dack_cache_key, self.dack)
             return True
-        except Exception:
-            await self.close()
+        except BaseException:
+            await self._wait_for_completion(loop.create_task(self._close()))
             raise
 
     def _run_watchdog_tick(self) -> None:
@@ -414,24 +484,34 @@ class RTL8822CUDriver(Driver):
         if channel not in self.SUPPORTED_CHANNELS:
             logger.warning("RTL8822CU unsupported 20 MHz channel %d", channel)
             return False
-        loop = asyncio.get_running_loop()
-        try:
-            def _tune() -> None:
-                with self._control_lock:
-                    switch_channel(self.transport, channel, self.txpwr)
-                    self._current_channel = channel
-                    self.current_band_is_2g = channel <= 14
-            await loop.run_in_executor(None, _tune)
-            if not self._rx_regs_after_tune_logged:
-                self._rx_regs_after_tune_logged = True
-                await loop.run_in_executor(None, self._log_rx_registers, "after_tune")
-            return True
-        except (IOError, ValueError, usb.core.USBError) as exc:
-            logger.warning("RTL8822CU channel %d failed: %s", channel, exc)
-            return False
+        async with self._lifecycle_lock:
+            if self._closed:
+                return False
+            loop = asyncio.get_running_loop()
+            try:
+                def _tune() -> None:
+                    with self._control_lock:
+                        switch_channel(self.transport, channel, self.txpwr)
+                        self._current_channel = channel
+                        self.current_band_is_2g = channel <= 14
+                        if not self._rx_regs_after_tune_logged:
+                            self._log_rx_registers("after_tune")
+                            self._rx_regs_after_tune_logged = True
+                await self._wait_for_completion(loop.run_in_executor(None, _tune))
+                return True
+            except (IOError, ValueError, usb.core.USBError) as exc:
+                logger.warning("RTL8822CU channel %d failed: %s", channel, exc)
+                return False
 
     async def close(self) -> None:
+        async with self._lifecycle_lock:
+            await self._wait_for_completion(asyncio.get_running_loop().create_task(self._close()))
+
+    async def _close(self) -> bool:
+        reset_ok = bool(self._claimed and self.chip_info)
         self.is_warm = False
+        self._closed = True
+        self._ack_filter_original = None
         if self._watchdog_task:
             self._watchdog_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -458,20 +538,24 @@ class RTL8822CUDriver(Driver):
                             mac_power_off(self.transport, cut_mask=cut_mask)
                 await loop.run_in_executor(None, _power_off)
             except (IOError, usb.core.USBError) as exc:
+                reset_ok = False
                 logger.debug("RTL8822CU MAC power-off during close failed: %s", exc)
         if self._claimed:
             try:
                 usb.util.release_interface(self.dev, self.layout.interface if self.layout else 0)
             except usb.core.USBError as exc:
+                reset_ok = False
                 logger.debug("RTL8822CU interface release during close failed: %s", exc)
             try:
                 usb.util.dispose_resources(self.dev)
             except usb.core.USBError as exc:
+                reset_ok = False
                 logger.debug("RTL8822CU resource disposal during close failed: %s", exc)
             self._claimed = False
         self._bulk_in_ep = None
         self._bulk_out_eps = []
         self.dack = DackState()
+        return reset_ok
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
         """Point REG_MACID at ``mac`` so the hardware HW-ACKs frames addressed to it while
@@ -490,24 +574,34 @@ class RTL8822CUDriver(Driver):
     async def _write_mac(self, mac6: bytes) -> None:
         """Program ``mac6`` into REG_MACID, offloaded so the blocking control transfer
         never stalls the RX dispatch."""
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, lambda: set_mac_addr(self.transport, mac6))
+        async with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("RTL8822CU is closed")
+            def _write() -> None:
+                with self._control_lock:
+                    set_mac_addr(self.transport, mac6)
+            loop = asyncio.get_running_loop()
+            await self._wait_for_completion(loop.run_in_executor(None, _write))
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        if not self._bulk_out_eps:
-            return False
-        try:
-            desc = build_tx_desc_inject(frame_bytes, band_is_2g=self.current_band_is_2g)
-            ep = pick_bulk_out_ep(self._bulk_out_eps, queue=TX_DESC_QSEL_MGMT)
-            loop = asyncio.get_running_loop()
-            sent = await loop.run_in_executor(None, lambda: write_bulk(self.dev, ep, desc + frame_bytes))
-            if sent == len(desc) + len(frame_bytes):
-                self._tx_bytes += len(frame_bytes)
-                return True
-            return False
-        except (ValueError, IOError, usb.core.USBError) as exc:
-            logger.warning("RTL8822CU TX failed: %s", exc)
-            return False
+        async with self._lifecycle_lock:
+            if self._closed or not self._bulk_out_eps:
+                return False
+            try:
+                ep = pick_bulk_out_ep(self._bulk_out_eps, queue=TX_DESC_QSEL_MGMT)
+                packet_size = self.layout.bulk_out_max_packet_size if self.layout else 512
+                packet = build_tx_packet_inject(frame_bytes, bulk_out_size=packet_size,
+                                                band_is_2g=self.current_band_is_2g)
+                loop = asyncio.get_running_loop()
+                sent = await self._wait_for_completion(
+                    loop.run_in_executor(None, lambda: write_bulk(self.dev, ep, packet)))
+                if sent == len(packet):
+                    self._tx_bytes += len(frame_bytes)
+                    return True
+                return False
+            except (ValueError, IOError, usb.core.USBError) as exc:
+                logger.warning("RTL8822CU TX failed: %s", exc)
+                return False
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Supply the incrementing SW sequence number the injected TxDesc copies: the 8822c
@@ -520,13 +614,30 @@ class RTL8822CUDriver(Driver):
         struct.pack_into("<H", buf, 22, (self._tx_seq << 4) | (buf[22] & 0x0F))
         return bytes(buf)
 
+    async def _set_rx_acks(self, enabled: bool) -> None:
+        async with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("RTL8822CU is closed")
+            def _update() -> None:
+                with self._control_lock:
+                    value = self.transport.read16(0x06A2)
+                    if enabled:
+                        if self._ack_filter_original is None:
+                            self._ack_filter_original = value & (1 << 13)
+                        value |= 1 << 13
+                    else:
+                        value = (value & ~(1 << 13)) | (self._ack_filter_original or 0)
+                    self.transport.write16(0x06A2, value)
+                    if not enabled:
+                        self._ack_filter_original = None
+            loop = asyncio.get_running_loop()
+            await self._wait_for_completion(loop.run_in_executor(None, _update))
+
     async def _enable_rx_acks(self) -> None:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, lambda: self.transport.write16(0x06A2, self.transport.read16(0x06A2) | (1 << 13)))
+        await self._set_rx_acks(True)
 
     async def _disable_rx_acks(self) -> None:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, lambda: self.transport.write16(0x06A2, self.transport.read16(0x06A2) & ~(1 << 13)))
+        await self._set_rx_acks(False)
 
     def _rx_read_once(self) -> bytes | None:
         if self._bulk_in_ep is None:
@@ -547,6 +658,9 @@ class RTL8822CUDriver(Driver):
                 continue
             if callback is None:
                 continue
-            parsed = WlanFrameParser.parse_80211_frame(mpdu, rssi if rssi is not None else -100)
-            if parsed:
-                callback(parsed)
+            try:
+                parsed = WlanFrameParser.parse_80211_frame(mpdu, rssi if rssi is not None else -100)
+                if parsed:
+                    callback(parsed)
+            except Exception:
+                logger.exception("RTL8822CU RX frame dispatch failed")

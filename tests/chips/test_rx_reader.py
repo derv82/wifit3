@@ -143,6 +143,170 @@ async def test_reader_pause_halts_reads_and_resume_restarts():
         await r.stop()
 
 
+def test_split_backlog_limits_and_partial_acceptance(monkeypatch):
+    monkeypatch.setattr(rx_reader, "MAX_SPLIT_BACKLOG", 2)
+    monkeypatch.setattr(rx_reader, "MAX_BACKLOG_BYTES", 3)
+    loop = asyncio.new_event_loop()
+    reads = iter([b"aggregate"])
+    dispatched = []
+    split_calls = []
+    reader = None
+
+    def read_once():
+        try:
+            return next(reads)
+        except StopIteration:
+            reader._running = False
+            return None
+
+    def split(buf):
+        for record in (b"aa", b"bb", b"c", b"d"):
+            split_calls.append(record)
+            yield record
+
+    reader = RxReaderThread(loop, read_once, dispatched.append, split=split)
+    reader._running = True
+    reader._run()
+    assert split_calls == [b"aa", b"bb", b"c", b"d"]
+    assert reader._backlog_count == 2
+    assert reader._backlog_bytes == 3
+    assert reader._dropped == 2
+    loop.run_until_complete(asyncio.sleep(0))
+    assert dispatched == [b"aa", b"c"]
+    assert reader._backlog_count == reader._backlog_bytes == 0
+    loop.close()
+
+
+def test_split_batches_enforce_frame_limit_and_preserve_order():
+    loop = asyncio.new_event_loop()
+    dispatched = []
+    submitted = []
+    reader = None
+    reads = iter([b"aggregate"])
+
+    def read_once():
+        try:
+            return next(reads)
+        except StopIteration:
+            reader._running = False
+            return None
+
+    def split(buf):
+        for index in range(rx_reader.MAX_SPLIT_BACKLOG + 3):
+            yield index.to_bytes(2, "little")
+
+    reader = RxReaderThread(loop, read_once, dispatched.append, split=split)
+    original = reader._dispatch_split_batch
+
+    def dispatch_batch(batch):
+        submitted.append(len(batch))
+        original(batch)
+
+    reader._dispatch_split_batch = dispatch_batch
+    reader._running = True
+    reader._run()
+    assert reader._backlog_count == 8192
+    assert reader._backlog_bytes == 8192 * 2
+    assert reader._dropped == 3
+    loop.run_until_complete(asyncio.sleep(0))
+    assert submitted == [64] * 128
+    assert dispatched == [index.to_bytes(2, "little") for index in range(8192)]
+    assert reader._backlog_count == reader._backlog_bytes == 0
+    loop.close()
+
+
+def test_split_batch_dispatch_failure_releases_capacity_and_continues():
+    loop = asyncio.new_event_loop()
+    received = []
+
+    def dispatch(record):
+        received.append(record)
+        if record == b"a":
+            raise ValueError("bad frame")
+
+    reader = RxReaderThread(loop, lambda: None, dispatch, split=lambda buf: ())
+    reader._backlog_count = 2
+    reader._backlog_bytes = 2
+    reader._submit_split_batch([b"a", b"b"])
+    loop.run_until_complete(asyncio.sleep(0))
+    assert received == [b"a", b"b"]
+    assert reader._backlog_count == reader._backlog_bytes == 0
+    loop.close()
+
+
+def test_split_batch_submission_failure_releases_capacity():
+    loop = asyncio.new_event_loop()
+    reader = RxReaderThread(loop, lambda: None, lambda record: None, split=lambda buf: ())
+    reader._backlog_count = 1
+    reader._backlog_bytes = 1
+    loop.close()
+    reader._submit_split_batch([b"a"])
+    assert reader._backlog_count == reader._backlog_bytes == 0
+
+
+@pytest.mark.asyncio
+async def test_split_pause_resume_preserves_order_and_stop_interrupts():
+    loop = asyncio.get_running_loop()
+    entered = threading.Event()
+    release = threading.Event()
+    dispatched = []
+    finished = asyncio.Event()
+    reads = iter([b"aggregate"])
+
+    def read_once():
+        return next(reads, None)
+
+    def split(buf):
+        yield b"a"
+        entered.set()
+        release.wait(1)
+        yield b"b"
+        yield b"c"
+
+    def dispatch(record):
+        dispatched.append(record)
+        if len(dispatched) == 3:
+            finished.set()
+
+    reader = RxReaderThread(loop, read_once, dispatch, split=split)
+    reader.start()
+    try:
+        assert await loop.run_in_executor(None, entered.wait, 1)
+        reader._pause_req.set()
+        release.set()
+        assert await loop.run_in_executor(None, reader._paused.wait, 1)
+        await asyncio.sleep(0.01)
+        assert dispatched == [b"a"]
+        reader.resume()
+        await asyncio.wait_for(finished.wait(), 1)
+        assert dispatched == [b"a", b"b", b"c"]
+    finally:
+        release.set()
+        await reader.stop()
+
+
+@pytest.mark.asyncio
+async def test_split_stop_while_paused_does_not_dispatch_remaining_records():
+    loop = asyncio.get_running_loop()
+    reader = None
+    dispatched = []
+    split_paused = threading.Event()
+
+    def split(buf):
+        yield b"a"
+        reader._pause_req.set()
+        split_paused.set()
+        yield b"b"
+
+    reader = RxReaderThread(loop, lambda: b"aggregate", dispatched.append, split=split)
+    reader.start()
+    assert await loop.run_in_executor(None, split_paused.wait, 1)
+    assert await loop.run_in_executor(None, reader._paused.wait, 1)
+    await reader.stop()
+    await asyncio.sleep(0)
+    assert dispatched == [b"a"]
+
+
 def test_pause_on_stopped_reader_returns_immediately():
     r = RxReaderThread(asyncio.new_event_loop(), lambda: None, lambda b: None, name="stopped")
     assert r.pause() is True

@@ -1,5 +1,7 @@
 from unittest.mock import Mock
 
+import pytest
+
 from wifit3.chips.rtl8822cu import cal
 
 
@@ -82,9 +84,21 @@ def test_poll_timeout_is_bounded_and_restore_continues(monkeypatch):
 
     monkeypatch.setattr(cal, "get_bb_reg", read)
     monkeypatch.setattr(cal, "set_bb_reg", lambda t, addr, mask, val: writes.append((addr, mask, val)))
-    cal._dack_restore(object(), cal.DackState(dack_en=True))
+    state = cal.DackState(dack_en=True, valid=True)
+    with pytest.raises(cal.DackRestoreError, match="MSBK 0x2808.*restore ready 0x4534"):
+        cal._dack_restore(object(), state)
+    assert not state.valid and not state.dack_en
     for addr in (0x2808, 0x2834, 0x4508, 0x4534):
         assert counts[addr, 0x7FFF80] == 20000
         assert counts[addr, 0xFF] == 10000
         assert counts[addr, 0xF] == 10000
     assert writes[-1] == (0x41CC, 0x1FF8000, 0)
+
+
+def test_restore_io_failure_is_explicit_and_invalidates(monkeypatch):
+    state = cal.DackState(dack_en=True, valid=True)
+    monkeypatch.setattr(cal, "get_bb_reg", Mock(side_effect=OSError("USB failure")))
+    with pytest.raises(cal.DackRestoreError) as exc:
+        cal.dac_cal(object(), state)
+    assert isinstance(exc.value.__cause__, OSError)
+    assert not state.valid and not state.dack_en

@@ -63,6 +63,18 @@ def _phy_rssi(buf: bytes, offset: int, stat: RxPktStat,
     return None
 
 
+def split_bulk_records(buf: bytes):
+    pos = 0
+    while pos + 24 <= len(buf):
+        stat = parse_rx_pkt_desc(buf, pos)
+        if stat.pkt_len == 0 or pos + stat.total_size > len(buf):
+            return
+        end = pos + stat.total_size
+        if not stat.is_c2h:
+            yield buf[pos:end]
+        pos = (end + 7) & ~7
+
+
 def iter_bulk_frames(buf: bytes, *, cck_gi_l_bnd: int | None = None,
                      cck_gi_u_bnd: int | None = None, rx_ant_status: int = 0x03):
     def phy_status_rssi(b: bytes, off: int, stat: RxPktStat) -> int | None:
@@ -70,4 +82,4 @@ def iter_bulk_frames(buf: bytes, *, cck_gi_l_bnd: int | None = None,
     return _iter_bulk_frames(buf, phy_status_rssi=phy_status_rssi)
 
 
-__all__ = ["Endpoints", "RxPktStat", "iter_bulk_frames", "parse_rx_pkt_desc", "probe_endpoints", "read_rx_burst"]
+__all__ = ["Endpoints", "RxPktStat", "iter_bulk_frames", "parse_rx_pkt_desc", "probe_endpoints", "read_rx_burst", "split_bulk_records"]

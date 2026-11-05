@@ -30,6 +30,14 @@ _BP_RFREG = (0x8F,)
 _SAMPLE_OVERFLOW = 0x64     # halrf_compare_8822c rejects a sample above this magnitude
 
 
+class DackCalibrationError(RuntimeError):
+    """DACK calibration did not complete; device reinitialization is required."""
+
+
+class DackRestoreError(RuntimeError):
+    """DACK restore failed; device reinitialization is required."""
+
+
 @dataclass
 class DackState:
     """halrf_dack_info: the calibration result, kept so a second halrf_init restores it
@@ -126,6 +134,8 @@ def measure(t: RTL8822CUTransport) -> tuple[int, int]:
         if not (_compare(i_sample) or _compare(q_sample)):
             iv.append(i_sample)
             qv.append(q_sample)
+    if len(iv) != SN:
+        raise DackCalibrationError(f"DACK measurement collected {len(iv)}/{SN} samples")
     for _ in range(100):
         i_min = i_max = iv[0]
         q_min = q_max = qv[0]
@@ -137,15 +147,17 @@ def measure(t: RTL8822CUTransport) -> tuple[int, int]:
             break
         iv[0], qv[0] = _read_sample(t)
         iv[SN - 1], qv[SN - 1] = _read_sample(t)
+    else:
+        raise DackCalibrationError("DACK measurement spread did not settle")
     return _trimmed_mean(iv), _trimmed_mean(qv)
 
 
 def _poll(t: RTL8822CUTransport, address: int, mask: int, data: int) -> None:
-    """halrf_polling_check_8822c: spin without a delay, and give up silently.
-    [SRC halrf_8822c.c:807]"""
+    """halrf_polling_check_8822c. [SRC halrf_8822c.c:807]"""
     for _ in range(100000):
         if get_bb_reg(t, address, mask) == data:
             return
+    raise DackCalibrationError(f"DACK poll timed out at {address:#x} mask {mask:#x}, expected {data:#x}")
 
 
 @dataclass(frozen=True)
@@ -214,6 +226,8 @@ def _adck_loop(t: RTL8822CUTransport, r: _PathRegs) -> tuple[int, int, int]:
             qc = 0x400 - qc
         if ic < 5 and qc < 5:
             break
+    else:
+        raise DackCalibrationError(f"ADCK did not converge at {r.adck:#x}")
     return temp, adc_ic, adc_qc
 
 
@@ -317,6 +331,8 @@ def _dack_loop(t: RTL8822CUTransport, r: _PathRegs, temp: int, adc_ic: int, adc_
             qc = 0x400 - qc
         if ic < 5 and qc < 5:
             break
+    else:
+        raise DackCalibrationError(f"DACK did not converge at {r.adck:#x}")
 
 
 def _dck_backup(t: RTL8822CUTransport, dack: DackState) -> None:
@@ -374,6 +390,7 @@ def _dack_restore(t: RTL8822CUTransport, dack: DackState) -> None:
     """halrf_dack_restore_8822c. [SRC halrf_8822c.c:610]"""
     if not dack.dack_en:
         return
+    failures = []
     logger.trace("RTL8822CU restoring saved DACK calibration")
     temp1 = get_bb_reg(t, 0x1860, MASKDWORD)
     temp2 = get_bb_reg(t, 0x4160, MASKDWORD)
@@ -410,6 +427,8 @@ def _dack_restore(t: RTL8822CUTransport, dack: DackState) -> None:
             get_bb_reg(t, addr, 0x7FFF80)
             if get_bb_reg(t, addr, 0x7FFF80) == 0xFFFF:
                 break
+        else:
+            failures.append(f"MSBK {addr:#x}")
     for path, branches in enumerate((((0x18B8, 0x2808, 0x18B4, 0x18B0),
                                       (0x18D4, 0x2834, 0x18D0, 0x18CC)),
                                      ((0x41B8, 0x4508, 0x41B4, 0x41B0),
@@ -423,6 +442,8 @@ def _dack_restore(t: RTL8822CUTransport, dack: DackState) -> None:
                     break
                 set_bb_reg(t, trigger, 0x6000000, 0)
                 set_bb_reg(t, trigger, 0x6000000, 2)
+            else:
+                failures.append(f"restore ready {status:#x}")
             for i in range(15):
                 set_bb_reg(t, data, 1 << 2, 0)
                 set_bb_reg(t, data, 0xFF8, dack.msbk_d[path][branch][i])
@@ -441,6 +462,10 @@ def _dack_restore(t: RTL8822CUTransport, dack: DackState) -> None:
         set_bb_reg(t, addr, 1 << 27, 1)
     set_bb_reg(t, 0x09B4, MASKDWORD, temp3)
     _biask_restore(t, dack)
+    if failures:
+        dack.dack_en = False
+        dack.valid = False
+        raise DackRestoreError("DACK restore timed out: " + ", ".join(failures))
 
 
 def dac_cal(t: RTL8822CUTransport, dack: DackState) -> None:
@@ -448,9 +473,16 @@ def dac_cal(t: RTL8822CUTransport, dack: DackState) -> None:
     result. Skipped on a warm chip, which restores the saved tables instead.
     [SRC halrf_8822c.c:821]"""
     if dack.dack_en:
-        _dack_restore(t, dack)
+        try:
+            _dack_restore(t, dack)
+        except Exception as exc:
+            dack.dack_en = False
+            dack.valid = False
+            if isinstance(exc, DackRestoreError):
+                raise
+            raise DackRestoreError("DACK restore interrupted; device reinitialization required") from exc
         return
-    dack.dack_en = True
+    dack.valid = False
 
     backup = [get_bb_reg(t, address) for address in _BP_REG]
     backup_rf = [[get_rf_reg(t, path, address) for path in (0, 1)] for address in _BP_RFREG]
@@ -501,6 +533,7 @@ def dac_cal(t: RTL8822CUTransport, dack: DackState) -> None:
         for path in (0, 1):
             set_rf_reg(t, path, address, 0xFFFFF, values[path])
     _dack_backup(t, dack)
+    dack.dack_en = True
     dack.valid = True
 
 
