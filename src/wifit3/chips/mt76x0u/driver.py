@@ -59,8 +59,7 @@ FW_FILE_FALLBACK = ASSETS_DIR / "mt7610u_linux-firmware.bin"
 class MT76x0UDriver(Driver):
     """Driver for MT7610U-family USB cards (e.g. Alfa AWUS036ACHM). WIRE-verified on 0e8d:7610."""
 
-    # DFS waits on mt76x02_phy_dfs_adjust_agc (mt76x0/phy.c:1063), not ported yet.
-    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
     LINUX_REPLUG_AFTER_MODPROBE = False   # self-colds: modprobe -r cold-re-enumerates the card
 

@@ -6,12 +6,10 @@ import pytest
 
 from wifit3 import chips
 from wifit3.chips.driver import Driver
-from wifit3.chips.mt76x0u.driver import MT76x0UDriver
-from wifit3.chips.mt76x2u.driver import MT76x2UDriver
 from wifit3.chips.rt2800usb.driver import RT2800USBDriver
 from wifit3.chips.rt5572.driver import RT5572Driver
 
-DRIVERS_WITHOUT_DFS = {MT76x0UDriver, MT76x2UDriver, RT2800USBDriver}
+DRIVERS_WITHOUT_DFS = {RT2800USBDriver}
 
 
 def _driver_classes() -> list[type[Driver]]:

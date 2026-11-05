@@ -19,6 +19,7 @@ import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
+from wifit3.dot11.chan import is_dfs_channel
 from wifit3.dot11.parser import WlanFrameParser
 
 from .chan import set_channel_20mhz, phy_channel_calibrate
@@ -88,8 +89,7 @@ class MT76x2UDriver(Driver):
     firmware upload.
     """
 
-    # DFS waits on mt76x02_phy_dfs_adjust_agc (mt76x2/phy.c:270), not ported yet.
-    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
     LINUX_REPLUG_AFTER_MODPROBE = False   # self-colds: force_power_cycle → cold-equivalent, no replug
 
@@ -614,6 +614,7 @@ class MT76x2UDriver(Driver):
                         band_2g=band_2g,
                         bw_40plus=False,
                         has_ext_lna=has_ext_lna(self.transport, band_2g),
+                        chan_radar=is_dfs_channel(ch),
                         rssi_thresh=(
                             MT76X2_RSSI_GAIN_THRESH_2G if band_2g
                             else MT76X2_RSSI_GAIN_THRESH_5G
