@@ -5,6 +5,7 @@ Textual): the headline + status markup are pure functions that read the active
 campaign off ``Campaign.active``. The button-matrix cases drive the real
 ``FocusViewV2.refresh_buttons`` against a headless screen, since button assembly
 moved onto the screen (there is no ``derive_buttons`` any more)."""
+import time
 import types
 from pathlib import Path
 
@@ -887,6 +888,17 @@ async def test_derive_buttons_all_disabled_when_silenced(buttons_screen, monkeyp
         assert btns[bid].disabled is True
     assert fm.campaign_blocked(DeauthCampaign, ap) == "AP silenced"
 
+
+
+def test_campaign_blocked_on_a_dfs_channel_once_the_ap_is_silent_for_60s():
+    ap = _rsn_ap()
+    ap.channel = 56
+    ap.last_seen = time.time() - 30
+    assert fm.campaign_blocked(DeauthCampaign, ap) is None
+    ap.last_seen = time.time() - 61
+    assert fm.campaign_blocked(DeauthCampaign, ap) == "DFS channel, AP silent >60s"
+    ap.channel = 36
+    assert fm.campaign_blocked(DeauthCampaign, ap) is None
 
 def _stored_psk(value: str, saved_at: int) -> Key:
     capture = PersistedCapture(type=CaptureType.WPA_PSK, timestamp=saved_at, path=f"/tmp/{saved_at}",
