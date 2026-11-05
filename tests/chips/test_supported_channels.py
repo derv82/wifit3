@@ -8,8 +8,9 @@ from wifit3 import chips
 from wifit3.chips.driver import Driver
 from wifit3.chips.rt2800usb.driver import RT2800USBDriver
 from wifit3.chips.rt5572.driver import RT5572Driver
+from wifit3.chips.rtw88_8814au.driver import RTL8814AUDriver
 
-DRIVERS_WITHOUT_DFS = {RT2800USBDriver}
+DRIVERS_WITHOUT_DFS = {RT2800USBDriver, RTL8814AUDriver}
 
 
 def _driver_classes() -> list[type[Driver]]:

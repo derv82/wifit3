@@ -58,7 +58,7 @@ _BAND_RELOCK_ATTEMPTS = 4
 class RTL8814AUDriver(Driver):
     """Driver for Realtek RTL8814AU (Alfa AWUS1900, 4T4R). M1: FW upload only."""
 
-    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G   # non-DFS by scope (RTL8814AU.md)
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
