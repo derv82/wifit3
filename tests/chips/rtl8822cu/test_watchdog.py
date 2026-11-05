@@ -2,7 +2,25 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from wifit3.chips.rtl8822cu import watchdog as wd
+from wifit3.chips.rtl8822cu import dm, watchdog as wd
+
+
+def test_dig_initializes_both_paths_at_no_link_lower_bound(monkeypatch):
+    reads = MagicMock(return_value=0x20)
+    writes = MagicMock()
+    monkeypatch.setattr(dm, "get_bb_reg", reads)
+    monkeypatch.setattr(dm, "set_bb_reg", writes)
+    state = dm.PhydmState()
+    transport = MagicMock()
+
+    dm.dig_init(transport, state)
+
+    assert state.cur_ig_value == 0x1C
+    assert writes.call_args_list[-2:] == [
+        call(transport, 0x1D70, 0x7F, 0x1C),
+        call(transport, 0x1D70, 0x7F00, 0x1C),
+    ]
+    assert wd.WatchdogState.from_phydm(state).cur_ig_value == 0x1C
 
 
 @pytest.mark.parametrize("tx_bytes,rx_bytes,low", [
