@@ -11,6 +11,7 @@ _DEFAULTS = {n: copy.deepcopy(getattr(Config, n))
              for n in (
                  "theme", "scanner_sort", "scanner_sort_reverse", "scanner_sort_delay",
                  "silenced_bssids", "hide_silenced", "log_level", "captures_dir", "save_pcap",
+                 "save_probed_ssids",
                  "decloaked_ssids", "wps_auto_pbc", "enable_dfs_channels", "auto_crack", "cpu_crack", "hashcat",
                  "hashtopolis")}
 
@@ -144,6 +145,15 @@ def test_enable_dfs_channels_save_load_roundtrip(config_path):
     Config.enable_dfs_channels = False
     Config.load()
     assert Config.enable_dfs_channels is True
+
+
+def test_save_probed_ssids_save_load_roundtrip(config_path):
+    assert Config.save_probed_ssids is False
+    Config.save_probed_ssids = True
+    Config.save()
+    Config.save_probed_ssids = False
+    Config.load()
+    assert Config.save_probed_ssids is True
 
 
 def test_wps_auto_pbc_save_load_roundtrip(config_path):
