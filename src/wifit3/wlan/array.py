@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, Callable, Dict, List, Optional, Set
 
 from wifit3.chips.driver import FakeMacSupport
+from wifit3.dot11.chan import is_dfs_channel
 from wifit3.dot11.packet import BeaconPacket, Packet
 from wifit3.models import AccessPoint, Client
 from wifit3.wlan.dedupe import StreamMerger
@@ -55,6 +56,7 @@ class WlanArray:
         self._hopping = False
         self._hop_channels: Optional[List[int]] = None
         self._hop_interval = 0.5
+        self._hop_include_dfs_channels = True
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._rehop_tasks: Set[asyncio.Task] = set()
         self._close_tasks: Set[asyncio.Task] = set()   # closing vanished cards; never cancelled
@@ -315,8 +317,11 @@ class WlanArray:
         absorbs the scarce 5 GHz work before the all-band 2.4 GHz channels spread. That keeps cards
         on-band and avoids costly band switches. Any card the spread leaves empty (more cards than
         channels) then hops every filter channel it supports, doubling up for redundant RX rather
-        than stranding on its last channel. A channel no card supports is dropped."""
+        than stranding on its last channel. A channel no card supports is dropped, and so is a DFS
+        channel unless the hop includes them."""
         pool = members if members is not None else self._members
+        if not self._hop_include_dfs_channels:
+            channels = [ch for ch in channels if not is_dfs_channel(ch)]
         assignment = {m: [] for m in pool}
         for ch in sorted(channels, reverse=True):
             capable = [m for m in pool if ch in m.supported_channels]
@@ -335,6 +340,7 @@ class WlanArray:
         was_hopping = self._hopping
         hop_channels = self._hop_channels
         hop_interval = self._hop_interval
+        hop_include_dfs_channels = self._hop_include_dfs_channels
         await iface.stop_hopping()
         if was_hopping:
             remaining = [m for m in self._members if m is not iface]
@@ -349,15 +355,17 @@ class WlanArray:
             yield iface
         finally:
             if was_hopping and self._hopping:
-                await self.start_hopping(channels=hop_channels, interval=hop_interval)
+                await self.start_hopping(channels=hop_channels, interval=hop_interval,
+                                         include_dfs_channels=hop_include_dfs_channels)
 
     async def start_hopping(self, channels: Optional[List[int]] = None,
-                            interval: float = 0.5) -> None:
+                            interval: float = 0.5, include_dfs_channels: bool = True) -> None:
         """SPREAD hop: partition the channel list across members; each hops only its subset. Records
         the config + running loop so a later membership change can re-partition on its own."""
         self._hopping = True
         self._hop_channels = channels
         self._hop_interval = interval
+        self._hop_include_dfs_channels = include_dfs_channels
         self._loop = asyncio.get_running_loop()
         chans = channels or self.supported_channels
         assignment = self._partition(chans)
@@ -398,7 +406,8 @@ class WlanArray:
 
     async def _rehop(self) -> None:
         try:
-            await self.start_hopping(self._hop_channels, self._hop_interval)
+            await self.start_hopping(self._hop_channels, self._hop_interval,
+                                     self._hop_include_dfs_channels)
         except asyncio.CancelledError:
             raise
         except Exception:
