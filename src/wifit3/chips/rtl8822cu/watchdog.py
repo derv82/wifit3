@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from .dm import PhydmState
 from .phy import (
     _RF_MASK,
-    DBGPORT_PRI_2,
     MASKDWORD,
     get_bb_reg,
     get_rf_reg,
@@ -87,6 +86,14 @@ class WatchdogState:
     thermal_value_lck: int = 0xFF
     last_rx_bytes: int = 0
     last_tx_bytes: int = 0
+    last_rx_ok_cnt: int = 0
+    last_tx_ok_cnt: int = 0
+    rx_tp: int = 0
+    tx_tp: int = 0
+    ndp_cnt_pre: int = 0
+    no_ndp_cnts: int = 0
+    bhtstfdisabled: bool = False
+    pre_dbg_priority: int = 0
 
     @classmethod
     def from_phydm(cls, dm: PhydmState) -> "WatchdogState":
@@ -116,12 +123,44 @@ def _usb_rx_agg(t: RTL8822CUTransport, *, low_traffic: bool) -> None:
     t.write16(0x0280, size | (timeout << 8))
 
 
-def _hw_setting(t: RTL8822CUTransport) -> None:
-    """phydm_hw_setting -> phydm_dynamic_switch_htstf_agc_8822c: read the NDP-valid counter off the
-    HT-STF debug port; with no traffic (total_tp == 0) keep HT-STF AGC on. [SRC phydm_rtl8822c.c:29]"""
-    set_bb_dbg_port(t, DBGPORT_PRI_2, 0x51F)
-    t.read32(0x2DBC)                                    # get_bb_dbg_port_val (NDP-valid count)
-    set_bb_reg(t, 0x08A0, 1 << 2, 1)
+def _traffic_statistics(st: WatchdogState, tx_bytes: int, rx_bytes: int) -> bool:
+    """collect_traffic_statistics and phydm_traffic_load_decision [SRC rtw_mlme.c:4052, phydm.c:46]."""
+    cur_tx_bytes = (tx_bytes - st.last_tx_bytes) & 0xFFFFFFFFFFFFFFFF
+    cur_rx_bytes = (rx_bytes - st.last_rx_bytes) & 0xFFFFFFFFFFFFFFFF
+    st.last_tx_bytes, st.last_rx_bytes = tx_bytes, rx_bytes
+    cur_tx_tp = ((cur_tx_bytes * 8 & 0xFFFFFFFFFFFFFFFF) // 2 // 1024 // 1024) & 0xFFFFFFFF
+    cur_rx_tp = ((cur_rx_bytes * 8 & 0xFFFFFFFFFFFFFFFF) // 2 // 1024 // 1024) & 0xFFFFFFFF
+
+    if st.last_tx_ok_cnt > tx_bytes:
+        st.last_tx_ok_cnt = tx_bytes
+    if st.last_rx_ok_cnt > rx_bytes:
+        st.last_rx_ok_cnt = rx_bytes
+    tx_delta, rx_delta = tx_bytes - st.last_tx_ok_cnt, rx_bytes - st.last_rx_ok_cnt
+    st.last_tx_ok_cnt, st.last_rx_ok_cnt = tx_bytes, rx_bytes
+    st.tx_tp = ((st.tx_tp >> 1) + (((tx_delta >> 18) >> 1) & 0xFFFFFFFF)) & 0xFFFFFFFF
+    st.rx_tp = ((st.rx_tp >> 1) + (((rx_delta >> 18) >> 1) & 0xFFFFFFFF)) & 0xFFFFFFFF
+    return cur_tx_tp < 1 and cur_rx_tp < 1
+
+
+def _hw_setting(t: RTL8822CUTransport, st: WatchdogState) -> None:
+    """phydm_dynamic_switch_htstf_agc_8822c [SRC phydm_rtl8822c.c:29, phydm_debug.c:132]."""
+    if st.bhtstfdisabled or st.pre_dbg_priority >= 1:
+        return
+    set_bb_dbg_port(t, 1, 0x51F)  # DBGPORT_PRI_1
+    st.pre_dbg_priority = 1
+    try:
+        ndp_valid_cnt = t.read32(0x2DBC) & 0xFF
+    finally:
+        st.pre_dbg_priority = 0
+    is_beamformed = ndp_valid_cnt != st.ndp_cnt_pre
+    st.ndp_cnt_pre = ndp_valid_cnt
+    if (st.tx_tp + st.rx_tp) & 0xFFFFFFFF == 0 or is_beamformed:
+        set_bb_reg(t, 0x08A0, 1 << 2, 1)
+        st.no_ndp_cnts = 0
+    elif st.no_ndp_cnts == 3:
+        set_bb_reg(t, 0x08A0, 1 << 2, 0)
+    elif st.no_ndp_cnts < 3:
+        st.no_ndp_cnts += 1
 
 
 def _ccx_result_gated(t: RTL8822CUTransport, rdy_reg: int, rdy_bit: int,
@@ -504,13 +543,15 @@ def _env_mntr_set(t: RTL8822CUTransport, st: WatchdogState) -> None:
     set_bb_reg(t, _REG_EDCCA_CLM_TRIG, 1 << 26, 1)
 
 
-def tick(t: RTL8822CUTransport, st: WatchdogState, channel: int, *, low_traffic: bool = True) -> None:
+def tick(t: RTL8822CUTransport, st: WatchdogState, channel: int, *,
+         tx_bytes: int = 0, rx_bytes: int = 0) -> None:
     """One phydm dynamic-check watchdog tick, in wire order (phydm.c:2624-2715). ``channel`` is the
     driver's current channel; the thermal callback selects its delta swing table by it."""
+    low_traffic = _traffic_statistics(st, tx_bytes, rx_bytes)
     _sreset_check(t)
     _usb_rx_agg(t, low_traffic=low_traffic)
     t.read32(0x0608)                                    # hw_var_rcr_get (interleaved)
-    _hw_setting(t)
+    _hw_setting(t, st)
     _env_mntr_result(t, st)
     cnt_all, cnt_cck_fail = _fa_cnt_statistics(t, st)
     _dig(t, st, cnt_all)

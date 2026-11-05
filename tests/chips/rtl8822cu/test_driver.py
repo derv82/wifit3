@@ -63,6 +63,7 @@ async def test_inject_frame_sends_desc_and_stamped_frame(monkeypatch):
     assert await d.inject_frame(frame) is True
     assert len(sent) == 1
     assert len(sent[0]) == 48 + len(frame)
+    assert d._tx_bytes == len(frame)
     assert sent[0][:2] == (len(frame) & 0xFFFF).to_bytes(2, "little")   # TXPKTSIZE
     assert sent[0][48:48 + 22] == frame[:22]        # header up to seq_ctl unchanged
     assert sent[0][48 + 22:48 + 24] == b"\x10\x00"  # seq_ctl stamped to seq 1 (first inject)
@@ -84,6 +85,7 @@ async def test_inject_frame_returns_false_on_short_write(monkeypatch):
 
     monkeypatch.setattr(drv, "write_bulk", _short)
     assert await d.inject_frame(_deauth()) is False
+    assert d._tx_bytes == 0
 
 
 async def test_inject_frame_returns_false_on_usb_error(monkeypatch):
@@ -280,20 +282,23 @@ def test_watchdog_tick_runs_only_for_a_live_driver(monkeypatch):
     d.is_warm = True
     d._current_channel = 149
     d._run_watchdog_tick()
-    assert calls == [((d.transport, d._watchdog_state, 149), {"low_traffic": True})]
+    assert calls == [((d.transport, d._watchdog_state, 149), {"tx_bytes": 0})]
 
 
-def test_watchdog_keeps_default_rx_aggregation_under_load(monkeypatch):
+def test_watchdog_uses_monitor_tx_counter_not_bulk_rx(monkeypatch):
     d = _driver()
     d.is_warm = True
     d._watchdog_state = drv.WatchdogState()
-    d._rx_bytes = drv._TRAFFIC_THRESHOLD_BYTES
-    calls = []
-    monkeypatch.setattr(drv, "watchdog_tick", lambda *args, **kwargs: calls.append(kwargs))
+    d._bulk_in_ep = 0x84
+    d._tx_bytes = 123
+    monkeypatch.setattr(drv, "read_rx_burst", lambda *args, **kwargs: b"x" * 300_000)
+    tick = MagicMock()
+    monkeypatch.setattr(drv, "watchdog_tick", tick)
 
+    assert len(d._rx_read_once()) == 300_000
     d._run_watchdog_tick()
 
-    assert calls == [{"low_traffic": False}]
+    tick.assert_called_once_with(d.transport, d._watchdog_state, 1, tx_bytes=123)
 
 
 # --- bring up wiring: the EFUSE and the MAC hidden report, not literals --------

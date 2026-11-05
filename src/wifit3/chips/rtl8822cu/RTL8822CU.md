@@ -122,7 +122,7 @@
 - TX power: `txpwr_index.hal_com_get_txpwr_idx`, state from `txpwr_index.txpwr_idx_state`, PG walk in `txpower.hal_load_txpwr_info`.
 - Cold boot calibrations: `cal.py` (`odm_dm_init` / `halrf_init`: DAC cal/DACK, RX DCK, X2K, thermal), then the phydm sub inits in `dm.py` (DIG, CCK-PD, env monitor, adaptivity, RA).
 - Per board RF trim: `kfree.py` (thermal, power, PA bias, TSSI trims); TSSI DC offset calibration `tssi.py`; TX gap K `txgapk.py`.
-- Watchdog tick: `watchdog.py`, the phydm 2 s JGR3 dynamic check (env monitor result/set, false alarm stats, DIG, CCK-PD, thermal).
+- Watchdog tick: `watchdog.py`, the phydm 2 s JGR3 dynamic check (monitor traffic accounting, USB RX aggregation, HT-STF AGC, env monitor result/set, false alarm stats, DIG, CCK-PD, thermal). The busy-traffic HT-STF branch has unit coverage but has not been verified on hardware.
 - RX decode: `rx.iter_bulk_frames` (`rtw88_base.parse_rx_pkt_desc` plus the 8822C JGR3 `_phy_rssi`: CCK type 0 and OFDM types 1..5, signed pwdb, floor -120 with no upper clamp, and per-path CCK gain correction from the `cck_gi` bounds `phy.config_bb_rf` returns).
 - TX inject: `tx.build_tx_desc_inject` (vendor `dump_mgntframe` inject branch, `pattrib->inject == 0xa5`).
 - TX LED: `led.enable_tx_blink` selects GPIO8 WL LED then the HALMAC TX-only hardware mode after `driver._monitor_entry`; `disable_tx_blink` restores software-off mode before MAC power-off.
