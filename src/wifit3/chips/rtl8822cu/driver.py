@@ -532,7 +532,8 @@ class RTL8822CUDriver(Driver):
         if callback is None and not self._ack_detect_on:
             return
         for stat, mpdu, rssi in iter_bulk_frames(
-                buf, cck_gi_l_bnd=self.phydm.cck_gi_l_bnd, cck_gi_u_bnd=self.phydm.cck_gi_u_bnd):
+                buf, cck_gi_l_bnd=self.phydm.cck_gi_l_bnd, cck_gi_u_bnd=self.phydm.cck_gi_u_bnd,
+                rx_ant_status=self.trx_path.rx_ant_status):
             if stat.crc_err or stat.icv_err:
                 continue
             if len(mpdu) == 10 and mpdu[0] == 0xD4:

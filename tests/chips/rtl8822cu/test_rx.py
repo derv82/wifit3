@@ -132,3 +132,18 @@ def test_cck_path_b_ignored_when_report_too_short():
     buf = _pkt(b"WXYZ" + b"\x00\x00\x00\x00", _cck_report(50, 20, 200, 0), drvinfo_sz=16)
     (_stat, _mpdu, rssi), = iter_bulk_frames(buf, cck_gi_l_bnd=16, cck_gi_u_bnd=63)
     assert rssi == -60                     # 50 in band -> 50 - 110, path B (200) ignored
+
+
+def test_rssi_uses_only_enabled_rx_paths():
+    cck = _pkt(b"WXYZ" + bytes(4), _cck_report(50, 20, 90, 20))
+    ofdm = _pkt(b"WXYZ" + bytes(4), _ofdm(1, 34, 60))
+    for mask, expected_cck, expected_ofdm in (
+        (0x01, -60, -76), (0x02, -20, -50), (0x03, -20, -50), (0x00, None, None),
+    ):
+        assert next(iter_bulk_frames(cck, rx_ant_status=mask))[2] == expected_cck
+        assert next(iter_bulk_frames(ofdm, rx_ant_status=mask))[2] == expected_ofdm
+
+
+def test_cck_path_b_only_requires_its_complete_report():
+    buf = _pkt(b"WXYZ" + bytes(4), _cck_report(50, 20, 90, 20), drvinfo_sz=16)
+    assert next(iter_bulk_frames(buf, rx_ant_status=0x02))[2] is None

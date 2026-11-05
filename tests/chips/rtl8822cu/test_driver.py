@@ -164,6 +164,20 @@ async def test_disable_rx_acks_drops_ack_control_frames():
     d.transport.write16.assert_called_once_with(0x06A2, 0xFFFF & ~(1 << 13))
 
 
+def test_rx_dispatch_uses_configured_rx_paths(monkeypatch):
+    d = _driver()
+    d.trx_path.rx_ant_status = 0x02
+    options = {}
+
+    def frames(buf, **kwargs):
+        options.update(kwargs)
+        return []
+
+    monkeypatch.setattr(drv, "iter_bulk_frames", frames)
+    d._rx_dispatch(b"buffer")
+    assert options["rx_ant_status"] == 0x02
+
+
 def test_tap_counts_ack_to_our_mac():
     d = _driver()
     ra = bytes.fromhex("020000000001")
