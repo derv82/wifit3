@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 
 import usb.core
+from usb.backend import IBackend
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ except ImportError:
     libusb_package = None
 
 _desktop_lock = threading.Lock()
-_desktop_backend = None
+_desktop_backend: Optional[IBackend] = None
 
 
 class UsbBackend(ABC):
@@ -43,20 +44,20 @@ class UsbBackend(ABC):
 class LibusbBackend(UsbBackend):
     """Desktop: one libusb context, either bundled or system-provided."""
 
-    def __init__(self, backend) -> None:
-        self._backend = backend
+    def __init__(self, libusb: IBackend) -> None:
+        self._libusb = libusb
 
     def enumerate(self) -> List[usb.core.Device]:
-        return list(usb.core.find(find_all=True, backend=self._backend) or [])
+        return list(usb.core.find(find_all=True, backend=self._libusb) or [])
 
     def find(self, vid: int, pid: int, bus: Optional[int] = None,
              address: Optional[int] = None) -> Optional[usb.core.Device]:
         extra = {"bus": bus, "address": address} if bus is not None and address is not None else {}
-        return usb.core.find(idVendor=vid, idProduct=pid, backend=self._backend, **extra)
+        return usb.core.find(idVendor=vid, idProduct=pid, backend=self._libusb, **extra)
 
     def find_all(self, vid: int, pid: int) -> List[usb.core.Device]:
         return list(usb.core.find(find_all=True, idVendor=vid, idProduct=pid,
-                                  backend=self._backend) or [])
+                                  backend=self._libusb) or [])
 
     def node_path(self, dev: usb.core.Device) -> Optional[str]:
         bus, address = getattr(dev, "bus", None), getattr(dev, "address", None)
@@ -73,7 +74,7 @@ def usb_backend() -> Optional[UsbBackend]:
     return LibusbBackend(low_level)
 
 
-def _desktop_libusb():
+def _desktop_libusb() -> Optional[IBackend]:
     global _desktop_backend
     with _desktop_lock:
         if libusb_package is not None:

@@ -5,9 +5,17 @@ from wifit3.device import backend
 
 
 def test_libusb_backend_enumerates(monkeypatch):
+    seen = {}
     dev = object()
-    monkeypatch.setattr(usb.core, "find", lambda **kw: [dev])
-    assert backend.LibusbBackend(object()).enumerate() == [dev]
+
+    def find(**kw):
+        seen.update(kw)
+        return [dev]
+
+    monkeypatch.setattr(usb.core, "find", find)
+    ctx = object()
+    assert backend.LibusbBackend(ctx).enumerate() == [dev]
+    assert seen == {"find_all": True, "backend": ctx}
 
 
 def test_libusb_backend_find_targets_instance(monkeypatch):
