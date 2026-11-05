@@ -190,11 +190,15 @@ class PreferencesModal(ModalScreen):
             yield Label("Preferences", id="title")
             yield ThemeSetting()
             yield SortDelaySetting()
-            yield CapturesDirSetting()
-            yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap")
             yield Checkbox("Enable DFS channels", value=Config.enable_dfs_channels,
                            id="enable_dfs_channels",
-                           tooltip="DFS channels (52-64, 100-144) are shared with radar.")
+                           tooltip="[u]DFS[/]: [bold]Dynamic Frequency Selection[/]\n"
+                                "[u]CH[/]:  [bold]52-64[/] and [bold]100-144[/]\n\n"
+                                "[bold $text-warning]Shared with weather & airport radar[/]\n"
+                                "[dim]Most countries allow transmitting only while an AP is active[/]")
+            yield CapturesDirSetting()
+            yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap",
+                           tooltip="[u]Note[/]: [bold].hc22000[/] files [i]always[/] save")
             yield AutoCrackSetting()
             yield SaveFooter()
 
