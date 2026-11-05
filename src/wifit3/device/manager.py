@@ -257,10 +257,7 @@ def _require_backend(backend: Optional[UsbBackend]) -> UsbBackend:
 
 def raw_devices() -> List[usb.core.Device]:
     """Every ``usb.core.Device`` on the bus right now, unfiltered (the ZeroCD ejector's view)."""
-    backend = usb_backend()
-    if backend is None:
-        return []
-    return _bus_devices(backend)
+    return _bus_devices(_require_backend(usb_backend()))
 
 
 def devices() -> List[DeviceID]:
@@ -316,18 +313,14 @@ def linux_node_path(device_id: DeviceID) -> Optional[str]:
     """The usbfs node ``/dev/bus/usb/BBB/DDD`` of the present card matching ``device_id`` (desktop
     Linux), or None when the platform has no usbfs node or the card isn't on the bus. Honors the
     (bus, address) instance when set, so identical siblings resolve to the right node."""
-    backend = usb_backend()
-    if backend is None:
-        return None
+    backend = _require_backend(usb_backend())
     dev = backend.find(device_id.vid, device_id.pid,
                        bus=device_id.bus, address=device_id.address)
     return backend.node_path(dev) if dev is not None else None
 
 
 def _live_dev(device_id: DeviceID) -> Optional[usb.core.Device]:
-    backend = usb_backend()
-    if backend is None:
-        return None
+    backend = _require_backend(usb_backend())
     return backend.find(device_id.vid, device_id.pid,
                         bus=device_id.bus, address=device_id.address)
 

@@ -1,4 +1,7 @@
 """The USB backend interface: one libusb context."""
+from types import SimpleNamespace
+
+import pytest
 import usb.core
 
 from wifit3.device import backend
@@ -68,3 +71,31 @@ def test_usb_backend_returns_a_libusb_backend(monkeypatch):
 def test_usb_backend_missing_libusb(monkeypatch):
     monkeypatch.setattr(backend, "_desktop_libusb", lambda: None)
     assert backend.usb_backend() is None
+
+
+@pytest.fixture(autouse=True)
+def _reset_backend_factory():
+    yield
+    backend.set_usb_backend_factory(None)
+
+
+def test_usb_backend_factory_override():
+    backend.set_usb_backend_factory(lambda: "custom")
+    assert backend.usb_backend() == "custom"
+
+
+def test_desktop_libusb_prefers_the_bundle(monkeypatch):
+    bundled = object()
+    monkeypatch.setattr(backend, "libusb_package",
+                        SimpleNamespace(get_libusb1_backend=lambda: bundled))
+    monkeypatch.setattr("usb.backend.libusb1.get_backend",
+                        lambda: pytest.fail("system backend used"))
+    assert backend._desktop_libusb() is bundled
+
+
+def test_desktop_libusb_falls_back_to_system(monkeypatch):
+    system = object()
+    monkeypatch.setattr(backend, "libusb_package",
+                        SimpleNamespace(get_libusb1_backend=lambda: None))
+    monkeypatch.setattr("usb.backend.libusb1.get_backend", lambda: system)
+    assert backend._desktop_libusb() is system

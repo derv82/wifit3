@@ -7,6 +7,7 @@ are the enumeration + factory the bring-up engine drives.
 import pytest
 
 import wifit3.device.manager as manager
+from tests.device.fakes import FakeBackend
 from wifit3.chips.driver import DeviceID
 
 
@@ -196,33 +197,6 @@ class _FakeDev:
         return iter([_Intf()])
 
 
-class _FakeBackend:
-    """A UsbBackend over a fixed device list, recording the last find() target."""
-
-    def __init__(self, devs):
-        self.devs = list(devs)
-        self.seen = {}
-
-    def enumerate(self):
-        return list(self.devs)
-
-    def find(self, vid, pid, bus=None, address=None):
-        self.seen = {"bus": bus, "address": address}
-        for dev in self.devs:
-            if (dev.idVendor, dev.idProduct) != (vid, pid):
-                continue
-            if bus is not None and address is not None and (dev.bus, dev.address) != (bus, address):
-                continue
-            return dev
-        return None
-
-    def find_all(self, vid, pid):
-        return [d for d in self.devs if (d.idVendor, d.idProduct) == (vid, pid)]
-
-    def node_path(self, dev):
-        return f"/dev/bus/usb/{dev.bus:03d}/{dev.address:03d}"
-
-
 class _FakeDriver:
     """Minimal driver satisfying WlanInterface's constructor (registers two callbacks)."""
     def __init__(self):
@@ -243,7 +217,7 @@ class _FakeDriver:
 
 
 def _stub_bus(monkeypatch, devs):
-    monkeypatch.setattr(manager, "usb_backend", lambda: _FakeBackend(devs))
+    monkeypatch.setattr(manager, "usb_backend", lambda: FakeBackend(devs))
     # Isolate from the host's real PnP tree on Windows (devices() merges it in).
     monkeypatch.setattr("wifit3.device.windows_pnp.present_usb_ids", lambda: set())
 
@@ -296,7 +270,7 @@ def test_wlan_iface_selects_the_addressed_instance(monkeypatch):
     # one via a targeted find, not the first VID:PID match (the two-identical-cards hotplug bug).
     entry = DeviceID(0x0E8D, 0x7961, "MT7921AU", bus=2, address=35)
     second = _FakeDev(0x0E8D, 0x7961, bus=2, address=35)
-    backend = _FakeBackend([second])
+    backend = FakeBackend([second])
 
     monkeypatch.setattr(manager, "driver_for", lambda v, p: (_FakeDriver, "mt7921au"))
     monkeypatch.setattr(manager, "usb_backend", lambda: backend)

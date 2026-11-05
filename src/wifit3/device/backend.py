@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import logging
-import threading
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import usb.core
 from usb.backend import IBackend
@@ -16,16 +15,15 @@ try:
 except ImportError:
     libusb_package = None
 
-_desktop_lock = threading.Lock()
-_desktop_backend: Optional[IBackend] = None
+_backend_factory: Optional[Callable[[], Optional["UsbBackend"]]] = None
 
 
 class UsbBackend(ABC):
-    """Enumerate and locate USB devices for one platform."""
+    """Enumerate and locate USB devices for one transport."""
 
     @abstractmethod
     def enumerate(self) -> List[usb.core.Device]:
-        """Every device the platform currently exposes."""
+        """Every device the transport currently exposes."""
 
     @abstractmethod
     def find(self, vid: int, pid: int, bus: Optional[int] = None,
@@ -37,7 +35,7 @@ class UsbBackend(ABC):
         """Every device with this VID:PID."""
 
     def node_path(self, dev: usb.core.Device) -> Optional[str]:
-        """The usbfs node for ``dev`` where the platform has one (desktop Linux)."""
+        """The usbfs node for ``dev`` where the transport has one (desktop Linux)."""
         return None
 
 
@@ -66,8 +64,16 @@ class LibusbBackend(UsbBackend):
         return f"/dev/bus/usb/{bus:03d}/{address:03d}"
 
 
+def set_usb_backend_factory(factory: Optional[Callable[[], Optional[UsbBackend]]]) -> None:
+    """Override the backend factory, e.g. for an alternative USB transport."""
+    global _backend_factory
+    _backend_factory = factory
+
+
 def usb_backend() -> Optional[UsbBackend]:
-    """The libusb backend, or None when libusb cannot be loaded."""
+    """The USB backend, or None when libusb cannot be loaded."""
+    if _backend_factory is not None:
+        return _backend_factory()
     low_level = _desktop_libusb()
     if low_level is None:
         return None
@@ -75,13 +81,12 @@ def usb_backend() -> Optional[UsbBackend]:
 
 
 def _desktop_libusb() -> Optional[IBackend]:
-    global _desktop_backend
-    with _desktop_lock:
-        if libusb_package is not None:
-            return libusb_package.get_libusb1_backend()
-        if _desktop_backend is None:
-            from usb.backend import libusb1
-            _desktop_backend = libusb1.get_backend()
-            if _desktop_backend is None:
-                logger.error("system libusb not found")
-        return _desktop_backend
+    if libusb_package is not None:
+        backend = libusb_package.get_libusb1_backend()
+        if backend is not None:
+            return backend
+    from usb.backend import libusb1
+    backend = libusb1.get_backend()
+    if backend is None:
+        logger.error("system libusb not found")
+    return backend
