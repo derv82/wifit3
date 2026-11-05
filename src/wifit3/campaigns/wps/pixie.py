@@ -250,7 +250,7 @@ def _find_second_half(oracle: _HalfOracle, e_s2: bytes, first4: str) -> Optional
     if oracle.matches(e_s2, oracle.empty_psk, e_hash2):
         return first4
     for middle in range(1_000):
-        tail = pins.full_pin(first4, f"{middle:03d}")[4:]
+        tail = pins.full_pin(first4, f"{middle:03d}")[-4:]
         if oracle.matches(e_s2, oracle.psk(int(tail)), e_hash2):
             return first4 + tail
     for value in range(10_000):
