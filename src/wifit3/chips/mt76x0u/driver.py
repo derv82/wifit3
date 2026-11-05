@@ -59,14 +59,7 @@ FW_FILE_FALLBACK = ASSETS_DIR / "mt7610u_linux-firmware.bin"
 class MT76x0UDriver(Driver):
     """Driver for MT7610U-family USB cards (e.g. Alfa AWUS036ACHM). WIRE-verified on 0e8d:7610."""
 
-    # Same channel-set assumption as mt76x2u: 2.4 GHz 1..14 + non-DFS 5 GHz.
-    # The MT7610U is single-stream (1T1R) but covers both bands. Refine when
-    # M2 channel tuning lands; for now the list only matters for the UI.
-    SUPPORTED_CHANNELS = (
-        list(range(1, 15))
-        + [36, 40, 44, 48]
-        + [149, 153, 157, 161, 165]
-    )
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
     LINUX_REPLUG_AFTER_MODPROBE = False   # self-colds: modprobe -r cold-re-enumerates the card
 

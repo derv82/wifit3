@@ -73,7 +73,7 @@ WATCHDOG_PERIOD_S = 2.0
 
 
 class Rtl8188ftvDkmsDriver(Driver):
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(Driver.CHANNELS_2G)
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE
 
     @classmethod

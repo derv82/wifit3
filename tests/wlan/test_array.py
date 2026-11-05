@@ -279,6 +279,36 @@ async def test_partition_5ghz_first_keeps_cards_on_band():
     assert dual.hop_calls[0] == [36, 44]             # dual took only 5 GHz; no 2.4 spillover onto it
 
 
+
+async def test_start_hopping_without_dfs_channels_drops_them():
+    dual = FakeIface("wlan0", [6, 36, 52, 100, 149])
+    a = _pool(dual)
+    await a.start_hopping(include_dfs_channels=False)
+    assert dual.hop_calls == [[6, 36, 149]]
+
+
+async def test_attach_while_hopping_without_dfs_channels_keeps_them_out():
+    a = WlanArray()
+    a.attach(FakeIface("wlan0", [1, 6, 11]))
+    await a.start_hopping(interval=0.25, include_dfs_channels=False)
+    five = FakeIface("wlan1", [36, 52, 100, 149])
+    a.attach(five)                                # a 5 GHz card joins a 2.4 GHz hop
+    await asyncio.sleep(0.05)
+    assert five.hop_calls[-1] == [36, 149]
+
+
+async def test_claim_restores_hopping_without_dfs_channels():
+    a = WlanArray()
+    m1 = FakeIface("wlan0", [6, 36, 52])
+    m2 = FakeIface("wlan1", [6, 36, 52])
+    a.attach(m1)
+    a.attach(m2)
+    await a.start_hopping(interval=0.25, include_dfs_channels=False)
+    async with a.claim(m1):
+        assert m2.hop_calls[-1] == [6, 36]
+    assert 52 not in m1.hop_calls[-1] + m2.hop_calls[-1]
+
+
 # ----- member loss -----------------------------------------------------------
 
 def test_member_lost_reemits_with_remaining_count():

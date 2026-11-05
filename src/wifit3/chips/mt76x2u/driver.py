@@ -19,6 +19,7 @@ import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
+from wifit3.dot11.chan import is_dfs_channel
 from wifit3.dot11.parser import WlanFrameParser
 
 from .chan import set_channel_20mhz, phy_channel_calibrate
@@ -88,14 +89,7 @@ class MT76x2UDriver(Driver):
     firmware upload.
     """
 
-    # 2.4 GHz channels 1..14 + non-DFS 5 GHz (UNII-1 + UNII-3).
-    # DFS bands (52..144) are PHY-capable on this chip but require radar
-    # detection support we won't ship; left out until that lands.
-    SUPPORTED_CHANNELS = (
-        list(range(1, 15))
-        + [36, 40, 44, 48]
-        + [149, 153, 157, 161, 165]
-    )
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
     LINUX_REPLUG_AFTER_MODPROBE = False   # self-colds: force_power_cycle → cold-equivalent, no replug
 
@@ -620,6 +614,7 @@ class MT76x2UDriver(Driver):
                         band_2g=band_2g,
                         bw_40plus=False,
                         has_ext_lna=has_ext_lna(self.transport, band_2g),
+                        chan_radar=is_dfs_channel(ch),
                         rssi_thresh=(
                             MT76X2_RSSI_GAIN_THRESH_2G if band_2g
                             else MT76X2_RSSI_GAIN_THRESH_5G
