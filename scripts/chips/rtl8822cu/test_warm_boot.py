@@ -55,16 +55,16 @@ async def run(channel: int, seconds: float) -> int:
         if disconnected or not driver.dack.dack_en:
             raise RuntimeError("Card disconnected or DACK calibration was not saved")
 
-        saved_dack = driver.dack
         await driver.close()
         if disconnected:
             raise RuntimeError("Card disconnected; refusing to reuse calibration")
-        driver.dack = saved_dack
-        print("Reconnecting the same USB device with experimentally retained DACK state.")
+        print("Reconnecting the same USB device using the process-local DACK cache.")
         start = time.monotonic()
         if not await driver.connect(progress_cb=progress):
             raise RuntimeError("Reconnect failed")
         warm_time = time.monotonic() - start
+        if not driver._dack_restored:
+            raise RuntimeError("No DACK cache entry was reused; check the card's EFUSE identity")
         warm_frames = await observe("Reconnect RX")
         print(f"Connect times: initial {cold_time:.2f}s; reconnect {warm_time:.2f}s")
         if disconnected:

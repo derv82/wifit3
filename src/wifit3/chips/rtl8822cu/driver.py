@@ -16,6 +16,7 @@ from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.chips.rx_reader import RxReaderThread
 
+from . import dack_cache
 from .cal import DackState, odm_dm_init
 from .kfree import PowerTrimState
 from .led import disable_tx_blink, enable_tx_blink
@@ -93,6 +94,8 @@ class RTL8822CUDriver(Driver):
         self.txpwr: Optional[TxPwrIdxState] = None
         self.trx_path = TrxPathState()
         self.dack = DackState()
+        self._dack_cache_key = None
+        self._dack_restored = False
         self.h2c = H2cState()
         self.power_trim = PowerTrimState()
         self.txgapk = TxGapKState()
@@ -168,6 +171,10 @@ class RTL8822CUDriver(Driver):
         if self.chip_id != CHIP_ID_RTL8822CU:
             raise BringUpError("chip-id", f"expected 0x{CHIP_ID_RTL8822CU:02x}, got 0x{self.chip_id:02x}")
         self.efuse = read_efuse(t)
+        self._dack_cache_key = dack_cache.identity(self.efuse, self.chip_info)
+        cached_dack = dack_cache.get(self._dack_cache_key)
+        self._dack_restored = cached_dack is not None
+        self.dack = cached_dack if cached_dack is not None else DackState()
         if self.efuse.map_valid:
             self.mac_address = ":".join(f"{octet:02x}" for octet in self.efuse.mac_address)
         cut_mask = cut_mask_from_sys_cfg1(self.chip_info.raw_cfg1)
@@ -217,7 +224,12 @@ class RTL8822CUDriver(Driver):
         config_trx_path(t, self.trx_path, tx_path=self.rfpath.tx_path,
                         rx_path=self.rfpath.rx_path, max_tx_cnt=self.rfpath.max_tx_cnt,
                         rfe_type=self.efuse.rfe_type)
-        odm_dm_init(t, self.h2c, self.dack, self.efuse, self.power_trim, self.txgapk, self.phydm)
+        try:
+            odm_dm_init(t, self.h2c, self.dack, self.efuse, self.power_trim, self.txgapk, self.phydm)
+        except Exception:
+            if self._dack_restored:
+                dack_cache.discard(self._dack_cache_key)
+            raise
         phy_bf_init(t)
         if not self.efuse.bluetooth_coexist:
             btcoex_wifionly_hw_config(t)
@@ -366,6 +378,8 @@ class RTL8822CUDriver(Driver):
             self._watchdog_task = asyncio.create_task(self._watchdog(), name="rtl8822cu-watchdog")
             if progress_cb:
                 progress_cb(1.0, "RTL8822CU monitor receiver online")
+            if not self._dack_restored:
+                dack_cache.put(self._dack_cache_key, self.dack)
             return True
         except Exception:
             await self.close()

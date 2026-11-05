@@ -35,6 +35,7 @@ class DackState:
     """halrf_dack_info: the calibration result, kept so a second halrf_init restores it
     instead of re-running the full DACK. [SRC halrf/halrf_iqk.h:65]"""
     dack_en: bool = False
+    valid: bool = False
     msbk_d: list = field(default_factory=lambda: [[[0] * 15 for _ in range(2)] for _ in range(2)])
     dck_d: list = field(default_factory=lambda: [[[0] * 2 for _ in range(2)] for _ in range(2)])
     biask_d: list = field(default_factory=lambda: [[0] * 2 for _ in range(2)])
@@ -500,6 +501,7 @@ def dac_cal(t: RTL8822CUTransport, dack: DackState) -> None:
         for path in (0, 1):
             set_rf_reg(t, path, address, 0xFFFFF, values[path])
     _dack_backup(t, dack)
+    dack.valid = True
 
 
 ODM_H2C_WIFI_CALIBRATION = 0x6D     # [SRC phydm_interface.h:44]
