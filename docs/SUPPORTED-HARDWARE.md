@@ -273,7 +273,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | RX | ✅ | 2026-11-05 | 5-min fixed-channel baseline: 2G ch4 4.96 vs 3.49 beacons/s, 37/36 APs; 5G ch36 9.67 vs 9.71 beacons/s, 6/7 APs; median RSSI +0.5 dB vs Linux (40 common APs); both channels heard their reference APs. One zero-beacon cross-band metadata record on ch4. |
 | Port | ✅ | 2026-09-02 | Matches linux-DKMS (rtl88x2cu) both bands; verify_pcap byte-identical up to TX. |
 | TX | ✅ | 2026-09-02 | Deauth + PMKID + WEP inject, 2.4 + 5 GHz. |
-| Handshake | ✅ | 2026-09-02 | Deauth → 4-way. |
+| Handshake | ✅ | 2026-11-05 | Deauth → 4-way M1-M4; Evil twin capture succeed.|
 | PMKID | ✅ | 2026-09-02 | Passive + active, 2.4 + 5 GHz. |
 | WEP | ✅ | 2026-09-02 | ChopChop + ARP replay ~220 IVs/s. |
 | WPS | ✅ | 2026-11-05 | PIN works; M1-M7 captured, pixie pin cracked using ralink |
