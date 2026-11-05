@@ -29,7 +29,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8822CU](#rtl8822cu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8822CU](#rtl8822cu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | B |
@@ -249,7 +249,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **A** | 2026-09-02 | Dual-band kernel-parity RX + full attack suite; spoofable ACKs. |
-| RX | ✅ | 2026-09-02 | 2G: 6.1 vs 6.8/s (90%), 5G: 9.6/9.6 (match); breadth 35/26 (≥ kernel); RSSI +0.3 dB. |
+| RX | ⚠️ | 2026-11-05 | 2G: 7.7 vs 6.7/s (114%), 5G: not measured yet; breadth 18/20 (2G), 4/2 (5G); RSSI +0.8 dB; needs more tests before assuming data. |
 | Port | ✅ | 2026-09-02 | Matches linux-DKMS (rtl88x2cu) both bands; verify_pcap byte-identical up to TX. |
 | TX | ✅ | 2026-09-02 | Deauth + PMKID + WEP inject, 2.4 + 5 GHz. |
 | Handshake | ✅ | 2026-09-02 | Deauth → 4-way. |
