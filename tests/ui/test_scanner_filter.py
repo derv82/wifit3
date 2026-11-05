@@ -62,7 +62,7 @@ class _FakeArray:
     def select_iface(self, channel):
         return next((iface for iface in self.members if channel in iface.supported_channels), None)
 
-    async def start_hopping(self, channels=None, interval=0.25):
+    async def start_hopping(self, channels=None, interval=0.25, include_dfs_channels=True):
         self.start_calls += 1
 
     async def stop_hopping(self):

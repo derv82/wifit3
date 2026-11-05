@@ -41,7 +41,7 @@ _SCAN_START_CHANNEL = 1            # first channel tuned at connect
 
 
 class RT5372Driver(Driver):
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))   # 2.4 GHz, 20 MHz
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(Driver.CHANNELS_2G)   # 2.4 GHz, 20 MHz
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: RT5372Transport):

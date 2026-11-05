@@ -82,8 +82,7 @@ logger = logging.getLogger(__name__)
 class RTL8188EUSDriver(Driver):
     """Driver for the Realtek RTL8188EUS (e.g. TP-Link TL-WN722N v2/v3)."""
 
-    # 2.4 GHz only.
-    SUPPORTED_CHANNELS = list(range(1, 15))
+    SUPPORTED_CHANNELS = list(Driver.CHANNELS_2G)   # 2.4 GHz only
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
@@ -399,7 +398,8 @@ class RTL8188EUSDriver(Driver):
             return bytes(self.dev.read(self._bulk_in_ep, 16384, 100))
         except usb.core.USBError as e:
             err = getattr(e, "errno", None)
-            if err in (110, 10060) or "timeout" in str(e).lower():
+            if (isinstance(e, usb.core.USBTimeoutError) or err in (110, 10060)
+                    or "timeout" in str(e).lower()):
                 return None
             raise
 

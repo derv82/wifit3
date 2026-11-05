@@ -43,13 +43,8 @@ class RTL8922AUDriver(Driver):
     # its own handle, so no user action is needed. [SRC] usb.c rtw89_usb_switch_mode_be.
     DEVICE_REENUMERATES = True
 
-    # 2.4 GHz + 5 GHz (non-DFS only) at 20 MHz. DFS channels (52-64, 100-144) are excluded: wifite
-    # ships non-DFS only, and a DFS hop hears nothing without a CAC dwell. TODO: 6 GHz (8922a
-    # support_bands includes it). [SRC] rtw8922a.c:3210.
-    SUPPORTED_CHANNELS = (
-        list(range(1, 15))
-        + [36, 40, 44, 48, 149, 153, 157, 161, 165]
-    )
+    # 2.4 GHz + 5 GHz at 20 MHz. TODO: 6 GHz (8922a support_bands includes it). [SRC] rtw8922a.c:3210.
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
 
     def __init__(self) -> None:
         super().__init__()
@@ -244,7 +239,8 @@ class RTL8922AUDriver(Driver):
             buf = bytes(self.dev.read(self._bulk_in_ep, RX_RECVBUF_SZ, 100))
         except usb.core.USBError as e:
             err = getattr(e, "errno", None)
-            if err in (110, 10060) or "timeout" in str(e).lower():
+            if (isinstance(e, usb.core.USBTimeoutError) or err in (110, 10060)
+                    or "timeout" in str(e).lower()):
                 return None
             raise
         if self.transport.rfk_wait.armed:

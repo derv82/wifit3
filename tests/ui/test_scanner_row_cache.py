@@ -34,7 +34,7 @@ class _Array:
     def get_access_points(self, include_eviltwin=True):
         return list(self.access_points.values())
 
-    async def start_hopping(self, channels=None, interval=0.25):
+    async def start_hopping(self, channels=None, interval=0.25, include_dfs_channels=True):
         pass
 
     async def stop_hopping(self):

@@ -71,7 +71,7 @@ _DEFAULT_CHANNEL = 1
 
 
 class RTL8822CUDriver(Driver):
-    SUPPORTED_CHANNELS: ClassVar[list[int]] = list(range(1, 15)) + [36, 40, 44, 48, 149, 153, 157, 161, 165]
+    SUPPORTED_CHANNELS: ClassVar[list[int]] = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, dev: usb.core.Device):

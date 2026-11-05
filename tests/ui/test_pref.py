@@ -2,7 +2,7 @@
 and Consolidate has moved out of Prefs into the Vault screen."""
 import pytest
 from textual.app import App
-from textual.widgets import Button, Select
+from textual.widgets import Button, Checkbox, Select
 
 from wifit3.models import ToolName
 from wifit3.persist import config
@@ -149,3 +149,18 @@ async def test_configure_button_opens_the_chosen_tools_modal():
 
         assert isinstance(app.screen, CpuCrackConfigModal)
         assert str(app.screen.query_one("#wordlist-launch", Button).label) == "Save"
+
+
+@pytest.mark.asyncio
+async def test_enable_dfs_channels_is_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "_PATH", tmp_path / "config.toml")
+    monkeypatch.setattr(Config, "enable_dfs_channels", False)
+    app = _Host()
+    async with app.run_test() as pilot:
+        await _open_prefs(app, pilot)
+        app.screen.query_one("#enable_dfs_channels", Checkbox).value = True
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause(0)
+
+    assert Config.enable_dfs_channels is True
+    assert "enable_dfs_channels = true" in (tmp_path / "config.toml").read_text("utf-8")

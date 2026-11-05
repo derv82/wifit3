@@ -1,6 +1,7 @@
 """View-model for the Focus screen."""
 from __future__ import annotations
 
+import time
 from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
@@ -15,6 +16,7 @@ from ..campaigns.pmkid import PmkidHarvestAttack
 from ..campaigns.wep import WepCampaign
 from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.crack.handshake import pmkid_crackable
+from wifit3.dot11.chan import is_dfs_channel
 from wifit3.dot11.eap import method_name
 from wifit3.dot11.pmf import PmfPosture
 from wifit3.dot11.rsn import SAE_AKM_SUITES
@@ -42,10 +44,12 @@ CAMPAIGN_BY_KEY = {cls.key: cls for cls in BUTTON_CAMPAIGNS}
 
 def campaign_blocked(cls, ap) -> Optional[str]:
     """Why cls's attack button is disabled right now, or None if it can start:
-    the AP is silenced, another campaign owns the radio, or the campaign's own
-    ineligible_reason (hidden SSID, WPS locked, unconfirmed encryption, …)."""
+    the AP is silenced, a DFS AP has gone quiet, another campaign owns the radio, or the
+    campaign's own ineligible_reason (hidden SSID, WPS locked, unconfirmed encryption, …)."""
     if Config.is_silenced(ap.bssid):
         return "AP silenced"
+    if is_dfs_channel(ap.channel) and time.time() - ap.last_seen > 60:
+        return "DFS channel, AP silent >60s"
     active = Campaign.active
     if active is not None and active.key != cls.key:
         return f"Blocked ({active.key} is active)"

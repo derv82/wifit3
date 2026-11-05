@@ -35,7 +35,7 @@ WATCHDOG_SECONDS = 2.0  # core.c:7358 schedule_delayed_work(&priv->ra_watchdog, 
 
 
 class RTL8192FUDriver(Driver):
-    SUPPORTED_CHANNELS = list(range(1, 15))
+    SUPPORTED_CHANNELS = list(Driver.CHANNELS_2G)
     CONFLICTING_LINUX_MODULES = ["rtl8xxxu"]
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 

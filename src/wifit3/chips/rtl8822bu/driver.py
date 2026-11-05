@@ -25,7 +25,6 @@ from wifit3.dot11.parser import WlanFrameParser
 
 from .chan import (
     CHANNELS_5G_ALL,
-    CHANNELS_5G_NON_DFS,
     channel_band_is_2g,
     set_channel_2g_20mhz,
     set_channel_5g_20mhz,
@@ -66,8 +65,7 @@ logger = logging.getLogger(__name__)
 class RTL8822BUDriver(Driver):
     """Driver for Realtek RTL8822BU (TP-Link T3U, ASUS USB-AC55, Edimax, ...)."""
 
-    # 2.4 GHz channels 1..14 + non-DFS 5 GHz (UNII-1 + UNII-3).
-    SUPPORTED_CHANNELS = list(range(1, 15)) + list(CHANNELS_5G_NON_DFS)
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
@@ -377,7 +375,8 @@ class RTL8822BUDriver(Driver):
             return bytes(self.dev.read(self._bulk_in_ep, 16384, 100))
         except usb.core.USBError as e:
             err = getattr(e, "errno", None)
-            if err in (110, 10060) or "timeout" in str(e).lower():
+            if (isinstance(e, usb.core.USBTimeoutError) or err in (110, 10060)
+                    or "timeout" in str(e).lower()):
                 return None
             raise
 

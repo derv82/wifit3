@@ -31,6 +31,8 @@ from wifit3.watchers.ap_watcher import (
 
 from ..capture_log import DECLOAK_METHOD_LABELS, saved_psk_markup
 from ..encryption_format import EncryptionSummary, wep_key_hex_and_ascii
+from wifit3.dot11.chan import is_dfs_channel
+from wifit3.wlan.array import WlanArray
 from wifit3.wlan.channels import band_ranges
 
 from .channel_filter import ChannelFilterDialog
@@ -241,7 +243,8 @@ class ScannerView(Screen):
         if self.app.screen is not self:
             return
         await array.start_hopping(
-            channels=self._channel_filter, interval=0.25
+            channels=self._channel_filter, interval=0.25,
+            include_dfs_channels=Config.enable_dfs_channels,
         )
 
     # ----- Per-tick refresh --------------------------------------------------
@@ -591,13 +594,13 @@ class ScannerView(Screen):
             self._write_log("[bold red][!] No active interface.[/bold red]")
             return
 
-        supported = array.supported_channels
+        supported = self._selectable_channels(array)
         if not supported:
             self._write_log("[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]")
             return
 
         dialog = ChannelFilterDialog(
-            supported_channels=list(supported),
+            supported_channels=supported,
             current_filter=self._channel_filter,
         )
         self.app.push_screen(dialog, self._on_channel_filter_result)
@@ -612,16 +615,26 @@ class ScannerView(Screen):
         self.query_one(FilterBar).set_channels(self._channel_filter)
         self.query_one("#ap-table", APTable).focus()
 
+    @staticmethod
+    def _selectable_channels(array: WlanArray) -> List[int]:
+        """The array's channels, without DFS channels unless the DFS pref is on."""
+        channels = []
+        for ch in array.supported_channels:
+            if Config.enable_dfs_channels or not is_dfs_channel(ch):
+                channels.append(ch)
+        return channels
+
     async def _apply_channel_filter(self, channels: List[int]) -> None:
         """Re-point the hopper; a full-band pick becomes None so hotplug keeps re-spreading it."""
         array = self.app.array
         if not array:
             return
-        full_band = set(channels) == set(array.supported_channels)
+        full_band = set(channels) == set(self._selectable_channels(array))
         self._channel_filter = None if full_band else channels
         await array.stop_hopping()
         dropped = self._prune_aps_outside(channels)
-        await array.start_hopping(channels=self._channel_filter, interval=0.25)
+        await array.start_hopping(channels=self._channel_filter, interval=0.25,
+                                  include_dfs_channels=Config.enable_dfs_channels)
 
         pieces = [
             f"[bold cyan]{name}[/bold cyan] [dim]({rngs})[/dim]"

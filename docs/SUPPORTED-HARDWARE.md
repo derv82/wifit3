@@ -32,6 +32,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8822CU](#rtl8822cu) | ✅ | ✅ | ✅ | ✅ | ⬜ | A |
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8188FTV](#rtl8188ftv) | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [RT5572](#rt5572) | ✅ | ⚠️ | ✅ | ✅ | ✅ | B |
 | [RTL8821CU](#rtl8821cu) | ⚠️ | ✅ | ✅ | ⚠️ | ✅ | B |
@@ -48,7 +49,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **92% (A)** | 2026-07-25 | Full 2.4 GHz attack suite, kernel-parity RX (now baselined). |
-| RX | ✅ | 2026-07-25 | Ref AP 7.1 vs 7.6/s (93%); RSSI accurate; run-to-run variance at weak signal. |
+| RX | ✅ | 2026-11-02 | Ref AP 7.3 vs 7.7/s (95%); 61 vs 63 APs; RSSI +0.7 dB. |
 | Port | ✅ | 2026-07-25 | Matches ath9k_htc: Ref AP beacon rate + RSSI parity. |
 | Handshake | ✅ | 2026-07-25 | Deauth → 4-way (M1–M4). |
 | PMKID | ✅ | 2026-07-25 | Passive + active extract. |
@@ -105,6 +106,26 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Stress | ✅ | 2026-10-27 | 30-min soak, flat (trend 1.00). |
 
 → [RTL8188EUS_DKMS.md](../src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](../src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
+
+### RTL8188FTV
+*No-name 0bda:f179 dongle · 2.4 GHz · 1T1R*
+
+> Ported from the [kelebek333/rtl8188fu](https://github.com/kelebek333/rtl8188fu) vendor/DKMS driver. Channels 1-14.
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **B** | 2026-11-02 | B: weak RF (short TX range), otherwise Linux-parity RX + full 2.4 attack suite. |
+| RX | ✅ | 2026-11-02 | Ref AP 6.1 vs 6.9/s (88%); breadth 76 vs 75; RSSI +0.7 dB (1 sweep; ±2/s run to run). |
+| TX | ✅ | 2026-11-02 | 100/100 deauths on air; unACKed frames retry to the limit (13 copies). |
+| ACKs | ✅ | 2026-11-02 | Auto-ACK forged MAC via active monitor (REG_MACID): 98/100 spoofed, 99/100 own. |
+| Port | ✅ | 2026-11-02 | Byte-exact vs 3 vendor cold boots; PR#62 driver 5.1/s in the same session. |
+| Handshake | ✅ | 2026-09-25 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-11-02 | Active: 3/3. |
+| WEP | ✅ | 2026-11-02 | ARP replay + ChopChop ~28-90 IVs/s; PTW key recovered. |
+| WPS | ✅ | 2026-11-02 | PIN → M7: hostapd 3/3, AirLink 1/1. |
+| Stress | ✅ | 2026-11-02 | 20-min 13-ch soak, OK (trend 1.20), 0 USB errors. |
+
+→ [RTL8188FTV_DKMS.md](../src/wifit3/chips/rtl8188ftv_dkms/RTL8188FTV_DKMS.md)
 
 ### RTL8192FU
 <img align="right" width="140" src="../assets/cardart/card-dlink-an3u-n300.png" alt="D-Link AN3U rev. A1">
@@ -512,6 +533,5 @@ Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_
 
 **Wishlist (not yet bought):**
 
-- *Generic/no-name brand*: RTL8188FTV [PR#62](https://github.com/derv82/wifit3/pull/62) (verify port in PR)
 - **TP-Link TL-WN823N**:  RTL8192CU [Issue#71](https://github.com/derv82/wifit3/issues/71) (new port)
 - **Asus USB-AC68**: RTL8814AU [Issue#86](https://github.com/derv82/wifit3/issues/86) ("for the art")

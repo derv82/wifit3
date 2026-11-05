@@ -30,10 +30,6 @@ from .transport import RTL8814AUTransport
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_CHANNELS_2G = list(range(1, 15))
-SUPPORTED_CHANNELS_5G = [36, 40, 44, 48, 149, 153, 157, 161, 165]
-
-
 def _set_rfe_reg_24g(transport: RTL8814AUTransport, rfe: int) -> None:
     """rtw8814a_set_rfe_reg_24g."""
     if rfe == 2:

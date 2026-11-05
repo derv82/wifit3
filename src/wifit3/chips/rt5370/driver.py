@@ -44,7 +44,7 @@ _RSSI_EWMA_N = 8                 # EWMA window: ewma = (ewma*(N-1) + rssi)/N
 
 
 class RT5370Driver(Driver):
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))   # 2.4 GHz, 20 MHz
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(Driver.CHANNELS_2G)   # 2.4 GHz, 20 MHz
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: RT5370Transport):

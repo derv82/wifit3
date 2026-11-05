@@ -35,11 +35,8 @@ class MT7921AUDriver(Driver):
     re-sync the channel. Cold chips take the full _cold_boot path.
     """
 
-    # Dual-band Wi-Fi 6 radio, 20 MHz primary. 2.4 GHz (1-14) + the 5 GHz 20 MHz
-    # channels of the world regulatory domain (regdomain.CHANNELS_5GHZ).
-    SUPPORTED_CHANNELS = list(range(1, 15)) + [
-        36, 40, 44, 48, 149, 153, 157, 161, 165,
-    ]
+    # Dual-band Wi-Fi 6 radio, 20 MHz primary.
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     # Bench (rx_autoack, 2026-07-16): auto-ACKs a spoofed MAC via active monitor on both
     # bands (2G 102/100, 5G 100/100); does NOT ACK its own silicon MAC. Behaves SPOOFABLE.
     # (An earlier read of ~120 EAPOL per WPS PBC and openwrt/mt76#839 suggested otherwise;
