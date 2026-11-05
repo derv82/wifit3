@@ -29,7 +29,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8822CU](#rtl8822cu) | ✅ | ✅ | ✅ | ✅ | ⬜ | A |
+| [RTL8822CU](#rtl8822cu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | B |
@@ -257,7 +257,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | WEP | ✅ | 2026-09-02 | ChopChop + ARP replay ~220 IVs/s. |
 | WPS | ✅ | 2026-09-02 | PIN works. |
 | ACKs | ✅ | 2026-09-02 | Auto-ACKs spoofed mac in AM; TX stops-on-ACK AM both on & off (retry 6). |
-| Stress | ⬜ |  | 30-min soak deferred this pass. |
+| Stress | ✅ | 2026-11-04 | 30-min 23-channel dual-band soak; no death-detect or USB/watchdog failure; active-BSSID trend 0.88 with a temporary minute 10–18 visibility dip. (possibly due to me moving the laptop a bit) |
 
 → [RTL8822CU.md](../src/wifit3/chips/rtl8822cu/RTL8822CU.md)
 
