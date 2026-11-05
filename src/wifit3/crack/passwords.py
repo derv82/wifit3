@@ -1,6 +1,9 @@
-"""WPA passphrases: length validation, SSID variants, wordlist streaming."""
+"""WPA passphrases: SSID variants, wordlist streaming."""
 from collections.abc import Iterable, Iterator
 from pathlib import Path
+
+from wifit3.crack.default_psks import default_psks
+from wifit3.dot11.wpa import is_valid_psk
 
 DEFAULT_PASSWORDS_PATH = Path(__file__).parent / "assets" / "default_passwords.txt"
 SSID_VARIANTS_VERSION = 1
@@ -20,11 +23,6 @@ _SEPARATOR_SUFFIXES = _SSID_SUFFIXES + ("123456",) + _RECENT_YEAR_SUFFIXES
 _LEET_SUFFIXES = ("1",) + _SSID_SUFFIXES
 _LEET_REPLACEMENTS = {"a": "4", "e": "3", "i": "1", "o": "0", "s": "5"}
 _MAX_NUMBER_DIGITS = 4
-
-
-def is_valid_psk(psk: str) -> bool:
-    """8..63 bytes once UTF-8 encoded, matching how ``derive_pmk`` encodes the passphrase."""
-    return 8 <= len(psk.encode()) <= 63
 
 
 def _leet_variants(value: str) -> list[str]:
@@ -71,9 +69,12 @@ def ssid_variants(ssid: str) -> list[str]:
     return [psk for psk in dict.fromkeys(candidates) if is_valid_psk(psk)]
 
 
-def all_ssid_variants(ssids: Iterable[str]) -> list[str]:
-    """``ssid_variants`` of every SSID, deduped."""
-    return list(dict.fromkeys(psk for ssid in dict.fromkeys(ssids) for psk in ssid_variants(ssid)))
+def all_ssid_variants(networks: Iterable[tuple[str, str]]) -> list[str]:
+    """``default_psks`` of every (SSID, BSSID), then their ``ssid_variants``, deduped."""
+    unique = list(dict.fromkeys(networks))
+    defaults = [psk for ssid, bssid in unique for psk in default_psks(ssid, bssid)]
+    variants = [psk for ssid, _ in unique for psk in ssid_variants(ssid)]
+    return list(dict.fromkeys(defaults + variants))
 
 
 def ssid_passwords(ssids: Iterable[str]) -> list[str]:

@@ -9,8 +9,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select
 
-from wifit3.crack.passwords import is_valid_psk
 from wifit3.crack.wpa_psk import RAW_PMK_RE
+from wifit3.dot11.wpa import is_valid_psk
 from wifit3.models import CaptureType
 
 _BSSID_RE = re.compile(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}")
