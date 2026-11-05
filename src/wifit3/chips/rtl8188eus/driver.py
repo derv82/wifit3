@@ -399,7 +399,8 @@ class RTL8188EUSDriver(Driver):
             return bytes(self.dev.read(self._bulk_in_ep, 16384, 100))
         except usb.core.USBError as e:
             err = getattr(e, "errno", None)
-            if err in (110, 10060) or "timeout" in str(e).lower():
+            if (isinstance(e, usb.core.USBTimeoutError) or err in (110, 10060)
+                    or "timeout" in str(e).lower()):
                 return None
             raise
 

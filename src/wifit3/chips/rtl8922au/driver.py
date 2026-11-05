@@ -244,7 +244,8 @@ class RTL8922AUDriver(Driver):
             buf = bytes(self.dev.read(self._bulk_in_ep, RX_RECVBUF_SZ, 100))
         except usb.core.USBError as e:
             err = getattr(e, "errno", None)
-            if err in (110, 10060) or "timeout" in str(e).lower():
+            if (isinstance(e, usb.core.USBTimeoutError) or err in (110, 10060)
+                    or "timeout" in str(e).lower()):
                 return None
             raise
         if self.transport.rfk_wait.armed:

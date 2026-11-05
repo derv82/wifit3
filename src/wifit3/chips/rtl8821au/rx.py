@@ -226,6 +226,7 @@ def read_rx_burst(dev: usb.core.Device, ep: int, *,
     except usb.core.USBError as e:
         # Windows libusb reports timeout as ETIMEDOUT (10060) or no_device (5).
         err = getattr(e, "errno", None)
-        if err in (110, 10060) or "timeout" in str(e).lower():
+        if (isinstance(e, usb.core.USBTimeoutError) or err in (110, 10060)
+                or "timeout" in str(e).lower()):
             return None
         raise

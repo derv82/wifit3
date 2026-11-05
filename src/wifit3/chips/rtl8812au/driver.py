@@ -528,7 +528,8 @@ class RTL8812AUDriver(Driver):
                 buf = bytes(self.dev.read(self._bulk_in_ep, 16384, _RX_READ_TIMEOUT_MS))
         except usb.core.USBError as e:
             err = getattr(e, "errno", None)
-            if err in (110, 10060) or "timeout" in str(e).lower():
+            if (isinstance(e, usb.core.USBTimeoutError) or err in (110, 10060)
+                    or "timeout" in str(e).lower()):
                 buf = b""
             else:
                 raise
