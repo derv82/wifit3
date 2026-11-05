@@ -4,6 +4,7 @@ import os
 import signal
 import sys
 import threading
+from pathlib import Path
 from typing import Any, List, Optional, Set
 
 from textual import events, work
@@ -21,6 +22,7 @@ from wifit3.chips import log_trace
 from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config, ConfigError
+from wifit3.persist.probed_ssids import ProbedSsidFile
 from wifit3.persist.vault import Vault
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
 from wifit3.device.manager import DeviceManager, Status
@@ -181,6 +183,11 @@ class WifiteApp(App):
         self._vault_full_refresh = False        # one of them was a full refresh (BSSID None)
         self.vault.subscribe(self._vault_changed)
         self.vault.set_probed_ssids_source(self._probed_ssids)
+
+        def _on_probe_write_error(path: Path, error: OSError) -> None:
+            self.notify(str(error), title=f"Can't save probed SSIDs to {path}", severity="error")
+
+        self.probed_ssid_file = ProbedSsidFile(on_error=_on_probe_write_error)
         self.ap_watcher = ApWatcher(self.vault)
         self._device_timer: Optional[Timer] = None
         self._handlers_before_mount: dict[signal.Signals, Any] = {}
@@ -283,6 +290,7 @@ class WifiteApp(App):
     def _poll_ap_events(self) -> None:
         if self.array is None:
             return
+        self.probed_ssid_file.sync(self.array.probed_ssids)
         for event in self.ap_watcher.poll(self.array):
             if isinstance(event, ApDecloaked):
                 if Config.remember_decloak(event.bssid, event.ssid or ""):

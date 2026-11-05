@@ -54,6 +54,7 @@ class Config:
     theme: str = "textual-dark"
     captures_dir: str = "captures"
     save_pcap: bool = True
+    save_probed_ssids: bool = False
     log_level: str = "info"
     scanner_sort: str = "signal"
     scanner_sort_reverse: bool = True
@@ -98,6 +99,7 @@ class Config:
             raise ConfigError(f"Failed to load config at {_PATH}: {e}") from e
         cls.captures_dir = data.get("captures_dir", cls.captures_dir)
         cls.save_pcap = data.get("save_pcap", cls.save_pcap)
+        cls.save_probed_ssids = bool(data.get("save_probed_ssids", cls.save_probed_ssids))
         cls.theme = data.get("theme", cls.theme)
         cls.log_level = data.get("log_level", cls.log_level)
         cls.scanner_sort = data.get("scanner_sort", cls.scanner_sort)
@@ -133,6 +135,7 @@ class Config:
         text = (
             f"captures_dir = {_fmt(cls.captures_dir)}\n"
             f"save_pcap = {_fmt(cls.save_pcap)}\n"
+            f"save_probed_ssids = {_fmt(cls.save_probed_ssids)}\n"
             f"theme = {_fmt(cls.theme)}\n"
             f"log_level = {_fmt(cls.log_level)}\n"
             f"scanner_sort = {_fmt(cls.scanner_sort)}\n"

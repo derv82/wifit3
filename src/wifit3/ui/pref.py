@@ -199,6 +199,9 @@ class PreferencesModal(ModalScreen):
             yield CapturesDirSetting()
             yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap",
                            tooltip="[u]Note[/]: [bold].hc22000[/] files [i]always[/] save")
+            yield Checkbox("Save probed SSIDs", value=Config.save_probed_ssids, id="save_probed_ssids",
+                           tooltip="[u]File[/]: [bold]probed_ssids.txt[/]\n"
+                                "[dim]SSID per line, for wordlists.[/]")
             yield AutoCrackSetting()
             yield SaveFooter()
 
@@ -212,6 +215,7 @@ class PreferencesModal(ModalScreen):
         Config.captures_dir = self.query_one("#captures_dir", Input).value
         self.app.vault.refresh()
         Config.save_pcap = self.query_one("#save_pcap", Checkbox).value
+        Config.save_probed_ssids = self.query_one("#save_probed_ssids", Checkbox).value
         Config.enable_dfs_channels = self.query_one("#enable_dfs_channels", Checkbox).value
         Config.auto_crack = self.query_one(AutoCrackSetting).tool
         Config.scanner_sort_delay = float(self.query_one("#sort_delay", Select).value)
