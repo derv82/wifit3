@@ -5,7 +5,6 @@ single driver via its env var; the var picks which, defaulting to DKMS. ``device
 are the enumeration + factory the bring-up engine drives.
 """
 import pytest
-import usb.core
 
 import wifit3.device.manager as manager
 from wifit3.chips.driver import DeviceID
@@ -138,8 +137,7 @@ def test_wlan_iface_23570137_dispatches_resolved_rtl8822cu(monkeypatch):
     dev = _FakeDev(0x2357, 0x0137, endpoints=[0x84, 0x05, 0x06, 0x08])
     entry = DeviceID(0x2357, 0x0137, "RTL8822CU", bus=1, address=1)
     monkeypatch.setattr(manager, "driver_for", lambda v, p: pytest.fail("catalog default must not win"))
-    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
-    monkeypatch.setattr(usb.core, "find", lambda **kw: dev)
+    _stub_bus(monkeypatch, [dev])
     iface = manager.wlan_iface(entry)
     assert iface is not None
     assert type(iface.driver).__name__ == "RTL8822CUDriver"
@@ -149,8 +147,7 @@ def test_wlan_iface_23570137_with_ep85_dispatches_mt76x2u(monkeypatch):
     dev = _FakeDev(0x2357, 0x0137, endpoints=[0x84, 0x85, 0x08, 0x05, 0x06])
     entry = DeviceID(0x2357, 0x0137, "MT7612U", bus=1, address=1)
     monkeypatch.setattr(manager, "driver_for", lambda v, p: pytest.fail("catalog default must not win"))
-    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
-    monkeypatch.setattr(usb.core, "find", lambda **kw: dev)
+    _stub_bus(monkeypatch, [dev])
     iface = manager.wlan_iface(entry)
     assert iface is not None
     assert type(iface.driver).__name__ == "MT76x2UDriver"
@@ -199,6 +196,33 @@ class _FakeDev:
         return iter([_Intf()])
 
 
+class _FakeBackend:
+    """A UsbBackend over a fixed device list, recording the last find() target."""
+
+    def __init__(self, devs):
+        self.devs = list(devs)
+        self.seen = {}
+
+    def enumerate(self):
+        return list(self.devs)
+
+    def find(self, vid, pid, bus=None, address=None):
+        self.seen = {"bus": bus, "address": address}
+        for dev in self.devs:
+            if (dev.idVendor, dev.idProduct) != (vid, pid):
+                continue
+            if bus is not None and address is not None and (dev.bus, dev.address) != (bus, address):
+                continue
+            return dev
+        return None
+
+    def find_all(self, vid, pid):
+        return [d for d in self.devs if (d.idVendor, d.idProduct) == (vid, pid)]
+
+    def node_path(self, dev):
+        return f"/dev/bus/usb/{dev.bus:03d}/{dev.address:03d}"
+
+
 class _FakeDriver:
     """Minimal driver satisfying WlanInterface's constructor (registers two callbacks)."""
     def __init__(self):
@@ -219,8 +243,7 @@ class _FakeDriver:
 
 
 def _stub_bus(monkeypatch, devs):
-    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
-    monkeypatch.setattr(usb.core, "find", lambda **kw: list(devs))
+    monkeypatch.setattr(manager, "usb_backend", lambda: _FakeBackend(devs))
     # Isolate from the host's real PnP tree on Windows (devices() merges it in).
     monkeypatch.setattr("wifit3.device.windows_pnp.present_usb_ids", lambda: set())
 
@@ -261,8 +284,7 @@ def test_wlan_iface_dispatches_matching_driver(monkeypatch):
     entry = DeviceID(0x0BDA, 0x8813, "RTL8814AU", bus=1, address=7)
     dev = _FakeDev(0x0BDA, 0x8813, bus=1, address=7)
     monkeypatch.setattr(manager, "driver_for", lambda v, p: (_FakeDriver, "rtl8814au"))
-    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
-    monkeypatch.setattr(usb.core, "find", lambda **kw: dev)
+    _stub_bus(monkeypatch, [dev])
     iface = manager.wlan_iface(entry, name="wlan3")
     assert iface is not None
     assert iface.name == "wlan3" and iface.vid == 0x0BDA and iface.dev is dev
@@ -274,24 +296,18 @@ def test_wlan_iface_selects_the_addressed_instance(monkeypatch):
     # one via a targeted find, not the first VID:PID match (the two-identical-cards hotplug bug).
     entry = DeviceID(0x0E8D, 0x7961, "MT7921AU", bus=2, address=35)
     second = _FakeDev(0x0E8D, 0x7961, bus=2, address=35)
-    seen = {}
-
-    def _find(**kw):
-        seen.update(kw)
-        return second if kw.get("address") == 35 else None
+    backend = _FakeBackend([second])
 
     monkeypatch.setattr(manager, "driver_for", lambda v, p: (_FakeDriver, "mt7921au"))
-    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
-    monkeypatch.setattr(usb.core, "find", _find)
+    monkeypatch.setattr(manager, "usb_backend", lambda: backend)
     iface = manager.wlan_iface(entry)
     assert iface is not None and iface.dev is second
-    assert seen["bus"] == 2 and seen["address"] == 35
+    assert backend.seen["bus"] == 2 and backend.seen["address"] == 35
 
 
 def test_wlan_iface_none_when_absent(monkeypatch):
     monkeypatch.setattr(manager, "driver_for", lambda v, p: (_FakeDriver, "k"))
-    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
-    monkeypatch.setattr(usb.core, "find", lambda **kw: None)
+    _stub_bus(monkeypatch, [])
     assert manager.wlan_iface(DeviceID(0x0BDA, 0x8813, "RTL8814AU")) is None
 
 
@@ -306,8 +322,7 @@ def test_wlan_iface_none_when_driver_raises(monkeypatch):
             raise RuntimeError("not ported yet")
 
     monkeypatch.setattr(manager, "driver_for", lambda v, p: (_Boom, "k"))
-    monkeypatch.setattr(manager.libusb_package, "get_libusb1_backend", lambda: None)
-    monkeypatch.setattr(usb.core, "find", lambda **kw: _FakeDev(0x0BDA, 0x8813))
+    _stub_bus(monkeypatch, [_FakeDev(0x0BDA, 0x8813)])
     assert manager.wlan_iface(DeviceID(0x0BDA, 0x8813, "RTL8814AU")) is None
 
 

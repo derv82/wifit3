@@ -6,6 +6,14 @@ import pytest
 from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
 
 
+class _Backend:
+    def __init__(self, devices):
+        self.devices = devices
+
+    def find_all(self, vid, pid):
+        return list(self.devices)
+
+
 @pytest.mark.asyncio
 async def test_reenumeration_selects_same_physical_port_with_identical_sibling():
     original = SimpleNamespace(bus=1, address=7, port_numbers=(6,))
@@ -14,8 +22,8 @@ async def test_reenumeration_selects_same_physical_port_with_identical_sibling()
     driver = AR9271V2Driver(original)
 
     with (patch("wifit3.chips.ar9271_v2.driver.asyncio.sleep"),
-          patch("wifit3.chips.ar9271_v2.driver.usb.core.find",
-                return_value=[sibling, rebooted])):
+          patch("wifit3.chips.ar9271_v2.driver.usb_backend",
+                return_value=_Backend([sibling, rebooted]))):
         found = await driver._await_reenumeration(original)
 
     assert found is rebooted
@@ -27,7 +35,7 @@ async def test_reenumeration_allows_linux_to_retain_address():
     driver = AR9271V2Driver(original)
 
     with (patch("wifit3.chips.ar9271_v2.driver.asyncio.sleep"),
-          patch("wifit3.chips.ar9271_v2.driver.usb.core.find", return_value=[original])):
+          patch("wifit3.chips.ar9271_v2.driver.usb_backend", return_value=_Backend([original]))):
         found = await driver._await_reenumeration(original)
 
     assert found is original
@@ -40,8 +48,8 @@ async def test_reenumeration_without_ports_keeps_same_address():
     driver = AR9271V2Driver(original)
 
     with (patch("wifit3.chips.ar9271_v2.driver.asyncio.sleep"),
-          patch("wifit3.chips.ar9271_v2.driver.usb.core.find",
-                return_value=[sibling, original])):
+          patch("wifit3.chips.ar9271_v2.driver.usb_backend",
+                return_value=_Backend([sibling, original]))):
         found = await driver._await_reenumeration(original)
 
     assert found is original
@@ -54,7 +62,7 @@ async def test_reenumeration_without_ports_never_selects_sibling():
     driver = AR9271V2Driver(original)
 
     with (patch("wifit3.chips.ar9271_v2.driver.asyncio.sleep"),
-          patch("wifit3.chips.ar9271_v2.driver.usb.core.find", return_value=[sibling])):
+          patch("wifit3.chips.ar9271_v2.driver.usb_backend", return_value=_Backend([sibling]))):
         found = await driver._await_reenumeration(original)
 
     assert found is None
@@ -67,7 +75,7 @@ async def test_reenumeration_without_ports_allows_known_single_card_address_chan
     driver = AR9271V2Driver(original)
 
     with (patch("wifit3.chips.ar9271_v2.driver.asyncio.sleep"),
-          patch("wifit3.chips.ar9271_v2.driver.usb.core.find", return_value=[rebooted])):
+          patch("wifit3.chips.ar9271_v2.driver.usb_backend", return_value=_Backend([rebooted]))):
         found = await driver._await_reenumeration(original, unique_vidpid=True)
 
     assert found is rebooted

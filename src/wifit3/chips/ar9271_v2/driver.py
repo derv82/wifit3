@@ -20,12 +20,12 @@ import threading
 import time
 from typing import Callable, ClassVar, List, Optional, Tuple
 
-import libusb_package
 import usb.core
 from usb.core import Device
 import usb.util
 
 from wifit3.chips.rx_reader import RxReaderThread
+from wifit3.device.backend import usb_backend
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.chips.products import ALFA, TPLink
 from wifit3.errors import BringUpError
@@ -304,10 +304,10 @@ class AR9271V2Driver(Driver):
     def _find_matching_ar9271_devices(self, dev: Device) -> List[Device]:
         vid = getattr(dev, "idVendor", C.AR9271_VID)
         pid = getattr(dev, "idProduct", C.AR9271_PID)
-        backend = libusb_package.get_libusb1_backend()
-        found = usb.core.find(find_all=True, backend=backend,
-                              idVendor=vid, idProduct=pid)
-        return list(found or ())
+        backend = usb_backend()
+        if backend is None:
+            return []
+        return backend.find_all(vid, pid)
 
     async def _await_reenumeration(self, original: Device, *, unique_vidpid: bool = False) -> Optional[Device]:
         """Reacquire this device, not an identical sibling.
