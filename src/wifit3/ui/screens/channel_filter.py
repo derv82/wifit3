@@ -7,6 +7,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label, SelectionList
 from textual.widgets.selection_list import Selection
 
+from wifit3.dot11.chan import is_dfs_channel
+
 
 class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
     """Modal dialog that lets the user pick which channels the hopper visits."""
@@ -114,7 +116,12 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
 
     @staticmethod
     def _format_label(channel: int) -> str:
-        band = "2.4 GHz" if channel <= 14 else "5 GHz"
+        if channel <= 14:
+            band = "2.4 GHz"
+        elif is_dfs_channel(channel):
+            band = "DFS"
+        else:
+            band = "5 GHz"
         return f"CH {channel:>3}   ({band})"
 
     # --- Quick-filter actions -------------------------------------------------

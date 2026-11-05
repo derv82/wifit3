@@ -49,3 +49,9 @@ async def test_list_not_collapsed_when_roomy():
         for bid in ("#btn-ok", "#btn-cancel"):
             r = dialog.query_one(bid, Button).region
             assert r.height > 0 and r.bottom <= 40
+
+
+def test_channel_labels_name_the_band_or_dfs():
+    assert ChannelFilterDialog._format_label(6) == "CH   6   (2.4 GHz)"
+    assert ChannelFilterDialog._format_label(36) == "CH  36   (5 GHz)"
+    assert ChannelFilterDialog._format_label(56) == "CH  56   (DFS)"
