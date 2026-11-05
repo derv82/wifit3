@@ -16,8 +16,9 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=True),
         Binding("a", "select_all", "All", show=True),
-        Binding("2", "select_24ghz", "2.4 GHz", show=True),
-        Binding("5", "select_5ghz", "5 GHz", show=True),
+        Binding("2", "select_24ghz", "2G", show=True),
+        Binding("5", "select_5ghz", "5G", show=True),
+        Binding("d", "select_dfs", "DFS", show=True),
         Binding("n", "select_none", "None", show=True),
         Binding("enter", "confirm", "OK", show=True, priority=True),
     ]
@@ -48,6 +49,9 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         height: 1;
         margin-bottom: 1;
     }
+    ChannelFilterDialog #band-row.-with-dfs {
+        grid-size: 5;
+    }
     ChannelFilterDialog #band-row Button {
         width: 100%;
         min-width: 0;
@@ -75,6 +79,7 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         # Treat a missing filter as "everything is selected"
         initial = set(current_filter) if current_filter else set(self._supported)
         self._initial_selected: set[int] = initial & set(self._supported)
+        self._dfs_channels: List[int] = [ch for ch in self._supported if is_dfs_channel(ch)]
 
     def compose(self) -> ComposeResult:
         selections = [
@@ -88,10 +93,12 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
 
         with Vertical(id="dialog"):
             yield Label("Channel Filter", id="title")
-            with Horizontal(id="band-row"):
+            with Horizontal(id="band-row", classes="-with-dfs" if self._dfs_channels else ""):
                 yield Button("[u]a[/]ll", variant="success", id="btn-all", compact=True)
-                yield Button("[u]2[/].4 GHz", variant="primary", id="btn-24ghz", compact=True)
-                yield Button("[u]5[/] GHz", variant="primary", id="btn-5ghz", compact=True)
+                yield Button("[u]2[/]G", variant="primary", id="btn-24ghz", compact=True)
+                yield Button("[u]5[/]G", variant="primary", id="btn-5ghz", compact=True)
+                if self._dfs_channels:
+                    yield Button("[u]D[/]FS", variant="primary", id="btn-dfs", compact=True)
                 yield Button("[u]n[/]one", variant="error", id="btn-none", compact=True)
             yield SelectionList[int](*selections, id="channel-list")
             with Horizontal(id="button-row"):
@@ -149,6 +156,17 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
             if ch > 14:
                 sl.select(ch)
 
+    def action_select_dfs(self) -> None:
+        sl = self._selection_list()
+        sl.deselect_all()
+        for ch in self._dfs_channels:
+            sl.select(ch)
+
+    def check_action(self, action: str, parameters: tuple) -> bool:
+        if action == "select_dfs":
+            return bool(self._dfs_channels)
+        return True
+
     # --- Confirm / cancel -----------------------------------------------------
 
     def action_cancel(self) -> None:
@@ -164,6 +182,7 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
             "btn-all": self.action_select_all,
             "btn-24ghz": self.action_select_24ghz,
             "btn-5ghz": self.action_select_5ghz,
+            "btn-dfs": self.action_select_dfs,
             "btn-none": self.action_select_none,
             "btn-ok": self.action_confirm,
             "btn-cancel": self.action_cancel,

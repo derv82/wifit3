@@ -55,3 +55,28 @@ def test_channel_labels_name_the_band_or_dfs():
     assert ChannelFilterDialog._format_label(6) == "CH   6   (2.4 GHz)"
     assert ChannelFilterDialog._format_label(36) == "CH  36   (5 GHz)"
     assert ChannelFilterDialog._format_label(56) == "CH  56   (DFS)"
+
+
+
+class _NoDfsHost(App):
+    def on_mount(self) -> None:
+        self.push_screen(ChannelFilterDialog([1, 6, 36, 149]))
+
+
+async def test_d_selects_only_the_dfs_channels():
+    app = _Host()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause(0)
+        assert app.screen.query("#btn-dfs")
+        await pilot.press("d")
+        assert sorted(app.screen.query_one(SelectionList).selected) == [
+            52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144]
+
+
+async def test_no_dfs_button_or_hotkey_without_dfs_channels():
+    app = _NoDfsHost()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause(0)
+        assert not app.screen.query("#btn-dfs")
+        await pilot.press("d")
+        assert sorted(app.screen.query_one(SelectionList).selected) == [1, 6, 36, 149]
