@@ -78,7 +78,7 @@ class _FakeArray:
         }
         return ap
 
-    async def start_hopping(self, channels=None, interval=0.25) -> None:
+    async def start_hopping(self, channels=None, interval=0.25, include_dfs_channels=True) -> None:
         pass
 
     async def stop_hopping(self) -> None:
