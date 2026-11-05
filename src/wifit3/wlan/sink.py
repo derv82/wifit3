@@ -194,6 +194,7 @@ class WlanSink:
                 pairwise_cipher=pairwise_cipher,
                 beacons=1 if frame_type == "beacon" else 0,
                 wpa3=wpa3,
+                sae_h2e=pkt.sae_h2e,
                 transition_mode=transition_mode,
                 pmf_capable=pmf_capable,
                 pmf_required=pmf_required,
@@ -247,6 +248,8 @@ class WlanSink:
                 ap.pmf_capable = pmf_capable
                 ap.pmf_required = pmf_required
                 ap.beacon_protection = beacon_protection
+            if pkt.sae_h2e != "unknown":
+                ap.sae_h2e = pkt.sae_h2e
             if pkt.chipset:
                 ap.chipset = pkt.chipset
             # Only refresh WPS when this frame carried the IE.

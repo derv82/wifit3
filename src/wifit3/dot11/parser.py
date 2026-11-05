@@ -73,7 +73,10 @@ from wifit3.dot11.rsn import (
     ENTERPRISE_AKM_SUITES,
     PSK_AKM_SUITES,
     RSN_OUI,
+    RSNXE_ID,
+    SAE_H2E_ONLY_SELECTOR,
     SAE_AKM_SUITES,
+    parse_rsnxe_h2e,
     WPA_OUI,
     RsnElement,
     WpaElement,
@@ -175,6 +178,8 @@ class WlanFrameParser:
                 "ssid": tags.get("ssid"),
                 "encryption": tags.get("encryption", "OPEN"),
                 "wpa3": tags.get("wpa3", False),
+                "sae_h2e": tags.get("sae_h2e", "unknown"),
+                "rsnxe_status": tags.get("rsnxe_status", "absent"),
                 "transition_mode": tags.get("transition_mode", False),
                 "pmf_capable": tags.get("pmf_capable", False),
                 "pmf_required": tags.get("pmf_required", False),
@@ -647,8 +652,12 @@ class WlanFrameParser:
         # so honor only the first occurrence.
         seen_ssid = False
         wps_payloads: List[bytes] = []
+        rsnxe_values: List[Optional[bool]] = []
+        h2e_only = False
+        ie_end = ptr
 
         for tag_id, tag_data, raw_elem in iter_information_elements(frame, start=ptr):
+            ie_end += len(raw_elem)
             if tag_id == 0 and not seen_ssid: # SSID (only the first)
                 seen_ssid = True
                 if len(tag_data) <= 32 and not tag_data.strip(b"\x00"):   # empty or NUL-filled
@@ -664,6 +673,10 @@ class WlanFrameParser:
                     if not all(ch.isprintable() for ch in ssid_text):
                         return None  # Corrupt frame masquerading as valid
                     parsed["ssid"] = ssid_text
+            elif tag_id in (1, 50):
+                h2e_only |= SAE_H2E_ONLY_SELECTOR in tag_data
+            elif tag_id == RSNXE_ID:
+                rsnxe_values.append(parse_rsnxe_h2e(tag_data))
             elif tag_id == 3: # DS Parameter Set (Channel)
                 if len(tag_data) == 1:
                     channel_ds = tag_data[0]
@@ -710,6 +723,17 @@ class WlanFrameParser:
                             wps_payloads.append(tag_data[4:])
                     elif oui in CHIPSET_BY_VENDOR_IE_OUI:
                         parsed.setdefault("chipset", CHIPSET_BY_VENDOR_IE_OUI[oui])
+
+        if ie_end < len(frame) and frame[ie_end] == RSNXE_ID:
+            rsnxe_values.append(None)
+        if rsnxe_values:
+            if len(rsnxe_values) != 1 or rsnxe_values[0] is None:
+                parsed["rsnxe_status"] = "malformed"
+            else:
+                parsed["rsnxe_status"] = "valid"
+                parsed["sae_h2e"] = "supported" if rsnxe_values[0] else "not-advertised"
+        if h2e_only:
+            parsed["sae_h2e"] = "only"
 
         if wps_payloads:
             parsed.update(cls._parse_wps_ie(b"".join(wps_payloads)))

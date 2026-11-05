@@ -69,6 +69,8 @@ class BeaconPacket(Packet):
     vendor_akm_offered: bool = False
     pairwise_cipher: Optional[str] = None
     wpa3: bool = False
+    sae_h2e: str = "unknown"
+    rsnxe_status: str = "absent"
     transition_mode: bool = False
     pmf_capable: bool = False
     pmf_required: bool = False

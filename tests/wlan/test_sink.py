@@ -52,6 +52,18 @@ def _wps_m1_frame(bssid: bytes, client: bytes) -> bytes:
 
 # ----- registry + per-card signal --------------------------------------------
 
+def test_sae_h2e_updates_preserve_unknown_and_accept_new_evidence():
+    sink = WlanSink()
+    sink.update(_beacon(), W0)
+    ap = sink.access_points[BSSID]
+    assert ap.sae_h2e == "unknown"
+    for value in ("supported", "unknown", "only", "unknown", "not-advertised"):
+        sink.update(_beacon({"sae_h2e": value}), W0)
+        if value != "unknown":
+            expected = value
+        assert ap.sae_h2e == expected
+
+
 def test_beacon_creates_ap_and_smooths_signal_per_card():
     s = WlanSink()
     s.update(_beacon(), W0)

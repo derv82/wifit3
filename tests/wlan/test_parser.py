@@ -96,6 +96,26 @@ def _rsn_ie(
     return bytes([48, len(body)]) + body
 
 
+@pytest.mark.parametrize(("ies", "expected", "status"), [
+    (b"", "unknown", "absent"),
+    (b"\xf4\x01\x20", "supported", "valid"),
+    (b"\xf4\x01\x00", "not-advertised", "valid"),
+    (b"\xf4\x02\x21\x00", "supported", "valid"),
+    (b"\xf4\x00", "unknown", "malformed"),
+    (b"\xf4\x01\x21", "unknown", "malformed"),
+    (b"\xf4\x02\x20", "unknown", "malformed"),
+    (b"\xf4\x01\x20\xf4\x01\x00", "unknown", "malformed"),
+    (b"\x32\x01\xfb", "only", "absent"),
+    (b"\x32\x01\x7b", "unknown", "absent"),
+    (b"\xf4\x00\x32\x01\xfb", "only", "malformed"),
+])
+def test_sae_h2e_advertisement(ies, expected, status):
+    frame = _build_beacon(rsn_ie=_rsn_ie(akms=(24,)) + ies)
+    packet = WlanFrameParser.parse_80211_frame(frame, -40)
+    assert packet.sae_h2e == expected
+    assert packet.rsnxe_status == status
+
+
 @pytest.mark.parametrize("length", range(18, 43))
 def test_rsn_optional_fields_must_end_on_field_boundaries(length):
     body = bytes.fromhex("0100000fac040100000fac040100000fac05c0000100")

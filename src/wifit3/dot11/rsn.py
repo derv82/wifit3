@@ -7,6 +7,17 @@ RSN_OUI = b"\x00\x0f\xac"
 WPA_OUI = b"\x00\x50\xf2"
 WFA_OUI = b"\x50\x6f\x9a"
 
+RSNXE_ID = 244
+RSNXE_SAE_H2E = 1 << 5
+SAE_H2E_ONLY_SELECTOR = 0x80 | 123
+
+
+def parse_rsnxe_h2e(data: bytes) -> Optional[bool]:
+    """Return the SAE H2E capability, or None for an invalid RSNXE body."""
+    if not data or len(data) != (data[0] & 0x0f) + 1:
+        return None
+    return bool(data[0] & RSNXE_SAE_H2E)
+
 # Wi-Fi Alliance AKM selectors, all 4 bytes: the suite number alone collides with 00-0F-AC.
 AKM_SELECTOR_OSEN = WFA_OUI + b"\x01"
 AKM_SELECTOR_DPP = WFA_OUI + b"\x02"

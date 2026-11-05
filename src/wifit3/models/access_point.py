@@ -72,6 +72,7 @@ class AccessPoint:
     # Most recent beacon/probe-resp timestamp.
     last_seen: float = field(default_factory=time.time)
     wpa3: bool = False
+    sae_h2e: str = "unknown"
     transition_mode: bool = False
     pmf_capable: bool = False
     pmf_required: bool = False

@@ -244,6 +244,15 @@ def status_under_dash(ap: AccessPoint, array: WlanArray, now: float) -> list[str
     if is_wep(ap):
         return wep_status_lines(ap, array, None, now)
     lines = [f"[dim]Encryption:[/dim] {format_encryption_markup(ap, detailed=True)}"]
+    sae_akms = [name for name in ap.akms if name in {
+        "SAE", "FT-SAE", "SAE-EXT-KEY", "FT-SAE-EXT-KEY",
+    }]
+    if sae_akms:
+        h2e = getattr(ap, "sae_h2e", "unknown")
+        if h2e not in {"unknown", "not-advertised", "supported", "only"}:
+            h2e = "unknown"
+        lines.append(f"[dim]Advertised AKM:[/dim] {', '.join(sae_akms)}  ·  "
+                     f"[dim]H2E:[/dim] {h2e}")
     parts = []
     if (ap.akms and ap.rsn_valid) or ap.wpa3:   # RSN (WPA2/3): PMF is meaningful
         parts.append(f"[dim]PMF:[/dim] {pmf_status_markup(ap)}")
