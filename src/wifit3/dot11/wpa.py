@@ -30,6 +30,11 @@ _FT_R0_KEY_DATA_BITS = 384  # PMK-R0 (256) + PMK-R0Name-Salt (128)
 _FT_PMK_R1_BITS = 256
 
 
+def is_valid_psk(psk: str) -> bool:
+    """8..63 bytes once UTF-8 encoded, matching how ``derive_pmk`` encodes the passphrase."""
+    return 8 <= len(psk.encode()) <= 63
+
+
 def derive_pmk(psk: str, ssid: bytes) -> bytes:
     """802.11i PSK to PMK: 64 hex digits are the PMK itself, else
     PBKDF2-HMAC-SHA1(passphrase, ssid, 4096, 32)."""
