@@ -37,6 +37,9 @@ scratchpad/
 wifit3*.pcap
 scripts/wps/lab_*.pcap
 scripts/wps/lab_results.jsonl
+tests/**/*.cap
+tests/**/*.pcap
+tests/**/*.pcapng
 
 # If it starts with a dot, committed it gets not
 .*

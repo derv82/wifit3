@@ -1,0 +1,194 @@
+"""Family decoder for rt2800usb chips: dump text, channel-switch and TX trigger recognition."""
+from __future__ import annotations
+
+import struct
+from dataclasses import replace
+from typing import Sequence
+
+from tests.verify_pcap.usb_capture import TransferType, UsbOp
+from tests.verify_pcap.verify_capture import FamilyDecoder, RegisterAccess, RegisterOp, TxOpField
+from wifit3.chips.rt5370 import constants as C
+
+CHANNEL_SWITCH_LOOKAHEAD = 64
+RFCSR_CHANNEL_RF1 = 8
+RFCSR_CHANNEL_RF3 = 9
+
+REGISTER_NAMES = {
+    C.MAC_CSR0: "MAC_CSR0", C.MAC_SYS_CTRL: "MAC_SYS_CTRL", C.PBF_SYS_CTRL: "PBF_SYS_CTRL",
+    C.GPIO_CTRL: "GPIO_CTRL", C.WPDMA_GLO_CFG: "WPDMA_GLO_CFG", C.USB_DMA_CFG: "USB_DMA_CFG",
+    C.EFUSE_CTRL: "EFUSE_CTRL", C.EFUSE_DATA0: "EFUSE_DATA0", C.EFUSE_DATA1: "EFUSE_DATA1",
+    C.EFUSE_DATA2: "EFUSE_DATA2", C.EFUSE_DATA3: "EFUSE_DATA3", C.BBP_CSR_CFG: "BBP_CSR_CFG",
+    C.RF_CSR_CFG: "RF_CSR_CFG", C.H2M_MAILBOX_CSR: "H2M_MAILBOX_CSR", C.HOST_CMD_CSR: "HOST_CMD_CSR",
+    C.H2M_MAILBOX_CID: "H2M_MAILBOX_CID", C.H2M_MAILBOX_STATUS: "H2M_MAILBOX_STATUS",
+    C.H2M_BBP_AGENT: "H2M_BBP_AGENT", C.H2M_INT_SRC: "H2M_INT_SRC",
+    C.AUTOWAKEUP_CFG: "AUTOWAKEUP_CFG", C.RX_FILTER_CFG: "RX_FILTER_CFG", C.TX_STA_FIFO: "TX_STA_FIFO",
+    C.CH_IDLE_STA: "CH_IDLE_STA", C.CH_BUSY_STA: "CH_BUSY_STA", C.CH_BUSY_STA_SEC: "CH_BUSY_STA_SEC",
+    C.TX_PWR_CFG_0: "TX_PWR_CFG_0", C.TX_PWR_CFG_1: "TX_PWR_CFG_1", C.TX_PWR_CFG_2: "TX_PWR_CFG_2",
+    C.TX_PWR_CFG_3: "TX_PWR_CFG_3", C.TX_PWR_CFG_4: "TX_PWR_CFG_4", C.TX_BAND_CFG: "TX_BAND_CFG",
+    C.TX_PIN_CFG: "TX_PIN_CFG", C.TX_RTY_CFG: "TX_RTY_CFG", C.MAC_STATUS_CFG: "MAC_STATUS_CFG",
+}
+
+
+def is_register_access(op: UsbOp, request: int, address: int) -> bool:
+    return (op.transfer_type == TransferType.CONTROL and op.setup is not None
+            and op.request == request and op.index == address)
+
+
+def register_value(op: UsbOp) -> int | None:
+    if len(op.data) != 4:
+        return None
+    return struct.unpack("<I", op.data)[0]
+
+
+class Rt2800Decoder(FamilyDecoder):
+    """Defaults are the rf53xx channel tune, RFCSR8 = rf1 and RFCSR9 = rf3 (rt2800lib.c:3395-3396); rf3xxx is RFCSR2
+    = rf1 and RFCSR3's RFCSR3_K field = rf3 (rt2800lib.c:2555-2559).
+    channel_rfcsr_values: channel -> (rf1 RFCSR value, rf3 RFCSR value & channel_rf3_mask); None: rf_vals_3x 2.4 GHz.
+    txwi_size: TXWI_DESC_SIZE_4WORDS, or 5WORDS on RT5592 (rt2800lib.c:603-625 rt2800_get_txwi_rxwi_size)."""
+
+    def __init__(self, channel_rf1_rfcsr: int = RFCSR_CHANNEL_RF1, channel_rf3_rfcsr: int = RFCSR_CHANNEL_RF3,
+                 channel_rf3_mask: int = C.RF_CSR_CFG_DATA,
+                 channel_rfcsr_values: dict[int, tuple[int, int]] | None = None,
+                 txwi_size: int = C.TXWI_DESC_SIZE_4WORDS) -> None:
+        self.channel_rf1_rfcsr = channel_rf1_rfcsr
+        self.channel_rf3_rfcsr = channel_rf3_rfcsr
+        self.channel_rf3_mask = channel_rf3_mask
+        if channel_rfcsr_values is None:
+            channel_rfcsr_values = {}
+            for channel, (channel_rf1, _channel_rf2, channel_rf3) in C.RF_VALS_3X_2G.items():
+                channel_rfcsr_values[channel] = (channel_rf1, channel_rf3 & channel_rf3_mask)
+        self.channel_rfcsr_values = channel_rfcsr_values
+        self.txwi_size = txwi_size
+
+    def describe(self, op: UsbOp) -> str:
+        status = f"  status {op.status}" if op.status else ""
+        if op.transfer_type != TransferType.CONTROL:
+            direction = "RX" if op.is_in else "TX"
+            text = f"{direction} ep 0x{op.endpoint:02x} {len(op.data)}B"
+            frame_offset = C.TXINFO_DESC_SIZE + self.txwi_size
+            if not op.is_in and len(op.data) >= frame_offset + 2:
+                frame_control = struct.unpack_from("<H", op.data, frame_offset)[0]
+                text += f" descriptor {op.data[:frame_offset].hex()} FC 0x{frame_control:04x}"
+            return text + status
+        assert op.setup is not None
+        address = op.index
+        name = REGISTER_NAMES.get(address, "")
+        value = register_value(op)
+        if op.request == C.USB_MULTI_READ:
+            if op.status == 0 and not op.data:
+                return f"R  0x{address:04x} {name}"
+            if value is None:
+                return f"R  0x{address:04x} {name} <{op.length}B> {op.data.hex()}{status}"
+            return f"R  0x{address:04x} {name} = 0x{value:08x}{status}"
+        if op.request == C.USB_MULTI_WRITE:
+            if value is None:
+                return f"W  0x{address:04x} {name} <{len(op.data)}B>{status}"
+            text = f"W  0x{address:04x} {name} = 0x{value:08x}"
+            if address == C.BBP_CSR_CFG:
+                register = (value & C.BBP_CSR_CFG_REGNUM) >> 8
+                if value & C.BBP_CSR_CFG_READ_CONTROL:
+                    text += f"  (BBP{register} read)"
+                else:
+                    text += f"  (BBP{register} <- 0x{value & C.BBP_CSR_CFG_VALUE:02x})"
+            elif address == C.RF_CSR_CFG:
+                register = (value & C.RF_CSR_CFG_REGNUM) >> 8
+                if value & C.RF_CSR_CFG_WRITE:
+                    text += f"  (RFCSR{register} <- 0x{value & C.RF_CSR_CFG_DATA:02x})"
+                else:
+                    text += f"  (RFCSR{register} read)"
+            return text + status
+        if op.request == C.USB_DEVICE_MODE:
+            return f"DEVICE_MODE wValue=0x{op.value:04x} wIndex=0x{address:04x}{status}"
+        return f"CTRL setup {op.setup.hex()} data {op.data.hex()}{status}"
+
+    def injected_frame_at(self, ops: Sequence[UsbOp], position: int) -> bytes | None:
+        op = ops[position]
+        if op.transfer_type == TransferType.BULK and not op.is_in:
+            txwi_word1 = struct.unpack_from("<I", op.data, C.TXINFO_DESC_SIZE + 4)[0]
+            frame_length = (txwi_word1 & C.TXWI_W1_MPDU_TOTAL_BYTE_COUNT) >> 16
+            frame_offset = C.TXINFO_DESC_SIZE + self.txwi_size
+            return op.data[frame_offset:frame_offset + frame_length]
+        return None
+
+    def channel_change_at(self, ops: Sequence[UsbOp], position: int) -> int | None:
+        op = ops[position]
+        if position + 2 >= len(ops):
+            return None
+        rx_stop = ops[position + 1]
+        rx_stop_value = register_value(rx_stop)
+        # rt2x00mac_config(CHANGE_CHANNEL): stop RX, then the survey reads, then the RF tune.
+        if not (is_register_access(op, C.USB_MULTI_READ, C.MAC_SYS_CTRL)
+                and is_register_access(rx_stop, C.USB_MULTI_WRITE, C.MAC_SYS_CTRL)
+                and rx_stop_value is not None and not rx_stop_value & C.MAC_SYS_CTRL_ENABLE_RX
+                and is_register_access(ops[position + 2], C.USB_MULTI_READ, C.CH_IDLE_STA)):
+            return None
+        rf1: int | None = None
+        rf3: int | None = None
+        for lookahead in ops[position:position + CHANNEL_SWITCH_LOOKAHEAD]:
+            value = register_value(lookahead)
+            if (value is None or not is_register_access(lookahead, C.USB_MULTI_WRITE, C.RF_CSR_CFG)
+                    or not value & C.RF_CSR_CFG_WRITE):
+                continue
+            register = (value & C.RF_CSR_CFG_REGNUM) >> 8
+            if register == self.channel_rf1_rfcsr and rf1 is None:
+                rf1 = value & C.RF_CSR_CFG_DATA
+            elif register == self.channel_rf3_rfcsr and rf3 is None:
+                rf3 = value & self.channel_rf3_mask
+        for channel, rfcsr_values in self.channel_rfcsr_values.items():
+            if rfcsr_values == (rf1, rf3):
+                return channel
+        return None
+
+    def is_racing_extra_request(self, caller_ops: Sequence[UsbOp], request: UsbOp) -> bool:
+        """A TX_STA_FIFO read after a valid then an empty one: the empty read's completion re-arms the 1 ms hrtimer only
+        if txdone_work has not yet completed the entry (rt2800usb.c:94-140, 456-476)."""
+        if len(caller_ops) != 2 or not is_register_access(request, C.USB_MULTI_READ, C.TX_STA_FIFO):
+            return False
+        values: list[int] = []
+        for op in caller_ops:
+            value = register_value(op)
+            if not is_register_access(op, C.USB_MULTI_READ, C.TX_STA_FIFO) or value is None:
+                return False
+            values.append(value)
+        return bool(values[0] & C.TX_STA_FIFO_VALID) and not values[1] & C.TX_STA_FIFO_VALID
+
+    def register_ops(self, op: UsbOp) -> list[RegisterOp]:
+        """A multi read or write is one 32-bit access per dword from wIndex (rt2x00usb_register_multiwrite); a single
+        write is one 16-bit write of wValue (rt2x00usb_vendor_request_sw). A read with no reply yet has value None."""
+        if op.transfer_type != TransferType.CONTROL or op.setup is None:
+            return []
+        if op.request == C.USB_SINGLE_WRITE:
+            return [RegisterOp(RegisterAccess.WRITE, op.index, op.value, 2)]
+        if op.request == C.USB_MULTI_WRITE:
+            access = RegisterAccess.WRITE
+        elif op.request == C.USB_MULTI_READ:
+            access = RegisterAccess.READ
+        else:
+            return []
+        values: list[int | None]
+        if op.is_in and not op.data:
+            values = [None] * (op.length // 4)
+        else:
+            values = list(struct.unpack(f"<{len(op.data) // 4}I", op.data))
+        register_ops: list[RegisterOp] = []
+        for word_index, value in enumerate(values):
+            register_ops.append(RegisterOp(access, op.index + 4 * word_index, value))
+        return register_ops
+
+    def with_tx_op_fields(self, op: UsbOp, fields: list[TxOpField], source: UsbOp) -> UsbOp:
+        """The TXINFO + TXWI (rt2800usb_write_tx_desc, rt2800_write_tx_data) carry no checksum."""
+        if op.transfer_type != TransferType.BULK or op.is_in or len(source.data) != len(op.data):
+            return op
+        data = bytearray(op.data)
+        for field in fields:
+            if 4 * field.dword + 4 > len(data):
+                continue
+            mask = ((1 << field.width) - 1) << field.shift
+            dword = struct.unpack_from("<I", data, 4 * field.dword)[0]
+            source_dword = struct.unpack_from("<I", source.data, 4 * field.dword)[0]
+            struct.pack_into("<I", data, 4 * field.dword, (dword & ~mask) | (source_dword & mask))
+        return replace(op, data=bytes(data))
+
+    def carries_only_80211_frames(self, op: UsbOp) -> bool:
+        """rt2800usb bulk IN is RX only; TX status is polled through TX_STA_FIFO."""
+        return op.transfer_type == TransferType.BULK and op.is_in
