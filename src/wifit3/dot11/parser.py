@@ -232,13 +232,29 @@ class WlanFrameParser:
         if subtype == cls.SUBTYPE_AUTH:
             # Body: Algorithm(2) + Seq(2) + Status(2); status at offset 28.
             status = struct.unpack("<H", frame[28:30])[0] if len(frame) >= 30 else None
-            return AuthPacket(**base, type=f"mgmt_{subtype}", status=status)
+            return AuthPacket(**base, type=f"mgmt_{subtype}", status=status,
+                              sae_method=cls._sae_commit_method(frame))
         if subtype in (cls.SUBTYPE_DEAUTH, cls.SUBTYPE_DISASSOC):
             # Reason code is the 2-byte body right after the 24-byte header.
             reason = struct.unpack("<H", frame[24:26])[0] if len(frame) >= 26 else None
             label = "deauth" if subtype == cls.SUBTYPE_DEAUTH else "disassoc"
             return DeauthPacket(**base, type=label, reason=reason)
         return Packet(**base, type=f"mgmt_{subtype}")
+
+    @staticmethod
+    def _sae_commit_method(frame: bytes) -> str | None:
+        if len(frame) < 32 or frame[1] & 0x44 or frame[22] & 0x0f:
+            return None
+        algorithm, transaction, status, group = struct.unpack_from("<HHHH", frame, 24)
+        method = {0: "HnP", 126: "H2E", 127: "SAE-PK"}.get(status)
+        group_lengths = {19: 32, 20: 48, 21: 66, 25: 24, 26: 28,
+                         28: 32, 29: 48, 30: 64}
+        prime_len = group_lengths.get(group)
+        if algorithm != 3 or transaction != 1 or method is None or prime_len is None:
+            return None
+        if len(frame) < 32 + 3 * prime_len:
+            return None
+        return method
 
     @classmethod
     def _parse_data(cls, frame: bytes, fc1: int, subtype: int, base: Dict[str, Any]) -> "Packet":

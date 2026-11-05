@@ -253,6 +253,10 @@ def status_under_dash(ap: AccessPoint, array: WlanArray, now: float) -> list[str
             h2e = "unknown"
         lines.append(f"[dim]Advertised AKM:[/dim] {', '.join(sae_akms)}  ·  "
                      f"[dim]H2E:[/dim] {h2e}")
+    if ap.observed_sae_methods:
+        methods = [method for method in ("HnP", "H2E", "SAE-PK") if method in ap.observed_sae_methods]
+        if methods:
+            lines.append(f"[dim]Observed SAE:[/dim] {', '.join(methods)}")
     parts = []
     if (ap.akms and ap.rsn_valid) or ap.wpa3:   # RSN (WPA2/3): PMF is meaningful
         parts.append(f"[dim]PMF:[/dim] {pmf_status_markup(ap)}")

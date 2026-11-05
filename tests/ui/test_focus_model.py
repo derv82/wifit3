@@ -470,6 +470,22 @@ def test_status_footer_shows_advertised_sae_details(h2e):
                         f"FT-SAE-EXT-KEY  ·  [dim]H2E:[/dim] {h2e}")
 
 
+def test_status_footer_distinguishes_observed_sae_from_advertised_h2e():
+    ap = build_ap(akms=["SAE"], akm_suites=[8], wpa3=True)
+    ap.sae_h2e = "supported"
+    assert "Observed SAE:" not in " ".join(fm.status_under_dash(ap, None, 0))
+    ap.observed_sae_methods.update({"SAE-PK", "H2E", "HnP"})
+    lines = fm.status_under_dash(ap, None, 0)
+    assert "[dim]H2E:[/dim] supported" in lines[1]
+    assert "[dim]Observed SAE:[/dim] HnP, H2E, SAE-PK" in lines
+
+
+def test_status_footer_observed_sae_does_not_require_advertised_sae():
+    ap = build_ap(akms=["PSK"], akm_suites=[2])
+    ap.observed_sae_methods.add("HnP")
+    assert "[dim]Observed SAE:[/dim] HnP" in fm.status_under_dash(ap, None, 0)
+
+
 def test_status_footer_sae_h2e_missing_or_invalid_is_unknown():
     ap = build_ap(akms=["FT-SAE-EXT-KEY"], akm_suites=[25], wpa3=True)
     assert "[dim]H2E:[/dim] unknown" in fm.status_under_dash(ap, None, 0)[1]

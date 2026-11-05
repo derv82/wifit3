@@ -133,8 +133,9 @@ class AssocRequestPacket(Packet):
 
 @dataclass(slots=True, kw_only=True)
 class AuthPacket(Packet):
-    """An Open-System Authentication frame; ``status`` is the result code (0 = success)."""
+    """An Authentication frame; ``sae_method`` describes an observed commit, not its outcome."""
     status: Optional[int] = None
+    sae_method: str | None = None
 
 
 @dataclass(slots=True, kw_only=True)

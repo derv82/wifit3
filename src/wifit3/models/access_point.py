@@ -79,6 +79,7 @@ class AccessPoint:
     beacon_protection: bool = False
     # Passively observed EAP method Type numbers (EAPOL-Type-0), aggregated across clients.
     observed_eap_methods: Set[int] = field(default_factory=set)
+    observed_sae_methods: Set[str] = field(default_factory=set)
 
     chipset: Optional[str] = None  # from a chipset driver's vendor IE
 

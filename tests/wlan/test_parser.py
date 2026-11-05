@@ -1058,6 +1058,39 @@ def test_auth_carries_status():
     assert p.status == 0x0e
 
 
+@pytest.mark.parametrize("status,method", [(0, "HnP"), (126, "H2E"), (127, "SAE-PK")])
+@pytest.mark.parametrize("group,size", [(19, 32), (20, 48), (21, 66), (25, 24),
+                                         (26, 28), (28, 32), (29, 48), (30, 64)])
+def test_sae_commit_method(status, method, group, size):
+    body = struct.pack("<HHHH", 3, 1, status, group) + b"\x02" * (3 * size)
+    p = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x0b, body), -50)
+    assert isinstance(p, AuthPacket)
+    assert p.status == status and p.sae_method == method
+    p = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x0b, body[:-1]), -50)
+    assert isinstance(p, AuthPacket) and p.sae_method is None
+
+
+@pytest.mark.parametrize("algorithm,transaction,status,group", [
+    (0, 1, 0, 19), (2, 1, 126, 19), (3, 2, 0, 19),
+    (3, 1, 76, 19), (3, 1, 77, 19), (3, 1, 1, 19),
+    (3, 1, 126, 0), (3, 1, 127, 0xffff), (3, 1, 0, 0x1300),
+])
+def test_sae_commit_method_rejects_other_authentication(algorithm, transaction, status, group):
+    body = struct.pack("<HHHH", algorithm, transaction, status, group) + b"\x02" * 198
+    p = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x0b, body), -50)
+    assert isinstance(p, AuthPacket) and p.sae_method is None
+
+
+def test_sae_commit_method_rejects_fragments_and_protected_frames():
+    body = struct.pack("<HHHH", 3, 1, 0, 19) + b"\x02" * 96
+    frame = _mgmt_frame(0x0b, body)
+    for offset, value in [(1, 0x04), (1, 0x40), (22, 1)]:
+        damaged = bytearray(frame)
+        damaged[offset] = value
+        p = WlanFrameParser.parse_80211_frame(bytes(damaged), -50)
+        assert isinstance(p, AuthPacket) and p.sae_method is None
+
+
 def test_deauth_and_disassoc_carry_reason():
     d = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x0c, b"\x07\x00"), -50)
     assert isinstance(d, DeauthPacket) and d.reason == 7 and d.type == "deauth"
