@@ -254,7 +254,9 @@ def status_under_dash(ap: AccessPoint, array: WlanArray, now: float) -> list[str
         lines.append(f"[dim]Advertised AKM:[/dim] {', '.join(sae_akms)}  ·  "
                      f"[dim]H2E:[/dim] {h2e}")
     if ap.observed_sae_methods:
-        methods = [method for method in ("HnP", "H2E", "SAE-PK") if method in ap.observed_sae_methods]
+        methods = [label for method, label in (("HnP", "SAE-HnP"), ("H2E", "SAE-H2E"),
+                                                ("SAE-PK", "SAE-PK"))
+                   if method in ap.observed_sae_methods]
         if methods:
             lines.append(f"[dim]Observed SAE:[/dim] {', '.join(methods)}")
     parts = []
