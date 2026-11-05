@@ -10,6 +10,8 @@ from typing import Iterable, Mapping, Optional
 
 from wifit3.crack.hc22000_format import Hc22000Line, hashline_id, read_hc22000
 from wifit3.crack.wpa_psk import psk_matches
+from wifit3.dot11.eapol import LLC_SNAP_EAPOL, MIC_LEN, MIC_OFFSET
+from wifit3.dot11.rsn import RSN_OUI
 from wifit3.models import AP_RECOVERED_CAPTURE_TYPES, PSK_CAPTURE_TYPES, CaptureType, PersistedCapture
 from wifit3.persist.common import safe_ssid
 from wifit3.persist.exhaustion import ExhaustedWordlist, read_exhausted_wordlists
@@ -20,6 +22,8 @@ from wifit3.persist.pcap import read_pcap
 _HASHLINES_KEY = "hashlines"
 _LIVE_VERIFICATIONS_KEY = "live_verifications"
 _MANUAL_CAPTURES_KEY = "manual_captures"
+_PMKID_KDE = b"\xdd\x14" + RSN_OUI + b"\x04"      # Key Data element: id, length, OUI, data type
+_PMKID_LEN = 16
 _PASSWORD_KEY_TYPES = frozenset({CaptureType.WPA_PSK, CaptureType.WEP})
 
 
@@ -106,12 +110,23 @@ def epoch_sort_key(epoch: Optional[int]) -> tuple[bool, int]:
 
 def _pcap_dates(lines: dict[str, Hc22000Line], pcaps: Iterable[Path]) -> dict[str, set[int]]:
     """Per hashline id, the time of each pcap frame carrying its MIC or PMKID."""
-    needles = {hid: bytes.fromhex(line.pmkid_or_mic) for hid, line in lines.items()}
+    hids_by_needle: dict[bytes, list[str]] = {}
+    for hid, line in lines.items():
+        hids_by_needle.setdefault(bytes.fromhex(line.pmkid_or_mic), []).append(hid)
     found: dict[str, set[int]] = {}
     for pcap in pcaps:
         for frame, epoch in read_pcap(pcap):
-            for hid, needle in needles.items():
-                if needle in frame:
+            llc = frame.find(LLC_SNAP_EAPOL)
+            if llc == -1:
+                continue
+            mic_start = llc + len(LLC_SNAP_EAPOL) + MIC_OFFSET
+            needles = [frame[mic_start:mic_start + MIC_LEN]]
+            kde = frame.find(_PMKID_KDE, mic_start + MIC_LEN)
+            if kde != -1:
+                pmkid_start = kde + len(_PMKID_KDE)
+                needles.append(frame[pmkid_start:pmkid_start + _PMKID_LEN])
+            for needle in needles:
+                for hid in hids_by_needle.get(needle, ()):
                     found.setdefault(hid, set()).add(epoch)
     return found
 

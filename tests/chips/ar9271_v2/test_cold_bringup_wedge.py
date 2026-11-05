@@ -118,6 +118,22 @@ async def test_post_boot_handshake_double_failure_becomes_a_clean_replug_error(m
     assert _renders_cleanly(exc_info.value)
 
 
+def test_warm_probe_resyncs_pipes_before_reading(mocker):
+    calls: list[str] = []
+    dev = SimpleNamespace(
+        set_configuration=MagicMock(),
+        clear_halt=lambda ep: calls.append(f"clear:{ep}"),
+        read=lambda ep, size, timeout: calls.append("read") or b"\x00\x00\x00\x4e",
+    )
+    driver = AR9271V2Driver(dev)
+    mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.claim_interface")
+    mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.release_interface")
+
+    assert driver._is_chip_warm() is True
+    assert calls[:4] == ["clear:1", "clear:130", "clear:131", "clear:4"]
+    assert calls[4] == "read"
+
+
 def test_claim_exhausted_retries_becomes_a_clean_replug_error(mocker):
     mocker.patch("wifit3.chips.ar9271_v2.driver.time.sleep")     # skip the real ~6s of retries
     mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.claim_interface",

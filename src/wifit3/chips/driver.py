@@ -31,8 +31,18 @@ class FakeMacSupport(enum.Enum):
 class Driver(ABC):
     """The contract every ``chips/*/driver.py`` implements."""
 
+    CHANNELS_2G: ClassVar[List[int]] = list(range(1, 15))
+    """2.4 GHz channels 1-14."""
+
+    CHANNELS_5G: ClassVar[List[int]] = [36, 40, 44, 48, 149, 153, 157, 161, 165]
+    """5 GHz non-DFS channels (UNII-1 + UNII-3)."""
+
+    CHANNELS_DFS: ClassVar[List[int]] = [52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136,
+                                         140, 144]
+    """5 GHz DFS channels (UNII-2 52-64, UNII-2e 100-144); the app hops them only with the DFS pref on."""
+
     SUPPORTED_CHANNELS: ClassVar[List[int]]
-    """Every channel this driver can tune to (2.4 GHz 1..14, 5 GHz 36..165)."""
+    """Every channel this driver can tune to, built from the CHANNELS_* lists above."""
 
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.UNIMPLEMENTED
     """This radio's ability to auto-ACK a programmed MAC."""

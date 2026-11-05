@@ -48,6 +48,18 @@ def _run():
     return ath, dev
 
 
+def test_getnf_uses_signed_eeprom_threshold(caplog):
+    ath = hw.AthHw(None)
+    ath.eeprom = bytearray(376)
+    ath.eeprom[52 + 19] = (-90) & 0xFF
+    reads = iter((0, ((-80) & 0x1FF) << 20, 0))
+    ath.read = lambda _reg: next(reads)
+
+    with caplog.at_level("DEBUG", logger="wifit3.chips.ar9271_v2.hw"):
+        assert ath.getnf(None)
+    assert "noise floor -80 above EEPROM threshold -90" in caplog.text
+
+
 def test_srev_derivation():
     ath, _ = _run()
     assert ath.macVersion == R.AR_SREV_VERSION_9271      # 0x140

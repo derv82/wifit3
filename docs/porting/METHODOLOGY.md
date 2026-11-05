@@ -172,9 +172,7 @@ Validate on hardware with `uv run python scripts/<chip>/test_hw.py` (add `--debu
 runs this itself. Don't add "quick wins" that surface beacons to the user mid-port. Reception is
 judged by the scripts, not by eye.
 
-The one human-gated step is live 802.11 TX. The agent *wires* TX (descriptor build, the bulk-OUT
-path, the `aireplay_*` methods) but never fires live injection or deauth. That's the user's
-explicit action.
+Live TX (injection, deauth, attacks) goes only at the user's test APs, supplied at runtime.
 
 If the device wedges, ask the user to unplug, wait, replug (resets cold-boot state).
 
@@ -182,7 +180,7 @@ If the device wedges, ask the user to unplug, wait, replug (resets cold-boot sta
 
 A clean verify and flowing beacons are necessary, not sufficient. Both gates are blind to a value
 hardcoded to match the recording, and to uncaptured paths (TX-descriptor variants, power-save,
-sreset, runtime recal). The agent does 1–6; 7 is the user's.
+sreset, runtime recal).
 
 1. **Zero waivers, everywhere** — read the verify report again, end to end (cold bring-up, monitor
    entry, hops, injection/deauth). A waiver is an un-ported op hiding.
@@ -199,8 +197,10 @@ sreset, runtime recal). The agent does 1–6; 7 is the user's.
 6. **Recalibration cadence** — confirm your per-tune recal (freq / VCO / synth / TX power / AGC)
    matches the kernel's channel-config path, and the per-hop lock holds so a cancelled tune can't
    strand the chip on a stale channel.
-7. **Hands-on break-it pass (user)** — alternate targets fast, hop hard, replug mid-run, soak
-   30 min, fire the live attacks. Stress finds what a snapshot and a single pcap can't.
+7. **Hands-on break-it pass** — alternate targets fast, hop hard, replug mid-run (ask the user),
+   soak 30 min, fire the live attacks. Stress finds what a snapshot and a single pcap can't.
+8. **Final checklist** — run docs/porting/FINAL-CHECKLIST.md and record each result in the chip
+   doc's Final checklist section. The port isn't done until every item has a number.
 
 ## Appendix — driver migrations (mainline → vendor/DKMS)
 

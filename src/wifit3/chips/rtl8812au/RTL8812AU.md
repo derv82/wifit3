@@ -48,8 +48,8 @@ and arms it once at attach.
 SIPI `read_rf` takes its PI/SI mode-select bit from `REG_3WIRE_SWB` on path B (not SWA) — using SWA for
 both corrupted masked RF read-modify-writes on path B. CCK RSSI is rate-branched in `rx.py`
 (`parse_jaguar_phy_status_rssi`): CCK uses an lna/vga lookup, OFDM/HT/VHT uses `gain-110` maxed across
-active paths. DFS 5 GHz channels (52..144) are excluded from `SUPPORTED_CHANNELS` (no DFS clearance) but
-`set_channel` accepts them if asked explicitly.
+active paths. `SUPPORTED_CHANNELS` includes `Driver.CHANNELS_DFS` (52..144); `set_channel` tunes the
+full `CHANNELS_5G_ALL` table.
 
 **Hop-death gives the Scanner no feedback** — targets fade dark, the list empties, no banner. The
 driver logs the warning, but the Scanner UI doesn't surface it.

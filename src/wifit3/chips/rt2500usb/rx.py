@@ -135,6 +135,7 @@ def read_rx_burst(
         return bytes(data)
     except usb.core.USBError as e:
         err = getattr(e, "errno", None)
-        if err in (110, 10060) or "timeout" in str(e).lower():
+        if (isinstance(e, usb.core.USBTimeoutError) or err in (110, 10060)
+                or "timeout" in str(e).lower()):
             return None
         raise

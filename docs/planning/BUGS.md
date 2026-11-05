@@ -33,7 +33,7 @@ Most drivers were ported against the single device they were tested on, so EFUSE
 (antenna count, TX power tables) sit in the code as constants. A device whose EFUSE differs then
 gets wrong values with no error raised: little or no RX/TX, or wedging.
 
-Chipsets confirmed to honor EFUSE: RTL8821AU, RTL8822BU, RTL8822CU, RTL8192FU.
+Chipsets confirmed to honor EFUSE: RTL8821AU, RTL8822BU, RTL8822CU, RTL8192FU, AR9271.
 RTL8192FU is verified only on its RFE type 5 reference card; RFE type 1 needs hardware validation.
 
 Direction: per driver, list the EFUSE fields the vendor driver reads, compare against the wifit3
@@ -170,8 +170,8 @@ AP (an Enterprise EvilTwin). Vault, the cracker and capture storage all assume `
 
 **Problem.** Without a lock, concurrent injects reach the device out of call order. Before mt7921au
 got one, the TX lab saw 42-46 of 500 flooded frames arrive out of order (rtl8822bu has a lock: 0).
-No lock in: ar9271_v2, mt76x0u, mt76x2u, mt7925au, rt2800usb, rt5572, rtl8187, rtl8822cu, rtl8922au.
-ar9271 also has a TxSlots race, and rt2800usb / rt5572 can transmit in the middle of a retune.
+No lock in: mt76x0u, mt76x2u, mt7925au, rt2800usb, rt5572, rtl8187, rtl8822cu, rtl8922au.
+rt2800usb / rt5572 can also transmit in the middle of a retune.
 
 **Direction.** A lock per driver, written in each driver (no shared base); re-run the TX lab flood
 test on each.

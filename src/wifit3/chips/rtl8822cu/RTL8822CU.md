@@ -29,8 +29,9 @@
 - 2357:0137 is shared: `device/manager.py` `_VIDPID_FAMILIES` maps it to `VidPidFamily(default="mt76x2u", resolve=_resolve_2357_0137)`.
 - `_resolve_2357_0137` reads the live device descriptor: any interface exposing bulk IN endpoint 0x85 routes to `mt76x2u`, otherwise to `rtl8822cu`; `resolve_driver` then pulls that package's `Claim`.
 - `supported_ids()` skips a shared VID:PID for a package that is not the family default, so rtl8822cu never enters 2357:0137 into the static map.
-- Scope is monitor mode at 20 MHz: RX, monitor bringup, channel tune, TX inject, watchdog tick. Managed / STA, 40 and 80 MHz, SDIO and PCIE are out of scope. The driver rejects 2- and 4-bulk-OUT USB layouts before claiming the interface because its ported queue map and FIFO allocation are specifically the vendor 3-bulk-OUT NORMAL layout.
-- `SUPPORTED_CHANNELS` is 1 to 14 plus 36, 40, 44, 48, 149, 153, 157, 161, 165 [driver.py:73]. Channel 14 takes the vendor's CCK only shaping branch [phy.py:1180].
+- Scope is monitor mode at 20 MHz: RX, monitor bringup, channel tune, TX inject, watchdog tick. Managed / STA, 40 and 80 MHz, SDIO and PCIE, and the 2 or 4 bulkout layouts are out of scope.
+- `SUPPORTED_CHANNELS` is `Driver.CHANNELS_2G + CHANNELS_5G + CHANNELS_DFS` [driver.py:74]; the live tune
+  (`phy.switch_channel`) has no channel gate, and `txpower.center_ch_5g_all` covers 52..144. Channel 14 takes the vendor's CCK only shaping branch [phy.py:1180].
 - The port was produced and checked by separate scouting, porting and reviewing agents against the vendor C.
 - Related ports: `rtw88_base` supplies the transport, the power sequence runner and the RX descriptor parse.
 - Hardware free unit tests: `test_driver`, `test_transport`, `test_tx`, `test_efuse_txpower`, and the TX power chain (`test_txpower_pg`, `test_txpwr_index`, `test_txpwr_tables`, `test_txagc`).

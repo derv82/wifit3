@@ -15,7 +15,7 @@ import pytest
 
 from wifit3.crack import wpa_psk
 from wifit3.crack.hc22000_format import Hc22000Line
-from wifit3.dot11.eapol import eapol_key
+from wifit3.dot11.eapol import LLC_SNAP_EAPOL, NONCE_LEN, data_header, eapol_key
 from wifit3.dot11.wpa import KCK_LEN, derive_pmk, derive_ptk, eapol_mic_hmac_md5
 from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage, ToolName
 from wifit3.persist.config import Config
@@ -820,7 +820,10 @@ def test_dates_read_from_pcaps_are_saved_so_they_are_read_once(tmp_path):
     _write_pmkid_line(tmp_path, "HomeNet", bssid, pmk)
     pmkid = wpa_psk.pmkid(pmk, bytes.fromhex(bssid.replace(":", "")), bytes.fromhex(_STA))
     pcap = tmp_path / "HomeNet_aa-bb-cc-dd-ee-01_1700000005_pmkid.pcap"
-    write_pcap(pcap, [(b"\x88\x02" + pmkid, 1_700_000_003.5)])
+    m1 = eapol_key(key_info=0x008a, key_len=16, replay=1, nonce=bytes(NONCE_LEN),
+                   key_data=bytes.fromhex("dd14000fac04") + pmkid)
+    header = data_header(to_ds=False, bssid=bytes.fromhex(bssid.replace(":", "")), client=bytes.fromhex(_STA))
+    write_pcap(pcap, [(header + LLC_SNAP_EAPOL + m1, 1_700_000_003.5)])
     v = Vault()
     assert v.ap_state(bssid).hashlines[0].captured == (1_700_000_003,)
 

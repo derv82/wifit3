@@ -62,6 +62,7 @@ class Config:
     decloaked_ssids: dict[str, str] = {}
     hide_silenced: bool = False
     wps_auto_pbc: bool = True
+    enable_dfs_channels: bool = False
     auto_crack: ToolName | None = ToolName.CPU_CRACK
     cpu_crack: CpuCrackSettings = CpuCrackSettings()
     hashcat: HashcatSettings = HashcatSettings()
@@ -115,6 +116,7 @@ class Config:
                                    and len(ssid.encode("utf-8")) <= SSID_MAX_OCTETS}
         cls.hide_silenced = bool(data.get("hide_silenced", cls.hide_silenced))
         cls.wps_auto_pbc = bool(data.get("wps_auto_pbc", cls.wps_auto_pbc))
+        cls.enable_dfs_channels = bool(data.get("enable_dfs_channels", cls.enable_dfs_channels))
         cls.auto_crack = _auto_crack(data, cls.auto_crack)
         legacy_wordlists = _legacy_wordlists(data)
         cls.cpu_crack = _load_table(_table(data, "cpu_crack"), cls.cpu_crack)
@@ -139,6 +141,7 @@ class Config:
             f"silenced_bssids = {_fmt(cls.silenced_bssids)}\n"
             f"hide_silenced = {_fmt(cls.hide_silenced)}\n"
             f"wps_auto_pbc = {_fmt(cls.wps_auto_pbc)}\n"
+            f"enable_dfs_channels = {_fmt(cls.enable_dfs_channels)}\n"
             f"auto_crack = {_fmt(cls.auto_crack or '')}\n"
         )
         text += _table_text("cpu_crack", cls.cpu_crack)

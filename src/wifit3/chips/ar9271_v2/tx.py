@@ -19,6 +19,7 @@ carries its own sequence number); only the wrapper — and the per-frame TX-slot
 from __future__ import annotations
 
 import struct
+import threading
 
 HIF_TX_STREAM_TAG = 0x697e          # [WIRE] le16 stream-mode tag on every bulk-OUT TX frame
 HTC_FRAME_HDR_LEN = 8               # [SRC] htc_hst.h struct htc_frame_hdr
@@ -109,14 +110,17 @@ class TxSlots:
 
     def __init__(self) -> None:
         self._slot = bytearray(MAX_TX_BUF_NUM)
+        self._lock = threading.Lock()
 
     def get(self) -> int:
-        slot = next((i for i in range(MAX_TX_BUF_NUM) if not self._slot[i]), -1)
-        if slot < 0:
-            raise RuntimeError("ar9271: no free TX slot (ENOBUFS)")
-        self._slot[slot] = 1
-        return slot
+        with self._lock:
+            slot = next((i for i in range(MAX_TX_BUF_NUM) if not self._slot[i]), -1)
+            if slot < 0:
+                raise RuntimeError("ar9271: no free TX slot (ENOBUFS)")
+            self._slot[slot] = 1
+            return slot
 
     def clear(self, slot: int) -> None:
-        if 0 <= slot < MAX_TX_BUF_NUM:
-            self._slot[slot] = 0
+        with self._lock:
+            if 0 <= slot < MAX_TX_BUF_NUM:
+                self._slot[slot] = 0

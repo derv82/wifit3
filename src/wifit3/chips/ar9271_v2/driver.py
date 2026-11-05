@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
+import threading
 import time
 from typing import Callable, ClassVar, List, Optional, Tuple
 
@@ -65,7 +66,7 @@ f8:c9:03 f8:ce:21 f8:d1:11 fc:d7:33
 class AR9271V2Driver(Driver):
     """Atheros AR9271 / ALFA AWUS036NHA — 2.4 GHz, soft-MAC, ath9k_htc firmware."""
 
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))   # 2.4 GHz only, no 5 GHz radio
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(Driver.CHANNELS_2G)   # 2.4 GHz only, no 5 GHz radio
     CONFLICTING_LINUX_MODULES: ClassVar[List[str]] = ["ath9k_htc"]   # modprobe blacklist hint
     LINUX_REPLUG_AFTER_MODPROBE: ClassVar[bool] = True   # replug, not the fragile FW-download self-cold
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE
@@ -157,6 +158,7 @@ class AR9271V2Driver(Driver):
         self.mgmt_epid = endpoints[C.WMI_MGMT_SVC]
         self.data_be_epid = endpoints[C.WMI_DATA_BE_SVC]
         self.tx_slots = tx.TxSlots()
+        self._operation_lock = threading.RLock()
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -330,9 +332,9 @@ class AR9271V2Driver(Driver):
     def _is_chip_warm(self) -> bool:
         """Detect a warm card (firmware already running) by smoke-testing the bulk-IN pipe: a
         firmware-running card in monitor mode streams HIF-framed RX (stream tag 0x4e00) on
-        WLAN_RX 0x82, while a cold bootloader is silent there [[warm_reattach]]. Claim interface 0
-        (the bulk pipe needs it), read a few times, and look for the tag. Any failure -> assume
-        cold (the cold path is the safe default; it re-claims after re-enumeration)."""
+        WLAN_RX 0x82, while a cold bootloader is silent there [[warm_reattach]]. Claim interface 0,
+        resync stale endpoint toggles, then read a few times and look for the tag. Any failure ->
+        assume cold (the cold path re-claims after re-enumeration)."""
         dev = self.transport.dev
         try:
             try:
@@ -344,6 +346,7 @@ class AR9271V2Driver(Driver):
             logger.debug("ar9271_v2: warm-probe claim failed (%s) -> assume cold", e)
             return False
         try:
+            self._clear_pipe_halts()
             for _ in range(6):                         # warm returns on the first beacon (~ms)
                 try:
                     buf = bytes(dev.read(C.EP_WLAN_RX, _RX_BUF_SIZE, 200))
@@ -391,24 +394,26 @@ class AR9271V2Driver(Driver):
 
     # ---- channel ----------------------------------------------------------
     async def set_channel(self, channel: int, scan: bool = False, *, _fastcc: bool = False) -> bool:
-        """Tune to ``channel`` via a full ath9k_hw_reset (the always-correct retune). ``_fastcc``
-        selects the kernel's within-band fast channel change — used only by the verify gate, which
-        reads the full-vs-fast decision off the wire; the live hopper always takes the full reset
-        (simple + safe). No running loop -> inline (the gate); otherwise offloaded."""
+        """Tune to ``channel``; transient scan hops use the kernel's fast channel-change path,
+        while settled tunes use a full reset. ``_fastcc`` reproduces captured kernel decisions in
+        the verify gate. No running loop -> inline (the gate); otherwise offloaded."""
         ch = chanmod.channel_2ghz(channel)
+        fastcc = _fastcc or (scan and self.hw is not None and self.hw.curchan is not None
+                             and self.hw.curchan.channel != ch.channel)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            self._do_channel_change(ch, _fastcc)
+            self._do_channel_change(ch, fastcc)
             return True
-        await loop.run_in_executor(None, self._do_channel_change, ch, _fastcc)
+        await loop.run_in_executor(None, self._do_channel_change, ch, fastcc)
         return True
 
     def _do_channel_change(self, ch: chanmod.Channel, fastcc: bool) -> None:
-        if fastcc:
-            bringup.fast_channel_change(self.wmi, self.hw, ch)
-        else:
-            bringup.full_channel_change(self.wmi, self.hw, ch)
+        with self._operation_lock:
+            if fastcc:
+                bringup.fast_channel_change(self.wmi, self.hw, ch)
+            else:
+                bringup.full_channel_change(self.wmi, self.hw, ch)
 
     # ---- RX (live only; the pcap gate does not model device->host frames) -
     def _read_once(self) -> Optional[bytes]:
@@ -484,13 +489,18 @@ class AR9271V2Driver(Driver):
         sequence number) is the caller's; only the wrapper and the cookie are ours. Returns the
         allocated cookie (TX slot). The verify gate + unit tests drive this directly (no event loop);
         the public async ``inject_frame`` wraps it for the UI."""
-        cookie = self.tx_slots.get()
-        if tx.is_data_frame(dot11):
-            frame = tx.build_data_tx(self.data_be_epid, dot11, cookie)
-        else:
-            frame = tx.build_mgmt_tx(self.mgmt_epid, dot11, cookie)
-        self.wmi.t.wlan_out(frame)
-        return cookie
+        with self._operation_lock:
+            cookie = self.tx_slots.get()
+            if tx.is_data_frame(dot11):
+                frame = tx.build_data_tx(self.data_be_epid, dot11, cookie)
+            else:
+                frame = tx.build_mgmt_tx(self.mgmt_epid, dot11, cookie)
+            try:
+                self.wmi.t.wlan_out(frame)
+            except Exception:
+                self.tx_slots.clear(cookie)
+                raise
+            return cookie
 
     def tx_status_event(self, event_body: bytes) -> None:
         """ath9k_htc_txstatus [SRC] htc_drv_txrx.c:647 — a WMI_TXSTATUS event reports completed
@@ -519,10 +529,11 @@ class AR9271V2Driver(Driver):
     def _write_sta_id(self, mac: bytes) -> None:
         """ath_hw_setbssidmask-style STA address write: low 4 bytes -> AR_STA_ID0, high 2 ->
         AR_STA_ID1 (preserving the upper opmode/KSRCH bits) [SRC] ath/hw.c ath_hw_setbssidmask."""
-        self.hw.write(R.AR_STA_ID0, int.from_bytes(mac[0:4], "little"))
-        id1 = (self.hw.read(R.AR_STA_ID1) & ~R.AR_STA_ID1_SADH_MASK) & 0xFFFFFFFF
-        id1 |= int.from_bytes(mac[4:6], "little")
-        self.hw.write(R.AR_STA_ID1, id1)
+        with self._operation_lock:
+            self.hw.write(R.AR_STA_ID0, int.from_bytes(mac[0:4], "little"))
+            id1 = (self.hw.read(R.AR_STA_ID1) & ~R.AR_STA_ID1_SADH_MASK) & 0xFFFFFFFF
+            id1 |= int.from_bytes(mac[4:6], "little")
+            self.hw.write(R.AR_STA_ID1, id1)
 
     async def close(self) -> None:
         if self._reader is not None:

@@ -72,7 +72,7 @@ class RT2500USBDriver(Driver):
 
     # 2.4 GHz channels 1-14 — the band every RT2500 RF chip tunes (RF5222 also
     # has 5 GHz rows, but this driver is 2.4 GHz-only; see chan.RF_VALS_5222).
-    SUPPORTED_CHANNELS = list(range(1, 15))
+    SUPPORTED_CHANNELS = list(Driver.CHANNELS_2G)
     # NONE: rt2500usb has no hardware autoresponder — it can't ACK any MAC.
     FAKE_MAC = FakeMacSupport.NONE
 

@@ -80,7 +80,7 @@ class RTL8187Driver(Driver):
     """
 
     # rtl818x_channels: 2.4 GHz 1..14 (ch14 = 2484 MHz, its own CCK power table).
-    SUPPORTED_CHANNELS = list(range(1, 15))
+    SUPPORTED_CHANNELS = list(Driver.CHANNELS_2G)
     # FIXED_MAC: the 8187L auto-ACKs its own silicon MAC in monitor mode (bench 2026-07-16:
     # 111 ACKs / 100 injects to the silicon MAC), but has no active monitor to program a
     # forged MAC, so a spoofed source is never ACKed.

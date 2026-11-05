@@ -72,7 +72,7 @@ CALIBRATE_INTERVAL_S = MT_CALIBRATE_INTERVAL / HZ
 class MT7601UDriver(Driver):
     """Receive-only userspace driver for the MT7601U."""
 
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(Driver.CHANNELS_2G)
     """2.4 GHz only. Channel 14 is tuned from the port's own table, bypassing the
     nl80211 regdomain check that refuses it under most domains; the kernel driver never
     sees that error, so the port must not invent one."""
