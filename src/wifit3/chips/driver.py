@@ -37,8 +37,9 @@ class Driver(ABC):
     CHANNELS_5G: ClassVar[List[int]] = [36, 40, 44, 48, 149, 153, 157, 161, 165]
     """5 GHz non-DFS channels (UNII-1 + UNII-3)."""
 
-    CHANNELS_DFS: ClassVar[List[int]] = []
-    """5 GHz DFS channels (52-64, 100-144); empty until DFS channels are enabled."""
+    CHANNELS_DFS: ClassVar[List[int]] = [52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136,
+                                         140, 144]
+    """5 GHz DFS channels (UNII-2 52-64, UNII-2e 100-144); the app hops them only with the DFS pref on."""
 
     SUPPORTED_CHANNELS: ClassVar[List[int]]
     """Every channel this driver can tune to, built from the CHANNELS_* lists above."""
