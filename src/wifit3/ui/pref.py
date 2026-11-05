@@ -200,8 +200,8 @@ class PreferencesModal(ModalScreen):
             yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap",
                            tooltip="[u]Note[/]: [bold].hc22000[/] files [i]always[/] save")
             yield Checkbox("Save probed SSIDs", value=Config.save_probed_ssids, id="save_probed_ssids",
-                           tooltip="[u]File[/]: [bold]probed_ssids.txt[/] in the captures dir\n"
-                                "[dim]One SSID per line, usable as a wordlist[/]")
+                           tooltip="[u]File[/]: [bold]probed_ssids.txt[/]\n"
+                                "[dim]SSID per line, for wordlists.[/]")
             yield AutoCrackSetting()
             yield SaveFooter()
 
