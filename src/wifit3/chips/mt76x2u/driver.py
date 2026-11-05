@@ -88,14 +88,8 @@ class MT76x2UDriver(Driver):
     firmware upload.
     """
 
-    # 2.4 GHz channels 1..14 + non-DFS 5 GHz (UNII-1 + UNII-3).
-    # DFS bands (52..144) are PHY-capable on this chip but require radar
-    # detection support we won't ship; left out until that lands.
-    SUPPORTED_CHANNELS = (
-        list(range(1, 15))
-        + [36, 40, 44, 48]
-        + [149, 153, 157, 161, 165]
-    )
+    # DFS waits on mt76x02_phy_dfs_adjust_agc (mt76x2/phy.c:270), not ported yet.
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G
     FAKE_MAC = FakeMacSupport.SPOOFABLE
     LINUX_REPLUG_AFTER_MODPROBE = False   # self-colds: force_power_cycle → cold-equivalent, no replug
 

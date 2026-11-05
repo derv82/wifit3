@@ -38,8 +38,6 @@ from .transport import Rtl8821cuTransport
 logger = logging.getLogger(__name__)
 
 CHANNELS_2G = list(range(1, 15))
-# Non-DFS 5 GHz only for now; the capture also tunes DFS 52..144 but set_channel
-# (and the DFS tune path) is a later milestone — see RTL8821CU_DKMS.md.
 CHANNELS_5G = [36, 40, 44, 48, 149, 153, 157, 161, 165]
 
 # Monitor-mode management-inject TX-descriptor attributes. [WIRE] every aireplay-ng frame in the
@@ -64,7 +62,7 @@ _REF_CUT = 4                    # hal chip_ver / dm cut_version
 
 
 class Rtl8821cuDkmsDriver(Driver):
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE
 
     def __init__(self, dev: usb.core.Device):

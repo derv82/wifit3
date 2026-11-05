@@ -58,9 +58,7 @@ _BAND_RELOCK_ATTEMPTS = 4
 class RTL8814AUDriver(Driver):
     """Driver for Realtek RTL8814AU (Alfa AWUS1900, 4T4R). M1: FW upload only."""
 
-    # 2.4 GHz 1..13 + non-DFS 5 GHz. Channel tune lands in M3; this advertises
-    # the chip's reach for when WlanInterface.start_hopping consumes it.
-    SUPPORTED_CHANNELS = list(range(1, 15)) + [36, 40, 44, 48, 149, 153, 157, 161, 165]
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
@@ -382,11 +380,8 @@ class RTL8814AUDriver(Driver):
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         is_2g = channel <= 14
-        if is_2g and channel not in chan.SUPPORTED_CHANNELS_2G:
-            logger.warning("RTL8814AU: unsupported 2.4 GHz channel %d", channel)
-            return False
-        if not is_2g and channel not in chan.SUPPORTED_CHANNELS_5G:
-            logger.warning("RTL8814AU: unsupported 5 GHz channel %d", channel)
+        if channel not in self.SUPPORTED_CHANNELS:
+            logger.warning("RTL8814AU: unsupported channel %d", channel)
             return False
         band_change = is_2g != self.current_band_is_2g
         loop = asyncio.get_event_loop()

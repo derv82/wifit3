@@ -34,9 +34,7 @@ from wifit3.dot11.parser import WlanFrameParser
 from ..rx_reader import RxReaderThread
 from .bb import phy_bb_config
 from .chan import init_tune, set_channel_bw, set_rfe_reg_init
-from .constants import (
-    BAND_MAX, BBSWING_DEFAULT, CHANNELS_2G, CHANNELS_5G_NON_DFS,
-)
+from .constants import BAND_MAX, BBSWING_DEFAULT
 from .dm import init_hal_dm
 from .watchdog import WATCHDOG_PERIOD_S, WatchdogState
 from .watchdog import tick as watchdog_tick
@@ -77,10 +75,8 @@ def _detect_super_speed(transport: Rtl8814auTransport) -> bool:
 
 
 class Rtl8814auDkmsDriver(Driver):
-    # 2.4 GHz + 5 GHz, 20 MHz primary (M5a band switch / M5b select / M5c runtime / M5d TX
-    # power) — both bands tune with correct per-rate TX power for RX and inject. Non-DFS 5 GHz
-    # only in the advertised set; set_channel still tunes DFS, we just don't hop it.
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(CHANNELS_2G + CHANNELS_5G_NON_DFS)
+    # 2.4 GHz + 5 GHz, 20 MHz primary: both bands tune with correct per-rate TX power.
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: Rtl8814auTransport):
