@@ -13,7 +13,7 @@ from textual.widget import Widget
 
 from wifit3.models import PSK_CAPTURE_TYPES, CaptureType, PersistedCapture
 from wifit3.persist.ap_state import PasswordStatus
-from wifit3.persist.meta import meta_path, read_meta
+from wifit3.persist.meta import read_nickname
 from wifit3.ui.colors import PASSWORD_MISMATCH_COLOR
 from textual.message import Message
 
@@ -150,8 +150,11 @@ class VaultTable(Widget):
         captures_by_bssid: Dict[str, List[PersistedCapture]] = {}
         for cap in self.app.vault.all_captures():
             captures_by_bssid.setdefault(cap.bssid, []).append(cap)
-        return {bssid: (self.app.vault.ssid(bssid), caps)
-                for bssid, caps in captures_by_bssid.items()}
+        aps = {bssid: (self.app.vault.ssid(bssid), caps)
+               for bssid, caps in captures_by_bssid.items()}
+        for bssid, ssid in self.app.vault.nickname_aps().items():
+            aps.setdefault(bssid, (ssid, []))
+        return aps
 
     def reload_table(self) -> None:
         if self._is_reloading or not self.is_attached:
@@ -162,8 +165,8 @@ class VaultTable(Widget):
             if self._nicknames_stale:
                 self._nicknames = {}
                 for bssid, (ssid, _) in self._aps.items():
-                    nickname = read_meta(meta_path(ssid, bssid)).get("nickname")
-                    if isinstance(nickname, str) and nickname:
+                    nickname = read_nickname(bssid, ssid)
+                    if nickname:
                         self._nicknames[bssid] = nickname
                 self._nicknames_stale = False
             self._update_tabs()

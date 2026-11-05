@@ -74,6 +74,44 @@ def read_bssid_metas(bssid: str) -> list[dict[str, Any]]:
     return [read_meta(path) for path in bssid_meta_paths(bssid)]
 
 
+def read_nickname(bssid: str, ssid: Optional[str] = None) -> str:
+    """Read a nickname across SSIDs, preferring the supplied SSID's metadata."""
+    preferred = meta_path(ssid, bssid)
+    paths = bssid_meta_paths(bssid)
+    for path in [preferred, *(path for path in paths if path != preferred)]:
+        nickname = read_meta(path).get("nickname")
+        if isinstance(nickname, str) and nickname:
+            return nickname
+    return ""
+
+
+def set_nickname(ssid: Optional[str], bssid: str, nickname: Optional[str]) -> None:
+    """Set or clear a BSSID's nickname, removing stale values from its other metadata files."""
+    target = meta_path(ssid, bssid)
+    for path in bssid_meta_paths(bssid):
+        if path != target and "nickname" in read_meta(path):
+            update_meta_file(path, nickname=None)
+    if nickname:
+        update_meta(ssid, bssid, nickname=nickname)
+    elif target.exists() and "nickname" in read_meta(target):
+        update_meta_file(target, nickname=None)
+
+
+def nickname_aps() -> dict[str, Optional[str]]:
+    """Return BSSIDs with nicknames and their stored SSIDs, when known."""
+    result: dict[str, Optional[str]] = {}
+    for dashed in sorted(_meta_paths._scanned().copy()):
+        bssid = bssid_to_colon(dashed)
+        for path in bssid_meta_paths(bssid):
+            data = read_meta(path)
+            nickname = data.get("nickname")
+            if isinstance(nickname, str) and nickname:
+                ssid = data.get("ssid")
+                result[bssid] = ssid if isinstance(ssid, str) and ssid else None
+                break
+    return result
+
+
 def read_meta(path: Path) -> dict[str, Any]:
     """The file's JSON object, or an empty dict when missing or invalid."""
     try:

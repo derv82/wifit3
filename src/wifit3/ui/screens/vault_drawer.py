@@ -14,7 +14,7 @@ from .vault_table import VaultTable
 from .vault_item import AddKeyPressed, DeleteKeyPressed, ShowApPressed, VaultItemView, key_description
 from wifit3.models import AccessPoint, CaptureType, PersistedCapture
 from wifit3.persist.ap_state import ApState, is_confirmed
-from wifit3.persist.meta import meta_path, read_meta, update_meta
+from wifit3.persist.meta import read_nickname, set_nickname
 from wifit3.ui.vault.job_pane import JobTrackerPane
 from wifit3.ui.vault.modals.add_credential import AddCredentialModal, ManualCredential
 from wifit3.ui.vault.modals.confirm import ConfirmModal
@@ -234,14 +234,13 @@ class VaultDrawer(ModalScreen):
         if not bssid:
             self.notify("Select an AP first", severity="warning")
             return
-        nickname = read_meta(meta_path(ssid, bssid)).get("nickname")
-        current = nickname if isinstance(nickname, str) else ""
+        current = read_nickname(bssid, ssid)
 
         def _save(value: Optional[str]) -> None:
             if value is None:
                 return
             try:
-                update_meta(ssid, bssid, nickname=value or None)
+                set_nickname(ssid, bssid, value or None)
             except OSError as exc:
                 self.notify(f"Could not save nickname: {exc}", severity="error")
                 return
