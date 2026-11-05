@@ -162,6 +162,8 @@ def test_csa_target_channel():
     assert csa_target_channel(1) == 6                 # 2.4G decoy
     assert csa_target_channel(11) == 1
     assert csa_target_channel(36) == 40               # 5G target stays in-band
+    assert csa_target_channel(56) == 36               # a DFS target's decoy is not DFS
+    assert csa_target_channel(100) == 36
     assert csa_target_channel(11, 1) == 1             # preferred honored when off the AP's channel
     assert csa_target_channel(11, 11) == 1            # preferred == AP channel -> decoy (the no-op guard)
 
