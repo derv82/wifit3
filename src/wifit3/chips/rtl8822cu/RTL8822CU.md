@@ -140,6 +140,9 @@ All three need a local copy of the vendor driver source or a capture, neither of
 
 ## Debug log
 
+- HALMAC firmware channel-switch offload remains untested for passive monitor hopping. The vendor defines `HALMAC_CS_ACTION_NONE` and `HALMAC_CS_ACTIVE_SCAN` [hal/halmac/halmac_fw_info.h:82]; its `_halmac_scanoffload` caller selects active scanning and probe requests under `CONFIG_PNO_SUPPORT`, disabled in the default Makefile [hal/hal_halmac.c:5322; Makefile:186]. `ACTION_NONE` has not been verified to remain silent, preserve RX, or report channel changes on this firmware. `RTW_CHANNEL_SWITCH_OFFLOAD` is a separate per-channel path [hal/rtl8822c/rtl8822c_phy.c:1008].
+- A runtime HALMAC hopping experiment needs reserved-page ownership, C2H ACK and scan-status routing through the existing RX reader, channel-change attribution, and confirmed stop/cleanup before host tuning resumes. ACK acceptance is distinct from scan completion [hal/halmac/halmac_88xx/halmac_common_88xx.c:980,1208,2346]. No offload experiment or comparison with host-driven hopping has been run.
+
 - 2026-09-16: ACK bench vs the 8822BU (rx_autoack / tx_retries, both bands). Auto-ACKs a spoofed
   MAC (active monitor) and its own silicon MAC (~100/100); TX stops on the target's ACK keyed on
   Addr2 (real AP median 1 copy, dead target ~7 both bands). SPOOFABLE confirmed. See docs/ACKS.md.
