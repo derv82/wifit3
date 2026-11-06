@@ -21,6 +21,8 @@ from wifit3.campaigns import treelog
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config
+from wifit3.persist.meta import read_nickname, set_nickname
+from wifit3.ui.vault.modals.nickname import NicknameModal
 from wifit3.models import AccessPoint
 from wifit3.crack.handshake import pmkid_crackable
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
@@ -162,6 +164,7 @@ class ScannerView(Screen):
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
         Binding("v", "open_vault", "Vault", show=True),
+        Binding("n", "set_nickname", "Nickname", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
         Binding("g", "scroll_home", "Top", show=False, priority=True),
@@ -185,6 +188,7 @@ class ScannerView(Screen):
         self._beacon_flash_until: Dict[str, float] = {}
         # Per-BSSID (signature, row): an unchanged AP reuses its row object.
         self._row_cache: Dict[str, tuple] = {}
+        self._nicknames: Dict[tuple, str] = {}
         self._logged_auto_crack: Optional[bool] = None
 
     # ----- Compose / mount ---------------------------------------------------
@@ -230,6 +234,8 @@ class ScannerView(Screen):
             self._log_auto_crack_status_when_changed()
 
     async def on_screen_resume(self) -> None:
+        self._nicknames.clear()
+        self._row_cache.clear()
         # Restart channel hopper
         array = self.app.array
         if not array:
@@ -301,6 +307,9 @@ class ScannerView(Screen):
             self._beacon_flash_until[ap.bssid] = now + self.BEACON_FLASH_S
         self._prev_beacons[ap.bssid] = ap.beacons
 
+        key = (ap.ssid, ap.bssid)
+        if key not in self._nicknames:
+            self._nicknames[key] = read_nickname(ap.bssid, ap.ssid)
         vault = self.app.vault
         is_stale = self._ap_row_age(ap, now) > STALE_DURATION_S
         beacon_flash = now < self._beacon_flash_until.get(ap.bssid, 0.0)
@@ -318,6 +327,7 @@ class ScannerView(Screen):
             bssid=ap.bssid,
             ssid=ap.ssid,
             guessid=guessid,
+            nickname=self._nicknames[key],
             channel=ap.channel,
             signal=ap.signal,
             beacons=ap.beacons,
@@ -476,6 +486,29 @@ class ScannerView(Screen):
     def selected_ap(self) -> Optional[AccessPoint]:
         bssid = self.query_one("#ap-table", APTable).cursor_bssid
         return self.ap_cache.get(bssid) if bssid else None
+
+    def action_set_nickname(self) -> None:
+        ap = self.selected_ap()
+        if ap is None:
+            self.notify("Select an AP first", severity="warning")
+            return
+        ssid, bssid = ap.ssid, ap.bssid
+        current = read_nickname(bssid, ssid)
+
+        def _save(value: Optional[str]) -> None:
+            if value is None:
+                return
+            try:
+                set_nickname(ssid, bssid, value or None)
+            except OSError as exc:
+                self.notify(f"Could not save nickname: {exc}", severity="error")
+                return
+            self._nicknames.pop((ssid, bssid), None)
+            self._row_cache.pop(bssid, None)
+            self.refresh_table()
+            self.notify("Nickname saved" if value else "Nickname cleared")
+
+        self.app.push_screen(NicknameModal(ssid, current), _save)
 
     # ----- WPS PBC opportunistic capture -------------------------------------
 

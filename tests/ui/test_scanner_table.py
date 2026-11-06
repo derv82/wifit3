@@ -11,12 +11,15 @@ import pytest
 import pytest_asyncio
 from textual.app import App, ComposeResult
 from textual.screen import Screen
+from textual.widgets import Input
 
 from wifit3.models import AccessPoint
 from wifit3.persist.config import Config
+from wifit3.persist.meta import meta_path, read_meta, update_meta
 from wifit3.persist.vault import Vault
 from wifit3.ui.ap_table import COLUMN_KEYS, COLUMNS, IDENTITY_CELL_MAX, SSID_CELL_MAX, APRow, APTable
 from wifit3.ui.screens.scanner import ScannerView
+from wifit3.ui.vault.modals.nickname import NicknameModal
 from wifit3.ui.encryption_format import EncryptionSummary, EncryptionType
 
 _WPA2 = EncryptionSummary(type=EncryptionType.WPA2, akms="PSK", cipher="CCMP",
@@ -518,6 +521,40 @@ async def scanner_host(_scanner_app):
     app.screen.refresh_table()
     await pilot.pause()
     yield app, aps, pilot
+
+
+async def test_scanner_nickname_display_edit_and_clear(scanner_host, tmp_path, monkeypatch):
+    app, aps, pilot = scanner_host
+    monkeypatch.setattr(Config, "captures_dir", str(tmp_path))
+    screen = app.screen
+    table = screen.query_one("#ap-table", APTable)
+    ap = aps[0]
+    old_meta = update_meta("Previous SSID", ap.bssid, nickname="Router")
+    screen._nicknames.clear()
+    screen._row_cache.clear()
+    screen.refresh_table()
+    await pilot.pause()
+    assert table.row_data(ap.bssid).nickname == "Router"
+    assert "Router (Net0)" in table.render_line(1).text
+
+    table.focus()
+    await pilot.press("n")
+    assert isinstance(app.screen, NicknameModal)
+    field = app.screen.query_one("#nickname", Input)
+    assert field.value == "Router"
+    field.value = "Home"
+    await pilot.press("enter")
+    await pilot.pause()
+    assert read_meta(meta_path(ap.ssid, ap.bssid))["nickname"] == "Home"
+    assert "nickname" not in read_meta(old_meta)
+    assert table.row_data(ap.bssid).nickname == "Home"
+
+    await pilot.press("n")
+    app.screen.query_one("#nickname", Input).value = ""
+    await pilot.press("enter")
+    await pilot.pause()
+    assert "nickname" not in read_meta(meta_path(ap.ssid, ap.bssid))
+    assert table.row_data(ap.bssid).nickname == ""
 
 
 async def test_enter_opens_the_focus_view(scanner_host):

@@ -56,6 +56,7 @@ from wifit3.models import CREDENTIAL_NAMES, AccessPoint, IdSource
 from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.persist.ap_state import Key, PasswordStatus, epoch_sort_key
 from wifit3.persist.config import Config
+from wifit3.persist.meta import read_nickname, set_nickname
 from wifit3.persist.save import SaveResult
 from wifit3.ui import focus_model as fm, pmkid_log
 from wifit3.ui.capture_log import DECLOAK_METHOD_LABELS, saved_psk_chip, short_sta
@@ -64,6 +65,7 @@ from wifit3.ui.encryption_format import psk_capture_supported, wep_key_hex_and_a
 from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal, _can_host
 from wifit3.ui.screens.vault_item import key_text
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
+from wifit3.ui.vault.modals.nickname import NicknameModal
 from wifit3.watchers.ap_watcher import (
     ApDecloaked, ApEvent, EapolFrameSeen, HandshakeCaptured, PmkidCaptured,
 )
@@ -161,6 +163,7 @@ class FocusViewV2(Screen):
           for cls in fm.BUTTON_CAMPAIGNS if cls.hotkey],
         Binding("c", "campaign('chop')", "ChopChop", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
+        Binding("n", "set_nickname", "Nickname", show=True),
         Binding("s", "silence", "Silence", show=True),
         Binding("s", "unsilence", "unSilence", show=True),
         Binding("q", "app.quit", "Quit", show=True),
@@ -290,6 +293,8 @@ class FocusViewV2(Screen):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._target_ap = None
+        self._nickname_key = None
+        self._nickname = ""
         self._last_status: list[str] | None = None   # last-pushed headline; skip no-op repaints
         self._beacon_samples: deque = deque()
         self._eapol_agg = EapolAggregator(settle_s=3.0)
@@ -355,6 +360,7 @@ class FocusViewV2(Screen):
     async def on_screen_resume(self) -> None:
         # Full re-acquire only on a target change; a same-target return keeps the live view.
         target = self.app.target_ap
+        self._nickname_key = None
         if target is not self._target_ap:
             await self._enter_target()
         elif target is not None and self.app.array is not None:
@@ -417,6 +423,12 @@ class FocusViewV2(Screen):
             guessid = self.app.guessid(ap)
             if guessid:
                 essid = f"{fm.truncate_ssid(guessid)}?"
+        key = (ap.ssid, ap.bssid)
+        if key != self._nickname_key:
+            self._nickname = read_nickname(ap.bssid, ap.ssid)
+            self._nickname_key = key
+        if self._nickname:
+            essid = f"{self._nickname} ({essid})"
         rate, _ = fm.beacon_rate(ap, self._beacon_samples, time.time())
         return dict(essid=essid, bssid=ap.bssid, channel=ap.channel,
                     power_dbm=ap.signal, signal=rate,
@@ -615,6 +627,9 @@ class FocusViewV2(Screen):
         else:
             self._log("[bold]Target acquired:[/bold] "
                       "[dim italic]cloaked network (hidden SSID)[/dim italic]")
+        nickname = read_nickname(ap.bssid, ap.ssid)
+        if nickname:
+            self._log(treelog.branch(f"[dim]Nickname:[/dim] {escape(nickname)}"))
         self._log(treelog.branch(f"[dim]Encryption:[/dim] {enc}"))
         self._log(treelog.branch(f"[dim]BSSID:[/dim] {ap.bssid}"))
         if array:
@@ -1117,6 +1132,28 @@ class FocusViewV2(Screen):
         else:
             self._log("[bold]WPS PushButton Extraction[/bold] "
                       "[yellow]disabled[/yellow] [dim](press w to toggle)[/dim]")
+
+    def action_set_nickname(self) -> None:
+        ap = self.app.target_ap
+        if ap is None:
+            self.notify("Select an AP first", severity="warning")
+            return
+        ssid, bssid = ap.ssid, ap.bssid
+        current = read_nickname(bssid, ssid)
+
+        def _save(value: Optional[str]) -> None:
+            if value is None:
+                return
+            try:
+                set_nickname(ssid, bssid, value or None)
+            except OSError as exc:
+                self.notify(f"Could not save nickname: {exc}", severity="error")
+                return
+            self._nickname_key = None
+            self.query_one("#router", RouterEndpoint).update(**self._router_values())
+            self.notify("Nickname saved" if value else "Nickname cleared")
+
+        self.app.push_screen(NicknameModal(ssid, current), _save)
 
     def action_silence(self) -> None:
         self._toggle_silence()

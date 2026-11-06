@@ -17,7 +17,7 @@ from wifit3.models import AccessPoint, CaptureType, ToolName
 from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.exhaustion import record_exhausted
-from wifit3.persist.meta import update_meta
+from wifit3.persist.meta import set_nickname, update_meta
 from wifit3.persist.vault import Vault
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.vault_drawer import VaultDrawer, _ap_contents_text
@@ -131,6 +131,20 @@ async def _open_vault(app, pilot, bssid: str | None = None) -> VaultDrawer:
     await app.workers.wait_for_complete()
     await pilot.pause(0)
     return drawer
+
+
+async def test_nickname_only_ap_shows_saved_identity_in_details():
+    bssid = "aa:bb:cc:dd:ee:ff"
+    set_nickname("Café Net", bssid, "Home")
+    app = _VaultApp()
+    async with app.run_test(size=(140, 45)) as pilot:
+        drawer = await _open_vault(app, pilot, bssid)
+        item = drawer.query_one(VaultItemView)
+        await _wait_until(pilot, lambda: bool(item.query_children(_ApStatePanel)))
+        await pilot.pause(0)
+        assert "Home (Café Net)" in str(item.border_title)
+        assert bssid in str(item.border_title)
+        assert item.query_one(".ssid", Label).render().plain == "Café Net"
 
 
 async def _open_item_view(app, pilot, bssid: str) -> VaultItemView:

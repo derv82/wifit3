@@ -315,6 +315,12 @@ def load_ap_state(bssid: str, captures: list[PersistedCapture]) -> ApState:
 
     status, status_key = password_status(hashlines, keys)
     ssids = _ssid_histories(hashlines, keys)
+    if not captures and not ssids:
+        saved_ssid = next((meta.get("ssid") for meta in metas
+                           if isinstance(meta.get("nickname"), str) and meta.get("nickname")
+                           and isinstance(meta.get("ssid"), str) and meta.get("ssid")), None)
+        if saved_ssid:
+            ssids = (SsidHistory(saved_ssid, None, None),)
     newest_ssid = safe_ssid(ssids[0].ssid) if ssids else None
     hc22000 = sorted((c for c in captures if c.path.endswith(".hc22000")),
                      key=lambda c: (safe_ssid(c.ssid) == newest_ssid, c.timestamp), reverse=True)

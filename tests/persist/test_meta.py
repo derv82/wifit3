@@ -5,7 +5,39 @@ import json
 from pathlib import Path
 
 from wifit3.persist.common import AGGREGATED_HC22000_RE, LEGACY_CAPTURE_RE
-from wifit3.persist.meta import bssid_meta_paths, meta_path, read_meta, update_meta
+from wifit3.persist.meta import (bssid_meta_paths, meta_path, nickname_aps, read_meta, read_nickname,
+                                 set_nickname, update_meta)
+
+
+def test_nickname_survives_ssid_changes_and_clearing_preserves_metadata(tmp_path):
+    bssid = "AA:BB:CC:DD:EE:FF"
+    old = update_meta("Old", bssid, nickname="old", extra={"keep": True})
+    other = update_meta("Other", bssid, nickname="stale", custom=3)
+    assert read_nickname(bssid, "New") == "old"
+    assert read_nickname(bssid, "Other") == "stale"
+    set_nickname("New", bssid, "home")
+    assert read_nickname(bssid, "Old") == "home"
+    assert read_meta(old)["extra"] == {"keep": True}
+    assert read_meta(other)["custom"] == 3
+    assert "nickname" not in read_meta(old) and "nickname" not in read_meta(other)
+    assert nickname_aps() == {"aa:bb:cc:dd:ee:ff": "New"}
+    set_nickname("Unknown", bssid, None)
+    assert read_nickname(bssid) == ""
+    assert nickname_aps() == {}
+    assert not meta_path("Unknown", bssid).exists()
+
+
+def test_nickname_only_preserves_original_ssid_and_legacy_metadata(tmp_path):
+    bssid = "aa:bb:cc:dd:ee:ff"
+    legacy = meta_path("Café Net", bssid)
+    legacy.write_text(json.dumps({"nickname": "old", "custom": {"keep": True}}), encoding="utf-8")
+    assert nickname_aps() == {bssid: None}
+    set_nickname("Café Net", bssid, "home")
+    assert nickname_aps() == {bssid: "Café Net"}
+    assert read_meta(legacy)["custom"] == {"keep": True}
+    set_nickname("Café Net", bssid, None)
+    assert read_meta(legacy)["ssid"] == "Café Net"
+    assert read_meta(legacy)["custom"] == {"keep": True}
 
 
 def test_meta_path_sorts_next_to_the_captures(tmp_path):
