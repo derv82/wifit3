@@ -1,5 +1,46 @@
 """Entry point for ``python -m wifit3`` and the ``wifit3`` console script."""
 
+import os
+import subprocess
+import sys
+import ctypes
+import shutil
+
+
+def setup_termux_environment() -> None:
+    """Автоматическая подготовка окружения Termux: создание mock-пакета и установка termux-api, libusb."""
+    # Проверяем, что запуск происходит именно в среде Termux
+    if "com.termux" in sys.executable or os.path.exists("/data/data/com.termux"):
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        mock_dir = os.path.join(base_dir, "libusb_package")
+        mock_init = os.path.join(mock_dir, "__init__.py")
+
+        # Проверяем и устанавливаем системный libusb через pkg
+        termux_lib_path = "/data/data/com.termux/files/usr/lib/libusb-1.0.so"
+        has_termux_usb = shutil.which("termux-usb") is not None
+        if not has_termux_usb:
+            print("[*] termux-usb not found. Installing termux-api...")
+            try:
+                subprocess.run(["pkg", "install", "termux-api", "-y"], check=True)
+                print("[+] termux-api installed successfully!")
+            except Exception as e:
+                print(f"[-] Failed to install termux-api via pkg automatically: {e}")
+                print("[-] Please run 'pkg install termux-api' manually.")
+        if not os.path.exists(termux_lib_path):
+            print("[*] Termux detected. Installing system dependency: libusb...")
+            try:
+                # Обновляем репозитории и ставим libusb без лишних вопросов
+                subprocess.run(["pkg", "update", "-y"], check=False)
+                subprocess.run(["pkg", "install", "libusb", "-y"], check=True)
+                print("[+] libusb installed successfully!")
+            except Exception as e:
+                print(f"[-] Failed to install libusb via pkg automatically: {e}")
+                print("[-] Please run 'pkg install libusb' manually.")
+
+
+# Инициализируем окружение Termux на самом раннем этапе до импорта остальных модулей
+setup_termux_environment()
+
 
 async def _smoke() -> None:
     """Headless self-test: prove the PyInstaller bundle is intact, then exit. Used by CI to
@@ -17,8 +58,6 @@ async def _smoke() -> None:
          drivers PyInstaller actually collected, so an empty map means the bundle shipped with
          no drivers and the app would launch but show zero interfaces.
     """
-    import ctypes
-    import os
 
     from libusb_package import get_library_path
 
