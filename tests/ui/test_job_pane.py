@@ -4,6 +4,7 @@ from textual.app import App, ComposeResult
 from textual.reactive import reactive
 from textual.widgets import Label
 
+from tests.ui.wait_until import wait_until
 from wifit3.models.jobs import JobAction, JobState, ToolStatus
 from wifit3.ui.vault.job_pane import (
     JobActionButton, JobPauseButton, JobRow, JobSkipButton, JobTrackerPane,
@@ -139,7 +140,7 @@ async def test_the_bar_fills_its_box_and_the_percentage_has_two_decimals():
         app.active_jobs = [_job(actions=JobAction.STOP,
                                 progress_msg="Running (0.29%) \u00b7 rockyou.txt",
                                 percent=0.29, detail="rockyou.txt")]
-        await pilot.pause()
+        await wait_until(pilot, lambda: any(bar.size.width for bar in app.query("#bar")))
 
         assert app.query_one("#bar").size.width == 11
         assert str(app.query_one(".job-percent", Label).render()) == "0.29%"
@@ -166,9 +167,12 @@ async def test_job_buttons_shrink_when_detail_would_have_less_than_16_columns():
     narrow_app = JobPaneApp()
     async with narrow_app.run_test(size=(110, 24)) as pilot:
         narrow_app.active_jobs = [job]
-        await pilot.pause()
+        await wait_until(pilot, lambda: bool(narrow_app.query(".job-bar")))
         narrow_row = narrow_app.query_one(JobRow)
         narrow_pane = narrow_app.query_one(JobTrackerPane)
+        await wait_until(pilot, lambda: narrow_row.query_one(".job-bar").display and all(
+            0 < narrow_row.query_one(button_type).size.width < 12 for button_type in (
+                JobPauseButton, JobSkipButton, JobActionButton)))
         assert narrow_pane.has_class("-compact-actions")
         assert not narrow_pane.has_class("-hide-progress")
         assert narrow_row.query_one(".job-bar").display is True
@@ -178,9 +182,11 @@ async def test_job_buttons_shrink_when_detail_would_have_less_than_16_columns():
     compressed_app = JobPaneApp()
     async with compressed_app.run_test(size=(95, 24)) as pilot:
         compressed_app.active_jobs = [job]
-        await pilot.pause()
+        await wait_until(pilot, lambda: bool(compressed_app.query(".job-bar")))
         compressed_row = compressed_app.query_one(JobRow)
         compressed_pane = compressed_app.query_one(JobTrackerPane)
+        await wait_until(pilot, lambda: not compressed_pane.has_class("-compact-name")
+                         and not compressed_row.query_one(".job-bar").display)
         assert compressed_pane.has_class("-compact-actions")
         assert compressed_pane.has_class("-hide-progress")
         assert not compressed_pane.has_class("-compact-name")
@@ -190,8 +196,10 @@ async def test_job_buttons_shrink_when_detail_would_have_less_than_16_columns():
     name_compact_app = JobPaneApp()
     async with name_compact_app.run_test(size=(85, 24)) as pilot:
         name_compact_app.active_jobs = [job]
-        await pilot.pause()
+        await wait_until(pilot, lambda: bool(name_compact_app.query(".job-bar")))
         name_compact_row = name_compact_app.query_one(JobRow)
+        await wait_until(
+            pilot, lambda: name_compact_row.query_one(".job-name", Label).size.width == 13)
         name_compact_pane = name_compact_app.query_one(JobTrackerPane)
         assert name_compact_pane.has_class("-compact-actions")
         assert name_compact_pane.has_class("-hide-progress")
@@ -202,9 +210,12 @@ async def test_job_buttons_shrink_when_detail_would_have_less_than_16_columns():
     wide_app = JobPaneApp()
     async with wide_app.run_test(size=(130, 24)) as pilot:
         wide_app.active_jobs = [job]
-        await pilot.pause()
+        await wait_until(pilot, lambda: bool(wide_app.query(".job-bar")))
         wide_row = wide_app.query_one(JobRow)
         wide_pane = wide_app.query_one(JobTrackerPane)
+        await wait_until(pilot, lambda: wide_row.query_one(".job-bar").display and all(
+            wide_row.query_one(button_type).size.width >= 12 for button_type in (
+                JobPauseButton, JobSkipButton, JobActionButton)))
         assert not wide_pane.has_class("-compact-actions")
         assert not wide_pane.has_class("-hide-progress")
         assert not wide_pane.has_class("-compact-name")
@@ -221,7 +232,8 @@ async def test_most_constrained_job_sets_the_layout_for_every_row():
     app = JobPaneApp()
     async with app.run_test(size=(95, 24)) as pilot:
         app.active_jobs = [many_actions, one_action]
-        await pilot.pause()
+        await wait_until(pilot, lambda: len(app.query(JobActionButton)) == 2 and all(
+            0 < button.size.width < 12 for button in app.query(JobActionButton)))
 
         pane = app.query_one(JobTrackerPane)
         assert pane.has_class("-compact-actions") and pane.has_class("-hide-progress")

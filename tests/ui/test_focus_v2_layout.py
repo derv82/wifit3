@@ -11,6 +11,7 @@ import pytest_asyncio
 from textual.app import App
 from textual.reactive import reactive
 
+from tests.ui.wait_until import wait_until
 from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.ui import focus_model as fm
 from wifit3.ui.screens.focus_v2 import FocusViewV2
@@ -48,11 +49,16 @@ async def test_layout_geometry():
     async with app.run_test(size=(80, 24)) as pilot:
         for w, h in [(80, 24), (80, 31), (80, 32), (100, 35), (120, 40)]:
             await pilot.resize_terminal(w, h)
-            await pilot.pause(0)
             scr = app.screen
 
             def reg(sel):
                 return scr.query_one(sel).region
+
+            # A resize settles in passes: each breakpoint's classes, then _distribute's heights.
+            await wait_until(pilot, lambda: reg("#bottom").bottom == h - 1
+                             and reg("#clients").width == (w if w <= 80 else 40)
+                             and all(widget.display is (h >= 36)
+                                     for widget in scr.query(".endpoint-art")))
 
             card, dash, router = reg("#card"), reg("#dashboard"), reg("#router")
             endpoint_art = list(scr.query(".endpoint-art"))
@@ -147,7 +153,7 @@ async def test_endpoint_art_is_hidden_below_60_columns():
         assert dashboard.bottom - card.bottom <= 1
 
         await pilot.resize_terminal(60, 36)
-        await pilot.pause(0)
+        await wait_until(pilot, lambda: screen.query_one("#card").region.x == 0)
         assert all(widget.display for widget in screen.query(".endpoint-art"))
         card = screen.query_one("#card").region
         dashboard = screen.query_one("#dashboard").region
