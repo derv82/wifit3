@@ -255,4 +255,4 @@ To keep context low:
 Port from source, cite `file:line`. No milestone labels or status text in code (those live in
 the commit message and this doc). Docstrings two lines or fewer, name things instead of
 describing them, no jargon. No em-dashes and none of the banned words anywhere; see
-`~/.claude/CLAUDE.md` and `docs/porting/CODE-STYLE.md`.
+`~/.claude/CLAUDE.md` and `docs/porting/METHODOLOGY.md` (Code style in `chips/`).

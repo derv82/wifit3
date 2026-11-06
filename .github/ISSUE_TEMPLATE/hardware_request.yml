@@ -50,5 +50,7 @@ body:
     attributes:
       label: Before submitting
       options:
+        - label: This adapter plugs in over USB (not a PCIe / M.2 / built-in laptop card).
+          required: true
         - label: This adapter is known to support monitor mode + injection on Linux.
           required: true

@@ -50,6 +50,7 @@ from wifit3.campaigns.verify import VERIFY_CAMPAIGNS
 from wifit3.campaigns.verify.campaign import VerifyCampaign, VerifyOutcome
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
+from wifit3.dot11.chan import is_dfs_channel
 from wifit3.dot11.pmf import PmfPosture
 from wifit3.models import CREDENTIAL_NAMES, AccessPoint, IdSource
 from wifit3.models.access_point import eap_only, no_passphrase
@@ -617,7 +618,10 @@ class FocusViewV2(Screen):
         self._log(treelog.branch(f"[dim]Encryption:[/dim] {enc}"))
         self._log(treelog.branch(f"[dim]BSSID:[/dim] {ap.bssid}"))
         if array:
-            self._log(treelog.leaf(f"Tuning to [cyan]channel {ap.channel}[/cyan]…"))
+            channel_text = f"[cyan]channel {ap.channel}[/cyan]"
+            if is_dfs_channel(ap.channel):
+                channel_text += " [dim](DFS)[/dim]"
+            self._log(treelog.leaf(f"Tuning to {channel_text}…"))
             self.run_worker(self._tune_to_target(array, ap), group="tune", exclusive=True)
         else:
             self._log(treelog.leaf("[yellow]no interface: passive view only[/yellow]"))

@@ -6,10 +6,10 @@ import logging
 import time
 from typing import Callable, Optional
 
-import libusb_package
 import usb.core
 import usb.util
 
+from wifit3.device.backend import usb_backend
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.errors import BringUpError
 
@@ -43,13 +43,8 @@ class RTL8922AUDriver(Driver):
     # its own handle, so no user action is needed. [SRC] usb.c rtw89_usb_switch_mode_be.
     DEVICE_REENUMERATES = True
 
-    # 2.4 GHz + 5 GHz (non-DFS only) at 20 MHz. DFS channels (52-64, 100-144) are excluded: wifite
-    # ships non-DFS only, and a DFS hop hears nothing without a CAC dwell. TODO: 6 GHz (8922a
-    # support_bands includes it). [SRC] rtw8922a.c:3210.
-    SUPPORTED_CHANNELS = (
-        list(range(1, 15))
-        + [36, 40, 44, 48, 149, 153, 157, 161, 165]
-    )
+    # 2.4 GHz + 5 GHz at 20 MHz. TODO: 6 GHz (8922a support_bands includes it). [SRC] rtw8922a.c:3210.
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
 
     def __init__(self) -> None:
         super().__init__()
@@ -244,7 +239,8 @@ class RTL8922AUDriver(Driver):
             buf = bytes(self.dev.read(self._bulk_in_ep, RX_RECVBUF_SZ, 100))
         except usb.core.USBError as e:
             err = getattr(e, "errno", None)
-            if err in (110, 10060) or "timeout" in str(e).lower():
+            if (isinstance(e, usb.core.USBTimeoutError) or err in (110, 10060)
+                    or "timeout" in str(e).lower()):
                 return None
             raise
         if self.transport.rfk_wait.armed:
@@ -323,10 +319,10 @@ class RTL8922AUDriver(Driver):
             usb.util.dispose_resources(self.dev)
         except Exception:                                   # noqa: BLE001
             pass
-        backend = libusb_package.get_libusb1_backend()
+        backend = usb_backend()
         for i in range(40):                                 # up to ~10 s for the re-enum to settle
             time.sleep(0.25)
-            dev = usb.core.find(idVendor=self._vid, idProduct=self._pid, backend=backend)
+            dev = backend.find(self._vid, self._pid)
             if dev is None:
                 continue
             # Skip the stale pre-switch device (same address) for the first ~2 s so the re-enum can

@@ -461,6 +461,10 @@ MT_BBP_AGC_R37                 = MT_BBP_AGC_BASE + 37 * 4    # 0x2394
 # BBP RXO reg 14 / 18 — written by update_channel_gain.
 MT_BBP_RXO_R14                 = MT_BBP_RXO_BASE + 14 * 4    # 0x2938
 MT_BBP_RXO_R18                 = MT_BBP_RXO_BASE + 18 * 4    # 0x2948
+# BBP DFS reg 31 / 32 — written by mt76x02_phy_dfs_adjust_agc. [SRC] mt76x02_dfs.c:811, 814.
+MT_BBP_DFS_BASE                = 0x2A00
+MT_BBP_DFS_R31                 = MT_BBP_DFS_BASE + 31 * 4    # 0x2A7C
+MT_BBP_DFS_R32                 = MT_BBP_DFS_BASE + 32 * 4    # 0x2A80
 
 # kernel: MT_CALIBRATE_INTERVAL = HZ (= 1 second). [SRC] mt76x02.h:21.
 MT_CALIBRATE_INTERVAL_S        = 1.0

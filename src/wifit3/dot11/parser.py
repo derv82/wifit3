@@ -651,7 +651,7 @@ class WlanFrameParser:
         for tag_id, tag_data, raw_elem in iter_information_elements(frame, start=ptr):
             if tag_id == 0 and not seen_ssid: # SSID (only the first)
                 seen_ssid = True
-                if len(tag_data) == 0:
+                if len(tag_data) <= 32 and not tag_data.strip(b"\x00"):   # empty or NUL-filled
                     parsed["ssid"] = "<hidden>"
                 elif len(tag_data) <= 32:
                     # Validate the DECODED codepoints, not the raw bytes. A byte test cannot

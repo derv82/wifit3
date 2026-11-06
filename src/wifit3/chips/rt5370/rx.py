@@ -145,7 +145,8 @@ def read_rx_burst(dev: usb.core.Device, ep: int, *, max_size: int = 16384,
         return data
     except usb.core.USBError as e:
         err = getattr(e, "errno", None)
-        if err in (110, 10060) or "timeout" in str(e).lower():
+        if (isinstance(e, usb.core.USBTimeoutError) or err in (110, 10060)
+                or "timeout" in str(e).lower()):
             if logger.isEnabledFor(TRACE):
                 logger.trace("RX bulk-IN timeout")
             return None

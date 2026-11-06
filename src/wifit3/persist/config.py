@@ -54,6 +54,7 @@ class Config:
     theme: str = "textual-dark"
     captures_dir: str = "captures"
     save_pcap: bool = True
+    save_probed_ssids: bool = False
     log_level: str = "info"
     scanner_sort: str = "signal"
     scanner_sort_reverse: bool = True
@@ -62,6 +63,7 @@ class Config:
     decloaked_ssids: dict[str, str] = {}
     hide_silenced: bool = False
     wps_auto_pbc: bool = True
+    enable_dfs_channels: bool = False
     auto_crack: ToolName | None = ToolName.CPU_CRACK
     cpu_crack: CpuCrackSettings = CpuCrackSettings()
     hashcat: HashcatSettings = HashcatSettings()
@@ -97,6 +99,7 @@ class Config:
             raise ConfigError(f"Failed to load config at {_PATH}: {e}") from e
         cls.captures_dir = data.get("captures_dir", cls.captures_dir)
         cls.save_pcap = data.get("save_pcap", cls.save_pcap)
+        cls.save_probed_ssids = bool(data.get("save_probed_ssids", cls.save_probed_ssids))
         cls.theme = data.get("theme", cls.theme)
         cls.log_level = data.get("log_level", cls.log_level)
         cls.scanner_sort = data.get("scanner_sort", cls.scanner_sort)
@@ -115,6 +118,7 @@ class Config:
                                    and len(ssid.encode("utf-8")) <= SSID_MAX_OCTETS}
         cls.hide_silenced = bool(data.get("hide_silenced", cls.hide_silenced))
         cls.wps_auto_pbc = bool(data.get("wps_auto_pbc", cls.wps_auto_pbc))
+        cls.enable_dfs_channels = bool(data.get("enable_dfs_channels", cls.enable_dfs_channels))
         cls.auto_crack = _auto_crack(data, cls.auto_crack)
         legacy_wordlists = _legacy_wordlists(data)
         cls.cpu_crack = _load_table(_table(data, "cpu_crack"), cls.cpu_crack)
@@ -131,6 +135,7 @@ class Config:
         text = (
             f"captures_dir = {_fmt(cls.captures_dir)}\n"
             f"save_pcap = {_fmt(cls.save_pcap)}\n"
+            f"save_probed_ssids = {_fmt(cls.save_probed_ssids)}\n"
             f"theme = {_fmt(cls.theme)}\n"
             f"log_level = {_fmt(cls.log_level)}\n"
             f"scanner_sort = {_fmt(cls.scanner_sort)}\n"
@@ -139,6 +144,7 @@ class Config:
             f"silenced_bssids = {_fmt(cls.silenced_bssids)}\n"
             f"hide_silenced = {_fmt(cls.hide_silenced)}\n"
             f"wps_auto_pbc = {_fmt(cls.wps_auto_pbc)}\n"
+            f"enable_dfs_channels = {_fmt(cls.enable_dfs_channels)}\n"
             f"auto_crack = {_fmt(cls.auto_crack or '')}\n"
         )
         text += _table_text("cpu_crack", cls.cpu_crack)

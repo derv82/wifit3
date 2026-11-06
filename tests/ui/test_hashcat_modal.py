@@ -8,7 +8,8 @@ from textual.containers import VerticalScroll
 from textual.widgets import Button, Checkbox, Input, Label
 
 import wifit3.ui.vault.modals.hashcat as mod
-from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH, read_passwords, ssid_passwords, ssid_variants
+from wifit3.crack.passwords import (DEFAULT_PASSWORDS_PATH, all_ssid_variants, read_passwords, ssid_passwords,
+                                    ssid_variants)
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.config import Config, ConfigError, HashcatSettings
 from wifit3.persist.meta import update_meta
@@ -353,7 +354,7 @@ async def test_password_source_labels_count_the_chosen_hashlines_ssids_or_one_ss
     async with app.run_test() as pilot:
         for modal, ssid_label in (
                 (CpuCrackConfigModal(bssid=persisted.bssid, probed_ssids=["CafeGuest"], hashlines=[_dated(chosen)]),
-                 f"This AP's SSID variants ({len(ssid_variants('ab'))})"),
+                 f"This AP's SSID variants ({len(all_ssid_variants([('ab', '02:00:00:00:00:01')]))})"),
                 (HashcatConfigModal(confirm_label="Save", probed_ssids=["CafeGuest"]),
                  f"This AP's SSID variants (about {len(ssid_variants('HomeWifi')):,} per SSID)")):
             await app.push_screen(modal)

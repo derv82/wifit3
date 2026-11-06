@@ -152,18 +152,36 @@ def _ralink_read_block_backward(sreg: int) -> Tuple[bytes, int]:
     return bytes(block), sreg
 
 
-def ralink_recover(e_nonce: bytes) -> Optional[Tuple[bytes, bytes]]:
-    """Rebuild (E-S1, E-S2) from the 48-byte LFSR run whose last 16 bytes are ``e_nonce``."""
+def _ralink_read_block_forward(sreg: int) -> Tuple[bytes, int]:
+    block = bytearray()
+    for _ in range(_NONCE_LEN):
+        byte, sreg = _ralink_read_byte_forward(sreg)
+        block.append(byte)
+    return bytes(block), sreg
+
+
+def ralink_recover_pairs(e_nonce: bytes) -> Optional[Tuple[Tuple[bytes, bytes], Tuple[bytes, bytes]]]:
+    """Recover secret pairs produced before or after ``e_nonce`` in one continuous LFSR stream."""
     if len(e_nonce) != _NONCE_LEN:
         return None
     sreg = 0
     for byte in reversed(e_nonce):
         sreg = _ralink_restore_byte(sreg, byte)
-    if ralink_forward_stream(sreg, _NONCE_LEN) != e_nonce:
-        return None  # the nonce is not a run of this LFSR
-    e_s2, sreg = _ralink_read_block_backward(sreg)
-    e_s1, _ = _ralink_read_block_backward(sreg)
-    return e_s1, e_s2
+    nonce_end = sreg
+    nonce, nonce_end = _ralink_read_block_forward(nonce_end)
+    if nonce != e_nonce:
+        return None
+    e_s2, before_s2 = _ralink_read_block_backward(sreg)
+    e_s1, _ = _ralink_read_block_backward(before_s2)
+    e_s1_forward, after_s1 = _ralink_read_block_forward(nonce_end)
+    e_s2_forward, _ = _ralink_read_block_forward(after_s1)
+    return (e_s1, e_s2), (e_s1_forward, e_s2_forward)
+
+
+def ralink_recover(e_nonce: bytes) -> Optional[Tuple[bytes, bytes]]:
+    """Rebuild the backward-compatible (E-S1, E-S2) pair for callers that need one pair."""
+    pairs = ralink_recover_pairs(e_nonce)
+    return pairs[0] if pairs is not None else None
 
 
 # --- eCos "simple" rand(): three LCG advances composed from disjoint top-bit slices ----------
@@ -226,3 +244,66 @@ def ecos_simple_recover(
             e_s2, _ = _ecos_low_bytes(state, _NONCE_LEN)
             return e_s1, e_s2
     return None
+
+
+# --- eCos "simplest" and Knuth rand(): full 32-bit seed sweeps, extended-only ----------
+
+_ECOS_KNUTH_MODULUS = 2_147_483_647
+_ECOS_KNUTH_MULTIPLIER = 48_271
+_ECOS_KNUTH_QUOTIENT = 44_488
+_ECOS_KNUTH_REMAINDER = 3_399
+
+
+def _ecos_simplest_advance(state: int) -> int:
+    return _ecos_advance(state)
+
+
+def _ecos_knuth_advance(state: int) -> int:
+    quotient, remainder = divmod(state, _ECOS_KNUTH_QUOTIENT)
+    state = _ECOS_KNUTH_MULTIPLIER * remainder - _ECOS_KNUTH_REMAINDER * quotient
+    return state + _ECOS_KNUTH_MODULUS if state < 0 else state
+
+
+def _ecos_stream(advance, seed: int, count: int) -> Tuple[bytes, int]:
+    output = bytearray()
+    for _ in range(count):
+        seed = advance(seed)
+        output.append(seed & 0xFF)
+    return bytes(output), seed
+
+
+def ecos_simplest_model(seed: int) -> Tuple[bytes, bytes, bytes]:
+    nonce, state = _ecos_stream(_ecos_simplest_advance, seed, _NONCE_LEN)
+    e_s1, state = _ecos_stream(_ecos_simplest_advance, state, _NONCE_LEN)
+    e_s2, _ = _ecos_stream(_ecos_simplest_advance, state, _NONCE_LEN)
+    return nonce, e_s1, e_s2
+
+
+def ecos_knuth_model(seed: int) -> Tuple[bytes, bytes, bytes]:
+    nonce, state = _ecos_stream(_ecos_knuth_advance, seed, _NONCE_LEN)
+    e_s1, state = _ecos_stream(_ecos_knuth_advance, state, _NONCE_LEN)
+    e_s2, _ = _ecos_stream(_ecos_knuth_advance, state, _NONCE_LEN)
+    return nonce, e_s1, e_s2
+
+
+def _ecos_full_seed_recover(advance, e_nonce: bytes, max_counter: int) -> Optional[Tuple[bytes, bytes]]:
+    if len(e_nonce) != _NONCE_LEN:
+        return None
+    for seed in range(max_counter):
+        nonce, state = _ecos_stream(advance, seed, _NONCE_LEN)
+        if nonce != e_nonce:
+            continue
+        e_s1, state = _ecos_stream(advance, state, _NONCE_LEN)
+        e_s2, _ = _ecos_stream(advance, state, _NONCE_LEN)
+        return e_s1, e_s2
+    return None
+
+
+def ecos_simplest_recover(e_nonce: bytes, max_counter: int = _U32) -> Optional[Tuple[bytes, bytes]]:
+    """Sweep seeds for eCos simplest; callers should set a practical explicit search limit."""
+    return _ecos_full_seed_recover(_ecos_simplest_advance, e_nonce, max_counter)
+
+
+def ecos_knuth_recover(e_nonce: bytes, max_counter: int = _U32) -> Optional[Tuple[bytes, bytes]]:
+    """Sweep seeds for eCos Knuth; callers should set a practical explicit search limit."""
+    return _ecos_full_seed_recover(_ecos_knuth_advance, e_nonce, max_counter)

@@ -20,7 +20,6 @@ import threading
 import time
 from typing import Callable, ClassVar, List, Optional, Tuple
 
-import libusb_package
 import usb.core
 from usb.core import Device
 import usb.util
@@ -28,6 +27,7 @@ import usb.util
 from wifit3.chips.rx_reader import RxReaderThread
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.chips.products import ALFA, TPLink
+from wifit3.device.backend import usb_backend
 from wifit3.errors import BringUpError
 from wifit3.dot11.parser import WlanFrameParser
 
@@ -66,7 +66,7 @@ f8:c9:03 f8:ce:21 f8:d1:11 fc:d7:33
 class AR9271V2Driver(Driver):
     """Atheros AR9271 / ALFA AWUS036NHA — 2.4 GHz, soft-MAC, ath9k_htc firmware."""
 
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))   # 2.4 GHz only, no 5 GHz radio
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(Driver.CHANNELS_2G)   # 2.4 GHz only, no 5 GHz radio
     CONFLICTING_LINUX_MODULES: ClassVar[List[str]] = ["ath9k_htc"]   # modprobe blacklist hint
     LINUX_REPLUG_AFTER_MODPROBE: ClassVar[bool] = True   # replug, not the fragile FW-download self-cold
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE
@@ -304,10 +304,7 @@ class AR9271V2Driver(Driver):
     def _find_matching_ar9271_devices(self, dev: Device) -> List[Device]:
         vid = getattr(dev, "idVendor", C.AR9271_VID)
         pid = getattr(dev, "idProduct", C.AR9271_PID)
-        backend = libusb_package.get_libusb1_backend()
-        found = usb.core.find(find_all=True, backend=backend,
-                              idVendor=vid, idProduct=pid)
-        return list(found or ())
+        return usb_backend().find_all(vid, pid)
 
     async def _await_reenumeration(self, original: Device, *, unique_vidpid: bool = False) -> Optional[Device]:
         """Reacquire this device, not an identical sibling.

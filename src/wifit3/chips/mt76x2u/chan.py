@@ -42,8 +42,6 @@ Order matches kernel `mt76x2u_phy_set_channel`:
 
 Permanently skipped (kernel paths wifit3 has no analog for):
 
-  - DFS-channel AGC adjust (`mt76x02_phy_dfs_adjust_agc`) — wifit3 doesn't
-    support DFS channels.
   - VHT / 40 MHz / 80 MHz bandwidth-dependent paths — we tune 20 MHz only;
     code keeps the `bw_40plus` parameter for kernel-fidelity but always
     passes False.
