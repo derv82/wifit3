@@ -138,7 +138,7 @@ class ScannerView(Screen):
     app: "WifiteApp"
 
     HORIZONTAL_BREAKPOINTS = [
-        (0, "-narrow"), (67, "-compact"), (71, "-medium"), (76, "-large"), (83, "-wide"),
+        (0, "-narrow"), (76, "-compact"), (84, "-medium"), (89, "-large"), (98, "-wide"),
     ]
 
     CSS = """
@@ -149,12 +149,19 @@ class ScannerView(Screen):
     ScannerView.-narrow #filter-channels-label { display: none; }
     ScannerView.-compact #filter-channels-label,
     ScannerView.-medium #filter-channels-label { width: 2; }
+    ScannerView.-narrow #filter-power-label,
+    ScannerView.-compact #filter-power-label,
+    ScannerView.-medium #filter-power-label,
+    ScannerView.-large #filter-power-label { display: none; }
+    ScannerView.-medium #filter-power-short-label,
+    ScannerView.-large #filter-power-short-label { display: block; }
     """
 
     BINDINGS = [
         Binding("q", "app.quit", "Quit", show=True),
         Binding("c", "change_channel", "Channel Filter", show=True),
         Binding("e", "focus_encryption", "Encryption", show=True),
+        Binding("p", "focus_power", "Power", show=True),
         Binding("s", "cycle_sort", "Sort Col", show=True),
         Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
         Binding("f", "focus_filter", "Filter", show=True),
@@ -563,6 +570,9 @@ class ScannerView(Screen):
 
     def action_focus_encryption(self) -> None:
         self.query_one(FilterBar).focus_encryption()
+
+    def action_focus_power(self) -> None:
+        self.query_one(FilterBar).focus_power()
 
     def action_cycle_sort(self) -> None:
         table = self.query_one("#ap-table", APTable)

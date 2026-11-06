@@ -7,7 +7,7 @@ import time
 import pytest
 import pytest_asyncio
 from textual.app import App
-from textual.widgets import Button, Checkbox, Input, Label
+from textual.widgets import Button, Checkbox, Input, Label, Select
 
 from wifit3.models import AccessPoint, IdKey, IdSource
 from wifit3.wlan.sink import WlanSink
@@ -97,12 +97,15 @@ class _ScannerHost(App):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("width", "encryption_label_text", "channels_label_text"), [
-    (66, None, None), (67, None, "Ch"), (70, None, "Ch"), (71, "Enc", "Ch"), (75, "Enc", "Ch"),
-    (76, "Enc", "Channel"), (82, "Enc", "Channel"), (83, "Encryption", "Channel"),
+@pytest.mark.parametrize(("width", "encryption_label_text", "channels_label_text", "power_label_id"), [
+    (75, None, None, None), (76, None, "Ch", None), (83, None, "Ch", None),
+    (84, "Enc", "Ch", "#filter-power-short-label"), (88, "Enc", "Ch", "#filter-power-short-label"),
+    (89, "Enc", "Channel", "#filter-power-short-label"),
+    (97, "Enc", "Channel", "#filter-power-short-label"),
+    (98, "Encryption", "Channel", "#filter-power-label"),
 ])
 async def test_filter_bar_labels_shrink_then_hide_as_the_terminal_narrows(
-        width, encryption_label_text, channels_label_text):
+        width, encryption_label_text, channels_label_text, power_label_id):
     app = _ScannerHost(_FakeArray([], list(range(1, 15)) + [36, 40, 149]))
     async with app.run_test(size=(width, 24)) as pilot:
         await pilot.pause(0)
@@ -121,6 +124,8 @@ async def test_filter_bar_labels_shrink_then_hide_as_the_terminal_narrows(
             else:
                 assert label.region.height == 1
                 assert label.region.width == len(text)
+        for label_id in ("#filter-power-label", "#filter-power-short-label"):
+            assert scanner.query_one(label_id, Label).display is (label_id == power_label_id)
         if channels_label_text is not None:
             assert scanner.query_one(FilterBar).max_scroll_x == 0
 
@@ -134,6 +139,37 @@ async def test_filter_bar_scrolls_when_future_controls_exceed_its_width():
         filter_input = filter_bar.query_one("#filter-text", Input)
         assert 16 <= filter_input.region.width <= 32
         assert filter_bar.max_scroll_x > 0
+
+
+@pytest.mark.asyncio
+async def test_p_opens_the_power_dropdown():
+    app = _ScannerHost(_FakeArray([], [1, 6, 11]))
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause(0)
+        await pilot.press("p")
+        await pilot.pause(0)
+        power = app.screen.query_one("#filter-power", Select)
+        assert power.has_focus_within and power.expanded
+
+
+@pytest.mark.asyncio
+async def test_power_filter_hides_rows_but_keeps_registry():
+    near_ap = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="Near", channel=1,
+                          signal_by_card={"card": -50})
+    far_ap = AccessPoint(bssid="aa:bb:cc:00:00:02", ssid="Far", channel=1,
+                         signal_by_card={"card": -85})
+
+    app = _ScannerHost(_FakeArray([near_ap, far_ap], [1, 6, 11]))
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        scanner = app.screen
+        table = scanner.query_one("#ap-table", APTable)
+
+        scanner._scan_filter = ScanFilter(min_signal=-80)
+        scanner.refresh_table()
+        assert table.row_count == 1
+        assert near_ap.bssid in scanner.ap_cache
+        assert far_ap.bssid in app.array.access_points
 
 
 @pytest.mark.asyncio
