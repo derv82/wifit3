@@ -157,8 +157,10 @@ class SnifferTap:
 
 
 class Lab:
-    def __init__(self, test, sniffer, tap: SnifferTap, channel: int) -> None:
-        self.test, self.sniffer, self.tap, self.channel = test, sniffer, tap, channel
+    def __init__(self, test, sniffers, taps: list[SnifferTap], channel: int, flood_count: int = FLOOD) -> None:
+        self.test, self.sniffers, self.taps, self.channel = test, sniffers, taps, channel
+        self.sniffer, self.tap = sniffers[0], taps[0]
+        self.flood_count = flood_count
         self.next_n = 0
         self.row: dict[str, str] = {}
 
@@ -170,7 +172,12 @@ class Lab:
             return False
 
     def copies_of(self, dst: bytes, ns) -> dict[int, list[Copy]]:
-        return {n: self.tap.copies[(dst, n)] for n in ns if (dst, n) in self.tap.copies}
+        found = {}
+        for n in ns:
+            copies = [copy for tap in self.taps for copy in tap.copies.get((dst, n), ())]
+            if copies:
+                found[n] = sorted(copies, key=lambda copy: copy.read_time)
+        return found
 
     async def capture(self) -> None:
         print("[*] capture: the sniffer's view of the reference AP")
@@ -249,9 +256,9 @@ class Lab:
         self.row["serial sent/heard per s"] = f"{calls / SERIAL_SECONDS:.0f} / {landed / SERIAL_SECONDS:.0f}"
 
     async def flood(self) -> None:
-        print(f"[*] flood: {FLOOD} unawaited send_no_wait tasks at once")
-        ns = range(self.next_n, self.next_n + FLOOD)
-        self.next_n += FLOOD
+        print(f"[*] flood: {self.flood_count} unawaited send_no_wait tasks at once")
+        ns = range(self.next_n, self.next_n + self.flood_count)
+        self.next_n += self.flood_count
         t0 = time.perf_counter()
         tasks = [asyncio.create_task(self.send(marker_frame(BROADCAST, n))) for n in ns]
         await asyncio.gather(*tasks)
@@ -261,9 +268,9 @@ class Lab:
         order = [n for n, _ in sorted(seen.items(), key=lambda kv: kv[1][0].read_time)]
         inversions = sum(b < a for a, b in zip(order, order[1:]))
         last = max((c[0].read_time for c in seen.values()), default=t0) - t0
-        print(f"[#] {len(seen)}/{FLOOD} heard, {inversions} out of order")
+        print(f"[#] {len(seen)}/{self.flood_count} heard, {inversions} out of order")
         print(f"[#] every task returned after {returned:.2f} s; last frame on air {last:.2f} s")
-        self.row["flood heard"] = f"{len(seen)}/{FLOOD}"
+        self.row["flood heard"] = f"{len(seen)}/{self.flood_count}"
         self.row["flood out of order"] = str(inversions)
         self.row["flood drain s"] = f"{last:.2f}"
 
@@ -350,36 +357,47 @@ async def main(a) -> None:
     logging.basicConfig(level=logging.DEBUG if a.debug else logging.ERROR)
     ifaces = wlan_ifaces()
     test = pick(ifaces, a.test_card, a.channel)
-    sniffer = pick(ifaces, a.sniffer_card, a.channel, exclude=test)
-    if test is None or sniffer is None:
-        print(f"[-] need a '{a.test_card}' and a '{a.sniffer_card}' card on channel {a.channel}. plugged in:")
+    sniffers = []
+    for card in a.sniffer_card:
+        sniffer = pick(ifaces, card, a.channel, exclude=test)
+        if sniffer is not None and sniffer not in sniffers:
+            sniffers.append(sniffer)
+    if test is None or not sniffers:
+        print(f"[-] need a '{a.test_card}' and at least one sniffer on channel {a.channel}. plugged in:")
         for i in ifaces:
             print(f"      {i.description}  (ch {i.driver.SUPPORTED_CHANNELS[:4]}...)")
         return
     print(f"[+] test:    {test.description}")
-    print(f"[+] sniffer: {sniffer.description}")
-    tap = SnifferTap(mac_bytes(a.ref_bssid))
+    if len(sniffers) > 1 and not a.flood_only:
+        raise SystemExit("multiple sniffers are currently supported with --flood-only")
+    taps = [SnifferTap(mac_bytes(a.ref_bssid)) for _ in sniffers]
+    for sniffer in sniffers:
+        print(f"[+] sniffer: {sniffer.description}")
 
     print("[*] connecting...")
-    # Sequential, sniffer first: two bring-ups at once collide on USB (see scripts/ack/tx_retries.py).
-    snf_ok = await sniffer.connect()
-    test_ok = await test.connect()
-    if not (snf_ok and test_ok):
-        print(f"[-] connect failed (test={test_ok} sniffer={snf_ok})")
-        return
-    await sniffer.set_channel(a.channel)
-    await test.set_channel(a.channel)
-    sniffer.register_rx_callback(tap)
+    # Keep bring-ups sequential; simultaneous initialization collides on USB.
+    for sniffer in sniffers:
+        if not await sniffer.connect():
+            raise RuntimeError(f"sniffer connect failed: {sniffer.description}")
+    if not await test.connect():
+        raise RuntimeError("test-card connect failed")
+    for sniffer, tap in zip(sniffers, taps):
+        if not await sniffer.set_channel(a.channel):
+            raise RuntimeError(f"sniffer tune failed: {sniffer.description}")
+        sniffer.register_rx_callback(tap)
+    if not await test.set_channel(a.channel):
+        raise RuntimeError("test-card tune failed")
     print()
 
-    lab = Lab(test, sniffer, tap, a.channel)
+    lab = Lab(test, sniffers, taps, a.channel, flood_count=a.flood_count)
     try:
-        for step in (lab.capture, lab.retries_and_latency, lab.serial, lab.flood, lab.beacon,
-                     lab.responder):
+        steps = (lab.flood,) if a.flood_only else (
+            lab.capture, lab.retries_and_latency, lab.serial, lab.flood, lab.beacon, lab.responder)
+        for step in steps:
             await step()
             print()
     finally:
-        await asyncio.gather(test.close(), sniffer.close(), return_exceptions=True)
+        await asyncio.gather(test.close(), *(sniffer.close() for sniffer in sniffers), return_exceptions=True)
     print("| card | ch | " + " | ".join(lab.row) + " |")
     print(f"| {test.description} | {a.channel} | " + " | ".join(lab.row.values()) + " |")
 
@@ -387,9 +405,11 @@ async def main(a) -> None:
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="TX lab: per-card injection numbers seen by a sniffer")
     p.add_argument("--test-card", required=True, help="substring of the card under test, e.g. 7601")
-    p.add_argument("--sniffer-card", default="7925", help="substring of the sniffer card")
+    p.add_argument("--sniffer-card", nargs="+", default=["7925"], help="one or more sniffer card description substrings")
     p.add_argument("--ref-bssid", required=True, help="a 100 TU AP on --channel, for the capture check")
     p.add_argument("--channel", type=int, default=1)
+    p.add_argument("--flood-count", type=int, default=FLOOD)
+    p.add_argument("--flood-only", action="store_true", help="run only the concurrent TX ordering flood")
     p.add_argument("--debug", action="store_true")
     try:
         asyncio.run(main(p.parse_args()))
