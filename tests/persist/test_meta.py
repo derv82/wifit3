@@ -27,6 +27,19 @@ def test_nickname_survives_ssid_changes_and_clearing_preserves_metadata(tmp_path
     assert not meta_path("Unknown", bssid).exists()
 
 
+def test_nickname_only_preserves_original_ssid_and_legacy_metadata(tmp_path):
+    bssid = "aa:bb:cc:dd:ee:ff"
+    legacy = meta_path("Café Net", bssid)
+    legacy.write_text(json.dumps({"nickname": "old", "custom": {"keep": True}}), encoding="utf-8")
+    assert nickname_aps() == {bssid: None}
+    set_nickname("Café Net", bssid, "home")
+    assert nickname_aps() == {bssid: "Café Net"}
+    assert read_meta(legacy)["custom"] == {"keep": True}
+    set_nickname("Café Net", bssid, None)
+    assert read_meta(legacy)["ssid"] == "Café Net"
+    assert read_meta(legacy)["custom"] == {"keep": True}
+
+
 def test_meta_path_sorts_next_to_the_captures(tmp_path):
     assert meta_path("Café Net", "AA:BB:CC:DD:EE:FF") == tmp_path / "Caf__Net_aa-bb-cc-dd-ee-ff.meta"
     assert meta_path(None, "aa:bb:cc:dd:ee:ff").name == "hidden_aa-bb-cc-dd-ee-ff.meta"
