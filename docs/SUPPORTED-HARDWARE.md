@@ -271,7 +271,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 |---|:--:|---|---|
 | **Grade** | **A** | 2026-09-02 | Dual-band kernel-parity RX + full attack suite; spoofable ACKs. |
 | RX | ✅ | 2026-11-05 | 5-min fixed-channel baseline: 2G ch4 4.96 vs 3.49 beacons/s, 37/36 APs; 5G ch36 9.67 vs 9.71 beacons/s, 6/7 APs; median RSSI +0.5 dB vs Linux (40 common APs); both channels heard their reference APs. One zero-beacon cross-band metadata record on ch4. |
-| Port | ✅ | 2026-09-02 | Matches linux-DKMS (rtl88x2cu) both bands; verify_pcap byte-identical up to TX. |
+| Port | ✅ | 2026-09-02 | Vendor USB replay matches bring-up, 65/67 hops, 34/35 watchdog ticks and RX records to TX frontier; TX descriptor not capture-verified byte by byte. DIG set to start with highest sensitivity. (fixed startup degradation) |
 | TX | ✅ | 2026-11-06 | TX Lab: Ch100: 100/100 broadcast; flood 499/500, 0 out of order; 50/50 probe replies. RTL8821AU DKMS sniffer. Deauth + PMKID, 2.4 + 5 GHz. |
 | Handshake | ✅ | 2026-11-05 | Deauth → 4-way M1-M4; Evil twin capture succeed.|
 | PMKID | ✅ | 2026-11-06 | Passive + active, 2.4 + 5 GHz. |
