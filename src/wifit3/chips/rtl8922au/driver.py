@@ -6,10 +6,10 @@ import logging
 import time
 from typing import Callable, Optional
 
-import libusb_package
 import usb.core
 import usb.util
 
+from wifit3.device.backend import usb_backend
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.errors import BringUpError
 
@@ -319,10 +319,10 @@ class RTL8922AUDriver(Driver):
             usb.util.dispose_resources(self.dev)
         except Exception:                                   # noqa: BLE001
             pass
-        backend = libusb_package.get_libusb1_backend()
+        backend = usb_backend()
         for i in range(40):                                 # up to ~10 s for the re-enum to settle
             time.sleep(0.25)
-            dev = usb.core.find(idVendor=self._vid, idProduct=self._pid, backend=backend)
+            dev = backend.find(self._vid, self._pid)
             if dev is None:
                 continue
             # Skip the stale pre-switch device (same address) for the first ~2 s so the re-enum can
