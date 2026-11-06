@@ -460,6 +460,44 @@ def test_status_footer_wpa_shows_encryption_and_pmf():
     assert "Protected Mgmt Frames" not in lines[1]      # abbreviated
 
 
+@pytest.mark.parametrize("h2e", ["unknown", "not-advertised", "supported", "only"])
+def test_status_footer_shows_advertised_sae_details(h2e):
+    ap = build_ap(akms=["PSK", "SAE", "FT-SAE", "SAE-EXT-KEY", "FT-SAE-EXT-KEY"],
+                  akm_suites=[2, 8, 9, 24, 25], wpa3=True, transition_mode=True)
+    ap.sae_h2e = h2e
+    lines = fm.status_under_dash(ap, None, 0)
+    assert lines[1] == ("[dim]Advertised AKM:[/dim] SAE, FT-SAE, SAE-EXT-KEY, "
+                        f"FT-SAE-EXT-KEY  ·  [dim]H2E:[/dim] {h2e}")
+
+
+def test_status_footer_distinguishes_observed_sae_from_advertised_h2e():
+    ap = build_ap(akms=["SAE"], akm_suites=[8], wpa3=True)
+    ap.sae_h2e = "supported"
+    assert "Observed SAE:" not in " ".join(fm.status_under_dash(ap, None, 0))
+    ap.observed_sae_methods.update({"SAE-PK", "H2E", "HnP"})
+    lines = fm.status_under_dash(ap, None, 0)
+    assert "[dim]H2E:[/dim] supported" in lines[1]
+    assert "[dim]Observed SAE:[/dim] SAE-HnP, SAE-H2E, SAE-PK" in lines
+
+
+def test_status_footer_observed_sae_does_not_require_advertised_sae():
+    ap = build_ap(akms=["PSK"], akm_suites=[2])
+    ap.observed_sae_methods.add("HnP")
+    assert "[dim]Observed SAE:[/dim] SAE-HnP" in fm.status_under_dash(ap, None, 0)
+
+
+def test_status_footer_sae_h2e_missing_or_invalid_is_unknown():
+    ap = build_ap(akms=["FT-SAE-EXT-KEY"], akm_suites=[25], wpa3=True)
+    assert "[dim]H2E:[/dim] unknown" in fm.status_under_dash(ap, None, 0)[1]
+    ap.sae_h2e = None
+    assert "[dim]H2E:[/dim] unknown" in fm.status_under_dash(ap, None, 0)[1]
+
+
+def test_status_footer_does_not_show_sae_details_for_enterprise():
+    ap = build_ap(akms=["EAP-SHA256"], akm_suites=[5], wpa3=True)
+    assert "H2E:" not in " ".join(fm.status_under_dash(ap, None, 0))
+
+
 def test_status_footer_combines_pmf_and_wps():
     """WPS rejoins the footer (it was dropped in v2) on the same row as PMF."""
     lines = fm.status_under_dash(_rsn_ap(wps=True, wps_version="1.0"), None, 0)

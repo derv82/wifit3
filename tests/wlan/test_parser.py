@@ -96,6 +96,26 @@ def _rsn_ie(
     return bytes([48, len(body)]) + body
 
 
+@pytest.mark.parametrize(("ies", "expected", "status"), [
+    (b"", "unknown", "absent"),
+    (b"\xf4\x01\x20", "supported", "valid"),
+    (b"\xf4\x01\x00", "not-advertised", "valid"),
+    (b"\xf4\x02\x21\x00", "supported", "valid"),
+    (b"\xf4\x00", "unknown", "malformed"),
+    (b"\xf4\x01\x21", "unknown", "malformed"),
+    (b"\xf4\x02\x20", "unknown", "malformed"),
+    (b"\xf4\x01\x20\xf4\x01\x00", "unknown", "malformed"),
+    (b"\x32\x01\xfb", "only", "absent"),
+    (b"\x32\x01\x7b", "unknown", "absent"),
+    (b"\xf4\x00\x32\x01\xfb", "only", "malformed"),
+])
+def test_sae_h2e_advertisement(ies, expected, status):
+    frame = _build_beacon(rsn_ie=_rsn_ie(akms=(24,)) + ies)
+    packet = WlanFrameParser.parse_80211_frame(frame, -40)
+    assert packet.sae_h2e == expected
+    assert packet.rsnxe_status == status
+
+
 @pytest.mark.parametrize("length", range(18, 43))
 def test_rsn_optional_fields_must_end_on_field_boundaries(length):
     body = bytes.fromhex("0100000fac040100000fac040100000fac05c0000100")
@@ -1036,6 +1056,39 @@ def test_auth_carries_status():
     p = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x0b, b"\x00\x00\x02\x00\x0e\x00"), -50)
     assert isinstance(p, AuthPacket)
     assert p.status == 0x0e
+
+
+@pytest.mark.parametrize("status,method", [(0, "HnP"), (126, "H2E"), (127, "SAE-PK")])
+@pytest.mark.parametrize("group,size", [(19, 32), (20, 48), (21, 66), (25, 24),
+                                         (26, 28), (28, 32), (29, 48), (30, 64)])
+def test_sae_commit_method(status, method, group, size):
+    body = struct.pack("<HHHH", 3, 1, status, group) + b"\x02" * (3 * size)
+    p = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x0b, body), -50)
+    assert isinstance(p, AuthPacket)
+    assert p.status == status and p.sae_method == method
+    p = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x0b, body[:-1]), -50)
+    assert isinstance(p, AuthPacket) and p.sae_method is None
+
+
+@pytest.mark.parametrize("algorithm,transaction,status,group", [
+    (0, 1, 0, 19), (2, 1, 126, 19), (3, 2, 0, 19),
+    (3, 1, 76, 19), (3, 1, 77, 19), (3, 1, 1, 19),
+    (3, 1, 126, 0), (3, 1, 127, 0xffff), (3, 1, 0, 0x1300),
+])
+def test_sae_commit_method_rejects_other_authentication(algorithm, transaction, status, group):
+    body = struct.pack("<HHHH", algorithm, transaction, status, group) + b"\x02" * 198
+    p = WlanFrameParser.parse_80211_frame(_mgmt_frame(0x0b, body), -50)
+    assert isinstance(p, AuthPacket) and p.sae_method is None
+
+
+def test_sae_commit_method_rejects_fragments_and_protected_frames():
+    body = struct.pack("<HHHH", 3, 1, 0, 19) + b"\x02" * 96
+    frame = _mgmt_frame(0x0b, body)
+    for offset, value in [(1, 0x04), (1, 0x40), (22, 1)]:
+        damaged = bytearray(frame)
+        damaged[offset] = value
+        p = WlanFrameParser.parse_80211_frame(bytes(damaged), -50)
+        assert isinstance(p, AuthPacket) and p.sae_method is None
 
 
 def test_deauth_and_disassoc_carry_reason():

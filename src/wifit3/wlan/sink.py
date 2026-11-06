@@ -24,7 +24,7 @@ from wifit3.dot11.wsc import messages as WSC
 from wifit3.dot11.wsc.identity import apply_wsc_identity
 from wifit3.dot11.packet import (
     Packet, BeaconPacket, EapolPacket, EapPacket, WepDataPacket, AssocRequestPacket,
-    AssocRespPacket, ProbeReqPacket, is_group_mac,
+    AssocRespPacket, AuthPacket, ProbeReqPacket, is_group_mac,
 )
 from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.wep_store import WepCaptureStore
@@ -124,6 +124,11 @@ class WlanSink:
         self._track_client(pkt, card_id)
         self._on_eapol_frame(pkt)
         self._on_eap_frame(pkt)
+        if isinstance(pkt, AuthPacket):
+            method = getattr(pkt, "sae_method", None)
+            ap = self.access_points.get(bssid)
+            if ap is not None and method in ("HnP", "H2E", "SAE-PK"):
+                ap.observed_sae_methods.add(method)
 
     def record_signal(self, card_id: str, bssid: str, rssi: int) -> None:
         """Update per-card RSSI from a cross-card duplicate: the frame's picture was already folded
@@ -194,6 +199,7 @@ class WlanSink:
                 pairwise_cipher=pairwise_cipher,
                 beacons=1 if frame_type == "beacon" else 0,
                 wpa3=wpa3,
+                sae_h2e=pkt.sae_h2e,
                 transition_mode=transition_mode,
                 pmf_capable=pmf_capable,
                 pmf_required=pmf_required,
@@ -247,6 +253,8 @@ class WlanSink:
                 ap.pmf_capable = pmf_capable
                 ap.pmf_required = pmf_required
                 ap.beacon_protection = beacon_protection
+            if pkt.sae_h2e != "unknown":
+                ap.sae_h2e = pkt.sae_h2e
             if pkt.chipset:
                 ap.chipset = pkt.chipset
             # Only refresh WPS when this frame carried the IE.
