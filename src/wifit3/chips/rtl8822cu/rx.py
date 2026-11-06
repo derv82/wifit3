@@ -34,7 +34,8 @@ def _cck_path_power(pwdb: int, gain_byte: int, l_bnd: int | None, u_bnd: int | N
 
 
 def _phy_rssi(buf: bytes, offset: int, stat: RxPktStat,
-              cck_gi_l_bnd: int | None = None, cck_gi_u_bnd: int | None = None) -> int | None:
+              cck_gi_l_bnd: int | None = None, cck_gi_u_bnd: int | None = None,
+              rx_ant_status: int = 0x03) -> int | None:
     # JGR3 PHY status: dispatch on the low type nibble (phydm_rx_physts_jgr3,
     # phydm_phystatus.c:2435). pwdb = (s8)agc_byte - 110, floor -120, NO upper
     # clamp (recv_signal_power = rx_pwr_db_max, init -120, at c:2050 / c:2312).
@@ -44,23 +45,44 @@ def _phy_rssi(buf: bytes, offset: int, stat: RxPktStat,
     if phy_type == 0:
         # CCK: gain-correct each RX path's pwdb, take the max [SRC c:1988-2052]. Path A
         # pwdb/gain at offset+1/+2; path B at offset+16/+19 when the 32-byte report is present.
-        rx_power = _cck_path_power(buf[offset + 1], buf[offset + 2], cck_gi_l_bnd, cck_gi_u_bnd)
-        if stat is not None and stat.drv_info_sz >= 20 and len(buf) - offset >= 20:
-            rx_power = max(rx_power, _cck_path_power(buf[offset + 16], buf[offset + 19],
-                                                     cck_gi_l_bnd, cck_gi_u_bnd))
-        return max(-120, rx_power - 110)
+        powers = []
+        if rx_ant_status & 0x01:
+            powers.append(_cck_path_power(buf[offset + 1], buf[offset + 2],
+                                          cck_gi_l_bnd, cck_gi_u_bnd))
+        if (rx_ant_status & 0x02 and stat is not None and stat.drv_info_sz >= 20
+                and len(buf) - offset >= 20):
+            powers.append(_cck_path_power(buf[offset + 16], buf[offset + 19],
+                                          cck_gi_l_bnd, cck_gi_u_bnd))
+        return max(-120, max(powers) - 110) if powers else None
     if 1 <= phy_type <= 5:
         # OFDM types 1..5 share one pwdb[] layout; 2 RX paths at offset+1..+2
         # (phydm_get_physts_ofdm_cmn_jgr3, c:2306).
-        return max(-120, max(_s8(buf[offset + 1]), _s8(buf[offset + 2])) - 110)
+        powers = [_s8(buf[offset + 1 + path]) for path in range(2)
+                  if rx_ant_status & (1 << path)]
+        return max(-120, max(powers) - 110) if powers else None
     return None
 
 
+def split_bulk_records(buf: bytes):
+    pos = 0
+    while pos + 24 <= len(buf):
+        stat = parse_rx_pkt_desc(buf, pos)
+        # rtl8822c_rxdesc2attribute only decodes drvinfo and shift for NORMAL_RX.
+        pkt_offset = 24 + stat.pkt_len if stat.is_c2h else stat.total_size
+        if stat.pkt_len == 0 or pos + pkt_offset > len(buf):
+            return
+        end = pos + pkt_offset
+        if not stat.is_c2h:
+            yield buf[pos:end]
+        pos = (end + 7) & ~7
+
+
 def iter_bulk_frames(buf: bytes, *, cck_gi_l_bnd: int | None = None,
-                     cck_gi_u_bnd: int | None = None):
+                     cck_gi_u_bnd: int | None = None, rx_ant_status: int = 0x03):
     def phy_status_rssi(b: bytes, off: int, stat: RxPktStat) -> int | None:
-        return _phy_rssi(b, off, stat, cck_gi_l_bnd, cck_gi_u_bnd)
-    return _iter_bulk_frames(buf, phy_status_rssi=phy_status_rssi)
+        return _phy_rssi(b, off, stat, cck_gi_l_bnd, cck_gi_u_bnd, rx_ant_status)
+    for record in split_bulk_records(buf):
+        yield from _iter_bulk_frames(record, phy_status_rssi=phy_status_rssi)
 
 
-__all__ = ["Endpoints", "RxPktStat", "iter_bulk_frames", "parse_rx_pkt_desc", "probe_endpoints", "read_rx_burst"]
+__all__ = ["Endpoints", "RxPktStat", "iter_bulk_frames", "parse_rx_pkt_desc", "probe_endpoints", "read_rx_burst", "split_bulk_records"]

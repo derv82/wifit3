@@ -337,14 +337,22 @@ def hal_rfpath_init(efuse: EfuseInfo, *, ant_num: int, hw_stype: int, rf_2t2r: b
     return RfPath(trx_path_bmp, max_tx_cnt)
 
 
-def read_physical_map(transport) -> bytes:
-    """Read the WIFI physical EFUSE map through the indirect controller.
+def switch_efuse_bank_wifi(transport) -> None:
+    """Select and verify the Wi-Fi bank. [SRC halmac_efuse_88xx.c:switch_efuse_bank_88xx]"""
+    address = REG_LDO_EFUSE_CTRL + 1
+    value = transport.read8(address)
+    if value & 0x03:
+        transport.write8(address, value & ~0x03)
+        if transport.read8(address) & 0x03:
+            raise RuntimeError("RTL8822CU failed to select Wi-Fi EFUSE bank")
 
-    Mirrors HALMAC ``dump_efuse_map_88xx`` -> ``switch_efuse_bank_88xx`` (WIFI bank is
-    already selected, so a bare read) -> ``read_hw_efuse_88xx`` (drop the 2.5 V LDO, then
-    the REG_EFUSE_CTRL byte loop) [SRC hal/halmac/halmac_88xx/halmac_efuse_88xx.c:168,1042-1067].
+
+def read_physical_map(transport) -> bytes:
+    """Read the Wi-Fi physical EFUSE map through the indirect controller.
+
+    [SRC hal/halmac/halmac_88xx/halmac_efuse_88xx.c:168,1042-1067]
     """
-    transport.read8(REG_LDO_EFUSE_CTRL + 1)                  # switch_efuse_bank: WIFI bank
+    switch_efuse_bank_wifi(transport)
     ldo25 = transport.read8(REG_ANAPARLDO_POW_MAC)           # read efuse needs no 2.5 V LDO
     transport.write8(REG_ANAPARLDO_POW_MAC, ldo25 & ~1)
     current = transport.read32(REG_EFUSE_CTRL)
@@ -364,9 +372,9 @@ def read_physical_map(transport) -> bytes:
 
 def one_byte_read(transport, physical_map: bytes, address: int) -> int:
     """``efuse_OneByteRead`` -> ``rtw_halmac_read_physical_efuse``: halmac answers from the map
-    it dumped at bring-up, so only the bank-switch check reaches the wire.
+    it dumped at bring-up, so only the bank selection reaches the wire.
     [SRC core/efuse/rtw_efuse.c:2226, halmac_efuse_88xx.c:168]"""
-    transport.read8(REG_LDO_EFUSE_CTRL + 1)
+    switch_efuse_bank_wifi(transport)
     return physical_map[address]
 
 

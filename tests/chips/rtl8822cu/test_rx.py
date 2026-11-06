@@ -5,7 +5,7 @@ that saturated strong signals to 0 dBm, and dropping OFDM phy-status types 2..5.
 Expected dBm come from the vendor formula pwdb = (s8)byte - 110, floor -120, no upper
 clamp (phydm_get_physts_0_jgr3 / phydm_get_physts_ofdm_cmn_jgr3, phydm_phystatus.c).
 """
-from wifit3.chips.rtl8822cu.rx import _phy_rssi, iter_bulk_frames
+from wifit3.chips.rtl8822cu.rx import _phy_rssi, iter_bulk_frames, split_bulk_records
 
 
 def _cck(pwdb_a, gain_a=0):
@@ -132,3 +132,49 @@ def test_cck_path_b_ignored_when_report_too_short():
     buf = _pkt(b"WXYZ" + b"\x00\x00\x00\x00", _cck_report(50, 20, 200, 0), drvinfo_sz=16)
     (_stat, _mpdu, rssi), = iter_bulk_frames(buf, cck_gi_l_bnd=16, cck_gi_u_bnd=63)
     assert rssi == -60                     # 50 in band -> 50 - 110, path B (200) ignored
+
+
+def test_rssi_uses_only_enabled_rx_paths():
+    cck = _pkt(b"WXYZ" + bytes(4), _cck_report(50, 20, 90, 20))
+    ofdm = _pkt(b"WXYZ" + bytes(4), _ofdm(1, 34, 60))
+    for mask, expected_cck, expected_ofdm in (
+        (0x01, -60, -76), (0x02, -20, -50), (0x03, -20, -50), (0x00, None, None),
+    ):
+        assert next(iter_bulk_frames(cck, rx_ant_status=mask))[2] == expected_cck
+        assert next(iter_bulk_frames(ofdm, rx_ant_status=mask))[2] == expected_ofdm
+
+
+def test_split_records_match_parser_with_alignment_c2h_and_truncation():
+    first = _pkt(b"first" + bytes(4), _ofdm(1, 34, 20), shift_sz=1)
+    c2h = bytearray(_desc(2, 32, shift_sz=3))
+    c2h[1] |= 0xc0
+    c2h[11] |= 0x10
+    c2h += b"\x10\x00"
+    c2h += bytes((-len(c2h)) % 8)
+    last = _pkt(b"last" + bytes(4), _cck(43))
+    aggregate = first + bytes(c2h) + last + _desc(100, 0)
+    records = list(split_bulk_records(aggregate))
+    assert len(records) == 2
+    assert [frame[1] for frame in iter_bulk_frames(aggregate)] == [b"first", b"last"]
+    assert [frame for record in records for frame in iter_bulk_frames(record)] == list(iter_bulk_frames(aggregate))
+    assert list(split_bulk_records(first[:-8])) == []
+    assert list(split_bulk_records(bytes(24))) == []
+
+
+def test_c2h_length_validation_ignores_normal_only_fields():
+    desc = bytearray(_desc(3, 32, shift_sz=2))
+    desc[1] |= 0xc0
+    desc[11] |= 0x10
+    record = bytes(desc) + b"\x10\x00\x55"
+    frame = _pkt(b"after" + bytes(4), _cck(43))
+    aligned_record = record + bytes((-len(record)) % 8)
+    assert list(split_bulk_records(aligned_record + frame)) == list(split_bulk_records(frame))
+    assert [item[1] for item in iter_bulk_frames(aligned_record + frame)] == [b"after"]
+    assert list(split_bulk_records(record[:-1])) == []
+    desc[0] = 0
+    assert list(split_bulk_records(bytes(desc))) == []
+
+
+def test_cck_path_b_only_requires_its_complete_report():
+    buf = _pkt(b"WXYZ" + bytes(4), _cck_report(50, 20, 90, 20), drvinfo_sz=16)
+    assert next(iter_bulk_frames(buf, rx_ant_status=0x02))[2] is None
