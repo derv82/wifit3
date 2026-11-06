@@ -627,6 +627,9 @@ class FocusViewV2(Screen):
         else:
             self._log("[bold]Target acquired:[/bold] "
                       "[dim italic]cloaked network (hidden SSID)[/dim italic]")
+        nickname = read_nickname(ap.bssid, ap.ssid)
+        if nickname:
+            self._log(treelog.branch(f"[dim]Nickname:[/dim] {escape(nickname)}"))
         self._log(treelog.branch(f"[dim]Encryption:[/dim] {enc}"))
         self._log(treelog.branch(f"[dim]BSSID:[/dim] {ap.bssid}"))
         if array:
