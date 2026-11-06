@@ -44,6 +44,7 @@ def test_assoc_req_sets_privacy_and_omits_rsn(mocker):
     assert f[0:2] == b"\x00\x00"            # mgmt / Assoc Req subtype
     cap = struct.unpack("<H", f[24:26])[0]
     assert cap & 0x0010                     # Privacy bit (mandatory for WEP)
+    assert cap & 0x0020                     # Short Preamble capable (required by some 2.4 GHz APs)
     # Tagged params start after cap(2) + listen interval(2) = offset 28.
     ids = _walk_tag_ids(f[28:])
     assert 0 in ids                         # SSID

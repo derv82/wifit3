@@ -56,13 +56,13 @@ def auth_req(bssid: bytes, our_mac: bytes) -> bytes:
 def assoc_req(bssid: bytes, our_mac: bytes, ssid: str, trailer_ies: bytes = b"",
               channel: int = 1, privacy: Optional[bool] = None,
               ht_capable: bool = True) -> bytes:
-    """Association Request: band-aware rates, 20MHz HT caps, ESS+(auto)Privacy."""
+    """Association Request: band-aware rates, 20MHz HT caps, ESS, short-preamble and auto Privacy."""
     if privacy is None:
         has_rsn = b"\x30" in trailer_ies or b"\x00\x50\xf2\x01" in trailer_ies
         has_wps = b"\x00\x50\xf2\x04" in trailer_ies
         privacy = not (has_wps and not has_rsn)
 
-    cap_val = 0x0011 if privacy else 0x0001
+    cap_val = 0x0031 if privacy else 0x0021
     cap = struct.pack("<H", cap_val)
     listen = struct.pack("<H", 0x0001)
     ht = ht_cap_ie() if ht_capable else b""
