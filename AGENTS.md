@@ -8,18 +8,7 @@ This file provides guidance to coding agents when working with code in this repo
 - **Naming modules/classes/methods/variables**: "Intention-revealing, exact names" applies everywhere. Examples: `array` of `devices` instead of a `pool` of `cards`, `device` instead of `radio`, `sink` or `aggregator` instead of `picture` or `airspace`.
 - **Human-facing docs** (any non-chipset `.md`): agents may edit them; say so in the hand-off so a human reviews the wording.
 - **Planning docs** (NOT auto-loaded, open as needed): `docs/planning/FEATURES.md`, `docs/planning/BUGS.md`, `docs/SUPPORTED-HARDWARE.md` (+ the grading process: `docs/GRADING.md`).
-
-## Porting Session Cheatsheet
-
-- **Porting code style**: When porting or working within `src/wifit3/chips/**/*`: `docs/porting/CODE-STYLE.md`.
-- **Porting / bringing up a chip?** Playbook: `docs/porting/METHODOLOGY.md` (or run `/port <chip>` in `.claude/skills/port`).
-- **Per-chipset port-reference docs**: each chip dir has a `<CHIP>.md`. Template + rules in `docs/porting/CHIP-DOC.md`.
-- **Before a port ships**: run every item in `docs/porting/FINAL-CHECKLIST.md`; record each result in the chip doc's Final checklist section.
-- **Within `chips/`, don't re-use code from another driver**, even when the tables or sequences look identical. Don't import another chip's module, and don't extract "shared" code into a base. Duplicated code across drivers is expected and fine.
-  *Why:* each port follows its own kernel/DKMS source, and those diverge, sometimes subtly, sometimes on a later upstream update to one driver only. Shared code turns into `if chip X: ... elif chip Y:` and makes every edit a re-test of every device that uses it (a 30-minute soak per device). A port is a standalone, confined unit.
-  `rtw88_base` is the one deliberate shared base; don't add to it or create new ones.
-- **Register READs can mutate device state: never assume two reads commute, never reorder them vs the capture.**
-- **Device gets borked? User replugs.** That resets cold-boot state.
+- **Porting a driver, or editing `src/wifit3/chips/`**: read `docs/porting/METHODOLOGY.md` completely before starting; `chips/` code follows its "Code style in `chips/`", not the code style above.
 
 ## Commands
 
@@ -95,23 +84,6 @@ A chip dir (chips/<chipset>/) is typically shaped:
 ```
 
 Not every chip uses every module; add modules as the chip's protocol needs them.
-
-### Adding a New Chipset
-
-Discovery is a `pkgutil` walk over `chips/*` that reads each package's light `__init__` (its VID:PID list) WITHOUT importing the driver; the matched driver is imported only on a hit. There is no manual registry to edit. To add a chip:
-
-1. Create `src/wifit3/chips/<name>/` with at minimum `__init__.py`, `driver.py`, `transport.py`, `constants.py` (+ `firmware.py` if the chip needs a FW upload).
-2. `chips/<name>/__init__.py` declares the hardware, and must NOT import `driver.py` at module top:
-   - `SUPPORTED_IDS: list[DeviceID]` (`from wifit3.models import DeviceID`): every VID:PID this driver claims, with a human-readable description and any chip-id discriminator in `extras={}`.
-   - `def import_driver()`: the one heavy import, lazy (`from .driver import <Class>; return <Class>`).
-3. `driver.py` must subclass the `Driver` ABC (`wifit3.chips.driver`); Python enforces the surface at instantiation:
-   - Class attr `SUPPORTED_CHANNELS: list[int]`: every channel the driver can tune to (consumed by `WlanInterface.start_hopping`). `SUPPORTED_IDS` lives in `__init__.py`, not on the class.
-   - Classmethod `from_usb_device(cls, dev, id_entry) -> Driver`: driver-side construction (transport wrapping, chip_id reads from `extras`).
-   - Runtime methods: `connect()`, `set_channel()`, `inject_frame()`, `close()`, plus the `register_rx_callback()` hook.
-4. Only if the chip's setup key must differ from its dir name, or two packages claim the same VID:PID (the Realtek mainline/DKMS pairs): add a row to `_FAMILIES` in `device/manager.py`. Otherwise there is nothing else to register.
-5. Drop a `<CHIP>.md` port-reference doc next to the driver (skeleton + rules in `docs/porting/CHIP-DOC.md`).
-
-The cold-vs-warm distinction is a per-driver concern: if a previous session left the chip running, `connect()` should detect that and skip the bring-up. See `chips/rtl8821au/mac.py:is_chip_warm()` + `driver.py:_warm_reattach` for the pattern.
 
 ### TUI Screens
 

@@ -14,7 +14,7 @@ linked GitHub handle means the kernel commits carry none (common for vendor `@re
 authors and pre-GitHub-era contributors).
 
 > **Maintainers:** when a new chipset is ported, update this file. See
-> `docs/porting/METHODOLOGY.md` → "Housekeeping".
+> `docs/porting/FINAL-CHECKLIST.md` → "Credits and licensing".
 
 ---
 
