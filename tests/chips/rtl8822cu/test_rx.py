@@ -146,15 +146,33 @@ def test_rssi_uses_only_enabled_rx_paths():
 
 def test_split_records_match_parser_with_alignment_c2h_and_truncation():
     first = _pkt(b"first" + bytes(4), _ofdm(1, 34, 20), shift_sz=1)
-    c2h = bytearray(_pkt(b"event" + bytes(4), _ofdm(1, 34, 20)))
+    c2h = bytearray(_desc(2, 32, shift_sz=3))
+    c2h[1] |= 0xc0
     c2h[11] |= 0x10
+    c2h += b"\x10\x00"
+    c2h += bytes((-len(c2h)) % 8)
     last = _pkt(b"last" + bytes(4), _cck(43))
     aggregate = first + bytes(c2h) + last + _desc(100, 0)
     records = list(split_bulk_records(aggregate))
     assert len(records) == 2
+    assert [frame[1] for frame in iter_bulk_frames(aggregate)] == [b"first", b"last"]
     assert [frame for record in records for frame in iter_bulk_frames(record)] == list(iter_bulk_frames(aggregate))
     assert list(split_bulk_records(first[:-8])) == []
     assert list(split_bulk_records(bytes(24))) == []
+
+
+def test_c2h_length_validation_ignores_normal_only_fields():
+    desc = bytearray(_desc(3, 32, shift_sz=2))
+    desc[1] |= 0xc0
+    desc[11] |= 0x10
+    record = bytes(desc) + b"\x10\x00\x55"
+    frame = _pkt(b"after" + bytes(4), _cck(43))
+    aligned_record = record + bytes((-len(record)) % 8)
+    assert list(split_bulk_records(aligned_record + frame)) == list(split_bulk_records(frame))
+    assert [item[1] for item in iter_bulk_frames(aligned_record + frame)] == [b"after"]
+    assert list(split_bulk_records(record[:-1])) == []
+    desc[0] = 0
+    assert list(split_bulk_records(bytes(desc))) == []
 
 
 def test_cck_path_b_only_requires_its_complete_report():

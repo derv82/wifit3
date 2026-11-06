@@ -67,9 +67,11 @@ def split_bulk_records(buf: bytes):
     pos = 0
     while pos + 24 <= len(buf):
         stat = parse_rx_pkt_desc(buf, pos)
-        if stat.pkt_len == 0 or pos + stat.total_size > len(buf):
+        # rtl8822c_rxdesc2attribute only decodes drvinfo and shift for NORMAL_RX.
+        pkt_offset = 24 + stat.pkt_len if stat.is_c2h else stat.total_size
+        if stat.pkt_len == 0 or pos + pkt_offset > len(buf):
             return
-        end = pos + stat.total_size
+        end = pos + pkt_offset
         if not stat.is_c2h:
             yield buf[pos:end]
         pos = (end + 7) & ~7
@@ -79,7 +81,8 @@ def iter_bulk_frames(buf: bytes, *, cck_gi_l_bnd: int | None = None,
                      cck_gi_u_bnd: int | None = None, rx_ant_status: int = 0x03):
     def phy_status_rssi(b: bytes, off: int, stat: RxPktStat) -> int | None:
         return _phy_rssi(b, off, stat, cck_gi_l_bnd, cck_gi_u_bnd, rx_ant_status)
-    return _iter_bulk_frames(buf, phy_status_rssi=phy_status_rssi)
+    for record in split_bulk_records(buf):
+        yield from _iter_bulk_frames(record, phy_status_rssi=phy_status_rssi)
 
 
 __all__ = ["Endpoints", "RxPktStat", "iter_bulk_frames", "parse_rx_pkt_desc", "probe_endpoints", "read_rx_burst", "split_bulk_records"]
