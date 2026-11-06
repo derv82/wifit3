@@ -15,7 +15,7 @@ try:
 except ImportError:
     libusb_package = None
 
-_backend_factory: Optional[Callable[[], Optional["UsbBackend"]]] = None
+_backend_factory: Optional[Callable[[], "UsbBackend"]] = None
 
 
 class UsbBackend(ABC):
@@ -58,25 +58,22 @@ class LibusbBackend(UsbBackend):
                                   backend=self._libusb) or [])
 
     def node_path(self, dev: usb.core.Device) -> Optional[str]:
-        bus, address = getattr(dev, "bus", None), getattr(dev, "address", None)
-        if bus is None or address is None:
-            return None
-        return f"/dev/bus/usb/{bus:03d}/{address:03d}"
+        return f"/dev/bus/usb/{dev.bus:03d}/{dev.address:03d}"
 
 
-def set_usb_backend_factory(factory: Optional[Callable[[], Optional[UsbBackend]]]) -> None:
+def set_usb_backend_factory(factory: Optional[Callable[[], UsbBackend]]) -> None:
     """Override the backend factory, e.g. for an alternative USB transport."""
     global _backend_factory
     _backend_factory = factory
 
 
-def usb_backend() -> Optional[UsbBackend]:
-    """The USB backend, or None when libusb cannot be loaded."""
+def usb_backend() -> UsbBackend:
+    """The USB backend. Raises ``usb.core.NoBackendError`` when libusb cannot be loaded."""
     if _backend_factory is not None:
         return _backend_factory()
     low_level = _desktop_libusb()
     if low_level is None:
-        return None
+        raise usb.core.NoBackendError("No backend available")
     return LibusbBackend(low_level)
 
 

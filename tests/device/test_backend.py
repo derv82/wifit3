@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 import usb.core
 
+from tests.device.fakes import FakeBackend
 from wifit3.device import backend
 
 
@@ -58,10 +59,6 @@ def test_libusb_backend_node_path():
     assert backend.LibusbBackend(None).node_path(dev) == "/dev/bus/usb/002/035"
 
 
-def test_libusb_backend_node_path_unknown():
-    assert backend.LibusbBackend(None).node_path(object()) is None
-
-
 def test_usb_backend_returns_a_libusb_backend(monkeypatch):
     low = object()
     monkeypatch.setattr(backend, "_desktop_libusb", lambda: low)
@@ -70,7 +67,8 @@ def test_usb_backend_returns_a_libusb_backend(monkeypatch):
 
 def test_usb_backend_missing_libusb(monkeypatch):
     monkeypatch.setattr(backend, "_desktop_libusb", lambda: None)
-    assert backend.usb_backend() is None
+    with pytest.raises(usb.core.NoBackendError):
+        backend.usb_backend()
 
 
 @pytest.fixture(autouse=True)
@@ -80,8 +78,9 @@ def _reset_backend_factory():
 
 
 def test_usb_backend_factory_override():
-    backend.set_usb_backend_factory(lambda: "custom")
-    assert backend.usb_backend() == "custom"
+    fake = FakeBackend()
+    backend.set_usb_backend_factory(lambda: fake)
+    assert backend.usb_backend() is fake
 
 
 def test_desktop_libusb_prefers_the_bundle(monkeypatch):

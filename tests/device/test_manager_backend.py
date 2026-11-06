@@ -1,5 +1,6 @@
 """manager delegates enumeration and lookup to the USB backend."""
 import pytest
+import usb.core
 
 import wifit3.device.manager as manager
 from tests.device.fakes import FakeBackend
@@ -9,6 +10,10 @@ from wifit3.chips.driver import DeviceID
 def _dev(vid=0x148F, pid=0x5370, bus=1, address=2):
     return type("D", (), {"idVendor": vid, "idProduct": pid,
                           "bus": bus, "address": address})()
+
+
+def _no_backend():
+    raise usb.core.NoBackendError("No backend available")
 
 
 def test_devices_empty(monkeypatch):
@@ -30,12 +35,12 @@ def test_linux_node_path_uses_the_backend(monkeypatch):
 
 
 def test_raw_devices_raises_without_a_backend(monkeypatch):
-    monkeypatch.setattr(manager, "usb_backend", lambda: None)
+    monkeypatch.setattr(manager, "usb_backend", _no_backend)
     with pytest.raises(manager.WifiteFatalError):
         manager.raw_devices()
 
 
 def test_linux_node_path_raises_without_a_backend(monkeypatch):
-    monkeypatch.setattr(manager, "usb_backend", lambda: None)
+    monkeypatch.setattr(manager, "usb_backend", _no_backend)
     with pytest.raises(manager.WifiteFatalError):
         manager.linux_node_path(DeviceID(0x148F, 0x5370, "RT5370", bus=1, address=2))

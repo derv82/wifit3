@@ -320,8 +320,6 @@ class RTL8922AUDriver(Driver):
         except Exception:                                   # noqa: BLE001
             pass
         backend = usb_backend()
-        if backend is None:
-            raise BringUpError("re-enumeration", "no USB backend")
         for i in range(40):                                 # up to ~10 s for the re-enum to settle
             time.sleep(0.25)
             dev = backend.find(self._vid, self._pid)
