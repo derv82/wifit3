@@ -59,6 +59,7 @@ class ScanFilter:
     text: str = ""
     encryption: EncryptionFilter = EncryptionFilter.ALL
     hide_silenced: bool = False
+    min_signal: Optional[int] = None
 
     def matches(self, ap: AccessPoint, *, ssid: Optional[str] = None) -> bool:
         """``ssid`` overrides ap.ssid so a hidden AP is searchable by its guessed name."""
@@ -66,12 +67,14 @@ class ScanFilter:
             return False
         if not self.encryption.matches(ap):
             return False
+        if self.min_signal is not None and ap.signal <= self.min_signal:
+            return False
         # The scanner runs this over every AP every tick, and the box is usually empty.
         return not self.text or text_matches(self.text, ap.bssid, ssid or ap.ssid)
 
 
 class FilterBar(HorizontalScroll):
-    """One row above the AP table: text query, encryption select, channels button, hide-silenced."""
+    """One row above the AP table: encryption, channels, power, text query, hide-silenced."""
 
     ALLOW_SELECT = False
 
@@ -87,9 +90,12 @@ class FilterBar(HorizontalScroll):
     }
     FilterBar > Label { margin-right: 1; color: $text-muted; }
     FilterBar > #filter-encryption-label,
-    FilterBar > #filter-channels-label { text-wrap: nowrap; text-overflow: clip; }
+    FilterBar > #filter-channels-label,
+    FilterBar > .filter-power-label { text-wrap: nowrap; text-overflow: clip; }
     FilterBar > #filter-encryption { width: 9; margin-right: 2; }
     FilterBar > #filter-channels { margin-right: 2; }
+    FilterBar > #filter-power-short-label { display: none; }
+    FilterBar > #filter-power { width: 7; margin-right: 2; }
     FilterBar > Input { width: 1fr; min-width: 16; max-width: 32; }
     FilterBar > #filter-hide-silenced { margin-left: 2; border: none; }
     FilterBar Select.-expanded SelectOverlay { border: round $primary !important; background: $surface; }
@@ -122,6 +128,15 @@ class FilterBar(HorizontalScroll):
         channels_label.ALLOW_SELECT = False
         yield channels_label
         yield Button(self._channels_text(None), id="filter-channels", compact=True)
+        for label_id, text in (("filter-power-label", "[u]P[/u]ower"),
+                               ("filter-power-short-label", "[u]P[/u]WR")):
+            power_label = Label(text, id=label_id, classes="filter-power-label")
+            power_label.ALLOW_SELECT = False
+            yield power_label
+        yield Select(
+            [("All", None), (">-90", -90), (">-80", -80), (">-70", -70)], value=None,
+            allow_blank=False, id="filter-power", compact=True,
+        )
         yield Input(placeholder="filter by ssid…", id="filter-text", compact=True)
         yield Checkbox("Hide silenced", value=Config.hide_silenced,
                        id="filter-hide-silenced", compact=True)
@@ -131,6 +146,11 @@ class FilterBar(HorizontalScroll):
 
     def focus_encryption(self) -> None:
         select = self.query_one("#filter-encryption", Select)
+        select.focus()
+        select.expanded = True
+
+    def focus_power(self) -> None:
+        select = self.query_one("#filter-power", Select)
         select.focus()
         select.expanded = True
 
@@ -172,8 +192,10 @@ class FilterBar(HorizontalScroll):
         text = self.query_one("#filter-text", Input).value
         encryption = self.query_one("#filter-encryption", Select).value
         hide_silenced = self.query_one("#filter-hide-silenced", Checkbox).value
+        min_signal = self.query_one("#filter-power", Select).value
         self.post_message(self.ScanFilterChanged(
-            ScanFilter(text=text, encryption=encryption, hide_silenced=hide_silenced)))
+            ScanFilter(text=text, encryption=encryption, hide_silenced=hide_silenced,
+                       min_signal=min_signal)))
 
     def _focus_table(self) -> None:
         tables = self.screen.query("#ap-table")

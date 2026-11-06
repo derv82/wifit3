@@ -1,4 +1,4 @@
-"""ScanFilter predicate (text + encryption) and FilterBar message wiring."""
+"""ScanFilter predicate (text, encryption, power) and FilterBar message wiring."""
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Checkbox, Input, Select
@@ -103,6 +103,20 @@ def test_hidden_ap_found_by_guessed_ssid():
     assert ScanFilter(text="castle").matches(hidden, ssid="Castle Crasher")
 
 
+# ---- ScanFilter min_signal -------------------------------------------------
+
+def test_min_signal_drops_aps_at_or_below_the_threshold():
+    scan_filter = ScanFilter(min_signal=-80)
+    assert scan_filter.matches(_ap(signal_by_card={"card": -79}))
+    assert not scan_filter.matches(_ap(signal_by_card={"card": -80}))
+    assert not scan_filter.matches(_ap(signal_by_card={"card": -81}))
+
+
+def test_min_signal_uses_the_best_card():
+    ap = _ap(signal_by_card={"near": -60, "far": -90})
+    assert ScanFilter(min_signal=-70).matches(ap)
+
+
 # ---- ScanFilter hide_silenced ----------------------------------------------
 
 def test_hide_silenced_drops_only_silenced_aps():
@@ -167,6 +181,18 @@ async def test_encryption_select_emits_scan_filter():
         await pilot.pause(0)
         scan = [e for e in app.events if e[0] == "scan"]
         assert scan and scan[-1][1].encryption is EncryptionFilter.WPA
+
+
+async def test_power_select_starts_at_all_and_emits_scan_filter():
+    app = _Host([1, 6, 11])
+    async with app.run_test() as pilot:
+        await pilot.pause(0)
+        assert app.query_one("#filter-power", Select).value is None
+        app.events.clear()
+        app.query_one("#filter-power", Select).value = -70
+        await pilot.pause(0)
+        scan = [e for e in app.events if e[0] == "scan"]
+        assert scan and scan[-1][1].min_signal == -70
 
 
 async def test_hide_silenced_checkbox_emits_scan_filter():
