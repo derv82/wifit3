@@ -274,7 +274,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Port | ✅ | 2026-09-02 | Matches linux-DKMS (rtl88x2cu) both bands; verify_pcap byte-identical up to TX. |
 | TX | ✅ | 2026-09-02 | Deauth + PMKID + WEP inject, 2.4 + 5 GHz. |
 | Handshake | ✅ | 2026-11-05 | Deauth → 4-way M1-M4; Evil twin capture succeed.|
-| PMKID | ✅ | 2026-09-02 | Passive + active, 2.4 + 5 GHz. |
+| PMKID | ✅ | 2026-11-06 | Passive + active, 2.4 + 5 GHz. |
 | WEP | ✅ | 2026-09-02 | ChopChop + ARP replay ~220 IVs/s. |
 | WPS | ✅ | 2026-11-05 | PIN works; M1-M7 captured, pixie pin cracked using ralink |
 | ACKs | ✅ | 2026-09-02 | Auto-ACKs spoofed mac in AM; TX stops-on-ACK AM both on & off (retry 6). |
