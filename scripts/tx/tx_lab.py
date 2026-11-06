@@ -129,33 +129,16 @@ class Copy:
 
 
 class SnifferTap:
-    """Sniffer RX sink. Must be built before the sniffer connects: the RX reader thread captures
-    the transport's ``_read_once`` / ``_dispatch`` when it starts."""
+    """Sniffer RX sink; timestamps frames when the driver dispatches them."""
 
-    def __init__(self, transport, ref_bssid: bytes) -> None:
+    def __init__(self, ref_bssid: bytes) -> None:
         self.ref_bssid = ref_bssid
         self.ref_beacons: list[float] = []
         self.lab_beacons: list[float] = []
         self.probe_resps: dict[bytes, list[float]] = defaultdict(list)   # addr1 -> read times
         self.copies: dict[tuple[bytes, int], list[Copy]] = defaultdict(list)   # (addr1, n)
-        self._read_times: dict[int, float] = {}
-        self._read_time = 0.0
-        read_once, dispatch = transport._read_once, transport._dispatch
-
-        def timed_read_once():
-            buf = read_once()
-            if buf:
-                self._read_times[id(buf)] = time.perf_counter()
-            return buf
-
-        def timed_dispatch(buf):
-            self._read_time = self._read_times.pop(id(buf), time.perf_counter())
-            dispatch(buf)
-
-        transport._read_once, transport._dispatch = timed_read_once, timed_dispatch
-
     def __call__(self, pkt) -> None:
-        raw, t = pkt.raw, self._read_time
+        raw, t = pkt.raw, time.perf_counter()
         if len(raw) < 24:
             return
         ta = raw[10:16]
@@ -375,7 +358,7 @@ async def main(a) -> None:
         return
     print(f"[+] test:    {test.description}")
     print(f"[+] sniffer: {sniffer.description}")
-    tap = SnifferTap(sniffer.driver.transport, mac_bytes(a.ref_bssid))
+    tap = SnifferTap(mac_bytes(a.ref_bssid))
 
     print("[*] connecting...")
     # Sequential, sniffer first: two bring-ups at once collide on USB (see scripts/ack/tx_retries.py).
