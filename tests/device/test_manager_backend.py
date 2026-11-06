@@ -18,11 +18,13 @@ def _no_backend():
 
 def test_devices_empty(monkeypatch):
     monkeypatch.setattr(manager, "usb_backend", lambda: FakeBackend())
+    monkeypatch.setattr("wifit3.device.windows_pnp.present_usb_ids", lambda: set())
     assert manager.devices() == []
 
 
 def test_devices_uses_the_backend(monkeypatch):
     monkeypatch.setattr(manager, "usb_backend", lambda: FakeBackend([_dev()]))
+    monkeypatch.setattr("wifit3.device.windows_pnp.present_usb_ids", lambda: set())
     out = manager.devices()
     assert [d.chipset for d in out] == ["RT5370"]
     assert (out[0].bus, out[0].address) == (1, 2)
