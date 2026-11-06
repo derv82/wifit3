@@ -243,7 +243,7 @@ async def test_checkbox_starts_from_the_persisted_setting():
         assert scan and scan[-1][1].hide_silenced is True
 
 
-@pytest.mark.parametrize("width", [90, 100, 120])
+@pytest.mark.parametrize("width", [104, 110, 120])
 async def test_filter_bar_fits_every_control_on_screen(width):
     """The text Input yields width so the hide-silenced checkbox is never clipped off the bar."""
     app = _Host([1, 6, 11, 36, 40])

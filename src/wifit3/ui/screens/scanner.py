@@ -138,7 +138,7 @@ class ScannerView(Screen):
     app: "WifiteApp"
 
     HORIZONTAL_BREAKPOINTS = [
-        (0, "-narrow"), (67, "-compact"), (71, "-medium"), (76, "-large"), (83, "-wide"),
+        (0, "-narrow"), (76, "-compact"), (84, "-medium"), (89, "-large"), (98, "-wide"),
     ]
 
     CSS = """

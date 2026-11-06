@@ -97,12 +97,15 @@ class _ScannerHost(App):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("width", "encryption_label_text", "channels_label_text"), [
-    (66, None, None), (67, None, "Ch"), (70, None, "Ch"), (71, "Enc", "Ch"), (75, "Enc", "Ch"),
-    (76, "Enc", "Channel"), (82, "Enc", "Channel"), (83, "Encryption", "Channel"),
+@pytest.mark.parametrize(("width", "encryption_label_text", "channels_label_text", "power_label_id"), [
+    (75, None, None, None), (76, None, "Ch", None), (83, None, "Ch", None),
+    (84, "Enc", "Ch", "#filter-power-short-label"), (88, "Enc", "Ch", "#filter-power-short-label"),
+    (89, "Enc", "Channel", "#filter-power-short-label"),
+    (97, "Enc", "Channel", "#filter-power-short-label"),
+    (98, "Encryption", "Channel", "#filter-power-label"),
 ])
 async def test_filter_bar_labels_shrink_then_hide_as_the_terminal_narrows(
-        width, encryption_label_text, channels_label_text):
+        width, encryption_label_text, channels_label_text, power_label_id):
     app = _ScannerHost(_FakeArray([], list(range(1, 15)) + [36, 40, 149]))
     async with app.run_test(size=(width, 24)) as pilot:
         await pilot.pause(0)
@@ -121,6 +124,8 @@ async def test_filter_bar_labels_shrink_then_hide_as_the_terminal_narrows(
             else:
                 assert label.region.height == 1
                 assert label.region.width == len(text)
+        for label_id in ("#filter-power-label", "#filter-power-short-label"):
+            assert scanner.query_one(label_id, Label).display is (label_id == power_label_id)
         if channels_label_text is not None:
             assert scanner.query_one(FilterBar).max_scroll_x == 0
 

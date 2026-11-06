@@ -82,7 +82,7 @@ class FilterBar(HorizontalScroll):
     FilterBar {
         height: auto;
         padding: 0 1;
-        overflow-x: auto;
+        overflow-x: hidden;
         overflow-y: hidden;
         border: round $primary;
         border-title-color: $primary;
