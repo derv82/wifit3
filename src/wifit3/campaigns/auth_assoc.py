@@ -157,7 +157,8 @@ class Association:
         self.iface.unregister_rx_callback(self._rx_cb)
 
     async def associate(self, attempts: int = 5) -> bool:
-        """Open-auth + assoc. Returns True once the AP accepts us (status 0)."""
+        """Open-auth + assoc. Returns True once the AP accepts us (status 0). An explicit
+        Auth or Assoc reject ends it; silence and deauths are retried up to ``attempts``."""
         if self.iface.current_channel != self.channel:
             await self.iface.set_channel(self.channel)
         for _ in range(attempts):
@@ -167,16 +168,21 @@ class Association:
             self._assoc_ok = False
             self.auth_status = None
             self.assoc_status = None
+            self.fail_reason = None
             logger.info("-> Auth Req to %s", self.bssid)
             await self._send_until(auth_req(self.bssid_bytes, self.our_mac),
-                                   lambda: self._auth_ok, self.auth_timeout)
+                                   lambda: self.auth_status is not None, self.auth_timeout)
+            if self.auth_status is not None and self.auth_status != 0:
+                break
             # Send Assoc whether or not the Auth Resp surfaced
             logger.info("-> Assoc Req to %s", self.bssid)
             await self._send_until(self._assoc_req(self.ssid),
-                                   lambda: self._assoc_ok, self.assoc_timeout)
+                                   lambda: self.assoc_status is not None, self.assoc_timeout)
             if self._assoc_ok:
                 self.associated = True
                 return True
+            if self.assoc_status is not None:
+                break
         self.associated = False
         if not self.fail_reason:
             self.fail_reason = "no Assoc resp"
@@ -190,7 +196,7 @@ class Association:
         self.auth_status = None
         logger.info("-> Auth Req to %s", self.bssid)
         await self._send_until(auth_req(self.bssid_bytes, self.our_mac),
-                               lambda: self._auth_ok, self.auth_timeout)
+                               lambda: self.auth_status is not None, self.auth_timeout)
         return self._auth_ok
 
     async def associate_as(self, ssid: str) -> Optional[int]:
