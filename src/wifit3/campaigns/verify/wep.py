@@ -6,7 +6,7 @@ import asyncio
 import os
 from typing import Optional
 
-from wifit3.campaigns.auth_assoc import Association
+from wifit3.wlan.station import Association
 from wifit3.crack.wep import rc4_keystream
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.mac import mac_header

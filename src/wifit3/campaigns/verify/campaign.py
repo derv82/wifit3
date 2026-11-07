@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Optional
 
-from wifit3.campaigns.auth_assoc import build_client_leaving
+from wifit3.wlan.station import build_client_leaving
 from wifit3.campaigns.campaign import Campaign
 from wifit3.dot11 import str_to_mac
 from wifit3.models import CREDENTIAL_NAMES, CaptureType

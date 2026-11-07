@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from wifit3.campaigns.auth_assoc import Association
+from wifit3.wlan.station import Association
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.deauth import REASON_4WAY_HANDSHAKE_TIMEOUT
 from wifit3.dot11.eapol import KEY_DESCRIPTOR_VERSION_MASK, KeyDescriptorVersion

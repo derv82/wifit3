@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Optional
 
-from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
+from wifit3.wlan.station import Association, WlanTransport, build_client_leaving
 from wifit3.campaigns.probe.base import BaseApProbe, ProbeResult
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.wsc import messages as M

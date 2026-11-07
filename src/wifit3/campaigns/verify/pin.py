@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from wifit3.campaigns.auth_assoc import Association, WlanTransport
+from wifit3.wlan.station import Association, WlanTransport
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.campaigns.wps.registrar import PinResult, WpsRegistrar
 from wifit3.dot11 import str_to_mac

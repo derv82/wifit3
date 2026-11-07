@@ -3,7 +3,7 @@
 Drives one PIN attempt as an external WPS Registrar against an Enrollee (the
 AP). Knows nothing about USB: it is handed a transport with
 ``send_until_ack``/``send_no_wait`` + ``recv(timeout)`` and builds/parses full 802.11
-data frames via ``messages``. The live adapter (``auth_assoc.WlanTransport``) wires
+data frames via ``messages``. The live adapter (``wlan.station.WlanTransport``) wires
 this to ``WlanInterface.send_until_ack``/``send_no_wait`` + ``register_rx_callback``;
 tests wire it to an in-process fake enrollee.
 

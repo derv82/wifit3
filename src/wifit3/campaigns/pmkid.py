@@ -37,7 +37,7 @@ from wifit3.dot11.pmf import PmfPosture
 from wifit3.dot11.rsn import AKM_PSK
 
 from .campaign import Campaign
-from .auth_assoc import Association
+from wifit3.wlan.station import Association
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ import logging
 from typing import Optional
 
 from .campaign import Campaign
-from .auth_assoc import (
+from wifit3.wlan.station import (
     Association, WlanTransport, build_client_leaving,
 )
 from wifit3.dot11 import random_client_mac, str_to_mac

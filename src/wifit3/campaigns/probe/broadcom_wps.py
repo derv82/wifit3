@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
-from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
+from wifit3.wlan.station import Association, WlanTransport, build_client_leaving
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_ENROLLEE, wps_assoc_ie

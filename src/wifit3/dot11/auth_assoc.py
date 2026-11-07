@@ -1,7 +1,7 @@
 """802.11 Open-System Authentication + Association Request builders (pure spec).
 
 The frame bytes only; the stateful auth+assoc exchange (retries, RX matching) lives in
-the campaign that drives these, ``campaigns.auth_assoc``.
+the campaign that drives these, ``wlan.station``.
 """
 import struct
 from typing import Optional
