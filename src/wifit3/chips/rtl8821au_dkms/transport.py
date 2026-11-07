@@ -29,12 +29,14 @@ CTRL_TIMEOUT_MS = 500  # [SRC] include/usb_ops_linux.h:22
 RX_BUF_SIZE = 0x8000        # 32 KB >= the RX-DMA aggregation ceiling
 RX_TIMEOUT_MS = 200
 _BULK_TIMEOUT_MS = 1000
+_RX_EP = 0x84               # real RX bulk-IN on the rtw88-shaped multi-function layout
 
 
 class RTL8821AUDkmsTransport:
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
-        self._in_ep = None  # bulk-IN (RX) endpoint address, probed lazily
+        self._in_ep = None        # bulk-IN (RX) endpoint address, probed lazily
+        self._in_ep_iface = 0     # interface owning that endpoint
 
     def _read(self, addr: int, length: int) -> bytes:
         return bytes(self.dev.ctrl_transfer(
@@ -73,19 +75,48 @@ class RTL8821AUDkmsTransport:
 
     # --- bulk IN (RX, ep 0x84) --------------------------------------------
     def _bulk_in_ep(self) -> int:
-        """Probe the active interface for the bulk-IN (RX) endpoint, cached."""
+        """The bulk-IN (RX) endpoint, cached, plus the interface that owns it.
+
+        Realtek ships two USB descriptor layouts for this silicon. Single-interface
+        parts expose one bulk-IN (0x81), so "first bulk-IN in the config" is right for
+        them. Multi-function parts -- the rtw88-shaped set seen on bare 0bda:0823
+        reference modules -- put FOUR functions on the bus:
+
+            intf 0 (class 0xe0)  bulk-IN 0x81, bulk-OUT 0x02, bulk-IN 0x82   <- decoys
+            intf 1 (class 0xe0)  isochronous in/out                            (BT)
+            intf 2 (class 0xff)  bulk-IN 0x84 + TX queues 0x05/0x06/0x08/0x09  <- the data path
+
+        Only 0x84 carries frames; that function is the one the TX path already writes
+        (``bulk_out`` hardcodes 0x09, also on interface 2). Picking the first bulk-IN
+        lands on 0x82 and every read times out: the card looks deaf while the radio is
+        fine. Prefer 0x84, fall back to the first bulk-IN for the simple layout.
+        """
         if self._in_ep is not None:
             return self._in_ep
         cfg = self.dev.get_active_configuration()
-        for intf in cfg:
-            for ep in intf:
-                if (usb.util.endpoint_direction(ep.bEndpointAddress)
-                        == usb.util.ENDPOINT_IN
-                        and usb.util.endpoint_type(ep.bmAttributes)
-                        == usb.util.ENDPOINT_TYPE_BULK):
-                    self._in_ep = ep.bEndpointAddress
-                    return self._in_ep
-        raise RuntimeError("RTL8821AU: no bulk-IN endpoint on the active interface")
+        bulk_ins = [
+            (ep.bEndpointAddress, intf.bInterfaceNumber)
+            for intf in cfg for ep in intf
+            if (usb.util.endpoint_direction(ep.bEndpointAddress) == usb.util.ENDPOINT_IN
+                and usb.util.endpoint_type(ep.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK)
+        ]
+        for addr, iface_num in bulk_ins:
+            if addr == _RX_EP:
+                self._in_ep, self._in_ep_iface = addr, iface_num
+                return addr
+        if not bulk_ins:
+            raise RuntimeError("RTL8821AU: no bulk-IN endpoint on the active interface")
+        self._in_ep, self._in_ep_iface = bulk_ins[0]
+        return self._in_ep
+
+    def claim_rx_interface(self) -> int:
+        """Claim the interface owning the RX endpoint (interface 2 on the multi-function
+        layout, already-claimed 0 on the simple one). ``dispose_resources`` in
+        ``close()`` releases it with the rest."""
+        self._bulk_in_ep()
+        if self._in_ep_iface:
+            usb.util.claim_interface(self.dev, self._in_ep_iface)
+        return self._in_ep_iface
 
     def bulk_in(self, size: int = RX_BUF_SIZE, timeout: int = RX_TIMEOUT_MS):
         """One blocking bulk-IN read. Returns the raw buffer, or None on a benign
