@@ -9,21 +9,24 @@ from typing import Optional
 from wifit3.dot11.ie import ssid_ie, rates_ie, ext_rates_ie, ht_cap_ie
 from wifit3.dot11.mac import mac_header
 
-# Standard 802.11 Authentication / Association response status codes.
+# 802.11 Authentication / Association response status codes (hostapd ieee802_11_defs.h).
 STATUS_CODES = {
     0: "success",
     1: "unspecified-failure",
     10: "caps-unsupported",
     12: "assoc-denied-outside-standard",
-    13: "rates-unsupported",
-    14: "short-slot-unsupported",
-    15: "dsss-ofdm-unsupported",
+    13: "auth-algorithm-unsupported",
+    14: "unknown-auth-transaction",
+    15: "challenge-failure",
+    16: "auth-timeout",
     17: "assoc-denied-ap-busy",
     18: "basic-rates-unsupported",
     19: "short-preamble-unsupported",
+    25: "short-slot-unsupported",
     27: "ht-caps-required",
-    30: "pmf-required",
-    34: "ht-caps-unsupported",
+    30: "assoc-rejected-temporarily",
+    31: "pmf-policy-violation",
+    34: "poor-channel-conditions",
     40: "invalid-ie",
     41: "group-cipher-invalid",
     42: "pairwise-cipher-invalid",
@@ -31,7 +34,11 @@ STATUS_CODES = {
     44: "rsne-version-unsupported",
     45: "rsne-caps-invalid",
     46: "cipher-suite-rejected",
-    72: "vht-caps-unsupported",
+    51: "listen-interval-too-large",
+    53: "invalid-pmkid",
+    54: "invalid-mde",
+    72: "invalid-rsne",
+    104: "vht-caps-required",
 }
 
 
