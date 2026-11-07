@@ -231,7 +231,7 @@ class DecloakCampaign(Campaign):
             self.iface, self.ap.bssid, "", self.ap.channel, our_mac=self.source_mac,
             auth_timeout=AUTH_TIMEOUT_S, assoc_timeout=ASSOC_TIMEOUT_S,
             assoc_trailer_ies=self.ap.rsn_ie or b"",
-            privacy=bool(self.ap.rsn_ie), should_stop=lambda: self.stopped,
+            should_stop=lambda: self.stopped, beacon_frame=self.ap.last_beacon_frame,
         )
         association.start()
         try:

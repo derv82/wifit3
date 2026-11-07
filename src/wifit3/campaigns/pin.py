@@ -324,7 +324,8 @@ class WpsCampaign(Campaign):
             self.assoc = Association(self.iface, self.bssid, self.target.ssid or "",
                                      self.channel, our_mac=self.our_mac,
                                      assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, self.wsc_2_0),
-                                     should_stop=lambda: self.stopped)
+                                     should_stop=lambda: self.stopped,
+                                     beacon_frame=self.target.last_beacon_frame)
             self.assoc.start()
             self.transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac)
             self.transport.start()

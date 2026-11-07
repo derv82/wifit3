@@ -84,6 +84,7 @@ class WpsM1Probe(BaseApProbe):
             assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, ap.wps_version == "2.0"),
             auth_timeout=0.6,
             assoc_timeout=0.8,
+            beacon_frame=ap.last_beacon_frame,
         )
         transport = WlanTransport(iface, bssid_bytes, our_mac)
         assoc.start()

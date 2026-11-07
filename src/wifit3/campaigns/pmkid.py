@@ -199,7 +199,8 @@ class PmkidHarvestAttack(Campaign):
                     assoc = Association(iface, self.target.bssid, self.target.ssid or "",
                                         self.target.channel, our_mac=self.source_mac,
                                         assoc_trailer_ies=self._assoc_rsn_ie,
-                                        should_stop=lambda: self.stopped)
+                                        should_stop=lambda: self.stopped,
+                                        beacon_frame=self.target.last_beacon_frame)
                     assoc.start()
                     try:
                         await assoc.associate()

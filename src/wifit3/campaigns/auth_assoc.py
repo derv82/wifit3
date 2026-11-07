@@ -119,7 +119,8 @@ class Association:
                  auth_timeout: float = 1.0,
                  assoc_trailer_ies: bytes = b"",
                  privacy: Optional[bool] = None,
-                 should_stop: Optional[Callable[[], bool]] = None):
+                 should_stop: Optional[Callable[[], bool]] = None,
+                 beacon_frame: Optional[bytes] = None):
         self.iface = iface
         self.bssid = bssid.lower()
         self.bssid_bytes = str_to_mac(self.bssid)
@@ -130,6 +131,7 @@ class Association:
         self.auth_timeout = auth_timeout
         self.assoc_trailer_ies = assoc_trailer_ies
         self.privacy = privacy
+        self.beacon_frame = beacon_frame
         self.should_stop = should_stop or (lambda: False)
         self.associated = False
         self.fail_reason: Optional[str] = None
@@ -169,9 +171,7 @@ class Association:
                                    lambda: self._auth_ok, self.auth_timeout)
             # Send Assoc whether or not the Auth Resp surfaced
             logger.info("-> Assoc Req to %s", self.bssid)
-            await self._send_until(assoc_req(self.bssid_bytes, self.our_mac, self.ssid,
-                                             self.assoc_trailer_ies,
-                                             channel=self.channel, privacy=self.privacy),
+            await self._send_until(self._assoc_req(self.ssid),
                                    lambda: self._assoc_ok, self.assoc_timeout)
             if self._assoc_ok:
                 self.associated = True
@@ -200,12 +200,14 @@ class Association:
         self.assoc_status = None
         self.ssid = ssid
         logger.info("-> Assoc Req to %s as %r", self.bssid, ssid)
-        await self._send_until(assoc_req(self.bssid_bytes, self.our_mac, ssid,
-                                         self.assoc_trailer_ies,
-                                         channel=self.channel, privacy=self.privacy),
+        await self._send_until(self._assoc_req(ssid),
                                lambda: self.assoc_status is not None, self.assoc_timeout)
         self.associated = self._assoc_ok
         return self.assoc_status
+
+    def _assoc_req(self, ssid: str) -> bytes:
+        return assoc_req(self.bssid_bytes, self.our_mac, ssid, self.assoc_trailer_ies,
+                         channel=self.channel, privacy=self.privacy, beacon_frame=self.beacon_frame)
 
     async def _send_until(self, frame: bytes, done, timeout: float,
                           resend_after: float = 0.4) -> None:

@@ -180,7 +180,8 @@ class WepFakeAuth:
         await asyncio.sleep(0.1)  # let the AP process Auth before Assoc lands
         await self.iface.send_no_wait(assoc_req(self.bssid_bytes, self.source_mac,
                                                 self.target.ssid or "",
-                                                channel=self.target.channel))
+                                                channel=self.target.channel,
+                                                beacon_frame=self.target.last_beacon_frame))
 
         deadline = time.time() + self.assoc_timeout
         while time.time() < deadline and self._active and not self._assoc_ok:

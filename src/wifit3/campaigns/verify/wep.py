@@ -47,7 +47,8 @@ class VerifyWepCampaign(VerifyCampaign):
             return VerifyOutcome.VERIFIED, None
 
         association = Association(iface, bssid, ap.ssid or "", ap.channel, our_mac=our_mac,
-                                  should_stop=lambda: self.stopped)
+                                  should_stop=lambda: self.stopped,
+                                  beacon_frame=ap.last_beacon_frame)
         association.start()
         self.step = "associating"
         try:
