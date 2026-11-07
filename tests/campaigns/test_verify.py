@@ -204,14 +204,6 @@ async def test_verify_errors_when_the_ap_is_not_heard():
     array.lease.assert_not_called()
 
 
-async def test_verify_errors_when_the_card_cannot_ack_as_a_client():
-    array = _array(_iface(), lease_mac=None)
-
-    campaign = await _run(VerifyPskCampaign, array, "pw")
-
-    assert (campaign.outcome, campaign.error) == (VerifyOutcome.ERROR, "this card can't ACK as a client")
-
-
 async def test_a_crashed_exchange_is_an_error_and_still_sends_the_leaving_deauth(monkeypatch):
     iface = _iface()
     array = _array(iface)

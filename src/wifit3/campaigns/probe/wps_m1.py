@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Optional
 
 from wifit3.wlan.station import Association, WlanTransport, build_client_leaving
 from wifit3.campaigns.probe.base import BaseApProbe, ProbeResult
-from wifit3.dot11 import str_to_mac
+from wifit3.dot11 import random_client_mac, str_to_mac
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from wifit3.dot11.wsc.identity import apply_wsc_identity
@@ -75,9 +75,7 @@ class WpsM1Probe(BaseApProbe):
         await asyncio.sleep(0.1)
         fake_mac = await iface.set_fake_mac(None, bssid_bytes)
         our_mac_str = fake_mac or (iface.mac_address if isinstance(iface.mac_address, str) else None)
-        if our_mac_str is None:
-            return ProbeResult(False, detail="active monitor unavailable")
-        our_mac = str_to_mac(our_mac_str)
+        our_mac = str_to_mac(our_mac_str) if our_mac_str else random_client_mac()
 
         assoc = Association(
             iface, ap.bssid.lower(), ap.ssid or "", ap.channel, our_mac=our_mac,
