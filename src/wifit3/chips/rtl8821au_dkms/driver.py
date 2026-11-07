@@ -104,6 +104,12 @@ class Rtl8821auDkmsDriver(Driver):
         # Hold interface 0 for the session: unclaimed, WinUSB claims and releases it around every
         # EP0 transfer, and that churn intermittently fails with "Entity not found".
         await loop.run_in_executor(None, usb.util.claim_interface, self.transport.dev, 0)
+        # The RX endpoint does not always live on interface 0: the rtw88-shaped descriptor set
+        # puts bulk-IN 0x84 and every TX queue on interface 2, whose sibling functions also
+        # expose decoy bulk-INs (0x81/0x82) that never carry frames. Claim the real one.
+        rx_iface = await loop.run_in_executor(None, self.transport.claim_rx_interface)
+        logger.debug("RTL8821AU: RX on ep %#04x (interface %d)",
+                     self.transport._bulk_in_ep(), rx_iface)
 
         # EFUSE read (probe phase, before power-on, like the vendor): crystal_cap (AFE
         # trim) + the per-rate TX-power base/diffs + the MAC address.
