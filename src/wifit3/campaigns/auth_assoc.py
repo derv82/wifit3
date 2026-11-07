@@ -133,6 +133,7 @@ class Association:
         self.privacy = privacy
         self.beacon_frame = beacon_frame
         self.should_stop = should_stop or (lambda: False)
+        self._replied = asyncio.Event()
         self.associated = False
         self.fail_reason: Optional[str] = None
         self._auth_ok = False
@@ -210,16 +211,22 @@ class Association:
                          channel=self.channel, privacy=self.privacy, beacon_frame=self.beacon_frame)
 
     async def _send_until(self, frame: bytes, done, timeout: float,
-                          resend_after: float = 0.4) -> None:
-        """Send ``frame`` immediately, then poll ``done()`` up to ``timeout``, resending
-        every ``resend_after`` while still silent (covers a lost TX or a lost AP reply)."""
-        deadline = time.time() + timeout
-        last_send = 0.0
-        while time.time() < deadline and not done() and not self.should_stop():
-            if time.time() - last_send >= resend_after:
-                await self.iface.send_no_wait(frame)
-                last_send = time.time()
-            await asyncio.sleep(0.02)
+                          resend_after: float = 0.2) -> None:
+        """Send ``frame``, then resend every ``resend_after`` (mac80211's 200 ms) until ``done()``
+        or ``timeout``. Wakes on each AP reply instead of polling."""
+        deadline = time.monotonic() + timeout
+        while not done() and not self.should_stop() and time.monotonic() < deadline:
+            await self.iface.send_no_wait(frame)
+            resend_at = min(time.monotonic() + resend_after, deadline)
+            while not done() and not self.should_stop():
+                remaining = resend_at - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._replied.clear()
+                try:
+                    await asyncio.wait_for(self._replied.wait(), remaining)
+                except asyncio.TimeoutError:
+                    break
 
     def _rx_cb(self, pkt: Packet) -> None:
         if (not self._active or pkt.raw[4:10] != self.our_mac   # addressed to us
@@ -254,3 +261,4 @@ class Association:
             self._assoc_ok = False
             self.state = (AssocState.AUTHENTICATED if kind == "disassoc"
                           else AssocState.UNAUTHENTICATED)
+        self._replied.set()
