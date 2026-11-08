@@ -279,12 +279,9 @@ MT_TX_NORMAL = 0
 
 # Monitor-vif TX context (mt7925/main.c:375-392, mt792x_mac.c). The monitor link is
 # vif idx 0: omac_idx 0, band_idx 0xff (masked to TGID=3), wcid = MT792x_WTBL_RESERVED
-# (19). basic_rates_idx = MT792x_BASIC_RATES_TBL + 4 because the phy's default chandef
-# lands on 5 GHz (the last band with world-enabled channels; mac80211.c:395-418), so
-# main.c:382 takes the non-2.4GHz branch. Constant for the monitor vif's lifetime.
+# (19). basic_rates_idx is per band (main.c:382-385): driver._inject_frame.
 MON_TX_OMAC_IDX  = 0
 MON_TX_BAND_IDX  = 0xff
-MON_TX_RATE_IDX  = 11 + 4   # MT792x_BASIC_RATES_TBL(mt792x.h:36) + 4 = 15
 
 # ===========================================================================
 # Post-boot init (mt7925_mac_init, mt792x_mac_init_band). Addresses/bits verbatim

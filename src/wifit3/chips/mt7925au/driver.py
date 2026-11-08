@@ -151,7 +151,14 @@ class MT7925AUDriver(Driver):
         """Build the connac3 TXWI for a raw 802.11 frame and send it once over the HCCA
         bulk-OUT (EP 0x09), the mgmt/PSD endpoint the mt76 xmit path routes injected
         frames to. The TXWI reads the 802.11 sequence from the frame itself."""
-        wire = tx.build_tx(frame_bytes, wcid_idx=self._tx_wcid)
+        # main.c:382-385 picks basic_rates_idx once, from the band when the vif is added (5 GHz in
+        # monitor mode, so Linux injects OFDM 6 on 2.4 GHz too). We pick it per tune: 2.4 GHz ->
+        # mt76_rates[0] CCK 1 Mbps, else mt76_rates[4] OFDM 6 Mbps (mac80211.c:160-172). MT7925AU.md.
+        if self._channel <= 14:
+            basic_rates_idx = MT792x_BASIC_RATES_TBL
+        else:
+            basic_rates_idx = MT792x_BASIC_RATES_TBL + 4
+        wire = tx.build_tx(frame_bytes, wcid_idx=self._tx_wcid, basic_rates_idx=basic_rates_idx)
         return await self.transport.send_bulk_checked(wire, EP_OUT_HCCA)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
