@@ -38,6 +38,7 @@ from .constants import (
     MT76X0_EEPROM_SIZE,
     MT76X0U_EE_MAX_VER,
     MT_EE_2G_TARGET_POWER,
+    MT_EE_5G_TARGET_POWER,
     MT_EE_CHIP_ID,
     MT_EE_FREQ_OFFSET,
     MT_EE_LNA_GAIN,
@@ -51,10 +52,14 @@ from .constants import (
     MT_EE_NIC_CONF_0_TX_PATH_MASK,
     MT_EE_NIC_CONF_0_TX_PATH_SHIFT,
     MT_EE_NIC_CONF_1,
+    MT_EE_NIC_CONF_1_TX_ALC_EN,
     MT_EE_PCI_ID,
     MT_EE_PHYSICAL_READ,
     MT_EE_READ,
     MT_EE_TSSI_BOUND4,
+    MT_EE_TX_POWER_0_GRP4_TSSI_SLOPE,
+    MT_EE_TX_POWER_BYRATE_BASE,
+    MT_EE_TX_POWER_DELTA_BW80,
     MT_EE_VERSION,
     MT_EFUSE_CTRL,
     MT_EFUSE_CTRL_AIN_MASK,
@@ -343,6 +348,114 @@ def lna_gain_for_channel(cache: EEPROMCache, channel: int) -> int:
         lna = lna_5g[2]
 
     return 0 if lna == 0xFF else _sign_extend(lna, 8)
+
+
+def s8(val: int) -> int:
+    """C ``(s8)`` cast: keep the low 8 bits, two's complement."""
+    val &= 0xFF
+    return val - 0x100 if val & 0x80 else val
+
+
+def s6_to_s8(val: int) -> int:
+    """[SRC] mt76x0/eeprom.h:26-33."""
+    ret = val & 0x3F
+    if ret & 0x20:
+        ret -= 0x40
+    return ret
+
+
+@dataclass
+class MT76x02RatePower:
+    """`struct mt76x02_rate_power` (mt76x02.h:75-85): s8 power offsets per rate, 0.5 dB units."""
+    cck: list[int]
+    ofdm: list[int]
+    ht: list[int]
+    vht: list[int]
+
+    def all(self) -> list[list[int]]:
+        return [self.cck, self.ofdm, self.ht, self.vht]
+
+
+def mt76x0_get_tx_power_per_rate(cache: EEPROMCache, channel: int) -> MT76x02RatePower:
+    """[SRC] mt76x0/eeprom.c:152-198. `mt76x0_get_delta` returns 0 at 20 MHz (eeprom.c:145-146),
+    so the delta offset (eeprom.c:196-197) is a no-op here."""
+    is_2ghz = channel <= 14
+    t = MT76x02RatePower(cck=[0] * 4, ofdm=[0] * 8, ht=[0] * 16, vht=[0] * 2)
+
+    # cck 1M, 2M, 5.5M, 11M
+    val = cache.get_u16(MT_EE_TX_POWER_BYRATE_BASE)
+    t.cck[0] = t.cck[1] = s6_to_s8(val)
+    t.cck[2] = t.cck[3] = s6_to_s8(val >> 8)
+
+    # ofdm 6M, 9M, 12M, 18M
+    val = cache.get_u16(MT_EE_TX_POWER_BYRATE_BASE + 2 if is_2ghz else 0x120)
+    t.ofdm[0] = t.ofdm[1] = s6_to_s8(val)
+    t.ofdm[2] = t.ofdm[3] = s6_to_s8(val >> 8)
+
+    # ofdm 24M, 36M, 48M, 54M
+    val = cache.get_u16(MT_EE_TX_POWER_BYRATE_BASE + 4 if is_2ghz else 0x122)
+    t.ofdm[4] = t.ofdm[5] = s6_to_s8(val)
+    t.ofdm[6] = t.ofdm[7] = s6_to_s8(val >> 8)
+
+    # ht-vht mcs 1ss 0, 1, 2, 3
+    val = cache.get_u16(MT_EE_TX_POWER_BYRATE_BASE + 6 if is_2ghz else 0x124)
+    t.ht[0] = t.ht[1] = s6_to_s8(val)
+    t.ht[2] = t.ht[3] = s6_to_s8(val >> 8)
+
+    # ht-vht mcs 1ss 4, 5, 6
+    val = cache.get_u16(MT_EE_TX_POWER_BYRATE_BASE + 8 if is_2ghz else 0x126)
+    t.ht[4] = t.ht[5] = s6_to_s8(val)
+    t.ht[6] = t.ht[7] = s6_to_s8(val >> 8)
+
+    # vht mcs 8, 9 5GHz
+    val = cache.get_u16(0x12C)
+    t.vht[0] = s6_to_s8(val)
+    t.vht[1] = s6_to_s8(val >> 8)
+    return t
+
+
+# [SRC] mt76x0/eeprom.c:206-214
+_POWER_INFO_CHAN_MAP = [
+    (2, 0), (4, 2), (6, 4), (8, 6),
+    (10, 8), (12, 10), (14, 12), (38, 0),
+    (44, 2), (48, 4), (54, 6), (60, 8),
+    (64, 10), (102, 12), (108, 14), (112, 16),
+    (118, 18), (124, 20), (128, 22), (134, 24),
+    (140, 26), (151, 28), (157, 30), (161, 32),
+    (167, 34), (171, 36), (175, 38),
+]
+
+
+def mt76x0_get_power_info(cache: EEPROMCache, channel: int, rate_power: MT76x02RatePower) -> int:
+    """[SRC] mt76x0/eeprom.c:200-271. ``rate_power`` is ``dev->rate_power``, which the TSSI branch
+    reads (eeprom.c:226). `mt76x0_get_delta` is 0 at 20 MHz (eeprom.c:145-146)."""
+    if cache.get_u16(MT_EE_NIC_CONF_1) & MT_EE_NIC_CONF_1_TX_ALC_EN:   # mt76x0_tssi_enabled
+        # TODO: verify, untested here, needs a TSSI (NIC_CONF_1 TX_ALC_EN) card
+        if channel > 14:
+            data = cache.get_u16(MT_EE_5G_TARGET_POWER)
+        else:
+            data = cache.get_u16(MT_EE_2G_TARGET_POWER)
+        return s8((data & 0xFF) - rate_power.ofdm[7])
+
+    idx = 0
+    offset = _POWER_INFO_CHAN_MAP[0][1]
+    for map_chan, map_offset in _POWER_INFO_CHAN_MAP:
+        if channel <= map_chan:
+            idx = 1 if channel == map_chan else 0
+            offset = map_offset
+            break
+
+    if channel <= 14:
+        addr = MT_EE_TX_POWER_DELTA_BW80 + offset
+    else:
+        # The switch at eeprom.c:245-263 (42, 58, 106, 122, 155) picks the offset the loop already did.
+        addr = MT_EE_TX_POWER_0_GRP4_TSSI_SLOPE + 2 + offset
+
+    data = cache.get_u16(addr)
+    tp = s8(data >> (8 * idx))
+    if tp < 0 or tp > 0x3F:
+        tp = 5
+    return tp
 
 
 @dataclass
