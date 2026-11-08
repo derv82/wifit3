@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import TYPE_CHECKING, Optional
 
 from wifit3.wlan.station import Association, WlanTransport, build_client_leaving
@@ -14,6 +15,8 @@ from wifit3.models import IdSource
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
     from wifit3.wlan.interface import WlanInterface
+
+NACK_REPLY_TIMEOUT = 0.5
 
 
 async def _trigger_m1(
@@ -58,6 +61,22 @@ async def _trigger_m1(
             last_send = now
             resends = 0
         elif parsed.wsc_msg_type == M.WPS_M1:
+            nonce_e = parsed.attrs.get(M.ATTR_ENROLLEE_NONCE, bytes(16))
+            nack = M.build_data_frame(bssid, our_mac, bssid, M.eap_wsc_response(
+                parsed.eap_id, M.WSC_NACK, M.build_wsc_nack(nonce_e, os.urandom(16))))
+            await transport.send_no_wait(nack)
+            nack_deadline = loop.time() + NACK_REPLY_TIMEOUT
+            while loop.time() < nack_deadline:
+                reply = await transport.recv(nack_deadline - loop.time())
+                if reply is None:
+                    break
+                reply_parsed = M.parse_rx_frame(reply)
+                if reply_parsed is None:
+                    continue
+                if reply_parsed.is_eap_failure:
+                    break
+                if reply_parsed.wsc_msg_type == M.WPS_M1:
+                    await transport.send_no_wait(nack)
             return parsed.attrs
     return None
 
