@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import TYPE_CHECKING, Optional
 
-from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
+from wifit3.wlan.station import Association, WlanTransport, build_client_leaving
 from wifit3.campaigns.probe.base import BaseApProbe, ProbeResult
-from wifit3.dot11 import str_to_mac
+from wifit3.dot11 import random_client_mac, str_to_mac
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from wifit3.dot11.wsc.identity import apply_wsc_identity
@@ -14,6 +15,8 @@ from wifit3.models import IdSource
 if TYPE_CHECKING:
     from wifit3.models import AccessPoint
     from wifit3.wlan.interface import WlanInterface
+
+NACK_REPLY_TIMEOUT = 0.5
 
 
 async def _trigger_m1(
@@ -58,6 +61,22 @@ async def _trigger_m1(
             last_send = now
             resends = 0
         elif parsed.wsc_msg_type == M.WPS_M1:
+            nonce_e = parsed.attrs.get(M.ATTR_ENROLLEE_NONCE, bytes(16))
+            nack = M.build_data_frame(bssid, our_mac, bssid, M.eap_wsc_response(
+                parsed.eap_id, M.WSC_NACK, M.build_wsc_nack(nonce_e, os.urandom(16))))
+            await transport.send_no_wait(nack)
+            nack_deadline = loop.time() + NACK_REPLY_TIMEOUT
+            while loop.time() < nack_deadline:
+                reply = await transport.recv(nack_deadline - loop.time())
+                if reply is None:
+                    break
+                reply_parsed = M.parse_rx_frame(reply)
+                if reply_parsed is None:
+                    continue
+                if reply_parsed.is_eap_failure:
+                    break
+                if reply_parsed.wsc_msg_type == M.WPS_M1:
+                    await transport.send_no_wait(nack)
             return parsed.attrs
     return None
 
@@ -75,15 +94,14 @@ class WpsM1Probe(BaseApProbe):
         await asyncio.sleep(0.1)
         fake_mac = await iface.set_fake_mac(None, bssid_bytes)
         our_mac_str = fake_mac or (iface.mac_address if isinstance(iface.mac_address, str) else None)
-        if our_mac_str is None:
-            return ProbeResult(False, detail="active monitor unavailable")
-        our_mac = str_to_mac(our_mac_str)
+        our_mac = str_to_mac(our_mac_str) if our_mac_str else random_client_mac()
 
         assoc = Association(
             iface, ap.bssid.lower(), ap.ssid or "", ap.channel, our_mac=our_mac,
             assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, ap.wps_version == "2.0"),
             auth_timeout=0.6,
             assoc_timeout=0.8,
+            beacon_frame=ap.last_beacon_frame,
         )
         transport = WlanTransport(iface, bssid_bytes, our_mac)
         assoc.start()

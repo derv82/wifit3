@@ -15,11 +15,19 @@ correctness against a real AP's independent stack is what wps_probe.py proves.
 import asyncio
 import os
 
+import pytest
 
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc import crypto as wc
+from wifit3.campaigns.wps import registrar
 from wifit3.campaigns.wps.pixie import PixieMode, recover_pin
 from wifit3.campaigns.wps.registrar import WpsRegistrar, PinResult
+
+
+@pytest.fixture(autouse=True)
+def no_eapol_start_wait(monkeypatch):
+    """The fake AP waits for our EAPOL-Start: skip the real 1-2 s wait for it to open EAP first."""
+    monkeypatch.setattr(registrar, "eapol_start_wait", lambda wsc_2_0: 0.0)
 
 BSSID = bytes.fromhex("3421090001ff")
 STA = bytes.fromhex("02aabbccddee")

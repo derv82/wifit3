@@ -7,11 +7,10 @@ import logging
 import time
 from typing import Optional
 
-from wifit3.campaigns.auth_assoc import build_client_leaving
+from wifit3.wlan.station import build_client_leaving
 from wifit3.campaigns.campaign import Campaign
-from wifit3.dot11 import str_to_mac
+from wifit3.dot11 import random_client_mac, str_to_mac
 from wifit3.models import CREDENTIAL_NAMES, CaptureType
-from wifit3.wlan.lease import SPOOFABLE
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +67,9 @@ class VerifyCampaign(Campaign):
             self.outcome, self.error = VerifyOutcome.ERROR, f"AP not heard on channel {self.target.channel}"
             return
         bssid_mac = str_to_mac(bssid)
-        lease = self.array.lease(channel=self.target.channel, fake_mac=SPOOFABLE, bssid=bssid_mac,
+        lease = self.array.lease(channel=self.target.channel, fake_mac=random_client_mac(), bssid=bssid_mac,
                                  ack_tally=True, iface=self.iface)
         async with lease as iface:
-            if lease.mac is None:
-                self.outcome, self.error = VerifyOutcome.ERROR, "this card can't ACK as a client"
-                return
             our_mac = str_to_mac(lease.mac)
             try:
                 self.outcome, self.error = await self._exchange(iface, our_mac, lease.mac)

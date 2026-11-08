@@ -26,7 +26,7 @@ sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
 from dev import select_device
 
-from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
+from wifit3.wlan.station import Association, WlanTransport, build_client_leaving
 from wifit3.campaigns.probe.broadcom_wps import RESPONSE_TIMEOUT, WpsImplementation, enter_wps, send_fragment
 from wifit3.device.manager import wlan_close, wlan_ifaces
 from wifit3.dot11 import str_to_mac

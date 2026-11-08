@@ -30,7 +30,7 @@ The attack machinery lives here in `campaigns/wps/`:
 
 The Focus-facing orchestrators are one level up: `campaigns/pin.py` (`WpsCampaign`) drives
 the PIN sweep, `campaigns/pbc.py` (`WpsPbcCampaign`) drives PBC, and
-`campaigns/auth_assoc.py` (`Association` + `WlanTransport`) is the shared auth/assoc engine.
+`wlan/station.py` (`Association` + `WlanTransport`) is the shared auth/assoc engine.
 
 ## One PIN attempt
 

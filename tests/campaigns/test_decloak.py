@@ -11,7 +11,7 @@ from wifit3.campaigns.decloak import (
     KnownDecloakCampaign,
     candidates_from_sibling,
 )
-from wifit3.campaigns.auth_assoc import AssocState
+from wifit3.wlan.station import AssocState
 from wifit3.models import AccessPoint
 from wifit3.persist.config import Config
 from wifit3.wlan.array import WlanArray

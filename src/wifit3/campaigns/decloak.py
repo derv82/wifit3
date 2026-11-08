@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from wifit3.campaigns.auth_assoc import Association, AssocState, build_client_leaving
+from wifit3.wlan.station import Association, AssocState, build_client_leaving
 from wifit3.campaigns.campaign import Campaign
 from wifit3.dot11 import SSID_MAX_OCTETS, mac_to_str, str_to_mac
 from wifit3.dot11.mac import BROADCAST_MAC, random_client_mac
@@ -231,7 +231,7 @@ class DecloakCampaign(Campaign):
             self.iface, self.ap.bssid, "", self.ap.channel, our_mac=self.source_mac,
             auth_timeout=AUTH_TIMEOUT_S, assoc_timeout=ASSOC_TIMEOUT_S,
             assoc_trailer_ies=self.ap.rsn_ie or b"",
-            privacy=bool(self.ap.rsn_ie), should_stop=lambda: self.stopped,
+            should_stop=lambda: self.stopped, beacon_frame=self.ap.last_beacon_frame,
         )
         association.start()
         try:

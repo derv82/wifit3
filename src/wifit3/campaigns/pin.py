@@ -32,7 +32,7 @@ from wifit3.persist.config import Config
 from .campaign import Campaign
 from .wps import known_pins
 from .wps import pins as pinmod
-from .auth_assoc import Association, WlanTransport
+from wifit3.wlan.station import Association, WlanTransport
 from wifit3.dot11 import random_client_mac, str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from .wps.lock import LockTracker
@@ -324,7 +324,8 @@ class WpsCampaign(Campaign):
             self.assoc = Association(self.iface, self.bssid, self.target.ssid or "",
                                      self.channel, our_mac=self.our_mac,
                                      assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, self.wsc_2_0),
-                                     should_stop=lambda: self.stopped)
+                                     should_stop=lambda: self.stopped,
+                                     beacon_frame=self.target.last_beacon_frame)
             self.assoc.start()
             self.transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac)
             self.transport.start()

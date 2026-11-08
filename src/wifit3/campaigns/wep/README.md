@@ -22,7 +22,7 @@ header) and counts uniques, which drives the Focus "ETA to 10k" line. A WEP AP s
 a `(W)` marker in Scanner.
 
 **Fake auth (`-1`).** Open-system auth + assoc as a forged client so the AP accepts
-our injections. Built on the auth/assoc machinery in `campaigns/auth_assoc.py` (shared
+our injections. Built on the auth/assoc machinery in `wlan/station.py` (shared
 with PMKID and WPS). Prerequisite for the TX attacks.
 
 **ARP replay (`-3`).** Capture a broadcast ARP request (a distinctively-sized WEP data
