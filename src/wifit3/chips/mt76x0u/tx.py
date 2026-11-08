@@ -73,10 +73,9 @@ logger = logging.getLogger(__name__)
 #   bit  11    : LDPC_EXSYM
 #   bits 13-15 : PHY (0=CCK, 1=OFDM, 2=HT-mix, 3=HT-GF, 4=VHT)
 #
-# A `rate=0` default means CCK PHY + IDX 0 = 1 Mbps, which the chip often
-# silently DROPS for transmit. mt76x2u (sibling driver, hw-proven inject)
-# defaults to OFDM PHY + IDX 0 = 6 Mbps — the lowest universal OFDM rate
-# that works on both 2.4 and 5 GHz. Match that.
+# Lowest rate per band: mt76x02_rates (mt76x02_util.c:17-24) hw_value, long preamble
+# (mt76x02_mac.c:207-210).
+TXWI_RATE_CCK_1MBPS = (0 << 13) | 0     # PHY=CCK, idx=0
 TXWI_RATE_OFDM_6MBPS = (1 << 13) | 0    # PHY=OFDM, idx=0
 
 
@@ -153,6 +152,7 @@ def build_inject_packet(
     *,
     request_ack: bool = False,
     wcid: int = 0xFF,
+    rate: int = TXWI_RATE_OFDM_6MBPS,
 ) -> bytes:
     """Assemble the full bulk-OUT packet for `frame` (an 802.11 MAC frame
     WITHOUT FCS — chip appends FCS). Returns the bytes to push out EP 0x09.
@@ -164,7 +164,7 @@ def build_inject_packet(
     4-aligned). When QoS-data or 4-addr WDS shows up we'll need to port
     the pad insert.
     """
-    txwi = build_txwi(len(frame), request_ack=request_ack, wcid=wcid)
+    txwi = build_txwi(len(frame), request_ack=request_ack, wcid=wcid, rate=rate)
     payload = txwi + frame
     dma_info = _build_dma_info(len(payload))
 
@@ -182,6 +182,7 @@ def inject_80211_frame(
     *,
     request_ack: bool = False,
     wcid: int = 0xFF,
+    rate: int = TXWI_RATE_OFDM_6MBPS,
     timeout_ms: int = 1000,
 ) -> int:
     """Send `frame` via EP 0x09 (HCCA = MGMT queue). Returns the number
@@ -189,7 +190,7 @@ def inject_80211_frame(
 
     Raises TXError on USB failure.
     """
-    pkt = build_inject_packet(frame, request_ack=request_ack, wcid=wcid)
+    pkt = build_inject_packet(frame, request_ack=request_ack, wcid=wcid, rate=rate)
     logger.trace("inject_80211_frame: %d-byte 802.11 frame -> %d-byte bulk-OUT",
                  len(frame), len(pkt))
     try:
