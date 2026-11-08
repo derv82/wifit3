@@ -46,3 +46,23 @@ def test_linux_node_path_raises_without_a_backend(monkeypatch):
     monkeypatch.setattr(manager, "usb_backend", _no_backend)
     with pytest.raises(manager.WifiteFatalError):
         manager.linux_node_path(DeviceID(0x148F, 0x5370, "RT5370", bus=1, address=2))
+
+
+async def test_restore_installed_dedupes_calls_setup_and_clears(monkeypatch):
+    monkeypatch.setattr(manager, "ZeroCdEjector", lambda *a, **k: object())
+
+    class _FakeSetup:
+        def __init__(self):
+            self.restored = []
+
+        async def restore(self, device_id):
+            self.restored.append(device_id)
+
+    setup = _FakeSetup()
+    dm = manager.DeviceManager(app=object(), setup=setup, prompter=object())
+    a = DeviceID(0x0BDA, 0x8813, "A", bus=1, address=5)
+    b = DeviceID(0x148F, 0x7601, "B", bus=1, address=6)
+    dm._setup_installed = [a, a, b]
+    await dm.restore_installed()
+    assert setup.restored == [a, b]
+    assert dm._setup_installed == []

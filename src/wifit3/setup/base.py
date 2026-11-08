@@ -91,6 +91,11 @@ class Setup(ABC):
         """Reverse a prior install (the splash's ✕ button). Returns a result for the caller to report."""
         ...
 
+    async def restore(self, device_id: DeviceID) -> None:
+        """Best-effort hand-back of the card to the OS on app exit (reverse of ``install``, no prompt,
+        no physical replug). Default no-op; only Linux has persistent state to reverse."""
+        return None
+
 
 class NoSetup(Setup):
     """No privileged setup exists on this OS: nothing to install, nothing to reverse."""

@@ -218,3 +218,22 @@ async def test_wait_for_access_short_circuits_for_root(monkeypatch):
     monkeypatch.setattr(lin.os, "geteuid", lambda: 0)
     assert await lin.SetupLinux()._wait_for_access(_DEV, writable=False) is True
     assert await lin.SetupLinux()._wait_for_access(_DEV, writable=True) is True
+
+
+# ---- restore (hand the card back to the OS on exit) ---------------------------------------------
+
+
+async def test_restore_calls_restore_rule(monkeypatch):
+    monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: _target())
+    calls = []
+    monkeypatch.setattr(lin, "restore_rule", lambda *a, **k: calls.append((a, k)) or _Result(ok=True))
+    await lin.SetupLinux().restore(_DEV)
+    assert calls
+
+
+async def test_restore_noop_for_unsupported_chipset(monkeypatch):
+    monkeypatch.setattr(lin, "target_for_vidpid", lambda v, p: None)
+    called = []
+    monkeypatch.setattr(lin, "restore_rule", lambda *a, **k: called.append(1) or _Result())
+    await lin.SetupLinux().restore(_DEV)
+    assert not called

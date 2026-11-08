@@ -619,6 +619,63 @@ def remove_rule(target: SetupTarget, *, run_with_terminal: RunWithTerminal,
                             message=f"Couldn't remove the udev rule + blocklist (exit {rc}).")
 
 
+_RESTORED_MSG = ("Card handed back to the kernel: blocklist removed, driver reloaded and the device "
+                 "re-enumerated. It works as a normal adapter again, no replug needed.")
+
+
+def _restore_cmd(key: str, modules: list[str], sys_dirs: list[str]) -> str:
+    """Reverse ``key``'s rule+blocklist, reload udev, modprobe ``modules`` back, then software-replug
+    each ``sys_dirs`` node (deauthorize/reauthorize) so the kernel driver rebinds without a replug."""
+    q = shlex.quote
+    steps = [
+        f"rm -f {q(rule_path(key))} {q(blacklist_path(key))}",
+        "udevadm control --reload-rules",
+    ]
+    if modules:
+        steps.append(f"(modprobe {' '.join(q(m) for m in modules)} 2>/dev/null || true)")
+    for d in sys_dirs:
+        auth = f"{d}/authorized"
+        steps.append(f"(test -e {q(auth)} && {{ echo 0 > {q(auth)}; echo 1 > {q(auth)}; }} || true)")
+    steps.append("(udevadm settle 2>/dev/null || true)")
+    return " && ".join(steps)
+
+
+def restore_rule(target: SetupTarget, *, ids, run_with_terminal: RunWithTerminal) -> SetupResult:
+    """Return ``target``'s card to the OS with no physical replug: remove its rule+blocklist, reload
+    udev, modprobe its module back and re-enumerate its live USB node(s). Idempotent, best-effort."""
+    if not sys.platform.startswith("linux"):
+        raise RuntimeError("restore_rule is Linux-only")
+    rpath, bpath = rule_path(target.key), blacklist_path(target.key)
+    modules = (sorted(modules_in_conf(Path(bpath))) if Path(bpath).exists()
+               else discover_kernel_modules(target))
+    sys_dirs = [str(d) for d in _matching_usb_dirs(ids)]
+    if not Path(rpath).exists() and not Path(bpath).exists() and not sys_dirs:
+        return SetupResult(ok=True, detail=rpath,
+                           message="No wifit3 rules installed for this chipset.")
+    cmd = _restore_cmd(target.key, modules, sys_dirs)
+    if os.geteuid() == 0:
+        rc = _run_as_root(cmd)
+        return (SetupResult(ok=True, detail=rpath, message=_RESTORED_MSG) if rc == 0
+                else SetupResult(ok=False, detail=rpath,
+                                 message=f"Couldn't hand the card back to the kernel (exit {rc})."))
+    escalation = _choose_escalation()
+    if escalation is None:
+        return SetupResult(ok=False, detail=rpath,
+                           message="No elevator (pkexec/sudo) found to hand the card back.")
+    rc = _elevate(cmd, escalation, f"handing {target.description} back to the kernel",
+                  run_with_terminal)
+    if rc is None:
+        return SetupResult(ok=False, detail=rpath,
+                           message="Couldn't hand the terminal over for the password prompt.")
+    if rc == 0:
+        return SetupResult(ok=True, detail=rpath, message=_RESTORED_MSG)
+    if rc in (126, 130):
+        return SetupResult(ok=False, cancelled=True,
+                           message="Authorization dismissed; the card was not handed back.")
+    return SetupResult(ok=False, detail=rpath,
+                       message=f"Couldn't hand the card back to the kernel (exit {rc}).")
+
+
 def _dedupe(keys) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -735,6 +792,20 @@ class SetupLinux(Setup):
                 ok=True, detail=result.detail,
                 message="Rules removed. Replug the card to fully revoke access.")
         return SetupResult(ok=True, message=result.message, detail=result.detail)
+
+    async def restore(self, device_id: DeviceID) -> None:
+        target = target_for_vidpid(device_id.vid, device_id.pid)
+        if target is None:
+            return
+        try:
+            result = await asyncio.to_thread(
+                restore_rule, target, ids=[(device_id.vid, device_id.pid)],
+                run_with_terminal=lambda run: run())
+        except Exception:
+            logger.exception("restore: handing %s back to the kernel raised", device_id.chipset)
+            return
+        if not result.ok:
+            logger.warning("restore: %s not fully handed back: %s", device_id.chipset, result.message)
 
     async def _wait_for_access(self, device_id: DeviceID, *, writable: bool,
                                timeout: float = 5.0, interval: float = 0.1) -> bool:

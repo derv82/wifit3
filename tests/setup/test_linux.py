@@ -604,3 +604,40 @@ def test_remove_rule_wide_clears_the_family(monkeypatch, tmp_path):
 def test_linux_setup_result_defaults():
     r = SetupResult(ok=True, message="x")
     assert r.ok and not r.cancelled and r.detail is None
+
+
+def test_restore_cmd_removes_files_reloads_modprobes_and_reenumerates():
+    cmd = lin._restore_cmd("ar9271", ["ath9k_htc"], ["/sys/bus/usb/devices/1-1"])
+    assert f"rm -f {rule_path('ar9271')} {blacklist_path('ar9271')}" in cmd
+    assert "udevadm control --reload-rules" in cmd
+    assert "modprobe ath9k_htc" in cmd
+    assert "echo 0 > /sys/bus/usb/devices/1-1/authorized" in cmd
+    assert "echo 1 > /sys/bus/usb/devices/1-1/authorized" in cmd
+    assert "udevadm settle" in cmd
+
+
+def test_restore_rule_root_runs_cmd_and_reports_restored(monkeypatch, tmp_path):
+    monkeypatch.setattr(lin, "rule_path", lambda k: str(tmp_path / f"{k}.rules"))
+    monkeypatch.setattr(lin, "blacklist_path", lambda k: str(tmp_path / f"{k}.conf"))
+    monkeypatch.setattr(lin, "_matching_usb_dirs", lambda ids: [Path("/sys/bus/usb/devices/1-1")])
+    monkeypatch.setattr(lin, "discover_kernel_modules", lambda t: ["ath9k_htc"])
+    monkeypatch.setattr(lin.os, "geteuid", lambda: 0)
+    ran = {}
+
+    def _fake_root(cmd):
+        ran["cmd"] = cmd
+        return 0
+    monkeypatch.setattr(lin, "_run_as_root", _fake_root)
+    target = SetupTarget(key="ar9271", description="AR9271", ids=(AR9271,), module_hints=("ath9k_htc",))
+    res = lin.restore_rule(target, ids=[AR9271], run_with_terminal=lambda run: run())
+    assert res.ok
+    assert "modprobe ath9k_htc" in ran["cmd"] and "/authorized" in ran["cmd"]
+
+
+def test_restore_rule_noop_when_nothing_installed(monkeypatch, tmp_path):
+    monkeypatch.setattr(lin, "rule_path", lambda k: str(tmp_path / f"{k}.rules"))
+    monkeypatch.setattr(lin, "blacklist_path", lambda k: str(tmp_path / f"{k}.conf"))
+    monkeypatch.setattr(lin, "_matching_usb_dirs", lambda ids: [])
+    target = SetupTarget(key="ar9271", description="AR9271", ids=(AR9271,), module_hints=("ath9k_htc",))
+    res = lin.restore_rule(target, ids=[AR9271], run_with_terminal=lambda run: run())
+    assert res.ok and "No wifit3 rules" in res.message

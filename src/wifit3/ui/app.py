@@ -496,6 +496,10 @@ class WifiteApp(App):
         self.vault.manager.kill_all_running()
         if self.array:
             await self.array.close()
+        try:
+            await self.device_manager.restore_installed()
+        except Exception:
+            logger.exception("quit: handing cards back to the kernel failed")
         self.exit()
 
     def action_toggle_vault(self) -> None:

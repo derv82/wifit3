@@ -391,6 +391,7 @@ class DeviceManager:
         self.prompter = prompter
         self._name_counter = 0
         self._ejector = ZeroCdEjector(zerocd_ids, raw_devices)
+        self._setup_installed: list[DeviceID] = []   # cards we ran setup on, to hand back on exit
 
     def devices(self) -> List[DeviceID]:
         return devices()
@@ -420,6 +421,7 @@ class DeviceManager:
             device_id = await self.setup.install(device_id, self.prompter)
             if device_id is None:
                 return BringupResult.cancelled()
+            self._setup_installed.append(device_id)
         try:
             await self._connect_and_attach(device_id)
             return BringupResult.ready()
@@ -438,6 +440,7 @@ class DeviceManager:
         device_id = await self.setup.install(device_id, self.prompter)
         if device_id is None:
             return BringupResult.cancelled()              # declined or failed (setup already reported)
+        self._setup_installed.append(device_id)
 
         try:
             await self._connect_and_attach(device_id)
@@ -457,6 +460,20 @@ class DeviceManager:
             return await self.setup.uninstall(device_id, self.prompter)
         finally:
             self.prompter.close()
+
+    async def restore_installed(self) -> None:
+        """Hand every card we set up this session back to the OS (reverse the blocklist, re-enumerate)
+        so it works in other apps again. Best-effort, called on app exit; never raises."""
+        seen: set[tuple[int, int]] = set()
+        for device_id in self._setup_installed:
+            if (device_id.vid, device_id.pid) in seen:
+                continue
+            seen.add((device_id.vid, device_id.pid))
+            try:
+                await self.setup.restore(device_id)
+            except Exception:
+                logger.exception("restore_installed: %s", device_id.description)
+        self._setup_installed = []
 
     async def _connect_and_attach(self, device_id) -> None:
         iface = wlan_iface(device_id, name=self._next_name())
