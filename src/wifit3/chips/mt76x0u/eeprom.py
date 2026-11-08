@@ -118,6 +118,7 @@ def efuse_read_block(
     for i in range(4):
         word = transport.read32(MT_EFUSE_DATA_BASE + 4 * i)
         block[4 * i: 4 * i + 4] = word.to_bytes(4, "little")
+    logger.debug("EFUSE block 0x%03x: %s", block_addr, block.hex(" "))
     return bytes(block)
 
 
