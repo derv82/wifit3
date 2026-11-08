@@ -32,7 +32,7 @@ body:
     id: usbinfo
     attributes:
       label: Card Output
-      description: For linux: "lsusb", macos: "system_profiler SPUSBDataType", Windows: "pnputil /enum-devices /connected /bus USB /deviceids /properties"
+      description: 'For linux: "lsusb", macos: "system_profiler SPUSBDataType", Windows: "pnputil /enum-devices /connected /bus USB /deviceids /properties"'
       placeholder: "Bus 001 Device 001: ID..."
   - type: dropdown
     id: have-it
