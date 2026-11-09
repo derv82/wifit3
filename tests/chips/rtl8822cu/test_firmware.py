@@ -45,7 +45,25 @@ def test_h2c_busy_mailbox_does_not_overwrite_firmware_command(monkeypatch):
     transport.write32.assert_not_called()
 
 
-def test_reserved_page_boundary_uses_packet_offset_before_firmware(monkeypatch):
+def test_first_download_boundary_uses_packet_offset_and_offset_56(monkeypatch):
+    transport = MagicMock()
+    dev = MagicMock()
+    payload = bytes(range(256)) * 15 + bytes(range(208))
+    dev.write.side_effect = lambda ep, packet, timeout: len(packet)
+    monkeypatch.setattr(firmware, "_poll8", lambda *args: True)
+
+    firmware._write_fw_packet(dev, transport, 0x05, payload, beacon=False, bulk_out_size=512)
+
+    packet = dev.write.call_args.args[1]
+    assert len(packet) == 48 + 8 + len(payload)
+    assert int.from_bytes(packet[0:2], "little") == len(payload)
+    assert (int.from_bytes(packet[0:4], "little") >> 16) & 0xFF == 56
+    assert (int.from_bytes(packet[4:8], "little") >> 24) & 0x1F == 1
+    assert packet[48:56] == b"\0" * 8
+    assert packet[56:] == payload
+
+
+def test_second_download_boundary_uses_packet_offset_and_offset_48(monkeypatch):
     transport = MagicMock()
     dev = MagicMock()
     payload = bytes(range(256)) * 15 + bytes(range(208))
@@ -57,7 +75,7 @@ def test_reserved_page_boundary_uses_packet_offset_before_firmware(monkeypatch):
     packet = dev.write.call_args.args[1]
     assert len(packet) == 48 + 8 + len(payload)
     assert int.from_bytes(packet[0:2], "little") == len(payload)
-    assert (int.from_bytes(packet[0:4], "little") >> 16) & 0xFF == 56
+    assert (int.from_bytes(packet[0:4], "little") >> 16) & 0xFF == 48
     assert (int.from_bytes(packet[4:8], "little") >> 24) & 0x1F == 1
     assert packet[48:56] == b"\0" * 8
     assert packet[56:] == payload

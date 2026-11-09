@@ -194,9 +194,10 @@ def _fw_tx_desc(size: int, *, qsel: int = 16, offset: int = _TX_DESC_SIZE,
                 pkt_offset: int = 0, beacon: bool = False, bmc: bool = False) -> bytes:
     """48-byte RTL8822C TX descriptor plus checksum.
 
-    ``usb_write_data_not_xmitframe`` inserts one eight-byte packet-offset unit before a reserved
-    page payload that ends on a USB bulk boundary; its descriptor carries OFFSET=56 and
-    PKT_OFFSET=1. [SRC hal/rtl8822c/usb/rtl8822cu_halmac.c:100-126]"""
+    A reserved page payload that ends on a USB bulk boundary gets one eight-byte packet-offset
+    unit before it and PKT_OFFSET=1. OFFSET is 56 on the first download
+    (``usb_write_data_not_xmitframe``) and 48 on the second (``update_txdesc``).
+    [SRC hal/rtl8822c/usb/rtl8822cu_halmac.c:141-161, rtl8822cu_xmit.c:63-95]"""
     desc = bytearray(_TX_DESC_SIZE)
     if beacon:
         w0 = (size & 0xFFFF) | (offset << 16) | (0x84 << 24)
@@ -234,12 +235,17 @@ def _write_fw_packet(dev: usb.core.Device, transport: RTL8822CUTransport,
     try:
         # BMC = multicast bit of the chunk's "addr1" (byte 4, past FC[2]+duration[2]).
         bmc = bool(payload[4] & 1) if beacon else False
-        add_pkt_offset = beacon and (len(payload) + _TX_DESC_SIZE) % bulk_out_size == 0
-        pkt_offset = 1 if add_pkt_offset else 0
-        desc_offset = _TX_DESC_SIZE + (pkt_offset * _PACKET_OFFSET_SZ)
+        on_boundary = (len(payload) + _TX_DESC_SIZE) % bulk_out_size == 0
+        pkt_offset = 1 if on_boundary else 0
+        if on_boundary and not beacon:
+            # usb_write_data_not_xmitframe [SRC hal/rtl8822c/usb/rtl8822cu_halmac.c:141-161]
+            desc_offset = _TX_DESC_SIZE + _PACKET_OFFSET_SZ
+        else:
+            # update_txdesc: OFFSET = TXDESC_SIZE + OFFSET_SZ (0) [SRC rtl8822cu_xmit.c:63-95, rtl8822cu.h:45]
+            desc_offset = _TX_DESC_SIZE
         packet = _fw_tx_desc(len(payload), offset=desc_offset, pkt_offset=pkt_offset,
                              beacon=beacon, bmc=bmc)
-        if add_pkt_offset:
+        if on_boundary:
             packet += b"\0" * _PACKET_OFFSET_SZ
         packet += payload
         sent = dev.write(bulk_out, packet, 1000)
