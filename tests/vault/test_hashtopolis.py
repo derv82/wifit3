@@ -1,8 +1,10 @@
 import base64
+import email.message
 import io
 import json
 import time
 import urllib.error
+import urllib.parse
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,9 +15,9 @@ from wifit3.persist.config import Config
 from wifit3.vault.manager import JobManager
 from wifit3.vault.tools import hashtopolis as ht
 from wifit3.vault.tools import hashtopolis_api as api_module
-from wifit3.vault.tools.hashtopolis_api import (HashtopolisApi, HashtopolisError,
+from wifit3.vault.tools.hashtopolis_api import (AccessGroup, HashtopolisApi, HashtopolisError,
                                                 HashtopolisUnreachable, ServerFile, TaskProgress,
-                                                user_api_endpoint)
+                                                api_endpoint, user_api_endpoint)
 
 _ESSID = "test".encode().hex()
 _PMKID = f"WPA*01*{'11' * 16}*020000000a01*020000000b02*{_ESSID}***"
@@ -355,3 +357,201 @@ def test_cracked_keys_are_the_plains(monkeypatch):
         {"hash": _PMKID, "plain": "secret-psk", "crackpos": 1}]})
 
     assert HashtopolisApi("server", "key").cracked_keys(40) == ["secret-psk"]
+
+
+_TOKEN = "header.payload.sig"
+
+
+def _http(monkeypatch, *responses):
+    sent = []
+    queue = list(responses)
+
+    def urlopen(request, timeout):
+        body = json.loads(request.data) if request.data else None
+        sent.append((request.get_method(), request.full_url, body,
+                     request.get_header("Authorization")))
+        response = queue.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        raw = response if isinstance(response, bytes) else json.dumps(response).encode()
+        return io.BytesIO(raw)
+
+    monkeypatch.setattr(api_module.urllib.request, "urlopen", urlopen)
+    return sent
+
+
+def _query(url: str) -> dict[str, list[str]]:
+    return urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+
+
+def test_v2_endpoint_for_a_jwt_and_user_api_otherwise():
+    assert api_endpoint("server:8080", _TOKEN) == "http://server:8080/api/v2"
+    assert api_endpoint("http://server:8080/api/v2/", "Bearer " + _TOKEN) == "http://server:8080/api/v2"
+    assert api_endpoint("http://server:8080/api/user.php", "key") == "http://server:8080/api/user.php"
+
+
+def test_jwt_job_records_the_v2_server(server, tmp_path, monkeypatch):
+    monkeypatch.setattr(Config.hashtopolis, "access_key", _TOKEN)
+    tool, capture = ht.HashtopolisTool(), _capture(tmp_path, _PMKID)
+    job = _job(capture)
+    tool.launch(job, capture)
+    _poll_until(tool, job, lambda r: r.value == "Waiting for an agent")
+
+    assert job.tool_state["server"] == "http://server:8080/api/v2"
+    assert _TOKEN not in json.dumps(job.to_dict())
+
+
+def test_v2_create_hashlist_posts_base64_paste(monkeypatch):
+    sent = _http(monkeypatch, {"data": {"id": 7}})
+
+    assert HashtopolisApi("server:8080", "Bearer " + _TOKEN).create_hashlist("n", [_PMKID], 1) == 7
+    method, url, body, auth = sent[0]
+    assert (method, url, auth) == (
+        "POST", "http://server:8080/api/v2/ui/hashlists", "Bearer " + _TOKEN)
+    attributes = body["data"]["attributes"]
+    assert body["data"]["type"] == "hashlist"
+    assert attributes["sourceType"] == "paste"
+    assert attributes["sourceData"] == base64.b64encode(f"{_PMKID}\n".encode()).decode()
+    assert attributes["hashTypeId"] == 22000
+
+
+def test_v2_create_task_runs_the_wordlist_on_the_hashlist(monkeypatch):
+    sent = _http(monkeypatch, {"data": {"id": 9}})
+
+    assert HashtopolisApi("http://server:8080", _TOKEN).create_task(
+        "n", 7, ServerFile(2, "rockyou.txt"), 3) == 9
+    attributes = sent[0][2]["data"]["attributes"]
+    assert (attributes["attackCmd"], attributes["files"], attributes["crackerBinaryId"]) == (
+        "#HL# rockyou.txt", [2], 3)
+    assert attributes["useNewBench"] is True
+    assert attributes["priority"] >= 1
+
+
+def test_v2_wordlists_follow_pages_and_keep_type_zero(monkeypatch):
+    sent = _http(
+        monkeypatch,
+        {"data": [{"id": 1, "attributes": {"fileType": 0, "filename": "rockyou.txt"}}],
+         "links": {"next": "http://internal/api/v2/ui/files?page[after]=abc&page[size]=1"}},
+        {"data": [{"id": 2, "attributes": {"fileType": 1, "filename": "best64.rule"}},
+                  {"id": 3, "attributes": {"fileType": 0, "filename": "top.txt"}}]})
+
+    assert HashtopolisApi("http://server:8080", _TOKEN).wordlists() == [
+        ServerFile(1, "rockyou.txt"), ServerFile(3, "top.txt")]
+    assert _query(sent[0][1])["filter[fileType]"] == ["0"]
+    assert sent[1][1].startswith("http://server:8080/api/v2/ui/files?")
+    assert _query(sent[1][1])["page[after]"] == ["abc"]
+
+
+def test_v2_access_groups(monkeypatch):
+    _http(monkeypatch, {"data": [{"id": 1, "attributes": {"groupName": "Default"}}]})
+
+    assert HashtopolisApi("http://server:8080", _TOKEN).access_groups() == [
+        AccessGroup(1, "Default")]
+
+
+def test_v2_newest_hashcat_prefers_one_that_supports_wpa(monkeypatch):
+    _http(monkeypatch,
+          {"data": [{"id": 1, "attributes": {"typeName": "hashcat"}}]},
+          {"data": [
+              {"id": 9, "attributes": {"crackerBinaryTypeId": 1},
+               "relationships": {"hashtypes": {"data": [{"id": 0}]}}},
+              {"id": 4, "attributes": {"crackerBinaryTypeId": 1},
+               "relationships": {"hashtypes": {"data": [{"id": 22000}]}}},
+              {"id": 8, "attributes": {"crackerBinaryTypeId": 1},
+               "relationships": {"hashtypes": {"data": []}}},
+          ]})
+
+    assert HashtopolisApi("http://server:8080", _TOKEN).newest_hashcat_version_id() == 4
+
+
+def test_v2_newest_hashcat_is_the_highest_id_when_support_is_unknown(monkeypatch):
+    _http(monkeypatch,
+          {"data": [{"id": 1, "attributes": {"typeName": "hashcat"}}]},
+          {"data": [
+              {"id": 2, "attributes": {"crackerBinaryTypeId": 1}},
+              {"id": 8, "attributes": {"crackerBinaryTypeId": 1},
+               "relationships": {"hashtypes": {"data": []}}},
+          ]})
+
+    assert HashtopolisApi("http://server:8080", _TOKEN).newest_hashcat_version_id() == 8
+
+
+def test_v2_hashcat_without_wpa_is_an_error(monkeypatch):
+    _http(monkeypatch,
+          {"data": [{"id": 1, "attributes": {"typeName": "hashcat"}}]},
+          {"data": [{"id": 4, "attributes": {"crackerBinaryTypeId": 1},
+                     "relationships": {"hashtypes": {"data": [{"id": 0}]}}}]})
+
+    with pytest.raises(HashtopolisError, match="no hashcat version"):
+        HashtopolisApi("http://server:8080", _TOKEN).newest_hashcat_version_id()
+
+
+def test_v2_missing_hashcat_cracker_is_an_error(monkeypatch):
+    _http(monkeypatch, {"data": [{"id": 2, "attributes": {"typeName": "john"}}]})
+
+    with pytest.raises(HashtopolisError, match="no hashcat cracker"):
+        HashtopolisApi("http://server:8080", _TOKEN).newest_hashcat_version_id()
+
+
+def test_v2_cracked_keys_are_the_plains(monkeypatch):
+    sent = _http(monkeypatch, {"data": [
+        {"id": 1, "attributes": {"plaintext": "secret-psk"}},
+        {"id": 2, "attributes": {"plaintext": ""}},
+    ]})
+
+    assert HashtopolisApi("http://server:8080", _TOKEN).cracked_keys(40) == ["secret-psk"]
+    assert _query(sent[0][1])["filter[hashlistId]"] == ["40"]
+    assert _query(sent[0][1])["filter[isCracked]"] == ["true"]
+
+
+def test_v2_task_progress_uses_status_and_cprogress(monkeypatch):
+    _http(monkeypatch, {"data": {"id": 50, "attributes": {
+        "keyspace": 10, "cprogress": 4, "status": 1}}})
+
+    assert HashtopolisApi("http://server:8080", _TOKEN).task_progress(50) == TaskProgress(10, 4, False)
+
+
+def test_v2_completed_task(monkeypatch):
+    _http(monkeypatch, {"data": {"id": 50, "attributes": {
+        "keyspace": 10, "cprogress": 10, "status": 3}}})
+
+    assert HashtopolisApi("http://server:8080", _TOKEN).task_progress(50).is_complete
+
+
+def test_v2_archive_patches_the_task(monkeypatch):
+    sent = _http(monkeypatch, {"data": {"id": 50}})
+
+    HashtopolisApi("http://server:8080", _TOKEN).archive_task(50)
+    method, url, body, _auth = sent[0]
+    assert (method, url) == ("PATCH", "http://server:8080/api/v2/ui/tasks/50")
+    assert body["data"]["attributes"] == {"isArchived": True}
+    assert body["data"]["id"] == 50
+
+
+def test_v2_problem_title_is_the_error(monkeypatch):
+    body = json.dumps({"title": "Expired token", "status": 401}).encode()
+    error = urllib.error.HTTPError(
+        "http://server:8080/api/v2/ui/accessgroups", 401, "Unauthorized",
+        email.message.Message(), io.BytesIO(body))
+    _http(monkeypatch, error)
+
+    with pytest.raises(HashtopolisError, match="Expired token") as raised:
+        HashtopolisApi("http://server:8080", _TOKEN).check_access()
+    assert not isinstance(raised.value, HashtopolisUnreachable)
+
+
+def test_v2_html_and_refused_are_unreachable(monkeypatch):
+    _http(monkeypatch, urllib.error.URLError("refused"), b"<html></html>")
+    api = HashtopolisApi("http://server:8080", _TOKEN)
+
+    with pytest.raises(HashtopolisUnreachable, match="refused"):
+        api.check_access()
+    with pytest.raises(HashtopolisUnreachable, match="not a Hashtopolis API"):
+        api.check_access()
+
+
+def test_v2_malformed_task_is_an_error(monkeypatch):
+    _http(monkeypatch, {"data": {"id": 1, "attributes": {}}})
+
+    with pytest.raises(HashtopolisError, match="Unexpected reply to /ui/tasks"):
+        HashtopolisApi("http://server:8080", _TOKEN).task_progress(1)

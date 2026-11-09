@@ -14,7 +14,8 @@ from wifit3.persist.config import Config, ConfigError
 from wifit3.vault.tools.hashtopolis_api import (AccessGroup, HashtopolisApi, HashtopolisError,
                                                 ServerFile)
 
-_ACCESS_KEY_HINT = "[dim]Use port 8080 (legacy API), [i]not 4200[/i]: Users → API Management[/dim]"
+_ACCESS_KEY_HINT = ("[dim]Backend port (usually 8080), not the web UI: "
+                    "Account → API Keys[/dim]")
 _REFRESH_HINT = "[dim]Refresh to list wordlists[/dim]"
 
 
