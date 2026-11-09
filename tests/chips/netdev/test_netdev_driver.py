@@ -45,6 +45,19 @@ def test_parse_radiotap_handles_short_data():
     assert rssi == -50
 
 
+def test_parse_radiotap_reads_signal_from_first_present_word():
+    # Real mac80211 header captured from an MT7922 (wlp62s0): three present words
+    # (ext-present chain), TSFT+flags+rate+channel+dBm-antsignal, antsignal byte 0xc5 = -59.
+    header = bytes.fromhex(
+        "000038002f4040a0200800a020080000"
+        "46b217000000000000028509a000c500"
+        "000000000000000046b217000000000000000101c300c201"
+    )
+    mpdu = b"\x80\x00" + b"\x00" * 22
+    _, rssi = parse_radiotap(header + mpdu)
+    assert rssi == -59, "field offsets must be decoded from the first present word, not the last"
+
+
 @pytest.fixture
 def mock_id():
     return DeviceID(
@@ -139,3 +152,13 @@ async def test_driver_close(mock_id):
     driver._loop = MagicMock()
     await driver.close()
     assert driver._sock is None
+
+
+async def test_driver_close_restores_networkmanager(mock_id):
+    driver = LinuxNetdevDriver.from_netdev("wlp62s0", mock_id)
+    driver._changed_mode = True
+    driver._nm_unmanaged = True
+    with patch("wifit3.chips.netdev.driver.subprocess.run") as run:
+        await driver.close()
+    restore_cmd = run.call_args[0][0]
+    assert "nmcli dev set wlp62s0 managed yes" in restore_cmd

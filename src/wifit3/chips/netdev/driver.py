@@ -28,7 +28,13 @@ def parse_radiotap(data: bytes) -> tuple[bytes, int]:
     it_len = struct.unpack_from("<H", data, 2)[0]
     if it_len > len(data):
         return b"", -50
-    it_present = struct.unpack_from("<I", data, 4)[0]
+    # The standard-namespace fields (TSFT..dBm antsignal) are described by the FIRST present
+    # word; the ext-present chain only tells us how many words precede the field data. Decoding
+    # against the last word (a continuation mask) misreads every field offset.
+    # shortcut: assumes dBm antsignal stays in the standard namespace (field 5); upgrade if a
+    # card emits it only via a vendor namespace.
+    fields_present = struct.unpack_from("<I", data, 4)[0]
+    it_present = fields_present
     offset = 8
     while (it_present & (1 << 31)) and offset + 4 <= it_len:
         it_present = struct.unpack_from("<I", data, offset)[0]
@@ -36,22 +42,22 @@ def parse_radiotap(data: bytes) -> tuple[bytes, int]:
 
     rssi = -50
     flags = 0
-    if it_present & (1 << 0):
+    if fields_present & (1 << 0):
         offset = (offset + 7) & ~7
         offset += 8
-    if it_present & (1 << 1):
+    if fields_present & (1 << 1):
         if offset < it_len:
             flags = data[offset]
         offset += 1
-    if it_present & (1 << 2):
+    if fields_present & (1 << 2):
         offset += 1
-    if it_present & (1 << 3):
+    if fields_present & (1 << 3):
         offset = (offset + 1) & ~1
         offset += 4
-    if it_present & (1 << 4):
+    if fields_present & (1 << 4):
         offset = (offset + 1) & ~1
         offset += 2
-    if it_present & (1 << 5):
+    if fields_present & (1 << 5):
         if offset < it_len:
             rssi = struct.unpack_from("<b", data, offset)[0]
         offset += 1
@@ -86,6 +92,7 @@ class LinuxNetdevDriver(Driver):
         self._tx_seq = 0
         self.is_warm = False
         self._changed_mode = False
+        self._nm_unmanaged = False
 
     @classmethod
     def from_netdev(cls, iface: str, id_entry: DeviceID) -> "LinuxNetdevDriver":
@@ -116,6 +123,7 @@ class LinuxNetdevDriver(Driver):
         ]
         if shutil.which("nmcli"):
             cmds.insert(0, f"nmcli dev set {self.iface} managed no")
+            self._nm_unmanaged = True
 
         compound = " && ".join(cmds)
         # Try unprivileged first
@@ -238,9 +246,14 @@ class LinuxNetdevDriver(Driver):
             self._sock = None
 
         if self._changed_mode:
+            restore = f"ip link set {self.iface} down && iw dev {self.iface} set type managed && ip link set {self.iface} up"
+            # Hand the device back to NetworkManager; without this it stays unmanaged and
+            # never scans/connects again, so the card appears to "see no networks".
+            if self._nm_unmanaged:
+                restore += f" && nmcli dev set {self.iface} managed yes"
             try:
                 subprocess.run(
-                    f"ip link set {self.iface} down && iw dev {self.iface} set type managed && ip link set {self.iface} up",
+                    restore,
                     shell=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
