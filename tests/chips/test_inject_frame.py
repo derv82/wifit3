@@ -353,7 +353,7 @@ FRAMES: dict[str, bytes] = {
 def driver_package_names() -> list[str]:
     chips_dir = Path(chips.__file__).parent
     return sorted(init.parent.name for init in chips_dir.glob("*/__init__.py")
-                  if "def import_driver" in init.read_text(encoding="utf-8"))
+                  if init.parent.name != "netdev" and "def import_driver" in init.read_text(encoding="utf-8"))
 
 
 def without_seq_ctrl(frame: bytes) -> bytes:

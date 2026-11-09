@@ -92,14 +92,22 @@ class WlanArray:
         it (the caller serializes calls: two cards driving RF bring-up over USB at once can collide),
         and pool it. Raises on bring-up failure; the caller decides splash-fatal vs toast."""
         dev, driver_cls, id_entry = handle
-        driver = driver_cls.from_usb_device(dev, id_entry)
+        if dev is None or id_entry.bus == "pci" or id_entry.extras.get("bus_type") == "pci":
+            iface_name = id_entry.extras.get("iface", f"wlan{self._name_counter}")
+            driver = driver_cls.from_netdev(iface_name, id_entry)
+            bus = id_entry.bus
+            address = id_entry.address
+        else:
+            driver = driver_cls.from_usb_device(dev, id_entry)
+            bus = dev.bus
+            address = dev.address
         name = f"wlan{self._name_counter}"
         self._name_counter += 1
         iface = WlanInterface(driver, name, id_entry.description,
                               vid=id_entry.vid, pid=id_entry.pid, dev=dev,
                               chipset=id_entry.chipset, vendor=id_entry.vendor,
                               product_name=id_entry.product_name,
-                              bus=dev.bus, address=dev.address)
+                              bus=bus, address=address)
         if connect and not await iface.connect():
             raise RuntimeError(f"{id_entry.description}: connect returned False")
         return self.attach(iface)

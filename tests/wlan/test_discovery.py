@@ -223,6 +223,8 @@ def _stub_bus(monkeypatch, devs):
     monkeypatch.setattr(usb.core, "find", lambda **kw: list(devs))
     # Isolate from the host's real PnP tree on Windows (devices() merges it in).
     monkeypatch.setattr("wifit3.device.windows_pnp.present_usb_ids", lambda: set())
+    # Isolate from the host's real PCIe netdev tree on Linux (devices() merges it in).
+    monkeypatch.setattr(manager, "_pci_netdev_devices", lambda smap: [])
 
 
 def test_devices_tags_each_match_with_its_bus_address(monkeypatch):

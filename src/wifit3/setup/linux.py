@@ -282,12 +282,15 @@ def _sudo_without_password(sudo: str) -> bool:
 def _choose_escalation() -> Escalation | None:
     sudo = shutil.which("sudo")
     pkexec = shutil.which("pkexec")
+    doas = shutil.which("doas")
     if sudo and _sudo_without_password(sudo):
         return Escalation(argv=(sudo, "-n"), needs_terminal=False)
     if pkexec and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         return Escalation(argv=(pkexec,), needs_terminal=False)
     if sudo:
         return Escalation(argv=(sudo,), needs_terminal=True)
+    if doas:
+        return Escalation(argv=(doas,), needs_terminal=True)
     if pkexec:
         return Escalation(argv=(pkexec,), needs_terminal=True)
     return None
@@ -646,6 +649,8 @@ class SetupLinux(Setup):
 
     def requires_setup(self, device_id: DeviceID) -> bool:
         """True when a kernel driver is bound to the card, so a cold bring-up would collide."""
+        if device_id.bus == "pci" or device_id.extras.get("bus_type") == "pci":
+            return False
         return kernel_driver_bound([(device_id.vid, device_id.pid)])
 
     async def install(self, device_id: DeviceID, ui: Prompter) -> DeviceID | None:

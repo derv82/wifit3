@@ -16,15 +16,16 @@ class DeviceID:
     vendor: Optional[str] = None
     product_name: Optional[str] = None
     extras: dict[str, Any] = field(default_factory=dict)
-    bus: Optional[int] = None       # None on the static SUPPORTED_IDS catalog entries;
-    address: Optional[int] = None   # set on the live devices find_devices() returns
+    bus: Optional[int | str] = None       # None on the static SUPPORTED_IDS catalog entries;
+    address: Optional[int | str] = None   # set on the live devices find_devices() returns
 
     @property
     def instance_key(self) -> tuple:
         """Identity of one physical card on the bus. ``address`` is assigned per-bus, so two identical
         models on different host controllers can share it; ``bus`` and ``address`` together are unique.
         vid/pid ride along so a catalog entry (bus/address None) never collides with a live instance."""
-        return (self.vid, self.pid, self.bus, self.address)
+        addr = self.address if self.address is not None else self.extras.get("iface")
+        return (self.vid, self.pid, self.bus, addr)
 
     @property
     def description(self) -> str:

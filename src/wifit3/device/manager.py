@@ -12,6 +12,7 @@ import functools
 import importlib
 import logging
 import os
+from pathlib import Path
 import pkgutil
 import sys
 from dataclasses import dataclass, replace
@@ -253,8 +254,59 @@ def raw_devices() -> List[usb.core.Device]:
     return _bus_devices(libusb_package.get_libusb1_backend())
 
 
+SYSFS_NET = "/sys/class/net"
+
+
+def _pci_netdev_devices(smap: dict[VidPid, Claim], sysfs_net: str | Path = SYSFS_NET) -> List[DeviceID]:
+    """Present supported PCIe/M.2 wireless network devices (Linux only)."""
+    if not sys.platform.startswith("linux"):
+        return []
+    base_net = Path(sysfs_net)
+    if not base_net.exists():
+        return []
+    out: List[DeviceID] = []
+    for iface_dir in sorted(base_net.iterdir()):
+        iface = iface_dir.name
+        if not ((iface_dir / "wireless").exists() or (iface_dir / "phy80211").exists()):
+            continue
+        device_link = iface_dir / "device"
+        if not device_link.exists():
+            continue
+        subsystem_link = device_link / "subsystem"
+        try:
+            if not (subsystem_link.is_symlink() and os.path.basename(os.readlink(subsystem_link)) == "pci"):
+                continue
+        except OSError:
+            continue
+        vendor_file = device_link / "vendor"
+        device_file = device_link / "device"
+        try:
+            vid = int(vendor_file.read_text().strip(), 16)
+            pid = int(device_file.read_text().strip(), 16)
+        except (OSError, ValueError):
+            continue
+        claim = smap.get((vid, pid))
+        if claim is None:
+            continue
+        entry = claim.entry
+        try:
+            pci_slot = os.path.basename(os.readlink(device_link))
+        except OSError:
+            pci_slot = iface
+        extras = dict(entry.extras)
+        extras.update({"iface": iface, "bus_type": "pci", "pci_slot": pci_slot})
+        out.append(replace(
+            entry,
+            bus="pci",
+            address=pci_slot,
+            product_name=f"{entry.product_name} ({iface})" if entry.product_name else iface,
+            extras=extras,
+        ))
+    return out
+
+
 def devices() -> List[DeviceID]:
-    """Every supported device present on the USB bus right now."""
+    """Every supported device present on the USB bus or PCIe right now."""
     backend = libusb_package.get_libusb1_backend()
     smap = supported_ids()
     out: List[DeviceID] = []
@@ -273,6 +325,7 @@ def devices() -> List[DeviceID]:
         out.append(replace(entry, bus=dev.bus, address=dev.address))
         seen.add(slot)
     out.extend(_pnp_only_devices(smap, seen))
+    out.extend(_pci_netdev_devices(smap))
     return out
 
 
@@ -296,16 +349,25 @@ def _pnp_only_devices(smap: dict[VidPid, Claim], seen: set[VidPid]) -> List[Devi
 
 def device(device_id: DeviceID) -> Optional[DeviceID]:
     """The live device with ``device_id``'s VID:PID, tagged with its current (bus, address), or None."""
-    for d in devices():
-        if (d.vid, d.pid) == (device_id.vid, device_id.pid):
+    candidates = [d for d in devices() if (d.vid, d.pid) == (device_id.vid, device_id.pid)]
+    if not candidates:
+        return None
+    for d in candidates:
+        if d.instance_key == device_id.instance_key:
             return d
-    return None
+    if device_id.extras.get("iface"):
+        for d in candidates:
+            if d.extras.get("iface") == device_id.extras.get("iface"):
+                return d
+    return candidates[0]
 
 
 def linux_node_path(device_id: DeviceID) -> Optional[str]:
     """The usbfs node ``/dev/bus/usb/BBB/DDD`` of the present card matching ``device_id`` (Linux),
     or None if it isn't on the bus. Honors the (bus, address) instance when set, so the right node is
     returned with identical siblings plugged in. The path the udev rule / chgrp acts on."""
+    if device_id.bus == "pci" or isinstance(device_id.bus, str) or isinstance(device_id.address, str):
+        return None
     backend = libusb_package.get_libusb1_backend()
     want_instance = device_id.bus is not None and device_id.address is not None
     for dev in _bus_devices(backend):
@@ -318,10 +380,13 @@ def linux_node_path(device_id: DeviceID) -> Optional[str]:
 
 
 def _live_dev(device_id: DeviceID) -> Optional[usb.core.Device]:
+    if device_id.bus == "pci" or device_id.extras.get("bus_type") == "pci":
+        return None
     backend = libusb_package.get_libusb1_backend()
     if device_id.bus is not None and device_id.address is not None:
-        return usb.core.find(idVendor=device_id.vid, idProduct=device_id.pid,
-                             bus=device_id.bus, address=device_id.address, backend=backend)
+        if isinstance(device_id.bus, int) and isinstance(device_id.address, int):
+            return usb.core.find(idVendor=device_id.vid, idProduct=device_id.pid,
+                                 bus=device_id.bus, address=device_id.address, backend=backend)
     return usb.core.find(idVendor=device_id.vid, idProduct=device_id.pid, backend=backend)
 
 
@@ -331,8 +396,23 @@ def wlan_iface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanInterfa
     ``devices()`` tags them) the exact physical card is opened via a targeted ``usb.core.find``; a
     bare catalog DeviceID (bus/address None) falls back to the first VID:PID match. ``connect()``
     opens it, not this."""
-    if supported_ids().get((device_id.vid, device_id.pid)) is None:
+    claim = supported_ids().get((device_id.vid, device_id.pid))
+    if claim is None:
         return None
+    driver_cls = claim.import_driver()
+    if device_id.bus == "pci" or device_id.extras.get("bus_type") == "pci":
+        iface_name = device_id.extras.get("iface", name)
+        try:
+            driver = driver_cls.from_netdev(iface_name, device_id)
+        except Exception as e:
+            logger.debug("wlan_iface: %s (%s): %s",
+                         iface_name, driver_cls.__name__, e)
+            return None
+        return WlanInterface(driver, name, device_id.description,
+                             vid=device_id.vid, pid=device_id.pid, dev=None,
+                             chipset=device_id.chipset, vendor=device_id.vendor,
+                             product_name=device_id.product_name,
+                             bus=device_id.bus, address=device_id.address)
     dev = _live_dev(device_id)
     if dev is None:
         logger.debug("wlan_iface: no live %04x:%04x instance (bus=%s addr=%s)",

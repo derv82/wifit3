@@ -48,6 +48,8 @@ def is_permission_error(exc: BaseException) -> bool:
     cur = exc
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
+        if isinstance(cur, PermissionError):
+            return True
         if isinstance(cur, NotImplementedError) and _raised_inside_pyusb(cur):
             return True
         if isinstance(cur, usb.core.USBError) and _usberror_is_permission(cur):

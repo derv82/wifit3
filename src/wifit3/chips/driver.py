@@ -78,10 +78,14 @@ class Driver(ABC):
 
 
     @classmethod
-    @abstractmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Driver":
         """Construct a driver instance for ``dev``."""
-        ...
+        raise NotImplementedError(f"{cls.__name__} does not support USB devices")
+
+    @classmethod
+    def from_netdev(cls, iface: str, id_entry: DeviceID) -> "Driver":
+        """Construct a driver instance for network interface ``iface``."""
+        raise NotImplementedError(f"{cls.__name__} does not support netdev interfaces")
 
     @abstractmethod
     def register_rx_callback(self, cb: Callable[[Packet], None]) -> None:
